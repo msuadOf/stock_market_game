@@ -231,6 +231,11 @@ impl CivilClock {
         self.disclosure_observers.push(observer);
     }
 
+    /// 本局冻结的交易日历；市场入口与逐股历史使用同一本政策。
+    pub(super) fn calendar(&self) -> &TradingCalendar {
+        &self.calendar
+    }
+
     /// 校验公司 due 日期落在冻结日历的适用范围内（公司 due 单一 authority 后，
     /// 本时钟承担日历上界守卫：越界待办失去恰好一次派发机会，须显式拒绝）。
     pub fn validate_due_horizon(&self, due_date: CivilDate) -> Result<(), CivilClockError> {

@@ -81,7 +81,7 @@ fn discovery_setup() -> SessionSetup {
         history_len: 5,
         t1_enabled: true,
         float_allocation: FloatAllocation::random(),
-        start_date: CivilDate::from_iso("2030-01-01").unwrap(),
+        start_date: CivilDate::from_iso("2030-01-02").unwrap(),
         simulation_policy_id: engine::SIMULATION_POLICY_ID.to_string(),
     }
 }

@@ -111,7 +111,8 @@ fn sample_setup() -> SessionSetup {
         history_len: 5,
         t1_enabled: true,
         float_allocation: engine::FloatAllocation::random(),
-        start_date: engine::CivilDate::from_iso("2030-01-01").unwrap(),
+        // 交易测试 fixture 首拍即可成交；默认休市开局由 civil_clock 专测覆盖。
+        start_date: engine::CivilDate::from_iso("2030-01-02").unwrap(),
         simulation_policy_id: engine::SIMULATION_POLICY_ID.to_string(),
     }
 }
@@ -207,8 +208,21 @@ impl TestOrderSaveFixture {
             .insert(code, position);
     }
 
+    /// 开局日取**首个交易日**（2030-01-02，周三）。
+    ///
+    /// #116：本 fixture 一开局就在簿里预置卖方挂单、并在第一次 `step` 期望
+    /// 成交——这些语义只在开市日成立。此前开局取默认 2030-01-01（元旦
+    /// 休市），而休市日门禁缺失使 step 照旧成交，缺陷被 fixture 掩盖；
+    /// 门禁补上后必须先落在开市日（"休市起点保持真实起点"的时钟语义由
+    /// civil_clock 专用测试承载，与本 fixture 的交易语义无关）。
     fn with_resting_sellers(seller_count: u32, player_cash: i64) -> Self {
+        Self::with_resting_sellers_on(seller_count, player_cash, "2030-01-02")
+    }
+
+    /// 开局日可显式指定（#116：休市日用例需要真实的休市开局日）。
+    fn with_resting_sellers_on(seller_count: u32, player_cash: i64, start: &str) -> Self {
         let mut setup = sample_setup();
+        setup.start_date = engine::CivilDate::from_iso(start).unwrap();
         setup.npcs = NpcSetup {
             retail_count: seller_count,
             inst_count: 0,
@@ -1658,14 +1672,229 @@ fn full_day_accounting_small_population_roundtrips_and_completes() {
     assert_large_population_roundtrip_and_complete_a_full_market_day(setup);
 }
 
+/// #116（P0）：公开市场入口在**休市日**不得成交。
+///
+/// 双向验证（防"把市场永久关掉"的塌方式假绿）：休市日必须先被拒，
+/// 且开市日 fixture 必须恢复成交。只断言前者的话，
+/// 一个"永远拒收"的实现也能全绿。
+#[test]
+fn market_holiday_gate_rejects_step_but_trading_day_still_fills() {
+    let buy = || Intent::PlaceLimit {
+        code: sid(),
+        side: Side::Buy,
+        price: LimitPrice::Fixed(Money::from_cents(1000)),
+        qty: 100,
+    };
+
+    // ── 半场一：开局 2030-01-01（元旦·休市）——step 必须被拒且不产生成交 ──
+    // 开局日即休市日（时钟"休市起点保持真实起点"语义），不是事后拨回。
+    let mut holiday = TestOrderSaveFixture::with_resting_sellers_on(1, 10_000_000, "2030-01-01")
+        .restore()
+        .unwrap();
+    assert_eq!(
+        holiday.civil_clock().phase(),
+        engine::session::CivilPhase::ClosedDay,
+        "fixture 开局必须落在休市日，否则本用例没有区分力"
+    );
+    holiday.enqueue_player_intent(AccountId(0), buy()).unwrap();
+    let resources_before = market_resources(&holiday, 2);
+    let hash_before = holiday.business_state_hash().unwrap();
+
+    let rejected = holiday.step().expect_err("休市日 step 必须被拒（#116）");
+    assert_eq!(holiday.poison_reason(), Some(&rejected), "沿用 StepFatal 的停止会话契约");
+    assert!(
+        matches!(&rejected, engine::session::StepFatal::InvariantViolation { description, .. }
+            if description.contains("休市")),
+        "拒绝原因必须显式指向休市（可诊断），实际：{rejected}"
+    );
+    assert_eq!(
+        market_resources(&holiday, 2),
+        resources_before,
+        "休市日被拒的 step 必须零状态变更（门禁在成交之前生效）"
+    );
+
+    assert_eq!(
+        holiday.business_state_hash().unwrap(),
+        hash_before,
+        "门禁失败不能消费 RNG、队列或市场状态"
+    );
+
+    // ── 半场二：开市日（2030-01-02）必须恢复成交 ──
+    let mut trading = TestOrderSaveFixture::with_resting_sellers(1, 10_000_000)
+        .restore()
+        .unwrap();
+    advance_civil_to_session_start(&mut trading);
+    assert_eq!(
+        trading.civil_clock().phase(),
+        engine::session::CivilPhase::IntradayTrading,
+        "推进后必须落在开市日"
+    );
+    trading.enqueue_player_intent(AccountId(0), buy()).unwrap();
+    let events = trading.step().expect("开市日 step 必须成功");
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event, Event::Trade { qty: 100, .. })),
+        "开市日必须恢复成交——门禁不得把市场永久关掉"
+    );
+}
+
+#[test]
+fn market_holiday_runtime_gate_preserves_pending_intents_and_resources() {
+    let mut game = TestOrderSaveFixture::with_resting_sellers_on(1, 10_000_000, "2030-01-01")
+        .restore()
+        .unwrap();
+    game.enqueue_player_intent(
+        AccountId(0),
+        Intent::PlaceLimit {
+            code: sid(),
+            side: Side::Buy,
+            price: LimitPrice::Fixed(Money::from_cents(1000)),
+            qty: 100,
+        },
+    )
+    .unwrap();
+    let before = game.business_state_hash().unwrap();
+    let error = game
+        .step_via_runtime()
+        .expect_err("runtime 同样必须在休市日前置拒绝");
+    assert!(
+        matches!(&error, engine::session::StepFatal::InvariantViolation { description, .. } if description.contains("休市"))
+    );
+    assert_eq!(game.poison_reason(), Some(&error));
+    assert_eq!(game.business_state_hash().unwrap(), before);
+    assert_eq!(game.tick(), 0);
+}
+
+#[test]
+fn market_holiday_day_end_advances_to_a_working_trading_session() {
+    let mut setup = sample_setup();
+    setup.start_date = engine::CivilDate::from_iso("2030-01-01").unwrap();
+    setup.npcs.retail_count = 0;
+    setup.npcs.inst_count = 0;
+    setup.npcs.hot_count = 0;
+    let mut game = GameSession::new(setup, 42).unwrap();
+    assert_eq!(
+        game.civil_clock().phase(),
+        engine::session::CivilPhase::ClosedDay
+    );
+    game.end_civil_day().unwrap();
+    assert_eq!(
+        game.civil_date(),
+        engine::CivilDate::from_iso("2030-01-02").unwrap()
+    );
+    assert_eq!(game.tick(), 0, "休市日结不得伪造行情 tick");
+    game.step().expect("自然日推进不能被市场门禁卡死");
+    assert_eq!(game.tick(), 1);
+}
+
+#[test]
+fn market_holiday_frame_entries_reject_without_changing_authority() {
+    for with_evidence in [false, true] {
+        let mut game = TestOrderSaveFixture::with_resting_sellers_on(1, 10_000_000, "2030-01-01")
+            .restore()
+            .unwrap();
+        let before = game.business_state_hash().unwrap();
+        let error = if with_evidence {
+            game.step_frame_with_commit_evidence().unwrap_err()
+        } else {
+            game.step_frame().unwrap_err()
+        };
+        assert!(
+            matches!(&error, engine::session::StepFatal::InvariantViolation { description, .. } if description.contains("休市"))
+        );
+        assert_eq!(game.poison_reason(), Some(&error));
+        assert_eq!(game.business_state_hash().unwrap(), before);
+        assert_eq!(game.tick(), 0);
+    }
+}
+
+#[test]
+fn market_holiday_gate_follows_frozen_closures_on_both_exchanges() {
+    use engine::calendar::{CalendarExchange, OfficialCoverageEntry};
+    let date = engine::CivilDate::from_iso("2030-01-02").unwrap();
+    let new_year = engine::CivilDate::from_iso("2030-01-01").unwrap();
+    for (exchange, calendar_exchange) in [
+        (StockExchange::Shanghai, CalendarExchange::Sse),
+        (StockExchange::Shenzhen, CalendarExchange::Szse),
+    ] {
+        let mut setup = sample_setup();
+        setup.stocks[0].exchange = exchange;
+        if exchange == StockExchange::Shenzhen {
+            setup.stocks[0].code = StockCode("000101".into());
+        }
+        setup.npcs.retail_count = 0;
+        setup.npcs.inst_count = 0;
+        setup.npcs.hot_count = 0;
+        let mut save = GameSession::new(setup, 42).unwrap().save().unwrap();
+        // Official 按整年替代 fallback；保留元旦休市以免改变开局前史。
+        save.civil_clock
+            .policy
+            .official_coverage
+            .push(OfficialCoverageEntry::new(
+                calendar_exchange,
+                2030,
+                vec![(new_year, date)],
+                "synthetic-holiday-gate-test-only".into(),
+                "synthetic-digest".into(),
+            ));
+        let mut game = GameSession::restore(&save).expect("冻结政策必须自洽且不改变前史");
+        let before = game.business_state_hash().unwrap();
+        let error = game
+            .step()
+            .expect_err("本局冻结政策休市时，默认表的开市结果不得放行");
+        assert!(
+            matches!(&error, engine::session::StepFatal::InvariantViolation { description, .. } if description.contains("休市"))
+        );
+        assert_eq!(game.business_state_hash().unwrap(), before);
+    }
+}
+
+/// #116（P1）：每股开市判定必须读**存档冻结**政策，不得回落到进程默认表。
+///
+/// 冻结政策把某日设为 Closed、而默认政策仍是 Trading 时，`runtime_stock_trading_on`
+/// 必须给出 Closed——否则日结保留冻结面（`assemble_retained_day_snapshot`）
+/// 拒绝该日桶，而入口侧（历史查询可用性）却按默认政策把它当开市日。
+#[test]
+fn per_stock_trading_flag_follows_the_frozen_calendar_not_the_default_table() {
+    let date = engine::CivilDate::from_iso("2031-06-10").unwrap();
+    let default_calendar = engine::calendar::TradingCalendar::current_default_calendar().unwrap();
+    assert!(
+        default_calendar
+            .is_trading_day(engine::calendar::CalendarExchange::Sse, date)
+            .unwrap(),
+        "前提：默认政策下 2031-06-10 是开市日，否则本用例没有区分力"
+    );
+
+    // 取开局后的整年覆盖，不改变开局前史；Official 按整年替代模拟政策。
+    let mut save = GameSession::new(sample_setup(), 42)
+        .unwrap()
+        .save()
+        .unwrap();
+    let mut spec = save.civil_clock.policy.clone();
+    spec.official_coverage
+        .push(engine::calendar::OfficialCoverageEntry::new(
+            engine::calendar::CalendarExchange::Sse,
+            2031,
+            vec![(date, date)],
+            "synthetic-sse-2031-closure".to_string(),
+            "synthetic-digest".to_string(),
+        ));
+    save.civil_clock.policy = spec;
+    let frozen = GameSession::restore(&save).expect("冻结政策必须可恢复");
+
+    assert!(
+        !frozen.runtime_stock_trading_on(sid().0, date).unwrap(),
+        "冻结政策已把 {date} 设为休市，每股开市判定必须跟随冻结政策而非默认表"
+    );
+}
+
 #[test]
 #[should_panic(expected = "每个实例必须恰好完成一次完整交易日日结")]
 fn full_day_accounting_rejects_a_missing_day_boundary() {
     let (mut session, _, _, _) = full_day_accounting_fixture();
     let ticks_per_day = sample_setup().ticks_per_day;
-    // 开局 2030-01-01 为元旦休市：日结保留面以冻结日历为权威（休市必须空桶），
-    // 未推进到首个交易日就 step 会先在 retained_freeze 不变量处失败，
-    // 掩盖本测试真正要锚定的"缺失日界被拒"。与同文件其余全量日用例同口径推进。
+    // 与其余完整交易日用例使用相同双时钟驱动，锚定缺失日界的拒绝。
     advance_civil_to_session_start(&mut session);
     let mut final_events = Vec::new();
     for _ in 1..ticks_per_day {
@@ -1742,8 +1971,7 @@ fn assert_large_population_roundtrip_and_complete_a_full_market_day(setup: Sessi
         let mut resources = market_resources(session, expected_accounts);
         let mut trade_totals = TradeTotals::new();
         let mut day_boundaries = 0;
-        // 开局 2030-01-01 为元旦休市：先按双时钟契约推进到首个交易日再开盘，
-        // 否则自产档的日 K 日期过不了恢复校验（fault2066）。
+        // 使用双时钟驱动，确保每个交易日的日 K 日期通过恢复校验。
         advance_civil_to_session_start(session);
         for tick in 0..ticks_per_day {
             let (events, evidence) = session.step_with_commit_evidence().expect("healthy step");
@@ -4091,9 +4319,7 @@ fn save_restore_preserves_pending_player_intents() {
 #[test]
 fn save_restore_preserves_state() {
     let mut s = GameSession::new(sample_setup(), 42).unwrap();
-    // 跑几步产生状态。开局 2030-01-01 为元旦休市：逐 tick 前按双时钟契约
-    // 推进自然日（休市日/已收盘日先 end_civil_day），日 K 日期才能与恢复
-    // 校验的交易日序列一致（fault2066）。
+    // 逐 tick 前按双时钟契约推进自然日，保持日 K 与恢复侧交易日序列一致。
     for _ in 0..20 {
         advance_civil_to_session_start(&mut s);
         s.step().expect("healthy step");
@@ -4545,8 +4771,7 @@ fn save_restore_rebuilds_the_active_trader_institution_deterministically() {
     setup.npcs.inst_count = 5;
     setup.npcs.hot_count = 0;
     let mut original = GameSession::new(setup, 0xA01_5A01).unwrap();
-    // 开局 2030-01-01 为元旦休市：逐 tick 前按双时钟契约推进自然日，
-    // 自产档日 K 日期才能与恢复校验一致（fault2066）。
+    // 逐 tick 前按双时钟契约推进自然日，保持日 K 日期与恢复校验一致。
     for _ in 0..25 {
         advance_civil_to_session_start(&mut original);
         original.step().expect("healthy step");

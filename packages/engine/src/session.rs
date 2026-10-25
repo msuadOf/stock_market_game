@@ -6120,7 +6120,8 @@ mod npc_working_quote_tests {
             history_len: 10,
             t1_enabled: true,
             float_allocation: FloatAllocation::random(),
-            start_date: default_civil_start_date(),
+            // 本 helper 要求首拍即可交易，开局必须使用开市日。
+            start_date: crate::CivilDate::from_iso("2030-01-02").unwrap(),
             simulation_policy_id: SIMULATION_POLICY_ID.to_string(),
         }
     }

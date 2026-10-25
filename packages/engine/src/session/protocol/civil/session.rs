@@ -1543,7 +1543,9 @@ mod rollback_tests {
 
     #[test]
     fn checkpoint_rejects_poison_and_failed_candidate_can_retry_from_healthy_state() {
-        let setup = crate::session::protocol::civil::publication_tests::setup();
+        let mut setup = crate::session::protocol::civil::publication_tests::setup();
+        // 本用例验证市场候选提交及回滚，首拍须为开市日。
+        setup.start_date = crate::CivilDate::from_iso("2030-01-02").unwrap();
         let mut session = ProtocolSession::new(setup, 53).unwrap();
         let fatal = StepFatal::InvariantViolation {
             location: "protocol checkpoint test".into(),
@@ -1562,7 +1564,9 @@ mod rollback_tests {
 
     #[test]
     fn committed_evidence_frame_is_the_same_public_runtime_step() {
-        let setup = crate::session::protocol::civil::publication_tests::setup();
+        let mut setup = crate::session::protocol::civil::publication_tests::setup();
+        // 本用例验证市场候选提交及回滚，首拍须为开市日。
+        setup.start_date = crate::CivilDate::from_iso("2030-01-02").unwrap();
         let mut ordinary = ProtocolSession::new(setup.clone(), 47).unwrap();
         let mut observed = ProtocolSession::new(setup, 47).unwrap();
 
@@ -1586,7 +1590,9 @@ mod rollback_tests {
 
     #[test]
     fn malformed_evidence_frame_rolls_back_game_history_and_facts_then_retries() {
-        let setup = crate::session::protocol::civil::publication_tests::setup();
+        let mut setup = crate::session::protocol::civil::publication_tests::setup();
+        // 本用例验证市场候选提交及回滚，首拍须为开市日。
+        setup.start_date = crate::CivilDate::from_iso("2030-01-02").unwrap();
         let mut session = ProtocolSession::new(setup, 48).unwrap();
         let preceding = crate::Event::CivilDateAdvanced {
             seq: session.state.game.seq(),
@@ -1677,7 +1683,9 @@ mod rollback_tests {
     /// 泄漏及重试契约）。红态：失败后 day==day_before+1。
     #[test]
     fn solfinal1a_day_end_projection_failure_rolls_back_day() {
-        let setup = crate::session::protocol::civil::publication_tests::setup();
+        let mut setup = crate::session::protocol::civil::publication_tests::setup();
+        // 本用例验证市场候选提交及回滚，首拍须为开市日。
+        setup.start_date = crate::CivilDate::from_iso("2030-01-02").unwrap();
         let mut session = ProtocolSession::new(setup, 49).unwrap();
         let tpd = session.game().state.setup.ticks_per_day;
         for _ in 1..tpd {
@@ -1706,7 +1714,9 @@ mod rollback_tests {
 
     #[test]
     fn malformed_frame_after_mutation_rolls_back_game_history_and_fact_cursor() {
-        let setup = crate::session::protocol::civil::publication_tests::setup();
+        let mut setup = crate::session::protocol::civil::publication_tests::setup();
+        // 本用例验证市场候选提交及回滚，首拍须为开市日。
+        setup.start_date = crate::CivilDate::from_iso("2030-01-02").unwrap();
         let mut session = ProtocolSession::new(setup, 40).unwrap();
         let preceding = crate::Event::CivilDateAdvanced {
             seq: session.state.game.seq(),

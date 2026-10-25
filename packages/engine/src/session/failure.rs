@@ -1298,6 +1298,24 @@ impl GameSession {
         }
     }
 
+    /// 按每只证券所属交易所及本局冻结政策判断开市数量。
+    fn open_stock_count_today(&self) -> Result<usize, StepFatal> {
+        let date = self.state.civil_clock.current_date();
+        let calendar = self.state.civil_clock.calendar();
+        let mut open = 0;
+        for stock in &self.state.setup.stocks {
+            let exchange = super::session_calendar_exchange(stock.exchange);
+            let trading = calendar.is_trading_day(exchange, date).map_err(|error| {
+                StepFatal::InvariantViolation {
+                    description: format!("交易日历无法判定 {date} {exchange:?} 是否开市：{error}"),
+                    location: "GameSession::check_step_start::calendar_gate".to_owned(),
+                }
+            })?;
+            open += usize::from(trading);
+        }
+        Ok(open)
+    }
+
     /// step 家族共用的前置检查：健康状态、测试注入失败与 NPC 策略完整性。
     /// frame 投影路径（step_frame_and_commit）与 step_inner 都从这里进入同一 dispatcher。
     pub(super) fn check_step_start(&mut self) -> Result<(), StepFatal> {
@@ -1308,6 +1326,16 @@ impl GameSession {
             return Err(StepFatal::InvariantViolation {
                 description: "non-player account has no authoritative strategy".to_owned(),
                 location: "GameSession::step".to_owned(),
+            });
+        }
+        // 在市场事务及 RNG 消费之前拒绝全场休市；自然日日结走独立入口。
+        if self.open_stock_count_today()? == 0 {
+            return Err(StepFatal::InvariantViolation {
+                description: format!(
+                    "休市日不得成交：{} 全场休市（本局冻结日历判定）",
+                    self.state.civil_clock.current_date()
+                ),
+                location: "GameSession::check_step_start::calendar_gate".to_owned(),
             });
         }
         Ok(())
@@ -2223,13 +2251,10 @@ impl GameSession {
                 floor: date,
             },
         )?;
-        let calendar = crate::calendar::TradingCalendar::current_default_calendar()?;
-        Ok(
-            matches!(
-                calendar.day_status(super::session_calendar_exchange(stock.exchange), date)?,
-                crate::calendar::DayStatus::Trading
-            ),
-        )
+        self.state
+            .civil_clock
+            .calendar()
+            .is_trading_day(super::session_calendar_exchange(stock.exchange), date)
     }
 
     /// B2：当日分钟K桶镜像**增量追加**（install 位置合并的低拷贝形态——
