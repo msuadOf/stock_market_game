@@ -34,6 +34,25 @@ impl ProtocolState {
 }
 
 impl ProtocolSession {
+    /// 显式转发 Simple 偏好配置，保留上一次已发布日终存档的职责。
+    pub fn company_simple_preferences(
+        &self,
+        company: &crate::company::CompanyId,
+    ) -> Result<
+        crate::company::simple::SimpleCompanyPreferences,
+        crate::session::SimplePreferencesError,
+    > {
+        self.state.game.company_simple_preferences(company)
+    }
+
+    pub fn set_simple_preferences(
+        &mut self,
+        company: &crate::company::CompanyId,
+        preferences: crate::company::simple::SimpleCompanyPreferences,
+    ) -> Result<(), crate::session::SimplePreferencesError> {
+        self.state.game.set_simple_preferences(company, preferences)
+    }
+
     /// B3 远程登录：成员变更面转发（bind/join/set_admission_cash 是会话级
     /// 静点操作，宿主在命令处理边界调用； ProtocolSession 未暴露通用
     /// DerefMut——成员操作经显式转发保持发布状态封装）。

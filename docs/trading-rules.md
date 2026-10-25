@@ -143,6 +143,21 @@ SealAllocationSnapshot 的 `DecisionResourceSnapshot::seal` 读取报价过期�
   所有权模型下单即扣，该缺陷形态从根上消除（等价防御=组端 purse 校验）。旧管线
   防御面随其退役消亡，不再回补。
 
+## Simple 偏好的局内配置入口（2026-10-25 登记）
+
+`GameSession` 与 `ProtocolSession` 提供 `company_simple_preferences` 和
+`set_simple_preferences` Rust API，仅配置既有现金分红与送转偏好；这是
+[ADR-0037](decisions/0037-company-action-initiator.md) 的游戏化策略配置，不是投资者
+发起公司行为的权限。比例沿用 bp、股份比例沿用百万分比、利润门槛沿用 `Money` 分、
+间隔沿用结算周期数。无公司线、未知公司、非法参数或两侧配置不一致均显式拒绝。
+
+编辑原子地同步公司系统及 setup 的偏好配置，不改变资产、已有方案、提案台账或个人信息。
+`GameSession.save` 包含已编辑配置；恢复时要求 `company_system.config` 与
+`setup.company_system` 完整一致，单侧编辑存档会被拒绝。`ProtocolSession.save`
+仍返回上次已发布的日终存档，后续自然日日终发布才包含新配置。本入口不代表偏好自动提案
+与公司行为日终执行链已经接通，也未开放配股、增发、回购或拆股策略参数；宿主 wire/API
+与 UI 接线由后续批次实现。
+
 ## 回购专户的自主交易隔离（2026-10-25 登记）
 
 `AccountKind::IssuerRepurchase` 禁止走普通 NPC 的自主决策下单通道。保留专户 kind、

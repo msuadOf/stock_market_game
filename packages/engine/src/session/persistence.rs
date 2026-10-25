@@ -318,6 +318,15 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
         )));
     }
 
+    if save.company_system.as_ref().map(|system| system.config()) != save.setup.company_system {
+        // 纯存档勾稽失败：不修改或毒化任何运行中的 GameSession。
+        return Err(super::StepFatal::InvariantViolation {
+            description: "存档 company_system.config 与 setup.company_system 不一致".into(),
+            location: "validate_save_slot.company_system_config".into(),
+        }
+        .into());
+    }
+
     let (saved_day, day_tick, auction_entry_ticks, saved_phase) =
         SaveValidationContext::derive_trading_clock(save)?;
 

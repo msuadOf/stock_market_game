@@ -95,6 +95,10 @@ mod plan_execution;
 mod player_candidates;
 pub mod protocol;
 mod self_views;
+mod simple_preferences;
+pub use simple_preferences::SimplePreferencesError;
+#[cfg(test)]
+mod simple_preferences_tests;
 mod snapshot;
 mod views;
 pub use crate::stock::StockId;
