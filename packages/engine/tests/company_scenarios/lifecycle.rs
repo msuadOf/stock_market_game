@@ -57,11 +57,13 @@ fn civil_information_chain_keeps_unread_beliefs_stable_and_closed_days_tick_free
 #[ignore = "long validation: same authoritative session must span year close through scheduled annual disclosure"]
 fn year_boundary_keeps_company_operations_and_disclosure_state_authoritative() {
     // Given: one year-end session with the full company operations and disclosure state.
-    let company = crate::scenario_catalog()
-        .id("C-600101")
-        .expect("默认目录含发行人");
     let base = focused_disclosure_session("2030-12-31");
     let mut controlled = base.save().expect("healthy save");
+    let company = controlled
+        .company_operations
+        .catalog()
+        .id("C-600101")
+        .expect("受测会话目录含发行人");
     controlled.plans = Default::default();
     controlled.npc_order_lifecycles.clear();
     for attention in controlled.npc_attention.values_mut() {
