@@ -1,0 +1,1 @@
+{"browser":"153.0.8010.12","message":"Uncaught Error: WASM Worker 错误报告通道双失败（wasm-worker.speedMetrics）：STEP_FATAL：真实 Worker 原始故障；首次发送：real port unavailable；再次发送：real port unavailable"}

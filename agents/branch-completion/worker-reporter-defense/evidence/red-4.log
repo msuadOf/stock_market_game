@@ -1,0 +1,100 @@
+✔ 错误边界保留可选未知详情和真实位置，既有三字段不要求虚构字段 (13.785358ms)
+✔ 非法核心字段、恢复标志和动作在边界明确拒绝，不回填默认值 (0.779732ms)
+✔ WASM Worker enables controlled stepping only for an explicit E2E build mode (2.358776ms)
+✔ Worker rejects stale save generation before looking up the current WASM candidate (2.215092ms)
+✔ WASM Worker preserves a structured HostFailure code and message (0.562626ms)
+✔ WASM Worker 保留标准 Error 的 code 和非枚举 message (0.281607ms)
+✔ WASM Worker 保留非枚举 code 和有效的 HostFailure 可选字段 (0.439012ms)
+✔ WASM Worker 仍显式拒绝非法的 HostFailure 可选字段 (0.688759ms)
+✔ WASM Worker 仍显式报告可选字段的 getter 和 Proxy 访问错误 (0.491973ms)
+✔ WASM Worker preserves an explicit engine error origin (0.226076ms)
+✔ WASM Worker describes malformed object errors without Object string coercion (0.292928ms)
+✔ WASM Worker reports a structured-error accessor failure explicitly (0.408372ms)
+✔ WASM Worker can report an unprintable thrown object without failing again (0.339589ms)
+✔ WASM Worker can report a revoked Proxy without failing again (0.314838ms)
+✔ WASM Worker safely stringifies a non-string Error message (0.256577ms)
+✔ WASM Worker safely stringifies a non-string serialization-error message (0.232417ms)
+✔ WASM Worker routes a structured request failure through HostFailure (0.362801ms)
+✔ 错误报告只读一次核心与详情 getter，并交付严格校验后的 clone 快照 (0.386601ms)
+✔ where getter 抛错和不可克隆详情均显式保留原故障及失败字段 (0.367991ms)
+✔ 嵌套 recoveryActions getter 只克隆一次，非法快照仍由严格 parser 拒绝 (0.384861ms)
+✔ 发送错误详情失败时第二条消息保留原始故障和发送原因 (0.500424ms)
+✔ 错误消息双发送失败通过 reportError 暴露原故障及两次发送原因 (0.540425ms)
+✔ listener 的 getter 故障仍送出 failure 而不产生二次报告异常 (0.36225ms)
+✔ 缺少 reportError 的旧环境通过 microtask 显式抛出完整故障详情 (0.690889ms)
+✔ operationError 发送失败改送 failure，保留请求原错误与传输原因 (0.320939ms)
+✔ 空白原生 Error message 明确报协议错误，交付非空说明及原 message (0.222316ms)
+✔ message getter 失败仍保留已读 code 并标明失败字段 (0.280748ms)
+✔ 非结构化 Error 与 object 的核心 getter 只读一次，listener 复用分类说明 (0.678849ms)
+✔ clone-safe 循环、Map、Set、BigInt 与原生 Error 详情仍通过主线程严格 parser (1.522163ms)
+✔ 非结构化错误保留 prototype.toJSON、Date、URL 的原有诊断 (1.05023ms)
+✔ 空 message 保留首读 code，message getter 抛错保留已读数值 code (0.426792ms)
+✔ context 回指原错误时 clone 再遍历 getter 的失败明确标注阶段并保留原故障 (0.413262ms)
+✖ 非结构化 Proxy 的核心 get trap 仅首读一次并复用原故障说明 (2.867591ms)
+✔ 串行 substrate（shared:false ingress）不 spawn intake worker，submitIntent 走 engine 主通道 enqueue (6.918805ms)
+✔ Browser engine worker 忙碌时 submitIntent 由独立 intake worker 确认，dispose 同时关闭两者 (2.025367ms)
+✔ Browser ingress consumerReject 不泄漏 intake worker 或误报旧代成功 (2.280134ms)
+✔ Browser ingress initializationTimeout 不泄漏 intake worker 或误报旧代成功 (0.861934ms)
+✔ Browser ingress staleEnqueued 不泄漏 intake worker 或误报旧代成功 (3.19562ms)
+✔ Browser ingress disposedEnqueued 不泄漏 intake worker 或误报旧代成功 (0.640178ms)
+✔ Worker 股票历史请求绑定 requestId 与 generation，且不携带可指定账户 (0.548665ms)
+✔ Worker baseline baseline 被消费者拒绝时终止并显式失败 (1.255125ms)
+✔ Worker refreshBaseline baseline 被消费者拒绝时终止并显式失败 (0.861354ms)
+✔ Worker load baseline 被消费者拒绝时终止并显式失败 (5.045382ms)
+✔ 审计G53：Worker恢复必须推进generation，不能接受相同或更小代 (0.482044ms)
+✔ 审计G53：恢复代次拒绝零、负数、非安全整数和字符串 (0.369921ms)
+✔ Worker refresh 已回包但 continuation 前 dispose 不得复活 baseline (0.70751ms)
+✔ Worker save pins candidate generation and rejects an old saved response after baseline replacement (0.650669ms)
+✔ Given a generation-correlated Worker metrics response, when read, then it validates the shared speed contract (0.304778ms)
+✔ Given a generation-correlated Worker order response, when read, then it preserves Money cents (0.450613ms)
+✔ Given a typed WASM indicator input error, when returned through the Worker, then calculation rejects (0.285268ms)
+✔ Given an enriched Worker failure, when parsed, then cause and recovery actions survive (0.418922ms)
+✔ Given a restore response from the old request generation, when read, then it yields the new authority before load completes (0.215786ms)
+✔ Given a refresh request, when the worker reads its live session, then it returns that authoritative snapshot (0.33728ms)
+✔ Given local pause preferences, when sent across the Worker boundary, then the request retains both flags and generation (0.198646ms)
+✔ Given a paused Worker, the correlated single-step response exposes its committed tick (0.208706ms)
+✔ Given production or a missing injected capability, Worker E2E stepping is rejected (0.246687ms)
+✔ Worker initialization sends init without pool size and reports startup failure immediately (0.546746ms)
+✔ duplicate delivered baselines preserve pending order queries, while a new generation invalidates them (0.792413ms)
+✔ Worker 控制等待应用回执，protocolBatch 每个提交接纳后立即 ACK 且不等待 render (1.026109ms)
+✔ Worker cached baseline 拒绝不启动或 ACK，显式重试仍交付且旧 host 不干扰新 host (1.07042ms)
+✔ Worker dispose 与 fatal 立即取消在途请求，释放监听并拒绝后续请求 (1.007318ms)
+✔ Worker 真实 coordinator 拒绝批次中间提交后不消费尾部、不 ACK、立即终止并取消控制 (5.68953ms)
+✔ Worker reportError 的 error 事件将完整错误交付用户回调并终止会话 (0.656159ms)
+ℹ tests 63
+ℹ suites 0
+ℹ pass 62
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 386.077475
+
+✖ failing tests:
+
+test at apps/web/src/host/wasm-worker-failure.test.ts:529:1
+✖ 非结构化 Proxy 的核心 get trap 仅首读一次并复用原故障说明 (2.867591ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+  + actual - expected
+  
+    {
+  +   code: 2,
+  -   code: 1,
+      message: 1
+    }
+  
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/worker-reporter-defense/apps/web/src/host/wasm-worker-failure.test.ts:542:10)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: { code: 2, message: 1 },
+    expected: { code: 1, message: 1 },
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }
+bounded command exited with 1

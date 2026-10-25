@@ -438,7 +438,7 @@ test("message getter 失败仍保留已读 code 并标明失败字段", () => {
   assert.equal(reads, 1);
   assert.deepEqual(posted, [{
     type: "failure", generation: 0, code: "WASM_WORKER_PROTOCOL", where: "wasm-worker.step",
-    message: "读取结构化错误字段 message 失败：message getter exploded",
+    message: "读取结构化错误字段 message 失败：message getter exploded；已读原始错误：code=STEP_FATAL",
     cause: { code: "STEP_FATAL" },
   }]);
 });
@@ -553,4 +553,28 @@ test("原生 Date 的 custom toJSON 也复用首读 message 而不重复访问�
   assert.equal(reads, 1);
   assert.equal(classified.kind, "unstructured");
   if (classified.kind === "unstructured") assert.match(classified.description, /original Date failure/);
+});
+
+test("双发送失败的用户文本保留 engine 原始 where，详情先降级时也保留", () => {
+  for (const badContext of [false, true]) {
+    posted.length = 0;
+    reportedErrors.length = 0;
+    remainingPostFailures = 2;
+    const error = { code: "STEP_FATAL", message: "原始故障", where: "engine::commit_tick" };
+    if (badContext) Object.defineProperty(error, "context", { get() { throw new Error("context unreadable"); } });
+    postFailure("wasm-worker.step", error);
+    assert.equal(reportedErrors.length, 1);
+    assert.match((reportedErrors[0] as Error).message, /engine::commit_tick.*port failure 1.*port failure 0/);
+  }
+});
+
+test("原型检查失败的非结构化 Proxy 仍显示首读 message", () => {
+  posted.length = 0;
+  const error = new Proxy({ message: "original proxy failure" }, {
+    getPrototypeOf() { throw new Error("prototype unreadable"); },
+  });
+  postFailure("wasm-worker.step", error);
+  const message = String((posted[0] as Record<string, unknown>).message);
+  assert.match(message, /检查错误对象失败.*prototype unreadable/);
+  assert.match(message, /original proxy failure/);
 });

@@ -3,7 +3,7 @@ import { normalizePublicReportById, normalizePublicReportPage, normalizeSerdeMap
 import { WasmSessionSlot } from "./wasm-session-slot.ts";
 import { WasmTickLoop } from "./wasm-tick-loop.ts";
 import { WorkerTaskScheduler } from "./worker-task-scheduler.ts";
-import { classifyWasmFailure, describeWasmFailure, type WasmFailureClassification } from "./wasm-failure.ts";
+import { classifyWasmFailure, describeWasmFailure, describeReadFailureFields, type WasmFailureClassification } from "./wasm-failure.ts";
 import { parseHostFailure } from "./protocol-failure.ts";
 import { stockIdOf } from "../config/stock-ids.ts";
 import { shouldLoadDiagnosticsWasm } from "./wasm-build-mode.ts";
@@ -92,14 +92,14 @@ function structuredHostFailure(error: unknown, where: string, classified: Exclud
       // details 仅含已读取且可克隆的快照；保留原故障，显式报告详情处理的失败。
       return {
         code: "WASM_WORKER_PROTOCOL", where,
-        message: `${phase}：${describeWasmFailure(detailError)}；原始错误：${classified.code}：${classified.message}`,
+        message: `${phase}：${describeWasmFailure(detailError)}${describeReadFailureFields({ code: classified.code, message: classified.message, where: details.where })}`,
         cause: details,
       };
     }
   }
   return {
     code: "WASM_WORKER_PROTOCOL", where,
-    message: `读取结构化错误字段 ${classified.field} 失败：${classified.reason}`,
+    message: `读取结构化错误字段 ${classified.field} 失败：${classified.reason}${describeReadFailureFields(classified.cause)}`,
     ...(Object.keys(classified.cause).length > 0 ? { cause: classified.cause } : {}),
   };
 }
@@ -155,7 +155,7 @@ function postFailureDetails(where: string, failure: WorkerFailureDetails): void 
     } catch (lastResortError) {
       const lastReason = describeWasmFailure(lastResortError);
       const reportingError = new Error(
-        `WASM Worker 错误报告通道双失败（${where}）：${failure.code}：${failure.message}；首次发送：${sendReason}；再次发送：${lastReason}`,
+        `WASM Worker 错误报告通道双失败（${where}）：${failure.code}：${failure.message}；原始位置：${failure.where}；首次发送：${sendReason}；再次发送：${lastReason}`,
         { cause: { failure, sendError: sendReason, lastResortError: lastReason } },
       );
       // reportError 经 Worker error 事件进入 worker-host 的用户错误通道。

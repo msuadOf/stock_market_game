@@ -11,12 +11,20 @@ function safeString(value: unknown): string {
   }
 }
 
+export function describeReadFailureFields(fields: Readonly<Record<string, unknown>> | undefined): string {
+  if (fields === undefined) return "";
+  const original = Object.entries(fields)
+    .filter(([, value]) => value === null || ["string", "number", "boolean", "bigint"].includes(typeof value))
+    .map(([key, value]) => `${key}=${String(value)}`).join("；");
+  return original.length > 0 ? `；已读原始错误：${original}` : "";
+}
+
 export function describeWasmFailure(error: unknown, coreFields?: { readonly code: unknown; readonly message: unknown }): string {
   if (typeof error === "string") return error;
   try {
     if (error instanceof Error) return safeString(coreFields === undefined ? error.message : coreFields.message);
   } catch (inspectionError) {
-    return `检查错误对象失败：${safeString(inspectionError)}`;
+    return `检查错误对象失败：${safeString(inspectionError)}${describeReadFailureFields(coreFields)}`;
   }
   if (error !== null && typeof error === "object") {
     try {
@@ -50,10 +58,7 @@ export function describeWasmFailure(error: unknown, coreFields?: { readonly code
       } catch (inspectionError) {
         reason = `检查序列化错误失败：${safeString(inspectionError)}`;
       }
-      const original = coreFields === undefined ? "" : Object.entries(coreFields)
-        .filter(([, value]) => typeof value === "string")
-        .map(([key, value]) => `${key}=${String(value)}`).join("；");
-      return `非标准错误对象无法序列化：${reason}${original.length > 0 ? `；已读原始错误：${original}` : ""}`;
+      return `非标准错误对象无法序列化：${reason}${describeReadFailureFields(coreFields)}`;
     }
   }
   return safeString(error);
