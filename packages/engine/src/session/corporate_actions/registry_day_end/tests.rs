@@ -262,6 +262,175 @@ fn treasury_final_position_mismatch_is_explicit_and_candidate_failure_is_atomic(
     assert_eq!(state, before);
 }
 
+/// #119 的小活动覆盖：三组含非满尾组，真实 Drain 成交的最终 facts 与确认可勾稽。
+/// 这是当前机制验证，不声称复现旧 1200/1500 场景或证明其历史根因。
+#[test]
+#[cfg(not(target_arch = "wasm32"))]
+fn runtime_closing_final_facts_reconcile_with_tail_group_confirmations() {
+    use crate::runtime::drive::RuntimeDriver;
+    use crate::GameSession;
+    let mut setup = crate::session::npc_working_quote_tests::quote_setup(1);
+    setup.npcs.retail_count = 4;
+    setup.npcs.inst_count = 0;
+    setup.stocks[0].float_shares = 800_000;
+    setup.start_date = CivilDate::from_ymd(2026, 1, 5).unwrap();
+    setup.ticks_per_day = 6;
+    setup.closing_auction_ticks = 2;
+    let mut session = GameSession::new(setup, 21).unwrap();
+    let day = session.civil_date();
+    let opened_on = day.prev().unwrap();
+    let cat = session.stock_catalog().clone();
+    let mut registered = 0;
+    let mut initial_holdings = Vec::new();
+    for id in session.account_roster() {
+        let qty = session
+            .account(id)
+            .unwrap()
+            .positions()
+            .get(&StockId(0))
+            .map_or(0, |p| p.qty());
+        if qty > 0 {
+            registered += u64::from(qty);
+            initial_holdings.push(ShareHolding {
+                holder: HolderId::Account(id),
+                lots: vec![ShareLot {
+                    id: format!("initial:{}", id.0),
+                    qty: u64::from(qty),
+                    acquired_on: opened_on,
+                    source: AcquisitionSource::InitialAllocation {
+                        evidence: "开局账户快照".into(),
+                    },
+                    restriction: ShareRestriction::Unrestricted,
+                }],
+            });
+        }
+    }
+    initial_holdings.push(ShareHolding {
+        holder: HolderId::External("非流通持有人".into()),
+        lots: vec![ShareLot {
+            id: "external".into(),
+            qty: 10_000_000 - registered,
+            acquired_on: opened_on,
+            source: AcquisitionSource::InitialAllocation {
+                evidence: "开局未入账户股份".into(),
+            },
+            restriction: ShareRestriction::Unrestricted,
+        }],
+    });
+    let state = SessionCorporateActions {
+        registries: vec![ShareRegistry::new(
+            StockCode(cat.code(StockId(0)).unwrap().into()),
+            CompanyId(0),
+            10_000_000,
+            opened_on,
+            initial_holdings,
+        )
+        .unwrap()],
+        ..SessionCorporateActions::default()
+    };
+    let mut driver = RuntimeDriver::from_session_grouped(&mut session, 3).unwrap();
+    driver.adopt_session_seq(&session);
+    let closing = std::sync::Arc::new(std::sync::Mutex::new(None));
+    let captured = std::sync::Arc::clone(&closing);
+    driver.set_day_end_validator_for_test(Box::new(move |candidate| {
+        *captured.lock().unwrap() = Some(candidate.clone());
+        Ok(())
+    }));
+    for tick in 1..=6 {
+        if tick == 3 || tick == 5 {
+            let seller = driver
+                .world_accounts_snapshot()
+                .unwrap()
+                .into_iter()
+                .find_map(|(g, accounts)| {
+                    accounts.iter().enumerate().find_map(|(l, a)| {
+                        let id = driver.account_by_owner((g, l as u32)).unwrap();
+                        (id != AccountId(4) && a.shares[0] >= 100).then_some(id)
+                    })
+                })
+                .unwrap();
+            let intents: Vec<_> = [(AccountId(4), Side::Buy), (seller, Side::Sell)]
+                .into_iter()
+                .map(|(owner, side)| crate::session::ReceiptBearingIntent {
+                    owner,
+                    intent: crate::Intent::PlaceLimit {
+                        code: StockId(0),
+                        side,
+                        price: crate::strategy::LimitPrice::Fixed(Money::from_cents(1000)),
+                        qty: 100,
+                    },
+                    account_ordinal: 0,
+                    stock_ordinal: 0,
+                })
+                .collect();
+            let upper: Vec<_> = driver
+                .world_public_views()
+                .iter()
+                .map(|v| v.daily_upper_limit)
+                .collect();
+            driver.inject_player_intents(&intents, &upper).unwrap();
+        }
+        driver.step_frame_equivalent(&mut session).unwrap();
+        driver.install_market_views(&mut session).unwrap();
+        driver.install_candles(&mut session).unwrap();
+        // 手动 driver 与生产 failure::step_via_runtime 使用同一确认安装入口。
+        let receipts = driver.take_pending_receipts();
+        session.runtime_append_trade_receipts(&receipts).unwrap();
+    }
+    driver
+        .day_end_with_runtime_market_day(&mut session)
+        .unwrap();
+    let closing = closing.lock().unwrap().clone().unwrap();
+    assert_eq!(closing.groups.len(), 3);
+    assert_eq!(driver.account_by_owner((2, 0)), Some(AccountId(4)));
+    let mut accounts = BTreeMap::new();
+    for (group, rows) in closing.groups {
+        for (local, a) in rows.iter().enumerate() {
+            // candidate 含尾组 padding 槽；它们没有 AccountId，不属于账户全集。
+            let Some(id) = driver.account_by_owner((group, local as u32)) else {
+                continue;
+            };
+            let qty = u64::from(a.shares[0]) + u64::from(a.pending_sell_qty[0]);
+            accounts.insert(id, [(StockId(0), qty)].into());
+        }
+    }
+    let confirmations: BTreeMap<_, Vec<_>> = session
+        .account_roster()
+        .into_iter()
+        .filter_map(|id| {
+            session
+                .personal_trade_confirmations(id)
+                .map(|rows| (id, rows))
+        })
+        .collect();
+    assert_eq!(
+        confirmations[&AccountId(4)]
+            .iter()
+            .filter(|r| r.side == Side::Buy)
+            .map(|r| r.quantity_shares)
+            .sum::<u32>(),
+        200
+    );
+    assert_eq!(
+        confirmations[&AccountId(4)]
+            .iter()
+            .filter(|r| r.side == Side::Buy)
+            .count(),
+        2
+    );
+    let candidate = state
+        .registry_day_end_candidate(RegistryDayEndInput {
+            day,
+            catalog: &cat,
+            accounts: &accounts,
+            confirmations: &confirmations,
+            issuer_repurchase_account: None,
+            late_holder_tax_accounts: None,
+        })
+        .unwrap();
+    assert_eq!(candidate.registries[0].settled_on(), day);
+    assert_eq!(candidate.registries[0].receipts().len(), 1);
+}
 
 #[test]
 fn same_day_round_trip_preserves_existing_registry_and_tax_acquisition_dates() {
