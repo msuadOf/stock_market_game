@@ -12,6 +12,8 @@ mod candles;
 mod causal;
 mod civil_clock;
 mod company_assembly;
+mod company_catalog_view;
+pub use company_catalog_view::{CompanyCatalogEntry, CompanyCatalogViewError};
 mod company_capability_views;
 #[cfg(test)]
 mod company_capability_views_tests;
