@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
@@ -9,8 +9,8 @@ import { corepackProbe } from "./build-matrix.mjs";
 const script = resolve("scripts/desktop/build-matrix.sh");
 const bash = "/bin/bash";
 
-function runPlanner(arguments_, environment = {}) {
-  return execFileSync(bash, [script, ...arguments_], {
+function runPlanner(arguments_, environment = {}, plannerScript = script) {
+  return execFileSync(bash, [plannerScript, ...arguments_], {
     encoding: "utf8",
     env: { ...process.env, ...environment },
     stdio: "pipe",
@@ -24,6 +24,19 @@ function createCommand(directory, name, source) {
 }
 
 function runConstrainedPreflight(directory, missing, environment = {}) {
+  const repository = join(directory, "repository");
+  const plannerDirectory = join(repository, "scripts/desktop");
+  const wasmDirectory = join(repository, "apps/web/wasm-pkg");
+  for (const path of [plannerDirectory, wasmDirectory, join(repository, "node_modules"), join(repository, "apps/desktop/src-tauri")]) {
+    mkdirSync(path, { recursive: true });
+  }
+  for (const name of ["build-matrix.sh", "build-matrix.mjs"]) {
+    copyFileSync(join(import.meta.dirname, name), join(plannerDirectory, name));
+  }
+  // 这里只模拟 preflight 前置，不代表已构建或验证产品 WASM；真实 planner 副本仍执行完整检查。
+  writeFileSync(join(wasmDirectory, "web_wasm.js"), "// preflight 测试 fixture，不是产品 glue。\n");
+  const EMPTY_WASM_MODULE = new Uint8Array([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]);
+  writeFileSync(join(wasmDirectory, "web_wasm_bg.wasm"), EMPTY_WASM_MODULE);
   const receipt = join(directory, "tauri-build");
   const commandPath = directory;
   writeFileSync(receipt, "");
@@ -50,8 +63,9 @@ function runConstrainedPreflight(directory, missing, environment = {}) {
   createCommand(directory, "dirname", "exec /usr/bin/dirname \"$@\"");
 
   return {
+    wasmDirectory,
     receipt,
-    run: () => runPlanner(["--target", "windows"], { PATH: commandPath, ...environment }),
+    run: () => runPlanner(["--target", "windows"], { PATH: commandPath, ...environment }, join(plannerDirectory, "build-matrix.sh")),
   };
 }
 
@@ -133,6 +147,29 @@ test("Given a dry run when tool names resolve to an execution sentinel then it n
   }
 });
 
+test("正常构建的 WASM 前置缺失、为空或损坏时必须拒绝且不启动 cargo Tauri", () => {
+  for (const { name, contents, diagnostic } of [
+    { name: "web_wasm.js", diagnostic: /missing apps\/web\/wasm-pkg\/web_wasm\.js/ },
+    { name: "web_wasm.js", contents: "", diagnostic: /missing apps\/web\/wasm-pkg\/web_wasm\.js/ },
+    { name: "web_wasm_bg.wasm", diagnostic: /missing apps\/web\/wasm-pkg\/web_wasm_bg\.wasm/ },
+    { name: "web_wasm_bg.wasm", contents: "", diagnostic: /missing apps\/web\/wasm-pkg\/web_wasm_bg\.wasm/ },
+    { name: "web_wasm_bg.wasm", contents: "invalid fixture WASM", diagnostic: /generated frontend\/WASM binary is invalid/ },
+  ]) {
+    const directory = mkdtempSync(join(tmpdir(), "desktop-build-matrix-assets-"));
+    try {
+      const preflight = runConstrainedPreflight(directory, "none");
+      const asset = join(preflight.wasmDirectory, name);
+      if (contents === undefined) rmSync(asset);
+      else writeFileSync(asset, contents);
+
+      assert.throws(preflight.run, diagnostic);
+      assert.equal(readFileSync(preflight.receipt, "utf8"), "", `${name}: WASM preflight 必须阻止 cargo tauri build`);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  }
+});
+
 test("Given constrained normal builds when the Windows MSVC target, lld, or resource compiler is absent then preflight rejects before Tauri", () => {
   for (const { prerequisite, missing } of [
     { prerequisite: "windows target", missing: "target" },
@@ -140,9 +177,9 @@ test("Given constrained normal builds when the Windows MSVC target, lld, or reso
     { prerequisite: "llvm-rc", missing: "llvm-rc" },
   ]) {
     const directory = mkdtempSync(join(tmpdir(), "desktop-build-matrix-preflight-"));
-    const preflight = runConstrainedPreflight(directory, missing);
 
     try {
+      const preflight = runConstrainedPreflight(directory, missing);
       assert.throws(
         preflight.run,
         new RegExp(prerequisite === "windows target" ? "x86_64-pc-windows-msvc" : prerequisite),
@@ -156,10 +193,10 @@ test("Given constrained normal builds when the Windows MSVC target, lld, or reso
 
 test("Given constrained normal builds when only a versioned llvm-rc is present then preflight rejects before cargo Tauri starts", () => {
   const directory = mkdtempSync(join(tmpdir(), "desktop-build-matrix-preflight-"));
-  const preflight = runConstrainedPreflight(directory, "llvm-rc");
-  createCommand(directory, "llvm-rc-18", "exit 0");
 
   try {
+    const preflight = runConstrainedPreflight(directory, "llvm-rc");
+    createCommand(directory, "llvm-rc-18", "exit 0");
     assert.throws(preflight.run, /llvm-rc/);
     assert.equal(readFileSync(preflight.receipt, "utf8"), "");
   } finally {
@@ -169,12 +206,12 @@ test("Given constrained normal builds when only a versioned llvm-rc is present t
 
 test("Given constrained normal builds when NSIS accepts its documented usage probe then probes reach the structured build", () => {
   const directory = mkdtempSync(join(tmpdir(), "desktop-build-matrix-probe-"));
-  const preflight = runConstrainedPreflight(directory, "none");
-  for (const command of ["lld-link", "llvm-rc"]) {
-    createCommand(directory, command, "test \"$#\" -eq 0");
-  }
 
   try {
+    const preflight = runConstrainedPreflight(directory, "none");
+    for (const command of ["lld-link", "llvm-rc"]) {
+      createCommand(directory, command, "test \"$#\" -eq 0");
+    }
     const output = preflight.run();
 
     assert.match(output, /Generated command: \(cd apps\/desktop\/src-tauri && cargo tauri build --runner cargo-xwin --target x86_64-pc-windows-msvc --bundles nsis\)/);
@@ -186,10 +223,10 @@ test("Given constrained normal builds when NSIS accepts its documented usage pro
 
 test("Given constrained normal builds when the NSIS version probe fails then cargo Tauri never starts", () => {
   const directory = mkdtempSync(join(tmpdir(), "desktop-build-matrix-nsis-failure-"));
-  const preflight = runConstrainedPreflight(directory, "none");
-  createCommand(directory, "makensis", "test \"$1\" = -VERSION");
 
   try {
+    const preflight = runConstrainedPreflight(directory, "none");
+    createCommand(directory, "makensis", "test \"$1\" = -VERSION");
     assert.throws(preflight.run, /makensis is required/);
     assert.equal(readFileSync(preflight.receipt, "utf8"), "", "NSIS probe failure must block cargo tauri build");
   } finally {
@@ -199,11 +236,11 @@ test("Given constrained normal builds when the NSIS version probe fails then car
 
 test("Given constrained normal builds when only generic LLVM linker drivers are available then preflight rejects before cargo Tauri starts", () => {
   const directory = mkdtempSync(join(tmpdir(), "desktop-build-matrix-lld-link-"));
-  const preflight = runConstrainedPreflight(directory, "lld");
-  createCommand(directory, "ld.lld", "test \"$#\" -eq 0");
-  createCommand(directory, "lld", "test \"$#\" -eq 0");
 
   try {
+    const preflight = runConstrainedPreflight(directory, "lld");
+    createCommand(directory, "ld.lld", "test \"$#\" -eq 0");
+    createCommand(directory, "lld", "test \"$#\" -eq 0");
     assert.throws(preflight.run, /lld-link/);
     assert.equal(readFileSync(preflight.receipt, "utf8"), "");
   } finally {
@@ -214,10 +251,10 @@ test("Given constrained normal builds when only generic LLVM linker drivers are 
 test("Given constrained normal builds when exact LLVM tools exit nonzero with no args then preflight reaches the structured build", () => {
   for (const tool of ["lld-link", "llvm-rc"]) {
     const directory = mkdtempSync(join(tmpdir(), "desktop-build-matrix-failing-llvm-"));
-    const preflight = runConstrainedPreflight(directory, "none");
-    createCommand(directory, tool, "exit 1");
 
     try {
+      const preflight = runConstrainedPreflight(directory, "none");
+      createCommand(directory, tool, "exit 1");
       const output = preflight.run();
       assert.match(output, /Generated command: \(cd apps\/desktop\/src-tauri && cargo tauri build --runner cargo-xwin --target x86_64-pc-windows-msvc --bundles nsis\)/);
       assert.equal(readFileSync(preflight.receipt, "utf8"), "tauri build --runner cargo-xwin --target x86_64-pc-windows-msvc --bundles nsis ", `${tool}: structured cargo tauri build should run`);
@@ -244,10 +281,10 @@ test("Given a Corepack command interpreter when normal preflight runs then it re
 
 test("Given Corepack is unavailable when normal preflight runs then cargo Tauri never starts", () => {
   const directory = mkdtempSync(join(tmpdir(), "desktop-build-matrix-corepack-"));
-  const preflight = runConstrainedPreflight(directory, "none");
-  createCommand(directory, "corepack", "exit 1");
 
   try {
+    const preflight = runConstrainedPreflight(directory, "none");
+    createCommand(directory, "corepack", "exit 1");
     assert.throws(preflight.run, /Corepack-managed pnpm is required/);
     assert.equal(readFileSync(preflight.receipt, "utf8"), "");
   } finally {
