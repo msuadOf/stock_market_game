@@ -292,6 +292,29 @@ std-thread runtime 的日结编排（2026-10-17 登记）：市场推进内 `run
 现有挂单的 `seq`；空簿也保留已消耗的序号。它们是明确的序号事实，不是实施版本后缀。
 公共日结档不包含活动委托，不能把该验证投影当作日内持久化入口。
 
+## 行政数值事务基座的支持边界（2026-10-25 登记）
+
+runtime 的独立 AdminTransaction 只承载上层已确定合法到账时点的 CashDividend、
+ShareSplit、WithholdingTax 和 ShareReduction 数值操作，尚未连接生产公司链。
+金额为 i64 分、数量为 u32 股；行政股份变动不是买卖申报，不套用买入 100 股整数倍。
+ShareSplit 沿用既有命名，仅表示已经可流通的送转正向到账，不增加当日买入的
+frozen_today。ShareReduction 只从实际在手且可卖股份安全核减；在途卖股已从组端
+shares 扣出，不能重复扣减，pending_sell_qty、在途票与 T+1 冻结保持原值。
+
+这是账务数值原语，**不表示已支持任意拆缩股制度**。长期限售、lock_until、冻结股整体
+缩股、混合来源归属、碎股分配与任意缩股方案合法性均不支持；本入口不接受 lock_until。
+真清仓但仍有在途票的 ShareReduction 显式拒绝。正式公司命令及 restore 接线须先补齐
+这些制度，或对未支持输入显式拒绝。WithholdingTax 仅借记已经算出的正分额，
+只可使用实际可用 cash，不使用在途买单 purse；本批没有确定新税率、计税主体或舍入制度。
+
+依据沿用 ADR-0031、ADR-0038、ADR-0039、ADR-0043 及已有中国结算取证：
+[上海分公司证券发行人业务指南 §2.5](https://www.chinaclear.cn/zdjs/yshsc/202503/bc6781d0a57340f598930115fe63e5c3/files/中国证券登记结算有限责任公司上海分公司证券发行人业务指南.pdf)、
+[深圳分公司证券发行人业务指南 §2.5](https://www.chinaclear.cn/zdjs/dsz/202512/fb54cbc97d61460288d48d079bb9f72c/files/中国证券登记结算有限责任公司深圳分公司证券发行人业务指南.pdf)
+关于送转新增股份上市及限售继承的适用边界。原件取证日期为 2026-10-06，记录见
+[`agents/company-system/remaining-corporate-rules-research.md`](../agents/company-system/remaining-corporate-rules-research.md)。
+本次只延续已可流通到账和既有 T+1 资源口径，没有重新联网核验官方原件，不声称新增完整
+权益日程、税制、拆缩股或回购注销制度；公司链接线仍须核对届时现行规则。
+
 ## 尚未模拟
 
 新股上市初期无涨跌幅限制、科创板/北交所的全部差异、停复牌、退市整理、盘中临停、

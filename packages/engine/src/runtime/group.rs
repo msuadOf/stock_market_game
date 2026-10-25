@@ -663,6 +663,10 @@ pub struct GroupFinalState {
 
 /// 组线程私有状态。
 pub struct GroupState {
+    admin_pending: Option<admin_transaction::PendingAdmin>,
+    admin_last_id: u64,
+    #[cfg(test)]
+    admin_fault: Option<(super::protocol::AdminPhase, super::protocol::AdminFault)>,
     /// 组索引。
     pub group: GroupIdx,
     /// 组内账户（下标=LocalIdx；Seal 攻顶刀 A-1：Arc+COW——写点经
@@ -904,6 +908,10 @@ impl GroupState {
                 })
                 .unwrap_or_default();
         GroupState {
+            admin_pending: None,
+            admin_last_id: 0,
+            #[cfg(test)]
+            admin_fault: None,
             group,
             accounts: accounts.into_iter().map(std::sync::Arc::new).collect(),
             undo: Vec::new(),
@@ -5035,7 +5043,27 @@ pub fn group_main(
                 break;
             }
         };
+        // pending 行政 overlay 仅允许本事务控制或无副作用读面。
+        if state.admin_pending.is_some() && !matches!(&msg,
+            GroupIn::AdminCommit { .. } | GroupIn::AdminAbort { .. } | GroupIn::AdminPrepare { .. }
+            | GroupIn::EchoAccounts | GroupIn::EchoAccountsSparse { .. } | GroupIn::Shutdown) {
+            let error = RuntimeError::ProtocolInvariant { detail: format!("组 {who} 行政事务 pending 时收到改变状态的消息") };
+            let _ = up_tx.send(UpMsg::Failed { who, error: error.clone() });
+            result = Err(error);
+            break;
+        }
         match msg {
+            #[cfg(test)]
+            GroupIn::AdminFaultForTest { phase, fault } => state.admin_fault = Some((phase, fault)),
+            GroupIn::AdminPrepare { id, operations } => {
+                if !state.handle_admin_message(id, super::protocol::AdminPhase::Prepare, operations, &up_tx, who) { break; }
+            }
+            GroupIn::AdminCommit { id } => {
+                if !state.handle_admin_message(id, super::protocol::AdminPhase::Commit, Vec::new(), &up_tx, who) { break; }
+            }
+            GroupIn::AdminAbort { id } => {
+                if !state.handle_admin_message(id, super::protocol::AdminPhase::Abort, Vec::new(), &up_tx, who) { break; }
+            }
             GroupIn::Batch(batch) => {
                 // eager 分域即时相：到达即应用 F1/F2/F3（等待窗=组空闲
                 // recv——与协调者收 DeskReport 的 Seal 屏障重叠，回收串行
@@ -6026,6 +6054,7 @@ pub fn group_main(
             }
         }
     }
+    state.discard_pending_admin();
     let final_state = state.final_state();
     let send = up_tx.send(UpMsg::GroupFinal(Box::new(final_state)));
     if result.is_ok() {
@@ -7561,3 +7590,5 @@ mod roster_offset_tests {
         );
     }
 }
+
+mod admin_transaction;

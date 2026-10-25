@@ -1,0 +1,5 @@
+2026-10-26T05:06:16.156850+08:00
+jobs=16，test profile多codegen单元；单crate前端工具限制，未切串行命令。
+PID PPID CPU% NLWP COMMAND
+some avg10=12.22 avg60=15.73 avg300=17.48 total=109395129182
+full avg10=10.40 avg60=13.92 avg300=15.38 total=98693897749

@@ -322,6 +322,9 @@ struct DayEndProgress {
 
 /// 世界（协调者视角持有全部通道与线程句柄）。
 pub struct World {
+    admin_next_id: u64,
+    #[cfg(test)]
+    admin_send_fault_for_test: Option<(super::protocol::AdminPhase, GroupIdx)>,
     /// 全局域权威（已收敛态）。
     pub global: GlobalState,
     /// 已收敛 tick 记录。
@@ -768,6 +771,9 @@ impl World {
             )),
         );
         Ok(World {
+            admin_next_id: 0,
+            #[cfg(test)]
+            admin_send_fault_for_test: None,
             global: global_v0,
             report_log: Vec::new(),
             group_txs,
@@ -3051,3 +3057,7 @@ mod failed_cleanup_tests {
         assert_eq!(finals.desk_finals[0].resting.len(), 1, "tick1 已发布挂单仍在诊断 Final");
     }
 }
+
+mod admin_transaction;
+
+pub use super::protocol::{AdminCandidate, AdminOperation, AdminTransactionId};
