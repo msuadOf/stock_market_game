@@ -71,3 +71,14 @@
 - Web 输出 `.tmp/plan-identity-web-receipts/roundtrip-save.json`，SHA-256 `e5541bd1e4fd6a3f4aab201095e98176a5b6721a0226731354c9425e9ef534fe`。
 - 核心随后对该确切回写文件执行真实 Rust `decode_save_slot → GameSession::restore`，2计划，外10000ms，exit0。证据 commit `90e9b624` 的 `plan-identity-web-roundtrip-evidence.json.log` 绑定完整命令、probe源码/二进制/engine rlib及两份原档SHA；说明 `5237591a`。原03a7在最终核心重新构建后逐字节一致。
 - 本原档没有 `company_system` 等8项 setup 可选键；此闭环不证明 Simple 公司模式或税务新局 UI 的完整旅程。8项新parser由另独立 writer 提供并以类型/单测验证；真实Simple含选项存档证据由后续 B4f 任务补。
+
+## 第三批：setup wrapper 与最终短门禁
+
+- 独立 setup helper `0644fedd`、覆盖限制 `fef582b8`、有效复核修复 `2df421f8` 已分别精确 cherry-pick 为 `c06bf728`、`f940b81d`、`ed589dc5`。复用 journal/tax 两个既有 parser，只导出供 helper 使用，没有复制另一套解析。
+- `market.ts::parseSetup` 只将实际出现的8键加入 exact 并展开严格 helper 返回值；不补税务模式或公司默认值。
+- wrapper 红灯验证临时使用本树 HEAD 原 market.ts，新增测试因 `setup.company_system` 未知而失败；随后重装接入实现。原日志 `setup-wrapper-red.log` exit1、`setup-wrapper-green.log` 12/12 exit0。helper 本身11项测试由独立 writer 保留原日志。
+- 最终35文件存档/诊断关联短回归216/216通过，8并发，case与整个进程树上限均10000ms，wall3.52s；命令与文件清单保留 `.tmp/plan-identity-web-receipts/final-short-regression.json`，原stdout `final-short-regression-2.log`。
+- 首轮该回归211/212，独立worktree缺少Tauri生成的ACL manifest而ENOENT；没有改测试。随后核 Cargo.lock、Tauri Cargo.toml、capability、tauri.conf 与主树逐字节一致，复用相同依赖已有生成物，记录 `acl-cache-precondition.json`。这是本地缓存前置，不是新Tauri构建证据。
+- 最终 app/node/DEV 三 project 并行 TypeScript 编译，统一进程外300000ms上限，实际 app8144ms、node1784ms、DEV1635ms，全部exit0；原 `.tmp/plan-identity-web-typecheck/final-supervisor.log` 和三个 compiler log，DEV临时配置放在 apps/web 使类型解析与正常项目一致，未放宽类型选项。
+- 最终受影响路径 oxlint exit0；原 `.tmp/plan-identity-web-receipts/final-lint.log`，10000ms外监督；`git diff --check`通过。
+- 本批是保存边界修复；仅证明现有真实非公司模式原档和精确helper契约，不宣称Simple公司新局UI/所有公司动作真实旅程已验收。最终独立完整复核仍由root门禁，尚未在本记录自签交付完成。

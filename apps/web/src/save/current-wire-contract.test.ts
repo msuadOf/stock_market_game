@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import { readFileSync } from "node:fs"
 import test from "node:test"
 import { currentSaveFixture } from "./current-save-fixture.ts"
+import { parseSetup } from "./schema/market.ts"
 import { parseSaveSlot } from "./save-schema.ts"
 import { parseInformationStates } from "./schema/personal/information.ts"
 import { parseBeliefBooks } from "./schema/personal/beliefs.ts"
@@ -41,4 +42,20 @@ test("个人存档拒绝非规范 AccountId、未知字段、错误 owner 和非
   for (const company of ["0", -1, 4_294_967_296, null]) {
     assert.throws(() => parseBeliefBooks({ "3": { ...belief, entries: { "0": { ...entries["0"], company } } } }), /company/)
   }
+})
+
+
+test("parseSetup 接入完整公司选项且保留独立 report_frequency", { timeout: 10_000 }, () => {
+  const base = currentSaveFixture().setup as Record<string, unknown>
+  const setup = {
+    ...base,
+    company_system: { mode: "Simulation" }, dividend_tax_mode: "FlatWithholding", flat_withholding_bp: 1_000,
+    rights_offering_enabled: true, issuer_repurchase_enabled: true, auto_corporate_foundation: true,
+    par_value_per_share: "9007199254740993", report_frequency: { Monthly: { schedule: { Custom: { day: 15, second_of_day: 64_800, delay: "None" } } } },
+  }
+  assert.deepEqual(parseSetup(setup, "setup"), setup)
+  assert.deepEqual(parseSetup({ ...base, report_frequency: "Quarterly" }, "setup"), { ...base, report_frequency: "Quarterly" })
+  assert.throws(() => parseSetup({ ...setup, company_system: { mode: "Simulation", extra: true } }, "setup"), /extra/)
+  assert.throws(() => parseSetup({ ...setup, dividend_tax_mode: "Legacy" }, "setup"), /dividend_tax_mode/)
+  assert.throws(() => parseSetup({ ...setup, extra: true }, "setup"), /extra/)
 })
