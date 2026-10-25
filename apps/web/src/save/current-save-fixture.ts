@@ -5,6 +5,7 @@ type JsonObject = Record<string, unknown>
 
 export function currentSaveFixture(): JsonObject {
   return {
+    desk_mirrored_resting: false,
     runtime_state: {
       poisoned: false,
       next_receipt_base: "0",

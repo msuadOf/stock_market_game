@@ -1,9 +1,10 @@
+import { parsePlanU64 } from "../../../utils/plan-identity.ts"
 import { array, boolean, exact, integer, map, nullable, oneOf, record, SaveSchemaError, string } from "../primitives.ts"
-import { accountKey, companyKey, externalTag, i32, money, orderId, publicationId, stockKey, tagged, u16, type StringMap } from "./common.ts"
+import { accountKey, externalTag, i32, money, orderId, publicationId, stockKey, tagged, u16, u32, type StringMap } from "./common.ts"
 import { parseRetailExperienceState, type RetailExperienceState } from "./experience.ts"
 import { parseInstitutionExperiencePolicy, type InstitutionExperiencePolicy } from "./institution-policy.ts"
 
-export type BeliefBook = { readonly npc: number; readonly profile: StrategyProfile; readonly analysis: AnalysisProfile; readonly assumptions: PersonalAssumptions; readonly entries: StringMap<BeliefEntry>; readonly experience: RetailExperienceState; readonly institution_policy: InstitutionExperiencePolicy | null; readonly institution_account_risk_paused: boolean }
+export type BeliefBook = { readonly npc: string; readonly profile: StrategyProfile; readonly analysis: AnalysisProfile; readonly assumptions: PersonalAssumptions; readonly entries: StringMap<BeliefEntry>; readonly experience: RetailExperienceState; readonly institution_policy: InstitutionExperiencePolicy | null; readonly institution_account_risk_paused: boolean }
 export type StrategyProfile = { readonly Retail: RetailStyle } | { readonly Institution: InstitutionStyle } | { readonly Hot: HotStyle }
 export type RetailStyle = "Dormant" | "LongTerm" | "Noise" | "DipBuyer" | "Momentum" | "Panic"
 export type InstitutionStyle = "DeepValue" | "Growth" | "Balanced" | "Defensive" | "ActiveTrader"
@@ -11,12 +12,12 @@ export type HotStyle = "Momentum" | "Reversal"
 export type AnalysisProfile = { readonly fundamental_bp: number; readonly trend_bp: number; readonly price_volume_bp: number; readonly technical_bp: number; readonly experience_cost_bp: number; readonly fundamental_method: FundamentalMethod | null }
 export type FundamentalMethod = "earnings_multiple" | "cash_flow" | "equity_roe"
 export type PersonalAssumptions = { readonly growth_deviation_bp: number; readonly quality_coefficient_bp: number; readonly pe_multiple: number; readonly equity_cost_bp: number; readonly terminal_growth_bp: number; readonly roe_deviation_bp: number }
-export type BeliefEntry = { readonly company: string; readonly method: FundamentalMethod | null; readonly forecast: ForecastState; readonly confidence_bp: number; readonly valuation: ValuationOutcome; readonly used_report_ids: readonly number[]; readonly anchor_trading_day: number; readonly horizon_trading_days: number; readonly last_cause: CauseRecord | null; readonly applied_experience_orders: readonly number[] }
+export type BeliefEntry = { readonly company: number; readonly method: FundamentalMethod | null; readonly forecast: ForecastState; readonly confidence_bp: number; readonly valuation: ValuationOutcome; readonly used_report_ids: readonly number[]; readonly anchor_trading_day: number; readonly horizon_trading_days: number; readonly last_cause: CauseRecord | null; readonly applied_experience_orders: readonly number[] }
 export type ForecastState = { readonly growth_bp: number | null; readonly basis: ForecastBasis }
 export type ForecastBasis = { readonly InitialTwoYear: { readonly observed_bp: number } } | "InitialWithoutHistory" | { readonly Revised: { readonly observed_bp: number } } | "Degenerate"
 export type ValuationOutcome = { readonly Available: { readonly total_equity_estimate: string; readonly per_share: PerShareRange } } | { readonly Unavailable: { readonly reason: ValuationUnavailable } }
 export type PerShareRange = { readonly pessimistic: string; readonly optimistic: string }
-export type ValuationUnavailable = "MethodDisabled" | { readonly CompanyMismatch: { readonly expected: string; readonly report: string } } | { readonly UnsupportedReportKind: { readonly kind: string } } | { readonly FutureDatedMaterial: { readonly report: number } } | "NonPositiveNetIncome" | { readonly NonPositivePe: { readonly pe: number } } | { readonly NonPositiveCost: { readonly cost_bp: number } } | { readonly TerminalGrowthNotBelowCost: { readonly terminal_bp: number; readonly cost_bp: number } } | "NonPositiveBookEquity" | "NonPositiveAverageEquity" | { readonly NonPositiveExpectedRoe: { readonly expected_bp: number } } | "NonPositiveValuationEstimate" | "GrowthPriorUnavailable" | "FinancingSplitUndeterminable" | "ConsolidatedCashFlowAttributionUnavailable" | "ConsolidatedNetIncomeAttributionUnavailable" | "ZeroIssuedShares" | { readonly Overflow: { readonly step: string } } | "PerShareOutOfRange"
+export type ValuationUnavailable = "MethodDisabled" | { readonly CompanyMismatch: { readonly expected: number; readonly report: number } } | { readonly UnsupportedReportKind: { readonly kind: string } } | { readonly FutureDatedMaterial: { readonly report: number } } | "NonPositiveNetIncome" | { readonly NonPositivePe: { readonly pe: number } } | { readonly NonPositiveCost: { readonly cost_bp: number } } | { readonly TerminalGrowthNotBelowCost: { readonly terminal_bp: number; readonly cost_bp: number } } | "NonPositiveBookEquity" | "NonPositiveAverageEquity" | { readonly NonPositiveExpectedRoe: { readonly expected_bp: number } } | "NonPositiveValuationEstimate" | "GrowthPriorUnavailable" | "FinancingSplitUndeterminable" | "ConsolidatedCashFlowAttributionUnavailable" | "ConsolidatedNetIncomeAttributionUnavailable" | "ZeroIssuedShares" | { readonly Overflow: { readonly step: string } } | "PerShareOutOfRange"
 export type CauseRecord = { readonly cause: BeliefCause; readonly as_of_trading_day: number }
 export type BeliefCause = { readonly NewMaterial: { readonly report: number } } | { readonly Correction: { readonly report: number } } | { readonly CreditDefault: { readonly announcement: number } } | "HorizonExpired" | { readonly ExperienceFailure: { readonly order: number } } | { readonly ProfitableExit: { readonly order: number } }
 
@@ -27,7 +28,9 @@ const METHODS = ["earnings_multiple", "cash_flow", "equity_roe"] as const
 const UNAVAILABLE_UNITS = ["MethodDisabled", "NonPositiveNetIncome", "NonPositiveBookEquity", "NonPositiveAverageEquity", "NonPositiveValuationEstimate", "GrowthPriorUnavailable", "FinancingSplitUndeterminable", "ConsolidatedCashFlowAttributionUnavailable", "ConsolidatedNetIncomeAttributionUnavailable", "ZeroIssuedShares", "PerShareOutOfRange"] as const
 
 export function parseBeliefBooks(value: unknown, path = "belief_books"): StringMap<BeliefBook> {
-  return map(value, path, accountKey, parseBeliefBook)
+  const result = map(value, path, accountKey, parseBeliefBook)
+  for (const [owner, book] of Object.entries(result)) if (book.npc !== owner) throw new SaveSchemaError(`${path}.${owner}.npc`, "必须与账户 key 一致")
+  return result
 }
 
 export function parseBeliefBook(value: unknown, path: string): BeliefBook {
@@ -36,7 +39,7 @@ export function parseBeliefBook(value: unknown, path: string): BeliefBook {
   const profile = parseProfile(parsed.profile, `${path}.profile`)
   if ("Retail" in profile && parsed.institution_policy !== null) throw new SaveSchemaError(`${path}.institution_policy`, "Retail 不得携带 Institution policy")
   if ("Retail" in profile && parsed.institution_account_risk_paused !== false) throw new SaveSchemaError(`${path}.institution_account_risk_paused`, "Retail 不得携带 Institution 账户暂停状态")
-  return { npc: integer(parsed.npc, `${path}.npc`, 0), profile: parseProfile(parsed.profile, `${path}.profile`), analysis: parseAnalysis(parsed.analysis, `${path}.analysis`), assumptions: parseAssumptions(parsed.assumptions, `${path}.assumptions`), entries: map(parsed.entries, `${path}.entries`, stockKey, parseEntry), experience: parseRetailExperienceState(parsed.experience, `${path}.experience`), institution_policy: nullable(parsed.institution_policy, `${path}.institution_policy`, parseInstitutionExperiencePolicy), institution_account_risk_paused: boolean(parsed.institution_account_risk_paused, `${path}.institution_account_risk_paused`) }
+  return { npc: parsePlanU64(parsed.npc, `${path}.npc`), profile: parseProfile(parsed.profile, `${path}.profile`), analysis: parseAnalysis(parsed.analysis, `${path}.analysis`), assumptions: parseAssumptions(parsed.assumptions, `${path}.assumptions`), entries: map(parsed.entries, `${path}.entries`, stockKey, parseEntry), experience: parseRetailExperienceState(parsed.experience, `${path}.experience`), institution_policy: nullable(parsed.institution_policy, `${path}.institution_policy`, parseInstitutionExperiencePolicy), institution_account_risk_paused: boolean(parsed.institution_account_risk_paused, `${path}.institution_account_risk_paused`) }
 }
 
 function parseProfile(value: unknown, path: string): StrategyProfile {
@@ -64,7 +67,7 @@ function parseAssumptions(value: unknown, path: string): PersonalAssumptions {
 function parseEntry(value: unknown, path: string): BeliefEntry {
   const parsed = record(value, path)
   exact(parsed, ["company", "method", "forecast", "confidence_bp", "valuation", "used_report_ids", "anchor_trading_day", "horizon_trading_days", "last_cause", "applied_experience_orders"], path)
-  const company = string(parsed.company, `${path}.company`); companyKey(company, `${path}.company`)
+  const company = u32(parsed.company, `${path}.company`)
   const confidence = u16(parsed.confidence_bp, `${path}.confidence_bp`)
   if (confidence > 10_000) throw new SaveSchemaError(`${path}.confidence_bp`, "必须不大于 10000bp")
   return { company, method: nullable(parsed.method, `${path}.method`, (nested, nestedPath) => oneOf(nested, nestedPath, METHODS)), forecast: parseForecast(parsed.forecast, `${path}.forecast`), confidence_bp: confidence, valuation: parseValuation(parsed.valuation, `${path}.valuation`), used_report_ids: array(parsed.used_report_ids, `${path}.used_report_ids`).map((id, index) => publicationId(id, `${path}.used_report_ids[${index}]`)), anchor_trading_day: integer(parsed.anchor_trading_day, `${path}.anchor_trading_day`, 0), horizon_trading_days: u16(parsed.horizon_trading_days, `${path}.horizon_trading_days`), last_cause: nullable(parsed.last_cause, `${path}.last_cause`, parseCauseRecord), applied_experience_orders: array(parsed.applied_experience_orders, `${path}.applied_experience_orders`).map((id, index) => integer(id, `${path}.applied_experience_orders[${index}]`, 0)) }
@@ -114,7 +117,7 @@ function parseUnavailable(value: unknown, path: string): ValuationUnavailable {
   const [tag, payload] = tagged(value, path)
   const fields: { readonly [key: string]: readonly string[] } = { CompanyMismatch: ["expected", "report"], UnsupportedReportKind: ["kind"], FutureDatedMaterial: ["report"], NonPositivePe: ["pe"], NonPositiveCost: ["cost_bp"], TerminalGrowthNotBelowCost: ["terminal_bp", "cost_bp"], NonPositiveExpectedRoe: ["expected_bp"], Overflow: ["step"] }
   const keys = fields[tag]; if (keys === undefined) throw new Error(`存档 ${path}.${tag} 包含无效估值不可用原因`); exact(payload, keys, `${path}.${tag}`)
-  if (tag === "CompanyMismatch") return { CompanyMismatch: { expected: string(payload.expected, `${path}.${tag}.expected`), report: string(payload.report, `${path}.${tag}.report`) } }
+  if (tag === "CompanyMismatch") return { CompanyMismatch: { expected: u32(payload.expected, `${path}.${tag}.expected`), report: u32(payload.report, `${path}.${tag}.report`) } }
   if (tag === "UnsupportedReportKind") return { UnsupportedReportKind: { kind: string(payload.kind, `${path}.${tag}.kind`) } }
   if (tag === "FutureDatedMaterial") return { FutureDatedMaterial: { report: publicationId(payload.report, `${path}.${tag}.report`) } }
   if (tag === "NonPositivePe") return { NonPositivePe: { pe: integer(payload.pe, `${path}.${tag}.pe`) } }

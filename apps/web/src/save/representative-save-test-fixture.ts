@@ -15,6 +15,20 @@ export function representativeCurrentSaveFixture(): Record<string, unknown> {
   const planBook = save.plans as { policy: unknown; next_plan_seq: number; plans: Record<string, Record<string, unknown>> }
   const historicalPlans = Object.values(planBook.plans)
   const owner_sequences = [...new Set(historicalPlans.map((plan) => String(plan.account)))].map((owner) => ({ owner, next_sequence: String(planBook.next_plan_seq) }))
+  const companyCodes = Object.keys((save.company_operations as { companies: Record<string, unknown> }).companies).sort()
+  const companyId = (code: unknown): number => {
+    const id = companyCodes.indexOf(String(code))
+    if (id < 0) throw new Error(`历史测试语料公司代码不存在：${String(code)}`)
+    return id
+  }
+  const information_states = Object.fromEntries(Object.entries(save.information_states as Record<string, { owner: number; companies: Record<string, unknown> }>).map(([owner, state]) => [owner, {
+    ...state, owner: String(state.owner),
+    companies: Object.fromEntries(Object.entries(state.companies).map(([code, records]) => [String(companyId(code)), records])),
+  }]))
+  const belief_books = Object.fromEntries(Object.entries(save.belief_books as Record<string, { npc: number; entries: Record<string, Record<string, unknown>> }>).map(([owner, book]) => [owner, {
+    ...book, npc: String(book.npc),
+    entries: Object.fromEntries(Object.entries(book.entries).map(([stock, entry]) => [stock, { ...entry, company: companyId(entry.company) }])),
+  }]))
   // B2 保存域（W3 接入）迁入：旧 fixture 摄于 B2 之前，缺根级四字段。
   // 已结算日的日K stats 全零（零成交交易日）——保留链按日注入
   // {trading:true, bars:[]} 与既有事实逐位自洽（parser 的分钟/日K互检兜底：
@@ -34,6 +48,9 @@ export function representativeCurrentSaveFixture(): Record<string, unknown> {
   }
   return {
     ...currentBookSave,
+    desk_mirrored_resting: false,
+    information_states,
+    belief_books,
     ...b2SaveFields,
     runtime_state: {
       ...(save.runtime_state as Record<string, unknown>),
