@@ -15,6 +15,8 @@
 //! （`save/schema/corporate-actions.ts`）随 B4f 的查询面一起接线，届时再
 //! 恢复 ts 注解（`SaveSlot` 侧本批按既有公司域权威字段惯例 `#[ts(skip)]`）。
 
+pub(crate) mod registry_day_end;
+
 use crate::company::share_registry::{HolderId, ShareRegistry};
 use crate::orderbook::AccountId;
 use crate::{account::StockCode, money::Money};
@@ -204,6 +206,14 @@ pub(crate) fn taxpayer_identity_of_kind(kind: crate::account::AccountKind) -> Ta
 pub enum SessionCorporateActionsError {
     #[error("公司行为股东名册配置无效：{0}")]
     Invalid(String),
+    #[error("日终 {date} 证券 {stock:?} 账户 {account:?} 持仓不一致：名册 {expected} 股，账户 {actual} 股")]
+    RegistryPositionMismatch {
+        date: crate::calendar::CivilDate,
+        stock: crate::stock::StockId,
+        account: AccountId,
+        expected: u64,
+        actual: u64,
+    },
 }
 
 impl SessionCorporateActions {
