@@ -12,10 +12,6 @@ export function accountKey(key: string, path: string): void {
   boundedDecimalKey(key, path, ACCOUNT_ID_MAX)
 }
 
-export function planKey(key: string, path: string): void {
-  boundedDecimalKey(key, path, ACCOUNT_ID_MAX)
-}
-
 export function stockKey(key: string, path: string): void {
   if (!/^(0|[1-9]\d*)$/.test(key) || BigInt(key) > U32_MAX) {
     throw new SaveSchemaError(path, "必须是数值 StockId 的规范十进制字符串形态（ADR 0041）")

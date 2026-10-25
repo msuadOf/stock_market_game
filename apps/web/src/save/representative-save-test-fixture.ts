@@ -3,7 +3,7 @@ import { currentSaveFixture } from "./current-save-fixture.ts"
 
 const save = JSON.parse(readFileSync(new URL("./fixtures/current-schema-save.json", import.meta.url), "utf8")) as Record<string, unknown>
 
-/** 含非空领域数据的 schema projection；可省略跨域引用，因此不声明 Rust restore 有效。 */
+/** 仅供测试的历史语料 schema projection；可省略跨域引用，不是 Rust save/restore 见证。 */
 export function representativeCurrentSaveFixture(): Record<string, unknown> {
   // 正例 fixture 显式迁入当前单 book 结构；parser 仍严格拒绝旧字段。
   const { auction_orders: _removedAuctionOrders, ...currentBookSave } = save
@@ -11,7 +11,10 @@ export function representativeCurrentSaveFixture(): Record<string, unknown> {
   const { day: _day, phase: _phase, ...savedSnapshot } = snapshot
   const markets = snapshot.markets as Record<string, Record<string, unknown>>
   const accounts = snapshot.accounts as Record<string, Record<string, unknown>>
-  const planBook = save.plans as { plans: Record<string, Record<string, unknown>> }
+  // 原 JSON 是历史语料，保留旧字节；这里只投影测试输入，不提供生产旧档迁移。
+  const planBook = save.plans as { policy: unknown; next_plan_seq: number; plans: Record<string, Record<string, unknown>> }
+  const historicalPlans = Object.values(planBook.plans)
+  const owner_sequences = [...new Set(historicalPlans.map((plan) => String(plan.account)))].map((owner) => ({ owner, next_sequence: String(planBook.next_plan_seq) }))
   // B2 保存域（W3 接入）迁入：旧 fixture 摄于 B2 之前，缺根级四字段。
   // 已结算日的日K stats 全零（零成交交易日）——保留链按日注入
   // {trading:true, bars:[]} 与既有事实逐位自洽（parser 的分钟/日K互检兜底：
@@ -38,11 +41,14 @@ export function representativeCurrentSaveFixture(): Record<string, unknown> {
     },
     urgency_policy: currentSaveFixture().urgency_policy,
     plans: {
-      ...planBook,
-      plans: Object.fromEntries(Object.entries(planBook.plans).map(([id, plan]) => [id, {
+      policy: planBook.policy,
+      owner_sequences,
+      plans: historicalPlans.map((plan) => ({
         ...plan,
+        account: String(plan.account),
+        plan_id: { owner: String(plan.account), sequence: String(plan.plan_id) },
         review: { ...(plan.review as Record<string, unknown>), last_review_resources: null },
-      }])),
+      })),
     },
     snapshot: {
       ...savedSnapshot,
