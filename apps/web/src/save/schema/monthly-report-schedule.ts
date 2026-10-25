@@ -30,4 +30,3 @@ export function parseMonthlyReportSchedule(value: unknown, path: string): Monthl
   exact(custom, ["day", "second_of_day", "delay"], `${path}.Custom`)
   return { Custom: { day: bounded(custom.day, `${path}.Custom.day`, 1, 28), second_of_day: bounded(custom.second_of_day, `${path}.Custom.second_of_day`, 0, 86399), delay: delay(custom.delay, `${path}.Custom.delay`) } }
 }
-

@@ -26,7 +26,7 @@ Rust 依据是当前基线的 `packages/engine/src/information/publication.rs` �
 3. `green-before-type-annotation/`：最小实现后 19/19 通过，1058.961ms。
 4. `green.*`：测试合法 delay 矩阵补 `as const` 类型标注（断言与运行输入不变）后，最终 19/19 通过，951.704ms。红证与最终测试 SHA 因此不同，首轮 green 保留变化前的精确测试 SHA。`run-short-tests.py` 此时也删去冗余 Python 12s timeout，唯一测试命令期限仍是进程外 Node 10000ms。
 
-原有两个测试文件及所有断言均未修改。`git diff --check` 通过。未运行完整 Web 测试或 TypeScript 构建，本片的短测通过不能外推为完整编译或整局旅程通过。
+原有两个测试文件及所有断言均未修改。独立复核发现共用 parser 的 EOF 多余空行，已删除；本轮未修改任何运行逻辑，因此不重复短测，最终 green 收据仍绑定删除 EOF 空行前的精确源码 SHA。修复后生产及测试路径的 `git diff --check` 通过；包含全部证据的完整 diff 仍有 `red.stdout.log` 四行尾空白警告，这是 Node 断言的原始 stdout，为保真保留，不能称完整证据 diff-check 通过。未运行完整 Web 测试或 TypeScript 构建，本片的短测通过不能外推为完整编译或整局旅程通过。
 
 ## fixture 与待验范围
 
