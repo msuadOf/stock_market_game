@@ -163,12 +163,16 @@ fn short_checkpoint_preserves_bytes_and_rejects_unknown_plan_references() {
         ),
     ] {
         let mut tampered = original.clone();
-        let plan_index = tampered["plans"]["plans"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .position(|plan| plan["plan_id"] == serde_json::to_value(plan_id).unwrap())
-            .unwrap();
+        let plan_index = tampered["plans"]["plans"].as_array().unwrap().iter()
+            .position(|plan| plan["plan_id"] == serde_json::to_value(plan_id).unwrap()).unwrap();
+        if field == "account" {
+            tampered["plans"]["plans"][plan_index]["plan_id"]["owner"] = value.clone();
+            let next_sequence = original["plans"]["owner_sequences"].as_array().unwrap().iter()
+                .find(|cursor| cursor["owner"] == serde_json::to_value(plan_id.owner).unwrap())
+                .unwrap()["next_sequence"].clone();
+            tampered["plans"]["owner_sequences"].as_array_mut().unwrap().push(
+                serde_json::json!({"owner": value.clone(), "next_sequence": next_sequence}));
+        }
         tampered["plans"]["plans"][plan_index][field] = value;
         let tampered_bytes = serde_json::to_vec(&tampered).expect("tampered save serializes");
         let decoded = engine::decode_save_slot(&tampered_bytes, &Default::default())

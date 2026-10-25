@@ -270,12 +270,16 @@ impl PlanBook {
         plans: Vec<TradingPlan>,
     ) -> Result<Self, PlanError> {
         validate_policy(&policy)?;
-        let mut sequences = BTreeMap::new();
-        for entry in owner_sequences {
-            if sequences.insert(entry.owner, entry.next_sequence).is_some() {
+        let mut owners = std::collections::BTreeSet::new();
+        for entry in &owner_sequences {
+            if !owners.insert(entry.owner) {
                 return Err(PlanError::PlanWriterOwnershipViolation { owner: entry.owner });
             }
         }
+        let sequences: BTreeMap<_, _> = owner_sequences
+            .into_iter()
+            .map(|entry| (entry.owner, entry.next_sequence))
+            .collect();
         let mut identities = std::collections::BTreeSet::new();
         for plan in &plans {
             if !identities.insert(plan.plan_id()) {

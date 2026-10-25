@@ -41,15 +41,8 @@ fn plan_open_rejects_unrepresentable_horizon_without_mutation() {
 
 #[test]
 fn plan_last_day_accepts_maximum_day_with_one_day_horizon() {
-    let plan = TradingPlan::from_open(
-        PlanId {
-            owner: AccountId(7),
-            sequence: 1,
-        },
-        open(u64::MAX, 1),
-        &PlanPolicy::default(),
-    )
-    .unwrap();
+    let plan =
+        TradingPlan::from_open(PlanId { owner: AccountId(7), sequence: 1 }, open(u64::MAX, 1), &PlanPolicy::default()).unwrap();
     assert_eq!(plan.last_valid_trading_day(), u64::MAX);
     let restored: TradingPlan =
         serde_json::from_value(serde_json::to_value(&plan).unwrap()).unwrap();
@@ -58,15 +51,7 @@ fn plan_last_day_accepts_maximum_day_with_one_day_horizon() {
 
 #[test]
 fn plan_deserialization_rejects_zero_and_overflowing_horizons() {
-    let plan = TradingPlan::from_open(
-        PlanId {
-            owner: AccountId(7),
-            sequence: 1,
-        },
-        open(0, 1),
-        &PlanPolicy::default(),
-    )
-    .unwrap();
+    let plan = TradingPlan::from_open(PlanId { owner: AccountId(7), sequence: 1 }, open(0, 1), &PlanPolicy::default()).unwrap();
     let baseline = serde_json::to_value(plan).unwrap();
     for (created, horizon) in [(0, 0), (u64::MAX, 2), (u64::MAX - 1, 3)] {
         let mut invalid = baseline.clone();
@@ -173,25 +158,13 @@ fn cancelled_due_is_absent_after_restore_and_does_not_reuse_identity() {
     assert_eq!(scheduler.cancel_due(cancelled).unwrap().id, cancelled);
     assert_eq!(scheduler.next_due_date(), Some(date("2030-01-10")));
     let state = serde_json::to_vec(&scheduler).unwrap();
-    assert!(
-        matches!(scheduler.cancel_due(cancelled), Err(SchedulerError::DueNotPending { id }) if id == cancelled)
-    );
-    assert_eq!(
-        serde_json::to_vec(&scheduler).unwrap(),
-        state,
-        "重复取消显式拒绝且不改状态"
-    );
+    assert!(matches!(scheduler.cancel_due(cancelled), Err(SchedulerError::DueNotPending { id }) if id == cancelled));
+    assert_eq!(serde_json::to_vec(&scheduler).unwrap(), state, "重复取消显式拒绝且不改状态");
 
     let mut restored: OperatingScheduler = serde_json::from_slice(&state).unwrap();
-    assert!(
-        restored.pop_due_on(date("2030-01-08")).unwrap().is_empty(),
-        "取消项不因恢复重新派发"
-    );
+    assert!(restored.pop_due_on(date("2030-01-08")).unwrap().is_empty(), "取消项不因恢复重新派发");
     let replacement = restored.submit(request("early", "2030-01-09")).unwrap();
-    assert!(
-        replacement.value() > retained.value(),
-        "取消后的来源 key 可复用，但 due id 不复用"
-    );
+    assert!(replacement.value() > retained.value(), "取消后的来源 key 可复用，但 due id 不复用");
     let replacement_due = restored.pop_due_on(date("2030-01-09")).unwrap();
     assert_eq!(replacement_due.len(), 1);
     assert_eq!(replacement_due[0].id, replacement);
