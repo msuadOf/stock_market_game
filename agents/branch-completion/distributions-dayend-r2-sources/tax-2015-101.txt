@@ -1,0 +1,681 @@
+ 
+ 
+
+ 
+     
+     
+     
+     
+     
+    
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+
+ 
+ 
+ 
+        国家税务总局政策法规库
+     
+     
+     
+     
+     
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      
+ 
+
+ 
+     
+ -->
+ 
+ 
+ 
+        .container{
+            min-height: 70px;
+        }
+        body {
+    background: #fff !important;
+}
+.header{
+    height: auto;
+    background: #fff;
+}
+.header .inhead,.mainnav .container{padding: 0;}
+.header-search .hotwords span{
+    float: left;
+    line-height: 1.875em;
+}
+.header-toolbar .pulldown{border: 0;padding: 0 0 0 0;}
+.header-login{
+position: absolute;
+top: 120px;
+right: 5px;
+width: 17%;
+max-width: 600px;
+overflow: hidden;
+display: none;
+}  
+  @media (max-width:1024px) {
+    .header-login{
+    	top: 105px;
+        right: 5px;
+        width: 23%;
+    }
+    @media (max-width:768px) {
+    .header-login{
+    	top: 140px;
+        width: 30%;
+    }
+      
+      @media (max-width:768px) {
+    .header-login{
+    	top: 140px;
+        width: 30%;
+    }
+     @media (max-width:767px) {
+    .header-login{
+    	top: 90px;
+        width: 65%;
+    }
+        @media (max-width:320px) {
+    .header-login{
+    	top: 80px;
+        width: 75%;
+    }
+
+ 
+ 
+   
+     
+        
+             
+                 
+           
+     
+     
+             
+               简 
+           
+       
+     
+             
+               繁 
+           
+       
+           
+             
+                 
+           
+       
+       
+                 
+                   登录 
+                 
+             
+     
+     
+       
+         
+       
+          
+         EN   
+     
+     
+         
+           
+             
+           
+            
+           
+             
+           
+         
+       
+         本站热词： 
+         		 发票 
+                 小微企业 
+                 个人所得税 
+                 发票查询 
+                 社保 
+       
+     
+     
+         
+             
+                 *** 
+             
+         
+         
+             
+                 个人中心 
+             
+         
+         
+             
+                 退出 
+             
+         
+     
+   
+   
+     
+       
+         
+           
+             首页 
+           
+          
+         
+           
+             总局概况 
+           
+          
+         
+           
+             信息公开 
+           
+          
+         
+           
+             新闻发布 
+           
+          
+         
+           
+             政策法规 
+           
+          
+         
+           
+             纳税服务 
+           
+          
+         
+           
+             互动交流 
+           
+          
+         
+           
+             专题专栏 
+           
+          
+       
+     
+   
+ 
+  
+  
+     
+         
+             
+             
+                 全部 
+                 文件 
+                 解读 
+             
+               搜索  高级搜索 
+                
+           
+           
+                 搜索方式： 
+                 精准 
+                 模糊 
+             
+             
+                 热门关键词： 
+                
+             
+         
+     
+
+ 
+// 简繁体切换
+    $('#zh_click_s').on('click',function(){
+      $(this).parents('.pulldown').hide();
+      $('#zh_click_t').parents('.pulldown').show();
+    })
+    $('#zh_click_t').on('click',function(){
+      $(this).parents('.pulldown').hide();
+      $('#zh_click_s').parents('.pulldown').show();
+    })
+ 
+     
+         
+            
+             当前位置： 首页  >  政策法规  >   财税文件  
+             
+                 
+                     
+                         财政部 国家税务总局 证监会关于上市公司股息红利差别化个人所得税政策有关问题的通知 
+                         
+                             财税〔2015〕101号 
+                              （    ）  
+                             
+                                 
+                                 
+                                 
+                                   
+                                         阅读量：165377次  -->
+                                         字体： 【大】  【中】  【小】  
+                                          
+                                            分享到：  
+                                            
+                                           
+                                             收藏  
+                                            订阅 
+                                            已推送，请在 “个人中心-我的订阅” 中查看 
+                                            此稿件无标签，进入 “订阅设置” 中订阅更多 
+                                        
+                                     
+                                     成文日期：2015-09-07  
+                                     
+                                         收藏 
+                                         分享 
+                                         订阅 
+                                         语音播报： 
+                                          
+                                          
+                                     
+                                     
+                                     
+                                          
+                                         
+                                             扫一扫在手机打开当前页 
+                                         
+                                     
+                                     
+                                      
+                                     
+                                        $('#share-1').share();
+                                     
+                                      
+                                      
+                                     
+                                      
+                                     
+                                 
+                             
+                             
+                                 
+                                     注释 
+                                     
+                                          
+                                     
+                                 
+                                 
+                                     各省、自治区、直辖市、计划单列市财政厅（局）、国家税务局、地方税务局，新疆生产建设兵团财务局，上海、深圳证券交易所，全国中小企业股份转让系统有限责任公司，中国证券登记结算公司： 
+ 　　经国务院批准，现就上市公司股息红利差别化个人所得税政策等有关问题通知如下： 
+ 　　一、个人从公开发行和转让市场取得的上市公司股票，持股期限超过1年的，股息红利所得暂免征收个人所得税。 
+ 　　个人从公开发行和转让市场取得的上市公司股票，持股期限在1个月以内（含1个月）的，其股息红利所得全额计入应纳税所得额；持股期限在1个月以上至1年（含1年）的，暂减按50%计入应纳税所得额；上述所得统一适用20%的税率计征个人所得税。 
+ 　　二、上市公司派发股息红利时，对个人持股1年以内（含1年）的，上市公司暂不扣缴个人所得税；待个人转让股票时，证券登记结算公司根据其持股期限计算应纳税额，由证券公司等股份托管机构从个人资金账户中扣收并划付证券登记结算公司，证券登记结算公司应于次月5个工作日内划付上市公司，上市公司在收到税款当月的法定申报期内向主管税务机关申报缴纳。 
+ 　　三、上市公司股息红利差别化个人所得税政策其他有关操作事项，按照 《财政部 国家税务总局 证监会关于实施上市公司股息红利差别化个人所得税政策有关问题的通知》 （财税〔2012〕85号）的相关规定执行。 
+ 　　 四、全国中小企业股份转让系统挂牌公司股息红利差别化个人所得税政策，按照本通知规定执行。其他有关操作事项，按照《财政部国家税务总局 证监会关于实施全国中小企业股份转让系统挂牌公司股息红利差别化个人所得税政策有关问题的通知》（财税〔2014〕48号）的相关规定执行。  
+ 　　五、本通知自2015年9月8日起施行。 
+ 　　上市公司派发股息红利，股权登记日在2015年9月8日之后的，股息红利所得按照本通知的规定执行。本通知实施之日个人投资者证券账户已持有的上市公司股票，其持股时间自取得之日起计算。 
+        抄送：国务院办公厅，财政部驻各省、自治区、直辖市、计划单列市财政监察专员办事处。 
+ 财政部 国家税务总局 证监会 
+ 2015年9月7日 
+                                 
+                                 
+                                     
+                                        【打印】 
+                                     
+                                      
+                                       
+                                         
+                                        【下载】
+                                        -->
+                                       
+                                         
+                                        【下载】
+                                       
+                                     
+                                 
+                                 
+                                    该文件非由国家税务总局牵头制定，查询结果仅供参考 -->
+                                     纠错或建议 
+                                 
+                             
+                         
+                     
+                     
+                         
+                             关联解读 
+                             
+                             
+                         
+                         
+                             关联文件 
+                             
+                             
+                         
+                       
+                             关联问答 
+                             
+                             
+                         
+                     
+                 
+            
+         
+         
+         
+             
+               
+                 用户登录 
+                  
+               
+               
+                 
+                  
+                 
+                 
+                 
+                   
+                   
+                   
+                   
+                     
+                       
+                     
+                   
+                   
+                     
+                       
+                     
+                   
+                   
+                     
+                       
+                       
+                     
+                   
+                   
+                     
+                        忘记密码   -->
+                        忘记密码  
+                       登　录  
+                     
+                   
+                 
+                 没有账号？ 立即注册账号   -->
+                 没有账号？ 立即注册账号  
+               
+                
+             
+           
+
+           
+         
+        	  
+         
+         
+
+         
+         
+        	  
+         
+
+
+         
+         
+           
+             
+               网站纠错 
+                
+             
+             
+               个人所得税 
+               文件 
+             
+           
+         
+     
+
+
+     
+      
+ 
+ 
+ 
+     
+         
+   
+   
+     
+       
+           
+         中国政府网 
+       
+     
+     
+       
+         国家税务总局各省级税务局   
+         
+           
+              北京  
+              天津  
+              河北  
+              山西  
+              内蒙古  
+              辽宁  
+              吉林  
+              黑龙江  
+              上海  
+              江苏  
+              浙江  
+              安徽  
+              福建  
+              江西  
+              山东  
+              河南  
+              湖北  
+              湖南  
+              广东  
+              广西  
+              海南  
+              重庆  
+              四川  
+              贵州  
+              云南  
+              西藏  
+              陕西  
+              甘肃  
+              青海  
+              宁夏  
+              新疆  
+              大连  
+              宁波  
+              厦门  
+              青岛  
+              深圳  
+           
+         
+       
+       
+         直属单位   
+         
+           
+              国家税务总局税务干部学院  
+              中国税务杂志社  
+              中国税务报社  
+              中国税务出版社  
+           
+         
+       
+       
+         税务相关   
+         
+           
+              中国税务学会  
+              中国国际税收研究会  
+              中国注册税务师协会  
+              "一带一路"税收征管合作机制  
+           
+         
+       
+       
+         友情链接   
+         
+           
+              国家发展和改革委员会  
+              财政部  
+              商务部  
+              人民银行  
+              审计署  
+              海关总署  
+              国家市场监督管理总局  
+              国家医疗保障局  
+           
+         
+       
+     
+    
+   
+ 
+ 
+ 
+ 
+   
+     
+       
+         
+            访问统计  |  
+            网站管理  |  
+            联系我们  |  
+            网站地图  |  
+         
+         
+           主办单位：国家税务总局  版权所有：国家税务总局   地址：北京市海淀区羊坊店西路5号  电脑版  移动端 
+         
+         
+           
+             
+               
+             
+           
+            
+         
+       
+     
+   
+   
+     
+       
+         网站标识码：bm29000002   京ICP备13021685号-2     京公网安备 11040102700073号  
+       
+     
+   
+ 
+  
+ var _trackDataType = 'web';var _trackData = _trackData || []; 
+  
+      
+      
+
+
+ 
+  //$(document).on('ready', function() {
+       //  20230426 切换至电脑端
+       $('.transToPc').on('click', function() {
+         var tempRadios = $(window).width() / 1400;
+         $('meta[name=viewport]').attr('content', 'width=1400px, user-scalable=no, initial-scale=' + tempRadios);
+         $('.transToPc').hide();
+         $('.transToMobile').show();
+       })
+       $('.transToMobile').on('click', function() {
+         $('meta[name=viewport]').attr('content',
+           'width=device-width, user-scalable=no, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0');
+         $('.transToPc').show();
+         $('.transToMobile').hide();
+       })
+   //  })
+       
+       
+         //返回顶部
+    $(".gotop").click(function (e) {
+      e.preventDefault();
+      scrollToTop(500);
+    });
+    function scrollToTop(time) {
+      var time = time || 0;
+      $("html,body").animate({ scrollTop: 0 }, time);
+    }
+     var a = window.pageYOffset
+      var c = Number($(".header").height());
+      a > c ? $("#goTop").show() : $("#goTop").hide();
+    // 当网页向下滑动200px 侧边栏出现"返回顶部" 按钮
+    window.onscroll = function () { scrollFunction() };
+    function scrollFunction() {
+      if (document.body.scrollTop > 200 || document.documentElement.scrollTop > 200) {
+        $("#goTop").show();
+      } else {
+        $("#goTop").hide();
+      }
+    }
+
+  
+ 
+  
+     
+
+      
+      
+      
+      
+     
+            //lay弹出
+    function openDialog(url, atitle, width, height) {
+        layer.open({    
+            
+            type: 2,
+            title: atitle,
+            closeBtn: 1,
+            area: [width, height],
+            content: url,
+            cancel: function(){
+                //reloadImage();
+            }
+        });
+    }
+    
+    
+    function closeDialog(){
+      $(".dialog").hide();
+      $(".info").remove();
+      $("body.dialog-parent-hidden").removeClass("dialog-parent-hidden");
+      stepActive = 0;
+      setStepState(stepActive);
+    
+      reset("loginForm");
+      //reset("regform");
+      //reset("step1Form");
+      //reset("step2Form");
+    }
+         
+ 
+
+ 
