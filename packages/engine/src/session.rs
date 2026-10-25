@@ -41,6 +41,7 @@ pub use deferred_drop::DeferredDropDegradation;
 mod disclosures;
 mod envelope_projection;
 mod execution;
+pub(crate) mod exchange_calendar_model;
 mod failure;
 mod hash;
 mod history_reads;
