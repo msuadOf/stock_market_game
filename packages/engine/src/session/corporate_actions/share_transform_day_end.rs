@@ -173,6 +173,14 @@ pub(crate) fn share_transform_day_end_candidate(
         if tax.stock() != &plan.stock {
             continue;
         }
+        if !matches!(input.day.days_since(tax.settled_on()), 0 | 1) {
+            return Err(fail(format!(
+                "账户 {:?} 的税账结算日 {} 不属于候选日 {} 的当日或前一自然日",
+                tax.account(),
+                tax.settled_on(),
+                input.day
+            )));
+        }
         let expected = receipt
             .holders
             .iter()
