@@ -12,7 +12,7 @@ fn civil_information_chain_keeps_unread_beliefs_stable_and_closed_days_tick_free
     if engine::runtime::step_runtime_enabled() {
         return;
     }
-    // Given: an actual Friday GameSession with seeded accounting, published history, and NPCs.
+    // Given：周五真实 GameSession 已含公司会计、公开材料与 NPC。
     let mut session = representative_session("2030-02-01");
     let initial = session.decision_chain_diagnostics();
     assert!(
@@ -20,23 +20,48 @@ fn civil_information_chain_keeps_unread_beliefs_stable_and_closed_days_tick_free
         "prehistory must provide public material"
     );
 
-    // When: Friday completes, then Friday and one closed civil day settle.
+    // When：完成周五交易及自然日日结，再完成周六休市日日结。
     run_trading_day(&mut session);
-    let beliefs_before = serde_json::to_vec(&session.save().expect("healthy save").belief_books)
-        .expect("belief books serialize");
+    let before_friday = session.save().expect("healthy save");
     let friday = session.end_civil_day().expect("completed Friday settles");
     assert_eq!(
         friday.settled_date,
         engine::CivilDate::from_iso("2030-02-01").unwrap()
     );
     let before_closed = session.save().expect("healthy save");
+    assert!(
+        before_closed.belief_books.iter().any(|(account, book)| {
+            let information = &before_closed.information_states[account];
+            book.entry_stocks().any(|stock| {
+                let entry = book.entry(stock).expect("本人 belief 条目存在");
+                let Some(engine::strategy::BeliefCause::NewMaterial { report }) =
+                    entry.last_cause.as_ref().map(|record| &record.cause)
+                else {
+                    return false;
+                };
+                information.observed_at_of(*report) == Some(friday.disclosure_instant)
+                    && before_friday.information_states[account]
+                        .observed_at_of(*report)
+                        .is_none()
+                    && before_friday.belief_books[account].entry(stock) != Some(entry)
+            })
+        }),
+        "周五到期信息检查或订阅须真实获知报告并重评本人 belief"
+    );
+    // 周五日结会送达本人应获知的材料；未读稳定性的基线应取其后。
+    let beliefs_before =
+        serde_json::to_vec(&before_closed.belief_books).expect("belief books serialize");
     assert_eq!(session.civil_clock().phase(), CivilPhase::ClosedDay);
     session
         .end_civil_day()
         .expect("Saturday operations and disclosure settle");
 
-    // Then: operations/disclosures advance on the closed day without a market tick or unread belief mutation.
+    // Then：休市日经营与披露继续推进；没有新增本人获知时，belief 严格不变。
     let after_closed = session.save().expect("healthy save");
+    assert_eq!(
+        before_closed.information_states,
+        after_closed.information_states
+    );
     assert_eq!(before_closed.snapshot.tick, after_closed.snapshot.tick);
     assert_eq!(
         GameSession::restore(&before_closed).unwrap().day(),
