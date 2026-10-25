@@ -1,0 +1,44 @@
+✔ 头部/槽字段偏移与 Rust arena.rs 逐字一致 (1.400122ms)
+✔ 状态码与 Rust codec.rs 逐字一致（I3 严格递增） (0.713421ms)
+✔ W 编解码往返且位域不重叠 (0.327469ms)
+✔ 槽/join 基址与 Rust 布局公式一致 (1.104263ms)
+✔ TS 编码镜像拒绝代/位宽/状态越界，最大合法代不回绕 (0.508535ms)
+✔ A1-A3 OK 全序：REQ→ANSWERING→OK，载荷 worker_id 落槽 (2.527335ms)
+✔ 迟到应答：A1 期望失配 ⇒ 零槽写 + terminate 卫生 (0.767113ms)
+✔ FAIL 应答计入 RA 账 (0.256277ms)
+✔ OK 回收三门：join 未 CONSUMED 不回收，闭合后 push，H1 占用转延迟 (0.561517ms)
+✔ 未知 workerExit 只丢弃，不写槽 (0.186066ms)
+✔ D5 死亡信号：WAITING→DEAD；已 CONSUMED 的迟到写丢弃 (0.301509ms)
+✔ A1→A3 间出现协议外写者 ⇒ 先落 tombstone 再抛 (0.500774ms)
+✔ 四账快照镜像 Rust accounts：健康回收后恒等式成立 (0.387891ms)
+✔ 门 (c)：子仍 ACTIVE 时不得回收（复核修正项） (0.263188ms)
+✔ 迟到 D5 撞换代：过期即弃，不崩不落 tombstone (0.314469ms)
+✔ H1 持续占用时延迟回收只处理快照且登记去重 (0.266228ms)
+✔ 同 pair 重复 workerExit 只入空闲表一次，未知 id 零写 (0.254538ms)
+✔ DEAD 对 join 可见时诊断 code 必须已发布 (0.608748ms)
+✔ D5 领写权暂停时重入零载荷写，完成后重复死亡通知幂等 (0.305239ms)
+✔ D5 输给 DONE/CONSUMED/换代时零载荷写 (0.226987ms)
+✔ workerExit 身份错配不得摘除活跃 manifest (0.152424ms)
+✔ H1 前旧门链失效时不得回收新代 REQ (0.253438ms)
+✔ 真实 WASM import 保留 i64 BigInt 与最高位为 1 的完整 W (2.737512ms)
+✔ 未绑定调用显式报错，shared memory 和一次绑定是硬合同 (0.863066ms)
+✔ wait 实际按完整 W 和 BigInt 超时比较，并拒绝非法转换 (0.690051ms)
+✔ 地址必须覆盖完整对齐共享字，grow 后 wait/notify 读取新 buffer (0.480674ms)
+✔ main 不可 wait，ingress 可 futex 但不可发线程控制 (0.450904ms)
+✔ layout 来自导出且一次装入，校验跨语言布局、header 和当前范围 (0.714542ms)
+✔ H5 同步复制 fatal UTF-8 名称，保留消息 slot/gen 且不猜当前槽 (0.537786ms)
+✔ exit 仅记录不可变身份匹配意图，重复/缺失/角色错误均拒绝 (0.611399ms)
+✔ terminate 只向主线程发控制且 postControl 原始错误不丢失 (0.389081ms)
+✔ notify 唤醒同一共享字的全部等待者 (4.886636ms)
+✔ 绑定拒绝未知角色和无效 child 身份，layout 使用装入时的值快照 (0.559037ms)
+✔ wait 把真实共享字唤醒映射为 0 (40.958286ms)
+✔ env 模块导出全部槽协议 import 名（否则 wasm 实例化 link error） (0.881696ms)
+✔ 槽协议环境函数在未装配的宿主上显式失败，不静默成功 (0.816985ms)
+ℹ tests 36
+ℹ suites 0
+ℹ pass 36
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 182.069813

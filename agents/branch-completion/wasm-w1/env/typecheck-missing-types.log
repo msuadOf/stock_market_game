@@ -1,0 +1,8 @@
+apps/web/src/host/facade-thread-binding.test.ts(1,20): error TS2591: Cannot find name 'node:assert/strict'. Do you need to install type definitions for node? Try `npm i --save-dev @types/node` and then add 'node' to the types field in your tsconfig.
+apps/web/src/host/facade-thread-binding.test.ts(2,20): error TS2591: Cannot find name 'node:test'. Do you need to install type definitions for node? Try `npm i --save-dev @types/node` and then add 'node' to the types field in your tsconfig.
+apps/web/src/host/facade-thread-binding.test.ts(3,22): error TS2591: Cannot find name 'node:events'. Do you need to install type definitions for node? Try `npm i --save-dev @types/node` and then add 'node' to the types field in your tsconfig.
+apps/web/src/host/facade-thread-binding.test.ts(4,24): error TS2591: Cannot find name 'node:worker_threads'. Do you need to install type definitions for node? Try `npm i --save-dev @types/node` and then add 'node' to the types field in your tsconfig.
+apps/web/src/host/facade-thread-binding.test.ts(166,58): error TS7006: Parameter 'error' implicitly has an 'any' type.
+apps/web/src/host/facade-thread-env.test.ts(1,20): error TS2591: Cannot find name 'node:assert/strict'. Do you need to install type definitions for node? Try `npm i --save-dev @types/node` and then add 'node' to the types field in your tsconfig.
+apps/web/src/host/facade-thread-env.test.ts(2,18): error TS2591: Cannot find name 'node:test'. Do you need to install type definitions for node? Try `npm i --save-dev @types/node` and then add 'node' to the types field in your tsconfig.
+bounded command exited with 2
