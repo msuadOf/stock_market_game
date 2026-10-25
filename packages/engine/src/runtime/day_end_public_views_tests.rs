@@ -18,6 +18,70 @@ const INITIAL_PRICE: i64 = 1_000;
 const CLOSING_PRICE: i64 = 1_100;
 const LOT: u32 = 100;
 
+/// 直接观察 spawn 生成的 initial_views；不运行 tick，避免被 DeskReport 覆盖。
+fn assert_initial_sell_floor(
+    first_tick: u64,
+    cage_on: bool,
+    floor: i64,
+) {
+    let mut spec = basic_spec(2, 1, 1, Box::new(|_| Box::new(|_, _| TickPlan::default())));
+    spec.ticks_per_day = DAY_END_TICK;
+    spec.auction_ticks = 9;
+    spec.closing_auction_ticks = 3;
+    spec.initial_committed_tick = first_tick - 1;
+    spec.stocks[0] = super::world::DeskStockSpec::main_board(CLOSING_PRICE);
+    let mut config = GameConfig::proposed_defaults();
+    config.price_cage_enabled = cage_on;
+    spec.config = Arc::new(config);
+    let world = World::spawn(spec).expect("构造首拍卖向行情世界");
+    assert_eq!(world.global.committed_tick, first_tick - 1);
+    assert!(
+        world.report_log.is_empty(),
+        "尚未运行任何 tick，必须直测 initial_views"
+    );
+    let view = &world.public_views()[0];
+    assert_eq!(
+        (view.last_price, view.daily_lower_limit, view.min_sell_price),
+        (CLOSING_PRICE, 990, floor)
+    );
+    let published = world.publication().load();
+    assert_eq!(published.tick, first_tick - 1);
+    assert_eq!(*published.desks[0].view, *view, "初始发布与公共观察基一致");
+    world.shutdown().expect("首拍直测正常关停并回收线程");
+}
+
+#[test]
+fn initial_views_continuous_with_cage_uses_sell_cage_floor() {
+    assert_initial_sell_floor(9, true, 1078);
+}
+
+#[test]
+fn initial_views_call_auction_uses_daily_lower_limit() {
+    assert_initial_sell_floor(1, true, 990);
+}
+
+#[test]
+fn initial_views_pre_open_uses_daily_lower_limit() {
+    assert_initial_sell_floor(6, true, 990);
+}
+
+#[test]
+fn initial_views_closing_auction_uses_daily_lower_limit() {
+    assert_initial_sell_floor(237, true, 990);
+}
+
+#[test]
+fn initial_views_continuous_without_cage_uses_daily_lower_limit() {
+    assert_initial_sell_floor(9, false, 990);
+}
+
+fn sell_cage_floor(last: i64, daily_lower: i64) -> i64 {
+    let pct = super::desk::bound_price(Money::from_cents(last), 9_800, false)
+        .expect("卖向笼子下界计算")
+        .cents();
+    pct.min(last - 10).max(1).max(daily_lower)
+}
+
 fn partial_drain_spec() -> WorldSpec {
     let mut spec = basic_spec(
         2,
@@ -1016,6 +1080,7 @@ fn next_start_real_sell_consumers_match_the_same_new_day_control() {
             let mut control = World::spawn(control_spec).expect("同新日昨收稳态对照");
             control.run_ticks(1).expect("对照 Start 真实机构卖向消费");
             let lower = close * 9 / 10;
+            let sell_floor = sell_cage_floor(close, lower);
             let crossed_view = &crossed.public_views()[0];
             let control_view = &control.public_views()[0];
             assert_eq!(
@@ -1024,8 +1089,8 @@ fn next_start_real_sell_consumers_match_the_same_new_day_control() {
                     crossed_view.daily_lower_limit,
                     crossed_view.min_sell_price
                 ),
-                (close, lower, lower),
-                "按真实新日基准消费，不残留前日 lower/min_sell"
+                (close, lower, sell_floor),
+                "按真实新日基准消费，卖向公开下限=笼子下限，不残留前日口径"
             );
             assert_eq!(
                 (crossed_view.daily_lower_limit, crossed_view.min_sell_price),
@@ -1058,7 +1123,7 @@ fn next_start_real_sell_consumers_match_the_same_new_day_control() {
                 .expect("首拍记录")
                 .desk_receipts
                 .is_empty());
-            eprintln!("#121 sell Start{next_tick}, manual={manual}, close={close}: public_lower={lower}, public_min_sell={lower}, actual_inst_sell={close}, control_inst_sell={close}");
+            eprintln!("#121 sell Start{next_tick}, manual={manual}, close={close}: public_lower={lower}, public_min_sell={sell_floor}, actual_inst_sell={close}, control_inst_sell={close}");
             crossed.shutdown().expect("跨日世界关停");
             control.shutdown().expect("对照世界关停");
         }
@@ -1066,9 +1131,10 @@ fn next_start_real_sell_consumers_match_the_same_new_day_control() {
 }
 
 #[test]
-fn next_start_sell_boundary_records_issue_125_without_a_new_cross_day_gap() {
+fn next_start_sell_boundary_matches_the_sell_cage_floor() {
     use super::decision::PendingOp;
     for (close, lower, actual_floor) in [(1_100, 990, 1_078), (900, 810, 882)] {
+        assert_eq!(sell_cage_floor(close, lower), actual_floor);
         for final_tick in [239, 240] {
             let mut spec = closing_spec(close);
             Arc::make_mut(&mut spec.config).price_cage_enabled = true;
@@ -1080,15 +1146,14 @@ fn next_start_sell_boundary_records_issue_125_without_a_new_cross_day_gap() {
             let view = &crossed.public_views()[0];
             assert_eq!(
                 (view.daily_lower_limit, view.min_sell_price),
-                (lower, lower)
+                (lower, actual_floor),
+                "公开卖向下限必须等于 desk 实际受理的卖笼子下限"
             );
-            // #125 的现状证据：公开 min_sell 仍不是卖笼子下限，不将合法拒单称为规则 bug。
-            // #125 修复后应更新此证据；本测试不宣称卖向整体语义验收通过。
             let public_floor = view.min_sell_price;
             let mut control = World::spawn(same_new_day_sell_control_spec(close, final_tick))
                 .expect("同基准、同阶段对照");
             for world in [&mut crossed, &mut control] {
-                let prices = [public_floor, actual_floor - 1, actual_floor];
+                let prices = [actual_floor - 1, actual_floor, actual_floor + 1];
                 let ops = prices
                     .into_iter()
                     .map(|price| PendingOp {
@@ -1107,8 +1172,8 @@ fn next_start_sell_boundary_records_issue_125_without_a_new_cross_day_gap() {
                 let record = world.report_log.last().expect("首拍受理记录");
                 assert_eq!(
                     record.desk_receipts.len(),
-                    2,
-                    "公开下限和笼子外一分均显式拒绝"
+                    1,
+                    "仅笼子外一分显式拒绝"
                 );
                 assert!(record
                     .desk_receipts
@@ -1119,16 +1184,25 @@ fn next_start_sell_boundary_records_issue_125_without_a_new_cross_day_gap() {
                     "不是资源不足掩盖价格拒单"
                 );
                 let orders = world.collect_desk_resting().expect("真实卖向入簿边界").0;
-                assert_eq!(orders[0].len(), 1, "仅真实边界价受理");
+                let mut prices: Vec<_> = orders[0].iter().map(|o| o.price).collect();
+                prices.sort_unstable();
                 assert_eq!(
-                    (orders[0][0].side, orders[0][0].price, orders[0][0].qty),
-                    (Side::Sell, actual_floor, LOT)
+                    prices,
+                    vec![actual_floor, actual_floor + 1],
+                    "公开下限与其上一分均受理"
                 );
+                assert!(orders[0]
+                    .iter()
+                    .all(|o| o.side == Side::Sell && o.qty == LOT));
                 let accounts = world.snapshot_accounts().expect("拒单资源退回后账户");
                 let seller = &accounts.iter().find(|(g, _)| *g == 0).expect("组0").1[1];
-                assert_eq!(seller.pending_sell_qty[0], LOT, "两笔拒单不泄漏股份占用");
+                assert_eq!(
+                    seller.pending_sell_qty[0],
+                    2 * LOT,
+                    "一笔拒单不泄漏股份占用，两笔受理正常冻结"
+                );
             }
-            eprintln!("#121/#125 sell Start{}: close={close}, public_lower={lower}, public_min_sell={public_floor}, actual_sell_floor={actual_floor}, floor_minus_one=rejected, floor=accepted; same as control", final_tick + 1);
+            eprintln!("#125 sell Start{}: close={close}, public_lower={lower}, public_min_sell={public_floor}, desk_sell_floor={actual_floor}, floor_minus_one=rejected, floor=accepted; same as control", final_tick + 1);
             crossed.shutdown().expect("跨日关停");
             control.shutdown().expect("对照关停");
         }
@@ -1222,4 +1296,241 @@ fn failing_first_tick_rolls_back_only_the_tick_not_the_committed_day_end() {
             "首拍重试不双做日结"
         );
     }
+}
+
+/// 低价股十个最小价位更宽，非整分百分比按交易所规则四舍五入。
+#[test]
+fn initial_public_cage_bounds_cover_ten_ticks_and_rounding() {
+    for (price, lower, sell, buy, upper) in [
+        (200, 180, 190, 210, 220),
+        (1_026, 923, 1_005, 1_047, 1_129),
+    ] {
+        let world = World::spawn(phase_view_spec(price, 0, 0, true))
+            .expect("构造低价与四舍五入边界世界");
+        let view = &world.public_views()[0];
+        assert_eq!(
+            (view.daily_lower_limit, view.min_sell_price, view.max_buy_price, view.daily_upper_limit),
+            (lower, sell, buy, upper),
+            "参考价={price}：公开边界遵守十个最小价位取宽及四舍五入"
+        );
+        world.shutdown().expect("关停");
+    }
+}
+
+/// #125 覆盖：固定 ticks_per_day=30、closing=3，用 auction_ticks 与
+/// initial_committed_tick 把首个真实 tick 放进指定相位。
+fn phase_view_spec(
+    initial_price: i64,
+    auction_ticks: u64,
+    initial_committed_tick: u64,
+    cage: bool,
+) -> WorldSpec {
+    let mut spec = basic_spec(
+        1,
+        1,
+        1,
+        Box::new(|_group| -> GroupScript {
+            Box::new(|_, _| TickPlan::default())
+        }),
+    );
+    spec.stocks = vec![super::world::DeskStockSpec::main_board(initial_price)];
+    spec.ticks_per_day = 30;
+    spec.auction_ticks = auction_ticks;
+    spec.closing_auction_ticks = 3;
+    spec.initial_committed_tick = initial_committed_tick;
+    let mut config = GameConfig::proposed_defaults();
+    config.price_cage_enabled = cage;
+    spec.config = Arc::new(config);
+    spec
+}
+
+/// 相位×笼子：只有连续竞价叠加卖笼子下限；其余相位等于日跌停。
+/// 买向同步锁定，防止只修卖向时把买向口径带偏。
+#[test]
+fn public_view_cage_bounds_follow_the_trading_phase() {
+    // (auction_ticks, initial_committed_tick, 期望 min_sell, 期望 max_buy)
+    let cases = [
+        (6u64, 0u64, 990i64, 1_210i64), // tick1 CallAuction
+        (6, 3, 990, 1_210),             // tick4 PreOpen
+        (0, 0, 1_078, 1_122),           // tick1 Continuous
+        (6, 26, 990, 1_210),            // tick27 ClosingAuction
+    ];
+    for (auction_ticks, initial_tick, sell, buy) in cases {
+        let mut world = World::spawn(phase_view_spec(1_100, auction_ticks, initial_tick, true))
+            .expect("构造相位世界");
+        world.run_ticks(1).expect("单拍收束");
+        let view = &world.public_views()[0];
+        assert_eq!(
+            (view.daily_lower_limit, view.min_sell_price, view.max_buy_price),
+            (990, sell, buy),
+            "auction_ticks={auction_ticks} initial={initial_tick}：笼子只在连续竞价生效"
+        );
+        world.shutdown().expect("关停");
+    }
+}
+
+/// 笼子关闭时，所有相位都必须退回纯日涨跌停口径。
+#[test]
+fn disabled_cage_keeps_daily_limits_in_every_phase() {
+    for (auction_ticks, initial_tick) in [(0u64, 0u64), (6, 0), (6, 3), (6, 26)] {
+        let mut world = World::spawn(phase_view_spec(1_100, auction_ticks, initial_tick, false))
+            .expect("构造关闭笼子的相位世界");
+        world.run_ticks(1).expect("单拍收束");
+        let view = &world.public_views()[0];
+        assert_eq!(
+            (
+                view.daily_lower_limit,
+                view.daily_upper_limit,
+                view.min_sell_price,
+                view.max_buy_price
+            ),
+            (990, 1_210, 990, 1_210),
+            "auction_ticks={auction_ticks} initial={initial_tick}：关闭笼子后不得残留卖/买笼子口径"
+        );
+        world.shutdown().expect("关停");
+    }
+}
+
+/// initial_views 是首个 Start 的决策观察基：必须与 desk 首拍受理边界同口径，
+/// 且只有首拍处于连续竞价时才叠加笼子。
+#[test]
+fn initial_public_view_matches_the_first_start_phase() {
+    // (initial_price, auction_ticks, initial_tick, cage, 期望 lower, min_sell, max_buy)
+    let cases = [
+        (1_100i64, 0u64, 0u64, true, 990i64, 1_078i64, 1_122i64), // Continuous
+        (900, 0, 0, true, 810, 882, 918),                          // Continuous 下跌向
+        (1_100, 6, 0, true, 990, 990, 1_210),                      // CallAuction
+        (1_100, 6, 3, true, 990, 990, 1_210),                      // PreOpen
+        (1_100, 0, 26, true, 990, 990, 1_210),                     // ClosingAuction
+        (1_100, 0, 0, false, 990, 990, 1_210),                     // 笼子关闭
+    ];
+    for (price, auction_ticks, initial_tick, cage, lower, sell, buy) in cases {
+        let world = World::spawn(phase_view_spec(price, auction_ticks, initial_tick, cage))
+            .expect("构造初始观察基");
+        let view = &world.public_views()[0];
+        assert_eq!(
+            (
+                view.daily_lower_limit,
+                view.min_sell_price,
+                view.max_buy_price
+            ),
+            (lower, sell, buy),
+            "初始广播价格={price} auction_ticks={auction_ticks} initial={initial_tick} cage={cage}"
+        );
+        world.shutdown().expect("关停");
+    }
+}
+
+/// 首拍连续竞价：初始公开边界必须与 desk 实际受理完全一致。
+/// 卖 1077 拒 / 1078 受，买 1123 拒 / 1122 受（分股隔离，避免同拍交叉成交）。
+#[test]
+fn first_start_accepts_exactly_the_initial_public_cage_bounds() {
+    use super::decision::PendingOp;
+    let mut spec = basic_spec(
+        1,
+        2,
+        1,
+        Box::new(|_group| -> GroupScript {
+            Box::new(|_, _| TickPlan::default())
+        }),
+    );
+    spec.stocks = vec![
+        super::world::DeskStockSpec::main_board(1_100),
+        super::world::DeskStockSpec::main_board(1_100),
+    ];
+    spec.ticks_per_day = 30;
+    spec.auction_ticks = 0;
+    spec.closing_auction_ticks = 3;
+    let mut config = GameConfig::proposed_defaults();
+    config.price_cage_enabled = true;
+    spec.config = Arc::new(config);
+    let mut world = World::spawn(spec).expect("构造首拍连续竞价世界");
+    let view = &world.public_views()[0];
+    assert_eq!(
+        (view.min_sell_price, view.max_buy_price),
+        (1_078, 1_122),
+        "初始公开边界"
+    );
+    let ops = vec![
+        PendingOp {
+            local: 0,
+            stock: 0,
+            side: Side::Sell,
+            routed: super::RoutedPrice::Fixed(1_077),
+            purse_reference: 1_077,
+            qty: LOT,
+        },
+        PendingOp {
+            local: 0,
+            stock: 0,
+            side: Side::Sell,
+            routed: super::RoutedPrice::Fixed(1_078),
+            purse_reference: 1_078,
+            qty: LOT,
+        },
+        PendingOp {
+            local: 0,
+            stock: 1,
+            side: Side::Buy,
+            routed: super::RoutedPrice::Fixed(1_123),
+            purse_reference: 1_123,
+            qty: LOT,
+        },
+        PendingOp {
+            local: 0,
+            stock: 1,
+            side: Side::Buy,
+            routed: super::RoutedPrice::Fixed(1_122),
+            purse_reference: 1_122,
+            qty: LOT,
+        },
+    ];
+    world.broadcast_external_plan(ops, vec![]);
+    world.run_ticks(1).expect("首拍真实受理");
+    let record = world.report_log.last().expect("首拍记录");
+    assert_eq!(
+        record
+            .desk_receipts
+            .iter()
+            .filter(|r| r.kind == super::ReceiptKind::PriceCageExceeded)
+            .count(),
+        2,
+        "买/卖各一笔笼子外一分显式拒绝"
+    );
+    assert!(
+        record.group_rejections.is_empty(),
+        "不得以资源不足掩盖价格笼子拒单"
+    );
+    let orders = world.collect_desk_resting().expect("首拍挂单").0;
+    let mut sells: Vec<_> = orders[0]
+        .iter()
+        .filter(|o| o.side == Side::Sell)
+        .map(|o| o.price)
+        .collect();
+    sells.sort_unstable();
+    let mut buys: Vec<_> = orders[1]
+        .iter()
+        .filter(|o| o.side == Side::Buy)
+        .map(|o| o.price)
+        .collect();
+    buys.sort_unstable();
+    assert_eq!(sells, vec![1_078], "卖向下限恰为公开 min_sell_price");
+    assert_eq!(buys, vec![1_122], "买向上限恰为公开 max_buy_price");
+    world.shutdown().expect("关停");
+}
+
+/// 初始行情计算失败必须在启动 worker 前返回，不能留下未 join 的后台线程。
+#[test]
+fn invalid_initial_cage_bound_starts_no_workers() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let started = Arc::new(AtomicUsize::new(0));
+    let observed = Arc::clone(&started);
+    let mut spec = phase_view_spec(i64::MAX, 0, 0, true);
+    spec.script_for = Box::new(move |_| {
+        observed.fetch_add(1, Ordering::SeqCst);
+        Box::new(|_, _| TickPlan::default())
+    });
+    let error = World::spawn(spec).err().expect("非法笼子边界明确失败");
+    assert!(matches!(error, super::protocol::RuntimeError::ProtocolInvariant { .. }));
+    assert_eq!(started.load(Ordering::SeqCst), 0, "行情失败前不得启动组 worker");
 }

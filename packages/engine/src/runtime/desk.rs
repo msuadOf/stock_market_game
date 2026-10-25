@@ -152,20 +152,36 @@ pub enum DeskPhase {
     ClosingAuction,
 }
 
+/// tick→交易相位纯函数（照搬 `GameSession::phase`）。
+/// desk 与 World 初次广播共用同一规则，防止"相位判断两套口径"漂移。
+pub fn phase_at_tick(
+    ticks_per_day: u64,
+    auction_ticks: u64,
+    closing_auction_ticks: u64,
+    tick: u64,
+) -> DeskPhase {
+    let day_tick = tick % ticks_per_day;
+    let entry = auction_ticks - auction_ticks / 3;
+    if day_tick < entry {
+        DeskPhase::CallAuction
+    } else if day_tick < auction_ticks {
+        DeskPhase::PreOpen
+    } else if day_tick >= ticks_per_day - closing_auction_ticks {
+        DeskPhase::ClosingAuction
+    } else {
+        DeskPhase::Continuous
+    }
+}
+
 impl DeskSetup {
     /// tick 对应交易相位（照搬 `GameSession::phase`）。
     pub fn phase_at(&self, tick: u64) -> DeskPhase {
-        let day_tick = tick % self.ticks_per_day;
-        let entry = self.auction_ticks - self.auction_ticks / 3;
-        if day_tick < entry {
-            DeskPhase::CallAuction
-        } else if day_tick < self.auction_ticks {
-            DeskPhase::PreOpen
-        } else if day_tick >= self.ticks_per_day - self.closing_auction_ticks {
-            DeskPhase::ClosingAuction
-        } else {
-            DeskPhase::Continuous
-        }
+        phase_at_tick(
+            self.ticks_per_day,
+            self.auction_ticks,
+            self.closing_auction_ticks,
+            tick,
+        )
     }
 
     /// 相位是否允许撤单（照搬 PhasePolicy::allows_cancel：开盘竞价前 1/3 可撤、
@@ -518,7 +534,10 @@ impl DeskState {
     /// 重建，未命中构建并缓存）。刀 2b 起返回 Arc（报告/收集/发布分片
     /// 全链指针共享——desk 端缓存条目直通）。等价面由
     /// desk_projection_cache_tests 双跑合同+J6 发布面守卫承载。
-    fn public_snapshot_arc(&mut self, tick: u64) -> std::sync::Arc<super::protocol::StockPublic> {
+    fn public_snapshot_arc(
+        &mut self,
+        tick: u64,
+    ) -> Result<std::sync::Arc<super::protocol::StockPublic>, RuntimeError> {
         let phase = self.setup.phase_at(tick);
         #[cfg(test)]
         let disabled = Self::projection_cache_disabled();
@@ -527,18 +546,18 @@ impl DeskState {
         if !disabled {
             if let Some((bv, mv, ph, cached)) = &self.view_cache {
                 if *bv == self.book_ver && *mv == self.market_ver && *ph == phase {
-                    return std::sync::Arc::clone(cached);
+                    return Ok(std::sync::Arc::clone(cached));
                 }
             }
         }
-        let built = std::sync::Arc::new(self.build_public(tick));
+        let built = std::sync::Arc::new(self.build_public(tick)?);
         self.view_cache = Some((
             self.book_ver,
             self.market_ver,
             phase,
             std::sync::Arc::clone(&built),
         ));
-        built
+        Ok(built)
     }
 
     /// 刀 2a/2b：resting 投影快照（簿版本键缓存；Arc 共享同上）。
@@ -2519,7 +2538,7 @@ impl DeskState {
             self.market.last_close
         };
         // 不走缓存：清算、清余单、桶提取均已结束，必须构建完整的新观察基。
-        let mut view = self.build_public(next_tick);
+        let mut view = self.build_public(next_tick)?;
         let (lower, upper) = self.price_bound_for_close(Side::Buy, next_tick, false, next_close)?;
         let (_, max_buy) = self.price_bound_for_close(
             Side::Buy,
@@ -2527,18 +2546,30 @@ impl DeskState {
             self.config.price_cage_enabled,
             next_close,
         )?;
+        let (min_sell, _) = self.price_bound_for_close(
+            Side::Sell,
+            next_tick,
+            self.config.price_cage_enabled,
+            next_close,
+        )?;
         view.daily_upper_limit = upper;
         view.daily_lower_limit = lower;
         view.max_buy_price = max_buy;
-        view.min_sell_price = lower;
+        view.min_sell_price = min_sell;
         Ok(view)
     }
 
     /// 本收束点公共态（协调者安装进下一 tick 广播）。
-    fn build_public(&self, tick: u64) -> super::protocol::StockPublic {
-        let (down, up_buy) = self
-            .price_bound_for(Side::Buy, tick, self.config.price_cage_enabled)
-            .unwrap_or((1, self.market.last_price));
+    fn build_public(
+        &self,
+        tick: u64,
+    ) -> Result<super::protocol::StockPublic, RuntimeError> {
+        // 买向取日涨停与买笼子的较低上界，卖向取日跌停与卖笼子的较高下界。
+        // 不得复用买向下界充当卖向下限——连续竞价阶段卖笼子下界高于日跌停。
+        let (_, up_buy) =
+            self.price_bound_for(Side::Buy, tick, self.config.price_cage_enabled)?;
+        let (down_sell, _) =
+            self.price_bound_for(Side::Sell, tick, self.config.price_cage_enabled)?;
         // D5 attention 公开可见性门禁（A 股制度面）：开盘集合竞价申报窗
         /// 公开簿=空（不揭示买卖盘）；收盘竞价只揭示截点前老单；盘前/
         /// 连续全公开（竞价清算后的揭示=簿全量）。desk 广播是组内观察
@@ -2578,14 +2609,14 @@ impl DeskState {
             let total = bid + ask;
             if total == 0 { 0.0 } else { (bid as f64 - ask as f64) / total as f64 }
         };
-        super::protocol::StockPublic {
+        Ok(super::protocol::StockPublic {
             last_price: self.market.last_price,
             best_bid: pub_best_bid,
             best_ask: pub_best_ask,
             max_buy_price: up_buy,
             daily_upper_limit: self.up_stop().unwrap_or(self.market.last_close),
             daily_lower_limit: self.down_stop().unwrap_or(self.market.last_close),
-            min_sell_price: down,
+            min_sell_price: down_sell,
             recent_prices: self.market.recent_prices.iter().copied().collect(),
             minute_closes: self.market.minute_closes.clone(),
             // B2：活动桶发布（Arc 共享——成交轮 view 重建时换新，零成交稳态轮缓存命中复用）。
@@ -2628,7 +2659,7 @@ impl DeskState {
                 .take(5)
                 .map(|(price, qty)| (*price, *qty))
                 .collect(),
-        }
+        })
     }
 
     /// 前五档买卖失衡（照搬原型 `top5_imbalance`）。
@@ -3322,7 +3353,7 @@ fn process_msg(
                         volume_today: state.market.volume_today,
                         trade_count: state.market.trade_count,
                         fee_sink: state.fee_sink,
-                        view: state.public_snapshot_arc(tick),
+                        view: state.public_snapshot_arc(tick)?,
                         trades: std::mem::take(&mut state.trade_facts),
                         lifecycle: std::mem::take(&mut state.lifecycle_facts),
                         receipts_out_list: receipts_detail,

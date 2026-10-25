@@ -487,6 +487,18 @@ impl World {
             root_projection,
             civil_start_date,
         } = spec;
+        // 可失败的行情计算须在启动 worker 前完成，防止构造失败遗留后台线程。
+        // 初始广播是首个 Start 的观察基；只有该拍处于连续竞价时才叠加价格笼子
+        //（集合竞价/盘前不接受连续竞价笼子约束）。相位规则与 desk 单一同源。
+        let cage_on = config.price_cage_enabled;
+        let first_tick = initial_committed_tick.saturating_add(1);
+        let cage_applies_first_tick = super::desk::phase_at_tick(
+            ticks_per_day,
+            auction_ticks,
+            closing_auction_ticks,
+            first_tick,
+        ) == super::desk::DeskPhase::Continuous;
+        let public_views = Self::initial_views(&stocks, cage_on, cage_applies_first_tick)?;
         let library_seed: std::sync::Arc<crate::information::PublicLibrary> =
             library.unwrap_or_default();
         let mut stock_seed_bars: Vec<Vec<(i64, i64, i64, i64, u64)>> = stocks
@@ -661,8 +673,6 @@ impl World {
                 })?;
             handles.push((WorkerId::Group(g), handle));
         }
-        let stocks_specs: Vec<DeskStockSpec> = stocks.clone();
-        let cage_on = config.price_cage_enabled;
         for (s, stock_spec) in stocks.into_iter().enumerate() {
             let s = s as StockIdx;
             let rx = desk_rxs.remove(0);
@@ -715,7 +725,6 @@ impl World {
         }
         // 世界不持上行发送端：全部 worker 退出后 recv 才会断连（显式失败面）。
         drop(up_tx);
-        let public_views = Self::initial_views(&stocks_specs, cage_on);
         // Q1 发布槽 v0：初始公共态即第一个一致读点（tick=initial）。
         let global_v0 = GlobalState {
             committed_tick: initial_committed_tick,
@@ -947,9 +956,12 @@ impl World {
         }
     }
 
-    /// 初始公共态（tick1 决策观察基；涨跌停按构造规格推导，无盘口）。
-    fn initial_views(specs: &[DeskStockSpec], cage_on: bool) -> Vec<StockPublic> {
-        let _ = cage_on;
+    /// 初始公共态是首个 Start 的决策观察基；连续竞价按配置叠加买卖笼子。
+    fn initial_views(
+        specs: &[DeskStockSpec],
+        cage_on: bool,
+        cage_applies_first_tick: bool,
+    ) -> Result<Vec<StockPublic>, RuntimeError> {
         specs
             .iter()
             .map(|s| {
@@ -960,16 +972,40 @@ impl World {
                 let down =
                     super::desk::bound_price(Money::from_cents(last), 10_000 - s.limit_bps, false)
                         .unwrap_or(Money::from_cents(1));
-                StockPublic {
+                // 空簿时笼子参考价为最新价；买卖向公开边界均须与 desk 受理同口径。
+                let min_sell = if cage_on && cage_applies_first_tick {
+                    let pct = super::desk::bound_price(Money::from_cents(last), 9_800, false)
+                        .map_err(|error| RuntimeError::ProtocolInvariant {
+                            detail: format!("初始卖向笼子下界计算失败：{error}"),
+                        })?
+                        .cents();
+                    down.cents().max(pct.min(last - 10).max(1))
+                } else {
+                    down.cents()
+                };
+                let max_buy = if cage_on && cage_applies_first_tick {
+                    let pct = super::desk::bound_price(Money::from_cents(last), 10_200, true)
+                        .map_err(|error| RuntimeError::ProtocolInvariant {
+                            detail: format!("初始买向笼子上界计算失败：{error}"),
+                        })?
+                        .cents();
+                    let ten_ticks = last.checked_add(10).ok_or_else(|| RuntimeError::ProtocolInvariant {
+                        detail: format!("初始买向十个最小价位上界溢出：reference={last}"),
+                    })?;
+                    up.cents().min(pct.max(ten_ticks))
+                } else {
+                    up.cents()
+                };
+                Ok(StockPublic {
                     last_price: last,
                     best_bid: None,
                     best_ask: None,
                     depth_bids: Vec::new(),
                     depth_asks: Vec::new(),
-                    max_buy_price: up.cents(),
+                    max_buy_price: max_buy,
                     daily_upper_limit: up.cents(),
                     daily_lower_limit: down.cents(),
-                    min_sell_price: down.cents(),
+                    min_sell_price: min_sell,
                     recent_prices: vec![last],
                     minute_closes: Vec::new(),
                     minute_bars: std::sync::Arc::new(Vec::new()),
@@ -983,7 +1019,7 @@ impl World {
                     relative_volume: 1.0,
                     order_book_imbalance: 0.0,
                     public_cutoff_serial: 0,
-                }
+                })
             })
             .collect()
     }
