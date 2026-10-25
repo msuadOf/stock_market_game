@@ -24,18 +24,22 @@
 helper 固定并核对本仓库这条 manifest 契约；构建前后核对源非空及 SHA256，不同即失败；
 执行前用 realpath 与 dev/ino 拒绝源和 wasm-pack 目标或实际 package LICENSE 的同文件别名；
 执行后使用当前源 inode 再核对，显式 copy 到实际 `pkg/LICENSE` 并校验内容。
+未实施者预审发现非源 symlink/hardlink 可能覆盖无关文件，已补红证并收紧同一目标校验：
+两个输出目标只接受不存在的路径，或 nlink=1 的普通文件；symlink（包括悬空）和共享
+hardlink 均显式拒绝，构建后再次检查，保留无关文件原字节。
 相对 out-dir 按 crate 解析；目录 symlink 的 `../..` 按文件系统真实目录解析。
 构建失败仍复核源，双错以 AggregateError 保留，失败不补发 package LICENSE。
 
 ## TDD 与验证原件
 
-- `red.log`：helper 不存在时，同一组最初的行为测试失败。
-- `red-replaced-inode.log`：相同内容替换源 inode 后，旧实现漏拒绝 hardlink，断言失败；
+- `red.txt`：helper 不存在时，同一组最初的行为测试失败。
+- `red-replaced-inode.txt`：相同内容替换源 inode 后，旧实现漏拒绝 hardlink，断言失败；
   修复为使用构建后的当前源身份。
-- `green-helper-frontend.log`：34/34，约 1.6 秒，涵盖 helper 与 frontend。
-- `green-native-a.log`：11/11，约 2.7 秒。
-- `green-native-b.log`：7/7，约 5.6 秒。
-- `green-native-c.log`：5/5，约 1.6 秒。
+- `red-external-link.txt`：独立审查发现非源 symlink/hardlink 会被覆盖后，新断言先失败。
+- `green-helper-frontend.txt`：42/42，约 2.1 秒，涵盖 helper 与 frontend。
+- `green-native-a.txt`：11/11，约 1.5 秒。
+- `green-native-b.txt`：7/7，约 5.1 秒。
+- `green-native-c.txt`：5/5，约 1.2 秒。
 
 四条最终普通命令均经 `node scripts/run-with-deadline.mjs 10000 --` 进程树门，
 Node 同时使用 `--test-timeout=10000`。helper/frontend 用 `--test-concurrency=4`；

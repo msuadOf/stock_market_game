@@ -1,0 +1,22 @@
+✔ prebuilt UI skips Node/WASM builds and native desktop uses a cache with freshly generated unsigned bundles (22.250883ms)
+[build desktop] jobs=4 (cd /home/baiyifan/.claude/tmp/ci-native-build-zKZTQr && check-frontend /home/baiyifan/.claude/tmp/ci-native-build-zKZTQr/target/ci-frontend)
+[build desktop] jobs=4 (cd /home/baiyifan/.claude/tmp/ci-native-build-zKZTQr && check-frontend /home/baiyifan/.claude/tmp/ci-native-build-zKZTQr/target/ci-frontend)
+[build desktop] jobs=4 (cd /home/baiyifan/.claude/tmp/ci-native-build-zKZTQr && clear-bundles /home/baiyifan/.claude/tmp/ci-native-build-zKZTQr/target/build-cache/desktop/x86_64-pc-windows-msvc/release/bundle)
+[build desktop] jobs=4 (cd /home/baiyifan/.claude/tmp/ci-native-build-zKZTQr/apps/desktop/src-tauri && cargo tauri build --bundles msi,nsis --no-sign --target x86_64-pc-windows-msvc --config {"build":{"beforeBuildCommand":"","frontendDist":"/home/baiyifan/.claude/tmp/ci-native-build-zKZTQr/target/ci-frontend"}} -- --jobs 4 --locked)
+[build desktop] published /home/baiyifan/.claude/tmp/ci-native-build-zKZTQr/target/build-artifacts/desktop
+✔ prebuilt UI is checked before native compilation and stale cached bundles cannot be republished (392.157507ms)
+✔ Linux portable desktop contains its real AppImage and preserves executable permissions (627.094573ms)
+[build webui-server] jobs=128 (cd /home/baiyifan/.claude/tmp/prebuilt-parent-vX71HD && check-frontend /home/baiyifan/.claude/tmp/prebuilt-parent-vX71HD/target/ui-link/dist)
+✔ prebuilt UI cannot escape the workspace through a symbolic-link parent (5.612902ms)
+[build desktop] jobs=4 (cd /home/baiyifan/.claude/tmp/desktop-compile-only-n1MTVn && check-frontend /home/baiyifan/.claude/tmp/desktop-compile-only-n1MTVn/target/frontend)
+[build desktop] jobs=4 (cd /home/baiyifan/.claude/tmp/desktop-compile-only-n1MTVn/apps/desktop/src-tauri && cargo build --locked --release -p stock-market-game --lib --features tauri/custom-protocol --target x86_64-unknown-linux-gnu --jobs 4)
+[build desktop] native library cache prepared; binary linking/bundling is a separate stage; no distribution published.
+✔ desktop compile-only warms the exact Tauri library feature graph before binary linking, without publishing (5.194612ms)
+ℹ tests 5
+ℹ suites 0
+ℹ pass 5
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1209.725167

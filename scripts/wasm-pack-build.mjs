@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { copyFile, mkdir, readFile, realpath, stat } from "node:fs/promises";
+import { copyFile, lstat, mkdir, readFile, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 
 async function licenseSnapshot(filename) {
@@ -14,12 +14,14 @@ async function licenseSnapshot(filename) {
   }
 }
 
-async function rejectAlias(source, target) {
+async function assertLicenseTarget(source, target) {
   let metadata;
-  try { metadata = await stat(target); } catch (error) {
+  try { metadata = await lstat(target); } catch (error) {
     if (error.code === "ENOENT") return;
     throw error;
   }
+  if (metadata.isSymbolicLink()) throw new Error(`LICENSE output alias/symlink rejected: ${target}; use an isolated regular file.`);
+  if (!metadata.isFile() || metadata.nlink !== 1) throw new Error(`LICENSE output alias/shared or non-regular file rejected: ${target}; use an isolated regular file.`);
   if (source.real === await realpath(target) || (source.metadata.dev === metadata.dev && source.metadata.ino === metadata.ino)) {
     throw new Error(`LICENSE source/output alias rejected: ${target}; choose an isolated wasm-pack --out-dir.`);
   }
@@ -48,8 +50,8 @@ export async function executeWasmPackBuild(root, command, commandRunner) {
   const packageLicense = path.join(outDir, "LICENSE");
   const before = await licenseSnapshot(sourceFile);
   await mkdir(outDir, { recursive: true });
-  await rejectAlias(before, await wasmPackLicense());
-  await rejectAlias(before, packageLicense);
+  await assertLicenseTarget(before, await wasmPackLicense());
+  await assertLicenseTarget(before, packageLicense);
   let buildError;
   try { await commandRunner(command); } catch (error) { buildError = error; }
   let currentSource;
@@ -58,8 +60,8 @@ export async function executeWasmPackBuild(root, command, commandRunner) {
     throw error;
   }
   if (buildError !== undefined) throw buildError;
-  await rejectAlias(currentSource, await wasmPackLicense());
-  await rejectAlias(currentSource, packageLicense);
+  await assertLicenseTarget(currentSource, await wasmPackLicense());
+  await assertLicenseTarget(currentSource, packageLicense);
   // license-file 含 ../.. 时 wasm-pack 不会生成 pkg/LICENSE，须显式补齐实际分发文件。
   await copyFile(sourceFile, packageLicense);
   const packaged = await licenseSnapshot(packageLicense);

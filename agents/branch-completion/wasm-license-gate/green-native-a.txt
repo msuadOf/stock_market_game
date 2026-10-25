@@ -1,0 +1,21 @@
+✔ parser requires an explicit target and rejects ambiguous or unsafe options (23.211767ms)
+✔ pure Server plan uses only locked Cargo release and independent executable output (1.704103ms)
+✔ Web plans compile real TypeScript, shared WASM and Rust web-ui, without fixed host mode (1.315753ms)
+✔ Desktop uses native Tauri installers from the existing matrix rather than a bin (1.738154ms)
+✔ dry-run does not run compilers or create any artifact and prints requirements/deadline (8.885374ms)
+✔ artifact publisher refuses existing paths, stale files and symlink parents (270.499471ms)
+✔ batch routes Server before Node and supplies a no-Node bounded Cargo release entry (1.225361ms)
+✔ fresh frontend staging excludes old assets, keeps TS build-info local, and preserves WASM license (334.057219ms)
+✔ repeat Web packaging uses a fresh output and never carries old Vite assets (742.741119ms)
+✔ shared supervisor bounds the whole Node build rather than resetting per phase (4.511644ms)
+[build webui] jobs=4 (cd /data1/baiyifan/workplace/stock_market_game/.worktree/w0l-gate/.tmp/w0l-native-ui-license-UphHjH && corepack pnpm install --frozen-lockfile)
+[build webui] jobs=4 (cd /data1/baiyifan/workplace/stock_market_game/.worktree/w0l-gate/.tmp/w0l-native-ui-license-UphHjH && wasm-pack build apps/web-wasm --target web --release --out-dir /data1/baiyifan/workplace/stock_market_game/.worktree/w0l-gate/.tmp/w0l-native-ui-license-UphHjH/apps/web-wasm/wasm-pack-output/license/wasm/pkg)
+✔ native UI 构建在 wasm-pack 修改 LICENSE 后停止，不运行 Cargo 或发布制品 (9.322906ms)
+ℹ tests 11
+ℹ suites 0
+ℹ pass 11
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1554.92072

@@ -187,3 +187,35 @@ test("编译失败同时源 LICENSE 被修改时保留两项原始错误", { tim
     return true;
   });
 }));
+
+for (const targetKind of ["package", "wasm-pack"]) {
+  for (const linkKind of ["symlink", "hardlink", "dangling-symlink"]) {
+    test(`拒绝 ${targetKind} LICENSE 的非源 ${linkKind}，避免改写无关文件`, { timeout: 10000, skip: process.platform === "win32" && linkKind.includes("symlink") }, async () => fixture(async (root) => {
+      const { executeWasmPackBuild } = await api();
+      const outDir = path.join(root, "safe/wasm/pkg");
+      const unrelated = path.join(root, "user-notice.txt");
+      const target = path.resolve(outDir, targetKind === "package" ? "LICENSE" : "../../LICENSE");
+      await mkdir(outDir, { recursive: true });
+      if (linkKind !== "dangling-symlink") await writeFile(unrelated, "user-owned notice");
+      if (linkKind === "hardlink") await link(unrelated, target);
+      else await symlink(unrelated, target);
+      await assert.rejects(executeWasmPackBuild(root, command(root, outDir), async () => assert.fail("unsafe compiler target accepted")), /LICENSE/);
+      if (linkKind === "dangling-symlink") await assert.rejects(readFile(unrelated), { code: "ENOENT" });
+      else assert.equal(await readFile(unrelated, "utf8"), "user-owned notice");
+    }));
+  }
+}
+
+for (const linkKind of ["symlink", "hardlink"]) {
+  test(`构建后新出现的非源 pkg LICENSE ${linkKind} 也不能被显式 copy 改写`, { timeout: 10000, skip: process.platform === "win32" && linkKind === "symlink" }, async () => fixture(async (root) => {
+    const { executeWasmPackBuild } = await api();
+    const outDir = path.join(root, "safe/wasm/pkg");
+    const unrelated = path.join(root, "user-notice.txt");
+    await writeFile(unrelated, "user-owned notice");
+    await assert.rejects(executeWasmPackBuild(root, command(root, outDir), async () => {
+      if (linkKind === "hardlink") await link(unrelated, path.join(outDir, "LICENSE"));
+      else await symlink(unrelated, path.join(outDir, "LICENSE"));
+    }), /LICENSE/);
+    assert.equal(await readFile(unrelated, "utf8"), "user-owned notice");
+  }));
+}
