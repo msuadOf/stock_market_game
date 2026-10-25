@@ -1898,6 +1898,7 @@ pub(in crate::session) enum FieldId {
     EnvelopeLedger,
     RetailProjectionSeen,
     CivilClock,
+    /// retired：T3 已删除 SpeculativePrepareStash；保留历史数值槽，不再产生 Job。
     SpeculativePrepare,
     /// B3 远程登录批次追加：市场成员关系（尾部追加，不改变既有变体数值）。
     Memberships,
@@ -1908,17 +1909,13 @@ pub(in crate::session) enum FieldId {
 
 /// commit_from 必须移交的字段全集（修复1·Astra 增量四复检 cfg 缺陷处置：按 cfg
 /// 条件化，与 commit_from 的条件 swap 对齐，绊线在所有真实构建组合内有效）。
-/// owner8 批次④删除两字段后由 33/35 收窄为 30/32；B3 远程登录批次追加
-/// Memberships 与 B2 查询 API 批次追加 SpeculativePrepare 后为 32/34 口径；
-/// B4b 公司线批次追加 CompanySystem/CorporateActions 后为现行 34/36
-/// 口径（默认 features 34 项；开启 simulation-diagnostics 时 36 项，追加
-/// NpcDecisionTraces/Causal）。一致性要求（Astra
-/// 增量六措辞校正）：34 项变体去掉两个诊断项（NpcDecisionTraces/Causal）后，
-/// 其余 32 项与默认变体逐项一致——诊断项插在默认变体第 20 项
-/// （LastRetailOrderEvents）之后，其后的项在 34 项变体中下标后移，逐下标位置
-/// 并不一致（人工同步维护，盲区 1 的自报标签性质同样适用于此处清单）。
+/// T3 已删除 speculative_prepare 与对应的 defer_swap；现行完整集合为 33/35 项
+/// （默认 33 项；simulation-diagnostics 追加 NpcDecisionTraces/Causal 两项）。
+/// SpeculativePrepare 的历史 FieldId 数值槽保留，但不再属于可提交字段集合。
+/// 两套期望集除诊断项外逐项一致；诊断项位于 LastRetailOrderEvents 之后，
+/// 后续字段的数组下标随之变化，不能逐下标比较两套清单。
 #[cfg(not(feature = "simulation-diagnostics"))]
-pub(in crate::session) const COMMIT_FIELD_EXPECTED: [FieldId; 34] = [
+pub(in crate::session) const COMMIT_FIELD_EXPECTED: [FieldId; 33] = [
     FieldId::Setup,
     FieldId::ValidatedConfig,
     FieldId::Stocks,
@@ -1951,12 +1948,11 @@ pub(in crate::session) const COMMIT_FIELD_EXPECTED: [FieldId; 34] = [
     FieldId::EnvelopeLedger,
     FieldId::RetailProjectionSeen,
     FieldId::CivilClock,
-    FieldId::SpeculativePrepare,
     FieldId::Memberships,
 ];
 
 #[cfg(feature = "simulation-diagnostics")]
-pub(in crate::session) const COMMIT_FIELD_EXPECTED: [FieldId; 36] = [
+pub(in crate::session) const COMMIT_FIELD_EXPECTED: [FieldId; 35] = [
     FieldId::Setup,
     FieldId::ValidatedConfig,
     FieldId::Stocks,
@@ -1991,11 +1987,10 @@ pub(in crate::session) const COMMIT_FIELD_EXPECTED: [FieldId; 36] = [
     FieldId::EnvelopeLedger,
     FieldId::RetailProjectionSeen,
     FieldId::CivilClock,
-    FieldId::SpeculativePrepare,
     FieldId::Memberships,
 ];
 
-/// FieldId 全变体数（含 simulation-diagnostics 两项），verify_metrics 计数数组长度。
+/// FieldId 历史槽位数（含诊断两项与 retired 槽），verify_metrics 计数数组长度。
 pub(in crate::session) const FIELD_ID_COUNT: usize = 36;
 const _: () = assert!(FieldId::CorporateActions as usize == FIELD_ID_COUNT - 1);
 
@@ -7559,13 +7554,11 @@ mod committable_state_tests {
     /// COMMIT_FIELD_EXPECTED 同样红（新字段观测到、期望集没有）。红绿反例
     /// 证据见 logs/red-green-astra-counterexample-{red,green}.log。
     /// ③CommitState 增量必须为 0（裁决 (d)：逐字段形态不存在整状态移交）。
-    /// 期望集随 cfg 条件化（默认 33 / simulation-diagnostics 35，与 commit_from
-    /// 条件 swap 对齐——Astra 增量四复检修复1）。已知盲区与如实边界见 FieldId
+    /// 期望集随 cfg 条件化，与 commit_from 的条件 swap 对齐。已知盲区见 FieldId
     /// 注释 b/c：自报标签可被错标绕过、绕过 defer_swap 的直接赋值新字段不被拦。
-    /// 运行现状：verification-harness+simulation-diagnostics 同开在本链树上因
-    /// 既有 simdiag 编译债务（16 处，全部位于 simdiag 专属代码，见增量二登记）
-    /// 无法构建，该组合的绊线执行验证待该债务修复后补（logs/
-    /// simdiag-both-features-check.log 为本轮实测证据）。
+    /// native 的 step() 缺省走 runtime 原地安装，不经过 commit_from；这里使用
+    /// 仍受支持的 step_with_commit_evidence() 真实事务入口，覆盖
+    /// PreparedCandidateCommit→commit_tick_shadow→commit_from→defer_swap。
     /// 运行口径：本测试读全局 METRICS 的 snapshot（ledger 派生 by_kind），
     /// 必须以独立过滤运行（cargo test -p engine --lib --features
     /// verification-harness verify_metrics_classifies）：同模块的
@@ -7578,8 +7571,15 @@ mod committable_state_tests {
         let mut session =
             GameSession::new(npc_working_quote_tests::retail_quote_setup(), 723).unwrap();
         let before = verify_metrics::snapshot().expect("计量台账一致");
-        session.step().unwrap();
+        let before_tick = session.tick();
+        session.step_with_commit_evidence().unwrap();
         let after = verify_metrics::snapshot().expect("计量台账一致");
+        assert_eq!(session.tick(), before_tick + 1, "真实事务必须提交一个 tick");
+        assert_eq!(
+            after.commit_from_calls - before.commit_from_calls,
+            1,
+            "真实事务必须恰好执行一次 commit_from"
+        );
         let classified = after.by_kind[JobKind::CommitField as usize].registered
             - before.by_kind[JobKind::CommitField as usize].registered;
         assert_eq!(
