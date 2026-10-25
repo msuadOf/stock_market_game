@@ -1,0 +1,2 @@
+3171250 1009769  0.0    1       00:00 /bin/zsh -lc tail -3 agents/branch-completion/company-catalog-bc/stock-export-build.stderr; df -h .; ps -eo pid,ppid,pcpu,nlwp,etime,args | rg 'cargo test -p engine --lib export_bindings|rustc --crate-name' > agents/branch-completion/company-catalog-bc/stock-export-cpu.txt
+3171255 3171250  0.0    1       00:00 rg cargo test -p engine --lib export_bindings|rustc --crate-name

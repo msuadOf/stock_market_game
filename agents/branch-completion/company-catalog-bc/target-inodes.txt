@@ -1,0 +1,2 @@
+31600796 /data1/baiyifan/workplace/stock_market_game/.tmp/company-catalog-a/target/debug/deps/libengine-b7714b84cb9f18d0.rlib
+31703753 /data1/baiyifan/workplace/stock_market_game/.tmp/company-catalog-bc/target/debug/deps/libengine-b7714b84cb9f18d0.rlib
