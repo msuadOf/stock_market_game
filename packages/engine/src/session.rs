@@ -12,6 +12,14 @@ mod candles;
 mod causal;
 mod civil_clock;
 mod company_assembly;
+mod company_capability_views;
+#[cfg(test)]
+mod company_capability_views_tests;
+mod owner_rights_views;
+pub use owner_rights_views::{
+    OwnerEntitlementDetail, OwnerQueuedSubscriptionView, OwnerRightsOfferingView,
+    OwnerSettledSubscriptionView,
+};
 #[cfg(test)]
 mod company_closing_tests;
 mod company_groups;
