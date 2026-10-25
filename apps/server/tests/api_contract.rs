@@ -130,10 +130,14 @@ async fn guest_token(app: &axum::Router) -> Option<String> {
 }
 
 async fn new_session_credentials(app: axum::Router) -> (String, String) {
+    new_session_credentials_with(app, sample_setup_json()).await
+}
+
+async fn new_session_credentials_with(app: axum::Router, setup: Value) -> (String, String) {
     let (_, token) = guest_identity(&app).await;
     let (status, body) = new_session_as(
         app,
-        json!({ "setup": sample_setup_json(), "seed": "42" }),
+        json!({ "setup": setup, "seed": "42" }),
         Some(&token),
     )
     .await;
@@ -681,7 +685,9 @@ async fn snapshot_returns_snapshot_json() {
 async fn public_report_page_requires_the_owning_session_token() {
     let app = server::app_router_with_manager(server::SessionManager::default());
     let (session_id, token) = new_session_credentials(app.clone()).await;
-    let uri = format!("/api/companies/C-600101/reports?session_id={session_id}");
+    // 路由契约 `/api/companies/:company_id` 为代码升序 CompanyId（u32）；
+    // 单股票 fixture 的 "600101" 对应 CompanyId(0)（见 company_assembly.rs）。
+    let uri = format!("/api/companies/0/reports?session_id={session_id}");
 
     let (status, body) = response_json(
         app.clone()
@@ -716,6 +722,14 @@ async fn public_report_page_requires_the_owning_session_token() {
         "published page should be readable: {body}"
     );
     assert!(body["reports"].is_array());
+    assert!(
+        body["reports"]
+            .as_array()
+            .is_some_and(|reports| reports
+                .iter()
+                .all(|report| report["company_id"] == json!(0u32))),
+        "单公司 fixture 的页面只含 CompanyId(0): {body}"
+    );
     for field in ["period", "approved_date", "published_date"] {
         let date = body["reports"][0][field]
             .as_str()
@@ -813,14 +827,34 @@ async fn npc_diagnostics_feature_returns_supported_records_for_authenticated_cur
 async fn public_report_routes_reject_invalid_pagination_and_credentials() {
     let app = server::app_router_with_manager(server::SessionManager::default());
     let (session_id, token) = new_session_credentials(app.clone()).await;
-    let base = format!("/api/companies/C-600101/reports?session_id={session_id}");
+    let base = format!("/api/companies/0/reports?session_id={session_id}");
 
+    // 无效 bearer 无法解析出登录主体 → 401（`request_subject`），
+    // 不能把它伪装成“会话权限不足”的 403。
     let (status, body) = response_json(
         app.clone()
             .oneshot(
                 Request::builder()
                     .uri(&base)
                     .header("authorization", "Bearer invalid-session-token")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("request must return a response"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert_eq!(body["code"], "IDENTITY_AUTHENTICATION_FAILED");
+
+    // 合法身份 + 未知 session → 403 SESSION_FORBIDDEN（防会话探测）。
+    let (_, valid_token) = guest_identity(&app).await;
+    let (status, body) = response_json(
+        app.clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/companies/0/reports?session_id=missing-session")
+                    .header("authorization", format!("Bearer {valid_token}"))
                     .body(axum::body::Body::empty())
                     .unwrap(),
             )
@@ -850,14 +884,23 @@ async fn public_report_routes_reject_invalid_pagination_and_credentials() {
 #[tokio::test]
 async fn public_report_by_id_rejects_unknown_and_company_mismatched_reports() {
     let app = server::app_router_with_manager(server::SessionManager::default());
-    let (session_id, token) = new_session_credentials(app.clone()).await;
+    // 两家真实公司：代码升序 "600101"→CompanyId(0)、"600102"→CompanyId(1)。
+    // 不匹配必须用真实存在的另一家公司，不能用不存在 id 冒充。
+    let mut setup = sample_setup_json();
+    let mut second = setup["stocks"][0].clone();
+    second["code"] = json!("600102");
+    setup["stocks"]
+        .as_array_mut()
+        .expect("stocks 必须是数组")
+        .push(second);
+    let (session_id, token) = new_session_credentials_with(app.clone(), setup).await;
     let base = format!("?session_id={session_id}");
 
     let (status, body) = response_json(
         app.clone()
             .oneshot(
                 Request::builder()
-                    .uri(format!("/api/companies/C-600101/reports/999999{base}"))
+                    .uri(format!("/api/companies/0/reports/999999{base}"))
                     .header("authorization", format!("Bearer {token}"))
                     .body(axum::body::Body::empty())
                     .unwrap(),
@@ -869,11 +912,38 @@ async fn public_report_by_id_rejects_unknown_and_company_mismatched_reports() {
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert_eq!(body["code"], "REPORT_NOT_VISIBLE");
 
+    // 两家公司都必须真实存在且各自持有公开报表，否则“不匹配”断言会失去意义。
+    for company_id in [0u32, 1u32] {
+        let page = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/companies/{company_id}/reports{base}"))
+                    .header("authorization", format!("Bearer {token}"))
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("request must return a response");
+        let (status, page) = response_json(page).await;
+        assert_eq!(status, StatusCode::OK, "公司 {company_id} 页面应可读: {page}");
+        let reports = page["reports"]
+            .as_array()
+            .expect("reports 必须是数组");
+        assert!(!reports.is_empty(), "公司 {company_id} 必须有公开报表");
+        assert!(
+            reports
+                .iter()
+                .all(|report| report["company_id"] == json!(company_id)),
+            "公司 {company_id} 的页面不得混入其他公司报表: {page}"
+        );
+    }
+
     let first_page = app
         .clone()
         .oneshot(
             Request::builder()
-                .uri(format!("/api/companies/C-600101/reports{base}"))
+                .uri(format!("/api/companies/0/reports{base}"))
                 .header("authorization", format!("Bearer {token}"))
                 .body(axum::body::Body::empty())
                 .unwrap(),
@@ -887,7 +957,7 @@ async fn public_report_by_id_rejects_unknown_and_company_mismatched_reports() {
     let (status, body) = response_json(
         app.oneshot(
             Request::builder()
-                .uri(format!("/api/companies/C-002156/reports/{report_id}{base}"))
+                .uri(format!("/api/companies/1/reports/{report_id}{base}"))
                 .header("authorization", format!("Bearer {token}"))
                 .body(axum::body::Body::empty())
                 .unwrap(),
