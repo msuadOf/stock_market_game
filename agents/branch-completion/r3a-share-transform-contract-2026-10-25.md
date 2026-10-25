@@ -39,3 +39,21 @@ Treasury 输入另补数学可行区间验证：Split 必须精确按整数比�
 - 普通 binary 每条命令外 10000ms，5个互不冲突过滤组并发、每组 `--test-threads=4`：R3a **13/13**（0.02s）、share_split **8/8**（1.11s）、share_registry **30/30**（0.01s）、cash_dividend_tax **24/24**（3.02s）、R1 registry_day_end **7/7**（0.00s）。日志 `final-0.log` 至 `final-4.log`。
 - `git diff --check` 通过。未跑全量、未生产接线、未 push/merge；成本真实入账、mixed-calendar、R4 日内相位、发行总0及碎股政策均未冒称验收。
 - 本树只冻结候选实现，独立未实施者完整 diff 复核由 root 安排；未复核前不宣称本片完成。
+
+## 独立复核 P2 修复与最终绑定（2026-10-26）
+
+本片不强制每个 Account 都有个人税账；仅处理上游按税务 mode 显式配置并传入的税账。目标证券税账校验自身 domain、唯一身份、登记数量，并要求 settled_on 属于候选 day 的当日或前一自然日；其他证券税账仅自校验后原样保留。`unit_chain` 的本股身份、完整权威历史由上游提供，本片只校验链形状、当前 event 的计划匹配及换算因子溢出，不按 registry 重建或证明历史链完整性。
+
+未实施者 tree reviewer 发现有效 P2：若缩股碎股结果使某账户数量不变，原实现跳过税账写入，未来或久远 settled_on 可绕过记账 API 的日期校验。纯测试提交 `3c56c523` 用冻结 seed 的两户各1股二并一（发行2→1，目标 Account 1→1），先断言回执再验证日期：future/old 两例真实红，第三例证明无关证券不改变。`c674112c` 仅增加8行目标证券日期 guard，未修改 domain、碎股算法或其他证券。
+
+先前 `7254b02b` 原运行未采 before source manifest，不能补写为历史现场见证。复核时另行 fresh 绑定在主仓 `.tmp/share-transform-r3a/provenance-2026-10-26/`：clean `7254b02b` 的4051个 tracked 文件 before/after 一致，Cargo JSON `fresh:true`，旧82项 fresh 全绿；旧 binary SHA256 `4d981be979ba1e2d2d878fae0437a1d762f2d47f42db39f2ea059b537c9b7adf`，该证据不覆盖新 P2 修复。
+
+最终 P2 原件在主仓 `.tmp/share-transform-r3a/review-tax-date-2026-10-26/`：
+
+- `red-source.json` / `red-artifacts.jsonl` / `red-build.log` / `red.log`：纯测试 clean `3c56c523`、warm build 3m42（外 deadline 300000ms），16例14绿2红；red source 在 build 已启动且实现未改时采集，未称其为启动前时间见证。
+- `source-before-green.json` 在 green build 启动前采集，明确含未提交的8行 guard；`green-artifacts.jsonl` 记录本树 Cargo artifact；`source-after-tests.json` / `result.json` 证明4051个 tracked 文件前后完全一致、binary 前后 SHA 相同。`committed-source-binding.json` 证明提交 `c674112c` 的全部文件与已编译 manifest 完全相同且工作树 clean；随后仅改本工作文档，不再重编业务。
+- `commands.json` 保留原命令、独占 target 与资源参数。两次必要 warm build 使用16 jobs、debug0、进程外 `runBoundedCommand` 300000ms shared deadline（含1000ms清理预留）；green build 23.40s。五个普通 binary 命令各10000ms外 deadline，5组并发、各4 test threads，无冷 target。
+- 最终 **85/85**：R3a 16（0.03s）、share_split 8（0.97s）、share_registry 30（0.01s）、cash_dividend_tax 24（0.97s）、R1 7（0.00s），见 `green-0.log` 至 `green-4.log`。
+- 最终 unit binary SHA256：`072fb47e061297682499e7550240440e9e46543e516f72c84aa92d5a8122e624`；路径仍为主仓 `.tmp/share-transform-r3a/target/debug/deps/engine-3eb2aa70a85e274e`。
+
+上述 green 只证明有限纯候选与输入守卫；ex 日空市场 conditional fixture 不证明生产相位可用。本片两个真实日内相位阻断、发行总0、法源/产品边界、mixed M 和真实成本入账仍保留，不以修复 P2 宣称已闭。最终完整 diff 还须未实施者复核。
