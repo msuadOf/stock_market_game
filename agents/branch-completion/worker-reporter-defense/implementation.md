@@ -63,3 +63,11 @@ Chromium 只验证实际产品源码经 Vite development transform 的 listener�
 68 源码上的 browser 两次十秒 deadline 失败保留为 `browser-final-68.log.gz`、`browser-final-68-retry.log.gz`。加阶段日志后的 `browser-final-68-diagnostic.log.gz` 显示 Vite 35ms、Chromium 连接约 142ms、页面约 777ms 开始并发 Worker 检查，内部 5000ms 事件等待未收到事件，清理约 6583ms 完成，exit 1。没有把 67 源码的旧成功冒充 68 源码通过；最终冻结时浏览器仍需独立复核承接。root 同期采到整机 I/O 压力，只作为环境观察，不宣称已证明本失败根因。
 
 所有原始 `.log` 用 gzip 原样归档，解压内容字节不变；避免测试 runner 原始空白触发源码 whitespace 门禁。旧失败和中间成功均保留，不改写运行日期。
+
+## 同源浏览器有限阶段终验
+
+root 要求继续完成 browser 失败诊断后，仅修改 `browser-check.mjs` 的 Blob 观察器：用保留的原生 postMessage 记录 import 前后、实际 listener 绑定/调用、两次 post 抛错、native reportError 或 noAPI microtask 执行、parent error。没有修改产品源码，也没有放宽 10000ms 外监督或 5000ms 事件等待。
+
+`evidence/browser-finite-stages.log.gz` 在产品 commit `a924a495e1e05f546503729dc9826db039b9ca40` 相同四文件源码上 exit 0。两个并发 Worker 都完成上述链路；总命令约 4.29 秒，fixture 内部清理在约 3658ms 完成。原错误与两次发送原因的断言保持；报告路径含 native reportError 的实调用和独立 microtask 的实执行，不由测试直接伪造 parent error。
+
+此前失败没有 Blob 内部进度，当前一次成功不能证明旧失败具体归因，因此不宣称修复了某个已定位产品缺陷。旧负证据全部保留；此成功只证明最终产品源码当前实际执行链与用户错误事件有效，仍由独立 reviewer 复测确认。

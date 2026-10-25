@@ -24,22 +24,47 @@ try {
   stage("并发检查两个实际 Worker");
   const results = await page.evaluate(async (origin) => Promise.all([true, false].map(async (enabled) => {
     const source = `let listener;
+      const progress = self.postMessage.bind(self);
+      progress('Blob 已启动，准备 import');
       const originalAdd = self.addEventListener.bind(self);
-      self.addEventListener = (type, callback) => { if(type === 'message') listener = callback; else originalAdd(type, callback); };
-      const {postFailure} = await import('${origin}/src/host/wasm-worker.ts');
-      if (!${enabled}) self.reportError = undefined;
-      self.postMessage = () => { throw new Error('real port unavailable'); };
+      self.addEventListener = (type, callback) => {
+        if(type === 'message') {
+          listener = callback;
+          progress('已捕获 listener 绑定：' + callback.toString().slice(0, 100));
+        } else originalAdd(type, callback);
+      };
+      try { await import('${origin}/src/host/wasm-worker.ts'); }
+      catch(error) { progress('import 失败：' + String(error)); throw error; }
+      progress('import 已完成');
+      if (${enabled}) {
+        const nativeReportError = self.reportError.bind(self);
+        self.reportError = error => { progress('调用 native reportError'); nativeReportError(error); };
+      } else {
+        self.reportError = undefined;
+        const nativeQueue = self.queueMicrotask.bind(self);
+        self.queueMicrotask = callback => {
+          progress('排入 noAPI microtask');
+          nativeQueue(() => { progress('执行 noAPI microtask'); callback(); });
+        };
+      }
+      let posts = 0;
+      self.postMessage = () => { progress('postMessage 抛错：' + (++posts)); throw new Error('real port unavailable'); };
       const request = Object.defineProperty({type:'speedMetrics',requestId:49},'generation',{get(){throw {code:'STEP_FATAL',message:'真实 Worker 原始故障'};}});
-      listener({data:request});`;
+      progress('准备实际调用 listener，类型：' + typeof listener);
+      listener({data:request});
+      progress('listener 同步调用已返回');`;
     const url = URL.createObjectURL(new Blob([source], { type: 'text/javascript' }));
     const worker = new Worker(url, { type: 'module' });
     try {
       return await new Promise((resolve, reject) => {
-        const timer = setTimeout(() => reject(new Error('Worker error event timeout')), 5000);
+        const progress = [];
+        worker.onmessage = (event) => { progress.push(event.data); };
+        const timer = setTimeout(() => reject(new Error(`Worker error event timeout：${JSON.stringify({ reportErrorEnabled: enabled, progress })}`)), 5000);
         worker.onerror = (event) => {
           clearTimeout(timer);
           event.preventDefault();
-          resolve({ reportErrorEnabled: enabled, message: event.message });
+          progress.push('parent 捕获 Worker error');
+          resolve({ reportErrorEnabled: enabled, message: event.message, progress });
         };
       });
     } finally { worker.terminate(); URL.revokeObjectURL(url); }
