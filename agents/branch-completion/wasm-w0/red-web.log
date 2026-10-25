@@ -1,0 +1,136 @@
+node:internal/modules/esm/resolve:271
+    throw new ERR_MODULE_NOT_FOUND(
+          ^
+
+Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/data1/baiyifan/workplace/stock_market_game/.worktree/wasm-w0-recovery/apps/web/src/host/engine-clock-env.ts' imported from /data1/baiyifan/workplace/stock_market_game/.worktree/wasm-w0-recovery/apps/web/src/host/engine-clock-env.test.ts
+    at finalizeResolution (node:internal/modules/esm/resolve:271:11)
+    at moduleResolve (node:internal/modules/esm/resolve:861:10)
+    at defaultResolve (node:internal/modules/esm/resolve:988:11)
+    at #cachedDefaultResolve (node:internal/modules/esm/loader:697:20)
+    at #resolveAndMaybeBlockOnLoaderThread (node:internal/modules/esm/loader:714:38)
+    at ModuleLoader.resolveSync (node:internal/modules/esm/loader:746:52)
+    at #resolve (node:internal/modules/esm/loader:679:17)
+    at ModuleLoader.getOrCreateModuleJob (node:internal/modules/esm/loader:599:35)
+    at ModuleJob.syncLink (node:internal/modules/esm/module_job:160:33)
+    at ModuleJob.link (node:internal/modules/esm/module_job:245:17) {
+  code: 'ERR_MODULE_NOT_FOUND',
+  url: 'file:///data1/baiyifan/workplace/stock_market_game/.worktree/wasm-w0-recovery/apps/web/src/host/engine-clock-env.ts'
+}
+
+Node.js v25.8.2
+✖ apps/web/src/host/engine-clock-env.test.ts (173.614184ms)
+node:internal/modules/esm/resolve:271
+    throw new ERR_MODULE_NOT_FOUND(
+          ^
+
+Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/data1/baiyifan/workplace/stock_market_game/.worktree/wasm-w0-recovery/apps/web/src/host/facade-child-shutdown.ts' imported from /data1/baiyifan/workplace/stock_market_game/.worktree/wasm-w0-recovery/apps/web/src/host/facade-child-shutdown.test.ts
+    at finalizeResolution (node:internal/modules/esm/resolve:271:11)
+    at moduleResolve (node:internal/modules/esm/resolve:861:10)
+    at defaultResolve (node:internal/modules/esm/resolve:988:11)
+    at #cachedDefaultResolve (node:internal/modules/esm/loader:697:20)
+    at #resolveAndMaybeBlockOnLoaderThread (node:internal/modules/esm/loader:714:38)
+    at ModuleLoader.resolveSync (node:internal/modules/esm/loader:746:52)
+    at #resolve (node:internal/modules/esm/loader:679:17)
+    at ModuleLoader.getOrCreateModuleJob (node:internal/modules/esm/loader:599:35)
+    at ModuleJob.syncLink (node:internal/modules/esm/module_job:160:33)
+    at ModuleJob.link (node:internal/modules/esm/module_job:245:17) {
+  code: 'ERR_MODULE_NOT_FOUND',
+  url: 'file:///data1/baiyifan/workplace/stock_market_game/.worktree/wasm-w0-recovery/apps/web/src/host/facade-child-shutdown.ts'
+}
+
+Node.js v25.8.2
+✖ apps/web/src/host/facade-child-shutdown.test.ts (170.952042ms)
+node:internal/modules/esm/resolve:271
+    throw new ERR_MODULE_NOT_FOUND(
+          ^
+
+Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/data1/baiyifan/workplace/stock_market_game/.worktree/wasm-w0-recovery/apps/web/src/host/facade-slot-protocol.ts' imported from /data1/baiyifan/workplace/stock_market_game/.worktree/wasm-w0-recovery/apps/web/src/host/facade-slot-protocol.test.ts
+    at finalizeResolution (node:internal/modules/esm/resolve:271:11)
+    at moduleResolve (node:internal/modules/esm/resolve:861:10)
+    at defaultResolve (node:internal/modules/esm/resolve:988:11)
+    at #cachedDefaultResolve (node:internal/modules/esm/loader:697:20)
+    at #resolveAndMaybeBlockOnLoaderThread (node:internal/modules/esm/loader:714:38)
+    at ModuleLoader.resolveSync (node:internal/modules/esm/loader:746:52)
+    at #resolve (node:internal/modules/esm/loader:679:17)
+    at ModuleLoader.getOrCreateModuleJob (node:internal/modules/esm/loader:599:35)
+    at ModuleJob.syncLink (node:internal/modules/esm/module_job:160:33)
+    at ModuleJob.link (node:internal/modules/esm/module_job:245:17) {
+  code: 'ERR_MODULE_NOT_FOUND',
+  url: 'file:///data1/baiyifan/workplace/stock_market_game/.worktree/wasm-w0-recovery/apps/web/src/host/facade-slot-protocol.ts'
+}
+
+Node.js v25.8.2
+✖ apps/web/src/host/facade-slot-protocol.test.ts (165.793643ms)
+node:internal/modules/esm/resolve:271
+    throw new ERR_MODULE_NOT_FOUND(
+          ^
+
+Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/data1/baiyifan/workplace/stock_market_game/.worktree/wasm-w0-recovery/apps/web/src/host/facade-slot-protocol.ts' imported from /data1/baiyifan/workplace/stock_market_game/.worktree/wasm-w0-recovery/apps/web/src/host/facade-supervisor.test.ts
+    at finalizeResolution (node:internal/modules/esm/resolve:271:11)
+    at moduleResolve (node:internal/modules/esm/resolve:861:10)
+    at defaultResolve (node:internal/modules/esm/resolve:988:11)
+    at #cachedDefaultResolve (node:internal/modules/esm/loader:697:20)
+    at #resolveAndMaybeBlockOnLoaderThread (node:internal/modules/esm/loader:714:38)
+    at ModuleLoader.resolveSync (node:internal/modules/esm/loader:746:52)
+    at #resolve (node:internal/modules/esm/loader:679:17)
+    at ModuleLoader.getOrCreateModuleJob (node:internal/modules/esm/loader:599:35)
+    at ModuleJob.syncLink (node:internal/modules/esm/module_job:160:33)
+    at ModuleJob.link (node:internal/modules/esm/module_job:245:17) {
+  code: 'ERR_MODULE_NOT_FOUND',
+  url: 'file:///data1/baiyifan/workplace/stock_market_game/.worktree/wasm-w0-recovery/apps/web/src/host/facade-slot-protocol.ts'
+}
+
+Node.js v25.8.2
+✖ apps/web/src/host/facade-supervisor.test.ts (166.953729ms)
+node:internal/modules/esm/resolve:271
+    throw new ERR_MODULE_NOT_FOUND(
+          ^
+
+Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/data1/baiyifan/workplace/stock_market_game/.worktree/wasm-w0-recovery/apps/web/src/host/engine-clock-env.ts' imported from /data1/baiyifan/workplace/stock_market_game/.worktree/wasm-w0-recovery/apps/web/src/host/facade-thread-env.test.ts
+    at finalizeResolution (node:internal/modules/esm/resolve:271:11)
+    at moduleResolve (node:internal/modules/esm/resolve:861:10)
+    at defaultResolve (node:internal/modules/esm/resolve:988:11)
+    at #cachedDefaultResolve (node:internal/modules/esm/loader:697:20)
+    at #resolveAndMaybeBlockOnLoaderThread (node:internal/modules/esm/loader:714:38)
+    at ModuleLoader.resolveSync (node:internal/modules/esm/loader:746:52)
+    at #resolve (node:internal/modules/esm/loader:679:17)
+    at ModuleLoader.getOrCreateModuleJob (node:internal/modules/esm/loader:599:35)
+    at ModuleJob.syncLink (node:internal/modules/esm/module_job:160:33)
+    at ModuleJob.link (node:internal/modules/esm/module_job:245:17) {
+  code: 'ERR_MODULE_NOT_FOUND',
+  url: 'file:///data1/baiyifan/workplace/stock_market_game/.worktree/wasm-w0-recovery/apps/web/src/host/engine-clock-env.ts'
+}
+
+Node.js v25.8.2
+✖ apps/web/src/host/facade-thread-env.test.ts (167.99141ms)
+ℹ tests 5
+ℹ suites 0
+ℹ pass 0
+ℹ fail 5
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 199.717071
+
+✖ failing tests:
+
+test at apps/web/src/host/engine-clock-env.test.ts:1:1
+✖ apps/web/src/host/engine-clock-env.test.ts (173.614184ms)
+  'test failed'
+
+test at apps/web/src/host/facade-child-shutdown.test.ts:1:1
+✖ apps/web/src/host/facade-child-shutdown.test.ts (170.952042ms)
+  'test failed'
+
+test at apps/web/src/host/facade-slot-protocol.test.ts:1:1
+✖ apps/web/src/host/facade-slot-protocol.test.ts (165.793643ms)
+  'test failed'
+
+test at apps/web/src/host/facade-supervisor.test.ts:1:1
+✖ apps/web/src/host/facade-supervisor.test.ts (166.953729ms)
+  'test failed'
+
+test at apps/web/src/host/facade-thread-env.test.ts:1:1
+✖ apps/web/src/host/facade-thread-env.test.ts (167.99141ms)
+  'test failed'
+bounded command exited with 1

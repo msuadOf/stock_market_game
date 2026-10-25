@@ -1,0 +1,55 @@
+✔ release WASM checker accepts the threaded product contract (13.222887ms)
+✔ release WASM checker rejects a second game WASM artifact (2.578327ms)
+✔ release WASM checker rejects debug trace exports without instantiating modules (1.983042ms)
+✔ release WASM checker rejects any non-whitelisted time import (2.399502ms)
+✔ release WASM checker rejects a duplicate engine_clock_now import (2.767903ms)
+✔ release WASM checker rejects a missing engine_clock_now import (1.704364ms)
+✔ release WASM checker rejects a module without atomic instructions (1.806267ms)
+✔ release WASM checker rejects a private module nested anywhere in dist (2.048584ms)
+✔ shared memory gate accepts the shared artifact contract (2.528626ms)
+✔ shared memory gate accepts minified glue from the bundled dist (2.044054ms)
+✔ shared memory gate rejects a non-shared memory import (1.702974ms)
+✔ shared memory gate rejects a shared memory import without explicit maximum (2.577498ms)
+✔ shared memory gate rejects glue missing the shared memory bootstrap (1.999703ms)
+✔ checks generated bindings after the Rust export tests have actually run (2.112726ms)
+✔ omits costly native debug symbols without disabling assertions or tests (0.371339ms)
+✔ gives native and WASM builds an explicit CPU budget and external deadline (0.318948ms)
+✔ reuses same-platform Cargo artifacts when dependency manifests change (0.245117ms)
+✔ pins wasm-pack after Cargo cache restoration and verifies the installed version (0.211646ms)
+✔ verifies the WASM thread lock matrix right after the wasm-pack version gate (0.173905ms)
+✔ Windows cold builds prepare libraries in a separate bounded stage before sealing test executables (0.288038ms)
+✔ library preparation failures preserve progress without pretending a sealed build ran (1.783327ms)
+✔ shared frontend plan owns install, threaded WASM, copy, TypeScript, Vite and release checks on every host (18.493225ms)
+✔ native UI builds use the same frontend command factory with isolated staging (2.577778ms)
+[frontend build] pnpm install --frozen-lockfile
+[frontend build] wasm-pack build apps/web-wasm --target web --release --out-dir /home/baiyifan/.claude/tmp/frontend-build-itC5CK/apps/web-wasm/wasm-pack-output/frontend/wasm/pkg
+[frontend build] /home/linuxbrew/.linuxbrew/Cellar/node/25.8.2/bin/node /home/baiyifan/.claude/tmp/frontend-build-itC5CK/scripts/check-web-release-wasm.mjs /home/baiyifan/.claude/tmp/frontend-build-itC5CK/apps/web-wasm/wasm-pack-output/frontend/wasm/pkg
+[frontend build] copy-wasm /home/baiyifan/.claude/tmp/frontend-build-itC5CK/apps/web
+[frontend build] /home/linuxbrew/.linuxbrew/Cellar/node/25.8.2/bin/node /home/baiyifan/.claude/tmp/frontend-build-itC5CK/apps/web/node_modules/typescript/bin/tsc --build --force
+[frontend build] /home/linuxbrew/.linuxbrew/Cellar/node/25.8.2/bin/node /home/baiyifan/.claude/tmp/frontend-build-itC5CK/apps/web/node_modules/vite/bin/vite.js build --outDir /home/baiyifan/.claude/tmp/frontend-build-itC5CK/apps/web/dist
+[frontend build] /home/linuxbrew/.linuxbrew/Cellar/node/25.8.2/bin/node /home/baiyifan/.claude/tmp/frontend-build-itC5CK/scripts/check-web-release-wasm.mjs /home/baiyifan/.claude/tmp/frontend-build-itC5CK/apps/web/dist
+[frontend build] pnpm install --frozen-lockfile
+[frontend build] pnpm install --frozen-lockfile
+[frontend build] wasm-pack build apps/web-wasm --target web --release --out-dir /home/baiyifan/.claude/tmp/frontend-build-itC5CK/apps/web-wasm/wasm-pack-output/frontend/wasm/pkg
+[frontend build] /home/linuxbrew/.linuxbrew/Cellar/node/25.8.2/bin/node /home/baiyifan/.claude/tmp/frontend-build-itC5CK/scripts/check-web-release-wasm.mjs /home/baiyifan/.claude/tmp/frontend-build-itC5CK/apps/web-wasm/wasm-pack-output/frontend/wasm/pkg
+✔ WASM copy replaces stale generated files only after source checks succeed (129.675671ms)
+✔ frontend entry supervises the whole build once, and dry-run creates nothing (2.057774ms)
+✔ frontend parser rejects duplicate, unsafe and native-only options (0.530434ms)
+✔ Pages frontend explicitly uses repository base and production pages mode, without changing ordinary builds (1.090809ms)
+[frontend build] pnpm install --frozen-lockfile
+[frontend build] wasm-pack build apps/web-wasm --target web --release --out-dir /home/baiyifan/.claude/tmp/frontend-link-DE6ZJh/apps/web-wasm/wasm-pack-output/frontend/wasm/pkg
+[frontend build] /home/linuxbrew/.linuxbrew/Cellar/node/25.8.2/bin/node /home/baiyifan/.claude/tmp/frontend-link-DE6ZJh/scripts/check-web-release-wasm.mjs /home/baiyifan/.claude/tmp/frontend-link-DE6ZJh/apps/web-wasm/wasm-pack-output/frontend/wasm/pkg
+[frontend build] copy-wasm /home/baiyifan/.claude/tmp/frontend-link-DE6ZJh/apps/web
+✔ WASM copy refuses a symlink destination without changing the referenced files (5.652388ms)
+✔ legacy shell and batch frontend entries delegate to the shared build instead of duplicating it (1.14105ms)
+✔ 锁定矩阵常量与设计 §6.3 R3-1 一致 (1.90618ms)
+✔ wasm-bindgen 锁版解析接受精确锁定并拒绝浮动/未锁形态 (0.288467ms)
+✔ 组合结果聚合：未登记红门使整体失败，登记红/跳过显式呈现 (1.363185ms)
+ℹ tests 32
+ℹ suites 0
+ℹ pass 32
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 306.714385

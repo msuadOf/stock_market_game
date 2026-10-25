@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import test, { mock } from "node:test";
 
 import {
   BUMP, CAPACITY, FREE_HEAD, FREE_HEAD_EMPTY, FREE_LEN, HEADER_WORDS, JOIN_STRIDE, SLOT_JOIN_INDEX, SLOT_STRIDE,
-  SlotState, JoinState, TombstoneCode, TOMBSTONE, RETIRED_FAIL_UNACKED,
+  SlotState, JoinState, TombstoneCode, TOMBSTONE, RETIRED_FAIL_UNACKED, H1_LOCK, JOIN_DEAD_CODE, joinFieldOffset,
   encodeJoin, encodeW, joinWordOffset, slotFieldOffset, slotWordOffset,
 } from "./facade-slot-protocol.ts";
 import {
@@ -171,4 +171,57 @@ test("迟到 D5 撞换代：过期即弃，不崩不落 tombstone", () => {
   assert.equal(writeDead(arena, 0, 0, "hardtrap", 0xD5), "lost-to-stale-generation");
   assert.equal(Atomics.load(arena.words, TOMBSTONE), 0, "迟到 D5 不得落 tombstone");
   assert.equal(Atomics.load(arena.words, joinWordOffset(0, arena.capacity)) >>> 0, encodeJoin(1, JoinState.Waiting, GEN_BITS));
+});
+
+
+test("H1 持续占用时延迟回收只处理快照且登记去重", () => {
+  const arena = freshArena();
+  const state = createSupervisorState();
+  publish(arena, 0, 0);
+  answerOk(arena, 0, 0, 1);
+  registerChild(state, 1, 0, 0);
+  Atomics.store(arena.words, joinWordOffset(0, CAP), encodeJoin(0, JoinState.Consumed, GEN_BITS));
+  Atomics.store(arena.words, H1_LOCK, 1);
+  onWorkerExit(arena, state, 1, 0, 0);
+  // 有限护栏把旧实现的无限追加转为同步失败，不让负控占满主线程。
+  const originalPush = state.pendingRecovery.push.bind(state.pendingRecovery);
+  state.pendingRecovery.push = (...items) => {
+    assert.ok(state.pendingRecovery.length < 2, "同一检查点反复追加同一登记");
+    return originalPush(...items);
+  };
+  assert.equal(recoverPending(arena, state), 0);
+  assert.equal(state.pendingRecovery.length, 1);
+});
+
+test("同 pair 重复 workerExit 只入空闲表一次，未知 id 零写", () => {
+  const arena = freshArena();
+  const state = createSupervisorState();
+  publish(arena, 0, 0);
+  answerOk(arena, 0, 0, 1);
+  registerChild(state, 1, 0, 0);
+  Atomics.store(arena.words, joinWordOffset(0, CAP), encodeJoin(0, JoinState.Consumed, GEN_BITS));
+  const before = Array.from(arena.words);
+  assert.equal(onWorkerExit(arena, state, 999, 0, 0), "gates-not-met");
+  assert.deepEqual(Array.from(arena.words), before);
+  assert.equal(onWorkerExit(arena, state, 1, 0, 0), "pushed");
+  onWorkerExit(arena, state, 1, 0, 0);
+  evaluateOkRecovery(arena, state, 0, 0);
+  assert.equal(Atomics.load(arena.words, FREE_LEN), 1);
+  assert.ok(readAccounts(arena));
+});
+
+test("DEAD 对 join 可见时诊断 code 必须已发布", () => {
+  const arena = freshArena();
+  publish(arena, 0, 0);
+  const compare = Atomics.compareExchange;
+  const patch = mock.method(Atomics, "compareExchange", (words, offset, expected, replacement) => {
+    const previous = compare(words, offset, expected, replacement);
+    if (offset === joinWordOffset(0, CAP) && previous === expected &&
+        [encodeJoin(0, JoinState.DeadHardtrap, GEN_BITS), encodeJoin(0, JoinState.DeadPanic, GEN_BITS)].includes(replacement)) {
+      assert.equal(Atomics.load(arena.words, joinFieldOffset(0, CAP, JOIN_DEAD_CODE)), 0xD5);
+    }
+    return previous;
+  });
+  try { assert.equal(writeDead(arena, 0, 0, "hardtrap", 0xD5), "written"); }
+  finally { patch.mock.restore(); }
 });

@@ -240,3 +240,22 @@ test("shared memory gate rejects glue missing the shared memory bootstrap", asyn
     await assert.rejects(verifySharedMemoryArtifact(assets), /WebAssembly\.Memory/);
   });
 });
+
+
+test("shared memory gate rejects historical 4GiB binary maximum", async () => {
+  await withAssets(async (assets) => {
+    await writeFile(path.join(assets, "web_wasm_bg-shared.wasm"), wasmModuleBytes({
+      imports: [importFunc("env", "engine_clock_now", 1), importSharedMemory("env", "memory", 17, 65536)], body: atomicBody,
+    }));
+    await writeFile(path.join(assets, "web_wasm.js"), sharedGlue);
+    await assert.rejects(verifySharedMemoryArtifact(assets), /32768|2GiB/);
+  });
+});
+
+test("shared memory gate rejects historical 4GiB glue maximum", async () => {
+  await withAssets(async (assets) => {
+    await writeFile(path.join(assets, "web_wasm_bg-shared.wasm"), sharedModuleBytes());
+    await writeFile(path.join(assets, "web_wasm.js"), sharedGlue.replace("maximum:32768", "maximum:65536"));
+    await assert.rejects(verifySharedMemoryArtifact(assets), /32768|2GiB/);
+  });
+});

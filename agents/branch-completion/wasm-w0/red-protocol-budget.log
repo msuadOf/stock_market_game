@@ -1,0 +1,137 @@
+✔ A1-A3 OK 全序：REQ→ANSWERING→OK，载荷 worker_id 落槽 (2.347795ms)
+✔ 迟到应答：A1 期望失配 ⇒ 零槽写 + terminate 卫生 (1.330057ms)
+✔ FAIL 应答计入 RA 账 (0.251737ms)
+✔ OK 回收三门：join 未 CONSUMED 不回收，闭合后 push，H1 占用转延迟 (0.591366ms)
+✔ 未知 workerExit 只丢弃，不写槽 (0.192975ms)
+✔ D5 死亡信号：WAITING→DEAD；已 CONSUMED 的迟到写丢弃 (0.293938ms)
+✔ A1→A3 间出现协议外写者 ⇒ 先落 tombstone 再抛 (0.509914ms)
+✔ 四账快照镜像 Rust accounts：健康回收后恒等式成立 (0.475053ms)
+✔ 门 (c)：子仍 ACTIVE 时不得回收（复核修正项） (0.250977ms)
+✔ 迟到 D5 撞换代：过期即弃，不崩不落 tombstone (0.308869ms)
+✖ H1 持续占用时延迟回收只处理快照且登记去重 (0.968397ms)
+✖ 同 pair 重复 workerExit 只入空闲表一次，未知 id 零写 (0.887585ms)
+✖ DEAD 对 join 可见时诊断 code 必须已发布 (0.703359ms)
+✔ release WASM checker accepts the threaded product contract (17.240626ms)
+✔ release WASM checker rejects a second game WASM artifact (2.423187ms)
+✔ release WASM checker rejects debug trace exports without instantiating modules (2.016886ms)
+✔ release WASM checker rejects any non-whitelisted time import (2.325964ms)
+✔ release WASM checker rejects a duplicate engine_clock_now import (2.803247ms)
+✔ release WASM checker rejects a missing engine_clock_now import (1.734838ms)
+✔ release WASM checker rejects a module without atomic instructions (1.669976ms)
+✔ release WASM checker rejects a private module nested anywhere in dist (2.033896ms)
+✔ shared memory gate accepts the shared artifact contract (2.504799ms)
+✔ shared memory gate accepts minified glue from the bundled dist (2.032356ms)
+✔ shared memory gate rejects a non-shared memory import (1.702887ms)
+✔ shared memory gate rejects a shared memory import without explicit maximum (1.584573ms)
+✔ shared memory gate rejects glue missing the shared memory bootstrap (2.424557ms)
+✖ shared memory gate rejects historical 4GiB binary maximum (2.394236ms)
+✖ shared memory gate rejects historical 4GiB glue maximum (2.647223ms)
+ℹ tests 28
+ℹ suites 0
+ℹ pass 23
+ℹ fail 5
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 220.270027
+
+✖ failing tests:
+
+test at apps/web/src/host/facade-supervisor.test.ts:177:1
+✖ H1 持续占用时延迟回收只处理快照且登记去重 (0.968397ms)
+  AssertionError [ERR_ASSERTION]: 同一检查点反复追加同一登记
+      at state.pendingRecovery.push (file:///data1/baiyifan/workplace/stock_market_game/.worktree/wasm-w0-recovery/apps/web/src/host/facade-supervisor.test.ts:189:12)
+      at evaluateOkRecovery (file:///data1/baiyifan/workplace/stock_market_game/.worktree/wasm-w0-recovery/apps/web/src/host/facade-supervisor.ts:211:27)
+      at recoverPending (file:///data1/baiyifan/workplace/stock_market_game/.worktree/wasm-w0-recovery/apps/web/src/host/facade-supervisor.ts:224:9)
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/wasm-w0-recovery/apps/web/src/host/facade-supervisor.test.ts:192:16)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at apps/web/src/host/facade-supervisor.test.ts:196:1
+✖ 同 pair 重复 workerExit 只入空闲表一次，未知 id 零写 (0.887585ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  3 !== 1
+  
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/wasm-w0-recovery/apps/web/src/host/facade-supervisor.test.ts:209:10)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 3,
+    expected: 1,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at apps/web/src/host/facade-supervisor.test.ts:213:1
+✖ DEAD 对 join 可见时诊断 code 必须已发布 (0.703359ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  0 !== 213
+  
+      at Atomics.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/wasm-w0-recovery/apps/web/src/host/facade-supervisor.test.ts:221:14)
+      at Object.apply (node:internal/test_runner/mock/mock:757:20)
+      at compareExchange (file:///data1/baiyifan/workplace/stock_market_game/.worktree/wasm-w0-recovery/apps/web/src/host/facade-supervisor.ts:345:22)
+      at writeDead (file:///data1/baiyifan/workplace/stock_market_game/.worktree/wasm-w0-recovery/apps/web/src/host/facade-supervisor.ts:255:7)
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/wasm-w0-recovery/apps/web/src/host/facade-supervisor.test.ts:225:22)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 0,
+    expected: 213,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at scripts/check-web-release-wasm.test.mjs:245:1
+✖ shared memory gate rejects historical 4GiB binary maximum (2.394236ms)
+  AssertionError [ERR_ASSERTION]: Missing expected rejection.
+      at async file:///data1/baiyifan/workplace/stock_market_game/.worktree/wasm-w0-recovery/scripts/check-web-release-wasm.test.mjs:251:5
+      at async withAssets (file:///data1/baiyifan/workplace/stock_market_game/.worktree/wasm-w0-recovery/scripts/check-web-release-wasm.test.mjs:129:5)
+      at async TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/wasm-w0-recovery/scripts/check-web-release-wasm.test.mjs:246:3)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: /32768|2GiB/,
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at scripts/check-web-release-wasm.test.mjs:255:1
+✖ shared memory gate rejects historical 4GiB glue maximum (2.647223ms)
+  AssertionError [ERR_ASSERTION]: Missing expected rejection.
+      at async file:///data1/baiyifan/workplace/stock_market_game/.worktree/wasm-w0-recovery/scripts/check-web-release-wasm.test.mjs:259:5
+      at async withAssets (file:///data1/baiyifan/workplace/stock_market_game/.worktree/wasm-w0-recovery/scripts/check-web-release-wasm.test.mjs:129:5)
+      at async TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/wasm-w0-recovery/scripts/check-web-release-wasm.test.mjs:256:3)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: /32768|2GiB/,
+    operator: 'rejects',
+    diff: 'simple'
+  }
+bounded command exited with 1
