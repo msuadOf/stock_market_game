@@ -31,3 +31,16 @@
 - Node兼容边界：当前机Node25.8.2短测绿；精确Node24.18.0二进制/官方SHASUM/registry下载均因TLS EOF或deadline失败（node24-*原件），已有Docker镜像无node24；不把Node25冒充最低版本实证。Node24.18实跑仍缺，CI运行前须显式保留该缺口。
 
 - Node24缺口已关闭：环境员工从官方Docker `node:24.18.0-bookworm-slim` linux/amd64提取绝对路径 `.tmp/node24-env/node`；镜像digest `sha256:6f7b03f7c2c8e2e784dcf9295400527b9b1270fd37b7e9a7285cf83b6951452d`，node二进制SHA256 `41a74efb34cbde5c7632cdac0cf8bd1a14d0b8d73dc1e82755014d9a9ce70f5c`。实际版本v24.18.0/V8 13.6.233.17-node.50，PATH仅当前子进程前置；9文件全套相关Node短测在该精确版本全绿，含inspector伪opcode/伪名称/缓存并发与组合入口合同，见`node24-green.log`。此前网络失败仍保留，不回填为成功。
+
+
+## 最终实编译与产物门收据
+
+- 实际构建源码冻结 `7a557b6bf537439bb065b2ef0ec06b33bb3f8f7f`；`source-before.txt`与`source-after.txt`完全一致，2221个tracked非agents文件聚合SHA256 `198fe53ea6e3ca77134a7311fe465a519fb8b7976c383ede56a86c76ea1f8b41`；LICENSE源SHA256 `e57d1f88b21c0b41859a0c884768d168a16bb9924c4681b3eddc6b83b32ad3c8`不变。工作树只后补agents证据，不修改该批源码。
+- 短测最终：Rust纯std 49/49（16测试线程、外10000ms）；精确Node24.18.0相关9文件69/69（8文件并发、case/外均10000ms），app/node TS类型检查及定向oxlint通过。reviewer独立同9文件曾因10s整命令deadline失败，随后单checker19/19独立绿；与本人69绿分别保留，不篡改独立负结果，API兼容有单独实证。
+- 首个定向长batch外300000ms：native `cargo check -p engine -p web-wasm --lib -j16` 33.64s完成；正式release product生成；后续release harness因剩余总预算不足终止，整体失败（`long-build-timeout.log`）。第二次独立release harness同样300000ms超时，没有编译错误结论，原件`wasm-harness-build.log`；不将两段拼成单批成功。
+- root与可信reviewer按W0原范围确认验证feature产物未规定release，故只追加一次代表性dev harness编译：相同nightly/build-std/atomics/panic=abort/2GiB链，`wasm-pack --dev --features verification-harness`、jobs16、`CARGO_PROFILE_DEV_DEBUG=0`、独立harness-dev/pkg，外300000ms，2m22完成。本产物只证明ABI与feature导出隔离，不充作release/performance/browser验收。正式release实际workspace参数为thin LTO/16CGU，不能沿用过时fat注释归因。
+- dev harness每2s真实PGID进程树/CPU/线程与全机IO PSI见`harness-dev-cpu.log`，包含rustc并行与wasm-bindgen129线程/多核峰值；首批实际观察及两次超时采样局限见`build-cpu-snapshot.txt`。未把全机IO压力当实现性能证明；所有长任务结束后相关进程归零，无在途全回归。
+- 正式release WASM 14,285,916 bytes，SHA256 `0df571042e83b5c5dbec6ae5f51f712ffd128f28451917af18b89d7a694d4371`；JS SHA256 `e01c87788cddf47270dc821e12224c166fec0c099e0deb1e50edf966b72e8208`。精确Node24实际产品门：唯一clock import、V8真实atomic、私有/verification导出零暴露、shared imported memory、binary/glue32768页(2GiB)全部通过（`product-gates.log`）。
+- dev harness WASM 116,778,175 bytes，SHA256 `0b00b4504e38012caca16f5f20327d9771ad1f2da605c84b899cd9122bae670f`；JS SHA256 `4a710057d45beedf4a662f6294c3ba514cb3fc8f49e9c6eee54bb8b2492777c6`。5个facade/verification ABI导出、clock import、shared/2GiB通过；正式门正确拒绝verification包（`harness-gates.log`）。实际pkg均位于根`.tmp/wasm-w0-recovery/artifacts/`的product/pkg和harness-dev/pkg，不入Git。
+- 实际组合CLI再次在已有正式production缓存上执行（不是重跑冷构建）：`CARGO_TARGET_DIR=根.tmp/wasm-w0-recovery/wasm-target node24 scripts/verify-wasm-thread-combo.mjs --jobs16`。入口外supervisor单批300000ms，构建7.30s，lock/build/product/shared均绿，browser-combo显式skipped，整体`green=false`；原件`combo-actual.log`。只满足W0常驻必绿门，不能称R4a完整组合全绿。
+- 边界仍保持：wasm runtime=false；生产supervisor/子Worker/bootstrap、watchdog wasm收件替代、budget ledger、真实浏览器R5与runtime翻转未完成。没有full all、merge或push。正式完成以未实施者最终复核为门。
