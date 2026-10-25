@@ -1,0 +1,42 @@
+✖ 实际两目录保留原 id，成员 scope 必须属于报告公司 (5.203071ms)
+✔ 目录严格拒绝缺键、多键、重复、非法 u32 与 issuer 覆盖缺口 (0.590945ms)
+✔ 合法特殊公司 code 精确保留且不依赖原型 (0.287647ms)
+ℹ tests 3
+ℹ suites 0
+ℹ pass 2
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 213.638619
+
+✖ failing tests:
+
+test at apps/web/src/host/catalog-resolver.test.ts:8:1
+✖ 实际两目录保留原 id，成员 scope 必须属于报告公司 (5.203071ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /scope/. Input:
+  
+  'ProtocolError: 未知 CompanyId：100'
+  
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/catalog-resolver.test.ts:16:10)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.start (node:internal/test_runner/test:1096:17)
+      at startSubtestAfterBootstrap (node:internal/test_runner/harness:385:17) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: ProtocolError: 未知 CompanyId：100
+        at invalid (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/catalog-resolver.ts:7:9)
+        at companyCode (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/catalog-resolver.ts:63:29)
+        at Object.reportScopeCode (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/catalog-resolver.ts:96:20)
+        at file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/catalog-resolver.test.ts:16:32
+        at getActual (node:assert:586:5)
+        at strict.throws (node:assert:734:24)
+        at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/catalog-resolver.test.ts:16:10)
+        at Test.runInAsyncScope (node:async_hooks:226:14)
+        at Test.run (node:internal/test_runner/test:1201:25)
+        at Test.start (node:internal/test_runner/test:1096:17),
+    expected: /scope/,
+    operator: 'throws',
+    diff: 'simple'
+  }
