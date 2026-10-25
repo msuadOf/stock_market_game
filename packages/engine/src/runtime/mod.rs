@@ -64,6 +64,8 @@ mod treasury_autonomy_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod day_end_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
+mod day_end_public_views_tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod decision_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod equivalence_tests;

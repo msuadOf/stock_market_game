@@ -529,11 +529,15 @@ pub enum GroupIn {
     },
     /// 交易部实体批次（进 staging，Start/Continue 时落账）。
     Batch(DeskBatch),
+    #[cfg(test)]
+    EchoTickForTest,
     /// 撤销 working overlay，回到上一收敛态（可逆日志逆序回放 + 清 staging）。
     Abort {
         /// 被撤销的 tick。
         tick: u64,
     },
+    /// 仅撤销 Seal 之后的日结增量，不得倒放已发布的普通 tick。
+    AbortDayEnd { tick: u64 },
     /// 日结相位（F §6.2）：Drain 回流落账 → T+1 解冻 → AdminBatch 权益落账
     /// （全部进可逆日志）→ GroupDayDone 回执。
     DayEnd(Box<DayEndDirective>),
@@ -824,6 +828,8 @@ pub enum DeskMsg {
         /// 被撤销的 tick。
         tick: u64,
     },
+    /// 仅撤销已经开始的 Drain；未进入日结的交易部保留普通 tick。
+    AbortDayEnd { tick: u64 },
     /// 日终清簿：强撤全部挂单、实体回流、上交清簿后状态。
     Drain,
     /// 关停：上交 `DeskFinal` 后退出。
@@ -835,6 +841,14 @@ pub enum DeskMsg {
 /// worker → 协调者的上行消息（全部 worker 共用一个 mpsc）。
 /// 手写 Debug：panic payload 不透明，只报告变体名与身份。
 pub enum UpMsg {
+    /// actor 完成日结专用撤销后确认；desk 确认构成组撤销的数据面屏障。
+    DayEndAborted { who: WorkerId, tick: u64 },
+    #[cfg(test)]
+    GroupTickForTest {
+        group: GroupIdx,
+        tick: u64,
+        committed_tick: u64,
+    },
     /// D5 envelope 投影：在途单快照回执（附 desk 真实 next_serial——
     /// Sol 四轮修复：序号游标贯通存档恢复，空簿也保留已耗序号）。
     DeskResting {
@@ -854,6 +868,8 @@ pub enum UpMsg {
         fee_sink: i64,
         /// 日终最新价（昨收基准）。
         last_price: i64,
+        /// 清算、清余单及桶提取后的下一 Start 决策观察基；不单独发布 PublishedTick。
+        drained_view: std::sync::Arc<StockPublic>,
         /// 清簿撤单事实（OrderCanceled 映射输入）。
         drained_lifecycle: Vec<DeskLifecycleFact>,
         /// Sol 六审段 1.2 取证修复：日结 Drain 的收盘竞价清算事实
@@ -1019,6 +1035,11 @@ pub enum UpMsg {
 impl std::fmt::Debug for UpMsg {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            UpMsg::DayEndAborted { who, tick } => write!(f, "DayEndAborted({who}, tick={tick})"),
+            #[cfg(test)]
+            UpMsg::GroupTickForTest { group, tick, committed_tick } => {
+                write!(f, "GroupTickForTest(group={group}, tick={tick}, committed={committed_tick})")
+            }
             UpMsg::DeskResting {
                 stock,
                 orders,

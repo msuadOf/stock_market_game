@@ -2207,6 +2207,25 @@ impl GroupState {
         self.run_round(tick, 0, desk_txs, up_tx)
     }
 
+    fn rollback_day_end(&mut self, tick: u64) -> Result<(), RuntimeError> {
+        if tick != self.cur_tick {
+            return Err(RuntimeError::ProtocolInvariant {
+                detail: format!("组 {} 日结撤销 tick 错配：{tick} != {}", self.group, self.cur_tick),
+            });
+        }
+        // Seal 前日志已经发布；Drain 即时增量必须保留在独立撤销范围内。
+        if let Some(baseline) = self.seal_acked_len {
+            self.undo.drain(..baseline);
+            self.committed_tick = self.cur_tick;
+        } else if self.committed_tick != self.cur_tick {
+            return Err(RuntimeError::ProtocolInvariant {
+                detail: format!("组 {} 日结撤销缺少 Seal 或日结隔离基线", self.group),
+            });
+        }
+        self.rollback();
+        Ok(())
+    }
+
     /// 日结相位（F §6.2 步骤 2/3）：Drain 回流落账 → T+1 解冻 → AdminBatch
     /// 权益落账——全部进可逆日志（日结校验失败 ⇒ Abort 整体冲回上一交易日
     /// 收敛态）；成功则由下一 `Start` 隐式转正（可逆日志退役=窗口关闭）。
@@ -5170,9 +5189,31 @@ pub fn group_main(
                     }
                 }
             }
+            #[cfg(test)]
+            GroupIn::EchoTickForTest => {
+                up_tx.send(UpMsg::GroupTickForTest {
+                    group: state.group,
+                    tick: state.cur_tick,
+                    committed_tick: state.committed_tick,
+                }).expect("测试游标回声通道必须可达");
+            }
             GroupIn::Abort { tick } => {
                 state.observed.push(Observed::Abort(tick));
                 state.rollback();
+            }
+            GroupIn::AbortDayEnd { tick } => {
+                state.observed.push(Observed::Abort(tick));
+                let outcome = state.rollback_day_end(tick).and_then(|()| {
+                    up_tx.send(UpMsg::DayEndAborted { who, tick }).map_err(|_| RuntimeError::SendFailed {
+                        detail: format!("组 {who} 日结撤销确认发送失败"),
+                    })
+                });
+                if let Err(error) = outcome {
+                    abort.store(true, Ordering::SeqCst);
+                    let _ = up_tx.send(UpMsg::Failed { who, error: error.clone() });
+                    result = Err(error);
+                    break;
+                }
             }
             GroupIn::DayEnd(directive) => {
                 state.observed.push(Observed::DayEnd(directive.day));

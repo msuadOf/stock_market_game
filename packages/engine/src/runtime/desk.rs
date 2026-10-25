@@ -308,6 +308,19 @@ struct MarketSnapshot {
     bars_len: usize,
 }
 
+/// Drain 可逆行情：只备份活动段及会被覆写的归档尾 K，不复制全部历史。
+#[derive(Clone, Debug)]
+struct DrainMarketSnapshot {
+    market: DeskMarket,
+    candles_len: usize,
+    rolled_day_bars: Option<Vec<super::protocol::MinuteBarFact>>,
+    rolled_day_stats: Option<(i64, u64)>,
+    rolled_day_candle: Option<DeskCandle>,
+    drain_cleared_closing: Option<super::protocol::DeskDayCandleFinal>,
+    bars_shipped_today: bool,
+    opening_cleared: bool,
+}
+
 /// 撤销日志条目（逆序回放恢复；覆盖面=全部可变状态）。
 #[derive(Clone, Debug)]
 enum DeskUndo {
@@ -330,11 +343,15 @@ enum DeskUndo {
     FeeSink(i64),
     /// 行情快照（tick 起始整面）。
     Market(MarketSnapshot),
+    /// 日结副作用前的行情与跨日暂存；下一 Start 随 undo 一并退役。
+    DrainMarket(Box<DrainMarketSnapshot>),
 }
 
 /// 交易部期末上交状态。
 #[derive(Clone, Debug)]
 pub struct DeskFinalState {
+    #[cfg(test)]
+    pub cur_tick_for_test: u64,
     /// 股索引。
     pub stock: StockIdx,
     /// 期末挂单（Drain 后为空）。
@@ -709,11 +726,41 @@ impl DeskState {
         }));
     }
 
+    /// 日结会覆写尾 K、消费 rolled 暂存，普通 tick 的 truncate 撤销不足以恢复。
+    fn snapshot_drain_market(&mut self) {
+        let m = &self.market;
+        self.undo.push(DeskUndo::DrainMarket(Box::new(DrainMarketSnapshot {
+            market: DeskMarket {
+                last_price: m.last_price,
+                last_close: m.last_close,
+                day_high: m.day_high,
+                day_low: m.day_low,
+                volume_today: m.volume_today,
+                turnover_today: m.turnover_today,
+                trade_count: m.trade_count,
+                candle: m.candle,
+                minute_closes: m.minute_closes.clone(),
+                minute_bars: m.minute_bars.clone(),
+                recent_prices: m.recent_prices.clone(),
+                candles: m.candles.last().copied().into_iter().collect(),
+                traded_days_total: m.traded_days_total,
+            },
+            candles_len: m.candles.len(),
+            rolled_day_bars: self.rolled_day_bars.clone(),
+            rolled_day_stats: self.rolled_day_stats,
+            rolled_day_candle: self.rolled_day_candle,
+            drain_cleared_closing: self.drain_cleared_closing,
+            bars_shipped_today: self.bars_shipped_today,
+            opening_cleared: self.opening_cleared,
+        })));
+    }
+
     /// 逆序回放撤销日志 + 清出口缓冲（Abort/panic 回滚）。
     fn rollback(&mut self) {
         // 刀 2a：Abort/panic 回滚——簿+行情整体恢复（保守双推）。
         self.bump_book_ver();
         self.bump_market_ver();
+        self.opening_cleared = false;
         let undo = std::mem::take(&mut self.undo);
         for entry in undo.into_iter().rev() {
             match entry {
@@ -747,6 +794,22 @@ impl DeskState {
                 DeskUndo::Expired(d) => self.expired_orders -= d,
                 DeskUndo::Cancelled(d) => self.cancelled_orders -= d,
                 DeskUndo::FeeSink(d) => self.fee_sink -= d,
+                DeskUndo::DrainMarket(s) => {
+                    let mut prior = s.market;
+                    let mut history = std::mem::take(&mut self.market.candles);
+                    history.truncate(s.candles_len);
+                    if let Some(tail) = prior.candles.pop() {
+                        *history.last_mut().expect("Drain 不得删除已归档 K") = tail;
+                    }
+                    prior.candles = history;
+                    self.market = prior;
+                    self.rolled_day_bars = s.rolled_day_bars;
+                    self.rolled_day_stats = s.rolled_day_stats;
+                    self.rolled_day_candle = s.rolled_day_candle;
+                    self.drain_cleared_closing = s.drain_cleared_closing;
+                    self.bars_shipped_today = s.bars_shipped_today;
+                    self.opening_cleared = s.opening_cleared;
+                }
                 DeskUndo::Market(s) => {
                     self.public_cutoff_serial = s.public_cutoff_serial;
                     self.last_phase = s.last_phase;
@@ -785,7 +848,6 @@ impl DeskState {
         // B2：清算窗标记复位（Err 泄漏防御——Abort/panic 回滚统一恢复点）。
         self.clearing_minute = None;
         self.cur_round = 0;
-        self.opening_cleared = false;
     }
 
     fn remove_by_ref(&mut self, order_ref: &OrderRef) {
@@ -956,8 +1018,23 @@ impl DeskState {
         tick: u64,
         cage: bool,
     ) -> Result<(i64, i64), RuntimeError> {
-        let up = self.up_stop()?;
-        let down = self.down_stop()?;
+        self.price_bound_for_close(side, tick, cage, self.market.last_close)
+    }
+
+    /// 共用同一选价规则，只显式指定昨收；用于尚未 roll 的下一 Start 观察基。
+    fn price_bound_for_close(
+        &self,
+        side: Side,
+        tick: u64,
+        cage: bool,
+        last_close: i64,
+    ) -> Result<(i64, i64), RuntimeError> {
+        let up = self
+            .price_bound(Self::money(last_close), 10_000 + self.setup.limit_bps, true)?
+            .cents();
+        let down = self
+            .price_bound(Self::money(last_close), 10_000 - self.setup.limit_bps, false)?
+            .cents();
         if !cage || !self.setup.cage_applies(tick) {
             return Ok((down, up));
         }
@@ -2427,6 +2504,36 @@ impl DeskState {
         });
     }
 
+    /// Drain 观察基供下一次 Start 使用；手动 Drain 可能先于真实 roll_day。
+    fn build_drained_public(&self) -> Result<super::protocol::StockPublic, RuntimeError> {
+        let next_tick = self
+            .cur_tick
+            .checked_add(1)
+            .ok_or_else(|| over("日结下一 tick 溢出"))?;
+        // 复用 begin_tick 的日界判定，不提前改变 desk 权威或归档。
+        let next_close = if next_tick / self.setup.ticks_per_day
+            > self.cur_tick / self.setup.ticks_per_day
+        {
+            self.market.last_price
+        } else {
+            self.market.last_close
+        };
+        // 不走缓存：清算、清余单、桶提取均已结束，必须构建完整的新观察基。
+        let mut view = self.build_public(next_tick);
+        let (lower, upper) = self.price_bound_for_close(Side::Buy, next_tick, false, next_close)?;
+        let (_, max_buy) = self.price_bound_for_close(
+            Side::Buy,
+            next_tick,
+            self.config.price_cage_enabled,
+            next_close,
+        )?;
+        view.daily_upper_limit = upper;
+        view.daily_lower_limit = lower;
+        view.max_buy_price = max_buy;
+        view.min_sell_price = lower;
+        Ok(view)
+    }
+
     /// 本收束点公共态（协调者安装进下一 tick 广播）。
     fn build_public(&self, tick: u64) -> super::protocol::StockPublic {
         let (down, up_buy) = self
@@ -2804,6 +2911,8 @@ impl DeskState {
     /// 期末上交。
     fn final_state(&self) -> DeskFinalState {
         DeskFinalState {
+            #[cfg(test)]
+            cur_tick_for_test: self.cur_tick,
             stock: self.setup.stock,
             resting: self
                 .bids
@@ -3243,11 +3352,28 @@ fn process_msg(
             state.rollback();
             state.rollback_hash = Some(state.state_hash());
         }
+        DeskMsg::AbortDayEnd { tick } => {
+            if tick != state.cur_tick {
+                return Err(RuntimeError::ProtocolInvariant {
+                    detail: format!("交易部 {} 日结撤销 tick 错配：{tick} != {}", state.setup.stock, state.cur_tick),
+                });
+            }
+            // 未进入 Drain 的交易部仍持普通 tick 日志，不可回放。
+            if state.undo.iter().any(|entry| matches!(entry, DeskUndo::DrainMarket(_))) {
+                state.rollback();
+                state.rollback_hash = Some(state.state_hash());
+            }
+            up_tx.send(UpMsg::DayEndAborted { who: WorkerId::Desk(state.setup.stock), tick })
+                .map_err(|_| RuntimeError::SendFailed {
+                    detail: format!("交易部 {} 日结撤销确认发送失败", state.setup.stock),
+                })?;
+        }
         DeskMsg::Drain => {
             // 隐式转正上一 tick（日终已收敛）：清簿进独立撤销日志，
             // Abort 只恢复清簿前簿态（回到上一交易日收敛态）。
             state.undo.clear();
             state.committed_tick = state.cur_tick;
+            state.snapshot_drain_market();
             state.drain_all()?;
             state.finish_round(state.cur_tick)?;
             state.flush_batches(group_txs, state.cur_tick, state.cur_round)?;
@@ -3302,6 +3428,7 @@ fn process_msg(
                     /// 手动日结=None——install 面维持既有形态（不对
                     /// 非收盘段日界补真，防预置历史/双属拍污染）。
                     drained_day_candle: state.drain_cleared_closing.take(),
+                    drained_view: std::sync::Arc::new(state.build_drained_public()?),
                 })
                 .map_err(|_| RuntimeError::SendFailed {
                     detail: format!("交易部 {} DeskDrained 发送失败", state.setup.stock),
