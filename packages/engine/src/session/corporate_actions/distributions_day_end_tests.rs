@@ -794,3 +794,63 @@ fn issuer_treasury_never_receives_dividend_or_stock_distribution() {
     }));
     assert_eq!(paid.actions.external_receipts[0].gross.cents(), 14);
 }
+
+#[test]
+fn zero_flat_withholding_keeps_receipts_without_zero_tax_admin_intents() {
+    let (mut actions, mut system, cal, catalog, cash) = fixture();
+    cash_plan(&mut actions, &mut system, &cal);
+    let reg = prepare(
+        &actions,
+        &system,
+        &cal,
+        &catalog,
+        &cash,
+        "2030-06-03",
+        CashDividendTaxMode::FlatWithholding,
+    )
+    .unwrap();
+    for rate in [0, 1] {
+        let paid = reg
+            .actions
+            .distributions_day_end_candidate(DistributionsDayEndInput {
+                day: date("2030-06-04"),
+                calendar: &cal,
+                catalog: &catalog,
+                company_system: &reg.company_system,
+                available_cash: &cash,
+                tax_mode: CashDividendTaxMode::FlatWithholding,
+                flat_withholding_bp: Some(rate),
+            })
+            .unwrap();
+        assert_eq!(paid.actions.flat_withholding_receipts.len(), 2);
+        assert!(paid
+            .actions
+            .flat_withholding_receipts
+            .iter()
+            .all(|r| r.withheld == Money::ZERO));
+        assert_eq!(paid.intents.len(), 2);
+        assert!(paid
+            .intents
+            .iter()
+            .all(|i| matches!(i, DistributionIntent::DividendGrossCredit { .. })));
+        assert_eq!(paid.projected_available_cash[&AccountId(1)].cents(), 21);
+    }
+}
+
+#[test]
+fn negative_available_cash_error_keeps_account_and_actual_cents() {
+    let (actions, system, cal, catalog, mut cash) = fixture();
+    cash.insert(AccountId(2), Money::from_cents(-17));
+    let error = prepare(
+        &actions,
+        &system,
+        &cal,
+        &catalog,
+        &cash,
+        "2030-06-03",
+        CashDividendTaxMode::Exempt,
+    )
+    .unwrap_err();
+    assert_eq!(error.account, Some(AccountId(2)));
+    assert!(error.to_string().contains("-17"), "{error}");
+}
