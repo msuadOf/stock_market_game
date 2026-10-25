@@ -1,0 +1,47 @@
+{"case": "per_stock_trading_flag_follows_the_frozen_calendar_not_the_default_table", "status": 0, "seconds": 0.408}
+
+running 1 test
+test per_stock_trading_flag_follows_the_frozen_calendar_not_the_default_table ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 147 filtered out; finished in 0.40s
+
+
+{"case": "market_holiday_day_end_advances_to_a_working_trading_session", "status": 0, "seconds": 0.207}
+
+running 1 test
+test market_holiday_day_end_advances_to_a_working_trading_session ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 147 filtered out; finished in 0.20s
+
+
+{"case": "market_holiday_frame_entries_reject_without_changing_authority", "status": 0, "seconds": 0.843}
+
+running 1 test
+test market_holiday_frame_entries_reject_without_changing_authority ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 147 filtered out; finished in 0.83s
+
+
+{"case": "market_holiday_gate_follows_frozen_closures_on_both_exchanges", "status": 0, "seconds": 0.841}
+
+running 1 test
+test market_holiday_gate_follows_frozen_closures_on_both_exchanges ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 147 filtered out; finished in 0.83s
+
+
+{"case": "market_holiday_runtime_gate_preserves_pending_intents_and_resources", "status": 0, "seconds": 0.434}
+
+running 1 test
+test market_holiday_runtime_gate_preserves_pending_intents_and_resources ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 147 filtered out; finished in 0.42s
+
+
+{"case": "market_holiday_gate_rejects_step_but_trading_day_still_fills", "status": 0, "seconds": 0.857}
+
+running 1 test
+test market_holiday_gate_rejects_step_but_trading_day_still_fills ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 147 filtered out; finished in 0.84s
+

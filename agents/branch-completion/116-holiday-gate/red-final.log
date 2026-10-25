@@ -1,0 +1,107 @@
+{"case": "per_stock_trading_flag_follows_the_frozen_calendar_not_the_default_table", "status": 101, "seconds": 0.422}
+
+running 1 test
+test per_stock_trading_flag_follows_the_frozen_calendar_not_the_default_table ... FAILED
+
+failures:
+
+---- per_stock_trading_flag_follows_the_frozen_calendar_not_the_default_table stdout ----
+
+thread 'per_stock_trading_flag_follows_the_frozen_calendar_not_the_default_table' (1829765) panicked at packages/engine/tests/session.rs:1848:5:
+冻结政策已把 2031-06-10 设为休市，每股开市判定必须跟随冻结政策而非默认表
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    per_stock_trading_flag_follows_the_frozen_calendar_not_the_default_table
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 147 filtered out; finished in 0.41s
+
+
+{"case": "market_holiday_day_end_advances_to_a_working_trading_session", "status": 0, "seconds": 0.216}
+
+running 1 test
+test market_holiday_day_end_advances_to_a_working_trading_session ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 147 filtered out; finished in 0.21s
+
+
+{"case": "market_holiday_frame_entries_reject_without_changing_authority", "status": 101, "seconds": 0.45}
+
+running 1 test
+test market_holiday_frame_entries_reject_without_changing_authority ... FAILED
+
+failures:
+
+---- market_holiday_frame_entries_reject_without_changing_authority stdout ----
+
+thread 'market_holiday_frame_entries_reject_without_changing_authority' (1829761) panicked at packages/engine/tests/session.rs:1781:31:
+called `Result::unwrap_err()` on an `Ok` value: TickFrame { tick: 1, facts: [EventFact { key: EventStableKey { phase_rank: 4, entity: Account(AccountId(1)), source: Sealed, local_event_index: 0 }, event: OrderAccepted { seq: 1, account: AccountId(1), code: StockId(0), id: OrderId(1), side: Sell, price: Money(1000), remaining_qty: 100 } }, EventFact { key: EventStableKey { phase_rank: 4, entity: Stock(StockId(0)), source: PriceTick, local_event_index: 0 }, event: PriceTick { seq: 2, tick: 1, code: StockId(0), last_price: Money(1000), daily_candle: DailyCandle { time: 1893456000, open: Money(1000), high: Money(1000), low: Money(1000), close: Money(1000), volume: 0, trade_stats: Some(DailyTradeStats { turnover_cents: 0, trade_count: 0 }) }, bids: [], asks: [(Money(1000), 100)] } }], timeseries_payload: TickTimeseriesPayload { markets: {StockId(0): MarketSnap { last_price: Money(1000), last_close: Money(1000), best_bid: None, best_ask: Some(Money(1000)), bids: [], asks: [(Money(1000), 100)] }}, active_daily_candles: {StockId(0): DailyCandle { time: 1893456000, open: Money(1000), high: Money(1000), low: Money(1000), close: Money(1000), volume: 0, trade_stats: Some(DailyTradeStats { turnover_cents: 0, trade_count: 0 }) }}, closed_daily_candles: {}, auction_points: {}, continuous_points: {StockId(0): ContinuousPoint { tick: 1, phase: Continuous, last_price: Money(1000), cumulative_volume: 0, bids: [], asks: [(Money(1000), 100)] }} }, seq_from: 0, seq_to: 2 }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    market_holiday_frame_entries_reject_without_changing_authority
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 147 filtered out; finished in 0.44s
+
+
+{"case": "market_holiday_gate_follows_frozen_closures_on_both_exchanges", "status": 101, "seconds": 0.443}
+
+running 1 test
+test market_holiday_gate_follows_frozen_closures_on_both_exchanges ... FAILED
+
+failures:
+
+---- market_holiday_gate_follows_frozen_closures_on_both_exchanges stdout ----
+
+thread 'market_holiday_gate_follows_frozen_closures_on_both_exchanges' (1829763) panicked at packages/engine/tests/session.rs:1811:33:
+本局冻结政策休市时，默认表的开市结果不得放行: [PriceTick { seq: 1, tick: 1, code: StockId(0), last_price: Money(1000), daily_candle: DailyCandle { time: 1893542400, open: Money(1000), high: Money(1000), low: Money(1000), close: Money(1000), volume: 0, trade_stats: Some(DailyTradeStats { turnover_cents: 0, trade_count: 0 }) }, bids: [], asks: [] }]
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    market_holiday_gate_follows_frozen_closures_on_both_exchanges
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 147 filtered out; finished in 0.43s
+
+
+{"case": "market_holiday_runtime_gate_preserves_pending_intents_and_resources", "status": 101, "seconds": 0.452}
+
+running 1 test
+test market_holiday_runtime_gate_preserves_pending_intents_and_resources ... FAILED
+
+failures:
+
+---- market_holiday_runtime_gate_preserves_pending_intents_and_resources stdout ----
+
+thread 'market_holiday_runtime_gate_preserves_pending_intents_and_resources' (1829766) panicked at packages/engine/tests/session.rs:1750:41:
+runtime 同样必须在休市日前置拒绝: [Trade { seq: 1, code: StockId(0), price: Money(1000), qty: 100, maker: AccountId(1), taker: AccountId(0) }, OrderAccepted { seq: 2, account: AccountId(1), code: StockId(0), id: OrderId(1), side: Sell, price: Money(1000), remaining_qty: 100 }, PriceTick { seq: 3, tick: 1, code: StockId(0), last_price: Money(1000), daily_candle: DailyCandle { time: 1893456000, open: Money(1000), high: Money(1000), low: Money(1000), close: Money(1000), volume: 100, trade_stats: Some(DailyTradeStats { turnover_cents: 100000, trade_count: 1 }) }, bids: [], asks: [] }]
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    market_holiday_runtime_gate_preserves_pending_intents_and_resources
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 147 filtered out; finished in 0.44s
+
+
+{"case": "market_holiday_gate_rejects_step_but_trading_day_still_fills", "status": 101, "seconds": 0.44}
+
+running 1 test
+test market_holiday_gate_rejects_step_but_trading_day_still_fills ... FAILED
+
+failures:
+
+---- market_holiday_gate_rejects_step_but_trading_day_still_fills stdout ----
+
+thread 'market_holiday_gate_rejects_step_but_trading_day_still_fills' (1829764) panicked at packages/engine/tests/session.rs:1706:35:
+休市日 step 必须被拒（#116）: [Trade { seq: 1, code: StockId(0), price: Money(1000), qty: 100, maker: AccountId(1), taker: AccountId(0) }, OrderAccepted { seq: 2, account: AccountId(1), code: StockId(0), id: OrderId(1), side: Sell, price: Money(1000), remaining_qty: 100 }, PriceTick { seq: 3, tick: 1, code: StockId(0), last_price: Money(1000), daily_candle: DailyCandle { time: 1893456000, open: Money(1000), high: Money(1000), low: Money(1000), close: Money(1000), volume: 100, trade_stats: Some(DailyTradeStats { turnover_cents: 100000, trade_count: 1 }) }, bids: [], asks: [] }]
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    market_holiday_gate_rejects_step_but_trading_day_still_fills
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 147 filtered out; finished in 0.43s
+
