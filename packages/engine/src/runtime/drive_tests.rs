@@ -4220,3 +4220,321 @@ fn knife5b_empty_group_book_keeps_session_mirror_on_clear() {
         "terminal 化后镜像不得保留 Active 状态（变化拍必装的旧语义固化）"
     );
 }
+
+/// D0：收盘 Drain 成交后不再 step，公开账户与日结 candidate 逐字段一致。
+fn d0_assert_candidate_accounts(
+    session: &GameSession,
+    driver: &RuntimeDriver,
+    candidate: &super::world::DayEndCandidate,
+) {
+    for (group, accounts) in &candidate.groups {
+        for (local, authority) in accounts.iter().enumerate() {
+            let Some(id) = driver.account_by_owner((*group, local as u32)) else {
+                continue;
+            };
+            let account = session.account(id).expect("名册账户");
+            assert_eq!(
+                account.cash().cents(),
+                authority.cash + authority.buy_purse_held_cents,
+                "{id:?} 日结现金立即交付"
+            );
+            for stock in 0..authority.shares.len() {
+                let qty = authority.shares[stock] + authority.pending_sell_qty[stock];
+                let actual = account.positions().get(&crate::StockId(stock as u32));
+                if qty == 0 {
+                    assert!(actual.is_none(), "清仓删除");
+                    continue;
+                }
+                let actual = actual.expect("日结持仓立即交付");
+                assert_eq!(actual.qty(), qty, "{id:?} 持仓");
+                assert_eq!(
+                    actual.t1_locked(),
+                    authority.frozen_today[stock],
+                    "{id:?} T+1"
+                );
+                assert_eq!(
+                    actual.invested_cents(),
+                    authority.invested_cents[stock],
+                    "{id:?} 买入成本"
+                );
+                assert_eq!(
+                    actual.recovered_cents(),
+                    authority.recovered_cents[stock],
+                    "{id:?} 卖出回收"
+                );
+            }
+        }
+    }
+}
+
+fn d0_closing_fixture() -> (
+    GameSession,
+    RuntimeDriver,
+    std::sync::Arc<std::sync::Mutex<Option<super::world::DayEndCandidate>>>,
+) {
+    let mut setup = setup_fixture();
+    setup.npcs.retail_count = 4;
+    setup.ticks_per_day = 6;
+    setup.auction_ticks = 1;
+    setup.closing_auction_ticks = 2;
+    let mut session = GameSession::new(setup, 21).expect("会话");
+    session.fixture_clear_holding_for_test(crate::AccountId(4), &crate::StockId(0));
+    let mut driver = RuntimeDriver::from_session_grouped(&mut session, 3).expect("三组含尾组");
+    let candidate = std::sync::Arc::new(std::sync::Mutex::new(None));
+    let out = std::sync::Arc::clone(&candidate);
+    driver.set_day_end_validator_for_test(Box::new(move |c| {
+        *out.lock().unwrap() = Some(c.clone());
+        Ok(())
+    }));
+    (session, driver, candidate)
+}
+
+fn d0_inject_closing(driver: &mut RuntimeDriver) {
+    let seller = driver
+        .world_accounts_snapshot()
+        .expect("账户权威")
+        .into_iter()
+        .find_map(|(g, accounts)| {
+            accounts.iter().enumerate().find_map(|(local, a)| {
+                (a.shares[0] >= 100).then(|| driver.account_by_owner((g, local as u32)).unwrap())
+            })
+        })
+        .expect("持股卖方");
+    let intents: Vec<_> = [
+        (crate::AccountId(4), crate::Side::Buy),
+        (seller, crate::Side::Sell),
+    ]
+    .into_iter()
+    .map(|(owner, side)| crate::session::ReceiptBearingIntent {
+        owner,
+        intent: crate::Intent::PlaceLimit {
+            code: crate::StockId(0),
+            side,
+            price: crate::strategy::LimitPrice::Fixed(crate::Money::from_cents(1000)),
+            qty: 100,
+        },
+        account_ordinal: 0,
+        stock_ordinal: 0,
+    })
+    .collect();
+    let upper: Vec<_> = driver
+        .world_public_views()
+        .iter()
+        .map(|v| v.daily_upper_limit)
+        .collect();
+    driver
+        .inject_player_intents(&intents, &upper)
+        .expect("收盘交叉委托");
+}
+
+#[test]
+fn d0_manual_day_end_installs_candidate_before_return_and_next_step() {
+    let (mut session, mut driver, candidate) = d0_closing_fixture();
+    for tick in 1..=6 {
+        if tick == 5 {
+            d0_inject_closing(&mut driver);
+        }
+        driver.step_frame_equivalent(&mut session).expect("交易拍");
+        driver.install_market_views(&mut session).expect("行情");
+        driver.install_candles(&mut session).expect("K");
+    }
+    driver
+        .day_end_with_runtime_market_day(&mut session)
+        .expect("日结");
+    let candidate = candidate.lock().unwrap().clone().expect("日结 candidate");
+    assert!(
+        candidate
+            .groups
+            .iter()
+            .flat_map(|(_, a)| a)
+            .any(|a| a.invested_cents[0] > 0),
+        "真实收盘成交"
+    );
+    d0_assert_candidate_accounts(&session, &driver, &candidate);
+    let epoch = &session
+        .runtime_retail_experience_for(&crate::AccountId(4))
+        .unwrap()
+        .feedback
+        .stocks[&crate::StockId(0)];
+    assert_eq!(
+        epoch.entry_moment.trading_day, 0,
+        "收盘首买属于刚结束的交易日"
+    );
+    assert_eq!(
+        epoch.entry_moment.market_minute, 240,
+        "收盘首买属于当日交易分钟末"
+    );
+
+    let tail = &candidate
+        .groups
+        .iter()
+        .find(|(group, _)| *group == 2)
+        .expect("尾组回执")
+        .1[0];
+    assert_eq!(tail.shares[0], 100, "尾组真实收盘首买 100 股");
+    assert_eq!(
+        tail.invested_cents[0], 100_000,
+        "收盘买入成交成本，不含费用"
+    );
+    assert_eq!(tail.frozen_today[0], 0, "日结后进入下一交易日，T+1 已解冻");
+    assert_eq!(candidate.groups.len(), 3, "三个组含非满尾组");
+    assert_eq!(
+        driver.account_by_owner((2, 0)),
+        Some(crate::AccountId(4)),
+        "尾组映射"
+    );
+    // 手动 API 的既有日 K 迁移缺口不在 D0；save/restore 由下方生产路径验证。
+    driver
+        .step_frame_equivalent(&mut session)
+        .expect("次日首拍");
+    d0_assert_candidate_accounts(&session, &driver, &candidate);
+}
+
+#[test]
+fn d0_production_day_end_installs_candidate_before_return_and_restore() {
+    let (mut session, driver, candidate) = d0_closing_fixture();
+    drop(driver);
+    session.step_via_runtime().expect("首拍惰性构造");
+    let out = std::sync::Arc::clone(&candidate);
+    session
+        .runtime_driver_for_test()
+        .unwrap()
+        .lock()
+        .unwrap()
+        .set_day_end_validator_for_test(Box::new(move |c| {
+            *out.lock().unwrap() = Some(c.clone());
+            Ok(())
+        }));
+    for tick in 2..=6 {
+        if tick == 5 {
+            let handle = session.runtime_driver_for_test().expect("驱动器");
+            d0_inject_closing(&mut handle.lock().unwrap());
+        }
+        session.step_via_runtime().expect("生产交易拍");
+    }
+    let candidate = candidate.lock().unwrap().clone().expect("日结 candidate");
+    let handle = session.runtime_driver_for_test().expect("驱动器");
+    let driver = handle.lock().unwrap();
+    d0_assert_candidate_accounts(&session, &driver, &candidate);
+    let epoch = &session
+        .runtime_retail_experience_for(&crate::AccountId(4))
+        .unwrap()
+        .feedback
+        .stocks[&crate::StockId(0)];
+    assert_eq!(
+        epoch.entry_moment.trading_day, 0,
+        "production收盘首买不能记到下一交易日"
+    );
+    assert_eq!(
+        epoch.entry_moment.market_minute, 240,
+        "production收盘首买属于当日交易分钟末"
+    );
+
+    let restored = GameSession::restore(&session.save().expect("日结 save")).expect("restore");
+    d0_assert_candidate_accounts(&restored, &driver, &candidate);
+}
+
+#[test]
+fn d0_civil_failure_restores_accounts_after_world_day_end() {
+    let (mut session, mut driver, _) = d0_closing_fixture();
+    for tick in 1..=6 {
+        if tick == 5 {
+            d0_inject_closing(&mut driver);
+        }
+        driver.step_frame_equivalent(&mut session).expect("交易拍");
+        driver.install_market_views(&mut session).expect("行情");
+        driver.install_candles(&mut session).expect("K");
+    }
+    let before = format!("{:?}", session.runtime_accounts_snapshot());
+    let retail_before = format!(
+        "{:?}",
+        session.runtime_retail_experience_for(&crate::AccountId(4))
+    );
+    let receipts_before =
+        serde_json::to_value(session.personal_trade_confirmations(crate::AccountId(4))).unwrap();
+    let err = driver
+        .day_end(&mut session)
+        .expect_err("未推进 market day，civil 时钟拒绝");
+    assert!(err.contains("自然日推进失败"), "{err}");
+    assert_eq!(
+        format!("{:?}", session.runtime_accounts_snapshot()),
+        before,
+        "civil 失败恢复现金/持仓/T+1/成本"
+    );
+    assert_eq!(
+        format!(
+            "{:?}",
+            session.runtime_retail_experience_for(&crate::AccountId(4))
+        ),
+        retail_before,
+        "civil 失败恢复首买经历"
+    );
+    assert_eq!(
+        serde_json::to_value(session.personal_trade_confirmations(crate::AccountId(4))).unwrap(),
+        receipts_before,
+        "civil 失败恢复收盘个人确认"
+    );
+}
+
+#[test]
+fn d0_partial_account_install_failure_restores_mirrors_without_reverting_published_tick() {
+    let (mut session, mut driver, _) = d0_closing_fixture();
+    for tick in 1..=6 {
+        if tick == 5 {
+            d0_inject_closing(&mut driver);
+        }
+        driver.step_frame_equivalent(&mut session).expect("交易拍");
+        driver.install_market_views(&mut session).expect("行情");
+        driver.install_candles(&mut session).expect("K");
+    }
+    // 已有经历但公开持仓缺席：新增投影会先写账户，再在首买经历守卫明确失败。
+    session
+        .runtime_hold_experience_init(&crate::AccountId(4), &crate::StockId(0), 100, 1000)
+        .expect("注入经历冲突");
+    let accounts = format!("{:?}", session.runtime_accounts_snapshot());
+    let retail = format!(
+        "{:?}",
+        session.runtime_retail_experience_for(&crate::AccountId(4))
+    );
+    let receipts =
+        serde_json::to_value(session.personal_trade_confirmations(crate::AccountId(4))).unwrap();
+    let publication = driver.publication();
+    let before = publication.load();
+    let err = driver
+        .day_end_with_runtime_market_day(&mut session)
+        .expect_err("首买经历冲突必须显式报错");
+    assert!(err.contains("首买经历初始化失败"), "{err}");
+    assert_eq!(
+        format!("{:?}", session.runtime_accounts_snapshot()),
+        accounts,
+        "部分账户安装恢复"
+    );
+    assert_eq!(
+        format!(
+            "{:?}",
+            session.runtime_retail_experience_for(&crate::AccountId(4))
+        ),
+        retail,
+        "经历恢复"
+    );
+    assert_eq!(
+        serde_json::to_value(session.personal_trade_confirmations(crate::AccountId(4))).unwrap(),
+        receipts,
+        "个人确认恢复"
+    );
+    assert_eq!(publication.load().tick, before.tick, "已发布 tick 不回退");
+    assert_eq!(
+        driver.world_committed_tick(),
+        6,
+        "日结失败仍停留最后一个已发布交易拍"
+    );
+    assert!(
+        driver
+            .world_accounts_snapshot()
+            .unwrap()
+            .into_iter()
+            .flat_map(|(_, a)| a)
+            .any(|a| a.foreign_active.iter().any(|&n| n > 0)),
+        "只撤日结，恢复真实收盘在途单"
+    );
+}

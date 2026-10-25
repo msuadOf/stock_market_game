@@ -1018,3 +1018,92 @@ fn runtime_heap_staleness_does_not_affect_business_hash() {
         "hash 与 heap 镜像状态解耦（恒由候选权威派生）"
     );
 }
+
+/// D0 新增镜像基线必须使用真实名册，不能把账户总数当作 AccountId 上界。
+#[test]
+fn d0_manual_day_end_mirror_rollback_covers_sparse_account_ids() {
+    let mut game = GameSession::new(super::npc_working_quote_tests::quote_setup(0), 42).unwrap();
+    let remote = AccountId(99);
+    game.state.accounts.insert(
+        remote,
+        crate::Account::new(
+            remote,
+            crate::account::AccountKind::Player,
+            Money::from_cents(123_456),
+        ),
+    );
+    let rollback = game.runtime_day_end_mirror_rollback();
+    game.fixture_account_mut(&remote)
+        .unwrap()
+        .fixture_set_cash(Money::from_cents(42));
+    rollback(&mut game);
+    assert_eq!(
+        game.account(remote).unwrap().cash(),
+        Money::from_cents(123_456),
+        "非连续 AccountId 也恢复日结安装前现金"
+    );
+}
+
+/// D0 生产日结完整基线的失败恢复面：新增安装写入不能遗漏稀疏账户。
+#[test]
+fn d0_production_day_end_baseline_restores_sparse_account_assets() {
+    let mut setup = super::npc_working_quote_tests::quote_setup(0);
+    setup.npcs.inst_count = 0;
+    setup.start_date = crate::calendar::CivilDate::from_ymd(2026, 1, 5).unwrap();
+    setup.ticks_per_day = 4;
+    setup.auction_ticks = 1;
+    setup.closing_auction_ticks = 0;
+    let mut game = GameSession::new(setup, 42).unwrap();
+    let remote = AccountId(99);
+    let mut account = crate::Account::new(
+        remote,
+        crate::account::AccountKind::Player,
+        Money::from_cents(123_456),
+    );
+    account.fixture_set_positions(std::collections::BTreeMap::from([(
+        StockId(0),
+        crate::account::Position::from_restored_parts(100, 100, 100_000, 10_000),
+    )]));
+    game.state.accounts.insert(remote, account);
+    let mut driver = crate::runtime::drive::RuntimeDriver::from_session(&mut game).unwrap();
+    for _ in 0..3 {
+        game.runtime_step_with_install(&mut driver)
+            .expect("真实生产安装前置拍");
+    }
+    let before_cash = game.account(remote).unwrap().cash();
+    let before_positions = format!("{:?}", game.account(remote).unwrap().positions());
+    let publication = driver.publication();
+    let (_, baseline) = game
+        .runtime_step_with_install_returning_baseline(&mut driver)
+        .expect("真实生产日结安装，保留失败回滚基线");
+    assert_eq!(
+        game.account(remote).unwrap().positions()[&StockId(0)].t1_locked(),
+        0,
+        "真实日结已解冻"
+    );
+    // 显式模拟安装尾部的新资产写入，再执行生产失败恢复；不伪造成交或 frame。
+    let changed = game.fixture_account_mut(&remote).unwrap();
+    changed.fixture_set_cash(Money::from_cents(42));
+    changed.fixture_set_positions(std::collections::BTreeMap::from([(
+        StockId(0),
+        crate::account::Position::from_restored_parts(200, 50, 200_000, 20_000),
+    )]));
+    game.rollback_runtime_step(baseline);
+    assert_eq!(
+        game.account(remote).unwrap().cash(),
+        before_cash,
+        "生产日结基线恢复稀疏账户现金"
+    );
+    assert_eq!(
+        format!("{:?}", game.account(remote).unwrap().positions()),
+        before_positions,
+        "恢复持仓、T+1 与成本"
+    );
+    assert_eq!(game.tick(), 3, "只撤会话安装");
+    assert_eq!(publication.load().tick, 4, "最后已发布市场 tick 不回退");
+    assert_eq!(
+        driver.world_committed_tick(),
+        4,
+        "不把生产失败改成 AbortTick"
+    );
+}

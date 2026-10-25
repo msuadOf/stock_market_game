@@ -782,93 +782,16 @@ impl RuntimeDriver {
         // 【P0 画像】acct_writeback 段（session 镜像回写循环——Arc 借用）。
         {
             let _seg = step_profile::scope(StepSegment::AcctWriteback);
-            for (g, accounts_arc) in snapshots.iter().enumerate() {
-            for (local, acct) in accounts_arc.iter() {
-                let global = g * self.accounts_per_group + *local as usize;
-                let Some(id) = self.id_map.get(global).copied() else {
-                    continue;
-                };
-                // P2-2b：首写前值入 undo（安装失败回滚源——替代 baseline
-                /// 全名册账户快照）。
-                session.runtime_record_account_undo(id);
-                #[cfg(test)]
-                {
-                    self.account_writes += 1;
-                }
-                // D3a-2c 件1：持仓回写全面以组权威同步——数量、T+1 冻结、
-                // 成本基（invested/recovered）均取组侧值（组侧由 FillFact
-                // 落账维护；清仓清零对齐 session 清仓删除条目语义）。此前
-                // "成本基保留会话侧"=runtime 模式下恒 0——D1 登记差异就此
-                // 闭合。先只读快照+经历补账，再单次可变写回（借用分离）。
-                let mut merged = session
-                    .account(id)
-                    .map(|a| a.positions().clone())
-                    .unwrap_or_default();
-                let mut pending_hold_inits: Vec<(crate::AccountId, crate::StockId, u32, i64)> =
-                    Vec::new();
-                for (idx, &qty_raw) in acct.shares.iter().enumerate() {
-                    // Sol 整改 3：qty 含在途卖余量（旧管线口径=在手+在途
-                    /// ——qty 口径差收口；session 域 cost_price/权益观察
-                    /// 因此与组读面同源）。
-                    let qty = qty_raw
-                        .saturating_add(
-                            acct.pending_sell_qty.get(idx).copied().unwrap_or(0),
-                        );
-                    let code = crate::StockId(idx as u32);
-                    // 清仓条目删除（Sol 四审修复 4，单列的清仓持仓回写差）：
-                    // qty 已含在途卖余量（pending_sell_qty 镜像），0=真清仓
-                    // 且无在途——对齐旧管线 apply_sell 清仓删条目语义。
-                    // 此前"清零保留"（qty 口径差时代在途期间条目清零）——
-                    // 余量入 qty 后保留语义只剩清仓残留条目（旧管线会删除，
-                    // completed_sell 场景断言红）。组侧"曾持有"观察面由
-                    // ever_held 位承载（held 集等价不依赖 session 条目）。
-                    if qty == 0 {
-                        merged.remove(&code);
-                        continue;
-                    }
-                    let is_new_hold = qty > 0 && !merged.contains_key(&code);
-                    if is_new_hold {
-                        // Sol 终审修复 1c：VWAP 查找用真实组号（此前写死
-                        /// group=0——多组下组 0 的 VWAP 误配给其他组账户）。
-                        let entry = buy_vwap
-                                .get(&(
-                                    g as super::GroupIdx,
-                                    *local,
-                                    idx as super::StockIdx,
-                                ))
-                                .copied()
-                                .or_else(|| last_prices.get(idx).copied())
-                                .unwrap_or(1);
-                        // D5 #4：首买经历 init 延后到个人态回写之后（组权威
-                        /// 经验行整态覆盖会冲掉先行写入——同拍投影段同式）。
-                        pending_hold_inits.push((id, code, qty, entry));
-                    }
-                    merged.insert(
-                        code,
-                        crate::account::Position::from_restored_parts(
-                            qty,
-                            acct.frozen_today.get(idx).copied().unwrap_or(0),
-                            acct.invested_cents.get(idx).copied().unwrap_or(0),
-                            acct.recovered_cents.get(idx).copied().unwrap_or(0),
-                        ),
-                    );
-                }
-                if let Some(engine_acct) = session.fixture_account_mut(&id) {
-                    // Sol 五审：公开现金=组现金+在途买占用（挂出不减、成交
-                    /// 实付减、终结不变——旧管线 reservation 观同口径；组
-                    /// 内部 purse 所有权口径不因此改变）。
-                    engine_acct.fixture_set_cash(Money::from_cents(
-                        acct.cash + acct.buy_purse_held_cents,
-                    ));
-                    engine_acct.fixture_set_positions(merged);
-                }
-                // Sol 终审修复 1b：本账户的首买经历 init 收集并入成员槽
-                ///（Q2 Seal 后组回写（发布分片）已含本拍全部成交——
-                /// 回写段是 init 的唯一时机，丢弃形成"有持仓、无经历"，
-                /// 破坏 fault2038 保存校验）。
-                self.pending_hold_inits.extend(pending_hold_inits);
-            }
-            }
+            self.install_account_projection(
+                session,
+                snapshots.iter().enumerate().flat_map(|(g, accounts)| {
+                    accounts
+                        .iter()
+                        .map(move |(local, acct)| (g, *local, acct.as_ref()))
+                }),
+                &buy_vwap,
+                &last_prices,
+            );
             // P2-1b：本 tick 事实集传下一拍（并集自身不传递——否则一旦
             // dirty 永远 dirty）；日结强制标记在此消费（本次已全量）。
             self.force_full_accounts = false;
@@ -1017,12 +940,7 @@ impl RuntimeDriver {
         // 【P0 画像】hold_inits 段。
         {
             let _seg = step_profile::scope(StepSegment::HoldInits);
-            let mut inits = std::mem::take(&mut self.pending_hold_inits);
-            for (id, code, qty, entry) in inits.drain(..) {
-                session
-                    .runtime_hold_experience_init(&id, &code, qty, entry)
-                    .map_err(|e| format!("首买经历初始化失败：{e}"))?;
-            }
+            self.install_pending_hold_inits(session, None)?;
         }
         // D3a-2c 件5：组内计划簿交付点投影（plans_debug 等读面源——组
         // 线程权威，X1 直改）。**空簿不覆盖**：迁移期 session 侧仍承载
@@ -1211,12 +1129,24 @@ impl RuntimeDriver {
     /// - runtime DayEnd（Drain 清簿→组日翻转/权益→候选校验）对应市场侧
     ///   日终点；`next_seq` 语义由会话权威保留（事件 seq 仍全局单调）；
     /// - `session.end_civil_day()` 保持为**唯一权威调用**（公司调度/
-    ///   日历/披露的 candidate-安装语义不变）——本方法把两者编排为
-    ///   一个原子序列：runtime 日结成功 ⇒ 会话自然日推进；任一失败
-    ///   ⇒ 两侧各自回滚（runtime Abort 可逆日志冲回、会话 candidate
-    ///   丢弃），日历不推进。
+    ///   日历/披露的 candidate-安装语义不变）。失败时撤销 World 日结、
+    ///   恢复 day/seq 及本次账户/经历/个人确认镜像；既有 retained 发布
+    ///   与 civil 其他域的跨域事务边界不由此局部镜像基线承诺。
     pub fn day_end(&mut self, session: &mut GameSession) -> Result<(), String> {
-        // 基线（Sol 二审修复集 2）：civil 失败时全量回滚——World 日结
+        let restore_mirror = session.runtime_day_end_mirror_rollback();
+        let pending_before = self.pending_hold_inits.clone();
+        let force_before = self.force_full_accounts;
+        let result = self.day_end_inner(session);
+        if result.is_err() {
+            restore_mirror(session);
+            self.pending_hold_inits = pending_before;
+            self.force_full_accounts = force_before;
+        }
+        result
+    }
+
+    fn day_end_inner(&mut self, session: &mut GameSession) -> Result<(), String> {
+        // 基线（Sol 二审修复集 2）：civil 失败时撤销 World 日结并恢复账户镜像——World 日结
         // （Abort 冲回）、driver seq/事件缓冲、会话 day/seq。
         let day_before = session.day();
         let seq_before = session.current_seq();
@@ -1226,6 +1156,12 @@ impl RuntimeDriver {
         self.world
             .run_day_end_public()
             .map_err(|e| format!("runtime 日结失败（内部已 Abort 冲回）：{e:?}"))?;
+        if let Err(e) = self.install_day_end_accounts(session) {
+            self.rollback_day_end(
+                session, day_before, seq_before, next_seq_before, drained_len_before,
+            );
+            return Err(format!("日结账户安装失败（账户镜像已回滚）：{e}"));
+        }
         // 日界批：收盘成交事件/个人确认派生（civil_date=当日）。失败=日结
         /// 冲回（drained_events 截断+Abort）。
         let drained_receipts = match self.collect_drained_events(session.civil_date()) {
@@ -1238,7 +1174,7 @@ impl RuntimeDriver {
                     next_seq_before,
                     drained_len_before,
                 );
-                return Err(format!("收盘成交事件派生失败（日结已全量回滚）：{e}"));
+                return Err(format!("收盘成交事件派生失败（World 日结与账户镜像已回滚）：{e}"));
             }
         };
         // B2 件 4：手动日结路径补保留冻结（civil 推进**前**——date=当日；
@@ -1252,7 +1188,18 @@ impl RuntimeDriver {
                 next_seq_before,
                 drained_len_before,
             );
-            return Err(format!("保留快照冻结失败（日结已全量回滚）：{e}"));
+            return Err(format!("保留快照冻结失败（World 日结与账户镜像已回滚）：{e}"));
+        }
+        // 公司链读取前交付收盘确认；失败时由外层恢复镜像基线。
+        if let Err(e) = session.runtime_append_trade_receipts(&drained_receipts) {
+            self.rollback_day_end(
+                session,
+                day_before,
+                seq_before,
+                next_seq_before,
+                drained_len_before,
+            );
+            return Err(format!("收盘成交个人确认入账失败（World 日结与账户镜像已回滚）：{e}"));
         }
         // 会话自然日推进（公司调度/关账/披露/civil clock——旧引擎权威）。
         if let Err(e) = session.end_civil_day() {
@@ -1263,7 +1210,7 @@ impl RuntimeDriver {
                 next_seq_before,
                 drained_len_before,
             );
-            return Err(format!("自然日推进失败（日结已全量回滚）：{e:?}"));
+            return Err(format!("自然日推进失败（World 日结与账户镜像已回滚）：{e:?}"));
         }
         // D3a-2c 件2：日结后同步自然日（快照 civil_date 跟随 civil clock）。
         self.world.set_civil_date(session.civil_date());
@@ -1274,17 +1221,168 @@ impl RuntimeDriver {
         // 逐账户事实事件——置强制全量回写标记（下一 step 全名册同步
         // 一次；低频路径语义安全优先）。
         self.force_full_accounts = true;
-        // 日界批：收盘成交个人确认入账（全序列成功尾点——此前入账会使
-        /// civil 失败回滚后确认残留）。
-        if let Err(e) = session.runtime_append_trade_receipts(&drained_receipts) {
-            self.rollback_day_end(
-                session,
-                day_before,
-                seq_before,
-                next_seq_before,
-                drained_len_before,
-            );
-            return Err(format!("收盘成交个人确认入账失败（日结已全量回滚）：{e}"));
+        Ok(())
+    }
+
+    /// tick 分片与日结完整 candidate 共用同一账户投影，保持现金、T+1、成本口径一致。
+    fn install_account_projection<'a>(
+        &mut self,
+        session: &mut GameSession,
+        accounts: impl Iterator<Item = (usize, super::LocalIdx, &'a super::group::GroupAccount)>,
+        buy_vwap: &std::collections::BTreeMap<
+            (super::GroupIdx, super::LocalIdx, super::StockIdx),
+            i64,
+        >,
+        last_prices: &[i64],
+    ) {
+        for (g, local, acct) in accounts {
+            let global = g * self.accounts_per_group + local as usize;
+            let Some(id) = self.id_map.get(global).copied() else {
+                continue;
+            };
+            // P2-2b：首写前值入 undo（安装失败回滚源——替代 baseline
+            /// 全名册账户快照）。
+            session.runtime_record_account_undo(id);
+            #[cfg(test)]
+            {
+                self.account_writes += 1;
+            }
+            // D3a-2c 件1：持仓回写全面以组权威同步——数量、T+1 冻结、
+            // 成本基（invested/recovered）均取组侧值（组侧由 FillFact
+            // 落账维护；清仓清零对齐 session 清仓删除条目语义）。此前
+            // "成本基保留会话侧"=runtime 模式下恒 0——D1 登记差异就此
+            // 闭合。先只读快照+经历补账，再单次可变写回（借用分离）。
+            let mut merged = session
+                .account(id)
+                .map(|a| a.positions().clone())
+                .unwrap_or_default();
+            let mut pending_hold_inits: Vec<(crate::AccountId, crate::StockId, u32, i64)> =
+                Vec::new();
+            for (idx, &qty_raw) in acct.shares.iter().enumerate() {
+                // Sol 整改 3：qty 含在途卖余量（旧管线口径=在手+在途
+                /// ——qty 口径差收口；session 域 cost_price/权益观察
+                /// 因此与组读面同源）。
+                let qty =
+                    qty_raw.saturating_add(acct.pending_sell_qty.get(idx).copied().unwrap_or(0));
+                let code = crate::StockId(idx as u32);
+                // 清仓条目删除（Sol 四审修复 4，单列的清仓持仓回写差）：
+                // qty 已含在途卖余量（pending_sell_qty 镜像），0=真清仓
+                // 且无在途——对齐旧管线 apply_sell 清仓删条目语义。
+                // 此前"清零保留"（qty 口径差时代在途期间条目清零）——
+                // 余量入 qty 后保留语义只剩清仓残留条目（旧管线会删除，
+                // completed_sell 场景断言红）。组侧"曾持有"观察面由
+                // ever_held 位承载（held 集等价不依赖 session 条目）。
+                if qty == 0 {
+                    merged.remove(&code);
+                    continue;
+                }
+                let is_new_hold = qty > 0 && !merged.contains_key(&code);
+                if is_new_hold {
+                    // Sol 终审修复 1c：VWAP 查找用真实组号（此前写死
+                    /// group=0——多组下组 0 的 VWAP 误配给其他组账户）。
+                    let entry = buy_vwap
+                        .get(&(g as super::GroupIdx, local, idx as super::StockIdx))
+                        .copied()
+                        .or_else(|| last_prices.get(idx).copied())
+                        .unwrap_or(1);
+                    // D5 #4：首买经历 init 延后到个人态回写之后（组权威
+                    /// 经验行整态覆盖会冲掉先行写入——同拍投影段同式）。
+                    pending_hold_inits.push((id, code, qty, entry));
+                }
+                merged.insert(
+                    code,
+                    crate::account::Position::from_restored_parts(
+                        qty,
+                        acct.frozen_today.get(idx).copied().unwrap_or(0),
+                        acct.invested_cents.get(idx).copied().unwrap_or(0),
+                        acct.recovered_cents.get(idx).copied().unwrap_or(0),
+                    ),
+                );
+            }
+            if let Some(engine_acct) = session.fixture_account_mut(&id) {
+                // Sol 五审：公开现金=组现金+在途买占用（挂出不减、成交
+                /// 实付减、终结不变——旧管线 reservation 观同口径；组
+                /// 内部 purse 所有权口径不因此改变）。
+                engine_acct
+                    .fixture_set_cash(Money::from_cents(acct.cash + acct.buy_purse_held_cents));
+                engine_acct.fixture_set_positions(merged);
+            }
+            // Sol 终审修复 1b：本账户的首买经历 init 收集并入成员槽
+            ///（Q2 Seal 后组回写（发布分片）已含本拍全部成交——
+            /// 回写段是 init 的唯一时机，丢弃形成"有持仓、无经历"，
+            /// 破坏 fault2038 保存校验）。
+            self.pending_hold_inits.extend(pending_hold_inits);
+        }
+    }
+
+    /// 日结成功回执已包含 Drain 结算及 T+1 解冻；在 civil 读取账户前立即交付。
+    fn install_day_end_accounts(&mut self, session: &mut GameSession) -> Result<(), String> {
+        let candidate = self
+            .world
+            .last_day_end_candidate
+            .as_ref()
+            .ok_or_else(|| "日结成功但缺少账户 candidate".to_owned())?;
+        let groups = candidate.groups.clone();
+        let closing_moment = crate::experience::ExperienceMoment {
+            civil_date: session.civil_date(),
+            trading_day: u64::from(candidate.day),
+            market_minute: (u64::from(candidate.day) + 1)
+                * u64::from(crate::observation::GAME_INTRADAY_MINUTES_PER_DAY),
+        };
+        let mut sums: std::collections::BTreeMap<_, (i128, u64)> = Default::default();
+        for fact in &self.world.drained_day_trades {
+            let entry = sums
+                .entry((fact.taker.0, fact.taker.1, fact.stock))
+                .or_default();
+            entry.0 += i128::from(fact.price) * i128::from(fact.qty);
+            entry.1 += u64::from(fact.qty);
+        }
+        let buy_vwap = sums
+            .into_iter()
+            .filter_map(|(key, (value, qty))| {
+                (qty > 0).then(|| {
+                    (
+                        key,
+                        i64::try_from(value / i128::from(qty)).expect("成交均价在 i64"),
+                    )
+                })
+            })
+            .collect();
+        let prices: Vec<_> = self
+            .world_public_views()
+            .iter()
+            .map(|v| v.last_price)
+            .collect();
+        self.install_account_projection(
+            session,
+            groups.iter().flat_map(|(g, accounts)| {
+                accounts
+                    .iter()
+                    .enumerate()
+                    .map(move |(local, acct)| (*g as usize, local as super::LocalIdx, acct))
+            }),
+            &buy_vwap,
+            &prices,
+        );
+        self.install_pending_hold_inits(session, Some(closing_moment))?;
+        // D0 暂保留下一拍全量对齐，待独立等价证据允许后再退役。
+        self.force_full_accounts = true;
+        Ok(())
+    }
+
+    fn install_pending_hold_inits(
+        &mut self,
+        session: &mut GameSession,
+        moment: Option<crate::experience::ExperienceMoment>,
+    ) -> Result<(), String> {
+        for (id, code, qty, entry) in std::mem::take(&mut self.pending_hold_inits) {
+            let result = match moment {
+                Some(moment) => {
+                    session.runtime_hold_experience_init_at(&id, &code, qty, entry, moment)
+                }
+                None => session.runtime_hold_experience_init(&id, &code, qty, entry),
+            };
+            result.map_err(|e| format!("首买经历初始化失败：{e}"))?;
         }
         Ok(())
     }
@@ -1607,13 +1705,14 @@ impl RuntimeDriver {
     /// （civil_date=当日；receipts 返回调用方即时入账）。
     pub fn world_day_end_for_step(
         &mut self,
-        civil_date: crate::calendar::CivilDate,
+        session: &mut GameSession,
     ) -> Result<Vec<crate::session::personal_trade_history::PendingTradeReceipt>, String>
     {
         self.world
             .run_day_end_public()
             .map_err(|e| format!("runtime 世界日结失败（内部已 Abort 冲回）：{e:?}"))?;
-        self.collect_drained_events(civil_date)
+        self.install_day_end_accounts(session)?;
+        self.collect_drained_events(session.civil_date())
     }
 
     /// 清簿撤单事实转事件（seq 分配），并入待取缓冲。
@@ -1754,6 +1853,22 @@ impl RuntimeDriver {
         &mut self,
         session: &mut GameSession,
     ) -> Result<(), String> {
+        let restore_mirror = session.runtime_day_end_mirror_rollback();
+        let pending_before = self.pending_hold_inits.clone();
+        let force_before = self.force_full_accounts;
+        let result = self.day_end_with_runtime_market_day_inner(session);
+        if result.is_err() {
+            restore_mirror(session);
+            self.pending_hold_inits = pending_before;
+            self.force_full_accounts = force_before;
+        }
+        result
+    }
+
+    fn day_end_with_runtime_market_day_inner(
+        &mut self,
+        session: &mut GameSession,
+    ) -> Result<(), String> {
         // 基线（Sol 二审修复集 2，扩展 P1-7）：civil 失败时除会话
         // day/seq 外，同步撤销 World 日结与 driver seq/事件缓冲。
         let day_before = session.day();
@@ -1763,8 +1878,13 @@ impl RuntimeDriver {
         self.world
             .run_day_end_public()
             .map_err(|e| format!("runtime 日结失败：{e:?}"))?;
-        // 日界批：收盘成交事件/个人确认派生（civil_date=当日；入账在
-        /// 全序列成功尾点）。
+        if let Err(e) = self.install_day_end_accounts(session) {
+            self.rollback_day_end(
+                session, day_before, seq_before, next_seq_before, drained_len_before,
+            );
+            return Err(format!("日结账户安装失败（账户镜像已回滚）：{e}"));
+        }
+        // civil 公司链读取前交付收盘成交；失败时由外层恢复镜像基线。
         let drained_receipts = match self.collect_drained_events(session.civil_date()) {
             Ok(receipts) => receipts,
             Err(e) => {
@@ -1775,13 +1895,24 @@ impl RuntimeDriver {
                     next_seq_before,
                     drained_len_before,
                 );
-                return Err(format!("收盘成交事件派生失败（日结已全量回滚）：{e}"));
+                return Err(format!("收盘成交事件派生失败（World 日结与账户镜像已回滚）：{e}"));
             }
         };
         // driver 直调路径无 DayBoundary 事件——撤单段紧随竞价段编号
         ///（编号序=输出序：trades/auction → lifecycle）。
         self.collect_drained_lifecycle_after_boundary();
         session.advance_runtime_market_day();
+        if let Err(e) = session.runtime_append_trade_receipts(&drained_receipts) {
+            self.rollback_day_end(
+                session,
+                day_before,
+                seq_before,
+                next_seq_before,
+                drained_len_before,
+            );
+            return Err(format!("收盘成交个人确认入账失败（World 日结与账户镜像已回滚）：{e}"));
+        }
+        // 会话自然日推进（公司调度/关账/披露/civil clock——旧引擎权威）。
         if let Err(e) = session.end_civil_day() {
             self.rollback_day_end(
                 session,
@@ -1790,7 +1921,7 @@ impl RuntimeDriver {
                 next_seq_before,
                 drained_len_before,
             );
-            return Err(format!("自然日推进失败（日结已全量回滚）：{e:?}"));
+            return Err(format!("自然日推进失败（World 日结与账户镜像已回滚）：{e:?}"));
         }
         // Sol 六审段 1.2 取证修复：日结 drained 事件（含收盘竞价清算
         /// AuctionTick/AuctionCompleted）经 next_seq 分配后**回写会话
@@ -1800,16 +1931,7 @@ impl RuntimeDriver {
         session.set_runtime_seq(self.next_seq);
         // D4：日结清会话分钟历史（位置合并的跨日对齐——旧管线同口径）。
         session.clear_runtime_minute_history();
-        if let Err(e) = session.runtime_append_trade_receipts(&drained_receipts) {
-            self.rollback_day_end(
-                session,
-                day_before,
-                seq_before,
-                next_seq_before,
-                drained_len_before,
-            );
-            return Err(format!("收盘成交个人确认入账失败（日结已全量回滚）：{e}"));
-        }
+
         Ok(())
     }
 }

@@ -991,7 +991,7 @@ impl GameSession {
             // 日界批：收盘竞价成交（Drain 应答捎带）——Trade 事件入
             /// DayBoundary 前段、个人确认以**当日** civil_date 即时入账
             /// （修复迟到下一拍取次日+日结静点 save 丢失两漂移）。
-            let drained_receipts = match driver.world_day_end_for_step(self.civil_date()) {
+            let drained_receipts = match driver.world_day_end_for_step(self) {
                 Ok(receipts) => receipts,
                 Err(e) => {
                     self.rollback_runtime_step(baseline);
@@ -1537,6 +1537,38 @@ impl GameSession {
             .collect()
     }
 
+    /// 手动日结只撤销新增账户投影、经历与个人确认；不承诺回退已发布市场 tick。
+    pub(crate) fn runtime_day_end_mirror_rollback(&self) -> impl FnOnce(&mut Self) {
+        let accounts = self.runtime_accounts_snapshot();
+        let retail = self.state.retail_experience.clone();
+        let confirmations = self.state.personal_trade_confirmations.clone();
+        let watermark = self.state.receipt_watermark;
+        let account_undo = self.state.runtime_account_undo.clone();
+        let account_ids = self.state.runtime_account_undo_ids.clone();
+        let retail_undo = self.state.runtime_retail_undo.clone();
+        let retail_ids = self.state.runtime_retail_undo_ids.clone();
+        let receipt_undo = self.state.runtime_receipts_undo.clone();
+        let receipt_ids = self.state.runtime_receipts_undo_ids.clone();
+        move |session| {
+            for (id, cash, positions) in accounts {
+                let account = session
+                    .fixture_account_mut(&id)
+                    .expect("日结前名册账户仍在册");
+                account.fixture_set_cash(crate::Money::from_cents(cash));
+                account.fixture_set_positions(positions);
+            }
+            session.state.retail_experience = retail;
+            session.state.personal_trade_confirmations = confirmations;
+            session.state.receipt_watermark = watermark;
+            session.state.runtime_account_undo = account_undo;
+            session.state.runtime_account_undo_ids = account_ids;
+            session.state.runtime_retail_undo = retail_undo;
+            session.state.runtime_retail_undo_ids = retail_ids;
+            session.state.runtime_receipts_undo = receipt_undo;
+            session.state.runtime_receipts_undo_ids = receipt_ids;
+        }
+    }
+
     /// runtime 驱动器翻转面（P1-7）：日结失败回滚 day/seq。
     pub fn rollback_runtime_day_end(&mut self, day: u32, seq: u64) {
         self.mark_external_mutation();
@@ -1601,12 +1633,10 @@ impl GameSession {
         i64,
         std::collections::BTreeMap<crate::StockId, crate::account::Position>,
     )> {
-        (0..self.account_count() as u64)
-            .filter_map(|i| {
-                let id = crate::AccountId(i);
-                self.account(id)
-                    .map(|a| (id, a.cash().cents(), a.positions().clone()))
-            })
+        self.state
+            .accounts
+            .iter()
+            .map(|(id, account)| (*id, account.cash().cents(), account.positions().clone()))
             .collect()
     }
 
@@ -2384,6 +2414,18 @@ impl GameSession {
             market_minute: self.current_market_minute(),
             trading_day: u64::from(self.state.day),
         };
+        self.runtime_hold_experience_init_at(id, code, qty, price_cents, moment)
+    }
+
+    /// 日结首买使用收盘事实的时刻，避免安装时 day 已推进导致经历跨日。
+    pub(crate) fn runtime_hold_experience_init_at(
+        &mut self,
+        id: &crate::AccountId,
+        code: &crate::StockId,
+        _qty: u32,
+        price_cents: i64,
+        moment: crate::experience::ExperienceMoment,
+    ) -> Result<(), String> {
         // P2-3b：首写前值入 undo（改写前记录——回滚源）。
         self.runtime_record_retail_undo(id);
         let Some(ledger) = self.state.retail_experience.get_mut(id) else {
