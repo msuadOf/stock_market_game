@@ -42,6 +42,12 @@
 
 - `domain-amount-tests.log`：当前10条中9通过（1.43s）；新增纯domain未划收/新评税与非空Session wrapper已通过，唯一Exempt构造前置仍红。
 
+## 后续独立复核修正
+
+C5：合法 `CashDividendTaxBook` 的同日 `collections` 物理数组可被交换后受检恢复，真实接受顺序由唯一 `operation_seq` 决定。新增短测已实际反序列化并 `validate()`，`.last()` 真红（得到 seq1，期望 seq2）；仅将投影改为 `max_by_key(operation_seq)` 后 exact 绿（0.00s），不改 domain/save。
+
+原始红绿：`sequence-red-tests.log`、`sequence-green-tests.log`；修复不削弱既有断言。最终独立复跑仍等待 Exempt 前置。
+
 ## 待完成
 
 当前尚未声明完成：等待 Exempt 前置提交、重跑全部新增短测与foundation、完整diff独立复核及本地小提交。主 agent 安排 `sol61_review_company_views`（未实施者）独立审查；有效发现均交实现修复后复查。

@@ -489,3 +489,30 @@ fn session_outstanding_query_preserves_populated_tax_book_after_restore() {
         .all(|view| view.stock == StockCode("600101".into())));
     assert_eq!(before, save_bytes(&session));
 }
+
+#[test]
+fn latest_collection_uses_operation_sequence_after_valid_same_day_receipts_reordering() {
+    let mut book = CashDividendTaxBook::new(
+        AccountId(1),
+        StockCode("600101".into()),
+        DividendTaxProfile::IndividualPublicMarket,
+        date("2030-01-01"),
+        vec![],
+    )
+    .unwrap();
+    book.collect_due("first".into(), date("2030-01-01"), Money::from_cents(1))
+        .unwrap();
+    let latest = book
+        .collect_due("second".into(), date("2030-01-01"), Money::from_cents(2))
+        .unwrap();
+    let mut wire = serde_json::to_value(&book).unwrap();
+    wire["collections"].as_array_mut().unwrap().swap(0, 1);
+    let restored: CashDividendTaxBook = serde_json::from_value(wire).unwrap();
+    restored.validate().unwrap();
+    let mut actions = engine::session::SessionCorporateActions::default();
+    actions.dividend_tax_books.push(restored);
+    let before = serde_json::to_vec(&actions).unwrap();
+    let views = actions.dividend_tax_outstanding_views().unwrap();
+    assert_eq!(views[0].latest_collection, Some(latest));
+    assert_eq!(before, serde_json::to_vec(&actions).unwrap());
+}

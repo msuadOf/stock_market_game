@@ -180,7 +180,7 @@ pub struct DividendTaxOutstandingView {
     pub stock: StockCode,
     /// 尚未划收的应纳税额（分，已约简非负分数；按每笔分红合计四舍五入到分后汇总）。
     pub outstanding: crate::company::cash_dividend_tax::ExactDividendTaxAmount,
-    /// 最近一次实际划收回执；None 表示尚无划收事实。
+    /// 按 operation_seq 读取最近一次实际划收回执；None 表示尚无划收事实。
     /// 回执保留其发生时的余额与资金事实，不代表当前余额全部已经尝试划收。
     pub latest_collection: Option<crate::company::cash_dividend_tax::TaxCollectionReceipt>,
 }
@@ -225,7 +225,11 @@ impl SessionCorporateActions {
                     account: book.account(),
                     stock: book.stock().clone(),
                     outstanding,
-                    latest_collection: book.collections().last().cloned(),
+                    latest_collection: book
+                        .collections()
+                        .iter()
+                        .max_by_key(|receipt| receipt.operation_seq)
+                        .cloned(),
                 })
             })
             .collect()
