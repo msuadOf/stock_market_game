@@ -82,7 +82,7 @@ impl GameSession {
             order,
             account,
             code: code.clone(),
-            company: self.state.company_registry.issuer_of(code).cloned(),
+            company: self.state.issuer_of_stock(*code),
             plan,
             decision: self.state.causal.decision_for(account),
             side,
@@ -116,5 +116,58 @@ impl GameSession {
                 reason,
             },
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn submitted_origin_resolves_company_from_the_stock_catalog() {
+        let mut setup = crate::session::npc_working_quote_tests::quote_setup(0);
+        setup.stocks[0].code = StockCode("600101".to_owned());
+        let mut configs = crate::company::default_companies(setup.start_date).unwrap();
+        configs.retain(|company| {
+            company.spec.code == "C-600101" || company.spec.code == "C-TEST-BANK"
+        });
+        for company in &mut configs {
+            if company.spec.listed_stock.is_some() {
+                setup.stocks[0].total_shares = company.spec.issued_shares;
+            } else {
+                company.spec.code = "A-UNLISTED".to_owned();
+            }
+        }
+        let registry = crate::company::CompanyRegistry::new(configs).unwrap();
+        registry
+            .validate_issuer_mapping(&[(setup.stocks[0].code.clone(), setup.stocks[0].total_shares)])
+            .unwrap();
+        let mut session = GameSession::new(setup, 42).unwrap();
+        // 单独验证诊断接缝：合法发行人表额外含一家未上市公司，不执行市场 tick。
+        session.state.company_registry = std::sync::Arc::new(registry);
+        let stock = session.stock_id("600101").unwrap();
+        let company = session.state.company_registry.catalog().id("C-600101").unwrap();
+        assert_ne!(stock.0, company.0, "夹具必须区分股票目录与公司目录的 id");
+        let quote = session.causal_quote(&stock);
+
+        session.causal_submitted_with_quote(
+            AccountId(0),
+            OrderId(1),
+            &stock,
+            crate::Side::Buy,
+            100,
+            quote,
+        );
+
+        let origin = session
+            .causal_facts()
+            .iter()
+            .find_map(|fact| match &fact.kind {
+                CausalFactKind::Submitted(origin) => Some(origin),
+                _ => None,
+            })
+            .expect("真实提交投影必须保留来源");
+        assert_eq!(origin.code, stock);
+        assert_eq!(origin.company, Some(company));
     }
 }

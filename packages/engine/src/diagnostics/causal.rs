@@ -230,7 +230,7 @@ mod tests {
     #[test]
     fn collector_filled_values_serialize_as_exact_decimal_cents() {
         let mut collector = CausalCollector::default();
-        let code = StockId("600101".to_owned());
+        let code = StockId(1);
         collector.record_continuous_fill(time(), OrderId(1), AccountId(1), &code, 100, i64::MAX);
         let value = serde_json::to_value(collector).unwrap();
         assert_eq!(value["filled_values"]["1"], i64::MAX.to_string());
@@ -275,7 +275,7 @@ mod tests {
     fn collector_continuous_overflow_appends_without_advancing_value() {
         let mut collector = CausalCollector::default();
         let order = OrderId(1);
-        let code = StockId("600101".to_owned());
+        let code = StockId(1);
         collector.record_continuous_fill(time(), order, AccountId(1), &code, 100, i64::MAX);
         collector.record_continuous_fill(time(), order, AccountId(1), &code, 100, 1);
         assert_eq!(collector.filled_values[&order], i64::MAX);
@@ -294,7 +294,7 @@ mod tests {
     fn collector_auction_arithmetic_failure_precedes_zero_entry_and_chain_check() {
         let mut collector = CausalCollector::default();
         let order = OrderId(1);
-        let code = StockId("600101".to_owned());
+        let code = StockId(1);
         assert_eq!(
             collector.record_auction_fill(
                 time(),
@@ -315,7 +315,7 @@ mod tests {
     fn collector_auction_chain_failure_keeps_entry_zero_without_appending() {
         let mut collector = CausalCollector::default();
         let order = OrderId(1);
-        let code = StockId("600101".to_owned());
+        let code = StockId(1);
         assert_eq!(
             collector.record_auction_fill(time(), order, AccountId(1), &code, 100, 1, 2),
             Err("auction causal fill value disagrees with the receipt chain")

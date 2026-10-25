@@ -394,7 +394,7 @@ impl GameSession {
                         };
                         facts.push(crate::diagnostics::causal::CausalFactKind::Acquisition {
                             account: id,
-                            company,
+                            company: *company,
                             publication: u64::from(record.id.value()),
                             published,
                             acquired: now,
@@ -861,7 +861,7 @@ mod tests {
         assert_eq!(session.state.next_order_id, next_order);
         assert!(session.state.history_reads[&id].stocks.is_empty());
         #[cfg(feature = "simulation-diagnostics")]
-        assert!(session.causal_facts().iter().any(|fact| matches!(&fact.kind, crate::diagnostics::causal::CausalFactKind::Acquisition { account, published, acquired, .. } if *account == id && *published == day_end.disclosure_instant && *acquired == day_end.disclosure_instant)));
+        assert!(session.causal_facts().iter().any(|fact| matches!(&fact.kind, crate::diagnostics::causal::CausalFactKind::Acquisition { account, company: acquired_company, published, acquired, .. } if *account == id && *acquired_company == company && *published == day_end.disclosure_instant && *acquired == day_end.disclosure_instant)));
         let saved = session.save().unwrap();
         assert_eq!(
             serde_json::to_value(GameSession::restore(&saved).unwrap().save().unwrap()).unwrap(),

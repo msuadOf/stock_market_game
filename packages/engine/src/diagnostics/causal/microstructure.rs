@@ -185,7 +185,7 @@ mod tests {
 
     fn quote(bid: Option<i64>, ask: Option<i64>, depth: u64) -> Quote {
         Quote {
-            code: StockId("600101".to_owned()),
+            code: StockId(1),
             bid_cents: bid,
             ask_cents: ask,
             bid_depth: depth,
@@ -196,11 +196,11 @@ mod tests {
     #[test]
     fn direction_persistence_keeps_each_stock_chain_and_ignores_auction_direction() {
         let kinds = [
-            ("600101", Some(Side::Buy)),
-            ("000001", Some(Side::Sell)),
-            ("600101", None),
-            ("600101", Some(Side::Buy)),
-            ("600101", Some(Side::Sell)),
+            (StockId(1), Some(Side::Buy)),
+            (StockId(0), Some(Side::Sell)),
+            (StockId(1), None),
+            (StockId(1), Some(Side::Buy)),
+            (StockId(1), Some(Side::Sell)),
         ];
         let facts: Vec<_> = kinds
             .into_iter()
@@ -217,7 +217,7 @@ mod tests {
                     .unwrap(),
                 },
                 kind: CausalFactKind::Execution {
-                    code: StockId(code.to_owned()),
+                    code,
                     maker: OrderId(1),
                     taker: OrderId(2),
                     side,
@@ -238,7 +238,7 @@ mod tests {
     fn quote_response_uses_first_later_valid_quote_and_includes_current_recovery() {
         let kinds = [
             CausalFactKind::Execution {
-                code: StockId("600101".to_owned()),
+                code: StockId(1),
                 maker: OrderId(1),
                 taker: OrderId(2),
                 side: Some(Side::Buy),

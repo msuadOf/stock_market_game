@@ -7,7 +7,7 @@ use engine::{AccountId, Event, GameSession, Intent, Money, Side, StockCode};
 #[test]
 fn causal_money_fields_use_full_precision_decimal_cents_strings() {
     use engine::diagnostics::causal::Quote;
-    let code = StockCode("600101".to_owned());
+    let code = fixture::setup().stock_catalog().unwrap().id("600101").unwrap();
     let quote = Quote {
         code: code.clone(),
         bid_cents: Some(i64::MIN),
@@ -112,7 +112,7 @@ fn causal_fact_json_preserves_large_time_sequence_and_depth() {
     fact.sequence = u64::MAX;
     fact.time.market_minute = u64::MAX;
     fact.kind = CausalFactKind::Quote(engine::diagnostics::causal::Quote {
-        code: StockCode("600101".to_owned()),
+        code: session.stock_id("600101").unwrap(),
         bid_cents: None,
         ask_cents: None,
         bid_depth: u64::MAX,
@@ -125,7 +125,7 @@ fn causal_fact_json_preserves_large_time_sequence_and_depth() {
     assert_eq!(json["kind"]["Quote"]["ask_depth"], "0");
     fact.kind = CausalFactKind::Acquisition {
         account: AccountId(0),
-        company: engine::company::CompanyId("diagnostic".to_owned()),
+        company: session.save().unwrap().company_operations.catalog().id("C-600101").unwrap(),
         publication: u64::MAX,
         published: fact.time.civil,
         acquired: fact.time.civil,
@@ -145,7 +145,7 @@ fn canceled_session(auction: bool) -> GameSession {
         setup.auction_ticks = 12;
     }
     let mut session = GameSession::new(setup, 7).unwrap();
-    let code = StockCode("600101".to_owned());
+    let code = session.stock_id("600101").unwrap();
     session
         .enqueue_player_intent(
             AccountId(0),
@@ -176,6 +176,9 @@ fn canceled_session(auction: bool) -> GameSession {
 fn reconciles_real_continuous_submission_and_voluntary_cancel() {
     let session = canceled_session(false);
     let report = session.causal_diagnostics().unwrap();
+    let company = session.save().unwrap().company_operations.catalog().id("C-600101").unwrap();
+    assert_eq!(report.orders[0].origin.company, Some(company));
+    assert_eq!(report.orders[0].origin.code, session.stock_id("600101").unwrap());
     assert_eq!(
         (report.submitted_qty, report.canceled_qty, report.open_qty),
         (100, 100, 0)
@@ -278,7 +281,7 @@ fn npc_execution_session_with_player_quantity(player_quantity: u32) -> GameSessi
             .enqueue_player_intent(
                 AccountId(0),
                 Intent::PlaceLimit {
-                    code: StockCode("000812".to_owned()),
+                    code: session.stock_id("000812").unwrap(),
                     side: Side::Buy,
                     price: engine::LimitPrice::Highest,
                     qty: player_quantity,
@@ -306,7 +309,7 @@ fn npc_execution_session_with_player_quantity(player_quantity: u32) -> GameSessi
                 let position = session
                     .account(AccountId(0))
                     .unwrap()
-                    .position(&StockCode("000812".to_owned()))
+                    .position(&session.stock_id("000812").unwrap())
                     .expect("真实买入必须形成持仓");
                 assert!(position.t1_locked() >= player_bought_this_tick);
             }
@@ -408,7 +411,7 @@ fn closing_auction_remainder_has_explicit_day_end_not_voluntary_cancel() {
         .enqueue_player_intent(
             AccountId(0),
             Intent::PlaceLimit {
-                code: StockCode("600101".to_owned()),
+                code: session.stock_id("600101").unwrap(),
                 side: Side::Buy,
                 price: engine::LimitPrice::Fixed(Money::from_cents(995)),
                 qty: 100,

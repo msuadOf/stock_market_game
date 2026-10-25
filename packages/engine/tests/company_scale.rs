@@ -158,7 +158,7 @@ fn short_checkpoint_preserves_bytes_and_rejects_unknown_plan_references() {
         ),
         (
             "code",
-            serde_json::to_value(StockCode("600999".to_string())).unwrap(),
+            serde_json::to_value(engine::StockId(u32::MAX)).unwrap(),
             2143_u16,
         ),
     ] {
@@ -334,6 +334,9 @@ fn four_industry_ten_year_archive_preserves_each_industry_state() {
     let config = engine::company::operations::CompanyOperationsConfig {
         seed: SEED,
         shock_params: engine::company::events::ShockParams::current_default_parameters(),
+        catalog: engine::company::CompanyCatalog::from_codes(&[
+            "C-BANK", "C-IND-A", "C-IND-B", "C-INS", "C-RE",
+        ]).unwrap(),
         companies: vec![
             four_industry_fixtures::industrial_a(start),
             four_industry_fixtures::bank_c(start),
