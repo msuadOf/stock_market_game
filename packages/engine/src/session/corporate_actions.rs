@@ -15,6 +15,8 @@
 //! （`save/schema/corporate-actions.ts`）随 B4f 的查询面一起接线，届时再
 //! 恢复 ts 注解（`SaveSlot` 侧本批按既有公司域权威字段惯例 `#[ts(skip)]`）。
 
+pub(crate) mod rights_offering_day_end;
+
 use crate::company::share_registry::{HolderId, ShareRegistry};
 use crate::orderbook::AccountId;
 use crate::{account::StockCode, money::Money};
