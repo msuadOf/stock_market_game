@@ -1,6 +1,8 @@
 import { assertReportRoe } from "../../../host/public-report-normalize.ts"
+import type { MonthlyReportSchedule } from "../../../types/generated/MonthlyReportSchedule"
+import { parseMonthlyReportSchedule } from "../monthly-report-schedule.ts"
 import type { ReportRoe } from "../../../types/generated/ReportRoe.ts"
-import { SaveSchemaError, array, civilDate, exact, integer, oneOf, record, string } from "../primitives.ts"
+import { SaveSchemaError, array, boolean, civilDate, exact, integer, oneOf, record, string } from "../primitives.ts"
 import { parseAnnouncementContent, type AnnouncementContent } from "./announcement-content.ts"
 import type { PublicationSource } from "../../../types/generated/PublicationSource.ts"
 import { u32 } from "../personal/common.ts"
@@ -23,7 +25,7 @@ export type Notes = { readonly items: readonly NoteItem[]; readonly consolidatio
 export type NoteItem = { readonly code: string; readonly name: string; readonly target: NoteTarget; readonly opening: DecimalAmount; readonly movement: DecimalAmount; readonly ytd_movement: DecimalAmount; readonly closing: DecimalAmount }
 export type ReportVersion = { readonly sequence: number; readonly supersedes: number | null; readonly kind: "Original" | { readonly Correction: { readonly reason: string } } }
 export type ReportSet = { readonly scope: Scope; readonly period: string; readonly kind: (typeof reportKinds)[number]; readonly window: readonly [string, string]; readonly version: ReportVersion; readonly balance_sheet: BalanceSheet; readonly income: { readonly report_period: IncomeColumns; readonly report_period_net_income_to_parent: DecimalAmount | null; readonly quarter: IncomeColumns; readonly cumulative: IncomeColumns; readonly prior_year: Comparative<IncomeColumns>; readonly minority_net_income: DecimalAmount | null; readonly net_income_to_parent: DecimalAmount | null }; readonly roe: ReportRoe; readonly cash_flow: CashFlow; readonly equity: Equity; readonly notes: Notes }
-export type PublicationOrigin = { readonly SeededPrehistory: { readonly fiscal_year: number; readonly kind: (typeof scheduledKinds)[number]; readonly offset_days: number } } | { readonly ScheduledDisclosure: { readonly fiscal_year: number; readonly kind: (typeof scheduledKinds)[number]; readonly offset_days: number } } | "Correction"
+export type PublicationOrigin = { readonly SeededPrehistory: { readonly fiscal_year: number; readonly kind: (typeof scheduledKinds)[number]; readonly offset_days: number } } | { readonly ScheduledDisclosure: { readonly fiscal_year: number; readonly kind: (typeof scheduledKinds)[number]; readonly offset_days: number } } | { readonly MonthlyDisclosure: { readonly schedule: MonthlyReportSchedule; readonly delay_days: number; readonly seeded: boolean } } | "Correction"
 export type PublishedReport = { readonly id: number; readonly company: number; readonly source: PublicationSource; readonly policy: { readonly chart_version: number }; readonly approved_at: CivilInstantValue; readonly published_at: CivilInstantValue; readonly origin: PublicationOrigin; readonly supersedes: number | null; readonly reports: ReportSet }
 export type Announcement = { readonly id: number; readonly company: number; readonly occurred_on: string; readonly published_at: CivilInstantValue; readonly content: AnnouncementContent }
 export type PublicLibrary = { readonly next_seq: number; readonly reports: readonly PublishedReport[]; readonly announcements: readonly Announcement[] }
@@ -40,7 +42,19 @@ export function parseReportSet(value: unknown, path: string): ReportSet {
 }
 
 function parseVersion(value: unknown, path: string): ReportVersion { const item = record(value, path); exact(item, ["sequence", "supersedes", "kind"], path); const kind = item.kind === "Original" ? item.kind : (() => { const [tag, body] = variant(item.kind, `${path}.kind`); if (tag !== "Correction") throw new SaveSchemaError(`${path}.kind`, "包含无效版本种类"); const correction = record(body, `${path}.kind.Correction`); exact(correction, ["reason"], `${path}.kind.Correction`); return { Correction: { reason: string(correction.reason, `${path}.kind.Correction.reason`) } } })(); return { sequence: integer(item.sequence, `${path}.sequence`, 1), supersedes: item.supersedes === null ? null : integer(item.supersedes, `${path}.supersedes`, 1), kind } }
-function parseOrigin(value: unknown, path: string): PublicationOrigin { if (value === "Correction") return value; const [tag, body] = variant(value, path); if (tag !== "SeededPrehistory" && tag !== "ScheduledDisclosure") throw new SaveSchemaError(path, "包含无效公布来源"); const item = record(body, `${path}.${tag}`); exact(item, ["fiscal_year", "kind", "offset_days"], `${path}.${tag}`); const result = { fiscal_year: integer(item.fiscal_year, `${path}.${tag}.fiscal_year`), kind: oneOf(item.kind, `${path}.${tag}.kind`, scheduledKinds), offset_days: integer(item.offset_days, `${path}.${tag}.offset_days`, 0) }; return tag === "SeededPrehistory" ? { SeededPrehistory: result } : { ScheduledDisclosure: result } }
+function parseOrigin(value: unknown, path: string): PublicationOrigin {
+  if (value === "Correction") return value
+  const [tag, body] = variant(value, path)
+  if (tag === "MonthlyDisclosure") {
+    const originPath = `${path}.MonthlyDisclosure`
+    const item = record(body, originPath)
+    exact(item, ["schedule", "delay_days", "seeded"], originPath)
+    const schedule = parseMonthlyReportSchedule(item.schedule, `${originPath}.schedule`)
+    const delay_days = integer(item.delay_days, `${originPath}.delay_days`, 0)
+    if (delay_days > 255) throw new SaveSchemaError(`${originPath}.delay_days`, "必须是 u8 范围内的整数")
+    return { MonthlyDisclosure: { schedule, delay_days, seeded: boolean(item.seeded, `${originPath}.seeded`) } }
+  }
+  if (tag !== "SeededPrehistory" && tag !== "ScheduledDisclosure") throw new SaveSchemaError(path, "包含无效公布来源"); const item = record(body, `${path}.${tag}`); exact(item, ["fiscal_year", "kind", "offset_days"], `${path}.${tag}`); const result = { fiscal_year: integer(item.fiscal_year, `${path}.${tag}.fiscal_year`), kind: oneOf(item.kind, `${path}.${tag}.kind`, scheduledKinds), offset_days: integer(item.offset_days, `${path}.${tag}.offset_days`, 0) }; return tag === "SeededPrehistory" ? { SeededPrehistory: result } : { ScheduledDisclosure: result } }
 
 export function parsePublicLibrary(value: unknown, path = "public_library"): PublicLibrary {
   const item = record(value, path)

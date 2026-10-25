@@ -7,8 +7,7 @@ import type { PeriodGenerationParameters } from "../../types/generated/PeriodGen
 import type { PeriodVariableExpenseRule } from "../../types/generated/PeriodVariableExpenseRule"
 import type { SimpleFinanceConfig } from "../../types/generated/SimpleFinanceConfig"
 import type { SimpleCompanyPreferences } from "../../types/generated/SimpleCompanyPreferences"
-import type { MonthlyReportSchedule } from "../../types/generated/MonthlyReportSchedule"
-import type { MonthlyReportDelay } from "../../types/generated/MonthlyReportDelay"
+import { parseMonthlyReportSchedule } from "./monthly-report-schedule.ts"
 import type { ReportFrequency } from "../../types/generated/ReportFrequency"
 import { parseJournalLine } from "./company/accounting/journal.ts"
 import { parseTaxPolicy } from "./company/books/industrial.ts"
@@ -130,36 +129,13 @@ function simple(value: unknown, path: string): SimpleConfig {
   return { environment: { initial_change_bp: bounded(environment.initial_change_bp, `${path}.environment.initial_change_bp`, -2147483648, I32_MAX), persistence_bp: bounded(environment.persistence_bp, `${path}.environment.persistence_bp`, 0, 10000), noise: noise(environment.noise, `${path}.environment.noise`) }, companies: array(parsed.companies, `${path}.companies`).map((item, index) => company(item, `${path}.companies[${index}]`)), prehistory_periods: bounded(parsed.prehistory_periods, `${path}.prehistory_periods`, 0, 65535), settlement_cycle: oneOf(parsed.settlement_cycle, `${path}.settlement_cycle`, ["Monthly", "Quarterly", "HalfYear", "Annual"] as const) }
 }
 
-function delay(value: unknown, path: string): MonthlyReportDelay {
-  if (value === "None") return value
-  const parsed = record(value, path)
-  exact(parsed, ["Uniform"], path)
-  const uniform = record(parsed.Uniform, `${path}.Uniform`)
-  exact(uniform, ["max_days"], `${path}.Uniform`)
-  return { Uniform: { max_days: bounded(uniform.max_days, `${path}.Uniform.max_days`, 1, 31) } }
-}
-
-function schedule(value: unknown, path: string): MonthlyReportSchedule {
-  const parsed = record(value, path)
-  if ("Preset" in parsed) {
-    exact(parsed, ["Preset"], path)
-    const preset = record(parsed.Preset, `${path}.Preset`)
-    exact(preset, ["preset", "delay"], `${path}.Preset`)
-    return { Preset: { preset: oneOf(preset.preset, `${path}.Preset.preset`, ["FirstDayEvening", "TenthDayEvening"] as const), delay: delay(preset.delay, `${path}.Preset.delay`) } }
-  }
-  exact(parsed, ["Custom"], path)
-  const custom = record(parsed.Custom, `${path}.Custom`)
-  exact(custom, ["day", "second_of_day", "delay"], `${path}.Custom`)
-  return { Custom: { day: bounded(custom.day, `${path}.Custom.day`, 1, 28), second_of_day: bounded(custom.second_of_day, `${path}.Custom.second_of_day`, 0, 86399), delay: delay(custom.delay, `${path}.Custom.delay`) } }
-}
-
 function frequency(value: unknown, path: string): ReportFrequency {
   if (value === "Quarterly") return value
   const parsed = record(value, path)
   exact(parsed, ["Monthly"], path)
   const monthly = record(parsed.Monthly, `${path}.Monthly`)
   exact(monthly, ["schedule"], `${path}.Monthly`)
-  return { Monthly: { schedule: schedule(monthly.schedule, `${path}.Monthly.schedule`) } }
+  return { Monthly: { schedule: parseMonthlyReportSchedule(monthly.schedule, `${path}.Monthly.schedule`) } }
 }
 
 /** 只投影当前存档中实际出现的配置；跨股票与账户的不变量仍由 Rust 恢复门禁校验。 */
