@@ -1,0 +1,59 @@
+
+running 10 tests
+test runtime::day_end_tests::d0_manual_and_auto_day_end_are_mutually_exclusive ... ok
+test runtime::skeleton_tests::d0_world_drop_shuts_down_workers ... ok
+test session::failure_tests::d0_lockstep_violation_fails_explicitly ... ok
+test session::failure_tests::d0_manual_day_end_mirror_rollback_covers_sparse_account_ids ... ok
+test session::failure_tests::d0_production_day_end_late_failure_restores_sparse_account_assets ... FAILED
+test session::failure_tests::d0_step_via_runtime_continues_across_ticks_and_keeps_book ... ok
+test runtime::drive_tests::d0_civil_failure_restores_accounts_after_world_day_end ... ok
+test runtime::drive_tests::d0_production_day_end_installs_candidate_before_return_and_restore ... FAILED
+test runtime::drive_tests::d0_manual_day_end_installs_candidate_before_return_and_next_step ... FAILED
+test runtime::drive_tests::d0_partial_account_install_failure_restores_mirrors_without_reverting_published_tick ... ok
+
+failures:
+
+---- session::failure_tests::d0_production_day_end_late_failure_restores_sparse_account_assets stdout ----
+
+thread 'session::failure_tests::d0_production_day_end_late_failure_restores_sparse_account_assets' (2258952) panicked at packages/engine/src/session/failure_tests.rs:1084:9:
+投影含真实收盘竞价成交
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- runtime::drive_tests::d0_production_day_end_installs_candidate_before_return_and_restore stdout ----
+PROBE info-check now=CivilInstant { date: CivilDate { year: 2026, month: 1, day: 5 }, second_of_day: 34200 } cadence=Immediate
+PROBE info-check now=CivilInstant { date: CivilDate { year: 2026, month: 1, day: 5 }, second_of_day: 38940 } cadence=Daily { checks: 1 }
+PROBE info-check now=CivilInstant { date: CivilDate { year: 2026, month: 1, day: 5 }, second_of_day: 53820 } cadence=Immediate
+PROBE info-check now=CivilInstant { date: CivilDate { year: 2026, month: 1, day: 5 }, second_of_day: 53820 } cadence=Daily { checks: 2 }
+PROBE info-check now=CivilInstant { date: CivilDate { year: 2026, month: 1, day: 5 }, second_of_day: 53910 } cadence=Immediate
+PROBE info-check now=CivilInstant { date: CivilDate { year: 2026, month: 1, day: 5 }, second_of_day: 33300 } cadence=Immediate
+
+thread 'runtime::drive_tests::d0_production_day_end_installs_candidate_before_return_and_restore' (2258937) panicked at packages/engine/src/runtime/drive_tests.rs:4410:5:
+assertion `left == right` failed: production收盘首买不能记到下一交易日
+  left: 1
+ right: 0
+
+---- runtime::drive_tests::d0_manual_day_end_installs_candidate_before_return_and_next_step stdout ----
+PROBE info-check now=CivilInstant { date: CivilDate { year: 2026, month: 1, day: 5 }, second_of_day: 34200 } cadence=Immediate
+PROBE info-check now=CivilInstant { date: CivilDate { year: 2026, month: 1, day: 5 }, second_of_day: 34200 } cadence=Daily { checks: 2 }
+PROBE info-check now=CivilInstant { date: CivilDate { year: 2026, month: 1, day: 5 }, second_of_day: 49080 } cadence=Daily { checks: 1 }
+PROBE info-check now=CivilInstant { date: CivilDate { year: 2026, month: 1, day: 5 }, second_of_day: 53820 } cadence=Immediate
+PROBE info-check now=CivilInstant { date: CivilDate { year: 2026, month: 1, day: 5 }, second_of_day: 53910 } cadence=Immediate
+PROBE info-check now=CivilInstant { date: CivilDate { year: 2026, month: 1, day: 5 }, second_of_day: 33300 } cadence=Immediate
+PROBE info-check now=CivilInstant { date: CivilDate { year: 2026, month: 1, day: 5 }, second_of_day: 64800 } cadence=Immediate
+PROBE info-check now=CivilInstant { date: CivilDate { year: 2026, month: 1, day: 5 }, second_of_day: 64800 } cadence=Daily { checks: 2 }
+PROBE info-check now=CivilInstant { date: CivilDate { year: 2026, month: 1, day: 5 }, second_of_day: 64800 } cadence=Monthly
+
+thread 'runtime::drive_tests::d0_manual_day_end_installs_candidate_before_return_and_next_step' (2258935) panicked at packages/engine/src/runtime/drive_tests.rs:4356:5:
+assertion `left == right` failed: 收盘首买属于当日交易分钟末
+  left: 0
+ right: 240
+
+
+failures:
+    runtime::drive_tests::d0_manual_day_end_installs_candidate_before_return_and_next_step
+    runtime::drive_tests::d0_production_day_end_installs_candidate_before_return_and_restore
+    session::failure_tests::d0_production_day_end_late_failure_restores_sparse_account_assets
+
+test result: FAILED. 7 passed; 3 failed; 0 ignored; 0 measured; 2270 filtered out; finished in 1.45s
+
+bounded command exited with 101

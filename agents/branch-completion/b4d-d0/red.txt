@@ -1,0 +1,47 @@
+
+running 3 tests
+PROBE info-check now=CivilInstant { date: CivilDate { year: 2026, month: 1, day: 5 }, second_of_day: 34200 } cadence=Daily { checks: 2 }
+PROBE info-check now=CivilInstant { date: CivilDate { year: 2026, month: 1, day: 5 }, second_of_day: 34200 } cadence=Immediate
+PROBE info-check now=CivilInstant { date: CivilDate { year: 2026, month: 1, day: 5 }, second_of_day: 34200 } cadence=Immediate
+PROBE info-check now=CivilInstant { date: CivilDate { year: 2026, month: 1, day: 5 }, second_of_day: 38940 } cadence=Daily { checks: 1 }
+PROBE info-check now=CivilInstant { date: CivilDate { year: 2026, month: 1, day: 5 }, second_of_day: 49080 } cadence=Daily { checks: 1 }
+PROBE info-check now=CivilInstant { date: CivilDate { year: 2026, month: 1, day: 5 }, second_of_day: 53820 } cadence=Immediate
+PROBE info-check now=CivilInstant { date: CivilDate { year: 2026, month: 1, day: 5 }, second_of_day: 53820 } cadence=Immediate
+PROBE info-check now=CivilInstant { date: CivilDate { year: 2026, month: 1, day: 5 }, second_of_day: 53820 } cadence=Daily { checks: 2 }
+PROBE info-check now=CivilInstant { date: CivilDate { year: 2026, month: 1, day: 5 }, second_of_day: 53910 } cadence=Immediate
+PROBE info-check now=CivilInstant { date: CivilDate { year: 2026, month: 1, day: 5 }, second_of_day: 53910 } cadence=Immediate
+PROBE info-check now=CivilInstant { date: CivilDate { year: 2026, month: 1, day: 5 }, second_of_day: 33300 } cadence=Immediate
+PROBE info-check now=CivilInstant { date: CivilDate { year: 2026, month: 1, day: 5 }, second_of_day: 33300 } cadence=Immediate
+
+thread 'runtime::drive_tests::d0_production_day_end_installs_candidate_before_return_and_restore' (1788388) panicked at packages/engine/src/runtime/drive_tests.rs:4230:13:
+assertion `left == right` failed: AccountId(2) 日结现金立即交付
+  left: 1347902
+ right: 1447351
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test runtime::drive_tests::d0_civil_failure_restores_accounts_after_world_day_end ... ok
+test runtime::drive_tests::d0_production_day_end_installs_candidate_before_return_and_restore ... FAILEDPROBE info-check now=
+CivilInstant { date: CivilDate { year: 2026, month: 1, day: 5 }, second_of_day: 34200 } cadence=Immediate
+PROBE info-check now=CivilInstant { date: CivilDate { year: 2026, month: 1, day: 5 }, second_of_day: 34200 } cadence=Daily { checks: 2 }
+PROBE info-check now=CivilInstant { date: CivilDate { year: 2026, month: 1, day: 5 }, second_of_day: 49080 } cadence=Daily { checks: 1 }
+PROBE info-check now=CivilInstant { date: CivilDate { year: 2026, month: 1, day: 5 }, second_of_day: 53820 } cadence=Immediate
+PROBE info-check now=CivilInstant { date: CivilDate { year: 2026, month: 1, day: 5 }, second_of_day: 53910 } cadence=Immediate
+PROBE info-check now=CivilInstant { date: CivilDate { year: 2026, month: 1, day: 5 }, second_of_day: 33300 } cadence=Immediate
+PROBE info-check now=CivilInstant { date: CivilDate { year: 2026, month: 1, day: 5 }, second_of_day: 64800 } cadence=Immediate
+PROBE info-check now=CivilInstant { date: CivilDate { year: 2026, month: 1, day: 5 }, second_of_day: 64800 } cadence=Daily { checks: 2 }
+PROBE info-check now=CivilInstant { date: CivilDate { year: 2026, month: 1, day: 5 }, second_of_day: 64800 } cadence=Monthly
+
+thread 'runtime::drive_tests::d0_manual_day_end_installs_candidate_before_return_and_restore' (1788387) panicked at packages/engine/src/runtime/drive_tests.rs:4230:13:
+assertion `left == right` failed: AccountId(4) 日结现金立即交付
+  left: 232852
+ right: 132351
+test runtime::drive_tests::d0_manual_day_end_installs_candidate_before_return_and_restore ... FAILED
+
+failures:
+
+failures:
+    runtime::drive_tests::d0_manual_day_end_installs_candidate_before_return_and_restore
+    runtime::drive_tests::d0_production_day_end_installs_candidate_before_return_and_restore
+
+test result: FAILED. 1 passed; 2 failed; 0 ignored; 0 measured; 2274 filtered out; finished in 1.72s
+
+bounded command exited with 101

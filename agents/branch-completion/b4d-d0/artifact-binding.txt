@@ -1,0 +1,27 @@
+{
+  "source_root": "/data1/baiyifan/workplace/stock_market_game/.worktrees/sol61-b4d-d0",
+  "base_commit": "f5820291",
+  "artifact": {
+    "executable": "/data1/baiyifan/workplace/stock_market_game/.tmp/sol61-b4d-d0/target/debug/deps/engine-f7ff6b8af6493b4b",
+    "bytes": 582213784,
+    "sha256": "f94c8c5ec190d4a02c0ad22eba476a5bfa7637c8c35ed3a3f6dfc4319009c84a"
+  },
+  "build": {
+    "jobs": 16,
+    "deadline_ms": 300000,
+    "log": "/data1/baiyifan/workplace/stock_market_game/.tmp/sol61-b4d-d0/build-r3-green.log"
+  },
+  "source_fingerprint": {
+    "algorithm": "full-regression-source-fingerprint",
+    "algorithm_version": 1,
+    "digest": "54c370fd9205d9c8dc560998cb8f8d374e6b25004ad7211eb5b58e46f8135a9e"
+  },
+  "full_manifest": {
+    "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/sol61-b4d-d0/manifest-r3.json",
+    "sha256": "a15efd0d34d2060f11c57192efdf1ac9d9b25a77df11ed94a15df4702c70e999"
+  },
+  "frozen_diff": {
+    "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/sol61-b4d-d0/frozen-r3.diff",
+    "sha256": "b70c5e137a95d8d9d951ef3d54ca792cfcba1af3a048911784e3022f18233fc1"
+  }
+}

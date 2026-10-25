@@ -1,0 +1,15 @@
+
+running 10 tests
+test runtime::day_end_tests::d0_manual_and_auto_day_end_are_mutually_exclusive ... ok
+test runtime::skeleton_tests::d0_world_drop_shuts_down_workers ... ok
+test session::failure_tests::d0_lockstep_violation_fails_explicitly ... ok
+test session::failure_tests::d0_manual_day_end_mirror_rollback_covers_sparse_account_ids ... ok
+test session::failure_tests::d0_production_day_end_baseline_restores_sparse_account_assets ... ok
+test session::failure_tests::d0_step_via_runtime_continues_across_ticks_and_keeps_book ... ok
+test runtime::drive_tests::d0_partial_account_install_failure_restores_mirrors_without_reverting_published_tick ... ok
+test runtime::drive_tests::d0_civil_failure_restores_accounts_after_world_day_end ... ok
+test runtime::drive_tests::d0_manual_day_end_installs_candidate_before_return_and_next_step ... ok
+test runtime::drive_tests::d0_production_day_end_installs_candidate_before_return_and_restore ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 2270 filtered out; finished in 2.99s
+

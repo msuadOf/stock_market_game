@@ -1,0 +1,21 @@
+
+running 1 test
+test session::failure_tests::d0_manual_day_end_mirror_rollback_covers_sparse_account_ids ... FAILED
+
+failures:
+
+---- session::failure_tests::d0_manual_day_end_mirror_rollback_covers_sparse_account_ids stdout ----
+
+thread 'session::failure_tests::d0_manual_day_end_mirror_rollback_covers_sparse_account_ids' (1986777) panicked at packages/engine/src/session/failure_tests.rs:1033:5:
+assertion `left == right` failed: 非连续 AccountId 也恢复日结安装前现金
+  left: Money(42)
+ right: Money(123456)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    session::failure_tests::d0_manual_day_end_mirror_rollback_covers_sparse_account_ids
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2278 filtered out; finished in 0.20s
+
+bounded command exited with 101
