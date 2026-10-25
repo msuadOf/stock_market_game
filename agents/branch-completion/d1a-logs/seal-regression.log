@@ -1,0 +1,11 @@
+
+running 6 tests
+test runtime::seal_tests::seal_continue_contract_anchored_by_existing_prereq1 ... ok
+test runtime::seal_tests::converge_round_skips_stale_seal_ack ... ok
+test runtime::seal_tests::seal_ack_failure_aborts_then_retry_survives ... ok
+test runtime::seal_tests::seal_unsettled_tail_is_empty ... ok
+test runtime::seal_tests::seal_partial_ack_timeout_recovers_with_late_ack_tolerance ... ok
+test runtime::seal_tests::seal_settles_before_publish ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 2304 filtered out; finished in 0.01s
+

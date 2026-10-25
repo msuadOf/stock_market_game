@@ -1,0 +1,64 @@
+
+running 11 tests
+test runtime::world::admin_transaction::tests::admin_01_two_groups_all_operations_persist_through_real_tick ... FAILED
+test runtime::world::admin_transaction::tests::admin_05_flat_cost_basis_and_frozen_pending_are_preserved ... FAILED
+test runtime::world::admin_transaction::tests::admin_09_closed_days_without_start_keep_first_commit ... FAILED
+test runtime::world::admin_transaction::tests::admin_13_candidate_panic_keeps_payload_joins_and_kills_world ... FAILED
+test runtime::world::admin_transaction::tests::admin_02_rejection_restores_complete_accounts_and_new_id_retries ... FAILED
+test runtime::world::admin_transaction::tests::admin_03_other_group_rejects_and_original_order_is_not_netted ... ok
+test runtime::world::admin_transaction::tests::admin_06_rejection_preserves_published_tick_and_next_step ... ok
+test runtime::world::admin_transaction::tests::admin_08_commit_closes_old_day_end_and_next_tick_abort_keeps_credit ... FAILED
+test runtime::world::admin_transaction::tests::admin_12_seal_commit_drain_abort_restores_orders_and_resources ... FAILED
+test runtime::world::admin_transaction::tests::admin_07_rejection_keeps_real_day_end_abort_legal ... ok
+test runtime::world::admin_transaction::tests::admin_04_large_share_abort_and_aggregate_overflow ... ok
+
+failures:
+
+---- runtime::world::admin_transaction::tests::admin_01_two_groups_all_operations_persist_through_real_tick stdout ----
+
+thread 'runtime::world::admin_transaction::tests::admin_01_two_groups_all_operations_persist_through_real_tick' (2140199) panicked at packages/engine/src/runtime/world/admin_transaction.rs:56:66:
+called `Result::unwrap()` on an `Err` value: ProtocolInvariant { detail: "D1a 行政事务尚未实现" }
+
+---- runtime::world::admin_transaction::tests::admin_05_flat_cost_basis_and_frozen_pending_are_preserved stdout ----
+
+thread 'runtime::world::admin_transaction::tests::admin_05_flat_cost_basis_and_frozen_pending_are_preserved' (2140203) panicked at packages/engine/src/runtime/world/admin_transaction.rs:114:66:
+called `Result::unwrap()` on an `Err` value: ProtocolInvariant { detail: "D1a 行政事务尚未实现" }
+
+---- runtime::world::admin_transaction::tests::admin_09_closed_days_without_start_keep_first_commit stdout ----
+
+thread 'runtime::world::admin_transaction::tests::admin_09_closed_days_without_start_keep_first_commit' (2140207) panicked at packages/engine/src/runtime/world/admin_transaction.rs:151:96:
+called `Result::unwrap()` on an `Err` value: ProtocolInvariant { detail: "D1a 行政事务尚未实现" }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- runtime::world::admin_transaction::tests::admin_13_candidate_panic_keeps_payload_joins_and_kills_world stdout ----
+
+thread 'runtime::world::admin_transaction::tests::admin_13_candidate_panic_keeps_payload_joins_and_kills_world' (2140209) panicked at packages/engine/src/runtime/world/admin_transaction.rs:168:170:
+called `Result::unwrap_err()` on an `Ok` value: ()
+
+---- runtime::world::admin_transaction::tests::admin_02_rejection_restores_complete_accounts_and_new_id_retries stdout ----
+
+thread 'runtime::world::admin_transaction::tests::admin_02_rejection_restores_complete_accounts_and_new_id_retries' (2140200) panicked at packages/engine/src/runtime/world/admin_transaction.rs:73:67:
+called `Result::unwrap()` on an `Err` value: ProtocolInvariant { detail: "D1a 行政事务尚未实现" }
+
+---- runtime::world::admin_transaction::tests::admin_08_commit_closes_old_day_end_and_next_tick_abort_keeps_credit stdout ----
+
+thread 'runtime::world::admin_transaction::tests::admin_08_commit_closes_old_day_end_and_next_tick_abort_keeps_credit' (2140206) panicked at packages/engine/src/runtime/world/admin_transaction.rs:144:56:
+called `Result::unwrap()` on an `Err` value: ProtocolInvariant { detail: "D1a 行政事务尚未实现" }
+
+---- runtime::world::admin_transaction::tests::admin_12_seal_commit_drain_abort_restores_orders_and_resources stdout ----
+
+thread 'runtime::world::admin_transaction::tests::admin_12_seal_commit_drain_abort_restores_orders_and_resources' (2140208) panicked at packages/engine/src/runtime/world/admin_transaction.rs:158:115:
+called `Result::unwrap()` on an `Err` value: ProtocolInvariant { detail: "D1a 行政事务尚未实现" }
+
+
+failures:
+    runtime::world::admin_transaction::tests::admin_01_two_groups_all_operations_persist_through_real_tick
+    runtime::world::admin_transaction::tests::admin_02_rejection_restores_complete_accounts_and_new_id_retries
+    runtime::world::admin_transaction::tests::admin_05_flat_cost_basis_and_frozen_pending_are_preserved
+    runtime::world::admin_transaction::tests::admin_08_commit_closes_old_day_end_and_next_tick_abort_keeps_credit
+    runtime::world::admin_transaction::tests::admin_09_closed_days_without_start_keep_first_commit
+    runtime::world::admin_transaction::tests::admin_12_seal_commit_drain_abort_restores_orders_and_resources
+    runtime::world::admin_transaction::tests::admin_13_candidate_panic_keeps_payload_joins_and_kills_world
+
+test result: FAILED. 4 passed; 7 failed; 0 ignored; 0 measured; 2285 filtered out; finished in 0.01s
+
