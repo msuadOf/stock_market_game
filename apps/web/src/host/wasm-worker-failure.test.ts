@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import test, { after } from "node:test";
+import { parseWorkerFailure } from "./worker-host.ts";
+import { classifyWasmFailure, describeWasmFailure } from "./wasm-failure.ts";
 
 const posted: unknown[] = [];
+let remainingPostFailures = 0;
+const reportedErrors: unknown[] = [];
+let reportErrorEnabled = true;
 let messageListener: ((event: MessageEvent<Record<string, unknown> & { type: string }>) => void) | null = null;
 const originalSelf = Object.getOwnPropertyDescriptor(globalThis, "self");
 const originalMessageChannel = globalThis.MessageChannel;
@@ -22,8 +27,13 @@ Object.defineProperty(globalThis, "self", {
   configurable: true,
   value: {
     postMessage(message: unknown) {
-      posted.push(message);
+      if (remainingPostFailures > 0) {
+        remainingPostFailures -= 1;
+        throw new Error(`port failure ${remainingPostFailures}`);
+      }
+      posted.push(structuredClone(message));
     },
+    get reportError() { return reportErrorEnabled ? (error: unknown) => { reportedErrors.push(error); } : undefined; },
     addEventListener(_type: "message", listener: typeof messageListener) {
       messageListener = listener;
     },
@@ -112,8 +122,12 @@ test("WASM Worker 仍显式拒绝非法的 HostFailure 可选字段", () => {
     posted.length = 0;
     const error = Object.assign(new Error("原始错误"), { code: "INIT_FAILED", ...details });
 
-    assert.throws(() => postFailure("wasm-worker.init", error), reason);
-    assert.deepEqual(posted, []);
+    assert.doesNotThrow(() => postFailure("wasm-worker.init", error));
+    const failure = posted[0] as Record<string, unknown>;
+    assert.equal(failure.code, "WASM_WORKER_PROTOCOL");
+    assert.equal(failure.where, "wasm-worker.init");
+    assert.match(String(failure.message), reason);
+    assert.deepEqual(failure.cause, { code: "INIT_FAILED", message: "原始错误", ...details });
   }
 });
 
@@ -126,8 +140,12 @@ test("WASM Worker 仍显式报告可选字段的 getter 和 Proxy 访问错误",
   });
   for (const thrown of [error, proxy]) {
     posted.length = 0;
-    assert.throws(() => postFailure("wasm-worker.init", thrown), (actual) => actual === accessFailure);
-    assert.deepEqual(posted, []);
+    assert.doesNotThrow(() => postFailure("wasm-worker.init", thrown));
+    const failure = posted[0] as Record<string, unknown>;
+    assert.equal(failure.code, "WASM_WORKER_PROTOCOL");
+    assert.equal(failure.where, "wasm-worker.init");
+    assert.match(String(failure.message), /读取结构化错误字段.*读取 context 失败/);
+    assert.deepEqual(failure.cause, { code: "INIT_FAILED", message: "原始错误" });
   }
 });
 
@@ -173,7 +191,7 @@ test("WASM Worker reports a structured-error accessor failure explicitly", () =>
     generation: 0,
     code: "WASM_WORKER_PROTOCOL",
     where: "wasm-worker.step",
-    message: "读取结构化错误失败：getter exploded",
+    message: "读取结构化错误字段 code 失败：getter exploded",
   }]);
 });
 
@@ -213,7 +231,7 @@ test("WASM Worker can report a revoked Proxy without failing again", () => {
     code: "WASM_WORKER_PROTOCOL",
     where: "wasm-worker.step",
   });
-  assert.match(String(message), /^读取结构化错误失败：/);
+  assert.match(String(message), /^读取结构化错误字段 object 失败：/);
 });
 
 test("WASM Worker safely stringifies a non-string Error message", () => {
@@ -282,4 +300,257 @@ test("WASM Worker routes a structured request failure through HostFailure", () =
     where: "wasm-worker.speedMetrics",
     message: "internal step failure: expected receipt hash differs",
   }]);
+});
+
+
+test("错误报告只读一次核心与详情 getter，并交付严格校验后的 clone 快照", () => {
+  posted.length = 0;
+  const reads: Record<string, number> = {};
+  const values = { code: "STEP_FATAL", message: "原始故障", where: "engine.step", context: { tick: 7 }, recoveryActions: ["反馈详情"] };
+  const error = Object.fromEntries(Object.keys(values).map((key) => [key, undefined]));
+  for (const [key, value] of Object.entries(values)) {
+    Object.defineProperty(error, key, { enumerable: true, get() {
+      reads[key] = (reads[key] ?? 0) + 1;
+      if (reads[key] > 1) throw new Error(`${key} 被重复读取`);
+      return value;
+    } });
+  }
+  postFailure("wasm-worker.step", error);
+  assert.deepEqual(reads, { code: 1, message: 1, where: 1, context: 1, recoveryActions: 1 });
+  assert.deepEqual(posted, [{ type: "failure", generation: 0, ...values }]);
+  assert.notEqual((posted[0] as typeof values).context, values.context);
+});
+
+test("where getter 抛错和不可克隆详情均显式保留原故障及失败字段", () => {
+  for (const [key, descriptor, reason] of [
+    ["where", { get() { throw new Error("where getter exploded"); } }, /读取结构化错误字段 where 失败.*where getter exploded/],
+    ["context", { value: { callback() {} } }, /克隆结构化错误字段 context 失败/],
+  ] as const) {
+    posted.length = 0;
+    const error = Object.defineProperty({ code: "STEP_FATAL", message: "原始故障" }, key, descriptor);
+    assert.doesNotThrow(() => postFailure("wasm-worker.step", error));
+    const failure = posted[0] as Record<string, unknown>;
+    assert.equal(failure.code, "WASM_WORKER_PROTOCOL");
+    assert.match(String(failure.message), reason);
+    assert.deepEqual(failure.cause, { code: "STEP_FATAL", message: "原始故障" });
+  }
+});
+
+test("嵌套 recoveryActions getter 只克隆一次，非法快照仍由严格 parser 拒绝", () => {
+  posted.length = 0;
+  let reads = 0;
+  const actions = Object.defineProperty([""], "0", { enumerable: true, get() { reads += 1; return 17; } });
+  postFailure("wasm-worker.step", { code: "STEP_FATAL", message: "原始故障", recoveryActions: actions });
+  assert.equal(reads, 1);
+  const failure = posted[0] as Record<string, unknown>;
+  assert.equal(failure.code, "WASM_WORKER_PROTOCOL");
+  assert.match(String(failure.message), /HostFailure.recoveryActions 必须是非空字符串/);
+  assert.deepEqual(failure.cause, { code: "STEP_FATAL", message: "原始故障", recoveryActions: [17] });
+});
+
+test("发送错误详情失败时第二条消息保留原始故障和发送原因", () => {
+  posted.length = 0;
+  remainingPostFailures = 1;
+  postFailure("wasm-worker.step", { code: "STEP_FATAL", message: "原始故障" });
+  assert.deepEqual(posted, [{
+    type: "failure", generation: 0, code: "WASM_WORKER_PROTOCOL", where: "wasm-worker.step",
+    message: "发送结构化错误详情失败：port failure 0",
+    cause: { code: "STEP_FATAL", message: "原始故障", where: "wasm-worker.step" },
+  }]);
+});
+
+test("错误消息双发送失败通过 reportError 暴露原故障及两次发送原因", () => {
+  posted.length = 0;
+  reportedErrors.length = 0;
+  remainingPostFailures = 2;
+  assert.doesNotThrow(() => postFailure("wasm-worker.step", { code: "STEP_FATAL", message: "原始故障" }));
+  assert.deepEqual(posted, []);
+  assert.equal(reportedErrors.length, 1);
+  const error = reportedErrors[0] as Error;
+  assert.match(error.message, /STEP_FATAL.*原始故障.*port failure 1.*port failure 0/);
+  assert.deepEqual(error.cause, {
+    failure: { code: "STEP_FATAL", message: "原始故障", where: "wasm-worker.step" },
+    sendError: "port failure 1", lastResortError: "port failure 0",
+  });
+});
+
+test("listener 的 getter 故障仍送出 failure 而不产生二次报告异常", () => {
+  posted.length = 0;
+  const error = Object.defineProperty({ code: "STEP_FATAL", message: "原始故障" }, "context", {
+    get() { throw new Error("context getter exploded"); },
+  });
+  const request = Object.defineProperty({ type: "speedMetrics", requestId: 29 }, "generation", { get() { throw error; } });
+  messageListener!({ data: request } as unknown as MessageEvent<Record<string, unknown> & { type: string }>);
+  const failure = posted[0] as Record<string, unknown>;
+  assert.equal(failure.code, "WASM_WORKER_PROTOCOL");
+  assert.match(String(failure.message), /context getter exploded/);
+  assert.deepEqual(failure.cause, { code: "STEP_FATAL", message: "原始故障" });
+});
+
+
+test("缺少 reportError 的旧环境通过 microtask 显式抛出完整故障详情", () => {
+  posted.length = 0;
+  remainingPostFailures = 2;
+  reportErrorEnabled = false;
+  const originalQueueMicrotask = globalThis.queueMicrotask;
+  let scheduled: (() => void) | undefined;
+  globalThis.queueMicrotask = (callback) => { scheduled = callback; };
+  try {
+    assert.doesNotThrow(() => postFailure("wasm-worker.step", { code: "STEP_FATAL", message: "原始故障" }));
+    assert.equal(typeof scheduled, "function");
+    assert.throws(() => scheduled!(), /STEP_FATAL.*原始故障.*port failure 1.*port failure 0/);
+  } finally {
+    reportErrorEnabled = true;
+    globalThis.queueMicrotask = originalQueueMicrotask;
+  }
+  assert.deepEqual(posted, []);
+});
+
+test("operationError 发送失败改送 failure，保留请求原错误与传输原因", () => {
+  posted.length = 0;
+  remainingPostFailures = 1;
+  messageListener!({ data: { type: "save", generation: 1, requestId: 42 } } as MessageEvent);
+  assert.deepEqual(posted, [{
+    type: "failure", generation: 0, code: "WASM_WORKER_PROTOCOL", where: "wasm-worker.save",
+    message: "发送 operationError 失败：port failure 0；原始错误：Worker 请求属于已过期会话",
+    cause: { message: "Worker 请求属于已过期会话" },
+  }]);
+});
+
+test("空白原生 Error message 明确报协议错误，交付非空说明及原 message", () => {
+  posted.length = 0;
+  postFailure("wasm-worker.init", new Error(""));
+  assert.deepEqual(posted, [{
+    type: "failure", generation: 0, code: "WASM_WORKER_PROTOCOL", where: "wasm-worker.init",
+    message: "非结构化错误没有可读的非空 message", cause: { message: "" },
+  }]);
+});
+
+
+test("message getter 失败仍保留已读 code 并标明失败字段", () => {
+  posted.length = 0;
+  let reads = 0;
+  const error = Object.defineProperty({ code: "STEP_FATAL" }, "message", { get() {
+    reads += 1;
+    throw new Error("message getter exploded");
+  } });
+  postFailure("wasm-worker.step", error);
+  assert.equal(reads, 1);
+  assert.deepEqual(posted, [{
+    type: "failure", generation: 0, code: "WASM_WORKER_PROTOCOL", where: "wasm-worker.step",
+    message: "读取结构化错误字段 message 失败：message getter exploded",
+    cause: { code: "STEP_FATAL" },
+  }]);
+});
+
+test("非结构化 Error 与 object 的核心 getter 只读一次，listener 复用分类说明", () => {
+  for (const listener of [false, true]) {
+    for (const nativeError of [false, true]) {
+      posted.length = 0;
+      const reads = { code: 0, message: 0 };
+      const error = Object.defineProperties(nativeError ? new Error() : {}, {
+        code: { enumerable: true, get() { reads.code += 1; if (reads.code > 1) throw new Error("code read twice"); return undefined; } },
+        message: { enumerable: true, get() { reads.message += 1; if (reads.message > 1) throw new Error("message read twice"); return "原始故障"; } },
+      });
+      if (listener) {
+        let generationReads = 0;
+        const request = Object.defineProperty({ type: "speedMetrics", requestId: 49 }, "generation", { get() {
+          generationReads += 1;
+          if (generationReads === 1) throw error;
+          return 0;
+        } });
+        messageListener!({ data: request } as unknown as MessageEvent<Record<string, unknown> & { type: string }>);
+      } else postFailure("wasm-worker.step", error);
+      assert.deepEqual(reads, { code: 1, message: 1 }, `listener=${listener} nativeError=${nativeError}`);
+      assert.match(String((posted[0] as Record<string, unknown>).message), /原始故障/);
+    }
+  }
+});
+
+
+test("clone-safe 循环、Map、Set、BigInt 与原生 Error 详情仍通过主线程严格 parser", () => {
+  posted.length = 0;
+  const cycle: { tick: bigint; self?: unknown } = { tick: 7n };
+  cycle.self = cycle;
+  const cause = new Error("原始 cause", { cause: new Error("内层 cause") });
+  const context = { cycle, map: new Map([["tick", 7n]]), set: new Set([7n]), exception: new DOMException("操作失败", "InvalidStateError") };
+  postFailure("wasm-worker.step", { code: "STEP_FATAL", message: "原始故障", cause, context });
+  const failure = parseWorkerFailure(posted[0]);
+  assert.equal(failure.code, "STEP_FATAL");
+  assert.ok(failure.cause instanceof Error);
+  assert.equal(failure.cause.message, "原始 cause");
+  const received = failure.context as typeof context;
+  assert.equal(received.cycle.self, received.cycle);
+  assert.equal(received.cycle.tick, 7n);
+  assert.deepEqual(received.map, context.map);
+  assert.deepEqual(received.set, context.set);
+  assert.notEqual(received, context);
+});
+
+test("非结构化错误保留 prototype.toJSON、Date、URL 的原有诊断", () => {
+  class ExternalFault { toJSON() { return { reason: "原始外部故障详情" }; } }
+  for (const error of [new ExternalFault(), new Date("2030-01-02T00:00:00Z"), new URL("https://example.com/failure")]) {
+    const classified = classifyWasmFailure(error);
+    assert.equal(classified.kind, "unstructured");
+    if (classified.kind === "unstructured") assert.equal(classified.description, describeWasmFailure(error));
+  }
+});
+
+test("空 message 保留首读 code，message getter 抛错保留已读数值 code", () => {
+  posted.length = 0;
+  postFailure("wasm-worker.init", Object.assign(new Error(""), { code: "MODULE_INIT_FAILED" }));
+  assert.deepEqual((posted[0] as Record<string, unknown>).cause, { code: "MODULE_INIT_FAILED", message: "" });
+  posted.length = 0;
+  postFailure("wasm-worker.init", Object.defineProperty({ code: 17 }, "message", { get() { throw new Error("message unreadable"); } }));
+  assert.deepEqual((posted[0] as Record<string, unknown>).cause, { code: 17 });
+  assert.match(String((posted[0] as Record<string, unknown>).message), /字段 message 失败.*message unreadable/);
+});
+
+
+test("context 回指原错误时 clone 再遍历 getter 的失败明确标注阶段并保留原故障", () => {
+  posted.length = 0;
+  let codeReads = 0;
+  const error = Object.defineProperty({ message: "原始故障", context: undefined as unknown }, "code", {
+    enumerable: true, get() {
+      codeReads += 1;
+      if (codeReads > 1) throw new Error("循环图回访 code getter");
+      return "STEP_FATAL";
+    },
+  });
+  error.context = error;
+  assert.doesNotThrow(() => postFailure("wasm-worker.step", error));
+  assert.equal(codeReads, 2);
+  const failure = parseWorkerFailure(posted[0]);
+  assert.equal(failure.code, "WASM_WORKER_PROTOCOL");
+  assert.match(failure.message, /克隆结构化错误字段 context 失败.*循环图回访 code getter.*STEP_FATAL.*原始故障/);
+  assert.deepEqual(failure.cause, { code: "STEP_FATAL", message: "原始故障" });
+});
+
+test("非结构化 Proxy 的核心 get trap 仅首读一次并复用原故障说明", () => {
+  posted.length = 0;
+  const reads = { code: 0, message: 0 };
+  const error = new Proxy({ code: undefined, message: "original proxy failure" }, {
+    get(target, key, receiver) {
+      if (key === "code" || key === "message") {
+        reads[key] += 1;
+        if (reads[key] > 1) throw new Error(`${key} read twice`);
+      }
+      return Reflect.get(target, key, receiver);
+    },
+  });
+  postFailure("wasm-worker.step", error);
+  assert.deepEqual(reads, { code: 1, message: 1 });
+  assert.match(String((posted[0] as Record<string, unknown>).message), /original proxy failure/);
+});
+
+test("原生 Date 的 custom toJSON 也复用首读 message 而不重复访问核心 getter", () => {
+  let reads = 0;
+  const error = Object.defineProperties(new Date("2030-01-02T00:00:00Z"), {
+    message: { get() { reads += 1; if (reads > 1) throw new Error("message read twice"); return "original Date failure"; } },
+    toJSON: { value(this: { message: string }) { return { message: this.message }; } },
+  });
+  const classified = classifyWasmFailure(error);
+  assert.equal(reads, 1);
+  assert.equal(classified.kind, "unstructured");
+  if (classified.kind === "unstructured") assert.match(classified.description, /original Date failure/);
 });

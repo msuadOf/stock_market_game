@@ -687,3 +687,37 @@ test("Worker 真实 coordinator 拒绝批次中间提交后不消费尾部、不
     else Object.defineProperty(globalThis, "Worker", original);
   }
 });
+
+
+test("Worker reportError 的 error 事件将完整错误交付用户回调并终止会话", async () => {
+  const original = Object.getOwnPropertyDescriptor(globalThis, "Worker");
+  class ReportingWorker extends EventTarget {
+    static current: ReportingWorker;
+    readonly sent: Record<string, unknown>[] = [];
+    terminated = false;
+    constructor() { super(); ReportingWorker.current = this; }
+    postMessage(value: Record<string, unknown>) { this.sent.push(value); }
+    terminate() { this.terminated = true; }
+    emit(value: unknown) { this.dispatchEvent(Object.assign(new Event("message"), { data: value })); }
+  }
+  Object.defineProperty(globalThis, "Worker", { configurable: true, value: ReportingWorker });
+  let host: Awaited<ReturnType<typeof createWorkerHost>> | undefined;
+  try {
+    const creating = createWorkerHost({} as Parameters<typeof createWorkerHost>[0], 1n);
+    const worker = ReportingWorker.current;
+    worker.emit({ type: "baseline", civilDate: "2030-01-02", generation: 1, snapshot: protocolSnapshot(0, 0) });
+    host = await creating;
+    const failures: unknown[] = [];
+    const starting = host.start(() => true, (failure) => { failures.push(failure); });
+    await Promise.resolve();
+    const detail = "STEP_FATAL：原始故障；首次发送：port failure 1；再次发送：port failure 0";
+    worker.dispatchEvent(Object.assign(new Event("error"), { message: detail }));
+    await assert.rejects(starting, /STEP_FATAL.*原始故障.*port failure 1.*port failure 0/);
+    assert.deepEqual(failures, [{ code: "WASM_WORKER_SCRIPT", where: "worker-host", message: `WASM Worker 脚本加载或执行失败：${detail}` }]);
+    assert.equal(worker.terminated, true);
+  } finally {
+    await host?.dispose();
+    if (original === undefined) delete (globalThis as { Worker?: unknown }).Worker;
+    else Object.defineProperty(globalThis, "Worker", original);
+  }
+});

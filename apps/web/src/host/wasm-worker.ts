@@ -3,7 +3,7 @@ import { normalizePublicReportById, normalizePublicReportPage, normalizeSerdeMap
 import { WasmSessionSlot } from "./wasm-session-slot.ts";
 import { WasmTickLoop } from "./wasm-tick-loop.ts";
 import { WorkerTaskScheduler } from "./worker-task-scheduler.ts";
-import { classifyWasmFailure, describeWasmFailure } from "./wasm-failure.ts";
+import { classifyWasmFailure, describeWasmFailure, type WasmFailureClassification } from "./wasm-failure.ts";
 import { parseHostFailure } from "./protocol-failure.ts";
 import { stockIdOf } from "../config/stock-ids.ts";
 import { shouldLoadDiagnosticsWasm } from "./wasm-build-mode.ts";
@@ -34,6 +34,7 @@ type WasmTransportExtensions = Omit<typeof import("../../wasm-pkg/web_wasm.js"),
 };
 type WorkerPort = {
   postMessage(message: unknown): void;
+  reportError?(error: unknown): void;
   addEventListener(type: "message", listener: (event: MessageEvent<WorkerMessage>) => void): void;
 };
 
@@ -71,26 +72,49 @@ const loop = new WasmTickLoop({
 
 type WorkerFailureDetails = HostFailure;
 
-function structuredHostFailure(error: unknown, where: string): WorkerFailureDetails | null {
-  const classified = classifyWasmFailure(error);
+function structuredHostFailure(error: unknown, where: string, classified: Exclude<WasmFailureClassification, { readonly kind: "unstructured" }>): WorkerFailureDetails {
   if (classified.kind === "structured") {
     const source = error as Readonly<Record<string, unknown>>;
     const details: Record<string, unknown> = { code: classified.code, message: classified.message };
-    for (const key of ["where", "cause", "context", "recoverable", "recoveryActions"]) {
-      if (Object.hasOwn(source, key)) details[key] = source[key];
+    let phase = "读取结构化错误详情失败";
+    try {
+      for (const key of ["where", "cause", "context", "recoverable", "recoveryActions"]) {
+        phase = `读取结构化错误字段 ${key} 失败`;
+        if (!Object.hasOwn(source, key)) continue;
+        const value = source[key];
+        // 先克隆后校验，避免 parser 与传输分别触发嵌套 getter 而读取不同值。
+        phase = `克隆结构化错误字段 ${key} 失败`;
+        details[key] = structuredClone(value);
+      }
+      phase = "校验结构化错误详情失败";
+      return parseHostFailure(details, where);
+    } catch (detailError) {
+      // details 仅含已读取且可克隆的快照；保留原故障，显式报告详情处理的失败。
+      return {
+        code: "WASM_WORKER_PROTOCOL", where,
+        message: `${phase}：${describeWasmFailure(detailError)}；原始错误：${classified.code}：${classified.message}`,
+        cause: details,
+      };
     }
-    return parseHostFailure(details, where);
   }
-  if (classified.kind === "access-error") {
-    return { code: "WASM_WORKER_PROTOCOL", where, message: `读取结构化错误失败：${classified.reason}` };
+  return {
+    code: "WASM_WORKER_PROTOCOL", where,
+    message: `读取结构化错误字段 ${classified.field} 失败：${classified.reason}`,
+    ...(Object.keys(classified.cause).length > 0 ? { cause: classified.cause } : {}),
+  };
+}
+
+function unstructuredFailureDetails(message: string, where: string, cause?: Readonly<Record<string, unknown>>): WorkerFailureDetails {
+  if (message.trim().length === 0) {
+    return { code: "WASM_WORKER_PROTOCOL", where, message: "非结构化错误没有可读的非空 message", cause: { ...cause, message } };
   }
-  return null;
+  return { code: "WASM_WORKER_PROTOCOL", where, message };
 }
 
 function workerFailureDetails(error: unknown, where: string): WorkerFailureDetails {
-  const structured = structuredHostFailure(error, where);
-  if (structured !== null) return structured;
-  return { code: "WASM_WORKER_PROTOCOL", where, message: describeWasmFailure(error) };
+  const classified = classifyWasmFailure(error);
+  if (classified.kind === "unstructured") return unstructuredFailureDetails(classified.description, where, classified.cause);
+  return structuredHostFailure(error, where, classified);
 }
 
 function requireRecord(value: unknown, label: string): Readonly<Record<string, unknown>> {
@@ -117,7 +141,29 @@ export function postFailure(where: string, error: unknown): void {
 }
 
 function postFailureDetails(where: string, failure: WorkerFailureDetails): void {
-  ctx.postMessage({ type: "failure", generation: slot.readGeneration(), ...failure, where: failure.where || where });
+  const generation = slot.readGeneration();
+  try {
+    ctx.postMessage({ type: "failure", generation, ...failure });
+  } catch (sendError) {
+    const sendReason = describeWasmFailure(sendError);
+    try {
+      ctx.postMessage({
+        type: "failure", generation, code: "WASM_WORKER_PROTOCOL", where,
+        message: `发送结构化错误详情失败：${sendReason}`,
+        cause: failure,
+      });
+    } catch (lastResortError) {
+      const lastReason = describeWasmFailure(lastResortError);
+      const reportingError = new Error(
+        `WASM Worker 错误报告通道双失败（${where}）：${failure.code}：${failure.message}；首次发送：${sendReason}；再次发送：${lastReason}`,
+        { cause: { failure, sendError: sendReason, lastResortError: lastReason } },
+      );
+      // reportError 经 Worker error 事件进入 worker-host 的用户错误通道。
+      // 旧环境用独立 microtask 抛出，避免 async listener 的 rejected Promise 丢失。
+      if (typeof ctx.reportError === "function") ctx.reportError(reportingError);
+      else queueMicrotask(() => { throw reportingError; });
+    }
+  }
 }
 
 function postBaseline(): void {
@@ -158,8 +204,17 @@ function postIngressBridge(): void {
   });
 }
 
-function respondOperationError(message: WorkerMessage, error: unknown): void {
-  ctx.postMessage({ type: "operationError", requestId: message.requestId, generation: message.generation, message: describeWasmFailure(error) });
+function respondOperationError(message: WorkerMessage, failureMessage: string): void {
+  try {
+    ctx.postMessage({ type: "operationError", requestId: message.requestId, generation: message.generation, message: failureMessage });
+  } catch (sendError) {
+    const where = `wasm-worker.${message.type}`;
+    postFailureDetails(where, {
+      code: "WASM_WORKER_PROTOCOL", where,
+      message: `发送 operationError 失败：${describeWasmFailure(sendError)}；原始错误：${failureMessage}`,
+      cause: { message: failureMessage },
+    });
+  }
 }
 
 async function initialize(): Promise<void> {
@@ -485,14 +540,13 @@ ctx.addEventListener("message", (event) => {
           throw new Error(`未知 Worker 消息：${message.type}`);
       }
     } catch (error) {
-      const structuredFailure = structuredHostFailure(error, `wasm-worker.${message.type}`);
-      if (structuredFailure !== null) {
-        loop.stop();
-        postFailureDetails(`wasm-worker.${message.type}`, structuredFailure);
-      } else if (typeof message.requestId === "number") {
-        respondOperationError(message, error);
+      const classified = classifyWasmFailure(error);
+      if (classified.kind === "unstructured") {
+        if (typeof message.requestId === "number") respondOperationError(message, classified.description);
+        else postFailureDetails("wasm-worker.message", unstructuredFailureDetails(classified.description, "wasm-worker.message", classified.cause));
       } else {
-        postFailure("wasm-worker.message", error);
+        loop.stop();
+        postFailureDetails(`wasm-worker.${message.type}`, structuredHostFailure(error, `wasm-worker.${message.type}`, classified));
       }
     }
   })();
