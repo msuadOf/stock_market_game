@@ -161,6 +161,8 @@ export function createFacadeThreadBinding(options: { readonly isWorker?: () => b
   }
 
   function facade_futex_notify(wordAddr: number): void {
+    bound();
+    if (!isWorker()) fail("主线程不可经 env Atomics.notify；仅允许真实 DedicatedWorker");
     const { words, index } = wordView(wordAddr);
     Atomics.notify(words, index);
   }

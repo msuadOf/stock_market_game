@@ -91,6 +91,7 @@ it("地址必须覆盖完整对齐共享字，grow 后 wait/notify 读取新 buf
 
 it("main 不可 wait，ingress 可 futex 但不可发线程控制", { timeout: 10_000 }, () => {
   assert.throws(() => fixture("engine", false).binding.facade_futex_wait(0, 0, 0n), /Worker|主线程/);
+  assert.throws(() => fixture("engine", false).binding.facade_futex_notify(0), /Worker|主线程/);
   const { binding } = fixture("ingress");
   assert.equal(binding.facade_futex_wait(0, 1, 0n), 1);
   assert.doesNotThrow(() => binding.facade_futex_notify(0));

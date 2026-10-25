@@ -57,4 +57,12 @@ node scripts/run-with-deadline.mjs 10000 -- apps/web/node_modules/.bin/oxlint --
 
 ## 独立复核
 
-待未实施者可信复核；不能以本记录宣称 W1-1 完成。
+未实施者 `review_w1_env` 独立完整审查发现 R1：notify 缺少 DedicatedWorker
+环境门，false fixture 环境仍可调用。新增业务断言先红（review-r1-red.log，
+12 中 11 过 1 败），加同样的 bound/isWorker 门后精确 Node24 四文件 36/36
+通过（review-r1-green.log），并行窄 TypeScript/lint 再次通过。reviewer 已独立
+重跑精确 Node24 四文件 36/36，并确认 R1 关闭；正式最终裁定另见根
+`agents/branch-completion/wasm-w1/env-review-2026-10-26.md`。
+
+源码指纹 source-sha256.txt 已同步 R1 最终代码/测试；API 文档同步真实
+DedicatedWorkerGlobalScope 检测。此批仍仅为 W1-1，不宣称 W1/W1-4 或 R4a 完成。

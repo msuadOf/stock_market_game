@@ -1,7 +1,7 @@
 # W1-1 待实现 API
 
 绑定工厂 `createFacadeThreadBinding({ isWorker? })` 为短 fixture 提供隔离状态；默认
-`isWorker` 检查真实 `WorkerGlobalScope`。只供测试注入环境判断，不拦截或包装 std。
+`isWorker` 检查真实 `DedicatedWorkerGlobalScope`。只供测试注入环境判断，不拦截或包装 std。
 工厂返回 `bindFacadeThreadEnvironment`、`installFacadeSlotLayout`、`getArenaView`、
 `requireExitIntent` 与五个 import 同名方法。env 模块导出一个单例的对应函数。
 
