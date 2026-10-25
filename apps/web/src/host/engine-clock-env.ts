@@ -31,43 +31,18 @@ export function engine_clock_now(): number {
   return origin + performance.now();
 }
 
-// ---------------------------------------------------------------------------
-// wasm 线程门面槽协议 env 面（R4a 阶段 2，设计 §12-14）。
-//
-// 这些名字是 Rust `facade_slot::platform` 的 `#[link(wasm_import_module =
-// "env")]` extern。**必须在本模块导出**——否则 wasm 实例化期即 link error
-// （import 解析发生在实例化，不在调用）。当前宿主尚未装配 supervisor/子 Worker，槽协议不可达，函数体一律**显式抛出**，不静默
-// no-op 伪装成功（铁律二）。真实实现由 W1 宿主 facade-supervisor 接线承接。
-// ---------------------------------------------------------------------------
+// 共享 memory 先绑定，实际 facade_slot_layout() 后装入；模块加载阶段无 memory 访问。
+import { createFacadeThreadBinding } from "./facade-thread-binding.ts";
 
-function facadeUnsupported(name: string): never {
-  throw new Error(
-    `facade_thread_env.${name}：当前宿主尚未装配 supervisor/子 Worker/bootstrap，` +
-      `槽协议路径不可达——这是构建形态违约而非运行时容错（设计 §12-14，阶段边界见 agents/wasm-thread-r4a/）`,
-  );
-}
-
-/** futex 等待（Atomics.wait 等价）：返回 0=醒 / 1=期望不符 / 2=超时。 */
-export function facade_futex_wait(_wordAddr: number, _expected: number, _timeoutMs: number): number {
-  return facadeUnsupported("facade_futex_wait");
-}
-
-/** futex_wake_all（Atomics.notify 全体）。 */
-export function facade_futex_notify(_wordAddr: number): void {
-  facadeUnsupported("facade_futex_notify");
-}
-
-/** H5：REQ 发布后的 facadeSpawn 消息。 */
-export function facade_spawn_notify(_slot: number, _gen: number, _namePtr: number, _nameLen: number): void {
-  facadeUnsupported("facade_spawn_notify");
-}
-
-/** W3：workerExit（宿主承接 W4 rust_done + W5 self.close）。 */
-export function facade_worker_exit_notify(_workerId: number, _slot: number, _gen: number): void {
-  facadeUnsupported("facade_worker_exit_notify");
-}
-
-/** 迟到构造子 terminate（幂等卫生义务）。 */
-export function facade_terminate_child(_workerId: number): void {
-  facadeUnsupported("facade_terminate_child");
-}
+const threadBinding = createFacadeThreadBinding();
+export const {
+  bindFacadeThreadEnvironment,
+  installFacadeSlotLayout,
+  getArenaView,
+  requireExitIntent,
+  facade_futex_wait,
+  facade_futex_notify,
+  facade_spawn_notify,
+  facade_worker_exit_notify,
+  facade_terminate_child,
+} = threadBinding;

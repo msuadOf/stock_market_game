@@ -30,7 +30,7 @@ test("env 模块导出全部槽协议 import 名（否则 wasm 实例化 link er
 
 test("槽协议环境函数在未装配的宿主上显式失败，不静默成功", () => {
   assert.throws(
-    () => envModule.facade_futex_wait(0, 0, -1),
+    () => envModule.facade_futex_wait(0, 0, -1n),
     /facade_thread_env|共享内存/,
     "futex_wait 必须在宿主未装配 时显式抛出",
   );

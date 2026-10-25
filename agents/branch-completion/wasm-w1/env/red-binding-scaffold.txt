@@ -1,0 +1,19 @@
+// W1-1 红测接口：先保留 W0 显式失败行为，再实现真实共享内存边界。
+import * as unsupported from "./engine-clock-env.ts";
+
+export function createFacadeThreadBinding(_options?: { isWorker?: () => boolean }) {
+  function pending(..._args: unknown[]): never {
+    throw new Error("W1-1 binding 尚未实现");
+  }
+  return {
+    bindFacadeThreadEnvironment: (..._args: unknown[]): void => {},
+    installFacadeSlotLayout: pending,
+    getArenaView: pending,
+    requireExitIntent: pending,
+    facade_futex_wait: unsupported.facade_futex_wait as (address: number, expected: number, timeout: bigint) => number,
+    facade_futex_notify: unsupported.facade_futex_notify,
+    facade_spawn_notify: unsupported.facade_spawn_notify,
+    facade_worker_exit_notify: unsupported.facade_worker_exit_notify,
+    facade_terminate_child: unsupported.facade_terminate_child,
+  };
+}
