@@ -463,3 +463,24 @@ fn same_day_round_trip_preserves_existing_registry_and_tax_acquisition_dates() {
     assert_eq!(candidate.dividend_tax_books[0].lots(), initial_tax_lots);
     assert_eq!(candidate.dividend_tax_books[0].settled_on(), date(23));
 }
+
+#[test]
+fn unknown_final_stock_and_missing_treasury_identity_are_explicitly_rejected() {
+    let state = foundation();
+    let cat = catalog();
+    let mut accounts = holdings(1000, 0);
+    accounts
+        .get_mut(&AccountId(1))
+        .unwrap()
+        .insert(StockId(99), 100);
+    let rows = BTreeMap::new();
+    assert!(
+        matches!(state.registry_day_end_candidate(input(&cat,&accounts,&rows,None)),Err(SessionCorporateActionsError::Invalid(reason)) if reason.contains("未知证券"))
+    );
+    let accounts = holdings(1000, 0);
+    let mut request = input(&cat, &accounts, &rows, None);
+    request.issuer_repurchase_account = Some(AccountId(99));
+    assert!(
+        matches!(state.registry_day_end_candidate(request),Err(SessionCorporateActionsError::Invalid(reason)) if reason.contains("回购专户") && reason.contains("不存在"))
+    );
+}

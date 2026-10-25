@@ -68,3 +68,12 @@ fixture 现使用相同真实确认安装入口，保留 200 股与两笔确认�
 
 实现者尚未独审；由 root 安排未实施者复核完整 diff、依据、必要性与边界。
 在独立复核通过前不宣称本片完成，更不宣称公司行为链已接通。
+
+## 预审有效发现修复
+
+readiness 对 `48cd9c50` 逐行核查后指出：Some(TreasuryId) 不存在于最终账户，
+且当天无 Treasury 成交或名册时，旧接口会成功；最终 positions 中未知 StockId
+也缺少显式校验。本片现对两个输入错误显式拒绝，未另建错误框架。
+先补短测并实际失败，见 `review-red.log`；修复后全九项通过，见
+`review-green.log`，0.21 秒；最后 no-run 构建 22.12 秒，见 `review-final-build.log`。
+本修复待独立复查，不以预审替代完整 diff 终审。

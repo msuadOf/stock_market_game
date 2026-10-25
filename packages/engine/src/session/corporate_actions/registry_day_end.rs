@@ -35,6 +35,20 @@ impl SessionCorporateActions {
         &self,
         input: RegistryDayEndInput<'_>,
     ) -> Result<RegistryDayEndCandidate, SessionCorporateActionsError> {
+        if let Some(account) = input.issuer_repurchase_account {
+            if !input.accounts.contains_key(&account) {
+                return Err(invalid(format!("回购专户 {account:?} 不存在")));
+            }
+        }
+        for (account, positions) in input.accounts {
+            for stock in positions.keys() {
+                if input.catalog.meta(*stock).is_none() {
+                    return Err(invalid(format!(
+                        "最终账户 {account:?} 含未知证券 {stock:?}"
+                    )));
+                }
+            }
+        }
         let mut seen_receipts = BTreeSet::new();
         for (account, rows) in input.confirmations {
             if !input.accounts.contains_key(account) {

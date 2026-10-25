@@ -1,0 +1,34 @@
+
+running 7 tests
+test session::corporate_actions::registry_day_end::tests::duplicate_confirmation_is_explicitly_rejected_and_unregistered_balance_is_not_hidden ... ok
+test session::corporate_actions::registry_day_end::tests::repurchase_account_is_registered_as_treasury_and_reconciled_separately ... ok
+test session::corporate_actions::registry_day_end::tests::ordinary_and_closing_confirmations_produce_candidate_without_mutating_facts ... ok
+test session::corporate_actions::registry_day_end::tests::late_personal_holder_opens_tax_book_once_and_non_personal_stays_unconfigured ... ok
+test session::corporate_actions::registry_day_end::tests::stale_pre_closing_accounts_fail_with_numeric_context_and_leave_original_unchanged ... ok
+test session::corporate_actions::registry_day_end::tests::treasury_final_position_mismatch_is_explicit_and_candidate_failure_is_atomic ... ok
+test session::corporate_actions::registry_day_end::tests::runtime_closing_final_facts_reconcile_with_tail_group_confirmations ... FAILED
+
+failures:
+
+---- session::corporate_actions::registry_day_end::tests::runtime_closing_final_facts_reconcile_with_tail_group_confirmations stdout ----
+PROBE info-check now=CivilInstant { date: CivilDate { year: 2026, month: 1, day: 5 }, second_of_day: 34200 } cadence=Daily { checks: 2 }
+PROBE info-check now=CivilInstant { date: CivilDate { year: 2026, month: 1, day: 5 }, second_of_day: 34200 } cadence=Immediate
+PROBE info-check now=CivilInstant { date: CivilDate { year: 2026, month: 1, day: 5 }, second_of_day: 49080 } cadence=Daily { checks: 1 }
+PROBE info-check now=CivilInstant { date: CivilDate { year: 2026, month: 1, day: 5 }, second_of_day: 53820 } cadence=Immediate
+PROBE info-check now=CivilInstant { date: CivilDate { year: 2026, month: 1, day: 5 }, second_of_day: 53910 } cadence=Immediate
+PROBE info-check now=CivilInstant { date: CivilDate { year: 2026, month: 1, day: 5 }, second_of_day: 33300 } cadence=Immediate
+PROBE info-check now=CivilInstant { date: CivilDate { year: 2026, month: 1, day: 5 }, second_of_day: 64800 } cadence=Immediate
+PROBE info-check now=CivilInstant { date: CivilDate { year: 2026, month: 1, day: 5 }, second_of_day: 64800 } cadence=Daily { checks: 2 }
+PROBE info-check now=CivilInstant { date: CivilDate { year: 2026, month: 1, day: 5 }, second_of_day: 64800 } cadence=Monthly
+
+thread 'session::corporate_actions::registry_day_end::tests::runtime_closing_final_facts_reconcile_with_tail_group_confirmations' (2124238) panicked at packages/engine/src/session/corporate_actions/registry_day_end/tests.rs:386:69:
+called `Option::unwrap()` on a `None` value
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    session::corporate_actions::registry_day_end::tests::runtime_closing_final_facts_reconcile_with_tail_group_confirmations
+
+test result: FAILED. 6 passed; 1 failed; 0 ignored; 0 measured; 2285 filtered out; finished in 0.20s
+
+bounded command exited with 101
