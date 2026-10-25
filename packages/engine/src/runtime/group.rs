@@ -5792,7 +5792,7 @@ pub fn group_main(
                     break;
                 }
                 // Seal 地板分解诊断：组端处理段（drain→Ack 发送前）计时。
-                let seal_handle_started = std::time::Instant::now();
+                let seal_handle_started = crate::clock::Instant::now();
                 // 收件箱顺序 drain：Seal 前入队的全部数据面消息（S4：
                 /// desk 批次 FIFO 先于其 DeskReport ⇒ 先于 Seal 入队）。
                 /// 数据面=Batch（实体批次）与 AcceptedBatch（受理身份）；
@@ -5883,7 +5883,7 @@ pub fn group_main(
                     ///——主循环继续等待（重试 Start 重跑本拍）。
                     continue;
                 }
-                let deferred_started = std::time::Instant::now();
+                let deferred_started = crate::clock::Instant::now();
                 // 终轮延迟相（S2 落账点唯一化——eager 分域版）：即时相
                 /// 已随 Batch 到达/Seal drain 应用；此处重放 F4/F5/F6
                 /// 延迟域（早轮批次的延迟项已随各自 handle_continue
@@ -5903,7 +5903,7 @@ pub fn group_main(
                 let final_hash = (0xcbf2_9ce4_8422_2325u64 ^ tick ^ ((round_final as u64) << 32))
                     .wrapping_mul(0x100000001b3)
                     ^ (state.undo.len() as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15);
-                let shard_started = std::time::Instant::now();
+                let shard_started = crate::clock::Instant::now();
                 // P1-2（Sol 复核阻断）：belief 稀疏分片在 apply_deferred
                 /// 之后构建（清仓经历转移已置 dirty——终轮清仓行随本拍
                 /// SealAck 上行，发布/session/save 同拍一致；此前随

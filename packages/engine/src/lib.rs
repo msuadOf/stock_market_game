@@ -77,6 +77,21 @@ pub use compute::{
     CpuBackend, create_backend,
 };
 
+/// 时钟门面：native=std re-export，wasm=env.engine_clock_now（设计 §6.1.3-2/§8.3）。
+pub mod clock;
+/// 请求槽协议核心（wasm 生产面 + 全部单元测试；设计 §12.1/§13/§14.1）。
+///
+/// **cfg 门控依据（阶段 2 asm 对照实测）**：协议核心对 native 生产是死代码
+/// （门面 native 分支仍纯 `pub use std::thread`），但若在 native 非测试构建中
+/// 参与编译，会改变 CGU 分区——实测 `GroupState::run_round` 的跨 CGU 调用
+/// 从直接 `callq` 退化为 `@GOTPCREL` 间接调用（§0 硬约束"零损耗"判据红）。
+/// 故 native 下只在 `cfg(test)` 编译（确定性测试仍全跑），生产构建完全不含
+/// 本模块的 codegen 输入。
+#[cfg(any(target_family = "wasm", test))]
+mod facade_slot;
+/// 线程门面：native=std re-export，wasm=槽协议接线（设计 §0/§1.1/§12-14）。
+pub mod thread_facade;
+
 pub mod verification_evidence;
 
 pub mod session;

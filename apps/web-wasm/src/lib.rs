@@ -722,6 +722,112 @@ pub fn restore_json(save_json: String) -> Result<u32, JsValue> {
         .map_err(session_error_to_js)
 }
 
+// ---------------------------------------------------------------------------
+// R4a 阶段 2：wasm 线程门面槽协议导出面（设计 §12-14）。
+//
+// 仅 wasm32 编译（native 上 facade 运行时不存在；宿主 bootstrap 在 substrate
+// 就绪后调 facade_slot_init，子 Worker bootstrap 调 facade_child_trampoline）。
+// 当前产品产物链（wasm-bindgen 0.2.93 无共享内存）下 spawn 不可达，本导出面
+// 是宿主装配的接口锚，不改变既有运行时行为（阶段边界见 agents 台账）。
+// ---------------------------------------------------------------------------
+
+/// facade 运行时初始化：容量 = 2×(G+N+2)（宿主按实际并行参数传入，不写死）。
+#[cfg(target_family = "wasm")]
+#[wasm_bindgen]
+pub fn facade_slot_init(capacity: u32) -> Result<(), JsValue> {
+    engine::thread_facade::init_wasm_facade(capacity).map_err(JsValue::from_str)
+}
+
+#[cfg(target_family = "wasm")]
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FacadeSlotLayout {
+    base_addr: u32,
+    header_words: u32,
+    slot_stride: u32,
+    join_stride: u32,
+    capacity: u32,
+    gen_bits: u32,
+}
+
+/// 共享字区布局（宿主建 Int32Array 视图的锚；wasm32 地址为 u32 域）。
+#[cfg(target_family = "wasm")]
+#[wasm_bindgen]
+pub fn facade_slot_layout() -> Result<JsValue, JsValue> {
+    let info = engine::thread_facade::facade_layout()
+        .map_err(|error| JsValue::from_str(&format!("facade_slot_layout 失败：{error}")))?;
+    to_js(&FacadeSlotLayout {
+        base_addr: info.base_addr,
+        header_words: info.header_words,
+        slot_stride: info.slot_stride,
+        join_stride: info.join_stride,
+        capacity: info.capacity,
+        gen_bits: info.gen_bits,
+    })
+}
+
+/// 子 Worker trampoline 入口（W1-W3）：0=Ran、1=Superseded；协议违约 panic
+/// ⇒ trap ⇒ 宿主 D5（§8.2.2）。
+#[cfg(target_family = "wasm")]
+#[wasm_bindgen]
+pub fn facade_child_trampoline(slot: u32, gen: u32, worker_id: u32) -> u32 {
+    engine::thread_facade::child_trampoline(slot, gen, worker_id)
+}
+
+// ---------------------------------------------------------------------------
+// 验证专用入口（feature = verification-harness；正式产物零暴露）。
+//
+// 正式产品里没人调用 `thread_facade::Builder::spawn`（wasm 运行时仍是串行
+// 管线），整条请求者链路会被 LTO 消除。真实双 Worker 闭环验证需要它存活，
+// 故只在验证 feature 下导出。构建方式见 agents/wasm-thread-r4a/phase2-ledger.md。
+// ---------------------------------------------------------------------------
+
+/// 验证：发起一次槽协议 spawn（请求者侧 H1-H5），返回 join 句柄索引。
+/// 闭包忠实执行一次并返回常量，用于验证 W1-W3 与 join 取回。
+#[cfg(all(target_family = "wasm", feature = "verification-harness"))]
+#[wasm_bindgen]
+pub fn verification_facade_spawn(ack_timeout_ms: u32) -> Result<u32, JsValue> {
+    let handle = engine::thread_facade::Builder::new()
+        .name("verification-spawn".to_owned())
+        .spawn(|| 0x5A5Au32)
+        .map_err(|error| JsValue::from_str(&format!("verification_facade_spawn 失败：{error}")))?;
+    // JoinHandle 必须存活到 join；返回 join 槽索引供宿主侧 join。
+    let index = facade_join_index_of(&handle);
+    FACADE_VERIFY_HANDLES.with(|slot| {
+        let mut store = slot.borrow_mut();
+        if store.is_some() {
+            return Err(JsValue::from_str(
+                "verification_facade_spawn：已有在途句柄（验证入口一次只允许一个）",
+            ));
+        }
+        *store = Some(handle);
+        let _ = ack_timeout_ms; // 预留：门面当前固定 SPAWN_ACK_TIMEOUT_MS
+        Ok(index)
+    })
+}
+
+/// 验证：join 上一次 verification_facade_spawn 并返回 u32 结果。
+#[cfg(all(target_family = "wasm", feature = "verification-harness"))]
+#[wasm_bindgen]
+pub fn verification_facade_join() -> Result<u32, JsValue> {
+    let handle = FACADE_VERIFY_HANDLES.with(|slot| slot.borrow_mut().take());
+    let handle = handle.ok_or_else(|| JsValue::from_str("verification_facade_join：无在途句柄"))?;
+    handle
+        .join()
+        .map_err(|error| JsValue::from_str(&format!("verification_facade_join 失败：{error}")))
+}
+
+#[cfg(all(target_family = "wasm", feature = "verification-harness"))]
+thread_local! {
+    static FACADE_VERIFY_HANDLES: RefCell<Option<engine::thread_facade::JoinHandle<u32>>> =
+        const { RefCell::new(None) };
+}
+
+#[cfg(all(target_family = "wasm", feature = "verification-harness"))]
+fn facade_join_index_of(handle: &engine::thread_facade::JoinHandle<u32>) -> u32 {
+    handle.join_index()
+}
+
 /// 句柄内执行闭包；句柄无效 → 抛 JsValue。
 fn with_session<T>(
     handle: u32,

@@ -329,7 +329,7 @@ pub struct World {
     group_txs: Vec<Sender<GroupIn>>,
     desk_txs: Vec<Sender<DeskMsg>>,
     up_rx: Receiver<UpMsg>,
-    handles: Vec<(WorkerId, std::thread::JoinHandle<Result<(), RuntimeError>>)>,
+    handles: Vec<(WorkerId, crate::thread_facade::JoinHandle<Result<(), RuntimeError>>)>,
     abort: Arc<AtomicBool>,
     /// Sol 终审三审：永久关停标记（sever/Drop/显式 shutdown 置位）——
     /// worker_recv 的退出判定源（与 abort 正交：abort=tick 级回滚语义，
@@ -515,6 +515,13 @@ impl World {
         > = std::sync::Arc::new(std::sync::Mutex::new(
             crate::verification_evidence::PhaseTimingBinding::empty(),
         ));
+        // 等待点账（R4a 阶段 1，设计 §10.1）：本构造体建立 1+G+N 条
+        // unbounded channel + deferred_drop 一条 bounded(64)。业务层
+        // 等待点全部经 watchdog 三函数（相位分档）；unbounded send 业务
+        // 层零等待——原语层可达等待点 (l)(m)(n)（分配锁/SyncWaker/链表
+        // 发布）逃逸外包宿主，锁序图见 §10.1.3（capture_slot 只进 (l)
+        // 锁叶，临界区 lock→clone→释放——由 wait_ledger_tests 静态钉住
+        // 「持锁不 send」）。
         let (up_tx, up_rx) = channel::<UpMsg>();
         let mut belief_seeds_clone = belief_seeds;
         let mut group_rxs = Vec::with_capacity(n_groups);
@@ -657,7 +664,7 @@ impl World {
             // 翻转批组参数化：本组全局名 roster 偏移。
             state.roster_offset = g as usize * accounts_per_group;
             let rx = group_rxs.remove(0);
-            let handle = std::thread::Builder::new()
+            let handle = crate::thread_facade::Builder::new()
                 .name(format!("rt-group-{g}"))
                 .spawn({
                     let desk_txs = desk_txs.clone();
@@ -701,7 +708,7 @@ impl World {
                     .copied()
                     .unwrap_or(0),
             };
-            let handle = std::thread::Builder::new()
+            let handle = crate::thread_facade::Builder::new()
                 .name(format!("rt-desk-{s}"))
                 .spawn({
                     let group_txs = group_txs.clone();
@@ -1927,7 +1934,7 @@ impl World {
         tick: u64,
         round_final: u32,
     ) -> Result<Vec<super::publication::GroupShardInput>, RuntimeError> {
-        let seal_started = std::time::Instant::now();
+        let seal_started = crate::clock::Instant::now();
         // 存活契约测试注入（one-shot，Sol 复核 P1-3 真实路径）：广播
         // **之后**在收集循环内消费 consume_acks 条真实 Ack 再合成收集
         // 失败（组已处理/正在处理 Seal——Abort 与 Seal 同队列竞态、迟到

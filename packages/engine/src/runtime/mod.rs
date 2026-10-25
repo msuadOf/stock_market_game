@@ -88,6 +88,9 @@ pub mod watchdog;
 /// B-1' 组线程等待分级自旋合同（协调者批 2026-10-19）。
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod watchdog_spin_tests;
+/// 等待点分层账静态锚（wasm 线程抽象层 R4a 阶段 1——设计 §10.1/§11.1）。
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod wait_ledger_tests;
 /// 刀 2a desk 投影轮间缓存合同（协调者刀单裁决②，2026-10-19）。
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod desk_projection_cache_tests;

@@ -14,10 +14,13 @@ export function createFrontendCommands({ root, host, jobs, frontend, wasmPackage
     host === "windows"
       ? { command: "cmd.exe", args: ["/d", "/s", "/c", [packageManager, ...installArgs].join(" ")], cwd: root, env: buildEnv }
       : { command: packageManager, args: installArgs, cwd: root, env: buildEnv },
-    // 批 9 A10 收尾：build-std/nightly 与 wasm 线程 glue 检查随
-    // wasm-bindgen-rayon 退役删除——串行 wasm 走稳定工具链。
+    // R4a 阶段 1（设计 §6.3 R3-1 锁定矩阵）：wasm32 产物链切回
+    // nightly-2026-09-05 + `-Zbuild-std=core,std`（flags 在
+    // apps/web-wasm/.cargo/config.toml，wasm-pack 在该目录内驱动 cargo 时按
+    // 目录链生效）。这里只注入工具链选择；native（stable 1.96.1）构建不经
+    // 本命令，零影响。
     { command: "wasm-pack", args: ["build", "apps/web-wasm", "--target", "web", "--release", "--out-dir", wasmPackage], cwd: root,
-      env: { ...buildEnv, CARGO_TARGET_DIR: staged ? path.join(env.CARGO_TARGET_DIR, "wasm") : env.CARGO_TARGET_DIR } },
+      env: { ...buildEnv, RUSTUP_TOOLCHAIN: "nightly-2026-09-05", CARGO_TARGET_DIR: staged ? path.join(env.CARGO_TARGET_DIR, "wasm") : env.CARGO_TARGET_DIR } },
     nodeCommand([path.join(root, "scripts/check-web-release-wasm.mjs"), wasmPackage]),
     { action: staged ? "stage-frontend" : "copy-wasm", command: staged ? "stage-frontend" : "copy-wasm", args: [frontend], cwd: root, env: buildEnv },
     nodeCommand([path.join(root, "apps/web/node_modules/typescript/bin/tsc"), "--build", "--force"], frontend),

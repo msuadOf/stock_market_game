@@ -1,5 +1,18 @@
 //! 相位感知看门狗（Sol 终审修订项）。
 //!
+//! **等待点账（wasm 线程抽象层 R4a 阶段 1，设计 §10.1 两层等待模型）**：
+//! 本文件三函数（recv_deadline / worker_recv / worker_recv_spin）是
+//! **业务层等待点**——mpsc 分片 recv 等待，逃逸=消息到达 / 相位超时 /
+//! 断连 / shutdown 标记（各自显式错误面，无无限等待）。业务层之下的
+//! **原语层等待点**（std mpmc 内部：(l) 全局分配锁自旋、(m) SyncWaker
+//! 内部 Mutex、(n) unbounded 链表发布自旋；bounded array flavor 另有
+//! (o)(p)(q)——见 session/deferred_drop.rs 账）不由本文件改写，其失败
+//! 逃逸统一外包宿主（D3/D5→R2-3，§10.1.2 设计立场：不加超时包装层）。
+//! wasm 语义登记位：recv_timeout 家族在 wasm 上经 std `Instant::now`
+//! 必 panic（§6.1.1 F2/N3）——阶段 2 落地两态收件状态机（§6.1.3-1）时
+//! 本文件加 `cfg(target_family = "wasm")` 分支替换，native 分支保持
+//! 逐字不变（§0）。
+//!
 //! 固定单值超时（原型 5s）在长相位（日结公司域事务、持久化窗口）会误报——worker
 //! 长时空闲等待是协议设计的一部分。处置：相位分档放宽阈值，超时上报必须携带相位
 //! 上下文（不静默放大全局阈值）。正常相位保持紧阈值以尽快暴露挂死。
@@ -203,7 +216,7 @@ pub fn worker_recv_spin<T>(
     // 窗内 try_recv 轮询（spin_loop 让出流水线端口——降功耗与 SMT 干扰）；
     // 断连即时退出；窗耗尽立即观察 shutdown（响应 ≤窗+ε）并回落睡眠。
     if spin.enabled && spin.window > Duration::ZERO {
-        let spin_started = std::time::Instant::now();
+        let spin_started = crate::clock::Instant::now();
         loop {
             match rx.try_recv() {
                 Ok(msg) => return Ok(Some(msg)),

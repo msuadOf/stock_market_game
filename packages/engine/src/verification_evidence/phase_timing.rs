@@ -12,7 +12,9 @@
 
 use crate::{session::pipeline::TickPhase, Event, GameSession};
 use serde::{Serialize, Serializer};
-use std::{cell::RefCell, fmt::Display, time::Instant};
+use std::{cell::RefCell, fmt::Display};
+
+use crate::clock::Instant;
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]

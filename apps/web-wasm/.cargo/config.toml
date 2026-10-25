@@ -1,3 +1,62 @@
-# 批 9 A10：wasm32 rustflags/build-std 已随 wasm-bindgen-rayon 退役整体
-# 删除（根目录 .cargo/config.toml 同步）；本文件保留占位说明 Cargo 仍读取
-# 父级配置（TS_RS 环境变量面）。串行 wasm 管线不需要 SharedArrayBuffer。
+# R4a 阶段 1（设计输入 §6.3 R3-1 锁定矩阵·恢复 build-std 段）：wasm32
+# 产物链锁定 nightly-2026-09-05 + `-Zbuild-std=core,std`（+atomics 线程前提）。
+# - 本段只对 wasm32 目标生效，native（stable 1.96.1）构建零影响。
+# - Cargo rustflags 按目录链**合并**（非替换）：仓库根 .cargo/config.toml 的
+#   空 rustflags 与本段合并后即本段取值（A10 占位注释语义保持）。
+# - `[unstable]` 仅 nightly cargo 读取；wasm 产物构建统一经
+#   scripts/frontend-build-plan.mjs（注入 RUSTUP_TOOLCHAIN=nightly-2026-09-05）。
+# - 不含 `-Zbuild-std-features=panic_immediate_abort`（R2-2 panic hook 依赖
+#   payload，设计 R3-1 明确排除）；`-sign-ext` 不再禁用（2026 基线浏览器已全
+#   支持，历史 rayon 期兼容位随锁定矩阵重审退役）。
+#
+# **共享内存 link-arg 链（工具链解阻塞批入默认链，取代阶段 1 的显式红登记）**：
+# 阶段 1 台账曾登记"wasm-bindgen 0.2.93 threads-xform 逐步索要 __stack_alloc
+# 等符号、后者由 wasm-bindgen-rayon 注入、无 rayon 不可满足"——该归因经源码
+# 核清为**误判**（.tmp/toolchain-unblock/symbol-responsibility.md）：
+# - `__stack_alloc` 是 threads-xform 的**输出**（TX lib.rs:172 自建导出），
+#   非输入要求；wasm-bindgen-rayon 1.2.1 无 build.rs、零符号注入，与 xform
+#   输入契约无关；
+# - xform 真实输入契约（逐符号提供者）：
+#   ① memory import+shared+明确 maximum —— wasm-lld（本段 --import-memory
+#      --shared-memory --max-memory；无 build-std 时 sysroot 预编译 std 无
+#      atomics，lld 直接拒绝 --shared-memory——见 rounds/round-0a 红证）；
+#   ② 被动 data 段 —— lld 在 --shared-memory 下自动转换（+bulk-memory 已有）；
+#   ③ `__heap_base`/`__wasm_init_tls`/`__tls_size`/`__tls_align` ——
+#      rustc/LLVM 合成，lld 默认不导出，需 --export= 逐个导出；
+#   ④ `__tls_base` —— 同上合成；wasm-conventions `get_tls_base` **只扫
+#      exports**，漏导出即 `failed to find tls base`（阶段 1 探针死点，
+#      rounds/round-2 红证）；
+#   ⑤ `__stack_pointer` —— LLVM 合成、按名可寻（导出非必需，此处导出为
+#      判据③浏览器观测点）；
+#   ⑥ `__wbindgen_malloc`/`__wbindgen_free` —— wasm-bindgen 运行时自带
+#      （宏注入 link_mem_intrinsics 保链接，无需动作）；
+#   ⑦ `__data_end` —— lld 合成，CLI 收尾会再裁除（与 __heap_base 同列
+#      unexported_unused_lld_things），导出仅为 xform 输入完整性。
+# - 逐轮红→绿证据链与最小复现：.tmp/toolchain-unblock/rounds/（轮 0 缺
+#   __heap_base → 轮 1 缺 __wasm_init_tls → 轮 2 缺 tls base → 轮 3 全绿，
+#   全程无 rayon）；隔离浏览器双 Worker 同 module+memory 判据③：
+#   .tmp/toolchain-unblock/browser-probe/（16/16 绿）。
+# - 产物语义：threads-xform 注入的 start 使**每实例**（每个
+#   WebAssembly.instantiate）原子自增 thread id——首线程用链接期静态栈
+#   （__stack_alloc 保持 0），后续实例经共享堆 malloc 独立栈+TLS 并置位
+#   __stack_pointer/__tls_base（实例局部 global，互不覆盖）；跨实例共享
+#   读写/wait/notify/memory.grow 已由判据③探针验证。宿主装配（G+N Worker
+#   传同一 module+memory）属阶段 2 槽协议。
+[target.wasm32-unknown-unknown]
+rustflags = [
+  "-C", "target-feature=+atomics,+bulk-memory,+mutable-globals",
+  "-C", "panic=abort",
+  "-C", "link-arg=--import-memory",
+  "-C", "link-arg=--shared-memory",
+  "-C", "link-arg=--max-memory=4294967296",
+  "-C", "link-arg=--export=__heap_base",
+  "-C", "link-arg=--export=__wasm_init_tls",
+  "-C", "link-arg=--export=__tls_size",
+  "-C", "link-arg=--export=__tls_align",
+  "-C", "link-arg=--export=__tls_base",
+  "-C", "link-arg=--export=__stack_pointer",
+  "-C", "link-arg=--export=__data_end",
+]
+
+[unstable]
+build-std = ["core", "std"]

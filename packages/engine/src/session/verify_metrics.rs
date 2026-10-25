@@ -10,7 +10,7 @@ use std::sync::{
     atomic::{AtomicU64, AtomicU8, Ordering},
     Mutex, MutexGuard,
 };
-use std::time::Instant;
+use crate::clock::Instant;
 
 /// 固定 Job 领域分类，不是 worker 数或调度参数。
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]

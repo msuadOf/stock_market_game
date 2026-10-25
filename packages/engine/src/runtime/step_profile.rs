@@ -14,7 +14,7 @@
 
 use std::cell::RefCell;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Instant;
+use crate::clock::Instant;
 
 /// 分段清单（枚举序=代码执行序；详细语义见各插桩点注释）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
