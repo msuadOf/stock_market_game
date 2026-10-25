@@ -21,7 +21,7 @@
 - `setup-company-green.log`：8 cases 全绿。每 case 10000ms；整命令由 `scripts/run-with-deadline.mjs 10000` 进程外监督，Node `--test-concurrency=4`。各 case 不共享可变 fixture，路径断言指向实际输入字段。
 - `setup-company-validation.log`：tsc 与 oxlint 独立 child 同时启动；共享300000ms上限，lint单独10000ms、`--threads=4`；tsc的依赖图为工具单进程限制。两项通过，wall 7760ms。
 - 首次把 `run-with-deadline.mjs` 普通入口用于300000ms类型检查，被普通测试上限门禁拒绝，记录于 `setup-company-types.log`；随后改为正式 `runBoundedCommand` 进程外 child supervisor，未放宽普通测试上限。
-- `setup-company-producer.log`：直接读取未修改 `/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-target/producer-save.json`，对8字段实际存在项与parser输出深度相等；记录 source SHA256。未改写生产档、未验证全档其余字段。
+- `setup-company-producer.log`：直接读取未修改 `/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-target/producer-save.json`，对8字段实际存在项与parser输出深度相等；该原件实际上是非公司局，8字段全部缺席，故这里只证明空投影，不证明 Simple 生产样本。记录 source SHA256。未改写生产档、未验证全档其余字段。
 - 未运行 all、merge、push；最终组合全档/类型/构建门禁归 planweb 与 root。
 
 ## 审查状态
