@@ -76,3 +76,29 @@
 - 测试二进制由上述源码在独占 warm target 构建，未复制归档大 binary。现有工程警告保留在构建日志，未宣称无 warning。
 
 完整 diff 已冻结交 root 安排未实施 Sol 独立审查；review 前不宣称批次完成。
+
+## 独立复核 R1 修复：已安装拒绝事实的同日恢复重试
+
+未实施 reviewer `sol61_review_plan_core` 给出真实组合反例：缴款首日 Retail 可用8800分、
+权益10股但显式申请11股，首次被拒且无意图；安装候选清空队列后，同日重试会被默认策略
+重新认购10股。原19例只分别覆盖首次拒绝与截止日重试，没有覆盖该组合。
+
+先保存纯测试提交 `01df320610df34b27ba36140dbe7fa6b7fe82bac`，fixture 加入
+first→install→Serde roundtrip→两次 retry。`review-r1-red-build.log` warm 编译42.22秒；
+`review-r1-red-test.log` 真实断言 `retried.results.is_empty()` 失败（0.01秒、exit101），
+未回填红灯。`review-r1-red-binding.json` 绑定当时3个源文件hash、命令、构建exit与binary hash。
+
+实现只增加6行：默认策略同时检查持久化的同 event/account 且 `rejected_on == day`
+拒绝事实；保留本次 pending 显式账户抑制，不以全历史拒绝永久封禁，不增加schema。
+
+修复后 `review-r1-green-build.log` 同一 warm target 编译35.98秒（外300000ms、`-j16`）；
+`review-r1-green-tests.log` 20个候选case全绿0.04秒；`review-r1-domain-tests.log`
+既有领域11个case全绿0.01秒，两条普通命令各外10000ms、8测试线程。格式与diff空白检查通过。
+机器可核绑定见 `.tmp/rights-offering-r3b/review-r1-green-binding.json`：
+
+- 业务源SHA256 `74045e6839ecae2b3c20d41cbf3b2c0e74afe8d93d554b708133b19b8f0c54ff`；
+- 测试源SHA256 `1f0fde28508a410c84f40576be6735d74800ad6815de8a51b69268325a7cac8f`；
+- binary SHA256 `45ba3c7cf892ea8f13eed5cbfb001a9e1b00e1afe2342358204d017b8ab4facf`。
+
+上述构建窗口由 root 在身份runtime编译结束后放行；没有新增冷target或复制大产物。
+已交回同一未实施 reviewer 复核，仍不把修复完成等同于独立门禁通过。
