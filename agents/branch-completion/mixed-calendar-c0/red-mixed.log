@@ -1,0 +1,18 @@
+
+running 1 test
+
+thread 'mixed_clock_session_uses_all_setup_exchanges_after_restore' (2000314) panicked at packages/engine/tests/civil_clock.rs:1091:13:
+assertion `left == right` failed: 任一实际配置交易所开市均须进入共享会话，首股=Shanghai，休市所=Sse
+  left: ClosedDay
+ right: IntradayTrading
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test mixed_clock_session_uses_all_setup_exchanges_after_restore ... FAILED
+
+failures:
+
+failures:
+    mixed_clock_session_uses_all_setup_exchanges_after_restore
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 13 filtered out; finished in 0.75s
+
+bounded command exited with 101

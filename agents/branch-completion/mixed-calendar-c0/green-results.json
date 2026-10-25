@@ -1,0 +1,100 @@
+{
+  "concurrency": 4,
+  "cases": [
+    {
+      "name": "advancing_beyond_2099_is_rejected_without_state_change",
+      "status": "passed",
+      "ms": 526
+    },
+    {
+      "name": "closed_civil_day_emits_one_date_advance_without_market_events",
+      "status": "passed",
+      "ms": 221
+    },
+    {
+      "name": "closed_day_fixture_facts_probe_is_deterministic_evidence",
+      "status": "passed",
+      "ms": 11
+    },
+    {
+      "name": "closed_days_accrue_without_trading",
+      "status": "passed",
+      "ms": 11
+    },
+    {
+      "name": "closed_start_date_is_preserved_not_shifted",
+      "status": "passed",
+      "ms": 216
+    },
+    {
+      "name": "disclosure_phase_runs_at_18_for_every_civil_day",
+      "status": "passed",
+      "ms": 293
+    },
+    {
+      "name": "duplicate_day_end_is_rejected_atomically",
+      "status": "passed",
+      "ms": 341
+    },
+    {
+      "name": "ending_a_civil_day_requires_the_market_session_to_be_complete",
+      "status": "passed",
+      "ms": 335
+    },
+    {
+      "name": "mixed_clock_closed_reason_is_a_canonical_representative",
+      "status": "passed",
+      "ms": 17
+    },
+    {
+      "name": "mixed_clock_empty_exchange_set_is_rejected",
+      "status": "passed",
+      "ms": 12
+    },
+    {
+      "name": "mixed_clock_restore_rejects_current_date_beyond_frozen_policy",
+      "status": "passed",
+      "ms": 15
+    },
+    {
+      "name": "mixed_clock_session_uses_all_setup_exchanges_after_restore",
+      "status": "passed",
+      "ms": 2947
+    },
+    {
+      "name": "mixed_clock_single_exchange_wrappers_preserve_saved_policy_and_validation",
+      "status": "passed",
+      "ms": 26
+    },
+    {
+      "name": "mixed_clock_union_count_phase_and_next_status_share_one_calendar_rule",
+      "status": "passed",
+      "ms": 29
+    },
+    {
+      "name": "out_of_order_day_end_is_rejected",
+      "status": "passed",
+      "ms": 340
+    },
+    {
+      "name": "rejected_day_end_preserves_disclosure_observer_for_retry",
+      "status": "passed",
+      "ms": 333
+    },
+    {
+      "name": "restored_period_boundary_is_exactly_once",
+      "status": "passed",
+      "ms": 900
+    },
+    {
+      "name": "setup_start_date_defaults_and_range_gate",
+      "status": "passed",
+      "ms": 17
+    },
+    {
+      "name": "skipping_a_day_with_unprocessed_dues_is_rejected",
+      "status": "passed",
+      "ms": 342
+    }
+  ]
+}
