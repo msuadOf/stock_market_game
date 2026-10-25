@@ -87,7 +87,14 @@ function finance(value: unknown, path: string): SimpleFinanceConfig {
     vat: { output_rate_bp: bounded(tax.vat.output_rate_bp, `${taxPath}.vat.output_rate_bp`, 0, 10000), input_rate_bp: bounded(tax.vat.input_rate_bp, `${taxPath}.vat.input_rate_bp`, 0, 10000), deductible_share_bp: bounded(tax.vat.deductible_share_bp, `${taxPath}.vat.deductible_share_bp`, 0, 10000) },
     income_tax: { rate_bp: bounded(tax.income_tax.rate_bp, `${taxPath}.income_tax.rate_bp`, 0, 10000), loss_carryforward_years: bounded(tax.income_tax.loss_carryforward_years, `${taxPath}.income_tax.loss_carryforward_years`, 1, 65535) },
   }
-  return { opening_lines: array(parsed.opening_lines, `${path}.opening_lines`).map((line, index) => parseJournalLine(line, `${path}.opening_lines[${index}]`)), tax_policy: taxPolicy, summary_rule: oneOf(parsed.summary_rule, `${path}.summary_rule`, ["ReceivableRevenuePayableExpenses"] as const), book_display: { investment_of_revenue_bp: bounded(display.investment_of_revenue_bp, `${path}.book_display.investment_of_revenue_bp`, 0, 10000) } }
+  return { opening_lines: array(parsed.opening_lines, `${path}.opening_lines`).map((line, index) => {
+    const linePath = `${path}.opening_lines[${index}]`
+    const parsedLine = parseJournalLine(line, linePath)
+    const parsedAmount = amount(parsedLine.amount, `${linePath}.amount`)
+    // Rust from_yuan_str 先构造正绝对值，再取负；负下界同样不包含 i128::MIN。
+    i128(parsedAmount.replace(".", "").replace(/^-/, ""), `${linePath}.amount`)
+    return { ...parsedLine, amount: parsedAmount }
+  }), tax_policy: taxPolicy, summary_rule: oneOf(parsed.summary_rule, `${path}.summary_rule`, ["ReceivableRevenuePayableExpenses"] as const), book_display: { investment_of_revenue_bp: bounded(display.investment_of_revenue_bp, `${path}.book_display.investment_of_revenue_bp`, 0, 10000) } }
 }
 
 function preferences(value: unknown, path: string): SimpleCompanyPreferences {

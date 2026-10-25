@@ -162,3 +162,30 @@ test("Simple finance 使用 Rust 整数字段宽度且不吞税务或 generation
     assert.throws(() => parse(source), (error: unknown) => error instanceof Error && error.message.includes(`setup.company_system.config.companies[0].${field}`))
   }
 })
+
+test("opening_lines 保留 Rust serde 可解码的正负 i128 边界金额", () => {
+  for (const value of ["1701411834604692317316873037158841057.27", "-1701411834604692317316873037158841057.27", "0.00"]) {
+    const source = options()
+    setPath(source, "company_system.config.companies.0.finance.opening_lines.0.amount", value)
+    const result = parse(source)
+    assert.equal(result.company_system?.mode, "Simple")
+    if (result.company_system?.mode !== "Simple") throw new Error("Fixture 必须是 Simple")
+    assert.equal(result.company_system.config.companies[0]?.finance.opening_lines[0]?.amount, value)
+  }
+})
+
+test("opening_lines 拒绝正负溢出并保留精确 amount 错误路径", () => {
+  for (const value of ["1701411834604692317316873037158841057.28", "-1701411834604692317316873037158841057.28", "-1701411834604692317316873037158841057.29"]) {
+    const source = options()
+    setPath(source, "company_system.config.companies.0.finance.opening_lines.0.amount", value)
+    assert.throws(() => parse(source), (error: unknown) => error instanceof Error && error.message.includes("setup.company_system.config.companies[0].finance.opening_lines[0].amount") && error.message.includes("i128"))
+  }
+})
+
+test("opening_lines 拒绝非当前存档两位小数金额格式", () => {
+  for (const value of [" 1.00", "+1.00", "1", "1.0"]) {
+    const source = options()
+    setPath(source, "company_system.config.companies.0.finance.opening_lines.0.amount", value)
+    assert.throws(() => parse(source), (error: unknown) => error instanceof Error && error.message.includes("setup.company_system.config.companies[0].finance.opening_lines[0].amount"))
+  }
+})
