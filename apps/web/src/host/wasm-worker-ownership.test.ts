@@ -14,11 +14,23 @@ async function withWorker(run: (fixture: Awaited<ReturnType<typeof createFixture
     globals.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
     Object.defineProperty(globalThis, key, { configurable: true, value });
   };
+  const channels: MessageChannel[] = [];
+  // 保留真实调度器；在 fixture 失败时也关闭 Node 中会阻止进程退出的 ports。
+  replace("MessageChannel", class extends MessageChannel {
+    constructor() {
+      super();
+      channels.push(this);
+    }
+  });
   let hooks: ReturnType<typeof registerHooks> | undefined;
   try {
     const f = await createFixture(replace, (registered) => { hooks = registered; });
     await run(f);
   } finally {
+    for (const channel of channels) {
+      channel.port1.close();
+      channel.port2.close();
+    }
     hooks?.deregister();
     for (const [key, original] of globals) {
       if (original === undefined) Reflect.deleteProperty(globalThis, key);
@@ -64,12 +76,14 @@ async function createFixture(
   const id = ++fixtureId;
   register(registerHooks({
     resolve(specifier, context, nextResolve) {
-      const resolved = nextResolve(specifier, context);
-      if (resolved.url.endsWith("/wasm-pkg/web_wasm.js")) return { ...resolved, url: `${resolved.url}?owner-test=${id}` };
-      return resolved;
+      // fixture 自持 bindings；不依赖被 git 忽略的 WASM 构建产物。
+      if (specifier === "../../wasm-pkg/web_wasm.js") {
+        return { url: `virtual:wasm-pkg:owner-${id}`, shortCircuit: true };
+      }
+      return nextResolve(specifier, context);
     },
     load(url, context, nextLoad) {
-      if (url.includes("/wasm-pkg/web_wasm.js?owner-test=")) {
+      if (url.startsWith("virtual:wasm-pkg:owner-")) {
         const exports = Object.keys(bindings).filter((key) => key !== "default")
           .map((key) => `export const ${key} = (...args) => bindings.${key}(...args);`).join("\n");
         return { shortCircuit: true, format: "module", source: `const bindings = globalThis[Symbol.for("stock-game-wasm-owner-tests")];\n${exports}\nexport default bindings.default;` };
