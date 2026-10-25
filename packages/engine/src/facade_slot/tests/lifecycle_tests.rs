@@ -595,3 +595,35 @@ fn 重复退出不重复回收且延迟登记去重() {
     );
     assert_eq!(arena.accounts().free, 1);
 }
+
+
+#[test]
+fn 旧回收锁前复用后须锁内重验完整代与join() {
+    for pending in [false, true] {
+        let arena = Arc::new(SlotArena::alloc(1, GEN_BITS_DEFAULT));
+        let platform = Arc::new(TestPlatform::default());
+        super::with_h1(&arena, |a| { let alloc = a.h2_take(&NullPlatform).unwrap(); a.h3_h4_publish(&platform, alloc, 0, 0); });
+        test_supervisor::answer_ok(&arena, &platform, 0, 0, 1);
+        arena.join_word(0).store(encode_join(0, JoinState::Consumed, GEN_BITS_DEFAULT), Ordering::SeqCst);
+        let mut state = test_supervisor::SupervisorState::default();
+        assert_eq!(test_supervisor::on_worker_exit(&arena, &platform, &mut state, 0, 0), test_supervisor::RecoveryOutcome::Pushed);
+        if pending { state.pending_recovery.push((0, 0)); }
+        platform.seams.recovery.arm();
+        let (a, p) = (arena.clone(), platform.clone());
+        let old = thread::spawn(move || {
+            if pending { assert_eq!(test_supervisor::recover_pending(&a, &p, &mut state), 0); }
+            else { assert_eq!(test_supervisor::on_worker_exit(&a, &p, &mut state, 0, 0), test_supervisor::RecoveryOutcome::GatesNotMet); }
+        });
+        platform.seams.recovery.wait_hit();
+        let counters = Arc::new(JobCounters::default());
+        let new = publish_spawn(&arena, &platform, counted_job("new", &counters)).unwrap();
+        assert_eq!(new.gen, 1);
+        platform.seams.recovery.release_once();
+        old.join().expect("正常复用不能触发迟到回收panic");
+        assert_eq!(arena.slot_word(0).load(Ordering::SeqCst), encode_w(1, SlotState::Req, GEN_BITS_DEFAULT));
+        assert_eq!(arena.join_word(0).load(Ordering::SeqCst), encode_join(1, JoinState::Waiting, GEN_BITS_DEFAULT));
+        assert_eq!(arena.accounts().free, 0);
+        assert_eq!(arena.tombstone_word().load(Ordering::SeqCst), 0);
+        engine_cancel(&arena, &platform, new);
+    }
+}

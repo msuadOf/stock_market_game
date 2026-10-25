@@ -59,6 +59,8 @@ pub trait FacadePlatform: Sync {
     fn seam_supervisor_after_acquire(&self, _slot: u32) {}
     /// D5 已领 join 载荷写权、尚未写 code（仅确定性交错测试）。
     fn seam_dead_after_acquire(&self, _join: u32) {}
+    /// 回收门链初检完成，H1取锁之前。
+    fn seam_recovery_before_lock(&self) {}
 }
 
 /// 无操作平台（arena 级测试用：不等待、不发消息、缝恒 no-op）。
@@ -164,6 +166,7 @@ impl<P: FacadePlatform + Send> FacadePlatform for std::sync::Arc<P> {
     fn terminate_child(&self, worker_id: u32) {
         (**self).terminate_child(worker_id)
     }
+    fn seam_recovery_before_lock(&self) { (**self).seam_recovery_before_lock() }
     fn seam_dead_after_acquire(&self, join: u32) {
         (**self).seam_dead_after_acquire(join)
     }

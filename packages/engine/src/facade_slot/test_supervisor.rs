@@ -249,6 +249,7 @@ pub fn on_worker_exit<P: FacadePlatform>(
     }
     // 门 (c)：摘除已发生（本函数即摘除动作；生产 = TS manifest ACTIVE→REMOVED）。
     // try-lock 快路径（主线程不 Atomics.wait）。
+    platform.seam_recovery_before_lock();
     if !arena.h1_try_lock() {
         if !state.pending_recovery.contains(&(slot, gen)) {
             state.pending_recovery.push((slot, gen));
@@ -280,6 +281,9 @@ pub fn recover_pending<P: FacadePlatform>(
             .join_word(arena.join_index_of(slot))
             .load(Ordering::SeqCst)
             == encode_join(gen, JoinState::Consumed, gb);
+        if w == encode_w(gen, SlotState::Ok, gb) && join_ok {
+            platform.seam_recovery_before_lock();
+        }
         if w == encode_w(gen, SlotState::Ok, gb) && join_ok && arena.h1_try_lock() {
             if !arena.is_free(slot) {
                 arena.push_free(slot);

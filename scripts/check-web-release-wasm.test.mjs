@@ -84,12 +84,13 @@ function importPlainMemory(moduleText = "env", fieldText = "memory", minimum = 1
   return [...name(moduleText), ...name(fieldText), 0x02, 0x00, ...leb32(minimum)];
 }
 
-function wasmModuleBytes({ imports = [], body = plainBody }) {
+function wasmModuleBytes({ imports = [], body = plainBody, exports = [] }) {
   const header = [0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00];
   const typeSection = section(0x01, vec([funcTypeNoResult(), funcTypeF64()]));
   const parts = [header, typeSection];
   if (imports.length > 0) parts.push(section(0x02, vec(imports)));
   parts.push(section(0x03, vec([[0]]))); // 本地函数 1 个，类型 0（() -> ()）
+  if (exports.length > 0) parts.push(section(0x07, vec(exports)));
   parts.push(section(0x0a, vec([[...leb32(body.length), ...body]])));
   return Buffer.from(parts.flat());
 }
@@ -257,5 +258,17 @@ test("shared memory gate rejects historical 4GiB glue maximum", async () => {
     await writeFile(path.join(assets, "web_wasm_bg-shared.wasm"), sharedModuleBytes());
     await writeFile(path.join(assets, "web_wasm.js"), sharedGlue.replace("maximum:32768", "maximum:65536"));
     await assert.rejects(verifySharedMemoryArtifact(assets), /32768|2GiB/);
+  });
+});
+
+
+test("release WASM checker rejects verification facade exports", async () => {
+  await withAssets(async (assets) => {
+    const bytes = wasmModuleBytes({
+      imports: [importFunc("env", "engine_clock_now", 1)], body: atomicFenceBody,
+      exports: [[...name("verification_facade_spawn"), 0x00, 0x01]],
+    });
+    await writeFile(path.join(assets, "web_wasm_bg-verify.wasm"), bytes);
+    await assert.rejects(verifyWebReleaseWasm(assets), /verification_facade_spawn/);
   });
 });

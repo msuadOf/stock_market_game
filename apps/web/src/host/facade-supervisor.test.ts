@@ -269,3 +269,22 @@ test("workerExit 身份错配不得摘除活跃 manifest", () => {
   assert.equal(onWorkerExit(arena, state, 1, 1, 0), "gates-not-met");
   assert.equal(state.manifest.get(1)?.status, "active");
 });
+
+
+test("H1 前旧门链失效时不得回收新代 REQ", () => {
+  const arena = freshArena(); const state = createSupervisorState();
+  publish(arena, 0, 0); answerOk(arena, 0, 0, 1); registerChild(state, 1, 0, 0);
+  Atomics.store(arena.words, joinWordOffset(0, CAP), encodeJoin(0, JoinState.Consumed, GEN_BITS));
+  const compare = Atomics.compareExchange;
+  const patch = mock.method(Atomics, "compareExchange", (words: Int32Array, offset: number, expected: number, replacement: number) => {
+    if (offset === H1_LOCK) {
+      // 同一主线程事件内，engine可并行复用旧free槽并发布新代REQ。
+      publish(arena, 0, 1);
+    }
+    return compare(words, offset, expected, replacement);
+  });
+  try { assert.equal(onWorkerExit(arena, state, 1, 0, 0), "gates-not-met"); }
+  finally { patch.mock.restore(); }
+  assert.equal(Atomics.load(arena.words, FREE_LEN), 0);
+  assert.equal(readSlot(arena, 0).raw, encodeW(1, SlotState.Req, GEN_BITS));
+});

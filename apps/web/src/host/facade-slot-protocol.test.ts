@@ -10,7 +10,7 @@ import {
   RETIRED_GEN_EXHAUSTED, SLOT_ANSWER_A, SLOT_ANSWER_B, SLOT_FREE_NEXT,
   SLOT_JOIN_INDEX, SLOT_PAYLOAD_HI, SLOT_PAYLOAD_LO, SLOT_STRIDE, SLOT_W,
   TIMEOUT_HIT_ANSWERING, TOMBSTONE, GEN_BITS, GEN_BITS_DEFAULT,
-  JoinState, SlotState, TombstoneCode, decodeGen, decodeState, encodeW, joinBase, slotBase,
+  JoinState, SlotState, TombstoneCode, decodeGen, decodeState, encodeW, encodeJoin, joinBase, slotBase,
 } from "./facade-slot-protocol.ts";
 
 // 跨语言 tripwire（设计 §12.1：Rust 为单一事实源，TS 侧逐字镜像）。
@@ -88,4 +88,14 @@ test("槽/join 基址与 Rust 布局公式一致", () => {
   assert.equal(slotBase(2, 8), HEADER_WORDS + 2 * SLOT_STRIDE);
   assert.equal(joinBase(0, 8), HEADER_WORDS + 8 * SLOT_STRIDE);
   assert.equal(joinBase(3, 8), HEADER_WORDS + 8 * SLOT_STRIDE + 3 * JOIN_STRIDE);
+});
+
+
+test("TS 编码镜像拒绝代/位宽/状态越界，最大合法代不回绕", () => {
+  for (const bits of [0, 30, -1, 1.5]) assert.throws(() => encodeW(0, SlotState.Req, bits));
+  for (const gen of [2 ** 29, 2 ** 32 - 1]) assert.throws(() => encodeW(gen, SlotState.Req));
+  for (const state of [-1, 8, 1.5]) assert.throws(() => encodeW(0, state));
+  for (const state of [6, 7]) assert.throws(() => encodeJoin(0, state));
+  assert.equal(decodeGen(encodeW(2 ** 29 - 1, SlotState.Req)), 2 ** 29 - 1);
+  assert.equal(decodeGen(encodeJoin(2 ** 29 - 1, JoinState.Consumed)), 2 ** 29 - 1);
 });

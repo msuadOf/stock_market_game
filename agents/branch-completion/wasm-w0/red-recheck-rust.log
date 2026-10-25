@@ -1,0 +1,22 @@
+
+running 1 test
+test facade_slot::tests::lifecycle_tests::旧回收锁前复用后须锁内重验完整代与join ... FAILED
+
+failures:
+
+---- facade_slot::tests::lifecycle_tests::旧回收锁前复用后须锁内重验完整代与join stdout ----
+
+thread '<unnamed>' (2084709) panicked at agents/branch-completion/wasm-w0/../../../packages/engine/src/facade_slot/arena.rs:360:9:
+facade_slot tombstone(FreeListCorrupt)：push_free 槽 0 状态非法：Req（未终态）
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+thread 'facade_slot::tests::lifecycle_tests::旧回收锁前复用后须锁内重验完整代与join' (2084708) panicked at agents/branch-completion/wasm-w0/../../../packages/engine/src/facade_slot/tests/lifecycle_tests.rs:622:20:
+正常复用不能触发迟到回收panic: Any { .. }
+
+
+failures:
+    facade_slot::tests::lifecycle_tests::旧回收锁前复用后须锁内重验完整代与join
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 48 filtered out; finished in 0.00s
+
+bounded command exited with 101

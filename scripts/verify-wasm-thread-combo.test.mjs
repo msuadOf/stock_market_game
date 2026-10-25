@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { combineGateResults, LOCKED_WASM_BINDGEN, LOCKED_TOOLCHAIN, LOCKED_WASM_PACK, parseWasmBindgenPin } from "./verify-wasm-thread-combo.mjs";
+import { main, combineGateResults, LOCKED_WASM_BINDGEN, LOCKED_TOOLCHAIN, LOCKED_WASM_PACK, parseWasmBindgenPin } from "./verify-wasm-thread-combo.mjs";
 
 // R3-2 组合验证入口·纯逻辑合同（重执行面由入口本体在长验收预算内承载）。
 
@@ -29,4 +29,18 @@ test("组合结果聚合：未登记红门使整体失败，登记红/跳过显�
   assert.deepEqual(summary.skipped, ["browser-combo"]);
   const allGreen = combineGateResults([{ gate: "lock-matrix", status: "green", detail: "" }]);
   assert.equal(allGreen.green, true);
+});
+
+
+test("组合长入口由进程外共享300000ms supervisor驱动且显式jobs", async () => {
+  const calls = [];
+  await main(["--jobs", "16"], { run: async (options) => { calls.push(options); }, env: {}, nodeExecutable: "/node" });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].timeoutMs, 300000);
+  assert.equal(calls[0].cleanupReserveMs, 1000);
+  assert.equal(calls[0].command, "/node");
+  assert.ok(calls[0].args.includes("--internal-worker"));
+  assert.deepEqual(calls[0].args.slice(-2), ["--jobs", "16"]);
+  assert.equal(calls[0].env.STOCK_GAME_WASM_COMBO_INTERNAL_WORKER, "1");
+  await assert.rejects(main(["--internal-worker"], { env: {} }), /supervisor/);
 });
