@@ -978,6 +978,9 @@ pub enum SessionError {
     /// 存档 schema 或领域不变量不合法。数值码+数值上下文（ADR 0041）。
     #[error("invalid save: {0}")]
     InvalidSave(crate::error::ValidationFault),
+    /// 存档拆股／缩股账簿校验失败，保留领域错误及其数值上下文。
+    #[error("share split validation failed: {0}")]
+    ShareSplit(#[from] crate::company::share_split::ShareSplitError),
     /// 透传交易日历错误（冻结日历与双时钟 开局日期门等）。
     #[error(transparent)]
     Calendar(#[from] crate::calendar::CalendarError),

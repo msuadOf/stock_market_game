@@ -1050,6 +1050,12 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
     validate_disclosure_cursors(save)?;
     validate_personal_states(&context)?;
     validate_plan_contract(&context)?;
+    // 内存 SaveSlot 可以绕过 serde；与严格 JSON 同样重放冻结账簿，保留原领域 cause。
+    if let Some(actions) = &save.corporate_actions {
+        for book in &actions.share_splits {
+            book.validate()?;
+        }
+    }
     Ok(())
 }
 

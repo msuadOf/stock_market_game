@@ -1,0 +1,16 @@
+
+running 11 tests
+test company::share_split::tests::allocation_rejects_snapshot_identity_mismatch_and_bad_ratio ... ok
+test company::share_split::tests::consolidation_remainder_tie_break_is_repeatable_per_seed ... ok
+test company::share_split::tests::split_multiplies_every_holder_including_issuer_treasury_without_fragments ... ok
+test company::share_split::tests::consolidation_floors_each_holder_and_awards_aggregate_whole_shares_by_remainder ... ok
+test company::share_split::tests::restored_book_without_registration_serializes_strictly ... ok
+test company::share_split::tests::treasury_buckets_split_exactly_and_consolidation_shares_the_target ... ok
+test company::share_split::tests::registered_zero_total_is_rejected_by_validation_and_strict_json ... ok
+test company::share_split::tests::allocation_rejects_zero_total_but_allows_an_account_to_receive_zero ... ok
+test company::share_split::tests::book_state_machine_advances_and_replays_restored_receipt ... ok
+test company::share_split::tests::whole_save::whole_save_rejects_unexecuted_zero_receipt_without_changing_positive_issuer ... ok
+test company::share_split::tests::whole_save::whole_save_preserves_nonzero_registered_consolidation ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 2311 filtered out; finished in 3.47s
+

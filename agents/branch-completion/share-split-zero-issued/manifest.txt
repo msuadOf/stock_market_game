@@ -1,0 +1,22 @@
+{
+  "base": "a29d9be40a7bf59f5c8bdb9563ed70e8e3bed143",
+  "files": {
+    "packages/engine/src/company/share_split.rs": "478267f68e63c5052c08f3d8a1d58d0c363785fa10fcd6a3cf298b31091c1691",
+    "packages/engine/src/company/share_split_tests.rs": "3d5b0e5a0851cab2e2fd06270c639e387f84447b93fefd1d79943ddbe858e175",
+    "packages/engine/src/session.rs": "6e8c6cb73e0a306334881135067d251a897417c122a982a7e41419a92a2e715a",
+    "packages/engine/src/session/persistence.rs": "d62990a28e04227737c81acd8122b23e3f5f56ec18efc120eb0b37243d63f7b8"
+  },
+  "artifact": {
+    "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/share-split-zero-issued-target/debug/deps/engine-3eb2aa70a85e274e",
+    "sha256": "d54704d5cc63a3e5056f87a9a49c49f5472cc125fe9b80a49087edba4357fe9e",
+    "bytes": 135519648,
+    "fresh": true
+  },
+  "sourceUnchangedAfterTests": true,
+  "testLog": "freeze-tests.log",
+  "documentation": {
+    "path": "docs/trading-rules.md",
+    "sha256": "906d0b17556e9c08acb02f20cf968dd8e74bb634b93838b621c46d4127394f01",
+    "updatedAfterTests": "根据独审收窄 JSON 错误保真文案，Rust 源码及 binary 未变"
+  }
+}

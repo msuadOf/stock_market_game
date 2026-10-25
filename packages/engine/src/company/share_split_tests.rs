@@ -314,3 +314,249 @@ fn treasury_buckets_split_exactly_and_consolidation_shares_the_target() {
     // Σbase 超过汇总目标（数量篡改）拒绝。
     assert!(allocate_treasury_buckets(&buckets, &Dir::Consolidate, 7, 1_428_449, 42).is_err());
 }
+
+#[test]
+fn allocation_rejects_zero_total_but_allows_an_account_to_receive_zero() {
+    let plan = plan(ShareSplitDirection::Consolidate, 3);
+    for (second, expected_total) in [(1, None), (2, Some(1)), (3, Some(1)), (5, Some(2))] {
+        let snapshot = snapshot(
+            vec![
+                holding(HolderId::Account(AccountId(1)), vec![lot("a1", 1)]),
+                holding(HolderId::Account(AccountId(2)), vec![lot("a2", second)]),
+            ],
+            1 + second,
+        );
+        match expected_total {
+            None => {
+                let allocation = allocate_share_split(&snapshot, &plan, 17);
+                let mut book = ShareSplitBook::new(plan.clone()).unwrap();
+                book.announce(plan.announced_on).unwrap();
+                let before = book.clone();
+                let calendar =
+                    crate::calendar::TradingCalendar::current_default_calendar().unwrap();
+                let registered = book.register(snapshot, &calendar).map(|_| ());
+                assert_eq!((allocation.is_err(), registered.is_err()), (true, true));
+                assert_eq!(allocation.unwrap_err(), ShareSplitError::ZeroIssuedShares {
+                    event_id: "split-1".into(), stock: StockCode("600001".into()),
+                    direction: ShareSplitDirection::Consolidate, ratio: 3,
+                    issued_shares_before: 2, issued_shares_after: 0,
+                });
+                assert_eq!(book, before, "失败不得冻结 registration 或发布成功回执");
+            }
+            Some(total) => {
+                let receipt = allocate_share_split(&snapshot, &plan, 17).unwrap();
+                assert_eq!(receipt.issued_shares_after, total);
+                assert_eq!(
+                    holder_outcome(&receipt, &HolderId::Account(AccountId(1))).new_shares,
+                    0
+                );
+            }
+        }
+    }
+}
+
+/// 构造修复前可保存的 Registered 事实，不能依赖修复后的受理入口制造反例。
+fn legacy_zero_book(snapshot: RegistrationSnapshot, plan: ShareSplitEventPlan) -> ShareSplitBook {
+    let receipt = super::ShareSplitReceipt {
+        event_id: plan.event_id.clone(),
+        approval_reference: plan.approval_reference.clone(),
+        registration_event_id: snapshot.event_id().to_owned(),
+        stock: plan.stock.clone(),
+        issuer: plan.issuer.clone(),
+        registered_on: plan.registered_on,
+        direction: plan.direction.clone(),
+        ratio: plan.ratio,
+        issued_shares_before: snapshot.issued_shares(),
+        issued_shares_after: 0,
+        tie_break_seed: super::tie_break_seed(&plan.event_id),
+        holders: snapshot
+            .holdings()
+            .iter()
+            .map(|holding| {
+                let original_shares = holding.lots.iter().map(|lot| lot.qty).sum();
+                HolderSplitOutcome {
+                    holder: holding.holder.clone(),
+                    original_shares,
+                    new_shares: 0,
+                    fractional_numerator: original_shares % plan.ratio,
+                    tie_break_award: 0,
+                    original_lots: holding.lots.clone(),
+                }
+            })
+            .collect(),
+    };
+    ShareSplitBook {
+        plan,
+        status: ShareSplitStatus::Registered,
+        registration: Some(snapshot),
+        receipt: Some(receipt),
+        settled_on: None,
+    }
+}
+
+#[test]
+fn registered_zero_total_is_rejected_by_validation_and_strict_json() {
+    let snapshot = snapshot(
+        vec![
+            holding(HolderId::Account(AccountId(1)), vec![lot("a1", 1)]),
+            holding(HolderId::Account(AccountId(2)), vec![lot("a2", 1)]),
+        ],
+        2,
+    );
+    let book = legacy_zero_book(snapshot, plan(ShareSplitDirection::Consolidate, 3));
+    assert!(book.validate().is_err());
+    assert!(
+        serde_json::from_str::<ShareSplitBook>(&serde_json::to_string(&book).unwrap()).is_err()
+    );
+}
+
+mod whole_save {
+    use super::*;
+    use crate::session::*;
+    use crate::{GameConfig, HotParams, InstParams, Money, RetailParams, StrategyParams};
+    include!("../../test-support/simple_company.rs");
+
+    fn session() -> GameSession {
+        let mut session = GameSession::new(
+            SessionSetup {
+                stocks: vec![StockSpec {
+                    code: StockCode("600001".into()),
+                    exchange: StockExchange::Shanghai,
+                    initial_price: Money::from_cents(1_000),
+                    category: SecurityCategory::MainBoard,
+                    limit_pct: 0.10,
+                    tick: Money::from_cents(1),
+                    total_shares: 100_000,
+                    float_shares: 0,
+                }],
+                npcs: NpcSetup {
+                    retail_count: 1,
+                    inst_count: 0,
+                    hot_count: 0,
+                    retail_cash_median: Money::from_cents(10_000_000),
+                },
+                config: GameConfig::proposed_defaults(),
+                strategy_params: StrategyParams {
+                    retail: RetailParams {
+                        arrival_rate: 0.0,
+                        order_size_mean: 100,
+                        chase_prob: 0.0,
+                    },
+                    inst: InstParams {
+                        margin: 0.05,
+                        order_size: 100,
+                    },
+                    hot: HotParams {
+                        lookback: 2,
+                        trend_threshold: 0.01,
+                        order_size: 100,
+                    },
+                },
+                company_operations: None,
+                groups: Vec::new(),
+                ticks_per_day: 1,
+                auction_ticks: 0,
+                closing_auction_ticks: 0,
+                history_len: 2,
+                t1_enabled: true,
+                float_allocation: FloatAllocation::random(),
+                start_date: date("2030-06-03"),
+                simulation_policy_id: SIMULATION_POLICY_ID.to_owned(),
+                company_system: Some(simple_company_fixture!(crate; ["600001"])),
+                dividend_tax_mode: Some(
+                    crate::company::cash_dividend_tax::CashDividendTaxMode::FlatWithholding,
+                ),
+                flat_withholding_bp: Some(1000),
+                rights_offering_enabled: false,
+                issuer_repurchase_enabled: false,
+                par_value_per_share: Some(Money::from_cents(100)),
+                auto_corporate_foundation: true,
+                report_frequency: Some(crate::information::ReportFrequency::Quarterly),
+            },
+            71,
+        )
+        .unwrap();
+        // 先完成真实 R 日日终，名册快照只能冻结当前已完成日。
+        session.step().unwrap();
+        session.end_civil_day().unwrap();
+        session
+    }
+
+    fn freeze(registry: &mut ShareRegistry) -> RegistrationSnapshot {
+        use crate::company::share_registry::{MovementScope, ShareDayRequest};
+        // 当前 main 尚未安装 R 日日终候选，显式以无成交名册事实补齐已完成日。
+        while registry.settled_on() < date("2030-06-03") {
+            let day = registry.settled_on().next().unwrap();
+            registry.close_day(ShareDayRequest {
+                event_id: format!("fixture-market:{day}"),
+                day,
+                scope: MovementScope::PublicMarket,
+                changes: Vec::new(),
+            }).unwrap();
+        }
+        registry.register("split-1".into(), date("2030-06-03")).unwrap().clone()
+    }
+
+    #[test]
+    fn whole_save_rejects_unexecuted_zero_receipt_without_changing_positive_issuer() {
+        let session = session();
+        let mut save = session.save().unwrap();
+        let original = serde_json::to_vec(&save).unwrap();
+        let actions = save.corporate_actions.as_mut().unwrap();
+        let registry = &mut actions.registries[0];
+        assert_eq!(registry.issued_shares(), 100_000);
+        let snapshot = freeze(registry);
+        actions.share_splits.push(legacy_zero_book(
+            snapshot,
+            plan(ShareSplitDirection::Consolidate, 100_001),
+        ));
+        let edited = serde_json::to_vec(&save).unwrap();
+        let restored = GameSession::restore(&save);
+        let decoded = serde_json::from_slice::<SaveSlot>(&edited);
+        assert_eq!(
+            (restored.is_err(), decoded.is_err()),
+            (true, true),
+            "内存 SaveSlot 与完整 JSON 均不得导入 Registered 零发行量回执"
+        );
+        let error = restored.err().unwrap();
+        let cause = std::error::Error::source(&error).unwrap()
+            .downcast_ref::<ShareSplitError>().unwrap();
+        assert_eq!(cause, &ShareSplitError::ZeroIssuedShares {
+            event_id: "split-1".into(), stock: StockCode("600001".into()),
+            direction: ShareSplitDirection::Consolidate, ratio: 100_001,
+            issued_shares_before: 100_000, issued_shares_after: 0,
+        });
+        assert_eq!(
+            save.corporate_actions.as_ref().unwrap().registries[0].issued_shares(),
+            100_000
+        );
+        assert_eq!(serde_json::to_vec(&save).unwrap(), edited);
+        assert_eq!(
+            serde_json::to_vec(&session.save().unwrap()).unwrap(),
+            original
+        );
+        assert!(session.poison_reason().is_none());
+    }
+
+    #[test]
+    fn whole_save_preserves_nonzero_registered_consolidation() {
+        let session = session();
+        let mut save = session.save().unwrap();
+        let actions = save.corporate_actions.as_mut().unwrap();
+        let snapshot = freeze(&mut actions.registries[0]);
+        let mut book = ShareSplitBook::new(plan(ShareSplitDirection::Consolidate, 2)).unwrap();
+        book.announce(date("2030-06-02")).unwrap();
+        book.register(
+            snapshot,
+            &crate::calendar::TradingCalendar::current_default_calendar().unwrap(),
+        )
+        .unwrap();
+        actions.share_splits.push(book);
+        let parsed: SaveSlot = serde_json::from_slice(&serde_json::to_vec(&save).unwrap()).unwrap();
+        let restored = GameSession::restore(&parsed).unwrap();
+        assert_eq!(
+            restored.corporate_actions().unwrap().share_splits,
+            save.corporate_actions.unwrap().share_splits
+        );
+    }
+}
