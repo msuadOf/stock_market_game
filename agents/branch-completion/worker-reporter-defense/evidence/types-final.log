@@ -1,2 +1,0 @@
-apps/web/src/host/wasm-worker.ts(75,147): error TS2366: Function lacks ending return statement and return type does not include 'undefined'.
-bounded command exited with 2

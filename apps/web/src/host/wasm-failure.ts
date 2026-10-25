@@ -19,7 +19,7 @@ export function describeReadFailureFields(fields: Readonly<Record<string, unknow
   return original.length > 0 ? `；已读原始错误：${original}` : "";
 }
 
-export function describeWasmFailure(error: unknown, coreFields?: { readonly code: unknown; readonly message: unknown }): string {
+export function describeWasmFailure(error: unknown, coreFields?: { readonly code: unknown; readonly message: unknown; readonly where?: unknown }): string {
   if (typeof error === "string") return error;
   try {
     if (error instanceof Error) return safeString(coreFields === undefined ? error.message : coreFields.message);
@@ -43,7 +43,8 @@ export function describeWasmFailure(error: unknown, coreFields?: { readonly code
         else if (!ownToJSON && prototype === String.prototype) source = String.prototype.valueOf.call(error);
         else {
           const descriptors = Object.getOwnPropertyDescriptors(error);
-          for (const key of ["code", "message"] as const) {
+          for (const key of ["code", "message", "where"] as const) {
+            if (!Object.hasOwn(coreFields, key)) continue;
             descriptors[key] = { value: coreFields[key], enumerable: descriptors[key]?.enumerable === true, configurable: true };
           }
           // descriptor 也可能来自 Proxy，必须始终投影；custom toJSON 只接触缓存字段。
@@ -85,7 +86,18 @@ export function classifyWasmFailure(error: unknown): WasmFailureClassification {
       ) {
         return { kind: "structured", code, message };
       }
-      return { kind: "unstructured", description: describeWasmFailure(error, { code, message }), cause };
+      field = "where";
+      const coreFields: { code: unknown; message: unknown; where?: unknown } = { code, message };
+      if (Object.hasOwn(candidate, "where")) {
+        const where = candidate.where;
+        coreFields.where = where;
+        if (where === null || ["string", "number", "boolean", "bigint"].includes(typeof where)) cause.where = where;
+      }
+      const description = describeWasmFailure(error, coreFields);
+      const supplemental = { ...cause };
+      // 标准 Error 的说明就是原 message；其他形态统一附上已读 primitive 诊断。
+      if (Object.hasOwn(cause, "message") && description === String(cause.message)) delete supplemental.message;
+      return { kind: "unstructured", description: `${description}${describeReadFailureFields(supplemental)}`, cause };
     } catch (accessError) {
       return { kind: "access-error", field, reason: describeWasmFailure(accessError), cause };
     }

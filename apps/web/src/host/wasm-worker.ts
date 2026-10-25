@@ -108,7 +108,10 @@ function unstructuredFailureDetails(message: string, where: string, cause?: Read
   if (message.trim().length === 0) {
     return { code: "WASM_WORKER_PROTOCOL", where, message: "非结构化错误没有可读的非空 message", cause: { ...cause, message } };
   }
-  return { code: "WASM_WORKER_PROTOCOL", where, message };
+  return {
+    code: "WASM_WORKER_PROTOCOL", where, message,
+    ...(cause !== undefined && (Object.hasOwn(cause, "code") || Object.hasOwn(cause, "where")) ? { cause } : {}),
+  };
 }
 
 function workerFailureDetails(error: unknown, where: string): WorkerFailureDetails {

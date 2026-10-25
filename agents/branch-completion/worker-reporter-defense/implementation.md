@@ -22,17 +22,17 @@
 
 普通命令均由 `run-with-deadline.mjs 10000` 监督，Node case 均设置 `--test-timeout=10000`。三个定向文件使用 `--test-concurrency=3`，包括 `wasm-worker-failure.test.ts`、`worker-host.test.ts`、`protocol-failure.test.ts`。
 
-- `evidence/red.log`：首次 getter/Proxy/parser/发送异常及 listener 消息丢失红灯。
-- `evidence/red-2.log`：`operationError` 发送失败红灯。
-- `evidence/red-3.log`：独立复核发现的首读核心丢失、非结构化重复读取红灯。
-- `evidence/red-4.log`：非结构化 Proxy get trap 重读红灯。
-- `evidence/red-5.log`：原生 Date 的 own custom `toJSON` 重读红灯。
-- `evidence/green-final-66.log`：最终 66/66 通过，无跳过，Node 报告约 372ms。
-- `evidence/types-final-66.log`：`tsc --project apps/web/tsconfig.app.json --incremental false` 通过；使用 `run-long-validation.mjs 300000` 外监督，与窄 lint/browser 独立并发。类型检查复用已有 WASM bindings 声明，未重建 engine/WASM。
-- `evidence/lint-final-66.log`：四个改动文件 `oxlint --deny-warnings` 通过。
-- `evidence/browser-final-66.log`：Chromium 153.0.8010.12 同时验证实际产品源码经 Vite development transform 的 listener 的 `reportError` 有/无两条路径，都收到完整 Worker error；`browser-check.mjs` 为原件，可从仓库根运行 `node scripts/run-with-deadline.mjs 10000 -- node agents/branch-completion/worker-reporter-defense/browser-check.mjs`。使用两个并发 Worker，`launchServer` 与显式 `kill()` 完成收尾。
+- `evidence/red.log.gz`：首次 getter/Proxy/parser/发送异常及 listener 消息丢失红灯。
+- `evidence/red-2.log.gz`：`operationError` 发送失败红灯。
+- `evidence/red-3.log.gz`：独立复核发现的首读核心丢失、非结构化重复读取红灯。
+- `evidence/red-4.log.gz`：非结构化 Proxy get trap 重读红灯。
+- `evidence/red-5.log.gz`：原生 Date 的 own custom `toJSON` 重读红灯。
+- `evidence/green-final-68.log.gz`：最终 68/68 通过，无跳过，Node 报告约 374ms。
+- `evidence/types-final-68.log.gz`：`tsc --project apps/web/tsconfig.app.json --incremental false` 通过；使用 `run-long-validation.mjs 300000` 外监督，与窄 lint/browser 独立并发。类型检查复用已有 WASM bindings 声明，未重建 engine/WASM。
+- `evidence/lint-final-68.log.gz`：四个改动文件 `oxlint --deny-warnings` 通过。
+- `evidence/browser-final-67.log.gz`：此前 Chromium 153.0.8010.12 同时验证实际产品源码经 Vite development transform 的 listener 的 `reportError` 有/无两条路径，都收到完整 Worker error；`browser-check.mjs` 为原件，可从仓库根运行 `node scripts/run-with-deadline.mjs 10000 -- node agents/branch-completion/worker-reporter-defense/browser-check.mjs`。使用两个并发 Worker，`launchServer` 与显式 `kill()` 完成收尾。
 
-保留负结果：前三次 browser fixture 已获得正确错误事件，但 `browser.close()` 卡住，十秒 supervisor 终止，因此这些运行不算通过；对应 `browser-report-error*.log` 保留。改用 `launchServer/kill` 后完整退出成功。`types-final.log` 的 TS2366 失败原件也保留，修正穷尽分支后 `types-final-66.log` 通过。
+保留负结果：前三次 browser fixture 已获得正确错误事件，但 `browser.close()` 卡住，十秒 supervisor 终止，因此这些运行不算通过；对应 `browser-report-error*.log.gz` 保留。改用 `launchServer/kill` 后完整退出成功。`types-final.log.gz` 的 TS2366 失败原件也保留，修正穷尽分支后 `types-final-68.log.gz` 通过。
 
 原先两个测试要求 reporter 对非法可选字段/getter 继续抛错且消息为空。该行为正是本次要修的缺口；现在保留非法 fixture 与拒绝原因，并加强为完整可见 failure 消息及原故障 `cause` 断言，未放宽 parser。非结构化 listener getter 用受控第二次 generation 返回值模拟故障注入，避免发送 operationError 信封时测试自身再次抛同一输入 getter，混入另一个发送故障。
 
@@ -40,9 +40,9 @@
 
 ## 复核修正与有限阶段表
 
-- `red.log` 原件为 50 测试中 43 绿、7 红，另有 1 次异步 unhandledRejection；不是 8 个断言全红。
-- prototype.toJSON/Date/URL 与空 message 原 code 的新增回归用例是复核修复后的验证，没有单独保存先红原件，不将其冒充完整 TDD 红绿循环。Proxy、自定义 Date.toJSON、双发送原 origin 和原型检查失败均另外有 `red-4/5/6.log` 先红原件。
-- `red-6.log` 固定原 `where` 在双发送或先详情降级后双发送丢失，以及 prototype 检查失败覆盖首读 message 两个缺口。修复后统一用 `describeReadFailureFields` 汇总首读 primitive 诊断，所有失败阶段不得回读原核心。
+- `red.log.gz` 原件为 50 测试中 43 绿、7 红，另有 1 次异步 unhandledRejection；不是 8 个断言全红。
+- prototype.toJSON/Date/URL 与空 message 原 code 的新增回归用例是复核修复后的验证，没有单独保存先红原件，不将其冒充完整 TDD 红绿循环。Proxy、自定义 Date.toJSON、双发送原 origin 和原型检查失败均另外有 `red-4/5/6.log.gz` 先红原件。
+- `red-6.log.gz` 固定原 `where` 在双发送或先详情降级后双发送丢失，以及 prototype 检查失败覆盖首读 message 两个缺口。修复后统一用 `describeReadFailureFields` 汇总首读 primitive 诊断，所有失败阶段不得回读原核心。
 - `cause` 保留 schema 合法核心和已读 primitive 诊断；不承诺任意畸形复杂 `code/message` 的全保真，不为它们构建通用 snapshot。合法复杂 `cause/context` 使用平台 structured clone。
 
 | 失败阶段 | 可见结果及原故障保留 |
@@ -55,3 +55,11 @@
 | 双 postMessage | Worker error 文本包含原故障 code/message/where 及两次发送原因；原快照继续挂在 Error.cause |
 
 Chromium 只验证实际产品源码经 Vite development transform 的 listener，不是 production build 或产品 WASM 整体验收。与 worker-host 的 error 事件到用户 callback 单测一起构成本次消息边界证据。
+
+## 2026-10-26 最终冻结补充
+
+最后两项窄红测见 `red-7.log.gz`（畸形复杂 message 下保留首读 primitive code/where）与 `red-8.log.gz`（原生标量说明不能覆盖已读 message）。最终 `green-final-68.log.gz` 为 68/68，`types-final-68.log.gz`、`lint-final-68.log.gz` 均 exit 0。
+
+68 源码上的 browser 两次十秒 deadline 失败保留为 `browser-final-68.log.gz`、`browser-final-68-retry.log.gz`。加阶段日志后的 `browser-final-68-diagnostic.log.gz` 显示 Vite 35ms、Chromium 连接约 142ms、页面约 777ms 开始并发 Worker 检查，内部 5000ms 事件等待未收到事件，清理约 6583ms 完成，exit 1。没有把 67 源码的旧成功冒充 68 源码通过；最终冻结时浏览器仍需独立复核承接。root 同期采到整机 I/O 压力，只作为环境观察，不宣称已证明本失败根因。
+
+所有原始 `.log` 用 gzip 原样归档，解压内容字节不变；避免测试 runner 原始空白触发源码 whitespace 门禁。旧失败和中间成功均保留，不改写运行日期。

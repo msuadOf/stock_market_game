@@ -1,5 +1,8 @@
 import { createServer } from '../../../apps/web/node_modules/vite/dist/node/index.js';
 import { chromium } from '../../../apps/web/node_modules/@playwright/test/index.mjs';
+const startedAt = performance.now();
+const stage = (name) => console.log(JSON.stringify({ 阶段: name, 已用毫秒: Math.round(performance.now() - startedAt) }));
+stage("创建 Vite server");
 const server = await createServer({
   root: new URL('../../../apps/web/', import.meta.url).pathname,
   configFile: false,
@@ -10,11 +13,15 @@ let browser;
 let browserServer;
 try {
   await server.listen();
-  browserServer = await chromium.launchServer({ headless: true, args: ['--no-sandbox'] });
+  stage("启动 Chromium");
+  browserServer = await chromium.launchServer({ headless: true, args: ['--no-sandbox'], timeout: 5000 });
+  stage("连接 Chromium");
   browser = await chromium.connect(browserServer.wsEndpoint());
   const page = await browser.newPage();
+  stage("加载同源页面");
   const origin = `http://127.0.0.1:${server.httpServer.address().port}`;
   await page.goto(`${origin}/src/host/wasm-failure.ts`);
+  stage("并发检查两个实际 Worker");
   const results = await page.evaluate(async (origin) => Promise.all([true, false].map(async (enabled) => {
     const source = `let listener;
       const originalAdd = self.addEventListener.bind(self);
@@ -44,8 +51,10 @@ try {
   }
   console.log(JSON.stringify({ browser: await browser.version(), results }));
 } finally {
+  stage("终止 Chromium");
   await browserServer?.kill();
   await browser?.close();
   server.httpServer.closeAllConnections();
   await server.close();
+  stage("清理完成");
 }

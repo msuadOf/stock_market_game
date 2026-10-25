@@ -578,3 +578,27 @@ test("原型检查失败的非结构化 Proxy 仍显示首读 message", () => {
   assert.match(message, /检查错误对象失败.*prototype unreadable/);
   assert.match(message, /original proxy failure/);
 });
+
+test("畸形复杂 message 仍保留已读 primitive code/where，operationError 文本也可见", () => {
+  for (const listener of [false, true]) {
+    posted.length = 0;
+    const error = Object.assign(new Error(), { code: "KNOWN", where: "bindings.initialize", message: { reason: "bad" } });
+    if (listener) {
+      let generationReads = 0;
+      const request = Object.defineProperty({ type: "speedMetrics", requestId: 59 }, "generation", { get() {
+        if (++generationReads === 1) throw error;
+        return 0;
+      } });
+      messageListener!({ data: request } as unknown as MessageEvent<Record<string, unknown> & { type: string }>);
+    } else postFailure("wasm-worker.step", error);
+    const failure = posted[0] as Record<string, unknown>;
+    assert.match(String(failure.message), /KNOWN.*bindings.initialize/);
+    if (!listener) assert.deepEqual(failure.cause, { code: "KNOWN", where: "bindings.initialize" });
+  }
+});
+
+test("非结构化原生标量说明保留已读 primitive message", () => {
+  posted.length = 0;
+  postFailure("wasm-worker.step", Object.assign(new Date("2030-01-02T00:00:00Z"), { message: "原故障必须可见" }));
+  assert.match(String((posted[0] as Record<string, unknown>).message), /原故障必须可见/);
+});
