@@ -51,11 +51,8 @@ fn sample_setup_json() -> serde_json::Value {
         "t1_enabled": true,
         "float_allocation": { "between_kinds": "Random", "within_kind": "Random" },
         "simulation_policy_id": engine::SIMULATION_POLICY_ID,
-        "dividend_tax_mode": "FlatWithholding",
-        "flat_withholding_bp": 1000,
         "rights_offering_enabled": false,
         "issuer_repurchase_enabled": false,
-        "par_value_per_share": "100",
         "auto_corporate_foundation": false
     })
 }
