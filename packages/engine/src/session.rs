@@ -1628,7 +1628,13 @@ impl SessionSetup {
         } else {
             0.0005
         };
-        if (self.config.stamp_tax_rate - expected_stamp_rate).abs() > f64::EPSILON {
+        let stamp_rate_mismatch = if tax_mode == CashDividendTaxMode::Exempt {
+            // 免税必须精确为零；极小正税率仍可能在合法大额成交上产生费用。
+            self.config.stamp_tax_rate != 0.0
+        } else {
+            (self.config.stamp_tax_rate - expected_stamp_rate).abs() > f64::EPSILON
+        };
+        if stamp_rate_mismatch {
             // fault1055: 印花税率与税务模式配对失败。ctx = [期望位模式, 实际位模式]
             // （f64 IEEE-754；C 批可改定点点表示）。
             return Err(SessionError::InvalidSetup(ValidationFault::new(

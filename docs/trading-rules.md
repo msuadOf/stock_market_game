@@ -113,7 +113,7 @@ SealAllocationSnapshot 的 `DecisionResourceSnapshot::seal` 读取报价过期�
   价格笼子，默认开启；关闭后仍执行涨跌幅和其他申报规则。该选择随当前存档保存。
 - 买卖双方收取交易过户费 0.01‰；卖出方另收 0.5‰ 印花税；券商佣金率和最低佣金可配置。
 - **可选游戏简化（[ADR-0040](decisions/0040-new-game-default-taxation-modes.md)，2026-10-08 批准）：**
-  公司局新局税务模式 `Exempt` 同时免除卖出印花税，要求 `stamp_tax_rate == 0`，
+  公司局新局税务模式 `Exempt` 同时免除卖出印花税，要求 `stamp_tax_rate` 精确为 `0`，
   佣金与过户费照付；这是游戏模式，不是真实 A 股普遍免税规则。
   `FlatWithholding`／`AShareIndividual` 以及无公司系统的局均要求现行基线
   `stamp_tax_rate == 0.0005`。模式与税率不匹配时显式拒绝创建或恢复，不补默认值。

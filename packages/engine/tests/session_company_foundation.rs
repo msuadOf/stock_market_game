@@ -184,6 +184,56 @@ mod tax_mode_stamp_tax_contract {
             resaved.setup.config.transfer_fee(gross).unwrap(),
             Money::from_cents(1)
         );
+        // 极小正税率在大额合法金额上仍会收费，免税不能依赖舍入恰好为零。
+        let large_gross = Money::from_cents(1_000_000_000_000_000_000);
+        assert_eq!(
+            resaved.setup.config.stamp_tax(large_gross).unwrap(),
+            Money::ZERO
+        );
+    }
+
+    #[test]
+    fn exempt_rejects_even_smallest_positive_stamp_tax_at_setup_and_construction() {
+        for actual in [f64::from_bits(1), 1e-16, f64::EPSILON] {
+            let setup = setup(CashDividendTaxMode::Exempt, actual);
+            let errors = [
+                setup.validate().expect_err("Exempt 必须精确零税率"),
+                GameSession::new(setup, 7)
+                    .err()
+                    .expect("新局必须拒绝非零税率"),
+            ];
+            for error in errors {
+                match error {
+                    engine::SessionError::InvalidSetup(fault) => {
+                        assert_eq!(fault.code, 1055);
+                        assert_eq!(fault.context, vec![0.0_f64.to_bits(), actual.to_bits()]);
+                    }
+                    error => panic!("税率 {actual:?} 必须返回配对错误：{error:?}"),
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn exempt_restore_rejects_saved_positive_stamp_tax_including_epsilon() {
+        let session = GameSession::new(setup(CashDividendTaxMode::Exempt, 0.0), 7)
+            .expect("合法 Exempt 新局");
+        let saved = session.save().expect("真实保存生成合法存档");
+        for actual in [f64::from_bits(1), 1e-16, f64::EPSILON, 0.0005] {
+            let mut edited = saved.clone();
+            edited.setup.config.stamp_tax_rate = actual;
+            let json = serde_json::to_string(&edited).expect("存档外部输入可序列化");
+            let edited = serde_json::from_str(&json).expect("恢复外部输入形态");
+            match GameSession::restore(&edited) {
+                Err(engine::SessionError::InvalidSave(fault)) => {
+                    // 现有恢复契约以 fault2002 包装非法 setup，不扩展存档错误协议。
+                    assert_eq!(fault.code, 2002, "税率 {actual:?}");
+                    assert!(fault.context.is_empty());
+                }
+                Err(error) => panic!("税率 {actual:?} 必须返回存档校验错误：{error:?}"),
+                Ok(_) => panic!("Exempt 存档必须拒绝非零印花税率 {actual:?}"),
+            }
+        }
     }
 
     #[test]
