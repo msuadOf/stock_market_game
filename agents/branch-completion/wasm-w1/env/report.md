@@ -26,7 +26,8 @@
 先准备 12 组合同测试。W0 最终可信批准前只运行独立 tiny WASM ABI 测试（1/1），
 不以缺 API/import/编译失败计红。W0 通过后先放最薄接口 scaffold，把五 import
 转给未改动的 W0 显式失败桩；第二次红测的绑定入口只是 scaffold，不模拟生产
-成功，wait/notify/H5/exit 等仍实际因 W0 桩而失败（14 项中 3 过、11 败）。
+成功；wait/notify 等到达保留的 W0 失败桩，layout/H5/exit 等在最薄 pending
+接口处失败（14 项中 3 过、11 败）。不声称所有失败均到达五 import。
 `red-binding-scaffold.txt` 保留原件，`red-behavior.log` 包含真实业务失败详情。
 首次 scaffold 绑定直接 pending 的 `red.log` 也保留，但不单独当行为红证。
 实现后 binding/env/protocol/supervisor 定向 36/36 通过；Node25 与精确
