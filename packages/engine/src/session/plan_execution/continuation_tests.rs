@@ -206,6 +206,7 @@ fn replace_rechecks_partial_fill_after_canceling_the_old_child() {
     let current = plans.plan(plan.plan_id()).unwrap();
     assert_eq!(current.filled_qty(), 60);
     assert_eq!(current.active_child_order_id(), None);
+
 }
 
 #[test]
@@ -354,14 +355,8 @@ fn a_new_plan_submit_keeps_parent_private_until_the_stock_accepts_it() {
         )
         .unwrap();
     assert!(plans.plan(plan_id).unwrap().execution().is_some());
-    assert_eq!(
-        plans.plan(plan_id).unwrap().active_child_order_id(),
-        Some(OrderId(4))
-    );
-    assert_eq!(
-        plans.plan(plan_id).unwrap().active_child_remaining_qty(),
-        Some(child.qty)
-    );
+    assert_eq!(plans.plan(plan_id).unwrap().active_child_order_id(), Some(OrderId(4)));
+    assert_eq!(plans.plan(plan_id).unwrap().active_child_remaining_qty(), Some(child.qty));
     assert_eq!(plans.plan(plan_id).unwrap().filled_qty(), 0);
 }
 
@@ -624,13 +619,13 @@ fn completed_plan_reports_a_stale_submit_without_reopening_it() {
     assert_eq!(plans, before);
     assert!(matches!(
         session.install_plan_execution(&mut plans, &plan, child, Some((order_id, child.qty))),
-        Err(PlanExecutionError::Plan(
-            crate::plans::PlanError::InvalidTransition { .. }
-        ))
+        Err(PlanExecutionError::Plan(crate::plans::PlanError::InvalidTransition { .. }))
     ));
     assert_eq!(plans, before, "终态计划不得被安装新执行腿");
     let mut forged = serde_json::to_value(&plans).unwrap();
-    forged["plans"][plan.plan_id().0.to_string()]["active_child_order_id"] =
+    let plan_index = forged["plans"].as_array().unwrap().iter()
+        .position(|entry| entry["plan_id"] == serde_json::to_value(plan.plan_id()).unwrap()).unwrap();
+    forged["plans"][plan_index]["active_child_order_id"] =
         serde_json::json!(order_id);
     let forged: PlanBook = serde_json::from_value(forged).unwrap();
     assert!(matches!(
@@ -816,19 +811,8 @@ fn owner_rejects_fact_for_an_unknown_plan() {
     let before = plans.clone();
 
     assert!(matches!(
-        plans.apply(
-            PlanId {
-                owner: AccountId(0),
-                sequence: 999
-            },
-            PlanEvent::TradingDayEnded { trading_day: 0 }
-        ),
-        Err(crate::plans::PlanError::UnknownPlan {
-            plan_id: PlanId {
-                owner: AccountId(0),
-                sequence: 999
-            }
-        })
+        plans.apply(PlanId { owner: AccountId(0), sequence: 999 }, PlanEvent::TradingDayEnded { trading_day: 0 }),
+        Err(crate::plans::PlanError::UnknownPlan { plan_id: PlanId { owner: AccountId(0), sequence: 999 } })
     ));
     assert_eq!(plans, before);
 }
