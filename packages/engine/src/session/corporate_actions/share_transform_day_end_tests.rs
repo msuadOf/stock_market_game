@@ -571,3 +571,69 @@ fn treasury_exact_ratio_cannot_be_reallocated_arbitrarily_between_buckets() {
         "每桶都可整除时不能用汇总守恒掩盖跨桶库存改写"
     );
 }
+
+fn unchanged_quantity_fixture() -> Fixture {
+    // 显式使用已冻结同余 seed：两户各1股二并一，Account 获1股，发行总量2→1。
+    let fixture = Fixture::new(ShareSplitDirection::Consolidate, 2, 1, 0).with_external(1);
+    let outcome = fixture
+        .book
+        .receipt()
+        .unwrap()
+        .holders
+        .iter()
+        .find(|outcome| outcome.holder == HolderId::Account(AccountId(1)))
+        .unwrap();
+    assert_eq!((outcome.original_shares, outcome.new_shares), (1, 1));
+    assert_eq!(fixture.book.receipt().unwrap().issued_shares_after, 1);
+    fixture
+}
+
+#[test]
+fn unchanged_quantity_rejects_future_same_stock_tax_baseline() {
+    let mut fixture = unchanged_quantity_fixture();
+    fixture.tax[0] = CashDividendTaxBook::new(
+        AccountId(1),
+        fixture.registry.stock().clone(),
+        DividendTaxProfile::IndividualPublicMarket,
+        date("2030-06-05"),
+        fixture.tax[0].lots().to_vec(),
+    )
+    .unwrap();
+    fixture.tax[0].validate().unwrap();
+    let error = fixture.run().unwrap_err();
+    assert_eq!(error.event_id, "split-1");
+    assert!(error.detail.contains("税账结算日"));
+}
+
+#[test]
+fn unchanged_quantity_rejects_old_same_stock_tax_baseline() {
+    let mut fixture = unchanged_quantity_fixture();
+    fixture.tax[0] = CashDividendTaxBook::new(
+        AccountId(1),
+        fixture.registry.stock().clone(),
+        DividendTaxProfile::IndividualPublicMarket,
+        date("2030-06-01"),
+        fixture.tax[0].lots().to_vec(),
+    )
+    .unwrap();
+    fixture.tax[0].validate().unwrap();
+    let error = fixture.run().unwrap_err();
+    assert_eq!(error.event_id, "split-1");
+    assert!(error.detail.contains("税账结算日"));
+}
+
+#[test]
+fn unrelated_stock_tax_baseline_is_validated_but_passed_through_unchanged() {
+    let mut fixture = unchanged_quantity_fixture();
+    let other = CashDividendTaxBook::new(
+        AccountId(1),
+        StockCode("600002".into()),
+        DividendTaxProfile::IndividualPublicMarket,
+        date("2030-06-05"),
+        fixture.tax[0].lots().to_vec(),
+    )
+    .unwrap();
+    fixture.tax.push(other.clone());
+    let result = fixture.run().unwrap();
+    assert_eq!(result.dividend_tax_books_before_new_unit_market[1], other);
+}
