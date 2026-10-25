@@ -1375,8 +1375,12 @@ impl SessionSetup {
             // fault1012: 正式 A 股局必须启用 T+1 结算。
             return Err(SessionError::InvalidSetup(ValidationFault::bare(1012)));
         }
-        if (self.config.stamp_tax_rate - 0.0005).abs() > f64::EPSILON {
-            // fault1013: 卖出印花税率必须为 0.0005。ctx[0] = 实际税率 f64 的 IEEE-754 位模式
+        // 公司局已由 validate_company_fields 按 ADR-0040 校验税率配对；
+        // 无公司系统时仍强制现行 A 股印花税率，不能隐式启用 Exempt 游戏模式。
+        if self.company_system.is_none()
+            && (self.config.stamp_tax_rate - 0.0005).abs() > f64::EPSILON
+        {
+            // fault1013: 无公司系统时卖出印花税率必须为 0.0005。ctx[0] = 实际税率 f64 的 IEEE-754 位模式
             // （C 批可改定点点表示）。
             return Err(SessionError::InvalidSetup(ValidationFault::new(
                 1013,

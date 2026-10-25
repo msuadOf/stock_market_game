@@ -137,6 +137,87 @@ fn exempt_mode_requires_zero_stamp_tax() {
     assert_eq!(invalid_setup_code(GameSession::new(setup, 7)), 1055);
 }
 
+mod tax_mode_stamp_tax_contract {
+    use super::*;
+
+    fn setup(mode: CashDividendTaxMode, stamp_tax_rate: f64) -> SessionSetup {
+        let mut setup = company_setup();
+        setup.dividend_tax_mode = Some(mode);
+        setup.flat_withholding_bp = (mode == CashDividendTaxMode::FlatWithholding).then_some(1000);
+        setup.config.stamp_tax_rate = stamp_tax_rate;
+        setup
+    }
+
+    #[test]
+    fn flat_withholding_accepts_current_a_share_stamp_tax() {
+        GameSession::new(setup(CashDividendTaxMode::FlatWithholding, 0.0005), 7)
+            .expect("FlatWithholding 必须接受现行印花税率");
+    }
+
+    #[test]
+    fn a_share_individual_accepts_current_a_share_stamp_tax() {
+        GameSession::new(setup(CashDividendTaxMode::AShareIndividual, 0.0005), 7)
+            .expect("AShareIndividual 必须接受现行印花税率");
+    }
+
+    #[test]
+    fn exempt_accepts_zero_stamp_tax_and_preserves_other_fees_on_restore() {
+        // Exempt 是 ADR-0040 批准的游戏模式；佣金与过户费仍按原配置收取。
+        let setup = setup(CashDividendTaxMode::Exempt, 0.0);
+        let config = setup.config.clone();
+        let session = GameSession::new(setup, 7).expect("Exempt 必须接受零印花税");
+        let saved = session.save().expect("Exempt 必须可保存");
+        let restored = GameSession::restore(&saved).expect("Exempt 必须可恢复");
+        let resaved = restored.save().expect("恢复后必须可保存");
+        assert_eq!(resaved.setup.config, config);
+        assert_eq!(
+            resaved.setup.dividend_tax_mode,
+            Some(CashDividendTaxMode::Exempt)
+        );
+        let gross = Money::from_cents(100_000);
+        assert_eq!(resaved.setup.config.stamp_tax(gross).unwrap(), Money::ZERO);
+        assert_eq!(
+            resaved.setup.config.commission(gross).unwrap(),
+            Money::from_cents(500)
+        );
+        assert_eq!(
+            resaved.setup.config.transfer_fee(gross).unwrap(),
+            Money::from_cents(1)
+        );
+    }
+
+    #[test]
+    fn company_modes_reject_mismatched_stamp_tax_with_expected_and_actual_context() {
+        for (mode, expected, actual) in [
+            (CashDividendTaxMode::FlatWithholding, 0.0005_f64, 0.0_f64),
+            (CashDividendTaxMode::AShareIndividual, 0.0005, 0.0),
+            (CashDividendTaxMode::Exempt, 0.0, 0.0005),
+            (CashDividendTaxMode::Exempt, 0.0, 0.001),
+        ] {
+            match setup(mode, actual).validate() {
+                Err(engine::SessionError::InvalidSetup(fault)) => {
+                    assert_eq!(fault.code, 1055, "税务模式 {mode:?}");
+                    assert_eq!(fault.context, vec![expected.to_bits(), actual.to_bits()]);
+                }
+                result => panic!("税务模式 {mode:?} 必须显式拒绝错误税率：{result:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn plain_game_still_rejects_zero_stamp_tax_with_actual_context() {
+        let mut setup = plain_setup();
+        setup.config.stamp_tax_rate = 0.0;
+        match setup.validate() {
+            Err(engine::SessionError::InvalidSetup(fault)) => {
+                assert_eq!(fault.code, 1013);
+                assert_eq!(fault.context, vec![0.0_f64.to_bits()]);
+            }
+            result => panic!("无公司税务模式时必须保留 A 股税率要求：{result:?}"),
+        }
+    }
+}
+
 #[test]
 fn par_value_domain_is_enforced() {
     // 面值非正 → fault1056；公司局缺面值 → fault1056（必填）。
