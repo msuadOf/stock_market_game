@@ -587,8 +587,8 @@ impl DistributionsDayEndCandidate {
                 } else {
                     None
                 };
-            if plan.kind == StockDistributionKind::CapitalReserveConversion {
-                let personal_holder = credit_lots.iter().find_map(|lot| match lot.holder {
+            let personal_holder =
+                credit_lots.iter().find_map(|lot| match lot.holder {
                     HolderId::Account(account)
                         if self.actions.dividend_tax_books.iter().any(|book| {
                             book.account() == account && book.stock() == &plan.stock
@@ -598,8 +598,14 @@ impl DistributionsDayEndCandidate {
                     }
                     _ => None,
                 });
-                if let Some(account) = personal_holder {
-                    ctx.account = Some(account);
+            if let Some(account) = personal_holder {
+                ctx.account = Some(account);
+                if plan.kind == StockDistributionKind::BonusShares {
+                    return Err(
+                        ctx.error(DistributionsDayEndFailure::UnsupportedPersonalStockBonus)
+                    );
+                }
+                if plan.kind == StockDistributionKind::CapitalReserveConversion {
                     match &capital_reserve_tax_source {
                         None => {
                             return Err(ctx
@@ -681,16 +687,6 @@ impl DistributionsDayEndCandidate {
                     {
                         let tax_lot_id = format!("tax:stock-distribution:{}:{key}", plan.event_id);
                         book.record_net_day(format!("stock-distribution:{}:{}", plan.event_id, account.0), input.day, i128::from(lot.qty), Some(DividendTaxLot { id: tax_lot_id.clone(), qty: lot.qty, acquired_on: input.day, source: crate::company::cash_dividend_tax::TaxAcquisitionSource::CorporateAction { event: plan.event_id.clone() }, class: crate::company::cash_dividend_tax::TaxShareClass::PublicMarket })).map_err(|e| ctx.error(e))?;
-                        if plan.kind == StockDistributionKind::BonusShares {
-                            book.record_stock_bonus_basis(
-                                plan.event_id.clone(),
-                                input.day,
-                                tax_lot_id,
-                                lot.qty,
-                                fact.par_value_per_share,
-                            )
-                            .map_err(|e| ctx.error(e))?;
-                        }
                     }
                 }
                 self.sources.push(DistributionSource::StockDistribution {
