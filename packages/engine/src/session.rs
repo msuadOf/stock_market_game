@@ -42,6 +42,7 @@ mod disclosures;
 mod envelope_projection;
 mod execution;
 pub(crate) mod exchange_calendar_model;
+pub(crate) mod market_calendar_context;
 mod failure;
 mod hash;
 mod history_reads;
