@@ -1,0 +1,39 @@
+{
+  "读取日期": "2026-10-26",
+  "适用日期": "2026-07-06",
+  "核对范围": "SSE 2.4.1、SZSE 2.3.1：按本所公告休市；240分钟与union属于既定游戏口径；2030差异仅synthetic-test",
+  "sources": [
+    {
+      "文件": "sse-notice.html",
+      "来源": "https://www.sse.com.cn/lawandrules/sselawsrules2025/stocks/exchange/c/c_20260424_10816482.shtml",
+      "读取日期": "2026-10-25",
+      "字节数": 33615,
+      "sha256": "758840542d49dd5d448a4ff8f42e9210085afef7b5e5c01d2f56adfc4c8151c4",
+      "实际重读SHA256": "758840542d49dd5d448a4ff8f42e9210085afef7b5e5c01d2f56adfc4c8151c4"
+    },
+    {
+      "文件": "sse-trading-rules.docx",
+      "来源": "https://www.sse.com.cn/lawandrules/sselawsrules2025/stocks/exchange/c/10816482/files/e3a3b98e36894edca77841837936e006.docx",
+      "读取日期": "2026-10-25",
+      "字节数": 65302,
+      "sha256": "fc922c433438b2636cb631eab25cca405209712acbb6aaded768c45456ff8888",
+      "实际重读SHA256": "fc922c433438b2636cb631eab25cca405209712acbb6aaded768c45456ff8888"
+    },
+    {
+      "文件": "sse-deferred-rules.docx",
+      "来源": "https://www.sse.com.cn/lawandrules/sselawsrules2025/stocks/exchange/c/10816482/files/c4510656662e48dc9d8d0deb8cc864b3.docx",
+      "读取日期": "2026-10-25",
+      "字节数": 16476,
+      "sha256": "f4a0d0976a01e3e95f82460170900993824b70d91183e42d09e13ba10a9958c5",
+      "实际重读SHA256": "f4a0d0976a01e3e95f82460170900993824b70d91183e42d09e13ba10a9958c5"
+    },
+    {
+      "文件": "szse-trading-rules.pdf",
+      "来源": "https://docs.static.szse.cn/www/lawrules/rule/trade/current/W020260424690713155663.pdf",
+      "读取日期": "2026-10-25",
+      "字节数": 282084,
+      "sha256": "9b66f8b0db70f84a25ef1ccb4ee2351001724e408117552d75f6d8993483c586",
+      "实际重读SHA256": "9b66f8b0db70f84a25ef1ccb4ee2351001724e408117552d75f6d8993483c586"
+    }
+  ]
+}
