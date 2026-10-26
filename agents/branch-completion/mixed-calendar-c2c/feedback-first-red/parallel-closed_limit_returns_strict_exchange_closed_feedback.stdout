@@ -1,0 +1,11 @@
+
+running 1 test
+test closed_limit_returns_strict_exchange_closed_feedback ... FAILED
+
+failures:
+
+failures:
+    closed_limit_returns_strict_exchange_closed_feedback
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.76s
+

@@ -1,0 +1,17 @@
+{
+  "case": "open_limit_is_accepted_and_reserves_real_cash",
+  "prefix": "positive",
+  "command": [
+    "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+    "10000",
+    "--",
+    "/data1/baiyifan/workplace/stock_market_game/.tmp/mixed-calendar-c2c/c2c-feedback-first-6ac",
+    "open_limit_is_accepted_and_reserves_real_cash",
+    "--exact",
+    "--nocapture",
+    "--test-threads=1"
+  ],
+  "wrapper_exit_code": 0,
+  "wall_seconds": 0.8099180459976196
+}
