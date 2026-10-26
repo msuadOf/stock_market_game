@@ -9,6 +9,10 @@ use crate::company::share_registry::{
     AcquisitionSource, DayNetChange, HolderId, MovementScope, NetAcquisition, ShareDayRequest,
     ShareHolding, ShareLot, ShareRegistry, ShareRestriction,
 };
+use crate::company::share_split::{
+    ShareSplitBook, ShareSplitDeclaration, ShareSplitDirection, ShareSplitEventPlan,
+    holder_inherited_restriction,
+};
 use crate::company::simple::period::{
     AnnualTrendConfig, PeriodGenerationParameters, PeriodNoiseConfig, PeriodVariableExpenseRule,
     SettlementCycle,
@@ -270,6 +274,172 @@ impl Fixture {
             )
             .unwrap();
     }
+}
+
+impl Fixture {
+    fn redenominate(&mut self, direction: ShareSplitDirection) {
+        let after_par = match direction {
+            ShareSplitDirection::Split => 50,
+            ShareSplitDirection::Consolidate => 200,
+        };
+        self.system
+            .declare_share_split(
+                &CompanyId(0),
+                ShareSplitDeclaration {
+                    event_id: "transform-a".into(),
+                    approval_reference: "批准-transform-a".into(),
+                    direction: direction.clone(),
+                    approved_on: date("2030-06-03"),
+                    ratio: 2,
+                    par_value_before: Money::from_cents(100),
+                    par_value_after: Money::from_cents(after_par),
+                    registered_capital_at_approval: AccountingAmount::from_cents(100_000),
+                },
+            )
+            .unwrap();
+        let plan = ShareSplitEventPlan {
+            event_id: "transform-a".into(),
+            approval_reference: "批准-transform-a".into(),
+            issuer: CompanyId(0),
+            stock: code(),
+            exchange: CalendarExchange::Sse,
+            direction,
+            ratio: 2,
+            approved_on: date("2030-06-03"),
+            announced_on: date("2030-06-03"),
+            registered_on: date("2030-06-03"),
+            ex_rights_on: date("2030-06-04"),
+        };
+        let mut book = ShareSplitBook::new(plan.clone()).unwrap();
+        book.announce(plan.announced_on).unwrap();
+        let registry = &mut self.actions.registries[0];
+        let snapshot = registry
+            .register(plan.event_id.clone(), plan.registered_on)
+            .unwrap()
+            .clone();
+        let receipt = book.register(snapshot, &self.calendar).unwrap().clone();
+        registry
+            .close_day(ShareDayRequest {
+                event_id: "market-2030-06-04".into(),
+                day: plan.ex_rights_on,
+                scope: MovementScope::PublicMarket,
+                changes: vec![],
+            })
+            .unwrap();
+        let outcome = &receipt.holders[0];
+        let change = i128::from(outcome.new_shares) - i128::from(outcome.original_shares);
+        let (acquisition, consume) = if change > 0 {
+            (
+                Some(NetAcquisition {
+                    lot_id: "transform-a-owner-7".into(),
+                    source: AcquisitionSource::CorporateAction {
+                        event: plan.event_id.clone(),
+                    },
+                    restriction: holder_inherited_restriction(outcome, plan.ex_rights_on).unwrap(),
+                }),
+                None,
+            )
+        } else {
+            (
+                None,
+                Some(vec![crate::company::share_registry::LotConsumption {
+                    lot_id: "initial-owner-7".into(),
+                    qty: u64::try_from(-change).unwrap(),
+                }]),
+            )
+        };
+        registry
+            .close_day(ShareDayRequest {
+                event_id: "share-transform:transform-a".into(),
+                day: plan.ex_rights_on,
+                scope: MovementScope::ShareReDenomination {
+                    basis: plan.approval_reference,
+                },
+                changes: vec![DayNetChange {
+                    holder: outcome.holder.clone(),
+                    change,
+                    acquisition,
+                    consume,
+                }],
+            })
+            .unwrap();
+        book.mark_settled(plan.ex_rights_on).unwrap();
+        self.system
+            .record_share_split_credit(
+                &CompanyId(0),
+                &plan.event_id,
+                plan.ex_rights_on,
+                receipt.issued_shares_before,
+                receipt.issued_shares_after,
+            )
+            .unwrap();
+        self.actions.share_splits.push(book);
+    }
+}
+
+#[test]
+fn capital_14_real_split_restores_2000_shares_without_changing_capital() {
+    let mut f = Fixture::new();
+    f.redenominate(ShareSplitDirection::Split);
+    f.system = serde_json::from_str(&serde_json::to_string(&f.system).unwrap()).unwrap();
+    f.actions = serde_json::from_str(&serde_json::to_string(&f.actions).unwrap()).unwrap();
+    let summary = f.validate("2030-06-04").unwrap();
+    assert_eq!(summary.companies[&CompanyId(0)].issued_shares, 2_000);
+    assert_eq!(
+        summary.companies[&CompanyId(0)].registered_capital,
+        Some(AccountingAmount::from_cents(100_000))
+    );
+    assert_eq!(summary.companies[&CompanyId(0)].receipt_frontier, 2);
+    assert_eq!(
+        f.system
+            .outstanding_par_value_at(&CompanyId(0), date("2030-06-04"))
+            .unwrap(),
+        Some(Money::from_cents(50))
+    );
+}
+
+#[test]
+fn capital_15_real_consolidation_preserves_capital_and_explicit_lot_consumption() {
+    let mut f = Fixture::new();
+    f.redenominate(ShareSplitDirection::Consolidate);
+    let summary = f.validate("2030-06-04").unwrap();
+    assert_eq!(summary.companies[&CompanyId(0)].issued_shares, 500);
+    assert_eq!(
+        summary.companies[&CompanyId(0)].registered_capital,
+        Some(AccountingAmount::from_cents(100_000))
+    );
+    let consumed = f.actions.registries[0].receipts()[1].request.changes[0]
+        .consume
+        .as_ref()
+        .unwrap();
+    assert_eq!(
+        consumed,
+        &vec![crate::company::share_registry::LotConsumption {
+            lot_id: "initial-owner-7".into(),
+            qty: 500
+        }]
+    );
+}
+
+#[test]
+fn capital_16_changed_current_issuer_2200_does_not_pass_real_split_replay() {
+    let mut f = Fixture::new();
+    f.redenominate(ShareSplitDirection::Split);
+    let mut saved = serde_json::to_value(&f.system).unwrap();
+    saved["issuers"]["0"]["issued_shares"] = serde_json::json!("2200");
+    f.system = serde_json::from_value(saved).unwrap();
+    assert!(matches!(
+        f.validate("2030-06-04"),
+        Err(CompanyCapitalRestoreError::IssuedShares {
+            context: CapitalRestoreContext {
+                company: Some(CompanyId(0)),
+                stock: Some(StockId(0)),
+                ..
+            },
+            expected: 2_000,
+            actual: 2_200,
+        })
+    ));
 }
 
 #[test]
