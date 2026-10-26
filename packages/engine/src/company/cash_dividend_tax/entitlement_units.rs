@@ -160,6 +160,14 @@ pub enum TaxLineageError {
     },
     #[error("本候选不接旧送股新 lot 税基：{event_id}")]
     UnsupportedLegacyBonusBasis { event_id: String },
+    #[error("Cash历史实收 {event_id} 序号{operation_seq} 超过纠正后的当时欠税：评税{assessed_cash}分、此前实收{previously_collected}分、本次{attempted_cents}分")]
+    LegacyCashOvercollection {
+        event_id: String,
+        operation_seq: u64,
+        assessed_cash: i128,
+        previously_collected: i128,
+        attempted_cents: i64,
+    },
     #[error("条件税事实 {event_id} 无效：{detail}")]
     InvalidConditionalFact {
         event_id: String,
@@ -255,6 +263,7 @@ impl CashDividendTaxBook {
         let mut consumptions = Vec::new();
         let mut retirements = Vec::new();
         let mut predecessor = None;
+        let mut legacy_cash_collected = 0i128;
         bonus_replay.apply_at(0, &lots, &mut carriers)?;
         for sequence in 1..=self.operation_seq {
             let before = lots.clone();
@@ -324,6 +333,32 @@ impl CashDividendTaxBook {
                 let key = cash_key(&dividend.event_id);
                 register_carriers(&key, &dividend.lots, &mut carriers)?;
             }
+            if let Some(collection) = self
+                .collections
+                .iter()
+                .find(|c| c.operation_seq == sequence)
+            {
+                let cash_assessed = self.assessed_cash_cents_with_consumptions_through(
+                    &consumptions,
+                    collection.day,
+                    sequence,
+                )?;
+                let due = cash_assessed
+                    .checked_sub(legacy_cash_collected)
+                    .ok_or_else(|| overflow("legacy Cash due"))?;
+                if i128::from(collection.collected.cents()) > due {
+                    return Err(TaxLineageError::LegacyCashOvercollection {
+                        event_id: collection.event_id.clone(),
+                        operation_seq: sequence,
+                        assessed_cash: cash_assessed,
+                        previously_collected: legacy_cash_collected,
+                        attempted_cents: collection.collected.cents(),
+                    });
+                }
+                legacy_cash_collected = legacy_cash_collected
+                    .checked_add(i128::from(collection.collected.cents()))
+                    .ok_or_else(|| overflow("legacy Cash collected"))?;
+            }
             bonus_replay.apply_at(sequence, &lots, &mut carriers)?;
         }
         let assessed = self
@@ -351,9 +386,22 @@ impl CashDividendTaxBook {
         &self,
         consumptions: &[TaxEntitlementConsumption],
     ) -> Result<i128, DividendTaxError> {
-        self.assessed_cash_cents_through(
+        self.assessed_cash_cents_with_consumptions_through(
+            consumptions,
             self.settled_on,
             self.operation_seq,
+        )
+    }
+    // consumptions是重放至该prefix已形成的事实，不能混入之后同日的处置。
+    fn assessed_cash_cents_with_consumptions_through(
+        &self,
+        consumptions: &[TaxEntitlementConsumption],
+        through: CivilDate,
+        sequence: u64,
+    ) -> Result<i128, DividendTaxError> {
+        self.assessed_cash_cents_through(
+            through,
+            sequence,
             |dividend, lot, per_share, start, assessed| {
                 let key = cash_key(&dividend.event_id);
                 assess_mapped_disposals(&key, lot, per_share, start, consumptions, assessed)?;

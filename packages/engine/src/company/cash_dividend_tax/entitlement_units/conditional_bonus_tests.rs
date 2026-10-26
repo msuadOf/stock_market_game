@@ -1,4 +1,4 @@
-use super::tests::{cash_book, current, date, fraction, fragment, lot, origin, q};
+use super::tests::{cash_book, date, fraction, fragment, lot, origin, q};
 use super::*;
 fn empty_lineage(book: &CashDividendTaxBook) -> TaxUnitLineage {
     TaxUnitLineage {
@@ -570,8 +570,134 @@ fn corrected_legacy_cash_overcollection_cannot_be_hidden_by_activated_bonus() {
     )
     .unwrap();
     let snapshot = book.clone();
-    assert!(book
-        .assessment_with_conditional_bonus(&lineage, &facts)
-        .is_err());
+    assert!(
+        matches!(book.assessment_with_conditional_bonus(&lineage,&facts),
+        Err(TaxLineageError::LegacyCashOvercollection {event_id,operation_seq:7,assessed_cash:0,previously_collected:0,attempted_cents:500}) if event_id=="old-cash")
+    );
     assert_eq!(book, snapshot);
+}
+
+#[test]
+fn fractional_distribution_and_nonpositive_terms_are_explicitly_rejected() {
+    let mut book = CashDividendTaxBook::new(
+        AccountId(1),
+        StockCode("600001".into()),
+        DividendTaxProfile::IndividualPublicMarket,
+        date("2030-01-01"),
+        vec![lot("original", 1, "2029-12-25")],
+    )
+    .unwrap();
+    book.record_net_day("given-net-zero".into(), date("2030-01-02"), 0, None)
+        .unwrap();
+    let facts = ConditionalBonusTaxFacts {
+        events: vec![
+            registration("bonus", 0, "2030-01-01", 500_000),
+            realization(&book, "bonus", 1, "2030-01-02", 1, None),
+        ],
+    };
+    assert!(matches!(
+        book.assessment_with_conditional_bonus(&empty_lineage(&book), &facts),
+        Err(TaxLineageError::UnsupportedBonusAllocation {
+            original_qty: 1,
+            ratio_micros: 500_000,
+            actual_qty: 1,
+            ..
+        })
+    ));
+    for invalid in [0, -1] {
+        let mut bad = facts.clone();
+        if let ConditionalBonusTaxAction::RegisterBonus {
+            par_value_per_share,
+            ..
+        } = &mut bad.events[0].action
+        {
+            *par_value_per_share = Money::from_cents(invalid);
+        }
+        assert!(matches!(
+            book.assessment_with_conditional_bonus(&empty_lineage(&book), &bad),
+            Err(TaxLineageError::InvalidConditionalFact { .. })
+        ));
+    }
+}
+#[test]
+fn exact_real_cash_collection_is_deducted_before_late_bonus_realization() {
+    let mut book = cash_book(vec![lot("original", 100, "2029-12-25")]);
+    book.record_net_day("given-net-minus40".into(), date("2030-01-02"), -40, None)
+        .unwrap();
+    book.collect_due(
+        "actual-cash".into(),
+        date("2030-01-02"),
+        Money::from_cents(300),
+    )
+    .unwrap();
+    let facts = ConditionalBonusTaxFacts {
+        events: vec![
+            registration("bonus", 2, "2030-01-01", 1_000_000),
+            realization(&book, "bonus", 4, "2030-01-02", 100, None),
+        ],
+    };
+    let before = book.clone();
+    assert_eq!(
+        book.assessment_with_conditional_bonus(&empty_lineage(&book), &facts)
+            .unwrap()
+            .outstanding
+            .numerator(),
+        1300
+    );
+    assert_eq!(book, before);
+    assert_eq!(book.collections()[0].outstanding.numerator(), 500);
+}
+#[test]
+fn cash_and_bonus_activated_before_consolidation_share_exact_original_unit_consumption() {
+    let mut book = cash_book(vec![lot("original", 100, "2029-12-25")]);
+    credit(&mut book, 100);
+    let facts = ConditionalBonusTaxFacts {
+        events: vec![
+            registration("bonus", 2, "2030-01-01", 1_000_000),
+            realization(&book, "bonus", 3, "2030-01-02", 100, Some(3)),
+        ],
+    };
+    book.record_net_day("zero".into(), date("2030-01-03"), 0, None)
+        .unwrap();
+    let before = book.lots().to_vec();
+    book.record_redenomination_reduction("consolidate".into(), date("2030-01-03"), 100)
+        .unwrap();
+    let lineage = TaxUnitLineage {
+        account: book.account(),
+        stock: book.stock().clone(),
+        transitions: vec![TaxUnitTransition {
+            event_id: "consolidate".into(),
+            operation_seq: 5,
+            day: date("2030-01-03"),
+            from_unit_event: None,
+            before_lots: before,
+            after_lots: book.lots().to_vec(),
+            fragments: vec![
+                fragment("original", q(0), q(100), "new", q(0), q(50)),
+                fragment("new", q(0), q(100), "new", q(50), q(100)),
+            ],
+            non_disposal_retirements: vec![],
+        }],
+    };
+    book.record_net_day("sell10".into(), date("2030-01-04"), -10, None)
+        .unwrap();
+    let partial = book
+        .assessment_with_conditional_bonus(&lineage, &facts)
+        .unwrap();
+    assert_eq!(partial.outstanding.numerator(), 800);
+    assert_eq!(partial.consumptions.len(), 2);
+    assert!(partial
+        .consumptions
+        .iter()
+        .all(|c| c.original == origin("original", q(0), q(20))));
+    book.record_net_day("sell-rest90".into(), date("2030-01-05"), -90, None)
+        .unwrap();
+    let complete = book
+        .assessment_with_conditional_bonus(&lineage, &facts)
+        .unwrap();
+    assert_eq!(complete.outstanding.numerator(), 4000);
+    assert_eq!(complete.consumptions.len(), 4);
+    assert!(complete.consumptions[2..]
+        .iter()
+        .all(|c| c.original == origin("original", q(20), q(100))));
 }

@@ -970,10 +970,16 @@ impl CashDividendTaxBook {
         {
             let event_cents = assess_registered_income_cents(
                 &dividend.lots,
-                dividend.payments.iter().filter(|payment| {
-                    payment.paid_on <= through && payment.operation_seq <= operation_seq
-                }).map(|payment| (payment.paid_on, i128::from(payment.received_gross.cents()))),
-                |lot,per_share,start,assessed| assess_disposals(dividend,lot,per_share,start,assessed),
+                dividend
+                    .payments
+                    .iter()
+                    .filter(|payment| {
+                        payment.paid_on <= through && payment.operation_seq <= operation_seq
+                    })
+                    .map(|payment| (payment.paid_on, i128::from(payment.received_gross.cents()))),
+                |lot, per_share, start, assessed| {
+                    assess_disposals(dividend, lot, per_share, start, assessed)
+                },
             )?;
             total_cents = total_cents
                 .checked_add(event_cents)
@@ -1356,23 +1362,28 @@ impl CashDividendTaxBook {
 fn assess_registered_income_cents(
     lots: &[DividendTaxLot],
     realizations: impl IntoIterator<Item = (CivilDate, i128)>,
-    mut assess_disposals: impl FnMut(&DividendTaxLot,&ExactDividendTaxAmount,CivilDate,&mut ExactDividendTaxAmount)
-        -> Result<(), DividendTaxError>,
+    mut assess_disposals: impl FnMut(
+        &DividendTaxLot,
+        &ExactDividendTaxAmount,
+        CivilDate,
+        &mut ExactDividendTaxAmount,
+    ) -> Result<(), DividendTaxError>,
 ) -> Result<i128, DividendTaxError> {
     let quantity = total_quantity(lots)?;
     let mut assessed = ExactDividendTaxAmount::zero();
-    for (realized_on,gross_cents) in realizations {
-        let per_share = ExactDividendTaxAmount::new(gross_cents,quantity)?;
+    for (realized_on, gross_cents) in realizations {
+        let per_share = ExactDividendTaxAmount::new(gross_cents, quantity)?;
         for lot in lots {
-            if matches!(&lot.class,TaxShareClass::StatutoryRestricted{release_on,..} if realized_on < *release_on) {
-                assessed = assessed.add(&per_share.multiply(lot.qty,10)?)?;
+            if matches!(&lot.class,TaxShareClass::StatutoryRestricted{release_on,..} if realized_on < *release_on)
+            {
+                assessed = assessed.add(&per_share.multiply(lot.qty, 10)?)?;
                 continue;
             }
             let start = match &lot.class {
                 TaxShareClass::PublicMarket => lot.acquired_on,
-                TaxShareClass::StatutoryRestricted{release_on,..} => *release_on,
+                TaxShareClass::StatutoryRestricted { release_on, .. } => *release_on,
             };
-            assess_disposals(lot,&per_share,start,&mut assessed)?;
+            assess_disposals(lot, &per_share, start, &mut assessed)?;
         }
     }
     assessed.round_half_up_cents()
