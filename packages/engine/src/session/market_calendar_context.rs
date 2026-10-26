@@ -101,13 +101,15 @@ impl MarketDayContext {
 
     pub(crate) fn validate_for_stock(
         &self,
-        _expected_source: &Arc<MarketCalendarSource>,
-        _expected_stock: StockId,
-        _expected_exchange: CalendarExchange,
-        _expected_date: CivilDate,
+        expected_source: &Arc<MarketCalendarSource>,
+        expected_stock: StockId,
+        expected_exchange: CalendarExchange,
+        expected_date: CivilDate,
     ) -> Result<(), MarketCalendarContextError> {
-        // TDD 初红：先保留可编译接缝，由真实接收负测驱动最小实现。
-        Ok(())
+        // 完整目录由 World 前置门校验；desk 只点查 spawn 已核的自身绑定。
+        self.validate_owner(expected_source)?;
+        self.validate_stock_binding(expected_stock, expected_exchange)?;
+        self.validate_date(expected_date)
     }
 
     pub(crate) fn validate_for(
@@ -116,9 +118,7 @@ impl MarketDayContext {
         expected_bindings: &[(StockId, CalendarExchange)],
         expected_date: CivilDate,
     ) -> Result<(), MarketCalendarContextError> {
-        if !Arc::ptr_eq(&self.source, expected_source) {
-            return Err(MarketCalendarContextError::SourceMismatch);
-        }
+        self.validate_owner(expected_source)?;
         let mut expected = BTreeMap::new();
         for &(stock, exchange) in expected_bindings {
             if expected.insert(stock, exchange).is_some() {
@@ -127,14 +127,7 @@ impl MarketDayContext {
         }
         // 双向检查完整 StockId 映射，避免同长度替换、缺股或多股被截断比较掩盖。
         for (&stock, &exchange) in &expected {
-            let actual = self.model.stocks().get(&stock).map(|row| row.exchange());
-            if actual != Some(exchange) {
-                return Err(MarketCalendarContextError::BindingMismatch {
-                    stock,
-                    expected: Some(exchange),
-                    actual,
-                });
-            }
+            self.validate_stock_binding(stock, exchange)?;
         }
         for (&stock, row) in self.model.stocks() {
             if !expected.contains_key(&stock) {
@@ -145,6 +138,40 @@ impl MarketDayContext {
                 });
             }
         }
+        self.validate_date(expected_date)
+    }
+
+    fn validate_owner(
+        &self,
+        expected_source: &Arc<MarketCalendarSource>,
+    ) -> Result<(), MarketCalendarContextError> {
+        if !Arc::ptr_eq(&self.source, expected_source) {
+            return Err(MarketCalendarContextError::SourceMismatch);
+        }
+        Ok(())
+    }
+
+    fn validate_stock_binding(
+        &self,
+        expected_stock: StockId,
+        expected_exchange: CalendarExchange,
+    ) -> Result<(), MarketCalendarContextError> {
+        let actual = match self.model.stock(expected_stock) {
+            Ok(row) => Some(row.exchange()),
+            Err(CalendarClockModelError::UnknownStock { .. }) => None,
+            Err(error) => return Err(error.into()),
+        };
+        if actual != Some(expected_exchange) {
+            return Err(MarketCalendarContextError::BindingMismatch {
+                stock: expected_stock,
+                expected: Some(expected_exchange),
+                actual,
+            });
+        }
+        Ok(())
+    }
+
+    fn validate_date(&self, expected_date: CivilDate) -> Result<(), MarketCalendarContextError> {
         if expected_date != self.model.current_date() {
             return Err(MarketCalendarContextError::DateMismatch {
                 expected: expected_date,
@@ -226,15 +253,20 @@ impl MarketTickContext {
 
     pub(crate) fn validate_for_stock(
         &self,
-        _expected_source: &Arc<MarketCalendarSource>,
-        _expected_stock: StockId,
-        _expected_exchange: CalendarExchange,
-        _expected_date: CivilDate,
-        _expected_layout: SessionTickLayout,
-        _expected_before: SharedClockInput,
+        expected_source: &Arc<MarketCalendarSource>,
+        expected_stock: StockId,
+        expected_exchange: CalendarExchange,
+        expected_date: CivilDate,
+        expected_layout: SessionTickLayout,
+        expected_before: SharedClockInput,
     ) -> Result<(), MarketCalendarContextError> {
-        // TDD 初红：先保留可编译接缝，由真实接收负测驱动最小实现。
-        Ok(())
+        self.day.validate_for_stock(
+            expected_source,
+            expected_stock,
+            expected_exchange,
+            expected_date,
+        )?;
+        self.validate_clock(expected_layout, expected_before)
     }
 
     pub(crate) fn validate_for(
@@ -247,6 +279,14 @@ impl MarketTickContext {
     ) -> Result<(), MarketCalendarContextError> {
         self.day
             .validate_for(expected_source, expected_bindings, expected_date)?;
+        self.validate_clock(expected_layout, expected_before)
+    }
+
+    fn validate_clock(
+        &self,
+        expected_layout: SessionTickLayout,
+        expected_before: SharedClockInput,
+    ) -> Result<(), MarketCalendarContextError> {
         if expected_layout.ticks_per_day != self.layout.ticks_per_day
             || expected_layout.auction_ticks != self.layout.auction_ticks
             || expected_layout.closing_auction_ticks != self.layout.closing_auction_ticks

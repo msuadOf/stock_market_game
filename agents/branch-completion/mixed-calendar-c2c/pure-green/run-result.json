@@ -1,0 +1,133 @@
+{
+  "cases": [
+    {
+      "case": "market_calendar_context::tests::c01_same_arc_owner_and_unordered_complete_bindings_are_accepted",
+      "wrapper_exit_code": 0,
+      "wall_seconds": 0.04885833605658263
+    },
+    {
+      "case": "market_calendar_context::tests::c02_identical_or_different_source_values_never_share_owner",
+      "wrapper_exit_code": 0,
+      "wall_seconds": 0.06363053899258375
+    },
+    {
+      "case": "market_calendar_context::tests::c03_duplicate_missing_extra_replaced_and_wrong_exchange_are_typed",
+      "wrapper_exit_code": 0,
+      "wall_seconds": 0.05191301298327744
+    },
+    {
+      "case": "market_calendar_context::tests::c04_receiver_validation_order_is_owner_bindings_date_layout_before",
+      "wrapper_exit_code": 0,
+      "wall_seconds": 0.050911081954836845
+    },
+    {
+      "case": "market_calendar_context::tests::c05_receiver_date_layout_and_before_compare_every_field",
+      "wrapper_exit_code": 0,
+      "wall_seconds": 0.05024721997324377
+    },
+    {
+      "case": "market_calendar_context::tests::c06_mixed_first_and_last_tick_match_oracle_and_manual_minutes",
+      "wrapper_exit_code": 0,
+      "wall_seconds": 0.0454771569930017
+    },
+    {
+      "case": "market_calendar_context::tests::c07_reopen_uses_own_session_count_and_original_sparse_stock_ids",
+      "wrapper_exit_code": 0,
+      "wall_seconds": 0.0491591349709779
+    },
+    {
+      "case": "market_calendar_context::tests::c08_auction_boundaries_keep_240_minutes_before_completed_session",
+      "wrapper_exit_code": 0,
+      "wall_seconds": 0.04690548300277442
+    },
+    {
+      "case": "market_calendar_context::tests::c09_closed_and_completed_are_read_only_and_final_tick_cannot_repeat",
+      "wrapper_exit_code": 0,
+      "wall_seconds": 0.04668185603804886
+    },
+    {
+      "case": "market_calendar_context::tests::c10_invalid_layout_and_before_inputs_propagate_c1a_errors",
+      "wrapper_exit_code": 0,
+      "wall_seconds": 0.046678136102855206
+    },
+    {
+      "case": "market_calendar_context::tests::c11_source_bindings_and_runtime_date_range_are_validated",
+      "wrapper_exit_code": 0,
+      "wall_seconds": 0.05900394998025149
+    },
+    {
+      "case": "market_calendar_context::tests::c12_checked_next_tick_overflow_rejects_legal_max_tick_before",
+      "wrapper_exit_code": 0,
+      "wall_seconds": 0.04565244202967733
+    },
+    {
+      "case": "market_calendar_context::tests::c13_failed_validation_preserves_all_context_facts",
+      "wrapper_exit_code": 0,
+      "wall_seconds": 0.04460720997303724
+    },
+    {
+      "case": "market_calendar_context::tests::c2c_stock_day_accepts_own_closed_and_open_rows_without_complete_bindings",
+      "wrapper_exit_code": 0,
+      "wall_seconds": 0.04662899405229837
+    },
+    {
+      "case": "market_calendar_context::tests::c2c_stock_day_rejects_equal_content_from_another_source_owner",
+      "wrapper_exit_code": 0,
+      "wall_seconds": 0.05041865597013384
+    },
+    {
+      "case": "market_calendar_context::tests::c2c_stock_day_rejects_unknown_stock_and_wrong_exchange_with_details",
+      "wrapper_exit_code": 0,
+      "wall_seconds": 0.041752947960048914
+    },
+    {
+      "case": "market_calendar_context::tests::c2c_stock_day_rejects_wrong_date_with_expected_and_actual",
+      "wrapper_exit_code": 0,
+      "wall_seconds": 0.04452333599328995
+    },
+    {
+      "case": "market_calendar_context::tests::c2c_stock_tick_accepts_same_owner_both_rows_and_both_tick_boundaries",
+      "wrapper_exit_code": 0,
+      "wall_seconds": 0.04701462702360004
+    },
+    {
+      "case": "market_calendar_context::tests::c2c_stock_tick_checks_each_before_clock_field_without_mutating_context",
+      "wrapper_exit_code": 0,
+      "wall_seconds": 0.04444354400038719
+    },
+    {
+      "case": "market_calendar_context::tests::c2c_stock_tick_checks_each_layout_field",
+      "wrapper_exit_code": 0,
+      "wall_seconds": 0.04224755393806845
+    },
+    {
+      "case": "market_calendar_context::tests::c2c_stock_tick_rejects_wrong_owner_stock_exchange_and_date",
+      "wrapper_exit_code": 0,
+      "wall_seconds": 0.047209363081492484
+    },
+    {
+      "case": "market_calendar_context::tests::c2c_stock_validation_priority_is_owner_stock_date_layout_before",
+      "wrapper_exit_code": 0,
+      "wall_seconds": 0.04696064500603825
+    }
+  ],
+  "wall_seconds": 0.15234998101368546,
+  "source_before": {
+    "packages/engine/src/session/exchange_calendar_model.rs": "173c0633b3489a852612458832046f3106e21b28c0c571d6f2ede90f8e33caf5",
+    "packages/engine/src/session/market_calendar_context.rs": "701ea312fd00c28d867adc5f5c66655cac03ee523929307294609a8d63da8468",
+    "packages/engine/src/session/market_calendar_context_tests.rs": "940ded77d66c45fc5419d4d2b9b815d41d5b1fecb5c2587ef5a3e4e1823f5699",
+    "agents/branch-completion/mixed-calendar-c2c/pure-context-harness.rs": "52503e2aae4e02ed09fd9d5adef56aebd31000abd17a16f5fdf1978ca92b6645"
+  },
+  "source_after": {
+    "packages/engine/src/session/exchange_calendar_model.rs": "173c0633b3489a852612458832046f3106e21b28c0c571d6f2ede90f8e33caf5",
+    "packages/engine/src/session/market_calendar_context.rs": "701ea312fd00c28d867adc5f5c66655cac03ee523929307294609a8d63da8468",
+    "packages/engine/src/session/market_calendar_context_tests.rs": "940ded77d66c45fc5419d4d2b9b815d41d5b1fecb5c2587ef5a3e4e1823f5699",
+    "agents/branch-completion/mixed-calendar-c2c/pure-context-harness.rs": "52503e2aae4e02ed09fd9d5adef56aebd31000abd17a16f5fdf1978ca92b6645"
+  },
+  "binary": {
+    "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/mixed-calendar-c2c/pure-context-green",
+    "bytes": 9089952,
+    "sha256": "defb163aa9836d5f7490c23149cd2d50ffb1aaf6f88e609d6dad91e26c116da1"
+  },
+  "说明": "退出码是deadline CLI wrapper；内层Rust失败码仅按stderr原件报告。"
+}
