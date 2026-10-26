@@ -651,3 +651,8 @@ fn consume_day(
 
 #[cfg(test)]
 mod tests;
+
+mod conditional_bonus;
+pub use conditional_bonus::*;
+#[cfg(test)]
+mod conditional_bonus_tests;

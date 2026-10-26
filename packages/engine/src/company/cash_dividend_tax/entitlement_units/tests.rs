@@ -1,15 +1,15 @@
 use super::*;
 
-fn date(text: &str) -> CivilDate {
+pub(super) fn date(text: &str) -> CivilDate {
     CivilDate::from_iso(text).unwrap()
 }
-fn q(n: i128) -> ExactShareUnits {
+pub(super) fn q(n: i128) -> ExactShareUnits {
     ExactShareUnits::new(n, 1).unwrap()
 }
-fn fraction(n: i128, d: u64) -> ExactShareUnits {
+pub(super) fn fraction(n: i128, d: u64) -> ExactShareUnits {
     ExactShareUnits::new(n, d).unwrap()
 }
-fn lot(id: &str, qty: u64, acquired: &str) -> DividendTaxLot {
+pub(super) fn lot(id: &str, qty: u64, acquired: &str) -> DividendTaxLot {
     DividendTaxLot {
         id: id.into(),
         qty,
@@ -20,7 +20,7 @@ fn lot(id: &str, qty: u64, acquired: &str) -> DividendTaxLot {
         class: TaxShareClass::PublicMarket,
     }
 }
-fn cash_book(lots: Vec<DividendTaxLot>) -> CashDividendTaxBook {
+pub(super) fn cash_book(lots: Vec<DividendTaxLot>) -> CashDividendTaxBook {
     let mut book = CashDividendTaxBook::new(
         AccountId(1),
         StockCode("600001".into()),
@@ -46,21 +46,21 @@ fn cash_book(lots: Vec<DividendTaxLot>) -> CashDividendTaxBook {
     .unwrap();
     book
 }
-fn origin(id: &str, start: ExactShareUnits, end: ExactShareUnits) -> TaxOriginSpan {
+pub(super) fn origin(id: &str, start: ExactShareUnits, end: ExactShareUnits) -> TaxOriginSpan {
     TaxOriginSpan {
         lot_id: id.into(),
         start,
         end,
     }
 }
-fn current(id: &str, start: ExactShareUnits, end: ExactShareUnits) -> TaxCurrentSpan {
+pub(super) fn current(id: &str, start: ExactShareUnits, end: ExactShareUnits) -> TaxCurrentSpan {
     TaxCurrentSpan {
         lot_id: id.into(),
         start,
         end,
     }
 }
-fn fragment(
+pub(super) fn fragment(
     from: &str,
     a: ExactShareUnits,
     b: ExactShareUnits,

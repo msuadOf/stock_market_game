@@ -39,6 +39,8 @@ module_links = {
     'company/cash_dividend_tax/tests.rs': 'packages/engine/src/company/cash_dividend_tax/tests.rs',
     'company/cash_dividend_tax/entitlement_units/mod.rs': 'packages/engine/src/company/cash_dividend_tax/entitlement_units.rs',
     'company/cash_dividend_tax/entitlement_units/tests.rs': 'packages/engine/src/company/cash_dividend_tax/entitlement_units/tests.rs',
+    'company/cash_dividend_tax/entitlement_units/conditional_bonus.rs': 'packages/engine/src/company/cash_dividend_tax/entitlement_units/conditional_bonus.rs',
+    'company/cash_dividend_tax/entitlement_units/conditional_bonus_tests.rs': 'packages/engine/src/company/cash_dividend_tax/entitlement_units/conditional_bonus_tests.rs',
 }
 for relative, original in module_links.items():
     link = output / relative
@@ -79,6 +81,8 @@ paths = [repo/p for p in [
     'packages/engine/src/company/share_registry/tests.rs','packages/engine/src/company/cash_dividend_tax.rs',
     'packages/engine/src/company/cash_dividend_tax/tests.rs','packages/engine/src/company/cash_dividend_tax/entitlement_units.rs',
     'packages/engine/src/company/cash_dividend_tax/entitlement_units/tests.rs',
+    'packages/engine/src/company/cash_dividend_tax/entitlement_units/conditional_bonus.rs',
+    'packages/engine/src/company/cash_dividend_tax/entitlement_units/conditional_bonus_tests.rs',
 ]]
 records = [{'path': str(p), 'sha256': hashlib.sha256(p.read_bytes()).hexdigest()} for p in paths]
 receipt = {'label':label,'binary_path':str(output/(label+'-harness')),'boundary_extractions':[{'source':str(repo/p),'concept':name,'sha256':hashlib.sha256(text.encode()).hexdigest()} for p,name,text in [('packages/engine/src/account.rs','StockCode',derived_type(account,'StockCode')),('packages/engine/src/orderbook.rs','AccountId',derived_type(order,'AccountId')),('packages/engine/src/orderbook.rs','serde helpers',helpers),('packages/engine/src/company/spec.rs','CompanyId',derived_type(spec,'CompanyId')+company_display)]],'harness_sha256':hashlib.sha256(harness.read_bytes()).hexdigest(),'args':args,'files':records,'dependencies':dependencies}
