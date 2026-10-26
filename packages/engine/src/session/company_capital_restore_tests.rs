@@ -844,6 +844,35 @@ fn capital_22_cancellation_cannot_consume_initial_treasury_instead_of_bought_lot
 }
 
 #[test]
+fn capital_23_cancellation_disposal_payload_must_match_real_bought_lot() {
+    let mut f = Fixture::new();
+    f.repurchase(true, false);
+    let mut wire = serde_json::to_value(&f.actions).unwrap();
+    wire["registries"][0]["receipts"][1]["disposals"][0]["lot"]["source"] =
+        serde_json::json!({"InitialAllocation": {"evidence": "同id与数量但伪造的处置来源"}});
+    f.actions = serde_json::from_value(wire).unwrap();
+    assert!(
+        matches!(f.validate_manual("2030-06-04"), Err(CompanyCapitalRestoreError::ActionMismatch {
+        context: CapitalRestoreContext { company: Some(CompanyId(0)), stock: Some(StockId(0)), kind: Some(CorporateCapitalKind::IssuerRepurchaseCancellation), event_id: Some(event), receipt_index: Some(1), .. }, field: "repurchase-lot-source",
+    }) if event == "buy-a")
+    );
+}
+
+#[test]
+fn capital_24_repurchase_purpose_cannot_drift_between_book_and_finance() {
+    let mut f = Fixture::new();
+    f.repurchase(true, false);
+    let mut wire = serde_json::to_value(&f.actions).unwrap();
+    wire["issuer_repurchases"][0]["plan"]["purpose"] = serde_json::json!("EmployeeIncentive");
+    f.actions = serde_json::from_value(wire).unwrap();
+    assert!(
+        matches!(f.validate_manual("2030-06-04"), Err(CompanyCapitalRestoreError::ActionMismatch {
+        context: CapitalRestoreContext { company: Some(CompanyId(0)), kind: Some(CorporateCapitalKind::IssuerRepurchaseCancellation), event_id: Some(event), .. }, field: "purpose",
+    }) if event == "buy-a")
+    );
+}
+
+#[test]
 fn capital_01_unchanged_issuer_and_registry_keep_initial_shares() {
     let f = Fixture::new();
     f.system.validate_restored().unwrap();
