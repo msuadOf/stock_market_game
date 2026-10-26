@@ -4,9 +4,7 @@ use crate::Money;
 use crate::accounting::AccountingAmount;
 use crate::calendar::{CivilDate, TradingCalendar};
 use crate::company::identity::IssuerRegistry;
-use crate::company::share_registry::{
-    HolderId, MovementScope, RegistrationSnapshot, ShareDayReceipt,
-};
+use crate::company::share_registry::{HolderId, MovementScope, ShareDayReceipt};
 use crate::company::share_split::{ShareSplitReceipt, holder_inherited_restriction};
 use crate::company::stock_distribution::{HolderCreditLot, holder_credit_lots};
 use crate::company::{CompanyId, CompanySystem, CompanySystemError};
@@ -47,8 +45,6 @@ pub(crate) struct CapitalRestoreContext {
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum CompanyCapitalRestoreError {
-    #[error("资本恢复验证尚未实现")]
-    NotImplemented,
     #[error("资本恢复公司事实校验失败：{context:?}：{source}")]
     System {
         context: CapitalRestoreContext,
@@ -90,8 +86,6 @@ pub(crate) enum CompanyCapitalRestoreError {
     },
     #[error("资本恢复算术不能表示合法股本：{context:?}")]
     Arithmetic { context: CapitalRestoreContext },
-    #[error("资本恢复所需动作验证尚未实现：{context:?}")]
-    UnsupportedMovement { context: CapitalRestoreContext },
     #[error("资本恢复正式动作缺少账簿：{context:?}")]
     MissingBook { context: CapitalRestoreContext },
     #[error("资本恢复正式账簿缺少金融事实：{context:?}")]
@@ -382,7 +376,7 @@ pub(crate) fn validate_company_capital_restore(
             .iter()
             .filter(|frozen| frozen.context.company == Some(*company))
         {
-            let frontier = usize::try_from(frozen.snapshot.settled_receipts()).map_err(|_| {
+            let frontier = usize::try_from(frozen.settled_receipts).map_err(|_| {
                 CompanyCapitalRestoreError::Arithmetic {
                     context: frozen.context.clone(),
                 }
@@ -395,7 +389,7 @@ pub(crate) fn validate_company_capital_restore(
             })?;
             check_shares(
                 *replayed,
-                frozen.snapshot.issued_shares(),
+                frozen.issued_shares,
                 CapitalRestoreContext {
                     receipt_index: Some(frontier),
                     ..frozen.context.clone()
@@ -535,7 +529,8 @@ struct BoughtRepurchaseLot {
 
 struct FrozenCapitalRegistration {
     context: CapitalRestoreContext,
-    snapshot: RegistrationSnapshot,
+    settled_receipts: u64,
+    issued_shares: u64,
 }
 
 #[derive(Default)]
@@ -646,7 +641,8 @@ fn prepare_stock_distributions(
             }
             bindings.snapshots.push(FrozenCapitalRegistration {
                 context: context.clone(),
-                snapshot: snapshot.clone(),
+                settled_receipts: snapshot.settled_receipts(),
+                issued_shares: snapshot.issued_shares(),
             });
         }
         if let Some(credited_on) = book.credited_on() {
@@ -806,7 +802,8 @@ fn prepare_share_splits(
             }
             bindings.snapshots.push(FrozenCapitalRegistration {
                 context: context.clone(),
-                snapshot: snapshot.clone(),
+                settled_receipts: snapshot.settled_receipts(),
+                issued_shares: snapshot.issued_shares(),
             });
         }
         if let Some(day) = book.settled_on() {
@@ -1012,7 +1009,8 @@ fn prepare_rights_offerings(
             }
             bindings.snapshots.push(FrozenCapitalRegistration {
                 context: context.clone(),
-                snapshot: snapshot.clone(),
+                settled_receipts: snapshot.settled_receipts(),
+                issued_shares: snapshot.issued_shares(),
             });
         }
         if let Some(receipt) = book.settlement() {
@@ -1644,63 +1642,6 @@ fn validate_positive_lots(
                 context: context.clone(),
                 field: "holder-allocation",
             });
-        }
-    }
-    Ok(())
-}
-
-fn reject_pending_capital_implementation(
-    input: &CapitalRestoreInput<'_>,
-) -> Result<(), CompanyCapitalRestoreError> {
-    let first = input.actions.issuer_repurchases.first().map(|book| {
-        (
-            book.plan().issuer,
-            &book.plan().event_id,
-            &book.plan().stock,
-            CorporateCapitalKind::IssuerRepurchaseCancellation,
-        )
-    });
-    if let Some((company, event, stock, kind)) = first {
-        return Err(CompanyCapitalRestoreError::UnsupportedMovement {
-            context: CapitalRestoreContext {
-                company: Some(company),
-                stock: input.catalog.id(&stock.0),
-                kind: Some(kind),
-                event_id: Some(event.clone()),
-                ..Default::default()
-            },
-        });
-    }
-    // 逐公司读取全部正式事实；读取错误必须传播，不能仅凭四个 book 数组为空放行。
-    for (company, _) in input.system.issuers().iter() {
-        let facts = [input.system.issuer_repurchase_facts(company).map(|facts| {
-            facts
-                .into_iter()
-                .map(|fact| fact.event_id)
-                .collect::<Vec<_>>()
-        })];
-        for (kind, events) in [CorporateCapitalKind::IssuerRepurchaseCancellation]
-            .into_iter()
-            .zip(facts)
-        {
-            let events = events.map_err(|source| CompanyCapitalRestoreError::System {
-                context: CapitalRestoreContext {
-                    company: Some(*company),
-                    kind: Some(kind),
-                    ..Default::default()
-                },
-                source,
-            })?;
-            if let Some(event) = events.first() {
-                return Err(CompanyCapitalRestoreError::UnsupportedMovement {
-                    context: CapitalRestoreContext {
-                        company: Some(*company),
-                        kind: Some(kind),
-                        event_id: Some(event.clone()),
-                        ..Default::default()
-                    },
-                });
-            }
         }
     }
     Ok(())
