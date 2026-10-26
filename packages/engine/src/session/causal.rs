@@ -4,7 +4,129 @@ use crate::diagnostics::causal::{
     Termination,
 };
 
+/// 仅含已校验的本拍增量，最外层全部成功后才可发布。
+pub(in crate::session) struct RuntimeCausalDelta {
+    time: FactTime,
+    kinds: Vec<CausalFactKind>,
+}
+
 impl GameSession {
+    pub(in crate::session) fn prepare_runtime_causal(
+        &self,
+        driver: &mut crate::runtime::drive::RuntimeDriver,
+        time: FactTime,
+    ) -> Result<RuntimeCausalDelta, StepFatal> {
+        use crate::runtime::diagnostics::{DeskCausalKind, OperationSource};
+        let fail = |description: String| StepFatal::InvariantViolation {
+            location: "runtime::diagnostics::prepare".to_owned(),
+            description,
+        };
+        if self.tick().is_multiple_of(self.state.setup.ticks_per_day) {
+            driver.ensure_causal_day_end_supported().map_err(fail)?;
+        }
+        let mut kinds = Vec::new();
+        for fact in driver.take_causal_facts() {
+            if fact.tick != self.tick() {
+                return Err(fail(format!(
+                    "causal tick 错位：fact={} session={}",
+                    fact.tick,
+                    self.tick()
+                )));
+            }
+            let code = StockId(u32::from(fact.stock));
+            if !self.state.markets.contains_key(&code) {
+                return Err(fail(format!("causal stock 不存在：{code:?}")));
+            }
+            let quote = |raw: crate::runtime::diagnostics::DeskQuote| Quote {
+                code,
+                bid_cents: raw.bid_cents,
+                ask_cents: raw.ask_cents,
+                bid_depth: raw.bid_depth,
+                ask_depth: raw.ask_depth,
+            };
+            let identity = |order: crate::runtime::OrderRef, owner: crate::runtime::Owner| {
+                if order.0 != fact.stock || order.1 > u64::from(u32::MAX) {
+                    return Err(fail(format!(
+                        "causal OrderRef 无效：stock={} order={order:?}",
+                        fact.stock
+                    )));
+                }
+                if usize::try_from(owner.1).map_or(true, |local| local >= driver.accounts_per_group()) {
+                    return Err(fail(format!("causal owner 局部坐标越界：{owner:?}")));
+                }
+                let account = driver
+                    .account_by_owner(owner)
+                    .ok_or_else(|| fail(format!("causal owner 不在名册：{owner:?}")))?;
+                Ok((OrderId((u64::from(order.0) << 32) | order.1), account))
+            };
+            match fact.kind {
+                DeskCausalKind::Submitted {
+                    order,
+                    owner,
+                    side,
+                    qty,
+                    source,
+                    before,
+                } => {
+                    if source != OperationSource::PlayerExternal {
+                        return Err(fail(format!(
+                            "causal Submitted 来源尚未接通：{source:?} order={order:?}"
+                        )));
+                    }
+                    let (order, account) = identity(order, owner)?;
+                    kinds.push(CausalFactKind::Quote(quote(before)));
+                    kinds.push(CausalFactKind::Submitted(OrderOrigin {
+                        order,
+                        account,
+                        code,
+                        company: self.state.issuer_of_stock(code),
+                        plan: None,
+                        decision: None,
+                        side,
+                        qty,
+                    }));
+                }
+                DeskCausalKind::Cancelled {
+                    order,
+                    owner,
+                    qty,
+                    source,
+                } => {
+                    if source != OperationSource::PlayerExternal {
+                        return Err(fail(format!(
+                            "causal Cancelled 来源尚未接通：{source:?} order={order:?}"
+                        )));
+                    }
+                    let (order, account) = identity(order, owner)?;
+                    kinds.push(CausalFactKind::Terminated {
+                        order,
+                        account,
+                        code,
+                        qty,
+                        reason: Termination::Voluntary,
+                    });
+                }
+                DeskCausalKind::Quote(raw) => kinds.push(CausalFactKind::Quote(quote(raw))),
+                DeskCausalKind::Unsupported { detail } => return Err(fail(detail.to_owned())),
+            }
+        }
+        let count = u64::try_from(self.state.causal.fact_count())
+            .map_err(|_| fail("causal 历史长度超出 sequence 域".to_owned()))?;
+        count
+            .checked_add(
+                u64::try_from(kinds.len())
+                    .map_err(|_| fail("causal delta 长度超出 sequence 域".to_owned()))?,
+            )
+            .ok_or_else(|| fail("causal sequence 溢出".to_owned()))?;
+        Ok(RuntimeCausalDelta { time, kinds })
+    }
+
+    pub(in crate::session) fn publish_runtime_causal(&mut self, delta: RuntimeCausalDelta) {
+        for kind in delta.kinds {
+            self.state.causal.record(delta.time, kind);
+        }
+    }
+
     pub fn causal_facts(&self) -> &[CausalFact] {
         self.state.causal.facts()
     }
@@ -140,13 +262,21 @@ mod tests {
         }
         let registry = crate::company::CompanyRegistry::new(configs).unwrap();
         registry
-            .validate_issuer_mapping(&[(setup.stocks[0].code.clone(), setup.stocks[0].total_shares)])
+            .validate_issuer_mapping(&[(
+                setup.stocks[0].code.clone(),
+                setup.stocks[0].total_shares,
+            )])
             .unwrap();
         let mut session = GameSession::new(setup, 42).unwrap();
         // 单独验证诊断接缝：合法发行人表额外含一家未上市公司，不执行市场 tick。
         session.state.company_registry = std::sync::Arc::new(registry);
         let stock = session.stock_id("600101").unwrap();
-        let company = session.state.company_registry.catalog().id("C-600101").unwrap();
+        let company = session
+            .state
+            .company_registry
+            .catalog()
+            .id("C-600101")
+            .unwrap();
         assert_ne!(stock.0, company.0, "夹具必须区分股票目录与公司目录的 id");
         let quote = session.causal_quote(&stock);
 

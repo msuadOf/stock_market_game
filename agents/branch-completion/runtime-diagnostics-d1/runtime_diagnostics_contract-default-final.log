@@ -1,0 +1,16 @@
+
+running 4 tests
+
+thread 'common::flip_helpers::closure_tests::sol3r_cancel_exceeding_accept_is_rejected' (3397799) panicked at packages/engine/tests/common/flip_helpers.rs:245:17:
+撤销余量超受理余量：(1, 0, 1) cancel=150 accept=100
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+thread 'common::flip_helpers::closure_tests::sol3r_double_cancel_same_id_is_rejected' (3397800) panicked at packages/engine/tests/common/flip_helpers.rs:249:17:
+同一受理 id 的撤单事件必须恰一条（Sol 三审反例——逐单终结不重复）：(1, 0, 1)
+test common::flip_helpers::closure_tests::sol3r_one_cancel_per_order_passes ... ok
+test common::flip_helpers::closure_tests::sol3r_double_cancel_same_id_is_rejected ... ok
+test common::flip_helpers::closure_tests::sol3r_cancel_exceeding_accept_is_rejected ... ok
+test fixed_player_operations_preserve_transaction_resources_events_and_restore ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.90s
+

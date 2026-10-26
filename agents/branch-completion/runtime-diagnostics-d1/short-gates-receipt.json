@@ -1,0 +1,126 @@
+{
+  "source_manifest": "/data1/baiyifan/workplace/stock_market_game/.tmp/runtime-diagnostics-d1/build-2-source-before.json",
+  "record_source": "执行后依据 functions.exec 的实际工具调用与返回字段记录；tool_wall_seconds 为工具原字段，不从 harness 输出反推。",
+  "case_and_command_deadline_ms": 10000,
+  "results": [
+    {
+      "name": "unit-final",
+      "cwd": "/data1/baiyifan/workplace/stock_market_game",
+      "command": [
+        "node",
+        "scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/runtime-diagnostics-d1/target/debug/deps/engine-35b7d31e21e038a1",
+        "d1_",
+        "--nocapture",
+        "--test-threads=8"
+      ],
+      "stdout_stderr_log": "/data1/baiyifan/workplace/stock_market_game/.tmp/runtime-diagnostics-d1/unit-final.log",
+      "exit": 0,
+      "tool_wall_seconds": 3.284315796,
+      "parallel_commands_in_group": 4,
+      "test_threads": 8,
+      "binary_sha256": "ee1c92f212071d079a17f86e2821433fb0caf8c3f36ac636c099c681be3c9c74"
+    },
+    {
+      "name": "public-final",
+      "cwd": "/data1/baiyifan/workplace/stock_market_game",
+      "command": [
+        "node",
+        "scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/runtime-diagnostics-d1/target/debug/deps/runtime_diagnostics_d1-5d541b905dac8506",
+        "d1_",
+        "--nocapture",
+        "--test-threads=8"
+      ],
+      "stdout_stderr_log": "/data1/baiyifan/workplace/stock_market_game/.tmp/runtime-diagnostics-d1/public-final.log",
+      "exit": 0,
+      "tool_wall_seconds": 0.902727917,
+      "parallel_commands_in_group": 4,
+      "test_threads": 8,
+      "binary_sha256": "20a660673c81028fd0e59aa5ddb008b696d8adac9faab3e98ce1255b24519b51"
+    },
+    {
+      "name": "storage-final",
+      "cwd": "/data1/baiyifan/workplace/stock_market_game",
+      "command": [
+        "node",
+        "scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/runtime-diagnostics-d1/target/debug/deps/engine-35b7d31e21e038a1",
+        "diagnostics::causal::tests",
+        "--nocapture",
+        "--test-threads=8"
+      ],
+      "stdout_stderr_log": "/data1/baiyifan/workplace/stock_market_game/.tmp/runtime-diagnostics-d1/storage-final.log",
+      "exit": 0,
+      "tool_wall_seconds": 0.203768552,
+      "parallel_commands_in_group": 4,
+      "test_threads": 8,
+      "binary_sha256": "ee1c92f212071d079a17f86e2821433fb0caf8c3f36ac636c099c681be3c9c74"
+    },
+    {
+      "name": "contract-feature-final",
+      "cwd": "/data1/baiyifan/workplace/stock_market_game",
+      "command": [
+        "node",
+        "scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/runtime-diagnostics-d1/target/debug/deps/runtime_diagnostics_contract-7198f1d2bed88758",
+        "fixed_player_operations_preserve_transaction_resources_events_and_restore",
+        "--exact",
+        "--nocapture",
+        "--test-threads=8"
+      ],
+      "stdout_stderr_log": "/data1/baiyifan/workplace/stock_market_game/.tmp/runtime-diagnostics-d1/contract-feature-final.log",
+      "exit": 0,
+      "tool_wall_seconds": 2.07874393,
+      "parallel_commands_in_group": 4,
+      "test_threads": 8,
+      "binary_sha256": "eea79e333b4c8e080d567f7e2bc4291bd1bc912132c5a91774962701e6e3c913"
+    },
+    {
+      "name": "diagnostic_absence-default-final",
+      "cwd": "/data1/baiyifan/workplace/stock_market_game",
+      "command": [
+        "node",
+        "scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/runtime-diagnostics-d1/target/debug/deps/diagnostic_absence-ec04148a42ef21ed",
+        "--nocapture",
+        "--test-threads=8"
+      ],
+      "stdout_stderr_log": "/data1/baiyifan/workplace/stock_market_game/.tmp/runtime-diagnostics-d1/diagnostic_absence-default-final.log",
+      "exit": 0,
+      "tool_wall_seconds": 0.560160522,
+      "parallel_commands_in_group": 2,
+      "test_threads": 8,
+      "binary_sha256": "b84e2df8c401fc015bd51ef9a7a9c2b7e7a53b6c9941534aa47808ca2ad598ae"
+    },
+    {
+      "name": "runtime_diagnostics_contract-default-final",
+      "cwd": "/data1/baiyifan/workplace/stock_market_game",
+      "command": [
+        "node",
+        "scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/runtime-diagnostics-d1/target/debug/deps/runtime_diagnostics_contract-323cb6cdf0c51550",
+        "--nocapture",
+        "--test-threads=8"
+      ],
+      "stdout_stderr_log": "/data1/baiyifan/workplace/stock_market_game/.tmp/runtime-diagnostics-d1/runtime_diagnostics_contract-default-final.log",
+      "exit": 0,
+      "tool_wall_seconds": 2.263663804,
+      "parallel_commands_in_group": 2,
+      "test_threads": 8,
+      "binary_sha256": "1241752c04f61466490b978fd761d0dee946d8f01d0afedf3b462a3a9ceefe65"
+    }
+  ]
+}

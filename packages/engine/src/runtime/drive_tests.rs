@@ -2951,6 +2951,8 @@ fn p2_4a_sparse_echo_missing_item_fails_loud() {
         desk_receipts: Vec::new(),
         group_rejections: Vec::new(),
         desk_auction: Vec::new(),
+        #[cfg(feature = "simulation-diagnostics")]
+        desk_causal: Vec::new(),
     };
     // 分片只含 local 0（maker）——taker local 3 缺项必须显式失败。
     let snapshots: Vec<Vec<(crate::runtime::LocalIdx, crate::runtime::group::GroupAccount)>> =
@@ -3003,6 +3005,8 @@ fn p2_4a_arc_shard_cover_check_matches_value_form() {
         desk_receipts: Vec::new(),
         group_rejections: Vec::new(),
         desk_auction: Vec::new(),
+        #[cfg(feature = "simulation-diagnostics")]
+        desk_causal: Vec::new(),
     };
     // Arc 分片形态（生产形态：组分片条目 Arc 共享——Seal 攻顶 A-1）。
     let make_shards = |locals: &[crate::runtime::LocalIdx]| -> Vec<

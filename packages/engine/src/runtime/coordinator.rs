@@ -83,6 +83,9 @@ pub struct TickEvidence {
     pub desk_resting: Vec<(StockIdx, u64)>,
     /// 本 tick 双腿成交事实（事件映射输入）。
     pub desk_trades: Vec<super::protocol::DeskTradeFact>,
+    /// 单股原顺序的本轮诊断 sideband。
+    #[cfg(feature = "simulation-diagnostics")]
+    pub desk_causal: Vec<super::diagnostics::DeskCausalFact>,
     /// 本 tick 生命周期事实（受理/撤单/到期）。
     pub desk_lifecycle: Vec<super::protocol::DeskLifecycleFact>,
     /// 本轮回执（拒收/不可撤）。
@@ -144,6 +147,8 @@ pub fn converge_round(
     let mut desk_views = Vec::with_capacity(n_stocks);
     let mut desk_resting = Vec::with_capacity(n_stocks);
     let mut desk_trades = Vec::new();
+    #[cfg(feature = "simulation-diagnostics")]
+    let mut desk_causal = Vec::new();
     let mut desk_lifecycle = Vec::new();
     let mut desk_receipts = Vec::new();
     let mut group_rejections = Vec::new();
@@ -181,6 +186,12 @@ pub fn converge_round(
                         ),
                     });
                 }
+                #[cfg(feature = "simulation-diagnostics")]
+                if r.causal.iter().any(|fact| fact.tick != tick || fact.round != round || fact.stock != r.stock) {
+                    return RoundOutcome::Failed(RuntimeError::ProtocolInvariant {
+                        detail: format!("causal sideband 上下文错配：tick={tick} round={round} stock={}", r.stock),
+                    });
+                }
                 desks_left -= 1;
                 entities_out += r.entities_out;
                 desk_hashes.push((r.stock, r.committed_hash));
@@ -189,6 +200,8 @@ pub fn converge_round(
                 desk_resting_facts[r.stock as usize] = Some(r.resting_orders);
                 desk_serial_cursors[r.stock as usize] = r.next_serial;
                 desk_trades.extend(r.trades.iter().copied());
+                #[cfg(feature = "simulation-diagnostics")]
+                desk_causal.extend(r.causal);
                 desk_lifecycle.extend(r.lifecycle.iter().copied());
                 desk_receipts.extend(r.receipts_out_list.iter().copied());
                 desk_auction.extend(r.auction.iter().copied());
@@ -230,6 +243,8 @@ pub fn converge_round(
         desk_views,
         desk_resting,
         desk_trades,
+        #[cfg(feature = "simulation-diagnostics")]
+        desk_causal,
         desk_lifecycle,
         desk_receipts,
         group_rejections,

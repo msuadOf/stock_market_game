@@ -1,0 +1,208 @@
+{
+  "source_manifest": "/data1/baiyifan/workplace/stock_market_game/.tmp/runtime-diagnostics-d1/build-2-source-before.json",
+  "build_artifacts": "/data1/baiyifan/workplace/stock_market_game/.tmp/runtime-diagnostics-d1/build-2-artifacts.json",
+  "concurrency": 8,
+  "case_command_deadline_ms": 10000,
+  "results": [
+    {
+      "binary": "diagnostics",
+      "case": "baseline_excludes_preset_history_and_reconciles_trade_volume_to_daily_candles",
+      "exit": 1,
+      "seconds": 0.250489518,
+      "binary_sha256": "775e954eb1fc77d98b9484b461303c2517ae398b3127aac31902a4e2b36d2ab3",
+      "log": "/data1/baiyifan/workplace/stock_market_game/.tmp/runtime-diagnostics-d1/matrix-final-diagnostics-baseline_excludes_preset_history_and_reconciles_trade_volume_to_daily_candles.log"
+    },
+    {
+      "binary": "diagnostics",
+      "case": "baseline_json_serializes_large_seeds_without_precision_loss",
+      "exit": 0,
+      "seconds": 0.215823388,
+      "binary_sha256": "775e954eb1fc77d98b9484b461303c2517ae398b3127aac31902a4e2b36d2ab3",
+      "log": "/data1/baiyifan/workplace/stock_market_game/.tmp/runtime-diagnostics-d1/matrix-final-diagnostics-baseline_json_serializes_large_seeds_without_precision_loss.log"
+    },
+    {
+      "binary": "diagnostics",
+      "case": "baseline_keeps_each_seed_visible_and_summarizes_observed_runs",
+      "exit": 1,
+      "seconds": 0.264721015,
+      "binary_sha256": "775e954eb1fc77d98b9484b461303c2517ae398b3127aac31902a4e2b36d2ab3",
+      "log": "/data1/baiyifan/workplace/stock_market_game/.tmp/runtime-diagnostics-d1/matrix-final-diagnostics-baseline_keeps_each_seed_visible_and_summarizes_observed_runs.log"
+    },
+    {
+      "binary": "diagnostics",
+      "case": "baseline_rejects_empty_seeds_and_zero_days_explicitly",
+      "exit": 0,
+      "seconds": 0.00001332,
+      "binary_sha256": "775e954eb1fc77d98b9484b461303c2517ae398b3127aac31902a4e2b36d2ab3",
+      "log": "/data1/baiyifan/workplace/stock_market_game/.tmp/runtime-diagnostics-d1/matrix-final-diagnostics-baseline_rejects_empty_seeds_and_zero_days_explicitly.log"
+    },
+    {
+      "binary": "diagnostics",
+      "case": "baseline_reports_a_complete_zero_trade_run_without_nan_or_fake_activity",
+      "exit": 0,
+      "seconds": 0.210015014,
+      "binary_sha256": "775e954eb1fc77d98b9484b461303c2517ae398b3127aac31902a4e2b36d2ab3",
+      "log": "/data1/baiyifan/workplace/stock_market_game/.tmp/runtime-diagnostics-d1/matrix-final-diagnostics-baseline_reports_a_complete_zero_trade_run_without_nan_or_fake_activity.log"
+    },
+    {
+      "binary": "diagnostics",
+      "case": "behavior_loop_runs_through_the_real_order_book_across_multiple_seeds",
+      "exit": 1,
+      "seconds": 0.264285134,
+      "binary_sha256": "775e954eb1fc77d98b9484b461303c2517ae398b3127aac31902a4e2b36d2ab3",
+      "log": "/data1/baiyifan/workplace/stock_market_game/.tmp/runtime-diagnostics-d1/matrix-final-diagnostics-behavior_loop_runs_through_the_real_order_book_across_multiple_seeds.log"
+    },
+    {
+      "binary": "diagnostics",
+      "case": "combined_diagnostics_pairs_reports_from_the_same_trade_receipts",
+      "exit": 1,
+      "seconds": 0.26033926,
+      "binary_sha256": "775e954eb1fc77d98b9484b461303c2517ae398b3127aac31902a4e2b36d2ab3",
+      "log": "/data1/baiyifan/workplace/stock_market_game/.tmp/runtime-diagnostics-d1/matrix-final-diagnostics-combined_diagnostics_pairs_reports_from_the_same_trade_receipts.log"
+    },
+    {
+      "binary": "diagnostics",
+      "case": "continuous_no_trade_streak_excludes_auction_and_preopen_windows",
+      "exit": 0,
+      "seconds": 0.194738968,
+      "binary_sha256": "775e954eb1fc77d98b9484b461303c2517ae398b3127aac31902a4e2b36d2ab3",
+      "log": "/data1/baiyifan/workplace/stock_market_game/.tmp/runtime-diagnostics-d1/matrix-final-diagnostics-continuous_no_trade_streak_excludes_auction_and_preopen_windows.log"
+    },
+    {
+      "binary": "diagnostics",
+      "case": "continuous_no_trade_streak_resets_at_day_boundary_without_an_auction",
+      "exit": 0,
+      "seconds": 0.196596369,
+      "binary_sha256": "775e954eb1fc77d98b9484b461303c2517ae398b3127aac31902a4e2b36d2ab3",
+      "log": "/data1/baiyifan/workplace/stock_market_game/.tmp/runtime-diagnostics-d1/matrix-final-diagnostics-continuous_no_trade_streak_resets_at_day_boundary_without_an_auction.log"
+    },
+    {
+      "binary": "diagnostic_parity",
+      "case": "trace_queries_are_read_only_and_keep_per_npc_history_bounded",
+      "exit": 1,
+      "seconds": 7.346086144,
+      "binary_sha256": "6f09e2a2cb9a8d48614ec420f0cf405417186bf823a6891ec1a71f45b02b8e71",
+      "log": "/data1/baiyifan/workplace/stock_market_game/.tmp/runtime-diagnostics-d1/matrix-final-diagnostic_parity-trace_queries_are_read_only_and_keep_per_npc_history_bounded.log"
+    },
+    {
+      "binary": "causal_diagnostics",
+      "case": "absence_is_not_a_zero_metric",
+      "exit": 0,
+      "seconds": 0.185923965,
+      "binary_sha256": "28840076203f5b1490ac9297ee1891b98904a67c4fa7e09993689bae6093b672",
+      "log": "/data1/baiyifan/workplace/stock_market_game/.tmp/runtime-diagnostics-d1/matrix-final-causal_diagnostics-absence_is_not_a_zero_metric.log"
+    },
+    {
+      "binary": "causal_diagnostics",
+      "case": "auction_lifetime_uses_civil_seconds_without_continuous_minutes",
+      "exit": 1,
+      "seconds": 0.2305786,
+      "binary_sha256": "28840076203f5b1490ac9297ee1891b98904a67c4fa7e09993689bae6093b672",
+      "log": "/data1/baiyifan/workplace/stock_market_game/.tmp/runtime-diagnostics-d1/matrix-final-causal_diagnostics-auction_lifetime_uses_civil_seconds_without_continuous_minutes.log"
+    },
+    {
+      "binary": "causal_diagnostics",
+      "case": "causal_fact_json_preserves_large_time_sequence_and_depth",
+      "exit": 0,
+      "seconds": 0.18458942,
+      "binary_sha256": "28840076203f5b1490ac9297ee1891b98904a67c4fa7e09993689bae6093b672",
+      "log": "/data1/baiyifan/workplace/stock_market_game/.tmp/runtime-diagnostics-d1/matrix-final-causal_diagnostics-causal_fact_json_preserves_large_time_sequence_and_depth.log"
+    },
+    {
+      "binary": "causal_diagnostics",
+      "case": "causal_json_preserves_large_unsigned_values_as_decimal_strings",
+      "exit": 0,
+      "seconds": 0.186211513,
+      "binary_sha256": "28840076203f5b1490ac9297ee1891b98904a67c4fa7e09993689bae6093b672",
+      "log": "/data1/baiyifan/workplace/stock_market_game/.tmp/runtime-diagnostics-d1/matrix-final-causal_diagnostics-causal_json_preserves_large_unsigned_values_as_decimal_strings.log"
+    },
+    {
+      "binary": "causal_diagnostics",
+      "case": "causal_money_fields_use_full_precision_decimal_cents_strings",
+      "exit": 0,
+      "seconds": 0.182018592,
+      "binary_sha256": "28840076203f5b1490ac9297ee1891b98904a67c4fa7e09993689bae6093b672",
+      "log": "/data1/baiyifan/workplace/stock_market_game/.tmp/runtime-diagnostics-d1/matrix-final-causal_diagnostics-causal_money_fields_use_full_precision_decimal_cents_strings.log"
+    },
+    {
+      "binary": "causal_diagnostics",
+      "case": "closing_auction_remainder_has_explicit_day_end_not_voluntary_cancel",
+      "exit": 1,
+      "seconds": 0.243667378,
+      "binary_sha256": "28840076203f5b1490ac9297ee1891b98904a67c4fa7e09993689bae6093b672",
+      "log": "/data1/baiyifan/workplace/stock_market_game/.tmp/runtime-diagnostics-d1/matrix-final-causal_diagnostics-closing_auction_remainder_has_explicit_day_end_not_voluntary_cancel.log"
+    },
+    {
+      "binary": "causal_diagnostics",
+      "case": "fixture::trace_queries_are_read_only_and_keep_per_npc_history_bounded",
+      "exit": 1,
+      "seconds": 7.259794222,
+      "binary_sha256": "28840076203f5b1490ac9297ee1891b98904a67c4fa7e09993689bae6093b672",
+      "log": "/data1/baiyifan/workplace/stock_market_game/.tmp/runtime-diagnostics-d1/matrix-final-causal_diagnostics-fixture_trace_queries_are_read_only_and_keep_per_npc_history_bounded.log"
+    },
+    {
+      "binary": "causal_diagnostics",
+      "case": "large_real_fill_stream_does_not_reject_recovered_position_cost",
+      "exit": 1,
+      "seconds": 0.827973965,
+      "binary_sha256": "28840076203f5b1490ac9297ee1891b98904a67c4fa7e09993689bae6093b672",
+      "log": "/data1/baiyifan/workplace/stock_market_game/.tmp/runtime-diagnostics-d1/matrix-final-causal_diagnostics-large_real_fill_stream_does_not_reject_recovered_position_cost.log"
+    },
+    {
+      "binary": "causal_diagnostics",
+      "case": "npc_execution_fixture_has_real_bilateral_fills",
+      "exit": 1,
+      "seconds": 0.832961358,
+      "binary_sha256": "28840076203f5b1490ac9297ee1891b98904a67c4fa7e09993689bae6093b672",
+      "log": "/data1/baiyifan/workplace/stock_market_game/.tmp/runtime-diagnostics-d1/matrix-final-causal_diagnostics-npc_execution_fixture_has_real_bilateral_fills.log"
+    },
+    {
+      "binary": "causal_diagnostics",
+      "case": "npc_execution_reconciles_every_share_and_preserves_provenance",
+      "exit": 1,
+      "seconds": 0.853848023,
+      "binary_sha256": "28840076203f5b1490ac9297ee1891b98904a67c4fa7e09993689bae6093b672",
+      "log": "/data1/baiyifan/workplace/stock_market_game/.tmp/runtime-diagnostics-d1/matrix-final-causal_diagnostics-npc_execution_reconciles_every_share_and_preserves_provenance.log"
+    },
+    {
+      "binary": "causal_diagnostics",
+      "case": "quantity_and_budget_overflows_are_explicit_errors",
+      "exit": 0,
+      "seconds": 0.178102633,
+      "binary_sha256": "28840076203f5b1490ac9297ee1891b98904a67c4fa7e09993689bae6093b672",
+      "log": "/data1/baiyifan/workplace/stock_market_game/.tmp/runtime-diagnostics-d1/matrix-final-causal_diagnostics-quantity_and_budget_overflows_are_explicit_errors.log"
+    },
+    {
+      "binary": "causal_diagnostics",
+      "case": "real_fill_stream_rejects_duplicate_fill_and_wrong_execution_price",
+      "exit": 1,
+      "seconds": 0.828373236,
+      "binary_sha256": "28840076203f5b1490ac9297ee1891b98904a67c4fa7e09993689bae6093b672",
+      "log": "/data1/baiyifan/workplace/stock_market_game/.tmp/runtime-diagnostics-d1/matrix-final-causal_diagnostics-real_fill_stream_rejects_duplicate_fill_and_wrong_execution_price.log"
+    },
+    {
+      "binary": "causal_diagnostics",
+      "case": "reconciles_real_continuous_submission_and_voluntary_cancel",
+      "exit": 0,
+      "seconds": 0.184223235,
+      "binary_sha256": "28840076203f5b1490ac9297ee1891b98904a67c4fa7e09993689bae6093b672",
+      "log": "/data1/baiyifan/workplace/stock_market_game/.tmp/runtime-diagnostics-d1/matrix-final-causal_diagnostics-reconciles_real_continuous_submission_and_voluntary_cancel.log"
+    },
+    {
+      "binary": "causal_diagnostics",
+      "case": "rejects_duplicate_and_mismatched_source_ids",
+      "exit": 0,
+      "seconds": 0.1892566,
+      "binary_sha256": "28840076203f5b1490ac9297ee1891b98904a67c4fa7e09993689bae6093b672",
+      "log": "/data1/baiyifan/workplace/stock_market_game/.tmp/runtime-diagnostics-d1/matrix-final-causal_diagnostics-rejects_duplicate_and_mismatched_source_ids.log"
+    },
+    {
+      "binary": "causal_diagnostics",
+      "case": "restore_reports_missing_observation_history_without_fabricating_origins",
+      "exit": 0,
+      "seconds": 0.419520402,
+      "binary_sha256": "28840076203f5b1490ac9297ee1891b98904a67c4fa7e09993689bae6093b672",
+      "log": "/data1/baiyifan/workplace/stock_market_game/.tmp/runtime-diagnostics-d1/matrix-final-causal_diagnostics-restore_reports_missing_observation_history_without_fabricating_origins.log"
+    }
+  ]
+}

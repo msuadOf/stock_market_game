@@ -39,6 +39,9 @@ pub enum DeskIn {
         qty: u32,
         /// 随单现金实体（i64 分）。卖单恒为 0。
         purse: i64,
+        /// 只读诊断来源，不参与路由、排序或资源判断。
+        #[cfg(feature = "simulation-diagnostics")]
+        source: super::diagnostics::OperationSource,
     },
     /// 对齐撤单：撤该 owner 在本交易部的全部挂单（实体原路回流）。
     CancelAll {
@@ -51,6 +54,9 @@ pub enum DeskIn {
         owner: Owner,
         /// 目标挂单复合标识（StockIdx 前缀必须指向本交易部）。
         order: OrderRef,
+        /// 只读撤单来源，不能从受理/终结事件猜测。
+        #[cfg(feature = "simulation-diagnostics")]
+        source: super::diagnostics::OperationSource,
     },
 }
 
@@ -1377,6 +1383,9 @@ pub struct DeskReport {
     pub resting_orders: std::sync::Arc<Vec<RestingFact>>,
     /// desk 序号游标（真实已耗序号——空簿也保留；save 投影权威源）。
     pub next_serial: u64,
+    /// 本轮单股真实操作顺序；成功后 move 消费，失败随 candidate 丢弃。
+    #[cfg(feature = "simulation-diagnostics")]
+    pub causal: Vec<super::diagnostics::DeskCausalFact>,
 }
 
 /// 运行时显式失败（不静默吞错）。panic 走 `TaskDied` 运输，不进本枚举。

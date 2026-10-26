@@ -288,6 +288,9 @@ pub struct TickRecord {
     /// 本 tick 双腿成交事实（事件映射输入；驱动器/测试面）。Continue
     /// 链下含**全轮**成交（早轮+终轮，每条恰一次——事实不丢）。
     pub desk_trades: Vec<super::protocol::DeskTradeFact>,
+    /// 未交付的诊断 sideband；驱动器取走后记录中只保留空 Vec。
+    #[cfg(feature = "simulation-diagnostics")]
+    pub desk_causal: Vec<super::diagnostics::DeskCausalFact>,
     /// Q2 批 4（D3 退役）：unsettled_trades 字段已删除——Seal 落账
     ///（批 2）使"终轮未落账尾巴"结构性不存在（合同 5 由类型承载：
     /// 复活需显式重新引入字段并过全部行为合同）。
@@ -1860,6 +1863,8 @@ impl World {
             // 在 Continue 分支被丢弃，轮 0 的 IntentRejected/Cancelled
             // 静默消失）。
             let mut acc_trades = Vec::new();
+            #[cfg(feature = "simulation-diagnostics")]
+            let mut acc_causal = Vec::new();
             let mut acc_lifecycle = Vec::new();
             let mut acc_receipts = Vec::new();
             let mut acc_group_rejections = Vec::new();
@@ -1906,6 +1911,8 @@ impl World {
                 }
                 // 累积本轮事实（终轮合并进 TickRecord——早轮不丢）。
                 acc_trades.extend(evidence.desk_trades.iter().copied());
+                #[cfg(feature = "simulation-diagnostics")]
+                acc_causal.append(&mut evidence.desk_causal);
                 acc_lifecycle.extend(evidence.desk_lifecycle.iter().copied());
                 acc_receipts.extend(evidence.desk_receipts.iter().copied());
                 acc_group_rejections.extend(evidence.group_rejections.iter().copied());
@@ -1929,6 +1936,10 @@ impl World {
                     //（合同 5；D3 退役的类型级表达随批 4）。
 
                     evidence.desk_trades = acc_trades;
+                    #[cfg(feature = "simulation-diagnostics")]
+                    {
+                        evidence.desk_causal = acc_causal;
+                    }
                     evidence.desk_lifecycle = acc_lifecycle;
                     evidence.desk_receipts = acc_receipts;
                     evidence.group_rejections = acc_group_rejections;
@@ -2335,6 +2346,8 @@ impl World {
             desk_hashes: desk_hashes.clone(),
             desk_resting: evidence.desk_resting,
             desk_trades: evidence.desk_trades,
+            #[cfg(feature = "simulation-diagnostics")]
+            desk_causal: evidence.desk_causal,
             desk_lifecycle: evidence.desk_lifecycle,
             desk_receipts: evidence.desk_receipts,
             group_rejections: evidence.group_rejections,

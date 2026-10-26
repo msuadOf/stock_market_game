@@ -1,0 +1,47 @@
+{
+  "source_unchanged": true,
+  "artifacts": [
+    {
+      "target": "diagnostics",
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/runtime-diagnostics-d1/target/debug/deps/diagnostics-4b6cf34a92aa8d85",
+      "sha256": "775e954eb1fc77d98b9484b461303c2517ae398b3127aac31902a4e2b36d2ab3",
+      "bytes": 342596840,
+      "fresh": false
+    },
+    {
+      "target": "diagnostic_parity",
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/runtime-diagnostics-d1/target/debug/deps/diagnostic_parity-0aee6e46f87268f3",
+      "sha256": "6f09e2a2cb9a8d48614ec420f0cf405417186bf823a6891ec1a71f45b02b8e71",
+      "bytes": 346503136,
+      "fresh": false
+    },
+    {
+      "target": "causal_diagnostics",
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/runtime-diagnostics-d1/target/debug/deps/causal_diagnostics-8440b527013f2583",
+      "sha256": "28840076203f5b1490ac9297ee1891b98904a67c4fa7e09993689bae6093b672",
+      "bytes": 350170952,
+      "fresh": false
+    },
+    {
+      "target": "runtime_diagnostics_d1",
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/runtime-diagnostics-d1/target/debug/deps/runtime_diagnostics_d1-5d541b905dac8506",
+      "sha256": "20a660673c81028fd0e59aa5ddb008b696d8adac9faab3e98ce1255b24519b51",
+      "bytes": 356247368,
+      "fresh": false
+    },
+    {
+      "target": "runtime_diagnostics_contract",
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/runtime-diagnostics-d1/target/debug/deps/runtime_diagnostics_contract-7198f1d2bed88758",
+      "sha256": "eea79e333b4c8e080d567f7e2bc4291bd1bc912132c5a91774962701e6e3c913",
+      "bytes": 353942680,
+      "fresh": false
+    },
+    {
+      "target": "engine",
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/runtime-diagnostics-d1/target/debug/deps/engine-35b7d31e21e038a1",
+      "sha256": "ee1c92f212071d079a17f86e2821433fb0caf8c3f36ac636c099c681be3c9c74",
+      "bytes": 595246536,
+      "fresh": false
+    }
+  ]
+}

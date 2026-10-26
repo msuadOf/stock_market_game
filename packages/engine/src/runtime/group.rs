@@ -3838,7 +3838,12 @@ impl GroupState {
         // 决策来源：内联 decide_data（批 4）或测试脚本。
         enum Pending {
             Op(PendingOp),
-            CancelAll { local: LocalIdx, stock: StockIdx },
+            #[cfg(feature = "simulation-diagnostics")]
+            ExternalOp(PendingOp),
+            CancelAll {
+                local: LocalIdx,
+                stock: StockIdx,
+            },
         }
         // D4 相位计时：决策段（decide_data 内联/测试脚本产计划）。
         crate::verification_evidence::enter_phase(
@@ -4129,6 +4134,9 @@ impl GroupState {
         // 外部注入计划（玩家意图路由，D2）：并入扣除路径（一次消费即清）。
         let external = std::mem::take(&mut self.external_pending);
         for op in external {
+            #[cfg(feature = "simulation-diagnostics")]
+            pendings.push(Pending::ExternalOp(op));
+            #[cfg(not(feature = "simulation-diagnostics"))]
             pendings.push(Pending::Op(op));
         }
         // D5 终程：外部定向撤单延迟到下单 flush 之后（同批 Place+Cancel
@@ -4170,10 +4178,11 @@ impl GroupState {
             buffers[stock as usize].push(DeskIn::Cancel {
                 owner: (group, local),
                 order: (stock, serial),
+                #[cfg(feature = "simulation-diagnostics")]
+                source: super::diagnostics::OperationSource::NonPlayerUnresolved,
             });
         }
-        let mut external_cancel_buffer: Vec<(LocalIdx, super::StockIdx, u64)> =
-            external_cancels;
+        let mut external_cancel_buffer: Vec<(LocalIdx, super::StockIdx, u64)> = external_cancels;
         let mut buffered = 0usize;
         let mut ops_sent = 0u64;
         // D4 相位计时：账户校验段（purse/持仓扣除+在途登记）。
@@ -4193,10 +4202,18 @@ impl GroupState {
                 buffered += 1;
             }
         }
-        for p in pendings.iter().filter_map(|p| match p {
-            Pending::Op(op) => Some(*op),
-            _ => None,
-        }) {
+        for pending in &pendings {
+            let p = match pending {
+                Pending::Op(op) => *op,
+                #[cfg(feature = "simulation-diagnostics")]
+                Pending::ExternalOp(op) => *op,
+                _ => continue,
+            };
+            #[cfg(feature = "simulation-diagnostics")]
+            let source = match pending {
+                Pending::ExternalOp(_) => super::diagnostics::OperationSource::PlayerExternal,
+                _ => super::diagnostics::OperationSource::NonPlayerUnresolved,
+            };
             let owner = (group, p.local);
             // Sol 复审修复 3（校验顺序）：竞价相位×市价门禁**先于**资源
             /// 校验——保证相位显式回执可达（资源不足不误吞相位拒收；
@@ -4271,6 +4288,8 @@ impl GroupState {
                         price: p.routed,
                         qty: p.qty,
                         purse,
+                        #[cfg(feature = "simulation-diagnostics")]
+                        source,
                     });
                     buffered += 1;
                 }
@@ -4346,6 +4365,8 @@ impl GroupState {
                         price: p.routed,
                         qty: p.qty,
                         purse: 0,
+                        #[cfg(feature = "simulation-diagnostics")]
+                        source,
                     });
                     buffered += 1;
                 }
@@ -4361,6 +4382,8 @@ impl GroupState {
             buffers[stock as usize].push(DeskIn::Cancel {
                 owner: (group, local),
                 order: (stock, serial),
+                #[cfg(feature = "simulation-diagnostics")]
+                source: super::diagnostics::OperationSource::PlayerExternal,
             });
         }
         // 名册末尾：每股发 final_flush 空批作为本组本轮提交标记（可空）。

@@ -153,6 +153,10 @@ impl Clone for CausalCollector {
 }
 
 impl CausalCollector {
+    pub(crate) fn fact_count(&self) -> usize {
+        self.facts.len()
+    }
+
     pub(crate) fn facts(&self) -> &[CausalFact] {
         self.flat_facts.get_or_init(|| self.facts.iter().cloned().collect())
     }
