@@ -1,0 +1,4 @@
+apps/web/src/host/player-proposals.ts(64,47): error TS2339: Property 'includes' does not exist on type 'never'.
+apps/web/src/host/player-proposals.ts(64,97): error TS2339: Property 'join' does not exist on type 'never'.
+apps/web/src/host/player-proposals.ts(80,24): error TS2339: Property 'includes' does not exist on type 'never'.
+apps/web/src/host/player-proposals.ts(82,23): error TS2488: Type 'never' must have a '[Symbol.iterator]()' method that returns an iterator.
