@@ -3,6 +3,7 @@ use crate::StockCode;
 use crate::accounting::{
     IncomeTaxPolicy, JournalLine, LedgerAccountId, PostingSide, TaxPolicy, VatPolicy,
 };
+use crate::calendar::CalendarExchange;
 use crate::company::config::CompanySystemConfig;
 use crate::company::share_registry::{
     AcquisitionSource, DayNetChange, HolderId, MovementScope, NetAcquisition, ShareDayRequest,
@@ -15,6 +16,10 @@ use crate::company::simple::period::{
 use crate::company::simple::{
     SimpleBookDisplayConfig, SimpleCompanyConfig, SimpleCompanyPreferences, SimpleConfig,
     SimpleEnvironmentConfig, SimpleFinanceConfig, SimpleSummaryRule,
+};
+use crate::company::stock_distribution::{
+    StockDistributionBook, StockDistributionDeclaration, StockDistributionEventPlan,
+    StockDistributionKind, holder_credit_lots,
 };
 use crate::company::{CompanyKind, CompanySpec, IndustryId};
 use crate::orderbook::AccountId;
@@ -169,6 +174,102 @@ impl Fixture {
             initial_par: Some(Money::from_cents(100)),
         })
     }
+
+    fn distribution(&mut self, event: &str, register: &str, ex: &str, new_shares: u64) {
+        let capital = self
+            .system
+            .dividend_legal_facts(&CompanyId(0))
+            .unwrap()
+            .unwrap()
+            .registered_capital;
+        self.system
+            .declare_stock_distribution(
+                &CompanyId(0),
+                StockDistributionDeclaration {
+                    event_id: event.into(),
+                    approval_reference: format!("批准-{event}"),
+                    kind: StockDistributionKind::CapitalReserveConversion,
+                    approved_on: date("2030-06-03"),
+                    new_shares,
+                    par_value_per_share: Money::from_cents(100),
+                    capital_increase: AccountingAmount::from_cents(i128::from(new_shares) * 100),
+                    registered_capital_at_approval: capital,
+                },
+            )
+            .unwrap();
+        self.actions.stock_distributions.push(
+            StockDistributionBook::new(StockDistributionEventPlan {
+                event_id: event.into(),
+                approval_reference: format!("批准-{event}"),
+                issuer: CompanyId(0),
+                stock: code(),
+                exchange: CalendarExchange::Sse,
+                kind: StockDistributionKind::CapitalReserveConversion,
+                approved_on: date("2030-06-03"),
+                announced_on: date("2030-06-03"),
+                registered_on: date(register),
+                ex_rights_on: date(ex),
+                shares_per_existing_share_micros: 100_000,
+                approved_total_new_shares: new_shares,
+            })
+            .unwrap(),
+        );
+    }
+
+    fn credit_distribution(&mut self) {
+        let book = self.actions.stock_distributions.last_mut().unwrap();
+        let plan = book.plan().clone();
+        let registry = &mut self.actions.registries[0];
+        book.announce(plan.announced_on).unwrap();
+        let snapshot = registry
+            .register(plan.event_id.clone(), plan.registered_on)
+            .unwrap()
+            .clone();
+        let receipt = book.register(snapshot, &self.calendar).unwrap().clone();
+        registry
+            .close_day(ShareDayRequest {
+                event_id: format!("market-{}", plan.ex_rights_on),
+                day: plan.ex_rights_on,
+                scope: MovementScope::PublicMarket,
+                changes: vec![],
+            })
+            .unwrap();
+        let changes = holder_credit_lots(&receipt, plan.ex_rights_on)
+            .unwrap()
+            .into_iter()
+            .map(|lot| DayNetChange {
+                holder: lot.holder,
+                change: i128::from(lot.qty),
+                acquisition: Some(NetAcquisition {
+                    lot_id: format!("stock-distribution:{}:owner-7", plan.event_id),
+                    source: AcquisitionSource::CorporateAction {
+                        event: plan.event_id.clone(),
+                    },
+                    restriction: lot.restriction,
+                }),
+                consume: None,
+            })
+            .collect();
+        registry
+            .close_day(ShareDayRequest {
+                event_id: format!("stock-distribution:{}", plan.event_id),
+                day: plan.ex_rights_on,
+                scope: MovementScope::NonTradingTransfer {
+                    basis: plan.approval_reference.clone(),
+                },
+                changes,
+            })
+            .unwrap();
+        book.mark_credited(plan.ex_rights_on).unwrap();
+        self.system
+            .record_stock_distribution_credit(
+                &plan.issuer,
+                &plan.event_id,
+                plan.ex_rights_on,
+                plan.approved_total_new_shares,
+            )
+            .unwrap();
+    }
 }
 
 #[test]
@@ -319,4 +420,83 @@ fn capital_07_nontrading_receipt_needs_real_bound_book_and_finance_fact() {
             context: CapitalRestoreContext { company: Some(CompanyId(0)), stock: Some(StockId(0)), event_id: Some(event), receipt_index: Some(0), .. },
         }) if event == "stock-distribution:unapproved"
     ));
+}
+
+#[test]
+fn capital_08_real_credited_distribution_replays_once_after_serde_roundtrip() {
+    let mut f = Fixture::new();
+    f.distribution("dist-a", "2030-06-03", "2030-06-04", 100);
+    f.credit_distribution();
+    f.system = serde_json::from_str(&serde_json::to_string(&f.system).unwrap()).unwrap();
+    f.actions = serde_json::from_str(&serde_json::to_string(&f.actions).unwrap()).unwrap();
+    let summary = f.validate("2030-06-04").unwrap();
+    let company = &summary.companies[&CompanyId(0)];
+    assert_eq!(company.issued_shares, 1_100);
+    assert_eq!(company.receipt_frontier, 2);
+    assert_eq!(
+        company.registered_capital,
+        Some(AccountingAmount::from_cents(110_000))
+    );
+    assert_eq!(
+        f.actions.stock_distributions[0]
+            .registration()
+            .unwrap()
+            .settled_receipts(),
+        0
+    );
+}
+
+#[test]
+fn capital_09_approved_uncredited_distribution_keeps_legal_future_schedule() {
+    let mut f = Fixture::new();
+    f.distribution("future-dist", "2030-06-05", "2030-06-06", 100);
+    assert!(
+        f.system.stock_distribution_facts(&CompanyId(0)).unwrap()[0]
+            .credited_on
+            .is_none()
+    );
+    let summary = f.validate("2030-06-03").unwrap();
+    assert_eq!(summary.companies[&CompanyId(0)].issued_shares, 1_000);
+    assert_eq!(
+        summary.companies[&CompanyId(0)].registered_capital,
+        Some(AccountingAmount::from_cents(100_000))
+    );
+}
+
+#[test]
+fn capital_10_finance_fact_without_book_is_not_silently_ignored() {
+    let mut f = Fixture::new();
+    f.distribution("orphan-finance", "2030-06-03", "2030-06-04", 100);
+    f.actions.stock_distributions.clear();
+    assert!(
+        matches!(f.validate("2030-06-03"), Err(CompanyCapitalRestoreError::MissingBook {
+        context: CapitalRestoreContext { company: Some(CompanyId(0)), stock: Some(StockId(0)), kind: Some(CorporateCapitalKind::StockDistribution), event_id: Some(event), .. },
+    }) if event == "orphan-finance")
+    );
+}
+
+#[test]
+fn capital_11_book_without_finance_fact_reports_exact_action() {
+    let mut f = Fixture::new();
+    let mut other = Fixture::new();
+    other.distribution("orphan-book", "2030-06-03", "2030-06-04", 100);
+    f.actions.stock_distributions = other.actions.stock_distributions;
+    assert!(
+        matches!(f.validate("2030-06-03"), Err(CompanyCapitalRestoreError::MissingFinanceFact {
+        context: CapitalRestoreContext { company: Some(CompanyId(0)), stock: Some(StockId(0)), kind: Some(CorporateCapitalKind::StockDistribution), event_id: Some(event), .. },
+    }) if event == "orphan-book")
+    );
+}
+
+#[test]
+fn capital_12_credited_distribution_requires_registry_in_same_saved_source() {
+    let mut f = Fixture::new();
+    f.distribution("dist-missing-registry", "2030-06-03", "2030-06-04", 100);
+    f.credit_distribution();
+    f.actions.registries.clear();
+    assert!(
+        matches!(f.validate("2030-06-04"), Err(CompanyCapitalRestoreError::MissingRegistry {
+        context: CapitalRestoreContext { company: Some(CompanyId(0)), stock: Some(StockId(0)), kind: Some(CorporateCapitalKind::StockDistribution), event_id: Some(event), .. },
+    }) if event == "dist-missing-registry")
+    );
 }

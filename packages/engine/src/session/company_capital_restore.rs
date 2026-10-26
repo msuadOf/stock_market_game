@@ -87,6 +87,27 @@ pub(crate) enum CompanyCapitalRestoreError {
     Arithmetic { context: CapitalRestoreContext },
     #[error("资本恢复所需动作验证尚未实现：{context:?}")]
     UnsupportedMovement { context: CapitalRestoreContext },
+    #[error("资本恢复正式动作缺少账簿：{context:?}")]
+    MissingBook { context: CapitalRestoreContext },
+    #[error("资本恢复正式账簿缺少金融事实：{context:?}")]
+    MissingFinanceFact { context: CapitalRestoreContext },
+    #[error("资本恢复送转账簿无效：{context:?}：{source}")]
+    StockDistribution {
+        context: CapitalRestoreContext,
+        #[source]
+        source: crate::company::stock_distribution::StockDistributionError,
+    },
+    #[error("资本恢复动作事实不一致：{context:?}，字段 {field}")]
+    ActionMismatch {
+        context: CapitalRestoreContext,
+        field: &'static str,
+    },
+    #[error("资本恢复资本不一致：{context:?}，预期 {expected:?}，实际 {actual:?}")]
+    RegisteredCapital {
+        context: CapitalRestoreContext,
+        expected: AccountingAmount,
+        actual: AccountingAmount,
+    },
 }
 
 /// 验证结果是恢复过程的派生结论，不进入 SaveSlot。
