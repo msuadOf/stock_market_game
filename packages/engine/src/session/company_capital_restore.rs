@@ -104,9 +104,337 @@ pub(crate) struct CapitalReplaySummary {
 }
 
 pub(crate) fn validate_company_capital_restore(
-    _input: CapitalRestoreInput<'_>,
+    input: CapitalRestoreInput<'_>,
 ) -> Result<CapitalReplaySummary, CompanyCapitalRestoreError> {
-    Err(CompanyCapitalRestoreError::NotImplemented)
+    input
+        .system
+        .validate_restored()
+        .map_err(|source| CompanyCapitalRestoreError::System {
+            context: CapitalRestoreContext::default(),
+            source,
+        })?;
+    validate_stable_issuers(&input)?;
+    let mut registries = BTreeMap::new();
+    for registry in &input.actions.registries {
+        let company = *registry.issuer();
+        let stock = input.catalog.id(&registry.stock().0).ok_or_else(|| {
+            CompanyCapitalRestoreError::CatalogMapping {
+                company: Some(company),
+                stock_code: registry.stock().0.clone(),
+            }
+        })?;
+        let context = CapitalRestoreContext {
+            company: Some(company),
+            stock: Some(stock),
+            ..Default::default()
+        };
+        if input.system.issuers().issuer_of(registry.stock()) != Some(company) {
+            return Err(CompanyCapitalRestoreError::CatalogMapping {
+                company: Some(company),
+                stock_code: registry.stock().0.clone(),
+            });
+        }
+        if registries.insert(company, registry).is_some() {
+            return Err(CompanyCapitalRestoreError::Duplicate { context });
+        }
+        registry
+            .validate()
+            .map_err(|source| CompanyCapitalRestoreError::Registry {
+                context: context.clone(),
+                source,
+            })?;
+    }
+    // 本子片尚未实现股份动作绑定；任何正式动作都必须明确拒绝，不能忽略后验过关。
+    reject_pending_capital_implementation(&input)?;
+    let mut companies = BTreeMap::new();
+    for (company, initial) in input.setup_issuers.iter() {
+        let current = input.system.issuers().get(company).ok_or(
+            CompanyCapitalRestoreError::StableIdentity {
+                company: *company,
+                field: "company-set",
+            },
+        )?;
+        let stock = initial
+            .listed_stock
+            .as_ref()
+            .map(|code| {
+                input.catalog.id(&code.0).ok_or_else(|| {
+                    CompanyCapitalRestoreError::CatalogMapping {
+                        company: Some(*company),
+                        stock_code: code.0.clone(),
+                    }
+                })
+            })
+            .transpose()?;
+        let context = CapitalRestoreContext {
+            company: Some(*company),
+            stock,
+            ..Default::default()
+        };
+        let mut issued_shares = initial.issued_shares;
+        let mut receipt_frontier = 0;
+        if let Some(registry) = registries.get(company) {
+            for (receipt_index, receipt) in registry.receipts().iter().enumerate() {
+                let receipt_context = CapitalRestoreContext {
+                    event_id: Some(receipt.request.event_id.clone()),
+                    receipt_index: Some(receipt_index),
+                    day: Some(receipt.request.day),
+                    kind: matches!(
+                        receipt.request.scope,
+                        crate::company::share_registry::MovementScope::PublicMarket
+                    )
+                    .then_some(CorporateCapitalKind::PublicMarket),
+                    ..context.clone()
+                };
+                if receipt.request.day > input.committed_through {
+                    return Err(CompanyCapitalRestoreError::FutureFact {
+                        context: receipt_context,
+                        committed_through: input.committed_through,
+                    });
+                }
+                if !matches!(
+                    receipt.request.scope,
+                    crate::company::share_registry::MovementScope::PublicMarket
+                ) {
+                    return Err(CompanyCapitalRestoreError::UnboundReceipt {
+                        context: receipt_context,
+                    });
+                }
+                let delta = receipt
+                    .request
+                    .changes
+                    .iter()
+                    .try_fold(0_i128, |sum, change| {
+                        sum.checked_add(change.change).ok_or_else(|| {
+                            CompanyCapitalRestoreError::Arithmetic {
+                                context: receipt_context.clone(),
+                            }
+                        })
+                    })?;
+                let after = i128::from(issued_shares)
+                    .checked_add(delta)
+                    .and_then(|value| u64::try_from(value).ok())
+                    .filter(|value| *value > 0)
+                    .ok_or_else(|| CompanyCapitalRestoreError::Arithmetic {
+                        context: receipt_context.clone(),
+                    })?;
+                if after != issued_shares {
+                    return Err(CompanyCapitalRestoreError::IssuedShares {
+                        context: receipt_context,
+                        expected: issued_shares,
+                        actual: after,
+                    });
+                }
+                issued_shares = after;
+                receipt_frontier += 1;
+            }
+            check_shares(issued_shares, registry.issued_shares(), context.clone())?;
+        }
+        check_shares(issued_shares, current.issued_shares, context.clone())?;
+        let registered_capital = input
+            .system
+            .dividend_legal_facts(company)
+            .map_err(|source| CompanyCapitalRestoreError::System {
+                context: context.clone(),
+                source,
+            })?
+            .map(|facts| facts.registered_capital);
+        companies.insert(
+            *company,
+            CompanyCapitalReplay {
+                stock,
+                issued_shares,
+                receipt_frontier,
+                registered_capital,
+            },
+        );
+    }
+    Ok(CapitalReplaySummary { companies })
+}
+
+fn check_shares(
+    expected: u64,
+    actual: u64,
+    context: CapitalRestoreContext,
+) -> Result<(), CompanyCapitalRestoreError> {
+    if expected != actual {
+        return Err(CompanyCapitalRestoreError::IssuedShares {
+            context,
+            expected,
+            actual,
+        });
+    }
+    Ok(())
+}
+
+fn validate_stable_issuers(
+    input: &CapitalRestoreInput<'_>,
+) -> Result<(), CompanyCapitalRestoreError> {
+    let mut mapped_stocks = BTreeMap::new();
+    for (company, expected) in input.setup_issuers.iter() {
+        let actual = input.system.issuers().get(company).ok_or(
+            CompanyCapitalRestoreError::StableIdentity {
+                company: *company,
+                field: "company-set",
+            },
+        )?;
+        for (field, equal) in [
+            ("code", expected.code == actual.code),
+            ("name", expected.name == actual.name),
+            ("industry", expected.industry == actual.industry),
+            ("kind", expected.kind == actual.kind),
+            ("listed_stock", expected.listed_stock == actual.listed_stock),
+            ("group_parent", expected.group_parent == actual.group_parent),
+        ] {
+            if !equal {
+                return Err(CompanyCapitalRestoreError::StableIdentity {
+                    company: *company,
+                    field,
+                });
+            }
+        }
+        if let Some(code) = &expected.listed_stock {
+            let stock = input.catalog.id(&code.0).ok_or_else(|| {
+                CompanyCapitalRestoreError::CatalogMapping {
+                    company: Some(*company),
+                    stock_code: code.0.clone(),
+                }
+            })?;
+            if mapped_stocks.insert(stock, *company).is_some() {
+                return Err(CompanyCapitalRestoreError::CatalogMapping {
+                    company: Some(*company),
+                    stock_code: code.0.clone(),
+                });
+            }
+        }
+    }
+    for (company, _) in input.system.issuers().iter() {
+        if input.setup_issuers.get(company).is_none() {
+            return Err(CompanyCapitalRestoreError::StableIdentity {
+                company: *company,
+                field: "company-set",
+            });
+        }
+    }
+    for (stock, meta) in input.catalog.iter() {
+        if !mapped_stocks.contains_key(&stock) {
+            return Err(CompanyCapitalRestoreError::CatalogMapping {
+                company: None,
+                stock_code: meta.code.clone(),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn reject_pending_capital_implementation(
+    input: &CapitalRestoreInput<'_>,
+) -> Result<(), CompanyCapitalRestoreError> {
+    let first = input
+        .actions
+        .stock_distributions
+        .first()
+        .map(|book| {
+            (
+                book.plan().issuer,
+                &book.plan().event_id,
+                &book.plan().stock,
+                CorporateCapitalKind::StockDistribution,
+            )
+        })
+        .or_else(|| {
+            input.actions.rights_offerings.first().map(|book| {
+                (
+                    book.plan().issuer,
+                    &book.plan().event_id,
+                    &book.plan().stock,
+                    CorporateCapitalKind::RightsOffering,
+                )
+            })
+        })
+        .or_else(|| {
+            input.actions.share_splits.first().map(|book| {
+                (
+                    book.plan().issuer,
+                    &book.plan().event_id,
+                    &book.plan().stock,
+                    CorporateCapitalKind::ShareReDenomination,
+                )
+            })
+        })
+        .or_else(|| {
+            input.actions.issuer_repurchases.first().map(|book| {
+                (
+                    book.plan().issuer,
+                    &book.plan().event_id,
+                    &book.plan().stock,
+                    CorporateCapitalKind::IssuerRepurchaseCancellation,
+                )
+            })
+        });
+    if let Some((company, event, stock, kind)) = first {
+        return Err(CompanyCapitalRestoreError::UnsupportedMovement {
+            context: CapitalRestoreContext {
+                company: Some(company),
+                stock: input.catalog.id(&stock.0),
+                kind: Some(kind),
+                event_id: Some(event.clone()),
+                ..Default::default()
+            },
+        });
+    }
+    // 逐公司读取全部正式事实；读取错误必须传播，不能仅凭四个 book 数组为空放行。
+    for (company, _) in input.system.issuers().iter() {
+        let facts = [
+            input.system.stock_distribution_facts(company).map(|facts| {
+                facts
+                    .into_iter()
+                    .map(|fact| fact.event_id)
+                    .collect::<Vec<_>>()
+            }),
+            input
+                .system
+                .rights_offering_facts(company)
+                .map(|facts| facts.into_iter().map(|fact| fact.event_id).collect()),
+            input
+                .system
+                .share_split_facts(company)
+                .map(|facts| facts.into_iter().map(|fact| fact.event_id).collect()),
+            input
+                .system
+                .issuer_repurchase_facts(company)
+                .map(|facts| facts.into_iter().map(|fact| fact.event_id).collect()),
+        ];
+        for (kind, events) in [
+            CorporateCapitalKind::StockDistribution,
+            CorporateCapitalKind::RightsOffering,
+            CorporateCapitalKind::ShareReDenomination,
+            CorporateCapitalKind::IssuerRepurchaseCancellation,
+        ]
+        .into_iter()
+        .zip(facts)
+        {
+            let events = events.map_err(|source| CompanyCapitalRestoreError::System {
+                context: CapitalRestoreContext {
+                    company: Some(*company),
+                    kind: Some(kind),
+                    ..Default::default()
+                },
+                source,
+            })?;
+            if let Some(event) = events.first() {
+                return Err(CompanyCapitalRestoreError::UnsupportedMovement {
+                    context: CapitalRestoreContext {
+                        company: Some(*company),
+                        kind: Some(kind),
+                        event_id: Some(event.clone()),
+                        ..Default::default()
+                    },
+                });
+            }
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
