@@ -300,6 +300,14 @@ impl Fixture {
 
 impl Fixture {
     fn redenominate(&mut self, direction: ShareSplitDirection) {
+        self.redenominate_with_market(direction, vec![]);
+    }
+
+    fn redenominate_with_market(
+        &mut self,
+        direction: ShareSplitDirection,
+        market_changes: Vec<DayNetChange>,
+    ) {
         let after_par = match direction {
             ShareSplitDirection::Split => 50,
             ShareSplitDirection::Consolidate => 200,
@@ -345,7 +353,7 @@ impl Fixture {
                 event_id: "market-2030-06-04".into(),
                 day: plan.ex_rights_on,
                 scope: MovementScope::PublicMarket,
-                changes: vec![],
+                changes: market_changes,
             })
             .unwrap();
         let outcome = &receipt.holders[0];
@@ -832,6 +840,10 @@ fn capital_20_manual_repurchase_only_reconstructs_capital_without_approval_snaps
         Some(AccountingAmount::from_cents(90_000))
     );
     assert_eq!(summary.companies[&CompanyId(0)].receipt_frontier, 2);
+    assert_eq!(
+        summary.companies[&CompanyId(0)].initial_registered_capital,
+        Some(AccountingAmount::from_cents(100_000))
+    );
 }
 
 #[test]
@@ -1371,6 +1383,133 @@ fn capital_47_repurchase_fact_mismatch_keeps_exact_action_context() {
         CorporateCapitalKind::IssuerRepurchaseCancellation,
         "buy-a",
         "approval_reference",
+    );
+}
+
+impl Fixture {
+    fn add_second_company(&mut self, listed_stock: Option<StockCode>) {
+        let first = self.initial.get(&CompanyId(0)).unwrap().clone();
+        let mut second = first.clone();
+        second.code = "Z-second".into();
+        second.listed_stock = listed_stock;
+        second.issued_shares = 17;
+        let mut config = self.system.config();
+        let CompanySystemConfig::Simple(ref mut simple) = config else {
+            unreachable!()
+        };
+        let mut second_config = simple.companies[0].clone();
+        second_config.company = CompanyId(1);
+        simple.companies.push(second_config);
+        self.initial = IssuerRegistry::new(vec![first.clone(), second.clone()]).unwrap();
+        self.system =
+            CompanySystem::create(vec![first, second], config, date("2030-06-03"), 19).unwrap();
+        self.system
+            .define_dividend_legal_facts(
+                &CompanyId(0),
+                AccountingAmount::from_cents(100_000),
+                "测试显式法定根".into(),
+            )
+            .unwrap();
+    }
+}
+
+#[test]
+fn capital_48_stable_group_parent_is_part_of_identity() {
+    let mut f = Fixture::new();
+    f.add_second_company(None);
+    let mut first = f.initial.get(&CompanyId(0)).unwrap().clone();
+    first.group_parent = Some("Z-second".into());
+    let second = f.initial.get(&CompanyId(1)).unwrap().clone();
+    f.initial = IssuerRegistry::new(vec![first, second]).unwrap();
+    assert!(matches!(
+        f.validate("2030-06-03"),
+        Err(CompanyCapitalRestoreError::StableIdentity {
+            company: CompanyId(0),
+            field: "group_parent",
+        })
+    ));
+}
+
+#[test]
+fn capital_49_current_company_set_cannot_omit_initial_unlisted_company() {
+    let mut f = Fixture::new();
+    f.add_second_company(None);
+    f.system = Fixture::new().system;
+    assert!(matches!(
+        f.validate("2030-06-03"),
+        Err(CompanyCapitalRestoreError::StableIdentity {
+            company: CompanyId(1),
+            field: "company-set",
+        })
+    ));
+}
+
+#[test]
+fn capital_50_current_company_set_cannot_add_unlisted_company() {
+    let mut f = Fixture::new();
+    f.add_second_company(None);
+    f.initial = Fixture::new().initial;
+    assert!(matches!(
+        f.validate("2030-06-03"),
+        Err(CompanyCapitalRestoreError::StableIdentity {
+            company: CompanyId(1),
+            field: "company-set",
+        })
+    ));
+}
+
+#[test]
+fn capital_51_setup_stock_order_is_independent_of_catalog_ids() {
+    let mut f = Fixture::new();
+    f.add_second_company(Some(StockCode("000001".into())));
+    let mut second = f.setup_stocks[0].clone();
+    second.code = StockCode("000001".into());
+    second.exchange = StockExchange::Shenzhen;
+    second.total_shares = 17;
+    second.float_shares = 17;
+    f.setup_stocks.push(second);
+    f.catalog =
+        StockCatalog::from_metas(vec![StockMeta::new("600101"), StockMeta::new("000001")]).unwrap();
+    f.distribution("ordered-exchange", "2030-06-03", "2030-06-04", 100);
+    let summary = f.validate("2030-06-03").unwrap();
+    assert_eq!(summary.companies[&CompanyId(0)].stock, Some(StockId(1)));
+    assert_eq!(summary.companies[&CompanyId(1)].stock, Some(StockId(0)));
+    f.setup_stocks.reverse();
+    assert_eq!(f.validate("2030-06-03").unwrap(), summary);
+}
+
+#[test]
+fn capital_52_same_day_real_market_change_requires_explicit_share_unit_phase() {
+    let mut f = Fixture::new();
+    f.redenominate_with_market(
+        ShareSplitDirection::Split,
+        vec![
+            DayNetChange {
+                holder: HolderId::Account(AccountId(7)),
+                change: -10,
+                acquisition: None,
+                consume: None,
+            },
+            DayNetChange {
+                holder: HolderId::Account(AccountId(8)),
+                change: 10,
+                acquisition: Some(NetAcquisition {
+                    lot_id: "same-day-owner-8".into(),
+                    source: AcquisitionSource::SecondaryMarket {
+                        settlement: "market-2030-06-04".into(),
+                    },
+                    restriction: ShareRestriction::Unrestricted,
+                }),
+                consume: None,
+            },
+        ],
+    );
+    f.actions.registries[0].validate().unwrap();
+    assert!(
+        matches!(f.validate("2030-06-04"), Err(CompanyCapitalRestoreError::Prerequisite {
+        context: CapitalRestoreContext { company: Some(CompanyId(0)), stock: Some(StockId(0)), kind: Some(CorporateCapitalKind::ShareReDenomination), event_id: Some(event), day: Some(day), .. },
+        required: CapitalRestorePrerequisite::SameDayShareUnits,
+    }) if event == "transform-a" && day == date("2030-06-04"))
     );
 }
 
