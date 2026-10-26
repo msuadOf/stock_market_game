@@ -1613,3 +1613,5 @@ mod nonnegative_decimal {
 
 #[cfg(test)]
 mod tests;
+
+pub mod entitlement_units;
