@@ -999,10 +999,12 @@ fn capital_30_replay_u64_overflow_reports_actual_receipt_position() {
             context: CapitalRestoreContext {
                 company: Some(CompanyId(0)),
                 stock: Some(StockId(0)),
+                kind: Some(CorporateCapitalKind::StockDistribution),
+                event_id: Some(event),
                 receipt_index: Some(1),
                 ..
             },
-        })
+        }) if event == "overflow-dist"
     ));
 }
 
@@ -1103,6 +1105,55 @@ fn capital_34_validator_uses_explicit_frozen_calendar_instead_of_default() {
         context: CapitalRestoreContext { company: Some(CompanyId(0)), kind: Some(CorporateCapitalKind::StockDistribution), event_id: Some(event), .. },
         source: crate::company::stock_distribution::StockDistributionError::InvalidTradingDate { date: day, .. },
     }) if event == "dist-a" && day == date("2030-06-03"))
+    );
+}
+
+#[test]
+fn capital_35_announced_fact_cannot_be_later_than_committed_cutoff() {
+    let mut f = Fixture::new();
+    let registered_on = f
+        .calendar
+        .next_trading_day(CalendarExchange::Sse, date("2030-06-04"))
+        .unwrap();
+    let ex = f
+        .calendar
+        .next_trading_day(CalendarExchange::Sse, registered_on)
+        .unwrap();
+    f.distribution(
+        "future-announced",
+        &registered_on.to_string(),
+        &ex.to_string(),
+        100,
+    );
+    let mut plan = f.actions.stock_distributions[0].plan().clone();
+    plan.announced_on = date("2030-06-04");
+    let mut book = StockDistributionBook::new(plan).unwrap();
+    book.announce(date("2030-06-04")).unwrap();
+    f.actions.stock_distributions[0] = book;
+    assert!(
+        matches!(f.validate("2030-06-03"), Err(CompanyCapitalRestoreError::FutureFact {
+        context: CapitalRestoreContext { company: Some(CompanyId(0)), kind: Some(CorporateCapitalKind::StockDistribution), event_id: Some(event), day: Some(day), .. }, committed_through,
+    }) if event == "future-announced" && day == date("2030-06-04") && committed_through == date("2030-06-03"))
+    );
+}
+
+#[test]
+fn capital_36_closed_payment_window_is_an_occurred_fact_even_without_subscriptions() {
+    let mut f = Fixture::new();
+    f.rights(0, false);
+    let book = &mut f.actions.rights_offerings[0];
+    let plan = book.plan().clone();
+    book.announce(plan.announced_on).unwrap();
+    let snapshot = f.actions.registries[0]
+        .register(plan.event_id.clone(), plan.registered_on)
+        .unwrap()
+        .clone();
+    book.entitle(snapshot, &f.calendar).unwrap();
+    book.close_payment_window(plan.payment_deadline_on).unwrap();
+    assert!(
+        matches!(f.validate("2030-06-03"), Err(CompanyCapitalRestoreError::FutureFact {
+        context: CapitalRestoreContext { company: Some(CompanyId(0)), kind: Some(CorporateCapitalKind::RightsOffering), event_id: Some(event), day: Some(day), .. }, committed_through,
+    }) if event == "rights-a" && day == plan.payment_deadline_on && committed_through == date("2030-06-03"))
     );
 }
 
