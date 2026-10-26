@@ -108,27 +108,37 @@ type RawFields = Record<string, string>;
 /** 本地保留未完成编辑；仅全部合法后回写，外部有效配置变化才重置字段。 */
 function usePreferenceFields(source: unknown, initial: RawFields, validate: (fields: RawFields) => FieldResult<SimpleCompanyPreferences>, props: ControlsProps) {
   const sourceKey = JSON.stringify(source);
-  const [state, setState] = useState({ sourceKey, fields: initial, error: null as string | null });
-  const current = state.sourceKey === sourceKey ? state : state.error === null
-    ? { sourceKey, fields: initial, error: null }
-    : { sourceKey, fields: state.fields, error: `外部配置已更新；保留本地未完成输入，修正后将应用本表单字段。${state.error}` };
+  const reset = { sourceKey, fields: initial, error: null as string | null, editing: source !== null, dirty: false };
+  const [state, setState] = useState(reset);
+  const current = state.sourceKey === sourceKey ? state : state.dirty
+    ? { ...state, sourceKey, editing: true, error: `外部配置已更新；保留本地未完成输入，修正后将应用本表单字段。${state.error === null ? "请完成编辑或取消" : state.error}` }
+    : reset;
   if (current !== state) setState(current);
   function edit(key: string, raw: string) {
     const fields = { ...current.fields, [key]: raw };
     const result = validate(fields);
-    if (!result.ok) { setState({ sourceKey, fields, error: result.error }); return; }
+    if (!result.ok) { setState({ ...current, fields, error: result.error, dirty: true }); return; }
     try {
       props.onApply(props.company, result.value);
-      setState({ sourceKey, fields, error: null });
+      setState({ ...current, fields, error: null, dirty: false });
     } catch (failure) {
-      setState({ sourceKey, fields, error: failure instanceof Error ? failure.message : String(failure) });
+      setState({ ...current, fields, dirty: true, error: failure instanceof Error ? failure.message : String(failure) });
     }
   }
-  return { ...current, edit };
+  function toggle(editing: boolean, next: SimpleCompanyPreferences | null) {
+    try {
+      if (next !== null) props.onApply(props.company, next);
+      setState({ ...reset, editing, dirty: editing && source === null && next === null,
+        error: editing && source === null && next === null ? "请填写全部字段；当前仍为未配置" : null });
+    } catch (failure) {
+      setState({ ...current, error: failure instanceof Error ? failure.message : String(failure) });
+    }
+  }
+  return { ...current, edit, toggle };
 }
 
 function CashPreferenceControls(props: ControlsProps) {
-  const { company, preferences, onApply } = props;
+  const { company, preferences } = props;
   const preference = preferences.cash_dividend;
   const controls = usePreferenceFields(preference, {
     payout: preference === null ? "" : String(preference.target_payout_bp),
@@ -139,9 +149,12 @@ function CashPreferenceControls(props: ControlsProps) {
     return result.ok ? { ok: true, value: { ...preferences, cash_dividend: result.value } } : result;
   }, props);
   return <fieldset><legend>现金分红</legend>
-    <label><input type="checkbox" name={`cash-preference-${company}`} checked={preference !== null} onChange={event => onApply(company, { ...preferences, cash_dividend: event.currentTarget.checked ? { ...DEFAULT_CASH_PREFERENCE } : null })} />启用现金分红自动提案</label>
+    <label><input type="checkbox" name={`cash-preference-${company}`} checked={controls.editing} onChange={event => {
+      const checked = event.currentTarget.checked;
+      controls.toggle(checked, !checked && preference === null ? null : { ...preferences, cash_dividend: checked ? { ...DEFAULT_CASH_PREFERENCE } : null });
+    }} />启用现金分红自动提案</label>
     <small>启用预设为虚拟可编辑参数：30%、100 万元、每结算周期；非行业统计。</small>
-    {preference !== null && <>
+    {controls.editing && <>
       {[["payout", "目标派息比例（基点）"], ["minimum", "最小可分配利润门槛（元）"], ["cycles", "提案最小间隔（结算周期数）"]].map(([key, label]) => <label key={key}>{label}<input aria-label={label} inputMode={key === "minimum" ? "decimal" : "numeric"} value={controls.fields[key!]} aria-invalid={controls.error !== null} onChange={event => controls.edit(key!, event.currentTarget.value)} /></label>)}
     </>}
     {controls.error !== null && <p role="alert">现金分红偏好无效：{controls.error}；未写入配置，请修正输入。</p>}
@@ -149,12 +162,8 @@ function CashPreferenceControls(props: ControlsProps) {
 }
 
 function StockPreferenceControls(props: ControlsProps) {
-  const { company, preferences, onApply } = props;
+  const { company, preferences } = props;
   const preference = preferences.stock_distribution;
-  const sourceKey = JSON.stringify(preference);
-  const [editingState, setEditingState] = useState({ sourceKey, editing: preference !== null });
-  const editing = editingState.sourceKey === sourceKey ? editingState.editing : preference !== null;
-  if (editingState.sourceKey !== sourceKey) setEditingState({ sourceKey, editing });
   const controls = usePreferenceFields(preference, {
     minimum: preference === null ? "" : centsToYuanText(preference.min_distributable_profit),
     ratio: preference === null ? "" : String(preference.shares_per_existing_share_micros),
@@ -165,14 +174,14 @@ function StockPreferenceControls(props: ControlsProps) {
     return result.ok ? { ok: true, value: { ...preferences, stock_distribution: result.value } } : result;
   }, props);
   return <fieldset><legend>送转</legend>
-    <label><input type="checkbox" name={`stock-preference-${company}`} checked={editing} onChange={event => {
-      setEditingState({ sourceKey, editing: event.currentTarget.checked });
-      if (!event.currentTarget.checked && preference !== null) onApply(company, { ...preferences, stock_distribution: null });
+    <label><input type="checkbox" name={`stock-preference-${company}`} checked={controls.editing} onChange={event => {
+      const checked = event.currentTarget.checked;
+      controls.toggle(checked, !checked && preference !== null ? { ...preferences, stock_distribution: null } : null);
     }} />启用送转自动提案</label>
     <small>未配置则不自动提案；自动提案仅送股，转增不支持。启用后需明确填写全部字段，未完成前仍为未配置。</small>
-    {editing && <>
+    {controls.editing && <>
       {[["minimum", "触发门槛（元）"], ["ratio", "每股送转比例（百万分之一股/股）"], ["expansion", "累计股本扩张上限（百万分比）"], ["cycles", "送转提案最小间隔（结算周期数）"]].map(([key, label]) => <label key={key}>{label}<input aria-label={label} inputMode={key === "minimum" ? "decimal" : "numeric"} value={controls.fields[key!]} aria-invalid={controls.error !== null} onChange={event => controls.edit(key!, event.currentTarget.value)} /></label>)}
     </>}
-    {editing && (controls.error !== null || preference === null) && <p role="alert">送转偏好编辑未完成：{controls.error === null ? "请填写全部字段；当前仍为未配置" : controls.error}；未写入配置，请修正输入。</p>}
+    {controls.error !== null && <p role="alert">送转偏好无效：{controls.error}；未写入配置，请修正输入。</p>}
   </fieldset>;
 }

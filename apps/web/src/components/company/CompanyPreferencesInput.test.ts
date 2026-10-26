@@ -100,3 +100,60 @@ test("外部配置更新时保留未完成 raw 并明确提示，不静默丢编
   const alerts = nodes(render.render()).filter(element => element.props.role === "alert");
   assert.match(JSON.stringify(alerts), /外部配置已更新/);
 });
+
+test("外部关闭送转/现金配置保留非法raw与冲突提示，显式取消才丢弃", () => {
+  for (const [name, field, label] of [["StockPreferenceControls", "stock_distribution", "触发门槛（元）"], ["CashPreferenceControls", "cash_dividend", "目标派息比例（基点）"]] as const) {
+    const preferences = { ...preference, stock_distribution: { min_distributable_profit: "100", shares_per_existing_share_micros: 1, max_cumulative_expansion_micros: 1, cycles_between_proposals: 1 } };
+    const outer = module.CompanyPreferencesInput({ companies: [{ company: 17, preferences } as never], onApply() { assert.fail("非法raw和取消本地冲突不应回写"); } });
+    const control = nodes(outer).find(element => typeof element.type === "function" && element.type.name === name)!;
+    const render = memoryHook(control.type as (props: Record<string, unknown>) => unknown, control.props);
+    const input = () => nodes(render.render()).find(element => element.props["aria-label"] === label);
+    (input()!.props.onChange as Function)({ currentTarget: { value: "unfinished" } });
+    render.render({ ...control.props, preferences: { ...preferences, [field]: null } });
+    assert.equal(input()?.props.value, "unfinished");
+    assert.match(JSON.stringify(nodes(render.render()).filter(element => element.props.role === "alert")), /外部配置已更新/);
+    const toggle = nodes(render.render()).find(element => element.props.type === "checkbox")!;
+    (toggle.props.onChange as Function)({ currentTarget: { checked: false } });
+    assert.equal(input(), undefined);
+    assert.equal(nodes(render.render()).filter(element => element.props.role === "alert").length, 0);
+  }
+});
+
+test("取消现金/送转的回调失败显式报错，保持原启用状态和raw", () => {
+  for (const name of ["StockPreferenceControls", "CashPreferenceControls"]) {
+    const preferences = { ...preference, stock_distribution: { min_distributable_profit: "100", shares_per_existing_share_micros: 1, max_cumulative_expansion_micros: 1, cycles_between_proposals: 1 } };
+    const outer = module.CompanyPreferencesInput({ companies: [{ company: 17, preferences } as never], onApply() { throw new Error("保存失败：保留原配置"); } });
+    const control = nodes(outer).find(element => typeof element.type === "function" && element.type.name === name)!;
+    const render = memoryHook(control.type as (props: Record<string, unknown>) => unknown, control.props);
+    const toggle = () => nodes(render.render()).find(element => element.props.type === "checkbox")!;
+    assert.doesNotThrow(() => (toggle().props.onChange as Function)({ currentTarget: { checked: false } }));
+    assert.equal(toggle().props.checked, true);
+    assert.match(JSON.stringify(nodes(render.render()).filter(element => element.props.role === "alert")), /保存失败/);
+  }
+});
+
+test("现金由null启用遭父级拒绝时显错且仍未启用", () => {
+  const preferences = { cash_dividend: null, stock_distribution: null };
+  const outer = module.CompanyPreferencesInput({ companies: [{ company: 17, preferences } as never], onApply() { throw new Error("父级拒绝写入"); } });
+  const control = nodes(outer).find(element => typeof element.type === "function" && element.type.name === "CashPreferenceControls")!;
+  const render = memoryHook(control.type as (props: Record<string, unknown>) => unknown, control.props);
+  const toggle = () => nodes(render.render()).find(element => element.props.type === "checkbox")!;
+  assert.doesNotThrow(() => (toggle().props.onChange as Function)({ currentTarget: { checked: true } }));
+  assert.equal(toggle().props.checked, false);
+  assert.match(JSON.stringify(nodes(render.render()).filter(element => element.props.role === "alert")), /父级拒绝写入/);
+});
+
+test("送转空raw完成全部字段后仅回写一次显式值", () => {
+  const applied: unknown[] = [];
+  const outer = module.CompanyPreferencesInput({ companies: [{ company: 17, preferences: preference } as never], onApply: (...args) => applied.push(args) });
+  const control = nodes(outer).find(element => typeof element.type === "function" && element.type.name === "StockPreferenceControls")!;
+  const render = memoryHook(control.type as (props: Record<string, unknown>) => unknown, control.props);
+  const toggle = nodes(render.render()).find(element => element.props.type === "checkbox")!;
+  (toggle.props.onChange as Function)({ currentTarget: { checked: true } });
+  for (const [index, [label, value]] of [["触发门槛（元）", "12.34"], ["每股送转比例（百万分之一股/股）", "123"], ["累计股本扩张上限（百万分比）", "456"], ["送转提案最小间隔（结算周期数）", "7"]].entries()) {
+    const input = nodes(render.render()).find(element => element.props["aria-label"] === label)!;
+    (input.props.onChange as Function)({ currentTarget: { value } });
+    assert.equal(applied.length, index === 3 ? 1 : 0);
+  }
+  assert.deepEqual(applied, [[17, { ...preference, stock_distribution: { min_distributable_profit: "1234", shares_per_existing_share_micros: 123, max_cumulative_expansion_micros: 456, cycles_between_proposals: 7 } }]]);
+});
