@@ -200,7 +200,10 @@ mod storage_tests {
             tick,
             source_report_ids: vec![format!("report-{account}-{tick}")],
             expectation_method: Some("真实观察".to_owned()),
-            plan_ids: vec![PlanId(1)],
+            plan_ids: vec![PlanId {
+                owner: AccountId(account),
+                sequence: 1,
+            }],
             plan_changes: vec!["初始变化".into()],
             budget_constraints: vec!["初始约束".into()],
             order_ids: vec![OrderId(1)],
@@ -258,7 +261,20 @@ mod storage_tests {
             AccountId(17),
             129,
             [OrderId(2), OrderId(2), OrderId(1)],
-            [PlanId(2), PlanId(1), PlanId(2)],
+            [
+                PlanId {
+                    owner: AccountId(17),
+                    sequence: 2,
+                },
+                PlanId {
+                    owner: AccountId(17),
+                    sequence: 1,
+                },
+                PlanId {
+                    owner: AccountId(17),
+                    sequence: 2,
+                },
+            ],
             ["变化一".into(), "变化二".into()],
             ["约束一".into(), "约束二".into()],
         );
@@ -280,7 +296,19 @@ mod storage_tests {
         }
         let last = enriched.back().unwrap();
         assert_eq!(last.order_ids, [OrderId(1), OrderId(2)]);
-        assert_eq!(last.plan_ids, [PlanId(1), PlanId(2)]);
+        assert_eq!(
+            last.plan_ids,
+            [
+                PlanId {
+                    owner: AccountId(17),
+                    sequence: 1
+                },
+                PlanId {
+                    owner: AccountId(17),
+                    sequence: 2
+                }
+            ]
+        );
         assert_eq!(last.plan_changes, ["初始变化", "变化一", "变化二"]);
         assert_eq!(last.budget_constraints, ["初始约束", "约束一", "约束二"]);
         let before = serde_json::to_vec(&collector).unwrap();
@@ -303,7 +331,16 @@ mod storage_tests {
             AccountId(1),
             127,
             [OrderId(2), OrderId(1), OrderId(2)],
-            [PlanId(2), PlanId(1)],
+            [
+                PlanId {
+                    owner: AccountId(1),
+                    sequence: 2,
+                },
+                PlanId {
+                    owner: AccountId(1),
+                    sequence: 1,
+                },
+            ],
             ["变化一".into(), "变化二".into()],
             ["约束一".into(), "约束二".into()],
         );
@@ -328,7 +365,19 @@ mod storage_tests {
         assert_eq!(serde_json::to_vec(&collector).unwrap(), before);
         let last = restored.back().unwrap();
         assert_eq!(last.order_ids, [OrderId(1), OrderId(2)]);
-        assert_eq!(last.plan_ids, [PlanId(1), PlanId(2)]);
+        assert_eq!(
+            last.plan_ids,
+            [
+                PlanId {
+                    owner: AccountId(1),
+                    sequence: 1
+                },
+                PlanId {
+                    owner: AccountId(1),
+                    sequence: 2
+                }
+            ]
+        );
         assert_eq!(last.plan_changes, ["初始变化", "变化一", "变化二"]);
         assert_eq!(last.budget_constraints, ["初始约束", "约束一", "约束二"]);
     }

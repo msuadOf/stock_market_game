@@ -1849,7 +1849,10 @@ mod d0b_storage_tests {
             tick,
             source_report_ids: vec![format!("report-{tick}")],
             expectation_method: Some("真实观察".into()),
-            plan_ids: vec![PlanId(1)],
+            plan_ids: vec![PlanId {
+                owner: AccountId(17),
+                sequence: 1,
+            }],
             plan_changes: vec!["初始变化".into()],
             budget_constraints: vec!["初始约束".into()],
             order_ids: vec![OrderId(1)],
@@ -1883,7 +1886,16 @@ mod d0b_storage_tests {
             AccountId(17),
             127,
             [OrderId(2), OrderId(1), OrderId(2)],
-            [PlanId(2), PlanId(1)],
+            [
+                PlanId {
+                    owner: AccountId(17),
+                    sequence: 2,
+                },
+                PlanId {
+                    owner: AccountId(17),
+                    sequence: 1,
+                },
+            ],
             ["变化一".into(), "变化二".into()],
             ["约束一".into(), "约束二".into()],
         );
@@ -1912,7 +1924,16 @@ mod d0b_storage_tests {
             AccountId(17),
             tick,
             [OrderId(3), OrderId(3)],
-            [PlanId(3), PlanId(3)],
+            [
+                PlanId {
+                    owner: AccountId(17),
+                    sequence: 3,
+                },
+                PlanId {
+                    owner: AccountId(17),
+                    sequence: 3,
+                },
+            ],
             [format!("变化-{tick}")],
             [format!("约束-{tick}")],
         );
@@ -2024,7 +2045,19 @@ mod d0b_storage_tests {
         assert_eq!(restored.first().unwrap().tick, 0);
         assert_eq!(restored.last().unwrap().tick, 127);
         assert_eq!(restored.last().unwrap().order_ids, [OrderId(1), OrderId(2)]);
-        assert_eq!(restored.last().unwrap().plan_ids, [PlanId(1), PlanId(2)]);
+        assert_eq!(
+            restored.last().unwrap().plan_ids,
+            [
+                PlanId {
+                    owner: AccountId(17),
+                    sequence: 1
+                },
+                PlanId {
+                    owner: AccountId(17),
+                    sequence: 2
+                }
+            ]
+        );
         assert_eq!(
             restored.last().unwrap().plan_changes,
             ["初始变化", "变化一", "变化二"]
