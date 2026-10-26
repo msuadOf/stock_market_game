@@ -19,6 +19,12 @@ pub struct ConditionalBonusTaxEvent {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub enum ConditionalBonusTaxAction {
+    Collect {
+        event_id: String,
+        available_cash: Money,
+        cash_collected: Money,
+        bonus_collected: Money,
+    },
     RegisterBonus {
         event_id: String,
         #[serde(with = "crate::orderbook::canonical_u64_decimal")]
@@ -100,6 +106,7 @@ impl<'a> BonusReplay<'a> {
             let (phase, id) = match &event.action {
                 ConditionalBonusTaxAction::RegisterBonus { event_id, .. } => (0u8, event_id),
                 ConditionalBonusTaxAction::RealizeBonus { event_id, .. } => (1u8, event_id),
+                ConditionalBonusTaxAction::Collect { event_id, .. } => (2u8, event_id),
             };
             // 身份冲突先拒；原样重试只引用首次位置，不重新进入时序或执行。
             if let Some(previous) = identities.insert((phase, id), event) {
@@ -127,6 +134,7 @@ impl<'a> BonusReplay<'a> {
             previous_prefix = event.after_book_operation;
             previous_day = event.day;
             match &event.action {
+                ConditionalBonusTaxAction::Collect { .. } => {}
                 ConditionalBonusTaxAction::RegisterBonus {
                     shares_per_existing_share_micros,
                     par_value_per_share,
@@ -194,6 +202,7 @@ impl<'a> BonusReplay<'a> {
             .filter(|e| e.after_book_operation == sequence)
         {
             match &event.action {
+                ConditionalBonusTaxAction::Collect { .. } => {}
                 ConditionalBonusTaxAction::RegisterBonus {
                     event_id,
                     shares_per_existing_share_micros,
@@ -269,5 +278,27 @@ impl<'a> BonusReplay<'a> {
                 .ok_or_else(|| overflow("stock bonus assessed tax cents"))?;
         }
         Ok(total)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ConditionalTaxCollectionPreparation {
+    pub collected: Money,
+    pub remaining_cash: Money,
+    pub outstanding: ExactDividendTaxAmount,
+    pub needs_funds: bool,
+}
+impl MappedTaxAssessment {
+    /// 只准备候选扣收，不安装账户、追加事实或减少下一次评估欠税。
+    pub fn prepare_collection(
+        &self,
+        available_cash: Money,
+    ) -> Result<ConditionalTaxCollectionPreparation, TaxLineageError> {
+        Ok(ConditionalTaxCollectionPreparation {
+            collected: Money::from_cents(0),
+            remaining_cash: available_cash,
+            outstanding: self.outstanding.clone(),
+            needs_funds: false,
+        })
     }
 }

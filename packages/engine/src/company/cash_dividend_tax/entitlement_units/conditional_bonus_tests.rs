@@ -743,3 +743,125 @@ fn appending_identical_register_and_realize_retries_after_later_frontier_is_idem
         Err(TaxLineageError::InvalidConditionalFact { .. })
     ));
 }
+
+fn collect(
+    event: &str,
+    prefix: u64,
+    available: i64,
+    cash: i64,
+    bonus: i64,
+) -> ConditionalBonusTaxEvent {
+    ConditionalBonusTaxEvent {
+        after_book_operation: prefix,
+        day: date("2030-01-02"),
+        action: ConditionalBonusTaxAction::Collect {
+            event_id: event.into(),
+            available_cash: Money::from_cents(available),
+            cash_collected: Money::from_cents(cash),
+            bonus_collected: Money::from_cents(bonus),
+        },
+    }
+}
+fn due_bonus() -> (CashDividendTaxBook, ConditionalBonusTaxFacts) {
+    let mut book = bonus_book("2029-12-25");
+    book.record_net_day("tax-dispose-all".into(), date("2030-01-02"), -100, None)
+        .unwrap();
+    let facts = ConditionalBonusTaxFacts {
+        events: vec![
+            registration("bonus", 0, "2030-01-01", 1_000_000),
+            realization(&book, "bonus", 1, "2030-01-02", 100, None),
+        ],
+    };
+    (book, facts)
+}
+#[test]
+fn prepare_partial_bonus_collection_has_no_installation_or_tax_fact_side_effect() {
+    let (book, facts) = due_bonus();
+    let before = book.clone();
+    let assessment = book
+        .assessment_with_conditional_bonus(&empty_lineage(&book), &facts)
+        .unwrap();
+    assert_eq!(assessment.outstanding.numerator(), 2000);
+    let preparation = assessment
+        .prepare_collection(Money::from_cents(300))
+        .unwrap();
+    assert_eq!(preparation.collected.cents(), 300);
+    assert_eq!(preparation.remaining_cash.cents(), 0);
+    assert_eq!(preparation.outstanding.numerator(), 1700);
+    assert!(preparation.needs_funds);
+    assert_eq!(book, before);
+    assert_eq!(
+        book.assessment_with_conditional_bonus(&empty_lineage(&book), &facts)
+            .unwrap(),
+        assessment
+    );
+}
+#[test]
+fn explicit_kind_collection_reduces_only_after_given_actual_fact_and_retries_once() {
+    let (book, mut facts) = due_bonus();
+    facts.events.push(collect("actual-first", 1, 300, 0, 300));
+    assert_eq!(
+        book.assessment_with_conditional_bonus(&empty_lineage(&book), &facts)
+            .unwrap()
+            .outstanding
+            .numerator(),
+        1700
+    );
+    facts
+        .events
+        .push(collect("actual-second", 1, 2000, 0, 1700));
+    let paid = book
+        .assessment_with_conditional_bonus(&empty_lineage(&book), &facts)
+        .unwrap();
+    assert_eq!(paid.outstanding.numerator(), 0);
+    facts.events.push(collect("actual-first", 1, 300, 0, 300));
+    assert_eq!(
+        book.assessment_with_conditional_bonus(&empty_lineage(&book), &facts)
+            .unwrap(),
+        paid
+    );
+}
+#[test]
+fn collection_before_same_prefix_activation_cannot_borrow_future_income() {
+    let (book, facts) = due_bonus();
+    let mut reversed = facts.clone();
+    reversed
+        .events
+        .insert(1, collect("too-early", 1, 300, 0, 300));
+    assert!(book
+        .assessment_with_conditional_bonus(&empty_lineage(&book), &reversed)
+        .is_err());
+    let mut ordered = facts;
+    ordered.events.push(collect("after-income", 1, 300, 0, 300));
+    assert_eq!(
+        book.assessment_with_conditional_bonus(&empty_lineage(&book), &ordered)
+            .unwrap()
+            .outstanding
+            .numerator(),
+        1700
+    );
+}
+#[test]
+fn conditional_cash_payment_before_bonus_activation_blocks_later_legacy_cash_double_collection() {
+    let mut book = cash_book(vec![lot("original", 100, "2029-12-25")]);
+    book.record_net_day("tax-dispose-all".into(), date("2030-01-02"), -100, None)
+        .unwrap();
+    book.collect_due(
+        "legacy-cash".into(),
+        date("2030-01-02"),
+        Money::from_cents(2000),
+    )
+    .unwrap();
+    let facts = ConditionalBonusTaxFacts {
+        events: vec![
+            registration("bonus", 2, "2030-01-01", 1_000_000),
+            collect("conditional-cash", 3, 2000, 2000, 0),
+            realization(&book, "bonus", 3, "2030-01-02", 100, None),
+        ],
+    };
+    let before = book.clone();
+    assert!(
+        matches!(book.assessment_with_conditional_bonus(&empty_lineage(&book),&facts),Err(TaxLineageError::LegacyCashOvercollection{event_id,previously_collected:2000,..}) if event_id=="legacy-cash")
+    );
+    assert_eq!(book, before);
+}
