@@ -873,6 +873,240 @@ fn capital_24_repurchase_purpose_cannot_drift_between_book_and_finance() {
 }
 
 #[test]
+fn capital_25_stable_identity_checks_each_represented_field() {
+    for field in ["code", "name", "industry", "kind", "listed_stock"] {
+        let mut f = Fixture::new();
+        let mut spec = f.initial.get(&CompanyId(0)).unwrap().clone();
+        match field {
+            "code" => spec.code = "DIFFERENT".into(),
+            "name" => spec.name = "不同名称".into(),
+            "industry" => spec.industry = IndustryId("不同的行业".into()),
+            "kind" => spec.kind = CompanyKind::Bank,
+            "listed_stock" => spec.listed_stock = None,
+            _ => unreachable!(),
+        }
+        f.initial = IssuerRegistry::new(vec![spec]).unwrap();
+        assert!(
+            matches!(f.validate("2030-06-03"), Err(CompanyCapitalRestoreError::StableIdentity { company: CompanyId(0), field: actual }) if actual == field),
+            "{field}"
+        );
+    }
+}
+
+#[test]
+fn capital_26_unlisted_company_and_independent_company_stock_id_stay_distinct() {
+    let mut f = Fixture::new();
+    let mut listed = f.initial.get(&CompanyId(0)).unwrap().clone();
+    listed.code = "Z-listed".into();
+    let mut unlisted = listed.clone();
+    unlisted.code = "A-unlisted".into();
+    unlisted.listed_stock = None;
+    unlisted.issued_shares = 17;
+    let mut config = f.system.config();
+    let CompanySystemConfig::Simple(ref mut simple) = config else {
+        unreachable!()
+    };
+    let mut unlisted_config = simple.companies[0].clone();
+    unlisted_config.company = CompanyId(0);
+    simple.companies[0].company = CompanyId(1);
+    simple.companies.push(unlisted_config);
+    f.initial = IssuerRegistry::new(vec![listed.clone(), unlisted.clone()]).unwrap();
+    f.system =
+        CompanySystem::create(vec![listed, unlisted], config, date("2030-06-03"), 19).unwrap();
+    f.system
+        .define_dividend_legal_facts(
+            &CompanyId(1),
+            AccountingAmount::from_cents(100_000),
+            "测试显式法定根".into(),
+        )
+        .unwrap();
+    let mut actions = serde_json::to_value(&f.actions).unwrap();
+    actions["registries"][0]["issuer"] = serde_json::json!(1);
+    f.actions = serde_json::from_value(actions).unwrap();
+    let summary = f.validate("2030-06-03").unwrap();
+    assert_eq!(summary.companies[&CompanyId(0)].stock, None);
+    assert_eq!(summary.companies[&CompanyId(0)].issued_shares, 17);
+    assert_eq!(summary.companies[&CompanyId(1)].stock, Some(StockId(0)));
+    assert_eq!(summary.companies[&CompanyId(1)].issued_shares, 1_000);
+}
+
+#[test]
+fn capital_27_duplicate_formal_book_is_rejected_with_exact_action() {
+    let mut f = Fixture::new();
+    f.distribution("duplicate-dist", "2030-06-03", "2030-06-04", 100);
+    f.actions
+        .stock_distributions
+        .push(f.actions.stock_distributions[0].clone());
+    assert!(
+        matches!(f.validate("2030-06-03"), Err(CompanyCapitalRestoreError::Duplicate {
+        context: CapitalRestoreContext { company: Some(CompanyId(0)), kind: Some(CorporateCapitalKind::StockDistribution), event_id: Some(event), .. },
+    }) if event == "duplicate-dist")
+    );
+}
+
+#[test]
+fn capital_28_wrong_receipt_basis_is_not_accepted_by_matching_prefix() {
+    let mut f = Fixture::new();
+    f.distribution("dist-a", "2030-06-03", "2030-06-04", 100);
+    f.credit_distribution();
+    let mut wire = serde_json::to_value(&f.actions).unwrap();
+    wire["registries"][0]["receipts"][1]["request"]["scope"] =
+        serde_json::json!({"NonTradingTransfer": {"basis": "不同批准"}});
+    f.actions = serde_json::from_value(wire).unwrap();
+    assert!(
+        matches!(f.validate("2030-06-04"), Err(CompanyCapitalRestoreError::ActionMismatch {
+        context: CapitalRestoreContext { kind: Some(CorporateCapitalKind::StockDistribution), event_id: Some(event), receipt_index: Some(1), .. }, field: "receipt-scope-or-day",
+    }) if event == "dist-a")
+    );
+}
+
+#[test]
+fn capital_29_same_day_registration_frontier_keeps_before_and_after_capital() {
+    let mut f = Fixture::new();
+    f.distribution("dist-a", "2030-06-03", "2030-06-04", 100);
+    f.credit_distribution();
+    let registry = &mut f.actions.registries[0];
+    let after = registry
+        .register("after-credit".into(), date("2030-06-04"))
+        .unwrap();
+    assert_eq!(after.settled_receipts(), 2);
+    assert_eq!(after.issued_shares(), 1_100);
+    assert_eq!(
+        registry.registration("dist-a").unwrap().settled_receipts(),
+        0
+    );
+    assert_eq!(
+        registry.registration("dist-a").unwrap().issued_shares(),
+        1_000
+    );
+    assert_eq!(
+        f.validate("2030-06-04").unwrap().companies[&CompanyId(0)].issued_shares,
+        1_100
+    );
+}
+
+#[test]
+fn capital_30_replay_u64_overflow_reports_actual_receipt_position() {
+    let mut f = Fixture::new();
+    f.distribution("overflow-dist", "2030-06-03", "2030-06-04", 100);
+    f.credit_distribution();
+    let mut spec = f.initial.get(&CompanyId(0)).unwrap().clone();
+    spec.issued_shares = u64::MAX;
+    f.initial = IssuerRegistry::new(vec![spec]).unwrap();
+    assert!(matches!(
+        f.validate("2030-06-04"),
+        Err(CompanyCapitalRestoreError::Arithmetic {
+            context: CapitalRestoreContext {
+                company: Some(CompanyId(0)),
+                stock: Some(StockId(0)),
+                receipt_index: Some(1),
+                ..
+            },
+        })
+    ));
+}
+
+#[test]
+fn capital_31_replay_cannot_reduce_issued_capital_to_zero() {
+    let mut f = Fixture::new();
+    f.repurchase(true, false);
+    let mut spec = f.initial.get(&CompanyId(0)).unwrap().clone();
+    spec.issued_shares = 100;
+    f.initial = IssuerRegistry::new(vec![spec]).unwrap();
+    assert!(matches!(
+        f.validate_manual("2030-06-04"),
+        Err(CompanyCapitalRestoreError::Arithmetic {
+            context: CapitalRestoreContext {
+                company: Some(CompanyId(0)),
+                stock: Some(StockId(0)),
+                receipt_index: Some(1),
+                ..
+            },
+        })
+    ));
+}
+
+#[test]
+fn capital_32_two_same_day_credits_keep_registration_basis_for_each_book() {
+    let mut f = Fixture::new();
+    f.distribution("dist-a", "2030-06-03", "2030-06-04", 100);
+    f.distribution("dist-b", "2030-06-03", "2030-06-04", 100);
+    for book in &mut f.actions.stock_distributions {
+        let plan = book.plan().clone();
+        book.announce(plan.announced_on).unwrap();
+        let frozen = f.actions.registries[0]
+            .register(plan.event_id, plan.registered_on)
+            .unwrap()
+            .clone();
+        book.register(frozen, &f.calendar).unwrap();
+    }
+    f.actions.stock_distributions.swap(0, 1);
+    f.credit_distribution();
+    f.actions.stock_distributions.swap(0, 1);
+    f.credit_distribution();
+    assert_eq!(
+        f.actions.stock_distributions[1]
+            .receipt()
+            .unwrap()
+            .issued_shares_before,
+        1_000
+    );
+    let summary = f.validate("2030-06-04").unwrap();
+    assert_eq!(summary.companies[&CompanyId(0)].issued_shares, 1_200);
+    assert_eq!(summary.companies[&CompanyId(0)].receipt_frontier, 3);
+    assert_eq!(
+        summary.companies[&CompanyId(0)].registered_capital,
+        Some(AccountingAmount::from_cents(120_000))
+    );
+}
+
+#[test]
+fn capital_33_credited_book_and_finance_require_exact_registry_receipt() {
+    let mut f = Fixture::new();
+    f.distribution("dist-a", "2030-06-03", "2030-06-04", 100);
+    f.credit_distribution();
+    let mut wire = serde_json::to_value(&f.actions).unwrap();
+    wire["registries"][0]["receipts"] = serde_json::json!([]);
+    wire["registries"][0]["issued_shares"] = serde_json::json!("1000");
+    wire["registries"][0]["settled_on"] = serde_json::to_value(date("2030-06-03")).unwrap();
+    wire["registries"][0]["holdings"][0]["lots"]
+        .as_array_mut()
+        .unwrap()
+        .truncate(1);
+    f.actions = serde_json::from_value(wire).unwrap();
+    assert!(
+        matches!(f.validate("2030-06-04"), Err(CompanyCapitalRestoreError::MissingReceipt {
+        context: CapitalRestoreContext { company: Some(CompanyId(0)), kind: Some(CorporateCapitalKind::StockDistribution), event_id: Some(event), .. },
+    }) if event == "dist-a")
+    );
+}
+
+#[test]
+fn capital_34_validator_uses_explicit_frozen_calendar_instead_of_default() {
+    let mut f = Fixture::new();
+    f.distribution("dist-a", "2030-06-03", "2030-06-04", 100);
+    let mut spec = f.calendar.policy().spec();
+    // 仅为证明输入 policy 权威的 synthetic fixture，不是对2030官方休市的预测。
+    spec.official_coverage
+        .push(crate::calendar::OfficialCoverageEntry::new(
+            CalendarExchange::Sse,
+            2030,
+            vec![(date("2030-06-03"), date("2030-06-03"))],
+            "synthetic-capital-restore-policy".into(),
+            "synthetic-fixture-not-official-source".into(),
+        ));
+    f.calendar =
+        TradingCalendar::from_policy(crate::calendar::CalendarPolicy::from_parts(spec).unwrap())
+            .unwrap();
+    assert!(
+        matches!(f.validate("2030-06-03"), Err(CompanyCapitalRestoreError::StockDistribution {
+        context: CapitalRestoreContext { company: Some(CompanyId(0)), kind: Some(CorporateCapitalKind::StockDistribution), event_id: Some(event), .. },
+        source: crate::company::stock_distribution::StockDistributionError::InvalidTradingDate { date: day, .. },
+    }) if event == "dist-a" && day == date("2030-06-03"))
+    );
+}
+
+#[test]
 fn capital_01_unchanged_issuer_and_registry_keep_initial_shares() {
     let f = Fixture::new();
     f.system.validate_restored().unwrap();
