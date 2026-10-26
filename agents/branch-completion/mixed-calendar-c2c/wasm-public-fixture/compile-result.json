@@ -1,0 +1,14 @@
+{
+  "wrapper_exit_code": 0,
+  "wall_seconds": 1.1802903920179233,
+  "sources_after": {
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/mixed-calendar-c2c/agents/branch-completion/mixed-calendar-c2c/export-public-wasm-fixture.rs": "3a387346750f5a8af6eaac3f23c26feaefd0b0dc6258f7da9f130217837a62fa",
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/mixed-calendar-c2c/packages/engine/tests/common/mixed_calendar_c2c_fixture.rs": "d1120a2ad62e3d0c1ca15ec1126ec44cf2050b48c4f84cb07e4dafbb5f4b2eb3"
+  },
+  "sources_unchanged": true,
+  "binary": {
+    "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/mixed-calendar-c2c/export-public-wasm-fixture-6ac",
+    "bytes": 39014096,
+    "sha256": "3788ab13961040adf4e775f63d621cdc4bb5e83e346971ba3688de2a64786965"
+  }
+}
