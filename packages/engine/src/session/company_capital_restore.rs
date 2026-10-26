@@ -521,9 +521,16 @@ enum ExpectedCapitalAllocation {
     PositiveLots(Vec<HolderCreditLot>),
     ReDenomination(ShareSplitReceipt),
     RepurchaseCancellation {
-        bought_lots: BTreeMap<String, (CivilDate, u64)>,
+        bought_lots: BTreeMap<String, BoughtRepurchaseLot>,
         cancelled_shares: u64,
     },
+}
+
+struct BoughtRepurchaseLot {
+    acquired_on: CivilDate,
+    qty: u64,
+    source: crate::company::share_registry::AcquisitionSource,
+    restriction: crate::company::share_registry::ShareRestriction,
 }
 
 struct FrozenCapitalRegistration {
@@ -1186,6 +1193,12 @@ fn prepare_repurchase_cancellations(
                 });
             }
         }
+        if fact.purpose != plan.purpose {
+            return Err(CompanyCapitalRestoreError::ActionMismatch {
+                context,
+                field: "purpose",
+            });
+        }
         if input
             .actions
             .issuer_repurchases
@@ -1268,7 +1281,15 @@ fn prepare_repurchase_cancellations(
                     });
                 }
                 if bought_lots
-                    .insert(acquisition.lot_id.clone(), (fill.day, fill.shares))
+                    .insert(
+                        acquisition.lot_id.clone(),
+                        BoughtRepurchaseLot {
+                            acquired_on: fill.day,
+                            qty: fill.shares,
+                            source: acquisition.source.clone(),
+                            restriction: acquisition.restriction.clone(),
+                        },
+                    )
                     .is_some()
                 {
                     return Err(CompanyCapitalRestoreError::Duplicate { context });
@@ -1357,7 +1378,7 @@ fn prepare_repurchase_cancellations(
 
 fn validate_cancellation_lots(
     receipt: &ShareDayReceipt,
-    bought_lots: &BTreeMap<String, (CivilDate, u64)>,
+    bought_lots: &BTreeMap<String, BoughtRepurchaseLot>,
     cancelled_shares: u64,
     context: &CapitalRestoreContext,
 ) -> Result<(), CompanyCapitalRestoreError> {
@@ -1387,7 +1408,7 @@ fn validate_cancellation_lots(
             })?;
     let mut total = 0_u64;
     for selection in consume {
-        let (acquired_on, available) = bought_lots.get(&selection.lot_id).ok_or_else(|| {
+        let bought = bought_lots.get(&selection.lot_id).ok_or_else(|| {
             CompanyCapitalRestoreError::ActionMismatch {
                 context: context.clone(),
                 field: "repurchase-lot-source",
@@ -1404,9 +1425,11 @@ fn validate_cancellation_lots(
                 field: "repurchase-lot-source",
             })?;
         if selection.qty == 0
-            || selection.qty > *available
-            || disposed.lot.acquired_on != *acquired_on
+            || selection.qty > bought.qty
+            || disposed.lot.acquired_on != bought.acquired_on
             || disposed.lot.qty != selection.qty
+            || disposed.lot.source != bought.source
+            || disposed.lot.restriction != bought.restriction
         {
             return Err(CompanyCapitalRestoreError::ActionMismatch {
                 context: context.clone(),
