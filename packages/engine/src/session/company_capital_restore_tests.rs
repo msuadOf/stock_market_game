@@ -36,6 +36,7 @@ use crate::company::stock_distribution::{
 };
 use crate::company::{CompanyKind, CompanySpec, IndustryId};
 use crate::orderbook::AccountId;
+use crate::session::{SecurityCategory, StockExchange, StockSpec};
 use crate::stock::StockMeta;
 
 fn date(text: &str) -> CivilDate {
@@ -59,6 +60,7 @@ fn lot(id: &str, qty: u64) -> ShareLot {
 }
 
 struct Fixture {
+    setup_stocks: Vec<StockSpec>,
     initial: IssuerRegistry,
     system: CompanySystem,
     actions: SessionCorporateActions,
@@ -165,6 +167,16 @@ impl Fixture {
         )
         .unwrap();
         Self {
+            setup_stocks: vec![StockSpec {
+                code: code(),
+                exchange: StockExchange::Shanghai,
+                initial_price: Money::from_cents(100),
+                category: SecurityCategory::MainBoard,
+                limit_pct: 0.10,
+                tick: Money::from_cents(1),
+                total_shares: 1_000,
+                float_shares: 1_000,
+            }],
             initial: IssuerRegistry::new(vec![spec]).unwrap(),
             system,
             actions: SessionCorporateActions {
@@ -178,6 +190,7 @@ impl Fixture {
 
     fn validate(&self, through: &str) -> Result<CapitalReplaySummary, CompanyCapitalRestoreError> {
         validate_company_capital_restore(CapitalRestoreInput {
+            setup_stocks: &self.setup_stocks,
             setup_issuers: &self.initial,
             system: &self.system,
             actions: &self.actions,
@@ -788,6 +801,7 @@ impl Fixture {
         through: &str,
     ) -> Result<CapitalReplaySummary, CompanyCapitalRestoreError> {
         validate_company_capital_restore(CapitalRestoreInput {
+            setup_stocks: &self.setup_stocks,
             setup_issuers: &self.initial,
             system: &self.system,
             actions: &self.actions,
@@ -1154,6 +1168,128 @@ fn capital_36_closed_payment_window_is_an_occurred_fact_even_without_subscriptio
         matches!(f.validate("2030-06-03"), Err(CompanyCapitalRestoreError::FutureFact {
         context: CapitalRestoreContext { company: Some(CompanyId(0)), kind: Some(CorporateCapitalKind::RightsOffering), event_id: Some(event), day: Some(day), .. }, committed_through,
     }) if event == "rights-a" && day == plan.payment_deadline_on && committed_through == date("2030-06-03"))
+    );
+}
+
+#[test]
+fn capital_37_setup_stocks_must_cover_catalog() {
+    let mut f = Fixture::new();
+    f.setup_stocks.clear();
+    assert!(
+        matches!(f.validate("2030-06-03"), Err(CompanyCapitalRestoreError::SetupStockMapping {
+        stock_code, reason: SetupStockMappingReason::Missing,
+    }) if stock_code == code().0)
+    );
+}
+
+#[test]
+fn capital_38_setup_stocks_must_not_duplicate_code() {
+    let mut f = Fixture::new();
+    f.setup_stocks.push(f.setup_stocks[0].clone());
+    assert!(
+        matches!(f.validate("2030-06-03"), Err(CompanyCapitalRestoreError::SetupStockMapping {
+        stock_code, reason: SetupStockMappingReason::Duplicate,
+    }) if stock_code == code().0)
+    );
+}
+
+#[test]
+fn capital_39_setup_stocks_must_not_add_unknown_security() {
+    let mut f = Fixture::new();
+    let mut extra = f.setup_stocks[0].clone();
+    extra.code = StockCode("000001".into());
+    extra.exchange = StockExchange::Shenzhen;
+    f.setup_stocks.push(extra);
+    assert!(
+        matches!(f.validate("2030-06-03"), Err(CompanyCapitalRestoreError::SetupStockMapping {
+        stock_code, reason: SetupStockMappingReason::Unexpected,
+    }) if stock_code == "000001")
+    );
+}
+
+fn assert_exchange_error(
+    f: &Fixture,
+    through: &str,
+    expected_kind: CorporateCapitalKind,
+    expected_event: &str,
+) {
+    assert!(
+        matches!(f.validate(through), Err(CompanyCapitalRestoreError::ExchangeMismatch {
+        context: CapitalRestoreContext { company: Some(CompanyId(0)), stock: Some(StockId(0)), kind: Some(kind), event_id: Some(event), .. },
+        expected: CalendarExchange::Sse, actual: CalendarExchange::Szse,
+    }) if kind == expected_kind && event == expected_event)
+    );
+}
+
+#[test]
+fn capital_40_approved_distribution_uses_actual_setup_exchange() {
+    let mut f = Fixture::new();
+    f.distribution("exchange-dist", "2030-06-03", "2030-06-04", 100);
+    let mut plan = f.actions.stock_distributions[0].plan().clone();
+    plan.exchange = CalendarExchange::Szse;
+    f.actions.stock_distributions[0] = StockDistributionBook::new(plan).unwrap();
+    f.actions.stock_distributions[0]
+        .validate_with_calendar(&f.calendar)
+        .unwrap();
+    assert_exchange_error(
+        &f,
+        "2030-06-03",
+        CorporateCapitalKind::StockDistribution,
+        "exchange-dist",
+    );
+}
+
+#[test]
+fn capital_41_settled_split_uses_actual_setup_exchange() {
+    let mut f = Fixture::new();
+    f.redenominate(ShareSplitDirection::Split);
+    let mut wire = serde_json::to_value(&f.actions).unwrap();
+    wire["share_splits"][0]["plan"]["exchange"] = serde_json::json!("Szse");
+    f.actions = serde_json::from_value(wire).unwrap();
+    f.actions.share_splits[0]
+        .validate_with_calendar(&f.calendar)
+        .unwrap();
+    assert_exchange_error(
+        &f,
+        "2030-06-04",
+        CorporateCapitalKind::ShareReDenomination,
+        "transform-a",
+    );
+}
+
+#[test]
+fn capital_42_settled_rights_uses_actual_setup_exchange() {
+    let mut f = Fixture::new();
+    let settled_on = f.rights(400, true);
+    let mut wire = serde_json::to_value(&f.actions).unwrap();
+    wire["rights_offerings"][0]["plan"]["exchange"] = serde_json::json!("Szse");
+    f.actions = serde_json::from_value(wire).unwrap();
+    f.actions.rights_offerings[0]
+        .validate_with_calendar(&f.calendar)
+        .unwrap();
+    assert_exchange_error(
+        &f,
+        &settled_on.to_string(),
+        CorporateCapitalKind::RightsOffering,
+        "rights-a",
+    );
+}
+
+#[test]
+fn capital_43_cancelled_repurchase_uses_actual_setup_exchange() {
+    let mut f = Fixture::new();
+    f.repurchase(true, false);
+    let mut wire = serde_json::to_value(&f.actions).unwrap();
+    wire["issuer_repurchases"][0]["plan"]["exchange"] = serde_json::json!("Szse");
+    f.actions = serde_json::from_value(wire).unwrap();
+    f.actions.issuer_repurchases[0]
+        .validate_with_calendar(&f.calendar)
+        .unwrap();
+    assert_exchange_error(
+        &f,
+        "2030-06-04",
+        CorporateCapitalKind::IssuerRepurchaseCancellation,
+        "buy-a",
     );
 }
 

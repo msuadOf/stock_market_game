@@ -14,6 +14,7 @@ use std::collections::BTreeMap;
 
 /// 日期校验借用本局冻结 policy，不在恢复时另建默认日历。
 pub(crate) struct CapitalRestoreInput<'a> {
+    pub(crate) setup_stocks: &'a [crate::session::StockSpec],
     pub(crate) setup_issuers: &'a IssuerRegistry,
     pub(crate) system: &'a CompanySystem,
     pub(crate) actions: &'a SessionCorporateActions,
@@ -84,6 +85,17 @@ pub(crate) enum CompanyCapitalRestoreError {
         company: Option<CompanyId>,
         stock_code: String,
     },
+    #[error("资本恢复开局证券映射无效：证券 {stock_code}，原因 {reason:?}")]
+    SetupStockMapping {
+        stock_code: String,
+        reason: SetupStockMappingReason,
+    },
+    #[error("资本恢复正式计划交易所不一致：{context:?}，预期 {expected:?}，实际 {actual:?}")]
+    ExchangeMismatch {
+        context: CapitalRestoreContext,
+        expected: crate::calendar::CalendarExchange,
+        actual: crate::calendar::CalendarExchange,
+    },
     #[error("资本恢复算术不能表示合法股本：{context:?}")]
     Arithmetic { context: CapitalRestoreContext },
     #[error("资本恢复正式动作缺少账簿：{context:?}")]
@@ -132,6 +144,13 @@ pub(crate) enum CompanyCapitalRestoreError {
         context: CapitalRestoreContext,
         required: CapitalRestorePrerequisite,
     },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum SetupStockMappingReason {
+    Missing,
+    Unexpected,
+    Duplicate,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
