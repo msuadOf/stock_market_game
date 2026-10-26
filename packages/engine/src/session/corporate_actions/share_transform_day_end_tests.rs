@@ -33,6 +33,15 @@ struct Fixture {
 }
 impl Fixture {
     fn new(direction: ShareSplitDirection, ratio: u64, shares: u64, treasury: u64) -> Self {
+        Self::with_initial_holdings(direction, ratio, shares, treasury, 0)
+    }
+    fn with_initial_holdings(
+        direction: ShareSplitDirection,
+        ratio: u64,
+        shares: u64,
+        treasury: u64,
+        external_shares: u64,
+    ) -> Self {
         let stock = StockCode("600001".into());
         let mut holdings = vec![ShareHolding {
             holder: HolderId::Account(AccountId(1)),
@@ -47,10 +56,16 @@ impl Fixture {
                 ],
             });
         }
+        if external_shares > 0 {
+            holdings.push(ShareHolding {
+                holder: HolderId::External("external".into()),
+                lots: vec![lot("external", external_shares)],
+            });
+        }
         let mut registry = ShareRegistry::new(
             stock.clone(),
             CompanyId(0),
-            shares + treasury,
+            shares + treasury + external_shares,
             date("2030-06-03"),
             holdings,
         )
@@ -107,38 +122,6 @@ impl Fixture {
             chain,
             buckets: vec![],
         }
-    }
-    fn with_external(mut self, external_shares: u64) -> Self {
-        let account_shares = self.tax[0].lots()[0].qty;
-        self.registry = ShareRegistry::new(
-            self.registry.stock().clone(),
-            CompanyId(0),
-            account_shares + external_shares,
-            date("2030-06-03"),
-            vec![
-                ShareHolding {
-                    holder: HolderId::Account(AccountId(1)),
-                    lots: vec![lot("a1", account_shares)],
-                },
-                ShareHolding {
-                    holder: HolderId::External("external".into()),
-                    lots: vec![lot("external", external_shares)],
-                },
-            ],
-        )
-        .unwrap();
-        self.book = ShareSplitBook::new(self.book.plan().clone()).unwrap();
-        self.book.announce(date("2030-06-02")).unwrap();
-        self.book
-            .register(
-                self.registry
-                    .register("split-1".into(), date("2030-06-03"))
-                    .unwrap()
-                    .clone(),
-                &crate::calendar::TradingCalendar::current_default_calendar().unwrap(),
-            )
-            .unwrap();
-        self
     }
     fn input(&self) -> ShareTransformDayEndInput<'_> {
         ShareTransformDayEndInput {
@@ -230,8 +213,11 @@ fn consolidation_emits_reduction_and_preserves_surviving_tax_acquisition_date() 
 
 #[test]
 fn registered_zero_outcome_does_not_claim_actual_account_or_cost_is_zero() {
-    let fixture = Fixture::new(ShareSplitDirection::Consolidate, 3, 1, 0).with_external(5);
+    let fixture = Fixture::with_initial_holdings(ShareSplitDirection::Consolidate, 3, 1, 0, 5);
+    assert_eq!(fixture.book.receipt().unwrap().issued_shares_before, 6);
+    assert_eq!(fixture.book.receipt().unwrap().issued_shares_after, 2);
     let result = fixture.run().unwrap();
+    assert_eq!(result.registry_before_new_unit_market.issued_shares(), 2);
     assert_eq!(result.account_intents[0].converted_after, 0);
     assert_eq!(
         result.account_intents[0].amount,
@@ -402,14 +388,40 @@ fn current_registry_api_blocks_public_market_after_same_day_transform() {
 }
 
 #[test]
-fn frozen_total_zero_is_domain_valid_but_registry_rejects_and_candidate_is_unchanged() {
-    let fixture = Fixture::new(ShareSplitDirection::Consolidate, 3, 1, 0);
-    fixture.book.validate().unwrap();
-    assert_eq!(fixture.book.receipt().unwrap().issued_shares_after, 0);
-    let before = fixture.registry.clone();
-    let error = fixture.run().unwrap_err();
-    assert!(error.detail.contains("issued share conservation mismatch"));
-    assert_eq!(fixture.registry, before);
+fn zero_issued_result_is_rejected_before_frozen_registration_without_mutation() {
+    let fixture = Fixture::new(ShareSplitDirection::Split, 2, 1, 0);
+    let mut plan = fixture.book.plan().clone();
+    plan.direction = ShareSplitDirection::Consolidate;
+    plan.ratio = 3;
+    let mut book = ShareSplitBook::new(plan).unwrap();
+    book.announce(date("2030-06-02")).unwrap();
+    let book_before = book.clone();
+    let registry_before = fixture.registry.clone();
+    let tax_before = fixture.tax.clone();
+    let snapshot = fixture.registry.registration("split-1").unwrap().clone();
+    let error = book
+        .register(
+            snapshot,
+            &crate::calendar::TradingCalendar::current_default_calendar().unwrap(),
+        )
+        .unwrap_err();
+    assert_eq!(
+        error,
+        crate::company::share_split::ShareSplitError::ZeroIssuedShares {
+            event_id: "split-1".into(),
+            stock: StockCode("600001".into()),
+            direction: ShareSplitDirection::Consolidate,
+            ratio: 3,
+            issued_shares_before: 1,
+            issued_shares_after: 0,
+        }
+    );
+    assert_eq!(book, book_before);
+    assert_eq!(book.status(), &ShareSplitStatus::Announced);
+    assert!(book.registration().is_none());
+    assert!(book.receipt().is_none());
+    assert_eq!(fixture.registry, registry_before);
+    assert_eq!(fixture.tax, tax_before);
 }
 
 #[test]
@@ -574,7 +586,7 @@ fn treasury_exact_ratio_cannot_be_reallocated_arbitrarily_between_buckets() {
 
 fn unchanged_quantity_fixture() -> Fixture {
     // 显式使用已冻结同余 seed：两户各1股二并一，Account 获1股，发行总量2→1。
-    let fixture = Fixture::new(ShareSplitDirection::Consolidate, 2, 1, 0).with_external(1);
+    let fixture = Fixture::with_initial_holdings(ShareSplitDirection::Consolidate, 2, 1, 0, 1);
     let outcome = fixture
         .book
         .receipt()
@@ -584,6 +596,7 @@ fn unchanged_quantity_fixture() -> Fixture {
         .find(|outcome| outcome.holder == HolderId::Account(AccountId(1)))
         .unwrap();
     assert_eq!((outcome.original_shares, outcome.new_shares), (1, 1));
+    assert_eq!(fixture.book.receipt().unwrap().issued_shares_before, 2);
     assert_eq!(fixture.book.receipt().unwrap().issued_shares_after, 1);
     fixture
 }
