@@ -516,3 +516,30 @@ fn capital_12_credited_distribution_requires_registry_in_same_saved_source() {
     }) if event == "dist-missing-registry")
     );
 }
+
+#[test]
+fn capital_13_future_registration_without_receipts_is_not_committed() {
+    let mut f = Fixture::new();
+    let mut future = ShareRegistry::new(
+        code(),
+        CompanyId(0),
+        1_000,
+        date("2030-06-04"),
+        vec![ShareHolding {
+            holder: HolderId::Account(AccountId(7)),
+            lots: vec![lot("initial-owner-7", 1_000)],
+        }],
+    )
+    .unwrap();
+    future
+        .register("future-registration".into(), date("2030-06-04"))
+        .unwrap();
+    assert!(future.receipts().is_empty());
+    future.validate().unwrap();
+    f.actions.registries = vec![future];
+    assert!(
+        matches!(f.validate("2030-06-03"), Err(CompanyCapitalRestoreError::FutureFact {
+        context: CapitalRestoreContext { company: Some(CompanyId(0)), stock: Some(StockId(0)), day: Some(day), .. }, committed_through,
+    }) if day == date("2030-06-04") && committed_through == date("2030-06-03"))
+    );
+}
