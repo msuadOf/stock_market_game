@@ -260,6 +260,17 @@ pub(crate) fn validate_company_capital_restore(
                 receipt_frontier += 1;
                 share_frontiers.push(issued_shares);
             }
+            // 先保留具体未来 receipt 的下标错误，再拒绝没有 receipt 却超前的登记静点。
+            // ShareRegistry::validate 已保证全部登记快照不晚于该 settled_on。
+            if registry.settled_on() > input.committed_through {
+                return Err(CompanyCapitalRestoreError::FutureFact {
+                    context: CapitalRestoreContext {
+                        day: Some(registry.settled_on()),
+                        ..context.clone()
+                    },
+                    committed_through: input.committed_through,
+                });
+            }
             check_shares(issued_shares, registry.issued_shares(), context.clone())?;
         }
         for movement in bindings
