@@ -469,6 +469,21 @@ fn check_shares(
     Ok(())
 }
 
+fn check_action_fields(
+    context: &CapitalRestoreContext,
+    fields: &[(&'static str, bool)],
+) -> Result<(), CompanyCapitalRestoreError> {
+    for (field, equal) in fields {
+        if !equal {
+            return Err(CompanyCapitalRestoreError::ActionMismatch {
+                context: context.clone(),
+                field,
+            });
+        }
+    }
+    Ok(())
+}
+
 fn validate_stable_issuers(
     input: &CapitalRestoreInput<'_>,
 ) -> Result<(), CompanyCapitalRestoreError> {
@@ -702,6 +717,22 @@ fn prepare_stock_distributions(
             .ok_or_else(|| CompanyCapitalRestoreError::MissingFinanceFact {
                 context: context.clone(),
             })?;
+        check_action_fields(
+            &context,
+            &[
+                ("approved_on", fact.approved_on == plan.approved_on),
+                (
+                    "approval_reference",
+                    fact.approval_reference == plan.approval_reference,
+                ),
+                ("kind", fact.kind == plan.kind),
+                (
+                    "approved_total_new_shares",
+                    fact.new_shares == plan.approved_total_new_shares,
+                ),
+                ("credited_on", fact.credited_on == book.credited_on()),
+            ],
+        )?;
         for occurred in [
             Some(plan.approved_on),
             (!matches!(
@@ -870,6 +901,19 @@ fn prepare_share_splits(
             .ok_or_else(|| CompanyCapitalRestoreError::MissingFinanceFact {
                 context: context.clone(),
             })?;
+        check_action_fields(
+            &context,
+            &[
+                ("approved_on", fact.approved_on == plan.approved_on),
+                (
+                    "approval_reference",
+                    fact.approval_reference == plan.approval_reference,
+                ),
+                ("direction", fact.direction == plan.direction),
+                ("ratio", fact.ratio == plan.ratio),
+                ("settled_on", fact.settled_on == book.settled_on()),
+            ],
+        )?;
         for occurred in [
             Some(plan.approved_on),
             (!matches!(
@@ -1079,6 +1123,24 @@ fn prepare_rights_offerings(
             .ok_or_else(|| CompanyCapitalRestoreError::MissingFinanceFact {
                 context: context.clone(),
             })?;
+        check_action_fields(
+            &context,
+            &[
+                ("approved_on", fact.approved_on == plan.approved_on),
+                (
+                    "approval_reference",
+                    fact.approval_reference == plan.approval_reference,
+                ),
+                (
+                    "price_per_share",
+                    fact.price_per_share == plan.price_per_share,
+                ),
+                (
+                    "settled_on",
+                    fact.settled_on == book.settlement().map(|receipt| receipt.settlement_on),
+                ),
+            ],
+        )?;
         for occurred in [
             Some(plan.approved_on),
             (!matches!(
@@ -1297,6 +1359,47 @@ fn prepare_repurchase_cancellations(
             .ok_or_else(|| CompanyCapitalRestoreError::MissingFinanceFact {
                 context: context.clone(),
             })?;
+        check_action_fields(
+            &context,
+            &[
+                ("approved_on", fact.approved_on == plan.approved_on),
+                (
+                    "approval_reference",
+                    fact.approval_reference == plan.approval_reference,
+                ),
+                (
+                    "synthetic_funding",
+                    fact.synthetic_funding == AccountingAmount::from_money(plan.total_budget),
+                ),
+                ("purpose", fact.purpose == plan.purpose),
+                ("completed_on", fact.completed_on == book.completed_on()),
+                ("cancelled_on", fact.cancelled_on == book.cancelled_on()),
+                (
+                    "cancelled_shares",
+                    fact.cancelled_shares == book.cancelled_shares(),
+                ),
+            ],
+        )?;
+        let spent = book
+            .completed_on()
+            .map(|_| book.total_spent())
+            .transpose()
+            .map_err(|source| CompanyCapitalRestoreError::IssuerRepurchase {
+                context: context.clone(),
+                source,
+            })?
+            .map(AccountingAmount::from_money);
+        check_action_fields(
+            &context,
+            &[
+                ("spent", fact.spent == spent),
+                (
+                    "withdrawn_remainder",
+                    fact.withdrawn_remainder
+                        == book.withdrawn_remainder().map(AccountingAmount::from_money),
+                ),
+            ],
+        )?;
         for occurred in [
             Some(plan.approved_on),
             (!matches!(
@@ -1320,12 +1423,6 @@ fn prepare_repurchase_cancellations(
                     committed_through: input.committed_through,
                 });
             }
-        }
-        if fact.purpose != plan.purpose {
-            return Err(CompanyCapitalRestoreError::ActionMismatch {
-                context,
-                field: "purpose",
-            });
         }
         if input
             .actions
