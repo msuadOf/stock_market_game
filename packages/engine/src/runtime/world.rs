@@ -86,11 +86,6 @@ pub struct GroupInformationPayload {
         crate::AccountId,
         crate::session::NpcAttentionState,
     )>,
-    pub issuer_map: std::collections::BTreeMap<crate::StockId, crate::company::CompanyId>,
-    pub company_specs: std::collections::BTreeMap<
-        crate::company::CompanyId,
-        (crate::company::CompanyKind, u64),
-    >,
 }
 
 /// 信念个人态快照（D3a-2b Belief-1：watchlist/价格记忆/信息态/信念书
@@ -133,14 +128,12 @@ pub struct OpenDerivationRecord {
 }
 
 /// 决策链根组装投影（D3a-2c 件2：构造期自 session 一次性投影——catalog
-/// 克隆、registry/operations Arc 共享、名册 AccountId、相位配置）。
+/// 克隆、初始 CompanyReadFacts 共享、名册 AccountId、相位配置）。
 pub struct RootProjection {
     /// 股票目录（id↔代码翻译层）。
     pub catalog: crate::stock::StockCatalog,
-    /// 发行人注册表。
-    pub company_registry: Arc<crate::company::CompanyRegistry>,
-    /// 公司域经营。
-    pub operations: Arc<crate::company::operations::CompanyOperations>,
+    /// 构造静点安装的选定模型公开事实；后续消费经组当前引用。
+    pub initial_company_facts: Arc<crate::company::CompanyReadFacts>,
     /// 组内名册的 AccountId（下标=LocalIdx；红证/session 映射）。
     pub account_ids: Vec<crate::AccountId>,
     /// 开盘集合竞价窗 tick 数（CivilInstant 秒映射输入）。
@@ -154,15 +147,11 @@ pub struct RootProjection {
     pub session_seed: u64,
     /// D3a-2c 件4：紧迫度策略（组内 initial_urgency 输入——同 session 对象克隆）。
     pub urgency_policy: crate::plans::UrgencyPolicy,
-    /// D3a-2c 件4：每股发行总股本（CandidateTargetProposal 上限——setup 权威）。
-    pub total_shares: std::collections::BTreeMap<crate::StockId, u64>,
     /// D3a-3 件4b：每股限价单笔上限（category.max_order_qty(false)——
     /// 预算请求与报价数量输入）。
     pub max_order_qty_limit: std::collections::BTreeMap<crate::StockId, u32>,
     /// D3a-3 复核收口：每股最小报价单位（tick——报价取整口径，setup 权威）。
     pub tick_size_cents: std::collections::BTreeMap<crate::StockId, i64>,
-    /// Sol 整改 5：(发行代码, 数值 id) 序列——曝光面共享函数的输入。
-    pub stock_codes: Vec<(crate::account::StockCode, crate::StockId)>,
 }
 
 /// 世界构造参数。
@@ -1469,8 +1458,6 @@ impl World {
                 day: payload.day,
                 library: std::sync::Arc::clone(&payload.library),
                 attentions: payload.attentions.clone(),
-                issuer_map: payload.issuer_map.clone(),
-                company_specs: payload.company_specs.clone(),
             })
             .map_err(|_| RuntimeError::SendFailed {
                 detail: "InformationDelivery 广播失败".to_owned(),

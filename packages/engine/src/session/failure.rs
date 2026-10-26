@@ -1836,31 +1836,32 @@ impl GameSession {
         (self.state.library.version(), std::sync::Arc::clone(&self.state.library))
     }
 
-    /// 股→发行人映射只读（投递载荷组装）。
+    /// 从会话选定公司模型构造不含私有财务的共同公开事实。
+    pub fn runtime_company_read_facts(
+        &self,
+    ) -> Result<std::sync::Arc<crate::company::CompanyReadFacts>, StepFatal> {
+        self.state.company_read_facts().map(std::sync::Arc::new).map_err(|error| {
+            StepFatal::InvariantViolation {
+                description: error.to_string(),
+                location: "GameSession::runtime_company_read_facts".to_owned(),
+            }
+        })
+    }
+
+    /// 数值股票到发行人的同源只读投影，已验证上市股不得遗漏。
     pub fn runtime_issuer_map(
         &self,
     ) -> std::collections::BTreeMap<crate::StockId, crate::company::CompanyId> {
-        self.state
-            .markets
-            .keys()
-            .filter_map(|code| Some((*code, self.state.issuer_of_stock(*code)?)))
-            .collect()
+        self.runtime_company_read_facts().unwrap_or_else(|error| panic!("发行人投影失败：{error}"))
+            .issuers().map(|(stock, company)| (*stock, *company)).collect()
     }
 
-    /// 发行人 spec 快照（投递载荷组装——(kind, issued_shares)）。
+    /// 公司 kind 与当前 issued_shares 的同源只读投影，包含未上市公司。
     pub fn runtime_company_specs(
         &self,
     ) -> std::collections::BTreeMap<crate::company::CompanyId, (crate::company::CompanyKind, u64)> {
-        let mut out: std::collections::BTreeMap<
-            crate::company::CompanyId,
-            (crate::company::CompanyKind, u64),
-        > = Default::default();
-        for company in self.runtime_issuer_map().values().copied() {
-            if let Some(op) = self.state.operations.company(&company) {
-                out.insert(company, (op.spec().kind, op.spec().issued_shares));
-            }
-        }
-        out
+        self.runtime_company_read_facts().unwrap_or_else(|error| panic!("公司规格投影失败：{error}"))
+            .company_specs().map(|(company, spec)| (*company, *spec)).collect()
     }
 
     /// 观察时刻（投递载荷——披露相位 instant）。
@@ -1989,36 +1990,23 @@ impl GameSession {
         self.state.urgency_policy.clone()
     }
 
-    /// 每股发行总股本投影（D3a-2c 件4：CandidateTargetProposal 上限输入
-    /// ——session setup 权威，u32 收敛口径同 lifecycle）。
+    /// 每股当前已发行股数；保留原始 u64，数量边界由策略与下单入口处理。
     pub fn runtime_total_shares(&self) -> std::collections::BTreeMap<crate::StockId, u64> {
-        self.state
-            .setup
-            .stocks
-            .iter()
-            .map(|stock| {
-                (
-                    self.state.stocks.id(stock.code.0.as_str()).expect("setup 股在目录"),
-                    stock.total_shares.min(u64::from(u32::MAX)),
-                )
-            })
-            .collect()
+        let facts = self.runtime_company_read_facts().unwrap_or_else(|error| panic!("当前股本投影失败：{error}"));
+        facts.issuers().map(|(stock, company)| {
+            let (_, issued_shares) = facts.company_spec(company).unwrap_or_else(|error| panic!("已验证发行人规格缺失：{error}"));
+            (*stock, issued_shares)
+        }).collect()
     }
 
-    /// 公司域只读句柄（D3a-2c 件2：RootReadContext 组装的构造期 Arc 投影源
-    /// ——catalog 克隆、registry/operations Arc 共享，与 capture 同一对象面）。
+    /// 构造期 NPC 只读输入只暴露目录与共同事实，不持有经营账簿。
     pub fn runtime_company_handles(
         &self,
-    ) -> (
+    ) -> Result<(
         crate::stock::StockCatalog,
-        std::sync::Arc<crate::company::CompanyRegistry>,
-        std::sync::Arc<crate::company::operations::CompanyOperations>,
-    ) {
-        (
-            self.state.stocks.clone(),
-            std::sync::Arc::clone(&self.state.company_registry),
-            std::sync::Arc::clone(&self.state.operations),
-        )
+        std::sync::Arc<crate::company::CompanyReadFacts>,
+    ), StepFatal> {
+        Ok((self.state.stocks.clone(), self.runtime_company_read_facts()?))
     }
 
     /// 完整个人态只读投影（D3a-2c 件2：PlanPersonalState 六件——含 attention

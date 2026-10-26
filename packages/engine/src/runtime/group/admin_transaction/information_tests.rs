@@ -785,3 +785,31 @@ fn info_22_padding_with_personal_row_but_without_owner_is_rejected() {
         })
     ));
 }
+
+#[test]
+fn selected_company_source_group_review_cap_reads_facts_after_information_commit() {
+    let mut s = state(&[AccountId(71)]);
+    let initial = Arc::clone(&s.root_projection.as_ref().unwrap().initial_company_facts);
+    s.install_initial_company_facts(initial).unwrap();
+    let market = payload(true).observation.unwrap().market.as_ref().clone();
+    let personal = s.belief_states[0].as_ref().unwrap().clone();
+    let cap = |state: &GroupState| {
+        let host = GroupReviewHost {
+            state, local: 0, account: AccountId(71), market: market.clone(),
+            belief: &personal.belief, information: &personal.information,
+            minutes_by_code: Default::default(),
+            moment: crate::experience::ExperienceMoment {
+                civil_date: at(19, 0).date(), market_minute: 17, trading_day: 0,
+            },
+        };
+        crate::session::PlanReviewHost::max_holdable_shares(&host, &StockId(0))
+    };
+    assert_eq!(cap(&s), 10_000);
+    let mut p = payload(false);
+    p.current_facts = facts(u64::from(u32::MAX) + 701);
+    s.prepare_admin_with_information(AdminTransactionId(1), Vec::new(), Some(p)).unwrap();
+    assert_eq!(cap(&s), 10_000, "prepare 不提前改变 consumer 可见股本");
+    s.complete_admin(AdminTransactionId(1), AdminPhase::Commit).unwrap();
+    assert_eq!(cap(&s), u64::from(u32::MAX), "commit 后真实复审 consumer 读取当前事实");
+    assert_eq!(s.root_projection.as_ref().unwrap().initial_company_facts.company_spec(&crate::company::CompanyId(0)).unwrap().1, 10_000);
+}

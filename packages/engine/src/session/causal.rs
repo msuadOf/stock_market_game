@@ -250,9 +250,12 @@ mod tests {
         let mut setup = crate::session::npc_working_quote_tests::quote_setup(0);
         setup.stocks[0].code = StockCode("600101".to_owned());
         let mut configs = crate::company::default_companies(setup.start_date).unwrap();
-        configs.retain(|company| {
-            company.spec.code == "C-600101" || company.spec.code == "C-TEST-BANK"
-        });
+        configs.retain(|company| company.spec.code == "C-600101");
+        // 保留独立 ID 负控；同类未上市实体与经营规格一起构造。
+        let mut unlisted = configs[0].clone();
+        unlisted.spec.code = "A-UNLISTED".to_owned();
+        unlisted.spec.listed_stock = None;
+        configs.push(unlisted);
         for company in &mut configs {
             if company.spec.listed_stock.is_some() {
                 setup.stocks[0].total_shares = company.spec.issued_shares;
@@ -269,6 +272,14 @@ mod tests {
             .unwrap();
         let mut session = GameSession::new(setup, 42).unwrap();
         // 单独验证诊断接缝：合法发行人表额外含一家未上市公司，不执行市场 tick。
+        let template = session.state.operations.company(&crate::company::CompanyId(0)).unwrap().clone();
+        let operations = std::sync::Arc::make_mut(&mut session.state.operations);
+        operations.catalog = registry.catalog().clone();
+        operations.companies = registry.iter().map(|(id, entity)| {
+            let mut operating = template.clone();
+            operating.spec = entity.spec().clone();
+            (*id, operating)
+        }).collect();
         session.state.company_registry = std::sync::Arc::new(registry);
         let stock = session.stock_id("600101").unwrap();
         let company = session

@@ -54,19 +54,7 @@ pub fn projection(ids: Vec<AccountId>) -> Arc<RootProjection> {
             crate::stock::StockMeta::new("600001"),
         ])
         .unwrap(),
-        company_registry: Arc::new(crate::company::CompanyRegistry::new(Vec::new()).unwrap()),
-        operations: Arc::new(
-            crate::company::CompanyOperations::new(
-                crate::company::CompanyOperationsConfig {
-                    seed: 1,
-                    shock_params: crate::company::ShockParams::current_default_parameters(),
-                    catalog: crate::company::CompanyCatalog::from_codes(&[]).unwrap(),
-                    companies: Vec::new(),
-                },
-                at(9, 0).date(),
-            )
-            .unwrap(),
-        ),
+        initial_company_facts: facts(10_000),
         chain_params: vec![
             Some((
                 crate::strategy::BeliefChainParams {
@@ -84,10 +72,8 @@ pub fn projection(ids: Vec<AccountId>) -> Arc<RootProjection> {
         closing_auction_ticks: 0,
         session_seed: 7,
         urgency_policy: Default::default(),
-        total_shares: BTreeMap::new(),
         max_order_qty_limit: BTreeMap::new(),
         tick_size_cents: BTreeMap::new(),
-        stock_codes: Vec::new(),
     })
 }
 pub fn payload(observe: bool) -> InformationPreparePayload {

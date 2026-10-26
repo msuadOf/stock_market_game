@@ -31,7 +31,7 @@ fn world_with_stocks_and_counterparty(n_stocks: usize, counterparty: bool) -> Wo
     // 本组证据只隔离名册消费；价格笼子由既有独立套件覆盖。
     setup.config.price_cage_enabled = false;
     let session = GameSession::new(setup.clone(), 17).expect("合法机构会话");
-    let (catalog, company_registry, operations) = session.runtime_company_handles();
+    let (catalog, initial_company_facts) = session.runtime_company_handles().expect("选定公司事实合法");
     let style = crate::strategy::InstitutionStyle::ActiveTrader;
     let mut spec = basic_spec(
         2,
@@ -76,8 +76,7 @@ fn world_with_stocks_and_counterparty(n_stocks: usize, counterparty: bool) -> Wo
         .collect();
     spec.root_projection = Some(Arc::new(RootProjection {
         catalog,
-        company_registry,
-        operations,
+        initial_company_facts,
         account_ids: OWNERS.to_vec(),
         // 错取组 0 也得到有效 Some，必须由数值断言识别。
         chain_params: [2_000, 8_000]
@@ -99,10 +98,8 @@ fn world_with_stocks_and_counterparty(n_stocks: usize, counterparty: bool) -> Wo
         closing_auction_ticks: 3,
         session_seed: 17,
         urgency_policy: crate::plans::UrgencyPolicy::default(),
-        total_shares: session.runtime_total_shares(),
         max_order_qty_limit: session.runtime_max_order_qty_limit(),
         tick_size_cents: session.runtime_tick_size_cents(),
-        stock_codes: session.runtime_stock_codes(),
     }));
     spec.library = Some(session.runtime_library_handle().1);
     spec.config = Arc::new(setup.config);

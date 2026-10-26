@@ -319,6 +319,7 @@ impl GameSession {
             return Ok(());
         }
         let market = self.build_market_view();
+        let company_facts = self.runtime_company_read_facts()?;
         let ids: Vec<_> = self.state.belief_participants.keys().copied().collect();
         let compute = self.compute.clone();
         let results = compute
@@ -339,7 +340,7 @@ impl GameSession {
                     .collect();
                 codes.extend(participant.watchlist().stocks.keys().cloned());
                 codes.extend(self.state.plans.active_codes(id).cloned());
-                let issuer_of = |code: StockId| self.state.issuer_of_stock(code);
+                let issuer_of = |code: StockId| company_facts.issuer_of_stock(code).ok();
                 deliver_information_for_npc(
                     id,
                     now,
@@ -349,11 +350,7 @@ impl GameSession {
                     participant.belief(),
                     codes,
                     &issuer_of,
-                    &|company: &crate::company::CompanyId| {
-                        self.state.operations.company(company).map(|operating| {
-                            (operating.spec().kind, operating.spec().issued_shares)
-                        })
-                    },
+                    &|company: &crate::company::CompanyId| company_facts.company_spec(company).ok(),
                     self.state.library.as_ref(),
                     &market,
                 )
