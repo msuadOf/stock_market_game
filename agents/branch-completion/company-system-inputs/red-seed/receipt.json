@@ -1,0 +1,13 @@
+{
+  "记录方式": "执行后收集现存原始输出；未伪造执行时间",
+  "node": "v25.8.2",
+  "case_timeout_ms": 10000,
+  "tree_deadline_ms": 10000,
+  "file_concurrency": 2,
+  "exit_code": 1,
+  "stdout": "stdout.log",
+  "stderr": "stderr.log",
+  "业务失败数": 2,
+  "source_sha256": "source-sha256.json",
+  "说明": "以AssertionError业务断言失败为红证据"
+}

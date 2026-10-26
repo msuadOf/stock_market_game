@@ -1,0 +1,13 @@
+{
+  "记录方式": "执行后收集现存原始输出；未伪造执行时间",
+  "node": "v25.8.2",
+  "case_timeout_ms": 10000,
+  "tree_deadline_ms": 10000,
+  "file_concurrency": 2,
+  "exit_code": 1,
+  "stdout": "business.stdout.log",
+  "stderr": "business.stderr.log",
+  "业务失败数": 2,
+  "source_sha256": "source-sha256.json",
+  "说明": "缺包首轮输出保留但不计业务红；业务红使用business.*文件"
+}
