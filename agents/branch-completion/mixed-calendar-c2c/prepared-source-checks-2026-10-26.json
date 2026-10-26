@@ -1,0 +1,80 @@
+{
+  "说明": "准备源码与格式检查证据；未编译、未运行 Rust case，不是行为红绿。",
+  "head": "d7a26186d40ec38ffce901f48a935917b5d29641",
+  "branch": "feat/engine-mixed-calendar-c2c",
+  "worktree": "/data1/baiyifan/workplace/stock_market_game/.worktree/mixed-calendar-c2c",
+  "files": {
+    "packages/engine/tests/mixed_calendar_c2c.rs": {
+      "bytes": 10450,
+      "sha256": "7454768a5f03d43b19d2972e057225c8c58fa67280fb011764f43ca4494ea571"
+    },
+    "packages/engine/tests/common/mixed_calendar_c2c_fixture.rs": {
+      "bytes": 4394,
+      "sha256": "d1120a2ad62e3d0c1ca15ec1126ec44cf2050b48c4f84cb07e4dafbb5f4b2eb3"
+    }
+  },
+  "checks": [
+    {
+      "command": [
+        "/home/baiyifan/.rustup/toolchains/1.96.1-x86_64-unknown-linux-gnu/bin/rustfmt",
+        "--edition",
+        "2021",
+        "--check",
+        "packages/engine/tests/mixed_calendar_c2c.rs",
+        "packages/engine/tests/common/mixed_calendar_c2c_fixture.rs"
+      ],
+      "exit_code": 0,
+      "wall_seconds": 0.018077629036270082,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "git",
+        "diff",
+        "--check"
+      ],
+      "exit_code": 0,
+      "wall_seconds": 0.008628913026768714,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "git",
+        "diff",
+        "--no-index",
+        "--check",
+        "--",
+        "/dev/null",
+        "packages/engine/tests/mixed_calendar_c2c.rs"
+      ],
+      "exit_code": 1,
+      "wall_seconds": 0.004413835005834699,
+      "stdout": "",
+      "stderr": "",
+      "说明": "git diff --no-index 对新增文件返回1表示存在差异；原始stdout/stderr均空，无whitespace诊断。保留实际exit1，不归一化为0。",
+      "whitespace_clean": true
+    },
+    {
+      "command": [
+        "git",
+        "diff",
+        "--no-index",
+        "--check",
+        "--",
+        "/dev/null",
+        "packages/engine/tests/common/mixed_calendar_c2c_fixture.rs"
+      ],
+      "exit_code": 1,
+      "wall_seconds": 0.003489819006063044,
+      "stdout": "",
+      "stderr": "",
+      "说明": "git diff --no-index 对新增文件返回1表示存在差异；原始stdout/stderr均空，无whitespace诊断。保留实际exit1，不归一化为0。",
+      "whitespace_clean": true
+    }
+  ],
+  "rust_test_build": "未执行；无同源 normal engine rlib 与 Cargo 窗口",
+  "rust_test_run": "未执行",
+  "preparation_wrapper_failure": "首次新增文件检查wrapper错误地要求--no-index exit0而触发AssertionError；原始两次exit1已保留，改按实际无诊断判定whitespace，不算Rust case失败。"
+}
