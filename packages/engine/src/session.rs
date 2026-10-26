@@ -3719,7 +3719,7 @@ impl GameSession {
         self.state
             .npc_decision_traces
             .records(account)
-            .map(|records| records.iter().cloned().collect())
+            .map(|records| records.iter().map(|record| record.as_ref().clone()).collect())
     }
 
     fn record_retail_order_canceled(
