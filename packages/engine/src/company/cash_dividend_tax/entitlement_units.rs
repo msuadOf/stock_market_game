@@ -69,11 +69,18 @@ pub struct TaxUnitTransition {
     #[serde(with = "crate::orderbook::js_safe_u64")]
     pub operation_seq: u64,
     pub day: CivilDate,
+    #[serde(deserialize_with = "required_predecessor")]
     pub from_unit_event: Option<String>,
     pub before_lots: Vec<DividendTaxLot>,
     pub after_lots: Vec<DividendTaxLot>,
     pub fragments: Vec<TaxUnitFragment>,
     pub non_disposal_retirements: Vec<TaxOriginSpan>,
+}
+
+fn required_predecessor<'de, D: serde::Deserializer<'de>>(
+    decoder: D,
+) -> Result<Option<String>, D::Error> {
+    Option::<String>::deserialize(decoder)
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
