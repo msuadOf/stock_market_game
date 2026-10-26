@@ -30,3 +30,10 @@
 - 先最小可编译 DTO + 空 Vec placeholder，真实 binary `actual_stock_identity_preserves_catalog_ids_after_restore --exact --nocapture` 在外部10000ms内断言红：`[] != [{0,002156},{1,600610}]`，1.48s；再实现 actual `stock_catalog().iter()` 原 key 投影，同target build 24.66s，绿case 3.04s（shell总4.15s）。保留源码/binary SHA、原stdout/stderr。
 - 必要 export：`cargo test -p engine --lib export_bindings_stockidentityentry --no-run -j8 --message-format=json`（build94s，300000外deadline）；随后真实 export case，`--test-threads=8`、10000ms外deadline。首次直接 binary 未继承 Cargo env，真实产物落 `bindings/`，没有冒称正确路径；显式 `TS_RS_EXPORT_DIR=<worktree>/apps/web/src/types/generated` 重跑1/1通过，实际生成 StockIdentityEntry.ts，未手写 generated。
 - 最后已无 cargo/rustc，自有进程树退出、磁盘74G；立即通知协调者与W1移交窗口。并未编译三 host。
+
+## StockIdentity 原件留存与观测局限补充
+
+- 当时原红源码仅存 `stock-red-source.sha256`，未另存源码 snapshot；红 binary 在同路径的绿构建中被覆盖，没有保存可再运行的红 binary 原件。原 build/case 命令存在本会话原 tool 调用体，没有独立命令 receipt 文件。
+- 2026-10-26 从原 `cat > packages/engine/src/session/stock_identity_view.rs` tool 调用体逐字恢复 `stock-red-source-recovered-from-tool.txt`；这是**事后从原调用恢复的副本**，不是当时落盘的 snapshot。SHA-256 `63488f07879c27257311faad93e5171e7aaa4d7e0037881818178c236a016778` 与红前原SHA匹配；原临时注释亦保留，不通过猜测内容凑SHA。
+- green/export CPU 采样过晚，仅采到 shell/rg，未采到 cargo/rustc；`-j8` 仅证明显式并发参数，不能据此声称实际满核。red采样有rustc，单crate阶段有编译器固有限制。后续批次应在构建在途时采样。
+- 真实 green/export binary 与生成物已由未实施者分别短跑及逐字核对；上述原红原件与采样局限仍保留，不用后验负控追认原始TDD。
