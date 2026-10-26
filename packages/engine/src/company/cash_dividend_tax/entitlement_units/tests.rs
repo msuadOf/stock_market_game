@@ -780,3 +780,38 @@ fn valid_boundary_fractions_that_overflow_projection_fail_typed_and_leave_inputs
     assert_eq!(book, before);
     assert_eq!(lineage, lineage_before);
 }
+
+#[test]
+fn corporate_credit_without_unit_classification_is_rejected_instead_of_guessing_new_rights() {
+    let mut book = cash_book(vec![lot("original", 100, "2029-12-25")]);
+    book.record_net_day("zero".into(), date("2030-01-02"), 0, None)
+        .unwrap();
+    // 条件事实：这100新单位实际为1拆2的正向取得；旧 source 不能区别独立配股。
+    book.record_net_day(
+        "credit".into(),
+        date("2030-01-02"),
+        100,
+        Some(DividendTaxLot {
+            id: "additional".into(),
+            qty: 100,
+            acquired_on: date("2030-01-02"),
+            source: TaxAcquisitionSource::CorporateAction {
+                event: "expand".into(),
+            },
+            class: TaxShareClass::PublicMarket,
+        }),
+    )
+    .unwrap();
+    book.record_net_day("sell20".into(), date("2030-01-03"), -20, None)
+        .unwrap();
+    let lineage = TaxUnitLineage {
+        account: book.account(),
+        stock: book.stock().clone(),
+        transitions: vec![],
+    };
+    let before = book.clone();
+    assert!(matches!(book.assessment_with_unit_lineage(&lineage),
+        Err(TaxLineageError::MissingTransition{event_id,operation_seq})
+        if event_id=="expand" && operation_seq==4));
+    assert_eq!(book, before);
+}
