@@ -389,7 +389,7 @@ fn typed_action_duplicates_are_idempotent_and_conflicting_frontier_or_terms_are_
             reg,
             actual.clone(),
             actual,
-            registration("bonus", 0, "2030-01-01", 1_000_000),
+            registration("different-new-event", 0, "2030-01-01", 1_000_000),
         ],
     };
     assert!(book
@@ -700,4 +700,53 @@ fn cash_and_bonus_activated_before_consolidation_share_exact_original_unit_consu
     assert!(complete.consumptions[2..]
         .iter()
         .all(|c| c.original == origin("original", q(20), q(100))));
+}
+
+#[test]
+fn appending_identical_register_and_realize_retries_after_later_frontier_is_idempotent() {
+    let mut book = bonus_book("2029-12-25");
+    credit(&mut book, 100);
+    book.record_net_day("sell-original".into(), date("2030-01-03"), -100, None)
+        .unwrap();
+    let reg = registration("bonus", 0, "2030-01-01", 1_000_000);
+    let actual = realization(&book, "bonus", 1, "2030-01-02", 100, Some(1));
+    let once = ConditionalBonusTaxFacts {
+        events: vec![
+            reg.clone(),
+            actual.clone(),
+            registration("later", 2, "2030-01-03", 1_000_000),
+        ],
+    };
+    let expected = book
+        .assessment_with_conditional_bonus(&empty_lineage(&book), &once)
+        .unwrap();
+    assert_eq!(expected.outstanding.numerator(), 2000);
+    let mut retry = once;
+    retry.events.push(reg.clone());
+    retry.events.push(actual);
+    assert_eq!(
+        book.assessment_with_conditional_bonus(&empty_lineage(&book), &retry)
+            .unwrap(),
+        expected
+    );
+    if let ConditionalBonusTaxAction::RegisterBonus {
+        par_value_per_share,
+        ..
+    } = &mut reg.clone().action
+    {
+        *par_value_per_share = Money::from_cents(101);
+    }
+    let mut conflicting = reg;
+    if let ConditionalBonusTaxAction::RegisterBonus {
+        par_value_per_share,
+        ..
+    } = &mut conflicting.action
+    {
+        *par_value_per_share = Money::from_cents(101);
+    }
+    retry.events.push(conflicting);
+    assert!(matches!(
+        book.assessment_with_conditional_bonus(&empty_lineage(&book), &retry),
+        Err(TaxLineageError::InvalidConditionalFact { .. })
+    ));
 }
