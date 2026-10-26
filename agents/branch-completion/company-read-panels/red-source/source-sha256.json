@@ -1,0 +1,8 @@
+{
+  "apps/web/src/components/company/CompanyContractPanel.tsx": "f7cfdfe7cc50b49cb76d9ddaee61e78c020a3d6fae61805e22ecb5f05e2d7c1e",
+  "apps/web/src/components/company/DividendTaxPanel.tsx": "72af356f315479ebd10f2e62f14b84970842581eb0638f17173b28136e25c7ff",
+  "apps/web/src/components/company/PreferenceRejectionsPanel.tsx": "3902efc0b0600a2cab37017897edc94e2630c2d7710267569e06f8b401cfc934",
+  "apps/web/src/components/company/RightsSubscriptionRejectionPanel.tsx": "e74be87206b0359c92a1ea3dea532fc5021a184f2a2e6cd3ece717b928e8f3cd",
+  "apps/web/src/components/company/use-company-query.ts": "2b91996a8b57300b7a6fc2cde698f57b1b7c96f29b3e52034e9868f952d95a4a",
+  "apps/web/src/components/company/use-company-query.test.ts": "adb2cd62871741f45cb1badb725adbedebddbfcf5dc594ec5b47b4193a58643e"
+}
