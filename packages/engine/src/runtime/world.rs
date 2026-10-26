@@ -328,6 +328,8 @@ struct DayEndProgress {
 /// 世界（协调者视角持有全部通道与线程句柄）。
 pub struct World {
     admin_next_id: u64,
+    /// 仅身份元数据，用于核对信息候选回执的组内 local/AccountId；不保存个人态。
+    information_roster: Vec<Vec<crate::AccountId>>,
     #[cfg(test)]
     admin_send_fault_for_test: Option<(super::protocol::AdminPhase, GroupIdx)>,
     /// 全局域权威（已收敛态）。
@@ -460,6 +462,12 @@ impl World {
                 detail: "chunk 需为正（分段 flush 粒度）".to_owned(),
             });
         }
+        let information_roster = (0..spec.n_groups).map(|group| {
+            spec.root_projection.as_ref().map(|root| {
+                let start = group * spec.accounts_per_group;
+                root.account_ids.iter().skip(start).take(spec.accounts_per_group).copied().collect()
+            }).unwrap_or_default()
+        }).collect();
         let WorldSpec {
             initial_plan_books,
             n_groups,
@@ -793,6 +801,7 @@ impl World {
         );
         Ok(World {
             admin_next_id: 0,
+            information_roster,
             #[cfg(test)]
             admin_send_fault_for_test: None,
             global: global_v0,
@@ -3094,4 +3103,4 @@ mod failed_cleanup_tests {
 
 mod admin_transaction;
 
-pub use super::protocol::{AdminCandidate, AdminOperation, AdminTransactionId};
+pub use super::protocol::{AdminCandidate, AdminOperation, AdminTransactionId, InformationObservation, InformationPreparePayload, PreparedInformationResult, InformationPrepareError};

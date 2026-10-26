@@ -840,6 +840,10 @@ pub struct GroupState {
     belief_pending_dirty: Vec<LocalIdx>,
     /// 公开库（Belief-1b·下：Arc 共享——投递消息稀疏刷新）。
     library: std::sync::Arc<crate::information::PublicLibrary>,
+    /// 已提交的共同公司事实；SOURCE-A 在首个 Start 前安装初值。
+    current_company_facts: Option<Arc<crate::company::CompanyReadFacts>>,
+    /// 只由成功信息 commit 推进；None 库刷新不声称观察。
+    information_observed_through: Option<crate::calendar::CivilInstant>,
     /// D3a-2 观察基：快照来源的每股（分钟收盘，日 K 条）——链观察的
     /// 纯输入（与 session 读面同源：desk 权威 minute_closes/daily_bars；
     /// 观察对象每 tick 由纯构建器现算，不累积不缓存——口径不可能漂移）。
@@ -1022,6 +1026,8 @@ impl GroupState {
             belief_dirty: vec![false; belief_roster],
             belief_pending_dirty: Vec::new(),
             library: library_seed,
+            current_company_facts: None,
+            information_observed_through: None,
             root_projection,
             child_in_flight: Default::default(),
             plan_undo_saved: false,
@@ -5184,14 +5190,14 @@ pub fn group_main(
         match msg {
             #[cfg(test)]
             GroupIn::AdminFaultForTest { phase, fault } => state.admin_fault = Some((phase, fault)),
-            GroupIn::AdminPrepare { id, operations } => {
-                if !state.handle_admin_message(id, super::protocol::AdminPhase::Prepare, operations, &up_tx, who) { break; }
+            GroupIn::AdminPrepare { id, operations, information } => {
+                if !state.handle_admin_message(id, super::protocol::AdminPhase::Prepare, operations, information, &up_tx, who) { break; }
             }
             GroupIn::AdminCommit { id } => {
-                if !state.handle_admin_message(id, super::protocol::AdminPhase::Commit, Vec::new(), &up_tx, who) { break; }
+                if !state.handle_admin_message(id, super::protocol::AdminPhase::Commit, Vec::new(), None, &up_tx, who) { break; }
             }
             GroupIn::AdminAbort { id } => {
-                if !state.handle_admin_message(id, super::protocol::AdminPhase::Abort, Vec::new(), &up_tx, who) { break; }
+                if !state.handle_admin_message(id, super::protocol::AdminPhase::Abort, Vec::new(), None, &up_tx, who) { break; }
             }
             GroupIn::Batch(batch) => {
                 // eager 分域即时相：到达即应用 F1/F2/F3（等待窗=组空闲
@@ -5391,7 +5397,7 @@ pub fn group_main(
                         match crate::session::notices::deliver_information_for_npc(
                             account_id,
                             now,
-                            day,
+                            &|_| Some(day),
                             &attention,
                             &snap.information,
                             &snap.belief,

@@ -544,9 +544,60 @@ impl AdminOperation {
     }
 }
 
+/// 单个真实观察点携带构造期 catalog 中全部 live StockId 的同源 as-of 输入。
+/// 逐股日期、行情、发行人/spec 必须完整，不随个人 cadence 缩小；publication 不创建观察点。
+#[derive(Clone, Debug)]
+pub struct InformationObservation {
+    pub through: crate::calendar::CivilInstant,
+    pub as_of_trading_days: std::collections::BTreeMap<crate::StockId, u64>,
+    pub market: std::sync::Arc<crate::strategy::MarketView>,
+    pub company_facts: std::sync::Arc<crate::company::CompanyReadFacts>,
+}
+
+/// Some 即有信息作用域；observation=None 仍向全部 live 组安装库及 current facts。
+/// 首片仅支持同事务最终资产 working 对应的一个真实观察点；不承诺多 hook civil 原子性。
+/// observation=None 不要求 market/day，不声称发生过本人观察。
+#[derive(Clone, Debug)]
+pub struct InformationPreparePayload {
+    pub library: std::sync::Arc<crate::information::PublicLibrary>,
+    pub current_facts: std::sync::Arc<crate::company::CompanyReadFacts>,
+    pub observation: Option<InformationObservation>,
+}
+
+/// 个人快照含未变字段；按实际组内 local、AccountId 返回，不广播全局 local。
+#[derive(Clone, Debug)]
+pub struct PreparedInformationResult {
+    pub personals: Vec<(LocalIdx, crate::AccountId, super::world::BeliefParticipantSnapshot)>,
+    pub observed_through: Option<crate::calendar::CivilInstant>,
+    pub library: std::sync::Arc<crate::information::PublicLibrary>,
+    pub current_facts: std::sync::Arc<crate::company::CompanyReadFacts>,
+}
+
+/// 信息 prepare 的缺事实、身份与观察顺序拒绝，均发生在 commit 前。
+#[derive(Clone, Debug, PartialEq, thiserror::Error)]
+pub enum InformationPrepareError {
+    #[error("缺少逐股 trading day：{stock:?}")]
+    MissingTradingDay { stock: crate::StockId },
+    #[error("缺少 as-of 行情：{stock:?}")]
+    MissingMarket { stock: crate::StockId },
+    #[error("观察行情 tick 与组静点不一致：expected={expected}, actual={actual}")]
+    MarketTickMismatch { expected: u64, actual: u64 },
+    #[error(transparent)]
+    CompanyFacts(#[from] crate::company::CompanyReadFactsError),
+    #[error("个人态或名册不一致：{detail}")]
+    Identity { detail: String },
+    #[error("观察点不得倒退已提交水位")]
+    ObservationOrder,
+    #[error("单点观察 facts 与 commit current facts 不一致")]
+    ObservationFactsMismatch,
+    #[error("信息重估失败：account={account:?}，{detail}")]
+    Revaluation { account: crate::AccountId, detail: String },
+}
+
 /// 组端账户候选；locals 递增且只含本事务触达账户。
 #[derive(Clone, Debug)]
 pub struct AdminGroupCandidate {
+    pub information: Option<PreparedInformationResult>,
     pub group: GroupIdx,
     pub accounts: Vec<(LocalIdx, std::sync::Arc<super::group::GroupAccount>)>,
     pub state_hash: u64,
@@ -594,7 +645,7 @@ pub struct DayEndDirective {
 /// FIFO + 收束因果序保证批次先于下一 Start 被处理）。
 pub enum GroupIn {
     /// 行政静点操作；事务生命周期不进入普通 tick 日志。
-    AdminPrepare { id: AdminTransactionId, operations: Vec<AdminOperation> },
+    AdminPrepare { id: AdminTransactionId, operations: Vec<AdminOperation>, information: Option<InformationPreparePayload> },
     AdminCommit { id: AdminTransactionId },
     AdminAbort { id: AdminTransactionId },
     #[cfg(test)]
@@ -1391,6 +1442,8 @@ pub struct DeskReport {
 /// 运行时显式失败（不静默吞错）。panic 走 `TaskDied` 运输，不进本枚举。
 #[derive(Clone, Debug, PartialEq, thiserror::Error)]
 pub enum RuntimeError {
+    #[error("组 {group} 信息 prepare 失败：{error}")]
+    InformationPrepare { group: GroupIdx, error: InformationPrepareError },
     /// 看门狗超时（携带相位上下文——相位感知，不静默放大全局阈值）。
     #[error("看门狗超时：phase={phase:?}, waited={waited:?}：{detail}")]
     Watchdog {
