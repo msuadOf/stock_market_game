@@ -993,7 +993,10 @@ fn prepare_share_splits(
                 })
             {
                 return Err(CompanyCapitalRestoreError::Prerequisite {
-                    context,
+                    context: CapitalRestoreContext {
+                        day: Some(day),
+                        ..context
+                    },
                     required: CapitalRestorePrerequisite::SameDayShareUnits,
                 });
             }
@@ -1001,7 +1004,10 @@ fn prepare_share_splits(
                 holder.holder == HolderId::IssuerTreasury && holder.original_shares > 0
             }) {
                 return Err(CompanyCapitalRestoreError::Prerequisite {
-                    context,
+                    context: CapitalRestoreContext {
+                        day: Some(day),
+                        ..context
+                    },
                     required: CapitalRestorePrerequisite::TreasuryShareUnitBuckets,
                 });
             }
@@ -1233,7 +1239,10 @@ fn prepare_rights_offerings(
                         && movement.day == day
                 }) {
                     return Err(CompanyCapitalRestoreError::Prerequisite {
-                        context,
+                        context: CapitalRestoreContext {
+                            day: Some(day),
+                            ..context
+                        },
                         required: CapitalRestorePrerequisite::SameDayShareUnits,
                     });
                 }
