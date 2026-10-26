@@ -160,6 +160,35 @@ pub enum TaxLineageError {
     },
     #[error("本候选不接旧送股新 lot 税基：{event_id}")]
     UnsupportedLegacyBonusBasis { event_id: String },
+    #[error("Cash历史实收 {event_id} 序号{operation_seq} 超过纠正后的当时欠税：评税{assessed_cash}分、此前实收{previously_collected}分、本次{attempted_cents}分")]
+    LegacyCashOvercollection {
+        event_id: String,
+        operation_seq: u64,
+        assessed_cash: i128,
+        previously_collected: i128,
+        attempted_cents: i64,
+    },
+    #[error("条件收缴 {event_id} 分额/当时欠税不符：Cash欠{cash_due_cents}分/收{cash_collected_cents}分，Bonus欠{bonus_due_cents}分/收{bonus_collected_cents}分，可用{available_cents}分")]
+    ConditionalCollectionMismatch {
+        event_id: String,
+        cash_due_cents: i128,
+        bonus_due_cents: i128,
+        available_cents: i64,
+        cash_collected_cents: i64,
+        bonus_collected_cents: i64,
+    },
+    #[error("条件税事实 {event_id} 无效：{detail}")]
+    InvalidConditionalFact {
+        event_id: String,
+        detail: &'static str,
+    },
+    #[error("Bonus {event_id} 无法使用无碎股所得口径：原权益{original_qty}、比例{ratio_micros}/1000000、实际{actual_qty}")]
+    UnsupportedBonusAllocation {
+        event_id: String,
+        original_qty: u64,
+        ratio_micros: u64,
+        actual_qty: u64,
+    },
 }
 
 // carrier 仅在重放期间存在；original 始终是登记单位，current 随转换和处置重定位。
@@ -176,7 +205,20 @@ impl CashDividendTaxBook {
         &self,
         lineage: &TaxUnitLineage,
     ) -> Result<MappedTaxAssessment, TaxLineageError> {
+        self.assessment_with_conditional_bonus(
+            lineage,
+            &ConditionalBonusTaxFacts { events: vec![] },
+        )
+    }
+
+    /// 仅评估完整明确的条件Bonus事实，不接真实行政安装或生产存档。
+    pub fn assessment_with_conditional_bonus(
+        &self,
+        lineage: &TaxUnitLineage,
+        bonus: &ConditionalBonusTaxFacts,
+    ) -> Result<MappedTaxAssessment, TaxLineageError> {
         self.validate()?;
+        let mut bonus_replay = conditional_bonus::BonusReplay::new(self, bonus)?;
         if lineage.account != self.account || lineage.stock != self.stock {
             return Err(TaxLineageError::ContextMismatch {
                 expected_account: self.account,
@@ -230,12 +272,14 @@ impl CashDividendTaxBook {
         let mut consumptions = Vec::new();
         let mut retirements = Vec::new();
         let mut predecessor = None;
+        let mut legacy_cash_collected = 0i128;
+        bonus_replay.apply_at(0, &lots, &mut carriers, &consumptions, 0, 0)?;
         for sequence in 1..=self.operation_seq {
             let before = lots.clone();
             if let Some(day) = self.days.iter().find(|day| day.operation_seq == sequence) {
                 // 旧 CorporateAction 来源未区分单位扩张与独立取得。缺受控分类时不能
                 // 默认新增权益，否则1拆2后的部分卖出会按错误原单位计税。
-                if !transitions.contains_key(&sequence) {
+                if !transitions.contains_key(&sequence) && !bonus_replay.classifies(sequence) {
                     if let Some(DividendTaxLot {
                         source: TaxAcquisitionSource::CorporateAction { event },
                         ..
@@ -271,6 +315,12 @@ impl CashDividendTaxBook {
                 }
             }
             if let Some(transition) = transitions.get(&sequence) {
+                if bonus_replay.classifies(sequence) {
+                    return Err(TaxLineageError::InvalidConditionalFact {
+                        event_id: transition.event_id.clone(),
+                        detail: "同一取得不能同时分类为单位转换和独立Bonus净取得",
+                    });
+                }
                 if transition.before_lots != before || transition.after_lots != lots {
                     return Err(TaxLineageError::TransitionMismatch {
                         event_id: transition.event_id.clone(),
@@ -290,30 +340,63 @@ impl CashDividendTaxBook {
             }
             if let Some(dividend) = self.dividends.iter().find(|d| d.operation_seq == sequence) {
                 let key = cash_key(&dividend.event_id);
-                for lot in &dividend.lots {
-                    let end = ExactShareUnits::new(i128::from(lot.qty), 1)?;
-                    carriers.push(EntitlementCarrier {
-                        key: key.clone(),
-                        original: TaxOriginSpan {
-                            lot_id: lot.id.clone(),
-                            start: units_zero(),
-                            end: end.clone(),
-                        },
-                        current: TaxCurrentSpan {
-                            lot_id: lot.id.clone(),
-                            start: units_zero(),
-                            end,
-                        },
+                register_carriers(&key, &dividend.lots, &mut carriers)?;
+            }
+            if let Some(collection) = self
+                .collections
+                .iter()
+                .find(|c| c.operation_seq == sequence)
+            {
+                let cash_assessed = self.assessed_cash_cents_with_consumptions_through(
+                    &consumptions,
+                    collection.day,
+                    sequence,
+                )?;
+                let prior_cash_collected = legacy_cash_collected
+                    .checked_add(bonus_replay.cash_collected())
+                    .ok_or_else(|| overflow("prior Cash collected"))?;
+                let due = cash_assessed
+                    .checked_sub(prior_cash_collected)
+                    .ok_or_else(|| overflow("legacy Cash due"))?;
+                if i128::from(collection.collected.cents()) > due {
+                    return Err(TaxLineageError::LegacyCashOvercollection {
+                        event_id: collection.event_id.clone(),
+                        operation_seq: sequence,
+                        assessed_cash: cash_assessed,
+                        previously_collected: prior_cash_collected,
+                        attempted_cents: collection.collected.cents(),
                     });
                 }
+                legacy_cash_collected = legacy_cash_collected
+                    .checked_add(i128::from(collection.collected.cents()))
+                    .ok_or_else(|| overflow("legacy Cash collected"))?;
             }
+            // 同prefix的侧事件不改变Cash所得；prefix限制排除后续同日付款。
+            let cash_assessed = if bonus_replay.needs_collection_at(sequence) {
+                self.assessed_cash_cents_with_consumptions_through(
+                    &consumptions,
+                    self.settled_on,
+                    sequence,
+                )?
+            } else {
+                0
+            };
+            bonus_replay.apply_at(
+                sequence,
+                &lots,
+                &mut carriers,
+                &consumptions,
+                cash_assessed,
+                legacy_cash_collected,
+            )?;
         }
-        let assessed = self.assessed_cash_cents_with_consumptions(&consumptions)?;
-        let collected = self.collections.iter().try_fold(0i128, |total, receipt| {
-            total
-                .checked_add(i128::from(receipt.collected.cents()))
-                .ok_or_else(|| overflow("collected tax sum"))
-        })?;
+        let assessed = self
+            .assessed_cash_cents_with_consumptions(&consumptions)?
+            .checked_add(bonus_replay.assessed(&consumptions)?)
+            .ok_or_else(|| overflow("combined assessed tax cents"))?;
+        let collected = legacy_cash_collected
+            .checked_add(bonus_replay.total_collected()?)
+            .ok_or_else(|| overflow("combined collected tax sum"))?;
         Ok(MappedTaxAssessment {
             outstanding: ExactDividendTaxAmount::new(
                 assessed
@@ -330,29 +413,76 @@ impl CashDividendTaxBook {
         &self,
         consumptions: &[TaxEntitlementConsumption],
     ) -> Result<i128, DividendTaxError> {
-        self.assessed_cash_cents_through(
+        self.assessed_cash_cents_with_consumptions_through(
+            consumptions,
             self.settled_on,
             self.operation_seq,
+        )
+    }
+    // consumptions是重放至该prefix已形成的事实，不能混入之后同日的处置。
+    fn assessed_cash_cents_with_consumptions_through(
+        &self,
+        consumptions: &[TaxEntitlementConsumption],
+        through: CivilDate,
+        sequence: u64,
+    ) -> Result<i128, DividendTaxError> {
+        self.assessed_cash_cents_through(
+            through,
+            sequence,
             |dividend, lot, per_share, start, assessed| {
                 let key = cash_key(&dividend.event_id);
-                for consumption in consumptions
-                    .iter()
-                    .filter(|c| c.key == key && c.original.lot_id == lot.id)
-                {
-                    let quantity =
-                        units_sub(&consumption.original.end, &consumption.original.start)?;
-                    let rate = personal_cash_dividend_rate(start, consumption.disposed_on)?;
-                    let tax = units_product(&[
-                        ExactShareUnits(per_share.clone()),
-                        quantity,
-                        ExactShareUnits::new(i128::from(rate), 100)?,
-                    ])?;
-                    *assessed = assessed.add(&tax.0)?;
-                }
+                assess_mapped_disposals(&key, lot, per_share, start, consumptions, assessed)?;
                 Ok(())
             },
         )
     }
+}
+
+fn register_carriers(
+    key: &TaxEntitlementKey,
+    lots: &[DividendTaxLot],
+    carriers: &mut Vec<EntitlementCarrier>,
+) -> Result<(), DividendTaxError> {
+    for lot in lots {
+        let end = ExactShareUnits::new(i128::from(lot.qty), 1)?;
+        carriers.push(EntitlementCarrier {
+            key: key.clone(),
+            original: TaxOriginSpan {
+                lot_id: lot.id.clone(),
+                start: units_zero(),
+                end: end.clone(),
+            },
+            current: TaxCurrentSpan {
+                lot_id: lot.id.clone(),
+                start: units_zero(),
+                end,
+            },
+        });
+    }
+    Ok(())
+}
+fn assess_mapped_disposals(
+    key: &TaxEntitlementKey,
+    lot: &DividendTaxLot,
+    per_share: &ExactDividendTaxAmount,
+    start: CivilDate,
+    consumptions: &[TaxEntitlementConsumption],
+    assessed: &mut ExactDividendTaxAmount,
+) -> Result<(), DividendTaxError> {
+    for consumption in consumptions
+        .iter()
+        .filter(|c| &c.key == key && c.original.lot_id == lot.id)
+    {
+        let quantity = units_sub(&consumption.original.end, &consumption.original.start)?;
+        let rate = personal_cash_dividend_rate(start, consumption.disposed_on)?;
+        let tax = units_product(&[
+            ExactShareUnits(per_share.clone()),
+            quantity,
+            ExactShareUnits::new(i128::from(rate), 100)?,
+        ])?;
+        *assessed = assessed.add(&tax.0)?;
+    }
+    Ok(())
 }
 
 fn cash_key(event_id: &str) -> TaxEntitlementKey {
@@ -651,3 +781,8 @@ fn consume_day(
 
 #[cfg(test)]
 mod tests;
+
+mod conditional_bonus;
+pub use conditional_bonus::*;
+#[cfg(test)]
+mod conditional_bonus_tests;

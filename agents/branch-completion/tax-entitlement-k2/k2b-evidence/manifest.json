@@ -1,0 +1,77 @@
+[
+  {
+    "path": "k2b-green-01-artifact.json",
+    "sha256": "110054d7ec023342187e8977c4a9bde176c9e3c0e16c3b202d4cbf12506750ea",
+    "bytes": 11314
+  },
+  {
+    "path": "k2b-green-01-before.json",
+    "sha256": "adf1e454a28a9c852d70255f497c46f118db39e60a02a98a1fba664bf4fd5bb3",
+    "bytes": 6780
+  },
+  {
+    "path": "k2b-green-01-build.log",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "bytes": 0
+  },
+  {
+    "path": "k2b-green-01-run.json",
+    "sha256": "b6bb53f6178e07c1831f14884a031578cc8104bd445b13b61b3be1ccb636d245",
+    "bytes": 376
+  },
+  {
+    "path": "k2b-green-01-run.log",
+    "sha256": "2a9e50a88095c3ecfba0bd826eeef895359ad320be8421a39df2d56a39fe43c9",
+    "bytes": 12611
+  },
+  {
+    "path": "k2b-green-02-artifact.json",
+    "sha256": "77e7c54e8fb7253b8c9f7201687e5f37ed5d1942498795f8e925c61c9485f73f",
+    "bytes": 12038
+  },
+  {
+    "path": "k2b-green-02-before.json",
+    "sha256": "cdfc150319988c85ff4e75beba807be4254031786f8b953bfc17504a178ffc56",
+    "bytes": 6780
+  },
+  {
+    "path": "k2b-green-02-build.log",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "bytes": 0
+  },
+  {
+    "path": "k2b-green-02-run.json",
+    "sha256": "d4d8bf18490f3cc025b5dc5b5453f4d3f46b2183a60ca6b946a68081f0b80c3c",
+    "bytes": 374
+  },
+  {
+    "path": "k2b-green-02-run.log",
+    "sha256": "8480c90b4614cc506fb20239a10a3364449b2b3d76d313644cbf61ddf0a3d1e2",
+    "bytes": 13582
+  },
+  {
+    "path": "k2b-red-01-artifact.json",
+    "sha256": "7adfe8cdaf777f01f700842978dff10196532b7f6ee41b28ce5026e0a8218d2b",
+    "bytes": 10357
+  },
+  {
+    "path": "k2b-red-01-before.json",
+    "sha256": "4d2ca76ce71f71f7b4f741285db5e6c5d2a016b587da6d7c3c30f76fb1f0528e",
+    "bytes": 6772
+  },
+  {
+    "path": "k2b-red-01-build.log",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "bytes": 0
+  },
+  {
+    "path": "k2b-red-01-run.json",
+    "sha256": "ea566ad735cce6b5f5c49b18c55f0e5839435ef26f6f2efc61f79c777da6ac50",
+    "bytes": 385
+  },
+  {
+    "path": "k2b-red-01-run.log",
+    "sha256": "5988260992b54d320123f929b2f39ab561525be3c82f0e7581cf7825881ebd42",
+    "bytes": 4215
+  }
+]
