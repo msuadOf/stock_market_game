@@ -1244,7 +1244,8 @@ fn capital_41_settled_split_uses_actual_setup_exchange() {
     let mut f = Fixture::new();
     f.redenominate(ShareSplitDirection::Split);
     let mut wire = serde_json::to_value(&f.actions).unwrap();
-    wire["share_splits"][0]["plan"]["exchange"] = serde_json::json!("Szse");
+    wire["share_splits"][0]["plan"]["exchange"] =
+        serde_json::to_value(CalendarExchange::Szse).unwrap();
     f.actions = serde_json::from_value(wire).unwrap();
     f.actions.share_splits[0]
         .validate_with_calendar(&f.calendar)
@@ -1262,7 +1263,8 @@ fn capital_42_settled_rights_uses_actual_setup_exchange() {
     let mut f = Fixture::new();
     let settled_on = f.rights(400, true);
     let mut wire = serde_json::to_value(&f.actions).unwrap();
-    wire["rights_offerings"][0]["plan"]["exchange"] = serde_json::json!("Szse");
+    wire["rights_offerings"][0]["plan"]["exchange"] =
+        serde_json::to_value(CalendarExchange::Szse).unwrap();
     f.actions = serde_json::from_value(wire).unwrap();
     f.actions.rights_offerings[0]
         .validate_with_calendar(&f.calendar)
@@ -1280,7 +1282,8 @@ fn capital_43_cancelled_repurchase_uses_actual_setup_exchange() {
     let mut f = Fixture::new();
     f.repurchase(true, false);
     let mut wire = serde_json::to_value(&f.actions).unwrap();
-    wire["issuer_repurchases"][0]["plan"]["exchange"] = serde_json::json!("Szse");
+    wire["issuer_repurchases"][0]["plan"]["exchange"] =
+        serde_json::to_value(CalendarExchange::Szse).unwrap();
     f.actions = serde_json::from_value(wire).unwrap();
     f.actions.issuer_repurchases[0]
         .validate_with_calendar(&f.calendar)
