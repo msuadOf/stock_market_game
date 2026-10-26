@@ -5,6 +5,11 @@ use crate::accounting::{
 };
 use crate::calendar::CalendarExchange;
 use crate::company::config::CompanySystemConfig;
+use crate::company::rights_offering::{
+    HolderRightsSettlement, RightsOfferingBook, RightsOfferingDeclaration, RightsOfferingEventPlan,
+    RightsOfferingMode, RightsSettlementReceipt, RightsSubscriptionRecord,
+    RightsSubscriptionStrategy, SubscriptionOrigin,
+};
 use crate::company::share_registry::{
     AcquisitionSource, DayNetChange, HolderId, MovementScope, NetAcquisition, ShareDayRequest,
     ShareHolding, ShareLot, ShareRegistry, ShareRestriction,
@@ -440,6 +445,183 @@ fn capital_16_changed_current_issuer_2200_does_not_pass_real_split_replay() {
             actual: 2_200,
         })
     ));
+}
+
+impl Fixture {
+    fn rights(&mut self, paid_shares: u64, settle: bool) -> CivilDate {
+        let mut plan = RightsOfferingEventPlan {
+            event_id: "rights-a".into(),
+            approval_reference: "批准-rights-a".into(),
+            issuer: CompanyId(0),
+            stock: code(),
+            exchange: CalendarExchange::Sse,
+            approved_on: date("2030-06-03"),
+            announced_on: date("2030-06-03"),
+            registered_on: date("2030-06-03"),
+            payment_start_on: date("2030-06-04"),
+            payment_deadline_on: date("2030-06-04"),
+            ex_rights_on: date("2030-06-04"),
+            settlement_on: date("2030-06-04"),
+            listing_on: date("2030-06-04"),
+            price_per_share: Money::from_cents(200),
+            mode: RightsOfferingMode::RightsToAllShareholders {
+                shares_per_existing_share_micros: 500_000,
+            },
+            npc_subscription_strategy: RightsSubscriptionStrategy::FullByDefault,
+        };
+        plan.derive_schedule(&self.calendar, CalendarExchange::Sse, 1)
+            .unwrap();
+        self.system
+            .declare_rights_offering(
+                &CompanyId(0),
+                RightsOfferingDeclaration {
+                    event_id: plan.event_id.clone(),
+                    approval_reference: plan.approval_reference.clone(),
+                    approved_on: plan.approved_on,
+                    price_per_share: plan.price_per_share,
+                    par_value_per_share: Money::from_cents(100),
+                    registered_capital_at_approval: AccountingAmount::from_cents(100_000),
+                },
+            )
+            .unwrap();
+        let mut book = RightsOfferingBook::new(plan.clone()).unwrap();
+        if settle {
+            book.announce(plan.announced_on).unwrap();
+            let registry = &mut self.actions.registries[0];
+            let snapshot = registry
+                .register(plan.event_id.clone(), plan.registered_on)
+                .unwrap()
+                .clone();
+            book.entitle(snapshot, &self.calendar).unwrap();
+            let paid_amount = Money::from_cents(i64::try_from(paid_shares).unwrap() * 200);
+            book.record_subscription(RightsSubscriptionRecord {
+                holder: HolderId::Account(AccountId(7)),
+                requested_shares: 500,
+                price_per_share: plan.price_per_share,
+                submitted_on: plan.payment_start_on,
+                origin: SubscriptionOrigin::Explicit,
+                paid_shares,
+                paid_amount,
+                waived_shares: 500 - paid_shares,
+            })
+            .unwrap();
+            book.close_payment_window(plan.payment_deadline_on).unwrap();
+            let failed = book.determine_failure().unwrap();
+            let refund = if failed { paid_amount } else { Money::ZERO };
+            book.settle(
+                plan.settlement_on,
+                RightsSettlementReceipt {
+                    event_id: plan.event_id.clone(),
+                    settlement_on: plan.settlement_on,
+                    failed,
+                    total_paid_shares: paid_shares,
+                    total_paid_amount: paid_amount,
+                    refunded_total: refund,
+                    holders: vec![HolderRightsSettlement {
+                        holder: HolderId::Account(AccountId(7)),
+                        paid_shares,
+                        paid_amount,
+                        waived_shares: 500 - paid_shares,
+                        refunded_amount: refund,
+                    }],
+                },
+            )
+            .unwrap();
+            let mut day = registry.settled_on();
+            while day < plan.settlement_on {
+                day = day.next().unwrap();
+                registry
+                    .close_day(ShareDayRequest {
+                        event_id: format!("market-{day}"),
+                        day,
+                        scope: MovementScope::PublicMarket,
+                        changes: vec![],
+                    })
+                    .unwrap();
+            }
+            if !failed {
+                registry
+                    .close_day(ShareDayRequest {
+                        event_id: "rights-offering:rights-a".into(),
+                        day: plan.settlement_on,
+                        scope: MovementScope::NonTradingTransfer {
+                            basis: plan.approval_reference.clone(),
+                        },
+                        changes: vec![DayNetChange {
+                            holder: HolderId::Account(AccountId(7)),
+                            change: i128::from(paid_shares),
+                            acquisition: Some(NetAcquisition {
+                                lot_id: "rights-a-owner-7".into(),
+                                source: AcquisitionSource::CorporateAction {
+                                    event: plan.event_id.clone(),
+                                },
+                                restriction: ShareRestriction::Unrestricted,
+                            }),
+                            consume: None,
+                        }],
+                    })
+                    .unwrap();
+            }
+            self.system
+                .record_rights_offering_settlement(
+                    &CompanyId(0),
+                    &plan.event_id,
+                    plan.settlement_on,
+                    if failed { 0 } else { paid_shares },
+                    if failed {
+                        AccountingAmount::ZERO
+                    } else {
+                        AccountingAmount::from_money(paid_amount)
+                    },
+                )
+                .unwrap();
+        }
+        self.actions.rights_offerings.push(book);
+        plan.settlement_on
+    }
+}
+
+#[test]
+fn capital_17_successful_rights_uses_actual_settled_shares_and_no_credited_flag() {
+    let mut f = Fixture::new();
+    let through = f.rights(400, true);
+    assert!(f.actions.rights_offerings[0].credited_on().is_none());
+    let summary = f.validate(&through.to_string()).unwrap();
+    assert_eq!(summary.companies[&CompanyId(0)].issued_shares, 1_400);
+    assert_eq!(
+        summary.companies[&CompanyId(0)].registered_capital,
+        Some(AccountingAmount::from_cents(140_000))
+    );
+    assert_eq!(
+        summary.companies[&CompanyId(0)].receipt_frontier,
+        f.actions.registries[0].receipts().len()
+    );
+}
+
+#[test]
+fn capital_18_failed_rights_refund_does_not_issue_subscribed_shares() {
+    let mut f = Fixture::new();
+    let through = f.rights(100, true);
+    let receipt = f.actions.rights_offerings[0].settlement().unwrap();
+    assert!(receipt.failed);
+    assert_eq!(receipt.total_paid_shares, 100);
+    assert_eq!(receipt.refunded_total, Money::from_cents(20_000));
+    let summary = f.validate(&through.to_string()).unwrap();
+    assert_eq!(summary.companies[&CompanyId(0)].issued_shares, 1_000);
+    assert_eq!(
+        summary.companies[&CompanyId(0)].registered_capital,
+        Some(AccountingAmount::from_cents(100_000))
+    );
+}
+
+#[test]
+fn capital_19_approved_rights_keeps_future_payment_and_listing_without_delta() {
+    let mut f = Fixture::new();
+    let through = f.rights(0, false);
+    assert!(through > date("2030-06-03"));
+    let summary = f.validate("2030-06-03").unwrap();
+    assert_eq!(summary.companies[&CompanyId(0)].issued_shares, 1_000);
+    assert_eq!(summary.companies[&CompanyId(0)].receipt_frontier, 0);
 }
 
 #[test]
