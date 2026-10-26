@@ -287,7 +287,10 @@ fn strict_lineage_round_trip_replays_same_assessment() {
     missing.as_object_mut().unwrap().remove("transitions");
     assert!(serde_json::from_value::<TaxUnitLineage>(missing).is_err());
     let mut missing_predecessor = serde_json::to_value(&lineage).unwrap();
-    missing_predecessor["transitions"][0].as_object_mut().unwrap().remove("from_unit_event");
+    missing_predecessor["transitions"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("from_unit_event");
     assert!(serde_json::from_value::<TaxUnitLineage>(missing_predecessor).is_err());
 }
 #[test]
@@ -348,8 +351,14 @@ fn partial_disposal_then_second_transition_preserves_remaining_original_span() {
     let assessment = book.assessment_with_unit_lineage(&lineage).unwrap();
     assert_eq!(assessment.outstanding.numerator(), 2_000);
     assert_eq!(assessment.consumptions.len(), 2);
-    assert_eq!(assessment.consumptions[0].original, origin("original", q(0), q(20)));
-    assert_eq!(assessment.consumptions[1].original, origin("original", q(20), q(100)));
+    assert_eq!(
+        assessment.consumptions[0].original,
+        origin("original", q(0), q(20))
+    );
+    assert_eq!(
+        assessment.consumptions[1].original,
+        origin("original", q(20), q(100))
+    );
 }
 
 #[test]
@@ -365,13 +374,15 @@ fn transition_must_match_real_operation_snapshot_and_unit_predecessor() {
     let mut bad_snapshot = lineage.clone();
     bad_snapshot.transitions[0].before_lots[0].acquired_on = date("2029-12-24");
     assert!(matches!(
-        book.assessment_with_unit_lineage(&bad_snapshot).unwrap_err(),
+        book.assessment_with_unit_lineage(&bad_snapshot)
+            .unwrap_err(),
         TaxLineageError::TransitionMismatch { .. }
     ));
     let mut bad_predecessor = lineage;
     bad_predecessor.transitions[0].from_unit_event = Some("不存在的前驱".into());
     assert!(matches!(
-        book.assessment_with_unit_lineage(&bad_predecessor).unwrap_err(),
+        book.assessment_with_unit_lineage(&bad_predecessor)
+            .unwrap_err(),
         TaxLineageError::UnitPredecessorMismatch { .. }
     ));
     assert_eq!(book, before);
@@ -381,17 +392,391 @@ fn transition_must_match_real_operation_snapshot_and_unit_predecessor() {
 fn each_registration_keeps_its_own_unit_basis_and_actual_payment() {
     let (mut book, lineage) = single_consolidation();
     // 第二次登记发生于缩股后：50当前份，每份200分，也实际收到10000分。
-    book.register_dividend("later".into(), date("2030-01-02"), ExactDividendTaxAmount::new(200, 1).unwrap())
-        .unwrap();
-    book.record_payment("later", "paid-later".into(), date("2030-01-02"), Money::from_cents(10_000), "第二笔实际付款".into())
-        .unwrap();
+    book.register_dividend(
+        "later".into(),
+        date("2030-01-02"),
+        ExactDividendTaxAmount::new(200, 1).unwrap(),
+    )
+    .unwrap();
+    book.record_payment(
+        "later",
+        "paid-later".into(),
+        date("2030-01-02"),
+        Money::from_cents(10_000),
+        "第二笔实际付款".into(),
+    )
+    .unwrap();
     book.record_net_day("sell50".into(), date("2030-01-03"), -50, None)
         .unwrap();
     let assessment = book.assessment_with_unit_lineage(&lineage).unwrap();
     assert_eq!(assessment.outstanding.numerator(), 4_000);
     assert_eq!(assessment.consumptions.len(), 2);
-    assert_eq!(assessment.consumptions[0].key, TaxEntitlementKey { kind: TaxIncomeKind::CashDividend, event_id: "cash".into() });
+    assert_eq!(
+        assessment.consumptions[0].key,
+        TaxEntitlementKey {
+            kind: TaxIncomeKind::CashDividend,
+            event_id: "cash".into()
+        }
+    );
     assert_eq!(assessment.consumptions[0].original.end, q(100));
-    assert_eq!(assessment.consumptions[1].key, TaxEntitlementKey { kind: TaxIncomeKind::CashDividend, event_id: "later".into() });
+    assert_eq!(
+        assessment.consumptions[1].key,
+        TaxEntitlementKey {
+            kind: TaxIncomeKind::CashDividend,
+            event_id: "later".into()
+        }
+    );
     assert_eq!(assessment.consumptions[1].original.end, q(50));
+}
+
+#[test]
+fn partition_rejects_source_overlap_target_gap_out_of_bounds_and_ghost_lot() {
+    let (book, lineage) = single_consolidation();
+    let before = book.clone();
+    let mut cases = Vec::new();
+    let mut source_overlap = lineage.clone();
+    source_overlap.transitions[0]
+        .non_disposal_retirements
+        .push(origin("original", q(0), q(1)));
+    cases.push((source_overlap, PartitionSide::Origin));
+    let mut target_gap = lineage.clone();
+    target_gap.transitions[0].fragments[0].to.start = q(1);
+    cases.push((target_gap, PartitionSide::Current));
+    let mut target_overflow = lineage.clone();
+    target_overflow.transitions[0].fragments[0].to.end = q(51);
+    cases.push((target_overflow, PartitionSide::Current));
+    let mut ghost = lineage;
+    ghost.transitions[0].fragments[0].to.lot_id = "ghost".into();
+    cases.push((ghost, PartitionSide::Current));
+    for (bad, expected) in cases {
+        assert!(matches!(book.assessment_with_unit_lineage(&bad),
+            Err(TaxLineageError::InvalidPartition { side, .. }) if side == expected));
+        assert_eq!(book, before);
+    }
+}
+
+#[test]
+fn one_origin_can_span_multiple_target_fragments_and_retirement() {
+    let mut book = cash_book(vec![lot("original", 100, "2029-12-25")]);
+    let lineage = consolidate(
+        &mut book,
+        50,
+        vec![
+            fragment("original", q(0), q(40), "original", q(0), q(25)),
+            fragment("original", q(40), q(80), "original", q(25), q(50)),
+        ],
+        vec![origin("original", q(80), q(100))],
+    );
+    book.record_net_day("sell-first".into(), date("2030-01-03"), -25, None)
+        .unwrap();
+    let first = book.assessment_with_unit_lineage(&lineage).unwrap();
+    assert_eq!(first.outstanding.numerator(), 800);
+    assert_eq!(
+        first.consumptions[0].original,
+        origin("original", q(0), q(40))
+    );
+    assert_eq!(
+        first.retirements[0].original,
+        origin("original", q(80), q(100))
+    );
+    book.record_net_day("sell-last".into(), date("2030-01-04"), -25, None)
+        .unwrap();
+    assert_eq!(
+        book.assessment_with_unit_lineage(&lineage)
+            .unwrap()
+            .outstanding
+            .numerator(),
+        1600
+    );
+}
+
+#[test]
+fn expansion_transports_original_rights_to_both_real_current_lots() {
+    let mut book = cash_book(vec![lot("original", 100, "2029-12-25")]);
+    book.record_net_day("zero".into(), date("2030-01-02"), 0, None)
+        .unwrap();
+    let before = book.lots().to_vec();
+    book.record_net_day(
+        "credit-receipt".into(),
+        date("2030-01-02"),
+        100,
+        Some(DividendTaxLot {
+            id: "additional".into(),
+            qty: 100,
+            acquired_on: date("2030-01-02"),
+            source: TaxAcquisitionSource::CorporateAction {
+                event: "expand".into(),
+            },
+            class: TaxShareClass::PublicMarket,
+        }),
+    )
+    .unwrap();
+    let lineage = TaxUnitLineage {
+        account: book.account(),
+        stock: book.stock().clone(),
+        transitions: vec![TaxUnitTransition {
+            event_id: "expand".into(),
+            operation_seq: book.days.last().unwrap().operation_seq,
+            day: date("2030-01-02"),
+            from_unit_event: None,
+            before_lots: before,
+            after_lots: book.lots().to_vec(),
+            fragments: vec![
+                fragment("original", q(0), q(50), "original", q(0), q(100)),
+                fragment("original", q(50), q(100), "additional", q(0), q(100)),
+            ],
+            non_disposal_retirements: vec![],
+        }],
+    };
+    book.record_net_day("sell-old".into(), date("2030-01-03"), -100, None)
+        .unwrap();
+    assert_eq!(
+        book.assessment_with_unit_lineage(&lineage)
+            .unwrap()
+            .outstanding
+            .numerator(),
+        1000
+    );
+    book.record_net_day("sell-extra".into(), date("2030-01-04"), -100, None)
+        .unwrap();
+    let assessment = book.assessment_with_unit_lineage(&lineage).unwrap();
+    assert_eq!(assessment.outstanding.numerator(), 2000);
+    assert_eq!(
+        assessment.consumptions[1].original,
+        origin("original", q(50), q(100))
+    );
+}
+
+#[test]
+fn no_mapping_preserves_cash_activation_rounding_collection_and_restore() {
+    let mut book = cash_book(vec![lot("original", 100, "2029-12-25")]);
+    let lineage = TaxUnitLineage {
+        account: book.account(),
+        stock: book.stock().clone(),
+        transitions: vec![],
+    };
+    book.record_net_day("sell40".into(), date("2030-01-02"), -40, None)
+        .unwrap();
+    let collected = book
+        .collect_due("collect".into(), date("2030-01-02"), Money::from_cents(300))
+        .unwrap();
+    assert_eq!(collected.collected.cents(), 300);
+    let mapped = book.assessment_with_unit_lineage(&lineage).unwrap();
+    assert_eq!(mapped.outstanding, book.outstanding().unwrap());
+    assert_eq!(mapped.outstanding.numerator(), 500);
+    let restored: CashDividendTaxBook =
+        serde_json::from_value(serde_json::to_value(&book).unwrap()).unwrap();
+    assert_eq!(
+        restored.assessment_with_unit_lineage(&lineage).unwrap(),
+        mapped
+    );
+    let mut corrupt = restored;
+    corrupt.lots[0].qty += 1;
+    let before = corrupt.clone();
+    assert!(corrupt.assessment_with_unit_lineage(&lineage).is_err());
+    assert_eq!(corrupt, before);
+}
+
+#[test]
+fn exact_fraction_serialization_and_extreme_comparison_do_not_overflow_or_round() {
+    let maximal = ExactShareUnits::new(i128::MAX, u64::MAX).unwrap();
+    assert_eq!(units_cmp(&maximal, &q(1)), std::cmp::Ordering::Greater);
+    let restored: ExactShareUnits =
+        serde_json::from_str(&serde_json::to_string(&fraction(1, 2)).unwrap()).unwrap();
+    assert_eq!(restored, fraction(1, 2));
+    assert!(ExactShareUnits::new(1, 0).is_err());
+    assert!(ExactShareUnits::new(-1, 1).is_err());
+    assert!(units_product(&[q(i128::MAX), q(2)]).is_err());
+    assert_eq!(
+        project(&fraction(1, 2), &q(0), &q(1), &q(0), &q(100)).unwrap(),
+        q(50)
+    );
+}
+
+#[test]
+fn actual_partial_payments_activate_only_received_cash_and_retry_is_idempotent() {
+    let mut book = CashDividendTaxBook::new(
+        AccountId(1),
+        StockCode("600001".into()),
+        DividendTaxProfile::IndividualPublicMarket,
+        date("2030-01-01"),
+        vec![lot("original", 100, "2029-12-25")],
+    )
+    .unwrap();
+    book.register_dividend(
+        "cash".into(),
+        date("2030-01-01"),
+        ExactDividendTaxAmount::new(100, 1).unwrap(),
+    )
+    .unwrap();
+    let lineage = consolidate(
+        &mut book,
+        50,
+        vec![fragment("original", q(0), q(100), "original", q(0), q(50))],
+        vec![],
+    );
+    book.record_net_day("sell".into(), date("2030-01-03"), -50, None)
+        .unwrap();
+    assert_eq!(
+        book.assessment_with_unit_lineage(&lineage)
+            .unwrap()
+            .outstanding
+            .numerator(),
+        0
+    );
+    book.record_payment(
+        "cash",
+        "first".into(),
+        date("2030-01-03"),
+        Money::from_cents(5000),
+        "实际第一笔".into(),
+    )
+    .unwrap();
+    assert_eq!(
+        book.assessment_with_unit_lineage(&lineage)
+            .unwrap()
+            .outstanding
+            .numerator(),
+        1000
+    );
+    book.record_payment(
+        "cash",
+        "second".into(),
+        date("2030-01-03"),
+        Money::from_cents(5000),
+        "实际第二笔".into(),
+    )
+    .unwrap();
+    let before = book.clone();
+    book.record_payment(
+        "cash",
+        "second".into(),
+        date("2030-01-03"),
+        Money::from_cents(5000),
+        "实际第二笔".into(),
+    )
+    .unwrap();
+    assert_eq!(book, before);
+    assert_eq!(
+        book.assessment_with_unit_lineage(&lineage)
+            .unwrap()
+            .outstanding
+            .numerator(),
+        2000
+    );
+}
+
+#[test]
+fn mapped_outstanding_deducts_actual_legacy_collection_without_rewriting_receipt() {
+    let (mut book, lineage) = single_consolidation();
+    book.record_net_day("sell".into(), date("2030-01-03"), -50, None)
+        .unwrap();
+    let receipt = book
+        .collect_due(
+            "legacy-collected".into(),
+            date("2030-01-03"),
+            Money::from_cents(300),
+        )
+        .unwrap();
+    assert_eq!(receipt.outstanding.numerator(), 700);
+    let before = book.clone();
+    let mapped = book.assessment_with_unit_lineage(&lineage).unwrap();
+    assert_eq!(mapped.outstanding.numerator(), 1700);
+    assert_eq!(book, before);
+    assert_eq!(book.collections()[0], receipt);
+}
+
+#[test]
+fn restoring_book_and_lineage_between_partial_disposals_preserves_remaining_basis() {
+    let (mut book, lineage) = single_consolidation();
+    book.record_net_day("sell10".into(), date("2030-01-03"), -10, None)
+        .unwrap();
+    let mut restored: CashDividendTaxBook =
+        serde_json::from_str(&serde_json::to_string(&book).unwrap()).unwrap();
+    let restored_lineage: TaxUnitLineage =
+        serde_json::from_str(&serde_json::to_string(&lineage).unwrap()).unwrap();
+    book.record_net_day("sell40".into(), date("2030-01-04"), -40, None)
+        .unwrap();
+    restored
+        .record_net_day("sell40".into(), date("2030-01-04"), -40, None)
+        .unwrap();
+    let continued = restored
+        .assessment_with_unit_lineage(&restored_lineage)
+        .unwrap();
+    assert_eq!(
+        continued,
+        book.assessment_with_unit_lineage(&lineage).unwrap()
+    );
+    assert_eq!(continued.outstanding.numerator(), 2000);
+    assert_eq!(continued.consumptions[0].key, cash_key("cash"));
+    assert_eq!(continued.consumptions[0].disposition_event_id, "sell10");
+    assert_eq!(continued.consumptions[0].disposed_on, date("2030-01-03"));
+    assert_eq!(
+        continued.consumptions[1].original,
+        origin("original", q(20), q(100))
+    );
+    assert_eq!(continued.consumptions[1].disposition_event_id, "sell40");
+}
+
+#[test]
+fn source_overlap_with_matching_quantity_sum_and_invalid_target_intervals_are_rejected() {
+    let (book, lineage) = single_consolidation();
+    let mut overlap = lineage.clone();
+    overlap.transitions[0].fragments = vec![
+        fragment("original", q(0), q(50), "original", q(0), q(25)),
+        fragment("original", q(0), q(50), "original", q(25), q(50)),
+    ];
+    assert!(matches!(
+        book.assessment_with_unit_lineage(&overlap),
+        Err(TaxLineageError::InvalidPartition {
+            side: PartitionSide::Origin,
+            ..
+        })
+    ));
+    for (start, end) in [(q(1), q(1)), (q(2), q(1))] {
+        let mut bad = lineage.clone();
+        bad.transitions[0].fragments[0].to.start = start;
+        bad.transitions[0].fragments[0].to.end = end;
+        assert!(matches!(
+            book.assessment_with_unit_lineage(&bad),
+            Err(TaxLineageError::InvalidPartition {
+                side: PartitionSide::Current,
+                ..
+            })
+        ));
+    }
+    let mut encoded = serde_json::to_value(&lineage).unwrap();
+    encoded["unexpected"] = serde_json::json!(true);
+    assert!(serde_json::from_value::<TaxUnitLineage>(encoded).is_err());
+    for (numerator, denominator) in [("2", "2"), ("1", "0")] {
+        let mut bad = serde_json::to_value(&lineage).unwrap();
+        bad["transitions"][0]["fragments"][0]["from"]["end"] =
+            serde_json::json!({"numerator":numerator,"denominator":denominator});
+        assert!(serde_json::from_value::<TaxUnitLineage>(bad).is_err());
+    }
+}
+
+#[test]
+fn valid_boundary_fractions_that_overflow_projection_fail_typed_and_leave_inputs_unchanged() {
+    let mut book = cash_book(vec![lot("original", 100, "2029-12-25")]);
+    let tiny = fraction(1, u64::MAX);
+    let lineage = consolidate(
+        &mut book,
+        50,
+        vec![
+            fragment("original", q(0), tiny.clone(), "original", q(0), q(25)),
+            fragment("original", tiny, q(100), "original", q(25), q(50)),
+        ],
+        vec![],
+    );
+    book.record_net_day("sell10".into(), date("2030-01-03"), -10, None)
+        .unwrap();
+    let before = book.clone();
+    let lineage_before = lineage.clone();
+    assert!(matches!(
+        book.assessment_with_unit_lineage(&lineage),
+        Err(TaxLineageError::Tax(DividendTaxError::Overflow { .. }))
+    ));
+    assert_eq!(book, before);
+    assert_eq!(lineage, lineage_before);
 }

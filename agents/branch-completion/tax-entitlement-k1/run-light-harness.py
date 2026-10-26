@@ -9,7 +9,7 @@ import time
 out = Path('/data1/baiyifan/workplace/stock_market_game/.tmp/tax-entitlement-k1')
 label, suite = sys.argv[1:]
 receipt = json.loads((out/(label+'-artifact.json')).read_text())
-binary = out/'light-harness'
+binary = Path(receipt.get('binary_path',str(out/'light-harness')))
 def verify():
     for item in receipt['files'] + receipt['dependencies']:
         if hashlib.sha256(Path(item['path']).read_bytes()).hexdigest() != item['sha256']:

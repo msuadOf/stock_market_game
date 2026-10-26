@@ -5,6 +5,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 
 if len(sys.argv) != 2 or not sys.argv[1].replace('-', '').replace('_', '').isalnum():
     raise SystemExit('需要唯一的字母数字证据标签；不得覆盖已存在的证据')
@@ -61,10 +62,10 @@ code = '\n'.join([
     '#[path = ' + json.dumps(str(output/'company/cash_dividend_tax/mod.rs')) + '] pub mod cash_dividend_tax;',
     '}',
 ])
-harness = output / 'light-harness.rs'
+harness = output / (label + '-harness.rs')
 harness.write_text(code)
 deps = Path('/data1/baiyifan/workplace/stock_market_game/.tmp/company-read-views-target/debug/deps')
-args = ['rustc', '--edition=2021', '--test', str(harness), '-C', 'debuginfo=0', '-C', 'codegen-units=32', '-L', 'dependency=' + str(deps), '-o', str(output/'light-harness')]
+args = ['rustc', '--edition=2021', '--test', str(harness), '-C', 'debuginfo=0', '-C', 'codegen-units=32', '-L', 'dependency=' + str(deps), '-o', str(output/(label+'-harness'))]
 dependencies = []
 for name in ['serde', 'serde_json', 'thiserror', 'ts_rs', 'num_bigint']:
     matches = list(deps.glob('lib' + name + '-*.rlib'))
@@ -80,13 +81,40 @@ paths = [repo/p for p in [
     'packages/engine/src/company/cash_dividend_tax/entitlement_units/tests.rs',
 ]]
 records = [{'path': str(p), 'sha256': hashlib.sha256(p.read_bytes()).hexdigest()} for p in paths]
-receipt = {'label':label,'harness_sha256':hashlib.sha256(harness.read_bytes()).hexdigest(),'args':args,'files':records,'dependencies':dependencies}
+receipt = {'label':label,'binary_path':str(output/(label+'-harness')),'boundary_extractions':[{'source':str(repo/p),'concept':name,'sha256':hashlib.sha256(text.encode()).hexdigest()} for p,name,text in [('packages/engine/src/account.rs','StockCode',derived_type(account,'StockCode')),('packages/engine/src/orderbook.rs','AccountId',derived_type(order,'AccountId')),('packages/engine/src/orderbook.rs','serde helpers',helpers),('packages/engine/src/company/spec.rs','CompanyId',derived_type(spec,'CompanyId')+company_display)]],'harness_sha256':hashlib.sha256(harness.read_bytes()).hexdigest(),'args':args,'files':records,'dependencies':dependencies}
 (output/(label+'-before.json')).write_text(json.dumps(receipt, ensure_ascii=False, indent=2)+'\n')
 build_env = os.environ.copy()
 build_env['TS_RS_EXPORT_DIR'] = str(output / 'bindings')
-subprocess.run(args, check=True, env=build_env)
+started = time.monotonic()
+child = subprocess.Popen(args, env=build_env)
+samples = []
+while child.poll() is None:
+    owned = {child.pid}
+    process_rows = []
+    for entry in Path('/proc').iterdir():
+        if not entry.name.isdecimal(): continue
+        try:
+            fields = (entry/'stat').read_text().rsplit(')',1)[1].split()
+            process_rows.append((int(entry.name),int(fields[1]),int(fields[11])+int(fields[12]),int(fields[17]),int(fields[21])*os.sysconf('SC_PAGE_SIZE')))
+        except FileNotFoundError:
+            continue
+        except ProcessLookupError:
+            continue
+    for _ in range(8):
+        previous = len(owned)
+        owned.update(row[0] for row in process_rows if row[1] in owned)
+        if len(owned) == previous: break
+    rows = [row for row in process_rows if row[0] in owned]
+    samples.append({'wall_seconds':time.monotonic()-started,'processes':[{'pid':r[0],'ppid':r[1],'cpu_ticks':r[2],'threads':r[3],'rss_bytes':r[4]} for r in rows]})
+    time.sleep(0.05)
+receipt['build_exit'] = child.returncode
+receipt['build_wall_seconds'] = time.monotonic()-started
+receipt['process_samples'] = samples
+(output/(label+'-build.json')).write_text(json.dumps(receipt,ensure_ascii=False,indent=2)+'\n')
+if child.returncode != 0:
+    raise subprocess.CalledProcessError(child.returncode,args)
 if any(hashlib.sha256(Path(r['path']).read_bytes()).hexdigest() != r['sha256'] for r in records + dependencies):
     raise RuntimeError('编译中源码或依赖漂移，产物无效')
-receipt['binary_sha256'] = hashlib.sha256((output/'light-harness').read_bytes()).hexdigest()
-receipt['binary_bytes'] = (output/'light-harness').stat().st_size
+receipt['binary_sha256'] = hashlib.sha256((output/(label+'-harness')).read_bytes()).hexdigest()
+receipt['binary_bytes'] = (output/(label+'-harness')).stat().st_size
 (output/(label+'-artifact.json')).write_text(json.dumps(receipt, ensure_ascii=False, indent=2)+'\n')

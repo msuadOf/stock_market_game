@@ -1,0 +1,122 @@
+[
+  {
+    "path": "green-all-02.log",
+    "sha256": "98b0340944daede87da09969e5e5bafa6c6de5567a0523fa3ec02f11a8ffb5d5",
+    "bytes": 8401
+  },
+  {
+    "path": "green-all-03.log",
+    "sha256": "d2e75c80fb4aeabd288d6e3abf4240cc6dec103bf9d4b38479ad3761002cfab2",
+    "bytes": 8401
+  },
+  {
+    "path": "green-all-04.log",
+    "sha256": "598be71fdff37dddba8d06f54ae2bde297c00ac8745a74e4b231d3ea5a77a755",
+    "bytes": 9136
+  },
+  {
+    "path": "green-behavior-01.log",
+    "sha256": "90e50028e3a5b6ebcae3bd4d381068c2b799a6016eaf889c13689665233c52c7",
+    "bytes": 1649
+  },
+  {
+    "path": "green-wire-01.log",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "bytes": 0
+  },
+  {
+    "path": "green-wire-02.log",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "bytes": 0
+  },
+  {
+    "path": "green-wire-03-artifact.json",
+    "sha256": "b55ea1f18f3d958b53d046aeea4de6856b3152cdf0012e0fbb8f4ad8a02c6770",
+    "bytes": 23676
+  },
+  {
+    "path": "green-wire-03-before.json",
+    "sha256": "6a88b85ea42e78010f898163d5f0af9ada9793b3a52a1097952c41498eff7ab0",
+    "bytes": 6236
+  },
+  {
+    "path": "green-wire-03-run.json",
+    "sha256": "d450f21d12ffc7a8bba247a1a50529c8a463b59ff3591187ab9d8a19901ce68e",
+    "bytes": 377
+  },
+  {
+    "path": "green-wire-03.log",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "bytes": 0
+  },
+  {
+    "path": "green-wire-04-artifact.json",
+    "sha256": "a213f0a56bff316e1de4ebc9cbe152be29a96ef2d3488542163fd3184489f639",
+    "bytes": 10711
+  },
+  {
+    "path": "green-wire-04-before.json",
+    "sha256": "2b48c82a86784ef0410f5247da0796d6c2c6671dfdccb08543b518cb2dae2b8b",
+    "bytes": 6236
+  },
+  {
+    "path": "green-wire-04-run.json",
+    "sha256": "8f931eeed3c55fab3da18715c94e1c0ff7dd75f903b6bf5f68f2921f3fad3ce6",
+    "bytes": 377
+  },
+  {
+    "path": "green-wire-04.log",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "bytes": 0
+  },
+  {
+    "path": "red-behavior-06.log",
+    "sha256": "f84506c920186d6c7ea30c9bc2ce52fe2324735b79978d5cb0b4004bf877adaa",
+    "bytes": 7731
+  },
+  {
+    "path": "red-wire-01.log",
+    "sha256": "e4de156e4fec68669e153c584385b7a8942829d8555effabea192aadc2fd58b3",
+    "bytes": 58
+  },
+  {
+    "path": "red-wire-02.log",
+    "sha256": "db501d30ece1afb29852145041ef5958df4cd39a1cc8bf67c336d11fbbb1954a",
+    "bytes": 4660
+  },
+  {
+    "path": "red-wire-03.log",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "bytes": 0
+  },
+  {
+    "path": "red-wire-04.log",
+    "sha256": "77c054067a9e3ba85daec7e1e4e45212c4f5db0490632fe0dfa7300d3e707146",
+    "bytes": 65
+  },
+  {
+    "path": "red-wire-05.log",
+    "sha256": "773d45a259912efe202df4e1daf862bc588c972959aa5d627c1e2cfc2c69ee99",
+    "bytes": 154
+  },
+  {
+    "path": "red-wire-06-artifact.json",
+    "sha256": "d9ae55f64c7ec375b38967ebe8329e0648aab067c1486450ccdb4a59bf259c9d",
+    "bytes": 5182
+  },
+  {
+    "path": "red-wire-06-before.json",
+    "sha256": "44da456412464ad23ddab09856a96cf0f97c9591bdb6d21bfc5a3083e570d144",
+    "bytes": 5067
+  },
+  {
+    "path": "red-wire-06-run.json",
+    "sha256": "92743486bc466c81f377cfbcd18d35d577648fbc1ac0014ea7baeec67e455727",
+    "bytes": 395
+  },
+  {
+    "path": "red-wire-06.log",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "bytes": 0
+  }
+]

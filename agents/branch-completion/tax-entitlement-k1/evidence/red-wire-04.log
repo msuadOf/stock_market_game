@@ -1,0 +1,1 @@
+usage: run-with-deadline.mjs <timeout-ms> -- <command> [args...]
