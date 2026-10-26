@@ -127,6 +127,12 @@ pub(crate) enum CompanyCapitalRestoreError {
         #[source]
         source: crate::company::rights_offering::RightsOfferingError,
     },
+    #[error("资本恢复回购账簿无效：{context:?}：{source}")]
+    IssuerRepurchase {
+        context: CapitalRestoreContext,
+        #[source]
+        source: crate::company::issuer_repurchase::IssuerRepurchaseError,
+    },
     #[error("资本恢复缺少已批准的前置验证 {required:?}：{context:?}")]
     Prerequisite {
         context: CapitalRestoreContext,
@@ -138,6 +144,7 @@ pub(crate) enum CompanyCapitalRestoreError {
 pub(crate) enum CapitalRestorePrerequisite {
     SameDayShareUnits,
     TreasuryShareUnitBuckets,
+    RepurchaseLotAttribution,
 }
 
 /// 验证结果是恢复过程的派生结论，不进入 SaveSlot。
@@ -147,6 +154,7 @@ pub(crate) struct CompanyCapitalReplay {
     pub(crate) issued_shares: u64,
     pub(crate) receipt_frontier: usize,
     pub(crate) registered_capital: Option<AccountingAmount>,
+    pub(crate) initial_registered_capital: Option<AccountingAmount>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -198,8 +206,7 @@ pub(crate) fn validate_company_capital_restore(
     let mut bindings = prepare_stock_distributions(&input)?;
     prepare_share_splits(&input, &mut bindings)?;
     prepare_rights_offerings(&input, &mut bindings)?;
-    // 其他股份动作尚未实现，必须明确拒绝，不能忽略后验过关。
-    reject_pending_capital_implementation(&input)?;
+    prepare_repurchase_cancellations(&input, &mut bindings)?;
     let mut companies = BTreeMap::new();
     for (company, initial) in input.setup_issuers.iter() {
         let current = input.system.issuers().get(company).ok_or(
@@ -225,6 +232,43 @@ pub(crate) fn validate_company_capital_restore(
             stock,
             ..Default::default()
         };
+        let registered_capital = input
+            .system
+            .dividend_legal_facts(company)
+            .map_err(|source| CompanyCapitalRestoreError::System {
+                context: context.clone(),
+                source,
+            })?
+            .map(|facts| facts.registered_capital);
+        let expected_total_delta = bindings
+            .movements
+            .values()
+            .filter(|movement| movement.context.company == Some(*company))
+            .try_fold(0_i128, |total, movement| {
+                total
+                    .checked_add(movement.capital_delta.cents())
+                    .ok_or_else(|| CompanyCapitalRestoreError::Arithmetic {
+                        context: context.clone(),
+                    })
+            })?;
+        // 手工装配没有 approval snapshot 时，从当前合法资本与已核动作逆推内部根。
+        // 该派生根不进入存档，也不用于证明外部资产来源。
+        let initial_registered_capital = registered_capital
+            .map(|actual| {
+                let cents = if let Some(par) = input.initial_par {
+                    i128::from(par.cents()).checked_mul(i128::from(initial.issued_shares))
+                } else {
+                    actual.cents().checked_sub(expected_total_delta)
+                };
+                cents
+                    .filter(|value| *value > 0)
+                    .map(AccountingAmount::from_cents)
+                    .ok_or_else(|| CompanyCapitalRestoreError::Arithmetic {
+                        context: context.clone(),
+                    })
+            })
+            .transpose()?;
+        let mut working_capital = initial_registered_capital;
         let mut issued_shares = initial.issued_shares;
         let mut receipt_frontier = 0;
         let mut share_frontiers = vec![issued_shares];
@@ -275,12 +319,28 @@ pub(crate) fn validate_company_capital_restore(
                         .ok_or_else(|| CompanyCapitalRestoreError::UnboundReceipt {
                             context: receipt_context.clone(),
                         })?;
-                    validate_bound_receipt(receipt, movement, receipt_index, issued_shares, after)?;
+                    validate_bound_receipt(
+                        receipt,
+                        movement,
+                        receipt_index,
+                        issued_shares,
+                        after,
+                        working_capital,
+                    )?;
                     capital_delta = capital_delta
                         .checked_add(movement.capital_delta.cents())
                         .ok_or_else(|| CompanyCapitalRestoreError::Arithmetic {
                             context: receipt_context.clone(),
                         })?;
+                    if let Some(before) = working_capital {
+                        working_capital =
+                            Some(before.add(movement.capital_delta).map_err(|source| {
+                                CompanyCapitalRestoreError::System {
+                                    context: receipt_context.clone(),
+                                    source: CompanySystemError::Accounting(source),
+                                }
+                            })?);
+                    }
                 }
                 issued_shares = after;
                 receipt_frontier += 1;
@@ -343,14 +403,6 @@ pub(crate) fn validate_company_capital_restore(
             )?;
         }
         check_shares(issued_shares, current.issued_shares, context.clone())?;
-        let registered_capital = input
-            .system
-            .dividend_legal_facts(company)
-            .map_err(|source| CompanyCapitalRestoreError::System {
-                context: context.clone(),
-                source,
-            })?
-            .map(|facts| facts.registered_capital);
         if let (Some(par), Some(actual)) = (input.initial_par, registered_capital) {
             let expected = i128::from(par.cents())
                 .checked_mul(i128::from(initial.issued_shares))
@@ -374,6 +426,7 @@ pub(crate) fn validate_company_capital_restore(
                 issued_shares,
                 receipt_frontier,
                 registered_capital,
+                initial_registered_capital,
             },
         );
     }
@@ -467,6 +520,10 @@ struct ExpectedCapitalMovement {
 enum ExpectedCapitalAllocation {
     PositiveLots(Vec<HolderCreditLot>),
     ReDenomination(ShareSplitReceipt),
+    RepurchaseCancellation {
+        bought_lots: BTreeMap<String, (CivilDate, u64)>,
+        cancelled_shares: u64,
+    },
 }
 
 struct FrozenCapitalRegistration {
@@ -1055,6 +1112,317 @@ fn prepare_rights_offerings(
     Ok(())
 }
 
+fn prepare_repurchase_cancellations(
+    input: &CapitalRestoreInput<'_>,
+    bindings: &mut CapitalBindings,
+) -> Result<(), CompanyCapitalRestoreError> {
+    let mut facts = BTreeMap::new();
+    for (company, spec) in input.system.issuers().iter() {
+        let context = CapitalRestoreContext {
+            company: Some(*company),
+            stock: spec
+                .listed_stock
+                .as_ref()
+                .and_then(|code| input.catalog.id(&code.0)),
+            kind: Some(CorporateCapitalKind::IssuerRepurchaseCancellation),
+            ..Default::default()
+        };
+        for fact in input
+            .system
+            .issuer_repurchase_facts(company)
+            .map_err(|source| CompanyCapitalRestoreError::System {
+                context: context.clone(),
+                source,
+            })?
+        {
+            if facts
+                .insert((*company, fact.event_id.clone()), fact)
+                .is_some()
+            {
+                return Err(CompanyCapitalRestoreError::Duplicate { context });
+            }
+        }
+    }
+    let mut seen = std::collections::BTreeSet::new();
+    for book in &input.actions.issuer_repurchases {
+        let plan = book.plan();
+        let context = CapitalRestoreContext {
+            company: Some(plan.issuer),
+            stock: input.catalog.id(&plan.stock.0),
+            kind: Some(CorporateCapitalKind::IssuerRepurchaseCancellation),
+            event_id: Some(plan.event_id.clone()),
+            day: Some(plan.approved_on),
+            ..Default::default()
+        };
+        if !seen.insert((plan.issuer, plan.event_id.clone())) {
+            return Err(CompanyCapitalRestoreError::Duplicate { context });
+        }
+        book.validate_with_calendar(input.calendar)
+            .map_err(|source| CompanyCapitalRestoreError::IssuerRepurchase {
+                context: context.clone(),
+                source,
+            })?;
+        let fact = facts
+            .remove(&(plan.issuer, plan.event_id.clone()))
+            .ok_or_else(|| CompanyCapitalRestoreError::MissingFinanceFact {
+                context: context.clone(),
+            })?;
+        for occurred in [
+            Some(plan.approved_on),
+            book.completed_on(),
+            book.cancelled_on(),
+        ]
+        .into_iter()
+        .flatten()
+        .chain(book.fills().iter().map(|fill| fill.day))
+        {
+            if occurred > input.committed_through {
+                return Err(CompanyCapitalRestoreError::FutureFact {
+                    context: CapitalRestoreContext {
+                        day: Some(occurred),
+                        ..context.clone()
+                    },
+                    committed_through: input.committed_through,
+                });
+            }
+        }
+        if input
+            .actions
+            .issuer_repurchases
+            .iter()
+            .filter(|other| other.plan().issuer == plan.issuer)
+            .count()
+            != 1
+            || plan.approval_unit_event_id.is_some()
+            || !book.share_unit_adjustments().is_empty()
+            || input
+                .actions
+                .share_splits
+                .iter()
+                .any(|other| other.plan().issuer == plan.issuer && other.settled_on().is_some())
+        {
+            return Err(CompanyCapitalRestoreError::Prerequisite {
+                context,
+                required: CapitalRestorePrerequisite::RepurchaseLotAttribution,
+            });
+        }
+        book.validate_share_units(&[], input.committed_through)
+            .map_err(|source| CompanyCapitalRestoreError::IssuerRepurchase {
+                context: context.clone(),
+                source,
+            })?;
+        let mut bought_lots = BTreeMap::new();
+        if !book.fills().is_empty() {
+            let registry = input
+                .actions
+                .registries
+                .iter()
+                .find(|registry| {
+                    registry.issuer() == &plan.issuer && registry.stock() == &plan.stock
+                })
+                .ok_or_else(|| CompanyCapitalRestoreError::MissingRegistry {
+                    context: context.clone(),
+                })?;
+            for fill in book.fills() {
+                let matching = registry
+                    .receipts()
+                    .iter()
+                    .filter(|receipt| {
+                        receipt.request.day == fill.day
+                            && matches!(receipt.request.scope, MovementScope::PublicMarket)
+                    })
+                    .collect::<Vec<_>>();
+                if matching.len() != 1 {
+                    return Err(CompanyCapitalRestoreError::ActionMismatch {
+                        context: context.clone(),
+                        field: "repurchase-market-receipt",
+                    });
+                }
+                let receipt = matching[0];
+                let treasury = receipt
+                    .request
+                    .changes
+                    .iter()
+                    .filter(|change| change.holder == HolderId::IssuerTreasury)
+                    .collect::<Vec<_>>();
+                if treasury.len() != 1 || treasury[0].change != i128::from(fill.shares) {
+                    return Err(CompanyCapitalRestoreError::ActionMismatch {
+                        context: context.clone(),
+                        field: "repurchase-market-shares",
+                    });
+                }
+                let acquisition = treasury[0].acquisition.as_ref().ok_or_else(|| {
+                    CompanyCapitalRestoreError::ActionMismatch {
+                        context: context.clone(),
+                        field: "repurchase-lot-source",
+                    }
+                })?;
+                if acquisition.source
+                    != (crate::company::share_registry::AcquisitionSource::SecondaryMarket {
+                        settlement: receipt.request.event_id.clone(),
+                    })
+                {
+                    return Err(CompanyCapitalRestoreError::ActionMismatch {
+                        context: context.clone(),
+                        field: "repurchase-lot-source",
+                    });
+                }
+                if bought_lots
+                    .insert(acquisition.lot_id.clone(), (fill.day, fill.shares))
+                    .is_some()
+                {
+                    return Err(CompanyCapitalRestoreError::Duplicate { context });
+                }
+            }
+        }
+        if let Some(day) = book.cancelled_on() {
+            let reduction = fact.capital_reduction.ok_or_else(|| {
+                CompanyCapitalRestoreError::ActionMismatch {
+                    context: context.clone(),
+                    field: "capital-reduction",
+                }
+            })?;
+            if fact.cancelled_on != Some(day)
+                || fact.cancelled_shares != book.cancelled_shares()
+                || !reduction.is_positive()
+            {
+                return Err(CompanyCapitalRestoreError::ActionMismatch {
+                    context,
+                    field: "cancellation-finance-fact",
+                });
+            }
+            let capital_delta = reduction.cents().checked_neg().ok_or_else(|| {
+                CompanyCapitalRestoreError::Arithmetic {
+                    context: context.clone(),
+                }
+            })?;
+            let movement = ExpectedCapitalMovement {
+                context: CapitalRestoreContext {
+                    day: Some(day),
+                    ..context.clone()
+                },
+                day,
+                scope: MovementScope::IssuerRepurchaseCancellation {
+                    basis: plan.approval_reference.clone(),
+                },
+                allocation: ExpectedCapitalAllocation::RepurchaseCancellation {
+                    bought_lots,
+                    cancelled_shares: book.cancelled_shares(),
+                },
+                capital_delta: AccountingAmount::from_cents(capital_delta),
+                consumed: false,
+            };
+            let id = capital_receipt_event_id(
+                CorporateCapitalKind::IssuerRepurchaseCancellation,
+                &plan.event_id,
+            );
+            if bindings
+                .movements
+                .insert((plan.issuer, id), movement)
+                .is_some()
+            {
+                return Err(CompanyCapitalRestoreError::Duplicate { context });
+            }
+        }
+    }
+    if let Some(((company, event), _)) = facts.first_key_value() {
+        let stock = input
+            .system
+            .issuers()
+            .get(company)
+            .and_then(|spec| spec.listed_stock.as_ref())
+            .and_then(|code| input.catalog.id(&code.0));
+        return Err(CompanyCapitalRestoreError::MissingBook {
+            context: CapitalRestoreContext {
+                company: Some(*company),
+                stock,
+                kind: Some(CorporateCapitalKind::IssuerRepurchaseCancellation),
+                event_id: Some(event.clone()),
+                ..Default::default()
+            },
+        });
+    }
+    input
+        .system
+        .validate_issuer_repurchase_books(&input.actions.issuer_repurchases)
+        .map_err(|source| CompanyCapitalRestoreError::System {
+            context: CapitalRestoreContext {
+                kind: Some(CorporateCapitalKind::IssuerRepurchaseCancellation),
+                ..Default::default()
+            },
+            source,
+        })?;
+    Ok(())
+}
+
+fn validate_cancellation_lots(
+    receipt: &ShareDayReceipt,
+    bought_lots: &BTreeMap<String, (CivilDate, u64)>,
+    cancelled_shares: u64,
+    context: &CapitalRestoreContext,
+) -> Result<(), CompanyCapitalRestoreError> {
+    if receipt.request.changes.len() != 1 {
+        return Err(CompanyCapitalRestoreError::ActionMismatch {
+            context: context.clone(),
+            field: "cancellation-holder",
+        });
+    }
+    let change = &receipt.request.changes[0];
+    if change.holder != HolderId::IssuerTreasury
+        || change.change != -i128::from(cancelled_shares)
+        || change.acquisition.is_some()
+    {
+        return Err(CompanyCapitalRestoreError::ActionMismatch {
+            context: context.clone(),
+            field: "cancellation-holder",
+        });
+    }
+    let consume =
+        change
+            .consume
+            .as_ref()
+            .ok_or_else(|| CompanyCapitalRestoreError::ActionMismatch {
+                context: context.clone(),
+                field: "consume",
+            })?;
+    let mut total = 0_u64;
+    for selection in consume {
+        let (acquired_on, available) = bought_lots.get(&selection.lot_id).ok_or_else(|| {
+            CompanyCapitalRestoreError::ActionMismatch {
+                context: context.clone(),
+                field: "repurchase-lot-source",
+            }
+        })?;
+        let disposed = receipt
+            .disposals
+            .iter()
+            .find(|disposed| {
+                disposed.holder == HolderId::IssuerTreasury && disposed.lot.id == selection.lot_id
+            })
+            .ok_or_else(|| CompanyCapitalRestoreError::ActionMismatch {
+                context: context.clone(),
+                field: "repurchase-lot-source",
+            })?;
+        if selection.qty == 0
+            || selection.qty > *available
+            || disposed.lot.acquired_on != *acquired_on
+            || disposed.lot.qty != selection.qty
+        {
+            return Err(CompanyCapitalRestoreError::ActionMismatch {
+                context: context.clone(),
+                field: "repurchase-lot-source",
+            });
+        }
+        total = total.checked_add(selection.qty).ok_or_else(|| {
+            CompanyCapitalRestoreError::Arithmetic {
+                context: context.clone(),
+            }
+        })?;
+    }
+    check_shares(cancelled_shares, total, context.clone())?;
+    Ok(())
+}
+
 fn validate_redenomination_holders(
     receipt: &ShareDayReceipt,
     frozen: &ShareSplitReceipt,
@@ -1149,6 +1517,7 @@ fn validate_bound_receipt(
     receipt_index: usize,
     issued_before: u64,
     issued_after: u64,
+    capital_before: Option<AccountingAmount>,
 ) -> Result<(), CompanyCapitalRestoreError> {
     let context = CapitalRestoreContext {
         receipt_index: Some(receipt_index),
@@ -1171,6 +1540,33 @@ fn validate_bound_receipt(
             check_shares(frozen.issued_shares_before, issued_before, context.clone())?;
             check_shares(frozen.issued_shares_after, issued_after, context.clone())?;
             validate_redenomination_holders(receipt, frozen, &context)?;
+        }
+        ExpectedCapitalAllocation::RepurchaseCancellation {
+            bought_lots,
+            cancelled_shares,
+        } => {
+            validate_cancellation_lots(receipt, bought_lots, *cancelled_shares, &context)?;
+            let capital =
+                capital_before.ok_or_else(|| CompanyCapitalRestoreError::ActionMismatch {
+                    context: context.clone(),
+                    field: "registered-capital",
+                })?;
+            let divisor = i128::from(issued_before);
+            if divisor == 0 || capital.cents() % divisor != 0 {
+                return Err(CompanyCapitalRestoreError::Arithmetic { context });
+            }
+            let expected = (capital.cents() / divisor)
+                .checked_mul(i128::from(*cancelled_shares))
+                .ok_or_else(|| CompanyCapitalRestoreError::Arithmetic {
+                    context: context.clone(),
+                })?;
+            if expected.checked_neg() != Some(movement.capital_delta.cents()) {
+                return Err(CompanyCapitalRestoreError::RegisteredCapital {
+                    context,
+                    expected: AccountingAmount::from_cents(expected),
+                    actual: AccountingAmount::from_cents(-movement.capital_delta.cents()),
+                });
+            }
         }
     }
     movement.consumed = true;
