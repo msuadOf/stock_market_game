@@ -5,6 +5,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { registerHooks } from "node:module";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { assertCheckedGamePath, verifyBuildReceiptChain } from "./verify-v11-build-bindings.mjs";
 
 const [manifestFile, outputFile] = process.argv.slice(2);
 assert(manifestFile && outputFile && process.argv.length === 4, "必须提供冻结 manifest 与新的结果文件路径");
@@ -39,8 +40,7 @@ async function verifyArtifacts() {
   });
 }
 await verifyArtifacts();
-assert.equal(manifest.nativeSourceManifestSha256, manifest.sourceManifest.sha256);
-assert.equal(manifest.wasmSourceManifestSha256, manifest.sourceManifest.sha256);
+await verifyBuildReceiptChain(manifest);
 const sourceManifest = JSON.parse(await readFile(manifest.sourceManifest.path, "utf8"));
 assert.equal(sourceManifest.head, manifest.sourceHead);
 assert(Array.isArray(sourceManifest.files) && sourceManifest.files.length > 0);
@@ -71,7 +71,8 @@ for (const relative of requiredSources) {
   assert(manifest.sourceFiles.some((item) => item.path === source(relative)), `必须冻结真实生产源码：${relative}`);
 }
 const { verifyWebReleaseWasm } = await import(pathToFileURL(source("scripts/check-web-release-wasm.mjs")).href);
-await verifyWebReleaseWasm(path.dirname(manifest.wasm.path));
+const games = await verifyWebReleaseWasm(path.dirname(manifest.wasm.path));
+assertCheckedGamePath(games, path.dirname(manifest.wasm.path), manifest.wasm.path);
 
 // 只把裸 env 指向同一真实生产单例；不复制shim、不伪造浏览器隔离或Worker身份。
 const environmentUrl = pathToFileURL(source("apps/web/src/host/engine-clock-env.ts")).href;
