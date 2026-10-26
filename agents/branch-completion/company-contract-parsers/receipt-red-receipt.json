@@ -1,0 +1,17 @@
+{
+  "deadline_ms": 10000,
+  "case_timeout_ms": 10000,
+  "file_concurrency": 3,
+  "exit_code": 1,
+  "tests": 13,
+  "pass": 12,
+  "fail": 1,
+  "source_sha256": {
+    "agents/branch-completion/company-contract-parsers/receipt-red-source/company-contract-views.ts": "4836b4ddb6a1b5e99f95bbe6d49602384f830898838716e43c46c3473af69623",
+    "agents/branch-completion/company-contract-parsers/receipt-red-source/company-contract-views.test.ts": "46f3ffcda874082d837a64c989a3bdd8f7c6233f69ec86f7ea66f36060cedc1b",
+    "agents/branch-completion/company-contract-parsers/receipt-red-source/dividend-tax.ts": "85d3c8081638143d8e714322cbbd59cb15b1b2279957d95847cf6a991c780ace",
+    "agents/branch-completion/company-contract-parsers/receipt-red-source/dividend-tax.test.ts": "e18ec93cf776e77d37c9c76641de79b04e18ed82109c818185f05674933a4bb7",
+    "agents/branch-completion/company-contract-parsers/receipt-red-source/corporate-action-views.ts": "b32235dc6ba83b6fdb49ca9ac0967febce1ca182a782e31b784bfa2cf98c6bc8",
+    "agents/branch-completion/company-contract-parsers/receipt-red-source/corporate-action-views.test.ts": "8350212243ed08e99f7f61c3e525f1523ccad5dc6d3747ace83764b90a316def"
+  }
+}
