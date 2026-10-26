@@ -729,13 +729,6 @@ fn appending_identical_register_and_realize_retries_after_later_frontier_is_idem
             .unwrap(),
         expected
     );
-    if let ConditionalBonusTaxAction::RegisterBonus {
-        par_value_per_share,
-        ..
-    } = &mut reg.clone().action
-    {
-        *par_value_per_share = Money::from_cents(101);
-    }
     let mut conflicting = reg;
     if let ConditionalBonusTaxAction::RegisterBonus {
         par_value_per_share,

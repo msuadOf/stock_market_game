@@ -60,3 +60,22 @@ strict nullable/unknown字段、book+条件事实恢复后继续、无碎股门/
 源码只改cash_dividend_tax.rs、entitlement_units.rs、其测试helper可见性与新增两个conditional子文件；
 工作/证据在agents本主题。未改外树或main、未推送。必须由原未实施Sol核完整K2a diff后才能宣称本片完成，
 通过后再继续K2b，不能用94绿跳过独审或以当前unused生产入口宣称税bug关闭。
+
+
+## K2a 初审F1修复
+
+未实施Sol完整初审仅发现F1：先校raw prefix/day再去重，导致合法Reg@0/Realize@1后追加
+完全同事实Reg@0被拒。原reversed测试错误地将同一注册重试写成应拒，这是我的oracle错误，
+现改为不同新typed身份的倒序负例，仍要求拒绝；没有删除/弱化原非重复倒序合同。
+
+新增跨更后frontier重试Register/Realize并保持完整assessment深等的case，`f304b406` 保存真实红。
+修复只将typed身份冲突/完全重复判断移至时间顺序检查之前，保首次事件位置；
+原样重试不重新注入carrier/激活，异事实先明确冲突。有效唯一流仍校非递减prefix/date。
+顺带删除红测中一个对临时clone的无效赋值，不改变断言；工作TDD计划纠正同一错误说明。
+
+review-f1-red真实1fail/exit101，失败为追加原样重试被InvalidConditionalFact拒，fixture准备成功。
+review-f1-green全95/95绿（17个Bonus＋原78），含真实重试正控与不同新动作倒序负控。
+最终binary SHA `84c198727834d5c3a9f9a68a6c66164b8180a574e34b2768e16aa9acee244f41`，
+整运行wall 0.22532962798140943s，8threads/10000ms外监督；build 2.747407049057074s，
+codegen32/300000ms外监督。新标签独立binary、13源+5依赖及运行前后SHA/argv/exit均封原件。
+初审原对象05a完整保留，修后须原未实施Sol增量复核，K2b尚未开始业务实现。

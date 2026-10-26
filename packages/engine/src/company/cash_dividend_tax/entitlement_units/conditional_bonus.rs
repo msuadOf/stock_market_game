@@ -101,6 +101,13 @@ impl<'a> BonusReplay<'a> {
                 ConditionalBonusTaxAction::RegisterBonus { event_id, .. } => (0u8, event_id),
                 ConditionalBonusTaxAction::RealizeBonus { event_id, .. } => (1u8, event_id),
             };
+            // 身份冲突先拒；原样重试只引用首次位置，不重新进入时序或执行。
+            if let Some(previous) = identities.insert((phase, id), event) {
+                if previous != event {
+                    return Err(bad(id, "同typed动作身份重用但事实不同"));
+                }
+                continue;
+            }
             let lower = days
                 .get(&event.after_book_operation)
                 .ok_or_else(|| bad(id, "未知book操作prefix"))?;
@@ -119,12 +126,6 @@ impl<'a> BonusReplay<'a> {
             }
             previous_prefix = event.after_book_operation;
             previous_day = event.day;
-            if let Some(previous) = identities.insert((phase, id), event) {
-                if previous != event {
-                    return Err(bad(id, "同typed动作身份重用但事实不同"));
-                }
-                continue;
-            }
             match &event.action {
                 ConditionalBonusTaxAction::RegisterBonus {
                     shares_per_existing_share_micros,

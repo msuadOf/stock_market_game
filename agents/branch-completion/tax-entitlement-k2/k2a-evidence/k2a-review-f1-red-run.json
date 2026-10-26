@@ -1,0 +1,13 @@
+{
+  "label": "k2a-review-f1-red",
+  "argv": [
+    "/data1/baiyifan/workplace/stock_market_game/.tmp/tax-entitlement-k1/k2a-review-f1-red-harness",
+    "appending_identical",
+    "--test-threads=8",
+    "--nocapture"
+  ],
+  "binary_sha256": "088c6300bf3317e68f26459d0840c791141a288453433001df60cd0f8b69b945",
+  "source_verified_before_and_after": true,
+  "exit": 101,
+  "wall_seconds": 0.0458755970466882
+}
