@@ -6,6 +6,7 @@ import { registerHooks } from "node:module";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { assertCheckedGamePath, verifyBuildReceiptChain } from "./verify-v11-build-bindings.mjs";
+import { assertMixedPublicTrace } from "./assert-v11-public-trace.mjs";
 
 const [manifestFile, outputFile] = process.argv.slice(2);
 assert(manifestFile && outputFile && process.argv.length === 4, "必须提供冻结 manifest 与新的结果文件路径");
@@ -150,16 +151,7 @@ try {
   }
   // 先保留真实输出，再执行oracle与逐字段对照；断言失败也不丢掉运行事实。
   await writeFile(outputFile, JSON.stringify({ manifest, layout, trace }, null, 2) + "\n", { flag: "wx" });
-  const first = trace.frames[0].view;
-  assert.equal(first.currentMinute[native.closed].trading, false);
-  assert.equal(first.currentMinute[native.closed].phase, "Closed");
-  assert(!Object.hasOwn(first.snapshot.active_daily_candles, native.closed));
-  assert.equal(trace.frames[1].view.snapshot.daily_candles[native.closed].length, 360);
-  assert.equal(trace.frames[1].view.snapshot.daily_candles[native.open].length, 361);
-  assert.equal(trace.frames[4].view.snapshot.daily_candles[native.closed].length, 361);
-  assert.equal(trace.frames[4].view.snapshot.daily_candles[native.open].length, 362);
-  assert.equal(trace.frames[2].view.retained[native.closed].entries[0].availability, "Closed");
-  assert.equal(trace.frames[2].view.retained[native.open].entries[0].availability, "NoTrades");
+  assertMixedPublicTrace(trace);
   assert.deepEqual(trace, native, "native与实际wasm32串行的协议、市场、账户、分钟与retained须逐字段一致");
   await verifyArtifacts();
   await verifySources();

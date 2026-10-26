@@ -1,0 +1,22 @@
+{
+  "outer_argv": [
+    "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+    "10000",
+    "--",
+    "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+    "--test",
+    "--test-timeout=10000",
+    "--test-concurrency=8",
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/mixed-calendar-c2c/agents/branch-completion/mixed-calendar-c2c/assert-v11-public-trace.test.mjs"
+  ],
+  "cwd": "/data1/baiyifan/workplace/stock_market_game/.worktree/mixed-calendar-c2c",
+  "concurrency": 8,
+  "case_timeout_ms": 10000,
+  "batch_deadline_ms": 10000,
+  "sources": {
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/mixed-calendar-c2c/agents/branch-completion/mixed-calendar-c2c/assert-v11-public-trace.mjs": "e01c0c39446f6e1c8da00c8613376b3f366555dea19cb2dd733d987a8840c36f",
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/mixed-calendar-c2c/agents/branch-completion/mixed-calendar-c2c/assert-v11-public-trace.test.mjs": "5ed04137a812870b83955f658f385f9cb6d3310166bf88edb09fd62622d98278",
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/mixed-calendar-c2c/agents/branch-completion/mixed-calendar-c2c/compare-native-wasm-public-fixture.mjs": "c61fb3ebd6386b123a10ab5ce6650352d66e182df19a9bd9089b7c9688d78cee"
+  }
+}
