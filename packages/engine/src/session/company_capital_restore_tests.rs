@@ -1296,6 +1296,84 @@ fn capital_43_cancelled_repurchase_uses_actual_setup_exchange() {
     );
 }
 
+fn assert_fact_mismatch(
+    f: &Fixture,
+    through: &str,
+    expected_kind: CorporateCapitalKind,
+    expected_event: &str,
+    expected_field: &str,
+) {
+    assert!(
+        matches!(f.validate(through), Err(CompanyCapitalRestoreError::ActionMismatch {
+        context: CapitalRestoreContext { company: Some(CompanyId(0)), stock: Some(StockId(0)), kind: Some(kind), event_id: Some(event), .. }, field,
+    }) if kind == expected_kind && event == expected_event && field == expected_field)
+    );
+}
+
+#[test]
+fn capital_44_distribution_fact_mismatch_keeps_exact_action_context() {
+    let mut f = Fixture::new();
+    f.distribution("mismatch-dist", "2030-06-03", "2030-06-04", 100);
+    let mut plan = f.actions.stock_distributions[0].plan().clone();
+    plan.approval_reference = "不同批准".into();
+    f.actions.stock_distributions[0] = StockDistributionBook::new(plan).unwrap();
+    assert_fact_mismatch(
+        &f,
+        "2030-06-03",
+        CorporateCapitalKind::StockDistribution,
+        "mismatch-dist",
+        "approval_reference",
+    );
+}
+
+#[test]
+fn capital_45_split_fact_mismatch_keeps_exact_action_context() {
+    let mut f = Fixture::new();
+    f.redenominate(ShareSplitDirection::Split);
+    let mut wire = serde_json::to_value(&f.actions).unwrap();
+    wire["share_splits"][0]["plan"]["approval_reference"] = serde_json::json!("不同批准");
+    f.actions = serde_json::from_value(wire).unwrap();
+    assert_fact_mismatch(
+        &f,
+        "2030-06-04",
+        CorporateCapitalKind::ShareReDenomination,
+        "transform-a",
+        "approval_reference",
+    );
+}
+
+#[test]
+fn capital_46_rights_fact_mismatch_keeps_exact_action_context() {
+    let mut f = Fixture::new();
+    f.rights(0, false);
+    let mut plan = f.actions.rights_offerings[0].plan().clone();
+    plan.price_per_share = Money::from_cents(201);
+    f.actions.rights_offerings[0] = RightsOfferingBook::new(plan).unwrap();
+    assert_fact_mismatch(
+        &f,
+        "2030-06-03",
+        CorporateCapitalKind::RightsOffering,
+        "rights-a",
+        "price_per_share",
+    );
+}
+
+#[test]
+fn capital_47_repurchase_fact_mismatch_keeps_exact_action_context() {
+    let mut f = Fixture::new();
+    f.repurchase(true, false);
+    let mut wire = serde_json::to_value(&f.actions).unwrap();
+    wire["issuer_repurchases"][0]["plan"]["approval_reference"] = serde_json::json!("不同批准");
+    f.actions = serde_json::from_value(wire).unwrap();
+    assert_fact_mismatch(
+        &f,
+        "2030-06-04",
+        CorporateCapitalKind::IssuerRepurchaseCancellation,
+        "buy-a",
+        "approval_reference",
+    );
+}
+
 #[test]
 fn capital_01_unchanged_issuer_and_registry_keep_initial_shares() {
     let f = Fixture::new();
