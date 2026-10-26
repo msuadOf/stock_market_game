@@ -2,7 +2,7 @@
 
 use crate::Money;
 use crate::accounting::AccountingAmount;
-use crate::calendar::{CivilDate, TradingCalendar};
+use crate::calendar::{CalendarExchange, CivilDate, TradingCalendar};
 use crate::company::identity::IssuerRegistry;
 use crate::company::share_registry::{HolderId, MovementScope, ShareDayReceipt};
 use crate::company::share_split::{ShareSplitReceipt, holder_inherited_restriction};
@@ -186,6 +186,7 @@ pub(crate) fn validate_company_capital_restore(
             source,
         })?;
     validate_stable_issuers(&input)?;
+    let setup_exchanges = validate_setup_stocks(&input)?;
     let mut registries = BTreeMap::new();
     for registry in &input.actions.registries {
         let company = *registry.issuer();
@@ -216,10 +217,10 @@ pub(crate) fn validate_company_capital_restore(
                 source,
             })?;
     }
-    let mut bindings = prepare_stock_distributions(&input)?;
-    prepare_share_splits(&input, &mut bindings)?;
-    prepare_rights_offerings(&input, &mut bindings)?;
-    prepare_repurchase_cancellations(&input, &mut bindings)?;
+    let mut bindings = prepare_stock_distributions(&input, &setup_exchanges)?;
+    prepare_share_splits(&input, &setup_exchanges, &mut bindings)?;
+    prepare_rights_offerings(&input, &setup_exchanges, &mut bindings)?;
+    prepare_repurchase_cancellations(&input, &setup_exchanges, &mut bindings)?;
     let mut companies = BTreeMap::new();
     for (company, initial) in input.setup_issuers.iter() {
         let current = input.system.issuers().get(company).ok_or(
@@ -528,6 +529,75 @@ fn validate_stable_issuers(
     Ok(())
 }
 
+/// 仅在恢复过程中索引已校验的开局证券，不创建额外持久权威。
+fn validate_setup_stocks(
+    input: &CapitalRestoreInput<'_>,
+) -> Result<BTreeMap<StockId, CalendarExchange>, CompanyCapitalRestoreError> {
+    let mut exchanges = BTreeMap::new();
+    for spec in input.setup_stocks {
+        let stock = input.catalog.id(&spec.code.0).ok_or_else(|| {
+            CompanyCapitalRestoreError::SetupStockMapping {
+                stock_code: spec.code.0.clone(),
+                reason: SetupStockMappingReason::Unexpected,
+            }
+        })?;
+        let exchange = match spec.exchange {
+            crate::session::StockExchange::Shanghai => CalendarExchange::Sse,
+            crate::session::StockExchange::Shenzhen => CalendarExchange::Szse,
+        };
+        if exchanges.insert(stock, exchange).is_some() {
+            return Err(CompanyCapitalRestoreError::SetupStockMapping {
+                stock_code: spec.code.0.clone(),
+                reason: SetupStockMappingReason::Duplicate,
+            });
+        }
+    }
+    for (stock, meta) in input.catalog.iter() {
+        if !exchanges.contains_key(&stock) {
+            return Err(CompanyCapitalRestoreError::SetupStockMapping {
+                stock_code: meta.code.clone(),
+                reason: SetupStockMappingReason::Missing,
+            });
+        }
+    }
+    Ok(exchanges)
+}
+
+fn validate_plan_security(
+    input: &CapitalRestoreInput<'_>,
+    setup_exchanges: &BTreeMap<StockId, CalendarExchange>,
+    context: &CapitalRestoreContext,
+    stock_code: &crate::StockCode,
+    actual: CalendarExchange,
+) -> Result<(), CompanyCapitalRestoreError> {
+    if input.system.issuers().issuer_of(stock_code) != context.company {
+        return Err(CompanyCapitalRestoreError::ActionMismatch {
+            context: context.clone(),
+            field: "issuer-listed-stock",
+        });
+    }
+    let stock = input.catalog.id(&stock_code.0).ok_or_else(|| {
+        CompanyCapitalRestoreError::CatalogMapping {
+            company: context.company,
+            stock_code: stock_code.0.clone(),
+        }
+    })?;
+    let expected = setup_exchanges.get(&stock).ok_or_else(|| {
+        CompanyCapitalRestoreError::SetupStockMapping {
+            stock_code: stock_code.0.clone(),
+            reason: SetupStockMappingReason::Missing,
+        }
+    })?;
+    if *expected != actual {
+        return Err(CompanyCapitalRestoreError::ExchangeMismatch {
+            context: context.clone(),
+            expected: *expected,
+            actual,
+        });
+    }
+    Ok(())
+}
+
 struct ExpectedCapitalMovement {
     context: CapitalRestoreContext,
     day: CivilDate,
@@ -579,6 +649,7 @@ pub(crate) fn capital_receipt_event_id(kind: CorporateCapitalKind, event_id: &st
 
 fn prepare_stock_distributions(
     input: &CapitalRestoreInput<'_>,
+    setup_exchanges: &BTreeMap<StockId, CalendarExchange>,
 ) -> Result<CapitalBindings, CompanyCapitalRestoreError> {
     let mut bindings = CapitalBindings::default();
     let mut all_facts = BTreeMap::new();
@@ -617,6 +688,7 @@ fn prepare_stock_distributions(
             day: Some(plan.approved_on),
             ..Default::default()
         };
+        validate_plan_security(input, setup_exchanges, &context, &plan.stock, plan.exchange)?;
         if !seen.insert((plan.issuer, plan.event_id.clone())) {
             return Err(CompanyCapitalRestoreError::Duplicate { context });
         }
@@ -745,6 +817,7 @@ fn prepare_stock_distributions(
 
 fn prepare_share_splits(
     input: &CapitalRestoreInput<'_>,
+    setup_exchanges: &BTreeMap<StockId, CalendarExchange>,
     bindings: &mut CapitalBindings,
 ) -> Result<(), CompanyCapitalRestoreError> {
     let mut facts = BTreeMap::new();
@@ -783,6 +856,7 @@ fn prepare_share_splits(
             day: Some(plan.approved_on),
             ..Default::default()
         };
+        validate_plan_security(input, setup_exchanges, &context, &plan.stock, plan.exchange)?;
         if !seen.insert((plan.issuer, plan.event_id.clone())) {
             return Err(CompanyCapitalRestoreError::Duplicate { context });
         }
@@ -950,6 +1024,7 @@ fn prepare_share_splits(
 
 fn prepare_rights_offerings(
     input: &CapitalRestoreInput<'_>,
+    setup_exchanges: &BTreeMap<StockId, CalendarExchange>,
     bindings: &mut CapitalBindings,
 ) -> Result<(), CompanyCapitalRestoreError> {
     let mut facts = BTreeMap::new();
@@ -990,6 +1065,7 @@ fn prepare_rights_offerings(
             day: Some(plan.approved_on),
             ..Default::default()
         };
+        validate_plan_security(input, setup_exchanges, &context, &plan.stock, plan.exchange)?;
         if !seen.insert((plan.issuer, plan.event_id.clone())) {
             return Err(CompanyCapitalRestoreError::Duplicate { context });
         }
@@ -1166,6 +1242,7 @@ fn prepare_rights_offerings(
 
 fn prepare_repurchase_cancellations(
     input: &CapitalRestoreInput<'_>,
+    setup_exchanges: &BTreeMap<StockId, CalendarExchange>,
     bindings: &mut CapitalBindings,
 ) -> Result<(), CompanyCapitalRestoreError> {
     let mut facts = BTreeMap::new();
@@ -1206,6 +1283,7 @@ fn prepare_repurchase_cancellations(
             day: Some(plan.approved_on),
             ..Default::default()
         };
+        validate_plan_security(input, setup_exchanges, &context, &plan.stock, plan.exchange)?;
         if !seen.insert((plan.issuer, plan.event_id.clone())) {
             return Err(CompanyCapitalRestoreError::Duplicate { context });
         }
