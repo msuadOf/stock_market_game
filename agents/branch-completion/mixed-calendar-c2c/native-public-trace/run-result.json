@@ -1,0 +1,18 @@
+{
+  "outer_argv": [
+    "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+    "10000",
+    "--",
+    "/data1/baiyifan/workplace/stock_market_game/.tmp/mixed-calendar-c2c/trace-native-public-fixture-6ac",
+    "/data1/baiyifan/workplace/stock_market_game/.tmp/mixed-calendar-c2c/public-wasm-initial-6ac.json",
+    "/data1/baiyifan/workplace/stock_market_game/.tmp/mixed-calendar-c2c/native-public-trace-6ac.json"
+  ],
+  "wrapper_exit_code": 0,
+  "wall_seconds": 0.8562087250174955,
+  "trace": {
+    "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/mixed-calendar-c2c/native-public-trace-6ac.json",
+    "bytes": 1571950,
+    "sha256": "4b478311d4edbb0bea5c20fc8d91e8a34400618003feea732063f9dde78d7e59"
+  }
+}

@@ -1,0 +1,35 @@
+{
+  "outer_argv": [
+    "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+    "10000",
+    "--",
+    "/home/baiyifan/.rustup/toolchains/1.96.1-x86_64-unknown-linux-gnu/bin/rustc",
+    "--edition=2021",
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/mixed-calendar-c2c/agents/branch-completion/mixed-calendar-c2c/trace-native-public-fixture.rs",
+    "--extern",
+    "engine=/data1/baiyifan/workplace/stock_market_game/.tmp/main-current-normal-rlib-2026-10-26/artifacts/libengine-e024975623ca4b70.rlib",
+    "--extern",
+    "serde_json=/data1/baiyifan/workplace/stock_market_game/.tmp/main-current-normal-rlib-2026-10-26/target/debug/deps/libserde_json-64d03d242a680cbe.rlib",
+    "-L",
+    "dependency=/data1/baiyifan/workplace/stock_market_game/.tmp/main-current-normal-rlib-2026-10-26/target/debug/deps",
+    "-C",
+    "codegen-units=8",
+    "-C",
+    "debuginfo=0",
+    "-C",
+    "strip=debuginfo",
+    "-C",
+    "link-arg=-Wl,--threads=8",
+    "-o",
+    "/data1/baiyifan/workplace/stock_market_game/.tmp/mixed-calendar-c2c/trace-native-public-fixture-6ac"
+  ],
+  "wrapper_exit_code": 0,
+  "wall_seconds": 1.0265704989433289,
+  "source_after": "3d446109ba7a36f2da3fcbf43d0a19cf7fc215cb455313f8d8e92c422432c3ac",
+  "binary": {
+    "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/mixed-calendar-c2c/trace-native-public-fixture-6ac",
+    "bytes": 64664576,
+    "sha256": "70a9345c7f740e622176cfae38a69411f299e950fe99467c843dae7f03d74ff1"
+  }
+}
