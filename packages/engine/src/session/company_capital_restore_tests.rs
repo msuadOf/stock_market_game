@@ -449,7 +449,23 @@ fn capital_08_real_credited_distribution_replays_once_after_serde_roundtrip() {
 #[test]
 fn capital_09_approved_uncredited_distribution_keeps_legal_future_schedule() {
     let mut f = Fixture::new();
-    f.distribution("future-dist", "2030-06-05", "2030-06-06", 100);
+    let registered_on = f
+        .calendar
+        .next_trading_day(CalendarExchange::Sse, date("2030-06-04"))
+        .unwrap();
+    let ex_rights_on = f
+        .calendar
+        .next_trading_day(CalendarExchange::Sse, registered_on)
+        .unwrap();
+    f.distribution(
+        "future-dist",
+        &registered_on.to_string(),
+        &ex_rights_on.to_string(),
+        100,
+    );
+    f.actions.stock_distributions[0]
+        .validate_with_calendar(&f.calendar)
+        .unwrap();
     assert!(
         f.system.stock_distribution_facts(&CompanyId(0)).unwrap()[0]
             .credited_on
