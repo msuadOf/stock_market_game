@@ -31,3 +31,5 @@
 ## 待门禁
 
 由未实施 Sol 只读复核完整 `3984e141..e7850b5c` diff：大 A 语义及依据、最小必要性、边界与跨层一致性；发现修复后重审。未通过此门禁前不宣称完成。
+
+TDD 纪律限制：`changeCompanyPreferencesDraft` 的现行 parser 复用胶水与对应身份/保值断言在同一编辑操作加入，没有单独留存该 helper 的先红现场；不能把相邻 seed 业务红冒称为此 helper 独立红证。其余上述专门业务红均有实际先红 snapshot。`git diff --check` 对原始 Node 红日志会报告原生 AssertionError 空白行的尾空格；日志未裁剪，源码 diff 检查通过。
