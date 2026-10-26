@@ -33,3 +33,13 @@
 由未实施 Sol 只读复核完整 `3984e141..e7850b5c` diff：大 A 语义及依据、最小必要性、边界与跨层一致性；发现修复后重审。未通过此门禁前不宣称完成。
 
 TDD 纪律限制：`changeCompanyPreferencesDraft` 的现行 parser 复用胶水与对应身份/保值断言在同一编辑操作加入，没有单独留存该 helper 的先红现场；不能把相邻 seed 业务红冒称为此 helper 独立红证。其余上述专门业务红均有实际先红 snapshot。`git diff --check` 对原始 Node 红日志会报告原生 AssertionError 空白行的尾空格；日志未裁剪，源码 diff 检查通过。
+
+## 独审 R1／R2 修复冻结
+
+独立 reviewer 在根 `agents/branch-completion/company-f3-inputs-review-2026-10-26/` 真实复现：R1 外部关闭送转隐藏未完成 raw 与全部提示；R2 checkbox 的 onApply 异常逃逸，且送转取消先隐藏本地输入。作者随后新增送转／现金对称用例，真实业务红 2 项，原件见 `red-r1-external-disable/`（Node24，未以自审代替独审）。
+
+修复只改 CompanyPreferencesInput 与其测试：统一字段编辑和 checkbox 的本地编辑状态；external null 遇未完成 raw 时保持可见并提示冲突，明确取消才丢弃；toggle onApply 成功后才采用新 checked 状态，失败显错并保留原状态。送转启用仍为空字段，不注入数字，填完四字段才写一次。
+
+源码新冻结与九文件 SHA 见 `source-manifest-r1-r2.json`。最终 Node24 并发4／case+tree10000ms：32/32，通过约1.28秒，见 `green-r1-r2-final.*`；窄严格 TS、范围 lint 通过（`types-r1-r2.*`／`lint-r1-r2.*`）。初次 R1/R2 绿 `green-r1-r2.*` 为追加两条边界前的中间结果，最终只以 final 输出绑定终稿。
+
+仍须未实施 Sol 完整 diff 及修复复核；原 TDD 胶水限制、未接 App、无真实 Rust 创建及 DOM 验证限制不变。

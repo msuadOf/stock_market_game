@@ -1,0 +1,11 @@
+{
+  "node": "v24.18.0",
+  "case_timeout_ms": 10000,
+  "tree_deadline_ms": 10000,
+  "file_concurrency": 2,
+  "exit_code": 1,
+  "failed_business_assertions": 2,
+  "stdout": "stdout.log",
+  "stderr": "stderr.log",
+  "source_sha256": "source-sha256.json"
+}
