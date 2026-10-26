@@ -1,0 +1,57 @@
+{
+  "sourceHead": "6ac167e1d98d1a56b1307822f311d0277d624003",
+  "sourceManifest": {
+    "path": "/data1/baiyifan/workplace/stock_market_game/agents/branch-completion/main-current-normal-rlib-2026-10-26/engine-source-before.json",
+    "bytes": 153643,
+    "sha256": "30e8e7ee4c2b9356154acf2f2f214b74182c6ae8015098ae359867645cf3ceba"
+  },
+  "fixture": {
+    "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/mixed-calendar-c2c/public-wasm-initial-6ac.json",
+    "bytes": 2321588,
+    "sha256": "63d03f04a821ba9a84d8e35d20f2c032415afd95d0dca5d085ad37f00f3fb1ae"
+  },
+  "nativeTrace": {
+    "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/mixed-calendar-c2c/native-public-trace-6ac.json",
+    "bytes": 1571950,
+    "sha256": "4b478311d4edbb0bea5c20fc8d91e8a34400618003feea732063f9dde78d7e59"
+  },
+  "sourceFiles": [
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.worktree/mixed-calendar-c2c/agents/branch-completion/mixed-calendar-c2c/trace-native-public-fixture.rs",
+      "bytes": 4234,
+      "sha256": "3d446109ba7a36f2da3fcbf43d0a19cf7fc215cb455313f8d8e92c422432c3ac"
+    }
+  ],
+  "nativeReceipts": {
+    "enginePlan": {
+      "path": "/data1/baiyifan/workplace/stock_market_game/agents/branch-completion/main-current-normal-rlib-2026-10-26/build-plan.json",
+      "bytes": 1110,
+      "sha256": "9c71b87ce8bebfb5191492354fbe0ad836a1ee8f4ecd45fcf56b5c117e19c613"
+    },
+    "engineResult": {
+      "path": "/data1/baiyifan/workplace/stock_market_game/agents/branch-completion/main-current-normal-rlib-2026-10-26/build-result.json",
+      "bytes": 242,
+      "sha256": "ef90af5be572fef9bd502bb6966f51f07c6706fc757afc20e371bd189443663a"
+    },
+    "engineBinding": {
+      "path": "/data1/baiyifan/workplace/stock_market_game/agents/branch-completion/main-current-normal-rlib-2026-10-26/artifact-binding.json",
+      "bytes": 2186,
+      "sha256": "21e2f23954e58076eafda5a3b7efcf2cf7471c89db67cc47c7d2c8e6055c2321"
+    },
+    "tracePlan": {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.worktree/mixed-calendar-c2c/agents/branch-completion/mixed-calendar-c2c/native-public-trace/plan.json",
+      "bytes": 3219,
+      "sha256": "3747866c1d3b6b8bb079aff285e79e8e7a3265ebf89822dda16be4782273fa28"
+    },
+    "traceCompile": {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.worktree/mixed-calendar-c2c/agents/branch-completion/mixed-calendar-c2c/native-public-trace/compile-result.json",
+      "bytes": 1596,
+      "sha256": "621f3443025489394f89c4314934550d4923c1a5ca8c3d53e12137aefc349d97"
+    },
+    "traceRun": {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.worktree/mixed-calendar-c2c/agents/branch-completion/mixed-calendar-c2c/native-public-trace/run-result.json",
+      "bytes": 845,
+      "sha256": "f5347cb3b9879ae316bb2b89a8afefff23ca9da49fe17fc9baffeb5c8ef767c8"
+    }
+  }
+}

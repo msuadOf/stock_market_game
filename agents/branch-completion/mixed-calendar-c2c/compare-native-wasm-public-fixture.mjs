@@ -67,6 +67,9 @@ const requiredSources = [
   "apps/web/src/host/serde-normalize.ts",
   "packages/engine/src/runtime/mod.rs",
   "apps/web-wasm/src/lib.rs",
+  "agents/branch-completion/mixed-calendar-c2c/trace-native-public-fixture.rs",
+  "agents/branch-completion/mixed-calendar-c2c/verify-v11-build-bindings.mjs",
+  "agents/branch-completion/mixed-calendar-c2c/assert-v11-public-trace.mjs",
 ];
 for (const relative of requiredSources) {
   assert(manifest.sourceFiles.some((item) => item.path === source(relative)), `必须冻结真实生产源码：${relative}`);

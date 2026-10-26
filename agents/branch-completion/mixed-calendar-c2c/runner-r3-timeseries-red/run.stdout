@@ -1,0 +1,144 @@
+▶ V11独立公开市场事实oracle
+  ✔ 接受已有snapshot与真实open行情及仅open终K (10.492741ms)
+  ✔ R3仅污染公开PriceTick为closed也必须拒绝 (6.068851ms)
+  ✔ R3仅污染公开Trade为closed也必须拒绝 (5.382694ms)
+  ✔ R3仅污染公开AuctionTick为closed也必须拒绝 (5.395974ms)
+  ✔ R3仅污染公开AuctionCompleted为closed也必须拒绝 (5.23877ms)
+  ✔ R3仅污染DayBoundary把closed终K加入也必须拒绝 (5.072975ms)
+  ✔ R3每个Jan2真实市场拍都必须有open行情正控 (4.320997ms)
+  ✖ R3仅污染公开timeseries active_daily_candles为closed也必须拒绝 (0.925614ms)
+  ✖ R3仅污染公开timeseries continuous_points为closed也必须拒绝 (0.40085ms)
+  ✖ R3仅污染公开timeseries auction_points为closed也必须拒绝 (1.717753ms)
+  ✖ R3仅污染公开timeseries closed_daily_candles为closed也必须拒绝 (1.296902ms)
+  ✖ R3 open行情timeseries缺失也必须拒绝 (1.082947ms)
+  ✖ R3 open终K timeseries缺失也必须拒绝 (0.832761ms)
+✖ V11独立公开市场事实oracle (12.652584ms)
+ℹ tests 13
+ℹ suites 1
+ℹ pass 7
+ℹ fail 6
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 84.274625
+
+✖ failing tests:
+
+test at agents/branch-completion/mixed-calendar-c2c/assert-v11-public-trace.test.mjs:50:5
+✖ R3仅污染公开timeseries active_daily_candles为closed也必须拒绝 (0.925614ms)
+  AssertionError [ERR_ASSERTION]: Missing expected exception.
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/mixed-calendar-c2c/agents/branch-completion/mixed-calendar-c2c/assert-v11-public-trace.test.mjs:53:14)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at Test.start (node:internal/test_runner/test:1191:17)
+      at node:internal/test_runner/test:1792:71
+      at node:internal/per_context/primordials:466:82
+      at new Promise (<anonymous>)
+      at new SafePromise (node:internal/per_context/primordials:435:3)
+      at node:internal/per_context/primordials:466:9
+      at Array.map (<anonymous>) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: /closed/,
+    operator: 'throws',
+    diff: 'simple'
+  }
+
+test at agents/branch-completion/mixed-calendar-c2c/assert-v11-public-trace.test.mjs:50:5
+✖ R3仅污染公开timeseries continuous_points为closed也必须拒绝 (0.40085ms)
+  AssertionError [ERR_ASSERTION]: Missing expected exception.
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/mixed-calendar-c2c/agents/branch-completion/mixed-calendar-c2c/assert-v11-public-trace.test.mjs:53:14)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at Suite.processPendingSubtests (node:internal/test_runner/test:911:18)
+      at Test.postRun (node:internal/test_runner/test:1465:19)
+      at Test.run (node:internal/test_runner/test:1390:12)
+      at async Promise.all (index 7)
+      at async Suite.run (node:internal/test_runner/test:1794:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: /closed/,
+    operator: 'throws',
+    diff: 'simple'
+  }
+
+test at agents/branch-completion/mixed-calendar-c2c/assert-v11-public-trace.test.mjs:50:5
+✖ R3仅污染公开timeseries auction_points为closed也必须拒绝 (1.717753ms)
+  AssertionError [ERR_ASSERTION]: Missing expected exception.
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/mixed-calendar-c2c/agents/branch-completion/mixed-calendar-c2c/assert-v11-public-trace.test.mjs:53:14)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at Suite.processPendingSubtests (node:internal/test_runner/test:911:18)
+      at Test.postRun (node:internal/test_runner/test:1465:19)
+      at Test.run (node:internal/test_runner/test:1390:12)
+      at async Suite.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: /closed/,
+    operator: 'throws',
+    diff: 'simple'
+  }
+
+test at agents/branch-completion/mixed-calendar-c2c/assert-v11-public-trace.test.mjs:50:5
+✖ R3仅污染公开timeseries closed_daily_candles为closed也必须拒绝 (1.296902ms)
+  AssertionError [ERR_ASSERTION]: Missing expected exception.
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/mixed-calendar-c2c/agents/branch-completion/mixed-calendar-c2c/assert-v11-public-trace.test.mjs:53:14)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at Suite.processPendingSubtests (node:internal/test_runner/test:911:18)
+      at Test.postRun (node:internal/test_runner/test:1465:19)
+      at Test.run (node:internal/test_runner/test:1390:12)
+      at async Promise.all (index 0)
+      at async Suite.run (node:internal/test_runner/test:1794:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: /closed/,
+    operator: 'throws',
+    diff: 'simple'
+  }
+
+test at agents/branch-completion/mixed-calendar-c2c/assert-v11-public-trace.test.mjs:57:3
+✖ R3 open行情timeseries缺失也必须拒绝 (1.082947ms)
+  AssertionError [ERR_ASSERTION]: Missing expected exception.
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/mixed-calendar-c2c/agents/branch-completion/mixed-calendar-c2c/assert-v11-public-trace.test.mjs:60:12)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at Suite.processPendingSubtests (node:internal/test_runner/test:911:18)
+      at Test.postRun (node:internal/test_runner/test:1465:19)
+      at Test.run (node:internal/test_runner/test:1390:12)
+      at async Promise.all (index 1)
+      at async Suite.run (node:internal/test_runner/test:1794:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: /open/,
+    operator: 'throws',
+    diff: 'simple'
+  }
+
+test at agents/branch-completion/mixed-calendar-c2c/assert-v11-public-trace.test.mjs:63:3
+✖ R3 open终K timeseries缺失也必须拒绝 (0.832761ms)
+  AssertionError [ERR_ASSERTION]: Missing expected exception.
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/mixed-calendar-c2c/agents/branch-completion/mixed-calendar-c2c/assert-v11-public-trace.test.mjs:66:12)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at Suite.processPendingSubtests (node:internal/test_runner/test:911:18)
+      at Test.postRun (node:internal/test_runner/test:1465:19)
+      at Test.run (node:internal/test_runner/test:1390:12)
+      at async Promise.all (index 2)
+      at async Suite.run (node:internal/test_runner/test:1794:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: /open/,
+    operator: 'throws',
+    diff: 'simple'
+  }

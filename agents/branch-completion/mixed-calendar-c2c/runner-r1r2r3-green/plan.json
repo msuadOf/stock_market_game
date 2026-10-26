@@ -1,0 +1,26 @@
+{
+  "outer_argv": [
+    "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+    "10000",
+    "--",
+    "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+    "--test",
+    "--test-timeout=10000",
+    "--test-concurrency=8",
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/mixed-calendar-c2c/agents/branch-completion/mixed-calendar-c2c/verify-v11-build-bindings.test.mjs",
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/mixed-calendar-c2c/agents/branch-completion/mixed-calendar-c2c/assert-v11-public-trace.test.mjs"
+  ],
+  "cwd": "/data1/baiyifan/workplace/stock_market_game/.worktree/mixed-calendar-c2c",
+  "concurrency": 8,
+  "case_timeout_ms": 10000,
+  "batch_deadline_ms": 10000,
+  "sources": {
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/mixed-calendar-c2c/agents/branch-completion/mixed-calendar-c2c/verify-v11-build-bindings.mjs": "7afc72e7d6edc5ec1c595aa164cf89f5a2937da982bdb186a7bbdc390c2f26a1",
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/mixed-calendar-c2c/agents/branch-completion/mixed-calendar-c2c/verify-v11-build-bindings.test.mjs": "ef6188ce10bc38171d9aa6571cafc89c55aa3259c1d2552b3ccf493aae1755af",
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/mixed-calendar-c2c/agents/branch-completion/mixed-calendar-c2c/assert-v11-public-trace.mjs": "60513127ccba69ccbd0f3c23de1ee5fa75295bed37797578c1cbdb69f82984a8",
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/mixed-calendar-c2c/agents/branch-completion/mixed-calendar-c2c/assert-v11-public-trace.test.mjs": "5ed04137a812870b83955f658f385f9cb6d3310166bf88edb09fd62622d98278",
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/mixed-calendar-c2c/agents/branch-completion/mixed-calendar-c2c/compare-native-wasm-public-fixture.mjs": "098812e520227618318ed6c64ee2ca7e4b91060fcd0d5b5bc1c026ec1e4e033d"
+  },
+  "说明": "只有fixture来源门/oracle短测，不执行WASM；R1正式WASMreceipt schema未交付，安全拒绝不等于实际WASM通过。"
+}

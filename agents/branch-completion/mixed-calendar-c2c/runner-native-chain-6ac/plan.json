@@ -1,0 +1,24 @@
+{
+  "outer_argv": [
+    "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+    "10000",
+    "--",
+    "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+    "--input-type=module",
+    "--eval",
+    "import {readFile} from 'node:fs/promises'; import {verifyNativeReceiptChain} from 'file:///data1/baiyifan/workplace/stock_market_game/.worktree/mixed-calendar-c2c/agents/branch-completion/mixed-calendar-c2c/verify-v11-build-bindings.mjs'; const m=JSON.parse(await readFile('/data1/baiyifan/workplace/stock_market_game/.worktree/mixed-calendar-c2c/agents/branch-completion/mixed-calendar-c2c/runner-native-chain-6ac/manifest.json','utf8')); await verifyNativeReceiptChain(m); console.log(JSON.stringify({nativeReceiptChainVerified:true,sourceHead:m.sourceHead,wasmExecuted:false}));"
+  ],
+  "deadline_ms": 10000,
+  "manifest": {
+    "path": "/data1/baiyifan/workplace/stock_market_game/.worktree/mixed-calendar-c2c/agents/branch-completion/mixed-calendar-c2c/runner-native-chain-6ac/manifest.json",
+    "bytes": 2861,
+    "sha256": "a9ea4c5a3643c3c527d3bcba139657396f53bcc94577685ddc5f23f4a56a22f2"
+  },
+  "validator": {
+    "path": "/data1/baiyifan/workplace/stock_market_game/.worktree/mixed-calendar-c2c/agents/branch-completion/mixed-calendar-c2c/verify-v11-build-bindings.mjs",
+    "bytes": 5837,
+    "sha256": "7afc72e7d6edc5ec1c595aa164cf89f5a2937da982bdb186a7bbdc390c2f26a1"
+  },
+  "说明": "验证现有真实6ac正式native receipt链，不运行wasm，不宣称新源生产完成。"
+}

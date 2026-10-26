@@ -9,15 +9,19 @@ function legalTrace() {
     retained: { 0: { entries: [{ availability: "NoTrades" }] }, 1: { entries: [{ availability: "Closed" }] } },
   });
   const trace = { closed: 1, open: 0, frames: Array.from({ length: 6 }, () => ({
-    update: { TickBatch: { frames: [{ facts: [{ event: { PriceTick: { code: 0 } } }] }] } },
+    update: { TickBatch: { frames: [{
+      facts: [{ event: { PriceTick: { code: 0 } } }],
+      timeseries_payload: { active_daily_candles: { 0: {} }, continuous_points: { 0: {} }, auction_points: {}, closed_daily_candles: {}, markets: { 0: {}, 1: {} } },
+    }] } },
     view: view(),
   })) };
   trace.frames[1].update.TickBatch.frames[0].facts.push({ event: { DayBoundary: { closed_daily_candles: { 0: {} } } } });
+  trace.frames[1].update.TickBatch.frames[0].timeseries_payload.closed_daily_candles = { 0: {} };
   trace.frames[4].view.snapshot.daily_candles = { 0: Array(362), 1: Array(361) };
   return trace;
 }
 
-describe("V11独立公开市场事实oracle", { concurrency: 8 }, () => {
+describe("V11独立公开市场事实oracle", { concurrency: 4 }, () => {
   it("接受已有snapshot与真实open行情及仅open终K", () => {
     assert.doesNotThrow(() => assertMixedPublicTrace(legalTrace()));
   });
@@ -39,6 +43,26 @@ describe("V11独立公开市场事实oracle", { concurrency: 8 }, () => {
   it("R3每个Jan2真实市场拍都必须有open行情正控", () => {
     const trace = legalTrace();
     trace.frames[0].update.TickBatch.frames[0].facts = [];
+    assert.throws(() => assertMixedPublicTrace(trace), /open/);
+  });
+
+  for (const field of ["active_daily_candles", "continuous_points", "auction_points", "closed_daily_candles"]) {
+    it(`R3仅污染公开timeseries ${field}为closed也必须拒绝`, () => {
+      const trace = legalTrace();
+      trace.frames[0].update.TickBatch.frames[0].timeseries_payload[field][1] = {};
+      assert.throws(() => assertMixedPublicTrace(trace), /closed/);
+    });
+  }
+
+  it("R3 open行情timeseries缺失也必须拒绝", () => {
+    const trace = legalTrace();
+    trace.frames[0].update.TickBatch.frames[0].timeseries_payload.continuous_points = {};
+    assert.throws(() => assertMixedPublicTrace(trace), /open/);
+  });
+
+  it("R3 open终K timeseries缺失也必须拒绝", () => {
+    const trace = legalTrace();
+    trace.frames[1].update.TickBatch.frames[0].timeseries_payload.closed_daily_candles = {};
     assert.throws(() => assertMixedPublicTrace(trace), /open/);
   });
 });
