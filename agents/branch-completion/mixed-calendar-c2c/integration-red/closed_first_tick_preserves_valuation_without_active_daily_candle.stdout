@@ -1,0 +1,11 @@
+
+running 1 test
+test closed_first_tick_preserves_valuation_without_active_daily_candle ... FAILED
+
+failures:
+
+failures:
+    closed_first_tick_preserves_valuation_without_active_daily_candle
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 8 filtered out; finished in 0.76s
+

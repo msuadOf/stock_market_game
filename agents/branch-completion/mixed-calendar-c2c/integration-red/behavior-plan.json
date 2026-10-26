@@ -1,0 +1,26 @@
+{
+  "phase": "behavior",
+  "case_parallelism": 8,
+  "harness_threads_per_case": 1,
+  "outer_deadline_ms": 10000,
+  "per_case_deadline_ms": 10000,
+  "binary": {
+    "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/mixed-calendar-c2c/integration-red-6ac167e1",
+    "bytes": 49534504,
+    "sha256": "99f40845745fcda323d10af1dfa28c5ef20bf9050d6d36ba054dfbf0e4fb2060"
+  },
+  "test_source_before": {
+    "packages/engine/tests/mixed_calendar_c2c.rs": "7454768a5f03d43b19d2972e057225c8c58fa67280fb011764f43ca4494ea571",
+    "packages/engine/tests/common/mixed_calendar_c2c_fixture.rs": "d1120a2ad62e3d0c1ca15ec1126ec44cf2050b48c4f84cb07e4dafbb5f4b2eb3"
+  },
+  "cases": [
+    "closed_first_tick_emits_no_price_fact_while_open_stock_progresses",
+    "closed_first_tick_preserves_valuation_without_active_daily_candle",
+    "closed_first_tick_adds_neither_price_history_nor_market_minute",
+    "mixed_day_end_archives_only_open_stock_and_reports_only_its_final_candle",
+    "closed_stock_produces_no_auction_facts_in_open_or_closing_window",
+    "closed_current_minute_query_stays_closed_during_shared_market_tick",
+    "retained_closed_and_open_no_trades_remain_distinct_after_civil_commit",
+    "first_reopen_uses_stock_minute_zero_while_other_exchange_starts_day_one"
+  ]
+}

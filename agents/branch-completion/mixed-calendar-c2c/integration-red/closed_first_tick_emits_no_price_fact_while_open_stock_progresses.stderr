@@ -1,0 +1,5 @@
+
+thread 'closed_first_tick_emits_no_price_fact_while_open_stock_progresses' (1623297) panicked at /data1/baiyifan/workplace/stock_market_game/.worktree/mixed-calendar-c2c/packages/engine/tests/mixed_calendar_c2c.rs:54:5:
+closed 股不能产生 PriceTick
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+bounded command exited with 101

@@ -1,0 +1,7 @@
+
+thread 'closed_stock_produces_no_auction_facts_in_open_or_closing_window' (1623299) panicked at /data1/baiyifan/workplace/stock_market_game/.worktree/mixed-calendar-c2c/packages/engine/tests/mixed_calendar_c2c.rs:161:5:
+assertion `left == right` failed: closed 股不得执行集合竞价清算
+  left: 2
+ right: 0
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+bounded command exited with 101

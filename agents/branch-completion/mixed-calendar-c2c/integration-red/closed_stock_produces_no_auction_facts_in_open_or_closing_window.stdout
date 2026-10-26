@@ -1,0 +1,11 @@
+
+running 1 test
+test closed_stock_produces_no_auction_facts_in_open_or_closing_window ... FAILED
+
+failures:
+
+failures:
+    closed_stock_produces_no_auction_facts_in_open_or_closing_window
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 8 filtered out; finished in 0.76s
+

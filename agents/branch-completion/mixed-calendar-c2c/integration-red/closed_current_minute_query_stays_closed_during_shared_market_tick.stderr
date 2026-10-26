@@ -1,0 +1,5 @@
+
+thread 'closed_current_minute_query_stays_closed_during_shared_market_tick' (1623304) panicked at /data1/baiyifan/workplace/stock_market_game/.worktree/mixed-calendar-c2c/packages/engine/tests/mixed_calendar_c2c.rs:181:5:
+assertion failed: !closed.trading
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+bounded command exited with 101

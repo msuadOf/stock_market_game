@@ -1,0 +1,59 @@
+{
+  "说明": "只重编译 integration test，engine 使用 root 已授权同源 normal rlib；无 Cargo。",
+  "head": "77bd566da405ae2a9f17d6b8e30170f5bd6e1260",
+  "engine_binding": "/data1/baiyifan/workplace/stock_market_game/agents/branch-completion/main-current-normal-rlib-2026-10-26/artifact-binding.json",
+  "binding_sha256": "21e2f23954e58076eafda5a3b7efcf2cf7471c89db67cc47c7d2c8e6055c2321",
+  "engine_source_manifest": "/data1/baiyifan/workplace/stock_market_game/agents/branch-completion/main-current-normal-rlib-2026-10-26/engine-source-before.json",
+  "source_manifest_sha256": "30e8e7ee4c2b9356154acf2f2f214b74182c6ae8015098ae359867645cf3ceba",
+  "verified_input_count": 826,
+  "verification_threads": 8,
+  "engine_artifact": {
+    "target": "engine",
+    "test": false,
+    "source": "/data1/baiyifan/workplace/stock_market_game/.tmp/main-current-normal-rlib-2026-10-26/target/debug/deps/libengine-e024975623ca4b70.rlib",
+    "sealed": "/data1/baiyifan/workplace/stock_market_game/.tmp/main-current-normal-rlib-2026-10-26/artifacts/libengine-e024975623ca4b70.rlib",
+    "bytes": 768433622,
+    "sha256": "9bee5bf8bb46234eaaeb075f82d38dde14ae2c4e9169664669f1627ed88f1480",
+    "profile": {
+      "opt_level": "0",
+      "debuginfo": 2,
+      "debug_assertions": true,
+      "overflow_checks": true,
+      "test": false
+    },
+    "features": [],
+    "normal_rlib": true
+  },
+  "command": [
+    "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+    "/data1/baiyifan/workplace/stock_market_game/scripts/run-with-deadline.mjs",
+    "10000",
+    "--",
+    "/home/baiyifan/.rustup/toolchains/1.96.1-x86_64-unknown-linux-gnu/bin/rustc",
+    "--edition=2021",
+    "--test",
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/mixed-calendar-c2c/packages/engine/tests/mixed_calendar_c2c.rs",
+    "--extern",
+    "engine=/data1/baiyifan/workplace/stock_market_game/.tmp/main-current-normal-rlib-2026-10-26/artifacts/libengine-e024975623ca4b70.rlib",
+    "-L",
+    "dependency=/data1/baiyifan/workplace/stock_market_game/.tmp/main-current-normal-rlib-2026-10-26/target/debug/deps",
+    "-C",
+    "codegen-units=8",
+    "-C",
+    "debuginfo=0",
+    "-C",
+    "strip=debuginfo",
+    "-C",
+    "link-arg=-Wl,--threads=8",
+    "-o",
+    "/data1/baiyifan/workplace/stock_market_game/.tmp/mixed-calendar-c2c/integration-red-6ac167e1"
+  ],
+  "cwd": "/data1/baiyifan/workplace/stock_market_game/.worktree/mixed-calendar-c2c",
+  "deadline_ms": 10000,
+  "codegen_units": 8,
+  "linker_threads": 8,
+  "test_source_before": {
+    "packages/engine/tests/mixed_calendar_c2c.rs": "7454768a5f03d43b19d2972e057225c8c58fa67280fb011764f43ca4494ea571",
+    "packages/engine/tests/common/mixed_calendar_c2c_fixture.rs": "d1120a2ad62e3d0c1ca15ec1126ec44cf2050b48c4f84cb07e4dafbb5f4b2eb3"
+  }
+}
