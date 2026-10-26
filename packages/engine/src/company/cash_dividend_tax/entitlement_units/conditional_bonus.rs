@@ -65,6 +65,8 @@ pub(super) struct BonusReplay<'a> {
     events: Vec<&'a ConditionalBonusTaxEvent>,
     acquisitions: BTreeSet<u64>,
     registered: BTreeMap<String, RegisteredBonus>,
+    cash_collected: i128,
+    bonus_collected: i128,
 }
 fn bad(event_id: &str, detail: &'static str) -> TaxLineageError {
     TaxLineageError::InvalidConditionalFact {
@@ -134,7 +136,15 @@ impl<'a> BonusReplay<'a> {
             previous_prefix = event.after_book_operation;
             previous_day = event.day;
             match &event.action {
-                ConditionalBonusTaxAction::Collect { .. } => {}
+                ConditionalBonusTaxAction::Collect { event_id, .. } => {
+                    if book
+                        .collections
+                        .iter()
+                        .any(|actual| actual.event_id == *event_id)
+                    {
+                        return Err(bad(event_id, "同一真实book收缴不能在条件流重复入账"));
+                    }
+                }
                 ConditionalBonusTaxAction::RegisterBonus {
                     shares_per_existing_share_micros,
                     par_value_per_share,
@@ -185,6 +195,8 @@ impl<'a> BonusReplay<'a> {
             events,
             acquisitions,
             registered: BTreeMap::new(),
+            cash_collected: 0,
+            bonus_collected: 0,
         })
     }
     pub(super) fn classifies(&self, sequence: u64) -> bool {
@@ -195,6 +207,9 @@ impl<'a> BonusReplay<'a> {
         sequence: u64,
         lots: &[DividendTaxLot],
         carriers: &mut Vec<EntitlementCarrier>,
+        consumptions: &[TaxEntitlementConsumption],
+        cash_assessed: i128,
+        legacy_cash_collected: i128,
     ) -> Result<(), TaxLineageError> {
         for event in self
             .events
@@ -202,7 +217,50 @@ impl<'a> BonusReplay<'a> {
             .filter(|e| e.after_book_operation == sequence)
         {
             match &event.action {
-                ConditionalBonusTaxAction::Collect { .. } => {}
+                ConditionalBonusTaxAction::Collect {
+                    event_id,
+                    available_cash,
+                    cash_collected,
+                    bonus_collected,
+                } => {
+                    let cash_due = cash_assessed
+                        .checked_sub(legacy_cash_collected)
+                        .and_then(|due| due.checked_sub(self.cash_collected))
+                        .ok_or_else(|| overflow("conditional Cash due"))?;
+                    let bonus_due = self
+                        .assessed(consumptions)?
+                        .checked_sub(self.bonus_collected)
+                        .ok_or_else(|| overflow("conditional Bonus due"))?;
+                    let total_due = cash_due
+                        .checked_add(bonus_due)
+                        .ok_or_else(|| overflow("conditional collection due"))?;
+                    let requested =
+                        i128::from(cash_collected.cents()) + i128::from(bonus_collected.cents());
+                    if available_cash.cents() < 0
+                        || cash_collected.cents() < 0
+                        || bonus_collected.cents() < 0
+                        || i128::from(cash_collected.cents()) > cash_due
+                        || i128::from(bonus_collected.cents()) > bonus_due
+                        || requested != total_due.min(i128::from(available_cash.cents()))
+                    {
+                        return Err(TaxLineageError::ConditionalCollectionMismatch {
+                            event_id: event_id.clone(),
+                            cash_due_cents: cash_due,
+                            bonus_due_cents: bonus_due,
+                            available_cents: available_cash.cents(),
+                            cash_collected_cents: cash_collected.cents(),
+                            bonus_collected_cents: bonus_collected.cents(),
+                        });
+                    }
+                    self.cash_collected = self
+                        .cash_collected
+                        .checked_add(i128::from(cash_collected.cents()))
+                        .ok_or_else(|| overflow("conditional Cash collected"))?;
+                    self.bonus_collected = self
+                        .bonus_collected
+                        .checked_add(i128::from(bonus_collected.cents()))
+                        .ok_or_else(|| overflow("conditional Bonus collected"))?;
+                }
                 ConditionalBonusTaxAction::RegisterBonus {
                     event_id,
                     shares_per_existing_share_micros,
@@ -256,6 +314,20 @@ impl<'a> BonusReplay<'a> {
         }
         Ok(())
     }
+    pub(super) fn needs_collection_at(&self, sequence: u64) -> bool {
+        self.events.iter().any(|e| {
+            e.after_book_operation == sequence
+                && matches!(e.action, ConditionalBonusTaxAction::Collect { .. })
+        })
+    }
+    pub(super) fn cash_collected(&self) -> i128 {
+        self.cash_collected
+    }
+    pub(super) fn total_collected(&self) -> Result<i128, DividendTaxError> {
+        self.cash_collected
+            .checked_add(self.bonus_collected)
+            .ok_or_else(|| overflow("conditional combined collected"))
+    }
     pub(super) fn assessed(
         &self,
         consumptions: &[TaxEntitlementConsumption],
@@ -294,11 +366,20 @@ impl MappedTaxAssessment {
         &self,
         available_cash: Money,
     ) -> Result<ConditionalTaxCollectionPreparation, TaxLineageError> {
+        if available_cash.cents() < 0 || self.outstanding.denominator() != 1 {
+            return Err(invalid(
+                "collection preparation requires nonnegative cash and whole assessed cents",
+            )
+            .into());
+        }
+        let due = self.outstanding.numerator();
+        let collected = due.min(i128::from(available_cash.cents()));
+        let cents = i64::try_from(collected).map_err(|_| overflow("prepared collection cash"))?;
         Ok(ConditionalTaxCollectionPreparation {
-            collected: Money::from_cents(0),
-            remaining_cash: available_cash,
-            outstanding: self.outstanding.clone(),
-            needs_funds: false,
+            collected: Money::from_cents(cents),
+            remaining_cash: Money::from_cents(available_cash.cents() - cents),
+            outstanding: ExactDividendTaxAmount::new(due - collected, 1)?,
+            needs_funds: due > collected,
         })
     }
 }

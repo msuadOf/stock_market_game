@@ -168,6 +168,15 @@ pub enum TaxLineageError {
         previously_collected: i128,
         attempted_cents: i64,
     },
+    #[error("条件收缴 {event_id} 分额/当时欠税不符：Cash欠{cash_due_cents}分/收{cash_collected_cents}分，Bonus欠{bonus_due_cents}分/收{bonus_collected_cents}分，可用{available_cents}分")]
+    ConditionalCollectionMismatch {
+        event_id: String,
+        cash_due_cents: i128,
+        bonus_due_cents: i128,
+        available_cents: i64,
+        cash_collected_cents: i64,
+        bonus_collected_cents: i64,
+    },
     #[error("条件税事实 {event_id} 无效：{detail}")]
     InvalidConditionalFact {
         event_id: String,
@@ -264,7 +273,7 @@ impl CashDividendTaxBook {
         let mut retirements = Vec::new();
         let mut predecessor = None;
         let mut legacy_cash_collected = 0i128;
-        bonus_replay.apply_at(0, &lots, &mut carriers)?;
+        bonus_replay.apply_at(0, &lots, &mut carriers, &consumptions, 0, 0)?;
         for sequence in 1..=self.operation_seq {
             let before = lots.clone();
             if let Some(day) = self.days.iter().find(|day| day.operation_seq == sequence) {
@@ -343,15 +352,18 @@ impl CashDividendTaxBook {
                     collection.day,
                     sequence,
                 )?;
+                let prior_cash_collected = legacy_cash_collected
+                    .checked_add(bonus_replay.cash_collected())
+                    .ok_or_else(|| overflow("prior Cash collected"))?;
                 let due = cash_assessed
-                    .checked_sub(legacy_cash_collected)
+                    .checked_sub(prior_cash_collected)
                     .ok_or_else(|| overflow("legacy Cash due"))?;
                 if i128::from(collection.collected.cents()) > due {
                     return Err(TaxLineageError::LegacyCashOvercollection {
                         event_id: collection.event_id.clone(),
                         operation_seq: sequence,
                         assessed_cash: cash_assessed,
-                        previously_collected: legacy_cash_collected,
+                        previously_collected: prior_cash_collected,
                         attempted_cents: collection.collected.cents(),
                     });
                 }
@@ -359,17 +371,32 @@ impl CashDividendTaxBook {
                     .checked_add(i128::from(collection.collected.cents()))
                     .ok_or_else(|| overflow("legacy Cash collected"))?;
             }
-            bonus_replay.apply_at(sequence, &lots, &mut carriers)?;
+            // 同prefix的侧事件不改变Cash所得；prefix限制排除后续同日付款。
+            let cash_assessed = if bonus_replay.needs_collection_at(sequence) {
+                self.assessed_cash_cents_with_consumptions_through(
+                    &consumptions,
+                    self.settled_on,
+                    sequence,
+                )?
+            } else {
+                0
+            };
+            bonus_replay.apply_at(
+                sequence,
+                &lots,
+                &mut carriers,
+                &consumptions,
+                cash_assessed,
+                legacy_cash_collected,
+            )?;
         }
         let assessed = self
             .assessed_cash_cents_with_consumptions(&consumptions)?
             .checked_add(bonus_replay.assessed(&consumptions)?)
             .ok_or_else(|| overflow("combined assessed tax cents"))?;
-        let collected = self.collections.iter().try_fold(0i128, |total, receipt| {
-            total
-                .checked_add(i128::from(receipt.collected.cents()))
-                .ok_or_else(|| overflow("collected tax sum"))
-        })?;
+        let collected = legacy_cash_collected
+            .checked_add(bonus_replay.total_collected()?)
+            .ok_or_else(|| overflow("combined collected tax sum"))?;
         Ok(MappedTaxAssessment {
             outstanding: ExactDividendTaxAmount::new(
                 assessed
