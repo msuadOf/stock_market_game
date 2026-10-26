@@ -2,7 +2,7 @@
 
 ## 当前状态
 
-实施前行为红已取得，尚未实现；设计批准不是实现通过。
+纯 C2-A 实现候选已冻结、13/13 实际绿；等待未实施 Sol 独立复核，尚不宣称完成。设计批准不是实现通过。
 
 - writer：`/root/sol61_mixed_calendar_design/mixed_calendar_c2a_writer`。
 - 独占树：`.worktree/mixed-calendar-c2a`，分支 `feat/engine-mixed-calendar-c2a`。
@@ -32,3 +32,27 @@ compile 成功，耗时 756ms，codegen-units=16；采样记录真实 rustc/link
 root 2026-10-26 明确授权本轻量 harness 只读复用 C1a engine rlib；原依赖路径与SHA见每次compile manifest。其engine rlib来自C1a red-build基791858d4，仅提供真实Calendar/observation/StockId；本树真实C1a、C2-A源码按path重新编译，不是替身Calendar。未调用Cargo，无最终完整engine crate通过结论。
 
 重读根ROLE/AGENTS、principles/testing/error-handling/architecture/open-questions、Git daily-workflow、Calendar与分钟/日结相关ADR和trading-rules；本片只新增纯immutable派生类型与只读receiver检查，无新制度、无生产caller、无live/cache/SaveSlot。官方重读条款、原件SHA和适用日期另见official-source-check.json。
+
+## 实现候选与实际绿证
+
+- 红代码提交 `a068389e`，红原件提交 `0fc0afb0`。
+- 实现提交 `3968ad17`；仅context实现110行增量，测试正文与红提交逐字相同。
+- `product.patch` 是从 C2-A 增量基到实现提交的全部产品diff；reviewer还应读取整个分支增量，含工作证据。
+- 产品新模块250行、独立测试668行，session.rs精确仅加一条mod；C1a未改。
+
+```sh
+node scripts/run-with-deadline.mjs 10000 -- node agents/branch-completion/mixed-calendar-c2a/run-validation.mjs compile green
+node scripts/run-with-deadline.mjs 10000 -- node agents/branch-completion/mixed-calendar-c2a/run-validation.mjs cases green
+```
+
+实际轻编译731ms，8并发的13个case全部exit0，整批shell wall约653ms。每case/整批外部deadline都是10000ms。红绿binary、依赖rlib、harness和完整产品源码SHA见source-artifact-manifest.json；编译前后和执行前后均验证源不漂移。CPU/线程采样在各compile manifest；这些值是实际瞬时采样，不冒称持续满核。
+
+Source不提供Clone，owner固定Arc::ptr_eq；receiver按owner→完整双向StockId/exchange→date→layout/before逐字段检查，错误携带expected/actual。tick先委派C1a验证before，仅Trading可checked构造下一拍，after再次C1a投影校验，civil date始终留在day。没有重复日历计数或分钟映射。
+
+新增文件rustfmt --check与git diff --check均通过。尝试对既有session.rs做skip_children rustfmt --check为exit1，大量既有排序/换行问题；依赖基同命令也exit1。checks.json保留两份原输出；未扩范围格式化既有文件，程序化核对session.rs相对基线精确仅增加一条mod。
+
+## 已测与未测
+
+本次13类测试直接证明同owner/异owner、完整bindings身份、receiver各字段和错误次序、mixed首末拍及竞价中拍、复市本股ordinal/分钟、closed/TradingCompleted静点、输入错误及合法最大tick的checked溢出。UnknownStock沿真实C1a结果；C11构造校验本已由C1a支持，初红为绿，如实保留。初stub对静点拒绝的分支也已正确，C09初红发生在合法末拍不能构造，不能把它称为静点分支的初红。其他被前一个断言遮住的后续分支仅有最终绿证，不逐分支夸称初红覆盖。
+
+未执行完整engine crate/Cargo、World/driver/group/desk、pending/资源/receipt原子性、native/WASM生产路径、live/cache、保存/恢复、NPC计划和宿主transport。C2-A只是必要纯substrate，mixed生产与C2-C/C4/C5仍另审。

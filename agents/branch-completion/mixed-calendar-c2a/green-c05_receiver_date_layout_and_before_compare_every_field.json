@@ -1,0 +1,14 @@
+{
+  "command": "/data1/baiyifan/workplace/stock_market_game/.tmp/mixed-calendar-c2a/green",
+  "args": [
+    "market_calendar_context::tests::c05_receiver_date_layout_and_before_compare_every_field",
+    "--exact",
+    "--nocapture",
+    "--test-threads=1"
+  ],
+  "timeoutMs": 10000,
+  "elapsedMs": 48,
+  "exitCode": 0,
+  "stdout": "\nrunning 1 test\ntest market_calendar_context::tests::c05_receiver_date_layout_and_before_compare_every_field ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 32 filtered out; finished in 0.00s\n\n",
+  "stderr": ""
+}

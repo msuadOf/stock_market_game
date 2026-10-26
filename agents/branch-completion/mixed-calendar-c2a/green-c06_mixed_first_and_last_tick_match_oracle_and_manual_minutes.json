@@ -1,0 +1,14 @@
+{
+  "command": "/data1/baiyifan/workplace/stock_market_game/.tmp/mixed-calendar-c2a/green",
+  "args": [
+    "market_calendar_context::tests::c06_mixed_first_and_last_tick_match_oracle_and_manual_minutes",
+    "--exact",
+    "--nocapture",
+    "--test-threads=1"
+  ],
+  "timeoutMs": 10000,
+  "elapsedMs": 10,
+  "exitCode": 0,
+  "stdout": "\nrunning 1 test\ntest market_calendar_context::tests::c06_mixed_first_and_last_tick_match_oracle_and_manual_minutes ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 32 filtered out; finished in 0.00s\n\n",
+  "stderr": ""
+}

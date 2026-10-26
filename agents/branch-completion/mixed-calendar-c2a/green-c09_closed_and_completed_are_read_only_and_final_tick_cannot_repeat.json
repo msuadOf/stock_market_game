@@ -1,0 +1,14 @@
+{
+  "command": "/data1/baiyifan/workplace/stock_market_game/.tmp/mixed-calendar-c2a/green",
+  "args": [
+    "market_calendar_context::tests::c09_closed_and_completed_are_read_only_and_final_tick_cannot_repeat",
+    "--exact",
+    "--nocapture",
+    "--test-threads=1"
+  ],
+  "timeoutMs": 10000,
+  "elapsedMs": 14,
+  "exitCode": 0,
+  "stdout": "\nrunning 1 test\ntest market_calendar_context::tests::c09_closed_and_completed_are_read_only_and_final_tick_cannot_repeat ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 32 filtered out; finished in 0.00s\n\n",
+  "stderr": ""
+}
