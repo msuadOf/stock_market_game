@@ -1330,9 +1330,9 @@ fn capital_44_distribution_fact_mismatch_keeps_exact_action_context() {
 fn capital_45_split_fact_mismatch_keeps_exact_action_context() {
     let mut f = Fixture::new();
     f.redenominate(ShareSplitDirection::Split);
-    let mut wire = serde_json::to_value(&f.actions).unwrap();
-    wire["share_splits"][0]["plan"]["approval_reference"] = serde_json::json!("不同批准");
-    f.actions = serde_json::from_value(wire).unwrap();
+    let mut plan = f.actions.share_splits[0].plan().clone();
+    plan.approval_reference = "不同批准".into();
+    f.actions.share_splits[0] = ShareSplitBook::new(plan).unwrap();
     assert_fact_mismatch(
         &f,
         "2030-06-04",
