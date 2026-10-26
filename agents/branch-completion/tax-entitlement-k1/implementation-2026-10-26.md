@@ -94,3 +94,28 @@ wire03/04以后每标签独立binary和harness源码留于根 `.tmp/tax-entitlem
 
 本记录截至提交前仅说明实现与有限测试通过。尚待未实施者完整 diff 独审，不能先宣称 K1完成。
 指定复核者：`/root/sol61_distributions_r2/personal_bonus_design_review`。
+
+
+## 初审 F1 修复（2026-10-26）
+
+未实施 reviewer 完整初审为 CHANGES_REQUESTED，仅F1阻断：未映射 CorporateAction 正向不能默认
+独立新增。原100股已收10000分，若实际1拆2、未给映射、卖20，原实现会消费20原权益并评400分，
+明确完整split映射则消费10原权益并评200分。旧 source 也能表示独立配股，不能猜它是哪一种。
+初审其余共同循环、双端partition、操作绑定与严格重放无新增有效阻断；其独立77case重跑通过。
+初审正式原件见根树 `agents/branch-completion/tax-entitlement-k1-review-2026-10-26.md`。
+
+- 红：`17853ac0` 新增一个直接旧book正向+100、lineage空、再卖20的拒绝case；
+  review-f1-red实际exit101、1红，0.050s；binary SHA
+  `df45f37273875948aee91dcd8d27424c4028ac6dbe090e0d2254cd6bab930141`。
+- 修：只在新候选重放入口增加fail-closed guard，未附transition的CorporateAction正向统一返回
+  `TaxLineageError::MissingTransition { event_id, operation_seq }`。不猜split，不批准独立配股来源，
+  不增加受控分类协议；要支持该独立新增须后续来源分类合同。SecondaryMarket独立新增正控仍通过。
+- 绿：review-f1-green-02真实78/78绿（23个lineage＋55原case），exit0；binary报告3.44s，
+  含绑定校验wall3.486s，8threads，整命令10秒外监督。binary SHA
+  `d865ecd7a5889f78c5e92a8209ed4907488798578ea1e71dab0981aa6859c068`。
+  构建2.449s、codegen32、300000ms外监督，进程树采样峰425340928B/10threads。
+- 中间一次字符串替换因模式不匹配报AssertionError，未修改源码；随后review-f1-green仅编译了
+  仍未修的源码且没有运行，不能当绿。修正替换后另用review-f1-green-02新标签真实构建/运行。
+  所有标签的.tmp artifact均保留，证据日志不覆盖。
+
+该修复冻结后仍待同一未实施 reviewer 复审终裁。本轮没有实施K2、生产接线、SaveSlot/Web变化。

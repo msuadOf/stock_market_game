@@ -233,6 +233,20 @@ impl CashDividendTaxBook {
         for sequence in 1..=self.operation_seq {
             let before = lots.clone();
             if let Some(day) = self.days.iter().find(|day| day.operation_seq == sequence) {
+                // 旧 CorporateAction 来源未区分单位扩张与独立取得。缺受控分类时不能
+                // 默认新增权益，否则1拆2后的部分卖出会按错误原单位计税。
+                if !transitions.contains_key(&sequence) {
+                    if let Some(DividendTaxLot {
+                        source: TaxAcquisitionSource::CorporateAction { event },
+                        ..
+                    }) = &day.acquisition
+                    {
+                        return Err(TaxLineageError::MissingTransition {
+                            event_id: event.clone(),
+                            operation_seq: sequence,
+                        });
+                    }
+                }
                 apply_net_change(&mut lots, day.day, day.net_change, day.acquisition.as_ref())?;
                 if !transitions.contains_key(&sequence) {
                     consume_day(&mut carriers, &mut consumptions, day)?;
