@@ -1,0 +1,21 @@
+{
+  "wrapper_exit_code": 0,
+  "wall_seconds": 0.8886247179470956,
+  "source_before": {
+    "packages/engine/src/session/exchange_calendar_model.rs": "173c0633b3489a852612458832046f3106e21b28c0c571d6f2ede90f8e33caf5",
+    "packages/engine/src/session/market_calendar_context.rs": "1b3f2332c6b4d524e6e4cb731a38536468886c2864fe8cff9e2520aad8b5230a",
+    "packages/engine/src/session/market_calendar_context_tests.rs": "940ded77d66c45fc5419d4d2b9b815d41d5b1fecb5c2587ef5a3e4e1823f5699",
+    "agents/branch-completion/mixed-calendar-c2c/pure-context-harness.rs": "52503e2aae4e02ed09fd9d5adef56aebd31000abd17a16f5fdf1978ca92b6645"
+  },
+  "source_after": {
+    "packages/engine/src/session/exchange_calendar_model.rs": "173c0633b3489a852612458832046f3106e21b28c0c571d6f2ede90f8e33caf5",
+    "packages/engine/src/session/market_calendar_context.rs": "1b3f2332c6b4d524e6e4cb731a38536468886c2864fe8cff9e2520aad8b5230a",
+    "packages/engine/src/session/market_calendar_context_tests.rs": "940ded77d66c45fc5419d4d2b9b815d41d5b1fecb5c2587ef5a3e4e1823f5699",
+    "agents/branch-completion/mixed-calendar-c2c/pure-context-harness.rs": "52503e2aae4e02ed09fd9d5adef56aebd31000abd17a16f5fdf1978ca92b6645"
+  },
+  "binary": {
+    "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/mixed-calendar-c2c/pure-context-red",
+    "bytes": 9087768,
+    "sha256": "e9304650bbae7a2b1596939e06bf1e6d871c7c75399dc99fc9511695332516bb"
+  }
+}

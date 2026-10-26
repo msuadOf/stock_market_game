@@ -8,6 +8,266 @@ use CalendarExchange::{Sse, Szse};
 use MarketCalendarContextError::*;
 use SharedDayProgress::{ClosedDay, Trading, TradingCompleted};
 
+#[test]
+fn c2c_stock_day_accepts_own_closed_and_open_rows_without_complete_bindings() {
+    let source = source();
+    let same_owner = Arc::clone(&source);
+    let day = source.day(date("2030-01-02")).unwrap();
+    for (stock, exchange) in BINDINGS {
+        day.validate_for_stock(&same_owner, stock, exchange, date("2030-01-02"))
+            .unwrap();
+    }
+    let reopen = source.day(date("2030-01-03")).unwrap();
+    reopen
+        .validate_for_stock(&same_owner, SSE, Sse, date("2030-01-03"))
+        .unwrap();
+    assert_eq!(
+        reopen
+            .day_model()
+            .stock(SSE)
+            .unwrap()
+            .sessions_before_date(),
+        0
+    );
+    assert_eq!(
+        reopen
+            .day_model()
+            .stock(SZSE)
+            .unwrap()
+            .sessions_before_date(),
+        1
+    );
+}
+
+#[test]
+fn c2c_stock_day_rejects_equal_content_from_another_source_owner() {
+    let source = source();
+    let other = self::source();
+    let day = source.day(date("2030-01-02")).unwrap();
+    assert_receiver_error(
+        day.validate_for_stock(&other, SSE, Sse, date("2030-01-02"))
+            .unwrap_err(),
+        "owner",
+    );
+}
+
+#[test]
+fn c2c_stock_day_rejects_unknown_stock_and_wrong_exchange_with_details() {
+    let source = source();
+    let day = source.day(date("2030-01-02")).unwrap();
+    for (stock, exchange, expected_actual) in [(StockId(88), Sse, None), (SSE, Szse, Some(Sse))] {
+        match day.validate_for_stock(&source, stock, exchange, date("2030-01-02")) {
+            Err(BindingMismatch {
+                stock: actual_stock,
+                expected,
+                actual,
+            }) => {
+                assert_eq!(actual_stock, stock);
+                assert_eq!(expected, Some(exchange));
+                assert_eq!(actual, expected_actual);
+            }
+            other => panic!("本股 binding 错误必须携完整详情：{other:?}"),
+        }
+    }
+}
+
+#[test]
+fn c2c_stock_day_rejects_wrong_date_with_expected_and_actual() {
+    let source = source();
+    let day = source.day(date("2030-01-02")).unwrap();
+    match day.validate_for_stock(&source, SSE, Sse, date("2030-01-03")) {
+        Err(DateMismatch { expected, actual }) => {
+            assert_eq!(expected, date("2030-01-03"));
+            assert_eq!(actual, date("2030-01-02"));
+        }
+        other => panic!("本股日期错误必须携完整详情：{other:?}"),
+    }
+}
+
+#[test]
+fn c2c_stock_tick_rejects_wrong_owner_stock_exchange_and_date() {
+    let source = source();
+    let other = self::source();
+    let tick = source
+        .day(date("2030-01-02"))
+        .unwrap()
+        .tick(layout(), first())
+        .unwrap();
+    for (owner, stock, exchange, current_date, expected) in [
+        (&other, SSE, Sse, date("2030-01-02"), "owner"),
+        (&source, StockId(88), Sse, date("2030-01-02"), "binding"),
+        (&source, SSE, Szse, date("2030-01-02"), "binding"),
+        (&source, SSE, Sse, date("2030-01-03"), "date"),
+    ] {
+        assert_receiver_error(
+            tick.validate_for_stock(owner, stock, exchange, current_date, layout(), first())
+                .unwrap_err(),
+            expected,
+        );
+    }
+}
+
+#[test]
+fn c2c_stock_tick_checks_each_layout_field() {
+    let source = source();
+    let tick = source
+        .day(date("2030-01-02"))
+        .unwrap()
+        .tick(layout(), first())
+        .unwrap();
+    for expected_layout in [
+        SessionTickLayout {
+            ticks_per_day: 3,
+            ..layout()
+        },
+        SessionTickLayout {
+            auction_ticks: 1,
+            ..layout()
+        },
+        SessionTickLayout {
+            closing_auction_ticks: 1,
+            ..layout()
+        },
+    ] {
+        match tick.validate_for_stock(
+            &source,
+            SZSE,
+            Szse,
+            date("2030-01-02"),
+            expected_layout,
+            first(),
+        ) {
+            Err(TickLayoutMismatch { expected, actual }) => {
+                assert_layout(expected, expected_layout);
+                assert_layout(actual, layout());
+            }
+            other => panic!("本股 Tick layout 错误必须携完整详情：{other:?}"),
+        }
+    }
+}
+
+#[test]
+fn c2c_stock_tick_checks_each_before_clock_field_without_mutating_context() {
+    let source = source();
+    let tick = source
+        .day(date("2030-01-02"))
+        .unwrap()
+        .tick(layout(), first())
+        .unwrap();
+    for expected_before in [
+        input(1, 0, Trading { completed_ticks: 0 }),
+        input(0, 1, Trading { completed_ticks: 0 }),
+        input(0, 0, Trading { completed_ticks: 1 }),
+        input(0, 0, ClosedDay),
+    ] {
+        match tick.validate_for_stock(
+            &source,
+            SZSE,
+            Szse,
+            date("2030-01-02"),
+            layout(),
+            expected_before,
+        ) {
+            Err(BeforeClockMismatch { expected, actual }) => {
+                assert_input(expected, expected_before);
+                assert_input(actual, first());
+            }
+            other => panic!("本股 before clock 错误必须携完整详情：{other:?}"),
+        }
+    }
+    assert_input(tick.before_input(), first());
+    assert_input(
+        tick.after_input(),
+        input(1, 0, Trading { completed_ticks: 1 }),
+    );
+}
+
+#[test]
+fn c2c_stock_validation_priority_is_owner_stock_date_layout_before() {
+    let source = source();
+    let other = self::source();
+    let day = source.day(date("2030-01-02")).unwrap();
+    let tick = day.tick(layout(), first()).unwrap();
+    let bad_layout = SessionTickLayout {
+        ticks_per_day: 3,
+        ..layout()
+    };
+    let bad_before = input(99, 99, ClosedDay);
+    for (owner, stock, exchange, current_date, tick_layout, expected) in [
+        (
+            &other,
+            StockId(88),
+            Szse,
+            date("2030-01-03"),
+            bad_layout,
+            "owner",
+        ),
+        (
+            &source,
+            StockId(88),
+            Sse,
+            date("2030-01-03"),
+            bad_layout,
+            "binding",
+        ),
+        (
+            &source,
+            SSE,
+            Szse,
+            date("2030-01-03"),
+            bad_layout,
+            "binding",
+        ),
+        (&source, SSE, Sse, date("2030-01-03"), bad_layout, "date"),
+        (&source, SSE, Sse, date("2030-01-02"), bad_layout, "layout"),
+        (&source, SSE, Sse, date("2030-01-02"), layout(), "before"),
+    ] {
+        assert_receiver_error(
+            tick.validate_for_stock(
+                owner,
+                stock,
+                exchange,
+                current_date,
+                tick_layout,
+                bad_before,
+            )
+            .unwrap_err(),
+            expected,
+        );
+        if expected != "layout" && expected != "before" {
+            assert_receiver_error(
+                day.validate_for_stock(owner, stock, exchange, current_date)
+                    .unwrap_err(),
+                expected,
+            );
+        }
+    }
+}
+
+#[test]
+fn c2c_stock_tick_accepts_same_owner_both_rows_and_both_tick_boundaries() {
+    let source = source();
+    let day = source.day(date("2030-01-02")).unwrap();
+    let mut before = first();
+    for _ in 0..2 {
+        let tick = day.tick(layout(), before).unwrap();
+        for (stock, exchange) in BINDINGS {
+            tick.validate_for_stock(
+                &source,
+                stock,
+                exchange,
+                date("2030-01-02"),
+                layout(),
+                before,
+            )
+            .unwrap();
+        }
+        before = tick.after_input();
+        assert!(Arc::ptr_eq(tick.day(), &day));
+    }
+    assert_eq!(before.progress, TradingCompleted);
+}
+
 const SSE: StockId = StockId(7);
 const SZSE: StockId = StockId(1009);
 const BINDINGS: [(StockId, CalendarExchange); 2] = [(SSE, Sse), (SZSE, Szse)];

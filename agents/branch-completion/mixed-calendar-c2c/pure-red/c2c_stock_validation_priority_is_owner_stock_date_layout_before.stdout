@@ -1,0 +1,11 @@
+
+running 1 test
+test market_calendar_context::tests::c2c_stock_validation_priority_is_owner_stock_date_layout_before ... FAILED
+
+failures:
+
+failures:
+    market_calendar_context::tests::c2c_stock_validation_priority_is_owner_stock_date_layout_before
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 41 filtered out; finished in 0.01s
+

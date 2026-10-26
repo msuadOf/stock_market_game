@@ -99,6 +99,17 @@ impl MarketDayContext {
         &self.model
     }
 
+    pub(crate) fn validate_for_stock(
+        &self,
+        _expected_source: &Arc<MarketCalendarSource>,
+        _expected_stock: StockId,
+        _expected_exchange: CalendarExchange,
+        _expected_date: CivilDate,
+    ) -> Result<(), MarketCalendarContextError> {
+        // TDD 初红：先保留可编译接缝，由真实接收负测驱动最小实现。
+        Ok(())
+    }
+
     pub(crate) fn validate_for(
         &self,
         expected_source: &Arc<MarketCalendarSource>,
@@ -211,6 +222,19 @@ impl MarketTickContext {
     }
     pub(crate) fn after_projection(&self) -> &CalendarClockProjection {
         &self.after_projection
+    }
+
+    pub(crate) fn validate_for_stock(
+        &self,
+        _expected_source: &Arc<MarketCalendarSource>,
+        _expected_stock: StockId,
+        _expected_exchange: CalendarExchange,
+        _expected_date: CivilDate,
+        _expected_layout: SessionTickLayout,
+        _expected_before: SharedClockInput,
+    ) -> Result<(), MarketCalendarContextError> {
+        // TDD 初红：先保留可编译接缝，由真实接收负测驱动最小实现。
+        Ok(())
     }
 
     pub(crate) fn validate_for(
