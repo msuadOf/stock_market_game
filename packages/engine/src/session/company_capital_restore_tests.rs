@@ -5,6 +5,10 @@ use crate::accounting::{
 };
 use crate::calendar::CalendarExchange;
 use crate::company::config::CompanySystemConfig;
+use crate::company::issuer_repurchase::{
+    IssuerRepurchaseBook, IssuerRepurchaseFinanceFact, IssuerRepurchasePlan,
+    RepurchaseCompletionPolicy, RepurchaseFillRecord, RepurchasePurpose,
+};
 use crate::company::rights_offering::{
     HolderRightsSettlement, RightsOfferingBook, RightsOfferingDeclaration, RightsOfferingEventPlan,
     RightsOfferingMode, RightsSettlementReceipt, RightsSubscriptionRecord,
@@ -622,6 +626,221 @@ fn capital_19_approved_rights_keeps_future_payment_and_listing_without_delta() {
     let summary = f.validate("2030-06-03").unwrap();
     assert_eq!(summary.companies[&CompanyId(0)].issued_shares, 1_000);
     assert_eq!(summary.companies[&CompanyId(0)].receipt_frontier, 0);
+}
+
+impl Fixture {
+    fn repurchase(&mut self, cancel: bool, consume_initial_treasury: bool) {
+        let plan = IssuerRepurchasePlan {
+            event_id: "buy-a".into(),
+            approval_reference: "批准-buy-a".into(),
+            issuer: CompanyId(0),
+            stock: code(),
+            exchange: CalendarExchange::Sse,
+            approved_on: date("2030-06-03"),
+            announced_on: date("2030-06-03"),
+            window_start_on: date("2030-06-03"),
+            window_deadline_on: date("2030-06-04"),
+            price_cap_per_share: Money::from_cents(100),
+            total_budget: Money::from_cents(20_000),
+            max_shares: 100,
+            purpose: RepurchasePurpose::ReduceCapital,
+            completion_policy: RepurchaseCompletionPolicy::CancelOnCompletion,
+            approval_unit_event_id: None,
+        };
+        self.system
+            .declare_issuer_repurchase(
+                &CompanyId(0),
+                IssuerRepurchaseFinanceFact {
+                    event_id: plan.event_id.clone(),
+                    approval_reference: plan.approval_reference.clone(),
+                    approved_on: plan.approved_on,
+                    synthetic_funding: AccountingAmount::from_money(plan.total_budget),
+                    purpose: plan.purpose.clone(),
+                    spent: None,
+                    withdrawn_remainder: None,
+                    completed_on: None,
+                    cancelled_shares: 0,
+                    cancelled_on: None,
+                    capital_reduction: None,
+                },
+            )
+            .unwrap();
+        let mut book = IssuerRepurchaseBook::new(plan.clone()).unwrap();
+        book.announce(plan.announced_on).unwrap();
+        book.record_fill(
+            RepurchaseFillRecord {
+                stock: code(),
+                day: date("2030-06-04"),
+                shares: 100,
+                gross: Money::from_cents(10_000),
+                fees: Money::ZERO,
+            },
+            &[],
+        )
+        .unwrap();
+        if consume_initial_treasury {
+            self.actions.registries[0] = ShareRegistry::new(
+                code(),
+                CompanyId(0),
+                1_000,
+                date("2030-06-03"),
+                vec![
+                    ShareHolding {
+                        holder: HolderId::Account(AccountId(7)),
+                        lots: vec![lot("initial-owner-7", 900)],
+                    },
+                    ShareHolding {
+                        holder: HolderId::IssuerTreasury,
+                        lots: vec![lot("initial-treasury", 100)],
+                    },
+                ],
+            )
+            .unwrap();
+        }
+        let registry = &mut self.actions.registries[0];
+        registry
+            .set_issuer_repurchase_account(
+                crate::company::share_registry::IssuerRepurchaseAccountFacts {
+                    account_reference: "回购专户".into(),
+                    source_evidence: "测试显式配置".into(),
+                    established_on: date("2030-06-03"),
+                },
+            )
+            .unwrap();
+        registry
+            .close_day(ShareDayRequest {
+                event_id: "market-2030-06-04".into(),
+                day: date("2030-06-04"),
+                scope: MovementScope::PublicMarket,
+                changes: vec![
+                    DayNetChange {
+                        holder: HolderId::Account(AccountId(7)),
+                        change: -100,
+                        acquisition: None,
+                        consume: None,
+                    },
+                    DayNetChange {
+                        holder: HolderId::IssuerTreasury,
+                        change: 100,
+                        acquisition: Some(NetAcquisition {
+                            lot_id: "actual-buy-a-lot".into(),
+                            source: AcquisitionSource::SecondaryMarket {
+                                settlement: "market-2030-06-04".into(),
+                            },
+                            restriction: ShareRestriction::Unrestricted,
+                        }),
+                        consume: None,
+                    },
+                ],
+            })
+            .unwrap();
+        if cancel {
+            book.complete(date("2030-06-04"), Money::from_cents(10_000))
+                .unwrap();
+            self.system
+                .record_issuer_repurchase_completion(
+                    &CompanyId(0),
+                    &plan.event_id,
+                    date("2030-06-04"),
+                    AccountingAmount::from_cents(10_000),
+                    AccountingAmount::from_cents(10_000),
+                )
+                .unwrap();
+            registry
+                .close_day(ShareDayRequest {
+                    event_id: "issuer-repurchase-cancellation:buy-a".into(),
+                    day: date("2030-06-04"),
+                    scope: MovementScope::IssuerRepurchaseCancellation {
+                        basis: plan.approval_reference.clone(),
+                    },
+                    changes: vec![DayNetChange {
+                        holder: HolderId::IssuerTreasury,
+                        change: -100,
+                        acquisition: None,
+                        consume: Some(vec![crate::company::share_registry::LotConsumption {
+                            lot_id: if consume_initial_treasury {
+                                "initial-treasury".into()
+                            } else {
+                                "actual-buy-a-lot".into()
+                            },
+                            qty: 100,
+                        }]),
+                    }],
+                })
+                .unwrap();
+            book.record_cancellation(date("2030-06-04"), 100, &[])
+                .unwrap();
+            self.system
+                .record_issuer_repurchase_cancellation(
+                    &CompanyId(0),
+                    &plan.event_id,
+                    date("2030-06-04"),
+                    100,
+                    1_000,
+                )
+                .unwrap();
+        }
+        self.actions.issuer_repurchases.push(book);
+    }
+
+    fn validate_manual(
+        &self,
+        through: &str,
+    ) -> Result<CapitalReplaySummary, CompanyCapitalRestoreError> {
+        validate_company_capital_restore(CapitalRestoreInput {
+            setup_issuers: &self.initial,
+            system: &self.system,
+            actions: &self.actions,
+            catalog: &self.catalog,
+            calendar: &self.calendar,
+            committed_through: date(through),
+            initial_par: None,
+        })
+    }
+}
+
+#[test]
+fn capital_20_manual_repurchase_only_reconstructs_capital_without_approval_snapshot() {
+    let mut f = Fixture::new();
+    f.repurchase(true, false);
+    assert_eq!(
+        f.system
+            .dividend_legal_facts(&CompanyId(0))
+            .unwrap()
+            .unwrap()
+            .registered_capital,
+        AccountingAmount::from_cents(90_000)
+    );
+    let summary = f.validate_manual("2030-06-04").unwrap();
+    assert_eq!(summary.companies[&CompanyId(0)].issued_shares, 900);
+    assert_eq!(
+        summary.companies[&CompanyId(0)].registered_capital,
+        Some(AccountingAmount::from_cents(90_000))
+    );
+    assert_eq!(summary.companies[&CompanyId(0)].receipt_frontier, 2);
+}
+
+#[test]
+fn capital_21_treasury_market_buy_is_zero_delta_before_cancellation() {
+    let mut f = Fixture::new();
+    f.repurchase(false, false);
+    let summary = f.validate_manual("2030-06-04").unwrap();
+    assert_eq!(summary.companies[&CompanyId(0)].issued_shares, 1_000);
+    assert_eq!(
+        summary.companies[&CompanyId(0)].registered_capital,
+        Some(AccountingAmount::from_cents(100_000))
+    );
+}
+
+#[test]
+fn capital_22_cancellation_cannot_consume_initial_treasury_instead_of_bought_lot() {
+    let mut f = Fixture::new();
+    f.repurchase(true, true);
+    assert!(
+        matches!(f.validate_manual("2030-06-04"), Err(CompanyCapitalRestoreError::ActionMismatch {
+        context: CapitalRestoreContext { company: Some(CompanyId(0)), stock: Some(StockId(0)), kind: Some(CorporateCapitalKind::IssuerRepurchaseCancellation), event_id: Some(event), receipt_index: Some(1), .. }, field: "repurchase-lot-source",
+    }) if event == "buy-a")
+    );
 }
 
 #[test]
