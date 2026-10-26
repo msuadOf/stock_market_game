@@ -269,15 +269,22 @@ pub(crate) fn validate_company_capital_restore(
         let mut capital_delta = 0_i128;
         if let Some(registry) = registries.get(company) {
             for (receipt_index, receipt) in registry.receipts().iter().enumerate() {
+                let bound_context = bindings
+                    .movements
+                    .get(&(*company, receipt.request.event_id.clone()))
+                    .map(|movement| &movement.context);
                 let receipt_context = CapitalRestoreContext {
-                    event_id: Some(receipt.request.event_id.clone()),
+                    event_id: bound_context
+                        .and_then(|bound| bound.event_id.clone())
+                        .or_else(|| Some(receipt.request.event_id.clone())),
                     receipt_index: Some(receipt_index),
                     day: Some(receipt.request.day),
                     kind: matches!(
                         receipt.request.scope,
                         crate::company::share_registry::MovementScope::PublicMarket
                     )
-                    .then_some(CorporateCapitalKind::PublicMarket),
+                    .then_some(CorporateCapitalKind::PublicMarket)
+                    .or_else(|| bound_context.and_then(|bound| bound.kind)),
                     ..context.clone()
                 };
                 if receipt.request.day > input.committed_through {
@@ -606,6 +613,11 @@ fn prepare_stock_distributions(
             })?;
         for occurred in [
             Some(plan.approved_on),
+            (!matches!(
+                book.status(),
+                crate::company::stock_distribution::StockDistributionStatus::Approved
+            ))
+            .then_some(plan.announced_on),
             book.registration().map(|snapshot| snapshot.registered_on()),
             book.credited_on(),
         ]
@@ -767,6 +779,11 @@ fn prepare_share_splits(
             })?;
         for occurred in [
             Some(plan.approved_on),
+            (!matches!(
+                book.status(),
+                crate::company::share_split::ShareSplitStatus::Approved
+            ))
+            .then_some(plan.announced_on),
             book.registration().map(|snapshot| snapshot.registered_on()),
             book.settled_on(),
         ]
@@ -969,9 +986,20 @@ fn prepare_rights_offerings(
             })?;
         for occurred in [
             Some(plan.approved_on),
+            (!matches!(
+                book.status(),
+                crate::company::rights_offering::RightsOfferingStatus::Approved
+            ))
+            .then_some(plan.announced_on),
             book.registration().map(|snapshot| snapshot.registered_on()),
             book.settlement().map(|receipt| receipt.settlement_on),
             book.credited_on(),
+            matches!(
+                book.status(),
+                crate::company::rights_offering::RightsOfferingStatus::Closed
+                    | crate::company::rights_offering::RightsOfferingStatus::Settled
+            )
+            .then_some(plan.payment_deadline_on),
         ]
         .into_iter()
         .flatten()
@@ -1174,6 +1202,11 @@ fn prepare_repurchase_cancellations(
             })?;
         for occurred in [
             Some(plan.approved_on),
+            (!matches!(
+                book.status(),
+                crate::company::issuer_repurchase::IssuerRepurchaseStatus::Approved
+            ))
+            .then_some(plan.announced_on),
             book.completed_on(),
             book.cancelled_on(),
         ]
