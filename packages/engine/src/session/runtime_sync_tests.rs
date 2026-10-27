@@ -400,3 +400,53 @@ fn same_world_static_point_normal_and_forced_full_prepare_agree() {
         "两臂 prepare 均不 swap"
     );
 }
+
+/// 两份同静点 candidate 的 source 可以相同，但成功安装已经消费本次安装序号。
+#[test]
+fn second_candidate_from_same_static_point_is_rejected_after_first_swap() {
+    let mut game = short_runtime_session();
+    let mut driver = crate::runtime::drive::RuntimeDriver::from_session(&mut game).unwrap();
+    driver.adopt_session_seq(&game);
+    let input = driver.prepare_driver_step(&game).unwrap();
+    let first = game
+        .prepare_runtime_mirror(&mut driver, input.clone(), 1)
+        .unwrap();
+    let second = game.prepare_runtime_mirror(&mut driver, input, 1).unwrap();
+    let source = driver.mirror_source();
+    let ack = game
+        .validate_runtime_mirror_source(&driver, &first)
+        .unwrap();
+    game.install_runtime_mirror(&mut driver, first);
+    driver.ack_prepared_mirror(ack);
+    let installed = serde_json::to_value(game.snapshot_inner(true, true)).unwrap();
+    let account_writes = driver.account_writes_for_test();
+    let personal_writes = driver.personal_installs_for_test();
+    let sequence = game.runtime_mirror_install_sequence;
+    let domains = driver.pending_mirror_domains();
+    assert_eq!(
+        driver.mirror_source(),
+        source,
+        "安装本身不伪造 World 来源变化"
+    );
+    let rejected = game.validate_runtime_mirror_source(&driver, &second);
+    assert!(
+        rejected.is_err(),
+        "第一次 swap 后，同源第二份 candidate 也必须按 install_sequence 拒绝"
+    );
+    assert_eq!(game.runtime_mirror_install_sequence, sequence);
+    assert_eq!(
+        driver.pending_mirror_domains(),
+        domains,
+        "拒绝不消费 pending 原因"
+    );
+    assert_eq!(
+        driver.account_writes_for_test(),
+        account_writes,
+        "第二份 swap=0"
+    );
+    assert_eq!(driver.personal_installs_for_test(), personal_writes);
+    assert_eq!(
+        serde_json::to_value(game.snapshot_inner(true, true)).unwrap(),
+        installed
+    );
+}
