@@ -1,19 +1,15 @@
+import { parsePlanU64 } from "../../../utils/plan-identity.ts"
 import { money as parseCanonicalMoney } from "../primitives.ts"
-import { SaveSchemaError, decimal, exact, integer, record, safeIntegerKey, string } from "../primitives.ts"
+import { SaveSchemaError, decimal, exact, integer, record, string } from "../primitives.ts"
 
 export type StringMap<T> = { readonly [key: string]: T }
 
-const ACCOUNT_ID_MAX = 9_007_199_254_740_991n
 const U32_MAX = 4_294_967_295n
 const U16_MAX = 65_535n
 const U64_MAX = 18_446_744_073_709_551_615n
 
 export function accountKey(key: string, path: string): void {
-  boundedDecimalKey(key, path, ACCOUNT_ID_MAX)
-}
-
-export function planKey(key: string, path: string): void {
-  boundedDecimalKey(key, path, ACCOUNT_ID_MAX)
+  parsePlanU64(key, path)
 }
 
 export function stockKey(key: string, path: string): void {
@@ -23,7 +19,7 @@ export function stockKey(key: string, path: string): void {
 }
 
 export function companyKey(key: string, path: string): void {
-  if (key.length === 0) throw new SaveSchemaError(path, "必须是非空公司标识")
+  if (!/^(0|[1-9][0-9]*)$/.test(key) || BigInt(key) > U32_MAX) throw new SaveSchemaError(path, "必须是数值 CompanyId 的规范 u32 十进制键")
 }
 
 export function publicationId(value: unknown, path: string): number {
@@ -76,11 +72,6 @@ export function unitOrTagged(value: unknown, path: string): string | readonly [s
 
 export function exactString(value: unknown, path: string): string {
   return string(value, path)
-}
-
-function boundedDecimalKey(key: string, path: string, maximum: bigint): void {
-  safeIntegerKey(key, path)
-  if (BigInt(key) > maximum) throw new SaveSchemaError(path, "超出 JavaScript 安全整数范围")
 }
 
 export function exactObject(value: unknown, keys: readonly string[], path: string): ReturnType<typeof record> {

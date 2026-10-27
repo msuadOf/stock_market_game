@@ -131,10 +131,9 @@ fn complete_save_decoding_rejects_zero_and_overflowing_plan_horizons() {
     ] {
         let mut wire = baseline();
         let plan = wire["plans"]["plans"]
-            .as_object_mut()
+            .as_array_mut()
             .unwrap()
-            .values_mut()
-            .next()
+            .first_mut()
             .unwrap();
         plan["created_trading_day"] = serde_json::json!(created);
         plan["horizon_trading_days"] = serde_json::json!(horizon);
@@ -210,4 +209,15 @@ fn complete_save_restore_rejects_scheduler_due_beyond_runtime_ceiling() {
         Ok(_) => panic!("越界待办必须被恢复边界拒绝，实际恢复成功"),
         Err(other) => panic!("越界 due 应以 fault2234 拒绝，实际：{other}"),
     }
+}
+
+#[test]
+fn complete_save_rejects_unknown_owner_cursor_without_any_plan() {
+    let mut wire = baseline();
+    wire["plans"]["owner_sequences"].as_array_mut().unwrap().push(
+        serde_json::json!({"owner":u64::MAX.to_string(),"next_sequence":"100"})
+    );
+    let save: engine::session::SaveSlot = serde_json::from_value(wire).unwrap();
+    assert!(matches!(GameSession::restore(&save), Err(SessionError::InvalidSave(fault))
+        if fault.code == 2690 && fault.context == vec![u32::MAX as u64,u32::MAX as u64]));
 }

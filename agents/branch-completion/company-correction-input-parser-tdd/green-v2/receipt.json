@@ -1,0 +1,62 @@
+{
+  "results": [
+    {
+      "name": "test",
+      "command": [
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "--test",
+        "--test-timeout=10000",
+        "--test-concurrency=4",
+        "apps/web/src/host/report-corrections.test.ts"
+      ],
+      "exitCode": 0,
+      "error": null,
+      "wallSeconds": 0.196966975
+    },
+    {
+      "name": "types",
+      "command": [
+        "/data1/baiyifan/workplace/stock_market_game/apps/web/node_modules/.bin/tsc",
+        "--noEmit",
+        "--strict",
+        "--noUnusedLocals",
+        "--noUnusedParameters",
+        "--target",
+        "ES2023",
+        "--module",
+        "nodenext",
+        "--moduleResolution",
+        "nodenext",
+        "--allowImportingTsExtensions",
+        "--verbatimModuleSyntax",
+        "--types",
+        "node",
+        "--typeRoots",
+        "/data1/baiyifan/workplace/stock_market_game/apps/web/node_modules/@types",
+        "apps/web/src/host/report-corrections.ts",
+        "apps/web/src/host/report-corrections.test.ts"
+      ],
+      "exitCode": 0,
+      "error": null,
+      "wallSeconds": 2.149604722
+    },
+    {
+      "name": "lint",
+      "command": [
+        "/data1/baiyifan/workplace/stock_market_game/apps/web/node_modules/.bin/oxlint",
+        "--deny-warnings",
+        "apps/web/src/host/report-corrections.ts",
+        "apps/web/src/host/report-corrections.test.ts"
+      ],
+      "exitCode": 0,
+      "error": null,
+      "wallSeconds": 0.192529358
+    }
+  ],
+  "deadlineEachMs": 10000,
+  "concurrentJobs": 3,
+  "hashes": {
+    "apps/web/src/host/report-corrections.ts": "5e02aae961447738e19ce91ef3de98e96e47c7d792aeb172c5c61a8421b72b14",
+    "apps/web/src/host/report-corrections.test.ts": "f5a4a1beb14b2f5cac9fe6253aa95613ade92276529355ae87a6810612d0189b"
+  }
+}

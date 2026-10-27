@@ -1,0 +1,66 @@
+✔ production delta updates selected daily K and mobile active K cache while retaining completed history (355.084016ms)
+✔ production runtimeSnapshot 替换权威日 K，普通帧的 active 不覆盖 snapshot (2.430645ms)
+✔ production AfterClose+BeforeOpen 即使携旧日历史也清空分时并保留权威日 K (8.212481ms)
+✔ successive production deltas use final authoritative active candles and remove absent active codes (2.561509ms)
+✔ 详情历史查询丢弃换股前响应，并在 hook rerender 后交付日 K consumer (2.2229ms)
+✔ 历史查询错误通过 notice 明确呈现 (0.39437ms)
+✔ production AfterClose-only 进入非交易日时保留真实收盘分时 (1.629454ms)
+✔ Money wire：持仓金额超过 Number 安全范围仍精确到分 (1.703706ms)
+✔ Money wire：条件单价格不能按字符串字典序比较 (0.487493ms)
+✔ Money wire：活动委托严格拒绝 Number 并保留大金额原值 (0.7367ms)
+✔ Money wire：图表坐标相同不能吞掉原始 OHLC 一分变化 (0.557865ms)
+✔ 审计G67：baseline拒绝没有行情的持仓引用，估值不能当零价 (2.62203ms)
+✔ 审计G67：非玩家和零股持仓引用同样校验，继承属性不是行情 (1.159191ms)
+✔ 公司选择仅允许 actual 目录存在，名称权威，自定义公司不编造行业 (1.583402ms)
+✔ 公开报告刷新经过 loading 或 error 后保留仍可见的用户选择 (280.149074ms)
+✔ 公开报告真正 empty 后清除选择，重新出现报告时使用当前默认报告 (2.684612ms)
+✔ 切换公司时旧选择失效后使用新公司的可见报告 (2.708772ms)
+✔ 附注渲染单体范围、更正原因与已公布行业科目明细 (154.527119ms)
+✔ 利润表渲染当季、累计、比较列，缺历史有原因不填零 (2.003814ms)
+✔ ReportNotes 单股实际scope动态显示，未知与已知错公司scope均拒绝渲染 (3.516675ms)
+✔ 实际单股只读请求发StockId0，initialAllocation与NPC诊断回相同证券 (1.558212ms)
+✖ 同代目录保留不同CompanyId与StockId，完整AccountId和PlanId不经过number (1.994473ms)
+✔ 真实WorkerHost只读请求按restore后实际子集发原StockId并拒绝旧响应 (79.199507ms)
+✔ 坏目录 prepare 不发布 Redux/protocol/App，新 baseline 同一次dispatch安装snapshot和company (4.553773ms)
+✔ Tauri 坏目录不覆盖 timeline、generation、query epoch 或 cached baseline (0.702509ms)
+ℹ tests 25
+ℹ suites 0
+ℹ pass 24
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 2080.514657
+
+✖ failing tests:
+
+test at src/host/actual-read-identity.test.ts:18:1
+✖ 同代目录保留不同CompanyId与StockId，完整AccountId和PlanId不经过number (1.994473ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /codes\[0\].*未知股票/. Input:
+  
+  'ProtocolError: 未知股票 StockId：7'
+  
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/actual-read-identity.test.ts:32:10)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:911:18)
+      at Test.postRun (node:internal/test_runner/test:1465:19)
+      at Test.run (node:internal/test_runner/test:1390:12)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: ProtocolError: 未知股票 StockId：7
+        at invalid (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/catalog-resolver.ts:7:9)
+        at Object.stockCode (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/catalog-resolver.ts:79:31)
+        at file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/npc-decision-trace.ts:86:59
+        at Array.map (<anonymous>)
+        at parseRecord (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/npc-decision-trace.ts:86:27)
+        at file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/npc-decision-trace.ts:40:39
+        at Array.map (<anonymous>)
+        at parseNpcDecisionTrace (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/npc-decision-trace.ts:40:16)
+        at file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/actual-read-identity.test.ts:32:23
+        at getActual (node:assert:611:5),
+    expected: /codes\[0\].*未知股票/,
+    operator: 'throws',
+    diff: 'simple'
+  }

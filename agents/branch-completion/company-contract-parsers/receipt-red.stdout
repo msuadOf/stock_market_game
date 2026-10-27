@@ -1,0 +1,41 @@
+✔ 能力面精确保留股数、不可用原因、五类readiness与实际settlement位 (2.945887ms)
+✔ 能力面拒绝重复readiness、缺多键、空原因、未知enum及金额越界 (1.635338ms)
+✔ 配股query使用数值CompanyId、字符串StockCode与显式nullable (0.987609ms)
+✔ 期间解释遵守i32/u8/会计i128值域并保留null与大额 (0.67767ms)
+✔ 金额保持元和分边界，嵌套契约缺键多键与非规范数字明确拒绝 (1.156684ms)
+✔ 认购排队与拒绝均校验显式非0owner，不混淆受理与支付 (3.687159ms)
+✔ 偏好拒绝台账使用u32 CompanyId与现有两类proposal (0.562967ms)
+✔ 同一批队列不接收另一owner且零账户可显式作为本人 (0.612358ms)
+✔ 本人简税回执无损校验，支持非0owner与0额回执 (3.779152ms)
+✔ 税状态三模式与各身份保留，不猜测未知状态或证券 (0.508104ms)
+✔ 未清税额保留约简非负分数与无collection事实，真实回执保持历史值 (0.895127ms)
+✔ 税务本人列表不会接收混入的另一账户，分数i128与u64端点无损 (0.854045ms)
+✖ 税务回执拒绝不可能的代扣和划收现金勾稽 (0.67101ms)
+ℹ tests 13
+ℹ suites 0
+ℹ pass 12
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 144.62826
+
+✖ failing tests:
+
+test at apps/web/src/host/dividend-tax.test.ts:40:1
+✖ 税务回执拒绝不可能的代扣和划收现金勾稽 (0.67101ms)
+  AssertionError [ERR_ASSERTION]: Missing expected exception.
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-contract-parsers/apps/web/src/host/dividend-tax.test.ts:41:10)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:911:18)
+      at Test.postRun (node:internal/test_runner/test:1465:19)
+      at Test.run (node:internal/test_runner/test:1390:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: /withheld/,
+    operator: 'throws',
+    diff: 'simple'
+  }

@@ -1050,6 +1050,12 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
     validate_disclosure_cursors(save)?;
     validate_personal_states(&context)?;
     validate_plan_contract(&context)?;
+    // 内存 SaveSlot 可以绕过 serde；与严格 JSON 同样重放冻结账簿，保留原领域 cause。
+    if let Some(actions) = &save.corporate_actions {
+        for book in &actions.share_splits {
+            book.validate()?;
+        }
+    }
     Ok(())
 }
 
@@ -1800,47 +1806,48 @@ fn validate_plan_contract(context: &SaveValidationContext) -> Result<(), Session
     let npc_count = context.npc_count;
     for plan_id in save.plans.plan_ids() {
         let plan = save.plans.plan(plan_id).expect("plan_ids always resolve");
-        // fault2141：计划持有期非法；ctx[0]=PlanId，ctx[1] 待 C 批数值化（原文本 "{error}"）。
+        // 以下计划错误的 ctx[0..4] 均为 owner 高/低 u32、sequence 高/低 u32。
+        // fault2141：计划持有期非法；ctx[4] 为既有原因占位码。
         plan.validate_horizon().map_err(|_| {
-            SessionError::InvalidSave(ValidationFault::new(2141, vec![plan_id.0, 0]))
+            SessionError::InvalidSave(ValidationFault::new(2141, plan_id.error_context_with([0])))
         })?;
         if plan.account().0 > npc_count {
-            // fault2142：计划属于未知账户；ctx[0]=PlanId，ctx[1]=AccountId。
+            // fault2142：计划属于未知账户；ctx[4..6]=AccountId 高/低 u32。
             return Err(SessionError::InvalidSave(ValidationFault::new(
                 2142,
-                vec![plan_id.0, plan.account().0],
+                plan_id.error_context_with([plan.account().0 >> 32, plan.account().0 & 0xffff_ffff]),
             )));
         }
         if !stock_codes.contains(plan.code()) {
-            // fault2143：计划指向未知股票；ctx[0]=PlanId，ctx[1]=StockId。
+            // fault2143：计划指向未知股票；ctx[4]=StockId。
             return Err(SessionError::InvalidSave(ValidationFault::new(
                 2143,
-                vec![plan_id.0, u64::from(plan.code().0)],
+                plan_id.error_context_with([u64::from(plan.code().0)]),
             )));
         }
         if let crate::plans::PlanTarget::ShareCount(target) = plan.target() {
             if target == 0 || plan.filled_qty() > target {
-                // fault2144：计划份额目标/进度非法；ctx[0]=PlanId。
+                // fault2144：计划份额目标/进度非法；仅身份前缀。
                 return Err(SessionError::InvalidSave(ValidationFault::new(
                     2144,
-                    vec![plan_id.0],
+                    plan_id.error_context(),
                 )));
             }
         }
         if let Some(leg) = plan.execution() {
             if leg.child_qty() == 0 || leg.limit_price().cents() <= 0 {
-                // fault2183：执行腿参数非法（子单数量/限价非正）；ctx[0]=PlanId。
+                // fault2183：执行腿参数非法（子单数量/限价非正）；仅身份前缀。
                 return Err(SessionError::InvalidSave(ValidationFault::new(
                     2183,
-                    vec![plan_id.0],
+                    plan_id.error_context(),
                 )));
             }
             if let Some(active_id) = plan.active_child_order_id() {
                 if active_id.0 == 0 || active_id.0 >= save.next_order_id {
-                    // fault2184：执行腿在途子单 id 越界；ctx[0]=PlanId，ctx[1]=订单 id。
+                    // fault2184：执行腿在途子单 id 越界；ctx[4]=订单 id。
                     return Err(SessionError::InvalidSave(ValidationFault::new(
                         2184,
-                        vec![plan_id.0, active_id.0],
+                        plan_id.error_context_with([active_id.0]),
                     )));
                 }
                 // 校验必须用真实订单簿余量：序列化的腿余量在 restore 会被真实
@@ -1859,27 +1866,27 @@ fn validate_plan_contract(context: &SaveValidationContext) -> Result<(), Session
                     .collect();
                 let [live_remaining] = live_quantities.as_slice() else {
                     // fault1042：计划在途子委托无法唯一重建（竞价/连续簿命中数 ≠ 1）。
-                    // ctx[0]=PlanId，ctx[1]=StockId。
+                    // ctx[4]=StockId。
                     return Err(SessionError::InvalidSave(ValidationFault::new(
                         1042,
-                        vec![plan_id.0, u64::from(plan.code().0)],
+                        plan_id.error_context_with([u64::from(plan.code().0)]),
                     )));
                 };
                 let exposure = u64::from(plan.filled_qty())
                     .checked_add(u64::from(*live_remaining))
                     .ok_or_else(|| {
-                        // fault2185：执行腿在途风险敞口溢出或超目标；ctx[0]=PlanId，ctx[1]=StockId。
+                        // fault2185：执行腿在途风险敞口溢出或超目标；ctx[4]=StockId。
                         SessionError::InvalidSave(ValidationFault::new(
                             2185,
-                            vec![plan_id.0, u64::from(plan.code().0)],
+                            plan_id.error_context_with([u64::from(plan.code().0)]),
                         ))
                     })?;
                 if let crate::plans::PlanTarget::ShareCount(target) = plan.target() {
                     if exposure > u64::from(target) {
-                        // fault2185：执行腿在途风险敞口溢出或超目标；ctx[0]=PlanId，ctx[1]=StockId。
+                        // fault2185：执行腿在途风险敞口溢出或超目标；ctx[4]=StockId。
                         return Err(SessionError::InvalidSave(ValidationFault::new(
                             2185,
-                            vec![plan_id.0, u64::from(plan.code().0)],
+                            plan_id.error_context_with([u64::from(plan.code().0)]),
                         )));
                     }
                 }
@@ -1888,10 +1895,18 @@ fn validate_plan_contract(context: &SaveValidationContext) -> Result<(), Session
                     // fault2185：序列化余量大于真实订单余量（虚增敞口）。
                     return Err(SessionError::InvalidSave(ValidationFault::new(
                         2185,
-                        vec![plan_id.0, u64::from(plan.code().0)],
+                        plan_id.error_context_with([u64::from(plan.code().0)]),
                     )));
                 }
             }
+        }
+    }
+    for cursor in save.plans.owner_sequences() {
+        if cursor.owner.0 > npc_count {
+            // fault2690：游标属于未知账户，包含没有当前计划的历史游标。
+            // ctx[0..2] = owner 高/低 u32。
+            return Err(SessionError::InvalidSave(ValidationFault::new(2690,
+                vec![cursor.owner.0 >> 32, cursor.owner.0 & 0xffff_ffff])));
         }
     }
     Ok(())

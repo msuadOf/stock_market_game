@@ -1,11 +1,14 @@
 import type { CatalogResolver } from "./catalog-resolver.ts";
+import { parsePlanId } from "../utils/plan-identity.ts";
+import type { PlanId } from "../types/generated/PlanId.ts";
+import type { AccountId } from "../types/generated/AccountId.ts";
 
 export type NpcDecisionTraceRecord = {
-  readonly account: number;
+  readonly account: AccountId;
   readonly tick: string;
   readonly source_report_ids: readonly string[];
   readonly expectation_method: string | null;
-  readonly plan_ids: readonly number[];
+  readonly plan_ids: readonly PlanId[];
   readonly plan_changes: readonly string[];
   readonly budget_constraints: readonly string[];
   readonly order_ids: readonly number[];
@@ -53,19 +56,29 @@ function parseRecord(value: unknown, index: number, identity: CatalogResolver): 
   if (Object.keys(value).length !== keys.length || keys.some((key) => !(key in value))) {
     throw new Error(`NPC 决策诊断第 ${index} 条字段不完整`);
   }
-  if (!isNonNegativeInteger(value["account"]) || !isU64Decimal(value["tick"])
+  if (!Array.isArray(value["plan_ids"])) throw new Error(`NPC 决策诊断第 ${index} 条 plan_ids 必须是数组`);
+  if (!isU64Decimal(value["account"]) || !isU64Decimal(value["tick"])
     || !isStringArray(value["source_report_ids"]) || !isStringOrNull(value["expectation_method"])
-    || !isNonNegativeIntegerArray(value["plan_ids"]) || !isStringArray(value["plan_changes"])
+    || !isStringArray(value["plan_changes"])
     || !isStringArray(value["budget_constraints"])
     || !isNonNegativeIntegerArray(value["order_ids"]) || !isNonNegativeIntegerArray(value["codes"])) {
     throw new Error(`NPC 决策诊断第 ${index} 条字段无效`);
   }
+  const seen = new Set<string>();
+  const plan_ids = value["plan_ids"].map((entry, planIndex) => {
+    const path = `NPC 决策诊断第 ${index} 条 plan_ids[${planIndex}]`;
+    const id = parsePlanId(entry, path);
+    if (id.owner !== value["account"]) throw new Error(`${path}.owner 必须与诊断 account 一致`);
+    if (seen.has(id.sequence)) throw new Error(`${path} 包含重复的 PlanId`);
+    seen.add(id.sequence);
+    return id;
+  });
   return {
     account: value["account"],
     tick: value["tick"],
     source_report_ids: value["source_report_ids"],
     expectation_method: value["expectation_method"],
-    plan_ids: value["plan_ids"],
+    plan_ids,
     plan_changes: value["plan_changes"],
     budget_constraints: value["budget_constraints"],
     order_ids: value["order_ids"],

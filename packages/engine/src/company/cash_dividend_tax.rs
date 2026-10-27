@@ -881,53 +881,25 @@ impl CashDividendTaxBook {
         through: CivilDate,
         operation_seq: u64,
     ) -> Result<i128, DividendTaxError> {
-        let mut total_cents = 0i128;
-        for dividend in self
-            .dividends
-            .iter()
-            .filter(|dividend| dividend.operation_seq <= operation_seq)
-        {
-            let quantity = total_quantity(&dividend.lots)?;
-            let mut assessed = ExactDividendTaxAmount::zero();
-            for payment in dividend.payments.iter().filter(|payment| {
-                payment.paid_on <= through && payment.operation_seq <= operation_seq
-            }) {
-                let per_share = ExactDividendTaxAmount::new(
-                    i128::from(payment.received_gross.cents()),
-                    quantity,
-                )?;
-                for lot in &dividend.lots {
-                    if matches!(&lot.class, TaxShareClass::StatutoryRestricted { release_on, .. } if payment.paid_on < *release_on)
-                    {
-                        assessed = assessed.add(&per_share.multiply(lot.qty, 10)?)?;
-                        continue;
-                    }
-                    let start = match &lot.class {
-                        TaxShareClass::PublicMarket => lot.acquired_on,
-                        TaxShareClass::StatutoryRestricted { release_on, .. } => *release_on,
-                    };
-                    for day in self.days.iter().filter(|day| {
-                        day.day > dividend.registered_on
-                            && day.day <= through
-                            && day.operation_seq <= operation_seq
-                    }) {
-                        for disposition in day
-                            .dispositions
-                            .iter()
-                            .filter(|disposition| disposition.lot.id == lot.id)
-                        {
-                            assessed = assessed.add(&per_share.multiply(
-                                disposition.lot.qty,
-                                personal_cash_dividend_rate(start, disposition.disposed_on)?,
-                            )?)?;
-                        }
+        let mut total_cents = self.assessed_cash_cents_through(
+            through,
+            operation_seq,
+            |dividend, lot, per_share, start, assessed| {
+                for day in self.days.iter().filter(|day| {
+                    day.day > dividend.registered_on
+                        && day.day <= through
+                        && day.operation_seq <= operation_seq
+                }) {
+                    for disposition in day.dispositions.iter().filter(|d| d.lot.id == lot.id) {
+                        *assessed = assessed.add(&per_share.multiply(
+                            disposition.lot.qty,
+                            personal_cash_dividend_rate(start, disposition.disposed_on)?,
+                        )?)?;
                     }
                 }
-            }
-            total_cents = total_cents
-                .checked_add(assessed.round_half_up_cents()?)
-                .ok_or_else(|| overflow("assessed tax cents"))?;
-        }
+                Ok(())
+            },
+        )?;
         // 送股税基：送股按面值计入股息税基，与现金分红同一差别化机制——
         // 解禁前到账按 10% 立即计税（85号第四条）；其余在关联批次处置时按
         // 持股档位计税（限售档期自解禁日起算）。每笔送股事件合计税额同样
@@ -976,6 +948,46 @@ impl CashDividendTaxBook {
         }
         Ok(total_cents)
     }
+    /// 现金评税的共同循环：实际已付所得、原登记持期/限售以及事件合计取整只有此处。
+    /// 调用方仅提供公开处置对应的原权益数量，旧入口仍使用既有整数处置事实。
+    fn assessed_cash_cents_through(
+        &self,
+        through: CivilDate,
+        operation_seq: u64,
+        mut assess_disposals: impl FnMut(
+            &RegisteredTaxDividend,
+            &DividendTaxLot,
+            &ExactDividendTaxAmount,
+            CivilDate,
+            &mut ExactDividendTaxAmount,
+        ) -> Result<(), DividendTaxError>,
+    ) -> Result<i128, DividendTaxError> {
+        let mut total_cents = 0i128;
+        for dividend in self
+            .dividends
+            .iter()
+            .filter(|d| d.operation_seq <= operation_seq)
+        {
+            let event_cents = assess_registered_income_cents(
+                &dividend.lots,
+                dividend
+                    .payments
+                    .iter()
+                    .filter(|payment| {
+                        payment.paid_on <= through && payment.operation_seq <= operation_seq
+                    })
+                    .map(|payment| (payment.paid_on, i128::from(payment.received_gross.cents()))),
+                |lot, per_share, start, assessed| {
+                    assess_disposals(dividend, lot, per_share, start, assessed)
+                },
+            )?;
+            total_cents = total_cents
+                .checked_add(event_cents)
+                .ok_or_else(|| overflow("assessed tax cents"))?;
+        }
+        Ok(total_cents)
+    }
+
     pub fn validate(&self) -> Result<(), DividendTaxError> {
         let mut operations = Vec::new();
         for day in &self.days {
@@ -1346,6 +1358,37 @@ impl CashDividendTaxBook {
     }
 }
 
+/// Cash/Bonus共用实际所得、原R持期/限售和每事件累计整分口径。
+fn assess_registered_income_cents(
+    lots: &[DividendTaxLot],
+    realizations: impl IntoIterator<Item = (CivilDate, i128)>,
+    mut assess_disposals: impl FnMut(
+        &DividendTaxLot,
+        &ExactDividendTaxAmount,
+        CivilDate,
+        &mut ExactDividendTaxAmount,
+    ) -> Result<(), DividendTaxError>,
+) -> Result<i128, DividendTaxError> {
+    let quantity = total_quantity(lots)?;
+    let mut assessed = ExactDividendTaxAmount::zero();
+    for (realized_on, gross_cents) in realizations {
+        let per_share = ExactDividendTaxAmount::new(gross_cents, quantity)?;
+        for lot in lots {
+            if matches!(&lot.class,TaxShareClass::StatutoryRestricted{release_on,..} if realized_on < *release_on)
+            {
+                assessed = assessed.add(&per_share.multiply(lot.qty, 10)?)?;
+                continue;
+            }
+            let start = match &lot.class {
+                TaxShareClass::PublicMarket => lot.acquired_on,
+                TaxShareClass::StatutoryRestricted { release_on, .. } => *release_on,
+            };
+            assess_disposals(lot, &per_share, start, &mut assessed)?;
+        }
+    }
+    assessed.round_half_up_cents()
+}
+
 pub(crate) fn convert_tax_source(
     source: &crate::company::share_registry::AcquisitionSource,
 ) -> crate::company::cash_dividend_tax::TaxAcquisitionSource {
@@ -1613,3 +1656,5 @@ mod nonnegative_decimal {
 
 #[cfg(test)]
 mod tests;
+
+pub mod entitlement_units;

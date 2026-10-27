@@ -1,0 +1,41 @@
+✔ Money 门槛精确保留 i64 上界并显式拒绝越界 (71.113593ms)
+✔ 真实事件保留非法 raw 文本、显示错误、不回写，再修正时以数值 company 回调 (3.762625ms)
+✔ 送转非法 raw 与 Money 上限保持可见，修正前不回写，外部有效回填重置字段 (1.40923ms)
+✔ 字段边界拒绝小数 bp、零间隔和过大送转比例，不钳制 (0.223446ms)
+✔ 未配置送转启用为空 raw，半填不回写；取消为未配置 (0.957087ms)
+✖ 外部配置更新时保留未完成 raw 并明确提示，不静默丢编辑 (1.875003ms)
+✔ seed 完整 u64、规范十进制边界，在创建前拒绝非法 seed (2.433708ms)
+✔ 预览 seed 原值创建；seed 编辑不覆盖 custom 非法 raw JSON (1.408629ms)
+✔ Simulation 创建草稿显式不支持，非法 seed 先于运行失败 (0.432412ms)
+✔ 合法 seed 预览与创建一致，偏好更新只按 numeric CompanyId 且不改金额 (2.661815ms)
+✔ 显式重新生成只抽一次 seed，周期切换使用明确期间范围、保留seed且拒绝custom (2.583683ms)
+ℹ tests 11
+ℹ suites 0
+ℹ pass 10
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1408.0587
+
+✖ failing tests:
+
+test at apps/web/src/components/company/CompanyPreferencesInput.test.ts:91:1
+✖ 外部配置更新时保留未完成 raw 并明确提示，不静默丢编辑 (1.875003ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  + actual - expected
+  
+  + '5000'
+  - 'unfinished'
+  
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-system-inputs/apps/web/src/components/company/CompanyPreferencesInput.test.ts:99:10)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: '5000',
+    expected: 'unfinished',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

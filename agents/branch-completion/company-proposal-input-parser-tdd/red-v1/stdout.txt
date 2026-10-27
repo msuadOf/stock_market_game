@@ -1,0 +1,158 @@
+✖ 六类 Proposal 严格保留 serde 字段，结构通过仅表示格式有效 (1.096349ms)
+✖ 精确保留 u64 边界，不接受越界与非规范十进制字符串 (0.178054ms)
+✖ Money 严格保持规范 i64 分字符串，接受负数和零但不接受数值或越界 (0.196946ms)
+✖ CompanyId 与 u32 日期窗口字段接受上下界并拒绝类型和范围错误 (0.201445ms)
+✖ 外层只允许一个已知 tag，payload 必须完整且拒绝未知字段 (0.946525ms)
+✖ 嵌套领域 enum 闭包严格拒绝未知值 (0.193125ms)
+✖ 解析不修改输入或伪造受理信息 (0.203305ms)
+✖ 直接读取真实 Rust serde 六类 fixture 并无损解析 (0.219065ms)
+✔ 全部变体逐字段缺键多键与null拒绝 (2.021163ms)
+✖ 所有u64及窗口字段遵守零和端点；Money按输入形状接受负值 (3.522892ms)
+✖ 所有u32身份和窗口字段拒绝负零并保留普通零 (0.327709ms)
+ℹ tests 11
+ℹ suites 0
+ℹ pass 1
+ℹ fail 10
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 125.6121
+
+✖ failing tests:
+
+test at apps/web/src/host/player-proposals.test.ts:15:1
+✖ 六类 Proposal 严格保留 serde 字段，结构通过仅表示格式有效 (1.096349ms)
+  Error: Proposal 解析尚未实现: [object Object]
+      at parsePlayerCompanyProposal (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-proposal-input-parser-tdd/apps/web/src/host/player-proposals.ts:2:9)
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-proposal-input-parser-tdd/apps/web/src/host/player-proposals.test.ts:17:22)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at Test.start (node:internal/test_runner/test:1191:17)
+      at startSubtestAfterBootstrap (node:internal/test_runner/harness:385:17)
+
+test at apps/web/src/host/player-proposals.test.ts:21:1
+✖ 精确保留 u64 边界，不接受越界与非规范十进制字符串 (0.178054ms)
+  Error: Proposal 解析尚未实现: [object Object]
+      at parsePlayerCompanyProposal (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-proposal-input-parser-tdd/apps/web/src/host/player-proposals.ts:2:9)
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-proposal-input-parser-tdd/apps/web/src/host/player-proposals.test.ts:24:20)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:911:18)
+      at Test.postRun (node:internal/test_runner/test:1465:19)
+      at Test.run (node:internal/test_runner/test:1390:12)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3)
+
+test at apps/web/src/host/player-proposals.test.ts:30:1
+✖ Money 严格保持规范 i64 分字符串，接受负数和零但不接受数值或越界 (0.196946ms)
+  Error: Proposal 解析尚未实现: [object Object]
+      at parsePlayerCompanyProposal (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-proposal-input-parser-tdd/apps/web/src/host/player-proposals.ts:2:9)
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-proposal-input-parser-tdd/apps/web/src/host/player-proposals.test.ts:33:22)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:911:18)
+      at Test.postRun (node:internal/test_runner/test:1465:19)
+      at Test.run (node:internal/test_runner/test:1390:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7)
+
+test at apps/web/src/host/player-proposals.test.ts:40:1
+✖ CompanyId 与 u32 日期窗口字段接受上下界并拒绝类型和范围错误 (0.201445ms)
+  Error: Proposal 解析尚未实现: [object Object]
+      at parsePlayerCompanyProposal (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-proposal-input-parser-tdd/apps/web/src/host/player-proposals.ts:2:9)
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-proposal-input-parser-tdd/apps/web/src/host/player-proposals.test.ts:41:20)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:911:18)
+      at Test.postRun (node:internal/test_runner/test:1465:19)
+      at Test.run (node:internal/test_runner/test:1390:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7)
+
+test at apps/web/src/host/player-proposals.test.ts:58:1
+✖ 外层只允许一个已知 tag，payload 必须完整且拒绝未知字段 (0.946525ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /Proposal\.CashDividend\.gross_per_share/. Input:
+  
+  'Error: Proposal 解析尚未实现: [object Object]'
+  
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-proposal-input-parser-tdd/apps/web/src/host/player-proposals.test.ts:62:10)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:911:18)
+      at Test.postRun (node:internal/test_runner/test:1465:19)
+      at Test.run (node:internal/test_runner/test:1390:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: Error: Proposal 解析尚未实现: [object Object]
+        at parsePlayerCompanyProposal (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-proposal-input-parser-tdd/apps/web/src/host/player-proposals.ts:2:9)
+        at file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-proposal-input-parser-tdd/apps/web/src/host/player-proposals.test.ts:62:23
+        at getActual (node:assert:611:5)
+        at strict.throws (node:assert:759:24)
+        at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-proposal-input-parser-tdd/apps/web/src/host/player-proposals.test.ts:62:10)
+        at Test.runInAsyncScope (node:async_hooks:227:14)
+        at Test.run (node:internal/test_runner/test:1325:25)
+        at Test.processPendingSubtests (node:internal/test_runner/test:911:18)
+        at Test.postRun (node:internal/test_runner/test:1465:19)
+        at Test.run (node:internal/test_runner/test:1390:12),
+    expected: /Proposal\.CashDividend\.gross_per_share/,
+    operator: 'throws',
+    diff: 'simple'
+  }
+
+test at apps/web/src/host/player-proposals.test.ts:67:1
+✖ 嵌套领域 enum 闭包严格拒绝未知值 (0.193125ms)
+  Error: Proposal 解析尚未实现: [object Object]
+      at parsePlayerCompanyProposal (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-proposal-input-parser-tdd/apps/web/src/host/player-proposals.ts:2:9)
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-proposal-input-parser-tdd/apps/web/src/host/player-proposals.test.ts:68:20)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:911:18)
+      at Test.postRun (node:internal/test_runner/test:1465:19)
+      at Test.run (node:internal/test_runner/test:1390:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7)
+
+test at apps/web/src/host/player-proposals.test.ts:84:1
+✖ 解析不修改输入或伪造受理信息 (0.203305ms)
+  Error: Proposal 解析尚未实现: [object Object]
+      at parsePlayerCompanyProposal (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-proposal-input-parser-tdd/apps/web/src/host/player-proposals.ts:2:9)
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-proposal-input-parser-tdd/apps/web/src/host/player-proposals.test.ts:87:18)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:911:18)
+      at Test.postRun (node:internal/test_runner/test:1465:19)
+      at Test.run (node:internal/test_runner/test:1390:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7)
+
+test at apps/web/src/host/player-proposals.test.ts:143:1
+✖ 直接读取真实 Rust serde 六类 fixture 并无损解析 (0.219065ms)
+  Error: Proposal 解析尚未实现: [object Object]
+      at parsePlayerCompanyProposal (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-proposal-input-parser-tdd/apps/web/src/host/player-proposals.ts:2:9)
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-proposal-input-parser-tdd/apps/web/src/host/player-proposals.test.ts:145:47)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:911:18)
+      at Test.postRun (node:internal/test_runner/test:1465:19)
+      at Test.run (node:internal/test_runner/test:1390:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7)
+
+test at apps/web/src/host/player-proposals.test.ts:160:1
+✖ 所有u64及窗口字段遵守零和端点；Money按输入形状接受负值 (3.522892ms)
+  Error: Proposal 解析尚未实现: [object Object]
+      at parsePlayerCompanyProposal (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-proposal-input-parser-tdd/apps/web/src/host/player-proposals.ts:2:9)
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-proposal-input-parser-tdd/apps/web/src/host/player-proposals.test.ts:167:97)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:911:18)
+      at Test.postRun (node:internal/test_runner/test:1465:19)
+      at Test.run (node:internal/test_runner/test:1390:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7)
+
+test at apps/web/src/host/player-proposals.test.ts:175:1
+✖ 所有u32身份和窗口字段拒绝负零并保留普通零 (0.327709ms)
+  Error: Proposal 解析尚未实现: [object Object]
+      at parsePlayerCompanyProposal (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-proposal-input-parser-tdd/apps/web/src/host/player-proposals.ts:2:9)
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-proposal-input-parser-tdd/apps/web/src/host/player-proposals.test.ts:182:22)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:911:18)
+      at Test.postRun (node:internal/test_runner/test:1465:19)
+      at Test.run (node:internal/test_runner/test:1390:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7)

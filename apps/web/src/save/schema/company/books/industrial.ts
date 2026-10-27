@@ -1,6 +1,6 @@
-import { array, civilDate, exact, integer, map, nullable, record, string } from "../../primitives.ts"
+import { SaveSchemaError, array, civilDate, exact, integer, map, record, string } from "../../primitives.ts"
 import { parseBooks, type Books } from "../accounting/index.ts"
-import { amount } from "../value.ts"
+import { amount, period } from "../value.ts"
 import { parseBudget, parseContractBook, parseCounterpartyLedger, parseFraction, parseI128Number, parseTradeOpenLedger, type ContractBook, type CounterpartyLedger, type OperatingBudget, type TradeOpenLedger } from "./common.ts"
 
 export type IndustrialBooks = { readonly books: Books; readonly inventory: InventoryLedger; readonly assets: FixedAssetRegister; readonly receivables: TradeOpenLedger; readonly payables: TradeOpenLedger; readonly contracts: ContractBook; readonly counterparties: CounterpartyLedger; readonly budget: OperatingBudget; readonly tax_policy: TaxPolicy; readonly income_tax_position: IncomeTaxPosition; readonly loans: Readonly<Record<string, IndustrialLoanState>>; readonly inventory_source_events: readonly { readonly event: number; readonly item: string; readonly account: string }[]; readonly trade_counterparty_events: readonly { readonly event: number; readonly counterparty: string; readonly account: string }[]; readonly next_event_id: number }
@@ -12,8 +12,8 @@ type TaxPolicy = { readonly version: number; readonly vat: VatPolicy; readonly i
 type VatPolicy = { readonly output_rate_bp: number; readonly input_rate_bp: number; readonly deductible_share_bp: number }
 type IncomeTaxPolicy = { readonly rate_bp: number; readonly loss_carryforward_years: number }
 type LossEntry = { readonly origin_year: number; readonly remaining: string }
-type IncomeTaxPosition = { readonly loss_pool: readonly LossEntry[]; readonly assessment: IncomeTaxAssessment | null }
-type IncomeTaxAssessment = { readonly year: number; readonly pretax: string; readonly current_tax: string; readonly opening_loss_pool: readonly LossEntry[] }
+type IncomeTaxPosition = { readonly loss_pool: readonly LossEntry[]; readonly assessments: Readonly<Record<string, IncomeTaxAssessment>>; readonly initial_deferred_tax_asset: string; readonly restatements: Readonly<Record<string, string>> }
+type IncomeTaxAssessment = { readonly deferred_tax_asset: string; readonly pretax: string; readonly current_tax: string; readonly opening_loss_pool: readonly LossEntry[] }
 type IndustrialLoanState = { readonly outstanding: string; readonly accrued_unpaid: string; readonly carried: string; readonly last_accrual_date: string }
 
 export function parseIndustrialBooks(value: unknown, path: string): IndustrialBooks {
@@ -36,14 +36,19 @@ export function parseIndustrialBooks(value: unknown, path: string): IndustrialBo
 
 function parseIncomeTaxPosition(value: unknown, path: string): IncomeTaxPosition {
   const parsed = record(value, path)
-  exact(parsed, ["loss_pool", "assessment"], path)
-  return { loss_pool: array(parsed.loss_pool, `${path}.loss_pool`).map((entry, index) => parseLossEntry(entry, `${path}.loss_pool[${index}]`)), assessment: nullable(parsed.assessment, `${path}.assessment`, parseIncomeTaxAssessment) }
+  exact(parsed, ["loss_pool", "assessments", "initial_deferred_tax_asset", "restatements"], path)
+  const assessments = map(parsed.assessments, `${path}.assessments`, (key, keyPath) => {
+    if (!/^(0|-?[1-9][0-9]*)$/.test(key) || BigInt(key) < -2_147_483_648n || BigInt(key) > 2_147_483_647n) throw new SaveSchemaError(keyPath, "必须是规范 i32 年度键")
+  }, parseIncomeTaxAssessment)
+  return { loss_pool: array(parsed.loss_pool, `${path}.loss_pool`).map((entry, index) => parseLossEntry(entry, `${path}.loss_pool[${index}]`)), assessments, initial_deferred_tax_asset: amount(parsed.initial_deferred_tax_asset, `${path}.initial_deferred_tax_asset`), restatements: map(parsed.restatements, `${path}.restatements`, (key, keyPath) => {
+    if (!/^(0|[1-9][0-9]*)$/.test(key) || BigInt(key) > 18_446_744_073_709_551_615n) throw new SaveSchemaError(keyPath, "必须是规范 u64 BusinessEventId 键")
+  }, period) }
 }
 
 function parseIncomeTaxAssessment(value: unknown, path: string): IncomeTaxAssessment {
   const parsed = record(value, path)
-  exact(parsed, ["year", "pretax", "current_tax", "opening_loss_pool"], path)
-  return { year: integer(parsed.year, `${path}.year`), pretax: amount(parsed.pretax, `${path}.pretax`), current_tax: amount(parsed.current_tax, `${path}.current_tax`), opening_loss_pool: array(parsed.opening_loss_pool, `${path}.opening_loss_pool`).map((entry, index) => parseLossEntry(entry, `${path}.opening_loss_pool[${index}]`)) }
+  exact(parsed, ["pretax", "current_tax", "opening_loss_pool", "deferred_tax_asset"], path)
+  return { deferred_tax_asset: amount(parsed.deferred_tax_asset, `${path}.deferred_tax_asset`), pretax: amount(parsed.pretax, `${path}.pretax`), current_tax: amount(parsed.current_tax, `${path}.current_tax`), opening_loss_pool: array(parsed.opening_loss_pool, `${path}.opening_loss_pool`).map((entry, index) => parseLossEntry(entry, `${path}.opening_loss_pool[${index}]`)) }
 }
 
 function parseInventory(value: unknown, path: string): InventoryLedger {
@@ -70,7 +75,7 @@ function parseAsset(value: unknown, path: string): FixedAssetEntry {
   return { cost: amount(parsed.cost, `${path}.cost`), salvage_value: amount(parsed.salvage_value, `${path}.salvage_value`), life_months: integer(parsed.life_months, `${path}.life_months`), depreciated_months: integer(parsed.depreciated_months, `${path}.depreciated_months`, 0), accumulated_depreciation: amount(parsed.accumulated_depreciation, `${path}.accumulated_depreciation`), accumulated_impairment: amount(parsed.accumulated_impairment, `${path}.accumulated_impairment`) }
 }
 
-function parseTaxPolicy(value: unknown, path: string): TaxPolicy {
+export function parseTaxPolicy(value: unknown, path: string): TaxPolicy {
   const parsed = record(value, path)
   exact(parsed, ["version", "vat", "income_tax"], path)
   return { version: integer(parsed.version, `${path}.version`, 0), vat: parseVat(parsed.vat, `${path}.vat`), income_tax: parseIncomeTax(parsed.income_tax, `${path}.income_tax`) }

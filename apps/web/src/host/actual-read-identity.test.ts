@@ -3,6 +3,7 @@ import test from "node:test";
 import { prepareCatalogResolver } from "./catalog-resolver.ts";
 import { parseInitialAllocation } from "./initial-allocation.ts";
 import { parseNpcDecisionTrace } from "./npc-decision-trace.ts";
+import { ProtocolError } from "./protocol/types.ts";
 import { wireCurrentMinuteHistoryRequest } from "./current-minute-history.ts";
 
 const identity = prepareCatalogResolver([{ id: 0, code: "600101" }], [{ id: 0, code: "C-600101", name: "实际公司", listed_stock: 0 }]);
@@ -10,9 +11,31 @@ const identity = prepareCatalogResolver([{ id: 0, code: "600101" }], [{ id: 0, c
 test("实际单股只读请求发StockId0，initialAllocation与NPC诊断回相同证券", () => {
   const allocation = parseInitialAllocation({ stocks: [{ code: 0, float_shares: 0, unallocated_shares: 0, categories: ["Retail", "Inst", "Hot"].map(kind => ({ kind, shares: 0, account_count: 0, zero_holders: 0 })) }] }, ["600101"], identity);
   assert.equal(allocation.stocks[0].code, "600101");
-  const trace = parseNpcDecisionTrace([{ account: 1, tick: "1", source_report_ids: [], expectation_method: null, plan_ids: [], plan_changes: [], budget_constraints: [], order_ids: [], codes: [0] }], identity);
+  const trace = parseNpcDecisionTrace([{ account: "1", tick: "1", source_report_ids: [], expectation_method: null, plan_ids: [], plan_changes: [], budget_constraints: [], order_ids: [], codes: [0] }], identity);
   assert.equal(trace[0].codes[0], "600101");
   assert.equal(wireCurrentMinuteHistoryRequest({ code: "600101" }, identity).stock, 0);
+});
+
+test("同代目录保留不同CompanyId与StockId，完整AccountId和PlanId不经过number", { timeout: 10000 }, () => {
+  const distinct = prepareCatalogResolver([{ id: 0, code: "600101" }], [{ id: 7, code: "C-600101", name: "实际公司", listed_stock: 0 }]);
+  const account = "18446744073709551615";
+  const row = { account, tick: "1", source_report_ids: [], expectation_method: null,
+    plan_ids: [{ owner: account, sequence: "9007199254740993" }], plan_changes: [], budget_constraints: [], order_ids: [], codes: [0] };
+  const parsed = parseNpcDecisionTrace([row], distinct)[0];
+  assert.equal(distinct.stockId("600101"), 0);
+  assert.equal(distinct.companyId("C-600101"), 7);
+  assert.equal(parsed.account, account);
+  assert.deepEqual(parsed.plan_ids, row.plan_ids);
+  assert.deepEqual(parsed.codes, ["600101"]);
+  assert.throws(() => parseNpcDecisionTrace([{ ...row, account: 1 }], distinct), /字段无效/);
+  assert.throws(() => parseNpcDecisionTrace([{ ...row, plan_ids: [1] }], distinct), /plan_ids\[0\]/);
+  assert.throws(() => parseNpcDecisionTrace([{ ...row, plan_ids: [{ owner: "1", sequence: "3" }] }], distinct), /owner.*account/);
+  assert.throws(() => parseNpcDecisionTrace([{ ...row, codes: [7] }], distinct), (error: unknown) => {
+    assert.ok(error instanceof ProtocolError);
+    assert.equal(error.where, "NPC 决策诊断第 0 条 codes[0]");
+    assert.match(error.message, /未知股票 StockId：7/);
+    return true;
+  });
 });
 
 test("真实WorkerHost只读请求按restore后实际子集发原StockId并拒绝旧响应", { timeout: 10000 }, async () => {

@@ -29,9 +29,70 @@ import * as regression from "./run-full-regression.mjs";
 import { discoverScriptTestFiles } from "./run-script-tests.mjs";
 
 it("根回归纳入完整 scripts 发现入口及其源码指纹", { timeout: 10000 }, () => {
-  const steps = fullRegressionSteps(4);
+  const steps = fullRegressionSteps(4, process.cwd(), {});
   assert.ok(steps.some((step) => step.kind === "script-test-batch"));
   assert.ok(FULL_REGRESSION_SOURCE_INPUTS.includes("scripts"));
+});
+
+const CARGO_BUILD_JOBS_ENV = "STOCK_GAME_FULL_REGRESSION_CARGO_BUILD_JOBS";
+
+it("Cargo 独立 jobs 只改变 build/doctest，保留总 CPU 与其他 step 契约", () => {
+  const repoRoot = process.cwd();
+  const baseEnv = { CARGO_BUILD_JOBS: "99", RUSTFLAGS: "fixture-rustflags", CARGO_PROFILE_TEST_DEBUG: "2" };
+  const original = fullRegressionSteps(128, repoRoot, baseEnv);
+  const configured = fullRegressionSteps(128, repoRoot, { ...baseEnv, [CARGO_BUILD_JOBS_ENV]: "8" });
+  for (const [index, step] of configured.entries()) {
+    const { env: originalEnv, ...originalStep } = original[index];
+    const { env: configuredEnv, ...configuredStep } = step;
+    assert.deepEqual(configuredStep, originalStep);
+    const expectedJobs = ["rust-test-build", "rust-doctests"].includes(step.kind) ? "8" : "99";
+    assert.equal(configuredEnv.CARGO_BUILD_JOBS, expectedJobs);
+    const { [CARGO_BUILD_JOBS_ENV]: ignored, ...withoutConfiguration } = configuredEnv;
+    assert.deepEqual(withoutConfiguration, { ...originalEnv, CARGO_BUILD_JOBS: expectedJobs });
+  }
+  assert.equal(configured[1].cpuCount, 128);
+  assert.equal(configured[4].cpuCount, 128);
+  assert.deepEqual(configured[2].args, ["test", "--workspace", "--doc", "--no-fail-fast", "--", "--test-threads=127"]);
+  for (const [cpuCount, value, jobs] of [[128, undefined, "128"], [128, "128", "128"], [1, "1", "1"]]) {
+    const env = value === undefined ? {} : { [CARGO_BUILD_JOBS_ENV]: value };
+    const steps = fullRegressionSteps(cpuCount, repoRoot, env);
+    assert.equal(steps[0].env.CARGO_BUILD_JOBS, jobs);
+    assert.equal(steps[2].env.CARGO_BUILD_JOBS, jobs);
+  }
+});
+
+it("Cargo 独立 jobs 拒绝非 canonical 字符串及超过可用 CPU 的值", () => {
+  const invalid = ["", "0", "-1", "01", "00", "+8", " 8", "8 ", "8\n", "8\r\n", "8\t", "1.5", "8e0", "0x8", "８", "八", "invalid", "9007199254740992", "129", 8, null, {}, true];
+  for (const value of invalid) {
+    assert.throws(() => fullRegressionSteps(128, process.cwd(), { [CARGO_BUILD_JOBS_ENV]: value }),
+      (error) => error.message.includes(CARGO_BUILD_JOBS_ENV) && error.message.includes("128"),
+      `非法配置必须显式拒绝：${JSON.stringify(value)}`);
+  }
+});
+
+it("all 的两个内部 phase 继承专用配置并由 Cargo steps 消费", { timeout: 10000 }, async () => {
+  const runnerUrl = new URL("./run-full-regression.mjs", import.meta.url).href;
+  const result = await runBoundedCommand({
+    command: process.execPath,
+    args: ["--input-type=module", "-e", `
+      import assert from "node:assert/strict";
+      import { runFullRegression, fullRegressionSteps } from ${JSON.stringify(runnerUrl)};
+      const phases = [];
+      await runFullRegression({ run: async ({ args, env }) => {
+        assert.equal(env.${CARGO_BUILD_JOBS_ENV}, "8");
+        const steps = fullRegressionSteps(128, process.cwd(), env);
+        assert.equal(steps[0].env.CARGO_BUILD_JOBS, "8");
+        assert.equal(steps[2].env.CARGO_BUILD_JOBS, "8");
+        phases.push(args[1]);
+      } });
+      assert.deepEqual(phases, ["--internal-build", "--internal-execute"]);
+      console.log("两个 phase 已继承并消费 jobs=8");
+    `],
+    env: { ...process.env, [CARGO_BUILD_JOBS_ENV]: "8" },
+    timeoutMs: 1000,
+    captureOutput: true,
+  });
+  assert.match(result.stdout, /两个 phase 已继承并消费 jobs=8/);
 });
 
 it("Rust case discovery rejects malformed output and excludes benchmarks", { timeout: 10000 }, () => {
@@ -145,7 +206,8 @@ it("resolves a linked worktree through the Git common directory", async () => {
 it("forces one workspace-local Cargo target and process-temp directory for every step", async () => {
   const repoRoot = process.cwd();
   const workspaceRoot = await resolveWorkspaceRoot(repoRoot);
-  const hostile = { ...process.env, CARGO_TARGET_DIR: "/tmp/external-target", TMPDIR: "/tmp", TMP: "/tmp", TEMP: "/tmp" };
+  const { [CARGO_BUILD_JOBS_ENV]: ignoredCargoBuildJobs, ...fixtureEnv } = process.env;
+  const hostile = { ...fixtureEnv, CARGO_TARGET_DIR: "/tmp/external-target", TMPDIR: "/tmp", TMP: "/tmp", TEMP: "/tmp" };
   const steps = fullRegressionSteps(8, repoRoot, hostile, workspaceRoot);
   const target = path.join(workspaceRoot, ".tmp", "build-cache", "full-regression");
   const processTmp = path.join(workspaceRoot, ".tmp", "process-tmp", "full-regression");
@@ -392,7 +454,7 @@ it("CI cache directory probe distinguishes a directory, a missing path, and an i
   }
 });
 
-async function createSealedFixture({ fingerprint = { algorithm: "test", algorithm_version: 1, files: [], digest: "a".repeat(64) } } = {}) {
+async function createSealedFixture({ buildOptions = {}, fingerprint = { algorithm: "test", algorithm_version: 1, files: [], digest: "a".repeat(64) } } = {}) {
   const workspaceRoot = await resolveWorkspaceRoot(process.cwd());
   const target = path.join(workspaceRoot, ".tmp", "build-cache", "full-regression");
   const artifact = path.join(target, "debug", "deps", `full-regression-fixture-${process.pid}-${Date.now()}`);
@@ -409,9 +471,11 @@ async function createSealedFixture({ fingerprint = { algorithm: "test", algorith
   await buildFullRegressionArtifacts({
     cwd: process.cwd(),
     inventoryPath,
+    ...buildOptions,
     collectFingerprint: async () => fingerprint,
     run: async (options) => {
       assert.equal(options.captureOutput, true);
+      if (buildOptions.run) return buildOptions.run(options, buildStdout);
       return { stdout: buildStdout, stderr: "" };
     },
   });
@@ -428,6 +492,61 @@ async function createSealedFixture({ fingerprint = { algorithm: "test", algorith
   };
 }
 
+it("fake build/execute 的 Cargo jobs 与所有预算日志一致且保留执行并发", { timeout: 10000 }, async () => {
+  const logs = [];
+  const baseEnv = { ...process.env, [CARGO_BUILD_JOBS_ENV]: "8" };
+  const fixture = await createSealedFixture({ buildOptions: {
+    cpuCount: 128, baseEnv,
+    progressIntervalMs: 5,
+    log: (line) => logs.push(JSON.parse(line)),
+    run: async (options, stdout) => {
+      assert.equal(options.command, "cargo");
+      assert.equal(options.env.CARGO_BUILD_JOBS, "8");
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      return { stdout, stderr: "" };
+    },
+  } });
+  try {
+    const start = logs.find((entry) => entry.phase === "build-start");
+    assert.equal(start.cargo_build_jobs, 8);
+    assert.equal(start.available_cpu_count, 128);
+    const budgetLogs = logs.filter((entry) => Object.hasOwn(entry, "cpu_jobs"));
+    assert.ok(budgetLogs.some((entry) => entry.stage === "source_fingerprint"));
+    assert.ok(budgetLogs.some((entry) => entry.status === "running"));
+    assert.ok(budgetLogs.every((entry) => entry.cpu_jobs === 8));
+    const inventory = JSON.parse(await readFile(fixture.inventoryPath, "utf8"));
+    assert.equal(inventory.build.available_cpu_count, 128);
+    let scriptsObserved = false;
+    const result = await executeFullRegression({
+      cpuCount: 128, baseEnv, inventoryPath: fixture.inventoryPath,
+      collectFingerprint: async () => fixture.fingerprint,
+      runScripts: async ({ env, cpuCount }) => {
+        assert.equal(env[CARGO_BUILD_JOBS_ENV], "8");
+        assert.equal(cpuCount, 128);
+        scriptsObserved = true;
+        return { file_count: 1 };
+      },
+      run: async ({ command, args, env }) => {
+        assert.equal(env[CARGO_BUILD_JOBS_ENV], "8");
+        if (command === "cargo") {
+          assert.equal(env.CARGO_BUILD_JOBS, "8");
+          assert.equal(args.at(-1), "--test-threads=127");
+        }
+        return { stdout: args.includes("--list")
+          ? (args.includes("--exact")
+            ? "lifecycle::year_boundary_keeps_company_operations_and_disclosure_state_authoritative: test\n"
+            : (args.includes("--ignored") ? "" : Array.from({ length: 80 }, (_, index) => `ordinary::case${index}: test\n`).join("")))
+          : "" };
+      },
+    });
+    const binaries = result.steps.find((step) => step.label === "Rust prebuilt test binaries");
+    assert.equal(binaries.available_cpu_count, 128);
+    assert.equal(binaries.max_concurrent_cases, 64);
+    assert.equal(binaries.test_threads, 1);
+    assert.equal(scriptsObserved, true);
+  } finally { await fixture.cleanup(); }
+});
+
 it("reports Cargo build progress before a real timed-out child is killed", async () => {
   const workspaceRoot = await resolveWorkspaceRoot(process.cwd());
   const inventoryPath = path.join(workspaceRoot, ".tmp", "full-regression", `timeout-inventory-${process.pid}-${Date.now()}.json`);
@@ -437,7 +556,7 @@ it("reports Cargo build progress before a real timed-out child is killed", async
   try {
     await assert.rejects(buildFullRegressionArtifacts({
       cwd: process.cwd(), inventoryPath,
-      cpuCount: 4,
+      cpuCount: 4, baseEnv: {},
       collectFingerprint: async () => ({ algorithm: "test", algorithm_version: 1, files: [], digest: "a".repeat(64) }),
       log: (line) => logs.push(JSON.parse(line)),
       writeDiagnostic: (chunk) => diagnostics.push(chunk.toString()),
@@ -704,7 +823,7 @@ it("executes sealed prebuilt test binaries, then preserves doctests and 10-secon
     const result = await executeFullRegression({
       cwd: process.cwd(),
       inventoryPath: fixture.inventoryPath,
-      cpuCount: 8,
+      cpuCount: 8, baseEnv: {},
       now: () => nowMs,
       collectFingerprint: async () => fixture.fingerprint,
       run: async (options) => {
@@ -783,7 +902,7 @@ it("fails fast and aborts in-flight sibling test binaries", async () => {
     await assert.rejects(executeFullRegression({
       cwd: process.cwd(),
       inventoryPath,
-      cpuCount: 8,
+      cpuCount: 8, baseEnv: {},
       collectFingerprint: async () => fingerprint,
       run: async (options) => {
         if (options.command === artifactPaths[0]) {
@@ -1039,7 +1158,7 @@ for (const firstError of ["filesystem", "SHA"]) it(`较早 ${firstError} 错误�
     await writeFile(fixture.inventoryPath, JSON.stringify(resealInventory(decoded)));
     let runs = 0;
     await assert.rejects(executeFullRegression({
-      cpuCount: 2, inventoryPath: fixture.inventoryPath,
+      cpuCount: 2, baseEnv: {}, inventoryPath: fixture.inventoryPath,
       collectFingerprint: async () => fixture.fingerprint,
       run: async () => { runs += 1; },
     }), firstError === "filesystem" ? /ENOENT/ : /SHA-256 mismatch/);
@@ -1061,14 +1180,14 @@ it("真实 hash worker 崩溃时 build 不发布、execute 不启动测试且全
   const unpublished = `${fixture.inventoryPath}.unpublished`;
   try {
     await assert.rejects(buildFullRegressionArtifacts({
-      cwd: process.cwd(), cpuCount: 2, inventoryPath: unpublished, hashArtifacts,
+      cwd: process.cwd(), cpuCount: 2, baseEnv: {}, inventoryPath: unpublished, hashArtifacts,
       collectFingerprint: async () => fixture.fingerprint,
       run: async () => ({ stdout: JSON.stringify({ reason: "compiler-artifact", package_id: "fixture",
         target: { name: "fixture", kind: ["test"], test: true }, profile: { test: true }, executable: fixture.artifact }) }),
     }), /注入 hash worker 崩溃/);
     await assert.rejects(readFile(unpublished), /ENOENT/);
     await assert.rejects(executeFullRegression({
-      cwd: process.cwd(), cpuCount: 2, inventoryPath: fixture.inventoryPath, hashArtifacts,
+      cwd: process.cwd(), cpuCount: 2, baseEnv: {}, inventoryPath: fixture.inventoryPath, hashArtifacts,
       collectFingerprint: async () => fixture.fingerprint,
       run: async () => { runs += 1; },
     }), /注入 hash worker 崩溃/);

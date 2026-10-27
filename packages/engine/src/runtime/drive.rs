@@ -168,6 +168,8 @@ pub struct RuntimeDriver {
     /// 每组账户数（多组形态的 Owner(g,l)→全局名册映射基；单组=名册长，
     /// owner.0 恒 0 时 g*k+l==l 兼容）。翻转批组参数化（探针负载用）。
     accounts_per_group: usize,
+    /// 构造时固定，所有组的计划 policy 必须一致。
+    plan_policy: crate::plans::PlanPolicy,
     /// D5 #4：首买经历 init 待办（回写/投影段收集、个人态回写后执行）。
     pending_hold_inits: Vec<(crate::AccountId, crate::StockId, u32, i64)>,
     /// 已投递的库版本（Belief-1b·下：稀疏判据）。
@@ -548,11 +550,15 @@ impl RuntimeDriver {
                     .runtime_public_cutoff_for(&crate::StockId(idx as u32));
             }
         }
-        // D5 adopt 收口：迁入后清旧簿（双域一致——save fault2226）。
-        session.runtime_clear_resting_for_adoption();
+        let plan_policy = *session.runtime_plans_snapshot().policy();
+        spec.initial_plan_books = super::plan_ownership::split(
+            session.runtime_plans_snapshot().clone(), &ids, n_groups, per_group,
+        ).map_err(|error| format!("计划构造移交失败：{error:?}"))?;
         // P2-2a：稀疏上行读面的全量缓存基线（构造期投影==组端初值）。
         let belief_cache = spec.belief_seeds.clone();
         let world = World::spawn(spec).map_err(|e| format!("驱动器世界构造失败：{e:?}"))?;
+        // 全部可失败构造已成功，才发布旧簿的所有权移交。
+        session.runtime_clear_resting_for_adoption();
         let driver = Self {
             world,
             id_map_shared: std::sync::Arc::new(ids.clone()),
@@ -575,6 +581,7 @@ impl RuntimeDriver {
             pending_receipts: Vec::new(),
             pending_rejections: Vec::new(),
             accounts_per_group: per_group.max(1),
+            plan_policy,
             pending_hold_inits: Vec::new(),
             last_library_version: None,
             resting_echo_prev: None,
@@ -942,41 +949,16 @@ impl RuntimeDriver {
             let _seg = step_profile::scope(StepSegment::HoldInits);
             self.install_pending_hold_inits(session, None)?;
         }
-        // D3a-2c 件5：组内计划簿交付点投影（plans_debug 等读面源——组
-        // 线程权威，X1 直改）。**空簿不覆盖**：迁移期 session 侧仍承载
-        // 测试注入/旧管线场景的计划（组内尚未接管注入路由——D3a-3），
-        // 空簿覆盖会清空它们（env=1 plan_owner 回归显红后收口）。
-        // 收集失败显式上抛（铁律二：不静默丢——plans_debug 静默过期
-        // 不可接受；复核发现 1 收口）。
-        // 【P0 画像】plans_echo 段（D1 EchoPlans + D3 同拍执行腿补写）。
+        // EveryTick 完整读取全部组；先验证唯一归属，再一次安装镜像。
         {
             let _seg = step_profile::scope(StepSegment::PlansEcho);
-            // ⑤b：生产通道（EchoPlans——组端 dirty 门控，未变拍回空簿
-            /// 省 PlanBook 全量克隆；读面 collect_plans 仍幂等全量）。
-            let plans_projection = self
-                .world
-                .collect_plans_echo()
-                .map_err(|e| format!("计划簿交付投影失败：{e:?}"));
-            match plans_projection {
-            Ok(collected) => {
-                let group_has_plans = collected
-                    .iter()
-                    .any(|(_, plans)| plans.plan_ids().next().is_some());
-                if group_has_plans {
-                    let (_, mut plans) = collected
-                        .into_iter()
-                        .find(|(_, plans)| plans.plan_ids().next().is_some())
-                        .expect("上方已判非空");
-                    // Sol 整改 4：权威状态控制的完整投影——组簿有任何
-                    // 计划记录（含 terminal）即安装。
-                    // Q2 批 4（D3 退役）：本拍成交执行腿补写删除——
-                    // Seal 落账使组簿 collect 已含全部轮成交推进
-                    //（apply_staging 的 apply_fill_plan_progress）。
-                    session.set_runtime_plans(plans);
-                }
-            }
-            Err(projection_error) => return Err(projection_error),
-            }
+            let shards = self.world.collect_plans()
+                .map_err(|error| format!("计划簿交付投影失败：{error:?}"))?;
+            let plans = super::plan_ownership::merge(
+                shards, &self.id_map, self.world.n_groups(),
+                self.accounts_per_group, self.plan_policy,
+            ).map_err(|error| format!("计划簿完整汇合失败：{error:?}"))?;
+            session.set_runtime_plans(plans);
         }
         // D3b 件 1：成交触达账户的个人记忆裁剪（同拍——组内 prune 在下一
         // Start 落账；个人态同步在上方用组镜像整态覆盖，裁剪必须在其后；
@@ -2114,29 +2096,28 @@ impl RuntimeDriver {
     /// 调度面的"无 due tick"形态构造）。
     #[cfg(test)]
     pub fn defer_due_for_test_at(&mut self, ids: &[crate::AccountId], tick: u64) {
-        let locals: Vec<super::LocalIdx> = self
-            .id_map
-            .iter()
-            .enumerate()
-            .filter_map(|(local, id)| ids.contains(id).then_some(local as super::LocalIdx))
-            .collect();
-        self.world.defer_due_for_test(locals, tick);
+        for (group, locals) in self.attention_groups_for_test(ids) {
+            self.world.defer_due_group_for_test(group, locals, tick);
+        }
     }
 
-    /// 测试控制面（Sol 整改注入通道）：按 AccountId 强制到期（显式
-    /// 目标 tick——指令表达账户+目标，组验证执行；Abort 冲回后指令
-    /// 失效需重发）。
+    /// 按稳定 AccountId 路由到所属组，不混用全局名册下标与组内 local。
     #[cfg(test)]
     pub fn force_due_for_test_at(&mut self, ids: &[crate::AccountId], tick: u64) {
-        let locals: Vec<super::LocalIdx> = self
-            .id_map
-            .iter()
-            .enumerate()
-            .filter_map(|(local, id)| ids.contains(id).then_some(local as super::LocalIdx))
-            .collect();
-        // 目标不早于世界下一 tick（游标领先时对齐——组验证拒绝过期）。
         let target = tick.max(self.world.global.committed_tick + 1);
-        self.world.force_due_for_test(locals, target);
+        for (group, locals) in self.attention_groups_for_test(ids) {
+            self.world.force_due_group_for_test(group, locals, target);
+        }
+    }
+
+    #[cfg(test)]
+    fn attention_groups_for_test(&self, ids: &[crate::AccountId]) -> std::collections::BTreeMap<super::GroupIdx, Vec<super::LocalIdx>> {
+        let mut groups = std::collections::BTreeMap::<super::GroupIdx, Vec<super::LocalIdx>>::new();
+        for &id in ids {
+            let (group, local) = self.owner_slot(id).unwrap_or_else(|error| panic!("注意力注入归属失败：{error}"));
+            groups.entry(group).or_default().push(local);
+        }
+        groups
     }
 
     /// step_frame 接轨前置约束① fixture 通道：强制下一次轮上报
@@ -2326,8 +2307,7 @@ impl RuntimeDriver {
         self.world.collect_plans().map_err(|e| format!("计划簿收集失败：{e:?}"))
     }
 
-    /// 计划簿收集（⑤b 生产通道：EchoPlans——组端 dirty 门控；红证面。
-    /// 生产链消费点=step 内 plans_echo 段）。
+    /// 保留 EchoPlans 的 dirty 诊断读面；EveryTick 完整交付使用 collect_plans。
     pub fn collect_plans_echo(
         &mut self,
     ) -> Result<Vec<(super::GroupIdx, crate::plans::PlanBook)>, String> {
@@ -2407,7 +2387,7 @@ impl RuntimeDriver {
         self.world.install_personal_for_test(local, snapshot);
     }
 
-    /// D3b 复审注入通道（cfg(test)）：计划事件下行组 0（restructure
+    /// D3b 复审注入通道（cfg(test)）：计划事件按 PlanId.owner 下行所属组（restructure
     /// fixture 的组内等价——session 版 commit_injected_plan_roots 的
     /// 计划事件面）。
     #[cfg(test)]
@@ -2415,10 +2395,17 @@ impl RuntimeDriver {
         &mut self,
         events: Vec<(crate::plans::PlanId, crate::plans::PlanEvent)>,
     ) {
-        self.world.apply_plan_events_for_test(events);
+        let mut grouped = std::collections::BTreeMap::<super::GroupIdx, Vec<_>>::new();
+        for (id, event) in events {
+            let group = self.plan_group_for_test(id.owner);
+            grouped.entry(group).or_default().push((id, event));
+        }
+        for (group, events) in grouped {
+            self.world.apply_plan_events_for_test(group, events);
+        }
     }
 
-    /// D3b 件 4 fixture 通道（cfg(test)）：复审候选注入下行组 0（组内
+    /// D3b 件 4 fixture 通道（cfg(test)）：复审候选按 AccountId 注入所属组（组内
     /// 复审块+开仓循环用注入值替代 observe 产物——一次消费即清）。
     #[cfg(test)]
     pub fn inject_review_assessments_for_test(
@@ -2426,17 +2413,27 @@ impl RuntimeDriver {
         account: crate::AccountId,
         assessments: std::collections::BTreeMap<crate::StockId, crate::plans::CandidateAssessment>,
     ) {
-        self.world.inject_review_assessments_for_test(account, assessments);
+        let group = self.plan_group_for_test(account);
+        self.world.inject_review_assessments_for_test(group, account, assessments);
     }
 
-    /// D3b 件 4 fixture 通道（cfg(test)）：组簿测试变换下行组 0（手工
+    /// D3b 件 4 fixture 通道（cfg(test)）：组簿测试变换按 owner 下行所属组（手工
     /// 簿推进的组内等价——闭包直施组权威簿，undo 可逆）。
     #[cfg(test)]
     pub fn mutate_plan_book_for_test(
         &mut self,
+        owner: crate::AccountId,
         mutate: Box<dyn FnOnce(&mut crate::plans::PlanBook) + Send>,
     ) {
-        self.world.mutate_plan_book_for_test(mutate);
+        let group = self.plan_group_for_test(owner);
+        self.world.mutate_plan_book_for_test(group, owner, mutate);
+    }
+
+    #[cfg(test)]
+    fn plan_group_for_test(&self, owner: crate::AccountId) -> super::GroupIdx {
+        let index = self.id_map.iter().position(|&id| id == owner)
+            .unwrap_or_else(|| panic!("PlanWriterOwnershipViolation：注入owner={owner:?}不在名册"));
+        (index / self.accounts_per_group) as super::GroupIdx
     }
 
     /// D3b 件 4 fixture 通道（cfg(test)）：观察基分钟序列注入下行组 0

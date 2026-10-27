@@ -5,6 +5,7 @@ type JsonObject = Record<string, unknown>
 
 export function currentSaveFixture(): JsonObject {
   return {
+    desk_mirrored_resting: false,
     runtime_state: {
       poisoned: false,
       next_receipt_base: "0",
@@ -121,6 +122,7 @@ export function currentSaveFixture(): JsonObject {
     },
     groups: [],
     company_operations: {
+      catalog: { metas: [] },
       payment_failures: {},
       seed: "0",
       shock_params: {
@@ -151,8 +153,8 @@ export function currentSaveFixture(): JsonObject {
         review_signal_delta_bp: 1000,
         review_price_change_bp: 200,
       },
-      next_plan_seq: 0,
-      plans: {},
+      owner_sequences: [],
+      plans: [],
     },
     urgency_policy: {
       policy_version: 1,

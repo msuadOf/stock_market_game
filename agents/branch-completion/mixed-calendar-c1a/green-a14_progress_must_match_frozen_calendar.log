@@ -1,0 +1,14 @@
+{
+  "command": "/data1/baiyifan/workplace/stock_market_game/.tmp/mixed-calendar-c1a/green",
+  "args": [
+    "exchange_calendar_model::tests::a14_progress_must_match_frozen_calendar",
+    "--exact",
+    "--nocapture",
+    "--test-threads=1"
+  ],
+  "timeoutMs": 10000,
+  "elapsedMs": 18,
+  "exitCode": 0,
+  "stdout": "\nrunning 1 test\ntest exchange_calendar_model::tests::a14_progress_must_match_frozen_calendar ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 19 filtered out; finished in 0.01s\n\n",
+  "stderr": ""
+}

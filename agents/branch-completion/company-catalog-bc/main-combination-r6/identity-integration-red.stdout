@@ -1,0 +1,37 @@
+✖ 实际单股只读请求发StockId0，initialAllocation与NPC诊断回相同证券 (1.373247ms)
+✔ 真实WorkerHost只读请求按restore后实际子集发原StockId并拒绝旧响应 (84.930907ms)
+▶ NPC decision trace boundary
+  ✔ preserves canonical decimal ticks through the u64 upper bound (1.557852ms)
+  ✔ rejects malformed trace records before they reach a DEV surface (0.198735ms)
+  ✔ rejects unsafe integers and unexpected private fields (0.260597ms)
+  ✔ retains the approved causal provenance fields (0.719719ms)
+  ✔ accepts unsupported results only without private payload (0.295428ms)
+✔ NPC decision trace boundary (4.162741ms)
+▶ NPC 决策 PlanId 边界
+  ✔ 无损保留完整 owner 和 sequence，及同 owner 的多项计划 (0.298688ms)
+  ✔ 拒绝旧标量身份、缺字段、未知字段、非规范及越界 u64 (0.895584ms)
+  ✔ 拒绝重复的完整身份和与诊断 account 不符的 owner (0.461692ms)
+✔ NPC 决策 PlanId 边界 (1.922721ms)
+ℹ tests 10
+ℹ suites 2
+ℹ pass 9
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 219.345339
+
+✖ failing tests:
+
+test at apps/web/src/host/actual-read-identity.test.ts:10:1
+✖ 实际单股只读请求发StockId0，initialAllocation与NPC诊断回相同证券 (1.373247ms)
+  Error: NPC 决策诊断第 0 条字段无效
+      at parseRecord (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/npc-decision-trace.ts:65:11)
+      at file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/npc-decision-trace.ts:40:39
+      at Array.map (<anonymous>)
+      at parseNpcDecisionTrace (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/npc-decision-trace.ts:40:16)
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/actual-read-identity.test.ts:13:17)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at Test.start (node:internal/test_runner/test:1191:17)
+      at startSubtestAfterBootstrap (node:internal/test_runner/harness:385:17)

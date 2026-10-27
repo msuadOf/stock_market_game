@@ -1,0 +1,15 @@
+{
+  "base": "3984e14167202dc645ec340fbd2a73e661c71c8a",
+  "head": "e7850b5cba4a07902a0b0b0a9e044ded0749995a",
+  "files": {
+    "apps/web/src/components/company/CompanyPreferencesInput.test.ts": "32bd4db70c2c20278976f9b12e994d9b548cdb4897465e1cc7d67870ee2bfa18",
+    "apps/web/src/components/company/CompanyPreferencesInput.tsx": "6c374fe5c7809269dce7480672df30fac5bbf19ba4dd96f5876ccb10d7a39c76",
+    "apps/web/src/components/company/CompanySystemInput.test.ts": "366201caa087e43be5a0c731c34326b1386b62f8bec4cf39c3fdb2c59c4ac1e9",
+    "apps/web/src/components/company/CompanySystemInput.tsx": "9b1becce725ea8dcc63791454f6c4dc824e8686db9351279df595e4345ecb335",
+    "apps/web/src/config/company-initial-preset.test.ts": "d55f1f25c2cbb905812f9e7e7c2d74f35d2d35dc979ea168bef204372af7aeac",
+    "apps/web/src/config/company-initial-preset.ts": "8c7276414c63bb07a62a4d48e50f28351ae137439c4a98bbceac33d88516ead6",
+    "apps/web/src/config/seed-draft.test.ts": "0cb17cef91d32fe8a1c0d9944448d8e91f19ff2da0ee67da5f152564d48e7d8f",
+    "apps/web/src/config/seed-draft.ts": "4dea5b3fea57e6b1437729222a054131b3d11b68b1b7f58e7962cb99733f87f8",
+    "apps/web/src/save/schema/setup-company-options.ts": "e041a2ab924662aecf3744cb7f10bc01e24b405b5875ed0252b3fc02a67f181d"
+  }
+}

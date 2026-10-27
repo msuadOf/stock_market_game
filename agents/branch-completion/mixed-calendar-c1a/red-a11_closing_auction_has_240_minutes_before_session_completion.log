@@ -1,0 +1,15 @@
+{
+  "command": "/data1/baiyifan/workplace/stock_market_game/.tmp/mixed-calendar-c1a/red",
+  "args": [
+    "exchange_calendar_model::tests::a11_closing_auction_has_240_minutes_before_session_completion",
+    "--exact",
+    "--nocapture",
+    "--test-threads=1"
+  ],
+  "timeoutMs": 10000,
+  "elapsedMs": 169,
+  "exitCode": 1,
+  "stdout": "\nrunning 1 test\ntest exchange_calendar_model::tests::a11_closing_auction_has_240_minutes_before_session_completion ... FAILED\n\nfailures:\n\nfailures:\n    exchange_calendar_model::tests::a11_closing_auction_has_240_minutes_before_session_completion\n\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 19 filtered out; finished in 0.00s\n\n",
+  "stderr": "\nthread 'exchange_calendar_model::tests::a11_closing_auction_has_240_minutes_before_session_completion' (2783154) panicked at /data1/baiyifan/workplace/stock_market_game/.worktree/mixed-calendar-c1a/agents/branch-completion/mixed-calendar-c1a/../../../packages/engine/src/session/exchange_calendar_model.rs:547:13:\nassertion `left == right` failed: ticks=4\n  left: 0\n right: 40\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\n",
+  "error": "bounded command exited with 101: thread 'exchange_calendar_model::tests::a11_closing_auction_has_240_minutes_before_session_completion' (2783154) panicked at /data1/baiyifan/workplace/stock_market_game/.worktree/mixed-calendar-c1a/agents/branch-completion/mixed-calendar-c1a/../../../packages/engine/src/session/exchange_calendar_model.rs:547:13:\nassertion `left == right` failed: ticks=4\n  left: 0\n right: 40\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace"
+}

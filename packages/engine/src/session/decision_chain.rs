@@ -3213,7 +3213,9 @@ mod chain_restructure_tests {
             let account = AccountId(1);
             let code = session.stock_id("000812").unwrap();
             let mut encoded = serde_json::to_value(&session.state.plans).unwrap();
-            encoded["plans"][plan_id.0.to_string()]["status"] =
+            let plan_index = encoded["plans"].as_array().unwrap().iter()
+                .position(|plan| plan["plan_id"] == serde_json::to_value(plan_id).unwrap()).unwrap();
+            encoded["plans"][plan_index]["status"] =
                 serde_json::json!({ "Paused": { "reason": original_reason } });
             session.state.plans = serde_json::from_value(encoded).unwrap();
             let policy = crate::strategy::InstitutionExperiencePolicy::new(
@@ -4339,7 +4341,7 @@ mod chain_restructure_tests {
         let config = crate::config::GameConfig::proposed_defaults();
         let request = buy_allocation_request(
             &config,
-            PlanId(0),
+            PlanId { owner: AccountId(1), sequence: 0 },
             StockId(0),
             8_000,
             Money::from_cents(2_000),
@@ -4948,7 +4950,16 @@ mod chain_restructure_tests {
     }
 
     fn seeded_buy_plan_with_child_events() -> (GameSession, Vec<Event>) {
+        seeded_buy_plan_with_child_and_shares(0)
+    }
+
+    fn seeded_buy_plan_with_child_and_shares(player_shares: u32) -> (GameSession, Vec<Event>) {
         let mut session = probe_session();
+        if player_shares > 0 {
+            let code = session.stock_id("000812").unwrap();
+            session.fixture_account_mut(&AccountId(0)).unwrap()
+                .grant_position(code, player_shares, Money::from_cents(285)).unwrap();
+        }
         let mut seed_events = Vec::new();
         session.seed_order_for_test(
             AccountId(0),
@@ -5003,6 +5014,73 @@ mod chain_restructure_tests {
             "seed scenario must leave an in-flight child order"
         );
         (session, events)
+    }
+
+    #[test]
+    fn plan_identity_live_join_rebuild_keeps_original_child_and_resources() {
+        let mut session = seeded_buy_plan_with_child();
+        let code = session.stock_id("000812").unwrap();
+        let before = session.state.plans.active_plan(AccountId(1), &code).unwrap().clone();
+        let child = before.active_child_order_id().unwrap();
+        let cash_before: i128 = session.account_roster().into_iter()
+            .map(|owner| i128::from(session.account(owner).unwrap().cash().cents())).sum();
+        session.runtime_group_count = 3;
+        let member = session.join_market(
+            crate::session::OpaqueSubjectId::new("plan-identity-live-join".to_owned()).unwrap(), false,
+        ).unwrap();
+        let events = session.step().expect("join后的真实native重建与步进");
+        let after = session.state.plans.plan(before.plan_id()).unwrap();
+        assert_eq!(after.active_child_order_id(), Some(child), "原child不能被丢票后重复报价替换");
+        assert_eq!(after.active_child_remaining_qty(), before.active_child_remaining_qty());
+        assert_eq!(after.filled_qty(), before.filled_qty());
+        assert!(!events.iter().any(|event| matches!(event, Event::OrderAccepted { id, .. } if *id == child)), "重建不重发Accepted");
+        assert!(!events.iter().any(|event| matches!(event, Event::Trade { .. })), "fixture没有卖向对手单");
+        let cash_after: i128 = session.account_roster().into_iter()
+            .map(|owner| i128::from(session.account(owner).unwrap().cash().cents())).sum();
+        assert_eq!(cash_after, cash_before + i128::from(member.admission_funding.external_cash.cents()), "重建不补扣补退资金");
+    }
+
+    #[test]
+    fn plan_identity_partial_child_live_join_keeps_fills_fees_and_cancel_reference() {
+        let (mut session, _) = seeded_buy_plan_with_child_and_shares(100);
+        let code = session.stock_id("000812").unwrap();
+        session.runtime_driver.as_mut().unwrap().lock().unwrap()
+            .defer_due_for_test_at(&[AccountId(1)], u64::MAX);
+        // 去掉用于引出机构报价的玩家原买单，避免既有自成交保护挡住玩家卖单。
+        for order in session.player_working_orders() {
+            session.enqueue_player_intent(AccountId(0), Intent::Cancel { code: order.code, id: OrderId(order.id) }).unwrap();
+        }
+        let cancelled_seed = session.step().unwrap();
+        assert!(cancelled_seed.iter().any(|event| matches!(event, Event::OrderCanceled { .. })));
+        let original = session.state.plans.active_plan(AccountId(1), &code).unwrap().clone();
+        let child = original.active_child_order_id().unwrap();
+        let price = original.execution().unwrap().limit_price();
+        assert!(original.active_child_remaining_qty().unwrap() > 100);
+        session.enqueue_player_intent(AccountId(0), Intent::PlaceLimit {
+            code, side: Side::Sell, price: LimitPrice::Fixed(price), qty: 100,
+        }).unwrap();
+        let events = session.step().unwrap();
+        assert!(events.iter().any(|event| matches!(event, Event::Trade { qty: 100, .. })), "原child真实部分成交：{events:?}");
+        let partial = session.state.plans.plan(original.plan_id()).unwrap().clone();
+        assert_eq!(partial.filled_qty(), original.filled_qty() + 100);
+        assert_eq!(partial.active_child_order_id(), Some(child));
+        let ledger_before = session.project_live_envelopes().unwrap();
+        session.runtime_group_count = 3;
+        session.join_market(OpaqueSubjectId::new("partial-child-join".to_owned()).unwrap(), false).unwrap();
+        // join 已释放 native writer，静点设置下一注意力种子，隔离恢复与自然复审。
+        assert!(session.runtime_driver.is_none());
+        session.state.npc_attention.get_mut(&AccountId(1)).unwrap().next_attention_candidate_tick = u64::MAX;
+        session.state.attention_scheduler.clear();
+        session.state.attention_scheduler.enqueue(u64::MAX, AccountId(1));
+        let rebuilt_events = session.step().expect("部分成交child换组重建");
+        assert!(!rebuilt_events.iter().any(|event| matches!(event, Event::OrderAccepted { id, .. } if *id == child)));
+        assert_eq!(session.state.plans.plan(original.plan_id()).unwrap(), &partial);
+        let ledger_after = session.project_live_envelopes().unwrap();
+        assert_eq!(ledger_after, ledger_before, "原child的purse/费用/数量事实不重算、不重放");
+        let cancelled = drive_once(&mut session, &reversal_assessment(0));
+        assert!(cancelled.iter().any(|event| matches!(event, Event::OrderCanceled { id, .. } if *id == child)), "恢复票必须支持原OrderId撤单");
+        assert_eq!(session.state.plans.plan(original.plan_id()).unwrap().active_child_order_id(), None);
+        assert_eq!(session.state.plans.plan(original.plan_id()).unwrap().filled_qty(), partial.filled_qty());
     }
 
     fn reversal_assessment(score_bp: i32) -> BTreeMap<StockId, CandidateAssessment> {
@@ -5356,14 +5434,14 @@ mod chain_restructure_tests {
             // 把真实在途子单的剩余量临时视为 500_100，推进 500_000 后仍余 100 在途。
             let mut advance = move |plans: &mut crate::plans::PlanBook| {
                 plans
-                    .restore_child_remaining_qty(crate::plans::PlanId(0), Some(500_100))
+                    .restore_child_remaining_qty(crate::plans::PlanId { owner: AccountId(1), sequence: 0 }, Some(500_100))
                     .unwrap();
                 plans
                     .record_child_fill(AccountId(1), &code, crate::Side::Buy, child_id, 500_000, 0)
                     .unwrap();
             };
             if session.runtime_driver.is_some() {
-                session.mutate_plan_book_via_runtime(Box::new(advance));
+                session.mutate_plan_book_via_runtime(AccountId(1), Box::new(advance));
             } else {
                 advance(&mut session.state.plans);
             }
@@ -5405,10 +5483,10 @@ mod chain_restructure_tests {
         {
             let mut relink = move |plans: &mut crate::plans::PlanBook| {
                 plans
-                    .restore_child_remaining_qty(PlanId(0), Some(500_100))
+                    .restore_child_remaining_qty(PlanId { owner: AccountId(1), sequence: 0 }, Some(500_100))
                     .unwrap();
                 let real_child = plans
-                    .plan(PlanId(0))
+                    .plan(PlanId { owner: AccountId(1), sequence: 0 })
                     .unwrap()
                     .active_child_order_id()
                     .unwrap();
@@ -5427,7 +5505,7 @@ mod chain_restructure_tests {
                     .unwrap();
             };
             if session.runtime_driver.is_some() {
-                session.mutate_plan_book_via_runtime(Box::new(relink));
+                session.mutate_plan_book_via_runtime(AccountId(1), Box::new(relink));
             } else {
                 relink(&mut session.state.plans);
             }
@@ -5445,7 +5523,7 @@ mod chain_restructure_tests {
             session
                 .state
                 .plans
-                .plan(PlanId(0))
+                .plan(PlanId { owner: AccountId(1), sequence: 0 })
                 .unwrap()
                 .execution()
                 .is_none(),

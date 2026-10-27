@@ -1,0 +1,7 @@
+# main组合后四库共同native构建候选
+
+当前merge尚未commit且完整新diff审在途，此计划仅静态候选，不可据已批旧native绿跳过新构建。单cargo命令选择engine/server/desktop/web-wasm四个lib-test，no-default-features仅使desktop不嵌前端，沿既有Desktop seam配置；server的verification-harness dev-dependency由Cargo实际统一features，不冒全部宿主default制品。
+
+复用同BC target，不clone，INC0/j8，外部300000ms共享总限/cleanup1000/60秒无进展/20GiB硬停。单命令让依赖去重与各crate编译并行，不引入多Cargo同target锁竞争。只从本批compiler-artifact提取binary；四组exact短门可并行，各命令外10000ms。真实源码清单包含engine全部src/tests/test-support、native-store、serversrc、web-wasm与desktop tauri输入及工作区工具链配置。
+
+若main合并review再改源码，必须重新冻结计划与manifest后复核；不得沿用本候选SHA。实际重槽按root排D2/SRCB优先，不自行启动。

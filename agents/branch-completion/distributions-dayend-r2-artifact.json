@@ -1,0 +1,158 @@
+{
+  "status": "待未实施者最终复核，不是生产权益批准",
+  "source_head": "9788dfd3d22c277a65b4fd6ad4a114978a569381",
+  "base": "b172c1ab1a69daa44dc57dddc887db255d7f6ce7",
+  "early_r1_dependency": [
+    "f9e2c8a0",
+    "0ed77510"
+  ],
+  "r1_final_integration_required": "98b9ff24",
+  "r2_commits": [
+    "91608f5f",
+    "1a0e6817",
+    "7438c720",
+    "7664a128",
+    "8e920eba",
+    "850d94bb",
+    "9788dfd3"
+  ],
+  "files": [
+    {
+      "path": "packages/engine/src/session/corporate_actions.rs",
+      "sha256": "cadd50afd7644d9b9e18116f2abec9581db4bb29a685f2bcaa540cb737531720",
+      "committed_blob_sha256": "cadd50afd7644d9b9e18116f2abec9581db4bb29a685f2bcaa540cb737531720",
+      "bytes": 16867
+    },
+    {
+      "path": "packages/engine/src/session/corporate_actions/distributions_day_end.rs",
+      "sha256": "3c6bedd515f769246a3342aea7afdd76dbb8073ef48f11b25222ad8403915049",
+      "committed_blob_sha256": "3c6bedd515f769246a3342aea7afdd76dbb8073ef48f11b25222ad8403915049",
+      "bytes": 33968
+    },
+    {
+      "path": "packages/engine/src/session/corporate_actions/distributions_day_end_tests.rs",
+      "sha256": "af20fe15f29e33230d079c2e41054bb302b83e85bf28b135f82196f73eca450b",
+      "committed_blob_sha256": "af20fe15f29e33230d079c2e41054bb302b83e85bf28b135f82196f73eca450b",
+      "bytes": 32782
+    },
+    {
+      "path": "docs/trading-rules.md",
+      "sha256": "d572d477c6567bb45a044d8ca0496119dcfaddc242a97d6773dd694c9cbfec23",
+      "committed_blob_sha256": "d572d477c6567bb45a044d8ca0496119dcfaddc242a97d6773dd694c9cbfec23",
+      "bytes": 37431
+    },
+    {
+      "path": "agents/branch-completion/distributions-dayend-r2-2026-10-26.md",
+      "sha256": "19335f6bf8a69e81e5d1c9262e1d5f8b23dd284bc5200c5f887174ee87019d69",
+      "committed_blob_sha256": "19335f6bf8a69e81e5d1c9262e1d5f8b23dd284bc5200c5f887174ee87019d69",
+      "bytes": 9457
+    },
+    {
+      "path": "agents/branch-completion/distributions-dayend-r2-sources/tax-2012-85.html",
+      "sha256": "5cce33fece6d57c9de662086927a822092b66e0f92cfeec23e59e469e16d04e8",
+      "committed_blob_sha256": "5cce33fece6d57c9de662086927a822092b66e0f92cfeec23e59e469e16d04e8",
+      "bytes": 41373
+    },
+    {
+      "path": "agents/branch-completion/distributions-dayend-r2-sources/tax-2015-101.html",
+      "sha256": "9eadaaa4693282e4a9b65ca5f02b0b2ab4720e6b0cfe6da97be4c1f1faa9845b",
+      "committed_blob_sha256": "9eadaaa4693282e4a9b65ca5f02b0b2ab4720e6b0cfe6da97be4c1f1faa9845b",
+      "bytes": 38314
+    }
+  ],
+  "compilation_sources_count": 785,
+  "sources_snapshot_path": "/data1/baiyifan/workplace/stock_market_game/.tmp/distributions-dayend-r2/bonus-green-sources.json",
+  "sources_snapshot_sha256": "e64b84949c4f6654876c5dbd8c153b5606ea51ba2bb31090e3e53d694788bf8f",
+  "sources_after_match": true,
+  "binary": {
+    "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/distributions-dayend-r2/target/debug/deps/engine-ae99ad04ff4bc0e0",
+    "bytes": 134974744,
+    "sha256": "38000d1cb58988438cbd651c2edfdef55aebf3eb7915be3b299ce2d9ac9dcc51"
+  },
+  "validation": {
+    "build": [
+      "cargo",
+      "test",
+      "-p",
+      "engine",
+      "--lib",
+      "--no-run",
+      "-j",
+      "32"
+    ],
+    "outer_deadline_ms": 300000,
+    "ordinary_test_deadline_ms": 10000,
+    "test_threads": 16,
+    "env": {
+      "CARGO_TARGET_DIR": "/data1/baiyifan/workplace/stock_market_game/.tmp/distributions-dayend-r2/target",
+      "CARGO_PROFILE_DEV_DEBUG": "0",
+      "CARGO_PROFILE_TEST_DEBUG": "0",
+      "CARGO_INCREMENTAL": "0",
+      "RUSTFLAGS": "-C codegen-units=32"
+    },
+    "test_filter": "session::corporate_actions::distributions_day_end",
+    "tests_passed": 13,
+    "test_wall_s": 0.02,
+    "build_wall_s": 56.73,
+    "cpu_peak_cores": 6.473,
+    "cpu_peak_threads": 26
+  },
+  "logs": [
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/distributions-dayend-r2/red-contract.log",
+      "sha256": "5e53fbd3784f9993f1bd9ec95bef178a8965b26c0e58ed0024d190bc0c0cd5b0"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/distributions-dayend-r2/fix-red-build.log",
+      "sha256": "ad305f8432748bf38cf669ce94539c9b9d2e206c94acf9887c104e2346e5cce4"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/distributions-dayend-r2/fix-red-tests.log",
+      "sha256": "78b7d1d5e5c14d683918cb010894eb7c465cd14eb5a4f2ac206ef3e463065a40"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/distributions-dayend-r2/fix-red-binary.sha256",
+      "sha256": "7897662375d4b25365991ba661b3ccead406a606ab50b55bf6efccd1ccab3364"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/distributions-dayend-r2/fix-green-build.log",
+      "sha256": "54d6d54539fbe09ed5595c664cdcda6665835dd8bdbe2f1dc6ba9ba0092a6444"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/distributions-dayend-r2/fix-green-tests.log",
+      "sha256": "3c9a3b86eaf269bd0c3d8f7499cdb87f530b132e757966424568face362cef3e"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/distributions-dayend-r2/bonus-red-build.log",
+      "sha256": "96fe5f8466c5016110da437a30810a7efb4c636771cd4f9e3265bc8aa56af1ca"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/distributions-dayend-r2/bonus-red-tests.log",
+      "sha256": "727066aa3087c8be77011558e22621221a5c69e88599759e40fb1d01bc4cfb89"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/distributions-dayend-r2/bonus-red-binary.sha256",
+      "sha256": "f5731eacbcebfe2dce91d52836bf2f2cd10f7151bdc8ff8d496c38c26d303139"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/distributions-dayend-r2/bonus-red-cpu.json",
+      "sha256": "89a86e76e80fc263688aee857351e2ad8ef49a58b601668452c3d115ebb192bf"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/distributions-dayend-r2/bonus-green-build.log",
+      "sha256": "92e42b469aa940021ee5a1945da2f68d50ac4bd264c57337fe3ff42087fe52f1"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/distributions-dayend-r2/bonus-green-tests.log",
+      "sha256": "9756ca663cbd8fb8509630680d86961a3c88d22fdbe6cb7f6c436d7822b79ba2"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/distributions-dayend-r2/bonus-green-cpu.json",
+      "sha256": "241c852814081ce532f005c8303f703cb15cc52bb37503f27a74d68744ff0b79"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/distributions-dayend-r2/bonus-green-sources.json",
+      "sha256": "e64b84949c4f6654876c5dbd8c153b5606ea51ba2bb31090e3e53d694788bf8f"
+    }
+  ]
+}

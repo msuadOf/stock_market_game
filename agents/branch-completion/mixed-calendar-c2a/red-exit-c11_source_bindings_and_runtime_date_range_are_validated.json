@@ -1,0 +1,14 @@
+{
+  "command": "/data1/baiyifan/workplace/stock_market_game/.tmp/mixed-calendar-c2a/red-exit",
+  "args": [
+    "market_calendar_context::tests::c11_source_bindings_and_runtime_date_range_are_validated",
+    "--exact",
+    "--nocapture",
+    "--test-threads=1"
+  ],
+  "timeoutMs": 10000,
+  "elapsedMs": 181,
+  "exitCode": 0,
+  "stdout": "\nrunning 1 test\ntest market_calendar_context::tests::c11_source_bindings_and_runtime_date_range_are_validated ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 32 filtered out; finished in 0.02s\n\n",
+  "stderr": ""
+}

@@ -1,0 +1,46 @@
+✖ 移除宿主回调立即清除旧owner事实，迟到成功不能污染新面板 (154.448491ms)
+✖ 股息税无实际划收回执时保留未划收额，不宣称资金不足、已尝试或结清 (41.687574ms)
+ℹ tests 2
+ℹ suites 0
+ℹ pass 0
+ℹ fail 2
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 599.558596
+
+✖ failing tests:
+
+test at apps/web/src/components/company/use-company-query.test.ts:90:1
+✖ 移除宿主回调立即清除旧owner事实，迟到成功不能污染新面板 (154.448491ms)
+  AssertionError [ERR_ASSERTION]: The input was expected to not match the regular expression /旧账户税表/. Input:
+  
+  '旧账户税表refresh'
+  
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-read-panels/apps/web/src/components/company/use-company-query.test.ts:96:10)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: '旧账户税表refresh',
+    expected: /旧账户税表/,
+    operator: 'doesNotMatch',
+    diff: 'simple'
+  }
+
+test at apps/web/src/components/company/use-company-query.test.ts:100:1
+✖ 股息税无实际划收回执时保留未划收额，不宣称资金不足、已尝试或结清 (41.687574ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /尚无实际划收回执/. Input:
+  
+  '股息税状态本局税务模式：大 A 方式（个人差别化计税）；本人身份：个人。当前没有已配置完整股东名册的证券。证券未划收税额状态6000013/2 分已结清刷新股息税状态'
+  
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-read-panels/apps/web/src/components/company/use-company-query.test.ts:104:10)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: '股息税状态本局税务模式：大 A 方式（个人差别化计税）；本人身份：个人。当前没有已配置完整股东名册的证券。证券未划收税额状态6000013/2 分已结清刷新股息税状态',
+    expected: /尚无实际划收回执/,
+    operator: 'match',
+    diff: 'simple'
+  }

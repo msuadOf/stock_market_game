@@ -12,6 +12,19 @@ use crate::orderbook::{AccountId, OrderId, Side};
 /// 计划模块操作失败。绝不静默吞掉（铁律二），错误携带完整上下文。
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum PlanError {
+    #[error("plan {plan_id:?} owner disagrees with account {account:?}")]
+    PlanOwnerMismatch { plan_id: PlanId, account: AccountId },
+    #[error("duplicate plan identity {plan_id:?}")]
+    DuplicatePlanIdentity { plan_id: PlanId },
+    #[error("account {owner:?} has an invalid or missing plan sequence {next_sequence:?}")]
+    InvalidPlanSequence {
+        owner: AccountId,
+        next_sequence: Option<u64>,
+    },
+    #[error("account {owner:?} has duplicate plan writer ownership")]
+    PlanWriterOwnershipViolation { owner: AccountId },
+    #[error("plan shard policies disagree")]
+    PlanPolicyMismatch,
     #[error("unknown plan id {plan_id:?}")]
     UnknownPlan { plan_id: PlanId },
     #[error("account {account:?} already has a non-terminal plan for {code:?}")]
@@ -47,9 +60,7 @@ pub enum PlanError {
     ChildCompletionMismatch { plan_id: PlanId },
     #[error("plan {plan_id:?}: restored child identity and quantity disagree")]
     InvalidChildRestore { plan_id: PlanId },
-    #[error(
-        "plan {plan_id:?}: a second active child was submitted before the first resolved"
-    )]
+    #[error("plan {plan_id:?}: a second active child was submitted before the first resolved")]
     SecondActiveChild { plan_id: PlanId },
     #[error(
         "plan {plan_id:?}: fill {fill_qty} from order {order_id:?} exceeds the child remaining {remaining}"

@@ -70,3 +70,31 @@
 3. A-公司 CompanyId + 其余标识（venue/frozen/光标）→ 提交 C
 4. server wire + ts_rs 再生成 + web 最小编译修复 + 配置格式 → 提交 D
 5. 基准（锚定交错配对）+ findings + ADR 终稿
+
+
+## PlanId 身份前置的错误上下文（2026-10-25）
+
+核心 `PlanId` 改为数值 `owner: AccountId` 与 `sequence: u64`，未新增字符串核心键。
+`PlanOwnerMismatch`、`DuplicatePlanIdentity`、`InvalidPlanSequence`、
+`PlanWriterOwnershipViolation`、`PlanPolicyMismatch` 是内部类型化 `PlanError`，
+与原有 `PlanSequenceExhausted` 一样不直接成为 wire 错误。格式或核心恢复校验失败由
+`decode_save_slot` 映射为现行 `InvalidSave` fault2080；运行中的归属冲突由 runtime
+协议层显式映射为 `ProtocolInvariant`，不创建另一套事件或错误兼容层。
+
+现存存档错误码的 PlanId 前缀统一拆为四个安全整数槽：owner 高/低 u32、sequence 高/低 u32。
+字段边界均为数值，不传十进制字符串，不丢失完整 u64 身份。
+
+| 错误码 | 身份前缀之后的 context | 语义 |
+|---|---|---|
+| 2141 | 槽4：原有原因占位0 | 计划持有期非法 |
+| 2142 | 槽4/5：AccountId 高/低 u32 | 计划账户不在 session 名册 |
+| 2143 | 槽4：StockId | 未知股票 |
+| 2144 | 无 | 份额目标或进度非法 |
+| 2183 | 无 | 执行腿参数非法 |
+| 2184 | 槽4：OrderId | 子单身份越界 |
+| 1042 | 槽4：StockId | 子单无法唯一重建 |
+| 2185 | 槽4：StockId | 执行腿风险敞口或存档余量非法 |
+| 2690 | **无 PlanId 前缀**；槽0/1：owner 高/低 u32 | owner 游标不在 session 名册，包含无当前计划的历史游标 |
+
+未知 owner 的核心 `PlanBook::from_parts` 不假设账户数值连续或任意容量；名册校验留在
+session/runtime 所属边界。错误码2690对所有 owner 游标检查，不因没有计划而绕过。

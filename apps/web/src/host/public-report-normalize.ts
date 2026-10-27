@@ -1,3 +1,4 @@
+import type { ReportRoe } from "../types/generated/ReportRoe.ts";
 import type { PublicReportPage, PublicReportSummary } from "../types/engine.ts";
 
 type Validator = (value: unknown, path: string) => void;
@@ -108,6 +109,11 @@ const roe = object({
   }),
   equity_events: object({ attributable_to_parent: equityListing, minority_interest: equityListing }),
 });
+/** 存档 ReportSet 与公共 DTO 共用同一 ROE 结构；先完整校验，再收窄类型。 */
+export function assertReportRoe(value: unknown, path: string): asserts value is ReportRoe {
+  roe(value, path);
+}
+
 const incomeColumns = object({
   operating: lines, investing: lines, financing: lines, discontinued: lines,
   ...amounts(["operating_subtotal", "investing_subtotal", "financing_subtotal", "discontinued_subtotal", "income_tax", "net_income"]),

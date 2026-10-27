@@ -56,7 +56,7 @@ async function stopDomain(domain, deadline) {
     }
     if (current !== undefined && current !== domain.birth) throw new Error(`launcher PID identity changed: ${domain.pid}`);
   }
-  await terminateTree({ pid: domain.pid }, true, deadline, monotonicMs);
+  await terminateTree({ pid: domain.pid, birth: domain.birth }, true, deadline, monotonicMs);
 }
 
 // 同一轮完成风暴只扫描一次 /proc，避免监督 loop 被逐 case 全表扫描堵塞。
@@ -66,8 +66,10 @@ export function createCompletionCleanup(launcherPid, {
   readProcessStat = (pid) => readFile(`/proc/${pid}/stat`, "utf8"),
   terminate = terminateTree,
 } = {}) {
-  async function identity(pid) {
+  async function identity(pid, checkBudget) {
+    checkBudget();
     const stat = await readProcessStat(pid);
+    checkBudget();
     const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
     if (fields.length < 20 || !/^\d+$/.test(fields[19])) throw new Error(`cannot confirm process ${pid}: malformed stat identity`);
     return { state: fields[0], ppid: Number(fields[1]), group: Number(fields[2]), birth: fields[19] };
@@ -79,26 +81,41 @@ export function createCompletionCleanup(launcherPid, {
   }
   let queued = [];
   let scheduled = false;
+  let failureDeadline = Infinity;
   async function flush() {
     const batch = queued;
     queued = [];
+    const batchDeadline = Math.min(...batch.map((item) => item.record.total));
+    const deadline = () => Math.min(batchDeadline, failureDeadline);
+    const checkBudget = () => {
+      if (monotonicMs() >= deadline()) throw new Error("case token cleanup deadline was exhausted before process tree confirmation");
+    };
+    const environment = async (pid) => {
+      checkBudget();
+      const value = await readEnvironment(pid);
+      checkBudget();
+      return value;
+    };
     const byToken = new Map(batch.map((item) => [item.record.token, item]));
     try {
+      checkBudget();
       if (process.platform === "linux") {
-        const entries = (await listProcesses()).filter((entry) => /^\d+$/.test(entry));
+        const listing = await listProcesses();
+        checkBudget();
+        const entries = listing.filter((entry) => /^\d+$/.test(entry));
         const owned = [];
         await Promise.all(entries.map(async (entry) => {
           let before;
           let candidate = false;
           try {
             // 首次 environ 只筛候选；归属必须由同 birth 内重读的 environ 确认。
-            if (tokenItem(await readEnvironment(Number(entry)), byToken) === undefined) return;
+            if (tokenItem(await environment(Number(entry)), byToken) === undefined) return;
             candidate = true;
-            before = await identity(Number(entry));
+            before = await identity(Number(entry), checkBudget);
             if (before.state === "Z" || before.state === "X") return;
-            const item = tokenItem(await readEnvironment(Number(entry)), byToken);
+            const item = tokenItem(await environment(Number(entry)), byToken);
             if (item === undefined) return;
-            const after = await identity(Number(entry));
+            const after = await identity(Number(entry), checkBudget);
             if (before.birth !== after.birth) throw new Error(`case PID identity changed during environment read: ${entry}`);
             if (after.state === "Z" || after.state === "X") return;
             owned.push({ item, pid: Number(entry), birth: before.birth });
@@ -106,7 +123,7 @@ export function createCompletionCleanup(launcherPid, {
             if (["ENOENT", "ESRCH"].includes(error.code)) return;
             if (["EACCES", "EPERM"].includes(error.code)) {
               let current;
-              try { current = await identity(Number(entry)); }
+              try { current = await identity(Number(entry), checkBudget); }
               catch (statError) { if (["ENOENT", "ESRCH"].includes(statError.code)) return; throw statError; }
               // 僵尸已无可执行实体；退出瞬间 environ 也可能拒绝访问，不等同活进程权限未知。
               if (current.state === "Z" || current.state === "X") return;
@@ -116,25 +133,41 @@ export function createCompletionCleanup(launcherPid, {
             throw error;
           }
         }));
+        checkBudget();
         await Promise.all(owned.map(async ({ item, pid, birth }) => {
           let current;
-          try { current = await identity(pid); }
+          try { current = await identity(pid, checkBudget); }
           catch (error) { if (["ENOENT", "ESRCH"].includes(error.code)) return; throw error; }
           if (current.birth !== birth) throw new Error(`case PID identity changed: ${pid}`);
           if (current.state === "Z" || current.state === "X") return;
-          await terminate({ pid }, false, item.record.total, monotonicMs);
+          checkBudget();
+          if (terminate === terminateTree) {
+            await terminate({ pid, birth }, false, deadline(), monotonicMs, deadline);
+          } else {
+            // 注入 hook 保留权威 token 对应的数值截止；前后复核共享界，但不能抢占任意 hook。
+            await terminate({ pid, birth }, false, Math.min(item.record.total, failureDeadline), monotonicMs);
+          }
+          checkBudget();
         }));
       }
+      checkBudget();
       for (const item of batch) item.resolve();
     } catch (error) { for (const item of batch) item.reject(error); }
     scheduled = false;
     if (queued.length > 0) { scheduled = true; setImmediate(() => { void flush(); }); }
   }
-  return (record) => new Promise((resolve, reject) => {
-    if (record.pid === undefined) { reject(new Error(`case ${record.context} finished without a spawned PID`)); return; }
+  const enqueue = (record, allowUnspawned) => new Promise((resolve, reject) => {
+    if (record.pid === undefined && !allowUnspawned) { reject(new Error(`case ${record.context} finished without a spawned PID`)); return; }
     queued.push({ record, resolve, reject });
     if (!scheduled) { scheduled = true; setImmediate(() => { void flush(); }); }
   });
+  const cleanup = (record) => enqueue(record, false);
+  cleanup.afterFailure = (records, deadline) => {
+    if (!Number.isFinite(deadline)) throw new Error("case token failure cleanup requires a finite deadline");
+    failureDeadline = Math.min(failureDeadline, deadline);
+    return Promise.all(Array.from(records, (record) => enqueue(record, true)));
+  };
+  return cleanup;
 }
 
 export async function executeSupervisedRustTestBinaries({ artifacts, policy, cwd, env, remainingMs, log = () => undefined, launcherPath = SELF, terminateDomain = stopDomain }) {
@@ -194,6 +227,9 @@ async function supervise(input) {
     const deadline = earliestCleanupDeadline(input.batchDeadline, record, records.values());
     stopping = (async () => {
       try {
+        // launcher 在 spawned 回报前退出时，只能凭既有 case token 找回子链，不能用裸 PGID 重认领。
+        const orphaned = process.platform === "linux" && birthIdentity(domain.pid) === undefined;
+        await cleanupCompletedCase.afterFailure(orphaned ? records.values() : [], deadline);
         await waitForLauncherClose(Promise.all([stopDomain(domain, deadline), launcherClosed]), deadline);
         domainCleaned = true;
         if (record) log({ phase: "rust-case-termination-confirmed", token: record.token, context: record.context,

@@ -1,0 +1,12 @@
+{
+  "source_commit": "07349845665609813394ae1d84f8b922b9e27da3",
+  "build_deadline_ms": 300000,
+  "execute_deadline_ms": 10000,
+  "source": "agents/branch-completion/plan-identity-producer.rs",
+  "source_sha256": "b4f52ef75cfe10fc4372abaa25974a4b1aa06c83fa6943d41409bdad083a9faf",
+  "engine_rlib_sha256": "bb3e722f5f1c106ce5264615c21a23e0882ba854e2c6d39134762b341f26758f",
+  "producer_binary_sha256": "68c027e7fe1c49e32f2e235568fc4b1be370ef7fa5eeb3defbd48ea35330d97c",
+  "save_sha256": "03a7e1776a5b81e09cf6bd91b365f4eeea1229b5b4c9cf470c7653739561ca24",
+  "save_bytes": 1819353,
+  "plan_count": 2
+}

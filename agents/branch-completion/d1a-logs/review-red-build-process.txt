@@ -1,0 +1,5 @@
+2026-10-26T04:16:05.226761+08:00
+jobs=16，普通test profile默认codegen并行；外deadline299s+kill1。
+PID PPID CPU% NLWP COMMAND
+some avg10=10.73 avg60=20.13 avg300=35.38 total=108894103470
+full avg10=8.68 avg60=17.38 avg300=31.20 total=98255816601

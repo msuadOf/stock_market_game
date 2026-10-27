@@ -1,0 +1,27 @@
+{
+  "command": [
+    "node",
+    "../../scripts/run-with-deadline.mjs",
+    "10000",
+    "--",
+    "node",
+    "--test",
+    "--test-timeout=10000",
+    "--test-concurrency=3",
+    "src/components/ReportFrequencyInput.test.ts",
+    "src/components/MechanismSwitchesInput.test.ts",
+    "src/components/company/report-availability.test.ts"
+  ],
+  "cwd": "apps/web",
+  "exit_code": 1,
+  "node": "v25.8.2",
+  "base": "3984e14167202dc645ec340fbd2a73e661c71c8a",
+  "source_sha256": {
+    "apps/web/src/components/ReportFrequencyInput.tsx": "b3cbd69808e2c9d000c6d31338d03937afdb34f17a3bebd8529a798f9ab32987",
+    "apps/web/src/components/MechanismSwitchesInput.tsx": "acbe776d51b744299a9e7c67280182a16b0225d3d4f1afc4541f5a2749a6b33f",
+    "apps/web/src/components/company/report-availability.ts": "6445ddfe1ef9def1f4578cb6d392f974b53de6c9221e486768c29676860d68b5",
+    "apps/web/src/components/ReportFrequencyInput.test.ts": "a184825758ea69e22c29245180a7728ef1b50e83067f5863d3f941e4624d968d",
+    "apps/web/src/components/MechanismSwitchesInput.test.ts": "dc5032e4d7c96ea6aaf51f3300e7863c480c4dcae65f487d05083556ad560e3c",
+    "apps/web/src/components/company/report-availability.test.ts": "878f077a8bdbb64997a8363d0da239b3bce69a719aacbaa4fe3714ac4ff9ff8a"
+  }
+}

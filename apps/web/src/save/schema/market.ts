@@ -1,3 +1,4 @@
+import { SETUP_COMPANY_OPTION_KEYS, parseSetupCompanyOptions } from "./setup-company-options.ts"
 import { money as parseCanonicalMoney } from "./primitives.ts"
 import { candleDate } from "../../utils/candle-date.ts"
 import type { FloatAllocation, SessionSetup } from "../../types/engine"
@@ -65,7 +66,7 @@ function floatAllocation(value: unknown, path: string): FloatAllocation {
 
 export function parseSetup(value: unknown, path: string): SessionSetup {
   const parsed = record(value, path)
-  exact(parsed, ["stocks", "npcs", "config", "strategy_params", "ticks_per_day", "auction_ticks", "closing_auction_ticks", "history_len", "t1_enabled", "float_allocation", "start_date", "simulation_policy_id", ...("company_operations" in parsed ? ["company_operations"] : []), ...("groups" in parsed ? ["groups"] : [])], path)
+  exact(parsed, ["stocks", "npcs", "config", "strategy_params", "ticks_per_day", "auction_ticks", "closing_auction_ticks", "history_len", "t1_enabled", "float_allocation", "start_date", "simulation_policy_id", ...("company_operations" in parsed ? ["company_operations"] : []), ...("groups" in parsed ? ["groups"] : []), ...SETUP_COMPANY_OPTION_KEYS.filter((key) => key in parsed)], path)
   const npcs = record(parsed.npcs, `${path}.npcs`)
   exact(npcs, ["retail_count", "inst_count", "hot_count", "retail_cash_median"], `${path}.npcs`)
   const config = record(parsed.config, `${path}.config`)
@@ -79,6 +80,7 @@ export function parseSetup(value: unknown, path: string): SessionSetup {
   exact(inst, ["margin", "order_size"], `${path}.strategy_params.inst`)
   exact(hot, ["lookback", "trend_threshold", "order_size"], `${path}.strategy_params.hot`)
   return {
+    ...parseSetupCompanyOptions(parsed, path),
     ...("company_operations" in parsed ? { company_operations: parsed.company_operations === null ? null : parseCompanyOperationsConfig(parsed.company_operations, `${path}.company_operations`) } : {}),
     ...("groups" in parsed ? { groups: parseGroups(parsed.groups, `${path}.groups`) } : {}),
     stocks: array(parsed.stocks, `${path}.stocks`).map((item, index) => stock(item, `${path}.stocks[${index}]`)),

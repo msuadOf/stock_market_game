@@ -42,7 +42,7 @@ fn plan_open_rejects_unrepresentable_horizon_without_mutation() {
 #[test]
 fn plan_last_day_accepts_maximum_day_with_one_day_horizon() {
     let plan =
-        TradingPlan::from_open(PlanId(1), open(u64::MAX, 1), &PlanPolicy::default()).unwrap();
+        TradingPlan::from_open(PlanId { owner: AccountId(7), sequence: 1 }, open(u64::MAX, 1), &PlanPolicy::default()).unwrap();
     assert_eq!(plan.last_valid_trading_day(), u64::MAX);
     let restored: TradingPlan =
         serde_json::from_value(serde_json::to_value(&plan).unwrap()).unwrap();
@@ -51,7 +51,7 @@ fn plan_last_day_accepts_maximum_day_with_one_day_horizon() {
 
 #[test]
 fn plan_deserialization_rejects_zero_and_overflowing_horizons() {
-    let plan = TradingPlan::from_open(PlanId(1), open(0, 1), &PlanPolicy::default()).unwrap();
+    let plan = TradingPlan::from_open(PlanId { owner: AccountId(7), sequence: 1 }, open(0, 1), &PlanPolicy::default()).unwrap();
     let baseline = serde_json::to_value(plan).unwrap();
     for (created, horizon) in [(0, 0), (u64::MAX, 2), (u64::MAX - 1, 3)] {
         let mut invalid = baseline.clone();

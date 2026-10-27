@@ -4013,7 +4013,7 @@ fn knife5b_plans_echo_gate_returns_empty_when_plan_book_unchanged() {
         .expect("步进（组线程就位）");
     // 直改注入计划一（mutate 面经 save_plan_book_undo ⇒ ⑤b 后置 dirty；
     // 注入后不步进——组簿无业务写，后续拍=未变拍）。
-    driver.mutate_plan_book_for_test(Box::new(|book| {
+    driver.mutate_plan_book_for_test(crate::AccountId(0), Box::new(|book| {
         book.create(plan_open_for_knife5b(crate::StockId(0)))
             .expect("注入计划一");
     }));
@@ -4038,7 +4038,7 @@ fn knife5b_plans_echo_gate_returns_empty_when_plan_book_unchanged() {
         );
     }
     // (4) 更新不漏：再次直改（计划二）后生产通道恢复全量。
-    driver.mutate_plan_book_for_test(Box::new(|book| {
+    driver.mutate_plan_book_for_test(crate::AccountId(0), Box::new(|book| {
         book.create(plan_open_for_knife5b(crate::StockId(1)))
             .expect("注入计划二");
     }));
@@ -4170,7 +4170,7 @@ fn knife5b_empty_group_book_keeps_session_mirror_on_clear() {
         .step_frame_equivalent(&mut session)
         .expect("步进（组线程就位）");
     // 注入计划 → 生产通道全量 → 手动安装（生产链 set_runtime_plans 等价面）。
-    driver.mutate_plan_book_for_test(Box::new(|book| {
+    driver.mutate_plan_book_for_test(crate::AccountId(0), Box::new(|book| {
         book.create(plan_open_for_knife5b(crate::StockId(0)))
             .expect("注入计划");
     }));
@@ -4184,7 +4184,7 @@ fn knife5b_empty_group_book_keeps_session_mirror_on_clear() {
     assert!(!debug_before.is_empty(), "前置：镜像已安装注入计划");
     // 计划集清空=全员 terminal 化（append-only：terminal 记录仍在
     // plan_ids）——**变化拍**（apply 置 dirty）。
-    driver.mutate_plan_book_for_test(Box::new(|book| {
+    driver.mutate_plan_book_for_test(crate::AccountId(0), Box::new(|book| {
         let ids: Vec<_> = book.plan_ids().collect();
         for id in ids {
             let _ = book.apply(

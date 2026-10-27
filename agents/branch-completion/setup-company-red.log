@@ -1,0 +1,263 @@
+✖ 公司选项逐字段保留且省略不生成默认值 (7.25855ms)
+✖ 公司系统所有声明变体、四种周期与行业可解析 (0.408912ms)
+✖ 月报两种排期、两个 preset 与两种 delay 全保留 (0.34218ms)
+✖ 公司选项拒绝 null、错误类型、错误税务配对和残缺公司字段族 (0.421032ms)
+✖ 所有嵌套对象拒绝未知字段及缺少必填字段 (0.577387ms)
+✖ 月报拒绝非法变体、范围和额外字段 (0.267318ms)
+ℹ tests 6
+ℹ suites 0
+ℹ pass 0
+ℹ fail 6
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 210.632981
+
+✖ failing tests:
+
+test at apps/web/src/save/schema/setup-company-options.test.ts:28:1
+✖ 公司选项逐字段保留且省略不生成默认值 (7.25855ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+  + actual - expected
+  
+  + {}
+  - {
+  -   auto_corporate_foundation: true,
+  -   company_system: {
+  -     config: {
+  -       companies: [
+  -         {
+  -           company: 0,
+  -           finance: {
+  -             book_display: {
+  -               investment_of_revenue_bp: 3000
+  -             },
+  -             opening_lines: [
+  -               {
+  -                 account: 'Cash',
+  -                 amount: '100.00',
+  -                 side: 'Debit'
+  -               }
+  -             ],
+  -             summary_rule: 'ReceivableRevenuePayableExpenses',
+  -             tax_policy: {
+  -               income_tax: {
+  -                 loss_carryforward_years: 5,
+  -                 rate_bp: 2500
+  -               },
+  -               vat: {
+  -                 deductible_share_bp: 10000,
+  -                 input_rate_bp: 1300,
+  -                 output_rate_bp: 1300
+  -               },
+  -               version: 1
+  -             }
+  -           },
+  -           generation: {
+  -             demand_sensitivity_bp: 5000,
+  -             fixed_expense_noise: {
+  -               annual_bp: 4,
+  -               half_year_bp: 3,
+  -               monthly_bp: 0,
+  -               quarterly_bp: 2
+  -             },
+  -             fixed_expense_trend: {
+  -               annual_growth_max_bp: 300,
+  -               annual_growth_min_bp: -200,
+  -               duration_max_months: 12,
+  -               duration_min_months: 2,
+  -               kind: 'Persistent'
+  -             },
+  -             initial_fixed_expense: '2000.00',
+  -             initial_revenue: '10000.00',
+  -             revenue_noise: {
+  -               annual_bp: 4,
+  -               half_year_bp: 3,
+  -               monthly_bp: 0,
+  -               quarterly_bp: 2
+  -             },
+  -             revenue_trend: {
+  -               annual_growth_bp: 1200,
+  -               kind: 'Fixed'
+  -             },
+  -             variable_expense: {
+  -               noise: {
+  -                 annual_bp: 4,
+  -                 half_year_bp: 3,
+  -                 monthly_bp: 0,
+  -                 quarterly_bp: 2
+  -               },
+  -               ratio_bp: 3000,
+  -               rule: 'RevenueRatio'
+  -             }
+  -           },
+  -           kind: 'Industrial',
+  -           preferences: {
+  -             cash_dividend: {
+  -               cycles_between_proposals: 1,
+  -               min_distributable_profit: '9007199254740993',
+  -               target_payout_bp: 5000
+  -             },
+  -             stock_distribution: {
+  -               cycles_between_proposals: 2,
+  -               max_cumulative_expansion_micros: 1000000,
+  -               min_distributable_profit: '100',
+  -               shares_per_existing_share_micros: 100000
+  -             }
+  -           }
+  -         }
+  -       ],
+  -       environment: {
+  -         initial_change_bp: -200,
+  -         noise: {
+  -           annual_bp: 4,
+  -           half_year_bp: 3,
+  -           monthly_bp: 0,
+  -           quarterly_bp: 2
+  -         },
+  -         persistence_bp: 9000
+  -       },
+  -       prehistory_periods: 12,
+  -       settlement_cycle: 'Quarterly'
+  -     },
+  -     mode: 'Simple'
+  -   },
+  -   dividend_tax_mode: 'FlatWithholding',
+  -   flat_withholding_bp: 1000,
+  -   issuer_repurchase_enabled: false,
+  -   par_value_per_share: '100',
+  -   report_frequency: 'Quarterly',
+  -   rights_offering_enabled: true
+  - }
+  
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game-setup-options/apps/web/src/save/schema/setup-company-options.test.ts:31:10)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.start (node:internal/test_runner/test:1096:17)
+      at startSubtestAfterBootstrap (node:internal/test_runner/harness:385:17) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: {},
+    expected: { company_system: { mode: 'Simple', config: [Object] }, dividend_tax_mode: 'FlatWithholding', flat_withholding_bp: 1000, rights_offering_enabled: true, issuer_repurchase_enabled: false, par_value_per_share: '100', auto_corporate_foundation: true, report_frequency: 'Quarterly' },
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }
+
+test at apps/web/src/save/schema/setup-company-options.test.ts:38:1
+✖ 公司系统所有声明变体、四种周期与行业可解析 (0.408912ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+  + actual - expected
+  
+  + {}
+  - {
+  -   company_system: {
+  -     mode: 'Simulation'
+  -   },
+  -   dividend_tax_mode: 'Exempt',
+  -   par_value_per_share: '100'
+  - }
+  
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game-setup-options/apps/web/src/save/schema/setup-company-options.test.ts:39:10)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: {},
+    expected: { company_system: { mode: 'Simulation' }, dividend_tax_mode: 'Exempt', par_value_per_share: '100' },
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }
+
+test at apps/web/src/save/schema/setup-company-options.test.ts:56:1
+✖ 月报两种排期、两个 preset 与两种 delay 全保留 (0.34218ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+  + actual - expected
+  
+  + {}
+  - {
+  -   report_frequency: {
+  -     Monthly: {
+  -       schedule: {
+  -         Preset: {
+  -           delay: 'None',
+  -           preset: 'FirstDayEvening'
+  -         }
+  -       }
+  -     }
+  -   }
+  - }
+  
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game-setup-options/apps/web/src/save/schema/setup-company-options.test.ts:60:14)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: {},
+    expected: { report_frequency: { Monthly: [Object] } },
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }
+
+test at apps/web/src/save/schema/setup-company-options.test.ts:65:1
+✖ 公司选项拒绝 null、错误类型、错误税务配对和残缺公司字段族 (0.421032ms)
+  AssertionError [ERR_ASSERTION]: Missing expected exception.
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game-setup-options/apps/web/src/save/schema/setup-company-options.test.ts:66:55)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: /setup\.company_system/,
+    operator: 'throws',
+    diff: 'simple'
+  }
+
+test at apps/web/src/save/schema/setup-company-options.test.ts:85:1
+✖ 所有嵌套对象拒绝未知字段及缺少必填字段 (0.577387ms)
+  AssertionError [ERR_ASSERTION]: Missing expected exception.
+      at visit (file:///data1/baiyifan/workplace/stock_market_game-setup-options/apps/web/src/save/schema/setup-company-options.test.ts:97:12)
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game-setup-options/apps/web/src/save/schema/setup-company-options.test.ts:108:3)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: /不是允许字段/,
+    operator: 'throws',
+    diff: 'simple'
+  }
+
+test at apps/web/src/save/schema/setup-company-options.test.ts:111:1
+✖ 月报拒绝非法变体、范围和额外字段 (0.267318ms)
+  AssertionError [ERR_ASSERTION]: Missing expected exception.
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game-setup-options/apps/web/src/save/schema/setup-company-options.test.ts:112:430)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: /setup\.report_frequency/,
+    operator: 'throws',
+    diff: 'simple'
+  }
+bounded command exited with 1

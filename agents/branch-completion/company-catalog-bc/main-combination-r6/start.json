@@ -1,0 +1,10 @@
+{
+  "savedCandidate": "2930f5532ed9976bfe6cc07c3116fee392732036",
+  "mergeMain": "9e7c3da2c41f89930d186e3061c11792fb60780a",
+  "conflicts": [
+    "apps/web/src/host/npc-decision-trace.test.ts",
+    "apps/web/src/host/npc-decision-trace.ts",
+    "packages/engine/src/session.rs"
+  ],
+  "conflictResolutionAuthorization": "root授权在原BC树安全合main并逐路径保留双边语义，未触maincheckout"
+}

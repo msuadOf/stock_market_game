@@ -16,6 +16,7 @@
 //! 恢复 ts 注解（`SaveSlot` 侧本批按既有公司域权威字段惯例 `#[ts(skip)]`）。
 
 pub(crate) mod registry_day_end;
+pub(crate) mod rights_offering_day_end;
 
 use crate::company::share_registry::{HolderId, ShareRegistry};
 use crate::orderbook::AccountId;
@@ -432,3 +433,7 @@ mod tests {
         );
     }
 }
+
+pub(crate) mod distributions_day_end;
+#[allow(dead_code)]
+pub(crate) mod share_transform_day_end;

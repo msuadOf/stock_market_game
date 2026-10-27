@@ -1,0 +1,7 @@
+{
+  "baseline_commit": "f58202911b8db6c042fe1816d08277c16381f2d2",
+  "source_files_verified": 560,
+  "test_source_sha256": "60ab547ae02027359fbf3ecef3fc9a4a4f0100482347a1a5aa4f973ab0bd13e6",
+  "baseline_rlib_sha256": "04e051a9dd498eb9e1ac3a38c7485f66b14256ad6d271659676cb5179a75bd37",
+  "baseline_test_binary_sha256": "01c0f853f065f130d3ebe1fd4bca6920c5f37dd59a5c84cc9caec550fd686a70"
+}

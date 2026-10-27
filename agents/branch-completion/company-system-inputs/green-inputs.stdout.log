@@ -1,0 +1,14 @@
+✔ Money 门槛精确保留 i64 上界并显式拒绝越界 (103.507711ms)
+✔ 真实事件保留非法 raw 文本、显示错误、不回写，再修正时以数值 company 回调 (3.709245ms)
+✔ 送转非法 raw 与 Money 上限保持可见，修正前不回写，外部有效回填重置字段 (1.389885ms)
+✔ 字段边界拒绝小数 bp、零间隔和过大送转比例，不钳制 (0.210876ms)
+✔ Simple 配置非法与 Simulation 明确报错，不承诺价格倒推或已交付自动结算 (278.38105ms)
+✔ 非法 u64 seed 可见且拒绝，JSON 错误保留 raw 草稿 (1.95978ms)
+ℹ tests 6
+ℹ suites 0
+ℹ pass 6
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1216.335795

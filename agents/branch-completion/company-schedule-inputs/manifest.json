@@ -1,0 +1,46 @@
+{
+  "base": "3984e14167202dc645ec340fbd2a73e661c71c8a",
+  "branch": "feat/web-company-schedule-inputs",
+  "files": {
+    "apps/web/src/components/ReportFrequencyInput.tsx": "8945de158f2739847dacc0bc2de175d74c3e74efb2b0b87908c8cfbc98e8f66f",
+    "apps/web/src/components/MechanismSwitchesInput.tsx": "cc21ec6b7625a038e53844d45d28f7d48433a2f852d707be18fed67d0969208c",
+    "apps/web/src/components/company/report-availability.ts": "08e3c783b1fb22afd0a2bfeba771eb51af1f8bd34e11fd1a33c5c64e950bb9c5",
+    "apps/web/src/components/ReportFrequencyInput.test.ts": "700cf42d936c95dd084159ffa5e6dca0e8eea3988d31dcd7f3c83b6fbd3c57bb",
+    "apps/web/src/components/MechanismSwitchesInput.test.ts": "dc5032e4d7c96ea6aaf51f3300e7863c480c4dcae65f487d05083556ad560e3c",
+    "apps/web/src/components/company/report-availability.test.ts": "878f077a8bdbb64997a8363d0da239b3bce69a719aacbaa4fe3714ac4ff9ff8a"
+  },
+  "unchanged_dependency_files": {
+    "apps/web/src/save/schema/monthly-report-schedule.ts": "24f86663017af1e04f28d94969923a28865ad4aa413a019acbcb6c4d6c819cc2",
+    "apps/web/src/types/generated/ReportFrequency.ts": "3abc5085045fb7592f7d3320877aa22b5537f76cfa07c1cde383d4262dda92d3",
+    "apps/web/src/types/generated/MonthlyReportSchedule.ts": "7d2f46ce9d009c76eee7357c45495f2b3cf9affbb545ebab3b31e6da73a1847f",
+    "apps/web/src/types/generated/MonthlyReportDelay.ts": "917be8460f29076783093dee809fdf0af87b5ed7c32dade26eb30a5045862729",
+    "apps/web/src/types/generated/PublicReportUnavailableReason.ts": "a6c163beebdf22e12e6c9f9f74ac1987f5ed626b9be2bd71145aa0a8deace657",
+    "packages/engine/src/information/monthly_schedule.rs": "a7d3fcc26ea6bc56a759baef3bf91091c747697cfb8800188e4d078963729c74",
+    "packages/engine/src/company/query.rs": "74646e7ce42baa5ceb4bc584549720a5cabe1d675f190321b417771484fb9c79",
+    "packages/engine/src/calendar/date.rs": "6e8e756c40fa9649bca93017bc2d94166f8bad18858c3724e6a31e910afbdf9e"
+  },
+  "evidence": {
+    "green.receipt.json": "f705d74774f7f1971ea00b609286033a189fadce26f18aaa01c6499f3f40c45d",
+    "green.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "green.stdout": "314a70353050a5e886db30f808d4808efaa2e6c0e66352de1adcc4c21b8b0df9",
+    "lint.receipt.json": "337f0c1cb939157066e412b0cc0de4a51d3fbbe91651aa16d31c0e339424e6d4",
+    "lint.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "lint.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "red-source/apps/web/src/components/MechanismSwitchesInput.test.ts": "dc5032e4d7c96ea6aaf51f3300e7863c480c4dcae65f487d05083556ad560e3c",
+    "red-source/apps/web/src/components/MechanismSwitchesInput.tsx": "acbe776d51b744299a9e7c67280182a16b0225d3d4f1afc4541f5a2749a6b33f",
+    "red-source/apps/web/src/components/ReportFrequencyInput.test.ts": "a184825758ea69e22c29245180a7728ef1b50e83067f5863d3f941e4624d968d",
+    "red-source/apps/web/src/components/ReportFrequencyInput.tsx": "b3cbd69808e2c9d000c6d31338d03937afdb34f17a3bebd8529a798f9ab32987",
+    "red-source/apps/web/src/components/company/report-availability.test.ts": "878f077a8bdbb64997a8363d0da239b3bce69a719aacbaa4fe3714ac4ff9ff8a",
+    "red-source/apps/web/src/components/company/report-availability.ts": "6445ddfe1ef9def1f4578cb6d392f974b53de6c9221e486768c29676860d68b5",
+    "red.receipt.json": "7878892add98d6f96e367fd753cf2c421b37ab9298fb33a9e325ff39d3ebad91",
+    "red.stderr": "d0ebb86e275cd92eb1d6df203cd2616b61cfe02d0cbdadfe0b71ebae146ec6e4",
+    "red.stdout": "1e880e20ef03d59c7189bc171c0b048d53facb6d63463947d98a7b68cb29eaec",
+    "typecheck-attempt1.receipt.json": "ceeb8b76aa3b523af32f4ede8e5b393ea06184938c7e82538e3ecd2d32050bd7",
+    "typecheck-attempt1.stderr": "d0ebb86e275cd92eb1d6df203cd2616b61cfe02d0cbdadfe0b71ebae146ec6e4",
+    "typecheck-attempt1.stdout": "5b766b55df5bc15c215149742c8fe88d72a584cb45f5422c7edca1594b6d0cb5",
+    "typecheck.receipt.json": "501e4ecd27f0f82eccb1a58fcca398cfab8bb1d26f75dbd73d9f6996c4eedd91",
+    "typecheck.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "typecheck.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "independent_review": "待协调者另派未实施 Sol 完整 diff 复核"
+}

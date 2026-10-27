@@ -313,6 +313,72 @@ struct ChildTicket {
     charged_cents: i64,
 }
 
+/// 构造期已经校验的计划和既有子单票；安装本身没有失败分支。
+pub(crate) struct PreparedPlanSeed {
+    book: crate::plans::PlanBook,
+    tickets: std::collections::BTreeMap<(crate::AccountId, crate::StockId), ChildTicket>,
+}
+
+/// 只恢复现有票；资源与费用仍由真实 desk/entity 事实独占维护。
+pub(crate) fn prepare_plan_seeds(
+    books: Vec<crate::plans::PlanBook>,
+    roster: &[crate::AccountId],
+    per_group: usize,
+    desk_seeds: &[Vec<super::desk::DeskRestingSeed>],
+) -> Result<Vec<PreparedPlanSeed>, RuntimeError> {
+    let bad = |detail: String| RuntimeError::ProtocolInvariant { detail };
+    let needs_tickets = books.iter().any(|book| book.plan_ids().any(|id| {
+        book.plan(id).expect("计划迭代身份存在").active_child_order_id().is_some()
+    }));
+    let mut index = std::collections::BTreeMap::new();
+    if needs_tickets {
+        for (stock, seeds) in desk_seeds.iter().enumerate() {
+            for seed in seeds {
+                let global = (seed.owner.0 as usize).checked_mul(per_group)
+                    .and_then(|offset| offset.checked_add(seed.owner.1 as usize))
+                    .ok_or_else(|| bad("子单种子 owner 坐标溢出".to_owned()))?;
+                let account = roster.get(global).copied().filter(|_| (seed.owner.1 as usize) < per_group)
+                    .ok_or_else(|| bad(format!("子单种子 owner 不在名册：{:?}", seed.owner)))?;
+                let stock = crate::StockId(stock as u32);
+                let order = crate::OrderId(desk_order_id(stock.0 as super::StockIdx, seed.serial));
+                if index.insert((account, stock, order), seed).is_some() {
+                    return Err(bad(format!("子单种子身份重复：account={account:?}, stock={stock:?}, order={order:?}")));
+                }
+            }
+        }
+    }
+    books.into_iter().map(|book| {
+        let mut tickets = std::collections::BTreeMap::new();
+        for id in book.plan_ids() {
+            let plan = book.plan(id).expect("计划迭代身份存在");
+            let Some(order) = plan.active_child_order_id() else { continue; };
+            if plan.is_terminal() {
+                return Err(bad(format!("terminal 计划仍引用子单：{id:?}")));
+            }
+            let seed = index.get(&(plan.account(), *plan.code(), order))
+                .ok_or_else(|| bad(format!("计划子单缺真实 desk 种子：plan={id:?}, order={order:?}")))?;
+            let leg = plan.execution().ok_or_else(|| bad(format!("计划子单缺 execution：{id:?}")))?;
+            let qty = seed.qty.checked_add(seed.filled_qty)
+                .ok_or_else(|| bad(format!("子单原数量溢出：{id:?}")))?;
+            if seed.side != plan.direction() || seed.qty == 0 || leg.child_qty() != qty
+                || plan.active_child_remaining_qty() != Some(seed.qty)
+            {
+                return Err(bad(format!("计划子单事实与 desk 种子不一致：plan={id:?}, order={order:?}")));
+            }
+            let charged_cents = if seed.side == Side::Buy {
+                seed.filled_value.checked_add(seed.charged_commission)
+                    .and_then(|value| value.checked_add(seed.charged_transfer_fee))
+                    .ok_or_else(|| bad(format!("子单累计真实扣减溢出：{id:?}")))?
+            } else { 0 };
+            tickets.insert((plan.account(), *plan.code()), ChildTicket {
+                qty, side: seed.side, price: seed.price, order_id: Some(order),
+                remaining: seed.qty, charged_cents,
+            });
+        }
+        Ok(PreparedPlanSeed { book, tickets })
+    }).collect()
+}
+
 /// 本组名册段（P0 缺陷修复的统一收口点）：全局名册投影按 `roster_offset`
 /// 切出**本组局部切片**，供 `cash_with_pending_at` / `held_qty_with_pending_at`
 /// / `equity_cents_with_pending` 直接以组内 local 索引（三者的
@@ -663,6 +729,10 @@ pub struct GroupFinalState {
 
 /// 组线程私有状态。
 pub struct GroupState {
+    admin_pending: Option<admin_transaction::PendingAdmin>,
+    admin_last_id: u64,
+    #[cfg(test)]
+    admin_fault: Option<(super::protocol::AdminPhase, super::protocol::AdminFault)>,
     /// 组索引。
     pub group: GroupIdx,
     /// 组内账户（下标=LocalIdx；Seal 攻顶刀 A-1：Arc+COW——写点经
@@ -815,8 +885,8 @@ pub struct GroupState {
     /// 的确定性触发）。
     #[cfg(test)]
     force_continuation: bool,
-    /// D3a-2c 件4：组内计划簿（开仓产物落地——crate::plans 纯类型直载；
-    /// 组装时起始空，runtime 模式 session plans 恒空天然一致）。
+    /// 本组账户的计划权威；构造时按 AccountId 移交全部计划与游标。
+    /// native 运行期间 session 只保留完整镜像，不作为特例 writer。
     plan_book: crate::plans::PlanBook,
     /// ⑤a 收袋刀：attention due 筛选堆（延迟删除模式）。不变式：∀local，
     /// (profiles[local].next_due, local) 在堆中——除非该项已被某轮
@@ -828,7 +898,7 @@ pub struct GroupState {
     /// ⑤b 收袋刀：计划簿 dirty 标记——真变置位（写点统一经
     /// [`Self::save_plan_book_undo`] 前奏或 `GroupUndo::PlanBook` 恢复；
     /// 宁多勿漏：多置=多一次全量上行无害，漏置=镜像漏更新红证抓）。
-    /// EchoPlans 生产通道消费（未变回空簿）；读面 EchoPlansFull 不动它。
+    /// EchoPlans 诊断通道消费（未变回空簿）；EveryTick 完整读面不依赖它。
     /// 初始 true：首拍全量基线（与 session 镜像构造同源对齐）。
     plan_book_dirty: bool,
     /// 决策脚本。
@@ -904,6 +974,10 @@ impl GroupState {
                 })
                 .unwrap_or_default();
         GroupState {
+            admin_pending: None,
+            admin_last_id: 0,
+            #[cfg(test)]
+            admin_fault: None,
             group,
             accounts: accounts.into_iter().map(std::sync::Arc::new).collect(),
             undo: Vec::new(),
@@ -971,6 +1045,34 @@ impl GroupState {
 
     /// 当前态哈希（FNV-1a，按名册与股序确定序遍历）。仅域内容（账户），不含
     /// 协议位置字段（tick/轮）——跨 tick 可比（Abort 回滚等价判据）。
+    fn owns_plan_account(&self, owner: crate::AccountId) -> bool {
+        self.root_projection.as_ref().is_some_and(|root| {
+            roster_slice(&root.account_ids, self.roster_offset, self.accounts.len()).contains(&owner)
+        })
+    }
+
+    fn validate_plan_writer(&self, owner: crate::AccountId, book: &crate::plans::PlanBook) -> Result<(), RuntimeError> {
+        if !self.owns_plan_account(owner)
+            || book.owner_sequences().any(|cursor| !self.owns_plan_account(cursor.owner))
+            || book.plan_ids().any(|id| !self.owns_plan_account(id.owner))
+        {
+            return Err(RuntimeError::ProtocolInvariant {
+                detail: format!("PlanWriterOwnershipViolation：group={}, owner={owner:?}", self.group),
+            });
+        }
+        if book.policy() != self.plan_book.policy() {
+            return Err(RuntimeError::ProtocolInvariant { detail: format!("PlanPolicyMismatch：group={}", self.group) });
+        }
+        Ok(())
+    }
+
+    /// 预检全部组成功后，单次移交本组计划和既有票。
+    pub(crate) fn install_plan_seed(&mut self, seed: PreparedPlanSeed) {
+        self.plan_book = seed.book;
+        self.child_in_flight = seed.tickets;
+        self.plan_book_dirty = true;
+    }
+
     pub fn state_hash(&self) -> u64 {
         let mut h: u64 = 0xcbf29ce484222325;
         h = fnv(h, self.group as u64);
@@ -1000,9 +1102,21 @@ impl GroupState {
         }
         // Sol 整改 1：计划域新状态入哈希（簿数值面+在途+身份计数——
         // Abort 回滚等价判据覆盖计划/身份漂移）。
+        let policy = self.plan_book.policy();
+        h = fnv(h, policy.reverse_revision_threshold_bp as u64);
+        h = fnv(h, policy.review_signal_delta_bp as u64);
+        h = fnv(h, policy.review_price_change_bp as u64);
+        for cursor in self.plan_book.owner_sequences() {
+            h = fnv(h, cursor.owner.0);
+            h = fnv(h, cursor.next_sequence.is_some() as u64);
+            if let Some(next) = cursor.next_sequence {
+                h = fnv(h, next);
+            }
+        }
         for plan_id in self.plan_book.plan_ids() {
             if let Ok(plan) = self.plan_book.plan(plan_id) {
-                h = fnv(h, plan_id.0);
+                h = fnv(h, plan_id.owner.0);
+                h = fnv(h, plan_id.sequence);
                 h = fnv(h, u64::from(plan.filled_qty()));
                 h = fnv(
                     h,
@@ -5035,7 +5149,27 @@ pub fn group_main(
                 break;
             }
         };
+        // pending 行政 overlay 仅允许本事务控制或无副作用读面。
+        if state.admin_pending.is_some() && !matches!(&msg,
+            GroupIn::AdminCommit { .. } | GroupIn::AdminAbort { .. } | GroupIn::AdminPrepare { .. }
+            | GroupIn::EchoAccounts | GroupIn::EchoAccountsSparse { .. } | GroupIn::Shutdown) {
+            let error = RuntimeError::ProtocolInvariant { detail: format!("组 {who} 行政事务 pending 时收到改变状态的消息") };
+            let _ = up_tx.send(UpMsg::Failed { who, error: error.clone() });
+            result = Err(error);
+            break;
+        }
         match msg {
+            #[cfg(test)]
+            GroupIn::AdminFaultForTest { phase, fault } => state.admin_fault = Some((phase, fault)),
+            GroupIn::AdminPrepare { id, operations } => {
+                if !state.handle_admin_message(id, super::protocol::AdminPhase::Prepare, operations, &up_tx, who) { break; }
+            }
+            GroupIn::AdminCommit { id } => {
+                if !state.handle_admin_message(id, super::protocol::AdminPhase::Commit, Vec::new(), &up_tx, who) { break; }
+            }
+            GroupIn::AdminAbort { id } => {
+                if !state.handle_admin_message(id, super::protocol::AdminPhase::Abort, Vec::new(), &up_tx, who) { break; }
+            }
             GroupIn::Batch(batch) => {
                 // eager 分域即时相：到达即应用 F1/F2/F3（等待窗=组空闲
                 // recv——与协调者收 DeskReport 的 Seal 屏障重叠，回收串行
@@ -5384,22 +5518,30 @@ pub fn group_main(
             }
             #[cfg(test)]
             GroupIn::ApplyPlanEvents { events } => {
-                // D3b 复审注入通道：逐条 apply 到组簿（权威语义由
-                // plan_book.apply 承载；簿快照 undo 可逆——Abort 冲回后
-                // 指令失效需重发）。
-                for (plan_id, event) in events {
-                    state.save_plan_book_undo();
-                    let applied = state.plan_book.apply(plan_id, event);
-                    if let Err(error) = applied {
+                // 整批先校验归属与迁移；失败不留下前半批事件或游标。
+                let applied = (|| {
+                    let mut candidate = state.plan_book.clone();
+                    for (plan_id, event) in events {
+                        if !state.owns_plan_account(plan_id.owner) {
+                            return Err(RuntimeError::ProtocolInvariant {
+                                detail: format!("PlanWriterOwnershipViolation：group={}, plan={plan_id:?}", state.group),
+                            });
+                        }
+                        candidate.apply(plan_id, event).map_err(|error| RuntimeError::ProtocolInvariant {
+                            detail: format!("组 {} 注入计划事件失败 {plan_id:?}：{error:?}", state.group),
+                        })?;
+                    }
+                    Ok(candidate)
+                })();
+                match applied {
+                    Ok(candidate) => {
+                        state.save_plan_book_undo();
+                        state.plan_book = candidate;
+                    }
+                    Err(error) => {
                         abort.store(true, Ordering::SeqCst);
-                        let e = RuntimeError::ProtocolInvariant {
-                            detail: format!(
-                                "组 {} 注入计划事件失败 {plan_id:?}：{error:?}",
-                                state.group
-                            ),
-                        };
-                        let _ = up_tx.send(UpMsg::Failed { who, error: e.clone() });
-                        result = Err(e);
+                        let _ = up_tx.send(UpMsg::Failed { who, error: error.clone() });
+                        result = Err(error);
                         break;
                     }
                 }
@@ -5411,14 +5553,30 @@ pub fn group_main(
             } => {
                 // D3b 件 4 fixture 通道：存入待办（run_chain_decision 按
                 // 账户匹配消费一次即清——不复读）。
+                if !state.owns_plan_account(account) {
+                    let error = RuntimeError::ProtocolInvariant {
+                        detail: format!("PlanWriterOwnershipViolation：group={}, review_owner={account:?}", state.group),
+                    };
+                    abort.store(true, Ordering::SeqCst);
+                    let _ = up_tx.send(UpMsg::Failed { who, error: error.clone() });
+                    result = Err(error);
+                    break;
+                }
                 state.injected_assessments.push((account, assessments));
             }
             #[cfg(test)]
-            GroupIn::MutatePlanBookForTest(mutate) => {
-                // D3b 件 4 fixture 通道：组簿测试变换（簿快照 undo 可逆
-                /// ——Abort 冲回后指令失效需重发）。
+            GroupIn::MutatePlanBookForTest { owner, mutate } => {
+                // 先在私有簿验证归属，失败不安装任何计划或游标。
+                let mut candidate = state.plan_book.clone();
+                mutate(&mut candidate);
+                if let Err(error) = state.validate_plan_writer(owner, &candidate) {
+                    abort.store(true, Ordering::SeqCst);
+                    let _ = up_tx.send(UpMsg::Failed { who, error: error.clone() });
+                    result = Err(error);
+                    break;
+                }
                 state.save_plan_book_undo();
-                mutate(&mut state.plan_book);
+                state.plan_book = candidate;
             }
             #[cfg(test)]
             GroupIn::InjectObservationMinutes { stock, minutes } => {
@@ -5526,17 +5684,8 @@ pub fn group_main(
                 }
             }
             GroupIn::EchoPlans => {
-                // D3a-2c 件5：组内计划簿上行（驱动器交付点回写 session
-                // plans_debug 投影源——D4 模式）。
-                // ⑤b 收袋刀：生产通道 dirty 门控——组簿未变时回空簿
-                //（省每拍全量 PlanBook 克隆往返）；驱动器端「空簿不覆盖」
-                //（group_has_plans 判定）使 session 镜像保持现值，与
-                // 未变组簿仍一致。等价面（final-ledger §七 已论证）：
-                // - 变化拍：dirty 在 ⇒ 全量上行 ⇒ 镜像安装新值（同旧行为）；
-                // - 未变拍：回空 ⇒ 不装 ⇒ 镜像保持（==未变组簿）；
-                // - 清空拍（变化）：回空簿 ⇒ 不装 ⇒ 镜像留旧值——旧行为
-                //   同（全量上行空簿同样不装），语义不变；
-                // - Abort 回滚：undo 恢复置 dirty ⇒ 下拍全量上行恢复值。
+                // 保留原 dirty 诊断协议；EveryTick 完整汇合使用 EchoPlansFull，
+                // 不再以空簿猜测是否覆盖 session 镜像。
                 let plans = if state.plan_book_dirty {
                     state.plan_book_dirty = false;
                     state.plan_book.clone()
@@ -6026,6 +6175,7 @@ pub fn group_main(
             }
         }
     }
+    state.discard_pending_admin();
     let final_state = state.final_state();
     let send = up_tx.send(UpMsg::GroupFinal(Box::new(final_state)));
     if result.is_ok() {
@@ -7561,3 +7711,5 @@ mod roster_offset_tests {
         );
     }
 }
+
+mod admin_transaction;

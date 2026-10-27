@@ -1,0 +1,44 @@
+
+running 11 tests
+
+thread 'company::cash_dividend_tax::entitlement_units::conditional_bonus_tests::prepare_partial_bonus_collection_has_no_installation_or_tax_fact_side_effect' (2067871) panicked at /data1/baiyifan/workplace/stock_market_game/.tmp/tax-entitlement-k1/company/cash_dividend_tax/entitlement_units/conditional_bonus_tests.rs:788:5:
+assertion `left == right` failed
+  left: 0
+ right: 300
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+thread 'company::cash_dividend_tax::entitlement_units::conditional_bonus_tests::collection_before_same_prefix_activation_cannot_borrow_future_income' (2067866) panicked at /data1/baiyifan/workplace/stock_market_game/.tmp/tax-entitlement-k1/company/cash_dividend_tax/entitlement_units/conditional_bonus_tests.rs:831:5:
+assertion failed: book.assessment_with_conditional_bonus(&empty_lineage(&book),
+        &reversed).is_err()
+
+thread 'company::cash_dividend_tax::entitlement_units::conditional_bonus_tests::conditional_cash_payment_before_bonus_activation_blocks_later_legacy_cash_double_collection' (2067867) panicked at /data1/baiyifan/workplace/stock_market_game/.tmp/tax-entitlement-k1/company/cash_dividend_tax/entitlement_units/conditional_bonus_tests.rs:863:5:
+assertion failed: matches!(book.assessment_with_conditional_bonus(&empty_lineage(&book),&facts),Err(TaxLineageError::LegacyCashOvercollection{event_id,previously_collected:2000,..})
+    if event_id=="legacy-cash")
+
+thread 'company::cash_dividend_tax::entitlement_units::conditional_bonus_tests::explicit_kind_collection_reduces_only_after_given_actual_fact_and_retries_once' (2067870) panicked at /data1/baiyifan/workplace/stock_market_game/.tmp/tax-entitlement-k1/company/cash_dividend_tax/entitlement_units/conditional_bonus_tests.rs:803:5:
+assertion `left == right` failed
+  left: 2000
+ right: 1700
+test company::cash_dividend_tax::entitlement_units::conditional_bonus_tests::exact_real_cash_collection_is_deducted_before_late_bonus_realization ... ok
+test company::cash_dividend_tax::entitlement_units::conditional_bonus_tests::prepare_partial_bonus_collection_has_no_installation_or_tax_fact_side_effect ... FAILED
+test company::cash_dividend_tax::entitlement_units::conditional_bonus_tests::collection_before_same_prefix_activation_cannot_borrow_future_income ... FAILED
+test company::cash_dividend_tax::entitlement_units::conditional_bonus_tests::conditional_cash_payment_before_bonus_activation_blocks_later_legacy_cash_double_collection ... FAILED
+test company::cash_dividend_tax::entitlement_units::tests::mapped_outstanding_deducts_actual_legacy_collection_without_rewriting_receipt ... ok
+test company::cash_dividend_tax::entitlement_units::conditional_bonus_tests::explicit_kind_collection_reduces_only_after_given_actual_fact_and_retries_once ... FAILED
+test company::cash_dividend_tax::tests::fifo_partial_sale_assesses_only_paid_dividend_and_collection_is_atomic ... ok
+test company::cash_dividend_tax::entitlement_units::conditional_bonus_tests::corrected_legacy_cash_overcollection_cannot_be_hidden_by_activated_bonus ... ok
+test company::cash_dividend_tax::tests::per_dividend_tax_rounds_half_up_to_whole_cents_at_collection ... ok
+test company::cash_dividend_tax::entitlement_units::tests::no_mapping_preserves_cash_activation_rounding_collection_and_restore ... ok
+test company::cash_dividend_tax::tests::later_same_day_payment_does_not_rewrite_earlier_collection ... ok
+
+failures:
+
+failures:
+    company::cash_dividend_tax::entitlement_units::conditional_bonus_tests::collection_before_same_prefix_activation_cannot_borrow_future_income
+    company::cash_dividend_tax::entitlement_units::conditional_bonus_tests::conditional_cash_payment_before_bonus_activation_blocks_later_legacy_cash_double_collection
+    company::cash_dividend_tax::entitlement_units::conditional_bonus_tests::explicit_kind_collection_reduces_only_after_given_actual_fact_and_retries_once
+    company::cash_dividend_tax::entitlement_units::conditional_bonus_tests::prepare_partial_bonus_collection_has_no_installation_or_tax_fact_side_effect
+
+test result: FAILED. 7 passed; 4 failed; 0 ignored; 0 measured; 88 filtered out; finished in 0.00s
+
+bounded command exited with 101

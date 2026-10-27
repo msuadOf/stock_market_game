@@ -3,7 +3,7 @@ import test from "node:test"
 import { representativeCompanyOperationsFixture } from "./company-slice-test-fixture.ts"
 import { parseIndustryBooks } from "./schema/company/books/index.ts"
 
-const industrial = (representativeCompanyOperationsFixture() as any).companies["C-000812"].books
+const industrial = (representativeCompanyOperationsFixture() as any).companies["0"].books
 const books = { chart: { version: 1, accounts: {} }, journal: { batches: [], closed: [] } }
 const counterparties = { counterparties: {}, flows: [] }
 const bank = { Bank: { books, deposits: {}, loans: {}, counterparties, ecl_policy: { version: 1, stage1_default: [{ weight_bp: 10000, pd_bp: 100, lgd_bp: 4000 }], lifetime_default: [{ weight_bp: 10000, pd_bp: 800, lgd_bp: 6000 }] }, next_event_id: 2 } }
@@ -44,12 +44,13 @@ test("IndustrialBooks 所得税年度基准必须完整且拒绝旧亏损池结�
   const { loss_pool: _oldPool, income_tax_position: _currentPosition, ...base } = industrial.Industrial
   const position = {
     loss_pool: [],
-    assessment: { year: 2030, pretax: "3.00", current_tax: "0.25", opening_loss_pool: [{ origin_year: 2029, remaining: "2.00" }] },
+    assessments: { "2030": { pretax: "3.00", current_tax: "0.25", opening_loss_pool: [{ origin_year: 2029, remaining: "2.00" }], deferred_tax_asset: "0.00" } },
+    initial_deferred_tax_asset: "0.00", restatements: {},
   }
   const saved = { Industrial: { ...base, income_tax_position: position } }
   assert.deepEqual(parseIndustryBooks(saved, "books"), saved)
   assert.throws(() => parseIndustryBooks({ Industrial: { ...base, loss_pool: [] } }, "books"), /income_tax_position/)
-  for (const invalid of [[], { loss_pool: [] }, { ...position, extra: true }, { ...position, assessment: { ...position.assessment, current_tax: 25 } }]) {
+  for (const invalid of [[], { loss_pool: [] }, { ...position, extra: true }, { ...position, assessments: { "2030": { ...position.assessments["2030"], current_tax: 25 } } }]) {
     assert.throws(() => parseIndustryBooks({ Industrial: { ...base, income_tax_position: invalid } }, "books"), /income_tax_position/)
   }
 })

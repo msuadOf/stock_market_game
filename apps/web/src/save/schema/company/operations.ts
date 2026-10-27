@@ -1,3 +1,4 @@
+import { companyKey, u32 } from "../personal/common.ts"
 import { SaveSchemaError, array, civilDate, exact, integer, record, string } from "../primitives.ts"
 import { parseCompanySpec } from "./accounting/index.ts"
 import { parseIndustryBooks, type IndustryBooks } from "./books/index.ts"
@@ -27,7 +28,9 @@ export type OperatingCompany = {
   readonly economy: { readonly active: readonly ActiveShock[] }
   readonly next_flow_seq: number
 }
+export type CompanyCatalog = { readonly metas: readonly { readonly code: string; readonly name: string }[] }
 export type CompanyOperations = {
+  readonly catalog: CompanyCatalog
   readonly seed: U64
   readonly shock_params: ShockParams
   readonly scheduler: Scheduler
@@ -36,7 +39,7 @@ export type CompanyOperations = {
   readonly companies: Readonly<Record<string, OperatingCompany>>
   readonly next_expected: string | null
   readonly history: History | null
-  readonly payment_failures: Readonly<Record<string, readonly (PaymentFailure & { readonly company: string })[]>>
+  readonly payment_failures: Readonly<Record<string, readonly (PaymentFailure & { readonly company: number })[]>>
 }
 export type DisclosureDispatch = { readonly published_through: CivilInstantValue | null; readonly announced_through: string | null }
 
@@ -63,14 +66,14 @@ function parseCompany(value: unknown, path: string): OperatingCompany {
 
 export function parseCompanyOperations(value: unknown, path = "company_operations"): CompanyOperations {
   const parsed = record(value, path)
-  exact(parsed, ["seed", "shock_params", "scheduler", "market_rng", "industry_rngs", "companies", "next_expected", "history", "payment_failures"], path)
+  exact(parsed, ["seed", "shock_params", "catalog", "scheduler", "market_rng", "industry_rngs", "companies", "next_expected", "history", "payment_failures"], path)
   const industryRngs = record(parsed.industry_rngs, `${path}.industry_rngs`)
   const companies = record(parsed.companies, `${path}.companies`)
   const parsedIndustryRngs: Record<string, OperatingRng> = {}
   for (const [key, nested] of Object.entries(industryRngs)) parsedIndustryRngs[key] = parseRng(nested, `${path}.industry_rngs.${key}`)
   const parsedCompanies: Record<string, OperatingCompany> = {}
-  for (const [key, nested] of Object.entries(companies)) parsedCompanies[key] = parseCompany(nested, `${path}.companies.${key}`)
-  const failures: Record<string, readonly (PaymentFailure & { readonly company: string })[]> = {}
+  for (const [key, nested] of Object.entries(companies)) { companyKey(key, `${path}.companies.${key}`); parsedCompanies[key] = parseCompany(nested, `${path}.companies.${key}`) }
+  const failures: Record<string, readonly (PaymentFailure & { readonly company: number })[]> = {}
   const nextExpected = nullableDate(parsed.next_expected, `${path}.next_expected`)
   for (const [date, value] of Object.entries(record(parsed.payment_failures, `${path}.payment_failures`))) {
     const datePath = `${path}.payment_failures.${date}`
@@ -82,12 +85,13 @@ export function parseCompanyOperations(value: unknown, path = "company_operation
       const itemPath = `${datePath}[${index}]`
       const item = record(value, itemPath)
       exact(item, ["company", "what", "amount", "obligation_status"], itemPath)
-      const company = string(item.company, `${itemPath}.company`)
+      const company = u32(item.company, `${itemPath}.company`)
       if (!Object.hasOwn(parsedCompanies, company)) throw new SaveSchemaError(`${itemPath}.company`, "公司不存在")
       return { company, ...parsePaymentFailure({ what: item.what, amount: item.amount, obligation_status: item.obligation_status }, itemPath) }
     })
   }
   return {
+    catalog: parseCompanyCatalog(parsed.catalog, `${path}.catalog`),
     seed: u64(parsed.seed, `${path}.seed`),
     shock_params: parseShockParams(parsed.shock_params, `${path}.shock_params`),
     scheduler: parseScheduler(parsed.scheduler, `${path}.scheduler`),
@@ -107,4 +111,20 @@ export function parseDisclosureDispatch(value: unknown, path = "disclosures"): D
     published_through: parsed.published_through === null ? null : instant(parsed.published_through, `${path}.published_through`),
     announced_through: nullableDate(parsed.announced_through, `${path}.announced_through`),
   }
+}
+
+export function parseCompanyCatalog(value: unknown, path: string): CompanyCatalog {
+  const catalog = record(value, path)
+  exact(catalog, ["metas"], path)
+  const seen = new Set<string>()
+  const metas = array(catalog.metas, `${path}.metas`).map((value, index) => {
+    const metaPath = `${path}.metas[${index}]`
+    const meta = record(value, metaPath)
+    exact(meta, ["code", "name"], metaPath)
+    const code = string(meta.code, `${metaPath}.code`)
+    if (seen.has(code)) throw new SaveSchemaError(`${metaPath}.code`, "公司代码重复")
+    seen.add(code)
+    return { code, name: string(meta.name, `${metaPath}.name`) }
+  })
+  return { metas }
 }

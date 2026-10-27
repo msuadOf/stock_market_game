@@ -1,0 +1,25 @@
+{
+  "command": "rustc",
+  "args": [
+    "--edition=2021",
+    "--test",
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/mixed-calendar-c2a/agents/branch-completion/mixed-calendar-c2a/harness.rs",
+    "--extern",
+    "engine=/data1/baiyifan/workplace/stock_market_game/.tmp/mixed-calendar-c1a/target/debug/libengine.rlib",
+    "--extern",
+    "thiserror=/data1/baiyifan/workplace/stock_market_game/.tmp/mixed-calendar-c1a/target/debug/deps/libthiserror-44f263b99c8e22f7.rlib",
+    "-L",
+    "dependency=/data1/baiyifan/workplace/stock_market_game/.tmp/mixed-calendar-c1a/target/debug/deps",
+    "-C",
+    "codegen-units=16",
+    "-C",
+    "debuginfo=0",
+    "-o",
+    "/data1/baiyifan/workplace/stock_market_game/.tmp/mixed-calendar-c2a/green"
+  ],
+  "timeoutMs": 10000,
+  "elapsedMs": 731,
+  "exitCode": 0,
+  "stdout": "",
+  "stderr": ""
+}

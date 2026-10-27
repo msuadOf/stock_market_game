@@ -1,0 +1,36 @@
+
+running 3 tests
+test runtime::world::admin_transaction::tests::admin_review_already_queued_extra_receipt_prevents_success ... FAILED
+test runtime::world::admin_transaction::tests::admin_review_prepare_terminal_closes_old_day_end_abort_window ... FAILED
+test runtime::world::admin_transaction::tests::admin_review_severed_entry_joins_and_kills_even_empty_transaction ... FAILED
+
+failures:
+
+---- runtime::world::admin_transaction::tests::admin_review_already_queued_extra_receipt_prevents_success stdout ----
+
+thread 'runtime::world::admin_transaction::tests::admin_review_already_queued_extra_receipt_prevents_success' (2846911) panicked at packages/engine/src/runtime/world/admin_transaction.rs:1262:13:
+Prepare收齐空集合后不应忽略已排队额外消息
+
+---- runtime::world::admin_transaction::tests::admin_review_prepare_terminal_closes_old_day_end_abort_window stdout ----
+
+thread 'runtime::world::admin_transaction::tests::admin_review_prepare_terminal_closes_old_day_end_abort_window' (2846912) panicked at packages/engine/src/runtime/world.rs:2399:13:
+日结撤销失败，world 已停止：发送失败：交易部 0 日结撤销发送失败
+
+thread 'runtime::world::admin_transaction::tests::admin_review_prepare_terminal_closes_old_day_end_abort_window' (2846912) panicked at packages/engine/src/runtime/world/admin_transaction.rs:1241:9:
+assertion failed: std::panic::catch_unwind(std::panic::AssertUnwindSafe(||
+                w.abort_day_end())).is_ok()
+
+---- runtime::world::admin_transaction::tests::admin_review_severed_entry_joins_and_kills_even_empty_transaction stdout ----
+
+thread 'runtime::world::admin_transaction::tests::admin_review_severed_entry_joins_and_kills_even_empty_transaction' (2846913) panicked at packages/engine/src/runtime/world/admin_transaction.rs:1228:9:
+assertion failed: w.dead_reason.is_some()
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    runtime::world::admin_transaction::tests::admin_review_already_queued_extra_receipt_prevents_success
+    runtime::world::admin_transaction::tests::admin_review_prepare_terminal_closes_old_day_end_abort_window
+    runtime::world::admin_transaction::tests::admin_review_severed_entry_joins_and_kills_even_empty_transaction
+
+test result: FAILED. 0 passed; 3 failed; 0 ignored; 0 measured; 2307 filtered out; finished in 0.05s
+

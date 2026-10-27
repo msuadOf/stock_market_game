@@ -1,0 +1,121 @@
+{
+  "concurrency": 8,
+  "caseDeadlineMs": 10000,
+  "batchExternalDeadlineMs": 10000,
+  "binary": {
+    "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/mixed-calendar-c2a/red",
+    "bytes": 19724264,
+    "sha256": "f4540ed488792cf00be678ae41b867d73c670d006efcb45e49c46e7d138098f2"
+  },
+  "sourceBefore": {
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/mixed-calendar-c2a/packages/engine/src/session/exchange_calendar_model.rs": {
+      "bytes": 30770,
+      "sha256": "173c0633b3489a852612458832046f3106e21b28c0c571d6f2ede90f8e33caf5"
+    },
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/mixed-calendar-c2a/packages/engine/src/session/market_calendar_context.rs": {
+      "bytes": 4716,
+      "sha256": "e85288d42d5cc30d97eb1c29f589c616d369b5b4dc109c4d34883b166d602afc"
+    },
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/mixed-calendar-c2a/packages/engine/src/session/market_calendar_context_tests.rs": {
+      "bytes": 21383,
+      "sha256": "fc698f28941a681c7c0438661fcb519ba1b2abad901d3864efd68c430949cbcb"
+    },
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/mixed-calendar-c2a/packages/engine/src/session.rs": {
+      "bytes": 339225,
+      "sha256": "5b0da15bcc081f41d8e4a47f55fed92df8f94eecba546b8ea8e35894c2ae3283"
+    },
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/mixed-calendar-c2a/agents/branch-completion/mixed-calendar-c2a/harness.rs": {
+      "bytes": 356,
+      "sha256": "846ab839a7000b7a0c208e457e9abef5be7de2d7aacf9b03e97f7af0646ac402"
+    }
+  },
+  "sourceAfter": {
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/mixed-calendar-c2a/packages/engine/src/session/exchange_calendar_model.rs": {
+      "bytes": 30770,
+      "sha256": "173c0633b3489a852612458832046f3106e21b28c0c571d6f2ede90f8e33caf5"
+    },
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/mixed-calendar-c2a/packages/engine/src/session/market_calendar_context.rs": {
+      "bytes": 4716,
+      "sha256": "e85288d42d5cc30d97eb1c29f589c616d369b5b4dc109c4d34883b166d602afc"
+    },
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/mixed-calendar-c2a/packages/engine/src/session/market_calendar_context_tests.rs": {
+      "bytes": 21383,
+      "sha256": "fc698f28941a681c7c0438661fcb519ba1b2abad901d3864efd68c430949cbcb"
+    },
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/mixed-calendar-c2a/packages/engine/src/session.rs": {
+      "bytes": 339225,
+      "sha256": "5b0da15bcc081f41d8e4a47f55fed92df8f94eecba546b8ea8e35894c2ae3283"
+    },
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/mixed-calendar-c2a/agents/branch-completion/mixed-calendar-c2a/harness.rs": {
+      "bytes": 356,
+      "sha256": "846ab839a7000b7a0c208e457e9abef5be7de2d7aacf9b03e97f7af0646ac402"
+    }
+  },
+  "results": [
+    {
+      "name": "market_calendar_context::tests::c01_same_arc_owner_and_unordered_complete_bindings_are_accepted",
+      "exitCode": 1,
+      "elapsedMs": 279
+    },
+    {
+      "name": "market_calendar_context::tests::c02_identical_or_different_source_values_never_share_owner",
+      "exitCode": 1,
+      "elapsedMs": 242
+    },
+    {
+      "name": "market_calendar_context::tests::c03_duplicate_missing_extra_replaced_and_wrong_exchange_are_typed",
+      "exitCode": 1,
+      "elapsedMs": 200
+    },
+    {
+      "name": "market_calendar_context::tests::c04_receiver_validation_order_is_owner_bindings_date_layout_before",
+      "exitCode": 1,
+      "elapsedMs": 160
+    },
+    {
+      "name": "market_calendar_context::tests::c05_receiver_date_layout_and_before_compare_every_field",
+      "exitCode": 1,
+      "elapsedMs": 113
+    },
+    {
+      "name": "market_calendar_context::tests::c06_mixed_first_and_last_tick_match_oracle_and_manual_minutes",
+      "exitCode": 1,
+      "elapsedMs": 63
+    },
+    {
+      "name": "market_calendar_context::tests::c07_reopen_uses_own_session_count_and_original_sparse_stock_ids",
+      "exitCode": 1,
+      "elapsedMs": 420
+    },
+    {
+      "name": "market_calendar_context::tests::c08_auction_boundaries_keep_240_minutes_before_completed_session",
+      "exitCode": 1,
+      "elapsedMs": 392
+    },
+    {
+      "name": "market_calendar_context::tests::c09_closed_and_completed_are_read_only_and_final_tick_cannot_repeat",
+      "exitCode": 1,
+      "elapsedMs": 307
+    },
+    {
+      "name": "market_calendar_context::tests::c10_invalid_layout_and_before_inputs_propagate_c1a_errors",
+      "exitCode": 1,
+      "elapsedMs": 231
+    },
+    {
+      "name": "market_calendar_context::tests::c11_source_bindings_and_runtime_date_range_are_validated",
+      "exitCode": 0,
+      "elapsedMs": 160
+    },
+    {
+      "name": "market_calendar_context::tests::c12_checked_next_tick_overflow_rejects_legal_max_tick_before",
+      "exitCode": 1,
+      "elapsedMs": 123
+    },
+    {
+      "name": "market_calendar_context::tests::c13_failed_validation_preserves_all_context_facts",
+      "exitCode": 1,
+      "elapsedMs": 61
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "command": "/data1/baiyifan/workplace/stock_market_game/.tmp/mixed-calendar-c2a/green",
+  "args": [
+    "market_calendar_context::tests::c10_invalid_layout_and_before_inputs_propagate_c1a_errors",
+    "--exact",
+    "--nocapture",
+    "--test-threads=1"
+  ],
+  "timeoutMs": 10000,
+  "elapsedMs": 11,
+  "exitCode": 0,
+  "stdout": "\nrunning 1 test\ntest market_calendar_context::tests::c10_invalid_layout_and_before_inputs_propagate_c1a_errors ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 32 filtered out; finished in 0.00s\n\n",
+  "stderr": ""
+}

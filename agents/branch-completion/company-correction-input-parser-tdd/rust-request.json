@@ -1,0 +1,26 @@
+{
+  "company": 3,
+  "entries": [
+    {
+      "cash_flow": "Operating",
+      "date": "2030-06-03",
+      "kind": "CashRevenue",
+      "lines": [
+        {
+          "account": "1002",
+          "amount": "10.00",
+          "side": "Debit"
+        },
+        {
+          "account": "6001",
+          "amount": "10.00",
+          "side": "Credit"
+        }
+      ],
+      "source": 900000001
+    }
+  ],
+  "operation_id": "correction-2030-06-a",
+  "reason": "补记前期已经收现收入",
+  "supersedes": 9
+}

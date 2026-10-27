@@ -1,0 +1,4 @@
+654337fbfc9e6fc24ac140ec3587a219de9aafda8b3d707428e82d018772a6fc  apps/web/src/host/player-proposals.ts
+d22b36c6441d6b0797ca6980bf8ad1e598d87155cdf2814058897a79b95d3c5b  apps/web/src/host/player-proposals.test.ts
+9469b4ac4e396e18d00910973ccc55ee45a8281e3f68f4006b5e93dbd779d210  agents/branch-completion/company-proposal-input-parser-tdd/red-v1/stub.ts
+d22b36c6441d6b0797ca6980bf8ad1e598d87155cdf2814058897a79b95d3c5b  agents/branch-completion/company-proposal-input-parser-tdd/red-v1/player-proposals.test.ts

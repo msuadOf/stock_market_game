@@ -498,6 +498,80 @@ pub enum AdminRight {
     },
 }
 
+/// 单个 live World 内的行政事务编号；不进入存档或 PlanId 分配。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct AdminTransactionId(pub(crate) u64);
+
+/// 已由上层确定合法到账时点的数值操作，金额为分、数量为股。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AdminOperation {
+    CashDividend {
+        local: LocalIdx,
+        stock: StockIdx,
+        amount: i64,
+    },
+    ShareSplit {
+        local: LocalIdx,
+        stock: StockIdx,
+        bonus_qty: u32,
+    },
+    WithholdingTax {
+        local: LocalIdx,
+        stock: StockIdx,
+        amount: i64,
+    },
+    ShareReduction {
+        local: LocalIdx,
+        stock: StockIdx,
+        qty: u32,
+    },
+}
+
+impl AdminOperation {
+    pub(crate) fn coordinates(self) -> (LocalIdx, StockIdx) {
+        match self {
+            Self::CashDividend { local, stock, .. }
+            | Self::ShareSplit { local, stock, .. }
+            | Self::WithholdingTax { local, stock, .. }
+            | Self::ShareReduction { local, stock, .. } => (local, stock),
+        }
+    }
+}
+
+/// 组端账户候选；locals 递增且只含本事务触达账户。
+#[derive(Clone, Debug)]
+pub struct AdminGroupCandidate {
+    pub group: GroupIdx,
+    pub accounts: Vec<(LocalIdx, std::sync::Arc<super::group::GroupAccount>)>,
+    pub state_hash: u64,
+}
+
+/// 只在同步行政作用域内交付，不代表已经向宿主发布。
+#[derive(Clone, Debug)]
+pub struct AdminCandidate {
+    pub id: AdminTransactionId,
+    pub groups: Vec<AdminGroupCandidate>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AdminPhase {
+    Prepare,
+    Commit,
+    Abort,
+}
+
+/// 仅短 fixture 使用；经真实组通道设置，生产构建无此类型。
+#[cfg(test)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AdminFault {
+    Panic(std::sync::Arc<String>),
+    WrongId,
+    WrongGroup,
+    WrongLocals,
+    Missing,
+    Duplicate,
+}
+
 /// 日结指令（F §6.2 步骤 2/3）：组端 Drain 回流落账 → T+1 解冻 → 权益落账
 /// （全部记逆操作，日结失败可整体冲回）→ 回执 GroupDayDone。
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -513,6 +587,12 @@ pub struct DayEndDirective {
 /// 组线程收件消息（coordinator 的控制消息与交易部的实体批次共用一个 mpsc；
 /// FIFO + 收束因果序保证批次先于下一 Start 被处理）。
 pub enum GroupIn {
+    /// 行政静点操作；事务生命周期不进入普通 tick 日志。
+    AdminPrepare { id: AdminTransactionId, operations: Vec<AdminOperation> },
+    AdminCommit { id: AdminTransactionId },
+    AdminAbort { id: AdminTransactionId },
+    #[cfg(test)]
+    AdminFaultForTest { phase: AdminPhase, fault: AdminFault },
     /// tick 开始：隐式转正上一 tick（落账 staging 后丢弃可逆日志）+ 本轮决策。
     Start {
         /// tick 编号。
@@ -670,7 +750,10 @@ pub enum GroupIn {
     /// restore_child_remaining_qty/record_child_fill 等手工簿推进的组内
     /// 等价（镜像簿写入组权威不感知；变换经簿快照 undo 可逆）。
     #[cfg(test)]
-    MutatePlanBookForTest(Box<dyn FnOnce(&mut crate::plans::PlanBook) + Send>),
+    MutatePlanBookForTest {
+        owner: crate::AccountId,
+        mutate: Box<dyn FnOnce(&mut crate::plans::PlanBook) + Send>,
+    },
     /// D3b 件 4 fixture 通道（cfg(test)）：观察基分钟序列注入——
     /// set_urgency_minutes 的组内等价（组观察基=observation_inputs，
     /// session 侧分钟缓存组内不感知；直改 session tick 会与世界权威
@@ -841,6 +924,13 @@ pub enum DeskMsg {
 /// worker → 协调者的上行消息（全部 worker 共用一个 mpsc）。
 /// 手写 Debug：panic payload 不透明，只报告变体名与身份。
 pub enum UpMsg {
+    /// 三阶段显式回执；Prepare 业务拒绝不终止 worker。
+    AdminReceipt {
+        id: AdminTransactionId,
+        group: GroupIdx,
+        phase: AdminPhase,
+        result: Result<AdminGroupCandidate, RuntimeError>,
+    },
     /// actor 完成日结专用撤销后确认；desk 确认构成组撤销的数据面屏障。
     DayEndAborted { who: WorkerId, tick: u64 },
     #[cfg(test)]
@@ -1035,6 +1125,7 @@ pub enum UpMsg {
 impl std::fmt::Debug for UpMsg {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            UpMsg::AdminReceipt { id, group, phase, result } => write!(f, "AdminReceipt({id:?}, group={group}, phase={phase:?}, ok={})", result.is_ok()),
             UpMsg::DayEndAborted { who, tick } => write!(f, "DayEndAborted({who}, tick={tick})"),
             #[cfg(test)]
             UpMsg::GroupTickForTest { group, tick, committed_tick } => {

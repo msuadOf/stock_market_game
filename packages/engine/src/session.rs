@@ -45,6 +45,8 @@ pub use deferred_drop::DeferredDropDegradation;
 mod disclosures;
 mod envelope_projection;
 mod execution;
+pub(crate) mod exchange_calendar_model;
+pub(crate) mod market_calendar_context;
 mod failure;
 mod hash;
 mod history_reads;
@@ -92,6 +94,8 @@ mod institutional_behavior;
 mod memberships;
 #[cfg(test)]
 mod memberships_tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod plan_identity_runtime_tests;
 mod minimal_snapshot;
 mod observation_clock;
 mod persistence;
@@ -984,6 +988,9 @@ pub enum SessionError {
     /// 存档 schema 或领域不变量不合法。数值码+数值上下文（ADR 0041）。
     #[error("invalid save: {0}")]
     InvalidSave(crate::error::ValidationFault),
+    /// 存档拆股／缩股账簿校验失败，保留领域错误及其数值上下文。
+    #[error("share split validation failed: {0}")]
+    ShareSplit(#[from] crate::company::share_split::ShareSplitError),
     /// 透传交易日历错误（冻结日历与双时钟 开局日期门等）。
     #[error(transparent)]
     Calendar(#[from] crate::calendar::CalendarError),
@@ -4639,10 +4646,10 @@ impl GameSession {
                 .collect::<Vec<_>>();
             let [remaining_qty] = active_quantities.as_slice() else {
                 // fault1042: 计划在途子委托无法唯一重建（竞价/连续簿命中数 ≠ 1）。
-                // ctx[0] = AccountId，ctx[1] = StockId。
+                // ctx[0..4] = owner 高/低 u32、sequence 高/低 u32；ctx[4] = StockId。
                 return Err(SessionError::InvalidSave(ValidationFault::new(
                     1042,
-                    vec![account.0, u64::from(code.0)],
+                    plan_id.error_context_with([u64::from(code.0)]),
                 )));
             };
             // 以真实订单余量做 checked exposure 校验：恢复不得用簿上余量盖过
@@ -4656,10 +4663,10 @@ impl GameSession {
             let exposure = u64::from(filled)
                 .checked_add(u64::from(*remaining_qty))
                 .ok_or_else(|| {
-                    // fault2185：执行腿在途风险敞口溢出或超目标；ctx[0]=AccountId，ctx[1]=StockId。
+                    // fault2185：执行腿在途风险敞口溢出或超目标；ctx[0..4]=PlanId 四槽，ctx[4]=StockId。
                     SessionError::InvalidSave(ValidationFault::new(
                         2185,
-                        vec![account.0, u64::from(code.0)],
+                        plan_id.error_context_with([u64::from(code.0)]),
                     ))
                 })?;
             if let crate::plans::PlanTarget::ShareCount(target) = sess
@@ -4670,10 +4677,10 @@ impl GameSession {
                 .target()
             {
                 if exposure > u64::from(target) {
-                    // fault2185：执行腿在途风险敞口溢出或超目标；ctx[0]=AccountId，ctx[1]=StockId。
+                    // fault2185：执行腿在途风险敞口溢出或超目标；ctx[0..4]=PlanId 四槽，ctx[4]=StockId。
                     return Err(SessionError::InvalidSave(ValidationFault::new(
                         2185,
-                        vec![account.0, u64::from(code.0)],
+                        plan_id.error_context_with([u64::from(code.0)]),
                     )));
                 }
             }
@@ -4684,7 +4691,7 @@ impl GameSession {
                     // fault1042：执行腿与真实订单簿不一致。
                     SessionError::InvalidSave(ValidationFault::new(
                         1042,
-                        vec![account.0, u64::from(code.0)],
+                        plan_id.error_context_with([u64::from(code.0)]),
                     ))
                 })?;
         }

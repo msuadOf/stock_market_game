@@ -1,0 +1,10 @@
+warning: unused import: `current`
+ --> /data1/baiyifan/workplace/stock_market_game/.tmp/tax-entitlement-k1/company/cash_dividend_tax/entitlement_units/conditional_bonus_tests.rs:1:31
+  |
+1 | use super::tests::{cash_book, current, date, fraction, fragment, lot, origin, q};
+  |                               ^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: 1 warning emitted
+

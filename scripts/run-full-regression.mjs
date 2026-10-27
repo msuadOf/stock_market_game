@@ -60,7 +60,18 @@ export function fullRegressionSteps(cpuCount = os.availableParallelism(), repoRo
     TEMP: processTmpDir,
   };
   // 批 9 A7：RAYON_NUM_THREADS 导出退役（rayon 全退）。
-  const cargoEnv = { ...workspaceEnv, CARGO_BUILD_JOBS: String(cpuCount) };
+  const configuredJobs = baseEnv.STOCK_GAME_FULL_REGRESSION_CARGO_BUILD_JOBS;
+  let cargoBuildJobs = cpuCount;
+  if (configuredJobs !== undefined) {
+    // 使用绝对字符串结尾，避免 `$` 接受末尾 LF/CRLF。
+    if (typeof configuredJobs !== "string" || !/^[1-9][0-9]*(?![\s\S])/.test(configuredJobs)
+      || !Number.isSafeInteger(Number(configuredJobs))
+      || Number(configuredJobs) > cpuCount) {
+      throw new Error(`STOCK_GAME_FULL_REGRESSION_CARGO_BUILD_JOBS must be a canonical positive integer within the available CPU limit ${cpuCount}`);
+    }
+    cargoBuildJobs = Number(configuredJobs);
+  }
+  const cargoEnv = { ...workspaceEnv, CARGO_BUILD_JOBS: String(cargoBuildJobs) };
   return [
     { kind: "rust-test-build", label: "Rust test build", command: "cargo", args: ["test", "--workspace", "--no-run", "--message-format=json-render-diagnostics"], env: cargoEnv, captureOutput: true },
     { kind: "rust-test-binaries", label: "Rust prebuilt test binaries", env: workspaceEnv, cpuCount },
@@ -533,6 +544,7 @@ export async function buildFullRegressionArtifacts({
   now = Date.now,
   cpuCount = os.availableParallelism(),
   cwd = DEFAULT_REPO_ROOT,
+  baseEnv = process.env,
   inventoryPath,
   collectFingerprint = collectFullRegressionSourceFingerprint,
   hashArtifacts = hashArtifactFiles,
@@ -543,16 +555,17 @@ export async function buildFullRegressionArtifacts({
   const sourceRoot = await fsp.realpath(path.resolve(cwd));
   const workspacePaths = await prepareWorkspacePaths({ sourceRoot, scope: "full-regression" });
   const resolvedInventoryPath = await prepareInventoryPath(workspacePaths.workspaceRoot, inventoryPath);
-  const buildStep = fullRegressionSteps(cpuCount, sourceRoot, process.env, workspacePaths.workspaceRoot)
+  const buildStep = fullRegressionSteps(cpuCount, sourceRoot, baseEnv, workspacePaths.workspaceRoot)
     .find((step) => step.kind === "rust-test-build");
-  log(JSON.stringify({ phase: "build-start", available_cpu_count: cpuCount, cargo_build_jobs: Number(buildStep.env.CARGO_BUILD_JOBS) }));
+  const cargoBuildJobs = Number(buildStep.env.CARGO_BUILD_JOBS);
+  log(JSON.stringify({ phase: "build-start", available_cpu_count: cpuCount, cargo_build_jobs: cargoBuildJobs }));
   const startedAt = now();
   log(JSON.stringify({ phase: "build", status: "started", stage: "source_fingerprint", elapsed_ms: 0,
-    cpu_jobs: cpuCount, deadline_ms: LONG_VALIDATION_MAX_MS, cargo_target_dir: workspacePaths.cargoTargetDir }));
+    cpu_jobs: cargoBuildJobs, deadline_ms: LONG_VALIDATION_MAX_MS, cargo_target_dir: workspacePaths.cargoTargetDir }));
   const before = await collectFingerprint(sourceRoot);
   const progress = cargoBuildProgress({ log, now, startedAt });
-  progress.snapshot("started", { stage: "cargo_test_build", cpu_jobs: cpuCount });
-  const heartbeat = setInterval(() => progress.snapshot("running", { stage: "cargo_test_build", cpu_jobs: cpuCount }), progressIntervalMs);
+  progress.snapshot("started", { stage: "cargo_test_build", cpu_jobs: cargoBuildJobs });
+  const heartbeat = setInterval(() => progress.snapshot("running", { stage: "cargo_test_build", cpu_jobs: cargoBuildJobs }), progressIntervalMs);
   let output;
   try {
     output = await run({
@@ -619,6 +632,7 @@ export async function executeFullRegression({
   now = Date.now,
   cpuCount = os.availableParallelism(),
   cwd = DEFAULT_REPO_ROOT,
+  baseEnv = process.env,
   inventoryPath,
   collectFingerprint = collectFullRegressionSourceFingerprint,
   hashArtifacts = hashArtifactFiles,
@@ -632,7 +646,7 @@ export async function executeFullRegression({
   const fingerprint = await collectFingerprint(sourceRoot);
   phaseRemainingMs(startedAt, now, "artifact inventory validation");
   const { artifacts } = await readAndValidateInventory(resolvedInventoryPath, sourceRoot, workspacePaths, fingerprint, cpuCount, log, hashArtifacts);
-  const steps = fullRegressionSteps(cpuCount, sourceRoot, process.env, workspacePaths.workspaceRoot);
+  const steps = fullRegressionSteps(cpuCount, sourceRoot, baseEnv, workspacePaths.workspaceRoot);
   const binaryStep = steps.find((step) => step.kind === "rust-test-binaries");
   const doctestStep = steps.find((step) => step.kind === "rust-doctests");
   const webStep = steps.find((step) => step.kind === "ordinary-command");
