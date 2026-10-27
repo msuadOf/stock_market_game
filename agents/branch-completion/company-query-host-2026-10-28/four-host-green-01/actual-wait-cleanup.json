@@ -1,0 +1,297 @@
+{
+  "execSessionId": 32018,
+  "actualWaitExit": 1,
+  "batchWallSeconds": 92.32617101400683,
+  "failure": "Tauri lib.rs240 E0308 lookup_handles returns SendCommandError but Session.message needsString；不是业务红",
+  "testsRun": 0,
+  "wireFixturesProduced": false,
+  "observedPids": [
+    3494260,
+    3494305,
+    3494324,
+    3494506,
+    3494507,
+    3494514,
+    3494582,
+    3495302,
+    3495804,
+    3495805,
+    3495806,
+    3496033,
+    3496034,
+    3496035,
+    3496344,
+    3496345,
+    3496346,
+    3497171,
+    3497172,
+    3497173,
+    3498741,
+    3498748,
+    3498760
+  ],
+  "observedBirths": [
+    {
+      "pid": 3494324,
+      "startTimeTicks": "7398782"
+    },
+    {
+      "pid": 3494506,
+      "startTimeTicks": "7398881"
+    },
+    {
+      "pid": 3494507,
+      "startTimeTicks": "7398881"
+    },
+    {
+      "pid": 3494514,
+      "startTimeTicks": "7398896"
+    },
+    {
+      "pid": 3494582,
+      "startTimeTicks": "7399030"
+    },
+    {
+      "pid": 3495302,
+      "startTimeTicks": "7401987"
+    },
+    {
+      "pid": 3495804,
+      "startTimeTicks": "7404198"
+    },
+    {
+      "pid": 3495805,
+      "startTimeTicks": "7404198"
+    },
+    {
+      "pid": 3495806,
+      "startTimeTicks": "7404199"
+    },
+    {
+      "pid": 3496033,
+      "startTimeTicks": "7404392"
+    },
+    {
+      "pid": 3496034,
+      "startTimeTicks": "7404393"
+    },
+    {
+      "pid": 3496035,
+      "startTimeTicks": "7404394"
+    },
+    {
+      "pid": 3496344,
+      "startTimeTicks": "7404996"
+    },
+    {
+      "pid": 3496345,
+      "startTimeTicks": "7404999"
+    },
+    {
+      "pid": 3496346,
+      "startTimeTicks": "7404999"
+    },
+    {
+      "pid": 3497171,
+      "startTimeTicks": "7407629"
+    },
+    {
+      "pid": 3497172,
+      "startTimeTicks": "7407636"
+    },
+    {
+      "pid": 3497173,
+      "startTimeTicks": "7407637"
+    }
+  ],
+  "remainingOwnedIdentities": [],
+  "remainingBatchArgvPids": [],
+  "scratchExists": false,
+  "artifacts": [
+    {
+      "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/web_wasm-fdf44bbd163f2c7a",
+      "target": "web_wasm",
+      "features": [],
+      "profile": {
+        "opt_level": "0",
+        "debuginfo": 2,
+        "debug_assertions": true,
+        "overflow_checks": true,
+        "test": true
+      },
+      "fresh": false,
+      "sha256": "f2d61cdf9632a92647f8d81c1b1521d01b548eaa065595ccb5ae7d13987a3a3c",
+      "bytes": 354738344,
+      "inode": 68233,
+      "sealed": "/tmp/stock-market-game-validation-2026-10-27-1311109/company-query-four-host-green-01-2026-10-28/sealed-partial-web_wasm",
+      "sealInode": 68529,
+      "sealSha256": "f2d61cdf9632a92647f8d81c1b1521d01b548eaa065595ccb5ae7d13987a3a3c",
+      "persistence": "同原共享截止内失败批已编译unit单件RAM封存，不代表整体编译或case通过",
+      "copyWrapperPid": 3498741,
+      "copyArgv": [
+        "/home/linuxbrew/.linuxbrew/Cellar/node/25.8.2/bin/node",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "cp",
+        "--reflink=never",
+        "-p",
+        "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/web_wasm-fdf44bbd163f2c7a",
+        "/tmp/stock-market-game-validation-2026-10-27-1311109/company-query-four-host-green-01-2026-10-28/sealed-partial-web_wasm"
+      ],
+      "copyExit": 0
+    },
+    {
+      "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/server-1c197535b335a9b3",
+      "target": "server",
+      "features": [],
+      "profile": {
+        "opt_level": "0",
+        "debuginfo": 2,
+        "debug_assertions": true,
+        "overflow_checks": true,
+        "test": true
+      },
+      "fresh": false,
+      "sha256": "ec7ec1ef2fa3ec76974ea289835f88a55234061ccae9aeaed50732ad8d8532a8",
+      "bytes": 459953552,
+      "inode": 68345,
+      "sealed": "/tmp/stock-market-game-validation-2026-10-27-1311109/company-query-four-host-green-01-2026-10-28/sealed-partial-server",
+      "sealInode": 68530,
+      "sealSha256": "ec7ec1ef2fa3ec76974ea289835f88a55234061ccae9aeaed50732ad8d8532a8",
+      "persistence": "同原共享截止内失败批已编译unit单件RAM封存，不代表整体编译或case通过",
+      "copyWrapperPid": 3498748,
+      "copyArgv": [
+        "/home/linuxbrew/.linuxbrew/Cellar/node/25.8.2/bin/node",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "cp",
+        "--reflink=never",
+        "-p",
+        "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/server-1c197535b335a9b3",
+        "/tmp/stock-market-game-validation-2026-10-27-1311109/company-query-four-host-green-01-2026-10-28/sealed-partial-server"
+      ],
+      "copyExit": 0
+    },
+    {
+      "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/engine-0b09022ab917e013",
+      "target": "engine",
+      "features": [
+        "verification-harness"
+      ],
+      "profile": {
+        "opt_level": "0",
+        "debuginfo": 2,
+        "debug_assertions": true,
+        "overflow_checks": true,
+        "test": true
+      },
+      "fresh": false,
+      "sha256": "ad7c60948139b800e0df8f596286223660d660da463b367818dc10bd9a676c84",
+      "bytes": 619058696,
+      "inode": 68379,
+      "sealed": "/tmp/stock-market-game-validation-2026-10-27-1311109/company-query-four-host-green-01-2026-10-28/sealed-partial-engine",
+      "sealInode": 68531,
+      "sealSha256": "ad7c60948139b800e0df8f596286223660d660da463b367818dc10bd9a676c84",
+      "persistence": "同原共享截止内失败批已编译unit单件RAM封存，不代表整体编译或case通过",
+      "copyWrapperPid": 3498760,
+      "copyArgv": [
+        "/home/linuxbrew/.linuxbrew/Cellar/node/25.8.2/bin/node",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "cp",
+        "--reflink=never",
+        "-p",
+        "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/engine-0b09022ab917e013",
+        "/tmp/stock-market-game-validation-2026-10-27-1311109/company-query-four-host-green-01-2026-10-28/sealed-partial-engine"
+      ],
+      "copyExit": 0
+    }
+  ],
+  "tauriArtifact": "未生成，不能用旧binary替代",
+  "priorInventoryAfter": [
+    {
+      "kind": "default",
+      "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/engine-006444ae8c4f3292",
+      "bytes": 613306496,
+      "sha256": "0c36d7c2d76e7b21065ebb38697589fecd47eae12eb492c550e4224352256821",
+      "existingSeal": "/tmp/stock-market-game-validation-2026-10-27-1311109/origin-green-main8e5-r1-2026-10-28/sealed-origin-green-engine",
+      "independentInode": true,
+      "ino": 67593,
+      "sealIno": 67603,
+      "afterBytes": 613306496,
+      "afterSha256": "0c36d7c2d76e7b21065ebb38697589fecd47eae12eb492c550e4224352256821",
+      "sealAfterBytes": 613306496,
+      "sealAfterSha256": "0c36d7c2d76e7b21065ebb38697589fecd47eae12eb492c550e4224352256821",
+      "unchanged": true,
+      "afterThisBatchBytes": 613306496,
+      "afterThisBatchSha256": "0c36d7c2d76e7b21065ebb38697589fecd47eae12eb492c550e4224352256821",
+      "afterThisBatchInode": 67593,
+      "sealAfterThisBatchSha256": "0c36d7c2d76e7b21065ebb38697589fecd47eae12eb492c550e4224352256821"
+    },
+    {
+      "kind": "plan_identity",
+      "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/plan_identity-886c0566202829ce",
+      "bytes": 306830872,
+      "sha256": "b58b425dfa9852eb20b90e08d73acdd4a597796001bf153658f83a77a1e9748f",
+      "existingSeal": "/tmp/stock-market-game-validation-2026-10-27-1311109/origin-green-main8e5-r1-2026-10-28/sealed-origin-green-plan_identity",
+      "independentInode": true,
+      "ino": 67419,
+      "sealIno": 67602,
+      "afterBytes": 306830872,
+      "afterSha256": "b58b425dfa9852eb20b90e08d73acdd4a597796001bf153658f83a77a1e9748f",
+      "sealAfterBytes": 306830872,
+      "sealAfterSha256": "b58b425dfa9852eb20b90e08d73acdd4a597796001bf153658f83a77a1e9748f",
+      "unchanged": true,
+      "afterThisBatchBytes": 306830872,
+      "afterThisBatchSha256": "b58b425dfa9852eb20b90e08d73acdd4a597796001bf153658f83a77a1e9748f",
+      "afterThisBatchInode": 67419,
+      "sealAfterThisBatchSha256": "b58b425dfa9852eb20b90e08d73acdd4a597796001bf153658f83a77a1e9748f"
+    },
+    {
+      "kind": "plans",
+      "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/plans-3db8006bb1341b1f",
+      "bytes": 290765504,
+      "sha256": "d9b98b9401cee60ce3b38944ea79586a902bab5100f3eb6100a015b4f46bae18",
+      "existingSeal": "/tmp/stock-market-game-validation-2026-10-27-1311109/origin-green-main8e5-r1-2026-10-28/sealed-origin-green-plans",
+      "independentInode": true,
+      "ino": 67418,
+      "sealIno": 67601,
+      "afterBytes": 290765504,
+      "afterSha256": "d9b98b9401cee60ce3b38944ea79586a902bab5100f3eb6100a015b4f46bae18",
+      "sealAfterBytes": 290765504,
+      "sealAfterSha256": "d9b98b9401cee60ce3b38944ea79586a902bab5100f3eb6100a015b4f46bae18",
+      "unchanged": true,
+      "afterThisBatchBytes": 290765504,
+      "afterThisBatchSha256": "d9b98b9401cee60ce3b38944ea79586a902bab5100f3eb6100a015b4f46bae18",
+      "afterThisBatchInode": 67418,
+      "sealAfterThisBatchSha256": "d9b98b9401cee60ce3b38944ea79586a902bab5100f3eb6100a015b4f46bae18"
+    },
+    {
+      "kind": "feature",
+      "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/engine-6ae3f608f3352a4a",
+      "bytes": 623454832,
+      "sha256": "a30ef7b8cf373fdea165e971bca60c36674ddaca69fe6092caa736354a2a2b4b",
+      "existingSeal": "/tmp/stock-market-game-validation-2026-10-27-1311109/d3-npc-causal-provenance-green-v2-2026-10-28/sealed-actual-feature",
+      "independentInode": true,
+      "ino": 64978,
+      "sealIno": 64979,
+      "afterBytes": 623454832,
+      "afterSha256": "a30ef7b8cf373fdea165e971bca60c36674ddaca69fe6092caa736354a2a2b4b",
+      "sealAfterBytes": 623454832,
+      "sealAfterSha256": "a30ef7b8cf373fdea165e971bca60c36674ddaca69fe6092caa736354a2a2b4b",
+      "unchanged": true,
+      "afterThisBatchBytes": 623454832,
+      "afterThisBatchSha256": "a30ef7b8cf373fdea165e971bca60c36674ddaca69fe6092caa736354a2a2b4b",
+      "afterThisBatchInode": 64978,
+      "sealAfterThisBatchSha256": "a30ef7b8cf373fdea165e971bca60c36674ddaca69fe6092caa736354a2a2b4b"
+    }
+  ],
+  "helperHead": "8e5b32de305257b7cb9aeb284d19551cdf3ce2c3",
+  "maxObservedThreads": 40,
+  "maxCpuTicksPer500ms": 542,
+  "minimumAvailableGiB": 78.00442886352539,
+  "postWaitSealingAndInventoryWithinOriginalSharedDeadline": true
+}

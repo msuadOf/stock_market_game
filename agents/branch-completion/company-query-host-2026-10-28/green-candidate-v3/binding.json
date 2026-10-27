@@ -1,0 +1,11 @@
+{
+  "productSourceSha256": "544991d10ae2b8e7020f6ab286334fec4717633cb70713b2ee7b4b9bc4844883",
+  "productDiffSha256": "e3b12dd9c06acc3ab9ecf212272254809525a1a0326ee8dc12eb605b064541d9",
+  "compileFixDiffSha256": "f552790ebda180862c7e421221350a32c7f0515b04c5a459310cb533448a2a12",
+  "planSha256": "0bb9550c952d92460e0d92eaad61d11688cd77f95ecd9c9f15c650b7275e2909",
+  "freezeSha256": "1a9a725c4c9b990bd5e83d3b4ef096c1649b161a5f7141a2f33b0c220c234293",
+  "productCount": 14,
+  "inputCount": 1001,
+  "runnerCount": 8,
+  "cases": 18
+}

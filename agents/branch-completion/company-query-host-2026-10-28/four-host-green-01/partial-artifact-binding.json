@@ -1,0 +1,108 @@
+{
+  "status": "Tauri E0308导致四包构建失败；仅3actualunit；未跑18case/未产生wire fixture",
+  "sharedPublicationDeadlineUnixMs": 1793134685200,
+  "createdUnixMs": 1793134556763,
+  "artifacts": [
+    {
+      "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/web_wasm-fdf44bbd163f2c7a",
+      "target": "web_wasm",
+      "features": [],
+      "profile": {
+        "opt_level": "0",
+        "debuginfo": 2,
+        "debug_assertions": true,
+        "overflow_checks": true,
+        "test": true
+      },
+      "fresh": false,
+      "sha256": "f2d61cdf9632a92647f8d81c1b1521d01b548eaa065595ccb5ae7d13987a3a3c",
+      "bytes": 354738344,
+      "inode": 68233,
+      "sealed": "/tmp/stock-market-game-validation-2026-10-27-1311109/company-query-four-host-green-01-2026-10-28/sealed-partial-web_wasm",
+      "sealInode": 68529,
+      "sealSha256": "f2d61cdf9632a92647f8d81c1b1521d01b548eaa065595ccb5ae7d13987a3a3c",
+      "persistence": "同原共享截止内失败批已编译unit单件RAM封存，不代表整体编译或case通过",
+      "copyWrapperPid": 3498741,
+      "copyArgv": [
+        "/home/linuxbrew/.linuxbrew/Cellar/node/25.8.2/bin/node",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "cp",
+        "--reflink=never",
+        "-p",
+        "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/web_wasm-fdf44bbd163f2c7a",
+        "/tmp/stock-market-game-validation-2026-10-27-1311109/company-query-four-host-green-01-2026-10-28/sealed-partial-web_wasm"
+      ],
+      "copyExit": 0
+    },
+    {
+      "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/server-1c197535b335a9b3",
+      "target": "server",
+      "features": [],
+      "profile": {
+        "opt_level": "0",
+        "debuginfo": 2,
+        "debug_assertions": true,
+        "overflow_checks": true,
+        "test": true
+      },
+      "fresh": false,
+      "sha256": "ec7ec1ef2fa3ec76974ea289835f88a55234061ccae9aeaed50732ad8d8532a8",
+      "bytes": 459953552,
+      "inode": 68345,
+      "sealed": "/tmp/stock-market-game-validation-2026-10-27-1311109/company-query-four-host-green-01-2026-10-28/sealed-partial-server",
+      "sealInode": 68530,
+      "sealSha256": "ec7ec1ef2fa3ec76974ea289835f88a55234061ccae9aeaed50732ad8d8532a8",
+      "persistence": "同原共享截止内失败批已编译unit单件RAM封存，不代表整体编译或case通过",
+      "copyWrapperPid": 3498748,
+      "copyArgv": [
+        "/home/linuxbrew/.linuxbrew/Cellar/node/25.8.2/bin/node",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "cp",
+        "--reflink=never",
+        "-p",
+        "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/server-1c197535b335a9b3",
+        "/tmp/stock-market-game-validation-2026-10-27-1311109/company-query-four-host-green-01-2026-10-28/sealed-partial-server"
+      ],
+      "copyExit": 0
+    },
+    {
+      "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/engine-0b09022ab917e013",
+      "target": "engine",
+      "features": [
+        "verification-harness"
+      ],
+      "profile": {
+        "opt_level": "0",
+        "debuginfo": 2,
+        "debug_assertions": true,
+        "overflow_checks": true,
+        "test": true
+      },
+      "fresh": false,
+      "sha256": "ad7c60948139b800e0df8f596286223660d660da463b367818dc10bd9a676c84",
+      "bytes": 619058696,
+      "inode": 68379,
+      "sealed": "/tmp/stock-market-game-validation-2026-10-27-1311109/company-query-four-host-green-01-2026-10-28/sealed-partial-engine",
+      "sealInode": 68531,
+      "sealSha256": "ad7c60948139b800e0df8f596286223660d660da463b367818dc10bd9a676c84",
+      "persistence": "同原共享截止内失败批已编译unit单件RAM封存，不代表整体编译或case通过",
+      "copyWrapperPid": 3498760,
+      "copyArgv": [
+        "/home/linuxbrew/.linuxbrew/Cellar/node/25.8.2/bin/node",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "cp",
+        "--reflink=never",
+        "-p",
+        "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/engine-0b09022ab917e013",
+        "/tmp/stock-market-game-validation-2026-10-27-1311109/company-query-four-host-green-01-2026-10-28/sealed-partial-engine"
+      ],
+      "copyExit": 0
+    }
+  ]
+}

@@ -1,0 +1,6 @@
+
+running 1 test
+test session::protocol::company_reads::tests::company_query_uses_catalog_company_id_even_when_listed_stock_id_differs ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2830 filtered out; finished in 1.67s
+

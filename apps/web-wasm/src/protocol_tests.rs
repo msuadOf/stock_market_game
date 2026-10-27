@@ -2,6 +2,60 @@
 mod fixture;
 
 use super::*;
+include!("../../../packages/engine/test-support/simple_company.rs");
+
+#[test]
+fn company_read_registry_uses_real_session_owner_and_does_not_mutate_saved_facts() {
+    use engine::session::protocol::CompanyReadQuery;
+    let mut setup = fixture::civil_setup(engine::CivilDate::from_iso("2030-01-08").unwrap());
+    setup.npcs.retail_count = 0;
+    setup.npcs.inst_count = 0;
+    setup.npcs.hot_count = 0;
+    setup.history_len = 1;
+    setup.stocks[0].float_shares = 0;
+    setup.company_system = Some(simple_company_fixture!(engine; ["600101"]));
+    setup.dividend_tax_mode = Some(engine::company::CashDividendTaxMode::FlatWithholding);
+    setup.flat_withholding_bp = Some(1000);
+    setup.par_value_per_share = Some(engine::Money::from_cents(100));
+    setup.auto_corporate_foundation = true;
+    let mut registry = SessionRegistry::default();
+    let handle = registry.create(setup, 7).unwrap();
+    registry
+        .with_session(handle, |session| {
+            let before = serde_json::to_value(session.game().save().unwrap()).unwrap();
+            let response =
+                query_company_reads(session, CompanyReadQuery::AccountDividendTaxStatus).unwrap();
+            let wire = serde_json::to_value(response).unwrap();
+            assert_eq!(wire["owner"], "0");
+            assert_eq!(wire["value"]["kind"], "AccountDividendTaxStatus");
+            assert_eq!(wire["value"]["data"]["stocks"][0]["stock"], "600101");
+            for query in [
+                CompanyReadQuery::CompanyPeriodExplanation {
+                    company: engine::company::CompanyId(0),
+                    period_end: engine::CivilDate::from_iso("2029-12-31").unwrap(),
+                },
+                CompanyReadQuery::DividendTaxOutstandingViews,
+                CompanyReadQuery::OwnerFlatWithholdingReceipts,
+                CompanyReadQuery::CompanyCapabilities {
+                    company: engine::company::CompanyId(0),
+                },
+                CompanyReadQuery::OwnerRightsOfferings,
+            ] {
+                let kind = serde_json::to_value(&query).unwrap()["kind"].clone();
+                let response =
+                    serde_json::to_value(query_company_reads(session, query).unwrap()).unwrap();
+                assert_eq!(response["owner"], "0");
+                assert_eq!(response["value"]["kind"], kind);
+            }
+            assert_eq!(
+                before,
+                serde_json::to_value(session.game().save().unwrap()).unwrap()
+            );
+        })
+        .unwrap();
+    registry.remove(handle).unwrap();
+    assert!(registry.with_session(handle, |_| ()).is_err());
+}
 
 fn ingress_cancel(id: u64) -> Intent {
     Intent::Cancel {

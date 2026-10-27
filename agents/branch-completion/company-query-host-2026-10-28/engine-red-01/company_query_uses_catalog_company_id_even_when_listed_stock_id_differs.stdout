@@ -1,0 +1,11 @@
+
+running 1 test
+test session::protocol::company_reads::tests::company_query_uses_catalog_company_id_even_when_listed_stock_id_differs ... FAILED
+
+failures:
+
+failures:
+    session::protocol::company_reads::tests::company_query_uses_catalog_company_id_even_when_listed_stock_id_differs
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2811 filtered out; finished in 1.59s
+

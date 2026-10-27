@@ -1,0 +1,11 @@
+
+running 1 test
+test session::protocol::company_reads::tests::flat_receipts_return_nonempty_owner_facts_without_other_accounts ... FAILED
+
+failures:
+
+failures:
+    session::protocol::company_reads::tests::flat_receipts_return_nonempty_owner_facts_without_other_accounts
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2811 filtered out; finished in 0.55s
+

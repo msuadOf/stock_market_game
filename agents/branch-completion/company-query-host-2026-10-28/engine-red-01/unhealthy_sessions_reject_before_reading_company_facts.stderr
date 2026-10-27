@@ -1,0 +1,6 @@
+
+thread 'session::protocol::company_reads::tests::unhealthy_sessions_reject_before_reading_company_facts' (3009990) panicked at packages/engine/src/session/protocol/company_reads/tests.rs:115:5:
+assertion failed: matches!(session.company_read_query(AccountId(0),
+    CompanyReadQuery::AccountDividendTaxStatus),
+    Err(CompanyReadError::Unhealthy(_)))
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace

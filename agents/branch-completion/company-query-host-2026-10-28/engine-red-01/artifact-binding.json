@@ -1,0 +1,13 @@
+{
+  "sourceCount": 893,
+  "artifacts": [
+    {
+      "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/engine-006444ae8c4f3292",
+      "sha256": "5a0b0b973c6684f712c44f6135e980b421bc983ff16980a43faa2c39948fb2fc",
+      "fresh": false,
+      "target": "engine",
+      "features": [],
+      "persistence": "RAM\u975e\u6301\u4e45"
+    }
+  ]
+}

@@ -1,0 +1,4 @@
+
+thread 'session::protocol::company_reads::tests::rights_offerings_return_nonempty_owner_entitlement_without_other_holders' (3010011) panicked at packages/engine/src/session/protocol/company_reads/tests.rs:310:10:
+called `Result::unwrap()` on an `Err` value: Company(Unsupported("公司只读注册尚未实现"))
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace

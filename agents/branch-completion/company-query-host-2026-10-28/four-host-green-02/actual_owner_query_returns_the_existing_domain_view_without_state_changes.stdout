@@ -1,0 +1,6 @@
+
+running 1 test
+test session::protocol::company_reads::tests::actual_owner_query_returns_the_existing_domain_view_without_state_changes ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2830 filtered out; finished in 0.28s
+

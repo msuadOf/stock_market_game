@@ -1,0 +1,7 @@
+
+running 1 test
+test session::protocol::company_reads::tests::global_outstanding_is_filtered_to_the_authenticated_owner ... COMPANY_READ_FIXTURE {"owner":"0","value":{"data":[{"account":"0","latest_collection":null,"outstanding":{"denominator":"1","numerator":"0"},"stock":"600888"}],"kind":"DividendTaxOutstandingViews"}}
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2830 filtered out; finished in 0.53s
+

@@ -1,0 +1,74 @@
+[
+  {
+    "target": "engine",
+    "name": "session::protocol::company_reads::tests::company_views_preserve_nonempty_existing_domain_results_and_save_bytes"
+  },
+  {
+    "target": "engine",
+    "name": "session::protocol::company_reads::tests::global_outstanding_is_filtered_to_the_authenticated_owner"
+  },
+  {
+    "target": "engine",
+    "name": "session::protocol::company_reads::tests::unhealthy_sessions_reject_before_reading_company_facts"
+  },
+  {
+    "target": "engine",
+    "name": "session::protocol::company_reads::tests::actual_owner_query_returns_the_existing_domain_view_without_state_changes"
+  },
+  {
+    "target": "engine",
+    "name": "session::protocol::company_reads::tests::unknown_owner_is_rejected_before_any_domain_query"
+  },
+  {
+    "target": "engine",
+    "name": "session::protocol::company_reads::tests::company_identity_uses_the_actual_catalog_namespace"
+  },
+  {
+    "target": "engine",
+    "name": "session::protocol::company_reads::tests::requests_have_no_client_selected_owner_and_reject_unknown_fields"
+  },
+  {
+    "target": "engine",
+    "name": "session::protocol::company_reads::tests::flat_receipts_return_nonempty_owner_facts_without_other_accounts"
+  },
+  {
+    "target": "engine",
+    "name": "session::protocol::company_reads::tests::rights_offerings_return_nonempty_owner_entitlement_without_other_holders"
+  },
+  {
+    "target": "engine",
+    "name": "session::protocol::company_reads::tests::public_failures_keep_specific_reasons_without_global_other_owner_facts"
+  },
+  {
+    "target": "engine",
+    "name": "session::protocol::company_reads::tests::company_query_uses_catalog_company_id_even_when_listed_stock_id_differs"
+  },
+  {
+    "target": "server",
+    "name": "actor::fatal_tests::company_read_member_request_projects_the_actual_nonzero_members_data"
+  },
+  {
+    "target": "server",
+    "name": "actor::fatal_tests::company_read_member_request_uses_current_nonzero_membership_and_rejects_stale_generation"
+  },
+  {
+    "target": "server",
+    "name": "routes::auth_tests::company_read_route_authenticates_and_preserves_owner_and_generation"
+  },
+  {
+    "target": "stock_market_game_lib",
+    "name": "actor::protocol_tests::company_read_command_preserves_actual_nonempty_data_and_local_owner"
+  },
+  {
+    "target": "stock_market_game_lib",
+    "name": "actor::protocol_tests::company_read_command_checks_generation_and_preserves_typed_domain_failure"
+  },
+  {
+    "target": "stock_market_game_lib",
+    "name": "lib_tests::company_read_ipc_registers_six_queries_and_preserves_typed_rejections"
+  },
+  {
+    "target": "web_wasm",
+    "name": "protocol_tests::company_read_registry_uses_real_session_owner_and_does_not_mutate_saved_facts"
+  }
+]

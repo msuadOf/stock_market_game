@@ -5,6 +5,63 @@ use engine::{
     StrategyParams,
 };
 use serde_json::{json, Value};
+include!("../../../../packages/engine/test-support/simple_company.rs");
+
+#[tokio::test]
+async fn company_read_ipc_registers_six_queries_and_preserves_typed_rejections() {
+    let app = command_builder(mock_builder())
+        .build(mock_context(noop_assets()))
+        .unwrap();
+    let webview = WebviewWindowBuilder::new(&app, "main", Default::default())
+        .build()
+        .unwrap();
+    let mut setup = diagnostic_setup();
+    setup.npcs.inst_count = 0;
+    setup.stocks[0].float_shares = 0;
+    setup.history_len = 1;
+    setup.company_system = Some(simple_company_fixture!(engine; ["600101"]));
+    setup.dividend_tax_mode = Some(engine::company::CashDividendTaxMode::FlatWithholding);
+    setup.flat_withholding_bp = Some(1000);
+    setup.par_value_per_share = Some(Money::from_cents(100));
+    setup.auto_corporate_foundation = true;
+    let session_id = invoke_json(
+        &webview,
+        "create_session",
+        json!({"setup":setup,"seed":"7"}),
+    )
+    .unwrap();
+    for query in [
+        json!({"kind":"CompanyPeriodExplanation","data":{"company":0,"period_end":"2029-12-31"}}),
+        json!({"kind":"AccountDividendTaxStatus"}),
+        json!({"kind":"DividendTaxOutstandingViews"}),
+        json!({"kind":"OwnerFlatWithholdingReceipts"}),
+        json!({"kind":"CompanyCapabilities","data":{"company":0}}),
+        json!({"kind":"OwnerRightsOfferings"}),
+    ] {
+        let response = invoke_json(
+            &webview,
+            "company_read_query",
+            json!({"sessionId":session_id,"generation":"1","query":query}),
+        )
+        .unwrap();
+        assert_eq!(response["generation"], "1");
+        assert_eq!(response["owner"], "0");
+        assert_eq!(response["value"]["kind"], query["kind"]);
+        println!("COMPANY_READ_TAURI_FIXTURE {response}");
+    }
+    let error = invoke_json(&webview,"company_read_query",json!({"sessionId":session_id,"generation":"1","query":{"kind":"CompanyPeriodExplanation","data":{"company":0,"period_end":"2030-01-31"}}})).unwrap_err();
+    assert_eq!(error["kind"], "Query");
+    assert_eq!(error["data"]["kind"], "Company");
+    assert_eq!(error["data"]["data"]["classification"], "BusinessCondition");
+    assert!(error["data"]["data"]["reason"]
+        .as_str()
+        .unwrap()
+        .contains("尚未结算"));
+    println!("COMPANY_READ_TAURI_FAILURE {error}");
+    let error = invoke_json(&webview,"company_read_query",json!({"sessionId":session_id,"generation":"999","query":{"kind":"AccountDividendTaxStatus"}})).unwrap_err();
+    assert_eq!(error["kind"], "Session");
+    invoke_json(&webview, "stop_session", json!({"sessionId":session_id})).unwrap();
+}
 #[cfg(all(feature = "simulation-diagnostics", debug_assertions))]
 use std::time::Duration;
 use tauri::{
