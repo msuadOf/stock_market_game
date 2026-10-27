@@ -569,7 +569,7 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
 
         <Card className="panel company-panel-shell" id="section-company">
           <h3 className="panel-title">公司信息</h3>
-          <ConnectedCompanyPanel stockContext={orientation === "landscape"} initialCivilDate={activeSetup.start_date} onCompanyQuery={queryCompanyReports} onAdvanceCivilDay={advanceCivilDay} />
+          <ConnectedCompanyPanel stockContext={orientation === "landscape"} initialCivilDate={activeSetup.start_date} onCompanyQuery={queryCompanyReports} onAdvanceCivilDay={advanceCivilDay} contractReadHost={hostRef.current} />
         </Card>
 
         {/* 委托面板 + 自动单（移动端为底页弹出） */}
@@ -690,7 +690,7 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
       {orientation === "portrait" && (
         <>
         <MobileDetailLayer ui={mobileUi}>
-            <ConnectedMobileDetail browser={securityBrowser} klineDays={klineDays} setKlineDays={setKlineDays} period={mobileUi.chartPeriod} infoTab={mobileUi.infoTab} speed={speed} measuredSpeed={measuredSpeedText} measuredSpeedTitle={measuredSpeedTitle} running={running} initialCivilDate={activeSetup.start_date} onCompanyQuery={queryCompanyReports} onAdvanceCivilDay={advanceCivilDay} onPeriodChange={(period) => dispatchMobileUi({ type: "select-period", period })} onInfoTabChange={showDetailInfo} onSpeedChange={handleSpeedChange} onPauseToggle={handlePauseToggle} onBack={() => dispatchMobileUi({ type: "back" })} onSelect={selectStock} />
+            <ConnectedMobileDetail browser={securityBrowser} klineDays={klineDays} setKlineDays={setKlineDays} period={mobileUi.chartPeriod} infoTab={mobileUi.infoTab} speed={speed} measuredSpeed={measuredSpeedText} measuredSpeedTitle={measuredSpeedTitle} running={running} initialCivilDate={activeSetup.start_date} onCompanyQuery={queryCompanyReports} onAdvanceCivilDay={advanceCivilDay} contractReadHost={hostRef.current} onPeriodChange={(period) => dispatchMobileUi({ type: "select-period", period })} onInfoTabChange={showDetailInfo} onSpeedChange={handleSpeedChange} onPauseToggle={handlePauseToggle} onBack={() => dispatchMobileUi({ type: "back" })} onSelect={selectStock} />
         </MobileDetailLayer>
         <nav className="mobile-tabbar mobile-main-tabbar" aria-label="主导航">
           {MOBILE_PRIMARY_NAV.map(([tab, label]) => (

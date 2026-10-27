@@ -1,0 +1,35 @@
+node:internal/modules/esm/resolve:271
+    throw new ERR_MODULE_NOT_FOUND(
+          ^
+
+Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/data1/baiyifan/workplace/stock_market_game/.worktree/apps/web/src/host/catalog-resolver.ts' imported from /data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/agents/branch-completion/company-web-f5-read-2026-10-28/independent-review-v2/issuer-mismatch.test.mjs
+    at finalizeResolution (node:internal/modules/esm/resolve:271:11)
+    at moduleResolve (node:internal/modules/esm/resolve:861:10)
+    at defaultResolve (node:internal/modules/esm/resolve:988:11)
+    at #cachedDefaultResolve (node:internal/modules/esm/loader:697:20)
+    at #resolveAndMaybeBlockOnLoaderThread (node:internal/modules/esm/loader:714:38)
+    at ModuleLoader.resolveSync (node:internal/modules/esm/loader:746:52)
+    at #resolve (node:internal/modules/esm/loader:679:17)
+    at ModuleLoader.getOrCreateModuleJob (node:internal/modules/esm/loader:599:35)
+    at ModuleJob.syncLink (node:internal/modules/esm/module_job:160:33)
+    at ModuleJob.link (node:internal/modules/esm/module_job:245:17) {
+  code: 'ERR_MODULE_NOT_FOUND',
+  url: 'file:///data1/baiyifan/workplace/stock_market_game/.worktree/apps/web/src/host/catalog-resolver.ts'
+}
+
+Node.js v25.8.2
+✖ agents/branch-completion/company-web-f5-read-2026-10-28/independent-review-v2/issuer-mismatch.test.mjs (122.022339ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 133.716899
+
+✖ failing tests:
+
+test at agents/branch-completion/company-web-f5-read-2026-10-28/independent-review-v2/issuer-mismatch.test.mjs:1:1
+✖ agents/branch-completion/company-web-f5-read-2026-10-28/independent-review-v2/issuer-mismatch.test.mjs (122.022339ms)
+  'test failed'

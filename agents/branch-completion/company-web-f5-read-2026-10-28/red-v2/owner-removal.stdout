@@ -1,0 +1,28 @@
+✖ App 本人读面在退出身份时清旧事实，迟到成功不能写回且不再查询本人 (297.108913ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 622.62233
+
+✖ failing tests:
+
+test at apps/web/src/components/company/use-company-query.test.ts:223:1
+✖ App 本人读面在退出身份时清旧事实，迟到成功不能写回且不再查询本人 (297.108913ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /尚未加入市场.*本人/. Input:
+  
+  '真实选中公司实际发行人模拟自然日2030-06-01日历状态等待权威事件推进模拟自然日正在请求已公开报告…'
+  
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/components/company/use-company-query.test.ts:231:12)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: '真实选中公司实际发行人模拟自然日2030-06-01日历状态等待权威事件推进模拟自然日正在请求已公开报告…',
+    expected: /尚未加入市场.*本人/,
+    operator: 'match',
+    diff: 'simple'
+  }

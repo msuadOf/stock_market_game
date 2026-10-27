@@ -1,0 +1,11 @@
+✔ Worker 真实 host 注册公司只读查询，发送同代请求且不能指定其他账户 (6.012665ms)
+✔ Worker 真实 host 拒绝其他账户回执与错 kind，不用空列表掩盖失败 (1.364029ms)
+✔ Worker 真实 host 销毁后拒绝迟到的本人查询成功 (0.764082ms)
+ℹ tests 3
+ℹ suites 0
+ℹ pass 3
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 236.789599

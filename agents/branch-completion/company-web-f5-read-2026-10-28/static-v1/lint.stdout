@@ -1,0 +1,4 @@
+apps/web/src/host/company-read-hosts.test.ts:68:25: warning eslint(no-unsafe-optional-chaining): Unsafe usage of optional chaining help: If this short-circuits with 'undefined' the evaluation will throw TypeError
+apps/web/src/App.tsx:405:11: warning react-hooks(exhaustive-deps): React Hook useEffect has a missing dependency: 'hostRef' help: Either include it or remove the dependency array.
+apps/web/src/App.tsx:429:18: warning react-hooks(exhaustive-deps): React Hook useCallback has a missing dependency: 'hostRef' help: Either include it or remove the dependency array.
+apps/web/src/App.tsx:448:18: warning react-hooks(exhaustive-deps): React Hook useCallback has a missing dependency: 'hostRef' help: Either include it or remove the dependency array.

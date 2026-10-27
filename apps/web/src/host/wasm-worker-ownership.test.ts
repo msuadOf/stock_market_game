@@ -51,7 +51,7 @@ async function createFixture(
   const timers = new Map<number, () => void>();
   let nextTimer = 0;
   let handle = 7;
-  let failing: "snapshot" | "prepare" | "drop" | "catalog" | "recoverable" | "snapshot-and-drop" | null = null;
+  let failing: "snapshot" | "prepare" | "drop" | "catalog" | "recoverable" | "snapshot-and-drop" | "company-read" | null = null;
   let failingPost: string | null = null;
   let listener: ((event: { data: Message }) => void) | undefined;
   const saved = currentSaveFixture();
@@ -71,6 +71,11 @@ async function createFixture(
     tick: () => 1n,
     save: (current: number) => { calls.push(`save:${current}`); return saved; },
     end_civil_day: () => civilUpdate(),
+    company_read_query: (current: number, query: unknown) => {
+      calls.push(`company-read:${current}:${JSON.stringify(query)}`);
+      if (failing === "company-read") throw new Error("本人公司查询的实际拒绝原因");
+      return { owner: "0", value: { kind: "OwnerRightsOfferings", data: [] } };
+    },
   };
   replace(bindingsKey, bindings);
   replace("self", { postMessage: (message: Message) => { if (message.type === failingPost) throw new DOMException("发送失败", "DataCloneError"); posted.push(message); if (message.type === "ready" || message.type === "failure") initialized(); }, addEventListener: (_type: string, callback: typeof listener) => { listener = callback; } });
@@ -332,5 +337,24 @@ test("真实Worker precommit snapshot与candidate cleanup双失败保旧身份�
     assert.equal(f.posted[0].type, "saved");
     assert.ok(f.calls.includes("save:7"));
     f.send({ type: "drop" });
+  });
+});
+
+
+test("Worker 公司查询 dispatch 使用当前唯一 handle，旧 generation 不读且域失败明确回传", { timeout: 10000 }, async () => {
+  await withWorker(async f => {
+    f.send({ type: "create", setup: {}, seed: 1n });
+    f.posted.length = 0;
+    const query = { kind: "OwnerRightsOfferings" };
+    f.send({ type: "companyReadQuery", requestId: 21, generation: 1, query });
+    assert.ok(f.calls.includes('company-read:7:{"kind":"OwnerRightsOfferings"}'));
+    assert.deepEqual(f.posted.at(-1), { type: "companyReadQuery", requestId: 21, generation: 1, result: { owner: "0", value: { kind: "OwnerRightsOfferings", data: [] } } });
+    const before = f.calls.filter(call => call.startsWith("company-read:")).length;
+    f.send({ type: "companyReadQuery", requestId: 22, generation: 0, query });
+    assert.equal(f.calls.filter(call => call.startsWith("company-read:")).length, before);
+    assert.equal(f.posted.at(-1)?.type, "operationError");
+    f.fail("company-read");
+    f.send({ type: "companyReadQuery", requestId: 23, generation: 1, query });
+    assert.match(String(f.posted.at(-1)?.message), /本人公司查询的实际拒绝原因/);
   });
 });

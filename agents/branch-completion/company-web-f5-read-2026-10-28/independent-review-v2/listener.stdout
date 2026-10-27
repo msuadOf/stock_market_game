@@ -1,0 +1,9 @@
+✔ Worker 公司查询 dispatch 使用当前唯一 handle，旧 generation 不读且域失败明确回传 (85.124237ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 1
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 323.757269

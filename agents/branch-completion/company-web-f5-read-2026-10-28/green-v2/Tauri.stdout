@@ -1,0 +1,13 @@
+✔ Tauri 真实 host 注册公司只读查询，发送同代请求且不能指定其他账户 (8.507557ms)
+✔ Tauri 真实 host 拒绝其他账户回执与错 kind，不用空列表掩盖失败 (1.286567ms)
+✔ Tauri 真实 host 销毁后拒绝迟到的本人查询成功 (1.195315ms)
+✔ Tauri 本地固定玩家零不能接受改写为其他 owner 的完整回执 (0.615608ms)
+✔ Tauri 同 generation 重装基线仍拒绝旧目录查询结果 (0.966868ms)
+ℹ tests 5
+ℹ suites 0
+ℹ pass 5
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 237.314946

@@ -1,0 +1,25 @@
+✖ 权益 issuer 与股票必须属于同代目录中的同一发行人，能力摘要也不能串公司 (2.597186ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 126.090488
+
+✖ failing tests:
+
+test at apps/web/src/host/company-read.test.ts:64:1
+✖ 权益 issuer 与股票必须属于同代目录中的同一发行人，能力摘要也不能串公司 (2.597186ms)
+  AssertionError [ERR_ASSERTION]: Missing expected rejection.
+      at async TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/company-read.test.ts:74:3)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: /发行|issuer/,
+    operator: 'rejects',
+    diff: 'simple'
+  }
