@@ -1,0 +1,1 @@
+{"pid": 3847625, "parentPid": 3847616, "argv": ["/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/stock_market_game_lib-1ce80ed0046e367e", "lib_tests::company_read_ipc_registers_six_queries_and_preserves_typed_rejections", "--exact", "--test-threads=1", "--nocapture"], "exit": 0, "seconds": 0.6045636339986231}

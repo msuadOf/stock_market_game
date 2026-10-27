@@ -8,7 +8,11 @@ engine 首红十例已真实完成并由未实施 Sol 终核：九个指定 quer
 
 首次四包批次 `four-host-green-01` 的 session `32018` 实际退出 `1`，耗时 92.326 秒：`lookup_handles` 返回 `SendCommandError`，而新增 `CompanyReadIpcError::Session.message` 需要 `String`，在 Tauri `lib.rs:240` 发生 E0308。没有执行十八个 case，也没有产生 wire fixture。三个已编 unit 仅作为 partial artifact 在原共享截止内独立封存；观察到的进程与 scratch 已清理，编译时段已交 root 指定的 E2。
 
-当前 `green-candidate-v3` 仅将该错误显式转为 `error.to_string()`，保留具体原因；六项 query、owner 与领域算法未改。`four-host-green-02` 保持 1001 项输入／8 项 runner、唯一 RAM target、j8／INC0／原 debug2、十八个短 exact、共享 297／299／300 秒绝对截止，仅更换本批输出目录；slot 与实际前槽身份 pending，等待 root 在 E2 之后重新分配，不提前 Cargo。成功后的真实 engine／Server HTTP／Tauri IPC JSON 将交 B/C 消费，WASM 真实 export／浏览器仍由 B/C／W1 实际制品门验证。
+重试准备时，`green-candidate-v3` 仅将该错误显式转为 `error.to_string()`，保留具体原因；六项 query、owner 与领域算法未改。`four-host-green-02` 保持 1001 项输入／8 项 runner、唯一 RAM target、j8／INC0／原 debug2、十八个短 exact、共享 297／299／300 秒绝对截止，仅更换本批输出目录；当时 slot 与实际前槽身份 pending，等待 root 在 E2 之后重新分配，未提前 Cargo。成功后的真实 engine／Server HTTP／Tauri IPC JSON 计划交 B/C 消费，WASM 真实 export／浏览器仍由 B/C／W1 实际制品门验证。
+
+随后 root 正式分配 green02，实际绑定 E2 session `72913` 的新 default unit `21ffb460…`，并在本批共享窗先独立封存。green02 session `57868` 实际退出 `0`，四包编译及十八个 exact 全部通过，耗时 19.355659 秒，最长单 case 命令 1.824 秒；1001 项来源始末一致，观察到最多二十六线程、每 500ms 最多 301 CPU ticks。WASM／Server／engine 三个同源 partial 由 Cargo 合法报告 fresh true、SHA 与失败批相同；Tauri 修后真实重新编译，fresh false。四包 unit 均独立封存，owned／argv 数组为空、scratch 已清理；时段已交 root 指定 R4red03，没有连跑。
+
+真实 stdout 已提取 engine／Server HTTP／Tauri mock IPC 各六项 JSON 和一项 Tauri typed 领域失败，见 [green02 执行证据](four-host-green-02/)，已通过 followup 交 B/C 继续消费验证。两名未实施 Sol 已分别完成实际 runner 终核和产品／执行证据终核，十八门、源码／制品／fixture 绑定及清理均通过，详见 [实际终审](four-host-green-02/actual-review.md) 与 [分层交接](handoff.md)。该结果限定于 Rust 四包 native 门；WASM export／浏览器、TS 跨层消费及生产公司结算不在本次通过范围。本地 main 接收等待 E2 公共 base 出口，不另造重复全宿主回归。
 
 ## 准备过程（保留历史）
 

@@ -1,0 +1,6 @@
+
+running 1 test
+test actor::fatal_tests::company_read_member_request_projects_the_actual_nonzero_members_data ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 40 filtered out; finished in 0.84s
+

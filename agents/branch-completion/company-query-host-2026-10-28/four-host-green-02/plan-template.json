@@ -4098,8 +4098,12 @@
   "mainHelperRepository": "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25",
   "mainHelperHead": "8e5b32de305257b7cb9aeb284d19551cdf3ce2c3",
   "protectedPrior": {
-    "pendingSlotHandoff": true,
-    "reason": "等待E2实际退出及root重新授权；不复用过期前槽身份"
+    "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/engine-006444ae8c4f3292",
+    "bytes": 623757816,
+    "sha256": "21ffb4607a70070ebae16aa282aaa64a171488433a10286afdf887bc55ebb1fe",
+    "inode": 69226,
+    "source": "/data1/baiyifan/workplace/stock_market_game/.worktree/runtime-sync-e1/agents/perf-intraday-independent/implementation/e2/static-handover-green/actual-wait-cleanup.json",
+    "requireSealWithinSharedWindow": true
   },
   "protectedPriorInventory": [
     {

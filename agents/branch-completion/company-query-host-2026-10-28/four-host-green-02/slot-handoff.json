@@ -1,5 +1,13 @@
 {
-  "pendingSlotHandoff": true,
-  "rootAuthorized": false,
-  "reason": "E2独占在途；本目录仅静态准备，不授权启动"
+  "pendingSlotHandoff": false,
+  "rootAuthorized": true,
+  "priorBatch": "E272913",
+  "actualWaitSession": 72913,
+  "actualWaitExit": 1,
+  "priorReceipt": "/data1/baiyifan/workplace/stock_market_game/.worktree/runtime-sync-e1/agents/perf-intraday-independent/implementation/e2/static-handover-green/actual-wait-cleanup.json",
+  "priorOwnedAlive": [],
+  "priorArgvAlive": [],
+  "priorTmpAbsent": true,
+  "rootAuthorization": "root正式授green02当前唯一槽；窄binding reviewer READY后立即launch，不再等许可",
+  "nextBatch": "成功/失败实际wait且owned空scratch清后默认R4red03，除root明确改序"
 }
