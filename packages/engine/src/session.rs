@@ -38,6 +38,8 @@ mod company_capital_restore;
 mod continuous_cancellation;
 mod corporate_actions;
 mod decision_chain;
+#[cfg(feature = "simulation-diagnostics")]
+pub(crate) use decision_chain::{plan_trace_state, plan_trace_states};
 mod deferred_drop;
 use crate::u64_decimal;
 pub use deferred_drop::defer as defer_destruction;

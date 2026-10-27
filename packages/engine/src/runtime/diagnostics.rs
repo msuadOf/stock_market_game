@@ -3,6 +3,15 @@
 use super::{OrderRef, Owner, StockIdx};
 use crate::Side;
 
+/// 本轮真实机构观察；Owner 坐标由 driver 对真实名册再次校验。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GroupDecisionTrace {
+    pub owner: Owner,
+    pub record: std::sync::Arc<crate::diagnostics::NpcDecisionTraceRecord>,
+    /// 同一账户在本次 review/open/quote 之前的真实计划状态；仅候选阶段消费。
+    pub plan_before: std::collections::BTreeMap<crate::PlanId, String>,
+}
+
 /// D1 只解析玩家外部操作；其他来源由后续真实计划归因接通。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OperationSource {

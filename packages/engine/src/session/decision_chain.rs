@@ -244,6 +244,43 @@ pub(crate) struct PlanRootDiagnostics {
     candidates: BTreeSet<StockId>,
 }
 
+#[cfg(feature = "simulation-diagnostics")]
+impl PlanRootDiagnostics {
+    /// 仅消费当次真实 observe；不从 Session 的旧个人态补报告或方法。
+    pub(crate) fn into_runtime_trace(
+        self,
+        account: AccountId,
+        tick: u64,
+        belief: &BeliefBook,
+        plan_ids: Vec<PlanId>,
+        plan_changes: Vec<String>,
+        budget_constraints: Vec<String>,
+    ) -> crate::diagnostics::NpcDecisionTraceRecord {
+        let expectation_method = self.candidates.iter()
+            .find_map(|code| belief.entry(code))
+            .and_then(|entry| entry.method)
+            .map(|method| format!("{method:?}"));
+        let mut reports: BTreeSet<_> = self.reports.iter()
+            .map(|(_, report)| report.value().to_string()).collect();
+        for code in &self.candidates {
+            if let Some(entry) = belief.entry(code) {
+                reports.extend(entry.used_report_ids.iter().map(|id| id.value().to_string()));
+            }
+        }
+        crate::diagnostics::NpcDecisionTraceRecord {
+            account,
+            tick,
+            source_report_ids: reports.into_iter().collect(),
+            expectation_method,
+            plan_ids,
+            plan_changes,
+            budget_constraints,
+            order_ids: Vec::new(),
+            codes: self.candidates.into_iter().collect(),
+        }
+    }
+}
+
 #[cfg(not(feature = "simulation-diagnostics"))]
 pub(crate) struct PlanRootDiagnostics;
 
@@ -557,7 +594,7 @@ fn root_candidate_codes(
 }
 
 #[cfg(feature = "simulation-diagnostics")]
-pub(in crate::session) fn plan_trace_states(
+pub(crate) fn plan_trace_states(
     account: AccountId,
     plans: &PlanBook,
 ) -> BTreeMap<PlanId, String> {
@@ -572,7 +609,7 @@ pub(in crate::session) fn plan_trace_states(
 }
 
 #[cfg(feature = "simulation-diagnostics")]
-fn plan_trace_state(plan: &TradingPlan) -> String {
+pub(crate) fn plan_trace_state(plan: &TradingPlan) -> String {
     format!(
         "{:?}/v{}/{:?}/{}/{:?}/{:?}/{:?}",
         plan.status(),
@@ -1713,6 +1750,8 @@ pub(crate) fn next_routable_sell_qty(
 #[cfg(test)]
 mod chain_restructure_tests {
     include!("decision_chain/company_source_tests.rs");
+    #[cfg(all(feature = "simulation-diagnostics", not(target_arch = "wasm32")))]
+    include!("decision_chain/runtime_trace_tests.rs");
     use crate::session::plan_continuation_domain::PlanContinuationDomain;
 
     #[cfg(feature = "simulation-diagnostics")]
