@@ -147,6 +147,7 @@ mod failure_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod runtime_sync_tests;
 mod runtime_mirror;
+pub(crate) mod retail_lifecycle;
 #[cfg(all(test, not(feature = "simulation-diagnostics"), not(target_arch = "wasm32")))]
 mod retail_lifecycle_tests;
 #[cfg(all(test, feature = "simulation-diagnostics", not(target_arch = "wasm32")))]
@@ -2070,7 +2071,8 @@ pub enum RetailOrderDiagnosticEvent {
         order_id: OrderId,
         remaining_qty: u32,
     },
-    /// 集合竞价原子提交失败后未写入连续订单簿的剩余委托；它不是“仍在簿中”。
+    /// 已进入真实 order-ID 生命周期、被 stock 层拒绝终止的申报尝试余量；不是受理或成交。
+    /// group 预检无 desk ID，只记 Rejected；整拍失败不发布本候选。
     Aborted {
         account: AccountId,
         code: StockId,
@@ -3711,14 +3713,13 @@ impl GameSession {
         Ok(())
     }
 
-    /// 读取上一 tick 的散户目标仓位诊断样本。
-    ///
-    /// 该切片在下一次 [`Self::step`] 开始时被替换；调用方不得把它当作存档、委托或成交。
+    /// 读取最近成功发布的市场批次目标仓位诊断；失败保留前批。
+    /// Tick 成功替换本拍样本，manual Drain 成功发布空样本；不属于存档、委托或成交。
     pub fn last_retail_decisions(&self) -> &[RetailDecisionTrace] {
         &self.state.last_retail_decisions
     }
 
-    /// 读取上一 tick 的散户订单生命周期诊断事件；不属于存档或撮合状态。
+    /// 读取最近成功发布的市场批次散户生命周期；失败保留前批，不属于存档或撮合状态。
     pub fn last_retail_order_events(&self) -> &[RetailOrderDiagnosticEvent] {
         &self.state.last_retail_order_events
     }
@@ -3769,38 +3770,6 @@ impl GameSession {
                     remaining_qty,
                 });
         }
-    }
-
-    /// D5 诊断面派生：retail 拒收（Sol P3 单遍派发——原逐账户 × 全事件
-    /// O(名册×事件) 扫描+每 tick 全名册 keys collect；拒收事件通常 0-几条，
-    /// 只对事件涉及账户查 retail_experience）。**输出序逐位等价**：按
-    /// 账户升序分组（=原 retail_experience.keys() 迭代序）、组内事件序。
-    fn record_retail_intent_rejections(&mut self, events: &[Event]) {
-        let prepared = self.prepare_retail_intent_rejections(events);
-        self.state.last_retail_order_events.extend(prepared);
-    }
-
-    fn prepare_retail_intent_rejections(&self, events: &[Event]) -> Vec<RetailOrderDiagnosticEvent> {
-        let mut by_account: std::collections::BTreeMap<
-            AccountId,
-            Vec<(StockId, crate::RejectionReason)>,
-        > = std::collections::BTreeMap::new();
-        for event in events {
-            if let Event::IntentRejected {
-                account, code, reason, ..
-            } = event
-            {
-                if self.state.retail_experience.contains_key(account) {
-                    by_account
-                        .entry(*account)
-                        .or_default()
-                        .push((code.clone(), reason.clone()));
-                }
-            }
-        }
-        by_account.into_iter().flat_map(|(account, items)| {
-            items.into_iter().map(move |(code, reason)| RetailOrderDiagnosticEvent::Rejected { account, code, reason })
-        }).collect()
     }
 
     fn reserved_cash_for_account(&self, account: AccountId) -> Result<Money, MoneyError> {

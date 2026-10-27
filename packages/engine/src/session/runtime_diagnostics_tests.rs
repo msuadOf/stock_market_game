@@ -46,10 +46,11 @@ fn successful_submission(game: &mut GameSession) {
 }
 
 #[test]
-fn d1_callback_failure_discards_delta_then_retry_publishes_once() {
+fn d1_late_callback_failure_preserves_terminal_raw_and_checkpoint_retry_publishes_once() {
     let mut game = game();
     enqueue(&mut game);
     let before = game.business_state_hash().unwrap();
+    let checkpoint = game.clone_for_tick_shadow().unwrap();
     let trace_before = serde_json::to_value(&game.state.npc_decision_traces).unwrap();
     let mut called = false;
     let rejected = game.step_frame_and_commit_via_runtime(|_, events| {
@@ -63,13 +64,26 @@ fn d1_callback_failure_discards_delta_then_retry_publishes_once() {
         })
     });
     assert!(called);
-    assert!(rejected.is_err());
+    let fatal = rejected.unwrap_err();
+    assert_eq!(game.poison_reason(), Some(&fatal));
+    let terminal = game.runtime_driver.as_ref().unwrap().lock().unwrap()
+        .terminal_causal_snapshot_for_test().expect("必须保留首错 raw 事实");
+    assert!(!terminal.1.is_empty());
+    assert_eq!(terminal.2, fatal);
+    let world_tick = game.runtime_driver.as_ref().unwrap().lock().unwrap().world_committed_tick();
+    assert_eq!(game.step_via_runtime().unwrap_err(), fatal);
+    assert_eq!(game.runtime_driver.as_ref().unwrap().lock().unwrap().world_committed_tick(), world_tick);
+    assert_eq!(game.runtime_driver.as_ref().unwrap().lock().unwrap().terminal_causal_snapshot_for_test(), Some(terminal));
     assert!(game.causal_facts().is_empty());
     assert_eq!(
         trace_before,
         serde_json::to_value(&game.state.npc_decision_traces).unwrap()
     );
     assert_eq!(before, game.business_state_hash().unwrap());
+    let mut expected = checkpoint.clone_for_tick_shadow().unwrap();
+    expected.poison_runtime_step(fatal);
+    assert_eq!(game.session_state_hash().unwrap(), expected.session_state_hash().unwrap());
+    let mut game = checkpoint;
     successful_submission(&mut game);
     game.step().unwrap();
     assert_eq!(game.causal_facts().len(), 3);
@@ -516,3 +530,24 @@ fn d2_prepare_market_after_real_fill_restores_both_install_capture_modes() {
 }
 
 mod coordinator_source_tests;
+
+#[test]
+fn d2b_rich_desk_reject_is_explicit_unsupported_and_keeps_prior_candidate_unpublished() {
+    let mut game = d2_game();
+    d2_place(&mut game, 0, 1, crate::Side::Buy, 990, 100);
+    game.step_via_runtime().unwrap();
+    d2_place(&mut game, 0, 1, crate::Side::Buy, 1050, 100);
+    let mut checkpoint = game.clone_for_tick_shadow().unwrap();
+    let prior_facts = serde_json::to_value(game.causal_facts()).unwrap();
+    let prior_events = game.last_retail_order_events().to_vec();
+    let prior_decisions = game.last_retail_decisions().to_vec();
+    let error = game.step_via_runtime().unwrap_err();
+    assert!(matches!(&error, StepFatal::InvariantViolation { location, description }
+        if location == "runtime::diagnostics::prepare" && description.contains("真实 desk reject 的 rich 来源尚未接通")));
+    assert_eq!(serde_json::to_value(game.causal_facts()).unwrap(), prior_facts);
+    assert_eq!(game.last_retail_order_events(), prior_events);
+    assert_eq!(game.last_retail_decisions(), prior_decisions);
+    assert_eq!(game.business_state_hash().unwrap(), checkpoint.business_state_hash().unwrap());
+    checkpoint.poison_runtime_step(error);
+    assert_eq!(game.session_state_hash().unwrap(), checkpoint.session_state_hash().unwrap());
+}

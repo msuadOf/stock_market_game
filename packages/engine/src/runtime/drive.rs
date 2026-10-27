@@ -210,6 +210,8 @@ pub struct RuntimeDriver {
     /// 后**才 push 会话——安装失败回滚不残留，重试同 seq 重发不触发
     /// 单调校验的假重复）。
     pending_receipts: Vec<crate::session::personal_trade_history::PendingTradeReceipt>,
+    pending_retail: Vec<super::retail_lifecycle::Fact>,
+    pending_retail_rejections: Vec<(AccountId, crate::StockId, crate::RejectionReason)>,
     #[cfg(feature = "simulation-diagnostics")]
     pending_causal: Vec<super::diagnostics::DeskCausalFact>,
     #[cfg(feature = "simulation-diagnostics")]
@@ -638,6 +640,8 @@ impl RuntimeDriver {
             belief_cache,
             drained_events: Vec::new(),
             pending_receipts: Vec::new(),
+            pending_retail: Vec::new(),
+            pending_retail_rejections: Vec::new(),
             #[cfg(feature = "simulation-diagnostics")]
             pending_causal: Vec::new(),
             #[cfg(feature = "simulation-diagnostics")]
@@ -803,6 +807,10 @@ impl RuntimeDriver {
                 .ok_or_else(|| "runtime 成功收束但缺少 causal TickRecord".to_owned())?;
             self.pending_causal = std::mem::take(&mut record.desk_causal);
         }
+        let record = self.world.report_log.last_mut()
+            .ok_or_else(|| "runtime 成功收束但缺少 Retail TickRecord".to_owned())?;
+        self.pending_retail = std::mem::take(&mut record.retail);
+        self.pending_retail_rejections.clear();
         let fact_rec = self.world.report_log.last().cloned();
         let _ = self.id_map.len();
         // 【P0 画像】acct_echo_collect 段（残余=发布版本分片重组；
@@ -936,12 +944,20 @@ impl RuntimeDriver {
                 }
                 self.pending_receipts = pending;
             }
+            for receipt in &receipts {
+                let account = self.account_by_owner(receipt.owner)
+                    .filter(|_| usize::try_from(receipt.owner.1).is_ok_and(|local| local < self.accounts_per_group))
+                    .ok_or_else(|| format!("Retail 拒单 Owner 不在真实名册：{:?}", receipt.owner))?;
+                self.pending_retail_rejections.push((account, crate::StockId(u32::from(receipt.order.0)),
+                    super::event_bridge::rejection_reason(receipt.kind)));
+            }
             let input = collect_lifecycle(&lifecycle, &receipts);
             events.extend(project_lifecycle_events(&input, &mut self.next_seq));
             events.extend(project_auction_events(&auction, &mut self.next_seq));
             // D5 组端校验拒收（路由层 qty=0 等）——本拍事件流投影。
             // step_frame 接轨件 2：先加后取（对齐旧管线 collect 语义）。
             for (code, owner) in std::mem::take(&mut self.pending_rejections) {
+                self.pending_retail_rejections.push((owner, code, crate::RejectionReason::InvalidQuantity));
                 self.next_seq = self
                     .next_seq
                     .checked_add(1)
@@ -1144,6 +1160,14 @@ impl RuntimeDriver {
     ///   与 civil 其他域的跨域事务边界不由此局部镜像基线承诺。
     pub fn day_end(&mut self, session: &mut GameSession) -> Result<(), String> {
         session.require_healthy().map_err(|fatal| fatal.to_string())?;
+        let candidate = self.prepare_manual_day_end(session)?;
+        session.publish_runtime_retail(candidate);
+        Ok(())
+    }
+
+    fn prepare_manual_day_end(&mut self, session: &mut GameSession)
+        -> Result<crate::session::retail_lifecycle::Candidate, String> {
+        session.require_healthy().map_err(|fatal| fatal.to_string())?;
         #[cfg(feature = "simulation-diagnostics")]
         self.ensure_causal_day_end_supported()?;
         let restore_mirror = session.runtime_day_end_mirror_rollback();
@@ -1158,7 +1182,8 @@ impl RuntimeDriver {
         result
     }
 
-    fn day_end_inner(&mut self, session: &mut GameSession) -> Result<(), String> {
+    fn day_end_inner(&mut self, session: &mut GameSession)
+        -> Result<crate::session::retail_lifecycle::Candidate, String> {
         // 基线（Sol 二审修复集 2）：civil 失败时撤销 World 日结并恢复账户镜像——World 日结
         // （Abort 冲回）、driver seq/事件缓冲、会话 day/seq。
         let day_before = session.day();
@@ -1190,6 +1215,12 @@ impl RuntimeDriver {
                 return Err(format!("收盘成交事件派生失败（World 日结与账户镜像已回滚）：{e}"));
             }
         };
+        let retail_facts = self.take_drained_retail_facts();
+        let mut retail = crate::session::retail_lifecycle::Candidate { events: Vec::new(), decisions: Vec::new() };
+        if let Err(error) = session.append_runtime_retail_facts(self, &mut retail, retail_facts) {
+            self.rollback_day_end(session, day_before, seq_before, next_seq_before, drained_len_before);
+            return Err(format!("Drain Retail 来源校验失败：{error}"));
+        }
         // B2 件 4：手动日结路径补保留冻结（civil 推进**前**——date=当日；
         /// 生产 step 的 ends_day 段之外的手动编排面。迁移缺席时对账按
         /// 登记跳过——见 assemble 注释）。
@@ -1234,7 +1265,7 @@ impl RuntimeDriver {
         // 逐账户事实事件——置强制全量回写标记（下一 step 全名册同步
         // 一次；低频路径语义安全优先）。
         self.force_full_accounts = true;
-        Ok(())
+        Ok(retail)
     }
 
     /// tick 分片与日结完整 candidate 共用同一账户投影，保持现金、T+1、成本口径一致。
@@ -1406,6 +1437,17 @@ impl RuntimeDriver {
     }
 
     /// Owner(g,l) → AccountId（多组映射；上行消费统一入口）。
+    pub(crate) fn take_retail_facts(&mut self) -> (
+        Vec<super::retail_lifecycle::Fact>,
+        Vec<(AccountId, crate::StockId, crate::RejectionReason)>,
+    ) {
+        (std::mem::take(&mut self.pending_retail), std::mem::take(&mut self.pending_retail_rejections))
+    }
+
+    pub(crate) fn take_drained_retail_facts(&mut self) -> Vec<super::retail_lifecycle::Fact> {
+        std::mem::take(&mut self.world.drained_retail)
+    }
+
     pub fn account_by_owner(&self, owner: super::Owner) -> Option<crate::AccountId> {
         self.id_map.get(self.global_index(owner)).copied()
     }
@@ -1882,13 +1924,13 @@ impl RuntimeDriver {
             self.pending_hold_inits = pending_before;
             self.force_full_accounts = force_before;
         }
-        result
+        result.map(|candidate| session.publish_runtime_retail(candidate))
     }
 
     fn day_end_with_runtime_market_day_inner(
         &mut self,
         session: &mut GameSession,
-    ) -> Result<(), String> {
+    ) -> Result<crate::session::retail_lifecycle::Candidate, String> {
         // 基线（Sol 二审修复集 2，扩展 P1-7）：civil 失败时除会话
         // day/seq 外，同步撤销 World 日结与 driver seq/事件缓冲。
         let day_before = session.day();
@@ -1918,6 +1960,12 @@ impl RuntimeDriver {
                 return Err(format!("收盘成交事件派生失败（World 日结与账户镜像已回滚）：{e}"));
             }
         };
+        let retail_facts = self.take_drained_retail_facts();
+        let mut retail = crate::session::retail_lifecycle::Candidate { events: Vec::new(), decisions: Vec::new() };
+        if let Err(error) = session.append_runtime_retail_facts(self, &mut retail, retail_facts) {
+            self.rollback_day_end(session, day_before, seq_before, next_seq_before, drained_len_before);
+            return Err(format!("Drain Retail 来源校验失败：{error}"));
+        }
         // driver 直调路径无 DayBoundary 事件——撤单段紧随竞价段编号
         ///（编号序=输出序：trades/auction → lifecycle）。
         self.collect_drained_lifecycle_after_boundary();
@@ -1952,7 +2000,7 @@ impl RuntimeDriver {
         // D4：日结清会话分钟历史（位置合并的跨日对齐——旧管线同口径）。
         session.clear_runtime_minute_history();
 
-        Ok(())
+        Ok(retail)
     }
 }
 
@@ -2749,8 +2797,10 @@ impl RuntimeDriver {
     /// 旧管线日界的行情面（昨收翻转）由 `roll_day` 已在 runtime 侧完成、
     /// 会话侧经 `end_civil_day` 权威推进，此处补行情同步。
     pub fn day_end_with_market(&mut self, session: &mut GameSession) -> Result<(), String> {
-        self.day_end(session)?;
-        self.install_market_views(session)
+        let candidate = self.prepare_manual_day_end(session)?;
+        self.install_market_views(session)?;
+        session.publish_runtime_retail(candidate);
+        Ok(())
     }
 }
 

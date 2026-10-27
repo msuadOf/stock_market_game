@@ -525,7 +525,16 @@ impl GameSession {
             .into_iter()
             .flatten()
             .collect();
-        let retail_order_events = self.prepare_retail_intent_rejections(&events);
+        let (retail_facts, retail_rejections) = driver.take_retail_facts();
+        let mut retail_candidate = super::retail_lifecycle::Candidate {
+            events: Vec::new(), decisions: retail_decisions,
+        };
+        self.append_runtime_retail_facts_at(driver, &mut retail_candidate, retail_facts, tick)
+            .map_err(|error| error.to_string())?;
+        self.append_runtime_retail_rejections(&mut retail_candidate, retail_rejections)
+            .map_err(|error| error.to_string())?;
+        let retail_decisions = retail_candidate.decisions;
+        let retail_order_events = retail_candidate.events;
         let mut npc_attention = self.state.npc_attention.clone();
         let mut beliefs = self.state.belief_participants.clone();
         let mut personal_history = self.state.history_reads.clone();

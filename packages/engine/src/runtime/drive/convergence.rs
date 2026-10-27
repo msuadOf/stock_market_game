@@ -54,6 +54,15 @@ impl RuntimeDriver {
         self.retain_terminal_causal(time, raw, fatal);
     }
 
+    #[cfg(all(test, feature = "simulation-diagnostics"))]
+    pub(crate) fn terminal_causal_snapshot_for_test(&self) -> Option<(
+        crate::diagnostics::causal::FactTime,
+        Vec<crate::runtime::diagnostics::DeskCausalFact>,
+        crate::session::StepFatal,
+    )> {
+        self.terminal_causal.clone()
+    }
+
     pub(crate) fn cached_personal_at(
         &self,
         index: usize,

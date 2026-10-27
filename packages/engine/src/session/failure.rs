@@ -13,6 +13,7 @@ pub enum StepFatal {
 pub(in crate::session) struct RuntimeStepInstall {
     pub events: Vec<Event>,
     pub baseline: RuntimeInstallBaseline,
+    pub retail: super::retail_lifecycle::Candidate,
     #[cfg(feature = "simulation-diagnostics")]
     pub causal: super::causal::RuntimeCausalDelta,
 }
@@ -630,6 +631,7 @@ impl GameSession {
             let RuntimeStepInstall {
                 events,
                 baseline,
+                retail,
                 #[cfg(feature = "simulation-diagnostics")]
                 causal,
             } = session.runtime_step_with_install_returning_baseline(driver)?;
@@ -655,6 +657,7 @@ impl GameSession {
             /// 路径同式）。
             #[cfg(feature = "simulation-diagnostics")]
             session.publish_runtime_causal(causal);
+            session.publish_runtime_retail(retail);
             session.runtime_clear_account_undo();
             Ok((projected, None))
         })
@@ -681,6 +684,7 @@ impl GameSession {
         let installed = self.runtime_step_with_install_inner(driver, false)?;
         #[cfg(feature = "simulation-diagnostics")]
         self.publish_runtime_causal(installed.causal);
+        self.publish_runtime_retail(installed.retail);
         // P2-2b：成功 step 尾清账户写时 undo（失败路径已由 rollback 消费）。
         // 【P0 画像】undo_clear 段（成功尾清）。
         let _seg_undo = crate::runtime::step_profile::scope(
@@ -823,6 +827,14 @@ impl GameSession {
                 return Err(self.poison_runtime_step(fatal));
             }
         };
+        let mut retail = super::retail_lifecycle::Candidate { events: Vec::new(), decisions: Vec::new() };
+        let (retail_facts, retail_rejections) = driver.take_retail_facts();
+        if let Err(fatal) = self.append_runtime_retail_facts(driver, &mut retail, retail_facts)
+            .and_then(|()| self.append_runtime_retail_rejections(&mut retail, retail_rejections)) {
+            self.rollback_runtime_step(baseline);
+            self.runtime_discard_driver_flag = true;
+            return Err(self.poison_runtime_step(fatal));
+        }
         // 晚失败注入（D0：旧管线 post_shadow 语义等价点——生产工作完成、
         // 安装之前；晚失败不得泄漏任何已计算状态。两路径同判：此前
         // runtime 路径不消费该注入，注入后期望 Err 的对照测试被
@@ -909,16 +921,7 @@ impl GameSession {
         let _seg_retail = crate::runtime::step_profile::scope(
             crate::runtime::step_profile::StepSegment::RetailDiag,
         );
-        // step_frame 接轨件 4b：投影失败回滚面——retail 诊断两域首写
-        /// 旧值入 undo（幂等首写；step() 路径 capture_undo=false 不记）。
-        if capture_undo && self.state.runtime_retail_diag_undo.is_none() {
-            self.state.runtime_retail_diag_undo = Some((
-                self.state.last_retail_order_events.clone(),
-                self.state.last_retail_decisions.clone(),
-            ));
-        }
-        self.state.last_retail_order_events.clear();
-        self.record_retail_intent_rejections(&events);
+        // 两个 Retail Vec 只写 candidate，失败不触碰上一成功批次。
         // D5 #4 retail 链：决策 trace 投影（组内生产——本拍清+装，旧管线
         /// 「本 tick 最新」瞬态语义；收集失败按段面显式失败不静默）。
         {
@@ -932,7 +935,7 @@ impl GameSession {
                     }));
                 }
             };
-            self.state.last_retail_decisions = traces;
+            retail.decisions = traces;
         }
         drop(_seg_retail);
         // D5 日界·world 段（ends_day 拍在 step 内编排——desk roll_day/
@@ -1104,6 +1107,12 @@ impl GameSession {
                     }));
                 }
             };
+            let drained_retail = driver.take_drained_retail_facts();
+            if let Err(fatal) = self.append_runtime_retail_facts(driver, &mut retail, drained_retail) {
+                self.rollback_runtime_step(baseline);
+                self.runtime_discard_driver_flag = true;
+                return Err(self.poison_runtime_step(fatal));
+            }
             // 日界批：install 面补真——candle_book 历史末条升级为含收盘
             /// 段的 Drain 终 K（commit_active 先于 Drain 提交的是日内段
             /// 形态）；DayBoundary 事件 `closed_daily_candles` 同源补值
@@ -1266,6 +1275,7 @@ impl GameSession {
         Ok(RuntimeStepInstall {
             events,
             baseline,
+            retail,
             #[cfg(feature = "simulation-diagnostics")]
             causal,
         })

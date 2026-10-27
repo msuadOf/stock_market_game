@@ -433,6 +433,7 @@ pub struct DeskState {
     bars_shipped_today: bool,
     /// 本 tick 双腿成交事实缓冲（出口随 DeskReport；Abort 清空）。
     trade_facts: Vec<super::protocol::DeskTradeFact>,
+    retail_facts: Vec<super::retail_lifecycle::RawFact>,
     /// 本轮因果事实，随报告 move；Abort 时丢弃。
     #[cfg(feature = "simulation-diagnostics")]
     causal_facts: Vec<super::diagnostics::DeskCausalFact>,
@@ -627,6 +628,7 @@ impl DeskState {
             drain_cleared_closing: None,
             bars_shipped_today: false,
             trade_facts: Vec::new(),
+            retail_facts: Vec::new(),
             #[cfg(feature = "simulation-diagnostics")]
             causal_facts: Vec::new(),
             lifecycle_facts: Vec::new(),
@@ -848,6 +850,7 @@ impl DeskState {
             *f = false;
         }
         self.trade_facts.clear();
+        self.retail_facts.clear();
         #[cfg(feature = "simulation-diagnostics")]
         self.causal_facts.clear();
         self.lifecycle_facts.clear();
@@ -1268,6 +1271,9 @@ impl DeskState {
             charged_transfer_fee: 0,
             expire_tick: tick.saturating_add(self.setup.order_ttl_ticks),
         };
+        self.retail_facts.push(super::retail_lifecycle::RawFact::Submitted {
+            order: order_ref, owner, side, qty,
+        });
         #[cfg(feature = "simulation-diagnostics")]
         {
             self.note_causal(super::diagnostics::DeskCausalKind::Submitted {
@@ -1369,6 +1375,10 @@ impl DeskState {
 
     /// 记录终结事实（Cancelled/Expired）。
     fn note_terminated(&mut self, order: &DeskOrder, kind: super::protocol::LifecycleKind) {
+        self.retail_facts.push(super::retail_lifecycle::RawFact::Terminated {
+            order: order.order_ref, owner: order.owner, qty: order.qty,
+            end: super::retail_lifecycle::Termination::Canceled,
+        });
         self.lifecycle_facts
             .push(super::protocol::DeskLifecycleFact {
                 stock: self.setup.stock,
@@ -1682,8 +1692,10 @@ impl DeskState {
         // 方向统一 (sell_ref, buy_ref)——owner 已固定 (seller, buyer)，
         // 序号按原始方向交换会使主动卖时身份核跳过合法计划成交）。
         let (maker_order, taker_order) = (sell_ref, buy_ref);
+        let trade_ordinal = u64::try_from(self.trade_facts.len()).map_err(|_| over("trade ordinal 溢出"))?;
+        self.retail_facts.push(super::retail_lifecycle::RawFact::TradeRef { ordinal: trade_ordinal });
         #[cfg(feature = "simulation-diagnostics")]
-        let causal_ordinal = u64::try_from(self.trade_facts.len()).map_err(|_| over("causal trade ordinal 溢出"))?;
+        let causal_ordinal = trade_ordinal;
         self.trade_facts.push(super::protocol::DeskTradeFact {
             stock: self.setup.stock,
             price,
@@ -2185,6 +2197,14 @@ impl DeskState {
                 ),
             })?;
         self.undo.push(DeskUndo::Serial);
+        self.retail_facts.push(super::retail_lifecycle::RawFact::Submitted { order, owner, side, qty });
+        self.retail_facts.push(super::retail_lifecycle::RawFact::Terminated {
+            order, owner, qty, end: super::retail_lifecycle::Termination::Aborted,
+        });
+        #[cfg(feature = "simulation-diagnostics")]
+        self.note_causal(super::diagnostics::DeskCausalKind::Unsupported {
+            detail: "真实 desk reject 的 rich 来源尚未接通",
+        });
         self.receipts_out[g].push(DeskReceipt { order, owner, kind });
         self.skipped_orders += 1;
         self.undo.push(DeskUndo::Skipped(1));
@@ -3360,6 +3380,7 @@ fn process_msg(
                         fee_sink: state.fee_sink,
                         view: state.public_snapshot_arc(tick)?,
                         trades: std::mem::take(&mut state.trade_facts),
+                        retail: std::mem::take(&mut state.retail_facts),
                         #[cfg(feature = "simulation-diagnostics")]
                         causal: std::mem::take(&mut state.causal_facts),
                         lifecycle: std::mem::take(&mut state.lifecycle_facts),
@@ -3437,6 +3458,7 @@ fn process_msg(
                     fee_sink: state.fee_sink,
                     last_price: state.market.last_price,
                     drained_lifecycle: std::mem::take(&mut state.lifecycle_facts),
+                    drained_retail: std::mem::take(&mut state.retail_facts),
                     // 只上行 **drain 自产**的收盘竞价事实——auction_facts
                     /// 可能残留拍内窗指示价（日结拍相位窗的 CallAuction
                     /// 指示价，其上行随拍内 DeskReport 承载或随 Abort 丢弃；

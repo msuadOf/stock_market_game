@@ -286,13 +286,14 @@ fn d2b_plain_late_day_end_failure_preserves_nonempty_prior_with_expected_poison(
 }
 
 #[test]
-fn d2b_internal_callback_failure_preserves_nonempty_prior_and_full_hash() {
+fn d2b_internal_late_callback_failure_preserves_prior_with_expected_poison() {
     let (mut game, mut driver) = fixture(100);
     group_reject_prior(&mut game, &mut driver);
     let prior_events = game.last_retail_order_events().to_vec();
     let prior_decisions = game.last_retail_decisions().to_vec();
     game.runtime_driver = Some(std::sync::Mutex::new(driver));
-    let before = game.session_state_hash().expect("callback 前完整 hash");
+    let before_business = game.business_state_hash().expect("callback 前完整业务 hash");
+    let mut oracle = game.clone_for_tick_shadow().expect("callback 前健康 checkpoint");
     let fatal = StepFatal::InvariantViolation {
         location: "d2b_internal_callback".to_owned(), description: "真实安装后拒绝候选".to_owned(),
     };
@@ -303,9 +304,99 @@ fn d2b_internal_callback_failure_preserves_nonempty_prior_and_full_hash() {
     }).expect_err("capture_undo=true 内部 callback 必须失败");
     assert!(called, "必须到达安装后的内部 callback");
     assert_eq!(error, fatal);
-    assert!(game.poison_reason().is_none(), "内部 callback 保持无 poison 合同");
+    // 新版本采用 E2 DP1：World 发布后的 ordinary 晚失败必须 terminal。
+    // source9 原七例的无 poison 旧断言及首次结果永久保留于 07ee516e。
+    assert_eq!(game.poison_reason(), Some(&fatal));
+    oracle.poison_runtime_step(fatal.clone());
+    assert_eq!(game.business_state_hash().expect("callback 失败后业务 hash"), before_business);
     assert_eq!(game.last_retail_order_events(), prior_events.as_slice());
     assert_eq!(game.last_retail_decisions(), prior_decisions.as_slice());
-    assert_eq!(game.session_state_hash().expect("callback 失败后完整 hash"), before);
-    assert!(game.runtime_driver.is_none(), "失败候选的已推进 driver 必须丢弃");
+    assert_eq!(game.session_state_hash().expect("callback 失败后完整 hash"), oracle.session_state_hash().expect("仅 expected poison 的完整 hash"));
+    assert!(game.runtime_driver.is_some(), "E2 terminal driver 保留首错与已发布 raw 事实");
+    let world_tick = game.runtime_driver.as_ref().unwrap().lock().unwrap().world_committed_tick();
+    assert_eq!(game.step_via_runtime().unwrap_err(), fatal);
+    assert_eq!(game.runtime_driver.as_ref().unwrap().lock().unwrap().world_committed_tick(), world_tick,
+        "terminal 后健康门必须拒绝再次推进 World");
+    assert_eq!(game.save().unwrap_err(), fatal);
+}
+
+
+#[test]
+fn d2b_install_failure_preserves_exact_prior_vectors_and_expected_poison_hash() {
+    let (mut game, mut driver) = fixture(100);
+    group_reject_prior(&mut game, &mut driver);
+    let prior_events = game.last_retail_order_events().to_vec();
+    let prior_decisions = game.last_retail_decisions().to_vec();
+    let before_business = game.business_state_hash().unwrap();
+    let mut oracle = game.clone_for_tick_shadow().unwrap();
+    let world_before = driver.world_committed_tick();
+    let account_writes = driver.account_writes_for_test();
+    let personal_writes = driver.personal_installs_for_test();
+    game.inject_runtime_install_failure();
+    let error = game.runtime_step_with_install(&mut driver).unwrap_err();
+    assert!(matches!(&error, StepFatal::InvariantViolation { location, description }
+        if location == "runtime_mirror::prepare" && description.contains("安装失败注入")));
+    assert_eq!(driver.world_committed_tick(), world_before + 1, "World 已发布，Session candidate 未安装");
+    assert_eq!(driver.account_writes_for_test(), account_writes);
+    assert_eq!(driver.personal_installs_for_test(), personal_writes);
+    assert_eq!(game.last_retail_order_events(), prior_events);
+    assert_eq!(game.last_retail_decisions(), prior_decisions);
+    assert_eq!(game.business_state_hash().unwrap(), before_business);
+    oracle.poison_runtime_step(error);
+    assert_eq!(game.session_state_hash().unwrap(), oracle.session_state_hash().unwrap());
+}
+
+#[test]
+fn d2b_manual_outer_failure_never_publishes_or_clears_prior_batch() {
+    for outer in 0..3 {
+        let (mut game, mut driver) = fixture(100);
+        partial_fill(&mut game, &mut driver);
+        let prior_events = game.last_retail_order_events().to_vec();
+        let prior_decisions = game.last_retail_decisions().to_vec();
+        driver.set_day_end_validator_for_test(Box::new(|_| Err("D2b manual Drain拒绝".to_owned())));
+        let error = match outer {
+            0 => driver.day_end(&mut game).unwrap_err(),
+            1 => driver.day_end_with_runtime_market_day(&mut game).unwrap_err(),
+            _ => driver.day_end_with_market(&mut game).unwrap_err(),
+        };
+        assert!(error.contains("D2b manual Drain拒绝"));
+        assert_eq!(game.last_retail_order_events(), prior_events);
+        assert_eq!(game.last_retail_decisions(), prior_decisions);
+        assert_eq!(driver.collect_resting_facts().unwrap()[0].len(), 1);
+    }
+}
+
+#[test]
+fn d2b_successful_empty_tick_clears_both_vectors_and_report_does_not_retain_copy() {
+    let (mut game, mut driver) = fixture(100);
+    group_reject_prior(&mut game, &mut driver);
+    driver.defer_due_for_test_at(&[SELLER, BUYER], 100);
+    game.runtime_step_with_install(&mut driver).unwrap();
+    assert!(game.last_retail_order_events().is_empty());
+    assert!(game.last_retail_decisions().is_empty());
+    assert!(driver.world_report_log().iter().all(|record| record.retail.is_empty()));
+}
+
+
+#[test]
+fn d2b_each_successful_manual_outer_publishes_only_drain_and_clears_decisions() {
+    for outer in 0..3 {
+        let (mut game, mut driver) = fixture(2);
+        let order_id = partial_fill(&mut game, &mut driver);
+        driver.step_frame_equivalent(&mut game).unwrap();
+        driver.install_market_views(&mut game).unwrap();
+        driver.install_candles(&mut game).unwrap();
+        assert_eq!(game.tick(), 2);
+        if outer != 1 { game.advance_runtime_market_day(); }
+        match outer {
+            0 => driver.day_end(&mut game).unwrap(),
+            1 => driver.day_end_with_runtime_market_day(&mut game).unwrap(),
+            _ => driver.day_end_with_market(&mut game).unwrap(),
+        }
+        assert_eq!(game.last_retail_order_events(), &[
+            RetailOrderDiagnosticEvent::Canceled { account: BUYER, code: CODE, order_id, remaining_qty: 200 },
+        ]);
+        assert!(game.last_retail_decisions().is_empty(), "manual Drain 没有新的 observe，不能保留旧 decisions");
+        assert!(driver.collect_resting_facts().unwrap()[0].is_empty());
+    }
 }

@@ -1023,6 +1023,8 @@ pub enum UpMsg {
         /// 原随下一拍 DeskReport 迟到——receipt civil_date 取组装时点
         /// 成次日；应答捎带后 `trade_facts` 已 take，杜绝双报）。
         drained_trades: Vec<DeskTradeFact>,
+        /// 本次 Drain 自产的默认生命周期，不与 Tick ordinal 混域。
+        drained_retail: Vec<super::retail_lifecycle::RawFact>,
         /// 日界批：当日终 K（含收盘段——desk `drain_all` 收盘清算的
         /// reroll 产出；仅本次 Drain 实际执行收盘清算时携带（closing=0
         /// 几何/未跨日手动日结=None）。install 面/`DayBoundary` 事件的
@@ -1415,6 +1417,8 @@ pub struct DeskReport {
     pub view: std::sync::Arc<StockPublic>,
     /// 本轮双腿成交事实（TickFrame 事件映射输入；按成交序）。
     pub trades: Vec<DeskTradeFact>,
+    /// 原报告内的默认 minimal 生命周期；TradeRef 不跨报告解析。
+    pub retail: Vec<super::retail_lifecycle::RawFact>,
     /// 本轮生命周期事实（受理/撤单/到期）。
     pub lifecycle: Vec<DeskLifecycleFact>,
     /// 本轮回执明细（IntentRejected 映射输入）。
