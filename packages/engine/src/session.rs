@@ -14,6 +14,8 @@ mod civil_clock;
 mod company_assembly;
 mod stock_identity_view;
 pub use stock_identity_view::StockIdentityEntry;
+mod company_catalog_fault;
+pub use company_catalog_fault::company_catalog_fault;
 mod company_catalog_view;
 pub use company_catalog_view::{CompanyCatalogEntry, CompanyCatalogViewError};
 mod company_capability_views;

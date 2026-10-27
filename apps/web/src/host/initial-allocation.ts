@@ -1,5 +1,5 @@
 import { exact, field, record, values, safeU32 } from "./protocol/guards.ts";
-import { stockCodeOf } from "./protocol/stock-identity.ts";
+import type { CatalogResolver } from "./catalog-resolver.ts";
 
 import type { InitialAllocationCategory } from "../types/generated/InitialAllocationCategory.ts";
 
@@ -13,7 +13,7 @@ export type InitialAllocation = {
   }>;
 };
 
-export function parseInitialAllocation(value: unknown, expectedCodes: readonly string[]): InitialAllocation {
+export function parseInitialAllocation(value: unknown, expectedCodes: readonly string[], identity: CatalogResolver): InitialAllocation {
   const source = record(value, "初始分配响应");
   exact(source, ["stocks"], "初始分配响应");
   const seen = new Set<string>();
@@ -24,7 +24,7 @@ export function parseInitialAllocation(value: unknown, expectedCodes: readonly s
     // wire 的 code 为数值 StockId（ADR 0041）；摄入时译回代码串再与本次会话证券比对。
     const wireCode = field(stock, "code", path);
     if (typeof wireCode !== "number" || !Number.isSafeInteger(wireCode) || wireCode < 0) throw new Error(`${path}.code 必须是数值 StockId`);
-    const code = stockCodeOf(wireCode, `${path}.code`);
+    const code = identity.stockCode(wireCode, `${path}.code`);
     if (!expectedCodes.includes(code) || seen.has(code)) throw new Error(`${path}.code 不属于本次会话证券或重复`);
     seen.add(code);
     const float_shares = safeU32(stock.float_shares, `${path}.float_shares`);

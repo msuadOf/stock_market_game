@@ -1,0 +1,222 @@
+✔ 已排队恢复重启在catalog失败后失效，微任务drain后仍停机 (1.976897ms)
+✔ 仅完整baseline通过且handle/generation仍一致才重启 (0.260288ms)
+✔ direct host keeps the old running session when restored snapshot validation fails (3.311026ms)
+✔ worker keeps the old running session when restored snapshot validation fails (0.166555ms)
+✔ restore swaps authority only after the candidate snapshot succeeds (0.291528ms)
+✔ WasmSessionSlot 维持未就绪、generation 校验与重复 create 覆盖边界 (3.652026ms)
+✔ WasmSessionSlot create 的未初始化和 seed 校验保持原错误顺序 (0.314239ms)
+✔ WasmSessionSlot restore snapshot 失败清 candidate 并恢复运行意图 (0.494674ms)
+✔ WasmSessionSlot restore 先 snapshot、交换 authority 并推进 generation，再 drop 旧句柄 (0.3468ms)
+✔ WasmSessionSlot restore 旧 drop 失败仍保留已提交新 handle 与新 generation (0.280008ms)
+✔ WasmSessionSlot restore prepare 失败保留新 handle 与新 generation (0.33838ms)
+✔ WasmSessionSlot drop 失败保留句柄，成功才清空且不改变 generation (0.312869ms)
+✔ WasmSessionSlot candidate 清理失败保留原 handle，仍恢复运行意图并保留双错 (0.529156ms)
+✔ WasmSessionSlot restore 构造失败不清未创建的 candidate，仍恢复运行意图 (0.35988ms)
+✖ Worker 全部会话 caller 共用 owner，restore 完整回应先于 microtask restart (5.177821ms)
+✖ Worker restore提交前snapshot失败恢复旧运行，提交后prepare失败fatal关闭新会话 (0.608617ms)
+✖ 真实Worker restore已换handle后catalog故障保持3019，drain后不重启或发成功 (0.529955ms)
+✖ 真实Worker restore提交前snapshot失败按旧handle/generation恢复运行 (0.508035ms)
+✖ 真实Worker replace后旧drop失败属于已提交fatal，旧generation不能操作新handle (0.587218ms)
+✖ 真实Worker refresh目录fatal关闭当前handle以撤销独立intake能力 (0.522635ms)
+✖ 真实Worker已提交restore发送ingress失败fatal且不重启 (0.556046ms)
+✖ 真实Worker已提交restore发送restored失败fatal且不重启 (0.459913ms)
+✖ 真实Worker暂停旧会话的precommit恢复失败保持暂停 (0.68977ms)
+✖ 非目录可恢复structured故障维持既有stop与显错，不销毁当前handle (0.710551ms)
+✖ 真实Worker precommit snapshot与candidate cleanup双失败保旧身份并恢复运行且显两错 (0.491924ms)
+ℹ tests 25
+ℹ suites 0
+ℹ pass 14
+ℹ fail 11
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 282.899353
+
+✖ failing tests:
+
+test at apps/web/src/host/wasm-worker-ownership.test.ts:113:1
+✖ Worker 全部会话 caller 共用 owner，restore 完整回应先于 microtask restart (5.177821ms)
+  Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/agents/branch-completion/company-catalog-bc/restore-review-freeze-r3/apps/web/src/host/wasm-worker.ts' imported from /data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/agents/branch-completion/company-catalog-bc/restore-review-freeze-r3/apps/web/src/host/wasm-worker-ownership.test.ts
+      at finalizeResolution (node:internal/modules/esm/resolve:271:11)
+      at moduleResolve (node:internal/modules/esm/resolve:861:10)
+      at defaultResolve (node:internal/modules/esm/resolve:988:11)
+      at #cachedDefaultResolve (node:internal/modules/esm/loader:697:20)
+      at #resolveAndMaybeBlockOnLoaderThread (node:internal/modules/esm/loader:714:38)
+      at nextStep (node:internal/modules/customization_hooks:189:26)
+      at resolve (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/agents/branch-completion/company-catalog-bc/restore-review-freeze-r3/apps/web/src/host/wasm-worker-ownership.test.ts:87:14)
+      at nextStep (node:internal/modules/customization_hooks:189:26)
+      at resolveWithHooks (node:internal/modules/customization_hooks:417:10)
+      at ModuleLoader.resolveSync (node:internal/modules/esm/loader:736:14) {
+    code: 'ERR_MODULE_NOT_FOUND',
+    url: 'file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/agents/branch-completion/company-catalog-bc/restore-review-freeze-r3/apps/web/src/host/wasm-worker.ts?owner-test=1'
+  }
+
+test at apps/web/src/host/wasm-worker-ownership.test.ts:164:1
+✖ Worker restore提交前snapshot失败恢复旧运行，提交后prepare失败fatal关闭新会话 (0.608617ms)
+  Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/agents/branch-completion/company-catalog-bc/restore-review-freeze-r3/apps/web/src/host/wasm-worker.ts' imported from /data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/agents/branch-completion/company-catalog-bc/restore-review-freeze-r3/apps/web/src/host/wasm-worker-ownership.test.ts
+      at finalizeResolution (node:internal/modules/esm/resolve:271:11)
+      at moduleResolve (node:internal/modules/esm/resolve:861:10)
+      at defaultResolve (node:internal/modules/esm/resolve:988:11)
+      at #cachedDefaultResolve (node:internal/modules/esm/loader:697:20)
+      at #resolveAndMaybeBlockOnLoaderThread (node:internal/modules/esm/loader:714:38)
+      at nextStep (node:internal/modules/customization_hooks:189:26)
+      at resolve (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/agents/branch-completion/company-catalog-bc/restore-review-freeze-r3/apps/web/src/host/wasm-worker-ownership.test.ts:87:14)
+      at nextStep (node:internal/modules/customization_hooks:189:26)
+      at resolveWithHooks (node:internal/modules/customization_hooks:417:10)
+      at ModuleLoader.resolveSync (node:internal/modules/esm/loader:736:14) {
+    code: 'ERR_MODULE_NOT_FOUND',
+    url: 'file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/agents/branch-completion/company-catalog-bc/restore-review-freeze-r3/apps/web/src/host/wasm-worker.ts?owner-test=2'
+  }
+
+test at apps/web/src/host/wasm-worker-ownership.test.ts:186:1
+✖ 真实Worker restore已换handle后catalog故障保持3019，drain后不重启或发成功 (0.529955ms)
+  Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/agents/branch-completion/company-catalog-bc/restore-review-freeze-r3/apps/web/src/host/wasm-worker.ts' imported from /data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/agents/branch-completion/company-catalog-bc/restore-review-freeze-r3/apps/web/src/host/wasm-worker-ownership.test.ts
+      at finalizeResolution (node:internal/modules/esm/resolve:271:11)
+      at moduleResolve (node:internal/modules/esm/resolve:861:10)
+      at defaultResolve (node:internal/modules/esm/resolve:988:11)
+      at #cachedDefaultResolve (node:internal/modules/esm/loader:697:20)
+      at #resolveAndMaybeBlockOnLoaderThread (node:internal/modules/esm/loader:714:38)
+      at nextStep (node:internal/modules/customization_hooks:189:26)
+      at resolve (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/agents/branch-completion/company-catalog-bc/restore-review-freeze-r3/apps/web/src/host/wasm-worker-ownership.test.ts:87:14)
+      at nextStep (node:internal/modules/customization_hooks:189:26)
+      at resolveWithHooks (node:internal/modules/customization_hooks:417:10)
+      at ModuleLoader.resolveSync (node:internal/modules/esm/loader:736:14) {
+    code: 'ERR_MODULE_NOT_FOUND',
+    url: 'file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/agents/branch-completion/company-catalog-bc/restore-review-freeze-r3/apps/web/src/host/wasm-worker.ts?owner-test=3'
+  }
+
+test at apps/web/src/host/wasm-worker-ownership.test.ts:212:1
+✖ 真实Worker restore提交前snapshot失败按旧handle/generation恢复运行 (0.508035ms)
+  Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/agents/branch-completion/company-catalog-bc/restore-review-freeze-r3/apps/web/src/host/wasm-worker.ts' imported from /data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/agents/branch-completion/company-catalog-bc/restore-review-freeze-r3/apps/web/src/host/wasm-worker-ownership.test.ts
+      at finalizeResolution (node:internal/modules/esm/resolve:271:11)
+      at moduleResolve (node:internal/modules/esm/resolve:861:10)
+      at defaultResolve (node:internal/modules/esm/resolve:988:11)
+      at #cachedDefaultResolve (node:internal/modules/esm/loader:697:20)
+      at #resolveAndMaybeBlockOnLoaderThread (node:internal/modules/esm/loader:714:38)
+      at nextStep (node:internal/modules/customization_hooks:189:26)
+      at resolve (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/agents/branch-completion/company-catalog-bc/restore-review-freeze-r3/apps/web/src/host/wasm-worker-ownership.test.ts:87:14)
+      at nextStep (node:internal/modules/customization_hooks:189:26)
+      at resolveWithHooks (node:internal/modules/customization_hooks:417:10)
+      at ModuleLoader.resolveSync (node:internal/modules/esm/loader:736:14) {
+    code: 'ERR_MODULE_NOT_FOUND',
+    url: 'file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/agents/branch-completion/company-catalog-bc/restore-review-freeze-r3/apps/web/src/host/wasm-worker.ts?owner-test=4'
+  }
+
+test at apps/web/src/host/wasm-worker-ownership.test.ts:227:1
+✖ 真实Worker replace后旧drop失败属于已提交fatal，旧generation不能操作新handle (0.587218ms)
+  Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/agents/branch-completion/company-catalog-bc/restore-review-freeze-r3/apps/web/src/host/wasm-worker.ts' imported from /data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/agents/branch-completion/company-catalog-bc/restore-review-freeze-r3/apps/web/src/host/wasm-worker-ownership.test.ts
+      at finalizeResolution (node:internal/modules/esm/resolve:271:11)
+      at moduleResolve (node:internal/modules/esm/resolve:861:10)
+      at defaultResolve (node:internal/modules/esm/resolve:988:11)
+      at #cachedDefaultResolve (node:internal/modules/esm/loader:697:20)
+      at #resolveAndMaybeBlockOnLoaderThread (node:internal/modules/esm/loader:714:38)
+      at nextStep (node:internal/modules/customization_hooks:189:26)
+      at resolve (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/agents/branch-completion/company-catalog-bc/restore-review-freeze-r3/apps/web/src/host/wasm-worker-ownership.test.ts:87:14)
+      at nextStep (node:internal/modules/customization_hooks:189:26)
+      at resolveWithHooks (node:internal/modules/customization_hooks:417:10)
+      at ModuleLoader.resolveSync (node:internal/modules/esm/loader:736:14) {
+    code: 'ERR_MODULE_NOT_FOUND',
+    url: 'file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/agents/branch-completion/company-catalog-bc/restore-review-freeze-r3/apps/web/src/host/wasm-worker.ts?owner-test=5'
+  }
+
+test at apps/web/src/host/wasm-worker-ownership.test.ts:245:1
+✖ 真实Worker refresh目录fatal关闭当前handle以撤销独立intake能力 (0.522635ms)
+  Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/agents/branch-completion/company-catalog-bc/restore-review-freeze-r3/apps/web/src/host/wasm-worker.ts' imported from /data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/agents/branch-completion/company-catalog-bc/restore-review-freeze-r3/apps/web/src/host/wasm-worker-ownership.test.ts
+      at finalizeResolution (node:internal/modules/esm/resolve:271:11)
+      at moduleResolve (node:internal/modules/esm/resolve:861:10)
+      at defaultResolve (node:internal/modules/esm/resolve:988:11)
+      at #cachedDefaultResolve (node:internal/modules/esm/loader:697:20)
+      at #resolveAndMaybeBlockOnLoaderThread (node:internal/modules/esm/loader:714:38)
+      at nextStep (node:internal/modules/customization_hooks:189:26)
+      at resolve (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/agents/branch-completion/company-catalog-bc/restore-review-freeze-r3/apps/web/src/host/wasm-worker-ownership.test.ts:87:14)
+      at nextStep (node:internal/modules/customization_hooks:189:26)
+      at resolveWithHooks (node:internal/modules/customization_hooks:417:10)
+      at ModuleLoader.resolveSync (node:internal/modules/esm/loader:736:14) {
+    code: 'ERR_MODULE_NOT_FOUND',
+    url: 'file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/agents/branch-completion/company-catalog-bc/restore-review-freeze-r3/apps/web/src/host/wasm-worker.ts?owner-test=6'
+  }
+
+test at apps/web/src/host/wasm-worker-ownership.test.ts:266:3
+✖ 真实Worker已提交restore发送ingress失败fatal且不重启 (0.556046ms)
+  Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/agents/branch-completion/company-catalog-bc/restore-review-freeze-r3/apps/web/src/host/wasm-worker.ts' imported from /data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/agents/branch-completion/company-catalog-bc/restore-review-freeze-r3/apps/web/src/host/wasm-worker-ownership.test.ts
+      at finalizeResolution (node:internal/modules/esm/resolve:271:11)
+      at moduleResolve (node:internal/modules/esm/resolve:861:10)
+      at defaultResolve (node:internal/modules/esm/resolve:988:11)
+      at #cachedDefaultResolve (node:internal/modules/esm/loader:697:20)
+      at #resolveAndMaybeBlockOnLoaderThread (node:internal/modules/esm/loader:714:38)
+      at nextStep (node:internal/modules/customization_hooks:189:26)
+      at resolve (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/agents/branch-completion/company-catalog-bc/restore-review-freeze-r3/apps/web/src/host/wasm-worker-ownership.test.ts:87:14)
+      at nextStep (node:internal/modules/customization_hooks:189:26)
+      at resolveWithHooks (node:internal/modules/customization_hooks:417:10)
+      at ModuleLoader.resolveSync (node:internal/modules/esm/loader:736:14) {
+    code: 'ERR_MODULE_NOT_FOUND',
+    url: 'file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/agents/branch-completion/company-catalog-bc/restore-review-freeze-r3/apps/web/src/host/wasm-worker.ts?owner-test=7'
+  }
+
+test at apps/web/src/host/wasm-worker-ownership.test.ts:266:3
+✖ 真实Worker已提交restore发送restored失败fatal且不重启 (0.459913ms)
+  Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/agents/branch-completion/company-catalog-bc/restore-review-freeze-r3/apps/web/src/host/wasm-worker.ts' imported from /data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/agents/branch-completion/company-catalog-bc/restore-review-freeze-r3/apps/web/src/host/wasm-worker-ownership.test.ts
+      at finalizeResolution (node:internal/modules/esm/resolve:271:11)
+      at moduleResolve (node:internal/modules/esm/resolve:861:10)
+      at defaultResolve (node:internal/modules/esm/resolve:988:11)
+      at #cachedDefaultResolve (node:internal/modules/esm/loader:697:20)
+      at #resolveAndMaybeBlockOnLoaderThread (node:internal/modules/esm/loader:714:38)
+      at nextStep (node:internal/modules/customization_hooks:189:26)
+      at resolve (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/agents/branch-completion/company-catalog-bc/restore-review-freeze-r3/apps/web/src/host/wasm-worker-ownership.test.ts:87:14)
+      at nextStep (node:internal/modules/customization_hooks:189:26)
+      at resolveWithHooks (node:internal/modules/customization_hooks:417:10)
+      at ModuleLoader.resolveSync (node:internal/modules/esm/loader:736:14) {
+    code: 'ERR_MODULE_NOT_FOUND',
+    url: 'file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/agents/branch-completion/company-catalog-bc/restore-review-freeze-r3/apps/web/src/host/wasm-worker.ts?owner-test=8'
+  }
+
+test at apps/web/src/host/wasm-worker-ownership.test.ts:287:1
+✖ 真实Worker暂停旧会话的precommit恢复失败保持暂停 (0.68977ms)
+  Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/agents/branch-completion/company-catalog-bc/restore-review-freeze-r3/apps/web/src/host/wasm-worker.ts' imported from /data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/agents/branch-completion/company-catalog-bc/restore-review-freeze-r3/apps/web/src/host/wasm-worker-ownership.test.ts
+      at finalizeResolution (node:internal/modules/esm/resolve:271:11)
+      at moduleResolve (node:internal/modules/esm/resolve:861:10)
+      at defaultResolve (node:internal/modules/esm/resolve:988:11)
+      at #cachedDefaultResolve (node:internal/modules/esm/loader:697:20)
+      at #resolveAndMaybeBlockOnLoaderThread (node:internal/modules/esm/loader:714:38)
+      at nextStep (node:internal/modules/customization_hooks:189:26)
+      at resolve (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/agents/branch-completion/company-catalog-bc/restore-review-freeze-r3/apps/web/src/host/wasm-worker-ownership.test.ts:87:14)
+      at nextStep (node:internal/modules/customization_hooks:189:26)
+      at resolveWithHooks (node:internal/modules/customization_hooks:417:10)
+      at ModuleLoader.resolveSync (node:internal/modules/esm/loader:736:14) {
+    code: 'ERR_MODULE_NOT_FOUND',
+    url: 'file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/agents/branch-completion/company-catalog-bc/restore-review-freeze-r3/apps/web/src/host/wasm-worker.ts?owner-test=9'
+  }
+
+test at apps/web/src/host/wasm-worker-ownership.test.ts:304:1
+✖ 非目录可恢复structured故障维持既有stop与显错，不销毁当前handle (0.710551ms)
+  Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/agents/branch-completion/company-catalog-bc/restore-review-freeze-r3/apps/web/src/host/wasm-worker.ts' imported from /data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/agents/branch-completion/company-catalog-bc/restore-review-freeze-r3/apps/web/src/host/wasm-worker-ownership.test.ts
+      at finalizeResolution (node:internal/modules/esm/resolve:271:11)
+      at moduleResolve (node:internal/modules/esm/resolve:861:10)
+      at defaultResolve (node:internal/modules/esm/resolve:988:11)
+      at #cachedDefaultResolve (node:internal/modules/esm/loader:697:20)
+      at #resolveAndMaybeBlockOnLoaderThread (node:internal/modules/esm/loader:714:38)
+      at nextStep (node:internal/modules/customization_hooks:189:26)
+      at resolve (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/agents/branch-completion/company-catalog-bc/restore-review-freeze-r3/apps/web/src/host/wasm-worker-ownership.test.ts:87:14)
+      at nextStep (node:internal/modules/customization_hooks:189:26)
+      at resolveWithHooks (node:internal/modules/customization_hooks:417:10)
+      at ModuleLoader.resolveSync (node:internal/modules/esm/loader:736:14) {
+    code: 'ERR_MODULE_NOT_FOUND',
+    url: 'file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/agents/branch-completion/company-catalog-bc/restore-review-freeze-r3/apps/web/src/host/wasm-worker.ts?owner-test=10'
+  }
+
+test at apps/web/src/host/wasm-worker-ownership.test.ts:319:1
+✖ 真实Worker precommit snapshot与candidate cleanup双失败保旧身份并恢复运行且显两错 (0.491924ms)
+  Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/agents/branch-completion/company-catalog-bc/restore-review-freeze-r3/apps/web/src/host/wasm-worker.ts' imported from /data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/agents/branch-completion/company-catalog-bc/restore-review-freeze-r3/apps/web/src/host/wasm-worker-ownership.test.ts
+      at finalizeResolution (node:internal/modules/esm/resolve:271:11)
+      at moduleResolve (node:internal/modules/esm/resolve:861:10)
+      at defaultResolve (node:internal/modules/esm/resolve:988:11)
+      at #cachedDefaultResolve (node:internal/modules/esm/loader:697:20)
+      at #resolveAndMaybeBlockOnLoaderThread (node:internal/modules/esm/loader:714:38)
+      at nextStep (node:internal/modules/customization_hooks:189:26)
+      at resolve (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/agents/branch-completion/company-catalog-bc/restore-review-freeze-r3/apps/web/src/host/wasm-worker-ownership.test.ts:87:14)
+      at nextStep (node:internal/modules/customization_hooks:189:26)
+      at resolveWithHooks (node:internal/modules/customization_hooks:417:10)
+      at ModuleLoader.resolveSync (node:internal/modules/esm/loader:736:14) {
+    code: 'ERR_MODULE_NOT_FOUND',
+    url: 'file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/agents/branch-completion/company-catalog-bc/restore-review-freeze-r3/apps/web/src/host/wasm-worker.ts?owner-test=11'
+  }

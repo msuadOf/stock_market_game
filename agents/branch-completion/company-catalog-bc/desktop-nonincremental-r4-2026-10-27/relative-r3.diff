@@ -1,0 +1,14 @@
+diff --git a/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/agents/branch-completion/company-catalog-bc/desktop-ready/apps/desktop/src-tauri/src/actor/protocol_tests.rs b/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/desktop/src-tauri/src/actor/protocol_tests.rs
+index 220fe54e..c9267195 100644
+--- a/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/agents/branch-completion/company-catalog-bc/desktop-ready/apps/desktop/src-tauri/src/actor/protocol_tests.rs
++++ b/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/desktop/src-tauri/src/actor/protocol_tests.rs
+@@ -281,7 +281,8 @@ fn committed_restore_catalog_failure_keeps_generation_and_closes_desktop_actor()
+     setup.npcs.inst_count = 0;
+     setup.history_len = 1;
+     setup.stocks[0].float_shares = 0;
+-    let game = ProtocolSession::new(setup, 7).unwrap();
++    let mut game = ProtocolSession::new(setup, 7).unwrap();
++    game.end_civil_day_update().unwrap();
+     let saved = game.save().unwrap();
+     let mut harness = ActorHarness::new_protocol_actor(
+         game,

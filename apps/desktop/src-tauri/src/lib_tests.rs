@@ -393,3 +393,28 @@ async fn diagnostics_ipc_rejects_malformed_account_and_stale_generation_before_r
     let stopped = invoke_json(&webview, "stop_session", json!({ "sessionId": session_id }));
     assert_eq!(stopped, Ok(Value::Null));
 }
+
+#[test]
+fn catalog_ipc_error_keeps_structured_fault_and_existing_string_shape() {
+    use crate::{map_baseline_error, BaselineIpcError};
+    let leaf = engine::session::CompanyCatalogViewError::UnknownListedStock {
+        company: engine::company::CompanyId(7),
+    };
+    let error =
+        crate::actor::BaselineRequestError::Baseline(crate::actor::BaselineError::Catalog(leaf));
+    let value = serde_json::to_value(map_baseline_error(
+        error,
+        "restore",
+        "desktop.actor.restore",
+    ))
+    .unwrap();
+    assert_eq!(value["code"], "CATALOG_BASELINE_FAILED");
+    assert_eq!(
+        value["context"]["fault"],
+        serde_json::json!({"code":3019,"context":[7]})
+    );
+    assert_eq!(
+        serde_json::to_value(BaselineIpcError::Existing("旧错误".to_owned())).unwrap(),
+        serde_json::json!("旧错误")
+    );
+}

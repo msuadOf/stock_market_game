@@ -37,3 +37,20 @@
 - 2026-10-26 从原 `cat > packages/engine/src/session/stock_identity_view.rs` tool 调用体逐字恢复 `stock-red-source-recovered-from-tool.txt`；这是**事后从原调用恢复的副本**，不是当时落盘的 snapshot。SHA-256 `63488f07879c27257311faad93e5171e7aaa4d7e0037881818178c236a016778` 与红前原SHA匹配；原临时注释亦保留，不通过猜测内容凑SHA。
 - green/export CPU 采样过晚，仅采到 shell/rg，未采到 cargo/rustc；`-j8` 仅证明显式并发参数，不能据此声称实际满核。red采样有rustc，单crate阶段有编译器固有限制。后续批次应在构建在途时采样。
 - 真实 green/export binary 与生成物已由未实施者分别短跑及逐字核对；上述原红原件与采样局限仍保留，不用后验负控追认原始TDD。
+
+## 最新只读请求授权与剩余交易门禁
+
+协调者传达 root 追加授权：同 host/generation 的只读 query code→StockId 与响应 StockId→code 共同使用 actual resolver，wire 字段与数值形状不改。
+本片已静态接入 initial-allocation、NPC diagnostics、working-orders、stock-history、Worker market-history/current-minute-history/personal-trade-history/personal-confirmations；后三历史源沿同 GameSession 的 StockId，不另造历史目录。
+Remote/Tauri 当前仅支持 stock-history/initial-allocation/NPC/working-orders；其 W3 market/currentMinute/personal/confirmations/VWAP 方法仍按原有合同显式 unsupported，不伪报支持。
+
+交易 intent 的剩余静态点：`protocol/stock-identity.ts::wireIntentOf` 三个分支仍调用 `config/stock-ids.ts::stockIdOf`，由 WorkerHost/RemoteHost/TauriHost 的 submitIntent 共同调用。
+该出站交易适配不夹入本片；必须作为后续真实交易旅程硬门，不能以本片只读身份测试声称单股自定义局下单已正确。
+
+## 2026-10-27 当前状态补充（优先于早期在途描述）
+
+- 前文“当前未运行 Cargo/types:generate”仅是当时状态；StockIdentity 已完成实际生成及上述 engine 核证，三宿主 Rust 正在由协调者排槽代核，本 writer 未再启动 Cargo。
+- 前文 intent 仍静态的剩余门已由后续明确批准的四文件最小适配实现；真实红、冻结72/72、独审批准与额外115/115分别见 `intent-slice/` 及相关原件。不得据此声称 SOURCE/R4、真实三宿主交易旅程完成。
+- r3 恢复边界已获窄批准；lint 的 unsafe finally 等价改写为 r4，25/25通过，当前仍等 r4 增量独审，不冒用 r3 对当前 r4 的批准。
+- r4 当前 Web 全 app 类型检查已重新运行，`tsc-full-r4-bound.receipt.json` 显式记录 exit0、8.058s、Node25.8.2/TypeScript6.0.3、cwd、完整 command、源码清单哈希和前后无漂移。复用已有 node_modules，无 clean install 声明。旧 `tsc-full-after-fixtures` 空 stdout 原件及更早 timeout 均保留，不补造旧 receipt。
+- `app-lint-baseline/` 对 A 前、A 后及当前 App 实际同配置 lint，三版本均恰有三条 hostRef exhaustive-deps；闭包/合同逐字核对未受本片新 state 影响。完整 lint 不通过；受改非 App 文件另有 `web-lint2` 通过记录。具体判断交完整终审。

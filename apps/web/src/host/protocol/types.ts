@@ -1,3 +1,4 @@
+import type { CatalogResolver } from "../catalog-resolver.ts";
 import type { ContinuousPoint } from "../../types/generated/ContinuousPoint.ts";
 import type { EngineUpdate } from "../../types/generated/EngineUpdate.ts";
 import type { PausePreferences } from "../../types/generated/PausePreferences.ts";
@@ -21,6 +22,7 @@ export type ProtocolCursor = {
 };
 
 export type ProtocolState = {
+  readonly catalogResolver: CatalogResolver;
   readonly cursor: ProtocolCursor;
   readonly snapshot: CodedSnapshot;
   readonly securities: readonly StockSpec[];
@@ -105,8 +107,9 @@ export class ProtocolError extends Error {
   }
 }
 
-export function createProtocolState(snapshot: CodedSnapshot, generation: string): ProtocolState {
+export function createProtocolState(snapshot: CodedSnapshot, generation: string, catalogResolver: CatalogResolver): ProtocolState {
   return {
+    catalogResolver,
     cursor: { generation, tick: snapshot.tick, seq: snapshot.seq },
     snapshot,
     securities: [],

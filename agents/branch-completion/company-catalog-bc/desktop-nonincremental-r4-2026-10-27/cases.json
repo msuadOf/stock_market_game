@@ -1,0 +1,59 @@
+{
+  "results": [
+    {
+      "name": "actor::protocol_tests::baseline_catalogs_match_actual_desktop_session",
+      "command": [
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/company-catalog-bc/desktop-r4-sealed/desktop-tests",
+        "actor::protocol_tests::baseline_catalogs_match_actual_desktop_session",
+        "--exact",
+        "--nocapture",
+        "--test-threads=8"
+      ],
+      "exitCode": 0,
+      "error": null,
+      "wallSeconds": 0.2889950480000007
+    },
+    {
+      "name": "actor::protocol_tests::baseline_error_source_chain_retains_typed_catalog_leaf",
+      "command": [
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/company-catalog-bc/desktop-r4-sealed/desktop-tests",
+        "actor::protocol_tests::baseline_error_source_chain_retains_typed_catalog_leaf",
+        "--exact",
+        "--nocapture",
+        "--test-threads=8"
+      ],
+      "exitCode": 0,
+      "error": null,
+      "wallSeconds": 0.029002857000000402
+    },
+    {
+      "name": "actor::protocol_tests::committed_restore_catalog_failure_keeps_generation_and_closes_desktop_actor",
+      "command": [
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/company-catalog-bc/desktop-r4-sealed/desktop-tests",
+        "actor::protocol_tests::committed_restore_catalog_failure_keeps_generation_and_closes_desktop_actor",
+        "--exact",
+        "--nocapture",
+        "--test-threads=8"
+      ],
+      "exitCode": 0,
+      "error": null,
+      "wallSeconds": 0.46586081600000034
+    },
+    {
+      "name": "lib_tests::catalog_ipc_error_keeps_structured_fault_and_existing_string_shape",
+      "command": [
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/company-catalog-bc/desktop-r4-sealed/desktop-tests",
+        "lib_tests::catalog_ipc_error_keeps_structured_fault_and_existing_string_shape",
+        "--exact",
+        "--nocapture",
+        "--test-threads=8"
+      ],
+      "exitCode": 0,
+      "error": null,
+      "wallSeconds": 0.023320434000000206
+    }
+  ],
+  "binarySha256": "9b85dbeaa5ce285eed6644760f8beffc876d17dc4fa12cbd550d2e21dcdd3e18",
+  "deadlineEachMs": 10000,
+  "concurrentProcesses": 4
+}

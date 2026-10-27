@@ -1,0 +1,33 @@
+✔ 已排队恢复重启在catalog失败后失效，微任务drain后仍停机 (2.110771ms)
+✔ 仅完整baseline通过且handle/generation仍一致才重启 (0.258628ms)
+✔ direct host keeps the old running session when restored snapshot validation fails (3.355947ms)
+✔ worker keeps the old running session when restored snapshot validation fails (0.165765ms)
+✔ restore swaps authority only after the candidate snapshot succeeds (0.326399ms)
+✔ WasmSessionSlot 维持未就绪、generation 校验与重复 create 覆盖边界 (3.716207ms)
+✔ WasmSessionSlot create 的未初始化和 seed 校验保持原错误顺序 (0.256978ms)
+✔ WasmSessionSlot restore snapshot 失败清 candidate 并恢复运行意图 (0.485304ms)
+✔ WasmSessionSlot restore 先 snapshot、交换 authority 并推进 generation，再 drop 旧句柄 (0.31903ms)
+✔ WasmSessionSlot restore 旧 drop 失败仍保留已提交新 handle 与新 generation (0.34339ms)
+✔ WasmSessionSlot restore prepare 失败保留新 handle 与新 generation (0.33941ms)
+✔ WasmSessionSlot drop 失败保留句柄，成功才清空且不改变 generation (0.34352ms)
+✔ WasmSessionSlot candidate 清理失败保留原 handle，仍恢复运行意图并保留双错 (0.511005ms)
+✔ WasmSessionSlot restore 构造失败不清未创建的 candidate，仍恢复运行意图 (0.34445ms)
+✔ Worker 全部会话 caller 共用 owner，restore 完整回应先于 microtask restart (79.808075ms)
+✔ Worker restore提交前snapshot失败恢复旧运行，提交后prepare失败fatal关闭新会话 (7.764345ms)
+✔ 真实Worker restore已换handle后catalog故障保持3019，drain后不重启或发成功 (6.879369ms)
+✔ 真实Worker restore提交前snapshot失败按旧handle/generation恢复运行 (6.091176ms)
+✔ 真实Worker replace后旧drop失败属于已提交fatal，旧generation不能操作新handle (7.808396ms)
+✔ 真实Worker refresh目录fatal关闭当前handle以撤销独立intake能力 (5.555771ms)
+✔ 真实Worker已提交restore发送ingress失败fatal且不重启 (6.800867ms)
+✔ 真实Worker已提交restore发送restored失败fatal且不重启 (6.473577ms)
+✔ 真实Worker暂停旧会话的precommit恢复失败保持暂停 (7.451705ms)
+✔ 非目录可恢复structured故障维持既有stop与显错，不销毁当前handle (5.619802ms)
+✔ 真实Worker precommit snapshot与candidate cleanup双失败保旧身份并恢复运行且显两错 (6.484988ms)
+ℹ tests 25
+ℹ suites 0
+ℹ pass 25
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 386.077425

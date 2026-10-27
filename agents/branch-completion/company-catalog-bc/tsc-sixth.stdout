@@ -1,0 +1,2 @@
+apps/web/src/host/wasm-worker.ts(10,1): error TS6133: 'stockIdOf' is declared but its value is never read.
+apps/web/src/host/wasm-worker.ts(436,142): error TS2345: Argument of type 'string' is not assignable to parameter of type 'number'.

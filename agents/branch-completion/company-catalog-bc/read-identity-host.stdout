@@ -1,0 +1,10 @@
+✔ 实际单股只读请求发StockId0，initialAllocation与NPC诊断回相同证券 (2.581772ms)
+✔ 真实WorkerHost只读请求按restore后实际子集发原StockId并拒绝旧响应 (78.335223ms)
+ℹ tests 2
+ℹ suites 0
+ℹ pass 2
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 307.920077

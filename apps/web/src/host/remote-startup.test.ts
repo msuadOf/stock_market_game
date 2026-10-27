@@ -1,3 +1,4 @@
+import { defaultCatalogFixture, catalogWireFixture } from "./catalog-test-fixture.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { SessionSetup } from "../types/engine.ts";
@@ -32,12 +33,12 @@ async function fixture(deliver: (socket: WebSocket) => void, loadResponse?: () =
 
 test("remote startup restores and caches the authoritative baseline without running the market", async (context) => {
   context.mock.timers.enable({ apis: ["setTimeout"] });
-  const { host, requests, connections, closes } = await fixture((socket) => socket.onmessage?.({ data: JSON.stringify({ Baseline: {
+  const { host, requests, connections, closes } = await fixture((socket) => socket.onmessage?.({ data: JSON.stringify({ Baseline: { ...catalogWireFixture(snapshot),
     timeline_generation: 2, snapshot, civil_date: "2030-01-02", public_revision: 0, public_report_ids: [],
   } }) } as MessageEvent));
   try {
     await host.load({ daily: true });
-    assert.deepEqual(host.snapshot(), parseProtocolSnapshot(snapshot, "expected baseline"));
+    assert.deepEqual(host.snapshot(), parseProtocolSnapshot(snapshot, "expected baseline", defaultCatalogFixture));
     assert.equal(connections(), 1);
     assert.equal(requests.some(({ url }) => url.endsWith("/api/running")), false);
     const received: unknown[] = [];

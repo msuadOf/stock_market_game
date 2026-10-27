@@ -201,6 +201,8 @@ pub struct HostFailure {
 pub struct FailureContext {
     pub operation: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub fault: Option<engine::ValidationFault>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub tick: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub seq: Option<u64>,
@@ -287,6 +289,7 @@ impl FailureContext {
     fn new(operation: &'static str) -> Self {
         Self {
             operation,
+            fault: None,
             tick: None,
             seq: None,
             day: None,
@@ -302,6 +305,27 @@ impl From<engine::session::StepFatal> for HostFailure {
 }
 
 impl HostFailure {
+    pub(crate) fn catalog(
+        error: &engine::session::CompanyCatalogViewError,
+        operation: &'static str,
+        location: &'static str,
+    ) -> Self {
+        let mut context = FailureContext::new(operation);
+        context.fault = Some(engine::session::company_catalog_fault(error));
+        Self {
+            code: "CATALOG_BASELINE_FAILED",
+            message: "公开公司身份目录构造失败".to_owned(),
+            r#where: location.to_owned(),
+            cause: None,
+            context,
+            recoverable: false,
+            recovery_actions: vec![
+                "停止当前提交并重新同步权威会话；仍失败则重开有效日终档或新局",
+                "复制错误详情反馈",
+            ],
+        }
+    }
+
     fn at_session(mut self, session: &ProtocolSession) -> Self {
         self.context.tick = Some(session.tick());
         self.context.seq = Some(session.seq());
@@ -418,6 +442,49 @@ fn step_update(handle: u32) -> Result<EngineUpdate, StepUpdateError> {
 #[wasm_bindgen]
 pub fn snapshot(handle: u32) -> Result<JsValue, JsValue> {
     with_session(handle, |sess| to_js(&sess.snapshot()))
+}
+
+#[wasm_bindgen]
+pub fn stock_catalog_view(handle: u32) -> Result<JsValue, JsValue> {
+    with_session(handle, |session| to_js(&session.stock_catalog_view()))
+}
+
+#[wasm_bindgen]
+pub fn company_catalog_view(handle: u32) -> Result<JsValue, JsValue> {
+    with_session(handle, |session| {
+        let catalog = session.company_catalog_view();
+        match finish_company_catalog(session, catalog) {
+            Ok(catalog) => to_js(&catalog),
+            Err(failure) => Err(to_js(&failure)?),
+        }
+    })
+}
+
+fn finish_company_catalog(
+    session: &ProtocolSession,
+    catalog: Result<
+        Vec<engine::session::CompanyCatalogEntry>,
+        engine::session::CompanyCatalogViewError,
+    >,
+) -> Result<Vec<engine::session::CompanyCatalogEntry>, HostFailure> {
+    catalog.map_err(|error| {
+        let mut failure = HostFailure::catalog(
+            &error,
+            "company_catalog_view",
+            "web-wasm.company_catalog_view",
+        );
+        if let Err(cleanup_error) = session.shared_ingress().close() {
+            failure.cause = Some(Box::new(FailureCause {
+                code: "CATALOG_INGRESS_CLOSE_FAILED",
+                message: "目录故障后关闭 ingress 失败".to_owned(),
+                cause: failure_cause(&cleanup_error),
+            }));
+        }
+        failure.context.tick = Some(session.tick());
+        failure.context.seq = Some(session.seq());
+        failure.context.day = Some(session.day());
+        failure
+    })
 }
 
 #[wasm_bindgen]
@@ -848,5 +915,25 @@ mod error_layout_tests {
     #[test]
     fn step_update_error_keeps_fatal_payload_indirect() {
         assert!(std::mem::size_of::<StepUpdateError>() <= 2 * std::mem::size_of::<String>());
+    }
+}
+
+#[cfg(test)]
+mod catalog_boundary_tests {
+    use super::*;
+    #[test]
+    fn catalog_failure_keeps_numeric_company_context() {
+        let error = engine::session::CompanyCatalogViewError::UnknownListedStock {
+            company: engine::company::CompanyId(7),
+        };
+        let failure = HostFailure::catalog(
+            &error,
+            "company_catalog_view",
+            "web-wasm.company_catalog_view",
+        );
+        assert_eq!(
+            serde_json::to_value(failure).unwrap()["context"]["fault"],
+            serde_json::json!({"code":3019,"context":[7]})
+        );
     }
 }

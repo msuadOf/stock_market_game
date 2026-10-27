@@ -1,0 +1,364 @@
+✖ disposed 公司实例的同 generation 晚到页、by-id 和失败不能污染新局 (8.359301ms)
+✔ Given a normalized tick frame, when public metadata advances, then company coverage follows its protocol cursor (2.964709ms)
+✔ Given a CivilUpdate refresh, when accepted, then the coordinator installs its authoritative public date (1.945811ms)
+✖ rejects delayed prior-session page and by-id responses while accepting current session data (1.694484ms)
+✔ reports malformed public DTOs as explicit query errors and unavailable capability separately (0.501933ms)
+✔ rejects public reports that violate shared opaque ID, decimal, or second-of-day contracts (1.15218ms)
+✔ refreshes an already cached company after a disclosure before advancing coverage (8.907845ms)
+✖ does not refresh a company absent from the cache (0.552875ms)
+✔ rejects a TickFrame coverage gap so the host can deliver a fresh baseline (0.601266ms)
+✔ accepts a multi-event TickFrame whose exclusive coverage cursor is continuous (0.38335ms)
+✔ rejects a reversed empty TickFrame range before it can desynchronize the coordinator (0.286528ms)
+✔ accepts reordered TickFrame events after protocol normalization restores canonical seq order (0.76085ms)
+✔ accepts reordered CivilUpdate events and facts after protocol normalization (3.255717ms)
+✔ 同 key force 请求替换后旧成功或失败的 finally 不删除新请求 (1.381066ms)
+✔ 页和 by-id ticket 分别去重，清理后不复用旧 requestSequence (0.151834ms)
+✔ 缺少 company capability 的页和 by-id 请求立即结束 ticket (0.247717ms)
+✔ Given a CivilUpdate barrier, when reduced before a next tick, then it refreshes authority and preserves seq continuity (9.127882ms)
+✔ Given CivilUpdate refresh history, when reduced, then it does not replay historical effects (1.374957ms)
+✔ Given two CivilDateAdvanced facts in one barrier, when reduced, then it rejects the ambiguous barrier atomically (1.52858ms)
+✔ Given an AfterClose refresh whose history does not start at the settled-day first tick, when reduced, then it rejects atomically (1.259354ms)
+✖ ProtocolCoordinator cursor 错误保留已知 actual/expected generation、tick 和 seq (4.360575ms)
+✖ ProtocolCoordinator 真实复制反馈保留公开游标且未知或双 variant 不猜 expected tick (0.588105ms)
+✖ ProtocolCoordinator onApplied 抛错时反馈引用本次输入 cursor，不捏造下一包 expected (0.485692ms)
+✖ Given a three-frame protocol batch, when the coordinator accepts it, then it publishes one reduction with every frame (0.430541ms)
+✖ Given an exact retry, when the coordinator accepts it, then it publishes nothing (0.728579ms)
+✖ Given malformed or stale-generation protocol updates, when accepted, then the coordinator preserves state and reports a typed failure (0.555454ms)
+✖ Given a fresh baseline after resync, when a new generation update arrives, then prior replay history is discarded (0.513543ms)
+✖ Given an already-published tick batch, when a CivilUpdate shares its tick barrier, then the coordinator accepts it (0.573216ms)
+✖ Given three frames including an empty one, when reduced, then every frame and timeseries survives (6.144953ms)
+✖ Given facts and events reversed together, when replayed, then it is exact and emits no effects (0.710669ms)
+✖ Given an event-fact pair moved between valid frames, when replayed, then it rejects changed tick boundaries (0.817081ms)
+✖ Given a coherent mutation ending at an accepted cursor, when replayed, then it rejects PROTOCOL_REPLAY (5.058494ms)
+✔ Given missing, duplicate, or mutated facts, when reduced, then input state remains unchanged (1.660813ms)
+✔ Given a snapshot mismatch or cursor gap, when reduced, then input state remains unchanged (1.12307ms)
+✔ Given a tick or sequence gap inside one batch, when reduced, then the whole batch is rejected (0.924375ms)
+✖ Given reversed fact arrays, when reduced, then effects and canonical state are invariant (0.667108ms)
+✖ Given JSON and WASM Map forms, when reduced, then they produce equal state (3.076832ms)
+✔ Given null final snapshot or a valid empty frame, when reduced, then the cursor advances without replacing authority (1.258613ms)
+ℹ tests 38
+ℹ suites 0
+ℹ pass 21
+ℹ fail 17
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 313.163238
+
+✖ failing tests:
+
+test at apps/web/src/host/company-query-coordinator.test.ts:62:1
+✖ disposed 公司实例的同 generation 晚到页、by-id 和失败不能污染新局 (8.359301ms)
+  Error: 公司协调器已经关闭
+      at CompanyQueryCoordinator.prepareBaseline (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/company-query-coordinator.ts:97:30)
+      at CompanyQueryCoordinator.installBaseline (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/company-query-coordinator.ts:107:25)
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/company-query-coordinator.test.ts:100:9)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3)
+
+test at apps/web/src/host/company-query-coordinator.test.ts:131:1
+✖ rejects delayed prior-session page and by-id responses while accepting current session data (1.694484ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  0 !== 2
+  
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/company-query-coordinator.test.ts:158:10)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 0,
+    expected: 2,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at apps/web/src/host/company-query-coordinator.test.ts:214:1
+✖ does not refresh a company absent from the cache (0.552875ms)
+  Error: 披露 CompanyId 必须是规范 u32 串
+      at CompanyQueryCoordinator.acceptEvents (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/company-query-coordinator.ts:209:63)
+      at CompanyQueryCoordinator.acceptFrame (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/company-query-coordinator.ts:181:10)
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/company-query-coordinator.test.ts:223:15)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7)
+
+test at apps/web/src/host/protocol-coordinator.test.ts:27:1
+✖ ProtocolCoordinator cursor 错误保留已知 actual/expected generation、tick 和 seq (4.360575ms)
+  TypeError: Cannot read properties of undefined (reading 'companyCatalog')
+      at ProtocolCoordinator.installBaseline (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/protocol-coordinator.ts:123:167)
+      at ProtocolCoordinator.accept (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/protocol-coordinator.ts:93:14)
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/protocol-coordinator.test.ts:30:15)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.start (node:internal/test_runner/test:1096:17)
+      at startSubtestAfterBootstrap (node:internal/test_runner/harness:385:17)
+
+test at apps/web/src/host/protocol-coordinator.test.ts:39:1
+✖ ProtocolCoordinator 真实复制反馈保留公开游标且未知或双 variant 不猜 expected tick (0.588105ms)
+  TypeError: Cannot read properties of undefined (reading 'companyCatalog')
+      at ProtocolCoordinator.installBaseline (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/protocol-coordinator.ts:123:167)
+      at ProtocolCoordinator.accept (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/protocol-coordinator.ts:93:14)
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/protocol-coordinator.test.ts:42:15)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3)
+
+test at apps/web/src/host/protocol-coordinator.test.ts:59:1
+✖ ProtocolCoordinator onApplied 抛错时反馈引用本次输入 cursor，不捏造下一包 expected (0.485692ms)
+  TypeError: Cannot read properties of undefined (reading 'companyCatalog')
+      at ProtocolCoordinator.installBaseline (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/protocol-coordinator.ts:123:167)
+      at ProtocolCoordinator.accept (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/protocol-coordinator.ts:93:14)
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/protocol-coordinator.test.ts:62:15)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7)
+
+test at apps/web/src/host/protocol-coordinator.test.ts:73:1
+✖ Given a three-frame protocol batch, when the coordinator accepts it, then it publishes one reduction with every frame (0.430541ms)
+  TypeError: Cannot read properties of undefined (reading 'companyCatalog')
+      at ProtocolCoordinator.installBaseline (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/protocol-coordinator.ts:123:167)
+      at ProtocolCoordinator.accept (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/protocol-coordinator.ts:93:14)
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/protocol-coordinator.test.ts:81:15)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7)
+
+test at apps/web/src/host/protocol-coordinator.test.ts:97:1
+✖ Given an exact retry, when the coordinator accepts it, then it publishes nothing (0.728579ms)
+  TypeError: Cannot read properties of undefined (reading 'companyCatalog')
+      at ProtocolCoordinator.installBaseline (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/protocol-coordinator.ts:123:167)
+      at ProtocolCoordinator.accept (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/protocol-coordinator.ts:93:14)
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/protocol-coordinator.test.ts:106:15)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7)
+
+test at apps/web/src/host/protocol-coordinator.test.ts:113:1
+✖ Given malformed or stale-generation protocol updates, when accepted, then the coordinator preserves state and reports a typed failure (0.555454ms)
+  TypeError: Cannot read properties of undefined (reading 'companyCatalog')
+      at ProtocolCoordinator.installBaseline (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/protocol-coordinator.ts:123:167)
+      at ProtocolCoordinator.accept (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/protocol-coordinator.ts:93:14)
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/protocol-coordinator.test.ts:120:15)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7)
+
+test at apps/web/src/host/protocol-coordinator.test.ts:137:1
+✖ Given a fresh baseline after resync, when a new generation update arrives, then prior replay history is discarded (0.513543ms)
+  TypeError: Cannot read properties of undefined (reading 'companyCatalog')
+      at ProtocolCoordinator.installBaseline (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/protocol-coordinator.ts:123:167)
+      at ProtocolCoordinator.accept (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/protocol-coordinator.ts:93:14)
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/protocol-coordinator.test.ts:146:15)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7)
+
+test at apps/web/src/host/protocol-coordinator.test.ts:155:1
+✖ Given an already-published tick batch, when a CivilUpdate shares its tick barrier, then the coordinator accepts it (0.573216ms)
+  TypeError: Cannot read properties of undefined (reading 'companyCatalog')
+      at ProtocolCoordinator.installBaseline (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/protocol-coordinator.ts:123:167)
+      at ProtocolCoordinator.accept (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/protocol-coordinator.ts:93:14)
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/protocol-coordinator.test.ts:162:15)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7)
+
+test at apps/web/src/host/protocol-reducer.test.ts:15:1
+✖ Given three frames including an empty one, when reduced, then every frame and timeseries survives (6.144953ms)
+  Error [ProtocolError]: 未知 StockId：2
+      at invalid (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/catalog-resolver.ts:7:9)
+      at Object.stockCode (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/catalog-resolver.ts:71:31)
+      at codedEvent (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/protocol/stock-identity.ts:331:101)
+      at codedFact (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/protocol/stock-identity.ts:341:12)
+      at file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/protocol/stock-identity.ts:375:50
+      at Array.map (<anonymous>)
+      at codedFrame (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/protocol/stock-identity.ts:375:29)
+      at file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/protocol/stock-identity.ts:423:52
+      at Array.map (<anonymous>)
+      at Object.translateEngineUpdate (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/protocol/stock-identity.ts:423:30) {
+    code: 'PROTOCOL_MALFORMED',
+    where: 'EngineUpdate.TickBatch.frames[2].facts[0].event.IntentRejected.code'
+  }
+
+test at apps/web/src/host/protocol-reducer.test.ts:26:1
+✖ Given facts and events reversed together, when replayed, then it is exact and emits no effects (0.710669ms)
+  Error [ProtocolError]: 未知 StockId：1
+      at invalid (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/catalog-resolver.ts:7:9)
+      at Object.stockCode (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/catalog-resolver.ts:71:31)
+      at codedEvent (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/protocol/stock-identity.ts:331:101)
+      at codedFact (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/protocol/stock-identity.ts:341:12)
+      at file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/protocol/stock-identity.ts:375:50
+      at Array.map (<anonymous>)
+      at codedFrame (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/protocol/stock-identity.ts:375:29)
+      at file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/protocol/stock-identity.ts:423:52
+      at Array.map (<anonymous>)
+      at Object.translateEngineUpdate (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/protocol/stock-identity.ts:423:30) {
+    code: 'PROTOCOL_MALFORMED',
+    where: 'EngineUpdate.TickBatch.frames[0].facts[1].event.IntentRejected.code'
+  }
+
+test at apps/web/src/host/protocol-reducer.test.ts:42:1
+✖ Given an event-fact pair moved between valid frames, when replayed, then it rejects changed tick boundaries (0.817081ms)
+  Error [ProtocolError]: 未知 StockId：1
+      at invalid (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/catalog-resolver.ts:7:9)
+      at Object.stockCode (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/catalog-resolver.ts:71:31)
+      at codedEvent (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/protocol/stock-identity.ts:331:101)
+      at codedFact (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/protocol/stock-identity.ts:341:12)
+      at file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/protocol/stock-identity.ts:375:50
+      at Array.map (<anonymous>)
+      at codedFrame (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/protocol/stock-identity.ts:375:29)
+      at file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/protocol/stock-identity.ts:423:52
+      at Array.map (<anonymous>)
+      at Object.translateEngineUpdate (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/protocol/stock-identity.ts:423:30) {
+    code: 'PROTOCOL_MALFORMED',
+    where: 'EngineUpdate.TickBatch.frames[1].facts[0].event.IntentRejected.code'
+  }
+
+test at apps/web/src/host/protocol-reducer.test.ts:56:1
+✖ Given a coherent mutation ending at an accepted cursor, when replayed, then it rejects PROTOCOL_REPLAY (5.058494ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+  + actual - expected
+  
+    Comparison {
+  +   code: 'PROTOCOL_MALFORMED'
+  -   code: 'PROTOCOL_REPLAY'
+    }
+  
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/protocol-reducer.test.ts:60:10)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: ProtocolError: 未知 StockId：1
+        at invalid (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/catalog-resolver.ts:7:9)
+        at Object.stockCode (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/catalog-resolver.ts:71:31)
+        at codedEvent (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/protocol/stock-identity.ts:331:101)
+        at codedFact (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/protocol/stock-identity.ts:341:12)
+        at file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/protocol/stock-identity.ts:375:50
+        at Array.map (<anonymous>)
+        at codedFrame (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/protocol/stock-identity.ts:375:29)
+        at file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/protocol/stock-identity.ts:423:52
+        at Array.map (<anonymous>)
+        at Object.translateEngineUpdate (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/protocol/stock-identity.ts:423:30),
+    expected: { code: 'PROTOCOL_REPLAY' },
+    operator: 'throws',
+    diff: 'simple'
+  }
+
+test at apps/web/src/host/protocol-reducer.test.ts:115:1
+✖ Given reversed fact arrays, when reduced, then effects and canonical state are invariant (0.667108ms)
+  Error [ProtocolError]: 未知 StockId：1
+      at invalid (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/catalog-resolver.ts:7:9)
+      at Object.stockCode (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/catalog-resolver.ts:71:31)
+      at codedEvent (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/protocol/stock-identity.ts:331:101)
+      at codedFact (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/protocol/stock-identity.ts:341:12)
+      at file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/protocol/stock-identity.ts:375:50
+      at Array.map (<anonymous>)
+      at codedFrame (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/protocol/stock-identity.ts:375:29)
+      at file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/protocol/stock-identity.ts:423:52
+      at Array.map (<anonymous>)
+      at Object.translateEngineUpdate (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/protocol/stock-identity.ts:423:30) {
+    code: 'PROTOCOL_MALFORMED',
+    where: 'EngineUpdate.TickBatch.frames[0].facts[1].event.IntentRejected.code'
+  }
+
+test at apps/web/src/host/protocol-reducer.test.ts:133:1
+✖ Given JSON and WASM Map forms, when reduced, then they produce equal state (3.076832ms)
+  AssertionError [ERR_ASSERTION]: Values have same structure but are not reference-equal:
+  
+  ... Skipped lines
+  {
+    accepted: Map(1) {
+      '1\x001' => '{"TickBatch":{"frames":[{"facts":[{"event":{"IntentRejected":{"account":"0","code":0,"reason":"UnknownStock","seq":1}},"key":{"entity":{"Account":"0"},"local_event_index":0,"phase_rank":4,"source":"Sealed"}}],"seq_from":0,"seq_to":1,"tick":1,"timeseries_payload":{"active_daily_candles":{"0":{"close":"1000","high":"1000","low":"1000","open":"1000","time":1893456000,"volume":0}},"auction_points":{},"closed_daily_candles":{},"continuous_points":{"0":{"asks":[],"bids":[],"cumulative_volume":1,"last_price":"1000","phase":"Continuous","tick":1}},"markets":{"0":{"asks":[],"best_ask":null,"best_bid":null,"bids":[],"last_close":"1000","last_price":"1000"}}}}],"runtime_snapshot":{"accounts":{},"active_daily_candles":{"0":{"close":"1000","high":"1000","low":"1000","open":"1000","time":1893456000,"volume":0}},"daily_candles":{"0":[]},"day":0,"markets":{"0":{"asks":[],"best_ask":null,"best_bid":null,"bids":[],"last_close":"1000","last_price":"1000"}},"phase":"Continuous","seq":1,"tick":1}}}'
+    },
+    catalogResolver: {
+      companyCatalog: [
+        {
+          code: 'C-000812',
+          id: 0,
+          listed_stock: 0,
+          name: '公司000812'
+        }
+      ],
+      companyCode: [Function: companyCode],
+      companyId: [Function: companyId],
+      reportScopeCode: [Function: reportScopeCode],
+      stockCatalog: [
+        {
+          code: '000812',
+          id: 0
+        }
+      ],
+      stockCode: [Function: stockCode]
+    },
+    cursor: {
+      generation: 'generation-1',
+      seq: 1,
+      tick: 1
+    },
+    intraday: [
+      {
+        activeDailyCandles: [Object: null prototype] {
+          '000812': {
+            close: '1000',
+            high: '1000',
+            low: '1000',
+            open: '1000',
+            time: 1893456000,
+            volume: 0
+          }
+        },
+        auctionPoints: [Object: null prototype] {},
+        closedDailyCandles: [Object: null prototype] {},
+        continuousPoints: [Object: null prototype] {
+          '000812': {
+            asks: [],
+            bids: [],
+            cumulative_volume: 1,
+            last_price: '1000',
+            phase: 'Continuous',
+  ...}
+  
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/protocol-reducer.test.ts:147:10)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: [Object],
+    expected: [Object],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }

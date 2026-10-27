@@ -1,0 +1,13 @@
+✔ 已排队恢复重启在catalog失败后失效，微任务drain后仍停机 (1.934485ms)
+✔ 仅完整baseline通过且handle/generation仍一致才重启 (0.254627ms)
+✔ Worker 全部会话 caller 共用 owner，restore 完整回应先于 microtask restart (83.656795ms)
+✔ Worker restore snapshot 和 prepare 失败均停止，prepare 失败保留新 authority (8.358351ms)
+✔ 真实Worker restore已换handle后catalog故障保持3019，drain后不重启或发成功 (7.059633ms)
+ℹ tests 5
+ℹ suites 0
+ℹ pass 5
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 332.985792

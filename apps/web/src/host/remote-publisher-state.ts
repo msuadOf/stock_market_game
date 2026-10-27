@@ -50,6 +50,7 @@ export class RemotePublisherState {
   }
 
   installBaseline(update: Baseline, onTimelineChanged: () => void): void {
+    if (this.cachedBaseline !== null && BigInt(update.generation) < BigInt(this.cachedBaseline.generation)) throw new Error("远程 baseline 属于旧 generation");
     this.baselineEpoch += 1;
     if (this.cachedBaseline !== null && this.cachedBaseline.generation !== update.generation) onTimelineChanged();
     this.cachedBaseline = update;

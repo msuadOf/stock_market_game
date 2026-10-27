@@ -27,3 +27,21 @@ export function publicCompanyById(id: string): PublicCompany | undefined {
 export function publicCompanyForStock(stockCode: string): PublicCompany | undefined {
   return listedPublicCompanies.find((company) => company.stockCode === stockCode);
 }
+
+/** 当前 baseline 的目录决定存在性；静态项仅补充可选展示文案。 */
+export function actualPublicCompanies(
+  companies: readonly import("../../types/generated/CompanyCatalogEntry.ts").CompanyCatalogEntry[],
+  stocks: readonly import("../../types/generated/StockIdentityEntry.ts").StockIdentityEntry[],
+): readonly PublicCompany[] {
+  const stockCodes = new Map(stocks.map(entry => [entry.id, entry.code]));
+  return companies.map(entry => {
+    const known = publicCompanyById(entry.code);
+    let stockCode: string | null = null;
+    if (entry.listed_stock !== null) {
+      const actualCode = stockCodes.get(entry.listed_stock);
+      if (actualCode === undefined) throw new Error(`公司 ${entry.code} 的上市证券不在当前目录`);
+      stockCode = actualCode;
+    }
+    return { id: entry.code, name: entry.name, industry: known === undefined ? "" : known.industry, business: known === undefined ? "" : known.business, stockCode };
+  });
+}

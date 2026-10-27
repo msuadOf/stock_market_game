@@ -19,6 +19,8 @@ declare module "*wasm-pkg/web_wasm.js" {
   export function create_session(setup: SessionSetup, seed: bigint): number;
   export function step(handle: number): EngineUpdate;
   export function snapshot(handle: number): Snapshot;
+  export function stock_catalog_view(handle: number): import("./types/generated/StockIdentityEntry").StockIdentityEntry[];
+  export function company_catalog_view(handle: number): import("./types/generated/CompanyCatalogEntry").CompanyCatalogEntry[];
   export function runtime_snapshot(handle: number): Snapshot;
   export function tick(handle: number): bigint;
   export function day(handle: number): number;

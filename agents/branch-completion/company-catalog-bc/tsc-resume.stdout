@@ -1,0 +1,1 @@
+apps/web/src/host/wasm-worker-ownership.test.ts(179,30): error TS2339: Property 'code' does not exist on type '{ type: string; requestId: number; generation: number; message: string; }'.

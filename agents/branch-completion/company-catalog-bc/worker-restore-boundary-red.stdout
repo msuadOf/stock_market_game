@@ -1,0 +1,55 @@
+✔ Worker 全部会话 caller 共用 owner，restore 完整回应先于 microtask restart (81.415529ms)
+✔ Worker restore snapshot 和 prepare 失败均停止，prepare 失败保留新 authority (7.43358ms)
+✔ 真实Worker restore已换handle后catalog故障保持3019，drain后不重启或发成功 (6.501581ms)
+✖ 真实Worker restore提交前snapshot失败按旧handle/generation恢复运行 (6.869312ms)
+✖ 真实Worker replace后旧drop失败属于已提交fatal，旧generation不能操作新handle (7.348978ms)
+ℹ tests 5
+ℹ suites 0
+ℹ pass 3
+ℹ fail 2
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 338.297907
+
+✖ failing tests:
+
+test at apps/web/src/host/wasm-worker-ownership.test.ts:216:1
+✖ 真实Worker restore提交前snapshot失败按旧handle/generation恢复运行 (6.869312ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  0 !== 1
+  
+      at file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/wasm-worker-ownership.test.ts:223:12
+      at async withWorker (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/wasm-worker-ownership.test.ts:29:5)
+      at async TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/wasm-worker-ownership.test.ts:217:3)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 0,
+    expected: 1,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at apps/web/src/host/wasm-worker-ownership.test.ts:231:1
+✖ 真实Worker replace后旧drop失败属于已提交fatal，旧generation不能操作新handle (7.348978ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  + actual - expected
+  
+  + 'operationError'
+  - 'failure'
+  
+      at file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/wasm-worker-ownership.test.ts:239:12
+      at async withWorker (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/wasm-worker-ownership.test.ts:29:5)
+      at async TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/wasm-worker-ownership.test.ts:232:3)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 'operationError',
+    expected: 'failure',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

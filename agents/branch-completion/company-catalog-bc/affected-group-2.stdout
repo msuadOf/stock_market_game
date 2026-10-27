@@ -1,0 +1,231 @@
+✖ Worker实际分配query绑定requestId/generation，refresh后旧响应失效 (7.022817ms)
+✖ Tauri实际分配query使用会话身份，refresh后拒绝旧响应 (7.684107ms)
+✖ Remote实际分配首次开跑前连接基线、不启动撮合，load后旧响应失效 (51.110089ms)
+✔ remote report ownership cannot survive a restored timeline with reused IDs (66.848234ms)
+✔ remote advertises its public company report capability (1.071453ms)
+✔ remote page uses the company route, opaque cursor, server limit and owning token (2.151537ms)
+✔ remote omits null pagination rather than sending null or inventing limits (1.042512ms)
+✔ remote by-ID refetches the report from its verified company route with the explicit token (1.507146ms)
+✔ remote rejects unknown report ownership without guessing a company or fetching (0.572887ms)
+✔ remote rejects cross-company pages atomically without registering their valid prefix (1.180066ms)
+✔ remote rejects conflicting report ownership without overwriting the verified company (1.909618ms)
+✔ remote rejects a by-ID response with mismatched company_id (1.757124ms)
+✔ remote rejects a by-ID response with mismatched id (1.689532ms)
+✔ remote exposes HTTP 403 for both report query entries without cached fallback (1.561948ms)
+✔ remote exposes HTTP 404 for both report query entries without cached fallback (1.641461ms)
+✔ remote exposes HTTP 500 for both report query entries without cached fallback (1.929459ms)
+✔ remote exposes network, JSON and DTO failures instead of returning empty reports (1.742084ms)
+✔ remote page response cannot cross a baseline timeline change (3.063855ms)
+✔ remote by-id response cannot cross a baseline timeline change (2.2763ms)
+✔ Given the remote whole-update DTO, when parsed, then it preserves generation and opaque EngineUpdate (3.57133ms)
+✔ Given the remote baseline DTO, when parsed, then it preserves generation and public metadata (1.784195ms)
+✔ Given legacy flat events or frames, when parsed in production, then remote rejects them (0.476184ms)
+✔ Given multiple remote envelope variants, when parsed, then the ambiguous message is rejected (0.199376ms)
+✔ Given malformed remote control payloads, when parsed, then their exact wire shapes are rejected (0.720562ms)
+✔ Given a pause preference payload mode, when converted from speed, then fastest stays JSON safe (0.192976ms)
+✔ Given enriched remote failures, when parsed, then diagnostic context and recovery guidance survive (0.265229ms)
+✔ Given an authenticated remote host, when player orders are queried, then it uses the read-only endpoint (54.08787ms)
+✔ 远程股票历史只通过显式 query endpoint 读取并绑定 generation (2.824447ms)
+✔ Given a keyed day-end save, when RemoteHost sends it, then the exact candidate key reaches the authenticated save endpoint (2.90409ms)
+✔ Given invalid indicators rejected by the server, when calculated remotely, then the host rejects instead of returning result arrays (3.862299ms)
+✔ Given a remote host without a Publisher baseline, when player orders are queried, then it rejects without inventing generation one (0.832825ms)
+✔ Given a same-generation Publisher resync, when refreshBaseline completes, then it redelivers the authoritative baseline (1.361582ms)
+✔ Given a server without diagnostic support, when created, then RemoteHost negotiates it as disabled (0.620769ms)
+✔ Given remote pause preferences, when serialized for the authenticated current generation API, then both flags remain explicit (0.180536ms)
+✔ Given remote session deletion fails, when disposed, then the host reports an explicit fatal failure (8.357198ms)
+✔ remote disposal authenticates the owning session before deletion (0.867807ms)
+✔ 浏览器 WS 凭据不进入 URL，speed GET 携带同一会话授权 (53.546703ms)
+✔ 暂停继续不重送旧 baseline，pull 持续请求并忽略旧 socket error (59.969701ms)
+✖ dispose 与切换 delivery 为已发送写请求提供结果未知出口 (4.128297ms)
+✔ 并发 refresh 与内部 ResyncRequired 共享请求，不遗失原 waiter (1.394843ms)
+✔ 意外断线自动取新权威 baseline，迟到旧 socket 消息不能污染恢复 (150.902189ms)
+✖ 已中断的写请求迟到 queued 不冒充完成，不关闭同 socket 的重同步连接 (1.112504ms)
+✖ 无入队确认的写请求在 5000ms 结果未知，真实未发送的 ID 仍协议失败 (1.466085ms)
+✔ 连续三次自动恢复失败后显式 fatal，不无限重连 (1.097264ms)
+✔ 应用层同步拒绝 baseline 后关闭当前连接并拒绝 waiter，不覆盖原 failure (0.923938ms)
+✔ 启动拒绝读档缓存 baseline 时返回失败且不请求 running true (3.457067ms)
+✔ 远程新 generation baseline 先于HTTP读档响应时，先通知恢复配置再交付 (1.097204ms)
+✔ 远程读档HTTP响应丢失后，重同步新generation仍先确认已提交配置 (0.865417ms)
+✔ 远程读档失败后旧generation确认不改变配置并允许重试 (0.798985ms)
+ℹ Error: Test "已中断的写请求迟到 queued 不冒充完成，不关闭同 socket 的重同步连接" at src/host/remote-lifecycle.test.ts:109:1 generated asynchronous activity after the test ended. This activity created the error "Error: REMOTE_BASELINE_TIMEOUT: 权威基线重同步超时（5000ms）" and would have caused the test to fail, but instead triggered an unhandledRejection event.
+✔ RemotePublisherState socket 移交与连接 identity 不改变 baseline gate (2.410325ms)
+✔ RemotePublisherState epoch 每次 baseline 都更新，跨 generation 先通知再安装 cache (0.712812ms)
+✔ RemotePublisherState waiter 替换显式拒绝旧请求，完成前清槽保留重入请求 (1.524688ms)
+✔ remote startup restores and caches the authoritative baseline without running the market (53.852563ms)
+✔ remote startup connection loss rejects restoration even while the market is paused (2.051303ms)
+✔ remote startup without a baseline times out and closes its connection (7.608564ms)
+✔ disposed remote startup cannot reconnect after a late load response (0.97376ms)
+✔ Remote SubmitIntent 严格携带权威 generation，不用默认值且旧代确认拒绝 (62.214141ms)
+✔ 并发 remote command 逆序确认只完成对应 request，重复确认显式失败 (2.369364ms)
+✔ request gateway error 只拒绝对应 command，HostFailure 批量拒绝其余 command (2.703593ms)
+✔ mode 切换丢弃旧 socket message/close，已同步的新连接沿用 protocol gate (4.399206ms)
+✔ 旧 socket onerror 不关闭新连接，恢复前仍保留 baseline gate (1.124574ms)
+✔ 并发 resync 共享权威 baseline，所有 waiter 均完成 (1.548248ms)
+✔ baseline callback 抛错时先安装 cache，waiter 由 fail 拒绝 (1.242188ms)
+✔ 同步 send throw 清理 command，dispose 显式拒绝未确认请求 (1.110744ms)
+✔ generation mismatch 和 ResyncRequired 请求重同步且同步前丢弃 protocol (1.530908ms)
+✔ load 新连接的 5000ms timer 在 baseline 到达后清除，超时显式失败 (10.393941ms)
+✔ 同 generation baseline 更新后 orders 沿用各自原有的 query guard (1.824917ms)
+✔ 同 generation baseline 更新后 diagnostics 沿用各自原有的 query guard (1.522597ms)
+✔ 同 generation baseline 更新后 save 沿用各自原有的 query guard (1.329881ms)
+✔ resync send 同步失败拒绝已登记 waiter，后续可显式重试 (1.28555ms)
+✔ Remote实际发送按同code换代id，unknown在pending和timeout前本地拒绝 (1.906469ms)
+✔ 真实双Remote host的submitIntent按A/B/A实际目录隔离 (1.347812ms)
+✔ Tauri save pins generation for keyed and latest candidates and rejects a late response after load (12.906648ms)
+✔ Tauri enqueue 严格携带当前 generation，restore 后旧入队确认不得报告新代成功 (1.700472ms)
+✔ Tauri restore 切换 timeline 后过滤旧 event，并在新 baseline callback 后 resume (7.269804ms)
+✔ Tauri 同 generation refresh 使 orders 与 NPC 查询失效，但 save 仍只检查 generation (1.651401ms)
+✔ Tauri 股票历史查询绑定 generation，刷新后拒绝旧结果，调用参数不含账户 (1.518957ms)
+✔ Tauri restore snapshot 解析失败保留可见 generation/timeline 与旧 baseline，不 resume (4.233281ms)
+✔ Tauri baseline callback 抛错保留已安装状态，并阻止 restore 后 resume (1.191086ms)
+✔ Tauri restore 失败后保留已确认暂停，不冒充 running (1.129154ms)
+✔ Tauri dispose 后晚到 refresh 与 save 拒绝，不能复活基线 (0.876618ms)
+✔ Tauri 拒绝初始 generation 不匹配及 restore 非 nextGeneration (1.000191ms)
+✔ Tauri start 与 stop 等待 IPC 应用确认，恢复不重送旧 baseline (1.274389ms)
+✔ Tauri cached baseline 消费者拒绝时 start 不得恢复 actor 或标记已交付 (0.584598ms)
+✔ Tauri refresh baseline 被拒绝时暂停 actor，并在重启时重新交付 (0.64776ms)
+✔ Tauri restore baseline 被拒绝时不恢复 actor，并在重启时重新交付 (0.669591ms)
+✔ Tauri 未启动消费者时 refresh 与 restore 不标记 baseline 已交付 (1.171267ms)
+✔ Tauri dispose 即使 IPC 失败也释放监听并显式拒绝 (0.602498ms)
+✔ Tauri dispose 后晚到 load 拒绝且不安装 restore baseline (0.64516ms)
+✔ Tauri 恢复提交在 baseline/恢复运行前通知，恢复运行失败仍保留提交通知 (0.870177ms)
+✔ Tauri实际enqueue按restore同code改id，unknown零invoke，旧确认不得转成新代成功 (1.029151ms)
+✔ Tauri已提交restore的新timeline事件被过滤时invoke目录fault仍显式失败并禁后续enqueue (1.016522ms)
+✔ Tauri 第二个 listener 初始化失败释放第一个，不创建或停止任何会话 (10.253306ms)
+✔ Tauri 首个 listener 或 create_session 失败不误停止已有其他会话 (0.651421ms)
+✔ Tauri 会话创建后的 baseline 或 capabilities 失败释放两个 listener 并停止本人会话 (2.360103ms)
+✔ Tauri 初始化失败保留原错误且汇总全部清理错误，某一项失败不阻止其他清理 (0.97444ms)
+✔ Tauri 非法创建响应不取得 handle 归属，非法 baseline 或 capability 响应回收已取得会话 (1.406124ms)
+✔ Tauri 初始化失败必须等 stop_session 确认，不能提前交还初始化终态 (0.64302ms)
+✔ Tauri 三种 baseline 都携带对应会话的当前自然日 (3.502918ms)
+✔ Tauri 拒绝无效自然日，prepare 失败保留此前可见 authority (0.784185ms)
+✔ Tauri generation 在 Number.MAX_SAFE_INTEGER 之后仍精确递增 (0.162815ms)
+✔ Tauri 刷新解析失败保留 timeline、baseline 和 query epoch (1.252288ms)
+✔ Tauri dispose 只清 timeline/cache，保留 generation/epoch 的既有查询检查 (0.407803ms)
+ℹ tests 103
+ℹ suites 0
+ℹ pass 97
+ℹ fail 6
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 5534.469165
+
+✖ failing tests:
+
+test at src/host/initial-allocation-transport.test.ts:18:1
+✖ Worker实际分配query绑定requestId/generation，refresh后旧响应失效 (7.022817ms)
+  Error [ProtocolError]: 未知股票 StockId：3
+      at invalid (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/catalog-resolver.ts:7:9)
+      at Object.stockCode (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/catalog-resolver.ts:79:31)
+      at file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/initial-allocation.ts:27:27
+      at Array.map (<anonymous>)
+      at parseInitialAllocation (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/initial-allocation.ts:20:77)
+      at Object.initialAllocation (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/worker-host.ts:471:18)
+      at async TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/initial-allocation-transport.test.ts:39:22)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    code: 'PROTOCOL_MALFORMED',
+    where: '初始分配响应.stocks[0].code'
+  }
+
+test at src/host/initial-allocation-transport.test.ts:55:1
+✖ Tauri实际分配query使用会话身份，refresh后拒绝旧响应 (7.684107ms)
+  Error [ProtocolError]: 未知股票 StockId：3
+      at invalid (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/catalog-resolver.ts:7:9)
+      at Object.stockCode (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/catalog-resolver.ts:79:31)
+      at file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/initial-allocation.ts:27:27
+      at Array.map (<anonymous>)
+      at parseInitialAllocation (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/initial-allocation.ts:20:77)
+      at Object.initialAllocation (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/tauri-host.ts:325:14)
+      at async TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/initial-allocation-transport.test.ts:75:22)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    code: 'PROTOCOL_MALFORMED',
+    where: '初始分配响应.stocks[0].code'
+  }
+
+test at src/host/initial-allocation-transport.test.ts:88:1
+✖ Remote实际分配首次开跑前连接基线、不启动撮合，load后旧响应失效 (51.110089ms)
+  Error [ProtocolError]: 未知股票 StockId：3
+      at invalid (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/catalog-resolver.ts:7:9)
+      at Object.stockCode (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/catalog-resolver.ts:79:31)
+      at file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/initial-allocation.ts:27:27
+      at Array.map (<anonymous>)
+      at parseInitialAllocation (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/initial-allocation.ts:20:77)
+      at Object.initialAllocation (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/remote-host.ts:409:14)
+      at async TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/initial-allocation-transport.test.ts:122:22)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    code: 'PROTOCOL_MALFORMED',
+    where: '初始分配响应.stocks[0].code'
+  }
+
+test at src/host/remote-lifecycle.test.ts:66:1
+✖ dispose 与切换 delivery 为已发送写请求提供结果未知出口 (4.128297ms)
+  [AssertionError [ERR_ASSERTION]: The input did not match the regular expression /结果未知/. Input:
+  
+  'ProtocolError: 未知股票代码：600101（不在本代 StockCatalog）'
+  ] {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: ProtocolError: 未知股票代码：600101（不在本代 StockCatalog）
+        at invalid (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/catalog-resolver.ts:7:9)
+        at Object.stockId (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/catalog-resolver.ts:73:29)
+        at wireIntentOf (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/protocol/stock-identity.ts:462:65)
+        at Object.submitIntent (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/remote-host.ts:335:27)
+        at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/remote-lifecycle.test.ts:71:34)
+        at async Test.run (node:internal/test_runner/test:1208:7)
+        at async Test.processPendingSubtests (node:internal/test_runner/test:831:7),
+    expected: /结果未知/,
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at src/host/remote-lifecycle.test.ts:109:1
+✖ 已中断的写请求迟到 queued 不冒充完成，不关闭同 socket 的重同步连接 (1.112504ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /结果未知/. Input:
+  
+  'ProtocolError: 未知股票代码：600101（不在本代 StockCatalog）'
+  
+      at async TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/remote-lifecycle.test.ts:117:3)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: ProtocolError: 未知股票代码：600101（不在本代 StockCatalog）
+        at invalid (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/catalog-resolver.ts:7:9)
+        at Object.stockId (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/catalog-resolver.ts:73:29)
+        at wireIntentOf (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/protocol/stock-identity.ts:462:65)
+        at Object.submitIntent (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/remote-host.ts:335:27)
+        at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/remote-lifecycle.test.ts:114:32)
+        at async Test.run (node:internal/test_runner/test:1208:7)
+        at async Test.processPendingSubtests (node:internal/test_runner/test:831:7),
+    expected: /结果未知/,
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at src/host/remote-lifecycle.test.ts:125:1
+✖ 无入队确认的写请求在 5000ms 结果未知，真实未发送的 ID 仍协议失败 (1.466085ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /5000ms.*结果未知/. Input:
+  
+  'ProtocolError: 未知股票代码：600101（不在本代 StockCatalog）'
+  
+      at async TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/remote-lifecycle.test.ts:134:3)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: ProtocolError: 未知股票代码：600101（不在本代 StockCatalog）
+        at invalid (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/catalog-resolver.ts:7:9)
+        at Object.stockId (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/catalog-resolver.ts:73:29)
+        at wireIntentOf (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/protocol/stock-identity.ts:462:65)
+        at Object.submitIntent (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/remote-host.ts:335:27)
+        at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/remote-lifecycle.test.ts:131:39)
+        at async Test.run (node:internal/test_runner/test:1208:7)
+        at async Test.processPendingSubtests (node:internal/test_runner/test:831:7),
+    expected: /5000ms.*结果未知/,
+    operator: 'rejects',
+    diff: 'simple'
+  }

@@ -1,3 +1,4 @@
+import { numericCompanyCatalogFixture, defaultCatalogFixture } from "./catalog-test-fixture.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { publicReportGold } from "../components/company/public-report-fixture.ts";
@@ -73,7 +74,7 @@ test("disposed 公司实例的同 generation 晚到页、by-id 和失败不能�
     let actions = 0;
     const dispatch = (action: Parameters<typeof companyReducer>[1]) => { actions++; state = companyReducer(state, action); };
     const old = new CompanyQueryCoordinator(oldHost, dispatch);
-    old.installBaseline({ civilDate: "2030-01-01", revision: "1", seq: 0 });
+    old.installBaseline({ catalogResolver: numericCompanyCatalogFixture, civilDate: "2030-01-01", revision: "1", seq: 0 });
     const oldPage = old.query({ companyId: "600001", cursor: null });
     const oldReport = old.queryReportById({ companyId: "600001", reportId: "7" });
     assert.equal(typeof old.dispose, "function");
@@ -83,10 +84,10 @@ test("disposed 公司实例的同 generation 晚到页、by-id 和失败不能�
       capabilities: oldHost.capabilities,
       queryPublicReports: async () => ({ reports: [], next_cursor: null }),
     }, dispatch);
-    current.installBaseline({ civilDate: "2031-01-01", revision: "2", seq: 0 });
+    current.installBaseline({ catalogResolver: numericCompanyCatalogFixture, civilDate: "2031-01-01", revision: "2", seq: 0 });
     await current.query({ companyId: "600001", cursor: null });
     assert.equal(state.generation, 1);
-    const expected = structuredClone(state);
+    const expected = state;
     const expectedActions = actions;
     if (rejected) {
       rejectPage(new Error("old page failed"));
@@ -96,7 +97,7 @@ test("disposed 公司实例的同 generation 晚到页、by-id 和失败不能�
       byId.resolve(report(600_001, "7"));
     }
     await Promise.all([oldPage, oldReport]);
-    old.installBaseline({ civilDate: "1999-01-01", revision: "99", seq: 0 });
+    old.installBaseline({ catalogResolver: numericCompanyCatalogFixture, civilDate: "1999-01-01", revision: "99", seq: 0 });
     await old.query({ companyId: "600001", cursor: null });
     await old.queryReportById({ companyId: "600001", reportId: "7" });
     old.acceptFrame(normalizedFrame([], 0, 0));
@@ -108,8 +109,8 @@ test("disposed 公司实例的同 generation 晚到页、by-id 和失败不能�
 test("Given a normalized tick frame, when public metadata advances, then company coverage follows its protocol cursor", () => {
   const actions: unknown[] = [];
   const coordinator = new CompanyQueryCoordinator(host, (action) => actions.push(action));
-  coordinator.installBaseline({ civilDate: "2030-01-01", revision: "1", seq: 0 });
-  const normalized = parseNormalizedEngineUpdate({ TickBatch: { frames: [frame(1, 0, [0])], runtime_snapshot: null } });
+  coordinator.installBaseline({ catalogResolver: numericCompanyCatalogFixture, civilDate: "2030-01-01", revision: "1", seq: 0 });
+  const normalized = parseNormalizedEngineUpdate({ TickBatch: { frames: [frame(1, 0, [0])], runtime_snapshot: null } }, defaultCatalogFixture);
   if (normalized.kind !== "tick-batch") throw new Error("test fixture invalid");
   coordinator.acceptFrame(normalized.frames[0]!, { civilDate: "2030-01-01", revision: "2" });
   assert.match(JSON.stringify(actions), /advanceCompanyEventCoverage/);
@@ -119,8 +120,8 @@ test("Given a normalized tick frame, when public metadata advances, then company
 test("Given a CivilUpdate refresh, when accepted, then the coordinator installs its authoritative public date", () => {
   const actions: unknown[] = [];
   const coordinator = new CompanyQueryCoordinator(host, (action) => actions.push(action));
-  coordinator.installBaseline({ civilDate: "2030-01-01", revision: "1", seq: 1 });
-  const normalized = parseNormalizedEngineUpdate(civilUpdate());
+  coordinator.installBaseline({ catalogResolver: numericCompanyCatalogFixture, civilDate: "2030-01-01", revision: "1", seq: 1 });
+  const normalized = parseNormalizedEngineUpdate(civilUpdate(), defaultCatalogFixture);
   if (normalized.kind !== "civil-update") throw new Error("test fixture invalid");
   coordinator.acceptCivil(normalized, { civilDate: "2030-01-03", revision: "3" });
   assert.match(JSON.stringify(actions), /recordCivilDateAdvanced/);
@@ -142,10 +143,10 @@ test("rejects delayed prior-session page and by-id responses while accepting cur
     publicReportById(id) { return id === "old-report" ? lateById.promise : Promise.resolve(report(22, id)); },
   } satisfies QueryHost;
   const coordinator = new CompanyQueryCoordinator(queryHost, (action) => updates.push(action));
-  coordinator.installBaseline({ civilDate: "2030-01-01", revision: "1", seq: 0 });
+  coordinator.installBaseline({ catalogResolver: numericCompanyCatalogFixture, civilDate: "2030-01-01", revision: "1", seq: 0 });
   const oldRequest = coordinator.query({ companyId: "11", cursor: null });
   const oldReportRequest = coordinator.queryReportById({ companyId: "11", reportId: "old-report" });
-  coordinator.installBaseline({ civilDate: "2031-01-01", revision: "2", seq: 0 });
+  coordinator.installBaseline({ catalogResolver: numericCompanyCatalogFixture, civilDate: "2031-01-01", revision: "2", seq: 0 });
   await coordinator.query({ companyId: "22", cursor: null });
   await coordinator.query({ companyId: "22", cursor: "7" });
   late.resolve({ reports: [report(11, "7")], next_cursor: null });
@@ -163,13 +164,13 @@ test("reports malformed public DTOs as explicit query errors and unavailable cap
     capabilities: { ...host.capabilities, publicCompanyReports: true },
     queryPublicReports: () => Promise.resolve(JSON.parse('{"reports":[{"id":"7"}],"next_cursor":null}')),
   } satisfies QueryHost, (action) => updates.push(action));
-  malformed.installBaseline({ civilDate: "2030-01-01", revision: "1", seq: 0 });
+  malformed.installBaseline({ catalogResolver: numericCompanyCatalogFixture, civilDate: "2030-01-01", revision: "1", seq: 0 });
   await malformed.query({ companyId: "600001", cursor: null });
   assert.match(JSON.stringify(updates), /recordCompanyQueryFailure/);
   assert.match(JSON.stringify(updates), /公共 DTO 契约/);
 
   const unsupported = new CompanyQueryCoordinator(host, (action) => updates.push(action));
-  unsupported.installBaseline({ civilDate: "2030-01-01", revision: "1", seq: 0 });
+  unsupported.installBaseline({ catalogResolver: numericCompanyCatalogFixture, civilDate: "2030-01-01", revision: "1", seq: 0 });
   await unsupported.query({ companyId: "600001", cursor: null });
   assert.match(JSON.stringify(updates), /unavailable/);
 });
@@ -186,7 +187,7 @@ test("rejects public reports that violate shared opaque ID, decimal, or second-o
       capabilities: { ...host.capabilities, publicCompanyReports: true },
       queryPublicReports: () => Promise.resolve({ reports: [invalidReport], next_cursor: null }),
     } satisfies QueryHost, (action) => updates.push(action));
-    coordinator.installBaseline({ civilDate: "2030-01-01", revision: "1", seq: 0 });
+    coordinator.installBaseline({ catalogResolver: numericCompanyCatalogFixture, civilDate: "2030-01-01", revision: "1", seq: 0 });
     await coordinator.query({ companyId: "600001", cursor: null });
     assert.match(JSON.stringify(updates), /recordCompanyQueryFailure/);
   }
@@ -199,7 +200,7 @@ test("refreshes an already cached company after a disclosure before advancing co
     queryPublicReports(query) { return Promise.resolve({ reports: [report(query.company_id, "8")], next_cursor: null }); },
   } satisfies QueryHost;
   const coordinator = new CompanyQueryCoordinator(queryHost, (action) => updates.push(action));
-  coordinator.installBaseline({ civilDate: "2030-01-01", revision: "1", seq: 0 });
+  coordinator.installBaseline({ catalogResolver: numericCompanyCatalogFixture, civilDate: "2030-01-01", revision: "1", seq: 0 });
   await coordinator.query({ companyId: "600001", cursor: null });
   coordinator.acceptFrame(normalizedFrame([disclosure(1, "600001"), civil(2)], 0, 2));
   await new Promise((resolve) => setImmediate(resolve));
@@ -218,8 +219,8 @@ test("does not refresh a company absent from the cache", async () => {
     queryPublicReports() { queries += 1; return Promise.resolve({ reports: [], next_cursor: null }); },
   } satisfies QueryHost;
   const coordinator = new CompanyQueryCoordinator(queryHost, (action) => updates.push(action));
-  coordinator.installBaseline({ civilDate: "2030-01-01", revision: "1", seq: 9 });
-  coordinator.acceptFrame(normalizedFrame([disclosure(10, "uncached")], 9, 10));
+  coordinator.installBaseline({ catalogResolver: numericCompanyCatalogFixture, civilDate: "2030-01-01", revision: "1", seq: 9 });
+  coordinator.acceptFrame(normalizedFrame([disclosure(10, "600002")], 9, 10));
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(queries, 0);
   assert.equal(JSON.stringify(updates).includes('"seq":10'), true);
@@ -227,32 +228,32 @@ test("does not refresh a company absent from the cache", async () => {
 
 test("rejects a TickFrame coverage gap so the host can deliver a fresh baseline", () => {
   const coordinator = new CompanyQueryCoordinator(host, () => {});
-  coordinator.installBaseline({ civilDate: "2030-01-01", revision: "1", seq: 1 });
+  coordinator.installBaseline({ catalogResolver: numericCompanyCatalogFixture, civilDate: "2030-01-01", revision: "1", seq: 1 });
   assert.throws(() => coordinator.acceptFrame(normalizedFrame([civil(4)], 3, 4)), /需要宿主重同步/);
 });
 
 test("accepts a multi-event TickFrame whose exclusive coverage cursor is continuous", () => {
   const coordinator = new CompanyQueryCoordinator(host, () => {});
-  coordinator.installBaseline({ civilDate: "2030-01-01", revision: "1", seq: 1 });
+  coordinator.installBaseline({ catalogResolver: numericCompanyCatalogFixture, civilDate: "2030-01-01", revision: "1", seq: 1 });
   coordinator.acceptFrame(normalizedFrame([disclosure(2, "600001"), civil(3)], 1, 3));
 });
 
 test("rejects a reversed empty TickFrame range before it can desynchronize the coordinator", () => {
   const coordinator = new CompanyQueryCoordinator(host, () => {});
-  coordinator.installBaseline({ civilDate: "2030-01-01", revision: "1", seq: 1 });
+  coordinator.installBaseline({ catalogResolver: numericCompanyCatalogFixture, civilDate: "2030-01-01", revision: "1", seq: 1 });
   assert.throws(() => coordinator.acceptFrame(normalizedFrame([], 2, 1)), /覆盖区间无效/);
   coordinator.acceptFrame(normalizedFrame([civil(2)], 1, 2));
 });
 
 test("accepts reordered TickFrame events after protocol normalization restores canonical seq order", () => {
   const coordinator = new CompanyQueryCoordinator(host, () => {});
-  coordinator.installBaseline({ civilDate: "2030-01-01", revision: "1", seq: 0 });
+  coordinator.installBaseline({ catalogResolver: numericCompanyCatalogFixture, civilDate: "2030-01-01", revision: "1", seq: 0 });
   // frame 的 code 参数是 wire 数值 StockId（ADR 0041）：0=000812、1=002156。
   const wireFrame = frame(1, 0, [0, 1]);
   const normalized = parseNormalizedEngineUpdate({ TickBatch: { frames: [{
     ...wireFrame,
     facts: [...recordArray(wireFrame.facts, "facts")].reverse(),
-  }], runtime_snapshot: null } });
+  }], runtime_snapshot: null } }, defaultCatalogFixture);
   if (normalized.kind !== "tick-batch") throw new Error("test fixture invalid");
   coordinator.acceptFrame(normalized.frames[0]!);
 });
@@ -286,7 +287,7 @@ test("accepts reordered CivilUpdate events and facts after protocol normalizatio
       snapshot: { ...update.refresh.snapshot, seq: 3 },
       public_publication_ids: ["9"],
     },
-  } });
+  } }, defaultCatalogFixture);
   if (normalized.kind !== "civil-update") throw new Error("test fixture invalid");
   const [first, second] = normalized.update.events;
   assert.ok(first !== undefined && "CompanyDisclosurePublished" in first);
@@ -294,7 +295,7 @@ test("accepts reordered CivilUpdate events and facts after protocol normalizatio
   assert.equal(first.CompanyDisclosurePublished.seq, 2);
   assert.equal(second.CivilDateAdvanced.seq, 3);
   const coordinator = new CompanyQueryCoordinator(host, () => {});
-  coordinator.installBaseline({ civilDate: "2030-01-01", revision: "1", seq: 1 });
+  coordinator.installBaseline({ catalogResolver: numericCompanyCatalogFixture, civilDate: "2030-01-01", revision: "1", seq: 1 });
   coordinator.acceptCivil(normalized);
 });
 
@@ -306,7 +307,7 @@ test("同 key force 请求替换后旧成功或失败的 finally 不删除新请
       capabilities: { ...host.capabilities, publicCompanyReports: true },
       queryPublicReports: () => new Promise((resolve, reject) => pending.push({ resolve, reject })),
     }, (action) => updates.push(action));
-    coordinator.installBaseline({ civilDate: "2030-01-01", revision: "1", seq: 0 });
+    coordinator.installBaseline({ catalogResolver: numericCompanyCatalogFixture, civilDate: "2030-01-01", revision: "1", seq: 0 });
     const query = { companyId: "600001", cursor: null };
     const first = coordinator.query(query);
     const replacement = coordinator.query(query, true);
@@ -351,7 +352,7 @@ test("页和 by-id ticket 分别去重，清理后不复用旧 requestSequence",
 test("缺少 company capability 的页和 by-id 请求立即结束 ticket", async () => {
   const updates: { type: string }[] = [];
   const coordinator = new CompanyQueryCoordinator(host, (action) => updates.push(action));
-  coordinator.installBaseline({ civilDate: "2030-01-01", revision: "1", seq: 0 });
+  coordinator.installBaseline({ catalogResolver: numericCompanyCatalogFixture, civilDate: "2030-01-01", revision: "1", seq: 0 });
   for (let index = 0; index < 2; index++) {
     await Promise.all([
       coordinator.query({ companyId: "600001", cursor: null }),

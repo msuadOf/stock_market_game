@@ -1,9 +1,13 @@
+import { installHostBaseline } from "../../store/host-baseline.ts";
+import { defaultCatalogFixture } from "../../host/catalog-test-fixture.ts";
+import { parseProtocolSnapshot } from "../../host/protocol/parse.ts";
+import { snapshot } from "../../host/protocol-test-fixtures.ts";
 import assert from "node:assert/strict";
 import { after, before, test } from "node:test";
 import * as React from "react";
 import { createServer, type ViteDevServer } from "vite";
 import { memoryHook } from "../../app/hook-test-runtime.ts";
-import { companyReducer, installCompanyBaseline, recordCompanyPage, recordCompanyQueryFailure, startCompanyQuery, updateCompanyReading } from "../../store/company-slice.ts";
+import { companyReducer, recordCompanyPage, recordCompanyQueryFailure, startCompanyQuery, updateCompanyReading } from "../../store/company-slice.ts";
 import { publicReportGold } from "./public-report-fixture.ts";
 import { companyIdOf } from "../../config/company-ids.ts";
 
@@ -19,7 +23,10 @@ after(async () => { if (vite) await vite.close(); });
 function fixture() {
   const query = { generation: 1, companyId: "C-600101", cursor: null };
   const reports = [publicReportGold(), { ...publicReportGold(), id: "8" }];
-  const baseline = companyReducer(undefined, installCompanyBaseline({ generation: 1, civilDate: "2030-04-02", revision: "1", seq: 0 }));
+  const baseline = companyReducer(undefined, installHostBaseline({ generation: "1", companyGeneration: 1,
+    snapshot: parseProtocolSnapshot(snapshot(0, 0), "fixture", defaultCatalogFixture),
+    companyCatalog: defaultCatalogFixture.companyCatalog, stockCatalog: defaultCatalogFixture.stockCatalog,
+    civilDate: "2030-04-02", revision: "1" }));
   const ready = companyReducer(baseline, recordCompanyPage({ ...query, reports, nextCursor: null }));
   return { query, reports, ready };
 }

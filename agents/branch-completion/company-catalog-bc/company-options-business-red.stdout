@@ -1,0 +1,35 @@
+✖ 公司选择仅允许 actual 目录存在，名称权威，自定义公司不编造行业 (4.959791ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 204.97578
+
+✖ failing tests:
+
+test at apps/web/src/components/company/actual-company-catalog.test.ts:5:1
+✖ 公司选择仅允许 actual 目录存在，名称权威，自定义公司不编造行业 (4.959791ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+  + actual - expected
+  
+  + []
+  - [
+  -   'C-600101',
+  -   '自定义\x00公司'
+  - ]
+  
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/components/company/actual-company-catalog.test.ts:7:10)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.start (node:internal/test_runner/test:1096:17)
+      at startSubtestAfterBootstrap (node:internal/test_runner/harness:385:17) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: [],
+    expected: [ 'C-600101', '自定义\x00公司' ],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }

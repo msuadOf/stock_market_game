@@ -1,0 +1,48 @@
+✔ 当前分钟历史使用独立live响应，严格保留真实分钟事实 (4.123874ms)
+✔ 当前分钟历史拒绝账户注入、归档冒充live与证券错配 (0.753012ms)
+✔ 永久分钟历史保留fullu64股数与u128金额，不转换为Number (4.828315ms)
+✔ 公开历史拒绝账户注入、缺字段、坏日期与游标 (0.31721ms)
+✔ 分钟历史拒绝假成交、数值金额、非规范数量和分页错配 (1.00552ms)
+✔ Given the remote whole-update DTO, when parsed, then it preserves generation and opaque EngineUpdate (3.808675ms)
+✔ Given the remote baseline DTO, when parsed, then it preserves generation and public metadata (1.99001ms)
+✔ Given legacy flat events or frames, when parsed in production, then remote rejects them (0.483245ms)
+✔ Given multiple remote envelope variants, when parsed, then the ambiguous message is rejected (0.220227ms)
+✔ Given malformed remote control payloads, when parsed, then their exact wire shapes are rejected (0.715342ms)
+✔ Given a pause preference payload mode, when converted from speed, then fastest stays JSON safe (0.227026ms)
+✔ Given enriched remote failures, when parsed, then diagnostic context and recovery guidance survive (0.299519ms)
+✔ Given an authenticated remote host, when player orders are queried, then it uses the read-only endpoint (52.211849ms)
+✔ 远程股票历史只通过显式 query endpoint 读取并绑定 generation (3.390292ms)
+✔ Given a keyed day-end save, when RemoteHost sends it, then the exact candidate key reaches the authenticated save endpoint (3.64392ms)
+✔ Given invalid indicators rejected by the server, when calculated remotely, then the host rejects instead of returning result arrays (0.99924ms)
+✔ Given a remote host without a Publisher baseline, when player orders are queried, then it rejects without inventing generation one (0.98657ms)
+✔ Given a same-generation Publisher resync, when refreshBaseline completes, then it redelivers the authoritative baseline (5.165126ms)
+✔ Given a server without diagnostic support, when created, then RemoteHost negotiates it as disabled (0.791234ms)
+✔ Given remote pause preferences, when serialized for the authenticated current generation API, then both flags remain explicit (0.171565ms)
+✔ Given remote session deletion fails, when disposed, then the host reports an explicit fatal failure (8.793114ms)
+✔ remote disposal authenticates the owning session before deletion (0.904957ms)
+✔ Tauri save pins generation for keyed and latest candidates and rejects a late response after load (12.61685ms)
+✔ Tauri enqueue 严格携带当前 generation，restore 后旧入队确认不得报告新代成功 (1.32077ms)
+✔ Tauri restore 切换 timeline 后过滤旧 event，并在新 baseline callback 后 resume (7.485595ms)
+✔ Tauri 同 generation refresh 使 orders 与 NPC 查询失效，但 save 仍只检查 generation (1.513435ms)
+✔ Tauri 股票历史查询绑定 generation，刷新后拒绝旧结果，调用参数不含账户 (1.400112ms)
+✔ Tauri restore snapshot 解析失败保留可见 generation/timeline 与旧 baseline，不 resume (2.117243ms)
+✔ Tauri baseline callback 抛错保留已安装状态，并阻止 restore 后 resume (4.086873ms)
+✔ Tauri restore 失败后保留已确认暂停，不冒充 running (1.083562ms)
+✔ Tauri dispose 后晚到 refresh 与 save 拒绝，不能复活基线 (0.808194ms)
+✔ Tauri 拒绝初始 generation 不匹配及 restore 非 nextGeneration (0.935308ms)
+✔ Tauri start 与 stop 等待 IPC 应用确认，恢复不重送旧 baseline (1.304539ms)
+✔ Tauri cached baseline 消费者拒绝时 start 不得恢复 actor 或标记已交付 (0.512736ms)
+✔ Tauri refresh baseline 被拒绝时暂停 actor，并在重启时重新交付 (0.587377ms)
+✔ Tauri restore baseline 被拒绝时不恢复 actor，并在重启时重新交付 (0.518286ms)
+✔ Tauri 未启动消费者时 refresh 与 restore 不标记 baseline 已交付 (0.622349ms)
+✔ Tauri dispose 即使 IPC 失败也释放监听并显式拒绝 (0.404672ms)
+✔ Tauri dispose 后晚到 load 拒绝且不安装 restore baseline (0.481565ms)
+✔ Tauri 恢复提交在 baseline/恢复运行前通知，恢复运行失败仍保留提交通知 (0.513125ms)
+ℹ tests 40
+ℹ suites 0
+ℹ pass 40
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 353.935607

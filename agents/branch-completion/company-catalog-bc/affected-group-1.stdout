@@ -1,0 +1,124 @@
+✔ production delta updates selected daily K and mobile active K cache while retaining completed history (388.182764ms)
+✖ production runtimeSnapshot 替换权威日 K，普通帧的 active 不覆盖 snapshot (3.118736ms)
+✖ production AfterClose+BeforeOpen 即使携旧日历史也清空分时并保留权威日 K (2.636201ms)
+✔ successive production deltas use final authoritative active candles and remove absent active codes (3.542329ms)
+✔ 详情历史查询丢弃换股前响应，并在 hook rerender 后交付日 K consumer (2.938121ms)
+✔ 历史查询错误通过 notice 明确呈现 (0.515476ms)
+✔ production AfterClose-only 进入非交易日时保留真实收盘分时 (4.51965ms)
+✔ Money wire：持仓金额超过 Number 安全范围仍精确到分 (3.341473ms)
+✔ Money wire：条件单价格不能按字符串字典序比较 (0.611589ms)
+✔ Money wire：活动委托严格拒绝 Number 并保留大金额原值 (0.926919ms)
+✔ Money wire：图表坐标相同不能吞掉原始 OHLC 一分变化 (0.563978ms)
+✔ 审计G67：baseline拒绝没有行情的持仓引用，估值不能当零价 (3.639213ms)
+✖ 审计G67：非玩家和零股持仓引用同样校验，继承属性不是行情 (1.275089ms)
+✔ 坏目录 prepare 不发布 Redux/protocol/App，新 baseline 同一次dispatch安装snapshot和company (6.516771ms)
+✔ Tauri 坏目录不覆盖 timeline、generation、query epoch 或 cached baseline (0.820225ms)
+✔ ProtocolCoordinator cursor 错误保留已知 actual/expected generation、tick 和 seq (7.693298ms)
+✔ ProtocolCoordinator 真实复制反馈保留公开游标且未知或双 variant 不猜 expected tick (3.513339ms)
+✔ ProtocolCoordinator onApplied 抛错时反馈引用本次输入 cursor，不捏造下一包 expected (4.025244ms)
+✔ Given a three-frame protocol batch, when the coordinator accepts it, then it publishes one reduction with every frame (2.094005ms)
+✔ Given an exact retry, when the coordinator accepts it, then it publishes nothing (1.324681ms)
+✔ Given malformed or stale-generation protocol updates, when accepted, then the coordinator preserves state and reports a typed failure (1.266509ms)
+✔ Given a fresh baseline after resync, when a new generation update arrives, then prior replay history is discarded (2.386994ms)
+✔ Given an already-published tick batch, when a CivilUpdate shares its tick barrier, then the coordinator accepts it (2.8932ms)
+✔ NPC普通拒单不冒充玩家反馈，原始事件、玩家拒单和结算错误继续保留 (10.849485ms)
+✔ Given stable facts and timeseries, when projected, then notices, trades, and automatic points are type-grouped (0.566717ms)
+✔ 跨帧成交效果保留各自 tick，重试不重复追加 (1.30214ms)
+✔ Given an already filled cancellation, when projected, then the notice explains the failure (0.485075ms)
+✔ Given WASM Map fields, when parsed, then nested maps normalize at the boundary (5.412417ms)
+✔ Given a structured-cloned WASM Snapshot, Map-backed markets and accounts survive baseline parsing (0.447263ms)
+✔ Given every Event wire variant, when parsed in an update, then all eleven tags are accepted (1.185536ms)
+✔ Given malformed tags, fields, keys, bigint, or enums, when parsed, then each is rejected (1.691042ms)
+✔ Given a decimal string beyond u64, when parsed, then opaque protocol IDs and totals are rejected (0.917489ms)
+✔ Given malformed StockSpec structural fields, when parsed, then transport rejects only those fields (1.049002ms)
+✔ Given structural-key attacks or normalized Map collisions, when parsed, then the boundary rejects them (0.67002ms)
+✔ Given Map keys that normalize to the same string, when normalized, then their distinct raw identities are rejected (0.310729ms)
+✔ Given a safe WASM Map, when normalized, then parsed records have no prototype (0.901138ms)
+✔ Given Rust-width boundary values, when parsed, then u8 and u32 fields keep their actual widths (1.171726ms)
+✔ Given a future structurally valid security, when parsed, then transport does not duplicate engine market policy (0.493476ms)
+✔ production coordinator consumes delta before the existing chart frame callback without a full snapshot replacement (11.963829ms)
+✔ a reconnect baseline can seed exact-cursor public orders before consuming a non-reset delta (1.974121ms)
+✔ late or cross-generation baseline order seeds cannot overwrite the current protocol and store (1.121684ms)
+✔ 单股本代 StockId0 在 baseline、日内 facts/timeseries 和 runtime delta 保持600101 (5.251262ms)
+✔ 两个宿主 resolver 交错翻译不共享当前目录 (2.323502ms)
+✔ 单股baseline→下一tick→CivilUpdate refresh与日内历史始终同代600101 (8.587685ms)
+✔ runtime delta consumes account reservations, T+1, clock and player orders without replacing history (8.459392ms)
+✔ subsequent delta replaces remaining quantity and removes filled/canceled orders without touching unchanged accounts (1.559458ms)
+✔ delta exact retry is effect-free but mutation at the accepted cursor is rejected (1.743544ms)
+✔ full-snapshot batches and complete baselines remain supported alongside explicit delta batches (1.240959ms)
+✔ delta rejects mismatched cursors and simultaneous full snapshot authority atomically (2.026653ms)
+✔ delta rejects NPC account data, invalid reservations and inconsistent order patches (3.108736ms)
+✔ delta cannot remove unknown orders or skip the explicit order reset after a baseline (0.845706ms)
+✔ a supported full snapshot invalidates order authority and requires a new explicit reset (1.235778ms)
+✔ snapshot delta keeps unchanged account, market and completed candle references (5.798719ms)
+✔ snapshot store rejects stale generation and noncontiguous seq without partial account updates (1.93233ms)
+✔ fresh baseline clears working-order state and rejects the former generation (1.051692ms)
+ℹ tests 55
+ℹ suites 0
+ℹ pass 52
+ℹ fail 3
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1035.718398
+
+✖ failing tests:
+
+test at src/app/market-chart-runtime.test.ts:87:1
+✖ production runtimeSnapshot 替换权威日 K，普通帧的 active 不覆盖 snapshot (3.118736ms)
+  Error: PROTOCOL_UNEXPECTED: 未知股票 StockId：0
+      at Object.onFailure (/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/app/market-chart-runtime.test-support.tsx:25:11)
+      at ProtocolCoordinator.fail (/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/protocol-coordinator.ts:98:18)
+      at ProtocolCoordinator.applyProtocol (/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/protocol-coordinator.ts:163:9)
+      at ProtocolCoordinator.accept (/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/protocol-coordinator.ts:87:10)
+      at MarketChartRuntimeProbe (/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/app/market-chart-runtime.test-support.tsx:36:53)
+      at finishHooks (/data1/baiyifan/workplace/stock_market_game/node_modules/.pnpm/react-dom@18.3.1_react@18.3.1/node_modules/react-dom/cjs/react-dom-server-legacy.node.development.js:4964:16)
+      at renderWithHooks (/data1/baiyifan/workplace/stock_market_game/node_modules/.pnpm/react-dom@18.3.1_react@18.3.1/node_modules/react-dom/cjs/react-dom-server-legacy.node.development.js:5663:10)
+      at renderIndeterminateComponent (/data1/baiyifan/workplace/stock_market_game/node_modules/.pnpm/react-dom@18.3.1_react@18.3.1/node_modules/react-dom/cjs/react-dom-server-legacy.node.development.js:5736:15)
+      at renderElement (/data1/baiyifan/workplace/stock_market_game/node_modules/.pnpm/react-dom@18.3.1_react@18.3.1/node_modules/react-dom/cjs/react-dom-server-legacy.node.development.js:5961:7)
+      at renderNodeDestructiveImpl (/data1/baiyifan/workplace/stock_market_game/node_modules/.pnpm/react-dom@18.3.1_react@18.3.1/node_modules/react-dom/cjs/react-dom-server-legacy.node.development.js:6119:11)
+
+test at src/app/market-chart-runtime.test.ts:104:1
+✖ production AfterClose+BeforeOpen 即使携旧日历史也清空分时并保留权威日 K (2.636201ms)
+  Error: PROTOCOL_UNEXPECTED: 未知股票 StockId：2
+      at Object.onFailure (/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/app/market-chart-runtime.test-support.tsx:25:11)
+      at ProtocolCoordinator.fail (/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/protocol-coordinator.ts:98:18)
+      at ProtocolCoordinator.applyProtocol (/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/protocol-coordinator.ts:163:9)
+      at ProtocolCoordinator.accept (/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/protocol-coordinator.ts:87:10)
+      at MarketChartRuntimeProbe (/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/app/market-chart-runtime.test-support.tsx:36:53)
+      at finishHooks (/data1/baiyifan/workplace/stock_market_game/node_modules/.pnpm/react-dom@18.3.1_react@18.3.1/node_modules/react-dom/cjs/react-dom-server-legacy.node.development.js:4964:16)
+      at renderWithHooks (/data1/baiyifan/workplace/stock_market_game/node_modules/.pnpm/react-dom@18.3.1_react@18.3.1/node_modules/react-dom/cjs/react-dom-server-legacy.node.development.js:5663:10)
+      at renderIndeterminateComponent (/data1/baiyifan/workplace/stock_market_game/node_modules/.pnpm/react-dom@18.3.1_react@18.3.1/node_modules/react-dom/cjs/react-dom-server-legacy.node.development.js:5736:15)
+      at renderElement (/data1/baiyifan/workplace/stock_market_game/node_modules/.pnpm/react-dom@18.3.1_react@18.3.1/node_modules/react-dom/cjs/react-dom-server-legacy.node.development.js:5961:7)
+      at renderNodeDestructiveImpl (/data1/baiyifan/workplace/stock_market_game/node_modules/.pnpm/react-dom@18.3.1_react@18.3.1/node_modules/react-dom/cjs/react-dom-server-legacy.node.development.js:6119:11)
+
+test at src/app/portfolio-selector.test.ts:22:1
+✖ 审计G67：非玩家和零股持仓引用同样校验，继承属性不是行情 (1.275089ms)
+  AssertionError [ERR_ASSERTION]: The validation function is expected to return "true". Received false
+  
+  Caught error:
+  
+  ProtocolError: 持仓 600101 缺少行情，不能估值
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/app/portfolio-selector.test.ts:26:12)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: ProtocolError: 持仓 600101 缺少行情，不能估值
+        at malformed (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/protocol/parse.ts:49:9)
+        at parseProtocolSnapshot (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/protocol/parse.ts:186:9)
+        at Object.create.600101.last_price (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/app/portfolio-selector.test.ts:26:25)
+        at getActual (node:assert:586:5)
+        at strict.throws (node:assert:734:24)
+        at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/app/portfolio-selector.test.ts:26:12)
+        at Test.runInAsyncScope (node:async_hooks:226:14)
+        at Test.run (node:internal/test_runner/test:1201:25)
+        at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+        at Test.postRun (node:internal/test_runner/test:1330:19),
+    operator: 'throws',
+    diff: 'simple'
+  }

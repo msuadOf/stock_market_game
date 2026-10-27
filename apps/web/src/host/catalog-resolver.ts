@@ -17,6 +17,7 @@ function identityText(value: unknown, path: string): string {
 export interface CatalogResolver {
   readonly stockCatalog: readonly StockIdentityEntry[];
   readonly companyCatalog: readonly CompanyCatalogEntry[];
+  stockId(code: string): number;
   stockCode(id: number, path?: string): string;
   companyCode(id: number, path?: string): string;
   companyId(code: string): number;
@@ -39,9 +40,11 @@ export function prepareCatalogResolver(stockValue: unknown, companyValue: unknow
   });
   const stocks = new Map<number, string>();
   const stockCodes = new Set<string>();
+  const stockIds = new Map<string, number>();
   for (const entry of stockCatalog) {
     if (stocks.has(entry.id) || stockCodes.has(entry.code)) invalid("stockCatalog", "StockId 与 code 必须分别唯一");
     stocks.set(entry.id, entry.code);
+    stockIds.set(entry.code, entry.id);
     stockCodes.add(entry.code);
   }
   const companies = new Map<number, string>();
@@ -65,10 +68,15 @@ export function prepareCatalogResolver(stockValue: unknown, companyValue: unknow
   };
   return Object.freeze({
     stockCatalog: Object.freeze(stockCatalog), companyCatalog: Object.freeze(companyCatalog),
+    stockId(code: string): number {
+      const id = stockIds.get(code);
+      if (id === undefined) invalid("stockCatalog.code", `未知股票代码：${code}（不在本代 StockCatalog）`);
+      return id;
+    },
     stockCode(id: number, path = "StockId"): string {
       safeU32(id, path);
       const code = stocks.get(id);
-      if (code === undefined) invalid(path, `未知 StockId：${id}`);
+      if (code === undefined) invalid(path, `未知股票 StockId：${id}`);
       return code;
     },
     companyCode,
