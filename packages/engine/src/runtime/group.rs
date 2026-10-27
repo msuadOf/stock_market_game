@@ -868,6 +868,10 @@ pub struct GroupState {
     /// 缓冲——驱动器段投影 session.last_retail_decisions；Start 清空
     /// 对齐旧管线「本 tick 最新」瞬态语义）。
     retail_traces: Vec<crate::session::RetailDecisionTrace>,
+    #[cfg(feature = "simulation-diagnostics")]
+    round_decision_traces: Vec<super::diagnostics::GroupDecisionTrace>,
+    #[cfg(feature = "simulation-diagnostics")]
+    quote_trace_constraints: Vec<String>,
     /// 翻转批组参数化：本组在全局名 roster 的偏移（RootProjection 的
     /// per-local 向量按全局序——组内 local 访问需加偏移；单组=0）。
     pub(crate) roster_offset: usize,
@@ -1034,6 +1038,10 @@ impl GroupState {
             plan_undo_saved: false,
             pending_force_due: Vec::new(),
             retail_traces: Vec::new(),
+            #[cfg(feature = "simulation-diagnostics")]
+            round_decision_traces: Vec::new(),
+            #[cfg(feature = "simulation-diagnostics")]
+            quote_trace_constraints: Vec::new(),
             roster_offset: 0,
             attention_evolved: Vec::new(),
             #[cfg(test)]
@@ -1259,6 +1267,11 @@ impl GroupState {
         // Sol 二审修复集 4：未消费的 ForceDue 待办一并作废（指令失效
         /// 需重发）；已入日志域的由上方 undo 逆序回放冲回。
         self.pending_force_due.clear();
+        #[cfg(feature = "simulation-diagnostics")]
+        {
+            self.round_decision_traces.clear();
+            self.quote_trace_constraints.clear();
+        }
         self.cur_tick = self.committed_tick;
         self.cur_round = 0;
     }
@@ -2915,6 +2928,8 @@ impl GroupState {
             belief: snap.belief.clone(),
         };
         let personal_in = personal.clone();
+        #[cfg(feature = "simulation-diagnostics")]
+        let trace_before = write_back.then(|| crate::session::plan_trace_states(account, &self.plan_book));
         let (_account, out, operations, _diagnostics) =
             crate::session::InstitutionDecisionRoot::new(account, personal)
                 .observe(&context, &observation);
@@ -3205,6 +3220,8 @@ impl GroupState {
         // 本轮开仓前计划集合（Sol 整改 3b：预算新旧分类——采集点在开仓
         // 循环之前，见上方 Sol 二审修复集 1 注记）。
         let (child_ops, chain_cancels) = if write_back {
+            #[cfg(feature = "simulation-diagnostics")]
+            self.quote_trace_constraints.clear();
             self.chain_quote_children(
                 local,
                 account,
@@ -3223,6 +3240,26 @@ impl GroupState {
         cancels_out.extend(chain_cancels);
         // 组态写回（生产路径：个人态六件入可逆日志后演进）。
         if write_back {
+            #[cfg(feature = "simulation-diagnostics")]
+            {
+                if snapshot.tick != tick {
+                    return Err(RuntimeError::ProtocolInvariant {
+                        detail: format!("机构 trace snapshot tick 错配：{} != {tick}", snapshot.tick),
+                    });
+                }
+                let before = trace_before.expect("真实 write_back 已取本账户计划基线");
+                let mut ids = self.plan_book.active_plan_ids_for_account(account);
+                for plan_id in before.keys() {
+                    if !ids.contains(plan_id) { ids.push(*plan_id); }
+                }
+                let record = _diagnostics.into_runtime_trace(
+                    account, tick, &out.belief, ids, Vec::new(),
+                    std::mem::take(&mut self.quote_trace_constraints),
+                );
+                self.round_decision_traces.push(super::diagnostics::GroupDecisionTrace {
+                    owner: (group, local), record: Arc::new(record), plan_before: before,
+                });
+            }
             self.push_undo(GroupUndo::Personal {
                 local,
                 prev: Box::new(snap),
@@ -3587,6 +3624,12 @@ impl GroupState {
                 .unwrap_or_else(|error| panic!("组内预算分配失败 {account:?}: {error}")),
             )
         };
+        #[cfg(feature = "simulation-diagnostics")]
+        if let Some(allocation) = &grants {
+            self.quote_trace_constraints.extend(allocation.grants.iter().filter_map(|grant| {
+                grant.constraint.map(|constraint| format!("{:?}: {constraint:?}", grant.plan_id))
+            }));
+        }
         // 逐计划报价（共享 decide_plan_quote——与 session 版同一函数）。
         let mut submits: Vec<(
             crate::plans::PlanId,
@@ -3740,6 +3783,13 @@ impl GroupState {
             let Some(decision) = decision else {
                 continue;
             };
+            #[cfg(feature = "simulation-diagnostics")]
+            if matches!(decision.reason, crate::plans::quote_policy::QuoteReason::InsufficientBudget
+                | crate::plans::quote_policy::QuoteReason::NoLegalPriceWithinProtection
+                | crate::plans::quote_policy::QuoteReason::PauseRequested
+                | crate::plans::quote_policy::QuoteReason::PendingReconsideration) {
+                self.quote_trace_constraints.push(format!("{plan_id:?}: {:?}", decision.reason));
+            }
             match decision.action {
                 crate::plans::QuoteAction::Submit { price, qty } => {
                     if qty == 0 {
@@ -3836,6 +3886,8 @@ impl GroupState {
         desk_txs: &[Sender<super::protocol::DeskMsg>],
         up_tx: &Sender<UpMsg>,
     ) -> Result<(), RuntimeError> {
+        #[cfg(feature = "simulation-diagnostics")]
+        self.round_decision_traces.clear();
         // 决策来源：内联 decide_data（批 4）或测试脚本。
         enum Pending {
             Op(PendingOp),
@@ -4401,6 +4453,8 @@ impl GroupState {
             }
         }
         let report = GroupReport {
+            #[cfg(feature = "simulation-diagnostics")]
+            decision_traces: std::mem::take(&mut self.round_decision_traces),
             group,
             tick,
             round,
@@ -7745,3 +7799,5 @@ mod roster_offset_tests {
 }
 
 mod admin_transaction;
+
+mod admin_funds_cost;

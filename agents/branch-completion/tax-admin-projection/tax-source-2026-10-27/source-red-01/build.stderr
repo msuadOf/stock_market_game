@@ -1,0 +1,74 @@
+error[E0583]: file not found for module `settlement_day`
+ --> /data1/baiyifan/workplace/stock_market_game/.worktree/tax-admin-projection/packages/engine/src/company/share_registry.rs:9:1
+  |
+9 | pub mod settlement_day;
+  | ^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = help: to create the module `settlement_day`, create file "/data1/baiyifan/workplace/stock_market_game/.worktree/tax-admin-projection/packages/engine/src/company/settlement_day.rs" or "/data1/baiyifan/workplace/stock_market_game/.worktree/tax-admin-projection/packages/engine/src/company/settlement_day/mod.rs"
+  = note: if there is a `mod settlement_day` elsewhere in the crate already, import it with `use crate::...` instead
+
+error[E0583]: file not found for module `tests`
+    --> /data1/baiyifan/workplace/stock_market_game/.worktree/tax-admin-projection/packages/engine/src/company/share_registry.rs:1289:1
+     |
+1289 | mod tests;
+     | ^^^^^^^^^^
+     |
+     = help: to create the module `tests`, create file "/data1/baiyifan/workplace/stock_market_game/.worktree/tax-admin-projection/packages/engine/src/company/tests.rs" or "/data1/baiyifan/workplace/stock_market_game/.worktree/tax-admin-projection/packages/engine/src/company/tests/mod.rs"
+     = note: if there is a `mod tests` elsewhere in the crate already, import it with `use crate::...` instead
+
+error[E0583]: file not found for module `tests`
+    --> /data1/baiyifan/workplace/stock_market_game/.worktree/tax-admin-projection/packages/engine/src/company/cash_dividend_tax.rs:1658:1
+     |
+1658 | mod tests;
+     | ^^^^^^^^^^
+     |
+     = help: to create the module `tests`, create file "/data1/baiyifan/workplace/stock_market_game/.worktree/tax-admin-projection/packages/engine/src/company/tests.rs" or "/data1/baiyifan/workplace/stock_market_game/.worktree/tax-admin-projection/packages/engine/src/company/tests/mod.rs"
+     = note: if there is a `mod tests` elsewhere in the crate already, import it with `use crate::...` instead
+
+error[E0583]: file not found for module `entitlement_units`
+    --> /data1/baiyifan/workplace/stock_market_game/.worktree/tax-admin-projection/packages/engine/src/company/cash_dividend_tax.rs:1660:1
+     |
+1660 | pub mod entitlement_units;
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: to create the module `entitlement_units`, create file "/data1/baiyifan/workplace/stock_market_game/.worktree/tax-admin-projection/packages/engine/src/company/entitlement_units.rs" or "/data1/baiyifan/workplace/stock_market_game/.worktree/tax-admin-projection/packages/engine/src/company/entitlement_units/mod.rs"
+     = note: if there is a `mod entitlement_units` elsewhere in the crate already, import it with `use crate::...` instead
+
+error[E0583]: file not found for module `day_boundary`
+    --> /data1/baiyifan/workplace/stock_market_game/.worktree/tax-admin-projection/packages/engine/src/company/cash_dividend_tax.rs:1663:1
+     |
+1663 | pub(crate) mod day_boundary;
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: to create the module `day_boundary`, create file "/data1/baiyifan/workplace/stock_market_game/.worktree/tax-admin-projection/packages/engine/src/company/day_boundary.rs" or "/data1/baiyifan/workplace/stock_market_game/.worktree/tax-admin-projection/packages/engine/src/company/day_boundary/mod.rs"
+     = note: if there is a `mod day_boundary` elsewhere in the crate already, import it with `use crate::...` instead
+
+error[E0603]: function `days_in_month` is private
+    --> /data1/baiyifan/workplace/stock_market_game/.worktree/tax-admin-projection/packages/engine/src/company/cash_dividend_tax.rs:1462:37
+     |
+1462 |     let last_day = crate::calendar::days_in_month(year, month);
+     |                                     ^^^^^^^^^^^^^ private function
+     |
+note: the function `days_in_month` is defined here
+    --> packages/engine/src/calendar.rs:21:16
+     |
+  21 | pub(crate) use date::days_in_month;
+     |                ^^^^^^^^^^^^^^^^^^^
+
+error[E0599]: no method named `is_typed_movement_identity` found for mutable reference `&mut company::share_registry::ShareRegistry` in the current scope
+   --> /data1/baiyifan/workplace/stock_market_game/.worktree/tax-admin-projection/packages/engine/src/company/share_registry.rs:658:17
+    |
+658 |         if self.is_typed_movement_identity(&event_id) {
+    |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^ method not found in `&mut company::share_registry::ShareRegistry`
+
+error[E0599]: no method named `validate_settlement_bindings` found for reference `&company::share_registry::ShareRegistry` in the current scope
+   --> /data1/baiyifan/workplace/stock_market_game/.worktree/tax-admin-projection/packages/engine/src/company/share_registry.rs:887:14
+    |
+887 |         self.validate_settlement_bindings()?;
+    |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ method not found in `&company::share_registry::ShareRegistry`
+
+error: aborting due to 8 previous errors
+
+Some errors have detailed explanations: E0583, E0599, E0603.
+For more information about an error, try `rustc --explain E0583`.
+bounded command exited with 1

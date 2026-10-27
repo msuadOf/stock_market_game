@@ -1,0 +1,5 @@
+
+thread 'company::cash_dividend_tax::day_boundary::tests::equal_tail_cannot_move_a_historical_sale_across_tax_holding_period_boundary' (2311790) panicked at /tmp/tax-source-history-red-01/company/cash_dividend_tax/day_boundary_tests.rs:584:5:
+税历史不能因相同期末lot而移日减税
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+bounded command exited with 101

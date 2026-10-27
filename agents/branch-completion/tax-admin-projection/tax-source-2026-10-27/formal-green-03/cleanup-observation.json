@@ -1,0 +1,44 @@
+{
+  "session": 70330,
+  "waitExit": 0,
+  "observedUnix": 1793127971.157753,
+  "owned": [
+    {
+      "pid": 2559614,
+      "alive": false
+    },
+    {
+      "pid": 2560238,
+      "alive": false
+    },
+    {
+      "pid": 2560521,
+      "alive": false
+    },
+    {
+      "pid": 2560528,
+      "alive": false
+    },
+    {
+      "pid": 2560540,
+      "alive": false
+    },
+    {
+      "pid": 2561764,
+      "alive": false
+    },
+    {
+      "pid": 2570214,
+      "alive": false
+    },
+    {
+      "pid": 2570221,
+      "alive": false
+    },
+    {
+      "pid": 2570222,
+      "alive": false
+    }
+  ],
+  "alive": []
+}

@@ -1,0 +1,6 @@
+{
+  "packages/engine/src/company/cash_dividend_tax.rs": "624cfc23e3bd6a70cbbc8a385839a4c274b8f118579536bcd8ac878a7226fa3a",
+  "docs/trading-rules.md": "34745f7d2c5b23ecbb92c9078878731bc9b8791e62e357ba8fa0afaa67baefbb",
+  "packages/engine/src/company/cash_dividend_tax/day_boundary.rs": "56979a5df453ed62f4a1790162f4c85fdba342ae5e9e50ff412cf24a74aef1a2",
+  "packages/engine/src/company/cash_dividend_tax/day_boundary_tests.rs": "84a31b0a6538ffcb68d8ae2a9fce6d45a7f5ac4a0a44699eb2170d012ab43f98"
+}

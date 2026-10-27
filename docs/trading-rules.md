@@ -315,8 +315,9 @@ std-thread runtime 的日结编排（2026-10-17 登记）：市场推进内 `run
 
 ## 行政数值事务基座的支持边界（2026-10-25 登记）
 
-runtime 的独立 AdminTransaction 只承载上层已确定合法到账时点的 CashDividend、
-ShareSplit、WithholdingTax 和 ShareReduction 数值操作，尚未连接生产公司链。
+runtime 的独立 AdminTransaction 承载上层已确定合法到账时点的 CashDividend、
+ShareSplit、WithholdingTax、ShareReduction，以及 PaymentDebit、SubscriptionRefund 和
+SharesWithCost 数值操作，尚未连接生产公司链。
 金额为 i64 分、数量为 u32 股；行政股份变动不是买卖申报，不套用买入 100 股整数倍。
 ShareSplit 沿用既有命名，仅表示已经可流通的送转正向到账，不增加当日买入的
 frozen_today。ShareReduction 只从实际在手且可卖股份安全核减；在途卖股已从组端
@@ -327,6 +328,13 @@ shares 扣出，不能重复扣减，pending_sell_qty、在途票与 T+1 冻结�
 真清仓但仍有在途票的 ShareReduction 显式拒绝。正式公司命令及 restore 接线须先补齐
 这些制度，或对未支持输入显式拒绝。WithholdingTax 仅借记已经算出的正分额，
 只可使用实际可用 cash，不使用在途买单 purse；本批没有确定新税率、计税主体或舍入制度。
+
+配股资金原语（2026-10-28 登记）：PaymentDebit 按输入顺序精确扣除当前 raw cash，
+不使用在途 purse，也不以随后退款净额掩盖中间余额不足。SubscriptionRefund 只退回原实缴
+本金，不计退款利息，不改变股份或成本。SharesWithCost 仅在上层确认已经到合法上市流通日
+后增加股份与该账户原实缴总成本，保留 recovered，不再扣现金、不收二级市场交易费用、
+不增加 frozen_today；长期限售仍不支持。三原语沿同一个 PendingAdmin 与 INFO 候选共同
+prepare／commit／abort；数值通道接线不表示配股缴款、上市或回购生产流程已经启用。
 
 依据沿用 ADR-0031、ADR-0038、ADR-0039、ADR-0043 及已有中国结算取证：
 [上海分公司证券发行人业务指南 §2.5](https://www.chinaclear.cn/zdjs/yshsc/202503/bc6781d0a57340f598930115fe63e5c3/files/中国证券登记结算有限责任公司上海分公司证券发行人业务指南.pdf)、
@@ -455,6 +463,14 @@ NPC 默认策略只在缴款首日日终对未显式申请的非玩家、非回�
   第二、三、六条（2013-01-01 起执行）：持股档位、转让扣收、FIFO、日终净增减与
   资金不足通知补足。候选按最终真实可用现金部分收缴，保留实收与未清税款；不含在途
   buy purse，不以默认零余额代替缺失账户。登记日冻结权利，登记后卖出不减少已登记股利。
+- `cash_dividend_tax::day_boundary::TaxDayBoundaryFacts` 仅准备 ordinary 税日候选，尚无生产
+  caller。每证券一次消费 typed REG 完整自然日、最终确认全集与实际完成水位，零成交日和
+  休市日也记税日零净额。每本税账从自己的 `opened_on` 完成 frontier 核完整 opening lots，
+  其后每个 REG 自然日与税日的净额、取得和处置须逐项一致；当前同数量、同 lot 尾部不能
+  替代历史勾稽。登记归属只接受无任何公司或单位 movement 的普通路径，完整物理与税
+  lots 必须一致；physical90／tax100 显式拒绝，不按比例推导原权益。历史旧式无最终确认
+  绑定的 REG、公司或单位 movement、未经核实的法定限售资格均不支持。本入口不确定
+  公司变动的 R／R+1 税务日，不改变下述个人 `BonusShares` 拒绝门。
 - 送转分配复用现有 `company::stock_distribution`，批准总量必须显式给出。
   中国结算沪业字〔2026〕33号指南 2.5.1（四）7、深业〔2025〕68号指南
   2.5.4（十）支持账户碎股降序、同数系统随机、依序补一股，但没有给出统一汇总

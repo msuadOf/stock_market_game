@@ -1,0 +1,24 @@
+
+thread 'company::cash_dividend_tax::day_boundary::tests::actual_reg_prepare_zero_market_day_advances_tax_and_binds_exact_plan_capture' (2314276) panicked at /tmp/tax-source-batch-red-01/company/cash_dividend_tax/day_boundary_tests.rs:97:6:
+已完成普通零日也必须推进税日: MissingSource("批来源与历史归属尚未实现")
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+thread 'company::cash_dividend_tax::day_boundary::tests::complete_lot_attribution_rejects_90_physical_100_tax_and_equal_total_spoofs' (2314280) panicked at /tmp/tax-source-batch-red-01/company/cash_dividend_tax/day_boundary_tests.rs:183:9:
+MissingSource("批来源与历史归属尚未实现")
+
+thread 'company::cash_dividend_tax::day_boundary::tests::calendar_closed_and_absent_holder_change_still_record_exactly_one_zero_tax_day' (2314279) panicked at /tmp/tax-source-batch-red-01/company/cash_dividend_tax/day_boundary_tests.rs:246:6:
+called `Result::unwrap()` on an `Err` value: MissingSource("批来源与历史归属尚未实现")
+
+thread 'company::cash_dividend_tax::day_boundary::tests::late_first_buyer_opens_empty_tax_book_at_own_frontier_after_existing_registry_history' (2314282) panicked at /tmp/tax-source-batch-red-01/company/cash_dividend_tax/day_boundary_tests.rs:604:130:
+called `Result::unwrap()` on an `Err` value: MissingSource("批来源与历史归属尚未实现")
+
+thread 'company::cash_dividend_tax::day_boundary::tests::equal_tail_cannot_move_a_historical_sale_across_tax_holding_period_boundary' (2314281) panicked at /tmp/tax-source-batch-red-01/company/cash_dividend_tax/day_boundary_tests.rs:583:5:
+assertion failed: TaxDayBoundaryFacts::prepare(&registry, std::slice::from_ref(&honest), &next,
+        &context(&calendar, &rows, Some(next.day))).is_ok()
+
+thread 'company::cash_dividend_tax::day_boundary::tests::actual_world_fills_normalize_into_reg_and_exact_tax_net_acquisition_and_disposition' (2314277) panicked at /tmp/tax-source-batch-red-01/company/cash_dividend_tax/day_boundary_tests.rs:523:10:
+called `Result::unwrap()` on an `Err` value: MissingSource("批来源与历史归属尚未实现")
+
+thread 'company::cash_dividend_tax::day_boundary::tests::stock_batch_keeps_one_registry_and_rejects_duplicate_tax_book_accounts' (2314284) panicked at /tmp/tax-source-batch-red-01/company/cash_dividend_tax/day_boundary_tests.rs:590:115:
+called `Result::unwrap()` on an `Err` value: MissingSource("批来源与历史归属尚未实现")
+bounded command exited with 101

@@ -1,0 +1,10 @@
+error[E0433]: cannot find `config` in `crate`
+   --> /tmp/tax-source-source-world-01/company/cash_dividend_tax/day_boundary_tests.rs:132:44
+    |
+132 |         config: std::sync::Arc::new(crate::config::GameConfig::proposed_defaults()),
+    |                                            ^^^^^^ could not find `config` in the crate root
+
+error: aborting due to 1 previous error
+
+For more information about this error, try `rustc --explain E0433`.
+bounded command exited with 1

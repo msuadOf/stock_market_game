@@ -1,0 +1,5 @@
+
+thread 'admin_tax_projection::tests::real_inspect_rejection_preserves_original_error_accounts_and_no_publication' (1323602) panicked at /data1/baiyifan/workplace/stock_market_game/.worktree/tax-admin-projection/packages/engine/src/runtime/admin_tax_projection_tests.rs:202:70:
+called `Result::unwrap_err()` on an `Ok` value: ()
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+bounded command exited with 101
