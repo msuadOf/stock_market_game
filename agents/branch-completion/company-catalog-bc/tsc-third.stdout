@@ -1,0 +1,5 @@
+apps/web/src/components/company/public-financials-render.test.ts(1,1): error TS6133: 'defaultCatalogFixture' is declared but its value is never read.
+apps/web/src/components/company/public-financials-render.test.ts(23,70): error TS2769: No overload matches this call.
+  The last overload gave the following error.
+    Argument of type '{ report: PublicReportSummary; }' is not assignable to parameter of type 'Attributes & ReportNotesProps'.
+      Property 'catalogResolver' is missing in type '{ report: PublicReportSummary; }' but required in type 'ReportNotesProps'.

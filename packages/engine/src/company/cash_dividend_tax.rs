@@ -1658,3 +1658,6 @@ mod nonnegative_decimal {
 mod tests;
 
 pub mod entitlement_units;
+
+/// 从真实 ordinary REG 日请求核验完整税务日候选；公司变动税日仍保门。
+pub(crate) mod day_boundary;

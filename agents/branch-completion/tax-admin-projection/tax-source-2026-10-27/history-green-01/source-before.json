@@ -1,0 +1,15 @@
+{
+  "/data1/baiyifan/workplace/stock_market_game/.worktree/tax-admin-projection/packages/engine/src/company/share_registry.rs": "a6f064d0fc1e19933b941af0b5402a9bf47b49f25dd5fe90acb10fd1c728fc3c",
+  "/data1/baiyifan/workplace/stock_market_game/.worktree/tax-admin-projection/packages/engine/src/company/cash_dividend_tax.rs": "624cfc23e3bd6a70cbbc8a385839a4c274b8f118579536bcd8ac878a7226fa3a",
+  "/data1/baiyifan/workplace/stock_market_game/.worktree/tax-admin-projection/packages/engine/src/company/share_registry/settlement_day/tests.rs": "9cc63b842a352eebec2873342ef2981f8c6a411966ffe5ba56e9b1dd651aa4d7",
+  "/data1/baiyifan/workplace/stock_market_game/.worktree/tax-admin-projection/packages/engine/src/company/share_registry/settlement_day.rs": "06f6fa65d6c5973567bbad009e79268367f50d90eabea748846f0990ae0c8f7e",
+  "/data1/baiyifan/workplace/stock_market_game/.worktree/tax-admin-projection/packages/engine/src/company/share_registry/tests.rs": "f32ff06d2fcfccdc9ba7ee3aa66b97141fc24684df8e620d6475e72d00f7c8a7",
+  "/data1/baiyifan/workplace/stock_market_game/.worktree/tax-admin-projection/packages/engine/src/company/cash_dividend_tax/day_boundary.rs": "4f75870f7651a0363cba791a338e038c9bc82c6cfe10ef5bcdbf679f571de1cd",
+  "/data1/baiyifan/workplace/stock_market_game/.worktree/tax-admin-projection/packages/engine/src/company/cash_dividend_tax/day_boundary_tests.rs": "00e61bbb95d09c959398043fc2ae1e6c3f6db3d5c7b2874d4c464853c009ed63",
+  "/data1/baiyifan/workplace/stock_market_game/.worktree/tax-admin-projection/packages/engine/src/company/cash_dividend_tax/entitlement_units/conditional_bonus.rs": "2f04cfff827d2c00cdaf939b76b4f821544c7d7a2cd7adcd059aeaf789dd035e",
+  "/data1/baiyifan/workplace/stock_market_game/.worktree/tax-admin-projection/packages/engine/src/company/cash_dividend_tax/entitlement_units/conditional_bonus_tests.rs": "14cbe3c7979fa3b03ee68c0d47867a744b0fbf5b25511a99cb024fc7ea8c2dde",
+  "/data1/baiyifan/workplace/stock_market_game/.worktree/tax-admin-projection/packages/engine/src/company/cash_dividend_tax/entitlement_units/tests.rs": "255879a763e0ccc3d77c42a673469f3d4f6205d703923ebcdbf7730dc9c75d0c",
+  "/data1/baiyifan/workplace/stock_market_game/.worktree/tax-admin-projection/packages/engine/src/company/cash_dividend_tax/entitlement_units.rs": "e06a902ed2a34b02bc68a850a00d21c5522e22b57297b0db3875a40e14b2d3af",
+  "/data1/baiyifan/workplace/stock_market_game/.worktree/tax-admin-projection/packages/engine/src/company/cash_dividend_tax/tests.rs": "9f9b7a2cea341453f2b37294f626586d08b30d93902a855b2fa83e5bb0598b4f",
+  "/data1/baiyifan/workplace/stock_market_game/.worktree/tax-admin-projection/packages/engine/src/session/personal_trade_history.rs": "e423a07805f1f192d111911ff2d6334a7ec27b948d540fc0eb69af33a2247642"
+}

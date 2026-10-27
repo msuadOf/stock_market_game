@@ -1,3 +1,4 @@
+import { defaultCatalogFixture, catalogFixtureForSnapshot } from "./catalog-test-fixture.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { ProtocolCoordinator } from "./protocol-coordinator.ts";
@@ -9,7 +10,7 @@ import { applyProtocolFrame, setSnapshot, store } from "../store/store.ts";
 test("production coordinator consumes delta before the existing chart frame callback without a full snapshot replacement", () => {
   const baseline = parseProtocolSnapshot({ ...snapshot(0, 0), accounts: {
     "0": { cash: "100000", reserved_cash: "0", reserved_sell_qty: {}, positions: {} },
-  } });
+  } }, "test.fixture", defaultCatalogFixture);
   const failures: unknown[] = [];
   const coordinator = new ProtocolCoordinator({
     onBaseline: (state) => { store.dispatch(setSnapshot(state.snapshot)); },
@@ -20,7 +21,7 @@ test("production coordinator consumes delta before the existing chart frame call
     },
     onFailure: (failure) => failures.push(failure),
   });
-  coordinator.accept(createBaselineUpdate("1", baseline));
+  coordinator.accept(createBaselineUpdate("1", baseline, catalogFixtureForSnapshot(baseline)));
   const before = store.getState().snapshot.snapshot!;
   coordinator.accept(createProtocolUpdate("1", { TickBatch: {
     frames: [frame(1, 0, [0])], runtime_snapshot: null,
@@ -44,10 +45,10 @@ test("production coordinator consumes delta before the existing chart frame call
 test("a reconnect baseline can seed exact-cursor public orders before consuming a non-reset delta", () => {
   const baseline = parseProtocolSnapshot({ ...snapshot(5, 5), accounts: {
     "0": { cash: "100000", reserved_cash: "0", reserved_sell_qty: {}, positions: {} },
-  } });
+  } }, "test.fixture", defaultCatalogFixture);
   const failures: unknown[] = [];
   const coordinator = new ProtocolCoordinator({ onBaseline: () => {}, onApplied: () => {}, onFailure: (failure) => failures.push(failure) });
-  coordinator.accept(createBaselineUpdate("2", baseline));
+  coordinator.accept(createBaselineUpdate("2", baseline, catalogFixtureForSnapshot(baseline)));
   const seed = Reflect.get(coordinator, "installPlayerWorkingOrdersBaseline");
   assert.equal(typeof seed, "function");
   seed.call(coordinator, { generation: "2", tick: 5, seq: 5 }, [
@@ -71,9 +72,9 @@ test("a reconnect baseline can seed exact-cursor public orders before consuming 
 test("late or cross-generation baseline order seeds cannot overwrite the current protocol and store", () => {
   const baseline = parseProtocolSnapshot({ ...snapshot(5, 5), accounts: {
     "0": { cash: "100000", reserved_cash: "0", reserved_sell_qty: {}, positions: {} },
-  } });
+  } }, "test.fixture", defaultCatalogFixture);
   const coordinator = new ProtocolCoordinator({ onBaseline: () => {}, onApplied: () => {}, onFailure: () => {} });
-  coordinator.accept(createBaselineUpdate("2", baseline));
+  coordinator.accept(createBaselineUpdate("2", baseline, catalogFixtureForSnapshot(baseline)));
   const seed = Reflect.get(coordinator, "installPlayerWorkingOrdersBaseline");
   assert.equal(typeof seed, "function");
   const before = coordinator.status();

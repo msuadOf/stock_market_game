@@ -6,12 +6,12 @@ import { parseActiveShocks, parseFlowParams, parseHistory, parseScheduler, parse
 import { instant, nullableDate, u64, type CivilInstantValue, type U64 } from "./value.ts"
 import { parsePaymentFailure, type PaymentFailure } from "./policies/shock.ts"
 
-export type CompanyOperationsConfig = { readonly seed: number; readonly shock_params: ShockParams; readonly companies: readonly { readonly spec: ReturnType<typeof parseCompanySpec>; readonly books: IndustryBooks; readonly flow: FlowParams }[] }
+export type CompanyOperationsConfig = { readonly seed: number; readonly shock_params: ShockParams; readonly catalog: CompanyCatalog; readonly companies: readonly { readonly spec: ReturnType<typeof parseCompanySpec>; readonly books: IndustryBooks; readonly flow: FlowParams }[] }
 
 export function parseCompanyOperationsConfig(value: unknown, path: string): CompanyOperationsConfig {
   const parsed = record(value, path)
-  exact(parsed, ["seed", "shock_params", "companies"], path)
-  return { seed: integer(parsed.seed, `${path}.seed`, 0), shock_params: parseShockParams(parsed.shock_params, `${path}.shock_params`), companies: array(parsed.companies, `${path}.companies`).map((value, index) => {
+  exact(parsed, ["seed", "shock_params", "catalog", "companies"], path)
+  return { seed: integer(parsed.seed, `${path}.seed`, 0), shock_params: parseShockParams(parsed.shock_params, `${path}.shock_params`), catalog: parseCompanyCatalog(parsed.catalog, `${path}.catalog`), companies: array(parsed.companies, `${path}.companies`).map((value, index) => {
     const itemPath = `${path}.companies[${index}]`
     const item = record(value, itemPath)
     exact(item, ["spec", "books", "flow"], itemPath)

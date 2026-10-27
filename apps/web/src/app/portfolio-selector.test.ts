@@ -1,3 +1,4 @@
+import { defaultCatalogFixture } from "../host/catalog-test-fixture.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { selectPortfolioInput } from "./portfolio-selector.ts";
@@ -12,9 +13,9 @@ function snapshot(markets: Record<string, unknown>) {
 
 test("审计G67：baseline拒绝没有行情的持仓引用，估值不能当零价", () => {
   const invalid = snapshot({});
-  assert.throws(() => parseProtocolSnapshot(invalid), /缺少行情/);
+  assert.throws(() => parseProtocolSnapshot(invalid, "Snapshot", defaultCatalogFixture), /缺少行情/);
   assert.throws(() => selectPortfolioInput({ remoteMembership: { accountId: "0", canControl: true, needsRejoin: false, remote: false }, snapshot: { snapshot: invalid } } as unknown as RootState), /缺少行情/);
-  const valid = parseProtocolSnapshot(snapshot({ "3": { last_price: "1001", last_close: "1000", best_bid: null, best_ask: null, bids: [], asks: [] } }));
+  const valid = parseProtocolSnapshot(snapshot({ "3": { last_price: "1001", last_close: "1000", best_bid: null, best_ask: null, bids: [], asks: [] } }), "Snapshot", defaultCatalogFixture);
   assert.equal(selectPortfolioInput({ remoteMembership: { accountId: "0", canControl: true, needsRejoin: false, remote: false }, snapshot: { snapshot: valid } } as unknown as RootState).heldPrices["600101"], "1001");
 });
 
@@ -22,9 +23,9 @@ test("审计G67：非玩家和零股持仓引用同样校验，继承属性不�
   for (const quantity of [0, 200]) {
     const invalid = snapshot({});
     const foreign = { ...invalid, accounts: { "7": { ...invalid.accounts["0"], positions: { "3": { ...invalid.accounts["0"].positions["3"], qty: quantity } } } } };
-    assert.throws(() => parseProtocolSnapshot(foreign), error => error instanceof ProtocolError && error.where === "Snapshot.accounts.7.positions.600101");
+    assert.throws(() => parseProtocolSnapshot(foreign, "Snapshot", defaultCatalogFixture), error => error instanceof ProtocolError && error.where === "Snapshot.accounts.7.positions.600101");
   }
   const invalid = snapshot(Object.create({ "600101": { last_price: "1001", last_close: "1000", best_bid: null, best_ask: null, bids: [], asks: [] } }));
-  assert.throws(() => parseProtocolSnapshot(invalid), /缺少行情/);
+  assert.throws(() => parseProtocolSnapshot(invalid, "Snapshot", defaultCatalogFixture), /缺少行情/);
   assert.throws(() => selectPortfolioInput({ remoteMembership: { accountId: "0", canControl: true, needsRejoin: false, remote: false }, snapshot: { snapshot: invalid } } as unknown as RootState), /缺少行情/);
 });

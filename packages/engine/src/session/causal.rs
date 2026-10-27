@@ -51,7 +51,10 @@ impl GameSession {
             driver.ensure_causal_day_end_supported().map_err(fail)?;
         }
         let mut kinds = Vec::new();
-        for fact in raw {
+        // 仅本拍 touched orders；首次观察到旧单时保留真实累计值，不补造 Submitted。
+        let mut touched = std::collections::BTreeMap::<OrderId, (AccountId, crate::Side, i64)>::new();
+        let mut sources = std::collections::BTreeSet::new();
+        for fact in raw.iter().copied() {
             if fact.tick != tick {
                 return Err(fail(format!(
                     "causal tick 错位：fact={} session={}",
@@ -100,6 +103,9 @@ impl GameSession {
                         )));
                     }
                     let (order, account) = identity(order, owner)?;
+                    if qty == 0 || touched.insert(order, (account, side, 0)).is_some() {
+                        return Err(fail(format!("causal Submitted 数量或身份重复：{order:?}")));
+                    }
                     kinds.push(CausalFactKind::Quote(quote(before)));
                     kinds.push(CausalFactKind::Submitted(OrderOrigin {
                         order,
@@ -132,19 +138,56 @@ impl GameSession {
                         reason: Termination::Voluntary,
                     });
                 }
+                DeskCausalKind::Execution { ordinal, seller, buyer, qty, price_cents, side, before } => {
+                    if !sources.insert((fact.tick, fact.round, fact.stock, ordinal)) {
+                        return Err(fail(format!("causal Execution source 重复：{fact:?}")));
+                    }
+                    if qty == 0 || price_cents <= 0 || seller.order == buyer.order || seller.owner == buyer.owner {
+                        return Err(fail(format!("causal Execution 双腿或价量无效：{fact:?}")));
+                    }
+                    let gross = price_cents.checked_mul(i64::from(qty))
+                        .ok_or_else(|| fail("causal gross 溢出".to_owned()))?;
+                    let (sell_order, sell_account) = identity(seller.order, seller.owner)?;
+                    let (buy_order, buy_account) = identity(buyer.order, buyer.owner)?;
+                    for (order, account, leg_side, value_before) in [
+                        (sell_order, sell_account, crate::Side::Sell, seller.value_before),
+                        (buy_order, buy_account, crate::Side::Buy, buyer.value_before),
+                    ] {
+                        if value_before < 0 {
+                            return Err(fail(format!("causal value_before 为负：{order:?}")));
+                        }
+                        if let Some(previous) = touched.get(&order) {
+                            if *previous != (account, leg_side, value_before) {
+                                return Err(fail(format!("causal 同单累计链或 Owner/side 错配：{order:?} before={value_before}")));
+                            }
+                        }
+                        let after = value_before.checked_add(gross)
+                            .ok_or_else(|| fail("causal after 溢出".to_owned()))?;
+                        touched.insert(order, (account, leg_side, after));
+                        kinds.push(CausalFactKind::Filled { order, account, code, qty, value_before, gross });
+                    }
+                    kinds.push(CausalFactKind::Execution {
+                        code, maker: sell_order, taker: buy_order, side: Some(side), qty,
+                        price_cents, before: quote(before),
+                    });
+                }
                 DeskCausalKind::Quote(raw) => kinds.push(CausalFactKind::Quote(quote(raw))),
                 DeskCausalKind::Unsupported { detail } => return Err(fail(detail.to_owned())),
             }
         }
-        let count = u64::try_from(self.state.causal.fact_count())
-            .map_err(|_| fail("causal 历史长度超出 sequence 域".to_owned()))?;
-        count
-            .checked_add(
-                u64::try_from(kinds.len())
-                    .map_err(|_| fail("causal delta 长度超出 sequence 域".to_owned()))?,
-            )
-            .ok_or_else(|| fail("causal sequence 溢出".to_owned()))?;
+        checked_runtime_sequence(self.state.causal.fact_count(), kinds.len()).map_err(fail)?;
         Ok(kinds)
+    }
+
+    // 保留直接纯校验测试接缝；真实入口按 E2 捕获原 raw 与 terminal 首错。
+    fn prepare_runtime_causal_facts(
+        &self,
+        driver: &crate::runtime::drive::RuntimeDriver,
+        time: FactTime,
+        facts: Vec<crate::runtime::diagnostics::DeskCausalFact>,
+    ) -> Result<RuntimeCausalDelta, StepFatal> {
+        let kinds = self.translate_runtime_causal(driver, self.tick(), &facts)?;
+        Ok(RuntimeCausalDelta { time, raw: facts, kinds })
     }
 
     pub(in crate::session) fn publish_runtime_causal(&mut self, delta: RuntimeCausalDelta) {
@@ -267,6 +310,12 @@ impl GameSession {
     }
 }
 
+fn checked_runtime_sequence(count: usize, delta: usize) -> Result<u64, String> {
+    let count = u64::try_from(count).map_err(|_| "causal 历史长度超出 sequence 域".to_owned())?;
+    let delta = u64::try_from(delta).map_err(|_| "causal delta 长度超出 sequence 域".to_owned())?;
+    count.checked_add(delta).ok_or_else(|| "causal sequence 溢出".to_owned())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -298,19 +347,18 @@ mod tests {
             .unwrap();
         let mut session = GameSession::new(setup, 42).unwrap();
         // 单独验证诊断接缝：合法发行人表额外含一家未上市公司，不执行市场 tick。
-        let template = session.state.operations.company(&crate::company::CompanyId(0)).unwrap().clone();
-        let operations = std::sync::Arc::make_mut(&mut session.state.operations);
+        let template = session.state.companies.legacy().expect("此调用仅用于 Legacy 公司状态").operations.company(&crate::company::CompanyId(0)).unwrap().clone();
+        let operations = std::sync::Arc::make_mut(&mut session.state.companies.legacy_mut().expect("此调用仅用于 Legacy 公司状态").operations);
         operations.catalog = registry.catalog().clone();
         operations.companies = registry.iter().map(|(id, entity)| {
             let mut operating = template.clone();
             operating.spec = entity.spec().clone();
             (*id, operating)
         }).collect();
-        session.state.company_registry = std::sync::Arc::new(registry);
+        session.state.companies.legacy_mut().unwrap().registry = std::sync::Arc::new(registry);
         let stock = session.stock_id("600101").unwrap();
         let company = session
-            .state
-            .company_registry
+            .state.companies.legacy().expect("此调用仅用于 Legacy 公司状态").registry
             .catalog()
             .id("C-600101")
             .unwrap();
@@ -337,4 +385,88 @@ mod tests {
         assert_eq!(origin.code, stock);
         assert_eq!(origin.company, Some(company));
     }
+    #[cfg(not(target_arch = "wasm32"))]
+    mod runtime_prepare_tests {
+        use super::*;
+
+    fn d2_raw_fixture() -> (GameSession, crate::runtime::drive::RuntimeDriver, Vec<crate::runtime::diagnostics::DeskCausalFact>) {
+        use crate::runtime::diagnostics::{DeskCausalFact, DeskCausalKind, DeskExecutionLeg, DeskQuote, OperationSource};
+        let mut game = super::super::super::runtime_diagnostics_tests::d2_game();
+        let driver = crate::runtime::drive::RuntimeDriver::from_session(&mut game).unwrap();
+        let owner_for = |account| (0..16).flat_map(|group| (0..16).map(move |local| (group,local)))
+            .find(|owner| driver.account_by_owner(*owner) == Some(AccountId(account))).unwrap();
+        let seller = owner_for(2); let buyer = owner_for(0);
+        let before = DeskQuote { bid_cents: None, ask_cents: None, bid_depth:0, ask_depth:0 };
+        let submitted = |order,owner,side| DeskCausalFact { tick:game.tick(), round:0, stock:1,
+            kind:DeskCausalKind::Submitted { order,owner,side,qty:200,source:OperationSource::PlayerExternal,before } };
+        let facts = vec![submitted((1,7),seller,crate::Side::Sell),submitted((1,8),buyer,crate::Side::Buy),
+            DeskCausalFact { tick:game.tick(),round:0,stock:1,kind:DeskCausalKind::Execution {
+                ordinal:0,seller:DeskExecutionLeg { order:(1,7), owner:seller,value_before:0 },
+                buyer:DeskExecutionLeg { order:(1,8),owner:buyer,value_before:0 },qty:100,price_cents:995,side:crate::Side::Buy,before,
+            }}];
+        (game,driver,facts)
+    }
+
+    #[test]
+    fn d2_prepare_real_typed_facts_expand_legs_and_round_stock_ordinals_reset() {
+        use crate::runtime::diagnostics::DeskCausalKind;
+        let (game,driver,mut facts) = d2_raw_fixture();
+        let mut next = facts[2]; next.round=1;
+        if let DeskCausalKind::Execution { seller,buyer,.. }=&mut next.kind {
+            seller.value_before=99_500; buyer.value_before=99_500;
+        }
+        facts.push(next);
+        let delta=game.prepare_runtime_causal_facts(&driver,game.causal_time(),facts.clone()).unwrap();
+        assert_eq!(delta.kinds.len(),10);
+        assert!(matches!(delta.kinds[4],CausalFactKind::Filled { order:OrderId(4294967303),value_before:0,gross:99_500,.. }));
+        assert!(matches!(delta.kinds[5],CausalFactKind::Filled { order:OrderId(4294967304),value_before:0,gross:99_500,.. }));
+        assert!(matches!(delta.kinds[7],CausalFactKind::Filled { value_before:99_500,.. }));
+        let mut other=facts[2];other.stock=0;
+        if let DeskCausalKind::Execution { seller,buyer,.. }=&mut other.kind { seller.order.0=0;buyer.order.0=0; }
+        facts.push(other);
+        game.prepare_runtime_causal_facts(&driver,game.causal_time(),facts).unwrap();
+    }
+
+    #[test]
+    fn d2_prepare_rejects_repeated_source_broken_chain_domains_and_checked_overflow() {
+        use crate::runtime::diagnostics::DeskCausalKind;
+        let (game,driver,facts)=d2_raw_fixture();
+        for mutation in 0..13 {
+            let mut bad=facts.clone();
+            if mutation==0 { bad.push(bad[2]); }
+            else if mutation==1 {
+                let mut next=bad[2];next.round=1;
+                if let DeskCausalKind::Execution { seller,buyer,.. }=&mut next.kind { seller.value_before=99_500;buyer.value_before=0; }
+                bad.push(next);
+            } else if mutation==2 { bad[2].tick=game.tick()+1; }
+            else if let DeskCausalKind::Execution { seller,buyer,qty,price_cents,.. }=&mut bad[2].kind {
+                match mutation {
+                    3=>seller.order.0=0,
+                    4=>seller.order.1=u64::from(u32::MAX)+1,
+                    5=>seller.owner.1=u32::MAX,
+                    6=>*qty=0,
+                    7=>*price_cents=0,
+                    8=>*price_cents=i64::MAX,
+                    9=>seller.value_before=-1,
+                    10=>seller.value_before=1,
+                    11=>buyer.order=seller.order,
+                    _=>buyer.owner=seller.owner,
+                }
+            }
+            assert!(game.prepare_runtime_causal_facts(&driver,game.causal_time(),bad).is_err(),"必须拒绝raw变体{mutation}");
+        }
+        // 旧单首次 before 可非零，但 after 的 checked 边界仍不可越过。
+        let mut old=vec![facts[2]];
+        if let DeskCausalKind::Execution { seller,.. }=&mut old[0].kind {seller.value_before=i64::MAX;}
+        let error=game.prepare_runtime_causal_facts(&driver,game.causal_time(),old).err().unwrap();
+        assert!(format!("{error:?}").contains("after 溢出"));
+        if usize::BITS == 64 {
+            assert!(checked_runtime_sequence(usize::MAX, 1).is_err());
+        } else {
+            assert_eq!(checked_runtime_sequence(usize::MAX, 1).unwrap(), u64::from(u32::MAX) + 1);
+        }
+    }
+
+    }
+
 }

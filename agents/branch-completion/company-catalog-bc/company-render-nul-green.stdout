@@ -1,0 +1,63 @@
+4:41:51 PM [vite] (ssr) Error when evaluating SSR module /src/components/company/ReportNotes.tsx: Failed to load url /src/components/company/ReportNotes.tsx (resolved id: /src/components/company/ReportNotes.tsx). Does the file exist?
+      at loadAndTransform (file:///data1/baiyifan/workplace/stock_market_game/node_modules/.pnpm/vite@8.1.0_@types+node@24.13.2/node_modules/vite/dist/node/chunks/node.js:19714:31)
+✖ 附注渲染单体范围、更正原因与已公布行业科目明细 (2858.572837ms)
+✖ 利润表渲染当季、累计、比较列，缺历史有原因不填零 (4.298624ms)
+✖ ReportNotes 单股实际scope动态显示，未知与已知错公司scope均拒绝渲染 (0.082223ms)
+✔ 实际 UI C-code 查询使用本代数值 id，结果仍落 C-code 缓存，scope错公司显式错误 (10.795891ms)
+✔ 旧 generation resolve 与 reject 不能污染换代后的同 code (1.31602ms)
+✔ 含NUL合法公司 code 的 page/by-id 不同tuple不能碰撞 (1.141834ms)
+ℹ tests 6
+ℹ suites 0
+ℹ pass 3
+ℹ fail 3
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 3596.859128
+
+✖ failing tests:
+
+test at apps/web/src/components/company/public-financials-render.test.ts:23:1
+✖ 附注渲染单体范围、更正原因与已公布行业科目明细 (2858.572837ms)
+  Error: Failed to load url /src/components/company/ReportNotes.tsx (resolved id: /src/components/company/ReportNotes.tsx). Does the file exist?
+      at loadAndTransform (file:///data1/baiyifan/workplace/stock_market_game/node_modules/.pnpm/vite@8.1.0_@types+node@24.13.2/node_modules/vite/dist/node/chunks/node.js:19714:31) {
+    code: 'ERR_LOAD_URL',
+    runnerError: Error: RunnerError
+        at reviveInvokeError (file:///data1/baiyifan/workplace/stock_market_game/node_modules/.pnpm/vite@8.1.0_@types+node@24.13.2/node_modules/vite/dist/node/module-runner.js:547:64)
+        at Object.invoke (file:///data1/baiyifan/workplace/stock_market_game/node_modules/.pnpm/vite@8.1.0_@types+node@24.13.2/node_modules/vite/dist/node/module-runner.js:620:11)
+        at async SSRCompatModuleRunner.getModuleInformation (file:///data1/baiyifan/workplace/stock_market_game/node_modules/.pnpm/vite@8.1.0_@types+node@24.13.2/node_modules/vite/dist/node/module-runner.js:1199:7)
+        at async SSRCompatModuleRunner.import (file:///data1/baiyifan/workplace/stock_market_game/node_modules/.pnpm/vite@8.1.0_@types+node@24.13.2/node_modules/vite/dist/node/module-runner.js:1119:23)
+        at async instantiateModule (file:///data1/baiyifan/workplace/stock_market_game/node_modules/.pnpm/vite@8.1.0_@types+node@24.13.2/node_modules/vite/dist/node/chunks/node.js:11213:10)
+        at async TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/components/company/public-financials-render.test.ts:17:11)
+        at async TestHook.run (node:internal/test_runner/test:1208:7)
+  }
+
+test at apps/web/src/components/company/public-financials-render.test.ts:34:1
+✖ 利润表渲染当季、累计、比较列，缺历史有原因不填零 (4.298624ms)
+  Error: Failed to load url /src/components/company/ReportNotes.tsx (resolved id: /src/components/company/ReportNotes.tsx). Does the file exist?
+      at loadAndTransform (file:///data1/baiyifan/workplace/stock_market_game/node_modules/.pnpm/vite@8.1.0_@types+node@24.13.2/node_modules/vite/dist/node/chunks/node.js:19714:31) {
+    code: 'ERR_LOAD_URL',
+    runnerError: Error: RunnerError
+        at reviveInvokeError (file:///data1/baiyifan/workplace/stock_market_game/node_modules/.pnpm/vite@8.1.0_@types+node@24.13.2/node_modules/vite/dist/node/module-runner.js:547:64)
+        at Object.invoke (file:///data1/baiyifan/workplace/stock_market_game/node_modules/.pnpm/vite@8.1.0_@types+node@24.13.2/node_modules/vite/dist/node/module-runner.js:620:11)
+        at async SSRCompatModuleRunner.getModuleInformation (file:///data1/baiyifan/workplace/stock_market_game/node_modules/.pnpm/vite@8.1.0_@types+node@24.13.2/node_modules/vite/dist/node/module-runner.js:1199:7)
+        at async SSRCompatModuleRunner.import (file:///data1/baiyifan/workplace/stock_market_game/node_modules/.pnpm/vite@8.1.0_@types+node@24.13.2/node_modules/vite/dist/node/module-runner.js:1119:23)
+        at async instantiateModule (file:///data1/baiyifan/workplace/stock_market_game/node_modules/.pnpm/vite@8.1.0_@types+node@24.13.2/node_modules/vite/dist/node/chunks/node.js:11213:10)
+        at async TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/components/company/public-financials-render.test.ts:17:11)
+        at async TestHook.run (node:internal/test_runner/test:1208:7)
+  }
+
+test at apps/web/src/components/company/public-financials-render.test.ts:46:1
+✖ ReportNotes 单股实际scope动态显示，未知与已知错公司scope均拒绝渲染 (0.082223ms)
+  Error: Failed to load url /src/components/company/ReportNotes.tsx (resolved id: /src/components/company/ReportNotes.tsx). Does the file exist?
+      at loadAndTransform (file:///data1/baiyifan/workplace/stock_market_game/node_modules/.pnpm/vite@8.1.0_@types+node@24.13.2/node_modules/vite/dist/node/chunks/node.js:19714:31) {
+    code: 'ERR_LOAD_URL',
+    runnerError: Error: RunnerError
+        at reviveInvokeError (file:///data1/baiyifan/workplace/stock_market_game/node_modules/.pnpm/vite@8.1.0_@types+node@24.13.2/node_modules/vite/dist/node/module-runner.js:547:64)
+        at Object.invoke (file:///data1/baiyifan/workplace/stock_market_game/node_modules/.pnpm/vite@8.1.0_@types+node@24.13.2/node_modules/vite/dist/node/module-runner.js:620:11)
+        at async SSRCompatModuleRunner.getModuleInformation (file:///data1/baiyifan/workplace/stock_market_game/node_modules/.pnpm/vite@8.1.0_@types+node@24.13.2/node_modules/vite/dist/node/module-runner.js:1199:7)
+        at async SSRCompatModuleRunner.import (file:///data1/baiyifan/workplace/stock_market_game/node_modules/.pnpm/vite@8.1.0_@types+node@24.13.2/node_modules/vite/dist/node/module-runner.js:1119:23)
+        at async instantiateModule (file:///data1/baiyifan/workplace/stock_market_game/node_modules/.pnpm/vite@8.1.0_@types+node@24.13.2/node_modules/vite/dist/node/chunks/node.js:11213:10)
+        at async TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/components/company/public-financials-render.test.ts:17:11)
+        at async TestHook.run (node:internal/test_runner/test:1208:7)
+  }

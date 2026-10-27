@@ -41,6 +41,7 @@ pub mod desk;
 pub mod drive;
 pub(crate) mod driver_sync;
 pub mod event_bridge;
+pub mod retail_lifecycle;
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod bridge_tests;

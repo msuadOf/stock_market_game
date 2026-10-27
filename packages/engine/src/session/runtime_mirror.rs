@@ -1,9 +1,13 @@
 use super::*;
 use crate::runtime::drive::{PreparedDriverStep, RuntimeDriver};
 use crate::runtime::world::BeliefParticipantSnapshot;
+#[cfg(feature = "simulation-diagnostics")]
+use std::sync::Arc;
 
 /// 仅持本次镜像替换值；不克隆 GameSession、World 或运行线程。
 pub(crate) struct PreparedRuntimeMirror {
+    #[cfg(feature = "simulation-diagnostics")]
+    decision_traces: crate::diagnostics::decision_trace::NpcDecisionTraceCollector,
     accounts: BTreeMap<AccountId, Account>,
     personals: BTreeMap<AccountId, (usize, BeliefParticipantSnapshot)>,
     plans: crate::plans::PlanBook,
@@ -35,6 +39,74 @@ pub(crate) struct PreparedRuntimeMirror {
 }
 
 impl GameSession {
+    /// 只准备本拍真实观察的共享根；失败时 Session prior 与 driver pending 均保留。
+    #[cfg(feature = "simulation-diagnostics")]
+    pub(crate) fn prepare_runtime_decision_traces(
+        &self,
+        driver: &RuntimeDriver,
+        tick: u64,
+        plans: &crate::plans::PlanBook,
+        events: &[Event],
+    ) -> Result<crate::diagnostics::decision_trace::NpcDecisionTraceCollector, String> {
+        let mut candidate = self.state.npc_decision_traces.clone();
+        let mut seen = BTreeSet::new();
+        for raw in driver.pending_decision_traces() {
+            let record = &raw.record;
+            if raw.owner.1 as usize >= driver.accounts_per_group()
+                || driver.account_by_owner(raw.owner) != Some(record.account)
+                || record.tick != tick || !seen.insert(record.account)
+                || self.account(record.account).map(|account| account.kind()) != Some(AccountKind::Inst) {
+                return Err(format!("机构 trace candidate 来源错配：owner={:?} account={:?} tick={} expected={tick}", raw.owner, record.account, record.tick));
+            }
+            let mut codes = BTreeSet::new();
+            for code in &record.codes {
+                if !self.state.markets.contains_key(code) || !codes.insert(*code) {
+                    return Err(format!("机构 trace candidate 股票不存在或重复：{code:?}"));
+                }
+            }
+            for plan_id in &record.plan_ids {
+                if plan_id.owner != record.account || plans.plan(*plan_id).is_err() {
+                    return Err(format!("机构 trace candidate 完整 PlanId 不属本人或不存在：{plan_id:?}"));
+                }
+            }
+            let mut changes = Vec::new();
+            let touched: BTreeSet<_> = raw.plan_before.keys().copied()
+                .chain(record.plan_ids.iter().copied()).collect();
+            for plan_id in touched {
+                if plan_id.owner != record.account {
+                    return Err(format!("机构 trace before PlanId 不属本人：{plan_id:?}"));
+                }
+                let plan = plans.plan(plan_id).map_err(|error| format!("机构 trace 最终计划消失：{plan_id:?} {error}"))?;
+                let current = crate::session::plan_trace_state(plan);
+                if raw.plan_before.get(&plan_id) != Some(&current) {
+                    changes.push(format!("{plan_id:?}: {} -> {current}", raw.plan_before.get(&plan_id).map(String::as_str).unwrap_or("Created")));
+                }
+            }
+            // 账户事件口径沿用 legacy trace；不把此投影冒充 causal PlanId→OrderId 归因。
+            let orders: Vec<_> = events.iter().filter_map(|event| match event {
+                Event::OrderAccepted { account, id, .. } | Event::OrderCanceled { account, id, .. }
+                    if *account == record.account => Some(*id),
+                _ => None,
+            }).collect();
+            let mut record = Arc::clone(record);
+            if !orders.is_empty() || !changes.is_empty() {
+                let record = Arc::make_mut(&mut record);
+                record.order_ids = orders;
+                record.plan_changes = changes;
+            }
+            candidate.record_shared(record);
+        }
+        Ok(candidate)
+    }
+
+    #[cfg(feature = "simulation-diagnostics")]
+    pub(crate) fn install_runtime_decision_traces(
+        &mut self,
+        traces: crate::diagnostics::decision_trace::NpcDecisionTraceCollector,
+    ) {
+        self.state.npc_decision_traces = traces;
+    }
+
     pub(crate) fn prepare_runtime_mirror(
         &self,
         driver: &mut RuntimeDriver,
@@ -607,7 +679,19 @@ impl GameSession {
             .into_iter()
             .flatten()
             .collect();
-        let retail_order_events = self.prepare_retail_intent_rejections(&events);
+        let (mut retail_facts, retail_rejections) = driver.take_retail_facts();
+        if is_day_end {
+            retail_facts.extend(driver.take_drained_retail_facts());
+        }
+        let mut retail_candidate = super::retail_lifecycle::Candidate {
+            events: Vec::new(), decisions: retail_decisions,
+        };
+        self.append_runtime_retail_facts_at(driver, &mut retail_candidate, retail_facts, tick)
+            .map_err(|error| error.to_string())?;
+        self.append_runtime_retail_rejections(&mut retail_candidate, retail_rejections)
+            .map_err(|error| error.to_string())?;
+        let retail_decisions = retail_candidate.decisions;
+        let retail_order_events = retail_candidate.events;
         let mut npc_attention = self.state.npc_attention.clone();
         let mut beliefs = self.state.belief_participants.clone();
         let mut personal_history = self.state.history_reads.clone();
@@ -639,6 +723,8 @@ impl GameSession {
             return Err("安装失败注入（私有镜像 candidate 校验失败）".to_owned());
         }
         Ok(PreparedRuntimeMirror {
+            #[cfg(feature = "simulation-diagnostics")]
+            decision_traces: self.prepare_runtime_decision_traces(driver, tick, &input.plans, &events)?,
             accounts,
             personals,
             plans: input.plans,
@@ -712,6 +798,10 @@ impl GameSession {
         self.state.npc_order_lifecycles = Vec::new();
         self.state.last_retail_decisions = prepared.retail_decisions;
         self.state.last_retail_order_events = prepared.retail_order_events;
+        #[cfg(feature = "simulation-diagnostics")]
+        {
+            self.state.npc_decision_traces = prepared.decision_traces;
+        }
         self.state.tick = prepared.tick;
         self.state.seq = prepared.seq;
         self.runtime_mirror_install_sequence = prepared.install_sequence;
@@ -764,6 +854,10 @@ impl GameSession {
 
 #[cfg(test)]
 impl PreparedRuntimeMirror {
+    pub(in crate::session) fn retail_order_events_for_test(&self) -> &[RetailOrderDiagnosticEvent] {
+        &self.retail_order_events
+    }
+
     pub(in crate::session) fn prepared_values_for_test(&self) -> String {
         format!(
             "{:?}",

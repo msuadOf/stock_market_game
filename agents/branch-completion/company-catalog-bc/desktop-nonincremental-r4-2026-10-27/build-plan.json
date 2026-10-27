@@ -1,0 +1,42 @@
+{
+  "repositoryRoot": "/data1/baiyifan/workplace/stock_market_game",
+  "cwd": "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "stock-market-game",
+    "--lib",
+    "--no-default-features",
+    "catalog",
+    "--no-run",
+    "-j8",
+    "--message-format=json"
+  ],
+  "environment": {
+    "CARGO_TARGET_DIR": "/data1/baiyifan/workplace/stock_market_game/.tmp/company-catalog-bc/target",
+    "CARGO_BUILD_JOBS": "8",
+    "CARGO_INCREMENTAL": "0"
+  },
+  "sourceManifestSha256": "914963c957b270e5e0a3d774be1a7ce516d8d1e47e061dc729eddacba97f61d0",
+  "profile": "default test profile; desktop no-default-features; CARGO_INCREMENTAL=0",
+  "runnerSha256": "3cdf6fd012b573b5554237e1a8fa1ead6a069f7bef58c681f8aa181fcf88ef0f",
+  "deadlineHelpers": {
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs": "de7fd2a82bc66e7a62fbc487002727b71ad28b69c1e645f82fa84bbfdb068916",
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-long-validation.mjs": "2d25f286fdec2159a1997cb3aa724a94ae3c8d09bc9bc242f9cfce1bcd641dff"
+  },
+  "deadlineMs": 300000,
+  "noProgressMs": 60000,
+  "authorization": "静态ready；原未实施者核准新flags/profile且root正式交唯一Cargo槽后才可执行",
+  "outerCommand": [
+    "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-long-validation.mjs",
+    "300000",
+    "--",
+    "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/agents/branch-completion/company-catalog-bc/desktop-nonincremental-r4-2026-10-27/run-build-nonincremental.mjs",
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/agents/branch-completion/company-catalog-bc/desktop-nonincremental-r4-2026-10-27/build-plan.json"
+  ],
+  "sourceManifestPath": "agents/branch-completion/company-catalog-bc/desktop-nonincremental-r4-2026-10-27/source.sha256",
+  "note": "r3构建绿/四case3绿1前置失败：ProtocolSession::save首日结前fault3015。唯一test fixture修复是在原默认2030-01-01自然日合法end_civil_day_update后才save，保真实ProtocolSession日终save/actor.restore/catalog/新generation与ingress关闭全部原assert；不改生产规则、不改成功路径。原r1/r2/r3输出全保。INC0/同target/不重跑Server；独审+root交槽前只ready。"
+}

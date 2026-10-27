@@ -1,0 +1,15 @@
+{
+  "base": "01792dbf",
+  "original_main": "1afece4c88fca7688305a7bfb713d9f107d4b2ba",
+  "head": "2d09e5ec2141509e4769f6def3cc278a81a903df",
+  "source_count": 1900,
+  "source_manifest_sha256": "9bf0ca5ab1a16891315ac6a0a5b4d3714f39f2137062165df5699c40bcebac79",
+  "diff_sha256": "354bf92d0180b8e47fe194a0877c90f5f4f41311189ff3ea0f0ac30cf50c5aa6",
+  "relative_r3_diff_sha256": "aaf59826b4684b0f4f0c18d3d72356bcbf4dd2cc810d1a7ecc77f2a8a2c34e10",
+  "evidence_manifest_sha256": "735c2faec79b74a3472ca7052a0780d891af9987209ddff62f9b5e446f3268e5",
+  "source_changes_from_r3": [
+    "apps/web/src/host/tauri-host.ts",
+    "apps/web/src/host/tauri-host.test.ts"
+  ],
+  "scope": "BCR4最小顺序复核；Server-ready-r3不变，无Cargo"
+}

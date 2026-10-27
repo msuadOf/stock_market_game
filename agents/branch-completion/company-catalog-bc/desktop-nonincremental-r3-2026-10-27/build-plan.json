@@ -1,0 +1,42 @@
+{
+  "repositoryRoot": "/data1/baiyifan/workplace/stock_market_game",
+  "cwd": "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "stock-market-game",
+    "--lib",
+    "--no-default-features",
+    "catalog",
+    "--no-run",
+    "-j8",
+    "--message-format=json"
+  ],
+  "environment": {
+    "CARGO_TARGET_DIR": "/data1/baiyifan/workplace/stock_market_game/.tmp/company-catalog-bc/target",
+    "CARGO_BUILD_JOBS": "8",
+    "CARGO_INCREMENTAL": "0"
+  },
+  "sourceManifestSha256": "503619a1045188f02a261baa2462d97ba286c53cd3b790bb3f88ccd8b426fe0b",
+  "profile": "default test profile; desktop no-default-features; CARGO_INCREMENTAL=0",
+  "runnerSha256": "3cdf6fd012b573b5554237e1a8fa1ead6a069f7bef58c681f8aa181fcf88ef0f",
+  "deadlineHelpers": {
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs": "de7fd2a82bc66e7a62fbc487002727b71ad28b69c1e645f82fa84bbfdb068916",
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-long-validation.mjs": "2d25f286fdec2159a1997cb3aa724a94ae3c8d09bc9bc242f9cfce1bcd641dff"
+  },
+  "deadlineMs": 300000,
+  "noProgressMs": 60000,
+  "authorization": "静态ready；原未实施者核准新flags/profile且root正式交唯一Cargo槽后才可执行",
+  "outerCommand": [
+    "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-long-validation.mjs",
+    "300000",
+    "--",
+    "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/agents/branch-completion/company-catalog-bc/desktop-nonincremental-r3-2026-10-27/run-build-nonincremental.mjs",
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/agents/branch-completion/company-catalog-bc/desktop-nonincremental-r3-2026-10-27/build-plan.json"
+  ],
+  "sourceManifestPath": "agents/branch-completion/company-catalog-bc/desktop-nonincremental-r3-2026-10-27/source.sha256",
+  "note": "r2真实Cargo101因两个lookup_handles的SendCommandError不能转换BaselineIpcError；唯一修复在两个call-site复用原map_send_error并由既有From<String>转换。旧字符串语义不变，不加Serialize。原r1磁盘失败/r2编译失败全部保留。INC0/同target/不重跑Server；独审和root新handoff前只ready。"
+}

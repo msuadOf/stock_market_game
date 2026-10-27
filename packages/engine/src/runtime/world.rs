@@ -270,6 +270,8 @@ pub type DayEndValidator = Box<dyn FnMut(&DayEndCandidate) -> Result<(), String>
 /// 每个已收敛 tick 的记录（测试与审计面）。
 #[derive(Clone, Debug)]
 pub struct TickRecord {
+    #[cfg(feature = "simulation-diagnostics")]
+    pub decision_traces: Vec<super::diagnostics::GroupDecisionTrace>,
     /// tick 编号。
     pub tick: u64,
     /// 实际轮数。
@@ -283,6 +285,8 @@ pub struct TickRecord {
     /// 本 tick 双腿成交事实（事件映射输入；驱动器/测试面）。Continue
     /// 链下含**全轮**成交（早轮+终轮，每条恰一次——事实不丢）。
     pub desk_trades: Vec<super::protocol::DeskTradeFact>,
+    /// 默认 minimal 生命周期；driver 在普通 record clone 前取走。
+    pub retail: Vec<super::retail_lifecycle::Fact>,
     /// 未交付的诊断 sideband；驱动器取走后记录中只保留空 Vec。
     #[cfg(feature = "simulation-diagnostics")]
     pub desk_causal: Vec<super::diagnostics::DeskCausalFact>,
@@ -398,6 +402,7 @@ pub struct World {
     /// 迟到——receipt civil_date 取组装时点成次日；驱动器在日结段
     /// 消费入事件流+个人确认，取走即清）。
     pub drained_day_trades: Vec<super::protocol::DeskTradeFact>,
+    pub(crate) drained_retail: Vec<super::retail_lifecycle::Fact>,
     /// 当前自然日（D3a-2c：快照 civil_date 来源——驱动器自会话同步，
     /// 自然日权威在会话 civil clock）。
     civil_date: crate::calendar::CivilDate,
@@ -941,6 +946,7 @@ impl World {
             drained_lifecycle: Vec::new(),
             drained_auction: Vec::new(),
             drained_day_trades: Vec::new(),
+            drained_retail: Vec::new(),
             civil_date: civil_start_date,
             publication,
             seal_ns_accumulated: 0,
@@ -2023,8 +2029,11 @@ impl World {
             // 在 Continue 分支被丢弃，轮 0 的 IntentRejected/Cancelled
             // 静默消失）。
             let mut acc_trades = Vec::new();
+            let mut acc_retail = Vec::new();
             #[cfg(feature = "simulation-diagnostics")]
             let mut acc_causal = Vec::new();
+            #[cfg(feature = "simulation-diagnostics")]
+            let mut acc_decision_traces = Vec::new();
             let mut acc_lifecycle = Vec::new();
             let mut acc_receipts = Vec::new();
             let mut acc_group_rejections = Vec::new();
@@ -2071,8 +2080,11 @@ impl World {
                 }
                 // 累积本轮事实（终轮合并进 TickRecord——早轮不丢）。
                 acc_trades.extend(evidence.desk_trades.iter().copied());
+                acc_retail.append(&mut evidence.retail);
                 #[cfg(feature = "simulation-diagnostics")]
                 acc_causal.append(&mut evidence.desk_causal);
+                #[cfg(feature = "simulation-diagnostics")]
+                acc_decision_traces.append(&mut evidence.decision_traces);
                 acc_lifecycle.extend(evidence.desk_lifecycle.iter().copied());
                 acc_receipts.extend(evidence.desk_receipts.iter().copied());
                 acc_group_rejections.extend(evidence.group_rejections.iter().copied());
@@ -2096,9 +2108,11 @@ impl World {
                     //（合同 5；D3 退役的类型级表达随批 4）。
 
                     evidence.desk_trades = acc_trades;
+                    evidence.retail = acc_retail;
                     #[cfg(feature = "simulation-diagnostics")]
                     {
                         evidence.desk_causal = acc_causal;
+                        evidence.decision_traces = acc_decision_traces;
                     }
                     evidence.desk_lifecycle = acc_lifecycle;
                     evidence.desk_receipts = acc_receipts;
@@ -2501,12 +2515,15 @@ impl World {
         let group_hashes = evidence.group_hashes;
         let desk_hashes = evidence.desk_hashes;
         let record = TickRecord {
+            #[cfg(feature = "simulation-diagnostics")]
+            decision_traces: evidence.decision_traces,
             tick,
             rounds,
             group_hashes: group_hashes.clone(),
             desk_hashes: desk_hashes.clone(),
             desk_resting: evidence.desk_resting,
             desk_trades: evidence.desk_trades,
+            retail: evidence.retail,
             #[cfg(feature = "simulation-diagnostics")]
             desk_causal: evidence.desk_causal,
             desk_lifecycle: evidence.desk_lifecycle,
@@ -2616,6 +2633,7 @@ impl World {
         self.drained_auction.clear();
         // 日界批：drain 成交/终 K 同步作废（回滚对称——重跑重新收集）。
         self.drained_day_trades.clear();
+        self.drained_retail.clear();
         for slot in &mut self.pending_day_candles {
             *slot = None;
         }
@@ -2651,6 +2669,7 @@ impl World {
             self.drained_lifecycle.clear();
             self.drained_auction.clear();
             self.drained_day_trades.clear();
+            self.drained_retail.clear();
             // 复核建议 S1：终 K 暂存对称清理（良性缺口——下次成功 Drain
             /// 全槽覆写、take 仅在成功后发生；此处补齐与 abort_day_end 同式）。
             for slot in &mut self.pending_day_candles {
@@ -2760,6 +2779,7 @@ impl World {
         let mut desks: Vec<(StockIdx, i64, i64)> = Vec::with_capacity(self.n_stocks);
         let mut drained_views = vec![None; self.n_stocks];
         let mut drained = 0usize;
+        let mut retail_fragments = Vec::new();
         while drained < self.n_stocks {
             #[cfg(test)]
             if self.day_end_fail_after_drain_reports == Some(drained) {
@@ -2778,6 +2798,7 @@ impl World {
                     drained_auction,
                     drained_minute_bars,
                     drained_trades,
+                    drained_retail,
                     drained_day_candle,
                 } => {
                     let slot = drained_views.get_mut(stock as usize).ok_or_else(|| {
@@ -2807,6 +2828,11 @@ impl World {
                     // Sol 六审段 1.2：日结收盘竞价事实（末拍清算事件源）。
                     self.drained_auction.extend(drained_auction);
                     // 日界批：收盘竞价成交（事件流+receipt 消费面）。
+                    let context = super::retail_lifecycle::BatchContext::Drain {
+                        ended_date: self.civil_date, final_tick: self.global.committed_tick, stock,
+                    };
+                    let facts = super::retail_lifecycle::resolve_report(context, drained_retail, &drained_trades)?;
+                    if !facts.is_empty() { retail_fragments.push((stock, facts)); }
                     self.drained_day_trades.extend(drained_trades);
                     drained += 1;
                 }
@@ -2824,6 +2850,8 @@ impl World {
                 }
             }
         }
+        retail_fragments.sort_unstable_by_key(|(stock, _)| *stock);
+        self.drained_retail.extend(retail_fragments.into_iter().flat_map(|(_, facts)| facts));
         // ② 组日翻转 + 权益落账（可逆）。
         for g in 0..self.n_groups as GroupIdx {
             #[cfg(test)]

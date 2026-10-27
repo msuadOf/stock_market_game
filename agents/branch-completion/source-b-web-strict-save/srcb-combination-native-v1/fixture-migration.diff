@@ -1,0 +1,46 @@
+diff --git a/packages/engine/tests/company_catalog_view.rs b/packages/engine/tests/company_catalog_view.rs
+index 7ac51c98..1f82c273 100644
+--- a/packages/engine/tests/company_catalog_view.rs
++++ b/packages/engine/tests/company_catalog_view.rs
+@@ -175,21 +175,37 @@ fn custom_registry_retains_unlisted_entities_unicode_and_special_codes() {
+ }
+ 
+ #[test]
+-fn selected_simple_uses_issuers_even_when_legacy_registry_has_other_ids() {
+-    let mut setup = setup(&["600101"], true);
+-    setup.company_operations = Some(custom_operations());
++fn selected_simple_uses_its_only_issuer_source() {
++    let setup = setup(&["600101"], true);
+     let game = GameSession::new(setup, 42).unwrap();
+     let entries = game.company_catalog_view().unwrap();
+     assert_eq!(entries.len(), 1);
+     assert_eq!(entries[0].id, CompanyId(0));
+     assert_eq!(entries[0].code, "C-600101");
++    assert_eq!(entries[0].name, "虚构上市公司600101");
++    assert_eq!(entries[0].listed_stock, Some(StockId(0)));
++}
++
++#[test]
++fn selected_simple_explicitly_rejects_parallel_legacy_operations() {
++    let mut setup = setup(&["600101"], true);
++    setup.company_operations = Some(custom_operations());
++    match GameSession::new(setup, 42) {
++        Err(engine::SessionError::InvalidSetup(fault)) => {
++            assert_eq!(fault, engine::ValidationFault::new(2235, vec![0, 1]));
++        }
++        Err(other) => panic!("必须保留双源配置冲突2235，实际错误：{other:?}"),
++        Ok(_) => panic!("Simple不得接受并列Legacy经营配置"),
++    }
+ }
+ 
+ #[test]
+ fn query_is_pure_and_restore_uses_the_restored_selected_source() {
+     for simple in [false, true] {
+         let mut setup = setup(&["600101"], simple);
+-        setup.company_operations = Some(custom_operations());
++        if !simple {
++            setup.company_operations = Some(custom_operations());
++        }
+         let game = GameSession::new(setup, 42).unwrap();
+         let before = serde_json::to_vec(&game.save().unwrap()).unwrap();
+         let entries = game.company_catalog_view().unwrap();

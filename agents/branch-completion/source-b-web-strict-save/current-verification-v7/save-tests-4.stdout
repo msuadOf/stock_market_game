@@ -1,0 +1,30 @@
+✔ initial reads share one disk request and completion releases the archive (2.158643ms)
+✔ a missing archive starts once without polling storage during gameplay (0.316879ms)
+✔ failed initial reads retain their exact error and do not silently retry or start a new game (0.858515ms)
+✔ synchronous storage errors become one cached rejected request (0.390192ms)
+✔ explicit new game does not reload the previous archive (0.305169ms)
+✔ explicit archive selection replaces a pending initial read without rereading storage (0.484874ms)
+✔ 当前 Save 接受非连续 MAX member 与低于 AdmissionFunding 的当前现金 (6.643723ms)
+✔ OpaqueSubjectId 接受空格及对象原型同名字符串且不丢成员 (0.779233ms)
+✔ MarketMembership 必填且严格拒绝未知字段与非规范身份 (4.762719ms)
+✔ 账户集合恰好为唯一 members 加 NPC，primary 0 必须 member (2.596755ms)
+✔ plan review preserves historical resources and rejects missing or impossible facts (3.755769ms)
+✔ personal parsers preserve populated simulation acceptance state exactly (2.708139ms)
+✔ BeliefBook 保存合并现金流归母归属不足的显式原因 (0.817354ms)
+✔ information and belief parsers reject malformed exact fields and tags (0.761962ms)
+✔ plan parsers reject bad keys and non-canonical execution legs (1.077371ms)
+✔ personal memory and feedback reject malformed identifiers, dates, and decimal minutes (0.799023ms)
+✔ PlanBook 无损保留各 owner 的 sequence、历史游标与耗尽状态 (0.554686ms)
+✔ PlanBook 严格拒绝旧格式、非规范身份与缺省游标字段 (1.862364ms)
+✔ PlanBook 拒绝重复身份、重复 owner、owner 漂移与回退游标 (1.340869ms)
+✔ new games enable the price cage by default (1.214706ms)
+✔ save setup preserves an explicitly enabled or disabled price cage (3.171062ms)
+✔ save setup requires an explicit boolean price cage choice (1.266927ms)
+ℹ tests 22
+ℹ suites 0
+ℹ pass 22
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 221.729746

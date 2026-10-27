@@ -1,0 +1,23 @@
+✔ 公开报告刷新经过 loading 或 error 后保留仍可见的用户选择 (225.325057ms)
+✔ 公开报告真正 empty 后清除选择，重新出现报告时使用当前默认报告 (2.556647ms)
+✔ 切换公司时旧选择失效后使用新公司的可见报告 (2.710212ms)
+✔ 每家公司分别保存报告、报表和金额显示，局部操作不覆盖其他选择 (9.189288ms)
+✔ 新 baseline 清空阅读状态，旧 generation 的界面操作不能写入新会话 (1.594508ms)
+✔ 公开报告 loading 和 error 不清除阅读位置 (1.408082ms)
+✔ 无效阅读操作显式拒绝：{"selectedStatementId":"unsupported"} (1.3376ms)
+✔ 无效阅读操作显式拒绝：{"exactAmountsVisible":"true"} (0.897197ms)
+✔ 无效阅读操作显式拒绝：{"selectedReportId":"unknown"} (1.088373ms)
+✔ baseline atomically replaces old session public cache and selection (6.119925ms)
+✔ keeps report versions immutable and isolates same report id by company (2.077993ms)
+✔ models loading, failure, empty and unavailable comparison without numeric coercion (2.185126ms)
+✔ applies civil date and disclosure events without a trade while rejecting old sequence values (0.809235ms)
+✔ anchors company event ordering at the baseline sequence (0.256267ms)
+✔ does not regress public event coverage when a stale completion arrives (0.322429ms)
+ℹ tests 15
+ℹ suites 0
+ℹ pass 15
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 665.963308

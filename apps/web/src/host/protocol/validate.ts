@@ -1,7 +1,8 @@
+import type { CatalogResolver } from "../catalog-resolver.ts";
 import type { StockSpec } from "../../types/generated/StockSpec.ts";
 import { canonicalJson, eventStableKey, factIdentity } from "./canonical.ts";
 import { ProtocolError } from "./types.ts";
-import { stockCodeOf, type WireCivilUpdate, type WireEngineUpdate, type WireEvent, type WireEventFact, type WireTickFrame } from "./stock-identity.ts";
+import { type WireCivilUpdate, type WireEngineUpdate, type WireEvent, type WireEventFact, type WireTickFrame } from "./stock-identity.ts";
 
 function malformed(where: string, message: string): never {
   throw new ProtocolError("PROTOCOL_MALFORMED", where, message);
@@ -112,7 +113,7 @@ function nextDate(settledDate: string): string | null {
   return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}-${String(date.getUTCDate()).padStart(2, "0")}`;
 }
 
-export function validateCivilUpdate(update: WireCivilUpdate): void {
+export function validateCivilUpdate(update: WireCivilUpdate, identity: CatalogResolver): void {
   validateFacts(update.facts, update.seq_from, update.seq_to, "protocol.civil.facts");
   if (
     update.refresh.snapshot.tick !== update.tick
@@ -133,7 +134,7 @@ export function validateCivilUpdate(update: WireCivilUpdate): void {
   }
   for (const id of Object.keys(update.refresh.snapshot.markets)) {
     // wire 快照市场键为数值 StockId；翻译为代码串后再与证券定义比对（未知 id 显式失败）。
-    if (!codes.has(stockCodeOf(Number(id), "protocol.civil.refresh.snapshot.markets"))) {
+    if (!codes.has(identity.stockCode(Number(id), "protocol.civil.refresh.snapshot.markets"))) {
       malformed("protocol.civil.refresh", "CivilUpdate 快照市场缺少证券定义");
     }
   }
@@ -180,13 +181,13 @@ function validateFrames(frames: readonly WireTickFrame[], where: string): void {
   }
 }
 
-export function validateEngineUpdate(update: WireEngineUpdate): void {
+export function validateEngineUpdate(update: WireEngineUpdate, identity: CatalogResolver): void {
   if ("TickBatch" in update) {
     validateTickBatch(update.TickBatch);
     return;
   }
   if ("CivilUpdate" in update) {
-    validateCivilUpdate(update.CivilUpdate);
+    validateCivilUpdate(update.CivilUpdate, identity);
     return;
   }
   assertNever(update);

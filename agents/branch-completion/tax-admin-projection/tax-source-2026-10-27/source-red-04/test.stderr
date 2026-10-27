@@ -1,0 +1,14 @@
+
+thread 'company::cash_dividend_tax::day_boundary::tests::actual_reg_prepare_zero_market_day_advances_tax_and_binds_exact_plan_capture' (2196781) panicked at /tmp/tax-source-source-red-04/company/cash_dividend_tax/day_boundary_tests.rs:24:105:
+已完成普通零日也必须推进税日: MissingSource("真实 ordinary 来源尚未实现")
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+thread 'company::cash_dividend_tax::day_boundary::tests::calendar_closed_and_absent_holder_change_still_record_exactly_one_zero_tax_day' (2196783) panicked at /tmp/tax-source-source-red-04/company/cash_dividend_tax/day_boundary_tests.rs:78:105:
+called `Result::unwrap()` on an `Err` value: MissingSource("真实 ordinary 来源尚未实现")
+
+thread 'company::cash_dividend_tax::day_boundary::tests::any_current_or_historical_nonmarket_movement_is_explicitly_unsupported' (2196782) panicked at /tmp/tax-source-source-red-04/company/cash_dividend_tax/day_boundary_tests.rs:88:180:
+called `Result::unwrap()` on an `Err` value: InvalidFact { detail: "non-trading transfer must issue a positive number of new shares" }
+
+thread 'company::cash_dividend_tax::day_boundary::tests::complete_lot_attribution_rejects_90_physical_100_tax_and_equal_total_spoofs' (2196784) panicked at /tmp/tax-source-source-red-04/company/cash_dividend_tax/day_boundary_tests.rs:63:9:
+MissingSource("真实 ordinary 来源尚未实现")
+bounded command exited with 101

@@ -1,0 +1,46 @@
+{
+  "label": "green-05",
+  "source_before": {
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/tax-admin-projection/agents/branch-completion/tax-admin-projection/resume-2026-10-27/harness.rs": "574179f6ff5425c07e7da151b4897e0e9dbe48ff3c2227006eae2586dfb381f2",
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/tax-admin-projection/packages/engine/src/runtime/admin_tax_projection.rs": "963f63bb9601689252160b018e239c6645b0187a7aae4bc8cba381d4d6332d26",
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/tax-admin-projection/packages/engine/src/runtime/admin_tax_projection_tests.rs": "8d284b6b3f50e0f64e7026f2ed045f7416e087379de519bd4fecdaf57fa33a0a"
+  },
+  "rlib_binding": "/data1/baiyifan/workplace/stock_market_game/agents/branch-completion/main-current-normal-rlib-2026-10-26/artifact-binding.json",
+  "build": {
+    "argv": [
+      "rustc",
+      "--test",
+      "--edition=2021",
+      "-C",
+      "codegen-units=8",
+      "-C",
+      "debuginfo=0",
+      "-C",
+      "opt-level=0",
+      "--extern",
+      "engine=/data1/baiyifan/workplace/stock_market_game/.tmp/main-current-normal-rlib-2026-10-26/artifacts/libengine-e024975623ca4b70.rlib",
+      "-L",
+      "dependency=/data1/baiyifan/workplace/stock_market_game/.tmp/main-current-normal-rlib-2026-10-26/target/debug/deps",
+      "/data1/baiyifan/workplace/stock_market_game/.worktree/tax-admin-projection/agents/branch-completion/tax-admin-projection/resume-2026-10-27/harness.rs",
+      "-o",
+      "/tmp/tax-admin-projection-green-05"
+    ],
+    "exit": 0,
+    "wall_seconds": 1.3521124100007
+  },
+  "binary_sha256": "abba4913451c461c3ed2bc36387ef99fc68ffa5a4fae0810202cd05e5ca1c586",
+  "test": {
+    "argv": [
+      "/tmp/tax-admin-projection-green-05",
+      "--test-threads=8",
+      "--nocapture"
+    ],
+    "exit": 0,
+    "wall_seconds": 0.11639994700090028
+  },
+  "source_after": {
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/tax-admin-projection/agents/branch-completion/tax-admin-projection/resume-2026-10-27/harness.rs": "574179f6ff5425c07e7da151b4897e0e9dbe48ff3c2227006eae2586dfb381f2",
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/tax-admin-projection/packages/engine/src/runtime/admin_tax_projection.rs": "963f63bb9601689252160b018e239c6645b0187a7aae4bc8cba381d4d6332d26",
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/tax-admin-projection/packages/engine/src/runtime/admin_tax_projection_tests.rs": "8d284b6b3f50e0f64e7026f2ed045f7416e087379de519bd4fecdaf57fa33a0a"
+  }
+}

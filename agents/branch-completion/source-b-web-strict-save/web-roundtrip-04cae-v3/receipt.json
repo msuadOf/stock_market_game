@@ -1,0 +1,55 @@
+{
+  "sourceRust": "04cae",
+  "webSourceFreezeSha256": "6fd2be94d133fd8e0e086d2cd7558ff0981631940ddc2c8efd0ba2759d25479d",
+  "scope": "Web parseSaveJson→JSON.stringify，等待04cae真实Rust reader回读",
+  "receipts": [
+    {
+      "name": "generated-company-state-registry.json",
+      "inputSha256": "0ba132976eacba6ee0850504c936392373348cf59bcb70b2d03b19b6f80863d7",
+      "webOutputSha256": "9b1bf12fec504d06d3e37bb6801a02a98025d1b3e0276fc650c404686ee9485b",
+      "webOutputBytes": 73280
+    },
+    {
+      "name": "manual-company-state-registry.json",
+      "inputSha256": "47e9f0e9735d5826b5ffb559d953bd7cda50abd273f2148e72eec5ce3ae6abee",
+      "webOutputSha256": "ee98e1d91f312b74bbc1fca79bf79ef5a1d65346ea9b17a508ad2b84154c7df5",
+      "webOutputBytes": 73141
+    },
+    {
+      "name": "legacy-company-state.json",
+      "inputSha256": "073c1522a0eb6c1ab28e2c1d25174665356808d5ac564dc3e9fd0ed5ff649b28",
+      "webOutputSha256": "557548b71b98ef8ec843d51ce6c6f750ba7ea1b7b39703f1a8832d0d2620828f",
+      "webOutputBytes": 462214
+    },
+    {
+      "name": "generated-custom-monthly-nonempty.json",
+      "inputSha256": "6f82e4a885493335609c62b658daeb000394c3f4d0ccc7b6feefe74829f2e6d4",
+      "webOutputSha256": "054966def57bc93797d7adef31b9a93cdb1170c23086551755d7db8899aa65b6",
+      "webOutputBytes": 505762
+    },
+    {
+      "name": "manual-custom-monthly-nonempty.json",
+      "inputSha256": "e0c7ba2de0b9a746131dfcb97277fb0a78c3fdec7b1f37406b6354d1f545317d",
+      "webOutputSha256": "ad61c84d31116e126adbf960735a246c9aa8f33eb9cd54a08631903b60d9e65e",
+      "webOutputBytes": 505206
+    },
+    {
+      "name": "generated-quarterly-nonempty.json",
+      "inputSha256": "09b3dcd37c3e4affc817f1b190aa2c86ffe606e3265ec4909b87e5ebdc419cc7",
+      "webOutputSha256": "8c4ff1b418093b63c06cd3ea2da93d076be2db8d24800401c1c887fdba21c389",
+      "webOutputBytes": 328836
+    },
+    {
+      "name": "manual-quarterly-nonempty.json",
+      "inputSha256": "658c40095a57779aba4b0792b50d3e0a0b496d12b1b5651023b315bfaa2eab59",
+      "webOutputSha256": "1adb5e286c6434e2e587208cfd7a6ee7e65bcb46a29fef6bee543356e870dfac",
+      "webOutputBytes": 328280
+    },
+    {
+      "name": "nonempty-legacy-group.json",
+      "inputSha256": "590f5231eff9a7a79cdf88a8841042835437c48b268c9a7ef4ac203a7eaee3e5",
+      "webOutputSha256": "d87aff62f8a3e6a3fb4be6f3355a3e3b375afaff8062aebb95452794f1faad81",
+      "webOutputBytes": 4279593
+    }
+  ]
+}

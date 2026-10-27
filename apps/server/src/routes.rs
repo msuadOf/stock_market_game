@@ -1977,13 +1977,18 @@ async fn run_ws_connection(
                 }
             }
         }
-        Err(SendCommandError::ActorGone) => {
-            warn!("ws: actor gone before public baseline");
+        Err(crate::actor::PublicBaselineError::Catalog(error)) => {
+            let failure = crate::actor::HostFailure::catalog(
+                &error,
+                "public_baseline",
+                "server.actor.public_baseline",
+            );
+            let _ = send_host_failure(&mut sender, failure).await;
             return;
         }
-        Err(SendCommandError::Rejected(_)) => unreachable!("public baseline cannot be rejected"),
-        Err(SendCommandError::InvalidSpeed(_)) => {
-            unreachable!("public baseline cannot validate speed")
+        Err(crate::actor::PublicBaselineError::Command(error)) => {
+            warn!(%error, "ws: public baseline command failed");
+            return;
         }
     }
 
@@ -2119,7 +2124,12 @@ async fn run_ws_connection(
                                             if !send_baseline(&mut sender, baseline).await { break; }
                                             connection.baseline_delivered(latched_failure);
                                         }
-                                        Err(error) => {
+                                        Err(crate::actor::PublicBaselineError::Catalog(error)) => {
+                                            let failure = crate::actor::HostFailure::catalog(&error, "public_baseline", "server.actor.public_baseline");
+                                            let _ = send_host_failure(&mut sender, failure).await;
+                                            break;
+                                        }
+                                        Err(crate::actor::PublicBaselineError::Command(error)) => {
                                             if !send_gateway_error(&mut sender, None, "RESYNC_FAILED", error.to_string()).await { break; }
                                         }
                                     }
@@ -2250,6 +2260,8 @@ mod baseline_failure_tests {
     #[test]
     fn latched_failure_is_sent_after_an_unchanged_baseline() {
         let messages = baseline_wire_messages(PublicBaseline {
+            stock_catalog: Vec::new(),
+            company_catalog: Vec::new(),
             timeline_generation: 3,
             snapshot: PublicBaselineSnapshot {
                 seq: 4,
@@ -2351,6 +2363,8 @@ mod publisher_connection_tests {
 
     fn baseline(failure: Option<HostFailure>) -> PublicBaseline {
         PublicBaseline {
+            stock_catalog: Vec::new(),
+            company_catalog: Vec::new(),
             timeline_generation: 7,
             snapshot: PublicBaselineSnapshot {
                 seq: 4,

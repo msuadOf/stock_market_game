@@ -1,0 +1,10 @@
+{
+  "exitCode": 0,
+  "error": null,
+  "stopReason": null,
+  "wallSeconds": 11.410433840000001,
+  "samples": 22,
+  "under40Reported": true,
+  "ownedTreeSupervision": "runBoundedCommand/terminateTree",
+  "failedTargetPreservedAsEvidence": false
+}

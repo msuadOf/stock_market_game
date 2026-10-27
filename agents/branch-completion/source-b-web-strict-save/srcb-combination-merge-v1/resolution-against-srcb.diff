@@ -1,0 +1,15 @@
+diff --git a/packages/engine/src/session.rs b/packages/engine/src/session.rs
+index 28f88ba9..eb372819 100644
+--- a/packages/engine/src/session.rs
++++ b/packages/engine/src/session.rs
+@@ -12,6 +12,10 @@ mod candles;
+ mod causal;
+ mod civil_clock;
+ mod company_assembly;
++mod stock_identity_view;
++pub use stock_identity_view::StockIdentityEntry;
++mod company_catalog_fault;
++pub use company_catalog_fault::company_catalog_fault;
+ mod company_facts;
+ mod company_catalog_view;
+ pub use company_catalog_view::{CompanyCatalogEntry, CompanyCatalogViewError};

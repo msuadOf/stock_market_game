@@ -8,7 +8,7 @@ import { DEFAULT_SETUP } from "../config/defaults.ts";
 import { snapshot } from "./protocol-test-fixtures.ts";
 
 const setup = { ...DEFAULT_SETUP, stocks: DEFAULT_SETUP.stocks.slice(0, 1) };
-const allocation = { stocks: [{ code: 3, float_shares: 7, unallocated_shares: 0, categories: [
+const allocation = { stocks: [{ code: 0, float_shares: 7, unallocated_shares: 0, categories: [
   { kind: "Retail", shares: 3, account_count: 5, zero_holders: 2 },
   { kind: "Inst", shares: 4, account_count: 1, zero_holders: 0 },
   { kind: "Hot", shares: 0, account_count: 0, zero_holders: 0 },
@@ -29,7 +29,7 @@ test("Worker实际分配query绑定requestId/generation，refresh后旧响应失
   try {
     const creating = createWorkerHost(setup, 17n);
     const worker = AllocationWorker.current;
-    worker.emit({ type: "baseline", generation: 1, snapshot: snapshot(0, 0), civilDate: "2024-01-02" });
+    worker.emit({ ...{ stockCatalog: [{ id: 0, code: "600101" }], companyCatalog: [{ id: 0, code: "C-600101", name: "公司", listed_stock: 0 }] }, type: "baseline", generation: 1, snapshot: snapshot(0, 0), civilDate: "2024-01-02" });
     host = await creating;
     const current = host.initialAllocation();
     const request = worker.sent.at(-1)!;
@@ -40,7 +40,7 @@ test("Worker实际分配query绑定requestId/generation，refresh后旧响应失
     const previous = worker.sent.at(-1)!;
     const rejected = assert.rejects(stale, /已过期会话 generation/);
     const refreshed = host.refreshBaseline();
-    worker.emit({ type: "refreshed", requestId: worker.sent.at(-1)!.requestId, generation: 1, snapshot: snapshot(0, 0), civilDate: "2024-01-02" });
+    worker.emit({ ...{ stockCatalog: [{ id: 0, code: "600101" }], companyCatalog: [{ id: 0, code: "C-600101", name: "公司", listed_stock: 0 }] }, type: "refreshed", requestId: worker.sent.at(-1)!.requestId, generation: 1, snapshot: snapshot(0, 0), civilDate: "2024-01-02" });
     await refreshed;
     worker.emit({ type: "initialAllocation", requestId: previous.requestId, generation: 1, data: allocation });
     await rejected;
@@ -59,8 +59,8 @@ test("Tauri实际分配query使用会话身份，refresh后拒绝旧响应", { t
   mockIPC((command, args) => {
     if (command === "create_session") return "allocation-session";
     if (command === "host_capabilities") return { npcDecisionDiagnostics: false };
-    if (command === "engine_baseline") return { snapshot: snapshot(0, 0), generation: "1", timeline_id: "allocation-session", civil_date: "2030-01-01" };
-    if (command === "restore_session") return { snapshot: snapshot(0, 0), generation: "1", timeline_id: "allocation-session", civil_date: "2030-01-01" };
+    if (command === "engine_baseline") return { ...{ stock_catalog: [{ id: 0, code: "600101" }], company_catalog: [{ id: 0, code: "C-600101", name: "公司", listed_stock: 0 }] }, snapshot: snapshot(0, 0), generation: "1", timeline_id: "allocation-session", civil_date: "2030-01-01" };
+    if (command === "restore_session") return { ...{ stock_catalog: [{ id: 0, code: "600101" }], company_catalog: [{ id: 0, code: "C-600101", name: "公司", listed_stock: 0 }] }, snapshot: snapshot(0, 0), generation: "1", timeline_id: "allocation-session", civil_date: "2030-01-01" };
     if (command === "initial_allocation") {
       assert.deepEqual(args, { sessionId: "allocation-session", generation: "1" });
       if (++requestCount === 1) return { generation: "1", value: allocation };
@@ -89,7 +89,7 @@ test("Remote实际分配首次开跑前连接基线、不启动撮合，load后�
   let responseGeneration = "1";
   let finish!: (value: Response) => void;
   let allocationCount = 0;
-  const baseline = () => ({ Baseline: { timeline_generation: Number(responseGeneration), snapshot: snapshot(0, 0), civil_date: "2030-01-01", public_revision: 0, public_report_ids: [] } });
+  const baseline = () => ({ Baseline: { ...{ stock_catalog: [{ id: 0, code: "600101" }], company_catalog: [{ id: 0, code: "C-600101", name: "公司", listed_stock: 0 }] }, timeline_generation: Number(responseGeneration), snapshot: snapshot(0, 0), civil_date: "2030-01-01", public_revision: 0, public_report_ids: [] } });
   const socket = {
     readyState: 1,
     onmessage: null as ((event: MessageEvent) => void) | null,

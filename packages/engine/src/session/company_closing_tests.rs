@@ -23,10 +23,10 @@ fn company_close_failure_discards_closed_books_registry_and_disclosure_candidate
     let mut session = closed_month_end();
     session.state.civil_clock.add_disclosure_observer(observer);
     // 真实集团入口在单体已关账后失败：未知 root 不是人工吞错/伪造成功。
-    session.state.groups.push(GroupStructure { root: crate::company::CompanyId(u32::MAX), holdings: vec![] });
+    session.state.companies.legacy_mut().expect("此调用仅用于 Legacy 公司状态").groups.push(GroupStructure { root: crate::company::CompanyId(u32::MAX), holdings: vec![] });
     let before = serde_json::to_vec(&session.save().unwrap()).unwrap();
-    let old_ops = session.state.operations.clone();
-    let old_closing = session.state.closing.clone();
+    let old_ops = session.state.companies.legacy().expect("此调用仅用于 Legacy 公司状态").operations.clone();
+    let old_closing = session.state.companies.legacy().expect("此调用仅用于 Legacy 公司状态").closing.clone();
     let old_library = session.state.library.clone();
     let old_date = session.civil_date();
     let period = AccountingPeriod::of_date(old_date);
@@ -36,18 +36,18 @@ fn company_close_failure_discards_closed_books_registry_and_disclosure_candidate
         "公司分录/封账登记/时钟/RNG/个人信息/公共材料必须全部回滚");
     assert_eq!(session.civil_date(), old_date);
     assert_eq!(OBSERVED.load(Ordering::SeqCst), 0, "失败 candidate 不能触发18:00观察者");
-    assert_eq!(serde_json::to_vec(session.state.operations.as_ref()).unwrap(), serde_json::to_vec(old_ops.as_ref()).unwrap());
-    assert_eq!(serde_json::to_vec(session.state.closing.as_ref()).unwrap(), serde_json::to_vec(old_closing.as_ref()).unwrap());
+    assert_eq!(serde_json::to_vec(session.state.companies.legacy().expect("此调用仅用于 Legacy 公司状态").operations.as_ref()).unwrap(), serde_json::to_vec(old_ops.as_ref()).unwrap());
+    assert_eq!(serde_json::to_vec(session.state.companies.legacy().expect("此调用仅用于 Legacy 公司状态").closing.as_ref()).unwrap(), serde_json::to_vec(old_closing.as_ref()).unwrap());
     assert_eq!(serde_json::to_vec(session.state.library.as_ref()).unwrap(), serde_json::to_vec(old_library.as_ref()).unwrap());
     for (_, company) in &old_ops.companies {
         assert_eq!(company.books().books().journal().period_status(period), PeriodStatus::Open,
             "旧 snapshot 仍处于开放期间，不能被失败关账改写");
     }
-    session.state.groups.clear();
+    session.state.companies.legacy_mut().expect("此调用仅用于 Legacy 公司状态").groups.clear();
     let report = session.end_civil_day().expect("修正上下文后可正常收口同一天");
     assert_eq!(report.settled_date, old_date);
     assert_eq!(OBSERVED.load(Ordering::SeqCst), 1, "成功关账后披露相位恰好一次");
-    for (_, company) in &session.state.operations.companies {
+    for (_, company) in &session.state.companies.legacy().expect("此调用仅用于 Legacy 公司状态").operations.companies {
         assert_eq!(company.books().books().journal().period_status(period), PeriodStatus::Closed);
     }
     assert!(report.events.iter().all(|event| !matches!(event, Event::Trade { .. } | Event::PriceTick { .. })),
@@ -57,16 +57,19 @@ fn company_close_failure_discards_closed_books_registry_and_disclosure_candidate
 #[test]
 fn domain_report_preparation_does_not_publish_or_grant_npc_knowledge() {
     let mut session = closed_month_end();
-    let company = session.state.operations.catalog().id("C-600888").unwrap();
+    let company = session.state.companies.legacy().expect("此调用仅用于 Legacy 公司状态").operations.catalog().id("C-600888").unwrap();
     let period = AccountingPeriod::from_ymd(2029, 12).unwrap();
     let library_before = serde_json::to_vec(session.state.library.as_ref()).unwrap();
     let known_before: Vec<_> = session.state.belief_participants.iter().map(|(id, participant)|
         (*id, serde_json::to_value(participant.information()).unwrap())
     ).collect();
-    let registered = session.state.operations.prepare_report_for_publication(
-        company, period, crate::accounting::reports::ReportKind::Annual,
-        std::sync::Arc::make_mut(&mut session.state.closing),
-    ).unwrap();
+    let registered = {
+        let legacy = session.state.companies.legacy_mut().unwrap();
+        legacy.operations.prepare_report_for_publication(
+            company, period, crate::accounting::reports::ReportKind::Annual,
+            std::sync::Arc::make_mut(&mut legacy.closing),
+        ).unwrap()
+    };
     assert_eq!(registered.scope, crate::accounting::consolidation::ScopeId::Standalone(
         crate::accounting::consolidation::MemberId(company.0)));
     assert_eq!(serde_json::to_vec(session.state.library.as_ref()).unwrap(), library_before,
@@ -75,9 +78,10 @@ fn domain_report_preparation_does_not_publish_or_grant_npc_knowledge() {
         (*id, serde_json::to_value(participant.information()).unwrap())
     ).collect();
     assert_eq!(known_after, known_before, "尚未发布的定稿不能成为 NPC 本人获知");
-    match session.state.operations.prepare_report_for_publication(
+    let legacy = session.state.companies.legacy_mut().unwrap();
+    match legacy.operations.prepare_report_for_publication(
         crate::company::CompanyId(u32::MAX), period, crate::accounting::reports::ReportKind::Annual,
-        std::sync::Arc::make_mut(&mut session.state.closing),
+        std::sync::Arc::make_mut(&mut legacy.closing),
     ) {
         Err(crate::company::operations::CompanyCloseError::Fault(fault)) => {
             assert_eq!(fault.code, 4002);

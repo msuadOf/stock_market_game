@@ -663,7 +663,10 @@ fn execution_leg_wire_rejects_injected_unknown_fields() {
 
 /// 唯一 owner 在途子单存档 fixture：计划 400 股、已成交 100、真实簿余量 300。
 fn live_child_case() -> (GameSession, crate::plans::PlanId, StockId) {
-    let mut session = low_price_session();
+    live_child_case_at_session(low_price_session())
+}
+
+fn live_child_case_at_session(mut session: GameSession) -> (GameSession, crate::plans::PlanId, StockId) {
     let code = StockId(0);
     let account = crate::AccountId(1);
     let plan_id = session
@@ -2290,5 +2293,239 @@ fn v6_order_id_encoding_stays_in_wire_domain_beyond_32_stocks() {
     assert!(
         encoded.is_ok(),
         "新编码域最大 id 须在 wire 域内——{encoded:?}"
+    );
+}
+
+#[test]
+fn lazy_handover_preserves_live_child_in_immediate_save_without_market_tick() {
+    let (mut source, plan_id, code) = live_child_case();
+    let before = source.save().unwrap();
+    assert!(
+        !before.desk_mirrored_resting,
+        "必须覆盖真实旧簿而非已有 desk 镜像的正控"
+    );
+    assert_eq!(before.resting_orders[&code][0].qty, 300);
+    let mut session = GameSession::restore(&before).expect("接管前存档必须真实合法");
+    assert!(session.runtime_driver.is_none());
+    let tick = session.tick();
+    let seq = session.seq();
+    let day = session.day();
+    session.runtime_group_count = 2;
+    session.construct_runtime_driver_lazy_for_test().unwrap();
+    assert!(
+        session.state.markets[&code].resting_orders().is_empty(),
+        "接管后旧簿不再保存第二份在途权威"
+    );
+    {
+        let mut driver = session.runtime_driver.as_ref().unwrap().lock().unwrap();
+        let source = driver.mirror_source();
+        let live = driver.collect_resting_facts_live().unwrap();
+        assert_eq!(
+            live[code.0 as usize].iter().map(|row| row.qty).sum::<u32>(),
+            300
+        );
+        assert_eq!(driver.mirror_source(), source, "完整静点读取不得推进来源");
+    }
+    let after = session.save().unwrap();
+    assert_eq!(
+        after.resting_orders[&code]
+            .iter()
+            .map(|order| order.qty)
+            .sum::<u32>(),
+        300,
+        "首次接管后立即保存必须保留真实在途余量，不能只有 PlanBook 和 ledger"
+    );
+    assert!(
+        after.desk_mirrored_resting,
+        "接管须完成同来源静点 mirror 而非保留旧簿双权威"
+    );
+    assert_eq!(session.tick(), tick);
+    assert_eq!(session.seq(), seq);
+    assert_eq!(session.day(), day);
+    assert_eq!(
+        session
+            .runtime_driver
+            .as_ref()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .world_committed_tick(),
+        tick
+    );
+    assert_eq!(
+        after
+            .plans
+            .plan(plan_id)
+            .unwrap()
+            .active_child_remaining_qty(),
+        Some(300)
+    );
+    for (left, right) in [
+        (
+            serde_json::to_value(&before.snapshot.accounts).unwrap(),
+            serde_json::to_value(&after.snapshot.accounts).unwrap(),
+        ),
+        (
+            serde_json::to_value(&before.runtime_state.live_envelopes).unwrap(),
+            serde_json::to_value(&after.runtime_state.live_envelopes).unwrap(),
+        ),
+        (
+            serde_json::to_value(&before.npc_attention).unwrap(),
+            serde_json::to_value(&after.npc_attention).unwrap(),
+        ),
+        (
+            serde_json::to_value(&before.belief_books).unwrap(),
+            serde_json::to_value(&after.belief_books).unwrap(),
+        ),
+        (
+            serde_json::to_value(&before.history_reads).unwrap(),
+            serde_json::to_value(&after.history_reads).unwrap(),
+        ),
+        (
+            serde_json::to_value(&before.information_states).unwrap(),
+            serde_json::to_value(&after.information_states).unwrap(),
+        ),
+        (
+            serde_json::to_value(&before.watchlists).unwrap(),
+            serde_json::to_value(&after.watchlists).unwrap(),
+        ),
+        (
+            serde_json::to_value(&before.price_memories).unwrap(),
+            serde_json::to_value(&after.price_memories).unwrap(),
+        ),
+        (
+            serde_json::to_value(&before.retail_experience).unwrap(),
+            serde_json::to_value(&after.retail_experience).unwrap(),
+        ),
+        (
+            serde_json::to_value(&before.personal_trade_confirmations).unwrap(),
+            serde_json::to_value(&after.personal_trade_confirmations).unwrap(),
+        ),
+    ] {
+        assert_eq!(
+            right, left,
+            "静点接管不运行计算、撮合或结算，也不重复登记回执"
+        );
+    }
+    let restored = GameSession::restore(&after).expect("接管后的同点完整存档必须可恢复");
+    assert_eq!(
+        restored
+            .state
+            .plans
+            .plan(plan_id)
+            .unwrap()
+            .active_child_remaining_qty(),
+        Some(300)
+    );
+}
+
+#[test]
+fn lazy_handover_revision_exhaustion_preserves_old_authority() {
+    let (mut session, _, _) = live_child_case();
+    session
+        .revision
+        .store(u64::MAX, std::sync::atomic::Ordering::Relaxed);
+    let before = serde_json::to_value(session.save().unwrap()).unwrap();
+    let epoch = session.runtime_authority_epoch;
+    let install = session.runtime_mirror_install_sequence;
+    let result = session.construct_runtime_driver_lazy_for_test();
+    assert!(
+        result.is_err(),
+        "静点移交必须在构造与旧簿变更前预检实际 revision 写集"
+    );
+    assert_eq!(session.external_revision(), u64::MAX);
+    assert_eq!(session.runtime_authority_epoch, epoch);
+    assert_eq!(session.runtime_mirror_install_sequence, install);
+    assert!(session.runtime_driver.is_none());
+    assert!(session.require_healthy().is_ok());
+    assert_eq!(
+        serde_json::to_value(session.save().unwrap()).unwrap(),
+        before
+    );
+}
+
+#[test]
+fn lazy_handover_preserves_nonzero_tick_and_sequence_without_new_events() {
+    let mut session = low_price_session();
+    session.step_pipeline_contract().unwrap();
+    assert!(session.tick() > 0);
+    assert!(session.seq() > 0);
+    let (mut source, plan_id, code) = live_child_case_at_session(session);
+    let before = source.save().unwrap();
+    let mut session = GameSession::restore(&before).expect("非零进度的旧簿存档必须合法");
+    session.construct_runtime_driver_lazy_for_test().unwrap();
+    let after = session.save().unwrap();
+    assert_eq!(
+        after.snapshot.tick, before.snapshot.tick,
+        "静点 Full 不偷跑 tick"
+    );
+    assert_eq!(
+        after.snapshot.seq, before.snapshot.seq,
+        "静点 Full 不造事件或归零已有 seq"
+    );
+    assert_eq!(
+        after.resting_orders[&code]
+            .iter()
+            .map(|order| order.qty)
+            .sum::<u32>(),
+        300,
+        "非零进度接管后必须保留真实在途余量"
+    );
+    assert_eq!(
+        after
+            .plans
+            .plan(plan_id)
+            .unwrap()
+            .active_child_remaining_qty(),
+        Some(300)
+    );
+    assert_eq!(
+        serde_json::to_value(&after.runtime_state.live_envelopes).unwrap(),
+        serde_json::to_value(&before.runtime_state.live_envelopes).unwrap()
+    );
+    GameSession::restore(&after).expect("非零进度静点镜像必须可真实恢复");
+}
+
+#[test]
+fn lazy_handover_install_sequence_exhaustion_preserves_old_authority() {
+    let (mut session, _, _) = live_child_case();
+    session.runtime_mirror_install_sequence = u64::MAX;
+    let before = serde_json::to_value(session.save().unwrap()).unwrap();
+    let revision = session.external_revision();
+    let epoch = session.runtime_authority_epoch;
+    assert!(
+        session.construct_runtime_driver_lazy_for_test().is_err(),
+        "安装序号耗尽必须在发布接管前拒绝"
+    );
+    assert_eq!(session.runtime_mirror_install_sequence, u64::MAX);
+    assert_eq!(session.runtime_authority_epoch, epoch);
+    assert_eq!(session.external_revision(), revision);
+    assert!(session.runtime_driver.is_none());
+    assert!(session.require_healthy().is_ok());
+    assert_eq!(
+        serde_json::to_value(session.save().unwrap()).unwrap(),
+        before
+    );
+}
+
+#[test]
+fn lazy_handover_authority_epoch_exhaustion_preserves_old_authority() {
+    let (mut session, _, _) = live_child_case();
+    session.runtime_authority_epoch = u64::MAX;
+    let before = serde_json::to_value(session.save().unwrap()).unwrap();
+    let revision = session.external_revision();
+    let install = session.runtime_mirror_install_sequence;
+    assert!(
+        session.construct_runtime_driver_lazy_for_test().is_err(),
+        "authority epoch 耗尽必须在发布接管前拒绝"
+    );
+    assert_eq!(session.runtime_authority_epoch, u64::MAX);
+    assert_eq!(session.runtime_mirror_install_sequence, install);
+    assert_eq!(session.external_revision(), revision);
+    assert!(session.runtime_driver.is_none());
+    assert!(session.require_healthy().is_ok());
+    assert_eq!(
+        serde_json::to_value(session.save().unwrap()).unwrap(),
+        before
     );
 }

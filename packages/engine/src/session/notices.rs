@@ -508,7 +508,7 @@ mod tests {
                 _ => unreachable!(),
             }
             let date = session.civil_date();
-            std::sync::Arc::make_mut(&mut session.state.operations)
+            std::sync::Arc::make_mut(&mut session.state.companies.legacy_mut().expect("此调用仅用于 Legacy 公司状态").operations)
                 .apply_company_shock(
                     &company,
                     crate::company::ActiveShock {
@@ -828,7 +828,7 @@ mod tests {
             .record_attention(&code, 0, 0)
             .unwrap();
         let date = session.civil_date();
-        std::sync::Arc::make_mut(&mut session.state.operations)
+        std::sync::Arc::make_mut(&mut session.state.companies.legacy_mut().expect("此调用仅用于 Legacy 公司状态").operations)
             .apply_company_shock(
                 &company,
                 crate::company::ActiveShock {
@@ -924,7 +924,7 @@ mod tests {
         let market = session.build_market_view();
         let ctx =
             NpcObservationContext::new(id, &information, &session.state.library, &market).unwrap();
-        let spec = session.state.operations.company(&company).unwrap().spec();
+        let spec = session.state.companies.legacy().expect("此调用仅用于 Legacy 公司状态").operations.company(&company).unwrap().spec();
         let mut inputs = BeliefInputs {
             ctx: &ctx,
             company,

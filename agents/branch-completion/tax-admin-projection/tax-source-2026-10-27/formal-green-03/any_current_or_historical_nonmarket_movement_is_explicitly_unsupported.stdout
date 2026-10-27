@@ -1,0 +1,6 @@
+
+running 1 test
+test company::cash_dividend_tax::day_boundary::tests::any_current_or_historical_nonmarket_movement_is_explicitly_unsupported ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2741 filtered out; finished in 0.01s
+

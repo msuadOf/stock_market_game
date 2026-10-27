@@ -1,0 +1,37 @@
+{
+  "artifact": {
+    "reason": "compiler-artifact",
+    "package_id": "path+file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/desktop/src-tauri#stock-market-game@0.1.0",
+    "manifest_path": "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/desktop/src-tauri/Cargo.toml",
+    "target": {
+      "kind": [
+        "rlib"
+      ],
+      "crate_types": [
+        "rlib"
+      ],
+      "name": "stock_market_game_lib",
+      "src_path": "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/desktop/src-tauri/src/lib.rs",
+      "edition": "2021",
+      "doc": true,
+      "doctest": true,
+      "test": true
+    },
+    "profile": {
+      "opt_level": "0",
+      "debuginfo": 2,
+      "debug_assertions": true,
+      "overflow_checks": true,
+      "test": true
+    },
+    "features": [],
+    "filenames": [
+      "/data1/baiyifan/workplace/stock_market_game/.tmp/company-catalog-bc/target/debug/deps/stock_market_game_lib-c8faad29f7a3c03a"
+    ],
+    "executable": "/data1/baiyifan/workplace/stock_market_game/.tmp/company-catalog-bc/target/debug/deps/stock_market_game_lib-c8faad29f7a3c03a",
+    "fresh": false
+  },
+  "sealedBinary": "/data1/baiyifan/workplace/stock_market_game/.tmp/company-catalog-bc/desktop-r4-sealed/desktop-tests",
+  "sha256": "9b85dbeaa5ce285eed6644760f8beffc876d17dc4fa12cbd550d2e21dcdd3e18",
+  "bytes": 466042144
+}

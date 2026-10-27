@@ -1,0 +1,48 @@
+{
+  "binarySha256": "6c77d7e2bcd0f920049d013c022e739a63cb9b6dfee189a28cb248101024b62b",
+  "concurrentProcesses": 3,
+  "cases": [
+    {
+      "command": "/data1/baiyifan/workplace/stock_market_game/.tmp/company-catalog-bc/server-r4-sealed/server-tests",
+      "args": [
+        "actor::catalog_boundary_tests::catalog_error_keeps_leaf_and_numeric_fault",
+        "--exact",
+        "--nocapture",
+        "--test-threads=8"
+      ],
+      "cwd": "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc",
+      "timeoutMs": 10000,
+      "wallSeconds": 0.017429059,
+      "exitCode": 0,
+      "error": null
+    },
+    {
+      "command": "/data1/baiyifan/workplace/stock_market_game/.tmp/company-catalog-bc/server-r4-sealed/server-tests",
+      "args": [
+        "actor::fatal_tests::catalog_failure_has_no_baseline_and_stops_actual_actor_ingress",
+        "--exact",
+        "--nocapture",
+        "--test-threads=8"
+      ],
+      "cwd": "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc",
+      "timeoutMs": 10000,
+      "wallSeconds": 0.22412267099999997,
+      "exitCode": 0,
+      "error": null
+    },
+    {
+      "command": "/data1/baiyifan/workplace/stock_market_game/.tmp/company-catalog-bc/server-r4-sealed/server-tests",
+      "args": [
+        "actor::fatal_tests::public_baseline_catalogs_match_the_same_actor_session",
+        "--exact",
+        "--nocapture",
+        "--test-threads=8"
+      ],
+      "cwd": "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc",
+      "timeoutMs": 10000,
+      "wallSeconds": 0.21962939300000003,
+      "exitCode": 0,
+      "error": null
+    }
+  ]
+}

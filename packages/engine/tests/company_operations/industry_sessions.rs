@@ -1,3 +1,4 @@
+include!("../../test-support/company_state.rs");
 use super::fixtures::*;
 use super::session_boundary::session_with_company;
 use engine::company::operations::{
@@ -13,9 +14,8 @@ fn assert_actual_publication(company: OperatingCompanyConfig, seed: u64, params:
     let mut session = session_with_company(date, company, seed, params);
     let report = session.end_civil_day().unwrap();
     let saved = session.save().unwrap();
-    let id = saved.company_operations.catalog().id(&code).unwrap();
-    let active = saved
-        .company_operations
+    let id = legacy_saved(&saved).0.catalog().id(&code).unwrap();
+    let active = legacy_saved(&saved).0
         .company(&id)
         .unwrap()
         .economy()

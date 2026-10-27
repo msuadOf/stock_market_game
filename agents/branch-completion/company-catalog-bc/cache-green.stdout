@@ -1,0 +1,12 @@
+✔ 实际两目录保留原 id，成员 scope 必须属于报告公司 (2.767791ms)
+✔ 目录严格拒绝缺键、多键、重复、非法 u32 与 issuer 覆盖缺口 (0.600476ms)
+✔ 合法特殊公司 code 精确保留且不依赖原型 (0.268387ms)
+✔ Redux/Immer 对特殊公司 code 的缓存和阅读操作不命中原型 (13.240191ms)
+ℹ tests 4
+ℹ suites 0
+ℹ pass 4
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 235.805102

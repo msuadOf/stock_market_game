@@ -1,0 +1,108 @@
+✖ 对象入口拒绝 sparse array entries (4.290472ms)
+✖ 对象入口拒绝 sparse array lines (0.425371ms)
+✖ 对象入口拒绝 sparse array pending (0.460943ms)
+✖ 对象入口拒绝 sparse array publications (0.4018ms)
+✖ 对象入口拒绝 sparse array inherited (0.361268ms)
+ℹ tests 5
+ℹ suites 0
+ℹ pass 0
+ℹ fail 5
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 135.109069
+
+✖ failing tests:
+
+test at apps/web/src/host/report-corrections.test.ts:92:50
+✖ 对象入口拒绝 sparse array entries (4.290472ms)
+  AssertionError [ERR_ASSERTION]: Missing expected exception.
+      at file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-correction-input-parser-tdd/apps/web/src/host/report-corrections.test.ts:162:51
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-correction-input-parser-tdd/apps/web/src/host/report-corrections.test.ts:92:101)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at Test.start (node:internal/test_runner/test:1191:17)
+      at startSubtestAfterBootstrap (node:internal/test_runner/harness:385:17) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: /entries\[0\]/,
+    operator: 'throws',
+    diff: 'simple'
+  }
+
+test at apps/web/src/host/report-corrections.test.ts:92:50
+✖ 对象入口拒绝 sparse array lines (0.425371ms)
+  AssertionError [ERR_ASSERTION]: Missing expected exception.
+      at file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-correction-input-parser-tdd/apps/web/src/host/report-corrections.test.ts:163:58
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-correction-input-parser-tdd/apps/web/src/host/report-corrections.test.ts:92:101)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:911:18)
+      at Test.postRun (node:internal/test_runner/test:1465:19)
+      at Test.run (node:internal/test_runner/test:1390:12)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: /lines\[0\]/,
+    operator: 'throws',
+    diff: 'simple'
+  }
+
+test at apps/web/src/host/report-corrections.test.ts:92:50
+✖ 对象入口拒绝 sparse array pending (0.460943ms)
+  AssertionError [ERR_ASSERTION]: Missing expected exception.
+      at file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-correction-input-parser-tdd/apps/web/src/host/report-corrections.test.ts:164:51
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-correction-input-parser-tdd/apps/web/src/host/report-corrections.test.ts:92:101)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:911:18)
+      at Test.postRun (node:internal/test_runner/test:1465:19)
+      at Test.run (node:internal/test_runner/test:1390:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: /pending\[0\]/,
+    operator: 'throws',
+    diff: 'simple'
+  }
+
+test at apps/web/src/host/report-corrections.test.ts:92:50
+✖ 对象入口拒绝 sparse array publications (0.4018ms)
+  AssertionError [ERR_ASSERTION]: Missing expected exception.
+      at file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-correction-input-parser-tdd/apps/web/src/host/report-corrections.test.ts:165:74
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-correction-input-parser-tdd/apps/web/src/host/report-corrections.test.ts:92:101)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:911:18)
+      at Test.postRun (node:internal/test_runner/test:1465:19)
+      at Test.run (node:internal/test_runner/test:1390:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: /publications\[0\]/,
+    operator: 'throws',
+    diff: 'simple'
+  }
+
+test at apps/web/src/host/report-corrections.test.ts:92:50
+✖ 对象入口拒绝 sparse array inherited (0.361268ms)
+  AssertionError [ERR_ASSERTION]: Missing expected exception.
+      at file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-correction-input-parser-tdd/apps/web/src/host/report-corrections.test.ts:166:177
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-correction-input-parser-tdd/apps/web/src/host/report-corrections.test.ts:92:101)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:911:18)
+      at Test.postRun (node:internal/test_runner/test:1465:19)
+      at Test.run (node:internal/test_runner/test:1390:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: /entries\[0\]/,
+    operator: 'throws',
+    diff: 'simple'
+  }

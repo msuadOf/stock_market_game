@@ -332,7 +332,7 @@ async fn capture(successful_steps: usize) {
     actor
         .handle_command(SessionCommand::PublicBaseline { reply })
         .await;
-    let baseline = response.await.unwrap();
+    let baseline = response.await.unwrap().unwrap();
     assert_eq!(baseline.failure, Some(failure.failure.clone().unwrap()));
     assert!(
         serde_json::to_value(&baseline)
@@ -796,4 +796,85 @@ fn batch_checkpoint_drop_is_deferred_to_dedicated_thread() {
     actor.run_protocol_batch(0);
     let delta = engine::session::deferred_destruction_count() - before;
     assert!(delta >= 1, "批级 checkpoint 未移交专用线程（增量 {delta}）");
+}
+
+fn catalog_actor_fixture() -> (SessionActor, broadcast::Receiver<EngineUpdate>) {
+    let mut setup = fixture::civil_setup(engine::CivilDate::from_iso("2030-01-02").unwrap());
+    setup.npcs.retail_count = 0;
+    setup.npcs.inst_count = 0;
+    setup.npcs.hot_count = 0;
+    setup.history_len = 1;
+    setup.stocks[0].float_shares = 0;
+    let game = ProtocolSession::new(setup, 7).unwrap();
+    let (_sender, cmd_rx) = mpsc::unbounded_channel();
+    let (event_tx, receiver) = broadcast::channel(EVENT_CHANNEL_CAPACITY);
+    (
+        SessionActor {
+            ingress: Arc::new(RwLock::new((1, game.shared_ingress()))),
+            members: Arc::new(RwLock::new(game.trading_subject_accounts())),
+            controllers: std::collections::BTreeSet::new(),
+            archive: None,
+            injected_step_failure: None,
+            pacing: ServerPacing::new(1, game.tick()),
+            game,
+            cmd_rx,
+            event_tx,
+            session_id: "catalog-fixture".into(),
+            public_revision: 0,
+            timeline_generation: 1,
+            pause_preferences: PausePreferences::default(),
+            fatal_failure: None,
+            deferred_drop_reported: false,
+        },
+        receiver,
+    )
+}
+
+#[test]
+fn public_baseline_catalogs_match_the_same_actor_session() {
+    let (mut actor, _) = catalog_actor_fixture();
+    let expected_stocks = actor.game.stock_catalog_view();
+    let expected_companies = actor.game.company_catalog_view().unwrap();
+    let baseline = actor.public_baseline_candidate().unwrap();
+    assert_eq!(baseline.stock_catalog, expected_stocks);
+    assert_eq!(baseline.company_catalog, expected_companies);
+    assert_eq!(
+        baseline.stock_catalog.len(),
+        baseline.snapshot.markets.len()
+    );
+    assert_eq!(baseline.stock_catalog[0].code, "600101");
+}
+
+#[test]
+fn catalog_failure_has_no_baseline_and_stops_actual_actor_ingress() {
+    let (mut actor, mut receiver) = catalog_actor_fixture();
+    let ingress = actor.game.shared_ingress();
+    let error = engine::session::CompanyCatalogViewError::UnknownListedStock {
+        company: engine::company::CompanyId(7),
+    };
+    assert_eq!(
+        actor
+            .finish_public_baseline(Err(error.clone()))
+            .unwrap_err(),
+        error
+    );
+    let failure = actor.fatal_failure.as_ref().unwrap();
+    assert_eq!(failure.code, "CATALOG_BASELINE_FAILED");
+    assert_eq!(
+        failure.context.fault,
+        Some(engine::ValidationFault::new(3019, vec![7]))
+    );
+    assert!(actor.fatal_rejection().is_some());
+    assert!(ingress
+        .enqueue_player_intent(
+            AccountId(0),
+            Intent::Cancel {
+                code: engine::StockId(0),
+                id: engine::OrderId(1)
+            }
+        )
+        .is_err());
+    let frame = receiver.try_recv().unwrap();
+    assert!(frame.update.is_none());
+    assert_eq!(frame.failure.unwrap().code, "CATALOG_BASELINE_FAILED");
 }

@@ -107,6 +107,15 @@ impl RuntimeDriver {
         self.retain_terminal_causal(time, raw, fatal);
     }
 
+    #[cfg(all(test, feature = "simulation-diagnostics"))]
+    pub(crate) fn terminal_causal_snapshot_for_test(&self) -> Option<(
+        crate::diagnostics::causal::FactTime,
+        Vec<crate::runtime::diagnostics::DeskCausalFact>,
+        crate::session::StepFatal,
+    )> {
+        self.terminal_causal.clone()
+    }
+
     pub(crate) fn cached_personal_at(
         &self,
         index: usize,
@@ -132,6 +141,8 @@ impl RuntimeDriver {
     }
 
     pub(crate) fn finish_mirror_install(&mut self, accounts: usize) {
+        #[cfg(feature = "simulation-diagnostics")]
+        self.pending_decision_traces.clear();
         #[cfg(test)]
         {
             self.account_writes += accounts as u64;

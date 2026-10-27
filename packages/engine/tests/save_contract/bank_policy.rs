@@ -37,7 +37,7 @@ fn complete_save_restore_rejects_invalid_bank_ecl_with_company_context() {
         ("lifetime_default", Some("pd_bp"), serde_json::json!(-1)),
     ] {
         let mut wire = baseline.clone();
-        let companies = wire["company_operations"]["companies"]
+        let companies = wire["company_state"]["LegacyOperations"]["operations"]["companies"]
             .as_object_mut()
             .unwrap();
         let (id, company) = companies.iter_mut().next().unwrap();

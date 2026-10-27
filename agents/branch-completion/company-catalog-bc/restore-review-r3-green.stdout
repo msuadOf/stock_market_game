@@ -1,0 +1,59 @@
+✔ 已排队恢复重启在catalog失败后失效，微任务drain后仍停机 (1.946985ms)
+✔ 仅完整baseline通过且handle/generation仍一致才重启 (0.249548ms)
+✔ direct host keeps the old running session when restored snapshot validation fails (3.343914ms)
+✔ worker keeps the old running session when restored snapshot validation fails (0.164655ms)
+✔ restore swaps authority only after the candidate snapshot succeeds (0.273668ms)
+✔ WasmSessionSlot 维持未就绪、generation 校验与重复 create 覆盖边界 (4.485117ms)
+✔ WasmSessionSlot create 的未初始化和 seed 校验保持原错误顺序 (0.266918ms)
+✔ WasmSessionSlot restore snapshot 失败清 candidate 并恢复运行意图 (0.457753ms)
+✔ WasmSessionSlot restore 先 snapshot、交换 authority 并推进 generation，再 drop 旧句柄 (0.389921ms)
+✔ WasmSessionSlot restore 旧 drop 失败仍保留已提交新 handle 与新 generation (0.266287ms)
+✔ WasmSessionSlot restore prepare 失败保留新 handle 与新 generation (0.321469ms)
+✔ WasmSessionSlot drop 失败保留句柄，成功才清空且不改变 generation (0.316259ms)
+✖ WasmSessionSlot candidate 清理失败保留原 handle，仍恢复运行意图并保留双错 (2.691466ms)
+✔ WasmSessionSlot restore 构造失败不清未创建的 candidate，仍恢复运行意图 (0.33496ms)
+✔ Worker 全部会话 caller 共用 owner，restore 完整回应先于 microtask restart (83.321993ms)
+✔ Worker restore提交前snapshot失败恢复旧运行，提交后prepare失败fatal关闭新会话 (8.099279ms)
+✔ 真实Worker restore已换handle后catalog故障保持3019，drain后不重启或发成功 (6.954387ms)
+✔ 真实Worker restore提交前snapshot失败按旧handle/generation恢复运行 (6.174025ms)
+✔ 真实Worker replace后旧drop失败属于已提交fatal，旧generation不能操作新handle (6.772322ms)
+✔ 真实Worker refresh目录fatal关闭当前handle以撤销独立intake能力 (5.681931ms)
+✔ 真实Worker已提交restore发送ingress失败fatal且不重启 (6.740121ms)
+✔ 真实Worker已提交restore发送restored失败fatal且不重启 (6.658149ms)
+✔ 真实Worker暂停旧会话的precommit恢复失败保持暂停 (7.40581ms)
+✔ 非目录可恢复structured故障维持既有stop与显错，不销毁当前handle (5.673051ms)
+✔ 真实Worker precommit snapshot与candidate cleanup双失败保旧身份并恢复运行且显两错 (5.863836ms)
+ℹ tests 25
+ℹ suites 0
+ℹ pass 24
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 395.719697
+
+✖ failing tests:
+
+test at apps/web/src/host/wasm-session-slot.test.ts:115:1
+✖ WasmSessionSlot candidate 清理失败保留原 handle，仍恢复运行意图并保留双错 (2.691466ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+  + actual - expected
+  
+    [
+      'stop',
+      'restore:{}',
+      'snapshot:9',
+      'drop:9',
+  +   'restart'
+    ]
+  
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/wasm-session-slot.test.ts:125:10)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: [ 'stop', 'restore:{}', 'snapshot:9', 'drop:9', 'restart' ],
+    expected: [ 'stop', 'restore:{}', 'snapshot:9', 'drop:9' ],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }

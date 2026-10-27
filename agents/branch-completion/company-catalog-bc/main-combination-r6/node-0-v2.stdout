@@ -1,0 +1,33 @@
+✔ production delta updates selected daily K and mobile active K cache while retaining completed history (328.998129ms)
+✔ production runtimeSnapshot 替换权威日 K，普通帧的 active 不覆盖 snapshot (2.791327ms)
+✔ production AfterClose+BeforeOpen 即使携旧日历史也清空分时并保留权威日 K (9.157871ms)
+✔ successive production deltas use final authoritative active candles and remove absent active codes (3.097755ms)
+✔ 详情历史查询丢弃换股前响应，并在 hook rerender 后交付日 K consumer (2.443837ms)
+✔ 历史查询错误通过 notice 明确呈现 (0.406761ms)
+✔ production AfterClose-only 进入非交易日时保留真实收盘分时 (1.906192ms)
+✔ Money wire：持仓金额超过 Number 安全范围仍精确到分 (1.556402ms)
+✔ Money wire：条件单价格不能按字符串字典序比较 (0.483713ms)
+✔ Money wire：活动委托严格拒绝 Number 并保留大金额原值 (0.706409ms)
+✔ Money wire：图表坐标相同不能吞掉原始 OHLC 一分变化 (0.483623ms)
+✔ 审计G67：baseline拒绝没有行情的持仓引用，估值不能当零价 (2.415626ms)
+✔ 审计G67：非玩家和零股持仓引用同样校验，继承属性不是行情 (1.10774ms)
+✔ 公司选择仅允许 actual 目录存在，名称权威，自定义公司不编造行业 (1.636335ms)
+✔ 公开报告刷新经过 loading 或 error 后保留仍可见的用户选择 (232.176778ms)
+✔ 公开报告真正 empty 后清除选择，重新出现报告时使用当前默认报告 (2.756286ms)
+✔ 切换公司时旧选择失效后使用新公司的可见报告 (2.628782ms)
+✔ 附注渲染单体范围、更正原因与已公布行业科目明细 (196.494841ms)
+✔ 利润表渲染当季、累计、比较列，缺历史有原因不填零 (2.017065ms)
+✔ ReportNotes 单股实际scope动态显示，未知与已知错公司scope均拒绝渲染 (3.571238ms)
+✔ 实际单股只读请求发StockId0，initialAllocation与NPC诊断回相同证券 (1.514852ms)
+✔ 同代目录保留不同CompanyId与StockId，完整AccountId和PlanId不经过number (1.527842ms)
+✔ 真实WorkerHost只读请求按restore后实际子集发原StockId并拒绝旧响应 (78.766307ms)
+✔ 坏目录 prepare 不发布 Redux/protocol/App，新 baseline 同一次dispatch安装snapshot和company (4.476323ms)
+✔ Tauri 坏目录不覆盖 timeline、generation、query epoch 或 cached baseline (0.683428ms)
+ℹ tests 25
+ℹ suites 0
+ℹ pass 25
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 682.330805

@@ -1,3 +1,4 @@
+import { defaultCatalogFixture } from "./catalog-test-fixture.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { normalizePersonalTradeHistoryPage, normalizePersonalTradeHistoryRequest, wirePersonalTradeHistoryRequest } from "./personal-trade-history.ts";
@@ -20,15 +21,15 @@ test("本人日期查询严格required-nullable、日期及完整u64游标，不
 });
 
 test("请求侧翻译在 code 筛选上做 StockId 数值化（wire 词表）", { timeout: 10000 }, () => {
-  assert.deepEqual(wirePersonalTradeHistoryRequest(request), { date_from: request.date_from, date_to: request.date_to, stock: null, side: null, before_receipt: null, as_of_receipt: null, page_size: 2 });
+  assert.deepEqual(wirePersonalTradeHistoryRequest(request, defaultCatalogFixture), { date_from: request.date_from, date_to: request.date_to, stock: null, side: null, before_receipt: null, as_of_receipt: null, page_size: 2 });
   const filtered = { ...request, code: "002156" };
-  assert.deepEqual(wirePersonalTradeHistoryRequest(filtered).stock, 1);
-  assert.throws(() => wirePersonalTradeHistoryRequest({ ...request, code: "600000" }), /未知股票代码/);
+  assert.deepEqual(wirePersonalTradeHistoryRequest(filtered, defaultCatalogFixture).stock, 1);
+  assert.throws(() => wirePersonalTradeHistoryRequest({ ...request, code: "600000" }, defaultCatalogFixture), /未知股票代码/);
 });
 
 test("本人日期页保留分股事实、原query与scope元数据，拒绝错filters和receiptwindow", { timeout: 10000 }, () => {
-  assert.deepEqual(normalizePersonalTradeHistoryPage(wirePage, request), page);
-  for (const invalid of [{ ...wirePage, request: { ...request, side: "Sell" } }, { ...wirePage, confirmations: [{ ...wireRow, receipt_id: "10" }] }, { ...wirePage, confirmations: [{ ...wireRow, civil_date: "2030-01-01" }] }, { ...wirePage, next_cursor: "7" }, { ...wirePage, confirmations: [wireRow, wireRow] }, { ...wirePage, settled_through: "2030-01-05" }]) assert.throws(() => normalizePersonalTradeHistoryPage(invalid, request));
+  assert.deepEqual(normalizePersonalTradeHistoryPage(wirePage, request, defaultCatalogFixture), page);
+  for (const invalid of [{ ...wirePage, request: { ...request, side: "Sell" } }, { ...wirePage, confirmations: [{ ...wireRow, receipt_id: "10" }] }, { ...wirePage, confirmations: [{ ...wireRow, civil_date: "2030-01-01" }] }, { ...wirePage, next_cursor: "7" }, { ...wirePage, confirmations: [wireRow, wireRow] }, { ...wirePage, settled_through: "2030-01-05" }]) assert.throws(() => normalizePersonalTradeHistoryPage(invalid, request, defaultCatalogFixture));
 });
 
 test("跨开局前及未来的合法范围不能带入本局未发生交割事实，当前日真实成交仍有效", { timeout: 10000 }, () => {
@@ -37,8 +38,8 @@ test("跨开局前及未来的合法范围不能带入本局未发生交割事�
   const wideWireEcho = { date_from: wide.date_from, date_to: wide.date_to, stock: null, side: null, before_receipt: null, as_of_receipt: null, page_size: wide.page_size };
   const scoped = { ...wirePage, request: wideWireEcho };
   for (const civil_date of ["2030-01-01", "2030-01-06"]) {
-    assert.throws(() => normalizePersonalTradeHistoryPage({ ...scoped, confirmations: [{ ...wireRow, civil_date }] }, wide), /本局.*自然日/);
+    assert.throws(() => normalizePersonalTradeHistoryPage({ ...scoped, confirmations: [{ ...wireRow, civil_date }] }, wide, defaultCatalogFixture), /本局.*自然日/);
   }
   const current = { ...scoped, confirmations: [{ ...wireRow, civil_date: page.current_date }] };
-  assert.deepEqual(normalizePersonalTradeHistoryPage(current, wide), { ...page, request: wide, confirmations: [{ ...viewRow, civil_date: page.current_date }] });
+  assert.deepEqual(normalizePersonalTradeHistoryPage(current, wide, defaultCatalogFixture), { ...page, request: wide, confirmations: [{ ...viewRow, civil_date: page.current_date }] });
 });

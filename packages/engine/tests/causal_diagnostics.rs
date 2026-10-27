@@ -1,3 +1,4 @@
+include!("../test-support/company_state.rs");
 #[path = "diagnostic_parity.rs"]
 mod fixture;
 
@@ -125,7 +126,7 @@ fn causal_fact_json_preserves_large_time_sequence_and_depth() {
     assert_eq!(json["kind"]["Quote"]["ask_depth"], "0");
     fact.kind = CausalFactKind::Acquisition {
         account: AccountId(0),
-        company: session.save().unwrap().company_operations.catalog().id("C-600101").unwrap(),
+        company: legacy_saved(&session.save().unwrap()).0.catalog().id("C-600101").unwrap(),
         publication: u64::MAX,
         published: fact.time.civil,
         acquired: fact.time.civil,
@@ -176,7 +177,7 @@ fn canceled_session(auction: bool) -> GameSession {
 fn reconciles_real_continuous_submission_and_voluntary_cancel() {
     let session = canceled_session(false);
     let report = session.causal_diagnostics().unwrap();
-    let company = session.save().unwrap().company_operations.catalog().id("C-600101").unwrap();
+    let company = legacy_saved(&session.save().unwrap()).0.catalog().id("C-600101").unwrap();
     assert_eq!(report.orders[0].origin.company, Some(company));
     assert_eq!(report.orders[0].origin.code, session.stock_id("600101").unwrap());
     assert_eq!(

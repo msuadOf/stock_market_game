@@ -1,0 +1,42 @@
+✔ 三个transport共用数值目录fault生成中文why并保留进度 (1.438179ms)
+✔ catalog fault 缺键、多键、错码及非单一u32上下文都拒绝 (0.674808ms)
+✔ 实际两目录保留原 id，成员 scope 必须属于报告公司 (2.146428ms)
+✔ 目录严格拒绝缺键、多键、重复、非法 u32 与 issuer 覆盖缺口 (0.801171ms)
+✔ 合法特殊公司 code 精确保留且不依赖原型 (0.400171ms)
+✔ 实际 UI C-code 查询使用本代数值 id，结果仍落 C-code 缓存，scope错公司显式错误 (13.511243ms)
+✔ 旧 generation resolve 与 reject 不能污染换代后的同 code (3.585837ms)
+✔ 含NUL合法公司 code 的 page/by-id 不同tuple不能碰撞 (2.368924ms)
+✔ disposed 公司实例的同 generation 晚到页、by-id 和失败不能污染新局 (8.213071ms)
+✔ Given a normalized tick frame, when public metadata advances, then company coverage follows its protocol cursor (2.910639ms)
+✔ Given a CivilUpdate refresh, when accepted, then the coordinator installs its authoritative public date (2.96154ms)
+✔ rejects delayed prior-session page and by-id responses while accepting current session data (2.040524ms)
+✔ reports malformed public DTOs as explicit query errors and unavailable capability separately (0.611457ms)
+✔ rejects public reports that violate shared opaque ID, decimal, or second-of-day contracts (0.807672ms)
+✔ refreshes an already cached company after a disclosure before advancing coverage (6.812742ms)
+✔ does not refresh a company absent from the cache (0.575315ms)
+✔ rejects a TickFrame coverage gap so the host can deliver a fresh baseline (0.614907ms)
+✔ accepts a multi-event TickFrame whose exclusive coverage cursor is continuous (0.37004ms)
+✔ rejects a reversed empty TickFrame range before it can desynchronize the coordinator (0.242537ms)
+✔ accepts reordered TickFrame events after protocol normalization restores canonical seq order (0.546844ms)
+✔ accepts reordered CivilUpdate events and facts after protocol normalization (0.852873ms)
+✔ 同 key force 请求替换后旧成功或失败的 finally 不删除新请求 (1.049249ms)
+✔ 页和 by-id ticket 分别去重，清理后不复用旧 requestSequence (0.140054ms)
+✔ 缺少 company capability 的页和 by-id 请求立即结束 ticket (0.246756ms)
+✔ 当前分钟历史使用独立live响应，严格保留真实分钟事实 (56.287891ms)
+✔ 当前分钟历史拒绝账户注入、归档冒充live与证券错配 (0.566186ms)
+✔ Given a host baseline and protocol update, when constructed, then both carry an authoritative generation (1.870611ms)
+✔ Given an invalid generation, when constructing a production host envelope, then it rejects it (0.602206ms)
+✔ UI delivery target uses a 16ms cadence above 60Hz (0.220456ms)
+✔ Worker实际分配query绑定requestId/generation，refresh后旧响应失效 (6.075984ms)
+✔ Tauri实际分配query使用会话身份，refresh后拒绝旧响应 (5.21371ms)
+✔ Remote实际分配首次开跑前连接基线、不启动撮合，load后旧响应失效 (28.924807ms)
+✔ 实际初始分配按整数股数对账并保留零持股人数 (1.698905ms)
+✔ 实际初始分配拒绝错股、重复类别、负数、未知字段和不守恒 (1.85551ms)
+ℹ tests 34
+ℹ suites 0
+ℹ pass 34
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 560.747257

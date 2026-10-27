@@ -511,6 +511,12 @@ pub struct AdminTransactionId(pub(crate) u64);
 /// 已由上层确定合法到账时点的数值操作，金额为分、数量为股。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AdminOperation {
+    /// 配股缴款只扣本人raw可用现金，金额为分。
+    PaymentDebit { local: LocalIdx, stock: StockIdx, amount: i64 },
+    /// 配股失败仅退回实缴本金，金额为分。
+    SubscriptionRefund { local: LocalIdx, stock: StockIdx, amount: i64 },
+    /// 新股按实缴总额增加成本，不重复扣款或增加买入冻结。
+    SharesWithCost { local: LocalIdx, stock: StockIdx, qty: u32, subscription_cost: i64 },
     CashDividend {
         local: LocalIdx,
         stock: StockIdx,
@@ -536,7 +542,10 @@ pub enum AdminOperation {
 impl AdminOperation {
     pub(crate) fn coordinates(self) -> (LocalIdx, StockIdx) {
         match self {
-            Self::CashDividend { local, stock, .. }
+            Self::PaymentDebit { local, stock, .. }
+            | Self::SubscriptionRefund { local, stock, .. }
+            | Self::SharesWithCost { local, stock, .. }
+            | Self::CashDividend { local, stock, .. }
             | Self::ShareSplit { local, stock, .. }
             | Self::WithholdingTax { local, stock, .. }
             | Self::ShareReduction { local, stock, .. } => (local, stock),
@@ -1026,6 +1035,8 @@ pub enum UpMsg {
         /// 原随下一拍 DeskReport 迟到——receipt civil_date 取组装时点
         /// 成次日；应答捎带后 `trade_facts` 已 take，杜绝双报）。
         drained_trades: Vec<DeskTradeFact>,
+        /// 本次 Drain 自产的默认生命周期，不与 Tick ordinal 混域。
+        drained_retail: Vec<super::retail_lifecycle::RawFact>,
         /// 日界批：当日终 K（含收盘段——desk `drain_all` 收盘清算的
         /// reroll 产出；仅本次 Drain 实际执行收盘清算时携带（closing=0
         /// 几何/未跨日手动日结=None）。install 面/`DayBoundary` 事件的
@@ -1257,6 +1268,9 @@ impl std::fmt::Debug for UpMsg {
 /// apply_deferred 后构建——含清仓经历行）；报告不再携带分片。
 #[derive(Clone, Debug, PartialEq)]
 pub struct GroupReport {
+    /// 仅本轮真实 observe 产生的增量；不含 Echo 派生或旧 trace。
+    #[cfg(feature = "simulation-diagnostics")]
+    pub decision_traces: Vec<super::diagnostics::GroupDecisionTrace>,
     /// 组索引。
     pub group: GroupIdx,
     /// tick 编号。
@@ -1426,6 +1440,8 @@ pub struct DeskReport {
     pub view: std::sync::Arc<StockPublic>,
     /// 本轮双腿成交事实（TickFrame 事件映射输入；按成交序）。
     pub trades: Vec<DeskTradeFact>,
+    /// 原报告内的默认 minimal 生命周期；TradeRef 不跨报告解析。
+    pub retail: Vec<super::retail_lifecycle::RawFact>,
     /// 本轮生命周期事实（受理/撤单/到期）。
     pub lifecycle: Vec<DeskLifecycleFact>,
     /// 本轮回执明细（IntentRejected 映射输入）。

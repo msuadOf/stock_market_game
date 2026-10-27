@@ -1,0 +1,133 @@
+{
+  "session": 70330,
+  "waitExit": 0,
+  "wallSeconds": 99.4846200190077,
+  "observedUnix": 1793127999.2686608,
+  "owned": [
+    {
+      "pid": 2559614,
+      "alive": false
+    },
+    {
+      "pid": 2560238,
+      "alive": false
+    },
+    {
+      "pid": 2560521,
+      "alive": false
+    },
+    {
+      "pid": 2560528,
+      "alive": false
+    },
+    {
+      "pid": 2560540,
+      "alive": false
+    },
+    {
+      "pid": 2561764,
+      "alive": false
+    },
+    {
+      "pid": 2570214,
+      "alive": false
+    },
+    {
+      "pid": 2570221,
+      "alive": false
+    },
+    {
+      "pid": 2570222,
+      "alive": false
+    },
+    {
+      "pid": 2570361,
+      "alive": false
+    },
+    {
+      "pid": 2570362,
+      "alive": false
+    },
+    {
+      "pid": 2570367,
+      "alive": false
+    },
+    {
+      "pid": 2570376,
+      "alive": false
+    },
+    {
+      "pid": 2570381,
+      "alive": false
+    },
+    {
+      "pid": 2570382,
+      "alive": false
+    },
+    {
+      "pid": 2570388,
+      "alive": false
+    },
+    {
+      "pid": 2570396,
+      "alive": false
+    },
+    {
+      "pid": 2570401,
+      "alive": false
+    },
+    {
+      "pid": 2570402,
+      "alive": false
+    },
+    {
+      "pid": 2570403,
+      "alive": false
+    },
+    {
+      "pid": 2570404,
+      "alive": false
+    },
+    {
+      "pid": 2570408,
+      "alive": false
+    },
+    {
+      "pid": 2570409,
+      "alive": false
+    },
+    {
+      "pid": 2570410,
+      "alive": false
+    },
+    {
+      "pid": 2570412,
+      "alive": false
+    },
+    {
+      "pid": 2570440,
+      "alive": false
+    },
+    {
+      "pid": 2570441,
+      "alive": false
+    },
+    {
+      "pid": 2570442,
+      "alive": false
+    },
+    {
+      "pid": 2570455,
+      "alive": false
+    },
+    {
+      "pid": 2570456,
+      "alive": false
+    },
+    {
+      "pid": 2570457,
+      "alive": false
+    }
+  ],
+  "alive": []
+}

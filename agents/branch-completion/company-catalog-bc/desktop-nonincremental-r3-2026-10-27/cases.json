@@ -1,0 +1,59 @@
+{
+  "results": [
+    {
+      "name": "actor::protocol_tests::baseline_catalogs_match_actual_desktop_session",
+      "command": [
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/company-catalog-bc/desktop-r3-sealed/desktop-tests",
+        "actor::protocol_tests::baseline_catalogs_match_actual_desktop_session",
+        "--exact",
+        "--nocapture",
+        "--test-threads=8"
+      ],
+      "exitCode": 0,
+      "error": null,
+      "wallSeconds": 0.23524915300000002
+    },
+    {
+      "name": "actor::protocol_tests::baseline_error_source_chain_retains_typed_catalog_leaf",
+      "command": [
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/company-catalog-bc/desktop-r3-sealed/desktop-tests",
+        "actor::protocol_tests::baseline_error_source_chain_retains_typed_catalog_leaf",
+        "--exact",
+        "--nocapture",
+        "--test-threads=8"
+      ],
+      "exitCode": 0,
+      "error": null,
+      "wallSeconds": 0.023154702
+    },
+    {
+      "name": "actor::protocol_tests::committed_restore_catalog_failure_keeps_generation_and_closes_desktop_actor",
+      "command": [
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/company-catalog-bc/desktop-r3-sealed/desktop-tests",
+        "actor::protocol_tests::committed_restore_catalog_failure_keeps_generation_and_closes_desktop_actor",
+        "--exact",
+        "--nocapture",
+        "--test-threads=8"
+      ],
+      "exitCode": 1,
+      "error": "bounded command exited with 101: thread 'actor::protocol_tests::committed_restore_catalog_failure_keeps_generation_and_closes_desktop_actor' (1192893) panicked at apps/desktop/src-tauri/src/actor/protocol_tests.rs:285:29:\ncalled `Result::unwrap()` on an `Err` value: InvalidSave(ValidationFault { code: 3015, context: [] })\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace",
+      "wallSeconds": 0.46479795
+    },
+    {
+      "name": "lib_tests::catalog_ipc_error_keeps_structured_fault_and_existing_string_shape",
+      "command": [
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/company-catalog-bc/desktop-r3-sealed/desktop-tests",
+        "lib_tests::catalog_ipc_error_keeps_structured_fault_and_existing_string_shape",
+        "--exact",
+        "--nocapture",
+        "--test-threads=8"
+      ],
+      "exitCode": 0,
+      "error": null,
+      "wallSeconds": 0.020606979
+    }
+  ],
+  "binarySha256": "617cbeee29ee59d79357966233c6b19c08c779b337d153b251b5ed902f652638",
+  "deadlineEachMs": 10000,
+  "concurrentProcesses": 4
+}

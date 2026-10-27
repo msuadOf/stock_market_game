@@ -1,0 +1,30 @@
+✖ 真实Worker precommit snapshot与candidate cleanup双失败保旧身份并恢复运行且显两错 (76.209857ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 315.061492
+
+✖ failing tests:
+
+test at apps/web/src/host/wasm-worker-ownership.test.ts:319:1
+✖ 真实Worker precommit snapshot与candidate cleanup双失败保旧身份并恢复运行且显两错 (76.209857ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  0 !== 1
+  
+      at file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/wasm-worker-ownership.test.ts:326:12
+      at async withWorker (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/wasm-worker-ownership.test.ts:29:5)
+      at async TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/wasm-worker-ownership.test.ts:320:3)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 0,
+    expected: 1,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

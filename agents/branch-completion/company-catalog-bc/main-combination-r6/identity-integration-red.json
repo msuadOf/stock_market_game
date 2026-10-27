@@ -1,0 +1,17 @@
+{
+  "command": [
+    "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+    "--test",
+    "--test-timeout=10000",
+    "--test-concurrency=4",
+    "apps/web/src/host/npc-decision-trace.test.ts",
+    "apps/web/src/host/actual-read-identity.test.ts"
+  ],
+  "exitCode": 1,
+  "error": "bounded command exited with 1",
+  "hashes": {
+    "apps/web/src/host/npc-decision-trace.test.ts": "71cbce72e490da31f36615d9f1c13cb99542ffc11834610daa90038595120b71",
+    "apps/web/src/host/actual-read-identity.test.ts": "ed1ab8e5356a60bbbb5461ce51ffe7d01c9f6e17e0a53d68ac0f68c4ba206cd7"
+  },
+  "reason": "冲突合成后、旧numeric AccountId fixture尚未适配的真实9过1败"
+}

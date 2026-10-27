@@ -7,7 +7,7 @@ const save = JSON.parse(readFileSync(new URL("./fixtures/current-schema-save.jso
 /** 仅供测试的历史语料 schema projection；可省略跨域引用，不是 Rust save/restore 见证。 */
 export function representativeCurrentSaveFixture(): Record<string, unknown> {
   // 正例 fixture 显式迁入当前单 book 结构；parser 仍严格拒绝旧字段。
-  const { auction_orders: _removedAuctionOrders, ...currentBookSave } = save
+  const { auction_orders: _removedAuctionOrders, groups, company_operations: _oldOperations, closing_registry: _oldClosing, ...currentBookSave } = save
   const snapshot = save.snapshot as Record<string, unknown>
   const { day: _day, phase: _phase, ...savedSnapshot } = snapshot
   const markets = snapshot.markets as Record<string, Record<string, unknown>>
@@ -63,9 +63,8 @@ export function representativeCurrentSaveFixture(): Record<string, unknown> {
   return {
     ...currentBookSave,
     desk_mirrored_resting: false,
-    company_operations: projectHistoricalCompanyOperations(save.company_operations as Record<string, unknown>),
+    company_state: { LegacyOperations: { operations: projectHistoricalCompanyOperations(save.company_operations as Record<string, unknown>), closing: closing_registry, groups } },
     public_library,
-    closing_registry,
     information_states,
     belief_books,
     ...b2SaveFields,

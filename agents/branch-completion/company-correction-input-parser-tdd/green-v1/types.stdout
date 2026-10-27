@@ -1,0 +1,13 @@
+apps/web/src/host/report-corrections.test.ts(34,5): error TS2353: Object literal may only specify known properties, and '"normalized"' does not exist in type '{ input: string; accepted: boolean; }'.
+apps/web/src/host/report-corrections.test.ts(39,5): error TS2353: Object literal may only specify known properties, and '"normalized"' does not exist in type '{ input: string; accepted: boolean; }'.
+apps/web/src/host/report-corrections.test.ts(44,5): error TS2353: Object literal may only specify known properties, and '"normalized"' does not exist in type '{ input: string; accepted: boolean; }'.
+apps/web/src/host/report-corrections.test.ts(49,5): error TS2353: Object literal may only specify known properties, and '"normalized"' does not exist in type '{ input: string; accepted: boolean; }'.
+apps/web/src/host/report-corrections.test.ts(54,5): error TS2353: Object literal may only specify known properties, and '"normalized"' does not exist in type '{ input: string; accepted: boolean; }'.
+apps/web/src/host/report-corrections.test.ts(58,5): error TS2353: Object literal may only specify known properties, and '"error"' does not exist in type '{ input: string; accepted: boolean; }'.
+apps/web/src/host/report-corrections.test.ts(63,5): error TS2353: Object literal may only specify known properties, and '"error"' does not exist in type '{ input: string; accepted: boolean; }'.
+apps/web/src/host/report-corrections.test.ts(68,5): error TS2353: Object literal may only specify known properties, and '"error"' does not exist in type '{ input: string; accepted: boolean; }'.
+apps/web/src/host/report-corrections.test.ts(74,5): error TS2353: Object literal may only specify known properties, and '"normalized"' does not exist in type '{ input: string; accepted: boolean; }'.
+apps/web/src/host/report-corrections.test.ts(79,5): error TS2353: Object literal may only specify known properties, and '"normalized"' does not exist in type '{ input: string; accepted: boolean; }'.
+apps/web/src/host/report-corrections.test.ts(83,5): error TS2353: Object literal may only specify known properties, and '"error"' does not exist in type '{ input: string; accepted: boolean; }'.
+apps/web/src/host/report-corrections.test.ts(109,97): error TS2352: Conversion of type 'CompanyReportCorrectionInput' to type 'Record<string, unknown>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+  Index signature for type 'string' is missing in type 'CompanyReportCorrectionInput'.

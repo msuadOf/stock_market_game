@@ -1,0 +1,61 @@
+{
+  "base": "53ecbcd3ac5aef998950afcd13b4a94da098b26f",
+  "paths": [
+    {
+      "path": "apps/web/src/save/save-schema.ts",
+      "sha256": "8f25434bb6eb94c5ecf5754edc47ceb72fcd462f4295231c7886932f9942d138"
+    },
+    {
+      "path": "apps/web/src/save/schema/company/accounting/journal.ts",
+      "sha256": "69a8793f1e50151d5e7fa23d4aa5258420cb783b0224bfc571f5a8b745768909"
+    },
+    {
+      "path": "apps/web/src/save/schema/company/books/industrial.ts",
+      "sha256": "e8342730c3265c0c6773d6b9b36eab83b584fef1a25695bdf5cfde85a410eb80"
+    },
+    {
+      "path": "apps/web/src/save/schema/company/state-shapes.ts",
+      "sha256": "8167eb5b3be7857df231ae26fb1d3fe054fbf2543a711cd3345c42464bdc734e"
+    },
+    {
+      "path": "apps/web/src/save/schema/company/state.test.ts",
+      "sha256": "e8f210c9eeee1ab2d8fda66283a51a9e33721e2fed8d6c2196ecdc27320139e4"
+    },
+    {
+      "path": "apps/web/src/save/schema/company/state.ts",
+      "sha256": "7003583bdd13756eede7013ae68dd58ed621e9cab2a6abeb847900abd819a2e5"
+    },
+    {
+      "path": "apps/web/src/save/schema/npc-attention.ts",
+      "sha256": "14f273201f065837a630b454e17b315c96168e588650c48a7966619105f5591c"
+    },
+    {
+      "path": "apps/web/src/save/schema/personal/experience.ts",
+      "sha256": "2e1afb06f652d675e348b71d966705c71316e38653c7a70ad7dc58af4a71d6b9"
+    },
+    {
+      "path": "apps/web/src/save/schema/personal/plans.ts",
+      "sha256": "c00269f4bdf889cce24d87dfc7dd494df9bdb0b3db33c8be5cf6b6a39643a1eb"
+    },
+    {
+      "path": "apps/web/src/save/schema/primitives.ts",
+      "sha256": "30665d32f64d08568ec9b25ef4824103ccc59eb6a543b7e53d22fa29ec07739f"
+    },
+    {
+      "path": "apps/web/src/save/schema/raw-json.ts",
+      "sha256": "d834f233d5a97c73b917e9498e208898a6a7024f13a9e5b827c103406a3cf2f7"
+    },
+    {
+      "path": "apps/web/src/save/schema/root.ts",
+      "sha256": "db9a36314a162c5066cd77cd31733d16da3ed79c58088574adfed9540999dbc1"
+    },
+    {
+      "path": "apps/web/src/save/schema/setup-company-options.ts",
+      "sha256": "a0b4e3b47186d07dc991dcee0616bf22c981882e3f17f08b8fcf5dbcb0fc5031"
+    },
+    {
+      "path": "apps/web/src/types/generated/SaveSlot.ts",
+      "sha256": "4ec673109853f624759c37b2b9bb19232523053e02653da04a0ddaff6e502c2e"
+    }
+  ]
+}

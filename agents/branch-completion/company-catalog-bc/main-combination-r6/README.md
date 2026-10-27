@@ -1,0 +1,17 @@
+# B/C 与 main 兼容候选 r6
+
+本树先将已审107路径产品保存为candidate2930f553（其中7路径已在原HEAD，本次产品增量100路径；其余为本主题必要文本证据）。没有target、ELF、node_modules或无关generated。随后只在本树合入main9e7c；主线checkout和main引用均未修改，merge尚未commit。
+
+真实冲突只有三处：npc-decision-trace.ts/test与session.rs模块注册。三方和冲突原件保存在conflicts目录。解析器同时保留main的AccountId规范字符串、完整PlanId.owner/sequence和同账户/去重校验，以及B/C的显式同代CatalogResolver；没有恢复静态stockCodeOf。session.rs只保两个B/C模块及main自动合并内容。ROLE和PlanId/AccountId生成字节均与main相同。
+
+合成首次两文件短验真实9过1败，原因是旧actual-read fixture的数字账户，原输出与哈希在identity-integration-red。仅将该有效fixture迁为规范字符串，再新增StockId0/CompanyId7/full-u64账户/超safe整数Plan sequence、未知股票、错owner和旧标量的组合强断言。第一轮新增断言误把ProtocolError.where当message，保留node-0首失败后改为同时断言真实where和message，不削弱未知股票拒绝；生产错误结构未改。
+
+48个受改Node测试文件分6个并发命令、每命令文件并发4，共311/311。每个普通命令由真实main supervisor外部10000ms监督，Node每case10000ms。首批app TypeScript达到执行预算后终止，原输出保留；减少同批job并提供8GiB Node heap后，完整app严格检查真实8.449秒退出0，Node配置检查也退出0。没有放宽deadline或把窄检查称完整app。
+
+完整受改lint真实失败，只有App三条已有hostRef exhaustive-deps告警；App本次与2930/full-r4字节相同，原独立闭包比较和三版本基线在已有app-lint-baseline目录。另对其余受改文件运行同规则deny-warnings，退出0；没有禁用Hook规则或把完整lint改称通过。
+
+product-source.json冻结107产品，products-vs-main.diff提供完整产品diff，resolution-and-fixture.diff提供相对已存candidate的冲突及夹具增量；验证后重新核对107项没有漂移。完整新diff等待未实施者独立审查，不能以原r4审核替代本组合审核。
+
+原engine/三host必要native绿只绑定合并前源码，不回填到当前候选。native-4libs-ready仅规划同一Cargo四lib共享300秒、j8、INC0、同target的下一次必要验证；没有启动Cargo。Node中的实际host类测试使用fake transport，不能据此称远程、Tauri或浏览器WASM真实端到端完成。SRC-B严格tagged存档、B4e/R4、F5/F6真实生产入口及完整UI/交易旅程仍是后续门，不伪造API或成功Outcome。
+
+未实施者sol_resume_independent_review已独立核对107源d06b1f1b与完整products-vs-main.diff504c3188，确认相对原独审r4仅七路径变化：三处已审Server/Desktop修复、NPC parser/test/actual-read与session的main合成；NPC相对main只接显式resolver，完整AccountId/PlanId逻辑保留，session相对main仅四行catalog模块。ROLE/AccountId/PlanId与main相同。独立两交叉套件11/11绿，源前后不漂；作者311/TS/lint原件亦已核。批准仅限本地merge候选，不是完整B/C或main准入；native4libs在后续新源码绑定批次验证。

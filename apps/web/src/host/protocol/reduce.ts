@@ -61,17 +61,17 @@ function appliedState(state: ProtocolState, generation: string, update: WireEngi
   if ("TickBatch" in update) {
     const batch = update.TickBatch;
     // 数值 wire 在通过校验后整体翻译为代码串形态，再进入归一化与状态应用。
-    const coded = translateEngineUpdate(update);
+    const coded = translateEngineUpdate(update, "EngineUpdate", state.catalogResolver);
     const normalized = normalizeEngineUpdate(coded);
     if (normalized.kind !== "tick-batch") {
       throw new ProtocolError("PROTOCOL_MALFORMED", "protocol.reduce", "TickBatch 归一化类型不匹配");
     }
     const frames = normalized.frames;
-    const runtimeSnapshot = batch.runtime_snapshot === null ? null : translateSnapshot(batch.runtime_snapshot, "protocol.reduce.runtime_snapshot");
+    const runtimeSnapshot = batch.runtime_snapshot === null ? null : translateSnapshot(batch.runtime_snapshot, "protocol.reduce.runtime_snapshot", state.catalogResolver);
     const finalFrame = frames.at(-1);
     if (finalFrame === undefined) throw new ProtocolError("PROTOCOL_MALFORMED", "protocol.reduce", "TickBatch 不得为空");
     const deltaState = batch.runtime_delta !== undefined
-      ? applyRuntimeDelta(state, translateRuntimeDelta(batch.runtime_delta, "protocol.reduce.runtime_delta"), finalFrame.markets, finalFrame.activeDailyCandles)
+      ? applyRuntimeDelta(state, translateRuntimeDelta(batch.runtime_delta, "protocol.reduce.runtime_delta", state.catalogResolver), finalFrame.markets, finalFrame.activeDailyCandles)
       : runtimeSnapshot === null ? null : { snapshot: runtimeSnapshot, playerWorkingOrders: {}, playerOrdersReady: false };
     return {
       ...state,
@@ -83,7 +83,7 @@ function appliedState(state: ProtocolState, generation: string, update: WireEngi
     };
   }
   const civil = update.CivilUpdate;
-  const coded = translateEngineUpdate(update);
+  const coded = translateEngineUpdate(update, "EngineUpdate", state.catalogResolver);
   const normalized = normalizeEngineUpdate(coded);
   if (normalized.kind !== "civil-update") {
     throw new ProtocolError("PROTOCOL_MALFORMED", "protocol.reduce", "CivilUpdate 归一化类型不匹配");
@@ -110,10 +110,10 @@ export function reduceEngineUpdate(
   sameGeneration(state, generation);
   const update = parseEngineUpdate(unknownUpdate);
   // 先按原始数值形态完成稳定键/seq 校验，再翻译为代码串归一化。
-  validateEngineUpdate(update);
+  validateEngineUpdate(update, state.catalogResolver);
   const range = updateRange(update);
   const canonical = canonicalEngineUpdate(update);
-  const normalizedUpdate = normalizeEngineUpdate(translateEngineUpdate(update));
+  const normalizedUpdate = normalizeEngineUpdate(translateEngineUpdate(update, "EngineUpdate", state.catalogResolver));
   if (exactRetry(state, range, canonical)) {
     return { kind: "exact-retry", state, update: normalizedUpdate, effects: [] };
   }

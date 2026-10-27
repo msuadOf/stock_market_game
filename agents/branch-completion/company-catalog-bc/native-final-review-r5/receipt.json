@@ -1,0 +1,13 @@
+{
+  "head": "2d09e5ec2141509e4769f6def3cc278a81a903df",
+  "priorFullFreeze": "full-review-freeze-r4",
+  "sourceCount": 1900,
+  "changedSourcePaths": [
+    "apps/desktop/src-tauri/src/actor/protocol_tests.rs",
+    "apps/desktop/src-tauri/src/lib.rs",
+    "apps/server/src/actor/fatal_tests.rs"
+  ],
+  "sourceManifestSha256": "940c319e492b225d31757668df6c5e828bf676799d827bd8b09357731a53280c",
+  "relativeDiffSha256": "d015db20e4b414ad9e8c4e1118b45fe66444c5f3ebeaee05e463e105138c3f50",
+  "sourceDeltaOnly": "原完整107paths独审+当前三个已独审最小delta；不把native门当SRC/B4e/R4/UI通过"
+}

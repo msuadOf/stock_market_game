@@ -13,7 +13,7 @@
 use super::bridge::{accounts_projection_from_session, world_spec_from_setup};
 use super::decision::{DecisionSetup, NpcProfile};
 use super::event_bridge::{
-    collect_lifecycle, project_auction_events, project_lifecycle_events, project_trade_events,
+    collect_lifecycle, project_auction_events, project_lifecycle_events,
 };
 use super::world::World;
 mod convergence;
@@ -22,6 +22,52 @@ pub(crate) use convergence::PreparedDriverStep;
 use crate::money::Money;
 use crate::strategy::StrategyData;
 use crate::{AccountId, Event, GameSession, SessionSetup};
+
+/// Trade 账户身份只取真实名册；整批解析与编号成功后才推进事件游标。
+fn project_trade_events_for_roster(
+    trades: &[super::protocol::DeskTradeFact],
+    id_map: &[AccountId],
+    accounts_per_group: usize,
+    next_seq: &mut u64,
+) -> Result<Vec<Event>, String> {
+    if accounts_per_group == 0 {
+        return Err("成交事件名册的 accounts_per_group 必须大于零".to_owned());
+    }
+    let resolve = |owner: super::Owner| {
+        let local = usize::try_from(owner.1)
+            .map_err(|_| format!("成交事件 Owner 局部坐标无法表示：{owner:?}"))?;
+        if local >= accounts_per_group {
+            return Err(format!("成交事件 Owner 局部坐标越界：{owner:?}"));
+        }
+        let index = usize::from(owner.0)
+            .checked_mul(accounts_per_group)
+            .and_then(|start| start.checked_add(local))
+            .ok_or_else(|| format!("成交事件 Owner 名册坐标溢出：{owner:?}"))?;
+        id_map.get(index).copied()
+            .ok_or_else(|| format!("成交事件 Owner 不在真实名册：{owner:?}"))
+    };
+    let mut candidate_seq = *next_seq;
+    let events = trades.iter().map(|trade| {
+        let maker = resolve(trade.maker)?;
+        let taker = resolve(trade.taker)?;
+        candidate_seq = candidate_seq.checked_add(1)
+            .ok_or_else(|| "成交事件 seq 溢出".to_owned())?;
+        Ok(Event::Trade {
+            seq: candidate_seq,
+            code: crate::StockId(u32::from(trade.stock)),
+            price: Money::from_cents(trade.price),
+            qty: trade.qty,
+            maker,
+            taker,
+        })
+    }).collect::<Result<Vec<_>, String>>()?;
+    *next_seq = candidate_seq;
+    Ok(events)
+}
+
+#[cfg(test)]
+#[path = "drive_event_identity_tests.rs"]
+mod event_identity_tests;
 
 /// Q2 批 3：账户分片覆盖校验——本拍 desk 事实（成交双腿/生命周期/回执）
 /// 的每个 owner 必须在对应组分片中（组端 undo 集漏标即红——不静默装
@@ -174,8 +220,12 @@ pub struct RuntimeDriver {
     /// 后**才 push 会话——安装失败回滚不残留，重试同 seq 重发不触发
     /// 单调校验的假重复）。
     pending_receipts: Vec<crate::session::personal_trade_history::PendingTradeReceipt>,
+    pending_retail: Vec<super::retail_lifecycle::Fact>,
+    pending_retail_rejections: Vec<(AccountId, crate::StockId, crate::RejectionReason)>,
     #[cfg(feature = "simulation-diagnostics")]
     pending_causal: Vec<super::diagnostics::DeskCausalFact>,
+    #[cfg(feature = "simulation-diagnostics")]
+    pending_decision_traces: Vec<super::diagnostics::GroupDecisionTrace>,
     #[cfg(feature = "simulation-diagnostics")]
     terminal_causal: Option<(
         crate::diagnostics::causal::FactTime,
@@ -214,6 +264,16 @@ pub struct RuntimeDriver {
 }
 
 impl RuntimeDriver {
+    #[cfg(feature = "simulation-diagnostics")]
+    pub(crate) fn pending_decision_traces(&self) -> &[super::diagnostics::GroupDecisionTrace] {
+        &self.pending_decision_traces
+    }
+
+    #[cfg(feature = "simulation-diagnostics")]
+    pub(crate) fn finish_decision_trace_install(&mut self) {
+        self.pending_decision_traces.clear();
+    }
+
     /// 个体策略投影（D3 台账收口）：账户已采样策略 → 三族 StrategyData
     /// 全参数（含风格修饰——与旧管线决策输入逐字段同源）。
     pub fn individual_strategy_data(
@@ -619,8 +679,12 @@ impl RuntimeDriver {
             belief_cache,
             drained_events: Vec::new(),
             pending_receipts: Vec::new(),
+            pending_retail: Vec::new(),
+            pending_retail_rejections: Vec::new(),
             #[cfg(feature = "simulation-diagnostics")]
             pending_causal: Vec::new(),
+            #[cfg(feature = "simulation-diagnostics")]
+            pending_decision_traces: Vec::new(),
             #[cfg(feature = "simulation-diagnostics")]
             terminal_causal: None,
             #[cfg(feature = "simulation-diagnostics")]
@@ -794,7 +858,12 @@ impl RuntimeDriver {
             let record = self.world.report_log.last_mut()
                 .ok_or_else(|| "runtime 成功收束但缺少 causal TickRecord".to_owned())?;
             self.pending_causal = std::mem::take(&mut record.desk_causal);
+            self.pending_decision_traces = std::mem::take(&mut record.decision_traces);
         }
+        let record = self.world.report_log.last_mut()
+            .ok_or_else(|| "runtime 成功收束但缺少 Retail TickRecord".to_owned())?;
+        self.pending_retail = std::mem::take(&mut record.retail);
+        self.pending_retail_rejections.clear();
         let fact_rec = self.world.report_log.last().cloned();
         let _ = self.id_map.len();
         // 【P0 画像】acct_echo_collect 段（残余=发布版本分片重组；
@@ -892,7 +961,9 @@ impl RuntimeDriver {
             crate::verification_evidence::enter_phase(
                 crate::session::pipeline::TickPhase::ReceiptAggregation,
             );
-            let mut events = project_trade_events(&trades, &mut self.next_seq);
+            let mut events = project_trade_events_for_roster(
+                &trades, &self.id_map, self.accounts_per_group, &mut self.next_seq,
+            )?;
             // B2 件 5：个人确认派生（同 seq 域——receipt_id=trade_seq×2+
             /// leg；owner→AccountId 缺失=名册投影缺口，显式失败）。空批
             /// 不触碰游标（take_seq 契约），此处 len 基准自洽。
@@ -926,12 +997,20 @@ impl RuntimeDriver {
                 }
                 self.pending_receipts = pending;
             }
+            for receipt in &receipts {
+                let account = self.account_by_owner(receipt.owner)
+                    .filter(|_| usize::try_from(receipt.owner.1).is_ok_and(|local| local < self.accounts_per_group))
+                    .ok_or_else(|| format!("Retail 拒单 Owner 不在真实名册：{:?}", receipt.owner))?;
+                self.pending_retail_rejections.push((account, crate::StockId(u32::from(receipt.order.0)),
+                    super::event_bridge::rejection_reason(receipt.kind)));
+            }
             let input = collect_lifecycle(&lifecycle, &receipts);
             events.extend(project_lifecycle_events(&input, &mut self.next_seq));
             events.extend(project_auction_events(&auction, &mut self.next_seq));
             // D5 组端校验拒收（路由层 qty=0 等）——本拍事件流投影。
             // step_frame 接轨件 2：先加后取（对齐旧管线 collect 语义）。
             for (code, owner) in std::mem::take(&mut self.pending_rejections) {
+                self.pending_retail_rejections.push((owner, code, crate::RejectionReason::InvalidQuantity));
                 self.next_seq = self
                     .next_seq
                     .checked_add(1)
@@ -1312,6 +1391,17 @@ impl RuntimeDriver {
     }
 
     /// Owner(g,l) → AccountId（多组映射；上行消费统一入口）。
+    pub(crate) fn take_retail_facts(&mut self) -> (
+        Vec<super::retail_lifecycle::Fact>,
+        Vec<(AccountId, crate::StockId, crate::RejectionReason)>,
+    ) {
+        (std::mem::take(&mut self.pending_retail), std::mem::take(&mut self.pending_retail_rejections))
+    }
+
+    pub(crate) fn take_drained_retail_facts(&mut self) -> Vec<super::retail_lifecycle::Fact> {
+        std::mem::take(&mut self.world.drained_retail)
+    }
+
     pub fn account_by_owner(&self, owner: super::Owner) -> Option<crate::AccountId> {
         self.id_map.get(self.global_index(owner)).copied()
     }
@@ -1668,7 +1758,9 @@ impl RuntimeDriver {
         if trades.is_empty() {
             return Ok(Vec::new());
         }
-        let mut events = project_trade_events(&trades, &mut self.next_seq);
+        let mut events = project_trade_events_for_roster(
+                &trades, &self.id_map, self.accounts_per_group, &mut self.next_seq,
+            )?;
         let trade_count = trades.len() as u64;
         let first_trade_seq = self.next_seq + 1 - trade_count;
         let mut pending: Vec<
@@ -2552,8 +2644,7 @@ impl RuntimeDriver {
     /// 旧管线日界的行情面（昨收翻转）由 `roll_day` 已在 runtime 侧完成、
     /// 会话侧经 `end_civil_day` 权威推进，此处补行情同步。
     pub fn day_end_with_market(&mut self, session: &mut GameSession) -> Result<(), String> {
-        self.day_end(session)?;
-        self.install_market_views(session)
+        self.install_manual_day_end(session, false)
     }
 }
 

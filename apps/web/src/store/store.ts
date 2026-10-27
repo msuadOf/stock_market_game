@@ -1,3 +1,4 @@
+import { installHostBaseline } from "./host-baseline.ts";
 /**
  * RTK store + slice 装配：snapshot / settings / trades / priceHistory / selectedStock。
  *
@@ -100,6 +101,12 @@ const snapshotSlice = createSlice({
       snap.active_daily_candles = retainUnchangedEntries(snap.active_daily_candles, action.payload.activeDailyCandles);
       state.lastSeq = action.payload.seq;
     },
+  },
+  extraReducers(builder) {
+    builder.addCase(installHostBaseline, (state, { payload }) => {
+      state.snapshot = payload.snapshot; state.lastSeq = payload.snapshot.seq;
+      state.generation = payload.generation; state.playerWorkingOrders = {}; state.playerOrdersReady = false;
+    });
   },
 });
 

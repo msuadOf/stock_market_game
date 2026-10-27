@@ -1,5 +1,5 @@
-import { parseClosingRegistry, parseCompanyOperations, parseDisclosureDispatch, parsePublicLibrary } from "./company/index.ts"
-import { parseGroups } from "./company/groups.ts"
+import { parseDisclosureDispatch, parsePublicLibrary } from "./company/index.ts"
+import { parseSavedSessionCompanies, type SavedSessionCompanies } from "./company/state.ts"
 import { parseSetup } from "./market.ts"
 import { parseSaveSnapshot } from "./save-snapshot.ts"
 import { parseOrderState } from "./orders.ts"
@@ -9,7 +9,7 @@ import { parseInformationStates } from "./personal/information.ts"
 import { parseHistoryReads, parsePriceMemories, parseWatchlists } from "./personal/memory.ts"
 import { parsePlanBook } from "./personal/plans.ts"
 import { parseActiveMinuteBars, parsePersonalTradeConfirmations, parseReceiptWatermark, parseRetainedHistory, validateRetainedHistoryCandles, type StockTickById } from "./retained-history.ts"
-import { boolean, decimal, exact, record } from "./primitives.ts"
+import { boolean, decimal, exact, record, SaveSchemaError } from "./primitives.ts"
 import { parseCivilClock } from "./civil-clock.ts"
 import { parseMarketMemberships, validateMembershipAccounts } from "./market-memberships.ts"
 import { parseSaveRuntime } from "./runtime-state.ts"
@@ -33,9 +33,7 @@ export type StrictSaveEnvelope = {
   readonly ingress_receipt_cursors: ReturnType<typeof parseOrderState>["ingress_receipt_cursors"]
   readonly next_order_id: number
   readonly civil_clock: ReturnType<typeof parseCivilClock>
-  readonly groups: ReturnType<typeof parseGroups>
-  readonly company_operations: ReturnType<typeof parseCompanyOperations>
-  readonly closing_registry: ReturnType<typeof parseClosingRegistry>
+  readonly company_state: SavedSessionCompanies
   readonly public_library: ReturnType<typeof parsePublicLibrary>
   readonly disclosures: ReturnType<typeof parseDisclosureDispatch>
   readonly plans: ReturnType<typeof parsePlanBook>
@@ -56,7 +54,7 @@ export type StrictSaveEnvelope = {
   readonly receipt_watermark: number
 }
 
-const ROOT_KEYS = ["desk_mirrored_resting", "runtime_state", "setup", "seed", "snapshot", "resting_orders", "book_next_sequences", "filled_orders", "price_history", "market_minute_closes", "market_minute_bars", "retained_market_days", "personal_trade_confirmations", "receipt_watermark", "rng_state", "npc_attention", "retail_experience", "npc_order_lifecycles", "pending_player", "ingress_receipt_cursors", "next_order_id", "civil_clock", "groups", "company_operations", "closing_registry", "public_library", "disclosures", "plans", "urgency_policy", "information_states", "belief_books", "watchlists", "price_memories", "history_reads", "market_memberships"] as const
+const ROOT_KEYS = ["desk_mirrored_resting", "runtime_state", "setup", "seed", "snapshot", "resting_orders", "book_next_sequences", "filled_orders", "price_history", "market_minute_closes", "market_minute_bars", "retained_market_days", "personal_trade_confirmations", "receipt_watermark", "rng_state", "npc_attention", "retail_experience", "npc_order_lifecycles", "pending_player", "ingress_receipt_cursors", "next_order_id", "civil_clock", "company_state", "public_library", "disclosures", "plans", "urgency_policy", "information_states", "belief_books", "watchlists", "price_memories", "history_reads", "market_memberships"] as const
 
 export function parseStrictSaveEnvelope(value: unknown): StrictSaveEnvelope {
   const root = record(value, "根节点")
@@ -73,6 +71,12 @@ export function parseStrictSaveEnvelope(value: unknown): StrictSaveEnvelope {
     throw new Error(`存档 setup.simulation_policy_id 必须为 a-share-simulation，实际为 ${JSON.stringify(setup.simulation_policy_id)}`)
   }
   const snapshot = parseSaveSnapshot(root.snapshot, "snapshot")
+  const company_state = parseSavedSessionCompanies(root.company_state, setup)
+  const public_library = parsePublicLibrary(root.public_library)
+  const selectedReportSource = "LegacyOperations" in company_state ? "SimulationAccounting" : "SimpleGenerated"
+  for (const [index, report] of public_library.reports.entries()) {
+    if (report.source !== selectedReportSource) throw new SaveSchemaError(`public_library.reports[${index}].source`, "必须来自当前 selected 公司权威")
+  }
   // ADR 0041：引擎按代码升序为证券分配 StockId（0..n），存档 wire 的股票 map 键是
   // id 的字符串形态。cross-check 用存档自带 setup 推导期望 id 键集合（代码串不出现在键位）。
   const expectedStockIdKeys = [...setup.stocks.map((stock) => stock.code)].sort().map((_, index) => String(index))
@@ -111,5 +115,5 @@ export function parseStrictSaveEnvelope(value: unknown): StrictSaveEnvelope {
     }
   }
   const receiptWatermark = parseReceiptWatermark(root.receipt_watermark, tradeConfirmations)
-  return { desk_mirrored_resting: boolean(root.desk_mirrored_resting, "desk_mirrored_resting"), runtime_state, setup, seed: decimal(root.seed, "seed"), snapshot, ...order, retail_experience: parseRetailExperienceStates(root.retail_experience), civil_clock: clock, groups: parseGroups(root.groups), company_operations: parseCompanyOperations(root.company_operations), closing_registry: parseClosingRegistry(root.closing_registry), public_library: parsePublicLibrary(root.public_library), disclosures: parseDisclosureDispatch(root.disclosures), plans: parsePlanBook(root.plans), urgency_policy: parseUrgencyPolicy(root.urgency_policy), information_states: parseInformationStates(root.information_states), belief_books: parseBeliefBooks(root.belief_books), watchlists: parseWatchlists(root.watchlists), price_memories: parsePriceMemories(root.price_memories), history_reads: parseHistoryReads(root.history_reads), market_memberships, market_minute_bars: marketMinuteBars, retained_market_days: retainedDays, personal_trade_confirmations: tradeConfirmations, receipt_watermark: receiptWatermark }
+  return { desk_mirrored_resting: boolean(root.desk_mirrored_resting, "desk_mirrored_resting"), runtime_state, setup, seed: decimal(root.seed, "seed"), snapshot, ...order, retail_experience: parseRetailExperienceStates(root.retail_experience), civil_clock: clock, company_state, public_library, disclosures: parseDisclosureDispatch(root.disclosures), plans: parsePlanBook(root.plans), urgency_policy: parseUrgencyPolicy(root.urgency_policy), information_states: parseInformationStates(root.information_states), belief_books: parseBeliefBooks(root.belief_books), watchlists: parseWatchlists(root.watchlists), price_memories: parsePriceMemories(root.price_memories), history_reads: parseHistoryReads(root.history_reads), market_memberships, market_minute_bars: marketMinuteBars, retained_market_days: retainedDays, personal_trade_confirmations: tradeConfirmations, receipt_watermark: receiptWatermark }
 }

@@ -1,3 +1,4 @@
+import { defaultCatalogFixture } from "./catalog-test-fixture.ts";
 import { parseProtocolSnapshot } from "./protocol/parse.ts";
 import { createProtocolState } from "./protocol/types.ts";
 
@@ -77,8 +78,8 @@ export function tickBatch(frames: readonly JsonRecord[], runtimeSnapshot: JsonRe
 
 export function baseState(): ReturnType<typeof createProtocolState> {
   // 初始快照经公共摄入入口解析（内部完成数值键 → 代码串翻译）。
-  const initial = parseProtocolSnapshot(snapshot(0, 0));
-  return createProtocolState(initial, "generation-1");
+  const initial = parseProtocolSnapshot(snapshot(0, 0), "test.fixture", defaultCatalogFixture);
+  return createProtocolState(initial, "generation-1", defaultCatalogFixture);
 }
 
 export function firstFrame(batch: TickBatchWire): JsonRecord {

@@ -1,0 +1,2 @@
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/bcache0    3.7T  3.6T   74G  99% /data1

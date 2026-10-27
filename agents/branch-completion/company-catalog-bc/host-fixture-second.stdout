@@ -1,0 +1,122 @@
+✖ Given a host baseline and protocol update, when constructed, then both carry an authoritative generation (5.997052ms)
+✔ Given an invalid generation, when constructing a production host envelope, then it rejects it (0.586853ms)
+✔ UI delivery target uses a 16ms cadence above 60Hz (0.256446ms)
+✔ Remote SubmitIntent 严格携带权威 generation，不用默认值且旧代确认拒绝 (54.747727ms)
+✔ 并发 remote command 逆序确认只完成对应 request，重复确认显式失败 (2.245699ms)
+✔ request gateway error 只拒绝对应 command，HostFailure 批量拒绝其余 command (2.171618ms)
+✔ mode 切换丢弃旧 socket message/close，已同步的新连接沿用 protocol gate (2.024354ms)
+✔ 旧 socket onerror 不关闭新连接，恢复前仍保留 baseline gate (3.850634ms)
+✔ 并发 resync 共享权威 baseline，所有 waiter 均完成 (1.273828ms)
+✔ baseline callback 抛错时先安装 cache，waiter 由 fail 拒绝 (0.949191ms)
+✔ 同步 send throw 清理 command，dispose 显式拒绝未确认请求 (1.027743ms)
+✔ generation mismatch 和 ResyncRequired 请求重同步且同步前丢弃 protocol (1.094574ms)
+✔ load 新连接的 5000ms timer 在 baseline 到达后清除，超时显式失败 (9.14082ms)
+✔ 同 generation baseline 更新后 orders 沿用各自原有的 query guard (1.138315ms)
+✔ 同 generation baseline 更新后 diagnostics 沿用各自原有的 query guard (0.995902ms)
+✔ 同 generation baseline 更新后 save 沿用各自原有的 query guard (0.738646ms)
+✔ resync send 同步失败拒绝已登记 waiter，后续可显式重试 (0.753996ms)
+✔ Tauri 三种 baseline 都携带对应会话的当前自然日 (3.981557ms)
+✖ Tauri 拒绝无效自然日并保留旧 baseline，restore 仍切换到新 authority (2.046095ms)
+✔ Tauri generation 在 Number.MAX_SAFE_INTEGER 之后仍精确递增 (0.175593ms)
+✖ Tauri 刷新解析失败只切换 timeline，保持旧 baseline 和 query epoch (1.038053ms)
+✔ Tauri dispose 只清 timeline/cache，保留 generation/epoch 的既有查询检查 (0.402579ms)
+ℹ tests 22
+ℹ suites 0
+ℹ pass 19
+ℹ fail 3
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 339.456425
+
+✖ failing tests:
+
+test at apps/web/src/host/host-update.test.ts:17:1
+✖ Given a host baseline and protocol update, when constructed, then both carry an authoritative generation (5.997052ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+  + actual - expected
+  ... Skipped lines
+  
+    {
+      catalogResolver: {
+        companyCatalog: [],
+        companyCode: [Function: companyCode],
+        companyId: [Function: companyId],
+  ...
+      civilDate: null,
+  -   companyCatalog: [],
+      generation: '1',
+      publicPublicationIds: [],
+      revision: null,
+      securities: [],
+      snapshot: {
+  ...
+      },
+  -   stockCatalog: [],
+      type: 'baseline'
+    }
+  
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/host-update.test.ts:18:10)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.start (node:internal/test_runner/test:1096:17)
+      at startSubtestAfterBootstrap (node:internal/test_runner/harness:385:17) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: [Object],
+    expected: [Object],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }
+
+test at apps/web/src/host/tauri-timeline-state.test.ts:18:1
+✖ Tauri 拒绝无效自然日并保留旧 baseline，restore 仍切换到新 authority (2.046095ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  '1' !== '2'
+  
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/tauri-timeline-state.test.ts:26:10)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: '1',
+    expected: '2',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at apps/web/src/host/tauri-timeline-state.test.ts:37:1
+✖ Tauri 刷新解析失败只切换 timeline，保持旧 baseline 和 query epoch (1.038053ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /Tauri engine_baseline.snapshot/. Input:
+  
+  'ProtocolError: baseline.snapshot 必须是对象'
+  
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/tauri-timeline-state.test.ts:43:10)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: ProtocolError: baseline.snapshot 必须是对象
+        at malformed (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/protocol/guards.ts:6:9)
+        at record (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/protocol/guards.ts:14:25)
+        at parseSnapshotRaw (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/protocol/parse.ts:165:18)
+        at parseProtocolSnapshot (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/protocol/parse.ts:182:38)
+        at prepareBaselineUpdate (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/host-update.ts:79:18)
+        at TauriTimelineState.installSnapshot (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/tauri-timeline-state.ts:90:23)
+        at TauriTimelineState.replaceRefreshedBaseline (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/tauri-timeline-state.ts:76:17)
+        at file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/tauri-timeline-state.test.ts:43:32
+        at getActual (node:assert:586:5)
+        at strict.throws (node:assert:734:24),
+    expected: /Tauri engine_baseline.snapshot/,
+    operator: 'throws',
+    diff: 'simple'
+  }

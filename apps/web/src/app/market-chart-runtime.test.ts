@@ -1,3 +1,5 @@
+import { DEFAULT_SETUP } from "../config/defaults.ts";
+import { catalogFixtureForSnapshot, defaultCatalogFixture } from "../host/catalog-test-fixture.ts";
 import assert from "node:assert/strict";
 import { after, before, test } from "node:test";
 import { createElement } from "react";
@@ -32,7 +34,12 @@ function baseline() {
     accounts: { "0": { cash: "100000", reserved_cash: "0", positions: {}, reserved_sell_qty: {} } },
     daily_candles: { "3": [{ ...dailyCandle(), time: 1893369600, open: "900", high: "900", low: "900", close: "900" }], "4": [] },
     active_daily_candles: { "3": dailyCandle(), "4": dailyCandle() },
-  }));
+  }, "test.fixture", defaultCatalogFixture), catalogFixtureForSnapshot(parseProtocolSnapshot({
+    ...snapshot(0, 0), markets: { "3": market(), "4": market() },
+    accounts: { "0": { cash: "100000", reserved_cash: "0", positions: {}, reserved_sell_qty: {} } },
+    daily_candles: { "3": [{ ...dailyCandle(), time: 1893369600, open: "900", high: "900", low: "900", close: "900" }], "4": [] },
+    active_daily_candles: { "3": dailyCandle(), "4": dailyCandle() },
+  }, "test.fixture", defaultCatalogFixture)));
 }
 
 function update(active: unknown, tick = 1, cursor = 0): Extract<HostUpdate, { type: "protocol" }> {
@@ -86,7 +93,7 @@ test("production runtimeSnapshot 替换权威日 K，普通帧的 active 不覆�
   };
   const { after } = render([createProtocolUpdate("1", { TickBatch: {
     frames: [{ ...frame(1, 0, []), timeseries_payload: { ...timeseries(1),
-      continuous_points: {}, active_daily_candles: { "3": { ...dailyCandle(), close: "1200" } },
+      markets: { "3": market(), "4": market() }, continuous_points: {}, active_daily_candles: { "3": { ...dailyCandle(), close: "1200" } },
     } }], runtime_snapshot: authoritative,
   } })]);
   assert.equal(after.daily.length, 2);
@@ -96,13 +103,23 @@ test("production runtimeSnapshot 替换权威日 K，普通帧的 active 不覆�
 });
 
 test("production AfterClose+BeforeOpen 即使携旧日历史也清空分时并保留权威日 K", { timeout: 10000 }, () => {
-  const initial = createBaselineUpdate("1", parseProtocolSnapshot(snapshot(0, 0)));
+  const oldMarketSnapshot = { ...snapshot(0, 0), markets: { "0": market(), "2": market() }, daily_candles: { "0": [], "2": [] }, active_daily_candles: { "0": dailyCandle(), "2": dailyCandle() } };
+  const initialSnapshot = parseProtocolSnapshot(oldMarketSnapshot, "test.fixture", defaultCatalogFixture);
+  const initial = createBaselineUpdate("1", initialSnapshot, catalogFixtureForSnapshot(initialSnapshot));
   const first = createProtocolUpdate("1", { TickBatch: {
     frames: [{ ...frame(1, 0, [0]), timeseries_payload: {
-      ...timeseries(1), continuous_points: { "2": { tick: 1, phase: "Continuous", last_price: "1000", cumulative_volume: 100, bids: [], asks: [] } },
-    } }], runtime_snapshot: snapshot(1, 1),
+      ...timeseries(1), markets: { "0": market(), "2": market() }, continuous_points: { "2": { tick: 1, phase: "Continuous", last_price: "1000", cumulative_volume: 100, bids: [], asks: [] } },
+    } }], runtime_snapshot: { ...oldMarketSnapshot, tick: 1, seq: 1 },
   } });
-  const civil = createProtocolUpdate("1", civilUpdate());
+  const rawCivil = parseEngineUpdate(civilUpdate());
+  if (!("CivilUpdate" in rawCivil)) throw new Error("fixture必须为CivilUpdate");
+  const secondSecurity = DEFAULT_SETUP.stocks.find(stock => stock.code === "300260");
+  if (secondSecurity === undefined) throw new Error("缺少默认fixture证券");
+  const civil = createProtocolUpdate("1", { CivilUpdate: { ...rawCivil.CivilUpdate, refresh: {
+    ...rawCivil.CivilUpdate.refresh, snapshot: { ...oldMarketSnapshot, tick: 1, seq: 2 },
+    securities: [...rawCivil.CivilUpdate.refresh.securities, secondSecurity],
+    intraday: [{ ...rawCivil.CivilUpdate.refresh.intraday[0], timeseries_payload: { ...rawCivil.CivilUpdate.refresh.intraday[0].timeseries_payload, markets: { "0": market(), "2": market() } } }],
+  } } });
   const selected = render([first, civil], { baseline: initial, afterUpdates: (runtime) => runtime.selectChart("000812") }).after;
   assert.equal(selected.code, "000812");
   assert.equal(Object.hasOwn(selected.history, "300260"), false);
@@ -134,7 +151,7 @@ test("详情历史查询丢弃换股前响应，并在 hook rerender 后交付�
   const host = { queryStockHistory: (code: string) => new Promise<HistoricalStockData>((resolve) => pending.set(code, resolve)) } as unknown as EngineHost;
   const harness = createMarketChartRuntimeHarness({ hostRef: { current: host }, setNotice: () => {} });
   let runtime = harness.render();
-  runtime.installBaseline(createProtocolState(baseline().snapshot, "1"));
+  runtime.installBaseline(createProtocolState(baseline().snapshot, "1", catalogFixtureForSnapshot(baseline().snapshot)));
   const oldRequest = runtime.queryChartHistory("600101");
   runtime.selectChart("600610");
   runtime = harness.render();
@@ -162,7 +179,7 @@ test("历史查询错误通过 notice 明确呈现", { timeout: 10000 }, async (
 });
 
 test("production AfterClose-only 进入非交易日时保留真实收盘分时", { timeout: 10000 }, () => {
-  const initial = createBaselineUpdate("1", parseProtocolSnapshot(snapshot(1, 1)));
+  const initial = createBaselineUpdate("1", parseProtocolSnapshot(snapshot(1, 1), "test.fixture", defaultCatalogFixture), catalogFixtureForSnapshot(parseProtocolSnapshot(snapshot(1, 1), "test.fixture", defaultCatalogFixture)));
   const parsed = parseEngineUpdate(civilUpdate());
   if (!("CivilUpdate" in parsed)) throw new Error("CivilUpdate fixture 类型错误");
   const event = { CivilDateAdvanced: {

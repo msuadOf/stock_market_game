@@ -1,3 +1,4 @@
+import { defaultCatalogFixture } from "./catalog-test-fixture.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { ProtocolCoordinator } from "./protocol-coordinator.ts";
@@ -13,9 +14,10 @@ function baseline() {
     throw new Error("test fixture invalid");
   }
   return {
+    catalogResolver: defaultCatalogFixture, stockCatalog: defaultCatalogFixture.stockCatalog, companyCatalog: defaultCatalogFixture.companyCatalog,
     type: "baseline" as const,
-    generation: "generation-1",
-    snapshot: translateSnapshot(parsed.TickBatch.runtime_snapshot, "test.baseline"),
+    generation: "1",
+    snapshot: translateSnapshot(parsed.TickBatch.runtime_snapshot, "test.baseline", defaultCatalogFixture),
     civilDate: null,
     revision: null,
     securities: [],
@@ -27,11 +29,11 @@ test("ProtocolCoordinator cursor 错误保留已知 actual/expected generation�
   let context: unknown;
   const coordinator = new ProtocolCoordinator({ onBaseline: () => {}, onApplied: () => {}, onFailure: (failure) => { context = failure.context; } });
   coordinator.accept(baseline());
-  coordinator.accept({ type: "protocol", generation: "generation-2", update: tickBatch([frame(3, 7, [0])], snapshot(3, 8)), civilDate: null, revision: null });
+  coordinator.accept({ type: "protocol", generation: "2", update: tickBatch([frame(3, 7, [0])], snapshot(3, 8)), civilDate: null, revision: null });
   assert.deepEqual(context, {
-    actual: { generation: "generation-2", kind: "TickBatch", tickFrom: 3, tickTo: 3, seqFrom: 7, seqTo: 8 },
-    expected: { generation: "generation-1", tickFrom: 1, seqFrom: 0 },
-    cursor: { generation: "generation-1", tick: 0, seq: 0 },
+    actual: { generation: "2", kind: "TickBatch", tickFrom: 3, tickTo: 3, seqFrom: 7, seqTo: 8 },
+    expected: { generation: "1", tickFrom: 1, seqFrom: 0 },
+    cursor: { generation: "1", tick: 0, seq: 0 },
   });
 });
 
@@ -80,7 +82,7 @@ test("Given a three-frame protocol batch, when the coordinator accepts it, then 
   coordinator.accept(baseline());
   coordinator.accept({
     type: "protocol",
-    generation: "generation-1",
+    generation: "1",
     update: tickBatch([
       frame(1, 0, [0]),
       frame(2, 1, []),
@@ -103,8 +105,8 @@ test("Given an exact retry, when the coordinator accepts it, then it publishes n
   });
 
   coordinator.accept(baseline());
-  coordinator.accept({ type: "protocol", generation: "generation-1", update, civilDate: null, revision: null });
-  coordinator.accept({ type: "protocol", generation: "generation-1", update, civilDate: null, revision: null });
+  coordinator.accept({ type: "protocol", generation: "1", update, civilDate: null, revision: null });
+  coordinator.accept({ type: "protocol", generation: "1", update, civilDate: null, revision: null });
 
   assert.equal(publications, 1);
 });
@@ -120,10 +122,10 @@ test("Given malformed or stale-generation protocol updates, when accepted, then 
   const initial = coordinator.status();
 
   coordinator.accept({ type: "protocol", generation: "generation-0", update: {}, civilDate: null, revision: null });
-  assert.equal(coordinator.accept({ type: "protocol", generation: "generation-1", update: { Wrong: {} }, civilDate: null, revision: null }), false);
+  assert.equal(coordinator.accept({ type: "protocol", generation: "1", update: { Wrong: {} }, civilDate: null, revision: null }), false);
   assert.equal(failures.length, 1, "fatal 后禁止消费下一提交或覆盖原错误");
   coordinator.accept(baseline());
-  coordinator.accept({ type: "protocol", generation: "generation-1", update: { Wrong: {} }, civilDate: null, revision: null });
+  coordinator.accept({ type: "protocol", generation: "1", update: { Wrong: {} }, civilDate: null, revision: null });
 
   assert.equal(initial.kind, "ready");
   assert.equal(coordinator.status().kind, "failure");
@@ -143,10 +145,10 @@ test("Given a fresh baseline after resync, when a new generation update arrives,
   const update = tickBatch([frame(1, 0, [0])], snapshot(1, 1));
 
   coordinator.accept(baseline());
-  coordinator.accept({ type: "protocol", generation: "generation-1", update, civilDate: null, revision: null });
+  coordinator.accept({ type: "protocol", generation: "1", update, civilDate: null, revision: null });
   const next = baseline();
-  coordinator.accept({ ...next, generation: "generation-2" });
-  coordinator.accept({ type: "protocol", generation: "generation-2", update, civilDate: null, revision: null });
+  coordinator.accept({ ...next, generation: "2" });
+  coordinator.accept({ type: "protocol", generation: "2", update, civilDate: null, revision: null });
 
   assert.equal(publications, 2);
 });
@@ -159,8 +161,8 @@ test("Given an already-published tick batch, when a CivilUpdate shares its tick 
     onFailure: () => {},
   });
   coordinator.accept(baseline());
-  coordinator.accept({ type: "protocol", generation: "generation-1", update: tickBatch([frame(1, 0, [0])], snapshot(1, 1)), civilDate: null, revision: null });
-  coordinator.accept({ type: "protocol", generation: "generation-1", update: {
+  coordinator.accept({ type: "protocol", generation: "1", update: tickBatch([frame(1, 0, [0])], snapshot(1, 1)), civilDate: null, revision: null });
+  coordinator.accept({ type: "protocol", generation: "1", update: {
     CivilUpdate: {
       boundary: { settled_date: "2030-01-02", settled_phase: "IntradayTrading", next_date: "2030-01-03", next_status: "Trading" },
       kinds: ["AfterClose", "BeforeOpen"],

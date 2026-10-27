@@ -1,0 +1,13 @@
+{
+  "ours": "7aa1fa701d3c3b88e54467dec5da2b1e7ec04d93",
+  "theirs": "04cae6969451d14c66bb545f855d9fa926b10429",
+  "command": [
+    "git",
+    "merge-tree",
+    "--write-tree",
+    "7aa1fa701d3c3b88e54467dec5da2b1e7ec04d93",
+    "04cae6969451d14c66bb545f855d9fa926b10429"
+  ],
+  "exit": 1,
+  "scope": "只预测候选树与冲突，不更新index/worktree/main"
+}

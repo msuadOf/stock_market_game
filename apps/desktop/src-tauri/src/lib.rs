@@ -110,17 +110,52 @@ async fn snapshot(state: State<'_, DesktopState>, session_id: String) -> Result<
     handles.snapshot().await.map_err(map_send_error)
 }
 
+#[derive(Debug, serde::Serialize)]
+#[serde(untagged)]
+enum BaselineIpcError {
+    Catalog(actor::HostFailure),
+    Existing(String),
+}
+
+impl From<String> for BaselineIpcError {
+    fn from(error: String) -> Self {
+        Self::Existing(error)
+    }
+}
+
+fn map_baseline_error(
+    error: actor::BaselineRequestError,
+    operation: &'static str,
+    location: &'static str,
+) -> BaselineIpcError {
+    match error {
+        actor::BaselineRequestError::Baseline(actor::BaselineError::Catalog(error)) => {
+            BaselineIpcError::Catalog(actor::HostFailure::catalog(&error, operation, location))
+        }
+        actor::BaselineRequestError::Baseline(actor::BaselineError::Session(error)) => {
+            BaselineIpcError::Existing(map_send_error(SendCommandError::Rejected(
+                error.to_string(),
+            )))
+        }
+        actor::BaselineRequestError::Command(error) => {
+            BaselineIpcError::Existing(map_send_error(error))
+        }
+    }
+}
+
 #[tauri::command]
 async fn engine_baseline(
     state: State<'_, DesktopState>,
     session_id: String,
     generation: String,
-) -> Result<actor::RestoreResult, String> {
-    let handles = lookup_handles(&state, &session_id).await?;
+) -> Result<actor::RestoreResult, BaselineIpcError> {
+    let handles = lookup_handles(&state, &session_id).await.map_err(map_send_error)?;
     handles
         .query_baseline(parse_generation(generation)?)
         .await
-        .map_err(map_send_error)
+        .map_err(|error| {
+            map_baseline_error(error, "query_baseline", "desktop.actor.query_baseline")
+        })
 }
 
 #[tauri::command]
@@ -263,12 +298,12 @@ async fn restore_session(
     session_id: String,
     generation: String,
     slot: SaveSlot,
-) -> Result<actor::RestoreResult, String> {
-    let handles = lookup_handles(&state, &session_id).await?;
+) -> Result<actor::RestoreResult, BaselineIpcError> {
+    let handles = lookup_handles(&state, &session_id).await.map_err(map_send_error)?;
     handles
         .restore(parse_generation(generation)?, slot)
         .await
-        .map_err(map_send_error)
+        .map_err(|error| map_baseline_error(error, "restore", "desktop.actor.restore"))
 }
 
 #[cfg(feature = "host-parity")]

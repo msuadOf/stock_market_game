@@ -1,0 +1,33 @@
+✔ Shock 保留当前 Rust 公告 wire 及精确数值 (2.271403ms)
+✔ Shock 拒绝缺失与未知字段并报告完整路径 (0.747251ms)
+✔ CashDividend 保留当前 Rust 公告 wire 及精确数值 (0.502834ms)
+✔ CashDividend 拒绝缺失与未知字段并报告完整路径 (0.594076ms)
+✔ RightsOffering 保留当前 Rust 公告 wire 及精确数值 (0.644828ms)
+✔ RightsOffering 拒绝缺失与未知字段并报告完整路径 (0.776262ms)
+✔ IssuerRepurchase 保留当前 Rust 公告 wire 及精确数值 (0.400811ms)
+✔ IssuerRepurchase 拒绝缺失与未知字段并报告完整路径 (0.665838ms)
+✔ ShareSplit 保留当前 Rust 公告 wire 及精确数值 (0.302718ms)
+✔ ShareSplit 拒绝缺失与未知字段并报告完整路径 (0.629027ms)
+✔ StockDistribution 保留当前 Rust 公告 wire 及精确数值 (0.257938ms)
+✔ StockDistribution 拒绝缺失与未知字段并报告完整路径 (0.452312ms)
+✔ 拒绝未知公告种类和旧 event 包装 (0.209796ms)
+✔ 股份与比例只接受 canonical u64 字符串 (1.185252ms)
+✔ 金额使用整数分字符串，拒绝小数价格与数字金额 (0.814283ms)
+✔ CompanyId 使用 u32 number，AccountId 保持独立的 u64 string (0.773081ms)
+✔ Shock 复用既有冲击解析且 amplitude_bp 限于 i32 (0.34681ms)
+✔ 方案枚举逐一保留已声明变体，nullable 锚不补默认值 (0.743801ms)
+✔ 定向方案递归拒绝未知、缺失和非规范字段 (1.024038ms)
+✔ MonthlyDisclosure 保留 Preset/Custom、None/Uniform 与 seeded=true (5.639857ms)
+✔ MonthlyDisclosure 保留 Preset/Custom、None/Uniform 与 seeded=false (1.803259ms)
+✔ MonthlyDisclosure 的 delay_days 仅做 u8 shape 校验，配置一致性留给 Rust (1.916473ms)
+✔ MonthlyDisclosure 及排期、延迟对象拒绝缺失和未知键 (1.258925ms)
+✔ MonthlyDisclosure 拒绝无效排期与延迟变体、数值边界和类型 (1.274085ms)
+✔ 旧 PublicationOrigin 三分支保持字段与变体校验 (1.034138ms)
+ℹ tests 25
+ℹ suites 0
+ℹ pass 25
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 179.703005

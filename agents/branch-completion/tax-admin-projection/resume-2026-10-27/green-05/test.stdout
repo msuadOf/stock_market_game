@@ -1,0 +1,10 @@
+
+running 5 tests
+test admin_tax_projection::tests::typed_positive_amounts_stock_bounds_and_shared_raw_cash_are_checked_in_order ... ok
+test admin_tax_projection::tests::candidate_coordinates_must_exactly_match_original_tax_operations ... ok
+test admin_tax_projection::tests::real_inspect_rejection_preserves_original_error_accounts_and_no_publication ... ok
+test admin_tax_projection::tests::real_tax_only_commit_preserves_id_operation_order_and_complete_accounts ... ok
+test admin_tax_projection::tests::complete_eq_rejects_every_non_cash_account_field_and_wrong_cash ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+

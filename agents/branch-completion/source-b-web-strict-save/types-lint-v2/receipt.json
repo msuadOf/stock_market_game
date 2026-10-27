@@ -1,0 +1,41 @@
+[
+  {
+    "name": "types",
+    "command": [
+      "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+      "--max-old-space-size=8192",
+      "/data1/baiyifan/workplace/stock_market_game/apps/web/node_modules/typescript/bin/tsc",
+      "-p",
+      "tsconfig.app.json",
+      "--noEmit",
+      "--incremental",
+      "false"
+    ],
+    "exitCode": 1,
+    "error": "bounded command exhausted its execution budget within the total 10000ms deadline; process tree termination was requested and direct child close confirmed",
+    "wallSeconds": 9.273555036
+  },
+  {
+    "name": "lint",
+    "command": [
+      "/data1/baiyifan/workplace/stock_market_game/apps/web/node_modules/.bin/oxlint",
+      "--deny-warnings",
+      "src/save/schema/company/state.ts",
+      "src/save/schema/company/state-shapes.ts",
+      "src/save/schema/company/state.test.ts",
+      "src/save/schema/raw-json.ts",
+      "src/save/schema/primitives.ts",
+      "src/save/schema/root.ts",
+      "src/save/schema/setup-company-options.ts",
+      "src/save/schema/company/accounting/journal.ts",
+      "src/save/schema/company/books/industrial.ts",
+      "src/save/schema/npc-attention.ts",
+      "src/save/schema/personal/plans.ts",
+      "src/save/schema/personal/experience.ts",
+      "src/save/save-schema.ts"
+    ],
+    "exitCode": 0,
+    "error": null,
+    "wallSeconds": 0.19914176700000003
+  }
+]

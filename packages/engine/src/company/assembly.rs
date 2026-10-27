@@ -73,6 +73,8 @@ impl CompanyOperations {
     pub(crate) fn assemble_new_game(
         ctx: CompanyAssemblyContext<'_>,
     ) -> Result<CompanyAssembly, CompanyAssemblyError> {
+        #[cfg(test)]
+        crate::company::source_probe::record(crate::company::source_probe::Call::LegacyAssembly);
         assemble_companies(&ctx)
     }
 }

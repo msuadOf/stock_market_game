@@ -1,3 +1,4 @@
+import type { CatalogResolver } from "./catalog-resolver.ts";
 import type { EngineHost } from "./engine-host.ts";
 import type { PublicReportSummary } from "../types/engine.ts";
 import type { CodedEvent } from "./protocol/stock-identity.ts";
@@ -22,9 +23,10 @@ interface Baseline {
   civilDate: string | null;
   revision: string | null;
   seq: number;
+  catalogResolver: CatalogResolver;
 }
 
-/** companyId = CompanyId 数值的 canonical 十进制串；cursor = PublicationId 数值的十进制文本。 */
+/** companyId 为本代实际公司 code；cursor 为 PublicationId 数值的规范十进制文本。 */
 interface CompanyQuery {
   companyId: string;
   cursor: string | null;
@@ -39,51 +41,41 @@ interface PublicMetadata {
 }
 
 /**
- * 视图层公司身份约定：CompanyId 数值的 canonical 十进制字符串（与 AccountId
- * canonical 化同式；披露事件摄入层 stock-identity.ts 也按此形态输出）。
- * wire 面 `PublicReportQuery.company_id` 是数值（ADR 0041 CompanyId u32），
- * 请求边界在此解析转换，不匹配规范十进制即显式失败。
- */
-function wireCompanyId(companyId: string): number {
-  if (!/^(0|[1-9]\d*)$/.test(companyId) || !Number.isSafeInteger(Number(companyId))) {
-    throw new TypeError(`公司查询身份必须是 CompanyId 的规范十进制串：${companyId}`);
-  }
-  return Number(companyId);
-}
-
-/**
  * 分页游标是 PublicationId（u32）数值的十进制文本（`PublicReportPage.next_cursor`
  * 原样回传）；wire 面 `PublicReportQuery.cursor` 是数值，此处同式解析转换。
  */
 function wireCursor(cursor: string | null): number | null {
   if (cursor === null) return null;
-  if (!/^(0|[1-9]\d*)$/.test(cursor) || !Number.isSafeInteger(Number(cursor))) {
+  if (!/^(0|[1-9]\d*)$/.test(cursor) || (!Number.isSafeInteger(Number(cursor)) || Number(cursor) > 4294967295)) {
     throw new TypeError(`公开报告分页游标必须是 PublicationId 的规范十进制串：${cursor}`);
   }
   return Number(cursor);
 }
 
-function parsePage(value: unknown, companyId: string): { reports: PublicReportSummary[]; nextCursor: string | null } {
-  const expected = wireCompanyId(companyId);
+function parsePage(value: unknown, companyId: string, identity: CatalogResolver): { reports: PublicReportSummary[]; nextCursor: string | null } {
+  const expected = identity.companyId(companyId);
   const page = normalizePublicReportPage(value);
   if (page.reports.some((report) => report.company_id !== expected)) {
     throw new TypeError("公开公司报告响应不符合公共 DTO 契约");
   }
+  for (const report of page.reports) identity.reportScopeCode(report.company_id, report.financials.scope);
   return { reports: page.reports, nextCursor: page.next_cursor };
 }
 
-function parseReport(value: unknown, companyId: string): PublicReportSummary {
-  const expected = wireCompanyId(companyId);
+function parseReport(value: unknown, companyId: string, identity: CatalogResolver): PublicReportSummary {
+  const expected = identity.companyId(companyId);
   const report = normalizePublicReportById(value);
   if (report.company_id !== expected) {
     throw new TypeError("公开公司报告响应不符合公共 DTO 契约");
   }
+  identity.reportScopeCode(report.company_id, report.financials.scope);
   return report;
 }
 
 export class CompanyQueryCoordinator {
   private disposed = false;
   private generation = 0;
+  private identity: CatalogResolver | null = null;
   private lastEventSeq = 0;
   private readonly requests = new CompanyRequestRegistry();
   private readonly cachedCompanies = new Set<string>();
@@ -101,19 +93,33 @@ export class CompanyQueryCoordinator {
     this.cachedCompanies.clear();
   }
 
+  prepareBaseline(baseline: Baseline, generation = this.generation + 1): () => void {
+    if (this.disposed) throw new Error("公司协调器已经关闭");
+    return () => {
+      this.generation = generation;
+      this.identity = baseline.catalogResolver;
+      this.lastEventSeq = baseline.seq;
+      this.requests.clear(); this.cachedCompanies.clear();
+    };
+  }
+
   installBaseline(baseline: Baseline): void {
     if (this.disposed) return;
-    this.generation += 1;
-    this.lastEventSeq = baseline.seq;
-    this.requests.clear();
-    this.cachedCompanies.clear();
+    const commit = this.prepareBaseline(baseline);
+    commit();
     this.dispatch(installCompanyBaseline({ generation: this.generation, ...baseline }));
+  }
+
+  private requireIdentity(): CatalogResolver {
+    if (this.identity === null) throw new Error("公司查询需要先安装实际目录 baseline");
+    return this.identity;
   }
 
   async query(query: CompanyQuery, force = false): Promise<void> {
     if (this.disposed) return;
     const generation = this.generation;
-    const key = `${generation}\u0000${query.companyId}\u0000${query.cursor ?? "root"}`;
+    const identity = this.requireIdentity();
+    const key = JSON.stringify([generation, "page", query.companyId, query.cursor]);
     const request = this.requests.begin(key, force);
     if (request === null) return;
     this.cachedCompanies.add(query.companyId);
@@ -125,8 +131,8 @@ export class CompanyQueryCoordinator {
     this.dispatch(startCompanyQuery({ generation, ...query }));
     try {
       const response = parsePage(await this.host.queryPublicReports({
-        company_id: wireCompanyId(query.companyId), cursor: wireCursor(query.cursor), page_size: null,
-      }), query.companyId);
+        company_id: identity.companyId(query.companyId), cursor: wireCursor(query.cursor), page_size: null,
+      }), query.companyId, identity);
       if (this.isCurrentRequest(generation, key, request)) {
         this.dispatch(recordCompanyPage({ generation, ...query, ...response }));
       }
@@ -144,7 +150,8 @@ export class CompanyQueryCoordinator {
   async queryReportById(query: { companyId: string; reportId: string }): Promise<void> {
     if (this.disposed) return;
     const generation = this.generation;
-    const key = `${generation}\u0000${query.companyId}\u0000report\u0000${query.reportId}`;
+    const identity = this.requireIdentity();
+    const key = JSON.stringify([generation, "report", query.companyId, query.reportId]);
     const request = this.requests.begin(key);
     if (request === null) return;
     this.cachedCompanies.add(query.companyId);
@@ -154,7 +161,7 @@ export class CompanyQueryCoordinator {
       return;
     }
     try {
-      const report = parseReport(await this.host.publicReportById(query.reportId), query.companyId);
+      const report = parseReport(await this.host.publicReportById(query.reportId), query.companyId, identity);
       if (this.isCurrentRequest(generation, key, request)) {
         this.dispatch(recordCompanyReport({ generation, companyId: query.companyId, report }));
       }
@@ -200,13 +207,15 @@ export class CompanyQueryCoordinator {
         }));
       } else if ("CompanyDisclosurePublished" in event) {
         const disclosure = event.CompanyDisclosurePublished;
+        if (!/^(0|[1-9]\d*)$/.test(disclosure.company)) throw new Error("披露 CompanyId 必须是规范 u32 串");
+        const companyCode = this.requireIdentity().companyCode(Number(disclosure.company), "disclosure.company");
         this.dispatch(invalidateCompanyForDisclosure({
           generation: this.generation,
           seq: disclosure.seq,
-          companyId: disclosure.company,
+          companyId: companyCode,
         }));
-        if (refreshDisclosures && this.cachedCompanies.has(disclosure.company)) {
-          void this.query({ companyId: disclosure.company, cursor: null }, true);
+        if (refreshDisclosures && this.cachedCompanies.has(companyCode)) {
+          void this.query({ companyId: companyCode, cursor: null }, true);
         }
       }
     }

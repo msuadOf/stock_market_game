@@ -1,0 +1,1 @@
+apps/web/src/host/player-proposals.test.ts(151,50): error TS2542: Index signature in type 'Readonly<Record<string, unknown>>' only permits reading.

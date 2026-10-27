@@ -1,3 +1,4 @@
+import { installHostBaseline } from "../store/host-baseline.ts";
 import {
   createProtocolState,
   ProtocolError,
@@ -41,7 +42,7 @@ function knownProtocolContext(update: Extract<HostUpdate, { type: "protocol" }>,
   return { actual, expected, cursor };
 }
 
-type SnapshotProtocolAction = ReturnType<typeof applyProtocolRuntimeDelta> | ReturnType<typeof installProtocolSnapshotBaseline> | ReturnType<typeof installProtocolWorkingOrdersBaseline>;
+type SnapshotProtocolAction = ReturnType<typeof installHostBaseline> | ReturnType<typeof applyProtocolRuntimeDelta> | ReturnType<typeof installProtocolSnapshotBaseline> | ReturnType<typeof installProtocolWorkingOrdersBaseline>;
 
 export type ProtocolCoordinatorStatus =
   | { readonly kind: "idle" }
@@ -49,6 +50,7 @@ export type ProtocolCoordinatorStatus =
   | { readonly kind: "failure"; readonly failure: HostFailure; readonly state: ProtocolState | null };
 
 export interface ProtocolCoordinatorCallbacks {
+  readonly prepareBaseline?: (state: ProtocolState, update: Extract<HostUpdate, { type: "baseline" }>, companyGeneration: number) => () => void;
   readonly onBaseline: (state: ProtocolState, update: Extract<HostUpdate, { type: "baseline" }>) => void;
   readonly onApplied: (reduction: Extract<ProtocolReduction, { kind: "applied" }>, metadata: { readonly civilDate: string | null; readonly revision: string | null }) => void;
   readonly onFailure: (failure: HostFailure) => void;
@@ -56,6 +58,7 @@ export interface ProtocolCoordinatorCallbacks {
 
 export class ProtocolCoordinator {
   private current: ProtocolState | null = null;
+  private baselineEpoch = 0;
   private currentStatus: ProtocolCoordinatorStatus = { kind: "idle" };
   private readonly callbacks: ProtocolCoordinatorCallbacks;
   private readonly snapshotDispatch: (action: SnapshotProtocolAction) => unknown;
@@ -104,15 +107,20 @@ export class ProtocolCoordinator {
   }
 
   private installBaseline(update: Extract<HostUpdate, { type: "baseline" }>): void {
-    const state = createProtocolState(update.snapshot, update.generation);
+    if (this.current !== null && BigInt(update.generation) < BigInt(this.current.cursor.generation)) throw new ProtocolError("PROTOCOL_CURSOR", "baseline.generation", "拒绝旧 generation baseline");
+    const state = createProtocolState(update.snapshot, update.generation, update.catalogResolver);
     const hydrated: ProtocolState = {
       ...state,
       securities: update.securities,
       publicPublicationIds: update.publicPublicationIds,
     };
-    this.snapshotDispatch(installProtocolSnapshotBaseline({ snapshot: hydrated.snapshot, generation: hydrated.cursor.generation }));
+    const companyGeneration = this.baselineEpoch + 1;
+    const commitCompany = this.callbacks.prepareBaseline?.(hydrated, update, companyGeneration);
+    commitCompany?.();
+    this.baselineEpoch = companyGeneration;
     this.current = hydrated;
     this.currentStatus = { kind: "ready", state: hydrated };
+    this.snapshotDispatch(installHostBaseline({ snapshot: hydrated.snapshot, generation: update.generation, companyGeneration, companyCatalog: update.catalogResolver.companyCatalog, stockCatalog: update.catalogResolver.stockCatalog, civilDate: update.civilDate, revision: update.revision }));
     this.callbacks.onBaseline(hydrated, update);
   }
 

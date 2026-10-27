@@ -359,6 +359,11 @@ impl GameSession {
 
     /// 惰性构造常驻驱动器（`with_routed_runtime_driver` 的构造段抽公共
     /// ——首步与 end_civil_day 补冻结两消费面共用）。
+    #[cfg(test)]
+    pub(in crate::session) fn construct_runtime_driver_lazy_for_test(&mut self) -> Result<(), StepFatal> {
+        self.construct_runtime_driver_lazy()
+    }
+
     fn construct_runtime_driver_lazy(&mut self) -> Result<(), StepFatal> {
         // 与 `with_routed_runtime_driver` 的构造段逐字一致（D0 惰性构造：
         // initial_committed_tick 对齐当前 session.tick；cfg(test) 的 staged

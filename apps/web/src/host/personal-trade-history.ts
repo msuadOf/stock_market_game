@@ -10,8 +10,7 @@ import type { CivilDate } from "../types/generated/CivilDate.ts";
 import type { Side } from "../types/generated/Side.ts";
 import type { PersonalTradeHistoryRequest as WirePersonalTradeHistoryRequest } from "../types/generated/PersonalTradeHistoryRequest.ts";
 import { normalizeConfirmationCursor, normalizePersonalTradeConfirmations } from "./intraday-average.ts";
-import { stockCodeOf } from "./protocol/stock-identity.ts";
-import { stockIdOf } from "../config/stock-ids.ts";
+import type { CatalogResolver } from "./catalog-resolver.ts";
 
 /** 视图请求（代码串词表——与旧 main 视图契约一致）。 */
 export interface PersonalTradeHistoryRequest {
@@ -36,11 +35,11 @@ export interface PersonalTradeHistoryPage {
 }
 
 /** 请求层翻译：视图 code 串 → wire 数值 StockId（wasm 请求侧，ADR-0041）。 */
-export function wirePersonalTradeHistoryRequest(request: PersonalTradeHistoryRequest): WirePersonalTradeHistoryRequest {
+export function wirePersonalTradeHistoryRequest(request: PersonalTradeHistoryRequest, identity: CatalogResolver): WirePersonalTradeHistoryRequest {
   return {
     date_from: request.date_from,
     date_to: request.date_to,
-    stock: request.code === null ? null : stockIdOf(request.code),
+    stock: request.code === null ? null : identity.stockId(request.code),
     side: request.side,
     before_receipt: request.before_receipt,
     as_of_receipt: request.as_of_receipt,
@@ -86,25 +85,25 @@ export function normalizePersonalTradeHistoryRequest(value: unknown): PersonalTr
 
 /** wire 回显请求 → 视图请求（数值 stock 译回代码串，ADR-0041——键位
  *  随词表替换：wire `stock` 在视图形态中不存在，剥离后再走视图校验）。 */
-function normalizeWireEchoedRequest(value: unknown): PersonalTradeHistoryRequest {
+function normalizeWireEchoedRequest(value: unknown, identity: CatalogResolver): PersonalTradeHistoryRequest {
   const item = record(value, "本人日期页.request");
   exact(item, ["date_from", "date_to", "stock", "side", "before_receipt", "as_of_receipt", "page_size"], "本人日期页.request");
   if (item.stock !== null && (typeof item.stock !== "number" || !Number.isInteger(item.stock))) throw new Error("本人日期页.request.stock 必须为数值StockId或null");
-  const code = item.stock === null ? null : stockCodeOf(item.stock, "本人日期页.request.stock");
+  const code = item.stock === null ? null : identity.stockCode(item.stock, "本人日期页.request.stock");
   const { stock: _wireStock, ...viewFields } = item;
   return normalizePersonalTradeHistoryRequest({ ...viewFields, code });
 }
 
-export function normalizePersonalTradeHistoryPage(value: unknown, request: PersonalTradeHistoryRequest): PersonalTradeHistoryPage {
+export function normalizePersonalTradeHistoryPage(value: unknown, request: PersonalTradeHistoryRequest, identity: CatalogResolver): PersonalTradeHistoryPage {
   const expected = normalizePersonalTradeHistoryRequest(request);
   const item = record(value, "本人日期页");
   exact(item, ["request", "confirmations", "next_cursor", "as_of_receipt", "start_date", "current_date", "settled_through"], "本人日期页");
-  const echoed = normalizeWireEchoedRequest(item.request);
+  const echoed = normalizeWireEchoedRequest(item.request, identity);
   if (JSON.stringify(echoed) !== JSON.stringify(expected)) throw new Error("本人日期页请求与当前filters不一致");
   const ceiling = cursor(item.as_of_receipt, "as_of_receipt");
   if (ceiling === null || (expected.as_of_receipt !== null && ceiling !== expected.as_of_receipt)) throw new Error("本人日期页固定receipt窗口与请求不一致");
   const next = cursor(item.next_cursor, "next_cursor");
-  const rows = normalizePersonalTradeConfirmations(item.confirmations);
+  const rows = normalizePersonalTradeConfirmations(item.confirmations, identity);
   if (rows.length > expected.page_size) throw new Error("本人日期页超过所请求page_size");
   let previous = expected.before_receipt === null ? BigInt(ceiling) : BigInt(expected.before_receipt);
   for (const row of rows) {

@@ -106,9 +106,9 @@ function parseExitRecord(value: unknown, path: string): ExitRecord {
 
 /** 存档 wire 的股票身份：数值 StockId（ADR 0041）。 */
 function parseStock(value: unknown, path: string): number {
-  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) throw new Error(`存档 ${path} 必须是数值 StockId`)
-  if (value > 4_294_967_295) throw new Error(`存档 ${path} 超出 u32 范围`)
-  return value
+  const parsed = integer(value, path, 0)
+  if (parsed > 4_294_967_295) throw new Error(`存档 ${path} 超出 u32 范围`)
+  return parsed
 }
 
 function parseCivilDate(value: unknown, path: string): string {

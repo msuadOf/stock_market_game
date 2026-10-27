@@ -1,3 +1,4 @@
+import { defaultCatalogFixture } from "./catalog-test-fixture.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { eventStableKey } from "./protocol/canonical.ts";
@@ -20,7 +21,7 @@ test("NPC普通拒单不冒充玩家反馈，原始事件、玩家拒单和结�
     const facts = events.map((event, index) => ({
       key: eventStableKey(event, index), event,
     }));
-    const coded = translateEngineUpdate({ TickBatch: { frames: [{ tick: 1, facts: [...facts], timeseries_payload: { markets: {}, active_daily_candles: {}, closed_daily_candles: {}, auction_points: {}, continuous_points: {} }, seq_from: 0, seq_to: 4 }], runtime_snapshot: null } });
+    const coded = translateEngineUpdate({ TickBatch: { frames: [{ tick: 1, facts: [...facts], timeseries_payload: { markets: {}, active_daily_candles: {}, closed_daily_candles: {}, auction_points: {}, continuous_points: {} }, seq_from: 0, seq_to: 4 }], runtime_snapshot: null } }, "test.fixture", defaultCatalogFixture);
     if (!("TickBatch" in coded)) throw new Error("测试期望 TickBatch");
     const codedEvents = coded.TickBatch.frames[0]?.events ?? [];
     const codedFacts = coded.TickBatch.frames[0]?.facts ?? [];
@@ -58,7 +59,7 @@ test("Given stable facts and timeseries, when projected, then notices, trades, a
     },
   };
   // 摄入翻译后事件/时序键均为代码串（ADR 0041）。
-  const parsed = translateEngineUpdate(parseEngineUpdate(update));
+  const parsed = translateEngineUpdate(parseEngineUpdate(update), "test.fixture", defaultCatalogFixture);
   if (!("TickBatch" in parsed)) throw new Error("test fixture invalid");
   const current = parsed.TickBatch.frames[0];
   if (current === undefined) throw new Error("test fixture invalid");
@@ -110,7 +111,7 @@ test("Given an already filled cancellation, when projected, then the notice expl
       runtime_snapshot: snapshot(1, 1),
     },
   };
-  const parsed = translateEngineUpdate(parseEngineUpdate(update));
+  const parsed = translateEngineUpdate(parseEngineUpdate(update), "test.fixture", defaultCatalogFixture);
   if (!("TickBatch" in parsed)) throw new Error("test fixture invalid");
   const current = parsed.TickBatch.frames[0];
   if (current === undefined) throw new Error("test fixture invalid");

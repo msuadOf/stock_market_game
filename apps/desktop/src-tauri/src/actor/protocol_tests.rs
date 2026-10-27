@@ -246,3 +246,86 @@ async fn before_open_publishes_before_pausing_and_resumes_once() {
     )
     .await;
 }
+
+#[test]
+fn baseline_catalogs_match_actual_desktop_session() {
+    let mut setup = super::tests::diagnostic_setup();
+    setup.npcs.inst_count = 0;
+    setup.history_len = 1;
+    setup.stocks[0].float_shares = 0;
+    let game = ProtocolSession::new(setup, 7).unwrap();
+    let expected_stocks = game.stock_catalog_view();
+    let expected_companies = game.company_catalog_view().unwrap();
+    let mut harness = ActorHarness::new_protocol_actor(
+        game,
+        false,
+        PausePreferences::default(),
+        "catalog",
+        "one",
+    );
+    let baseline = harness
+        .actor
+        .baseline_candidate("query_baseline", "desktop.actor.query_baseline")
+        .unwrap();
+    assert_eq!(baseline.stock_catalog, expected_stocks);
+    assert_eq!(baseline.company_catalog, expected_companies);
+    assert_eq!(
+        baseline.stock_catalog.len(),
+        baseline.snapshot.markets.len()
+    );
+}
+
+#[test]
+fn committed_restore_catalog_failure_keeps_generation_and_closes_desktop_actor() {
+    let mut setup = super::tests::diagnostic_setup();
+    setup.npcs.inst_count = 0;
+    setup.history_len = 1;
+    setup.stocks[0].float_shares = 0;
+    let mut game = ProtocolSession::new(setup, 7).unwrap();
+    game.end_civil_day_update().unwrap();
+    let saved = game.save().unwrap();
+    let mut harness = ActorHarness::new_protocol_actor(
+        game,
+        false,
+        PausePreferences::default(),
+        "catalog",
+        "one",
+    );
+    harness.actor.restore(1, Box::new(saved)).unwrap();
+    let new_timeline = harness.actor.timeline_id.clone();
+    let ingress = harness.actor.game.shared_ingress();
+    let error = engine::session::CompanyCatalogViewError::UnknownListedStock {
+        company: engine::company::CompanyId(7),
+    };
+    let result =
+        harness
+            .actor
+            .finish_catalog_baseline(Err(error), "restore", "desktop.actor.restore");
+    assert!(matches!(result, Err(BaselineError::Catalog(_))));
+    assert_eq!(harness.actor.generation, 2);
+    assert_eq!(harness.actor.timeline_id, new_timeline);
+    assert!(harness.cmd_tx.is_closed());
+    assert!(ingress
+        .enqueue_player_intent(
+            AccountId(0),
+            Intent::Cancel {
+                code: engine::StockId(0),
+                id: engine::OrderId(1)
+            }
+        )
+        .is_err());
+}
+
+#[test]
+fn baseline_error_source_chain_retains_typed_catalog_leaf() {
+    use std::error::Error;
+    let error = BaselineRequestError::Baseline(BaselineError::Catalog(
+        engine::session::CompanyCatalogViewError::UnknownListedStock {
+            company: engine::company::CompanyId(7),
+        },
+    ));
+    assert!(error
+        .source()
+        .unwrap()
+        .is::<engine::session::CompanyCatalogViewError>());
+}

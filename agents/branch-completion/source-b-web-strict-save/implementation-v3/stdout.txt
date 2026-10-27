@@ -1,0 +1,162 @@
+✖ 真实Rust完整generated-company-state-registry.json对象/raw解析无损，只有一个公司权威tag (31.78994ms)
+✖ 真实Rust完整manual-company-state-registry.json对象/raw解析无损，只有一个公司权威tag (12.492086ms)
+✔ 真实Rust完整legacy-company-state.json对象/raw解析无损，只有一个公司权威tag (113.48528ms)
+✔ required单tag拒绝旧双源根字段、缺失/null/双tag/未知tag (68.734761ms)
+✔ setup模式与selected公司tag必须一致，不迁移旧源 (34.978303ms)
+✖ 真实REG SettlementDayMarket.binding五字段required且unknown逐层拒绝 (36.516579ms)
+✖ 公司状态全部真实非空结构拒绝未知字段，nullable必填不被默认掩盖 (243.998689ms)
+✖ rawJSON在覆盖前拒绝重复tag、转义后同键与REG binding重复键 (5.498501ms)
+✖ canonical整数字符串拒绝前导零/负零与unsafe裸数，保真实单位 (18.332907ms)
+ℹ tests 9
+ℹ suites 0
+ℹ pass 3
+ℹ fail 6
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 764.077884
+
+✖ failing tests:
+
+test at apps/web/src/save/schema/company/state.test.ts:10:44
+✖ 真实Rust完整generated-company-state-registry.json对象/raw解析无损，只有一个公司权威tag (31.78994ms)
+  Error [SaveSchemaError]: 存档 npc_attention.1.base_probability 必须为有限(0,1]概率
+      at parseNpcAttention (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/npc-attention.ts:32:118)
+      at map (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/primitives.ts:177:23)
+      at parseOrderState (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/orders.ts:82:25)
+      at parseStrictSaveEnvelope (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/root.ts:68:17)
+      at parseSaveSlot (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/save-schema.ts:7:10)
+      at parseSaveJson (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/save-schema.ts:12:33)
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/state.test.ts:11:90)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at Test.start (node:internal/test_runner/test:1191:17) {
+    path: 'npc_attention.1.base_probability'
+  }
+
+test at apps/web/src/save/schema/company/state.test.ts:10:44
+✖ 真实Rust完整manual-company-state-registry.json对象/raw解析无损，只有一个公司权威tag (12.492086ms)
+  Error [SaveSchemaError]: 存档 npc_attention.1.base_probability 必须为有限(0,1]概率
+      at parseNpcAttention (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/npc-attention.ts:32:118)
+      at map (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/primitives.ts:177:23)
+      at parseOrderState (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/orders.ts:82:25)
+      at parseStrictSaveEnvelope (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/root.ts:68:17)
+      at parseSaveSlot (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/save-schema.ts:7:10)
+      at parseSaveJson (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/save-schema.ts:12:33)
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/state.test.ts:11:90)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:911:18) {
+    path: 'npc_attention.1.base_probability'
+  }
+
+test at apps/web/src/save/schema/company/state.test.ts:25:1
+✖ 真实REG SettlementDayMarket.binding五字段required且unknown逐层拒绝 (36.516579ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /unexpected/. Input:
+  
+  'SaveSchemaError: 存档 company_state.CompanySystem.corporate_actions.registries[0].receipts[0].request.scope.SettlementDayMarket.binding.market_source 必须是一个已知枚举变体'
+  
+      at walk (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/state.test.ts:28:229)
+      at walk (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/state.test.ts:28:312)
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/state.test.ts:28:406)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:911:18)
+      at Test.postRun (node:internal/test_runner/test:1465:19)
+      at Test.run (node:internal/test_runner/test:1390:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: SaveSchemaError: 存档 company_state.CompanySystem.corporate_actions.registries[0].receipts[0].request.scope.SettlementDayMarket.binding.market_source 必须是一个已知枚举变体
+        at fail (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/state.ts:19:60)
+        at decode (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/state.ts:89:97)
+        at decode (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/state.ts:65:137)
+        at file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/state.ts:72:86
+        at Array.map (<anonymous>)
+        at decode (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/state.ts:72:56)
+        at decode (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/state.ts:65:137)
+        at file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/state.ts:72:86
+        at Array.map (<anonymous>)
+        at decode (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/state.ts:72:56),
+    expected: /unexpected/,
+    operator: 'throws',
+    diff: 'simple'
+  }
+
+test at apps/web/src/save/schema/company/state.test.ts:30:1
+✖ 公司状态全部真实非空结构拒绝未知字段，nullable必填不被默认掩盖 (243.998689ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /unexpected/. Input:
+  
+  'SaveSchemaError: 存档 company_state.CompanySystem.system.implementation.state.companies.0.finance.closing.versions[0][0] 必须是单一范围变体'
+  
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/state.test.ts:35:256)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:911:18)
+      at Test.postRun (node:internal/test_runner/test:1465:19)
+      at Test.run (node:internal/test_runner/test:1390:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: SaveSchemaError: 存档 company_state.CompanySystem.system.implementation.state.companies.0.finance.closing.versions[0][0] 必须是单一范围变体
+        at parseScope (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/closing.ts:15:35)
+        at file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/closing.ts:29:13
+        at Array.map (<anonymous>)
+        at parseClosingRegistry (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/closing.ts:26:63)
+        at decode (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/state.ts:50:30)
+        at file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/state.ts:72:86
+        at Array.map (<anonymous>)
+        at decode (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/state.ts:72:56)
+        at decode (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/state.ts:65:137)
+        at file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/state.ts:72:86,
+    expected: /unexpected/,
+    operator: 'throws',
+    diff: 'simple'
+  }
+
+test at apps/web/src/save/schema/company/state.test.ts:37:1
+✖ rawJSON在覆盖前拒绝重复tag、转义后同键与REG binding重复键 (5.498501ms)
+  Error [SaveSchemaError]: 存档 npc_attention.1.base_probability 必须为有限(0,1]概率
+      at parseNpcAttention (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/npc-attention.ts:32:118)
+      at map (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/primitives.ts:177:23)
+      at parseOrderState (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/orders.ts:82:25)
+      at parseStrictSaveEnvelope (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/root.ts:68:17)
+      at parseSaveSlot (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/save-schema.ts:7:10)
+      at parseSaveJson (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/save-schema.ts:12:33)
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/state.test.ts:38:19)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:911:18) {
+    path: 'npc_attention.1.base_probability'
+  }
+
+test at apps/web/src/save/schema/company/state.test.ts:42:1
+✖ canonical整数字符串拒绝前导零/负零与unsafe裸数，保真实单位 (18.332907ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /company|负零/. Input:
+  
+  'SaveSchemaError: 存档 npc_attention.1.base_probability 必须为有限(0,1]概率'
+  
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/state.test.ts:45:92)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:911:18)
+      at Test.postRun (node:internal/test_runner/test:1465:19)
+      at Test.run (node:internal/test_runner/test:1390:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: SaveSchemaError: 存档 npc_attention.1.base_probability 必须为有限(0,1]概率
+        at parseNpcAttention (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/npc-attention.ts:32:118)
+        at map (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/primitives.ts:177:23)
+        at parseOrderState (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/orders.ts:82:25)
+        at parseStrictSaveEnvelope (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/root.ts:68:17)
+        at parseSaveSlot (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/save-schema.ts:7:10)
+        at parseSaveJson (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/save-schema.ts:12:33)
+        at file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/state.test.ts:45:103
+        at getActual (node:assert:611:5)
+        at strict.throws (node:assert:759:24)
+        at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/state.test.ts:45:92),
+    expected: /company|负零/,
+    operator: 'throws',
+    diff: 'simple'
+  }

@@ -1,3 +1,4 @@
+import { defaultCatalogFixture } from "../host/catalog-test-fixture.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { valueHeldPosition } from "./position-valuation.ts";
@@ -21,8 +22,8 @@ test("Money wire：条件单价格不能按字符串字典序比较", { timeout:
 
 test("Money wire：活动委托严格拒绝 Number 并保留大金额原值", { timeout: 10000 }, () => {
   const order = { id: 1, code: 0, side: "Buy", price: "9007199254740993", remainingQty: 100, venue: "Continuous", frozen: "Cash" };
-  assert.equal(normalizePlayerWorkingOrders([order])[0]?.price, "9007199254740993");
-  assert.throws(() => normalizePlayerWorkingOrders([{ ...order, price: 1000 }]), /十进制整数分字符串/);
+  assert.equal(normalizePlayerWorkingOrders([order], defaultCatalogFixture)[0]?.price, "9007199254740993");
+  assert.throws(() => normalizePlayerWorkingOrders([{ ...order, price: 1000 }], defaultCatalogFixture), /十进制整数分字符串/);
 });
 
 test("Money wire：图表坐标相同不能吞掉原始 OHLC 一分变化", { timeout: 10000 }, () => {

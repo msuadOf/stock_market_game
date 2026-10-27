@@ -1,3 +1,4 @@
+import { defaultCatalogFixture } from "../host/catalog-test-fixture.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { applyProtocolRuntimeDelta, installProtocolSnapshotBaseline, snapshotReducer } from "./store.ts";
@@ -8,7 +9,7 @@ import type { CodedRuntimeDelta } from "../host/protocol/stock-identity.ts";
 function baseline() {
   return snapshotReducer(undefined, installProtocolSnapshotBaseline({ generation: "1", snapshot: parseProtocolSnapshot({
     ...snapshot(0, 0), accounts: { "0": { cash: "1000", reserved_cash: "0", positions: {}, reserved_sell_qty: {} } },
-  }) }));
+  }, "test.fixture", defaultCatalogFixture) }));
 }
 
 function delta(): CodedRuntimeDelta {

@@ -1,0 +1,13 @@
+error[E0502]: cannot borrow `changed.groups` as immutable because it is also borrowed as mutable
+   --> /data1/baiyifan/workplace/stock_market_game/.worktree/tax-admin-projection/packages/engine/src/runtime/admin_tax_projection_tests.rs:133:54
+    |
+133 |                 4 => changed.groups[0].accounts.push(changed.groups[0].accounts[0].clone()),
+    |                      --------------             ---- ^^^^^^^^^^^^^^ immutable borrow occurs here
+    |                      |                          |
+    |                      |                          mutable borrow later used by call
+    |                      mutable borrow occurs here
+
+error: aborting due to 1 previous error
+
+For more information about this error, try `rustc --explain E0502`.
+bounded command exited with 1

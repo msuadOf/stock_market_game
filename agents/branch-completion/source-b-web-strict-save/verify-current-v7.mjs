@@ -1,0 +1,12 @@
+import {readFileSync,writeFileSync,mkdirSync,readdirSync} from "node:fs";
+import {runWithDeadline} from "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs";
+const root=new URL("../../../",import.meta.url).pathname;
+const dir=new URL("./current-verification-v7/",import.meta.url);mkdirSync(dir);
+const app=root+"apps/web",node="/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node";
+const walk=path=>readdirSync(path,{withFileTypes:true}).flatMap(e=>e.isDirectory()?walk(path+"/"+e.name):[path+"/"+e.name]);
+const files=walk(app+"/src/save").filter(p=>p.endsWith(".test.ts"));
+const jobs=[];for(let i=0;i<files.length;i+=4)jobs.push({name:`save-tests-${i/4}`,command:node,args:["--test","--test-timeout=10000","--test-concurrency=4",...files.slice(i,i+4)]});
+const previous=JSON.parse(readFileSync(new URL("./current-verification-v3/receipt.json",import.meta.url)));
+for(const x of previous.filter(x=>x.name.startsWith("types-")))jobs.push({name:x.name,command:x.command[0],args:x.command.slice(1)});
+const results=await Promise.all(jobs.map(async j=>{const start=performance.now();let stdout="",stderr="";try{const result=await runWithDeadline({...j,cwd:app,timeoutMs:10000,captureOutput:true,onStdout:s=>stdout+=s,onStderr:s=>stderr+=s});writeFileSync(new URL(j.name+".stdout",dir),result.stdout);writeFileSync(new URL(j.name+".stderr",dir),result.stderr);return {...j,exitCode:0,wallMs:performance.now()-start};}catch(e){writeFileSync(new URL(j.name+".stdout",dir),stdout);writeFileSync(new URL(j.name+".stderr",dir),stderr+String(e));return {...j,exitCode:1,error:String(e),wallMs:performance.now()-start};}}));
+writeFileSync(new URL("receipt.json",dir),JSON.stringify({files,jobs:jobs.length,results},null,2));console.log(JSON.stringify(results.map(({name,exitCode,error,wallMs})=>({name,exitCode,error,wallMs})),null,2));

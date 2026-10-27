@@ -4,7 +4,7 @@ use serde::Serialize;
 use tauri::{Emitter, Runtime};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-pub(super) struct HostFailure {
+pub(crate) struct HostFailure {
     pub code: &'static str,
     pub message: String,
     pub r#where: String,
@@ -16,8 +16,10 @@ pub(super) struct HostFailure {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-pub(super) struct FailureContext {
+pub(crate) struct FailureContext {
     pub operation: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fault: Option<engine::ValidationFault>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tick: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -29,7 +31,7 @@ pub(super) struct FailureContext {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-pub(super) struct FailureCause {
+pub(crate) struct FailureCause {
     code: &'static str,
     message: String,
     cause: Option<Box<FailureCause>>,
@@ -109,6 +111,7 @@ impl FailureContext {
     fn new(operation: &'static str) -> Self {
         Self {
             operation,
+            fault: None,
             tick: None,
             seq: None,
             day: None,
@@ -124,6 +127,27 @@ impl From<StepFatal> for HostFailure {
 }
 
 impl HostFailure {
+    pub(crate) fn catalog(
+        error: &engine::session::CompanyCatalogViewError,
+        operation: &'static str,
+        location: &'static str,
+    ) -> Self {
+        let mut context = FailureContext::new(operation);
+        context.fault = Some(engine::session::company_catalog_fault(error));
+        Self {
+            code: "CATALOG_BASELINE_FAILED",
+            message: "公开公司身份目录构造失败".to_owned(),
+            r#where: location.to_owned(),
+            cause: None,
+            context,
+            recoverable: false,
+            recovery_actions: vec![
+                "停止当前提交并重新同步权威会话；仍失败则重开有效日终档或新局",
+                "复制错误详情反馈",
+            ],
+        }
+    }
+
     pub(super) fn step(error: StepFatal) -> Self {
         let StepFatal::InvariantViolation { ref location, .. } = error;
         Self {

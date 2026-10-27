@@ -1,3 +1,7 @@
+import { prepareCatalogResolver } from "./catalog-resolver.ts";
+import { normalizeSerdeValue } from "./protocol/guards.ts";
+import { parseProtocolSnapshot } from "./protocol/parse.ts";
+import type { CatalogResolver } from "./catalog-resolver.ts";
 import type { StockSpec } from "../types/engine.ts";
 import type { CodedSnapshot } from "./protocol/stock-identity.ts";
 
@@ -15,6 +19,9 @@ export type HostUpdate =
       readonly generation: string;
       readonly snapshot: CodedSnapshot;
       readonly securities: readonly StockSpec[];
+      readonly catalogResolver: CatalogResolver;
+      readonly stockCatalog: CatalogResolver["stockCatalog"];
+      readonly companyCatalog: CatalogResolver["companyCatalog"];
       readonly publicPublicationIds: readonly string[];
     } & PublicMetadata)
   | ({
@@ -36,6 +43,7 @@ export type HostFailure = {
 export function createBaselineUpdate(
   generation: string,
   snapshot: CodedSnapshot,
+  catalogResolver: CatalogResolver,
   metadata: PublicMetadata = { civilDate: null, revision: null },
   securities: readonly StockSpec[] = [],
   publicPublicationIds: readonly string[] = [],
@@ -46,7 +54,11 @@ export function createBaselineUpdate(
   if (!Number.isSafeInteger(snapshot.seq) || snapshot.seq < 0) {
     throw new Error("宿主基线快照缺少非负安全整数 seq");
   }
-  return { type: "baseline", generation, snapshot, ...metadata, securities, publicPublicationIds };
+  const codes = new Set(catalogResolver.stockCatalog.map(entry => entry.code));
+  if (codes.size !== Object.keys(snapshot.markets).length || Object.keys(snapshot.markets).some(code => !codes.has(code))) {
+    throw new Error("宿主基线 snapshot 市场必须与实际 StockCatalog 精确对应");
+  }
+  return { type: "baseline", generation, snapshot, catalogResolver, stockCatalog: catalogResolver.stockCatalog, companyCatalog: catalogResolver.companyCatalog, ...metadata, securities, publicPublicationIds };
 }
 
 export function createProtocolUpdate(
@@ -58,4 +70,14 @@ export function createProtocolUpdate(
     throw new Error("宿主协议更新 generation 必须是规范非负十进制整数");
   }
   return { type: "protocol", generation, update, ...metadata };
+}
+
+/** 原始 wire 在任何宿主缓存或 Redux 发布前完成完整准备。 */
+export function prepareBaselineUpdate(
+  generation: string, snapshot: unknown, stockCatalog: unknown, companyCatalog: unknown,
+  metadata: PublicMetadata, securities: readonly StockSpec[] = [], publicPublicationIds: readonly string[] = [],
+): Extract<HostUpdate, { type: "baseline" }> {
+  const resolver = prepareCatalogResolver(normalizeSerdeValue(stockCatalog, "stockCatalog"), normalizeSerdeValue(companyCatalog, "companyCatalog"));
+  const parsed = parseProtocolSnapshot(snapshot, "baseline.snapshot", resolver);
+  return createBaselineUpdate(generation, parsed, resolver, metadata, securities, publicPublicationIds);
 }

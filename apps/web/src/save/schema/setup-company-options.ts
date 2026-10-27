@@ -97,6 +97,8 @@ function finance(value: unknown, path: string): SimpleFinanceConfig {
   }), tax_policy: taxPolicy, summary_rule: oneOf(parsed.summary_rule, `${path}.summary_rule`, ["ReceivableRevenuePayableExpenses"] as const), book_display: { investment_of_revenue_bp: bounded(display.investment_of_revenue_bp, `${path}.book_display.investment_of_revenue_bp`, 0, 10000) } }
 }
 
+export { finance as parseSimpleFinanceConfig }
+
 function preferences(value: unknown, path: string): SimpleCompanyPreferences {
   const parsed = record(value, path)
   exact(parsed, ["cash_dividend", "stock_distribution"], path)
@@ -129,6 +131,8 @@ function simple(value: unknown, path: string): SimpleConfig {
   exact(environment, ["initial_change_bp", "persistence_bp", "noise"], `${path}.environment`)
   return { environment: { initial_change_bp: bounded(environment.initial_change_bp, `${path}.environment.initial_change_bp`, -2147483648, I32_MAX), persistence_bp: bounded(environment.persistence_bp, `${path}.environment.persistence_bp`, 0, 10000), noise: noise(environment.noise, `${path}.environment.noise`) }, companies: array(parsed.companies, `${path}.companies`).map((item, index) => company(item, `${path}.companies[${index}]`)), prehistory_periods: bounded(parsed.prehistory_periods, `${path}.prehistory_periods`, 0, 65535), settlement_cycle: oneOf(parsed.settlement_cycle, `${path}.settlement_cycle`, ["Monthly", "Quarterly", "HalfYear", "Annual"] as const) }
 }
+
+export { simple as parseSimpleConfig }
 
 function frequency(value: unknown, path: string): ReportFrequency {
   if (value === "Quarterly") return value

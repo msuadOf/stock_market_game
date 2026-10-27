@@ -1,0 +1,25 @@
+✖ Redux/Immer 对特殊公司 code 的缓存和阅读操作不命中原型 (7.715118ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 244.094462
+
+✖ failing tests:
+
+test at apps/web/src/store/company-code-safety.test.ts:7:1
+✖ Redux/Immer 对特殊公司 code 的缓存和阅读操作不命中原型 (7.715118ms)
+  TypeError: Cannot set properties of undefined (setting 'root')
+      at startCompanyQuery (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/store/company-slice.ts:157:91)
+      at file:///data1/baiyifan/workplace/stock_market_game/node_modules/.pnpm/@reduxjs+toolkit@2.12.0_react-redux@9.3.0_@types+react@18.3.28_react@18.3.1_redux@5.0.1__react@18.3.1/node_modules/@reduxjs/toolkit/dist/redux-toolkit.modern.mjs:735:20
+      at Immer2.produce (file:///data1/baiyifan/workplace/stock_market_game/node_modules/.pnpm/immer@11.1.8/node_modules/immer/dist/immer.mjs:701:20)
+      at file:///data1/baiyifan/workplace/stock_market_game/node_modules/.pnpm/@reduxjs+toolkit@2.12.0_react-redux@9.3.0_@types+react@18.3.28_react@18.3.1_redux@5.0.1__react@18.3.1/node_modules/@reduxjs/toolkit/dist/redux-toolkit.modern.mjs:734:18
+      at Array.reduce (<anonymous>)
+      at reducer (file:///data1/baiyifan/workplace/stock_market_game/node_modules/.pnpm/@reduxjs+toolkit@2.12.0_react-redux@9.3.0_@types+react@18.3.28_react@18.3.1_redux@5.0.1__react@18.3.1/node_modules/@reduxjs/toolkit/dist/redux-toolkit.modern.mjs:715:25)
+      at reducer (file:///data1/baiyifan/workplace/stock_market_game/node_modules/.pnpm/@reduxjs+toolkit@2.12.0_react-redux@9.3.0_@types+react@18.3.28_react@18.3.1_redux@5.0.1__react@18.3.1/node_modules/@reduxjs/toolkit/dist/redux-toolkit.modern.mjs:1145:14)
+      at Object.dispatch (file:///data1/baiyifan/workplace/stock_market_game/node_modules/.pnpm/redux@5.0.1/node_modules/redux/dist/redux.mjs:160:22)
+      at dispatch (file:///data1/baiyifan/workplace/stock_market_game/node_modules/.pnpm/@reduxjs+toolkit@2.12.0_react-redux@9.3.0_@types+react@18.3.28_react@18.3.1_redux@5.0.1__react@18.3.1/node_modules/@reduxjs/toolkit/dist/redux-toolkit.modern.mjs:532:22)
+      at file:///data1/baiyifan/workplace/stock_market_game/node_modules/.pnpm/@reduxjs+toolkit@2.12.0_react-redux@9.3.0_@types+react@18.3.28_react@18.3.1_redux@5.0.1__react@18.3.1/node_modules/@reduxjs/toolkit/dist/redux-toolkit.modern.mjs:382:22

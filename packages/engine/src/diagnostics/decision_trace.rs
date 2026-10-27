@@ -53,6 +53,11 @@ pub(crate) struct NpcDecisionTraceCollector {
 
 impl NpcDecisionTraceCollector {
     pub(crate) fn record(&mut self, record: NpcDecisionTraceRecord) {
+        self.record_shared(Arc::new(record));
+    }
+
+    /// 已封好的本轮增量与 driver pending 共用不可变 payload。
+    pub(crate) fn record_shared(&mut self, record: Arc<NpcDecisionTraceRecord>) {
         let account = record.account;
         let mut ring = match self.records.get(account.0) {
             Some(records) => Arc::clone(records),
@@ -68,7 +73,7 @@ impl NpcDecisionTraceCollector {
         if records.len() == MAX_NPC_DECISION_TRACE_RECORDS {
             let _ = records.pop_front();
         }
-        records.push_back(Arc::new(record));
+        records.push_back(record);
         self.records.insert(account.0, ring);
     }
 

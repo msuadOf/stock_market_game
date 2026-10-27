@@ -1,6 +1,7 @@
 import { SaveSchemaError, array, civilDate, exact, integer, map, record, string } from "../../primitives.ts"
 import { parseBooks, type Books } from "../accounting/index.ts"
-import { amount, period } from "../value.ts"
+import { parseAccountingPeriod } from "../accounting/period.ts"
+import { amount } from "../value.ts"
 import { parseBudget, parseContractBook, parseCounterpartyLedger, parseFraction, parseI128Number, parseTradeOpenLedger, type ContractBook, type CounterpartyLedger, type OperatingBudget, type TradeOpenLedger } from "./common.ts"
 
 export type IndustrialBooks = { readonly books: Books; readonly inventory: InventoryLedger; readonly assets: FixedAssetRegister; readonly receivables: TradeOpenLedger; readonly payables: TradeOpenLedger; readonly contracts: ContractBook; readonly counterparties: CounterpartyLedger; readonly budget: OperatingBudget; readonly tax_policy: TaxPolicy; readonly income_tax_position: IncomeTaxPosition; readonly loans: Readonly<Record<string, IndustrialLoanState>>; readonly inventory_source_events: readonly { readonly event: number; readonly item: string; readonly account: string }[]; readonly trade_counterparty_events: readonly { readonly event: number; readonly counterparty: string; readonly account: string }[]; readonly next_event_id: number }
@@ -34,7 +35,7 @@ export function parseIndustrialBooks(value: unknown, path: string): IndustrialBo
   return { inventory_source_events: inventoryEvents, trade_counterparty_events: tradeEvents, books: parseBooks(parsed.books, `${path}.books`), inventory: parseInventory(parsed.inventory, `${path}.inventory`), assets: parseAssets(parsed.assets, `${path}.assets`), receivables: parseTradeOpenLedger(parsed.receivables, `${path}.receivables`), payables: parseTradeOpenLedger(parsed.payables, `${path}.payables`), contracts: parseContractBook(parsed.contracts, `${path}.contracts`), counterparties: parseCounterpartyLedger(parsed.counterparties, `${path}.counterparties`), budget: parseBudget(parsed.budget, `${path}.budget`), tax_policy: parseTaxPolicy(parsed.tax_policy, `${path}.tax_policy`), income_tax_position: parseIncomeTaxPosition(parsed.income_tax_position, `${path}.income_tax_position`), loans: map(parsed.loans, `${path}.loans`, stringKey, parseLoan), next_event_id: integer(parsed.next_event_id, `${path}.next_event_id`, 0) }
 }
 
-function parseIncomeTaxPosition(value: unknown, path: string): IncomeTaxPosition {
+export function parseIncomeTaxPosition(value: unknown, path: string): IncomeTaxPosition {
   const parsed = record(value, path)
   exact(parsed, ["loss_pool", "assessments", "initial_deferred_tax_asset", "restatements"], path)
   const assessments = map(parsed.assessments, `${path}.assessments`, (key, keyPath) => {
@@ -42,7 +43,7 @@ function parseIncomeTaxPosition(value: unknown, path: string): IncomeTaxPosition
   }, parseIncomeTaxAssessment)
   return { loss_pool: array(parsed.loss_pool, `${path}.loss_pool`).map((entry, index) => parseLossEntry(entry, `${path}.loss_pool[${index}]`)), assessments, initial_deferred_tax_asset: amount(parsed.initial_deferred_tax_asset, `${path}.initial_deferred_tax_asset`), restatements: map(parsed.restatements, `${path}.restatements`, (key, keyPath) => {
     if (!/^(0|[1-9][0-9]*)$/.test(key) || BigInt(key) > 18_446_744_073_709_551_615n) throw new SaveSchemaError(keyPath, "必须是规范 u64 BusinessEventId 键")
-  }, period) }
+  }, parseAccountingPeriod) }
 }
 
 function parseIncomeTaxAssessment(value: unknown, path: string): IncomeTaxAssessment {
@@ -87,16 +88,22 @@ function parseVat(value: unknown, path: string): VatPolicy {
   return { output_rate_bp: integer(parsed.output_rate_bp, `${path}.output_rate_bp`), input_rate_bp: integer(parsed.input_rate_bp, `${path}.input_rate_bp`), deductible_share_bp: integer(parsed.deductible_share_bp, `${path}.deductible_share_bp`) }
 }
 
-function parseIncomeTax(value: unknown, path: string): IncomeTaxPolicy {
+export function parseIncomeTax(value: unknown, path: string): IncomeTaxPolicy {
   const parsed = record(value, path)
   exact(parsed, ["rate_bp", "loss_carryforward_years"], path)
-  return { rate_bp: integer(parsed.rate_bp, `${path}.rate_bp`), loss_carryforward_years: integer(parsed.loss_carryforward_years, `${path}.loss_carryforward_years`, 0) }
+  const rate = integer(parsed.rate_bp, `${path}.rate_bp`, -2147483648)
+  const years = integer(parsed.loss_carryforward_years, `${path}.loss_carryforward_years`, 0)
+  if (rate > 2147483647) throw new SaveSchemaError(`${path}.rate_bp`, "超出 i32 范围")
+  if (years > 65535) throw new SaveSchemaError(`${path}.loss_carryforward_years`, "超出 u16 范围")
+  return { rate_bp: rate, loss_carryforward_years: years }
 }
 
 function parseLossEntry(value: unknown, path: string): LossEntry {
   const parsed = record(value, path)
   exact(parsed, ["origin_year", "remaining"], path)
-  return { origin_year: integer(parsed.origin_year, `${path}.origin_year`), remaining: amount(parsed.remaining, `${path}.remaining`) }
+  const year = integer(parsed.origin_year, `${path}.origin_year`, -2147483648)
+  if (year > 2147483647) throw new SaveSchemaError(`${path}.origin_year`, "超出 i32 范围")
+  return { origin_year: year, remaining: amount(parsed.remaining, `${path}.remaining`) }
 }
 
 function parseLoan(value: unknown, path: string): IndustrialLoanState {

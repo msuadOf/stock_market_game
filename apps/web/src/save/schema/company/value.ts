@@ -31,6 +31,8 @@ export function i128(value: unknown, path: string): I128 {
 export function amount(value: unknown, path: string): DecimalAmount {
   const parsed = string(value, path)
   if (!AMOUNT.test(parsed)) throw new SaveSchemaError(path, "必须是两位小数的会计金额")
+  const cents = BigInt(parsed.replace(".", ""))
+  if (cents < -I128_MAX || cents > I128_MAX) throw new SaveSchemaError(path, "会计金额超出 Rust i128 分值域")
   return parsed
 }
 
