@@ -1,0 +1,7 @@
+
+running 1 test
+test session::protocol::company_reads::tests::rights_offerings_return_nonempty_owner_entitlement_without_other_holders ... COMPANY_READ_FIXTURE {"owner":"0","value":{"data":[{"event_id":"read-rights","ex_rights_on":"2030-01-02","issuer":0,"open_subscription_remaining_shares":null,"owner_entitlement":{"lock_until":null,"rights_shares":"10"},"payment_deadline_on":"2029-12-31","payment_start_on":"2029-12-25","payment_window":"Closed","price_per_share":"800","queued_subscription":null,"settled_subscription":null,"settlement_on":"2030-01-03","stage":"Entitled","stock":"600888"}],"kind":"OwnerRightsOfferings"}}
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2830 filtered out; finished in 0.59s
+

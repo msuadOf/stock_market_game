@@ -5,6 +5,10 @@ import { createRoot, type Root } from "react-dom/client";
 import { createServer, type ViteDevServer } from "vite";
 import { Provider } from "react-redux";
 import { useCompanyQuery } from "./use-company-query.ts";
+import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { createRemoteHost } from "../../host/remote-host.ts";
+import { market } from "../../host/protocol-test-fixtures.ts";
 
 /** 仅实现 ReactDOM 所需的内存 DOM；hooks、调度、effect 与 cleanup 均由真实 React 执行。 */
 class MemoryNode {
@@ -270,6 +274,64 @@ test("App ConnectedCompanyPanel 实际消费 membership 就绪与 generation，�
     assert.match(view.container.textContent, /尚未加入市场.*本人/);
     assert.doesNotMatch(view.container.textContent, /9007199254740993.*股/);
   } finally { await view.unmount(); }
+});
+
+test("App ConnectedCompanyPanel 经真实 Remote host 展示 Rust 同局六种只读 JSON", { timeout: 10_000 }, async () => {
+  const bytes = readFileSync(new URL("../../host/fixtures/company-read/wire-server.json", import.meta.url));
+  assert.equal(createHash("sha256").update(bytes).digest("hex"), "399e7a0831069d7602accf6fa25b8c3ad9ea9bf1d18cd45613345e8277b40c1a");
+  const rows = JSON.parse(bytes.toString("utf8")) as { generation: string; owner: string; value: { kind: string; data: unknown } }[];
+  const byKind = new Map(rows.map(row => [row.value.kind, row]));
+  const calls: { session_id: string; generation: string; query: { kind: string; data?: unknown } }[] = [];
+  // 仅传输与 baseline 受控；查询响应逐字来自同一个真实 Rust server fixture。
+  const fetchFn = (async (input: string | URL | Request, init?: RequestInit) => {
+    const url = String(input);
+    if (url.endsWith("/api/new")) return new Response(JSON.stringify({ session_id: "fixture-session", session_token: "fixture-token" }));
+    if (url.includes("/api/host-capabilities?")) return new Response(JSON.stringify({ npcDecisionDiagnostics: false }));
+    if (url.endsWith("/api/running") && init?.method === "POST") return new Response(null);
+    if (url.endsWith("/api/company-read-query")) {
+      assert.equal(init?.method, "POST");
+      assert.equal(new Headers(init?.headers).get("authorization"), "Bearer fixture-token");
+      const request = JSON.parse(String(init?.body)) as typeof calls[number];
+      assert.deepEqual(Object.keys(request).sort(), ["generation", "query", "session_id"]);
+      assert.equal(request.session_id, "fixture-session"); assert.equal(request.generation, "1");
+      calls.push(request);
+      const row = byKind.get(request.query.kind); assert.ok(row);
+      return new Response(JSON.stringify(row));
+    }
+    if (url.endsWith("/api/session?session_id=fixture-session") && init?.method === "DELETE") return new Response(null);
+    throw new Error(`界面 fixture 不支持请求：${url}`);
+  }) as typeof fetch;
+  const socket = { readyState: 1, close() {}, send() {}, onmessage: null, onclose: null, onerror: null } as unknown as WebSocket;
+  const host = await createRemoteHost({} as import("../../types/engine.ts").SessionSetup, 1n, { baseUrl: "http://127.0.0.1:3000", fetchFn, webSocketFactory: () => socket });
+  const view = mounted();
+  try {
+    await host.start(() => undefined);
+    const stockCatalog = [{ id: 0, code: "600101" }];
+    const companyCatalog = [{ id: 0, code: "C-600101", name: "真实 fixture 公司", listed_stock: 0 }];
+    const snapshot = { seq: 0, tick: 0, day: 0, phase: "Continuous" as const, markets: { "0": market() }, accounts: {}, daily_candles: { "0": [] }, active_daily_candles: {} };
+    socket.onmessage!({ data: JSON.stringify({ Baseline: { timeline_generation: 1, snapshot, stock_catalog: stockCatalog, company_catalog: companyCatalog, civil_date: "2030-01-01", public_revision: 0, public_report_ids: [] } }) } as MessageEvent);
+    appStore.store.dispatch(baselineActions.installHostBaseline({ generation: "1", companyGeneration: 1, companyCatalog, stockCatalog, civilDate: "2030-01-01", revision: null, snapshot: host.snapshot() }));
+    appStore.store.dispatch(appStore.setRemoteMembership({ remote: true, accountId: "0", canControl: false, needsRejoin: false, generation: "1", ready: true }));
+    const panel = createElement(connected.ConnectedCompanyPanel, { stockContext: true, initialCivilDate: "2030-01-01", onCompanyQuery: () => {}, onAdvanceCivilDay: async () => {}, contractReadHost: host });
+    const runtimeProps = { autoOrderManagerRef: { current: null }, hostRef: { current: host }, setNotice: () => {}, children: panel };
+    const providerProps = { store: appStore.store, children: createElement(marketProvider.MarketRuntimeProvider, runtimeProps) };
+    await view.render(createElement(Provider, providerProps));
+    assert.match(view.container.textContent, /10000000 股/);
+    assert.match(view.container.textContent, /可分配 1710000\.00 元/);
+    assert.match(view.container.textContent, /简税（分红付款日按开局比例代扣/);
+    assert.match(view.container.textContent, /查询未返回本人个人股息税账记录/);
+    assert.match(view.container.textContent, /当前仅支持只读查询/);
+    const input = elements(view.container).find(node => node.attributes["aria-label"] === "期间解释期间末日"); assert.ok(input);
+    const key = Object.keys(input).find(name => name.startsWith("__reactProps$")); assert.ok(key);
+    const props = (input as unknown as Record<string, { onChange: (event: { currentTarget: { value: string } }) => void }>)[key]!;
+    await act(async () => props.onChange({ currentTarget: { value: "2029-12-31" } }));
+    await click(view.container, "查询期间解释");
+    assert.match(view.container.textContent, /上一期：营收 1000000\.00 元/);
+    assert.deepEqual(calls.map(call => call.query.kind).sort(), [...byKind.keys()].sort());
+    assert.deepEqual(calls.find(call => call.query.kind === "CompanyCapabilities")!.query, { kind: "CompanyCapabilities", data: { company: 0 } });
+    assert.deepEqual(calls.find(call => call.query.kind === "CompanyPeriodExplanation")!.query, { kind: "CompanyPeriodExplanation", data: { company: 0, period_end: "2029-12-31" } });
+    assert.doesNotMatch(view.container.textContent, /提交认购|提交提案|批准分红|已结清|查询失败/);
+  } finally { await view.unmount(); await host.dispose(); }
 });
 
 test("公司能力只读利润可用与实际结算不可用并列；真实空不冒查询失败", async () => {

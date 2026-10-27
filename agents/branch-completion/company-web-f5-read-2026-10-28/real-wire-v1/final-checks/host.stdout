@@ -1,0 +1,27 @@
+✔ Worker 真实 host 注册公司只读查询，发送同代请求且不能指定其他账户 (6.090577ms)
+✔ Worker 真实 host 拒绝其他账户回执与错 kind，不用空列表掩盖失败 (1.993598ms)
+✔ Worker 真实 host 销毁后拒绝迟到的本人查询成功 (0.732602ms)
+✔ Worker 本地固定玩家零不能接受改写为其他 owner 的完整回执 (0.583787ms)
+✔ Worker 同 generation 重装基线仍拒绝旧目录查询结果 (0.755192ms)
+✔ Tauri 真实 host 注册公司只读查询，发送同代请求且不能指定其他账户 (2.529833ms)
+✔ Tauri 真实 host 拒绝其他账户回执与错 kind，不用空列表掩盖失败 (0.604467ms)
+✔ Tauri 真实 host 销毁后拒绝迟到的本人查询成功 (0.492264ms)
+✔ Tauri 本地固定玩家零不能接受改写为其他 owner 的完整回执 (0.603508ms)
+✔ Tauri 同 generation 重装基线仍拒绝旧目录查询结果 (0.957178ms)
+✔ Remote 真实 host 注册公司只读查询，发送同代请求且不能指定其他账户 (26.559763ms)
+✔ Remote 真实 host 拒绝其他账户回执与错 kind，不用空列表掩盖失败 (1.598267ms)
+✔ Remote 真实 host 销毁后拒绝迟到的本人查询成功 (1.095962ms)
+✔ Remote 同 generation 重装基线仍拒绝旧目录查询结果 (0.994099ms)
+✔ Tauri 公司查询拒绝保留结构化失败的可见详情，不将对象显示成 object Object (0.929507ms)
+✔ Worker 真实 Rust 六 kind 原始 JSON 通过现有 TypeScript host 与严格 decoder (2.782611ms)
+✔ Tauri 真实 Rust 六 kind 原始 JSON 通过现有 TypeScript host 与严格 decoder (0.67004ms)
+✔ Remote 真实 Rust 六 kind 原始 JSON 通过现有 TypeScript host 与严格 decoder (1.786752ms)
+✔ Tauri 真实 IPC 领域拒绝保留 BusinessCondition 与尚未结算的具体原因 (0.705551ms)
+ℹ tests 19
+ℹ suites 0
+ℹ pass 19
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 293.497073

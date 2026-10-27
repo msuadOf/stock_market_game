@@ -1,0 +1,46 @@
+{
+  "copies": [
+    {
+      "sourcePath": "/data1/baiyifan/workplace/stock_market_game/.worktree/company-query-host-2026-10-28/agents/branch-completion/company-query-host-2026-10-28/four-host-green-02/company_views_preserve_nonempty_existing_domain_results_and_save_bytes.stdout",
+      "copyPath": "agents/branch-completion/company-web-f5-read-2026-10-28/real-wire-v1/rust-stdout/company_views_preserve_nonempty_existing_domain_results_and_save_bytes.stdout",
+      "sha256": "f0a9299298c2ab625212d205410a97f4fc9f9d3969f4a21d0a4d05ca4fa0d474",
+      "bytes": 2631
+    },
+    {
+      "sourcePath": "/data1/baiyifan/workplace/stock_market_game/.worktree/company-query-host-2026-10-28/agents/branch-completion/company-query-host-2026-10-28/four-host-green-02/flat_receipts_return_nonempty_owner_facts_without_other_accounts.stdout",
+      "copyPath": "agents/branch-completion/company-web-f5-read-2026-10-28/real-wire-v1/rust-stdout/flat_receipts_return_nonempty_owner_facts_without_other_accounts.stdout",
+      "sha256": "0e3ce2ee5df64f5866f8ce62e701464f9811c109848f1c9deeed8fffb82df1de",
+      "bytes": 459
+    },
+    {
+      "sourcePath": "/data1/baiyifan/workplace/stock_market_game/.worktree/company-query-host-2026-10-28/agents/branch-completion/company-query-host-2026-10-28/four-host-green-02/global_outstanding_is_filtered_to_the_authenticated_owner.stdout",
+      "copyPath": "agents/branch-completion/company-web-f5-read-2026-10-28/real-wire-v1/rust-stdout/global_outstanding_is_filtered_to_the_authenticated_owner.stdout",
+      "sha256": "fb81de30c68689fce8002794efebd5afb45408968fae22ead5f83752ea705dec",
+      "bytes": 425
+    },
+    {
+      "sourcePath": "/data1/baiyifan/workplace/stock_market_game/.worktree/company-query-host-2026-10-28/agents/branch-completion/company-query-host-2026-10-28/four-host-green-02/rights_offerings_return_nonempty_owner_entitlement_without_other_holders.stdout",
+      "copyPath": "agents/branch-completion/company-web-f5-read-2026-10-28/real-wire-v1/rust-stdout/rights_offerings_return_nonempty_owner_entitlement_without_other_holders.stdout",
+      "sha256": "75014097a79fc2567c002136fcbc00e236a6b889f69c8ff431aaa75000ff3736",
+      "bytes": 731
+    },
+    {
+      "sourcePath": "/data1/baiyifan/workplace/stock_market_game/.worktree/company-query-host-2026-10-28/agents/branch-completion/company-query-host-2026-10-28/four-host-green-02/company_read_route_authenticates_and_preserves_owner_and_generation.stdout",
+      "copyPath": "agents/branch-completion/company-web-f5-read-2026-10-28/real-wire-v1/rust-stdout/company_read_route_authenticates_and_preserves_owner_and_generation.stdout",
+      "sha256": "3825961ce591ff703be433004872f371a2f4cc27f2b66a78964df061460f93fb",
+      "bytes": 3011
+    },
+    {
+      "sourcePath": "/data1/baiyifan/workplace/stock_market_game/.worktree/company-query-host-2026-10-28/agents/branch-completion/company-query-host-2026-10-28/four-host-green-02/company_read_ipc_registers_six_queries_and_preserves_typed_rejections.stdout",
+      "copyPath": "agents/branch-completion/company-web-f5-read-2026-10-28/real-wire-v1/rust-stdout/company_read_ipc_registers_six_queries_and_preserves_typed_rejections.stdout",
+      "sha256": "a021dd460772d16a7201bed4da5b30d5abc8e7143f2c7114881305c5b31d1971",
+      "bytes": 3244
+    },
+    {
+      "sourcePath": "/data1/baiyifan/workplace/stock_market_game/.worktree/company-query-host-2026-10-28/agents/branch-completion/company-query-host-2026-10-28/four-host-green-02/company_read_ipc_registers_six_queries_and_preserves_typed_rejections.stdout",
+      "copyPath": "agents/branch-completion/company-web-f5-read-2026-10-28/real-wire-v1/rust-stdout/company_read_ipc_registers_six_queries_and_preserves_typed_rejections.stdout",
+      "sha256": "a021dd460772d16a7201bed4da5b30d5abc8e7143f2c7114881305c5b31d1971",
+      "bytes": 3244
+    }
+  ]
+}

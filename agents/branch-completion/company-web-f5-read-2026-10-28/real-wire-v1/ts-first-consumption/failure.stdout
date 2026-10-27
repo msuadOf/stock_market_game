@@ -1,0 +1,9 @@
+✔ Tauri 真实 IPC 领域拒绝保留 BusinessCondition 与尚未结算的具体原因 (6.114328ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 1
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 240.180362

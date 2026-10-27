@@ -32,3 +32,7 @@ App 的桌面与移动公司页面均通过 `ConnectedCompanyPanel` 挂载现有
 - W1 冻结 `9a1cf4ea` 不含本片。`worker-query-narrow-v1.patch` 已对该树实际执行只读 `git apply --check` 并退出 0；没有写入 W1 delivery，也不据此宣称 W1 构建或 browser 已通过。
 
 独立完整审查及发现修复记录见 [app-read-independent-review.md](app-read-independent-review.md)。产品提交须等待未实施者对最终指纹及发行关系修复复核。
+
+## 真实 Rust wire 消费追加批次
+
+`e2b831fd` 之后追加测试原始 Rust JSON 的消费，生产实现未变化。三类 TypeScript host 消费 18 份真实结果，Tauri 消费实际拒绝；真实 React/Redux 的 ConnectedCompanyPanel 经 Remote host 展示同局六种 JSON。来源、失败原件、最终检查与准确限制见 [real-wire-v1/README.md](real-wire-v1/README.md)。本批 native fixture 消费不改变原 `SOURCE_ONLY` 审查的历史范围，也不代表 WASM JavaScript export、browser、F6 或真实投资者结算完成。

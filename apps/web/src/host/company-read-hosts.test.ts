@@ -7,6 +7,8 @@ import { createWorkerHost } from "./worker-host.ts";
 import { market, dailyCandle } from "./protocol-test-fixtures.ts";
 import type { EngineHost } from "./engine-host.ts";
 import type { SessionSetup } from "../types/engine.ts";
+import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 
 const snapshot = { seq: 0, tick: 0, day: 0, phase: "Continuous", markets: { "0": market() }, accounts: {}, daily_candles: { "0": [] }, active_daily_candles: { "0": dailyCandle() } };
 const stocks = [{ id: 0, code: "600101" }];
@@ -17,7 +19,7 @@ type Calls = { query: unknown; generation: unknown; account?: unknown }[];
 type Answer = (kind: string) => unknown | Promise<unknown>;
 const answer: Answer = kind => ({ owner: "0", value: { kind, data: kind === "AccountDividendTaxStatus" ? status : kind === "OwnerFlatWithholdingReceipts" ? [flat] : [] } });
 
-async function withHost(kind: "Worker" | "Tauri" | "Remote", body: (host: EngineHost, calls: Calls, respond: (value: Answer) => void, replaceBaseline: () => Promise<void>) => Promise<void>) {
+async function withHost(kind: "Worker" | "Tauri" | "Remote", body: (host: EngineHost, calls: Calls, respond: (value: Answer) => void, replaceBaseline: () => Promise<void>) => Promise<void>, catalog = { stocks, companies }) {
   const calls: Calls = []; let response = answer;
   let host: EngineHost | undefined;
   let replaceBaseline: () => Promise<void> = async () => { throw new Error("基线 fixture 尚未初始化"); };
@@ -41,9 +43,9 @@ async function withHost(kind: "Worker" | "Tauri" | "Remote", body: (host: Engine
       restore.push(() => { if (original) Object.defineProperty(globalThis, "Worker", original); else Reflect.deleteProperty(globalThis, "Worker"); });
       const pending = createWorkerHost({} as SessionSetup, 1n);
       QueryWorker.current.emit({ type: "ingress", generation: 1, shared: false });
-      QueryWorker.current.emit({ type: "baseline", generation: 1, snapshot, stockCatalog: stocks, companyCatalog: companies, civilDate: "2030-06-01" });
+      QueryWorker.current.emit({ type: "baseline", generation: 1, snapshot, stockCatalog: catalog.stocks, companyCatalog: catalog.companies, civilDate: "2030-06-01" });
       host = await pending;
-      replaceBaseline = async () => QueryWorker.current.emit({ type: "baseline", generation: 1, snapshot, stockCatalog: stocks, companyCatalog: companies, civilDate: "2030-06-01" });
+      replaceBaseline = async () => QueryWorker.current.emit({ type: "baseline", generation: 1, snapshot, stockCatalog: catalog.stocks, companyCatalog: catalog.companies, civilDate: "2030-06-01" });
     } else if (kind === "Tauri") {
       const original = Object.getOwnPropertyDescriptor(globalThis, "window");
       Object.defineProperty(globalThis, "window", { configurable: true, value: { crypto: globalThis.crypto } });
@@ -51,7 +53,7 @@ async function withHost(kind: "Worker" | "Tauri" | "Remote", body: (host: Engine
       mockIPC(async (command, input) => {
         if (command === "create_session") return "session-1";
         if (command === "host_capabilities") return { npcDecisionDiagnostics: false };
-        if (command === "engine_baseline") return { generation: "1", timeline_id: "t1", snapshot, stock_catalog: stocks, company_catalog: companies, civil_date: "2030-06-01" };
+        if (command === "engine_baseline") return { generation: "1", timeline_id: "t1", snapshot, stock_catalog: catalog.stocks, company_catalog: catalog.companies, civil_date: "2030-06-01" };
         if (command === "company_read_query") {
           const args = input as Record<string, unknown>;
           calls.push({ query: args.query, generation: args.generation, account: args.account });
@@ -79,8 +81,8 @@ async function withHost(kind: "Worker" | "Tauri" | "Remote", body: (host: Engine
       const socket = { readyState: 1, close() {}, send() {}, onmessage: null, onclose: null, onerror: null } as unknown as WebSocket;
       host = await createRemoteHost({} as SessionSetup, 1n, { baseUrl: "http://127.0.0.1:3000", fetchFn, webSocketFactory: () => socket });
       await host.start(() => undefined);
-      socket.onmessage!({ data: JSON.stringify({ Baseline: { timeline_generation: 1, snapshot, stock_catalog: stocks, company_catalog: companies, civil_date: "2030-06-01", public_revision: 0, public_report_ids: [] } }) } as MessageEvent);
-      replaceBaseline = async () => { socket.onmessage!({ data: JSON.stringify({ Baseline: { timeline_generation: 1, snapshot, stock_catalog: stocks, company_catalog: companies, civil_date: "2030-06-01", public_revision: 1, public_report_ids: [] } }) } as MessageEvent); };
+      socket.onmessage!({ data: JSON.stringify({ Baseline: { timeline_generation: 1, snapshot, stock_catalog: catalog.stocks, company_catalog: catalog.companies, civil_date: "2030-06-01", public_revision: 0, public_report_ids: [] } }) } as MessageEvent);
+      replaceBaseline = async () => { socket.onmessage!({ data: JSON.stringify({ Baseline: { timeline_generation: 1, snapshot, stock_catalog: catalog.stocks, company_catalog: catalog.companies, civil_date: "2030-06-01", public_revision: 1, public_report_ids: [] } }) } as MessageEvent); };
     }
     await body(host, calls, next => { response = next; }, replaceBaseline);
   } finally {
@@ -143,6 +145,54 @@ test("Tauri 公司查询拒绝保留结构化失败的可见详情，不将对�
       assert.ok(error instanceof Error);
       assert.match(error.message, /Tauri.*公司查询/);
       assert.match(error.message, /UnknownCompany/);
+      assert.doesNotMatch(error.message, /\[object Object\]/);
+      return true;
+    });
+  });
+});
+
+type RustWireRow = { generation?: string; owner: string; value: { kind: string; data: unknown } };
+function rustWire(name: string, expectedSha: string): RustWireRow[] {
+  const bytes = readFileSync(new URL(`./fixtures/company-read/${name}`, import.meta.url));
+  assert.equal(createHash("sha256").update(bytes).digest("hex"), expectedSha);
+  return JSON.parse(bytes.toString("utf8")) as RustWireRow[];
+}
+const actualRust = {
+  Worker: rustWire("wire-engine.json", "241c0007905ad4e3f023c885980b618a79a20fd593dd900b3614bc717462b7da"),
+  Remote: rustWire("wire-server.json", "399e7a0831069d7602accf6fa25b8c3ad9ea9bf1d18cd45613345e8277b40c1a"),
+  Tauri: rustWire("wire-tauri.json", "8939c269d5cbe7f41bd8e35b1a28cf5832ebe2dd8bf6d06822af640ff93b2a13"),
+};
+
+for (const kind of ["Worker", "Tauri", "Remote"] as const) test(`${kind} 真实 Rust 六 kind 原始 JSON 通过现有 TypeScript host 与严格 decoder`, { timeout: 10_000 }, async () => {
+  const rows = actualRust[kind];
+  const byKind = new Map(rows.map(row => [row.value.kind, row]));
+  assert.equal(byKind.size, 6);
+  // 单股目录来自各 Rust fixture 的 setup 与 issuer_specs；这是受控 baseline，非 browser 取样。
+  const code = kind === "Worker" ? "600888" : "600101";
+  await withHost(kind, async (host, calls, respond) => {
+    respond(queryKind => { const row = byKind.get(queryKind); assert.ok(row); return row; });
+    assert.deepEqual(await host.queryAccountDividendTaxStatus!(), byKind.get("AccountDividendTaxStatus")!.value.data);
+    assert.deepEqual(await host.queryCompanyCapabilities!(`C-${code}`), byKind.get("CompanyCapabilities")!.value.data);
+    assert.deepEqual(await host.queryCompanyPeriodExplanation!(`C-${code}`, "2029-12-31"), byKind.get("CompanyPeriodExplanation")!.value.data);
+    assert.deepEqual(await host.queryDividendTaxOutstandingViews!(), byKind.get("DividendTaxOutstandingViews")!.value.data);
+    assert.deepEqual(await host.queryOwnerFlatWithholdingReceipts!(), byKind.get("OwnerFlatWithholdingReceipts")!.value.data);
+    assert.deepEqual(await host.queryOwnerRightsOfferings!(), byKind.get("OwnerRightsOfferings")!.value.data);
+    assert.equal(calls.length, 6);
+    assert.deepEqual(calls[1].query, { kind: "CompanyCapabilities", data: { company: 0 } });
+    assert.equal(calls.every(call => call.account === undefined), true);
+  }, { stocks: [{ id: 0, code }], companies: [{ id: 0, code: `C-${code}`, name: "Rust fixture 公司", listed_stock: 0 }] });
+});
+
+test("Tauri 真实 IPC 领域拒绝保留 BusinessCondition 与尚未结算的具体原因", { timeout: 10_000 }, async () => {
+  const bytes = readFileSync(new URL("./fixtures/company-read/wire-tauri-failures.json", import.meta.url));
+  assert.equal(createHash("sha256").update(bytes).digest("hex"), "a63eac0b5f3f0b68672d3b8419b9c9520cab0db9f9b859c4f6c3e45205f0bfa0");
+  const [failure] = JSON.parse(bytes.toString("utf8")) as unknown[];
+  await withHost("Tauri", async (host, _calls, respond) => {
+    respond(() => { throw failure; });
+    await assert.rejects(host.queryCompanyPeriodExplanation!("实际发行人", "2030-01-31"), error => {
+      assert.ok(error instanceof Error);
+      assert.match(error.message, /BusinessCondition/);
+      assert.match(error.message, /2030-01-31.*尚未结算/);
       assert.doesNotMatch(error.message, /\[object Object\]/);
       return true;
     });
