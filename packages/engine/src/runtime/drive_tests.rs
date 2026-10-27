@@ -571,12 +571,10 @@ fn d3a2c_group_open_derivation_matches_session_observe() {
     };
     // Sol 整改 5：曝光面同输入（共享 exposed_stocks_shared——组内与
     // session 版同一函数；此前两侧空集）。
-    let (catalog, registry, operations) = session.runtime_company_handles();
-    let codes = session.runtime_stock_codes();
+    let (_, company_facts) = session.runtime_company_handles().expect("选定公司事实合法");
     let exposed = crate::session::exposed_stocks_shared(
         &session.runtime_library_handle().1,
-        &registry,
-        &codes,
+        &company_facts,
         *derivation_now,
     );
     let observation = crate::session::DecisionChainObservation {

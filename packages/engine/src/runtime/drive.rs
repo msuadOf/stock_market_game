@@ -409,17 +409,15 @@ impl RuntimeDriver {
         // discovery_candidates 输入——此前构造期空库，红证
         // d3a2c_group_open_derivation 显红：组内 belief 条目不创建）。
         spec.library = Some(session.runtime_library_handle().1);
-        // D3a-2c 件2：决策链根组装投影（catalog 克隆、registry/operations
+        // D3a-2c 件2：决策链根组装投影（catalog 克隆、初始 CompanyReadFacts
         // Arc 共享、名册 AccountId、相位参数——observe 直调的组内输入面）。
         {
-            let (catalog, registry, operations) = session.runtime_company_handles();
+            let (catalog, initial_company_facts) = session.runtime_company_handles().map_err(|error| error.to_string())?;
             let setup_civil = session.export_setup_for_runtime();
             let chain_params_by_id = session.runtime_chain_params();
-            let total_shares = session.runtime_total_shares();
             spec.root_projection = Some(std::sync::Arc::new(super::world::RootProjection {
                 catalog,
-                company_registry: registry,
-                operations,
+                initial_company_facts,
                 account_ids: ids.clone(),
                 auction_ticks: setup_civil.auction_ticks,
                 closing_auction_ticks: setup_civil.closing_auction_ticks,
@@ -430,10 +428,8 @@ impl RuntimeDriver {
                 // D5 #4 retail 链：决策流种子基（npc_seed_base 同源）。
                 session_seed: session.runtime_session_seed(),
                 urgency_policy: session.runtime_urgency_policy(),
-                total_shares,
                 max_order_qty_limit: session.runtime_max_order_qty_limit(),
                 tick_size_cents: session.runtime_tick_size_cents(),
-                stock_codes: session.runtime_stock_codes(),
             }));
         }
         // D3a-2：会话预置日 K 历史投影进 desk（链观察的日 K 权威——
@@ -2227,8 +2223,6 @@ impl RuntimeDriver {
             day,
             library,
             attentions,
-            issuer_map: session.runtime_issuer_map(),
-            company_specs: session.runtime_company_specs(),
         };
         let collected = self
             .world

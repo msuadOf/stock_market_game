@@ -710,13 +710,6 @@ pub enum GroupIn {
             crate::AccountId,
             crate::session::NpcAttentionState,
         )>,
-        /// 股→发行人。
-        issuer_map: std::collections::BTreeMap<crate::StockId, crate::company::CompanyId>,
-        /// 发行人→(spec.kind, issued_shares)。
-        company_specs: std::collections::BTreeMap<
-            crate::company::CompanyId,
-            (crate::company::CompanyKind, u64),
-        >,
     },
     /// 计划簿生产通道（D3a-2c 件5：组内 PlanBook 上行——plans_debug
     /// 投影源）。⑤b 收袋刀：组端 dirty 门控——簿未变时回空簿（驱动器
