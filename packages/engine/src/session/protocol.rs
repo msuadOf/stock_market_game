@@ -5,6 +5,8 @@ use super::{DailyCandle, Event, Snapshot, StockId, TradingPhase};
 use std::collections::{BTreeMap, BTreeSet};
 mod civil;
 mod commit;
+mod company_reads;
+pub use company_reads::{CompanyReadError, CompanyReadFailure, CompanyReadQuery, CompanyReadResult};
 mod delta;
 mod facts;
 mod optional_u64;
