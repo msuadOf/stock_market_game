@@ -407,6 +407,7 @@ fn d2b_each_successful_manual_outer_publishes_only_drain_and_clears_decisions() 
             RetailOrderDiagnosticEvent::Canceled { account: BUYER, code: CODE, order_id, remaining_qty: 200 },
         ]);
         assert!(game.last_retail_decisions().is_empty(), "manual Drain 没有新的 observe，不能保留旧 decisions");
-        assert!(driver.collect_resting_facts().unwrap()[0].is_empty());
+        // 同 tick Drain 后 PublishedTick 仍是清簿前快照；空簿断言须查真实 desk。
+        assert!(driver.collect_resting_facts_live().unwrap()[0].is_empty());
     }
 }

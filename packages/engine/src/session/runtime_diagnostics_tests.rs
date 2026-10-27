@@ -139,28 +139,39 @@ fn d1_seal_failure_keeps_facts_and_retry_publishes_once() {
 }
 
 #[test]
-fn d1_unresolved_source_reports_error_before_plain_step_install_and_rolls_back() {
+fn d1_unresolved_source_before_ordinary_install_preserves_terminal_raw_and_prior_mirror() {
     let mut game = game();
     enqueue(&mut game);
     let checkpoint = game.clone_for_tick_shadow().unwrap();
     let mut driver = driver(&mut game);
     let before_hash = game.business_state_hash().unwrap();
+    let mut oracle = game.clone_for_tick_shadow().unwrap();
     driver.unresolved_causal_source_for_test();
     let error = game.runtime_step_with_install(&mut driver).unwrap_err();
     assert!(matches!(error, StepFatal::InvariantViolation { ref location, ref description }
         if location == "runtime::diagnostics::prepare" && description.contains("NonPlayerUnresolved")));
     assert!(game.causal_facts().is_empty());
     assert_eq!(game.business_state_hash().unwrap(), before_hash);
-    assert!(game.runtime_discard_driver_flag);
+    assert!(!game.runtime_discard_driver_flag, "E2 ordinary terminal 保留 driver 和首错 raw");
+    let terminal = driver.terminal_causal_snapshot_for_test().expect("必须保留真实 raw");
+    assert!(!terminal.1.is_empty());
+    assert_eq!(terminal.2, error);
+    let world_tick = driver.world_committed_tick();
+    assert_eq!(driver.step_frame_equivalent(&mut game).unwrap_err(), error);
+    assert_eq!(driver.world_committed_tick(), world_tick);
+    assert_eq!(driver.terminal_causal_snapshot_for_test(), Some(terminal));
+    oracle.poison_runtime_step(error);
+    assert_eq!(game.session_state_hash().unwrap(), oracle.session_state_hash().unwrap());
     game = checkpoint;
     successful_submission(&mut game);
 }
 
 #[test]
-fn d1_unresolved_source_at_frame_entry_discards_driver_before_callback() {
+fn d1_unresolved_source_at_ordinary_frame_keeps_terminal_driver_before_callback() {
     let mut game = game();
     enqueue(&mut game);
     let before_hash = game.business_state_hash().unwrap();
+    let mut oracle = game.clone_for_tick_shadow().unwrap();
     let mut driver = crate::runtime::drive::RuntimeDriver::from_session(&mut game).unwrap();
     driver.unresolved_causal_source_for_test();
     game.runtime_driver = Some(std::sync::Mutex::new(driver));
@@ -169,9 +180,20 @@ fn d1_unresolved_source_at_frame_entry_discards_driver_before_callback() {
         callback = true;
         Ok(())
     });
-    assert!(result.is_err());
+    let fatal = result.unwrap_err();
+    assert!(matches!(&fatal, StepFatal::InvariantViolation { location, description }
+        if location == "runtime::diagnostics::prepare" && description.contains("NonPlayerUnresolved")));
     assert!(!callback);
-    assert!(game.runtime_driver.is_none());
+    assert!(game.runtime_driver.is_some(), "保留E2首错 driver");
+    let terminal = game.runtime_driver.as_ref().unwrap().lock().unwrap().terminal_causal_snapshot_for_test().unwrap();
+    assert!(!terminal.1.is_empty());
+    assert_eq!(terminal.2, fatal);
+    let world_tick = game.runtime_driver.as_ref().unwrap().lock().unwrap().world_committed_tick();
+    assert_eq!(game.step_via_runtime().unwrap_err(), fatal);
+    assert_eq!(game.runtime_driver.as_ref().unwrap().lock().unwrap().world_committed_tick(), world_tick);
+    assert_eq!(game.runtime_driver.as_ref().unwrap().lock().unwrap().terminal_causal_snapshot_for_test(), Some(terminal));
+    oracle.poison_runtime_step(fatal);
+    assert_eq!(game.session_state_hash().unwrap(), oracle.session_state_hash().unwrap());
     assert!(game.causal_facts().is_empty());
     assert_eq!(game.business_state_hash().unwrap(), before_hash);
 }
@@ -510,6 +532,7 @@ fn d2_prepare_market_after_real_fill_restores_both_install_capture_modes() {
         game.enqueue_player_intent(AccountId(0), Intent::PlaceMarket { code: StockId(1), side: crate::Side::Buy, qty: 100 }).unwrap();
         let mut runtime = driver(&mut game);
         let before = game.business_state_hash().unwrap();
+        let mut poison_oracle = game.clone_for_tick_shadow().unwrap();
         let error = if capture {
             game.runtime_step_with_install_returning_baseline(&mut runtime).err().unwrap()
         } else {
@@ -520,7 +543,20 @@ fn d2_prepare_market_after_real_fill_restores_both_install_capture_modes() {
         assert_eq!(runtime.world_report_log().last().unwrap().desk_trades.len(), 1, "prepare 拒绝前真实 World 已产生一笔双腿成交");
         assert_eq!(serde_json::to_value(game.causal_facts()).unwrap(), prior_facts);
         assert_eq!(game.business_state_hash().unwrap(), before);
-        assert!(game.runtime_discard_driver_flag);
+        if capture {
+            assert!(game.runtime_discard_driver_flag, "legacy returning-baseline 入口仍丢弃失败候选 driver");
+        } else {
+            assert!(!game.runtime_discard_driver_flag, "E2 ordinary 必须保留 terminal raw");
+            let terminal = runtime.terminal_causal_snapshot_for_test().unwrap();
+            assert!(!terminal.1.is_empty());
+            assert_eq!(terminal.2, error);
+            let world_tick = runtime.world_committed_tick();
+            assert_eq!(runtime.step_frame_equivalent(&mut game).unwrap_err(), error);
+            assert_eq!(runtime.world_committed_tick(), world_tick);
+            assert_eq!(runtime.terminal_causal_snapshot_for_test(), Some(terminal));
+        }
+        poison_oracle.poison_runtime_step(error);
+        assert_eq!(game.session_state_hash().unwrap(), poison_oracle.session_state_hash().unwrap());
         game = checkpoint;
         d2_place(&mut game, 0, 1, crate::Side::Buy, 995, 100);
         game.step().unwrap();

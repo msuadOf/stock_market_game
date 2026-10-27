@@ -34,7 +34,7 @@ fn check_failure(frame: bool) {
     drop(hook);
     assert!(!callback, "来源缺失必须早于 frame callback");
     assert!(matches!(&error, StepFatal::InvariantViolation { location, description }
-        if location == "RuntimeDriver::step_frame_equivalent"
+        if location == "runtime_mirror::prepare"
             && description.contains("ProtocolInvariant")
             && description.contains("causal Execution 缺失真实 Trade")), "必须由真实 coordinator 原 report 校验拒绝：{error:?}");
     assert_eq!((evidence.tick, evidence.round, evidence.stock), (3, 0, 1));
