@@ -580,8 +580,11 @@ pub struct ShareSplitBook {
 struct ShareSplitBookState {
     plan: ShareSplitEventPlan,
     status: ShareSplitStatus,
+    #[serde(deserialize_with = "crate::company::persistence::required_nullable")]
     registration: Option<RegistrationSnapshot>,
+    #[serde(deserialize_with = "crate::company::persistence::required_nullable")]
     receipt: Option<ShareSplitReceipt>,
+    #[serde(deserialize_with = "crate::company::persistence::required_nullable")]
     settled_on: Option<CivilDate>,
 }
 

@@ -428,7 +428,9 @@ struct StockDistributionBookState {
     status: StockDistributionStatus,
     #[serde(deserialize_with = "required_nullable_registration")]
     registration: Option<RegistrationSnapshot>,
+    #[serde(deserialize_with = "crate::company::persistence::required_nullable")]
     receipt: Option<StockDistributionReceipt>,
+    #[serde(deserialize_with = "crate::company::persistence::required_nullable")]
     credited_on: Option<CivilDate>,
 }
 

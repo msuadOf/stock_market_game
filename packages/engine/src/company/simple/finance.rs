@@ -244,6 +244,8 @@ impl SimpleFinanceState {
         end: CivilDate,
         amounts: &PeriodAmounts,
     ) -> Result<(), SimpleFinanceError> {
+        #[cfg(test)]
+        crate::company::source_probe::record(crate::company::source_probe::Call::SimpleFinalize);
         if start != self.as_of.next()?
             || start.day() != 1
             || end < start

@@ -12,8 +12,8 @@ mod candles;
 mod causal;
 mod civil_clock;
 mod company_assembly;
-mod company_catalog_view;
 mod company_facts;
+mod company_catalog_view;
 pub use company_catalog_view::{CompanyCatalogEntry, CompanyCatalogViewError};
 mod company_capability_views;
 #[cfg(test)]
@@ -28,11 +28,11 @@ mod company_closing_tests;
 mod company_groups;
 mod company_read_views;
 mod company_state;
-mod continuous_cancellation;
-mod corporate_actions;
 pub use company_state::SavedSessionCompanies;
 use company_state::SessionCompanies;
 mod company_capital_restore;
+mod continuous_cancellation;
+mod corporate_actions;
 mod decision_chain;
 mod deferred_drop;
 use crate::u64_decimal;
@@ -45,17 +45,17 @@ pub use deferred_drop::host_deferred_degradation as deferred_destruction_degrada
 pub use deferred_drop::DeferredDropDegradation;
 mod disclosures;
 mod envelope_projection;
-pub(crate) mod exchange_calendar_model;
 mod execution;
+pub(crate) mod exchange_calendar_model;
+pub(crate) mod market_calendar_context;
 mod failure;
 mod hash;
 mod history_reads;
-pub(crate) mod market_calendar_context;
-/// B2 件 5：市场历史查询面（保留历史分页/当日分钟K/日内均价）。
-mod market_history_query;
 /// B2 件 5：个人成交确认（交割单）——事实派生域（驱动器侧 receipt
 /// 派生入口 pub(crate)）。
 pub(crate) mod personal_trade_history;
+/// B2 件 5：市场历史查询面（保留历史分页/当日分钟K/日内均价）。
+mod market_history_query;
 mod shared_ingress;
 pub use shared_ingress::SharedSessionIngress;
 #[cfg(feature = "verification-harness")]
@@ -95,6 +95,8 @@ mod institutional_behavior;
 mod memberships;
 #[cfg(test)]
 mod memberships_tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod plan_identity_runtime_tests;
 mod minimal_snapshot;
 mod observation_clock;
 mod persistence;
@@ -102,8 +104,6 @@ pub mod pipeline;
 mod plan_chain_candidates;
 mod plan_continuation_domain;
 mod plan_execution;
-#[cfg(all(test, not(target_arch = "wasm32")))]
-mod plan_identity_runtime_tests;
 mod player_candidates;
 pub mod protocol;
 mod self_views;
@@ -118,25 +118,25 @@ pub use failure::StepFatal;
 pub use hash::StateHash;
 pub use history_reads::HistoricalStockData;
 // B3 远程登录批次：市场成员关系面（OpaqueSubjectId 鉴权主体→玩家账户）。
+pub use memberships::{
+    AdmissionFunding, MarketMembership, MarketMembershipState, MembershipError, OpaqueSubjectId,
+};
+pub use personal_trade_history::PersonalTradeConfirmation;
 /// 公司行为 spine 容器与 B4e 最小税务查询视图；不包含日终或命令接线。
 pub use corporate_actions::{
-    AccountDividendTaxStatusView, AccountStockDividendTaxStatus, DividendTaxOutstandingView,
-    DividendTaxStatus, FlatWithholdingReceipt, SessionCorporateActions,
-    SessionCorporateActionsError, TaxpayerIdentity,
-};
-pub use initial_allocation::{
-    InitialAllocation, InitialAllocationCategory, InitialAllocationKind, InitialStockAllocation,
+    AccountDividendTaxStatusView, AccountStockDividendTaxStatus,
+    DividendTaxOutstandingView, DividendTaxStatus, FlatWithholdingReceipt,
+    SessionCorporateActions, SessionCorporateActionsError, TaxpayerIdentity,
 };
 pub use market_history_query::{
     CurrentMinuteHistoryPhase, CurrentMinuteHistoryRequest, CurrentMinuteHistoryResponse,
     MarketHistoryAvailability, MarketHistoryEntry, MarketHistoryPage, MarketHistoryRequest,
 };
-pub use memberships::{
-    AdmissionFunding, MarketMembership, MarketMembershipState, MembershipError, OpaqueSubjectId,
-};
-pub use personal_trade_history::PersonalTradeConfirmation;
 pub use personal_trade_history::{
     PersonalTradeHistoryPage, PersonalTradeHistoryRequest, TradeHistoryReceiptCursor,
+};
+pub use initial_allocation::{
+    InitialAllocation, InitialAllocationCategory, InitialAllocationKind, InitialStockAllocation,
 };
 #[cfg(test)]
 mod continuous_cancellation_tests;
@@ -148,6 +148,8 @@ mod envelope_projection_hydration_tests;
 mod envelope_projection_tests;
 #[cfg(test)]
 mod failure_tests;
+#[cfg(all(test, feature = "simulation-diagnostics", not(target_arch = "wasm32")))]
+mod runtime_diagnostics_tests;
 #[cfg(test)]
 mod hash_contract_tests;
 #[cfg(test)]
@@ -162,8 +164,6 @@ mod player_candidates_tests;
 mod reconciliation_plan_phase_tests;
 #[cfg(test)]
 mod reconciliation_plan_tests;
-#[cfg(all(test, feature = "simulation-diagnostics", not(target_arch = "wasm32")))]
-mod runtime_diagnostics_tests;
 
 use account_paged_map::AccountPagedMap;
 use attention::NpcAttentionScheduler;
@@ -178,8 +178,8 @@ pub use attention::NpcAttentionState;
 pub(crate) mod notices;
 pub use civil_clock::{CivilClock, CivilClockError, CivilClockSave, CivilDayEndReport, CivilPhase};
 pub use company_groups::{GroupHolding, GroupStructure};
-pub(crate) use decision_chain::retail_analysis::{RetailAnalysisCtx, RetailStrategyInstance};
 pub use decision_chain::{BeliefDebugSummary, DecisionChainDiagnostics};
+pub(crate) use decision_chain::retail_analysis::{RetailAnalysisCtx, RetailStrategyInstance};
 pub(crate) use pipeline::npc_decisions::npc_rng_seed;
 // D3a-2c 件2/3：组线程组装/直调的承载类型（AccountBook 投影 + 时间映射）。
 pub(crate) use account_book::AccountBook;
@@ -187,22 +187,22 @@ pub(crate) use observation_clock::intraday_observation_second;
 // D3a-2c 件2/3：组线程直调 observe 的类型面（决策链深移植——方向 A；
 // crate 内可见——runtime 组线程组装/直调）。
 pub(crate) use decision_chain::{
-    buy_allocation_request, decide_plan_quote, exposed_stocks_shared, next_routable_buy_qty,
-    next_routable_sell_qty, open_position_action, DecisionChainObservation,
-    InstitutionDecisionRoot, PlanLifecycleAction, PlanPersonalState, PlanQuoteInputs,
-    PlanRootDiagnostics, RootReadContext,
+    DecisionChainObservation, InstitutionDecisionRoot, PlanLifecycleAction, PlanPersonalState,
+    PlanQuoteInputs, PlanRootDiagnostics, RootReadContext, buy_allocation_request,
+    decide_plan_quote, exposed_stocks_shared, next_routable_buy_qty, next_routable_sell_qty,
+    open_position_action,
 };
 // D3b 件 4：组线程复审宿主的共享类型面（trait+行为结构——两宿主实现
 // 同一 trait，行为不得分叉）。
-pub(crate) use institutional_behavior::assess_institution_behavior;
 pub(crate) use institutional_behavior::InstitutionBehavior;
+pub(crate) use institutional_behavior::assess_institution_behavior;
 // 转发 decision_chain 的 re-export（组线程经 crate::session 使用）。
-pub(crate) use decision_chain::{ratio_to_bp, PlanLifecycleReview, PlanReviewHost};
+pub(crate) use decision_chain::{PlanLifecycleReview, PlanReviewHost, ratio_to_bp};
 // D5 #2：组线程 attention evaluate 共用面（signal 概率+observe 门+wait
 /// 采样——旧管线 evaluate_candidate_with_signal 同式，字段不得分叉）。
 pub(crate) use attention::{
-    attention_candidate_is_observation, market_attention_signal, maximum_observation_probability,
-    sample_attention_wait,
+    attention_candidate_is_observation, market_attention_signal,
+    maximum_observation_probability, sample_attention_wait,
 };
 pub use disclosures::{
     disclosure_phase_observer, DayEndDisclosureCtx, DayEndDisclosures, DisclosureDispatch,
@@ -582,7 +582,8 @@ pub struct SaveSlot {
     /// 只含真实成交，零成交分钟不占位）。
     pub market_minute_bars: BTreeMap<StockId, Vec<crate::runtime::MinuteBarFact>>,
     /// 个人确认日志（B2 件 5：按账户展开——wire 形态平铺 Vec）。
-    pub personal_trade_confirmations: BTreeMap<AccountId, Vec<PersonalTradeConfirmation>>,
+    pub personal_trade_confirmations:
+        BTreeMap<AccountId, Vec<PersonalTradeConfirmation>>,
     /// 回执水位（B2 件 5 派生域游标——持久续号）。
     #[serde(default)]
     pub receipt_watermark: u64,
@@ -1580,8 +1581,7 @@ impl SessionSetup {
                 // fault1048: 携带公司字段而 company_system 缺席=配置残缺。
                 // ctx[0] = 残缺位图（按上注槽位）。
                 return Err(SessionError::InvalidSetup(ValidationFault::new(
-                    1048,
-                    vec![residue],
+                    1048, vec![residue],
                 )));
             }
             return Ok(());
@@ -1614,8 +1614,7 @@ impl SessionSetup {
             )));
         }
         // 月报排期域校验（携带即校验；报告频率独立于公司系统）。
-        if let Some(crate::information::ReportFrequency::Monthly { schedule }) =
-            self.report_frequency
+        if let Some(crate::information::ReportFrequency::Monthly { schedule }) = self.report_frequency
         {
             schedule.validate().map_err(|_error| {
                 // fault1050: 月报排期参数非法。槽0 待 C 批数值化
@@ -1854,7 +1853,8 @@ struct CommittableSessionState {
     /// get_or_insert；ledger clone 仅 step_frame 分叉路径记录——见
     /// runtime_step_with_install_inner 的 capture_undo 门控）。瞬态不入
     /// 存档/hash；shadow/commit 有意丢弃（与五域 undo 同生命周期）。
-    runtime_mirror_undo: Option<(BTreeMap<StockId, DeskBookMirror>, Vec<u64>)>,
+    runtime_mirror_undo:
+        Option<(BTreeMap<StockId, DeskBookMirror>, Vec<u64>)>,
     runtime_plans_undo: Option<crate::plans::PlanBook>,
     runtime_envelope_undo: Option<pipeline::EnvelopeLedger>,
     runtime_lifecycles_undo: Option<Vec<NpcOrderLifecycle>>,
@@ -2595,12 +2595,8 @@ impl GameSession {
                         id: format!("initial:{}:{}", spec.code.0, account.0),
                         qty,
                         acquired_on: settled_on,
-                        source:
-                            crate::company::share_registry::AcquisitionSource::InitialAllocation {
-                                evidence: format!(
-                                    "session-auto:initial-allocation:{}",
-                                    spec.code.0
-                                ),
+                        source: crate::company::share_registry::AcquisitionSource::InitialAllocation {
+                            evidence: format!("session-auto:initial-allocation:{}", spec.code.0),
                         },
                         restriction: crate::company::share_registry::ShareRestriction::Unrestricted,
                     }],
@@ -2626,8 +2622,7 @@ impl GameSession {
                         id: format!("initial:{}:founding", spec.code.0),
                         qty: remainder,
                         acquired_on: settled_on,
-                        source:
-                            crate::company::share_registry::AcquisitionSource::InitialAllocation {
+                        source: crate::company::share_registry::AcquisitionSource::InitialAllocation {
                             evidence: format!(
                                 "session-auto:initial-allocation:{}:founding",
                                 spec.code.0
@@ -2781,9 +2776,8 @@ impl GameSession {
                         vec![u64::from(issuer.0)],
                     ))
                 })?;
-            let registered_capital_cents = i128::from(par_cents)
-                .checked_mul(i128::from(total_shares))
-                .ok_or_else(|| {
+            let registered_capital_cents =
+                i128::from(par_cents).checked_mul(i128::from(total_shares)).ok_or_else(|| {
                     // fault1057: 注册资本（面值×总股本）溢出（setup 校验已防御，
                     // 此处复验兜底）。ctx=[面值分, 总股本]。
                     SessionError::InvalidSetup(ValidationFault::new(
@@ -3759,10 +3753,7 @@ impl GameSession {
         > = std::collections::BTreeMap::new();
         for event in events {
             if let Event::IntentRejected {
-                account,
-                code,
-                reason,
-                ..
+                account, code, reason, ..
             } = event
             {
                 if self.state.retail_experience.contains_key(account) {
@@ -4204,7 +4195,8 @@ impl GameSession {
                 /// 仅镜像在册 serial+1：闭合单 id 使 fault2044 显红。
                 let mut floor = mirror_max.saturating_add(1);
                 for (code, mirror) in &self.state.desk_book_mirror {
-                    floor = floor.max(crate::runtime::group::desk_order_id(
+                    floor = floor
+                        .max(crate::runtime::group::desk_order_id(
                             code.0 as crate::runtime::StockIdx,
                             mirror.next_serial,
                         ));
@@ -5250,11 +5242,13 @@ mod b2_bars_rollback_tests {
                 },
             )
             .unwrap();
-        assert!(session
+        assert!(
+            session
                 .step()
                 .expect("成交")
                 .iter()
-            .any(|e| matches!(e, crate::Event::Trade { .. })));
+                .any(|e| matches!(e, crate::Event::Trade { .. }))
+        );
     }
 
     #[test]
@@ -5311,10 +5305,7 @@ mod b2_bars_rollback_tests {
         /// 端到端重试链（seed/ledger 交互）登记台账，随 W3 接线批补。
         let seeds = session.runtime_market_seeds();
         assert_eq!(
-            seeds
-                .get(&code)
-                .map(|seed| seed.minute_bars.len())
-                .unwrap_or(0),
+            seeds.get(&code).map(|seed| seed.minute_bars.len()).unwrap_or(0),
             1,
             "重建 seed 携回滚后镜像（ghost 不入重建输入）"
         );
@@ -5368,11 +5359,13 @@ mod b2_query_contract_tests {
                 },
             )
             .unwrap();
-        assert!(session
+        assert!(
+            session
                 .step()
                 .expect("首步成交")
                 .iter()
-            .any(|e| matches!(e, crate::Event::Trade { .. })));
+                .any(|e| matches!(e, crate::Event::Trade { .. }))
+        );
     }
 
     fn date(s: &str) -> crate::calendar::CivilDate {
@@ -5429,27 +5422,11 @@ mod b2_query_contract_tests {
         }
         assert_eq!(entries.len(), 8, "八自然日全覆盖（含元旦）");
         let states: Vec<_> = entries.iter().map(|(_, a)| *a).collect();
-        assert_eq!(
-            states[0],
-            MarketHistoryAvailability::BeforeStart,
-            "2029-12-31 早于开局"
-        );
-        assert_eq!(
-            states[1],
-            MarketHistoryAvailability::BeforeStart,
-            "2030-01-01 元旦仍在开局前"
-        );
+        assert_eq!(states[0], MarketHistoryAvailability::BeforeStart, "2029-12-31 早于开局");
+        assert_eq!(states[1], MarketHistoryAvailability::BeforeStart, "2030-01-01 元旦仍在开局前");
         assert_eq!(states[2], MarketHistoryAvailability::Traded, "1/2 有成交");
-        assert_eq!(
-            states[3],
-            MarketHistoryAvailability::NoTrades,
-            "1/3 开市零成交"
-        );
-        assert_eq!(
-            states[4],
-            MarketHistoryAvailability::NoTrades,
-            "1/4 开市零成交"
-        );
+        assert_eq!(states[3], MarketHistoryAvailability::NoTrades, "1/3 开市零成交");
+        assert_eq!(states[4], MarketHistoryAvailability::NoTrades, "1/4 开市零成交");
         assert_eq!(states[5], MarketHistoryAvailability::Closed, "1/5 周六休市");
         assert_eq!(states[6], MarketHistoryAvailability::Closed, "1/6 周日休市");
         assert_eq!(states[7], MarketHistoryAvailability::NotEnded, "1/7 未结束");
@@ -5493,9 +5470,7 @@ mod b2_query_contract_tests {
         let before = session.state.history_reads.to_map();
         session.market_history_page(&request).unwrap();
         assert_eq!(session.state.history_reads.to_map(), before, "纯查询不记");
-        session
-            .query_market_history_for(AccountId(0), &request)
-            .unwrap();
+        session.query_market_history_for(AccountId(0), &request).unwrap();
         assert_eq!(
             session.state.history_reads[&AccountId(0)].stocks[&stock].read_count,
             1,
@@ -5506,9 +5481,7 @@ mod b2_query_contract_tests {
             "不记他人"
         );
         let current = CurrentMinuteHistoryRequest { stock };
-        session
-            .query_current_minute_history_for(AccountId(0), &current)
-            .unwrap();
+        session.query_current_minute_history_for(AccountId(0), &current).unwrap();
         assert_eq!(
             session.state.history_reads[&AccountId(0)].stocks[&stock].read_count,
             2,
@@ -5569,9 +5542,7 @@ mod b2_query_contract_tests {
             as_of_receipt: None,
             page_size: 1,
         };
-        let first = session
-            .query_personal_trade_history(AccountId(0), request())
-            .unwrap();
+        let first = session.query_personal_trade_history(AccountId(0), request()).unwrap();
         assert_eq!(first.confirmations.len(), 1, "页大小 1");
         let second = session
             .query_personal_trade_history(
@@ -5615,23 +5586,15 @@ mod b2_query_contract_tests {
             .unwrap();
         assert!(filtered.confirmations.iter().all(|r| r.side == Side::Buy));
         for invalid in [
-            PersonalTradeHistoryRequest {
-                page_size: 0,
-                ..request()
-            },
-            PersonalTradeHistoryRequest {
-                page_size: 101,
-                ..request()
-            },
+            PersonalTradeHistoryRequest { page_size: 0, ..request() },
+            PersonalTradeHistoryRequest { page_size: 101, ..request() },
             PersonalTradeHistoryRequest {
                 as_of_receipt: Some(TradeHistoryReceiptCursor(u64::MAX)),
                 ..request()
             },
         ] {
             assert!(
-                session
-                    .query_personal_trade_history(AccountId(0), invalid)
-                    .is_err(),
+                session.query_personal_trade_history(AccountId(0), invalid).is_err(),
                 "参数不合法显式拒绝"
             );
         }
@@ -5643,10 +5606,7 @@ mod b2_query_contract_tests {
         let empty = session
             .query_personal_trade_history(
                 AccountId(1),
-                PersonalTradeHistoryRequest {
-                    side: Some(Side::Buy),
-                    ..request()
-                },
+                PersonalTradeHistoryRequest { side: Some(Side::Buy), ..request() },
             )
             .unwrap();
         assert!(empty.confirmations.is_empty());
@@ -5798,21 +5758,19 @@ mod personal_receipt_tests {
             "页内按 receipt 降序（最新在前）"
         );
         // 排他游标：before=页首 id → 恰好排除该条及之后。
-        let older =
-            session.personal_trade_confirmations_page(AccountId(0), Some(page[0].receipt_id));
+        let older = session.personal_trade_confirmations_page(AccountId(0), Some(page[0].receipt_id));
         assert!(
             older.iter().all(|row| row.receipt_id < page[0].receipt_id),
             "游标排他"
         );
         assert_eq!(older.len(), 1);
-        assert_eq!(
-            older[0].receipt_id, first_id,
-            "翻页命中上一页之前的 receipt"
-        );
+        assert_eq!(older[0].receipt_id, first_id, "翻页命中上一页之前的 receipt");
         // 无事实账户返回空页（不报错——空账户与空页同义）。
-        assert!(session
+        assert!(
+            session
                 .personal_trade_confirmations_page(AccountId(99), None)
-            .is_empty());
+                .is_empty()
+        );
     }
 
     #[test]
@@ -5964,11 +5922,7 @@ mod retained_snapshot_tests {
         assert_eq!(session_0.bars[0].turnover_cents, 100_000);
         // end_civil_day 不重复补条目（末条==settled）。
         session.end_civil_day().unwrap();
-        assert_eq!(
-            session.retained_market_days().len(),
-            1,
-            "交易日不重复补条目"
-        );
+        assert_eq!(session.retained_market_days().len(), 1, "交易日不重复补条目");
     }
 
     /// 真实成交局的日 K stats×分钟桶互检（W3 接线实证缺陷的红证补立：
@@ -6003,7 +5957,10 @@ mod retained_snapshot_tests {
             crate::session::MarketHistoryAvailability::Traded
         );
         assert!(!entry.bars.is_empty(), "真实成交分钟桶非空");
-        let candle = entry.daily_candle.as_ref().expect("已结算开市日必有日 K");
+        let candle = entry
+            .daily_candle
+            .as_ref()
+            .expect("已结算开市日必有日 K");
         let volume: u64 = entry.bars.iter().map(|bar| bar.volume_shares).sum();
         let turnover: u128 = entry.bars.iter().map(|bar| bar.turnover_cents).sum();
         let count: u64 = entry.bars.iter().map(|bar| bar.trade_count).sum();
@@ -6013,11 +5970,7 @@ mod retained_snapshot_tests {
             .trade_stats
             .as_ref()
             .expect("真实成交局日 K 必有成交统计");
-        assert_eq!(
-            u128::from(stats.turnover_cents),
-            turnover,
-            "日 K 额==分钟桶累计"
-        );
+        assert_eq!(u128::from(stats.turnover_cents), turnover, "日 K 额==分钟桶累计");
         assert_eq!(stats.trade_count, count, "日 K 笔数==分钟桶累计");
         // OHLC 同样来自真实成交（互检外延：open/close=桶首尾）。
         let first = &entry.bars[0];
@@ -6163,10 +6116,7 @@ mod retained_snapshot_tests {
         second.end_civil_day().unwrap();
         let chain = second.retained_market_days();
         assert_eq!(chain.len(), 2);
-        assert_eq!(
-            chain[1].0.date,
-            crate::CivilDate::from_iso("2030-01-03").unwrap()
-        );
+        assert_eq!(chain[1].0.date, crate::CivilDate::from_iso("2030-01-03").unwrap());
         let _: Option<RetainedMinuteSession> = None;
     }
 }
@@ -6557,10 +6507,7 @@ mod npc_working_quote_tests {
             })
             .expect("旧镜像计划创建");
         assert!(
-            session
-                .plans_debug()
-                .iter()
-                .any(|(.., status)| status == "Active"),
+            session.plans_debug().iter().any(|(.., status)| status == "Active"),
             "前置：session 侧旧 Active 镜像在册"
         );
         // 组簿权威：同键计划的 terminal 记录（全额成交 ⇒ Completed）。
@@ -6700,9 +6647,7 @@ mod npc_working_quote_tests {
             "同拍：买方现金扣全额预留（限价=成交价，全额成交）"
         );
         assert!(
-            !session.state.accounts[&seller]
-                .positions()
-                .contains_key(&code),
+            !session.state.accounts[&seller].positions().contains_key(&code),
             "同拍：卖方清仓条目删除"
         );
         assert_eq!(
@@ -7819,8 +7764,7 @@ mod committable_state_tests {
             Some(DeferredDropDegradation::SpawnFailed { os_errno: Some(11) })
         );
     }
-}
-/// D5 attention：desk 簿镜像的单股条目（瞬态——install 段刷新）。
+}/// D5 attention：desk 簿镜像的单股条目（瞬态——install 段刷新）。
 #[derive(Clone, Debug, Default)]
 pub struct DeskBookMirror {
     /// 在途单事实（owner/方向/价/余量/desk 序号/累计成交额/累计成交量
@@ -7834,3 +7778,6 @@ pub struct DeskBookMirror {
     /// 修复：save 的 book_next_sequences 权威源，不再从存活单重算）。
     pub next_serial: u64,
 }
+
+#[cfg(test)]
+mod company_source_runtime_tests;

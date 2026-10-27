@@ -101,11 +101,7 @@ fn find_stock_spec<'a>(
 ) -> Result<(CompanyId, &'a CompanySpec), CompanyFactsSourceError> {
     let mut found: Option<(CompanyId, &CompanySpec)> = None;
     for (company, spec) in specs {
-        if spec
-            .listed_stock
-            .as_ref()
-            .is_some_and(|listed| listed.0 == code)
-        {
+        if spec.listed_stock.as_ref().is_some_and(|listed| listed.0 == code) {
             if let Some((previous, _)) = found {
                 return Err(CompanyFactsSourceError::DuplicateIssuer {
                     stock,
@@ -185,11 +181,9 @@ mod tests {
         let listed = spec(Some("600101"), CompanyKind::Bank, u64::from(u32::MAX) + 701);
         let unlisted = spec(None, CompanyKind::Insurance, 900);
         let (company, actual) = find_stock_spec(
-            StockId(0),
-            "600101",
+            StockId(0), "600101",
             [(CompanyId(2), &unlisted), (CompanyId(17), &listed)].into_iter(),
-        )
-        .unwrap();
+        ).unwrap();
         assert_eq!(company, CompanyId(17));
         assert_eq!(actual, &listed);
     }
@@ -197,31 +191,22 @@ mod tests {
     #[test]
     fn selected_company_source_single_stock_lookup_checks_later_duplicate() {
         let listed = spec(Some("600101"), CompanyKind::Bank, 700);
-        assert_eq!(
-            find_stock_spec(
-                StockId(0),
-                "600101",
+        assert_eq!(find_stock_spec(
+            StockId(0), "600101",
             [(CompanyId(17), &listed), (CompanyId(22), &listed)].into_iter(),
-            ),
-            Err(CompanyFactsSourceError::DuplicateIssuer {
-                stock: StockId(0),
-                previous: CompanyId(17),
-                company: CompanyId(22),
-            })
-        );
+        ), Err(CompanyFactsSourceError::DuplicateIssuer {
+            stock: StockId(0), previous: CompanyId(17), company: CompanyId(22),
+        }));
     }
 
     #[test]
     fn selected_company_source_single_stock_lookup_rejects_zero_shares() {
         let listed = spec(Some("600101"), CompanyKind::Bank, 0);
-        assert_eq!(
-            find_stock_spec(StockId(0), "600101", [(CompanyId(17), &listed)].into_iter(),),
-            Err(CompanyFactsSourceError::Facts(
-                CompanyReadFactsError::ZeroIssuedShares {
+        assert_eq!(find_stock_spec(
+            StockId(0), "600101", [(CompanyId(17), &listed)].into_iter(),
+        ), Err(CompanyFactsSourceError::Facts(CompanyReadFactsError::ZeroIssuedShares {
             company: CompanyId(17),
-                }
-            ))
-        );
+        })));
     }
 
     #[test]

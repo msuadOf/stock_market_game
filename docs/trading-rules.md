@@ -153,6 +153,27 @@ SealAllocationSnapshot 的 `DecisionResourceSnapshot::seal` 读取报价过期�
   所有权模型下单即扣，该缺陷形态从根上消除（等价防御=组端 purse 校验）。旧管线
   防御面随其退役消亡，不再回补。
 
+## 公司模型选源与完整存档（2026-10-27 候选分支登记）
+
+本段描述 SOURCE-B 候选分支的契约；完整跨 Web 验证与独立终审通过前，不据此宣称
+main 已交付。`setup.company_system` 缺席时沿 `LegacyOperations` 的经营、前史和公开
+会计材料；选定 `Simple` 时只构造和推进 `CompanySystem`，公开材料标为
+`SimpleGenerated`，不创建或后台推进旧经营网络。`Simple` 携带 `company_operations`
+或非空 `groups` 时，在装配前按模式字段冲突明确拒绝；`Simulation` 仍明确不支持。
+公司会计类别 `CompanyKind` 不表示沪深证券板块，股本单位仍为股且保留 `u64`。
+
+完整 `SaveSlot` 只保存一个 required `company_state` 外部标记：
+`LegacyOperations { operations, closing, groups }` 或
+`CompanySystem { system, corporate_actions }`。旧并列运行字段不再接受，不提供迁移、
+别名或缺字段补值；创建参数中的 `setup.company_operations` 和 `setup.groups` 保留各自
+原语义。公开库和披露游标仍各只有一份，与选中模型、冻结时钟、报告来源和恢复资本事实
+同时勾稽。名册 `SettlementDayMarket.binding` 保留实际物理日的前驱、股数单位与最终
+确认或休市日历来源，不能简写成普通 `PublicMarket` 或丢弃 binding。
+
+`Simple` 是明确的游戏财务简化，不声称逐合同经营、真实公司现金来源或偿付能力已经仿真。
+此选源和存档改动不开放 R4 公司行为资产提交或 SRC-C live hook，不改变沪深撮合、
+T+1、税费、账户资金或股份守恒规则。
+
 ## Simple 偏好的局内配置入口（2026-10-25 登记）
 
 `GameSession` 与 `ProtocolSession` 提供 `company_simple_preferences` 和
@@ -162,7 +183,7 @@ SealAllocationSnapshot 的 `DecisionResourceSnapshot::seal` 读取报价过期�
 间隔沿用结算周期数。无公司线、未知公司、非法参数或两侧配置不一致均显式拒绝。
 
 编辑原子地同步公司系统及 setup 的偏好配置，不改变资产、已有方案、提案台账或个人信息。
-`GameSession.save` 包含已编辑配置；恢复时要求 `company_system.config` 与
+`GameSession.save` 包含已编辑配置；恢复时要求 `company_state.CompanySystem.system.config` 与
 `setup.company_system` 完整一致，单侧编辑存档会被拒绝。`ProtocolSession.save`
 仍返回上次已发布的日终存档，后续自然日日终发布才包含新配置。本入口不代表偏好自动提案
 与公司行为日终执行链已经接通，也未开放配股、增发、回购或拆股策略参数；宿主 wire/API

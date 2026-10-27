@@ -764,10 +764,14 @@ struct RightsOfferingBookState {
     status: RightsOfferingStatus,
     #[serde(deserialize_with = "required_nullable_registration")]
     registration: Option<RegistrationSnapshot>,
+    #[serde(deserialize_with = "crate::company::persistence::required_nullable")]
     entitlement: Option<RightsEntitlementReceipt>,
     subscriptions: Vec<RightsSubscriptionRecord>,
+    #[serde(deserialize_with = "crate::company::persistence::required_nullable")]
     closed_on: Option<CivilDate>,
+    #[serde(deserialize_with = "crate::company::persistence::required_nullable")]
     settlement: Option<RightsSettlementReceipt>,
+    #[serde(deserialize_with = "crate::company::persistence::required_nullable")]
     credited_on: Option<CivilDate>,
 }
 

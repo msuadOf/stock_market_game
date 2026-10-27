@@ -1894,8 +1894,7 @@ fn validate_plan_contract(context: &SaveValidationContext) -> Result<(), Session
             // fault2142：计划属于未知账户；ctx[4..6]=AccountId 高/低 u32。
             return Err(SessionError::InvalidSave(ValidationFault::new(
                 2142,
-                plan_id
-                    .error_context_with([plan.account().0 >> 32, plan.account().0 & 0xffff_ffff]),
+                plan_id.error_context_with([plan.account().0 >> 32, plan.account().0 & 0xffff_ffff]),
             )));
         }
         if !stock_codes.contains(plan.code()) {
@@ -1970,9 +1969,7 @@ fn validate_plan_contract(context: &SaveValidationContext) -> Result<(), Session
                         )));
                     }
                 }
-                if leg
-                    .active_child_remaining_qty()
-                    .is_some_and(|stored| stored > *live_remaining)
+                if leg.active_child_remaining_qty().is_some_and(|stored| stored > *live_remaining)
                 {
                     // fault2185：序列化余量大于真实订单余量（虚增敞口）。
                     return Err(SessionError::InvalidSave(ValidationFault::new(

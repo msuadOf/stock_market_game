@@ -1093,6 +1093,8 @@ impl CompanySystem {
         &mut self,
         date: CivilDate,
     ) -> Result<Vec<SimpleDisclosureCandidate>, CompanySystemError> {
+        #[cfg(test)]
+        crate::company::source_probe::record(crate::company::source_probe::Call::SimpleAdvance);
         let result = match &mut self.implementation {
             CompanyImplementation::Simple(state) => state.advance_day(date),
         };

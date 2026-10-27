@@ -6,8 +6,8 @@ use engine::company::operations::CompanyOperationsConfig;
 use engine::company::{CompanyId, ShockKind};
 use engine::money::Money;
 use engine::session::{
-    CivilPhase, CompanyDisclosureKind, Event, FloatAllocation, GameSession, NpcSetup, SaveSlot,
-    SecurityCategory, SessionSetup, StockExchange, StockSpec,
+    CivilPhase, CompanyDisclosureKind, Event, FloatAllocation, GameSession, NpcSetup,
+    SaveSlot, SecurityCategory, SessionSetup, StockExchange, StockSpec,
 };
 use engine::strategy::{HotParams, InstParams, RetailParams, StrategyParams};
 
@@ -30,14 +30,14 @@ pub(super) fn session_with_company(
     company.spec.listed_stock = Some(StockCode("600101".into()));
     GameSession::new(
         SessionSetup {
-            company_system: None,
-            dividend_tax_mode: None,
-            flat_withholding_bp: None,
-            rights_offering_enabled: false,
-            issuer_repurchase_enabled: false,
-            par_value_per_share: None,
-            auto_corporate_foundation: false,
-            report_frequency: None,
+        company_system: None,
+        dividend_tax_mode: None,
+        flat_withholding_bp: None,
+        rights_offering_enabled: false,
+        issuer_repurchase_enabled: false,
+        par_value_per_share: None,
+        auto_corporate_foundation: false,
+        report_frequency: None,
             stocks: vec![StockSpec {
                 code: StockCode("600101".into()),
                 exchange: StockExchange::Shanghai,
@@ -119,7 +119,8 @@ fn real_session_failure_history_is_saved_restored_and_publicly_queryable() {
             } = match &announcement.content {
                 engine::information::AnnouncementContent::Shock(event) => &event.kind,
                 _ => continue,
-            } {
+            }
+            {
                 assert!(failures.iter().any(|failure| &failure.what == what
                     && &failure.amount == amount
                     && &failure.obligation_status == obligation_status));
@@ -289,9 +290,7 @@ fn company_assembly_rejects_due_beyond_frozen_calendar_ceiling() {
     let date = d("2030-01-05");
     let source = session_with_company(date, bank_c(d("2027-12-31")), 1, quiet_params());
     let mut setup = source.save().unwrap().setup;
-    if let FlowParams::Bank(params) =
-        &mut setup.company_operations.as_mut().unwrap().companies[0].flow
-    {
+    if let FlowParams::Bank(params) = &mut setup.company_operations.as_mut().unwrap().companies[0].flow {
         params.loan_term_days = d("2100-01-01").days_since(d("2028-01-01"));
     }
     match GameSession::new(setup, 1) {
@@ -308,16 +307,10 @@ fn day_end_new_due_beyond_calendar_ceiling_rolls_back_every_domain() {
     use engine::session::SessionError;
     let date = d("2099-12-28");
     let mut target = session_with_company(date, industrial_b(d("2096-12-31")), 1, quiet_params());
-    for _ in 0..6 {
-        target.step().unwrap();
-    }
-    target
-        .end_civil_day()
-        .expect("28 日新增三天后回款仍在 2099 年内");
+    for _ in 0..6 { target.step().unwrap(); }
+    target.end_civil_day().expect("28 日新增三天后回款仍在 2099 年内");
     assert_eq!(target.civil_date(), d("2099-12-29"));
-    for _ in 0..6 {
-        target.step().unwrap();
-    }
+    for _ in 0..6 { target.step().unwrap(); }
     let before = serde_json::to_vec(&target.save().unwrap()).unwrap();
     match target.end_civil_day() {
         Err(SessionError::CivilClock(engine::session::CivilClockError::Calendar(
@@ -326,11 +319,8 @@ fn day_end_new_due_beyond_calendar_ceiling_rolls_back_every_domain() {
         Ok(_) => panic!("29 日新增三天后回款已越界，日结必须整体失败"),
         Err(other) => panic!("新增 due 应按冻结日历 horizon 拒绝，实际：{other}"),
     }
-    assert_eq!(
-        serde_json::to_vec(&target.save().unwrap()).unwrap(),
-        before,
-        "越界 due 失败不得提交公司分录、RNG、时钟、封账或披露的任何半成品"
-    );
+    assert_eq!(serde_json::to_vec(&target.save().unwrap()).unwrap(), before,
+        "越界 due 失败不得提交公司分录、RNG、时钟、封账或披露的任何半成品");
 }
 
 #[test]

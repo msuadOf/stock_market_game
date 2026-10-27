@@ -360,3 +360,6 @@ impl CompanyRegistry {
         self.companies.iter()
     }
 }
+
+#[cfg(test)]
+pub(crate) mod source_probe;
