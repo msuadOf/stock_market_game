@@ -6,6 +6,17 @@ use crate::runtime::protocol::{
 };
 use std::collections::BTreeMap;
 
+/// 仅保留最后成功观察的有限输入；Arc 按内容比较，不以地址或 hash 作为相等依据。
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct InformationObservationSignature {
+    through: crate::calendar::CivilInstant,
+    library: Arc<crate::information::PublicLibrary>,
+    facts: Arc<crate::company::CompanyReadFacts>,
+    market: Arc<crate::strategy::MarketView>,
+    trading_days: BTreeMap<crate::StockId, u64>,
+    owners_and_codes: BTreeMap<LocalIdx, (crate::AccountId, std::collections::BTreeSet<crate::StockId>)>,
+}
+
 /// 只保留 touched 账户前值，不借用有 i32 股数差额的普通日志。
 pub(super) struct PendingAdmin {
     id: AdminTransactionId,

@@ -844,6 +844,8 @@ pub struct GroupState {
     current_company_facts: Option<Arc<crate::company::CompanyReadFacts>>,
     /// 只由成功信息 commit 推进；None 库刷新不声称观察。
     information_observed_through: Option<crate::calendar::CivilInstant>,
+    /// 最后成功 Some 观察输入；None 材料刷新不占用观察资格，不保存历史。
+    information_signature: Option<admin_transaction::InformationObservationSignature>,
     /// D3a-2 观察基：快照来源的每股（分钟收盘，日 K 条）——链观察的
     /// 纯输入（与 session 读面同源：desk 权威 minute_closes/daily_bars；
     /// 观察对象每 tick 由纯构建器现算，不累积不缓存——口径不可能漂移）。
@@ -1029,6 +1031,7 @@ impl GroupState {
             library: library_seed,
             current_company_facts: None,
             information_observed_through: None,
+            information_signature: None,
             root_projection,
             child_in_flight: Default::default(),
             plan_undo_saved: false,
