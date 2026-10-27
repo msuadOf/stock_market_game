@@ -8,6 +8,10 @@ use crate::{AccountId, StockId};
 use fixture::*;
 
 fn world() -> World {
+    world_with_cadence(crate::session::notices::NpcInformationCadence::Daily { checks: 1 })
+}
+
+fn world_with_cadence(cadence: crate::session::notices::NpcInformationCadence) -> World {
     let ids = [11, 37, 51, 79, 113].map(AccountId);
     let mut spec = basic_spec(3, 2, 2, Box::new(|_| Box::new(|_, _| TickPlan::default())));
     spec.ticks_per_day = 100;
@@ -17,6 +21,7 @@ fn world() -> World {
         .enumerate()
         .map(|(i, &id)| {
             let mut p = personal(id);
+            p.attention.information_cadence = cadence;
             p.watchlist
                 .stocks
                 .insert(StockId(if i == 4 { 1 } else { 0 }), Default::default());
@@ -320,5 +325,115 @@ fn info_material_only_revision_noop_and_exact_ack_follow_actual_write_set() {
     snapshot(&mut w, p);
     assert_eq!(w.mirror_source(), source2);
     assert!(w.pending_mirror_domains().is_empty());
+    w.shutdown().unwrap();
+}
+
+/// I2：Immediate 的 next_after(now)=now，只有完整签名才能拒绝重复本人计算。
+#[test]
+fn same_signature_immediate_information_does_not_recompute_personal() {
+    let mut w = world_with_cadence(crate::session::notices::NpcInformationCadence::Immediate);
+    let mut p = payload(true);
+    announcement(&mut p, 0);
+    let first = snapshot(&mut w, p.clone());
+    let first_count: usize = first
+        .iter()
+        .map(|group| group.information.as_ref().unwrap().personals.len())
+        .sum();
+    assert_eq!(
+        first_count, 5,
+        "首次三个真实组的五人都必须完成观察，不以空名册自证去重"
+    );
+    let source = w.mirror_source();
+    let pending = w.pending_mirror_domains();
+    let before = w.collect_group_belief().unwrap();
+    let second = snapshot(&mut w, p);
+    assert!(
+        second
+            .iter()
+            .all(|group| group.information.as_ref().unwrap().personals.is_empty()),
+        "Immediate 的同through/library/facts/market/day/owner/codes签名不得重复本人计算"
+    );
+    assert_eq!(
+        w.collect_group_belief().unwrap(),
+        before,
+        "相同观察不能改七字段或丢获知"
+    );
+    assert_eq!(
+        w.mirror_source(),
+        source,
+        "自己的revision/check回写不能变成新观察输入"
+    );
+    assert_eq!(w.pending_mirror_domains(), pending);
+    w.shutdown().unwrap();
+}
+
+#[test]
+fn library_only_install_does_not_consume_same_through_observation_eligibility() {
+    let mut w = world_with_cadence(crate::session::notices::NpcInformationCadence::Immediate);
+    let mut some = payload(true);
+    announcement(&mut some, 0);
+    let mut none = some.clone();
+    none.observation = None;
+    let materials = snapshot(&mut w, none);
+    assert!(materials
+        .iter()
+        .all(|group| group.information.as_ref().unwrap().personals.is_empty()));
+    let observed = snapshot(&mut w, some.clone());
+    assert_eq!(
+        observed
+            .iter()
+            .map(|group| group.information.as_ref().unwrap().personals.len())
+            .sum::<usize>(),
+        5,
+        "None没有本人观察，不能占用随后Some同through的资格"
+    );
+    let source = w.mirror_source();
+    let pending = w.pending_mirror_domains();
+    let repeated = snapshot(&mut w, some);
+    assert!(
+        repeated
+            .iter()
+            .all(|group| group.information.as_ref().unwrap().personals.is_empty()),
+        "第一次Some成功后，同签名必须去重"
+    );
+    assert_eq!(w.mirror_source(), source);
+    assert_eq!(w.pending_mirror_domains(), pending);
+    w.shutdown().unwrap();
+}
+
+/// 即使命中先前观察，仍先验证完整上下文；不能让版本/签名缓存绕过目录缺项。
+#[test]
+fn repeated_information_validates_full_context_before_cache_shortcut() {
+    let mut w = world_with_cadence(crate::session::notices::NpcInformationCadence::Immediate);
+    let mut p = payload(true);
+    announcement(&mut p, 0);
+    let first = snapshot(&mut w, p.clone());
+    assert_eq!(
+        first
+            .iter()
+            .map(|group| group.information.as_ref().unwrap().personals.len())
+            .sum::<usize>(),
+        5
+    );
+    let source = w.mirror_source();
+    let pending = w.pending_mirror_domains();
+    Arc::make_mut(&mut p.observation.as_mut().unwrap().market)
+        .stocks
+        .remove(&StockId(0));
+    let rejected = w.with_information_transaction(Vec::new(), p, |_| Ok(()));
+    assert!(
+        matches!(
+            &rejected,
+            Err(RuntimeError::InformationPrepare {
+                error: crate::runtime::protocol::InformationPrepareError::MissingMarket {
+                    stock: StockId(0)
+                },
+                ..
+            })
+        ),
+        "相同through/library仍要精确拒绝缺market字段：{rejected:?}"
+    );
+    assert_eq!(w.mirror_source(), source);
+    assert_eq!(w.pending_mirror_domains(), pending);
     w.shutdown().unwrap();
 }
