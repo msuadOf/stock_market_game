@@ -1,0 +1,66 @@
+[
+  {
+    "index": 0,
+    "command": [
+      "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+      "--max-old-space-size=8192",
+      "/data1/baiyifan/workplace/stock_market_game/apps/web/node_modules/typescript/bin/tsc",
+      "-p",
+      "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/agents/branch-completion/source-b-web-strict-save/app-types-shards-v1/tsconfig-0.json",
+      "--noEmit",
+      "--incremental",
+      "false"
+    ],
+    "exitCode": 1,
+    "error": "bounded command exited with 2",
+    "wallSeconds": 2.4735980239999997
+  },
+  {
+    "index": 1,
+    "command": [
+      "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+      "--max-old-space-size=8192",
+      "/data1/baiyifan/workplace/stock_market_game/apps/web/node_modules/typescript/bin/tsc",
+      "-p",
+      "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/agents/branch-completion/source-b-web-strict-save/app-types-shards-v1/tsconfig-1.json",
+      "--noEmit",
+      "--incremental",
+      "false"
+    ],
+    "exitCode": 1,
+    "error": "bounded command exited with 2",
+    "wallSeconds": 2.5631318039999997
+  },
+  {
+    "index": 2,
+    "command": [
+      "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+      "--max-old-space-size=8192",
+      "/data1/baiyifan/workplace/stock_market_game/apps/web/node_modules/typescript/bin/tsc",
+      "-p",
+      "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/agents/branch-completion/source-b-web-strict-save/app-types-shards-v1/tsconfig-2.json",
+      "--noEmit",
+      "--incremental",
+      "false"
+    ],
+    "exitCode": 1,
+    "error": "bounded command exited with 2",
+    "wallSeconds": 2.2454156210000003
+  },
+  {
+    "index": 3,
+    "command": [
+      "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+      "--max-old-space-size=8192",
+      "/data1/baiyifan/workplace/stock_market_game/apps/web/node_modules/typescript/bin/tsc",
+      "-p",
+      "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/agents/branch-completion/source-b-web-strict-save/app-types-shards-v1/tsconfig-3.json",
+      "--noEmit",
+      "--incremental",
+      "false"
+    ],
+    "exitCode": 1,
+    "error": "bounded command exited with 2",
+    "wallSeconds": 2.5273427949999996
+  }
+]

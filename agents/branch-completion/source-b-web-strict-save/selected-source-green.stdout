@@ -1,0 +1,28 @@
+✔ GroupStructure的CompanyId为独立u32，两个真实母子持股结构无损 (2.335914ms)
+✔ 真实Rust完整generated-company-state-registry.json对象/raw解析无损，只有一个公司权威tag (38.973439ms)
+✔ 真实Rust完整manual-company-state-registry.json对象/raw解析无损，只有一个公司权威tag (17.605473ms)
+✔ 真实Rust完整legacy-company-state.json对象/raw解析无损，只有一个公司权威tag (91.252153ms)
+✔ required单tag拒绝旧双源根字段、缺失/null/双tag/未知tag (57.120637ms)
+✔ setup模式与selected公司tag必须一致，不迁移旧源 (29.387366ms)
+✔ 真实REG SettlementDayMarket.binding五字段required且unknown逐层拒绝 (27.890555ms)
+✔ 公司状态全部真实非空结构拒绝未知字段，nullable必填不被默认掩盖 (394.369149ms)
+✔ rawJSON在覆盖前拒绝重复tag、转义后同键与REG binding重复键 (27.35183ms)
+✔ canonical整数字符串拒绝前导零/负零与unsafe裸数，保真实单位 (15.092654ms)
+✔ 真实非空SimpleGenerated报告generated-custom-monthly-nonempty.json对象/raw与来源频率无损 (125.578395ms)
+✔ 真实非空SimpleGenerated报告manual-custom-monthly-nonempty.json对象/raw与来源频率无损 (146.448028ms)
+✔ 真实非空SimpleGenerated报告generated-quarterly-nonempty.json对象/raw与来源频率无损 (69.405274ms)
+✔ 真实非空SimpleGenerated报告manual-quarterly-nonempty.json对象/raw与来源频率无损 (70.202236ms)
+✔ 真实RustShareSplitBook-approved.json的3个required nullable与variant严格校验 (2.20976ms)
+✔ 真实RustStockDistributionBook-approved.json的3个required nullable与variant严格校验 (1.980585ms)
+✔ 真实RustRightsOfferingBook-approved.json的5个required nullable与variant严格校验 (2.737815ms)
+✔ 真实RustIssuerRepurchaseBook-approved.json的4个required nullable与variant严格校验 (2.447937ms)
+✔ 全部已存在公司数组拒绝sparse与继承元素，raw整数拒绝舍入与负零 (188.512012ms)
+✔ selected公司权威与公开报告source一致，拒绝已知但来自另一模型的报告 (48.791168ms)
+ℹ tests 20
+ℹ suites 0
+ℹ pass 20
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1571.138372

@@ -1,0 +1,3 @@
+src/save/schema/company/state-shapes.ts(2096,1): error TS6133: 'parseCompanyOperations' is declared but its value is never read.
+src/save/schema/company/state-shapes.ts(2097,1): error TS6133: 'parseGroups' is declared but its value is never read.
+src/save/schema/company/state-shapes.ts(2101,34): error TS2307: Cannot find module '../../../types/generated/CompanyKind.ts' or its corresponding type declarations.

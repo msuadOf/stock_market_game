@@ -1,0 +1,183 @@
+{
+  "files": [
+    "src/save/complete-save-schema.test.ts",
+    "src/save/company-schema.test.ts",
+    "src/save/company-policies-schema.test.ts",
+    "src/save/company-contracts.test.ts",
+    "src/save/company-books-schema.test.ts",
+    "src/save/company-accounting-schema.test.ts",
+    "src/save/save-schema-contract.test.ts",
+    "src/save/personal-schema.test.ts",
+    "src/save/day-end-archive.test.ts",
+    "src/save/current-wire-contract.test.ts",
+    "src/save/current-company-wire.test.ts",
+    "src/save/save-repository.test.ts",
+    "src/save/runtime-strategy-position.test.ts",
+    "src/save/retained-history-day-end.test.ts",
+    "src/save/price-cage-config.test.ts",
+    "src/save/market-memberships-schema.test.ts",
+    "src/save/initial-save-source.test.ts",
+    "src/save/indexed-db-save-repository.test.ts",
+    "src/save/file-target.test.ts",
+    "src/save/file-target-permissions.test.ts",
+    "src/save/day-end-targets.test.ts",
+    "src/save/day-end-persistence.test.ts",
+    "src/save/day-end-candidate.test.ts",
+    "src/save/archive-store.test.ts",
+    "src/save/session-replacement.test.ts",
+    "src/save/schema/setup-company-options.test.ts",
+    "src/save/schema/money-wire.test.ts",
+    "src/save/schema/npc-attention.test.ts",
+    "src/save/schema/urgency-policy.test.ts",
+    "src/save/schema/retained-history.test.ts",
+    "src/save/schema/personal/beliefs.test.ts",
+    "src/save/schema/personal/institution-policy.test.ts",
+    "src/save/schema/company/monthly-origin.test.ts",
+    "src/save/schema/company/announcement-content.test.ts"
+  ],
+  "concurrentCommands": 9,
+  "results": [
+    {
+      "index": 0,
+      "command": [
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "--test",
+        "--test-timeout=10000",
+        "--test-concurrency=4",
+        "src/save/complete-save-schema.test.ts",
+        "src/save/company-schema.test.ts",
+        "src/save/company-policies-schema.test.ts",
+        "src/save/company-contracts.test.ts"
+      ],
+      "exitCode": 1,
+      "error": "bounded command exited with 1",
+      "wallSeconds": 1.690252895
+    },
+    {
+      "index": 1,
+      "command": [
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "--test",
+        "--test-timeout=10000",
+        "--test-concurrency=4",
+        "src/save/company-books-schema.test.ts",
+        "src/save/company-accounting-schema.test.ts",
+        "src/save/save-schema-contract.test.ts",
+        "src/save/personal-schema.test.ts"
+      ],
+      "exitCode": 1,
+      "error": "bounded command exited with 1",
+      "wallSeconds": 1.420363562
+    },
+    {
+      "index": 2,
+      "command": [
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "--test",
+        "--test-timeout=10000",
+        "--test-concurrency=4",
+        "src/save/day-end-archive.test.ts",
+        "src/save/current-wire-contract.test.ts",
+        "src/save/current-company-wire.test.ts",
+        "src/save/save-repository.test.ts"
+      ],
+      "exitCode": 1,
+      "error": "bounded command exited with 1",
+      "wallSeconds": 1.388720196
+    },
+    {
+      "index": 3,
+      "command": [
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "--test",
+        "--test-timeout=10000",
+        "--test-concurrency=4",
+        "src/save/runtime-strategy-position.test.ts",
+        "src/save/retained-history-day-end.test.ts",
+        "src/save/price-cage-config.test.ts",
+        "src/save/market-memberships-schema.test.ts"
+      ],
+      "exitCode": 1,
+      "error": "bounded command exited with 1",
+      "wallSeconds": 1.102694658
+    },
+    {
+      "index": 4,
+      "command": [
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "--test",
+        "--test-timeout=10000",
+        "--test-concurrency=4",
+        "src/save/initial-save-source.test.ts",
+        "src/save/indexed-db-save-repository.test.ts",
+        "src/save/file-target.test.ts",
+        "src/save/file-target-permissions.test.ts"
+      ],
+      "exitCode": 1,
+      "error": "bounded command exited with 1",
+      "wallSeconds": 1.42243589
+    },
+    {
+      "index": 5,
+      "command": [
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "--test",
+        "--test-timeout=10000",
+        "--test-concurrency=4",
+        "src/save/day-end-targets.test.ts",
+        "src/save/day-end-persistence.test.ts",
+        "src/save/day-end-candidate.test.ts",
+        "src/save/archive-store.test.ts"
+      ],
+      "exitCode": 1,
+      "error": "bounded command exited with 1",
+      "wallSeconds": 1.1193871100000001
+    },
+    {
+      "index": 6,
+      "command": [
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "--test",
+        "--test-timeout=10000",
+        "--test-concurrency=4",
+        "src/save/session-replacement.test.ts",
+        "src/save/schema/setup-company-options.test.ts",
+        "src/save/schema/money-wire.test.ts",
+        "src/save/schema/npc-attention.test.ts"
+      ],
+      "exitCode": 0,
+      "error": null,
+      "wallSeconds": 0.23819534399999998
+    },
+    {
+      "index": 7,
+      "command": [
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "--test",
+        "--test-timeout=10000",
+        "--test-concurrency=4",
+        "src/save/schema/urgency-policy.test.ts",
+        "src/save/schema/retained-history.test.ts",
+        "src/save/schema/personal/beliefs.test.ts",
+        "src/save/schema/personal/institution-policy.test.ts"
+      ],
+      "exitCode": 1,
+      "error": "bounded command exited with 1",
+      "wallSeconds": 1.128164963
+    },
+    {
+      "index": 8,
+      "command": [
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "--test",
+        "--test-timeout=10000",
+        "--test-concurrency=4",
+        "src/save/schema/company/monthly-origin.test.ts",
+        "src/save/schema/company/announcement-content.test.ts"
+      ],
+      "exitCode": 0,
+      "error": null,
+      "wallSeconds": 0.22988795399999998
+    }
+  ]
+}

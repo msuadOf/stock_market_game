@@ -1,0 +1,76 @@
+✔ 公共日终入口拒绝活动分钟且不删除输入事实 (2.75796ms)
+✔ runtime strategies preserve position adjustment steps and uncapped momentum state (3.323796ms)
+✔ runtime position adjustment steps must be explicit integers from zero to ten thousand (1.245956ms)
+✔ runtime strategies reject the removed stock fraction cap without migrating it (0.34289ms)
+✔ browser save rejects an old generation after asynchronous compression (1.587786ms)
+✔ compressed browser save repository preserves the current authority state (4.189142ms)
+✔ compressed browser save repository rejects unwrapped local data (0.516095ms)
+✖ compressed browser save repository reports malformed JSON and rejects old schema (0.916307ms)
+✔ compressed browser save repository reports storage and decoding failures (0.984609ms)
+✔ 存档运行时校验边界保留必填权威状态，不保存旧 profile (9.386622ms)
+✔ 存档流通盘设置完整保存类间与类内方式，并拒绝旧 shape (0.826904ms)
+✔ 存档 Money 保留完整 i64 分值并拒绝旧 number 编码 (6.273901ms)
+✔ save snapshot accepts only raw account and market facts (0.612847ms)
+✔ save snapshot derives day and phase instead of accepting persisted mirrors (0.418132ms)
+✔ runtime envelope persists identity and actual charges only (0.724391ms)
+✔ 当前存档不再携带 parent_orders 与 pending_plan_events，旧字段按未知键拒绝 (1.112842ms)
+✔ 计划执行腿作为 TradingPlan.execution 保存并拒绝非规范形态 (4.982964ms)
+✔ book sequence cursors preserve empty-book history and lossless u64 boundaries (4.050327ms)
+✔ book sequence cursors are mandatory and reject malformed u64 strings (1.632847ms)
+✔ book sequence cursor keys must match both configured stocks and snapshot markets (1.280437ms)
+✔ pending player and NPC limit intents preserve fixed, highest and lowest prices (1.510884ms)
+✔ receipt cursors and pending ordinals preserve lossless u64 decimal strings (2.127871ms)
+✔ pending limit intents reject legacy numeric and malformed symbolic prices (1.308428ms)
+✔ pending fixed price preserves integer amounts for later engine rejection (0.572116ms)
+✔ legacy saves carrying pending_npc are rejected at the root parser (0.33253ms)
+✔ 存档仅接受当前结构，不接受任何 schema_version 标记 (0.765982ms)
+✔ 统一 book 后存档不再有 auction_orders，旧字段按未知根字段显式拒绝 (0.304729ms)
+✔ 存档运行时校验边界拒绝非法 scalar 和未知字段 (0.940647ms)
+✔ 存档运行时校验边界拒绝非法策略内部状态 (1.119352ms)
+✔ 存档运行时校验边界拒绝非有限 exact-float 位串 (0.933007ms)
+✔ 存档运行时校验边界拒绝 Rust u32 溢出 (2.302697ms)
+✔ 存档运行时校验边界拒绝注入派生 envelope 镜像 (1.618937ms)
+✔ 存档运行时校验边界在 Map 转换前拒绝非规范策略账户 key (0.430303ms)
+✔ 存档运行时校验边界保留非空 live envelope 和回执身份 (0.437883ms)
+✔ 存档运行时校验边界拒绝不安全及未知的 live-envelope 嵌套字段 (0.944337ms)
+✔ 存档运行时校验边界拒绝非法回执来源标签及未知嵌套字段 (0.70141ms)
+✔ 当前存档使用 runtime_state，不含实施代号与版本标记 (0.830574ms)
+✔ SavedReceiptSource 接受 QuoteExpiry 并明确拒绝旧 P0Expiry 标签 (0.32289ms)
+✔ 存档拒绝额外版本字段及旧 simulation_policy_id (0.34214ms)
+ℹ tests 39
+ℹ suites 0
+ℹ pass 38
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 243.57796
+
+✖ failing tests:
+
+test at src/save/save-repository.test.ts:50:1
+✖ compressed browser save repository reports malformed JSON and rejects old schema (0.916307ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /存档不是合法 JSON/. Input:
+  
+  'SaveSchemaError: 存档 根节点.key JSON 对象键必须是字符串'
+  
+      at async TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/save-repository.test.ts:56:3)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: SaveSchemaError: 存档 根节点.key JSON 对象键必须是字符串
+        at fail (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/raw-json.ts:7:65)
+        at quoted (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/raw-json.ts:10:30)
+        at value (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/raw-json.ts:32:29)
+        at parseRawSaveJson (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/raw-json.ts:59:18)
+        at parseSaveJson (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/save-schema.ts:12:47)
+        at CompressedLocalStorageSaveRepository.load (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/save-repository.ts:100:12)
+        at async waitForActual (node:assert:646:5)
+        at async strict.rejects (node:assert:769:25)
+        at async TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/save-repository.test.ts:56:3)
+        at async Test.run (node:internal/test_runner/test:1332:7),
+    expected: /存档不是合法 JSON/,
+    operator: 'rejects',
+    diff: 'simple'
+  }

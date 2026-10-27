@@ -4,7 +4,7 @@ const SMALL = "3f847ae147ae147b"
 type JsonObject = Record<string, unknown>
 
 export function currentSaveFixture(): JsonObject {
-  return {
+  const fixture = {
     desk_mirrored_resting: false,
     runtime_state: {
       poisoned: false,
@@ -178,6 +178,9 @@ export function currentSaveFixture(): JsonObject {
       },
     },
   }
+  // 仅同步单元 fixture 的单一 LegacyOperations wire；真实 producer 正控在 fixtures/source-b。
+  const { groups, company_operations, closing_registry, ...common } = fixture
+  return { ...common, company_state: { LegacyOperations: { operations: company_operations, closing: closing_registry, groups } } }
 }
 
 

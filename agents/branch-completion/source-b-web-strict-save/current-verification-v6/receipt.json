@@ -1,0 +1,238 @@
+{
+  "files": [
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/archive-store.test.ts",
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/company-accounting-schema.test.ts",
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/company-books-schema.test.ts",
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/company-contracts.test.ts",
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/company-policies-schema.test.ts",
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/company-schema.test.ts",
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/complete-save-schema.test.ts",
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/current-company-wire.test.ts",
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/current-wire-contract.test.ts",
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/day-end-archive.test.ts",
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/day-end-candidate.test.ts",
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/day-end-persistence.test.ts",
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/day-end-targets.test.ts",
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/file-target-permissions.test.ts",
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/file-target.test.ts",
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/indexed-db-save-repository.test.ts",
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/initial-save-source.test.ts",
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/market-memberships-schema.test.ts",
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/personal-schema.test.ts",
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/price-cage-config.test.ts",
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/retained-history-day-end.test.ts",
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/runtime-strategy-position.test.ts",
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/save-repository.test.ts",
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/save-schema-contract.test.ts",
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/announcement-content.test.ts",
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/groups.test.ts",
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/monthly-origin.test.ts",
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/state.test.ts",
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/money-wire.test.ts",
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/npc-attention.test.ts",
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/personal/beliefs.test.ts",
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/personal/institution-policy.test.ts",
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/retained-history.test.ts",
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/setup-company-options.test.ts",
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/urgency-policy.test.ts",
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/session-replacement.test.ts"
+  ],
+  "jobs": 13,
+  "results": [
+    {
+      "name": "save-tests-0",
+      "command": "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+      "args": [
+        "--test",
+        "--test-timeout=10000",
+        "--test-concurrency=4",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/archive-store.test.ts",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/company-accounting-schema.test.ts",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/company-books-schema.test.ts",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/company-contracts.test.ts"
+      ],
+      "exitCode": 0,
+      "wallMs": 1488.886872
+    },
+    {
+      "name": "save-tests-1",
+      "command": "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+      "args": [
+        "--test",
+        "--test-timeout=10000",
+        "--test-concurrency=4",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/company-policies-schema.test.ts",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/company-schema.test.ts",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/complete-save-schema.test.ts",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/current-company-wire.test.ts"
+      ],
+      "exitCode": 0,
+      "wallMs": 5299.717747
+    },
+    {
+      "name": "save-tests-2",
+      "command": "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+      "args": [
+        "--test",
+        "--test-timeout=10000",
+        "--test-concurrency=4",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/current-wire-contract.test.ts",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/day-end-archive.test.ts",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/day-end-candidate.test.ts",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/day-end-persistence.test.ts"
+      ],
+      "exitCode": 0,
+      "wallMs": 283.565418
+    },
+    {
+      "name": "save-tests-3",
+      "command": "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+      "args": [
+        "--test",
+        "--test-timeout=10000",
+        "--test-concurrency=4",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/day-end-targets.test.ts",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/file-target-permissions.test.ts",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/file-target.test.ts",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/indexed-db-save-repository.test.ts"
+      ],
+      "exitCode": 0,
+      "wallMs": 808.992877
+    },
+    {
+      "name": "save-tests-4",
+      "command": "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+      "args": [
+        "--test",
+        "--test-timeout=10000",
+        "--test-concurrency=4",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/initial-save-source.test.ts",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/market-memberships-schema.test.ts",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/personal-schema.test.ts",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/price-cage-config.test.ts"
+      ],
+      "exitCode": 0,
+      "wallMs": 266.884545
+    },
+    {
+      "name": "save-tests-5",
+      "command": "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+      "args": [
+        "--test",
+        "--test-timeout=10000",
+        "--test-concurrency=4",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/retained-history-day-end.test.ts",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/runtime-strategy-position.test.ts",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/save-repository.test.ts",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/save-schema-contract.test.ts"
+      ],
+      "exitCode": 0,
+      "wallMs": 321.631522
+    },
+    {
+      "name": "save-tests-6",
+      "command": "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+      "args": [
+        "--test",
+        "--test-timeout=10000",
+        "--test-concurrency=4",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/announcement-content.test.ts",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/groups.test.ts",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/monthly-origin.test.ts",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/state.test.ts"
+      ],
+      "exitCode": 0,
+      "wallMs": 2314.008388
+    },
+    {
+      "name": "save-tests-7",
+      "command": "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+      "args": [
+        "--test",
+        "--test-timeout=10000",
+        "--test-concurrency=4",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/money-wire.test.ts",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/npc-attention.test.ts",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/personal/beliefs.test.ts",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/personal/institution-policy.test.ts"
+      ],
+      "exitCode": 0,
+      "wallMs": 246.866645
+    },
+    {
+      "name": "save-tests-8",
+      "command": "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+      "args": [
+        "--test",
+        "--test-timeout=10000",
+        "--test-concurrency=4",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/retained-history.test.ts",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/setup-company-options.test.ts",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/urgency-policy.test.ts",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/session-replacement.test.ts"
+      ],
+      "exitCode": 0,
+      "wallMs": 280.738407
+    },
+    {
+      "name": "types-0",
+      "command": "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+      "args": [
+        "--max-old-space-size=8192",
+        "/data1/baiyifan/workplace/stock_market_game/apps/web/node_modules/typescript/bin/tsc",
+        "-p",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/agents/branch-completion/source-b-web-strict-save/current-verification-v3/tsconfig-0.json",
+        "--noEmit",
+        "--incremental",
+        "false"
+      ],
+      "exitCode": 0,
+      "wallMs": 6725.535384000001
+    },
+    {
+      "name": "types-1",
+      "command": "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+      "args": [
+        "--max-old-space-size=8192",
+        "/data1/baiyifan/workplace/stock_market_game/apps/web/node_modules/typescript/bin/tsc",
+        "-p",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/agents/branch-completion/source-b-web-strict-save/current-verification-v3/tsconfig-1.json",
+        "--noEmit",
+        "--incremental",
+        "false"
+      ],
+      "exitCode": 0,
+      "wallMs": 6917.277483
+    },
+    {
+      "name": "types-2",
+      "command": "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+      "args": [
+        "--max-old-space-size=8192",
+        "/data1/baiyifan/workplace/stock_market_game/apps/web/node_modules/typescript/bin/tsc",
+        "-p",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/agents/branch-completion/source-b-web-strict-save/current-verification-v3/tsconfig-2.json",
+        "--noEmit",
+        "--incremental",
+        "false"
+      ],
+      "exitCode": 0,
+      "wallMs": 6036.665437
+    },
+    {
+      "name": "types-3",
+      "command": "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+      "args": [
+        "--max-old-space-size=8192",
+        "/data1/baiyifan/workplace/stock_market_game/apps/web/node_modules/typescript/bin/tsc",
+        "-p",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/agents/branch-completion/source-b-web-strict-save/current-verification-v3/tsconfig-3.json",
+        "--noEmit",
+        "--incremental",
+        "false"
+      ],
+      "exitCode": 0,
+      "wallMs": 7380.716436
+    }
+  ]
+}

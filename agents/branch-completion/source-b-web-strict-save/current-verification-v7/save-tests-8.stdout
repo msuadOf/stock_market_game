@@ -1,0 +1,31 @@
+✔ 分钟事实严格保留规范金额、股数、时段与价格单位 (3.708157ms)
+✔ 完整日终历史覆盖每个自然日和精确证券集合（trading 布尔词表） (1.257497ms)
+✔ 活动分钟按 StockId 键收存（日结清空=空数组合法，bars 永为真实稀疏事实） (0.485814ms)
+✔ 归档分钟和日K逐项互证而非补造成交 (0.650359ms)
+✔ 零成交开市与闰日连续覆盖不裁剪且不生成分钟 (0.415512ms)
+✔ receipt 日志按账户收存且严格递增，水位必须超过最大已发 id (0.755852ms)
+✔ 公司选项逐字段保留且省略不生成默认值 (4.775819ms)
+✔ 公司系统所有声明变体、四种周期与行业可解析 (4.132ms)
+✔ 月报两种排期、两个 preset 与两种 delay 全保留 (0.561316ms)
+✔ 公司选项拒绝 null、错误类型、错误税务配对和残缺公司字段族 (3.946045ms)
+✔ 所有嵌套对象拒绝未知字段及缺少必填字段 (9.178496ms)
+✔ 月报拒绝非法变体、范围和额外字段 (0.433852ms)
+✔ Simple 的整数范围、身份与 Money 边界显式拒绝 (2.467401ms)
+✔ Simple finance 使用 Rust 整数字段宽度且不吞税务或 generation 非法输入 (0.651189ms)
+✔ opening_lines 保留 Rust serde 可解码的正负 i128 边界金额 (0.477323ms)
+✔ opening_lines 拒绝正负溢出并保留精确 amount 错误路径 (0.581287ms)
+✔ opening_lines 拒绝非当前存档两位小数金额格式 (0.527715ms)
+✔ save requires an explicit urgency policy without legacy defaults (2.520723ms)
+✔ save preserves the frozen non-default urgency policy (6.924541ms)
+✔ save urgency policy rejects missing, extra, unsupported and invalid fields (8.489997ms)
+✔ replacement operations serialize without sharing the file-picker epoch (1.405491ms)
+✔ late rejected baseline sync is stale instead of failing a newer session (1.500814ms)
+✔ current synchronization failure retains its actual cause and successful sync remains current (0.452803ms)
+ℹ tests 23
+ℹ suites 0
+ℹ pass 23
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 241.002246

@@ -1,0 +1,66 @@
+[
+  {
+    "index": 0,
+    "command": [
+      "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+      "--max-old-space-size=8192",
+      "/data1/baiyifan/workplace/stock_market_game/apps/web/node_modules/typescript/bin/tsc",
+      "-p",
+      "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/agents/branch-completion/source-b-web-strict-save/app-types-shards-v2/tsconfig-0.json",
+      "--noEmit",
+      "--incremental",
+      "false"
+    ],
+    "exitCode": 0,
+    "error": null,
+    "wallSeconds": 6.600488581
+  },
+  {
+    "index": 1,
+    "command": [
+      "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+      "--max-old-space-size=8192",
+      "/data1/baiyifan/workplace/stock_market_game/apps/web/node_modules/typescript/bin/tsc",
+      "-p",
+      "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/agents/branch-completion/source-b-web-strict-save/app-types-shards-v2/tsconfig-1.json",
+      "--noEmit",
+      "--incremental",
+      "false"
+    ],
+    "exitCode": 0,
+    "error": null,
+    "wallSeconds": 7.032122285000001
+  },
+  {
+    "index": 2,
+    "command": [
+      "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+      "--max-old-space-size=8192",
+      "/data1/baiyifan/workplace/stock_market_game/apps/web/node_modules/typescript/bin/tsc",
+      "-p",
+      "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/agents/branch-completion/source-b-web-strict-save/app-types-shards-v2/tsconfig-2.json",
+      "--noEmit",
+      "--incremental",
+      "false"
+    ],
+    "exitCode": 0,
+    "error": null,
+    "wallSeconds": 6.5500642749999995
+  },
+  {
+    "index": 3,
+    "command": [
+      "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+      "--max-old-space-size=8192",
+      "/data1/baiyifan/workplace/stock_market_game/apps/web/node_modules/typescript/bin/tsc",
+      "-p",
+      "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/agents/branch-completion/source-b-web-strict-save/app-types-shards-v2/tsconfig-3.json",
+      "--noEmit",
+      "--incremental",
+      "false"
+    ],
+    "exitCode": 0,
+    "error": null,
+    "wallSeconds": 6.794727365
+  }
+]

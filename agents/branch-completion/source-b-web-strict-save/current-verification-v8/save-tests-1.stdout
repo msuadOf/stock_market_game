@@ -1,0 +1,22 @@
+✔ company policy parsers preserve mature and every flow variant (4.633325ms)
+✔ company policy parsers reject malformed exact values (1.118662ms)
+✔ company schema parsers preserve populated company slices (241.927884ms)
+✔ company schema parsers reject malformed exact subdomains with paths (106.687292ms)
+✔ strict save boundary preserves a populated current-schema save (445.054411ms)
+✔ strict save boundary rejects malformed nested company and personal-state branches (4032.808085ms)
+✔ strict save boundary rejects unsafe company RNG numbers (167.182631ms)
+✔ strict save boundary rejects malformed company book and flow internals (217.090093ms)
+✔ strict save boundary rejects malformed representative fields for every flow variant (312.385074ms)
+✔ 真实 CompanySpec 使用 code 和完整 u64 issued_shares (2.456672ms)
+✔ CompanyOperations 保留严格 catalog，拒绝重复代码、缺字段与派生索引 (1.435982ms)
+✔ 真实报告保留来源和数值 CompanyId/MemberId，并拒绝旧字符串或越界身份 (4.372477ms)
+✔ 真实所得税仓位保留年度 assessments 链、初始递延资产与 restatements (191.189469ms)
+✔ 报告新增字段仍严格拒绝缺失、未知 ROE 与旧公告 event 包装 (0.896546ms)
+ℹ tests 14
+ℹ suites 0
+ℹ pass 14
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 5882.598573

@@ -1,0 +1,705 @@
+diff --git a/apps/web/src/save/company-books-schema.test.ts b/apps/web/src/save/company-books-schema.test.ts
+index 8bfdf363..486b3b60 100644
+--- a/apps/web/src/save/company-books-schema.test.ts
++++ b/apps/web/src/save/company-books-schema.test.ts
+@@ -6,7 +6,7 @@ import { parseIndustryBooks } from "./schema/company/books/index.ts"
+ const industrial = (representativeCompanyOperationsFixture() as any).companies["0"].books
+ const books = { chart: { version: 1, accounts: {} }, journal: { batches: [], closed: [] } }
+ const counterparties = { counterparties: {}, flows: [] }
+-const bank = { Bank: { books, deposits: {}, loans: {}, counterparties, ecl_policy: { version: 1, stage1_default: [{ weight_bp: 10000, pd_bp: 100, lgd_bp: 4000 }], lifetime_default: [{ weight_bp: 10000, pd_bp: 800, lgd_bp: 6000 }] }, next_event_id: 2 } }
++const bank = { Bank: { income_tax_policy: { rate_bp: 2500, loss_carryforward_years: 5 }, income_tax_position: { loss_pool: [], assessments: {}, initial_deferred_tax_asset: "0.00", restatements: {} }, loan_claim_sources: [], books, deposits: {}, loans: {}, counterparties, ecl_policy: { version: 1, stage1_default: [{ weight_bp: 10000, pd_bp: 100, lgd_bp: 4000 }], lifetime_default: [{ weight_bp: 10000, pd_bp: 800, lgd_bp: 6000 }] }, next_event_id: 2 } }
+ const insurance = { Insurance: { books, groups: {}, counterparties, discount: { version: 1, rate_bp: 400 }, next_event_id: 2 } }
+ const realEstate = { RealEstate: { books, projects: {}, presales: {}, loans: {}, receivables: { items: {}, written_off_total: "0.00" }, counterparties, budget: { operating_cash_floor: "0.00", credit_lines: {} }, capitalization_policy: { version: 1, suspension_min_days: 90 }, max_projects: 2, next_event_id: 2 } }
+ 
+@@ -79,7 +79,7 @@ test("parseIndustryBooks rejects malformed exact nested fields and wire scalars"
+ })
+ 
+ test("parseIndustryBooks accepts fully populated source-shaped subledgers", () => {
+-  const populatedBank = { Bank: { ...bank.Bank, deposits: { "DEP-1": { principal: "100.00", accrued_payable: "1.00", carried: "0", last_accrual_date: "2030-01-01", rate_bp: 150, counterparty: "EXT-DEP", start_date: "2030-01-01", maturity_date: "2030-01-11" } }, loans: { "LN-1": { principal: "80.00", accrued_receivable: "1.00", carried: "0", last_accrual_date: "2030-01-01", rate_bp: 400, counterparty: "EXT-BOR", stage: "Stage2", allowance: "4.00", written_off: false, recoverable: "0.00", transfers: [{ date: "2030-01-02", from_stage: "Stage1", to_stage: "Stage2", reason: "fixture" }] } } } }
++  const populatedBank = { Bank: { ...bank.Bank, deposits: { "DEP-1": { principal: "100.00", accrued_payable: "1.00", carried: "0", last_accrual_date: "2030-01-01", rate_bp: 150, counterparty: "EXT-DEP", start_date: "2030-01-01", maturity_date: "2030-01-11" } }, loans: { "LN-1": { principal: "80.00", accrued_receivable: "1.00", carried: "0", last_accrual_date: "2030-01-01", start_date: "2030-01-01", maturity_date: "2031-01-01", rate_bp: 400, counterparty: "EXT-BOR", stage: "Stage2", allowance: "4.00", written_off: false, recoverable: "0.00", transfers: [{ date: "2030-01-02", from_stage: "Stage1", to_stage: "Stage2", reason: "fixture" }] } } } }
+   const populatedInsurance = { Insurance: { ...insurance.Insurance, groups: { "GRP-1": { policyholder: "EXT-POL", premium: "60.00", premium_collected: "50.00", expected_claims_remaining: "40.00", risk_adjustment_remaining: "3.00", csm: "7.00", loss_component: "0.00", finance_remaining: "1.00", units_total: 30, units_released: 5, coverage_start: "2030-01-01", coverage_end: "2030-01-31", day_one_loss: "0.00", released_revenue: "10.00", released_finance: "0.00", remeasure_finance: "0.00", remeasure_loss: "0.00", reestimated_csm: "0.00", carried_claims: "0", carried_risk_adjustment: "0", carried_csm: "0", carried_finance: "0", carried_loss: "0", claims: { "CLM-1": { incurred: "10.00", paid: "4.00", date_incurred: "2030-01-02" } } } } } }
+   const populatedRealEstate = { RealEstate: { ...realEstate.RealEstate, projects: { "P-1": { total_units: 8, remaining_units: 6, land_cost: "2000.00", development_cost: "500.00", capitalized_interest: "10.00", remaining_cost: "1882.50", carried_out_cost: "627.50", dev_started_on: "2030-01-02", interrupted_on: null, interruptions: [{ start: "2030-01-03", end: "2030-01-04" }], completed_on: null } }, presales: { "PS-1": { project: "P-1", buyer: "EXT-BUYER", units: 2, price_total: "600.00", collected: "300.00", delivered: false } }, loans: { "LN-1": { outstanding: "500.00", accrued_unpaid: "1.00", carried_cap: "0", carried_exp: "0", last_accrual_date: "2030-01-02", maturity_date: "2030-01-01", lender: "EXT-LEND", project: "P-1", debt_account: "2001", annual_rate_bp: 365 } } } }
+   assert.deepEqual(parseIndustryBooks(populatedBank, "save.books"), populatedBank)
+diff --git a/apps/web/src/save/company-contracts.test.ts b/apps/web/src/save/company-contracts.test.ts
+index 8af66ba9..ee83f7ee 100644
+--- a/apps/web/src/save/company-contracts.test.ts
++++ b/apps/web/src/save/company-contracts.test.ts
+@@ -9,10 +9,13 @@ import { parsePublicLibrary } from "./schema/company/reports.ts"
+ import { parseGroups } from "./schema/company/groups.ts"
+ import { parseSaveSlot } from "./save-schema.ts"
+ 
+-test("当前存档保留 groups 与职责运行时字段且拒绝代际字段", { timeout: 10_000 }, () => {
+-  const save: Record<string, unknown> = { ...currentSaveFixture(), groups: [{ root: "ROOT", holdings: [{ company: "CHILD", parent_held_shares: 60 }] }] }
++test("当前存档保留单一 LegacyOperations groups 与职责运行时字段且拒绝代际字段", { timeout: 10_000 }, () => {
++  const save = currentSaveFixture()
++  const legacy = (save.company_state as { LegacyOperations: Record<string, unknown> }).LegacyOperations
++  legacy.groups = [{ root: 0, holdings: [{ company: 1, parent_held_shares: 60 }] }]
+   assert.deepEqual(parseSaveSlot(save), save)
+-  const { groups: _removed, ...missingGroups } = save
++  const missingGroups = structuredClone(save)
++  delete (missingGroups.company_state as { LegacyOperations: Record<string, unknown> }).LegacyOperations.groups
+   assert.throws(() => parseSaveSlot(missingGroups), /groups/)
+   for (const schema_version of [1, 2, 3]) assert.throws(() => parseSaveSlot({ ...save, schema_version }), /schema_version/)
+   assert.throws(() => parseSaveSlot({ ...save, runtime_v2: save.runtime_state }), /runtime_v2/)
+@@ -24,18 +27,18 @@ test("setup 保留省略字段并严格解析显式 company config 与 groups",
+   const empty = { ...setup, company_operations: null, groups: [] }
+   assert.deepEqual(parseSetup(empty, "setup"), empty)
+   const operations = representativeCompanyOperationsFixture() as any
+-  const config = { seed: 42, shock_params: operations.shock_params, companies: Object.values(operations.companies).map((company: any) => ({ spec: company.spec, books: company.books, flow: company.params })) }
+-  const explicit = { ...setup, company_operations: config, groups: [{ root: "ROOT", holdings: [{ company: "CHILD", parent_held_shares: 60 }] }] }
++  const config = { seed: 42, shock_params: operations.shock_params, catalog: operations.catalog, companies: Object.values(operations.companies).map((company: any) => ({ spec: company.spec, books: company.books, flow: company.params })) }
++  const explicit = { ...setup, company_operations: config, groups: [{ root: 0, holdings: [{ company: 1, parent_held_shares: 60 }] }] }
+   assert.deepEqual(parseSetup(explicit, "setup"), explicit)
+   assert.throws(() => parseSetup({ ...explicit, company_operations: {} }, "setup"), /company_operations\.seed/)
+   assert.throws(() => parseSetup({ ...explicit, company_operations: { ...config, unknown: true } }, "setup"), /unknown/)
+-  assert.throws(() => parseSetup({ ...explicit, groups: [{ root: "ROOT", holdings: [{ company: "CHILD", parent_held_shares: "60" }] }] }, "setup"), /parent_held_shares/)
++  assert.throws(() => parseSetup({ ...explicit, groups: [{ root: 0, holdings: [{ company: 1, parent_held_shares: "60" }] }] }, "setup"), /parent_held_shares/)
+ })
+ 
+ test("groups 拒绝重复 root、跨组重复成员、自持和不安全股份数", () => {
+-  const group = { root: "ROOT", holdings: [{ company: "CHILD", parent_held_shares: 60 }] }
+-  for (const invalid of [[group, group], [group, { root: "ROOT2", holdings: group.holdings }], [{ root: "ROOT", holdings: [{ company: "ROOT", parent_held_shares: 1 }] }]]) assert.throws(() => parseGroups(invalid), /groups/)
+-  for (const shares of [0, -1, Number.MAX_SAFE_INTEGER + 1]) assert.throws(() => parseGroups([{ ...group, holdings: [{ company: "CHILD", parent_held_shares: shares }] }]), /parent_held_shares/)
++  const group = { root: 0, holdings: [{ company: 1, parent_held_shares: 60 }] }
++  for (const invalid of [[group, group], [group, { root: 2, holdings: group.holdings }], [{ root: 0, holdings: [{ company: 0, parent_held_shares: 1 }] }]]) assert.throws(() => parseGroups(invalid), /groups/)
++  for (const shares of [0, -1, Number.MAX_SAFE_INTEGER + 1]) assert.throws(() => parseGroups([{ ...group, holdings: [{ company: 1, parent_held_shares: shares }] }]), /parent_held_shares/)
+ })
+ 
+ test("PaymentFailure 保留正金额与事项并拒绝无效及 active 注入", () => {
+diff --git a/apps/web/src/save/complete-save-schema.test.ts b/apps/web/src/save/complete-save-schema.test.ts
+index 874ca3c6..cdcde6a6 100644
+--- a/apps/web/src/save/complete-save-schema.test.ts
++++ b/apps/web/src/save/complete-save-schema.test.ts
+@@ -52,7 +52,7 @@ test("strict save boundary preserves a populated current-schema save", () => {
+ test("strict save boundary rejects malformed nested company and personal-state branches", () => {
+   const save = matureSave()
+   assert.ok(typeof save === "object" && save !== null)
+-  const operations = Reflect.get(save, "company_operations")
++  const operations = Reflect.get(Reflect.get(Reflect.get(save, "company_state"), "LegacyOperations"), "operations")
+   assert.ok(typeof operations === "object" && operations !== null)
+   const companies = Reflect.get(operations, "companies")
+   assert.ok(typeof companies === "object" && companies !== null)
+@@ -105,8 +105,8 @@ test("strict save boundary rejects malformed nested company and personal-state b
+     [["pending_player"], [[1, { Retired: {} }]], /pending_player/],
+     [["next_order_id"], 9_007_199_254_740_992, /next_order_id/],
+     [["civil_clock", "policy", "unexpected"], true, /civil_clock\.policy\.unexpected/],
+-    [["company_operations", "companies", company, "spec", "unexpected"], true, /company_operations/],
+-    [["closing_registry", "versions"], [{}], /closing_registry/],
++    [["company_state", "LegacyOperations", "operations", "companies", company, "spec", "unexpected"], true, /company_state\.LegacyOperations\.operations/],
++    [["company_state", "LegacyOperations", "closing", "versions"], [{}], /company_state\.LegacyOperations\.closing/],
+     [["public_library", "next_seq"], "35", /public_library/],
+     [["ops_wiring"], { mirrored: [] }, /ops_wiring/],
+     [["civil_clock", "pending_due"], [], /civil_clock\.pending_due/],
+@@ -115,7 +115,7 @@ test("strict save boundary rejects malformed nested company and personal-state b
+     [["plans", "plans", plan, "status"], { Unknown: {} }, /plans/],
+     [["plans", "plans", plan, "review", "last_review_resources"], undefined, /last_review_resources/],
+     [["belief_books", account, "experience"], undefined, /belief_books.*experience/],
+-    [["belief_books", institution, "institution_policy"], undefined, /institution_experience_policy/],
++    [["belief_books", institution, "institution_policy"], undefined, /belief_books.*institution_policy/],
+     [["belief_books", institution, "institution_account_risk_paused"], undefined, /institution_account_risk_paused/],
+     [["information_states", account, "unexpected"], true, /information_states/],
+     [["belief_books", account, "analysis", "fundamental_bp"], "4000", /belief_books/],
+@@ -129,15 +129,15 @@ test("strict save boundary rejects malformed nested company and personal-state b
+ 
+ test("strict save boundary rejects unsafe company RNG numbers", () => {
+   assert.throws(
+-    () => parseSaveSlot(mutate(["company_operations", "market_rng", "state"], 9_007_199_254_740_992)),
+-    /company_operations\.market_rng\.state/,
++    () => parseSaveSlot(mutate(["company_state", "LegacyOperations", "operations", "market_rng", "state"], 9_007_199_254_740_992)),
++    /company_state\.LegacyOperations\.operations\.market_rng\.state/,
+   )
+ })
+ 
+ test("strict save boundary rejects malformed company book and flow internals", () => {
+   const save = matureSave()
+   assert.ok(typeof save === "object" && save !== null)
+-  const operations = Reflect.get(save, "company_operations")
++  const operations = Reflect.get(Reflect.get(Reflect.get(save, "company_state"), "LegacyOperations"), "operations")
+   assert.ok(typeof operations === "object" && operations !== null)
+   const companies = Reflect.get(operations, "companies")
+   assert.ok(typeof companies === "object" && companies !== null)
+@@ -145,9 +145,9 @@ test("strict save boundary rejects malformed company book and flow internals", (
+   if (company === undefined) throw new Error("mature save must contain a company")
+ 
+   const cases: readonly [readonly (string | number)[], unknown, RegExp][] = [
+-    [["company_operations", "companies", company, "books", "Industrial", "inventory"], 7, /company_operations\.companies\..*\.books\.Industrial\.inventory/],
+-    [["company_operations", "companies", company, "books", "Industrial", "books", "chart", "accounts", "1001", "name"], 7, /company_operations\.companies\..*\.books\.Industrial\.books\.chart\.accounts\.1001\.name/],
+-    [["company_operations", "companies", company, "params", "Industrial", "unit_price_excl_vat"], {}, /company_operations\.companies\..*\.params\.Industrial\.unit_price_excl_vat/],
++    [["company_state", "LegacyOperations", "operations", "companies", company, "books", "Industrial", "inventory"], 7, /company_state\.LegacyOperations\.operations\.companies\..*\.books\.Industrial\.inventory/],
++    [["company_state", "LegacyOperations", "operations", "companies", company, "books", "Industrial", "books", "chart", "accounts", "1001", "name"], 7, /company_state\.LegacyOperations\.operations\.companies\..*\.books\.Industrial\.books\.chart\.accounts\.1001\.name/],
++    [["company_state", "LegacyOperations", "operations", "companies", company, "params", "Industrial", "unit_price_excl_vat"], {}, /company_state\.LegacyOperations\.operations\.companies\..*\.params\.Industrial\.unit_price_excl_vat/],
+   ]
+   for (const [path, value, expected] of cases) assert.throws(() => parseSaveSlot(mutate(path, value)), expected)
+ })
+@@ -162,12 +162,12 @@ test("strict save boundary rejects malformed representative fields for every flo
+   for (const [flow, expected] of flows) {
+     const save = matureSave()
+     assert.ok(typeof save === "object" && save !== null)
+-    const operations = Reflect.get(save, "company_operations")
++    const operations = Reflect.get(Reflect.get(Reflect.get(save, "company_state"), "LegacyOperations"), "operations")
+     assert.ok(typeof operations === "object" && operations !== null)
+     const companies = Reflect.get(operations, "companies")
+     assert.ok(typeof companies === "object" && companies !== null)
+     const company = Object.keys(companies)[0]
+     if (company === undefined) throw new Error("mature save must contain a company")
+-    assert.throws(() => parseSaveSlot(mutate(["company_operations", "companies", company, "params"], flow)), expected)
++    assert.throws(() => parseSaveSlot(mutate(["company_state", "LegacyOperations", "operations", "companies", company, "params"], flow)), expected)
+   }
+ })
+diff --git a/apps/web/src/save/current-company-wire.test.ts b/apps/web/src/save/current-company-wire.test.ts
+index 52e76d01..68bd77e6 100644
+--- a/apps/web/src/save/current-company-wire.test.ts
++++ b/apps/web/src/save/current-company-wire.test.ts
+@@ -22,7 +22,7 @@ test("真实 CompanySpec 使用 code 和完整 u64 issued_shares", { timeout: 10
+ })
+ 
+ test("CompanyOperations 保留严格 catalog，拒绝重复代码、缺字段与派生索引", { timeout: 10_000 }, () => {
+-  const saved = { ...(currentSaveFixture().company_operations as Record<string, unknown>), catalog: fragments.catalog }
++  const saved = { ...((currentSaveFixture().company_state as { LegacyOperations: { operations: Record<string, unknown> } }).LegacyOperations.operations), catalog: fragments.catalog }
+   assert.deepEqual(parseCompanyOperations(saved), saved)
+   const { catalog: _removed, ...missing } = saved
+   assert.throws(() => parseCompanyOperations(missing), /catalog/)
+diff --git a/apps/web/src/save/current-save-fixture.ts b/apps/web/src/save/current-save-fixture.ts
+index 63fb760b..9632588d 100644
+--- a/apps/web/src/save/current-save-fixture.ts
++++ b/apps/web/src/save/current-save-fixture.ts
+@@ -4,7 +4,7 @@ const SMALL = "3f847ae147ae147b"
+ type JsonObject = Record<string, unknown>
+ 
+ export function currentSaveFixture(): JsonObject {
+-  return {
++  const fixture = {
+     desk_mirrored_resting: false,
+     runtime_state: {
+       poisoned: false,
+@@ -178,6 +178,9 @@ export function currentSaveFixture(): JsonObject {
+       },
+     },
+   }
++  // 仅同步单元 fixture 的单一 LegacyOperations wire；真实 producer 正控在 fixtures/source-b。
++  const { groups, company_operations, closing_registry, ...common } = fixture
++  return { ...common, company_state: { LegacyOperations: { operations: company_operations, closing: closing_registry, groups } } }
+ }
+ 
+ 
+diff --git a/apps/web/src/save/representative-save-test-fixture.ts b/apps/web/src/save/representative-save-test-fixture.ts
+index 8e9802a3..1b475213 100644
+--- a/apps/web/src/save/representative-save-test-fixture.ts
++++ b/apps/web/src/save/representative-save-test-fixture.ts
+@@ -7,7 +7,7 @@ const save = JSON.parse(readFileSync(new URL("./fixtures/current-schema-save.jso
+ /** 仅供测试的历史语料 schema projection；可省略跨域引用，不是 Rust save/restore 见证。 */
+ export function representativeCurrentSaveFixture(): Record<string, unknown> {
+   // 正例 fixture 显式迁入当前单 book 结构；parser 仍严格拒绝旧字段。
+-  const { auction_orders: _removedAuctionOrders, ...currentBookSave } = save
++  const { auction_orders: _removedAuctionOrders, groups, company_operations: _oldOperations, closing_registry: _oldClosing, ...currentBookSave } = save
+   const snapshot = save.snapshot as Record<string, unknown>
+   const { day: _day, phase: _phase, ...savedSnapshot } = snapshot
+   const markets = snapshot.markets as Record<string, Record<string, unknown>>
+@@ -63,9 +63,8 @@ export function representativeCurrentSaveFixture(): Record<string, unknown> {
+   return {
+     ...currentBookSave,
+     desk_mirrored_resting: false,
+-    company_operations: projectHistoricalCompanyOperations(save.company_operations as Record<string, unknown>),
++    company_state: { LegacyOperations: { operations: projectHistoricalCompanyOperations(save.company_operations as Record<string, unknown>), closing: closing_registry, groups } },
+     public_library,
+-    closing_registry,
+     information_states,
+     belief_books,
+     ...b2SaveFields,
+diff --git a/apps/web/src/save/save-schema.ts b/apps/web/src/save/save-schema.ts
+index 06c2803c..1d951927 100644
+--- a/apps/web/src/save/save-schema.ts
++++ b/apps/web/src/save/save-schema.ts
+@@ -1,12 +1,15 @@
+ import { parseStrictSaveEnvelope, type StrictSaveEnvelope } from "./schema/root.ts"
++import { materializeSaveValue, validateSaveValue } from "./schema/primitives.ts"
++import { parseRawSaveJson } from "./schema/raw-json.ts"
+ 
+ export function parseSaveSlot(value: unknown): StrictSaveEnvelope {
++  validateSaveValue(value)
+   return parseStrictSaveEnvelope(value)
+ }
+ 
+ export function parseSaveJson(text: string): StrictSaveEnvelope {
+   try {
+-    return parseSaveSlot(JSON.parse(text))
++    return materializeSaveValue(parseSaveSlot(parseRawSaveJson(text)))
+   } catch (error) {
+     if (error instanceof SyntaxError) throw new Error(`存档不是合法 JSON：${error.message}`)
+     throw error
+diff --git a/apps/web/src/save/schema/company/accounting/journal.ts b/apps/web/src/save/schema/company/accounting/journal.ts
+index 9c2726ba..b5322321 100644
+--- a/apps/web/src/save/schema/company/accounting/journal.ts
++++ b/apps/web/src/save/schema/company/accounting/journal.ts
+@@ -1,7 +1,7 @@
+ import { SaveSchemaError, array, civilDate, exact, integer, oneOf, record, string } from "../../primitives.ts"
+ import { parseAccountingPeriod, type AccountingPeriod } from "./period.ts"
+ 
+-const businessKinds = ["OpeningBalance", "LoanDisbursement", "LoanRepayment", "CashRevenue", "CreditSale", "ReceivableCollection", "CashExpense", "InterestAccrual", "InterestPayment", "TaxAccrual", "TaxPayment", "Depreciation", "CustomerDeposit", "CustomerWithdrawal", "LoanIssued", "LoanPrincipalCollected", "LoanInterestAccrued", "LoanInterestCollected", "DepositInterestAccrued", "DepositInterestPaid", "FeeAndCommissionEarned", "CreditImpairment", "LoanWriteOff", "WriteOffRecovery", "LandAcquisition", "DevelopmentCostIncurred", "PresaleCollection", "RealEstateDelivery", "FinalPaymentCollected", "BorrowingCostCapitalized", "DevelopmentImpairment", "InsurancePremiumAccrued", "InsurancePremiumCollected", "InsuranceServiceRevenue", "InsuranceFinance", "InsuranceLossComponent", "InsuranceClaimIncurred", "InsuranceClaimPaid"] as const
++const businessKinds = ["SimpleRevenueAccrual", "SimpleFixedExpenseAccrual", "SimpleVariableExpenseAccrual", "CompanyDividendDeclaration", "CompanyDividendPayment", "CompanyStockDistributionCredit", "CompanyRightsOfferingSettlement", "CompanyRepurchaseCancellation", "CompanyShareReDenomination", "OpeningBalance", "LoanDisbursement", "LoanRepayment", "CashRevenue", "CreditSale", "ReceivableCollection", "CashExpense", "InterestAccrual", "InterestPayment", "TaxAccrual", "TaxPayment", "Depreciation", "CustomerDeposit", "CustomerWithdrawal", "LoanIssued", "LoanPrincipalCollected", "LoanInterestAccrued", "LoanInterestCollected", "DepositInterestAccrued", "DepositInterestPaid", "FeeAndCommissionEarned", "CreditImpairment", "LoanWriteOff", "WriteOffRecovery", "LandAcquisition", "DevelopmentCostIncurred", "PresaleCollection", "RealEstateDelivery", "FinalPaymentCollected", "BorrowingCostCapitalized", "DevelopmentImpairment", "InsurancePremiumAccrued", "InsurancePremiumCollected", "InsuranceServiceRevenue", "InsuranceFinance", "InsuranceLossComponent", "InsuranceClaimIncurred", "InsuranceClaimPaid"] as const
+ const cashFlows = ["Operating", "Investing", "Financing", "NonCash"] as const
+ const postingSides = ["Debit", "Credit"] as const
+ const AMOUNT = /^\s*[+-]?\d+(?:\.\d{1,2})?\s*$/
+diff --git a/apps/web/src/save/schema/company/books/bank.ts b/apps/web/src/save/schema/company/books/bank.ts
+index 9e70ac59..94d3059d 100644
+--- a/apps/web/src/save/schema/company/books/bank.ts
++++ b/apps/web/src/save/schema/company/books/bank.ts
+@@ -1,11 +1,13 @@
+ import { array, boolean, civilDate, exact, integer, map, oneOf, record, string } from "../../primitives.ts"
+ import { parseBooks, type Books } from "../accounting/index.ts"
++import { parseIncomeTax, parseIncomeTaxPosition } from "./industrial.ts"
+ import { amount } from "../value.ts"
+ import { parseCounterpartyLedger, parseFraction, type CounterpartyLedger } from "./common.ts"
+ 
+-export type BankBooks = { readonly books: Books; readonly deposits: Readonly<Record<string, DepositState>>; readonly loans: Readonly<Record<string, BankLoanState>>; readonly counterparties: CounterpartyLedger; readonly ecl_policy: EclPolicy; readonly next_event_id: number }
++export type BankBooks = { readonly books: Books; readonly deposits: Readonly<Record<string, DepositState>>; readonly loans: Readonly<Record<string, BankLoanState>>; readonly counterparties: CounterpartyLedger; readonly ecl_policy: EclPolicy; readonly income_tax_policy: ReturnType<typeof parseIncomeTax>; readonly income_tax_position: ReturnType<typeof parseIncomeTaxPosition>; readonly loan_claim_sources: readonly BankLoanClaimSource[]; readonly next_event_id: number }
++type BankLoanClaimSource = { readonly loan: string; readonly source: number; readonly kind: "Principal" | "Interest" }
+ type DepositState = { readonly principal: string; readonly accrued_payable: string; readonly carried: string; readonly last_accrual_date: string; readonly rate_bp: number; readonly counterparty: string; readonly start_date: string; readonly maturity_date: string }
+-type BankLoanState = { readonly principal: string; readonly accrued_receivable: string; readonly carried: string; readonly last_accrual_date: string; readonly rate_bp: number; readonly counterparty: string; readonly stage: EclStage; readonly allowance: string; readonly written_off: boolean; readonly recoverable: string; readonly transfers: readonly StageTransferRecord[] }
++type BankLoanState = { readonly principal: string; readonly accrued_receivable: string; readonly carried: string; readonly last_accrual_date: string; readonly rate_bp: number; readonly counterparty: string; readonly start_date: string; readonly maturity_date: string; readonly stage: EclStage; readonly allowance: string; readonly written_off: boolean; readonly recoverable: string; readonly transfers: readonly StageTransferRecord[] }
+ type EclStage = "Stage1" | "Stage2" | "Stage3"
+ type StageTransferRecord = { readonly date: string; readonly from_stage: EclStage; readonly to_stage: EclStage; readonly reason: string }
+ type EclPolicy = { readonly version: number; readonly stage1_default: readonly EclScenario[]; readonly lifetime_default: readonly EclScenario[] }
+@@ -14,8 +16,8 @@ const stages = ["Stage1", "Stage2", "Stage3"] as const
+ 
+ export function parseBankBooks(value: unknown, path: string): BankBooks {
+   const parsed = record(value, path)
+-  exact(parsed, ["books", "deposits", "loans", "counterparties", "ecl_policy", "next_event_id"], path)
+-  return { books: parseBooks(parsed.books, `${path}.books`), deposits: map(parsed.deposits, `${path}.deposits`, stringKey, parseDeposit), loans: map(parsed.loans, `${path}.loans`, stringKey, parseLoan), counterparties: parseCounterpartyLedger(parsed.counterparties, `${path}.counterparties`), ecl_policy: parsePolicy(parsed.ecl_policy, `${path}.ecl_policy`), next_event_id: integer(parsed.next_event_id, `${path}.next_event_id`, 0) }
++  exact(parsed, ["books", "deposits", "loans", "counterparties", "ecl_policy", "income_tax_policy", "income_tax_position", "loan_claim_sources", "next_event_id"], path)
++  return { income_tax_policy: parseIncomeTax(parsed.income_tax_policy, `${path}.income_tax_policy`), income_tax_position: parseIncomeTaxPosition(parsed.income_tax_position, `${path}.income_tax_position`), loan_claim_sources: array(parsed.loan_claim_sources, `${path}.loan_claim_sources`).map((entry, index) => parseClaimSource(entry, `${path}.loan_claim_sources[${index}]`)), books: parseBooks(parsed.books, `${path}.books`), deposits: map(parsed.deposits, `${path}.deposits`, stringKey, parseDeposit), loans: map(parsed.loans, `${path}.loans`, stringKey, parseLoan), counterparties: parseCounterpartyLedger(parsed.counterparties, `${path}.counterparties`), ecl_policy: parsePolicy(parsed.ecl_policy, `${path}.ecl_policy`), next_event_id: integer(parsed.next_event_id, `${path}.next_event_id`, 0) }
+ }
+ 
+ function parseDeposit(value: unknown, path: string): DepositState {
+@@ -26,8 +28,8 @@ function parseDeposit(value: unknown, path: string): DepositState {
+ 
+ function parseLoan(value: unknown, path: string): BankLoanState {
+   const parsed = record(value, path)
+-  exact(parsed, ["principal", "accrued_receivable", "carried", "last_accrual_date", "rate_bp", "counterparty", "stage", "allowance", "written_off", "recoverable", "transfers"], path)
+-  return { principal: amount(parsed.principal, `${path}.principal`), accrued_receivable: amount(parsed.accrued_receivable, `${path}.accrued_receivable`), carried: parseFraction(parsed.carried, `${path}.carried`), last_accrual_date: civilDate(parsed.last_accrual_date, `${path}.last_accrual_date`), rate_bp: integer(parsed.rate_bp, `${path}.rate_bp`), counterparty: string(parsed.counterparty, `${path}.counterparty`), stage: oneOf(parsed.stage, `${path}.stage`, stages), allowance: amount(parsed.allowance, `${path}.allowance`), written_off: boolean(parsed.written_off, `${path}.written_off`), recoverable: amount(parsed.recoverable, `${path}.recoverable`), transfers: array(parsed.transfers, `${path}.transfers`).map((entry, index) => parseTransfer(entry, `${path}.transfers[${index}]`)) }
++  exact(parsed, ["principal", "accrued_receivable", "carried", "last_accrual_date", "start_date", "maturity_date", "rate_bp", "counterparty", "stage", "allowance", "written_off", "recoverable", "transfers"], path)
++  return { start_date: civilDate(parsed.start_date, `${path}.start_date`), maturity_date: civilDate(parsed.maturity_date, `${path}.maturity_date`), principal: amount(parsed.principal, `${path}.principal`), accrued_receivable: amount(parsed.accrued_receivable, `${path}.accrued_receivable`), carried: parseFraction(parsed.carried, `${path}.carried`), last_accrual_date: civilDate(parsed.last_accrual_date, `${path}.last_accrual_date`), rate_bp: integer(parsed.rate_bp, `${path}.rate_bp`), counterparty: string(parsed.counterparty, `${path}.counterparty`), stage: oneOf(parsed.stage, `${path}.stage`, stages), allowance: amount(parsed.allowance, `${path}.allowance`), written_off: boolean(parsed.written_off, `${path}.written_off`), recoverable: amount(parsed.recoverable, `${path}.recoverable`), transfers: array(parsed.transfers, `${path}.transfers`).map((entry, index) => parseTransfer(entry, `${path}.transfers[${index}]`)) }
+ }
+ 
+ function parseTransfer(value: unknown, path: string): StageTransferRecord {
+@@ -48,3 +50,9 @@ function parseScenario(value: unknown, path: string): EclScenario {
+   return { weight_bp: integer(parsed.weight_bp, `${path}.weight_bp`), pd_bp: integer(parsed.pd_bp, `${path}.pd_bp`), lgd_bp: integer(parsed.lgd_bp, `${path}.lgd_bp`) }
+ }
+ function stringKey(key: string): void { string(key, key) }
++
++function parseClaimSource(value: unknown, path: string): BankLoanClaimSource {
++  const parsed = record(value, path)
++  exact(parsed, ["loan", "source", "kind"], path)
++  return { loan: string(parsed.loan, `${path}.loan`), source: integer(parsed.source, `${path}.source`, 0), kind: oneOf(parsed.kind, `${path}.kind`, ["Principal", "Interest"] as const) }
++}
+diff --git a/apps/web/src/save/schema/company/books/industrial.ts b/apps/web/src/save/schema/company/books/industrial.ts
+index e713e1a7..4a657717 100644
+--- a/apps/web/src/save/schema/company/books/industrial.ts
++++ b/apps/web/src/save/schema/company/books/industrial.ts
+@@ -1,6 +1,7 @@
+ import { SaveSchemaError, array, civilDate, exact, integer, map, record, string } from "../../primitives.ts"
+ import { parseBooks, type Books } from "../accounting/index.ts"
+-import { amount, period } from "../value.ts"
++import { parseAccountingPeriod } from "../accounting/period.ts"
++import { amount } from "../value.ts"
+ import { parseBudget, parseContractBook, parseCounterpartyLedger, parseFraction, parseI128Number, parseTradeOpenLedger, type ContractBook, type CounterpartyLedger, type OperatingBudget, type TradeOpenLedger } from "./common.ts"
+ 
+ export type IndustrialBooks = { readonly books: Books; readonly inventory: InventoryLedger; readonly assets: FixedAssetRegister; readonly receivables: TradeOpenLedger; readonly payables: TradeOpenLedger; readonly contracts: ContractBook; readonly counterparties: CounterpartyLedger; readonly budget: OperatingBudget; readonly tax_policy: TaxPolicy; readonly income_tax_position: IncomeTaxPosition; readonly loans: Readonly<Record<string, IndustrialLoanState>>; readonly inventory_source_events: readonly { readonly event: number; readonly item: string; readonly account: string }[]; readonly trade_counterparty_events: readonly { readonly event: number; readonly counterparty: string; readonly account: string }[]; readonly next_event_id: number }
+@@ -34,7 +35,7 @@ export function parseIndustrialBooks(value: unknown, path: string): IndustrialBo
+   return { inventory_source_events: inventoryEvents, trade_counterparty_events: tradeEvents, books: parseBooks(parsed.books, `${path}.books`), inventory: parseInventory(parsed.inventory, `${path}.inventory`), assets: parseAssets(parsed.assets, `${path}.assets`), receivables: parseTradeOpenLedger(parsed.receivables, `${path}.receivables`), payables: parseTradeOpenLedger(parsed.payables, `${path}.payables`), contracts: parseContractBook(parsed.contracts, `${path}.contracts`), counterparties: parseCounterpartyLedger(parsed.counterparties, `${path}.counterparties`), budget: parseBudget(parsed.budget, `${path}.budget`), tax_policy: parseTaxPolicy(parsed.tax_policy, `${path}.tax_policy`), income_tax_position: parseIncomeTaxPosition(parsed.income_tax_position, `${path}.income_tax_position`), loans: map(parsed.loans, `${path}.loans`, stringKey, parseLoan), next_event_id: integer(parsed.next_event_id, `${path}.next_event_id`, 0) }
+ }
+ 
+-function parseIncomeTaxPosition(value: unknown, path: string): IncomeTaxPosition {
++export function parseIncomeTaxPosition(value: unknown, path: string): IncomeTaxPosition {
+   const parsed = record(value, path)
+   exact(parsed, ["loss_pool", "assessments", "initial_deferred_tax_asset", "restatements"], path)
+   const assessments = map(parsed.assessments, `${path}.assessments`, (key, keyPath) => {
+@@ -42,7 +43,7 @@ function parseIncomeTaxPosition(value: unknown, path: string): IncomeTaxPosition
+   }, parseIncomeTaxAssessment)
+   return { loss_pool: array(parsed.loss_pool, `${path}.loss_pool`).map((entry, index) => parseLossEntry(entry, `${path}.loss_pool[${index}]`)), assessments, initial_deferred_tax_asset: amount(parsed.initial_deferred_tax_asset, `${path}.initial_deferred_tax_asset`), restatements: map(parsed.restatements, `${path}.restatements`, (key, keyPath) => {
+     if (!/^(0|[1-9][0-9]*)$/.test(key) || BigInt(key) > 18_446_744_073_709_551_615n) throw new SaveSchemaError(keyPath, "必须是规范 u64 BusinessEventId 键")
+-  }, period) }
++  }, parseAccountingPeriod) }
+ }
+ 
+ function parseIncomeTaxAssessment(value: unknown, path: string): IncomeTaxAssessment {
+@@ -87,16 +88,22 @@ function parseVat(value: unknown, path: string): VatPolicy {
+   return { output_rate_bp: integer(parsed.output_rate_bp, `${path}.output_rate_bp`), input_rate_bp: integer(parsed.input_rate_bp, `${path}.input_rate_bp`), deductible_share_bp: integer(parsed.deductible_share_bp, `${path}.deductible_share_bp`) }
+ }
+ 
+-function parseIncomeTax(value: unknown, path: string): IncomeTaxPolicy {
++export function parseIncomeTax(value: unknown, path: string): IncomeTaxPolicy {
+   const parsed = record(value, path)
+   exact(parsed, ["rate_bp", "loss_carryforward_years"], path)
+-  return { rate_bp: integer(parsed.rate_bp, `${path}.rate_bp`), loss_carryforward_years: integer(parsed.loss_carryforward_years, `${path}.loss_carryforward_years`, 0) }
++  const rate = integer(parsed.rate_bp, `${path}.rate_bp`, -2147483648)
++  const years = integer(parsed.loss_carryforward_years, `${path}.loss_carryforward_years`, 0)
++  if (rate > 2147483647) throw new SaveSchemaError(`${path}.rate_bp`, "超出 i32 范围")
++  if (years > 65535) throw new SaveSchemaError(`${path}.loss_carryforward_years`, "超出 u16 范围")
++  return { rate_bp: rate, loss_carryforward_years: years }
+ }
+ 
+ function parseLossEntry(value: unknown, path: string): LossEntry {
+   const parsed = record(value, path)
+   exact(parsed, ["origin_year", "remaining"], path)
+-  return { origin_year: integer(parsed.origin_year, `${path}.origin_year`), remaining: amount(parsed.remaining, `${path}.remaining`) }
++  const year = integer(parsed.origin_year, `${path}.origin_year`, -2147483648)
++  if (year > 2147483647) throw new SaveSchemaError(`${path}.origin_year`, "超出 i32 范围")
++  return { origin_year: year, remaining: amount(parsed.remaining, `${path}.remaining`) }
+ }
+ 
+ function parseLoan(value: unknown, path: string): IndustrialLoanState {
+diff --git a/apps/web/src/save/schema/company/groups.ts b/apps/web/src/save/schema/company/groups.ts
+index 95e66d7b..34bc8504 100644
+--- a/apps/web/src/save/schema/company/groups.ts
++++ b/apps/web/src/save/schema/company/groups.ts
+@@ -1,27 +1,22 @@
+-import { SaveSchemaError, array, exact, integer, record, string } from "../primitives.ts"
++import { SaveSchemaError, array, exact, integer, record } from "../primitives.ts"
++import { u32 } from "../personal/common.ts"
+ 
+-export type GroupStructure = { readonly root: string; readonly holdings: readonly { readonly company: string; readonly parent_held_shares: number }[] }
+-
+-function companyId(value: unknown, path: string): string {
+-  const parsed = string(value, path)
+-  if (parsed.trim().length === 0) throw new SaveSchemaError(path, "不能为空")
+-  return parsed
+-}
++export type GroupStructure = { readonly root: number; readonly holdings: readonly { readonly company: number; readonly parent_held_shares: number }[] }
+ 
+ export function parseGroups(value: unknown, path = "groups"): GroupStructure[] {
+-  const members = new Set<string>()
++  const members = new Set<number>()
+   return array(value, path).map((value, index) => {
+     const itemPath = `${path}[${index}]`
+     const item = record(value, itemPath)
+     exact(item, ["root", "holdings"], itemPath)
+-    const root = companyId(item.root, `${itemPath}.root`)
++    const root = u32(item.root, `${itemPath}.root`)
+     if (members.has(root)) throw new SaveSchemaError(`${itemPath}.root`, "公司不得重复出现在 groups")
+     members.add(root)
+     const holdings = array(item.holdings, `${itemPath}.holdings`).map((value, holdingIndex) => {
+       const holdingPath = `${itemPath}.holdings[${holdingIndex}]`
+       const holding = record(value, holdingPath)
+       exact(holding, ["company", "parent_held_shares"], holdingPath)
+-      const company = companyId(holding.company, `${holdingPath}.company`)
++      const company = u32(holding.company, `${holdingPath}.company`)
+       if (members.has(company)) throw new SaveSchemaError(`${holdingPath}.company`, "公司不得重复出现在 groups")
+       members.add(company)
+       return { company, parent_held_shares: integer(holding.parent_held_shares, `${holdingPath}.parent_held_shares`, 1) }
+diff --git a/apps/web/src/save/schema/company/operations.ts b/apps/web/src/save/schema/company/operations.ts
+index 35e68330..2369e375 100644
+--- a/apps/web/src/save/schema/company/operations.ts
++++ b/apps/web/src/save/schema/company/operations.ts
+@@ -6,12 +6,12 @@ import { parseActiveShocks, parseFlowParams, parseHistory, parseScheduler, parse
+ import { instant, nullableDate, u64, type CivilInstantValue, type U64 } from "./value.ts"
+ import { parsePaymentFailure, type PaymentFailure } from "./policies/shock.ts"
+ 
+-export type CompanyOperationsConfig = { readonly seed: number; readonly shock_params: ShockParams; readonly companies: readonly { readonly spec: ReturnType<typeof parseCompanySpec>; readonly books: IndustryBooks; readonly flow: FlowParams }[] }
++export type CompanyOperationsConfig = { readonly seed: number; readonly shock_params: ShockParams; readonly catalog: CompanyCatalog; readonly companies: readonly { readonly spec: ReturnType<typeof parseCompanySpec>; readonly books: IndustryBooks; readonly flow: FlowParams }[] }
+ 
+ export function parseCompanyOperationsConfig(value: unknown, path: string): CompanyOperationsConfig {
+   const parsed = record(value, path)
+-  exact(parsed, ["seed", "shock_params", "companies"], path)
+-  return { seed: integer(parsed.seed, `${path}.seed`, 0), shock_params: parseShockParams(parsed.shock_params, `${path}.shock_params`), companies: array(parsed.companies, `${path}.companies`).map((value, index) => {
++  exact(parsed, ["seed", "shock_params", "catalog", "companies"], path)
++  return { seed: integer(parsed.seed, `${path}.seed`, 0), shock_params: parseShockParams(parsed.shock_params, `${path}.shock_params`), catalog: parseCompanyCatalog(parsed.catalog, `${path}.catalog`), companies: array(parsed.companies, `${path}.companies`).map((value, index) => {
+     const itemPath = `${path}.companies[${index}]`
+     const item = record(value, itemPath)
+     exact(item, ["spec", "books", "flow"], itemPath)
+diff --git a/apps/web/src/save/schema/company/value.ts b/apps/web/src/save/schema/company/value.ts
+index 0c296fa9..4c5aad1e 100644
+--- a/apps/web/src/save/schema/company/value.ts
++++ b/apps/web/src/save/schema/company/value.ts
+@@ -31,6 +31,8 @@ export function i128(value: unknown, path: string): I128 {
+ export function amount(value: unknown, path: string): DecimalAmount {
+   const parsed = string(value, path)
+   if (!AMOUNT.test(parsed)) throw new SaveSchemaError(path, "必须是两位小数的会计金额")
++  const cents = BigInt(parsed.replace(".", ""))
++  if (cents < -I128_MAX || cents > I128_MAX) throw new SaveSchemaError(path, "会计金额超出 Rust i128 分值域")
+   return parsed
+ }
+ 
+diff --git a/apps/web/src/save/schema/npc-attention.ts b/apps/web/src/save/schema/npc-attention.ts
+index fbdc0641..d17096de 100644
+--- a/apps/web/src/save/schema/npc-attention.ts
++++ b/apps/web/src/save/schema/npc-attention.ts
+@@ -1,6 +1,6 @@
+ import type { NpcAttentionState } from "../../types/generated/NpcAttentionState"
+ import type { NpcInformationCadence } from "../../types/generated/NpcInformationCadence"
+-import { decimal, exact, integer, record, SaveSchemaError } from "./primitives.ts"
++import { decimal, exact, finite, integer, record, SaveSchemaError } from "./primitives.ts"
+ import { parseCivilInstant } from "./personal/experience.ts"
+ 
+ export function parseInformationCadence(value: unknown, path: string): NpcInformationCadence {
+@@ -28,8 +28,8 @@ export function parseInformationCadence(value: unknown, path: string): NpcInform
+ export function parseNpcAttention(value: unknown, path: string): NpcAttentionState {
+   const attention = record(value, path)
+   exact(attention, ["base_probability", "next_attention_candidate_tick", "rng_state", "information_cadence", "next_information_check"], path)
+-  const probability = attention.base_probability
+-  if (typeof probability !== "number" || !Number.isFinite(probability) || probability <= 0 || probability > 1) throw new SaveSchemaError(`${path}.base_probability`, "必须为有限(0,1]概率")
++  const probability = finite(attention.base_probability, `${path}.base_probability`)
++  if (probability <= 0 || probability > 1) throw new SaveSchemaError(`${path}.base_probability`, "必须为有限(0,1]概率")
+   return {
+     base_probability: probability,
+     next_attention_candidate_tick: decimal(attention.next_attention_candidate_tick, `${path}.next_attention_candidate_tick`),
+diff --git a/apps/web/src/save/schema/personal/experience.ts b/apps/web/src/save/schema/personal/experience.ts
+index 195bbf08..1fa46930 100644
+--- a/apps/web/src/save/schema/personal/experience.ts
++++ b/apps/web/src/save/schema/personal/experience.ts
+@@ -106,9 +106,9 @@ function parseExitRecord(value: unknown, path: string): ExitRecord {
+ 
+ /** 存档 wire 的股票身份：数值 StockId（ADR 0041）。 */
+ function parseStock(value: unknown, path: string): number {
+-  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) throw new Error(`存档 ${path} 必须是数值 StockId`)
+-  if (value > 4_294_967_295) throw new Error(`存档 ${path} 超出 u32 范围`)
+-  return value
++  const parsed = integer(value, path, 0)
++  if (parsed > 4_294_967_295) throw new Error(`存档 ${path} 超出 u32 范围`)
++  return parsed
+ }
+ 
+ function parseCivilDate(value: unknown, path: string): string {
+diff --git a/apps/web/src/save/schema/personal/plans.ts b/apps/web/src/save/schema/personal/plans.ts
+index d6dc124d..7f06e38d 100644
+--- a/apps/web/src/save/schema/personal/plans.ts
++++ b/apps/web/src/save/schema/personal/plans.ts
+@@ -94,7 +94,7 @@ function parseExecutionLeg(value: unknown, path: string): PlanExecutionLeg {
+ 
+ function parsePolicy(value: unknown, path: string): PlanPolicy { const parsed = record(value, path); exact(parsed, ["reverse_revision_threshold_bp", "review_signal_delta_bp", "review_price_change_bp"], path); return { reverse_revision_threshold_bp: integer(parsed.reverse_revision_threshold_bp, `${path}.reverse_revision_threshold_bp`), review_signal_delta_bp: integer(parsed.review_signal_delta_bp, `${path}.review_signal_delta_bp`), review_price_change_bp: integer(parsed.review_price_change_bp, `${path}.review_price_change_bp`) } }
+ /** 存档 wire 的股票身份：数值 StockId（ADR 0041）。 */
+-function parseStock(value: unknown, path: string): number { if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) throw new Error(`存档 ${path} 必须是数值 StockId`); if (value > 4_294_967_295) throw new Error(`存档 ${path} 超出 u32 范围`); return value }
++function parseStock(value: unknown, path: string): number { const parsed = integer(value, path, 0); if (parsed > 4_294_967_295) throw new Error(`存档 ${path} 超出 u32 范围`); return parsed }
+ function parseTarget(value: unknown, path: string): PlanTarget { const [tag, payload] = externalTag(value, path); if (tag === "ShareCount") return { ShareCount: integer(payload, `${path}.ShareCount`, 0) }; if (tag === "PositionFractionBp") return { PositionFractionBp: integer(payload, `${path}.PositionFractionBp`, 0) }; throw new Error(`存档 ${path}.${tag} 不是已知计划目标`) }
+ function parseOpinion(value: unknown, path: string): PlanOpinion { const parsed = record(value, path); exact(parsed, ["signal_score_bp", "source"], path); return { signal_score_bp: integer(parsed.signal_score_bp, `${path}.signal_score_bp`), source: oneOf(parsed.source, `${path}.source`, SOURCE) } }
+ function parseStatus(value: unknown, path: string): PlanStatus { if (value === "Active" || value === "Completed") return value; const [tag, payload] = tagged(value, path); if (tag === "Paused") { exact(payload, ["reason"], `${path}.Paused`); return { Paused: { reason: oneOf(payload.reason, `${path}.Paused.reason`, PAUSE) } } }; if (tag === "Terminated") { exact(payload, ["reason"], `${path}.Terminated`); return { Terminated: { reason: oneOf(payload.reason, `${path}.Terminated.reason`, TERMINATION) } } }; throw new Error(`存档 ${path}.${tag} 不是已知计划状态`) }
+diff --git a/apps/web/src/save/schema/primitives.ts b/apps/web/src/save/schema/primitives.ts
+index a4ed9634..2edd3fcc 100644
+--- a/apps/web/src/save/schema/primitives.ts
++++ b/apps/web/src/save/schema/primitives.ts
+@@ -2,6 +2,45 @@ import { parseMoney } from "../../utils/money.ts"
+ 
+ export type JsonRecord = Record<string, unknown>
+ 
++/** 原始数值在对应 integer/finite codec 消费前不得先经 JSON.parse 舍入。 */
++export class RawSaveNumber {
++  readonly token: string
++  decoded: number | undefined
++  constructor(token: string) { this.token = token }
++}
++
++/** 校验后返回原始 opaque 子树的叶也必须消费过数值 codec，不能漏出 token。 */
++export function materializeSaveValue<T>(value: T, path = "根节点"): T {
++  if (value instanceof RawSaveNumber) {
++    if (value.decoded === undefined) throw new SaveSchemaError(path, "数值未经过字段 codec 校验")
++    return value.decoded as T
++  }
++  if (Array.isArray(value)) return value.map((item, index) => materializeSaveValue(item, `${path}[${index}]`)) as T
++  if (value !== null && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, materializeSaveValue(item, `${path}.${key}`)])) as T
++  return value
++}
++
++export function validateSaveValue(value: unknown, path = "根节点", ancestors = new Set<object>()): void {
++  if (value instanceof RawSaveNumber) return
++  if (typeof value === "string") { string(value, path); return }
++  if (value === null || typeof value === "number" || typeof value === "boolean") return
++  if (typeof value !== "object") throw new SaveSchemaError(path, "不是 JSON 值")
++  if (ancestors.has(value)) throw new SaveSchemaError(path, "包含循环引用")
++  ancestors.add(value)
++  if (Array.isArray(value)) {
++    for (let index = 0; index < value.length; index++) {
++      if (!Object.hasOwn(value, index)) throw new SaveSchemaError(`${path}[${index}]`, "数组元素缺失")
++      validateSaveValue(value[index], `${path}[${index}]`, ancestors)
++    }
++  } else {
++    for (const [key, nested] of Object.entries(value)) {
++      string(key, `${path}.key`)
++      validateSaveValue(nested, `${path}.${key}`, ancestors)
++    }
++  }
++  ancestors.delete(value)
++}
++
+ const UNSIGNED_DECIMAL = /^\d+$/
+ const ACCOUNTING_AMOUNT = /^-?\d+\.\d{2}$/
+ const ISO_CIVIL_DATE = /^\d{4}-\d{2}-\d{2}$/
+@@ -27,7 +66,7 @@ export function record(value: unknown, path: string): JsonRecord {
+ 
+ export function exact(value: JsonRecord, keys: readonly string[], path: string): void {
+   const expected = new Set(keys)
+-  const missing = keys.filter((key) => !(key in value))
++  const missing = keys.filter((key) => !Object.hasOwn(value, key))
+   const extra = Object.keys(value).filter((key) => !expected.has(key))
+   if (missing.length > 0) throw new SaveSchemaError(`${path}.${missing[0]}`, "是必填字段")
+   if (extra.length > 0) throw new SaveSchemaError(`${path}.${extra[0]}`, "不是允许字段")
+@@ -35,11 +74,19 @@ export function exact(value: JsonRecord, keys: readonly string[], path: string):
+ 
+ export function array(value: unknown, path: string): readonly unknown[] {
+   if (!Array.isArray(value)) throw new SaveSchemaError(path, "必须是数组")
++  for (let index = 0; index < value.length; index++) if (!Object.hasOwn(value, index)) throw new SaveSchemaError(`${path}[${index}]`, "数组元素缺失")
+   return value
+ }
+ 
+ export function string(value: unknown, path: string): string {
+   if (typeof value !== "string") throw new SaveSchemaError(path, "必须是字符串")
++  for (let index = 0; index < value.length; index++) {
++    const unit = value.charCodeAt(index)
++    if (unit >= 0xd800 && unit <= 0xdbff) {
++      const next = value.charCodeAt(++index)
++      if (!(next >= 0xdc00 && next <= 0xdfff)) throw new SaveSchemaError(path, "包含孤立 Unicode surrogate")
++    } else if (unit >= 0xdc00 && unit <= 0xdfff) throw new SaveSchemaError(path, "包含孤立 Unicode surrogate")
++  }
+   return value
+ }
+ 
+@@ -49,16 +96,25 @@ export function boolean(value: unknown, path: string): boolean {
+ }
+ 
+ export function integer(value: unknown, path: string, minimum?: number): number {
+-  if (typeof value !== "number" || !Number.isSafeInteger(value) || (minimum !== undefined && value < minimum)) {
++  const source = value instanceof RawSaveNumber ? value : undefined
++  if (value instanceof RawSaveNumber) {
++    if (!/^(?:0|-?[1-9][0-9]*)$/.test(value.token)) throw new SaveSchemaError(path, "整数 token 不接受负零、小数或指数")
++    value = Number(value.token)
++  }
++  if (typeof value !== "number" || !Number.isSafeInteger(value) || Object.is(value, -0) || (minimum !== undefined && value < minimum)) {
+     throw new SaveSchemaError(path, minimum === undefined ? "必须是安全整数" : `必须是不小于 ${minimum} 的安全整数`)
+   }
++  if (source !== undefined) source.decoded = value
+   return value
+ }
+ 
+ export function finite(value: unknown, path: string): number {
++  const source = value instanceof RawSaveNumber ? value : undefined
++  if (value instanceof RawSaveNumber) value = Number(value.token)
+   if (typeof value !== "number" || !Number.isFinite(value)) {
+     throw new SaveSchemaError(path, "必须是有限数值")
+   }
++  if (source !== undefined) source.decoded = value
+   return value
+ }
+ 
+@@ -115,10 +171,10 @@ export function oneOf<T extends string>(value: unknown, path: string, variants:
+ 
+ export function map<T>(value: unknown, path: string, parseKey: (key: string, keyPath: string) => void, parseValue: (nested: unknown, nestedPath: string) => T): Record<string, T> {
+   const parsed = record(value, path)
+-  const result: Record<string, T> = {}
++  const result: [string, T][] = []
+   for (const [key, nested] of Object.entries(parsed)) {
+     parseKey(key, `${path}.${key}`)
+-    result[key] = parseValue(nested, `${path}.${key}`)
++    result.push([key, parseValue(nested, `${path}.${key}`)])
+   }
+-  return result
++  return Object.fromEntries(result)
+ }
+diff --git a/apps/web/src/save/schema/root.ts b/apps/web/src/save/schema/root.ts
+index 19127ee7..32daede1 100644
+--- a/apps/web/src/save/schema/root.ts
++++ b/apps/web/src/save/schema/root.ts
+@@ -1,5 +1,5 @@
+-import { parseClosingRegistry, parseCompanyOperations, parseDisclosureDispatch, parsePublicLibrary } from "./company/index.ts"
+-import { parseGroups } from "./company/groups.ts"
++import { parseDisclosureDispatch, parsePublicLibrary } from "./company/index.ts"
++import { parseSavedSessionCompanies, type SavedSessionCompanies } from "./company/state.ts"
+ import { parseSetup } from "./market.ts"
+ import { parseSaveSnapshot } from "./save-snapshot.ts"
+ import { parseOrderState } from "./orders.ts"
+@@ -9,7 +9,7 @@ import { parseInformationStates } from "./personal/information.ts"
+ import { parseHistoryReads, parsePriceMemories, parseWatchlists } from "./personal/memory.ts"
+ import { parsePlanBook } from "./personal/plans.ts"
+ import { parseActiveMinuteBars, parsePersonalTradeConfirmations, parseReceiptWatermark, parseRetainedHistory, validateRetainedHistoryCandles, type StockTickById } from "./retained-history.ts"
+-import { boolean, decimal, exact, record } from "./primitives.ts"
++import { boolean, decimal, exact, record, SaveSchemaError } from "./primitives.ts"
+ import { parseCivilClock } from "./civil-clock.ts"
+ import { parseMarketMemberships, validateMembershipAccounts } from "./market-memberships.ts"
+ import { parseSaveRuntime } from "./runtime-state.ts"
+@@ -33,9 +33,7 @@ export type StrictSaveEnvelope = {
+   readonly ingress_receipt_cursors: ReturnType<typeof parseOrderState>["ingress_receipt_cursors"]
+   readonly next_order_id: number
+   readonly civil_clock: ReturnType<typeof parseCivilClock>
+-  readonly groups: ReturnType<typeof parseGroups>
+-  readonly company_operations: ReturnType<typeof parseCompanyOperations>
+-  readonly closing_registry: ReturnType<typeof parseClosingRegistry>
++  readonly company_state: SavedSessionCompanies
+   readonly public_library: ReturnType<typeof parsePublicLibrary>
+   readonly disclosures: ReturnType<typeof parseDisclosureDispatch>
+   readonly plans: ReturnType<typeof parsePlanBook>
+@@ -56,7 +54,7 @@ export type StrictSaveEnvelope = {
+   readonly receipt_watermark: number
+ }
+ 
+-const ROOT_KEYS = ["desk_mirrored_resting", "runtime_state", "setup", "seed", "snapshot", "resting_orders", "book_next_sequences", "filled_orders", "price_history", "market_minute_closes", "market_minute_bars", "retained_market_days", "personal_trade_confirmations", "receipt_watermark", "rng_state", "npc_attention", "retail_experience", "npc_order_lifecycles", "pending_player", "ingress_receipt_cursors", "next_order_id", "civil_clock", "groups", "company_operations", "closing_registry", "public_library", "disclosures", "plans", "urgency_policy", "information_states", "belief_books", "watchlists", "price_memories", "history_reads", "market_memberships"] as const
++const ROOT_KEYS = ["desk_mirrored_resting", "runtime_state", "setup", "seed", "snapshot", "resting_orders", "book_next_sequences", "filled_orders", "price_history", "market_minute_closes", "market_minute_bars", "retained_market_days", "personal_trade_confirmations", "receipt_watermark", "rng_state", "npc_attention", "retail_experience", "npc_order_lifecycles", "pending_player", "ingress_receipt_cursors", "next_order_id", "civil_clock", "company_state", "public_library", "disclosures", "plans", "urgency_policy", "information_states", "belief_books", "watchlists", "price_memories", "history_reads", "market_memberships"] as const
+ 
+ export function parseStrictSaveEnvelope(value: unknown): StrictSaveEnvelope {
+   const root = record(value, "根节点")
+@@ -73,6 +71,12 @@ export function parseStrictSaveEnvelope(value: unknown): StrictSaveEnvelope {
+     throw new Error(`存档 setup.simulation_policy_id 必须为 a-share-simulation，实际为 ${JSON.stringify(setup.simulation_policy_id)}`)
+   }
+   const snapshot = parseSaveSnapshot(root.snapshot, "snapshot")
++  const company_state = parseSavedSessionCompanies(root.company_state, setup)
++  const public_library = parsePublicLibrary(root.public_library)
++  const selectedReportSource = "LegacyOperations" in company_state ? "SimulationAccounting" : "SimpleGenerated"
++  for (const [index, report] of public_library.reports.entries()) {
++    if (report.source !== selectedReportSource) throw new SaveSchemaError(`public_library.reports[${index}].source`, "必须来自当前 selected 公司权威")
++  }
+   // ADR 0041：引擎按代码升序为证券分配 StockId（0..n），存档 wire 的股票 map 键是
+   // id 的字符串形态。cross-check 用存档自带 setup 推导期望 id 键集合（代码串不出现在键位）。
+   const expectedStockIdKeys = [...setup.stocks.map((stock) => stock.code)].sort().map((_, index) => String(index))
+@@ -111,5 +115,5 @@ export function parseStrictSaveEnvelope(value: unknown): StrictSaveEnvelope {
+     }
+   }
+   const receiptWatermark = parseReceiptWatermark(root.receipt_watermark, tradeConfirmations)
+-  return { desk_mirrored_resting: boolean(root.desk_mirrored_resting, "desk_mirrored_resting"), runtime_state, setup, seed: decimal(root.seed, "seed"), snapshot, ...order, retail_experience: parseRetailExperienceStates(root.retail_experience), civil_clock: clock, groups: parseGroups(root.groups), company_operations: parseCompanyOperations(root.company_operations), closing_registry: parseClosingRegistry(root.closing_registry), public_library: parsePublicLibrary(root.public_library), disclosures: parseDisclosureDispatch(root.disclosures), plans: parsePlanBook(root.plans), urgency_policy: parseUrgencyPolicy(root.urgency_policy), information_states: parseInformationStates(root.information_states), belief_books: parseBeliefBooks(root.belief_books), watchlists: parseWatchlists(root.watchlists), price_memories: parsePriceMemories(root.price_memories), history_reads: parseHistoryReads(root.history_reads), market_memberships, market_minute_bars: marketMinuteBars, retained_market_days: retainedDays, personal_trade_confirmations: tradeConfirmations, receipt_watermark: receiptWatermark }
++  return { desk_mirrored_resting: boolean(root.desk_mirrored_resting, "desk_mirrored_resting"), runtime_state, setup, seed: decimal(root.seed, "seed"), snapshot, ...order, retail_experience: parseRetailExperienceStates(root.retail_experience), civil_clock: clock, company_state, public_library, disclosures: parseDisclosureDispatch(root.disclosures), plans: parsePlanBook(root.plans), urgency_policy: parseUrgencyPolicy(root.urgency_policy), information_states: parseInformationStates(root.information_states), belief_books: parseBeliefBooks(root.belief_books), watchlists: parseWatchlists(root.watchlists), price_memories: parsePriceMemories(root.price_memories), history_reads: parseHistoryReads(root.history_reads), market_memberships, market_minute_bars: marketMinuteBars, retained_market_days: retainedDays, personal_trade_confirmations: tradeConfirmations, receipt_watermark: receiptWatermark }
+ }
+diff --git a/apps/web/src/save/schema/setup-company-options.ts b/apps/web/src/save/schema/setup-company-options.ts
+index 90fd07c2..9b6c62fe 100644
+--- a/apps/web/src/save/schema/setup-company-options.ts
++++ b/apps/web/src/save/schema/setup-company-options.ts
+@@ -97,6 +97,8 @@ function finance(value: unknown, path: string): SimpleFinanceConfig {
+   }), tax_policy: taxPolicy, summary_rule: oneOf(parsed.summary_rule, `${path}.summary_rule`, ["ReceivableRevenuePayableExpenses"] as const), book_display: { investment_of_revenue_bp: bounded(display.investment_of_revenue_bp, `${path}.book_display.investment_of_revenue_bp`, 0, 10000) } }
+ }
+ 
++export { finance as parseSimpleFinanceConfig }
++
+ function preferences(value: unknown, path: string): SimpleCompanyPreferences {
+   const parsed = record(value, path)
+   exact(parsed, ["cash_dividend", "stock_distribution"], path)
+@@ -130,6 +132,8 @@ function simple(value: unknown, path: string): SimpleConfig {
+   return { environment: { initial_change_bp: bounded(environment.initial_change_bp, `${path}.environment.initial_change_bp`, -2147483648, I32_MAX), persistence_bp: bounded(environment.persistence_bp, `${path}.environment.persistence_bp`, 0, 10000), noise: noise(environment.noise, `${path}.environment.noise`) }, companies: array(parsed.companies, `${path}.companies`).map((item, index) => company(item, `${path}.companies[${index}]`)), prehistory_periods: bounded(parsed.prehistory_periods, `${path}.prehistory_periods`, 0, 65535), settlement_cycle: oneOf(parsed.settlement_cycle, `${path}.settlement_cycle`, ["Monthly", "Quarterly", "HalfYear", "Annual"] as const) }
+ }
+ 
++export { simple as parseSimpleConfig }
++
+ function frequency(value: unknown, path: string): ReportFrequency {
+   if (value === "Quarterly") return value
+   const parsed = record(value, path)
+diff --git a/apps/web/src/types/generated/SaveSlot.ts b/apps/web/src/types/generated/SaveSlot.ts
+index 7e7afc73..6427ac95 100644
+--- a/apps/web/src/types/generated/SaveSlot.ts
++++ b/apps/web/src/types/generated/SaveSlot.ts
+@@ -46,7 +46,6 @@ export type SaveSlot = {
+    */
+   desk_mirrored_resting: boolean;
+   setup: SessionSetup;
+-  groups: import("../../save/schema/company/groups").GroupStructure[];
+   seed: string;
+   snapshot: SaveSnapshot;
+   /**
+@@ -132,11 +131,10 @@ export type SaveSlot = {
+   /**
+    * ── 权威状态连续性（完整存档）：公司域与个体决策链权威状态。全部必填；缺失任一字段
+    *    的 JSON 不是当前 schema 的合法存档，走通用校验拒绝。──
+-   * 经营编排（调度器/活跃冲击/各经营 RNG/账套——serde 全量持久化，分录与
+-   * 余额在反序列化重放边界校验）。
++   * 唯一公司运行事实，外部 tag 与 setup 模式严格勾稽，无旧并列字段迁移。
+    */
+-  company_operations:
+-    import("../../save/schema/company/operations").CompanyOperations;
++  company_state:
++    import("../../save/schema/company/state").SavedSessionCompanies;
+   /**
+    * 跨日个人交易计划簿（(账户,股票) 索引恢复时重建并校验）。
+    */

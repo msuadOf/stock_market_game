@@ -1,0 +1,295 @@
+✔ 原子日终输出的必要命令全部获授权，命令专属 scope 仅扩展到项目 UUID 临时文件 (1.571713ms)
+✔ 不增加 exists、全局 fs scope、全目录读写或非 main 窗口能力，风险明确登记 (0.407191ms)
+✔ 旧 saveToFile 出口拒绝日内保存，不请求权限、不下载或写当前状态 (446.562122ms)
+✖ 仅需保存选择器即可选择授权目标，后续两次日结复用同一 handle (2.462058ms)
+✔ 取消选择返回 null，授权失败可见，不支持覆盖时不伪装成下载 (0.768081ms)
+✔ 非法候选在创建 writable 前拒绝，不掩盖存档校验失败 (0.577016ms)
+✖ 序列化在第一个 await 前冻结输入，不读取后来已变动的盘中状态 (0.754421ms)
+✖ write 失败 abort 临时写入，绝不 finally close 提交损坏候选 (0.940486ms)
+✖ write 与 abort 都失败时保留两个真实错误及主 cause (4.004461ms)
+✖ close 失败也尝试 abort；创建 writable 的 AbortError 不能被当成取消选择 (0.701309ms)
+✖ 旧 generation 在创建前、创建后和 write await 后均拒绝；close 不得提交旧写 (0.924005ms)
+✖ loadFromFile 保留读档行为，读后不创建 writable 或写回文件 (2.611452ms)
+✖ 选择正在写入的日终文件后等待提交，再获取新 File；取消不等待或取消写入 (1.576174ms)
+✔ 日终文件写入屏障失败明确拒绝读取旧内容 (0.530124ms)
+✖ 上传读档选中文件后等待屏障，屏障失败不读，取消不进入屏障 (1.641406ms)
+✖ Tauri 选中文件后等待屏障再读取路径；屏障失败不读旧文件 (1.602434ms)
+✖ Tauri 选择仅复用路径，两次写入都先生成独占同目录临时文件再 rename (0.7083ms)
+✔ Tauri 取消不写；非法选择路径明确拒绝 (0.336539ms)
+✖ Tauri 临时写入或 rename 失败均保旧并清理；创建冲突绝不删他人临时文件 (0.638708ms)
+✖ Tauri generation 在任意准备 await 后变旧时清理临时文件，绝不 rename (0.777262ms)
+✖ Tauri 写失败且清理失败时两个错误显式可见，目标旧档仍保留 (0.71411ms)
+file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/primitives.ts:71
+  if (missing.length > 0) throw new SaveSchemaError(`${path}.${missing[0]}`, "是必填字段")
+                                ^
+
+SaveSchemaError: 存档 根节点.company_state 是必填字段
+    at exact (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/primitives.ts:71:33)
+    at parseStrictSaveEnvelope (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/root.ts:67:3)
+    at parseSaveSlot (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/save-schema.ts:7:10)
+    at file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/indexed-db-save-repository.test.ts:89:14
+    at ModuleJob.run (node:internal/modules/esm/module_job:439:25)
+    at async node:internal/modules/esm/loader:643:26
+    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:101:5) {
+  path: '根节点.company_state'
+}
+
+Node.js v24.18.0
+✖ src/save/indexed-db-save-repository.test.ts (181.963858ms)
+✔ initial reads share one disk request and completion releases the archive (1.975365ms)
+✔ a missing archive starts once without polling storage during gameplay (0.240127ms)
+✔ failed initial reads retain their exact error and do not silently retry or start a new game (0.685979ms)
+✔ synchronous storage errors become one cached rejected request (0.3444ms)
+✔ explicit new game does not reload the previous archive (0.205496ms)
+✔ explicit archive selection replaces a pending initial read without rereading storage (0.371931ms)
+ℹ tests 28
+ℹ suites 0
+ℹ pass 13
+ℹ fail 15
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 791.827941
+
+✖ failing tests:
+
+test at src/save/file-target.test.ts:103:1
+✖ 仅需保存选择器即可选择授权目标，后续两次日结复用同一 handle (2.462058ms)
+  Error [SaveSchemaError]: 存档 根节点.company_state 是必填字段
+      at exact (/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/primitives.ts:88:32)
+      at parseStrictSaveEnvelope (/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/root.ts:79:34)
+      at parseSaveSlot (/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/save-schema.ts:13:58)
+      at Object.write (/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/save-file.ts:134:70)
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/file-target.test.ts:109:16)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    path: '根节点.company_state'
+  }
+
+test at src/save/file-target.test.ts:140:1
+✖ 序列化在第一个 await 前冻结输入，不读取后来已变动的盘中状态 (0.754421ms)
+  Error [SaveSchemaError]: 存档 根节点.company_state 是必填字段
+      at exact (/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/primitives.ts:88:32)
+      at parseStrictSaveEnvelope (/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/root.ts:79:34)
+      at parseSaveSlot (/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/save-schema.ts:13:58)
+      at Object.write (/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/save-file.ts:134:70)
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/file-target.test.ts:145:16)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    path: '根节点.company_state'
+  }
+
+test at src/save/file-target.test.ts:150:1
+✖ write 失败 abort 临时写入，绝不 finally close 提交损坏候选 (0.940486ms)
+  AssertionError [ERR_ASSERTION]: The validation function is expected to return "true". Received false
+  
+  Caught error:
+  
+  SaveSchemaError: 存档 根节点.company_state 是必填字段
+      at async TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/file-target.test.ts:155:3)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: SaveSchemaError: 存档 根节点.company_state 是必填字段
+        at exact (/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/primitives.ts:88:32)
+        at parseStrictSaveEnvelope (/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/root.ts:79:34)
+        at parseSaveSlot (/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/save-schema.ts:13:58)
+        at Object.write (/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/save-file.ts:134:70)
+        at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/file-target.test.ts:155:31)
+        at async Test.run (node:internal/test_runner/test:1332:7)
+        at async Test.processPendingSubtests (node:internal/test_runner/test:911:7),
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at src/save/file-target.test.ts:160:1
+✖ write 与 abort 都失败时保留两个真实错误及主 cause (4.004461ms)
+  AssertionError [ERR_ASSERTION]: The expression evaluated to a falsy value:
+  
+    assert.ok(error instanceof AggregateError)
+  
+      at Object.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/file-target.test.ts:167:12)
+      at expectedException (node:assert:578:17)
+      at expectsError (node:assert:703:21)
+      at strict.rejects (node:assert:769:3)
+      at async TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/file-target.test.ts:166:3)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at src/save/file-target.test.ts:178:1
+✖ close 失败也尝试 abort；创建 writable 的 AbortError 不能被当成取消选择 (0.701309ms)
+  AssertionError [ERR_ASSERTION]: The validation function is expected to return "true". Received false
+  
+  Caught error:
+  
+  SaveSchemaError: 存档 根节点.company_state 是必填字段
+      at async TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/file-target.test.ts:184:3)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: SaveSchemaError: 存档 根节点.company_state 是必填字段
+        at exact (/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/primitives.ts:88:32)
+        at parseStrictSaveEnvelope (/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/root.ts:79:34)
+        at parseSaveSlot (/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/save-schema.ts:13:58)
+        at Object.write (/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/save-file.ts:134:70)
+        at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/file-target.test.ts:184:31)
+        at async Test.run (node:internal/test_runner/test:1332:7)
+        at async Test.processPendingSubtests (node:internal/test_runner/test:911:7),
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at src/save/file-target.test.ts:192:1
+✖ 旧 generation 在创建前、创建后和 write await 后均拒绝；close 不得提交旧写 (0.924005ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /旧局|generation/. Input:
+  
+  'SaveSchemaError: 存档 根节点.company_state 是必填字段'
+  
+      at async TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/file-target.test.ts:201:5)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: SaveSchemaError: 存档 根节点.company_state 是必填字段
+        at exact (/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/primitives.ts:88:32)
+        at parseStrictSaveEnvelope (/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/root.ts:79:34)
+        at parseSaveSlot (/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/save-schema.ts:13:58)
+        at Object.write (/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/save-file.ts:134:70)
+        at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/file-target.test.ts:201:33)
+        at async Test.run (node:internal/test_runner/test:1332:7)
+        at async Test.processPendingSubtests (node:internal/test_runner/test:911:7),
+    expected: /旧局|generation/,
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at src/save/file-target.test.ts:209:1
+✖ loadFromFile 保留读档行为，读后不创建 writable 或写回文件 (2.611452ms)
+  Error: 文件读取失败：存档 根节点.company_state 是必填字段
+      at Module.loadFromFile (/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/save-file.ts:260:10)
+      at async TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/file-target.test.ts:215:18)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7)
+
+test at src/save/file-target.test.ts:221:1
+✖ 选择正在写入的日终文件后等待提交，再获取新 File；取消不等待或取消写入 (1.576174ms)
+  Error: 文件读取失败：存档 根节点.company_state 是必填字段
+      at Module.loadFromFile (/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/save-file.ts:260:10)
+      at async TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/file-target.test.ts:243:17)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7)
+
+test at src/save/file-target.test.ts:265:1
+✖ 上传读档选中文件后等待屏障，屏障失败不读，取消不进入屏障 (1.641406ms)
+  Error: 存档文件不是合法 JSON：存档 根节点.company_state 是必填字段
+      at eval (/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/save-file.ts:203:13)
+
+test at src/save/file-target.test.ts:358:1
+✖ Tauri 选中文件后等待屏障再读取路径；屏障失败不读旧文件 (1.602434ms)
+  Error [SaveSchemaError]: 存档 根节点.company_state 是必填字段
+      at exact (/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/primitives.ts:88:32)
+      at parseStrictSaveEnvelope (/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/root.ts:79:34)
+      at parseSaveSlot (/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/save-schema.ts:13:58)
+      at parseSaveJson (/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/save-schema.ts:17:57)
+      at loadViaTauri (/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/save-file.ts:114:48)
+      at async Module.loadFromFile (/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/save-file.ts:255:12)
+      at async TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/file-target.test.ts:366:28)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    path: '根节点.company_state'
+  }
+
+test at src/save/file-target.test.ts:373:1
+✖ Tauri 选择仅复用路径，两次写入都先生成独占同目录临时文件再 rename (0.7083ms)
+  Error [SaveSchemaError]: 存档 根节点.company_state 是必填字段
+      at exact (/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/primitives.ts:88:32)
+      at parseStrictSaveEnvelope (/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/root.ts:79:34)
+      at parseSaveSlot (/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/save-schema.ts:13:58)
+      at Object.write (/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/save-file.ts:51:70)
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/file-target.test.ts:378:16)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    path: '根节点.company_state'
+  }
+
+test at src/save/file-target.test.ts:398:1
+✖ Tauri 临时写入或 rename 失败均保旧并清理；创建冲突绝不删他人临时文件 (0.638708ms)
+  AssertionError [ERR_ASSERTION]: The validation function is expected to return "true". Received false
+  
+  Caught error:
+  
+  SaveSchemaError: 存档 根节点.company_state 是必填字段
+      at async TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/file-target.test.ts:403:5)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: SaveSchemaError: 存档 根节点.company_state 是必填字段
+        at exact (/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/primitives.ts:88:32)
+        at parseStrictSaveEnvelope (/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/root.ts:79:34)
+        at parseSaveSlot (/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/save-schema.ts:13:58)
+        at Object.write (/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/save-file.ts:51:70)
+        at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/file-target.test.ts:403:33)
+        at async Test.run (node:internal/test_runner/test:1332:7)
+        at async Test.processPendingSubtests (node:internal/test_runner/test:911:7),
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at src/save/file-target.test.ts:415:1
+✖ Tauri generation 在任意准备 await 后变旧时清理临时文件，绝不 rename (0.777262ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /旧局|generation/. Input:
+  
+  'SaveSchemaError: 存档 根节点.company_state 是必填字段'
+  
+      at async TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/file-target.test.ts:421:5)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: SaveSchemaError: 存档 根节点.company_state 是必填字段
+        at exact (/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/primitives.ts:88:32)
+        at parseStrictSaveEnvelope (/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/root.ts:79:34)
+        at parseSaveSlot (/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/save-schema.ts:13:58)
+        at Object.write (/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/save-file.ts:51:70)
+        at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/file-target.test.ts:421:33)
+        at async Test.run (node:internal/test_runner/test:1332:7)
+        at async Test.processPendingSubtests (node:internal/test_runner/test:911:7),
+    expected: /旧局|generation/,
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at src/save/file-target.test.ts:428:1
+✖ Tauri 写失败且清理失败时两个错误显式可见，目标旧档仍保留 (0.71411ms)
+  AssertionError [ERR_ASSERTION]: The expression evaluated to a falsy value:
+  
+    assert.ok(error instanceof AggregateError)
+  
+      at Object.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/file-target.test.ts:434:12)
+      at expectedException (node:assert:578:17)
+      at expectsError (node:assert:703:21)
+      at strict.rejects (node:assert:769:3)
+      at async TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/file-target.test.ts:433:3)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at src/save/indexed-db-save-repository.test.ts:1:1
+✖ src/save/indexed-db-save-repository.test.ts (181.963858ms)
+  'test failed'

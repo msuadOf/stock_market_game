@@ -1,0 +1,27 @@
+✖ 真实组合Rust非空Legacy集团完整存档按catalog的u32恢复并无损raw解析 (128.746009ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 315.541853
+
+✖ failing tests:
+
+test at apps/web/src/save/schema/company/state.test.ts:82:1
+✖ 真实组合Rust非空Legacy集团完整存档按catalog的u32恢复并无损raw解析 (128.746009ms)
+  Error [SaveSchemaError]: 存档 setup.company_operations.companies[1].books.Bank.income_tax_policy 不是允许字段
+      at exact (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/primitives.ts:72:31)
+      at parseBankBooks (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/books/bank.ts:17:3)
+      at parseIndustryBooks (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/books/index.ts:20:22)
+      at file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/operations.ts:18:76
+      at Array.map (<anonymous>)
+      at parseCompanyOperationsConfig (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/operations.ts:14:257)
+      at parseSetup (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/market.ts:84:108)
+      at parseStrictSaveEnvelope (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/root.ts:69:17)
+      at parseSaveSlot (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/save-schema.ts:7:10)
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/state.test.ts:85:19) {
+    path: 'setup.company_operations.companies[1].books.Bank.income_tax_policy'
+  }

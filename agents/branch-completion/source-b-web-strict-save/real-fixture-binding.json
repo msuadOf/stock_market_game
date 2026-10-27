@@ -1,0 +1,11 @@
+{
+  "sourceHead": "71f370afcc6a6b38adcf572fea897695fa2da3b2",
+  "sourceManifestSha256": "824f61c4f83556355e4c85b26f04211b3a8e296bf5ded44cf8ba555e07cc6083",
+  "sourceNormalRlibSha256": "701238c007fd0463d8006932c8628190d38b241a543d0548457887f5cd820426",
+  "fixtures": {
+    "generated-company-state-registry.json": "0ba132976eacba6ee0850504c936392373348cf59bcb70b2d03b19b6f80863d7",
+    "manual-company-state-registry.json": "47e9f0e9735d5826b5ffb559d953bd7cda50abd273f2148e72eec5ce3ae6abee",
+    "legacy-company-state.json": "073c1522a0eb6c1ab28e2c1d25174665356808d5ac564dc3e9fd0ed5ff649b28"
+  },
+  "originBinding": "根agents/branch-completion/source-b/resume-2026-10-27/green-build1/real-save-fixture-binding.json"
+}

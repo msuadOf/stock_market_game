@@ -1,0 +1,104 @@
+✔ Retail BeliefBook 不携带 Institution policy 或账户暂停状态 (2.559561ms)
+✔ institution account risk pause is a required frozen boolean (0.735491ms)
+✔ belief confidence rejects values above 10000 at the save boundary (1.015898ms)
+✔ holding fee history is a required nullable nonnegative fact (1.314447ms)
+✔ institution belief book requires its independent experience state (0.251457ms)
+✔ institution experience strictly parses dated receipt facts and exit order ids (0.561875ms)
+✔ institution experience policy preserves its exact eight fields (1.913143ms)
+✔ institution experience policy rejects missing or additional fields (0.765121ms)
+✔ institution experience policy rejects invalid values and threshold relationships (0.572226ms)
+✔ 分钟事实严格保留规范金额、股数、时段与价格单位 (4.475444ms)
+✔ 完整日终历史覆盖每个自然日和精确证券集合（trading 布尔词表） (1.46138ms)
+✔ 活动分钟按 StockId 键收存（日结清空=空数组合法，bars 永为真实稀疏事实） (0.606967ms)
+✔ 归档分钟和日K逐项互证而非补造成交 (0.675389ms)
+✔ 零成交开市与闰日连续覆盖不裁剪且不生成分钟 (0.438172ms)
+✔ receipt 日志按账户收存且严格递增，水位必须超过最大已发 id (0.792322ms)
+✖ save requires an explicit urgency policy without legacy defaults (2.593381ms)
+✖ save preserves the frozen non-default urgency policy (0.288108ms)
+✖ save urgency policy rejects missing, extra, unsupported and invalid fields (0.518344ms)
+ℹ tests 18
+ℹ suites 0
+ℹ pass 15
+ℹ fail 3
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 223.285691
+
+✖ failing tests:
+
+test at src/save/schema/urgency-policy.test.ts:16:1
+✖ save requires an explicit urgency policy without legacy defaults (2.593381ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /urgency_policy.*必填/. Input:
+  
+  'SaveSchemaError: 存档 根节点.company_state 是必填字段'
+  
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/urgency-policy.test.ts:19:10)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at Test.start (node:internal/test_runner/test:1191:17)
+      at startSubtestAfterBootstrap (node:internal/test_runner/harness:385:17) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: SaveSchemaError: 存档 根节点.company_state 是必填字段
+        at exact (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/primitives.ts:71:33)
+        at parseStrictSaveEnvelope (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/root.ts:67:3)
+        at parseSaveSlot (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/save-schema.ts:7:10)
+        at file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/urgency-policy.test.ts:19:23
+        at getActual (node:assert:611:5)
+        at strict.throws (node:assert:759:24)
+        at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/urgency-policy.test.ts:19:10)
+        at Test.runInAsyncScope (node:async_hooks:227:14)
+        at Test.run (node:internal/test_runner/test:1325:25)
+        at Test.start (node:internal/test_runner/test:1191:17),
+    expected: /urgency_policy.*必填/,
+    operator: 'throws',
+    diff: 'simple'
+  }
+
+test at src/save/schema/urgency-policy.test.ts:22:1
+✖ save preserves the frozen non-default urgency policy (0.288108ms)
+  Error [SaveSchemaError]: 存档 根节点.company_state 是必填字段
+      at exact (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/primitives.ts:71:33)
+      at parseStrictSaveEnvelope (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/root.ts:67:3)
+      at parseSaveSlot (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/save-schema.ts:7:10)
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/urgency-policy.test.ts:24:20)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:911:18)
+      at Test.postRun (node:internal/test_runner/test:1465:19)
+      at Test.run (node:internal/test_runner/test:1390:12)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    path: '根节点.company_state'
+  }
+
+test at src/save/schema/urgency-policy.test.ts:27:1
+✖ save urgency policy rejects missing, extra, unsupported and invalid fields (0.518344ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /urgency_policy\.policy_version/. Input:
+  
+  'SaveSchemaError: 存档 根节点.company_state 是必填字段'
+  
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/urgency-policy.test.ts:31:12)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:911:18)
+      at Test.postRun (node:internal/test_runner/test:1465:19)
+      at Test.run (node:internal/test_runner/test:1390:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: SaveSchemaError: 存档 根节点.company_state 是必填字段
+        at exact (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/primitives.ts:71:33)
+        at parseStrictSaveEnvelope (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/root.ts:67:3)
+        at parseSaveSlot (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/save-schema.ts:7:10)
+        at file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/urgency-policy.test.ts:31:25
+        at getActual (node:assert:611:5)
+        at strict.throws (node:assert:759:24)
+        at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/urgency-policy.test.ts:31:12)
+        at Test.runInAsyncScope (node:async_hooks:227:14)
+        at Test.run (node:internal/test_runner/test:1325:25)
+        at Test.processPendingSubtests (node:internal/test_runner/test:911:18),
+    expected: /urgency_policy\.policy_version/,
+    operator: 'throws',
+    diff: 'simple'
+  }

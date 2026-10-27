@@ -1,0 +1,43 @@
+✔ GroupStructure的CompanyId为独立u32，两个真实母子持股结构无损 (2.204941ms)
+✔ 真实Rust完整generated-company-state-registry.json对象/raw解析无损，只有一个公司权威tag (41.536677ms)
+✔ 真实Rust完整manual-company-state-registry.json对象/raw解析无损，只有一个公司权威tag (17.36403ms)
+✔ 真实Rust完整legacy-company-state.json对象/raw解析无损，只有一个公司权威tag (103.935211ms)
+✔ required单tag拒绝旧双源根字段、缺失/null/双tag/未知tag (60.207373ms)
+✔ setup模式与selected公司tag必须一致，不迁移旧源 (32.992521ms)
+✔ 真实REG SettlementDayMarket.binding五字段required且unknown逐层拒绝 (29.69972ms)
+✔ 公司状态全部真实非空结构拒绝未知字段，nullable必填不被默认掩盖 (418.91505ms)
+✔ rawJSON在覆盖前拒绝重复tag、转义后同键与REG binding重复键 (28.272671ms)
+✔ canonical整数字符串拒绝前导零/负零与unsafe裸数，保真实单位 (16.077084ms)
+✔ 真实非空SimpleGenerated报告generated-custom-monthly-nonempty.json对象/raw与来源频率无损 (131.510132ms)
+✔ 真实非空SimpleGenerated报告manual-custom-monthly-nonempty.json对象/raw与来源频率无损 (135.188494ms)
+✔ 真实非空SimpleGenerated报告generated-quarterly-nonempty.json对象/raw与来源频率无损 (70.494227ms)
+✔ 真实非空SimpleGenerated报告manual-quarterly-nonempty.json对象/raw与来源频率无损 (70.543649ms)
+✔ 真实RustShareSplitBook-approved.json的3个required nullable与variant严格校验 (2.115478ms)
+✔ 真实RustStockDistributionBook-approved.json的3个required nullable与variant严格校验 (1.917393ms)
+✔ 真实RustRightsOfferingBook-approved.json的5个required nullable与variant严格校验 (2.618113ms)
+✔ 真实RustIssuerRepurchaseBook-approved.json的4个required nullable与variant严格校验 (2.357496ms)
+✔ 全部已存在公司数组拒绝sparse与继承元素，raw整数拒绝舍入与负零 (184.389104ms)
+✔ selected公司权威与公开报告source一致，拒绝已知但来自另一模型的报告 (47.461481ms)
+✔ ShareSplitBook-approved.json.receipt：显式null接受，missing拒绝 (1.047329ms)
+✔ ShareSplitBook-approved.json.registration：显式null接受，missing拒绝 (0.777122ms)
+✔ ShareSplitBook-approved.json.settled_on：显式null接受，missing拒绝 (0.775241ms)
+✔ StockDistributionBook-approved.json.credited_on：显式null接受，missing拒绝 (0.786712ms)
+✔ StockDistributionBook-approved.json.receipt：显式null接受，missing拒绝 (0.758811ms)
+✔ StockDistributionBook-approved.json.registration：显式null接受，missing拒绝 (0.760511ms)
+✔ RightsOfferingBook-approved.json.closed_on：显式null接受，missing拒绝 (1.026078ms)
+✔ RightsOfferingBook-approved.json.credited_on：显式null接受，missing拒绝 (0.905715ms)
+✔ RightsOfferingBook-approved.json.entitlement：显式null接受，missing拒绝 (0.850083ms)
+✔ RightsOfferingBook-approved.json.registration：显式null接受，missing拒绝 (0.873264ms)
+✔ RightsOfferingBook-approved.json.settlement：显式null接受，missing拒绝 (0.940246ms)
+✔ IssuerRepurchaseBook-approved.json.cancelled_on：显式null接受，missing拒绝 (1.007118ms)
+✔ IssuerRepurchaseBook-approved.json.completed_on：显式null接受，missing拒绝 (0.890954ms)
+✔ IssuerRepurchaseBook-approved.json.last_order_day：显式null接受，missing拒绝 (0.803672ms)
+✔ IssuerRepurchaseBook-approved.json.withdrawn_remainder：显式null接受，missing拒绝 (0.74673ms)
+ℹ tests 35
+ℹ suites 0
+ℹ pass 35
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1635.236104
