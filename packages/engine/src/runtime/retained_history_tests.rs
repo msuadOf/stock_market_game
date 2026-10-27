@@ -41,7 +41,12 @@ fn auction_world(script: Box<dyn Fn(GroupIdx) -> GroupScript>) -> World {
     spec.ticks_per_day = 30;
     spec.auction_ticks = 6;
     spec.closing_auction_ticks = 3;
-    World::spawn(spec).expect("世界构造")
+    World::spawn(
+        spec,
+        crate::calendar::TradingCalendar::current_default_calendar()
+            .expect("显式 raw Calendar 政策合法"),
+    )
+    .expect("世界构造")
 }
 
 #[test]

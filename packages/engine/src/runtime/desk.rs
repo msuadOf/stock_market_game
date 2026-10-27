@@ -338,6 +338,8 @@ struct DrainMarketSnapshot {
 /// 撤销日志条目（逆序回放恢复；覆盖面=全部可变状态）。
 #[derive(Clone, Debug)]
 enum DeskUndo {
+    /// 失败回滚恢复上一拍的同 owner 时钟。
+    Calendar(Option<Arc<super::MarketTickContext>>),
     /// 新挂入订单（回滚=移除）。
     Inserted(DeskOrder),
     /// 移除订单（回滚=放回档尾原序由 FIFO 保证——移除只发生在档首，放回档首）。
@@ -391,6 +393,9 @@ pub struct DeskFinalState {
 
 /// 交易部私有状态。
 pub struct DeskState {
+    calendar_owner: Option<Arc<crate::session::market_calendar_context::MarketCalendarSource>>,
+    initial_calendar_day: Option<Arc<super::MarketDayContext>>,
+    calendar_tick: Option<Arc<super::MarketTickContext>>,
     setup: DeskSetup,
     config: Arc<GameConfig>,
     bids: BTreeMap<i64, VecDeque<DeskOrder>>,
@@ -600,6 +605,9 @@ impl DeskState {
                     .count() as u64,
         };
         DeskState {
+            calendar_owner: None,
+            initial_calendar_day: None,
+            calendar_tick: None,
             setup,
             config,
             bids: BTreeMap::new(),
@@ -774,6 +782,7 @@ impl DeskState {
         let undo = std::mem::take(&mut self.undo);
         for entry in undo.into_iter().rev() {
             match entry {
+                DeskUndo::Calendar(previous) => self.calendar_tick = previous,
                 DeskUndo::Inserted(o) => {
                     self.remove_by_ref(&o.order_ref);
                 }
@@ -1092,6 +1101,17 @@ impl DeskState {
     // ── 受理与撮合 ──
 
     fn apply_ops(&mut self, tick: u64, ops: Vec<DeskIn>) -> Result<(), RuntimeError> {
+        if self.calendar_tick.as_ref().is_some_and(|context| {
+            context
+                .before_projection()
+                .stock(crate::StockId(u32::from(self.setup.stock)))
+                .is_ok_and(|clock| clock.date_session_ordinal().is_none())
+        }) && !ops.is_empty()
+        {
+            return Err(over(
+                "closed 交易部收到非空错路由 Ops，未分配 serial 或修改资源",
+            ));
+        }
         for op in ops {
             match op {
                 DeskIn::Place {
@@ -1269,7 +1289,10 @@ impl DeskState {
             charged_commission: 0,
             charged_stamp_tax: 0,
             charged_transfer_fee: 0,
-            expire_tick: tick.saturating_add(self.setup.order_ttl_ticks),
+            expire_tick: self
+                .stock_tick_after()?
+                .checked_add(self.setup.order_ttl_ticks)
+                .ok_or_else(|| over("本股委托 TTL 溢出"))?,
         };
         self.retail_facts.push(super::retail_lifecycle::RawFact::Submitted {
             order: order_ref, owner, side, qty,
@@ -2463,9 +2486,39 @@ impl DeskState {
     }
 
     /// 新 tick 起点：隐式转正 → 行情快照 → 开盘清算 → 到期撤销。
-    fn begin_tick(&mut self, tick: u64) -> Result<(), RuntimeError> {
+    fn stock_tick_after(&self) -> Result<u64, RuntimeError> {
+        let context = self
+            .calendar_tick
+            .as_ref()
+            .ok_or_else(|| over("委托生命周期缺少同拍 Calendar context"))?;
+        let row = context
+            .before_projection()
+            .stock(crate::StockId(u32::from(self.setup.stock)))
+            .map_err(|error| over(&error.to_string()))?;
+        let ordinal = row
+            .date_session_ordinal()
+            .ok_or_else(|| over("closed 证券没有市场 TTL 时钟"))?;
+        let crate::session::exchange_calendar_model::SharedDayProgress::Trading { completed_ticks } =
+            context.before_input().progress
+        else {
+            return Err(over("TTL before 不是 Trading"));
+        };
+        ordinal
+            .checked_mul(self.setup.ticks_per_day)
+            .and_then(|base| base.checked_add(completed_ticks))
+            .and_then(|tick| tick.checked_add(1))
+            .ok_or_else(|| over("本股市场 TTL 时钟溢出"))
+    }
+
+    fn begin_tick(
+        &mut self,
+        tick: u64,
+        calendar: Arc<super::MarketTickContext>,
+    ) -> Result<(), RuntimeError> {
         // 下一 tick 首批 Ops(N) = tick N−1 隐式转正。
         self.undo.clear();
+        let previous = self.calendar_tick.replace(calendar);
+        self.undo.push(DeskUndo::Calendar(previous));
         self.committed_tick = self.cur_tick;
         self.cur_tick = tick;
         self.cur_round = 0;
@@ -2502,7 +2555,7 @@ impl DeskState {
         }
         self.last_phase = Some(phase);
         // 到期撤销先于本 tick 新意图。
-        self.expire_due(tick);
+        self.expire_due(self.stock_tick_after()?);
         // 批 8b 哈希惰性化：热路径 O(1) 指纹；全量留 Final/回滚冷路径。
         self.committed_hash = (0x9E37_79B9_7F4A_7C15u64 ^ tick).wrapping_mul(0x100000001b3);
         Ok(())
@@ -2711,6 +2764,15 @@ impl DeskState {
     /// 本轮收束：行情收尾（tick 收盘价历史、分钟收盘、零成交 K 占位）→
     /// 出口缓冲 flush（先于 DeskReport，因果基石）。
     fn finish_round(&mut self, tick: u64) -> Result<(), RuntimeError> {
+        if let Some(context) = &self.calendar_tick {
+            let clock = context
+                .before_projection()
+                .stock(crate::StockId(u32::from(self.setup.stock)))
+                .map_err(|error| over(&error.to_string()))?;
+            if clock.date_session_ordinal().is_none() {
+                return Ok(());
+            }
+        }
         // 零成交也建立占位 K（对齐 record_trade_or_mark 的 or_insert 语义）。
         let last = self.market.last_price;
         // 刀 2a 值敏感失效：finish_round 每轮跑（幂等写为主）——只在
@@ -2745,36 +2807,41 @@ impl DeskState {
         if self.market.recent_prices.len() > self.setup.history_len {
             self.market.recent_prices.pop_front();
         }
-        // 分钟收盘：连续竞价相位按完成分钟回填（无成交分钟沿用当时最新价）。
-        // 收盘竞价段同填（存档口径 persistence.rs 把收盘段的连续窗算满
-        //——min(elapsed, 连续窗) 钳制；此前收盘段不填，tick7 save 的
-        // fault2018（缺末段分钟）显红）。
-        let phase_now = self.setup.phase_at(tick);
-        if phase_now == DeskPhase::Continuous || phase_now == DeskPhase::ClosingAuction {
+        // 真实 Start context 的 after 仍属于本日；末拍不可被次日取模相位挡住。
+        let minute_progress = if let Some(context) = &self.calendar_tick {
+            let clock = context
+                .after_projection()
+                .stock(crate::StockId(u32::from(self.setup.stock)))
+                .map_err(|error| over(&error.to_string()))?;
+            Some((
+                clock
+                    .current_date_first_minute_key()
+                    .ok_or_else(|| over("closed 证券不可建立分钟"))?,
+                u64::from(clock.current_date_completed_minute_count()),
+            ))
+        } else {
+            // 直接 DeskState 单元测试没有消息协议；保留其显式相位输入。
+            let phase_now = self.setup.phase_at(tick);
             let continuous = self.setup.continuous_ticks_per_day();
-            if continuous > 0 {
+            if matches!(phase_now, DeskPhase::Continuous | DeskPhase::ClosingAuction)
+                && continuous > 0
+            {
                 let day = tick / self.setup.ticks_per_day;
-                // 存档校验口径（persistence.rs）：completed = day×连续窗 +
-                // (tick%tpd − auction).min(连续窗)——无 +1（完成 tick 语义）。
                 let elapsed = (tick % self.setup.ticks_per_day)
                     .saturating_sub(self.setup.auction_ticks)
                     .min(continuous);
-                let completed =
-                    completed_market_minute_count(elapsed, continuous).map_err(|e| {
-                        RuntimeError::ProtocolInvariant {
-                            detail: format!("分钟映射失败：{e:?}"),
-                        }
-                    })?;
-                // P1-6（Sol）：键=绝对分钟（day×240+日内序），容量口径=
-                // 日内 completed（跨日 roll_day 已清空 ⇒ 第二日从 0 重数，
-                // 键重新带当日偏移——修复"绝对键当日内长度"的双计）。
-                let day_base = day * 240;
-                let target_local = completed as u64;
-                while (self.market.minute_closes.len() as u64) < target_local {
-                    let idx = self.market.minute_closes.len() as u64;
-                    self.market.minute_closes.push((day_base + idx, last));
-                    content_changed = true;
-                }
+                let completed = completed_market_minute_count(elapsed, continuous)
+                    .map_err(|error| over(&format!("分钟映射失败：{error:?}")))?;
+                Some((day * 240, u64::from(completed)))
+            } else {
+                None
+            }
+        };
+        if let Some((day_base, target_local)) = minute_progress {
+            while (self.market.minute_closes.len() as u64) < target_local {
+                let idx = self.market.minute_closes.len() as u64;
+                self.market.minute_closes.push((day_base + idx, last));
+                content_changed = true;
             }
         }
         if content_changed {
@@ -3244,6 +3311,39 @@ fn process_msg(
     up_tx: &Sender<UpMsg>,
     msg: DeskMsg,
 ) -> Result<(), RuntimeError> {
+    // typed 市场日终在任何 undo 隔离、清簿、roll 或 flush 之前验证完整日界。
+    let msg = match msg {
+        DeskMsg::DrainMarket { tick, day } => {
+            let source = state
+                .calendar_owner
+                .as_ref()
+                .ok_or_else(|| over("DrainMarket 缺少构造期 source owner"))?;
+            let context = state
+                .calendar_tick
+                .as_ref()
+                .ok_or_else(|| over("DrainMarket 缺少本日最后一拍"))?;
+            let exchange = match state.setup.exchange {
+                crate::StockExchange::Shanghai => crate::calendar::CalendarExchange::Sse,
+                crate::StockExchange::Shenzhen => crate::calendar::CalendarExchange::Szse,
+            };
+            day.validate_for_stock(
+                source,
+                crate::StockId(u32::from(state.setup.stock)),
+                exchange,
+                context.day().day_model().current_date(),
+            )
+            .map_err(|error| over(&error.to_string()))?;
+            if tick != state.cur_tick
+                || tick != context.after_input().tick
+                || context.after_input().progress
+                    != crate::session::exchange_calendar_model::SharedDayProgress::TradingCompleted
+            {
+                return Err(over("DrainMarket 必须匹配本日已完成最后一拍"));
+            }
+            DeskMsg::Drain
+        }
+        other => other,
+    };
     match msg {
         DeskMsg::EchoResting => {
             // D5 envelope 投影：在途单快照（bids+asks 全量——费用
@@ -3263,27 +3363,84 @@ fn process_msg(
                 });
             }
         }
-        DeskMsg::Start { tick } => {
-            // D4：tick 起点（先于同 tick Ops，FIFO）——每 tick 必推进
-            // begin_tick：到期/清算/快照不再依赖 Ops 到达。
-            if tick > state.cur_tick {
-                if tick != state.cur_tick + 1 {
-                    return Err(RuntimeError::ProtocolInvariant {
-                        detail: format!(
-                            "交易部 {} Start tick 跳变：tick={tick}, 上一执行 tick={}",
-                            state.setup.stock, state.cur_tick
-                        ),
-                    });
-                }
+        DeskMsg::BindCalendar { day } => {
+            if state.calendar_owner.is_some() || state.calendar_tick.is_some() {
+                return Err(over("交易部 Calendar owner 只能在 spawn 静点绑定一次"));
+            }
+            let exchange = match state.setup.exchange {
+                crate::StockExchange::Shanghai => crate::calendar::CalendarExchange::Sse,
+                crate::StockExchange::Shenzhen => crate::calendar::CalendarExchange::Szse,
+            };
+            day.validate_for_stock(
+                day.source(),
+                crate::StockId(u32::from(state.setup.stock)),
+                exchange,
+                day.day_model().current_date(),
+            )
+            .map_err(|error| over(&error.to_string()))?;
+            state.calendar_owner = Some(Arc::clone(day.source()));
+            state.initial_calendar_day = Some(day);
+        }
+        DeskMsg::Start { tick, calendar } => {
+            let source = state
+                .calendar_owner
+                .as_ref()
+                .ok_or_else(|| over("Start 缺少构造期 Calendar owner"))?;
+            let exchange = match state.setup.exchange {
+                crate::StockExchange::Shanghai => crate::calendar::CalendarExchange::Sse,
+                crate::StockExchange::Shenzhen => crate::calendar::CalendarExchange::Szse,
+            };
+            calendar
+                .validate_for_stock(
+                    source,
+                    crate::StockId(u32::from(state.setup.stock)),
+                    exchange,
+                    calendar.day().day_model().current_date(),
+                    crate::session::exchange_calendar_model::SessionTickLayout {
+                        ticks_per_day: state.setup.ticks_per_day,
+                        auction_ticks: state.setup.auction_ticks,
+                        closing_auction_ticks: state.setup.closing_auction_ticks,
+                    },
+                    calendar.before_input(),
+                )
+                .map_err(|error| over(&error.to_string()))?;
+            if calendar.before_input().tick != state.cur_tick || calendar.after_input().tick != tick
+            {
+                return Err(over("交易部 Start 与 Calendar before/after tick 不一致"));
+            }
+            let open = calendar
+                .before_projection()
+                .stock(crate::StockId(u32::from(state.setup.stock)))
+                .map_err(|error| over(&error.to_string()))?
+                .date_session_ordinal()
+                .is_some();
+            if !open
+                && (!state.bids.is_empty()
+                    || !state.asks.is_empty()
+                    || state.resting_count != 0
+                    || state.out.iter().any(|batch| !batch.is_empty()))
+            {
+                return Err(over("closed 交易部仍有活动簿或在途实体"));
+            }
+            let previous = state.calendar_tick.clone();
+            if open {
                 crate::verification_evidence::enter_phase(
                     crate::session::pipeline::TickPhase::ExpiryShadow,
                 );
-                state.begin_tick(tick)?;
-                crate::verification_evidence::enter_phase(
-                    crate::session::pipeline::TickPhase::StockProcessing,
-                );
+                state.begin_tick(tick, Arc::clone(&calendar))?;
+            } else {
+                state.undo.clear();
+                state.committed_tick = state.cur_tick;
+                state.cur_tick = tick;
+                state.cur_round = 0;
             }
-            // tick == cur_tick：Ops 已自行 begin（防御路径），无操作。
+            if !open {
+                state.undo.push(DeskUndo::Calendar(previous));
+            }
+            state.calendar_tick = Some(calendar);
+            crate::verification_evidence::enter_phase(
+                crate::session::pipeline::TickPhase::StockProcessing,
+            );
         }
         DeskMsg::Ops {
             tick,
@@ -3292,27 +3449,13 @@ fn process_msg(
             ops,
             final_flush,
         } => {
-            if tick > state.cur_tick {
-                if tick != state.cur_tick + 1 {
-                    return Err(RuntimeError::ProtocolInvariant {
-                        detail: format!(
-                            "交易部 {} Ops tick 跳变：tick={tick}, 上一执行 tick={}",
-                            state.setup.stock, state.cur_tick
-                        ),
-                    });
-                }
-                // D4 相位：到期撤销段（begin_tick 内 expire_due/清算/快照）。
-                crate::verification_evidence::enter_phase(
-                    crate::session::pipeline::TickPhase::ExpiryShadow,
-                );
-                state.begin_tick(tick)?;
-            } else if tick < state.cur_tick {
-                return Err(RuntimeError::ProtocolInvariant {
-                    detail: format!(
-                        "交易部 {} 收到过期 tick 消息：{tick} < {}",
-                        state.setup.stock, state.cur_tick
-                    ),
-                });
+            if tick != state.cur_tick
+                || state
+                    .calendar_tick
+                    .as_ref()
+                    .is_none_or(|context| context.after_input().tick != tick)
+            {
+                return Err(over("交易部 Ops 缺少同拍合法 Start context"));
             }
             if round != state.cur_round {
                 if round == state.cur_round + 1 {
@@ -3430,8 +3573,32 @@ fn process_msg(
         DeskMsg::Drain => {
             // 同一 Start 以来已完成 Drain：Shutdown 的重复请求只取诊断面。
             // AbortDayEnd 消费该日志，重试重新清算；下一 Start 清日志，开启新窗口。
-            let already_drained = state.undo.iter().any(|entry| matches!(entry, DeskUndo::DrainMarket(_)));
-            if !already_drained {
+            let already_drained = state
+                .undo
+                .iter()
+                .any(|entry| matches!(entry, DeskUndo::DrainMarket(_)));
+            let open = match &state.calendar_tick {
+                Some(context) => context
+                    .before_projection()
+                    .stock(crate::StockId(u32::from(state.setup.stock)))
+                    .map_err(|error| over(&error.to_string()))?
+                    .date_session_ordinal()
+                    .is_some(),
+                None => {
+                    let day = state
+                        .initial_calendar_day
+                        .as_ref()
+                        .ok_or_else(|| over("静点关停缺少显式初始 DayContext"))?;
+                    matches!(
+                        day.day_model()
+                            .stock(crate::StockId(u32::from(state.setup.stock)))
+                            .map_err(|error| over(&error.to_string()))?
+                            .status(),
+                        crate::calendar::DayStatus::Trading
+                    )
+                }
+            };
+            if !already_drained && open {
                 state.undo.clear();
                 state.committed_tick = state.cur_tick;
                 state.snapshot_drain_market();
@@ -3447,9 +3614,19 @@ fn process_msg(
                             trade_count: state.market.trade_count,
                         });
                     }
+                    // 清算已完成，本日终 K 在归档前保留；roll 后只构造公开读面。
+                    if state.market.candle.is_none() {
+                        let last = state.market.last_price;
+                        state.market.candle = Some(DeskCandle {
+                            open: last,
+                            high: last,
+                            low: last,
+                            close: last,
+                            volume: 0,
+                        });
+                    }
                     state.roll_day();
                 }
-                state.finish_round(state.cur_tick)?;
                 state.flush_batches(group_txs, state.cur_tick, state.cur_round)?;
             }
             up_tx
@@ -3498,6 +3675,7 @@ fn process_msg(
                     detail: format!("交易部 {} DeskDrained 发送失败", state.setup.stock),
                 })?;
         }
+        DeskMsg::DrainMarket { .. } => unreachable!("DrainMarket 已完成前置验证"),
         // Shutdown 由主循环拦截，此处防御保留（不可达）。
         DeskMsg::Shutdown => {}
         // EchoCandles 由主循环拦截，此处防御保留（不可达）。

@@ -154,6 +154,30 @@ pub(super) fn continuous_shards(
     Ok(shards)
 }
 
+pub(super) fn finish_market_shards_with_calendar(
+    shards: BTreeMap<StockId, IncrementalContinuousStockCoordinator>,
+    boundary: super::phase::MarketTickBoundary,
+    exchanges: &BTreeMap<StockId, crate::StockExchange>,
+    calendar: &crate::session::market_calendar_context::MarketTickContext,
+) -> Result<IncrementalContinuousStockFinish, StockFinishFatal> {
+    collect_finished_shards(shards, |code, shard| {
+        if shard.is_detached() {
+            return shard.finish_for_tick(false);
+        }
+        let clock = calendar
+            .before_projection()
+            .stock(code)
+            .map_err(|error| StockFinishFatal::Other(invariant(&error.to_string())))?;
+        if clock.date_session_ordinal().is_none() {
+            return shard.finish_closed_tick();
+        }
+        let exchange = exchanges
+            .get(&code)
+            .ok_or_else(|| StockFinishFatal::Other(invariant("open 股票边界缺少交易所事实")))?;
+        shard.finish_for_market_tick(boundary, *exchange)
+    })
+}
+
 pub(super) fn finish_market_shards(
     shards: BTreeMap<StockId, IncrementalContinuousStockCoordinator>,
     boundary: super::phase::MarketTickBoundary,
@@ -1651,47 +1675,54 @@ mod tests {
                     let shared = shared.clone();
                     let executions = Arc::clone(&executions);
                     scope.spawn(move || {
-                    let shards = (0..PER_COORDINATOR)
-                        .map(|offset| {
-                            let code = StockId(lane as u32 * PER_COORDINATOR + offset);
-                            (
-                                code,
-                                CountingShard {
-                                    executions: Arc::clone(&executions),
+                        let shards = (0..PER_COORDINATOR)
+                            .map(|offset| {
+                                let code = StockId(lane as u32 * PER_COORDINATOR + offset);
+                                (
+                                    code,
+                                    CountingShard {
+                                        executions: Arc::clone(&executions),
+                                    },
+                                )
+                            })
+                            .collect::<BTreeMap<_, _>>();
+                        let operations = (0..PER_COORDINATOR)
+                            .map(|offset| {
+                                cancel(
+                                    StockId(lane as u32 * PER_COORDINATOR + offset),
+                                    (lane as u64 * u64::from(PER_COORDINATOR))
+                                        + u64::from(offset)
+                                        + 1,
+                                )
+                            })
+                            .collect::<Vec<_>>();
+                        let lane_shards = shards;
+                        let drive = move || {
+                            drive_stock_stream(
+                                &shared,
+                                lane_shards,
+                                operations,
+                                StockStreamNotifications::new(),
+                                |_: &StockId| -> Result<CountingShard, StepFatal> {
+                                    Err(invariant("饱和夹具不得请求 detached 股票"))
+                                },
+                                |progress| {
+                                    Ok(match progress {
+                                        StockStreamProgress::Idle => FeedOutcome::Complete,
+                                        _ => FeedOutcome::Operations {
+                                            operations: Vec::new(),
+                                            outcomes: Vec::new(),
+                                        },
+                                    })
                                 },
                             )
-                        })
-                        .collect::<BTreeMap<_, _>>();
-                    let operations = (0..PER_COORDINATOR)
-                        .map(|offset| {
-                            cancel(
-                                StockId(lane as u32 * PER_COORDINATOR + offset),
-                                (lane as u64 * u64::from(PER_COORDINATOR)) + u64::from(offset) + 1,
-                            )
-                        })
-                        .collect::<Vec<_>>();
-                    let lane_shards = shards;
-                    let drive = move || {
-                        drive_stock_stream(
-                            &shared,
-                            lane_shards,
-                            operations,
-                            StockStreamNotifications::new(),
-                            |_: &StockId| -> Result<CountingShard, StepFatal> {
-                                Err(invariant("饱和夹具不得请求 detached 股票"))
-                            },
-                            |progress| Ok(match progress {
-                        StockStreamProgress::Idle => FeedOutcome::Complete,
-                        _ => FeedOutcome::Operations { operations: Vec::new(), outcomes: Vec::new() },
-                    }),
-                        )
-                        .map(|books| books.len())
-                    };
-                    if lane < 2 {
-                        pool.install(drive)
-                    } else {
-                        drive()
-                    }
+                            .map(|books| books.len())
+                        };
+                        if lane < 2 {
+                            pool.install(drive)
+                        } else {
+                            drive()
+                        }
                     })
                 })
                 .collect::<Vec<_>>();

@@ -84,7 +84,12 @@ fn price_improvement_world() -> World {
         profiles: vec![profile(u64::MAX), profile(2)],
         attention_gap_ticks: 0,
     });
-    World::spawn(spec).expect("真实组线程与交易部")
+    World::spawn(
+        spec,
+        crate::calendar::TradingCalendar::current_default_calendar()
+            .expect("显式 raw Calendar 政策合法"),
+    )
+    .expect("真实组线程与交易部")
 }
 
 fn install_buy_assessment(world: &mut World) {
@@ -214,7 +219,12 @@ fn external_orders_across_stocks_release_exactly_once_on_cancel() {
     let mut spec = basic_spec(1, 2, 1, Box::new(|_| Box::new(|_, _| TickPlan::default())));
     spec.ticks_per_day = 240;
     spec.stocks[1].initial_price = 2_000;
-    let mut world = World::spawn(spec).expect("两股显式下单世界");
+    let mut world = World::spawn(
+        spec,
+        crate::calendar::TradingCalendar::current_default_calendar()
+            .expect("显式 raw Calendar 政策合法"),
+    )
+    .expect("两股显式下单世界");
     world.broadcast_external_plan(
         vec![external_buy(0, 1_000, 200), external_buy(1, 2_000, 100)],
         Vec::new(),
@@ -256,7 +266,12 @@ fn external_orders_across_stocks_release_exactly_once_on_cancel() {
 fn available_budget_excludes_held_purse_even_when_total_cash_is_sufficient() {
     let mut spec = basic_spec(1, 2, 1, Box::new(|_| Box::new(|_, _| TickPlan::default())));
     spec.ticks_per_day = 240;
-    let mut world = World::spawn(spec).expect("预算隔离世界");
+    let mut world = World::spawn(
+        spec,
+        crate::calendar::TradingCalendar::current_default_calendar()
+            .expect("显式 raw Calendar 政策合法"),
+    )
+    .expect("预算隔离世界");
     world.broadcast_external_plan(vec![external_buy(0, 1_000, 700)], Vec::new());
     world.run_ticks(1).expect("先扣出第一笔买单预算");
     let before = assert_complete_cash_cut(&mut world);
@@ -284,7 +299,12 @@ fn rejected_and_expired_orders_leave_no_purse_in_the_group_cut() {
         let mut spec = basic_spec(1, 1, 1, Box::new(|_| Box::new(|_, _| TickPlan::default())));
         spec.ticks_per_day = 240;
         spec.order_ttl_ticks = if expire { 1 } else { 100 };
-        let mut world = World::spawn(spec).expect("拒收或到期世界");
+        let mut world = World::spawn(
+            spec,
+            crate::calendar::TradingCalendar::current_default_calendar()
+                .expect("显式 raw Calendar 政策合法"),
+        )
+        .expect("拒收或到期世界");
         world.broadcast_external_plan(
             vec![external_buy(0, if expire { 1_000 } else { 1_100 }, 100)],
             Vec::new(),
@@ -322,7 +342,12 @@ fn failed_tick_restores_cash_and_purse_before_replaying_a_partial_fill() {
             }),
         );
         spec.ticks_per_day = 240;
-        let mut world = World::spawn(spec).expect("回滚真实成交世界");
+        let mut world = World::spawn(
+            spec,
+            crate::calendar::TradingCalendar::current_default_calendar()
+                .expect("显式 raw Calendar 政策合法"),
+        )
+        .expect("回滚真实成交世界");
         world.send_external_plan_grouped(
             vec![
                 vec![PendingOp {
@@ -386,7 +411,12 @@ fn failed_tick_restores_cash_and_purse_before_replaying_a_partial_fill() {
 fn multiple_external_orders_preserve_cash_through_partial_full_fill_and_cancel() {
     let mut spec = basic_spec(2, 1, 2, Box::new(|_| Box::new(|_, _| TickPlan::default())));
     spec.ticks_per_day = 240;
-    let mut world = World::spawn(spec).expect("多单多成交世界");
+    let mut world = World::spawn(
+        spec,
+        crate::calendar::TradingCalendar::current_default_calendar()
+            .expect("显式 raw Calendar 政策合法"),
+    )
+    .expect("多单多成交世界");
     let sell = |local, price| PendingOp {
         local,
         stock: 0,
@@ -489,7 +519,12 @@ fn retail_strategy_orders_share_the_same_entity_driven_purse_cut() {
         }],
         attention_gap_ticks: 0,
     });
-    let mut world = World::spawn(spec).expect("真实散户策略世界");
+    let mut world = World::spawn(
+        spec,
+        crate::calendar::TradingCalendar::current_default_calendar()
+            .expect("显式 raw Calendar 政策合法"),
+    )
+    .expect("真实散户策略世界");
     for _ in 0..16 {
         world.run_ticks(1).expect("散户自主决策真实交易拍");
         assert_complete_cash_cut(&mut world);

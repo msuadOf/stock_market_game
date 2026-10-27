@@ -588,7 +588,12 @@ mod tests {
 
     #[test]
     fn admin_01_two_groups_all_operations_persist_through_real_tick() {
-        let mut w = World::spawn(spec()).unwrap();
+        let mut w = World::spawn(
+            spec(),
+            crate::calendar::TradingCalendar::current_default_calendar()
+                .expect("显式 raw Calendar 政策合法"),
+        )
+        .unwrap();
         let before = accounts(&mut w);
         let ops = vec![
             (
@@ -630,7 +635,12 @@ mod tests {
     }
     #[test]
     fn admin_02_rejection_restores_complete_accounts_and_new_id_retries() {
-        let mut w = World::spawn(spec()).unwrap();
+        let mut w = World::spawn(
+            spec(),
+            crate::calendar::TradingCalendar::current_default_calendar()
+                .expect("显式 raw Calendar 政策合法"),
+        )
+        .unwrap();
         let before = accounts(&mut w);
         let mut failed_id = None;
         assert!(w
@@ -647,7 +657,12 @@ mod tests {
     }
     #[test]
     fn admin_03_other_group_rejects_and_original_order_is_not_netted() {
-        let mut w = World::spawn(spec()).unwrap();
+        let mut w = World::spawn(
+            spec(),
+            crate::calendar::TradingCalendar::current_default_calendar()
+                .expect("显式 raw Calendar 政策合法"),
+        )
+        .unwrap();
         let before = accounts(&mut w);
         for (operation, reason) in [
             (
@@ -699,7 +714,12 @@ mod tests {
     fn admin_04_large_share_abort_and_aggregate_overflow() {
         let mut s = spec();
         s.initial_shares = vec![vec![vec![0]; 2]; 2];
-        let mut w = World::spawn(s).unwrap();
+        let mut w = World::spawn(
+            s,
+            crate::calendar::TradingCalendar::current_default_calendar()
+                .expect("显式 raw Calendar 政策合法"),
+        )
+        .unwrap();
         let before = accounts(&mut w);
         assert!(w
             .with_admin_transaction(
@@ -753,7 +773,12 @@ mod tests {
             s.initial_purse_held = vec![vec![held; 2]; 2];
             s.initial_shares = vec![vec![vec![shares]; 2]; 2];
             s.initial_pending_sell = vec![vec![vec![pending]; 2]; 2];
-            let mut w = World::spawn(s).unwrap();
+            let mut w = World::spawn(
+                s,
+                crate::calendar::TradingCalendar::current_default_calendar()
+                    .expect("显式 raw Calendar 政策合法"),
+            )
+            .unwrap();
             let before = accounts(&mut w);
             assert!(w
                 .with_admin_transaction(vec![(0, vec![op])], |_| Ok(()))
@@ -769,7 +794,12 @@ mod tests {
         s.initial_recovered = vec![vec![vec![100_000]; 2]; 2];
         s.initial_frozen_today = vec![vec![vec![100]; 2]; 2];
         s.initial_pending_sell = vec![vec![vec![50]; 2]; 2];
-        let mut w = World::spawn(s).unwrap();
+        let mut w = World::spawn(
+            s,
+            crate::calendar::TradingCalendar::current_default_calendar()
+                .expect("显式 raw Calendar 政策合法"),
+        )
+        .unwrap();
         let before = accounts(&mut w);
         let op = AdminOperation::ShareReduction {
             local: 1,
@@ -798,7 +828,12 @@ mod tests {
         let mut s = spec();
         s.initial_shares = vec![vec![vec![100]; 2]; 2];
         s.initial_invested = vec![vec![vec![90000]; 2]; 2];
-        let mut w = World::spawn(s).unwrap();
+        let mut w = World::spawn(
+            s,
+            crate::calendar::TradingCalendar::current_default_calendar()
+                .expect("显式 raw Calendar 政策合法"),
+        )
+        .unwrap();
         let before = accounts(&mut w);
         let zero = vec![(
             0,
@@ -831,7 +866,12 @@ mod tests {
     }
     #[test]
     fn admin_06_rejection_preserves_published_tick_and_next_step() {
-        let mut w = World::spawn(traded_spec()).unwrap();
+        let mut w = World::spawn(
+            traded_spec(),
+            crate::calendar::TradingCalendar::current_default_calendar()
+                .expect("显式 raw Calendar 政策合法"),
+        )
+        .unwrap();
         w.run_ticks(1).unwrap();
         let published = w.publication.load();
         let before = accounts(&mut w);
@@ -849,7 +889,12 @@ mod tests {
     fn admin_07_rejection_keeps_real_day_end_abort_legal() {
         let mut s = spec();
         s.initial_frozen_today = vec![vec![vec![100]; 2]; 2];
-        let mut w = World::spawn(s).unwrap();
+        let mut w = World::spawn(
+            s,
+            crate::calendar::TradingCalendar::current_default_calendar()
+                .expect("显式 raw Calendar 政策合法"),
+        )
+        .unwrap();
         w.run_ticks(1).unwrap();
         let before = accounts(&mut w);
         w.run_day_end_public().unwrap();
@@ -860,7 +905,12 @@ mod tests {
     }
     #[test]
     fn admin_08_commit_closes_old_day_end_and_next_tick_abort_keeps_credit() {
-        let mut w = World::spawn(spec()).unwrap();
+        let mut w = World::spawn(
+            spec(),
+            crate::calendar::TradingCalendar::current_default_calendar()
+                .expect("显式 raw Calendar 政策合法"),
+        )
+        .unwrap();
         w.run_ticks(1).unwrap();
         w.run_day_end_public().unwrap();
         w.with_admin_transaction(credit(), |_| Ok(())).unwrap();
@@ -874,7 +924,12 @@ mod tests {
     }
     #[test]
     fn admin_09_closed_days_without_start_keep_first_commit() {
-        let mut w = World::spawn(spec()).unwrap();
+        let mut w = World::spawn(
+            spec(),
+            crate::calendar::TradingCalendar::current_default_calendar()
+                .expect("显式 raw Calendar 政策合法"),
+        )
+        .unwrap();
         w.with_admin_transaction(credit(), |_| Ok(())).unwrap();
         let baseline = accounts(&mut w);
         assert!(w.with_admin_transaction(credit(), reject).is_err());
@@ -900,7 +955,12 @@ mod tests {
                 p
             })
         });
-        let mut w = World::spawn(s).unwrap();
+        let mut w = World::spawn(
+            s,
+            crate::calendar::TradingCalendar::current_default_calendar()
+                .expect("显式 raw Calendar 政策合法"),
+        )
+        .unwrap();
         w.run_ticks(1).unwrap();
         w.with_admin_transaction(credit(), |_| Ok(())).unwrap();
         let baseline = accounts(&mut w);
@@ -918,7 +978,12 @@ mod tests {
     }
     #[test]
     fn admin_13_candidate_panic_keeps_payload_joins_and_kills_world() {
-        let mut w = World::spawn(traded_spec()).unwrap();
+        let mut w = World::spawn(
+            traded_spec(),
+            crate::calendar::TradingCalendar::current_default_calendar()
+                .expect("显式 raw Calendar 政策合法"),
+        )
+        .unwrap();
         w.run_ticks(1).unwrap();
         let published = w.publication.load();
         let baseline = accounts(&mut w);
@@ -946,7 +1011,12 @@ mod tests {
     #[test]
     fn admin_10_partial_prepare_and_commit_send_failure_kill_and_join() {
         for phase in [AdminPhase::Prepare, AdminPhase::Commit] {
-            let mut w = World::spawn(spec()).unwrap();
+            let mut w = World::spawn(
+                spec(),
+                crate::calendar::TradingCalendar::current_default_calendar()
+                    .expect("显式 raw Calendar 政策合法"),
+            )
+            .unwrap();
             w.run_ticks(1).unwrap();
             w.run_day_end_public().unwrap();
             let published = w.publication.load();
@@ -978,7 +1048,12 @@ mod tests {
                 AdminFault::Missing,
                 AdminFault::Duplicate,
             ] {
-                let mut w = World::spawn(spec()).unwrap();
+                let mut w = World::spawn(
+                    spec(),
+                    crate::calendar::TradingCalendar::current_default_calendar()
+                        .expect("显式 raw Calendar 政策合法"),
+                )
+                .unwrap();
                 w.run_ticks(1).unwrap();
                 let published = w.publication.load();
                 w.group_txs[0]
@@ -1019,7 +1094,12 @@ mod tests {
     #[test]
     fn admin_13_worker_prepare_and_commit_panic_transport_original_and_join() {
         for phase in [AdminPhase::Prepare, AdminPhase::Commit] {
-            let mut w = World::spawn(traded_spec()).unwrap();
+            let mut w = World::spawn(
+                traded_spec(),
+                crate::calendar::TradingCalendar::current_default_calendar()
+                    .expect("显式 raw Calendar 政策合法"),
+            )
+            .unwrap();
             w.run_ticks(1).unwrap();
             let published = w.publication.load();
             let baseline = accounts(&mut w);
@@ -1061,7 +1141,12 @@ mod tests {
     }
     #[test]
     fn admin_08_partial_start_does_not_undo_committed_admin_or_tick() {
-        let mut w = World::spawn(spec()).unwrap();
+        let mut w = World::spawn(
+            spec(),
+            crate::calendar::TradingCalendar::current_default_calendar()
+                .expect("显式 raw Calendar 政策合法"),
+        )
+        .unwrap();
         w.run_ticks(1).unwrap();
         w.run_day_end_public().unwrap();
         w.with_admin_transaction(credit(), |_| Ok(())).unwrap();
@@ -1106,7 +1191,12 @@ mod tests {
                 p
             })
         });
-        let mut w = World::spawn(s).unwrap();
+        let mut w = World::spawn(
+            s,
+            crate::calendar::TradingCalendar::current_default_calendar()
+                .expect("显式 raw Calendar 政策合法"),
+        )
+        .unwrap();
         w.run_ticks(1).unwrap();
         let before = accounts(&mut w);
         assert!(before[0][0].foreign_active[0] > 0);
@@ -1141,7 +1231,12 @@ mod tests {
                 p
             })
         });
-        let mut w = World::spawn(s).unwrap();
+        let mut w = World::spawn(
+            s,
+            crate::calendar::TradingCalendar::current_default_calendar()
+                .expect("显式 raw Calendar 政策合法"),
+        )
+        .unwrap();
         w.with_admin_transaction(
             vec![(
                 0,
@@ -1167,7 +1262,12 @@ mod tests {
         s.initial_purse_held = vec![vec![100; 2]; 2];
         s.initial_shares = vec![vec![vec![u32::MAX - 11]; 2]; 2];
         s.initial_pending_sell = vec![vec![vec![10]; 2]; 2];
-        let mut w = World::spawn(s).unwrap();
+        let mut w = World::spawn(
+            s,
+            crate::calendar::TradingCalendar::current_default_calendar()
+                .expect("显式 raw Calendar 政策合法"),
+        )
+        .unwrap();
         w.with_admin_transaction(
             vec![(
                 0,
@@ -1216,7 +1316,12 @@ mod tests {
                 qty: 0,
             },
         ] {
-            let mut w = World::spawn(spec()).unwrap();
+            let mut w = World::spawn(
+                spec(),
+                crate::calendar::TradingCalendar::current_default_calendar()
+                    .expect("显式 raw Calendar 政策合法"),
+            )
+            .unwrap();
             let before = accounts(&mut w);
             assert!(w
                 .with_admin_transaction(vec![(0, vec![op])], |_| Ok(()))
@@ -1241,7 +1346,12 @@ mod tests {
                 .collect(),
             attention_gap_ticks: 0,
         });
-        let mut w = World::spawn(s).unwrap();
+        let mut w = World::spawn(
+            s,
+            crate::calendar::TradingCalendar::current_default_calendar()
+                .expect("显式 raw Calendar 政策合法"),
+        )
+        .unwrap();
         w.with_admin_transaction(credit(), |_| Ok(())).unwrap();
         w.run_ticks(3).unwrap();
         let attention = w.collect_group_attention().unwrap();
@@ -1266,7 +1376,12 @@ mod tests {
     }
     #[test]
     fn admin_00_empty_duplicate_group_and_id_exhaustion_are_explicit() {
-        let mut w = World::spawn(spec()).unwrap();
+        let mut w = World::spawn(
+            spec(),
+            crate::calendar::TradingCalendar::current_default_calendar()
+                .expect("显式 raw Calendar 政策合法"),
+        )
+        .unwrap();
         let before = accounts(&mut w);
         let mut calls = 0;
         w.with_admin_transaction(vec![(1, Vec::new())], |c| {
@@ -1291,7 +1406,12 @@ mod tests {
     #[test]
     fn admin_11_pending_rejects_start_continue_and_day_end_without_market_rollback() {
         for mode in 0..3 {
-            let mut w = World::spawn(spec()).unwrap();
+            let mut w = World::spawn(
+                spec(),
+                crate::calendar::TradingCalendar::current_default_calendar()
+                    .expect("显式 raw Calendar 政策合法"),
+            )
+            .unwrap();
             w.run_ticks(1).unwrap();
             let before = accounts(&mut w);
             w.group_txs[0]
@@ -1309,6 +1429,7 @@ mod tests {
                 0 => GroupIn::Start {
                     tick: 2,
                     snapshot: Arc::new(crate::runtime::protocol::TickSnapshot {
+                        calendar: w.prepare_raw_calendar_tick().unwrap(),
                         tick: 2,
                         civil_date: w.civil_date,
                         market_minute: 0,
@@ -1335,7 +1456,12 @@ mod tests {
     }
     #[test]
     fn admin_review_severed_entry_joins_and_kills_even_empty_transaction() {
-        let mut w = World::spawn(spec()).unwrap();
+        let mut w = World::spawn(
+            spec(),
+            crate::calendar::TradingCalendar::current_default_calendar()
+                .expect("显式 raw Calendar 政策合法"),
+        )
+        .unwrap();
         w.sever();
         assert!(w.with_admin_transaction(Vec::new(), |_| Ok(())).is_err());
         assert!(w.dead_reason.is_some());
@@ -1344,7 +1470,12 @@ mod tests {
     }
     #[test]
     fn admin_review_prepare_terminal_closes_old_day_end_abort_window() {
-        let mut w = World::spawn(spec()).unwrap();
+        let mut w = World::spawn(
+            spec(),
+            crate::calendar::TradingCalendar::current_default_calendar()
+                .expect("显式 raw Calendar 政策合法"),
+        )
+        .unwrap();
         w.run_ticks(1).unwrap();
         w.run_day_end_public().unwrap();
         w.admin_send_fault_for_test = Some((AdminPhase::Prepare, 1));
@@ -1361,7 +1492,12 @@ mod tests {
     #[test]
     fn admin_review_already_queued_extra_receipt_prevents_success() {
         for phase in [AdminPhase::Prepare, AdminPhase::Commit, AdminPhase::Abort] {
-            let mut w = World::spawn(spec()).unwrap();
+            let mut w = World::spawn(
+                spec(),
+                crate::calendar::TradingCalendar::current_default_calendar()
+                    .expect("显式 raw Calendar 政策合法"),
+            )
+            .unwrap();
             let (tx, rx) = channel();
             tx.send(UpMsg::AdminReceipt {
                 id: AdminTransactionId(1),

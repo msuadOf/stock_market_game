@@ -71,7 +71,12 @@ fn spec_for_run() -> WorldSpec {
 /// 单跑采集：35 tick 逐拍发布版本 desks 域 view 快照+终态守恒锚。
 fn run_and_collect(disable_cache: bool) -> (Vec<Vec<StockPublic>>, i128, u64) {
     set_desk_projection_cache_disabled_for_test(disable_cache);
-    let mut world = World::spawn(spec_for_run()).expect("世界构造");
+    let mut world = World::spawn(
+        spec_for_run(),
+        crate::calendar::TradingCalendar::current_default_calendar()
+            .expect("显式 raw Calendar 政策合法"),
+    )
+    .expect("世界构造");
     let mut snapshots: Vec<Vec<StockPublic>> = Vec::new();
     for _ in 0..13u64 {
         world.run_ticks(1).expect("单 tick 收敛");

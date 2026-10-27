@@ -62,7 +62,12 @@ fn day_end_drains_inflight_and_conserves_across_days() {
             plan
         })
     };
-    let mut world = World::spawn(day_spec(Box::new(script))).expect("世界构造");
+    let mut world = World::spawn(
+        day_spec(Box::new(script)),
+        crate::calendar::TradingCalendar::current_default_calendar()
+            .expect("显式 raw Calendar 政策合法"),
+    )
+    .expect("世界构造");
     world.run_ticks(5).expect("5 tick 收敛（含一次日结）");
     let cand = world.last_day_end_candidate.clone().expect("候选");
     let report = world.shutdown().expect("关停");
@@ -109,7 +114,12 @@ fn admin_rights_apply_reversibly_and_validate_before_commit() {
             },
         ]
     }));
-    let mut world = World::spawn(spec).expect("世界构造");
+    let mut world = World::spawn(
+        spec,
+        crate::calendar::TradingCalendar::current_default_calendar()
+            .expect("显式 raw Calendar 政策合法"),
+    )
+    .expect("世界构造");
     // 首次日结校验失败 ⇒ Err + 冲回（回到上一交易日收敛态=初始）。
     let fail: super::world::DayEndValidator = Box::new(|_| Err("注入：日结校验失败".to_owned()));
     world.set_day_end_validator(fail);
@@ -147,7 +157,12 @@ fn fee_sink_surrendered_in_candidate_and_conserves() {
             plan
         })
     };
-    let mut world = World::spawn(day_spec(Box::new(script))).expect("世界构造");
+    let mut world = World::spawn(
+        day_spec(Box::new(script)),
+        crate::calendar::TradingCalendar::current_default_calendar()
+            .expect("显式 raw Calendar 政策合法"),
+    )
+    .expect("世界构造");
     world.run_ticks(5).expect("收敛");
     let cand = world.last_day_end_candidate.clone().expect("候选");
     let fee_surrendered: i64 = cand.desks.iter().map(|(_, fee, _)| *fee).sum();
@@ -177,7 +192,12 @@ fn day_rollover_updates_last_close_and_archives_candle() {
             plan
         })
     };
-    let mut world = World::spawn(day_spec(Box::new(script))).expect("世界构造");
+    let mut world = World::spawn(
+        day_spec(Box::new(script)),
+        crate::calendar::TradingCalendar::current_default_calendar()
+            .expect("显式 raw Calendar 政策合法"),
+    )
+    .expect("世界构造");
     world.run_ticks(6).expect("收敛");
     let cand = world.last_day_end_candidate.clone().expect("候选");
     let report = world.shutdown().expect("关停");
@@ -208,7 +228,12 @@ fn day_end_candidate_roundtrip_rebuilds_equivalent_world() {
             plan
         })
     };
-    let mut world = World::spawn(day_spec(Box::new(script))).expect("世界构造");
+    let mut world = World::spawn(
+        day_spec(Box::new(script)),
+        crate::calendar::TradingCalendar::current_default_calendar()
+            .expect("显式 raw Calendar 政策合法"),
+    )
+    .expect("世界构造");
     world.run_ticks(4).expect("day0 收敛");
     // 手动推进到日结（tick5 触发）。
     world.run_ticks(1).expect("日结+tick5");
@@ -237,7 +262,12 @@ fn day_end_candidate_roundtrip_rebuilds_equivalent_world() {
         .iter()
         .map(|(_, accts)| accts.iter().map(|a| a.shares.as_slice().to_vec()).collect())
         .collect();
-    let mut rebuilt = World::spawn(rebuilt_spec).expect("候选重建世界");
+    let mut rebuilt = World::spawn(
+        rebuilt_spec,
+        crate::calendar::TradingCalendar::current_default_calendar()
+            .expect("显式 raw Calendar 政策合法"),
+    )
+    .expect("候选重建世界");
     rebuilt.run_ticks(2).expect("重建后续跑 2 tick");
     let rebuilt_report = rebuilt.shutdown().expect("重建世界关停");
     // 续跑无单 ⇒ 账户与候选逐分一致（往返内容等价）。
@@ -266,7 +296,12 @@ fn day_end_group_hash_matches_post_apply_state() {
             Vec::new()
         }
     }));
-    let mut world = World::spawn(spec).expect("世界构造");
+    let mut world = World::spawn(
+        spec,
+        crate::calendar::TradingCalendar::current_default_calendar()
+            .expect("显式 raw Calendar 政策合法"),
+    )
+    .expect("世界构造");
     world.run_ticks(5).expect("收敛");
     let cand = world.last_day_end_candidate.clone().expect("候选");
     let report = world.shutdown().expect("关停");
@@ -303,7 +338,12 @@ fn d0_manual_and_auto_day_end_are_mutually_exclusive() {
     spec.ticks_per_day = 4; // day0=tick1..4；自动日结在 tick5 开头判定
     spec.auction_ticks = 0;
     spec.closing_auction_ticks = 0;
-    let mut world = World::spawn(spec).expect("世界构造");
+    let mut world = World::spawn(
+        spec,
+        crate::calendar::TradingCalendar::current_default_calendar()
+            .expect("显式 raw Calendar 政策合法"),
+    )
+    .expect("世界构造");
     world.run_ticks(4).expect("day0 四 tick");
     world.run_day_end_public().expect("手动日结（tick4）");
     // 同日重复日结必须显式拒绝（D0 前红：第二次空转成功）。

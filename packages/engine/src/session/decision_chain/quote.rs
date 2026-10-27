@@ -8,7 +8,7 @@ impl GameSession {
         unfinished_routes: &BTreeSet<(AccountId, StockId)>,
     ) -> Option<PlanExecutionRequest> {
         let id = cursor.account;
-        let trading_day = u64::from(self.state.day);
+
         let lot = self.state.setup.config.lot_size;
         let chain_params = self.chain_strategy_params(id);
         let available = cursor.plans.len();
@@ -20,6 +20,12 @@ impl GameSession {
             let plan = plans
                 .plan(plan_id)
                 .unwrap_or_else(|error| panic!("plan quote cursor lost its plan: {error}"));
+            let Some(trading_day) = self
+                .stock_calendar_day(*plan.code())
+                .expect("报价本股 Calendar 合法")
+            else {
+                continue;
+            };
             if unfinished_routes.contains(&(id, plan.code().clone())) {
                 cursor.plans.push_back(plan_id);
                 continue;

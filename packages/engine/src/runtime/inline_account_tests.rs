@@ -91,8 +91,15 @@ fn seal_shard_matches_group_authority() {
     let mut spec = basic_spec(2, 1, 4, trading_script());
     spec.ticks_per_day = 30;
     spec.auction_ticks = 0;
-    let mut world = World::spawn(spec).expect("世界构造");
-    world.run_ticks(2).expect("2 tick（tick2 成交拍——分片=当拍 dirty，take 清空式消费后末拍须即成交拍对照）");
+    let mut world = World::spawn(
+        spec,
+        crate::calendar::TradingCalendar::current_default_calendar()
+            .expect("显式 raw Calendar 政策合法"),
+    )
+    .expect("世界构造");
+    world
+        .run_ticks(2)
+        .expect("2 tick（tick2 成交拍——分片=当拍 dirty，take 清空式消费后末拍须即成交拍对照）");
     // 分片（发布版本——SealAck 上行）。
     let published = world.publication().load();
     assert_eq!(published.tick, 2, "发布版本推进到成交拍");
@@ -128,7 +135,12 @@ fn seal_shard_abort_retry_fresh() {
     let mut spec = basic_spec(1, 1, 4, trading_script());
     spec.ticks_per_day = 30;
     spec.auction_ticks = 0;
-    let mut world = World::spawn(spec).expect("世界构造");
+    let mut world = World::spawn(
+        spec,
+        crate::calendar::TradingCalendar::current_default_calendar()
+            .expect("显式 raw Calendar 政策合法"),
+    )
+    .expect("世界构造");
     world.run_ticks(2).expect("2 tick 基线");
     world.set_seal_ack_failure_once_for_test(0);
     assert!(world.run_ticks(1).is_err(), "注入的 SealAck 失败显式失败");
@@ -162,7 +174,12 @@ fn seal_knob1_tamper_proves_shard_source() {
     let mut spec = basic_spec(1, 1, 4, trading_script());
     spec.ticks_per_day = 30;
     spec.auction_ticks = 0;
-    let mut world = World::spawn(spec).expect("世界构造");
+    let mut world = World::spawn(
+        spec,
+        crate::calendar::TradingCalendar::current_default_calendar()
+            .expect("显式 raw Calendar 政策合法"),
+    )
+    .expect("世界构造");
     world.seal_knobs_for_test(true, false);
     world.run_ticks(2).expect("2 tick（成交拍）");
     let published = world.publication().load();
@@ -197,7 +214,12 @@ fn seal_knob2_skip_proves_dirty_completeness() {
         let mut spec = basic_spec(1, 1, 4, trading_script());
         spec.ticks_per_day = 30;
         spec.auction_ticks = 0;
-        let mut world = World::spawn(spec).expect("世界构造");
+        let mut world = World::spawn(
+            spec,
+            crate::calendar::TradingCalendar::current_default_calendar()
+                .expect("显式 raw Calendar 政策合法"),
+        )
+        .expect("世界构造");
         if with_knob {
             world.seal_knobs_for_test(false, true);
         }

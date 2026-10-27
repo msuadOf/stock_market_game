@@ -19,7 +19,12 @@ fn idle_script() -> Box<dyn Fn(GroupIdx) -> super::group::GroupScript> {
 fn spawn_world(ticks_per_day: u64) -> World {
     let mut spec = basic_spec(1, 2, 2, idle_script());
     spec.ticks_per_day = ticks_per_day;
-    World::spawn(spec).expect("世界构造")
+    World::spawn(
+        spec,
+        crate::calendar::TradingCalendar::current_default_calendar()
+            .expect("显式 raw Calendar 政策合法"),
+    )
+    .expect("世界构造")
 }
 
 // ── J4 判据（一致性）：tick 序列与版本内分片一致 ──
@@ -213,7 +218,12 @@ fn publication_group_belief_shard_matches_group_authority() {
     use super::skeleton_tests::basic_spec;
     let mut spec = basic_spec(2, 2, 4, idle_script());
     spec.ticks_per_day = 30;
-    let mut world = World::spawn(spec).expect("世界构造");
+    let mut world = World::spawn(
+        spec,
+        crate::calendar::TradingCalendar::current_default_calendar()
+            .expect("显式 raw Calendar 政策合法"),
+    )
+    .expect("世界构造");
     world.run_ticks(3).expect("3 tick");
     let version = world.publication().load();
     assert_eq!(version.tick, 3);
@@ -289,7 +299,12 @@ fn publication_resting_shard_matches_live_collection() {
         )
         .expect("测试配置合法"),
     );
-    let mut world = World::spawn(spec).expect("世界构造");
+    let mut world = World::spawn(
+        spec,
+        crate::calendar::TradingCalendar::current_default_calendar()
+            .expect("显式 raw Calendar 政策合法"),
+    )
+    .expect("世界构造");
     world.run_ticks(1).expect("1 tick（挂单拍——TTL 内在簿）");
     let version = world.publication().load();
     assert_eq!(version.tick, 1);

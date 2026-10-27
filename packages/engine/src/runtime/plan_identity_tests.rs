@@ -145,8 +145,19 @@ fn invalid_seed_is_rejected_before_any_group_constructor_or_worker_starts() {
     }));
     let mut unknown = PlanBook::default(); unknown.create(open(AccountId(999), 0)).unwrap();
     spec.initial_plan_books = vec![unknown, PlanBook::default()];
-    assert!(matches!(super::world::World::spawn(spec), Err(super::protocol::RuntimeError::ProtocolInvariant { .. })));
-    assert_eq!(started.load(Ordering::SeqCst), 0, "坏种子不得启动任何组或线程");
+    assert!(matches!(
+        super::world::World::spawn(
+            spec,
+            crate::calendar::TradingCalendar::current_default_calendar()
+                .expect("显式 raw Calendar 政策合法")
+        ),
+        Err(super::protocol::RuntimeError::ProtocolInvariant { .. })
+    ));
+    assert_eq!(
+        started.load(Ordering::SeqCst),
+        0,
+        "坏种子不得启动任何组或线程"
+    );
 }
 
 #[test]

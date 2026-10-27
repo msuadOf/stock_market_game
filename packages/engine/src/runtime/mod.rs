@@ -166,3 +166,9 @@ pub fn step_runtime_enabled() -> bool {
         })
     }
 }
+
+// 公开消息只暴露 opaque context；构造与读取仍由 engine 内部受控。
+pub use crate::session::market_calendar_context::{MarketDayContext, MarketTickContext};
+
+#[cfg(test)]
+mod calendar_test_support;

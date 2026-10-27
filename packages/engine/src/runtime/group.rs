@@ -347,36 +347,64 @@ pub(crate) fn prepare_plan_seeds(
             }
         }
     }
-    books.into_iter().map(|book| {
-        let mut tickets = std::collections::BTreeMap::new();
-        for id in book.plan_ids() {
-            let plan = book.plan(id).expect("计划迭代身份存在");
-            let Some(order) = plan.active_child_order_id() else { continue; };
-            if plan.is_terminal() {
-                return Err(bad(format!("terminal 计划仍引用子单：{id:?}")));
+    books
+        .into_iter()
+        .map(|book| {
+            let mut tickets = std::collections::BTreeMap::new();
+            for id in book.plan_ids() {
+                let plan = book.plan(id).expect("计划迭代身份存在");
+                let Some(order) = plan.active_child_order_id() else {
+                    continue;
+                };
+                if plan.is_terminal() {
+                    return Err(bad(format!("terminal 计划仍引用子单：{id:?}")));
+                }
+                let seed = index
+                    .get(&(plan.account(), *plan.code(), order))
+                    .ok_or_else(|| {
+                        bad(format!(
+                            "计划子单缺真实 desk 种子：plan={id:?}, order={order:?}"
+                        ))
+                    })?;
+                let leg = plan
+                    .execution()
+                    .ok_or_else(|| bad(format!("计划子单缺 execution：{id:?}")))?;
+                let qty = seed
+                    .qty
+                    .checked_add(seed.filled_qty)
+                    .ok_or_else(|| bad(format!("子单原数量溢出：{id:?}")))?;
+                if seed.side != plan.direction()
+                    || seed.qty == 0
+                    || leg.child_qty() != qty
+                    || plan.active_child_remaining_qty() != Some(seed.qty)
+                {
+                    return Err(bad(format!(
+                        "计划子单事实与 desk 种子不一致：plan={id:?}, order={order:?}"
+                    )));
+                }
+                let charged_cents = if seed.side == Side::Buy {
+                    seed.filled_value
+                        .checked_add(seed.charged_commission)
+                        .and_then(|value| value.checked_add(seed.charged_transfer_fee))
+                        .ok_or_else(|| bad(format!("子单累计真实扣减溢出：{id:?}")))?
+                } else {
+                    0
+                };
+                tickets.insert(
+                    (plan.account(), *plan.code()),
+                    ChildTicket {
+                        qty,
+                        side: seed.side,
+                        price: seed.price,
+                        order_id: Some(order),
+                        remaining: seed.qty,
+                        charged_cents,
+                    },
+                );
             }
-            let seed = index.get(&(plan.account(), *plan.code(), order))
-                .ok_or_else(|| bad(format!("计划子单缺真实 desk 种子：plan={id:?}, order={order:?}")))?;
-            let leg = plan.execution().ok_or_else(|| bad(format!("计划子单缺 execution：{id:?}")))?;
-            let qty = seed.qty.checked_add(seed.filled_qty)
-                .ok_or_else(|| bad(format!("子单原数量溢出：{id:?}")))?;
-            if seed.side != plan.direction() || seed.qty == 0 || leg.child_qty() != qty
-                || plan.active_child_remaining_qty() != Some(seed.qty)
-            {
-                return Err(bad(format!("计划子单事实与 desk 种子不一致：plan={id:?}, order={order:?}")));
-            }
-            let charged_cents = if seed.side == Side::Buy {
-                seed.filled_value.checked_add(seed.charged_commission)
-                    .and_then(|value| value.checked_add(seed.charged_transfer_fee))
-                    .ok_or_else(|| bad(format!("子单累计真实扣减溢出：{id:?}")))?
-            } else { 0 };
-            tickets.insert((plan.account(), *plan.code()), ChildTicket {
-                qty, side: seed.side, price: seed.price, order_id: Some(order),
-                remaining: seed.qty, charged_cents,
-            });
-        }
-        Ok(PreparedPlanSeed { book, tickets })
-    }).collect()
+            Ok(PreparedPlanSeed { book, tickets })
+        })
+        .collect()
 }
 
 /// 本组名册段（P0 缺陷修复的统一收口点）：全局名册投影按 `roster_offset`
@@ -729,6 +757,10 @@ pub struct GroupFinalState {
 
 /// 组线程私有状态。
 pub struct GroupState {
+    calendar_owner: Option<(
+        Arc<crate::session::market_calendar_context::MarketCalendarSource>,
+        Vec<(crate::StockId, crate::calendar::CalendarExchange)>,
+    )>,
     admin_pending: Option<admin_transaction::PendingAdmin>,
     admin_last_id: u64,
     #[cfg(test)]
@@ -910,6 +942,48 @@ pub struct GroupState {
 }
 
 impl GroupState {
+    fn stock_is_open(&self, stock: StockIdx) -> Result<bool, RuntimeError> {
+        let snapshot = self
+            .snapshot
+            .as_ref()
+            .ok_or_else(|| RuntimeError::ProtocolInvariant {
+                detail: "交易操作缺少 Start snapshot".to_owned(),
+            })?;
+        let clock = snapshot
+            .calendar
+            .before_projection()
+            .stock(crate::StockId(u32::from(stock)))
+            .map_err(|error| RuntimeError::ProtocolInvariant {
+                detail: error.to_string(),
+            })?;
+        Ok(clock.date_session_ordinal().is_some())
+    }
+
+    fn stock_trading_day(&self, code: crate::StockId) -> Result<Option<u64>, RuntimeError> {
+        let snapshot = self
+            .snapshot
+            .as_ref()
+            .ok_or_else(|| RuntimeError::ProtocolInvariant {
+                detail: "本股时钟缺少同拍 snapshot".to_owned(),
+            })?;
+        snapshot
+            .calendar
+            .before_projection()
+            .stock(code)
+            .map(|clock| clock.date_session_ordinal())
+            .map_err(|error| RuntimeError::ProtocolInvariant {
+                detail: error.to_string(),
+            })
+    }
+
+    pub(crate) fn bind_calendar(
+        &mut self,
+        source: Arc<crate::session::market_calendar_context::MarketCalendarSource>,
+        bindings: Vec<(crate::StockId, crate::calendar::CalendarExchange)>,
+    ) {
+        self.calendar_owner = Some((source, bindings));
+    }
+
     /// 构造组状态（全新世界：tick 0 起步）。
     pub fn new(
         group: GroupIdx,
@@ -979,6 +1053,7 @@ impl GroupState {
                 .unwrap_or_default();
         let initial_company_facts = root_projection.as_ref().map(|p| Arc::clone(&p.initial_company_facts));
         let mut state = GroupState {
+            calendar_owner: None,
             admin_pending: None,
             admin_last_id: 0,
             #[cfg(test)]
@@ -1722,7 +1797,11 @@ impl GroupState {
         // Sol 终审四审 A2：日基准=(tick−1)/tpd（首拍属 day 0——与
         /// session.day 同基；此前 tick/tpd 使组内日历超前 1，plan 事件
         /// day 超前触发 session 日终迁移的 precedes 校验拒绝）。
-        let day = self.cur_tick.saturating_sub(1) / self.ticks_per_day;
+        let day = self
+            .stock_trading_day(code)?
+            .ok_or_else(|| RuntimeError::ProtocolInvariant {
+                detail: "closed 证券收到子单生命周期".to_owned(),
+            })?;
         self.save_plan_book_undo();
         // 首见 adopt（身份=FillFact.order 合成；数量=挂出量——完整）。
         if ticket.order_id.is_none() {
@@ -1914,7 +1993,11 @@ impl GroupState {
         // Sol 六审收官复核阻断 2：desk 侧 lifecycle/facts 的 order_serial
         /// 已是 wire 编码 id（(stock<<32)|serial）——不再二次合成。
         let order_id = crate::OrderId(order_serial);
-        let day = self.cur_tick.saturating_sub(1) / self.ticks_per_day;
+        let day = self
+            .stock_trading_day(code)?
+            .ok_or_else(|| RuntimeError::ProtocolInvariant {
+                detail: "closed 证券收到子单生命周期".to_owned(),
+            })?;
         self.save_plan_book_undo();
         self.plan_book
             .record_child_submitted(account, &code, side, order_id, qty, day)
@@ -1981,7 +2064,11 @@ impl GroupState {
         // 在途卖余量镜像改由 RefundedShares 实体驱动（apply_staging 统一
         // 段——Sol 五审：票域减法与实体退款双计）。
         if let Some(order_id) = ticket.order_id {
-            let day = self.cur_tick.saturating_sub(1) / self.ticks_per_day;
+            let day =
+                self.stock_trading_day(code)?
+                    .ok_or_else(|| RuntimeError::ProtocolInvariant {
+                        detail: "closed 证券收到子单生命周期".to_owned(),
+                    })?;
             self.save_plan_book_undo();
             // 日终清簿的子单释放=错过日终的补账（revision.rs 守卫注释
             /// 的豁免面——horizon 外仍须可达）。
@@ -2586,8 +2673,14 @@ impl GroupState {
             }
         }
         let held: std::collections::BTreeSet<crate::StockId> = positions.keys().copied().collect();
-        let minute = u64::from(snapshot.market_minute);
-        let day = tick.saturating_sub(1) / self.ticks_per_day.max(1);
+        let minute = snapshot
+            .calendar
+            .before_projection()
+            .completed_shared_minute_count();
+        let day = snapshot
+            .calendar
+            .before_projection()
+            .completed_shared_session_count();
         let retail = crate::session::RetailStrategyInstance {
             data: profile.strategy.clone(),
             style: retail_style,
@@ -2957,7 +3050,10 @@ impl GroupState {
         // 复审/开仓后复评共用输入（交易日/分钟收盘预转换/复审时刻——
         // 组装一次；分钟转换与 build_observations 同式 c.max(1)，时刻与
         // RootReadContext 共用 market_minute_at——字段不得分叉）。
-        let trading_day = snapshot.tick.saturating_sub(1) / self.ticks_per_day;
+        let trading_day = snapshot
+            .calendar
+            .before_projection()
+            .completed_shared_session_count();
         let minutes_by_code: std::collections::BTreeMap<
             crate::StockId,
             Vec<crate::observation::MarketMinuteClose>,
@@ -2982,12 +3078,10 @@ impl GroupState {
             .collect();
         let moment = crate::experience::ExperienceMoment {
             civil_date: snapshot.civil_date,
-            market_minute: market_minute_at(
-                snapshot.tick,
-                self.ticks_per_day,
-                projection.auction_ticks,
-                projection.closing_auction_ticks,
-            ),
+            market_minute: snapshot
+                .calendar
+                .before_projection()
+                .completed_shared_minute_count(),
             trading_day,
         };
         if write_back {
@@ -3019,7 +3113,13 @@ impl GroupState {
                     equity,
                     belief: &out.belief,
                     chain_params: params,
-                    trading_day,
+                    stock_days: snapshot
+                        .calendar
+                        .before_projection()
+                        .stocks()
+                        .iter()
+                        .map(|(&code, clock)| (code, clock.date_session_ordinal()))
+                        .collect(),
                     lot: self.config.lot_size,
                 };
                 let host = GroupReviewHost {
@@ -3043,7 +3143,6 @@ impl GroupState {
                         &observation.market,
                         local,
                         account,
-                        trading_day,
                         &out.information,
                         &mut review_cancels,
                     );
@@ -3061,6 +3160,17 @@ impl GroupState {
         // 结果——违反只读/幂等承诺，红证 solmid_echo_* 显红）。
         let consume_open = write_back;
         for (code, assessment) in &assessments {
+            let Some(trading_day) = snapshot
+                .calendar
+                .before_projection()
+                .stock(*code)
+                .map_err(|error| RuntimeError::ProtocolInvariant {
+                    detail: error.to_string(),
+                })?
+                .date_session_ordinal()
+            else {
+                continue;
+            };
             if !consume_open || self.plan_book.active_plan(account, code).is_some() {
                 continue;
             }
@@ -3119,7 +3229,7 @@ impl GroupState {
                     projection.closing_auction_ticks,
                 ),
                 // Sol 终审四审 A2：开仓复审 trading_day 同 (tick−1)/tpd 基准。
-                snapshot.tick.saturating_sub(1) / self.ticks_per_day,
+                trading_day,
                 self.config.lot_size,
                 group_max_holdable_shares(&company_facts, code),
                 |direction, confidence_bp, horizon| {
@@ -3182,6 +3292,7 @@ impl GroupState {
                     local,
                     &observation.market,
                     &moment,
+                    trading_day,
                     &plan,
                     crate::session::ratio_to_bp(path.thirty_minute.return_ratio),
                     crate::session::ratio_to_bp(path.one_minute.return_ratio),
@@ -3274,7 +3385,6 @@ impl GroupState {
         market: &crate::strategy::MarketView,
         local: LocalIdx,
         account: crate::AccountId,
-        trading_day: u64,
         information: &crate::information::NpcInformationState,
         cancels: &mut Vec<(LocalIdx, StockIdx, u64)>,
     ) {
@@ -3289,12 +3399,21 @@ impl GroupState {
             | A::Restructure { plan_id, .. } => Some(*plan_id),
             A::Create { .. } => None,
         };
-        if let Some(plan_id) = existing {
+        let Some(plan_id) = existing else {
+            return;
+        };
+        let trading_day = {
             let code = {
                 let plan = self.plan_book.plan(plan_id).unwrap_or_else(|e| {
                     panic!("组内复审动作计划读取失败 {plan_id:?}: {e:?}")
                 });
                 plan.code().clone()
+            };
+            let Some(trading_day) = self
+                .stock_trading_day(code)
+                .unwrap_or_else(|error| panic!("复审本股时钟失败：{error}"))
+            else {
+                return;
             };
             // 复审事实：price=快照行情；acquired=issuer 记录计数
             //（group_review_acquired——session plan_review_facts 同式）。
@@ -3326,7 +3445,8 @@ impl GroupState {
             self.plan_book
                 .record_resource_review(plan_id, resources)
                 .unwrap_or_else(|e| panic!("组内复审资源记录失败 {plan_id:?}: {e:?}"));
-        }
+            trading_day
+        };
         match action {
             A::ExecutionState { plan_id, event } => {
                 self.save_plan_book_undo();
@@ -3491,6 +3611,18 @@ impl GroupState {
                 .plan_book
                 .plan(plan_id)
                 .unwrap_or_else(|error| panic!("组内计划读取失败 {plan_id:?}: {error}"));
+            if snapshot
+                .calendar
+                .before_projection()
+                .stock(*plan.code())
+                .map_err(|error| RuntimeError::ProtocolInvariant {
+                    detail: error.to_string(),
+                })?
+                .date_session_ordinal()
+                .is_none()
+            {
+                continue;
+            }
             // D3b 件 3：Paused 计划放行到报价决策（共享 decide_plan_quote
             /// 的暂停分支产出 Cancel——定向撤单路由）；terminal 跳过。
             /// 在途票跳过仅对 Active（防重复挂单）——Paused+在途恰是
@@ -3601,6 +3733,18 @@ impl GroupState {
                 .plan_book
                 .plan(plan_id)
                 .unwrap_or_else(|error| panic!("组内计划读取失败 {plan_id:?}: {error}"));
+            if snapshot
+                .calendar
+                .before_projection()
+                .stock(*plan.code())
+                .map_err(|error| RuntimeError::ProtocolInvariant {
+                    detail: error.to_string(),
+                })?
+                .date_session_ordinal()
+                .is_none()
+            {
+                continue;
+            }
             // D3b 件 3：Paused 计划放行到报价决策（共享 decide_plan_quote
             /// 的暂停分支产出 Cancel——定向撤单路由）；terminal 跳过。
             /// 在途票跳过仅对 Active（防重复挂单）——Paused+在途恰是
@@ -3767,13 +3911,22 @@ impl GroupState {
         // 撤信号 ≤0 的买计划终止；子单 Cancel 已入 cancels）。
         for plan_id in withdrawals {
             self.save_plan_book_undo();
-            let _ = self.plan_book.apply(
-                plan_id,
-                crate::plans::PlanEvent::Terminated {
-                    reason: crate::plans::TerminationReason::Cancelled,
-                    trading_day: snapshot.tick.saturating_sub(1) / self.ticks_per_day,
-                },
-            );
+            let stock_day = self
+                .stock_trading_day(*self.plan_book.plan(plan_id).expect("撤买计划存在").code())?
+                .ok_or_else(|| RuntimeError::ProtocolInvariant {
+                    detail: "closed 计划不可终止".to_owned(),
+                })?;
+            self.plan_book
+                .apply(
+                    plan_id,
+                    crate::plans::PlanEvent::Terminated {
+                        reason: crate::plans::TerminationReason::Cancelled,
+                        trading_day: stock_day,
+                    },
+                )
+                .map_err(|error| RuntimeError::ProtocolInvariant {
+                    detail: format!("本股撤买计划终止失败：{error}"),
+                })?;
         }
         // 执行腿登记（借用外——D3a-3：挂出即登记，execution 腿在=后续轮
         // 报价跳过——同计划不重复挂子单；remaining 校验/成交推进见
@@ -3811,7 +3964,21 @@ impl GroupState {
                     plan_id,
                     qty,
                     price,
-                    u64::from(crate::observation::GAME_INTRADAY_MINUTES_PER_DAY),
+                    snapshot
+                        .calendar
+                        .before_projection()
+                        .stock(code)
+                        .map_err(|error| RuntimeError::ProtocolInvariant {
+                            detail: error.to_string(),
+                        })?
+                        .current_date_first_minute_key()
+                        .ok_or_else(|| RuntimeError::ProtocolInvariant {
+                            detail: "closed 计划不可建立 execution leg".to_owned(),
+                        })?
+                        .checked_add(u64::from(crate::observation::GAME_INTRADAY_MINUTES_PER_DAY))
+                        .ok_or_else(|| RuntimeError::ProtocolInvariant {
+                            detail: "execution leg 本股分钟日界溢出".to_owned(),
+                        })?,
                 )
                 .unwrap_or_else(|error| {
                     panic!("组内执行腿登记失败 {account:?} {code:?}: {error}")
@@ -4175,6 +4342,9 @@ impl GroupState {
         /// 下单共用分段 flush 缓冲；票保留至 Closed 实体释放——identity
         /// 匹配的 release 路径已有）。
         for (local, stock, serial) in chain_cancels {
+            if !self.stock_is_open(stock)? {
+                continue;
+            }
             buffers[stock as usize].push(DeskIn::Cancel {
                 owner: (group, local),
                 order: (stock, serial),
@@ -4194,6 +4364,14 @@ impl GroupState {
             Pending::CancelAll { local, stock } => Some((*local, *stock)),
             _ => None,
         }) {
+            if !self.stock_is_open(c.1)? {
+                self.round_rejections.push(super::DeskReceipt {
+                    order: (c.1, 0),
+                    owner: (group, c.0),
+                    kind: super::ReceiptKind::ExchangeClosed,
+                });
+                continue;
+            }
             let active = self.accounts[c.0 as usize].foreign_active[c.1 as usize];
             if active > 0 {
                 buffers[c.1 as usize].push(DeskIn::CancelAll {
@@ -4215,17 +4393,29 @@ impl GroupState {
                 _ => super::diagnostics::OperationSource::NonPlayerUnresolved,
             };
             let owner = (group, p.local);
+            if !self.stock_is_open(p.stock)? {
+                self.round_rejections.push(super::DeskReceipt {
+                    order: (p.stock, 0),
+                    owner,
+                    kind: super::ReceiptKind::ExchangeClosed,
+                });
+                continue;
+            }
             // Sol 复审修复 3（校验顺序）：竞价相位×市价门禁**先于**资源
             /// 校验——保证相位显式回执可达（资源不足不误吞相位拒收；
             /// 对齐旧管线相位门禁在市场层入口的次序）。相位基准
             /// phase_at(tick−1)（与 desk 受理同窗——D5 off-by-one 口径）。
             if matches!(p.routed, super::protocol::RoutedPrice::Market) {
-                let day_tick = (tick.saturating_sub(1)) % self.ticks_per_day;
-                let entry = self.auction_ticks - self.auction_ticks / 3;
-                let closing_start =
-                    self.ticks_per_day.saturating_sub(self.closing_auction_ticks);
-                let in_auction = day_tick < entry
-                    || (day_tick >= closing_start && self.closing_auction_ticks > 0);
+                let snapshot =
+                    self.snapshot
+                        .as_ref()
+                        .ok_or_else(|| RuntimeError::ProtocolInvariant {
+                            detail: "市价准入缺同拍 snapshot".to_owned(),
+                        })?;
+                let in_auction = matches!(
+                    snapshot.calendar.phase_before(),
+                    crate::TradingPhase::CallAuction | crate::TradingPhase::ClosingAuction
+                );
                 if in_auction {
                     self.skipped_orders += 1;
                     self.round_rejections.push(super::DeskReceipt {
@@ -4379,6 +4569,14 @@ impl GroupState {
         // 外部定向撤单在下单 flush 之后（同批 Place+Cancel 的 desk 到达
         /// 序——Cancel 晚于 Place 才能命中簿内单）。
         for (local, stock, serial) in std::mem::take(&mut external_cancel_buffer) {
+            if !self.stock_is_open(stock)? {
+                self.round_rejections.push(super::DeskReceipt {
+                    order: (stock, 0),
+                    owner: (group, local),
+                    kind: super::ReceiptKind::ExchangeClosed,
+                });
+                continue;
+            }
             buffers[stock as usize].push(DeskIn::Cancel {
                 owner: (group, local),
                 order: (stock, serial),
@@ -4531,6 +4729,10 @@ impl<'a> crate::session::PlanReviewHost for GroupReviewHost<'a> {
             self.local,
             &self.market,
             &self.moment,
+            self.state
+                .stock_trading_day(*plan.code())
+                .expect("复审本股时钟合法")
+                .expect("closed 证券不得复审"),
             plan,
             return_30min_bp,
             return_1min_bp,
@@ -4711,6 +4913,7 @@ fn group_urgency_at_view(
     local: LocalIdx,
     market: &crate::strategy::MarketView,
     moment: &crate::experience::ExperienceMoment,
+    stock_day: u64,
     plan: &crate::plans::TradingPlan,
     return_30min_bp: Option<i32>,
     return_1min_bp: Option<i32>,
@@ -4830,7 +5033,7 @@ fn group_urgency_at_view(
         risk_reduction_active,
         account_drawdown_bp,
         remaining_trading_days: u32::try_from(
-            plan.last_valid_trading_day().saturating_sub(moment.trading_day),
+            plan.last_valid_trading_day().saturating_sub(stock_day),
         )
         .expect("live plan remaining days fit its u32 horizon"),
         confidence_bp: plan.confidence_bp(),
@@ -5002,8 +5205,17 @@ fn build_root_read_context(
         account.fixture_set_positions(positions);
         book.insert(account_id, account);
     }
-    let day = u32::try_from(tick.saturating_sub(1) / ticks_per_day).expect("交易日序号超 u32");
-    let market_minute = market_minute_at(tick, ticks_per_day, projection.auction_ticks, projection.closing_auction_ticks);
+    let day = u32::try_from(
+        snapshot
+            .calendar
+            .before_projection()
+            .completed_shared_session_count(),
+    )
+    .expect("共享 before 会话数超过 u32");
+    let market_minute = snapshot
+        .calendar
+        .before_projection()
+        .completed_shared_minute_count();
     crate::session::RootReadContext::from_parts(
         book,
         Arc::clone(company_facts),
@@ -5061,15 +5273,7 @@ fn build_chain_observation(
         paths.insert(crate::StockId(stock as u32), path);
         technical.insert(crate::StockId(stock as u32), tech);
     }
-    let day_tick = snapshot.tick % ticks_per_day;
-    let second = crate::session::intraday_observation_second(
-        day_tick,
-        ticks_per_day,
-        auction_ticks,
-        closing_auction_ticks,
-    );
-    let now = crate::calendar::CivilInstant::new(snapshot.civil_date, second)
-        .expect("快照自然日与日内秒构成合法 CivilInstant");
+    let now = snapshot.calendar.observation_instant_after();
     // Sol 整改 5：曝光面收口（此前空集——生产发现路径丢披露曝光权重；
     /// 与 session 版同一共享函数 exposed_stocks_shared）。
     let exposed =
@@ -5227,6 +5431,46 @@ pub fn group_main(
                         error: e.clone(),
                     });
                     result = Err(e);
+                    break;
+                }
+                let calendar_check = (|| {
+                    let (source, bindings) = state.calendar_owner.as_ref().ok_or_else(|| {
+                        RuntimeError::ProtocolInvariant {
+                            detail: "组缺少构造期 Calendar owner".to_owned(),
+                        }
+                    })?;
+                    snapshot
+                        .calendar
+                        .validate_for(
+                            source,
+                            bindings,
+                            snapshot.civil_date,
+                            crate::session::exchange_calendar_model::SessionTickLayout {
+                                ticks_per_day: state.ticks_per_day,
+                                auction_ticks: state.auction_ticks,
+                                closing_auction_ticks: state.closing_auction_ticks,
+                            },
+                            snapshot.calendar.before_input(),
+                        )
+                        .map_err(|error| RuntimeError::ProtocolInvariant {
+                            detail: error.to_string(),
+                        })?;
+                    if snapshot.calendar.before_input().tick != state.cur_tick
+                        || snapshot.calendar.after_input().tick != tick
+                    {
+                        return Err(RuntimeError::ProtocolInvariant {
+                            detail: "组 Calendar before/after tick 与 Start 失步".to_owned(),
+                        });
+                    }
+                    Ok(())
+                })();
+                if let Err(error) = calendar_check {
+                    abort.store(true, Ordering::SeqCst);
+                    let _ = up_tx.send(UpMsg::Failed {
+                        who,
+                        error: error.clone(),
+                    });
+                    result = Err(error);
                     break;
                 }
                 state.snapshot = Some(snapshot);
@@ -6368,7 +6612,12 @@ mod v5_shutdown_idle_window_tests {
             1,
             Box::new(|_g| Box::new(|_t, _r| TickPlan::default())),
         );
-        let mut world = crate::runtime::world::World::spawn(spec).expect("世界构造");
+        let mut world = crate::runtime::world::World::spawn(
+            spec,
+            crate::calendar::TradingCalendar::current_default_calendar()
+                .expect("显式 raw Calendar 政策合法"),
+        )
+        .expect("世界构造");
         world.run_ticks(1).expect("首拍");
         let report = world.shutdown().expect("正常关停成功");
         assert_eq!(report.group_finals.len(), 2, "两组期末态齐");
@@ -6404,7 +6653,12 @@ fn v5_world_shutdown_stall_window_keeps_message_protocol() {
         1,
         Box::new(|_g| Box::new(|_t, _r| TickPlan::default())),
     );
-    let mut world = crate::runtime::world::World::spawn(spec).expect("世界构造");
+    let mut world = crate::runtime::world::World::spawn(
+        spec,
+        crate::calendar::TradingCalendar::current_default_calendar()
+            .expect("显式 raw Calendar 政策合法"),
+    )
+    .expect("世界构造");
     world.run_ticks(1).expect("首拍");
     world.shutdown_stall_for_test = Some(std::time::Duration::from_millis(120));
     let report = world.shutdown().expect("正常关停成功（停顿窗不破坏协议）");
@@ -6513,6 +6767,116 @@ mod sol_recheck3_tests {
             },
         );
         state
+    }
+
+    /// 首日 SSE 休市、次日首开市：重构撤子单与修订必须共用本股 ordinal 0。
+    #[test]
+    fn restructure_releases_child_on_stock_day_after_first_reopen() {
+        use crate::calendar::{
+            CalendarExchange, CalendarPolicy, CivilDate, OfficialCoverageEntry, TradingCalendar,
+        };
+        use crate::session::exchange_calendar_model::{
+            SessionTickLayout, SharedClockInput, SharedDayProgress,
+        };
+        use crate::session::market_calendar_context::MarketCalendarSource;
+
+        let start = CivilDate::from_iso("2030-01-02").unwrap();
+        let current = CivilDate::from_iso("2030-01-03").unwrap();
+        let mut policy = CalendarPolicy::current_default_policy().unwrap().spec();
+        // 合成休市差异仅服务测试，不预测 2030 年交易所公告。
+        policy.official_coverage.push(OfficialCoverageEntry::new(
+            CalendarExchange::Sse,
+            2030,
+            vec![(start, start)],
+            "synthetic-test".into(),
+            "synthetic-test".into(),
+        ));
+        let calendar = TradingCalendar::from_policy(CalendarPolicy::from_parts(policy).unwrap())
+            .unwrap();
+        let source = MarketCalendarSource::new(
+            calendar,
+            start,
+            vec![
+                (crate::StockId(0), CalendarExchange::Sse),
+                (crate::StockId(1), CalendarExchange::Szse),
+            ],
+        ).unwrap();
+        let calendar = source.day(current).unwrap().tick(
+            SessionTickLayout {
+                ticks_per_day: 240,
+                auction_ticks: 0,
+                closing_auction_ticks: 0,
+            },
+            SharedClockInput {
+                tick: 240,
+                completed_shared_sessions: 1,
+                progress: SharedDayProgress::Trading { completed_ticks: 0 },
+            },
+        ).unwrap();
+        assert_eq!(calendar.before_projection().completed_shared_session_count(), 1);
+        assert_eq!(calendar.before_projection().stock(crate::StockId(0)).unwrap()
+            .date_session_ordinal(), Some(0));
+
+        let mut state = chain_harness(Side::Buy);
+        state.snapshot = Some(Arc::new(TickSnapshot {
+            tick: 241,
+            market_minute: 240,
+            civil_date: current,
+            stocks: Arc::new(Vec::new()),
+            calendar,
+        }));
+        let account = crate::AccountId(9);
+        let code = crate::StockId(0);
+        let plan_id = state.plan_book.active_plan(account, &code).unwrap().plan_id();
+        let mut market = crate::strategy::MarketView {
+            tick: 240,
+            market_minute: 240,
+            stocks: std::collections::BTreeMap::new(),
+        };
+        market.stocks.insert(code, crate::strategy::StockView {
+            best_bid: None,
+            best_ask: None,
+            last_price: Money::from_cents(1_000),
+            max_buy_price: Money::from_cents(1_100),
+            daily_upper_limit: Money::from_cents(1_100),
+            min_sell_price: Money::from_cents(900),
+            recent_prices: Vec::new(),
+            recent_market_minute_prices: Vec::new(),
+            relative_volume: 1.0,
+            order_book_imbalance: 0.0,
+        });
+        let revision = crate::plans::PlanRevision {
+            reason: crate::plans::RevisionReason::ConstraintsChanged,
+            trading_day: 0,
+            direction: Side::Buy,
+            target: crate::plans::PlanTarget::ShareCount(300),
+            opinion: state.plan_book.plan(plan_id).unwrap().opinion().clone(),
+            confidence_bp: 8_000,
+            urgency: crate::plans::Urgency::Normal,
+            below_filled_rationale: None,
+        };
+        let mut cancels = Vec::new();
+        state.apply_lifecycle_action(
+            crate::session::PlanLifecycleAction::Restructure {
+                account,
+                plan_id,
+                code,
+                child_order_id: Some(order_id_of(&(0, 5))),
+                terminating: false,
+                revision,
+            },
+            &market,
+            0,
+            account,
+            &crate::information::NpcInformationState::new(account),
+            &mut cancels,
+        );
+        let plan = state.plan_book.plan(plan_id).unwrap();
+        assert_eq!(plan.last_event_trading_day(), 0);
+        assert_eq!(plan.review().last_review_trading_day, 0);
+        assert_eq!(plan.target(), crate::plans::PlanTarget::ShareCount(300));
+        assert!(plan.active_child_order_id().is_none());
+        assert_eq!(cancels, vec![(0, 0, 5)]);
     }
 
     // Sol 三审修复 3：terminal 记录小型确定性 fixture——target=100 的买
@@ -6916,42 +7280,53 @@ mod sol_recheck1_tests {
             order_size: 100,
             daily_plan_review: false,
         };
-        state.root_projection = Some(std::sync::Arc::new(
-            crate::runtime::world::RootProjection {
-                catalog: crate::stock::StockCatalog::from_metas(vec![
-                    crate::stock::StockMeta::new("600000"),
-                    crate::stock::StockMeta::new("600001"),
-                ])
-                .expect("目录构造"),
-                initial_company_facts: Arc::new(
-                    crate::company::CompanyReadFacts::new(
-                        (0..2).map(|id| (crate::StockId(id), crate::company::CompanyId(id))).collect(),
-                        (0..2).map(|id| (crate::company::CompanyId(id), (crate::company::CompanyKind::Industrial, 1_000_000))).collect(),
-                    ).expect("fixture 发行人事实合法"),
-                ),
-                account_ids: vec![account],
-                auction_ticks: 2,
-                closing_auction_ticks: 3,
-                chain_params: vec![Some((chain_params, None))],
-                session_seed: 1,
-                urgency_policy: crate::plans::UrgencyPolicy::default(),
-                max_order_qty_limit: [
-                    (crate::StockId(0), 1_000_000),
-                    (crate::StockId(1), 1_000_000),
-                ]
+        state.root_projection = Some(std::sync::Arc::new(crate::runtime::world::RootProjection {
+            catalog: crate::stock::StockCatalog::from_metas(vec![
+                crate::stock::StockMeta::new("600000"),
+                crate::stock::StockMeta::new("600001"),
+            ])
+            .expect("目录构造"),
+            initial_company_facts: Arc::new(
+                crate::company::CompanyReadFacts::new(
+                    (0..2)
+                        .map(|id| (crate::StockId(id), crate::company::CompanyId(id)))
+                        .collect(),
+                    (0..2)
+                        .map(|id| {
+                            (
+                                crate::company::CompanyId(id),
+                                (crate::company::CompanyKind::Industrial, 1_000_000),
+                            )
+                        })
+                        .collect(),
+                )
+                .expect("fixture 发行人事实合法"),
+            ),
+            account_ids: vec![account],
+            auction_ticks: 2,
+            closing_auction_ticks: 3,
+            chain_params: vec![Some((chain_params, None))],
+            session_seed: 1,
+            urgency_policy: crate::plans::UrgencyPolicy::default(),
+            max_order_qty_limit: [
+                (crate::StockId(0), 1_000_000),
+                (crate::StockId(1), 1_000_000),
+            ]
+            .into_iter()
+            .collect(),
+            tick_size_cents: [(crate::StockId(0), 1), (crate::StockId(1), 1)]
                 .into_iter()
                 .collect(),
-                tick_size_cents: [
-                    (crate::StockId(0), 1),
-                    (crate::StockId(1), 1),
-                ]
-                .into_iter()
-                .collect(),
-            },
-        ));
-        state.install_initial_company_facts(Arc::clone(
-            &state.root_projection.as_ref().expect("fixture root 在位").initial_company_facts,
-        )).expect("fixture 构造静点安装公司事实");
+        }));
+        state
+            .install_initial_company_facts(Arc::clone(
+                &state
+                    .root_projection
+                    .as_ref()
+                    .expect("fixture root 在位")
+                    .initial_company_facts,
+            ))
+            .expect("fixture 构造静点安装公司事实");
         state.cur_tick = 1;
         state.cur_round = 0;
         // 计划 A（股 0，信心 3000）与计划 B（股 1，信心 9000）。
@@ -7003,6 +7378,14 @@ mod sol_recheck1_tests {
             depth_asks: Vec::new(),
         };
         std::sync::Arc::new(TickSnapshot {
+            calendar: super::super::calendar_test_support::open_tick(
+                1,
+                240,
+                2,
+                0,
+                2,
+                crate::calendar::CivilDate::from_iso("2026-01-05").unwrap(),
+            ),
             // tick 0 < auction_ticks=2 ⇒ 竞价相位（空簿回退 last 价——
             // decide_plan_quote 可 Submit，无需估值条目）。
             tick: 0,

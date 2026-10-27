@@ -156,7 +156,7 @@ pub(crate) struct PlanLifecycleReview<'a> {
     pub(crate) equity: Money,
     pub(crate) belief: &'a BeliefBook,
     pub(crate) chain_params: crate::strategy::BeliefChainParams,
-    pub(crate) trading_day: u64,
+    pub(crate) stock_days: BTreeMap<StockId, Option<u64>>,
     pub(crate) lot: u32,
 }
 
@@ -196,7 +196,9 @@ impl<'a> PlanLifecycleReview<'a> {
             equity,
             belief,
             chain_params: session.chain_strategy_params(account),
-            trading_day: u64::from(session.state.day),
+            stock_days: session
+                .stock_calendar_days()
+                .unwrap_or_else(|error| panic!("计划复审 Calendar 输入失败：{error}")),
             lot: session.state.setup.config.lot_size,
         })
     }
@@ -258,7 +260,13 @@ impl<'a> PlanLifecycleReview<'a> {
         let id = self.account;
         let market_view = self.market;
         let plans = self.plans;
-        let trading_day = self.trading_day;
+        let Some(trading_day) = *self
+            .stock_days
+            .get(code)
+            .expect("复审证券必须属于实际 Calendar catalog")
+        else {
+            return actions;
+        };
         let lot = self.lot;
         let held_by_code = &self.held_by_code;
         let equity = self.equity;

@@ -1,4 +1,4 @@
-//! 同一 source owner 的不可变日历上下文；本模块不接入 live 市场。
+//! 同一 source owner 的不可变日历上下文；生产调用方必须持有同一 source owner。
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -53,13 +53,13 @@ pub(crate) struct MarketCalendarSource {
 }
 
 #[derive(Debug)]
-pub(crate) struct MarketDayContext {
+pub struct MarketDayContext {
     source: Arc<MarketCalendarSource>,
     model: CalendarDayModel,
 }
 
 #[derive(Debug)]
-pub(crate) struct MarketTickContext {
+pub struct MarketTickContext {
     day: Arc<MarketDayContext>,
     layout: SessionTickLayout,
     before: SharedClockInput,
@@ -67,6 +67,13 @@ pub(crate) struct MarketTickContext {
     before_projection: CalendarClockProjection,
     after_projection: CalendarClockProjection,
 }
+
+impl PartialEq for MarketTickContext {
+    fn eq(&self, other: &Self) -> bool {
+        std::ptr::eq(self, other)
+    }
+}
+impl Eq for MarketTickContext {}
 
 impl MarketCalendarSource {
     pub(crate) fn new(
@@ -95,6 +102,9 @@ impl MarketCalendarSource {
 }
 
 impl MarketDayContext {
+    pub(crate) fn source(&self) -> &Arc<MarketCalendarSource> {
+        &self.source
+    }
     pub(crate) fn day_model(&self) -> &CalendarDayModel {
         &self.model
     }
@@ -232,6 +242,42 @@ impl MarketDayContext {
 }
 
 impl MarketTickContext {
+    /// 市场受理/复审相位只使用本拍 before 进度；末拍不会回到下一日开盘。
+    pub(crate) fn phase_before(&self) -> crate::TradingPhase {
+        let SharedDayProgress::Trading { completed_ticks } = self.before.progress else {
+            unreachable!("MarketTickContext 只能由 Trading before 构造")
+        };
+        let entry = self.layout.auction_ticks - self.layout.auction_ticks / 3;
+        if completed_ticks < entry {
+            crate::TradingPhase::CallAuction
+        } else if completed_ticks < self.layout.auction_ticks {
+            crate::TradingPhase::PreOpen
+        } else if self.layout.closing_auction_ticks > 0
+            && completed_ticks >= self.layout.ticks_per_day - self.layout.closing_auction_ticks
+        {
+            crate::TradingPhase::ClosingAuction
+        } else {
+            crate::TradingPhase::Continuous
+        }
+    }
+
+    /// observe 在真实完成本拍后的日内时点运行；civil date 保持当日，末拍为 15:00。
+    pub(crate) fn observation_instant_after(&self) -> crate::calendar::CivilInstant {
+        let completed_ticks = match self.after.progress {
+            SharedDayProgress::Trading { completed_ticks } => completed_ticks,
+            SharedDayProgress::TradingCompleted => self.layout.ticks_per_day,
+            SharedDayProgress::ClosedDay => unreachable!("市场拍不能以 ClosedDay 完成"),
+        };
+        let second = super::exchange_calendar_model::intraday_observation_second(
+            completed_ticks,
+            self.layout.ticks_per_day,
+            self.layout.auction_ticks,
+            self.layout.closing_auction_ticks,
+        );
+        crate::calendar::CivilInstant::new(self.day.day_model().current_date(), second)
+            .expect("已验证 Calendar context 的日内观察时点合法")
+    }
+
     pub(crate) fn day(&self) -> &Arc<MarketDayContext> {
         &self.day
     }

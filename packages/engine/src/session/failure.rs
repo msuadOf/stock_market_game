@@ -512,6 +512,8 @@ impl GameSession {
             &mut crate::runtime::drive::RuntimeDriver,
         ) -> Result<R, StepFatal>,
     ) -> Result<R, StepFatal> {
+        // Calendar 非法时不得构造 driver、截取 ingress 或消费受理身份。
+        let (calendar_day, calendar_tick) = self.prepare_market_calendar_tick()?;
         // D0 常驻 driver：首次调用惰性构造（initial_committed_tick 对齐
         // 当前 session.tick——全新会话即 0）。
         if self.runtime_driver.is_none() {
@@ -528,7 +530,10 @@ impl GameSession {
             .runtime_driver
             .take()
             .expect("runtime_driver 刚构造或在位");
-        let outcome = self.with_routed_runtime_driver_locked(&cell, body);
+        let outcome = self.with_routed_runtime_driver_locked(&cell, calendar_tick, body);
+        if outcome.is_ok() {
+            self.install_market_calendar_day(calendar_day);
+        }
         if self.runtime_discard_driver_flag {
             self.runtime_discard_driver_flag = false;
             drop(cell);
@@ -542,10 +547,8 @@ impl GameSession {
     fn with_routed_runtime_driver_locked<R>(
         &mut self,
         cell: &std::sync::Mutex<crate::runtime::drive::RuntimeDriver>,
-        body: impl FnOnce(
-            &mut Self,
-            &mut crate::runtime::drive::RuntimeDriver,
-        ) -> Result<R, StepFatal>,
+        calendar: std::sync::Arc<crate::runtime::MarketTickContext>,
+        body: impl FnOnce(&mut Self, &mut crate::runtime::drive::RuntimeDriver) -> Result<R, StepFatal>,
     ) -> Result<R, StepFatal> {
         // 【P0 画像】lock_route 段（锁+锁步校验+ingress freeze+意图路由）。
         let _seg_lock = crate::runtime::step_profile::scope(
@@ -575,6 +578,12 @@ impl GameSession {
                 ),
             }));
         }
+        driver
+            .stage_calendar_tick(calendar)
+            .map_err(|description| StepFatal::InvariantViolation {
+                location: "GameSession::with_routed_runtime_driver_locked::calendar".to_owned(),
+                description,
+            })?;
         // D4（t3 对等）：ingress 截取时刻——宿主经 shared ingress
         // 绑定入队的玩家意图搬运进 pending_player（旧管线 cutoff
         // 同口径；无绑定为 no-op）。

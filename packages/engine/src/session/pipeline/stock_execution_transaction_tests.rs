@@ -68,6 +68,7 @@ fn account_validation_buy_operations_for_quantities(
             SecurityCategory::MainBoard,
             Money::from_cents(1_100),
             Money::from_cents(900),
+            true,
         ),
     )])
     .unwrap();

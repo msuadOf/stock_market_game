@@ -9,6 +9,10 @@ impl GameSession {
         code: &StockId,
         fills: &[OrderFillSettlement],
     ) -> Result<(), crate::plans::PlanError> {
+        let stock_day = self
+            .stock_calendar_day(*code)
+            .expect("执行事实的本股 Calendar 合法")
+            .expect("closed 证券不可产生执行事实");
         for fill in fills {
             self.state.plans.record_child_fill(
                 fill.account,
@@ -16,7 +20,7 @@ impl GameSession {
                 fill.side,
                 fill.order_id,
                 fill.qty,
-                u64::from(self.state.day),
+                stock_day,
             )?;
             #[cfg(feature = "simulation-diagnostics")]
             {
@@ -39,6 +43,10 @@ impl GameSession {
         order_id: OrderId,
         qty: u32,
     ) -> Result<(), crate::plans::PlanError> {
+        let stock_day = self
+            .stock_calendar_day(*code)
+            .expect("执行事实的本股 Calendar 合法")
+            .expect("closed 证券不可产生执行事实");
         if let Some(plan) = self.state.plans.active_plan(account, code) {
             if plan.active_child_order_id() == Some(order_id) {
                 if plan.direction() != side || plan.active_child_remaining_qty() != Some(qty) {
@@ -49,9 +57,9 @@ impl GameSession {
                 return Ok(());
             }
         }
-        self.state.plans.record_child_submitted(
-            account, code, side, order_id, qty, u64::from(self.state.day),
-        )?;
+        self.state
+            .plans
+            .record_child_submitted(account, code, side, order_id, qty, stock_day)?;
         Ok(())
     }
 
@@ -62,9 +70,13 @@ impl GameSession {
         code: &StockId,
         order_id: OrderId,
     ) -> Result<(), crate::plans::PlanError> {
-        self.state.plans.record_child_released(
-            account, code, order_id, u64::from(self.state.day), false,
-        )?;
+        let stock_day = self
+            .stock_calendar_day(*code)
+            .expect("执行事实的本股 Calendar 合法")
+            .expect("closed 证券不可产生执行事实");
+        self.state
+            .plans
+            .record_child_released(account, code, order_id, stock_day, false)?;
         Ok(())
     }
 }

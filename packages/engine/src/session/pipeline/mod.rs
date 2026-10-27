@@ -274,7 +274,9 @@ impl TickShadowPlan {
     pub(in crate::session) fn capture_candidate(
         session: &GameSession,
     ) -> Result<GameSession, StepFatal> {
+        let (day, _) = session.prepare_market_calendar_tick()?;
         let mut candidate = session.clone_for_tick_shadow()?;
+        candidate.install_market_calendar_day(day);
         candidate.freeze_shared_ingress()?;
         Ok(candidate)
     }

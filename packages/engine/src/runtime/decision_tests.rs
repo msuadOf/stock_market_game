@@ -22,6 +22,14 @@ use std::collections::BTreeMap;
 
 fn snapshot_one_stock(last: i64, upper: i64, lower: i64) -> TickSnapshot {
     TickSnapshot {
+        calendar: super::calendar_test_support::open_tick(
+            1,
+            240,
+            0,
+            0,
+            1,
+            crate::calendar::CivilDate::from_iso("2026-01-05").unwrap(),
+        ),
         civil_date: crate::calendar::CivilDate::from_ymd(2026, 1, 5).expect("测试日期合法"),
         tick: 1,
         market_minute: 0,
@@ -263,7 +271,12 @@ fn inline_decision_drives_orders_and_conservation_holds() {
     // 初始零持仓：与种子搜索的单元上下文一致（持仓影响策略分类）。
     spec.initial_shares = vec![vec![vec![0u32]]];
     spec.decision = Some(setup);
-    let mut world = World::spawn(spec).expect("世界构造");
+    let mut world = World::spawn(
+        spec,
+        crate::calendar::TradingCalendar::current_default_calendar()
+            .expect("显式 raw Calendar 政策合法"),
+    )
+    .expect("世界构造");
     world.run_ticks(3).expect("3 tick 收敛");
     let resting_tick1 = world.report_log[0].desk_resting.clone();
     let report = world.shutdown().expect("关停");
@@ -314,7 +327,12 @@ fn shared_view_decision_sequence_golden() {
     );
     spec.initial_shares = vec![vec![vec![0u32; 1]; 1]; 1];
     spec.decision = Some(setup);
-    let mut world = World::spawn(spec).expect("世界构造");
+    let mut world = World::spawn(
+        spec,
+        crate::calendar::TradingCalendar::current_default_calendar()
+            .expect("显式 raw Calendar 政策合法"),
+    )
+    .expect("世界构造");
     world.run_ticks(5).expect("5 tick 收敛");
     let resting_per_tick: Vec<Vec<(u16, u64)>> = world
         .report_log
@@ -365,7 +383,12 @@ fn snapshot_reflects_last_converged_desk_state() {
             plan
         })
     };
-    let mut world = World::spawn(basic_spec(1, 1, 2, Box::new(script))).expect("世界构造");
+    let mut world = World::spawn(
+        basic_spec(1, 1, 2, Box::new(script)),
+        crate::calendar::TradingCalendar::current_default_calendar()
+            .expect("显式 raw Calendar 政策合法"),
+    )
+    .expect("世界构造");
     world.run_ticks(2).expect("收敛");
     let views = world.public_views();
     assert_eq!(views[0].last_price, 1000, "成交价=maker 价 1000 进入观察基");
@@ -439,7 +462,12 @@ fn t1_frozen_unfreezes_at_day_boundary_in_group_thread() {
     spec.ticks_per_day = 4;
     spec.auction_ticks = 0;
     spec.closing_auction_ticks = 0;
-    let mut world = World::spawn(spec).expect("世界构造");
+    let mut world = World::spawn(
+        spec,
+        crate::calendar::TradingCalendar::current_default_calendar()
+            .expect("显式 raw Calendar 政策合法"),
+    )
+    .expect("世界构造");
     world.run_ticks(5).expect("5 tick 收敛");
     let report = world.shutdown().expect("关停");
     let a0 = &report.group_finals[0].accounts[0];
@@ -483,7 +511,12 @@ fn sol5_abort_rolls_back_next_due_reschedule() {
         Box::new(|_g: GroupIdx| -> GroupScript { Box::new(|_t, _r| TickPlan::default()) }),
     );
     spec.decision = Some(setup);
-    let mut world = World::spawn(spec).expect("世界构造");
+    let mut world = World::spawn(
+        spec,
+        crate::calendar::TradingCalendar::current_default_calendar()
+            .expect("显式 raw Calendar 政策合法"),
+    )
+    .expect("世界构造");
     let fail: super::coordinator::Validator = Box::new(|ev| {
         if ev.tick == 1 {
             Err("sol5 注入".to_owned())

@@ -1145,6 +1145,7 @@ fn validated_operations(
             SecurityCategory::MainBoard,
             Money::from_cents(1_100),
             Money::from_cents(900),
+            true,
         ),
     )])
     .unwrap();
@@ -1194,6 +1195,7 @@ fn validated_operations_for_stocks(
                 SecurityCategory::MainBoard,
                 Money::from_cents(1_100),
                 Money::from_cents(900),
+                true,
             ),
         )
     }))

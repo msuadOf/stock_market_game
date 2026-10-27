@@ -29,6 +29,7 @@ fn account_validation_independent_share_reservations_of_one_account_use_two_work
         crate::SecurityCategory::MainBoard,
         crate::Money::from_cents(1_100),
         crate::Money::from_cents(900),
+        true,
     );
     let context =
         AccountValidationContext::new(codes.iter().cloned().map(|code| (code, validation)))
@@ -70,6 +71,7 @@ fn account_validation_unrelated_cancels_do_not_occupy_the_cash_lane() {
             crate::SecurityCategory::MainBoard,
             crate::Money::from_cents(1_100),
             crate::Money::from_cents(900),
+            true,
         ),
     )])
     .unwrap();
@@ -129,6 +131,7 @@ fn account_validation_driver_shares_cash_budget_and_advances_rejected_sealed_slo
         crate::SecurityCategory::MainBoard,
         crate::Money::from_cents(1_100),
         crate::Money::from_cents(900),
+        true,
     );
     let context =
         AccountValidationContext::new([(first.clone(), validation), (second.clone(), validation)])
@@ -187,6 +190,7 @@ fn account_validation_driver_rejections_do_not_consume_the_shared_sell_budget_or
             crate::SecurityCategory::MainBoard,
             crate::Money::from_cents(1_100),
             crate::Money::from_cents(900),
+            true,
         ),
     )])
     .unwrap();
@@ -278,6 +282,7 @@ fn account_validation_driver_fatal_is_atomic_and_the_same_sealed_slot_can_be_ret
             crate::SecurityCategory::MainBoard,
             crate::Money::from_cents(1_100),
             crate::Money::from_cents(900),
+            true,
         ),
     )])
     .unwrap();
@@ -336,6 +341,7 @@ fn account_validation_driver_preserves_key_regression_and_rejects_replayed_ident
             crate::SecurityCategory::MainBoard,
             crate::Money::from_cents(1_100),
             crate::Money::from_cents(900),
+            true,
         ),
     )])
     .unwrap();
@@ -404,6 +410,7 @@ fn account_validation_driver_final_output_matches_one_shot_batch_validation() {
             crate::SecurityCategory::MainBoard,
             crate::Money::from_cents(1_100),
             crate::Money::from_cents(900),
+            true,
         ),
     )])
     .unwrap();
@@ -468,6 +475,7 @@ fn account_validation_driver_round_uses_two_pass_identity_allocation() {
         crate::SecurityCategory::MainBoard,
         crate::Money::from_cents(1_100),
         crate::Money::from_cents(900),
+        true,
     );
     let context = AccountValidationContext::new([(known.clone(), validation)]).unwrap();
     let start = game.state.next_order_id;
@@ -560,6 +568,7 @@ fn account_validation_driver_later_round_order_id_overflow_discards_the_whole_ro
             crate::SecurityCategory::MainBoard,
             crate::Money::from_cents(1_100),
             crate::Money::from_cents(900),
+            true,
         ),
     )])
     .unwrap();
@@ -609,6 +618,7 @@ fn account_validation_driver_later_round_sealed_overflow_preserves_the_prior_bou
             crate::SecurityCategory::MainBoard,
             crate::Money::from_cents(1_100),
             crate::Money::from_cents(900),
+            true,
         ),
     )])
     .unwrap();

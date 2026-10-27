@@ -228,6 +228,27 @@ impl AccountBook {
         }
     }
 
+    pub(super) fn unlock_t1_for_stocks(
+        &mut self,
+        stocks: &std::collections::BTreeSet<crate::StockId>,
+    ) {
+        let locked = self
+            .iter()
+            .filter_map(|(id, account)| {
+                account
+                    .positions()
+                    .iter()
+                    .any(|(stock, position)| stocks.contains(stock) && position.t1_locked() > 0)
+                    .then_some(*id)
+            })
+            .collect::<Vec<_>>();
+        for id in locked {
+            self.get_mut(&id)
+                .expect("持锁账户来自同一 AccountBook")
+                .unlock_t1_for_stocks(stocks);
+        }
+    }
+
     pub(crate) fn insert(&mut self, id: AccountId, account: Account) -> Option<Account> {
         let group = Arc::make_mut(self.groups.entry(group_id(id)).or_default());
         let page = group.entry(page_id(id)).or_default();

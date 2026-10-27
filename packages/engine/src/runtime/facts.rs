@@ -120,6 +120,8 @@ pub struct DeskReceipt {
 /// 回执种类：交易部受理校验与撤单窗口的业务拒绝（对齐 trading-rules 语义表）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ReceiptKind {
+    /// 证券所属交易所当日休市，未分配 serial 或占用资源。
+    ExchangeClosed,
     /// 带外价拒收：申报价在涨跌停带外。
     PriceOutOfBand,
     /// 价格笼子拒收：申报价在连续竞价笼子（参考价 ±2% ∨ 十个最小价位）

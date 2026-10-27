@@ -180,6 +180,7 @@ pub fn collect_lifecycle(facts: &[DeskLifecycleFact], receipts: &[DeskReceipt]) 
 pub fn rejection_reason(kind: super::ReceiptKind) -> RejectionReason {
     use super::ReceiptKind as RK;
     match kind {
+        RK::ExchangeClosed => RejectionReason::ExchangeClosed,
         RK::PriceOutOfBand => RejectionReason::LimitExceeded,
         RK::PriceCageExceeded => RejectionReason::PriceCageExceeded,
         RK::NotRoundLot => RejectionReason::InvalidQuantity,

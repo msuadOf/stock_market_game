@@ -141,7 +141,12 @@ impl GameSession {
                 code: plan.code().clone(),
             });
         }
-        let session_day = u64::from(self.state.day);
+        let session_day = self.stock_calendar_day(*plan.code())?.ok_or_else(|| {
+            StepFatal::InvariantViolation {
+                location: "plan_execution::validate_plan_execution_request".to_owned(),
+                description: "closed 证券不可执行交易计划".to_owned(),
+            }
+        })?;
         if request.trading_day != session_day {
             return Err(PlanExecutionError::TradingDayMismatch {
                 plan_id: plan.plan_id(),

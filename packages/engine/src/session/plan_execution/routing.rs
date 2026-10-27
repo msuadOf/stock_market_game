@@ -51,8 +51,21 @@ impl GameSession {
                 plan_id: plan.plan_id(),
             });
         }
-        let day_end = (u64::from(self.state.day) + 1)
-            * u64::from(crate::session::GAME_INTRADAY_MINUTES_PER_DAY);
+        let stock_day = self.stock_calendar_day(*plan.code())?.ok_or_else(|| {
+            StepFatal::InvariantViolation {
+                location: "plan_execution::install_plan_execution".to_owned(),
+                description: "closed 证券不可建立执行腿".to_owned(),
+            }
+        })?;
+        let day_end = stock_day
+            .checked_add(1)
+            .and_then(|day| {
+                day.checked_mul(u64::from(crate::session::GAME_INTRADAY_MINUTES_PER_DAY))
+            })
+            .ok_or_else(|| StepFatal::InvariantViolation {
+                location: "plan_execution::install_plan_execution".to_owned(),
+                description: "本股执行腿到期分钟溢出".to_owned(),
+            })?;
         plans
             .install_execution(plan.plan_id(), child.qty, child.price, day_end)
             .map_err(PlanExecutionError::Plan)?;
@@ -64,7 +77,7 @@ impl GameSession {
                     plan.direction(),
                     order_id,
                     qty,
-                    u64::from(self.state.day),
+                    stock_day,
                 )
                 .map_err(PlanExecutionError::Plan)?;
         }

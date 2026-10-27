@@ -44,6 +44,7 @@ mod envelope_projection;
 mod execution;
 pub(crate) mod exchange_calendar_model;
 pub(crate) mod market_calendar_context;
+mod market_calendar_live;
 mod failure;
 mod hash;
 mod history_reads;
@@ -297,6 +298,8 @@ impl Rng for SplitMix64 {
 /// 意图被拒原因（预校验/涨跌停/未知股票）。
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq, ts_rs::TS)]
 pub enum RejectionReason {
+    /// 证券所属交易所当日休市。
+    ExchangeClosed,
     /// 买入资金不足（成交额+佣金 > 现金）。
     InsufficientCash,
     /// 卖出超卖（qty > 可卖持仓）。
@@ -1717,6 +1720,9 @@ impl SessionSetup {
 /// 会话 RNG、按 tick 派生的决策 RNG 与可存档的个体注意力 RNG 都源于同一 seed，
 /// 且用途彼此分离。种子固定随机决定；并发交易的先后仍由实际局部受理决定。
 pub struct GameSession {
+    /// 同一局唯一 immutable Calendar owner；派生 cache 不进入存档或业务 hash。
+    market_calendar_source: std::sync::Arc<market_calendar_context::MarketCalendarSource>,
+    market_calendar_day: Option<std::sync::Arc<market_calendar_context::MarketDayContext>>,
     compute: std::sync::Arc<crate::compute::ComputeContext>,
     ingress: Option<shared_ingress::IngressBinding>,
     /// 外部直改计数（X1 新鲜度校验）：任何绕过 tick 管线、在 commit 与下个
@@ -2210,6 +2216,8 @@ impl GameSession {
 impl GameSession {
     pub(super) fn clone_for_tick_shadow(&self) -> Result<Self, StepFatal> {
         Ok(Self {
+            market_calendar_source: self.market_calendar_source.clone(),
+            market_calendar_day: self.market_calendar_day.clone(),
             compute: self.compute.clone(),
             ingress: self
                 .ingress
@@ -2236,6 +2244,7 @@ impl GameSession {
     }
 
     pub(super) fn commit_tick_shadow(&mut self, shadow: Self) {
+        self.market_calendar_day = shadow.market_calendar_day;
         self.ingress = shadow.ingress;
         self.state.commit_from(shadow.state);
     }
@@ -2407,7 +2416,10 @@ impl GameSession {
         }
         let disclosures = DisclosureDispatch::new(seeded_through);
         disclosures.install(&mut civil_clock);
+        let market_calendar_source = Self::calendar_source_for(&setup, &stocks, &civil_clock)?;
         let mut sess = GameSession {
+            market_calendar_source,
+            market_calendar_day: None,
             compute,
             ingress: None,
             revision: std::sync::atomic::AtomicU64::new(0),
@@ -3567,6 +3579,7 @@ impl GameSession {
                 SessionError::InvalidSave(ValidationFault::new(1034, vec![0]))
             })?;
             let report = candidate.end_civil_day_after_session_check()?;
+            candidate.market_calendar_day = None;
             let instant = report.disclosure_instant;
             let publication = project(&candidate, report)?;
             Ok::<_, SessionError>((candidate, instant, publication))
@@ -3820,12 +3833,19 @@ impl GameSession {
         }
         pipeline::quote_expiry::NpcOrderLifecycleBook::new(&mut self.state.npc_order_lifecycles)
             .ensure_order_absent(order.id);
-        let placed_market_minute = self.current_market_minute();
+        let placed_market_minute = self
+            .stock_calendar_minute(*code)
+            .expect("NPC 报价本股分钟必须合法")
+            .expect("closed 证券不得建立报价生命周期");
         let lifetime_minutes = self.npc_quote_lifetime_minutes_at_quote(
             account, code, order, last_price, best_bid, best_ask,
         );
-        let day_end = (u64::from(self.state.day) + 1)
-            .checked_mul(u64::from(GAME_INTRADAY_MINUTES_PER_DAY))
+        let day_end = self
+            .stock_calendar_day(*code)
+            .expect("NPC 报价本股交易日必须合法")
+            .expect("closed 证券不得建立报价生命周期")
+            .checked_add(1)
+            .and_then(|day| day.checked_mul(u64::from(GAME_INTRADAY_MINUTES_PER_DAY)))
             .expect("session day plus one fits market-minute range");
         let expires_market_minute = placed_market_minute
             .checked_add(lifetime_minutes)
@@ -4443,6 +4463,12 @@ impl GameSession {
                 .iter()
                 .map(|stock| session_calendar_exchange(stock.exchange)),
         )?;
+        sess.market_calendar_source = Self::calendar_source_for(
+            &sess.state.setup,
+            &sess.state.stocks,
+            &sess.state.civil_clock,
+        )?;
+        sess.market_calendar_day = None;
         validate_saved_order_state(&sess, save)?;
         sess.state.next_order_id = save.next_order_id;
 
@@ -7352,9 +7378,10 @@ mod committable_state_tests {
             .as_ref()
             .expect("commit 后快照必须在位（shadow 值移交——不丢弃）");
         assert!(
-            committed.facts.iter().any(|book| book
+            committed
+                .facts
                 .iter()
-                .any(|f| f.order_serial == 9)),
+                .any(|book| book.iter().any(|f| f.order_serial == 9)),
             "移交的是 shadow 期间演进的快照（新值），非旧值"
         );
     }

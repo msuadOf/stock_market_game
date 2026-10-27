@@ -237,6 +237,8 @@ pub struct WorldSpec {
     pub root_projection: Option<std::sync::Arc<RootProjection>>,
     /// D3a-2c 件2：起始自然日（快照 civil_date 基线——驱动器每步同步）。
     pub civil_start_date: crate::calendar::CivilDate,
+    /// raw Calendar 会话计数的起日；与当前 civil_start_date 分开显式提供。
+    pub calendar_start_date: crate::calendar::CivilDate,
 }
 
 /// 日结候选投影（F §6.2 步骤 4：组投影 + 交易部清簿态 + 全局域 + 费用上交；
@@ -318,6 +320,10 @@ struct DayEndProgress {
 
 /// 世界（协调者视角持有全部通道与线程句柄）。
 pub struct World {
+    calendar_source: Arc<crate::session::market_calendar_context::MarketCalendarSource>,
+    calendar_bindings: Vec<(crate::StockId, crate::calendar::CalendarExchange)>,
+    tick_layout: crate::session::exchange_calendar_model::SessionTickLayout,
+    pending_calendar_tick: Option<Arc<super::MarketTickContext>>,
     admin_next_id: u64,
     /// 仅身份元数据，用于核对信息候选回执的组内 local/AccountId；不保存个人态。
     information_roster: Vec<Vec<crate::AccountId>>,
@@ -429,7 +435,77 @@ pub struct World {
 
 impl World {
     /// 构造世界并启动全部 worker 线程。
-    pub fn spawn(spec: WorldSpec) -> Result<Self, RuntimeError> {
+    pub fn spawn(
+        spec: WorldSpec,
+        calendar: crate::calendar::TradingCalendar,
+    ) -> Result<Self, RuntimeError> {
+        let bindings = spec
+            .stocks
+            .iter()
+            .enumerate()
+            .map(|(index, stock)| {
+                let index = u32::try_from(index).map_err(|_| RuntimeError::ProtocolInvariant {
+                    detail: "raw StockIdx 超过 u32".to_owned(),
+                })?;
+                let exchange = match stock.exchange {
+                    crate::StockExchange::Shanghai => crate::calendar::CalendarExchange::Sse,
+                    crate::StockExchange::Shenzhen => crate::calendar::CalendarExchange::Szse,
+                };
+                Ok((crate::StockId(index), exchange))
+            })
+            .collect::<Result<Vec<_>, RuntimeError>>()?;
+        let source = crate::session::market_calendar_context::MarketCalendarSource::new(
+            calendar,
+            spec.calendar_start_date,
+            bindings.clone(),
+        )
+        .map_err(|error| RuntimeError::ProtocolInvariant {
+            detail: error.to_string(),
+        })?;
+        Self::spawn_with_calendar_source(spec, source, bindings)
+    }
+
+    pub(crate) fn spawn_with_calendar_source(
+        spec: WorldSpec,
+        calendar_source: Arc<crate::session::market_calendar_context::MarketCalendarSource>,
+        calendar_bindings: Vec<(crate::StockId, crate::calendar::CalendarExchange)>,
+    ) -> Result<Self, RuntimeError> {
+        let mut actual_bindings = std::collections::BTreeMap::new();
+        for (index, stock) in spec.stocks.iter().enumerate() {
+            let id = crate::StockId(u32::try_from(index).map_err(|_| {
+                RuntimeError::ProtocolInvariant {
+                    detail: "runtime dense StockId 越界".to_owned(),
+                }
+            })?);
+            let exchange = match stock.exchange {
+                crate::StockExchange::Shanghai => crate::calendar::CalendarExchange::Sse,
+                crate::StockExchange::Shenzhen => crate::calendar::CalendarExchange::Szse,
+            };
+            actual_bindings.insert(id, exchange);
+        }
+        if calendar_bindings.len() != actual_bindings.len()
+            || calendar_bindings
+                .iter()
+                .any(|(stock, exchange)| actual_bindings.get(stock) != Some(exchange))
+        {
+            return Err(RuntimeError::ProtocolInvariant {
+                detail: "source bindings 与 runtime 实际 dense StockId/exchange 不一致".to_owned(),
+            });
+        }
+        let initial_calendar_day = calendar_source
+            .day(spec.civil_start_date)
+            .and_then(|day| {
+                day.validate_for(&calendar_source, &calendar_bindings, spec.civil_start_date)?;
+                Ok(day)
+            })
+            .map_err(|error| RuntimeError::ProtocolInvariant {
+                detail: error.to_string(),
+            })?;
+        let tick_layout = crate::session::exchange_calendar_model::SessionTickLayout {
+            ticks_per_day: spec.ticks_per_day,
+            auction_ticks: spec.auction_ticks,
+            closing_auction_ticks: spec.closing_auction_ticks,
+        };
         if spec.n_groups == 0 || spec.n_groups > GroupIdx::MAX as usize {
             return Err(RuntimeError::ProtocolInvariant {
                 detail: format!("组数需 1~{}，收到 {}", GroupIdx::MAX, spec.n_groups),
@@ -495,6 +571,7 @@ impl World {
             initial_desk_next_serial,
             root_projection,
             civil_start_date,
+            calendar_start_date: _,
         } = spec;
         // 可失败的行情计算须在启动 worker 前完成，防止构造失败遗留后台线程。
         // 初始广播是首个 Start 的观察基；只有该拍处于连续竞价时才叠加价格笼子
@@ -685,6 +762,7 @@ impl World {
                 script_for(g),
             );
             // 翻转批组参数化：本组全局名 roster 偏移。
+            state.bind_calendar(Arc::clone(&calendar_source), calendar_bindings.clone());
             state.roster_offset = g as usize * accounts_per_group;
             state.install_plan_seed(prepared_plans.next().expect("全部组已预检"));
             let rx = group_rxs.remove(0);
@@ -757,6 +835,14 @@ impl World {
         // 世界不持上行发送端：全部 worker 退出后 recv 才会断连（显式失败面）。
         drop(up_tx);
         // Q1 发布槽 v0：初始公共态即第一个一致读点（tick=initial）。
+        for tx in &desk_txs {
+            tx.send(DeskMsg::BindCalendar {
+                day: Arc::clone(&initial_calendar_day),
+            })
+            .map_err(|_| RuntimeError::SendFailed {
+                detail: "交易部 Calendar owner 绑定失败".to_owned(),
+            })?;
+        }
         let global_v0 = GlobalState {
             committed_tick: initial_committed_tick,
             day: (initial_committed_tick / ticks_per_day) as u32,
@@ -792,6 +878,10 @@ impl World {
             )),
         );
         Ok(World {
+            calendar_source,
+            calendar_bindings,
+            tick_layout,
+            pending_calendar_tick: None,
             admin_next_id: 0,
             information_roster,
             #[cfg(test)]
@@ -1865,6 +1955,93 @@ impl World {
         self.n_groups
     }
 
+    pub(crate) fn stage_calendar_tick(
+        &mut self,
+        calendar: Arc<super::MarketTickContext>,
+    ) -> Result<(), RuntimeError> {
+        self.validate_calendar_tick(&calendar)?;
+        self.pending_calendar_tick = Some(calendar);
+        Ok(())
+    }
+
+    pub(crate) fn staged_calendar_tick(&self) -> Option<Arc<super::MarketTickContext>> {
+        self.pending_calendar_tick.as_ref().map(Arc::clone)
+    }
+
+    pub(crate) fn take_or_stage_calendar_tick(
+        &mut self,
+        calendar: Arc<super::MarketTickContext>,
+    ) -> Result<Arc<super::MarketTickContext>, RuntimeError> {
+        if let Some(staged) = &self.pending_calendar_tick {
+            self.validate_calendar_tick(staged)?;
+            return Ok(Arc::clone(staged));
+        }
+        self.stage_calendar_tick(Arc::clone(&calendar))?;
+        Ok(calendar)
+    }
+
+    fn validate_calendar_tick(
+        &self,
+        calendar: &super::MarketTickContext,
+    ) -> Result<(), RuntimeError> {
+        calendar
+            .validate_for(
+                &self.calendar_source,
+                &self.calendar_bindings,
+                self.civil_date,
+                self.tick_layout,
+                crate::session::exchange_calendar_model::SharedClockInput {
+                    tick: self.global.committed_tick,
+                    completed_shared_sessions: calendar.before_input().completed_shared_sessions,
+                    progress: calendar.before_input().progress,
+                },
+            )
+            .map_err(|error| RuntimeError::ProtocolInvariant {
+                detail: error.to_string(),
+            })
+    }
+
+    pub(crate) fn prepare_raw_calendar_tick(
+        &self,
+    ) -> Result<Arc<super::MarketTickContext>, RuntimeError> {
+        use crate::session::exchange_calendar_model::{SharedClockInput, SharedDayProgress};
+        let fail = |error: crate::session::market_calendar_context::MarketCalendarContextError| {
+            RuntimeError::ProtocolInvariant {
+                detail: error.to_string(),
+            }
+        };
+        let day = self.calendar_source.day(self.civil_date).map_err(fail)?;
+        let base = day
+            .day_model()
+            .shared_sessions_before_date()
+            .checked_mul(self.ticks_per_day)
+            .ok_or_else(|| RuntimeError::ProtocolInvariant {
+                detail: "raw Calendar tick base 溢出".to_owned(),
+            })?;
+        let completed_ticks = self
+            .global
+            .committed_tick
+            .checked_sub(base)
+            .ok_or_else(|| RuntimeError::ProtocolInvariant {
+                detail: "raw Calendar tick 早于当日 base".to_owned(),
+            })?;
+        let progress = if day.day_model().shared_trading_on_date() {
+            SharedDayProgress::Trading { completed_ticks }
+        } else {
+            SharedDayProgress::ClosedDay
+        };
+        let completed_shared_sessions = day.day_model().shared_sessions_before_date();
+        day.tick(
+            self.tick_layout,
+            SharedClockInput {
+                tick: self.global.committed_tick,
+                completed_shared_sessions,
+                progress,
+            },
+        )
+        .map_err(fail)
+    }
+
     /// 运行 n 个 tick（协调者逻辑在本调用线程执行）。
     /// panic 运输：worker panic ⇒ 本函数以原 payload `resume_unwind`（不吞不改写）。
     pub fn run_ticks(&mut self, n: u64) -> Result<u64, RuntimeError> {
@@ -1873,30 +2050,87 @@ impl World {
                 detail: format!("world 已死亡，不可继续跑 tick：{reason}"),
             });
         }
-        for _ in 0..n {
-            let tick = self.global.committed_tick + 1;
-            // 日界：上一交易日末 tick 之后、新日首 tick 之前跑 DayEnd 序列
-            // （F §6.2：Drain → 组日翻转/权益 → 候选校验 → 本 Start 即隐式提交）。
-            if tick > 1
-                && (tick - 1) % self.ticks_per_day == 0
-                && self.last_day_end_tick != Some(tick - 1)
-            {
-                // D0 互斥：该交易日尚未日结才自动跑（手动已日结则跳过）。
-                self.run_day_end(tick - 1)?;
+        // 整段 preflight 必须先于任何 Start 或日结 undo 退役。
+        let day = match &self.pending_calendar_tick {
+            Some(calendar) => Arc::clone(calendar.day()),
+            None => self.calendar_source.day(self.civil_date).map_err(|error| {
+                RuntimeError::ProtocolInvariant {
+                    detail: error.to_string(),
+                }
+            })?,
+        };
+        day.validate_for(
+            &self.calendar_source,
+            &self.calendar_bindings,
+            self.civil_date,
+        )
+        .map_err(|error| RuntimeError::ProtocolInvariant {
+            detail: error.to_string(),
+        })?;
+        let base = day
+            .day_model()
+            .shared_sessions_before_date()
+            .checked_mul(self.ticks_per_day)
+            .ok_or_else(|| RuntimeError::ProtocolInvariant {
+                detail: "raw tick base 溢出".to_owned(),
+            })?;
+        let elapsed = self
+            .global
+            .committed_tick
+            .checked_sub(base)
+            .ok_or_else(|| RuntimeError::ProtocolInvariant {
+                detail: "raw tick 早于当前 civil date".to_owned(),
+            })?;
+        let remaining = if day.day_model().shared_trading_on_date() {
+            self.ticks_per_day.checked_sub(elapsed).ok_or_else(|| {
+                RuntimeError::ProtocolInvariant {
+                    detail: "raw tick 已越过当前 civil date".to_owned(),
+                }
+            })?
+        } else {
+            if elapsed != 0 {
+                return Err(RuntimeError::ProtocolInvariant {
+                    detail: "closed raw date 的 tick 与 Calendar 不一致".to_owned(),
+                });
             }
+            0
+        };
+        if n > remaining {
+            return Err(RuntimeError::ProtocolInvariant {
+                detail: format!("TickRangeCrossesCivilDay: n={n}, remaining={remaining}"),
+            });
+        }
+        for _ in 0..n {
+            let calendar = match self.pending_calendar_tick.take() {
+                Some(calendar) => calendar,
+                None => self.prepare_raw_calendar_tick()?,
+            };
+            self.validate_calendar_tick(&calendar)?;
+            let tick = calendar.after_input().tick;
             // 首个 Start 即可能使参与者退役日结 undo；发送失败也不能重新打开窗口。
             self.day_end_prior_public_views = None;
             // D4：tick 起点先达交易部（FIFO 保证先于同 tick Ops）——
             // 每 tick 必推进 begin_tick（到期/清算/快照不再依赖 Ops 到达）。
             for tx in &self.desk_txs {
-                if tx.send(DeskMsg::Start { tick }).is_err() {
+                if tx
+                    .send(DeskMsg::Start {
+                        tick,
+                        calendar: Arc::clone(&calendar),
+                    })
+                    .is_err()
+                {
                     let error = RuntimeError::SendFailed {
                         detail: format!("DeskMsg::Start(tick={tick}) 广播失败（部已退出）"),
                     };
                     return Err(self.stop_after_start_failure(tick, error));
                 }
             }
-            if let Err(error) = broadcast_start(&self.group_txs, tick, self.civil_date, &self.public_views) {
+            if let Err(error) = broadcast_start(
+                &self.group_txs,
+                tick,
+                Arc::clone(&calendar),
+                &self.public_views,
+            ) {
                 return Err(self.stop_after_start_failure(tick, error));
             }
             let mut rounds = 0u32;
@@ -2846,15 +3080,17 @@ impl World {
                 while drained < self.n_stocks {
                     match recv_deadline(&self.up_rx, Phase::Drain, &self.watchdog)? {
                         UpMsg::DeskDrained {
-                        stock, drained_minute_bars, ..
-                    } => {
-                        // B2：期末 Drain 应答同样收集桶（观察面与日结统一；
-                        /// DeskFinal 的 live 桶在跨日形态已并入应答）。
-                        if let Some(slot) = self.pending_day_bars.get_mut(stock as usize) {
-                            *slot = Some(drained_minute_bars);
+                            stock,
+                            drained_minute_bars,
+                            ..
+                        } => {
+                            // B2：期末 Drain 应答同样收集桶（观察面与日结统一；
+                            /// DeskFinal 的 live 桶在跨日形态已并入应答）。
+                            if let Some(slot) = self.pending_day_bars.get_mut(stock as usize) {
+                                *slot = Some(drained_minute_bars);
+                            }
+                            drained += 1;
                         }
-                        drained += 1;
-                    }
                         UpMsg::Failed { who, error } => {
                             return Err(RuntimeError::WorkerFailed {
                                 who,
@@ -3092,7 +3328,12 @@ mod failed_cleanup_tests {
         let mut config = GameConfig::proposed_defaults();
         config.price_cage_enabled = false;
         spec.config = Arc::new(config);
-        let mut world = World::spawn(spec).expect("构造两组真实线程");
+        let mut world = World::spawn(
+            spec,
+            crate::calendar::TradingCalendar::current_default_calendar()
+                .expect("显式 raw Calendar 政策合法"),
+        )
+        .expect("构造两组真实线程");
         world.run_ticks(1).expect("先发布真实扣款 tick1");
         let before = world.snapshot_accounts().expect("已发布账户");
         let publication = world.publication();
@@ -3152,4 +3393,7 @@ mod failed_cleanup_tests {
 
 mod admin_transaction;
 
-pub use super::protocol::{AdminCandidate, AdminOperation, AdminTransactionId, InformationObservation, InformationPreparePayload, PreparedInformationResult, InformationPrepareError};
+pub use super::protocol::{
+    AdminCandidate, AdminOperation, AdminTransactionId, InformationObservation,
+    InformationPrepareError, InformationPreparePayload, PreparedInformationResult,
+};

@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 /// World 已发布后的只读投影输入；构造它不写 Session 镜像或消费完整读取。
 pub(crate) struct PreparedDriverStep {
+    pub calendar: std::sync::Arc<crate::runtime::MarketTickContext>,
     pub accounts: Vec<
         Arc<
             Vec<(

@@ -1388,6 +1388,7 @@ fn decision_reason_name(reason: DecisionReason) -> &'static str {
 
 fn rejection_reason_name(reason: &RejectionReason) -> &'static str {
     match reason {
+        RejectionReason::ExchangeClosed => "exchange_closed",
         RejectionReason::InsufficientCash => "insufficient_cash",
         RejectionReason::InsufficientShares => "insufficient_shares",
         RejectionReason::LimitExceeded => "limit_exceeded",

@@ -926,3 +926,77 @@ fn c13_failed_validation_preserves_all_context_facts() {
     assert_layout(tick.layout(), layout());
     assert!(Arc::ptr_eq(tick.day(), &day));
 }
+
+#[test]
+fn live_tick_observation_after_skips_lunch_and_finishes_same_date_at_fifteen() {
+    let source = source();
+    let day = source.day(date("2030-01-02")).unwrap();
+    let first_tick = day.tick(layout(), first()).unwrap();
+    assert_eq!(
+        first_tick.observation_instant_after().date(),
+        date("2030-01-02")
+    );
+    assert_eq!(
+        first_tick.observation_instant_after().second_of_day(),
+        13 * 3600
+    );
+    let last_tick = day
+        .tick(layout(), input(1, 0, Trading { completed_ticks: 1 }))
+        .unwrap();
+    assert_eq!(
+        last_tick.observation_instant_after().date(),
+        date("2030-01-02")
+    );
+    assert_eq!(
+        last_tick.observation_instant_after().second_of_day(),
+        15 * 3600
+    );
+    assert_eq!(
+        last_tick
+            .before_projection()
+            .stock(SSE)
+            .unwrap()
+            .date_session_ordinal(),
+        None
+    );
+    assert_eq!(
+        last_tick
+            .after_projection()
+            .stock(SSE)
+            .unwrap()
+            .completed_minute_count(),
+        0
+    );
+}
+
+#[test]
+fn live_phase_before_remains_closing_auction_on_last_tick() {
+    let source = source();
+    let day = source.day(date("2030-01-02")).unwrap();
+    let layout = SessionTickLayout {
+        ticks_per_day: 12,
+        auction_ticks: 3,
+        closing_auction_ticks: 3,
+    };
+    for (before_tick, phase) in [
+        (0, crate::TradingPhase::CallAuction),
+        (2, crate::TradingPhase::PreOpen),
+        (3, crate::TradingPhase::Continuous),
+        (9, crate::TradingPhase::ClosingAuction),
+        (11, crate::TradingPhase::ClosingAuction),
+    ] {
+        let context = day
+            .tick(
+                layout,
+                input(
+                    before_tick,
+                    0,
+                    Trading {
+                        completed_ticks: before_tick,
+                    },
+                ),
+            )
+            .unwrap();
+        assert_eq!(context.phase_before(), phase);
+    }
+}

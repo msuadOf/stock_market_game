@@ -204,10 +204,8 @@ impl GameSession {
         let mut active = self.state.candle_book.active().clone();
         let setup = &self.state.setup;
         let day_tick = tick % setup.ticks_per_day;
-        let continuous = setup.ticks_per_day - setup.auction_ticks - setup.closing_auction_ticks;
-        let completed = tick / setup.ticks_per_day * continuous
-            + day_tick.saturating_sub(setup.auction_ticks).min(continuous);
-        let history_len = (completed as usize).min(setup.history_len);
+        // desk 的 recent_prices 已按真实 open 拍及 history_len 限界；不再用共享日数裁本股历史。
+        let history_len = setup.history_len;
         let published = driver.publication().load();
         if published.tick != tick {
             return Err(format!(
@@ -218,6 +216,14 @@ impl GameSession {
         let candle_time = self.candle_date_time_for_runtime();
         for (index, view) in driver.world_public_views().iter().enumerate() {
             let code = StockId(index as u32);
+            let clock = input
+                .calendar
+                .before_projection()
+                .stock(code)
+                .map_err(|error| error.to_string())?;
+            if clock.date_session_ordinal().is_none() {
+                continue;
+            }
             let market = markets
                 .get_mut(&code)
                 .ok_or_else(|| format!("行情 candidate 未知股票：{code:?}"))?;
@@ -379,7 +385,7 @@ impl GameSession {
             history.push(pending.confirmation.clone());
         }
         let mut events = input.events;
-        if self.phase() == TradingPhase::Continuous {
+        if input.calendar.phase_before() == TradingPhase::Continuous {
             let views: Vec<_> = driver
                 .world_public_views()
                 .iter()
@@ -393,6 +399,16 @@ impl GameSession {
                 .collect();
             for (index, (last_price, bids, asks)) in views.into_iter().enumerate() {
                 let code = StockId(index as u32);
+                if input
+                    .calendar
+                    .before_projection()
+                    .stock(code)
+                    .map_err(|error| error.to_string())?
+                    .date_session_ordinal()
+                    .is_none()
+                {
+                    continue;
+                }
                 let candle = active
                     .get(&code)
                     .cloned()

@@ -31,6 +31,8 @@ use crate::session::{
 /// markets、账本、行情和公司公开信息只共享不可变借用；个人状态与计划只在写组。
 /// 新消费方若需要在 view 生存期内修改某域，必须先隔离该域，不能借用可写 authority。
 pub(in crate::session) struct SessionReadView<'a> {
+    pub(in crate::session) calendar_day:
+        std::sync::Arc<super::super::market_calendar_context::MarketDayContext>,
     pub(in crate::session) compute: &'a std::sync::Arc<crate::compute::ComputeContext>,
     pub(in crate::session) setup: &'a SessionSetup,
     /// 创建/恢复时固定的费率快照（任务65 #1 前置条件守卫；与 setup.config 比对）。
@@ -64,6 +66,9 @@ impl GameSession {
     /// 普通 &self 消费方：全部借用，不复制账户目录或 lifecycle Vec。
     pub(in crate::session) fn read_view(&self) -> SessionReadView<'_> {
         SessionReadView {
+            calendar_day: self
+                .prepare_market_calendar_day()
+                .expect("只读视图的当前 Calendar day 必须合法"),
             compute: &self.compute,
             setup: &self.state.setup,
             validated_config: &self.state.validated_config,
@@ -114,11 +119,18 @@ pub(in crate::session) struct NpcWriteFields<'a> {
 pub(in crate::session) fn npc_split(
     session: &mut GameSession,
 ) -> (SessionReadView<'_>, NpcWriteFields<'_>) {
-    let company_facts = std::sync::Arc::new(session.state.company_read_facts().unwrap_or_else(|error| {
-        panic!("NPC 分借用公司事实构造失败：{error}")
-    }));
+    let company_facts = std::sync::Arc::new(
+        session
+            .state
+            .company_read_facts()
+            .unwrap_or_else(|error| panic!("NPC 分借用公司事实构造失败：{error}")),
+    );
+    let calendar_day = session
+        .prepare_market_calendar_day()
+        .expect("NPC 只读 Calendar day 必须合法");
     let state = &mut session.state;
     let read = SessionReadView {
+        calendar_day,
         compute: &session.compute,
         setup: &state.setup,
         validated_config: &state.validated_config,
