@@ -167,6 +167,14 @@ impl SavedSessionCompanies {
             Self::CompanySystem { .. } => panic!("测试必须显式构造 LegacyOperations"),
         }
     }
+    pub(crate) fn actions_for_test_mut(&mut self) -> &mut SessionCorporateActions {
+        match self {
+            Self::CompanySystem {
+                corporate_actions, ..
+            } => corporate_actions,
+            Self::LegacyOperations { .. } => panic!("测试必须显式构造 CompanySystem"),
+        }
+    }
     pub(crate) fn system_for_test_mut(&mut self) -> &mut CompanySystem {
         match self {
             Self::CompanySystem { system, .. } => system,

@@ -1,8 +1,8 @@
 //! SOURCE-B 真实 Session 选源、公开前史与唯一存档字段的生产边界。
 include!("../test-support/simple_company.rs");
-use engine::*;
 use engine::company::cash_dividend_tax::CashDividendTaxMode;
 use engine::information::PublicationSource;
+use engine::*;
 fn plain_setup() -> SessionSetup {
     SessionSetup {
         company_operations: None,
@@ -59,7 +59,6 @@ fn plain_setup() -> SessionSetup {
     }
 }
 
-
 fn setup() -> SessionSetup {
     let mut setup = plain_setup();
     setup.npcs.retail_count = 0;
@@ -76,7 +75,9 @@ fn selected_simple_initial_public_history_comes_from_simple_generated_reports() 
     let session = GameSession::new(setup(), 42).unwrap();
     let saved = session.save().unwrap();
     let now = engine::calendar::CivilInstant::new(session.civil_date(), 0).unwrap();
-    let reports = saved.public_library.reports_for_company(&engine::company::CompanyId(0), now);
+    let reports = saved
+        .public_library
+        .reports_for_company(&engine::company::CompanyId(0), now);
     assert!(!reports.is_empty(), "真实 Simple 前史应已生成可公开定稿");
     for report in reports {
         assert_eq!(report.source, PublicationSource::SimpleGenerated);
@@ -88,8 +89,17 @@ fn selected_simple_save_contains_only_the_required_selected_company_state() {
     let session = GameSession::new(setup(), 42).unwrap();
     let saved = serde_json::to_value(session.save().unwrap()).unwrap();
     assert!(saved["company_state"]["CompanySystem"].is_object());
-    for old in ["company_system", "corporate_actions", "company_operations", "closing_registry", "groups"] {
-        assert!(!saved.as_object().unwrap().contains_key(old), "旧双源运行字段 {old}");
+    for old in [
+        "company_system",
+        "corporate_actions",
+        "company_operations",
+        "closing_registry",
+        "groups",
+    ] {
+        assert!(
+            !saved.as_object().unwrap().contains_key(old),
+            "旧双源运行字段 {old}"
+        );
     }
 }
 
@@ -98,23 +108,47 @@ fn selected_legacy_save_contains_only_legacy_company_state_and_original_public_s
     let mut setup = plain_setup();
     setup.npcs.retail_count = 0;
     setup.history_len = 1;
-    let session = GameSession::new(setup, 42).unwrap();
+    setup.ticks_per_day = 1;
+    let mut session = GameSession::new(setup, 42).unwrap();
+    session.step().unwrap();
+    session.end_civil_day().unwrap();
     let saved = session.save().unwrap();
     let value = serde_json::to_value(&saved).unwrap();
     assert!(value["company_state"]["LegacyOperations"].is_object());
     let now = engine::calendar::CivilInstant::new(session.civil_date(), 0).unwrap();
-    let reports = saved.public_library.reports_for_company(&engine::company::CompanyId(0), now);
+    let reports = saved
+        .public_library
+        .reports_for_company(&engine::company::CompanyId(0), now);
     assert!(!reports.is_empty());
-    assert!(reports.iter().all(|r| r.source == PublicationSource::SimulationAccounting));
+    assert!(reports
+        .iter()
+        .all(|r| r.source == PublicationSource::SimulationAccounting));
+    let bytes = serde_json::to_vec(&saved).unwrap();
+    let decoded: engine::SaveSlot = serde_json::from_slice(&bytes).unwrap();
+    let restored = GameSession::restore(&decoded).unwrap();
+    assert_eq!(
+        serde_json::to_vec(&restored.save().unwrap()).unwrap(),
+        bytes
+    );
+    if let Some(directory) = std::env::var_os("SOURCE_B_SAVE_FIXTURE_DIR") {
+        let directory = std::path::PathBuf::from(directory);
+        std::fs::create_dir_all(&directory).expect("真实Legacy样例目录必须可创建");
+        std::fs::write(directory.join("legacy-company-state.json"), &bytes)
+            .expect("真实Legacy完整样例必须可写入");
+    }
 }
 
 #[test]
 fn selected_simple_rejects_legacy_group_configuration_before_any_assembly() {
     let mut setup = setup();
     setup.groups.push(engine::session::GroupStructure {
-        root: engine::company::CompanyId(0), holdings: vec![],
+        root: engine::company::CompanyId(0),
+        holdings: vec![],
     });
-    assert!(GameSession::new(setup, 42).is_err(), "所选 Simple 不得执行或静默忽略 Legacy 集团配置");
+    assert!(
+        GameSession::new(setup, 42).is_err(),
+        "所选 Simple 不得执行或静默忽略 Legacy 集团配置"
+    );
 }
 
 #[test]
@@ -125,5 +159,8 @@ fn selected_simple_real_save_roundtrips_only_one_company_authority() {
     assert!(value["company_state"]["CompanySystem"].is_object());
     let save: engine::SaveSlot = serde_json::from_slice(&bytes).unwrap();
     let restored = GameSession::restore(&save).unwrap();
-    assert_eq!(serde_json::to_vec(&restored.save().unwrap()).unwrap(), bytes);
+    assert_eq!(
+        serde_json::to_vec(&restored.save().unwrap()).unwrap(),
+        bytes
+    );
 }

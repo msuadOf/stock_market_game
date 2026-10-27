@@ -63,10 +63,13 @@ fn domain_report_preparation_does_not_publish_or_grant_npc_knowledge() {
     let known_before: Vec<_> = session.state.belief_participants.iter().map(|(id, participant)|
         (*id, serde_json::to_value(participant.information()).unwrap())
     ).collect();
-    let registered = session.state.companies.legacy().expect("此调用仅用于 Legacy 公司状态").operations.prepare_report_for_publication(
-        company, period, crate::accounting::reports::ReportKind::Annual,
-        std::sync::Arc::make_mut(&mut session.state.companies.legacy_mut().expect("此调用仅用于 Legacy 公司状态").closing),
-    ).unwrap();
+    let registered = {
+        let legacy = session.state.companies.legacy_mut().unwrap();
+        legacy.operations.prepare_report_for_publication(
+            company, period, crate::accounting::reports::ReportKind::Annual,
+            std::sync::Arc::make_mut(&mut legacy.closing),
+        ).unwrap()
+    };
     assert_eq!(registered.scope, crate::accounting::consolidation::ScopeId::Standalone(
         crate::accounting::consolidation::MemberId(company.0)));
     assert_eq!(serde_json::to_vec(session.state.library.as_ref()).unwrap(), library_before,
@@ -75,9 +78,10 @@ fn domain_report_preparation_does_not_publish_or_grant_npc_knowledge() {
         (*id, serde_json::to_value(participant.information()).unwrap())
     ).collect();
     assert_eq!(known_after, known_before, "尚未发布的定稿不能成为 NPC 本人获知");
-    match session.state.companies.legacy().expect("此调用仅用于 Legacy 公司状态").operations.prepare_report_for_publication(
+    let legacy = session.state.companies.legacy_mut().unwrap();
+    match legacy.operations.prepare_report_for_publication(
         crate::company::CompanyId(u32::MAX), period, crate::accounting::reports::ReportKind::Annual,
-        std::sync::Arc::make_mut(&mut session.state.companies.legacy_mut().expect("此调用仅用于 Legacy 公司状态").closing),
+        std::sync::Arc::make_mut(&mut legacy.closing),
     ) {
         Err(crate::company::operations::CompanyCloseError::Fault(fault)) => {
             assert_eq!(fault.code, 4002);
