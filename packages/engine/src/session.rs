@@ -12,6 +12,7 @@ mod candles;
 mod causal;
 mod civil_clock;
 mod company_assembly;
+mod company_facts;
 mod company_catalog_view;
 pub use company_catalog_view::{CompanyCatalogEntry, CompanyCatalogViewError};
 mod company_capability_views;
@@ -143,6 +144,8 @@ mod envelope_projection_hydration_tests;
 mod envelope_projection_tests;
 #[cfg(test)]
 mod failure_tests;
+#[cfg(all(test, feature = "simulation-diagnostics", not(target_arch = "wasm32")))]
+mod runtime_diagnostics_tests;
 #[cfg(test)]
 mod hash_contract_tests;
 #[cfg(test)]
@@ -3717,7 +3720,7 @@ impl GameSession {
         self.state
             .npc_decision_traces
             .records(account)
-            .map(|records| records.iter().cloned().collect())
+            .map(|records| records.iter().map(|record| record.as_ref().clone()).collect())
     }
 
     fn record_retail_order_canceled(
@@ -6845,12 +6848,12 @@ mod npc_working_quote_tests {
 }
 
 impl CommittableSessionState {
-    /// 按数值 id 查发行人公司（公司域仍以 StockCode 关联，翻译在会话侧完成；
-    /// 公司域数值化后此助手消亡——见 string-free-inventory.md A 表）。
+    /// 已知股票按所选模型的 CompanyReadFacts 查发行人；目录外 id 返回 None。
     fn issuer_of_stock(&self, id: StockId) -> Option<crate::company::CompanyId> {
-        let code = self.stocks.code(id)?;
-        self.company_registry
-            .issuer_of(&crate::account::StockCode(code.to_string()))
+        self.stocks.code(id)?;
+        Some(self.company_spec_of_stock(id).unwrap_or_else(|error| {
+            panic!("会话发行人读取失败：{error}")
+        }).0)
     }
     fn clone_for_shadow(&self) -> Result<Self, StepFatal> {
         let Self {

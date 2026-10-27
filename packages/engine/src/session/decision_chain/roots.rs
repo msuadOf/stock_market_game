@@ -5,9 +5,7 @@ use super::*;
 /// 同批 root 共享的只读事实；不包含市场簿、历史、个人状态 map 或委托游标。
 pub(crate) struct RootReadContext {
     accounts: account_book::AccountBook,
-    stocks: crate::stock::StockCatalog,
-    company_registry: std::sync::Arc<crate::company::CompanyRegistry>,
-    operations: std::sync::Arc<crate::company::operations::CompanyOperations>,
+    company_facts: std::sync::Arc<crate::company::CompanyReadFacts>,
     library: std::sync::Arc<crate::information::PublicLibrary>,
     pub(in crate::session) plans: PlanBook,
     civil_date: crate::CivilDate,
@@ -16,23 +14,36 @@ pub(crate) struct RootReadContext {
 }
 
 impl RootReadContext {
-    /// 按数值 id 查发行人（公司域仍以 StockCode 关联，翻译在此完成）。
+    /// 按数值 id 查询同批已验证的发行人事实。
     pub(in crate::session) fn issuer_of_stock(
         &self,
         id: StockId,
-    ) -> Option<crate::company::CompanyId> {
-        let code = self.stocks.code(id)?;
-        self.company_registry
-            .issuer_of(&crate::account::StockCode(code.to_string()))
+    ) -> Result<crate::company::CompanyId, crate::company::CompanyReadFactsError> {
+        self.company_facts.issuer_of_stock(id)
+    }
+
+    /// 信念输入使用的发行人公开规格；与报表获知权限无关。
+    pub(crate) fn company_spec(
+        &self,
+        company: &crate::company::CompanyId,
+    ) -> Result<(crate::company::CompanyKind, u64), StepFatal> {
+        self.company_facts.company_spec(company).map_err(|error| StepFatal::InvariantViolation {
+            description: error.to_string(),
+            location: "decision_chain::root_company_spec".to_owned(),
+        })
     }
 
     pub(crate) fn capture(session: &GameSession) -> Result<Self, StepFatal> {
         let accounts = session.state.accounts.clone();
+        let company_facts = std::sync::Arc::new(session.state.company_read_facts().map_err(|error| {
+            StepFatal::InvariantViolation {
+                description: error.to_string(),
+                location: "decision_chain::root_company_facts".to_owned(),
+            }
+        })?);
         Ok(Self {
             accounts,
-            stocks: session.state.stocks.clone(),
-            company_registry: session.state.company_registry.clone(),
-            operations: session.state.operations.clone(),
+            company_facts,
             library: session.state.library.clone(),
             plans: session.state.plans.clone(),
             civil_date: session.civil_date(),
@@ -46,9 +57,7 @@ impl RootReadContext {
     /// 字段逐项显式，任何组装分叉在红证（组内派生==session 版派生）显红。
     pub(crate) fn from_parts(
         accounts: account_book::AccountBook,
-        stocks: crate::stock::StockCatalog,
-        company_registry: std::sync::Arc<crate::company::CompanyRegistry>,
-        operations: std::sync::Arc<crate::company::operations::CompanyOperations>,
+        company_facts: std::sync::Arc<crate::company::CompanyReadFacts>,
         library: std::sync::Arc<crate::information::PublicLibrary>,
         plans: PlanBook,
         civil_date: crate::CivilDate,
@@ -57,9 +66,7 @@ impl RootReadContext {
     ) -> Self {
         Self {
             accounts,
-            stocks,
-            company_registry,
-            operations,
+            company_facts,
             library,
             plans,
             civil_date,
@@ -391,9 +398,9 @@ impl InstitutionDecisionRoot {
         let mut credit_defaults = Vec::new();
         let mut corrections = Vec::new();
         for code in &candidates {
-            let Some(company_id) = context.issuer_of_stock(*code) else {
-                continue;
-            };
+            let company_id = context.issuer_of_stock(*code).unwrap_or_else(|error| {
+                panic!("root 候选发行人读取失败：{error}")
+            });
             for publication_id in discovery_candidates(&context.library, &company_id, now) {
                 let already = personal
                     .information
@@ -495,23 +502,23 @@ impl InstitutionDecisionRoot {
         let as_of_trading_day = u64::from(context.day);
         let issuer_inputs: Vec<(StockId, BeliefInputs<'_, MarketView>)> = candidates
             .iter()
-            .filter_map(|code| {
-                let company = context.issuer_of_stock(*code)?;
-                let spec = context
-                    .operations
-                    .company(&company)
-                    .unwrap_or_else(|| panic!("issuer {company:?} must have operating books"))
-                    .spec();
-                Some((
+            .map(|code| {
+                let company = context.issuer_of_stock(*code).unwrap_or_else(|error| {
+                    panic!("root 信念发行人读取失败：{error}")
+                });
+                let (kind, issued_shares) = context
+                    .company_spec(&company)
+                    .unwrap_or_else(|error| panic!("发行人 {company:?} 规格读取失败：{error}"));
+                (
                     code.clone(),
                     BeliefInputs {
                         ctx: &ctx,
                         company,
-                        kind: spec.kind,
-                        total_issued_shares: spec.issued_shares,
+                        kind,
+                        total_issued_shares: issued_shares,
                         as_of_trading_day,
                     },
-                ))
+                )
             })
             .collect();
         {

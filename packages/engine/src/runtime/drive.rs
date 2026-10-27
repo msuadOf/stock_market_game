@@ -162,6 +162,13 @@ pub struct RuntimeDriver {
     /// 后**才 push 会话——安装失败回滚不残留，重试同 seq 重发不触发
     /// 单调校验的假重复）。
     pending_receipts: Vec<crate::session::personal_trade_history::PendingTradeReceipt>,
+    #[cfg(feature = "simulation-diagnostics")]
+    pending_causal: Vec<super::diagnostics::DeskCausalFact>,
+    /// 初始发布 v0 的 resting 观察面为空；接管的真实种子在首拍前另记存在性。
+    #[cfg(feature = "simulation-diagnostics")]
+    initial_causal_resting: bool,
+    #[cfg(all(test, feature = "simulation-diagnostics"))]
+    unresolved_causal_source_for_test: bool,
     /// 路由层拒收待投影（D5 组端校验：qty=0 等——(code, owner)，本拍
     /// 事件组装时分配 seq 投影为 IntentRejected）。
     pending_rejections: Vec<(crate::StockId, crate::AccountId)>,
@@ -402,17 +409,15 @@ impl RuntimeDriver {
         // discovery_candidates 输入——此前构造期空库，红证
         // d3a2c_group_open_derivation 显红：组内 belief 条目不创建）。
         spec.library = Some(session.runtime_library_handle().1);
-        // D3a-2c 件2：决策链根组装投影（catalog 克隆、registry/operations
+        // D3a-2c 件2：决策链根组装投影（catalog 克隆、初始 CompanyReadFacts
         // Arc 共享、名册 AccountId、相位参数——observe 直调的组内输入面）。
         {
-            let (catalog, registry, operations) = session.runtime_company_handles();
+            let (catalog, initial_company_facts) = session.runtime_company_handles().map_err(|error| error.to_string())?;
             let setup_civil = session.export_setup_for_runtime();
             let chain_params_by_id = session.runtime_chain_params();
-            let total_shares = session.runtime_total_shares();
             spec.root_projection = Some(std::sync::Arc::new(super::world::RootProjection {
                 catalog,
-                company_registry: registry,
-                operations,
+                initial_company_facts,
                 account_ids: ids.clone(),
                 auction_ticks: setup_civil.auction_ticks,
                 closing_auction_ticks: setup_civil.closing_auction_ticks,
@@ -423,10 +428,8 @@ impl RuntimeDriver {
                 // D5 #4 retail 链：决策流种子基（npc_seed_base 同源）。
                 session_seed: session.runtime_session_seed(),
                 urgency_policy: session.runtime_urgency_policy(),
-                total_shares,
                 max_order_qty_limit: session.runtime_max_order_qty_limit(),
                 tick_size_cents: session.runtime_tick_size_cents(),
-                stock_codes: session.runtime_stock_codes(),
             }));
         }
         // D3a-2：会话预置日 K 历史投影进 desk（链观察的日 K 权威——
@@ -530,6 +533,8 @@ impl RuntimeDriver {
         // 消息链晚于外部新单到达，maker/taker 身分颠倒——live_plan_
         // partial_fill 红证）。owner 不在名册=投影缺口，显式失败。
         // （种子已在预留段先行计算——组端现金/持仓扣减与之同源。）
+        #[cfg(feature = "simulation-diagnostics")]
+        let initial_causal_resting = desk_order_seeds.iter().any(|orders| !orders.is_empty());
         spec.initial_desk_orders = desk_order_seeds;
         // D5 restore 等价：tick 价格历史投影（save fault2010 长度面）+
         /// 日内行情聚合种子（最后一层——活动 K/日内高低调/分钟收盘/昨收，
@@ -579,6 +584,12 @@ impl RuntimeDriver {
             belief_cache,
             drained_events: Vec::new(),
             pending_receipts: Vec::new(),
+            #[cfg(feature = "simulation-diagnostics")]
+            pending_causal: Vec::new(),
+            #[cfg(feature = "simulation-diagnostics")]
+            initial_causal_resting,
+            #[cfg(all(test, feature = "simulation-diagnostics"))]
+            unresolved_causal_source_for_test: false,
             pending_rejections: Vec::new(),
             accounts_per_group: per_group.max(1),
             plan_policy,
@@ -724,6 +735,12 @@ impl RuntimeDriver {
         /// EchoAccountsSparse 独立往返退役；覆盖校验承接原"缺项=
         /// RuntimeError"语义（请求集改述为本拍事实集）。全量读面
         ///（force_full/日结/调试）仍走 EchoAccounts。
+        #[cfg(feature = "simulation-diagnostics")]
+        {
+            let record = self.world.report_log.last_mut()
+                .ok_or_else(|| "runtime 成功收束但缺少 causal TickRecord".to_owned())?;
+            self.pending_causal = std::mem::take(&mut record.desk_causal);
+        }
         let fact_rec = self.world.report_log.last().cloned();
         let _ = self.id_map.len();
         // 【P0 画像】acct_echo_collect 段（残余=发布版本分片重组；
@@ -1115,6 +1132,8 @@ impl RuntimeDriver {
     ///   恢复 day/seq 及本次账户/经历/个人确认镜像；既有 retained 发布
     ///   与 civil 其他域的跨域事务边界不由此局部镜像基线承诺。
     pub fn day_end(&mut self, session: &mut GameSession) -> Result<(), String> {
+        #[cfg(feature = "simulation-diagnostics")]
+        self.ensure_causal_day_end_supported()?;
         let restore_mirror = session.runtime_day_end_mirror_rollback();
         let pending_before = self.pending_hold_inits.clone();
         let force_before = self.force_full_accounts;
@@ -1690,6 +1709,8 @@ impl RuntimeDriver {
         session: &mut GameSession,
     ) -> Result<Vec<crate::session::personal_trade_history::PendingTradeReceipt>, String>
     {
+        #[cfg(feature = "simulation-diagnostics")]
+        self.ensure_causal_day_end_supported()?;
         self.world
             .run_day_end_public()
             .map_err(|e| format!("runtime 世界日结失败（内部已 Abort 冲回）：{e:?}"))?;
@@ -1835,6 +1856,8 @@ impl RuntimeDriver {
         &mut self,
         session: &mut GameSession,
     ) -> Result<(), String> {
+        #[cfg(feature = "simulation-diagnostics")]
+        self.ensure_causal_day_end_supported()?;
         let restore_mirror = session.runtime_day_end_mirror_rollback();
         let pending_before = self.pending_hold_inits.clone();
         let force_before = self.force_full_accounts;
@@ -2200,8 +2223,6 @@ impl RuntimeDriver {
             day,
             library,
             attentions,
-            issuer_map: session.runtime_issuer_map(),
-            company_specs: session.runtime_company_specs(),
         };
         let collected = self
             .world
@@ -2360,6 +2381,47 @@ impl RuntimeDriver {
         self.world
             .snapshot_accounts()
             .map_err(|e| format!("账户快照失败：{e:?}"))
+    }
+
+    /// Drain 的能力门只读现有权威发布，不新增查询往返或伪造终止事实。
+    #[cfg(feature = "simulation-diagnostics")]
+    pub(crate) fn ensure_causal_day_end_supported(&self) -> Result<(), String> {
+        let published = self.world.publication().load();
+        if (self.world.report_log.is_empty() && self.initial_causal_resting)
+            || published.desks.iter().any(|desk| desk.resting_count > 0) {
+            return Err("causal DayEnd真实余单终止尚未接通".to_owned());
+        }
+        Ok(())
+    }
+
+    /// 消费本拍 sideband；report_log 不再永久保存第二份诊断历史。
+    #[cfg(feature = "simulation-diagnostics")]
+    pub(crate) fn take_causal_facts(&mut self) -> Vec<super::diagnostics::DeskCausalFact> {
+        let facts = std::mem::take(&mut self.pending_causal);
+        #[cfg(test)]
+        let facts = if self.unresolved_causal_source_for_test {
+            facts.into_iter().map(|mut fact| {
+                match &mut fact.kind {
+                    super::diagnostics::DeskCausalKind::Submitted { source, .. }
+                    | super::diagnostics::DeskCausalKind::Cancelled { source, .. } => {
+                        *source = super::diagnostics::OperationSource::NonPlayerUnresolved;
+                    }
+                    _ => {}
+                }
+                fact
+            }).collect()
+        } else { facts };
+        facts
+    }
+
+    #[cfg(all(test, feature = "simulation-diagnostics"))]
+    pub(crate) fn unresolved_causal_source_for_test(&mut self) {
+        self.unresolved_causal_source_for_test = true;
+    }
+
+    #[cfg(all(test, feature = "simulation-diagnostics"))]
+    pub(crate) fn fail_seal_once_for_test(&mut self) {
+        self.world.set_seal_ack_failure_once_for_test(0);
     }
 
     /// 测试面：注入 tick 级校验器（构造 step 失败路径——Sol 二审

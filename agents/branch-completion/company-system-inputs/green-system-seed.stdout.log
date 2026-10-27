@@ -1,0 +1,13 @@
+✔ Simple 配置非法与 Simulation 明确报错，不承诺价格倒推或已交付自动结算 (239.18148ms)
+✔ 非法 u64 seed 可见且拒绝，JSON 错误保留 raw 草稿 (1.871933ms)
+✔ seed 完整 u64、规范十进制边界，在创建前拒绝非法 seed (2.404555ms)
+✔ 预览 seed 原值创建；seed 编辑不覆盖 custom 非法 raw JSON (1.385433ms)
+✔ Simulation 创建草稿显式不支持，非法 seed 先于运行失败 (0.464711ms)
+ℹ tests 5
+ℹ suites 0
+ℹ pass 5
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 661.015962

@@ -1,0 +1,28 @@
+
+running 13 tests
+test company::cash_dividend_tax::entitlement_units::conditional_bonus_tests::conditional_credit_scope_quantity_dates_and_classification_fail_without_input_changes ... ok
+
+thread 'company::cash_dividend_tax::entitlement_units::conditional_bonus_tests::corrected_legacy_cash_overcollection_cannot_be_hidden_by_activated_bonus' (1844724) panicked at /data1/baiyifan/workplace/stock_market_game/.tmp/tax-entitlement-k1/company/cash_dividend_tax/entitlement_units/conditional_bonus_tests.rs:573:5:
+assertion failed: book.assessment_with_conditional_bonus(&lineage, &facts).is_err()
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test company::cash_dividend_tax::entitlement_units::conditional_bonus_tests::acquisition_p_and_later_realization_q_preserve_prior_original_disposals ... ok
+test company::cash_dividend_tax::entitlement_units::conditional_bonus_tests::cash_and_bonus_same_event_text_keep_distinct_income_keys ... ok
+test company::cash_dividend_tax::entitlement_units::conditional_bonus_tests::net_positive_thirty_tax_shares_do_not_shrink_actual_hundred_share_income ... ok
+test company::cash_dividend_tax::entitlement_units::conditional_bonus_tests::corrected_legacy_cash_overcollection_cannot_be_hidden_by_activated_bonus ... FAILED
+test company::cash_dividend_tax::entitlement_units::conditional_bonus_tests::net_zero_realizes_actual_credit_without_creating_tax_lot ... ok
+test company::cash_dividend_tax::entitlement_units::conditional_bonus_tests::future_cash_and_bonus_r_use_new_tax_acquisition_without_recharging_first_bonus ... ok
+test company::cash_dividend_tax::entitlement_units::conditional_bonus_tests::long_original_bonus_stays_exempt_when_new_short_lot_is_sold ... ok
+test company::cash_dividend_tax::entitlement_units::conditional_bonus_tests::fractional_original_bonus_carriers_follow_the_same_frozen_partition ... ok
+test company::cash_dividend_tax::entitlement_units::conditional_bonus_tests::short_original_partial_disposals_assess_bonus_once_without_waiting_for_new_lot ... ok
+test company::cash_dividend_tax::entitlement_units::conditional_bonus_tests::typed_action_duplicates_are_idempotent_and_conflicting_frontier_or_terms_are_rejected ... ok
+test company::cash_dividend_tax::entitlement_units::conditional_bonus_tests::strict_bonus_facts_round_trip_and_restore_then_continue_preserve_basis ... ok
+test company::cash_dividend_tax::entitlement_units::conditional_bonus_tests::no_tax_acquisition_is_needed_to_realize_net_negative_stock_bonus_income ... ok
+
+failures:
+
+failures:
+    company::cash_dividend_tax::entitlement_units::conditional_bonus_tests::corrected_legacy_cash_overcollection_cannot_be_hidden_by_activated_bonus
+
+test result: FAILED. 12 passed; 1 failed; 0 ignored; 0 measured; 78 filtered out; finished in 0.00s
+
+bounded command exited with 101

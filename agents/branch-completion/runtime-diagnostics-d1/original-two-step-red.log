@@ -1,0 +1,16 @@
+
+running 1 test
+
+thread 'reconciles_real_continuous_submission_and_voluntary_cancel' (2858416) panicked at packages/engine/tests/causal_diagnostics.rs:180:29:
+index out of bounds: the len is 0 but the index is 0
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test reconciles_real_continuous_submission_and_voluntary_cancel ... FAILED
+
+failures:
+
+failures:
+    reconciles_real_continuous_submission_and_voluntary_cancel
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 14 filtered out; finished in 0.19s
+
+bounded command exited with 101

@@ -1,0 +1,21 @@
+{
+  "ownedTemporaryPaths": [
+    {
+      "path": "apps/web/.tmp/company-read-panels",
+      "existed": true,
+      "existsAfter": false
+    },
+    {
+      "path": "/home/baiyifan/.claude/tmp/playwright_chromiumdev_profile-JwMHpU",
+      "existed": true,
+      "existsAfter": false
+    },
+    {
+      "path": "/home/baiyifan/.claude/tmp/playwright_chromiumdev_profile-kHS4jn",
+      "existed": true,
+      "existsAfter": false
+    }
+  ],
+  "remainingOwnBrowserOrNodeTestProcesses": [],
+  "processCheckCommand": "ps -eo pid,ppid,comm,args"
+}

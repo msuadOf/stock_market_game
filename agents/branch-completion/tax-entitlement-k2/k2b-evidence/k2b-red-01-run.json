@@ -1,0 +1,13 @@
+{
+  "label": "k2b-red-01",
+  "argv": [
+    "/data1/baiyifan/workplace/stock_market_game/.tmp/tax-entitlement-k1/k2b-red-01-harness",
+    "collection",
+    "--test-threads=8",
+    "--nocapture"
+  ],
+  "binary_sha256": "ffd5fc2177a346cce94659db2a7b8db5873b114d1f73f63cee34109de5cc3362",
+  "source_verified_before_and_after": true,
+  "exit": 101,
+  "wall_seconds": 0.043689418002031744
+}

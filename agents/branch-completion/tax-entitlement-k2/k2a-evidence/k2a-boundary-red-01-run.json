@@ -1,0 +1,13 @@
+{
+  "label": "k2a-boundary-red-01",
+  "argv": [
+    "/data1/baiyifan/workplace/stock_market_game/.tmp/tax-entitlement-k1/k2a-boundary-red-01-harness",
+    "conditional_bonus_tests",
+    "--test-threads=8",
+    "--nocapture"
+  ],
+  "binary_sha256": "641898d76ad2fb1f4e64cd29dcd104ab0fd759cbaa980e721c40825ba4ca9361",
+  "source_verified_before_and_after": true,
+  "exit": 101,
+  "wall_seconds": 0.04373842605855316
+}

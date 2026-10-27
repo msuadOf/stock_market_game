@@ -1,0 +1,33 @@
+
+running 4 tests
+
+thread 'company::cash_dividend_tax::entitlement_units::conditional_bonus_tests::no_tax_acquisition_is_needed_to_realize_net_negative_stock_bonus_income' (1809638) panicked at /data1/baiyifan/workplace/stock_market_game/.tmp/tax-entitlement-k1/company/cash_dividend_tax/entitlement_units/conditional_bonus_tests.rs:61:5:
+assertion `left == right` failed
+  left: 0
+ right: 420
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+thread 'company::cash_dividend_tax::entitlement_units::conditional_bonus_tests::net_positive_thirty_tax_shares_do_not_shrink_actual_hundred_share_income' (1809637) panicked at /data1/baiyifan/workplace/stock_market_game/.tmp/tax-entitlement-k1/company/cash_dividend_tax/entitlement_units/conditional_bonus_tests.rs:72:85:
+called `Result::unwrap()` on an `Err` value: MissingTransition { event_id: "bonus", operation_seq: 1 }
+
+thread 'company::cash_dividend_tax::entitlement_units::conditional_bonus_tests::long_original_bonus_stays_exempt_when_new_short_lot_is_sold' (1809636) panicked at /data1/baiyifan/workplace/stock_market_game/.tmp/tax-entitlement-k1/company/cash_dividend_tax/entitlement_units/conditional_bonus_tests.rs:32:85:
+called `Result::unwrap()` on an `Err` value: MissingTransition { event_id: "bonus", operation_seq: 1 }
+
+thread 'company::cash_dividend_tax::entitlement_units::conditional_bonus_tests::short_original_partial_disposals_assess_bonus_once_without_waiting_for_new_lot' (1809639) panicked at /data1/baiyifan/workplace/stock_market_game/.tmp/tax-entitlement-k1/company/cash_dividend_tax/entitlement_units/conditional_bonus_tests.rs:44:85:
+called `Result::unwrap()` on an `Err` value: MissingTransition { event_id: "bonus", operation_seq: 1 }
+test company::cash_dividend_tax::entitlement_units::conditional_bonus_tests::no_tax_acquisition_is_needed_to_realize_net_negative_stock_bonus_income ... FAILED
+test company::cash_dividend_tax::entitlement_units::conditional_bonus_tests::net_positive_thirty_tax_shares_do_not_shrink_actual_hundred_share_income ... FAILED
+test company::cash_dividend_tax::entitlement_units::conditional_bonus_tests::long_original_bonus_stays_exempt_when_new_short_lot_is_sold ... FAILED
+test company::cash_dividend_tax::entitlement_units::conditional_bonus_tests::short_original_partial_disposals_assess_bonus_once_without_waiting_for_new_lot ... FAILED
+
+failures:
+
+failures:
+    company::cash_dividend_tax::entitlement_units::conditional_bonus_tests::long_original_bonus_stays_exempt_when_new_short_lot_is_sold
+    company::cash_dividend_tax::entitlement_units::conditional_bonus_tests::net_positive_thirty_tax_shares_do_not_shrink_actual_hundred_share_income
+    company::cash_dividend_tax::entitlement_units::conditional_bonus_tests::no_tax_acquisition_is_needed_to_realize_net_negative_stock_bonus_income
+    company::cash_dividend_tax::entitlement_units::conditional_bonus_tests::short_original_partial_disposals_assess_bonus_once_without_waiting_for_new_lot
+
+test result: FAILED. 0 passed; 4 failed; 0 ignored; 0 measured; 78 filtered out; finished in 0.00s
+
+bounded command exited with 101

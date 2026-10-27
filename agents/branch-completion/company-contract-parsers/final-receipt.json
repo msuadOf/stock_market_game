@@ -1,0 +1,90 @@
+{
+  "nodeVersion": "v24.18.0",
+  "availableParallelism": 128,
+  "independentJobs": 3,
+  "testFileConcurrency": 3,
+  "caseTimeoutMs": 10000,
+  "processTreeDeadlineMs": 10000,
+  "sourceSha256": {
+    "apps/web/src/host/company-contract-views.ts": "4836b4ddb6a1b5e99f95bbe6d49602384f830898838716e43c46c3473af69623",
+    "apps/web/src/host/company-contract-views.test.ts": "46f3ffcda874082d837a64c989a3bdd8f7c6233f69ec86f7ea66f36060cedc1b",
+    "apps/web/src/host/dividend-tax.ts": "fdd30af2f2e6f4eefb4de06884c5268f0793cccf224362494a021c3e0e54fafc",
+    "apps/web/src/host/dividend-tax.test.ts": "e18ec93cf776e77d37c9c76641de79b04e18ed82109c818185f05674933a4bb7",
+    "apps/web/src/host/corporate-action-views.ts": "8c4a9fcee64a681f304e8dd01028ddc628c084aaab3a87150b4967044d603c6c",
+    "apps/web/src/host/corporate-action-views.test.ts": "8350212243ed08e99f7f61c3e525f1523ccad5dc6d3747ace83764b90a316def"
+  },
+  "results": [
+    {
+      "name": "final-tests",
+      "args": [
+        "--experimental-strip-types",
+        "--test",
+        "--test-timeout=10000",
+        "--test-concurrency=3",
+        "apps/web/src/host/company-contract-views.test.ts",
+        "apps/web/src/host/dividend-tax.test.ts",
+        "apps/web/src/host/corporate-action-views.test.ts"
+      ],
+      "command": "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+      "startedAt": "2026-10-26T10:11:21.747Z",
+      "completedAt": "2026-10-26T10:11:21.939Z",
+      "result": {
+        "exitCode": 0
+      }
+    },
+    {
+      "name": "final-typecheck",
+      "args": [
+        "/data1/baiyifan/workplace/stock_market_game/node_modules/.pnpm/typescript@6.0.3/node_modules/typescript/bin/tsc",
+        "--noEmit",
+        "--ignoreConfig",
+        "--target",
+        "es2023",
+        "--module",
+        "esnext",
+        "--moduleResolution",
+        "bundler",
+        "--allowImportingTsExtensions",
+        "--strict",
+        "--skipLibCheck",
+        "--noUnusedLocals",
+        "--noUnusedParameters",
+        "--types",
+        "node",
+        "--typeRoots",
+        "/data1/baiyifan/workplace/stock_market_game/node_modules/.pnpm/node_modules/@types",
+        "apps/web/src/host/company-contract-views.ts",
+        "apps/web/src/host/company-contract-views.test.ts",
+        "apps/web/src/host/dividend-tax.ts",
+        "apps/web/src/host/dividend-tax.test.ts",
+        "apps/web/src/host/corporate-action-views.ts",
+        "apps/web/src/host/corporate-action-views.test.ts"
+      ],
+      "command": "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+      "startedAt": "2026-10-26T10:11:21.752Z",
+      "completedAt": "2026-10-26T10:11:22.600Z",
+      "result": {
+        "exitCode": 0
+      }
+    },
+    {
+      "name": "final-lint",
+      "args": [
+        "/data1/baiyifan/workplace/stock_market_game/node_modules/.pnpm/oxlint@1.71.0/node_modules/oxlint/bin/oxlint",
+        "--deny-warnings",
+        "apps/web/src/host/company-contract-views.ts",
+        "apps/web/src/host/company-contract-views.test.ts",
+        "apps/web/src/host/dividend-tax.ts",
+        "apps/web/src/host/dividend-tax.test.ts",
+        "apps/web/src/host/corporate-action-views.ts",
+        "apps/web/src/host/corporate-action-views.test.ts"
+      ],
+      "command": "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+      "startedAt": "2026-10-26T10:11:21.754Z",
+      "completedAt": "2026-10-26T10:11:21.860Z",
+      "result": {
+        "exitCode": 0
+      }
+    }
+  ]
+}

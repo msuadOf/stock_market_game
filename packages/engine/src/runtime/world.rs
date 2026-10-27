@@ -86,11 +86,6 @@ pub struct GroupInformationPayload {
         crate::AccountId,
         crate::session::NpcAttentionState,
     )>,
-    pub issuer_map: std::collections::BTreeMap<crate::StockId, crate::company::CompanyId>,
-    pub company_specs: std::collections::BTreeMap<
-        crate::company::CompanyId,
-        (crate::company::CompanyKind, u64),
-    >,
 }
 
 /// 信念个人态快照（D3a-2b Belief-1：watchlist/价格记忆/信息态/信念书
@@ -133,14 +128,12 @@ pub struct OpenDerivationRecord {
 }
 
 /// 决策链根组装投影（D3a-2c 件2：构造期自 session 一次性投影——catalog
-/// 克隆、registry/operations Arc 共享、名册 AccountId、相位配置）。
+/// 克隆、初始 CompanyReadFacts 共享、名册 AccountId、相位配置）。
 pub struct RootProjection {
     /// 股票目录（id↔代码翻译层）。
     pub catalog: crate::stock::StockCatalog,
-    /// 发行人注册表。
-    pub company_registry: Arc<crate::company::CompanyRegistry>,
-    /// 公司域经营。
-    pub operations: Arc<crate::company::operations::CompanyOperations>,
+    /// 构造静点安装的选定模型公开事实；后续消费经组当前引用。
+    pub initial_company_facts: Arc<crate::company::CompanyReadFacts>,
     /// 组内名册的 AccountId（下标=LocalIdx；红证/session 映射）。
     pub account_ids: Vec<crate::AccountId>,
     /// 开盘集合竞价窗 tick 数（CivilInstant 秒映射输入）。
@@ -154,15 +147,11 @@ pub struct RootProjection {
     pub session_seed: u64,
     /// D3a-2c 件4：紧迫度策略（组内 initial_urgency 输入——同 session 对象克隆）。
     pub urgency_policy: crate::plans::UrgencyPolicy,
-    /// D3a-2c 件4：每股发行总股本（CandidateTargetProposal 上限——setup 权威）。
-    pub total_shares: std::collections::BTreeMap<crate::StockId, u64>,
     /// D3a-3 件4b：每股限价单笔上限（category.max_order_qty(false)——
     /// 预算请求与报价数量输入）。
     pub max_order_qty_limit: std::collections::BTreeMap<crate::StockId, u32>,
     /// D3a-3 复核收口：每股最小报价单位（tick——报价取整口径，setup 权威）。
     pub tick_size_cents: std::collections::BTreeMap<crate::StockId, i64>,
-    /// Sol 整改 5：(发行代码, 数值 id) 序列——曝光面共享函数的输入。
-    pub stock_codes: Vec<(crate::account::StockCode, crate::StockId)>,
 }
 
 /// 世界构造参数。
@@ -288,6 +277,9 @@ pub struct TickRecord {
     /// 本 tick 双腿成交事实（事件映射输入；驱动器/测试面）。Continue
     /// 链下含**全轮**成交（早轮+终轮，每条恰一次——事实不丢）。
     pub desk_trades: Vec<super::protocol::DeskTradeFact>,
+    /// 未交付的诊断 sideband；驱动器取走后记录中只保留空 Vec。
+    #[cfg(feature = "simulation-diagnostics")]
+    pub desk_causal: Vec<super::diagnostics::DeskCausalFact>,
     /// Q2 批 4（D3 退役）：unsettled_trades 字段已删除——Seal 落账
     ///（批 2）使"终轮未落账尾巴"结构性不存在（合同 5 由类型承载：
     /// 复活需显式重新引入字段并过全部行为合同）。
@@ -325,6 +317,8 @@ struct DayEndProgress {
 /// 世界（协调者视角持有全部通道与线程句柄）。
 pub struct World {
     admin_next_id: u64,
+    /// 仅身份元数据，用于核对信息候选回执的组内 local/AccountId；不保存个人态。
+    information_roster: Vec<Vec<crate::AccountId>>,
     #[cfg(test)]
     admin_send_fault_for_test: Option<(super::protocol::AdminPhase, GroupIdx)>,
     /// 全局域权威（已收敛态）。
@@ -457,6 +451,12 @@ impl World {
                 detail: "chunk 需为正（分段 flush 粒度）".to_owned(),
             });
         }
+        let information_roster = (0..spec.n_groups).map(|group| {
+            spec.root_projection.as_ref().map(|root| {
+                let start = group * spec.accounts_per_group;
+                root.account_ids.iter().skip(start).take(spec.accounts_per_group).copied().collect()
+            }).unwrap_or_default()
+        }).collect();
         let WorldSpec {
             initial_plan_books,
             n_groups,
@@ -790,6 +790,7 @@ impl World {
         );
         Ok(World {
             admin_next_id: 0,
+            information_roster,
             #[cfg(test)]
             admin_send_fault_for_test: None,
             global: global_v0,
@@ -1457,8 +1458,6 @@ impl World {
                 day: payload.day,
                 library: std::sync::Arc::clone(&payload.library),
                 attentions: payload.attentions.clone(),
-                issuer_map: payload.issuer_map.clone(),
-                company_specs: payload.company_specs.clone(),
             })
             .map_err(|_| RuntimeError::SendFailed {
                 detail: "InformationDelivery 广播失败".to_owned(),
@@ -1860,6 +1859,8 @@ impl World {
             // 在 Continue 分支被丢弃，轮 0 的 IntentRejected/Cancelled
             // 静默消失）。
             let mut acc_trades = Vec::new();
+            #[cfg(feature = "simulation-diagnostics")]
+            let mut acc_causal = Vec::new();
             let mut acc_lifecycle = Vec::new();
             let mut acc_receipts = Vec::new();
             let mut acc_group_rejections = Vec::new();
@@ -1906,6 +1907,8 @@ impl World {
                 }
                 // 累积本轮事实（终轮合并进 TickRecord——早轮不丢）。
                 acc_trades.extend(evidence.desk_trades.iter().copied());
+                #[cfg(feature = "simulation-diagnostics")]
+                acc_causal.append(&mut evidence.desk_causal);
                 acc_lifecycle.extend(evidence.desk_lifecycle.iter().copied());
                 acc_receipts.extend(evidence.desk_receipts.iter().copied());
                 acc_group_rejections.extend(evidence.group_rejections.iter().copied());
@@ -1929,6 +1932,10 @@ impl World {
                     //（合同 5；D3 退役的类型级表达随批 4）。
 
                     evidence.desk_trades = acc_trades;
+                    #[cfg(feature = "simulation-diagnostics")]
+                    {
+                        evidence.desk_causal = acc_causal;
+                    }
                     evidence.desk_lifecycle = acc_lifecycle;
                     evidence.desk_receipts = acc_receipts;
                     evidence.group_rejections = acc_group_rejections;
@@ -2335,6 +2342,8 @@ impl World {
             desk_hashes: desk_hashes.clone(),
             desk_resting: evidence.desk_resting,
             desk_trades: evidence.desk_trades,
+            #[cfg(feature = "simulation-diagnostics")]
+            desk_causal: evidence.desk_causal,
             desk_lifecycle: evidence.desk_lifecycle,
             desk_receipts: evidence.desk_receipts,
             group_rejections: evidence.group_rejections,
@@ -3081,4 +3090,4 @@ mod failed_cleanup_tests {
 
 mod admin_transaction;
 
-pub use super::protocol::{AdminCandidate, AdminOperation, AdminTransactionId};
+pub use super::protocol::{AdminCandidate, AdminOperation, AdminTransactionId, InformationObservation, InformationPreparePayload, PreparedInformationResult, InformationPrepareError};

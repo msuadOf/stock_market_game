@@ -1,0 +1,12 @@
+
+running 7 tests
+test diagnostics::causal::tests::collector_auction_arithmetic_failure_precedes_zero_entry_and_chain_check ... ok
+test diagnostics::causal::tests::collector_auction_chain_failure_keeps_entry_zero_without_appending ... ok
+test diagnostics::causal::tests::collector_continuous_overflow_appends_without_advancing_value ... ok
+test diagnostics::causal::tests::collector_checkpoint_shares_three_chunks_and_isolates_later_appends ... ok
+test diagnostics::causal::tests::collector_decision_batch_keeps_empty_and_non_decision_acceptance ... ok
+test diagnostics::causal::tests::collector_filled_values_serialize_as_exact_decimal_cents ... ok
+test diagnostics::causal::tests::collector_full_query_cache_is_lazy_not_cloned_and_preserves_serialization ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 2351 filtered out; finished in 0.01s
+

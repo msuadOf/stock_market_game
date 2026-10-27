@@ -69,7 +69,7 @@ it("launcher 在 spawn 返回前异常退出，已知组中的 root 与 detached
   const childCode = `const {spawn}=require('node:child_process');const fs=require('node:fs');const grand=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{detached:true,stdio:'ignore'});fs.writeFileSync(${JSON.stringify(pidsPath)},JSON.stringify([process.pid,grand.pid]));setInterval(()=>{},1000);`;
   await writeFile(launcherPath, `import{spawn}from'node:child_process';import fs from'node:fs';const now=()=>Number(process.hrtime.bigint())/1e6;
 process.on('message',m=>{if(m.kind==='initialize'){const started=now();process.send({kind:'arm',token:String(process.pid)+':eof',started,total:started+2400,execution:started+1400,timeoutMs:2400,context:'launcher EOF case'});}
-else if(m.kind==='armed'){spawn(process.execPath,['-e',${JSON.stringify(childCode)}],{stdio:'ignore',detached:false});const timer=setInterval(()=>{if(fs.existsSync(${JSON.stringify(pidsPath)}))process.exit(29);},5);}});process.send({kind:'ready'});
+else if(m.kind==='armed'){spawn(process.execPath,['-e',${JSON.stringify(childCode)}],{stdio:'ignore',detached:false,env:{...process.env,STOCK_GAME_RUST_CASE_TOKEN:m.token}});const timer=setInterval(()=>{if(fs.existsSync(${JSON.stringify(pidsPath)}))process.exit(29);},5);}});process.send({kind:'ready'});
 `);
   try {
     await assert.rejects(executeSupervisedRustTestBinaries({ artifacts: [], policy: buildRustTestExecutionPolicy(4, 1),

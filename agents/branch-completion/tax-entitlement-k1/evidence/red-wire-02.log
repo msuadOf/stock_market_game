@@ -1,0 +1,50 @@
+error[E0583]: file not found for module `tests`
+    --> /data1/baiyifan/workplace/stock_market_game/.worktree/tax-entitlement-k1/packages/engine/src/company/share_registry.rs:1214:1
+     |
+1214 | mod tests;
+     | ^^^^^^^^^^
+     |
+     = help: to create the module `tests`, create file "/data1/baiyifan/workplace/stock_market_game/.worktree/tax-entitlement-k1/packages/engine/src/company/tests.rs" or "/data1/baiyifan/workplace/stock_market_game/.worktree/tax-entitlement-k1/packages/engine/src/company/tests/mod.rs"
+     = note: if there is a `mod tests` elsewhere in the crate already, import it with `use crate::...` instead
+
+error[E0583]: file not found for module `tests`
+    --> /data1/baiyifan/workplace/stock_market_game/.worktree/tax-entitlement-k1/packages/engine/src/company/cash_dividend_tax.rs:1615:1
+     |
+1615 | mod tests;
+     | ^^^^^^^^^^
+     |
+     = help: to create the module `tests`, create file "/data1/baiyifan/workplace/stock_market_game/.worktree/tax-entitlement-k1/packages/engine/src/company/tests.rs" or "/data1/baiyifan/workplace/stock_market_game/.worktree/tax-entitlement-k1/packages/engine/src/company/tests/mod.rs"
+     = note: if there is a `mod tests` elsewhere in the crate already, import it with `use crate::...` instead
+
+error[E0583]: file not found for module `entitlement_units`
+    --> /data1/baiyifan/workplace/stock_market_game/.worktree/tax-entitlement-k1/packages/engine/src/company/cash_dividend_tax.rs:1617:1
+     |
+1617 | pub mod entitlement_units;
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: to create the module `entitlement_units`, create file "/data1/baiyifan/workplace/stock_market_game/.worktree/tax-entitlement-k1/packages/engine/src/company/entitlement_units.rs" or "/data1/baiyifan/workplace/stock_market_game/.worktree/tax-entitlement-k1/packages/engine/src/company/entitlement_units/mod.rs"
+     = note: if there is a `mod entitlement_units` elsewhere in the crate already, import it with `use crate::...` instead
+
+error: aborting due to 3 previous errors
+
+For more information about this error, try `rustc --explain E0583`.
+Traceback (most recent call last):
+  File "/data1/baiyifan/workplace/stock_market_game/.worktree/tax-entitlement-k1/agents/branch-completion/tax-entitlement-k1/build-light-harness.py", line 68, in <module>
+    subprocess.run(args, check=True, env=build_env)
+    ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/baiyifan/miniconda3/lib/python3.13/subprocess.py", line 577, in run
+    raise CalledProcessError(retcode, process.args,
+                             output=stdout, stderr=stderr)
+subprocess.CalledProcessError: Command '['rustc', '--edition=2021', '--test', '/data1/baiyifan/workplace/stock_market_game/.tmp/tax-entitlement-k1/light-harness.rs', '-C', 'debuginfo=0', '-C', 'codegen-units=32', '-L', 'dependency=/data1/baiyifan/workplace/stock_market_game/.tmp/company-read-views-target/debug/deps', '-o', '/data1/baiyifan/workplace/stock_market_game/.tmp/tax-entitlement-k1/light-harness', '--extern', 'serde=/data1/baiyifan/workplace/stock_market_game/.tmp/company-read-views-target/debug/deps/libserde-5c7cb7779157236d.rlib', '--extern', 'serde_json=/data1/baiyifan/workplace/stock_market_game/.tmp/company-read-views-target/debug/deps/libserde_json-910c725843be2f8c.rlib', '--extern', 'thiserror=/data1/baiyifan/workplace/stock_market_game/.tmp/company-read-views-target/debug/deps/libthiserror-98d7ae0fe06469e3.rlib', '--extern', 'ts_rs=/data1/baiyifan/workplace/stock_market_game/.tmp/company-read-views-target/debug/deps/libts_rs-529c3d3cbd62be59.rlib', '--extern', 'num_bigint=/data1/baiyifan/workplace/stock_market_game/.tmp/company-read-views-target/debug/deps/libnum_bigint-286ac31a19caae10.rlib']' returned non-zero exit status 1.
+file:///data1/baiyifan/workplace/stock_market_game/.worktree/tax-entitlement-k1/scripts/run-with-deadline.mjs:220
+        failure = new Error(`bounded command exited with ${code ?? `signal ${signal}`}${detail}`);
+                  ^
+
+Error: bounded command exited with 1
+    at file:///data1/baiyifan/workplace/stock_market_game/.worktree/tax-entitlement-k1/scripts/run-with-deadline.mjs:220:19
+    at #settleOnce (file:///data1/baiyifan/workplace/stock_market_game/.worktree/tax-entitlement-k1/scripts/run-with-deadline.mjs:239:5)
+    at #completeClose (file:///data1/baiyifan/workplace/stock_market_game/.worktree/tax-entitlement-k1/scripts/run-with-deadline.mjs:211:21)
+    at file:///data1/baiyifan/workplace/stock_market_game/.worktree/tax-entitlement-k1/scripts/run-with-deadline.mjs:204:55
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+
+Node.js v25.8.2

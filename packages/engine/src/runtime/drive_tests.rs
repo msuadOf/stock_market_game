@@ -571,12 +571,10 @@ fn d3a2c_group_open_derivation_matches_session_observe() {
     };
     // Sol 整改 5：曝光面同输入（共享 exposed_stocks_shared——组内与
     // session 版同一函数；此前两侧空集）。
-    let (catalog, registry, operations) = session.runtime_company_handles();
-    let codes = session.runtime_stock_codes();
+    let (_, company_facts) = session.runtime_company_handles().expect("选定公司事实合法");
     let exposed = crate::session::exposed_stocks_shared(
         &session.runtime_library_handle().1,
-        &registry,
-        &codes,
+        &company_facts,
         *derivation_now,
     );
     let observation = crate::session::DecisionChainObservation {
@@ -2951,6 +2949,8 @@ fn p2_4a_sparse_echo_missing_item_fails_loud() {
         desk_receipts: Vec::new(),
         group_rejections: Vec::new(),
         desk_auction: Vec::new(),
+        #[cfg(feature = "simulation-diagnostics")]
+        desk_causal: Vec::new(),
     };
     // 分片只含 local 0（maker）——taker local 3 缺项必须显式失败。
     let snapshots: Vec<Vec<(crate::runtime::LocalIdx, crate::runtime::group::GroupAccount)>> =
@@ -3003,6 +3003,8 @@ fn p2_4a_arc_shard_cover_check_matches_value_form() {
         desk_receipts: Vec::new(),
         group_rejections: Vec::new(),
         desk_auction: Vec::new(),
+        #[cfg(feature = "simulation-diagnostics")]
+        desk_causal: Vec::new(),
     };
     // Arc 分片形态（生产形态：组分片条目 Arc 共享——Seal 攻顶 A-1）。
     let make_shards = |locals: &[crate::runtime::LocalIdx]| -> Vec<

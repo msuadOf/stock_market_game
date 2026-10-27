@@ -1,3 +1,4 @@
+import type { CompanySystemConfig } from "../../types/generated/CompanySystemConfig"
 import type { SessionSetup } from "../../types/generated/SessionSetup"
 import type { SimpleConfig } from "../../types/generated/SimpleConfig"
 import type { SimpleCompanyConfig } from "../../types/generated/SimpleCompanyConfig"
@@ -138,15 +139,19 @@ function frequency(value: unknown, path: string): ReportFrequency {
   return { Monthly: { schedule: parseMonthlyReportSchedule(monthly.schedule, `${path}.Monthly.schedule`) } }
 }
 
+/** 复用现行严格 company_system 解析，调用方必须显式提供错误路径。 */
+export function parseCompanySystemConfig(value: unknown, path: string): CompanySystemConfig {
+  const system = record(value, path)
+  const mode = oneOf(system.mode, `${path}.mode`, ["Simple", "Simulation"] as const)
+  exact(system, mode === "Simple" ? ["mode", "config"] : ["mode"], path)
+  return mode === "Simple" ? { mode, config: simple(system.config, `${path}.config`) } : { mode }
+}
+
 /** 只投影当前存档中实际出现的配置；跨股票与账户的不变量仍由 Rust 恢复门禁校验。 */
 export function parseSetupCompanyOptions(source: Record<string, unknown>, path: string): SetupCompanyOptions {
   const result: SetupCompanyOptions = {}
   if ("company_system" in source) {
-    const systemPath = `${path}.company_system`
-    const system = record(source.company_system, systemPath)
-    const mode = oneOf(system.mode, `${systemPath}.mode`, ["Simple", "Simulation"] as const)
-    exact(system, mode === "Simple" ? ["mode", "config"] : ["mode"], systemPath)
-    result.company_system = mode === "Simple" ? { mode, config: simple(system.config, `${systemPath}.config`) } : { mode }
+    result.company_system = parseCompanySystemConfig(source.company_system, `${path}.company_system`)
   }
   if ("dividend_tax_mode" in source) result.dividend_tax_mode = oneOf(source.dividend_tax_mode, `${path}.dividend_tax_mode`, ["FlatWithholding", "AShareIndividual", "Exempt"] as const)
   if ("flat_withholding_bp" in source) result.flat_withholding_bp = bounded(source.flat_withholding_bp, `${path}.flat_withholding_bp`, 0, 10000)

@@ -1,0 +1,13 @@
+{
+  "label": "red-wire-06",
+  "argv": [
+    "/data1/baiyifan/workplace/stock_market_game/.tmp/tax-entitlement-k1/light-harness",
+    "entitlement_units::tests",
+    "--test-threads=8",
+    "--nocapture"
+  ],
+  "binary_sha256": "b22f4f3b486862c7ecfa689cba475ff8a03f040c6b85733f41f7d80ee2072782",
+  "source_verified_before_and_after": true,
+  "exit": 101,
+  "wall_seconds": 0.044195666967425495
+}

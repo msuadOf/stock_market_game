@@ -1,0 +1,382 @@
+{
+  "label": "k2b-green-02",
+  "binary_path": "/data1/baiyifan/workplace/stock_market_game/.tmp/tax-entitlement-k1/k2b-green-02-harness",
+  "boundary_extractions": [
+    {
+      "source": "/data1/baiyifan/workplace/stock_market_game/.worktree/tax-entitlement-k1/packages/engine/src/account.rs",
+      "concept": "StockCode",
+      "sha256": "11acf2044ae97f255ac38ae9f39399944dea78741676a963ed836190917a7682"
+    },
+    {
+      "source": "/data1/baiyifan/workplace/stock_market_game/.worktree/tax-entitlement-k1/packages/engine/src/orderbook.rs",
+      "concept": "AccountId",
+      "sha256": "18e006962315567505ea8de476c7ca8b569a16a8cb237c4bbb06825182e70397"
+    },
+    {
+      "source": "/data1/baiyifan/workplace/stock_market_game/.worktree/tax-entitlement-k1/packages/engine/src/orderbook.rs",
+      "concept": "serde helpers",
+      "sha256": "a411946c2746fa594d7c7789725a7360ac760339ab469cfff1cd6cdf155b61dd"
+    },
+    {
+      "source": "/data1/baiyifan/workplace/stock_market_game/.worktree/tax-entitlement-k1/packages/engine/src/company/spec.rs",
+      "concept": "CompanyId",
+      "sha256": "957c2b950caf1b52d3ee7f40f7e70bf486d17146986e11d80be6839069272d6e"
+    }
+  ],
+  "harness_sha256": "e90d44bb7687f1d9e852e6d51c6de46e70156eeab91b4bdf7807b99dfd3fe148",
+  "args": [
+    "rustc",
+    "--edition=2021",
+    "--test",
+    "/data1/baiyifan/workplace/stock_market_game/.tmp/tax-entitlement-k1/k2b-green-02-harness.rs",
+    "-C",
+    "debuginfo=0",
+    "-C",
+    "codegen-units=32",
+    "-L",
+    "dependency=/data1/baiyifan/workplace/stock_market_game/.tmp/company-read-views-target/debug/deps",
+    "-o",
+    "/data1/baiyifan/workplace/stock_market_game/.tmp/tax-entitlement-k1/k2b-green-02-harness",
+    "--extern",
+    "serde=/data1/baiyifan/workplace/stock_market_game/.tmp/company-read-views-target/debug/deps/libserde-5c7cb7779157236d.rlib",
+    "--extern",
+    "serde_json=/data1/baiyifan/workplace/stock_market_game/.tmp/company-read-views-target/debug/deps/libserde_json-910c725843be2f8c.rlib",
+    "--extern",
+    "thiserror=/data1/baiyifan/workplace/stock_market_game/.tmp/company-read-views-target/debug/deps/libthiserror-98d7ae0fe06469e3.rlib",
+    "--extern",
+    "ts_rs=/data1/baiyifan/workplace/stock_market_game/.tmp/company-read-views-target/debug/deps/libts_rs-529c3d3cbd62be59.rlib",
+    "--extern",
+    "num_bigint=/data1/baiyifan/workplace/stock_market_game/.tmp/company-read-views-target/debug/deps/libnum_bigint-286ac31a19caae10.rlib"
+  ],
+  "files": [
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.worktree/tax-entitlement-k1/packages/engine/src/account.rs",
+      "sha256": "8088db5eb0541e691d36be8b14eb558aa07ad9284867f6aea2a6c7ffce58d1bb"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.worktree/tax-entitlement-k1/packages/engine/src/orderbook.rs",
+      "sha256": "c4a17d38336e79a7d2aeead4b0c4f6a757d231b7463bfaca2393ec65793171ac"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.worktree/tax-entitlement-k1/packages/engine/src/company/spec.rs",
+      "sha256": "7a512f3b110bae61d04a9095173a1bc68394c29b9adc28b2f815525f256685df"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.worktree/tax-entitlement-k1/packages/engine/src/calendar/date.rs",
+      "sha256": "6e8e756c40fa9649bca93017bc2d94166f8bad18858c3724e6a31e910afbdf9e"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.worktree/tax-entitlement-k1/packages/engine/src/money.rs",
+      "sha256": "18a1884ced2d8f525fc6d36b03dbf643c9ba3311a50b1515f52d5e2d90124e8f"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.worktree/tax-entitlement-k1/packages/engine/src/company/share_registry.rs",
+      "sha256": "0d42e54739f97b9fc6c91e430b1a3efbeaa2daaa3544e86bf93baa360d7fd281"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.worktree/tax-entitlement-k1/packages/engine/src/company/share_registry/tests.rs",
+      "sha256": "3390372a951285ee290fdd873f88ebcc85bfc9d4a3f3cf6d14fd03a1c293e4cd"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.worktree/tax-entitlement-k1/packages/engine/src/company/cash_dividend_tax.rs",
+      "sha256": "555390c1c2735b85c234bb599ef60954367f2333102101ddd0fdbdf6d161fdbf"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.worktree/tax-entitlement-k1/packages/engine/src/company/cash_dividend_tax/tests.rs",
+      "sha256": "9f9b7a2cea341453f2b37294f626586d08b30d93902a855b2fa83e5bb0598b4f"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.worktree/tax-entitlement-k1/packages/engine/src/company/cash_dividend_tax/entitlement_units.rs",
+      "sha256": "e06a902ed2a34b02bc68a850a00d21c5522e22b57297b0db3875a40e14b2d3af"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.worktree/tax-entitlement-k1/packages/engine/src/company/cash_dividend_tax/entitlement_units/tests.rs",
+      "sha256": "255879a763e0ccc3d77c42a673469f3d4f6205d703923ebcdbf7730dc9c75d0c"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.worktree/tax-entitlement-k1/packages/engine/src/company/cash_dividend_tax/entitlement_units/conditional_bonus.rs",
+      "sha256": "2f04cfff827d2c00cdaf939b76b4f821544c7d7a2cd7adcd059aeaf789dd035e"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.worktree/tax-entitlement-k1/packages/engine/src/company/cash_dividend_tax/entitlement_units/conditional_bonus_tests.rs",
+      "sha256": "14cbe3c7979fa3b03ee68c0d47867a744b0fbf5b25511a99cb024fc7ea8c2dde"
+    }
+  ],
+  "dependencies": [
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/company-read-views-target/debug/deps/libserde-5c7cb7779157236d.rlib",
+      "sha256": "f1010ce386aace137d6643e82d37fb56a08f6c829ee982e7c3e578f11fb6bb29"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/company-read-views-target/debug/deps/libserde_json-910c725843be2f8c.rlib",
+      "sha256": "7895232e4d2da6e870e4232a33b52f6eac2a9f87ceef45260a72a1b3ce842d50"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/company-read-views-target/debug/deps/libthiserror-98d7ae0fe06469e3.rlib",
+      "sha256": "abd21b242430aea51feeddc36c4032149652c742c767063cc7e2a902e78b145b"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/company-read-views-target/debug/deps/libts_rs-529c3d3cbd62be59.rlib",
+      "sha256": "56137faa31a41c028373718543309e0fdecb661672595946322b667348416dce"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/company-read-views-target/debug/deps/libnum_bigint-286ac31a19caae10.rlib",
+      "sha256": "924b49a68036a9d2c1cad25d71252e6ada15f4f4bdd2c0bd1c01f74e9924c219"
+    }
+  ],
+  "build_exit": 0,
+  "build_wall_seconds": 2.875370451947674,
+  "process_samples": [
+    {
+      "wall_seconds": 0.1081771389581263,
+      "processes": [
+        {
+          "pid": 2100891,
+          "ppid": 2100866,
+          "cpu_ticks": 13,
+          "threads": 4,
+          "rss_bytes": 93315072
+        }
+      ]
+    },
+    {
+      "wall_seconds": 0.2601353629725054,
+      "processes": [
+        {
+          "pid": 2100891,
+          "ppid": 2100866,
+          "cpu_ticks": 27,
+          "threads": 4,
+          "rss_bytes": 131133440
+        }
+      ]
+    },
+    {
+      "wall_seconds": 0.41675289790146053,
+      "processes": [
+        {
+          "pid": 2100891,
+          "ppid": 2100866,
+          "cpu_ticks": 43,
+          "threads": 4,
+          "rss_bytes": 182595584
+        }
+      ]
+    },
+    {
+      "wall_seconds": 0.5721099498914555,
+      "processes": [
+        {
+          "pid": 2100891,
+          "ppid": 2100866,
+          "cpu_ticks": 58,
+          "threads": 4,
+          "rss_bytes": 218411008
+        }
+      ]
+    },
+    {
+      "wall_seconds": 0.7484932119259611,
+      "processes": [
+        {
+          "pid": 2100891,
+          "ppid": 2100866,
+          "cpu_ticks": 76,
+          "threads": 4,
+          "rss_bytes": 230993920
+        }
+      ]
+    },
+    {
+      "wall_seconds": 0.9232552530011162,
+      "processes": [
+        {
+          "pid": 2100891,
+          "ppid": 2100866,
+          "cpu_ticks": 94,
+          "threads": 4,
+          "rss_bytes": 242569216
+        }
+      ]
+    },
+    {
+      "wall_seconds": 1.0847057019127533,
+      "processes": [
+        {
+          "pid": 2100891,
+          "ppid": 2100866,
+          "cpu_ticks": 110,
+          "threads": 4,
+          "rss_bytes": 254115840
+        }
+      ]
+    },
+    {
+      "wall_seconds": 1.2372034299187362,
+      "processes": [
+        {
+          "pid": 2100891,
+          "ppid": 2100866,
+          "cpu_ticks": 125,
+          "threads": 4,
+          "rss_bytes": 265650176
+        }
+      ]
+    },
+    {
+      "wall_seconds": 1.3848047739593312,
+      "processes": [
+        {
+          "pid": 2100891,
+          "ppid": 2100866,
+          "cpu_ticks": 140,
+          "threads": 4,
+          "rss_bytes": 280330240
+        }
+      ]
+    },
+    {
+      "wall_seconds": 1.5285452079260722,
+      "processes": [
+        {
+          "pid": 2100891,
+          "ppid": 2100866,
+          "cpu_ticks": 154,
+          "threads": 4,
+          "rss_bytes": 292913152
+        }
+      ]
+    },
+    {
+      "wall_seconds": 1.6738467919640243,
+      "processes": [
+        {
+          "pid": 2100891,
+          "ppid": 2100866,
+          "cpu_ticks": 168,
+          "threads": 4,
+          "rss_bytes": 330911744
+        }
+      ]
+    },
+    {
+      "wall_seconds": 1.8204625799553469,
+      "processes": [
+        {
+          "pid": 2100891,
+          "ppid": 2100866,
+          "cpu_ticks": 183,
+          "threads": 4,
+          "rss_bytes": 354041856
+        }
+      ]
+    },
+    {
+      "wall_seconds": 1.9646347949746996,
+      "processes": [
+        {
+          "pid": 2100891,
+          "ppid": 2100866,
+          "cpu_ticks": 197,
+          "threads": 4,
+          "rss_bytes": 370843648
+        }
+      ]
+    },
+    {
+      "wall_seconds": 2.1077236719429493,
+      "processes": [
+        {
+          "pid": 2100891,
+          "ppid": 2100866,
+          "cpu_ticks": 217,
+          "threads": 7,
+          "rss_bytes": 403398656
+        }
+      ]
+    },
+    {
+      "wall_seconds": 2.2501442519715056,
+      "processes": [
+        {
+          "pid": 2100891,
+          "ppid": 2100866,
+          "cpu_ticks": 291,
+          "threads": 12,
+          "rss_bytes": 444579840
+        }
+      ]
+    },
+    {
+      "wall_seconds": 2.3936223699711263,
+      "processes": [
+        {
+          "pid": 2100891,
+          "ppid": 2100866,
+          "cpu_ticks": 398,
+          "threads": 9,
+          "rss_bytes": 427790336
+        }
+      ]
+    },
+    {
+      "wall_seconds": 2.5424237749539316,
+      "processes": [
+        {
+          "pid": 2100891,
+          "ppid": 2100866,
+          "cpu_ticks": 407,
+          "threads": 4,
+          "rss_bytes": 319459328
+        }
+      ]
+    },
+    {
+      "wall_seconds": 2.6844277950003743,
+      "processes": [
+        {
+          "pid": 2100891,
+          "ppid": 2100866,
+          "cpu_ticks": 407,
+          "threads": 4,
+          "rss_bytes": 319459328
+        },
+        {
+          "pid": 2101622,
+          "ppid": 2100891,
+          "cpu_ticks": 1,
+          "threads": 1,
+          "rss_bytes": 2191360
+        },
+        {
+          "pid": 2101623,
+          "ppid": 2101622,
+          "cpu_ticks": 0,
+          "threads": 1,
+          "rss_bytes": 1105920
+        },
+        {
+          "pid": 2101624,
+          "ppid": 2101623,
+          "cpu_ticks": 75,
+          "threads": 17,
+          "rss_bytes": 174534656
+        }
+      ]
+    },
+    {
+      "wall_seconds": 2.8251323309959844,
+      "processes": [
+        {
+          "pid": 2100891,
+          "ppid": 2100866,
+          "cpu_ticks": 410,
+          "threads": 1,
+          "rss_bytes": 0
+        }
+      ]
+    }
+  ],
+  "binary_sha256": "a89aaa61e56c9b59e49942409b88706df15409d4cd94edd881d889571de73d55",
+  "binary_bytes": 26628680
+}

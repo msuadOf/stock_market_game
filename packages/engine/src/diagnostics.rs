@@ -18,6 +18,8 @@ pub mod causal;
 #[cfg(feature = "simulation-diagnostics")]
 pub mod decision_trace;
 #[cfg(feature = "simulation-diagnostics")]
+mod shared_index;
+#[cfg(feature = "simulation-diagnostics")]
 pub use decision_trace::{NpcDecisionTraceRecord, MAX_NPC_DECISION_TRACE_RECORDS};
 use std::collections::{BTreeMap, BTreeSet};
 

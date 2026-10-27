@@ -35,6 +35,8 @@ mod protocol;
 pub mod bridge;
 pub mod coordinator;
 pub mod decision;
+#[cfg(feature = "simulation-diagnostics")]
+pub mod diagnostics;
 pub mod desk;
 pub mod drive;
 pub mod event_bridge;

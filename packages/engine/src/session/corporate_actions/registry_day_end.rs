@@ -455,3 +455,6 @@ fn reconcile_registry(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod closing_reconciliation_tests;
