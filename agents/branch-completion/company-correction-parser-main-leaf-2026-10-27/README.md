@@ -1,0 +1,9 @@
+# Correction parser 主线精确移植
+
+从main d6204183创建独立topic，精确cherry-pick已获未实施者独立完整复核的新TDD叶片c6c5acc0至451031d7，无冲突。净diff仅两个正式parser/test文件及本主题工作记录；source3d7bc2b/testaf2fc363与已批准原叶片逐字相同，没有手写generated、API或更正生产入口。
+
+真实main supervisor下三job并发验证：Node18/18、strict/noUnused TypeScript包含正式测试、目标oxlint deny-warnings均0；每命令外部10000ms、每Node case10000ms、test-concurrency4。新receipt保存完整命令、源码和PlanId/AccountId/helper哈希；未重复整个B/C。
+
+未实施者sol_resume_independent_review独立核对完整净移植diff和同源blobs，确认PlanId{owner:AccountId,sequence:string}/AccountId字符串与原b9逐字未变，真实main三job收据绑定一致，批准本地FF。新parser原TDD红绿与sparse修复红绿完整留存；旧实现历史红灯缺口不追认。
+
+此裁决仅限输入parser叶片，不声明凭证业务校验、生产更正受理、三host、发布或完整B/C完成；不推送。
