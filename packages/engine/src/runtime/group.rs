@@ -7745,3 +7745,5 @@ mod roster_offset_tests {
 }
 
 mod admin_transaction;
+
+mod admin_funds_cost;

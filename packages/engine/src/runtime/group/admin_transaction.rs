@@ -272,6 +272,10 @@ fn apply_operation(
         return Err(invalid("冻结超过在手持仓"));
     }
     match operation {
+        // P1正式通道红灯占位：只使用唯一真实prepare/inspect/commit/abort，尚不实施资金原语。
+        AdminOperation::PaymentDebit { .. }
+        | AdminOperation::SubscriptionRefund { .. }
+        | AdminOperation::SharesWithCost { .. } => {}
         AdminOperation::CashDividend { amount, .. } => {
             if amount <= 0 {
                 return Err(invalid("股利必须为正分额"));
