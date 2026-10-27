@@ -227,3 +227,68 @@ fn price_tick_execution_phase_keeps_existing_transition_policy() {
     );
     assert_eq!(game.phase(), TradingPhase::ClosingAuction);
 }
+
+/// 下一片复用真实 step_frame callback；不新增伪造 Full 或 retained hook。
+#[test]
+fn day_end_callback_failure_keeps_published_retained_and_old_mirror() {
+    let mut setup = super::npc_working_quote_tests::quote_setup(0);
+    setup.start_date = crate::calendar::CivilDate::from_ymd(2026, 1, 5).unwrap();
+    setup.ticks_per_day = 4;
+    setup.auction_ticks = 1;
+    setup.closing_auction_ticks = 0;
+    let mut game = GameSession::new(setup, 42).unwrap();
+    for _ in 0..3 {
+        game.step_via_runtime().unwrap();
+    }
+    let publication = game
+        .runtime_driver
+        .as_ref()
+        .unwrap()
+        .lock()
+        .unwrap()
+        .publication();
+    let before = publication.load();
+    let mirror = serde_json::to_value(game.snapshot_inner(true, true)).unwrap();
+    let fatal = StepFatal::InvariantViolation {
+        location: "runtime_sync_tests::day_end_callback".to_owned(),
+        description: "retained 发布后最后 callback 拒绝 Full candidate".to_owned(),
+    };
+
+    let failed: Result<((), _), StepFatal> =
+        game.step_frame_and_commit_via_runtime(|projection, facts| {
+            assert_eq!(projection.tick(), 4);
+            projection
+                .project_frame(facts)?
+                .validate()
+                .map_err(|error| StepFatal::InvariantViolation {
+                    location: "runtime_sync_tests::day_end_projection".to_owned(),
+                    description: error.to_string(),
+                })?;
+            Err(fatal.clone())
+        });
+
+    assert_eq!(failed.unwrap_err(), fatal);
+    let published = publication.load();
+    assert_eq!(published.tick, 4, "普通 tick 已发布，不回退");
+    assert_eq!(
+        published.retained.days.len(),
+        before.retained.days.len() + 1,
+        "F1 保留已经发布的真实日结 retained"
+    );
+    assert_eq!(
+        serde_json::to_value(game.snapshot_inner(true, true)).unwrap(),
+        mirror,
+        "F1 candidate 尚未 swap，镜像保持旧来源"
+    );
+    assert_eq!(
+        game.poison_reason(),
+        Some(&fatal),
+        "F1 必须 terminal，不重放已发布市场"
+    );
+    assert!(
+        game.runtime_driver.is_some(),
+        "保留已提交 World 及首错诊断，不能丢弃后重建"
+    );
+    assert_eq!(game.save().unwrap_err(), fatal);
+    assert_eq!(game.step_frame().unwrap_err(), fatal);
+}
