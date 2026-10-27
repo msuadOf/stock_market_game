@@ -12,6 +12,14 @@ use crate::orderbook::{AccountId, OrderId, Side};
 /// 计划模块操作失败。绝不静默吞掉（铁律二），错误携带完整上下文。
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum PlanError {
+    #[error("计划 {plan_id:?} 来源为 {actual:?}，此入口要求 {expected:?}")]
+    WrongOrigin {
+        plan_id: PlanId,
+        expected: super::PlanOrigin,
+        actual: super::PlanOrigin,
+    },
+    #[error("计划 {plan_id:?} 的发行人真实子单来源尚未接线，拒绝安装执行腿或活动票")]
+    IssuerChildNotConnected { plan_id: PlanId },
     #[error("plan {plan_id:?} owner disagrees with account {account:?}")]
     PlanOwnerMismatch { plan_id: PlanId, account: AccountId },
     #[error("duplicate plan identity {plan_id:?}")]

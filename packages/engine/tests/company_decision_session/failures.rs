@@ -30,7 +30,7 @@ fn no_counterparty_means_zero_fills_and_unfilled_plans() {
         }
     }
     assert_eq!(trades, 0, "no counterparty must produce zero fills");
-    for (account, code, _direction, _target, filled, _status) in session.plans_debug() {
+    for (account, code, _direction, _target, filled, _status) in session.investor_plans_debug() {
         assert_eq!(
             filled, 0,
             "plan {code:?} for account {account:?} must not advance without real fills"

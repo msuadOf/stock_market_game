@@ -266,7 +266,7 @@ impl GameSession {
         let plan = self
             .state
             .plans
-            .active_plan(account, code)
+            .active_investor_plan(account, code)
             .filter(|plan| plan.direction() == side)
             .map(|plan| plan.plan_id());
         self.causal_record(CausalFactKind::Submitted(OrderOrigin {

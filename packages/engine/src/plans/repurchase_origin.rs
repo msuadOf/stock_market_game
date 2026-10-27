@@ -4,15 +4,17 @@ use super::{PlanExecutionLeg, PlanId};
 use crate::company::CompanyId;
 use crate::stock::StockId;
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[ts(export)]
 pub enum RepurchaseExecutionStatus {
     Funded,
     Draining,
     Closed,
 }
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq, serde::Serialize)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, serde::Serialize, ts_rs::TS)]
 #[serde(deny_unknown_fields)]
+#[ts(export)]
 pub struct RepurchaseExecutionPlan {
     plan_id: PlanId,
     issuer: CompanyId,
@@ -57,6 +59,7 @@ impl<'de> serde::Deserialize<'de> for RepurchaseExecutionPlan {
 pub enum RepurchaseExecutionPlanError {
     ClosedCannotDrain,
     ClosedWithActiveChild,
+    InvalidExecutionParameters,
 }
 
 impl std::fmt::Display for RepurchaseExecutionPlanError {
@@ -64,6 +67,7 @@ impl std::fmt::Display for RepurchaseExecutionPlanError {
         let message = match self {
             Self::ClosedCannotDrain => "Closed 回购执行计划不能重新进入 Draining",
             Self::ClosedWithActiveChild => "Closed 回购执行计划仍有活动子单余量",
+            Self::InvalidExecutionParameters => "回购执行腿数量、价格或活动余量非法",
         };
         formatter.write_str(message)
     }
@@ -72,6 +76,21 @@ impl std::fmt::Display for RepurchaseExecutionPlanError {
 impl std::error::Error for RepurchaseExecutionPlanError {}
 
 impl RepurchaseExecutionPlan {
+    /// 仅准备未发布的批准候选；调用方须在同一事务核信用并成功 commit 后安装。
+    pub(super) fn for_approval_candidate(
+        plan_id: PlanId,
+        issuer: CompanyId,
+        stock: StockId,
+    ) -> Self {
+        Self {
+            plan_id,
+            issuer,
+            stock,
+            status: RepurchaseExecutionStatus::Funded,
+            execution: None,
+        }
+    }
+
     /// 调用方须先完成并验证资金 commit；本值不会自证资金事实，也不分配身份。
     /// 不得仅凭输入 `PlanId` 调用本构造器并把它当作注资授权。
     pub fn from_committed_funding(
@@ -101,12 +120,20 @@ impl RepurchaseExecutionPlan {
         self.stock
     }
 
+    pub const fn stock_ref(&self) -> &StockId {
+        &self.stock
+    }
+
     pub const fn status(&self) -> RepurchaseExecutionStatus {
         self.status
     }
 
     pub const fn execution(&self) -> Option<PlanExecutionLeg> {
         self.execution
+    }
+
+    pub const fn execution_ref(&self) -> Option<&PlanExecutionLeg> {
+        self.execution.as_ref()
     }
 
     /// 停止续发新 child；重复调用保持 Draining，Closed 为终态。
@@ -125,6 +152,15 @@ impl RepurchaseExecutionPlan {
 
     /// 校验本值类型可自行证明的结构约束，不代替上层资金与真实成交勾稽。
     pub fn validate(&self) -> Result<(), RepurchaseExecutionPlanError> {
+        if self.execution.is_some_and(|leg| {
+            leg.child_qty() == 0
+                || leg.limit_price().cents() <= 0
+                || leg
+                    .active_child_remaining_qty()
+                    .is_some_and(|qty| qty == 0 || qty > leg.child_qty())
+        }) {
+            return Err(RepurchaseExecutionPlanError::InvalidExecutionParameters);
+        }
         if self.status == RepurchaseExecutionStatus::Closed
             && self
                 .execution

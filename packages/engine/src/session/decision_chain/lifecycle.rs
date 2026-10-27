@@ -307,7 +307,7 @@ impl<'a> PlanLifecycleReview<'a> {
             }
             _ => 0,
         };
-        let active = plans.active_plan(id, code).cloned();
+        let active = plans.active_investor_plan(id, code).cloned();
         match active {
             Some(plan) => {
                 let plan_id = plan.plan_id();
@@ -628,6 +628,9 @@ impl<'a> PlanLifecycleReview<'a> {
                 actions.push(PlanLifecycleAction::Revise { plan_id, revision });
             }
             None => {
+                if plans.active_entry(id, code).is_some() {
+                    return actions;
+                }
                 // D3a-2c 件4：开仓分支提取共享（与组线程 Lifecycle 消费同一
                 // 函数）——行为保持（参数自本复核面提取）。
                 let open = open_position_action(

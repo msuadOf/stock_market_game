@@ -236,7 +236,7 @@ impl GameSession {
         let id = ctx.account;
         let held = ctx.held.clone();
         let mut protected = held.clone();
-        protected.extend(plans.active_codes(id).cloned());
+        protected.extend(plans.active_investor_codes(id).cloned());
         let discovered = personal.attention.sample_discovery_stock(
             &observation.market,
             &held,

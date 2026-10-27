@@ -1,14 +1,16 @@
-//! 可跨日的个人交易计划状态机。
+//! 同一身份簿内的个人交易计划与发行人回购授权。
 //!
 //! 纯状态机：转移是 (状态, 事件) 的确定性纯函数，无随机数、无 I/O。
 //! 计划不冻结资产，不建立第二套订单/冻结系统；母单执行子状态
-//! （`PlanExecutionLeg`）唯一保存在 `TradingPlan`，由会话的计划执行路由接线。
+//! （`PlanExecutionLeg`）唯一保存在 `PlanEntry` 对应来源，个人执行由会话计划路由接线。
 //! 预算分配与紧迫度报价决策分别在 allocation 与 urgency 中实现。
 
 mod allocation;
 mod candidates;
+mod entry;
 pub mod quote_policy;
 mod records;
+mod repurchase_origin;
 mod revision;
 mod state;
 pub mod urgency;
@@ -31,7 +33,9 @@ pub use quote_policy::{
     decide_quote, ActiveQuote, BookTop, QuoteAction, QuoteDecision, QuoteDecisionInputs,
     QuoteError, QuoteReason,
 };
+pub use entry::{PlanEntry, PlanOrigin};
 pub use revision::{PlanRevision, RevisionReason, RevisionRecord};
+pub use repurchase_origin::{RepurchaseExecutionPlan, RepurchaseExecutionStatus};
 pub use state::{
     OpinionSource, PauseReason, PlanExecutionLeg, PlanId, PlanOpen, PlanOpinion, PlanStatus,
     PlanTarget, ResumeReason, ReviewConditions, ReviewResources, TerminationReason, TradingPlan,
@@ -49,6 +53,14 @@ use validation::{validate_open, validate_policy};
 
 use crate::account::StockId;
 use crate::orderbook::{AccountId, OrderId, Side};
+
+/// 行政候选中的公司计划开启事实；身份仍由唯一 PlanBook 分配。
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub(crate) struct RepurchaseExecutionOpen {
+    pub owner: AccountId,
+    pub issuer: crate::company::CompanyId,
+    pub stock: StockId,
+}
 
 /// 个人期限按风格为 5/20/60 交易日；风格→期限映射由分析档案派生，这里固定参数。
 pub const HORIZON_TRADING_DAYS_SHORT: u32 = 5;
@@ -166,7 +178,7 @@ pub struct PlanBook {
     policy: PlanPolicy,
     #[ts(as = "Vec<OwnerSequence>")]
     owner_sequences: BTreeMap<AccountId, Option<u64>>,
-    #[ts(as = "Vec<TradingPlan>")]
+    #[ts(as = "Vec<PlanEntry>")]
     plans: records::PlanRecords,
     #[ts(skip)]
     by_account_stock: BTreeMap<AccountId, BTreeMap<StockId, PlanId>>,
@@ -177,7 +189,7 @@ pub struct PlanBook {
 struct PlanBookSave {
     policy: PlanPolicy,
     owner_sequences: Vec<OwnerSequence>,
-    plans: Vec<TradingPlan>,
+    plans: Vec<PlanEntry>,
 }
 
 impl serde::Serialize for PlanBook {
@@ -203,6 +215,123 @@ impl<'de> serde::Deserialize<'de> for PlanBook {
 }
 
 impl PlanBook {
+    /// 准备公司授权条目；只有与资金共同提交的行政候选才能发布 Funded。
+    pub(crate) fn create_issuer_repurchase(
+        &mut self,
+        open: RepurchaseExecutionOpen,
+    ) -> Result<PlanId, PlanError> {
+        let id = self.prepare_identity(open.owner, open.stock)?;
+        let plan = RepurchaseExecutionPlan::for_approval_candidate(id, open.issuer, open.stock);
+        self.install_new_entry(PlanEntry::IssuerRepurchase(plan));
+        Ok(id)
+    }
+
+    fn prepare_identity(&self, owner: AccountId, code: StockId) -> Result<PlanId, PlanError> {
+        if self
+            .by_account_stock
+            .get(&owner)
+            .is_some_and(|stocks| stocks.contains_key(&code))
+        {
+            return Err(PlanError::DuplicateActivePlan {
+                account: owner,
+                code,
+            });
+        }
+        let sequence = match self.owner_sequences.get(&owner) {
+            Some(Some(next)) => *next,
+            Some(None) => return Err(PlanError::PlanSequenceExhausted),
+            None => 0,
+        };
+        Ok(PlanId { owner, sequence })
+    }
+
+    fn install_new_entry(&mut self, entry: PlanEntry) {
+        let id = entry.plan_id();
+        self.owner_sequences
+            .insert(id.owner, id.sequence.checked_add(1));
+        self.by_account_stock
+            .entry(id.owner)
+            .or_default()
+            .insert(*entry.code(), id);
+        self.plans.insert(id, entry);
+    }
+
+    fn investor_mut(&mut self, id: PlanId) -> Result<&mut TradingPlan, PlanError> {
+        let entry = self
+            .plans
+            .get_mut(&id)
+            .ok_or(PlanError::UnknownPlan { plan_id: id })?;
+        match entry {
+            PlanEntry::Investor(plan) => Ok(plan),
+            PlanEntry::IssuerRepurchase(_) => Err(PlanError::WrongOrigin {
+                plan_id: id,
+                expected: PlanOrigin::Investor,
+                actual: PlanOrigin::IssuerRepurchase,
+            }),
+        }
+    }
+
+    fn require_connected_child_origin(&self, id: PlanId) -> Result<(), PlanError> {
+        match self.entry(id)? {
+            PlanEntry::Investor(_) => Ok(()),
+            PlanEntry::IssuerRepurchase(_) => {
+                Err(PlanError::IssuerChildNotConnected { plan_id: id })
+            }
+        }
+    }
+
+    /// 全来源读取；个人入口不能借 Unknown 掩盖公司条目。
+    pub fn entry(&self, id: PlanId) -> Result<&PlanEntry, PlanError> {
+        self.plans
+            .get(&id)
+            .ok_or(PlanError::UnknownPlan { plan_id: id })
+    }
+
+    pub fn active_entry(&self, account: AccountId, code: &StockId) -> Option<&PlanEntry> {
+        let id = self.by_account_stock.get(&account)?.get(code)?;
+        Some(self.entry(*id).expect("活动索引必须对应真实条目"))
+    }
+
+    /// 只用于个人判断的读取面，不将公司授权当个人观点。
+    pub fn investor_plans(&self) -> impl Iterator<Item = &TradingPlan> {
+        self.plans.iter().filter_map(|(_, entry)| match entry {
+            PlanEntry::Investor(plan) => Some(plan),
+            PlanEntry::IssuerRepurchase(_) => None,
+        })
+    }
+
+    pub(crate) fn active_investor_plan_ids_for_account(&self, owner: AccountId) -> Vec<PlanId> {
+        self.active_plan_ids_for_account(owner)
+            .into_iter()
+            .filter(|id| {
+                matches!(
+                    self.entry(*id).expect("活动身份必须存在"),
+                    PlanEntry::Investor(_)
+                )
+            })
+            .collect()
+    }
+
+    /// 两类日终共用同一簿；未接真实来源的公司执行腿不能静默跨日或被清空。
+    pub(crate) fn end_trading_day(&mut self, day: u64) -> Result<(), PlanError> {
+        let mut working = self.clone();
+        for id in self.active_plan_ids() {
+            match self.entry(id)? {
+                PlanEntry::Investor(plan) if !plan.is_terminal() => {
+                    working.apply(id, PlanEvent::TradingDayEnded { trading_day: day })?;
+                }
+                PlanEntry::Investor(_) => {}
+                PlanEntry::IssuerRepurchase(plan) => {
+                    if plan.execution().is_some() {
+                        return Err(PlanError::IssuerChildNotConnected { plan_id: id });
+                    }
+                }
+            }
+        }
+        *self = working;
+        Ok(())
+    }
+
     pub(crate) fn record_resource_review(
         &mut self,
         plan_id: PlanId,
@@ -213,9 +342,7 @@ impl PlanBook {
                 detail: "invalid personal review resource facts".to_owned(),
             });
         }
-        self.plans
-            .get_mut(&plan_id)
-            .ok_or(PlanError::UnknownPlan { plan_id })?
+        self.investor_mut(plan_id)?
             .record_resource_review(resources);
         Ok(())
     }
@@ -228,24 +355,25 @@ impl PlanBook {
         price: crate::Money,
         acquired_count: u32,
     ) -> Result<(), PlanError> {
-        let plan = self
-            .plans
-            .get_mut(&plan_id)
-            .ok_or(PlanError::UnknownPlan { plan_id })?;
+        let plan = self.investor_mut(plan_id)?;
         plan.record_review(trading_day, price, acquired_count)
     }
 
     /// Only live plans participate in decision roots. Historical plan records stay
     /// queryable in `plans` without making every observation scan them.
-    pub(crate) fn active_codes(&self, account: AccountId) -> impl Iterator<Item = &StockId> {
+    pub(crate) fn active_investor_codes(&self, account: AccountId) -> impl Iterator<Item = &StockId> {
         self.by_account_stock
             .get(&account)
             .into_iter()
-            .flat_map(|stocks| stocks.keys())
+            .flat_map(|stocks| stocks.iter())
+            .filter_map(move |(code, id)| match self.entry(*id).expect("活动索引必须对应真实条目") {
+                PlanEntry::Investor(_) => Some(code),
+                PlanEntry::IssuerRepurchase(_) => None,
+            })
     }
 
-    pub(crate) fn active_accounts(&self) -> impl Iterator<Item = AccountId> + '_ {
-        self.by_account_stock.keys().copied()
+    pub(crate) fn active_investor_accounts(&self) -> impl Iterator<Item = AccountId> + '_ {
+        self.by_account_stock.keys().copied().filter(move |owner| self.active_investor_codes(*owner).next().is_some())
     }
 
     /// 以显式政策构造（政策字段立即校验）。
@@ -267,7 +395,7 @@ impl PlanBook {
     pub fn from_parts(
         policy: PlanPolicy,
         owner_sequences: Vec<OwnerSequence>,
-        plans: Vec<TradingPlan>,
+        plans: Vec<PlanEntry>,
     ) -> Result<Self, PlanError> {
         validate_policy(&policy)?;
         let mut owners = std::collections::BTreeSet::new();
@@ -291,27 +419,37 @@ impl PlanBook {
         let mut by_account_stock = BTreeMap::new();
         for plan in &plans {
             let plan_id = plan.plan_id();
-            plan.validate_horizon()?;
-            if plan_id.owner != plan.account() {
-                return Err(PlanError::PlanOwnerMismatch {
-                    plan_id,
-                    account: plan.account(),
-                });
-            }
-            if plan
-                .review()
-                .last_review_price
-                .is_some_and(|price| price.cents() <= 0)
-                || plan
-                    .review()
-                    .last_review_resources
-                    .is_some_and(|resources| !resources.is_valid())
-                || plan.review().last_review_trading_day < plan.created_trading_day()
-                || plan.review().last_review_trading_day > plan.last_event_trading_day()
-            {
-                return Err(PlanError::SaveInconsistent {
-                    detail: format!("plan {plan_id:?} has an invalid review baseline"),
-                });
+            match plan {
+                PlanEntry::Investor(plan) => {
+                    plan.validate_horizon()?;
+                    if plan_id.owner != plan.account() {
+                        return Err(PlanError::PlanOwnerMismatch {
+                            plan_id,
+                            account: plan.account(),
+                        });
+                    }
+                    if plan
+                        .review()
+                        .last_review_price
+                        .is_some_and(|price| price.cents() <= 0)
+                        || plan
+                            .review()
+                            .last_review_resources
+                            .is_some_and(|resources| !resources.is_valid())
+                        || plan.review().last_review_trading_day < plan.created_trading_day()
+                        || plan.review().last_review_trading_day > plan.last_event_trading_day()
+                    {
+                        return Err(PlanError::SaveInconsistent {
+                            detail: format!("plan {plan_id:?} has an invalid review baseline"),
+                        });
+                    }
+                }
+                PlanEntry::IssuerRepurchase(plan) => {
+                    plan.validate()
+                        .map_err(|error| PlanError::SaveInconsistent {
+                            detail: error.to_string(),
+                        })?
+                }
             }
             match sequences.get(&plan_id.owner) {
                 Some(None) => {}
@@ -362,7 +500,7 @@ impl PlanBook {
     }
 
     /// 权威移交的完整部件；不重算游标或替换 policy。
-    pub fn into_parts(self) -> (PlanPolicy, Vec<OwnerSequence>, Vec<TradingPlan>) {
+    pub fn into_parts(self) -> (PlanPolicy, Vec<OwnerSequence>, Vec<PlanEntry>) {
         let sequences = self.owner_sequences().collect();
         let plans = self.plans.iter().map(|(_, plan)| plan.clone()).collect();
         (self.policy, sequences, plans)
@@ -375,41 +513,22 @@ impl PlanBook {
     /// 开一个新计划：同账户+股票存在非终止计划时拒绝；否则分配新 PlanId。
     pub fn create(&mut self, open: PlanOpen) -> Result<PlanId, PlanError> {
         validate_open(&open)?;
-        if self
-            .by_account_stock
-            .get(&open.account)
-            .is_some_and(|by_stock| by_stock.contains_key(&open.code))
-        {
-            return Err(PlanError::DuplicateActivePlan {
-                account: open.account,
-                code: open.code,
-            });
-        }
-        let sequence = match self.owner_sequences.get(&open.account) {
-            Some(Some(next)) => *next,
-            Some(None) => return Err(PlanError::PlanSequenceExhausted),
-            None => 0,
-        };
-        let plan_id = PlanId {
-            owner: open.account,
-            sequence,
-        };
-        let plan = TradingPlan::from_open(plan_id, open, &self.policy)?;
-        self.owner_sequences
-            .insert(plan_id.owner, sequence.checked_add(1));
-        self.by_account_stock
-            .entry(plan.account())
-            .or_default()
-            .insert(plan.code().clone(), plan_id);
-        self.plans.insert(plan_id, plan);
-        Ok(plan_id)
+        let id = self.prepare_identity(open.account, open.code)?;
+        let plan = TradingPlan::from_open(id, open, &self.policy)?;
+        self.install_new_entry(PlanEntry::Investor(plan));
+        Ok(id)
     }
 
     /// 按 id 查询；未知 id 是类型化错误而非静默空值。
     pub fn plan(&self, plan_id: PlanId) -> Result<&TradingPlan, PlanError> {
-        self.plans
-            .get(&plan_id)
-            .ok_or(PlanError::UnknownPlan { plan_id })
+        match self.entry(plan_id)? {
+            PlanEntry::Investor(plan) => Ok(plan),
+            PlanEntry::IssuerRepurchase(_) => Err(PlanError::WrongOrigin {
+                plan_id,
+                expected: PlanOrigin::Investor,
+                actual: PlanOrigin::IssuerRepurchase,
+            }),
+        }
     }
 
     /// 全部历史计划 id（PlanId 升序；存档/诊断用——不暴露内部 map）。
@@ -442,9 +561,12 @@ impl PlanBook {
     }
 
     /// 账户+股票当前的非终止计划（无则 None）。
-    pub fn active_plan(&self, account: AccountId, code: &StockId) -> Option<&TradingPlan> {
+    pub fn active_investor_plan(&self, account: AccountId, code: &StockId) -> Option<&TradingPlan> {
         let plan_id = self.by_account_stock.get(&account)?.get(code)?;
-        self.plans.get(plan_id)
+        match self.entry(*plan_id).expect("活动索引必须对应真实条目") {
+            PlanEntry::Investor(plan) => Some(plan),
+            PlanEntry::IssuerRepurchase(_) => None,
+        }
     }
 
     // ── 母单执行子状态的唯一 owner 入口（ADR-0015 2026-09-10 修订）──
@@ -459,10 +581,8 @@ impl PlanBook {
         limit_price: crate::Money,
         expires_market_minute: u64,
     ) -> Result<(), PlanError> {
-        let plan = self
-            .plans
-            .get_mut(&plan_id)
-            .ok_or(PlanError::UnknownPlan { plan_id })?;
+        self.require_connected_child_origin(plan_id)?;
+        let plan = self.investor_mut(plan_id)?;
         plan.install_execution_leg(child_qty, limit_price, expires_market_minute)
     }
 
@@ -484,10 +604,8 @@ impl PlanBook {
         else {
             return Ok(false);
         };
-        let plan = self
-            .plans
-            .get_mut(&plan_id)
-            .ok_or(PlanError::UnknownPlan { plan_id })?;
+        self.require_connected_child_origin(plan_id)?;
+        let plan = self.investor_mut(plan_id)?;
         if plan.direction() != side || plan.execution().is_none() {
             return Ok(false);
         }
@@ -512,10 +630,8 @@ impl PlanBook {
         else {
             return Ok(false);
         };
-        let plan = self
-            .plans
-            .get_mut(&plan_id)
-            .ok_or(PlanError::UnknownPlan { plan_id })?;
+        self.require_connected_child_origin(plan_id)?;
+        let plan = self.investor_mut(plan_id)?;
         if plan.active_child_order_id() != Some(order_id) {
             return Ok(false);
         }
@@ -533,7 +649,10 @@ impl PlanBook {
         qty: u32,
         trading_day: u64,
     ) -> Result<bool, PlanError> {
-        let Some(plan) = self.active_plan(account, code) else {
+        if let Some(entry) = self.active_entry(account, code) {
+            self.require_connected_child_origin(entry.plan_id())?;
+        }
+        let Some(plan) = self.active_investor_plan(account, code) else {
             return Ok(false);
         };
         if plan.direction() != side || plan.active_child_order_id() != Some(order_id) {
@@ -561,10 +680,8 @@ impl PlanBook {
         plan_id: PlanId,
         remaining: Option<u32>,
     ) -> Result<(), PlanError> {
-        let plan = self
-            .plans
-            .get_mut(&plan_id)
-            .ok_or(PlanError::UnknownPlan { plan_id })?;
+        self.require_connected_child_origin(plan_id)?;
+        let plan = self.investor_mut(plan_id)?;
         let Some(leg) = plan.execution.as_mut() else {
             return Err(PlanError::MissingExecutionLeg { plan_id });
         };
@@ -580,12 +697,10 @@ impl PlanBook {
 
     /// 对一个计划应用一个事件：纯 (状态, 事件) 转移，返回事件后的状态。
     pub fn apply(&mut self, plan_id: PlanId, event: PlanEvent) -> Result<PlanStatus, PlanError> {
-        let plan = self
-            .plans
-            .get_mut(&plan_id)
-            .ok_or(PlanError::UnknownPlan { plan_id })?;
-        let key = (plan.account(), plan.code().clone());
-        let status = Self::apply_to_plan(plan, event, &self.policy)?;
+        let policy = self.policy;
+        let plan = self.investor_mut(plan_id)?;
+        let key = (plan.account(), *plan.code());
+        let status = Self::apply_to_plan(plan, event, &policy)?;
         if plan.is_terminal() {
             self.remove_active_index(key.0, &key.1);
         }
@@ -604,10 +719,7 @@ impl PlanBook {
         let mut outcomes = Vec::with_capacity(events.len());
         for (plan_id, event) in events {
             if !staged.contains_key(plan_id) {
-                let plan = self
-                    .plans
-                    .get(plan_id)
-                    .ok_or(PlanError::UnknownPlan { plan_id: *plan_id })?;
+                let plan = self.plan(*plan_id)?;
                 if plan.is_terminal() {
                     return Err(PlanError::InvalidTransition {
                         plan_id: *plan_id,
@@ -634,7 +746,7 @@ impl PlanBook {
             if plan.is_terminal() {
                 self.remove_active_index(plan.account(), plan.code());
             }
-            self.plans.insert(plan_id, plan);
+            self.plans.insert(plan_id, PlanEntry::Investor(plan));
         }
         Ok(outcomes)
     }
@@ -699,6 +811,9 @@ impl Default for PlanBook {
         Self::new(PlanPolicy::default()).expect("default plan policy is valid by construction")
     }
 }
+
+#[cfg(test)]
+mod origin_tests;
 
 #[cfg(test)]
 mod atomic_event_tests {
@@ -859,7 +974,7 @@ mod atomic_event_tests {
         assert_eq!(plans.active_plan_ids_for_account(AccountId(2)), vec![other]);
         assert_eq!(
             plans
-                .active_codes(AccountId(1))
+                .active_investor_codes(AccountId(1))
                 .cloned()
                 .collect::<Vec<_>>(),
             vec![StockId(0), StockId(1)]
@@ -878,7 +993,7 @@ mod atomic_event_tests {
         );
         assert_eq!(
             restored
-                .active_plan(AccountId(1), &StockId(0))
+                .active_investor_plan(AccountId(1), &StockId(0))
                 .unwrap()
                 .plan_id(),
             successor

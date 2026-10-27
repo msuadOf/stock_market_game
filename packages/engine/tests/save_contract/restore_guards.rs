@@ -135,8 +135,8 @@ fn complete_save_decoding_rejects_zero_and_overflowing_plan_horizons() {
             .unwrap()
             .first_mut()
             .unwrap();
-        plan["created_trading_day"] = serde_json::json!(created);
-        plan["horizon_trading_days"] = serde_json::json!(horizon);
+        plan["Investor"]["created_trading_day"] = serde_json::json!(created);
+        plan["Investor"]["horizon_trading_days"] = serde_json::json!(horizon);
         assert_decode_rejects_with_fault2080(&wire);
         assert!(serde_rejection_text(&wire).contains(reason));
     }

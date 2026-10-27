@@ -113,7 +113,7 @@ fn restore_rejects_duplicate_identity_cursor_missing_cursor_and_owner_mismatch()
     missing["owner_sequences"] = serde_json::json!([]);
     assert!(serde_json::from_value::<PlanBook>(missing).is_err());
     let mut mismatch = original.clone();
-    mismatch["plans"][0]["plan_id"]["owner"] = serde_json::json!("2");
+    mismatch["plans"][0]["Investor"]["plan_id"]["owner"] = serde_json::json!("2");
     assert!(serde_json::from_value::<PlanBook>(mismatch).is_err());
     for bad in [
         serde_json::json!({"policy":PlanPolicy::default(),"next_plan_seq":1,"plans":{}}),
@@ -191,11 +191,15 @@ fn constructor_and_restore_validate_identity_before_building_maps() {
         next_sequence: Some(1),
     }];
     assert_eq!(
-        PlanBook::from_parts(policy, cursors.clone(), vec![plan.clone(), plan.clone()]),
+        PlanBook::from_parts(
+            policy,
+            cursors.clone(),
+            vec![plan.clone().into(), plan.clone().into()]
+        ),
         Err(PlanError::DuplicatePlanIdentity { plan_id: id })
     );
     assert_eq!(
-        PlanBook::from_parts(policy, vec![], vec![plan.clone()]),
+        PlanBook::from_parts(policy, vec![], vec![plan.clone().into()]),
         Err(PlanError::InvalidPlanSequence {
             owner: AccountId(1),
             next_sequence: None
@@ -250,7 +254,10 @@ fn identity_order_and_error_context_keep_both_full_width_components() {
 #[test]
 fn export_bindings_plan_identity() {
     let config = ts_rs::Config::from_env();
-    <PlanBook as ts_rs::TS>::export_all(&config).unwrap();
+    <PlanBook as ts_rs::TS>::export(&config).unwrap();
+    <engine::plans::PlanEntry as ts_rs::TS>::export(&config).unwrap();
+    <engine::plans::RepurchaseExecutionPlan as ts_rs::TS>::export(&config).unwrap();
+    <engine::plans::RepurchaseExecutionStatus as ts_rs::TS>::export(&config).unwrap();
 }
 
 #[test]
@@ -314,5 +321,54 @@ fn identity_and_owner_cursor_wire_cover_javascript_boundary_without_caps() {
         serde_json::json!({"owner":"1","next_sequence":"0","extra":0}),
     ] {
         assert!(serde_json::from_value::<OwnerSequence>(bad).is_err());
+    }
+}
+
+#[test]
+fn origin_mixed_wire_crosses_web_and_returns_to_the_same_rust_decoder() {
+    let mut investor = PlanBook::default();
+    let id = investor.create(open(1, 0)).unwrap();
+    let wire = serde_json::json!({
+        "policy": investor.policy(),
+        "owner_sequences": [
+            {"owner":"1", "next_sequence":"1"},
+            {"owner":"9007199254740993", "next_sequence":"18446744073709551615"},
+            {"owner":"18446744073709551615", "next_sequence":null},
+        ],
+        "plans": [
+            {"Investor":investor.plan(id).unwrap()},
+            {"IssuerRepurchase": {
+                "plan_id":{"owner":"9007199254740993", "sequence":"9007199254740993"},
+                "issuer":3,"stock":7,"status":"Closed","execution":null,
+            }},
+            {"IssuerRepurchase": {
+                "plan_id":{"owner":"9007199254740993", "sequence":"18446744073709551614"},
+                "issuer":3,"stock":7,"status":"Funded","execution":null,
+            }},
+            {"IssuerRepurchase": {
+                "plan_id":{"owner":"18446744073709551615", "sequence":"18446744073709551615"},
+                "issuer":4,"stock":8,"status":"Draining","execution":null,
+            }},
+        ],
+    });
+    let expected: PlanBook =
+        serde_json::from_value(wire.clone()).expect("明确来源的低层mixed wire合法；不表示公司批准");
+    let encoded = serde_json::to_value(&expected).unwrap();
+    assert_eq!(encoded, wire);
+    let decoded: PlanBook = serde_json::from_value(encoded.clone()).unwrap();
+    assert_eq!(decoded, expected);
+    match std::env::var_os("STOCK_GAME_ORIGIN_WIRE_INPUT") {
+        Some(path) => {
+            let bytes = std::fs::read(&path).expect("必须读取本批真实TS输出；不得回退fixture");
+            let returned: PlanBook =
+                serde_json::from_slice(&bytes).expect("真实TS输出必须通过同一Rust decoder");
+            assert_eq!(returned, expected);
+            assert_eq!(serde_json::to_value(returned).unwrap(), wire);
+            println!("ORIGIN_WIRE_READBACK={}", bytes.len());
+        }
+        None => println!(
+            "ORIGIN_WIRE_JSON={}",
+            serde_json::to_string(&encoded).unwrap()
+        ),
     }
 }

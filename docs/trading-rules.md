@@ -189,6 +189,19 @@ T+1、税费、账户资金或股份守恒规则。
 与公司行为日终执行链已经接通，也未开放配股、增发、回购或拆股策略参数；宿主 wire/API
 与 UI 接线由后续批次实现。
 
+## 计划来源与持久化边界（2026-10-28）
+
+同一 `PlanBook` 按 `PlanEntry::Investor` 与 `PlanEntry::IssuerRepurchase` 区分个人交易判断和
+发行人回购授权，共用账户内 `OwnerSequence`、`PlanId` 与 `(account, stock)` 活动索引。
+公司授权没有个人 `opinion`、`confidence_bp`、`urgency` 或持有期，不能以个人判断公式续发；
+同账户同股的两类非终止条目互斥。`Closed` 公司历史保留，后继计划只分配更高 sequence。
+
+当前 wire 的 `plans` 是带唯一外部 tag 的数组；旧裸个人计划、未知或多 tag、缺少游标显式拒绝，
+不提供兼容默认。公共日终档对两种来源都禁止任何 `execution`，WASM 入站保持数组。
+本片只提供共同身份和值恢复：公司 child 安装、真实成交来源与资金/公司授权 binding 尚不支持，
+完整 Session 恢复明确拒绝未能证明已提交 binding 的公司条目。低层 `Funded` 值不代表批准成功或
+资金已经生成；回购制度与资金简化仍以 ADR-0038 和下节官方依据为准。
+
 ## 回购专户的自主交易隔离（2026-10-25 登记）
 
 `AccountKind::IssuerRepurchase` 禁止走普通 NPC 的自主决策下单通道。保留专户 kind、

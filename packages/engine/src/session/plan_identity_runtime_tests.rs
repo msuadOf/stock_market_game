@@ -92,7 +92,7 @@ fn plan_identity_joined_player_plan_and_events_use_tail_group_writer() {
         driver.mutate_plan_book_for_test(owner, Box::new(move |book| { book.create(open(owner, 0)).unwrap(); }));
     }
     session.step().unwrap();
-    let id = session.state.plans.active_plan(owner, &StockId(0)).unwrap().plan_id();
+    let id = session.state.plans.active_investor_plan(owner, &StockId(0)).unwrap().plan_id();
     {
         let mut driver = session.runtime_driver.as_mut().unwrap().lock().unwrap();
         driver.apply_plan_events_for_test(vec![(id, PlanEvent::Terminated {
@@ -104,5 +104,83 @@ fn plan_identity_joined_player_plan_and_events_use_tail_group_writer() {
     let mut driver = session.runtime_driver.as_mut().unwrap().lock().unwrap();
     for (group, book) in driver.collect_plans().unwrap() {
         assert_eq!(book.plan(id).is_ok(), group == 2, "新Player仅由所属末组持有计划");
+    }
+}
+
+#[test]
+fn origin_diagnostics_counts_all_entries_and_personal_view_remains_explicit() {
+    let mut session = GameSession::new(super::npc_working_quote_tests::quote_setup(0), 95).unwrap();
+    let personal = session.state.plans.create(open(AccountId(1), 0)).unwrap();
+    let company = session.state.plans.create_issuer_repurchase(crate::plans::RepurchaseExecutionOpen {
+        owner: AccountId(17), issuer: crate::company::CompanyId(0), stock: StockId(0),
+    }).unwrap();
+    let diagnostic = session.decision_chain_diagnostics();
+    assert_eq!(diagnostic.plan_count, 2);
+    assert_eq!(diagnostic.plans_per_stock[&StockId(0)], 2);
+    assert_eq!(session.investor_plans_debug().len(), 1);
+    let entries = session.plan_entries_debug();
+    assert_eq!(entries.iter().map(|entry| entry.plan_id()).collect::<Vec<_>>(), vec![personal, company]);
+}
+
+include!("../../test-support/simple_company.rs");
+
+fn origin_treasury_setup() -> SessionSetup {
+    let mut setup = super::npc_working_quote_tests::quote_setup(0);
+    setup.company_system = Some(simple_company_fixture!(crate; ["600888"]));
+    setup.dividend_tax_mode = Some(crate::company::CashDividendTaxMode::FlatWithholding);
+    setup.flat_withholding_bp = Some(1_000);
+    setup.par_value_per_share = Some(Money::from_cents(100));
+    setup.issuer_repurchase_enabled = true;
+    setup
+}
+
+#[test]
+fn origin_session_restore_rejects_company_without_committed_funding_binding() {
+    let mut session = GameSession::new(origin_treasury_setup(), 96).unwrap();
+    let owner = session.state.accounts.iter().find_map(|(id, account)| {
+        (account.kind() == AccountKind::IssuerRepurchase).then_some(*id)
+    }).unwrap();
+    session.state.plans.create_issuer_repurchase(crate::plans::RepurchaseExecutionOpen {
+        owner, issuer: crate::company::CompanyId(0), stock: StockId(0),
+    }).unwrap();
+    let saved = session.save().unwrap();
+    let error = GameSession::restore(&saved).err().expect("低层公司条目不等于已提交资金授权");
+    assert!(error.to_string().contains("缺少已提交的资金与公司授权 binding"), "{error}");
+}
+
+#[test]
+fn origin_session_restore_rejects_investor_plan_on_real_treasury_account() {
+    let mut session = GameSession::new(origin_treasury_setup(), 97).unwrap();
+    let owner = session.state.accounts.iter().find_map(|(id, account)| {
+        (account.kind() == AccountKind::IssuerRepurchase).then_some(*id)
+    }).unwrap();
+    session.state.plans.create(open(owner, 0)).unwrap();
+    let saved = session.save().unwrap();
+    let error = GameSession::restore(&saved).err().expect("真实专户不能伪造个人判断");
+    assert!(error.to_string().contains("不能持有 Investor 个人计划"), "{error}");
+}
+
+#[test]
+fn origin_real_next_tick_keeps_unfunded_company_value_out_of_personal_execution() {
+    // 仅验证共同 records 的真实移交；直接创建的低层值没有批准或注资权限。
+    let mut session = GameSession::new(origin_treasury_setup(), 98).unwrap();
+    let owner = session.state.accounts.iter().find_map(|(id, account)| {
+        (account.kind() == AccountKind::IssuerRepurchase).then_some(*id)
+    }).unwrap();
+    let personal = session.state.plans.create(open(AccountId(1), 0)).unwrap();
+    let company = session.state.plans.create_issuer_repurchase(crate::plans::RepurchaseExecutionOpen {
+        owner, issuer: crate::company::CompanyId(0), stock: StockId(0),
+    }).unwrap();
+    let authorization = session.state.plans.entry(company).unwrap().clone();
+    let mut driver = crate::runtime::drive::RuntimeDriver::from_session_grouped(&mut session, 2).unwrap();
+    for _ in 0..2 {
+        driver.step_frame_equivalent(&mut session).unwrap();
+        let mirror = session.take_runtime_plans();
+        assert_eq!(mirror.entry(company).unwrap(), &authorization);
+        assert!(mirror.entry(company).unwrap().execution().is_none());
+        assert_eq!(mirror.plan(personal).unwrap().filled_qty(), 0);
+        assert_eq!(mirror.investor_plans().map(|plan| plan.account()).collect::<Vec<_>>(), vec![AccountId(1)]);
+        assert_eq!(session.state.accounts.get(&owner).unwrap().cash(), Money::ZERO);
+        session.set_runtime_plans(mirror);
     }
 }

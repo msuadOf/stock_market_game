@@ -69,16 +69,16 @@ test("daily archives cannot resume an unfinished intraday execution leg", () => 
     execution: { child_qty: 100, limit_price: "1120", expires_market_minute: 500, active_child_remaining_qty: 100 },
     last_event_trading_day: 3,
   }
-  const withInflightChild = { ...slot, plans: { ...slot.plans, owner_sequences: [{ owner: "1", next_sequence: "2" }], plans: [plan] } }
+  const withInflightChild = { ...slot, plans: { ...slot.plans, owner_sequences: [{ owner: "1", next_sequence: "2" }], plans: [{ Investor: plan }] } }
   assert.throws(() => validate(withInflightChild), /活动委托/)
   // 腿还在但没有在途子单：日终同样必须整体结束执行腿，不能带腿过日。
   const legWithoutChild = { ...withInflightChild, plans: { ...withInflightChild.plans, plans: [
-    { ...plan, active_child_order_id: null, execution: { ...plan.execution, active_child_remaining_qty: null } },
+    { Investor: { ...plan, active_child_order_id: null, execution: { ...plan.execution, active_child_remaining_qty: null } } },
   ] } }
   assert.throws(() => validate(legWithoutChild), /活动委托/)
   // 只有在途子单引用、没有执行腿的旧形态（引擎不会产出）同样拒绝。
   const childWithoutLeg = { ...withInflightChild, plans: { ...withInflightChild.plans, plans: [
-    { ...plan, execution: undefined },
+    { Investor: { ...plan, execution: undefined } },
   ] } }
   assert.throws(() => validate(childWithoutLeg), /活动委托/)
 });

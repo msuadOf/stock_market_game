@@ -12,7 +12,7 @@ type WasmSaveMaps = {
   readonly belief_books: Record<string, unknown>;
   readonly watchlists: Record<string, unknown>;
   readonly price_memories: Record<string, unknown>;
-  readonly plans: { readonly plans: Record<string, unknown> };
+  readonly plans: { readonly plans: readonly unknown[] };
 };
 
 export function normalizePublicReportPage(value: unknown): PublicReportPage {
@@ -89,7 +89,7 @@ export function prepareSaveForWasm<T extends WasmSaveMaps>(slot: T): unknown {
   const beliefBooks = accountMap(slot.belief_books, "个人信念");
   const watchlists = accountMap(slot.watchlists, "个人关注");
   const priceMemories = accountMap(slot.price_memories, "价格记忆");
-  const plans = accountMap(slot.plans.plans, "交易计划");
+  if (!Array.isArray(slot.plans.plans)) throw new Error("交易计划必须是带 origin tag 的数组");
   return {
     ...slot,
     runtime_state: {
@@ -104,7 +104,7 @@ export function prepareSaveForWasm<T extends WasmSaveMaps>(slot: T): unknown {
     price_memories: priceMemories,
     plans: {
       ...slot.plans,
-      plans,
+      plans: slot.plans.plans,
     },
     snapshot: {
       ...slot.snapshot,

@@ -39,7 +39,7 @@ impl GameSession {
         order_id: OrderId,
         qty: u32,
     ) -> Result<(), crate::plans::PlanError> {
-        if let Some(plan) = self.state.plans.active_plan(account, code) {
+        if let Some(plan) = self.state.plans.active_investor_plan(account, code) {
             if plan.active_child_order_id() == Some(order_id) {
                 if plan.direction() != side || plan.active_child_remaining_qty() != Some(qty) {
                     return Err(crate::plans::PlanError::InvalidExecutionParameters {

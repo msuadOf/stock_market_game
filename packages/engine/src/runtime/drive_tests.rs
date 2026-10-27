@@ -687,7 +687,7 @@ fn d3a2c_plans_debug_projects_group_plan_book_at_delivery() {
         "场景须产生至少一个开仓（PlanOpen 落组内 PlanBook）"
     );
     session.set_runtime_plans(plans);
-    let debug = session.plans_debug();
+    let debug = session.investor_plans_debug();
     for (account, code) in &expected {
         assert!(
             debug
@@ -780,7 +780,7 @@ fn d3a3_group_first_child_quote_matches_shared_decide_plan_quote() {
             continue;
         };
         // 找该股的 plan（组簿——生产开仓产物）。
-        let Some(plan) = plans.active_plan(record.account, &crate::StockId(u32::from(*stock)))
+        let Some(plan) = plans.active_investor_plan(record.account, &crate::StockId(u32::from(*stock)))
         else {
             panic!(
                 "受理子单缺对应计划：account={:?} stock={stock}",
@@ -973,7 +973,7 @@ fn d3a3_execution_leg_registers_and_prevents_duplicate_children() {
     // (a) 不重复挂：同 (账户, 股) 的受理子单数==计划数（每计划恰一条
     // 腿；腿清理前不再挂——撤销路径未接，受理数=计划数上界）。
     for ((id, code), count) in &accepted {
-        let active = plans.active_plan(*id, code).is_some();
+        let active = plans.active_investor_plan(*id, code).is_some();
         assert!(
             if active { *count <= 2 } else { *count <= 1 },
             "账户 {id:?} 股 {code:?} 受理 {count} 条（执行腿登记失效=重复挂单）"
@@ -987,7 +987,7 @@ fn d3a3_execution_leg_registers_and_prevents_duplicate_children() {
     for ((id, code), count) in &accepted {
         if *count > 0 {
             let plan = plans
-                .active_plan(*id, code)
+                .active_investor_plan(*id, code)
                 .expect("受理子单的计划在簿");
             assert!(
                 plan.execution().is_some(),
@@ -1491,7 +1491,7 @@ fn solmid_plan_projection_carries_terminal_records() {
     // 交付投影后：session plans 读面（debug）覆盖组簿全部记录——
     // 含 terminal（Completed/Terminated 的 (账户,股) 对仍在册——
     // 最后计划结束后旧镜像不残留的等价读面）。
-    let debug = session.plans_debug();
+    let debug = session.investor_plans_debug();
     for pid in &group_ids {
         let Ok(plan) = group_plans.plan(*pid) else { continue };
         assert!(
@@ -1946,7 +1946,7 @@ fn sol7th_foreign_same_key_fill_does_not_advance_plan_child() {
     /// 照样 Active、下一拍组权威又抹掉，判别力为零。投影 filled 未被
     /// 外来成交推进=身份核生效的直接证据）。
     let session_filled = session
-        .plans_debug()
+        .investor_plans_debug()
         .into_iter()
         .find(|(a, c, ..)| *a == account && *c == code)
         .map(|(.., filled, _)| filled)
@@ -1964,7 +1964,7 @@ fn sol7th_foreign_same_key_fill_does_not_advance_plan_child() {
     driver.install_candles(&mut session).expect("K");
     let plans = driver.collect_plans().expect("权威组簿").remove(0).1;
     let r2 = plans
-        .active_plan(account, &code)
+        .active_investor_plan(account, &code)
         .expect("计划在")
         .active_child_remaining_qty()
         .expect("子单仍在途");
@@ -2162,14 +2162,14 @@ fn d3b2_plan_event_injection_pauses_group_plan() {
     driver.install_market_views(&mut session).expect("行情");
     driver.install_candles(&mut session).expect("K");
     let debug: Vec<_> = session
-        .plans_debug()
+        .investor_plans_debug()
         .into_iter()
         .filter(|(_, _, _, _, _, s)| s.contains("Paused"))
         .collect();
     assert!(
         !debug.is_empty(),
         "注入 Paused 事件经组簿权威投影可见：{:?}",
-        session.plans_debug()
+        session.investor_plans_debug()
     );
     // Abort 冲回（可逆）：注入后在下一拍注入拒绝→回滚→Paused 消失。
     driver.set_world_validator_for_test(Box::new(|_e| Err("注入：拒绝".to_owned())));
@@ -2181,14 +2181,14 @@ fn d3b2_plan_event_injection_pauses_group_plan() {
     // 投影，失败拍只回滚自身变更、不回退会话投影——已提交的 Paused
     // 投影必须在失败拍后保持（若 Abort 错误冲回会话侧已安装状态即红）。
     let after: Vec<_> = session
-        .plans_debug()
+        .investor_plans_debug()
         .into_iter()
         .filter(|(_, _, _, _, _, s)| s.contains("Paused"))
         .collect();
     assert!(
         !after.is_empty(),
         "失败拍不回滚已提交投影：Paused 注入（上一成功拍）在 Abort 后必须仍可见：{:?}",
-        session.plans_debug()
+        session.investor_plans_debug()
     );
 }
 
@@ -2280,7 +2280,7 @@ fn d3b3_paused_plan_with_child_routes_targeted_cancel() {
     driver.install_candles(&mut session).expect("K");
     let plans = driver.collect_plans().expect("撤后组簿").remove(0).1;
     let plan = plans
-        .active_plan(account, &code)
+        .active_investor_plan(account, &code)
         .expect("计划在（Paused 非 terminal）");
     assert!(
         plan.active_child_order_id().is_none(),
@@ -4188,7 +4188,7 @@ fn knife5b_empty_group_book_keeps_session_mirror_on_clear() {
         .find(|(_, p)| p.plan_ids().next().is_some())
         .expect("变化拍全量上行");
     session.set_runtime_plans(plans);
-    let debug_before = session.plans_debug();
+    let debug_before = session.investor_plans_debug();
     assert!(!debug_before.is_empty(), "前置：镜像已安装注入计划");
     // 计划集清空=全员 terminal 化（append-only：terminal 记录仍在
     // plan_ids）——**变化拍**（apply 置 dirty）。
@@ -4216,7 +4216,7 @@ fn knife5b_empty_group_book_keeps_session_mirror_on_clear() {
         .find(|(_, p)| p.plan_ids().next().is_some())
         .expect("上方已判非空");
     session.set_runtime_plans(plans);
-    let debug_after = session.plans_debug();
+    let debug_after = session.investor_plans_debug();
     // 镜像同步为 terminal 簿（非保留旧 Active 值——旧行为=变化拍必装）。
     assert_eq!(
         debug_after.len(),

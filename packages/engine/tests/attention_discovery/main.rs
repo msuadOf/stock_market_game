@@ -388,7 +388,7 @@ fn active_plan_and_held_stocks_survive_prune_and_fade_after_termination() {
             created_trading_day: 1,
         })
         .expect("open plan");
-    assert!(plans.active_plan(npc, &code("600001")).is_some());
+    assert!(plans.active_investor_plan(npc, &code("600001")).is_some());
 
     let mut protected: BTreeSet<_> = [code("600300")].into_iter().collect(); // 持仓
     protected.insert(code("600001")); // 活跃计划
@@ -416,7 +416,7 @@ fn active_plan_and_held_stocks_survive_prune_and_fade_after_termination() {
             },
         )
         .expect("terminate plan");
-    assert!(plans.active_plan(npc, &code("600001")).is_none());
+    assert!(plans.active_investor_plan(npc, &code("600001")).is_none());
     let held_only: BTreeSet<_> = [code("600300")].into_iter().collect();
     watchlist.prune(&held_only);
     assert!(

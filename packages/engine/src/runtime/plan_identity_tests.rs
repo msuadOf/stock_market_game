@@ -180,3 +180,22 @@ fn tail_owner_force_and_defer_due_change_only_the_addressed_account() {
     assert_eq!(after[1].1[0].1, u64::MAX, "未被force的另一组账户保持原调度");
     assert_ne!(after[2].1[0].1, u64::MAX, "末组owner在真实Start执行后重排下一due");
 }
+
+#[test]
+fn origin_mixed_shards_merge_entries_and_history_cursors_without_reallocating_identity() {
+    let roster = [AccountId(0), AccountId(1), AccountId(17)];
+    let mut book = PlanBook::default();
+    book.create(open(AccountId(1), 0)).unwrap();
+    let company = book.create_issuer_repurchase(crate::plans::RepurchaseExecutionOpen {
+        owner: AccountId(17), issuer: crate::company::CompanyId(3), stock: StockId(1),
+    }).unwrap();
+    let shards = super::plan_ownership::split(book.clone(), &roster, 2, 2).unwrap();
+    assert!(matches!(shards[1].entry(company), Ok(crate::plans::PlanEntry::IssuerRepurchase(_))));
+    assert!(shards[0].entry(company).is_err());
+    let merged = super::plan_ownership::merge(
+        shards.into_iter().enumerate().map(|(group, shard)| (group as u16, shard)).collect(),
+        &roster, 2, 2, *book.policy(),
+    ).unwrap();
+    assert_eq!(merged, book);
+    assert_eq!(serde_json::to_value(merged).unwrap(), serde_json::to_value(book).unwrap());
+}
