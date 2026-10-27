@@ -2873,3 +2873,21 @@ thread_local! {
         Option<std::sync::Arc<std::sync::Mutex<(usize, usize, usize)>>>
     > = const { std::cell::RefCell::new(None) };
 }
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod sync_input_tests;
+
+impl RuntimeDriver {
+    /// E1 生产接线首红读面；返回真实覆盖表数量与私有输入序号。
+    #[cfg(test)]
+    fn pending_sync_inputs_for_test(&self) -> (usize, usize, usize, bool, u64) {
+        (0, 0, 0, false, 0)
+    }
+}
+
+impl RuntimeDriver {
+    #[cfg(all(test, not(target_arch = "wasm32")))]
+    fn pending_sync_values_for_test(&self) -> sync_input_tests::SyncValuesForTest {
+        Default::default()
+    }
+}
