@@ -1,0 +1,11 @@
+
+running 1 test
+test admin_tax_projection::tests::real_tax_only_commit_preserves_id_operation_order_and_complete_accounts ... FAILED
+
+failures:
+
+failures:
+    admin_tax_projection::tests::real_tax_only_commit_preserves_id_operation_order_and_complete_accounts
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

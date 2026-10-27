@@ -1,0 +1,1 @@
+{"pid": 2570402, "parentPid": 2570362, "argv": ["/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/engine-006444ae8c4f3292", "company::cash_dividend_tax::day_boundary::tests::actual_reg_prepare_zero_market_day_advances_tax_and_binds_exact_plan_capture", "--exact", "--test-threads=1", "--nocapture"], "exit": 0, "seconds": 0.013731077007832937}

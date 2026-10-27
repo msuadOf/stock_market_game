@@ -1,0 +1,26 @@
+{
+  "label": "red-01",
+  "rlib_binding": "/data1/baiyifan/workplace/stock_market_game/agents/branch-completion/main-current-normal-rlib-2026-10-26/artifact-binding.json",
+  "build": {
+    "argv": [
+      "rustc",
+      "--test",
+      "--edition=2021",
+      "-C",
+      "codegen-units=8",
+      "-C",
+      "debuginfo=0",
+      "-C",
+      "opt-level=0",
+      "--extern",
+      "engine=/data1/baiyifan/workplace/stock_market_game/.tmp/main-current-normal-rlib-2026-10-26/artifacts/libengine-e024975623ca4b70.rlib",
+      "-L",
+      "dependency=/data1/baiyifan/workplace/stock_market_game/.tmp/main-current-normal-rlib-2026-10-26/target/debug/deps",
+      "/data1/baiyifan/workplace/stock_market_game/.worktree/tax-admin-projection/agents/branch-completion/tax-admin-projection/resume-2026-10-27/harness.rs",
+      "-o",
+      "/tmp/tax-admin-projection-red-01"
+    ],
+    "exit": 1,
+    "wall_seconds": 0.35395966400392354
+  }
+}

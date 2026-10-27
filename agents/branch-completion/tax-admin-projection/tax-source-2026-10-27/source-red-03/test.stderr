@@ -1,0 +1,5 @@
+
+thread 'company::cash_dividend_tax::day_boundary::tests::actual_reg_prepare_zero_market_day_advances_tax_and_binds_exact_plan_capture' (2194541) panicked at /tmp/tax-source-source-red-03/company/cash_dividend_tax/day_boundary_tests.rs:24:105:
+已完成普通零日也必须推进税日: MissingSource("真实 ordinary 来源尚未实现")
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+bounded command exited with 101

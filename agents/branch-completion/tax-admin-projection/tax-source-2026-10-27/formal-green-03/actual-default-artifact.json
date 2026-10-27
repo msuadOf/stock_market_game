@@ -1,0 +1,142 @@
+{
+  "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/engine-006444ae8c4f3292",
+  "sha256": "24b05e43284149f68d48a0f6c8c1b8ce69dc3442a3180cfcb940f0910e37a608",
+  "fresh": false,
+  "bytes": 600689024,
+  "features": [],
+  "sourceReceipt": "/data1/baiyifan/workplace/stock_market_game/.worktree/tax-admin-projection/agents/branch-completion/tax-admin-projection/tax-source-2026-10-27/formal-green-03/batch-receipt.json",
+  "sourceReceiptSha256": "299af308e4321b4b77de32cd0e32c13cbafcbf8efddb3e1cc64e05e2d148f412",
+  "cleanup": {
+    "session": 70330,
+    "waitExit": 0,
+    "wallSeconds": 99.4846200190077,
+    "observedUnix": 1793127999.2686608,
+    "owned": [
+      {
+        "pid": 2559614,
+        "alive": false
+      },
+      {
+        "pid": 2560238,
+        "alive": false
+      },
+      {
+        "pid": 2560521,
+        "alive": false
+      },
+      {
+        "pid": 2560528,
+        "alive": false
+      },
+      {
+        "pid": 2560540,
+        "alive": false
+      },
+      {
+        "pid": 2561764,
+        "alive": false
+      },
+      {
+        "pid": 2570214,
+        "alive": false
+      },
+      {
+        "pid": 2570221,
+        "alive": false
+      },
+      {
+        "pid": 2570222,
+        "alive": false
+      },
+      {
+        "pid": 2570361,
+        "alive": false
+      },
+      {
+        "pid": 2570362,
+        "alive": false
+      },
+      {
+        "pid": 2570367,
+        "alive": false
+      },
+      {
+        "pid": 2570376,
+        "alive": false
+      },
+      {
+        "pid": 2570381,
+        "alive": false
+      },
+      {
+        "pid": 2570382,
+        "alive": false
+      },
+      {
+        "pid": 2570388,
+        "alive": false
+      },
+      {
+        "pid": 2570396,
+        "alive": false
+      },
+      {
+        "pid": 2570401,
+        "alive": false
+      },
+      {
+        "pid": 2570402,
+        "alive": false
+      },
+      {
+        "pid": 2570403,
+        "alive": false
+      },
+      {
+        "pid": 2570404,
+        "alive": false
+      },
+      {
+        "pid": 2570408,
+        "alive": false
+      },
+      {
+        "pid": 2570409,
+        "alive": false
+      },
+      {
+        "pid": 2570410,
+        "alive": false
+      },
+      {
+        "pid": 2570412,
+        "alive": false
+      },
+      {
+        "pid": 2570440,
+        "alive": false
+      },
+      {
+        "pid": 2570441,
+        "alive": false
+      },
+      {
+        "pid": 2570442,
+        "alive": false
+      },
+      {
+        "pid": 2570455,
+        "alive": false
+      },
+      {
+        "pid": 2570456,
+        "alive": false
+      },
+      {
+        "pid": 2570457,
+        "alive": false
+      }
+    ],
+    "alive": []
+  }
+}

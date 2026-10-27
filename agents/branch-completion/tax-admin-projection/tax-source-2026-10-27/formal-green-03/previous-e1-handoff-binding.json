@@ -1,0 +1,14 @@
+[
+  {
+    "path": "/data1/baiyifan/workplace/stock_market_game/.worktree/runtime-sync-e1/agents/perf-intraday-independent/implementation/e2/e1-production-input-green/tmpfs-batch-receipt.json",
+    "sha256": "6bd721d5d1de3dcd2ad28b69524a9f28c4f631ac07cda38cfcb25df9a7c78af9"
+  },
+  {
+    "path": "/data1/baiyifan/workplace/stock_market_game/.worktree/runtime-sync-e1/agents/perf-intraday-independent/implementation/e2/e1-production-input-green/default-guard-receipt.json",
+    "sha256": "1abc3e1c98604caadcb0df36e77208abd1008a35df5d7c9a13fafb50b51c6300"
+  },
+  {
+    "path": "/data1/baiyifan/workplace/stock_market_game/.worktree/runtime-sync-e1/agents/perf-intraday-independent/implementation/e2/e1-production-input-green/cleanup-observation.json",
+    "sha256": "80a2ade554069ce162da2151947d58e1f66253263256da3d171f599d7ebeb36e"
+  }
+]
