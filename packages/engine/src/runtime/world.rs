@@ -1305,8 +1305,6 @@ impl World {
         let mut out = Vec::with_capacity(self.n_groups);
         let mut left = self.n_groups;
         let mut seen_groups = std::collections::BTreeSet::new();
-        let expected_locals: Vec<std::collections::BTreeSet<_>> = payload.attentions.iter()
-            .map(|rows| rows.iter().map(|(local, _, _)| *local).collect()).collect();
         while left > 0 {
             match recv_deadline(&self.up_rx, Phase::Drain, &self.watchdog)? {
                 UpMsg::GroupPlans { group, plans } => {
@@ -1485,6 +1483,8 @@ impl World {
         let mut out = Vec::with_capacity(self.n_groups);
         let mut left = self.n_groups;
         let mut seen_groups = std::collections::BTreeSet::new();
+        let expected_locals: Vec<std::collections::BTreeSet<_>> = payload.attentions.iter()
+            .map(|rows| rows.iter().map(|(local, _, _)| *local).collect()).collect();
         while left > 0 {
             match recv_deadline(&self.up_rx, Phase::Drain, &self.watchdog)? {
                 UpMsg::GroupDeliveryDone { group, updates } => {
