@@ -4098,7 +4098,73 @@
   "mainHelperRepository": "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25",
   "mainHelperHead": "8e5b32de305257b7cb9aeb284d19551cdf3ce2c3",
   "protectedPrior": {
-    "pendingSlotHandoff": true,
-    "source": "等待root前槽真实default与稳定seal身份，不自行build"
-  }
+    "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/engine-006444ae8c4f3292",
+    "bytes": 613306496,
+    "sha256": "0c36d7c2d76e7b21065ebb38697589fecd47eae12eb492c550e4224352256821",
+    "sealedExisting": "/tmp/stock-market-game-validation-2026-10-27-1311109/origin-green-main8e5-r1-2026-10-28/sealed-origin-green-engine",
+    "source": "W1formal03 actualwait20726 EXIT1/owned[]/ECHILD/tmpAbsent；native4全前后SHA未改，复用Origin既有defaultseal不重复copy"
+  },
+  "protectedPriorInventory": [
+    {
+      "kind": "default",
+      "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/engine-006444ae8c4f3292",
+      "bytes": 613306496,
+      "sha256": "0c36d7c2d76e7b21065ebb38697589fecd47eae12eb492c550e4224352256821",
+      "existingSeal": "/tmp/stock-market-game-validation-2026-10-27-1311109/origin-green-main8e5-r1-2026-10-28/sealed-origin-green-engine",
+      "independentInode": true,
+      "ino": 67593,
+      "sealIno": 67603,
+      "afterBytes": 613306496,
+      "afterSha256": "0c36d7c2d76e7b21065ebb38697589fecd47eae12eb492c550e4224352256821",
+      "sealAfterBytes": 613306496,
+      "sealAfterSha256": "0c36d7c2d76e7b21065ebb38697589fecd47eae12eb492c550e4224352256821",
+      "unchanged": true
+    },
+    {
+      "kind": "plan_identity",
+      "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/plan_identity-886c0566202829ce",
+      "bytes": 306830872,
+      "sha256": "b58b425dfa9852eb20b90e08d73acdd4a597796001bf153658f83a77a1e9748f",
+      "existingSeal": "/tmp/stock-market-game-validation-2026-10-27-1311109/origin-green-main8e5-r1-2026-10-28/sealed-origin-green-plan_identity",
+      "independentInode": true,
+      "ino": 67419,
+      "sealIno": 67602,
+      "afterBytes": 306830872,
+      "afterSha256": "b58b425dfa9852eb20b90e08d73acdd4a597796001bf153658f83a77a1e9748f",
+      "sealAfterBytes": 306830872,
+      "sealAfterSha256": "b58b425dfa9852eb20b90e08d73acdd4a597796001bf153658f83a77a1e9748f",
+      "unchanged": true
+    },
+    {
+      "kind": "plans",
+      "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/plans-3db8006bb1341b1f",
+      "bytes": 290765504,
+      "sha256": "d9b98b9401cee60ce3b38944ea79586a902bab5100f3eb6100a015b4f46bae18",
+      "existingSeal": "/tmp/stock-market-game-validation-2026-10-27-1311109/origin-green-main8e5-r1-2026-10-28/sealed-origin-green-plans",
+      "independentInode": true,
+      "ino": 67418,
+      "sealIno": 67601,
+      "afterBytes": 290765504,
+      "afterSha256": "d9b98b9401cee60ce3b38944ea79586a902bab5100f3eb6100a015b4f46bae18",
+      "sealAfterBytes": 290765504,
+      "sealAfterSha256": "d9b98b9401cee60ce3b38944ea79586a902bab5100f3eb6100a015b4f46bae18",
+      "unchanged": true
+    },
+    {
+      "kind": "feature",
+      "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/engine-6ae3f608f3352a4a",
+      "bytes": 623454832,
+      "sha256": "a30ef7b8cf373fdea165e971bca60c36674ddaca69fe6092caa736354a2a2b4b",
+      "existingSeal": "/tmp/stock-market-game-validation-2026-10-27-1311109/d3-npc-causal-provenance-green-v2-2026-10-28/sealed-actual-feature",
+      "independentInode": true,
+      "ino": 64978,
+      "sealIno": 64979,
+      "afterBytes": 623454832,
+      "afterSha256": "a30ef7b8cf373fdea165e971bca60c36674ddaca69fe6092caa736354a2a2b4b",
+      "sealAfterBytes": 623454832,
+      "sealAfterSha256": "a30ef7b8cf373fdea165e971bca60c36674ddaca69fe6092caa736354a2a2b4b",
+      "unchanged": true
+    }
+  ],
+  "priorBatchReceipt": "/data1/baiyifan/workplace/stock_market_game/agents/branch-completion/wasm-w1/resume-2026-10-28/formal-03-post-wait-integrity.json"
 }

@@ -1,6 +1,16 @@
 # 公司六项只读查询的三宿主注册
 
-## 当前状态
+## 最新状态（2026-10-28）
+
+engine 首红十例已真实完成并由未实施 Sol 终核：九个指定 query 业务断言红、一个严格请求绿，构建与执行约 92.285 秒，893 项源码前后一致，已观察进程及 scratch 收口。实际 red／prior 单件均已封存，原件见 [engine-red-01](engine-red-01/)。
+
+六项只读 dispatch、Server 当前 membership／HTTP 注册、Tauri actor／IPC 注册、WASM registry／export 代码已落在本地候选 `cef172e6`，十四产品路径完整 diff 获两名未实施 Sol 的源码预审；首次实际四包编译暴露该预审漏掉的 Tauri 类型错误，不能将静态结论视为编译通过。
+
+首次四包批次 `four-host-green-01` 的 session `32018` 实际退出 `1`，耗时 92.326 秒：`lookup_handles` 返回 `SendCommandError`，而新增 `CompanyReadIpcError::Session.message` 需要 `String`，在 Tauri `lib.rs:240` 发生 E0308。没有执行十八个 case，也没有产生 wire fixture。三个已编 unit 仅作为 partial artifact 在原共享截止内独立封存；观察到的进程与 scratch 已清理，编译时段已交 root 指定的 E2。
+
+当前 `green-candidate-v3` 仅将该错误显式转为 `error.to_string()`，保留具体原因；六项 query、owner 与领域算法未改。`four-host-green-02` 保持 1001 项输入／8 项 runner、唯一 RAM target、j8／INC0／原 debug2、十八个短 exact、共享 297／299／300 秒绝对截止，仅更换本批输出目录；slot 与实际前槽身份 pending，等待 root 在 E2 之后重新分配，不提前 Cargo。成功后的真实 engine／Server HTTP／Tauri IPC JSON 将交 B/C 消费，WASM 真实 export／浏览器仍由 B/C／W1 实际制品门验证。
+
+## 准备过程（保留历史）
 
 截至本记录写入：只有测试、显式 stub、接口 enum 与设计审查记录；尚未运行 Cargo，尚未取得实际红／绿，尚未完成三宿主注册，也未交付真实 wire fixture。root 独占 RAM target 的队列正在处理其他批次。本任务不自行启动 Cargo／metadata。
 

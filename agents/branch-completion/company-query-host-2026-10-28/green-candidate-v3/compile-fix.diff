@@ -1,0 +1,15 @@
+diff --git a/apps/desktop/src-tauri/src/lib.rs b/apps/desktop/src-tauri/src/lib.rs
+index c63db209..adc4e0ae 100644
+--- a/apps/desktop/src-tauri/src/lib.rs
++++ b/apps/desktop/src-tauri/src/lib.rs
+@@ -237,7 +237,9 @@ async fn company_read_query(
+ ) -> Result<actor::CompanyReadResponse, CompanyReadIpcError> {
+     let handles = lookup_handles(&state, &session_id)
+         .await
+-        .map_err(|message| CompanyReadIpcError::Session { message })?;
++        .map_err(|error| CompanyReadIpcError::Session {
++            message: error.to_string(),
++        })?;
+     let generation =
+         parse_generation(generation).map_err(|message| CompanyReadIpcError::Session { message })?;
+     handles

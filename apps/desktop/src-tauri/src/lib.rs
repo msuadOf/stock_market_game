@@ -237,7 +237,9 @@ async fn company_read_query(
 ) -> Result<actor::CompanyReadResponse, CompanyReadIpcError> {
     let handles = lookup_handles(&state, &session_id)
         .await
-        .map_err(|message| CompanyReadIpcError::Session { message })?;
+        .map_err(|error| CompanyReadIpcError::Session {
+            message: error.to_string(),
+        })?;
     let generation =
         parse_generation(generation).map_err(|message| CompanyReadIpcError::Session { message })?;
     handles
