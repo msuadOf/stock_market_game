@@ -1,0 +1,2 @@
+2970594 1009769    1 50.0       00:00 /bin/zsh -lc ps -eo pid,ppid,nlwp,pcpu,etime,args | rg '/company-catalog-a/target|cargo test -p engine --lib --test company_catalog_view' | cut -c 1-265 | head -8 > agents/branch-completion/company-catalog-a/green-build-cpu-sam
+2970597 2970594    1  0.0       00:00 rg /company-catalog-a/target|cargo test -p engine --lib --test company_catalog_view

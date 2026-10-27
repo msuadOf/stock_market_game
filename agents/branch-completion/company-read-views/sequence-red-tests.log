@@ -1,0 +1,21 @@
+
+running 1 test
+test latest_collection_uses_operation_sequence_after_valid_same_day_receipts_reordering ... FAILED
+
+failures:
+
+---- latest_collection_uses_operation_sequence_after_valid_same_day_receipts_reordering stdout ----
+
+thread 'latest_collection_uses_operation_sequence_after_valid_same_day_receipts_reordering' (2068029) panicked at packages/engine/tests/session_company_read_views.rs:516:5:
+assertion `left == right` failed
+  left: Some(TaxCollectionReceipt { operation_seq: 1, event_id: "first", day: CivilDate { year: 2030, month: 1, day: 1 }, available_cash: Money(1), collected: Money(0), remaining_cash: Money(1), outstanding: ExactDividendTaxAmount { numerator: 0, denominator: 1 }, needs_funds: false })
+ right: Some(TaxCollectionReceipt { operation_seq: 2, event_id: "second", day: CivilDate { year: 2030, month: 1, day: 1 }, available_cash: Money(2), collected: Money(0), remaining_cash: Money(2), outstanding: ExactDividendTaxAmount { numerator: 0, denominator: 1 }, needs_funds: false })
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    latest_collection_uses_operation_sequence_after_valid_same_day_receipts_reordering
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 10 filtered out; finished in 0.00s
+
+bounded command exited with 101

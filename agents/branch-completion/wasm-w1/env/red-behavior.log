@@ -1,0 +1,221 @@
+✔ 真实 WASM import 保留 i64 BigInt 与最高位为 1 的完整 W (3.694732ms)
+✖ 未绑定调用显式报错，shared memory 和一次绑定是硬合同 (1.904398ms)
+✖ wait 实际按完整 W 和 BigInt 超时比较，并拒绝非法转换 (0.464164ms)
+✖ 地址必须覆盖完整对齐共享字，grow 后 wait/notify 读取新 buffer (0.450503ms)
+✖ main 不可 wait，ingress 可 futex 但不可发线程控制 (0.351661ms)
+✖ layout 来自导出且一次装入，校验跨语言布局、header 和当前范围 (0.429023ms)
+✖ H5 同步复制 fatal UTF-8 名称，保留消息 slot/gen 且不猜当前槽 (0.273038ms)
+✖ exit 仅记录不可变身份匹配意图，重复/缺失/角色错误均拒绝 (0.260518ms)
+✖ terminate 只向主线程发控制且 postControl 原始错误不丢失 (0.32799ms)
+✖ notify 唤醒同一共享字的全部等待者 (0.64397ms)
+✖ 绑定拒绝未知角色和无效 child 身份，layout 使用装入时的值快照 (0.408852ms)
+✖ wait 把真实共享字唤醒映射为 0 (38.752884ms)
+✔ env 模块导出全部槽协议 import 名（否则 wasm 实例化 link error） (1.819915ms)
+✔ 槽协议环境函数在未装配的宿主上显式失败，不静默成功 (0.621649ms)
+ℹ tests 14
+ℹ suites 0
+ℹ pass 3
+ℹ fail 11
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 258.091393
+
+✖ failing tests:
+
+test at apps/web/src/host/facade-thread-binding.test.ts:50:1
+✖ 未绑定调用显式报错，shared memory 和一次绑定是硬合同 (1.904398ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /未绑定/. Input:
+  
+  'Error: facade_thread_env.facade_futex_wait：当前宿主尚未装配 supervisor/子 Worker/bootstrap，槽协议路径不可达——这是构建形态违约而非运行时容错（设计 §12-14，阶段边界见 agents/wasm-thread-r4a/）'
+  
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/wasm-w1-env/apps/web/src/host/facade-thread-binding.test.ts:52:10)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: Error: facade_thread_env.facade_futex_wait：当前宿主尚未装配 supervisor/子 Worker/bootstrap，槽协议路径不可达——这是构建形态违约而非运行时容错（设计 §12-14，阶段边界见 agents/wasm-thread-r4a/）
+        at facadeUnsupported (file:///data1/baiyifan/workplace/stock_market_game/.worktree/wasm-w1-env/apps/web/src/host/engine-clock-env.ts:44:9)
+        at Object.facade_futex_wait (file:///data1/baiyifan/workplace/stock_market_game/.worktree/wasm-w1-env/apps/web/src/host/engine-clock-env.ts:52:10)
+        at file:///data1/baiyifan/workplace/stock_market_game/.worktree/wasm-w1-env/apps/web/src/host/facade-thread-binding.test.ts:52:31
+        at getActual (node:assert:586:5)
+        at strict.throws (node:assert:734:24)
+        at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/wasm-w1-env/apps/web/src/host/facade-thread-binding.test.ts:52:10)
+        at Test.runInAsyncScope (node:async_hooks:226:14)
+        at Test.run (node:internal/test_runner/test:1201:25)
+        at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+        at Test.postRun (node:internal/test_runner/test:1330:19),
+    expected: /未绑定/,
+    operator: 'throws',
+    diff: 'simple'
+  }
+
+test at apps/web/src/host/facade-thread-binding.test.ts:66:1
+✖ wait 实际按完整 W 和 BigInt 超时比较，并拒绝非法转换 (0.464164ms)
+  Error: facade_thread_env.facade_futex_wait：当前宿主尚未装配 supervisor/子 Worker/bootstrap，槽协议路径不可达——这是构建形态违约而非运行时容错（设计 §12-14，阶段边界见 agents/wasm-thread-r4a/）
+      at facadeUnsupported (file:///data1/baiyifan/workplace/stock_market_game/.worktree/wasm-w1-env/apps/web/src/host/engine-clock-env.ts:44:9)
+      at facade_futex_wait (file:///data1/baiyifan/workplace/stock_market_game/.worktree/wasm-w1-env/apps/web/src/host/engine-clock-env.ts:52:10)
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/wasm-w1-env/apps/web/src/host/facade-thread-binding.test.ts:70:16)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7)
+
+test at apps/web/src/host/facade-thread-binding.test.ts:81:1
+✖ 地址必须覆盖完整对齐共享字，grow 后 wait/notify 读取新 buffer (0.450503ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /地址|wordAddr/. Input:
+  
+  'Error: facade_thread_env.facade_futex_wait：当前宿主尚未装配 supervisor/子 Worker/bootstrap，槽协议路径不可达——这是构建形态违约而非运行时容错（设计 §12-14，阶段边界见 agents/wasm-thread-r4a/）'
+  
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/wasm-w1-env/apps/web/src/host/facade-thread-binding.test.ts:84:12)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: Error: facade_thread_env.facade_futex_wait：当前宿主尚未装配 supervisor/子 Worker/bootstrap，槽协议路径不可达——这是构建形态违约而非运行时容错（设计 §12-14，阶段边界见 agents/wasm-thread-r4a/）
+        at facadeUnsupported (file:///data1/baiyifan/workplace/stock_market_game/.worktree/wasm-w1-env/apps/web/src/host/engine-clock-env.ts:44:9)
+        at Object.facade_futex_wait (file:///data1/baiyifan/workplace/stock_market_game/.worktree/wasm-w1-env/apps/web/src/host/engine-clock-env.ts:52:10)
+        at file:///data1/baiyifan/workplace/stock_market_game/.worktree/wasm-w1-env/apps/web/src/host/facade-thread-binding.test.ts:84:33
+        at getActual (node:assert:586:5)
+        at strict.throws (node:assert:734:24)
+        at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/wasm-w1-env/apps/web/src/host/facade-thread-binding.test.ts:84:12)
+        at Test.runInAsyncScope (node:async_hooks:226:14)
+        at Test.run (node:internal/test_runner/test:1201:25)
+        at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+        at Test.postRun (node:internal/test_runner/test:1330:19),
+    expected: /地址|wordAddr/,
+    operator: 'throws',
+    diff: 'simple'
+  }
+
+test at apps/web/src/host/facade-thread-binding.test.ts:92:1
+✖ main 不可 wait，ingress 可 futex 但不可发线程控制 (0.351661ms)
+  Error: facade_thread_env.facade_futex_wait：当前宿主尚未装配 supervisor/子 Worker/bootstrap，槽协议路径不可达——这是构建形态违约而非运行时容错（设计 §12-14，阶段边界见 agents/wasm-thread-r4a/）
+      at facadeUnsupported (file:///data1/baiyifan/workplace/stock_market_game/.worktree/wasm-w1-env/apps/web/src/host/engine-clock-env.ts:44:9)
+      at Object.facade_futex_wait (file:///data1/baiyifan/workplace/stock_market_game/.worktree/wasm-w1-env/apps/web/src/host/engine-clock-env.ts:52:10)
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/wasm-w1-env/apps/web/src/host/facade-thread-binding.test.ts:95:24)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7)
+
+test at apps/web/src/host/facade-thread-binding.test.ts:102:1
+✖ layout 来自导出且一次装入，校验跨语言布局、header 和当前范围 (0.429023ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /layout|布局/. Input:
+  
+  'Error: W1-1 binding 尚未实现'
+  
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/wasm-w1-env/apps/web/src/host/facade-thread-binding.test.ts:104:10)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: Error: W1-1 binding 尚未实现
+        at Object.pending (file:///data1/baiyifan/workplace/stock_market_game/.worktree/wasm-w1-env/apps/web/src/host/facade-thread-binding.ts:6:11)
+        at file:///data1/baiyifan/workplace/stock_market_game/.worktree/wasm-w1-env/apps/web/src/host/facade-thread-binding.test.ts:104:31
+        at getActual (node:assert:586:5)
+        at strict.throws (node:assert:734:24)
+        at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/wasm-w1-env/apps/web/src/host/facade-thread-binding.test.ts:104:10)
+        at Test.runInAsyncScope (node:async_hooks:226:14)
+        at Test.run (node:internal/test_runner/test:1201:25)
+        at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+        at Test.postRun (node:internal/test_runner/test:1330:19)
+        at Test.run (node:internal/test_runner/test:1258:12),
+    expected: /layout|布局/,
+    operator: 'throws',
+    diff: 'simple'
+  }
+
+test at apps/web/src/host/facade-thread-binding.test.ts:124:1
+✖ H5 同步复制 fatal UTF-8 名称，保留消息 slot/gen 且不猜当前槽 (0.273038ms)
+  Error: W1-1 binding 尚未实现
+      at Object.pending (file:///data1/baiyifan/workplace/stock_market_game/.worktree/wasm-w1-env/apps/web/src/host/facade-thread-binding.ts:6:11)
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/wasm-w1-env/apps/web/src/host/facade-thread-binding.test.ts:126:11)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7)
+
+test at apps/web/src/host/facade-thread-binding.test.ts:142:1
+✖ exit 仅记录不可变身份匹配意图，重复/缺失/角色错误均拒绝 (0.260518ms)
+  Error: W1-1 binding 尚未实现
+      at Object.pending (file:///data1/baiyifan/workplace/stock_market_game/.worktree/wasm-w1-env/apps/web/src/host/facade-thread-binding.ts:6:11)
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/wasm-w1-env/apps/web/src/host/facade-thread-binding.test.ts:144:11)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7)
+
+test at apps/web/src/host/facade-thread-binding.test.ts:158:1
+✖ terminate 只向主线程发控制且 postControl 原始错误不丢失 (0.32799ms)
+  Error: facade_thread_env.facade_terminate_child：当前宿主尚未装配 supervisor/子 Worker/bootstrap，槽协议路径不可达——这是构建形态违约而非运行时容错（设计 §12-14，阶段边界见 agents/wasm-thread-r4a/）
+      at facadeUnsupported (file:///data1/baiyifan/workplace/stock_market_game/.worktree/wasm-w1-env/apps/web/src/host/engine-clock-env.ts:44:9)
+      at Object.facade_terminate_child (file:///data1/baiyifan/workplace/stock_market_game/.worktree/wasm-w1-env/apps/web/src/host/engine-clock-env.ts:72:3)
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/wasm-w1-env/apps/web/src/host/facade-thread-binding.test.ts:160:11)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7)
+
+test at apps/web/src/host/facade-thread-binding.test.ts:170:1
+✖ notify 唤醒同一共享字的全部等待者 (0.64397ms)
+  Error: facade_thread_env.facade_futex_notify：当前宿主尚未装配 supervisor/子 Worker/bootstrap，槽协议路径不可达——这是构建形态违约而非运行时容错（设计 §12-14，阶段边界见 agents/wasm-thread-r4a/）
+      at facadeUnsupported (file:///data1/baiyifan/workplace/stock_market_game/.worktree/wasm-w1-env/apps/web/src/host/engine-clock-env.ts:44:9)
+      at Object.facade_futex_notify (file:///data1/baiyifan/workplace/stock_market_game/.worktree/wasm-w1-env/apps/web/src/host/engine-clock-env.ts:57:3)
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/wasm-w1-env/apps/web/src/host/facade-thread-binding.test.ts:181:11)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7)
+
+test at apps/web/src/host/facade-thread-binding.test.ts:185:1
+✖ 绑定拒绝未知角色和无效 child 身份，layout 使用装入时的值快照 (0.408852ms)
+  AssertionError [ERR_ASSERTION]: Missing expected exception.
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/wasm-w1-env/apps/web/src/host/facade-thread-binding.test.ts:194:12)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: /角色|bootstrap|workerId|slot/,
+    operator: 'throws',
+    diff: 'simple'
+  }
+
+test at apps/web/src/host/facade-thread-binding.test.ts:206:1
+✖ wait 把真实共享字唤醒映射为 0 (38.752884ms)
+  Error: facade_thread_env.facade_futex_wait：当前宿主尚未装配 supervisor/子 Worker/bootstrap，槽协议路径不可达——这是构建形态违约而非运行时容错（设计 §12-14，阶段边界见 agents/wasm-thread-r4a/）
+      at facadeUnsupported (file:///data1/baiyifan/workplace/stock_market_game/.worktree/wasm-w1-env/apps/web/src/host/engine-clock-env.ts:44:9)
+      at Object.facade_futex_wait (file:///data1/baiyifan/workplace/stock_market_game/.worktree/wasm-w1-env/apps/web/src/host/engine-clock-env.ts:52:10)
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/wasm-w1-env/apps/web/src/host/facade-thread-binding.test.ts:219:26)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7)
+bounded command exited with 1

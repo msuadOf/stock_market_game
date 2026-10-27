@@ -1,0 +1,67 @@
+✔ shared frontend plan owns install, threaded WASM, copy, TypeScript, Vite and release checks on every host (19.411161ms)
+✔ native UI builds use the same frontend command factory with isolated staging (2.651286ms)
+[frontend build] pnpm install --frozen-lockfile
+[frontend build] wasm-pack build apps/web-wasm --target web --release --out-dir /home/baiyifan/.claude/tmp/frontend-build-l81Swh/apps/web-wasm/wasm-pack-output/frontend/wasm/pkg
+[frontend build] /home/linuxbrew/.linuxbrew/Cellar/node/25.8.2/bin/node /home/baiyifan/.claude/tmp/frontend-build-l81Swh/scripts/check-web-release-wasm.mjs /home/baiyifan/.claude/tmp/frontend-build-l81Swh/apps/web-wasm/wasm-pack-output/frontend/wasm/pkg
+[frontend build] copy-wasm /home/baiyifan/.claude/tmp/frontend-build-l81Swh/apps/web
+[frontend build] /home/linuxbrew/.linuxbrew/Cellar/node/25.8.2/bin/node /home/baiyifan/.claude/tmp/frontend-build-l81Swh/apps/web/node_modules/typescript/bin/tsc --build --force
+[frontend build] /home/linuxbrew/.linuxbrew/Cellar/node/25.8.2/bin/node /home/baiyifan/.claude/tmp/frontend-build-l81Swh/apps/web/node_modules/vite/bin/vite.js build --outDir /home/baiyifan/.claude/tmp/frontend-build-l81Swh/apps/web/dist
+[frontend build] /home/linuxbrew/.linuxbrew/Cellar/node/25.8.2/bin/node /home/baiyifan/.claude/tmp/frontend-build-l81Swh/scripts/check-web-release-wasm.mjs /home/baiyifan/.claude/tmp/frontend-build-l81Swh/apps/web/dist
+[frontend build] pnpm install --frozen-lockfile
+[frontend build] pnpm install --frozen-lockfile
+[frontend build] wasm-pack build apps/web-wasm --target web --release --out-dir /home/baiyifan/.claude/tmp/frontend-build-l81Swh/apps/web-wasm/wasm-pack-output/frontend/wasm/pkg
+[frontend build] /home/linuxbrew/.linuxbrew/Cellar/node/25.8.2/bin/node /home/baiyifan/.claude/tmp/frontend-build-l81Swh/scripts/check-web-release-wasm.mjs /home/baiyifan/.claude/tmp/frontend-build-l81Swh/apps/web-wasm/wasm-pack-output/frontend/wasm/pkg
+✔ WASM copy replaces stale generated files only after source checks succeed (1563.913941ms)
+✔ frontend entry supervises the whole build once, and dry-run creates nothing (3.055156ms)
+✔ frontend parser rejects duplicate, unsafe and native-only options (0.631825ms)
+✔ Pages frontend explicitly uses repository base and production pages mode, without changing ordinary builds (1.336003ms)
+[frontend build] pnpm install --frozen-lockfile
+[frontend build] wasm-pack build apps/web-wasm --target web --release --out-dir /home/baiyifan/.claude/tmp/frontend-link-Oe5yk2/apps/web-wasm/wasm-pack-output/frontend/wasm/pkg
+[frontend build] /home/linuxbrew/.linuxbrew/Cellar/node/25.8.2/bin/node /home/baiyifan/.claude/tmp/frontend-link-Oe5yk2/scripts/check-web-release-wasm.mjs /home/baiyifan/.claude/tmp/frontend-link-Oe5yk2/apps/web-wasm/wasm-pack-output/frontend/wasm/pkg
+[frontend build] copy-wasm /home/baiyifan/.claude/tmp/frontend-link-Oe5yk2/apps/web
+✔ WASM copy refuses a symlink destination without changing the referenced files (355.322828ms)
+✔ legacy shell and batch frontend entries delegate to the shared build instead of duplicating it (1.580509ms)
+[frontend build] pnpm install --frozen-lockfile
+[frontend build] wasm-pack build apps/web-wasm --target web --release --out-dir /data1/baiyifan/workplace/stock_market_game/.worktree/w0l-gate/.tmp/w0l-frontend-license-R0WGkJ/apps/web-wasm/wasm-pack-output/frontend/wasm/pkg
+✔ frontend 构建在 LICENSE 变更后阻断后续复制 (5.601199ms)
+✔ wasm-pack 构建显式补齐并验证实际 pkg/LICENSE (35.148202ms)
+✔ wasm-pack 在执行前拒绝 LICENSE 同文件别名：absolute (3.487066ms)
+✔ wasm-pack 在执行前拒绝 LICENSE 同文件别名：relative (3.560089ms)
+✔ wasm-pack 在执行前拒绝 LICENSE 同文件别名：symlink-chain (3.712412ms)
+✔ wasm-pack 在执行前拒绝 LICENSE 同文件别名：hardlink (4.801479ms)
+✔ wasm-pack 在执行前拒绝 LICENSE 同文件别名：pkg-symlink (3.299032ms)
+✔ wasm-pack 在执行前拒绝 LICENSE 同文件别名：pkg-hardlink (3.021275ms)
+✔ LICENSE 源完整性失败阻断构建：missing-before (2.683377ms)
+✔ LICENSE 源完整性失败阻断构建：empty-before (2.569083ms)
+✔ LICENSE 源完整性失败阻断构建：changed-after (3.364713ms)
+✔ LICENSE 源完整性失败阻断构建：empty-after (3.000015ms)
+✔ LICENSE 源完整性失败阻断构建：missing-after (3.24147ms)
+✔ LICENSE 源完整性失败阻断构建：changed-failure (3.20461ms)
+✔ wasm-pack 失败保留错误且不发布 pkg/LICENSE (3.983559ms)
+✔ 构建后产生的 LICENSE 别名在显式 copy 前被拒绝 (3.665071ms)
+✔ out-dir 的目录符号链也不能把 wasm-pack LICENSE 指向源文件 (4.374469ms)
+✔ 构建替换同内容源文件后仍拒绝新 inode 的 pkg hardlink 别名 (4.594934ms)
+✔ out-dir 本身是目录符号链时按真实父目录检查 alias (3.673022ms)
+✔ 畸形源 LICENSE 目录在执行前显式拒绝 (2.458411ms)
+✔ 畸形产物 LICENSE 目录阻断成功返回且不损坏源 (3.670961ms)
+✔ wasm-pack 部分产物失败不会补发 LICENSE (3.555718ms)
+✔ LICENSE gate 拒绝已漂移的 manifest 或非预期 wasm-pack 参数 (2.783089ms)
+✔ wasm-pack 产生的空 pkg/LICENSE 被显式纠正 (4.899911ms)
+✔ wasm-pack 产生的错误 pkg/LICENSE 被显式纠正 (4.718307ms)
+✔ 编译失败同时源 LICENSE 被修改时保留两项原始错误 (3.816685ms)
+✔ 拒绝 package LICENSE 的非源 symlink，避免改写无关文件 (5.681081ms)
+✔ 拒绝 package LICENSE 的非源 hardlink，避免改写无关文件 (3.455356ms)
+✔ 拒绝 package LICENSE 的非源 dangling-symlink，避免改写无关文件 (3.201539ms)
+✔ 拒绝 wasm-pack LICENSE 的非源 symlink，避免改写无关文件 (2.927033ms)
+✔ 拒绝 wasm-pack LICENSE 的非源 hardlink，避免改写无关文件 (2.972473ms)
+✔ 拒绝 wasm-pack LICENSE 的非源 dangling-symlink，避免改写无关文件 (2.723828ms)
+✔ 构建后新出现的非源 pkg LICENSE symlink 也不能被显式 copy 改写 (3.673141ms)
+✔ 构建后新出现的非源 pkg LICENSE hardlink 也不能被显式 copy 改写 (3.63284ms)
+ℹ tests 42
+ℹ suites 0
+ℹ pass 42
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 2101.54007

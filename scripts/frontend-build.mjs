@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { executeBuildCommand, parseBuildArgs } from "./build-targets.mjs";
 import { createFrontendCommands } from "./frontend-build-plan.mjs";
 import { runBoundedCommand } from "./run-with-deadline.mjs";
+import { executeWasmPackBuild } from "./wasm-pack-build.mjs";
 
 const rootDirectory = path.resolve(import.meta.dirname, "..");
 
@@ -71,7 +72,8 @@ export async function executeFrontendBuild(plan, { commandRunner = executeBuildC
       await ensureDirectory(plan.root, destination);
       await rm(destination, { recursive: true });
       await cp(plan.wasmPackage, destination, { recursive: true, errorOnExist: true, force: false });
-    } else await commandRunner(command);
+    } else if (command.command === "wasm-pack") await executeWasmPackBuild(plan.root, command, commandRunner);
+    else await commandRunner(command);
   }
 }
 

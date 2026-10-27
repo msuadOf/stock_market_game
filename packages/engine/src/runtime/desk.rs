@@ -330,8 +330,6 @@ struct DrainMarketSnapshot {
     market: DeskMarket,
     candles_len: usize,
     rolled_day_bars: Option<Vec<super::protocol::MinuteBarFact>>,
-    rolled_day_stats: Option<(i64, u64)>,
-    rolled_day_candle: Option<DeskCandle>,
     drain_cleared_closing: Option<super::protocol::DeskDayCandleFinal>,
     bars_shipped_today: bool,
     opening_cleared: bool,
@@ -425,26 +423,20 @@ pub struct DeskState {
     /// /收盘清算——成交归固定分钟 565/900；None=连续竞价按 tick 推导墙钟
     /// 分钟）。置/清由两条清算路径的调用者承担；rollback 统一复位。
     clearing_minute: Option<(u16, super::protocol::MinuteBarPhase)>,
-    /// B2：跨日暂存桶（生产时序 roll_day 先于日结 Drain——tick=tpd 首
-    /// 拍清当日桶；暂存待 Drain 应答捎带，冻结链才能拿到完整当日桶
-    /// ＋收盘清算 900 桶）。每日结消费一次。
+    /// 日末清算后随 roll 暂存的完整当日分钟K桶；Drain 应答恰一次取走。
     rolled_day_bars: Option<Vec<super::protocol::MinuteBarFact>>,
-    /// 日界批：跨日暂存的日内段成交统计（额/笔——`roll_day` 清零前的
-    /// `turnover_today`/`trade_count`；量在归档 K 内）。`drain_all` 收盘
-    /// 段 unroll 还原当日累计用；与 `rolled_day_bars` 同生命周期。
-    rolled_day_stats: Option<(i64, u64)>,
-    /// 日界批：roll_day 归档的当日 K 暂存（unroll 还原活动位用——不经
-    /// `candles.pop`，杜绝预置历史误取；与 `rolled_day_bars` 成对）。
-    rolled_day_candle: Option<DeskCandle>,
-    /// 日界批：本 Drain 收盘清算产出的当日终 K（含收盘段；reroll 写入、
-    /// `DeskDrained` 应答取走。None=本次 Drain 未执行收盘清算（closing=0
-    /// 几何/未跨日手动日结）——应答不带终 K，install 面维持既有形态）。
+    /// 日末清算后的真实终 K（含收盘量额笔）；Drain 应答恰一次取走。
+    /// closing=0 或日中手动 Drain 不生成此收盘清算投影。
     drain_cleared_closing: Option<super::protocol::DeskDayCandleFinal>,
     /// B2：当日桶已随 Drain 捎带（未跨日手动日结形态——防后续 roll_day
     /// 把已捎带的桶再暂存造成下次日结双计；roll_day 重置）。
     bars_shipped_today: bool,
     /// 本 tick 双腿成交事实缓冲（出口随 DeskReport；Abort 清空）。
     trade_facts: Vec<super::protocol::DeskTradeFact>,
+    retail_facts: Vec<super::retail_lifecycle::RawFact>,
+    /// 本轮因果事实，随报告 move；Abort 时丢弃。
+    #[cfg(feature = "simulation-diagnostics")]
+    causal_facts: Vec<super::diagnostics::DeskCausalFact>,
     /// 本 tick 生命周期事实缓冲（受理/撤单/到期）。
     lifecycle_facts: Vec<super::protocol::DeskLifecycleFact>,
     /// 本 tick 竞价事实缓冲。
@@ -633,11 +625,12 @@ impl DeskState {
             opening_cleared: false,
             clearing_minute: None,
             rolled_day_bars: None,
-            rolled_day_stats: None,
-            rolled_day_candle: None,
             drain_cleared_closing: None,
             bars_shipped_today: false,
             trade_facts: Vec::new(),
+            retail_facts: Vec::new(),
+            #[cfg(feature = "simulation-diagnostics")]
+            causal_facts: Vec::new(),
             lifecycle_facts: Vec::new(),
             auction_facts: Vec::new(),
             self_asks: std::collections::HashMap::new(),
@@ -766,8 +759,6 @@ impl DeskState {
             },
             candles_len: m.candles.len(),
             rolled_day_bars: self.rolled_day_bars.clone(),
-            rolled_day_stats: self.rolled_day_stats,
-            rolled_day_candle: self.rolled_day_candle,
             drain_cleared_closing: self.drain_cleared_closing,
             bars_shipped_today: self.bars_shipped_today,
             opening_cleared: self.opening_cleared,
@@ -823,8 +814,6 @@ impl DeskState {
                     prior.candles = history;
                     self.market = prior;
                     self.rolled_day_bars = s.rolled_day_bars;
-                    self.rolled_day_stats = s.rolled_day_stats;
-                    self.rolled_day_candle = s.rolled_day_candle;
                     self.drain_cleared_closing = s.drain_cleared_closing;
                     self.bars_shipped_today = s.bars_shipped_today;
                     self.opening_cleared = s.opening_cleared;
@@ -861,6 +850,9 @@ impl DeskState {
             *f = false;
         }
         self.trade_facts.clear();
+        self.retail_facts.clear();
+        #[cfg(feature = "simulation-diagnostics")]
+        self.causal_facts.clear();
         self.lifecycle_facts.clear();
         self.auction_facts.clear();
         self.cur_tick = self.committed_tick;
@@ -1108,11 +1100,33 @@ impl DeskState {
                     price,
                     qty,
                     purse,
+                    #[cfg(feature = "simulation-diagnostics")]
+                    source,
                 } => {
-                    self.place(tick, owner, side, price, qty, purse)?;
+                    self.place(
+                        tick,
+                        owner,
+                        side,
+                        price,
+                        qty,
+                        purse,
+                        #[cfg(feature = "simulation-diagnostics")]
+                        source,
+                    )?;
                 }
-                DeskIn::CancelAll { owner } => self.cancel_all_for(tick, owner),
-                DeskIn::Cancel { owner, order } => self.cancel_one(tick, owner, order)?,
+                DeskIn::CancelAll { owner } => self.cancel_all_for(tick, owner)?,
+                DeskIn::Cancel {
+                    owner,
+                    order,
+                    #[cfg(feature = "simulation-diagnostics")]
+                    source,
+                } => self.cancel_one(
+                    tick,
+                    owner,
+                    order,
+                    #[cfg(feature = "simulation-diagnostics")]
+                    source,
+                )?,
             }
         }
         Ok(())
@@ -1128,6 +1142,7 @@ impl DeskState {
         rp: RoutedPrice,
         qty: u32,
         purse: i64,
+        #[cfg(feature = "simulation-diagnostics")] source: super::diagnostics::OperationSource,
     ) -> Result<(), RuntimeError> {
         // D5 复核（off-by-one 对齐）：本拍处理的委托属上一收束点到本拍
         // 的相位窗——旧管线 step(N) 的受理判定用 phase(N-1)（PreOpen 拒
@@ -1211,6 +1226,19 @@ impl DeskState {
                 ),
             });
         }
+        // 先验证深度及本单的增量上界；后续成交只会减量，post Quote 不新增溢出点。
+        #[cfg(feature = "simulation-diagnostics")]
+        let causal_before = {
+            let before = self.causal_quote()?;
+            let depth = match side {
+                Side::Buy => before.bid_depth,
+                Side::Sell => before.ask_depth,
+            };
+            depth.checked_add(u64::from(qty)).ok_or_else(|| RuntimeError::ProtocolInvariant {
+                detail: format!("causal Quote 申报增量溢出：stock={} qty={qty}", self.setup.stock),
+            })?;
+            before
+        };
         // Sol 三轮修复 2（即时单序号推进）：申报取号即消费（A 股语义：
         /// 每笔申报消耗一个序号）——此前仅在挂簿路径（rest_inner）推进，
         /// 即成/即撤的即时单不推进，同账户同股连续两笔空盘市价单产生
@@ -1243,6 +1271,25 @@ impl DeskState {
             charged_transfer_fee: 0,
             expire_tick: tick.saturating_add(self.setup.order_ttl_ticks),
         };
+        self.retail_facts.push(super::retail_lifecycle::RawFact::Submitted {
+            order: order_ref, owner, side, qty,
+        });
+        #[cfg(feature = "simulation-diagnostics")]
+        {
+            self.note_causal(super::diagnostics::DeskCausalKind::Submitted {
+                order: order_ref,
+                owner,
+                side,
+                qty,
+                source,
+                before: causal_before,
+            });
+            if is_market || phase != DeskPhase::Continuous {
+                self.note_causal(super::diagnostics::DeskCausalKind::Unsupported {
+                    detail: "Market或非连续申报生命周期尚未接通",
+                });
+            }
+        }
         match phase {
             DeskPhase::CallAuction | DeskPhase::ClosingAuction => {
                 // 集合竞价：只积累不撮合（受理价已解析——purse 先收敛）。
@@ -1252,7 +1299,10 @@ impl DeskState {
             }
             DeskPhase::PreOpen | DeskPhase::Continuous => {
                 let mut order = order;
-                self.match_incoming(tick, &mut order)?;
+                self.match_incoming(tick, &mut order,
+                    #[cfg(feature = "simulation-diagnostics")]
+                    if phase == DeskPhase::Continuous && !is_market { Some(causal_before) } else { None },
+                )?;
                 if order.qty == 0 {
                     // 全成：purse slack（最坏情况预留 − 实际扣费）退款 + Closed。
                     self.close_order_entities(&order);
@@ -1270,7 +1320,43 @@ impl DeskState {
                 }
             }
         }
+        #[cfg(feature = "simulation-diagnostics")]
+        self.note_causal(super::diagnostics::DeskCausalKind::Quote(
+            self.causal_quote()?,
+        ));
         Ok(())
+    }
+
+    /// 精确读取单股全簿深度；仅 feature on，成本为 O(本股挂单数)。
+    #[cfg(feature = "simulation-diagnostics")]
+    fn causal_quote(&self) -> Result<super::diagnostics::DeskQuote, RuntimeError> {
+        let depth = |book: &BTreeMap<i64, VecDeque<DeskOrder>>| {
+            book.values()
+                .flat_map(|level| level.iter())
+                .try_fold(0u64, |total, order| {
+                    total.checked_add(u64::from(order.qty)).ok_or_else(|| {
+                        RuntimeError::ProtocolInvariant {
+                            detail: format!("causal Quote 深度溢出：stock={}", self.setup.stock),
+                        }
+                    })
+                })
+        };
+        Ok(super::diagnostics::DeskQuote {
+            bid_cents: self.bids.keys().next_back().copied(),
+            ask_cents: self.asks.keys().next().copied(),
+            bid_depth: depth(&self.bids)?,
+            ask_depth: depth(&self.asks)?,
+        })
+    }
+
+    #[cfg(feature = "simulation-diagnostics")]
+    fn note_causal(&mut self, kind: super::diagnostics::DeskCausalKind) {
+        self.causal_facts.push(super::diagnostics::DeskCausalFact {
+            tick: self.cur_tick,
+            round: self.cur_round,
+            stock: self.setup.stock,
+            kind,
+        });
     }
 
     /// 记录受理事实（Accepted）。
@@ -1289,6 +1375,10 @@ impl DeskState {
 
     /// 记录终结事实（Cancelled/Expired）。
     fn note_terminated(&mut self, order: &DeskOrder, kind: super::protocol::LifecycleKind) {
+        self.retail_facts.push(super::retail_lifecycle::RawFact::Terminated {
+            order: order.order_ref, owner: order.owner, qty: order.qty,
+            end: super::retail_lifecycle::Termination::Canceled,
+        });
         self.lifecycle_facts
             .push(super::protocol::DeskLifecycleFact {
                 stock: self.setup.stock,
@@ -1352,7 +1442,9 @@ impl DeskState {
     }
 
     /// 连续竞价撮合：逐档吃对面最优（价格时间优先），成交价取 maker 价。
-    fn match_incoming(&mut self, _tick: u64, order: &mut DeskOrder) -> Result<(), RuntimeError> {
+    fn match_incoming(&mut self, _tick: u64, order: &mut DeskOrder,
+        #[cfg(feature = "simulation-diagnostics")] causal_before: Option<super::diagnostics::DeskQuote>,
+    ) -> Result<(), RuntimeError> {
         loop {
             if order.qty == 0 {
                 break;
@@ -1402,7 +1494,9 @@ impl DeskState {
             let fill_qty = order.qty.min(maker.qty);
             // 连续竞价：成交价=maker 价（对手档申报价，价格改善归 taker）。
             let maker_price = maker.price;
-            self.settle_fill(order, maker, fill_qty, maker_price)?;
+            self.settle_fill(order, maker, fill_qty, maker_price,
+                #[cfg(feature = "simulation-diagnostics")] causal_before,
+            )?;
         }
         Ok(())
     }
@@ -1418,6 +1512,7 @@ impl DeskState {
         maker: DeskOrder,
         qty: u32,
         fill_price: i64,
+        #[cfg(feature = "simulation-diagnostics")] causal_before: Option<super::diagnostics::DeskQuote>,
     ) -> Result<(), RuntimeError> {
         // 刀 2a：成交行情写（last/high/low/量/额/K 演进）。
         self.bump_market_ver();
@@ -1597,6 +1692,10 @@ impl DeskState {
         // 方向统一 (sell_ref, buy_ref)——owner 已固定 (seller, buyer)，
         // 序号按原始方向交换会使主动卖时身份核跳过合法计划成交）。
         let (maker_order, taker_order) = (sell_ref, buy_ref);
+        let trade_ordinal = u64::try_from(self.trade_facts.len()).map_err(|_| over("trade ordinal 溢出"))?;
+        self.retail_facts.push(super::retail_lifecycle::RawFact::TradeRef { ordinal: trade_ordinal });
+        #[cfg(feature = "simulation-diagnostics")]
+        let causal_ordinal = trade_ordinal;
         self.trade_facts.push(super::protocol::DeskTradeFact {
             stock: self.setup.stock,
             price,
@@ -1621,6 +1720,20 @@ impl DeskState {
             maker_order_serial: (u64::from(maker_order.0) << 32) | maker_order.1,
             taker_order_serial: (u64::from(taker_order.0) << 32) | taker_order.1,
         });
+        #[cfg(feature = "simulation-diagnostics")]
+        if let Some(before) = causal_before {
+            use super::diagnostics::{DeskCausalKind, DeskExecutionLeg};
+            self.note_causal(DeskCausalKind::Execution {
+                ordinal: causal_ordinal,
+                seller: DeskExecutionLeg { order: sell_ref, owner: sell_owner, value_before: sell_filled_before },
+                buyer: DeskExecutionLeg { order: buy_ref, owner: buy_owner, value_before: buy_filled_before },
+                qty, price_cents: price, side: taker_side, before,
+            });
+        } else {
+            self.note_causal(super::diagnostics::DeskCausalKind::Unsupported {
+                detail: "本切片尚未接通的Filled/Execution类型",
+            });
+        }
         // 实体互换：买方得股票、卖方得净额。
         let bg = buy_owner.0 as usize;
         self.out[bg].push(Entity::BoughtShares {
@@ -1921,7 +2034,7 @@ impl DeskState {
 
     /// 对齐撤单：撤该 owner 全部挂单（实体原路回流）。撤单窗口门禁在组端不知相位，
     /// 由交易部统一裁决。
-    fn cancel_all_for(&mut self, tick: u64, owner: Owner) {
+    fn cancel_all_for(&mut self, tick: u64, owner: Owner) -> Result<(), RuntimeError> {
         // D5 off-by-one 对齐：撤单门禁与受理同窗（phase(tick-1)）。
         let allowed = self.setup.allows_cancel(tick.saturating_sub(1));
         let targets: Vec<DeskOrder> = self
@@ -1933,7 +2046,7 @@ impl DeskState {
             .cloned()
             .collect();
         if targets.is_empty() {
-            return;
+            return Ok(());
         }
         if !allowed {
             for o in targets {
@@ -1943,19 +2056,37 @@ impl DeskState {
                     kind: ReceiptKind::CancelWindowClosed,
                 });
             }
-            return;
+            return Ok(());
         }
+        // 单线程纯删除：先验总深度，随后每次 post Quote 不会新增溢出。
+        #[cfg(feature = "simulation-diagnostics")]
+        self.causal_quote()?;
         for o in targets {
             self.note_terminated(&o, super::protocol::LifecycleKind::Cancelled);
             self.remove_order(&o);
             self.close_order_entities(&o);
             self.cancelled_orders += 1;
             self.undo.push(DeskUndo::Cancelled(1));
+            #[cfg(feature = "simulation-diagnostics")]
+            {
+                self.note_causal(super::diagnostics::DeskCausalKind::Cancelled {
+                    order: o.order_ref, owner, qty: o.qty,
+                    source: super::diagnostics::OperationSource::NonPlayerUnresolved,
+                });
+                self.note_causal(super::diagnostics::DeskCausalKind::Quote(self.causal_quote()?));
+            }
         }
+        Ok(())
     }
 
     /// 定向撤单：命中撤余量；未命中=已全成（显式业务回执）。
-    fn cancel_one(&mut self, tick: u64, owner: Owner, order: OrderRef) -> Result<(), RuntimeError> {
+    fn cancel_one(
+        &mut self,
+        tick: u64,
+        owner: Owner,
+        order: OrderRef,
+        #[cfg(feature = "simulation-diagnostics")] source: super::diagnostics::OperationSource,
+    ) -> Result<(), RuntimeError> {
         if order.0 != self.setup.stock {
             return Err(RuntimeError::ProtocolInvariant {
                 detail: format!("交易部 {} 收到他股撤单：order={order:?}", self.setup.stock),
@@ -1990,11 +2121,25 @@ impl DeskState {
         }
         match found {
             Some(o) => {
+                #[cfg(feature = "simulation-diagnostics")]
+                self.causal_quote()?;
                 self.note_terminated(&o, super::protocol::LifecycleKind::Cancelled);
                 self.remove_order(&o);
                 self.close_order_entities(&o);
                 self.cancelled_orders += 1;
                 self.undo.push(DeskUndo::Cancelled(1));
+                #[cfg(feature = "simulation-diagnostics")]
+                {
+                    self.note_causal(super::diagnostics::DeskCausalKind::Cancelled {
+                        order,
+                        owner,
+                        qty: o.qty,
+                        source,
+                    });
+                    self.note_causal(super::diagnostics::DeskCausalKind::Quote(
+                        self.causal_quote()?,
+                    ));
+                }
                 Ok(())
             }
             None => {
@@ -2052,6 +2197,14 @@ impl DeskState {
                 ),
             })?;
         self.undo.push(DeskUndo::Serial);
+        self.retail_facts.push(super::retail_lifecycle::RawFact::Submitted { order, owner, side, qty });
+        self.retail_facts.push(super::retail_lifecycle::RawFact::Terminated {
+            order, owner, qty, end: super::retail_lifecycle::Termination::Aborted,
+        });
+        #[cfg(feature = "simulation-diagnostics")]
+        self.note_causal(super::diagnostics::DeskCausalKind::Unsupported {
+            detail: "真实 desk reject 的 rich 来源尚未接通",
+        });
         self.receipts_out[g].push(DeskReceipt { order, owner, kind });
         self.skipped_orders += 1;
         self.undo.push(DeskUndo::Skipped(1));
@@ -2070,6 +2223,10 @@ impl DeskState {
             .collect();
         for o in due {
             self.note_terminated(&o, super::protocol::LifecycleKind::Expired);
+            #[cfg(feature = "simulation-diagnostics")]
+            self.note_causal(super::diagnostics::DeskCausalKind::Unsupported {
+                detail: "真实Expired终止生命周期尚未接通",
+            });
             self.remove_order(&o);
             self.close_order_entities(&o);
             self.expired_orders += 1;
@@ -2229,7 +2386,9 @@ impl DeskState {
             // 价格原则——本函数的 price 形参），费用按成交价双边计。
             let mut taker = buy;
             let maker = sell;
-            self.settle_fill(&mut taker, maker, qty, price)?;
+            self.settle_fill(&mut taker, maker, qty, price,
+                #[cfg(feature = "simulation-diagnostics")] None,
+            )?;
             // taker 全成即闭合；部分成交写回簿（apply_maker_fill 只写 maker——
             // taker 也是簿内单，需对称写回）。
             self.write_back_taker(&taker)?;
@@ -2250,7 +2409,7 @@ impl DeskState {
     }
 
     /// 日界重置：昨收=最新价、日内高低/量清零、活动 K 入历史（F §6.2 步骤 5
-    /// 的下一交易日视图；撤销日志的 Market 快照覆盖本重置——Abort 可回退）。
+    /// 的下一交易日视图；DrainMarket 快照覆盖本重置，AbortDayEnd 可回退）。
     fn roll_day(&mut self) {
         // 刀 2a：日结重置——簿清空+行情跨日。
         self.bump_book_ver();
@@ -2260,22 +2419,18 @@ impl DeskState {
         // 跨日不残留（此前第二日开盘窗被首日标记抑制，
         // batch4_second_day_auction_window 显红）。
         self.opening_cleared = false;
-        // 日内段归档（量在 K；K/额/笔随桶一并暂存——drain_all 收盘段
-        // unroll 还原当日形态用）。
+        // 收盘清算已完成，归档完整当日 K；有成交日仅在此计数一次。
         {
             let m = &mut self.market;
             if let Some(candle) = m.candle.take() {
                 if candle.volume > 0 {
                     m.traded_days_total = m.traded_days_total.saturating_add(1);
                 }
-                self.rolled_day_candle = Some(candle);
                 m.candles.push(candle);
             }
             m.minute_closes.clear();
         }
-        // B2：当日桶跨日暂存（roll_day 先于日结 Drain 的生产时序——见
-        // 字段注释）。上一暂存未消费=连续两日未日结（结构性 bug，防御
-        /// 显式覆盖前先断言）。
+        // Drain 内归档后、应答前保留完整当日桶；前一应答未消费则显式暴露。
         debug_assert!(
             self.rolled_day_bars.is_none(),
             "跨日暂存桶未被日结消费（连续日结缺失）"
@@ -2283,26 +2438,20 @@ impl DeskState {
         // 未跨日手动日结已捎带过（bars_shipped_today）——不再暂存（防
         /// 下次日结双计）且**清 live**（复核终核登记 a：day-1 仅 565 一桶
         /// 的窄形态会与 day-2 同桶静默合并——多数形态键回退显式 Err，窄
-        /// 形态必须同样终结）；生产自动形态（roll 先于 Drain）恒 false。
+        /// 形态必须同样终结）；生产日末 Drain 在 roll 之前尚未捎带。
         if !self.bars_shipped_today {
             let m = &mut self.market;
-            self.rolled_day_stats = Some((m.turnover_today, m.trade_count));
             self.rolled_day_bars = Some(std::mem::take(&mut m.minute_bars));
         } else {
             // 已随先前 Drain 捎带（未跨日手动日结后再 roll）——不再暂存
-            //（防双计）；candle 同置 None（后续无 unroll 消费）。
-            self.rolled_day_stats = None;
-            self.rolled_day_candle = None;
+            //（防双计）。
             self.market.minute_bars.clear();
         }
         self.bars_shipped_today = false;
         self.reset_market_for_new_day();
     }
 
-    /// 日界批：跨日行情段重置（`roll_day` 与 `drain_all` 收盘段 reroll
-    /// 共用——昨收=最新价、日内高低/量/额/笔清零。reroll 时点的
-    /// `last_price` 已含收盘竞价成交 ⇒ 昨收=官方收盘价（大 A：收盘价
-    /// =收盘竞价成交价，无成交=最后成交价））。
+    /// 收盘清算与终 K 归档完成后，按真实收盘建立下一日行情基准。
     fn reset_market_for_new_day(&mut self) {
         let m = &mut self.market;
         m.last_close = m.last_price;
@@ -2313,125 +2462,15 @@ impl DeskState {
         m.trade_count = 0;
     }
 
-    /// 日界批：收盘段 unroll——还原被 `roll_day` 归档的当日行情段
-    /// （归档 K 弹回活动位/量额累计还原/暂存桶回填），使收盘竞价清算
-    /// 成交自然落**当日** K 与 900 桶（roll 先于 Drain 的生产时序修正）。
-    /// 返回 Some(日内段 K)=跨日形态已还原（reroll 消费）；None=未跨日
-    /// 手动日结形态（K/桶仍 live，无需还原亦无需 reroll）。
-    fn unroll_day_for_drain_clearing(
-        &mut self,
-    ) -> Result<Option<DeskCandle>, RuntimeError> {
-        if self.rolled_day_bars.is_none() {
-            return Ok(None);
-        }
-        let bars = self.rolled_day_bars.take().expect("上方已判在位");
-        let (turnover, count) = self.rolled_day_stats.take().ok_or_else(|| {
-            RuntimeError::ProtocolInvariant {
-                detail: format!(
-                    "收盘段 unroll 缺跨日暂存统计（stock={}——与桶的成对不变量破坏）",
-                    self.setup.stock
-                ),
-            }
-        })?;
-        let day0 = self.rolled_day_candle.take().ok_or_else(|| {
-            RuntimeError::ProtocolInvariant {
-                detail: format!(
-                    "收盘段 unroll 缺当日归档 K 暂存（stock={}——roll_day 归档面缺失）",
-                    self.setup.stock
-                ),
-            }
-        })?;
-        let m = &mut self.market;
-        // 次日零占位 K（finish_round 于新日申报窗首拍建）丢弃待 reroll 重建
-        // ——申报窗无撮合，占位必零量；非零=结构性错序，显式失败不静默丢。
-        if m.candle.as_ref().is_some_and(|next| next.volume != 0) {
-            return Err(RuntimeError::ProtocolInvariant {
-                detail: format!(
-                    "收盘段 unroll：次日占位 K 非零量（stock={}——新日申报窗不应成交）",
-                    self.setup.stock
-                ),
-            });
-        }
-        m.volume_today = day0.volume;
-        m.turnover_today = turnover;
-        m.trade_count = count;
-        m.day_high = day0.high;
-        m.day_low = day0.low;
-        m.candle = Some(day0);
-        m.minute_bars = bars;
-        Ok(Some(day0))
-    }
-
-    /// 日界批：收盘段 reroll——清算成交已落当日 K/桶后归档终 K、重置
-    /// 跨日行情段、按现价重建次日零占位 K（不被收盘段污染）。
-    /// `unrolled=None`（未跨日形态）为无操作。`traded_days_total` 恰一次：
-    /// 首 roll 已按日内段量计过，收盘段补计仅限"日内零量、终 K 非零"
-    /// （全日仅收盘竞价成交）形态。
-    fn reroll_after_drain_clearing(
-        &mut self,
-        unrolled: Option<DeskCandle>,
-    ) -> Result<(), RuntimeError> {
-        let Some(day0_intraday) = unrolled else {
-            return Ok(());
-        };
-        let m = &mut self.market;
-        let final_candle = m.candle.take().ok_or_else(|| RuntimeError::ProtocolInvariant {
-            detail: format!(
-                "收盘段 reroll 缺当日 K（stock={}——unroll 后清算段必在位）",
-                self.setup.stock
-            ),
-        })?;
-        if final_candle.volume > 0 && day0_intraday.volume == 0 {
-            m.traded_days_total = m.traded_days_total.saturating_add(1);
-        }
-        // 归档末条原位覆写为终 K（unroll 未 pop——末条即当日归档位）。
-        let archive = m.candles.last_mut().ok_or_else(|| {
-            RuntimeError::ProtocolInvariant {
-                detail: format!(
-                    "收盘段 reroll 缺当日归档位（stock={}——candles 空）",
-                    self.setup.stock
-                ),
-            }
-        })?;
-        *archive = final_candle;
-        // 终 K 产出（应答消费）+ 桶/统计再暂存 + 跨日段重置 + 次日零占位重建。
-        self.drain_cleared_closing = Some(super::protocol::DeskDayCandleFinal {
-            open: final_candle.open,
-            high: final_candle.high,
-            low: final_candle.low,
-            close: final_candle.close,
-            volume: final_candle.volume,
-            turnover_cents: m.turnover_today,
-            trade_count: m.trade_count,
-        });
-        self.rolled_day_candle = Some(final_candle);
-        self.rolled_day_stats = Some((m.turnover_today, m.trade_count));
-        self.rolled_day_bars = Some(std::mem::take(&mut m.minute_bars));
-        m.minute_closes.clear();
-        let last = m.last_price;
-        m.candle = Some(DeskCandle {
-            open: last,
-            high: last,
-            low: last,
-            close: last,
-            volume: 0,
-        });
-        self.reset_market_for_new_day();
-        Ok(())
-    }
-
-    /// 新 tick 起点：隐式转正 → （日界重置）→ 行情快照 → 开盘清算 → 到期撤销。
+    /// 新 tick 起点：隐式转正 → 行情快照 → 开盘清算 → 到期撤销。
     fn begin_tick(&mut self, tick: u64) -> Result<(), RuntimeError> {
         // 下一 tick 首批 Ops(N) = tick N−1 隐式转正。
         self.undo.clear();
-        let day_before = self.committed_tick / self.setup.ticks_per_day.max(1);
-        let day_after = tick / self.setup.ticks_per_day.max(1);
         self.committed_tick = self.cur_tick;
         self.cur_tick = tick;
         self.cur_round = 0;
-        if day_after > day_before {
-            self.roll_day();
-        }
+        // 委托受理窗口为 N−1；最后一拍及其 Continue 都必须使用当日昨收。
+        // 自然日日结的 Drain 在收盘清算后统一归档与 roll，Start 不提前换基准。
         self.snapshot_market();
         // 开盘清算：上一 tick 还在申报窗、本 tick 已离开 → 09:25 一次撮合。
         let prev_phase = self.setup.phase_at(tick.saturating_sub(1));
@@ -2529,14 +2568,9 @@ impl DeskState {
             .cur_tick
             .checked_add(1)
             .ok_or_else(|| over("日结下一 tick 溢出"))?;
-        // 复用 begin_tick 的日界判定，不提前改变 desk 权威或归档。
-        let next_close = if next_tick / self.setup.ticks_per_day
-            > self.cur_tick / self.setup.ticks_per_day
-        {
-            self.market.last_price
-        } else {
-            self.market.last_close
-        };
+        // 日末 Drain 已在清算后 roll；日中手动 Drain 保留当前昨收。
+        // 观察面与下一 Start 的实际受理面共用同一权威，不提前预测自然日。
+        let next_close = self.market.last_close;
         // 不走缓存：清算、清余单、桶提取均已结束，必须构建完整的新观察基。
         let mut view = self.build_public(next_tick)?;
         let (lower, upper) = self.price_bound_for_close(Side::Buy, next_tick, false, next_close)?;
@@ -2802,12 +2836,7 @@ impl DeskState {
         if self.cur_tick > 0
             && self.setup.phase_at(self.cur_tick - 1) == DeskPhase::ClosingAuction
         {
-            // 日界批：收盘段 unroll——还原被 roll_day 归档的当日行情段，
-            // 使清算成交落**当日** K/量额/900 桶（reroll 在清算后对称执行）。
-            let unrolled = self.unroll_day_for_drain_clearing()?;
-            // 不置 opening_cleared——该标记只属开盘清算语义；日结 Drain
-            // 置位会跨日残留（roll_day 在 Drain 前已跑过当日重置），
-            /// 抑制第二日开盘窗的指示价与清算（batch4 二日窗实证）。
+            // 清算前保留真正前一交易日昨收，不能先 roll 再用当日价冒充昨收。
             let orders: Vec<ClearingOrder> = self
                 .bids
                 .values()
@@ -2866,9 +2895,6 @@ impl DeskState {
                     imbalance: sel.imbalance,
                 });
                 let cleared = Ok(Some((price, actual)));
-                // 日界批：收盘段 reroll——终 K 归档+跨日段重置（昨收=官方
-                /// 收盘价）+次日零占位重建；桶/统计再暂存供应答捎带。
-                self.reroll_after_drain_clearing(unrolled)?;
                 // 清算后**继续清余单**（收盘竞价一次清算后清簿——模块
                 /// 语义；此前清算分支提前 return 使余单跨日残留，
                 /// sol3r 余 100 不退回/closing_keeps bids 不空两测显红）。
@@ -2886,7 +2912,6 @@ impl DeskState {
                 completed: true,
                 imbalance: 0,
             });
-            self.reroll_after_drain_clearing(unrolled)?;
             self.drain_remaining_orders();
             return Ok(None);
         }
@@ -3355,6 +3380,9 @@ fn process_msg(
                         fee_sink: state.fee_sink,
                         view: state.public_snapshot_arc(tick)?,
                         trades: std::mem::take(&mut state.trade_facts),
+                        retail: std::mem::take(&mut state.retail_facts),
+                        #[cfg(feature = "simulation-diagnostics")]
+                        causal: std::mem::take(&mut state.causal_facts),
                         lifecycle: std::mem::take(&mut state.lifecycle_facts),
                         receipts_out_list: receipts_detail,
                         auction: std::mem::take(&mut state.auction_facts),
@@ -3400,20 +3428,37 @@ fn process_msg(
                 })?;
         }
         DeskMsg::Drain => {
-            // 隐式转正上一 tick（日终已收敛）：清簿进独立撤销日志，
-            // Abort 只恢复清簿前簿态（回到上一交易日收敛态）。
-            state.undo.clear();
-            state.committed_tick = state.cur_tick;
-            state.snapshot_drain_market();
-            state.drain_all()?;
-            state.finish_round(state.cur_tick)?;
-            state.flush_batches(group_txs, state.cur_tick, state.cur_round)?;
+            // 同一 Start 以来已完成 Drain：Shutdown 的重复请求只取诊断面。
+            // AbortDayEnd 消费该日志，重试重新清算；下一 Start 清日志，开启新窗口。
+            let already_drained = state.undo.iter().any(|entry| matches!(entry, DeskUndo::DrainMarket(_)));
+            if !already_drained {
+                state.undo.clear();
+                state.committed_tick = state.cur_tick;
+                state.snapshot_drain_market();
+                state.drain_all()?;
+                if state.cur_tick > 0 && state.cur_tick % state.setup.ticks_per_day == 0 {
+                    if state.setup.phase_at(state.cur_tick - 1) == DeskPhase::ClosingAuction {
+                        let candle = state.market.candle.ok_or_else(|| RuntimeError::ProtocolInvariant {
+                            detail: format!("交易部 {} 日末清算后缺终 K", state.setup.stock),
+                        })?;
+                        state.drain_cleared_closing = Some(super::protocol::DeskDayCandleFinal {
+                            open: candle.open, high: candle.high, low: candle.low, close: candle.close,
+                            volume: candle.volume, turnover_cents: state.market.turnover_today,
+                            trade_count: state.market.trade_count,
+                        });
+                    }
+                    state.roll_day();
+                }
+                state.finish_round(state.cur_tick)?;
+                state.flush_batches(group_txs, state.cur_tick, state.cur_round)?;
+            }
             up_tx
                 .send(UpMsg::DeskDrained {
                     stock: state.setup.stock,
                     fee_sink: state.fee_sink,
                     last_price: state.market.last_price,
                     drained_lifecycle: std::mem::take(&mut state.lifecycle_facts),
+                    drained_retail: std::mem::take(&mut state.retail_facts),
                     // 只上行 **drain 自产**的收盘竞价事实——auction_facts
                     /// 可能残留拍内窗指示价（日结拍相位窗的 CallAuction
                     /// 指示价，其上行随拍内 DeskReport 承载或随 Abort 丢弃；
@@ -3423,20 +3468,8 @@ fn process_msg(
                         .drain(..)
                         .filter(|f| f.phase == crate::TradingPhase::ClosingAuction)
                         .collect(),
-                    // B2：当日桶=跨日暂存（日内段——roll_day 先于 Drain 的
-                    /// 生产形态）＋live 段（本 Drain 收盘清算 900 桶；手动
-                    /// 日结未跨日形态下 live 即全量）。键序天然衔接（日内
-                    /// <900）。
+                    // 日末应答取 roll 后完整当日桶；日中手动 Drain 取当前 live 桶。
                     drained_minute_bars: {
-                        // B2 日结形态两分（期末 Final 观察面保留桶）：
-                        // - 跨日形态（rolled 在）：日界批后收盘清算经
-                        //   unroll 落**当日**桶（reroll 再暂存=全量）；
-                        //   live 段=新日数组（申报窗无撮合恒空）并入即
-                        //   全量当日桶；并入后清（残留会使次日连续桶键
-                        //   回退——探针 tick241 实证）；
-                        // - 未跨日形态（手动日结）：应答=live 全量，置已
-                        //   捎带标记（防后续 roll_day 双计）；live 保留供
-                        //   期末 Final 观察面。
                         match state.rolled_day_bars.take() {
                             Some(mut rolled) => {
                                 rolled.extend(state.market.minute_bars.iter().copied());
@@ -3455,7 +3488,7 @@ fn process_msg(
                     drained_trades: std::mem::take(&mut state.trade_facts),
                     // 日界批：当日终 K（含收盘段——install 面/DayBoundary
                     /// 事件的权威补真值源）。仅本次 Drain 实际执行了收盘
-                    /// 清算时携带（reroll 产出）；closing=0 几何/未跨日
+                    /// 清算且归档后携带；closing=0 几何/未跨日
                     /// 手动日结=None——install 面维持既有形态（不对
                     /// 非收盘段日界补真，防预置历史/双属拍污染）。
                     drained_day_candle: state.drain_cleared_closing.take(),

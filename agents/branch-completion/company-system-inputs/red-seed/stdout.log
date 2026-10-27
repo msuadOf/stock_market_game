@@ -1,0 +1,52 @@
+✖ seed 完整 u64、规范十进制边界，在创建前拒绝非法 seed (2.657391ms)
+✔ 预览 seed 原值创建；seed 编辑不覆盖 custom 非法 raw JSON (1.632546ms)
+✖ Simulation 创建草稿显式不支持，非法 seed 先于运行失败 (0.270949ms)
+▶ 新局 seed 熵边界
+  ✔ 保留完整 u64 精度并允许固定熵注入 (1.288155ms)
+  ✔ 每次新局重新读取熵，不复用固定 seed (0.212507ms)
+  ✔ 熵能力缺失或调用失败时显式报错，不降级到固定 seed (0.679874ms)
+✔ 新局 seed 熵边界 (3.972767ms)
+ℹ tests 6
+ℹ suites 1
+ℹ pass 4
+ℹ fail 2
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 2447.924687
+
+✖ failing tests:
+
+test at apps/web/src/config/seed-draft.test.ts:5:1
+✖ seed 完整 u64、规范十进制边界，在创建前拒绝非法 seed (2.657391ms)
+  AssertionError [ERR_ASSERTION]: Missing expected exception.
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-system-inputs/apps/web/src/config/seed-draft.test.ts:7:98)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.start (node:internal/test_runner/test:1096:17)
+      at startSubtestAfterBootstrap (node:internal/test_runner/harness:385:17) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: /seed/,
+    operator: 'throws',
+    diff: 'simple'
+  }
+
+test at apps/web/src/config/seed-draft.test.ts:16:1
+✖ Simulation 创建草稿显式不支持，非法 seed 先于运行失败 (0.270949ms)
+  AssertionError [ERR_ASSERTION]: Missing expected exception.
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-system-inputs/apps/web/src/config/seed-draft.test.ts:17:10)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: /Simulation/,
+    operator: 'throws',
+    diff: 'simple'
+  }

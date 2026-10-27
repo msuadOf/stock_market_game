@@ -48,7 +48,7 @@ test("PaymentFailure 保留正金额与事项并拒绝无效及 active 注入", 
 
 test("CompanyOperations 严格保留 payment_failures 并拒绝缺失及非法日期/记录", () => {
   const base = representativeCompanyOperationsFixture() as any
-  const company = Object.keys(base.companies)[0]
+  const company = Number(Object.keys(base.companies)[0])
   const operations = { ...base, payment_failures: { "2030-01-01": [{ company, what: "经营支付", amount: "1.00", obligation_status: "UncommittedExpense" }] } }
   assert.deepEqual(parseCompanyOperations(operations), operations)
   const { payment_failures: _removed, ...missing } = operations
@@ -61,8 +61,8 @@ test("CompanyOperations 严格保留 payment_failures 并拒绝缺失及非法�
 })
 
 test("公开 PaymentFailure 公告保留单日事实且拒绝伪造幅度或持续期", () => {
-  const announcement = { id: 0, company: "C-1", occurred_on: "2030-01-01", published_at: { date: "2030-01-02", second_of_day: 0 }, event: { kind: { PaymentFailure: { what: "到期本金", amount: "1.00", obligation_status: "ContractualOverdue" } }, amplitude_bp: 0, starts_on: "2030-01-01", expires_on: "2030-01-01" } }
+  const announcement = { id: 0, company: 0, occurred_on: "2030-01-01", published_at: { date: "2030-01-02", second_of_day: 0 }, content: { kind: "Shock", value: { kind: { PaymentFailure: { what: "到期本金", amount: "1.00", obligation_status: "ContractualOverdue" } }, amplitude_bp: 0, starts_on: "2030-01-01", expires_on: "2030-01-01" } } }
   const library = { next_seq: 1, reports: [], announcements: [announcement] }
   assert.deepEqual(parsePublicLibrary(library), library)
-  for (const event of [{ ...announcement.event, amplitude_bp: 1 }, { ...announcement.event, expires_on: "2030-01-02" }]) assert.throws(() => parsePublicLibrary({ ...library, announcements: [{ ...announcement, event }] }), /event/)
+  for (const value of [{ ...announcement.content.value, amplitude_bp: 1 }, { ...announcement.content.value, expires_on: "2030-01-02" }]) assert.throws(() => parsePublicLibrary({ ...library, announcements: [{ ...announcement, content: { kind: "Shock", value } }] }), /content/)
 })

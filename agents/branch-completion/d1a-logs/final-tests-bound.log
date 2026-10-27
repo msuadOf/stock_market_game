@@ -1,0 +1,30 @@
+
+running 25 tests
+test runtime::group::admin_transaction::tests::admin_11_group_id_contract_and_failed_prepare_consumes_id ... ok
+test runtime::group::admin_transaction::tests::admin_02_prepare_abort_preserve_full_log_and_commit_only_retires_metadata ... ok
+test runtime::world::admin_transaction::tests::admin_01_two_groups_all_operations_persist_through_real_tick ... ok
+test runtime::world::admin_transaction::tests::admin_06_rejection_preserves_published_tick_and_next_step ... ok
+test runtime::world::admin_transaction::tests::admin_00_empty_duplicate_group_and_id_exhaustion_are_explicit ... ok
+test runtime::world::admin_transaction::tests::admin_01_normal_npc_decisions_continue_after_credit ... ok
+test runtime::world::admin_transaction::tests::admin_03_other_group_rejects_and_original_order_is_not_netted ... ok
+test runtime::world::admin_transaction::tests::admin_02_rejection_restores_complete_accounts_and_new_id_retries ... ok
+test runtime::world::admin_transaction::tests::admin_05_flat_cost_basis_and_frozen_pending_are_preserved ... ok
+test runtime::world::admin_transaction::tests::admin_09_closed_days_without_start_keep_first_commit ... ok
+test runtime::world::admin_transaction::tests::admin_07_rejection_keeps_real_day_end_abort_legal ... ok
+test runtime::world::admin_transaction::tests::admin_08_commit_closes_old_day_end_and_next_tick_abort_keeps_credit ... ok
+test runtime::world::admin_transaction::tests::admin_05_flat_reduction_rejects_real_inflight_buy_and_real_rebuy_starts_new_cost ... ok
+test runtime::world::admin_transaction::tests::admin_12_seal_commit_drain_abort_restores_orders_and_resources ... ok
+test runtime::world::admin_transaction::tests::admin_10_partial_prepare_and_commit_send_failure_kill_and_join ... ok
+test runtime::world::admin_transaction::tests::admin_13_candidate_panic_keeps_payload_joins_and_kills_world ... ok
+test runtime::world::admin_transaction::tests::admin_review_prepare_terminal_closes_old_day_end_abort_window ... ok
+test runtime::world::admin_transaction::tests::admin_11_pending_rejects_start_continue_and_day_end_without_market_rollback ... ok
+test runtime::world::admin_transaction::tests::admin_review_already_queued_extra_receipt_prevents_success ... ok
+test runtime::world::admin_transaction::tests::admin_13_worker_prepare_and_commit_panic_transport_original_and_join ... ok
+test runtime::world::admin_transaction::tests::admin_04_large_share_abort_and_aggregate_overflow ... ok
+test runtime::world::admin_transaction::tests::admin_04_exact_aggregate_boundary_and_invalid_values ... ok
+test runtime::world::admin_transaction::tests::admin_08_partial_start_does_not_undo_committed_admin_or_tick ... ok
+test runtime::world::admin_transaction::tests::admin_review_severed_entry_joins_and_kills_even_empty_transaction ... ok
+test runtime::world::admin_transaction::tests::admin_11_real_channel_receipt_id_group_locals_and_missing_are_fatal ... ok
+
+test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 2285 filtered out; finished in 0.94s
+

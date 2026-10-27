@@ -138,6 +138,36 @@ POSIX 帮助脚本进行 `.nvmrc` 诊断。CI 或隔离环境可将 `NODE_BIN` �
   事件身份按 ADR-0017 的真实域校验：`Account/Sealed` 允许稀疏操作索引和独立 `QuoteExpiry` 预留段，检查 JS-safe 范围、变体映射及键唯一；Stock、PriceTick、DayEnd 和共享 Session 域仍要求各自连续，不重编号真实 producer 身份。
 - 正式长验收的单阶段进程外门禁统一使用 `scripts/run-long-validation.mjs 300000 -- <command>` 或等价的 runner 内进程外门禁；普通测试不得借此放宽 10 秒门禁。
 
+### 完整回归的 Cargo 独立构建预算
+
+`STOCK_GAME_FULL_REGRESSION_CARGO_BUILD_JOBS` 仅控制 Rust test build 与 doctest 的
+`CARGO_BUILD_JOBS`。未设置时沿用全部可用 CPU；显式值必须是无前导零、空白或符号的
+ASCII 正整数字符串，且为 safe integer、不超过可用 CPU 数；非法值明确报错，不截断或回退。
+Rust case、hash workers、Web shards 与 scripts workers 仍使用总可用 CPU 预算。
+
+POSIX shell 可将配置放在最外层 supervisor 前，使其继承到所有内部 phase：
+
+```bash
+STOCK_GAME_FULL_REGRESSION_CARGO_BUILD_JOBS=8 node scripts/run-long-validation.mjs 300000 -- node scripts/run-full-regression.mjs all
+```
+
+PowerShell 使用当前会话的环境变量；以下示例在结束后恢复原值：
+
+```powershell
+$previousCargoBuildJobs = $env:STOCK_GAME_FULL_REGRESSION_CARGO_BUILD_JOBS
+try {
+  $env:STOCK_GAME_FULL_REGRESSION_CARGO_BUILD_JOBS = '8'
+  node scripts/run-long-validation.mjs 300000 -- node scripts/run-full-regression.mjs all
+} finally {
+  $env:STOCK_GAME_FULL_REGRESSION_CARGO_BUILD_JOBS = $previousCargoBuildJobs
+}
+```
+
+这两个示例由唯一最外层进程外 supervisor 对整个 `all` 施加共享的 300000ms 期限，
+包含 build、execute 与进程树收尾；runner 既有内部阶段期限不变，裸 `all` 不因此具有
+共享期限。runner 直接读取环境配置，不依赖 shell。`8` 是本机待测的资源选择，
+不代表最优值，也不承诺吞吐收益或 300 秒内通过。预热必须单独记录，不能当作正式 `all` 验收。
+
 ### GitHub CI 构建与类型门禁
 
 `ci.yml` 仅通过 `workflow_dispatch` 手动运行开发诊断，产品构建和标签发布不调用

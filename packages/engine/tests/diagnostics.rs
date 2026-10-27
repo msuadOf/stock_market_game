@@ -1,7 +1,7 @@
 use engine::{
     run_combined_diagnostics, run_price_volume_baseline, BaselineError, FloatAllocation,
     GameConfig, HotParams, InstParams, Money, NpcSetup, RetailParams, SecurityCategory,
-    SessionSetup, StockCode, StockExchange, StockSpec, StrategyParams,
+    SessionSetup, StockCode, StockExchange, StockId, StockSpec, StrategyParams,
 };
 
 fn diagnostic_setup() -> SessionSetup {
@@ -56,9 +56,13 @@ fn diagnostic_setup() -> SessionSetup {
         history_len: 20,
         t1_enabled: true,
         float_allocation: FloatAllocation::random(),
-        start_date: engine::CivilDate::from_iso("2030-01-01").unwrap(),
+        start_date: engine::CivilDate::from_iso("2030-01-02").unwrap(),
         simulation_policy_id: engine::SIMULATION_POLICY_ID.to_string(),
     }
+}
+
+fn diagnostic_stock_id() -> StockId {
+    diagnostic_setup().stock_catalog().unwrap().id("600101").unwrap()
 }
 
 #[test]
@@ -76,7 +80,7 @@ fn combined_diagnostics_pairs_reports_from_the_same_trade_receipts() {
         .iter()
         .find(|price_volume_run| price_volume_run.run_id == run.run_id)
         .expect("the paired price-volume report must use the same run identity");
-    let stock = &price_volume_run.stocks[&StockCode("600101".to_string())];
+    let stock = &price_volume_run.stocks[&diagnostic_stock_id()];
 
     assert!(
         run.source.trade_receipt_count > 0,
@@ -153,7 +157,7 @@ fn baseline_keeps_each_seed_visible_and_summarizes_observed_runs() {
             report.runs.iter().map(|run| run.seed).collect::<Vec<_>>(),
             vec![7, 11]
         );
-        let aggregate = &report.stocks[&StockCode("600101".to_string())];
+        let aggregate = &report.stocks[&diagnostic_stock_id()];
         assert_eq!(aggregate.seed_count, 2);
         assert_eq!(aggregate.mean_daily_volume.sample_count, 2);
         assert!(aggregate.mean_daily_volume.minimum <= aggregate.mean_daily_volume.median);
@@ -240,7 +244,7 @@ fn behavior_loop_runs_through_the_real_order_book_across_multiple_seeds() {
         .iter()
         .map(|run| {
             assert_eq!(run.engine_error_events, 0);
-            let stock = &run.stocks[&StockCode("600101".to_string())];
+            let stock = &run.stocks[&diagnostic_stock_id()];
             assert_eq!(stock.trade_event_volume, stock.total_daily_volume);
             stock.total_daily_volume
         })
@@ -288,7 +292,7 @@ fn behavior_loop_runs_through_the_real_order_book_across_multiple_seeds() {
 fn baseline_excludes_preset_history_and_reconciles_trade_volume_to_daily_candles() {
     let report = run_price_volume_baseline(&diagnostic_setup(), &[42], 4).unwrap();
     let run = &report.runs[0];
-    let stock = &run.stocks[&StockCode("600101".to_string())];
+    let stock = &run.stocks[&diagnostic_stock_id()];
 
     assert_eq!(stock.completed_days, 4);
     assert_eq!(stock.daily_returns_bps.len(), 4);

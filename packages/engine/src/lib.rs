@@ -77,6 +77,19 @@ pub use compute::{
     CpuBackend, create_backend,
 };
 
+/// 时钟门面：native=std re-export，wasm=env.engine_clock_now（设计 §6.1.3-2/§8.3）。
+pub mod clock;
+/// 请求槽协议核心（wasm 生产面 + 全部单元测试；设计 §12.1/§13/§14.1）。
+///
+/// native生产路径仅用std re-export；协议核心只在wasm或测试参与编译，
+/// 避免把未使用的协议模块引入native codegen输入与CGU分区。
+/// 旧阶段曾把跨CGU调用形态变化归因于本模块，后续已撤回该实测归因；
+/// 本门控不声称已证明该因果关系或native热函数逐指令等价。
+#[cfg(any(target_family = "wasm", test))]
+mod facade_slot;
+/// 线程门面：native=std re-export，wasm=槽协议接线（设计 §0/§1.1/§12-14）。
+pub mod thread_facade;
+
 pub mod verification_evidence;
 
 pub mod session;

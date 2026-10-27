@@ -1,0 +1,28 @@
+
+running 10 tests
+test later_assessment_preserves_latest_collection_without_explaining_new_outstanding ... ok
+test outstanding_projection_preserves_exact_tax_and_actual_collection_receipts ... ok
+test uncollected_assessment_does_not_claim_insufficient_cash ... ok
+test queries_reject_sessions_without_company_line ... ok
+test non_flat_receipt_query_rejects_instead_of_returning_empty_ledger ... ok
+test period_explanation_preserves_domain_result_and_rejects_unsettled_period ... ok
+test configured_company_without_registry_has_explicitly_empty_tax_views ... ok
+test flat_receipts_are_owner_filtered_and_queries_do_not_change_save_bytes ... ok
+test session_outstanding_query_preserves_populated_tax_book_after_restore ... ok
+test account_tax_status_distinguishes_mode_identity_and_configured_books ... FAILED
+
+failures:
+
+---- account_tax_status_distinguishes_mode_identity_and_configured_books stdout ----
+
+thread 'account_tax_status_distinguishes_mode_identity_and_configured_books' (1987001) panicked at packages/engine/tests/session_company_read_views.rs:91:62:
+called `Result::unwrap()` on an `Err` value: InvalidSetup(ValidationFault { code: 1013, context: [0] })
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    account_tax_status_distinguishes_mode_identity_and_configured_books
+
+test result: FAILED. 9 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.43s
+
+bounded command exited with 101

@@ -1,0 +1,21 @@
+
+running 16 tests
+test company_config_without_company_system_is_rejected ... ok
+test incomplete_company_config_residue_is_isolated_per_field ... ok
+test exempt_mode_requires_zero_stamp_tax ... ok
+test flat_withholding_three_state_contract ... ok
+test missing_dividend_tax_mode_with_company_system_is_rejected ... ok
+test par_value_domain_is_enforced ... ok
+test plain_sessions_save_json_carries_no_company_keys ... ok
+test plain_sessions_restore_identically ... ok
+test disabled_foundation_leaves_registry_empty ... ok
+test new_game_with_company_opens_repurchase_account_without_float ... ok
+test incomplete_company_save_is_rejected ... ok
+test auto_foundation_builds_full_float_registry_and_legal_facts ... ok
+test new_game_without_repurchase_keeps_roster_unchanged ... ok
+test flat_withholding_boundary_values_are_accepted ... ok
+test save_restore_roundtrips_company_fields_bitwise ... ok
+test restore_rejects_company_system_diverging_from_setup_issuers ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.73s
+

@@ -712,18 +712,18 @@ fn manual_drain_before_roll_prices_the_next_real_start_not_the_current_day() {
         &build_market_view(&snapshot),
     )
     .expect("Highest 意图转换");
-    eprintln!("#121 manual Drain tick239→Start240: broadcast_upper={}, purse_reference={}, expected_upper=1210", snapshot.stocks[0].daily_upper_limit, op.purse_reference);
+    eprintln!("#121 manual Drain tick239→Start240: broadcast_upper={}, purse_reference={}, expected_upper=1100", snapshot.stocks[0].daily_upper_limit, op.purse_reference);
     world.broadcast_external_plan(vec![op], vec![]);
     world
         .run_ticks(1)
-        .expect("Start240 日界重置后也必须付得起已生成的符号买单");
-    assert_eq!(op.purse_reference, 1_210, "预测下一次真实 Start 的新涨停");
+        .expect("Start240 仍属当日，广播和受理必须使用同一旧昨收");
+    assert_eq!(op.purse_reference, 1_100, "最后一拍仍使用当日旧昨收涨停");
     let orders = world.collect_desk_resting().expect("真实受理挂单").0;
     let order = orders[0]
         .iter()
         .find(|o| o.owner == (0, 0))
         .expect("手动日结后买单入簿");
-    assert_eq!((order.price, order.purse), (1_210, 121_501));
+    assert_eq!((order.price, order.purse), (1_100, 110_501));
     world.shutdown().expect("关停");
 }
 
@@ -1009,13 +1009,14 @@ fn sell_decision_setup(next_tick: u64) -> super::decision::DecisionSetup {
     }
 }
 
-/// 对照从合法活动 K 恢复；跨日首拍与关停都走真实 desk 协议。
+/// 对照从相同最新价及真实昨收恢复；最后一拍保旧昨收，下一日才用收盘价。
 fn same_new_day_sell_control_spec(close: i64, final_tick: u64) -> WorldSpec {
+    let previous_close = if final_tick % DAY_END_TICK == 0 { close } else { INITIAL_PRICE };
     let mut spec = closing_spec(close);
     spec.stocks[0] = super::world::DeskStockSpec::main_board(close);
     spec.stocks[0].initial_market = Some(super::desk::DeskMarketSeed {
         last_price: close,
-        last_close: close,
+        last_close: previous_close,
         day_high: close,
         day_low: close,
         volume_today: 0,
@@ -1079,7 +1080,7 @@ fn next_start_real_sell_consumers_match_the_same_new_day_control() {
             control_spec.decision = Some(sell_decision_setup(next_tick));
             let mut control = World::spawn(control_spec).expect("同新日昨收稳态对照");
             control.run_ticks(1).expect("对照 Start 真实机构卖向消费");
-            let lower = close * 9 / 10;
+            let lower = if final_tick == DAY_END_TICK { close * 9 / 10 } else { 900 };
             let sell_floor = sell_cage_floor(close, lower);
             let crossed_view = &crossed.public_views()[0];
             let control_view = &control.public_views()[0];
@@ -1136,6 +1137,9 @@ fn next_start_sell_boundary_matches_the_sell_cage_floor() {
     for (close, lower, actual_floor) in [(1_100, 990, 1_078), (900, 810, 882)] {
         assert_eq!(sell_cage_floor(close, lower), actual_floor);
         for final_tick in [239, 240] {
+            let lower = if final_tick == DAY_END_TICK { lower } else { 900 };
+            let actual_floor = sell_cage_floor(close, lower);
+            let rejection = if actual_floor == lower { super::ReceiptKind::PriceOutOfBand } else { super::ReceiptKind::PriceCageExceeded };
             let mut spec = closing_spec(close);
             Arc::make_mut(&mut spec.config).price_cage_enabled = true;
             let mut crossed = World::spawn(spec).expect("开启笼子的日界世界");
@@ -1178,7 +1182,7 @@ fn next_start_sell_boundary_matches_the_sell_cage_floor() {
                 assert!(record
                     .desk_receipts
                     .iter()
-                    .all(|r| r.kind == super::ReceiptKind::PriceCageExceeded));
+                    .all(|r| r.kind == rejection));
                 assert!(
                     record.group_rejections.is_empty(),
                     "不是资源不足掩盖价格拒单"
@@ -1296,6 +1300,62 @@ fn failing_first_tick_rolls_back_only_the_tick_not_the_committed_day_end() {
             "首拍重试不双做日结"
         );
     }
+}
+
+#[test]
+fn final_tick_uses_old_close_then_next_tick_uses_the_drained_close() {
+    let mut spec = basic_spec(2, 3, 26, Box::new(|_| Box::new(|_, _| TickPlan::default())));
+    spec.ticks_per_day = 30;
+    spec.auction_ticks = 8;
+    spec.closing_auction_ticks = 4;
+    spec.initial_committed_tick = 88;
+    spec.initial_cash = 2_000_000;
+    spec.stocks[2].exchange = crate::StockExchange::Shenzhen;
+    spec.stocks[2].initial_price = 1274;
+    spec.stocks[2].limit_bps = 2000;
+    spec.stocks[2].max_order_qty_limit = 300_000;
+    spec.stocks[2].max_order_qty_market = 150_000;
+    spec.stocks[2].initial_market = Some(super::desk::DeskMarketSeed {
+        last_price: 1529, last_close: 1274, day_high: 1529, day_low: 1274,
+        volume_today: 100, turnover_today: 152900, trade_count: 1,
+        candle: Some((1274, 1529, 1274, 1529, 100)),
+        minute_closes: vec![], minute_bars: vec![],
+    });
+    let date = spec.civil_start_date;
+    let mut world = World::spawn(spec).expect("构造原失败数字的两组三股短 fixture");
+    world.run_ticks(1).expect("tick89 发布当日观察基");
+    assert_eq!(world.public_views()[2].daily_upper_limit, 1529);
+    let make_buy = |world: &World, tick| {
+        let snapshot = TickSnapshot { tick, market_minute: 0, civil_date: date,
+            stocks: Arc::new(world.public_views().to_vec()) };
+        let mut op = intent_to_pending(Intent::PlaceLimit {
+            code: StockId(2), side: Side::Buy, price: LimitPrice::Highest, qty: 300,
+        }, &build_market_view(&snapshot)).expect("正式意图转换");
+        op.local = 25;
+        op
+    };
+    world.broadcast_external_plan(vec![make_buy(&world, 90)], vec![]);
+    world.run_ticks(1).expect("tick90 仍属原交易日，不能提前提高昨收和精确 purse");
+    let orders = world.collect_desk_resting().expect("日末真实挂单").0;
+    let order = orders[2].iter().find(|o| o.owner == (0, 25)).expect("历史失败owner已受理");
+    assert_eq!((order.price, order.purse), (1529, 459205), "旧昨收1274的20%上限与含费预留");
+    let publication = world.publication();
+    let published = publication.load();
+    world.run_day_end_public().expect("日末成功 Drain");
+    assert_eq!(world.public_views()[2].daily_upper_limit, 1835);
+    world.broadcast_external_plan(vec![make_buy(&world, 91)], vec![]);
+    world.run_ticks(1).expect("tick91 使用真实日结后的新昨收，不得再次roll");
+    assert_eq!(published.tick, 90, "日结前发布句柄不可变");
+    let orders = world.collect_desk_resting().expect("次日真实挂单").0;
+    let order = orders[2].iter().find(|o| o.owner == (0, 25)).expect("次日买单已受理");
+    assert_eq!((order.price, order.purse), (1835, 551006), "新昨收1529的20%上限与含费预留");
+    let report = world.shutdown().expect("正常退出并回收全部线程");
+    assert_eq!(report.worker_results.len(), 5);
+    let buyer = &report.group_finals[0].accounts[25];
+    assert_eq!(buyer.cash, 2_000_000, "两次无成交买单最终逐分退回");
+    assert_eq!(buyer.buy_purse_held_cents, 0);
+    assert_eq!(report.desk_finals[2].market.candles.len(), 1, "同日二次Drain不重复归档");
+    assert_eq!(report.desk_finals[2].market.last_close, 1529);
 }
 
 /// 低价股十个最小价位更宽，非整分百分比按交易所规则四舍五入。
@@ -1533,4 +1593,174 @@ fn invalid_initial_cage_bound_starts_no_workers() {
     let error = World::spawn(spec).err().expect("非法笼子边界明确失败");
     assert!(matches!(error, super::protocol::RuntimeError::ProtocolInvariant { .. }));
     assert_eq!(started.load(Ordering::SeqCst), 0, "行情失败前不得启动组 worker");
+}
+
+fn shenzhen_closing_tie_world() -> World {
+    let mut spec = basic_spec(2, 1, 2, Box::new(|group| Box::new(move |tick, round| {
+        let mut plan = TickPlan::default();
+        if group == 0 && tick == 235 {
+            for (local, side) in [(0, Side::Buy), (1, Side::Sell)] {
+                plan.places.push(PlaceSpec { local, stock: 0, side, price: 1100, qty: 100 });
+            }
+        }
+        if group == 0 && tick == 239 {
+            plan.places.push(PlaceSpec { local: 0, stock: 0, side: Side::Buy, price: 1100, qty: 100 });
+            plan.places.push(PlaceSpec { local: 1, stock: 0, side: Side::Sell, price: 900, qty: 100 });
+        }
+        // 最后一拍真实 Continue 仍属同一交易日，不能在轮间切换基准。
+        if tick == 240 && round == 0 { plan.continuation = true; }
+        plan
+    })));
+    spec.stocks[0].exchange = crate::StockExchange::Shenzhen;
+    spec.ticks_per_day = 240;
+    spec.auction_ticks = 0;
+    spec.closing_auction_ticks = 3;
+    spec.initial_committed_tick = 233;
+    Arc::make_mut(&mut spec.config).price_cage_enabled = false;
+    World::spawn(spec).expect("构造真实日内成交与收盘并列候选")
+}
+
+#[test]
+fn shenzhen_closing_tie_keeps_the_declared_prior_close_and_full_daily_totals() {
+    let mut world = shenzhen_closing_tie_world();
+    world.run_ticks(7).expect("tick240多轮成功收束");
+    assert_eq!(world.public_views()[0].daily_upper_limit, 1100, "最后一拍仍用昨收1000");
+    world.run_day_end_public().expect("收盘清算后归档");
+    assert_eq!(world.drained_day_trades.len(), 1);
+    assert_eq!(world.drained_day_trades[0].price, 900, "已登记深市统一昨收简化：900/1100距1000同距取低价");
+    let bars = world.take_pending_day_bars()[0].take().expect("完整当日分钟桶");
+    let totals = bars.iter().fold((0_u64,0_u128,0_u64), |(v,a,n), b|
+        (v + b.volume_shares, a + b.turnover_cents, n + b.trade_count));
+    assert_eq!(totals, (200, 200000, 2), "日内100股与收盘100股不得丢失或重复");
+    let candle = world.take_pending_day_candles()[0].take().expect("真实终K");
+    assert_eq!((candle.volume,u128::try_from(candle.turnover_cents).expect("成交额非负"),candle.trade_count), totals);
+    assert_eq!((candle.high,candle.low,candle.close), (1100,900,900));
+    let report = world.shutdown().expect("重复Drain只作诊断并join");
+    assert_eq!(report.desk_finals[0].market.candles.len(), 1);
+    assert_eq!(report.desk_finals[0].market.traded_days_total, 1);
+    assert_eq!(report.desk_finals[0].market.candles[0].volume, 200);
+    assert_eq!(report.desk_finals[0].market.last_close, 900);
+}
+
+#[test]
+fn final_tick_multi_round_and_day_end_retry_keep_each_board_and_direction() {
+    for (limit_bps, upper_before) in [(1000, 1100), (2000, 1200)] {
+        for close in [1100, 900] {
+            let mut spec = closing_spec(close);
+            spec.stocks[0].limit_bps = limit_bps;
+            if limit_bps == 2000 {
+                spec.stocks[0].exchange = crate::StockExchange::Shenzhen;
+                spec.stocks[0].max_order_qty_limit = 300_000;
+                spec.stocks[0].max_order_qty_market = 150_000;
+            }
+            let script_for = std::mem::replace(&mut spec.script_for,
+                Box::new(|_| Box::new(|_, _| TickPlan::default())));
+            spec.script_for = Box::new(move |group| {
+                let script = script_for(group);
+                Box::new(move |tick, round| {
+                    let mut plan = script(tick, round);
+                    plan.continuation = tick == 240 && round == 0;
+                    plan
+                })
+            });
+            let mut world = World::spawn(spec).expect("构造分板块双向多轮日末");
+            world.run_ticks(2).expect("tick239/240与Continue均受理成功");
+            assert_eq!(world.public_views()[0].daily_upper_limit, upper_before);
+            let prior_orders = world.collect_desk_resting().expect("日末真实簿");
+            let prior_candles = world.take_candle_projection().expect("日末K事实");
+            let publication = world.publication();
+            let published = publication.load();
+            world.set_day_end_validator(Box::new(|_| Err("日结拒绝，用于验证清算后roll可逆".into())));
+            world.run_day_end_public().expect_err("失败日结必须显式返回");
+            assert_eq!(world.collect_desk_resting().expect("回滚簿"), prior_orders);
+            assert_eq!(world.take_candle_projection().expect("回滚K"), prior_candles);
+            assert!(Arc::ptr_eq(&published, &publication.load()));
+            assert_eq!(world.public_views()[0].daily_upper_limit, upper_before);
+            world.set_day_end_validator(Box::new(|_| Ok(())));
+            world.run_day_end_public().expect("相同事实重试日结");
+            let expected_upper = close * (10_000 + i64::from(limit_bps)) / 10_000;
+            let expected_lower = close * (10_000 - i64::from(limit_bps)) / 10_000;
+            assert_eq!((world.public_views()[0].daily_upper_limit, world.public_views()[0].daily_lower_limit),
+                (expected_upper, expected_lower));
+            let bars = world.take_pending_day_bars()[0].take().expect("重试完整桶");
+            let candle = world.take_pending_day_candles()[0].take().expect("重试终K");
+            assert_eq!(bars.iter().map(|b| b.volume_shares).sum::<u64>(), 200);
+            assert_eq!((candle.volume,candle.turnover_cents,candle.trade_count), (200, close * 200, 2));
+            let report = world.shutdown().expect("成功日结后重复Drain不得再次清算/归档");
+            assert_eq!(report.desk_finals[0].market.candles.len(), 1);
+            assert_eq!(report.desk_finals[0].market.traded_days_total, 1);
+            assert_eq!(report.desk_finals[0].market.candles[0].volume, 200);
+        }
+    }
+}
+
+#[test]
+fn shutdown_preserves_unconsumed_day_end_minute_bars() {
+    let mut world = shenzhen_closing_tie_world();
+    world.run_ticks(7).expect("日末真实成交与收盘申报");
+    world.run_day_end_public().expect("成功日结且尚未取得分钟桶");
+    let report = world.shutdown().expect("同一Start后的关停");
+    let bars = report.drained_minute_bars[0].as_ref().expect("已完成日结的完整分钟桶不可被二次Drain覆盖");
+    let totals = bars.iter().fold((0_u64,0_u128,0_u64), |(v,a,n), b|
+        (v + b.volume_shares, a + b.turnover_cents, n + b.trade_count));
+    assert_eq!(totals, (200,200000,2), "关停必须保留未消费的日结分钟事实");
+    assert_eq!(report.desk_finals[0].market.candles.len(), 1);
+    assert_eq!(report.worker_results.len(), 3);
+}
+
+#[test]
+fn shutdown_day_end_reuse_respects_consumed_aborted_and_new_start_paths() {
+    use super::decision::PendingOp;
+    for path in 0..4 {
+        let mut world = shenzhen_closing_tie_world();
+        world.run_ticks(if path == 3 { 2 } else { 7 }).expect("真实成交起点");
+        world.run_day_end_public().expect("成功日结");
+        if path == 0 {
+            assert_eq!(world.take_pending_day_bars()[0].as_ref().expect("先消费桶").iter()
+                .map(|b| b.volume_shares).sum::<u64>(), 200);
+        } else if path == 1 {
+            world.abort_day_end();
+        } else if path == 2 {
+            // 新Start的真实买单须在关停时撤销，不能因旧last_day_end_tick漏Drain。
+            world.broadcast_external_plan(vec![PendingOp {
+                local:0,stock:0,side:Side::Buy,routed:super::RoutedPrice::Fixed(900),
+                purse_reference:900,qty:100,
+            }],vec![]);
+            world.run_ticks(1).expect("新Start真实挂单");
+            assert!(!world.collect_desk_resting().expect("关停前活动单").0[0].is_empty());
+        }
+        let report = world.shutdown().expect("按真实日结与Start状态关停");
+        assert_eq!(report.worker_results.len(), 3);
+        assert!(report.desk_finals[0].resting.is_empty());
+        assert!(report.group_finals.iter().flat_map(|g| &g.accounts)
+            .all(|a| a.buy_purse_held_cents == 0 && a.pending_sell_qty[0] == 0));
+        if path == 0 {
+            assert!(report.drained_minute_bars[0].is_none(), "已消费日结桶不得重发");
+        } else {
+            let bars = report.drained_minute_bars[0].as_ref().expect("未消费或真实新Drain结果");
+            let expected = if path == 2 { 0 } else if path == 3 { 100 } else { 200 };
+            assert_eq!(bars.iter().map(|b| b.volume_shares).sum::<u64>(), expected);
+        }
+    }
+}
+
+#[test]
+fn restored_day_end_shutdown_does_not_archive_the_next_day_zero_candle() {
+    let mut spec = basic_spec(2,1,2,Box::new(|_| Box::new(|_,_|TickPlan::default())));
+    spec.initial_committed_tick = 240;
+    spec.initial_last_day_end_tick = Some(240);
+    spec.ticks_per_day = 240;
+    spec.stocks[0].initial_price = 900;
+    spec.stocks[0].initial_daily_bars = vec![(1100,1100,900,900,200)];
+    spec.stocks[0].initial_market = Some(super::desk::DeskMarketSeed {
+        last_price:900,last_close:900,day_high:900,day_low:900,
+        volume_today:0,turnover_today:0,trade_count:0,
+        candle:Some((900,900,900,900,0)),minute_closes:vec![],minute_bars:vec![],
+    });
+    let world = World::spawn(spec).expect("恢复完整日结静点");
+    let report = world.shutdown().expect("恢复后未Start即可关停");
+    assert_eq!(report.desk_finals[0].market.candles.len(),1,"不能再归档次日零活动K");
+    assert_eq!(report.desk_finals[0].market.traded_days_total,1);
+    assert_eq!(report.desk_finals[0].market.candle.as_ref().expect("次日零K仍活动").volume,0);
+    assert!(report.drained_minute_bars[0].is_none(),"恢复没有新的日结桶可发");
 }

@@ -8,6 +8,7 @@ import { planCell } from "./desktop/build-matrix.mjs";
 import { runBoundedCommand } from "./run-with-deadline.mjs";
 import { verifyWebReleaseWasm } from "./check-web-release-wasm.mjs";
 import { createFrontendCommands } from "./frontend-build-plan.mjs";
+import { executeWasmPackBuild } from "./wasm-pack-build.mjs";
 
 const rootDirectory = path.resolve(import.meta.dirname, "..");
 const targets = new Set(["desktop", "webui", "webui-server", "server"]);
@@ -287,6 +288,7 @@ class BuildRun {
         if (stat !== undefined && (stat.isSymbolicLink() || !stat.isDirectory())) throw new Error(`unsafe cached bundle directory: ${bundle}`);
         await rm(bundle, { recursive: true, force: true });
       } else if (command.action === "stage-frontend") await stageFrontend(plan);
+      else if (command.command === "wasm-pack") await executeWasmPackBuild(plan.root, command, commandRunner);
       else await commandRunner(command);
     }
     if (plan.compileOnly) {

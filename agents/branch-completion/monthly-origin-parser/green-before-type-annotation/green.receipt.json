@@ -1,0 +1,38 @@
+{
+  "phase": "green",
+  "started_at_utc": "2026-10-25T22:53:13.093277+00:00",
+  "cwd": "/data1/baiyifan/workplace/stock_market_game/.worktree/monthly-origin-parser",
+  "base_oid": "f364e64cb481d011a620e99760386b5c743c1ec8",
+  "node_version": "v25.8.2",
+  "command": [
+    "/home/linuxbrew/.linuxbrew/bin/node",
+    "scripts/run-with-deadline.mjs",
+    "10000",
+    "--",
+    "/home/linuxbrew/.linuxbrew/bin/node",
+    "--test",
+    "--test-timeout=10000",
+    "--test-concurrency=3",
+    "apps/web/src/save/schema/company/monthly-origin.test.ts",
+    "apps/web/src/save/schema/setup-company-options.test.ts",
+    "apps/web/src/save/company-schema.test.ts"
+  ],
+  "process_tree_deadline_ms": 10000,
+  "case_timeout_ms": 10000,
+  "file_concurrency": 3,
+  "source_sha256": {
+    "apps/web/src/save/schema/company/monthly-origin.test.ts": "188ec6b1ecdc6973c62e63a61264815bf5a600eaafe530f777d99e94d9771995",
+    "apps/web/src/save/schema/setup-company-options.test.ts": "bcdd11165d1d542e6a024bcc4852bb7fdb1961c972e03a3f3eefcd1559b1a9c5",
+    "apps/web/src/save/company-schema.test.ts": "45b2fcf8b1e3e52c46397dd19a7b1f44a803f20e518240c40e96b9749093f1c0",
+    "apps/web/src/save/schema/company/reports.ts": "8506ec453298078a32005e6a9264df8a828e3caaf757f510d28013b1b6c1e069",
+    "apps/web/src/save/schema/setup-company-options.ts": "60419e99c3f503e849c5f2829f3511abc84f5945ad53be7991531f8fccffcdb9",
+    "apps/web/src/save/schema/monthly-report-schedule.ts": "a3dce4d7b18662a9e8ed6bd850631ec765452ae94f94c25fdefbd34fe590b764",
+    "packages/engine/src/information/monthly_schedule.rs": "a7d3fcc26ea6bc56a759baef3bf91091c747697cfb8800188e4d078963729c74",
+    "packages/engine/src/information/publication.rs": "2adb62e5e200832c521feb0de2eb00e312611ea526e0f8029714398eac7427d0",
+    "scripts/run-with-deadline.mjs": "3f391c87ab5032c3c9acfea70a131a8d1694c0f94a27d1e3f69c1b43412f3233"
+  },
+  "exit_code": 0,
+  "wall_ms": 1058.961,
+  "stdout": "green.stdout.log",
+  "stderr": "green.stderr.log"
+}

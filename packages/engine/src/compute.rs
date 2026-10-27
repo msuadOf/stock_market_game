@@ -39,6 +39,10 @@ pub struct ComputeContext {
     /// WASM 单线程恒为空转。
     admission: std::sync::Mutex<PoolAdmission>,
     /// 容量变化广播：占槽退出/派发预留释放时唤醒等待容量的池外协调者。
+    /// 等待点账（R4a 阶段 1，设计 §10.1）：`wait_for_spawn_capacity` 的
+    /// `wait_while` 是**业务层阻塞等待点**（真实同步原语，不轮询不自旋）
+    /// ——逃逸=容量释放 notify_all（A2' 顺序代码）或持锁者 panic；其
+    /// 原语层底座为 wasm futex（(m) 同型），失败逃逸外包宿主（D3/D5）。
     capacity_changed: std::sync::Condvar,
     /// 方向B·宽度封顶（宽度税治理）：实际参与宽度——池宽（`workers()`）
     /// 是部署合同上限（读法 A：池=上限、活跃任务=取用），本值是粒度成形
@@ -462,7 +466,7 @@ impl ComputeContext {
     /// 默认资源来自 OS 及进程亲和限制，不读取 caller 的 Rayon registry。
     pub fn available() -> Result<std::sync::Arc<Self>, ComputeInitError> {
         #[cfg(not(target_arch = "wasm32"))]
-        let workers = std::thread::available_parallelism()
+        let workers = crate::thread_facade::available_parallelism()
             .map_err(|error| ComputeInitError::AvailableResources {
                 os_code: error.raw_os_error(),
             })?

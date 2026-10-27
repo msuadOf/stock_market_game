@@ -85,6 +85,8 @@ fn desk_in_place_carries_owner_side_price_qty_purse() {
         price: RoutedPrice::Fixed(1_055),
         qty: 200,
         purse: 211_000,
+        #[cfg(feature = "simulation-diagnostics")]
+        source: super::diagnostics::OperationSource::PlayerExternal,
     };
     let DeskIn::Place {
         owner,
@@ -92,6 +94,8 @@ fn desk_in_place_carries_owner_side_price_qty_purse() {
         price,
         qty,
         purse,
+        #[cfg(feature = "simulation-diagnostics")]
+        source: _,
     } = op
     else {
         panic!("应构造出 Place 变体");
@@ -109,13 +113,17 @@ fn desk_in_cancel_all_and_cancel_carry_owner() {
     let cancel = DeskIn::Cancel {
         owner: (0, 9),
         order: (5, 17),
+        #[cfg(feature = "simulation-diagnostics")]
+        source: super::diagnostics::OperationSource::PlayerExternal,
     };
     assert_eq!(cancel_all, DeskIn::CancelAll { owner: (0, 9) });
     assert_eq!(
         cancel,
         DeskIn::Cancel {
             owner: (0, 9),
-            order: (5, 17)
+            order: (5, 17),
+            #[cfg(feature = "simulation-diagnostics")]
+            source: super::diagnostics::OperationSource::PlayerExternal,
         }
     );
 }

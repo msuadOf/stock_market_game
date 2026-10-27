@@ -1,0 +1,79 @@
+import assert from "node:assert/strict";
+import { after, before, test } from "node:test";
+import { chromium, type Browser, type Page } from "@playwright/test";
+import { createServer, type ViteDevServer } from "vite";
+
+let vite: ViteDevServer;
+let browser: Browser;
+let page: Page;
+
+before(async () => {
+  vite = await createServer({ configFile: false, root: new URL("../../../", import.meta.url).pathname, appType: "custom",
+    server: { host: "127.0.0.1", port: 0, ws: false },
+    optimizeDeps: { include: ["react", "react-dom/client", "react-dom"] },
+    plugins: [{ name: "company-read-lifecycle-test", configureServer(server) {
+      server.middlewares.use("/__company_test", async (_request, response, next) => {
+        try {
+          const html = await server.transformIndexHtml("/__company_test", `<!doctype html><div id="root"></div><script type="module">
+            import React from 'react';
+            import { createRoot } from 'react-dom/client';
+            import { flushSync } from 'react-dom';
+            import { useCompanyQuery } from '/src/components/company/use-company-query.ts';
+            import { DividendTaxPanel } from '/src/components/company/DividendTaxPanel.tsx';
+            import { CompanyContractPanel } from '/src/components/company/CompanyContractPanel.tsx';
+            import { PreferenceRejectionsPanel } from '/src/components/company/PreferenceRejectionsPanel.tsx';
+            import { RightsSubscriptionRejectionPanel } from '/src/components/company/RightsSubscriptionRejectionPanel.tsx';
+            let root=createRoot(document.getElementById('root'));
+            const requests=[];
+            const provider=()=>new Promise((resolve,reject)=>requests.push({resolve,reject}));
+            function Probe(props) {
+              const [data,error,loading,refresh]=useCompanyQuery(props.query, props.refreshKey);
+              return React.createElement('div',null, loading?'loading':error===null?data===null?'idle':data:error,
+                React.createElement('button',{onClick:refresh},'refresh'));
+            }
+            window.fixture={requests,provider,
+              render: (props,component='Probe')=>flushSync(()=>root.render(React.createElement({Probe,DividendTaxPanel,CompanyContractPanel,PreferenceRejectionsPanel,RightsSubscriptionRejectionPanel}[component],props))),
+              unmount:()=>{flushSync(()=>root.unmount());root=createRoot(document.getElementById('root'));},
+              text:()=>document.getElementById('root').textContent};
+          </script>`);
+          response.setHeader("Content-Type", "text/html"); response.end(html);
+        } catch (failure) { next(failure); }
+      });
+    } }],
+  });
+  await vite.listen();
+  console.log("vite ready", vite.resolvedUrls);
+  browser = await chromium.launch({ headless: true, timeout: 1500 });
+  console.log("browser ready");
+  page = await browser.newPage();
+  page.setDefaultTimeout(2000);
+  page.on("pageerror", (error) => console.error(error));
+  page.on("console", (message) => console.log(message.text()));
+  await page.goto(`${vite.resolvedUrls!.local[0]}__company_test`);
+  await page.waitForFunction(() => "fixture" in window);
+});
+
+after(async () => { if (browser) await browser.close(); if (vite) await vite.close(); });
+
+/** 真实 Chromium + React createRoot；不替换 hooks dispatcher。 */
+async function run(code: string) { return page.evaluate(code); }
+
+test("移除宿主回调立即清除旧owner事实，迟到成功及失败不能污染新面板", async () => {
+  await run(`fixture.render({query:fixture.provider,refreshKey:'owner-a'});`);
+  await page.waitForFunction(() => (window as unknown as { fixture: { requests: unknown[] } }).fixture.requests.length === 1);
+  await run(`fixture.requests[0].resolve('旧账户税表');`);
+  await page.waitForFunction(() => document.body.textContent!.includes("旧账户税表"));
+  await run(`fixture.render({query:undefined,refreshKey:'owner-b'});`);
+  assert.doesNotMatch(await page.locator("#root").innerText(), /旧账户税表/);
+  await run(`fixture.unmount();`);
+});
+
+test("股息税无实际划收回执时保留未划收额，不宣称资金不足、已尝试或结清", async () => {
+  await run(`fixture.render({refreshKey:'owner-b',onQuery:()=>Promise.resolve({status:{mode:'AShareIndividual',identity:'Personal',stocks:[]},outstanding:[{account:'9',stock:'600001',outstanding:{numerator:'3',denominator:'2'},latest_collection:null}]})},'DividendTaxPanel');`);
+  await page.waitForFunction(() => document.body.textContent!.includes("600001"));
+  const text = await page.locator("#root").innerText();
+  assert.match(text, /3\/2 分/);
+  assert.match(text, /尚无实际划收回执/);
+  assert.doesNotMatch(text, /资金不足|已结清|已尝试/);
+  await run(`fixture.unmount();`);
+});

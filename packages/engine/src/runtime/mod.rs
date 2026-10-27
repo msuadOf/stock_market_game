@@ -35,9 +35,12 @@ mod protocol;
 pub mod bridge;
 pub mod coordinator;
 pub mod decision;
+#[cfg(feature = "simulation-diagnostics")]
+pub mod diagnostics;
 pub mod desk;
 pub mod drive;
 pub mod event_bridge;
+pub mod retail_lifecycle;
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod bridge_tests;
@@ -56,6 +59,8 @@ mod trade_fee_split_tests;
 mod retained_history_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod drive_tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod plan_identity_tests;
 /// P0 预存缺陷红证：多组名册偏移（组端坐标 vs 全局投影坐标）。
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod group_roster_offset_tests;
@@ -72,6 +77,7 @@ mod equivalence_tests;
 pub mod fees;
 pub mod group;
 pub mod plans;
+mod plan_ownership;
 /// P0 分段画像探针（视图内生战役）：driver 线程 step 各段 wall 计时。
 /// 默认零开销（探针显式 enable；生产恒关闭）。
 pub mod step_profile;
@@ -88,6 +94,9 @@ pub mod watchdog;
 /// B-1' 组线程等待分级自旋合同（协调者批 2026-10-19）。
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod watchdog_spin_tests;
+/// 等待点分层账静态锚（wasm 线程抽象层 R4a 阶段 1——设计 §10.1/§11.1）。
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod wait_ledger_tests;
 /// 刀 2a desk 投影轮间缓存合同（协调者刀单裁决②，2026-10-19）。
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod desk_projection_cache_tests;

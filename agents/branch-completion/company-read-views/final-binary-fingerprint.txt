@@ -1,0 +1,2 @@
+5d3a28e4c9b4ac7ba06bb1810c0608ad766093d8c4b0ccf4f7d67e18b21efa2c  /data1/baiyifan/workplace/stock_market_game/.tmp/company-read-views-target/debug/deps/session_company_read_views-c678e4c7f9c4b645
+7a42749b24a7edb460c6e4436db5a1da470c6ead567bc53cf3aaf51d6c6d6147  /data1/baiyifan/workplace/stock_market_game/.tmp/company-read-views-target/debug/deps/session_company_foundation-c3d45966a29b05a7

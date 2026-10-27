@@ -64,7 +64,8 @@ fn session_with_institutions(auction_ticks: u64, inst_count: u32) -> crate::Game
             history_len: 10,
             t1_enabled: true,
             float_allocation: FloatAllocation::random(),
-            start_date: crate::CivilDate::from_ymd(2030, 1, 1).unwrap(),
+            // 计时证据针对市场 tick，不能以元旦休市开局。
+            start_date: crate::CivilDate::from_ymd(2030, 1, 2).unwrap(),
             simulation_policy_id: SIMULATION_POLICY_ID.to_owned(),
         },
         42,

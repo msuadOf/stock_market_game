@@ -36,7 +36,10 @@ pub(crate) fn buy_request(
     requested_cents: i64,
 ) -> AllocationRequest {
     AllocationRequest {
-        plan_id: PlanId(plan),
+        plan_id: PlanId {
+            owner: engine::AccountId(1),
+            sequence: plan,
+        },
         code: code(stock),
         side: Side::Buy,
         class,

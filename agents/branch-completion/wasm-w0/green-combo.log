@@ -1,0 +1,12 @@
+✔ 锁定矩阵常量与设计 §6.3 R3-1 一致 (1.899145ms)
+✔ wasm-bindgen 锁版解析接受精确锁定并拒绝浮动/未锁形态 (0.293814ms)
+✔ 组合结果聚合：未登记红门使整体失败，登记红/跳过显式呈现 (1.465359ms)
+✔ 组合长入口由进程外共享300000ms supervisor驱动且显式jobs (2.673876ms)
+ℹ tests 4
+ℹ suites 0
+ℹ pass 4
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 168.738892

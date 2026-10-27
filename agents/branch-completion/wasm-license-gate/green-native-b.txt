@@ -1,0 +1,17 @@
+✔ shell Server route works without Node and does not touch frontend or an existing artifact (3463.441333ms)
+✔ supervisor kills a worker without finally and removes its owned work/WASM trees (329.278427ms)
+[build server] jobs=4 (cd /home/baiyifan/.claude/tmp/build-native-target-f9WLAe && cargo build --locked --release -p server --bin server --jobs 4 --target x86_64-unknown-linux-gnu)
+[build server] published /home/baiyifan/.claude/tmp/build-native-target-f9WLAe/target/build-artifacts/server
+✔ native target overrides Cargo configuration and never publishes the stale unqualified exe (578.901168ms)
+✔ publisher cleans its exclusively-created stage when copying fails without touching user files (22.257183ms)
+✔ production compiler child does not inherit build-machine remote mode, address or token (85.465914ms)
+✔ failed Cargo never publishes a stale executable from the reusable cache (4.292279ms)
+✔ native bundles preserve contained macOS symlinks but reject external bundle links (512.467169ms)
+ℹ tests 7
+ℹ suites 0
+ℹ pass 7
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 5145.209785

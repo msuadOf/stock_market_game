@@ -1,0 +1,67 @@
+{
+  "recorded_at_unix_ns": 1792929265963677678,
+  "source_unchanged": true,
+  "binaries": {
+    "engine": {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/finish-116/target/debug/deps/engine-3eb2aa70a85e274e",
+      "sha256": "9b02df04e4673a449d6e907d368501caf542df91cc096304dc5a8ec2d8d76651",
+      "mtime_ns": 1792928612475612184,
+      "fresh": true
+    },
+    "session": {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/finish-116/target/debug/deps/session-75daef09c95d85b4",
+      "sha256": "b043a26fddf32bdbaa5068b77a144c7c3f187cbd0ed72e2e9a3caa3167dbcf87",
+      "mtime_ns": 1792928755580804627,
+      "fresh": true
+    },
+    "tick_frame_commit": {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/finish-116/target/debug/deps/tick_frame_commit-99c1aa9ba3c7ad2e",
+      "sha256": "d919dfd03c6607381a3ecfdc254579b86b3413181e62c4bafef58be422079477",
+      "mtime_ns": 1792928607310461289,
+      "fresh": true
+    },
+    "civil_clock": {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/finish-116/target/debug/deps/civil_clock-22a8799547bb12d1",
+      "sha256": "d75476a5e6969f844bf3e7b86801e0d88701948bb41735c7b236bace73ce1e9a",
+      "mtime_ns": 1792928607619470316,
+      "fresh": true
+    },
+    "auction": {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/finish-116/target/debug/deps/auction-c8e1a3960b86b3b5",
+      "sha256": "0fe739b9e40e690ca8739e9f8b835033753665dc22d84fe26f08253b5d17d940",
+      "mtime_ns": 1792929181499377120,
+      "fresh": false
+    },
+    "attention_discovery": {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/finish-116/target/debug/deps/attention_discovery-6bbb4becc224a31a",
+      "sha256": "ab035e1ad13da41c1a367eb89e54f938223aafccd88c1e2f475fa0931c04e207",
+      "mtime_ns": 1792929181405374334,
+      "fresh": false
+    },
+    "diagnostic_absence": {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/finish-116/target/debug/deps/diagnostic_absence-e818ea24dae281e5",
+      "sha256": "677925a271ff6c21f368e6b6c5eb9c0c8fa84c8e474e1df6d949c78c6eb7aac8",
+      "mtime_ns": 1792929181538378275,
+      "fresh": false
+    }
+  },
+  "source_files_manifest_sha256": "31e2c8e7403dc95bc191e4f092909b6b7965162cc5dccac0a60b925002dd56b2",
+  "binary_hashes_unchanged_by_binding_build": false,
+  "source_manifest_path": ".tmp/finish-116/binding-source-before.json",
+  "source_after_tests_unix_ns": 1792930049758767703,
+  "source_unchanged_after_tests": true,
+  "prior_test_binary_reuse": {
+    "engine": true,
+    "session": true,
+    "tick_frame_commit": true,
+    "civil_clock": true,
+    "auction": false,
+    "attention_discovery": false,
+    "diagnostic_absence": false
+  },
+  "relinked_test_results": {
+    "auction": ".tmp/finish-116/auction-binding",
+    "attention_discovery": ".tmp/finish-116/attention-binding",
+    "diagnostic_absence": ".tmp/finish-116/absence-binding"
+  }
+}

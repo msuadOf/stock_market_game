@@ -1,0 +1,55 @@
+
+running 7 tests
+test outstanding_projection_preserves_exact_tax_and_insufficient_funds_cause ... FAILED
+test queries_reject_sessions_without_company_line ... ok
+test period_explanation_preserves_domain_result_and_rejects_unsettled_period ... FAILED
+test configured_company_without_registry_has_explicitly_empty_tax_views ... FAILED
+test non_flat_receipt_query_rejects_instead_of_returning_empty_ledger ... FAILED
+test account_tax_status_distinguishes_mode_identity_and_configured_books ... FAILED
+test flat_receipts_are_owner_filtered_and_queries_do_not_change_save_bytes ... FAILED
+
+failures:
+
+---- outstanding_projection_preserves_exact_tax_and_insufficient_funds_cause stdout ----
+
+thread 'outstanding_projection_preserves_exact_tax_and_insufficient_funds_cause' (1855676) panicked at packages/engine/tests/session_company_read_views.rs:194:58:
+called `Result::unwrap()` on an `Err` value: Invalid("B4e 查询尚未接线")
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- period_explanation_preserves_domain_result_and_rejects_unsettled_period stdout ----
+
+thread 'period_explanation_preserves_domain_result_and_rejects_unsettled_period' (1855677) panicked at packages/engine/tests/session_company_read_views.rs:57:67:
+called `Result::unwrap()` on an `Err` value: Unsupported("B4e 查询尚未接线")
+
+---- configured_company_without_registry_has_explicitly_empty_tax_views stdout ----
+
+thread 'configured_company_without_registry_has_explicitly_empty_tax_views' (1855673) panicked at packages/engine/tests/session_company_read_views.rs:99:63:
+called `Result::unwrap()` on an `Err` value: Invalid("B4e 查询尚未接线")
+
+---- non_flat_receipt_query_rejects_instead_of_returning_empty_ledger stdout ----
+
+thread 'non_flat_receipt_query_rejects_instead_of_returning_empty_ledger' (1855675) panicked at packages/engine/tests/session_company_read_views.rs:173:5:
+assertion failed: session.owner_flat_withholding_receipts(AccountId(0)).unwrap_err().to_string().contains("FlatWithholding")
+
+---- account_tax_status_distinguishes_mode_identity_and_configured_books stdout ----
+
+thread 'account_tax_status_distinguishes_mode_identity_and_configured_books' (1855672) panicked at packages/engine/tests/session_company_read_views.rs:75:69:
+called `Result::unwrap()` on an `Err` value: Invalid("B4e 查询尚未接线")
+
+---- flat_receipts_are_owner_filtered_and_queries_do_not_change_save_bytes stdout ----
+
+thread 'flat_receipts_are_owner_filtered_and_queries_do_not_change_save_bytes' (1855674) panicked at packages/engine/tests/session_company_read_views.rs:158:71:
+called `Result::unwrap()` on an `Err` value: Invalid("B4e 查询尚未接线")
+
+
+failures:
+    account_tax_status_distinguishes_mode_identity_and_configured_books
+    configured_company_without_registry_has_explicitly_empty_tax_views
+    flat_receipts_are_owner_filtered_and_queries_do_not_change_save_bytes
+    non_flat_receipt_query_rejects_instead_of_returning_empty_ledger
+    outstanding_projection_preserves_exact_tax_and_insufficient_funds_cause
+    period_explanation_preserves_domain_result_and_rejects_unsettled_period
+
+test result: FAILED. 1 passed; 6 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.32s
+
+bounded command exited with 101

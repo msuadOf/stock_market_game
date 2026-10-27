@@ -1,0 +1,53 @@
+{
+  "时间": "2026-10-25T17:45:55.711770+00:00",
+  "说明": "退出码来自本轮 exec/write_stdin 原始完成结果；gzip解压后为原始日志。最终browser未通过，旧67版本成功不可替代。",
+  "checks": [
+    {
+      "name": "targeted-tests",
+      "command": "node scripts/run-with-deadline.mjs 10000 -- node --test --test-timeout=10000 --test-concurrency=3 apps/web/src/host/wasm-worker-failure.test.ts apps/web/src/host/worker-host.test.ts apps/web/src/host/protocol-failure.test.ts",
+      "exit_code": 0,
+      "log": "evidence/green-final-68.log.gz",
+      "sha256": "cff9d41631ef9e1c4a03b288b2c1c04126aeacf23ee6091ce1222142e93533c7",
+      "raw_sha256": "e0ce456c05a96d812e56328c79e2db10422ca86f9452bc85fd96c1f11653afa4"
+    },
+    {
+      "name": "typescript",
+      "command": "node scripts/run-long-validation.mjs 300000 -- node apps/web/node_modules/typescript/bin/tsc --project apps/web/tsconfig.app.json --incremental false",
+      "exit_code": 0,
+      "log": "evidence/types-final-68.log.gz",
+      "sha256": "b0eb3accf074695406fd5b5d15047c370d5da759b72828c410d0c75b97c6ede6",
+      "raw_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "lint",
+      "command": "node scripts/run-with-deadline.mjs 10000 -- node apps/web/node_modules/oxlint/bin/oxlint --deny-warnings apps/web/src/host/wasm-failure.ts apps/web/src/host/wasm-worker.ts apps/web/src/host/wasm-worker-failure.test.ts apps/web/src/host/worker-host.test.ts",
+      "exit_code": 0,
+      "log": "evidence/lint-final-68.log.gz",
+      "sha256": "f6a1af13218aaa3e4aba48ee8c23e3904f42460f6c200eccd0bc6c74fcc2d36d",
+      "raw_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "browser",
+      "command": "node scripts/run-with-deadline.mjs 10000 -- node agents/branch-completion/worker-reporter-defense/browser-check.mjs",
+      "exit_code": 1,
+      "log": "evidence/browser-final-68-diagnostic.log.gz",
+      "sha256": "768d565a880012786a3610afe37e6f8f06ee1fc0f6bc3b026683ac8d622aaaad",
+      "raw_sha256": "3a5ec3ab96c627e088b5af8afa8f57be96a566618b49bb7ae0027636f8402c4f"
+    }
+  ],
+  "追加浏览器终验": {
+    "时间": "2026-10-25T18:15:57.080784+00:00",
+    "product_commit": "a924a495e1e05f546503729dc9826db039b9ca40",
+    "command": "node scripts/run-with-deadline.mjs 10000 -- node agents/branch-completion/worker-reporter-defense/browser-check.mjs",
+    "exit_code": 0,
+    "log": "evidence/browser-finite-stages.log.gz",
+    "raw_sha256": "1516290c63ffbbc1f9779ed4fa08b4d6c3c5a7068977effdc3769b44b36f7ae5",
+    "说明": "产品四文件未改；仅Blob观察器加有限阶段进度。旧失败不能由此次成功反推具体归因。",
+    "product_sources": {
+      "apps/web/src/host/wasm-failure.ts": "20595031051a64789da1323a873eed7b2babb813259b3bc49173f078fb01d362",
+      "apps/web/src/host/wasm-worker.ts": "9c094e499fecb60feddfe800d7479cd7772f683d0cce5c59f57e38f787374046",
+      "apps/web/src/host/wasm-worker-failure.test.ts": "253a172103db4bd645a5471b60b0b44700675bdceb3ad0986df2652e496da4a2",
+      "apps/web/src/host/worker-host.test.ts": "3e92e61f845784874c5ba4198cb18a796b12acac0a056cc64fc0e9d4d7036600"
+    }
+  }
+}

@@ -18,6 +18,8 @@ use super::{
 use crate::session::{completed_market_minute_count, RetailOrderDiagnosticEvent};
 use std::collections::BTreeMap;
 use crate::{Event, GameSession, StockId};
+#[cfg(feature = "simulation-diagnostics")]
+use crate::TradingPhase;
 #[cfg(test)]
 use crate::Money;
 

@@ -1,0 +1,4 @@
+{"cwd":"/data1/baiyifan/workplace/stock_market_game-setup-options","shared_deadline_ms":300000,"concurrent_children":2,"oxlint_threads":4,"tsc_limitation":"依赖图由工具单进程处理","jobs":[{"label":"typescript","command":"apps/web/node_modules/.bin/tsc","args":["-p","apps/web/tsconfig.app.json","--noEmit","--incremental","false"],"timeoutMs":300000},{"label":"oxlint","command":"apps/web/node_modules/.bin/oxlint","args":["--deny-warnings","--threads=4","apps/web/src/save/schema/setup-company-options.ts","apps/web/src/save/schema/setup-company-options.test.ts","apps/web/src/save/schema/company/accounting/journal.ts","apps/web/src/save/schema/company/books/industrial.ts"],"timeoutMs":10000}]}
+{"label":"oxlint","exit":0,"wall_ms":151}
+{"label":"typescript","exit":0,"wall_ms":8373}
+{"exit":0,"wall_ms":8375}

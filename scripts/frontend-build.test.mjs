@@ -12,9 +12,11 @@ test("shared frontend plan owns install, threaded WASM, copy, TypeScript, Vite a
     const plan = createFrontendPlan({ jobs: 4 }, { host });
     assert.match(JSON.stringify(plan.commands), /--frozen-lockfile/);
     const wasm = plan.commands.find(({ command }) => command === "wasm-pack");
-    // 批 9 A10 收尾：build-std/nightly 断言退役——稳定工具链串行构建。
+    // R4a 阶段 1（设计 §6.3 R3-1）：wasm32 链锁定 nightly-2026-09-05 + build-std
+    // （flags 在 apps/web-wasm/.cargo/config.toml，按调用目录链生效）——
+    // build 命令注入 RUSTUP_TOOLCHAIN；native 链（stable 1.96.1）不受影响。
     assert.ok(!wasm.args.includes("-Z"));
-    assert.equal(wasm.env.RUSTUP_TOOLCHAIN, undefined);
+    assert.equal(wasm.env.RUSTUP_TOOLCHAIN, "nightly-2026-09-05");
     assert.equal(wasm.env.CARGO_BUILD_JOBS, "4");
     // 批 9 A7：RAYON 分量退役——断言缺省。
     assert.equal(wasm.env.RAYON_NUM_THREADS, undefined);
@@ -41,6 +43,9 @@ test("WASM copy replaces stale generated files only after source checks succeed"
   const { createFrontendPlan, executeFrontendBuild } = await api();
   const root = await mkdtemp(path.join(tmpdir(), "frontend-build-"));
   try {
+    await mkdir(path.join(root, "apps/web-wasm"), { recursive: true });
+    await writeFile(path.join(root, "apps/web-wasm/Cargo.toml"), '[package]\nlicense-file = "../../LICENSE"\n');
+    await writeFile(path.join(root, "LICENSE"), "fixture license");
     const plan = createFrontendPlan({ jobs: 4 }, { root, host: "linux" });
     await mkdir(plan.wasmPackage, { recursive: true });
     await mkdir(path.join(plan.frontend, "wasm-pkg"), { recursive: true });
@@ -51,7 +56,8 @@ test("WASM copy replaces stale generated files only after source checks succeed"
       calls.push(command);
       if (command.command === "wasm-pack") await writeFile(path.join(plan.wasmPackage, "web_wasm.js"), "fresh glue");
     } });
-    assert.deepEqual(await readdir(path.join(plan.frontend, "wasm-pkg")), ["web_wasm.js"]);
+    assert.deepEqual(await readdir(path.join(plan.frontend, "wasm-pkg")), ["LICENSE", "web_wasm.js"]);
+    assert.equal(await readFile(path.join(plan.frontend, "wasm-pkg/LICENSE"), "utf8"), "fixture license");
     assert.equal(await readFile(path.join(plan.frontend, "wasm-pkg/web_wasm.js"), "utf8"), "fresh glue");
     assert.match(calls.at(-1).args[0], /check-web-release-wasm/);
     await assert.rejects(executeFrontendBuild(plan, { commandRunner: async () => { throw new Error("compiler failed"); } }), /compiler failed/);
@@ -110,6 +116,9 @@ test("WASM copy refuses a symlink destination without changing the referenced fi
   const { createFrontendPlan, executeFrontendBuild } = await api();
   const root = await mkdtemp(path.join(tmpdir(), "frontend-link-"));
   try {
+    await mkdir(path.join(root, "apps/web-wasm"), { recursive: true });
+    await writeFile(path.join(root, "apps/web-wasm/Cargo.toml"), '[package]\nlicense-file = "../../LICENSE"\n');
+    await writeFile(path.join(root, "LICENSE"), "fixture license");
     const plan = createFrontendPlan({ jobs: 4 }, { root, host: "linux" });
     const unrelated = path.join(root, "unrelated");
     await mkdir(plan.wasmPackage, { recursive: true });
@@ -128,4 +137,22 @@ test("legacy shell and batch frontend entries delegate to the shared build inste
     assert.match(script, /frontend-build\.mjs.*--package-manager corepack/);
     assert.doesNotMatch(script, /wasm-pack build|pnpm.*--filter web build|xcopy|cp -r/);
   }
+});
+
+
+test("frontend 构建在 LICENSE 变更后阻断后续复制", { timeout: 10000 }, async () => {
+  const { createFrontendPlan, executeFrontendBuild } = await api();
+  const scratch = path.resolve(import.meta.dirname, "../.tmp");
+  await mkdir(scratch, { recursive: true });
+  const root = await mkdtemp(path.join(scratch, "w0l-frontend-license-"));
+  try {
+    await mkdir(path.join(root, "apps/web-wasm"), { recursive: true });
+    await writeFile(path.join(root, "apps/web-wasm/Cargo.toml"), '[package]\nlicense-file = "../../LICENSE"\n');
+    await writeFile(path.join(root, "LICENSE"), "fixture license");
+    const plan = createFrontendPlan({ jobs: 4 }, { root, host: "linux" });
+    await assert.rejects(executeFrontendBuild(plan, { commandRunner: async (command) => {
+      if (command.command === "wasm-pack") await writeFile(path.join(root, "LICENSE"), "changed");
+      else assert.ok(!command.args[0].endsWith("check-web-release-wasm.mjs"), "LICENSE failure must stop release checks");
+    } }), /LICENSE.*changed/);
+  } finally { await rm(root, { recursive: true, force: true }); }
 });

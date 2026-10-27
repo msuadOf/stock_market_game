@@ -1,0 +1,15 @@
+{
+  "command": "/data1/baiyifan/workplace/stock_market_game/.tmp/mixed-calendar-c2a/red",
+  "args": [
+    "market_calendar_context::tests::c01_same_arc_owner_and_unordered_complete_bindings_are_accepted",
+    "--exact",
+    "--nocapture",
+    "--test-threads=1"
+  ],
+  "timeoutMs": 10000,
+  "elapsedMs": 279,
+  "exitCode": 1,
+  "stdout": "\nrunning 1 test\ntest market_calendar_context::tests::c01_same_arc_owner_and_unordered_complete_bindings_are_accepted ... FAILED\n\nfailures:\n\nfailures:\n    market_calendar_context::tests::c01_same_arc_owner_and_unordered_complete_bindings_are_accepted\n\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 32 filtered out; finished in 0.00s\n\n",
+  "stderr": "\nthread 'market_calendar_context::tests::c01_same_arc_owner_and_unordered_complete_bindings_are_accepted' (3206632) panicked at /data1/baiyifan/workplace/stock_market_game/.worktree/mixed-calendar-c2a/agents/branch-completion/mixed-calendar-c2a/../../../packages/engine/src/session/market_calendar_context_tests.rs:110:44:\ncalled `Result::unwrap()` on an `Err` value: MarketTickRequiresTrading { progress: Trading { completed_ticks: 0 } }\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\n",
+  "error": "bounded command exited with 101: thread 'market_calendar_context::tests::c01_same_arc_owner_and_unordered_complete_bindings_are_accepted' (3206632) panicked at /data1/baiyifan/workplace/stock_market_game/.worktree/mixed-calendar-c2a/agents/branch-completion/mixed-calendar-c2a/../../../packages/engine/src/session/market_calendar_context_tests.rs:110:44:\ncalled `Result::unwrap()` on an `Err` value: MarketTickRequiresTrading { progress: Trading { completed_ticks: 0 } }\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace"
+}

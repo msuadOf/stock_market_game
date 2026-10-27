@@ -1,0 +1,40 @@
+{
+  "base_commit": "6631905bce83d2701c129c3dfc5130a2a1ac8a78",
+  "design_sha256": "f8eb6323602935c0c6d205a2c52f0bccd8c39a5ef5b9fdb3e2b8d175911a4711",
+  "source_manifest_sha256": "8a044d1a3ddefcd3b670e95677a20565eef9870e698927a467c36a7a83436400",
+  "source_manifest_entries": 2166,
+  "source_manifest_scope": "git ls-files 中除 agents/ 与 memory/ 的完整现存文件；未跟踪业务源码为空",
+  "source_manifest_before": ".tmp/mixed-calendar-c0/source-before.json",
+  "source_manifest_after": ".tmp/mixed-calendar-c0/source-after.json",
+  "source_unchanged_during_binding": true,
+  "binary": ".tmp/mixed-calendar-c0/target/debug/deps/civil_clock-22a8799547bb12d1",
+  "binary_sha256": "1a91e86c4f989c64029b45a0797d5c6c8e6d99a4d0f094a59ed275ff4197ce98",
+  "build_artifact_jsonl_sha256": "f820b7b3f27bb48f4d979ef30c5054725ff40304952aae45fb4c7602be1a2149",
+  "build_log": ".tmp/mixed-calendar-c0/build-binding.jsonl",
+  "build_jobs": 8,
+  "test_process_concurrency": 4,
+  "ordinary_command_and_case_deadline_ms": 10000,
+  "build_only_deadline_ms": 300000,
+  "product_diff_files": [
+    {
+      "path": "docs/simulation-calendar.md",
+      "sha256": "7df44a1b5a76aa30d2f400cb00a79b8fbcf037b845594c81c564d4827ad0db20"
+    },
+    {
+      "path": "docs/trading-rules.md",
+      "sha256": "560fafa3ca6fedc70511007d569b636e075e1f4cb6ef9efc05e045eee19413b1"
+    },
+    {
+      "path": "packages/engine/src/session.rs",
+      "sha256": "69a30f341fde39c6f80d382654856310df0094942267126e7f3db02f0446b3c4"
+    },
+    {
+      "path": "packages/engine/src/session/civil_clock.rs",
+      "sha256": "1c14657ebdc1718aa4e2ec71c1319d2bf9a21b843b5a835d4383f10242643b48"
+    },
+    {
+      "path": "packages/engine/tests/civil_clock.rs",
+      "sha256": "c50b22c2286270becc4be5bda7f6833f6997e707a3b355b7efbde89cb02666b2"
+    }
+  ]
+}

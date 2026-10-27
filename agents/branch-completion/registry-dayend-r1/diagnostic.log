@@ -1,0 +1,33 @@
+
+running 1 test
+test session::corporate_actions::registry_day_end::tests::runtime_closing_final_facts_reconcile_with_tail_group_confirmations ... PROBE info-check now=CivilInstant { date: CivilDate { year: 2026, month: 1, day: 5 }, second_of_day: 34200 } cadence=Immediate
+PROBE info-check now=CivilInstant { date: CivilDate { year: 2026, month: 1, day: 5 }, second_of_day: 34200 } cadence=Daily { checks: 2 }
+R1 tick 1 buyer confirmations None
+R1 tick 2 buyer confirmations None
+PROBE info-check now=CivilInstant { date: CivilDate { year: 2026, month: 1, day: 5 }, second_of_day: 49080 } cadence=Daily { checks: 1 }
+R1 tick 3 buyer confirmations None
+PROBE info-check now=CivilInstant { date: CivilDate { year: 2026, month: 1, day: 5 }, second_of_day: 53820 } cadence=Immediate
+R1 tick 4 buyer confirmations None
+PROBE info-check now=CivilInstant { date: CivilDate { year: 2026, month: 1, day: 5 }, second_of_day: 53910 } cadence=Immediate
+R1 tick 5 buyer confirmations None
+PROBE info-check now=CivilInstant { date: CivilDate { year: 2026, month: 1, day: 5 }, second_of_day: 33300 } cadence=Immediate
+R1 tick 6 buyer confirmations None
+PROBE info-check now=CivilInstant { date: CivilDate { year: 2026, month: 1, day: 5 }, second_of_day: 64800 } cadence=Immediate
+PROBE info-check now=CivilInstant { date: CivilDate { year: 2026, month: 1, day: 5 }, second_of_day: 64800 } cadence=Daily { checks: 2 }
+PROBE info-check now=CivilInstant { date: CivilDate { year: 2026, month: 1, day: 5 }, second_of_day: 64800 } cadence=Monthly
+
+thread 'session::corporate_actions::registry_day_end::tests::runtime_closing_final_facts_reconcile_with_tail_group_confirmations' (2198193) panicked at packages/engine/src/session/corporate_actions/registry_day_end/tests.rs:404:5:
+assertion `left == right` failed
+  left: 100
+ right: 200
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+FAILED
+
+failures:
+
+failures:
+    session::corporate_actions::registry_day_end::tests::runtime_closing_final_facts_reconcile_with_tail_group_confirmations
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2292 filtered out; finished in 0.21s
+
+bounded command exited with 101

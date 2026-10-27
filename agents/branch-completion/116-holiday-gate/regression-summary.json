@@ -1,0 +1,549 @@
+{
+  "lib-baseline": {
+    "binary": "/data1/baiyifan/workplace/stock_market_game/.tmp/finish-116/target/debug/deps/engine-3eb2aa70a85e274e",
+    "prefix": "session::,verification_evidence::",
+    "case_count": 1222,
+    "workers": 16,
+    "case_deadline_ms": 10000,
+    "seconds": 24.247,
+    "passed": 1222,
+    "failures": []
+  },
+  "lib-gate": {
+    "binary": "/data1/baiyifan/workplace/stock_market_game/.tmp/finish-116/target/debug/deps/engine-3eb2aa70a85e274e",
+    "prefix": "session::,verification_evidence::",
+    "case_count": 1222,
+    "workers": 16,
+    "case_deadline_ms": 10000,
+    "seconds": 21.586,
+    "passed": 1140,
+    "failures": [
+      {
+        "case": "session::attention::attention_tests::closing_keeps_continuous_orders_public_but_hides_new_auction_orders_and_preserves_self_view",
+        "status": 101,
+        "seconds": 0.207
+      },
+      {
+        "case": "session::attention::attention_tests::opening_clearing_makes_original_sequence_remainders_public_without_repricing",
+        "status": 101,
+        "seconds": 0.204
+      },
+      {
+        "case": "session::attention::attention_tests::opening_hidden_book_does_not_change_public_depth_imbalance_or_attention_probability",
+        "status": 101,
+        "seconds": 0.202
+      },
+      {
+        "case": "session::committable_state_tests::real_step_commits_successfully_when_drop_thread_cannot_spawn",
+        "status": 101,
+        "seconds": 0.196
+      },
+      {
+        "case": "session::decision_chain::chain_restructure_tests::completed_sell_prunes_memory_before_quiet_point_save_validation",
+        "status": 101,
+        "seconds": 4.696
+      },
+      {
+        "case": "session::decision_chain::retail_analysis::tests::public_step_consumes_retail_beliefs_and_replays_after_restore",
+        "status": 101,
+        "seconds": 0.192
+      },
+      {
+        "case": "session::failure_tests::d0_lockstep_violation_fails_explicitly",
+        "status": 101,
+        "seconds": 0.205
+      },
+      {
+        "case": "session::failure_tests::d0_step_via_runtime_continues_across_ticks_and_keeps_book",
+        "status": 101,
+        "seconds": 0.201
+      },
+      {
+        "case": "session::failure_tests::runtime_attention_heap_mirror_does_not_grow_across_ticks",
+        "status": 101,
+        "seconds": 0.2
+      },
+      {
+        "case": "session::npc_working_quote_tests::accepted_retail_observation_persists_an_unheld_watchlist_stock",
+        "status": 101,
+        "seconds": 0.195
+      },
+      {
+        "case": "session::npc_working_quote_tests::sol5_seed_before_first_step_reaches_runtime_world",
+        "status": 101,
+        "seconds": 0.199
+      },
+      {
+        "case": "session::npc_working_quote_tests::sol6th_same_tick_settlement_full_projection",
+        "status": 101,
+        "seconds": 0.199
+      },
+      {
+        "case": "session::persistence::saved_runtime_tests::per_fill_priority_history_survives_restore_and_next_tick",
+        "status": 101,
+        "seconds": 0.386
+      },
+      {
+        "case": "session::persistence::saved_runtime_tests::real_step_settles_and_persists_gross_capped_seller_without_cash_reservation",
+        "status": 101,
+        "seconds": 0.203
+      },
+      {
+        "case": "session::persistence::saved_runtime_tests::restore_carries_true_fill_facts_and_continues_buy_with_cumulative_fees",
+        "status": 101,
+        "seconds": 0.199
+      },
+      {
+        "case": "session::persistence::saved_runtime_tests::restore_keeps_cognitive_profiles_independent_from_execution_styles",
+        "status": 101,
+        "seconds": 0.407
+      },
+      {
+        "case": "session::persistence::saved_runtime_tests::same_tick_new_seller_route_creates_and_advances_cumulative_fee_audit",
+        "status": 101,
+        "seconds": 0.193
+      },
+      {
+        "case": "session::persistence::saved_runtime_tests::same_tick_routes_advance_one_seller_fee_debt_without_reusing_tick_start_audit",
+        "status": 101,
+        "seconds": 0.196
+      },
+      {
+        "case": "session::persistence::saved_runtime_tests::seller_cumulative_nominal_and_charged_audit_survives_restore",
+        "status": 101,
+        "seconds": 0.385
+      },
+      {
+        "case": "session::persistence::saved_runtime_tests::v5_adopt_partial_buy_seeds_exact_escrow_and_survives_quiet_save",
+        "status": 101,
+        "seconds": 0.4
+      },
+      {
+        "case": "session::persistence::saved_runtime_tests::v6_order_id_encoding_stays_in_wire_domain_beyond_32_stocks",
+        "status": 101,
+        "seconds": 0.393
+      },
+      {
+        "case": "session::pipeline::authoritative_tick_tests::compute_context_shared_sessions_preserve_budget_and_failure_atomicity",
+        "status": 101,
+        "seconds": 0.193
+      },
+      {
+        "case": "session::pipeline::authoritative_tick_tests::preparing_each_market_phase_leaves_authority_untouched_until_commit",
+        "status": 101,
+        "seconds": 0.426
+      },
+      {
+        "case": "session::pipeline::authoritative_tick_tests::public_step_discards_each_phase_candidate_when_commit_preparation_fails",
+        "status": 101,
+        "seconds": 0.22
+      },
+      {
+        "case": "session::pipeline::authoritative_tick_tests::public_step_dispatches_each_market_phase_and_commits_its_evidence",
+        "status": 101,
+        "seconds": 0.197
+      },
+      {
+        "case": "session::pipeline::authoritative_tick_tests::public_step_reports_zero_quantity_in_event_and_retail_diagnostic",
+        "status": 101,
+        "seconds": 0.199
+      },
+      {
+        "case": "session::pipeline::authoritative_tick_tests::public_step_routes_pre_open_rejection_and_continuous_place_cancel_lifecycle",
+        "status": 101,
+        "seconds": 0.198
+      },
+      {
+        "case": "session::pipeline::authoritative_tick_tests::two_npc_requests_and_player_request_share_stock_price_time_rules",
+        "status": 101,
+        "seconds": 0.2
+      },
+      {
+        "case": "session::pipeline::authoritative_tick_tests::unified_market_auction_keeps_orders_in_the_production_book_without_matching",
+        "status": 101,
+        "seconds": 0.197
+      },
+      {
+        "case": "session::pipeline::book_auction_boundary_tests::market_order_rejected_after_account_validation_consumes_its_order_id_in_auction",
+        "status": 101,
+        "seconds": 0.196
+      },
+      {
+        "case": "session::pipeline::commit_evidence_tests::ordinary_tick_skips_commit_evidence_replay_but_diagnostic_tick_captures_it",
+        "status": 101,
+        "seconds": 0.389
+      },
+      {
+        "case": "session::pipeline::npc_tick_preparation::t1_account_task_tests::probe3_consume_path",
+        "status": 101,
+        "seconds": 0.199
+      },
+      {
+        "case": "session::pipeline::npc_tick_preparation::t1_account_task_tests::sol4th_queue_before_first_step_executes_intents_exactly_once",
+        "status": 101,
+        "seconds": 0.372
+      },
+      {
+        "case": "session::pipeline::npc_tick_preparation::t1_account_task_tests::sol5_queue_npc_all_due_takes_effect_in_runtime",
+        "status": 101,
+        "seconds": 0.191
+      },
+      {
+        "case": "session::pipeline::npc_tick_preparation_tests::legacy_archive_identification_covers_value_escape_null_and_precedence",
+        "status": 101,
+        "seconds": 0.193
+      },
+      {
+        "case": "session::pipeline::npc_tick_preparation_tests::missing_npc_batch_contract_after_entry_switch",
+        "status": 101,
+        "seconds": 0.4
+      },
+      {
+        "case": "session::pipeline::npc_tick_preparation_tests::restore_explicitly_rejects_legacy_pending_some_batch",
+        "status": 101,
+        "seconds": 0.189
+      },
+      {
+        "case": "session::pipeline::quote_expiry_tests::discarded_or_failed_quote_expiry_shadow_preserves_authoritative_retail_diagnostics",
+        "status": 101,
+        "seconds": 0.196
+      },
+      {
+        "case": "session::pipeline::quote_expiry_tests::quote_expiry_diagnostic_precedes_each_same_tick_diagnostic_exactly_once",
+        "status": 101,
+        "seconds": 0.199
+      },
+      {
+        "case": "session::pipeline::quote_expiry_tests::quote_expiry_releases_buy_resources_and_defers_authority_until_commit",
+        "status": 101,
+        "seconds": 0.226
+      },
+      {
+        "case": "session::pipeline::quote_expiry_tests::quote_expiry_retail_cancellation_diagnostic_survives_commit",
+        "status": 101,
+        "seconds": 0.201
+      },
+      {
+        "case": "session::pipeline::ready_ingress::tests::failed_tick_keeps_external_queue_for_the_next_committed_attempt",
+        "status": 101,
+        "seconds": 0.219
+      },
+      {
+        "case": "session::pipeline::spine_v0_contract_tests::v0_empty_tick_still_delivers_a_valid_frame",
+        "status": 101,
+        "seconds": 0.192
+      },
+      {
+        "case": "session::pipeline::spine_v0_contract_tests::v0_late_round_failure_preserves_authority_rng_ids_and_cursors",
+        "status": 101,
+        "seconds": 0.196
+      },
+      {
+        "case": "session::pipeline::spine_v0_contract_tests::v0_publication_failure_installs_nothing_and_keeps_session_steppable",
+        "status": 101,
+        "seconds": 0.221
+      },
+      {
+        "case": "session::pipeline::spine_v0_contract_tests::v0_quote_expiry_is_usable_in_tick_and_post_seal_releases_never_replenish_budgets",
+        "status": 101,
+        "seconds": 0.372
+      },
+      {
+        "case": "session::pipeline::t3_boundary_tests::civil_fixture_sell_direction_is_absent_at_production_source",
+        "status": 101,
+        "seconds": 0.204
+      },
+      {
+        "case": "session::pipeline::t3_boundary_tests::full_tick_produces_exactly_once_and_execution_phase_adds_nothing",
+        "status": 101,
+        "seconds": 0.201
+      },
+      {
+        "case": "session::pipeline::t3_boundary_tests::full_trading_day_and_day_boundary_keep_one_production_per_tick",
+        "status": 101,
+        "seconds": 0.2
+      },
+      {
+        "case": "session::pipeline::t3_boundary_tests::no_due_tick_still_produces_exactly_one_empty_batch",
+        "status": 101,
+        "seconds": 0.233
+      },
+      {
+        "case": "session::pipeline::t3_boundary_tests::nonempty_root_handover_pairs_completion_with_delivery_per_tick",
+        "status": 101,
+        "seconds": 0.197
+      },
+      {
+        "case": "session::pipeline::t3_boundary_tests::produced_retail_traces_are_visible_after_the_producing_tick",
+        "status": 101,
+        "seconds": 0.196
+      },
+      {
+        "case": "session::pipeline::t3_boundary_tests::restore_does_not_accumulate_stale_diagnostics",
+        "status": 101,
+        "seconds": 0.192
+      },
+      {
+        "case": "session::pipeline::t3_boundary_tests::root_handover_precedes_first_delivery_every_tick",
+        "status": 101,
+        "seconds": 0.202
+      },
+      {
+        "case": "session::pipeline::t3_boundary_tests::sealed_tick_is_not_backfilled_after_commit",
+        "status": 101,
+        "seconds": 0.196
+      },
+      {
+        "case": "session::pipeline::t3_boundary_tests::staged_injection_is_not_counted_as_production",
+        "status": 101,
+        "seconds": 0.2
+      },
+      {
+        "case": "session::pipeline::t3_boundary_tests::stale_traces_are_cleared_when_the_next_tick_produces_none",
+        "status": 101,
+        "seconds": 0.2
+      },
+      {
+        "case": "session::pipeline::t3_boundary_tests::tick_with_expiry_still_produces_once_across_phase_boundaries",
+        "status": 101,
+        "seconds": 0.225
+      },
+      {
+        "case": "session::pipeline::t4_market_data_owner_tests::auction_event_order_and_no_trade_candle_mark",
+        "status": 101,
+        "seconds": 0.199
+      },
+      {
+        "case": "session::pipeline::t4_market_data_owner_tests::finalize_installs_owner_market_data_patch_into_session",
+        "status": 101,
+        "seconds": 0.203
+      },
+      {
+        "case": "session::pipeline::t4_market_data_owner_tests::minute_history_prefix_is_preserved_when_owner_appends",
+        "status": 101,
+        "seconds": 0.2
+      },
+      {
+        "case": "session::pipeline::tests::committed_shadow_advances_authority_once",
+        "status": 101,
+        "seconds": 0.224
+      },
+      {
+        "case": "session::pipeline::tests::post_shadow_fatal_preserves_authority_and_publishes_no_events",
+        "status": 101,
+        "seconds": 0.223
+      },
+      {
+        "case": "session::protocol::civil::session::epoch_alignment_tests::epoch_alignment_accepted_account_personal_rng_terminal_is_exact",
+        "status": 101,
+        "seconds": 0.428
+      },
+      {
+        "case": "session::protocol::civil::session::rollback_tests::checkpoint_rejects_poison_and_failed_candidate_can_retry_from_healthy_state",
+        "status": 101,
+        "seconds": 0.222
+      },
+      {
+        "case": "session::protocol::civil::session::rollback_tests::committed_evidence_frame_is_the_same_public_runtime_step",
+        "status": 101,
+        "seconds": 0.369
+      },
+      {
+        "case": "session::protocol::civil::session::rollback_tests::malformed_evidence_frame_rolls_back_game_history_and_facts_then_retries",
+        "status": 101,
+        "seconds": 0.261
+      },
+      {
+        "case": "session::protocol::civil::session::rollback_tests::malformed_frame_after_mutation_rolls_back_game_history_and_fact_cursor",
+        "status": 101,
+        "seconds": 0.271
+      },
+      {
+        "case": "session::protocol::civil::session::rollback_tests::solfinal1a_day_end_projection_failure_rolls_back_day",
+        "status": 101,
+        "seconds": 0.199
+      },
+      {
+        "case": "session::protocol::stepframe_parity_tests::solfinal2_real_trade_parity_cash_position_t1_cost",
+        "status": 101,
+        "seconds": 0.412
+      },
+      {
+        "case": "session::protocol::stepframe_parity_tests::stepframe4_runtime_and_legacy_frame_contract_faces_match",
+        "status": 101,
+        "seconds": 0.382
+      },
+      {
+        "case": "session::shared_ingress::tests::failed_private_receipt_gap_restores_without_losing_real_player_inputs",
+        "status": 101,
+        "seconds": 0.761
+      },
+      {
+        "case": "session::shared_ingress::tests::production_step_cash_winner_follows_cross_source_receive_order",
+        "status": 101,
+        "seconds": 0.35
+      },
+      {
+        "case": "session::shared_ingress::tests::production_step_same_price_stock_order_follows_cross_source_receipts",
+        "status": 101,
+        "seconds": 0.374
+      },
+      {
+        "case": "session::shared_ingress::tests::real_step_chain_delivers_each_external_input_exactly_once_across_forks",
+        "status": 101,
+        "seconds": 0.375
+      },
+      {
+        "case": "verification_evidence::phase_timing::tests::auction_and_pre_open_dispatchers_each_emit_complete_committed_timing",
+        "status": 101,
+        "seconds": 0.2
+      },
+      {
+        "case": "verification_evidence::phase_timing::tests::compute_context_shared_host_sessions_keep_timing_isolated",
+        "status": 101,
+        "seconds": 0.2
+      },
+      {
+        "case": "verification_evidence::phase_timing::tests::empty_and_nonempty_ingress_both_record_account_validation",
+        "status": 101,
+        "seconds": 0.2
+      },
+      {
+        "case": "verification_evidence::phase_timing::tests::evidence_serializes_all_measurements_as_decimal_strings",
+        "status": 101,
+        "seconds": 0.195
+      },
+      {
+        "case": "verification_evidence::phase_timing::tests::failed_step_returns_no_committed_timing_evidence",
+        "status": 101,
+        "seconds": 0.201
+      },
+      {
+        "case": "verification_evidence::phase_timing::tests::opt_in_timing_does_not_change_events_save_or_business_hash",
+        "status": 101,
+        "seconds": 0.381
+      },
+      {
+        "case": "verification_evidence::phase_timing::tests::public_timed_step_captures_one_committed_expiry_to_commit_record",
+        "status": 101,
+        "seconds": 0.194
+      }
+    ]
+  },
+  "lib-final": {
+    "binary": "/data1/baiyifan/workplace/stock_market_game/.tmp/finish-116/target/debug/deps/engine-3eb2aa70a85e274e",
+    "prefix": "session::,verification_evidence::",
+    "case_count": 1222,
+    "workers": 16,
+    "case_deadline_ms": 10000,
+    "seconds": 22.888,
+    "passed": 1222,
+    "failures": []
+  },
+  "session-final": {
+    "binary": "/data1/baiyifan/workplace/stock_market_game/.tmp/finish-116/target/debug/deps/session-75daef09c95d85b4",
+    "prefix": "*",
+    "case_count": 144,
+    "workers": 16,
+    "case_deadline_ms": 10000,
+    "seconds": 8.515,
+    "passed": 144,
+    "failures": []
+  },
+  "auction": {
+    "binary": "/data1/baiyifan/workplace/stock_market_game/.tmp/finish-116/target/debug/deps/auction-c8e1a3960b86b3b5",
+    "prefix": "*",
+    "case_count": 32,
+    "workers": 16,
+    "case_deadline_ms": 10000,
+    "seconds": 0.919,
+    "passed": 32,
+    "failures": []
+  },
+  "attention": {
+    "binary": "/data1/baiyifan/workplace/stock_market_game/.tmp/finish-116/target/debug/deps/attention_discovery-6bbb4becc224a31a",
+    "prefix": "*",
+    "case_count": 20,
+    "workers": 16,
+    "case_deadline_ms": 10000,
+    "seconds": 2.345,
+    "passed": 20,
+    "failures": []
+  },
+  "absence": {
+    "binary": "/data1/baiyifan/workplace/stock_market_game/.tmp/finish-116/target/debug/deps/diagnostic_absence-e818ea24dae281e5",
+    "prefix": "*",
+    "case_count": 2,
+    "workers": 16,
+    "case_deadline_ms": 10000,
+    "seconds": 0.446,
+    "passed": 2,
+    "failures": []
+  },
+  "civil": {
+    "binary": "/data1/baiyifan/workplace/stock_market_game/.tmp/finish-116/target/debug/deps/civil_clock-22a8799547bb12d1",
+    "prefix": "*",
+    "case_count": 13,
+    "workers": 16,
+    "case_deadline_ms": 10000,
+    "seconds": 0.874,
+    "passed": 13,
+    "failures": []
+  },
+  "frame": {
+    "binary": "/data1/baiyifan/workplace/stock_market_game/.tmp/finish-116/target/debug/deps/tick_frame_commit-99c1aa9ba3c7ad2e",
+    "prefix": "*",
+    "case_count": 12,
+    "workers": 16,
+    "case_deadline_ms": 10000,
+    "seconds": 1.484,
+    "passed": 12,
+    "failures": []
+  },
+  "red": {
+    "binary": "/data1/baiyifan/workplace/stock_market_game/.tmp/finish-116/target/debug/deps/session-75daef09c95d85b4",
+    "prefix": "market_holiday_,per_stock_trading_flag_",
+    "case_count": 6,
+    "workers": 16,
+    "case_deadline_ms": 10000,
+    "seconds": 0.457,
+    "passed": 1,
+    "failures": [
+      {
+        "case": "market_holiday_frame_entries_reject_without_changing_authority",
+        "status": 101,
+        "seconds": 0.45
+      },
+      {
+        "case": "market_holiday_gate_follows_frozen_closures_on_both_exchanges",
+        "status": 101,
+        "seconds": 0.443
+      },
+      {
+        "case": "market_holiday_gate_rejects_step_but_trading_day_still_fills",
+        "status": 101,
+        "seconds": 0.44
+      },
+      {
+        "case": "market_holiday_runtime_gate_preserves_pending_intents_and_resources",
+        "status": 101,
+        "seconds": 0.452
+      },
+      {
+        "case": "per_stock_trading_flag_follows_the_frozen_calendar_not_the_default_table",
+        "status": 101,
+        "seconds": 0.422
+      }
+    ]
+  },
+  "green": {
+    "binary": "/data1/baiyifan/workplace/stock_market_game/.tmp/finish-116/target/debug/deps/session-75daef09c95d85b4",
+    "prefix": "market_holiday_,per_stock_trading_flag_",
+    "case_count": 6,
+    "workers": 16,
+    "case_deadline_ms": 10000,
+    "seconds": 0.861,
+    "passed": 6,
+    "failures": []
+  }
+}

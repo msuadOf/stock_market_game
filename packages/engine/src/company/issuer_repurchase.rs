@@ -417,11 +417,15 @@ struct IssuerRepurchaseBookState {
     status: IssuerRepurchaseStatus,
     fills: Vec<RepurchaseFillRecord>,
     share_unit_adjustments: Vec<ShareUnitAdjustment>,
+    #[serde(deserialize_with = "crate::company::persistence::required_nullable")]
     completed_on: Option<CivilDate>,
+    #[serde(deserialize_with = "crate::company::persistence::required_nullable")]
     withdrawn_remainder: Option<Money>,
+    #[serde(deserialize_with = "crate::company::persistence::required_nullable")]
     cancelled_on: Option<CivilDate>,
     #[serde(with = "crate::orderbook::canonical_u64_decimal")]
     cancelled_shares: u64,
+    #[serde(deserialize_with = "crate::company::persistence::required_nullable")]
     last_order_day: Option<CivilDate>,
 }
 

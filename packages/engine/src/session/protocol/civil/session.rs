@@ -34,6 +34,25 @@ impl ProtocolState {
 }
 
 impl ProtocolSession {
+    /// 显式转发 Simple 偏好配置，保留上一次已发布日终存档的职责。
+    pub fn company_simple_preferences(
+        &self,
+        company: &crate::company::CompanyId,
+    ) -> Result<
+        crate::company::simple::SimpleCompanyPreferences,
+        crate::session::SimplePreferencesError,
+    > {
+        self.state.game.company_simple_preferences(company)
+    }
+
+    pub fn set_simple_preferences(
+        &mut self,
+        company: &crate::company::CompanyId,
+        preferences: crate::company::simple::SimpleCompanyPreferences,
+    ) -> Result<(), crate::session::SimplePreferencesError> {
+        self.state.game.set_simple_preferences(company, preferences)
+    }
+
     /// B3 远程登录：成员变更面转发（bind/join/set_admission_cash 是会话级
     /// 静点操作，宿主在命令处理边界调用； ProtocolSession 未暴露通用
     /// DerefMut——成员操作经显式转发保持发布状态封装）。
@@ -1543,7 +1562,9 @@ mod rollback_tests {
 
     #[test]
     fn checkpoint_rejects_poison_and_failed_candidate_can_retry_from_healthy_state() {
-        let setup = crate::session::protocol::civil::publication_tests::setup();
+        let mut setup = crate::session::protocol::civil::publication_tests::setup();
+        // 本用例验证市场候选提交及回滚，首拍须为开市日。
+        setup.start_date = crate::CivilDate::from_iso("2030-01-02").unwrap();
         let mut session = ProtocolSession::new(setup, 53).unwrap();
         let fatal = StepFatal::InvariantViolation {
             location: "protocol checkpoint test".into(),
@@ -1562,7 +1583,9 @@ mod rollback_tests {
 
     #[test]
     fn committed_evidence_frame_is_the_same_public_runtime_step() {
-        let setup = crate::session::protocol::civil::publication_tests::setup();
+        let mut setup = crate::session::protocol::civil::publication_tests::setup();
+        // 本用例验证市场候选提交及回滚，首拍须为开市日。
+        setup.start_date = crate::CivilDate::from_iso("2030-01-02").unwrap();
         let mut ordinary = ProtocolSession::new(setup.clone(), 47).unwrap();
         let mut observed = ProtocolSession::new(setup, 47).unwrap();
 
@@ -1586,7 +1609,9 @@ mod rollback_tests {
 
     #[test]
     fn malformed_evidence_frame_rolls_back_game_history_and_facts_then_retries() {
-        let setup = crate::session::protocol::civil::publication_tests::setup();
+        let mut setup = crate::session::protocol::civil::publication_tests::setup();
+        // 本用例验证市场候选提交及回滚，首拍须为开市日。
+        setup.start_date = crate::CivilDate::from_iso("2030-01-02").unwrap();
         let mut session = ProtocolSession::new(setup, 48).unwrap();
         let preceding = crate::Event::CivilDateAdvanced {
             seq: session.state.game.seq(),
@@ -1677,7 +1702,9 @@ mod rollback_tests {
     /// 泄漏及重试契约）。红态：失败后 day==day_before+1。
     #[test]
     fn solfinal1a_day_end_projection_failure_rolls_back_day() {
-        let setup = crate::session::protocol::civil::publication_tests::setup();
+        let mut setup = crate::session::protocol::civil::publication_tests::setup();
+        // 本用例验证市场候选提交及回滚，首拍须为开市日。
+        setup.start_date = crate::CivilDate::from_iso("2030-01-02").unwrap();
         let mut session = ProtocolSession::new(setup, 49).unwrap();
         let tpd = session.game().state.setup.ticks_per_day;
         for _ in 1..tpd {
@@ -1706,7 +1733,9 @@ mod rollback_tests {
 
     #[test]
     fn malformed_frame_after_mutation_rolls_back_game_history_and_fact_cursor() {
-        let setup = crate::session::protocol::civil::publication_tests::setup();
+        let mut setup = crate::session::protocol::civil::publication_tests::setup();
+        // 本用例验证市场候选提交及回滚，首拍须为开市日。
+        setup.start_date = crate::CivilDate::from_iso("2030-01-02").unwrap();
         let mut session = ProtocolSession::new(setup, 40).unwrap();
         let preceding = crate::Event::CivilDateAdvanced {
             seq: session.state.game.seq(),
@@ -1796,5 +1825,295 @@ mod rollback_tests {
         fact.key.phase_rank() == 6
             && fact.key.entity() == &crate::session::pipeline::EntityTag::Session
             && fact.key.source() == crate::session::pipeline::EventSourceIndex::Session
+    }
+}
+
+#[cfg(all(test, feature = "simulation-diagnostics"))]
+mod d0b_storage_tests {
+    use super::*;
+    use crate::diagnostics::{causal::CausalFactKind, NpcDecisionTraceRecord};
+    use crate::{AccountId, OrderId, PlanId, StockId};
+
+    fn session(seed: u64) -> ProtocolSession {
+        let mut setup = crate::session::protocol::civil::publication_tests::setup();
+        setup.start_date = crate::CivilDate::from_iso("2030-01-02").unwrap();
+        setup.npcs.retail_count = 0;
+        setup.npcs.inst_count = 0;
+        setup.ticks_per_day = 30;
+        ProtocolSession::new(setup, seed).unwrap()
+    }
+
+    fn trace(tick: u64) -> NpcDecisionTraceRecord {
+        NpcDecisionTraceRecord {
+            account: AccountId(17),
+            tick,
+            source_report_ids: vec![format!("report-{tick}")],
+            expectation_method: Some("真实观察".into()),
+            plan_ids: vec![PlanId {
+                owner: AccountId(17),
+                sequence: 1,
+            }],
+            plan_changes: vec!["初始变化".into()],
+            budget_constraints: vec!["初始约束".into()],
+            order_ids: vec![OrderId(1)],
+            codes: vec![StockId(0)],
+        }
+    }
+
+    fn seed(session: &mut ProtocolSession) {
+        let game = &mut session.state.game;
+        let time = game.causal_time();
+        for key in 0..257u64 {
+            let account = AccountId(key << 32);
+            game.state.causal.record_plan_root(
+                time,
+                account,
+                [CausalFactKind::Decision { account }],
+            );
+            game.state.causal.record_continuous_fill(
+                time,
+                OrderId((1 << 40) + key),
+                account,
+                &StockId(0),
+                100,
+                key as i64 - 128,
+            );
+        }
+        for tick in 0..128 {
+            game.state.npc_decision_traces.record(trace(tick));
+        }
+        game.state.npc_decision_traces.enrich(
+            AccountId(17),
+            127,
+            [OrderId(2), OrderId(1), OrderId(2)],
+            [
+                PlanId {
+                    owner: AccountId(17),
+                    sequence: 2,
+                },
+                PlanId {
+                    owner: AccountId(17),
+                    sequence: 1,
+                },
+            ],
+            ["变化一".into(), "变化二".into()],
+            ["约束一".into(), "约束二".into()],
+        );
+    }
+
+    fn advance_seed(session: &mut ProtocolSession, tick: u64) {
+        let game = &mut session.state.game;
+        let time = game.causal_time();
+        game.state.causal.record_plan_root(
+            time,
+            AccountId(17 << 32),
+            [CausalFactKind::Decision {
+                account: AccountId(17 << 32),
+            }],
+        );
+        game.state.causal.record_continuous_fill(
+            time,
+            OrderId((1 << 40) + 17),
+            AccountId(17 << 32),
+            &StockId(0),
+            100,
+            tick as i64,
+        );
+        game.state.npc_decision_traces.record(trace(tick));
+        game.state.npc_decision_traces.enrich(
+            AccountId(17),
+            tick,
+            [OrderId(3), OrderId(3)],
+            [
+                PlanId {
+                    owner: AccountId(17),
+                    sequence: 3,
+                },
+                PlanId {
+                    owner: AccountId(17),
+                    sequence: 3,
+                },
+            ],
+            [format!("变化-{tick}")],
+            [format!("约束-{tick}")],
+        );
+    }
+
+    #[derive(Debug, PartialEq)]
+    struct Snapshot {
+        causal: Vec<u8>,
+        trace: Vec<u8>,
+        facts: Vec<u8>,
+        query: Vec<NpcDecisionTraceRecord>,
+        hash: crate::session::StateHash,
+    }
+
+    fn snapshot(session: &ProtocolSession) -> Snapshot {
+        let game = session.game();
+        let before_save = serde_json::to_vec(&game.save().unwrap()).unwrap();
+        let before_hash = game.session_state_hash().unwrap();
+        let query = game.npc_decision_trace(AccountId(17)).unwrap();
+        assert_eq!(query, game.npc_decision_trace(AccountId(17)).unwrap());
+        assert!(game.npc_decision_trace(AccountId(18)).is_none());
+        let facts = game.causal_facts();
+        for (index, fact) in facts.iter().enumerate() {
+            assert_eq!(fact.sequence, index as u64);
+        }
+        let result = Snapshot {
+            causal: serde_json::to_vec(&game.state.causal).unwrap(),
+            trace: serde_json::to_vec(&game.state.npc_decision_traces).unwrap(),
+            facts: serde_json::to_vec(facts).unwrap(),
+            query,
+            hash: before_hash,
+        };
+        assert_eq!(game.session_state_hash().unwrap(), before_hash);
+        assert_eq!(
+            serde_json::to_vec(&game.save().unwrap()).unwrap(),
+            before_save
+        );
+        result
+    }
+
+    fn place(session: &mut ProtocolSession, cents: i64) -> OrderId {
+        session
+            .enqueue_player_intent(
+                AccountId(0),
+                crate::Intent::PlaceLimit {
+                    code: StockId(0),
+                    side: crate::Side::Buy,
+                    price: crate::LimitPrice::Fixed(crate::Money::from_cents(cents)),
+                    qty: 100,
+                },
+            )
+            .unwrap();
+        session
+            .step_frame()
+            .unwrap()
+            .events()
+            .find_map(|event| match event {
+                crate::Event::OrderAccepted { id, .. } => Some(*id),
+                _ => None,
+            })
+            .expect("真实 player 申报必须成功")
+    }
+
+    fn cancel(session: &mut ProtocolSession, order: OrderId) {
+        session
+            .enqueue_player_intent(
+                AccountId(0),
+                crate::Intent::Cancel {
+                    code: StockId(0),
+                    id: order,
+                },
+            )
+            .unwrap();
+        assert!(session
+            .step_frame()
+            .unwrap()
+            .events()
+            .any(|event| matches!(event, crate::Event::OrderCanceled { id, .. } if *id == order)));
+    }
+
+    #[test]
+    fn d0b_protocol_nonempty_owned_checkpoints_restore_eviction_non_lifo_and_cross_session() {
+        let mut live = session(7);
+        seed(&mut live);
+        let initial = snapshot(&live);
+        assert_eq!(live.game().causal_facts().len(), 514);
+        let oldest = live.checkpoint().unwrap();
+        let cross_session = live.checkpoint().unwrap();
+        let order = place(&mut live, 995);
+        advance_seed(&mut live, 128);
+        let middle = snapshot(&live);
+        let newer = live.checkpoint().unwrap();
+        cancel(&mut live, order);
+        advance_seed(&mut live, 129);
+        assert_eq!(
+            live.game()
+                .npc_decision_trace(AccountId(17))
+                .unwrap()
+                .first()
+                .unwrap()
+                .tick,
+            2
+        );
+        assert_ne!(snapshot(&live), middle);
+        live.rollback(oldest);
+        assert_eq!(snapshot(&live), initial);
+        let restored = live.game().npc_decision_trace(AccountId(17)).unwrap();
+        assert_eq!(restored.len(), 128);
+        assert_eq!(restored.first().unwrap().tick, 0);
+        assert_eq!(restored.last().unwrap().tick, 127);
+        assert_eq!(restored.last().unwrap().order_ids, [OrderId(1), OrderId(2)]);
+        assert_eq!(
+            restored.last().unwrap().plan_ids,
+            [
+                PlanId {
+                    owner: AccountId(17),
+                    sequence: 1
+                },
+                PlanId {
+                    owner: AccountId(17),
+                    sequence: 2
+                }
+            ]
+        );
+        assert_eq!(
+            restored.last().unwrap().plan_changes,
+            ["初始变化", "变化一", "变化二"]
+        );
+        assert_eq!(
+            restored.last().unwrap().budget_constraints,
+            ["初始约束", "约束一", "约束二"]
+        );
+        live.rollback(newer);
+        assert_eq!(snapshot(&live), middle);
+        let mut other = session(8);
+        seed(&mut other);
+        place(&mut other, 990);
+        advance_seed(&mut other, 130);
+        other.rollback(cross_session);
+        assert_eq!(snapshot(&other), initial);
+        let causal: serde_json::Value = serde_json::from_slice(&initial.causal).unwrap();
+        for key in 0..257u64 {
+            assert_eq!(causal["decision"][format!("{}", key << 32)], key * 2);
+            assert_eq!(
+                causal["filled_values"][format!("{}", (1u64 << 40) + key)],
+                (key as i64 - 128).to_string()
+            );
+        }
+    }
+
+    #[cfg(feature = "verification-harness")]
+    #[test]
+    fn d0b_protocol_verification_forks_keep_nonempty_diagnostics_independent() {
+        let mut source = session(9);
+        seed(&mut source);
+        let initial = snapshot(&source);
+        let mut left = source.fork_for_verification().unwrap();
+        let mut right = source.fork_for_verification().unwrap();
+        assert_eq!(snapshot(&left), initial);
+        assert_eq!(snapshot(&right), initial);
+        let left_order = place(&mut left, 995);
+        advance_seed(&mut left, 128);
+        let left_snapshot = snapshot(&left);
+        assert_eq!(snapshot(&right), initial);
+        assert_eq!(snapshot(&source), initial);
+        let right_order = place(&mut right, 990);
+        advance_seed(&mut right, 129);
+        let right_snapshot = snapshot(&right);
+        assert_ne!(left_snapshot, right_snapshot);
+        assert_eq!(snapshot(&left), left_snapshot);
+        let left_checkpoint = left.checkpoint().unwrap();
+        let right_checkpoint = right.checkpoint().unwrap();
+        cancel(&mut left, left_order);
+        advance_seed(&mut left, 130);
+        cancel(&mut right, right_order);
+        advance_seed(&mut right, 131);
+        left.rollback(left_checkpoint);
+        right.rollback(right_checkpoint);
+        assert_eq!(snapshot(&left), left_snapshot);
+        assert_eq!(snapshot(&right), right_snapshot);
+        assert_eq!(snapshot(&source), initial);
     }
 }

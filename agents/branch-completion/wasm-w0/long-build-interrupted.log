@@ -1,0 +1,3 @@
+{"jobs":16,"available":128,"target":"/data1/baiyifan/workplace/stock_market_game/.tmp/wasm-w0-recovery/target","artifact":"/data1/baiyifan/workplace/stock_market_game/.tmp/wasm-w0-recovery/artifacts","started":"2026-10-25T11:42:11.794Z"}
+{"label":"native-check","pid":1843782,"command":"cargo","args":["check","-p","engine","-p","web-wasm","--tests","-j","16"]}
+{"label":"wasm-product-build","pid":1843783,"command":"wasm-pack","args":["build","apps/web-wasm","--target","web","--release","--out-dir","/data1/baiyifan/workplace/stock_market_game/.tmp/wasm-w0-recovery/artifacts/product/pkg"]}

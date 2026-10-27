@@ -1,0 +1,6 @@
+# W0 构建资源取证
+
+- 首批参数：jobs=16，机器availableParallelism=128，rustc codegen-units=16。
+- 首批实际工具返回的product engine进程：PID2472428、PPID2462715、PGID2460261、CPU183%、NLWP20，指向独占wasm-target。此行为此前exec工具返回实采的摘录。
+- 事后试采harness时任务已超时结束；错误的args全文匹配曾命中采样命令自身，未作为CPU证据，已明确剔除。两次harness超时没有可采信的进程CPU快照，不能宣称实核harness多核利用。
+- 事后整机IO PSI（不是本任务归因证明）：some avg10=33.55 avg60=28.98；full avg10=30.57 avg60=25.20。

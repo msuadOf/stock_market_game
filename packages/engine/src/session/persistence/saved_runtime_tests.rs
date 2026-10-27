@@ -214,7 +214,9 @@ fn restore_rejects_plan_child_that_does_not_match_a_live_order() {
         .expect("an execution leg without a child is valid");
     {
         let mut encoded = serde_json::to_value(&forged).unwrap();
-        encoded["plans"]["plans"][&plan_id.0.to_string()]["active_child_order_id"] =
+        let plan_index = encoded["plans"]["plans"].as_array().unwrap().iter()
+            .position(|plan| plan["plan_id"] == serde_json::to_value(plan_id).unwrap()).unwrap();
+        encoded["plans"]["plans"][plan_index]["active_child_order_id"] =
             serde_json::json!(player_order.0);
         forged = serde_json::from_value(encoded).unwrap();
     }
@@ -224,6 +226,7 @@ fn restore_rejects_plan_child_that_does_not_match_a_live_order() {
     assert!(matches!(
         GameSession::restore(&forged),
         Err(SessionError::InvalidSave(fault)) if fault.code == 1042
+            && fault.context == plan_id.error_context_with([u64::from(code.0)])
     ));
 }
 
@@ -728,11 +731,13 @@ fn live_child_case() -> (GameSession, crate::plans::PlanId, StockId) {
 
 #[test]
 fn restore_rebuilds_remaining_from_live_book_when_serialized_value_is_stale() {
-    let (mut authority, plan_id, _code) = live_child_case();
+    let (mut authority, plan_id, code) = live_child_case();
     let saved = authority.save().unwrap();
     let mut encoded = serde_json::to_value(&saved).unwrap();
     // 序列化余量(1) < 真实订单余量(300)：restore 必须以真实簿为准。
-    encoded["plans"]["plans"][&plan_id.0.to_string()]["execution"]
+    let plan_index = encoded["plans"]["plans"].as_array().unwrap().iter()
+        .position(|plan| plan["plan_id"] == serde_json::to_value(plan_id).unwrap()).unwrap();
+    encoded["plans"]["plans"][plan_index]["execution"]
         ["active_child_remaining_qty"] = serde_json::json!(1);
     let forged: crate::SaveSlot = serde_json::from_value(encoded).unwrap();
     let restored = GameSession::restore(&forged).expect("stale serialized remaining is rebuilt");
@@ -749,11 +754,13 @@ fn restore_rebuilds_remaining_from_live_book_when_serialized_value_is_stale() {
 
 #[test]
 fn restore_rebuilds_remaining_from_live_book_when_field_is_absent() {
-    let (mut authority, plan_id, _code) = live_child_case();
+    let (mut authority, plan_id, code) = live_child_case();
     let saved = authority.save().unwrap();
     let mut encoded = serde_json::to_value(&saved).unwrap();
     // 字段缺失：唯一 owner 从真实订单簿重建。
-    encoded["plans"]["plans"][&plan_id.0.to_string()]["execution"]
+    let plan_index = encoded["plans"]["plans"].as_array().unwrap().iter()
+        .position(|plan| plan["plan_id"] == serde_json::to_value(plan_id).unwrap()).unwrap();
+    encoded["plans"]["plans"][plan_index]["execution"]
         .as_object_mut()
         .unwrap()
         .remove("active_child_remaining_qty");
@@ -772,31 +779,37 @@ fn restore_rebuilds_remaining_from_live_book_when_field_is_absent() {
 
 #[test]
 fn restore_rejects_live_exposure_beyond_target_with_fault2185() {
-    let (mut authority, plan_id, _code) = live_child_case();
+    let (mut authority, plan_id, code) = live_child_case();
     let saved = authority.save().unwrap();
     let mut encoded = serde_json::to_value(&saved).unwrap();
     // filled=350（≤ target 400，2144 不触发），真实余量 300 ⇒ exposure 650 > 400。
-    encoded["plans"]["plans"][&plan_id.0.to_string()]["filled_qty"] = serde_json::json!(350);
+    let plan_index = encoded["plans"]["plans"].as_array().unwrap().iter()
+        .position(|plan| plan["plan_id"] == serde_json::to_value(plan_id).unwrap()).unwrap();
+    encoded["plans"]["plans"][plan_index]["filled_qty"] = serde_json::json!(350);
     let forged: crate::SaveSlot = serde_json::from_value(encoded).unwrap();
     assert!(matches!(
         GameSession::restore(&forged),
         Err(SessionError::InvalidSave(fault)) if fault.code == 2185
+            && fault.context == plan_id.error_context_with([u64::from(code.0)])
     ));
     assert!(authority.state.plans.plan(plan_id).is_ok());
 }
 
 #[test]
 fn restore_rejects_inflated_serialized_remaining_with_fault2185() {
-    let (mut authority, plan_id, _code) = live_child_case();
+    let (mut authority, plan_id, code) = live_child_case();
     let saved = authority.save().unwrap();
     let mut encoded = serde_json::to_value(&saved).unwrap();
     // 序列化余量(999) > 真实余量(300)：虚增敞口直接拒绝。
-    encoded["plans"]["plans"][&plan_id.0.to_string()]["execution"]
+    let plan_index = encoded["plans"]["plans"].as_array().unwrap().iter()
+        .position(|plan| plan["plan_id"] == serde_json::to_value(plan_id).unwrap()).unwrap();
+    encoded["plans"]["plans"][plan_index]["execution"]
         ["active_child_remaining_qty"] = serde_json::json!(999);
     let forged: crate::SaveSlot = serde_json::from_value(encoded).unwrap();
     assert!(matches!(
         GameSession::restore(&forged),
         Err(SessionError::InvalidSave(fault)) if fault.code == 2185
+            && fault.context == plan_id.error_context_with([u64::from(code.0)])
     ));
 }
 

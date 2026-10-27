@@ -38,6 +38,7 @@ fn main() {
     };
 
     let spec = WorldSpec {
+        initial_plan_books: Vec::new(),
         n_groups,
         accounts_per_group: per_group,
         initial_cash: 1_000_000_000, // 千万元级，避免早期普遍 skip

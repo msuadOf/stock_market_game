@@ -1,4 +1,5 @@
-import { array, exact, integer, map, record } from "../primitives.ts"
+import { parsePlanU64 } from "../../../utils/plan-identity.ts"
+import { array, exact, map, record } from "../primitives.ts"
 import { accountKey, companyKey, publicationId, type StringMap } from "./common.ts"
 import { parseCivilInstant } from "./experience.ts"
 
@@ -14,19 +15,21 @@ export type CivilInstant = {
 }
 
 export type InformationState = {
-  readonly owner: number
+  readonly owner: string
   readonly companies: StringMap<readonly AcquisitionRecord[]>
 }
 
 export function parseInformationStates(value: unknown, path = "information_states"): StringMap<InformationState> {
-  return map(value, path, accountKey, parseInformationState)
+  const result = map(value, path, accountKey, parseInformationState)
+  for (const [owner, state] of Object.entries(result)) if (state.owner !== owner) throw new Error(`存档 ${path}.${owner}.owner 必须与账户 key 一致`)
+  return result
 }
 
 export function parseInformationState(value: unknown, path: string): InformationState {
   const parsed = record(value, path)
   exact(parsed, ["owner", "companies"], path)
   return {
-    owner: integer(parsed.owner, `${path}.owner`, 0),
+    owner: parsePlanU64(parsed.owner, `${path}.owner`),
     companies: map(parsed.companies, `${path}.companies`, companyKey, parseAcquisitionRecords),
   }
 }

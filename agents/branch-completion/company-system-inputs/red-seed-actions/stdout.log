@@ -1,0 +1,39 @@
+✔ 显式期间金额直接采样，不按周期缩放，不改变kind/开账/偏好且不修改入参 (9.216667ms)
+✔ 精确混合vector，完整u64范围和i128上界，非零min大额无JS精度损失 (0.319369ms)
+✔ 拒绝非法区间、缺失/重复身份、不匹配expense规则与seed，不补默认 (1.378157ms)
+✔ seed 完整 u64、规范十进制边界，在创建前拒绝非法 seed (2.361243ms)
+✔ 预览 seed 原值创建；seed 编辑不覆盖 custom 非法 raw JSON (1.371047ms)
+✔ Simulation 创建草稿显式不支持，非法 seed 先于运行失败 (0.445052ms)
+✔ 合法 seed 预览与创建一致，偏好更新只按 numeric CompanyId 且不改金额 (2.64409ms)
+✖ 显式重新生成只抽一次 seed，周期切换使用明确期间范围、保留seed且拒绝custom (1.560782ms)
+ℹ tests 8
+ℹ suites 0
+ℹ pass 7
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 248.967129
+
+✖ failing tests:
+
+test at apps/web/src/config/seed-draft.test.ts:47:1
+✖ 显式重新生成只抽一次 seed，周期切换使用明确期间范围、保留seed且拒绝custom (1.560782ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  0 !== 1
+  
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-system-inputs/apps/web/src/config/seed-draft.test.ts:52:10)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 0,
+    expected: 1,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

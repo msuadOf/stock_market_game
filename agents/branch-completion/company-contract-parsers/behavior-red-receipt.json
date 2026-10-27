@@ -1,0 +1,20 @@
+{
+  "base": "3984e14167202dc645ec340fbd2a73e661c71c8a",
+  "node": "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+  "deadline_ms": 10000,
+  "case_timeout_ms": 10000,
+  "file_concurrency": 3,
+  "exit_code": 1,
+  "tests": 9,
+  "pass": 1,
+  "fail": 8,
+  "source_sha256": {
+    "agents/branch-completion/company-contract-parsers/behavior-red-source/company-contract-views.ts": "3bca64ed7a5827d1d9966bd7601726fd1336e1b344692a355a2691e69fd54bb3",
+    "agents/branch-completion/company-contract-parsers/behavior-red-source/dividend-tax.ts": "445a5ac0e7fbc2e065ecd50dce11dae76bf9148a9222a40e548d4b04c3307884",
+    "agents/branch-completion/company-contract-parsers/behavior-red-source/corporate-action-views.ts": "3f87b8d66822d1d59d10755d81e50ebcf13fbad7c04601f993fa5befab03a5db",
+    "agents/branch-completion/company-contract-parsers/behavior-red-source/company-contract-views.test.ts": "b9968205efe3a2e73357411019e28d60325399fd76066faac0d75def5e124f3a",
+    "agents/branch-completion/company-contract-parsers/behavior-red-source/dividend-tax.test.ts": "b39601ad6ba01e7d6ffd672126263cbda4218d186b287c2b2e0e5518147e5cc5",
+    "agents/branch-completion/company-contract-parsers/behavior-red-source/corporate-action-views.test.ts": "e8f9959c4d275e0715f9e5f1b8bc12b9f78873d0f479e724253ed782b59dca49"
+  },
+  "note": "现行DTO最小适配后的历史真实parser行为红；原red.stdout来自透传stub，不能作为业务TDD红证"
+}

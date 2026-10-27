@@ -1,0 +1,4 @@
+{"node":"v24.18.0","v8":"13.6.233.17-node.50","profile":"dev","directory":"/data1/baiyifan/workplace/stock_market_game/.tmp/wasm-w0-recovery/artifacts/harness-dev/pkg"}
+{"name":"web_wasm_bg.wasm","bytes":116778175,"sha256":"0b00b4504e38012caca16f5f20327d9771ad1f2da605c84b899cd9122bae670f"}
+{"name":"web_wasm.js","bytes":46324,"sha256":"4a710057d45beedf4a662f6294c3ba514cb3fc8f49e9c6eee54bb8b2492777c6"}
+{"verificationExports":["verification_facade_join","verification_facade_spawn"],"gates":"dev ABI/shared import/2GiB binary+glue/正式门拒绝验证包均通过"}

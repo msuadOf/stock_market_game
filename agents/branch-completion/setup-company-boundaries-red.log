@@ -1,0 +1,36 @@
+✔ 公司选项逐字段保留且省略不生成默认值 (5.739297ms)
+✔ 公司系统所有声明变体、四种周期与行业可解析 (4.935105ms)
+✔ 月报两种排期、两个 preset 与两种 delay 全保留 (0.588707ms)
+✔ 公司选项拒绝 null、错误类型、错误税务配对和残缺公司字段族 (3.426104ms)
+✔ 所有嵌套对象拒绝未知字段及缺少必填字段 (7.096255ms)
+✔ 月报拒绝非法变体、范围和额外字段 (0.457702ms)
+✔ Simple 的整数范围、身份与 Money 边界显式拒绝 (2.869458ms)
+✖ Simple finance 使用 Rust 整数字段宽度且不吞税务或 generation 非法输入 (1.0928ms)
+ℹ tests 8
+ℹ suites 0
+ℹ pass 7
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 270.223049
+
+✖ failing tests:
+
+test at apps/web/src/save/schema/setup-company-options.test.ts:152:1
+✖ Simple finance 使用 Rust 整数字段宽度且不吞税务或 generation 非法输入 (1.0928ms)
+  AssertionError [ERR_ASSERTION]: Missing expected exception.
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game-setup-options/apps/web/src/save/schema/setup-company-options.test.ts:162:12)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    operator: 'throws',
+    diff: 'simple'
+  }
+bounded command exited with 1

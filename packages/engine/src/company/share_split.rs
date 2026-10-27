@@ -208,6 +208,15 @@ pub struct ShareSplitReceipt {
 pub enum ShareSplitError {
     #[error("share split: {detail}")]
     InvalidPlan { detail: String },
+    #[error("share split allocation {event_id} for {stock:?}: {direction:?} ratio {ratio} converts issued shares {issued_shares_before} to {issued_shares_after}; engine requires positive issued shares")]
+    ZeroIssuedShares {
+        event_id: String,
+        stock: StockCode,
+        direction: ShareSplitDirection,
+        ratio: u64,
+        issued_shares_before: u64,
+        issued_shares_after: u64,
+    },
     #[error("share split: integer arithmetic overflow")]
     ArithmeticOverflow,
     #[error("share split: operation {operation} is invalid in status {status:?}")]
@@ -355,6 +364,17 @@ pub fn allocate_share_split(
                 });
             }
         }
+    }
+    // 维护名册既有正发行股本不变量，不把不可执行结果冻结为 Registered 成功事实。
+    if issued_shares_after == 0 {
+        return Err(ShareSplitError::ZeroIssuedShares {
+            event_id: plan.event_id.clone(),
+            stock: plan.stock.clone(),
+            direction: plan.direction.clone(),
+            ratio: plan.ratio,
+            issued_shares_before: total_before,
+            issued_shares_after,
+        });
     }
     Ok(ShareSplitReceipt {
         event_id: plan.event_id.clone(),
@@ -560,8 +580,11 @@ pub struct ShareSplitBook {
 struct ShareSplitBookState {
     plan: ShareSplitEventPlan,
     status: ShareSplitStatus,
+    #[serde(deserialize_with = "crate::company::persistence::required_nullable")]
     registration: Option<RegistrationSnapshot>,
+    #[serde(deserialize_with = "crate::company::persistence::required_nullable")]
     receipt: Option<ShareSplitReceipt>,
+    #[serde(deserialize_with = "crate::company::persistence::required_nullable")]
     settled_on: Option<CivilDate>,
 }
 

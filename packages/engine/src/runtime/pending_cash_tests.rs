@@ -24,7 +24,7 @@ fn price_improvement_world() -> World {
         .expect("技术分析机构参数");
     personal.belief = crate::strategy::BeliefBook::new(OWNER, profile, analysis, &mut rng);
     assert_eq!(personal.belief.analysis().weights().fundamental_bp(), 0);
-    let (catalog, company_registry, operations) = session.runtime_company_handles();
+    let (catalog, initial_company_facts) = session.runtime_company_handles().expect("选定公司事实合法");
     let params = crate::strategy::BeliefChainParams {
         position_step_bp: 5_000,
         margin: 0.01,
@@ -33,8 +33,7 @@ fn price_improvement_world() -> World {
     };
     let projection = RootProjection {
         catalog,
-        company_registry,
-        operations,
+        initial_company_facts,
         account_ids: vec![AccountId(1), OWNER],
         chain_params: vec![
             Some((
@@ -47,10 +46,8 @@ fn price_improvement_world() -> World {
         closing_auction_ticks: 3,
         session_seed: 17,
         urgency_policy: crate::plans::UrgencyPolicy::default(),
-        total_shares: session.runtime_total_shares(),
         max_order_qty_limit: session.runtime_max_order_qty_limit(),
         tick_size_cents: session.runtime_tick_size_cents(),
-        stock_codes: session.runtime_stock_codes(),
     };
     let mut spec = basic_spec(1, 1, 2, Box::new(|_| Box::new(|_, _| TickPlan::default())));
     spec.ticks_per_day = 240;
@@ -92,7 +89,7 @@ fn price_improvement_world() -> World {
 
 fn install_buy_assessment(world: &mut World) {
     world.inject_review_assessments_for_test(
-        OWNER,
+        0, OWNER,
         std::collections::BTreeMap::from([(
             StockId(0),
             crate::plans::CandidateAssessment::Scored {

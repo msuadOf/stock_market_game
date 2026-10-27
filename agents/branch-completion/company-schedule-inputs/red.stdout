@@ -1,0 +1,147 @@
+✔ 配股与回购开关独立回调，受控 bool 可来回切换 (65.666777ms)
+✖ 默认关闭及同局不可切可见，FullByDefault 如实解释本人现金与弃配 (5.034313ms)
+Warning: Each child in a list should have a unique "key" prop.
+
+Check the top-level render call using <select>. See https://reactjs.org/link/warning-keys for more information.
+    at option
+Warning: Each child in a list should have a unique "key" prop.
+
+Check the top-level render call using <label>. See https://reactjs.org/link/warning-keys for more information.
+    at select
+Warning: Each child in a list should have a unique "key" prop.
+
+Check the top-level render call using <fieldset>. See https://reactjs.org/link/warning-keys for more information.
+    at label
+Warning: Each child in a list should have a unique "key" prop.
+
+Check the top-level render call using <div>. See https://reactjs.org/link/warning-keys for more information.
+    at label
+Warning: Each child in a list should have a unique "key" prop. See https://reactjs.org/link/warning-keys for more information.
+    at label
+✔ Monthly 未明确排期仅回写不可创建草稿，Quarterly 与法定披露边界可见 (196.235996ms)
+✔ 两个 Preset、None 和 Uniform 1..31 真实回写引擎契约 (9.558951ms)
+✔ Custom 的两端日与秒数保持精确，非法输入不截断且显式报错 (18.870494ms)
+✖ 延迟空值与非整数字符串不被 Number 强转为合法上限 (4.025391ms)
+✖ 外部 Monthly 未选排期清空旧排期，其他外部 value 同步且不发回调 (1.522549ms)
+✖ 模式来回切换不恢复未确认的旧排期，未知选择显式拒绝 (1.390815ms)
+✔ 六种 Rust 报告不可用原因各有准确解释 (2.421719ms)
+✔ 只认可真实自然月末，正确区分闰年与世纪年 (1.136637ms)
+✖ 期末日期与 Rust CivilDate 算法年份窗一致 (1.330813ms)
+ℹ tests 11
+ℹ suites 0
+ℹ pass 6
+ℹ fail 5
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1579.065354
+
+✖ failing tests:
+
+test at src/components/MechanismSwitchesInput.test.ts:37:1
+✖ 默认关闭及同局不可切可见，FullByDefault 如实解释本人现金与弃配 (5.034313ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /FullByDefault/. Input:
+  
+  '<fieldset class="mechanism-switches-input" title="仅对新游戏生效。开关随存档严格固化，开局后不可修改。"><legend>新局公司行为机制</legend><label><input type="checkbox" name="rights-offering-enabled"/>启用配股／增发（默认关闭）</label><label><input type="checkbox" name="issuer-repurchase-enabled"/>启用发行人回购（默认关闭，独立开关）</label><small>关闭时对应机制不触发，显式调用被拒绝（错误指明本局未启用）。 NPC 认购策略当前仅实现「默认足额认购」；其他策略属后续批次（TODO，未实现）。</small></fieldset>'
+  
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-schedule-inputs/apps/web/src/components/MechanismSwitchesInput.test.ts:41:10)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: '<fieldset class="mechanism-switches-input" title="仅对新游戏生效。开关随存档严格固化，开局后不可修改。"><legend>新局公司行为机制</legend><label><input type="checkbox" name="rights-offering-enabled"/>启用配股／增发（默认关闭）</label><label><input type="checkbox" name="issuer-repurchase-enabled"/>启用发行人回购（默认关闭，独立开关）</label><small>关闭时对应机制不触发，显式调用被拒绝（错误指明本局未启用）。 NPC 认购策略当前仅实现「默认足额认购」；其他策略属后续批次（TODO，未实现）。</small></fieldset>',
+    expected: /FullByDefault/,
+    operator: 'match',
+    diff: 'simple'
+  }
+
+test at src/components/ReportFrequencyInput.test.ts:130:1
+✖ 延迟空值与非整数字符串不被 Number 强转为合法上限 (4.025391ms)
+  AssertionError [ERR_ASSERTION]:  应保持不可创建
+  + actual - expected
+  
+  + {
+  +   Monthly: {
+  +     schedule: {
+  +       Preset: {
+  +         delay: 'None',
+  +         preset: 'FirstDayEvening'
+  +       }
+  +     }
+  +   }
+  + }
+  - 'Monthly'
+  
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-schedule-inputs/apps/web/src/components/ReportFrequencyInput.test.ts:133:37)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: { Monthly: { schedule: [Object] } },
+    expected: 'Monthly',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at src/components/ReportFrequencyInput.test.ts:140:1
+✖ 外部 Monthly 未选排期清空旧排期，其他外部 value 同步且不发回调 (1.522549ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  + actual - expected
+  
+  + 'FirstDayEvening'
+  - ''
+  
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-schedule-inputs/apps/web/src/components/ReportFrequencyInput.test.ts:143:10)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 'FirstDayEvening',
+    expected: '',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at src/components/ReportFrequencyInput.test.ts:154:1
+✖ 模式来回切换不恢复未确认的旧排期，未知选择显式拒绝 (1.390815ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  + actual - expected
+  
+  + 'TenthDayEvening'
+  - ''
+  
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-schedule-inputs/apps/web/src/components/ReportFrequencyInput.test.ts:157:47)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 'TenthDayEvening',
+    expected: '',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at src/components/company/report-availability.test.ts:22:1
+✖ 期末日期与 Rust CivilDate 算法年份窗一致 (1.330813ms)
+  AssertionError [ERR_ASSERTION]: 1899-12-31
+  
+  true !== false
+  
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-schedule-inputs/apps/web/src/components/company/report-availability.test.ts:24:88)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: true,
+    expected: false,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

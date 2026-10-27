@@ -518,3 +518,24 @@ test("desktop compile-only warms the exact Tauri library feature graph before bi
     assert.throws(() => parseBuildArgs(["desktop", "--compile-only", "--output", "target/build-artifacts/unused"]), /output|compile-only/i);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
+
+
+test("native UI 构建在 wasm-pack 修改 LICENSE 后停止，不运行 Cargo 或发布制品", { timeout: 10000 }, async () => {
+  const { executeBuild, parseBuildArgs } = await api();
+  const scratch = path.join(repository, ".tmp");
+  await mkdir(scratch, { recursive: true });
+  const root = await mkdtemp(path.join(scratch, "w0l-native-ui-license-"));
+  try {
+    await mkdir(path.join(root, "apps/web-wasm"), { recursive: true });
+    await writeFile(path.join(root, "apps/web-wasm/Cargo.toml"), '[package]\nlicense-file = "../../LICENSE"\n');
+    await writeFile(path.join(root, "LICENSE"), "fixture license");
+    await assert.rejects(executeBuild(parseBuildArgs(["webui", "--jobs", "4"]), {
+      root, host: "linux", buildId: "license", commandRunner: async (command) => {
+        if (command.command === "rustc") return "host: x86_64-unknown-linux-gnu\n";
+        if (command.command === "wasm-pack") await writeFile(path.join(root, "LICENSE"), "changed");
+        else assert.equal(command.command, "corepack", "LICENSE failure must stop subsequent build commands");
+      },
+    }), /LICENSE.*changed/);
+    await assert.rejects(lstat(path.join(root, "target/build-artifacts/webui")), { code: "ENOENT" });
+  } finally { await rm(root, { recursive: true, force: true }); }
+});

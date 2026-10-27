@@ -335,7 +335,7 @@ fn initial_batch_full_fill_completes_linked_parent_before_later_manual_acceptanc
     assert!(session
         .state
         .plans
-        .plan(crate::plans::PlanId(0))
+        .plan(crate::plans::PlanId { owner: AccountId(1), sequence: 0 })
         .is_ok_and(|plan| plan.execution().is_none()));
     assert_eq!(session.state.markets[&code].resting_order_count(), 1);
     assert_eq!(

@@ -1,0 +1,7 @@
+{"jobs":16,"available":128,"target":"/data1/baiyifan/workplace/stock_market_game/.tmp/wasm-w0-recovery","artifact":"/data1/baiyifan/workplace/stock_market_game/.tmp/wasm-w0-recovery/artifacts","started":"2026-10-25T17:00:46.533Z"}
+{"label":"native-check","pid":2460274,"command":"cargo","args":["check","-p","engine","-p","web-wasm","--lib","-j","16"]}
+{"label":"wasm-product-build","pid":2460275,"command":"wasm-pack","args":["build","apps/web-wasm","--target","web","--release","--out-dir","/data1/baiyifan/workplace/stock_market_game/.tmp/wasm-w0-recovery/artifacts/product/pkg"]}
+{"label":"native-check","completed":"2026-10-25T17:01:20.282Z"}
+{"label":"wasm-product-build","completed":"2026-10-25T17:05:14.310Z"}
+{"label":"wasm-harness-build","pid":2520462,"command":"wasm-pack","args":["build","apps/web-wasm","--target","web","--release","--out-dir","/data1/baiyifan/workplace/stock_market_game/.tmp/wasm-w0-recovery/artifacts/harness/pkg","--features","verification-harness"]}
+bounded command exhausted its execution budget within the total 300000ms deadline; process tree termination was requested and direct child close confirmed

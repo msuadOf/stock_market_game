@@ -1,0 +1,16 @@
+
+running 11 tests
+test latest_collection_uses_operation_sequence_after_valid_same_day_receipts_reordering ... ok
+test later_assessment_preserves_latest_collection_without_explaining_new_outstanding ... ok
+test outstanding_projection_preserves_exact_tax_and_actual_collection_receipts ... ok
+test uncollected_assessment_does_not_claim_insufficient_cash ... ok
+test queries_reject_sessions_without_company_line ... ok
+test configured_company_without_registry_has_explicitly_empty_tax_views ... ok
+test non_flat_receipt_query_rejects_instead_of_returning_empty_ledger ... ok
+test period_explanation_preserves_domain_result_and_rejects_unsettled_period ... ok
+test flat_receipts_are_owner_filtered_and_queries_do_not_change_save_bytes ... ok
+test session_outstanding_query_preserves_populated_tax_book_after_restore ... ok
+test account_tax_status_distinguishes_mode_identity_and_configured_books ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.19s
+

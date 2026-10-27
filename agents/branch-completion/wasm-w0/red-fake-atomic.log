@@ -1,0 +1,45 @@
+✔ release WASM checker accepts the threaded product contract (18.347441ms)
+✔ release WASM checker rejects a second game WASM artifact (2.594464ms)
+✔ release WASM checker rejects debug trace exports without instantiating modules (2.163981ms)
+✔ release WASM checker rejects any non-whitelisted time import (2.722037ms)
+✔ release WASM checker rejects a duplicate engine_clock_now import (3.773738ms)
+✔ release WASM checker rejects a missing engine_clock_now import (2.204053ms)
+✔ release WASM checker rejects a module without atomic instructions (2.1045ms)
+✔ release WASM checker rejects a private module nested anywhere in dist (2.366467ms)
+✔ shared memory gate accepts the shared artifact contract (3.006685ms)
+✔ shared memory gate accepts minified glue from the bundled dist (2.346096ms)
+✔ shared memory gate rejects a non-shared memory import (1.914865ms)
+✔ shared memory gate rejects a shared memory import without explicit maximum (3.296213ms)
+✔ shared memory gate rejects glue missing the shared memory bootstrap (2.090899ms)
+✔ shared memory gate rejects historical 4GiB binary maximum (1.933705ms)
+✔ shared memory gate rejects historical 4GiB glue maximum (2.315466ms)
+✔ release WASM checker rejects verification facade exports (1.702938ms)
+✔ release WASM checker identifies the actual forbidden diagnostics export (1.527583ms)
+✖ release WASM checker rejects 0xFE inside a constant LEB immediate (2.383298ms)
+ℹ tests 18
+ℹ suites 0
+ℹ pass 17
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 201.464683
+
+✖ failing tests:
+
+test at scripts/check-web-release-wasm.test.mjs:293:1
+✖ release WASM checker rejects 0xFE inside a constant LEB immediate (2.383298ms)
+  AssertionError [ERR_ASSERTION]: Missing expected rejection.
+      at async file:///data1/baiyifan/workplace/stock_market_game/.worktree/wasm-w0-recovery/scripts/check-web-release-wasm.test.mjs:298:5
+      at async withAssets (file:///data1/baiyifan/workplace/stock_market_game/.worktree/wasm-w0-recovery/scripts/check-web-release-wasm.test.mjs:138:5)
+      at async TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/wasm-w0-recovery/scripts/check-web-release-wasm.test.mjs:294:3)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: /原子|atomic/i,
+    operator: 'rejects',
+    diff: 'simple'
+  }
+bounded command exited with 1

@@ -1,0 +1,14 @@
+
+running 9 tests
+test session::corporate_actions::registry_day_end::tests::duplicate_confirmation_is_explicitly_rejected_and_unregistered_balance_is_not_hidden ... ok
+test session::corporate_actions::registry_day_end::tests::repurchase_account_is_registered_as_treasury_and_reconciled_separately ... ok
+test session::corporate_actions::registry_day_end::tests::ordinary_and_closing_confirmations_produce_candidate_without_mutating_facts ... ok
+test session::corporate_actions::registry_day_end::tests::late_personal_holder_opens_tax_book_once_and_non_personal_stays_unconfigured ... ok
+test session::corporate_actions::registry_day_end::tests::stale_pre_closing_accounts_fail_with_numeric_context_and_leave_original_unchanged ... ok
+test session::corporate_actions::registry_day_end::tests::same_day_round_trip_preserves_existing_registry_and_tax_acquisition_dates ... ok
+test session::corporate_actions::registry_day_end::tests::unknown_final_stock_and_missing_treasury_identity_are_explicitly_rejected ... ok
+test session::corporate_actions::registry_day_end::tests::treasury_final_position_mismatch_is_explicit_and_candidate_failure_is_atomic ... ok
+test session::corporate_actions::registry_day_end::tests::runtime_closing_final_facts_reconcile_with_tail_group_confirmations ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 2285 filtered out; finished in 0.21s
+

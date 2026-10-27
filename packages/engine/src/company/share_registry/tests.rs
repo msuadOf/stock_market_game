@@ -69,6 +69,75 @@ fn transfer(qty: i128) -> ShareDayRequest {
 }
 
 #[test]
+fn registration_frontier_replays_holder_and_lot_metadata_when_capital_is_unchanged() {
+    let mut registry = registry();
+    registry.close_day(transfer(10)).unwrap();
+    registry
+        .register("after-transfer".into(), day("2030-01-02"))
+        .unwrap();
+    assert_eq!(registry.issued_shares(), 100);
+    assert_eq!(registry.registrations[0].settled_receipts, 1);
+    let valid = registry.clone();
+
+    registry.registrations[0].settled_receipts = 0;
+    assert!(registry.validate().is_err());
+    let mut json = serde_json::to_value(&valid).unwrap();
+    json["registrations"][0]["settled_receipts"] = serde_json::json!("0");
+    assert!(serde_json::from_value::<ShareRegistry>(json).is_err());
+    valid.validate().unwrap();
+}
+
+#[test]
+fn registration_frontier_rejects_same_quantity_lot_metadata_substitution() {
+    let mut registry = registry();
+    registry.close_day(transfer(10)).unwrap();
+    registry
+        .register("after-transfer".into(), day("2030-01-02"))
+        .unwrap();
+    let mut corrupt = registry.clone();
+    corrupt.registrations[0].holdings[0].lots[0].source = AcquisitionSource::InitialAllocation {
+        evidence: "forged-origin".into(),
+    };
+    assert!(corrupt.validate().is_err());
+    assert_eq!(registry.registrations[0].holdings[0].lots[0].qty, 20);
+}
+
+#[test]
+fn legacy_nextday_redenomination_after_existing_history_has_consistent_write_and_restore() {
+    let mut registry = registry();
+    registry.close_day(transfer(10)).unwrap();
+    let request = ShareDayRequest {
+        event_id: "legacy-second-day-redenomination".into(),
+        day: day("2030-01-03"),
+        scope: MovementScope::ShareReDenomination {
+            basis: "已冻结的游戏重新计值事实".into(),
+        },
+        changes: vec![DayNetChange {
+            holder: account(1),
+            change: -5,
+            acquisition: None,
+            consume: Some(vec![LotConsumption {
+                lot_id: "old".into(),
+                qty: 5,
+            }]),
+        }],
+    };
+    registry.close_day(request.clone()).unwrap();
+    assert_eq!(registry.issued_shares(), 95);
+    registry.validate().unwrap();
+    let restored: ShareRegistry =
+        serde_json::from_value(serde_json::to_value(&registry).unwrap()).unwrap();
+    assert_eq!(restored, registry);
+    assert_eq!(
+        restored
+            .receipt_by_event(&request.event_id)
+            .unwrap()
+            .request,
+        request
+    );
+}
+
+#[test]
 fn net_disposal_consumes_oldest_lot_and_preserves_total() {
     let mut registry = registry();
     let receipt = registry.close_day(transfer(35)).unwrap();
@@ -1149,4 +1218,16 @@ fn explicit_lot_consumption_is_rejected_in_public_market_scope() {
         error.to_string().contains("explicit lot consumption"),
         "公开市场负向带显式消耗必须拒绝：{error}"
     );
+}
+
+
+#[test]
+fn legacy_registration_and_receipt_identity_domains_remain_separate_without_typed_days() {
+    let mut registry = registry();
+    let request = transfer(10);
+    registry.close_day(request.clone()).unwrap();
+    registry.register(request.event_id, request.day).unwrap();
+    registry.validate().unwrap();
+    let restored: ShareRegistry = serde_json::from_value(serde_json::to_value(&registry).unwrap()).unwrap();
+    assert_eq!(restored, registry);
 }

@@ -1,0 +1,56 @@
+{
+  "status": "passed",
+  "at": "2026-10-26T05:22:49.615382+08:00",
+  "base": "b172c1ab1a69daa44dc57dddc887db255d7f6ce7",
+  "source_before": {
+    "packages/engine/src/runtime/protocol.rs": "a844698b0b637c54a5d6fe031fcc2ce117fb2d091930943620f3276a1ba8cb69",
+    "packages/engine/src/runtime/group.rs": "b3fc369146b524fcd6b23733c1fce73fef66e2d16f8abdf95ae1cb3668c2ecc7",
+    "packages/engine/src/runtime/world.rs": "cdbc0b23ee764541cc2d0265608b2137f9222c6908f3ef568daa96bdd92f7ca0",
+    "packages/engine/src/runtime/group/admin_transaction.rs": "ac64794f6396c51946545ad0d09f1d1ae439beacce7a6515e726a1490a6b7f99",
+    "packages/engine/src/runtime/world/admin_transaction.rs": "e0533818a860f11a675b459d499b7dae8bf986617a6c7c417a45c0029bc7a1bc",
+    "docs/trading-rules.md": "c39572410355868abdf77418ae918cb5a6b9f4f59b9c719e22896f017bee1053"
+  },
+  "source_after": {
+    "packages/engine/src/runtime/protocol.rs": "a844698b0b637c54a5d6fe031fcc2ce117fb2d091930943620f3276a1ba8cb69",
+    "packages/engine/src/runtime/group.rs": "b3fc369146b524fcd6b23733c1fce73fef66e2d16f8abdf95ae1cb3668c2ecc7",
+    "packages/engine/src/runtime/world.rs": "cdbc0b23ee764541cc2d0265608b2137f9222c6908f3ef568daa96bdd92f7ca0",
+    "packages/engine/src/runtime/group/admin_transaction.rs": "ac64794f6396c51946545ad0d09f1d1ae439beacce7a6515e726a1490a6b7f99",
+    "packages/engine/src/runtime/world/admin_transaction.rs": "e0533818a860f11a675b459d499b7dae8bf986617a6c7c417a45c0029bc7a1bc",
+    "docs/trading-rules.md": "c39572410355868abdf77418ae918cb5a6b9f4f59b9c719e22896f017bee1053"
+  },
+  "source_unchanged": true,
+  "source_mtime_ns": {
+    "packages/engine/src/runtime/protocol.rs": 1792956213909632068,
+    "packages/engine/src/runtime/group.rs": 1792952207912683888,
+    "packages/engine/src/runtime/world.rs": 1792946469702302330,
+    "packages/engine/src/runtime/group/admin_transaction.rs": 1792953353400942942,
+    "packages/engine/src/runtime/world/admin_transaction.rs": 1792962109624606169,
+    "docs/trading-rules.md": 1792951288066249546
+  },
+  "binary": "/data1/baiyifan/workplace/stock_market_game/.tmp/sol61-b4d-d1a-target/debug/deps/engine-f7ff6b8af6493b4b",
+  "binary_sha256": "ba7ab91a761ccf07dcba4b1207df069e90ecc64fd29f93e3396431e643606888",
+  "binary_mtime_ns": 1792962143988624461,
+  "build_log": "final-build-r2.log",
+  "build_jobs": 16,
+  "build_external_term_ms": 299000,
+  "build_external_kill_grace_ms": 1000,
+  "test_command": [
+    "timeout",
+    "--signal=TERM",
+    "--kill-after=1s",
+    "9s",
+    "/data1/baiyifan/workplace/stock_market_game/.tmp/sol61-b4d-d1a-target/debug/deps/engine-f7ff6b8af6493b4b",
+    "admin_transaction::tests",
+    "--test-threads=16"
+  ],
+  "test_returncode": 0,
+  "test_wall_s": 1.0132359770359471,
+  "test_threads": 16,
+  "test_cases": 25,
+  "test_log": "final-tests-bound.log",
+  "adjacent_regressions": {
+    "day-end-regression.log": 8,
+    "day-end-public-regression.log": 29,
+    "seal-regression.log": 6
+  }
+}

@@ -14,6 +14,16 @@
 //! 调用线程同步释放恰一次，退化以 Copy 结构化诊断暴露给宿主边界报告
 //! （见 [`DeferredDropDegradation`]）。队列满是正常背压，不算退化。
 
+//! **等待点账（R4a 阶段 1，设计 §11.1 三元组 (o)(p)(q)）**：本通道为
+//! `sync_channel(64)`（mpmc **array flavor**）——提交面只 `try_send`
+//! （满=FullInline 背压不等待），可达等待点：(o) 槽 stamp 发布自旋
+//! （CAS 赢家未完成 write/read 的交错窗）、(p) 析构线程空队列阻塞
+//! `recv()`（park futex，唤醒=对端 write 或断连）、(q) 末 Receiver Drop
+//! 等在途 sender 发布。**阻塞 send（array.rs send :319-361）生产不可达**
+//! ——由 wait_ledger_tests 静态钉住（提交面出现非 try send 即红）。
+//! Backoff 无超时，失败逃逸=对端死亡⇒楔死⇒宿主 D3/D5→R2-3（§11.1
+//! 同构立场，不自救）。harness 面 drain_running（recv_timeout）为
+//! native-only，不入 wasm 生产账。
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 #[cfg(not(target_family = "wasm"))]
 use std::sync::mpsc::{self, SyncSender};
@@ -168,7 +178,7 @@ fn backend() -> &'static Backend {
         let (tx, rx) = mpsc::sync_channel::<Job>(QUEUE_CAPACITY);
         // sync_channel 有界：满时 try_send 立即返回 Err（不阻塞调用方）。
         // 创建失败不 panic：转入 SpawnFailed 持久退化（诊断可见，同步释放，不重试）。
-        let spawned = std::thread::Builder::new()
+        let spawned = crate::thread_facade::Builder::new()
             .name("engine-deferred-drop".to_owned())
             .spawn(move || {
                 // 只消费并析构；任何 Drop panic 都会让线程退出，后续 defer 的
@@ -184,7 +194,7 @@ fn backend() -> &'static Backend {
 /// 由真实 spawn 结果构造后端状态（生产与负控共用；失败不 panic、不重试）。
 #[cfg(not(target_family = "wasm"))]
 fn backend_from_spawn(
-    result: std::io::Result<std::thread::JoinHandle<()>>,
+    result: std::io::Result<crate::thread_facade::JoinHandle<()>>,
     sender: SyncSender<Job>,
 ) -> Backend {
     match result {
@@ -387,7 +397,7 @@ pub enum DrainFailure { Timeout, WorkerDisconnected, ProducerStillActive, Ledger
 /// 在 marker 前后登记数变化或仍有未完成 id，都拒绝称为完整 drain。
 #[cfg(all(feature = "verification-harness", not(target_family = "wasm")))]
 fn drain_running(running: &RunningBackend, metrics: &super::verify_metrics::VerifyMetrics, timeout: std::time::Duration) -> Result<super::verify_metrics::VerifySnapshot, DrainFailure> {
-    let deadline = std::time::Instant::now() + timeout;
+    let deadline = crate::clock::Instant::now() + timeout;
     let before = metrics.snapshot().map_err(|e| DrainFailure::LedgerInvalid(e.code))?;
     if before.actor_producers != 0 { return Err(DrainFailure::ProducerStillActive); }
     let (ack_tx, ack_rx) = mpsc::sync_channel(1);
@@ -396,7 +406,7 @@ fn drain_running(running: &RunningBackend, metrics: &super::verify_metrics::Veri
         let _ = ack_tx.send(());
     });
     loop {
-        if std::time::Instant::now() >= deadline { return Err(DrainFailure::Timeout); }
+        if crate::clock::Instant::now() >= deadline { return Err(DrainFailure::Timeout); }
         match running.sender.try_send(marker) {
             Ok(()) => break,
             Err(mpsc::TrySendError::Full(returned)) => {
@@ -406,7 +416,7 @@ fn drain_running(running: &RunningBackend, metrics: &super::verify_metrics::Veri
             Err(mpsc::TrySendError::Disconnected(_)) => return Err(DrainFailure::WorkerDisconnected),
         }
     }
-    match ack_rx.recv_timeout(deadline.saturating_duration_since(std::time::Instant::now())) {
+    match ack_rx.recv_timeout(deadline.saturating_duration_since(crate::clock::Instant::now())) {
         Ok(()) => {},
         Err(mpsc::RecvTimeoutError::Timeout) => return Err(DrainFailure::Timeout),
         Err(mpsc::RecvTimeoutError::Disconnected) => return Err(DrainFailure::WorkerDisconnected),

@@ -137,13 +137,10 @@ fn own_known_interim_supplements_growth_without_replacing_annual_earnings() {
         group.reports.income.report_period_net_income_to_parent =
             Some(group.reports.income.report_period.net_income);
         let roe_reason = engine::accounting::reports::ReportRoeUnavailable::ConsolidatedAttributionFactsUnavailable;
-        let roe_unavailable = engine::accounting::reports::ReportRoeValue::Unavailable {
-            reason: roe_reason,
-        };
+        let roe_unavailable =
+            engine::accounting::reports::ReportRoeValue::Unavailable { reason: roe_reason };
         group.reports.roe = engine::accounting::reports::ReportRoe {
-            basis: engine::accounting::reports::ReportRoeBasis::Unsupported {
-                reason: roe_reason,
-            },
+            basis: engine::accounting::reports::ReportRoeBasis::Unsupported { reason: roe_reason },
             ordinary_roe: roe_unavailable.clone(),
             adjusted_roe: roe_unavailable.clone(),
             weighted_average_parent_equity_cents: roe_unavailable.clone(),
@@ -178,4 +175,292 @@ fn own_known_interim_supplements_growth_without_replacing_annual_earnings() {
         ));
         assert_eq!(case.book.entry(&code).unwrap(), &before);
     }
+}
+
+/// Monthly 与年度基准使用不同期间：本月收入同比只用于增长，不年化利润。
+fn monthly_case() -> (
+    FundamentalBeliefCase,
+    PublicationId,
+    PublicationId,
+    CivilInstant,
+) {
+    use engine::information::{MonthlyReportDelay, MonthlyReportSchedule};
+    let mut scenario = scenario();
+    let annual = scenario.annual_ids[3];
+    let mut books = Books::new(industrial_account_chart());
+    books
+        .post_batch(vec![
+            entry(
+                1,
+                "2029-12-31",
+                BusinessKind::OpeningBalance,
+                CashFlowClass::Financing,
+                &[
+                    ("1002", PostingSide::Debit, 100_000),
+                    ("4001", PostingSide::Credit, 100_000),
+                ],
+            ),
+            entry(
+                2,
+                "2030-03-15",
+                BusinessKind::CashRevenue,
+                CashFlowClass::Operating,
+                &[
+                    ("1002", PostingSide::Debit, 100_000),
+                    ("6001", PostingSide::Credit, 100_000),
+                ],
+            ),
+            entry(
+                3,
+                "2031-03-15",
+                BusinessKind::CashRevenue,
+                CashFlowClass::Operating,
+                &[
+                    ("1002", PostingSide::Debit, 120_000),
+                    ("6001", PostingSide::Credit, 120_000),
+                ],
+            ),
+        ])
+        .unwrap();
+    let mut closing = ClosingEngine::new();
+    let period = AccountingPeriod::from_ymd(2031, 3).unwrap();
+    closing
+        .close_month(
+            &mut books,
+            &MemberId(0),
+            IndustryPresentation::Industrial,
+            period,
+        )
+        .unwrap();
+    let published = CivilInstant::from_hms(d("2031-04-01"), 10, 30, 0).unwrap();
+    let monthly = scenario
+        .library
+        .publish_closed(
+            &closing,
+            PublicationRequest {
+                company: scenario.company,
+                scope: ScopeId::Standalone(MemberId(0)),
+                period,
+                kind: ReportKind::Monthly,
+                sequence: 1,
+                policy: AccountingPolicyRef { chart_version: 2 },
+                approved_at: CivilInstant::from_hms(published.date(), 8, 0, 0).unwrap(),
+                published_at: published,
+                origin: PublicationOrigin::MonthlyDisclosure {
+                    schedule: MonthlyReportSchedule::Custom {
+                        day: 1,
+                        second_of_day: 10 * 3600 + 30 * 60,
+                        delay: MonthlyReportDelay::None,
+                    },
+                    delay_days: 0,
+                    seeded: false,
+                },
+                supersedes: None,
+            },
+        )
+        .unwrap();
+    let case = FundamentalBeliefCase::new(
+        scenario,
+        AccountId(2),
+        market(ISSUED_SHARES),
+        momentum_profile(),
+        momentum_analysis(FundamentalMethod::EarningsMultiple),
+        BeliefIssuerInputs {
+            kind: CompanyKind::Industrial,
+            total_issued_shares: ISSUED_SHARES,
+        },
+        &mut assumptions_rng(0.5),
+    );
+    (case, annual, monthly, published)
+}
+
+fn monthly_acquire_and_form_annual(case: &mut FundamentalBeliefCase, annual: PublicationId) {
+    let instant = case.scenario.library.publication_instant(annual).unwrap();
+    case.acquire(annual, hour_after(instant)).unwrap();
+    case.apply_cause(
+        &stock_code(),
+        BeliefCause::NewMaterial { report: annual },
+        0,
+    )
+    .unwrap();
+}
+
+fn monthly_correction(
+    case: &mut FundamentalBeliefCase,
+    original: PublicationId,
+    date: &str,
+) -> PublicationId {
+    use engine::accounting::reports::{ReportVersion, VersionKind};
+    let mut saved = case.scenario.library.save();
+    let id = PublicationId::new(saved.next_seq);
+    saved.next_seq += 1;
+    let mut report = saved
+        .reports
+        .iter()
+        .find(|r| r.id == original)
+        .unwrap()
+        .clone();
+    report.id = id;
+    report.supersedes = Some(original);
+    report.origin = PublicationOrigin::Correction;
+    report.approved_at = CivilInstant::from_hms(d(date), 8, 0, 0).unwrap();
+    report.published_at = CivilInstant::from_hms(d(date), 18, 0, 0).unwrap();
+    report.reports.version = ReportVersion {
+        sequence: 2,
+        supersedes: Some(1),
+        kind: VersionKind::Correction {
+            reason: "Monthly 基准更正短 fixture".into(),
+        },
+    };
+    saved.reports.push(report);
+    case.scenario.library = PublicLibrary::from_parts(saved).unwrap();
+    id
+}
+
+#[test]
+fn monthly_material_keeps_annual_earnings_and_is_idempotent() {
+    let (mut case, annual, monthly, published) = monthly_case();
+    monthly_acquire_and_form_annual(&mut case, annual);
+    let before = case.book.entry(&stock_code()).unwrap().clone();
+    case.acquire(monthly, hour_after(published)).unwrap();
+    case.apply_cause(
+        &stock_code(),
+        BeliefCause::NewMaterial { report: monthly },
+        7,
+    )
+    .unwrap();
+    let after = case.book.entry(&stock_code()).unwrap().clone();
+    assert_eq!(after.used_report_ids, [annual, monthly]);
+    assert_eq!(after.forecast.growth_bp, Some(1250));
+    assert_eq!(
+        after.forecast.basis,
+        ForecastBasis::Revised { observed_bp: 2000 }
+    );
+    assert_eq!(
+        after.valuation, before.valuation,
+        "盈利倍数继续读取年度盈利，不能将月盈利乘12"
+    );
+    assert_eq!(after.confidence_bp, before.confidence_bp);
+    case.apply_cause(
+        &stock_code(),
+        BeliefCause::NewMaterial { report: monthly },
+        8,
+    )
+    .unwrap();
+    assert_eq!(case.book.entry(&stock_code()).unwrap(), &after);
+}
+
+#[test]
+fn monthly_without_same_scope_annual_rejects_without_mutating_entry() {
+    for mismatched in [false, true] {
+        let (mut case, annual, monthly, published) = monthly_case();
+        if mismatched {
+            monthly_acquire_and_form_annual(&mut case, annual);
+            let mut saved = case.scenario.library.save();
+            let report = saved.reports.iter_mut().find(|r| r.id == monthly).unwrap();
+            report.reports.scope = ScopeId::Consolidated(MemberId(0));
+            report.reports.income.net_income_to_parent =
+                Some(report.reports.income.cumulative.net_income);
+            report.reports.income.report_period_net_income_to_parent =
+                Some(report.reports.income.report_period.net_income);
+            report.reports.income.minority_net_income = Some(AccountingAmount::ZERO);
+            report.reports.equity.opening_minority = Some(AccountingAmount::ZERO);
+            report.reports.equity.minority_net_income = Some(AccountingAmount::ZERO);
+            report.reports.equity.closing_minority = Some(AccountingAmount::ZERO);
+            report.reports.balance_sheet.equity_lines.push((
+                engine::accounting::reports::BsLine::MinorityEquity,
+                AccountingAmount::ZERO,
+            ));
+            use engine::accounting::reports::*;
+            let reason = ReportRoeUnavailable::ConsolidatedAttributionFactsUnavailable;
+            let unavailable = ReportRoeValue::Unavailable { reason };
+            report.reports.roe = ReportRoe {
+                basis: ReportRoeBasis::Unsupported { reason },
+                ordinary_roe: unavailable.clone(),
+                adjusted_roe: unavailable.clone(),
+                weighted_average_parent_equity_cents: unavailable,
+                non_recurring: ReportRoeNonRecurring::Unavailable { reason },
+                equity_events: ReportRoeEquityEventBreakdown {
+                    attributable_to_parent: ReportRoeEquityEventListing::Unavailable { reason },
+                    minority_interest: ReportRoeEquityEventListing::Unavailable { reason },
+                },
+            };
+            case.scenario.library = PublicLibrary::from_parts(saved).unwrap();
+        }
+        let before = case.book.entry(&stock_code()).cloned();
+        case.acquire(monthly, hour_after(published)).unwrap();
+        assert!(matches!(
+            case.apply_cause(
+                &stock_code(),
+                BeliefCause::NewMaterial { report: monthly },
+                7
+            ),
+            Err(BeliefError::NoOwnAnnualMaterial)
+        ));
+        assert_eq!(case.book.entry(&stock_code()), before.as_ref());
+    }
+}
+
+#[test]
+fn monthly_direct_correction_reestimates_from_annual_basis() {
+    let (mut case, annual, monthly, published) = monthly_case();
+    monthly_acquire_and_form_annual(&mut case, annual);
+    case.acquire(monthly, hour_after(published)).unwrap();
+    case.apply_cause(
+        &stock_code(),
+        BeliefCause::NewMaterial { report: monthly },
+        7,
+    )
+    .unwrap();
+    let correction = monthly_correction(&mut case, monthly, "2031-04-02");
+    let now = case
+        .scenario
+        .library
+        .publication_instant(correction)
+        .unwrap();
+    case.acquire(correction, hour_after(now)).unwrap();
+    case.apply_cause(
+        &stock_code(),
+        BeliefCause::Correction { report: correction },
+        8,
+    )
+    .unwrap();
+    let after = case.book.entry(&stock_code()).unwrap();
+    assert_eq!(after.used_report_ids, [annual, correction]);
+    assert_eq!(after.forecast.growth_bp, Some(2000));
+    assert_eq!(
+        after.forecast.basis,
+        ForecastBasis::InitialTwoYear { observed_bp: 2000 }
+    );
+    assert_eq!(
+        after.last_cause.as_ref().unwrap().cause,
+        BeliefCause::Correction { report: correction }
+    );
+}
+
+#[test]
+fn annual_correction_keeps_newer_monthly_and_correction_cause() {
+    let (mut case, annual, monthly, published) = monthly_case();
+    monthly_acquire_and_form_annual(&mut case, annual);
+    case.acquire(monthly, hour_after(published)).unwrap();
+    let correction = monthly_correction(&mut case, annual, "2031-04-02");
+    let now = case
+        .scenario
+        .library
+        .publication_instant(correction)
+        .unwrap();
+    case.acquire(correction, hour_after(now)).unwrap();
+    case.apply_cause(
+        &stock_code(),
+        BeliefCause::Correction { report: correction },
+        8,
+    )
+    .unwrap();
+    let after = case.book.entry(&stock_code()).unwrap();
+    assert_eq!(after.used_report_ids, [correction, monthly]);
+    assert_eq!(after.forecast.growth_bp, Some(2000));
+    assert_eq!(
+        after.last_cause.as_ref().unwrap().cause,
+        BeliefCause::Correction { report: correction }
+    );
 }

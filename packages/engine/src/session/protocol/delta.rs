@@ -165,12 +165,19 @@ impl GameSession {
         snapshot: &crate::Snapshot,
     ) -> Result<PublicRuntimeState, StepFatal> {
         self.require_healthy()?;
+        Self::public_runtime_from_prepared(snapshot, self.player_working_orders())
+    }
+
+    pub(in crate::session) fn public_runtime_from_prepared(
+        snapshot: &crate::Snapshot,
+        orders: Vec<super::PlayerWorkingOrder>,
+    ) -> Result<PublicRuntimeState, StepFatal> {
         validate_accounts(&snapshot.accounts).map_err(fatal)?;
         if !snapshot.accounts.contains_key(&AccountId(0)) {
             return Err(fatal(ProtocolError::RuntimeDeltaMismatch));
         }
         let mut working_orders = BTreeMap::new();
-        for order in self.player_working_orders() {
+        for order in orders {
             validate_order(&order).map_err(fatal)?;
             if working_orders.insert(order.id, order).is_some() {
                 return Err(fatal(ProtocolError::RuntimeDeltaMismatch));

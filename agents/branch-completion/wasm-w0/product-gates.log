@@ -1,0 +1,4 @@
+{"node":"v24.18.0","v8":"13.6.233.17-node.50","directory":"/data1/baiyifan/workplace/stock_market_game/.tmp/wasm-w0-recovery/artifacts/product/pkg"}
+{"name":"web_wasm_bg.wasm","bytes":14285916,"sha256":"0df571042e83b5c5dbec6ae5f51f712ffd128f28451917af18b89d7a694d4371"}
+{"name":"web_wasm.js","bytes":41022,"sha256":"e01c87788cddf47270dc821e12224c166fec0c099e0deb1e50edf966b72e8208"}
+正式product时间/真实atomic/私有导出隔离/shared import/2GiB binary+glue门通过

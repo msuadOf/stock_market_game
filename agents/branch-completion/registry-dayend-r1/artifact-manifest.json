@@ -1,0 +1,16 @@
+{
+  "base": "b172c1ab",
+  "prior_code_commit": "a95656352b785e5537e1dff647066b75b964d833",
+  "source_sha256": {
+    "packages/engine/src/session/corporate_actions.rs": "e6b1fb8667924168d744d4049d01e27e867bb9609dfa230813dac8ee2a0befcf",
+    "packages/engine/src/session/corporate_actions/registry_day_end.rs": "e0175b585cf3db83494836ff79add63c1169a14aa03b3fe509a3e5cf0a11e8db",
+    "packages/engine/src/session/corporate_actions/registry_day_end/tests.rs": "b400e5311d1aafd058a53cfc3d415a0309b42c7cc81cc3c67ab6dbb2c2c935f6"
+  },
+  "binary_path": "/data1/baiyifan/workplace/stock_market_game/.tmp/registry-dayend-r1-target/debug/deps/engine-3eb2aa70a85e274e",
+  "binary_sha256": "9e368c9a19752b8fd99ab382a149d92a7c9c6f956fb4b6fec9dd068e5310b9e1",
+  "build_command": "node scripts/run-long-validation.mjs 300000 -- env CARGO_TARGET_DIR=/data1/baiyifan/workplace/stock_market_game/.tmp/registry-dayend-r1-target CARGO_BUILD_JOBS=8 CARGO_PROFILE_DEV_DEBUG=0 cargo test -p engine --lib --no-run -j 8",
+  "test_command": "node scripts/run-with-deadline.mjs 10000 -- /data1/baiyifan/workplace/stock_market_game/.tmp/registry-dayend-r1-target/debug/deps/engine-3eb2aa70a85e274e registry_day_end::tests --test-threads=4",
+  "test_log": "review-green.log",
+  "build_log": "review-final-build.log",
+  "code_commit": "8cc9eead"
+}

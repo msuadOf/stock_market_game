@@ -1,0 +1,77 @@
+✖ 显式期间金额直接采样，不按周期缩放，不改变kind/开账/偏好且不修改入参 (4.644348ms)
+✖ 精确混合vector，完整u64范围和i128上界，非零min大额无JS精度损失 (0.463914ms)
+✖ 拒绝非法区间、缺失/重复身份、不匹配expense规则与seed，不补默认 (0.722242ms)
+✔ seed 完整 u64、规范十进制边界，在创建前拒绝非法 seed (2.299588ms)
+✔ 预览 seed 原值创建；seed 编辑不覆盖 custom 非法 raw JSON (1.658909ms)
+✔ Simulation 创建草稿显式不支持，非法 seed 先于运行失败 (0.433183ms)
+✔ 合法 seed 预览与创建一致，偏好更新只按 numeric CompanyId 且不改金额 (2.622508ms)
+ℹ tests 7
+ℹ suites 0
+ℹ pass 4
+ℹ fail 3
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 242.994541
+
+✖ failing tests:
+
+test at apps/web/src/config/company-initial-preset.test.ts:16:1
+✖ 显式期间金额直接采样，不按周期缩放，不改变kind/开账/偏好且不修改入参 (4.644348ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  '1.00' !== '123.45'
+  
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-system-inputs/apps/web/src/config/company-initial-preset.test.ts:23:14)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.start (node:internal/test_runner/test:1096:17)
+      at startSubtestAfterBootstrap (node:internal/test_runner/harness:385:17) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: '1.00',
+    expected: '123.45',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at apps/web/src/config/company-initial-preset.test.ts:32:1
+✖ 精确混合vector，完整u64范围和i128上界，非零min大额无JS精度损失 (0.463914ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  + actual - expected
+  
+  + '1.00'
+  - '4436879973638968.10'
+  
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-system-inputs/apps/web/src/config/company-initial-preset.test.ts:36:10)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: '1.00',
+    expected: '4436879973638968.10',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at apps/web/src/config/company-initial-preset.test.ts:40:1
+✖ 拒绝非法区间、缺失/重复身份、不匹配expense规则与seed，不补默认 (0.722242ms)
+  AssertionError [ERR_ASSERTION]: Missing expected exception.
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-system-inputs/apps/web/src/config/company-initial-preset.test.ts:41:237)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: /revenue/,
+    operator: 'throws',
+    diff: 'simple'
+  }

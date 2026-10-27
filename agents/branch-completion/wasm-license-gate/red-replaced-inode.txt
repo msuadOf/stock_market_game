@@ -1,0 +1,27 @@
+✖ 构建替换同内容源文件后仍拒绝新 inode 的 pkg hardlink 别名 (23.577743ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 170.126608
+
+✖ failing tests:
+
+test at scripts/wasm-pack-build.test.mjs:97:1
+✖ 构建替换同内容源文件后仍拒绝新 inode 的 pkg hardlink 别名 (23.577743ms)
+  AssertionError [ERR_ASSERTION]: Missing expected rejection.
+      at async file:///data1/baiyifan/workplace/stock_market_game/.worktree/w0l-gate/scripts/wasm-pack-build.test.mjs:101:3
+      at async fixture (file:///data1/baiyifan/workplace/stock_market_game/.worktree/w0l-gate/scripts/wasm-pack-build.test.mjs:13:5)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: /LICENSE.*alias/i,
+    operator: 'rejects',
+    diff: 'simple'
+  }
+bounded command exited with 1

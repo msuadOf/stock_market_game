@@ -313,6 +313,72 @@ struct ChildTicket {
     charged_cents: i64,
 }
 
+/// 构造期已经校验的计划和既有子单票；安装本身没有失败分支。
+pub(crate) struct PreparedPlanSeed {
+    book: crate::plans::PlanBook,
+    tickets: std::collections::BTreeMap<(crate::AccountId, crate::StockId), ChildTicket>,
+}
+
+/// 只恢复现有票；资源与费用仍由真实 desk/entity 事实独占维护。
+pub(crate) fn prepare_plan_seeds(
+    books: Vec<crate::plans::PlanBook>,
+    roster: &[crate::AccountId],
+    per_group: usize,
+    desk_seeds: &[Vec<super::desk::DeskRestingSeed>],
+) -> Result<Vec<PreparedPlanSeed>, RuntimeError> {
+    let bad = |detail: String| RuntimeError::ProtocolInvariant { detail };
+    let needs_tickets = books.iter().any(|book| book.plan_ids().any(|id| {
+        book.plan(id).expect("计划迭代身份存在").active_child_order_id().is_some()
+    }));
+    let mut index = std::collections::BTreeMap::new();
+    if needs_tickets {
+        for (stock, seeds) in desk_seeds.iter().enumerate() {
+            for seed in seeds {
+                let global = (seed.owner.0 as usize).checked_mul(per_group)
+                    .and_then(|offset| offset.checked_add(seed.owner.1 as usize))
+                    .ok_or_else(|| bad("子单种子 owner 坐标溢出".to_owned()))?;
+                let account = roster.get(global).copied().filter(|_| (seed.owner.1 as usize) < per_group)
+                    .ok_or_else(|| bad(format!("子单种子 owner 不在名册：{:?}", seed.owner)))?;
+                let stock = crate::StockId(stock as u32);
+                let order = crate::OrderId(desk_order_id(stock.0 as super::StockIdx, seed.serial));
+                if index.insert((account, stock, order), seed).is_some() {
+                    return Err(bad(format!("子单种子身份重复：account={account:?}, stock={stock:?}, order={order:?}")));
+                }
+            }
+        }
+    }
+    books.into_iter().map(|book| {
+        let mut tickets = std::collections::BTreeMap::new();
+        for id in book.plan_ids() {
+            let plan = book.plan(id).expect("计划迭代身份存在");
+            let Some(order) = plan.active_child_order_id() else { continue; };
+            if plan.is_terminal() {
+                return Err(bad(format!("terminal 计划仍引用子单：{id:?}")));
+            }
+            let seed = index.get(&(plan.account(), *plan.code(), order))
+                .ok_or_else(|| bad(format!("计划子单缺真实 desk 种子：plan={id:?}, order={order:?}")))?;
+            let leg = plan.execution().ok_or_else(|| bad(format!("计划子单缺 execution：{id:?}")))?;
+            let qty = seed.qty.checked_add(seed.filled_qty)
+                .ok_or_else(|| bad(format!("子单原数量溢出：{id:?}")))?;
+            if seed.side != plan.direction() || seed.qty == 0 || leg.child_qty() != qty
+                || plan.active_child_remaining_qty() != Some(seed.qty)
+            {
+                return Err(bad(format!("计划子单事实与 desk 种子不一致：plan={id:?}, order={order:?}")));
+            }
+            let charged_cents = if seed.side == Side::Buy {
+                seed.filled_value.checked_add(seed.charged_commission)
+                    .and_then(|value| value.checked_add(seed.charged_transfer_fee))
+                    .ok_or_else(|| bad(format!("子单累计真实扣减溢出：{id:?}")))?
+            } else { 0 };
+            tickets.insert((plan.account(), *plan.code()), ChildTicket {
+                qty, side: seed.side, price: seed.price, order_id: Some(order),
+                remaining: seed.qty, charged_cents,
+            });
+        }
+        Ok(PreparedPlanSeed { book, tickets })
+    }).collect()
+}
+
 /// 本组名册段（P0 缺陷修复的统一收口点）：全局名册投影按 `roster_offset`
 /// 切出**本组局部切片**，供 `cash_with_pending_at` / `held_qty_with_pending_at`
 /// / `equity_cents_with_pending` 直接以组内 local 索引（三者的
@@ -663,6 +729,10 @@ pub struct GroupFinalState {
 
 /// 组线程私有状态。
 pub struct GroupState {
+    admin_pending: Option<admin_transaction::PendingAdmin>,
+    admin_last_id: u64,
+    #[cfg(test)]
+    admin_fault: Option<(super::protocol::AdminPhase, super::protocol::AdminFault)>,
     /// 组索引。
     pub group: GroupIdx,
     /// 组内账户（下标=LocalIdx；Seal 攻顶刀 A-1：Arc+COW——写点经
@@ -770,6 +840,10 @@ pub struct GroupState {
     belief_pending_dirty: Vec<LocalIdx>,
     /// 公开库（Belief-1b·下：Arc 共享——投递消息稀疏刷新）。
     library: std::sync::Arc<crate::information::PublicLibrary>,
+    /// 已提交的共同公司事实；SOURCE-A 在首个 Start 前安装初值。
+    current_company_facts: Option<Arc<crate::company::CompanyReadFacts>>,
+    /// 只由成功信息 commit 推进；None 库刷新不声称观察。
+    information_observed_through: Option<crate::calendar::CivilInstant>,
     /// D3a-2 观察基：快照来源的每股（分钟收盘，日 K 条）——链观察的
     /// 纯输入（与 session 读面同源：desk 权威 minute_closes/daily_bars；
     /// 观察对象每 tick 由纯构建器现算，不累积不缓存——口径不可能漂移）。
@@ -815,8 +889,8 @@ pub struct GroupState {
     /// 的确定性触发）。
     #[cfg(test)]
     force_continuation: bool,
-    /// D3a-2c 件4：组内计划簿（开仓产物落地——crate::plans 纯类型直载；
-    /// 组装时起始空，runtime 模式 session plans 恒空天然一致）。
+    /// 本组账户的计划权威；构造时按 AccountId 移交全部计划与游标。
+    /// native 运行期间 session 只保留完整镜像，不作为特例 writer。
     plan_book: crate::plans::PlanBook,
     /// ⑤a 收袋刀：attention due 筛选堆（延迟删除模式）。不变式：∀local，
     /// (profiles[local].next_due, local) 在堆中——除非该项已被某轮
@@ -828,7 +902,7 @@ pub struct GroupState {
     /// ⑤b 收袋刀：计划簿 dirty 标记——真变置位（写点统一经
     /// [`Self::save_plan_book_undo`] 前奏或 `GroupUndo::PlanBook` 恢复；
     /// 宁多勿漏：多置=多一次全量上行无害，漏置=镜像漏更新红证抓）。
-    /// EchoPlans 生产通道消费（未变回空簿）；读面 EchoPlansFull 不动它。
+    /// EchoPlans 诊断通道消费（未变回空簿）；EveryTick 完整读面不依赖它。
     /// 初始 true：首拍全量基线（与 session 镜像构造同源对齐）。
     plan_book_dirty: bool,
     /// 决策脚本。
@@ -903,7 +977,12 @@ impl GroupState {
                         .collect()
                 })
                 .unwrap_or_default();
-        GroupState {
+        let initial_company_facts = root_projection.as_ref().map(|p| Arc::clone(&p.initial_company_facts));
+        let mut state = GroupState {
+            admin_pending: None,
+            admin_last_id: 0,
+            #[cfg(test)]
+            admin_fault: None,
             group,
             accounts: accounts.into_iter().map(std::sync::Arc::new).collect(),
             undo: Vec::new(),
@@ -948,6 +1027,8 @@ impl GroupState {
             belief_dirty: vec![false; belief_roster],
             belief_pending_dirty: Vec::new(),
             library: library_seed,
+            current_company_facts: None,
+            information_observed_through: None,
             root_projection,
             child_in_flight: Default::default(),
             plan_undo_saved: false,
@@ -966,11 +1047,44 @@ impl GroupState {
             due_heap: due_heap_seed,
             plan_book_dirty: true,
             script,
+        };
+        if let Some(facts) = initial_company_facts {
+            state.install_initial_company_facts(facts)
+                .expect("构造静点安装 CompanyReadFacts");
         }
+        state
     }
 
     /// 当前态哈希（FNV-1a，按名册与股序确定序遍历）。仅域内容（账户），不含
     /// 协议位置字段（tick/轮）——跨 tick 可比（Abort 回滚等价判据）。
+    fn owns_plan_account(&self, owner: crate::AccountId) -> bool {
+        self.root_projection.as_ref().is_some_and(|root| {
+            roster_slice(&root.account_ids, self.roster_offset, self.accounts.len()).contains(&owner)
+        })
+    }
+
+    fn validate_plan_writer(&self, owner: crate::AccountId, book: &crate::plans::PlanBook) -> Result<(), RuntimeError> {
+        if !self.owns_plan_account(owner)
+            || book.owner_sequences().any(|cursor| !self.owns_plan_account(cursor.owner))
+            || book.plan_ids().any(|id| !self.owns_plan_account(id.owner))
+        {
+            return Err(RuntimeError::ProtocolInvariant {
+                detail: format!("PlanWriterOwnershipViolation：group={}, owner={owner:?}", self.group),
+            });
+        }
+        if book.policy() != self.plan_book.policy() {
+            return Err(RuntimeError::ProtocolInvariant { detail: format!("PlanPolicyMismatch：group={}", self.group) });
+        }
+        Ok(())
+    }
+
+    /// 预检全部组成功后，单次移交本组计划和既有票。
+    pub(crate) fn install_plan_seed(&mut self, seed: PreparedPlanSeed) {
+        self.plan_book = seed.book;
+        self.child_in_flight = seed.tickets;
+        self.plan_book_dirty = true;
+    }
+
     pub fn state_hash(&self) -> u64 {
         let mut h: u64 = 0xcbf29ce484222325;
         h = fnv(h, self.group as u64);
@@ -1000,9 +1114,21 @@ impl GroupState {
         }
         // Sol 整改 1：计划域新状态入哈希（簿数值面+在途+身份计数——
         // Abort 回滚等价判据覆盖计划/身份漂移）。
+        let policy = self.plan_book.policy();
+        h = fnv(h, policy.reverse_revision_threshold_bp as u64);
+        h = fnv(h, policy.review_signal_delta_bp as u64);
+        h = fnv(h, policy.review_price_change_bp as u64);
+        for cursor in self.plan_book.owner_sequences() {
+            h = fnv(h, cursor.owner.0);
+            h = fnv(h, cursor.next_sequence.is_some() as u64);
+            if let Some(next) = cursor.next_sequence {
+                h = fnv(h, next);
+            }
+        }
         for plan_id in self.plan_book.plan_ids() {
             if let Ok(plan) = self.plan_book.plan(plan_id) {
-                h = fnv(h, plan_id.0);
+                h = fnv(h, plan_id.owner.0);
+                h = fnv(h, plan_id.sequence);
                 h = fnv(h, u64::from(plan.filled_qty()));
                 h = fnv(
                     h,
@@ -2368,6 +2494,7 @@ impl GroupState {
         behavior: &crate::behavior::BehaviorMarketObservation,
     ) -> Result<Vec<super::decision::PendingOp>, RuntimeError> {
         let group = self.group;
+        let company_facts = Arc::clone(self.current_company_facts()?);
         let projection = match self.root_projection.clone() {
             Some(p) => p,
             None => {
@@ -2459,19 +2586,6 @@ impl GroupState {
             }
         }
         let held: std::collections::BTreeSet<crate::StockId> = positions.keys().copied().collect();
-        let issuer_of: std::collections::BTreeMap<
-            crate::StockId,
-            Option<crate::company::CompanyId>,
-        > = projection
-            .stock_codes
-            .iter()
-            .map(|(code, id)| {
-                (
-                    *id,
-                    projection.company_registry.issuer_of(code),
-                )
-            })
-            .collect();
         let minute = u64::from(snapshot.market_minute);
         let day = tick.saturating_sub(1) / self.ticks_per_day.max(1);
         let retail = crate::session::RetailStrategyInstance {
@@ -2489,8 +2603,7 @@ impl GroupState {
             seed: projection.session_seed,
             tick,
             library: &self.library,
-            issuer_of,
-            operations: &projection.operations,
+            company_facts: &company_facts,
             retail,
         };
         // 观察（core——session 版同核）：belief entry/watchlist/information
@@ -2743,6 +2856,7 @@ impl GroupState {
         RuntimeError,
     > {
         let group = self.group;
+        let company_facts = Arc::clone(self.current_company_facts()?);
         let (projection, snapshot) = match (
             self.root_projection.clone(),
             self.snapshot.clone(),
@@ -2774,6 +2888,7 @@ impl GroupState {
             &accounts_ref,
             &self.belief_states,
             &projection,
+            &company_facts,
             &self.library,
             &self.plan_book,
             &self.child_in_flight,
@@ -2789,8 +2904,7 @@ impl GroupState {
             projection.auction_ticks,
             projection.closing_auction_ticks,
             &self.library,
-            &projection.company_registry,
-            &projection.stock_codes,
+            &company_facts,
         );
         let personal = crate::session::PlanPersonalState {
             attention: snap.attention.clone(),
@@ -2930,7 +3044,6 @@ impl GroupState {
                         local,
                         account,
                         trading_day,
-                        &projection,
                         &out.information,
                         &mut review_cancels,
                     );
@@ -3008,7 +3121,7 @@ impl GroupState {
                 // Sol 终审四审 A2：开仓复审 trading_day 同 (tick−1)/tpd 基准。
                 snapshot.tick.saturating_sub(1) / self.ticks_per_day,
                 self.config.lot_size,
-                projection.total_shares.get(code).copied().unwrap_or(0),
+                group_max_holdable_shares(&company_facts, code),
                 |direction, confidence_bp, horizon| {
                     initial_group_urgency(
                         direction,
@@ -3044,7 +3157,7 @@ impl GroupState {
                         t1_locked: acct.frozen_today.get(idx).copied().unwrap_or(0),
                     }
                 };
-                let acquired = group_review_acquired(&projection, &out.information, code);
+                let acquired = group_review_acquired(&company_facts, &out.information, code);
                 self.plan_book
                     .record_review(plan_id, trading_day, price, acquired)
                     .unwrap_or_else(|e| panic!("组内新计划复审事实记录失败 {plan_id:?}: {e:?}"));
@@ -3162,7 +3275,6 @@ impl GroupState {
         local: LocalIdx,
         account: crate::AccountId,
         trading_day: u64,
-        projection: &std::sync::Arc<super::world::RootProjection>,
         information: &crate::information::NpcInformationState,
         cancels: &mut Vec<(LocalIdx, StockIdx, u64)>,
     ) {
@@ -3192,7 +3304,10 @@ impl GroupState {
                 .map(|v| v.last_price)
                 .unwrap_or_else(|| panic!("组内复审缺股 {code:?} 行情"));
             let idx = code.0 as usize;
-            let acquired = group_review_acquired(projection, information, &code);
+            let acquired = group_review_acquired(
+                self.current_company_facts().expect("组内复审需要 current CompanyReadFacts"),
+                information, &code,
+            );
             let resources = {
                 let acct = &self.accounts[local as usize];
                 crate::plans::ReviewResources {
@@ -3724,7 +3839,12 @@ impl GroupState {
         // 决策来源：内联 decide_data（批 4）或测试脚本。
         enum Pending {
             Op(PendingOp),
-            CancelAll { local: LocalIdx, stock: StockIdx },
+            #[cfg(feature = "simulation-diagnostics")]
+            ExternalOp(PendingOp),
+            CancelAll {
+                local: LocalIdx,
+                stock: StockIdx,
+            },
         }
         // D4 相位计时：决策段（decide_data 内联/测试脚本产计划）。
         crate::verification_evidence::enter_phase(
@@ -3954,8 +4074,7 @@ impl GroupState {
                         projection.auction_ticks,
                         projection.closing_auction_ticks,
                         &self.library,
-                        &projection.company_registry,
-                        &projection.stock_codes,
+                        self.current_company_facts()?,
                     );
                     let returns: std::collections::BTreeMap<crate::StockId, Option<f64>> = chain
                         .paths
@@ -4015,6 +4134,9 @@ impl GroupState {
         // 外部注入计划（玩家意图路由，D2）：并入扣除路径（一次消费即清）。
         let external = std::mem::take(&mut self.external_pending);
         for op in external {
+            #[cfg(feature = "simulation-diagnostics")]
+            pendings.push(Pending::ExternalOp(op));
+            #[cfg(not(feature = "simulation-diagnostics"))]
             pendings.push(Pending::Op(op));
         }
         // D5 终程：外部定向撤单延迟到下单 flush 之后（同批 Place+Cancel
@@ -4056,10 +4178,11 @@ impl GroupState {
             buffers[stock as usize].push(DeskIn::Cancel {
                 owner: (group, local),
                 order: (stock, serial),
+                #[cfg(feature = "simulation-diagnostics")]
+                source: super::diagnostics::OperationSource::NonPlayerUnresolved,
             });
         }
-        let mut external_cancel_buffer: Vec<(LocalIdx, super::StockIdx, u64)> =
-            external_cancels;
+        let mut external_cancel_buffer: Vec<(LocalIdx, super::StockIdx, u64)> = external_cancels;
         let mut buffered = 0usize;
         let mut ops_sent = 0u64;
         // D4 相位计时：账户校验段（purse/持仓扣除+在途登记）。
@@ -4079,10 +4202,18 @@ impl GroupState {
                 buffered += 1;
             }
         }
-        for p in pendings.iter().filter_map(|p| match p {
-            Pending::Op(op) => Some(*op),
-            _ => None,
-        }) {
+        for pending in &pendings {
+            let p = match pending {
+                Pending::Op(op) => *op,
+                #[cfg(feature = "simulation-diagnostics")]
+                Pending::ExternalOp(op) => *op,
+                _ => continue,
+            };
+            #[cfg(feature = "simulation-diagnostics")]
+            let source = match pending {
+                Pending::ExternalOp(_) => super::diagnostics::OperationSource::PlayerExternal,
+                _ => super::diagnostics::OperationSource::NonPlayerUnresolved,
+            };
             let owner = (group, p.local);
             // Sol 复审修复 3（校验顺序）：竞价相位×市价门禁**先于**资源
             /// 校验——保证相位显式回执可达（资源不足不误吞相位拒收；
@@ -4157,6 +4288,8 @@ impl GroupState {
                         price: p.routed,
                         qty: p.qty,
                         purse,
+                        #[cfg(feature = "simulation-diagnostics")]
+                        source,
                     });
                     buffered += 1;
                 }
@@ -4232,6 +4365,8 @@ impl GroupState {
                         price: p.routed,
                         qty: p.qty,
                         purse: 0,
+                        #[cfg(feature = "simulation-diagnostics")]
+                        source,
                     });
                     buffered += 1;
                 }
@@ -4247,6 +4382,8 @@ impl GroupState {
             buffers[stock as usize].push(DeskIn::Cancel {
                 owner: (group, local),
                 order: (stock, serial),
+                #[cfg(feature = "simulation-diagnostics")]
+                source: super::diagnostics::OperationSource::PlayerExternal,
             });
         }
         // 名册末尾：每股发 final_flush 空批作为本组本轮提交标记（可空）。
@@ -4411,7 +4548,7 @@ impl<'a> crate::session::PlanReviewHost for GroupReviewHost<'a> {
         // plan_review_facts 同式：股→发行人→information 记录；复审时点
         /// 的 observe 输出面）。
         let acquired = group_review_acquired(
-            self.state.root_projection.as_ref().expect("复审位投影在"),
+            self.state.current_company_facts().expect("复审位需要 current CompanyReadFacts"),
             self.information,
             code,
         );
@@ -4501,12 +4638,10 @@ impl<'a> crate::session::PlanReviewHost for GroupReviewHost<'a> {
         )
     }
     fn max_holdable_shares(&self, code: &crate::StockId) -> u64 {
-        self.state
-            .root_projection
-            .as_ref()
-            .and_then(|p| p.total_shares.get(code).copied())
-            .unwrap_or(0)
-            .min(u64::from(u32::MAX))
+        group_max_holdable_shares(
+            self.state.current_company_facts().expect("复审位需要 current CompanyReadFacts"),
+            code,
+        )
     }
 }
 
@@ -4712,23 +4847,25 @@ fn group_urgency_at_view(
     (urgency, risk)
 }
 
-/// 复审 acquired 数（与 session `plan_review_facts` 同式：股→发行人→
-/// information 记录计数；issuer 查询经投影 stock_codes+registry）。此前
-/// 恒 0 的近似使 quiet 判定的 acquired 比对永不成立（组记录 0 vs session
-/// 真实计数）——D3b 件 4 fixture 适配红证 institution_small_signal。
+/// 复审仅统计本人已获知材料；发行人身份来自当前共同事实。
 fn group_review_acquired(
-    projection: &std::sync::Arc<super::world::RootProjection>,
+    facts: &crate::company::CompanyReadFacts,
     information: &crate::information::NpcInformationState,
     code: &crate::StockId,
 ) -> u32 {
-    projection
-        .stock_codes
-        .iter()
-        .find(|(_, id)| id == code)
-        .and_then(|(code_str, _)| projection.company_registry.issuer_of(code_str))
-        .map(|company| information.records_for_company(&company).len())
-        .map(|len| u32::try_from(len).expect("publication ids fit in u32"))
-        .unwrap_or(0)
+    let company = facts.issuer_of_stock(*code)
+        .unwrap_or_else(|error| panic!("组内复审缺发行人 {code:?}: {error:?}"));
+    u32::try_from(information.records_for_company(&company).len())
+        .expect("publication ids fit in u32")
+}
+
+/// 当前总股本保持 u64；仅策略执行数量上限沿用 u32 边界。
+fn group_max_holdable_shares(facts: &crate::company::CompanyReadFacts, code: &crate::StockId) -> u64 {
+    let issuer = facts.issuer_of_stock(*code)
+        .unwrap_or_else(|error| panic!("组内持仓上限缺发行人 {code:?}: {error:?}"));
+    let (_, shares) = facts.company_spec(&issuer)
+        .unwrap_or_else(|error| panic!("组内持仓上限缺公司 {issuer:?}: {error:?}"));
+    shares.min(u64::from(u32::MAX))
 }
 
 /// 组簿反手阈值（D3b 件 3 辅助——plan_book.policy() 的只读便捷）。
@@ -4793,7 +4930,7 @@ fn initial_group_urgency(
 
 /// D3a-2c 件2：组线程组装 RootReadContext（与 `RootReadContext::capture`
 /// 同一字段面——投影来源同源：组账户→AccountBook 保真投影（现金/持仓/
-/// T+1 冻结/成本基）、catalog/registry/operations 构造期 Arc、library=组内
+/// T+1 冻结/成本基）、current CompanyReadFacts 共享引用、library=组内
 /// 共享、plans=组内空簿（runtime 模式 session plans 恒空）、时间面=快照
 /// tick 推导 + 快照 civil_date）。任何组装分叉在红证（组内派生==session
 /// 版派生）显红。
@@ -4802,6 +4939,7 @@ fn build_root_read_context(
     accounts: &[&GroupAccount],
     belief_states: &[Option<super::world::BeliefParticipantSnapshot>],
     projection: &std::sync::Arc<crate::runtime::world::RootProjection>,
+    company_facts: &Arc<crate::company::CompanyReadFacts>,
     library: &std::sync::Arc<crate::information::PublicLibrary>,
     plans: &crate::plans::PlanBook,
     child_in_flight: &std::collections::BTreeMap<
@@ -4868,9 +5006,7 @@ fn build_root_read_context(
     let market_minute = market_minute_at(tick, ticks_per_day, projection.auction_ticks, projection.closing_auction_ticks);
     crate::session::RootReadContext::from_parts(
         book,
-        projection.catalog.clone(),
-        std::sync::Arc::clone(&projection.company_registry),
-        std::sync::Arc::clone(&projection.operations),
+        Arc::clone(company_facts),
         std::sync::Arc::clone(library),
         // 组内计划簿（D3a-2c 件4 起承载开仓产物——与 session 投影同源；
         // 此前恒空簿的起点形态在件4 落地后退役）。
@@ -4915,8 +5051,7 @@ fn build_chain_observation(
     auction_ticks: u64,
     closing_auction_ticks: u64,
     library: &std::sync::Arc<crate::information::PublicLibrary>,
-    company_registry: &std::sync::Arc<crate::company::CompanyRegistry>,
-    stock_codes: &[(crate::account::StockCode, crate::StockId)],
+    company_facts: &crate::company::CompanyReadFacts,
 ) -> crate::session::DecisionChainObservation {
     let market = super::decision::build_market_view(snapshot);
     let mut paths = std::collections::BTreeMap::new();
@@ -4938,7 +5073,7 @@ fn build_chain_observation(
     // Sol 整改 5：曝光面收口（此前空集——生产发现路径丢披露曝光权重；
     /// 与 session 版同一共享函数 exposed_stocks_shared）。
     let exposed =
-        crate::session::exposed_stocks_shared(library, company_registry, stock_codes, now);
+        crate::session::exposed_stocks_shared(library, company_facts, now);
     crate::session::DecisionChainObservation {
         market,
         paths,
@@ -5035,7 +5170,27 @@ pub fn group_main(
                 break;
             }
         };
+        // pending 行政 overlay 仅允许本事务控制或无副作用读面。
+        if state.admin_pending.is_some() && !matches!(&msg,
+            GroupIn::AdminCommit { .. } | GroupIn::AdminAbort { .. } | GroupIn::AdminPrepare { .. }
+            | GroupIn::EchoAccounts | GroupIn::EchoAccountsSparse { .. } | GroupIn::Shutdown) {
+            let error = RuntimeError::ProtocolInvariant { detail: format!("组 {who} 行政事务 pending 时收到改变状态的消息") };
+            let _ = up_tx.send(UpMsg::Failed { who, error: error.clone() });
+            result = Err(error);
+            break;
+        }
         match msg {
+            #[cfg(test)]
+            GroupIn::AdminFaultForTest { phase, fault } => state.admin_fault = Some((phase, fault)),
+            GroupIn::AdminPrepare { id, operations, information } => {
+                if !state.handle_admin_message(id, super::protocol::AdminPhase::Prepare, operations, information, &up_tx, who) { break; }
+            }
+            GroupIn::AdminCommit { id } => {
+                if !state.handle_admin_message(id, super::protocol::AdminPhase::Commit, Vec::new(), None, &up_tx, who) { break; }
+            }
+            GroupIn::AdminAbort { id } => {
+                if !state.handle_admin_message(id, super::protocol::AdminPhase::Abort, Vec::new(), None, &up_tx, who) { break; }
+            }
             GroupIn::Batch(batch) => {
                 // eager 分域即时相：到达即应用 F1/F2/F3（等待窗=组空闲
                 // recv——与协调者收 DeskReport 的 Seal 屏障重叠，回收串行
@@ -5202,22 +5357,61 @@ pub fn group_main(
                 day,
                 library,
                 attentions,
-                issuer_map,
-                company_specs,
             } => {
                 // Belief-1b·下：组内纯函数推进（与 session 版同输入同
                 // 演进）。codes=当前持仓∪watchlist（组账户无"曾持有"
                 // 零量条目面——差异登记）。快照缺席（未跑 tick 即投递）
                 // 如实上行空更新。
+                let identities = (|| {
+                    let projection = state.root_projection.as_ref().ok_or_else(|| {
+                        RuntimeError::ProtocolInvariant {
+                            detail: "信息投递缺少真实账户名册".to_owned(),
+                        }
+                    })?;
+                    let mut seen = std::collections::BTreeSet::new();
+                    for (local, account_id, _) in &attentions {
+                        let index = *local as usize;
+                        let actual = projection.account_ids.get(state.roster_offset + index);
+                        if actual != Some(account_id) || !seen.insert(*local) {
+                            return Err(RuntimeError::ProtocolInvariant {
+                                detail: format!("组内信息投递身份错误：group={} local={local} expected={actual:?} actual={account_id:?}", state.group),
+                            });
+                        }
+                        let personal = state.belief_states.get(index).and_then(Option::as_ref)
+                            .ok_or_else(|| RuntimeError::ProtocolInvariant {
+                                detail: format!("组内信息投递缺个人态：group={} local={local} account={account_id:?}", state.group),
+                            })?;
+                        if personal.information.owner() != *account_id || personal.belief.npc() != *account_id {
+                            return Err(RuntimeError::ProtocolInvariant {
+                                detail: format!("组内信息投递个人属主错误：group={} local={local} account={account_id:?} information={:?} belief={:?}", state.group, personal.information.owner(), personal.belief.npc()),
+                            });
+                        }
+                    }
+                    Ok(())
+                })();
+                if let Err(error) = identities {
+                    abort.store(true, Ordering::SeqCst);
+                    let _ = up_tx.send(UpMsg::Failed { who, error: error.clone() });
+                    result = Err(error);
+                    break;
+                }
+                let company_facts = match state.current_company_facts() {
+                    Ok(facts) => Arc::clone(facts),
+                    Err(error) => {
+                        abort.store(true, Ordering::SeqCst);
+                        let _ = up_tx.send(UpMsg::Failed { who, error: error.clone() });
+                        result = Err(error);
+                        break;
+                    }
+                };
                 state.library = library;
                 let mut updates = Vec::new();
                 if let Some(snapshot) = state.snapshot.clone() {
                     let market = super::decision::build_market_view(&snapshot);
                     for (local, account_id, attention) in attentions {
                         let li = local as usize;
-                        let Some(snap) = state.belief_states.get_mut(li).and_then(|s| s.as_mut()) else {
-                            continue;
-                        };
+                        let snap = state.belief_states[li].as_mut()
+                            .expect("投递前已经完整验证个人态存在与属主");
                         let mut codes: std::collections::BTreeSet<crate::StockId> =
                             state.accounts[li]
                                 .shares
@@ -5228,13 +5422,13 @@ pub fn group_main(
                                 .collect();
                         codes.extend(snap.watchlist.stocks.keys().copied());
                         let issuer_of =
-                            |code: crate::StockId| issuer_map.get(&code).copied();
+                            |code: crate::StockId| company_facts.issuer_of_stock(code).ok();
                         let spec_of =
-                            |company: &crate::company::CompanyId| company_specs.get(company).copied();
+                            |company: &crate::company::CompanyId| company_facts.company_spec(company).ok();
                         match crate::session::notices::deliver_information_for_npc(
                             account_id,
                             now,
-                            day,
+                            &|_| Some(day),
                             &attention,
                             &snap.information,
                             &snap.belief,
@@ -5384,22 +5578,30 @@ pub fn group_main(
             }
             #[cfg(test)]
             GroupIn::ApplyPlanEvents { events } => {
-                // D3b 复审注入通道：逐条 apply 到组簿（权威语义由
-                // plan_book.apply 承载；簿快照 undo 可逆——Abort 冲回后
-                // 指令失效需重发）。
-                for (plan_id, event) in events {
-                    state.save_plan_book_undo();
-                    let applied = state.plan_book.apply(plan_id, event);
-                    if let Err(error) = applied {
+                // 整批先校验归属与迁移；失败不留下前半批事件或游标。
+                let applied = (|| {
+                    let mut candidate = state.plan_book.clone();
+                    for (plan_id, event) in events {
+                        if !state.owns_plan_account(plan_id.owner) {
+                            return Err(RuntimeError::ProtocolInvariant {
+                                detail: format!("PlanWriterOwnershipViolation：group={}, plan={plan_id:?}", state.group),
+                            });
+                        }
+                        candidate.apply(plan_id, event).map_err(|error| RuntimeError::ProtocolInvariant {
+                            detail: format!("组 {} 注入计划事件失败 {plan_id:?}：{error:?}", state.group),
+                        })?;
+                    }
+                    Ok(candidate)
+                })();
+                match applied {
+                    Ok(candidate) => {
+                        state.save_plan_book_undo();
+                        state.plan_book = candidate;
+                    }
+                    Err(error) => {
                         abort.store(true, Ordering::SeqCst);
-                        let e = RuntimeError::ProtocolInvariant {
-                            detail: format!(
-                                "组 {} 注入计划事件失败 {plan_id:?}：{error:?}",
-                                state.group
-                            ),
-                        };
-                        let _ = up_tx.send(UpMsg::Failed { who, error: e.clone() });
-                        result = Err(e);
+                        let _ = up_tx.send(UpMsg::Failed { who, error: error.clone() });
+                        result = Err(error);
                         break;
                     }
                 }
@@ -5411,14 +5613,30 @@ pub fn group_main(
             } => {
                 // D3b 件 4 fixture 通道：存入待办（run_chain_decision 按
                 // 账户匹配消费一次即清——不复读）。
+                if !state.owns_plan_account(account) {
+                    let error = RuntimeError::ProtocolInvariant {
+                        detail: format!("PlanWriterOwnershipViolation：group={}, review_owner={account:?}", state.group),
+                    };
+                    abort.store(true, Ordering::SeqCst);
+                    let _ = up_tx.send(UpMsg::Failed { who, error: error.clone() });
+                    result = Err(error);
+                    break;
+                }
                 state.injected_assessments.push((account, assessments));
             }
             #[cfg(test)]
-            GroupIn::MutatePlanBookForTest(mutate) => {
-                // D3b 件 4 fixture 通道：组簿测试变换（簿快照 undo 可逆
-                /// ——Abort 冲回后指令失效需重发）。
+            GroupIn::MutatePlanBookForTest { owner, mutate } => {
+                // 先在私有簿验证归属，失败不安装任何计划或游标。
+                let mut candidate = state.plan_book.clone();
+                mutate(&mut candidate);
+                if let Err(error) = state.validate_plan_writer(owner, &candidate) {
+                    abort.store(true, Ordering::SeqCst);
+                    let _ = up_tx.send(UpMsg::Failed { who, error: error.clone() });
+                    result = Err(error);
+                    break;
+                }
                 state.save_plan_book_undo();
-                mutate(&mut state.plan_book);
+                state.plan_book = candidate;
             }
             #[cfg(test)]
             GroupIn::InjectObservationMinutes { stock, minutes } => {
@@ -5526,17 +5744,8 @@ pub fn group_main(
                 }
             }
             GroupIn::EchoPlans => {
-                // D3a-2c 件5：组内计划簿上行（驱动器交付点回写 session
-                // plans_debug 投影源——D4 模式）。
-                // ⑤b 收袋刀：生产通道 dirty 门控——组簿未变时回空簿
-                //（省每拍全量 PlanBook 克隆往返）；驱动器端「空簿不覆盖」
-                //（group_has_plans 判定）使 session 镜像保持现值，与
-                // 未变组簿仍一致。等价面（final-ledger §七 已论证）：
-                // - 变化拍：dirty 在 ⇒ 全量上行 ⇒ 镜像安装新值（同旧行为）；
-                // - 未变拍：回空 ⇒ 不装 ⇒ 镜像保持（==未变组簿）；
-                // - 清空拍（变化）：回空簿 ⇒ 不装 ⇒ 镜像留旧值——旧行为
-                //   同（全量上行空簿同样不装），语义不变；
-                // - Abort 回滚：undo 恢复置 dirty ⇒ 下拍全量上行恢复值。
+                // 保留原 dirty 诊断协议；EveryTick 完整汇合使用 EchoPlansFull，
+                // 不再以空簿猜测是否覆盖 session 镜像。
                 let plans = if state.plan_book_dirty {
                     state.plan_book_dirty = false;
                     state.plan_book.clone()
@@ -5792,7 +6001,7 @@ pub fn group_main(
                     break;
                 }
                 // Seal 地板分解诊断：组端处理段（drain→Ack 发送前）计时。
-                let seal_handle_started = std::time::Instant::now();
+                let seal_handle_started = crate::clock::Instant::now();
                 // 收件箱顺序 drain：Seal 前入队的全部数据面消息（S4：
                 /// desk 批次 FIFO 先于其 DeskReport ⇒ 先于 Seal 入队）。
                 /// 数据面=Batch（实体批次）与 AcceptedBatch（受理身份）；
@@ -5883,7 +6092,7 @@ pub fn group_main(
                     ///——主循环继续等待（重试 Start 重跑本拍）。
                     continue;
                 }
-                let deferred_started = std::time::Instant::now();
+                let deferred_started = crate::clock::Instant::now();
                 // 终轮延迟相（S2 落账点唯一化——eager 分域版）：即时相
                 /// 已随 Batch 到达/Seal drain 应用；此处重放 F4/F5/F6
                 /// 延迟域（早轮批次的延迟项已随各自 handle_continue
@@ -5903,7 +6112,7 @@ pub fn group_main(
                 let final_hash = (0xcbf2_9ce4_8422_2325u64 ^ tick ^ ((round_final as u64) << 32))
                     .wrapping_mul(0x100000001b3)
                     ^ (state.undo.len() as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15);
-                let shard_started = std::time::Instant::now();
+                let shard_started = crate::clock::Instant::now();
                 // P1-2（Sol 复核阻断）：belief 稀疏分片在 apply_deferred
                 /// 之后构建（清仓经历转移已置 dirty——终轮清仓行随本拍
                 /// SealAck 上行，发布/session/save 同拍一致；此前随
@@ -6026,6 +6235,7 @@ pub fn group_main(
             }
         }
     }
+    state.discard_pending_admin();
     let final_state = state.final_state();
     let send = up_tx.send(UpMsg::GroupFinal(Box::new(final_state)));
     if result.is_ok() {
@@ -6238,28 +6448,16 @@ mod sol_recheck3_tests {
             Vec::new(),
             Box::new(|_t, _r| TickPlan::default()),
         );
-        state.cur_tick = 1;
-        state.cur_round = 0;
         state.root_projection = Some(std::sync::Arc::new(crate::runtime::world::RootProjection {
             catalog: crate::stock::StockCatalog::from_metas(vec![crate::stock::StockMeta::new(
                 "600000",
             )])
             .expect("目录构造"),
-            company_registry: std::sync::Arc::new(
-                crate::company::CompanyRegistry::new(Vec::new()).expect("空注册表"),
-            ),
-            operations: std::sync::Arc::new(
-                crate::company::operations::CompanyOperations::new(
-                    crate::company::operations::CompanyOperationsConfig {
-                        seed: 1,
-                        shock_params: crate::company::events::ShockParams::current_default_parameters(),
-                        catalog: crate::company::CompanyCatalog::from_codes(&[])
-                            .expect("空公司目录"),
-                        companies: Vec::new(),
-                    },
-                    crate::calendar::CivilDate::from_ymd(2026, 1, 5).expect("日期合法"),
-                )
-                .expect("空经营"),
+            initial_company_facts: Arc::new(
+                crate::company::CompanyReadFacts::new(
+                    (0..1).map(|id| (crate::StockId(id), crate::company::CompanyId(id))).collect(),
+                    (0..1).map(|id| (crate::company::CompanyId(id), (crate::company::CompanyKind::Industrial, 1_000_000))).collect(),
+                ).expect("fixture 发行人事实合法"),
             ),
             account_ids: vec![crate::AccountId(9)],
             auction_ticks: 0,
@@ -6267,11 +6465,14 @@ mod sol_recheck3_tests {
             chain_params: vec![None],
             session_seed: 1,
             urgency_policy: crate::plans::UrgencyPolicy::default(),
-            total_shares: Default::default(),
             max_order_qty_limit: Default::default(),
             tick_size_cents: Default::default(),
-            stock_codes: Vec::new(),
         }));
+        state.install_initial_company_facts(Arc::clone(
+            &state.root_projection.as_ref().expect("fixture root 在位").initial_company_facts,
+        )).expect("fixture 构造静点安装公司事实");
+        state.cur_tick = 1;
+        state.cur_round = 0;
         let account = crate::AccountId(9);
         let code = crate::StockId(0);
         let order_id = order_id_of(&(0, 5));
@@ -6708,8 +6909,6 @@ mod sol_recheck1_tests {
             Vec::new(),
             Box::new(|_t, _r| TickPlan::default()),
         );
-        state.cur_tick = 1;
-        state.cur_round = 0;
         let account = crate::AccountId(9);
         let chain_params = crate::strategy::BeliefChainParams {
             position_step_bp: 1_000,
@@ -6724,22 +6923,11 @@ mod sol_recheck1_tests {
                     crate::stock::StockMeta::new("600001"),
                 ])
                 .expect("目录构造"),
-                company_registry: std::sync::Arc::new(
-                    crate::company::CompanyRegistry::new(Vec::new()).expect("空注册表"),
-                ),
-                operations: std::sync::Arc::new(
-                    crate::company::operations::CompanyOperations::new(
-                        crate::company::operations::CompanyOperationsConfig {
-                            seed: 1,
-                            shock_params:
-                                crate::company::events::ShockParams::current_default_parameters(),
-                            catalog: crate::company::CompanyCatalog::from_codes(&[])
-                                .expect("空公司目录"),
-                            companies: Vec::new(),
-                        },
-                        crate::calendar::CivilDate::from_ymd(2026, 1, 5).expect("日期合法"),
-                    )
-                    .expect("空经营"),
+                initial_company_facts: Arc::new(
+                    crate::company::CompanyReadFacts::new(
+                        (0..2).map(|id| (crate::StockId(id), crate::company::CompanyId(id))).collect(),
+                        (0..2).map(|id| (crate::company::CompanyId(id), (crate::company::CompanyKind::Industrial, 1_000_000))).collect(),
+                    ).expect("fixture 发行人事实合法"),
                 ),
                 account_ids: vec![account],
                 auction_ticks: 2,
@@ -6747,7 +6935,6 @@ mod sol_recheck1_tests {
                 chain_params: vec![Some((chain_params, None))],
                 session_seed: 1,
                 urgency_policy: crate::plans::UrgencyPolicy::default(),
-                total_shares: Default::default(),
                 max_order_qty_limit: [
                     (crate::StockId(0), 1_000_000),
                     (crate::StockId(1), 1_000_000),
@@ -6760,9 +6947,13 @@ mod sol_recheck1_tests {
                 ]
                 .into_iter()
                 .collect(),
-                stock_codes: Vec::new(),
             },
         ));
+        state.install_initial_company_facts(Arc::clone(
+            &state.root_projection.as_ref().expect("fixture root 在位").initial_company_facts,
+        )).expect("fixture 构造静点安装公司事实");
+        state.cur_tick = 1;
+        state.cur_round = 0;
         // 计划 A（股 0，信心 3000）与计划 B（股 1，信心 9000）。
         for (stock, confidence) in [(0u32, 3_000u32), (1, 9_000)] {
             state
@@ -7379,8 +7570,6 @@ mod roster_offset_tests {
             Vec::new(),
             Box::new(|_t, _r| TickPlan::default()),
         );
-        state.cur_tick = 1;
-        state.cur_round = 0;
         // 本组在全局名册的偏移=1（组 1）。
         state.roster_offset = 1;
         state.root_projection = Some(std::sync::Arc::new(crate::runtime::world::RootProjection {
@@ -7388,21 +7577,11 @@ mod roster_offset_tests {
                 "600000",
             )])
             .expect("目录构造"),
-            company_registry: std::sync::Arc::new(
-                crate::company::CompanyRegistry::new(Vec::new()).expect("空注册表"),
-            ),
-            operations: std::sync::Arc::new(
-                crate::company::operations::CompanyOperations::new(
-                    crate::company::operations::CompanyOperationsConfig {
-                        seed: 1,
-                        shock_params: crate::company::events::ShockParams::current_default_parameters(),
-                        catalog: crate::company::CompanyCatalog::from_codes(&[])
-                            .expect("空公司目录"),
-                        companies: Vec::new(),
-                    },
-                    crate::calendar::CivilDate::from_ymd(2026, 1, 5).expect("日期合法"),
-                )
-                .expect("空经营"),
+            initial_company_facts: Arc::new(
+                crate::company::CompanyReadFacts::new(
+                    (0..1).map(|id| (crate::StockId(id), crate::company::CompanyId(id))).collect(),
+                    (0..1).map(|id| (crate::company::CompanyId(id), (crate::company::CompanyKind::Industrial, 1_000_000))).collect(),
+                ).expect("fixture 发行人事实合法"),
             ),
             account_ids: vec![other, mine],
             auction_ticks: 0,
@@ -7410,11 +7589,14 @@ mod roster_offset_tests {
             chain_params: vec![None, None],
             session_seed: 1,
             urgency_policy: crate::plans::UrgencyPolicy::default(),
-            total_shares: Default::default(),
             max_order_qty_limit: Default::default(),
             tick_size_cents: Default::default(),
-            stock_codes: Vec::new(),
         }));
+        state.install_initial_company_facts(Arc::clone(
+            &state.root_projection.as_ref().expect("fixture root 在位").initial_company_facts,
+        )).expect("fixture 构造静点安装公司事实");
+        state.cur_tick = 1;
+        state.cur_round = 0;
         // 本组账户的计划 + 执行腿 + 已受理在途票（身份=serial 5）。
         let order_id = order_id_of(&(0, 5));
         let pid = state
@@ -7561,3 +7743,5 @@ mod roster_offset_tests {
         );
     }
 }
+
+mod admin_transaction;

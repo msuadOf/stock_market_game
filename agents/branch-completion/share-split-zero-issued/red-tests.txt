@@ -1,0 +1,46 @@
+
+running 11 tests
+test company::share_split::tests::allocation_rejects_snapshot_identity_mismatch_and_bad_ratio ... ok
+test company::share_split::tests::split_multiplies_every_holder_including_issuer_treasury_without_fragments ... ok
+test company::share_split::tests::consolidation_remainder_tie_break_is_repeatable_per_seed ... ok
+test company::share_split::tests::consolidation_floors_each_holder_and_awards_aggregate_whole_shares_by_remainder ... ok
+test company::share_split::tests::registered_zero_total_is_rejected_by_validation_and_strict_json ... FAILED
+test company::share_split::tests::restored_book_without_registration_serializes_strictly ... ok
+test company::share_split::tests::treasury_buckets_split_exactly_and_consolidation_shares_the_target ... ok
+test company::share_split::tests::allocation_rejects_zero_total_but_allows_an_account_to_receive_zero ... FAILED
+test company::share_split::tests::book_state_machine_advances_and_replays_restored_receipt ... ok
+test company::share_split::tests::whole_save::whole_save_preserves_nonzero_registered_consolidation ... ok
+test company::share_split::tests::whole_save::whole_save_rejects_unexecuted_zero_receipt_without_changing_positive_issuer ... FAILED
+
+failures:
+
+---- company::share_split::tests::registered_zero_total_is_rejected_by_validation_and_strict_json stdout ----
+
+thread 'company::share_split::tests::registered_zero_total_is_rejected_by_validation_and_strict_json' (2947675) panicked at packages/engine/src/company/share_split_tests.rs:402:5:
+assertion failed: book.validate().is_err()
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- company::share_split::tests::allocation_rejects_zero_total_but_allows_an_account_to_receive_zero stdout ----
+
+thread 'company::share_split::tests::allocation_rejects_zero_total_but_allows_an_account_to_receive_zero' (2947671) panicked at packages/engine/src/company/share_split_tests.rs:338:17:
+assertion `left == right` failed
+  left: (false, false)
+ right: (true, true)
+
+---- company::share_split::tests::whole_save::whole_save_rejects_unexecuted_zero_receipt_without_changing_positive_issuer stdout ----
+PROBE info-check now=CivilInstant { date: CivilDate { year: 2030, month: 6, day: 3 }, second_of_day: 34200 } cadence=EveryDays { days: 2 }
+
+thread 'company::share_split::tests::whole_save::whole_save_rejects_unexecuted_zero_receipt_without_changing_positive_issuer' (2947680) panicked at packages/engine/src/company/share_split_tests.rs:511:9:
+assertion `left == right` failed: 内存 SaveSlot 与完整 JSON 均不得导入 Registered 零发行量回执
+  left: (false, false)
+ right: (true, true)
+
+
+failures:
+    company::share_split::tests::allocation_rejects_zero_total_but_allows_an_account_to_receive_zero
+    company::share_split::tests::registered_zero_total_is_rejected_by_validation_and_strict_json
+    company::share_split::tests::whole_save::whole_save_rejects_unexecuted_zero_receipt_without_changing_positive_issuer
+
+test result: FAILED. 8 passed; 3 failed; 0 ignored; 0 measured; 2311 filtered out; finished in 3.72s
+
+bounded command exited with 101

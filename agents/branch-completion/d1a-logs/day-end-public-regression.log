@@ -1,0 +1,34 @@
+
+running 29 tests
+test runtime::day_end_public_views_tests::failed_day_end_restores_desk_and_broadcast_before_retry ... ok
+test runtime::day_end_public_views_tests::first_start_accepts_exactly_the_initial_public_cage_bounds ... ok
+test runtime::day_end_public_views_tests::initial_views_call_auction_uses_daily_lower_limit ... ok
+test runtime::day_end_public_views_tests::initial_views_continuous_with_cage_uses_sell_cage_floor ... ok
+test runtime::day_end_public_views_tests::failing_first_tick_rolls_back_only_the_tick_not_the_committed_day_end ... ok
+test runtime::day_end_public_views_tests::initial_views_closing_auction_uses_daily_lower_limit ... ok
+test runtime::day_end_public_views_tests::initial_public_cage_bounds_cover_ten_ticks_and_rounding ... ok
+test runtime::day_end_public_views_tests::invalid_initial_cage_bound_starts_no_workers ... ok
+test runtime::day_end_public_views_tests::failing_drain_collection_reverts_only_day_end_entities ... ok
+test runtime::day_end_public_views_tests::initial_views_pre_open_uses_daily_lower_limit ... ok
+test runtime::day_end_public_views_tests::closing_rise_next_day_highest_buy_reserves_the_new_daily_limit ... ok
+test runtime::day_end_public_views_tests::explicit_abort_day_end_restores_the_real_prior_then_retries ... ok
+test runtime::day_end_public_views_tests::failing_partial_group_day_end_send_preserves_unprepared_groups ... ok
+test runtime::day_end_public_views_tests::failing_partial_drain_send_preserves_the_published_tick ... ok
+test runtime::day_end_public_views_tests::initial_views_continuous_without_cage_uses_daily_lower_limit ... ok
+test runtime::day_end_public_views_tests::automatic_day_end_broadcast_reaches_real_npcs_in_every_group ... ok
+test runtime::day_end_public_views_tests::manual_drain_before_roll_prices_the_next_real_start_not_the_current_day ... ok
+test runtime::day_end_public_views_tests::closing_moves_refresh_next_day_limits_and_buy_cage_in_both_directions ... ok
+test runtime::day_end_public_views_tests::disabled_cage_keeps_daily_limits_in_every_phase ... ok
+test runtime::day_end_public_views_tests::successful_next_start_closes_the_day_end_abort_window ... ok
+test runtime::day_end_public_views_tests::two_groups_two_stocks_keep_distinct_up_and_down_closing_bases ... ok
+test runtime::day_end_public_views_tests::initial_public_view_matches_the_first_start_phase ... ok
+test runtime::day_end_public_views_tests::public_view_cage_bounds_follow_the_trading_phase ... ok
+test runtime::day_end_public_views_tests::next_start_sell_boundary_matches_the_sell_cage_floor ... ok
+test runtime::day_end_public_views_tests::next_start_real_sell_consumers_match_the_same_new_day_control ... ok
+test runtime::day_end_public_views_tests::partial_desk_start_failure_closes_day_end_abort_and_stops_world ... ok
+test runtime::day_end_public_views_tests::partial_group_start_failure_closes_day_end_abort_and_stops_world ... ok
+test runtime::day_end_public_views_tests::partial_start_cleanup_joins_workers_before_resuming_the_original_panic ... ok
+test runtime::day_end_public_views_tests::partial_start_cleanup_reports_unknown_messages_after_joining_every_worker ... ok
+
+test result: ok. 29 passed; 0 failed; 0 ignored; 0 measured; 2281 filtered out; finished in 0.06s
+

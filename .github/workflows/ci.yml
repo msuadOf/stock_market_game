@@ -127,6 +127,12 @@ jobs:
       - name: Verify wasm-pack version
         run: node -e "const {execFileSync} = require('node:child_process'); const version = execFileSync('wasm-pack', ['--version'], {encoding:'utf8'}).trim(); console.log(version); if (version !== 'wasm-pack 0.13.1') throw new Error('Expected wasm-pack 0.13.1, got ' + version);"
 
+      # R4a 阶段 1（设计 §6.3 R3-1）：锁定矩阵单件断言——工具链组件 +
+      # wasm-bindgen 锁版（=0.2.93 精确锁定；完整组合门由
+      # scripts/verify-wasm-thread-combo.mjs 本地长验收承载，全绿后再入 CI）。
+      - name: Verify WASM thread lock matrix (R3-2 entry, lock-only)
+        run: node scripts/run-with-deadline.mjs 10000 -- node scripts/verify-wasm-thread-combo.mjs --lock-only
+
       # ---- 缓存 pnpm -----------------------------------------------
       - name: Get pnpm store dir
         id: pnpm-store

@@ -1,6 +1,7 @@
+import { u32 } from "../../personal/common.ts"
 import { SaveSchemaError, array, civilDate, exact, integer, record, string } from "../../primitives.ts"
 
-export type ScheduledAction = { readonly InterestAccrual: { readonly company: string } } | { readonly ContractMaturity: { readonly company: string; readonly reference: string } }
+export type ScheduledAction = { readonly InterestAccrual: { readonly company: number } } | { readonly ContractMaturity: { readonly company: number; readonly reference: string } }
 export type ScheduledDue = { readonly id: number; readonly key: string; readonly due_date: string; readonly action: ScheduledAction }
 export type Scheduler = { readonly next_seq: number; readonly settled_through: string | null; readonly pending: readonly ScheduledDue[] }
 
@@ -12,10 +13,10 @@ export function parseScheduledAction(value: unknown, path: string): ScheduledAct
   switch (tag) {
     case "InterestAccrual":
       exact(item, ["company"], `${path}.InterestAccrual`)
-      return { InterestAccrual: { company: string(item.company, `${path}.InterestAccrual.company`) } }
+      return { InterestAccrual: { company: u32(item.company, `${path}.InterestAccrual.company`) } }
     case "ContractMaturity":
       exact(item, ["company", "reference"], `${path}.ContractMaturity`)
-      return { ContractMaturity: { company: string(item.company, `${path}.ContractMaturity.company`), reference: string(item.reference, `${path}.ContractMaturity.reference`) } }
+      return { ContractMaturity: { company: u32(item.company, `${path}.ContractMaturity.company`), reference: string(item.reference, `${path}.ContractMaturity.reference`) } }
     default: throw new SaveSchemaError(path, "包含无效调度动作")
   }
 }

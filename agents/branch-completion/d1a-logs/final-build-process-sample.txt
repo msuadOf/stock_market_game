@@ -1,0 +1,3 @@
+2026-10-26T02:59:49.832053+08:00
+jobs=16；target为独占暖缓存；Rust单crate前端受工具串行限制，codegen按默认多单元并行。
+PID PPID CPU% NLWP COMMAND

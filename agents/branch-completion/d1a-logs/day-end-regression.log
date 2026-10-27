@@ -1,0 +1,13 @@
+
+running 8 tests
+test runtime::day_end_tests::splitmix_stays_deterministic_for_rights_scheduling ... ok
+test runtime::day_end_tests::day_end_group_hash_matches_post_apply_state ... ok
+test runtime::day_end_tests::fee_sink_surrendered_in_candidate_and_conserves ... ok
+test runtime::day_end_tests::day_rollover_updates_last_close_and_archives_candle ... ok
+test runtime::day_end_tests::day_end_drains_inflight_and_conserves_across_days ... ok
+test runtime::day_end_tests::d0_manual_and_auto_day_end_are_mutually_exclusive ... ok
+test runtime::day_end_tests::admin_rights_apply_reversibly_and_validate_before_commit ... ok
+test runtime::day_end_tests::day_end_candidate_roundtrip_rebuilds_equivalent_world ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 2302 filtered out; finished in 0.01s
+

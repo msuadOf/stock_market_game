@@ -5,6 +5,7 @@
 //! 范围边界（战役计划 §B4b）：只覆盖构造期与存读面；权益计算/日终推进/
 //! 命令通道属 B4c/B4d/B4e，不在本文件断言面内。
 
+include!("../test-support/company_state.rs");
 include!("../test-support/simple_company.rs");
 
 use engine::company::cash_dividend_tax::CashDividendTaxMode;
@@ -137,6 +138,137 @@ fn exempt_mode_requires_zero_stamp_tax() {
     assert_eq!(invalid_setup_code(GameSession::new(setup, 7)), 1055);
 }
 
+mod tax_mode_stamp_tax_contract {
+    use super::*;
+
+    fn setup(mode: CashDividendTaxMode, stamp_tax_rate: f64) -> SessionSetup {
+        let mut setup = company_setup();
+        setup.dividend_tax_mode = Some(mode);
+        setup.flat_withholding_bp = (mode == CashDividendTaxMode::FlatWithholding).then_some(1000);
+        setup.config.stamp_tax_rate = stamp_tax_rate;
+        setup
+    }
+
+    #[test]
+    fn flat_withholding_accepts_current_a_share_stamp_tax() {
+        GameSession::new(setup(CashDividendTaxMode::FlatWithholding, 0.0005), 7)
+            .expect("FlatWithholding 必须接受现行印花税率");
+    }
+
+    #[test]
+    fn a_share_individual_accepts_current_a_share_stamp_tax() {
+        GameSession::new(setup(CashDividendTaxMode::AShareIndividual, 0.0005), 7)
+            .expect("AShareIndividual 必须接受现行印花税率");
+    }
+
+    #[test]
+    fn exempt_accepts_zero_stamp_tax_and_preserves_other_fees_on_restore() {
+        // Exempt 是 ADR-0040 批准的游戏模式；佣金与过户费仍按原配置收取。
+        let setup = setup(CashDividendTaxMode::Exempt, 0.0);
+        let config = setup.config.clone();
+        let session = GameSession::new(setup, 7).expect("Exempt 必须接受零印花税");
+        let saved = session.save().expect("Exempt 必须可保存");
+        let restored = GameSession::restore(&saved).expect("Exempt 必须可恢复");
+        let resaved = restored.save().expect("恢复后必须可保存");
+        assert_eq!(resaved.setup.config, config);
+        assert_eq!(
+            resaved.setup.dividend_tax_mode,
+            Some(CashDividendTaxMode::Exempt)
+        );
+        let gross = Money::from_cents(100_000);
+        assert_eq!(resaved.setup.config.stamp_tax(gross).unwrap(), Money::ZERO);
+        assert_eq!(
+            resaved.setup.config.commission(gross).unwrap(),
+            Money::from_cents(500)
+        );
+        assert_eq!(
+            resaved.setup.config.transfer_fee(gross).unwrap(),
+            Money::from_cents(1)
+        );
+        // 极小正税率在大额合法金额上仍会收费，免税不能依赖舍入恰好为零。
+        let large_gross = Money::from_cents(1_000_000_000_000_000_000);
+        assert_eq!(
+            resaved.setup.config.stamp_tax(large_gross).unwrap(),
+            Money::ZERO
+        );
+    }
+
+    #[test]
+    fn exempt_rejects_even_smallest_positive_stamp_tax_at_setup_and_construction() {
+        for actual in [f64::from_bits(1), 1e-16, f64::EPSILON] {
+            let setup = setup(CashDividendTaxMode::Exempt, actual);
+            let errors = [
+                setup.validate().expect_err("Exempt 必须精确零税率"),
+                GameSession::new(setup, 7)
+                    .err()
+                    .expect("新局必须拒绝非零税率"),
+            ];
+            for error in errors {
+                match error {
+                    engine::SessionError::InvalidSetup(fault) => {
+                        assert_eq!(fault.code, 1055);
+                        assert_eq!(fault.context, vec![0.0_f64.to_bits(), actual.to_bits()]);
+                    }
+                    error => panic!("税率 {actual:?} 必须返回配对错误：{error:?}"),
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn exempt_restore_rejects_saved_positive_stamp_tax_including_epsilon() {
+        let session = GameSession::new(setup(CashDividendTaxMode::Exempt, 0.0), 7)
+            .expect("合法 Exempt 新局");
+        let saved = session.save().expect("真实保存生成合法存档");
+        for actual in [f64::from_bits(1), 1e-16, f64::EPSILON, 0.0005] {
+            let mut edited = saved.clone();
+            edited.setup.config.stamp_tax_rate = actual;
+            let json = serde_json::to_string(&edited).expect("存档外部输入可序列化");
+            let edited = serde_json::from_str(&json).expect("恢复外部输入形态");
+            match GameSession::restore(&edited) {
+                Err(engine::SessionError::InvalidSave(fault)) => {
+                    // 现有恢复契约以 fault2002 包装非法 setup，不扩展存档错误协议。
+                    assert_eq!(fault.code, 2002, "税率 {actual:?}");
+                    assert!(fault.context.is_empty());
+                }
+                Err(error) => panic!("税率 {actual:?} 必须返回存档校验错误：{error:?}"),
+                Ok(_) => panic!("Exempt 存档必须拒绝非零印花税率 {actual:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn company_modes_reject_mismatched_stamp_tax_with_expected_and_actual_context() {
+        for (mode, expected, actual) in [
+            (CashDividendTaxMode::FlatWithholding, 0.0005_f64, 0.0_f64),
+            (CashDividendTaxMode::AShareIndividual, 0.0005, 0.0),
+            (CashDividendTaxMode::Exempt, 0.0, 0.0005),
+            (CashDividendTaxMode::Exempt, 0.0, 0.001),
+        ] {
+            match setup(mode, actual).validate() {
+                Err(engine::SessionError::InvalidSetup(fault)) => {
+                    assert_eq!(fault.code, 1055, "税务模式 {mode:?}");
+                    assert_eq!(fault.context, vec![expected.to_bits(), actual.to_bits()]);
+                }
+                result => panic!("税务模式 {mode:?} 必须显式拒绝错误税率：{result:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn plain_game_still_rejects_zero_stamp_tax_with_actual_context() {
+        let mut setup = plain_setup();
+        setup.config.stamp_tax_rate = 0.0;
+        match setup.validate() {
+            Err(engine::SessionError::InvalidSetup(fault)) => {
+                assert_eq!(fault.code, 1013);
+                assert_eq!(fault.context, vec![0.0_f64.to_bits()]);
+            }
+            result => panic!("无公司税务模式时必须保留 A 股税率要求：{result:?}"),
+        }
+    }
+}
+
 #[test]
 fn par_value_domain_is_enforced() {
     // 面值非正 → fault1056；公司局缺面值 → fault1056（必填）。
@@ -233,7 +365,7 @@ fn auto_foundation_builds_full_float_registry_and_legal_facts() {
     // 法定事实：注册资本 = 面值 100 分 × 100_000 股 = 10_000_000 分——按
     // 精确 JSON 路径取值断言（Simple 公司 0 的 finance.legal_facts）。
     let saved = session.save().unwrap();
-    let company_json = serde_json::to_value(&saved.company_system).unwrap();
+    let company_json = serde_json::to_value(&system_saved(&saved).0).unwrap();
     let capital = &company_json["implementation"]["state"]["companies"]["0"]["finance"]
         ["legal_facts"]["registered_capital"];
     assert_eq!(
@@ -314,7 +446,7 @@ fn restore_rejects_company_system_diverging_from_setup_issuers() {
     let other = GameSession::new(two_stock, 7).unwrap();
     let other_saved = other.save().unwrap();
     let mut tampered = saved.clone();
-    tampered.company_system = other_saved.company_system.clone();
+    *system_saved_mut(&mut tampered).0 = system_saved(&other_saved).0.clone();
     match GameSession::restore(&tampered) {
         Err(engine::SessionError::InvalidSave(fault)) => assert_eq!(fault.code, 1063),
         Err(other_err) => panic!("期望 InvalidSave(fault1063)，实际 {other_err}"),
@@ -341,14 +473,14 @@ fn save_restore_roundtrips_company_fields_bitwise() {
         session.step().expect("healthy step");
     }
     let saved = session.save().expect("healthy save");
-    let saved_company = saved.company_system.clone().expect("公司局存档必带公司系统");
-    let saved_actions = saved.corporate_actions.clone().expect("公司局存档必带公司行为");
+    let saved_company = system_saved(&saved).0.clone();
+    let saved_actions = system_saved(&saved).1.clone();
 
     let restored = GameSession::restore(&saved).expect("healthy restore");
     // 逐位比较：restore 后再存档，公司字段与原档完全一致。
     let resaved = restored.save().expect("healthy resave");
-    let resaved_company = resaved.company_system.expect("恢复后公司系统必须在档");
-    let resaved_actions = resaved.corporate_actions.expect("恢复后公司行为必须在档");
+    let resaved_company = system_saved(&resaved).0.clone();
+    let resaved_actions = system_saved(&resaved).1.clone();
     assert_eq!(saved_company, resaved_company, "公司系统字段逐位一致");
     assert_eq!(saved_actions, resaved_actions, "公司行为字段逐位一致");
     // 领域 Eq 之外再加 wire 形态逐字节（serde 投影面一致）。
@@ -373,7 +505,20 @@ fn incomplete_company_save_is_rejected() {
     let saved = session.save().unwrap();
     // 只带 company_system 丢 corporate_actions = 不完整档，显式拒绝。
     let mut stripped = saved.clone();
-    stripped.corporate_actions = None;
+    let mut malformed = serde_json::to_value(&saved).unwrap();
+    malformed["company_state"]["CompanySystem"]
+        .as_object_mut()
+        .unwrap()
+        .remove("corporate_actions");
+    assert!(
+        serde_json::from_value::<engine::SaveSlot>(malformed).is_err(),
+        "真实required字段不能缺席"
+    );
+    stripped.company_state = GameSession::new(plain_setup(), 7)
+        .unwrap()
+        .save()
+        .unwrap()
+        .company_state;
     match GameSession::restore(&stripped) {
         Err(engine::SessionError::InvalidSave(fault)) => assert_eq!(fault.code, 2101),
         Err(other) => panic!("期望 InvalidSave(fault2101)，实际其他错误：{other}"),
@@ -415,8 +560,14 @@ fn plain_sessions_save_json_carries_no_company_keys() {
     }
     // 无公司配置的 spine 读面：公司状态缺席（None）而非空容器。
     assert!(session.corporate_actions().is_none());
-    assert!(saved.company_system.is_none());
-    assert!(saved.corporate_actions.is_none());
+    assert!(matches!(
+        &saved.company_state,
+        engine::session::SavedSessionCompanies::LegacyOperations { .. }
+    ));
+    assert!(!matches!(
+        &saved.company_state,
+        engine::session::SavedSessionCompanies::CompanySystem { .. }
+    ));
 }
 
 #[test]
@@ -429,7 +580,13 @@ fn plain_sessions_restore_identically() {
     }
     let saved = session.save().unwrap();
     let restored = GameSession::restore(&saved).unwrap();
-    for id in [AccountId(0), AccountId(1), AccountId(2), AccountId(3), AccountId(4)] {
+    for id in [
+        AccountId(0),
+        AccountId(1),
+        AccountId(2),
+        AccountId(3),
+        AccountId(4),
+    ] {
         let before = session.account(id).expect("账户在册");
         let after = restored.account(id).expect("恢复后账户在册");
         assert_eq!(before.cash(), after.cash(), "账户 {id:?} 现金逐位一致");

@@ -1,0 +1,9 @@
+{
+  "cwd": "/data1/baiyifan/workplace/stock_market_game/.worktree/mixed-calendar-c1a",
+  "target": "/data1/baiyifan/workplace/stock_market_game/.tmp/mixed-calendar-c1a/target",
+  "jobs": 8,
+  "codegenUnits": 16,
+  "debug": 0,
+  "incremental": false,
+  "sharedDeadlineMs": 300000
+}

@@ -1,5 +1,5 @@
 use engine::plans::PlanOpen;
-use engine::session::{GameSession, SaveDecodeLimits, SessionError, decode_save_slot};
+use engine::session::{decode_save_slot, GameSession, SaveDecodeLimits, SessionError};
 use engine::{AccountId, OpinionSource, PlanOpinion, PlanTarget, Side, StockId, Urgency};
 
 fn baseline() -> serde_json::Value {
@@ -80,7 +80,7 @@ fn restore_error(wire: serde_json::Value) -> String {
 fn audit_credit_complete_save_rejects_invalid_industrial_loan_facts() {
     let baseline = baseline();
     let mut invalid = baseline.clone();
-    let company = invalid["company_operations"]["companies"]
+    let company = invalid["company_state"]["LegacyOperations"]["operations"]["companies"]
         .as_object_mut()
         .unwrap()
         .values_mut()
@@ -95,7 +95,7 @@ fn audit_credit_complete_save_rejects_invalid_industrial_loan_facts() {
     assert_decode_rejects_with_fault2080(&invalid);
     assert!(serde_rejection_text(&invalid).contains("industrial credit state"));
     let mut overflowing = baseline;
-    let company = overflowing["company_operations"]["companies"]
+    let company = overflowing["company_state"]["LegacyOperations"]["operations"]["companies"]
         .as_object_mut()
         .unwrap()
         .values_mut()
@@ -131,10 +131,9 @@ fn complete_save_decoding_rejects_zero_and_overflowing_plan_horizons() {
     ] {
         let mut wire = baseline();
         let plan = wire["plans"]["plans"]
-            .as_object_mut()
+            .as_array_mut()
             .unwrap()
-            .values_mut()
-            .next()
+            .first_mut()
             .unwrap();
         plan["created_trading_day"] = serde_json::json!(created);
         plan["horizon_trading_days"] = serde_json::json!(horizon);
@@ -146,7 +145,7 @@ fn complete_save_decoding_rejects_zero_and_overflowing_plan_horizons() {
 #[test]
 fn complete_save_decoding_rejects_duplicate_operating_due_id() {
     let mut wire = baseline();
-    let scheduler = &mut wire["company_operations"]["scheduler"];
+    let scheduler = &mut wire["company_state"]["LegacyOperations"]["operations"]["scheduler"];
     let pending = scheduler["pending"].as_array_mut().unwrap();
     assert!(!pending.is_empty());
     let mut duplicate = pending[0].clone();
@@ -190,7 +189,7 @@ fn complete_save_restore_rejects_scheduler_due_beyond_runtime_ceiling() {
     // 待办 due 晚于冻结政策 runtime_max_end（2099-12-31）= 失去恰好一次
     // 派发机会的越界待办，恢复显式拒绝（fault2234）。
     let mut wire = baseline();
-    let scheduler = &mut wire["company_operations"]["scheduler"];
+    let scheduler = &mut wire["company_state"]["LegacyOperations"]["operations"]["scheduler"];
     let pending = scheduler["pending"].as_array_mut().unwrap();
     assert!(pending.len() >= 2, "基线存档须有多条待办");
     // 取日期最大的一条（排序仍保持：2100-01-01 仍是最大）。
@@ -210,4 +209,18 @@ fn complete_save_restore_rejects_scheduler_due_beyond_runtime_ceiling() {
         Ok(_) => panic!("越界待办必须被恢复边界拒绝，实际恢复成功"),
         Err(other) => panic!("越界 due 应以 fault2234 拒绝，实际：{other}"),
     }
+}
+
+#[test]
+fn complete_save_rejects_unknown_owner_cursor_without_any_plan() {
+    let mut wire = baseline();
+    wire["plans"]["owner_sequences"]
+        .as_array_mut()
+        .unwrap()
+        .push(serde_json::json!({"owner":u64::MAX.to_string(),"next_sequence":"100"}));
+    let save: engine::session::SaveSlot = serde_json::from_value(wire).unwrap();
+    assert!(
+        matches!(GameSession::restore(&save), Err(SessionError::InvalidSave(fault))
+        if fault.code == 2690 && fault.context == vec![u32::MAX as u64,u32::MAX as u64])
+    );
 }

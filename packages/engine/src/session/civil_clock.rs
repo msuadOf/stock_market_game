@@ -43,6 +43,7 @@ pub struct CivilDayEndReport {
     pub disclosure_instant: CivilInstant,
     /// 日结后的新自然日及其日历状态。
     pub next_date: CivilDate,
+    /// 共享聚合诊断；ClosedReason 取 canonical 第一所的代表原因，不表示逐所原因相同。
     pub next_status: DayStatus,
     /// 日结成功后由会话追加的共享公开事件，顺序属于全局 session seq。
     pub events: Vec<Event>,
@@ -113,17 +114,16 @@ pub enum CivilClockError {
 #[derive(Clone, Debug)]
 pub struct CivilClock {
     calendar: TradingCalendar,
-    exchange: CalendarExchange,
+    exchanges: Vec<CalendarExchange>,
     start_date: CivilDate,
     current_date: CivilDate,
     settled_through: Option<CivilDate>,
     disclosure_observers: Vec<DisclosureObserver>,
 }
 
-/// 会话按固定参考交易所解析日历；当前默认政策下沪深使用同一休市节奏（游戏简化）。
-/// 以 setup 首只股票的上市所作为确定的会话日历参考所。
-pub(super) fn session_calendar_exchange(first: StockExchange) -> CalendarExchange {
-    match first {
+/// 将证券上市所映射为冻结日历的交易所维度。
+pub(super) fn session_calendar_exchange(exchange: StockExchange) -> CalendarExchange {
+    match exchange {
         StockExchange::Shanghai => CalendarExchange::Sse,
         StockExchange::Shenzhen => CalendarExchange::Szse,
     }
@@ -138,11 +138,20 @@ impl CivilClock {
     /// 用当前默认政策构建，开局日期须在运行区间 2000-01-01..2099-12-31。
     /// 休市开局保持真实起点（phase = `ClosedDay`），不挪到开市日。
     pub fn new(start_date: CivilDate, exchange: CalendarExchange) -> Result<Self, CivilClockError> {
+        Self::new_for_exchanges(start_date, [exchange])
+    }
+
+    /// 按本局实际配置的非空交易所集合构建；输入排序、去重后决定共享会话。
+    pub fn new_for_exchanges(
+        start_date: CivilDate,
+        exchanges: impl IntoIterator<Item = CalendarExchange>,
+    ) -> Result<Self, CivilClockError> {
+        let exchanges = Self::canonical_exchanges(exchanges)?;
         let calendar = TradingCalendar::current_default_calendar()?;
         calendar.validate_runtime_start(start_date)?;
         Ok(Self {
             calendar,
-            exchange,
+            exchanges,
             start_date,
             current_date: start_date,
             settled_through: None,
@@ -157,6 +166,16 @@ impl CivilClock {
         save: &CivilClockSave,
         exchange: CalendarExchange,
     ) -> Result<Self, CivilClockError> {
+        Self::from_parts_for_exchanges(start_date, save, [exchange])
+    }
+
+    /// 以存档冻结政策与 setup 的完整交易所集合恢复，不增加存档派生字段。
+    pub fn from_parts_for_exchanges(
+        start_date: CivilDate,
+        save: &CivilClockSave,
+        exchanges: impl IntoIterator<Item = CalendarExchange>,
+    ) -> Result<Self, CivilClockError> {
+        let exchanges = Self::canonical_exchanges(exchanges)?;
         let calendar = TradingCalendar::from_policy(crate::calendar::CalendarPolicy::from_parts(
             save.policy.clone(),
         )?)?;
@@ -186,14 +205,42 @@ impl CivilClock {
                 }
             }
         }
+        // 日期相邻不保证 current 仍在政策范围；返回前拒绝越界，避免 phase panic。
+        calendar.day_status(exchanges[0], save.current_date)?;
         Ok(Self {
             calendar,
-            exchange,
+            exchanges,
             start_date,
             current_date: save.current_date,
             settled_through: save.settled_through,
             disclosure_observers: Vec::new(),
         })
+    }
+
+    fn canonical_exchanges(
+        exchanges: impl IntoIterator<Item = CalendarExchange>,
+    ) -> Result<Vec<CalendarExchange>, CivilClockError> {
+        let mut exchanges: Vec<_> = exchanges.into_iter().collect();
+        exchanges.sort_unstable();
+        exchanges.dedup();
+        if exchanges.is_empty() {
+            return Err(CivilClockError::SaveInconsistent {
+                detail: "civil clock requires at least one configured exchange".into(),
+            });
+        }
+        Ok(exchanges)
+    }
+
+    /// 任一实际交易所开市即为共享会话；全闭市时按 canonical 顺序取代表性原因。
+    /// 该 ClosedReason 只供共享诊断，逐所原因仍须查询本股交易所的冻结日历。
+    fn shared_day_status(&self, date: CivilDate) -> Result<DayStatus, CalendarError> {
+        let status = self.calendar.day_status(self.exchanges[0], date)?;
+        for exchange in &self.exchanges[1..] {
+            if self.calendar.day_status(*exchange, date)? == DayStatus::Trading {
+                return Ok(DayStatus::Trading);
+            }
+        }
+        Ok(status)
     }
 
     pub fn start_date(&self) -> CivilDate {
@@ -217,8 +264,7 @@ impl CivilClock {
     /// 当前稳定阶段（交易日盘中 / 休市日）。
     pub fn phase(&self) -> CivilPhase {
         let status = self
-            .calendar
-            .day_status(self.exchange, self.current_date)
+            .shared_day_status(self.current_date)
             .expect("clock dates stay within calendar applicability by construction");
         match status {
             DayStatus::Trading => CivilPhase::IntradayTrading,
@@ -231,10 +277,16 @@ impl CivilClock {
         self.disclosure_observers.push(observer);
     }
 
+    /// 本局冻结的交易日历；市场入口与逐股历史使用同一本政策。
+    pub(super) fn calendar(&self) -> &TradingCalendar {
+        &self.calendar
+    }
+
     /// 校验公司 due 日期落在冻结日历的适用范围内（公司 due 单一 authority 后，
     /// 本时钟承担日历上界守卫：越界待办失去恰好一次派发机会，须显式拒绝）。
     pub fn validate_due_horizon(&self, due_date: CivilDate) -> Result<(), CivilClockError> {
-        self.calendar.day_status(self.exchange, due_date)?;
+        // 第一所仅用于验证统一适用范围；公司事项不会因该所休市而被拒绝。
+        self.calendar.day_status(self.exchanges[0], due_date)?;
         Ok(())
     }
 
@@ -243,12 +295,12 @@ impl CivilClock {
     }
 
     /// 截至 current（含）应已完成的市场会话数（会话同步守卫用）。
-    /// 休市日不计会话——周末不欠会话也不多发会话。
+    /// 按交易所集合的 union 计数；同日多所开市只计一次，全闭市不欠会话。
     pub fn completed_trading_sessions_expected(&self) -> Result<u32, CivilClockError> {
         let mut count = 0u32;
         let mut cursor = self.start_date;
         while cursor <= self.current_date {
-            if self.calendar.is_trading_day(self.exchange, cursor)? {
+            if self.shared_day_status(cursor)? == DayStatus::Trading {
                 count += 1;
             }
             cursor = cursor.next()?;
@@ -289,7 +341,7 @@ impl CivilClock {
         let settled_date = self.current_date;
         let disclosure_instant =
             CivilInstant::from_hms(settled_date, 18, 0, 0).expect("18:00:00 is a valid instant");
-        let next_status = self.calendar.day_status(self.exchange, next)?;
+        let next_status = self.shared_day_status(next)?;
         self.settled_through = Some(settled_date);
         self.current_date = next;
         Ok(CivilDayEndReport {

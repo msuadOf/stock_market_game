@@ -1,0 +1,30 @@
+✔ 时钟 bootstrap 返回绝对毫秒且随调用单调非递减 (1.958991ms)
+✔ timeOrigin 能力位显式登记，不静默 (0.162874ms)
+✔ W3→W5 序：先 post workerExit，再置 rust_done，最后 close (3.230455ms)
+✔ close 后 onmessage 一律丢弃（W4 迟到消息守卫） (0.194165ms)
+✔ 重复关闭显式失败（trampoline 单出口） (0.457982ms)
+✔ workerExit 消息形状守卫拒绝畸形输入 (0.277917ms)
+✔ 头部/槽字段偏移与 Rust arena.rs 逐字一致 (3.391389ms)
+✔ 状态码与 Rust codec.rs 逐字一致（I3 严格递增） (0.724389ms)
+✔ W 编解码往返且位域不重叠 (0.314809ms)
+✔ 槽/join 基址与 Rust 布局公式一致 (0.189875ms)
+✔ A1-A3 OK 全序：REQ→ANSWERING→OK，载荷 worker_id 落槽 (2.26575ms)
+✔ 迟到应答：A1 期望失配 ⇒ 零槽写 + terminate 卫生 (1.289174ms)
+✔ FAIL 应答计入 RA 账 (0.249976ms)
+✔ OK 回收三门：join 未 CONSUMED 不回收，闭合后 push，H1 占用转延迟 (0.532564ms)
+✔ 未知 workerExit 只丢弃，不写槽 (0.201695ms)
+✔ D5 死亡信号：WAITING→DEAD；已 CONSUMED 的迟到写丢弃 (0.304638ms)
+✔ A1→A3 间出现协议外写者 ⇒ 先落 tombstone 再抛 (0.488193ms)
+✔ 四账快照镜像 Rust accounts：健康回收后恒等式成立 (0.425641ms)
+✔ 门 (c)：子仍 ACTIVE 时不得回收（复核修正项） (0.243237ms)
+✔ 迟到 D5 撞换代：过期即弃，不崩不落 tombstone (0.323549ms)
+✔ env 模块导出全部槽协议 import 名（否则 wasm 实例化 link error） (1.806578ms)
+✔ 槽协议环境函数在不支持的产物链上显式失败，不静默成功 (0.662007ms)
+ℹ tests 22
+ℹ suites 0
+ℹ pass 22
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 227.020324

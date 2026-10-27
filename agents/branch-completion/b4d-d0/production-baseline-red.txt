@@ -1,0 +1,21 @@
+
+running 1 test
+test session::failure_tests::d0_production_day_end_baseline_restores_sparse_account_assets ... FAILED
+
+failures:
+
+---- session::failure_tests::d0_production_day_end_baseline_restores_sparse_account_assets stdout ----
+
+thread 'session::failure_tests::d0_production_day_end_baseline_restores_sparse_account_assets' (2361443) panicked at packages/engine/src/session/failure_tests.rs:1077:5:
+assertion `left == right` failed: 生产日结基线恢复稀疏账户现金
+  left: Money(42)
+ right: Money(123456)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    session::failure_tests::d0_production_day_end_baseline_restores_sparse_account_assets
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2279 filtered out; finished in 0.21s
+
+bounded command exited with 101

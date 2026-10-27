@@ -1,0 +1,87 @@
+
+running 12 tests
+
+thread 'company::cash_dividend_tax::entitlement_units::tests::duplicate_identical_transition_is_idempotent_but_conflict_is_explicit' (515698) panicked at /data1/baiyifan/workplace/stock_market_game/.tmp/tax-entitlement-k1/company/cash_dividend_tax/entitlement_units/tests.rs:265:51:
+called `Result::unwrap_err()` on an `Ok` value: MappedTaxAssessment { outstanding: ExactDividendTaxAmount { numerator: 1000, denominator: 1 }, consumptions: [], retirements: [] }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+thread 'company::cash_dividend_tax::entitlement_units::tests::overlapping_target_is_rejected_even_when_both_totals_match' (515702) panicked at /data1/baiyifan/workplace/stock_market_game/.tmp/tax-entitlement-k1/company/cash_dividend_tax/entitlement_units/tests.rs:162:53:
+called `Result::unwrap_err()` on an `Ok` value: MappedTaxAssessment { outstanding: ExactDividendTaxAmount { numerator: 0, denominator: 1 }, consumptions: [], retirements: [] }
+
+thread 'company::cash_dividend_tax::entitlement_units::tests::complete_source_partition_and_context_are_required' (515697) panicked at /data1/baiyifan/workplace/stock_market_game/.tmp/tax-entitlement-k1/company/cash_dividend_tax/entitlement_units/tests.rs:235:53:
+called `Result::unwrap_err()` on an `Ok` value: MappedTaxAssessment { outstanding: ExactDividendTaxAmount { numerator: 0, denominator: 1 }, consumptions: [], retirements: [] }
+
+thread 'company::cash_dividend_tax::entitlement_units::tests::each_registration_keeps_its_own_unit_basis_and_actual_payment' (515699) panicked at /data1/baiyifan/workplace/stock_market_game/.tmp/tax-entitlement-k1/company/cash_dividend_tax/entitlement_units/tests.rs:391:5:
+assertion `left == right` failed
+  left: 3000
+ right: 4000
+
+thread 'company::cash_dividend_tax::entitlement_units::tests::mixed_holding_periods_follow_explicit_target_fragments' (515701) panicked at /data1/baiyifan/workplace/stock_market_game/.tmp/tax-entitlement-k1/company/cash_dividend_tax/entitlement_units/tests.rs:187:5:
+assertion `left == right` failed
+  left: 500
+ right: 0
+test company::cash_dividend_tax::entitlement_units::tests::duplicate_identical_transition_is_idempotent_but_conflict_is_explicit ... 
+thread 'company::cash_dividend_tax::entitlement_units::tests::fractional_internal_target_spans_are_not_floored_into_lost_rights' (515700) panicked at /data1/baiyifan/workplace/stock_market_game/.tmp/tax-entitlement-k1/company/cash_dividend_tax/entitlement_units/tests.rs:223:5:
+assertion `left == right` failed
+  left: 0
+ right: 2
+FAILED
+
+thread 'company::cash_dividend_tax::entitlement_units::tests::partial_disposals_consume_twenty_then_eighty_original_units' (515704) panicked at /data1/baiyifan/workplace/stock_market_game/.tmp/tax-entitlement-k1/company/cash_dividend_tax/entitlement_units/tests.rs:131:5:
+assertion `left == right` failed
+  left: 200
+ right: 400
+test company::cash_dividend_tax::entitlement_units::tests::overlapping_target_is_rejected_even_when_both_totals_match ... FAILED
+thread 'company::cash_dividend_tax::entitlement_units::tests::partial_disposal_then_second_transition_preserves_remaining_original_span' (515703) panicked at /data1/baiyifan/workplace/stock_market_game/.tmp/tax-entitlement-k1/company/cash_dividend_tax/entitlement_units/tests.rs:349:5:
+assertion `left == right` failed
+  left: 600
+ right: 2000
+
+test company::cash_dividend_tax::entitlement_units::tests::complete_source_partition_and_context_are_required ... FAILED
+
+thread 'company::cash_dividend_tax::entitlement_units::tests::real_cash_book_consolidation_must_assess_original_hundred_units' (515705) panicked at /data1/baiyifan/workplace/stock_market_game/.tmp/tax-entitlement-k1/company/cash_dividend_tax/entitlement_units/tests.rs:122:5:
+assertion `left == right` failed
+  left: 1000
+ right: 2000
+test company::cash_dividend_tax::entitlement_units::tests::each_registration_keeps_its_own_unit_basis_and_actual_payment ... FAILED
+test company::cash_dividend_tax::entitlement_units::tests::mixed_holding_periods_follow_explicit_target_fragments ... FAILED
+
+thread 'company::cash_dividend_tax::entitlement_units::tests::retired_original_rights_are_not_assigned_to_later_new_purchase' (515706) panicked at /data1/baiyifan/workplace/stock_market_game/.tmp/tax-entitlement-k1/company/cash_dividend_tax/entitlement_units/tests.rs:322:5:
+assertion `left == right` failed
+  left: 0
+ right: 1
+test company::cash_dividend_tax::entitlement_units::tests::fractional_internal_target_spans_are_not_floored_into_lost_rights ... FAILED
+test company::cash_dividend_tax::entitlement_units::tests::partial_disposals_consume_twenty_then_eighty_original_units ... FAILED
+
+thread 'company::cash_dividend_tax::entitlement_units::tests::transition_must_match_real_operation_snapshot_and_unit_predecessor' (515708) panicked at /data1/baiyifan/workplace/stock_market_game/.tmp/tax-entitlement-k1/company/cash_dividend_tax/entitlement_units/tests.rs:362:53:
+called `Result::unwrap_err()` on an `Ok` value: MappedTaxAssessment { outstanding: ExactDividendTaxAmount { numerator: 0, denominator: 1 }, consumptions: [], retirements: [] }
+test company::cash_dividend_tax::entitlement_units::tests::partial_disposal_then_second_transition_preserves_remaining_original_span ... FAILED
+test company::cash_dividend_tax::entitlement_units::tests::real_cash_book_consolidation_must_assess_original_hundred_units ... FAILED
+test company::cash_dividend_tax::entitlement_units::tests::retired_original_rights_are_not_assigned_to_later_new_purchase ... FAILED
+test company::cash_dividend_tax::entitlement_units::tests::transition_must_match_real_operation_snapshot_and_unit_predecessor ... FAILED
+
+thread 'company::cash_dividend_tax::entitlement_units::tests::strict_lineage_round_trip_replays_same_assessment' (515707) panicked at /data1/baiyifan/workplace/stock_market_game/.tmp/tax-entitlement-k1/company/cash_dividend_tax/entitlement_units/tests.rs:276:5:
+assertion `left == right` failed
+  left: 1000
+ right: 2000
+test company::cash_dividend_tax::entitlement_units::tests::strict_lineage_round_trip_replays_same_assessment ... FAILED
+
+failures:
+
+failures:
+    company::cash_dividend_tax::entitlement_units::tests::complete_source_partition_and_context_are_required
+    company::cash_dividend_tax::entitlement_units::tests::duplicate_identical_transition_is_idempotent_but_conflict_is_explicit
+    company::cash_dividend_tax::entitlement_units::tests::each_registration_keeps_its_own_unit_basis_and_actual_payment
+    company::cash_dividend_tax::entitlement_units::tests::fractional_internal_target_spans_are_not_floored_into_lost_rights
+    company::cash_dividend_tax::entitlement_units::tests::mixed_holding_periods_follow_explicit_target_fragments
+    company::cash_dividend_tax::entitlement_units::tests::overlapping_target_is_rejected_even_when_both_totals_match
+    company::cash_dividend_tax::entitlement_units::tests::partial_disposal_then_second_transition_preserves_remaining_original_span
+    company::cash_dividend_tax::entitlement_units::tests::partial_disposals_consume_twenty_then_eighty_original_units
+    company::cash_dividend_tax::entitlement_units::tests::real_cash_book_consolidation_must_assess_original_hundred_units
+    company::cash_dividend_tax::entitlement_units::tests::retired_original_rights_are_not_assigned_to_later_new_purchase
+    company::cash_dividend_tax::entitlement_units::tests::strict_lineage_round_trip_replays_same_assessment
+    company::cash_dividend_tax::entitlement_units::tests::transition_must_match_real_operation_snapshot_and_unit_predecessor
+
+test result: FAILED. 0 passed; 12 failed; 0 ignored; 0 measured; 55 filtered out; finished in 0.00s
+
+bounded command exited with 101

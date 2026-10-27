@@ -158,12 +158,22 @@ fn short_checkpoint_preserves_bytes_and_rejects_unknown_plan_references() {
         ),
         (
             "code",
-            serde_json::to_value(StockCode("600999".to_string())).unwrap(),
+            serde_json::to_value(engine::StockId(u32::MAX)).unwrap(),
             2143_u16,
         ),
     ] {
         let mut tampered = original.clone();
-        tampered["plans"]["plans"][plan_id.0.to_string()][field] = value;
+        let plan_index = tampered["plans"]["plans"].as_array().unwrap().iter()
+            .position(|plan| plan["plan_id"] == serde_json::to_value(plan_id).unwrap()).unwrap();
+        if field == "account" {
+            tampered["plans"]["plans"][plan_index]["plan_id"]["owner"] = value.clone();
+            let next_sequence = original["plans"]["owner_sequences"].as_array().unwrap().iter()
+                .find(|cursor| cursor["owner"] == serde_json::to_value(plan_id.owner).unwrap())
+                .unwrap()["next_sequence"].clone();
+            tampered["plans"]["owner_sequences"].as_array_mut().unwrap().push(
+                serde_json::json!({"owner": value.clone(), "next_sequence": next_sequence}));
+        }
+        tampered["plans"]["plans"][plan_index][field] = value;
         let tampered_bytes = serde_json::to_vec(&tampered).expect("tampered save serializes");
         let decoded = engine::decode_save_slot(&tampered_bytes, &Default::default())
             .expect("plan reference tampering remains structurally decodable");
@@ -334,6 +344,9 @@ fn four_industry_ten_year_archive_preserves_each_industry_state() {
     let config = engine::company::operations::CompanyOperationsConfig {
         seed: SEED,
         shock_params: engine::company::events::ShockParams::current_default_parameters(),
+        catalog: engine::company::CompanyCatalog::from_codes(&[
+            "C-BANK", "C-IND-A", "C-IND-B", "C-INS", "C-RE",
+        ]).unwrap(),
         companies: vec![
             four_industry_fixtures::industrial_a(start),
             four_industry_fixtures::bank_c(start),

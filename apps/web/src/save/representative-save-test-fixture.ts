@@ -1,9 +1,10 @@
 import { readFileSync } from "node:fs"
+import { projectHistoricalCompanyOperations } from "./company-slice-test-fixture.ts"
 import { currentSaveFixture } from "./current-save-fixture.ts"
 
 const save = JSON.parse(readFileSync(new URL("./fixtures/current-schema-save.json", import.meta.url), "utf8")) as Record<string, unknown>
 
-/** 含非空领域数据的 schema projection；可省略跨域引用，因此不声明 Rust restore 有效。 */
+/** 仅供测试的历史语料 schema projection；可省略跨域引用，不是 Rust save/restore 见证。 */
 export function representativeCurrentSaveFixture(): Record<string, unknown> {
   // 正例 fixture 显式迁入当前单 book 结构；parser 仍严格拒绝旧字段。
   const { auction_orders: _removedAuctionOrders, ...currentBookSave } = save
@@ -11,7 +12,37 @@ export function representativeCurrentSaveFixture(): Record<string, unknown> {
   const { day: _day, phase: _phase, ...savedSnapshot } = snapshot
   const markets = snapshot.markets as Record<string, Record<string, unknown>>
   const accounts = snapshot.accounts as Record<string, Record<string, unknown>>
-  const planBook = save.plans as { plans: Record<string, Record<string, unknown>> }
+  // 原 JSON 是历史语料，保留旧字节；这里只投影测试输入，不提供生产旧档迁移。
+  const planBook = save.plans as { policy: unknown; next_plan_seq: number; plans: Record<string, Record<string, unknown>> }
+  const historicalPlans = Object.values(planBook.plans)
+  const owner_sequences = [...new Set(historicalPlans.map((plan) => String(plan.account)))].map((owner) => ({ owner, next_sequence: String(planBook.next_plan_seq) }))
+  const companyCodes = Object.keys((save.company_operations as { companies: Record<string, unknown> }).companies).sort()
+  const companyId = (code: unknown): number => {
+    const id = companyCodes.indexOf(String(code))
+    if (id < 0) throw new Error(`历史测试语料公司代码不存在：${String(code)}`)
+    return id
+  }
+  const unavailableRoe = { basis: { Unsupported: { reason: "MissingNonRecurringIncomeFacts" } }, ordinary_roe: { Unavailable: { reason: "MissingNonRecurringIncomeFacts" } }, adjusted_roe: { Unavailable: { reason: "MissingNonRecurringIncomeFacts" } }, weighted_average_parent_equity_cents: { Unavailable: { reason: "MissingNonRecurringIncomeFacts" } }, non_recurring: { Unavailable: { reason: "MissingNonRecurringIncomeFacts" } }, equity_events: { attributable_to_parent: { Unavailable: { reason: "MissingNonRecurringIncomeFacts" } }, minority_interest: { Unavailable: { reason: "MissingNonRecurringIncomeFacts" } } } }
+  const reportSet = (report: Record<string, unknown>) => {
+    const income = report.income as Record<string, unknown>
+    const scope = Object.fromEntries(Object.entries(report.scope as Record<string, unknown>).map(([kind, code]) => [kind, companyId(code)]))
+    return { ...report, scope, roe: unavailableRoe, income: { ...income, report_period: report.kind === "Quarter" ? income.quarter : income.cumulative, report_period_net_income_to_parent: income.net_income_to_parent } }
+  }
+  const library = save.public_library as { reports: Record<string, unknown>[]; announcements: Record<string, unknown>[] }
+  const public_library = { ...library, reports: library.reports.map((report) => ({ ...report, company: companyId(report.company), source: "SimulationAccounting", reports: reportSet(report.reports as Record<string, unknown>) })), announcements: library.announcements.map((announcement) => {
+    const { event, ...rest } = announcement
+    return { ...rest, company: companyId(announcement.company), content: { kind: "Shock", value: event } }
+  }) }
+  const registry = save.closing_registry as { versions: [Record<string, unknown>, string, string, Record<string, unknown>[]][]; restatements: [Record<string, unknown>, unknown][] }
+  const closing_registry = { versions: registry.versions.map(([scope, period, kind, reports]) => [Object.fromEntries(Object.entries(scope).map(([kind, code]) => [kind, companyId(code)])), period, kind, reports.map(reportSet)]), restatements: registry.restatements.map(([scope, entries]) => [Object.fromEntries(Object.entries(scope).map(([kind, code]) => [kind, companyId(code)])), entries]) }
+  const information_states = Object.fromEntries(Object.entries(save.information_states as Record<string, { owner: number; companies: Record<string, unknown> }>).map(([owner, state]) => [owner, {
+    ...state, owner: String(state.owner),
+    companies: Object.fromEntries(Object.entries(state.companies).map(([code, records]) => [String(companyId(code)), records])),
+  }]))
+  const belief_books = Object.fromEntries(Object.entries(save.belief_books as Record<string, { npc: number; entries: Record<string, Record<string, unknown>> }>).map(([owner, book]) => [owner, {
+    ...book, npc: String(book.npc),
+    entries: Object.fromEntries(Object.entries(book.entries).map(([stock, entry]) => [stock, { ...entry, company: companyId(entry.company) }])),
+  }]))
   // B2 保存域（W3 接入）迁入：旧 fixture 摄于 B2 之前，缺根级四字段。
   // 已结算日的日K stats 全零（零成交交易日）——保留链按日注入
   // {trading:true, bars:[]} 与既有事实逐位自洽（parser 的分钟/日K互检兜底：
@@ -31,6 +62,12 @@ export function representativeCurrentSaveFixture(): Record<string, unknown> {
   }
   return {
     ...currentBookSave,
+    desk_mirrored_resting: false,
+    company_operations: projectHistoricalCompanyOperations(save.company_operations as Record<string, unknown>),
+    public_library,
+    closing_registry,
+    information_states,
+    belief_books,
     ...b2SaveFields,
     runtime_state: {
       ...(save.runtime_state as Record<string, unknown>),
@@ -38,11 +75,14 @@ export function representativeCurrentSaveFixture(): Record<string, unknown> {
     },
     urgency_policy: currentSaveFixture().urgency_policy,
     plans: {
-      ...planBook,
-      plans: Object.fromEntries(Object.entries(planBook.plans).map(([id, plan]) => [id, {
+      policy: planBook.policy,
+      owner_sequences,
+      plans: historicalPlans.map((plan) => ({
         ...plan,
+        account: String(plan.account),
+        plan_id: { owner: String(plan.account), sequence: String(plan.plan_id) },
         review: { ...(plan.review as Record<string, unknown>), last_review_resources: null },
-      }])),
+      })),
     },
     snapshot: {
       ...savedSnapshot,
