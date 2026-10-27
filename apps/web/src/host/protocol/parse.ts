@@ -40,7 +40,7 @@ const EVENT_NAMES = [
 const EVENT_SOURCES = ["Sealed", "QuoteExpiry", "PriceTick", "DayEnd", "Session"] as const;
 const REJECTION_REASONS = [
   "InsufficientCash", "InsufficientShares", "LimitExceeded", "PriceCageExceeded", "UnknownStock",
-  "AuctionLimitOrderRequired", "AuctionOrderNotCancelable", "AuctionOrderEntryClosed", "InvalidQuantity",
+  "ExchangeClosed", "AuctionLimitOrderRequired", "AuctionOrderNotCancelable", "AuctionOrderEntryClosed", "InvalidQuantity",
   "OrderNotFound", "OrderAlreadyFilled", "NotOrderOwner",
 ] as const;
 const CIVIL_KINDS = ["AfterClose", "BeforeOpen", "CivilAdvance"] as const;

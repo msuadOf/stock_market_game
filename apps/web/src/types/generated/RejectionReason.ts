@@ -4,6 +4,7 @@
  * 意图被拒原因（预校验/涨跌停/未知股票）。
  */
 export type RejectionReason =
+  | "ExchangeClosed"
   | "InsufficientCash"
   | "InsufficientShares"
   | "LimitExceeded"
