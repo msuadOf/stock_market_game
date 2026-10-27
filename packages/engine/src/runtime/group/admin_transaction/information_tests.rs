@@ -813,3 +813,83 @@ fn selected_company_source_group_review_cap_reads_facts_after_information_commit
     assert_eq!(cap(&s), u64::from(u32::MAX), "commit 后真实复审 consumer 读取当前事实");
     assert_eq!(s.root_projection.as_ref().unwrap().initial_company_facts.company_spec(&crate::company::CompanyId(0)).unwrap().1, 10_000);
 }
+
+#[test]
+fn funds_p1_information_abort_restores_complete_private_overlay_then_commits_once() {
+    let mut s = state(&[AccountId(71)]);
+    let old_facts = facts(8000);
+    s.install_initial_company_facts(old_facts.clone()).unwrap();
+    s.information_observed_through = Some(at(18, 0));
+    s.belief_dirty[0] = true;
+    s.belief_pending_dirty.push(0);
+    let before_accounts = s.accounts.clone();
+    let before_personal = s.belief_states.clone();
+    let before_library = s.library.clone();
+    let before_watermark = s.information_observed_through;
+    let before_dirty = s.belief_dirty.clone();
+    let before_pending = s.belief_pending_dirty.clone();
+    let before_hash = s.state_hash();
+    let mut payload = payload(true);
+    let publication = announcement(&mut payload, 0);
+    let operations = vec![AdminOperation::SharesWithCost {
+        local: 0,
+        stock: 0,
+        qty: 7,
+        subscription_cost: 5600,
+    }];
+    let candidate = s
+        .prepare_admin_with_information(
+            AdminTransactionId(1),
+            operations.clone(),
+            Some(payload.clone()),
+        )
+        .unwrap();
+    assert_eq!(
+        candidate.accounts[0].1.shares[0],
+        before_accounts[0].shares[0] + 7
+    );
+    assert_eq!(
+        candidate.accounts[0].1.invested_cents[0],
+        before_accounts[0].invested_cents[0] + 5600
+    );
+    let info = candidate.information.unwrap();
+    assert!(Arc::ptr_eq(&info.library, &payload.library));
+    assert!(Arc::ptr_eq(&info.current_facts, &payload.current_facts));
+    assert_eq!(
+        info.personals[0].2.information.observed_at_of(publication),
+        Some(at(19, 0))
+    );
+    assert_eq!(
+        s.belief_states, before_personal,
+        "prepare不能提前安装含RNG的完整个人态"
+    );
+    s.complete_admin(AdminTransactionId(1), AdminPhase::Abort)
+        .unwrap();
+    assert_eq!(s.accounts, before_accounts);
+    assert_eq!(s.belief_states, before_personal);
+    assert!(Arc::ptr_eq(&s.library, &before_library));
+    assert!(Arc::ptr_eq(s.current_company_facts().unwrap(), &old_facts));
+    assert_eq!(s.information_observed_through, before_watermark);
+    assert_eq!(s.belief_dirty, before_dirty);
+    assert_eq!(s.belief_pending_dirty, before_pending);
+    assert_eq!(s.state_hash(), before_hash);
+    assert!(s.admin_pending.is_none());
+    s.prepare_admin_with_information(AdminTransactionId(2), operations, Some(payload.clone()))
+        .unwrap();
+    s.complete_admin(AdminTransactionId(2), AdminPhase::Commit)
+        .unwrap();
+    assert_eq!(s.accounts[0].shares[0], before_accounts[0].shares[0] + 7);
+    assert_eq!(
+        s.accounts[0].invested_cents[0],
+        before_accounts[0].invested_cents[0] + 5600
+    );
+    assert_eq!(s.accounts[0].cash, before_accounts[0].cash);
+    assert_eq!(s.accounts[0].frozen_today, before_accounts[0].frozen_today);
+    assert!(Arc::ptr_eq(&s.library, &payload.library));
+    assert!(Arc::ptr_eq(
+        s.current_company_facts().unwrap(),
+        &payload.current_facts
+    ));
+    assert_eq!(s.information_observed_through, Some(at(19, 0)));
+    assert!(s.admin_pending.is_none());
+}

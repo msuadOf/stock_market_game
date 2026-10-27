@@ -264,14 +264,41 @@ fn apply_operation(
     stock: StockIdx,
     operation: AdminOperation,
 ) -> Result<(), RuntimeError> {
-    let stock = stock as usize;
-    if stock >= account.shares.len() {
-        return Err(invalid("stock 越界"));
-    }
-    if account.frozen_today[stock] > account.shares[stock] {
-        return Err(invalid("冻结超过在手持仓"));
+    let stock_coordinate = stock;
+    let stock = usize::from(stock);
+    // 新资金原语先校验完整账户向量；旧操作保留原有坐标与冻结检查。
+    if matches!(
+        operation,
+        AdminOperation::CashDividend { .. }
+            | AdminOperation::WithholdingTax { .. }
+            | AdminOperation::ShareSplit { .. }
+            | AdminOperation::ShareReduction { .. }
+    ) {
+        if stock >= account.shares.len() {
+            return Err(invalid("stock 越界"));
+        }
+        if account.frozen_today[stock] > account.shares[stock] {
+            return Err(invalid("冻结超过在手持仓"));
+        }
     }
     match operation {
+        AdminOperation::PaymentDebit { amount, .. } => {
+            return super::admin_funds_cost::payment_debit(account, stock_coordinate, amount)
+                .map_err(|error| invalid(error.to_string()));
+        }
+        AdminOperation::SubscriptionRefund { amount, .. } => {
+            return super::admin_funds_cost::subscription_refund(account, stock_coordinate, amount)
+                .map_err(|error| invalid(error.to_string()));
+        }
+        AdminOperation::SharesWithCost { qty, subscription_cost, .. } => {
+            return super::admin_funds_cost::shares_with_cost(
+                account,
+                stock_coordinate,
+                qty,
+                subscription_cost,
+            )
+            .map_err(|error| invalid(error.to_string()));
+        }
         AdminOperation::CashDividend { amount, .. } => {
             if amount <= 0 {
                 return Err(invalid("股利必须为正分额"));
@@ -335,6 +362,35 @@ fn apply_operation(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn funds_p1_dispatcher_rejects_short_vectors_without_panic_or_mutation() {
+        use crate::runtime::group::InlineVec;
+        for operation in [
+            AdminOperation::PaymentDebit { local: 0, stock: 0, amount: 1 },
+            AdminOperation::SubscriptionRefund { local: 0, stock: 0, amount: 1 },
+            AdminOperation::SharesWithCost { local: 0, stock: 0, qty: 1, subscription_cost: 1 },
+        ] {
+            for short in 0..6 {
+                let mut account = GroupAccount::new(100, 1);
+                account.shares[0] = 20;
+                match short {
+                    0 => account.frozen_today = InlineVec::filled(0, 0),
+                    1 => account.foreign_active = InlineVec::filled(0, 0),
+                    2 => account.pending_sell_qty = InlineVec::filled(0, 0),
+                    3 => account.invested_cents = InlineVec::filled(0, 0),
+                    4 => account.recovered_cents = InlineVec::filled(0, 0),
+                    _ => account.ever_held = InlineVec::filled(0, false),
+                }
+                let before = account.clone();
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(||
+                    apply_operation(&mut account, 0, operation)));
+                assert!(result.is_ok(), "真实dispatcher必须显式拒绝短向量而非panic：{operation:?}/{short}");
+                assert!(result.unwrap().is_err(), "短向量不得通过：{operation:?}/{short}");
+                assert_eq!(account, before);
+            }
+        }
+    }
+
     fn state() -> GroupState {
         let mut a = GroupAccount::new(1_000_000, 1);
         a.shares[0] = 1000;
