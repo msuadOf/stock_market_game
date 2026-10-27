@@ -339,6 +339,35 @@ fn apply_operation(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn funds_p1_dispatcher_rejects_short_vectors_without_panic_or_mutation() {
+        use crate::runtime::group::InlineVec;
+        for operation in [
+            AdminOperation::PaymentDebit { local: 0, stock: 0, amount: 1 },
+            AdminOperation::SubscriptionRefund { local: 0, stock: 0, amount: 1 },
+            AdminOperation::SharesWithCost { local: 0, stock: 0, qty: 1, subscription_cost: 1 },
+        ] {
+            for short in 0..6 {
+                let mut account = GroupAccount::new(100, 1);
+                account.shares[0] = 20;
+                match short {
+                    0 => account.frozen_today = InlineVec::filled(0, 0),
+                    1 => account.foreign_active = InlineVec::filled(0, 0),
+                    2 => account.pending_sell_qty = InlineVec::filled(0, 0),
+                    3 => account.invested_cents = InlineVec::filled(0, 0),
+                    4 => account.recovered_cents = InlineVec::filled(0, 0),
+                    _ => account.ever_held = InlineVec::filled(0, false),
+                }
+                let before = account.clone();
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(||
+                    apply_operation(&mut account, 0, operation)));
+                assert!(result.is_ok(), "真实dispatcher必须显式拒绝短向量而非panic：{operation:?}/{short}");
+                assert!(result.unwrap().is_err(), "短向量不得通过：{operation:?}/{short}");
+                assert_eq!(account, before);
+            }
+        }
+    }
+
     fn state() -> GroupState {
         let mut a = GroupAccount::new(1_000_000, 1);
         a.shares[0] = 1000;

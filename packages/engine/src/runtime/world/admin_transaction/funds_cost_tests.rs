@@ -356,6 +356,8 @@ fn assert_information_candidate(
 fn funds_p1_09_information_and_paid_share_cost_abort_together_on_last_group_rejection() {
     let mut world = information_world();
     let before = accounts(&mut world);
+    let published_before = world.publication.load();
+    let committed_tick_before = world.global.committed_tick;
     let mut payload = information_fixture::payload(true);
     let publication = information_fixture::announcement(&mut payload, 0);
     let mut inspected = false;
@@ -375,6 +377,8 @@ fn funds_p1_09_information_and_paid_share_cost_abort_together_on_last_group_reje
     assert!(!inspected);
     assert!(world.dead_reason.is_none());
     assert_eq!(accounts(&mut world), before);
+    assert!(Arc::ptr_eq(&published_before, &world.publication.load()), "同overlay拒绝不得撤回已发布PublishedTick");
+    assert_eq!(world.global.committed_tick, committed_tick_before);
     let mut expected = before;
     expected[0][0].shares[0] += 7;
     expected[0][0].invested_cents[0] += 5600;
@@ -396,6 +400,8 @@ fn funds_p1_09_information_and_paid_share_cost_abort_together_on_last_group_reje
 fn funds_p1_10_information_inspect_rejection_restores_cost_and_observation_before_retry() {
     let mut world = information_world();
     let before = accounts(&mut world);
+    let published_before = world.publication.load();
+    let committed_tick_before = world.global.committed_tick;
     let mut expected = before.clone();
     expected[0][0].shares[0] += 7;
     expected[0][0].invested_cents[0] += 5600;
@@ -418,6 +424,8 @@ fn funds_p1_10_information_inspect_rejection_restores_cost_and_observation_befor
     assert!(error.to_string().contains("P1资产与信息共同候选拒绝"));
     assert!(world.dead_reason.is_none());
     assert_eq!(accounts(&mut world), before);
+    assert!(Arc::ptr_eq(&published_before, &world.publication.load()), "同overlay拒绝不得撤回已发布PublishedTick");
+    assert_eq!(world.global.committed_tick, committed_tick_before);
     world
         .with_information_transaction(vec![(0, vec![shares(0, 7, 5600)])], payload, |candidate| {
             assert_information_candidate(candidate, publication);
