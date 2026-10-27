@@ -9,71 +9,6 @@ pub enum StepFatal {
     },
 }
 
-/// 未交付的成功安装结果；诊断仍是待发布 delta。
-pub(in crate::session) struct RuntimeStepInstall {
-    pub events: Vec<Event>,
-    pub baseline: RuntimeInstallBaseline,
-    #[cfg(feature = "simulation-diagnostics")]
-    pub causal: super::causal::RuntimeCausalDelta,
-}
-
-/// 安装失败回滚基线，覆盖 step 推进与安装面写入的会话域。
-pub(crate) struct RuntimeInstallBaseline {
-    tick: u64,
-    seq: u64,
-    // Sol 终审修复 1a：交易日计数入基线——日结拍（ends_day 段的
-    // install_runtime_day_boundary 推进 day）之后投影失败必须随整面
-    /// 回滚（此前 day 不在基线——tick/seq/账户回滚而 day 留新日，
-    /// 违反失败零泄漏及重试契约）。
-    day: u32,
-    // P2-2b：accounts 全名册快照退役——改写时 undo（drive 两写入点经
-    // runtime_record_account_undo 记录首写前值，O(dirty)；回滚恢复。
-    // 原 O(名册) 每 tick 快照是驱动器侧 AccountBook::get 全名册遍历+
-    // positions 深拷贝的主要来源（P2-2a 后画像 19% 读写下的大项）。
-    // P2 复核阻断 1 修正：**日结拍**恢复全量快照——ends_day 段的
-    // install_runtime_day_boundary 直改 state.accounts（T+1 解锁——
-    // day_end.rs:52，不经 fixture_account_mut、无 undo 记录），其后
-    // world 日结失败回滚须覆盖该直改面；日结低频，全量一次可接受。
-    accounts_full: Option<
-        Vec<(
-            crate::AccountId,
-            i64,
-            std::collections::BTreeMap<crate::StockId, crate::account::Position>,
-        )>,
-    >,
-    markets: std::collections::BTreeMap<crate::StockId, crate::Market>,
-    price_history:
-        std::collections::BTreeMap<crate::StockId, std::collections::VecDeque<crate::money::Money>>,
-    minute_closes: std::collections::BTreeMap<
-        crate::StockId,
-        Vec<crate::observation::MarketMinuteClose>,
-    >,
-    // B2 复核阻断 1：当日分钟K桶拍前整值（回滚源——bars 增量追加域）。
-    minute_bars:
-        std::collections::BTreeMap<crate::StockId, Vec<crate::runtime::MinuteBarFact>>,
-    candle_histories: std::collections::BTreeMap<crate::StockId, super::candles::DailyCandleHistory>,
-    candle_active: std::collections::BTreeMap<crate::StockId, crate::session::DailyCandle>,
-    // B2 件 4：保留链拍前尾长（ends_day 段冻结 push 的回滚源——轻量
-    // 截断，避免整链深拷贝进每拍基线）。
-    retained_len: usize,
-    // Sol 复核阻断 P1-1：在途快照拍前值（Arc 廉价克隆）。回滚恢复拍前
-    // 快照（上一成功拍发布版本——与账户/镜像回滚面同源），替代清空：
-    // ledger 已停逐拍维护（P2-4），清空使失败拍后的信封查询/save 与
-    // 驱动器重建种子（from_session 读 ledger）读 stale/空集。
-    resting_snapshot: Option<super::RuntimeRestingSnapshot>,
-    // P2-3b：npc_attention/attention_scheduler/belief_participants/
-    // retail_experience/history_reads 五域基线 clone 退役——改写时 undo
-    // （记录面=set_runtime_attention/set_runtime_information_checks/
-    // set_runtime_personal_state/runtime_hold_experience_init 四写入点；
-    // heap 整体替换域用 move-undo 旧堆整值入槽）。原每 tick 全名册
-    // clone 使 AccountPagedMap 页 Arc 共享，后续 get_mut 全部触发 COW
-    // 页组深拷贝（驱动线程画像 get_mut 8.6%+jemalloc 家族 ~20% 主源）。
-    // 回滚等价：undo 恢复写入条目（墓碑=拍前不在册→移除）；未写条目
-    // 未变无需恢复——与全量快照逐位等价。heap 回滚=move 还原精确
-    // 旧堆（P1-C 教训保持：不"从权威重建"——旧管线陈旧项会丢，
-    // business_state_hash 回滚对比显红）。
-}
-
 impl GameSession {
     pub fn publication_ids(&self) -> Vec<crate::information::PublicationId> {
         self.state.library.publication_ids()
@@ -497,122 +432,8 @@ impl GameSession {
         })
     }
 
-    /// step_frame 接轨件 4：驱动器获取+前置编排共用段（step_via_runtime
-    /// 与 step_frame_and_commit_via_runtime 共享）。语义与原
-    /// step_via_runtime 内联段逐字一致：D0 惰性构造（含 cfg(test) 的
-    /// staged handover 消费）→ 锁单元取出/放回 → poison 拒绝 → 锁步
-    /// 不变量校验 → ingress 冻结 → 玩家意图路由（失败回灌——ready
-    /// ingress 语义）。`body` 在驱动器锁内执行；body 失败时本段回灌
-    /// 意图（外部队列不被失败 tick 消费）。
-    fn with_routed_runtime_driver<R>(
-        &mut self,
-        body: impl FnOnce(
-            &mut Self,
-            &mut crate::runtime::drive::RuntimeDriver,
-        ) -> Result<R, StepFatal>,
-    ) -> Result<R, StepFatal> {
-        // D0 常驻 driver：首次调用惰性构造（initial_committed_tick 对齐
-        // 当前 session.tick——全新会话即 0）。
-        if self.runtime_driver.is_none() {
-            // 构造细节见 `construct_runtime_driver_lazy`（D0 惰性构造+
-            /// cfg(test) staged handover 消费——两消费面共用）。
-            self.construct_runtime_driver_lazy()?;
-        }
-        // 取出锁单元（避免 &mut self 与 guard 交叉借用）；失败/成功都
-        // 放回——Abort 语义下 worker 存活，driver 可重跑。例外：body 内
-        /// 置 runtime_discard_driver_flag（step_frame 分叉的投影段失败——
-        /// world 已转正而会话已回滚，锁步断裂的实例不可复用）时丢弃，
-        /// 重试经 from_session 重建（等价旧管线"candidate 丢弃+可重试"）。
-        let cell = self
-            .runtime_driver
-            .take()
-            .expect("runtime_driver 刚构造或在位");
-        let outcome = self.with_routed_runtime_driver_locked(&cell, body);
-        if self.runtime_discard_driver_flag {
-            self.runtime_discard_driver_flag = false;
-            drop(cell);
-        } else {
-            self.runtime_driver = Some(cell);
-        }
-        outcome
-    }
-
-    /// 共用段锁内部分（cell 已取出——失败路径由调用方放回）。
-    fn with_routed_runtime_driver_locked<R>(
-        &mut self,
-        cell: &std::sync::Mutex<crate::runtime::drive::RuntimeDriver>,
-        body: impl FnOnce(
-            &mut Self,
-            &mut crate::runtime::drive::RuntimeDriver,
-        ) -> Result<R, StepFatal>,
-    ) -> Result<R, StepFatal> {
-        // 【P0 画像】lock_route 段（锁+锁步校验+ingress freeze+意图路由）。
-        let _seg_lock = crate::runtime::step_profile::scope(
-            crate::runtime::step_profile::StepSegment::LockRoute,
-        );
-        let guard = cell.lock();
-        let poisoned = guard.is_err();
-        let mut driver = if poisoned {
-            // 锁被 poison=前次持有期 panic——显式失败，不静默复用
-            // （不 into_inner：poison 期状态未知）。
-            return Err(self.poison_runtime_step(StepFatal::InvariantViolation {
-                location: "GameSession::step_via_runtime".to_owned(),
-                description: "常驻驱动器锁被 poison（前次持有期 panic）".to_owned(),
-            }));
-        } else {
-            guard.expect("is_err 已排阴")
-        };
-        // 锁步不变量：world 已转正 tick 必须 == session.tick
-        // （失配=两权威漂移，显式拒绝——不静默重放）。
-        let world_tick = driver.world_committed_tick();
-        if world_tick != self.tick() {
-            return Err(self.poison_runtime_step(StepFatal::InvariantViolation {
-                location: "GameSession::step_via_runtime".to_owned(),
-                description: format!(
-                    "锁步失配：world 已转正 tick={world_tick} 而 session.tick={}（两权威漂移——不得静默重放）",
-                    self.tick()
-                ),
-            }));
-        }
-        // D4（t3 对等）：ingress 截取时刻——宿主经 shared ingress
-        // 绑定入队的玩家意图搬运进 pending_player（旧管线 cutoff
-        // 同口径；无绑定为 no-op）。
-        if let Err(fatal) = self.freeze_shared_ingress() {
-            return Err(self.poison_runtime_step(fatal));
-        }
-        // 玩家意图路由（D2）：冻结取出→ExternalPlan 注入组 0；
-        // 失败回灌（ready ingress 语义——外部队列不被失败 tick 消费）。
-        let intents = self.take_runtime_player_intents();
-        if !intents.is_empty() {
-            let uppers: Vec<i64> = {
-                let views = driver.world_public_views();
-                views.iter().map(|v| v.daily_upper_limit).collect()
-            };
-            if let Err(route_err) = driver.inject_player_intents(&intents, &uppers) {
-                self.restore_runtime_player_intents(intents);
-                return Err(self.poison_runtime_step(StepFatal::InvariantViolation {
-                    location: "GameSession::step_via_runtime".to_owned(),
-                    description: route_err,
-                }));
-            }
-        }
-        drop(_seg_lock);
-        let outcome = body(self, &mut driver);
-        if outcome.is_err() {
-            self.restore_runtime_player_intents(intents);
-        }
-        outcome
-    }
-
-    /// step_frame 接轨件 4：step_frame 的 runtime 分叉体——驱动器步进+
-    /// 安装（保留基线）后组装 EventFact（稳定键——event_bridge 批 8h·
-    /// 部分 2），经 `TickCandidateProjection`（借用安装后的会话——
-    /// runtime_snapshot/player_working_orders 自动走 runtime 读面）
-    /// 调用与旧管线**同一形状**的 project 回调。投影段失败=整面回滚
-    /// （`rollback_runtime_step`——撤销 tick/seq/账户/行情/五域）+poison，
-    /// 语义等价旧管线"publication 回调先于唯一 CommitTick、投影可失败
-    /// ⇒不安装"（安装被完全撤销）。成功后尾清写时 undo 并交付
-    /// `(P, None)`（commit evidence 恒走旧管线——见分叉入口注释）。
+    /// Frame callback 只读取私有 candidate；全部验证成功才唯一安装。
+    /// callback 失败保旧镜像与已发布 World，封存首错并禁止重跑。
     pub(in crate::session) fn step_frame_and_commit_via_runtime<P>(
         &mut self,
         project: impl FnOnce(
@@ -623,75 +444,21 @@ impl GameSession {
         self.check_step_start()
             .map_err(|fatal| self.poison_runtime_step(fatal))?;
         self.with_routed_runtime_driver(|session, driver| {
-            if !(session.tick() + 1).is_multiple_of(session.state.setup.ticks_per_day) {
-                return session.runtime_step_with_prepared_mirror(driver, project).map(|value| (value, None));
-            }
-            let seq_from = session.current_seq();
-            let RuntimeStepInstall {
-                events,
-                baseline,
-                #[cfg(feature = "simulation-diagnostics")]
-                causal,
-            } = session.runtime_step_with_install_returning_baseline(driver)?;
-            // 投影段（可失败）：稳定键组装 → 冻结投影 → 回调。
-            let facts = crate::runtime::event_bridge::event_facts_with_stable_keys(events);
-            let projected = match project(
-                crate::session::protocol::TickCandidateProjection::new(session, seq_from),
-                facts,
-            ) {
-                Ok(value) => value,
-                Err(fatal) => {
-                    // 投影失败=旧管线"candidate 投影失败"等价点：回滚全部
-                    /// 已安装域、**不 poison**（candidate 失败可重试——
-                    /// rollback_tests/checkpoint_rejects_poison 的契约）。
-                    /// world 已转正而会话已回滚——常驻驱动器锁步断裂，
-                    /// 置丢弃标志（共用段 drop；重试经 from_session 重建）。
-                    session.rollback_runtime_step(baseline);
-                    session.runtime_discard_driver_flag = true;
-                    return Err(fatal);
-                }
-            };
-            // 投影成功：尾清写时 undo（与 runtime_step_with_install 成功
-            /// 路径同式）。
-            #[cfg(feature = "simulation-diagnostics")]
-            session.publish_runtime_causal(causal);
-            session.runtime_clear_account_undo();
-            Ok((projected, None))
+            session.runtime_step_with_prepared_mirror(driver, project).map(|value| (value, None))
         })
     }
 
-    /// runtime 步进+安装本体（Sol 二审修复集 3）：独立成方法供测试注入
-    /// 驱动器（`step_via_runtime` 每次构造驱动器，测试无法在其内部注入
-    /// tick 级失败）。三段语义：
-    /// - **step 失败：立即停止安装**（不把已回滚世界的状态安装进会话）；
-    /// - **安装失败：撤销已推进的 tick/seq/账户+安装面写入的行情/历史/
-    ///   注意力基线**（Sol 三审 (b)：market_views 成功、candles 失败时
-    ///   前半已写入——只回滚 tick/seq/账户会残留半安装会话）；
-    /// - 全部成功：返回事件。
-    /// 任一失败都 poison（旧管线 `poison_failed_step` 语义）。
+    /// 普通拍与日界共用私有 prepare、最后 callback、source 验证及 move install。
     pub(in crate::session) fn runtime_step_with_install(
         &mut self,
         driver: &mut crate::runtime::drive::RuntimeDriver,
     ) -> Result<Vec<Event>, StepFatal> {
-        if !(self.tick() + 1).is_multiple_of(self.state.setup.ticks_per_day) {
-            return self.runtime_step_with_prepared_mirror(driver, |_, facts| {
-                Ok(facts.into_iter().map(|fact| fact.event).collect())
-            });
-        }
-        let installed = self.runtime_step_with_install_inner(driver, false)?;
-        #[cfg(feature = "simulation-diagnostics")]
-        self.publish_runtime_causal(installed.causal);
-        // P2-2b：成功 step 尾清账户写时 undo（失败路径已由 rollback 消费）。
-        // 【P0 画像】undo_clear 段（成功尾清）。
-        let _seg_undo = crate::runtime::step_profile::scope(
-            crate::runtime::step_profile::StepSegment::UndoClear,
-        );
-        self.runtime_clear_account_undo();
-        drop(_seg_undo);
-        Ok(installed.events)
+        self.runtime_step_with_prepared_mirror(driver, |_, facts| {
+            Ok(facts.into_iter().map(|fact| fact.event).collect())
+        })
     }
 
-    /// 普通拍在私有镜像与全部输出验证成功后一次安装；失败保留 World 已发布事实。
+    /// 每拍在私有镜像与全部输出验证成功后一次安装；失败保留 World 已发布事实。
     pub(in crate::session) fn runtime_step_with_prepared_mirror<P>(
         &mut self,
         driver: &mut crate::runtime::drive::RuntimeDriver,
@@ -742,12 +509,16 @@ impl GameSession {
                 return Err(self.poison_runtime_step(fatal));
             }
         };
-        if let Err(fatal) = self.validate_runtime_mirror_source(driver, &prepared) {
-            #[cfg(feature = "simulation-diagnostics")]
-            driver.retain_terminal_causal(causal.time, causal.raw, fatal.clone());
-            return Err(self.poison_runtime_step(fatal));
-        }
+        let ack = match self.validate_runtime_mirror_source(driver, &prepared) {
+            Ok(ack) => ack,
+            Err(fatal) => {
+                #[cfg(feature = "simulation-diagnostics")]
+                driver.retain_terminal_causal(causal.time, causal.raw, fatal.clone());
+                return Err(self.poison_runtime_step(fatal));
+            }
+        };
         self.install_runtime_mirror(driver, prepared);
+        driver.ack_prepared_mirror(ack);
         #[cfg(feature = "simulation-diagnostics")]
         self.publish_runtime_causal(causal);
         crate::verification_evidence::enter_phase(crate::session::pipeline::TickPhase::CommitTick);
@@ -758,518 +529,7 @@ impl GameSession {
         Ok(value)
     }
 
-    /// step_frame 接轨件 4：同 [`Self::runtime_step_with_install`]，但
-    /// 成功时**不清写时 undo、不丢安装基线**——两者连同返回，供调用方
-    /// （step_frame 分叉）在**投影段失败**时执行与安装失败同一语义的
-    /// 整面回滚（等价旧管线"publication 回调先于唯一 CommitTick、投影
-    /// 可失败⇒不安装"的门禁序）。调用方投影成功后必须自行
-    /// `runtime_clear_account_undo`。
-    pub(in crate::session) fn runtime_step_with_install_returning_baseline(
-        &mut self,
-        driver: &mut crate::runtime::drive::RuntimeDriver,
-    ) -> Result<RuntimeStepInstall, StepFatal> {
-        self.runtime_step_with_install_inner(driver, true)
-    }
 
-    /// 主体（capture_undo：是否记录扩展回滚面 undo——envelope/mirror/
-    /// 游标/lifecycles/retail 诊断的整值旧值。step() 路径失败点全部在
-    /// 这些写入之前（安装失败），无需记录；step_frame 分叉的投影失败
-    /// 发生在全部写入之后，必须记录）。
-    fn runtime_step_with_install_inner(
-        &mut self,
-        driver: &mut crate::runtime::drive::RuntimeDriver,
-        capture_undo: bool,
-    ) -> Result<RuntimeStepInstall, StepFatal> {
-        // P2-3b：step 入口清写时 undo 槽（上一 step 成功已尾清/失败已
-        // 回滚消费——此处清的是驱动器手动序列等直调安装面的残留记录；
-        /// 残留会把本拍回滚恢复到错误的更早状态）。
-        // 【P0 画像】undo_clear 段（入口清）。
-        let _seg_undo0 = crate::runtime::step_profile::scope(
-            crate::runtime::step_profile::StepSegment::UndoClear,
-        );
-        self.runtime_clear_account_undo();
-        drop(_seg_undo0);
-        // 生产探针对齐（t3 契约：每 tick 恰一次"生产调用"）。
-        #[cfg(test)]
-        self.compute_context()
-            .t1_probes
-            .queue_attempt_seq
-            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        // 【P0 画像】baseline_snapshot 段（D5：五域每拍快照 clone）。
-        let _seg_baseline = crate::runtime::step_profile::scope(
-            crate::runtime::step_profile::StepSegment::BaselineSnapshot,
-        );
-        let baseline = self.runtime_install_baseline();
-        drop(_seg_baseline);
-        // step 失败即停（此前先存 Result 再无条件安装——已 Abort 的
-        // 世界状态会被写进会话）。
-        // 【P0 画像】driver_step 段（step_frame_equivalent 总 wall——
-        // 二分定位残余在 drive 层还是安装层）。
-        let _seg_dstep = crate::runtime::step_profile::scope(
-            crate::runtime::step_profile::StepSegment::DriverStep,
-        );
-        #[cfg(feature = "simulation-diagnostics")]
-        let causal_time = self.causal_time();
-        let step_result = driver.step_frame_equivalent(self);
-        drop(_seg_dstep);
-        let mut events = step_result?;
-        // 所有可失败诊断校验早于扩展安装；普通 step 不依赖 callback undo。
-        #[cfg(feature = "simulation-diagnostics")]
-        let causal = match self.prepare_runtime_causal(driver, causal_time) {
-            Ok(delta) => delta,
-            Err(fatal) => {
-                self.rollback_runtime_step(baseline);
-                self.runtime_discard_driver_flag = true;
-                return Err(self.poison_runtime_step(fatal));
-            }
-        };
-        // 晚失败注入（D0：旧管线 post_shadow 语义等价点——生产工作完成、
-        // 安装之前；晚失败不得泄漏任何已计算状态。两路径同判：此前
-        // runtime 路径不消费该注入，注入后期望 Err 的对照测试被
-        // 首 tick 门禁掩盖）。
-        #[cfg(test)]
-        if let Some(fatal) = self.post_shadow_failure.take() {
-            self.rollback_runtime_step(baseline);
-            return Err(self.poison_runtime_step(fatal));
-        }
-        // 安装失败注入（测试面——与真实安装失败走同一回滚分支）。
-        // Sol 三审 (b)：注入点在 install_market_views **之后**——复现
-        // 真实缺口路径"前半安装已写入、后半失败"。
-        #[cfg(test)]
-        let install_injected = self.runtime_install_failure;
-        #[cfg(not(test))]
-        let install_injected = false;
-        // 安装错误传播（不吞）——失败即撤销已推进状态并 poison，
-        // 不返回部分成功。
-        let install_outcome = if install_injected {
-            match driver.install_market_views(self) {
-                Ok(()) => Err(
-                    "安装失败注入（Sol 三审 (b) 测试面——行情已写入后失败）".to_owned(),
-                ),
-                // market_views 自身失败同样走注入描述（注入场景聚焦后半）。
-                Err(e) => Err(format!("{e}（注入点：market_views）")),
-            }
-        } else {
-            // 【P0 画像】market_install 段（D4；内嵌 attention_heap 段——
-            // 报告净额=market_install−attention_heap）。
-            let _seg_market =
-                crate::runtime::step_profile::scope(crate::runtime::step_profile::StepSegment::MarketInstall);
-            let market_result = driver.install_market_views(self);
-            drop(_seg_market);
-            market_result.and_then(|()| {
-                // 【P0 画像】candle_install 段（D4）。
-                let _seg_candle = crate::runtime::step_profile::scope(
-                    crate::runtime::step_profile::StepSegment::CandleInstall,
-                );
-                driver.install_candles(self)
-            })
-        };
-        if let Err(install_err) = install_outcome {
-            self.rollback_runtime_step(baseline);
-            return Err(self.poison_runtime_step(StepFatal::InvariantViolation {
-                location: "GameSession::step_via_runtime::install".to_owned(),
-                description: install_err,
-            }));
-        }
-        // step_frame 接轨件 3：连续相位行情事件（每连续拍每股一条
-        /// PriceTick——旧管线 finish_market_data 的 runtime 等价；竞价
-        /// 相位由 desk_auction facts 承载）。安装在 install_candles 之后
-        ///（daily_candle 读 session 活动 K）。
-        // 【P0 画像】price_tick_emit 段。
-        let _seg_ptick = crate::runtime::step_profile::scope(
-            crate::runtime::step_profile::StepSegment::PriceTickEmit,
-        );
-        let price_tick_outcome = driver.emit_price_tick_events(self, &mut events);
-        drop(_seg_ptick);
-        if let Err(emit_err) = price_tick_outcome {
-            self.rollback_runtime_step(baseline);
-            return Err(self.poison_runtime_step(StepFatal::InvariantViolation {
-                location: "GameSession::step_via_runtime::price_tick".to_owned(),
-                description: emit_err,
-            }));
-        }
-        // B2 件 5：个人确认入账（安装链成功后——失败回滚不残留；重试
-        /// 同 seq 重发经 take 恰一次语义不触发假重复）。
-        {
-            let receipts = driver.take_pending_receipts();
-            if let Err(e) = self.runtime_append_trade_receipts(&receipts) {
-                self.rollback_runtime_step(baseline);
-                return Err(self.poison_runtime_step(StepFatal::InvariantViolation {
-                    location: "GameSession::step_via_runtime::receipts".to_owned(),
-                    description: e,
-                }));
-            }
-        }
-        // D5 诊断面派生：retail 拒收诊断（旧管线 continuous lifecycle
-        /// projection 的 Rejected 面——路由层组端校验拒收/交易部回执的
-        /// runtime 等价；受理/成交/撤销诊断面随事件域迁移逐步补，此处
-        /// 仅派生已迁移的 Rejected）。P2-3c：单遍派发（原逐账户×全事件
-        /// O(名册×事件)+全名册 keys collect——Sol P3）。
-        // 【P0 画像】retail_diag 段（D5：拒收诊断+决策 trace 收集）。
-        let _seg_retail = crate::runtime::step_profile::scope(
-            crate::runtime::step_profile::StepSegment::RetailDiag,
-        );
-        // step_frame 接轨件 4b：投影失败回滚面——retail 诊断两域首写
-        /// 旧值入 undo（幂等首写；step() 路径 capture_undo=false 不记）。
-        if capture_undo && self.state.runtime_retail_diag_undo.is_none() {
-            self.state.runtime_retail_diag_undo = Some((
-                self.state.last_retail_order_events.clone(),
-                self.state.last_retail_decisions.clone(),
-            ));
-        }
-        self.state.last_retail_order_events.clear();
-        self.record_retail_intent_rejections(&events);
-        // D5 #4 retail 链：决策 trace 投影（组内生产——本拍清+装，旧管线
-        /// 「本 tick 最新」瞬态语义；收集失败按段面显式失败不静默）。
-        {
-            let traces = match driver.collect_retail_traces() {
-                Ok(collected) => collected.into_iter().flatten().collect::<Vec<_>>(),
-                Err(e) => {
-                    self.rollback_runtime_step(baseline);
-                    return Err(self.poison_runtime_step(StepFatal::InvariantViolation {
-                        location: "GameSession::step_via_runtime::retail_traces".to_owned(),
-                        description: format!("零售决策 trace 收集失败：{e:?}"),
-                    }));
-                }
-            };
-            self.state.last_retail_decisions = traces;
-        }
-        drop(_seg_retail);
-        // D5 日界·world 段（ends_day 拍在 step 内编排——desk roll_day/
-        /// 组日翻，**先于**信封重建：日终清簿后的 desk 在途=空集，ledger
-        /// 重建与旧管线"日终无在途"校验面同源；drained 撤单事件并入本拍
-        /// 事件流。此前该编排面缺失（world_day_end_for_test 未接线）——
-        /// 多日 step 的 ledger 残留使 session 日终校验显红）。
-        let ends_day = {
-            let tpd = u64::from(self.state.setup.ticks_per_day);
-            tpd > 0 && self.tick() % tpd == 0
-        };
-        // D5 envelope 投影：desk 在途单重建 session 信封账本（审计面——
-        /// nominal 自费用表重算、charged 直取 desk 累计；OrderId=serial 域
-        ///（与事件 id 一致））。权威在 desk。
-        // P2-4b：增量维护——相邻两拍在途单差分（增/删/改）原位应用，
-        /// 取代每拍 O(resting) 全量重建+全量 drop（insert 4.77%+drop
-        /// 4.13% 样本，resting 存量 305→4766 随时长增长）。等价合同：
-        /// 增量应用后的账本内容 == 以本拍快照全量重建的内容（守卫
-        /// p2_4b_envelope_incremental_matches_full_rebuild；全量读面/
-        /// save/hash 均按内容消费，内容等价即全读面等价）。基线缺失
-        ///（构造后首拍/红证强制/股面错配）退全量重建。
-        // 【P0 画像】envelope 段（D6：resting 收集+增量/全量信封账本；
-        /// 子分 envelope_collect=收集往返，差额=差分+增量应用）。
-        let _seg_envelope = crate::runtime::step_profile::scope(
-            crate::runtime::step_profile::StepSegment::Envelope,
-        );
-        let _seg_ecollect = crate::runtime::step_profile::scope(
-            crate::runtime::step_profile::StepSegment::EnvelopeCollect,
-        );
-        // P2-4（视图内生战役）：envelope_ledger 每拍增量/全量维护退役
-        //（P0 画像 80μs/tick）——发布版本快照句柄存 session（Arc 共享
-        /// 零拷贝），投影在查询/hash 时派生（内容等价=原全量重建口径
-        ///——runtime_resting_envelope 同一构造逻辑；undo 面随维护退役，
-        /// 回滚=快照失效下一拍重建）。mirror 段与后续消费改读快照。
-        let (resting_facts, resting_id_map) = match driver.resting_snapshot_for_session() {
-            Ok(pair) => pair,
-            Err(e) => {
-                self.rollback_runtime_step(baseline);
-                return Err(self.poison_runtime_step(StepFatal::InvariantViolation {
-                    location: "GameSession::step_via_runtime::envelope".to_owned(),
-                    description: e,
-                }));
-            }
-        };
-        let accounts_per_group = driver.accounts_per_group();
-        self.state.runtime_resting_snapshot = Some(super::RuntimeRestingSnapshot {
-            facts: resting_facts,
-            id_map: resting_id_map,
-            accounts_per_group,
-        });
-        drop(_seg_ecollect);
-        drop(_seg_envelope);
-        // 【P0 画像】desk_mirror 段（D6：簿镜像+lifecycle 投影清空）。
-        let _seg_mirror = crate::runtime::step_profile::scope(
-            crate::runtime::step_profile::StepSegment::DeskMirror,
-        );
-        // D5 attention 公开可见性门禁：desk 簿镜像刷新（瞬态读面源——
-        /// snapshot 公开投影/玩家在途/预留；desk 权威事实+公开截点）。
-        {
-            // step_frame 接轨件 4b：投影失败回滚面——镜像+游标旧值入
-            /// undo（首写幂等；ends_day 重刷点共用同一槽）。
-            if capture_undo && self.state.runtime_mirror_undo.is_none() {
-                self.state.runtime_mirror_undo = Some((
-                    self.state.desk_book_mirror.clone(),
-                    self.state.runtime_desk_serial_cursors.clone(),
-                ));
-            }
-            let views = driver.world_public_views();
-            let mut mirror = std::collections::BTreeMap::new();
-            // P2-4：镜像数据源改读发布版本快照（collect 退役）。
-            let snapshot = self
-                .state
-                .runtime_resting_snapshot
-                .as_ref()
-                .expect("envelope 段刚存入快照");
-            for (stock_idx, book) in snapshot.facts.iter().enumerate() {
-                let Some(view) = views.get(stock_idx) else {
-                    continue;
-                };
-                let mut orders = Vec::with_capacity(book.len());
-                for fact in book.iter() {
-                    // Sol 终审修复 1c：归户用 account_by_owner（保留组号
-                    /// ——此前 account_by_local(owner.1) 丢组号，其他组的
-                    /// 同 local 委托被归给组 0 账户，与删除分支键不一致）。
-                    let Some(owner) = driver.account_by_owner(fact.owner) else {
-                        continue;
-                    };
-                    orders.push((
-                        owner,
-                        fact.side,
-                        crate::Money::from_cents(fact.price),
-                        fact.qty,
-                        fact.order_serial,
-                        fact.filled_value,
-                        fact.filled_qty,
-                    ));
-                }
-                mirror.insert(
-                    crate::StockId(u32::try_from(stock_idx).expect("股下标在 u32")),
-                    super::DeskBookMirror {
-                        orders,
-                        last_price: crate::Money::from_cents(view.last_price),
-                        public_cutoff_serial: view.public_cutoff_serial,
-                        // Sol 四轮修复：真实 desk 游标（空簿保留已耗序号
-                        //——save 投影权威源）。
-                        next_serial: driver
-                            .desk_next_serials()
-                            .get(stock_idx)
-                            .copied()
-                            .unwrap_or(0),
-                    },
-                );
-            }
-            self.state.desk_book_mirror = mirror;
-            // Sol 四轮修复：游标会话级缓存（镜像瞬态不可靠——save
-            // 静止点可能落在镜像缺席的拍后）。
-            self.state.runtime_desk_serial_cursors = driver.desk_next_serials().to_vec();
-        }
-        // D5 lifecycle 投影：runtime 下 NPC 投价生命周期权威=desk TTL
-        ///（save 的 2170 校验绑定旧簿在场委托——runtime 旧簿恒空，投影
-        /// 空集通过；TTL 到期撤销由 desk begin_tick 承载）。
-        if capture_undo && self.state.runtime_lifecycles_undo.is_none() {
-            self.state.runtime_lifecycles_undo = Some(self.state.npc_order_lifecycles.clone());
-        }
-        self.mark_external_mutation();
-        self.state.npc_order_lifecycles = Vec::new();
-        drop(_seg_mirror);
-        // D5 日界安装（ends_day 拍）：session 侧交易日终迁移（day 推进/
-        /// candle 提交/T+1 解锁/DayBoundary——与旧管线 continuous_tick_
-        /// finalizer 同一迁移；在行情安装**之后**（本拍 active candle 先
-        /// 写入、日终提交清空——save 的 day_tick=0 期望空 active 对齐；
-        /// 价格历史长度由 install 侧按 tick 推导，与本序无耦合）。
-        /// world 侧日结编排不在 step 内（生产由 driver.day_end 承载），
-        /// 登记差异。
-        // 【P0 画像】day_end 段（日结编排；低频——B fixture 不触发）。
-        let _seg_dayend = crate::runtime::step_profile::scope(
-            crate::runtime::step_profile::StepSegment::DayEnd,
-        );
-        if ends_day {
-            // Sol 终审修复 1a：日结段的全部可失败出口统一走
-            /// rollback+poison（此前 `?` 直出绕过回滚——day/candle/T+1
-            /// 等已写域泄漏；判决 :883/:930 两处）。
-            // Sol 六审段 1.2 取证修复（事件序）：日结拍事件序=竞价事件
-            /// （收盘清算 AuctionTick/AuctionCompleted）先于 DayBoundary
-            /// ——与旧管线日结拍序列一致（此前 DayBoundary 先 push、
-            /// drained 竞价后 extend，序颠倒——step_skeleton 逐字段
-            /// 取证实证）。drained 撤单事件保持 DayBoundary 之后
-            ///（清簿语义属"日结后"面，与竞价清算不同）。故执行序：
-            /// 迁移（facts 收集不 push）→ world 日结（drain 事实收集）
-            /// → 竞价事件 → DayBoundary 事件。迁移先行仍满足"组内/
-            /// 计划事件日历以 session day 为准"（world 日结在迁移后）。
-            let mut facts = match crate::session::pipeline::install_runtime_day_boundary(self) {
-                Ok(facts) => facts,
-                Err(fatal) => {
-                    self.rollback_runtime_step(baseline);
-                    return Err(self.poison_runtime_step(fatal));
-                }
-            };
-            // 日界批：收盘竞价成交（Drain 应答捎带）——Trade 事件入
-            /// DayBoundary 前段、个人确认以**当日** civil_date 即时入账
-            /// （修复迟到下一拍取次日+日结静点 save 丢失两漂移）。
-            let drained_receipts = match driver.world_day_end_for_step(self) {
-                Ok(receipts) => receipts,
-                Err(e) => {
-                    self.rollback_runtime_step(baseline);
-                    return Err(self.poison_runtime_step(StepFatal::InvariantViolation {
-                        location: "GameSession::step_via_runtime::day_end_world".to_owned(),
-                        description: e,
-                    }));
-                }
-            };
-            // 日界批：install 面补真——candle_book 历史末条升级为含收盘
-            /// 段的 Drain 终 K（commit_active 先于 Drain 提交的是日内段
-            /// 形态）；DayBoundary 事件 `closed_daily_candles` 同源补值
-            ///（facts 尚未编号 push，原地改写）。
-            let day_candles = match driver.take_drained_day_candles(self) {
-                Ok(candles) => candles,
-                Err(e) => {
-                    self.rollback_runtime_step(baseline);
-                    return Err(self.poison_runtime_step(StepFatal::InvariantViolation {
-                        location: "GameSession::step_via_runtime::day_end_candle_patch".to_owned(),
-                        description: e,
-                    }));
-                }
-            };
-            if let Err(e) = self.replace_runtime_committed_daily_candles(&day_candles) {
-                self.rollback_runtime_step(baseline);
-                return Err(self.poison_runtime_step(StepFatal::InvariantViolation {
-                    location: "GameSession::step_via_runtime::day_end_candle_patch".to_owned(),
-                    description: e,
-                }));
-            }
-            for fact in facts.iter_mut() {
-                if let Event::DayBoundary {
-                    closed_daily_candles,
-                    ..
-                } = &mut fact.event
-                {
-                    for (code, candle) in &day_candles {
-                        closed_daily_candles.insert(code.clone(), candle.clone());
-                    }
-                }
-            }
-            if let Err(e) = self.runtime_append_trade_receipts(&drained_receipts) {
-                self.rollback_runtime_step(baseline);
-                return Err(self.poison_runtime_step(StepFatal::InvariantViolation {
-                    location: "GameSession::step_via_runtime::day_end_receipts".to_owned(),
-                    description: e,
-                }));
-            }
-            // B2 件 4：交易日保留快照冻结（boundary 迁移已提交日K、
-            /// world 日结 Drain 已收当日桶——组装+日K对账+原子发布+镜像；
-            /// 日界批后日 K 已补真，对账在全对账分支闭合）。
-            if let Err(e) = driver.freeze_retained_trading_day(self) {
-                self.rollback_runtime_step(baseline);
-                return Err(self.poison_runtime_step(StepFatal::InvariantViolation {
-                    location: "GameSession::step_via_runtime::retained_freeze".to_owned(),
-                    description: e,
-                }));
-            }
-            events.extend(driver.take_drained_auction_events());
-            for fact in facts {
-                // step_frame 接轨件 4：分配走驱动器游标（take_event_seq
-                /// 先加后取）再同步会话权威——此前直改 state.seq 而不推进
-                /// 驱动器游标，下一拍驱动器重复分配同一 seq（日结后首拍
-                /// TickFrame coverage 显红）。
-                let seq = driver.take_event_seq();
-                self.set_runtime_seq(seq);
-                let mut event = fact.event;
-                if let Event::DayBoundary { seq: event_seq, .. } = &mut event {
-                    *event_seq = seq;
-                }
-                events.push(event);
-            }
-            // Sol 收官再复核阻断 3：撤单事件在 DayBoundary 序号分配
-            /// 之后编号（输出序=编号序的收尾段）。
-            driver.collect_drained_lifecycle_after_boundary();
-            // P2 复核阻断 2：生产日结路径（此前仅手动 driver.day_end 设
-            // force_full，生产 ends_day 段不设——组端 Drain 回流/
-            // AdminBatch 无逐账户 desk 事实，session 镜像漏同步）。日结
-            // 成功后置强制全量（下一拍回写全名册同步）。
-            driver.force_full_accounts = true;
-            let drained = driver.take_drained_events();
-            events.extend(drained);
-            // step_frame 接轨件 4：drained 撤单事件经驱动器游标分配
-            ///（collect_drained_events 内 project_lifecycle_events），
-            /// 此处回写会话权威——否则 state.seq 落后于事件流，TickFrame
-            /// 的 (seq_from, seq_to] coverage 显红（日结拍撤单场景）。
-            self.set_runtime_seq(driver.next_seq());
-            // D5 调序收尾：desk 清簿后重刷 mirror（此前刷新在 world 段前
-            /// ——旧在途残留使公开面/玩家在途读面跨日泄漏）。
-            {
-                let views: Vec<_> = driver
-                    .world_public_views()
-                    .iter()
-                    .map(|v| (v.last_price, v.public_cutoff_serial))
-                    .collect();
-                let mut mirror = std::collections::BTreeMap::new();
-                // P2-3：日结清簿后发布版本仍是清簿前 tick——须 live 现拉。
-                let facts = match driver.collect_resting_facts_live() {
-                    Ok(facts) => facts,
-                    Err(e) => {
-                        let fatal = StepFatal::InvariantViolation {
-                            location: "GameSession::step_via_runtime::day_end_mirror".to_owned(),
-                            description: e,
-                        };
-                        self.rollback_runtime_step(baseline);
-                        return Err(self.poison_runtime_step(fatal));
-                    }
-                };
-                for (stock_idx, book) in facts.iter().enumerate() {
-                    let Some((last_price, cutoff)) = views.get(stock_idx).copied() else {
-                        continue;
-                    };
-                    let orders = book
-                        .iter()
-                        .filter_map(|fact| {
-                            Some((
-                                driver.account_by_owner(fact.owner)?,
-                                fact.side,
-                                crate::Money::from_cents(fact.price),
-                                fact.qty,
-                                fact.order_serial,
-                                fact.filled_value,
-                                fact.filled_qty,
-                            ))
-                        })
-                        .collect::<Vec<_>>();
-                    mirror.insert(
-                        crate::StockId(u32::try_from(stock_idx).expect("股下标在 u32")),
-                        super::DeskBookMirror {
-                            orders,
-                            last_price: crate::Money::from_cents(last_price),
-                            public_cutoff_serial: cutoff,
-                            // Sol 四轮修复：真实 desk 游标（同上映射点）。
-                            next_serial: driver
-                                .desk_next_serials()
-                                .get(stock_idx)
-                                .copied()
-                                .unwrap_or(0),
-                        },
-                    );
-                }
-                self.state.desk_book_mirror = mirror;
-                // Sol 四轮修复：游标会话级缓存（同上）。
-                self.state.runtime_desk_serial_cursors = driver.desk_next_serials().to_vec();
-                // Sol 复核阻断 P1-1：日终清簿后在途快照 live 重刷（与
-                // mirror 同式现拉——发布版本仍是清簿前 tick；快照安装
-                // 在 Drain 之前，不重刷则日终后信封查询/save 读清簿前
-                // 在途单）。
-                self.state.runtime_resting_snapshot = Some(super::RuntimeRestingSnapshot {
-                    facts: facts.into_iter().map(std::sync::Arc::new).collect(),
-                    id_map: driver.resting_id_map_handle(),
-                    accounts_per_group: driver.accounts_per_group(),
-                });
-            }
-            // Sol 终审四审 A2：world 日结（上方）把当日 K 归档进 desk
-            /// 历史——但常规 install_candles 在其**之前**执行（当日条
-            /// 尚不可见，档少一条 fault2064 反截）。日结后补一次安装
-            ///（幂等：push 按 session 历史 skip，active 重装同值）。
-            if let Err(e) = driver.install_candles_with_mode(self, true) {
-                self.rollback_runtime_step(baseline);
-                return Err(self.poison_runtime_step(StepFatal::InvariantViolation {
-                    location: "GameSession::step_via_runtime::day_end_candles".to_owned(),
-                    description: e,
-                }));
-            }
-        }
-        drop(_seg_dayend);
-        // 接轨件 4：尾清与基线交付由调用方承载（见方法注释）。
-        Ok(RuntimeStepInstall {
-            events,
-            baseline,
-            #[cfg(feature = "simulation-diagnostics")]
-            causal,
-        })
-    }
 
     /// P2-3b：五域写时 undo 记录面（幂等首写——undo_ids 判重；None=拍前
     /// 不在册墓碑）。写入点在**改写前**调用。
@@ -1301,43 +561,6 @@ impl GameSession {
         }
     }
 
-    /// 安装失败回滚基线（Sol 三审 (b)）：step 推进+安装面可能写入的
-    /// 全部会话域快照。candle 域当前为防御性覆盖（install_candles 的
-    /// 写入循环不产生中途失败——收集失败时不写任何条目；若后续写入
-    /// 面变为可失败，此快照即回滚依据）。
-    fn runtime_install_baseline(&self) -> RuntimeInstallBaseline {
-        // P2 复核阻断 1（复审返工：判定对齐 ends_day 的拍基准）：ends_day
-        // 判定读 **step 后** tick（set_runtime_tick 推进后），本基线在
-        // step 前构造——预测下一拍（tick+1）。原 step 前 tick 判定恒错
-        // 位一拍（日结拍基线恒 None=修复不生效，复审突变实证）。
-        let tpd = u64::from(self.state.setup.ticks_per_day);
-        let day_end_tick = tpd > 0 && (self.tick() + 1) % tpd == 0;
-        RuntimeInstallBaseline {
-            tick: self.tick(),
-            seq: self.current_seq(),
-            // Sol 终审修复 1a：日结拍 day 推进的回滚源。
-            day: self.day(),
-            accounts_full: if day_end_tick {
-                Some(self.runtime_accounts_snapshot())
-            } else {
-                None
-            },
-            markets: self.state.markets.clone(),
-            price_history: self.state.price_history.clone(),
-            minute_closes: self.state.market_minute_closes.clone(),
-            // B2 复核阻断 1：当日分钟K桶入回滚面（candidate 投影失败
-            /// 不 poison 可重试——泄漏的 ghost bars 会经 from_session
-            /// 重建播回 desk 与重试成交合并，静默错桶入保留链）。
-            minute_bars: self.state.market_minute_bars.clone(),
-            retained_len: self.state.retained_market_days.len(),
-            candle_histories: self.state.candle_book.histories().clone(),
-            candle_active: self.state.candle_book.active().clone(),
-            // P1-1：快照拍前值入基线（回滚恢复源）。
-            resting_snapshot: self.state.runtime_resting_snapshot.clone(),
-            // P2-3b：五域（attention/heap/belief/retail/history）不再随基线
-            // 快照——回滚源=写时 undo（见结构体注释）。
-        }
-    }
 
     /// 所有市场工作运行在私有 tick shadow；失败候选被丢弃。
     /// 权威状态只接收最终不会失败的 CommitTick 状态交换。
@@ -1748,151 +971,6 @@ impl GameSession {
             .collect()
     }
 
-    /// runtime 驱动器翻转面（Sol 二审修复集 3 + 三审 (b)）：安装失败
-    /// 撤销已推进的 tick/seq/账户基线**及安装面已写入的行情/历史/
-    /// 注意力域**（经直改标记——回滚也是外部直改；不残留半安装会话）。
-    pub fn rollback_runtime_step(&mut self, baseline: RuntimeInstallBaseline) {
-        let RuntimeInstallBaseline {
-            tick,
-            seq,
-            day,
-            accounts_full,
-            markets,
-            price_history,
-            minute_closes,
-            minute_bars,
-            retained_len,
-            candle_histories,
-            candle_active,
-            resting_snapshot,
-        } = baseline;
-        self.mark_external_mutation();
-        self.state.tick = tick;
-        self.state.seq = seq;
-        // Sol 终审修复 1a：日结拍 day 推进随整面回滚（此前泄漏新日）。
-        self.state.day = day;
-        // P2-2b：账户恢复改走写时 undo（首写前值——step 内全部账户写入
-        /// 的回滚等价；无记录=step 内未写=无需恢复）。P2 复核阻断 1：
-        /// 日结拍（accounts_full=Some）全量恢复——覆盖日结迁移对
-        /// state.accounts 的一切直改（T+1 解锁等）。
-        if let Some(accounts) = accounts_full {
-            for (id, cash, positions) in accounts {
-                if let Some(acct) = self.fixture_account_mut(&id) {
-                    acct.fixture_set_cash(crate::money::Money::from_cents(cash));
-                    acct.fixture_set_positions(positions);
-                }
-            }
-            self.state.runtime_account_undo.clear();
-            self.state.runtime_account_undo_ids.clear();
-        } else {
-            for (id, cash, positions) in std::mem::take(&mut self.state.runtime_account_undo) {
-                if let Some(acct) = self.fixture_account_mut(&id) {
-                    acct.fixture_set_cash(crate::money::Money::from_cents(cash));
-                    acct.fixture_set_positions(positions);
-                }
-            }
-            self.state.runtime_account_undo_ids.clear();
-        }
-        self.state.markets = markets;
-        self.state.price_history = price_history;
-        self.state.market_minute_closes = minute_closes;
-        // B2 复核阻断 1：当日分钟K桶随整面恢复（bars 增量追加域的
-        // 回滚源——与 minute_closes 同式整值替换）。
-        self.state.market_minute_bars = minute_bars;
-        // B2：保留链截断回拍前尾长（冻结 push 的失败零泄漏）。
-        self.state.retained_market_days.truncate(retained_len);
-        self.state.candle_book.replace_histories(candle_histories);
-        self.state.candle_book.replace_active(candle_active);
-        // P2-3b：五域回滚改写时 undo 消费（原全量快照恢复退役）。
-        // attention：逐条恢复首写前值（None 墓碑=拍前不在册→移除）。
-        for (id, prev) in std::mem::take(&mut self.state.runtime_attention_undo) {
-            match prev {
-                Some(value) => {
-                    self.state.npc_attention.insert(id, value);
-                }
-                None => {
-                    self.state.npc_attention.remove(&id);
-                }
-            }
-        }
-        self.state.runtime_attention_undo_ids.clear();
-        // heap：move-undo 精确还原旧堆（P1-C 教训保持：不"从权威重建"——
-        // 旧管线陈旧项会丢，business_state_hash 回滚对比显红）。
-        if let Some(old_heap) = self.state.runtime_heap_undo.take() {
-            self.state.attention_scheduler = old_heap;
-        }
-        // belief/retail/history：同 attention 式逐条恢复。
-        for (id, prev) in std::mem::take(&mut self.state.runtime_belief_undo) {
-            match prev {
-                Some(value) => {
-                    self.state.belief_participants.insert(id, value);
-                }
-                None => {
-                    self.state.belief_participants.remove(&id);
-                }
-            }
-        }
-        self.state.runtime_belief_undo_ids.clear();
-        for (id, prev) in std::mem::take(&mut self.state.runtime_retail_undo) {
-            match prev {
-                Some(value) => {
-                    self.state.retail_experience.insert(id, value);
-                }
-                None => {
-                    self.state.retail_experience.remove(&id);
-                }
-            }
-        }
-        self.state.runtime_retail_undo_ids.clear();
-        for (id, prev) in std::mem::take(&mut self.state.runtime_history_undo) {
-            match prev {
-                Some(value) => {
-                    self.state.history_reads.insert(id, value);
-                }
-                None => {
-                    self.state.history_reads.remove(&id);
-                }
-            }
-        }
-        self.state.runtime_history_undo_ids.clear();
-        // B2 件 5：个人确认回滚（首写尾长截断——AppendOnlyHistory 支持
-        /// pop 或重建；用重建（chunk 共享尾不可中途截断）。
-        for (id, prev_len) in std::mem::take(&mut self.state.runtime_receipts_undo) {
-            if let Some(history) = self.state.personal_trade_confirmations.get(&id) {
-                let mut restored = crate::experience::AppendOnlyHistory::default();
-                for row in history.iter().take(prev_len) {
-                    restored.push(row.clone());
-                }
-                self.state
-                    .personal_trade_confirmations
-                    .insert(id, restored);
-            }
-        }
-        self.state.runtime_receipts_undo_ids.clear();
-        // step_frame 接轨件 4b：扩展回滚面（整值替换域 move-undo 恢复——
-        /// malformed_frame 契约：投影失败后 save==步前）。
-        if let Some((mirror, cursors)) = self.state.runtime_mirror_undo.take() {
-            self.state.desk_book_mirror = mirror;
-            self.state.runtime_desk_serial_cursors = cursors;
-        }
-        if let Some(plans) = self.state.runtime_plans_undo.take() {
-            self.state.plans = plans;
-        }
-        // P2-4：envelope undo 随每拍维护退役（槽恒 None——保留 no-op
-        /// 消费面防结构扩散，死字段登记随下批清理）。
-        let _ = self.state.runtime_envelope_undo.take();
-        // Sol 复核阻断 P1-1：快照恢复拍前值（上一成功拍发布版本——
-        // ledger 已停逐拍维护，清空使失败拍后的信封查询/save/驱动器
-        // 重建种子读 stale ledger 或空集）。
-        self.state.runtime_resting_snapshot = resting_snapshot;
-        if let Some(lifecycles) = self.state.runtime_lifecycles_undo.take() {
-            self.state.npc_order_lifecycles = lifecycles;
-        }
-        if let Some((events, decisions)) = self.state.runtime_retail_diag_undo.take() {
-            self.state.last_retail_order_events = events;
-            self.state.last_retail_decisions = decisions;
-        }
-    }
 
     /// 注意力镜像全量只读（Belief-1b·下：投递下行快照源——candidate
     /// 域=上一 tick 组同步值）。
@@ -2149,6 +1227,48 @@ impl GameSession {
         self.state.belief_participants.contains_key(&account)
     }
 
+    pub(crate) fn next_runtime_authority_epoch(&self) -> Result<u64, String> {
+        self.runtime_authority_epoch.checked_add(1).ok_or_else(|| "driver authority_epoch 已耗尽，拒绝构造替换".to_owned())
+    }
+
+    pub(crate) fn install_runtime_authority_epoch(&mut self, epoch: u64) {
+        assert_eq!(self.runtime_authority_epoch.checked_add(1), Some(epoch), "driver epoch 已在 spawn 前验证且仅成功安装一次");
+        self.runtime_authority_epoch = epoch;
+    }
+
+    pub(crate) fn runtime_personal_presence(
+        &self,
+    ) -> Result<std::collections::BTreeMap<crate::AccountId, crate::runtime::personal_full_validation::PersonalPresence>, String> {
+        use crate::runtime::personal_full_validation::{PersonalAbsenceReason, PersonalPresence};
+        let mut expected = std::collections::BTreeMap::new();
+        for (id, account) in self.state.accounts.iter() {
+            let Some(strategy) = account.strategy() else {
+                if self.state.belief_participants.contains_key(id) {
+                    return Err(format!("个人能力名册：无实际 strategy 却有 participant：{id:?}"));
+                }
+                expected.insert(*id, PersonalPresence::Absent(PersonalAbsenceReason::NoStrategy));
+                continue;
+            };
+            let participant = self.state.belief_participants.get(id);
+            let required = strategy.retail_style().is_some() || strategy.belief_chain_params().is_some();
+            if required && participant.is_none() {
+                return Err(format!("个人能力名册：实际 strategy 要求 participant 但缺行：{id:?}"));
+            }
+            if let Some(participant) = participant {
+                if !self.state.npc_attention.contains_key(id) {
+                    return Err(format!("个人能力名册：participant 缺 attention：{id:?}"));
+                }
+                if participant.information().owner() != *id || participant.belief().npc() != *id {
+                    return Err(format!("个人能力名册：participant 属主不匹配：{id:?}"));
+                }
+                expected.insert(*id, PersonalPresence::Required);
+            } else {
+                expected.insert(*id, PersonalPresence::Absent(PersonalAbsenceReason::NoBeliefParticipant));
+            }
+        }
+        Ok(expected)
+    }
+
     /// 信念个人态只读投影（D3a-2b Belief-1：构造投影/同源校验源）。
     pub fn runtime_belief_states(
         &self,
@@ -2292,6 +1412,20 @@ impl GameSession {
         bars: Vec<Option<Vec<crate::runtime::MinuteBarFact>>>,
         date: crate::calendar::CivilDate,
     ) -> Result<std::sync::Arc<crate::runtime::publication::RetainedDaySnapshot>, String> {
+        let candle_time = self.candle_date_time_for_runtime();
+        let closed = self.state.candle_book.histories().iter().filter_map(|(code, history)| {
+            history.iter_rev().find(|candle| candle.time == candle_time).map(|candle| (*code, candle.clone()))
+        }).collect();
+        self.assemble_retained_from_prepared(bars, date, &closed, false)
+    }
+
+    pub(in crate::session) fn assemble_retained_from_prepared(
+        &self,
+        bars: Vec<Option<Vec<crate::runtime::MinuteBarFact>>>,
+        date: crate::calendar::CivilDate,
+        closed: &std::collections::BTreeMap<crate::StockId, crate::session::DailyCandle>,
+        require_candles: bool,
+    ) -> Result<std::sync::Arc<crate::runtime::publication::RetainedDaySnapshot>, String> {
         let n = self.stock_count_for_runtime();
         if bars.len() != n {
             return Err(format!(
@@ -2313,14 +1447,9 @@ impl GameSession {
             /// 空 bars 互恰）。
             if trading {
                 let code = crate::StockId(idx as u32);
-                let candle_time = self.candle_date_time_for_runtime();
-                let candle = self
-                    .candle_book_histories_for_runtime(&code)
-                    .iter()
-                    .rev()
-                    .find(|c| c.time == candle_time)
-                    .cloned();
+                let candle = closed.get(&code);
                 let Some(candle) = candle else {
+                    if require_candles { return Err(format!("Full 日结候选缺当日 K：{code:?}")); }
                     // 【既有登记（manual 面）】手动 day_end 编排不做
                     /// boundary 迁移（日K未提交 install 面）——对账基缺席
                     /// 跳过（生产 step 的 ends_day 段恒有提交条目+日界批

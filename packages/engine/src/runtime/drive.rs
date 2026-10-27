@@ -318,6 +318,7 @@ impl RuntimeDriver {
         session: &mut GameSession,
         n_groups: usize,
     ) -> Result<Self, String> {
+        let authority_epoch = session.next_runtime_authority_epoch()?;
         let mut setup: SessionSetup = session.export_setup_for_runtime();
         // StockId 按代码升序分配；交易部、账户矩阵与报价数组必须共用该顺序。
         setup.stocks.sort_unstable_by(|a, b| a.code.0.cmp(&b.code.0));
@@ -325,6 +326,7 @@ impl RuntimeDriver {
         let (cash_raw, shares_raw, invested_raw, recovered_raw, frozen_raw, ever_held_raw, ids) =
             accounts_projection_from_session(session, n_stocks);
         let npcs = ids.len();
+        let personal_presence = session.runtime_personal_presence()?;
         // 翻转批组参数化：账户矩阵按组切分（[group][local]——id_map 序
         /// 均分、尾组余位零填充；单组 n_groups=1 时与原全量单行等价）。
         let n_groups = n_groups.max(1);
@@ -569,9 +571,15 @@ impl RuntimeDriver {
         ).map_err(|error| format!("计划构造移交失败：{error:?}"))?;
         // P2-2a：稀疏上行读面的全量缓存基线（构造期投影==组端初值）。
         let belief_cache = spec.belief_seeds.clone();
-        let world = World::spawn(spec).map_err(|e| format!("驱动器世界构造失败：{e:?}"))?;
+        let mut world = World::spawn(spec).map_err(|e| format!("驱动器世界构造失败：{e:?}"))?;
+        let presence = (0..n_groups).map(|group| {
+            (group as super::GroupIdx, ids.iter().skip(group * per_group).take(per_group)
+                .map(|id| (*id, personal_presence[id])).collect())
+        }).collect();
+        world.install_personal_presence(authority_epoch, presence);
         // 全部可失败构造已成功，才发布旧簿的所有权移交。
         session.runtime_clear_resting_for_adoption();
+        session.install_runtime_authority_epoch(authority_epoch);
         let driver = Self {
             world,
             id_map_shared: std::sync::Arc::new(ids.clone()),
@@ -763,7 +771,7 @@ impl RuntimeDriver {
         /// fact_rec 的 clone 归 remainder——事件面 R4 必留）。
         let snapshots = {
             let _seg = step_profile::scope(StepSegment::AcctEchoCollect);
-            let skip_all = !self.force_full_accounts;
+            let skip_all = !self.force_full_accounts && !self.world.pending_mirror_domains().accounts_full;
             if skip_all {
                 let published = self.world.publication().load();
                 if published.tick != self.world.global.committed_tick {
@@ -913,7 +921,16 @@ impl RuntimeDriver {
             crate::session::pipeline::TickPhase::DerivationAudit,
         );
         let mut personals = Vec::new();
-        {
+        if self.world.pending_mirror_domains().personal_full {
+            let full = self.world.collect_personal_full().map_err(|error| error.to_string())?;
+            for (group, rows) in full.groups {
+                for (local, id, value) in rows {
+                    if let Some(value) = value {
+                        personals.push((self.global_index((group, local)), id, value));
+                    }
+                }
+            }
+        } else {
             let published = self.world.publication().load();
             if published.tick != self.world.global.committed_tick {
                 return Err(format!("个人态发布版本滞后：{} != {}", published.tick, self.world.global.committed_tick));
@@ -959,6 +976,8 @@ impl RuntimeDriver {
             plans,
             touched,
             events,
+            day_end: None,
+            emit_price_tick: true,
         })
     }
 
@@ -1085,108 +1104,9 @@ impl RuntimeDriver {
 }
 
 impl RuntimeDriver {
-    /// 日结+自然日推进（批 8g：公司域/civil 全局域等价路径）。
-    ///
-    /// 语义对齐（业务照搬 `end_civil_day` 形状，执行形态改 runtime）：
-    /// - runtime DayEnd（Drain 清簿→组日翻转/权益→候选校验）对应市场侧
-    ///   日终点；`next_seq` 语义由会话权威保留（事件 seq 仍全局单调）；
-    /// - `session.end_civil_day()` 保持为**唯一权威调用**（公司调度/
-    ///   日历/披露的 candidate-安装语义不变）。失败时撤销 World 日结、
-    ///   恢复 day/seq 及本次账户/经历/个人确认镜像；既有 retained 发布
-    ///   与 civil 其他域的跨域事务边界不由此局部镜像基线承诺。
+    /// 手动市场日结后推进 civil；调用方仍负责原 API 约定的市场 day 计数。
     pub fn day_end(&mut self, session: &mut GameSession) -> Result<(), String> {
-        session.require_healthy().map_err(|fatal| fatal.to_string())?;
-        #[cfg(feature = "simulation-diagnostics")]
-        self.ensure_causal_day_end_supported()?;
-        let restore_mirror = session.runtime_day_end_mirror_rollback();
-        let pending_before = self.pending_hold_inits.clone();
-        let force_before = self.force_full_accounts;
-        let result = self.day_end_inner(session);
-        if result.is_err() && session.poison_reason().is_none() {
-            restore_mirror(session);
-            self.pending_hold_inits = pending_before;
-            self.force_full_accounts = force_before;
-        }
-        result
-    }
-
-    fn day_end_inner(&mut self, session: &mut GameSession) -> Result<(), String> {
-        // 基线（Sol 二审修复集 2）：civil 失败时撤销 World 日结并恢复账户镜像——World 日结
-        // （Abort 冲回）、driver seq/事件缓冲、会话 day/seq。
-        let day_before = session.day();
-        let seq_before = session.current_seq();
-        let next_seq_before = self.next_seq;
-        let drained_len_before = self.drained_events.len();
-        // runtime 侧日结：Drain→组日翻转→候选校验（失败=内部已 Abort 冲回）。
-        self.world
-            .run_day_end_public()
-            .map_err(|e| format!("runtime 日结失败（内部已 Abort 冲回）：{e:?}"))?;
-        if let Err(e) = self.install_day_end_accounts(session) {
-            self.rollback_day_end(
-                session, day_before, seq_before, next_seq_before, drained_len_before,
-            );
-            return Err(format!("日结账户安装失败（账户镜像已回滚）：{e}"));
-        }
-        // 日界批：收盘成交事件/个人确认派生（civil_date=当日）。失败=日结
-        /// 冲回（drained_events 截断+Abort）。
-        let drained_receipts = match self.collect_drained_events(session.civil_date()) {
-            Ok(receipts) => receipts,
-            Err(e) => {
-                self.rollback_day_end(
-                    session,
-                    day_before,
-                    seq_before,
-                    next_seq_before,
-                    drained_len_before,
-                );
-                return Err(format!("收盘成交事件派生失败（World 日结与账户镜像已回滚）：{e}"));
-            }
-        };
-        // B2 件 4：手动日结路径补保留冻结（civil 推进**前**——date=当日；
-        /// 生产 step 的 ends_day 段之外的手动编排面。迁移缺席时对账按
-        /// 登记跳过——见 assemble 注释）。
-        if let Err(e) = self.freeze_retained_trading_day(session) {
-            self.rollback_day_end(
-                session,
-                day_before,
-                seq_before,
-                next_seq_before,
-                drained_len_before,
-            );
-            return Err(format!("保留快照冻结失败（World 日结与账户镜像已回滚）：{e}"));
-        }
-        // 公司链读取前交付收盘确认；失败时由外层恢复镜像基线。
-        if let Err(e) = session.runtime_append_trade_receipts(&drained_receipts) {
-            self.rollback_day_end(
-                session,
-                day_before,
-                seq_before,
-                next_seq_before,
-                drained_len_before,
-            );
-            return Err(format!("收盘成交个人确认入账失败（World 日结与账户镜像已回滚）：{e}"));
-        }
-        // 会话自然日推进（公司调度/关账/披露/civil clock——旧引擎权威）。
-        if let Err(e) = session.end_civil_day() {
-            let fatal = match e {
-                crate::session::SessionError::Step(fatal) => fatal,
-                error => crate::session::StepFatal::InvariantViolation {
-                    location: "RuntimeDriver::day_end::civil".to_owned(),
-                    description: format!("市场日结安装后的自然日推进失败：{error}"),
-                },
-            };
-            return Err(session.poison_runtime_step(fatal).to_string());
-        }
-        // D3a-2c 件2：日结后同步自然日（快照 civil_date 跟随 civil clock）。
-        self.world.set_civil_date(session.civil_date());
-        // D4：日结清会话分钟历史（位置合并的跨日对齐——旧管线同口径）。
-        session.clear_runtime_minute_history();
-
-        // P2-1b：日结改账户（Drain 回流/T+1 解冻/AdminBatch 权益）但无
-        // 逐账户事实事件——置强制全量回写标记（下一 step 全名册同步
-        // 一次；低频路径语义安全优先）。
-        self.force_full_accounts = true;
-        Ok(())
+        self.install_manual_day_end(session, false)
     }
 
     /// tick 分片与日结完整 candidate 共用同一账户投影，保持现金、T+1、成本口径一致。
@@ -1768,24 +1688,6 @@ impl RuntimeDriver {
         }
     }
 
-    /// 日结失败全量回滚（Sol 二审修复集 2）：撤销 World 日结（Abort——
-    /// 组/部按可逆日志冲回上一交易日收敛态）、恢复 driver seq 与事件
-    /// 缓冲、恢复会话 day/seq 基线。调用后可原样重跑日结（恰一次语义
-    /// 由缓冲截断保证——失败尝试不残留事件、不消耗 seq）。
-    fn rollback_day_end(
-        &mut self,
-        session: &mut GameSession,
-        day_before: u32,
-        seq_before: u64,
-        next_seq_before: u64,
-        drained_len_before: usize,
-    ) {
-        session.rollback_runtime_day_end(day_before, seq_before);
-        self.world.abort_day_end();
-        self.next_seq = next_seq_before;
-        self.drained_events.truncate(drained_len_before);
-    }
-
     /// 取日终清簿事件（清空式——调用方拼进 tick 帧或日结帧）。
     pub fn take_drained_events(&mut self) -> Vec<Event> {
         std::mem::take(&mut self.drained_events)
@@ -1813,97 +1715,14 @@ impl RuntimeDriver {
         out
     }
 
-    /// 日结编排（runtime 市场侧 day 同步版）：runtime DayEnd → 会话
-    /// 交易日计数推进（直改标记——旧管线 commit_from 的 day 域等价）
-    /// → 自然日推进（end_civil_day 时钟校验通过）→ 清簿事件。
+    /// 手动日结在同一私有 candidate 推进市场 day，安装后再推进 civil。
     pub fn day_end_with_runtime_market_day(
         &mut self,
         session: &mut GameSession,
     ) -> Result<(), String> {
-        session.require_healthy().map_err(|fatal| fatal.to_string())?;
-        #[cfg(feature = "simulation-diagnostics")]
-        self.ensure_causal_day_end_supported()?;
-        let restore_mirror = session.runtime_day_end_mirror_rollback();
-        let pending_before = self.pending_hold_inits.clone();
-        let force_before = self.force_full_accounts;
-        let result = self.day_end_with_runtime_market_day_inner(session);
-        if result.is_err() && session.poison_reason().is_none() {
-            restore_mirror(session);
-            self.pending_hold_inits = pending_before;
-            self.force_full_accounts = force_before;
-        }
-        result
+        self.install_manual_day_end(session, true)
     }
 
-    fn day_end_with_runtime_market_day_inner(
-        &mut self,
-        session: &mut GameSession,
-    ) -> Result<(), String> {
-        // 基线（Sol 二审修复集 2，扩展 P1-7）：civil 失败时除会话
-        // day/seq 外，同步撤销 World 日结与 driver seq/事件缓冲。
-        let day_before = session.day();
-        let seq_before = session.current_seq();
-        let next_seq_before = self.next_seq;
-        let drained_len_before = self.drained_events.len();
-        self.world
-            .run_day_end_public()
-            .map_err(|e| format!("runtime 日结失败：{e:?}"))?;
-        if let Err(e) = self.install_day_end_accounts(session) {
-            self.rollback_day_end(
-                session, day_before, seq_before, next_seq_before, drained_len_before,
-            );
-            return Err(format!("日结账户安装失败（账户镜像已回滚）：{e}"));
-        }
-        // civil 公司链读取前交付收盘成交；失败时由外层恢复镜像基线。
-        let drained_receipts = match self.collect_drained_events(session.civil_date()) {
-            Ok(receipts) => receipts,
-            Err(e) => {
-                self.rollback_day_end(
-                    session,
-                    day_before,
-                    seq_before,
-                    next_seq_before,
-                    drained_len_before,
-                );
-                return Err(format!("收盘成交事件派生失败（World 日结与账户镜像已回滚）：{e}"));
-            }
-        };
-        // driver 直调路径无 DayBoundary 事件——撤单段紧随竞价段编号
-        ///（编号序=输出序：trades/auction → lifecycle）。
-        self.collect_drained_lifecycle_after_boundary();
-        session.advance_runtime_market_day();
-        if let Err(e) = session.runtime_append_trade_receipts(&drained_receipts) {
-            self.rollback_day_end(
-                session,
-                day_before,
-                seq_before,
-                next_seq_before,
-                drained_len_before,
-            );
-            return Err(format!("收盘成交个人确认入账失败（World 日结与账户镜像已回滚）：{e}"));
-        }
-        // 会话自然日推进（公司调度/关账/披露/civil clock——旧引擎权威）。
-        if let Err(e) = session.end_civil_day() {
-            let fatal = match e {
-                crate::session::SessionError::Step(fatal) => fatal,
-                error => crate::session::StepFatal::InvariantViolation {
-                    location: "RuntimeDriver::day_end_with_runtime_market_day::civil".to_owned(),
-                    description: format!("市场日结安装后的自然日推进失败：{error}"),
-                },
-            };
-            return Err(session.poison_runtime_step(fatal).to_string());
-        }
-        // Sol 六审段 1.2 取证修复：日结 drained 事件（含收盘竞价清算
-        /// AuctionTick/AuctionCompleted）经 next_seq 分配后**回写会话
-        /// seq 权威**——否则下一拍 step_frame_equivalent 的
-        /// adopt_session_seq 从会话旧值重取游标，日结事件已耗的
-        /// seq 被复用（batch4_seq_continuous 15<=15 双用实证）。
-        session.set_runtime_seq(self.next_seq);
-        // D4：日结清会话分钟历史（位置合并的跨日对齐——旧管线同口径）。
-        session.clear_runtime_minute_history();
-
-        Ok(())
-    }
 }
 
 impl RuntimeDriver {

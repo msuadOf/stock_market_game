@@ -1044,9 +1044,9 @@ fn d0_manual_day_end_mirror_rollback_covers_sparse_account_ids() {
     );
 }
 
-/// D0 生产日结完整基线的失败恢复面：新增安装写入不能遗漏稀疏账户。
+/// DP4 F1：新日结候选拒绝不得安装稀疏账户，也不得撤回已经发布的市场。
 #[test]
-fn d0_production_day_end_baseline_restores_sparse_account_assets() {
+fn d0_day_end_candidate_rejection_preserves_sparse_account_mirror_and_market_source() {
     let mut setup = super::npc_working_quote_tests::quote_setup(0);
     setup.npcs.inst_count = 0;
     setup.start_date = crate::calendar::CivilDate::from_ymd(2026, 1, 5).unwrap();
@@ -1073,37 +1073,26 @@ fn d0_production_day_end_baseline_restores_sparse_account_assets() {
     let before_cash = game.account(remote).unwrap().cash();
     let before_positions = format!("{:?}", game.account(remote).unwrap().positions());
     let publication = driver.publication();
-    let installed = game
-        .runtime_step_with_install_returning_baseline(&mut driver)
-        .expect("真实生产日结安装，保留失败回滚基线");
-    assert_eq!(
-        game.account(remote).unwrap().positions()[&StockId(0)].t1_locked(),
-        0,
-        "真实日结已解冻"
-    );
-    // 显式模拟安装尾部的新资产写入，再执行生产失败恢复；不伪造成交或 frame。
-    let changed = game.fixture_account_mut(&remote).unwrap();
-    changed.fixture_set_cash(Money::from_cents(42));
-    changed.fixture_set_positions(std::collections::BTreeMap::from([(
-        StockId(0),
-        crate::account::Position::from_restored_parts(200, 50, 200_000, 20_000),
-    )]));
-    game.rollback_runtime_step(installed.baseline);
-    assert_eq!(
-        game.account(remote).unwrap().cash(),
-        before_cash,
-        "生产日结基线恢复稀疏账户现金"
-    );
-    assert_eq!(
-        format!("{:?}", game.account(remote).unwrap().positions()),
-        before_positions,
-        "恢复持仓、T+1 与成本"
-    );
-    assert_eq!(game.tick(), 3, "只撤会话安装");
-    assert_eq!(publication.load().tick, 4, "最后已发布市场 tick 不回退");
-    assert_eq!(
-        driver.world_committed_tick(),
-        4,
-        "不把生产失败改成 AbortTick"
-    );
+    let fatal = StepFatal::InvariantViolation {
+        location: "failure_tests::sparse_day_end_candidate".to_owned(),
+        description: "拒绝完整日结候选，不恢复已发布市场".to_owned(),
+    };
+    let failed: Result<(), StepFatal> = game.runtime_step_with_prepared_mirror(&mut driver, |projection, facts| {
+        assert_eq!(projection.tick(), 4);
+        projection.project_frame(facts)?.validate().map_err(|error| StepFatal::InvariantViolation {
+            location: "failure_tests::sparse_projection".to_owned(), description: error.to_string(),
+        })?;
+        Err(fatal.clone())
+    });
+    assert_eq!(failed.unwrap_err(), fatal);
+    assert_eq!(game.account(remote).unwrap().cash(), before_cash, "未 swap 不写稀疏账户现金");
+    assert_eq!(format!("{:?}", game.account(remote).unwrap().positions()), before_positions,
+        "未 swap 保完整持仓、T+1 和成本旧镜像");
+    assert_eq!(game.tick(), 3, "镜像保旧读点");
+    assert_eq!(publication.load().tick, 4, "已发布市场 tick 不回退");
+    assert_eq!(driver.world_committed_tick(), 4);
+    assert_eq!(publication.load().retained.days.len(), 1, "已发布 retained 不撤回");
+    assert_eq!(game.poison_reason(), Some(&fatal));
+    assert_eq!(driver.step_frame_equivalent(&mut game).unwrap_err(), fatal);
+    assert_eq!(game.save().unwrap_err(), fatal);
 }

@@ -104,7 +104,13 @@ impl GroupState {
 
     fn admin_candidate(&self) -> AdminGroupCandidate {
         let pending = self.admin_pending.as_ref().expect("候选必须有 pending");
+        let accounts_full = pending.before.iter().any(|(local, before)| before.as_ref() != self.accounts[*local as usize].as_ref());
+        let mut mirror_domains = super::super::source::MirrorDomains { accounts_full, ..Default::default() };
+        if let Some(information) = &pending.information {
+            mirror_domains = mirror_domains.union(information.mirror_domains());
+        }
         AdminGroupCandidate {
+            mirror_domains,
             information: pending.information.as_ref().map(|info| info.prepared.clone()),
             group: self.group,
             accounts: pending
@@ -155,6 +161,7 @@ impl GroupState {
             AdminPhase::Prepare => return Err(invalid("prepare 不能走 complete")),
         }
         Ok(AdminGroupCandidate {
+            mirror_domains: Default::default(),
             information: None,
             group: self.group,
             accounts: locals

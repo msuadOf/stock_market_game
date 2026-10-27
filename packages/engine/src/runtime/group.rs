@@ -5477,6 +5477,42 @@ pub fn group_main(
                     break;
                 }
             }
+            GroupIn::EchoPersonalFull { source } => {
+                let full = (|| {
+                    if source.tick != state.committed_tick || state.cur_tick != state.committed_tick
+                        || state.admin_pending.is_some()
+                    {
+                        return Err(RuntimeError::ProtocolInvariant {
+                            detail: format!("Full 个人读取不是已提交静点：group={} source={source:?} committed={} current={}", state.group, state.committed_tick, state.cur_tick),
+                        });
+                    }
+                    let root = state.root_projection.as_ref().ok_or_else(|| RuntimeError::ProtocolInvariant {
+                        detail: format!("Full 个人读取缺真实名册：group={}", state.group),
+                    })?;
+                    let mut slots = Vec::new();
+                    for (local, account) in root.account_ids.iter().skip(state.roster_offset).take(state.accounts.len()).enumerate() {
+                        let personal = state.belief_states.get(local).ok_or_else(|| RuntimeError::ProtocolInvariant {
+                            detail: format!("Full 个人真实名册缺槽：group={} local={local} account={account:?}", state.group),
+                        })?;
+                        slots.push((local as LocalIdx, *account, personal.clone()));
+                    }
+                    Ok(slots)
+                })();
+                match full {
+                    Ok(slots) => {
+                        if up_tx.send(UpMsg::GroupPersonalFull { group: state.group, source, slots }).is_err() {
+                            result = Err(RuntimeError::SendFailed { detail: "GroupPersonalFull 上行失败".to_owned() });
+                            break;
+                        }
+                    }
+                    Err(error) => {
+                        abort.store(true, Ordering::SeqCst);
+                        let _ = up_tx.send(UpMsg::Failed { who, error: error.clone() });
+                        result = Err(error);
+                        break;
+                    }
+                }
+            }
             GroupIn::EchoBelief => {
                 // P2-2a：稀疏上行——只 clone 本 tick dirty 且在册的条目
                 //（省全名册深拷贝；驱动器增量缓存承载全量读面语义）。
@@ -5887,6 +5923,7 @@ pub fn group_main(
                     Some((profiles, _)) => profiles
                         .iter()
                         .enumerate()
+                        .take(state.root_projection.as_ref().map_or(profiles.len(), |root| root.account_ids.len().saturating_sub(state.roster_offset).min(profiles.len())))
                         .map(|(i, p)| {
                             let mixed = (state.group as u64)
                                 .wrapping_mul(0x9E3779B97F4A7C15)

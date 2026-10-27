@@ -340,3 +340,63 @@ fn full_personal_read_covers_three_real_groups_without_consuming_sparse_state() 
         .collect();
     assert_eq!(owners, expected);
 }
+
+/// T04 的两臂取同一次 World 收束，强制 Full 只改变读取方式，不再执行本人计算。
+#[test]
+fn same_world_static_point_normal_and_forced_full_prepare_agree() {
+    let mut setup = super::npc_working_quote_tests::quote_setup(0);
+    setup.npcs.inst_count = 5;
+    setup.npcs.retail_count = 1;
+    setup.start_date = crate::calendar::CivilDate::from_ymd(2026, 1, 5).unwrap();
+    setup.ticks_per_day = 8;
+    setup.auction_ticks = 3;
+    setup.closing_auction_ticks = 0;
+    let mut game = GameSession::new(setup, 42).unwrap();
+    let mut driver =
+        crate::runtime::drive::RuntimeDriver::from_session_grouped(&mut game, 3).unwrap();
+    game.runtime_step_with_install(&mut driver).unwrap();
+    let ids = driver.id_map.clone();
+    driver.defer_due_for_test_at(&ids, 99);
+    driver.adopt_session_seq(&game);
+    let input = driver.prepare_driver_step(&game).unwrap();
+    assert!(input.day_end.is_none());
+    let source = driver.mirror_source();
+    let account_writes = driver.account_writes_for_test();
+    let personal_writes = driver.personal_installs_for_test();
+    let before = serde_json::to_value(game.snapshot_inner(true, true)).unwrap();
+    let normal = game
+        .prepare_runtime_mirror(&mut driver, input.clone(), 2)
+        .unwrap();
+    let full_input = driver.force_full_prepared_input_for_test(input).unwrap();
+    assert_eq!(
+        full_input
+            .accounts
+            .iter()
+            .map(|rows| rows.len())
+            .sum::<usize>(),
+        9,
+        "完整账户读取包含三组固定槽，再核真实名册/padding"
+    );
+    assert_eq!(
+        full_input.personals.len(),
+        6,
+        "Full 含全部六个真实个人，不靠当前 dirty"
+    );
+    let full = game
+        .prepare_runtime_mirror(&mut driver, full_input, 2)
+        .unwrap();
+    assert_eq!(
+        normal.prepared_values_for_test(),
+        full.prepared_values_for_test(),
+        "同源两臂的所有安装值相等"
+    );
+    assert_eq!(driver.mirror_source(), source);
+    assert_eq!(driver.world_committed_tick(), 2, "World 只执行一次第二拍");
+    assert_eq!(driver.account_writes_for_test(), account_writes);
+    assert_eq!(driver.personal_installs_for_test(), personal_writes);
+    assert_eq!(
+        serde_json::to_value(game.snapshot_inner(true, true)).unwrap(),
+        before,
+        "两臂 prepare 均不 swap"
+    );
+}

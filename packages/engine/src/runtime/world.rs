@@ -323,11 +323,13 @@ struct DayEndProgress {
 /// 世界（协调者视角持有全部通道与线程句柄）。
 pub struct World {
     admin_next_id: u64,
+    authority_epoch: u64,
     non_tick_revision: u64,
     pending_mirror_domains: super::source::MirrorDomains,
     mirror_day_end_stage: super::source::MirrorDayEndStage,
     /// 仅身份元数据，用于核对信息候选回执的组内 local/AccountId；不保存个人态。
     information_roster: Vec<Vec<crate::AccountId>>,
+    personal_presence: Option<Vec<(GroupIdx, Vec<(crate::AccountId, super::personal_full_validation::PersonalPresence)>)>>,
     #[cfg(test)]
     admin_send_fault_for_test: Option<(super::protocol::AdminPhase, GroupIdx)>,
     /// 全局域权威（已收敛态）。
@@ -437,7 +439,9 @@ impl World {
     pub(crate) fn mirror_source(&self) -> super::source::WorldMirrorSource {
         let published = self.publication.load();
         super::source::WorldMirrorSource {
+            authority_epoch: self.authority_epoch,
             tick: self.global.committed_tick,
+            day: self.global.day,
             generation: published.generation,
             day_end_stage: self.mirror_day_end_stage,
             non_tick_revision: self.non_tick_revision,
@@ -449,11 +453,79 @@ impl World {
         self.pending_mirror_domains
     }
 
-    /// TDD 首红接缝；尚未实现组只读 Full 协议时必须明确拒绝，不能拿稀疏缓存冒充。
+    pub(crate) fn prepare_mirror_ack(&self, source: super::source::WorldMirrorSource, domains: super::source::MirrorDomains) -> Result<super::source::PreparedMirrorAck, RuntimeError> {
+        if source != self.mirror_source() || domains != self.pending_mirror_domains {
+            return Err(RuntimeError::ProtocolInvariant { detail: format!("镜像 candidate 已过期：prepared={source:?} current={:?}", self.mirror_source()) });
+        }
+        Ok(super::source::PreparedMirrorAck { domains })
+    }
+
+    /// 调用者持有同一独占静点，source 已在唯一 swap 前验证，期间不再执行 callback。
+    pub(crate) fn ack_prepared_mirror(&mut self, ack: super::source::PreparedMirrorAck) {
+        if ack.domains.accounts_full { self.pending_mirror_domains.accounts_full = false; }
+        if ack.domains.personal_full { self.pending_mirror_domains.personal_full = false; }
+        if ack.domains.attention_full { self.pending_mirror_domains.attention_full = false; }
+        if ack.domains.plans_pending { self.pending_mirror_domains.plans_pending = false; }
+    }
+
+    /// Driver 只在构造期接收已按实际 strategy/participant/attention 验证的能力名册。
+    pub(crate) fn install_personal_presence(&mut self, authority_epoch: u64, roster: Vec<(GroupIdx, Vec<(crate::AccountId, super::personal_full_validation::PersonalPresence)>)>) {
+        assert!(self.personal_presence.is_none() && self.report_log.is_empty(), "完整个人能力名册只能初始安装一次");
+        assert_eq!(roster.len(), self.n_groups, "Driver 已验证的能力名册必须覆盖全部组");
+        for (expected, (group, rows)) in self.information_roster.iter().zip(&roster) {
+            assert_eq!(&rows.iter().map(|(id, _)| *id).collect::<Vec<_>>(), expected, "能力名册与真实 World 名册必须同源");
+            assert!(usize::from(*group) < self.n_groups, "能力名册组号必须来自已验证拓扑");
+        }
+        self.personal_presence = Some(roster);
+        self.authority_epoch = authority_epoch;
+    }
+
+    /// 完整只读回执不消费 dirty/pending，不执行任何个人计算。
     pub(crate) fn collect_personal_full(&mut self) -> Result<PersonalFullSnapshot, RuntimeError> {
-        Err(RuntimeError::ProtocolInvariant {
-            detail: "完整个人态只读协议尚未接入；不能使用稀疏 EchoBelief 代替".to_owned(),
-        })
+        match self.collect_personal_full_inner() {
+            Ok(snapshot) => Ok(snapshot),
+            Err(error) => Err(self.stop_after_fatal_failure(
+                self.global.committed_tick, 0, "collect_personal_full", error, true, None,
+            )),
+        }
+    }
+
+    fn collect_personal_full_inner(&mut self) -> Result<PersonalFullSnapshot, RuntimeError> {
+        if let Some(reason) = &self.dead_reason {
+            return Err(RuntimeError::ProtocolInvariant { detail: format!("Full 读取拒绝已终止 World：{reason}") });
+        }
+        let expected = self.personal_presence.as_ref().ok_or_else(|| RuntimeError::ProtocolInvariant {
+            detail: "完整个人态缺构造期实际能力名册；不能从缺 seed 推断合法 None".to_owned(),
+        })?;
+        if self.group_txs.len() != self.n_groups {
+            return Err(RuntimeError::ProtocolInvariant { detail: "Full 读取通道与组数不一致".to_owned() });
+        }
+        let source = self.mirror_source();
+        for tx in &self.group_txs {
+            tx.send(GroupIn::EchoPersonalFull { source }).map_err(|_| RuntimeError::SendFailed {
+                detail: "EchoPersonalFull 广播失败".to_owned(),
+            })?;
+        }
+        let mut groups = Vec::with_capacity(self.n_groups);
+        for _ in 0..self.n_groups {
+            match recv_deadline(&self.up_rx, Phase::Drain, &self.watchdog)? {
+                UpMsg::GroupPersonalFull { group, source: actual, slots } => {
+                    if actual != source {
+                        return Err(RuntimeError::ProtocolInvariant { detail: format!("Full 个人回执来源错误：group={group} expected={source:?} actual={actual:?}") });
+                    }
+                    groups.push((group, slots));
+                }
+                UpMsg::Failed { who, error } => return Err(RuntimeError::WorkerFailed { who, error: Box::new(error) }),
+                other => return Err(RuntimeError::ProtocolInvariant { detail: format!("Full 个人读取收到非预期消息：{other:?}") }),
+            }
+        }
+        super::personal_full_validation::validate_personal_full(expected, &groups)
+            .map_err(|error| RuntimeError::ProtocolInvariant { detail: format!("Full 个人态完整性错误：{error:?}") })?;
+        if source != self.mirror_source() {
+            return Err(RuntimeError::ProtocolInvariant { detail: "Full 读取期间 World 静点发生变化".to_owned() });
+        }
+        groups.sort_by_key(|(group, _)| *group);
+        Ok(PersonalFullSnapshot { source, groups })
     }
 
     /// 构造世界并启动全部 worker 线程。
@@ -821,6 +893,7 @@ impl World {
         );
         Ok(World {
             admin_next_id: 0,
+            authority_epoch: 0,
             non_tick_revision: 0,
             pending_mirror_domains: super::source::MirrorDomains::default(),
             mirror_day_end_stage: if initial_last_day_end_tick.is_some() {
@@ -829,6 +902,7 @@ impl World {
                 super::source::MirrorDayEndStage::Tick
             },
             information_roster,
+            personal_presence: None,
             #[cfg(test)]
             admin_send_fault_for_test: None,
             global: global_v0,
@@ -928,6 +1002,8 @@ impl World {
     ) {
         if self.last_day_end_tick == Some(self.global.committed_tick) {
             self.mirror_day_end_stage = super::source::MirrorDayEndStage::RetainedPublished;
+            // retained 已向读者发布，之后任何失败都不得再撤销市场日结。
+            self.day_end_prior_public_views = None;
         }
         self.retained_days.push(std::sync::Arc::clone(&snapshot));
         self.retained_index = std::sync::Arc::new(super::publication::RetainedIndex {

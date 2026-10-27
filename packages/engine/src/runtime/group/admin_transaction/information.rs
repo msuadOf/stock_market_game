@@ -14,6 +14,21 @@ pub(super) struct PendingInformation {
     facts: Option<Arc<crate::company::CompanyReadFacts>>,
     observed_through: Option<crate::calendar::CivilInstant>,
 }
+
+impl PendingInformation {
+    pub(super) fn mirror_domains(&self) -> crate::runtime::source::MirrorDomains {
+        let material_changed = self.library.as_ref() != self.prepared.library.as_ref()
+            || self.facts.as_deref() != Some(self.prepared.current_facts.as_ref());
+        let through_changed = self.prepared.observed_through.is_some()
+            && self.prepared.observed_through != self.observed_through;
+        let personal_changed = self.before.iter().zip(&self.prepared.personals)
+            .any(|((before_local, before, _), (local, _, after))| before_local != local || before != after);
+        crate::runtime::source::MirrorDomains {
+            personal_full: material_changed || through_changed || personal_changed,
+            ..Default::default()
+        }
+    }
+}
 impl GroupState {
     fn information_error(&self, error: InformationPrepareError) -> RuntimeError {
         RuntimeError::InformationPrepare {

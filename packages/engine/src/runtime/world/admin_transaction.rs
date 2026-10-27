@@ -248,6 +248,19 @@ impl World {
                     })
                 }
             };
+        let domains = candidate.groups.iter().fold(crate::runtime::source::MirrorDomains::default(), |all, group| all.union(group.mirror_domains));
+        let next_revision = if domains.is_empty() {
+            self.non_tick_revision
+        } else {
+            match self.non_tick_revision.checked_add(1) {
+                Some(revision) => revision,
+                None => {
+                    let error = invalid("非 tick 成功来源游标已耗尽，拒绝首个 commit");
+                    self.abort_admin_preserving_error(id, expected, &error)?;
+                    return Err(AdminFailure { error, payload: None, terminal: false, committing: false });
+                }
+            }
+        };
         if !expected.is_empty() {
             // 首个 commit 发送前关窗；任何部分提交失败均不可复用 world。
             self.day_end_prior_public_views = None;
@@ -257,6 +270,8 @@ impl World {
                     failure
                 })?;
         }
+        self.non_tick_revision = next_revision;
+        self.pending_mirror_domains = self.pending_mirror_domains.union(domains);
         Ok(value)
     }
 
