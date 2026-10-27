@@ -158,6 +158,8 @@ pub struct RootProjection {
 pub struct WorldSpec {
     /// 按组移交的完整计划簿；空 Vec 仅表示无历史的新世界。
     pub initial_plan_books: Vec<crate::plans::PlanBook>,
+    /// 实际 AccountBook 派生的不可变专户名册；空集合不授予资金角色。
+    pub admin_treasury_bindings: Vec<super::protocol::AdminTreasuryBinding>,
     /// 组数 G。
     pub n_groups: usize,
     /// 每组账户数。
@@ -464,6 +466,7 @@ impl World {
         }).collect();
         let WorldSpec {
             initial_plan_books,
+            admin_treasury_bindings,
             n_groups,
             accounts_per_group,
             initial_cash,
@@ -688,6 +691,8 @@ impl World {
             );
             // 翻转批组参数化：本组全局名 roster 偏移。
             state.roster_offset = g as usize * accounts_per_group;
+            state.admin_treasury_bindings = admin_treasury_bindings.iter()
+                .filter(|binding| binding.owner.0 == g).copied().collect();
             state.install_plan_seed(prepared_plans.next().expect("全部组已预检"));
             let rx = group_rxs.remove(0);
             let handle = crate::thread_facade::Builder::new()

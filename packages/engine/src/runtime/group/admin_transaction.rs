@@ -282,6 +282,10 @@ fn apply_operation(
         }
     }
     match operation {
+        AdminOperation::SyntheticBudgetCredit { .. }
+        | AdminOperation::SyntheticBudgetRecycle { .. } => {
+            return Err(invalid("回购资金原语尚未实现（P2 tests-first）"));
+        }
         AdminOperation::PaymentDebit { amount, .. } => {
             return super::admin_funds_cost::payment_debit(account, stock_coordinate, amount)
                 .map_err(|error| invalid(error.to_string()));
@@ -515,3 +519,6 @@ use information::PendingInformation;
 
 #[cfg(test)]
 mod information_tests;
+
+#[cfg(test)]
+mod repurchase_funds_tests;

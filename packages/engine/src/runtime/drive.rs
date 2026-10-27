@@ -3169,3 +3169,15 @@ thread_local! {
         Option<std::sync::Arc<std::sync::Mutex<(usize, usize, usize)>>>
     > = const { std::cell::RefCell::new(None) };
 }
+
+/// P2 tests-first 接缝；实现前明确拒绝，不将账户数字或 Funded 值作为角色授权。
+pub(crate) fn admin_treasury_bindings_from_session(
+    _session: &crate::GameSession,
+    _ids: &[crate::AccountId],
+    _accounts_per_group: usize,
+) -> Result<Vec<super::protocol::AdminTreasuryBinding>, String> {
+    Err("实际 AccountBook 专户 binding 派生尚未实现（P2 tests-first）".into())
+}
+
+#[cfg(test)]
+mod repurchase_funds_tests;

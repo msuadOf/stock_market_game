@@ -344,24 +344,24 @@ mod tests {
     fn identity() -> (Account, PlanBook, PlanId) {
         let account = Account::new(AccountId(17), AccountKind::IssuerRepurchase, Money::ZERO);
         let mut plans = PlanBook::new(PlanPolicy::default()).unwrap();
-        // 真allocator仅用于取得真实canonical身份；这不是公司origin或资金授权的正控。
-        let id = plans
-            .create(PlanOpen {
-                account: account.id(),
-                code: StockId(1),
-                direction: Side::Buy,
-                target: PlanTarget::ShareCount(100),
-                opinion: PlanOpinion {
-                    signal_score_bp: 0,
-                    source: OpinionSource::Fundamental,
-                },
-                confidence_bp: 0,
-                urgency: Urgency::Patient,
-                horizon_trading_days: 20,
-                created_trading_day: 0,
-            })
-            .unwrap();
+        // 真实 company entry 只证明身份；资金批准仍由调用事务核验。
+        let id = plans.create_issuer_repurchase(crate::plans::RepurchaseExecutionOpen {
+            owner: account.id(), issuer: CompanyId(2), stock: StockId(1),
+        }).unwrap();
         (account, plans, id)
+    }
+    #[test]
+    fn investor_entry_is_never_a_company_funding_source() {
+        let (account, _, _) = identity();
+        let mut plans = PlanBook::default();
+        let id = plans.create(PlanOpen {
+            account: account.id(), code: StockId(1), direction: Side::Buy,
+            target: PlanTarget::ShareCount(100),
+            opinion: PlanOpinion { signal_score_bp: 0, source: OpinionSource::Fundamental },
+            confidence_bp: 0, urgency: Urgency::Patient, horizon_trading_days: 20, created_trading_day: 0,
+        }).unwrap();
+        assert!(credit_candidate(&book(), &registry(), &account, &plans, id, &catalog(),
+            &GroupAccount::new(9_000_000, 2)).is_err(), "Investor 个人判断不能冒充发行人资金来源");
     }
     #[test]
     fn recycle_uses_real_book_fees_and_leaves_surplus_and_other_plan_money_untouched() {

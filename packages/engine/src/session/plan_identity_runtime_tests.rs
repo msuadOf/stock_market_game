@@ -184,3 +184,32 @@ fn origin_real_next_tick_keeps_unfunded_company_value_out_of_personal_execution(
         session.set_runtime_plans(mirror);
     }
 }
+
+#[test]
+fn funds_p2_driver_01_binding_uses_actual_account_kind_roster_owner_and_catalog() {
+    let mut setup = origin_treasury_setup();
+    setup.npcs.retail_count = 2; setup.npcs.inst_count = 0; setup.npcs.hot_count = 0;
+    let session = GameSession::new(setup, 99).unwrap();
+    let ids = session.account_roster();
+    let owner_id = ids.iter().position(|id| session.account(*id).unwrap().kind() == AccountKind::IssuerRepurchase).unwrap();
+    assert_eq!(owner_id, 3);
+    let bindings = crate::runtime::drive::admin_treasury_bindings_from_session(&session, &ids, 2).unwrap();
+    assert_eq!(bindings.len(), 1);
+    let b = bindings[0];
+    assert_eq!(b.account, ids[owner_id]); assert_eq!(b.owner, ((owner_id / 2) as u16, (owner_id % 2) as u32));
+    assert_eq!(b.stock, 0); assert_eq!(b.issuer, crate::company::CompanyId(0));
+    for id in &ids { if session.account(*id).unwrap().kind() != AccountKind::IssuerRepurchase {
+        assert!(bindings.iter().all(|b| b.account != *id));
+    }}
+}
+#[test]
+fn funds_p2_driver_02_binding_rejects_missing_duplicate_unknown_roster_and_zero_width() {
+    let session = GameSession::new(origin_treasury_setup(), 100).unwrap();
+    let ids = session.account_roster();
+    for mode in 0..4 {
+        let mut roster = ids.clone(); let mut width = 2;
+        match mode { 0 => { roster.pop(); }, 1 => roster.push(ids[0]),
+            2 => roster[0] = AccountId(999), _ => width = 0 }
+        assert!(crate::runtime::drive::admin_treasury_bindings_from_session(&session, &roster, width).is_err());
+    }
+}

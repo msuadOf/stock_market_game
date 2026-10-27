@@ -333,6 +333,7 @@ fn basic_spec(
     let shares = vec![vec![vec![1_000u32; n_stocks]; accounts_per_group]; n_groups];
     WorldSpec {
         initial_plan_books: Vec::new(),
+        admin_treasury_bindings: Vec::new(),
         initial_desk_orders: Vec::new(),
         initial_desk_next_serial: Vec::new(),
         n_groups,

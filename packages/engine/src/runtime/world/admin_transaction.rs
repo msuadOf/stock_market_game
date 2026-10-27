@@ -1386,3 +1386,6 @@ mod information_tests;
 
 #[cfg(test)]
 mod funds_cost_tests;
+
+#[cfg(test)]
+mod repurchase_funds_tests;

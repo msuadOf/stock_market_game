@@ -864,6 +864,8 @@ pub struct GroupState {
     /// 全成/终结（Closed/到期/日终清簿/拒收）清除。
     child_in_flight:
         std::collections::BTreeMap<(crate::AccountId, crate::StockId), ChildTicket>,
+    /// 构造期冻结的实际专户身份，不从 INFO 公开事实猜账户角色。
+    pub(crate) admin_treasury_bindings: Vec<super::protocol::AdminTreasuryBinding>,
     /// Sol 整改 1：簿快照已保存标志（本 tick 内首个簿变更前保存一次；
     /// 转正/回滚清 undo 时重置）。
     plan_undo_saved: bool,
@@ -1043,6 +1045,7 @@ impl GroupState {
             information_observed_through: None,
             root_projection,
             child_in_flight: Default::default(),
+            admin_treasury_bindings: Vec::new(),
             plan_undo_saved: false,
             pending_force_due: Vec::new(),
             retail_traces: Vec::new(),
@@ -7828,3 +7831,5 @@ mod admin_funds_cost;
 
 #[cfg(test)]
 mod origin_consumer_tests;
+
+mod repurchase_funds_candidate;

@@ -508,9 +508,22 @@ pub enum AdminRight {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct AdminTransactionId(pub(crate) u64);
 
+/// 构造期从实际 AccountBook 与公司目录派生的专户身份；不证明方案已批准。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct AdminTreasuryBinding {
+    pub owner: Owner,
+    pub account: crate::AccountId,
+    pub issuer: crate::company::CompanyId,
+    pub stock: StockIdx,
+}
+
 /// 已由上层确定合法到账时点的数值操作，金额为分、数量为股。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AdminOperation {
+    /// Simple 已批准回购的合成预算；批准与精确额度仍须由同事务 inspect 核验。
+    SyntheticBudgetCredit { local: LocalIdx, stock: StockIdx, execution_plan: crate::plans::PlanId, amount: i64 },
+    /// 回收本计划的精确未用预算；不得按共享账户现金推断回收额。
+    SyntheticBudgetRecycle { local: LocalIdx, stock: StockIdx, execution_plan: crate::plans::PlanId, amount: i64 },
     /// 配股缴款只扣本人raw可用现金，金额为分。
     PaymentDebit { local: LocalIdx, stock: StockIdx, amount: i64 },
     /// 配股失败仅退回实缴本金，金额为分。
@@ -542,7 +555,9 @@ pub enum AdminOperation {
 impl AdminOperation {
     pub(crate) fn coordinates(self) -> (LocalIdx, StockIdx) {
         match self {
-            Self::PaymentDebit { local, stock, .. }
+            Self::SyntheticBudgetCredit { local, stock, .. }
+            | Self::SyntheticBudgetRecycle { local, stock, .. }
+            | Self::PaymentDebit { local, stock, .. }
             | Self::SubscriptionRefund { local, stock, .. }
             | Self::SharesWithCost { local, stock, .. }
             | Self::CashDividend { local, stock, .. }
