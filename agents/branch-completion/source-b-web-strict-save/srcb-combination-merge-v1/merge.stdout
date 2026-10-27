@@ -1,0 +1,3 @@
+Auto-merging packages/engine/src/session.rs
+CONFLICT (content): Merge conflict in packages/engine/src/session.rs
+Automatic merge failed; fix conflicts and then commit the result.
