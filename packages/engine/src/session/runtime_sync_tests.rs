@@ -358,6 +358,14 @@ fn same_world_static_point_normal_and_forced_full_prepare_agree() {
     let ids = driver.id_map.clone();
     driver.defer_due_for_test_at(&ids, 99);
     driver.adopt_session_seq(&game);
+    let deferred: BTreeSet<_> = game.runtime_personal_states().keys().copied().collect();
+    let actual_due: BTreeMap<_, _> = driver.collect_attention().unwrap().into_iter()
+        .flat_map(|(group, rows)| rows.into_iter().filter_map(|(local, due, _)| {
+            driver.account_by_owner((group, local)).map(|id| (id, due))
+        }).collect::<Vec<_>>()).collect();
+    for id in &deferred {
+        assert_eq!(actual_due[id], 99, "先核组真实 profile，不能用错同值两臂自证");
+    }
     let input = driver.prepare_driver_step(&game).unwrap();
     assert!(input.day_end.is_none());
     let source = driver.mirror_source();
@@ -399,6 +407,15 @@ fn same_world_static_point_normal_and_forced_full_prepare_agree() {
         before,
         "两臂 prepare 均不 swap"
     );
+    let ack = game.validate_runtime_mirror_source(&driver, &normal).unwrap();
+    game.install_runtime_mirror(&mut driver, normal);
+    driver.ack_prepared_mirror(ack);
+    let installed_due: BTreeMap<_, _> = game.runtime_attention_state().into_iter()
+        .map(|(id, due, _)| (id, due)).collect();
+    for id in &deferred {
+        assert_eq!(installed_due[id], 99, "唯一 swap 必须安装真实推远调度值");
+    }
+
 }
 
 /// 两份同静点 candidate 的 source 可以相同，但成功安装已经消费本次安装序号。

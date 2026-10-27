@@ -350,17 +350,7 @@ impl GameSession {
                 }
             }
         }
-        let mut attention = Vec::new();
-        for (group, rows) in driver.collect_attention()? {
-            for (local, due, seed) in rows {
-                let Some(id) = driver.account_by_owner((group, local)) else {
-                    return Err(format!(
-                        "调度 candidate owner 不在真实名册：group={group} local={local}"
-                    ));
-                };
-                attention.push((id, due, seed));
-            }
-        }
+        let attention = driver.sync_attention_for_projection()?;
         let (facts, id_map) = driver.resting_snapshot_for_prepared(is_day_end)?;
         let mut mirrors = BTreeMap::new();
         for (index, rows) in facts.iter().enumerate() {

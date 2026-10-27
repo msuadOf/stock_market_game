@@ -618,6 +618,23 @@ mod tests {
         assert_eq!(world.pending_mirror_domains(), pending);
         world.shutdown().unwrap();
     }
+    #[test]
+    fn defer_due_revision_exhaustion_rejects_before_send() {
+        let mut world = World::spawn(spec()).unwrap();
+        world.non_tick_revision = u64::MAX;
+        let source = world.mirror_source();
+        let pending = world.pending_mirror_domains();
+        let before = accounts(&mut world);
+        let rejected = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            world.defer_due_group_for_test(0, vec![0], 99);
+        }));
+        assert!(rejected.is_err(), "耗尽必须在发送测试控制消息前显式拒绝");
+        assert_eq!(world.mirror_source(), source);
+        assert_eq!(world.pending_mirror_domains(), pending);
+        assert_eq!(accounts(&mut world), before);
+        world.shutdown().unwrap();
+    }
+
     fn accounts(w: &mut World) -> Vec<Vec<GroupAccount>> {
         for tx in &w.group_txs {
             tx.send(GroupIn::EchoAccounts).unwrap();

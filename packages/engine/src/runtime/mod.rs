@@ -39,6 +39,7 @@ pub mod decision;
 pub mod diagnostics;
 pub mod desk;
 pub mod drive;
+pub(crate) mod driver_sync;
 pub mod event_bridge;
 
 #[cfg(all(test, not(target_arch = "wasm32")))]

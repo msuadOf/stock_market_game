@@ -1261,8 +1261,12 @@ impl World {
     /// 按真实组内坐标推远 next_due；不把全局下标当 local。
     #[cfg(test)]
     pub fn defer_due_group_for_test(&mut self, group: GroupIdx, locals: Vec<super::LocalIdx>, tick: u64) {
+        let next_revision = self.non_tick_revision.checked_add(1)
+            .expect("DeferDueForTest non_tick_revision 已耗尽，拒绝发送");
         self.group_txs.get(group as usize).expect("注意力账户组存在")
             .send(GroupIn::DeferDueForTest { locals, tick }).expect("推远到期注入通道连通");
+        self.non_tick_revision = next_revision;
+        self.pending_mirror_domains.attention_full = true;
     }
 
     /// step_frame 接轨前置约束① fixture 通道：下行组 0 强制续行标记

@@ -17,6 +17,7 @@ use super::event_bridge::{
 };
 use super::world::World;
 mod convergence;
+mod sync_inputs;
 pub(crate) use convergence::PreparedDriverStep;
 use crate::money::Money;
 use crate::strategy::StrategyData;
@@ -122,6 +123,15 @@ where
 /// 常驻 runtime 驱动器。
 pub struct RuntimeDriver {
     world: World,
+    /// 三张真实 owner 覆盖表接管尚未安装的最后整态；不保存逐拍事件历史。
+    sync_inputs: crate::runtime::driver_sync::SyncAccumulator<
+        std::sync::Arc<super::group::GroupAccount>,
+        super::world::BeliefParticipantSnapshot,
+        (u64, u64),
+    >,
+    /// 私有输入序号独立于 tick、发布 generation 与公共 event seq。
+    sync_source_seq: u64,
+    sync_last_source: Option<crate::runtime::source::WorldMirrorSource>,
     /// Owner(组内下标) → 引擎 AccountId（玩家=0 惯例位）。
     pub id_map: Vec<AccountId>,
     /// P2-4：id_map 的 Arc 共享副本（构造一次——session 信封派生快照用，
@@ -571,6 +581,12 @@ impl RuntimeDriver {
         ).map_err(|error| format!("计划构造移交失败：{error:?}"))?;
         // P2-2a：稀疏上行读面的全量缓存基线（构造期投影==组端初值）。
         let belief_cache = spec.belief_seeds.clone();
+        let sync_inputs = crate::runtime::driver_sync::SyncAccumulator::new(
+            (0..n_groups).map(|group| {
+                (group as super::GroupIdx,
+                 ids.len().saturating_sub(group * per_group).min(per_group) as super::LocalIdx)
+            }),
+        ).map_err(|error| error.to_string())?;
         let mut world = World::spawn(spec).map_err(|e| format!("驱动器世界构造失败：{e:?}"))?;
         let presence = (0..n_groups).map(|group| {
             (group as super::GroupIdx, ids.iter().skip(group * per_group).take(per_group)
@@ -582,6 +598,9 @@ impl RuntimeDriver {
         session.install_runtime_authority_epoch(authority_epoch);
         let driver = Self {
             world,
+            sync_inputs,
+            sync_source_seq: 0,
+            sync_last_source: None,
             id_map_shared: std::sync::Arc::new(ids.clone()),
             id_map: ids.clone(),
             desk_next_serials: Vec::new(),
@@ -679,11 +698,22 @@ impl RuntimeDriver {
 
     /// step 本体（D4：捕获绑定已挂）——驱动器侧相位对齐旧管线 10 相。
     fn step_with_capture(&mut self, session: &mut GameSession) -> Result<Vec<Event>, String> {
-        let prepared = self.prepare_step_with_capture(session)?;
+        let prepared = self.prepare_step_with_capture(session, false)?;
         self.install_driver_projection(session, prepared)
     }
 
-    fn prepare_step_with_capture(&mut self, session: &GameSession) -> Result<PreparedDriverStep, String> {
+    fn prepare_step_with_capture(
+        &mut self,
+        session: &GameSession,
+        capture_sync: bool,
+    ) -> Result<PreparedDriverStep, String> {
+        // 兼容 step 的局部投影仍沿原安装语义；统一 candidate 才接管三表。
+        // checked 在首个 Start 之前完成；耗尽不能先推进 World 再报错。
+        let next_sync_seq = if capture_sync {
+            Some(self.next_sync_source_sequence()?)
+        } else {
+            None
+        };
         // P0 画像：本函数各段用块作用域 + guard 计时（未启用=零成本）。
         use super::step_profile::{self, StepSegment};
         // D4 相位：密封分配快照段（tick 起点，组/部广播前）。
@@ -968,7 +998,7 @@ impl RuntimeDriver {
         }
         touched.sort();
         touched.dedup();
-        Ok(PreparedDriverStep {
+        let mut input = PreparedDriverStep {
             accounts: snapshots,
             buy_vwap,
             last_prices,
@@ -978,7 +1008,11 @@ impl RuntimeDriver {
             events,
             day_end: None,
             emit_price_tick: true,
-        })
+        };
+        if let Some(source_seq) = next_sync_seq {
+            self.capture_sync_inputs(&mut input, source_seq)?;
+        }
+        Ok(input)
     }
 
     /// 事件 seq 游标（诊断）。
@@ -2881,13 +2915,18 @@ impl RuntimeDriver {
     /// E1 生产接线首红读面；返回真实覆盖表数量与私有输入序号。
     #[cfg(test)]
     fn pending_sync_inputs_for_test(&self) -> (usize, usize, usize, bool, u64) {
-        (0, 0, 0, false, 0)
+        (self.sync_inputs.accounts().len(), self.sync_inputs.beliefs().len(),
+         self.sync_inputs.attentions().len(), self.sync_inputs.plans_pending(), self.sync_source_seq)
     }
 }
 
 impl RuntimeDriver {
     #[cfg(all(test, not(target_arch = "wasm32")))]
     fn pending_sync_values_for_test(&self) -> sync_input_tests::SyncValuesForTest {
-        Default::default()
+        sync_input_tests::SyncValuesForTest {
+            accounts: self.sync_inputs.accounts().iter().map(|(owner, row)| ((owner.group, owner.local), std::sync::Arc::clone(&row.value))).collect(),
+            personals: self.sync_inputs.beliefs().iter().map(|(owner, row)| ((owner.group, owner.local), row.value.clone())).collect(),
+            attentions: self.sync_inputs.attentions().iter().map(|(owner, row)| ((owner.group, owner.local), row.value)).collect(),
+        }
     }
 }

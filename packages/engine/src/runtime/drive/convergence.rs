@@ -139,6 +139,7 @@ impl RuntimeDriver {
         #[cfg(not(test))]
         let _ = accounts;
         self.force_full_accounts = false;
+        self.sync_inputs.complete_flush(crate::runtime::driver_sync::FlushOutcome::Successful);
         self.pending_receipts.clear();
         self.pending_hold_inits.clear();
     }
@@ -189,11 +190,16 @@ impl RuntimeDriver {
         &mut self,
         session: &GameSession,
     ) -> Result<PreparedDriverStep, String> {
+        let next_tick = self.world_committed_tick().checked_add(1)
+            .ok_or_else(|| "driver sync 下一 tick 已耗尽".to_owned())?;
+        let registrations = if next_tick.is_multiple_of(session.export_setup_for_runtime().ticks_per_day) { 2 } else { 1 };
+        self.sync_source_seq.checked_add(registrations)
+            .ok_or_else(|| "driver sync source_seq 在本拍完整登记前已耗尽".to_owned())?;
         self.world.set_civil_date(session.civil_date());
         self.world
             .set_tick_capture(crate::verification_evidence::current_phase_timing_binding());
         let result = self
-            .prepare_step_with_capture(session)
+            .prepare_step_with_capture(session, true)
             .and_then(|mut input| {
                 let tick = self.world.global.committed_tick;
                 if tick.is_multiple_of(session.export_setup_for_runtime().ticks_per_day) {
@@ -215,6 +221,7 @@ impl RuntimeDriver {
     ) -> Result<PreparedDriverStep, String> {
         #[cfg(feature = "simulation-diagnostics")]
         self.ensure_causal_day_end_supported()?;
+        let next_sync_seq = self.next_sync_source_sequence()?;
         self.world
             .run_day_end_public()
             .map_err(|error| format!("日结私有准备失败：{error}"))?;
@@ -319,6 +326,7 @@ impl RuntimeDriver {
             candles,
             bars,
         });
+        self.capture_sync_inputs(&mut input, next_sync_seq)?;
         Ok(input)
     }
 
@@ -380,6 +388,7 @@ impl RuntimeDriver {
             .map_err(|fatal| fatal.to_string())?;
         #[cfg(feature = "simulation-diagnostics")]
         self.ensure_causal_day_end_supported()?;
+        self.next_sync_source_sequence()?;
         self.world.set_civil_date(session.civil_date());
         let input = PreparedDriverStep {
             accounts: Vec::new(),
