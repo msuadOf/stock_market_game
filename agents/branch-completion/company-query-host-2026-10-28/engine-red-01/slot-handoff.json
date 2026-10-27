@@ -1,0 +1,11 @@
+{
+  "pendingSlotHandoff": false,
+  "rootAuthorized": true,
+  "priorBatch": "C2C10",
+  "actualWaitSession": 37364,
+  "priorReceipt": "/data1/baiyifan/workplace/stock_market_game/.worktree/mixed-calendar-c2c/agents/branch-completion/mixed-calendar-c2c/resume-live/raw-civil-main8e5-10/actual-wait-cleanup.json",
+  "priorOwnedAlive": [],
+  "priorScratchAbsent": true,
+  "rootAuthorization": "/root明确C2C actualwait/owned空/scratch清后唯一槽给query10；不另等确认",
+  "nextBatch": "DISC40green唯一后继；不自行enginegreen连跑"
+}

@@ -1,0 +1,813 @@
+{
+  "pythonPid": 3004312,
+  "actualPythonArgv": [
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/company-query-host-2026-10-28/agents/branch-completion/company-query-host-2026-10-28/engine-red-01/run-ram-batch.py",
+    "1793132796412",
+    "1793132798412",
+    "1793132799412"
+  ],
+  "actualParentArgv": [
+    "/home/linuxbrew/.linuxbrew/Cellar/node/25.8.2/bin/node",
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/company-query-host-2026-10-28/agents/branch-completion/company-query-host-2026-10-28/engine-red-01/absolute-supervisor.mjs",
+    "1793132799412",
+    "/home/baiyifan/miniconda3/bin/python3",
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/company-query-host-2026-10-28/agents/branch-completion/company-query-host-2026-10-28/engine-red-01/run-ram-batch.py",
+    "1793132796412",
+    "1793132798412",
+    "1793132799412"
+  ],
+  "target": "/tmp/stock-market-game-validation-2026-10-27-1311109/target",
+  "wholeTargetCopy": false,
+  "persistence": "RAM target 与封存单件均非持久；root统一保留复用",
+  "stages": [
+    {
+      "stage": "seal-single-prior-default-unit",
+      "actualArgv": [
+        "/home/linuxbrew/.linuxbrew/Cellar/node/25.8.2/bin/node",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-long-validation.mjs",
+        "296272",
+        "--",
+        "cp",
+        "--reflink=never",
+        "-p",
+        "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/engine-006444ae8c4f3292",
+        "/tmp/stock-market-game-validation-2026-10-27-1311109/company-query-engine-red-01-2026-10-28/sealed-prior-default-unit"
+      ],
+      "pid": 3004392,
+      "exit": 0,
+      "seconds": 0.5548323539987905
+    },
+    {
+      "stage": "default-build",
+      "actualArgv": [
+        "/home/linuxbrew/.linuxbrew/Cellar/node/25.8.2/bin/node",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-long-validation.mjs",
+        "295099",
+        "--",
+        "/home/linuxbrew/.linuxbrew/Cellar/node/25.8.2/bin/node",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/runtime-sync-e1/agents/perf-intraday-independent/implementation/e2/day-end-full-source-tmpfs-batch-r2/run-build-guard-tmpfs.mjs",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/company-query-host-2026-10-28/agents/branch-completion/company-query-host-2026-10-28/engine-red-01/default-plan.json"
+      ],
+      "pid": 3004459,
+      "exit": 0,
+      "seconds": 86.86872963799397
+    },
+    {
+      "stage": "seal-single-origin-core-red-unit",
+      "actualArgv": [
+        "/home/linuxbrew/.linuxbrew/Cellar/node/25.8.2/bin/node",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-long-validation.mjs",
+        "207788",
+        "--",
+        "cp",
+        "--reflink=never",
+        "-p",
+        "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/engine-006444ae8c4f3292",
+        "/tmp/stock-market-game-validation-2026-10-27-1311109/company-query-engine-red-01-2026-10-28/sealed-company-query-red-unit"
+      ],
+      "pid": 3009848,
+      "exit": 0,
+      "seconds": 0.45872075999795925
+    },
+    {
+      "stage": "actual-test-list",
+      "actualArgv": [
+        "/home/linuxbrew/.linuxbrew/Cellar/node/25.8.2/bin/node",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/engine-006444ae8c4f3292",
+        "--list",
+        "--format=terse"
+      ],
+      "pid": 3009866,
+      "exit": 0,
+      "seconds": 0.12412808899534866
+    },
+    {
+      "stage": "requests_have_no_client_selected_owner_and_reject_unknown_fields",
+      "actualArgv": [
+        "/home/linuxbrew/.linuxbrew/Cellar/node/25.8.2/bin/node",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "/home/baiyifan/miniconda3/bin/python3",
+        "/data1/baiyifan/workplace/stock_market_game/agents/branch-completion/funds-production-resume-2026-10-27/p1-formal-red-2026-10-28/collect-child-status.py",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/company-query-host-2026-10-28/agents/branch-completion/company-query-host-2026-10-28/engine-red-01/requests_have_no_client_selected_owner_and_reject_unknown_fields.child-status.json",
+        "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/engine-006444ae8c4f3292",
+        "session::protocol::company_reads::tests::requests_have_no_client_selected_owner_and_reject_unknown_fields",
+        "--exact",
+        "--test-threads=1",
+        "--nocapture"
+      ],
+      "pid": 3009892,
+      "exit": 0,
+      "seconds": 0.1392052579903975
+    },
+    {
+      "stage": "unknown_owner_is_rejected_before_any_domain_query",
+      "actualArgv": [
+        "/home/linuxbrew/.linuxbrew/Cellar/node/25.8.2/bin/node",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "/home/baiyifan/miniconda3/bin/python3",
+        "/data1/baiyifan/workplace/stock_market_game/agents/branch-completion/funds-production-resume-2026-10-27/p1-formal-red-2026-10-28/collect-child-status.py",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/company-query-host-2026-10-28/agents/branch-completion/company-query-host-2026-10-28/engine-red-01/unknown_owner_is_rejected_before_any_domain_query.child-status.json",
+        "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/engine-006444ae8c4f3292",
+        "session::protocol::company_reads::tests::unknown_owner_is_rejected_before_any_domain_query",
+        "--exact",
+        "--test-threads=1",
+        "--nocapture"
+      ],
+      "pid": 3009890,
+      "exit": 0,
+      "seconds": 0.34423174100811593
+    },
+    {
+      "stage": "company_identity_uses_the_actual_catalog_namespace",
+      "actualArgv": [
+        "/home/linuxbrew/.linuxbrew/Cellar/node/25.8.2/bin/node",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "/home/baiyifan/miniconda3/bin/python3",
+        "/data1/baiyifan/workplace/stock_market_game/agents/branch-completion/funds-production-resume-2026-10-27/p1-formal-red-2026-10-28/collect-child-status.py",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/company-query-host-2026-10-28/agents/branch-completion/company-query-host-2026-10-28/engine-red-01/company_identity_uses_the_actual_catalog_namespace.child-status.json",
+        "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/engine-006444ae8c4f3292",
+        "session::protocol::company_reads::tests::company_identity_uses_the_actual_catalog_namespace",
+        "--exact",
+        "--test-threads=1",
+        "--nocapture"
+      ],
+      "pid": 3009891,
+      "exit": 0,
+      "seconds": 0.34406084498914424
+    },
+    {
+      "stage": "actual_owner_query_returns_the_existing_domain_view_without_state_changes",
+      "actualArgv": [
+        "/home/linuxbrew/.linuxbrew/Cellar/node/25.8.2/bin/node",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "/home/baiyifan/miniconda3/bin/python3",
+        "/data1/baiyifan/workplace/stock_market_game/agents/branch-completion/funds-production-resume-2026-10-27/p1-formal-red-2026-10-28/collect-child-status.py",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/company-query-host-2026-10-28/agents/branch-completion/company-query-host-2026-10-28/engine-red-01/actual_owner_query_returns_the_existing_domain_view_without_state_changes.child-status.json",
+        "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/engine-006444ae8c4f3292",
+        "session::protocol::company_reads::tests::actual_owner_query_returns_the_existing_domain_view_without_state_changes",
+        "--exact",
+        "--test-threads=1",
+        "--nocapture"
+      ],
+      "pid": 3009887,
+      "exit": 0,
+      "seconds": 0.38546477000636514
+    },
+    {
+      "stage": "unhealthy_sessions_reject_before_reading_company_facts",
+      "actualArgv": [
+        "/home/linuxbrew/.linuxbrew/Cellar/node/25.8.2/bin/node",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "/home/baiyifan/miniconda3/bin/python3",
+        "/data1/baiyifan/workplace/stock_market_game/agents/branch-completion/funds-production-resume-2026-10-27/p1-formal-red-2026-10-28/collect-child-status.py",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/company-query-host-2026-10-28/agents/branch-completion/company-query-host-2026-10-28/engine-red-01/unhealthy_sessions_reject_before_reading_company_facts.child-status.json",
+        "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/engine-006444ae8c4f3292",
+        "session::protocol::company_reads::tests::unhealthy_sessions_reject_before_reading_company_facts",
+        "--exact",
+        "--test-threads=1",
+        "--nocapture"
+      ],
+      "pid": 3009884,
+      "exit": 0,
+      "seconds": 0.6664476299920352
+    },
+    {
+      "stage": "global_outstanding_is_filtered_to_the_authenticated_owner",
+      "actualArgv": [
+        "/home/linuxbrew/.linuxbrew/Cellar/node/25.8.2/bin/node",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "/home/baiyifan/miniconda3/bin/python3",
+        "/data1/baiyifan/workplace/stock_market_game/agents/branch-completion/funds-production-resume-2026-10-27/p1-formal-red-2026-10-28/collect-child-status.py",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/company-query-host-2026-10-28/agents/branch-completion/company-query-host-2026-10-28/engine-red-01/global_outstanding_is_filtered_to_the_authenticated_owner.child-status.json",
+        "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/engine-006444ae8c4f3292",
+        "session::protocol::company_reads::tests::global_outstanding_is_filtered_to_the_authenticated_owner",
+        "--exact",
+        "--test-threads=1",
+        "--nocapture"
+      ],
+      "pid": 3009886,
+      "exit": 0,
+      "seconds": 0.6667499689938268
+    },
+    {
+      "stage": "company_views_preserve_nonempty_existing_domain_results_and_save_bytes",
+      "actualArgv": [
+        "/home/linuxbrew/.linuxbrew/Cellar/node/25.8.2/bin/node",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "/home/baiyifan/miniconda3/bin/python3",
+        "/data1/baiyifan/workplace/stock_market_game/agents/branch-completion/funds-production-resume-2026-10-27/p1-formal-red-2026-10-28/collect-child-status.py",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/company-query-host-2026-10-28/agents/branch-completion/company-query-host-2026-10-28/engine-red-01/company_views_preserve_nonempty_existing_domain_results_and_save_bytes.child-status.json",
+        "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/engine-006444ae8c4f3292",
+        "session::protocol::company_reads::tests::company_views_preserve_nonempty_existing_domain_results_and_save_bytes",
+        "--exact",
+        "--test-threads=1",
+        "--nocapture"
+      ],
+      "pid": 3009882,
+      "exit": 0,
+      "seconds": 0.6942398889950709
+    },
+    {
+      "stage": "flat_receipts_return_nonempty_owner_facts_without_other_accounts",
+      "actualArgv": [
+        "/home/linuxbrew/.linuxbrew/Cellar/node/25.8.2/bin/node",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "/home/baiyifan/miniconda3/bin/python3",
+        "/data1/baiyifan/workplace/stock_market_game/agents/branch-completion/funds-production-resume-2026-10-27/p1-formal-red-2026-10-28/collect-child-status.py",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/company-query-host-2026-10-28/agents/branch-completion/company-query-host-2026-10-28/engine-red-01/flat_receipts_return_nonempty_owner_facts_without_other_accounts.child-status.json",
+        "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/engine-006444ae8c4f3292",
+        "session::protocol::company_reads::tests::flat_receipts_return_nonempty_owner_facts_without_other_accounts",
+        "--exact",
+        "--test-threads=1",
+        "--nocapture"
+      ],
+      "pid": 3009893,
+      "exit": 0,
+      "seconds": 0.7077202910004416
+    },
+    {
+      "stage": "rights_offerings_return_nonempty_owner_entitlement_without_other_holders",
+      "actualArgv": [
+        "/home/linuxbrew/.linuxbrew/Cellar/node/25.8.2/bin/node",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "/home/baiyifan/miniconda3/bin/python3",
+        "/data1/baiyifan/workplace/stock_market_game/agents/branch-completion/funds-production-resume-2026-10-27/p1-formal-red-2026-10-28/collect-child-status.py",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/company-query-host-2026-10-28/agents/branch-completion/company-query-host-2026-10-28/engine-red-01/rights_offerings_return_nonempty_owner_entitlement_without_other_holders.child-status.json",
+        "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/engine-006444ae8c4f3292",
+        "session::protocol::company_reads::tests::rights_offerings_return_nonempty_owner_entitlement_without_other_holders",
+        "--exact",
+        "--test-threads=1",
+        "--nocapture"
+      ],
+      "pid": 3009997,
+      "exit": 0,
+      "seconds": 0.7083557290025055
+    },
+    {
+      "stage": "company_query_uses_catalog_company_id_even_when_listed_stock_id_differs",
+      "actualArgv": [
+        "/home/linuxbrew/.linuxbrew/Cellar/node/25.8.2/bin/node",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "/home/baiyifan/miniconda3/bin/python3",
+        "/data1/baiyifan/workplace/stock_market_game/agents/branch-completion/funds-production-resume-2026-10-27/p1-formal-red-2026-10-28/collect-child-status.py",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/company-query-host-2026-10-28/agents/branch-completion/company-query-host-2026-10-28/engine-red-01/company_query_uses_catalog_company_id_even_when_listed_stock_id_differs.child-status.json",
+        "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/engine-006444ae8c4f3292",
+        "session::protocol::company_reads::tests::company_query_uses_catalog_company_id_even_when_listed_stock_id_differs",
+        "--exact",
+        "--test-threads=1",
+        "--nocapture"
+      ],
+      "pid": 3010012,
+      "exit": 0,
+      "seconds": 1.7316325449937722
+    }
+  ],
+  "before": {
+    "outputAvailableBytes": 90925367296,
+    "sourceAvailableBytes": 6255697920,
+    "memAvailable": "202254776 kB"
+  },
+  "protectedPrior": {
+    "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/engine-006444ae8c4f3292",
+    "bytes": 612479176,
+    "sha256": "62a085bbb1c42ce5ab8b09e3dee4aa33e805a713a9bdf53c87e41f28fb4afd65",
+    "inodeAtHandoff": 64618,
+    "source": "C2C10 actualwait37364 EXIT0/owned[]/scratchAbsent；新件未seal，本批同共享窗单件非COW保护",
+    "sealed": "/tmp/stock-market-game-validation-2026-10-27-1311109/company-query-engine-red-01-2026-10-28/sealed-prior-default-unit",
+    "distinctInode": true,
+    "reusedExistingSeal": false,
+    "persistence": "仅RAM非持久，root统一保留"
+  },
+  "actualPlanSha256": "2f4064d14c0354cba1285aabda913a8841cfddd1979890096d87d6ee1e57f716",
+  "sealedRed": {
+    "actualArtifact": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/engine-006444ae8c4f3292",
+    "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/company-query-engine-red-01-2026-10-28/sealed-company-query-red-unit",
+    "sha256": "5a0b0b973c6684f712c44f6135e980b421bc983ff16980a43faa2c39948fb2fc",
+    "bytes": 611542264,
+    "distinctInode": true,
+    "persistence": "仅RAM非持久，交root保留至红绿复核完成"
+  },
+  "artifacts": [
+    {
+      "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/engine-006444ae8c4f3292",
+      "sha256": "5a0b0b973c6684f712c44f6135e980b421bc983ff16980a43faa2c39948fb2fc",
+      "fresh": false,
+      "target": "engine",
+      "features": [],
+      "persistence": "RAM非持久"
+    }
+  ],
+  "tests": [
+    {
+      "stage": "company_views_preserve_nonempty_existing_domain_results_and_save_bytes",
+      "actualArgv": [
+        "/home/linuxbrew/.linuxbrew/Cellar/node/25.8.2/bin/node",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "/home/baiyifan/miniconda3/bin/python3",
+        "/data1/baiyifan/workplace/stock_market_game/agents/branch-completion/funds-production-resume-2026-10-27/p1-formal-red-2026-10-28/collect-child-status.py",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/company-query-host-2026-10-28/agents/branch-completion/company-query-host-2026-10-28/engine-red-01/company_views_preserve_nonempty_existing_domain_results_and_save_bytes.child-status.json",
+        "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/engine-006444ae8c4f3292",
+        "session::protocol::company_reads::tests::company_views_preserve_nonempty_existing_domain_results_and_save_bytes",
+        "--exact",
+        "--test-threads=1",
+        "--nocapture"
+      ],
+      "pid": 3009882,
+      "exit": 0,
+      "seconds": 0.6942398889950709,
+      "expected": "red",
+      "targetedPanic": true,
+      "name": "session::protocol::company_reads::tests::company_views_preserve_nonempty_existing_domain_results_and_save_bytes",
+      "childStatus": {
+        "pid": 3009991,
+        "parentPid": 3009944,
+        "argv": [
+          "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/engine-006444ae8c4f3292",
+          "session::protocol::company_reads::tests::company_views_preserve_nonempty_existing_domain_results_and_save_bytes",
+          "--exact",
+          "--test-threads=1",
+          "--nocapture"
+        ],
+        "exit": 101,
+        "seconds": 0.5535058459936408
+      },
+      "binarySha256": "5a0b0b973c6684f712c44f6135e980b421bc983ff16980a43faa2c39948fb2fc",
+      "summary": [
+        [
+          "FAILED",
+          "0",
+          "1"
+        ]
+      ],
+      "exactPassed": false,
+      "exactAssertionFailed": true,
+      "stderrSha256": "8fca8e18aaba8844c92245413797876c12a39d8b31acbd88959def99c702f1a4"
+    },
+    {
+      "stage": "global_outstanding_is_filtered_to_the_authenticated_owner",
+      "actualArgv": [
+        "/home/linuxbrew/.linuxbrew/Cellar/node/25.8.2/bin/node",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "/home/baiyifan/miniconda3/bin/python3",
+        "/data1/baiyifan/workplace/stock_market_game/agents/branch-completion/funds-production-resume-2026-10-27/p1-formal-red-2026-10-28/collect-child-status.py",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/company-query-host-2026-10-28/agents/branch-completion/company-query-host-2026-10-28/engine-red-01/global_outstanding_is_filtered_to_the_authenticated_owner.child-status.json",
+        "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/engine-006444ae8c4f3292",
+        "session::protocol::company_reads::tests::global_outstanding_is_filtered_to_the_authenticated_owner",
+        "--exact",
+        "--test-threads=1",
+        "--nocapture"
+      ],
+      "pid": 3009886,
+      "exit": 0,
+      "seconds": 0.6667499689938268,
+      "expected": "red",
+      "targetedPanic": true,
+      "name": "session::protocol::company_reads::tests::global_outstanding_is_filtered_to_the_authenticated_owner",
+      "childStatus": {
+        "pid": 3009982,
+        "parentPid": 3009942,
+        "argv": [
+          "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/engine-006444ae8c4f3292",
+          "session::protocol::company_reads::tests::global_outstanding_is_filtered_to_the_authenticated_owner",
+          "--exact",
+          "--test-threads=1",
+          "--nocapture"
+        ],
+        "exit": 101,
+        "seconds": 0.5315900290006539
+      },
+      "binarySha256": "5a0b0b973c6684f712c44f6135e980b421bc983ff16980a43faa2c39948fb2fc",
+      "summary": [
+        [
+          "FAILED",
+          "0",
+          "1"
+        ]
+      ],
+      "exactPassed": false,
+      "exactAssertionFailed": true,
+      "stderrSha256": "63d925051b1355a0cba869f7445ec1d1818c1ed10f59e15edef9e1fd67d6ccbc"
+    },
+    {
+      "stage": "unhealthy_sessions_reject_before_reading_company_facts",
+      "actualArgv": [
+        "/home/linuxbrew/.linuxbrew/Cellar/node/25.8.2/bin/node",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "/home/baiyifan/miniconda3/bin/python3",
+        "/data1/baiyifan/workplace/stock_market_game/agents/branch-completion/funds-production-resume-2026-10-27/p1-formal-red-2026-10-28/collect-child-status.py",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/company-query-host-2026-10-28/agents/branch-completion/company-query-host-2026-10-28/engine-red-01/unhealthy_sessions_reject_before_reading_company_facts.child-status.json",
+        "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/engine-006444ae8c4f3292",
+        "session::protocol::company_reads::tests::unhealthy_sessions_reject_before_reading_company_facts",
+        "--exact",
+        "--test-threads=1",
+        "--nocapture"
+      ],
+      "pid": 3009884,
+      "exit": 0,
+      "seconds": 0.6664476299920352,
+      "expected": "red",
+      "targetedPanic": true,
+      "name": "session::protocol::company_reads::tests::unhealthy_sessions_reject_before_reading_company_facts",
+      "childStatus": {
+        "pid": 3009985,
+        "parentPid": 3009946,
+        "argv": [
+          "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/engine-006444ae8c4f3292",
+          "session::protocol::company_reads::tests::unhealthy_sessions_reject_before_reading_company_facts",
+          "--exact",
+          "--test-threads=1",
+          "--nocapture"
+        ],
+        "exit": 101,
+        "seconds": 0.5306494109972846
+      },
+      "binarySha256": "5a0b0b973c6684f712c44f6135e980b421bc983ff16980a43faa2c39948fb2fc",
+      "summary": [
+        [
+          "FAILED",
+          "0",
+          "1"
+        ]
+      ],
+      "exactPassed": false,
+      "exactAssertionFailed": true,
+      "stderrSha256": "93ddab3d5f160b198030b5ee0704c7430b82c9f004b70c41ecc4db35a14cf097"
+    },
+    {
+      "stage": "actual_owner_query_returns_the_existing_domain_view_without_state_changes",
+      "actualArgv": [
+        "/home/linuxbrew/.linuxbrew/Cellar/node/25.8.2/bin/node",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "/home/baiyifan/miniconda3/bin/python3",
+        "/data1/baiyifan/workplace/stock_market_game/agents/branch-completion/funds-production-resume-2026-10-27/p1-formal-red-2026-10-28/collect-child-status.py",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/company-query-host-2026-10-28/agents/branch-completion/company-query-host-2026-10-28/engine-red-01/actual_owner_query_returns_the_existing_domain_view_without_state_changes.child-status.json",
+        "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/engine-006444ae8c4f3292",
+        "session::protocol::company_reads::tests::actual_owner_query_returns_the_existing_domain_view_without_state_changes",
+        "--exact",
+        "--test-threads=1",
+        "--nocapture"
+      ],
+      "pid": 3009887,
+      "exit": 0,
+      "seconds": 0.38546477000636514,
+      "expected": "red",
+      "targetedPanic": true,
+      "name": "session::protocol::company_reads::tests::actual_owner_query_returns_the_existing_domain_view_without_state_changes",
+      "childStatus": {
+        "pid": 3009992,
+        "parentPid": 3009943,
+        "argv": [
+          "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/engine-006444ae8c4f3292",
+          "session::protocol::company_reads::tests::actual_owner_query_returns_the_existing_domain_view_without_state_changes",
+          "--exact",
+          "--test-threads=1",
+          "--nocapture"
+        ],
+        "exit": 101,
+        "seconds": 0.24402913599624299
+      },
+      "binarySha256": "5a0b0b973c6684f712c44f6135e980b421bc983ff16980a43faa2c39948fb2fc",
+      "summary": [
+        [
+          "FAILED",
+          "0",
+          "1"
+        ]
+      ],
+      "exactPassed": false,
+      "exactAssertionFailed": true,
+      "stderrSha256": "ff77af529fda45bf7612e9d7789d6c0bb47e4f50f899e4e09836ca02bd035476"
+    },
+    {
+      "stage": "unknown_owner_is_rejected_before_any_domain_query",
+      "actualArgv": [
+        "/home/linuxbrew/.linuxbrew/Cellar/node/25.8.2/bin/node",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "/home/baiyifan/miniconda3/bin/python3",
+        "/data1/baiyifan/workplace/stock_market_game/agents/branch-completion/funds-production-resume-2026-10-27/p1-formal-red-2026-10-28/collect-child-status.py",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/company-query-host-2026-10-28/agents/branch-completion/company-query-host-2026-10-28/engine-red-01/unknown_owner_is_rejected_before_any_domain_query.child-status.json",
+        "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/engine-006444ae8c4f3292",
+        "session::protocol::company_reads::tests::unknown_owner_is_rejected_before_any_domain_query",
+        "--exact",
+        "--test-threads=1",
+        "--nocapture"
+      ],
+      "pid": 3009890,
+      "exit": 0,
+      "seconds": 0.34423174100811593,
+      "expected": "red",
+      "targetedPanic": true,
+      "name": "session::protocol::company_reads::tests::unknown_owner_is_rejected_before_any_domain_query",
+      "childStatus": {
+        "pid": 3009986,
+        "parentPid": 3009972,
+        "argv": [
+          "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/engine-006444ae8c4f3292",
+          "session::protocol::company_reads::tests::unknown_owner_is_rejected_before_any_domain_query",
+          "--exact",
+          "--test-threads=1",
+          "--nocapture"
+        ],
+        "exit": 101,
+        "seconds": 0.20713003299897537
+      },
+      "binarySha256": "5a0b0b973c6684f712c44f6135e980b421bc983ff16980a43faa2c39948fb2fc",
+      "summary": [
+        [
+          "FAILED",
+          "0",
+          "1"
+        ]
+      ],
+      "exactPassed": false,
+      "exactAssertionFailed": true,
+      "stderrSha256": "fd7d8ac1d8638f02a354beec8030fcdbec5a06b1eaa1516b48947dfa3c5c137d"
+    },
+    {
+      "stage": "company_identity_uses_the_actual_catalog_namespace",
+      "actualArgv": [
+        "/home/linuxbrew/.linuxbrew/Cellar/node/25.8.2/bin/node",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "/home/baiyifan/miniconda3/bin/python3",
+        "/data1/baiyifan/workplace/stock_market_game/agents/branch-completion/funds-production-resume-2026-10-27/p1-formal-red-2026-10-28/collect-child-status.py",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/company-query-host-2026-10-28/agents/branch-completion/company-query-host-2026-10-28/engine-red-01/company_identity_uses_the_actual_catalog_namespace.child-status.json",
+        "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/engine-006444ae8c4f3292",
+        "session::protocol::company_reads::tests::company_identity_uses_the_actual_catalog_namespace",
+        "--exact",
+        "--test-threads=1",
+        "--nocapture"
+      ],
+      "pid": 3009891,
+      "exit": 0,
+      "seconds": 0.34406084498914424,
+      "expected": "red",
+      "targetedPanic": true,
+      "name": "session::protocol::company_reads::tests::company_identity_uses_the_actual_catalog_namespace",
+      "childStatus": {
+        "pid": 3009983,
+        "parentPid": 3009945,
+        "argv": [
+          "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/engine-006444ae8c4f3292",
+          "session::protocol::company_reads::tests::company_identity_uses_the_actual_catalog_namespace",
+          "--exact",
+          "--test-threads=1",
+          "--nocapture"
+        ],
+        "exit": 101,
+        "seconds": 0.20905758999288082
+      },
+      "binarySha256": "5a0b0b973c6684f712c44f6135e980b421bc983ff16980a43faa2c39948fb2fc",
+      "summary": [
+        [
+          "FAILED",
+          "0",
+          "1"
+        ]
+      ],
+      "exactPassed": false,
+      "exactAssertionFailed": true,
+      "stderrSha256": "ba5e85a002b4c8b707ed7a16d932e089090c5891b800d248eea9e8fc2abbcb08"
+    },
+    {
+      "stage": "requests_have_no_client_selected_owner_and_reject_unknown_fields",
+      "actualArgv": [
+        "/home/linuxbrew/.linuxbrew/Cellar/node/25.8.2/bin/node",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "/home/baiyifan/miniconda3/bin/python3",
+        "/data1/baiyifan/workplace/stock_market_game/agents/branch-completion/funds-production-resume-2026-10-27/p1-formal-red-2026-10-28/collect-child-status.py",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/company-query-host-2026-10-28/agents/branch-completion/company-query-host-2026-10-28/engine-red-01/requests_have_no_client_selected_owner_and_reject_unknown_fields.child-status.json",
+        "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/engine-006444ae8c4f3292",
+        "session::protocol::company_reads::tests::requests_have_no_client_selected_owner_and_reject_unknown_fields",
+        "--exact",
+        "--test-threads=1",
+        "--nocapture"
+      ],
+      "pid": 3009892,
+      "exit": 0,
+      "seconds": 0.1392052579903975,
+      "expected": "green",
+      "targetedPanic": true,
+      "name": "session::protocol::company_reads::tests::requests_have_no_client_selected_owner_and_reject_unknown_fields",
+      "childStatus": {
+        "pid": 3009984,
+        "parentPid": 3009948,
+        "argv": [
+          "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/engine-006444ae8c4f3292",
+          "session::protocol::company_reads::tests::requests_have_no_client_selected_owner_and_reject_unknown_fields",
+          "--exact",
+          "--test-threads=1",
+          "--nocapture"
+        ],
+        "exit": 0,
+        "seconds": 0.0057273470010841265
+      },
+      "binarySha256": "5a0b0b973c6684f712c44f6135e980b421bc983ff16980a43faa2c39948fb2fc",
+      "summary": [
+        [
+          "ok",
+          "1",
+          "0"
+        ]
+      ],
+      "exactPassed": true,
+      "exactAssertionFailed": false,
+      "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "stage": "flat_receipts_return_nonempty_owner_facts_without_other_accounts",
+      "actualArgv": [
+        "/home/linuxbrew/.linuxbrew/Cellar/node/25.8.2/bin/node",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "/home/baiyifan/miniconda3/bin/python3",
+        "/data1/baiyifan/workplace/stock_market_game/agents/branch-completion/funds-production-resume-2026-10-27/p1-formal-red-2026-10-28/collect-child-status.py",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/company-query-host-2026-10-28/agents/branch-completion/company-query-host-2026-10-28/engine-red-01/flat_receipts_return_nonempty_owner_facts_without_other_accounts.child-status.json",
+        "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/engine-006444ae8c4f3292",
+        "session::protocol::company_reads::tests::flat_receipts_return_nonempty_owner_facts_without_other_accounts",
+        "--exact",
+        "--test-threads=1",
+        "--nocapture"
+      ],
+      "pid": 3009893,
+      "exit": 0,
+      "seconds": 0.7077202910004416,
+      "expected": "red",
+      "targetedPanic": true,
+      "name": "session::protocol::company_reads::tests::flat_receipts_return_nonempty_owner_facts_without_other_accounts",
+      "childStatus": {
+        "pid": 3009996,
+        "parentPid": 3009977,
+        "argv": [
+          "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/engine-006444ae8c4f3292",
+          "session::protocol::company_reads::tests::flat_receipts_return_nonempty_owner_facts_without_other_accounts",
+          "--exact",
+          "--test-threads=1",
+          "--nocapture"
+        ],
+        "exit": 101,
+        "seconds": 0.5557734309986699
+      },
+      "binarySha256": "5a0b0b973c6684f712c44f6135e980b421bc983ff16980a43faa2c39948fb2fc",
+      "summary": [
+        [
+          "FAILED",
+          "0",
+          "1"
+        ]
+      ],
+      "exactPassed": false,
+      "exactAssertionFailed": true,
+      "stderrSha256": "f11d0104f2c2a989763e82b82ace16f250c11fff1490d28fb4dae85234e9d97f"
+    },
+    {
+      "stage": "rights_offerings_return_nonempty_owner_entitlement_without_other_holders",
+      "actualArgv": [
+        "/home/linuxbrew/.linuxbrew/Cellar/node/25.8.2/bin/node",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "/home/baiyifan/miniconda3/bin/python3",
+        "/data1/baiyifan/workplace/stock_market_game/agents/branch-completion/funds-production-resume-2026-10-27/p1-formal-red-2026-10-28/collect-child-status.py",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/company-query-host-2026-10-28/agents/branch-completion/company-query-host-2026-10-28/engine-red-01/rights_offerings_return_nonempty_owner_entitlement_without_other_holders.child-status.json",
+        "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/engine-006444ae8c4f3292",
+        "session::protocol::company_reads::tests::rights_offerings_return_nonempty_owner_entitlement_without_other_holders",
+        "--exact",
+        "--test-threads=1",
+        "--nocapture"
+      ],
+      "pid": 3009997,
+      "exit": 0,
+      "seconds": 0.7083557290025055,
+      "expected": "red",
+      "targetedPanic": true,
+      "name": "session::protocol::company_reads::tests::rights_offerings_return_nonempty_owner_entitlement_without_other_holders",
+      "childStatus": {
+        "pid": 3010010,
+        "parentPid": 3010005,
+        "argv": [
+          "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/engine-006444ae8c4f3292",
+          "session::protocol::company_reads::tests::rights_offerings_return_nonempty_owner_entitlement_without_other_holders",
+          "--exact",
+          "--test-threads=1",
+          "--nocapture"
+        ],
+        "exit": 101,
+        "seconds": 0.5714822089939844
+      },
+      "binarySha256": "5a0b0b973c6684f712c44f6135e980b421bc983ff16980a43faa2c39948fb2fc",
+      "summary": [
+        [
+          "FAILED",
+          "0",
+          "1"
+        ]
+      ],
+      "exactPassed": false,
+      "exactAssertionFailed": true,
+      "stderrSha256": "1a234a625dfbe6474b5c69e9d12e25e826724fb7ca6c0af600e903d7c6b062e2"
+    },
+    {
+      "stage": "company_query_uses_catalog_company_id_even_when_listed_stock_id_differs",
+      "actualArgv": [
+        "/home/linuxbrew/.linuxbrew/Cellar/node/25.8.2/bin/node",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "/home/baiyifan/miniconda3/bin/python3",
+        "/data1/baiyifan/workplace/stock_market_game/agents/branch-completion/funds-production-resume-2026-10-27/p1-formal-red-2026-10-28/collect-child-status.py",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/company-query-host-2026-10-28/agents/branch-completion/company-query-host-2026-10-28/engine-red-01/company_query_uses_catalog_company_id_even_when_listed_stock_id_differs.child-status.json",
+        "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/engine-006444ae8c4f3292",
+        "session::protocol::company_reads::tests::company_query_uses_catalog_company_id_even_when_listed_stock_id_differs",
+        "--exact",
+        "--test-threads=1",
+        "--nocapture"
+      ],
+      "pid": 3010012,
+      "exit": 0,
+      "seconds": 1.7316325449937722,
+      "expected": "red",
+      "targetedPanic": true,
+      "name": "session::protocol::company_reads::tests::company_query_uses_catalog_company_id_even_when_listed_stock_id_differs",
+      "childStatus": {
+        "pid": 3010024,
+        "parentPid": 3010019,
+        "argv": [
+          "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/engine-006444ae8c4f3292",
+          "session::protocol::company_reads::tests::company_query_uses_catalog_company_id_even_when_listed_stock_id_differs",
+          "--exact",
+          "--test-threads=1",
+          "--nocapture"
+        ],
+        "exit": 101,
+        "seconds": 1.5944142149965046
+      },
+      "binarySha256": "5a0b0b973c6684f712c44f6135e980b421bc983ff16980a43faa2c39948fb2fc",
+      "summary": [
+        [
+          "FAILED",
+          "0",
+          "1"
+        ]
+      ],
+      "exactPassed": false,
+      "exactAssertionFailed": true,
+      "stderrSha256": "18e4ceef64a8decadd066cbc0967f0a6c08f9f1beba9184e58266028c9e5b080"
+    }
+  ],
+  "sourceCount": 893,
+  "sourceUnchanged": true,
+  "passed": 1,
+  "assertionFailed": 9,
+  "status": "公司只读engine首红实际完成，逐例分类，不表示三宿主已注册或生产结算已支持",
+  "after": {
+    "outputAvailableBytes": 92756262912,
+    "sourceAvailableBytes": 6252621824,
+    "memAvailable": "202713516 kB"
+  },
+  "wallSeconds": 92.28471034500399,
+  "scratchCleanup": {
+    "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/company-query-engine-red-01-2026-10-28/scratch",
+    "ownedByThisBatch": true,
+    "removed": true,
+    "seconds": 0.002467522004735656
+  },
+  "scratchDisposition": "本批scratch已实际清理；保护单件binary仅RAM非持久由root保留"
+}

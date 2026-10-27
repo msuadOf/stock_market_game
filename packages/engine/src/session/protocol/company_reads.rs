@@ -2,7 +2,7 @@
 
 use super::ProtocolSession;
 use crate::company::capabilities::CompanyCapabilities;
-use crate::company::error::CompanyErrorClass;
+use crate::company::CompanyErrorClass;
 use crate::company::simple::period::PeriodChangeExplanation;
 use crate::company::{CompanyId, CompanySystemError};
 use crate::session::{
@@ -15,11 +15,16 @@ use crate::{AccountId, CivilDate, ValidationFault};
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "kind", content = "data", deny_unknown_fields)]
 pub enum CompanyReadQuery {
-    CompanyPeriodExplanation { company: CompanyId, period_end: CivilDate },
+    CompanyPeriodExplanation {
+        company: CompanyId,
+        period_end: CivilDate,
+    },
     AccountDividendTaxStatus,
     DividendTaxOutstandingViews,
     OwnerFlatWithholdingReceipts,
-    CompanyCapabilities { company: CompanyId },
+    CompanyCapabilities {
+        company: CompanyId,
+    },
     OwnerRightsOfferings,
 }
 
@@ -68,11 +73,15 @@ impl CompanyReadError {
         match self {
             Self::Unhealthy(_) => CompanyReadFailure::Unhealthy,
             Self::UnknownOwner(account) => CompanyReadFailure::UnknownOwner { account: *account },
-            Self::UnknownCompany(company) => CompanyReadFailure::UnknownCompany { company: *company },
+            Self::UnknownCompany(company) => {
+                CompanyReadFailure::UnknownCompany { company: *company }
+            }
             Self::Catalog(error) => CompanyReadFailure::Catalog {
                 fault: crate::session::company_catalog_fault(error),
             },
-            Self::Company(error) => CompanyReadFailure::Company { classification: error.classification() },
+            Self::Company(error) => CompanyReadFailure::Company {
+                classification: error.classification(),
+            },
             Self::Corporate(_) => CompanyReadFailure::CorporateState,
         }
     }

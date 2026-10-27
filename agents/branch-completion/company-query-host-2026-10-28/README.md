@@ -1,0 +1,36 @@
+# 公司六项只读查询的三宿主注册
+
+## 当前状态
+
+截至本记录写入：只有测试、显式 stub、接口 enum 与设计审查记录；尚未运行 Cargo，尚未取得实际红／绿，尚未完成三宿主注册，也未交付真实 wire fixture。root 独占 RAM target 的队列正在处理其他批次。本任务不自行启动 Cargo／metadata。
+
+root 随后明确授权在同一未执行 stub 上补两个 owner 非空与 CompanyId／StockId 不相等正控，首红从七例扩为十例，避免为漏覆盖重复构建。`red-*-v3.rs` 为新快照；旧七例准备保存在 `engine-red-01/prepared-seven-case-v1/`，所有这些都尚未实际执行。当前 static 目标为九红一绿。
+
+代码树从可信 main `c10cf187` 创建。测试／stub 先本地提交保存，再 rebase 到已实际完成集成的可信 main `8e5b32de`；当前提交 `f305495b`。`pre-base-align.diff` 与 `red-*-v1.rs` 保留准备过程，v1 含未静态修正的 fixture 构造，不是实际测试结果。`red-*-v2.rs` 是申请首红时的源码快照，仍不是运行结果；include 相对路径按生产测试文件位置解释，不能在工作记录目录直接编译。
+
+## 最小文件／接口范围
+
+| 层 | 文件 | 目的 |
+|---|---|---|
+| engine | `session/protocol.rs`、`protocol/company_reads.rs`、`protocol/company_reads/tests.rs` | 六项 query 的共同只读 dispatch、真实结果 enum、健康与身份／目录边界及 typed 错误 |
+| Server | `actor.rs`、`actor/fatal_tests.rs`、`routes.rs`、`routes/auth_tests.rs`、`lib.rs` | 当前 member／generation 校验、actor 回执与实际 HTTP 注册 |
+| Tauri | `actor.rs`、`actor/protocol_tests.rs`、`lib.rs` | 本地 owner 0、generation、actor 回执与实际 invoke 注册 |
+| WASM | `lib.rs`、`protocol_tests.rs` | 实际 session registry 与导出绑定，本地 owner 0 |
+
+不修改 `GameSession` 的六项领域 query、税算法、资金／股份结算、运行时中央编排或 TS `EngineHost`。TS 由原 B/C owner 独占。
+
+## 输入与成功外壳
+
+- engine request：serde adjacent `{kind,data}`。unit query 无 data；公司解释 data 为 `{company: CompanyId,period_end: CivilDate}`，能力 data 为 `{company: CompanyId}`。严格拒绝未知字段，account／owner 不属于请求。
+- kind：`CompanyPeriodExplanation`、`AccountDividendTaxStatus`、`DividendTaxOutstandingViews`、`OwnerFlatWithholdingReceipts`、`CompanyCapabilities`、`OwnerRightsOfferings`。
+- 结果：同名 kind 的 data 为既有领域类型原样 serde。股息税／配股中的证券沿 `StockCode` 字符串，不当作 `StockId`。`Money` 分字符串、`AccountingAmount` 元字符串及股数／bp 沿原类型，不换单位。
+- Server／Tauri 成功：`{generation: string,owner: AccountId,value: {kind,data}}`；WASM 成功：`{owner: AccountId,value: {kind,data}}`。AccountId 沿实际规范十进制字符串 serde。
+- 六项新增接口均要求当前 member；不改变原公开报告接口的观战权限。Server 在 actor 内由当前 subject 的 membership 导出 owner；本地固定 player 0。空数组也包含真实 owner。
+
+错误投影的必要性与安全界限见 [设计审查记录](design-review.md)。最终 error enum 源码及真实 serde fixture 要等实际首红后实现并冻结，不能把这里的计划当作已注册 API。
+
+## 首红资源准备
+
+[engine-red-01](engine-red-01/) 仅准备 engine 十个短 case 的一次长构建与并发 exact，复用已审 P1 runner／guard／child collector。slot 与前槽实际 binary 身份均 pending，尚不授权启动。静态预测为九个 stub 行为红、一个严格请求绿；实际分类必须逐项消费 child exit、summary、指定断言位置、明确 stub 内容与源码／制品绑定。执行／清理发布／外层分别共享同一 anchor 的 297／299／300 秒绝对截止，新增 batch 局部 absolute supervisor 不改共享 helper。
+
+不得将 engine 首红称为三宿主、浏览器 WASM 或生产公司结算已经完成。完整 diff 的未实施审查仍为必需门禁。

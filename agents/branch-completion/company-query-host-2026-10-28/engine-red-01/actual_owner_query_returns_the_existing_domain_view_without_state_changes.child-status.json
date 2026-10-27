@@ -1,0 +1,1 @@
+{"pid": 3009992, "parentPid": 3009943, "argv": ["/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/engine-006444ae8c4f3292", "session::protocol::company_reads::tests::actual_owner_query_returns_the_existing_domain_view_without_state_changes", "--exact", "--test-threads=1", "--nocapture"], "exit": 101, "seconds": 0.24402913599624299}

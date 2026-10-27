@@ -1,0 +1,11 @@
+
+running 1 test
+test session::protocol::company_reads::tests::company_identity_uses_the_actual_catalog_namespace ... FAILED
+
+failures:
+
+failures:
+    session::protocol::company_reads::tests::company_identity_uses_the_actual_catalog_namespace
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2811 filtered out; finished in 0.20s
+

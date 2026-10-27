@@ -1,0 +1,103 @@
+{
+  "execSessionId": 54576,
+  "actualWaitExit": 0,
+  "batchReceipt": "/data1/baiyifan/workplace/stock_market_game/.worktree/company-query-host-2026-10-28/agents/branch-completion/company-query-host-2026-10-28/engine-red-01/batch-receipt.json",
+  "batchWallSeconds": 92.28471034500399,
+  "observedOwnedIdentities": [
+    {
+      "pid": 3004493,
+      "startTimeTicks": "7210170"
+    },
+    {
+      "pid": 3004646,
+      "startTimeTicks": "7210195"
+    },
+    {
+      "pid": 3009552,
+      "startTimeTicks": "7218635"
+    },
+    {
+      "pid": 3009553,
+      "startTimeTicks": "7218646"
+    },
+    {
+      "pid": 3009554,
+      "startTimeTicks": "7218646"
+    }
+  ],
+  "observedPids": [
+    3004312,
+    3004392,
+    3004459,
+    3004493,
+    3004646,
+    3009552,
+    3009553,
+    3009554,
+    3009848,
+    3009866,
+    3009882,
+    3009884,
+    3009886,
+    3009887,
+    3009890,
+    3009891,
+    3009892,
+    3009893,
+    3009982,
+    3009983,
+    3009984,
+    3009985,
+    3009986,
+    3009991,
+    3009992,
+    3009996,
+    3009997,
+    3010010,
+    3010012,
+    3010024
+  ],
+  "remainingOwnedIdentities": [],
+  "remainingBatchArgvPids": [],
+  "scratchExists": false,
+  "artifact": {
+    "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/engine-006444ae8c4f3292",
+    "sha256": "5a0b0b973c6684f712c44f6135e980b421bc983ff16980a43faa2c39948fb2fc",
+    "fresh": false,
+    "target": "engine",
+    "features": [],
+    "persistence": "RAM非持久",
+    "bytes": 611542264,
+    "inode": 64719
+  },
+  "stableRedSeal": {
+    "actualArtifact": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/engine-006444ae8c4f3292",
+    "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/company-query-engine-red-01-2026-10-28/sealed-company-query-red-unit",
+    "sha256": "5a0b0b973c6684f712c44f6135e980b421bc983ff16980a43faa2c39948fb2fc",
+    "bytes": 611542264,
+    "distinctInode": true,
+    "persistence": "仅RAM非持久，交root保留至红绿复核完成",
+    "inode": 64721,
+    "fullShaRecheckedAfterActualWait": true
+  },
+  "priorStableSeal": {
+    "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/engine-006444ae8c4f3292",
+    "bytes": 612479176,
+    "sha256": "62a085bbb1c42ce5ab8b09e3dee4aa33e805a713a9bdf53c87e41f28fb4afd65",
+    "inodeAtHandoff": 64618,
+    "source": "C2C10 actualwait37364 EXIT0/owned[]/scratchAbsent；新件未seal，本批同共享窗单件非COW保护",
+    "sealed": "/tmp/stock-market-game-validation-2026-10-27-1311109/company-query-engine-red-01-2026-10-28/sealed-prior-default-unit",
+    "distinctInode": true,
+    "reusedExistingSeal": false,
+    "persistence": "仅RAM非持久，root统一保留",
+    "inode": 64658
+  },
+  "sourceAndRunnerUnchanged": true,
+  "passed": 1,
+  "assertionFailed": 9,
+  "helperHead": "8e5b32de305257b7cb9aeb284d19551cdf3ce2c3",
+  "maxObservedThreads": 26,
+  "maxCpuTicksPer500ms": 287,
+  "minimumAvailableGiB": 84.11040115356445,
+  "scope": "十例engine首红真实9目标红1严格输入绿；不是三host运行或生产公司结算"
+}

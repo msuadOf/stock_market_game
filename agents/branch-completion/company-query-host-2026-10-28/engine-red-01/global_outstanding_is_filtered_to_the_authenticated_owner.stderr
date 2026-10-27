@@ -1,0 +1,4 @@
+
+thread 'session::protocol::company_reads::tests::global_outstanding_is_filtered_to_the_authenticated_owner' (3009987) panicked at packages/engine/src/session/protocol/company_reads/tests.rs:100:10:
+called `Result::unwrap()` on an `Err` value: Company(Unsupported("公司只读注册尚未实现"))
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
