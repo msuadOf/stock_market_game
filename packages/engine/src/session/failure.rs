@@ -432,6 +432,113 @@ impl GameSession {
         })
     }
 
+    /// step_frame 接轨件 4：驱动器获取+前置编排共用段（step_via_runtime
+    /// 与 step_frame_and_commit_via_runtime 共享）。语义与原
+    /// step_via_runtime 内联段逐字一致：D0 惰性构造（含 cfg(test) 的
+    /// staged handover 消费）→ 锁单元取出/放回 → poison 拒绝 → 锁步
+    /// 不变量校验 → ingress 冻结 → 玩家意图路由（失败回灌——ready
+    /// ingress 语义）。`body` 在驱动器锁内执行；body 失败时本段回灌
+    /// 意图（外部队列不被失败 tick 消费）。
+    fn with_routed_runtime_driver<R>(
+        &mut self,
+        body: impl FnOnce(
+            &mut Self,
+            &mut crate::runtime::drive::RuntimeDriver,
+        ) -> Result<R, StepFatal>,
+    ) -> Result<R, StepFatal> {
+        // D0 常驻 driver：首次调用惰性构造（initial_committed_tick 对齐
+        // 当前 session.tick——全新会话即 0）。
+        if self.runtime_driver.is_none() {
+            // 构造细节见 `construct_runtime_driver_lazy`（D0 惰性构造+
+            /// cfg(test) staged handover 消费——两消费面共用）。
+            self.construct_runtime_driver_lazy()?;
+        }
+        // 取出锁单元（避免 &mut self 与 guard 交叉借用）；失败/成功都
+        // 放回——Abort 语义下 worker 存活，driver 可重跑。例外：body 内
+        /// 置 runtime_discard_driver_flag（step_frame 分叉的投影段失败——
+        /// world 已转正而会话已回滚，锁步断裂的实例不可复用）时丢弃，
+        /// 重试经 from_session 重建（等价旧管线"candidate 丢弃+可重试"）。
+        let cell = self
+            .runtime_driver
+            .take()
+            .expect("runtime_driver 刚构造或在位");
+        let outcome = self.with_routed_runtime_driver_locked(&cell, body);
+        if self.runtime_discard_driver_flag {
+            self.runtime_discard_driver_flag = false;
+            drop(cell);
+        } else {
+            self.runtime_driver = Some(cell);
+        }
+        outcome
+    }
+
+    /// 共用段锁内部分（cell 已取出——失败路径由调用方放回）。
+    fn with_routed_runtime_driver_locked<R>(
+        &mut self,
+        cell: &std::sync::Mutex<crate::runtime::drive::RuntimeDriver>,
+        body: impl FnOnce(
+            &mut Self,
+            &mut crate::runtime::drive::RuntimeDriver,
+        ) -> Result<R, StepFatal>,
+    ) -> Result<R, StepFatal> {
+        // 【P0 画像】lock_route 段（锁+锁步校验+ingress freeze+意图路由）。
+        let _seg_lock = crate::runtime::step_profile::scope(
+            crate::runtime::step_profile::StepSegment::LockRoute,
+        );
+        let guard = cell.lock();
+        let poisoned = guard.is_err();
+        let mut driver = if poisoned {
+            // 锁被 poison=前次持有期 panic——显式失败，不静默复用
+            // （不 into_inner：poison 期状态未知）。
+            return Err(self.poison_runtime_step(StepFatal::InvariantViolation {
+                location: "GameSession::step_via_runtime".to_owned(),
+                description: "常驻驱动器锁被 poison（前次持有期 panic）".to_owned(),
+            }));
+        } else {
+            guard.expect("is_err 已排阴")
+        };
+        // 锁步不变量：world 已转正 tick 必须 == session.tick
+        // （失配=两权威漂移，显式拒绝——不静默重放）。
+        let world_tick = driver.world_committed_tick();
+        if world_tick != self.tick() {
+            return Err(self.poison_runtime_step(StepFatal::InvariantViolation {
+                location: "GameSession::step_via_runtime".to_owned(),
+                description: format!(
+                    "锁步失配：world 已转正 tick={world_tick} 而 session.tick={}（两权威漂移——不得静默重放）",
+                    self.tick()
+                ),
+            }));
+        }
+        // D4（t3 对等）：ingress 截取时刻——宿主经 shared ingress
+        // 绑定入队的玩家意图搬运进 pending_player（旧管线 cutoff
+        // 同口径；无绑定为 no-op）。
+        if let Err(fatal) = self.freeze_shared_ingress() {
+            return Err(self.poison_runtime_step(fatal));
+        }
+        // 玩家意图路由（D2）：冻结取出→ExternalPlan 注入组 0；
+        // 失败回灌（ready ingress 语义——外部队列不被失败 tick 消费）。
+        let intents = self.take_runtime_player_intents();
+        if !intents.is_empty() {
+            let uppers: Vec<i64> = {
+                let views = driver.world_public_views();
+                views.iter().map(|v| v.daily_upper_limit).collect()
+            };
+            if let Err(route_err) = driver.inject_player_intents(&intents, &uppers) {
+                self.restore_runtime_player_intents(intents);
+                return Err(self.poison_runtime_step(StepFatal::InvariantViolation {
+                    location: "GameSession::step_via_runtime".to_owned(),
+                    description: route_err,
+                }));
+            }
+        }
+        drop(_seg_lock);
+        let outcome = body(self, &mut driver);
+        if outcome.is_err() {
+            self.restore_runtime_player_intents(intents);
+        }
+        outcome
+    }
+
     /// Frame callback 只读取私有 candidate；全部验证成功才唯一安装。
     /// callback 失败保旧镜像与已发布 World，封存首错并禁止重跑。
     pub(in crate::session) fn step_frame_and_commit_via_runtime<P>(
