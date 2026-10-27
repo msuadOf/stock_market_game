@@ -2672,6 +2672,9 @@ impl GameSession {
 
 
     pub(super) fn poison_failed_step(&mut self, fatal: StepFatal) -> StepFatal {
+        if let Some(first) = &self.poison {
+            return first.clone();
+        }
         self.poison = Some(fatal.clone());
         fatal
     }

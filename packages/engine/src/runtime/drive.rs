@@ -645,6 +645,7 @@ impl RuntimeDriver {
     /// 驱动一个 tick：runtime 收束 → 账户/行情回写会话 → 事件产出。
     /// 会话 tick 由调用方（或批 8e 的 step_frame 本体）推进。
     pub fn step(&mut self, session: &mut GameSession) -> Result<Vec<Event>, String> {
+        session.require_healthy().map_err(|fatal| fatal.to_string())?;
         // D3a-2c 件2：自然日同步（会话 civil clock 权威——快照 civil_date
         // 的唯一来源；休市日跳变经此传导）。
         self.world.set_civil_date(session.civil_date());
@@ -1132,13 +1133,14 @@ impl RuntimeDriver {
     ///   恢复 day/seq 及本次账户/经历/个人确认镜像；既有 retained 发布
     ///   与 civil 其他域的跨域事务边界不由此局部镜像基线承诺。
     pub fn day_end(&mut self, session: &mut GameSession) -> Result<(), String> {
+        session.require_healthy().map_err(|fatal| fatal.to_string())?;
         #[cfg(feature = "simulation-diagnostics")]
         self.ensure_causal_day_end_supported()?;
         let restore_mirror = session.runtime_day_end_mirror_rollback();
         let pending_before = self.pending_hold_inits.clone();
         let force_before = self.force_full_accounts;
         let result = self.day_end_inner(session);
-        if result.is_err() {
+        if result.is_err() && session.poison_reason().is_none() {
             restore_mirror(session);
             self.pending_hold_inits = pending_before;
             self.force_full_accounts = force_before;
@@ -1204,14 +1206,14 @@ impl RuntimeDriver {
         }
         // 会话自然日推进（公司调度/关账/披露/civil clock——旧引擎权威）。
         if let Err(e) = session.end_civil_day() {
-            self.rollback_day_end(
-                session,
-                day_before,
-                seq_before,
-                next_seq_before,
-                drained_len_before,
-            );
-            return Err(format!("自然日推进失败（World 日结与账户镜像已回滚）：{e:?}"));
+            let fatal = match e {
+                crate::session::SessionError::Step(fatal) => fatal,
+                error => crate::session::StepFatal::InvariantViolation {
+                    location: "RuntimeDriver::day_end::civil".to_owned(),
+                    description: format!("市场日结安装后的自然日推进失败：{error}"),
+                },
+            };
+            return Err(session.poison_runtime_step(fatal).to_string());
         }
         // D3a-2c 件2：日结后同步自然日（快照 civil_date 跟随 civil clock）。
         self.world.set_civil_date(session.civil_date());
@@ -1856,13 +1858,14 @@ impl RuntimeDriver {
         &mut self,
         session: &mut GameSession,
     ) -> Result<(), String> {
+        session.require_healthy().map_err(|fatal| fatal.to_string())?;
         #[cfg(feature = "simulation-diagnostics")]
         self.ensure_causal_day_end_supported()?;
         let restore_mirror = session.runtime_day_end_mirror_rollback();
         let pending_before = self.pending_hold_inits.clone();
         let force_before = self.force_full_accounts;
         let result = self.day_end_with_runtime_market_day_inner(session);
-        if result.is_err() {
+        if result.is_err() && session.poison_reason().is_none() {
             restore_mirror(session);
             self.pending_hold_inits = pending_before;
             self.force_full_accounts = force_before;
@@ -1919,14 +1922,14 @@ impl RuntimeDriver {
         }
         // 会话自然日推进（公司调度/关账/披露/civil clock——旧引擎权威）。
         if let Err(e) = session.end_civil_day() {
-            self.rollback_day_end(
-                session,
-                day_before,
-                seq_before,
-                next_seq_before,
-                drained_len_before,
-            );
-            return Err(format!("自然日推进失败（World 日结与账户镜像已回滚）：{e:?}"));
+            let fatal = match e {
+                crate::session::SessionError::Step(fatal) => fatal,
+                error => crate::session::StepFatal::InvariantViolation {
+                    location: "RuntimeDriver::day_end_with_runtime_market_day::civil".to_owned(),
+                    description: format!("市场日结安装后的自然日推进失败：{error}"),
+                },
+            };
+            return Err(session.poison_runtime_step(fatal).to_string());
         }
         // Sol 六审段 1.2 取证修复：日结 drained 事件（含收盘竞价清算
         /// AuctionTick/AuctionCompleted）经 next_seq 分配后**回写会话
@@ -2178,6 +2181,7 @@ impl RuntimeDriver {
     /// 推进；回写**仅 information 域**——权威调和见设计注记）。
     /// 返回回写条数。
     pub fn deliver_information(&mut self, session: &mut GameSession) -> Result<usize, String> {
+        session.require_healthy().map_err(|fatal| fatal.to_string())?;
         let (version, library) = session.runtime_library_handle();
         if Some(version) == self.last_library_version {
             return Ok(0);
@@ -2193,6 +2197,7 @@ impl RuntimeDriver {
         &mut self,
         session: &mut GameSession,
     ) -> Result<usize, String> {
+        session.require_healthy().map_err(|fatal| fatal.to_string())?;
         let (version, library) = session.runtime_library_handle();
         let updates = self.collect_delivery(session, library)?;
         self.last_library_version = Some(version);
@@ -2212,11 +2217,29 @@ impl RuntimeDriver {
         let attentions_full = session.runtime_attention_full_states();
         let by_id: std::collections::BTreeMap<crate::AccountId, _> =
             attentions_full.into_iter().collect();
-        let mut attentions = Vec::new();
-        for (local, id) in self.id_map.iter().enumerate() {
-            if let Some(state) = by_id.get(id) {
-                attentions.push((local as super::LocalIdx, *id, state.clone()));
+        let participants = session.runtime_belief_states();
+        let mut attentions = vec![Vec::new(); self.world.n_groups()];
+        for id in &self.id_map {
+            let account = session.account(*id)
+                .ok_or_else(|| format!("信息投递名册账户缺失：{id:?}"))?;
+            let strategy = account.strategy();
+            let required = strategy.is_some_and(|strategy| {
+                strategy.retail_style().is_some() || strategy.belief_chain_params().is_some()
+            });
+            if !participants.contains_key(id) {
+                if required {
+                    return Err(format!("信息投递实际策略要求个人态但 participant 缺失：{id:?}"));
+                }
+                // 无个人信息能力的真实账户不属于投递名册；不是缺少 attention 的 fallback。
+                continue;
             }
+            if strategy.is_none() {
+                return Err(format!("信息投递 participant 存在但无实际策略：{id:?}"));
+            }
+            let state = by_id.get(id)
+                .ok_or_else(|| format!("信息投递 participant 缺 attention：{id:?}"))?;
+            let (group, local) = self.owner_slot(*id)?;
+            attentions[usize::from(group)].push((local, *id, state.clone()));
         }
         let payload = super::world::GroupInformationPayload {
             now,
@@ -2231,13 +2254,10 @@ impl RuntimeDriver {
         let mut updates = Vec::new();
         for (g, group_updates) in collected {
             for (local, state) in group_updates {
-                if let Some(id) = self
-                    .id_map
-                    .get(g as usize * self.accounts_per_group + local as usize)
-                    .copied()
-                {
-                    updates.push((id, state));
-                }
+                let id = self.account_by_owner((g, local)).ok_or_else(|| {
+                    format!("信息投递回执 owner 不在真实名册：group={g} local={local}")
+                })?;
+                updates.push((id, state));
             }
         }
         Ok(updates)

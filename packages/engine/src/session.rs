@@ -3549,13 +3549,33 @@ impl GameSession {
                 },
             ));
         }
-        let mut candidate = self.clone_for_tick_shadow().map_err(|_error| {
-            // fault1034：自然日日终 candidate 捕获失败，保持数值错误契约。
-            SessionError::InvalidSave(ValidationFault::new(1034, vec![0]))
-        })?;
-        let report = candidate.end_civil_day_after_session_check()?;
-        let instant = report.disclosure_instant;
-        let publication = project(&candidate, report)?;
+        // native 市场已经交付的日结镜像不能因后续 civil 失败而恢复或重试。
+        // 这里只识别既有实际安装载体，不以构造过 driver 冒充成功安装。
+        let runtime_installed = self.state.runtime_resting_snapshot.is_some();
+        let prepared = (|| {
+            let mut candidate = self.clone_for_tick_shadow().map_err(|_error| {
+                // fault1034：自然日日终 candidate 捕获失败，保持数值错误契约。
+                SessionError::InvalidSave(ValidationFault::new(1034, vec![0]))
+            })?;
+            let report = candidate.end_civil_day_after_session_check()?;
+            let instant = report.disclosure_instant;
+            let publication = project(&candidate, report)?;
+            Ok::<_, SessionError>((candidate, instant, publication))
+        })();
+        let (candidate, instant, publication) = match prepared {
+            Ok(prepared) => prepared,
+            Err(error) if runtime_installed => {
+                let fatal = match error {
+                    SessionError::Step(fatal) => fatal,
+                    error => StepFatal::InvariantViolation {
+                        location: "GameSession::with_prepared_civil_day".to_owned(),
+                        description: format!("已安装市场日结后的 civil 准备失败：{error}"),
+                    },
+                };
+                return Err(SessionError::Step(self.poison_runtime_step(fatal)));
+            }
+            Err(error) => return Err(error),
+        };
         self.commit_tick_shadow(candidate);
         for observer in self.state.civil_clock.disclosure_observers() {
             observer(instant);
