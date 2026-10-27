@@ -1,0 +1,21 @@
+{
+  "exit": 0,
+  "elapsed_seconds": 70.37066840199986,
+  "command": [
+    "env",
+    "CARGO_TARGET_DIR=/data1/baiyifan/workplace/stock_market_game/.tmp/runtime-diagnostics-d1/target",
+    "cargo",
+    "test",
+    "-p",
+    "engine",
+    "--test",
+    "diagnostic_absence",
+    "--test",
+    "runtime_diagnostics_contract",
+    "--no-run",
+    "-j",
+    "8",
+    "--message-format=json-render-diagnostics"
+  ],
+  "supervisor_ms": 300000
+}

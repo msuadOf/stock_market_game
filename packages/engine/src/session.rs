@@ -12,6 +12,7 @@ mod candles;
 mod causal;
 mod civil_clock;
 mod company_assembly;
+mod company_facts;
 mod company_catalog_view;
 pub use company_catalog_view::{CompanyCatalogEntry, CompanyCatalogViewError};
 mod company_capability_views;
@@ -143,6 +144,14 @@ mod envelope_projection_hydration_tests;
 mod envelope_projection_tests;
 #[cfg(test)]
 mod failure_tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod runtime_sync_tests;
+mod runtime_mirror;
+pub(crate) mod retail_lifecycle;
+#[cfg(all(test, not(feature = "simulation-diagnostics"), not(target_arch = "wasm32")))]
+mod retail_lifecycle_tests;
+#[cfg(all(test, feature = "simulation-diagnostics", not(target_arch = "wasm32")))]
+mod runtime_diagnostics_tests;
 #[cfg(test)]
 mod hash_contract_tests;
 #[cfg(test)]
@@ -2062,7 +2071,8 @@ pub enum RetailOrderDiagnosticEvent {
         order_id: OrderId,
         remaining_qty: u32,
     },
-    /// 集合竞价原子提交失败后未写入连续订单簿的剩余委托；它不是“仍在簿中”。
+    /// 已进入真实 order-ID 生命周期、被 stock 层拒绝终止的申报尝试余量；不是受理或成交。
+    /// group 预检无 desk ID，只记 Rejected；整拍失败不发布本候选。
     Aborted {
         account: AccountId,
         code: StockId,
@@ -3424,7 +3434,11 @@ impl GameSession {
     /// 当前交易阶段。`auction_ticks` 表示 09:15–09:30 的整段开盘时间；
     /// 前 2/3 接受集合竞价申报，后 1/3 为不接受申报的盘前窗口。
     pub fn phase(&self) -> TradingPhase {
-        let day_tick = self.state.tick % self.state.setup.ticks_per_day;
+        self.phase_at_tick(self.state.tick)
+    }
+
+    pub(in crate::session) fn phase_at_tick(&self, tick: u64) -> TradingPhase {
+        let day_tick = tick % self.state.setup.ticks_per_day;
         if day_tick < self.auction_entry_ticks() {
             TradingPhase::CallAuction
         } else if day_tick < self.state.setup.auction_ticks {
@@ -3544,13 +3558,33 @@ impl GameSession {
                 },
             ));
         }
-        let mut candidate = self.clone_for_tick_shadow().map_err(|_error| {
-            // fault1034：自然日日终 candidate 捕获失败，保持数值错误契约。
-            SessionError::InvalidSave(ValidationFault::new(1034, vec![0]))
-        })?;
-        let report = candidate.end_civil_day_after_session_check()?;
-        let instant = report.disclosure_instant;
-        let publication = project(&candidate, report)?;
+        // native 市场已经交付的日结镜像不能因后续 civil 失败而恢复或重试。
+        // 这里只识别既有实际安装载体，不以构造过 driver 冒充成功安装。
+        let runtime_installed = self.state.runtime_resting_snapshot.is_some();
+        let prepared = (|| {
+            let mut candidate = self.clone_for_tick_shadow().map_err(|_error| {
+                // fault1034：自然日日终 candidate 捕获失败，保持数值错误契约。
+                SessionError::InvalidSave(ValidationFault::new(1034, vec![0]))
+            })?;
+            let report = candidate.end_civil_day_after_session_check()?;
+            let instant = report.disclosure_instant;
+            let publication = project(&candidate, report)?;
+            Ok::<_, SessionError>((candidate, instant, publication))
+        })();
+        let (candidate, instant, publication) = match prepared {
+            Ok(prepared) => prepared,
+            Err(error) if runtime_installed => {
+                let fatal = match error {
+                    SessionError::Step(fatal) => fatal,
+                    error => StepFatal::InvariantViolation {
+                        location: "GameSession::with_prepared_civil_day".to_owned(),
+                        description: format!("已安装市场日结后的 civil 准备失败：{error}"),
+                    },
+                };
+                return Err(SessionError::Step(self.poison_runtime_step(fatal)));
+            }
+            Err(error) => return Err(error),
+        };
         self.commit_tick_shadow(candidate);
         for observer in self.state.civil_clock.disclosure_observers() {
             observer(instant);
@@ -3679,14 +3713,13 @@ impl GameSession {
         Ok(())
     }
 
-    /// 读取上一 tick 的散户目标仓位诊断样本。
-    ///
-    /// 该切片在下一次 [`Self::step`] 开始时被替换；调用方不得把它当作存档、委托或成交。
+    /// 读取最近成功发布的市场批次目标仓位诊断；失败保留前批。
+    /// Tick 成功替换本拍样本，manual Drain 成功发布空样本；不属于存档、委托或成交。
     pub fn last_retail_decisions(&self) -> &[RetailDecisionTrace] {
         &self.state.last_retail_decisions
     }
 
-    /// 读取上一 tick 的散户订单生命周期诊断事件；不属于存档或撮合状态。
+    /// 读取最近成功发布的市场批次散户生命周期；失败保留前批，不属于存档或撮合状态。
     pub fn last_retail_order_events(&self) -> &[RetailOrderDiagnosticEvent] {
         &self.state.last_retail_order_events
     }
@@ -3717,7 +3750,7 @@ impl GameSession {
         self.state
             .npc_decision_traces
             .records(account)
-            .map(|records| records.iter().cloned().collect())
+            .map(|records| records.iter().map(|record| record.as_ref().clone()).collect())
     }
 
     fn record_retail_order_canceled(
@@ -3736,41 +3769,6 @@ impl GameSession {
                     order_id,
                     remaining_qty,
                 });
-        }
-    }
-
-    /// D5 诊断面派生：retail 拒收（Sol P3 单遍派发——原逐账户 × 全事件
-    /// O(名册×事件) 扫描+每 tick 全名册 keys collect；拒收事件通常 0-几条，
-    /// 只对事件涉及账户查 retail_experience）。**输出序逐位等价**：按
-    /// 账户升序分组（=原 retail_experience.keys() 迭代序）、组内事件序。
-    fn record_retail_intent_rejections(&mut self, events: &[Event]) {
-        let mut by_account: std::collections::BTreeMap<
-            AccountId,
-            Vec<(StockId, crate::RejectionReason)>,
-        > = std::collections::BTreeMap::new();
-        for event in events {
-            if let Event::IntentRejected {
-                account, code, reason, ..
-            } = event
-            {
-                if self.state.retail_experience.contains_key(account) {
-                    by_account
-                        .entry(*account)
-                        .or_default()
-                        .push((code.clone(), reason.clone()));
-                }
-            }
-        }
-        for (account, items) in by_account {
-            for (code, reason) in items {
-                self.state
-                    .last_retail_order_events
-                    .push(RetailOrderDiagnosticEvent::Rejected {
-                        account,
-                        code,
-                        reason,
-                    });
-            }
         }
     }
 
@@ -6845,12 +6843,12 @@ mod npc_working_quote_tests {
 }
 
 impl CommittableSessionState {
-    /// 按数值 id 查发行人公司（公司域仍以 StockCode 关联，翻译在会话侧完成；
-    /// 公司域数值化后此助手消亡——见 string-free-inventory.md A 表）。
+    /// 已知股票按所选模型的 CompanyReadFacts 查发行人；目录外 id 返回 None。
     fn issuer_of_stock(&self, id: StockId) -> Option<crate::company::CompanyId> {
-        let code = self.stocks.code(id)?;
-        self.company_registry
-            .issuer_of(&crate::account::StockCode(code.to_string()))
+        self.stocks.code(id)?;
+        Some(self.company_spec_of_stock(id).unwrap_or_else(|error| {
+            panic!("会话发行人读取失败：{error}")
+        }).0)
     }
     fn clone_for_shadow(&self) -> Result<Self, StepFatal> {
         let Self {

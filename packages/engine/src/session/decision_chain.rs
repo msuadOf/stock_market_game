@@ -160,23 +160,7 @@ impl DecisionChainObservation {
         view: &crate::session::pipeline::npc_split::SessionReadView,
         now: crate::calendar::CivilInstant,
     ) -> BTreeSet<StockId> {
-        let codes: Vec<(crate::account::StockCode, crate::StockId)> = view
-            .setup
-            .stocks
-            .iter()
-            .map(|stock| {
-                (
-                    stock.code.clone(),
-                    view.stocks.id(&stock.code.0).expect("配置股票必须已入目录"),
-                )
-            })
-            .collect();
-        exposed_stocks_shared(
-            view.library,
-            view.company_registry,
-            &codes,
-            now,
-        )
+        exposed_stocks_shared(view.library, &view.company_facts, now)
     }
 }
 
@@ -280,12 +264,10 @@ const EXPOSURE_FRESHNESS_DAYS: u32 = 2;
 
 /// 曝光股票集合（Sol 中点整改 5 提取共享：session 读视图与组线程
 /// DecisionChainObservation 组装同一函数——发现权重的披露曝光面
-/// 不得分叉）。输入：公开库、发行人注册表、(发行代码→数值 id) 映射、
-/// 观察时刻。
+/// 不得分叉）。输入：公开库、同源数值发行人事实、观察时刻。
 pub(crate) fn exposed_stocks_shared(
     library: &std::sync::Arc<crate::information::PublicLibrary>,
-    company_registry: &std::sync::Arc<crate::company::CompanyRegistry>,
-    codes: &[(crate::account::StockCode, crate::StockId)],
+    company_facts: &crate::company::CompanyReadFacts,
     now: crate::calendar::CivilInstant,
 ) -> BTreeSet<StockId> {
     let mut threshold = now.date();
@@ -295,16 +277,13 @@ pub(crate) fn exposed_stocks_shared(
             .expect("runtime window stays above the civil floor");
     }
     let mut exposed = BTreeSet::new();
-    for (code, id) in codes {
-        let Some(company) = company_registry.issuer_of(code) else {
-            continue;
-        };
+    for (id, company) in company_facts.issuers() {
         let fresh = library
-            .reports_for_company(&company, now)
+            .reports_for_company(company, now)
             .iter()
             .any(|report| report.published_at.date() >= threshold)
             || library
-                .announcements_for_company(&company, now)
+                .announcements_for_company(company, now)
                 .iter()
                 .any(|announcement| announcement.published_at.date() >= threshold);
         if fresh {
@@ -543,20 +522,11 @@ impl lifecycle::PlanReviewHost for SessionReviewHost<'_> {
         )
     }
     fn max_holdable_shares(&self, code: &StockId) -> u64 {
-        let code_str = self
-            .session
-            .state
-            .stocks
-            .code(*code)
-            .expect("candidate stock must be cataloged");
-        self.session
-            .state
-            .setup
-            .stocks
-            .iter()
-            .find(|stock| stock.code.0 == *code_str)
-            .map(|stock| stock.total_shares.min(u64::from(u32::MAX)))
-            .unwrap_or(0)
+        let (_, spec) = self.session.state.company_spec_of_stock(*code).unwrap_or_else(|error| {
+            panic!("策略发行人股本读取失败：{error}")
+        });
+        let issued_shares = spec.issued_shares;
+        issued_shares.min(u64::from(u32::MAX))
     }
 }
 
@@ -1742,6 +1712,7 @@ pub(crate) fn next_routable_sell_qty(
 
 #[cfg(test)]
 mod chain_restructure_tests {
+    include!("decision_chain/company_source_tests.rs");
     use crate::session::plan_continuation_domain::PlanContinuationDomain;
 
     #[cfg(feature = "simulation-diagnostics")]

@@ -1,0 +1,25 @@
+{
+  "exit": 0,
+  "elapsed_seconds": 2.73389001499163,
+  "command": [
+    "rustc",
+    "--edition=2021",
+    "--test",
+    "packages/engine/tests/runtime_diagnostics_d1.rs",
+    "--cfg",
+    "feature=\"simulation-diagnostics\"",
+    "-L",
+    "dependency=/data1/baiyifan/workplace/stock_market_game/.tmp/runtime-diagnostics-d1/target/debug/deps",
+    "--extern",
+    "engine=/data1/baiyifan/workplace/stock_market_game/.tmp/runtime-diagnostics-d1/target/debug/deps/libengine-436669dc3305723a.rlib",
+    "--extern",
+    "serde_json=/data1/baiyifan/workplace/stock_market_game/.tmp/runtime-diagnostics-d1/target/debug/deps/libserde_json-64d03d242a680cbe.rlib",
+    "-C",
+    "debuginfo=0",
+    "-C",
+    "codegen-units=8",
+    "-o",
+    "/data1/baiyifan/workplace/stock_market_game/.tmp/runtime-diagnostics-d1/unsupported-red"
+  ],
+  "supervisor_ms": 300000
+}

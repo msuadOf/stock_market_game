@@ -1,0 +1,6 @@
+{
+  "effective_peak_cores_sampled": 24.166362118016117,
+  "max_running_processes": 1,
+  "clock_ticks": 100,
+  "scope": "可见相关进程utime/stime相邻采样差，不等同全机满核；线程R状态未逐线程采集"
+}

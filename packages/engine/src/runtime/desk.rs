@@ -433,6 +433,10 @@ pub struct DeskState {
     bars_shipped_today: bool,
     /// 本 tick 双腿成交事实缓冲（出口随 DeskReport；Abort 清空）。
     trade_facts: Vec<super::protocol::DeskTradeFact>,
+    retail_facts: Vec<super::retail_lifecycle::RawFact>,
+    /// 本轮因果事实，随报告 move；Abort 时丢弃。
+    #[cfg(feature = "simulation-diagnostics")]
+    causal_facts: Vec<super::diagnostics::DeskCausalFact>,
     /// 本 tick 生命周期事实缓冲（受理/撤单/到期）。
     lifecycle_facts: Vec<super::protocol::DeskLifecycleFact>,
     /// 本 tick 竞价事实缓冲。
@@ -624,6 +628,9 @@ impl DeskState {
             drain_cleared_closing: None,
             bars_shipped_today: false,
             trade_facts: Vec::new(),
+            retail_facts: Vec::new(),
+            #[cfg(feature = "simulation-diagnostics")]
+            causal_facts: Vec::new(),
             lifecycle_facts: Vec::new(),
             auction_facts: Vec::new(),
             self_asks: std::collections::HashMap::new(),
@@ -843,6 +850,9 @@ impl DeskState {
             *f = false;
         }
         self.trade_facts.clear();
+        self.retail_facts.clear();
+        #[cfg(feature = "simulation-diagnostics")]
+        self.causal_facts.clear();
         self.lifecycle_facts.clear();
         self.auction_facts.clear();
         self.cur_tick = self.committed_tick;
@@ -1090,11 +1100,33 @@ impl DeskState {
                     price,
                     qty,
                     purse,
+                    #[cfg(feature = "simulation-diagnostics")]
+                    source,
                 } => {
-                    self.place(tick, owner, side, price, qty, purse)?;
+                    self.place(
+                        tick,
+                        owner,
+                        side,
+                        price,
+                        qty,
+                        purse,
+                        #[cfg(feature = "simulation-diagnostics")]
+                        source,
+                    )?;
                 }
-                DeskIn::CancelAll { owner } => self.cancel_all_for(tick, owner),
-                DeskIn::Cancel { owner, order } => self.cancel_one(tick, owner, order)?,
+                DeskIn::CancelAll { owner } => self.cancel_all_for(tick, owner)?,
+                DeskIn::Cancel {
+                    owner,
+                    order,
+                    #[cfg(feature = "simulation-diagnostics")]
+                    source,
+                } => self.cancel_one(
+                    tick,
+                    owner,
+                    order,
+                    #[cfg(feature = "simulation-diagnostics")]
+                    source,
+                )?,
             }
         }
         Ok(())
@@ -1110,6 +1142,7 @@ impl DeskState {
         rp: RoutedPrice,
         qty: u32,
         purse: i64,
+        #[cfg(feature = "simulation-diagnostics")] source: super::diagnostics::OperationSource,
     ) -> Result<(), RuntimeError> {
         // D5 复核（off-by-one 对齐）：本拍处理的委托属上一收束点到本拍
         // 的相位窗——旧管线 step(N) 的受理判定用 phase(N-1)（PreOpen 拒
@@ -1193,6 +1226,19 @@ impl DeskState {
                 ),
             });
         }
+        // 先验证深度及本单的增量上界；后续成交只会减量，post Quote 不新增溢出点。
+        #[cfg(feature = "simulation-diagnostics")]
+        let causal_before = {
+            let before = self.causal_quote()?;
+            let depth = match side {
+                Side::Buy => before.bid_depth,
+                Side::Sell => before.ask_depth,
+            };
+            depth.checked_add(u64::from(qty)).ok_or_else(|| RuntimeError::ProtocolInvariant {
+                detail: format!("causal Quote 申报增量溢出：stock={} qty={qty}", self.setup.stock),
+            })?;
+            before
+        };
         // Sol 三轮修复 2（即时单序号推进）：申报取号即消费（A 股语义：
         /// 每笔申报消耗一个序号）——此前仅在挂簿路径（rest_inner）推进，
         /// 即成/即撤的即时单不推进，同账户同股连续两笔空盘市价单产生
@@ -1225,6 +1271,25 @@ impl DeskState {
             charged_transfer_fee: 0,
             expire_tick: tick.saturating_add(self.setup.order_ttl_ticks),
         };
+        self.retail_facts.push(super::retail_lifecycle::RawFact::Submitted {
+            order: order_ref, owner, side, qty,
+        });
+        #[cfg(feature = "simulation-diagnostics")]
+        {
+            self.note_causal(super::diagnostics::DeskCausalKind::Submitted {
+                order: order_ref,
+                owner,
+                side,
+                qty,
+                source,
+                before: causal_before,
+            });
+            if is_market || phase != DeskPhase::Continuous {
+                self.note_causal(super::diagnostics::DeskCausalKind::Unsupported {
+                    detail: "Market或非连续申报生命周期尚未接通",
+                });
+            }
+        }
         match phase {
             DeskPhase::CallAuction | DeskPhase::ClosingAuction => {
                 // 集合竞价：只积累不撮合（受理价已解析——purse 先收敛）。
@@ -1234,7 +1299,10 @@ impl DeskState {
             }
             DeskPhase::PreOpen | DeskPhase::Continuous => {
                 let mut order = order;
-                self.match_incoming(tick, &mut order)?;
+                self.match_incoming(tick, &mut order,
+                    #[cfg(feature = "simulation-diagnostics")]
+                    if phase == DeskPhase::Continuous && !is_market { Some(causal_before) } else { None },
+                )?;
                 if order.qty == 0 {
                     // 全成：purse slack（最坏情况预留 − 实际扣费）退款 + Closed。
                     self.close_order_entities(&order);
@@ -1252,7 +1320,43 @@ impl DeskState {
                 }
             }
         }
+        #[cfg(feature = "simulation-diagnostics")]
+        self.note_causal(super::diagnostics::DeskCausalKind::Quote(
+            self.causal_quote()?,
+        ));
         Ok(())
+    }
+
+    /// 精确读取单股全簿深度；仅 feature on，成本为 O(本股挂单数)。
+    #[cfg(feature = "simulation-diagnostics")]
+    fn causal_quote(&self) -> Result<super::diagnostics::DeskQuote, RuntimeError> {
+        let depth = |book: &BTreeMap<i64, VecDeque<DeskOrder>>| {
+            book.values()
+                .flat_map(|level| level.iter())
+                .try_fold(0u64, |total, order| {
+                    total.checked_add(u64::from(order.qty)).ok_or_else(|| {
+                        RuntimeError::ProtocolInvariant {
+                            detail: format!("causal Quote 深度溢出：stock={}", self.setup.stock),
+                        }
+                    })
+                })
+        };
+        Ok(super::diagnostics::DeskQuote {
+            bid_cents: self.bids.keys().next_back().copied(),
+            ask_cents: self.asks.keys().next().copied(),
+            bid_depth: depth(&self.bids)?,
+            ask_depth: depth(&self.asks)?,
+        })
+    }
+
+    #[cfg(feature = "simulation-diagnostics")]
+    fn note_causal(&mut self, kind: super::diagnostics::DeskCausalKind) {
+        self.causal_facts.push(super::diagnostics::DeskCausalFact {
+            tick: self.cur_tick,
+            round: self.cur_round,
+            stock: self.setup.stock,
+            kind,
+        });
     }
 
     /// 记录受理事实（Accepted）。
@@ -1271,6 +1375,10 @@ impl DeskState {
 
     /// 记录终结事实（Cancelled/Expired）。
     fn note_terminated(&mut self, order: &DeskOrder, kind: super::protocol::LifecycleKind) {
+        self.retail_facts.push(super::retail_lifecycle::RawFact::Terminated {
+            order: order.order_ref, owner: order.owner, qty: order.qty,
+            end: super::retail_lifecycle::Termination::Canceled,
+        });
         self.lifecycle_facts
             .push(super::protocol::DeskLifecycleFact {
                 stock: self.setup.stock,
@@ -1334,7 +1442,9 @@ impl DeskState {
     }
 
     /// 连续竞价撮合：逐档吃对面最优（价格时间优先），成交价取 maker 价。
-    fn match_incoming(&mut self, _tick: u64, order: &mut DeskOrder) -> Result<(), RuntimeError> {
+    fn match_incoming(&mut self, _tick: u64, order: &mut DeskOrder,
+        #[cfg(feature = "simulation-diagnostics")] causal_before: Option<super::diagnostics::DeskQuote>,
+    ) -> Result<(), RuntimeError> {
         loop {
             if order.qty == 0 {
                 break;
@@ -1384,7 +1494,9 @@ impl DeskState {
             let fill_qty = order.qty.min(maker.qty);
             // 连续竞价：成交价=maker 价（对手档申报价，价格改善归 taker）。
             let maker_price = maker.price;
-            self.settle_fill(order, maker, fill_qty, maker_price)?;
+            self.settle_fill(order, maker, fill_qty, maker_price,
+                #[cfg(feature = "simulation-diagnostics")] causal_before,
+            )?;
         }
         Ok(())
     }
@@ -1400,6 +1512,7 @@ impl DeskState {
         maker: DeskOrder,
         qty: u32,
         fill_price: i64,
+        #[cfg(feature = "simulation-diagnostics")] causal_before: Option<super::diagnostics::DeskQuote>,
     ) -> Result<(), RuntimeError> {
         // 刀 2a：成交行情写（last/high/low/量/额/K 演进）。
         self.bump_market_ver();
@@ -1579,6 +1692,10 @@ impl DeskState {
         // 方向统一 (sell_ref, buy_ref)——owner 已固定 (seller, buyer)，
         // 序号按原始方向交换会使主动卖时身份核跳过合法计划成交）。
         let (maker_order, taker_order) = (sell_ref, buy_ref);
+        let trade_ordinal = u64::try_from(self.trade_facts.len()).map_err(|_| over("trade ordinal 溢出"))?;
+        self.retail_facts.push(super::retail_lifecycle::RawFact::TradeRef { ordinal: trade_ordinal });
+        #[cfg(feature = "simulation-diagnostics")]
+        let causal_ordinal = trade_ordinal;
         self.trade_facts.push(super::protocol::DeskTradeFact {
             stock: self.setup.stock,
             price,
@@ -1603,6 +1720,20 @@ impl DeskState {
             maker_order_serial: (u64::from(maker_order.0) << 32) | maker_order.1,
             taker_order_serial: (u64::from(taker_order.0) << 32) | taker_order.1,
         });
+        #[cfg(feature = "simulation-diagnostics")]
+        if let Some(before) = causal_before {
+            use super::diagnostics::{DeskCausalKind, DeskExecutionLeg};
+            self.note_causal(DeskCausalKind::Execution {
+                ordinal: causal_ordinal,
+                seller: DeskExecutionLeg { order: sell_ref, owner: sell_owner, value_before: sell_filled_before },
+                buyer: DeskExecutionLeg { order: buy_ref, owner: buy_owner, value_before: buy_filled_before },
+                qty, price_cents: price, side: taker_side, before,
+            });
+        } else {
+            self.note_causal(super::diagnostics::DeskCausalKind::Unsupported {
+                detail: "本切片尚未接通的Filled/Execution类型",
+            });
+        }
         // 实体互换：买方得股票、卖方得净额。
         let bg = buy_owner.0 as usize;
         self.out[bg].push(Entity::BoughtShares {
@@ -1903,7 +2034,7 @@ impl DeskState {
 
     /// 对齐撤单：撤该 owner 全部挂单（实体原路回流）。撤单窗口门禁在组端不知相位，
     /// 由交易部统一裁决。
-    fn cancel_all_for(&mut self, tick: u64, owner: Owner) {
+    fn cancel_all_for(&mut self, tick: u64, owner: Owner) -> Result<(), RuntimeError> {
         // D5 off-by-one 对齐：撤单门禁与受理同窗（phase(tick-1)）。
         let allowed = self.setup.allows_cancel(tick.saturating_sub(1));
         let targets: Vec<DeskOrder> = self
@@ -1915,7 +2046,7 @@ impl DeskState {
             .cloned()
             .collect();
         if targets.is_empty() {
-            return;
+            return Ok(());
         }
         if !allowed {
             for o in targets {
@@ -1925,19 +2056,37 @@ impl DeskState {
                     kind: ReceiptKind::CancelWindowClosed,
                 });
             }
-            return;
+            return Ok(());
         }
+        // 单线程纯删除：先验总深度，随后每次 post Quote 不会新增溢出。
+        #[cfg(feature = "simulation-diagnostics")]
+        self.causal_quote()?;
         for o in targets {
             self.note_terminated(&o, super::protocol::LifecycleKind::Cancelled);
             self.remove_order(&o);
             self.close_order_entities(&o);
             self.cancelled_orders += 1;
             self.undo.push(DeskUndo::Cancelled(1));
+            #[cfg(feature = "simulation-diagnostics")]
+            {
+                self.note_causal(super::diagnostics::DeskCausalKind::Cancelled {
+                    order: o.order_ref, owner, qty: o.qty,
+                    source: super::diagnostics::OperationSource::NonPlayerUnresolved,
+                });
+                self.note_causal(super::diagnostics::DeskCausalKind::Quote(self.causal_quote()?));
+            }
         }
+        Ok(())
     }
 
     /// 定向撤单：命中撤余量；未命中=已全成（显式业务回执）。
-    fn cancel_one(&mut self, tick: u64, owner: Owner, order: OrderRef) -> Result<(), RuntimeError> {
+    fn cancel_one(
+        &mut self,
+        tick: u64,
+        owner: Owner,
+        order: OrderRef,
+        #[cfg(feature = "simulation-diagnostics")] source: super::diagnostics::OperationSource,
+    ) -> Result<(), RuntimeError> {
         if order.0 != self.setup.stock {
             return Err(RuntimeError::ProtocolInvariant {
                 detail: format!("交易部 {} 收到他股撤单：order={order:?}", self.setup.stock),
@@ -1972,11 +2121,25 @@ impl DeskState {
         }
         match found {
             Some(o) => {
+                #[cfg(feature = "simulation-diagnostics")]
+                self.causal_quote()?;
                 self.note_terminated(&o, super::protocol::LifecycleKind::Cancelled);
                 self.remove_order(&o);
                 self.close_order_entities(&o);
                 self.cancelled_orders += 1;
                 self.undo.push(DeskUndo::Cancelled(1));
+                #[cfg(feature = "simulation-diagnostics")]
+                {
+                    self.note_causal(super::diagnostics::DeskCausalKind::Cancelled {
+                        order,
+                        owner,
+                        qty: o.qty,
+                        source,
+                    });
+                    self.note_causal(super::diagnostics::DeskCausalKind::Quote(
+                        self.causal_quote()?,
+                    ));
+                }
                 Ok(())
             }
             None => {
@@ -2034,6 +2197,14 @@ impl DeskState {
                 ),
             })?;
         self.undo.push(DeskUndo::Serial);
+        self.retail_facts.push(super::retail_lifecycle::RawFact::Submitted { order, owner, side, qty });
+        self.retail_facts.push(super::retail_lifecycle::RawFact::Terminated {
+            order, owner, qty, end: super::retail_lifecycle::Termination::Aborted,
+        });
+        #[cfg(feature = "simulation-diagnostics")]
+        self.note_causal(super::diagnostics::DeskCausalKind::Unsupported {
+            detail: "真实 desk reject 的 rich 来源尚未接通",
+        });
         self.receipts_out[g].push(DeskReceipt { order, owner, kind });
         self.skipped_orders += 1;
         self.undo.push(DeskUndo::Skipped(1));
@@ -2052,6 +2223,10 @@ impl DeskState {
             .collect();
         for o in due {
             self.note_terminated(&o, super::protocol::LifecycleKind::Expired);
+            #[cfg(feature = "simulation-diagnostics")]
+            self.note_causal(super::diagnostics::DeskCausalKind::Unsupported {
+                detail: "真实Expired终止生命周期尚未接通",
+            });
             self.remove_order(&o);
             self.close_order_entities(&o);
             self.expired_orders += 1;
@@ -2211,7 +2386,9 @@ impl DeskState {
             // 价格原则——本函数的 price 形参），费用按成交价双边计。
             let mut taker = buy;
             let maker = sell;
-            self.settle_fill(&mut taker, maker, qty, price)?;
+            self.settle_fill(&mut taker, maker, qty, price,
+                #[cfg(feature = "simulation-diagnostics")] None,
+            )?;
             // taker 全成即闭合；部分成交写回簿（apply_maker_fill 只写 maker——
             // taker 也是簿内单，需对称写回）。
             self.write_back_taker(&taker)?;
@@ -3203,6 +3380,9 @@ fn process_msg(
                         fee_sink: state.fee_sink,
                         view: state.public_snapshot_arc(tick)?,
                         trades: std::mem::take(&mut state.trade_facts),
+                        retail: std::mem::take(&mut state.retail_facts),
+                        #[cfg(feature = "simulation-diagnostics")]
+                        causal: std::mem::take(&mut state.causal_facts),
                         lifecycle: std::mem::take(&mut state.lifecycle_facts),
                         receipts_out_list: receipts_detail,
                         auction: std::mem::take(&mut state.auction_facts),
@@ -3278,6 +3458,7 @@ fn process_msg(
                     fee_sink: state.fee_sink,
                     last_price: state.market.last_price,
                     drained_lifecycle: std::mem::take(&mut state.lifecycle_facts),
+                    drained_retail: std::mem::take(&mut state.retail_facts),
                     // 只上行 **drain 自产**的收盘竞价事实——auction_facts
                     /// 可能残留拍内窗指示价（日结拍相位窗的 CallAuction
                     /// 指示价，其上行随拍内 DeskReport 承载或随 Abort 丢弃；

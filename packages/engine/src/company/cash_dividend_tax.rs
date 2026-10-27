@@ -968,30 +968,21 @@ impl CashDividendTaxBook {
             .iter()
             .filter(|d| d.operation_seq <= operation_seq)
         {
-            let quantity = total_quantity(&dividend.lots)?;
-            let mut assessed = ExactDividendTaxAmount::zero();
-            for payment in dividend.payments.iter().filter(|payment| {
-                payment.paid_on <= through && payment.operation_seq <= operation_seq
-            }) {
-                let per_share = ExactDividendTaxAmount::new(
-                    i128::from(payment.received_gross.cents()),
-                    quantity,
-                )?;
-                for lot in &dividend.lots {
-                    if matches!(&lot.class, TaxShareClass::StatutoryRestricted { release_on, .. } if payment.paid_on < *release_on)
-                    {
-                        assessed = assessed.add(&per_share.multiply(lot.qty, 10)?)?;
-                        continue;
-                    }
-                    let start = match &lot.class {
-                        TaxShareClass::PublicMarket => lot.acquired_on,
-                        TaxShareClass::StatutoryRestricted { release_on, .. } => *release_on,
-                    };
-                    assess_disposals(dividend, lot, &per_share, start, &mut assessed)?;
-                }
-            }
+            let event_cents = assess_registered_income_cents(
+                &dividend.lots,
+                dividend
+                    .payments
+                    .iter()
+                    .filter(|payment| {
+                        payment.paid_on <= through && payment.operation_seq <= operation_seq
+                    })
+                    .map(|payment| (payment.paid_on, i128::from(payment.received_gross.cents()))),
+                |lot, per_share, start, assessed| {
+                    assess_disposals(dividend, lot, per_share, start, assessed)
+                },
+            )?;
             total_cents = total_cents
-                .checked_add(assessed.round_half_up_cents()?)
+                .checked_add(event_cents)
                 .ok_or_else(|| overflow("assessed tax cents"))?;
         }
         Ok(total_cents)
@@ -1365,6 +1356,37 @@ impl CashDividendTaxBook {
             .ok_or_else(|| overflow("operation sequence"))?;
         Ok(self.operation_seq)
     }
+}
+
+/// Cash/Bonus共用实际所得、原R持期/限售和每事件累计整分口径。
+fn assess_registered_income_cents(
+    lots: &[DividendTaxLot],
+    realizations: impl IntoIterator<Item = (CivilDate, i128)>,
+    mut assess_disposals: impl FnMut(
+        &DividendTaxLot,
+        &ExactDividendTaxAmount,
+        CivilDate,
+        &mut ExactDividendTaxAmount,
+    ) -> Result<(), DividendTaxError>,
+) -> Result<i128, DividendTaxError> {
+    let quantity = total_quantity(lots)?;
+    let mut assessed = ExactDividendTaxAmount::zero();
+    for (realized_on, gross_cents) in realizations {
+        let per_share = ExactDividendTaxAmount::new(gross_cents, quantity)?;
+        for lot in lots {
+            if matches!(&lot.class,TaxShareClass::StatutoryRestricted{release_on,..} if realized_on < *release_on)
+            {
+                assessed = assessed.add(&per_share.multiply(lot.qty, 10)?)?;
+                continue;
+            }
+            let start = match &lot.class {
+                TaxShareClass::PublicMarket => lot.acquired_on,
+                TaxShareClass::StatutoryRestricted { release_on, .. } => *release_on,
+            };
+            assess_disposals(lot, &per_share, start, &mut assessed)?;
+        }
+    }
+    assessed.round_half_up_cents()
 }
 
 pub(crate) fn convert_tax_source(

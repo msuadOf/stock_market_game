@@ -1,0 +1,16 @@
+
+running 1 test
+
+thread 'diagnostics::causal::tests::collector_checkpoint_shares_three_chunks_and_isolates_later_appends' (2804096) panicked at /data1/baiyifan/workplace/stock_market_game/.tmp/runtime-diagnostics-d1/storage/collector-module.rs:242:13:
+checkpoint 应共享已有事实，不能复制历史：index=0
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test diagnostics::causal::tests::collector_checkpoint_shares_three_chunks_and_isolates_later_appends ... FAILED
+
+failures:
+
+failures:
+    diagnostics::causal::tests::collector_checkpoint_shares_three_chunks_and_isolates_later_appends
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 17 filtered out; finished in 0.00s
+
+bounded command exited with 101

@@ -164,7 +164,7 @@ impl BeliefBook {
                         if latest_annual.is_some_and(|(latest, _)| latest == report_id)
                             && matches!(
                                 preferred.reports.kind,
-                                ReportKind::Quarter | ReportKind::HalfYear
+                                ReportKind::Monthly | ReportKind::Quarter | ReportKind::HalfYear
                             )
                         {
                             return self.apply_interim_material(
@@ -188,7 +188,7 @@ impl BeliefBook {
         }
         if matches!(
             report.reports.kind,
-            ReportKind::Quarter | ReportKind::HalfYear
+            ReportKind::Monthly | ReportKind::Quarter | ReportKind::HalfYear
         ) {
             return self.apply_interim_material(stock, cause, report_id, inputs, direct);
         }

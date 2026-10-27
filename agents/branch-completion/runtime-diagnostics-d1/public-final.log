@@ -1,0 +1,11 @@
+
+running 5 tests
+D1 单股8档/8次原始申报及16次精确Quote采样 wall=1.895059ms；采样成本为O(本股挂单数)
+test d1_quote_depth_uses_the_complete_single_stock_book ... ok
+test d1_real_lifecycle_keeps_original_quantity_order_quotes_and_exactly_once ... ok
+test d1_unsupported_market_operation_is_explicit_and_rolls_back ... ok
+test d1_unsupported_day_end_with_resting_orders_rolls_back_before_drain ... ok
+test d1_owned_protocol_checkpoints_restore_multiple_successes_across_sessions ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.52s
+
