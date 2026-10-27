@@ -567,6 +567,42 @@ mod tests {
     fn credit() -> Vec<(GroupIdx, Vec<AdminOperation>)> {
         vec![(0, vec![dividend(0, 101)]), (1, vec![dividend(1, 202)])]
     }
+
+    #[test]
+    fn successful_non_tick_writes_advance_source_without_published_tick() {
+        let mut world = World::spawn(spec()).unwrap();
+        let initial = world.mirror_source();
+        for revision in 1..=2 {
+            world.with_admin_transaction(credit(), |_| Ok(())).unwrap();
+            let source = world.mirror_source();
+            assert_eq!((source.tick, source.generation), (initial.tick, initial.generation));
+            assert_eq!(source.non_tick_revision, revision,
+                "成功 Admin 不是 attempt id；同 tick 连续写必须有独立成功来源");
+            assert!(world.pending_mirror_domains().accounts_full);
+        }
+        let source = world.mirror_source();
+        let pending = world.pending_mirror_domains();
+        let rejected = world.with_admin_transaction(credit(), |_| Err::<(), _>(invalid("纯 inspect 业务拒绝")));
+        assert!(rejected.is_err());
+        assert_eq!(world.mirror_source(), source, "失败不推进成功来源");
+        assert_eq!(world.pending_mirror_domains(), pending, "失败不清旧 dirty 原因");
+        world.shutdown().unwrap();
+    }
+
+    #[test]
+    fn non_tick_revision_exhaustion_rejects_before_first_commit() {
+        let mut world = World::spawn(spec()).unwrap();
+        world.non_tick_revision = u64::MAX;
+        let before = accounts(&mut world);
+        let source = world.mirror_source();
+        let pending = world.pending_mirror_domains();
+        let rejected = world.with_admin_transaction(credit(), |_| Ok(()));
+        assert!(rejected.is_err(), "耗尽必须在首个不可撤 commit 前拒绝");
+        assert_eq!(accounts(&mut world), before, "不得先 commit 后发现来源游标耗尽");
+        assert_eq!(world.mirror_source(), source);
+        assert_eq!(world.pending_mirror_domains(), pending);
+        world.shutdown().unwrap();
+    }
     fn accounts(w: &mut World) -> Vec<Vec<GroupAccount>> {
         for tx in &w.group_txs {
             tx.send(GroupIn::EchoAccounts).unwrap();

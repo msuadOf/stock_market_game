@@ -317,6 +317,9 @@ struct DayEndProgress {
 /// 世界（协调者视角持有全部通道与线程句柄）。
 pub struct World {
     admin_next_id: u64,
+    non_tick_revision: u64,
+    pending_mirror_domains: super::source::MirrorDomains,
+    mirror_day_end_stage: super::source::MirrorDayEndStage,
     /// 仅身份元数据，用于核对信息候选回执的组内 local/AccountId；不保存个人态。
     information_roster: Vec<Vec<crate::AccountId>>,
     #[cfg(test)]
@@ -425,6 +428,21 @@ pub struct World {
 }
 
 impl World {
+    pub(crate) fn mirror_source(&self) -> super::source::WorldMirrorSource {
+        let published = self.publication.load();
+        super::source::WorldMirrorSource {
+            tick: self.global.committed_tick,
+            generation: published.generation,
+            day_end_stage: self.mirror_day_end_stage,
+            non_tick_revision: self.non_tick_revision,
+            civil_date: self.civil_date,
+        }
+    }
+
+    pub(crate) fn pending_mirror_domains(&self) -> super::source::MirrorDomains {
+        self.pending_mirror_domains
+    }
+
     /// 构造世界并启动全部 worker 线程。
     pub fn spawn(spec: WorldSpec) -> Result<Self, RuntimeError> {
         if spec.n_groups == 0 || spec.n_groups > GroupIdx::MAX as usize {
@@ -790,6 +808,13 @@ impl World {
         );
         Ok(World {
             admin_next_id: 0,
+            non_tick_revision: 0,
+            pending_mirror_domains: super::source::MirrorDomains::default(),
+            mirror_day_end_stage: if initial_last_day_end_tick.is_some() {
+                super::source::MirrorDayEndStage::DayEndCommitted
+            } else {
+                super::source::MirrorDayEndStage::Tick
+            },
             information_roster,
             #[cfg(test)]
             admin_send_fault_for_test: None,
@@ -888,6 +913,9 @@ impl World {
         &mut self,
         snapshot: std::sync::Arc<super::publication::RetainedDaySnapshot>,
     ) {
+        if self.last_day_end_tick == Some(self.global.committed_tick) {
+            self.mirror_day_end_stage = super::source::MirrorDayEndStage::RetainedPublished;
+        }
         self.retained_days.push(std::sync::Arc::clone(&snapshot));
         self.retained_index = std::sync::Arc::new(super::publication::RetainedIndex {
             days: self.retained_days.clone(),
@@ -2370,6 +2398,7 @@ impl World {
         // 收束到达序不定——发布分片按股序稳定排列（读者按下标=股消费）。
         desk_shards.sort_by_key(|shard| shard.stock);
         self.global.committed_tick = tick;
+        self.mirror_day_end_stage = super::source::MirrorDayEndStage::Tick;
         // Sol 终审四审 A2：day 按 World 自身的 ticks_per_day 推导（此前
         // 硬编码 240——非 240 配置（如 tpd=1 的存档契约 fixture）下组
         // 侧日历超前，session 日终计划迁移的 TradingDayEnded 落后于
@@ -2785,6 +2814,7 @@ impl World {
         // 成功：候选不可变交出；下一 Start 隐式提交（Abort 窗口关闭）。
         self.last_day_end_candidate = Some(candidate);
         self.last_day_end_tick = Some(day_final_tick);
+        self.mirror_day_end_stage = super::source::MirrorDayEndStage::DayEndCommitted;
         Ok(())
     }
 
