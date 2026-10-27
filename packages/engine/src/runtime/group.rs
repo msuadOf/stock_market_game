@@ -5362,6 +5362,39 @@ pub fn group_main(
                 // 演进）。codes=当前持仓∪watchlist（组账户无"曾持有"
                 // 零量条目面——差异登记）。快照缺席（未跑 tick 即投递）
                 // 如实上行空更新。
+                let identities = (|| {
+                    let projection = state.root_projection.as_ref().ok_or_else(|| {
+                        RuntimeError::ProtocolInvariant {
+                            detail: "信息投递缺少真实账户名册".to_owned(),
+                        }
+                    })?;
+                    let mut seen = std::collections::BTreeSet::new();
+                    for (local, account_id, _) in &attentions {
+                        let index = *local as usize;
+                        let actual = projection.account_ids.get(state.roster_offset + index);
+                        if actual != Some(account_id) || !seen.insert(*local) {
+                            return Err(RuntimeError::ProtocolInvariant {
+                                detail: format!("组内信息投递身份错误：group={} local={local} expected={actual:?} actual={account_id:?}", state.group),
+                            });
+                        }
+                        let personal = state.belief_states.get(index).and_then(Option::as_ref)
+                            .ok_or_else(|| RuntimeError::ProtocolInvariant {
+                                detail: format!("组内信息投递缺个人态：group={} local={local} account={account_id:?}", state.group),
+                            })?;
+                        if personal.information.owner() != *account_id || personal.belief.npc() != *account_id {
+                            return Err(RuntimeError::ProtocolInvariant {
+                                detail: format!("组内信息投递个人属主错误：group={} local={local} account={account_id:?} information={:?} belief={:?}", state.group, personal.information.owner(), personal.belief.npc()),
+                            });
+                        }
+                    }
+                    Ok(())
+                })();
+                if let Err(error) = identities {
+                    abort.store(true, Ordering::SeqCst);
+                    let _ = up_tx.send(UpMsg::Failed { who, error: error.clone() });
+                    result = Err(error);
+                    break;
+                }
                 let company_facts = match state.current_company_facts() {
                     Ok(facts) => Arc::clone(facts),
                     Err(error) => {
@@ -5377,9 +5410,8 @@ pub fn group_main(
                     let market = super::decision::build_market_view(&snapshot);
                     for (local, account_id, attention) in attentions {
                         let li = local as usize;
-                        let Some(snap) = state.belief_states.get_mut(li).and_then(|s| s.as_mut()) else {
-                            continue;
-                        };
+                        let snap = state.belief_states[li].as_mut()
+                            .expect("投递前已经完整验证个人态存在与属主");
                         let mut codes: std::collections::BTreeSet<crate::StockId> =
                             state.accounts[li]
                                 .shares

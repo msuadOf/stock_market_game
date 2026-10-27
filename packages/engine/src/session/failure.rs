@@ -13,6 +13,7 @@ pub enum StepFatal {
 pub(in crate::session) struct RuntimeStepInstall {
     pub events: Vec<Event>,
     pub baseline: RuntimeInstallBaseline,
+    pub retail: super::retail_lifecycle::Candidate,
     #[cfg(feature = "simulation-diagnostics")]
     pub causal: super::causal::RuntimeCausalDelta,
 }
@@ -623,10 +624,14 @@ impl GameSession {
         self.check_step_start()
             .map_err(|fatal| self.poison_runtime_step(fatal))?;
         self.with_routed_runtime_driver(|session, driver| {
+            if !(session.tick() + 1).is_multiple_of(session.state.setup.ticks_per_day) {
+                return session.runtime_step_with_prepared_mirror(driver, project).map(|value| (value, None));
+            }
             let seq_from = session.current_seq();
             let RuntimeStepInstall {
                 events,
                 baseline,
+                retail,
                 #[cfg(feature = "simulation-diagnostics")]
                 causal,
             } = session.runtime_step_with_install_returning_baseline(driver)?;
@@ -652,6 +657,7 @@ impl GameSession {
             /// 路径同式）。
             #[cfg(feature = "simulation-diagnostics")]
             session.publish_runtime_causal(causal);
+            session.publish_runtime_retail(retail);
             session.runtime_clear_account_undo();
             Ok((projected, None))
         })
@@ -670,9 +676,15 @@ impl GameSession {
         &mut self,
         driver: &mut crate::runtime::drive::RuntimeDriver,
     ) -> Result<Vec<Event>, StepFatal> {
+        if !(self.tick() + 1).is_multiple_of(self.state.setup.ticks_per_day) {
+            return self.runtime_step_with_prepared_mirror(driver, |_, facts| {
+                Ok(facts.into_iter().map(|fact| fact.event).collect())
+            });
+        }
         let installed = self.runtime_step_with_install_inner(driver, false)?;
         #[cfg(feature = "simulation-diagnostics")]
         self.publish_runtime_causal(installed.causal);
+        self.publish_runtime_retail(installed.retail);
         // P2-2b：成功 step 尾清账户写时 undo（失败路径已由 rollback 消费）。
         // 【P0 画像】undo_clear 段（成功尾清）。
         let _seg_undo = crate::runtime::step_profile::scope(
@@ -681,6 +693,73 @@ impl GameSession {
         self.runtime_clear_account_undo();
         drop(_seg_undo);
         Ok(installed.events)
+    }
+
+    /// 普通拍在私有镜像与全部输出验证成功后一次安装；失败保留 World 已发布事实。
+    pub(in crate::session) fn runtime_step_with_prepared_mirror<P>(
+        &mut self,
+        driver: &mut crate::runtime::drive::RuntimeDriver,
+        project: impl FnOnce(crate::session::protocol::TickCandidateProjection<'_>, Vec<crate::session::protocol::EventFact>) -> Result<P, StepFatal>,
+    ) -> Result<P, StepFatal> {
+        self.require_healthy()?;
+        self.runtime_clear_account_undo();
+        #[cfg(test)]
+        self.compute_context().t1_probes.queue_attempt_seq.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let tick = self.tick().checked_add(1).ok_or_else(|| self.poison_runtime_step(StepFatal::InvariantViolation {
+            location: "runtime_mirror::prepare".to_owned(), description: "运行 tick 溢出".to_owned(),
+        }))?;
+        let seq_from = self.seq();
+        driver.adopt_session_seq(self);
+        crate::verification_evidence::begin_authoritative_tick(self.tick(), self.compute_context())?;
+        #[cfg(feature = "simulation-diagnostics")]
+        let causal_time = self.causal_time();
+        let prepared = driver.prepare_driver_step(self).and_then(|input| self.prepare_runtime_mirror(driver, input, tick));
+        let mut prepared = prepared.map_err(|description| {
+            let fatal = StepFatal::InvariantViolation { location: "runtime_mirror::prepare".to_owned(), description };
+            #[cfg(feature = "simulation-diagnostics")]
+            driver.retain_pending_causal_failure(causal_time, fatal.clone());
+            self.poison_runtime_step(fatal)
+        })?;
+        #[cfg(feature = "simulation-diagnostics")]
+        let causal = self.prepare_runtime_causal_at(driver, causal_time, tick)
+            .map_err(|fatal| self.poison_runtime_step(fatal))?;
+        #[cfg(test)]
+        if let Some(fatal) = self.post_shadow_failure.take() {
+            #[cfg(feature = "simulation-diagnostics")]
+            driver.retain_terminal_causal(causal.time, causal.raw, fatal.clone());
+            return Err(self.poison_runtime_step(fatal));
+        }
+        crate::verification_evidence::enter_phase(crate::session::pipeline::TickPhase::PreCommitValidation);
+        if let Err(fatal) = crate::verification_evidence::validate_precommit() {
+            #[cfg(feature = "simulation-diagnostics")]
+            driver.retain_terminal_causal(causal.time, causal.raw, fatal.clone());
+            return Err(self.poison_runtime_step(fatal));
+        }
+        #[cfg(test)]
+        let has_events = !prepared.events.is_empty();
+        let facts = crate::runtime::event_bridge::event_facts_with_stable_keys(std::mem::take(&mut prepared.events));
+        let value = match project(crate::session::protocol::TickCandidateProjection::from_prepared(&prepared.projection, seq_from), facts) {
+            Ok(value) => value,
+            Err(fatal) => {
+                #[cfg(feature = "simulation-diagnostics")]
+                driver.retain_terminal_causal(causal.time, causal.raw, fatal.clone());
+                return Err(self.poison_runtime_step(fatal));
+            }
+        };
+        if let Err(fatal) = self.validate_runtime_mirror_source(driver, &prepared) {
+            #[cfg(feature = "simulation-diagnostics")]
+            driver.retain_terminal_causal(causal.time, causal.raw, fatal.clone());
+            return Err(self.poison_runtime_step(fatal));
+        }
+        self.install_runtime_mirror(driver, prepared);
+        #[cfg(feature = "simulation-diagnostics")]
+        self.publish_runtime_causal(causal);
+        crate::verification_evidence::enter_phase(crate::session::pipeline::TickPhase::CommitTick);
+        crate::verification_evidence::mark_committed(tick);
+        #[cfg(test)]
+        crate::runtime::drive::RuntimeDriver::record_root_handover(self, tick, has_events);
+        self.runtime_clear_account_undo();
+        Ok(value)
     }
 
     /// step_frame 接轨件 4：同 [`Self::runtime_step_with_install`]，但
@@ -748,6 +827,14 @@ impl GameSession {
                 return Err(self.poison_runtime_step(fatal));
             }
         };
+        let mut retail = super::retail_lifecycle::Candidate { events: Vec::new(), decisions: Vec::new() };
+        let (retail_facts, retail_rejections) = driver.take_retail_facts();
+        if let Err(fatal) = self.append_runtime_retail_facts(driver, &mut retail, retail_facts)
+            .and_then(|()| self.append_runtime_retail_rejections(&mut retail, retail_rejections)) {
+            self.rollback_runtime_step(baseline);
+            self.runtime_discard_driver_flag = true;
+            return Err(self.poison_runtime_step(fatal));
+        }
         // 晚失败注入（D0：旧管线 post_shadow 语义等价点——生产工作完成、
         // 安装之前；晚失败不得泄漏任何已计算状态。两路径同判：此前
         // runtime 路径不消费该注入，注入后期望 Err 的对照测试被
@@ -834,16 +921,7 @@ impl GameSession {
         let _seg_retail = crate::runtime::step_profile::scope(
             crate::runtime::step_profile::StepSegment::RetailDiag,
         );
-        // step_frame 接轨件 4b：投影失败回滚面——retail 诊断两域首写
-        /// 旧值入 undo（幂等首写；step() 路径 capture_undo=false 不记）。
-        if capture_undo && self.state.runtime_retail_diag_undo.is_none() {
-            self.state.runtime_retail_diag_undo = Some((
-                self.state.last_retail_order_events.clone(),
-                self.state.last_retail_decisions.clone(),
-            ));
-        }
-        self.state.last_retail_order_events.clear();
-        self.record_retail_intent_rejections(&events);
+        // 两个 Retail Vec 只写 candidate，失败不触碰上一成功批次。
         // D5 #4 retail 链：决策 trace 投影（组内生产——本拍清+装，旧管线
         /// 「本 tick 最新」瞬态语义；收集失败按段面显式失败不静默）。
         {
@@ -857,7 +935,7 @@ impl GameSession {
                     }));
                 }
             };
-            self.state.last_retail_decisions = traces;
+            retail.decisions = traces;
         }
         drop(_seg_retail);
         // D5 日界·world 段（ends_day 拍在 step 内编排——desk roll_day/
@@ -1029,6 +1107,12 @@ impl GameSession {
                     }));
                 }
             };
+            let drained_retail = driver.take_drained_retail_facts();
+            if let Err(fatal) = self.append_runtime_retail_facts(driver, &mut retail, drained_retail) {
+                self.rollback_runtime_step(baseline);
+                self.runtime_discard_driver_flag = true;
+                return Err(self.poison_runtime_step(fatal));
+            }
             // 日界批：install 面补真——candle_book 历史末条升级为含收盘
             /// 段的 Drain 终 K（commit_active 先于 Drain 提交的是日内段
             /// 形态）；DayBoundary 事件 `closed_daily_candles` 同源补值
@@ -1191,6 +1275,7 @@ impl GameSession {
         Ok(RuntimeStepInstall {
             events,
             baseline,
+            retail,
             #[cfg(feature = "simulation-diagnostics")]
             causal,
         })
@@ -2069,6 +2154,11 @@ impl GameSession {
         }
     }
 
+    /// 只借用 participant 名册，避免仅判断存在性时深克隆全部个人态。
+    pub(crate) fn runtime_has_belief_participant(&self, account: crate::AccountId) -> bool {
+        self.state.belief_participants.contains_key(&account)
+    }
+
     /// 信念个人态只读投影（D3a-2b Belief-1：构造投影/同源校验源）。
     pub fn runtime_belief_states(
         &self,
@@ -2212,6 +2302,8 @@ impl GameSession {
         bars: Vec<Option<Vec<crate::runtime::MinuteBarFact>>>,
         date: crate::calendar::CivilDate,
     ) -> Result<std::sync::Arc<crate::runtime::publication::RetainedDaySnapshot>, String> {
+        #[cfg(all(test, feature = "simulation-diagnostics", not(target_arch = "wasm32")))]
+        let bars = super::runtime_diagnostics_tests::retained_tests::perturb_volume_once(bars);
         let n = self.stock_count_for_runtime();
         if bars.len() != n {
             return Err(format!(
@@ -2672,6 +2764,9 @@ impl GameSession {
 
 
     pub(super) fn poison_failed_step(&mut self, fatal: StepFatal) -> StepFatal {
+        if let Some(first) = &self.poison {
+            return first.clone();
+        }
         self.poison = Some(fatal.clone());
         fatal
     }
