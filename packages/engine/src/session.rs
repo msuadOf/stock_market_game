@@ -336,6 +336,14 @@ pub enum RejectionReason {
     NotOrderOwner,
 }
 
+#[cfg(test)]
+#[test]
+fn export_bindings_rejection_reason_only() {
+    use ts_rs::TS;
+    RejectionReason::export(&ts_rs::Config::from_env())
+        .expect("RejectionReason 必须由真实 ts-rs 导出");
+}
+
 /// 当前交易阶段。`ticks_per_day` 包含集合竞价与连续竞价。
 #[derive(
     Copy, Clone, Debug, Default, serde::Serialize, serde::Deserialize, PartialEq, Eq, ts_rs::TS,

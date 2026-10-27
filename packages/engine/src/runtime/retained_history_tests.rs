@@ -156,7 +156,18 @@ fn published_retained_and_generation_advance_atomically_on_freeze() {
     let script = |_: GroupIdx| -> GroupScript {
         Box::new(|_t, _r| TickPlan::default())
     };
-    let mut world = auction_world(Box::new(script));
+    let mut spec = basic_spec(1, 1, 3, Box::new(script));
+    spec.config = config_no_cage();
+    spec.ticks_per_day = 30;
+    spec.auction_ticks = 6;
+    spec.closing_auction_ticks = 3;
+    let first_date = spec.civil_start_date;
+    let calendar = crate::calendar::TradingCalendar::current_default_calendar()
+        .expect("显式 raw Calendar 政策合法");
+    let next_date = calendar.next_trading_day(
+        crate::calendar::CalendarExchange::Sse, first_date,
+    ).expect("fixture 下一 SSE trading date 合法");
+    let mut world = World::spawn(spec, calendar).expect("世界构造");
     world.run_ticks(1).expect("tick1");
     let published_before = world.publication().load();
     assert!(
@@ -164,10 +175,13 @@ fn published_retained_and_generation_advance_atomically_on_freeze() {
         "冻结前发布版本保留链为空"
     );
     let gen_before = published_before.generation;
-    world.run_ticks(30).expect("日末");
+    world.run_ticks(29).expect("首日剩余二十九拍");
+    world.run_day_end_public().expect("显式首日市场日终");
+    world.set_civil_date(next_date);
+    world.run_ticks(1).expect("次日首拍保留同一发布口径");
     let empty = Arc::new(Vec::new());
     world.freeze_retained_day(Arc::new(RetainedDaySnapshot {
-        date: crate::calendar::CivilDate::from_ymd(2026, 1, 5).expect("测试日期"),
+        date: first_date,
         securities: [(0_u32, super::publication::RetainedMinuteSession {
             trading: true,
             bars: empty,
