@@ -234,7 +234,7 @@ struct SaveValidationContext<'a> {
     day_tick: u64,
     phase: TradingPhase,
     stock_codes: BTreeSet<StockId>,
-    issuer_ids: BTreeSet<&'a crate::company::CompanyId>,
+    issuer_ids: BTreeSet<crate::company::CompanyId>,
     npc_count: u64,
     current_market_minute: u64,
 }

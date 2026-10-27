@@ -14,6 +14,23 @@ use engine::company::{CompanyId, CompanyKind, PublicReportQuery, PublicReportSco
 use engine::session::{GroupHolding, GroupStructure, SessionSetup};
 use engine::{GameSession, StockCode};
 
+/// 测试只借真实存档选定的 Legacy variant，不维护第二套公司状态。
+fn legacy_saved(
+    save: &engine::SaveSlot,
+) -> (
+    &engine::company::operations::CompanyOperations,
+    &engine::accounting::closing::ClosingEngine,
+) {
+    match &save.company_state {
+        engine::session::SavedSessionCompanies::LegacyOperations {
+            operations,
+            closing,
+            ..
+        } => (operations, closing),
+        _ => panic!("本测试输入必须是 LegacyOperations"),
+    }
+}
+
 fn small_industrial_books() -> engine::company::industrial::IndustrialBooks {
     use engine::accounting::{AccountingAmount, JournalLine, LedgerAccountId, PostingSide};
     use engine::company::{
@@ -154,18 +171,19 @@ fn four_custom_industries_close_real_books_and_publish_queryable_reports() {
     export_save("four-industries.json", &save);
     let period = AccountingPeriod::from_iso("2030-03").unwrap();
     for code in ["C-IND-A", "C-BANK", "C-INS", "C-RE"] {
-        let company_id = save
-            .company_operations
+        let company_id = legacy_saved(&save)
+            .0
             .catalog()
             .id(code)
             .expect("目录含清单公司");
-        let company = save.company_operations.company(&company_id).unwrap();
+        let company = legacy_saved(&save).0.company(&company_id).unwrap();
         assert_eq!(
             company.books().books().journal().period_status(period),
             PeriodStatus::Closed
         );
         assert_eq!(
-            save.closing_registry
+            legacy_saved(&save)
+                .1
                 .versions(
                     &ScopeId::Standalone(MemberId(company_id.0)),
                     period,
@@ -201,16 +219,16 @@ fn mixed_group_closes_then_publishes_distinct_consolidated_public_report() {
     let march = AccountingPeriod::from_iso("2030-03").unwrap();
     let save = session.save().unwrap();
     let scope = ScopeId::Consolidated(MemberId(
-        save.company_operations.catalog().id("C-IND-A").unwrap().0,
+        legacy_saved(&save).0.catalog().id("C-IND-A").unwrap().0,
     ));
-    let closed = save
-        .closing_registry
+    let closed = legacy_saved(&save)
+        .1
         .version(&scope, march, ReportKind::Quarter, 1)
         .unwrap();
     closed.validate().unwrap();
     assert!(session
         .query_public_reports(&PublicReportQuery {
-            company_id: save.company_operations.catalog().id("C-IND-A").unwrap().0,
+            company_id: legacy_saved(&save).0.catalog().id("C-IND-A").unwrap().0,
             cursor: None,
             page_size: Some(100)
         })
@@ -231,7 +249,7 @@ fn mixed_group_closes_then_publishes_distinct_consolidated_public_report() {
     }
     let page = session
         .query_public_reports(&PublicReportQuery {
-            company_id: save.company_operations.catalog().id("C-IND-A").unwrap().0,
+            company_id: legacy_saved(&save).0.catalog().id("C-IND-A").unwrap().0,
             cursor: None,
             page_size: Some(100),
         })
@@ -256,8 +274,8 @@ fn mixed_group_closes_then_publishes_distinct_consolidated_public_report() {
     let final_save = session.save().unwrap();
     export_save("mixed-group.json", &final_save);
     assert_eq!(
-        final_save
-            .closing_registry
+        legacy_saved(&final_save)
+            .1
             .version(&scope, march, ReportKind::Quarter, 1)
             .unwrap(),
         closed
@@ -266,7 +284,7 @@ fn mixed_group_closes_then_publishes_distinct_consolidated_public_report() {
     assert_eq!(
         restored
             .query_public_reports(&PublicReportQuery {
-                company_id: save.company_operations.catalog().id("C-IND-A").unwrap().0,
+                company_id: legacy_saved(&save).0.catalog().id("C-IND-A").unwrap().0,
                 cursor: None,
                 page_size: Some(100)
             })
@@ -314,17 +332,17 @@ fn real_internal_sale_facts_in_editable_save_close_and_publish_through_session()
     }];
     let session = GameSession::new(setup, 41).unwrap();
     let save = session.save().unwrap();
-    let mut root = save
-        .company_operations
-        .company(&save.company_operations.catalog().id("C-IND-A").unwrap())
+    let mut root = legacy_saved(&save)
+        .0
+        .company(&legacy_saved(&save).0.catalog().id("C-IND-A").unwrap())
         .unwrap()
         .books()
         .as_industrial()
         .unwrap()
         .clone();
-    let mut child = save
-        .company_operations
-        .company(&save.company_operations.catalog().id("C-IND-A").unwrap())
+    let mut child = legacy_saved(&save)
+        .0
+        .company(&legacy_saved(&save).0.catalog().id("C-IND-A").unwrap())
         .unwrap()
         .books()
         .as_industrial()
@@ -386,25 +404,25 @@ fn real_internal_sale_facts_in_editable_save_close_and_publish_through_session()
     let closed_save = session.save().unwrap();
     let period = AccountingPeriod::from_iso("2030-03").unwrap();
     let scope = ScopeId::Consolidated(MemberId(
-        closed_save
-            .company_operations
+        legacy_saved(&closed_save)
+            .0
             .catalog()
             .id("C-IND-A")
             .unwrap()
             .0,
     ));
-    let group = closed_save
-        .closing_registry
+    let group = legacy_saved(&closed_save)
+        .1
         .version(&scope, period, ReportKind::Quarter, 1)
         .unwrap();
     group.validate().unwrap();
     let mut standalone_income = AccountingAmount::ZERO;
     for id in ["C-IND-A", "C-IND-SUB"] {
-        let company_id = closed_save.company_operations.catalog().id(id).unwrap().0;
+        let company_id = legacy_saved(&closed_save).0.catalog().id(id).unwrap().0;
         standalone_income = standalone_income
             .add(
-                closed_save
-                    .closing_registry
+                legacy_saved(&closed_save)
+                    .1
                     .version(
                         &ScopeId::Standalone(MemberId(company_id)),
                         period,
@@ -447,8 +465,8 @@ fn real_internal_sale_facts_in_editable_save_close_and_publish_through_session()
     }
     let page = session
         .query_public_reports(&PublicReportQuery {
-            company_id: closed_save
-                .company_operations
+            company_id: legacy_saved(&closed_save)
+                .0
                 .catalog()
                 .id("C-IND-A")
                 .unwrap()
@@ -477,8 +495,8 @@ fn real_internal_sale_facts_in_editable_save_close_and_publish_through_session()
     end_day(&mut restored);
     assert!(restored
         .query_public_reports(&PublicReportQuery {
-            company_id: final_save
-                .company_operations
+            company_id: legacy_saved(&final_save)
+                .0
                 .catalog()
                 .id("C-IND-A")
                 .unwrap()
@@ -503,7 +521,6 @@ fn real_internal_sale_facts_in_editable_save_close_and_publish_through_session()
     export_save("internal-sale-group.json", &final_save);
 }
 
-
 include!("../test-support/simple_company.rs");
 
 #[test]
@@ -515,6 +532,9 @@ fn source_b_simple_conflict_rejects_the_same_valid_legacy_group_before_assembly(
     selected.dividend_tax_mode = Some(engine::company::CashDividendTaxMode::FlatWithholding);
     selected.flat_withholding_bp = Some(1000);
     selected.par_value_per_share = Some(engine::Money::from_cents(100));
-    assert!(matches!(GameSession::new(selected, 17), Err(engine::SessionError::InvalidSetup(fault))
-        if fault.code == 2235 && fault.context == vec![0, 3]), "必须在所选模型装配前返回精确模式字段冲突");
+    assert!(
+        matches!(GameSession::new(selected, 17), Err(engine::SessionError::InvalidSetup(fault))
+        if fault.code == 2235 && fault.context == vec![0, 3]),
+        "必须在所选模型装配前返回精确模式字段冲突"
+    );
 }

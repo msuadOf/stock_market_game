@@ -125,12 +125,14 @@ impl SavedSessionCompanies {
             Self::LegacyOperations { .. } => None,
         }
     }
-    pub(crate) fn issuer_ids(&self) -> std::collections::BTreeSet<&crate::company::CompanyId> {
+    pub(crate) fn issuer_ids(&self) -> std::collections::BTreeSet<crate::company::CompanyId> {
         match self {
             Self::CompanySystem { system, .. } => {
-                system.issuers().iter().map(|(id, _)| id).collect()
+                system.issuers().iter().map(|(id, _)| *id).collect()
             }
-            Self::LegacyOperations { operations, .. } => operations.companies.keys().collect(),
+            Self::LegacyOperations { operations, .. } => {
+                operations.catalog().iter().map(|(id, _)| id).collect()
+            }
         }
     }
 }
