@@ -1,0 +1,28 @@
+✖ 对象入口逐项拒绝sparse array与继承数组元素，禁止转JSON后变null (3.047013ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 131.122296
+
+✖ failing tests:
+
+test at apps/web/src/host/report-corrections.test.ts:92:50
+✖ 对象入口逐项拒绝sparse array与继承数组元素，禁止转JSON后变null (3.047013ms)
+  AssertionError [ERR_ASSERTION]: Missing expected exception.
+      at file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-correction-input-parser-tdd/apps/web/src/host/report-corrections.test.ts:160:46
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-correction-input-parser-tdd/apps/web/src/host/report-corrections.test.ts:92:101)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at Test.start (node:internal/test_runner/test:1191:17)
+      at startSubtestAfterBootstrap (node:internal/test_runner/harness:385:17) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: /entries\[0\]/,
+    operator: 'throws',
+    diff: 'simple'
+  }

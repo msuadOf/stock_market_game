@@ -1,0 +1,21 @@
+{
+  "command": {
+    "command": "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+    "args": [
+      "--test",
+      "--test-timeout=10000",
+      "--test-concurrency=4",
+      "--test-name-pattern=sparse array",
+      "apps/web/src/host/report-corrections.test.ts"
+    ],
+    "cwd": "/data1/baiyifan/workplace/stock_market_game/.worktree/company-correction-input-parser-tdd",
+    "timeoutMs": 10000,
+    "captureOutput": true
+  },
+  "exitCode": 1,
+  "error": "bounded command exited with 1",
+  "hashes": {
+    "source.ts": "5e02aae961447738e19ce91ef3de98e96e47c7d792aeb172c5c61a8421b72b14",
+    "test.ts": "af2fc363d9ff1f6626db25797c675a6cea8aae42cac4ab2d21e5fe9870244d53"
+  }
+}

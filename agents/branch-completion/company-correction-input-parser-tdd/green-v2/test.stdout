@@ -1,0 +1,21 @@
+✔ 真实Rust request与status对象/raw输入无损通过且不修改输入 (5.152677ms)
+✔ request每个字段required并拒绝未知字段 (1.05242ms)
+✔ 所有嵌套层精确字段并拒绝非对象 (0.717731ms)
+✔ u32身份端点与source安全整数端点 (1.03341ms)
+✔ 真实Rust AccountingAmount输入probe逐项一致并原样保持 (1.060061ms)
+✔ 全部47项BusinessKind与现金流借贷enum闭包 (1.468162ms)
+✔ 日期实际窗口公历与完成秒边界 (0.919296ms)
+✔ status和completed每层required/未知字段 (0.745292ms)
+✔ 结构通过不冒充更正业务成功 (0.378791ms)
+✔ Unicode scalar字符串和completed动态key原样保留 (2.013438ms)
+✔ raw数字在舍入前拒绝unsafe/小数/指数/负零 (1.157813ms)
+✔ raw解码后重复键包含转义key必须在覆盖前拒绝 (0.436633ms)
+✔ raw标准JSON语法及字符串中的数字和标点 (0.858184ms)
+ℹ tests 13
+ℹ suites 0
+ℹ pass 13
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 148.436935
