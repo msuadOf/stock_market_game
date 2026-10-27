@@ -215,6 +215,8 @@ pub struct RuntimeDriver {
     #[cfg(feature = "simulation-diagnostics")]
     pending_causal: Vec<super::diagnostics::DeskCausalFact>,
     #[cfg(feature = "simulation-diagnostics")]
+    pending_decision_traces: Vec<super::diagnostics::GroupDecisionTrace>,
+    #[cfg(feature = "simulation-diagnostics")]
     terminal_causal: Option<(
         crate::diagnostics::causal::FactTime,
         Vec<super::diagnostics::DeskCausalFact>,
@@ -252,6 +254,16 @@ pub struct RuntimeDriver {
 }
 
 impl RuntimeDriver {
+    #[cfg(feature = "simulation-diagnostics")]
+    pub(crate) fn pending_decision_traces(&self) -> &[super::diagnostics::GroupDecisionTrace] {
+        &self.pending_decision_traces
+    }
+
+    #[cfg(feature = "simulation-diagnostics")]
+    pub(crate) fn finish_decision_trace_install(&mut self) {
+        self.pending_decision_traces.clear();
+    }
+
     /// 个体策略投影（D3 台账收口）：账户已采样策略 → 三族 StrategyData
     /// 全参数（含风格修饰——与旧管线决策输入逐字段同源）。
     pub fn individual_strategy_data(
@@ -645,6 +657,8 @@ impl RuntimeDriver {
             #[cfg(feature = "simulation-diagnostics")]
             pending_causal: Vec::new(),
             #[cfg(feature = "simulation-diagnostics")]
+            pending_decision_traces: Vec::new(),
+            #[cfg(feature = "simulation-diagnostics")]
             terminal_causal: None,
             #[cfg(feature = "simulation-diagnostics")]
             initial_causal_resting,
@@ -806,6 +820,7 @@ impl RuntimeDriver {
             let record = self.world.report_log.last_mut()
                 .ok_or_else(|| "runtime 成功收束但缺少 causal TickRecord".to_owned())?;
             self.pending_causal = std::mem::take(&mut record.desk_causal);
+            self.pending_decision_traces = std::mem::take(&mut record.decision_traces);
         }
         let record = self.world.report_log.last_mut()
             .ok_or_else(|| "runtime 成功收束但缺少 Retail TickRecord".to_owned())?;

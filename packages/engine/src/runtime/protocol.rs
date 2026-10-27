@@ -1248,6 +1248,9 @@ impl std::fmt::Debug for UpMsg {
 /// apply_deferred 后构建——含清仓经历行）；报告不再携带分片。
 #[derive(Clone, Debug, PartialEq)]
 pub struct GroupReport {
+    /// 仅本轮真实 observe 产生的增量；不含 Echo 派生或旧 trace。
+    #[cfg(feature = "simulation-diagnostics")]
+    pub decision_traces: Vec<super::diagnostics::GroupDecisionTrace>,
     /// 组索引。
     pub group: GroupIdx,
     /// tick 编号。
