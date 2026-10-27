@@ -29,6 +29,8 @@ mod company_groups;
 mod company_read_views;
 mod continuous_cancellation;
 mod corporate_actions;
+mod company_state;
+pub use company_state::SavedSessionCompanies;
 mod decision_chain;
 mod deferred_drop;
 use crate::u64_decimal;
