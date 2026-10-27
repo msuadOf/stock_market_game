@@ -502,3 +502,19 @@ fn real_internal_sale_facts_in_editable_save_close_and_publish_through_session()
                 .id));
     export_save("internal-sale-group.json", &final_save);
 }
+
+
+include!("../test-support/simple_company.rs");
+
+#[test]
+fn source_b_simple_conflict_rejects_the_same_valid_legacy_group_before_assembly() {
+    let legacy = setup(&[CompanyKind::Industrial, CompanyKind::Industrial], true);
+    GameSession::new(legacy.clone(), 17).expect("同一有效 Legacy 集团输入必须仍可创建");
+    let mut selected = legacy;
+    selected.company_system = Some(simple_company_fixture!(engine; ["600100", "600101"]));
+    selected.dividend_tax_mode = Some(engine::company::CashDividendTaxMode::FlatWithholding);
+    selected.flat_withholding_bp = Some(1000);
+    selected.par_value_per_share = Some(engine::Money::from_cents(100));
+    assert!(matches!(GameSession::new(selected, 17), Err(engine::SessionError::InvalidSetup(fault))
+        if fault.code == 2235 && fault.context == vec![0, 3]), "必须在所选模型装配前返回精确模式字段冲突");
+}

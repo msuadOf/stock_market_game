@@ -4,6 +4,9 @@ use super::*;
 use crate::error::ValidationFault;
 
 mod saved_runtime;
+mod registry_settlement;
+#[cfg(test)]
+mod registry_settlement_restore_tests;
 #[cfg(test)]
 mod saved_runtime_tests;
 
@@ -13,7 +16,7 @@ fn direct_save_slot_rejects_missing_consolidated_parent_income() {
     let session = GameSession::new(super::npc_working_quote_tests::quote_setup(0), 42).unwrap();
     let mut save = session.save().unwrap();
     assert!(GameSession::restore(&save).is_ok());
-    save.closing_registry =
+    *save.company_state.legacy_for_test_mut().1 =
         crate::accounting::closing::ClosingEngine::missing_parent_income_test_fixture();
     // fault2085：closing registry 缺少合并母公司净利（结构断言替代原文本 contains）。
     assert!(
@@ -88,7 +91,7 @@ fn institution_boundary_restore_rejects_confidence_above_10000() {
     let save = session.save().unwrap();
     let account = *save.belief_books.keys().next().unwrap();
     let code = StockId(0);
-    let company = save.company_operations.companies.keys().next().unwrap();
+    let company = save.company_state.issuer_ids().into_iter().next().unwrap();
     for confidence in [0, 10_000, 10_001, 65_535] {
         let mut encoded = serde_json::to_value(&save).unwrap();
         encoded["belief_books"][account.0.to_string()]["entries"][code.0.to_string()] = serde_json::json!({
@@ -189,7 +192,7 @@ fn save_validation_context_preserves_phase_boundaries_and_shared_domain_facts() 
         assert_eq!(context.stock_codes.len(), save.setup.stocks.len());
         assert_eq!(
             context.issuer_ids.len(),
-            save.company_operations.companies.len()
+            save.company_state.legacy_for_test().0.companies.len()
         );
         assert_eq!(context.config.lot_size, 100);
         validate_personal_states(&context).unwrap();
@@ -253,7 +256,7 @@ impl<'a> SaveValidationContext<'a> {
             day_tick,
             phase,
             stock_codes,
-            issuer_ids: save.company_operations.companies.keys().collect(),
+            issuer_ids: save.company_state.issuer_ids(),
             npc_count,
             current_market_minute,
         }
@@ -304,27 +307,20 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
     save.setup
         .validate()
         .map_err(|_| SessionError::InvalidSave(ValidationFault::bare(2002)))?;
-    // 公司线在场性配对（B4b）：company_system 与 corporate_actions 必须同在场
-    // 或同缺席——单边档是不完整存档，显式拒绝（不静默补空容器）。
-    if save.company_system.is_some() != save.corporate_actions.is_some() {
-        // fault2101：公司字段在场性不配对（一侧缺席）。
-        // ctx[0] = company_system 在场（1/0）；ctx[1] = corporate_actions 在场（1/0）。
-        return Err(SessionError::InvalidSave(ValidationFault::new(
-            2101,
-            vec![
-                u64::from(save.company_system.is_some()),
-                u64::from(save.corporate_actions.is_some()),
-            ],
-        )));
-    }
-
-    if save.company_system.as_ref().map(|system| system.config()) != save.setup.company_system {
-        // 纯存档勾稽失败：不修改或毒化任何运行中的 GameSession。
+    match (&save.setup.company_system, &save.company_state) {
+        (None, SavedSessionCompanies::LegacyOperations { .. }) => {}
+        (
+            Some(crate::company::config::CompanySystemConfig::Simple(_)),
+            SavedSessionCompanies::CompanySystem { system, .. },
+        ) => {
+            if Some(system.config()) != save.setup.company_system {
         return Err(super::StepFatal::InvariantViolation {
-            description: "存档 company_system.config 与 setup.company_system 不一致".into(),
+                    description: "存档 company_state.CompanySystem.system.config 与 setup.company_system 不一致".into(),
             location: "validate_save_slot.company_system_config".into(),
+                }.into());
         }
-        .into());
+        }
+        _ => return Err(SessionError::InvalidSave(ValidationFault::bare(2101))),
     }
 
     let (saved_day, day_tick, auction_entry_ticks, saved_phase) =
@@ -335,6 +331,13 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
         .setup
         .stock_catalog()
         .map_err(|_| SessionError::InvalidSave(ValidationFault::bare(2002)))?;
+    if let Some(actions) = save.company_state.actions() {
+        registry_settlement::validate_registry_settlement_sources(&actions.registries, save, &save_catalog)
+            .map_err(|cause| super::StepFatal::InvariantViolation {
+                description: cause.to_string(),
+                location: "validate_save_slot.registry_settlement_sources".into(),
+            })?;
+    }
     let expected_markets: BTreeSet<StockId> = save
         .setup
         .stocks
@@ -1051,7 +1054,7 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
     validate_personal_states(&context)?;
     validate_plan_contract(&context)?;
     // 内存 SaveSlot 可以绕过 serde；与严格 JSON 同样重放冻结账簿，保留原领域 cause。
-    if let Some(actions) = &save.corporate_actions {
+    if let Some(actions) = save.company_state.actions() {
         for book in &actions.share_splits {
             book.validate()?;
         }
@@ -1105,7 +1108,10 @@ pub fn decode_save_slot(json: &[u8], limits: &SaveDecodeLimits) -> Result<SaveSl
         .unwrap_or(false)
     {
         // fault2100：旧跨 tick pending_npc 档不被 T3 入口切换后版本接受。
-        return Err(SessionError::InvalidSave(ValidationFault::new(2100, vec![0])));
+        return Err(SessionError::InvalidSave(ValidationFault::new(
+            2100,
+            vec![0],
+        )));
     }
     serde_json::from_slice(json)
         // fault2080：存档 JSON 不可解码；ctx[0] 待 C 批数值化（原文本 "{error}" serde 错误）。
@@ -1193,11 +1199,42 @@ fn validate_pending_receipt_order(save: &SaveSlot) -> Result<(), SessionError> {
 }
 
 fn validate_company_domain(save: &SaveSlot) -> Result<(), SessionError> {
+    match &save.company_state {
+        SavedSessionCompanies::CompanySystem { system, .. } => {
+            system.validate_restored()?;
+            let expected = save
+                .civil_clock
+                .current_date
+                .prev()
+                .map_err(crate::calendar::CalendarError::from)?;
+            if system.advanced_through() != expected {
+                return Err(SessionError::InvalidSave(ValidationFault::new(
+                    2100,
+                    vec![
+                        crate::error::ymd_context(
+                            system.advanced_through().year(),
+                            system.advanced_through().month(),
+                            system.advanced_through().day(),
+                        ),
+                        crate::error::ymd_context(
+                            expected.year(),
+                            expected.month(),
+                            expected.day(),
+                        ),
+                    ],
+                )));
+            }
+        }
+        SavedSessionCompanies::LegacyOperations {
+            operations,
+            closing,
+            groups,
+        } => {
     // fault2085：closing registry 缺少合并母公司净利；ctx[0] 待 C 批数值化（原文本 "{error}" closing 子错误）。
-    save.closing_registry
+            closing
         .validate_consolidated_parent_income()
         .map_err(|_| SessionError::InvalidSave(ValidationFault::new(2085, vec![0])))?;
-    for date in save.company_operations.payment_failures.keys() {
+            for date in operations.payment_failures.keys() {
         if *date < save.civil_clock.policy.init_only_min_start
             || *date > save.civil_clock.policy.runtime_max_end
         {
@@ -1210,21 +1247,21 @@ fn validate_company_domain(save: &SaveSlot) -> Result<(), SessionError> {
         }
     }
     // fault2087：付款历史不一致；ctx[0] 待 C 批数值化（原文本 "{error}"）。
-    save.company_operations
+            operations
         .validate_payment_history()
         .map_err(|_| SessionError::InvalidSave(ValidationFault::new(2087, vec![0])))?;
-    if save.groups != save.setup.groups {
+            if *groups != save.setup.groups {
         // fault2088：存档分组与 setup 不一致。
         return Err(SessionError::InvalidSave(ValidationFault::bare(2088)));
     }
     // fault2089：存档公司分组非法；ctx[0] 待 C 批数值化（原文本 "{error}"）。
-    super::company_groups::validate_groups(&save.groups, &save.company_operations)
+            super::company_groups::validate_groups(groups, operations)
         .map_err(|_| SessionError::InvalidSave(ValidationFault::new(2089, vec![0])))?;
     // 公司集合精确：每家经营公司唯一映射一只 setup 股票且股本一致。
     // 2090-2096 的 ctx[0] 统一落数值 CompanyId（C 批数值化收口：定位到具体公司，
     // 不再以 0 占位）；ctx[1]（错误种别/字符串 id）仍待 C 批登记。
     let mut mapped: BTreeSet<&StockCode> = BTreeSet::new();
-    for (id, company) in &save.company_operations.companies {
+            for (id, company) in &operations.companies {
         if company
             .economy()
             .active()
@@ -1254,27 +1291,44 @@ fn validate_company_domain(save: &SaveSlot) -> Result<(), SessionError> {
         if let Some(insurance) = company.books().as_insurance() {
             // fault2092：保险账状态非法；ctx[0]=CompanyId，ctx[1] 待 C 批（原文本 "{error}"）。
             insurance.validate_restore().map_err(|_| {
-                SessionError::InvalidSave(ValidationFault::new(2092, vec![u64::from(id.0), 0]))
+                        SessionError::InvalidSave(ValidationFault::new(
+                            2092,
+                            vec![u64::from(id.0), 0],
+                        ))
             })?;
         }
         if let Some(industrial) = company.books().as_industrial() {
             // fault2093：工业贸易对手方事件非法；ctx[0]=CompanyId，ctx[1] 待 C 批（"{error}"）。
-            industrial.validate_trade_counterparty_events().map_err(|_| {
-                SessionError::InvalidSave(ValidationFault::new(2093, vec![u64::from(id.0), 0]))
+                    industrial
+                        .validate_trade_counterparty_events()
+                        .map_err(|_| {
+                            SessionError::InvalidSave(ValidationFault::new(
+                                2093,
+                                vec![u64::from(id.0), 0],
+                            ))
             })?;
             // fault2094：工业库存来源事件非法；ctx[0]=CompanyId，ctx[1] 待 C 批（"{error}"）。
             industrial.validate_inventory_source_events().map_err(|_| {
-                SessionError::InvalidSave(ValidationFault::new(2094, vec![u64::from(id.0), 0]))
+                        SessionError::InvalidSave(ValidationFault::new(
+                            2094,
+                            vec![u64::from(id.0), 0],
+                        ))
             })?;
             // fault2095：工业信用状态非法；ctx[0]=CompanyId，ctx[1] 待 C 批（"{error}"）。
             industrial.validate_credit_state().map_err(|_| {
-                SessionError::InvalidSave(ValidationFault::new(2095, vec![u64::from(id.0), 0]))
+                        SessionError::InvalidSave(ValidationFault::new(
+                            2095,
+                            vec![u64::from(id.0), 0],
+                        ))
             })?;
         }
         if let Some(bank) = company.books().as_bank() {
             // fault2096：银行 ECL 政策非法；ctx[0]=CompanyId，ctx[1] 待 C 批（"{error}"）。
             bank.ecl_policy().validate().map_err(|_| {
-                SessionError::InvalidSave(ValidationFault::new(2096, vec![u64::from(id.0), 0]))
+                        SessionError::InvalidSave(ValidationFault::new(
+                            2096,
+                            vec![u64::from(id.0), 0],
+                        ))
             })?;
         }
         let Some(listed) = company.spec().listed_stock.as_ref() else {
@@ -1300,9 +1354,9 @@ fn validate_company_domain(save: &SaveSlot) -> Result<(), SessionError> {
         return Err(SessionError::InvalidSave(ValidationFault::bare(2099)));
     }
     // 经营推进时点与时钟一致：存档时点 next_expected 恒等于当前自然日。
-    if save.company_operations.next_expected_date() != save.civil_clock.current_date {
+            if operations.next_expected_date() != save.civil_clock.current_date {
         // fault2100：经营推进时点与自然日不一致；ctx[0]=期望日 yyyymmdd，ctx[1]=当前日 yyyymmdd。
-        let expected_date = save.company_operations.next_expected_date();
+                let expected_date = operations.next_expected_date();
         let (expect_y, expect_m, expect_d) = expected_date.ymd();
         let (clock_y, clock_m, clock_d) = save.civil_clock.current_date.ymd();
         return Err(SessionError::InvalidSave(ValidationFault::new(
@@ -1315,7 +1369,7 @@ fn validate_company_domain(save: &SaveSlot) -> Result<(), SessionError> {
     }
     // 公司 due 单一 authority：待办只存在于调度器；不允许任何待办早于当前
     // 自然日，或超出冻结日历适用范围（均失去恰好一次派发机会）。
-    for due in save.company_operations.scheduler().pending() {
+            for due in operations.scheduler().pending() {
         if due.due_date < save.civil_clock.policy.init_only_min_start
             || due.due_date > save.civil_clock.policy.runtime_max_end
         {
@@ -1340,6 +1394,23 @@ fn validate_company_domain(save: &SaveSlot) -> Result<(), SessionError> {
             )));
         }
     }
+        }
+    }
+    let issuer_ids = save.company_state.issuer_ids();
+    let expected_source = if save.company_state.system().is_some() {
+        crate::information::PublicationSource::SimpleGenerated
+    } else { crate::information::PublicationSource::SimulationAccounting };
+    let public = save.public_library.save();
+    for report in &public.reports {
+        if report.source != expected_source || !issuer_ids.contains(&report.company) {
+            return Err(SessionError::InvalidSave(ValidationFault::new(2236, vec![u64::from(report.company.0)])));
+        }
+    }
+    for announcement in &public.announcements {
+        if !issuer_ids.contains(&announcement.company) {
+            return Err(SessionError::InvalidSave(ValidationFault::new(2236, vec![u64::from(announcement.company.0)])));
+        }
+    }
     // 公开信息库：全量重验（JSON 路径已验，这里覆盖直接内存构造的 SaveSlot）。
     // fault2104：公开信息库不一致；ctx[0] 待 C 批数值化（原文本 "{error}"）。
     crate::information::PublicLibrary::from_parts(save.public_library.save())
@@ -1358,7 +1429,10 @@ fn validate_disclosure_cursors(save: &SaveSlot) -> Result<(), SessionError> {
         (Some(settled), Some(announced)) if settled == announced => {
             // 每个已日结自然日的披露相位都是 18:00；游标必须精确落在其上。
             // fault2105：settled 日 18:00 相位构造失败；ctx[0] 待 C 批数值化（原文本 "{error}" CalendarError）。
-            let phase = crate::calendar::CivilInstant::from_hms(settled, 18, 0, 0)
+            let phase = if save.company_state.system().is_some()
+                && matches!(save.setup.report_frequency, Some(crate::information::ReportFrequency::Monthly { .. })) {
+                crate::calendar::CivilInstant::new(settled, 86_399)
+            } else { crate::calendar::CivilInstant::from_hms(settled, 18, 0, 0) }
                 .map_err(|_| SessionError::InvalidSave(ValidationFault::new(2105, vec![0])))?;
             if save.disclosures.published_through() != Some(phase) {
                 // fault2106：披露游标未落在 settled 日 18:00 相位；
@@ -1815,7 +1889,8 @@ fn validate_plan_contract(context: &SaveValidationContext) -> Result<(), Session
             // fault2142：计划属于未知账户；ctx[4..6]=AccountId 高/低 u32。
             return Err(SessionError::InvalidSave(ValidationFault::new(
                 2142,
-                plan_id.error_context_with([plan.account().0 >> 32, plan.account().0 & 0xffff_ffff]),
+                plan_id
+                    .error_context_with([plan.account().0 >> 32, plan.account().0 & 0xffff_ffff]),
             )));
         }
         if !stock_codes.contains(plan.code()) {
@@ -1890,7 +1965,9 @@ fn validate_plan_contract(context: &SaveValidationContext) -> Result<(), Session
                         )));
                     }
                 }
-                if leg.active_child_remaining_qty().is_some_and(|stored| stored > *live_remaining)
+                if leg
+                    .active_child_remaining_qty()
+                    .is_some_and(|stored| stored > *live_remaining)
                 {
                     // fault2185：序列化余量大于真实订单余量（虚增敞口）。
                     return Err(SessionError::InvalidSave(ValidationFault::new(
@@ -1905,8 +1982,10 @@ fn validate_plan_contract(context: &SaveValidationContext) -> Result<(), Session
         if cursor.owner.0 > npc_count {
             // fault2690：游标属于未知账户，包含没有当前计划的历史游标。
             // ctx[0..2] = owner 高/低 u32。
-            return Err(SessionError::InvalidSave(ValidationFault::new(2690,
-                vec![cursor.owner.0 >> 32, cursor.owner.0 & 0xffff_ffff])));
+            return Err(SessionError::InvalidSave(ValidationFault::new(
+                2690,
+                vec![cursor.owner.0 >> 32, cursor.owner.0 & 0xffff_ffff],
+            )));
         }
     }
     Ok(())

@@ -16,9 +16,9 @@ use crate::company::operations::{CompanyCloseError, CompanyOperations};
 use crate::company::CompanyId;
 
 use crate::information::{
-    scheduled_instant, stable_company_offset,
-    AnnouncedEvent, AnnouncementRequest, InformationError, PublicLibrary,
-    PublicationId, PublicationOrigin, PublicationRequest, ScheduledReportKind, APPROVAL_HOUR,
+    scheduled_instant, stable_company_offset, AnnouncedEvent, AnnouncementRequest,
+    InformationError, PublicLibrary, PublicationId, PublicationOrigin, PublicationRequest,
+    ScheduledReportKind, APPROVAL_HOUR,
 };
 use crate::session::civil_clock::{CivilClock, CivilDayEndReport};
 use thiserror::Error;
@@ -87,6 +87,32 @@ impl DisclosureDispatch {
     pub fn install(&self, clock: &mut CivilClock) -> usize {
         clock.add_disclosure_observer(disclosure_phase_observer);
         1
+    }
+
+    /// Simple 的实际定稿材料沿同一公开库、同一排期和同一游标发布。
+    pub(super) fn run_simple_day_end(
+        &mut self,
+        system: &crate::company::CompanySystem,
+        frequency: crate::information::ReportFrequency,
+        seed: u64,
+        report: &CivilDayEndReport,
+        library: &mut PublicLibrary,
+    ) -> Result<DayEndDisclosures, DisclosureError> {
+        let reports_published = crate::information::publish_simple_scheduled(
+            system,
+            frequency,
+            seed,
+            self.published_through,
+            report.disclosure_instant,
+            library,
+            false,
+        )?;
+        self.published_through = Some(report.disclosure_instant);
+        self.announced_through = Some(report.settled_date);
+        Ok(DayEndDisclosures {
+            reports_published,
+            announcements_published: Vec::new(),
+        })
     }
 
     /// 18:00 披露派发（恰好一次语义：同日重复调用 = no-op）。
@@ -202,7 +228,10 @@ impl DayEndDisclosureCtx<'_> {
     ) -> Result<PublicationId, DisclosureError> {
         let period = kind.landing_period(fiscal_year)?;
         let registered = self.ops.prepare_report_for_publication(
-            *company_id, period, kind.report_kind(), self.closing,
+            *company_id,
+            period,
+            kind.report_kind(),
+            self.closing,
         )?;
         let approval = CivilInstant::from_hms(instant.date(), APPROVAL_HOUR, 0, 0)?;
         let publication = self.library.publish_closed(

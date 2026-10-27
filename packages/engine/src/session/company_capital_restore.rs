@@ -301,7 +301,7 @@ pub(crate) fn validate_company_capital_restore(
                     day: Some(receipt.request.day),
                     kind: matches!(
                         receipt.request.scope,
-                        crate::company::share_registry::MovementScope::PublicMarket
+                        crate::company::share_registry::MovementScope::PublicMarket | crate::company::share_registry::MovementScope::SettlementDayMarket { .. }
                     )
                     .then_some(CorporateCapitalKind::PublicMarket)
                     .or_else(|| bound_context.and_then(|bound| bound.kind)),
@@ -331,7 +331,7 @@ pub(crate) fn validate_company_capital_restore(
                     .ok_or_else(|| CompanyCapitalRestoreError::Arithmetic {
                         context: receipt_context.clone(),
                     })?;
-                if matches!(receipt.request.scope, MovementScope::PublicMarket) {
+                if matches!(receipt.request.scope, MovementScope::PublicMarket | MovementScope::SettlementDayMarket { .. }) {
                     check_shares(issued_shares, after, receipt_context.clone())?;
                 } else {
                     let movement = bindings
@@ -1476,7 +1476,7 @@ fn prepare_repurchase_cancellations(
                     .iter()
                     .filter(|receipt| {
                         receipt.request.day == fill.day
-                            && matches!(receipt.request.scope, MovementScope::PublicMarket)
+                            && matches!(receipt.request.scope, MovementScope::PublicMarket | MovementScope::SettlementDayMarket { .. })
                     })
                     .collect::<Vec<_>>();
                 if matching.len() != 1 {

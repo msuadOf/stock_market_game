@@ -59,7 +59,11 @@ impl GameSession {
         }
         // 所有可失败操作完成后才标记并同时安装；不触碰常驻 runtime driver。
         self.mark_external_mutation();
-        self.state.company_system = Some(std::sync::Arc::new(candidate_system));
+        *self
+            .state
+            .companies
+            .system_arc_mut()
+            .expect("配置校验已确认 Simple 公司状态") = std::sync::Arc::new(candidate_system);
         self.state.setup.company_system = Some(candidate_config);
         Ok(())
     }
@@ -68,7 +72,10 @@ impl GameSession {
         &self,
         company: &CompanyId,
     ) -> Result<(&CompanySystem, &CompanySystemConfig), CompanySystemError> {
-        match (&self.state.company_system, &self.state.setup.company_system) {
+        match (
+            &self.state.companies.system_arc(),
+            &self.state.setup.company_system,
+        ) {
             (None, None) => Err(CompanySystemError::Unsupported(format!(
                 "本局未启用公司系统，无法访问公司 {} 的 Simple 偏好",
                 company.0

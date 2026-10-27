@@ -272,19 +272,18 @@ mod tests {
             .unwrap();
         let mut session = GameSession::new(setup, 42).unwrap();
         // 单独验证诊断接缝：合法发行人表额外含一家未上市公司，不执行市场 tick。
-        let template = session.state.operations.company(&crate::company::CompanyId(0)).unwrap().clone();
-        let operations = std::sync::Arc::make_mut(&mut session.state.operations);
+        let template = session.state.companies.legacy().expect("此调用仅用于 Legacy 公司状态").operations.company(&crate::company::CompanyId(0)).unwrap().clone();
+        let operations = std::sync::Arc::make_mut(&mut session.state.companies.legacy_mut().expect("此调用仅用于 Legacy 公司状态").operations);
         operations.catalog = registry.catalog().clone();
         operations.companies = registry.iter().map(|(id, entity)| {
             let mut operating = template.clone();
             operating.spec = entity.spec().clone();
             (*id, operating)
         }).collect();
-        session.state.company_registry = std::sync::Arc::new(registry);
+        session.state.companies.legacy_mut().unwrap().registry = std::sync::Arc::new(registry);
         let stock = session.stock_id("600101").unwrap();
         let company = session
-            .state
-            .company_registry
+            .state.companies.legacy().expect("此调用仅用于 Legacy 公司状态").registry
             .catalog()
             .id("C-600101")
             .unwrap();

@@ -40,13 +40,19 @@ impl CommittableSessionState {
     fn selected_company_specs(
         &self,
     ) -> Result<impl Iterator<Item = (CompanyId, &CompanySpec)>, CompanyFactsSourceError> {
-        let (issuers, registry) = match (&self.setup.company_system, &self.company_system) {
-            (Some(_), Some(system)) => (Some(system.issuers()), None),
-            (Some(_), None) => return Err(CompanyFactsSourceError::MissingSelectedSystem),
-            (None, Some(_)) => return Err(CompanyFactsSourceError::UnexpectedSystem),
-            (None, None) => {
-                for (company, entity) in self.company_registry.iter() {
-                    let operating = self.operations.company(company).ok_or(
+        let (issuers, registry) = match (&self.setup.company_system, &self.companies) {
+            (Some(_), super::company_state::SessionCompanies::CompanySystem(state)) => {
+                (Some(state.system.issuers()), None)
+            }
+            (Some(_), super::company_state::SessionCompanies::LegacyOperations(_)) => {
+                return Err(CompanyFactsSourceError::MissingSelectedSystem)
+            }
+            (None, super::company_state::SessionCompanies::CompanySystem(_)) => {
+                return Err(CompanyFactsSourceError::UnexpectedSystem)
+            }
+            (None, super::company_state::SessionCompanies::LegacyOperations(legacy)) => {
+                for (company, entity) in legacy.registry.iter() {
+                    let operating = legacy.operations.company(company).ok_or(
                         CompanyFactsSourceError::MissingLegacyOperation { company: *company },
                     )?;
                     if entity.spec() != operating.spec() {
@@ -55,20 +61,23 @@ impl CommittableSessionState {
                         });
                     }
                 }
-                for company in self.operations.companies.keys() {
-                    if self.company_registry.get(company).is_none() {
+                for company in legacy.operations.companies.keys() {
+                    if legacy.registry.get(company).is_none() {
                         return Err(CompanyFactsSourceError::MissingLegacyRegistry {
                             company: *company,
                         });
                     }
                 }
-                (None, Some(self.company_registry.as_ref()))
+                (None, Some(legacy.registry.as_ref()))
             }
         };
-        Ok(issuers.into_iter().flat_map(|issuers| {
-            issuers.iter().map(|(company, spec)| (*company, spec))
-        }).chain(registry.into_iter().flat_map(|registry| {
-            registry.iter().map(|(company, entity)| (*company, entity.spec()))
+        Ok(issuers
+            .into_iter()
+            .flat_map(|issuers| issuers.iter().map(|(company, spec)| (*company, spec)))
+            .chain(registry.into_iter().flat_map(|registry| {
+                registry
+                    .iter()
+                    .map(|(company, entity)| (*company, entity.spec()))
         })))
     }
 
@@ -77,9 +86,10 @@ impl CommittableSessionState {
         &self,
         stock: StockId,
     ) -> Result<(CompanyId, &CompanySpec), CompanyFactsSourceError> {
-        let code = self.stocks.code(stock).ok_or(
-            CompanyReadFactsError::MissingIssuer { stock },
-        )?;
+        let code = self
+            .stocks
+            .code(stock)
+            .ok_or(CompanyReadFactsError::MissingIssuer { stock })?;
         find_stock_spec(stock, code, self.selected_company_specs()?)
     }
 }
@@ -91,9 +101,17 @@ fn find_stock_spec<'a>(
 ) -> Result<(CompanyId, &'a CompanySpec), CompanyFactsSourceError> {
     let mut found: Option<(CompanyId, &CompanySpec)> = None;
     for (company, spec) in specs {
-        if spec.listed_stock.as_ref().is_some_and(|listed| listed.0 == code) {
+        if spec
+            .listed_stock
+            .as_ref()
+            .is_some_and(|listed| listed.0 == code)
+        {
             if let Some((previous, _)) = found {
-                return Err(CompanyFactsSourceError::DuplicateIssuer { stock, previous, company });
+                return Err(CompanyFactsSourceError::DuplicateIssuer {
+                    stock,
+                    previous,
+                    company,
+                });
             }
             if spec.issued_shares == 0 {
                 return Err(CompanyReadFactsError::ZeroIssuedShares { company }.into());
@@ -167,9 +185,11 @@ mod tests {
         let listed = spec(Some("600101"), CompanyKind::Bank, u64::from(u32::MAX) + 701);
         let unlisted = spec(None, CompanyKind::Insurance, 900);
         let (company, actual) = find_stock_spec(
-            StockId(0), "600101",
+            StockId(0),
+            "600101",
             [(CompanyId(2), &unlisted), (CompanyId(17), &listed)].into_iter(),
-        ).unwrap();
+        )
+        .unwrap();
         assert_eq!(company, CompanyId(17));
         assert_eq!(actual, &listed);
     }
@@ -177,32 +197,46 @@ mod tests {
     #[test]
     fn selected_company_source_single_stock_lookup_checks_later_duplicate() {
         let listed = spec(Some("600101"), CompanyKind::Bank, 700);
-        assert_eq!(find_stock_spec(
-            StockId(0), "600101",
+        assert_eq!(
+            find_stock_spec(
+                StockId(0),
+                "600101",
             [(CompanyId(17), &listed), (CompanyId(22), &listed)].into_iter(),
-        ), Err(CompanyFactsSourceError::DuplicateIssuer {
-            stock: StockId(0), previous: CompanyId(17), company: CompanyId(22),
-        }));
+            ),
+            Err(CompanyFactsSourceError::DuplicateIssuer {
+                stock: StockId(0),
+                previous: CompanyId(17),
+                company: CompanyId(22),
+            })
+        );
     }
 
     #[test]
     fn selected_company_source_single_stock_lookup_rejects_zero_shares() {
         let listed = spec(Some("600101"), CompanyKind::Bank, 0);
-        assert_eq!(find_stock_spec(
-            StockId(0), "600101", [(CompanyId(17), &listed)].into_iter(),
-        ), Err(CompanyFactsSourceError::Facts(CompanyReadFactsError::ZeroIssuedShares {
+        assert_eq!(
+            find_stock_spec(StockId(0), "600101", [(CompanyId(17), &listed)].into_iter(),),
+            Err(CompanyFactsSourceError::Facts(
+                CompanyReadFactsError::ZeroIssuedShares {
             company: CompanyId(17),
-        })));
+                }
+            ))
+        );
     }
 
     #[test]
     fn selected_company_source_single_stock_lookup_rejects_missing_issuer() {
         let unlisted = spec(None, CompanyKind::Insurance, 900);
-        assert_eq!(find_stock_spec(
-            StockId(0), "600101", [(CompanyId(2), &unlisted)].into_iter(),
-        ), Err(CompanyFactsSourceError::Facts(CompanyReadFactsError::MissingIssuer {
-            stock: StockId(0),
-        })));
+        assert_eq!(
+            find_stock_spec(
+                StockId(0),
+                "600101",
+                [(CompanyId(2), &unlisted)].into_iter(),
+            ),
+            Err(CompanyFactsSourceError::Facts(
+                CompanyReadFactsError::MissingIssuer { stock: StockId(0) }
+            ))
+        );
     }
 
     #[test]

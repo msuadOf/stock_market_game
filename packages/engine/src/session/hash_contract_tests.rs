@@ -15,23 +15,23 @@ fn ordinary_tick_shadow_shares_report_histories_and_isolates_mutation() {
     let game = game();
     let mut shadow = game.clone_for_tick_shadow().unwrap();
     assert!(std::sync::Arc::ptr_eq(
-        &game.state.closing,
-        &shadow.state.closing
+        &game.state.companies.legacy().expect("此调用仅用于 Legacy 公司状态").closing,
+        &shadow.state.companies.legacy().expect("此调用仅用于 Legacy 公司状态").closing
     ));
     assert!(std::sync::Arc::ptr_eq(
         &game.state.library,
         &shadow.state.library
     ));
-    let before = game.state.closing.hash_projection().unwrap();
+    let before = game.state.companies.legacy().expect("此调用仅用于 Legacy 公司状态").closing.hash_projection().unwrap();
     let report = game.state.library.save().reports[0].reports.clone();
-    std::sync::Arc::make_mut(&mut shadow.state.closing)
+    std::sync::Arc::make_mut(&mut shadow.state.companies.legacy_mut().expect("此调用仅用于 Legacy 公司状态").closing)
         .record(report)
         .unwrap();
     assert!(!std::sync::Arc::ptr_eq(
-        &game.state.closing,
-        &shadow.state.closing
+        &game.state.companies.legacy().expect("此调用仅用于 Legacy 公司状态").closing,
+        &shadow.state.companies.legacy().expect("此调用仅用于 Legacy 公司状态").closing
     ));
-    assert_eq!(game.state.closing.hash_projection().unwrap(), before);
+    assert_eq!(game.state.companies.legacy().expect("此调用仅用于 Legacy 公司状态").closing.hash_projection().unwrap(), before);
     assert!(std::sync::Arc::ptr_eq(
         &game.state.library,
         &shadow.state.library
@@ -44,8 +44,8 @@ fn tick_shadow_shares_immutable_company_registry_without_changing_hashes() {
     let shadow = game.clone_for_tick_shadow().unwrap();
 
     assert!(std::sync::Arc::ptr_eq(
-        &game.state.company_registry,
-        &shadow.state.company_registry,
+        &game.state.companies.legacy().expect("此调用仅用于 Legacy 公司状态").registry,
+        &shadow.state.companies.legacy().expect("此调用仅用于 Legacy 公司状态").registry,
     ));
     assert_eq!(
         shadow.business_state_hash().unwrap(),
@@ -63,26 +63,25 @@ fn company_operations_shadow_shares_journals_until_an_actual_change() {
     let business_before = game.business_state_hash().unwrap();
     let mut shadow = game.clone_for_tick_shadow().unwrap();
     assert!(std::sync::Arc::ptr_eq(
-        &game.state.operations,
-        &shadow.state.operations
+        &game.state.companies.legacy().expect("此调用仅用于 Legacy 公司状态").operations,
+        &shadow.state.companies.legacy().expect("此调用仅用于 Legacy 公司状态").operations
     ));
 
     let company = shadow
-        .state
-        .operations
+        .state.companies.legacy().expect("此调用仅用于 Legacy 公司状态").operations
         .companies
         .keys()
         .next()
         .unwrap()
         .clone();
-    std::sync::Arc::make_mut(&mut shadow.state.operations)
+    std::sync::Arc::make_mut(&mut shadow.state.companies.legacy_mut().expect("此调用仅用于 Legacy 公司状态").operations)
         .company_mut(&company)
         .unwrap()
         .next_flow_seq += 1;
 
     assert!(!std::sync::Arc::ptr_eq(
-        &game.state.operations,
-        &shadow.state.operations
+        &game.state.companies.legacy().expect("此调用仅用于 Legacy 公司状态").operations,
+        &shadow.state.companies.legacy().expect("此调用仅用于 Legacy 公司状态").operations
     ));
     assert_eq!(game.business_state_hash().unwrap(), business_before);
     assert_ne!(shadow.business_state_hash().unwrap(), business_before);
@@ -143,7 +142,7 @@ fn company_operations_hash_cache_is_invalidated_by_authoritative_mutation() {
     assert_eq!(game.business_state_hash().unwrap(), business_before);
     let current_date = game.state.civil_clock.current_date();
 
-    std::sync::Arc::make_mut(&mut game.state.operations)
+    std::sync::Arc::make_mut(&mut game.state.companies.legacy_mut().expect("此调用仅用于 Legacy 公司状态").operations)
         .apply_market_shock(crate::company::events::ActiveShock {
             kind: crate::company::ShockKind::MarketDemandShift,
             amplitude_bp: 100,
@@ -195,7 +194,7 @@ fn company_operations_projection_is_stable_across_repeated_hashes_and_shadow_clo
     assert_eq!(shadow.business_state_hash().unwrap(), first);
 
     let current_date = game.state.civil_clock.current_date();
-    std::sync::Arc::make_mut(&mut shadow.state.operations)
+    std::sync::Arc::make_mut(&mut shadow.state.companies.legacy_mut().expect("此调用仅用于 Legacy 公司状态").operations)
         .apply_market_shock(crate::company::events::ActiveShock {
             kind: crate::company::ShockKind::MarketDemandShift,
             amplitude_bp: 200,
@@ -208,7 +207,7 @@ fn company_operations_projection_is_stable_across_repeated_hashes_and_shadow_clo
     // invalidate or replace the authority's cached projection.
     assert_eq!(game.business_state_hash().unwrap(), first);
 
-    std::sync::Arc::make_mut(&mut game.state.operations)
+    std::sync::Arc::make_mut(&mut game.state.companies.legacy_mut().expect("此调用仅用于 Legacy 公司状态").operations)
         .apply_market_shock(crate::company::events::ActiveShock {
             kind: crate::company::ShockKind::MarketDemandShift,
             amplitude_bp: 100,
@@ -235,12 +234,12 @@ fn company_operations_projection_is_stable_across_repeated_hashes_and_shadow_clo
 #[test]
 fn company_operations_projection_survives_serde_round_trip_without_serializing_the_cache() {
     let game = game();
-    let expected = game.state.operations.hash_projection().unwrap();
-    let json = serde_json::to_vec(&game.state.operations).unwrap();
+    let expected = game.state.companies.legacy().expect("此调用仅用于 Legacy 公司状态").operations.hash_projection().unwrap();
+    let json = serde_json::to_vec(&game.state.companies.legacy().expect("此调用仅用于 Legacy 公司状态").operations).unwrap();
     let restored: crate::company::operations::CompanyOperations =
         serde_json::from_slice(&json).unwrap();
 
-    assert_eq!(restored, *game.state.operations);
+    assert_eq!(restored, *game.state.companies.legacy().expect("此调用仅用于 Legacy 公司状态").operations);
     assert_eq!(restored.hash_projection().unwrap(), expected);
 }
 
@@ -258,7 +257,7 @@ fn closing_hash_cache_is_invalidated_by_authoritative_recording() {
         .reports
         .clone();
 
-    std::sync::Arc::make_mut(&mut game.state.closing)
+    std::sync::Arc::make_mut(&mut game.state.companies.legacy_mut().expect("此调用仅用于 Legacy 公司状态").closing)
         .record(report)
         .unwrap();
 
@@ -270,7 +269,7 @@ fn closing_hash_cache_is_invalidated_by_authoritative_recording() {
 #[test]
 fn closing_projection_clone_mutations_are_isolated_and_serde_stable() {
     let game = game();
-    let mut authority = game.state.closing.as_ref().clone();
+    let mut authority = game.state.companies.legacy().expect("此调用仅用于 Legacy 公司状态").closing.as_ref().clone();
     let expected = authority.hash_projection().unwrap();
     let mut cloned = authority.clone();
     let reports = game.state.library.save().reports;

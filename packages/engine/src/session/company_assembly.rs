@@ -20,10 +20,14 @@ pub(super) fn assemble_companies(
     seed: u64,
     event_multiplier_bp: u16,
 ) -> Result<CompanyAssembly, SessionError> {
-    let issuers: Vec<_> = setup.stocks.iter().map(|stock| IssuerFacts {
+    let issuers: Vec<_> = setup
+        .stocks
+        .iter()
+        .map(|stock| IssuerFacts {
         code: &stock.code,
         total_shares: stock.total_shares,
-    }).collect();
+        })
+        .collect();
     CompanyOperations::assemble_new_game(CompanyAssemblyContext {
         issuers: &issuers,
         custom: setup.company_operations.as_ref(),
@@ -31,12 +35,13 @@ pub(super) fn assemble_companies(
         start_date: setup.start_date,
         // 报告频率 B4b 恢复 SessionSetup.report_frequency 后改接配置真值；
         // 缺席（None）= 既有行为（Quarterly），旧局零变化。
-        report_frequency: setup.report_frequency.unwrap_or(
-            crate::information::ReportFrequency::Quarterly,
-        ),
+        report_frequency: setup
+            .report_frequency
+            .unwrap_or(crate::information::ReportFrequency::Quarterly),
         seed,
         event_multiplier_bp,
-    }).map_err(|source| SessionError::InvalidSetup(source.0))
+    })
+    .map_err(|source| SessionError::InvalidSetup(source.0))
 }
 
 /// 公司系统 spine 装配：按 setup 股票清单与 Simple 配置构建
@@ -84,8 +89,10 @@ pub(super) fn assemble_company_system(
 /// `SimpleCompanyConfig.company` 即代码升序下标（与 `IssuerRegistry::new`
 /// 同款约定，见 `company/identity.rs` 模块注释）。
 pub(super) fn issuer_specs(setup: &SessionSetup) -> Result<Vec<CompanySpec>, SessionError> {
-    let crate::company::config::CompanySystemConfig::Simple(config) =
-        setup.company_system.as_ref().expect("调用方已校验公司系统在场")
+    let crate::company::config::CompanySystemConfig::Simple(config) = setup
+        .company_system
+        .as_ref()
+        .expect("调用方已校验公司系统在场")
     else {
         // fault1049: 公司系统配置非法（Simulation 未实现）。槽0=变体判别值
         // （Simple=0/Simulation=1）。
@@ -119,7 +126,10 @@ pub(super) fn issuer_specs(setup: &SessionSetup) -> Result<Vec<CompanySpec>, Ses
         .iter()
         .enumerate()
         .map(|(index, stock)| {
-            let kind = kinds.get(&CompanyId(index as u32)).copied().ok_or_else(|| {
+            let kind = kinds
+                .get(&CompanyId(index as u32))
+                .copied()
+                .ok_or_else(|| {
                 // fault1049: 股票缺少显式 CompanyKind 配置。槽0 待 C 批数值化
                 // （原文本为代码串 "{}"）。
                 SessionError::InvalidSetup(ValidationFault::new(1049, vec![0]))
@@ -135,4 +145,76 @@ pub(super) fn issuer_specs(setup: &SessionSetup) -> Result<Vec<CompanySpec>, Ses
             })
         })
         .collect()
+}
+
+/// 只创建所选模型；Simple 不构造 Legacy 经营网络或其前史。
+pub(super) fn assemble_selected(
+    setup: &SessionSetup,
+    seed: u64,
+    event_multiplier_bp: u16,
+) -> Result<
+    (
+        super::company_state::SessionCompanies,
+        crate::information::PublicLibrary,
+    ),
+    SessionError,
+> {
+    use super::company_state::{LegacyCompanyState, SessionCompanies, SystemCompanyState};
+    use std::sync::Arc;
+    match &setup.company_system {
+        None => {
+            let CompanyAssembly {
+                registry,
+                prehistory,
+            } = assemble_companies(setup, seed, event_multiplier_bp)?;
+            let crate::information::SeededPrehistory {
+                ops,
+                closing,
+                library,
+                ..
+            } = prehistory;
+            super::company_groups::validate_groups(&setup.groups, &ops)
+                .map_err(|_| SessionError::InvalidSetup(ValidationFault::new(1028, vec![0])))?;
+            Ok((
+                SessionCompanies::LegacyOperations(LegacyCompanyState {
+                    registry: Arc::new(registry),
+                    operations: Arc::new(ops),
+                    closing: Arc::new(closing),
+                    groups: setup.groups.clone(),
+                }),
+                library,
+            ))
+        }
+        Some(_) => {
+            let system = assemble_company_system(setup, seed)?;
+            let through = crate::calendar::CivilInstant::new(
+                setup
+                    .start_date
+                    .prev()
+                    .map_err(crate::calendar::CalendarError::from)?,
+                86_399,
+            )
+            .map_err(crate::calendar::CalendarError::from)?;
+            let mut library = crate::information::PublicLibrary::new();
+            crate::information::publish_simple_scheduled(
+                &system,
+                setup
+                    .report_frequency
+                    .unwrap_or(crate::information::ReportFrequency::Quarterly),
+                seed,
+                None,
+                through,
+                &mut library,
+                true,
+            )
+            .map_err(|error| SessionError::Information(Box::new(error)))?;
+            Ok((
+                SessionCompanies::CompanySystem(SystemCompanyState {
+                    system: Arc::new(system),
+                    corporate_actions: super::SessionCorporateActions::default(),
+                }),
+                library,
+            ))
+        }
+    }
 }

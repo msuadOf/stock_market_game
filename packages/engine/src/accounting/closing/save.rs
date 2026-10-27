@@ -16,6 +16,7 @@ use super::{ClosingEngine, RestatementRegister, RestatementRows, VersionKey};
 
 /// 存档形态：版本序列与重述底稿均平铺（键组合成为元组值）。
 #[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(super) struct EngineSave {
     versions: Vec<(ScopeId, AccountingPeriod, ReportKind, Vec<ReportSet>)>,
     restatements: RestatementRows,
