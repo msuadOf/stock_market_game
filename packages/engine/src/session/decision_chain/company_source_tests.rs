@@ -26,6 +26,19 @@ fn divergent_company_source_session_with_counts(
         }
         .to_owned(),
     );
+    // 股本刻意超过 u32；财务与利润同比放大，保 ROE 与每股估值的合法量级。
+    // 原始股本约4296倍，取同一10000倍规模覆盖各人的悲观情景，不修改估值结果。
+    let scale = |amount: crate::accounting::AccountingAmount| {
+        crate::accounting::AccountingAmount::from_cents(
+            amount.cents().checked_mul(10_000).expect("fixture 同比财务金额不得溢出"),
+        )
+    };
+    let company = &mut simple.companies[0];
+    company.generation.initial_revenue = scale(company.generation.initial_revenue);
+    company.generation.initial_fixed_expense = scale(company.generation.initial_fixed_expense);
+    for line in &mut company.finance.opening_lines {
+        line.amount = scale(line.amount);
+    }
     simple.prehistory_periods = 1;
     setup.company_system = Some(config);
     setup.dividend_tax_mode =
