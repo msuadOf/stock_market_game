@@ -28,12 +28,15 @@ test("requires the active EngineHost and gives the standalone page an explicit n
 
 test("renders lossless tick and actual plan transitions without numeric coercion", { timeout: 10_000 }, () => {
   const record: NpcDecisionTraceRecord = {
-    account: 1, tick: "18446744073709551615", source_report_ids: ["2"],
-    expectation_method: "CashFlow", plan_ids: [3], plan_changes: ["PlanId(3): Active -> Paused"],
+    account: "18446744073709551615", tick: "18446744073709551615", source_report_ids: ["2"],
+    expectation_method: "CashFlow", plan_ids: [{ owner: "18446744073709551615", sequence: "9007199254740993" }, { owner: "18446744073709551615", sequence: "18446744073709551615" }], plan_changes: ["PlanId(3): Active -> Paused"],
     budget_constraints: ["PlanId(3): InsufficientAvailableCash"], order_ids: [4], codes: ["600001"],
   };
   const html = renderToStaticMarkup(createElement(TraceRecord, { record }));
   assert.match(html, /18446744073709551615/);
+  assert.match(html, /owner=18446744073709551615, sequence=9007199254740993/);
+  assert.match(html, /owner=18446744073709551615, sequence=18446744073709551615/);
+  assert.doesNotMatch(html, /\[object Object\]/);
   assert.match(html, /计划变化/);
   assert.match(html, /Active -&gt; Paused/);
   assert.match(html, /InsufficientAvailableCash/);

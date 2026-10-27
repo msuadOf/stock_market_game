@@ -1,0 +1,13 @@
+{
+  "label": "green-wire-03",
+  "argv": [
+    "/data1/baiyifan/workplace/stock_market_game/.tmp/tax-entitlement-k1/green-wire-03-harness",
+    "",
+    "--test-threads=8",
+    "--nocapture"
+  ],
+  "binary_sha256": "1bd0a4203230f7725b87148041d71f7b613b63a6d1154c353a8e5dcd1b3d8a37",
+  "source_verified_before_and_after": true,
+  "exit": 0,
+  "wall_seconds": 3.4466464149882086
+}

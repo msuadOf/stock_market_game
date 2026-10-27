@@ -1,0 +1,224 @@
+✖ 当前存档保留 groups 与职责运行时字段且拒绝代际字段 (2.103398ms)
+✖ setup 保留省略字段并严格解析显式 company config 与 groups (184.496628ms)
+✖ groups 拒绝重复 root、跨组重复成员、自持和不安全股份数 (1.273326ms)
+✔ PaymentFailure 保留正金额与事项并拒绝无效及 active 注入 (0.876574ms)
+✔ CompanyOperations 严格保留 payment_failures 并拒绝缺失及非法日期/记录 (899.74397ms)
+✔ 公开 PaymentFailure 公告保留单日事实且拒绝伪造幅度或持续期 (1.874702ms)
+✔ company policy parsers preserve mature and every flow variant (4.196016ms)
+✔ company policy parsers reject malformed exact values (1.312286ms)
+✔ company schema parsers preserve populated company slices (259.777462ms)
+✔ company schema parsers reject malformed exact subdomains with paths (110.902371ms)
+✖ strict save boundary preserves a populated current-schema save (126.582515ms)
+✖ strict save boundary rejects malformed nested company and personal-state branches (86.054662ms)
+✖ strict save boundary rejects unsafe company RNG numbers (83.906113ms)
+✖ strict save boundary rejects malformed company book and flow internals (81.534957ms)
+✖ strict save boundary rejects malformed representative fields for every flow variant (81.736483ms)
+ℹ tests 15
+ℹ suites 0
+ℹ pass 7
+ℹ fail 8
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1444.169372
+
+✖ failing tests:
+
+test at src/save/company-contracts.test.ts:12:1
+✖ 当前存档保留 groups 与职责运行时字段且拒绝代际字段 (2.103398ms)
+  Error [SaveSchemaError]: 存档 根节点.company_state 是必填字段
+      at exact (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/primitives.ts:71:33)
+      at parseStrictSaveEnvelope (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/root.ts:67:3)
+      at parseSaveSlot (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/save-schema.ts:7:10)
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/company-contracts.test.ts:14:20)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at Test.start (node:internal/test_runner/test:1191:17)
+      at startSubtestAfterBootstrap (node:internal/test_runner/harness:385:17) {
+    path: '根节点.company_state'
+  }
+
+test at src/save/company-contracts.test.ts:21:1
+✖ setup 保留省略字段并严格解析显式 company config 与 groups (184.496628ms)
+  Error [SaveSchemaError]: 存档 setup.groups[0].root 必须是不小于 0 的安全整数
+      at integer (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/primitives.ts:105:11)
+      at u32 (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/personal/common.ts:84:18)
+      at file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/groups.ts:12:18
+      at Array.map (<anonymous>)
+      at parseGroups (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/groups.ts:8:29)
+      at parseSetup (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/market.ts:85:40)
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/company-contracts.test.ts:29:20)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:911:18) {
+    path: 'setup.groups[0].root'
+  }
+
+test at src/save/company-contracts.test.ts:35:1
+✖ groups 拒绝重复 root、跨组重复成员、自持和不安全股份数 (1.273326ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /parent_held_shares/. Input:
+  
+  'SaveSchemaError: 存档 groups[0].root 必须是不小于 0 的安全整数'
+  
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/company-contracts.test.ts:38:69)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:911:18)
+      at Test.postRun (node:internal/test_runner/test:1465:19)
+      at Test.run (node:internal/test_runner/test:1390:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: SaveSchemaError: 存档 groups[0].root 必须是不小于 0 的安全整数
+        at integer (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/primitives.ts:105:11)
+        at u32 (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/personal/common.ts:84:18)
+        at file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/groups.ts:12:18
+        at Array.map (<anonymous>)
+        at parseGroups (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/groups.ts:8:29)
+        at file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/company-contracts.test.ts:38:82
+        at getActual (node:assert:611:5)
+        at strict.throws (node:assert:759:24)
+        at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/company-contracts.test.ts:38:69)
+        at Test.runInAsyncScope (node:async_hooks:227:14),
+    expected: /parent_held_shares/,
+    operator: 'throws',
+    diff: 'simple'
+  }
+
+test at src/save/complete-save-schema.test.ts:47:1
+✖ strict save boundary preserves a populated current-schema save (126.582515ms)
+  Error [SaveSchemaError]: 存档 根节点.company_state 是必填字段
+      at exact (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/primitives.ts:71:33)
+      at parseStrictSaveEnvelope (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/root.ts:67:3)
+      at parseSaveSlot (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/save-schema.ts:7:10)
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/complete-save-schema.test.ts:49:20)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at Test.start (node:internal/test_runner/test:1191:17)
+      at startSubtestAfterBootstrap (node:internal/test_runner/harness:385:17) {
+    path: '根节点.company_state'
+  }
+
+test at src/save/complete-save-schema.test.ts:52:1
+✖ strict save boundary rejects malformed nested company and personal-state branches (86.054662ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /setup\.start_date/. Input:
+  
+  'SaveSchemaError: 存档 根节点.company_state 是必填字段'
+  
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/complete-save-schema.test.ts:127:55)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:911:18)
+      at Test.postRun (node:internal/test_runner/test:1465:19)
+      at Test.run (node:internal/test_runner/test:1390:12)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: SaveSchemaError: 存档 根节点.company_state 是必填字段
+        at exact (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/primitives.ts:71:33)
+        at parseStrictSaveEnvelope (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/root.ts:67:3)
+        at parseSaveSlot (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/save-schema.ts:7:10)
+        at file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/complete-save-schema.test.ts:127:68
+        at getActual (node:assert:611:5)
+        at strict.throws (node:assert:759:24)
+        at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/complete-save-schema.test.ts:127:55)
+        at Test.runInAsyncScope (node:async_hooks:227:14)
+        at Test.run (node:internal/test_runner/test:1325:25)
+        at Test.processPendingSubtests (node:internal/test_runner/test:911:18),
+    expected: /setup\.start_date/,
+    operator: 'throws',
+    diff: 'simple'
+  }
+
+test at src/save/complete-save-schema.test.ts:130:1
+✖ strict save boundary rejects unsafe company RNG numbers (83.906113ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /company_operations\.market_rng\.state/. Input:
+  
+  'SaveSchemaError: 存档 根节点.company_state 是必填字段'
+  
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/complete-save-schema.test.ts:131:10)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:911:18)
+      at Test.postRun (node:internal/test_runner/test:1465:19)
+      at Test.run (node:internal/test_runner/test:1390:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: SaveSchemaError: 存档 根节点.company_state 是必填字段
+        at exact (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/primitives.ts:71:33)
+        at parseStrictSaveEnvelope (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/root.ts:67:3)
+        at parseSaveSlot (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/save-schema.ts:7:10)
+        at file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/complete-save-schema.test.ts:132:11
+        at getActual (node:assert:611:5)
+        at strict.throws (node:assert:759:24)
+        at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/complete-save-schema.test.ts:131:10)
+        at Test.runInAsyncScope (node:async_hooks:227:14)
+        at Test.run (node:internal/test_runner/test:1325:25)
+        at Test.processPendingSubtests (node:internal/test_runner/test:911:18),
+    expected: /company_operations\.market_rng\.state/,
+    operator: 'throws',
+    diff: 'simple'
+  }
+
+test at src/save/complete-save-schema.test.ts:137:1
+✖ strict save boundary rejects malformed company book and flow internals (81.534957ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /company_operations\.companies\..*\.books\.Industrial\.inventory/. Input:
+  
+  'SaveSchemaError: 存档 根节点.company_state 是必填字段'
+  
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/complete-save-schema.test.ts:152:55)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:911:18)
+      at Test.postRun (node:internal/test_runner/test:1465:19)
+      at Test.run (node:internal/test_runner/test:1390:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: SaveSchemaError: 存档 根节点.company_state 是必填字段
+        at exact (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/primitives.ts:71:33)
+        at parseStrictSaveEnvelope (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/root.ts:67:3)
+        at parseSaveSlot (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/save-schema.ts:7:10)
+        at file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/complete-save-schema.test.ts:152:68
+        at getActual (node:assert:611:5)
+        at strict.throws (node:assert:759:24)
+        at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/complete-save-schema.test.ts:152:55)
+        at Test.runInAsyncScope (node:async_hooks:227:14)
+        at Test.run (node:internal/test_runner/test:1325:25)
+        at Test.processPendingSubtests (node:internal/test_runner/test:911:18),
+    expected: /company_operations\.companies\..*\.books\.Industrial\.inventory/,
+    operator: 'throws',
+    diff: 'simple'
+  }
+
+test at src/save/complete-save-schema.test.ts:155:1
+✖ strict save boundary rejects malformed representative fields for every flow variant (81.736483ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /params\.Industrial\.unit_price_excl_vat/. Input:
+  
+  'SaveSchemaError: 存档 根节点.company_state 是必填字段'
+  
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/complete-save-schema.test.ts:171:12)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:911:18)
+      at Test.postRun (node:internal/test_runner/test:1465:19)
+      at Test.run (node:internal/test_runner/test:1390:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: SaveSchemaError: 存档 根节点.company_state 是必填字段
+        at exact (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/primitives.ts:71:33)
+        at parseStrictSaveEnvelope (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/root.ts:67:3)
+        at parseSaveSlot (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/save-schema.ts:7:10)
+        at file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/complete-save-schema.test.ts:171:25
+        at getActual (node:assert:611:5)
+        at strict.throws (node:assert:759:24)
+        at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/complete-save-schema.test.ts:171:12)
+        at Test.runInAsyncScope (node:async_hooks:227:14)
+        at Test.run (node:internal/test_runner/test:1325:25)
+        at Test.processPendingSubtests (node:internal/test_runner/test:911:18),
+    expected: /params\.Industrial\.unit_price_excl_vat/,
+    operator: 'throws',
+    diff: 'simple'
+  }

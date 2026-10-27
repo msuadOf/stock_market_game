@@ -1,0 +1,33 @@
+✖ Simple 配置非法与 Simulation 明确报错，不承诺价格倒推或已交付自动结算 (274.470284ms)
+✔ 非法 u64 seed 可见且拒绝，JSON 错误保留 raw 草稿 (2.558553ms)
+✔ seed 完整 u64、规范十进制边界，在创建前拒绝非法 seed (2.581394ms)
+✔ 预览 seed 原值创建；seed 编辑不覆盖 custom 非法 raw JSON (1.485348ms)
+✔ Simulation 创建草稿显式不支持，非法 seed 先于运行失败 (0.482945ms)
+ℹ tests 5
+ℹ suites 0
+ℹ pass 4
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 699.745004
+
+✖ failing tests:
+
+test at apps/web/src/components/company/CompanySystemInput.test.ts:17:1
+✖ Simple 配置非法与 Simulation 明确报错，不承诺价格倒推或已交付自动结算 (274.470284ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /日终自动提案尚未接通/. Input:
+  
+  '<fieldset aria-label="公司基本面系统设置"><legend>公司基本面系统：Simple</legend><p>虚拟简化模型，不使用真实市场统计。整局选定后不能切换；Simulation 尚未实现，不能创建该模式。</p><p>可选择月、季度、半年或年度结算，使用年化持续趋势与独立期间扰动生成营收和开支，再由一致财务状态计算利润。财务查询、披露和股本行为使用共同规则；Simple 不需要具体客户、工厂或研发项目。</p><p>Simple 只生成账面汇总财务，不建立真实公司资金或 SyntheticFunding；股本行为遵守共同适用规则，不能因账面现金不足而把公司功能整体禁用。</p><label>基本面结算周期<select aria-label="基本面结算周期" disabled=""><option value="" disabled="" selected="">请先完善配置</option><option value="Monthly">自然月</option><option value="Quarterly">自然季度</option><option value="HalfYear">自然半年</option><option value="Annual">自然年</option></select></label><p>预设切换周期保留同一 seed 并重新计算相同跨度的初始营收和开支，不改变公开排期。本人编辑的配置请在 JSON 中同时设置周期及对应金额，或明确重新生成预设后再切换，不静默覆盖编辑内容。</p><label>本局 seed<input aria-label="公司配置与运行统一 seed" inputMode="numeric" aria-invalid="false" value="42"/></label><p>当前配置来源：本人编辑。创建使用已展示的 seed，不重新抽取；本人编辑的 JSON 不会因 seed 改动被自动覆盖。</p><button type="button">保留合法参数，重新生成 seed 与初值</button><p>JSON 尚未完成时请先修正后再生成；不会自动丢弃本人编辑或用默认值掩盖无效配置。</p><fieldset class="company-preferences-input" aria-label="公司行为偏好"><legend>公司行为偏好（自动提案）</legend><p class="company-state">当前创建入口未接入偏好编辑；偏好仍可在下方 JSON 的 companies[].preferences 中显式配置（未配置=不自动产生方案）。</p></fieldset><details><summary>编辑公司基本面参数</summary><label>Simple 配置（完整 JSON）<textarea aria-label="Simple 公司配置 JSON" rows="16" spellcheck="false">{&quot;mode&quot;:&quot;Simulation&quot;}</textarea></label><dl><div><dt>金额</dt><dd>会计金额使用两位小数元字符串，交易与投资者账户 Money 使用十进制分字符串；不混用单位。</dd></div><div><dt>变化率</dt><dd>所有 *_bp 字段使用整数基点，100 bp = 1%；收入与开支分别变化，利润不得独立抽取或覆盖。</dd></div><div><dt>环境</dt><dd>initial_change_bp 为初始年化需求变化；persistence_bp 为上期变化保留比例；noise 按月、季度、半年、年分别配置有界扰动。环境只进入营收趋势，不直接设置利润或成交价格。</dd></div><div><dt>每家公司</dt><dd>company 需与当前发行人身份逐一匹配；营收、固定开支和变动开支参数均须明确配置。参数与财务期初不一致时拒绝，不自动补平。</dd></div><div><dt>偏好</dt><dd>companies[].preferences 为公司行为偏好（ADR-0037）：cash_dividend／stock_distribution 未配置（null）即不自动产生该类方案；数值域由严格 parser 校验，非法值显式拒绝。</dd></div><div><dt>日期</dt><dd>settlement_cycle 选择基本面结算周期；prehistory_periods 表示同长度虚拟前史期间数量。初始营收和开支属于完整所选期间，不能把月金额当年度金额。报告公开日期独立使用财报公开频率设置；较长结算下未形成的更短报告窗口明确不可用，不平均摊造。虚拟前史不产生证券成交。</dd></div><div><dt>趋势与扰动</dt><dd>revenue_trend／fixed_expense_trend 是年化基点，Persistent 使用自然月持续时间；期间内趋势变化按实际持续时间复合。各 noise 的 monthly_bp／quarterly_bp／half_year_bp／annual_bp 独立，不声称真实市场波动率换算。</dd></div></dl></details><p role="alert">公司基本面设置无效：Simulation 尚未实现，不能创建该模式；请修正后再创建新游戏。</p></fieldset>'
+  
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-system-inputs/apps/web/src/components/company/CompanySystemInput.test.ts:24:10)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: '<fieldset aria-label="公司基本面系统设置"><legend>公司基本面系统：Simple</legend><p>虚拟简化模型，不使用真实市场统计。整局选定后不能切换；Simulation 尚未实现，不能创建该模式。</p><p>可选择月、季度、半年或年度结算，使用年化持续趋势与独立期间扰动生成营收和开支，再由一致财务状态计算利润。财务查询、披露和股本行为使用共同规则；Simple 不需要具体客户、工厂或研发项目。</p><p>Simple 只生成账面汇总财务，不建立真实公司资金或 SyntheticFunding；股本行为遵守共同适用规则，不能因账面现金不足而把公司功能整体禁用。</p><label>基本面结算周期<select aria-label="基本面结算周期" disabled=""><option value="" disabled="" selected="">请先完善配置</option><option value="Monthly">自然月</option><option value="Quarterly">自然季度</option><option value="HalfYear">自然半年</option><option value="Annual">自然年</option></select></label><p>预设切换周期保留同一 seed 并重新计算相同跨度的初始营收和开支，不改变公开排期。本人编辑的配置请在 JSON 中同时设置周期及对应金额，或明确重新生成预设后再切换，不静默覆盖编辑内容。</p><label>本局 seed<input aria-label="公司配置与运行统一 seed" inputMode="numeric" aria-invalid="false" value="42"/></label><p>当前配置来源：本人编辑。创建使用已展示的 seed，不重新抽取；本人编辑的 JSON 不会因 seed 改动被自动覆盖。</p><button type="button">保留合法参数，重新生成 seed 与初值</button><p>JSON 尚未完成时请先修正后再生成；不会自动丢弃本人编辑或用默认值掩盖无效配置。</p><fieldset class="company-preferences-input" aria-label="公司行为偏好"><legend>公司行为偏好（自动提案）</legend><p class="company-state">当前创建入口未接入偏好编辑；偏好仍可在下方 JSON 的 companies[].preferences 中显式配置（未配置=不自动产生方案）。</p></fieldset><details><summary>编辑公司基本面参数</summary><label>Simple 配置（完整 JSON）<textarea aria-label="Simple 公司配置 JSON" rows="16" spellcheck="false">{&quot;mode&quot;:&quot;Simulation&quot;}</textarea></label><dl><div><dt>金额</dt><dd>会计金额使用两位小数元字符串，交易与投资者账户 Money 使用十进制分字符串；不混用单位。</dd></div><div><dt>变化率</dt><dd>所有 *_bp 字段使用整数基点，100 bp = 1%；收入与开支分别变化，利润不得独立抽取或覆盖。</dd></div><div><dt>环境</dt><dd>initial_change_bp 为初始年化需求变化；persistence_bp 为上期变化保留比例；noise 按月、季度、半年、年分别配置有界扰动。环境只进入营收趋势，不直接设置利润或成交价格。</dd></div><div><dt>每家公司</dt><dd>company 需与当前发行人身份逐一匹配；营收、固定开支和变动开支参数均须明确配置。参数与财务期初不一致时拒绝，不自动补平。</dd></div><div><dt>偏好</dt><dd>companies[].preferences 为公司行为偏好（ADR-0037）：cash_dividend／stock_distribution 未配置（null）即不自动产生该类方案；数值域由严格 parser 校验，非法值显式拒绝。</dd></div><div><dt>日期</dt><dd>settlement_cycle 选择基本面结算周期；prehistory_periods 表示同长度虚拟前史期间数量。初始营收和开支属于完整所选期间，不能把月金额当年度金额。报告公开日期独立使用财报公开频率设置；较长结算下未形成的更短报告窗口明确不可用，不平均摊造。虚拟前史不产生证券成交。</dd></div><div><dt>趋势与扰动</dt><dd>revenue_trend／fixed_expense_trend 是年化基点，Persistent 使用自然月持续时间；期间内趋势变化按实际持续时间复合。各 noise 的 monthly_bp／quarterly_bp／half_year_bp／annual_bp 独立，不声称真实市场波动率换算。</dd></div></dl></details><p role="alert">公司基本面设置无效：Simulation 尚未实现，不能创建该模式；请修正后再创建新游戏。</p></fieldset>',
+    expected: /日终自动提案尚未接通/,
+    operator: 'match',
+    diff: 'simple'
+  }

@@ -1,0 +1,17 @@
+✔ 能力面精确保留股数、不可用原因、五类readiness与实际settlement位 (3.075429ms)
+✔ 能力面拒绝重复readiness、缺多键、空原因、未知enum及金额越界 (2.08002ms)
+✔ 配股query使用数值CompanyId、字符串StockCode与显式nullable (1.03226ms)
+✔ 期间解释遵守i32/u8/会计i128值域并保留null与大额 (0.674589ms)
+✔ 认购排队与拒绝均校验显式非0owner，不混淆受理与支付 (3.80494ms)
+✔ 偏好拒绝台账使用u32 CompanyId与现有两类proposal (0.596087ms)
+✔ 本人简税回执无损校验，支持非0owner与0额回执 (3.567893ms)
+✔ 税状态三模式与各身份保留，不猜测未知状态或证券 (0.523825ms)
+✔ 未清税额保留约简非负分数与无collection事实，真实回执保持历史值 (0.855755ms)
+ℹ tests 9
+ℹ suites 0
+ℹ pass 9
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 135.429697

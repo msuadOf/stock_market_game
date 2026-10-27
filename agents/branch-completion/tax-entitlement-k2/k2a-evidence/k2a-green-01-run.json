@@ -1,0 +1,13 @@
+{
+  "label": "k2a-green-01",
+  "argv": [
+    "/data1/baiyifan/workplace/stock_market_game/.tmp/tax-entitlement-k1/k2a-green-01-harness",
+    "",
+    "--test-threads=8",
+    "--nocapture"
+  ],
+  "binary_sha256": "a3010216afb875c5595d6875bc5445ca744f0adf27c4dd2ff1020d481349ced9",
+  "source_verified_before_and_after": true,
+  "exit": 0,
+  "wall_seconds": 0.46314110001549125
+}

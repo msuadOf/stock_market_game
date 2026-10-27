@@ -1,0 +1,23 @@
+apps/web/src/components/company/use-company-query.test.ts(25,7): error TS7023: 'lastChild' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.
+apps/web/src/components/company/use-company-query.test.ts(102,82): error TS2769: No overload matches this call.
+  The last overload gave the following error.
+    Type '() => Promise<{ status: { mode: string; identity: string; stocks: never[]; }; outstanding: { account: string; stock: string; outstanding: { numerator: string; denominator: string; }; latest_collection: null; }[]; }>' is not assignable to type '() => Promise<DividendTaxQueryResult>'.
+      Type 'Promise<{ status: { mode: string; identity: string; stocks: never[]; }; outstanding: { account: string; stock: string; outstanding: { numerator: string; denominator: string; }; latest_collection: null; }[]; }>' is not assignable to type 'Promise<DividendTaxQueryResult>'.
+        Type '{ status: { mode: string; identity: string; stocks: never[]; }; outstanding: { account: string; stock: string; outstanding: { numerator: string; denominator: string; }; latest_collection: null; }[]; }' is not assignable to type 'DividendTaxQueryResult'.
+          The types of 'status.mode' are incompatible between these types.
+            Type 'string' is not assignable to type '"FlatWithholding" | "AShareIndividual" | "Exempt"'.
+apps/web/src/components/company/use-company-query.test.ts(165,77): error TS2769: No overload matches this call.
+  The last overload gave the following error.
+    Type '() => Promise<{ status: { mode: string; identity: string; stocks: never[]; }; outstanding: { account: string; stock: string; outstanding: { numerator: string; denominator: string; }; latest_collection: { operation_seq: number; ... 6 more ...; needs_funds: boolean; }; }[]; }>' is not assignable to type '() => Promise<DividendTaxQueryResult>'.
+      Type 'Promise<{ status: { mode: string; identity: string; stocks: never[]; }; outstanding: { account: string; stock: string; outstanding: { numerator: string; denominator: string; }; latest_collection: { operation_seq: number; ... 6 more ...; needs_funds: boolean; }; }[]; }>' is not assignable to type 'Promise<DividendTaxQueryResult>'.
+        Type '{ status: { mode: string; identity: string; stocks: never[]; }; outstanding: { account: string; stock: string; outstanding: { numerator: string; denominator: string; }; latest_collection: { operation_seq: number; ... 6 more ...; needs_funds: boolean; }; }[]; }' is not assignable to type 'DividendTaxQueryResult'.
+          The types of 'status.mode' are incompatible between these types.
+            Type 'string' is not assignable to type '"FlatWithholding" | "AShareIndividual" | "Exempt"'.
+apps/web/src/components/company/use-company-query.test.ts(214,108): error TS2769: No overload matches this call.
+  The last overload gave the following error.
+    Type '() => Promise<{ company: number; evaluated_on: string; kind: string; detail: string; }[]>' is not assignable to type '(companyId: number) => Promise<readonly CompanyPreferenceRejectionView[]>'.
+      Type 'Promise<{ company: number; evaluated_on: string; kind: string; detail: string; }[]>' is not assignable to type 'Promise<readonly CompanyPreferenceRejectionView[]>'.
+        Type '{ company: number; evaluated_on: string; kind: string; detail: string; }[]' is not assignable to type 'readonly CompanyPreferenceRejectionView[]'.
+          Type '{ company: number; evaluated_on: string; kind: string; detail: string; }' is not assignable to type 'CompanyPreferenceRejectionView'.
+            Types of property 'kind' are incompatible.
+              Type 'string' is not assignable to type '"CashDividend" | "StockDistribution"'.

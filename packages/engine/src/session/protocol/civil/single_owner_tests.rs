@@ -164,10 +164,10 @@ fn disclosure_public_index_and_private_acquisition_stay_separate() {
         starts_on: date,
         expires_on: date.next().unwrap(),
     };
-    std::sync::Arc::make_mut(&mut acquired.state.operations)
+    std::sync::Arc::make_mut(&mut acquired.state.companies.legacy_mut().expect("此调用仅用于 Legacy 公司状态").operations)
         .apply_company_shock(&crate::company::CompanyId(0), shock.clone())
         .unwrap();
-    std::sync::Arc::make_mut(&mut session.state.operations)
+    std::sync::Arc::make_mut(&mut session.state.companies.legacy_mut().expect("此调用仅用于 Legacy 公司状态").operations)
         .apply_company_shock(&crate::company::CompanyId(0), shock)
         .unwrap();
     assert_ne!(acquired.business_state_hash().unwrap(), business_before);

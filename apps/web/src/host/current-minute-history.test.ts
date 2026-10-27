@@ -1,3 +1,4 @@
+import { defaultCatalogFixture } from "./catalog-test-fixture.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { normalizeCurrentMinuteHistoryRequest, normalizeCurrentMinuteHistoryResponse, wireCurrentMinuteHistoryRequest } from "./current-minute-history.ts";
@@ -11,11 +12,11 @@ const response = { code: "000812", date: "2030-01-02", live: true, trading: true
 
 test("当前分钟历史使用独立live响应，严格保留真实分钟事实", { timeout: 10000 }, () => {
   assert.deepEqual(normalizeCurrentMinuteHistoryRequest(request), request);
-  assert.deepEqual(wireCurrentMinuteHistoryRequest(request), { stock: 0 });
-  assert.deepEqual(normalizeCurrentMinuteHistoryResponse(wireResponse, request), response);
-  assert.deepEqual(normalizeCurrentMinuteHistoryResponse({ ...wireResponse, bars: [] }, request), { ...response, bars: [] });
+  assert.deepEqual(wireCurrentMinuteHistoryRequest(request, defaultCatalogFixture), { stock: 0 });
+  assert.deepEqual(normalizeCurrentMinuteHistoryResponse(wireResponse, request, defaultCatalogFixture), response);
+  assert.deepEqual(normalizeCurrentMinuteHistoryResponse({ ...wireResponse, bars: [] }, request, defaultCatalogFixture), { ...response, bars: [] });
 });
 test("当前分钟历史拒绝账户注入、归档冒充live与证券错配", { timeout: 10000 }, () => {
   assert.throws(() => normalizeCurrentMinuteHistoryRequest({ ...request, account: "0" }));
-  for (const invalid of [{ ...wireResponse, live: false }, { ...wireResponse, stock: 1 }, { ...wireResponse, trading: false, phase: "Continuous" }, { ...wireResponse, trading: false, bars: [bar] }, { ...wireResponse, phase: "Closed" }, { ...wireResponse, bars: [bar, bar] }, { ...wireResponse, trading: "yes" }]) assert.throws(() => normalizeCurrentMinuteHistoryResponse(invalid, request));
+  for (const invalid of [{ ...wireResponse, live: false }, { ...wireResponse, stock: 1 }, { ...wireResponse, trading: false, phase: "Continuous" }, { ...wireResponse, trading: false, bars: [bar] }, { ...wireResponse, phase: "Closed" }, { ...wireResponse, bars: [bar, bar] }, { ...wireResponse, trading: "yes" }]) assert.throws(() => normalizeCurrentMinuteHistoryResponse(invalid, request, defaultCatalogFixture));
 });

@@ -1,0 +1,16 @@
+{
+  "head": "fb31bc73c9e1ffba8ee2c5507aa905e135a407a8",
+  "tree": "0d705b653e750d3e7b346cc3dc52880c9a64f65c",
+  "parents": [
+    "7aa1fa701d3c3b88e54467dec5da2b1e7ec04d93",
+    "04cae6969451d14c66bb545f855d9fa926b10429"
+  ],
+  "sourceWebFreezeSha256": "6fd2be94d133fd8e0e086d2cd7558ff0981631940ddc2c8efd0ba2759d25479d",
+  "web37PathsUnchanged": true,
+  "resolution": "session.rs仅双方五行module/pub use注册并集，SRCB函数体保留",
+  "rustBuildState": "尚未启动；等待唯一RAMtarget公平队列",
+  "reviewOwners": {
+    "candidateStructureAndResourcePlan": "/root/sol_strategy_review",
+    "productAndWireSemantics": "/root/sol_resume_independent_review"
+  }
+}

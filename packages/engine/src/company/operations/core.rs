@@ -18,6 +18,7 @@ use crate::company::spec::{CompanyId, IndustryId};
 
 /// 单公司经营实体（账套 + 流参数 + 经营 RNG + 经济状态 + 流序号）。
 #[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct OperatingCompany {
     pub(crate) spec: crate::company::spec::CompanySpec,
     pub(crate) books: IndustryBooks,
@@ -136,6 +137,7 @@ impl Eq for CompanyOperationsHashCache {}
 /// （main 线曾把反序列化改走 restore 校验通道；B4a 未取回 restore，恢复
 /// derive 以保持 std-thread 现状行为——校验化恢复随 B4b save/restore 面落地。）
 #[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CompanyOperations {
     #[serde(with = "crate::u64_decimal")]
     pub(crate) seed: u64,
@@ -145,7 +147,9 @@ pub struct CompanyOperations {
     pub(crate) market_rng: OperatingRng,
     pub(crate) industry_rngs: BTreeMap<IndustryId, OperatingRng>,
     pub(crate) companies: BTreeMap<CompanyId, OperatingCompany>,
+    #[serde(deserialize_with = "crate::company::persistence::required_nullable")]
     pub(crate) next_expected: Option<CivilDate>,
+    #[serde(deserialize_with = "crate::company::persistence::required_nullable")]
     pub(crate) history: Option<HistoryMeta>,
     pub(crate) payment_failures: BTreeMap<CivilDate, Vec<PaymentFailureRecord>>,
     #[serde(skip, default)]

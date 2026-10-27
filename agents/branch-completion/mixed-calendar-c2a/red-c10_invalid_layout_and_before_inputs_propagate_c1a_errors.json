@@ -1,0 +1,15 @@
+{
+  "command": "/data1/baiyifan/workplace/stock_market_game/.tmp/mixed-calendar-c2a/red",
+  "args": [
+    "market_calendar_context::tests::c10_invalid_layout_and_before_inputs_propagate_c1a_errors",
+    "--exact",
+    "--nocapture",
+    "--test-threads=1"
+  ],
+  "timeoutMs": 10000,
+  "elapsedMs": 231,
+  "exitCode": 1,
+  "stdout": "\nrunning 1 test\ntest market_calendar_context::tests::c10_invalid_layout_and_before_inputs_propagate_c1a_errors ... FAILED\n\nfailures:\n\nfailures:\n    market_calendar_context::tests::c10_invalid_layout_and_before_inputs_propagate_c1a_errors\n\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 32 filtered out; finished in 0.00s\n\n",
+  "stderr": "\nthread 'market_calendar_context::tests::c10_invalid_layout_and_before_inputs_propagate_c1a_errors' (3206650) panicked at /data1/baiyifan/workplace/stock_market_game/.worktree/mixed-calendar-c2a/agents/branch-completion/mixed-calendar-c2a/../../../packages/engine/src/session/market_calendar_context_tests.rs:547:9:\nassertion failed: matches!(day.tick(bad, first()),\n    Err(Model(CalendarClockModelError::InvalidTickLayout { .. })))\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\n",
+  "error": "bounded command exited with 101: thread 'market_calendar_context::tests::c10_invalid_layout_and_before_inputs_propagate_c1a_errors' (3206650) panicked at /data1/baiyifan/workplace/stock_market_game/.worktree/mixed-calendar-c2a/agents/branch-completion/mixed-calendar-c2a/../../../packages/engine/src/session/market_calendar_context_tests.rs:547:9:\nassertion failed: matches!(day.tick(bad, first()),\n    Err(Model(CalendarClockModelError::InvalidTickLayout { .. })))\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace"
+}

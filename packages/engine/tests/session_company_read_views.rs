@@ -1,5 +1,6 @@
 //! B4e 最小只读切片：读取既有公司与税账事实，不调用日终或付款命令。
 
+include!("../test-support/company_state.rs");
 #[allow(dead_code)]
 #[path = "publications/session_fixture.rs"]
 mod session_fixture;
@@ -177,7 +178,7 @@ fn flat_receipts_are_owner_filtered_and_queries_do_not_change_save_bytes() {
     // 从已完成的领域账簿构造冻结历史事实；不以 Session 日终接线证明付款能力。
     let session = GameSession::new(setup(CashDividendTaxMode::FlatWithholding, true), 7).unwrap();
     let mut saved = session.save().unwrap();
-    let actions = saved.corporate_actions.as_mut().unwrap();
+    let actions = system_saved_mut(&mut saved).1;
     let calendar = TradingCalendar::current_default_calendar().unwrap();
     let plan = CashDividendPlan::new(
         "history-dividend".into(),
@@ -451,7 +452,7 @@ fn later_assessment_preserves_latest_collection_without_explaining_new_outstandi
 fn session_outstanding_query_preserves_populated_tax_book_after_restore() {
     let session = GameSession::new(setup(CashDividendTaxMode::AShareIndividual, true), 7).unwrap();
     let mut saved = session.save().unwrap();
-    let actions = saved.corporate_actions.as_mut().unwrap();
+    let actions = system_saved_mut(&mut saved).1;
     // 编辑已有税账的合法历史事实，不改变股份持有量；无处置时到账尚不产生应纳税额。
     let book = actions
         .dividend_tax_books

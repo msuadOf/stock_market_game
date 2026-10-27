@@ -1,9 +1,14 @@
-import { exact, integer, map, nullable, oneOf, record } from "../primitives.ts"
-import { externalTag, money, orderId, planKey, tagged, type StringMap } from "./common.ts"
+import { SaveSchemaError, array, exact, integer, nullable, oneOf, record } from "../primitives.ts"
+import { externalTag, money, orderId, tagged } from "./common.ts"
 
-export type PlanBook = { readonly policy: PlanPolicy; readonly next_plan_seq: number; readonly plans: StringMap<TradingPlan> }
+import { parsePlanId, parsePlanU64 } from "../../../utils/plan-identity.ts"
+import type { PlanId } from "../../../types/generated/PlanId.ts"
+import type { AccountId } from "../../../types/generated/AccountId.ts"
+
+export type OwnerSequence = { readonly owner: AccountId; readonly next_sequence: string | null }
+export type PlanBook = { readonly policy: PlanPolicy; readonly owner_sequences: readonly OwnerSequence[]; readonly plans: readonly TradingPlan[] }
 export type PlanPolicy = { readonly reverse_revision_threshold_bp: number; readonly review_signal_delta_bp: number; readonly review_price_change_bp: number }
-export type TradingPlan = { readonly plan_id: number; readonly account: number; readonly code: number; readonly direction: Side; readonly target: PlanTarget; readonly filled_qty: number; readonly opinion: PlanOpinion; readonly confidence_bp: number; readonly urgency: Urgency; readonly status: PlanStatus; readonly version: number; readonly last_revision: RevisionRecord | null; readonly last_resume: ResumeReason | null; readonly created_trading_day: number; readonly horizon_trading_days: number; readonly review: ReviewConditions; readonly active_child_order_id: number | null; readonly execution?: PlanExecutionLeg; readonly last_event_trading_day: number }
+export type TradingPlan = { readonly plan_id: PlanId; readonly account: AccountId; readonly code: number; readonly direction: Side; readonly target: PlanTarget; readonly filled_qty: number; readonly opinion: PlanOpinion; readonly confidence_bp: number; readonly urgency: Urgency; readonly status: PlanStatus; readonly version: number; readonly last_revision: RevisionRecord | null; readonly last_resume: ResumeReason | null; readonly created_trading_day: number; readonly horizon_trading_days: number; readonly review: ReviewConditions; readonly active_child_order_id: number | null; readonly execution?: PlanExecutionLeg; readonly last_event_trading_day: number }
 /** 母单执行子状态：一次执行腿的调度参数与唯一在途子单事实（架构项 8：执行状态唯一所有者是计划本体）。 */
 export type PlanExecutionLeg = { readonly child_qty: number; readonly limit_price: string; readonly expires_market_minute: number; readonly active_child_remaining_qty: number | null }
 export type Side = "Buy" | "Sell"
@@ -30,8 +35,35 @@ const REVISION = ["SignalShift", "PriceMove", "ConstraintsChanged", "RiskTrigger
 
 export function parsePlanBook(value: unknown, path = "plans"): PlanBook {
   const parsed = record(value, path)
-  exact(parsed, ["policy", "next_plan_seq", "plans"], path)
-  return { policy: parsePolicy(parsed.policy, `${path}.policy`), next_plan_seq: integer(parsed.next_plan_seq, `${path}.next_plan_seq`, 0), plans: map(parsed.plans, `${path}.plans`, planKey, parseTradingPlan) }
+  exact(parsed, ["policy", "owner_sequences", "plans"], path)
+  const policy = parsePolicy(parsed.policy, `${path}.policy`)
+  const owner_sequences = array(parsed.owner_sequences, `${path}.owner_sequences`).map((entry, index) => parseOwnerSequence(entry, `${path}.owner_sequences[${index}]`))
+  const plans = array(parsed.plans, `${path}.plans`).map((entry, index) => parseTradingPlan(entry, `${path}.plans[${index}]`))
+  const cursors = new Map<string, string | null>()
+  for (const [index, cursor] of owner_sequences.entries()) {
+    if (cursors.has(cursor.owner)) throw new SaveSchemaError(`${path}.owner_sequences[${index}].owner`, "包含重复的 owner")
+    cursors.set(cursor.owner, cursor.next_sequence)
+  }
+  const identities = new Map<string, Set<string>>()
+  const activeStocks = new Map<string, Set<number>>()
+  for (const [index, plan] of plans.entries()) {
+    const planPath = `${path}.plans[${index}]`
+    const { owner, sequence } = plan.plan_id
+    const sequences = identities.get(owner) ?? new Set<string>()
+    if (sequences.has(sequence)) throw new SaveSchemaError(`${planPath}.plan_id`, "包含重复的 PlanId")
+    sequences.add(sequence)
+    identities.set(owner, sequences)
+    const next = cursors.get(owner)
+    if (next === undefined) throw new SaveSchemaError(`${path}.owner_sequences`, `缺少计划 owner=${owner} 的游标`)
+    if (next !== null && BigInt(next) <= BigInt(sequence)) throw new SaveSchemaError(`${path}.owner_sequences`, "next_sequence 必须大于该 owner 的全部已存 sequence")
+    if (plan.status !== "Completed" && !(typeof plan.status === "object" && "Terminated" in plan.status)) {
+      const stocks = activeStocks.get(owner) ?? new Set<number>()
+      if (stocks.has(plan.code)) throw new SaveSchemaError(planPath, "同一账户和股票最多允许一个非终止计划")
+      stocks.add(plan.code)
+      activeStocks.set(owner, stocks)
+    }
+  }
+  return { policy, owner_sequences, plans }
 }
 
 export function parseTradingPlan(value: unknown, path: string): TradingPlan {
@@ -39,7 +71,16 @@ export function parseTradingPlan(value: unknown, path: string): TradingPlan {
   // execution 是可选键：缺省合法（尚未执行或腿已结束）；出现就必须是完整执行腿。
   const withExecution = "execution" in parsed ? [...TRADING_PLAN_KEYS, "execution"] : TRADING_PLAN_KEYS
   exact(parsed, withExecution, path)
-  return { plan_id: integer(parsed.plan_id, `${path}.plan_id`, 0), account: integer(parsed.account, `${path}.account`, 0), code: parseStock(parsed.code, `${path}.code`), direction: oneOf(parsed.direction, `${path}.direction`, SIDE), target: parseTarget(parsed.target, `${path}.target`), filled_qty: integer(parsed.filled_qty, `${path}.filled_qty`, 0), opinion: parseOpinion(parsed.opinion, `${path}.opinion`), confidence_bp: integer(parsed.confidence_bp, `${path}.confidence_bp`, 0), urgency: oneOf(parsed.urgency, `${path}.urgency`, URGENCY), status: parseStatus(parsed.status, `${path}.status`), version: integer(parsed.version, `${path}.version`, 1), last_revision: nullable(parsed.last_revision, `${path}.last_revision`, parseRevision), last_resume: nullable(parsed.last_resume, `${path}.last_resume`, (nested, nestedPath) => oneOf(nested, nestedPath, RESUME)), created_trading_day: integer(parsed.created_trading_day, `${path}.created_trading_day`, 0), horizon_trading_days: integer(parsed.horizon_trading_days, `${path}.horizon_trading_days`, 1), review: parseReview(parsed.review, `${path}.review`), active_child_order_id: nullable(parsed.active_child_order_id, `${path}.active_child_order_id`, orderId), ...("execution" in parsed ? { execution: parseExecutionLeg(parsed.execution, `${path}.execution`) } : {}), last_event_trading_day: integer(parsed.last_event_trading_day, `${path}.last_event_trading_day`, 0) }
+  const plan_id = parsePlanId(parsed.plan_id, `${path}.plan_id`)
+  const account = parsePlanU64(parsed.account, `${path}.account`)
+  if (plan_id.owner !== account) throw new SaveSchemaError(`${path}.plan_id.owner`, "必须与 plan.account 一致")
+  return { plan_id, account, code: parseStock(parsed.code, `${path}.code`), direction: oneOf(parsed.direction, `${path}.direction`, SIDE), target: parseTarget(parsed.target, `${path}.target`), filled_qty: integer(parsed.filled_qty, `${path}.filled_qty`, 0), opinion: parseOpinion(parsed.opinion, `${path}.opinion`), confidence_bp: integer(parsed.confidence_bp, `${path}.confidence_bp`, 0), urgency: oneOf(parsed.urgency, `${path}.urgency`, URGENCY), status: parseStatus(parsed.status, `${path}.status`), version: integer(parsed.version, `${path}.version`, 1), last_revision: nullable(parsed.last_revision, `${path}.last_revision`, parseRevision), last_resume: nullable(parsed.last_resume, `${path}.last_resume`, (nested, nestedPath) => oneOf(nested, nestedPath, RESUME)), created_trading_day: integer(parsed.created_trading_day, `${path}.created_trading_day`, 0), horizon_trading_days: integer(parsed.horizon_trading_days, `${path}.horizon_trading_days`, 1), review: parseReview(parsed.review, `${path}.review`), active_child_order_id: nullable(parsed.active_child_order_id, `${path}.active_child_order_id`, orderId), ...("execution" in parsed ? { execution: parseExecutionLeg(parsed.execution, `${path}.execution`) } : {}), last_event_trading_day: integer(parsed.last_event_trading_day, `${path}.last_event_trading_day`, 0) }
+}
+
+function parseOwnerSequence(value: unknown, path: string): OwnerSequence {
+  const parsed = record(value, path)
+  exact(parsed, ["owner", "next_sequence"], path)
+  return { owner: parsePlanU64(parsed.owner, `${path}.owner`), next_sequence: nullable(parsed.next_sequence, `${path}.next_sequence`, parsePlanU64) }
 }
 
 const TRADING_PLAN_KEYS = ["plan_id", "account", "code", "direction", "target", "filled_qty", "opinion", "confidence_bp", "urgency", "status", "version", "last_revision", "last_resume", "created_trading_day", "horizon_trading_days", "review", "active_child_order_id", "last_event_trading_day"] as const
@@ -53,7 +94,7 @@ function parseExecutionLeg(value: unknown, path: string): PlanExecutionLeg {
 
 function parsePolicy(value: unknown, path: string): PlanPolicy { const parsed = record(value, path); exact(parsed, ["reverse_revision_threshold_bp", "review_signal_delta_bp", "review_price_change_bp"], path); return { reverse_revision_threshold_bp: integer(parsed.reverse_revision_threshold_bp, `${path}.reverse_revision_threshold_bp`), review_signal_delta_bp: integer(parsed.review_signal_delta_bp, `${path}.review_signal_delta_bp`), review_price_change_bp: integer(parsed.review_price_change_bp, `${path}.review_price_change_bp`) } }
 /** 存档 wire 的股票身份：数值 StockId（ADR 0041）。 */
-function parseStock(value: unknown, path: string): number { if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) throw new Error(`存档 ${path} 必须是数值 StockId`); if (value > 4_294_967_295) throw new Error(`存档 ${path} 超出 u32 范围`); return value }
+function parseStock(value: unknown, path: string): number { const parsed = integer(value, path, 0); if (parsed > 4_294_967_295) throw new Error(`存档 ${path} 超出 u32 范围`); return parsed }
 function parseTarget(value: unknown, path: string): PlanTarget { const [tag, payload] = externalTag(value, path); if (tag === "ShareCount") return { ShareCount: integer(payload, `${path}.ShareCount`, 0) }; if (tag === "PositionFractionBp") return { PositionFractionBp: integer(payload, `${path}.PositionFractionBp`, 0) }; throw new Error(`存档 ${path}.${tag} 不是已知计划目标`) }
 function parseOpinion(value: unknown, path: string): PlanOpinion { const parsed = record(value, path); exact(parsed, ["signal_score_bp", "source"], path); return { signal_score_bp: integer(parsed.signal_score_bp, `${path}.signal_score_bp`), source: oneOf(parsed.source, `${path}.source`, SOURCE) } }
 function parseStatus(value: unknown, path: string): PlanStatus { if (value === "Active" || value === "Completed") return value; const [tag, payload] = tagged(value, path); if (tag === "Paused") { exact(payload, ["reason"], `${path}.Paused`); return { Paused: { reason: oneOf(payload.reason, `${path}.Paused.reason`, PAUSE) } } }; if (tag === "Terminated") { exact(payload, ["reason"], `${path}.Terminated`); return { Terminated: { reason: oneOf(payload.reason, `${path}.Terminated.reason`, TERMINATION) } } }; throw new Error(`存档 ${path}.${tag} 不是已知计划状态`) }

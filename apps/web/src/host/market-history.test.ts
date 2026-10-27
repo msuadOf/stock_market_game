@@ -1,3 +1,4 @@
+import { defaultCatalogFixture } from "./catalog-test-fixture.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { normalizeMarketHistoryPage, normalizeMarketHistoryRequest, wireMarketHistoryRequest } from "./market-history.ts";
@@ -11,10 +12,10 @@ const page = { code: "600101", entries: wirePage.entries, next_cursor: "2026-10-
 
 test("永久分钟历史保留fullu64股数与u128金额，不转换为Number", { timeout: 10000 }, () => {
   assert.deepEqual(normalizeMarketHistoryRequest(request), request);
-  assert.deepEqual(wireMarketHistoryRequest(request), wireRequest);
-  assert.deepEqual(normalizeMarketHistoryPage(wirePage, request), page);
+  assert.deepEqual(wireMarketHistoryRequest(request, defaultCatalogFixture), wireRequest);
+  assert.deepEqual(normalizeMarketHistoryPage(wirePage, request, defaultCatalogFixture), page);
   // 请求侧翻译拒绝目录外代码（ADR 0041：未知代码显式抛错）。
-  assert.throws(() => wireMarketHistoryRequest({ ...request, code: "600000" }), /未知股票代码/);
+  assert.throws(() => wireMarketHistoryRequest({ ...request, code: "600000" }, defaultCatalogFixture), /未知股票代码/);
 });
 
 test("公开历史拒绝账户注入、缺字段、坏日期与游标", { timeout: 10000 }, () => {
@@ -22,12 +23,12 @@ test("公开历史拒绝账户注入、缺字段、坏日期与游标", { timeou
 });
 
 test("分钟历史拒绝假成交、数值金额、非规范数量和分页错配", { timeout: 10000 }, () => {
-  for (const invalidBar of [{ ...bar, open: 100 }, { ...bar, volume_shares: "01" }, { ...bar, trade_count: "0" }, { ...bar, turnover_cents: "340282366920938463463374607431768211456" }, { ...bar, phase: "ClosingAuction", minute_of_day: 899 }]) assert.throws(() => normalizeMarketHistoryPage({ ...wirePage, entries: [{ ...wirePage.entries[0], bars: [invalidBar] }] }, request));
-  assert.throws(() => normalizeMarketHistoryPage({ ...wirePage, stock: 4 }, request), /证券与请求不同/);
-  assert.throws(() => normalizeMarketHistoryPage({ ...wirePage, stock: 99 }, request), /未知股票/);
-  assert.throws(() => normalizeMarketHistoryPage({ ...wirePage, code: "600101" }, request), /字段不符合协议契约/);
-  assert.throws(() => normalizeMarketHistoryPage({ ...wirePage, entries: [{ ...wirePage.entries[1], bars: [bar] }] }, request));
-  assert.throws(() => normalizeMarketHistoryPage({ ...wirePage, entries: [...wirePage.entries].reverse() }, request));
-  assert.throws(() => normalizeMarketHistoryPage({ ...wirePage, entries: [] }, request));
-  assert.throws(() => normalizeMarketHistoryPage({ ...wirePage, next_cursor: null }, request));
+  for (const invalidBar of [{ ...bar, open: 100 }, { ...bar, volume_shares: "01" }, { ...bar, trade_count: "0" }, { ...bar, turnover_cents: "340282366920938463463374607431768211456" }, { ...bar, phase: "ClosingAuction", minute_of_day: 899 }]) assert.throws(() => normalizeMarketHistoryPage({ ...wirePage, entries: [{ ...wirePage.entries[0], bars: [invalidBar] }] }, request, defaultCatalogFixture));
+  assert.throws(() => normalizeMarketHistoryPage({ ...wirePage, stock: 4 }, request, defaultCatalogFixture), /证券与请求不同/);
+  assert.throws(() => normalizeMarketHistoryPage({ ...wirePage, stock: 99 }, request, defaultCatalogFixture), /未知股票/);
+  assert.throws(() => normalizeMarketHistoryPage({ ...wirePage, code: "600101" }, request, defaultCatalogFixture), /字段不符合协议契约/);
+  assert.throws(() => normalizeMarketHistoryPage({ ...wirePage, entries: [{ ...wirePage.entries[1], bars: [bar] }] }, request, defaultCatalogFixture));
+  assert.throws(() => normalizeMarketHistoryPage({ ...wirePage, entries: [...wirePage.entries].reverse() }, request, defaultCatalogFixture));
+  assert.throws(() => normalizeMarketHistoryPage({ ...wirePage, entries: [] }, request, defaultCatalogFixture));
+  assert.throws(() => normalizeMarketHistoryPage({ ...wirePage, next_cursor: null }, request, defaultCatalogFixture));
 });

@@ -1,0 +1,15 @@
+{
+  "command": "/data1/baiyifan/workplace/stock_market_game/.tmp/mixed-calendar-c2a/red-exit",
+  "args": [
+    "market_calendar_context::tests::c09_closed_and_completed_are_read_only_and_final_tick_cannot_repeat",
+    "--exact",
+    "--nocapture",
+    "--test-threads=1"
+  ],
+  "timeoutMs": 10000,
+  "elapsedMs": 347,
+  "exitCode": 101,
+  "stdout": "\nrunning 1 test\ntest market_calendar_context::tests::c09_closed_and_completed_are_read_only_and_final_tick_cannot_repeat ... FAILED\n\nfailures:\n\nfailures:\n    market_calendar_context::tests::c09_closed_and_completed_are_read_only_and_final_tick_cannot_repeat\n\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 32 filtered out; finished in 0.00s\n\n",
+  "stderr": "\nthread 'market_calendar_context::tests::c09_closed_and_completed_are_read_only_and_final_tick_cannot_repeat' (3218440) panicked at /data1/baiyifan/workplace/stock_market_game/.worktree/mixed-calendar-c2a/agents/branch-completion/mixed-calendar-c2a/../../../packages/engine/src/session/market_calendar_context_tests.rs:518:10:\ncalled `Result::unwrap()` on an `Err` value: MarketTickRequiresTrading { progress: Trading { completed_ticks: 1 } }\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\n",
+  "error": "bounded command exited with 101: thread 'market_calendar_context::tests::c09_closed_and_completed_are_read_only_and_final_tick_cannot_repeat' (3218440) panicked at /data1/baiyifan/workplace/stock_market_game/.worktree/mixed-calendar-c2a/agents/branch-completion/mixed-calendar-c2a/../../../packages/engine/src/session/market_calendar_context_tests.rs:518:10:\ncalled `Result::unwrap()` on an `Err` value: MarketTickRequiresTrading { progress: Trading { completed_ticks: 1 } }\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace"
+}

@@ -1,0 +1,154 @@
+{
+  "base": "53ecbcd3ac5aef998950afcd13b4a94da098b26f",
+  "scope": "Web严格wire结构与primitive/custom-serde codec；跨字段业务restore留给真实Rust，非完整业务等价",
+  "paths": [
+    {
+      "path": "apps/web/src/save/company-books-schema.test.ts",
+      "sha256": "409411b462bbda00b606319d6abe629776f048e891087bb2d312d3b46abec750"
+    },
+    {
+      "path": "apps/web/src/save/company-contracts.test.ts",
+      "sha256": "e24535a437b10d397ccfe0f19a24acfb436d821b3be7f7fe081a855766dbd451"
+    },
+    {
+      "path": "apps/web/src/save/complete-save-schema.test.ts",
+      "sha256": "45a0547aa42038b858e19437e5a8df4c62d0fd26bbd9be0fb23bd6a1f6f4f043"
+    },
+    {
+      "path": "apps/web/src/save/current-company-wire.test.ts",
+      "sha256": "dd44a8d335363b00a1ea3ff8ef016d1f9bd319dbca4ed03dca9db3acc0a6de8e"
+    },
+    {
+      "path": "apps/web/src/save/current-save-fixture.ts",
+      "sha256": "a459767a9ae2a5903fa42dd99ad0cf6099a999445c714b55b1e7ef9fe5615bd8"
+    },
+    {
+      "path": "apps/web/src/save/fixtures/source-b/IssuerRepurchaseBook-approved.json",
+      "sha256": "553b7025d96ae8cc1418a6ee75915fff51dd1c29c05786565304cc6015298843"
+    },
+    {
+      "path": "apps/web/src/save/fixtures/source-b/RightsOfferingBook-approved.json",
+      "sha256": "4b7bfa09159a4b53374f6369648676863e003066cd3be05f188a20bc965eeaf0"
+    },
+    {
+      "path": "apps/web/src/save/fixtures/source-b/ShareSplitBook-approved.json",
+      "sha256": "a98d6aa886b207bf77953a8f188be66c2449b1d8f397eaf3343f48a68c134919"
+    },
+    {
+      "path": "apps/web/src/save/fixtures/source-b/StockDistributionBook-approved.json",
+      "sha256": "2c636f3d4e7c3ffdb4e60b51ac3b6fb4b9886113553984bd0e19687e0919b64d"
+    },
+    {
+      "path": "apps/web/src/save/fixtures/source-b/generated-company-state-registry.json",
+      "sha256": "0ba132976eacba6ee0850504c936392373348cf59bcb70b2d03b19b6f80863d7"
+    },
+    {
+      "path": "apps/web/src/save/fixtures/source-b/generated-custom-monthly-nonempty.json",
+      "sha256": "6f82e4a885493335609c62b658daeb000394c3f4d0ccc7b6feefe74829f2e6d4"
+    },
+    {
+      "path": "apps/web/src/save/fixtures/source-b/generated-quarterly-nonempty.json",
+      "sha256": "09b3dcd37c3e4affc817f1b190aa2c86ffe606e3265ec4909b87e5ebdc419cc7"
+    },
+    {
+      "path": "apps/web/src/save/fixtures/source-b/legacy-company-state.json",
+      "sha256": "073c1522a0eb6c1ab28e2c1d25174665356808d5ac564dc3e9fd0ed5ff649b28"
+    },
+    {
+      "path": "apps/web/src/save/fixtures/source-b/manual-company-state-registry.json",
+      "sha256": "47e9f0e9735d5826b5ffb559d953bd7cda50abd273f2148e72eec5ce3ae6abee"
+    },
+    {
+      "path": "apps/web/src/save/fixtures/source-b/manual-custom-monthly-nonempty.json",
+      "sha256": "e0c7ba2de0b9a746131dfcb97277fb0a78c3fdec7b1f37406b6354d1f545317d"
+    },
+    {
+      "path": "apps/web/src/save/fixtures/source-b/manual-quarterly-nonempty.json",
+      "sha256": "658c40095a57779aba4b0792b50d3e0a0b496d12b1b5651023b315bfaa2eab59"
+    },
+    {
+      "path": "apps/web/src/save/fixtures/source-b/nonempty-legacy-group.json",
+      "sha256": "590f5231eff9a7a79cdf88a8841042835437c48b268c9a7ef4ac203a7eaee3e5"
+    },
+    {
+      "path": "apps/web/src/save/representative-save-test-fixture.ts",
+      "sha256": "52faabb936c19ea7b29dfcfeaba1ea77bde25fe95b436dfd5fd4a0df79fd892d"
+    },
+    {
+      "path": "apps/web/src/save/save-schema.ts",
+      "sha256": "8f25434bb6eb94c5ecf5754edc47ceb72fcd462f4295231c7886932f9942d138"
+    },
+    {
+      "path": "apps/web/src/save/schema/company/accounting/journal.ts",
+      "sha256": "69a8793f1e50151d5e7fa23d4aa5258420cb783b0224bfc571f5a8b745768909"
+    },
+    {
+      "path": "apps/web/src/save/schema/company/books/bank.ts",
+      "sha256": "74344e9f1dc6d781b0b163a85fa5de0cb9fa54c0e7af0583d08654d8cea23ed2"
+    },
+    {
+      "path": "apps/web/src/save/schema/company/books/industrial.ts",
+      "sha256": "2bb49345979f2546824614c0c652b69a617d6dbc92c85d8203454636de247276"
+    },
+    {
+      "path": "apps/web/src/save/schema/company/groups.test.ts",
+      "sha256": "c447d07ec496318859ebddc17647538b2680afeb27f8b62b544c49a5718ff8c6"
+    },
+    {
+      "path": "apps/web/src/save/schema/company/groups.ts",
+      "sha256": "336157eb801f7b1372515d491b9747de0933516849fa060a3e1736781ccdf8c6"
+    },
+    {
+      "path": "apps/web/src/save/schema/company/operations.ts",
+      "sha256": "7b7bdc5b857896050eab7dc50a9361dd228db3e71f405d964ae8c229036c23e4"
+    },
+    {
+      "path": "apps/web/src/save/schema/company/state-shapes.ts",
+      "sha256": "8167eb5b3be7857df231ae26fb1d3fe054fbf2543a711cd3345c42464bdc734e"
+    },
+    {
+      "path": "apps/web/src/save/schema/company/state.test.ts",
+      "sha256": "84fe10d2c41364b7c4837b662068109b11c6856bec9adae577d97316a4bba39d"
+    },
+    {
+      "path": "apps/web/src/save/schema/company/state.ts",
+      "sha256": "aba28096474efe293610729ecd856d801b115feced8d79ae8b89f90436802411"
+    },
+    {
+      "path": "apps/web/src/save/schema/company/value.ts",
+      "sha256": "f3c0f8145e59d1bbf72186fe394173fa3f66392c5431df37e9af5153ebc7233a"
+    },
+    {
+      "path": "apps/web/src/save/schema/npc-attention.ts",
+      "sha256": "14f273201f065837a630b454e17b315c96168e588650c48a7966619105f5591c"
+    },
+    {
+      "path": "apps/web/src/save/schema/personal/experience.ts",
+      "sha256": "2e1afb06f652d675e348b71d966705c71316e38653c7a70ad7dc58af4a71d6b9"
+    },
+    {
+      "path": "apps/web/src/save/schema/personal/plans.ts",
+      "sha256": "c00269f4bdf889cce24d87dfc7dd494df9bdb0b3db33c8be5cf6b6a39643a1eb"
+    },
+    {
+      "path": "apps/web/src/save/schema/primitives.ts",
+      "sha256": "30665d32f64d08568ec9b25ef4824103ccc59eb6a543b7e53d22fa29ec07739f"
+    },
+    {
+      "path": "apps/web/src/save/schema/raw-json.ts",
+      "sha256": "c7ce58149924c4b713d635fd576e788ea81aa250048e5a143694fb08f56ca941"
+    },
+    {
+      "path": "apps/web/src/save/schema/root.ts",
+      "sha256": "5abaa16186cd3f031bf1d4311f6e4648e4ebd1f15f94d79c39bdfbcf644deb03"
+    },
+    {
+      "path": "apps/web/src/save/schema/setup-company-options.ts",
+      "sha256": "a0b4e3b47186d07dc991dcee0616bf22c981882e3f17f08b8fcf5dbcb0fc5031"
+    },
+    {
+      "path": "apps/web/src/types/generated/SaveSlot.ts",
+      "sha256": "4ec673109853f624759c37b2b9bb19232523053e02653da04a0ddaff6e502c2e"
+    }
+  ]
+}

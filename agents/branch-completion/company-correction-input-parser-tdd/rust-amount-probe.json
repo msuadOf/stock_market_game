@@ -1,0 +1,57 @@
+[
+  {
+    "accepted": true,
+    "input": "  +10.0 ",
+    "normalized": "10.00"
+  },
+  {
+    "accepted": true,
+    "input": "0010",
+    "normalized": "10.00"
+  },
+  {
+    "accepted": true,
+    "input": "-0",
+    "normalized": "0.00"
+  },
+  {
+    "accepted": true,
+    "input": "+0.00",
+    "normalized": "0.00"
+  },
+  {
+    "accepted": true,
+    "input": "10.00",
+    "normalized": "10.00"
+  },
+  {
+    "accepted": false,
+    "error": "decimal parse failed: input \"10.\": dangling decimal point",
+    "input": "10."
+  },
+  {
+    "accepted": false,
+    "error": "decimal parse failed: input \".5\": integer part must be all digits",
+    "input": ".5"
+  },
+  {
+    "accepted": false,
+    "error": "decimal parse failed: input \"1.234\": too many fractional digits: 3",
+    "input": "1.234"
+  },
+  {
+    "accepted": true,
+    "input": "1701411834604692317316873037158841057.27",
+    "normalized": "1701411834604692317316873037158841057.27"
+  },
+  {
+    "accepted": true,
+    "input": "-1701411834604692317316873037158841057.27",
+    "normalized": "-1701411834604692317316873037158841057.27"
+  },
+  {
+    "accepted": false,
+    "error": "decimal parse failed: input \"-1701411834604692317316873037158841057.28\": value out of i128 range",
+    "input": "-1701411834604692317316873037158841057.28"
+  }
+]

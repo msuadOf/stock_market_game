@@ -502,7 +502,7 @@ mod whole_save {
         let session = session();
         let mut save = session.save().unwrap();
         let original = serde_json::to_vec(&save).unwrap();
-        let actions = save.corporate_actions.as_mut().unwrap();
+        let actions = save.company_state.actions_for_test_mut();
         let registry = &mut actions.registries[0];
         assert_eq!(registry.issued_shares(), 100_000);
         let snapshot = freeze(registry);
@@ -527,7 +527,7 @@ mod whole_save {
             issued_shares_before: 100_000, issued_shares_after: 0,
         });
         assert_eq!(
-            save.corporate_actions.as_ref().unwrap().registries[0].issued_shares(),
+            save.company_state.actions().unwrap().registries[0].issued_shares(),
             100_000
         );
         assert_eq!(serde_json::to_vec(&save).unwrap(), edited);
@@ -542,7 +542,7 @@ mod whole_save {
     fn whole_save_preserves_nonzero_registered_consolidation() {
         let session = session();
         let mut save = session.save().unwrap();
-        let actions = save.corporate_actions.as_mut().unwrap();
+        let actions = save.company_state.actions_for_test_mut();
         let snapshot = freeze(&mut actions.registries[0]);
         let mut book = ShareSplitBook::new(plan(ShareSplitDirection::Consolidate, 2)).unwrap();
         book.announce(date("2030-06-02")).unwrap();
@@ -556,7 +556,7 @@ mod whole_save {
         let restored = GameSession::restore(&parsed).unwrap();
         assert_eq!(
             restored.corporate_actions().unwrap().share_splits,
-            save.corporate_actions.unwrap().share_splits
+            save.company_state.actions().unwrap().share_splits.clone()
         );
     }
 }

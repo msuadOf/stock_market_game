@@ -1,5 +1,4 @@
-import { createBaselineUpdate, createProtocolUpdate, type HostFailure, type HostUpdate } from "./host-update.ts";
-import { parseProtocolSnapshot } from "./protocol/index.ts";
+import { prepareBaselineUpdate, createProtocolUpdate, type HostFailure, type HostUpdate } from "./host-update.ts";
 import { parseHostFailure } from "./protocol-failure.ts";
 
 export type RemoteMessage =
@@ -42,11 +41,11 @@ function failure(value: unknown, where: string): HostFailure {
 }
 
 function baseline(source: Readonly<Record<string, unknown>>): Extract<RemoteMessage, { kind: "baseline" }> {
-  exact(source, ["timeline_generation", "snapshot", "civil_date", "public_revision", "public_report_ids"], "远程 Baseline");
+  exact(source, ["timeline_generation", "snapshot", "civil_date", "public_revision", "public_report_ids", "stock_catalog", "company_catalog"], "远程 Baseline");
   if (!Array.isArray(source.public_report_ids) || source.public_report_ids.some((id) => typeof id !== "string" || !/^(0|[1-9]\d*)$/.test(id))) throw new Error("远程 Baseline.public_report_ids 无效");
   return {
     kind: "baseline",
-    update: createBaselineUpdate(generation(source.timeline_generation, "远程 Baseline.timeline_generation"), parseProtocolSnapshot(source.snapshot, "远程 Baseline.snapshot"), metadata(source, "远程 Baseline"), [], source.public_report_ids),
+    update: prepareBaselineUpdate(generation(source.timeline_generation, "远程 Baseline.timeline_generation"), source.snapshot, source.stock_catalog, source.company_catalog, metadata(source, "远程 Baseline"), [], source.public_report_ids),
   };
 }
 

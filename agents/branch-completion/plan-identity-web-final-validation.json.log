@@ -1,0 +1,335 @@
+{
+  "源码提交": "f89f56403d490355e810e0d46842f0d0cbac30b2",
+  "Web源码树": "d5e8e5adc0ef0fc6737c3e7f4eaaec798fc3de98",
+  "工作树状态": "",
+  "TypeScript编译": {
+    "命令": [
+      "node",
+      "scripts/run-long-validation.mjs",
+      "300000",
+      "--",
+      "node",
+      ".tmp/plan-identity-web-typecheck/run.mjs"
+    ],
+    "项目并发": 3,
+    "可用CPU": 128,
+    "共享deadline_ms": 300000,
+    "结果": {
+      "app": {
+        "exit": 0,
+        "wall_ms": 8144
+      },
+      "node": {
+        "exit": 0,
+        "wall_ms": 1784
+      },
+      "DEV": {
+        "exit": 0,
+        "wall_ms": 1635
+      }
+    },
+    "实际项目命令": [
+      "node apps/web/node_modules/typescript/bin/tsc -p apps/web/tsconfig.app.json --incremental false",
+      "node apps/web/node_modules/typescript/bin/tsc -p apps/web/tsconfig.node.json --incremental false",
+      "node apps/web/node_modules/typescript/bin/tsc -p apps/web/tsconfig.dev.verify.json --incremental false"
+    ],
+    "临时DEV配置": {
+      "extends": "./tsconfig.app.json",
+      "include": [
+        "src/dev/**/*.ts",
+        "src/dev/**/*.tsx",
+        "src/dev-inspector-main.tsx"
+      ],
+      "exclude": []
+    }
+  },
+  "普通测试": {
+    "command": [
+      "node",
+      "../../scripts/run-with-deadline.mjs",
+      "10000",
+      "--",
+      "node",
+      "--test",
+      "--test-timeout=10000",
+      "--test-concurrency=8",
+      "src/save/archive-store.test.ts",
+      "src/save/company-accounting-schema.test.ts",
+      "src/save/company-books-schema.test.ts",
+      "src/save/company-contracts.test.ts",
+      "src/save/company-policies-schema.test.ts",
+      "src/save/company-schema.test.ts",
+      "src/save/complete-save-schema.test.ts",
+      "src/save/current-company-wire.test.ts",
+      "src/save/current-wire-contract.test.ts",
+      "src/save/day-end-archive.test.ts",
+      "src/save/day-end-candidate.test.ts",
+      "src/save/day-end-persistence.test.ts",
+      "src/save/day-end-targets.test.ts",
+      "src/save/file-target-permissions.test.ts",
+      "src/save/file-target.test.ts",
+      "src/save/indexed-db-save-repository.test.ts",
+      "src/save/initial-save-source.test.ts",
+      "src/save/market-memberships-schema.test.ts",
+      "src/save/personal-schema.test.ts",
+      "src/save/price-cage-config.test.ts",
+      "src/save/retained-history-day-end.test.ts",
+      "src/save/runtime-strategy-position.test.ts",
+      "src/save/save-repository.test.ts",
+      "src/save/save-schema-contract.test.ts",
+      "src/save/schema/company/announcement-content.test.ts",
+      "src/save/schema/money-wire.test.ts",
+      "src/save/schema/npc-attention.test.ts",
+      "src/save/schema/personal/beliefs.test.ts",
+      "src/save/schema/personal/institution-policy.test.ts",
+      "src/save/schema/retained-history.test.ts",
+      "src/save/schema/setup-company-options.test.ts",
+      "src/save/schema/urgency-policy.test.ts",
+      "src/save/session-replacement.test.ts",
+      "src/host/npc-decision-trace.test.ts",
+      "src/dev/npc-decision-inspector.test.ts"
+    ],
+    "cwd": "apps/web",
+    "fileCount": 35,
+    "concurrency": 8,
+    "caseTimeoutMs": 10000,
+    "processTreeDeadlineMs": 10000,
+    "exit": 0,
+    "wallSeconds": 3.51632022857666,
+    "log": ".tmp/plan-identity-web-receipts/final-short-regression-2.log"
+  },
+  "lint": {
+    "命令": [
+      "node",
+      "../../scripts/run-with-deadline.mjs",
+      "10000",
+      "--",
+      "node",
+      "node_modules/oxlint/bin/oxlint",
+      "--deny-warnings",
+      "src/save",
+      "src/host/npc-decision-trace.ts",
+      "src/host/npc-decision-trace.test.ts",
+      "src/host/public-report-normalize.ts",
+      "src/utils/plan-identity.ts",
+      "src/dev/NpcDecisionInspector.tsx",
+      "src/dev/npc-decision-inspector.test.ts"
+    ],
+    "cwd": "apps/web",
+    "exit": 0,
+    "deadline_ms": 10000
+  },
+  "真实存档往返": {
+    "命令": [
+      "node",
+      "scripts/run-with-deadline.mjs",
+      "10000",
+      "--",
+      "node",
+      ".tmp/plan-identity-web-receipts/roundtrip.mjs"
+    ],
+    "exit": 0,
+    "deadline_ms": 10000,
+    "原件": {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-target/producer-save.json",
+      "sha256": "03a7e1776a5b81e09cf6bd91b365f4eeea1229b5b4c9cf470c7653739561ca24"
+    },
+    "Web回写": {
+      "path": "/data1/baiyifan/workplace/stock_market_game-plan-web/.tmp/plan-identity-web-receipts/roundtrip-save.json",
+      "sha256": "e5541bd1e4fd6a3f4aab201095e98176a5b6721a0226731354c9425e9ef534fe"
+    },
+    "Rust恢复证据提交": "90e9b624",
+    "Rust原日志": "/data1/baiyifan/workplace/stock_market_game_plan_identity/agents/branch-completion/plan-identity-web-roundtrip-green.log",
+    "限制": "原件无company_system等8字段；不证明Simple公司新局旅程"
+  },
+  "精确依赖来源": {
+    "生成类型": {
+      "原提交": "21cbee78",
+      "本树提交": "0cf0abb3"
+    },
+    "公告": {
+      "原提交": "d6aa0d05",
+      "本树提交": "283afef0",
+      "sha256": "6f0670464f7c02ced458e60f273450857bc07f344f4ce0de553cc847d6b18de3"
+    },
+    "setup": {
+      "原提交": [
+        "0644fedd",
+        "fef582b8",
+        "2df421f8"
+      ],
+      "本树提交": [
+        "c06bf728",
+        "f940b81d",
+        "ed589dc5"
+      ],
+      "sha256": "3c48f78664346facd9189dce0f718277ebbe9c030cb607d45a4c52e2c0823a1b"
+    }
+  },
+  "原日志": [
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game-plan-web/.tmp/plan-identity-web-receipts/company-related-regression-2.log",
+      "sha256": "545a6c62db2b24ec55a51e23291a5c728fc7d747b158491e2b5e9179824dd396",
+      "bytes": 4397
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game-plan-web/.tmp/plan-identity-web-receipts/company-related-regression.log",
+      "sha256": "5b71af3dc5eac6f30715bc1ccb51da2f8eaa1c8170cd00d8ca233d4684a7c041",
+      "bytes": 5117
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game-plan-web/.tmp/plan-identity-web-receipts/company-wire-green-2.log",
+      "sha256": "8e8843aa21776950d782c5c178b7d49d1b9954fbeb3f307eb15547f0afb9dac2",
+      "bytes": 1757
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game-plan-web/.tmp/plan-identity-web-receipts/company-wire-green-3.log",
+      "sha256": "4054abfcac3bddb0344e70afe78301c18fe9076096a032b849d5c3dec9ed41d8",
+      "bytes": 1951
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game-plan-web/.tmp/plan-identity-web-receipts/company-wire-green-4.log",
+      "sha256": "a863e9f380d315262761a6dafe724f6b70a270621685f1353a060e40fafb9539",
+      "bytes": 404
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game-plan-web/.tmp/plan-identity-web-receipts/company-wire-green.log",
+      "sha256": "eaddf7c6a689b6dcd4e04419b4ad7d4242794022ba893cd6956a726ed2934e1d",
+      "bytes": 1723
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game-plan-web/.tmp/plan-identity-web-receipts/company-wire-red.log",
+      "sha256": "f60bbcca762788b2667413e0ea3cd94c27bb86ec4050b21fee5f158fe41dc851",
+      "bytes": 3634
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game-plan-web/.tmp/plan-identity-web-receipts/current-wire-green-2.log",
+      "sha256": "8a3e8883755b47d8ecda3f348b7e2e79e707614fbe5608141c30d9770b4d3381",
+      "bytes": 1728
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game-plan-web/.tmp/plan-identity-web-receipts/current-wire-green.log",
+      "sha256": "1942676818504f9f91520e2834c0e579bb187ee067a8996be2d8bf7bc4cce769",
+      "bytes": 3107
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game-plan-web/.tmp/plan-identity-web-receipts/current-wire-red.log",
+      "sha256": "ce2adec26773f536634f5d277ddfbf5516d87a2419d85adef1c3595606b376ed",
+      "bytes": 3776
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game-plan-web/.tmp/plan-identity-web-receipts/final-full-save-roundtrip.log",
+      "sha256": "a6eb25bd55fa11deb1b152d815eaf61fe6d0ec3fb13d817d4cf4274e04fbb038",
+      "bytes": 577
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game-plan-web/.tmp/plan-identity-web-receipts/final-lint.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game-plan-web/.tmp/plan-identity-web-receipts/final-short-regression-2.log",
+      "sha256": "0faa526b0df6c9dc4c1952c4d89aaa6724ea34705ffc96cec8cebbdbaf4a4693",
+      "bytes": 19437
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game-plan-web/.tmp/plan-identity-web-receipts/final-short-regression.log",
+      "sha256": "67101e2f453dcbffe6c5abcf596318fee3b2018a27415a1fd52d0d16faf2f692",
+      "bytes": 20039
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game-plan-web/.tmp/plan-identity-web-receipts/full-save-roundtrip-green.log",
+      "sha256": "a6eb25bd55fa11deb1b152d815eaf61fe6d0ec3fb13d817d4cf4274e04fbb038",
+      "bytes": 577
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game-plan-web/.tmp/plan-identity-web-receipts/root-personal-regression.log",
+      "sha256": "4831769e5c83e402da0e8cdb99637ba4d30d88b43ce99ce716bb9fe4192ca9f6",
+      "bytes": 5379
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game-plan-web/.tmp/plan-identity-web-receipts/setup-integration-green.log",
+      "sha256": "e65e28eeb1a4bd5b735b58f80a6681f6f378975ce01541fc8fa17c822c3d979d",
+      "bytes": 1638
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game-plan-web/.tmp/plan-identity-web-receipts/setup-wrapper-green.log",
+      "sha256": "52a70cbe6c3ea7615d2ee4aa977f261e8c9c8a88d229e949d848b82f181ca668",
+      "bytes": 1157
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game-plan-web/.tmp/plan-identity-web-receipts/setup-wrapper-red.log",
+      "sha256": "b0032b8aeca37c4faf3933a5a374b7c62af7594bc7b2322cf05780874bb61f13",
+      "bytes": 1599
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game-plan-web/.tmp/plan-identity-web-receipts/tax-position-green.log",
+      "sha256": "e9cd019d7bb21d560c0b66156c2969ebc4131d57f36bc49c4f80fef4c083f832",
+      "bytes": 510
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game-plan-web/.tmp/plan-identity-web-receipts/tax-position-red.log",
+      "sha256": "2210d2c9183ed31902924394af585ec9cd85b821fed58fff00468827e18613e0",
+      "bytes": 1837
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game-plan-web/.tmp/plan-identity-web-typecheck/app.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game-plan-web/.tmp/plan-identity-web-typecheck/dev.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game-plan-web/.tmp/plan-identity-web-typecheck/final-supervisor.log",
+      "sha256": "c0e0a4a65e29107491fce4830570f67603604be5cdbadb3ae7b33cd8c6ea39c8",
+      "bytes": 433
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game-plan-web/.tmp/plan-identity-web-typecheck/node.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    }
+  ],
+  "进程外监督脚本": [
+    {
+      "path": "scripts/run-with-deadline.mjs",
+      "sha256": "3f391c87ab5032c3c9acfea70a131a8d1694c0f94a27d1e3f69c1b43412f3233"
+    },
+    {
+      "path": "scripts/run-long-validation.mjs",
+      "sha256": "d46e2d5a2defc2547080e85fa46bb38b99858095516697d5a839e284e20e333d"
+    }
+  ],
+  "短测ACL缓存前置": [
+    {
+      "file": "Cargo.lock",
+      "sha256": "558353207e066e3bd9e1fb56b7d7aa56373c0fcccd8de2fef5a17d32b7c43bb9",
+      "identical": true
+    },
+    {
+      "file": "apps/desktop/src-tauri/Cargo.toml",
+      "sha256": "785aa06ac0970b4a665668cc0480f20d2b01f0c9edddc3779a93a348220f7ba5",
+      "identical": true
+    },
+    {
+      "file": "apps/desktop/src-tauri/capabilities/default.json",
+      "sha256": "05f0fa4998699cb5bb49fd62f3f693bb464a41248855b28650cd7cfb70ce7435",
+      "identical": true
+    },
+    {
+      "file": "apps/desktop/src-tauri/tauri.conf.json",
+      "sha256": "082fcabe8fce1115b9e825c5bea15eda5fc63ffb0671f853b41ff727ad5c4409",
+      "identical": true
+    },
+    {
+      "cache": "apps/desktop/src-tauri/gen/schemas/acl-manifests.json",
+      "sha256": "130fb077e332ebf82c8d24872b04935639d63ee69774cbf4387792cebc24b3f6",
+      "origin": "/data1/baiyifan/workplace/stock_market_game/apps/desktop/src-tauri/gen/schemas/acl-manifests.json",
+      "note": "复用现成相同依赖生成物；未宣称重新构建Tauri"
+    }
+  ],
+  "独立复核": "待sol61_pending122_contract最终组合审查，尚未自签完成"
+}

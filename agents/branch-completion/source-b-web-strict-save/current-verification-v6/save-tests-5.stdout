@@ -1,0 +1,47 @@
+✔ 公共日终入口拒绝活动分钟且不删除输入事实 (3.08816ms)
+✔ runtime strategies preserve position adjustment steps and uncapped momentum state (4.627694ms)
+✔ runtime position adjustment steps must be explicit integers from zero to ten thousand (2.020748ms)
+✔ runtime strategies reject the removed stock fraction cap without migrating it (0.508614ms)
+✔ browser save rejects an old generation after asynchronous compression (1.663528ms)
+✔ compressed browser save repository preserves the current authority state (4.615964ms)
+✔ compressed browser save repository rejects unwrapped local data (0.570007ms)
+✔ compressed browser save repository reports malformed JSON and rejects old schema (2.486622ms)
+✔ compressed browser save repository reports storage and decoding failures (1.803032ms)
+✔ 存档运行时校验边界保留必填权威状态，不保存旧 profile (9.683521ms)
+✔ 存档流通盘设置完整保存类间与类内方式，并拒绝旧 shape (0.848805ms)
+✔ 存档 Money 保留完整 i64 分值并拒绝旧 number 编码 (6.022755ms)
+✔ save snapshot accepts only raw account and market facts (0.651729ms)
+✔ save snapshot derives day and phase instead of accepting persisted mirrors (0.468524ms)
+✔ runtime envelope persists identity and actual charges only (0.573636ms)
+✔ 当前存档不再携带 parent_orders 与 pending_plan_events，旧字段按未知键拒绝 (1.084182ms)
+✔ 计划执行腿作为 TradingPlan.execution 保存并拒绝非规范形态 (4.874591ms)
+✔ book sequence cursors preserve empty-book history and lossless u64 boundaries (4.389827ms)
+✔ book sequence cursors are mandatory and reject malformed u64 strings (1.939617ms)
+✔ book sequence cursor keys must match both configured stocks and snapshot markets (1.066861ms)
+✔ pending player and NPC limit intents preserve fixed, highest and lowest prices (1.530625ms)
+✔ receipt cursors and pending ordinals preserve lossless u64 decimal strings (2.304097ms)
+✔ pending limit intents reject legacy numeric and malformed symbolic prices (1.463793ms)
+✔ pending fixed price preserves integer amounts for later engine rejection (0.555336ms)
+✔ legacy saves carrying pending_npc are rejected at the root parser (0.357411ms)
+✔ 存档仅接受当前结构，不接受任何 schema_version 标记 (0.756492ms)
+✔ 统一 book 后存档不再有 auction_orders，旧字段按未知根字段显式拒绝 (0.33003ms)
+✔ 存档运行时校验边界拒绝非法 scalar 和未知字段 (1.485973ms)
+✔ 存档运行时校验边界拒绝非法策略内部状态 (1.334389ms)
+✔ 存档运行时校验边界拒绝非有限 exact-float 位串 (1.245096ms)
+✔ 存档运行时校验边界拒绝 Rust u32 溢出 (2.324617ms)
+✔ 存档运行时校验边界拒绝注入派生 envelope 镜像 (1.602736ms)
+✔ 存档运行时校验边界在 Map 转换前拒绝非规范策略账户 key (0.433473ms)
+✔ 存档运行时校验边界保留非空 live envelope 和回执身份 (0.493035ms)
+✔ 存档运行时校验边界拒绝不安全及未知的 live-envelope 嵌套字段 (0.951948ms)
+✔ 存档运行时校验边界拒绝非法回执来源标签及未知嵌套字段 (0.793413ms)
+✔ 当前存档使用 runtime_state，不含实施代号与版本标记 (0.840175ms)
+✔ SavedReceiptSource 接受 QuoteExpiry 并明确拒绝旧 P0Expiry 标签 (0.395962ms)
+✔ 存档拒绝额外版本字段及旧 simulation_policy_id (0.3438ms)
+ℹ tests 39
+ℹ suites 0
+ℹ pass 39
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 279.682426

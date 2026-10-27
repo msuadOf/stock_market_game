@@ -1,3 +1,4 @@
+import { catalogWorkerFixture } from "./catalog-test-fixture.ts";
 import assert from "node:assert/strict";
 import { registerHooks } from "node:module";
 import test from "node:test";
@@ -50,7 +51,8 @@ async function createFixture(
   const timers = new Map<number, () => void>();
   let nextTimer = 0;
   let handle = 7;
-  let failing: "snapshot" | "prepare" | "drop" | null = null;
+  let failing: "snapshot" | "prepare" | "drop" | "catalog" | "recoverable" | "snapshot-and-drop" | null = null;
+  let failingPost: string | null = null;
   let listener: ((event: { data: Message }) => void) | undefined;
   const saved = currentSaveFixture();
   const bindings = {
@@ -58,9 +60,11 @@ async function createFixture(
     ingress_token: (current: number) => current,
     create_session: () => { calls.push(`create:${handle}`); return handle; },
     civil_date: (current: number) => current === 7 ? "2030-01-02" : "2031-02-03",
-    snapshot: (current: number) => { calls.push(`snapshot:${current}`); if (failing === "snapshot") throw new Error("snapshot failed"); return { handle: current }; },
+    snapshot: (current: number) => { calls.push(`snapshot:${current}`); if (failing === "snapshot" || failing === "snapshot-and-drop") throw new Error("snapshot failed"); if (failing === "recoverable") throw { code: "READ_RETRY", where: "test.read", message: "可恢复读取失败", recoverable: true }; return snapshot(0, 0); },
+    stock_catalog_view: () => [{ id: 0, code: "000812" }],
+    company_catalog_view: () => { if (failing === "catalog") throw { code: "CATALOG_BASELINE_FAILED", where: "web-wasm.company_catalog_view", message: "公开公司身份目录构造失败", context: { operation: "company_catalog_view", fault: { code: 3019, context: [7] } }, recoverable: false, recoveryActions: ["重新同步"] }; return [{ id: 0, code: "C-000812", name: "公司000812", listed_stock: 0 }]; },
     prepare_public_baseline: (current: number) => { calls.push(`prepare:${current}`); if (failing === "prepare") throw new Error("prepare failed"); },
-    drop_session: (current: number) => { calls.push(`drop:${current}`); if (failing === "drop") throw new Error("drop failed"); },
+    drop_session: (current: number) => { calls.push(`drop:${current}`); if (failing === "drop" || failing === "snapshot-and-drop") throw new Error("drop failed"); },
     restore_json: (encoded: string) => { assert.deepEqual(JSON.parse(encoded), saved); calls.push(`restore:${handle}`); return handle; },
     host_capabilities: () => ({ npcDecisionDiagnostics: false, indicatorCapabilities: { intradayAverage: false, macd: false, priceKdj: false, candleKdj: false }, personalTradeHistory: false }),
     step: (current: number) => { calls.push(`step:${current}`); return tickBatch([frame(1, 0, [0])], snapshot(1, 1)); },
@@ -69,7 +73,7 @@ async function createFixture(
     end_civil_day: () => civilUpdate(),
   };
   replace(bindingsKey, bindings);
-  replace("self", { postMessage: (message: Message) => { posted.push(message); if (message.type === "ready" || message.type === "failure") initialized(); }, addEventListener: (_type: string, callback: typeof listener) => { listener = callback; } });
+  replace("self", { postMessage: (message: Message) => { if (message.type === failingPost) throw new DOMException("发送失败", "DataCloneError"); posted.push(message); if (message.type === "ready" || message.type === "failure") initialized(); }, addEventListener: (_type: string, callback: typeof listener) => { listener = callback; } });
   replace("fetch", async () => ({ ok: true, arrayBuffer: async () => Uint8Array.from([0, 97, 115, 109, 1, 0, 0, 0]).buffer }));
   replace("setTimeout", (callback: () => void) => { const id = ++nextTimer; timers.set(id, callback); return id; });
   replace("clearTimeout", (id: number) => { timers.delete(id); });
@@ -103,10 +107,10 @@ async function createFixture(
   await ready;
   assert.deepEqual(posted, [{ type: "ready" }]);
   posted.length = 0;
-  return { send, calls, posted: posted as Message[], timers, saved, handle: (next: number) => { handle = next; }, fail: (next: typeof failing) => { failing = next; } };
+  return { send, calls, posted: posted as Message[], timers, saved, handle: (next: number) => { handle = next; }, fail: (next: typeof failing) => { failing = next; }, failPost: (type: string | null) => { failingPost = type; } };
 }
 
-test("Worker 全部会话 caller 共用 owner，restore 旧 generation 回应先于新 baseline 和 microtask restart", { timeout: 10000 }, async () => {
+test("Worker 全部会话 caller 共用 owner，restore 完整回应先于 microtask restart", { timeout: 10000 }, async () => {
   await withWorker(async (f) => {
     f.send({ type: "create", setup: {}, seed: 1n });
     assert.equal(f.posted[0].type, "ingress");
@@ -116,7 +120,7 @@ test("Worker 全部会话 caller 共用 owner，restore 旧 generation 回应先
     assert.ok((f.posted[0].memory as WebAssembly.Memory).buffer instanceof SharedArrayBuffer);
     assert.deepEqual(f.posted.slice(1), [
       { type: "created", generation: 1, capabilities: { npcDecisionDiagnostics: false, indicatorCapabilities: { intradayAverage: false, macd: false, priceKdj: false, candleKdj: false }, personalTradeHistory: false } },
-      { type: "baseline", generation: 1, snapshot: { handle: 7 }, civilDate: "2030-01-02" },
+      { ...catalogWorkerFixture(snapshot(0, 0)), type: "baseline", generation: 1, snapshot: snapshot(0, 0), civilDate: "2030-01-02" },
     ]);
     f.posted.length = 0;
     f.send({ type: "save", generation: 1, requestId: 1 });
@@ -132,8 +136,7 @@ test("Worker 全部会话 caller 共用 owner，restore 旧 generation 回应先
     assert.equal((f.posted[0] as Message).token, 9);
     assert.equal(f.posted[0].generation, 2);
     assert.deepEqual(f.posted.slice(1), [
-      { type: "restored", generation: 1, nextGeneration: 2, requestId: 2, snapshot: { handle: 9 }, civilDate: "2031-02-03" },
-      { type: "baseline", generation: 2, snapshot: { handle: 9 }, civilDate: "2031-02-03" },
+      { ...catalogWorkerFixture(snapshot(0, 0)), type: "restored", generation: 1, nextGeneration: 2, requestId: 2, snapshot: snapshot(0, 0), civilDate: "2031-02-03" },
     ]);
     await Promise.resolve();
     assert.equal(f.timers.size, 1);
@@ -158,30 +161,176 @@ test("Worker 全部会话 caller 共用 owner，restore 旧 generation 回应先
   });
 });
 
-test("Worker restore snapshot 失败仍以 microtask 恢复原会话，prepare 失败保留新 authority", { timeout: 10000 }, async () => {
-  await withWorker(async (f) => {
+test("Worker restore提交前snapshot失败恢复旧运行，提交后prepare失败fatal关闭新会话", { timeout: 10000 }, async () => {
+  await withWorker(async f => {
     f.send({ type: "create", setup: {}, seed: 1n });
     f.send({ type: "start", generation: 1, requestId: 20 });
-    assert.deepEqual(f.posted.at(-1), { type: "started", generation: 1, requestId: 20 });
-    f.handle(9);
-    f.fail("snapshot");
-    f.posted.length = 0;
+    f.handle(9); f.fail("snapshot"); f.posted.length = 0;
     f.send({ type: "restore", generation: 1, requestId: 10, slot: f.saved });
     assert.equal(f.timers.size, 0);
     assert.deepEqual(f.posted, [{ type: "operationError", requestId: 10, generation: 1, message: "snapshot failed" }]);
-    assert.equal(f.calls.at(-1), "drop:9");
     await Promise.resolve();
     assert.equal(f.timers.size, 1);
-    f.fail("prepare");
-    f.posted.length = 0;
+    f.fail("prepare"); f.posted.length = 0;
     f.send({ type: "restore", generation: 1, requestId: 11, slot: f.saved });
-    assert.deepEqual(f.posted, [{ type: "operationError", requestId: 11, generation: 1, message: "prepare failed" }]);
+    await Promise.resolve();
+    assert.equal(f.timers.size, 0);
+    assert.equal(f.posted[0].type, "failure");
+    assert.equal(f.posted[0].generation, 2);
+    assert.equal((f.posted[0] as Message).code, "WASM_RESTORE_COMMITTED_FAILED");
+    assert.ok(f.calls.includes("drop:9"));
+    f.fail(null); f.send({ type: "drop" });
+  });
+});
+
+test("真实Worker restore已换handle后catalog故障保持3019，drain后不重启或发成功", { timeout: 10000 }, async () => {
+  await withWorker(async f => {
+    f.send({ type: "create", setup: {}, seed: 1n });
+    f.send({ type: "start", generation: 1, requestId: 1 });
+    f.handle(9);
+    f.fail("catalog");
+    f.posted.length = 0;
+    f.send({ type: "restore", generation: 1, requestId: 2, slot: f.saved });
+    await Promise.resolve();
+    await Promise.resolve();
+    assert.equal(f.timers.size, 0);
+    assert.ok(f.calls.includes("drop:7"));
+    assert.ok(f.calls.includes("drop:9"), "catalog故障必须清理新handle");
+    assert.equal(f.posted.some(message => message.type === "restored" || message.type === "baseline"), false);
+    const failure = f.posted.find(message => message.type === "failure");
+    assert.ok(failure);
+    assert.equal(failure.code, "CATALOG_BASELINE_FAILED");
+    assert.deepEqual((failure.context as { fault: unknown }).fault, { code: 3019, context: [7] });
+    assert.equal(failure.generation, 2);
+    f.posted.length = 0;
+    f.send({ type: "save", generation: 1, requestId: 3 });
+    assert.equal(f.posted[0].type, "operationError");
+    f.send({ type: "drop" });
+  });
+});
+
+test("真实Worker restore提交前snapshot失败按旧handle/generation恢复运行", { timeout: 10000 }, async () => {
+  await withWorker(async f => {
+    f.send({ type: "create", setup: {}, seed: 1n });
+    f.send({ type: "start", generation: 1, requestId: 1 });
+    f.handle(9); f.fail("snapshot"); f.posted.length = 0;
+    f.send({ type: "restore", generation: 1, requestId: 2, slot: f.saved });
     await Promise.resolve();
     assert.equal(f.timers.size, 1);
-    f.fail(null);
-    f.send({ type: "refreshBaseline", generation: 2, requestId: 12 });
-    assert.deepEqual(f.posted.at(-1), { type: "refreshed", generation: 2, requestId: 12, snapshot: { handle: 9 }, civilDate: "2031-02-03" });
+    f.fail(null); f.posted.length = 0;
+    f.send({ type: "save", generation: 1, requestId: 3 });
+    assert.equal(f.posted[0].type, "saved");
     f.send({ type: "drop" });
+  });
+});
+
+test("真实Worker replace后旧drop失败属于已提交fatal，旧generation不能操作新handle", { timeout: 10000 }, async () => {
+  await withWorker(async f => {
+    f.send({ type: "create", setup: {}, seed: 1n });
+    f.send({ type: "start", generation: 1, requestId: 1 });
+    f.handle(9); f.fail("drop"); f.posted.length = 0;
+    f.send({ type: "restore", generation: 1, requestId: 2, slot: f.saved });
+    await Promise.resolve();
     assert.equal(f.timers.size, 0);
+    assert.equal(f.posted[0].type, "failure");
+    assert.equal(f.posted[0].generation, 2);
+    f.fail(null); f.posted.length = 0;
+    f.send({ type: "save", generation: 1, requestId: 3 });
+    assert.equal(f.posted[0].type, "operationError");
+    assert.equal(f.calls.includes("save:9"), false);
+    f.send({ type: "drop" });
+  });
+});
+
+test("真实Worker refresh目录fatal关闭当前handle以撤销独立intake能力", { timeout: 10000 }, async () => {
+  await withWorker(async f => {
+    f.send({ type: "create", setup: {}, seed: 1n });
+    f.send({ type: "start", generation: 1, requestId: 1 });
+    f.fail("catalog"); f.posted.length = 0;
+    f.send({ type: "refreshBaseline", generation: 1, requestId: 2 });
+    await Promise.resolve();
+    assert.equal(f.timers.size, 0);
+    assert.ok(f.calls.includes("drop:7"), "drop_session必须关闭真实SessionRegistry token，不能只停止主Worker loop");
+    assert.equal(f.posted.some(message => message.type === "refreshed"), false);
+    assert.equal(f.posted[0].type, "failure");
+    f.fail(null); f.posted.length = 0;
+    f.send({ type: "save", generation: 1, requestId: 3 });
+    assert.equal(f.posted[0].type, "operationError");
+    assert.equal(f.calls.includes("save:7"), false);
+    f.send({ type: "drop" });
+  });
+});
+
+
+for (const failureType of ["ingress", "restored"] as const) {
+  test(`真实Worker已提交restore发送${failureType}失败fatal且不重启`, { timeout: 10000 }, async () => {
+    await withWorker(async f => {
+      f.send({ type: "create", setup: {}, seed: 1n });
+      f.send({ type: "start", generation: 1, requestId: 1 });
+      f.handle(9); f.failPost(failureType); f.posted.length = 0;
+      f.send({ type: "restore", generation: 1, requestId: 2, slot: f.saved });
+      await Promise.resolve(); await Promise.resolve();
+      assert.equal(f.timers.size, 0);
+      assert.ok(f.calls.includes("drop:9"));
+      assert.equal(f.posted.some(message => message.type === "restored" || message.type === "baseline"), false);
+      assert.equal(f.posted.at(-1)?.type, "failure");
+      assert.equal(f.posted.at(-1)?.generation, 2);
+      f.failPost(null); f.posted.length = 0;
+      for (const generation of [1, 2]) f.send({ type: "save", generation, requestId: generation + 10 });
+      assert.deepEqual(f.posted.map(message => message.type), ["operationError", "operationError"]);
+      assert.equal(f.calls.includes("save:9"), false);
+      f.send({ type: "drop" });
+    });
+  });
+}
+
+test("真实Worker暂停旧会话的precommit恢复失败保持暂停", { timeout: 10000 }, async () => {
+  await withWorker(async f => {
+    f.send({ type: "create", setup: {}, seed: 1n });
+    f.handle(9); f.fail("snapshot"); f.posted.length = 0;
+    f.send({ type: "restore", generation: 1, requestId: 2, slot: f.saved });
+    await Promise.resolve(); await Promise.resolve();
+    assert.equal(f.timers.size, 0);
+    assert.equal(f.posted[0].type, "operationError");
+    f.fail(null); f.posted.length = 0;
+    f.send({ type: "save", generation: 1, requestId: 3 });
+    assert.equal(f.posted[0].type, "saved");
+    assert.ok(f.calls.includes("save:7"));
+    f.send({ type: "drop" });
+  });
+});
+
+
+test("非目录可恢复structured故障维持既有stop与显错，不销毁当前handle", { timeout: 10000 }, async () => {
+  await withWorker(async f => {
+    f.send({ type: "create", setup: {}, seed: 1n });
+    f.fail("recoverable"); f.posted.length = 0;
+    f.send({ type: "refreshBaseline", generation: 1, requestId: 1 });
+    assert.equal(f.posted[0].type, "failure");
+    assert.equal(f.calls.includes("drop:7"), false);
+    f.fail(null); f.posted.length = 0;
+    f.send({ type: "refreshBaseline", generation: 1, requestId: 2 });
+    assert.equal(f.posted[0].type, "refreshed");
+    f.send({ type: "drop" });
+  });
+});
+
+
+test("真实Worker precommit snapshot与candidate cleanup双失败保旧身份并恢复运行且显两错", { timeout: 10000 }, async () => {
+  await withWorker(async f => {
+    f.send({ type: "create", setup: {}, seed: 1n });
+    f.send({ type: "start", generation: 1, requestId: 1 });
+    f.handle(9); f.fail("snapshot-and-drop"); f.posted.length = 0;
+    f.send({ type: "restore", generation: 1, requestId: 2, slot: f.saved });
+    await Promise.resolve(); await Promise.resolve();
+    assert.equal(f.timers.size, 1);
+    assert.equal(f.posted[0].type, "operationError");
+    assert.match(String(f.posted[0].message), /snapshot failed/);
+    assert.match(String(f.posted[0].message), /drop failed/);
+    f.fail(null); f.posted.length = 0;
+    f.send({ type: "save", generation: 1, requestId: 3 });
+    assert.equal(f.posted[0].type, "saved");
+    assert.ok(f.calls.includes("save:7"));
+    f.send({ type: "drop" });
   });
 });

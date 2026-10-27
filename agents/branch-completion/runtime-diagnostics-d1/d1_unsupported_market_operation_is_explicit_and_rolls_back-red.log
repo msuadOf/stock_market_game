@@ -1,0 +1,16 @@
+
+running 1 test
+test d1_unsupported_market_operation_is_explicit_and_rolls_back ... 
+thread 'd1_unsupported_market_operation_is_explicit_and_rolls_back' (3192358) panicked at packages/engine/tests/runtime_diagnostics_d1.rs:160:5:
+未接通的Market余量终止不能报成open订单：Ok([OrderCanceled { seq: 1, account: AccountId(0), code: StockId(0), id: OrderId(1), remaining_qty: 100 }, PriceTick { seq: 2, tick: 1, code: StockId(0), last_price: Money(1000), daily_candle: DailyCandle { time: 1893542400, open: Money(1000), high: Money(1000), low: Money(1000), close: Money(1000), volume: 0, trade_stats: Some(DailyTradeStats { turnover_cents: 0, trade_count: 0 }) }, bids: [], asks: [] }])
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+FAILED
+
+failures:
+
+failures:
+    d1_unsupported_market_operation_is_explicit_and_rolls_back
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 5 filtered out; finished in 0.24s
+
+bounded command exited with 101

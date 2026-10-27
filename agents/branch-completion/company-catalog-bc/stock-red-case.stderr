@@ -1,0 +1,7 @@
+
+thread 'actual_stock_identity_preserves_catalog_ids_after_restore' (3159289) panicked at packages/engine/tests/stock_identity_view.rs:34:5:
+assertion `left == right` failed
+  left: []
+ right: [StockIdentityEntry { id: StockId(0), code: "002156" }, StockIdentityEntry { id: StockId(1), code: "600610" }]
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+bounded command exited with 101

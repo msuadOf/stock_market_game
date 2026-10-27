@@ -1,0 +1,1206 @@
+✖ 真实Rust完整generated-company-state-registry.json对象/raw解析无损，只有一个公司权威tag (13.790422ms)
+✖ 真实Rust完整manual-company-state-registry.json对象/raw解析无损，只有一个公司权威tag (5.315325ms)
+✖ 真实Rust完整legacy-company-state.json对象/raw解析无损，只有一个公司权威tag (297.080671ms)
+✖ required单tag拒绝旧双源根字段、缺失/null/双tag/未知tag (3.481341ms)
+✖ setup模式与selected公司tag必须一致，不迁移旧源 (2.603946ms)
+✖ 真实REG SettlementDayMarket.binding五字段required且unknown逐层拒绝 (2.556745ms)
+✖ 公司状态全部真实非空结构拒绝未知字段，nullable必填不被默认掩盖 (2.468522ms)
+✖ rawJSON在覆盖前拒绝重复tag、转义后同键与REG binding重复键 (7.127048ms)
+✖ canonical整数字符串拒绝前导零/负零与unsafe裸数，保真实单位 (2.469202ms)
+ℹ tests 9
+ℹ suites 0
+ℹ pass 0
+ℹ fail 9
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 582.950184
+
+✖ failing tests:
+
+test at apps/web/src/save/schema/company/state.test.ts:10:44
+✖ 真实Rust完整generated-company-state-registry.json对象/raw解析无损，只有一个公司权威tag (13.790422ms)
+  Error [SaveSchemaError]: 存档 company_state.CompanySystem.system.implementation.state.companies.0.finance.books.journal.batches[1][0].kind 包含无效枚举值
+      at oneOf (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/primitives.ts:152:34)
+      at parseJournalEntry (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/accounting/journal.ts:29:117)
+      at file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/accounting/journal.ts:36:156
+      at Array.map (<anonymous>)
+      at file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/accounting/journal.ts:36:129
+      at Array.map (<anonymous>)
+      at parseJournal (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/accounting/journal.ts:36:55)
+      at parseBooks (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/accounting/books.ts:12:14)
+      at decode (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/state.ts:49:28)
+      at file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/state.ts:72:86 {
+    path: 'company_state.CompanySystem.system.implementation.state.companies.0.finance.books.journal.batches[1][0].kind'
+  }
+
+test at apps/web/src/save/schema/company/state.test.ts:10:44
+✖ 真实Rust完整manual-company-state-registry.json对象/raw解析无损，只有一个公司权威tag (5.315325ms)
+  Error [SaveSchemaError]: 存档 company_state.CompanySystem.system.implementation.state.companies.0.finance.books.journal.batches[1][0].kind 包含无效枚举值
+      at oneOf (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/primitives.ts:152:34)
+      at parseJournalEntry (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/accounting/journal.ts:29:117)
+      at file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/accounting/journal.ts:36:156
+      at Array.map (<anonymous>)
+      at file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/accounting/journal.ts:36:129
+      at Array.map (<anonymous>)
+      at parseJournal (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/accounting/journal.ts:36:55)
+      at parseBooks (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/accounting/books.ts:12:14)
+      at decode (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/state.ts:49:28)
+      at file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/state.ts:72:86 {
+    path: 'company_state.CompanySystem.system.implementation.state.companies.0.finance.books.journal.batches[1][0].kind'
+  }
+
+test at apps/web/src/save/schema/company/state.test.ts:10:44
+✖ 真实Rust完整legacy-company-state.json对象/raw解析无损，只有一个公司权威tag (297.080671ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+  + actual - expected
+  ... Skipped lines
+  
+    {
+      belief_books: {},
+      book_next_sequences: {
+        '0': '1'
+      },
+  ...
+                  qingming: '1998-04-05',
+  +               year: RawSaveNumber {
+  +                 token: '1998'
+  +               }
+  -               year: 1998
+                },
+                {
+                  dragon_boat: '1999-06-18',
+                  lunar_new_year: '1999-02-16',
+                  mid_autumn: '1999-09-24',
+                  qingming: '1999-04-05',
+  +               year: RawSaveNumber {
+  +                 token: '1999'
+  +               }
+  -               year: 1999
+                },
+                {
+                  dragon_boat: '2000-06-06',
+                  lunar_new_year: '2000-02-05',
+                  mid_autumn: '2000-09-12',
+                  qingming: '2000-04-04',
+  +               year: RawSaveNumber {
+  +                 token: '2000'
+  +               }
+  -               year: 2000
+                },
+                {
+                  dragon_boat: '2001-06-25',
+                  lunar_new_year: '2001-01-24',
+                  mid_autumn: '2001-10-01',
+                  qingming: '2001-04-05',
+  +               year: RawSaveNumber {
+  +                 token: '2001'
+  +               }
+  -               year: 2001
+                },
+                {
+                  dragon_boat: '2002-06-15',
+                  lunar_new_year: '2002-02-12',
+                  mid_autumn: '2002-09-21',
+                  qingming: '2002-04-05',
+  +               year: RawSaveNumber {
+  +                 token: '2002'
+  +               }
+  -               year: 2002
+                },
+                {
+                  dragon_boat: '2003-06-04',
+                  lunar_new_year: '2003-02-01',
+                  mid_autumn: '2003-09-11',
+                  qingming: '2003-04-05',
+  +               year: RawSaveNumber {
+  +                 token: '2003'
+  +               }
+  -               year: 2003
+                },
+                {
+                  dragon_boat: '2004-06-22',
+                  lunar_new_year: '2004-01-22',
+                  mid_autumn: '2004-09-28',
+                  qingming: '2004-04-04',
+  +               year: RawSaveNumber {
+  +                 token: '2004'
+  +               }
+  -               year: 2004
+                },
+                {
+                  dragon_boat: '2005-06-11',
+                  lunar_new_year: '2005-02-09',
+                  mid_autumn: '2005-09-18',
+                  qingming: '2005-04-05',
+  +               year: RawSaveNumber {
+  +                 token: '2005'
+  +               }
+  -               year: 2005
+                },
+                {
+                  dragon_boat: '2006-05-31',
+                  lunar_new_year: '2006-01-29',
+                  mid_autumn: '2006-10-06',
+                  qingming: '2006-04-05',
+  +               year: RawSaveNumber {
+  +                 token: '2006'
+  +               }
+  -               year: 2006
+                },
+                {
+                  dragon_boat: '2007-06-19',
+                  lunar_new_year: '2007-02-18',
+                  mid_autumn: '2007-09-25',
+                  qingming: '2007-04-05',
+  +               year: RawSaveNumber {
+  +                 token: '2007'
+  +               }
+  -               year: 2007
+                },
+                {
+                  dragon_boat: '2008-06-08',
+                  lunar_new_year: '2008-02-07',
+                  mid_autumn: '2008-09-14',
+                  qingming: '2008-04-04',
+  +               year: RawSaveNumber {
+  +                 token: '2008'
+  +               }
+  -               year: 2008
+                },
+                {
+                  dragon_boat: '2009-05-28',
+                  lunar_new_year: '2009-01-26',
+                  mid_autumn: '2009-10-03',
+                  qingming: '2009-04-04',
+  +               year: RawSaveNumber {
+  +                 token: '2009'
+  +               }
+  -               year: 2009
+                },
+                {
+                  dragon_boat: '2010-06-16',
+                  lunar_new_year: '2010-02-14',
+                  mid_autumn: '2010-09-22',
+                  qingming: '2010-04-05',
+  +               year: RawSaveNumber {
+  +                 token: '2010'
+  +               }
+  -               year: 2010
+                },
+                {
+                  dragon_boat: '2011-06-06',
+                  lunar_new_year: '2011-02-03',
+                  mid_autumn: '2011-09-12',
+                  qingming: '2011-04-05',
+  +               year: RawSaveNumber {
+  +                 token: '2011'
+  +               }
+  -               year: 2011
+                },
+                {
+                  dragon_boat: '2012-06-23',
+                  lunar_new_year: '2012-01-23',
+                  mid_autumn: '2012-09-30',
+                  qingming: '2012-04-04',
+  +               year: RawSaveNumber {
+  +                 token: '2012'
+  +               }
+  -               year: 2012
+                },
+                {
+                  dragon_boat: '2013-06-12',
+                  lunar_new_year: '2013-02-10',
+                  mid_autumn: '2013-09-19',
+                  qingming: '2013-04-04',
+  +               year: RawSaveNumber {
+  +                 token: '2013'
+  +               }
+  -               year: 2013
+                },
+                {
+                  dragon_boat: '2014-06-02',
+                  lunar_new_year: '2014-01-31',
+                  mid_autumn: '2014-09-08',
+                  qingming: '2014-04-05',
+  +               year: RawSaveNumber {
+  +                 token: '2014'
+  +               }
+  -               year: 2014
+                },
+                {
+                  dragon_boat: '2015-06-20',
+                  lunar_new_year: '2015-02-19',
+                  mid_autumn: '2015-09-27',
+                  qingming: '2015-04-05',
+  +               year: RawSaveNumber {
+  +                 token: '2015'
+  +               }
+  -               year: 2015
+                },
+                {
+                  dragon_boat: '2016-06-09',
+                  lunar_new_year: '2016-02-08',
+                  mid_autumn: '2016-09-15',
+                  qingming: '2016-04-04',
+  +               year: RawSaveNumber {
+  +                 token: '2016'
+  +               }
+  -               year: 2016
+                },
+                {
+                  dragon_boat: '2017-05-30',
+                  lunar_new_year: '2017-01-28',
+                  mid_autumn: '2017-10-04',
+                  qingming: '2017-04-04',
+  +               year: RawSaveNumber {
+  +                 token: '2017'
+  +               }
+  -               year: 2017
+                },
+                {
+                  dragon_boat: '2018-06-18',
+                  lunar_new_year: '2018-02-16',
+                  mid_autumn: '2018-09-24',
+                  qingming: '2018-04-05',
+  +               year: RawSaveNumber {
+  +                 token: '2018'
+  +               }
+  -               year: 2018
+                },
+                {
+                  dragon_boat: '2019-06-07',
+                  lunar_new_year: '2019-02-05',
+                  mid_autumn: '2019-09-13',
+                  qingming: '2019-04-05',
+  +               year: RawSaveNumber {
+  +                 token: '2019'
+  +               }
+  -               year: 2019
+                },
+                {
+                  dragon_boat: '2020-06-25',
+                  lunar_new_year: '2020-01-25',
+                  mid_autumn: '2020-10-01',
+                  qingming: '2020-04-04',
+  +               year: RawSaveNumber {
+  +                 token: '2020'
+  +               }
+  -               year: 2020
+                },
+                {
+                  dragon_boat: '2021-06-14',
+                  lunar_new_year: '2021-02-12',
+                  mid_autumn: '2021-09-21',
+                  qingming: '2021-04-04',
+  +               year: RawSaveNumber {
+  +                 token: '2021'
+  +               }
+  -               year: 2021
+                },
+                {
+                  dragon_boat: '2022-06-03',
+                  lunar_new_year: '2022-02-01',
+                  mid_autumn: '2022-09-10',
+                  qingming: '2022-04-05',
+  +               year: RawSaveNumber {
+  +                 token: '2022'
+  +               }
+  -               year: 2022
+                },
+                {
+                  dragon_boat: '2023-06-22',
+                  lunar_new_year: '2023-01-22',
+                  mid_autumn: '2023-09-29',
+                  qingming: '2023-04-05',
+  +               year: RawSaveNumber {
+  +                 token: '2023'
+  +               }
+  -               year: 2023
+                },
+                {
+                  dragon_boat: '2024-06-10',
+                  lunar_new_year: '2024-02-10',
+                  mid_autumn: '2024-09-17',
+                  qingming: '2024-04-04',
+  +               year: RawSaveNumber {
+  +                 token: '2024'
+  +               }
+  -               year: 2024
+                },
+                {
+                  dragon_boat: '2025-05-31',
+                  lunar_new_year: '2025-01-29',
+                  mid_autumn: '2025-10-06',
+                  qingming: '2025-04-04',
+  +               year: RawSaveNumber {
+  +                 token: '2025'
+  +               }
+  -               year: 2025
+                },
+                {
+                  dragon_boat: '2026-06-19',
+                  lunar_new_year: '2026-02-17',
+                  mid_autumn: '2026-09-25',
+                  qingming: '2026-04-05',
+  +               year: RawSaveNumber {
+  +                 token: '2026'
+  +               }
+  -               year: 2026
+                },
+                {
+                  dragon_boat: '2027-06-09',
+                  lunar_new_year: '2027-02-06',
+                  mid_autumn: '2027-09-15',
+                  qingming: '2027-04-05',
+  +               year: RawSaveNumber {
+  +                 token: '2027'
+  +               }
+  -               year: 2027
+                },
+                {
+                  dragon_boat: '2028-05-28',
+                  lunar_new_year: '2028-01-26',
+                  mid_autumn: '2028-10-03',
+                  qingming: '2028-04-04',
+  +               year: RawSaveNumber {
+  +                 token: '2028'
+  +               }
+  -               year: 2028
+                },
+                {
+                  dragon_boat: '2029-06-16',
+                  lunar_new_year: '2029-02-13',
+                  mid_autumn: '2029-09-22',
+                  qingming: '2029-04-04',
+  +               year: RawSaveNumber {
+  +                 token: '2029'
+  +               }
+  -               year: 2029
+                },
+                {
+                  dragon_boat: '2030-06-05',
+                  lunar_new_year: '2030-02-03',
+                  mid_autumn: '2030-09-12',
+                  qingming: '2030-04-05',
+  +               year: RawSaveNumber {
+  +                 token: '2030'
+  +               }
+  -               year: 2030
+                },
+                {
+                  dragon_boat: '2031-06-24',
+                  lunar_new_year: '2031-01-23',
+                  mid_autumn: '2031-10-01',
+                  qingming: '2031-04-05',
+  +               year: RawSaveNumber {
+  +                 token: '2031'
+  +               }
+  -               year: 2031
+                },
+                {
+                  dragon_boat: '2032-06-12',
+                  lunar_new_year: '2032-02-11',
+                  mid_autumn: '2032-09-19',
+                  qingming: '2032-04-04',
+  +               year: RawSaveNumber {
+  +                 token: '2032'
+  +               }
+  -               year: 2032
+                },
+                {
+                  dragon_boat: '2033-06-01',
+                  lunar_new_year: '2033-01-31',
+                  mid_autumn: '2033-09-08',
+                  qingming: '2033-04-04',
+  +               year: RawSaveNumber {
+  +                 token: '2033'
+  +               }
+  -               year: 2033
+                },
+                {
+                  dragon_boat: '2034-06-20',
+                  lunar_new_year: '2034-02-19',
+                  mid_autumn: '2034-09-27',
+                  qingming: '2034-04-05',
+  +               year: RawSaveNumber {
+  +                 token: '2034'
+  +               }
+  -               year: 2034
+                },
+                {
+                  dragon_boat: '2035-06-10',
+                  lunar_new_year: '2035-02-08',
+                  mid_autumn: '2035-09-16',
+                  qingming: '2035-04-05',
+  +               year: RawSaveNumber {
+  +                 token: '2035'
+  +               }
+  -               year: 2035
+                },
+                {
+                  dragon_boat: '2036-05-30',
+                  lunar_new_year: '2036-01-28',
+                  mid_autumn: '2036-10-04',
+                  qingming: '2036-04-04',
+  +               year: RawSaveNumber {
+  +                 token: '2036'
+  +               }
+  -               year: 2036
+                },
+                {
+                  dragon_boat: '2037-06-18',
+                  lunar_new_year: '2037-02-15',
+                  mid_autumn: '2037-09-24',
+                  qingming: '2037-04-04',
+  +               year: RawSaveNumber {
+  +                 token: '2037'
+  +               }
+  -               year: 2037
+                },
+                {
+                  dragon_boat: '2038-06-07',
+                  lunar_new_year: '2038-02-04',
+                  mid_autumn: '2038-09-13',
+                  qingming: '2038-04-05',
+  +               year: RawSaveNumber {
+  +                 token: '2038'
+  +               }
+  -               year: 2038
+                },
+                {
+                  dragon_boat: '2039-05-27',
+                  lunar_new_year: '2039-01-24',
+                  mid_autumn: '2039-10-02',
+                  qingming: '2039-04-05',
+  +               year: RawSaveNumber {
+  +                 token: '2039'
+  +               }
+  -               year: 2039
+                },
+                {
+                  dragon_boat: '2040-06-14',
+                  lunar_new_year: '2040-02-12',
+                  mid_autumn: '2040-09-20',
+                  qingming: '2040-04-04',
+  +               year: RawSaveNumber {
+  +                 token: '2040'
+  +               }
+  -               year: 2040
+                },
+                {
+                  dragon_boat: '2041-06-03',
+                  lunar_new_year: '2041-02-01',
+                  mid_autumn: '2041-09-10',
+                  qingming: '2041-04-04',
+  +               year: RawSaveNumber {
+  +                 token: '2041'
+  +               }
+  -               year: 2041
+                },
+                {
+                  dragon_boat: '2042-06-22',
+                  lunar_new_year: '2042-01-22',
+                  mid_autumn: '2042-09-28',
+                  qingming: '2042-04-04',
+  +               year: RawSaveNumber {
+  +                 token: '2042'
+  +               }
+  -               year: 2042
+                },
+                {
+                  dragon_boat: '2043-06-11',
+                  lunar_new_year: '2043-02-10',
+                  mid_autumn: '2043-09-17',
+                  qingming: '2043-04-05',
+  +               year: RawSaveNumber {
+  +                 token: '2043'
+  +               }
+  -               year: 2043
+                },
+                {
+                  dragon_boat: '2044-05-31',
+                  lunar_new_year: '2044-01-30',
+                  mid_autumn: '2044-10-05',
+                  qingming: '2044-04-04',
+  +               year: RawSaveNumber {
+  +                 token: '2044'
+  +               }
+  -               year: 2044
+                },
+                {
+                  dragon_boat: '2045-06-19',
+                  lunar_new_year: '2045-02-17',
+                  mid_autumn: '2045-09-25',
+                  qingming: '2045-04-04',
+  +               year: RawSaveNumber {
+  +                 token: '2045'
+  +               }
+  -               year: 2045
+                },
+                {
+                  dragon_boat: '2046-06-08',
+                  lunar_new_year: '2046-02-06',
+                  mid_autumn: '2046-09-15',
+                  qingming: '2046-04-04',
+  +               year: RawSaveNumber {
+  +                 token: '2046'
+  +               }
+  -               year: 2046
+                },
+                {
+                  dragon_boat: '2047-05-29',
+                  lunar_new_year: '2047-01-26',
+                  mid_autumn: '2047-10-04',
+                  qingming: '2047-04-05',
+  +               year: RawSaveNumber {
+  +                 token: '2047'
+  +               }
+  -               year: 2047
+                },
+                {
+                  dragon_boat: '2048-06-15',
+                  lunar_new_year: '2048-02-14',
+                  mid_autumn: '2048-09-22',
+                  qingming: '2048-04-04',
+  +               year: RawSaveNumber {
+  +                 token: '2048'
+  +               }
+  -               year: 2048
+                },
+                {
+                  dragon_boat: '2049-06-04',
+                  lunar_new_year: '2049-02-02',
+                  mid_autumn: '2049-09-11',
+                  qingming: '2049-04-04',
+  +               year: RawSaveNumber {
+  +                 token: '2049'
+  +               }
+  -               year: 2049
+                },
+                {
+                  dragon_boat: '2050-06-23',
+                  lunar_new_year: '2050-01-23',
+                  mid_autumn: '2050-09-30',
+                  qingming: '2050-04-04',
+  +               year: RawSaveNumber {
+  +                 token: '2050'
+  +               }
+  -               year: 2050
+                },
+                {
+                  dragon_boat: '2051-06-13',
+                  lunar_new_year: '2051-02-11',
+                  mid_autumn: '2051-09-19',
+                  qingming: '2051-04-05',
+  +               year: RawSaveNumber {
+  +                 token: '2051'
+  +               }
+  -               year: 2051
+                },
+                {
+                  dragon_boat: '2052-06-01',
+                  lunar_new_year: '2052-02-01',
+                  mid_autumn: '2052-09-07',
+                  qingming: '2052-04-04',
+  +               year: RawSaveNumber {
+  +                 token: '2052'
+  +               }
+  -               year: 2052
+                },
+                {
+                  dragon_boat: '2053-06-20',
+                  lunar_new_year: '2053-02-19',
+                  mid_autumn: '2053-09-26',
+                  qingming: '2053-04-04',
+  +               year: RawSaveNumber {
+  +                 token: '2053'
+  +               }
+  -               year: 2053
+                },
+                {
+                  dragon_boat: '2054-06-10',
+                  lunar_new_year: '2054-02-08',
+                  mid_autumn: '2054-09-16',
+                  qingming: '2054-04-04',
+  +               year: RawSaveNumber {
+  +                 token: '2054'
+  +               }
+  -               year: 2054
+                },
+                {
+                  dragon_boat: '2055-05-30',
+                  lunar_new_year: '2055-01-28',
+                  mid_autumn: '2055-10-05',
+                  qingming: '2055-04-05',
+  +               year: RawSaveNumber {
+  +                 token: '2055'
+  +               }
+  -               year: 2055
+                },
+                {
+                  dragon_boat: '2056-06-17',
+                  lunar_new_year: '2056-02-15',
+                  mid_autumn: '2056-09-24',
+                  qingming: '2056-04-04',
+  +               year: RawSaveNumber {
+  +                 token: '2056'
+  +               }
+  -               year: 2056
+                },
+                {
+                  dragon_boat: '2057-06-06',
+                  lunar_new_year: '2057-02-04',
+                  mid_autumn: '2057-09-13',
+                  qingming: '2057-04-04',
+  +               year: RawSaveNumber {
+  +                 token: '2057'
+  +               }
+  -               year: 2057
+                },
+                {
+                  dragon_boat: '2058-06-25',
+                  lunar_new_year: '2058-01-24',
+                  mid_autumn: '2058-10-02',
+                  qingming: '2058-04-04',
+  +               year: RawSaveNumber {
+  +                 token: '2058'
+  +               }
+  -               year: 2058
+                },
+                {
+                  dragon_boat: '2059-06-14',
+                  lunar_new_year: '2059-02-12',
+                  mid_autumn: '2059-09-21',
+                  qingming: '2059-04-05',
+  +               year: RawSaveNumber {
+  +                 token: '2059'
+  +               }
+  -               year: 2059
+                },
+                {
+                  dragon_boat: '2060-06-03',
+                  lunar_new_year: '2060-02-02',
+                  mid_autumn: '2060-09-09',
+                  qingming: '2060-04-04',
+  +               year: RawSaveNumber {
+  +                 token: '2060'
+  +               }
+  -               year: 2060
+                },
+                {
+                  dragon_boat: '2061-06-22',
+                  lunar_new_year: '2061-01-21',
+                  mid_autumn: '2061-09-28',
+                  qingming: '2061-04-04',
+  +               year: RawSaveNumber {
+  +                 token: '2061'
+  +               }
+  -               year: 2061
+                },
+                {
+                  dragon_boat: '2062-06-11',
+                  lunar_new_year: '2062-02-09',
+                  mid_autumn: '2062-09-17',
+                  qingming: '2062-04-04',
+  +               year: RawSaveNumber {
+  +                 token: '2062'
+  +               }
+  -               year: 2062
+                },
+                {
+                  dragon_boat: '2063-06-01',
+                  lunar_new_year: '2063-01-29',
+                  mid_autumn: '2063-10-06',
+                  qingming: '2063-04-05',
+  +               year: RawSaveNumber {
+  +                 token: '2063'
+  +               }
+  -               year: 2063
+                },
+                {
+                  dragon_boat: '2064-06-19',
+                  lunar_new_year: '2064-02-17',
+                  mid_autumn: '2064-09-25',
+                  qingming: '2064-04-04',
+  +               year: RawSaveNumber {
+  +                 token: '2064'
+  +               }
+  -               year: 2064
+                },
+                {
+                  dragon_boat: '2065-06-08',
+                  lunar_new_year: '2065-02-05',
+                  mid_autumn: '2065-09-15',
+                  qingming: '2065-04-04',
+  +               year: RawSaveNumber {
+  +                 token: '2065'
+  +               }
+  -               year: 2065
+                },
+                {
+                  dragon_boat: '2066-05-28',
+                  lunar_new_year: '2066-01-26',
+                  mid_autumn: '2066-10-03',
+                  qingming: '2066-04-04',
+  +               year: RawSaveNumber {
+  +                 token: '2066'
+  +               }
+  -               year: 2066
+                },
+                {
+                  dragon_boat: '2067-06-16',
+                  lunar_new_year: '2067-02-14',
+                  mid_autumn: '2067-09-23',
+                  qingming: '2067-04-05',
+  +               year: RawSaveNumber {
+  +                 token: '2067'
+  +               }
+  -               year: 2067
+                },
+                {
+                  dragon_boat: '2068-06-04',
+                  lunar_new_year: '2068-02-03',
+                  mid_autumn: '2068-09-11',
+                  qingming: '2068-04-04',
+  +               year: RawSaveNumber {
+  +                 token: '2068'
+  +               }
+  -               year: 2068
+                },
+                {
+                  dragon_boat: '2069-06-23',
+                  lunar_new_year: '2069-01-23',
+                  mid_autumn: '2069-09-29',
+                  qingming: '2069-04-04',
+  +               year: RawSaveNumber {
+  +                 token: '2069'
+  +               }
+  -               year: 2069
+                },
+                {
+                  dragon_boat: '2070-06-13',
+                  lunar_new_year: '2070-02-11',
+                  mid_autumn: '2070-09-19',
+                  qingming: '2070-04-04',
+  +               year: RawSaveNumber {
+  +                 token: '2070'
+  +               }
+  -               year: 2070
+                },
+                {
+                  dragon_boat: '2071-06-02',
+                  lunar_new_year: '2071-01-31',
+                  mid_autumn: '2071-09-08',
+                  qingming: '2071-04-05',
+  +               year: RawSaveNumber {
+  +                 token: '2071'
+  +               }
+  -               year: 2071
+                },
+                {
+                  dragon_boat: '2072-06-20',
+                  lunar_new_year: '2072-02-19',
+                  mid_autumn: '2072-09-26',
+                  qingming: '2072-04-04',
+  +               year: RawSaveNumber {
+  +                 token: '2072'
+  +               }
+  -               year: 2072
+                },
+                {
+                  dragon_boat: '2073-06-10',
+                  lunar_new_year: '2073-02-07',
+                  mid_autumn: '2073-09-16',
+                  qingming: '2073-04-04',
+  +               year: RawSaveNumber {
+  +                 token: '2073'
+  +               }
+  -               year: 2073
+                },
+                {
+                  dragon_boat: '2074-05-30',
+                  lunar_new_year: '2074-01-27',
+                  mid_autumn: '2074-10-05',
+                  qingming: '2074-04-04',
+  +               year: RawSaveNumber {
+  +                 token: '2074'
+  +               }
+  -               year: 2074
+                },
+                {
+                  dragon_boat: '2075-06-17',
+                  lunar_new_year: '2075-02-15',
+                  mid_autumn: '2075-09-24',
+                  qingming: '2075-04-04',
+  +               year: RawSaveNumber {
+  +                 token: '2075'
+  +               }
+  -               year: 2075
+                },
+                {
+                  dragon_boat: '2076-06-06',
+                  lunar_new_year: '2076-02-05',
+                  mid_autumn: '2076-09-12',
+                  qingming: '2076-04-04',
+  +               year: RawSaveNumber {
+  +                 token: '2076'
+  +               }
+  -               year: 2076
+                },
+                {
+                  dragon_boat: '2077-06-24',
+                  lunar_new_year: '2077-01-24',
+                  mid_autumn: '2077-10-01',
+                  qingming: '2077-04-04',
+  +               year: RawSaveNumber {
+  +                 token: '2077'
+  +               }
+  -               year: 2077
+                },
+                {
+                  dragon_boat: '2078-06-14',
+                  lunar_new_year: '2078-02-12',
+                  mid_autumn: '2078-09-20',
+                  qingming: '2078-04-04',
+  +               year: RawSaveNumber {
+  +                 token: '2078'
+  +               }
+  -               year: 2078
+                },
+                {
+                  dragon_boat: '2079-06-04',
+                  lunar_new_year: '2079-02-02',
+                  mid_autumn: '2079-09-10',
+                  qingming: '2079-04-04',
+  +               year: RawSaveNumber {
+  +                 token: '2079'
+  +               }
+  -               year: 2079
+                },
+                {
+                  dragon_boat: '2080-06-22',
+                  lunar_new_year: '2080-01-22',
+                  mid_autumn: '2080-09-28',
+                  qingming: '2080-04-04',
+  +               year: RawSaveNumber {
+  +                 token: '2080'
+  +               }
+  -               year: 2080
+                },
+                {
+                  dragon_boat: '2081-06-11',
+                  lunar_new_year: '2081-02-09',
+                  mid_autumn: '2081-09-17',
+                  qingming: '2081-04-04',
+  +               year: RawSaveNumber {
+  +                 token: '2081'
+  +               }
+  -               year: 2081
+                },
+                {
+                  dragon_boat: '2082-06-01',
+                  lunar_new_year: '2082-01-29',
+                  mid_autumn: '2082-10-06',
+                  qingming: '2082-04-04',
+  +               year: RawSaveNumber {
+  +                 token: '2082'
+  +               }
+  -               year: 2082
+                },
+                {
+                  dragon_boat: '2083-06-19',
+                  lunar_new_year: '2083-02-17',
+                  mid_autumn: '2083-09-26',
+                  qingming: '2083-04-04',
+  +               year: RawSaveNumber {
+  +                 token: '2083'
+  +               }
+  -               year: 2083
+                },
+                {
+                  dragon_boat: '2084-06-07',
+                  lunar_new_year: '2084-02-06',
+                  mid_autumn: '2084-09-14',
+                  qingming: '2084-04-04',
+  +               year: RawSaveNumber {
+  +                 token: '2084'
+  +               }
+  -               year: 2084
+                },
+                {
+                  dragon_boat: '2085-05-27',
+                  lunar_new_year: '2085-01-26',
+                  mid_autumn: '2085-10-03',
+                  qingming: '2085-04-04',
+  +               year: RawSaveNumber {
+  +                 token: '2085'
+  +               }
+  -               year: 2085
+                },
+                {
+                  dragon_boat: '2086-06-15',
+                  lunar_new_year: '2086-02-14',
+                  mid_autumn: '2086-09-22',
+                  qingming: '2086-04-04',
+  +               year: RawSaveNumber {
+  +                 token: '2086'
+  +               }
+  -               year: 2086
+                },
+                {
+                  dragon_boat: '2087-06-05',
+                  lunar_new_year: '2087-02-03',
+                  mid_autumn: '2087-09-11',
+                  qingming: '2087-04-04',
+  +               year: RawSaveNumber {
+  +                 token: '2087'
+  +               }
+  -               year: 2087
+                },
+                {
+                  dragon_boat: '2088-06-23',
+                  lunar_new_year: '2088-01-24',
+                  mid_autumn: '2088-09-29',
+                  qingming: '2088-04-04',
+  +               year: RawSaveNumber {
+  +                 token: '2088'
+  +               }
+  -               year: 2088
+                },
+                {
+                  dragon_boat: '2089-06-13',
+                  lunar_new_year: '2089-02-10',
+                  mid_autumn: '2089-09-18',
+                  qingming: '2089-04-04',
+  +               year: RawSaveNumber {
+  +                 token: '2089'
+  +               }
+  -               year: 2089
+                },
+                {
+                  dragon_boat: '2090-06-02',
+                  lunar_new_year: '2090-01-30',
+                  mid_autumn: '2090-09-08',
+                  qingming: '2090-04-04',
+  +               year: RawSaveNumber {
+  +                 token: '2090'
+  +               }
+  -               year: 2090
+                },
+                {
+                  dragon_boat: '2091-06-21',
+                  lunar_new_year: '2091-02-18',
+                  mid_autumn: '2091-09-27',
+                  qingming: '2091-04-04',
+  +               year: RawSaveNumber {
+  +                 token: '2091'
+  +               }
+  -               year: 2091
+                },
+                {
+                  dragon_boat: '2092-06-09',
+                  lunar_new_year: '2092-02-07',
+                  mid_autumn: '2092-09-16',
+                  qingming: '2092-04-04',
+  +               year: RawSaveNumber {
+  +                 token: '2092'
+  +               }
+  -               year: 2092
+                },
+                {
+                  dragon_boat: '2093-05-29',
+                  lunar_new_year: '2093-01-27',
+                  mid_autumn: '2093-10-05',
+                  qingming: '2093-04-04',
+  +               year: RawSaveNumber {
+  +                 token: '2093'
+  +               }
+  -               year: 2093
+                },
+                {
+                  dragon_boat: '2094-06-17',
+                  lunar_new_year: '2094-02-15',
+                  mid_autumn: '2094-09-24',
+                  qingming: '2094-04-04',
+  +               year: RawSaveNumber {
+  +                 token: '2094'
+  +               }
+  -               year: 2094
+                },
+                {
+                  dragon_boat: '2095-06-06',
+                  lunar_new_year: '2095-02-05',
+                  mid_autumn: '2095-09-13',
+                  qingming: '2095-04-04',
+  +               year: RawSaveNumber {
+  +                 token: '2095'
+  +               }
+  -               year: 2095
+                },
+                {
+                  dragon_boat: '2096-06-24',
+                  lunar_new_year: '2096-01-25',
+                  mid_autumn: '2096-09-30',
+                  qingming: '2096-04-04',
+  +               year: RawSaveNumber {
+  +                 token: '2096'
+  +               }
+  -               year: 2096
+                },
+                {
+                  dragon_boat: '2097-06-14',
+                  lunar_new_year: '2097-02-12',
+                  mid_autumn: '2097-09-20',
+                  qingming: '2097-04-04',
+  +               year: RawSaveNumber {
+  +                 token: '2097'
+  +               }
+  -               year: 2097
+                },
+                {
+                  dragon_boat: '2098-06-04',
+                  lunar_new_year: '2098-02-01',
+                  mid_autumn: '2098-09-09',
+                  qingming: '2098-04-04',
+  +               year: RawSaveNumber {
+  +                 token: '2098'
+  +               }
+  -               year: 2098
+                },
+                {
+                  dragon_boat: '2099-06-23',
+                  lunar_new_year: '2099-01-21',
+                  mid_autumn: '2099-09-29',
+                  qingming: '2099-04-04',
+  +               year: RawSaveNumber {
+  +                 token: '2099'
+  +               }
+  -               year: 2099
+                }
+              ]
+            },
+  +         notice_unverified_year: RawSaveNumber {
+  +           token: '2026'
+  +         },
+  +         version: RawSaveNumber {
+  +           token: '1'
+  +         }
+  -         notice_unverified_year: 2026,
+  -         version: 1
+          }
+        },
+        settled_through: '2030-01-02'
+      },
+      company_state: {
+  
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/state.test.ts:11:80)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:911:18)
+      at Test.postRun (node:internal/test_runner/test:1465:19)
+      at Test.run (node:internal/test_runner/test:1390:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: { desk_mirrored_resting: true, runtime_state: { poisoned: false, next_receipt_base: '0', live_envelopes: [], book_public_cutoff_sequences: [Object], retail_projection_seen: [], strategy_states: {} }, setup: { company_operations: null, groups: [], stocks: [Array], npcs: [Object], config: [Object], strategy_params: [Object], ticks_per_day: 1, auction_ticks: 0, closing_auction_ticks: 0, history_len: 1, t1_enabled: true, float_allocation: [Object], start_date: '2030-01-02', simulation_policy_id: 'a-share-simulation' }, seed: '42', snapshot: { seq: 6, tick: 1, markets: [Object], accounts: [Object], daily_candles: [Object], active_daily_candles: {} }, resting_orders: { '0': [] }, book_next_sequences: { '0': '1' }, filled_orders: { '0': [] }, price_history: { '0': [Array] }, market_minute_closes: { '0': [] }, rng_state: '42', npc_attention: {}, npc_order_lifecycles: [], pending_player: [], ingress_receipt_cursors: { next_account_ordinal: {}, next_stock_ordinal: {} }, next_order_id: 1, retail_experience: {}, civil_clock: { current_date: '2030-01-03', settled_through: '2030-01-02', policy: [Object] }, company_state: { LegacyOperations: [Object] }, public_library: { next_seq: 10, reports: [Array], announcements: [Array] }, disclosures: { published_through: [Object], announced_through: '2030-01-02' }, plans: { policy: [Object], owner_sequences: [], plans: [] }, urgency_policy: { policy_version: 1, drop_30min_threshold_bp: -300, drop_1min_threshold_bp: -75, urgent_drawdown_threshold_bp: 2000, patient_confidence_threshold_bp: 4000, urgent_remaining_trading_days: 1, resume_signal_threshold_bp: 2000 }, information_states: {}, belief_books: {}, watchlists: {}, price_memories: {}, history_reads: { '0': [Object] }, market_memberships: { members: [Object] }, market_minute_bars: { '0': [] }, retained_market_days: [ [Object] ], personal_trade_confirmations: {}, receipt_watermark: 0 },
+    expected: { market_memberships: { members: [Object] }, runtime_state: { poisoned: false, next_receipt_base: '0', live_envelopes: [], book_public_cutoff_sequences: [Object], retail_projection_seen: [], strategy_states: {} }, desk_mirrored_resting: true, setup: { stocks: [Array], company_operations: null, groups: [], npcs: [Object], config: [Object], strategy_params: [Object], ticks_per_day: 1, auction_ticks: 0, closing_auction_ticks: 0, history_len: 1, t1_enabled: true, float_allocation: [Object], start_date: '2030-01-02', simulation_policy_id: 'a-share-simulation' }, seed: '42', snapshot: { seq: 6, tick: 1, markets: [Object], accounts: [Object], daily_candles: [Object], active_daily_candles: {} }, resting_orders: { '0': [] }, book_next_sequences: { '0': '1' }, filled_orders: { '0': [] }, price_history: { '0': [Array] }, market_minute_closes: { '0': [] }, market_minute_bars: { '0': [] }, personal_trade_confirmations: {}, receipt_watermark: 0, retained_market_days: [ [Object] ], rng_state: '42', npc_attention: {}, retail_experience: {}, npc_order_lifecycles: [], pending_player: [], ingress_receipt_cursors: { next_account_ordinal: {}, next_stock_ordinal: {} }, next_order_id: 1, civil_clock: { current_date: '2030-01-03', settled_through: '2030-01-02', policy: [Object] }, company_state: { LegacyOperations: [Object] }, public_library: { next_seq: 10, reports: [Array], announcements: [Array] }, disclosures: { published_through: [Object], announced_through: '2030-01-02' }, plans: { policy: [Object], owner_sequences: [], plans: [] }, urgency_policy: { policy_version: 1, drop_30min_threshold_bp: -300, drop_1min_threshold_bp: -75, urgent_drawdown_threshold_bp: 2000, patient_confidence_threshold_bp: 4000, urgent_remaining_trading_days: 1, resume_signal_threshold_bp: 2000 }, information_states: {}, belief_books: {}, watchlists: {}, price_memories: {}, history_reads: { '0': [Object] } },
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }
+
+test at apps/web/src/save/schema/company/state.test.ts:14:1
+✖ required单tag拒绝旧双源根字段、缺失/null/双tag/未知tag (3.481341ms)
+  Error [SaveSchemaError]: 存档 company_state.CompanySystem.system.implementation.state.companies.0.finance.books.journal.batches[1][0].kind 包含无效枚举值
+      at oneOf (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/primitives.ts:152:34)
+      at parseJournalEntry (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/accounting/journal.ts:29:117)
+      at file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/accounting/journal.ts:36:156
+      at Array.map (<anonymous>)
+      at file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/accounting/journal.ts:36:129
+      at Array.map (<anonymous>)
+      at parseJournal (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/accounting/journal.ts:36:55)
+      at parseBooks (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/accounting/books.ts:12:14)
+      at decode (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/state.ts:49:28)
+      at file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/state.ts:72:86 {
+    path: 'company_state.CompanySystem.system.implementation.state.companies.0.finance.books.journal.batches[1][0].kind'
+  }
+
+test at apps/web/src/save/schema/company/state.test.ts:20:1
+✖ setup模式与selected公司tag必须一致，不迁移旧源 (2.603946ms)
+  Error [SaveSchemaError]: 存档 company_state.CompanySystem.system.implementation.state.companies.0.finance.books.journal.batches[1][0].kind 包含无效枚举值
+      at oneOf (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/primitives.ts:152:34)
+      at parseJournalEntry (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/accounting/journal.ts:29:117)
+      at file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/accounting/journal.ts:36:156
+      at Array.map (<anonymous>)
+      at file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/accounting/journal.ts:36:129
+      at Array.map (<anonymous>)
+      at parseJournal (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/accounting/journal.ts:36:55)
+      at parseBooks (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/accounting/books.ts:12:14)
+      at decode (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/state.ts:49:28)
+      at file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/state.ts:72:86 {
+    path: 'company_state.CompanySystem.system.implementation.state.companies.0.finance.books.journal.batches[1][0].kind'
+  }
+
+test at apps/web/src/save/schema/company/state.test.ts:25:1
+✖ 真实REG SettlementDayMarket.binding五字段required且unknown逐层拒绝 (2.556745ms)
+  Error [SaveSchemaError]: 存档 company_state.CompanySystem.system.implementation.state.companies.0.finance.books.journal.batches[1][0].kind 包含无效枚举值
+      at oneOf (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/primitives.ts:152:34)
+      at parseJournalEntry (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/accounting/journal.ts:29:117)
+      at file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/accounting/journal.ts:36:156
+      at Array.map (<anonymous>)
+      at file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/accounting/journal.ts:36:129
+      at Array.map (<anonymous>)
+      at parseJournal (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/accounting/journal.ts:36:55)
+      at parseBooks (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/accounting/books.ts:12:14)
+      at decode (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/state.ts:49:28)
+      at file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/state.ts:72:86 {
+    path: 'company_state.CompanySystem.system.implementation.state.companies.0.finance.books.journal.batches[1][0].kind'
+  }
+
+test at apps/web/src/save/schema/company/state.test.ts:30:1
+✖ 公司状态全部真实非空结构拒绝未知字段，nullable必填不被默认掩盖 (2.468522ms)
+  Error [SaveSchemaError]: 存档 company_state.CompanySystem.system.implementation.state.companies.0.finance.books.journal.batches[1][0].kind 包含无效枚举值
+      at oneOf (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/primitives.ts:152:34)
+      at parseJournalEntry (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/accounting/journal.ts:29:117)
+      at file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/accounting/journal.ts:36:156
+      at Array.map (<anonymous>)
+      at file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/accounting/journal.ts:36:129
+      at Array.map (<anonymous>)
+      at parseJournal (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/accounting/journal.ts:36:55)
+      at parseBooks (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/accounting/books.ts:12:14)
+      at decode (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/state.ts:49:28)
+      at file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/state.ts:72:86 {
+    path: 'company_state.CompanySystem.system.implementation.state.companies.0.finance.books.journal.batches[1][0].kind'
+  }
+
+test at apps/web/src/save/schema/company/state.test.ts:37:1
+✖ rawJSON在覆盖前拒绝重复tag、转义后同键与REG binding重复键 (7.127048ms)
+  Error [SaveSchemaError]: 存档 npc_attention.1.base_probability 必须为有限(0,1]概率
+      at parseNpcAttention (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/npc-attention.ts:32:118)
+      at map (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/primitives.ts:161:23)
+      at parseOrderState (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/orders.ts:82:25)
+      at parseStrictSaveEnvelope (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/root.ts:68:17)
+      at parseSaveSlot (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/save-schema.ts:7:10)
+      at parseSaveJson (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/save-schema.ts:12:12)
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/state.test.ts:38:19)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:911:18) {
+    path: 'npc_attention.1.base_probability'
+  }
+
+test at apps/web/src/save/schema/company/state.test.ts:42:1
+✖ canonical整数字符串拒绝前导零/负零与unsafe裸数，保真实单位 (2.469202ms)
+  Error [SaveSchemaError]: 存档 company_state.CompanySystem.system.implementation.state.companies.0.finance.books.journal.batches[1][0].kind 包含无效枚举值
+      at oneOf (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/primitives.ts:152:34)
+      at parseJournalEntry (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/accounting/journal.ts:29:117)
+      at file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/accounting/journal.ts:36:156
+      at Array.map (<anonymous>)
+      at file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/accounting/journal.ts:36:129
+      at Array.map (<anonymous>)
+      at parseJournal (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/accounting/journal.ts:36:55)
+      at parseBooks (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/accounting/books.ts:12:14)
+      at decode (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/state.ts:49:28)
+      at file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/state.ts:72:86 {
+    path: 'company_state.CompanySystem.system.implementation.state.companies.0.finance.books.journal.batches[1][0].kind'
+  }

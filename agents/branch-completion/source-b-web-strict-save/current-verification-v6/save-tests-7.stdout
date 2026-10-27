@@ -1,0 +1,25 @@
+✔ 存档和宿主严格拒绝非规范 Money 并保留错误路径 (2.735689ms)
+✔ 盘口价格严格使用无损分字符串，股数仍是整数 (1.636528ms)
+✔ 公共存档资金与成本在安全整数外精确保留 (1.02571ms)
+✔ 运行快照 PositionSnap 成本严格接受大额字符串并拒绝旧数字 (1.165314ms)
+✔ NPC 经历金额严格使用 Money 而不误改失败计数 (0.453493ms)
+✔ 计划历史资源按整数金额而非字符串字典序校验占用 (1.338019ms)
+✔ 信息关注节奏严格保存，不补旧档默认值 (2.880103ms)
+✔ 付款失败区分未发生支出与真实合同逾期 (0.568657ms)
+✔ Retail BeliefBook 不携带 Institution policy 或账户暂停状态 (3.643146ms)
+✔ institution account risk pause is a required frozen boolean (1.131283ms)
+✔ belief confidence rejects values above 10000 at the save boundary (1.103052ms)
+✔ holding fee history is a required nullable nonnegative fact (1.684508ms)
+✔ institution belief book requires its independent experience state (0.382361ms)
+✔ institution experience strictly parses dated receipt facts and exit order ids (0.636608ms)
+✔ institution experience policy preserves its exact eight fields (2.652157ms)
+✔ institution experience policy rejects missing or additional fields (1.129253ms)
+✔ institution experience policy rejects invalid values and threshold relationships (0.676139ms)
+ℹ tests 17
+ℹ suites 0
+ℹ pass 17
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 197.01555

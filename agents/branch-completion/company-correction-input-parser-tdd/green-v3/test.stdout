@@ -1,0 +1,26 @@
+✔ 真实Rust request与status对象/raw输入无损通过且不修改输入 (4.681399ms)
+✔ request每个字段required并拒绝未知字段 (1.155057ms)
+✔ 所有嵌套层精确字段并拒绝非对象 (0.724616ms)
+✔ u32身份端点与source安全整数端点 (0.974377ms)
+✔ 真实Rust AccountingAmount输入probe逐项一致并原样保持 (0.839421ms)
+✔ 全部47项BusinessKind与现金流借贷enum闭包 (1.547016ms)
+✔ 日期实际窗口公历与完成秒边界 (0.940626ms)
+✔ status和completed每层required/未知字段 (0.781698ms)
+✔ 结构通过不冒充更正业务成功 (0.420351ms)
+✔ Unicode scalar字符串和completed动态key原样保留 (1.902563ms)
+✔ raw数字在舍入前拒绝unsafe/小数/指数/负零 (1.714984ms)
+✔ raw解码后重复键包含转义key必须在覆盖前拒绝 (0.545657ms)
+✔ raw标准JSON语法及字符串中的数字和标点 (0.493135ms)
+✔ 对象入口拒绝 sparse array entries (0.275023ms)
+✔ 对象入口拒绝 sparse array lines (0.20942ms)
+✔ 对象入口拒绝 sparse array pending (0.272213ms)
+✔ 对象入口拒绝 sparse array publications (0.21289ms)
+✔ 对象入口拒绝 sparse array inherited (0.275054ms)
+ℹ tests 18
+ℹ suites 0
+ℹ pass 18
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 136.313697

@@ -9,8 +9,16 @@ pub enum StepFatal {
     },
 }
 
-/// 安装失败回滚基线（Sol 三审 (b)）：step 推进与安装面写入的全部
-/// 会话域整值快照（见 `GameSession::runtime_install_baseline`）。
+/// 未交付的成功安装结果；诊断仍是待发布 delta。
+pub(in crate::session) struct RuntimeStepInstall {
+    pub events: Vec<Event>,
+    pub baseline: RuntimeInstallBaseline,
+    pub retail: super::retail_lifecycle::Candidate,
+    #[cfg(feature = "simulation-diagnostics")]
+    pub causal: super::causal::RuntimeCausalDelta,
+}
+
+/// 安装失败回滚基线，覆盖 step 推进与安装面写入的会话域。
 pub(crate) struct RuntimeInstallBaseline {
     tick: u64,
     seq: u64,
@@ -304,6 +312,7 @@ impl GameSession {
     #[cfg(test)]
     pub(super) fn mutate_plan_book_via_runtime(
         &mut self,
+        owner: crate::AccountId,
         mutate: Box<dyn FnOnce(&mut crate::plans::PlanBook) + Send>,
     ) {
         let mut driver = self
@@ -311,7 +320,7 @@ impl GameSession {
             .as_mut()
             .and_then(|cell| cell.lock().ok())
             .expect("runtime 驱动器在位（调用方已判）");
-        driver.mutate_plan_book_for_test(mutate);
+        driver.mutate_plan_book_for_test(owner, mutate);
     }
 
     /// D3b 件 4 fixture 通道（cfg(test)）：观察基分钟序列注入下行
@@ -615,9 +624,17 @@ impl GameSession {
         self.check_step_start()
             .map_err(|fatal| self.poison_runtime_step(fatal))?;
         self.with_routed_runtime_driver(|session, driver| {
+            if !(session.tick() + 1).is_multiple_of(session.state.setup.ticks_per_day) {
+                return session.runtime_step_with_prepared_mirror(driver, project).map(|value| (value, None));
+            }
             let seq_from = session.current_seq();
-            let (events, baseline) =
-                session.runtime_step_with_install_returning_baseline(driver)?;
+            let RuntimeStepInstall {
+                events,
+                baseline,
+                retail,
+                #[cfg(feature = "simulation-diagnostics")]
+                causal,
+            } = session.runtime_step_with_install_returning_baseline(driver)?;
             // 投影段（可失败）：稳定键组装 → 冻结投影 → 回调。
             let facts = crate::runtime::event_bridge::event_facts_with_stable_keys(events);
             let projected = match project(
@@ -638,6 +655,9 @@ impl GameSession {
             };
             // 投影成功：尾清写时 undo（与 runtime_step_with_install 成功
             /// 路径同式）。
+            #[cfg(feature = "simulation-diagnostics")]
+            session.publish_runtime_causal(causal);
+            session.publish_runtime_retail(retail);
             session.runtime_clear_account_undo();
             Ok((projected, None))
         })
@@ -656,7 +676,15 @@ impl GameSession {
         &mut self,
         driver: &mut crate::runtime::drive::RuntimeDriver,
     ) -> Result<Vec<Event>, StepFatal> {
-        let (events, _baseline) = self.runtime_step_with_install_inner(driver, false)?;
+        if !(self.tick() + 1).is_multiple_of(self.state.setup.ticks_per_day) {
+            return self.runtime_step_with_prepared_mirror(driver, |_, facts| {
+                Ok(facts.into_iter().map(|fact| fact.event).collect())
+            });
+        }
+        let installed = self.runtime_step_with_install_inner(driver, false)?;
+        #[cfg(feature = "simulation-diagnostics")]
+        self.publish_runtime_causal(installed.causal);
+        self.publish_runtime_retail(installed.retail);
         // P2-2b：成功 step 尾清账户写时 undo（失败路径已由 rollback 消费）。
         // 【P0 画像】undo_clear 段（成功尾清）。
         let _seg_undo = crate::runtime::step_profile::scope(
@@ -664,7 +692,74 @@ impl GameSession {
         );
         self.runtime_clear_account_undo();
         drop(_seg_undo);
-        Ok(events)
+        Ok(installed.events)
+    }
+
+    /// 普通拍在私有镜像与全部输出验证成功后一次安装；失败保留 World 已发布事实。
+    pub(in crate::session) fn runtime_step_with_prepared_mirror<P>(
+        &mut self,
+        driver: &mut crate::runtime::drive::RuntimeDriver,
+        project: impl FnOnce(crate::session::protocol::TickCandidateProjection<'_>, Vec<crate::session::protocol::EventFact>) -> Result<P, StepFatal>,
+    ) -> Result<P, StepFatal> {
+        self.require_healthy()?;
+        self.runtime_clear_account_undo();
+        #[cfg(test)]
+        self.compute_context().t1_probes.queue_attempt_seq.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let tick = self.tick().checked_add(1).ok_or_else(|| self.poison_runtime_step(StepFatal::InvariantViolation {
+            location: "runtime_mirror::prepare".to_owned(), description: "运行 tick 溢出".to_owned(),
+        }))?;
+        let seq_from = self.seq();
+        driver.adopt_session_seq(self);
+        crate::verification_evidence::begin_authoritative_tick(self.tick(), self.compute_context())?;
+        #[cfg(feature = "simulation-diagnostics")]
+        let causal_time = self.causal_time();
+        let prepared = driver.prepare_driver_step(self).and_then(|input| self.prepare_runtime_mirror(driver, input, tick));
+        let mut prepared = prepared.map_err(|description| {
+            let fatal = StepFatal::InvariantViolation { location: "runtime_mirror::prepare".to_owned(), description };
+            #[cfg(feature = "simulation-diagnostics")]
+            driver.retain_pending_causal_failure(causal_time, fatal.clone());
+            self.poison_runtime_step(fatal)
+        })?;
+        #[cfg(feature = "simulation-diagnostics")]
+        let causal = self.prepare_runtime_causal_at(driver, causal_time, tick)
+            .map_err(|fatal| self.poison_runtime_step(fatal))?;
+        #[cfg(test)]
+        if let Some(fatal) = self.post_shadow_failure.take() {
+            #[cfg(feature = "simulation-diagnostics")]
+            driver.retain_terminal_causal(causal.time, causal.raw, fatal.clone());
+            return Err(self.poison_runtime_step(fatal));
+        }
+        crate::verification_evidence::enter_phase(crate::session::pipeline::TickPhase::PreCommitValidation);
+        if let Err(fatal) = crate::verification_evidence::validate_precommit() {
+            #[cfg(feature = "simulation-diagnostics")]
+            driver.retain_terminal_causal(causal.time, causal.raw, fatal.clone());
+            return Err(self.poison_runtime_step(fatal));
+        }
+        #[cfg(test)]
+        let has_events = !prepared.events.is_empty();
+        let facts = crate::runtime::event_bridge::event_facts_with_stable_keys(std::mem::take(&mut prepared.events));
+        let value = match project(crate::session::protocol::TickCandidateProjection::from_prepared(&prepared.projection, seq_from), facts) {
+            Ok(value) => value,
+            Err(fatal) => {
+                #[cfg(feature = "simulation-diagnostics")]
+                driver.retain_terminal_causal(causal.time, causal.raw, fatal.clone());
+                return Err(self.poison_runtime_step(fatal));
+            }
+        };
+        if let Err(fatal) = self.validate_runtime_mirror_source(driver, &prepared) {
+            #[cfg(feature = "simulation-diagnostics")]
+            driver.retain_terminal_causal(causal.time, causal.raw, fatal.clone());
+            return Err(self.poison_runtime_step(fatal));
+        }
+        self.install_runtime_mirror(driver, prepared);
+        #[cfg(feature = "simulation-diagnostics")]
+        self.publish_runtime_causal(causal);
+        crate::verification_evidence::enter_phase(crate::session::pipeline::TickPhase::CommitTick);
+        crate::verification_evidence::mark_committed(tick);
+        #[cfg(test)]
+        crate::runtime::drive::RuntimeDriver::record_root_handover(self, tick, has_events);
+        self.runtime_clear_account_undo();
+        Ok(value)
     }
 
     /// step_frame 接轨件 4：同 [`Self::runtime_step_with_install`]，但
@@ -676,7 +771,7 @@ impl GameSession {
     pub(in crate::session) fn runtime_step_with_install_returning_baseline(
         &mut self,
         driver: &mut crate::runtime::drive::RuntimeDriver,
-    ) -> Result<(Vec<Event>, RuntimeInstallBaseline), StepFatal> {
+    ) -> Result<RuntimeStepInstall, StepFatal> {
         self.runtime_step_with_install_inner(driver, true)
     }
 
@@ -688,7 +783,7 @@ impl GameSession {
         &mut self,
         driver: &mut crate::runtime::drive::RuntimeDriver,
         capture_undo: bool,
-    ) -> Result<(Vec<Event>, RuntimeInstallBaseline), StepFatal> {
+    ) -> Result<RuntimeStepInstall, StepFatal> {
         // P2-3b：step 入口清写时 undo 槽（上一 step 成功已尾清/失败已
         // 回滚消费——此处清的是驱动器手动序列等直调安装面的残留记录；
         /// 残留会把本拍回滚恢复到错误的更早状态）。
@@ -717,9 +812,29 @@ impl GameSession {
         let _seg_dstep = crate::runtime::step_profile::scope(
             crate::runtime::step_profile::StepSegment::DriverStep,
         );
+        #[cfg(feature = "simulation-diagnostics")]
+        let causal_time = self.causal_time();
         let step_result = driver.step_frame_equivalent(self);
         drop(_seg_dstep);
         let mut events = step_result?;
+        // 所有可失败诊断校验早于扩展安装；普通 step 不依赖 callback undo。
+        #[cfg(feature = "simulation-diagnostics")]
+        let causal = match self.prepare_runtime_causal(driver, causal_time) {
+            Ok(delta) => delta,
+            Err(fatal) => {
+                self.rollback_runtime_step(baseline);
+                self.runtime_discard_driver_flag = true;
+                return Err(self.poison_runtime_step(fatal));
+            }
+        };
+        let mut retail = super::retail_lifecycle::Candidate { events: Vec::new(), decisions: Vec::new() };
+        let (retail_facts, retail_rejections) = driver.take_retail_facts();
+        if let Err(fatal) = self.append_runtime_retail_facts(driver, &mut retail, retail_facts)
+            .and_then(|()| self.append_runtime_retail_rejections(&mut retail, retail_rejections)) {
+            self.rollback_runtime_step(baseline);
+            self.runtime_discard_driver_flag = true;
+            return Err(self.poison_runtime_step(fatal));
+        }
         // 晚失败注入（D0：旧管线 post_shadow 语义等价点——生产工作完成、
         // 安装之前；晚失败不得泄漏任何已计算状态。两路径同判：此前
         // runtime 路径不消费该注入，注入后期望 Err 的对照测试被
@@ -806,16 +921,7 @@ impl GameSession {
         let _seg_retail = crate::runtime::step_profile::scope(
             crate::runtime::step_profile::StepSegment::RetailDiag,
         );
-        // step_frame 接轨件 4b：投影失败回滚面——retail 诊断两域首写
-        /// 旧值入 undo（幂等首写；step() 路径 capture_undo=false 不记）。
-        if capture_undo && self.state.runtime_retail_diag_undo.is_none() {
-            self.state.runtime_retail_diag_undo = Some((
-                self.state.last_retail_order_events.clone(),
-                self.state.last_retail_decisions.clone(),
-            ));
-        }
-        self.state.last_retail_order_events.clear();
-        self.record_retail_intent_rejections(&events);
+        // 两个 Retail Vec 只写 candidate，失败不触碰上一成功批次。
         // D5 #4 retail 链：决策 trace 投影（组内生产——本拍清+装，旧管线
         /// 「本 tick 最新」瞬态语义；收集失败按段面显式失败不静默）。
         {
@@ -829,7 +935,7 @@ impl GameSession {
                     }));
                 }
             };
-            self.state.last_retail_decisions = traces;
+            retail.decisions = traces;
         }
         drop(_seg_retail);
         // D5 日界·world 段（ends_day 拍在 step 内编排——desk roll_day/
@@ -1001,6 +1107,12 @@ impl GameSession {
                     }));
                 }
             };
+            let drained_retail = driver.take_drained_retail_facts();
+            if let Err(fatal) = self.append_runtime_retail_facts(driver, &mut retail, drained_retail) {
+                self.rollback_runtime_step(baseline);
+                self.runtime_discard_driver_flag = true;
+                return Err(self.poison_runtime_step(fatal));
+            }
             // 日界批：install 面补真——candle_book 历史末条升级为含收盘
             /// 段的 Drain 终 K（commit_active 先于 Drain 提交的是日内段
             /// 形态）；DayBoundary 事件 `closed_daily_candles` 同源补值
@@ -1160,7 +1272,13 @@ impl GameSession {
         }
         drop(_seg_dayend);
         // 接轨件 4：尾清与基线交付由调用方承载（见方法注释）。
-        Ok((events, baseline))
+        Ok(RuntimeStepInstall {
+            events,
+            baseline,
+            retail,
+            #[cfg(feature = "simulation-diagnostics")]
+            causal,
+        })
     }
 
     /// P2-3b：五域写时 undo 记录面（幂等首写——undo_ids 判重；None=拍前
@@ -1803,31 +1921,32 @@ impl GameSession {
         (self.state.library.version(), std::sync::Arc::clone(&self.state.library))
     }
 
-    /// 股→发行人映射只读（投递载荷组装）。
+    /// 从会话选定公司模型构造不含私有财务的共同公开事实。
+    pub fn runtime_company_read_facts(
+        &self,
+    ) -> Result<std::sync::Arc<crate::company::CompanyReadFacts>, StepFatal> {
+        self.state.company_read_facts().map(std::sync::Arc::new).map_err(|error| {
+            StepFatal::InvariantViolation {
+                description: error.to_string(),
+                location: "GameSession::runtime_company_read_facts".to_owned(),
+            }
+        })
+    }
+
+    /// 数值股票到发行人的同源只读投影，已验证上市股不得遗漏。
     pub fn runtime_issuer_map(
         &self,
     ) -> std::collections::BTreeMap<crate::StockId, crate::company::CompanyId> {
-        self.state
-            .markets
-            .keys()
-            .filter_map(|code| Some((*code, self.state.issuer_of_stock(*code)?)))
-            .collect()
+        self.runtime_company_read_facts().unwrap_or_else(|error| panic!("发行人投影失败：{error}"))
+            .issuers().map(|(stock, company)| (*stock, *company)).collect()
     }
 
-    /// 发行人 spec 快照（投递载荷组装——(kind, issued_shares)）。
+    /// 公司 kind 与当前 issued_shares 的同源只读投影，包含未上市公司。
     pub fn runtime_company_specs(
         &self,
     ) -> std::collections::BTreeMap<crate::company::CompanyId, (crate::company::CompanyKind, u64)> {
-        let mut out: std::collections::BTreeMap<
-            crate::company::CompanyId,
-            (crate::company::CompanyKind, u64),
-        > = Default::default();
-        for company in self.runtime_issuer_map().values().copied() {
-            if let Some(op) = self.state.operations.company(&company) {
-                out.insert(company, (op.spec().kind, op.spec().issued_shares));
-            }
-        }
-        out
+        self.runtime_company_read_facts().unwrap_or_else(|error| panic!("公司规格投影失败：{error}"))
+            .company_specs().map(|(company, spec)| (*company, *spec)).collect()
     }
 
     /// 观察时刻（投递载荷——披露相位 instant）。
@@ -1917,6 +2036,11 @@ impl GameSession {
         self.state.plans = plans;
     }
 
+    /// native 构造期读取完整计划镜像，成功构造后由所属组独占写入。
+    pub(crate) fn runtime_plans_snapshot(&self) -> &crate::plans::PlanBook {
+        &self.state.plans
+    }
+
     /// D5 cross_stock：session 侧计划簿 take/restore（迁移期注入面保护
     /// 的计划——driver 段同拍成交合入用；组簿权威接管前）。
     pub fn take_runtime_plans(&mut self) -> crate::plans::PlanBook {
@@ -1951,36 +2075,23 @@ impl GameSession {
         self.state.urgency_policy.clone()
     }
 
-    /// 每股发行总股本投影（D3a-2c 件4：CandidateTargetProposal 上限输入
-    /// ——session setup 权威，u32 收敛口径同 lifecycle）。
+    /// 每股当前已发行股数；保留原始 u64，数量边界由策略与下单入口处理。
     pub fn runtime_total_shares(&self) -> std::collections::BTreeMap<crate::StockId, u64> {
-        self.state
-            .setup
-            .stocks
-            .iter()
-            .map(|stock| {
-                (
-                    self.state.stocks.id(stock.code.0.as_str()).expect("setup 股在目录"),
-                    stock.total_shares.min(u64::from(u32::MAX)),
-                )
-            })
-            .collect()
+        let facts = self.runtime_company_read_facts().unwrap_or_else(|error| panic!("当前股本投影失败：{error}"));
+        facts.issuers().map(|(stock, company)| {
+            let (_, issued_shares) = facts.company_spec(company).unwrap_or_else(|error| panic!("已验证发行人规格缺失：{error}"));
+            (*stock, issued_shares)
+        }).collect()
     }
 
-    /// 公司域只读句柄（D3a-2c 件2：RootReadContext 组装的构造期 Arc 投影源
-    /// ——catalog 克隆、registry/operations Arc 共享，与 capture 同一对象面）。
+    /// 构造期 NPC 只读输入只暴露目录与共同事实，不持有经营账簿。
     pub fn runtime_company_handles(
         &self,
-    ) -> (
+    ) -> Result<(
         crate::stock::StockCatalog,
-        std::sync::Arc<crate::company::CompanyRegistry>,
-        std::sync::Arc<crate::company::operations::CompanyOperations>,
-    ) {
-        (
-            self.state.stocks.clone(),
-            std::sync::Arc::clone(&self.state.company_registry),
-            std::sync::Arc::clone(&self.state.operations),
-        )
+        std::sync::Arc<crate::company::CompanyReadFacts>,
+    ), StepFatal> {
+        Ok((self.state.stocks.clone(), self.runtime_company_read_facts()?))
     }
 
     /// 完整个人态只读投影（D3a-2c 件2：PlanPersonalState 六件——含 attention
@@ -2041,6 +2152,11 @@ impl GameSession {
         } else {
             None
         }
+    }
+
+    /// 只借用 participant 名册，避免仅判断存在性时深克隆全部个人态。
+    pub(crate) fn runtime_has_belief_participant(&self, account: crate::AccountId) -> bool {
+        self.state.belief_participants.contains_key(&account)
     }
 
     /// 信念个人态只读投影（D3a-2b Belief-1：构造投影/同源校验源）。
@@ -2186,6 +2302,8 @@ impl GameSession {
         bars: Vec<Option<Vec<crate::runtime::MinuteBarFact>>>,
         date: crate::calendar::CivilDate,
     ) -> Result<std::sync::Arc<crate::runtime::publication::RetainedDaySnapshot>, String> {
+        #[cfg(all(test, feature = "simulation-diagnostics", not(target_arch = "wasm32")))]
+        let bars = super::runtime_diagnostics_tests::retained_tests::perturb_volume_once(bars);
         let n = self.stock_count_for_runtime();
         if bars.len() != n {
             return Err(format!(
@@ -2646,6 +2764,9 @@ impl GameSession {
 
 
     pub(super) fn poison_failed_step(&mut self, fatal: StepFatal) -> StepFatal {
+        if let Some(first) = &self.poison {
+            return first.clone();
+        }
         self.poison = Some(fatal.clone());
         fatal
     }

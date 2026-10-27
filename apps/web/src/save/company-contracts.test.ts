@@ -9,10 +9,13 @@ import { parsePublicLibrary } from "./schema/company/reports.ts"
 import { parseGroups } from "./schema/company/groups.ts"
 import { parseSaveSlot } from "./save-schema.ts"
 
-test("当前存档保留 groups 与职责运行时字段且拒绝代际字段", { timeout: 10_000 }, () => {
-  const save: Record<string, unknown> = { ...currentSaveFixture(), groups: [{ root: "ROOT", holdings: [{ company: "CHILD", parent_held_shares: 60 }] }] }
+test("当前存档保留单一 LegacyOperations groups 与职责运行时字段且拒绝代际字段", { timeout: 10_000 }, () => {
+  const save = currentSaveFixture()
+  const legacy = (save.company_state as { LegacyOperations: Record<string, unknown> }).LegacyOperations
+  legacy.groups = [{ root: 0, holdings: [{ company: 1, parent_held_shares: 60 }] }]
   assert.deepEqual(parseSaveSlot(save), save)
-  const { groups: _removed, ...missingGroups } = save
+  const missingGroups = structuredClone(save)
+  delete (missingGroups.company_state as { LegacyOperations: Record<string, unknown> }).LegacyOperations.groups
   assert.throws(() => parseSaveSlot(missingGroups), /groups/)
   for (const schema_version of [1, 2, 3]) assert.throws(() => parseSaveSlot({ ...save, schema_version }), /schema_version/)
   assert.throws(() => parseSaveSlot({ ...save, runtime_v2: save.runtime_state }), /runtime_v2/)
@@ -24,18 +27,18 @@ test("setup 保留省略字段并严格解析显式 company config 与 groups", 
   const empty = { ...setup, company_operations: null, groups: [] }
   assert.deepEqual(parseSetup(empty, "setup"), empty)
   const operations = representativeCompanyOperationsFixture() as any
-  const config = { seed: 42, shock_params: operations.shock_params, companies: Object.values(operations.companies).map((company: any) => ({ spec: company.spec, books: company.books, flow: company.params })) }
-  const explicit = { ...setup, company_operations: config, groups: [{ root: "ROOT", holdings: [{ company: "CHILD", parent_held_shares: 60 }] }] }
+  const config = { seed: 42, shock_params: operations.shock_params, catalog: operations.catalog, companies: Object.values(operations.companies).map((company: any) => ({ spec: company.spec, books: company.books, flow: company.params })) }
+  const explicit = { ...setup, company_operations: config, groups: [{ root: 0, holdings: [{ company: 1, parent_held_shares: 60 }] }] }
   assert.deepEqual(parseSetup(explicit, "setup"), explicit)
   assert.throws(() => parseSetup({ ...explicit, company_operations: {} }, "setup"), /company_operations\.seed/)
   assert.throws(() => parseSetup({ ...explicit, company_operations: { ...config, unknown: true } }, "setup"), /unknown/)
-  assert.throws(() => parseSetup({ ...explicit, groups: [{ root: "ROOT", holdings: [{ company: "CHILD", parent_held_shares: "60" }] }] }, "setup"), /parent_held_shares/)
+  assert.throws(() => parseSetup({ ...explicit, groups: [{ root: 0, holdings: [{ company: 1, parent_held_shares: "60" }] }] }, "setup"), /parent_held_shares/)
 })
 
 test("groups 拒绝重复 root、跨组重复成员、自持和不安全股份数", () => {
-  const group = { root: "ROOT", holdings: [{ company: "CHILD", parent_held_shares: 60 }] }
-  for (const invalid of [[group, group], [group, { root: "ROOT2", holdings: group.holdings }], [{ root: "ROOT", holdings: [{ company: "ROOT", parent_held_shares: 1 }] }]]) assert.throws(() => parseGroups(invalid), /groups/)
-  for (const shares of [0, -1, Number.MAX_SAFE_INTEGER + 1]) assert.throws(() => parseGroups([{ ...group, holdings: [{ company: "CHILD", parent_held_shares: shares }] }]), /parent_held_shares/)
+  const group = { root: 0, holdings: [{ company: 1, parent_held_shares: 60 }] }
+  for (const invalid of [[group, group], [group, { root: 2, holdings: group.holdings }], [{ root: 0, holdings: [{ company: 0, parent_held_shares: 1 }] }]]) assert.throws(() => parseGroups(invalid), /groups/)
+  for (const shares of [0, -1, Number.MAX_SAFE_INTEGER + 1]) assert.throws(() => parseGroups([{ ...group, holdings: [{ company: 1, parent_held_shares: shares }] }]), /parent_held_shares/)
 })
 
 test("PaymentFailure 保留正金额与事项并拒绝无效及 active 注入", () => {
@@ -48,7 +51,7 @@ test("PaymentFailure 保留正金额与事项并拒绝无效及 active 注入", 
 
 test("CompanyOperations 严格保留 payment_failures 并拒绝缺失及非法日期/记录", () => {
   const base = representativeCompanyOperationsFixture() as any
-  const company = Object.keys(base.companies)[0]
+  const company = Number(Object.keys(base.companies)[0])
   const operations = { ...base, payment_failures: { "2030-01-01": [{ company, what: "经营支付", amount: "1.00", obligation_status: "UncommittedExpense" }] } }
   assert.deepEqual(parseCompanyOperations(operations), operations)
   const { payment_failures: _removed, ...missing } = operations
@@ -61,8 +64,8 @@ test("CompanyOperations 严格保留 payment_failures 并拒绝缺失及非法�
 })
 
 test("公开 PaymentFailure 公告保留单日事实且拒绝伪造幅度或持续期", () => {
-  const announcement = { id: 0, company: "C-1", occurred_on: "2030-01-01", published_at: { date: "2030-01-02", second_of_day: 0 }, event: { kind: { PaymentFailure: { what: "到期本金", amount: "1.00", obligation_status: "ContractualOverdue" } }, amplitude_bp: 0, starts_on: "2030-01-01", expires_on: "2030-01-01" } }
+  const announcement = { id: 0, company: 0, occurred_on: "2030-01-01", published_at: { date: "2030-01-02", second_of_day: 0 }, content: { kind: "Shock", value: { kind: { PaymentFailure: { what: "到期本金", amount: "1.00", obligation_status: "ContractualOverdue" } }, amplitude_bp: 0, starts_on: "2030-01-01", expires_on: "2030-01-01" } } }
   const library = { next_seq: 1, reports: [], announcements: [announcement] }
   assert.deepEqual(parsePublicLibrary(library), library)
-  for (const event of [{ ...announcement.event, amplitude_bp: 1 }, { ...announcement.event, expires_on: "2030-01-02" }]) assert.throws(() => parsePublicLibrary({ ...library, announcements: [{ ...announcement, event }] }), /event/)
+  for (const value of [{ ...announcement.content.value, amplitude_bp: 1 }, { ...announcement.content.value, expires_on: "2030-01-02" }]) assert.throws(() => parsePublicLibrary({ ...library, announcements: [{ ...announcement, content: { kind: "Shock", value } }] }), /content/)
 })

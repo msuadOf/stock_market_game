@@ -1,0 +1,25 @@
+{
+  "command": "rustc",
+  "args": [
+    "--edition=2021",
+    "--test",
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/mixed-calendar-c1a/agents/branch-completion/mixed-calendar-c1a/harness.rs",
+    "--extern",
+    "engine=/data1/baiyifan/workplace/stock_market_game/.tmp/mixed-calendar-c1a/target/debug/libengine.rlib",
+    "--extern",
+    "thiserror=/data1/baiyifan/workplace/stock_market_game/.tmp/mixed-calendar-c1a/target/debug/deps/libthiserror-44f263b99c8e22f7.rlib",
+    "-L",
+    "dependency=/data1/baiyifan/workplace/stock_market_game/.tmp/mixed-calendar-c1a/target/debug/deps",
+    "-C",
+    "codegen-units=16",
+    "-C",
+    "debuginfo=0",
+    "-o",
+    "/data1/baiyifan/workplace/stock_market_game/.tmp/mixed-calendar-c1a/red"
+  ],
+  "timeoutMs": 300000,
+  "elapsedMs": 642,
+  "exitCode": 0,
+  "stdout": "",
+  "stderr": "warning: fields `ticks_per_day`, `auction_ticks`, and `closing_auction_ticks` are never read\n  --> /data1/baiyifan/workplace/stock_market_game/.worktree/mixed-calendar-c1a/agents/branch-completion/mixed-calendar-c1a/../../../packages/engine/src/session/exchange_calendar_model.rs:11:9\n   |\n10 | pub(crate) struct SessionTickLayout {\n   |                   ----------------- fields in this struct\n11 |     pub ticks_per_day: u64,\n   |         ^^^^^^^^^^^^^\n12 |     pub auction_ticks: u64,\n   |         ^^^^^^^^^^^^^\n13 |     pub closing_auction_ticks: u64,\n   |         ^^^^^^^^^^^^^^^^^^^^^\n   |\n   = note: `SessionTickLayout` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis\n   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default\n\nwarning: fields `tick`, `completed_shared_sessions`, and `progress` are never read\n  --> /data1/baiyifan/workplace/stock_market_game/.worktree/mixed-calendar-c1a/agents/branch-completion/mixed-calendar-c1a/../../../packages/engine/src/session/exchange_calendar_model.rs:25:9\n   |\n24 | pub(crate) struct SharedClockInput {\n   |                   ---------------- fields in this struct\n25 |     pub tick: u64,\n   |         ^^^^\n26 |     pub completed_shared_sessions: u64,\n   |         ^^^^^^^^^^^^^^^^^^^^^^^^^\n27 |     pub progress: SharedDayProgress,\n   |         ^^^^^^^^\n   |\n   = note: `SharedClockInput` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis\n\nwarning: multiple variants are never constructed\n  --> /data1/baiyifan/workplace/stock_market_game/.worktree/mixed-calendar-c1a/agents/branch-completion/mixed-calendar-c1a/../../../packages/engine/src/session/exchange_calendar_model.rs:35:5\n   |\n31 | pub(crate) enum CalendarClockModelError {\n   |                 ----------------------- variants in this enum\n...\n35 |     EmptyBindings,\n   |     ^^^^^^^^^^^^^\n36 |     #[error(\"重复 StockId：{stock:?}\")]\n37 |     DuplicateStock { stock: StockId },\n   |     ^^^^^^^^^^^^^^\n38 |     #[error(\"current_date {current} 早于 start_date {start}\")]\n39 |     CurrentBeforeStart {\n   |     ^^^^^^^^^^^^^^^^^^\n...\n44 |     InvalidTickLayout {\n   |     ^^^^^^^^^^^^^^^^^\n...\n50 |     ProgressCalendarMismatch {\n   |     ^^^^^^^^^^^^^^^^^^^^^^^^\n...\n55 |     TradingTicksOutsideSession {\n   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^\n...\n60 |     CountersMismatch {\n   |     ^^^^^^^^^^^^^^^^\n...\n67 |     ArithmeticOverflow,\n   |     ^^^^^^^^^^^^^^^^^^\n   |\n   = note: `CalendarClockModelError` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis\n\nwarning: 3 warnings emitted\n\n"
+}

@@ -54,14 +54,13 @@ export class WasmSessionSlot<TBindings extends WasmSessionBindings> {
     const [, wasm] = this.requireHandle();
     const restoredSnapshot = restoreWasmSession({
       currentHandle: () => this.handle,
-      replaceHandle: (handle) => { this.handle = handle; },
+      replaceHandle: (handle) => { this.handle = handle; this.generation += 1; },
       restore: () => wasm.restore_json(JSON.stringify(parsedSlot)),
       snapshot: wasm.snapshot,
       drop: wasm.drop_session,
       ...loopHooks,
     });
-    // 旧 handle 的 drop 成功后才推进；prepare 失败已属于新 generation。
-    this.generation += 1;
+    // authority 一旦替换就已经推进 generation；旧句柄清理失败也不得继续接旧请求。
     if (this.handle === null) throw new Error("WASM restore 没有安装新会话句柄");
     this.preparePublicBaseline(this.handle, wasm);
     return restoredSnapshot;

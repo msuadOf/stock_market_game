@@ -1,10 +1,11 @@
+import { defaultCatalogFixture, catalogWorkerFixture } from "./catalog-test-fixture.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { parseProtocolSnapshot } from "./protocol/index.ts";
 import { assertWorkerE2EStepAllowed, createWorkerHost, parseWorkerFailure, readWorkerPlayerWorkingOrders, readWorkerStockHistory, readWorkerSpeedMetrics, refreshWorkerBaseline, requestWorkerIndicators, restoreWorkerSlot, stepWorkerOnce, workerPausePreferenceRequest } from "./worker-host.ts";
 import { WorkerRequestScope, type WorkerRequestPort } from "./worker-request.ts";
 import { ProtocolCoordinator } from "./protocol-coordinator.ts";
-import { frame, snapshot as protocolSnapshot, tickBatch } from "./protocol-test-fixtures.ts";
+import { frame, snapshot as protocolSnapshot, tickBatch, market, dailyCandle } from "./protocol-test-fixtures.ts";
 import { currentSaveFixture } from "../save/current-save-fixture.ts";
 
 class FakeWorker implements WorkerRequestPort {
@@ -36,7 +37,7 @@ test("串行 substrate（shared:false ingress）不 spawn intake worker，submit
     // 形态（shared:false），不携带 module/memory——独立 intake worker 无从
     // 共享内存直写 engine 队列，submitIntent 必须降级走 engine 主通道。
     engine.emit({ type: "ingress", generation: 1, shared: false });
-    engine.emit({ type: "baseline", civilDate: "2030-01-02", generation: 1, snapshot: protocolSnapshot(0, 0) });
+    engine.emit({ ...catalogWorkerFixture(protocolSnapshot(0, 0)), type: "baseline", civilDate: "2030-01-02", generation: 1, snapshot: protocolSnapshot(0, 0) });
     host = await creating;
     assert.equal(IntakeWorker.instances.length, 1, "串行 substrate 不得 spawn intake worker");
     const intent = { Cancel: { code: "000812", id: 7 } } as Parameters<typeof host.submitIntent>[0];
@@ -80,7 +81,7 @@ test("Browser engine worker 忙碌时 submitIntent 由独立 intake worker 确�
     assert.equal(binding.type, "bindIngress");
     intake.emit({ type: "ingressBound", requestId: binding.requestId, generation: 1 });
     // ADR 0041: baseline wire 契约携带 civilDate，E8 改写时遗漏导致协议解析失败
-    engine.emit({ type: "baseline", civilDate: "2030-01-02", generation: 1, snapshot: protocolSnapshot(0, 0) });
+    engine.emit({ ...catalogWorkerFixture(protocolSnapshot(0, 0)), type: "baseline", civilDate: "2030-01-02", generation: 1, snapshot: protocolSnapshot(0, 0) });
     host = await creating;
     const intent = { Cancel: { code: "000812", id: 7 } } as Parameters<typeof host.submitIntent>[0];
     const submitting = host.submitIntent(intent);
@@ -134,9 +135,9 @@ for (const scenario of ["consumerReject", "initializationTimeout", "staleEnqueue
       }
       intake.emit({ type: "ingressBound", requestId: intake.sent[0].requestId, generation: 1 });
       // ADR 0041: baseline wire 契约携带 civilDate，E8 改写时遗漏导致协议解析失败
-      engine.emit({ type: "baseline", civilDate: "2030-01-02", generation: 1, snapshot: protocolSnapshot(0, 0) });
+      engine.emit({ ...catalogWorkerFixture(protocolSnapshot(0, 0)), type: "baseline", civilDate: "2030-01-02", generation: 1, snapshot: protocolSnapshot(0, 0) });
       host = await creating;
-      const intent = { Cancel: { code: "600101", id: 7 } } as Parameters<typeof host.submitIntent>[0];
+      const intent = { Cancel: { code: "000812", id: 7 } } as Parameters<typeof host.submitIntent>[0];
       const pending = host.submitIntent(intent);
       await Promise.resolve();
       const rejected = assert.rejects(pending, /消费者拒绝|已过期/);
@@ -151,7 +152,7 @@ for (const scenario of ["consumerReject", "initializationTimeout", "staleEnqueue
         const request = intake.sent.at(-1)!;
         intake.emit({ type: "enqueued", generation: 1, requestId: request.requestId });
         if (scenario === "disposedEnqueued") await host.dispose();
-        else engine.emit({ type: "baseline", generation: 2, snapshot: protocolSnapshot(1, 1) });
+        else engine.emit({ ...catalogWorkerFixture(protocolSnapshot(1, 1)), type: "baseline", generation: 2, snapshot: protocolSnapshot(1, 1) });
       }
       if (scenario === "consumerReject") {
         assert.equal(intake.terminations, 1);
@@ -171,8 +172,8 @@ for (const scenario of ["consumerReject", "initializationTimeout", "staleEnqueue
 test("Worker 股票历史请求绑定 requestId 与 generation，且不携带可指定账户", { timeout: 10000 }, async () => {
   const worker = new FakeWorker();
   const requests = new WorkerRequestScope(worker);
-  const pending = readWorkerStockHistory(requests, 12, 3, "000812");
-  assert.deepEqual(worker.sent, [{ type: "stockHistory", requestId: 12, generation: 3, code: "000812" }]);
+  const pending = readWorkerStockHistory(requests, 12, 3, "000812", defaultCatalogFixture);
+  assert.deepEqual(worker.sent, [{ type: "stockHistory", requestId: 12, generation: 3, code: 0 }]);
   worker.emit({ type: "stockHistory", requestId: 12, generation: 3, data: { code: 0, daily_candles: [], active_daily_candle: null } });
   assert.deepEqual(await pending, { code: "000812", daily_candles: [], active_daily_candle: null });
   assert.equal(requests.pendingCount(), 0);
@@ -195,7 +196,7 @@ for (const operation of ["baseline", "refreshBaseline", "load"] as const) {
     try {
       const creating = createWorkerHost({} as Parameters<typeof createWorkerHost>[0], 1n);
       const worker = BaselineRejectingWorker.current;
-      worker.emit({ type: "baseline", civilDate: "2030-01-01", generation: 1, snapshot: protocolSnapshot(0, 0) });
+      worker.emit({ ...catalogWorkerFixture(protocolSnapshot(0, 0)), type: "baseline", civilDate: "2030-01-01", generation: 1, snapshot: protocolSnapshot(0, 0) });
       host = await creating;
       let accept = true;
       const failures: unknown[] = [];
@@ -205,14 +206,14 @@ for (const operation of ["baseline", "refreshBaseline", "load"] as const) {
       accept = false;
       const pendingQuery = host.civilDate!().then(() => null, (error: unknown) => error);
       if (operation === "baseline") {
-        worker.emit({ type: "baseline", civilDate: "2030-01-01", generation: 2, snapshot: protocolSnapshot(1, 1) });
+        worker.emit({ ...catalogWorkerFixture(protocolSnapshot(1, 1)), type: "baseline", civilDate: "2030-01-01", generation: 2, snapshot: protocolSnapshot(1, 1) });
       } else {
         const pending = operation === "load" ? host.load(currentSaveFixture()) : host.refreshBaseline();
         const rejected = assert.rejects(pending, /消费者拒绝.*baseline/);
         const requestId = worker.sent.at(-1)!.requestId;
         worker.emit(operation === "load"
-          ? { type: "restored", civilDate: "2030-01-01", generation: 1, nextGeneration: 2, requestId, snapshot: protocolSnapshot(1, 1) }
-          : { type: "refreshed", civilDate: "2030-01-01", generation: 1, requestId, snapshot: protocolSnapshot(1, 1) });
+          ? { ...catalogWorkerFixture(protocolSnapshot(1, 1)), type: "restored", civilDate: "2030-01-01", generation: 1, nextGeneration: 2, requestId, snapshot: protocolSnapshot(1, 1) }
+          : { ...catalogWorkerFixture(protocolSnapshot(1, 1)), type: "refreshed", civilDate: "2030-01-01", generation: 1, requestId, snapshot: protocolSnapshot(1, 1) });
         await rejected;
       }
       assert.equal(worker.terminations, 1);
@@ -233,7 +234,7 @@ test("审计G53：Worker恢复必须推进generation，不能接受相同或更�
     const worker = new FakeWorker();
     const requests = new WorkerRequestScope(worker);
     const pending = restoreWorkerSlot(requests, {}, 1, 2);
-    worker.emit({ type: "restored", civilDate: "2030-01-01", requestId: 1, generation: 2, nextGeneration,
+    worker.emit({ ...catalogWorkerFixture({ seq: 0, tick: 0, day: 0, phase: "Continuous", markets: {}, accounts: {}, daily_candles: {}, active_daily_candles: {} }), type: "restored", civilDate: "2030-01-01", requestId: 1, generation: 2, nextGeneration,
       snapshot: { seq: 0, tick: 0, day: 0, phase: "Continuous", markets: {}, accounts: {}, daily_candles: {}, active_daily_candles: {} } });
     if (nextGeneration <= 2) await assert.rejects(pending, /generation.*2.*[12]|[12].*generation.*2/);
     else assert.equal((await pending).nextGeneration, 3);
@@ -246,7 +247,7 @@ test("审计G53：恢复代次拒绝零、负数、非安全整数和字符串",
     const worker = new FakeWorker();
     const requests = new WorkerRequestScope(worker);
     const pending = restoreWorkerSlot(requests, {}, 1, 2);
-    worker.emit({ type: "restored", civilDate: "2030-01-01", requestId: 1, generation: 2, nextGeneration,
+    worker.emit({ ...catalogWorkerFixture({ seq: 0, tick: 0, day: 0, phase: "Continuous", markets: {}, accounts: {}, daily_candles: {}, active_daily_candles: {} }), type: "restored", civilDate: "2030-01-01", requestId: 1, generation: 2, nextGeneration,
       snapshot: { seq: 0, tick: 0, day: 0, phase: "Continuous", markets: {}, accounts: {}, daily_candles: {}, active_daily_candles: {} } });
     await assert.rejects(pending, /正安全整数/);
     assert.equal(requests.pendingCount(), 0);
@@ -268,11 +269,11 @@ test("Worker refresh 已回包但 continuation 前 dispose 不得复活 baseline
   try {
     const creating = createWorkerHost({} as Parameters<typeof createWorkerHost>[0], 1n);
     const worker = DisposedRefreshWorker.current;
-    worker.emit({ type: "baseline", civilDate: "2030-01-01", generation: 1, snapshot: protocolSnapshot(0, 0) });
+    worker.emit({ ...catalogWorkerFixture(protocolSnapshot(0, 0)), type: "baseline", civilDate: "2030-01-01", generation: 1, snapshot: protocolSnapshot(0, 0) });
     host = await creating;
     const pending = host.refreshBaseline();
     const rejected = assert.rejects(pending, /已过期会话 generation/);
-    worker.emit({ type: "refreshed", civilDate: "2030-01-01", generation: 1, requestId: worker.sent.at(-1)!.requestId, snapshot: protocolSnapshot(1, 1) });
+    worker.emit({ ...catalogWorkerFixture(protocolSnapshot(1, 1)), type: "refreshed", civilDate: "2030-01-01", generation: 1, requestId: worker.sent.at(-1)!.requestId, snapshot: protocolSnapshot(1, 1) });
     await host.dispose();
     await rejected;
     assert.throws(() => host!.snapshot(), /快照尚未就绪/);
@@ -299,13 +300,13 @@ test("Worker save pins candidate generation and rejects an old saved response af
     const worker = SaveWorker.current;
     const snapshot = { seq: 42, tick: 0, day: 0, phase: "Continuous", markets: {}, accounts: {}, daily_candles: {}, active_daily_candles: {} };
     worker.emit({ type: "created", generation: 1, capabilities: { npcDecisionDiagnostics: false, indicatorCapabilities: { intradayAverage: false, macd: false, priceKdj: false, candleKdj: false }, personalTradeHistory: false } });
-    worker.emit({ type: "baseline", civilDate: "2030-01-01", generation: 1, snapshot });
+    worker.emit({ ...catalogWorkerFixture(snapshot), type: "baseline", civilDate: "2030-01-01", generation: 1, snapshot });
     const host = await ready;
     const candidate = { seq: 42, settledDate: "2030-01-05" };
     const pending = host.save(candidate);
     const request = worker.sent.at(-1)!;
     assert.deepEqual(request, { type: "save", requestId: 1, generation: 1, candidate });
-    worker.emit({ type: "baseline", civilDate: "2030-01-01", generation: 2, snapshot });
+    worker.emit({ ...catalogWorkerFixture(snapshot), type: "baseline", civilDate: "2030-01-01", generation: 2, snapshot });
     worker.emit({ type: "saved", requestId: request.requestId, generation: 1, slot: { old: true } });
     await assert.rejects(pending, /generation/);
     host.dispose();
@@ -326,7 +327,7 @@ test("Given a generation-correlated Worker metrics response, when read, then it 
 
 test("Given a generation-correlated Worker order response, when read, then it preserves Money cents", async () => {
   const worker = new FakeWorker();
-  const pending = readWorkerPlayerWorkingOrders(new WorkerRequestScope(worker), 5, 2);
+  const pending = readWorkerPlayerWorkingOrders(new WorkerRequestScope(worker), 5, 2, defaultCatalogFixture);
   worker.emit({ type: "playerWorkingOrders", requestId: 5, generation: 2, orders: [{
     id: 7, code: 0, side: "Buy", price: "1234", remainingQty: 200, venue: "Auction", frozen: "Cash",
   }] });
@@ -367,7 +368,7 @@ test("Given an enriched Worker failure, when parsed, then cause and recovery act
 test("Given a restore response from the old request generation, when read, then it yields the new authority before load completes", async () => {
   const worker = new FakeWorker();
   const pending = restoreWorkerSlot(new WorkerRequestScope(worker), { valid: "already-parsed" }, 2, 1);
-  worker.emit({
+  worker.emit({ ...catalogWorkerFixture({ seq: 4, tick: 4, day: 0, phase: "Continuous", markets: {}, accounts: {}, daily_candles: {}, active_daily_candles: {} }),
     type: "restored", civilDate: "2030-01-01",
     requestId: 2,
     generation: 1,
@@ -385,8 +386,12 @@ test("Given a refresh request, when the worker reads its live session, then it r
   const worker = new FakeWorker();
   const restoredSnapshot = { seq: 8, tick: 8, day: 1, phase: "Continuous", markets: {}, accounts: {}, daily_candles: {}, active_daily_candles: {} };
   const pending = refreshWorkerBaseline(new WorkerRequestScope(worker), 12, 4);
-  worker.emit({ type: "refreshed", civilDate: "2030-01-01", requestId: 12, generation: 4, snapshot: restoredSnapshot });
-  assert.deepEqual(await pending, { snapshot: parseProtocolSnapshot(restoredSnapshot, "Worker refreshed.snapshot"), civilDate: "2030-01-01" });
+  worker.emit({ ...catalogWorkerFixture(restoredSnapshot), type: "refreshed", civilDate: "2030-01-01", requestId: 12, generation: 4, snapshot: restoredSnapshot });
+  const baseline = await pending;
+  assert.deepEqual(baseline.snapshot, parseProtocolSnapshot(restoredSnapshot, "Worker refreshed.snapshot", defaultCatalogFixture));
+  assert.equal(baseline.civilDate, "2030-01-01");
+  assert.deepEqual(baseline.stockCatalog, []);
+  assert.deepEqual(baseline.companyCatalog, []);
   assert.deepEqual(worker.sent, [{ type: "refreshBaseline", requestId: 12, generation: 4 }]);
 });
 
@@ -461,19 +466,19 @@ test("duplicate delivered baselines preserve pending order queries, while a new 
   try {
     const creating = createWorkerHost({} as Parameters<typeof createWorkerHost>[0], 1n);
     const worker = BaselineWorker.current;
-    worker.emit({ type: "baseline", civilDate: "2030-01-01", generation: 1, snapshot });
+    worker.emit({ ...catalogWorkerFixture(snapshot), type: "baseline", civilDate: "2030-01-01", generation: 1, snapshot });
     host = await creating;
     const updates: unknown[] = [];
     const starting = host.start((update) => { updates.push(update); });
     worker.emit({ type: "started", requestId: worker.sent.at(-1)!.requestId, generation: 1 });
     await starting;
     const refresh = host.refreshBaseline();
-    worker.emit({ type: "refreshed", civilDate: "2030-01-01", requestId: worker.sent.at(-1)!.requestId, generation: 1, snapshot });
+    worker.emit({ ...catalogWorkerFixture(snapshot), type: "refreshed", civilDate: "2030-01-01", requestId: worker.sent.at(-1)!.requestId, generation: 1, snapshot });
     await refresh;
 
     const orders = host.playerWorkingOrders();
     const requestId = worker.sent.at(-1)!.requestId;
-    worker.emit({ type: "baseline", civilDate: "2030-01-01", generation: 1, snapshot });
+    worker.emit({ ...catalogWorkerFixture(snapshot), type: "baseline", civilDate: "2030-01-01", generation: 1, snapshot });
     worker.emit({ type: "playerWorkingOrders", requestId, generation: 1, orders: [] });
     assert.deepEqual(await orders, []);
     assert.equal(updates.length, 2, "duplicate baseline must not be delivered again");
@@ -481,7 +486,7 @@ test("duplicate delivered baselines preserve pending order queries, while a new 
     const stale = host.playerWorkingOrders();
     const rejected = assert.rejects(stale, /已过期会话 generation/);
     const staleRequestId = worker.sent.at(-1)!.requestId;
-    worker.emit({ type: "baseline", civilDate: "2030-01-01", generation: 2, snapshot });
+    worker.emit({ ...catalogWorkerFixture(snapshot), type: "baseline", civilDate: "2030-01-01", generation: 2, snapshot });
     worker.emit({ type: "playerWorkingOrders", requestId: staleRequestId, generation: 1, orders: [] });
     await rejected;
   } finally {
@@ -508,7 +513,7 @@ test("Worker 控制等待应用回执，protocolBatch 每个提交接纳后立�
     const creating = createWorkerHost({} as Parameters<typeof createWorkerHost>[0], 1n);
     const worker = ControlledWorker.current;
     const snapshot = { seq: 0, tick: 0, day: 0, phase: "Continuous", markets: {}, accounts: {}, daily_candles: {}, active_daily_candles: {} };
-    worker.emit({ type: "baseline", civilDate: "2030-01-01", generation: 1, snapshot });
+    worker.emit({ ...catalogWorkerFixture(snapshot), type: "baseline", civilDate: "2030-01-01", generation: 1, snapshot });
     host = await creating;
     const updates: unknown[] = [];
     let applied = false;
@@ -524,7 +529,7 @@ test("Worker 控制等待应用回执，protocolBatch 每个提交接纳后立�
     assert.deepEqual(worker.sent.at(-1), { type: "uiFrame", generation: 1, deliveryId: 3 });
     const speedChange = assert.rejects(host.setSpeed(10), /已过期 generation/);
     const requestId = worker.sent.at(-1)!.requestId;
-    worker.emit({ type: "baseline", civilDate: "2030-01-01", generation: 2, snapshot });
+    worker.emit({ ...catalogWorkerFixture(snapshot), type: "baseline", civilDate: "2030-01-01", generation: 2, snapshot });
     worker.emit({ type: "speedSet", generation: 1, requestId });
     await speedChange;
     const acceptedCount = updates.length;
@@ -560,7 +565,7 @@ test("Worker cached baseline 拒绝不启动或 ACK，显式重试仍交付且�
   try {
     const oldCreating = createWorkerHost({} as Parameters<typeof createWorkerHost>[0], 1n);
     const oldWorker = IsolatedWorker.current;
-    oldWorker.emit({ type: "baseline", civilDate: "2030-01-01", generation: 1, snapshot: protocolSnapshot(0, 0) });
+    oldWorker.emit({ ...catalogWorkerFixture(protocolSnapshot(0, 0)), type: "baseline", civilDate: "2030-01-01", generation: 1, snapshot: protocolSnapshot(0, 0) });
     oldHost = await oldCreating;
     const rejectingStart = oldHost.start(() => false);
     const unexpectedStart = oldWorker.sent.find((message) => message.type === "start");
@@ -569,7 +574,7 @@ test("Worker cached baseline 拒绝不启动或 ACK，显式重试仍交付且�
     assert.equal(oldWorker.sent.filter((message) => message.type === "start" || message.type === "uiFrame").length, 0);
     const newCreating = createWorkerHost({} as Parameters<typeof createWorkerHost>[0], 2n);
     const newWorker = IsolatedWorker.current;
-    newWorker.emit({ type: "baseline", civilDate: "2030-01-01", generation: 1, snapshot: protocolSnapshot(9, 4) });
+    newWorker.emit({ ...catalogWorkerFixture(protocolSnapshot(9, 4)), type: "baseline", civilDate: "2030-01-01", generation: 1, snapshot: protocolSnapshot(9, 4) });
     newHost = await newCreating;
     const newUpdates: unknown[] = [];
     let newStarted = false;
@@ -617,7 +622,7 @@ test("Worker dispose 与 fatal 立即取消在途请求，释放监听并拒绝�
       const creating = createWorkerHost({} as Parameters<typeof createWorkerHost>[0], 1n);
       const worker = PendingWorker.current;
       const snapshot = { seq: 0, tick: 0, day: 0, phase: "Continuous", markets: {}, accounts: {}, daily_candles: {}, active_daily_candles: {} };
-      worker.emit({ type: "baseline", civilDate: "2030-01-01", generation: 1, snapshot });
+      worker.emit({ ...catalogWorkerFixture(snapshot), type: "baseline", civilDate: "2030-01-01", generation: 1, snapshot });
       const host = await creating;
       const date = host.civilDate!();
       const preferences = host.setPausePreferences({ pause_after_close: true, pause_before_open: false });
@@ -657,7 +662,7 @@ test("Worker 真实 coordinator 拒绝批次中间提交后不消费尾部、不
   try {
     const creating = createWorkerHost({} as Parameters<typeof createWorkerHost>[0], 1n);
     const worker = RejectingWorker.current;
-    worker.emit({ type: "baseline", civilDate: "2030-01-01", generation: 1, snapshot: protocolSnapshot(0, 0) });
+    worker.emit({ ...catalogWorkerFixture(protocolSnapshot(0, 0)), type: "baseline", civilDate: "2030-01-01", generation: 1, snapshot: protocolSnapshot(0, 0) });
     host = await creating;
     let applications = 0;
     const failures: unknown[] = [];
@@ -705,7 +710,7 @@ test("Worker reportError 的 error 事件将完整错误交付用户回调并终
   try {
     const creating = createWorkerHost({} as Parameters<typeof createWorkerHost>[0], 1n);
     const worker = ReportingWorker.current;
-    worker.emit({ type: "baseline", civilDate: "2030-01-02", generation: 1, snapshot: protocolSnapshot(0, 0) });
+    worker.emit({ ...catalogWorkerFixture(protocolSnapshot(0, 0)), type: "baseline", civilDate: "2030-01-02", generation: 1, snapshot: protocolSnapshot(0, 0) });
     host = await creating;
     const failures: unknown[] = [];
     const starting = host.start(() => true, (failure) => { failures.push(failure); });
@@ -721,3 +726,64 @@ test("Worker reportError 的 error 事件将完整错误交付用户回调并终
     else Object.defineProperty(globalThis, "Worker", original);
   }
 });
+
+for (const shared of [false, true]) {
+  test(`实际单股Worker ${shared ? "shared ingress" : "serial"}三variant与unknown零enqueue`, { timeout: 10000 }, async () => {
+    const original = Object.getOwnPropertyDescriptor(globalThis, "Worker");
+    class IntentWorker extends EventTarget {
+      static instances: IntentWorker[] = [];
+      sent: Record<string, unknown>[] = [];
+      constructor() { super(); IntentWorker.instances.push(this); }
+      postMessage(value: Record<string, unknown>) { this.sent.push(value); }
+      terminate() {}
+      emit(data: unknown) { this.dispatchEvent(Object.assign(new Event("message"), { data })); }
+    }
+    Object.defineProperty(globalThis, "Worker", { configurable: true, value: IntentWorker });
+    let host: Awaited<ReturnType<typeof createWorkerHost>> | undefined;
+    try {
+      const creating = createWorkerHost({} as never, 1n);
+      const engine = IntentWorker.instances[0];
+      engine.emit({ type: "ingress", generation: 1, token: 7, shared });
+      const intake = shared ? IntentWorker.instances[1] : engine;
+      if (shared) intake.emit({ type: "ingressBound", generation: 1, requestId: intake.sent[0].requestId });
+      engine.emit({ type: "baseline", generation: 1, snapshot: protocolSnapshot(0, 0), civilDate: "2030-01-02",
+        stockCatalog: [{ id: 0, code: "600101" }], companyCatalog: [{ id: 0, code: "C-600101", name: "公司", listed_stock: 0 }] });
+      host = await creating;
+      for (const [intent, expected] of [
+        [{ PlaceLimit: { code: "600101", side: "Buy", price: { Fixed: "1234" }, qty: 100 } }, { PlaceLimit: { code: 0, side: "Buy", price: { Fixed: "1234" }, qty: 100 } }],
+        [{ PlaceMarket: { code: "600101", side: "Sell", qty: 200 } }, { PlaceMarket: { code: 0, side: "Sell", qty: 200 } }],
+        [{ Cancel: { code: "600101", id: 9 } }, { Cancel: { code: 0, id: 9 } }],
+      ] as const) {
+        const pending = host.submitIntent(intent);
+        await Promise.resolve();
+        const request = intake.sent.at(-1)!;
+        assert.equal(request.type, "enqueue");
+        assert.equal(request.generation, 1);
+        assert.deepEqual(request.intent, expected);
+        intake.emit({ type: "enqueued", generation: 1, requestId: request.requestId });
+        await pending;
+      }
+      const count = intake.sent.length;
+      for (const intent of [
+        { PlaceLimit: { code: "000812", side: "Buy", price: { Fixed: "1234" }, qty: 100 } },
+        { PlaceMarket: { code: "000812", side: "Sell", qty: 200 } },
+        { Cancel: { code: "000812", id: 9 } },
+      ] as const) await assert.rejects(host.submitIntent(intent), /000812/);
+      assert.equal(intake.sent.length, count);
+      const old = host.submitIntent({ Cancel: { code: "600101", id: 10 } });
+      const rejected = assert.rejects(old, /过期/);
+      const oldRequest = intake.sent.at(-1)!;
+      engine.emit({ type: "baseline", generation: 2, civilDate: "2030-02-02",
+        snapshot: { ...protocolSnapshot(0, 0), markets: { "0": market(), "1": market() }, daily_candles: { "0": [], "1": [] }, active_daily_candles: { "0": dailyCandle(), "1": dailyCandle() } },
+        stockCatalog: [{ id: 0, code: "002156" }, { id: 1, code: "600101" }],
+        companyCatalog: [{ id: 0, code: "C-002156", name: "芯片", listed_stock: 0 }, { id: 1, code: "C-600101", name: "公司", listed_stock: 1 }] });
+      if (!shared) intake.emit({ type: "enqueued", generation: 1, requestId: oldRequest.requestId });
+      await rejected;
+      assert.equal(intake.sent.length, count + (shared ? 0 : 1), "shared等待间换代不得发送旧请求");
+    } finally {
+      await host?.dispose();
+      if (original === undefined) delete (globalThis as { Worker?: unknown }).Worker;
+      else Object.defineProperty(globalThis, "Worker", original);
+    }
+  });
+}

@@ -1,0 +1,1 @@
+node scripts/run-with-deadline.mjs 10000 -- node --test --test-timeout=10000 --test-concurrency=4 --test-name-pattern=可恢复structured apps/web/src/host/wasm-worker-ownership.test.ts

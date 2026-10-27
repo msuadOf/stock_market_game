@@ -1,3 +1,5 @@
+import { WasmRestartGate } from "./wasm-restart-gate.ts";
+import { prepareBaselineUpdate } from "./host-update.ts";
 import { parseSaveSlot } from "../save/save-schema.ts";
 import { normalizePublicReportById, normalizePublicReportPage, normalizeSerdeMaps } from "./serde-normalize.ts";
 import { WasmSessionSlot } from "./wasm-session-slot.ts";
@@ -5,7 +7,6 @@ import { WasmTickLoop } from "./wasm-tick-loop.ts";
 import { WorkerTaskScheduler } from "./worker-task-scheduler.ts";
 import { classifyWasmFailure, describeWasmFailure, describeReadFailureFields, type WasmFailureClassification } from "./wasm-failure.ts";
 import { parseHostFailure } from "./protocol-failure.ts";
-import { stockIdOf } from "../config/stock-ids.ts";
 import { shouldLoadDiagnosticsWasm } from "./wasm-build-mode.ts";
 import type { HostFailure } from "./host-update.ts";
 import type { NpcDecisionTraceRecord } from "./npc-decision-trace.ts";
@@ -17,6 +18,8 @@ type WasmNpcDecisionTrace = (handle: number, account: bigint) => readonly NpcDec
 type WasmTransportExtensions = Omit<typeof import("../../wasm-pkg/web_wasm.js"), "query_stock_history"> & {
   readonly ingress_token?: (handle: number) => number;
   readonly prepare_public_baseline?: (handle: number) => void;
+  readonly stock_catalog_view: (handle: number) => unknown;
+  readonly company_catalog_view: (handle: number) => unknown;
   readonly host_capabilities?: () => { readonly npcDecisionDiagnostics: boolean; readonly indicatorCapabilities?: { readonly intradayAverage: boolean; readonly macd: boolean; readonly priceKdj: boolean; readonly candleKdj: boolean }; readonly personalTradeHistory?: boolean };
   readonly player_working_orders?: (handle: number) => unknown;
   readonly query_stock_history?: (handle: number, code: number) => unknown;
@@ -169,6 +172,9 @@ function postFailureDetails(where: string, failure: WorkerFailureDetails): void 
   }
 }
 
+const restoreRestart = new WasmRestartGate();
+let fatalSession = false;
+
 function postBaseline(): void {
   const [session, wasm] = slot.requireHandle();
   slot.prepareBaseline();
@@ -176,6 +182,8 @@ function postBaseline(): void {
     type: "baseline",
     generation: slot.readGeneration(),
     snapshot: wasm.snapshot(session),
+    stockCatalog: wasm.stock_catalog_view(session),
+    companyCatalog: wasm.company_catalog_view(session),
     civilDate: wasm.civil_date(session),
   });
 }
@@ -254,7 +262,9 @@ async function initialize(): Promise<void> {
 ctx.addEventListener("message", (event) => {
   const message = event.data;
   void (async () => {
+    let restoreAttempt: { handle: number; generation: number; token: number; restartWanted: boolean } | null = null;
     try {
+      if (fatalSession && message.type !== "drop") throw new Error("Worker 会话已停止，必须重建有效会话");
       switch (message.type) {
         case "init":
           await initialize();
@@ -357,6 +367,8 @@ ctx.addEventListener("message", (event) => {
             requestId: message.requestId,
             generation: requestedGeneration,
             snapshot: wasm.snapshot(session),
+    stockCatalog: wasm.stock_catalog_view(session),
+    companyCatalog: wasm.company_catalog_view(session),
             civilDate: wasm.civil_date(session),
           });
           return;
@@ -364,23 +376,23 @@ ctx.addEventListener("message", (event) => {
         case "restore": {
           const requestedGeneration = slot.requireGeneration(message.generation);
           const parsed = parseSaveSlot(message.slot);
+          const restartToken = restoreRestart.begin();
+          restoreAttempt = { handle: slot.requireHandle()[0], generation: slot.readGeneration(), token: restartToken, restartWanted: false };
           const restoredSnapshot = slot.restore(parsed, {
-            wasRunning: loop.isRunning(),
-            stop: () => loop.stop(),
-            restart: () => { queueMicrotask(() => loop.start()); },
+            wasRunning: loop.isRunning(), stop: () => loop.stop(), restart: () => { if (restoreAttempt !== null) restoreAttempt.restartWanted = true; },
           });
-          postIngressBridge();
           const [session, wasm] = slot.requireHandle();
           const civilDate = wasm.civil_date(session);
-          ctx.postMessage({
-            type: "restored",
-            requestId: message.requestId,
-            generation: requestedGeneration,
-            nextGeneration: slot.readGeneration(),
-            snapshot: restoredSnapshot,
-            civilDate,
-          });
-          ctx.postMessage({ type: "baseline", generation: slot.readGeneration(), snapshot: restoredSnapshot, civilDate });
+          const stockCatalog = wasm.stock_catalog_view(session);
+          const companyCatalog = wasm.company_catalog_view(session);
+          const restoredGeneration = slot.readGeneration();
+          prepareBaselineUpdate(String(restoredGeneration), restoredSnapshot, stockCatalog, companyCatalog, { civilDate, revision: null });
+          postIngressBridge();
+          ctx.postMessage({ type: "restored", requestId: message.requestId, generation: requestedGeneration,
+            nextGeneration: restoredGeneration, snapshot: restoredSnapshot, stockCatalog, companyCatalog, civilDate });
+          if (restoreAttempt.restartWanted) restoreRestart.schedule(restartToken,
+            () => slot.readGeneration() === restoredGeneration && slot.requireHandle()[0] === session,
+            () => loop.start());
           return;
         }
         case "civilDate": {
@@ -418,12 +430,12 @@ ctx.addEventListener("message", (event) => {
         }
         case "stockHistory": {
           const requestedGeneration = slot.requireGeneration(message.generation);
-          if (typeof message.code !== "string" || message.code.length === 0) throw new Error("股票历史查询代码无效");
+          if (typeof message.code !== "number" || !Number.isInteger(message.code) || message.code < 0 || message.code > 4294967295) throw new Error("股票历史查询 StockId 无效");
           const [session, wasm] = slot.requireHandle();
           const queryHistory = transportExtensions(wasm).query_stock_history;
           if (queryHistory === undefined) throw new Error("当前 WASM bindings 不支持股票历史查询，请重建 bindings");
-          // 请求层翻译：主线程传来的代码串 code 译为数值 StockId 再调用 wasm FFI（u32）。
-          ctx.postMessage({ type: "stockHistory", requestId: message.requestId, generation: requestedGeneration, data: queryHistory(session, stockIdOf(message.code)) });
+          // 主线程已用本代实际目录将只读查询 code 译为数值 StockId。
+          ctx.postMessage({ type: "stockHistory", requestId: message.requestId, generation: requestedGeneration, data: queryHistory(session, message.code) });
           return;
         }
         // W3 查询面：query 已由主线程归一并译为数值 StockId wire 形态（ADR-0041），
@@ -535,6 +547,7 @@ ctx.addEventListener("message", (event) => {
           return;
         }
         case "drop": {
+          restoreRestart.invalidate();
           loop.stop();
           slot.drop();
           return;
@@ -543,14 +556,31 @@ ctx.addEventListener("message", (event) => {
           throw new Error(`未知 Worker 消息：${message.type}`);
       }
     } catch (error) {
+      const attempt = restoreAttempt;
+      const committed = attempt !== null && (slot.readGeneration() !== attempt.generation || slot.requireHandle()[0] !== attempt.handle);
       const classified = classifyWasmFailure(error);
-      if (classified.kind === "unstructured") {
-        if (typeof message.requestId === "number") respondOperationError(message, classified.description);
-        else postFailureDetails("wasm-worker.message", unstructuredFailureDetails(classified.description, "wasm-worker.message", classified.cause));
-      } else {
+      if (attempt !== null && !committed && classified.kind === "unstructured" && attempt.restartWanted) {
+        restoreRestart.schedule(attempt.token,
+          () => !fatalSession && slot.readGeneration() === attempt.generation && slot.requireHandle()[0] === attempt.handle,
+          () => loop.start());
+      } else restoreRestart.invalidate();
+      if (committed || classified.kind !== "unstructured") {
+        const closeAuthority = committed || (classified.kind === "structured" && classified.code === "CATALOG_BASELINE_FAILED");
+        if (closeAuthority) fatalSession = true;
         loop.stop();
-        postFailureDetails(`wasm-worker.${message.type}`, structuredHostFailure(error, `wasm-worker.${message.type}`, classified));
-      }
+        let failure: WorkerFailureDetails = classified.kind === "unstructured"
+          ? { code: "WASM_RESTORE_COMMITTED_FAILED", where: "wasm-worker.restore",
+              message: "恢复已替换实际会话，后续准备或清理失败，必须重建有效会话", context: { operation: "restore", generation: String(slot.readGeneration()) }, recoverable: false,
+              recoveryActions: ["重新加载有效日终档或新建会话", "复制错误详情反馈"], cause: { message: classified.description } }
+          : structuredHostFailure(error, `wasm-worker.${message.type}`, classified);
+        // drop_session 同时撤销 SessionRegistry 的 ingress token，阻止独立 intake 继续入队。
+        if (closeAuthority) {
+          try { slot.drop(); }
+          catch (cleanupError) { failure = { ...failure, cause: { primary: failure.cause, cleanup: describeWasmFailure(cleanupError) } }; }
+        }
+        postFailureDetails(`wasm-worker.${message.type}`, failure);
+      } else if (typeof message.requestId === "number") respondOperationError(message, classified.description);
+      else postFailureDetails("wasm-worker.message", unstructuredFailureDetails(classified.description, "wasm-worker.message", classified.cause));
     }
   })();
 });

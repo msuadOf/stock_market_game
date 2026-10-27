@@ -1,0 +1,49 @@
+diff --git a/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/agents/branch-completion/company-catalog-bc/full-review-freeze-r4/source/apps/desktop/src-tauri/src/actor/protocol_tests.rs b/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/desktop/src-tauri/src/actor/protocol_tests.rs
+index 220fe54e..c9267195 100644
+--- a/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/agents/branch-completion/company-catalog-bc/full-review-freeze-r4/source/apps/desktop/src-tauri/src/actor/protocol_tests.rs
++++ b/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/desktop/src-tauri/src/actor/protocol_tests.rs
+@@ -281,7 +281,8 @@ fn committed_restore_catalog_failure_keeps_generation_and_closes_desktop_actor()
+     setup.npcs.inst_count = 0;
+     setup.history_len = 1;
+     setup.stocks[0].float_shares = 0;
+-    let game = ProtocolSession::new(setup, 7).unwrap();
++    let mut game = ProtocolSession::new(setup, 7).unwrap();
++    game.end_civil_day_update().unwrap();
+     let saved = game.save().unwrap();
+     let mut harness = ActorHarness::new_protocol_actor(
+         game,
+diff --git a/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/agents/branch-completion/company-catalog-bc/full-review-freeze-r4/source/apps/desktop/src-tauri/src/lib.rs b/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/desktop/src-tauri/src/lib.rs
+index d0cfd5e5..d18965fb 100644
+--- a/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/agents/branch-completion/company-catalog-bc/full-review-freeze-r4/source/apps/desktop/src-tauri/src/lib.rs
++++ b/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/desktop/src-tauri/src/lib.rs
+@@ -149,7 +149,7 @@ async fn engine_baseline(
+     session_id: String,
+     generation: String,
+ ) -> Result<actor::RestoreResult, BaselineIpcError> {
+-    let handles = lookup_handles(&state, &session_id).await?;
++    let handles = lookup_handles(&state, &session_id).await.map_err(map_send_error)?;
+     handles
+         .query_baseline(parse_generation(generation)?)
+         .await
+@@ -299,7 +299,7 @@ async fn restore_session(
+     generation: String,
+     slot: SaveSlot,
+ ) -> Result<actor::RestoreResult, BaselineIpcError> {
+-    let handles = lookup_handles(&state, &session_id).await?;
++    let handles = lookup_handles(&state, &session_id).await.map_err(map_send_error)?;
+     handles
+         .restore(parse_generation(generation)?, slot)
+         .await
+diff --git a/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/agents/branch-completion/company-catalog-bc/full-review-freeze-r4/source/apps/server/src/actor/fatal_tests.rs b/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/server/src/actor/fatal_tests.rs
+index a82bd72d..d688acba 100644
+--- a/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/agents/branch-completion/company-catalog-bc/full-review-freeze-r4/source/apps/server/src/actor/fatal_tests.rs
++++ b/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/server/src/actor/fatal_tests.rs
+@@ -332,7 +332,7 @@ async fn capture(successful_steps: usize) {
+     actor
+         .handle_command(SessionCommand::PublicBaseline { reply })
+         .await;
+-    let baseline = response.await.unwrap();
++    let baseline = response.await.unwrap().unwrap();
+     assert_eq!(baseline.failure, Some(failure.failure.clone().unwrap()));
+     assert!(
+         serde_json::to_value(&baseline)

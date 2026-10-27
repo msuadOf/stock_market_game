@@ -1,0 +1,23 @@
+✖ 实际单股只读请求发StockId0，initialAllocation与NPC诊断回相同证券 (2.149599ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 230.924476
+
+✖ failing tests:
+
+test at apps/web/src/host/actual-read-identity.test.ts:11:1
+✖ 实际单股只读请求发StockId0，initialAllocation与NPC诊断回相同证券 (2.149599ms)
+  Error: 初始分配响应.stocks[0].code 不属于本次会话证券或重复
+      at file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/initial-allocation.ts:28:64
+      at Array.map (<anonymous>)
+      at parseInitialAllocation (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/initial-allocation.ts:20:77)
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/actual-read-identity.test.ts:12:22)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.start (node:internal/test_runner/test:1096:17)
+      at startSubtestAfterBootstrap (node:internal/test_runner/harness:385:17)

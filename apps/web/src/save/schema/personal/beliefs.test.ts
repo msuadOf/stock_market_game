@@ -3,7 +3,7 @@ import test from "node:test"
 import { parseBeliefBook } from "./beliefs.ts"
 
 const base = {
-  npc: 1,
+  npc: "1",
   institution_account_risk_paused: false,
   profile: { Institution: "Balanced" },
   analysis: {
@@ -65,7 +65,7 @@ test("institution account risk pause is a required frozen boolean", () => {
 
 test("belief confidence rejects values above 10000 at the save boundary", () => {
   const entry = {
-    company: "company", method: null,
+    company: 0, method: null,
     forecast: { growth_bp: null, basis: "InitialWithoutHistory" },
     valuation: { Unavailable: { reason: "MethodDisabled" } },
     used_report_ids: [], anchor_trading_day: 0, horizon_trading_days: 1,

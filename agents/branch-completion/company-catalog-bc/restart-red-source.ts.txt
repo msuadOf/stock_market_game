@@ -1,0 +1,9 @@
+/** Worker 恢复重启的可失效令牌。 */
+export class WasmRestartGate {
+  private epoch = 0;
+  begin(): number { return ++this.epoch; }
+  invalidate(): void { this.epoch++; }
+  schedule(_token: number, _isCurrent: () => boolean, restart: () => void): void {
+    queueMicrotask(restart);
+  }
+}

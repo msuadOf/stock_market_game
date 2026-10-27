@@ -1,0 +1,10 @@
+{
+  "exitCode": 1,
+  "error": "Error: bounded command exited with 101: Compiling stock-market-game v0.1.0 (/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/desktop/src-tauri)\n   Compiling engine v0.1.0 (/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/packages/engine)\nerror: could not compile `stock-market-game` (lib test) due to 2 previous errors; 1 warning emitted\n    at #commandFailure (file:///data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs:398:17)\n    at file:///data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs:413:43\n    at #settleOnce (file:///data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs:423:5)\n    at #completeClose (file:///data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs:412:21)\n    at file:///data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs:383:55",
+  "stopReason": null,
+  "wallSeconds": 52.96080977,
+  "samples": 105,
+  "under40Reported": true,
+  "ownedTreeSupervision": "runBoundedCommand/terminateTree",
+  "failedTargetPreservedAsEvidence": true
+}

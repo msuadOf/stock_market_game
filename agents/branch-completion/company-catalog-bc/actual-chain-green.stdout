@@ -1,0 +1,15 @@
+✔ 实际单股只读请求发StockId0，initialAllocation与NPC诊断回相同证券 (2.473865ms)
+✔ 真实WorkerHost只读请求按restore后实际子集发原StockId并拒绝旧响应 (75.312889ms)
+✔ 坏目录 prepare 不发布 Redux/protocol/App，新 baseline 同一次dispatch安装snapshot和company (6.264154ms)
+✔ Tauri 坏目录不覆盖 timeline、generation、query epoch 或 cached baseline (0.795551ms)
+✔ 单股本代 StockId0 在 baseline、日内 facts/timeseries 和 runtime delta 保持600101 (5.194226ms)
+✔ 两个宿主 resolver 交错翻译不共享当前目录 (1.449258ms)
+✔ 单股baseline→下一tick→CivilUpdate refresh与日内历史始终同代600101 (9.221951ms)
+ℹ tests 7
+ℹ suites 0
+ℹ pass 7
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 296.945286

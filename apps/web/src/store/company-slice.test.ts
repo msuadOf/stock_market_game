@@ -13,7 +13,7 @@ import {
 
 const report = (companyId: string, id: string, version = "1") => {
   const value = publicReportGold();
-  // store 键保持字符串视图身份（CompanyId 十进制串）；wire 字段取其数值形态（ADR 0041）。
+  // 本测试为数值文本code的显式fixture；store实际允许任意合法公司code，wire字段仍为CompanyId。
   const numericCompanyId = Number(companyId);
   Object.assign(value, { id, company_id: numericCompanyId, version_sequence: version });
   value.financials.scope = { Standalone: { entity_id: numericCompanyId } };
@@ -34,7 +34,7 @@ test("baseline atomically replaces old session public cache and selection", () =
   const first = companyReducer(undefined, installCompanyBaseline({ generation: 1, civilDate: "2030-01-01", revision: "1", seq: 0 }));
   const loaded = companyReducer(first, recordCompanyPage({ generation: 1, companyId: "600001", cursor: null, reports: [report("600001", "7")], nextCursor: null }));
   const next = companyReducer(loaded, installCompanyBaseline({ generation: 2, civilDate: "2031-01-01", revision: "2", seq: 0 }));
-  assert.deepEqual(next.companies, {});
+  assert.deepEqual(next.companies, Object.create(null));
   assert.equal(next.generation, 2);
   assert.equal(next.revision, "2");
 });

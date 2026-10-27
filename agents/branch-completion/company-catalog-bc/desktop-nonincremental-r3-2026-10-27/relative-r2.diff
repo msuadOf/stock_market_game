@@ -1,0 +1,22 @@
+diff --git a/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/agents/branch-completion/company-catalog-bc/desktop-ready/apps/desktop/src-tauri/src/lib.rs b/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/desktop/src-tauri/src/lib.rs
+index d0cfd5e5..d18965fb 100644
+--- a/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/agents/branch-completion/company-catalog-bc/desktop-ready/apps/desktop/src-tauri/src/lib.rs
++++ b/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/desktop/src-tauri/src/lib.rs
+@@ -149,7 +149,7 @@ async fn engine_baseline(
+     session_id: String,
+     generation: String,
+ ) -> Result<actor::RestoreResult, BaselineIpcError> {
+-    let handles = lookup_handles(&state, &session_id).await?;
++    let handles = lookup_handles(&state, &session_id).await.map_err(map_send_error)?;
+     handles
+         .query_baseline(parse_generation(generation)?)
+         .await
+@@ -299,7 +299,7 @@ async fn restore_session(
+     generation: String,
+     slot: SaveSlot,
+ ) -> Result<actor::RestoreResult, BaselineIpcError> {
+-    let handles = lookup_handles(&state, &session_id).await?;
++    let handles = lookup_handles(&state, &session_id).await.map_err(map_send_error)?;
+     handles
+         .restore(parse_generation(generation)?, slot)
+         .await

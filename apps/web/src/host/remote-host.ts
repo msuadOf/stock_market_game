@@ -1,7 +1,6 @@
 import type { HistoricalStockData, PublicReportPage, PublicReportQuery, PublicReportSummary, SessionSetup, StockCode } from "../types/engine.ts";
 import type { CodedIntent, CodedSnapshot } from "./protocol/stock-identity.ts";
 import { wireIntentOf } from "./protocol/stock-identity.ts";
-import { stockIdOf } from "../config/stock-ids.ts";
 import type { PausePreferences } from "../types/generated/PausePreferences.ts";
 import type { DeliveryMode, EngineHost } from "./engine-host.ts";
 import type { HostFailure, HostUpdate } from "./host-update.ts";
@@ -59,6 +58,7 @@ export async function createRemoteHost(setup: SessionSetup, seed: bigint, option
   let disposed = false;
   let delivery: DeliveryMode = "push";
   let baselineDelivered = false;
+  const requireCatalogResolver = () => { const baseline = publisher.baselineForRead(); if (baseline === null) throw new Error("远程只读查询需要baseline"); return baseline.catalogResolver; };
   let resyncPromise: Promise<void> | null = null;
   let pullTimer: ReturnType<typeof setInterval> | null = null;
   let pullResponseTimer: ReturnType<typeof setTimeout> | null = null;
@@ -332,12 +332,13 @@ export async function createRemoteHost(setup: SessionSetup, seed: bigint, option
       const baseline = publisher.baselineForRead();
       if (baseline === null) throw new Error("远程权威 generation 尚未就绪，写请求未入队");
       const generation = baseline.generation;
+      const wiredIntent = wireIntentOf(intent, baseline.catalogResolver);
       const requestId = commands.next();
       await new Promise<void>((resolve, reject) => {
         const timeout = setTimeout(() => commands.rejectGateway(requestId, { code: "REMOTE_COMMAND_TIMEOUT", where: "remote-host.submitIntent", message: "入队确认超时（5000ms），结果未知，请核对权威委托状态，勿重复提交" }, true), 5000);
         commands.register(requestId, { resolve() { clearTimeout(timeout); resolve(); }, reject(error) { clearTimeout(timeout); reject(error); } });
         // 请求层翻译：公共 Intent 的代码串 code 译为数值 StockId 后再提交（ADR 0041）。
-        try { current.send(JSON.stringify({ SubmitIntent: { request_id: requestId, generation, intent: wireIntentOf(intent) } })); }
+        try { current.send(JSON.stringify({ SubmitIntent: { request_id: requestId, generation, intent: wiredIntent } })); }
         catch (error) { commands.rejectGateway(requestId, { code: "REMOTE_COMMAND_SEND", where: "remote-host.submitIntent", message: `写请求发送中断，结果未知：${error instanceof Error ? error.message : String(error)}` }); }
       });
       if (disposed || !publisher.hasGeneration(generation) || publisher.isAwaitingBaseline()) throw new Error("远程入队确认属于已过期会话 generation，请核对权威委托状态，勿重复提交");
@@ -383,18 +384,18 @@ export async function createRemoteHost(setup: SessionSetup, seed: bigint, option
       const response = raw as Record<string, unknown>;
       if (Object.keys(response).length !== 2 || typeof response.generation !== "string" || !Object.hasOwn(response, "orders")) throw new Error("远程玩家活动委托响应字段无效");
       publisher.assertQueryCursor(cursor, response.generation, "远程玩家活动委托响应属于已过期会话 generation");
-      return normalizePlayerWorkingOrders(response.orders);
+      return normalizePlayerWorkingOrders(response.orders, (() => { const baseline = publisher.baselineForRead(); if (baseline === null) throw new Error("远程活动委托需要 baseline"); return baseline.catalogResolver; })());
     },
     async queryStockHistory(code: StockCode): Promise<HistoricalStockData> {
       const cursor = publisher.captureQueryCursor("远程基线尚未就绪，不能查询股票历史");
       // HTTP 查询参数 code 为数值 StockId（ADR 0041）。
-      const params = new URLSearchParams({ session_id: created.id, generation: cursor.generation, code: String(stockIdOf(code)) });
+      const params = new URLSearchParams({ session_id: created.id, generation: cursor.generation, code: String(requireCatalogResolver().stockId(code)) });
       const raw = await requestJson(`${baseUrl}/api/stock-history?${params}`, { method: "GET", headers: { authorization: `Bearer ${token}` } });
       if (raw === null || typeof raw !== "object" || Array.isArray(raw)) throw new Error("远程股票历史响应必须是对象");
       const response = raw as Record<string, unknown>;
       if (Object.keys(response).length !== 2 || typeof response.generation !== "string" || !Object.hasOwn(response, "data")) throw new Error("远程股票历史响应字段无效");
       publisher.assertQueryCursor(cursor, response.generation, "远程股票历史响应属于已过期会话 generation");
-      return parseHistoricalStockData(response.data, code);
+      return parseHistoricalStockData(response.data, code, requireCatalogResolver());
     },
     async initialAllocation() {
       if (disposed) throw new Error("远程会话已经销毁，不能查询初始分配");
@@ -405,7 +406,7 @@ export async function createRemoteHost(setup: SessionSetup, seed: bigint, option
       exact(response, ["generation", "data"], "远程初始分配响应");
       if (disposed) throw new Error("远程初始分配响应属于已销毁会话");
       publisher.assertQueryCursor(cursor, response.generation, "远程初始分配响应属于已过期会话 generation");
-      return parseInitialAllocation(response.data, setup.stocks.map((stock) => stock.code));
+      return parseInitialAllocation(response.data, requireCatalogResolver().stockCatalog.map(stock => stock.code), requireCatalogResolver());
     },
     async calculateIndicators(input: IndicatorInput): Promise<IndicatorResults> {
       const normalized = normalizeIndicatorInput(input);
@@ -472,7 +473,7 @@ export async function createRemoteHost(setup: SessionSetup, seed: bigint, option
       if (result === null || typeof result !== "object" || Array.isArray(result)) throw new Error("远程 NPC 诊断响应必须是对象");
       const response = result as Record<string, unknown>;
       publisher.assertQueryCursor(cursor, response.generation, "远程 NPC 诊断响应属于已过期会话 generation");
-      const diagnostics = parseNpcDecisionDiagnostics(response.diagnostics);
+      const diagnostics = parseNpcDecisionDiagnostics(response.diagnostics, requireCatalogResolver());
       if (diagnostics.kind === "unsupported") throw new Error("远程服务端未提供 NPC 决策诊断数据");
       return diagnostics.records;
     },

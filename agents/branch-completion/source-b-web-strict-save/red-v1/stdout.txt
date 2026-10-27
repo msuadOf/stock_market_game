@@ -1,0 +1,161 @@
+✖ 真实Rust完整generated-company-state-registry.json对象/raw解析无损，只有一个公司权威tag (2.119263ms)
+✖ 真实Rust完整manual-company-state-registry.json对象/raw解析无损，只有一个公司权威tag (0.572837ms)
+✖ 真实Rust完整legacy-company-state.json对象/raw解析无损，只有一个公司权威tag (3.141344ms)
+✖ required单tag拒绝旧双源根字段、缺失/null/双tag/未知tag (0.717191ms)
+✖ setup模式与selected公司tag必须一致，不迁移旧源 (0.689161ms)
+✖ 真实REG SettlementDayMarket.binding五字段required且unknown逐层拒绝 (0.66863ms)
+✖ 公司状态全部真实非空结构拒绝未知字段，nullable必填不被默认掩盖 (0.769803ms)
+✖ rawJSON在覆盖前拒绝重复tag、转义后同键与REG binding重复键 (0.742882ms)
+✖ canonical整数字符串拒绝前导零/负零与unsafe裸数，保真实单位 (0.799144ms)
+ℹ tests 9
+ℹ suites 0
+ℹ pass 0
+ℹ fail 9
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 200.866721
+
+✖ failing tests:
+
+test at apps/web/src/save/schema/company/state.test.ts:10:44
+✖ 真实Rust完整generated-company-state-registry.json对象/raw解析无损，只有一个公司权威tag (2.119263ms)
+  Error [SaveSchemaError]: 存档 根节点.groups 是必填字段
+      at exact (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/primitives.ts:32:33)
+      at parseStrictSaveEnvelope (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/root.ts:69:3)
+      at parseSaveSlot (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/save-schema.ts:4:10)
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/state.test.ts:11:45)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at Test.start (node:internal/test_runner/test:1191:17)
+      at startSubtestAfterBootstrap (node:internal/test_runner/harness:385:17) {
+    path: '根节点.groups'
+  }
+
+test at apps/web/src/save/schema/company/state.test.ts:10:44
+✖ 真实Rust完整manual-company-state-registry.json对象/raw解析无损，只有一个公司权威tag (0.572837ms)
+  Error [SaveSchemaError]: 存档 根节点.groups 是必填字段
+      at exact (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/primitives.ts:32:33)
+      at parseStrictSaveEnvelope (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/root.ts:69:3)
+      at parseSaveSlot (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/save-schema.ts:4:10)
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/state.test.ts:11:45)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:911:18)
+      at Test.postRun (node:internal/test_runner/test:1465:19)
+      at Test.run (node:internal/test_runner/test:1390:12)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    path: '根节点.groups'
+  }
+
+test at apps/web/src/save/schema/company/state.test.ts:10:44
+✖ 真实Rust完整legacy-company-state.json对象/raw解析无损，只有一个公司权威tag (3.141344ms)
+  Error [SaveSchemaError]: 存档 根节点.groups 是必填字段
+      at exact (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/primitives.ts:32:33)
+      at parseStrictSaveEnvelope (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/root.ts:69:3)
+      at parseSaveSlot (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/save-schema.ts:4:10)
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/state.test.ts:11:45)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:911:18)
+      at Test.postRun (node:internal/test_runner/test:1465:19)
+      at Test.run (node:internal/test_runner/test:1390:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    path: '根节点.groups'
+  }
+
+test at apps/web/src/save/schema/company/state.test.ts:14:1
+✖ required单tag拒绝旧双源根字段、缺失/null/双tag/未知tag (0.717191ms)
+  Error [SaveSchemaError]: 存档 根节点.groups 是必填字段
+      at exact (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/primitives.ts:32:33)
+      at parseStrictSaveEnvelope (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/root.ts:69:3)
+      at parseSaveSlot (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/save-schema.ts:4:10)
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/state.test.ts:15:40)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:911:18)
+      at Test.postRun (node:internal/test_runner/test:1465:19)
+      at Test.run (node:internal/test_runner/test:1390:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    path: '根节点.groups'
+  }
+
+test at apps/web/src/save/schema/company/state.test.ts:20:1
+✖ setup模式与selected公司tag必须一致，不迁移旧源 (0.689161ms)
+  Error [SaveSchemaError]: 存档 根节点.groups 是必填字段
+      at exact (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/primitives.ts:32:33)
+      at parseStrictSaveEnvelope (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/root.ts:69:3)
+      at parseSaveSlot (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/save-schema.ts:4:10)
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/state.test.ts:21:41)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:911:18)
+      at Test.postRun (node:internal/test_runner/test:1465:19)
+      at Test.run (node:internal/test_runner/test:1390:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    path: '根节点.groups'
+  }
+
+test at apps/web/src/save/schema/company/state.test.ts:25:1
+✖ 真实REG SettlementDayMarket.binding五字段required且unknown逐层拒绝 (0.66863ms)
+  Error [SaveSchemaError]: 存档 根节点.groups 是必填字段
+      at exact (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/primitives.ts:32:33)
+      at parseStrictSaveEnvelope (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/root.ts:69:3)
+      at parseSaveSlot (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/save-schema.ts:4:10)
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/state.test.ts:26:39)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:911:18)
+      at Test.postRun (node:internal/test_runner/test:1465:19)
+      at Test.run (node:internal/test_runner/test:1390:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    path: '根节点.groups'
+  }
+
+test at apps/web/src/save/schema/company/state.test.ts:30:1
+✖ 公司状态全部真实非空结构拒绝未知字段，nullable必填不被默认掩盖 (0.769803ms)
+  Error [SaveSchemaError]: 存档 根节点.groups 是必填字段
+      at exact (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/primitives.ts:32:33)
+      at parseStrictSaveEnvelope (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/root.ts:69:3)
+      at parseSaveSlot (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/save-schema.ts:4:10)
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/state.test.ts:31:39)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:911:18)
+      at Test.postRun (node:internal/test_runner/test:1465:19)
+      at Test.run (node:internal/test_runner/test:1390:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    path: '根节点.groups'
+  }
+
+test at apps/web/src/save/schema/company/state.test.ts:37:1
+✖ rawJSON在覆盖前拒绝重复tag、转义后同键与REG binding重复键 (0.742882ms)
+  Error [SaveSchemaError]: 存档 根节点.groups 是必填字段
+      at exact (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/primitives.ts:32:33)
+      at parseStrictSaveEnvelope (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/root.ts:69:3)
+      at parseSaveSlot (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/save-schema.ts:4:10)
+      at parseSaveJson (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/save-schema.ts:9:12)
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/state.test.ts:38:19)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:911:18)
+      at Test.postRun (node:internal/test_runner/test:1465:19)
+      at Test.run (node:internal/test_runner/test:1390:12) {
+    path: '根节点.groups'
+  }
+
+test at apps/web/src/save/schema/company/state.test.ts:42:1
+✖ canonical整数字符串拒绝前导零/负零与unsafe裸数，保真实单位 (0.799144ms)
+  Error [SaveSchemaError]: 存档 根节点.groups 是必填字段
+      at exact (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/primitives.ts:32:33)
+      at parseStrictSaveEnvelope (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/root.ts:69:3)
+      at parseSaveSlot (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/save-schema.ts:4:10)
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/state.test.ts:43:39)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:911:18)
+      at Test.postRun (node:internal/test_runner/test:1465:19)
+      at Test.run (node:internal/test_runner/test:1390:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    path: '根节点.groups'
+  }

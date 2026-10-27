@@ -1,0 +1,151 @@
+✖ 能力面精确保留股数、不可用原因、五类readiness与实际settlement位 (2.606456ms)
+✖ 能力面拒绝重复readiness、缺多键、空原因、未知enum及金额越界 (0.79485ms)
+✖ 配股query使用数值CompanyId、字符串StockCode与显式nullable (0.926554ms)
+✖ 期间解释遵守i32/u8/会计i128值域并保留null与大额 (0.499413ms)
+✖ 认购排队与拒绝均校验显式非0owner，不混淆受理与支付 (2.604416ms)
+✖ 偏好拒绝台账使用u32 CompanyId与现有两类proposal (0.662867ms)
+✖ 本人简税回执无损校验，支持非0owner与0额回执 (2.637466ms)
+✔ 税状态三模式与各身份保留，不猜测未知状态或证券 (0.590065ms)
+✖ 未清税额保留约简非负分数与无collection事实，真实回执保持历史值 (0.710468ms)
+ℹ tests 9
+ℹ suites 0
+ℹ pass 1
+ℹ fail 8
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 131.129826
+
+✖ failing tests:
+
+test at apps/web/src/host/company-contract-views.test.ts:10:1
+✖ 能力面精确保留股数、不可用原因、五类readiness与实际settlement位 (2.606456ms)
+  Error: company_capabilities.unsupported_reason 必须显式说明
+      at parseCompanyCapabilities (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-contract-parsers/apps/web/src/host/company-contract-views.ts:129:41)
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-contract-parsers/apps/web/src/host/company-contract-views.test.ts:12:20)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at Test.start (node:internal/test_runner/test:1191:17)
+      at startSubtestAfterBootstrap (node:internal/test_runner/harness:385:17)
+
+test at apps/web/src/host/company-contract-views.test.ts:14:1
+✖ 能力面拒绝重复readiness、缺多键、空原因、未知enum及金额越界 (0.79485ms)
+  AssertionError [ERR_ASSERTION]: Missing expected exception.
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-contract-parsers/apps/web/src/host/company-contract-views.test.ts:18:36)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:911:18)
+      at Test.postRun (node:internal/test_runner/test:1465:19)
+      at Test.run (node:internal/test_runner/test:1390:12)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: undefined,
+    operator: 'throws',
+    diff: 'simple'
+  }
+
+test at apps/web/src/host/company-contract-views.test.ts:20:1
+✖ 配股query使用数值CompanyId、字符串StockCode与显式nullable (0.926554ms)
+  AssertionError [ERR_ASSERTION]: Missing expected exception.
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-contract-parsers/apps/web/src/host/company-contract-views.test.ts:22:452)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:911:18)
+      at Test.postRun (node:internal/test_runner/test:1465:19)
+      at Test.run (node:internal/test_runner/test:1390:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: undefined,
+    operator: 'throws',
+    diff: 'simple'
+  }
+
+test at apps/web/src/host/company-contract-views.test.ts:25:1
+✖ 期间解释遵守i32/u8/会计i128值域并保留null与大额 (0.499413ms)
+  AssertionError [ERR_ASSERTION]: Missing expected exception.
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-contract-parsers/apps/web/src/host/company-contract-views.test.ts:27:471)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:911:18)
+      at Test.postRun (node:internal/test_runner/test:1465:19)
+      at Test.run (node:internal/test_runner/test:1390:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: undefined,
+    operator: 'throws',
+    diff: 'simple'
+  }
+
+test at apps/web/src/host/corporate-action-views.test.ts:6:1
+✖ 认购排队与拒绝均校验显式非0owner，不混淆受理与支付 (2.604416ms)
+  AssertionError [ERR_ASSERTION]: Missing expected exception.
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-contract-parsers/apps/web/src/host/corporate-action-views.test.ts:8:236)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at Test.start (node:internal/test_runner/test:1191:17)
+      at startSubtestAfterBootstrap (node:internal/test_runner/harness:385:17) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: undefined,
+    operator: 'throws',
+    diff: 'simple'
+  }
+
+test at apps/web/src/host/corporate-action-views.test.ts:12:1
+✖ 偏好拒绝台账使用u32 CompanyId与现有两类proposal (0.662867ms)
+  AssertionError [ERR_ASSERTION]: Missing expected exception.
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-contract-parsers/apps/web/src/host/corporate-action-views.test.ts:16:175)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:911:18)
+      at Test.postRun (node:internal/test_runner/test:1465:19)
+      at Test.run (node:internal/test_runner/test:1390:12)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: undefined,
+    operator: 'throws',
+    diff: 'simple'
+  }
+
+test at apps/web/src/host/dividend-tax.test.ts:7:1
+✖ 本人简税回执无损校验，支持非0owner与0额回执 (2.637466ms)
+  AssertionError [ERR_ASSERTION]: Missing expected exception.
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-contract-parsers/apps/web/src/host/dividend-tax.test.ts:10:233)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at Test.start (node:internal/test_runner/test:1191:17)
+      at startSubtestAfterBootstrap (node:internal/test_runner/harness:385:17) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: undefined,
+    operator: 'throws',
+    diff: 'simple'
+  }
+
+test at apps/web/src/host/dividend-tax.test.ts:18:1
+✖ 未清税额保留约简非负分数与无collection事实，真实回执保持历史值 (0.710468ms)
+  AssertionError [ERR_ASSERTION]: Missing expected exception.
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-contract-parsers/apps/web/src/host/dividend-tax.test.ts:21:612)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:911:18)
+      at Test.postRun (node:internal/test_runner/test:1465:19)
+      at Test.run (node:internal/test_runner/test:1390:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: undefined,
+    operator: 'throws',
+    diff: 'simple'
+  }

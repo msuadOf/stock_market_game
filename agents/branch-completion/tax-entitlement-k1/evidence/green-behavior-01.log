@@ -1,0 +1,17 @@
+
+running 12 tests
+test company::cash_dividend_tax::entitlement_units::tests::complete_source_partition_and_context_are_required ... ok
+test company::cash_dividend_tax::entitlement_units::tests::each_registration_keeps_its_own_unit_basis_and_actual_payment ... ok
+test company::cash_dividend_tax::entitlement_units::tests::fractional_internal_target_spans_are_not_floored_into_lost_rights ... ok
+test company::cash_dividend_tax::entitlement_units::tests::duplicate_identical_transition_is_idempotent_but_conflict_is_explicit ... ok
+test company::cash_dividend_tax::entitlement_units::tests::mixed_holding_periods_follow_explicit_target_fragments ... ok
+test company::cash_dividend_tax::entitlement_units::tests::overlapping_target_is_rejected_even_when_both_totals_match ... ok
+test company::cash_dividend_tax::entitlement_units::tests::partial_disposal_then_second_transition_preserves_remaining_original_span ... ok
+test company::cash_dividend_tax::entitlement_units::tests::real_cash_book_consolidation_must_assess_original_hundred_units ... ok
+test company::cash_dividend_tax::entitlement_units::tests::partial_disposals_consume_twenty_then_eighty_original_units ... ok
+test company::cash_dividend_tax::entitlement_units::tests::transition_must_match_real_operation_snapshot_and_unit_predecessor ... ok
+test company::cash_dividend_tax::entitlement_units::tests::retired_original_rights_are_not_assigned_to_later_new_purchase ... ok
+test company::cash_dividend_tax::entitlement_units::tests::strict_lineage_round_trip_replays_same_assessment ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 55 filtered out; finished in 0.00s
+

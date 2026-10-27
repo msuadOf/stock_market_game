@@ -1,6 +1,6 @@
 import type { NpcAttentionState } from "../../types/generated/NpcAttentionState"
 import type { NpcInformationCadence } from "../../types/generated/NpcInformationCadence"
-import { decimal, exact, integer, record, SaveSchemaError } from "./primitives.ts"
+import { decimal, exact, finite, integer, record, SaveSchemaError } from "./primitives.ts"
 import { parseCivilInstant } from "./personal/experience.ts"
 
 export function parseInformationCadence(value: unknown, path: string): NpcInformationCadence {
@@ -28,8 +28,8 @@ export function parseInformationCadence(value: unknown, path: string): NpcInform
 export function parseNpcAttention(value: unknown, path: string): NpcAttentionState {
   const attention = record(value, path)
   exact(attention, ["base_probability", "next_attention_candidate_tick", "rng_state", "information_cadence", "next_information_check"], path)
-  const probability = attention.base_probability
-  if (typeof probability !== "number" || !Number.isFinite(probability) || probability <= 0 || probability > 1) throw new SaveSchemaError(`${path}.base_probability`, "必须为有限(0,1]概率")
+  const probability = finite(attention.base_probability, `${path}.base_probability`)
+  if (probability <= 0 || probability > 1) throw new SaveSchemaError(`${path}.base_probability`, "必须为有限(0,1]概率")
   return {
     base_probability: probability,
     next_attention_candidate_tick: decimal(attention.next_attention_candidate_tick, `${path}.next_attention_candidate_tick`),

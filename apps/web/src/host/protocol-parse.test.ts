@@ -1,3 +1,4 @@
+import { defaultCatalogFixture } from "./catalog-test-fixture.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { parseNormalizedEngineUpdate } from "./protocol/index.ts";
@@ -47,7 +48,7 @@ test("Given WASM Map fields, when parsed, then nested maps normalize at the boun
     },
   };
 
-  const normalized = parseNormalizedEngineUpdate(withMaps);
+  const normalized = parseNormalizedEngineUpdate(withMaps, defaultCatalogFixture);
 
   assert.equal(normalized.kind, "tick-batch");
   assert.equal(normalized.frames[0]?.continuousPoints["000812"]?.tick, 1);
@@ -69,7 +70,7 @@ test("Given a structured-cloned WASM Snapshot, Map-backed markets and accounts s
     active_daily_candles: new Map(),
   };
 
-  const parsed = parseProtocolSnapshot(withMaps);
+  const parsed = parseProtocolSnapshot(withMaps, "test.fixture", defaultCatalogFixture);
 
   assert.equal(parsed.accounts["0"]?.cash, "999890000");
   assert.equal(parsed.accounts["0"]?.reserved_cash, "110000");

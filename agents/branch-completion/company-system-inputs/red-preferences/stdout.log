@@ -1,0 +1,39 @@
+node:internal/modules/package_json_reader:301
+  throw new ERR_MODULE_NOT_FOUND(packageName, fileURLToPath(base), null);
+        ^
+
+Error [ERR_MODULE_NOT_FOUND]: Cannot find package 'vite' imported from /data1/baiyifan/workplace/stock_market_game/.worktree/company-system-inputs/apps/web/src/components/company/CompanyPreferencesInput.test.ts
+    at Object.getPackageJSONURL (node:internal/modules/package_json_reader:301:9)
+    at packageResolve (node:internal/modules/esm/resolve:764:81)
+    at moduleResolve (node:internal/modules/esm/resolve:855:18)
+    at defaultResolve (node:internal/modules/esm/resolve:988:11)
+    at #cachedDefaultResolve (node:internal/modules/esm/loader:697:20)
+    at #resolveAndMaybeBlockOnLoaderThread (node:internal/modules/esm/loader:714:38)
+    at ModuleLoader.resolveSync (node:internal/modules/esm/loader:746:52)
+    at #resolve (node:internal/modules/esm/loader:679:17)
+    at ModuleLoader.getOrCreateModuleJob (node:internal/modules/esm/loader:599:35)
+    at ModuleJob.syncLink (node:internal/modules/esm/module_job:160:33) {
+  code: 'ERR_MODULE_NOT_FOUND'
+}
+
+Node.js v25.8.2
+✖ apps/web/src/components/company/CompanyPreferencesInput.test.ts (186.194165ms)
+▶ 新局 seed 熵边界
+  ✔ 保留完整 u64 精度并允许固定熵注入 (1.257107ms)
+  ✔ 每次新局重新读取熵，不复用固定 seed (0.198459ms)
+  ✔ 熵能力缺失或调用失败时显式报错，不降级到固定 seed (0.66579ms)
+✔ 新局 seed 熵边界 (3.849983ms)
+ℹ tests 4
+ℹ suites 1
+ℹ pass 3
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 215.624419
+
+✖ failing tests:
+
+test at apps/web/src/components/company/CompanyPreferencesInput.test.ts:1:1
+✖ apps/web/src/components/company/CompanyPreferencesInput.test.ts (186.194165ms)
+  'test failed'

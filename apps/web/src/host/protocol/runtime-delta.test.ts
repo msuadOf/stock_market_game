@@ -1,3 +1,4 @@
+import { catalogFixtureForSnapshot, defaultCatalogFixture } from "../catalog-test-fixture.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createProtocolState, ProtocolError } from "./types.ts";
@@ -15,7 +16,7 @@ const order = { id: 1, code: 0, side: "Buy" as const, price: "1000", remainingQt
 const codedOrder = { ...order, code: "000812" };
 
 function initial() {
-  return createProtocolState(parseProtocolSnapshot({ ...snapshot(0, 0), accounts: { "0": account } }), "1");
+  return createProtocolState(parseProtocolSnapshot({ ...snapshot(0, 0), accounts: { "0": account } }, "test.fixture", defaultCatalogFixture), "1", catalogFixtureForSnapshot(parseProtocolSnapshot({ ...snapshot(0, 0), accounts: { "0": account } }, "test.fixture", defaultCatalogFixture)));
 }
 
 type DeltaWire = {
@@ -53,7 +54,7 @@ test("runtime delta consumes account reservations, T+1, clock and player orders 
   assert.equal(reduction.update.kind, "tick-batch");
   assert.deepEqual(Reflect.get(reduction.update, "runtimeDelta"), {
     ...delta(), working_orders: { reset: true, upserts: [codedOrder], removed: [] },
-    accounts: parseProtocolSnapshot({ ...snapshot(0, 0), accounts: delta().accounts }).accounts,
+    accounts: parseProtocolSnapshot({ ...snapshot(0, 0), accounts: delta().accounts }, "test.fixture", defaultCatalogFixture).accounts,
   });
 });
 
@@ -82,13 +83,13 @@ test("delta exact retry is effect-free but mutation at the accepted cursor is re
 });
 
 test("full-snapshot batches and complete baselines remain supported alongside explicit delta batches", () => {
-  const current = parseProtocolSnapshot(snapshot(1, 1));
+  const current = parseProtocolSnapshot(snapshot(1, 1), "test.fixture", defaultCatalogFixture);
   const parsed = parseEngineUpdate({ TickBatch: { frames: [frame(1, 0, [0])], runtime_snapshot: current } });
   assert.equal("TickBatch" in parsed && parsed.TickBatch.runtime_snapshot?.tick, 1);
   let reduction: ReturnType<typeof reduceEngineUpdate> | undefined;
   assert.doesNotThrow(() => { reduction = reduceEngineUpdate(initial(), "1", batch()); });
   assert.ok(reduction);
-  const newBaseline = createProtocolState(current, "2");
+  const newBaseline = createProtocolState(current, "2", catalogFixtureForSnapshot(current));
   assert.deepEqual(Reflect.get(newBaseline, "playerWorkingOrders"), {});
   assert.throws(() => reduceEngineUpdate(newBaseline, "1", batch()), { code: "PROTOCOL_CURSOR" });
 });

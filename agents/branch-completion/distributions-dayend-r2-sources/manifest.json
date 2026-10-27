@@ -1,0 +1,17 @@
+{
+  "checked_on": "2026-10-26",
+  "sources": [
+    {
+      "name": "tax-2012-85.html",
+      "url": "https://fgk.chinatax.gov.cn/zcfgk/c102416/c5204415/content.html",
+      "bytes": 41373,
+      "sha256": "5cce33fece6d57c9de662086927a822092b66e0f92cfeec23e59e469e16d04e8"
+    },
+    {
+      "name": "tax-2015-101.html",
+      "url": "https://fgk.chinatax.gov.cn/zcfgk/c102416/c5203902/content.html",
+      "bytes": 38314,
+      "sha256": "9eadaaa4693282e4a9b65ca5f02b0b2ab4720e6b0cfe6da97be4c1f1faa9845b"
+    }
+  ]
+}

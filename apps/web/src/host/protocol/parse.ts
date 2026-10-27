@@ -1,3 +1,4 @@
+import type { CatalogResolver } from "../catalog-resolver.ts";
 import type { AuctionPoint } from "../../types/generated/AuctionPoint.ts";
 import type { ContinuousPoint } from "../../types/generated/ContinuousPoint.ts";
 import type { EntityTag } from "../../types/generated/EntityTag.ts";
@@ -177,8 +178,8 @@ export function parseSnapshotRaw(value: unknown, path = "Snapshot"): WireSnapsho
 }
 
 /** 基线快照摄入：解析原始数值形态后立即翻译为代码串键（ADR 0041）。 */
-export function parseProtocolSnapshot(value: unknown, path = "Snapshot"): CodedSnapshot {
-  const snapshot = translateSnapshot(parseSnapshotRaw(value, path), path);
+export function parseProtocolSnapshot(value: unknown, path: string, identity: CatalogResolver): CodedSnapshot {
+  const snapshot = translateSnapshot(parseSnapshotRaw(value, path), path, identity);
   for (const [accountId, account] of Object.entries(snapshot.accounts)) {
     for (const code of Object.keys(account.positions)) {
       if (!Object.hasOwn(snapshot.markets, code)) {

@@ -1,0 +1,2344 @@
+{
+  "status": "writer 验收已通过；等待未实施 reviewer 最终裁决",
+  "production_head": "c8e9a4f51dfb9021cf95b6da8f7f52cfbcf20957",
+  "root_tree": "93edf601a8f1232b5cca376815413c746e8a8e8a",
+  "web_tree": "a1de954719c5caa214e4e64f9c2f21bb11c9d8ca",
+  "rust_build_head": "1579b8b320a93188514672196d99e94f33de0f3a",
+  "rust_build_source_digest": "6c74fe4115e2575fcd666197ce7a96fa696eae13314c64a18574bf9282f1a634",
+  "final_source_digest": "41004d4adb5ee57e20cf22b9e75c07e0ce54dd37f84da660682b837520f808bb",
+  "rust_build_input_files": 1739,
+  "final_input_files": 1741,
+  "only_source_delta_after_rust_build": [
+    "apps/web/src/save/schema/company/monthly-origin.test.ts",
+    "apps/web/src/save/schema/company/reports.ts",
+    "apps/web/src/save/schema/monthly-report-schedule.ts",
+    "apps/web/src/save/schema/setup-company-options.ts"
+  ],
+  "rust_inputs_unchanged": true,
+  "source_before_after_build_equal": true,
+  "working_tree": "",
+  "web_case_count": 222,
+  "web_file_count": 36,
+  "chain_exactly_once": {
+    "cases": 71,
+    "slices": 9,
+    "verified": true
+  },
+  "unit_case_invocations_with_repeats": 215,
+  "unit_distinct_cases": 210,
+  "receipts": [
+    {
+      "mode": "base",
+      "head": "c8e9a4f51dfb9021cf95b6da8f7f52cfbcf20957",
+      "parallel_commands": 3,
+      "wall_ms": 5486,
+      "results": [
+        {
+          "label": "unit-identity-final",
+          "argv": [
+            "node",
+            "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined/scripts/run-with-deadline.mjs",
+            "10000",
+            "--",
+            "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/target/debug/deps/engine-3eb2aa70a85e274e",
+            "plan_identity",
+            "--test-threads=8"
+          ],
+          "cwd": "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined",
+          "exit": 0,
+          "wall_ms": 2327,
+          "deadline_ms": 10000,
+          "summary": [
+            "test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 2399 filtered out; finished in 2.19s"
+          ],
+          "stdout": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/unit-identity-final.stdout",
+          "stderr": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/unit-identity-final.stderr"
+        },
+        {
+          "label": "purse-final",
+          "argv": [
+            "node",
+            "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined/scripts/run-with-deadline.mjs",
+            "10000",
+            "--",
+            "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/target/debug/deps/engine-3eb2aa70a85e274e",
+            "runtime::group::pending_cash_tests::",
+            "--test-threads=8"
+          ],
+          "cwd": "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined",
+          "exit": 0,
+          "wall_ms": 816,
+          "deadline_ms": 10000,
+          "summary": [
+            "test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 2409 filtered out; finished in 0.68s"
+          ],
+          "stdout": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/purse-final.stdout",
+          "stderr": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/purse-final.stderr"
+        },
+        {
+          "label": "core-identity-final",
+          "argv": [
+            "node",
+            "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined/scripts/run-with-deadline.mjs",
+            "10000",
+            "--",
+            "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/target/debug/deps/plan_identity-4c6cc6b4c30fbbdd",
+            "--skip",
+            "export_bindings_plan_identity",
+            "--test-threads=8"
+          ],
+          "cwd": "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined",
+          "exit": 0,
+          "wall_ms": 123,
+          "deadline_ms": 10000,
+          "summary": [
+            "test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s"
+          ],
+          "stdout": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/core-identity-final.stdout",
+          "stderr": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/core-identity-final.stderr"
+        },
+        {
+          "label": "behavior-final",
+          "argv": [
+            "node",
+            "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined/scripts/run-with-deadline.mjs",
+            "10000",
+            "--",
+            "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/target/debug/deps/plan_identity_behavior-4ba0cb78c616347d",
+            "--test-threads=8"
+          ],
+          "cwd": "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined",
+          "exit": 0,
+          "wall_ms": 114,
+          "deadline_ms": 10000,
+          "summary": [
+            "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+          ],
+          "stdout": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/behavior-final.stdout",
+          "stderr": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/behavior-final.stderr"
+        },
+        {
+          "label": "allocation-final",
+          "argv": [
+            "node",
+            "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined/scripts/run-with-deadline.mjs",
+            "10000",
+            "--",
+            "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/target/debug/deps/plan_allocation-66dad3f56f8ab836",
+            "--test-threads=8"
+          ],
+          "cwd": "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined",
+          "exit": 0,
+          "wall_ms": 112,
+          "deadline_ms": 10000,
+          "summary": [
+            "test result: ok. 28 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+          ],
+          "stdout": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/allocation-final.stdout",
+          "stderr": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/allocation-final.stderr"
+        },
+        {
+          "label": "save-contract-final",
+          "argv": [
+            "node",
+            "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined/scripts/run-with-deadline.mjs",
+            "10000",
+            "--",
+            "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/target/debug/deps/save_contract-eca1eeae557b8b6d",
+            "restore_guards",
+            "--test-threads=8"
+          ],
+          "cwd": "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined",
+          "exit": 0,
+          "wall_ms": 5131,
+          "deadline_ms": 10000,
+          "summary": [
+            "test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 33 filtered out; finished in 5.01s"
+          ],
+          "stdout": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/save-contract-final.stdout",
+          "stderr": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/save-contract-final.stderr"
+        }
+      ]
+    },
+    {
+      "mode": "extra",
+      "head": "c8e9a4f51dfb9021cf95b6da8f7f52cfbcf20957",
+      "parallel_commands": 3,
+      "wall_ms": 2358,
+      "results": [
+        {
+          "label": "roster-consumers",
+          "argv": [
+            "node",
+            "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined/scripts/run-with-deadline.mjs",
+            "10000",
+            "--",
+            "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/target/debug/deps/engine-3eb2aa70a85e274e",
+            "runtime::world::group_roster_consumer_tests::",
+            "--test-threads=8"
+          ],
+          "cwd": "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined",
+          "exit": 0,
+          "wall_ms": 983,
+          "deadline_ms": 10000,
+          "summary": [
+            "test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 2408 filtered out; finished in 0.85s"
+          ],
+          "stdout": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/roster-consumers.stdout",
+          "stderr": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/roster-consumers.stderr"
+        },
+        {
+          "label": "producer-v3-replay",
+          "argv": [
+            "node",
+            "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined/scripts/run-with-deadline.mjs",
+            "10000",
+            "--",
+            "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/combined-producer-v3",
+            "produce",
+            "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/rust-full-save-v3-replay.json"
+          ],
+          "cwd": "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined",
+          "exit": 0,
+          "wall_ms": 2352,
+          "deadline_ms": 10000,
+          "summary": [],
+          "stdout": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/producer-v3-replay.stdout",
+          "stderr": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/producer-v3-replay.stderr"
+        }
+      ]
+    },
+    {
+      "mode": "journey",
+      "head": "c8e9a4f51dfb9021cf95b6da8f7f52cfbcf20957",
+      "parallel_commands": 3,
+      "wall_ms": 573,
+      "results": [
+        {
+          "label": "web-roundtrip-receipted",
+          "argv": [
+            "node",
+            "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined/scripts/run-with-deadline.mjs",
+            "10000",
+            "--",
+            "node",
+            "--experimental-strip-types",
+            "/data1/baiyifan/workplace/stock_market_game/agents/branch-completion/plan-identity-combined-web-roundtrip.mjs",
+            "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined",
+            "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/rust-full-save-v3.json",
+            "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/web-full-save-v3-receipted.json"
+          ],
+          "cwd": "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined",
+          "exit": 0,
+          "wall_ms": 569,
+          "deadline_ms": 10000,
+          "summary": [],
+          "stdout": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/web-roundtrip-receipted.stdout",
+          "stderr": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/web-roundtrip-receipted.stderr"
+        }
+      ]
+    },
+    {
+      "mode": "restore",
+      "head": "c8e9a4f51dfb9021cf95b6da8f7f52cfbcf20957",
+      "parallel_commands": 3,
+      "wall_ms": 1550,
+      "results": [
+        {
+          "label": "rust-roundtrip-receipted",
+          "argv": [
+            "node",
+            "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined/scripts/run-with-deadline.mjs",
+            "10000",
+            "--",
+            "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/combined-producer-v3",
+            "restore",
+            "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/web-full-save-v3-receipted.json"
+          ],
+          "cwd": "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined",
+          "exit": 0,
+          "wall_ms": 1544,
+          "deadline_ms": 10000,
+          "summary": [],
+          "stdout": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/rust-roundtrip-receipted.stdout",
+          "stderr": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/rust-roundtrip-receipted.stderr"
+        }
+      ]
+    },
+    {
+      "mode": "rust",
+      "head": "c8e9a4f51dfb9021cf95b6da8f7f52cfbcf20957",
+      "parallel_commands": 12,
+      "wall_ms": 6126,
+      "results": [
+        {
+          "label": "roster-0",
+          "argv": [
+            "node",
+            "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined/scripts/run-with-deadline.mjs",
+            "10000",
+            "--",
+            "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/target/debug/deps/engine-3eb2aa70a85e274e",
+            "--exact",
+            "--test-threads=4",
+            "runtime::group::roster_offset_tests::fill_plan_progress_resolves_owner_within_group_roster",
+            "runtime::group::roster_offset_tests::roster_chain_params_yields_this_groups_params",
+            "runtime::group::roster_offset_tests::roster_slice_empty_for_group_beyond_roster",
+            "runtime::group::roster_offset_tests::roster_slice_starts_at_group_offset_not_zero",
+            "runtime::group::roster_offset_tests::roster_slice_truncates_tail_padding_instead_of_panicking",
+            "runtime::group::roster_offset_tests::roster_slice_yields_this_groups_segment"
+          ],
+          "cwd": "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined",
+          "exit": 0,
+          "wall_ms": 127,
+          "deadline_ms": 10000,
+          "summary": [
+            "test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 2410 filtered out; finished in 0.00s"
+          ],
+          "stdout": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/roster-0.stdout",
+          "stderr": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/roster-0.stderr"
+        },
+        {
+          "label": "plan-owner-0",
+          "argv": [
+            "node",
+            "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined/scripts/run-with-deadline.mjs",
+            "10000",
+            "--",
+            "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/target/debug/deps/engine-3eb2aa70a85e274e",
+            "--exact",
+            "--test-threads=4",
+            "session::pipeline::plan_owner_tests::auction_invalid_transitions_preserve_candidate_parent",
+            "session::pipeline::plan_owner_tests::closing_auction_never_duplicates_a_live_continuous_child_and_expiry_stops_intents",
+            "session::pipeline::plan_owner_tests::confirmed_cancel_clears_the_plan_child_and_allows_resubmission",
+            "session::pipeline::plan_owner_tests::cross_stock_plans_keep_independent_children_and_escrow_after_a_cancel",
+            "session::pipeline::plan_owner_tests::only_matching_settled_child_advances_and_completion_retains_linked_parent",
+            "session::pipeline::plan_owner_tests::ordinary_adoption_within_remaining_passes",
+            "session::pipeline::plan_owner_tests::parent_buy_does_not_overbuy_when_an_odd_lot_partial_fill_leaves_a_sub_lot_target",
+            "session::pipeline::plan_owner_tests::save_restore_never_resurrects_a_canceled_plan_child"
+          ],
+          "cwd": "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined",
+          "exit": 0,
+          "wall_ms": 848,
+          "deadline_ms": 10000,
+          "summary": [
+            "test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 2408 filtered out; finished in 0.72s"
+          ],
+          "stdout": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/plan-owner-0.stdout",
+          "stderr": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/plan-owner-0.stderr"
+        },
+        {
+          "label": "plan-owner-1",
+          "argv": [
+            "node",
+            "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined/scripts/run-with-deadline.mjs",
+            "10000",
+            "--",
+            "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/target/debug/deps/engine-3eb2aa70a85e274e",
+            "--exact",
+            "--test-threads=4",
+            "session::pipeline::plan_owner_tests::closing_auction_does_not_duplicate_a_parent_child_still_resting_in_continuous_book",
+            "session::pipeline::plan_owner_tests::closing_auction_restores_a_parent_child_that_remains_in_continuous_book",
+            "session::pipeline::plan_owner_tests::continuous_assert_and_auction_checked_fill_keep_distinct_failure_boundaries",
+            "session::pipeline::plan_owner_tests::failed_candidate_rolls_back_adoption_without_residue",
+            "session::pipeline::plan_owner_tests::ordinary_adoption_rejects_exceeding_remaining_quantity",
+            "session::pipeline::plan_owner_tests::ordinary_quotes_reach_authority_with_and_without_old_owner",
+            "session::pipeline::plan_owner_tests::same_side_reprice_replaces_the_leg_and_keeps_progress_and_target",
+            "session::pipeline::plan_owner_tests::unlinked_parent_reverse_rebuilds_execution_from_the_new_target"
+          ],
+          "cwd": "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined",
+          "exit": 0,
+          "wall_ms": 691,
+          "deadline_ms": 10000,
+          "summary": [
+            "test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 2408 filtered out; finished in 0.56s"
+          ],
+          "stdout": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/plan-owner-1.stdout",
+          "stderr": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/plan-owner-1.stderr"
+        },
+        {
+          "label": "continuation-0",
+          "argv": [
+            "node",
+            "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined/scripts/run-with-deadline.mjs",
+            "10000",
+            "--",
+            "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/target/debug/deps/engine-3eb2aa70a85e274e",
+            "--exact",
+            "--test-threads=4",
+            "session::plan_execution::continuation_tests::a_new_plan_submit_keeps_parent_private_until_the_stock_accepts_it",
+            "session::plan_execution::continuation_tests::an_adoption_decision_cannot_install_a_parent_after_its_order_disappears",
+            "session::plan_execution::continuation_tests::completed_plan_reports_a_stale_submit_without_reopening_it",
+            "session::plan_execution::continuation_tests::owner_batch_installs_nothing_when_a_later_fact_fails",
+            "session::plan_execution::continuation_tests::owner_rejects_fact_for_an_unknown_plan",
+            "session::plan_execution::continuation_tests::plan_working_orders_reads_only_the_target_stock_and_account",
+            "session::plan_execution::continuation_tests::restructure_rechecks_partial_fill_before_applying_smaller_target"
+          ],
+          "cwd": "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined",
+          "exit": 0,
+          "wall_ms": 637,
+          "deadline_ms": 10000,
+          "summary": [
+            "test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 2409 filtered out; finished in 0.52s"
+          ],
+          "stdout": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/continuation-0.stdout",
+          "stderr": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/continuation-0.stderr"
+        },
+        {
+          "label": "continuation-1",
+          "argv": [
+            "node",
+            "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined/scripts/run-with-deadline.mjs",
+            "10000",
+            "--",
+            "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/target/debug/deps/engine-3eb2aa70a85e274e",
+            "--exact",
+            "--test-threads=4",
+            "session::plan_execution::continuation_tests::adopting_an_existing_order_is_decided_without_writing_plan_state",
+            "session::plan_execution::continuation_tests::completed_child_makes_cancel_failure_a_business_report",
+            "session::plan_execution::continuation_tests::filled_child_can_reject_cancellation_while_its_plan_remains_active",
+            "session::plan_execution::continuation_tests::owner_consumes_completion_facts_and_clears_the_execution_leg",
+            "session::plan_execution::continuation_tests::partly_filled_child_supersedes_a_stale_submit_before_quantity_validation",
+            "session::plan_execution::continuation_tests::replace_rechecks_partial_fill_after_canceling_the_old_child",
+            "session::plan_execution::continuation_tests::stale_submit_with_an_active_child_waits_for_reconsideration"
+          ],
+          "cwd": "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined",
+          "exit": 0,
+          "wall_ms": 509,
+          "deadline_ms": 10000,
+          "summary": [
+            "test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 2409 filtered out; finished in 0.39s"
+          ],
+          "stdout": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/continuation-1.stdout",
+          "stderr": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/continuation-1.stderr"
+        },
+        {
+          "label": "knife5b-0",
+          "argv": [
+            "node",
+            "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined/scripts/run-with-deadline.mjs",
+            "10000",
+            "--",
+            "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/target/debug/deps/engine-3eb2aa70a85e274e",
+            "--exact",
+            "--test-threads=4",
+            "runtime::drive_tests::knife5b_empty_group_book_keeps_session_mirror_on_clear",
+            "runtime::drive_tests::knife5b_plans_echo_gate_returns_empty_when_plan_book_unchanged"
+          ],
+          "cwd": "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined",
+          "exit": 0,
+          "wall_ms": 1566,
+          "deadline_ms": 10000,
+          "summary": [
+            "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 2414 filtered out; finished in 1.44s"
+          ],
+          "stdout": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/knife5b-0.stdout",
+          "stderr": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/knife5b-0.stderr"
+        },
+        {
+          "label": "chain-0",
+          "argv": [
+            "node",
+            "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined/scripts/run-with-deadline.mjs",
+            "10000",
+            "--",
+            "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/target/debug/deps/engine-3eb2aa70a85e274e",
+            "--exact",
+            "--test-threads=4",
+            "session::decision_chain::chain_restructure_tests::active_trader_creates_only_a_same_day_plan_after_the_opening_auction",
+            "session::decision_chain::chain_restructure_tests::full_sell_plan_exits_the_available_odd_lot_in_one_order",
+            "session::decision_chain::chain_restructure_tests::institution_existing_reduction_uses_its_own_observed_drawdown",
+            "session::decision_chain::chain_restructure_tests::institution_risk_pressure_cancels_buy_and_recovers_only_after_own_review",
+            "session::decision_chain::chain_restructure_tests::partial_sell_plan_does_not_split_or_include_the_odd_lot_remainder",
+            "session::decision_chain::chain_restructure_tests::restructure_rejection_preserves_old_plan_parent_order_and_reservation",
+            "session::decision_chain::chain_restructure_tests::sub_board_lot_buy_strategy_size_has_no_routable_child",
+            "session::decision_chain::chain_restructure_tests::urgency_policy_is_required_in_saved_session"
+          ],
+          "cwd": "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined",
+          "exit": 0,
+          "wall_ms": 2282,
+          "deadline_ms": 10000,
+          "summary": [
+            "test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 2408 filtered out; finished in 2.16s"
+          ],
+          "stdout": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/chain-0.stdout",
+          "stderr": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/chain-0.stderr"
+        },
+        {
+          "label": "chain-1",
+          "argv": [
+            "node",
+            "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined/scripts/run-with-deadline.mjs",
+            "10000",
+            "--",
+            "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/target/debug/deps/engine-3eb2aa70a85e274e",
+            "--exact",
+            "--test-threads=4",
+            "session::decision_chain::chain_restructure_tests::buy_allocation_request_reserves_only_the_next_routable_child",
+            "session::decision_chain::chain_restructure_tests::generation_preserves_plan_facts_across_a_decision_chain_run",
+            "session::decision_chain::chain_restructure_tests::institution_frozen_policy_and_historical_review_resources_survive_restore",
+            "session::decision_chain::chain_restructure_tests::institution_small_signal_changes_do_not_revise_a_quiet_plan",
+            "session::decision_chain::chain_restructure_tests::personal_root_prefers_known_consolidated_before_standalone_version_sequence",
+            "session::decision_chain::chain_restructure_tests::retail_observation_prefers_known_consolidated_before_standalone_version_sequence",
+            "session::decision_chain::chain_restructure_tests::technical_observation_uses_bounded_recent_samples_with_full_valid_count",
+            "session::decision_chain::chain_restructure_tests::urgency_quote_uses_frozen_policy_instead_of_default"
+          ],
+          "cwd": "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined",
+          "exit": 0,
+          "wall_ms": 3126,
+          "deadline_ms": 10000,
+          "summary": [
+            "test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 2408 filtered out; finished in 2.99s"
+          ],
+          "stdout": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/chain-1.stdout",
+          "stderr": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/chain-1.stderr"
+        },
+        {
+          "label": "chain-2",
+          "argv": [
+            "node",
+            "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined/scripts/run-with-deadline.mjs",
+            "10000",
+            "--",
+            "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/target/debug/deps/engine-3eb2aa70a85e274e",
+            "--exact",
+            "--test-threads=4",
+            "session::decision_chain::chain_restructure_tests::completed_sell_prunes_memory_before_quiet_point_save_validation",
+            "session::decision_chain::chain_restructure_tests::institution_account_latch_blocks_other_buys_after_plan_termination_until_own_root",
+            "session::decision_chain::chain_restructure_tests::institution_initial_plan_records_its_personal_execution_urgency",
+            "session::decision_chain::chain_restructure_tests::live_plan_without_position_or_belief_still_enters_root_observation",
+            "session::decision_chain::chain_restructure_tests::personal_root_prunes_price_memory_to_protected_union_plus_eight",
+            "session::decision_chain::chain_restructure_tests::root_observation_rejects_tick_minute_and_phase_clock_mismatches",
+            "session::decision_chain::chain_restructure_tests::unaffordable_parent_target_routes_its_affordable_next_buy_child",
+            "session::decision_chain::chain_restructure_tests::urgency_recovery_review_negative_subthreshold_withdraws_buy_without_opening_sell"
+          ],
+          "cwd": "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined",
+          "exit": 0,
+          "wall_ms": 6115,
+          "deadline_ms": 10000,
+          "summary": [
+            "test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 2408 filtered out; finished in 5.98s"
+          ],
+          "stdout": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/chain-2.stdout",
+          "stderr": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/chain-2.stderr"
+        },
+        {
+          "label": "chain-3",
+          "argv": [
+            "node",
+            "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined/scripts/run-with-deadline.mjs",
+            "10000",
+            "--",
+            "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/target/debug/deps/engine-3eb2aa70a85e274e",
+            "--exact",
+            "--test-threads=4",
+            "session::decision_chain::chain_restructure_tests::decision_chain_generates_a_candidate_without_routing_it",
+            "session::decision_chain::chain_restructure_tests::institution_active_buy_withdraws_when_its_positive_opinion_ends",
+            "session::decision_chain::chain_restructure_tests::institution_known_drawdown_does_not_clear_a_still_triggered_risk_pause",
+            "session::decision_chain::chain_restructure_tests::mid_day_restructure_in_a_non_cancellable_phase_keeps_plan_and_child",
+            "session::decision_chain::chain_restructure_tests::plan_identity_live_join_rebuild_keeps_original_child_and_resources",
+            "session::decision_chain::chain_restructure_tests::save_validation_accepts_eight_unprotected_price_memories",
+            "session::decision_chain::chain_restructure_tests::unfinished_buy_plan_with_less_cash_than_its_fee_receives_zero_budget",
+            "session::decision_chain::chain_restructure_tests::urgency_recovery_review_neutral_signal_withdraws_buy_through_real_cancel"
+          ],
+          "cwd": "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined",
+          "exit": 0,
+          "wall_ms": 5628,
+          "deadline_ms": 10000,
+          "summary": [
+            "test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 2408 filtered out; finished in 5.51s"
+          ],
+          "stdout": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/chain-3.stdout",
+          "stderr": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/chain-3.stderr"
+        },
+        {
+          "label": "chain-4",
+          "argv": [
+            "node",
+            "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined/scripts/run-with-deadline.mjs",
+            "10000",
+            "--",
+            "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/target/debug/deps/engine-3eb2aa70a85e274e",
+            "--exact",
+            "--test-threads=4",
+            "session::decision_chain::chain_restructure_tests::decision_observations_include_lunch_without_advancing_market_minutes",
+            "session::decision_chain::chain_restructure_tests::institution_boundary_buy_quote_shrinks_to_actual_fee_budget",
+            "session::decision_chain::chain_restructure_tests::institution_net_profitable_exit_updates_confidence_once_on_own_review",
+            "session::decision_chain::chain_restructure_tests::mid_day_reversal_cancels_the_in_flight_child_before_flipping",
+            "session::decision_chain::chain_restructure_tests::plan_identity_partial_child_live_join_keeps_fills_fees_and_cancel_reference",
+            "session::decision_chain::chain_restructure_tests::save_validation_protects_active_plan_memory_outside_the_eight_limit",
+            "session::decision_chain::chain_restructure_tests::urgency_acceleration_pauses_live_plan_and_routes_real_cancel",
+            "session::decision_chain::chain_restructure_tests::urgency_recovery_review_uses_custom_resume_threshold_without_resuming_below_it"
+          ],
+          "cwd": "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined",
+          "exit": 0,
+          "wall_ms": 5721,
+          "deadline_ms": 10000,
+          "summary": [
+            "test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 2408 filtered out; finished in 5.60s"
+          ],
+          "stdout": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/chain-4.stdout",
+          "stderr": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/chain-4.stderr"
+        },
+        {
+          "label": "chain-5",
+          "argv": [
+            "node",
+            "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined/scripts/run-with-deadline.mjs",
+            "10000",
+            "--",
+            "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/target/debug/deps/engine-3eb2aa70a85e274e",
+            "--exact",
+            "--test-threads=4",
+            "session::decision_chain::chain_restructure_tests::faded_belief_is_not_a_candidate_without_attention_holding_or_plan",
+            "session::decision_chain::chain_restructure_tests::institution_boundary_existing_child_keeps_priority_without_reusing_frozen_cash",
+            "session::decision_chain::chain_restructure_tests::institution_new_direction_requires_the_confirmed_signal_threshold",
+            "session::decision_chain::chain_restructure_tests::mid_day_termination_cancels_the_in_flight_child_first",
+            "session::decision_chain::chain_restructure_tests::plan_root_owns_its_personal_state_until_the_private_candidate_installs_it",
+            "session::decision_chain::chain_restructure_tests::saved_urgency_policy_restores_and_survives_session_clones",
+            "session::decision_chain::chain_restructure_tests::urgency_paused_buy_reversal_restarts_sell_leg_without_buy_pause",
+            "session::decision_chain::chain_restructure_tests::urgency_recovery_review_weak_positive_revises_opinion_without_resuming"
+          ],
+          "cwd": "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined",
+          "exit": 0,
+          "wall_ms": 3177,
+          "deadline_ms": 10000,
+          "summary": [
+            "test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 2408 filtered out; finished in 3.05s"
+          ],
+          "stdout": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/chain-5.stdout",
+          "stderr": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/chain-5.stderr"
+        },
+        {
+          "label": "chain-6",
+          "argv": [
+            "node",
+            "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined/scripts/run-with-deadline.mjs",
+            "10000",
+            "--",
+            "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/target/debug/deps/engine-3eb2aa70a85e274e",
+            "--exact",
+            "--test-threads=4",
+            "session::decision_chain::chain_restructure_tests::faded_stock_root_preserves_old_knowledge_without_acquiring_new_material",
+            "session::decision_chain::chain_restructure_tests::institution_boundary_large_child_fee_estimate_cannot_hide_a_funded_board_lot",
+            "session::decision_chain::chain_restructure_tests::institution_observation_records_only_its_private_equity_and_holding_facts",
+            "session::decision_chain::chain_restructure_tests::mid_day_termination_removes_a_linked_parent_without_an_active_child",
+            "session::decision_chain::chain_restructure_tests::plan_wake_uses_strategy_cadence_and_its_own_price_threshold",
+            "session::decision_chain::chain_restructure_tests::shared_root_context_keeps_own_facts_when_account_execution_order_changes",
+            "session::decision_chain::chain_restructure_tests::urgency_paused_child_in_no_cancel_window_stays_pending_without_releasing_resources",
+            "session::decision_chain::chain_restructure_tests::urgency_unavailable_personal_risk_does_not_clear_existing_risk_pause"
+          ],
+          "cwd": "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined",
+          "exit": 0,
+          "wall_ms": 3129,
+          "deadline_ms": 10000,
+          "summary": [
+            "test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 2408 filtered out; finished in 3.00s"
+          ],
+          "stdout": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/chain-6.stdout",
+          "stderr": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/chain-6.stderr"
+        },
+        {
+          "label": "chain-7",
+          "argv": [
+            "node",
+            "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined/scripts/run-with-deadline.mjs",
+            "10000",
+            "--",
+            "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/target/debug/deps/engine-3eb2aa70a85e274e",
+            "--exact",
+            "--test-threads=4",
+            "session::decision_chain::chain_restructure_tests::filled_child_cancel_failure_reconsiders_the_live_plan",
+            "session::decision_chain::chain_restructure_tests::institution_boundary_mixed_pause_latches_risk_pressure_until_recovery",
+            "session::decision_chain::chain_restructure_tests::institution_plan_parameters_use_execution_style_when_cognition_differs",
+            "session::decision_chain::chain_restructure_tests::observation_clock_maps_session_boundaries_and_compressed_days",
+            "session::decision_chain::chain_restructure_tests::restore_rejects_nine_unprotected_price_memories",
+            "session::decision_chain::chain_restructure_tests::shrinking_a_live_child_below_its_remaining_exposure_requests_cancellation",
+            "session::decision_chain::chain_restructure_tests::urgency_paused_plan_requires_own_observation_and_reaffirmed_signal",
+            "session::decision_chain::chain_restructure_tests::urgent_plan_quote_applies_price_cage_only_when_enabled_in_continuous_trading"
+          ],
+          "cwd": "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined",
+          "exit": 0,
+          "wall_ms": 5234,
+          "deadline_ms": 10000,
+          "summary": [
+            "test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 2408 filtered out; finished in 5.10s"
+          ],
+          "stdout": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/chain-7.stdout",
+          "stderr": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/chain-7.stderr"
+        },
+        {
+          "label": "chain-8",
+          "argv": [
+            "node",
+            "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined/scripts/run-with-deadline.mjs",
+            "10000",
+            "--",
+            "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/target/debug/deps/engine-3eb2aa70a85e274e",
+            "--exact",
+            "--test-threads=4",
+            "session::decision_chain::chain_restructure_tests::first_personal_root_uses_latest_known_interim_with_annual_basis",
+            "session::decision_chain::chain_restructure_tests::institution_boundary_patient_buy_sizes_at_its_actual_quote_not_protection",
+            "session::decision_chain::chain_restructure_tests::institution_revisions_preserve_the_assessed_patience",
+            "session::decision_chain::chain_restructure_tests::own_existing_plan_budget_precedes_a_new_opportunity",
+            "session::decision_chain::chain_restructure_tests::restore_rejects_nine_unprotected_watchlist_entries",
+            "session::decision_chain::chain_restructure_tests::sub_board_lot_buy_plan_does_not_submit_or_advance_a_parent",
+            "session::decision_chain::chain_restructure_tests::urgency_policy_changes_authoritative_business_hash"
+          ],
+          "cwd": "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined",
+          "exit": 0,
+          "wall_ms": 5352,
+          "deadline_ms": 10000,
+          "summary": [
+            "test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 2409 filtered out; finished in 5.22s"
+          ],
+          "stdout": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/chain-8.stdout",
+          "stderr": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/chain-8.stderr"
+        },
+        {
+          "label": "atomic-0",
+          "argv": [
+            "node",
+            "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined/scripts/run-with-deadline.mjs",
+            "10000",
+            "--",
+            "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/target/debug/deps/engine-3eb2aa70a85e274e",
+            "--exact",
+            "--test-threads=4",
+            "plans::atomic_event_tests::active_index_ignores_terminal_history_and_survives_a_round_trip",
+            "plans::atomic_event_tests::atomic_completion_updates_the_active_index_only_after_success",
+            "plans::atomic_event_tests::invalid_later_plan_event_does_not_commit_an_earlier_plan_transition",
+            "plans::atomic_event_tests::shadow_clone_shares_terminal_history_and_only_copies_touched_plan"
+          ],
+          "cwd": "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined",
+          "exit": 0,
+          "wall_ms": 164,
+          "deadline_ms": 10000,
+          "summary": [
+            "test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 2412 filtered out; finished in 0.04s"
+          ],
+          "stdout": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/atomic-0.stdout",
+          "stderr": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/atomic-0.stderr"
+        },
+        {
+          "label": "owner-state-0",
+          "argv": [
+            "node",
+            "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined/scripts/run-with-deadline.mjs",
+            "10000",
+            "--",
+            "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/target/debug/deps/engine-3eb2aa70a85e274e",
+            "--exact",
+            "--test-threads=4",
+            "plans::state::owner_tests::review_preview_preserves_authoritative_plan_and_wire_facts"
+          ],
+          "cwd": "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined",
+          "exit": 0,
+          "wall_ms": 116,
+          "deadline_ms": 10000,
+          "summary": [
+            "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2415 filtered out; finished in 0.00s"
+          ],
+          "stdout": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/owner-state-0.stdout",
+          "stderr": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/owner-state-0.stderr"
+        },
+        {
+          "label": "day-end-0",
+          "argv": [
+            "node",
+            "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined/scripts/run-with-deadline.mjs",
+            "10000",
+            "--",
+            "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/target/debug/deps/engine-3eb2aa70a85e274e",
+            "--exact",
+            "--test-threads=4",
+            "runtime::day_end_public_views_tests::automatic_day_end_broadcast_reaches_real_npcs_in_every_group",
+            "runtime::day_end_public_views_tests::failing_drain_collection_reverts_only_day_end_entities",
+            "runtime::day_end_public_views_tests::first_start_accepts_exactly_the_initial_public_cage_bounds",
+            "runtime::day_end_public_views_tests::initial_views_continuous_without_cage_uses_daily_lower_limit",
+            "runtime::day_end_public_views_tests::partial_desk_start_failure_closes_day_end_abort_and_stops_world",
+            "runtime::day_end_public_views_tests::shenzhen_closing_tie_keeps_the_declared_prior_close_and_full_daily_totals"
+          ],
+          "cwd": "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined",
+          "exit": 0,
+          "wall_ms": 178,
+          "deadline_ms": 10000,
+          "summary": [
+            "test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 2410 filtered out; finished in 0.06s"
+          ],
+          "stdout": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/day-end-0.stdout",
+          "stderr": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/day-end-0.stderr"
+        },
+        {
+          "label": "day-end-1",
+          "argv": [
+            "node",
+            "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined/scripts/run-with-deadline.mjs",
+            "10000",
+            "--",
+            "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/target/debug/deps/engine-3eb2aa70a85e274e",
+            "--exact",
+            "--test-threads=4",
+            "runtime::day_end_public_views_tests::closing_moves_refresh_next_day_limits_and_buy_cage_in_both_directions",
+            "runtime::day_end_public_views_tests::failing_first_tick_rolls_back_only_the_tick_not_the_committed_day_end",
+            "runtime::day_end_public_views_tests::initial_public_cage_bounds_cover_ten_ticks_and_rounding",
+            "runtime::day_end_public_views_tests::initial_views_pre_open_uses_daily_lower_limit",
+            "runtime::day_end_public_views_tests::partial_group_start_failure_closes_day_end_abort_and_stops_world",
+            "runtime::day_end_public_views_tests::shutdown_day_end_reuse_respects_consumed_aborted_and_new_start_paths"
+          ],
+          "cwd": "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined",
+          "exit": 0,
+          "wall_ms": 180,
+          "deadline_ms": 10000,
+          "summary": [
+            "test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 2410 filtered out; finished in 0.06s"
+          ],
+          "stdout": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/day-end-1.stdout",
+          "stderr": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/day-end-1.stderr"
+        },
+        {
+          "label": "day-end-2",
+          "argv": [
+            "node",
+            "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined/scripts/run-with-deadline.mjs",
+            "10000",
+            "--",
+            "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/target/debug/deps/engine-3eb2aa70a85e274e",
+            "--exact",
+            "--test-threads=4",
+            "runtime::day_end_public_views_tests::closing_rise_next_day_highest_buy_reserves_the_new_daily_limit",
+            "runtime::day_end_public_views_tests::failing_partial_drain_send_preserves_the_published_tick",
+            "runtime::day_end_public_views_tests::initial_public_view_matches_the_first_start_phase",
+            "runtime::day_end_public_views_tests::invalid_initial_cage_bound_starts_no_workers",
+            "runtime::day_end_public_views_tests::partial_start_cleanup_joins_workers_before_resuming_the_original_panic",
+            "runtime::day_end_public_views_tests::shutdown_preserves_unconsumed_day_end_minute_bars"
+          ],
+          "cwd": "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined",
+          "exit": 0,
+          "wall_ms": 175,
+          "deadline_ms": 10000,
+          "summary": [
+            "test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 2410 filtered out; finished in 0.06s"
+          ],
+          "stdout": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/day-end-2.stdout",
+          "stderr": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/day-end-2.stderr"
+        },
+        {
+          "label": "day-end-3",
+          "argv": [
+            "node",
+            "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined/scripts/run-with-deadline.mjs",
+            "10000",
+            "--",
+            "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/target/debug/deps/engine-3eb2aa70a85e274e",
+            "--exact",
+            "--test-threads=4",
+            "runtime::day_end_public_views_tests::disabled_cage_keeps_daily_limits_in_every_phase",
+            "runtime::day_end_public_views_tests::failing_partial_group_day_end_send_preserves_unprepared_groups",
+            "runtime::day_end_public_views_tests::initial_views_call_auction_uses_daily_lower_limit",
+            "runtime::day_end_public_views_tests::manual_drain_before_roll_prices_the_next_real_start_not_the_current_day",
+            "runtime::day_end_public_views_tests::partial_start_cleanup_reports_unknown_messages_after_joining_every_worker",
+            "runtime::day_end_public_views_tests::successful_next_start_closes_the_day_end_abort_window"
+          ],
+          "cwd": "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined",
+          "exit": 0,
+          "wall_ms": 185,
+          "deadline_ms": 10000,
+          "summary": [
+            "test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 2410 filtered out; finished in 0.06s"
+          ],
+          "stdout": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/day-end-3.stdout",
+          "stderr": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/day-end-3.stderr"
+        },
+        {
+          "label": "day-end-4",
+          "argv": [
+            "node",
+            "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined/scripts/run-with-deadline.mjs",
+            "10000",
+            "--",
+            "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/target/debug/deps/engine-3eb2aa70a85e274e",
+            "--exact",
+            "--test-threads=4",
+            "runtime::day_end_public_views_tests::explicit_abort_day_end_restores_the_real_prior_then_retries",
+            "runtime::day_end_public_views_tests::final_tick_multi_round_and_day_end_retry_keep_each_board_and_direction",
+            "runtime::day_end_public_views_tests::initial_views_closing_auction_uses_daily_lower_limit",
+            "runtime::day_end_public_views_tests::next_start_real_sell_consumers_match_the_same_new_day_control",
+            "runtime::day_end_public_views_tests::public_view_cage_bounds_follow_the_trading_phase",
+            "runtime::day_end_public_views_tests::two_groups_two_stocks_keep_distinct_up_and_down_closing_bases"
+          ],
+          "cwd": "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined",
+          "exit": 0,
+          "wall_ms": 147,
+          "deadline_ms": 10000,
+          "summary": [
+            "test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 2410 filtered out; finished in 0.02s"
+          ],
+          "stdout": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/day-end-4.stdout",
+          "stderr": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/day-end-4.stderr"
+        },
+        {
+          "label": "day-end-5",
+          "argv": [
+            "node",
+            "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined/scripts/run-with-deadline.mjs",
+            "10000",
+            "--",
+            "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/target/debug/deps/engine-3eb2aa70a85e274e",
+            "--exact",
+            "--test-threads=4",
+            "runtime::day_end_public_views_tests::failed_day_end_restores_desk_and_broadcast_before_retry",
+            "runtime::day_end_public_views_tests::final_tick_uses_old_close_then_next_tick_uses_the_drained_close",
+            "runtime::day_end_public_views_tests::initial_views_continuous_with_cage_uses_sell_cage_floor",
+            "runtime::day_end_public_views_tests::next_start_sell_boundary_matches_the_sell_cage_floor",
+            "runtime::day_end_public_views_tests::restored_day_end_shutdown_does_not_archive_the_next_day_zero_candle"
+          ],
+          "cwd": "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined",
+          "exit": 0,
+          "wall_ms": 138,
+          "deadline_ms": 10000,
+          "summary": [
+            "test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 2411 filtered out; finished in 0.02s"
+          ],
+          "stdout": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/day-end-5.stdout",
+          "stderr": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/day-end-5.stderr"
+        },
+        {
+          "label": "admin-group-0",
+          "argv": [
+            "node",
+            "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined/scripts/run-with-deadline.mjs",
+            "10000",
+            "--",
+            "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/target/debug/deps/engine-3eb2aa70a85e274e",
+            "--exact",
+            "--test-threads=4",
+            "runtime::group::admin_transaction::tests::admin_02_prepare_abort_preserve_full_log_and_commit_only_retires_metadata",
+            "runtime::group::admin_transaction::tests::admin_11_group_id_contract_and_failed_prepare_consumes_id"
+          ],
+          "cwd": "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined",
+          "exit": 0,
+          "wall_ms": 118,
+          "deadline_ms": 10000,
+          "summary": [
+            "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 2414 filtered out; finished in 0.00s"
+          ],
+          "stdout": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/admin-group-0.stdout",
+          "stderr": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/admin-group-0.stderr"
+        },
+        {
+          "label": "admin-world-0",
+          "argv": [
+            "node",
+            "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined/scripts/run-with-deadline.mjs",
+            "10000",
+            "--",
+            "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/target/debug/deps/engine-3eb2aa70a85e274e",
+            "--exact",
+            "--test-threads=4",
+            "runtime::world::admin_transaction::tests::admin_00_empty_duplicate_group_and_id_exhaustion_are_explicit",
+            "runtime::world::admin_transaction::tests::admin_04_exact_aggregate_boundary_and_invalid_values",
+            "runtime::world::admin_transaction::tests::admin_07_rejection_keeps_real_day_end_abort_legal",
+            "runtime::world::admin_transaction::tests::admin_11_pending_rejects_start_continue_and_day_end_without_market_rollback",
+            "runtime::world::admin_transaction::tests::admin_review_already_queued_extra_receipt_prevents_success"
+          ],
+          "cwd": "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined",
+          "exit": 0,
+          "wall_ms": 133,
+          "deadline_ms": 10000,
+          "summary": [
+            "test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 2411 filtered out; finished in 0.01s"
+          ],
+          "stdout": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/admin-world-0.stdout",
+          "stderr": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/admin-world-0.stderr"
+        },
+        {
+          "label": "admin-world-1",
+          "argv": [
+            "node",
+            "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined/scripts/run-with-deadline.mjs",
+            "10000",
+            "--",
+            "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/target/debug/deps/engine-3eb2aa70a85e274e",
+            "--exact",
+            "--test-threads=4",
+            "runtime::world::admin_transaction::tests::admin_01_normal_npc_decisions_continue_after_credit",
+            "runtime::world::admin_transaction::tests::admin_04_large_share_abort_and_aggregate_overflow",
+            "runtime::world::admin_transaction::tests::admin_08_commit_closes_old_day_end_and_next_tick_abort_keeps_credit",
+            "runtime::world::admin_transaction::tests::admin_11_real_channel_receipt_id_group_locals_and_missing_are_fatal",
+            "runtime::world::admin_transaction::tests::admin_review_prepare_terminal_closes_old_day_end_abort_window"
+          ],
+          "cwd": "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined",
+          "exit": 0,
+          "wall_ms": 1073,
+          "deadline_ms": 10000,
+          "summary": [
+            "test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 2411 filtered out; finished in 0.93s"
+          ],
+          "stdout": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/admin-world-1.stdout",
+          "stderr": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/admin-world-1.stderr"
+        },
+        {
+          "label": "admin-world-2",
+          "argv": [
+            "node",
+            "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined/scripts/run-with-deadline.mjs",
+            "10000",
+            "--",
+            "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/target/debug/deps/engine-3eb2aa70a85e274e",
+            "--exact",
+            "--test-threads=4",
+            "runtime::world::admin_transaction::tests::admin_01_two_groups_all_operations_persist_through_real_tick",
+            "runtime::world::admin_transaction::tests::admin_05_flat_cost_basis_and_frozen_pending_are_preserved",
+            "runtime::world::admin_transaction::tests::admin_08_partial_start_does_not_undo_committed_admin_or_tick",
+            "runtime::world::admin_transaction::tests::admin_12_seal_commit_drain_abort_restores_orders_and_resources",
+            "runtime::world::admin_transaction::tests::admin_review_severed_entry_joins_and_kills_even_empty_transaction"
+          ],
+          "cwd": "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined",
+          "exit": 0,
+          "wall_ms": 185,
+          "deadline_ms": 10000,
+          "summary": [
+            "test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 2411 filtered out; finished in 0.06s"
+          ],
+          "stdout": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/admin-world-2.stdout",
+          "stderr": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/admin-world-2.stderr"
+        },
+        {
+          "label": "admin-world-3",
+          "argv": [
+            "node",
+            "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined/scripts/run-with-deadline.mjs",
+            "10000",
+            "--",
+            "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/target/debug/deps/engine-3eb2aa70a85e274e",
+            "--exact",
+            "--test-threads=4",
+            "runtime::world::admin_transaction::tests::admin_02_rejection_restores_complete_accounts_and_new_id_retries",
+            "runtime::world::admin_transaction::tests::admin_05_flat_reduction_rejects_real_inflight_buy_and_real_rebuy_starts_new_cost",
+            "runtime::world::admin_transaction::tests::admin_09_closed_days_without_start_keep_first_commit",
+            "runtime::world::admin_transaction::tests::admin_13_candidate_panic_keeps_payload_joins_and_kills_world"
+          ],
+          "cwd": "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined",
+          "exit": 0,
+          "wall_ms": 128,
+          "deadline_ms": 10000,
+          "summary": [
+            "test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 2412 filtered out; finished in 0.01s"
+          ],
+          "stdout": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/admin-world-3.stdout",
+          "stderr": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/admin-world-3.stderr"
+        },
+        {
+          "label": "admin-world-4",
+          "argv": [
+            "node",
+            "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined/scripts/run-with-deadline.mjs",
+            "10000",
+            "--",
+            "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/target/debug/deps/engine-3eb2aa70a85e274e",
+            "--exact",
+            "--test-threads=4",
+            "runtime::world::admin_transaction::tests::admin_03_other_group_rejects_and_original_order_is_not_netted",
+            "runtime::world::admin_transaction::tests::admin_06_rejection_preserves_published_tick_and_next_step",
+            "runtime::world::admin_transaction::tests::admin_10_partial_prepare_and_commit_send_failure_kill_and_join",
+            "runtime::world::admin_transaction::tests::admin_13_worker_prepare_and_commit_panic_transport_original_and_join"
+          ],
+          "cwd": "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined",
+          "exit": 0,
+          "wall_ms": 129,
+          "deadline_ms": 10000,
+          "summary": [
+            "test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 2412 filtered out; finished in 0.01s"
+          ],
+          "stdout": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/admin-world-4.stdout",
+          "stderr": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/admin-world-4.stderr"
+        },
+        {
+          "label": "initial_batch_full_fill_completes_linked_parent_before_later_manual_acceptance",
+          "argv": [
+            "node",
+            "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined/scripts/run-with-deadline.mjs",
+            "10000",
+            "--",
+            "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/target/debug/deps/engine-3eb2aa70a85e274e",
+            "--exact",
+            "--test-threads=4",
+            "session::pipeline::initial_candidate_round_tests::initial_batch_full_fill_completes_linked_parent_before_later_manual_acceptance"
+          ],
+          "cwd": "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined",
+          "exit": 0,
+          "wall_ms": 342,
+          "deadline_ms": 10000,
+          "summary": [
+            "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2415 filtered out; finished in 0.22s"
+          ],
+          "stdout": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/initial_batch_full_fill_completes_linked_parent_before_later_manual_acceptance.stdout",
+          "stderr": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/initial_batch_full_fill_completes_linked_parent_before_later_manual_acceptance.stderr"
+        },
+        {
+          "label": "buy_allocation_request_reserves_only_the_next_routable_child",
+          "argv": [
+            "node",
+            "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined/scripts/run-with-deadline.mjs",
+            "10000",
+            "--",
+            "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/target/debug/deps/engine-3eb2aa70a85e274e",
+            "--exact",
+            "--test-threads=4",
+            "session::decision_chain::chain_restructure_tests::buy_allocation_request_reserves_only_the_next_routable_child"
+          ],
+          "cwd": "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined",
+          "exit": 0,
+          "wall_ms": 127,
+          "deadline_ms": 10000,
+          "summary": [
+            "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2415 filtered out; finished in 0.00s"
+          ],
+          "stdout": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/buy_allocation_request_reserves_only_the_next_routable_child.stdout",
+          "stderr": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/buy_allocation_request_reserves_only_the_next_routable_child.stderr"
+        },
+        {
+          "label": "stock_worker_assigns_time_priority_from_supplied_order_not_sealed_identity",
+          "argv": [
+            "node",
+            "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined/scripts/run-with-deadline.mjs",
+            "10000",
+            "--",
+            "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/target/debug/deps/engine-3eb2aa70a85e274e",
+            "--exact",
+            "--test-threads=4",
+            "session::pipeline::continuous_matching_tests::stock_worker_assigns_time_priority_from_supplied_order_not_sealed_identity"
+          ],
+          "cwd": "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined",
+          "exit": 0,
+          "wall_ms": 319,
+          "deadline_ms": 10000,
+          "summary": [
+            "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2415 filtered out; finished in 0.20s"
+          ],
+          "stdout": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/stock_worker_assigns_time_priority_from_supplied_order_not_sealed_identity.stdout",
+          "stderr": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/stock_worker_assigns_time_priority_from_supplied_order_not_sealed_identity.stderr"
+        },
+        {
+          "label": "restore_rebuilds_remaining_from_live_book_when_field_is_absent",
+          "argv": [
+            "node",
+            "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined/scripts/run-with-deadline.mjs",
+            "10000",
+            "--",
+            "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/target/debug/deps/engine-3eb2aa70a85e274e",
+            "--exact",
+            "--test-threads=4",
+            "session::persistence::saved_runtime_tests::restore_rebuilds_remaining_from_live_book_when_field_is_absent"
+          ],
+          "cwd": "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined",
+          "exit": 0,
+          "wall_ms": 604,
+          "deadline_ms": 10000,
+          "summary": [
+            "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2415 filtered out; finished in 0.48s"
+          ],
+          "stdout": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/restore_rebuilds_remaining_from_live_book_when_field_is_absent.stdout",
+          "stderr": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/restore_rebuilds_remaining_from_live_book_when_field_is_absent.stderr"
+        },
+        {
+          "label": "restore_rebuilds_remaining_from_live_book_when_serialized_value_is_stale",
+          "argv": [
+            "node",
+            "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined/scripts/run-with-deadline.mjs",
+            "10000",
+            "--",
+            "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/target/debug/deps/engine-3eb2aa70a85e274e",
+            "--exact",
+            "--test-threads=4",
+            "session::persistence::saved_runtime_tests::restore_rebuilds_remaining_from_live_book_when_serialized_value_is_stale"
+          ],
+          "cwd": "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined",
+          "exit": 0,
+          "wall_ms": 608,
+          "deadline_ms": 10000,
+          "summary": [
+            "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2415 filtered out; finished in 0.48s"
+          ],
+          "stdout": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/restore_rebuilds_remaining_from_live_book_when_serialized_value_is_stale.stdout",
+          "stderr": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/restore_rebuilds_remaining_from_live_book_when_serialized_value_is_stale.stderr"
+        },
+        {
+          "label": "restore_rejects_inflated_serialized_remaining_with_fault2185",
+          "argv": [
+            "node",
+            "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined/scripts/run-with-deadline.mjs",
+            "10000",
+            "--",
+            "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/target/debug/deps/engine-3eb2aa70a85e274e",
+            "--exact",
+            "--test-threads=4",
+            "session::persistence::saved_runtime_tests::restore_rejects_inflated_serialized_remaining_with_fault2185"
+          ],
+          "cwd": "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined",
+          "exit": 0,
+          "wall_ms": 407,
+          "deadline_ms": 10000,
+          "summary": [
+            "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2415 filtered out; finished in 0.29s"
+          ],
+          "stdout": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/restore_rejects_inflated_serialized_remaining_with_fault2185.stdout",
+          "stderr": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/restore_rejects_inflated_serialized_remaining_with_fault2185.stderr"
+        },
+        {
+          "label": "restore_rejects_live_exposure_beyond_target_with_fault2185",
+          "argv": [
+            "node",
+            "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined/scripts/run-with-deadline.mjs",
+            "10000",
+            "--",
+            "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/target/debug/deps/engine-3eb2aa70a85e274e",
+            "--exact",
+            "--test-threads=4",
+            "session::persistence::saved_runtime_tests::restore_rejects_live_exposure_beyond_target_with_fault2185"
+          ],
+          "cwd": "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined",
+          "exit": 0,
+          "wall_ms": 411,
+          "deadline_ms": 10000,
+          "summary": [
+            "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2415 filtered out; finished in 0.29s"
+          ],
+          "stdout": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/restore_rejects_live_exposure_beyond_target_with_fault2185.stdout",
+          "stderr": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/restore_rejects_live_exposure_beyond_target_with_fault2185.stderr"
+        },
+        {
+          "label": "restore_rejects_plan_child_that_does_not_match_a_live_order",
+          "argv": [
+            "node",
+            "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined/scripts/run-with-deadline.mjs",
+            "10000",
+            "--",
+            "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/target/debug/deps/engine-3eb2aa70a85e274e",
+            "--exact",
+            "--test-threads=4",
+            "session::persistence::saved_runtime_tests::restore_rejects_plan_child_that_does_not_match_a_live_order"
+          ],
+          "cwd": "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined",
+          "exit": 0,
+          "wall_ms": 421,
+          "deadline_ms": 10000,
+          "summary": [
+            "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2415 filtered out; finished in 0.29s"
+          ],
+          "stdout": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/restore_rejects_plan_child_that_does_not_match_a_live_order.stdout",
+          "stderr": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/restore_rejects_plan_child_that_does_not_match_a_live_order.stderr"
+        },
+        {
+          "label": "strategy_state_identity_tampering_is_rejected",
+          "argv": [
+            "node",
+            "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined/scripts/run-with-deadline.mjs",
+            "10000",
+            "--",
+            "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/target/debug/deps/engine-3eb2aa70a85e274e",
+            "--exact",
+            "--test-threads=4",
+            "session::persistence::saved_runtime_tests::strategy_state_identity_tampering_is_rejected"
+          ],
+          "cwd": "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined",
+          "exit": 0,
+          "wall_ms": 313,
+          "deadline_ms": 10000,
+          "summary": [
+            "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2415 filtered out; finished in 0.19s"
+          ],
+          "stdout": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/strategy_state_identity_tampering_is_rejected.stdout",
+          "stderr": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/strategy_state_identity_tampering_is_rejected.stderr"
+        }
+      ]
+    },
+    {
+      "mode": "types-child",
+      "head": "c8e9a4f51dfb9021cf95b6da8f7f52cfbcf20957",
+      "parallel_commands": 3,
+      "wall_ms": 10999,
+      "results": [
+        {
+          "label": "tsc-app",
+          "argv": [
+            "node",
+            "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined/scripts/run-long-validation.mjs",
+            "300000",
+            "--",
+            "node",
+            "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined/apps/web/node_modules/typescript/bin/tsc",
+            "-p",
+            "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined/apps/web/tsconfig.app.json",
+            "--incremental",
+            "false"
+          ],
+          "cwd": "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined",
+          "exit": 0,
+          "wall_ms": 10035,
+          "deadline_ms": 300000,
+          "summary": [],
+          "stdout": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/tsc-app.stdout",
+          "stderr": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/tsc-app.stderr"
+        },
+        {
+          "label": "tsc-node",
+          "argv": [
+            "node",
+            "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined/scripts/run-long-validation.mjs",
+            "300000",
+            "--",
+            "node",
+            "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined/apps/web/node_modules/typescript/bin/tsc",
+            "-p",
+            "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined/apps/web/tsconfig.node.json",
+            "--incremental",
+            "false"
+          ],
+          "cwd": "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined",
+          "exit": 0,
+          "wall_ms": 1587,
+          "deadline_ms": 300000,
+          "summary": [],
+          "stdout": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/tsc-node.stdout",
+          "stderr": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/tsc-node.stderr"
+        },
+        {
+          "label": "tsc-DEV",
+          "argv": [
+            "node",
+            "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined/scripts/run-long-validation.mjs",
+            "300000",
+            "--",
+            "node",
+            "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined/apps/web/node_modules/typescript/bin/tsc",
+            "-p",
+            "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined/apps/web/tsconfig.inspector.json",
+            "--incremental",
+            "false"
+          ],
+          "cwd": "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined",
+          "exit": 0,
+          "wall_ms": 2000,
+          "deadline_ms": 300000,
+          "summary": [],
+          "stdout": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/tsc-DEV.stdout",
+          "stderr": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/tsc-DEV.stderr"
+        }
+      ]
+    },
+    {
+      "mode": "web",
+      "head": "c8e9a4f51dfb9021cf95b6da8f7f52cfbcf20957",
+      "parallel_commands": 3,
+      "wall_ms": 4044,
+      "results": [
+        {
+          "label": "web-short",
+          "argv": [
+            "node",
+            "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined/scripts/run-with-deadline.mjs",
+            "10000",
+            "--",
+            "node",
+            "--test",
+            "--test-timeout=10000",
+            "--test-concurrency=8",
+            "src/save/archive-store.test.ts",
+            "src/save/company-accounting-schema.test.ts",
+            "src/save/company-books-schema.test.ts",
+            "src/save/company-contracts.test.ts",
+            "src/save/company-policies-schema.test.ts",
+            "src/save/company-schema.test.ts",
+            "src/save/complete-save-schema.test.ts",
+            "src/save/current-company-wire.test.ts",
+            "src/save/current-wire-contract.test.ts",
+            "src/save/day-end-archive.test.ts",
+            "src/save/day-end-candidate.test.ts",
+            "src/save/day-end-persistence.test.ts",
+            "src/save/day-end-targets.test.ts",
+            "src/save/file-target-permissions.test.ts",
+            "src/save/file-target.test.ts",
+            "src/save/indexed-db-save-repository.test.ts",
+            "src/save/initial-save-source.test.ts",
+            "src/save/market-memberships-schema.test.ts",
+            "src/save/personal-schema.test.ts",
+            "src/save/price-cage-config.test.ts",
+            "src/save/retained-history-day-end.test.ts",
+            "src/save/runtime-strategy-position.test.ts",
+            "src/save/save-repository.test.ts",
+            "src/save/save-schema-contract.test.ts",
+            "src/save/schema/company/announcement-content.test.ts",
+            "src/save/schema/money-wire.test.ts",
+            "src/save/schema/npc-attention.test.ts",
+            "src/save/schema/personal/beliefs.test.ts",
+            "src/save/schema/personal/institution-policy.test.ts",
+            "src/save/schema/retained-history.test.ts",
+            "src/save/schema/setup-company-options.test.ts",
+            "src/save/schema/urgency-policy.test.ts",
+            "src/save/session-replacement.test.ts",
+            "src/host/npc-decision-trace.test.ts",
+            "src/dev/npc-decision-inspector.test.ts",
+            "src/save/schema/company/monthly-origin.test.ts"
+          ],
+          "cwd": "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined/apps/web",
+          "exit": 0,
+          "wall_ms": 4038,
+          "deadline_ms": 10000,
+          "summary": [
+            "ℹ tests 222",
+            "ℹ pass 222",
+            "ℹ fail 0",
+            "ℹ cancelled 0",
+            "ℹ skipped 0"
+          ],
+          "stdout": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/web-short.stdout",
+          "stderr": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/web-short.stderr"
+        },
+        {
+          "label": "web-lint",
+          "argv": [
+            "node",
+            "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined/scripts/run-with-deadline.mjs",
+            "10000",
+            "--",
+            "node",
+            "node_modules/oxlint/bin/oxlint",
+            "--deny-warnings",
+            "src/save",
+            "src/host/npc-decision-trace.ts",
+            "src/host/npc-decision-trace.test.ts",
+            "src/host/public-report-normalize.ts",
+            "src/utils/plan-identity.ts",
+            "src/dev/NpcDecisionInspector.tsx",
+            "src/dev/npc-decision-inspector.test.ts"
+          ],
+          "cwd": "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined/apps/web",
+          "exit": 0,
+          "wall_ms": 687,
+          "deadline_ms": 10000,
+          "summary": [],
+          "stdout": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/web-lint.stdout",
+          "stderr": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/web-lint.stderr"
+        }
+      ]
+    }
+  ],
+  "historical_compile_metadata": {
+    "v2_v3": "原stdout/stderr与源码/binary SHA完整；当时 standalone rustc 无集中 argv/时序收据，不能伪称历史原件",
+    "known_invocation_template": [
+      "node",
+      "scripts/run-long-validation.mjs",
+      "300000",
+      "--",
+      "rustc",
+      "--edition=2021",
+      "-C",
+      "debuginfo=0",
+      "-C",
+      "codegen-units=16",
+      "<v2或v3源码>",
+      "-L",
+      "dependency=<组合target/debug/deps>",
+      "--extern",
+      "engine=<组合libengine-b7714b84cb9f18d0.rlib>",
+      "--extern",
+      "serde_json=<libserde_json-910c725843be2f8c.rlib>",
+      "-o",
+      "<v2或v3binary>"
+    ],
+    "cwd": "/data1/baiyifan/workplace/stock_market_game/.worktree/plan-identity-combined",
+    "wall_ms": null,
+    "source": "先前实施记录及本次组合产物链接关系；非新捕获原件"
+  },
+  "limitations": [
+    "未运行full/all",
+    "未证明Simple/月报真实生产旅程；Monthly仅parser回归",
+    "未实施#122；等待独立I-D裁决",
+    "旧producer v1/v2断言失败日志保留；v3 inst8真实自然生产成功",
+    "不同真实并发调度的producer重放不宣称JSON字节确定性"
+  ],
+  "artifact_seals": [
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/source-before-build.json",
+      "bytes": 316570,
+      "sha256": "f1ea4e0a1213c92661b1480583965de983046772ae11618a40e389ff7eb3d2ef"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/build.stdout",
+      "bytes": 1366,
+      "sha256": "2401631dac265dd390b676ad0efc6e0dd737f5e141cae9c2e7f8973b3c367895"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/build.stderr",
+      "bytes": 362128,
+      "sha256": "71f63cebc6a883404e0d99946a0291ccbd2e9638afb73f350f1c9987b7a24e9a"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/build-command.json",
+      "bytes": 550,
+      "sha256": "e82eb45c1f3522c6e1280fb301750b69c9ec970171a5349a565aaddf4ed6cfba"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/cargo-artifacts.jsonl",
+      "bytes": 140897,
+      "sha256": "93f4738be06f3d5db74998e5e0cc3522c6f0889b54f2580706c5cd1b64ebe18f"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/cargo-five-binaries-process-samples.jsonl",
+      "bytes": 41717,
+      "sha256": "6e14d6ba5864d23f65002b0951dc1bd03ee967b22ca628ee5b9886b3c14e6ddb"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/rustc-producer-process-samples.jsonl",
+      "bytes": 2078,
+      "sha256": "841aa81aacb7a297e38028297fa4c143518566c6a56bc68bc2b2bcecaa4efa93"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/combined-producer",
+      "bytes": 69383744,
+      "sha256": "6fc41a1544724d958e6d7b07b0a08f5a36798e1b76f4a2dd2bda21e30257d3f9"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/build-artifact-seals.json",
+      "bytes": 2145,
+      "sha256": "afdf25e93ea3d3f1225e75e27f48fa4b6b1fd2713e875d724b55dab301e3f9cd"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/source-after-rust-build.json",
+      "bytes": 316570,
+      "sha256": "f1ea4e0a1213c92661b1480583965de983046772ae11618a40e389ff7eb3d2ef"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/producer.stdout",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/producer.stderr",
+      "bytes": 336,
+      "sha256": "534346d4e77bd38f7f7c0deb236f4deca37a32506446ea362165c8d076726d16"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/producer-v2-build.stdout",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/producer-v2-build.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/combined-producer-v2",
+      "bytes": 69383600,
+      "sha256": "54684519ccaefef622d8231b6e89ad70aacbca2f0ee29a916b7bcaeee9c186bd"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/unit-identity.stdout",
+      "bytes": 2087,
+      "sha256": "42a6740bd4f57b4784055adbdcc7b856e578de9f863ab6c801f978facbe0ab74"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/unit-identity.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/purse.stdout",
+      "bytes": 925,
+      "sha256": "ad2b7fb15abedefb69fde174d2817d2fc6c13c29ca1915d6f4156edce444a520"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/purse.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/core-identity.stdout",
+      "bytes": 754,
+      "sha256": "76dd13579caf9fa11c0a0d5a630f703f1f3dfb4cb7d01bb53b9adab93a532964"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/core-identity.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/allocation.stdout",
+      "bytes": 2411,
+      "sha256": "7923cebeac23d6e02dd617c26c766035ac0e497b0cabfc68eedd1c0ccaf3bce2"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/allocation.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/save-contract.stdout",
+      "bytes": 659,
+      "sha256": "189f4c5f2c1062452c8aa65dc3cb852f87f45a74c708e097e9d3e0a495cc36c8"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/save-contract.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/behavior.stdout",
+      "bytes": 182,
+      "sha256": "6a5aca18324f133e24d38783a49eed3e346efcc57aeb87efba243dc0274a0db0"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/behavior.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/producer-v2.stdout",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/producer-v2.stderr",
+      "bytes": 339,
+      "sha256": "10c4e11e57ea6c072ebba1a05ac4e9547ff9c300033b609f97d50ffaa0b3ad29"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/producer-v3-build.stdout",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/producer-v3-build.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/combined-producer-v3",
+      "bytes": 69383608,
+      "sha256": "f055a389f50e723d5ed08f256ad8354e32fc23f0fc0502ffa11745510e0bfc77"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/producer-v3.stdout",
+      "bytes": 350,
+      "sha256": "1e732b9abbed5a776b12de8e05f0337bd025e665bdcae9cc64ffb57ec660fb2d"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/producer-v3.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/rust-full-save-v3.json",
+      "bytes": 1843635,
+      "sha256": "f7babf17a9b52ab61ef7566b64d7a753edf50bc3366cb63e25b592fe25b3c321"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/unit-list.txt",
+      "bytes": 251229,
+      "sha256": "c36891875c124273b31429e8294d3d5b6212e3d2099764ef711f70029b9d3cb8"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/producer-v2-v3-seals.json",
+      "bytes": 1129,
+      "sha256": "dbba0f01b42134145dd3c7275165d21e41943b561cbfd257690f5f290e9c4b0c"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/web-roundtrip.stdout",
+      "bytes": 309,
+      "sha256": "a9e5425f6d8140e09dd906d873707612971d751f30fca7d154f8181a5995d7c4"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/web-roundtrip.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/web-full-save-v3.json",
+      "bytes": 1843625,
+      "sha256": "e7569f707c77aa851b995420facd8d7bd385f126a91ff94d344f8576c5066948"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/rust-roundtrip.stdout",
+      "bytes": 310,
+      "sha256": "6a7f5fb0ad3b57c01f09005eb86b1a18eec65c07cb9960cd330bc19cad1c152f"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/rust-roundtrip.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/tsc-app.stdout",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/tsc-node.stdout",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/tsc-app.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/tsc-DEV.stdout",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/tsc-node.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/tsc-DEV.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/final-types-child-receipt.json",
+      "bytes": 2981,
+      "sha256": "c03b5095f339e6ce2f5955ae1ce3018a1da3e943790a48896122c93d2a0e081d"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/web-files.json",
+      "bytes": 1578,
+      "sha256": "564bc6e6cca963a0786c764cd79a7d4522da1a26534c079c7ce1ba797a48e735"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/rust-related-inventory.json",
+      "bytes": 21623,
+      "sha256": "55b2562700c14553d9d724978f856b741fbf89610a42747b779d9e5c8bb97b5d"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/roster-0.stdout",
+      "bytes": 695,
+      "sha256": "38ebff0a215e48f86b468bb5ac38f0c72f064c5c513782fd84c9fe5abfd6b383"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/plan-owner-0.stdout",
+      "bytes": 1026,
+      "sha256": "c9eab01564beb56c46eec197c91d541d99a91de68fa3f7812b97bd8ca3fd6205"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/roster-0.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/plan-owner-1.stdout",
+      "bytes": 1034,
+      "sha256": "d812dbaf3c1322f0223ae8d95717e942b02dcec93a6295edfbb8abc5b20f0ed5"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/plan-owner-0.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/plan-owner-1.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/continuation-0.stdout",
+      "bytes": 929,
+      "sha256": "c858d46a0dd29b0323c9d3f26376bed0812207e0a95abbf75ef0028fe40e11d0"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/continuation-0.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/continuation-1.stdout",
+      "bytes": 956,
+      "sha256": "f956f16f934fa73d39d7d5fec8aa4959f832128e055516ada206706492778324"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/continuation-1.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/knife5b-0.stdout",
+      "bytes": 302,
+      "sha256": "19688287f956b5f629ec2a10ced7243d305c5c96e1a40d124aba935b32d85d98"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/chain-0.stdout",
+      "bytes": 1106,
+      "sha256": "6a8be7aa6622aec2300ed7f4cf0cbb3a1d732f1f6e67450aadb6d8ef9b012a9a"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/knife5b-0.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/chain-0.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/chain-1.stdout",
+      "bytes": 1148,
+      "sha256": "d8ea648b9df90e0c53b82905acf80a959eab72ed7bb7a4035364b42d16bc634a"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/chain-1.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/chain-2.stdout",
+      "bytes": 1162,
+      "sha256": "7bc2b56035f0548ae993c4c874343ff66a0abf4d92905c6dfdb566b65c0c2809"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/chain-2.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/chain-3.stdout",
+      "bytes": 1137,
+      "sha256": "bab15607fdc2d8e283011fa957961ca69a88a2e471623673f63a9b7874aaefc0"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/chain-4.stdout",
+      "bytes": 1156,
+      "sha256": "4c9cfe24a47bc833006b1c3dbd2fb3675a9aba4e7231d9062a467a5c6a094ed2"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/chain-3.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/chain-4.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/chain-5.stdout",
+      "bytes": 1144,
+      "sha256": "6e399d8b581f81708e6ae2925d36e7f6f86f239b3c9be821bb489f115ecd8f9e"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/chain-5.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/web-cache.json",
+      "bytes": 409,
+      "sha256": "cad9d9cf36497db23a61df99a162dd9c425dd857c7bfaf8211aa89e97897645b"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/web-short.stdout",
+      "bytes": 19953,
+      "sha256": "6622ba042eba95ffe04c5856cdec7e11225f7a01baa71bce58e1abe25bc59c17"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/web-short.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/web-lint.stdout",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/web-lint.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/chain-6.stdout",
+      "bytes": 1188,
+      "sha256": "346e53e3597ab1aae96acd42d2d469f1370afe0abbf81e848b2624737d7581c2"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/chain-6.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/chain-7.stdout",
+      "bytes": 1135,
+      "sha256": "36c74135b8dc97414ef0810040f6378271ee253901de78e3a4cdda18106b1b90"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/chain-7.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/chain-8.stdout",
+      "bytes": 954,
+      "sha256": "ac5b37907ffb74f6aed2572f338c31df90dfff36312af05f5c20dd8b366ca792"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/chain-8.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/atomic-0.stdout",
+      "bytes": 532,
+      "sha256": "f371d837c087ec3bacef74eb45f01fc8f92169a889e14a07f686bd24afb8348e"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/atomic-0.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/owner-state-0.stdout",
+      "bytes": 213,
+      "sha256": "f74abb18e418da203dd5aace9ab5afb271f60fd18a3a9bf2ecd579f25348e494"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/owner-state-0.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/day-end-0.stdout",
+      "bytes": 784,
+      "sha256": "3c2bc83a47457c59582ba8c26085210864d150bc9386bf8cd221399f588fa324"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/day-end-0.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/day-end-1.stdout",
+      "bytes": 786,
+      "sha256": "46c7a88053035d753ac588d459e2f6c58a139d3a3a9f1d4a18728dba7647462c"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/day-end-1.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/day-end-2.stdout",
+      "bytes": 745,
+      "sha256": "a169be15394af25951843d08aba102de5eb62488633181518d1ed184e05cea3f"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/day-end-2.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/day-end-3.stdout",
+      "bytes": 771,
+      "sha256": "6c494eac2272803615638b9cd9b473bad0208bda7dac18ee7cd47f7869fcc88e"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/day-end-3.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/day-end-4.stdout",
+      "bytes": 767,
+      "sha256": "610c4d293b373fc55b713035bedc4389c9ff7b1dba577108d4962c0fa6fadbce"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/day-end-4.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/day-end-5.stdout",
+      "bytes": 658,
+      "sha256": "a7e653e81b0a0d8c6586a88c0ddbc2db7190597b71d5858671432150a7feae11"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/day-end-5.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/admin-group-0.stdout",
+      "bytes": 356,
+      "sha256": "5a9ada8c3f2aecf24a4c20b2faa2af815a47530357d7b1d5515f4937cf224844"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/admin-group-0.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/admin-world-0.stdout",
+      "bytes": 686,
+      "sha256": "1810a65c19a3a9225ac4df1941a75f378bc368d318733e96c831f95c2562ae56"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/admin-world-0.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/admin-world-1.stdout",
+      "bytes": 686,
+      "sha256": "3acf61b2ee4cff31fed8496b352c43e7256d06310c6b1773d1629571f422e706"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/admin-world-1.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/admin-world-2.stdout",
+      "bytes": 695,
+      "sha256": "e1ef83b1d98dbb97560e73c3f6ca8309b45bf124982d73f8881bc932ca85df9d"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/admin-world-2.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/admin-world-3.stdout",
+      "bytes": 592,
+      "sha256": "8731fce2d37d66a6a70e171cbacbb993bb0046ad8cd4a2c71e5dd8d83cf34b08"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/admin-world-3.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/admin-world-4.stdout",
+      "bytes": 584,
+      "sha256": "397ba4cc19564e3daeeafd4b7239999a0691ee6e90d0617be59b34040acaf4e6"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/admin-world-4.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/initial_batch_full_fill_completes_linked_parent_before_later_manual_acceptance.stdout",
+      "bytes": 256,
+      "sha256": "8aae1e6662d856dbc28b72bce8f8ab68f6a662c431e3c1b30f3f1234123df277"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/initial_batch_full_fill_completes_linked_parent_before_later_manual_acceptance.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/buy_allocation_request_reserves_only_the_next_routable_child.stdout",
+      "bytes": 238,
+      "sha256": "12f7c079748293f2b72c8cfd92535272fd8023adcce78cffb1cf8ab396742171"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/buy_allocation_request_reserves_only_the_next_routable_child.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/stock_worker_assigns_time_priority_from_supplied_order_not_sealed_identity.stdout",
+      "bytes": 248,
+      "sha256": "3c8ee6ea1de618b52fbb4ad8d8b7d6ac6fb1792124448286fe1d15758b5dd56d"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/stock_worker_assigns_time_priority_from_supplied_order_not_sealed_identity.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/restore_rebuilds_remaining_from_live_book_when_field_is_absent.stdout",
+      "bytes": 233,
+      "sha256": "2bbf7e22bea01a809add557a31906ac8e5c53bc39bc0a646bae606ab3e5c5ef0"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/restore_rebuilds_remaining_from_live_book_when_field_is_absent.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/restore_rebuilds_remaining_from_live_book_when_serialized_value_is_stale.stdout",
+      "bytes": 243,
+      "sha256": "6f68ac4c6f9b3e93a41b167f1d6a513aeefe1253481b5703f44dad7ac9b487ee"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/restore_rebuilds_remaining_from_live_book_when_serialized_value_is_stale.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/restore_rejects_inflated_serialized_remaining_with_fault2185.stdout",
+      "bytes": 231,
+      "sha256": "b6c83791a01a46f68840c0523e26e29932c9be2be93b844f50f5cb06af28a5ec"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/restore_rejects_inflated_serialized_remaining_with_fault2185.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/restore_rejects_live_exposure_beyond_target_with_fault2185.stdout",
+      "bytes": 229,
+      "sha256": "9d028b01756447f1abd6d49b8949f84409fc5d528192c8f31778d12ddd078cdf"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/restore_rejects_live_exposure_beyond_target_with_fault2185.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/restore_rejects_plan_child_that_does_not_match_a_live_order.stdout",
+      "bytes": 230,
+      "sha256": "c48fb9c7fe079da2cf2a912c574fd35c46298e440a2362cb2863bb923feec6eb"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/restore_rejects_plan_child_that_does_not_match_a_live_order.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/strategy_state_identity_tampering_is_rejected.stdout",
+      "bytes": 216,
+      "sha256": "6979213437aebd02be4824cb349847236c8957f3f2c57daa42026a9d569e04c3"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/strategy_state_identity_tampering_is_rejected.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/final-web-receipt.json",
+      "bytes": 3668,
+      "sha256": "b4495cb2555bf1d56d79cefa50c992a62184c993d6123a791542020f47092cce"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/final-rust-receipt.json",
+      "bytes": 57810,
+      "sha256": "53c22f35792dd2f7558a0203628e4af06e38e2a4f57ea7a5255eff734a17827e"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/source-final-after-tests.json",
+      "bytes": 316946,
+      "sha256": "243df6eb5f2b473ec9e24637420604f7b390422a63f866e553c97e0a6167d652"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/roster-consumers.stdout",
+      "bytes": 1080,
+      "sha256": "d92b748e4fee968a578a1740d73117bb1417b82263b207709bc3ae230eac98bb"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/roster-consumers.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/producer-v3-replay.stdout",
+      "bytes": 350,
+      "sha256": "1e732b9abbed5a776b12de8e05f0337bd025e665bdcae9cc64ffb57ec660fb2d"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/producer-v3-replay.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/rust-full-save-v3-replay.json",
+      "bytes": 1843635,
+      "sha256": "f7babf17a9b52ab61ef7566b64d7a753edf50bc3366cb63e25b592fe25b3c321"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/final-extra-receipt.json",
+      "bytes": 2001,
+      "sha256": "10a38744be301c471eac85b307de2f36aa34e6d7674493ac0c431bf62f41afc2"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/web-roundtrip-receipted.stdout",
+      "bytes": 309,
+      "sha256": "a9e5425f6d8140e09dd906d873707612971d751f30fca7d154f8181a5995d7c4"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/web-roundtrip-receipted.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/web-full-save-v3-receipted.json",
+      "bytes": 1843625,
+      "sha256": "e7569f707c77aa851b995420facd8d7bd385f126a91ff94d344f8576c5066948"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/final-journey-receipt.json",
+      "bytes": 1293,
+      "sha256": "26d05ecb67585945644b60c129c0a39d25537ac9537e0d6e9225c082eea3e86c"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/rust-roundtrip-receipted.stdout",
+      "bytes": 310,
+      "sha256": "6a7f5fb0ad3b57c01f09005eb86b1a18eec65c07cb9960cd330bc19cad1c152f"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/rust-roundtrip-receipted.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/final-restore-receipt.json",
+      "bytes": 1052,
+      "sha256": "34ddd21646301a5c0a68a0bfe9948e3e96c66f1ed08c6a5a7ac57eb2f581d01f"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/unit-identity-final.stdout",
+      "bytes": 2087,
+      "sha256": "381b733ca6f6df9d32f63cd9091f71ddf7887c06c148a5c91235b40c3a3a2c11"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/purse-final.stdout",
+      "bytes": 925,
+      "sha256": "a774c78fda75a3d68b5429514920376e6daab0f70a0a6a69920a236a65bb4a61"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/purse-final.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/unit-identity-final.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/core-identity-final.stdout",
+      "bytes": 754,
+      "sha256": "2a4558616809943dc2b091a85d37b3042d7824db1a4466303f46f2e9f5494d0d"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/core-identity-final.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/behavior-final.stdout",
+      "bytes": 182,
+      "sha256": "6a5aca18324f133e24d38783a49eed3e346efcc57aeb87efba243dc0274a0db0"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/behavior-final.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/allocation-final.stdout",
+      "bytes": 2411,
+      "sha256": "9af5e50b2d48763be562972c49f68bf5ef7027c14d81d64c15e396267d0304c0"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/allocation-final.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/save-contract-final.stdout",
+      "bytes": 659,
+      "sha256": "f0c8381992af83f54b3e912e112d09ef915dfb141d05fe091d182043cc22b907"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/save-contract-final.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/final-base-receipt.json",
+      "bytes": 5819,
+      "sha256": "753a4ff7c571678e1be49fac057ade23a2e23160701e247e9d46ca39eef66b1f"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/combined-final-complete.patch",
+      "bytes": 3575914,
+      "sha256": "ae2ba62fad097c19f4b723fd38c00ad6f9c7350d35df22b39a33df1198c282b2"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/agents/branch-completion/plan-identity-combined-build.py",
+      "bytes": 4990,
+      "sha256": "fd503b61a101d3b8cc91d04cc812986596c5bf61dc76f7723abe11079d505c41"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/agents/branch-completion/plan-identity-combined-final-checks.py",
+      "bytes": 6938,
+      "sha256": "1c4ddc0dd79207b0286c01585345ef6f8014b8194b6aaeba93be478f2f6c7289"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/agents/branch-completion/plan-identity-combined-freeze.mjs",
+      "bytes": 646,
+      "sha256": "e80da569c77e50139fa1955aaff908ef4223de3c0fdc4cf6ecb2d1668d44cbf7"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/agents/branch-completion/plan-identity-combined-seal.py",
+      "bytes": 5422,
+      "sha256": "200bc75fd26ef0f4290b64a0a1e4f633657932fb21373c1f03ebc25bbaae8e49"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/agents/branch-completion/plan-identity-combined-producer.rs",
+      "bytes": 5147,
+      "sha256": "3cf78f51025fdaefd6c22c0ce27833df92631e875de0e6121cae93c4ed82bae9"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/agents/branch-completion/plan-identity-combined-producer-v2.rs",
+      "bytes": 4913,
+      "sha256": "c1dfb32ae2e69498aaf1133416840eee7c56b90356fd2bf781a104df611b792c"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/agents/branch-completion/plan-identity-combined-producer-v3.rs",
+      "bytes": 4913,
+      "sha256": "0850e225171e4c5ef959a406211e2f328ee4f108043f6ec44e7298d914805b48"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/agents/branch-completion/plan-identity-combined-web-roundtrip.mjs",
+      "bytes": 1158,
+      "sha256": "c817a1d89f5f055fa161746eb022193695a761c6f54e69c66999ced9819f922e"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/target/debug/deps/plan_identity_behavior-4ba0cb78c616347d",
+      "bytes": 8545088,
+      "sha256": "a75da64f5381d3443b8cd240cf4d512bfb828fda14d3549a901d80caf1e81867"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/target/debug/deps/plan_identity-4c6cc6b4c30fbbdd",
+      "bytes": 25156640,
+      "sha256": "6919f58abea6563b51c224e473653ae76df9351a0cd1c6479269fb9f13bafeb3"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/target/debug/deps/plan_allocation-66dad3f56f8ab836",
+      "bytes": 8703248,
+      "sha256": "7400770f0a2c20f4947807f7c24a13c03bdf2c2d2f6f1e929ee440135799634b"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/target/debug/deps/save_contract-eca1eeae557b8b6d",
+      "bytes": 71075168,
+      "sha256": "98948f4f98b96e2347fee74487b0585a89395d0191e2bb6cfd60957d4d57784d"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/target/debug/deps/engine-3eb2aa70a85e274e",
+      "bytes": 140735656,
+      "sha256": "be7134364f3afdfc23f92f52f7f3a75ba78d575b0163f03629077590e450d349"
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/plan-identity-combined/target/debug/deps/libengine-b7714b84cb9f18d0.rlib",
+      "bytes": 193838400,
+      "sha256": "b97de30c44116751be1fb005e6af8876f37d29899cc6b0ad84b457f0dd758846"
+    }
+  ]
+}

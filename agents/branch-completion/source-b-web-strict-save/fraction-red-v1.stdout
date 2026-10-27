@@ -1,0 +1,65 @@
+✖ ExactDividendTaxAmount拒绝非规范分数1/0 (2.274086ms)
+✖ ExactDividendTaxAmount拒绝非规范分数2/2 (1.346239ms)
+✖ ExactDividendTaxAmount拒绝非规范分数0/2 (0.700921ms)
+ℹ tests 3
+ℹ suites 0
+ℹ pass 0
+ℹ fail 3
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 178.995071
+
+✖ failing tests:
+
+test at src/save/schema/company/state.test.ts:89:78
+✖ ExactDividendTaxAmount拒绝非规范分数1/0 (2.274086ms)
+  AssertionError [ERR_ASSERTION]: 真实Rust样例必须含精确税额分数
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/state.test.ts:93:38)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at Test.start (node:internal/test_runner/test:1191:17)
+      at startSubtestAfterBootstrap (node:internal/test_runner/harness:385:17) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at src/save/schema/company/state.test.ts:89:78
+✖ ExactDividendTaxAmount拒绝非规范分数2/2 (1.346239ms)
+  AssertionError [ERR_ASSERTION]: 真实Rust样例必须含精确税额分数
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/state.test.ts:93:38)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:911:18)
+      at Test.postRun (node:internal/test_runner/test:1465:19)
+      at Test.run (node:internal/test_runner/test:1390:12)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at src/save/schema/company/state.test.ts:89:78
+✖ ExactDividendTaxAmount拒绝非规范分数0/2 (0.700921ms)
+  AssertionError [ERR_ASSERTION]: 真实Rust样例必须含精确税额分数
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/state.test.ts:93:38)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:911:18)
+      at Test.postRun (node:internal/test_runner/test:1465:19)
+      at Test.run (node:internal/test_runner/test:1390:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }

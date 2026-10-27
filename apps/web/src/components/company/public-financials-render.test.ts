@@ -1,3 +1,5 @@
+import { prepareCatalogResolver } from "../../host/catalog-resolver.ts";
+import { defaultCatalogFixture } from "../../host/catalog-test-fixture.ts";
 import assert from "node:assert/strict";
 import { after, before, test } from "node:test";
 import { createElement } from "react";
@@ -19,7 +21,7 @@ before(async () => {
 after(async () => { if (vite) await vite.close(); });
 
 test("附注渲染单体范围、更正原因与已公布行业科目明细", () => {
-  const html = renderToStaticMarkup(createElement(notes.ReportNotes, { report: publicReportGold() }));
+  const html = renderToStaticMarkup(createElement(notes.ReportNotes, { report: publicReportGold(), catalogResolver: defaultCatalogFixture }));
   assert.match(html, /单体.*C-600101/);
   assert.match(html, /已公布更正说明/);
   assert.match(html, /银行存款/);
@@ -38,4 +40,24 @@ test("利润表渲染当季、累计、比较列，缺历史有原因不填零",
   assert.match(html, /无上年历史/);
   assert.match(html, /营业收入/);
   assert.match(html, /200\.00/);
+});
+
+
+test("ReportNotes 单股实际scope动态显示，未知与已知错公司scope均拒绝渲染", () => {
+  const identity = prepareCatalogResolver([{ id: 0, code: "600101" }], [
+    { id: 0, code: "当前公司", name: "实际发行人", listed_stock: 0 },
+    { id: 7, code: "其他公司", name: "非本报告公司", listed_stock: null },
+  ]);
+  for (const scope of [{ Standalone: { entity_id: 0 } }, { Consolidated: { root_entity_id: 0 } }]) {
+    const report = publicReportGold(); report.company_id = 0; report.financials.scope = scope;
+    const html = renderToStaticMarkup(createElement(notes.ReportNotes, { report, catalogResolver: identity }));
+    assert.match(html, /当前公司/);
+    assert.doesNotMatch(html, /C-000812/);
+  }
+  for (const id of [7, 100]) {
+    for (const scope of [{ Standalone: { entity_id: id } }, { Consolidated: { root_entity_id: id } }]) {
+      const report = publicReportGold(); report.company_id = 0; report.financials.scope = scope;
+      assert.throws(() => renderToStaticMarkup(createElement(notes.ReportNotes, { report, catalogResolver: identity })), /scope/);
+    }
+  }
 });

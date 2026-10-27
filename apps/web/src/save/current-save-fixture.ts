@@ -4,7 +4,8 @@ const SMALL = "3f847ae147ae147b"
 type JsonObject = Record<string, unknown>
 
 export function currentSaveFixture(): JsonObject {
-  return {
+  const fixture = {
+    desk_mirrored_resting: false,
     runtime_state: {
       poisoned: false,
       next_receipt_base: "0",
@@ -121,6 +122,7 @@ export function currentSaveFixture(): JsonObject {
     },
     groups: [],
     company_operations: {
+      catalog: { metas: [] },
       payment_failures: {},
       seed: "0",
       shock_params: {
@@ -151,8 +153,8 @@ export function currentSaveFixture(): JsonObject {
         review_signal_delta_bp: 1000,
         review_price_change_bp: 200,
       },
-      next_plan_seq: 0,
-      plans: {},
+      owner_sequences: [],
+      plans: [],
     },
     urgency_policy: {
       policy_version: 1,
@@ -176,6 +178,9 @@ export function currentSaveFixture(): JsonObject {
       },
     },
   }
+  // 仅同步单元 fixture 的单一 LegacyOperations wire；真实 producer 正控在 fixtures/source-b。
+  const { groups, company_operations, closing_registry, ...common } = fixture
+  return { ...common, company_state: { LegacyOperations: { operations: company_operations, closing: closing_registry, groups } } }
 }
 
 

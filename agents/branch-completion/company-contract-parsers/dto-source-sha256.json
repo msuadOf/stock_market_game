@@ -1,0 +1,15 @@
+{
+  "packages/engine/src/company/capabilities.rs": "273e02a8c0dc27af7244f88c3926b12252c100077e45e832414b044f3c573114",
+  "packages/engine/src/session/owner_rights_views.rs": "9cccf41419bcab009496c27b9212ce59586c83f0df05f10f619633e4e91dc9da",
+  "packages/engine/src/session/corporate_actions.rs": "7bbe6b716e94aa068116c69bacc90d2a74fdb5725d68ed4c3685c2e99647f752",
+  "packages/engine/src/company/simple/period.rs": "06f5b359c734c349432747bcedb985b8e3b0b87313babc8d97c42e3d11d96197",
+  "packages/engine/src/company/simple/preferences.rs": "f90db919d29267b79648b3426209e5715763b9c6c187ef2e5f7782c54126e986",
+  "packages/engine/src/company/cash_dividend_tax.rs": "1ebcd24d4eec19fb5d108c95ab9884493f373c3836a5d7d33760bb253a7a8031",
+  "packages/engine/src/accounting/amount.rs": "499a430665f6031912105cd7d6e224acb0062b0ab81e3f4075b05887fe47479f",
+  "packages/engine/src/calendar/date.rs": "6e8e756c40fa9649bca93017bc2d94166f8bad18858c3724e6a31e910afbdf9e",
+  "apps/web/src/types/generated/CompanyCapabilities.ts": "776bee9818ae83b117758850c5793af7535532e0b6b23c63723f25e3a29e6d36",
+  "apps/web/src/types/generated/PeriodChangeExplanation.ts": "6812b95c1e1920eb8a77479fdb0fd4121bc9a839dd6a718231526f4cfd7f9259",
+  "docs/decisions/0035-company-system-simple-fundamentals.md": "b44d4c88f4617a97b3820a8d79d0eacadf8e4133f67991a752d7cb2622cb197b",
+  "docs/decisions/0041-stock-numeric-identity.md": "cd90748a9cfd01ec12271e33fec789043a8951750eef554a489b8df379d7b270",
+  "docs/decisions/0040-new-game-default-taxation-modes.md": "0d035f73ae15271fc2929a99d774761759beaeee8c667e07935c7aee1285e0a8"
+}

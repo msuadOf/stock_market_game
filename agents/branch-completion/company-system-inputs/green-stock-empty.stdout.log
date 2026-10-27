@@ -1,0 +1,16 @@
+✔ Money 门槛精确保留 i64 上界并显式拒绝越界 (86.512976ms)
+✔ 真实事件保留非法 raw 文本、显示错误、不回写，再修正时以数值 company 回调 (3.850596ms)
+✔ 送转非法 raw 与 Money 上限保持可见，修正前不回写，外部有效回填重置字段 (1.493301ms)
+✔ 字段边界拒绝小数 bp、零间隔和过大送转比例，不钳制 (0.275998ms)
+✔ 未配置送转启用为空 raw，半填不回写；取消为未配置 (1.204074ms)
+✔ seed 完整 u64、规范十进制边界，在创建前拒绝非法 seed (2.365205ms)
+✔ 预览 seed 原值创建；seed 编辑不覆盖 custom 非法 raw JSON (1.356788ms)
+✔ Simulation 创建草稿显式不支持，非法 seed 先于运行失败 (0.423562ms)
+ℹ tests 8
+ℹ suites 0
+ℹ pass 8
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1441.023609

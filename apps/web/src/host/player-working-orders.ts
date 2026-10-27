@@ -1,6 +1,6 @@
 import { parseMoney, compareMoney } from "../utils/money.ts";
 import type { Cents } from "../types/engine.ts";
-import { stockCodeOf } from "./protocol/stock-identity.ts";
+import type { CatalogResolver } from "./catalog-resolver.ts";
 
 export type PlayerWorkingOrder = {
   readonly id: number;
@@ -26,7 +26,7 @@ function nonnegativeSafeInteger(value: unknown, path: string): number {
   return value;
 }
 
-export function normalizePlayerWorkingOrders(value: unknown): readonly PlayerWorkingOrder[] {
+export function normalizePlayerWorkingOrders(value: unknown, identity: CatalogResolver): readonly PlayerWorkingOrder[] {
   if (!Array.isArray(value)) throw new TypeError("玩家活动委托必须是数组");
   return value.map((item, index) => {
     const path = `玩家活动委托[${index}]`;
@@ -48,7 +48,7 @@ export function normalizePlayerWorkingOrders(value: unknown): readonly PlayerWor
     if (remainingQty > 0xffff_ffff) throw new TypeError(`${path}.remainingQty 必须是 u32`);
     return {
       id: nonnegativeSafeInteger(order.id, `${path}.id`),
-      code: stockCodeOf(order.code, `${path}.code`),
+      code: identity.stockCode(order.code, `${path}.code`),
       side: order.side,
       price,
       remainingQty,

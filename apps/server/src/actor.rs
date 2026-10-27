@@ -81,6 +81,8 @@ pub struct HostFailure {
 pub struct FailureContext {
     pub operation: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub fault: Option<engine::ValidationFault>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub tick: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub seq: Option<u64>,
@@ -167,6 +169,7 @@ impl FailureContext {
     fn new(operation: &'static str) -> Self {
         Self {
             operation,
+            fault: None,
             tick: None,
             seq: None,
             day: None,
@@ -176,6 +179,27 @@ impl FailureContext {
 }
 
 impl HostFailure {
+    pub(crate) fn catalog(
+        error: &engine::session::CompanyCatalogViewError,
+        operation: &'static str,
+        location: &'static str,
+    ) -> Self {
+        let mut context = FailureContext::new(operation);
+        context.fault = Some(engine::session::company_catalog_fault(error));
+        Self {
+            code: "CATALOG_BASELINE_FAILED",
+            message: "公开公司身份目录构造失败".to_owned(),
+            r#where: location.to_owned(),
+            cause: None,
+            context,
+            recoverable: false,
+            recovery_actions: vec![
+                "停止当前提交并重新同步权威会话；仍失败则重开有效日终档或新局",
+                "复制错误详情反馈",
+            ],
+        }
+    }
+
     pub(crate) fn step(error: &engine::session::StepFatal) -> Self {
         let engine::session::StepFatal::InvariantViolation { location, .. } = error;
         Self {
@@ -233,6 +257,8 @@ impl HostFailure {
 pub struct PublicBaseline {
     pub timeline_generation: u64,
     pub snapshot: PublicBaselineSnapshot,
+    pub stock_catalog: Vec<engine::session::StockIdentityEntry>,
+    pub company_catalog: Vec<engine::session::CompanyCatalogEntry>,
     pub civil_date: String,
     pub public_revision: u64,
     pub public_report_ids: Vec<String>,
@@ -445,7 +471,7 @@ pub enum SessionCommand {
         reply: oneshot::Sender<Result<(u64, engine::session::InitialAllocation), SendCommandError>>,
     },
     PublicBaseline {
-        reply: oneshot::Sender<PublicBaseline>,
+        reply: oneshot::Sender<Result<PublicBaseline, engine::session::CompanyCatalogViewError>>,
     },
     SpeedMetrics {
         reply: oneshot::Sender<SpeedMetrics>,
@@ -577,7 +603,7 @@ pub enum MemberRequest {
 
 #[derive(Debug)]
 pub enum MemberResponse {
-    Baseline(PublicBaseline),
+    Baseline(Result<PublicBaseline, engine::session::CompanyCatalogViewError>),
     Context(MarketContext),
     Membership(MarketMembership),
     Control,
@@ -893,10 +919,15 @@ impl SessionHandles {
     pub async fn public_baseline_for(
         &self,
         subject: OpaqueSubjectId,
-    ) -> Result<PublicBaseline, SendCommandError> {
-        match self.member_request(subject, MemberRequest::Baseline).await? {
-            MemberResponse::Baseline(baseline) => Ok(baseline),
-            _ => Err(SendCommandError::Rejected("本人基线响应类型错误".into())),
+    ) -> Result<PublicBaseline, PublicBaselineError> {
+        match self
+            .member_request(subject, MemberRequest::Baseline)
+            .await?
+        {
+            MemberResponse::Baseline(baseline) => baseline.map_err(PublicBaselineError::Catalog),
+            _ => Err(PublicBaselineError::Command(SendCommandError::Rejected(
+                "本人基线响应类型错误".into(),
+            ))),
         }
     }
 
@@ -1230,12 +1261,14 @@ impl SessionHandles {
         rx.await.map_err(|_| SendCommandError::ActorGone)?
     }
 
-    pub async fn public_baseline(&self) -> Result<PublicBaseline, SendCommandError> {
+    pub async fn public_baseline(&self) -> Result<PublicBaseline, PublicBaselineError> {
         let (tx, rx) = oneshot::channel();
         self.cmd_tx
             .send(SessionCommand::PublicBaseline { reply: tx })
             .map_err(|_| SendCommandError::ActorGone)?;
-        rx.await.map_err(|_| SendCommandError::ActorGone)
+        rx.await
+            .map_err(|_| SendCommandError::ActorGone)?
+            .map_err(PublicBaselineError::Catalog)
     }
 
     pub async fn speed_metrics(&self) -> Result<SpeedMetrics, SendCommandError> {
@@ -1420,6 +1453,14 @@ impl SessionHandles {
 }
 
 /// 命令投递失败（actor task 已退出 / engine 拒绝意图）。显式可见，不静默吞。
+#[derive(Debug, thiserror::Error)]
+pub enum PublicBaselineError {
+    #[error(transparent)]
+    Command(#[from] SendCommandError),
+    #[error("公开公司身份目录构造失败")]
+    Catalog(#[from] engine::session::CompanyCatalogViewError),
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum SendCommandError {
     /// actor task 已退出（session 被 drop 或 panic）。
@@ -2114,22 +2155,14 @@ impl SessionActor {
                     Err(engine::session::MembershipError::RejoinConfirmationRequired) => None,
                     Err(error) => return Err(reject(error)),
                 };
-                self.game.prepare_public_baseline();
-                let mut snapshot: PublicBaselineSnapshot = self.game.snapshot().into();
-                snapshot.accounts.retain(|id, _| Some(*id) == account);
-                Ok(MemberResponse::Baseline(PublicBaseline {
-                    timeline_generation: self.timeline_generation,
-                    snapshot,
-                    civil_date: self.game.civil_date().to_iso(),
-                    public_revision: self.public_revision,
-                    public_report_ids: self
-                        .game
-                        .publication_ids()
-                        .into_iter()
-                        .map(|id| id.value().to_string())
-                        .collect(),
-                    failure: self.fatal_failure.clone(),
-                }))
+                let baseline = self.public_baseline_candidate().map(|mut baseline| {
+                    baseline
+                        .snapshot
+                        .accounts
+                        .retain(|id, _| Some(*id) == account);
+                    baseline
+                });
+                Ok(MemberResponse::Baseline(baseline))
             }
             MemberRequest::Context => {
                 let member = match self.game.market_membership(&subject) {
@@ -2286,6 +2319,49 @@ impl SessionActor {
         self.stop_with_failure(HostFailure::civil(&error));
     }
 
+    fn public_baseline_candidate(
+        &mut self,
+    ) -> Result<PublicBaseline, engine::session::CompanyCatalogViewError> {
+        let catalog = self.game.company_catalog_view();
+        self.finish_public_baseline(catalog)
+    }
+
+    fn finish_public_baseline(
+        &mut self,
+        catalog: Result<
+            Vec<engine::session::CompanyCatalogEntry>,
+            engine::session::CompanyCatalogViewError,
+        >,
+    ) -> Result<PublicBaseline, engine::session::CompanyCatalogViewError> {
+        let company_catalog = match catalog {
+            Ok(catalog) => catalog,
+            Err(error) => {
+                self.stop_with_failure(HostFailure::catalog(
+                    &error,
+                    "public_baseline",
+                    "server.actor.public_baseline",
+                ));
+                return Err(error);
+            }
+        };
+        self.game.prepare_public_baseline();
+        Ok(PublicBaseline {
+            timeline_generation: self.timeline_generation,
+            snapshot: self.game.snapshot().into(),
+            stock_catalog: self.game.stock_catalog_view(),
+            company_catalog,
+            civil_date: self.game.civil_date().to_iso(),
+            public_revision: self.public_revision,
+            public_report_ids: self
+                .game
+                .publication_ids()
+                .into_iter()
+                .map(|id| id.value().to_string())
+                .collect(),
+            failure: self.fatal_failure.clone(),
+        })
+    }
+
     fn stop_with_failure(&mut self, mut failure: HostFailure) {
         // B3：可恢复失败（如日终存档写失败）不关 ingress、不停机——交易
         // 提交有效，恢复推进后自动重试（18725d07 persist_day_end 语义）。
@@ -2434,20 +2510,8 @@ impl SessionActor {
                 let _ = reply.send(result);
             }
             SessionCommand::PublicBaseline { reply } => {
-                self.game.prepare_public_baseline();
-                let _ = reply.send(PublicBaseline {
-                    timeline_generation: self.timeline_generation,
-                    snapshot: self.game.snapshot().into(),
-                    civil_date: self.game.civil_date().to_iso(),
-                    public_revision: self.public_revision,
-                    public_report_ids: self
-                        .game
-                        .publication_ids()
-                        .into_iter()
-                        .map(|id| id.value().to_string())
-                        .collect(),
-                    failure: self.fatal_failure.clone(),
-                });
+                let baseline = self.public_baseline_candidate();
+                let _ = reply.send(baseline);
             }
             SessionCommand::SpeedMetrics { reply } => {
                 let metrics = self.pacing.refresh_metrics(self.game.tick());
@@ -2771,5 +2835,31 @@ impl SessionActor {
     /// 当前 interval 对应的 `Duration`（至少 1ms）。
     fn tick_duration(&self) -> Duration {
         self.pacing.tick_interval()
+    }
+}
+
+#[cfg(test)]
+mod catalog_boundary_tests {
+    use super::*;
+    use std::error::Error;
+    #[test]
+    fn catalog_error_keeps_leaf_and_numeric_fault() {
+        let error = PublicBaselineError::Catalog(
+            engine::session::CompanyCatalogViewError::UnknownListedStock {
+                company: engine::company::CompanyId(7),
+            },
+        );
+        let source = error
+            .source()
+            .unwrap()
+            .downcast_ref::<engine::session::CompanyCatalogViewError>()
+            .unwrap();
+        let failure =
+            HostFailure::catalog(source, "public_baseline", "server.actor.public_baseline");
+        assert_eq!(
+            failure.context.fault,
+            Some(engine::ValidationFault::new(3019, vec![7]))
+        );
+        assert!(!failure.recoverable);
     }
 }

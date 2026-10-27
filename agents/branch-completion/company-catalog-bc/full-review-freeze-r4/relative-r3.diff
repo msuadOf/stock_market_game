@@ -1,0 +1,54 @@
+diff --git a/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/agents/branch-completion/company-catalog-bc/full-review-freeze-r4/source/apps/web/src/host/tauri-host.ts b/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/tauri-host.ts
+index cad72628..11031734 100644
+--- a/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/agents/branch-completion/company-catalog-bc/full-review-freeze-r4/source/apps/web/src/host/tauri-host.ts
++++ b/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/tauri-host.ts
+@@ -238,8 +238,7 @@ export async function createTauriHost(setup: SessionSetup, seed: bigint): Promis
+       }
+       const generation = timeline.captureGeneration();
+       await invoke("resume_session", { sessionId: id });
+-      if (disposed) throw new Error("Tauri start 响应属于已销毁会话");
+-      timeline.assertGeneration(generation, "Tauri start 响应属于已过期 generation");
++      assertResponseCurrent(generation, "start");
+       running = true;
+     },
+     async stop() {
+diff --git a/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/agents/branch-completion/company-catalog-bc/full-review-freeze-r4/source/apps/web/src/host/tauri-host.test.ts b/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/tauri-host.test.ts
+index 1cee10d8..cd985de1 100644
+--- a/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/agents/branch-completion/company-catalog-bc/full-review-freeze-r4/source/apps/web/src/host/tauri-host.test.ts
++++ b/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/tauri-host.test.ts
+@@ -481,3 +481,35 @@ test("Tauri restore 坏头部保留可见 baseline，但拒绝晚到的同代写
+     return undefined;
+   });
+ });
++test("独立review r3：pending start确认不得在恢复authority已失效后报告成功",{timeout:10000},async()=>{
++ let finishResume!:(value:unknown)=>void;
++ await withTauriHost(async host=>{
++  const start=host.start(()=>{});
++  const refused=assert.rejects(start,/baseline.*失效/);
++  await assert.rejects(host.load({}),/响应字段无效/);
++  finishResume(null);
++  await refused;
++ },command=>{
++  if(command==="resume_session")return new Promise(resolve=>{finishResume=resolve;});
++  if(command==="restore_session")return {snapshot,generation:"2",timeline_id:"new",civil_date:"2030-01-01",stock_catalog:defaultStockCatalogFixture};
++  return undefined;
++ });
++});
++
++test("Tauri pending start 遇普通提交前恢复拒绝仍可确认旧 authority 运行", { timeout: 10000 }, async () => {
++  let finishResume!: (value: unknown) => void;
++  const enqueues: unknown[] = [];
++  await withTauriHost(async host => {
++    const starting = host.start(() => {});
++    await assert.rejects(host.load({}), /候选校验失败/);
++    finishResume(null);
++    await starting;
++    await host.submitIntent({ Cancel: { code: "600101", id: 7 } });
++    assert.deepEqual(enqueues, [{ sessionId: "session-1", generation: "1", intent: { Cancel: { code: 3, id: 7 } } }]);
++  }, (command, args) => {
++    if (command === "resume_session") return new Promise(resolve => { finishResume = resolve; });
++    if (command === "restore_session") return Promise.reject("候选校验失败");
++    if (command === "enqueue") enqueues.push(args);
++    return undefined;
++  });
++});

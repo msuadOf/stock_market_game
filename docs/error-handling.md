@@ -135,3 +135,12 @@ UI 收到一个错误时，至少要能渲染以下字段（来自错误对象�
 
 > **可预期的失败用 Result 显式表达；不可预期的错误抛出带上下文的异常并由 UI 展示给用户。
 > 永远不在静默中 fallback。让错误成为改进的信号，而不是被掩埋的炸弹。**
+
+### 公开目录身份失配
+
+`engine::error::COMPANY_CATALOG_LISTED_STOCK_MISSING` 是公开身份故障的唯一数值码定义，
+`context` 恰为 `[CompanyId]`。共同 `session::company_catalog_fault` 将
+`CompanyCatalogViewError` 投影到该数值契约；三宿主沿既有 `HostFailure.context.fault`
+传递，Web 共同 parser 严格校验并展示公司身份与 `StockCatalog` 失配原因。
+恢复提交前的校验失败可以保留原会话；恢复已经替换实际会话后发生目录失败，必须停止新会话并重同步，
+此前界面保留的旧 baseline 不代表 engine 已回滚。

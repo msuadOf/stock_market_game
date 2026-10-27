@@ -1,0 +1,9 @@
+✔ 实际单股只读请求发StockId0，initialAllocation与NPC诊断回相同证券 (2.46935ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 1
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 235.986681

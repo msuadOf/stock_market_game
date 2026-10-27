@@ -1,0 +1,15 @@
+✔ 实际两目录保留原 id，成员 scope 必须属于报告公司 (4.356085ms)
+✔ 目录严格拒绝缺键、多键、重复、非法 u32 与 issuer 覆盖缺口 (0.576856ms)
+✔ 合法特殊公司 code 精确保留且不依赖原型 (0.285887ms)
+✔ 实际 UI C-code 查询使用本代数值 id，结果仍落 C-code 缓存，scope错公司显式错误 (11.322339ms)
+✔ 旧 generation resolve 与 reject 不能污染换代后的同 code (1.52272ms)
+✔ 单股本代 StockId0 在 baseline、日内 facts/timeseries 和 runtime delta 保持600101 (5.247329ms)
+✔ Redux/Immer 对特殊公司 code 的缓存和阅读操作不命中原型 (14.291058ms)
+ℹ tests 7
+ℹ suites 0
+ℹ pass 7
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 256.108298

@@ -1,0 +1,212 @@
+✔ production delta updates selected daily K and mobile active K cache while retaining completed history (406.223425ms)
+✖ production runtimeSnapshot 替换权威日 K，普通帧的 active 不覆盖 snapshot (3.309561ms)
+✖ production AfterClose+BeforeOpen 即使携旧日历史也清空分时并保留权威日 K (2.528957ms)
+✔ successive production deltas use final authoritative active candles and remove absent active codes (3.536438ms)
+✔ 详情历史查询丢弃换股前响应，并在 hook rerender 后交付日 K consumer (3.121526ms)
+✔ 历史查询错误通过 notice 明确呈现 (0.493665ms)
+✔ production AfterClose-only 进入非交易日时保留真实收盘分时 (4.585621ms)
+✔ 审计G67：baseline拒绝没有行情的持仓引用，估值不能当零价 (3.469096ms)
+✖ 审计G67：非玩家和零股持仓引用同样校验，继承属性不是行情 (1.262879ms)
+✖ Worker实际分配query绑定requestId/generation，refresh后旧响应失效 (7.260002ms)
+✖ Tauri实际分配query使用会话身份，refresh后拒绝旧响应 (7.973604ms)
+✖ Remote实际分配首次开跑前连接基线、不启动撮合，load后旧响应失效 (55.80731ms)
+✔ 浏览器 WS 凭据不进入 URL，speed GET 携带同一会话授权 (52.784457ms)
+✔ 暂停继续不重送旧 baseline，pull 持续请求并忽略旧 socket error (58.303756ms)
+✖ dispose 与切换 delivery 为已发送写请求提供结果未知出口 (3.431225ms)
+✔ 并发 refresh 与内部 ResyncRequired 共享请求，不遗失原 waiter (1.31709ms)
+✔ 意外断线自动取新权威 baseline，迟到旧 socket 消息不能污染恢复 (151.495191ms)
+✖ 已中断的写请求迟到 queued 不冒充完成，不关闭同 socket 的重同步连接 (1.000511ms)
+✖ 无入队确认的写请求在 5000ms 结果未知，真实未发送的 ID 仍协议失败 (1.428664ms)
+✔ 连续三次自动恢复失败后显式 fatal，不无限重连 (1.082663ms)
+✔ 应用层同步拒绝 baseline 后关闭当前连接并拒绝 waiter，不覆盖原 failure (0.900557ms)
+✔ 启动拒绝读档缓存 baseline 时返回失败且不请求 running true (3.177897ms)
+✔ 远程新 generation baseline 先于HTTP读档响应时，先通知恢复配置再交付 (1.097294ms)
+✔ 远程读档HTTP响应丢失后，重同步新generation仍先确认已提交配置 (0.851006ms)
+✔ 远程读档失败后旧generation确认不改变配置并允许重试 (0.788654ms)
+ℹ Error: Test "已中断的写请求迟到 queued 不冒充完成，不关闭同 socket 的重同步连接" at src/host/remote-lifecycle.test.ts:109:1 generated asynchronous activity after the test ended. This activity created the error "Error: REMOTE_BASELINE_TIMEOUT: 权威基线重同步超时（5000ms）" and would have caused the test to fail, but instead triggered an unhandledRejection event.
+ℹ tests 25
+ℹ suites 0
+ℹ pass 16
+ℹ fail 9
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 5529.365345
+
+✖ failing tests:
+
+test at src/app/market-chart-runtime.test.ts:87:1
+✖ production runtimeSnapshot 替换权威日 K，普通帧的 active 不覆盖 snapshot (3.309561ms)
+  Error: PROTOCOL_UNEXPECTED: 未知股票 StockId：0
+      at Object.onFailure (/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/app/market-chart-runtime.test-support.tsx:25:11)
+      at ProtocolCoordinator.fail (/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/protocol-coordinator.ts:98:18)
+      at ProtocolCoordinator.applyProtocol (/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/protocol-coordinator.ts:163:9)
+      at ProtocolCoordinator.accept (/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/protocol-coordinator.ts:87:10)
+      at MarketChartRuntimeProbe (/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/app/market-chart-runtime.test-support.tsx:36:53)
+      at finishHooks (/data1/baiyifan/workplace/stock_market_game/node_modules/.pnpm/react-dom@18.3.1_react@18.3.1/node_modules/react-dom/cjs/react-dom-server-legacy.node.development.js:4964:16)
+      at renderWithHooks (/data1/baiyifan/workplace/stock_market_game/node_modules/.pnpm/react-dom@18.3.1_react@18.3.1/node_modules/react-dom/cjs/react-dom-server-legacy.node.development.js:5663:10)
+      at renderIndeterminateComponent (/data1/baiyifan/workplace/stock_market_game/node_modules/.pnpm/react-dom@18.3.1_react@18.3.1/node_modules/react-dom/cjs/react-dom-server-legacy.node.development.js:5736:15)
+      at renderElement (/data1/baiyifan/workplace/stock_market_game/node_modules/.pnpm/react-dom@18.3.1_react@18.3.1/node_modules/react-dom/cjs/react-dom-server-legacy.node.development.js:5961:7)
+      at renderNodeDestructiveImpl (/data1/baiyifan/workplace/stock_market_game/node_modules/.pnpm/react-dom@18.3.1_react@18.3.1/node_modules/react-dom/cjs/react-dom-server-legacy.node.development.js:6119:11)
+
+test at src/app/market-chart-runtime.test.ts:104:1
+✖ production AfterClose+BeforeOpen 即使携旧日历史也清空分时并保留权威日 K (2.528957ms)
+  Error: PROTOCOL_UNEXPECTED: 未知股票 StockId：2
+      at Object.onFailure (/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/app/market-chart-runtime.test-support.tsx:25:11)
+      at ProtocolCoordinator.fail (/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/protocol-coordinator.ts:98:18)
+      at ProtocolCoordinator.applyProtocol (/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/protocol-coordinator.ts:163:9)
+      at ProtocolCoordinator.accept (/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/protocol-coordinator.ts:87:10)
+      at MarketChartRuntimeProbe (/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/app/market-chart-runtime.test-support.tsx:36:53)
+      at finishHooks (/data1/baiyifan/workplace/stock_market_game/node_modules/.pnpm/react-dom@18.3.1_react@18.3.1/node_modules/react-dom/cjs/react-dom-server-legacy.node.development.js:4964:16)
+      at renderWithHooks (/data1/baiyifan/workplace/stock_market_game/node_modules/.pnpm/react-dom@18.3.1_react@18.3.1/node_modules/react-dom/cjs/react-dom-server-legacy.node.development.js:5663:10)
+      at renderIndeterminateComponent (/data1/baiyifan/workplace/stock_market_game/node_modules/.pnpm/react-dom@18.3.1_react@18.3.1/node_modules/react-dom/cjs/react-dom-server-legacy.node.development.js:5736:15)
+      at renderElement (/data1/baiyifan/workplace/stock_market_game/node_modules/.pnpm/react-dom@18.3.1_react@18.3.1/node_modules/react-dom/cjs/react-dom-server-legacy.node.development.js:5961:7)
+      at renderNodeDestructiveImpl (/data1/baiyifan/workplace/stock_market_game/node_modules/.pnpm/react-dom@18.3.1_react@18.3.1/node_modules/react-dom/cjs/react-dom-server-legacy.node.development.js:6119:11)
+
+test at src/app/portfolio-selector.test.ts:22:1
+✖ 审计G67：非玩家和零股持仓引用同样校验，继承属性不是行情 (1.262879ms)
+  AssertionError [ERR_ASSERTION]: The validation function is expected to return "true". Received false
+  
+  Caught error:
+  
+  ProtocolError: 持仓 600101 缺少行情，不能估值
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/app/portfolio-selector.test.ts:26:12)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: ProtocolError: 持仓 600101 缺少行情，不能估值
+        at malformed (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/protocol/parse.ts:49:9)
+        at parseProtocolSnapshot (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/protocol/parse.ts:186:9)
+        at Object.create.600101.last_price (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/app/portfolio-selector.test.ts:26:25)
+        at getActual (node:assert:586:5)
+        at strict.throws (node:assert:734:24)
+        at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/app/portfolio-selector.test.ts:26:12)
+        at Test.runInAsyncScope (node:async_hooks:226:14)
+        at Test.run (node:internal/test_runner/test:1201:25)
+        at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+        at Test.postRun (node:internal/test_runner/test:1330:19),
+    operator: 'throws',
+    diff: 'simple'
+  }
+
+test at src/host/initial-allocation-transport.test.ts:18:1
+✖ Worker实际分配query绑定requestId/generation，refresh后旧响应失效 (7.260002ms)
+  Error [ProtocolError]: 未知股票 StockId：3
+      at invalid (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/catalog-resolver.ts:7:9)
+      at Object.stockCode (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/catalog-resolver.ts:79:31)
+      at file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/initial-allocation.ts:27:27
+      at Array.map (<anonymous>)
+      at parseInitialAllocation (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/initial-allocation.ts:20:77)
+      at Object.initialAllocation (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/worker-host.ts:471:18)
+      at async TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/initial-allocation-transport.test.ts:39:22)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    code: 'PROTOCOL_MALFORMED',
+    where: '初始分配响应.stocks[0].code'
+  }
+
+test at src/host/initial-allocation-transport.test.ts:55:1
+✖ Tauri实际分配query使用会话身份，refresh后拒绝旧响应 (7.973604ms)
+  Error [ProtocolError]: 未知股票 StockId：3
+      at invalid (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/catalog-resolver.ts:7:9)
+      at Object.stockCode (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/catalog-resolver.ts:79:31)
+      at file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/initial-allocation.ts:27:27
+      at Array.map (<anonymous>)
+      at parseInitialAllocation (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/initial-allocation.ts:20:77)
+      at Object.initialAllocation (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/tauri-host.ts:325:14)
+      at async TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/initial-allocation-transport.test.ts:75:22)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    code: 'PROTOCOL_MALFORMED',
+    where: '初始分配响应.stocks[0].code'
+  }
+
+test at src/host/initial-allocation-transport.test.ts:88:1
+✖ Remote实际分配首次开跑前连接基线、不启动撮合，load后旧响应失效 (55.80731ms)
+  Error [ProtocolError]: 未知股票 StockId：3
+      at invalid (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/catalog-resolver.ts:7:9)
+      at Object.stockCode (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/catalog-resolver.ts:79:31)
+      at file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/initial-allocation.ts:27:27
+      at Array.map (<anonymous>)
+      at parseInitialAllocation (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/initial-allocation.ts:20:77)
+      at Object.initialAllocation (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/remote-host.ts:409:14)
+      at async TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/initial-allocation-transport.test.ts:122:22)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    code: 'PROTOCOL_MALFORMED',
+    where: '初始分配响应.stocks[0].code'
+  }
+
+test at src/host/remote-lifecycle.test.ts:66:1
+✖ dispose 与切换 delivery 为已发送写请求提供结果未知出口 (3.431225ms)
+  [AssertionError [ERR_ASSERTION]: The input did not match the regular expression /结果未知/. Input:
+  
+  'ProtocolError: 未知股票代码：600101（不在本代 StockCatalog）'
+  ] {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: ProtocolError: 未知股票代码：600101（不在本代 StockCatalog）
+        at invalid (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/catalog-resolver.ts:7:9)
+        at Object.stockId (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/catalog-resolver.ts:73:29)
+        at wireIntentOf (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/protocol/stock-identity.ts:462:65)
+        at Object.submitIntent (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/remote-host.ts:335:27)
+        at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/remote-lifecycle.test.ts:71:34)
+        at async Test.run (node:internal/test_runner/test:1208:7)
+        at async Test.processPendingSubtests (node:internal/test_runner/test:831:7),
+    expected: /结果未知/,
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at src/host/remote-lifecycle.test.ts:109:1
+✖ 已中断的写请求迟到 queued 不冒充完成，不关闭同 socket 的重同步连接 (1.000511ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /结果未知/. Input:
+  
+  'ProtocolError: 未知股票代码：600101（不在本代 StockCatalog）'
+  
+      at async TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/remote-lifecycle.test.ts:117:3)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: ProtocolError: 未知股票代码：600101（不在本代 StockCatalog）
+        at invalid (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/catalog-resolver.ts:7:9)
+        at Object.stockId (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/catalog-resolver.ts:73:29)
+        at wireIntentOf (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/protocol/stock-identity.ts:462:65)
+        at Object.submitIntent (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/remote-host.ts:335:27)
+        at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/remote-lifecycle.test.ts:114:32)
+        at async Test.run (node:internal/test_runner/test:1208:7)
+        at async Test.processPendingSubtests (node:internal/test_runner/test:831:7),
+    expected: /结果未知/,
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at src/host/remote-lifecycle.test.ts:125:1
+✖ 无入队确认的写请求在 5000ms 结果未知，真实未发送的 ID 仍协议失败 (1.428664ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /5000ms.*结果未知/. Input:
+  
+  'ProtocolError: 未知股票代码：600101（不在本代 StockCatalog）'
+  
+      at async TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/remote-lifecycle.test.ts:134:3)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: ProtocolError: 未知股票代码：600101（不在本代 StockCatalog）
+        at invalid (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/catalog-resolver.ts:7:9)
+        at Object.stockId (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/catalog-resolver.ts:73:29)
+        at wireIntentOf (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/protocol/stock-identity.ts:462:65)
+        at Object.submitIntent (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/remote-host.ts:335:27)
+        at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/remote-lifecycle.test.ts:131:39)
+        at async Test.run (node:internal/test_runner/test:1208:7)
+        at async Test.processPendingSubtests (node:internal/test_runner/test:831:7),
+    expected: /5000ms.*结果未知/,
+    operator: 'rejects',
+    diff: 'simple'
+  }

@@ -1,0 +1,25 @@
+
+running 2 tests
+
+thread 'd1_real_lifecycle_keeps_original_quantity_order_quotes_and_exactly_once' (2886028) panicked at packages/engine/tests/runtime_diagnostics_d1.rs:37:5:
+assertion `left == right` failed: pre Quote → Submitted → post Quote
+  left: 0
+ right: 3
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test d1_real_lifecycle_keeps_original_quantity_order_quotes_and_exactly_once ... FAILED
+
+thread 'd1_owned_protocol_checkpoints_restore_multiple_successes_across_sessions' (2886027) panicked at packages/engine/tests/runtime_diagnostics_d1.rs:68:5:
+assertion `left == right` failed
+  left: 0
+ right: 3
+test d1_owned_protocol_checkpoints_restore_multiple_successes_across_sessions ... FAILED
+
+failures:
+
+failures:
+    d1_owned_protocol_checkpoints_restore_multiple_successes_across_sessions
+    d1_real_lifecycle_keeps_original_quantity_order_quotes_and_exactly_once
+
+test result: FAILED. 0 passed; 2 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.20s
+
+bounded command exited with 101

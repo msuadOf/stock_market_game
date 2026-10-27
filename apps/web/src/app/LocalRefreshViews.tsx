@@ -14,7 +14,7 @@ import { addMoney, subtractMoney, compareMoney } from "../utils/money.ts";
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { useSelector } from "react-redux";
 import { CompanyPanel } from "../components/company/CompanyPanel.tsx";
-import { publicCompanyForStock } from "../components/company/company-catalog.ts";
+import { actualPublicCompanies } from "../components/company/company-catalog.ts";
 import { MarketGrid } from "../components/MarketGrid.tsx";
 import { PriceChart } from "../components/PriceChart.tsx";
 import { STOCK_LIST, STOCK_NAMES, TRADING_MINUTES_PER_DAY } from "../config/defaults.ts";
@@ -228,7 +228,9 @@ interface MobileDetailProps extends CompanyPanelActions { browser: SecurityBrows
 export function ConnectedCompanyPanel(props: CompanyPanelActions & { stockContext?: boolean }) {
   const chartCode = useMarketRuntimeSelection();
   const companyState = useSelector((state: RootState) => state.company);
-  const companyId = props.stockContext ? publicCompanyForStock(chartCode)?.id ?? null : companyState.selectedCompanyId ?? publicCompanyForStock(chartCode)?.id ?? null;
+  const companies = actualPublicCompanies(companyState.companyCatalog, companyState.stockCatalog);
+  const listed = companies.find(company => company.stockCode === chartCode);
+  const companyId = props.stockContext ? listed?.id ?? null : companyState.selectedCompanyId ?? listed?.id ?? null;
   const onCompanyChange = (nextCompanyId: string) => {
     store.dispatch(selectCompany(nextCompanyId));
   };

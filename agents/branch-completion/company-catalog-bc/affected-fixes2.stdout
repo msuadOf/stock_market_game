@@ -1,0 +1,33 @@
+✔ production delta updates selected daily K and mobile active K cache while retaining completed history (407.733888ms)
+✔ production runtimeSnapshot 替换权威日 K，普通帧的 active 不覆盖 snapshot (2.555208ms)
+✔ production AfterClose+BeforeOpen 即使携旧日历史也清空分时并保留权威日 K (9.133109ms)
+✔ successive production deltas use final authoritative active candles and remove absent active codes (2.903519ms)
+✔ 详情历史查询丢弃换股前响应，并在 hook rerender 后交付日 K consumer (2.402504ms)
+✔ 历史查询错误通过 notice 明确呈现 (0.456234ms)
+✔ production AfterClose-only 进入非交易日时保留真实收盘分时 (1.870617ms)
+✔ 审计G67：baseline拒绝没有行情的持仓引用，估值不能当零价 (3.721333ms)
+✔ 审计G67：非玩家和零股持仓引用同样校验，继承属性不是行情 (0.673421ms)
+✔ Worker实际分配query绑定requestId/generation，refresh后旧响应失效 (7.836769ms)
+✔ Tauri实际分配query使用会话身份，refresh后拒绝旧响应 (8.226771ms)
+✔ Remote实际分配首次开跑前连接基线、不启动撮合，load后旧响应失效 (52.934619ms)
+✔ 浏览器 WS 凭据不进入 URL，speed GET 携带同一会话授权 (53.753483ms)
+✔ 暂停继续不重送旧 baseline，pull 持续请求并忽略旧 socket error (59.688825ms)
+✔ dispose 与切换 delivery 为已发送写请求提供结果未知出口 (3.099035ms)
+✔ 并发 refresh 与内部 ResyncRequired 共享请求，不遗失原 waiter (1.439694ms)
+✔ 意外断线自动取新权威 baseline，迟到旧 socket 消息不能污染恢复 (151.642957ms)
+✔ 已中断的写请求迟到 queued 不冒充完成，不关闭同 socket 的重同步连接 (1.31142ms)
+✔ 无入队确认的写请求在 5000ms 结果未知，真实未发送的 ID 仍协议失败 (1.587689ms)
+✔ 连续三次自动恢复失败后显式 fatal，不无限重连 (1.029102ms)
+✔ 应用层同步拒绝 baseline 后关闭当前连接并拒绝 waiter，不覆盖原 failure (1.141765ms)
+✔ 启动拒绝读档缓存 baseline 时返回失败且不请求 running true (2.721693ms)
+✔ 远程新 generation baseline 先于HTTP读档响应时，先通知恢复配置再交付 (1.343671ms)
+✔ 远程读档HTTP响应丢失后，重同步新generation仍先确认已提交配置 (1.051402ms)
+✔ 远程读档失败后旧generation确认不改变配置并允许重试 (1.098483ms)
+ℹ tests 25
+ℹ suites 0
+ℹ pass 25
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 902.123166

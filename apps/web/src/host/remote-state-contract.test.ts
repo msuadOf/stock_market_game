@@ -1,12 +1,13 @@
+import { market, dailyCandle } from "./protocol-test-fixtures.ts";
+import { catalogWireFixture, defaultStockCatalogFixture } from "./catalog-test-fixture.ts";
 import assert from "node:assert/strict";
-import { wireIntentOf } from "./protocol/stock-identity.ts";
 import test from "node:test";
 import type { Intent, SessionSetup } from "../types/engine.ts";
 import type { HostFailure, HostUpdate } from "./host-update.ts";
 import { createRemoteHost } from "./remote-host.ts";
 
-const snapshot = { seq: 0, tick: 0, day: 0, phase: "Continuous", markets: {}, accounts: {}, daily_candles: {}, active_daily_candles: {} };
-const baseline = (generation = 1) => ({ Baseline: { timeline_generation: generation, snapshot, civil_date: "2030-01-02", public_revision: 0, public_report_ids: [] } });
+const snapshot = { seq: 0, tick: 0, day: 0, phase: "Continuous", markets: Object.fromEntries(defaultStockCatalogFixture.map(stock => [String(stock.id), market()])), accounts: {}, daily_candles: Object.fromEntries(defaultStockCatalogFixture.map(stock => [String(stock.id), []])), active_daily_candles: Object.fromEntries(defaultStockCatalogFixture.map(stock => [String(stock.id), dailyCandle()])) };
+const baseline = (generation = 1) => ({ Baseline: { ...catalogWireFixture(snapshot), timeline_generation: generation, snapshot, civil_date: "2030-01-02", public_revision: 0, public_report_ids: [] } });
 const protocol = (generation = 1) => ({ PublisherFrame: { timeline_generation: generation, update: { TickBatch: { frames: [], runtime_snapshot: null } }, civil_date: "2030-01-02", public_revision: 0 } });
 // 公共 Intent 形态（代码串 code；宿主经 wireIntentOf 译数值后上 wire）。
 const intent = { PlaceLimit: { code: "600101", side: "Buy" as const, price: { Fixed: "1000" }, qty: 100 } } satisfies Intent;
@@ -66,11 +67,11 @@ test("Remote SubmitIntent 严格携带权威 generation，不用默认值且旧�
   socket.receive({ CommandQueued: { request_id: commandId(socket, 0) } });
   await rejected;
   // wire 携带数值 StockId（wireIntentOf 译码串→数值，ADR 0041）。
-  assert.deepEqual(socket.sent[0], { SubmitIntent: { request_id: 1, generation: "1", intent: wireIntentOf(intent) } });
+  assert.deepEqual(socket.sent[0], { SubmitIntent: { request_id: 1, generation: "1", intent: { PlaceLimit: { ...intent.PlaceLimit, code: 3 } } } });
   const current = host.submitIntent(intent);
   socket.receive({ CommandQueued: { request_id: commandId(socket, 1) } });
   await current;
-  assert.deepEqual(socket.sent[1], { SubmitIntent: { request_id: 2, generation: "2", intent: wireIntentOf(intent) } });
+  assert.deepEqual(socket.sent[1], { SubmitIntent: { request_id: 2, generation: "2", intent: { PlaceLimit: { ...intent.PlaceLimit, code: 3 } } } });
   await host.dispose();
 });
 
@@ -254,4 +255,46 @@ test("resync send 同步失败拒绝已登记 waiter，后续可显式重试", o
   socket.receive(baseline());
   await first;
   await host.dispose();
+});
+
+function actualIntentBaseline(generation: number, codes: readonly string[]) {
+  const stock_catalog = [...codes].sort().map((code, id) => ({ id, code }));
+  return { Baseline: { timeline_generation: generation, civil_date: "2030-01-02", public_revision: 0, public_report_ids: [],
+    stock_catalog, company_catalog: stock_catalog.map(stock => ({ id: stock.id, code: `C-${stock.code}`, name: stock.code, listed_stock: stock.id })),
+    snapshot: { ...snapshot, markets: Object.fromEntries(stock_catalog.map(stock => [stock.id, market()])), daily_candles: Object.fromEntries(stock_catalog.map(stock => [stock.id, []])), active_daily_candles: Object.fromEntries(stock_catalog.map(stock => [stock.id, dailyCandle()])) },
+  } };
+}
+
+test("Remote实际发送按同code换代id，unknown在pending和timeout前本地拒绝", options, async () => {
+  const { host, socket } = await fixture();
+  socket.receive(actualIntentBaseline(1, ["600101"]));
+  const before = socket.sent.length;
+  await assert.rejects(host.submitIntent({ Cancel: { code: "000812", id: 7 } }), error => {
+    assert.match(String(error), /000812/);
+    assert.doesNotMatch(String(error), /结果未知|REMOTE_COMMAND_SEND/);
+    return true;
+  });
+  assert.equal(socket.sent.length, before);
+  const first = host.submitIntent(intent);
+  assert.deepEqual(socket.sent[0], { SubmitIntent: { request_id: 1, generation: "1", intent: { PlaceLimit: { code: 0, side: "Buy", price: { Fixed: "1000" }, qty: 100 } } } });
+  socket.receive({ CommandQueued: { request_id: 1 } }); await first;
+  socket.receive(actualIntentBaseline(2, ["002156", "600101"]));
+  const next = host.submitIntent({ PlaceMarket: { code: "600101", side: "Sell", qty: 200 } });
+  assert.deepEqual(socket.sent[1], { SubmitIntent: { request_id: 2, generation: "2", intent: { PlaceMarket: { code: 1, side: "Sell", qty: 200 } } } });
+  socket.receive({ CommandQueued: { request_id: 2 } }); await next;
+  await host.dispose();
+});
+
+test("真实双Remote host的submitIntent按A/B/A实际目录隔离", options, async () => {
+  const a = await fixture(); const b = await fixture();
+  a.socket.receive(actualIntentBaseline(1, ["600101"]));
+  b.socket.receive(actualIntentBaseline(1, ["002156", "600101"]));
+  for (const [current, id] of [[a, 0], [b, 1], [a, 0]] as const) {
+    const pending = current.host.submitIntent({ Cancel: { code: "600101", id: 7 } });
+    const sent = current.socket.sent.at(-1) as { SubmitIntent: { request_id: number; generation: string; intent: unknown } };
+    assert.deepEqual(sent.SubmitIntent.intent, { Cancel: { code: id, id: 7 } });
+    current.socket.receive({ CommandQueued: { request_id: sent.SubmitIntent.request_id } });
+    await pending;
+  }
+  await Promise.all([a.host.dispose(), b.host.dispose()]);
 });

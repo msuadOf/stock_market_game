@@ -1,0 +1,46 @@
+✖ Bank income_tax_policy.rate_bp保持Rust整数位宽 (375.330943ms)
+✖ Bank income_tax_policy.loss_carryforward_years保持Rust整数位宽 (264.586319ms)
+ℹ tests 2
+ℹ suites 0
+ℹ pass 0
+ℹ fail 2
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 843.202302
+
+✖ failing tests:
+
+test at apps/web/src/save/schema/company/state.test.ts:111:121
+✖ Bank income_tax_policy.rate_bp保持Rust整数位宽 (375.330943ms)
+  AssertionError [ERR_ASSERTION]: Missing expected exception.
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/state.test.ts:114:9)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at Test.start (node:internal/test_runner/test:1191:17)
+      at startSubtestAfterBootstrap (node:internal/test_runner/harness:385:17) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: /income_tax_policy.rate_bp/,
+    operator: 'throws',
+    diff: 'simple'
+  }
+
+test at apps/web/src/save/schema/company/state.test.ts:111:121
+✖ Bank income_tax_policy.loss_carryforward_years保持Rust整数位宽 (264.586319ms)
+  AssertionError [ERR_ASSERTION]: Missing expected exception.
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/state.test.ts:114:9)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:911:18)
+      at Test.postRun (node:internal/test_runner/test:1465:19)
+      at Test.run (node:internal/test_runner/test:1390:12)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: /income_tax_policy.loss_carryforward_years/,
+    operator: 'throws',
+    diff: 'simple'
+  }

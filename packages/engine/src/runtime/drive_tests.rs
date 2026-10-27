@@ -571,12 +571,10 @@ fn d3a2c_group_open_derivation_matches_session_observe() {
     };
     // Sol 整改 5：曝光面同输入（共享 exposed_stocks_shared——组内与
     // session 版同一函数；此前两侧空集）。
-    let (catalog, registry, operations) = session.runtime_company_handles();
-    let codes = session.runtime_stock_codes();
+    let (_, company_facts) = session.runtime_company_handles().expect("选定公司事实合法");
     let exposed = crate::session::exposed_stocks_shared(
         &session.runtime_library_handle().1,
-        &registry,
-        &codes,
+        &company_facts,
         *derivation_now,
     );
     let observation = crate::session::DecisionChainObservation {
@@ -2928,6 +2926,7 @@ fn p2_4a_sparse_echo_missing_item_fails_loud() {
     use crate::runtime::drive::ensure_fact_owners_covered;
     use crate::runtime::world::TickRecord;
     let record = TickRecord {
+        retail: Vec::new(),
         tick: 1,
         rounds: 0,
         group_hashes: Vec::new(),
@@ -2951,6 +2950,8 @@ fn p2_4a_sparse_echo_missing_item_fails_loud() {
         desk_receipts: Vec::new(),
         group_rejections: Vec::new(),
         desk_auction: Vec::new(),
+        #[cfg(feature = "simulation-diagnostics")]
+        desk_causal: Vec::new(),
     };
     // 分片只含 local 0（maker）——taker local 3 缺项必须显式失败。
     let snapshots: Vec<Vec<(crate::runtime::LocalIdx, crate::runtime::group::GroupAccount)>> =
@@ -2980,6 +2981,7 @@ fn p2_4a_arc_shard_cover_check_matches_value_form() {
     use std::sync::Arc;
 
     let record = TickRecord {
+        retail: Vec::new(),
         tick: 1,
         rounds: 0,
         group_hashes: Vec::new(),
@@ -3003,6 +3005,8 @@ fn p2_4a_arc_shard_cover_check_matches_value_form() {
         desk_receipts: Vec::new(),
         group_rejections: Vec::new(),
         desk_auction: Vec::new(),
+        #[cfg(feature = "simulation-diagnostics")]
+        desk_causal: Vec::new(),
     };
     // Arc 分片形态（生产形态：组分片条目 Arc 共享——Seal 攻顶 A-1）。
     let make_shards = |locals: &[crate::runtime::LocalIdx]| -> Vec<
@@ -4013,7 +4017,7 @@ fn knife5b_plans_echo_gate_returns_empty_when_plan_book_unchanged() {
         .expect("步进（组线程就位）");
     // 直改注入计划一（mutate 面经 save_plan_book_undo ⇒ ⑤b 后置 dirty；
     // 注入后不步进——组簿无业务写，后续拍=未变拍）。
-    driver.mutate_plan_book_for_test(Box::new(|book| {
+    driver.mutate_plan_book_for_test(crate::AccountId(0), Box::new(|book| {
         book.create(plan_open_for_knife5b(crate::StockId(0)))
             .expect("注入计划一");
     }));
@@ -4038,7 +4042,7 @@ fn knife5b_plans_echo_gate_returns_empty_when_plan_book_unchanged() {
         );
     }
     // (4) 更新不漏：再次直改（计划二）后生产通道恢复全量。
-    driver.mutate_plan_book_for_test(Box::new(|book| {
+    driver.mutate_plan_book_for_test(crate::AccountId(0), Box::new(|book| {
         book.create(plan_open_for_knife5b(crate::StockId(1)))
             .expect("注入计划二");
     }));
@@ -4170,7 +4174,7 @@ fn knife5b_empty_group_book_keeps_session_mirror_on_clear() {
         .step_frame_equivalent(&mut session)
         .expect("步进（组线程就位）");
     // 注入计划 → 生产通道全量 → 手动安装（生产链 set_runtime_plans 等价面）。
-    driver.mutate_plan_book_for_test(Box::new(|book| {
+    driver.mutate_plan_book_for_test(crate::AccountId(0), Box::new(|book| {
         book.create(plan_open_for_knife5b(crate::StockId(0)))
             .expect("注入计划");
     }));
@@ -4184,7 +4188,7 @@ fn knife5b_empty_group_book_keeps_session_mirror_on_clear() {
     assert!(!debug_before.is_empty(), "前置：镜像已安装注入计划");
     // 计划集清空=全员 terminal 化（append-only：terminal 记录仍在
     // plan_ids）——**变化拍**（apply 置 dirty）。
-    driver.mutate_plan_book_for_test(Box::new(|book| {
+    driver.mutate_plan_book_for_test(crate::AccountId(0), Box::new(|book| {
         let ids: Vec<_> = book.plan_ids().collect();
         for id in ids {
             let _ = book.apply(

@@ -1,0 +1,27 @@
+✖ 真实组合Rust非空Legacy集团完整存档按catalog的u32恢复并无损raw解析 (147.060182ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 335.787522
+
+✖ failing tests:
+
+test at apps/web/src/save/schema/company/state.test.ts:82:1
+✖ 真实组合Rust非空Legacy集团完整存档按catalog的u32恢复并无损raw解析 (147.060182ms)
+  Error [SaveSchemaError]: 存档 setup.company_operations.catalog 不是允许字段
+      at exact (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/primitives.ts:72:31)
+      at parseCompanyOperationsConfig (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/operations.ts:13:3)
+      at parseSetup (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/market.ts:84:108)
+      at parseStrictSaveEnvelope (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/root.ts:69:17)
+      at parseSaveSlot (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/save-schema.ts:7:10)
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/state.test.ts:85:19)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at Test.start (node:internal/test_runner/test:1191:17)
+      at startSubtestAfterBootstrap (node:internal/test_runner/harness:385:17) {
+    path: 'setup.company_operations.catalog'
+  }

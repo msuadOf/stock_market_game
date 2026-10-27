@@ -16,8 +16,7 @@ import type { MarketHistoryRequest as WireMarketHistoryRequest } from "../types/
 import type { MarketHistoryAvailability } from "../types/generated/MarketHistoryAvailability.ts";
 import { exact, field, record, values } from "./protocol/guards.ts";
 import { parseDailyCandle } from "./protocol/wire-values.ts";
-import { stockCodeOf } from "./protocol/stock-identity.ts";
-import { stockIdOf } from "../config/stock-ids.ts";
+import type { CatalogResolver } from "./catalog-resolver.ts";
 import { tradeHistoryDate } from "./personal-trade-history.ts";
 import { parseMoney } from "../utils/money.ts";
 import { parseTurnoverCents } from "../utils/turnover.ts";
@@ -61,9 +60,9 @@ export interface MarketHistoryPage {
 }
 
 /** 请求层翻译：视图 code 串 → wire 数值 StockId（wasm 请求侧，ADR-0041）。 */
-export function wireMarketHistoryRequest(request: MarketHistoryRequest): WireMarketHistoryRequest {
+export function wireMarketHistoryRequest(request: MarketHistoryRequest, identity: CatalogResolver): WireMarketHistoryRequest {
   return {
-    stock: stockIdOf(request.code),
+    stock: identity.stockId(request.code),
     date_from: request.date_from,
     date_to: request.date_to,
     after: request.after,
@@ -103,13 +102,13 @@ export function normalizeMinuteBar(value: unknown): MinuteBar {
   return { minute_of_day: minute, phase: phase as MinuteBar["phase"], open, high, low, close, volume_shares: volume, trade_count: count, turnover_cents: turnover };
 }
 
-export function normalizeMarketHistoryPage(value: unknown, request: MarketHistoryRequest): MarketHistoryPage {
+export function normalizeMarketHistoryPage(value: unknown, request: MarketHistoryRequest, identity: CatalogResolver): MarketHistoryPage {
   const expected = normalizeMarketHistoryRequest(request), source = record(value, "公开历史页");
   // wire 的 stock 为数值 StockId（ADR 0041）；摄入时译回代码串再与请求比对。
   exact(source, ["stock", "entries", "next_cursor", "settled_through"], "公开历史页");
   const wireStock = field(source, "stock", "公开历史页");
   if (typeof wireStock !== "number" || !Number.isInteger(wireStock)) throw new Error("公开历史页证券必须为数值StockId");
-  const code = stockCodeOf(wireStock, "公开历史页.stock");
+  const code = identity.stockCode(wireStock, "公开历史页.stock");
   if (code !== expected.code) throw new Error("公开历史页证券与请求不同");
   const settled = source.settled_through === null ? null : tradeHistoryDate(source.settled_through, "settled_through");
   let previous = expected.after;

@@ -1,0 +1,25 @@
+{
+  "command": "rustc",
+  "args": [
+    "--edition=2021",
+    "--test",
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/mixed-calendar-c2a/agents/branch-completion/mixed-calendar-c2a/harness.rs",
+    "--extern",
+    "engine=/data1/baiyifan/workplace/stock_market_game/.tmp/mixed-calendar-c1a/target/debug/libengine.rlib",
+    "--extern",
+    "thiserror=/data1/baiyifan/workplace/stock_market_game/.tmp/mixed-calendar-c1a/target/debug/deps/libthiserror-44f263b99c8e22f7.rlib",
+    "-L",
+    "dependency=/data1/baiyifan/workplace/stock_market_game/.tmp/mixed-calendar-c1a/target/debug/deps",
+    "-C",
+    "codegen-units=16",
+    "-C",
+    "debuginfo=0",
+    "-o",
+    "/data1/baiyifan/workplace/stock_market_game/.tmp/mixed-calendar-c2a/red"
+  ],
+  "timeoutMs": 10000,
+  "elapsedMs": 922,
+  "exitCode": 0,
+  "stdout": "",
+  "stderr": "warning: variants `SourceMismatch`, `DuplicateExpectedStock`, `BindingMismatch`, `DateMismatch`, `TickLayoutMismatch`, and `BeforeClockMismatch` are never constructed\n  --> /data1/baiyifan/workplace/stock_market_game/.worktree/mixed-calendar-c2a/agents/branch-completion/mixed-calendar-c2a/../../../packages/engine/src/session/market_calendar_context.rs:18:5\n   |\n14 | pub(crate) enum MarketCalendarContextError {\n   |                 -------------------------- variants in this enum\n...\n18 |     SourceMismatch,\n   |     ^^^^^^^^^^^^^^\n19 |     #[error(\"接收方 bindings 重复 StockId：{stock:?}\")]\n20 |     DuplicateExpectedStock { stock: StockId },\n   |     ^^^^^^^^^^^^^^^^^^^^^^\n21 |     #[error(\"StockId {stock:?} 绑定不一致：expected={expected:?}, actual={actual:?}\")]\n22 |     BindingMismatch {\n   |     ^^^^^^^^^^^^^^^\n...\n28 |     DateMismatch {\n   |     ^^^^^^^^^^^^\n...\n33 |     TickLayoutMismatch {\n   |     ^^^^^^^^^^^^^^^^^^\n...\n38 |     BeforeClockMismatch {\n   |     ^^^^^^^^^^^^^^^^^^^\n   |\n   = note: `MarketCalendarContextError` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis\n   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default\n\nwarning: field `source` is never read\n  --> /data1/baiyifan/workplace/stock_market_game/.worktree/mixed-calendar-c2a/agents/branch-completion/mixed-calendar-c2a/../../../packages/engine/src/session/market_calendar_context.rs:55:5\n   |\n54 | pub(crate) struct MarketDayContext {\n   |                   ---------------- field in this struct\n55 |     source: Arc<MarketCalendarSource>,\n   |     ^^^^^^\n   |\n   = note: `MarketDayContext` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis\n\nwarning: 2 warnings emitted\n\n"
+}

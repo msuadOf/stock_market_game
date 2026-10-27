@@ -1,0 +1,174 @@
+{
+  "engineSourceHead": "04cae6969451d14c66bb545f855d9fa926b10429",
+  "sourceManifestSha256": "b2e70d8695656296797bcf41c677fbdaad7b8ab99aa5f0cba369d0b9a4f0f97b",
+  "readerSha256": "b178d0dcfe81d2b2714182aa58d924483233e83e78aafc345b1efaf6377d0d89",
+  "engineRlibSha256FromFrozenArtifactBinding": "f0f8db8cd8812daaa435e9e1e000a8c3a72c4225bdd34048a9f9a91bf3807219",
+  "rlibNotRehashedPerRootResourceStop": true,
+  "webSourceFreezeSha256": "6fd2be94d133fd8e0e086d2cd7558ff0981631940ddc2c8efd0ba2759d25479d",
+  "webReceiptSha256": "6a8741fd2cb5ad748f3c7d535b9175704397fd8090770eaf98fb7985814eed87",
+  "maxParallel": 8,
+  "childAndOuterDeadlineMs": 10000,
+  "passed": 8,
+  "rows": [
+    {
+      "name": "generated-company-state-registry.json",
+      "command": [
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/source-b-web-json-readback-04cae",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/agents/branch-completion/source-b-web-strict-save/web-roundtrip-04cae-v3/generated-company-state-registry.json",
+        "/data1/baiyifan/workplace/stock_market_game/agents/branch-completion/source-b/resume-2026-10-27/canonical-combination/web-rust-readback-v3/generated-company-state-registry.json"
+      ],
+      "exit": 0,
+      "wallSeconds": 0.09733808299642988,
+      "inputSha256": "9b1bf12fec504d06d3e37bb6801a02a98025d1b3e0276fc650c404686ee9485b",
+      "outputSha256": "0ba132976eacba6ee0850504c936392373348cf59bcb70b2d03b19b6f80863d7",
+      "expectedProducerSha256": "0ba132976eacba6ee0850504c936392373348cf59bcb70b2d03b19b6f80863d7",
+      "matchesProducerBytes": true,
+      "stdout": "输入73280字节，真实Rust恢复后输出73284字节\n",
+      "stderr": ""
+    },
+    {
+      "name": "manual-company-state-registry.json",
+      "command": [
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/source-b-web-json-readback-04cae",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/agents/branch-completion/source-b-web-strict-save/web-roundtrip-04cae-v3/manual-company-state-registry.json",
+        "/data1/baiyifan/workplace/stock_market_game/agents/branch-completion/source-b/resume-2026-10-27/canonical-combination/web-rust-readback-v3/manual-company-state-registry.json"
+      ],
+      "exit": 0,
+      "wallSeconds": 0.09663107300002594,
+      "inputSha256": "ee98e1d91f312b74bbc1fca79bf79ef5a1d65346ea9b17a508ad2b84154c7df5",
+      "outputSha256": "47e9f0e9735d5826b5ffb559d953bd7cda50abd273f2148e72eec5ce3ae6abee",
+      "expectedProducerSha256": "47e9f0e9735d5826b5ffb559d953bd7cda50abd273f2148e72eec5ce3ae6abee",
+      "matchesProducerBytes": true,
+      "stdout": "输入73141字节，真实Rust恢复后输出73145字节\n",
+      "stderr": ""
+    },
+    {
+      "name": "legacy-company-state.json",
+      "command": [
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/source-b-web-json-readback-04cae",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/agents/branch-completion/source-b-web-strict-save/web-roundtrip-04cae-v3/legacy-company-state.json",
+        "/data1/baiyifan/workplace/stock_market_game/agents/branch-completion/source-b/resume-2026-10-27/canonical-combination/web-rust-readback-v3/legacy-company-state.json"
+      ],
+      "exit": 0,
+      "wallSeconds": 0.3956227340022451,
+      "inputSha256": "557548b71b98ef8ec843d51ce6c6f750ba7ea1b7b39703f1a8832d0d2620828f",
+      "outputSha256": "073c1522a0eb6c1ab28e2c1d25174665356808d5ac564dc3e9fd0ed5ff649b28",
+      "expectedProducerSha256": "073c1522a0eb6c1ab28e2c1d25174665356808d5ac564dc3e9fd0ed5ff649b28",
+      "matchesProducerBytes": true,
+      "stdout": "输入462214字节，真实Rust恢复后输出462214字节\n",
+      "stderr": ""
+    },
+    {
+      "name": "generated-custom-monthly-nonempty.json",
+      "command": [
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/source-b-web-json-readback-04cae",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/agents/branch-completion/source-b-web-strict-save/web-roundtrip-04cae-v3/generated-custom-monthly-nonempty.json",
+        "/data1/baiyifan/workplace/stock_market_game/agents/branch-completion/source-b/resume-2026-10-27/canonical-combination/web-rust-readback-v3/generated-custom-monthly-nonempty.json"
+      ],
+      "exit": 0,
+      "wallSeconds": 0.8507839009980671,
+      "inputSha256": "054966def57bc93797d7adef31b9a93cdb1170c23086551755d7db8899aa65b6",
+      "outputSha256": "6f82e4a885493335609c62b658daeb000394c3f4d0ccc7b6feefe74829f2e6d4",
+      "expectedProducerSha256": "6f82e4a885493335609c62b658daeb000394c3f4d0ccc7b6feefe74829f2e6d4",
+      "matchesProducerBytes": true,
+      "stdout": "输入505762字节，真实Rust恢复后输出505766字节\n",
+      "stderr": ""
+    },
+    {
+      "name": "manual-custom-monthly-nonempty.json",
+      "command": [
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/source-b-web-json-readback-04cae",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/agents/branch-completion/source-b-web-strict-save/web-roundtrip-04cae-v3/manual-custom-monthly-nonempty.json",
+        "/data1/baiyifan/workplace/stock_market_game/agents/branch-completion/source-b/resume-2026-10-27/canonical-combination/web-rust-readback-v3/manual-custom-monthly-nonempty.json"
+      ],
+      "exit": 0,
+      "wallSeconds": 0.8483966810017591,
+      "inputSha256": "ad61c84d31116e126adbf960735a246c9aa8f33eb9cd54a08631903b60d9e65e",
+      "outputSha256": "e0c7ba2de0b9a746131dfcb97277fb0a78c3fdec7b1f37406b6354d1f545317d",
+      "expectedProducerSha256": "e0c7ba2de0b9a746131dfcb97277fb0a78c3fdec7b1f37406b6354d1f545317d",
+      "matchesProducerBytes": true,
+      "stdout": "输入505206字节，真实Rust恢复后输出505210字节\n",
+      "stderr": ""
+    },
+    {
+      "name": "generated-quarterly-nonempty.json",
+      "command": [
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/source-b-web-json-readback-04cae",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/agents/branch-completion/source-b-web-strict-save/web-roundtrip-04cae-v3/generated-quarterly-nonempty.json",
+        "/data1/baiyifan/workplace/stock_market_game/agents/branch-completion/source-b/resume-2026-10-27/canonical-combination/web-rust-readback-v3/generated-quarterly-nonempty.json"
+      ],
+      "exit": 0,
+      "wallSeconds": 0.6845484619989293,
+      "inputSha256": "8c4ff1b418093b63c06cd3ea2da93d076be2db8d24800401c1c887fdba21c389",
+      "outputSha256": "09b3dcd37c3e4affc817f1b190aa2c86ffe606e3265ec4909b87e5ebdc419cc7",
+      "expectedProducerSha256": "09b3dcd37c3e4affc817f1b190aa2c86ffe606e3265ec4909b87e5ebdc419cc7",
+      "matchesProducerBytes": true,
+      "stdout": "输入328836字节，真实Rust恢复后输出328840字节\n",
+      "stderr": ""
+    },
+    {
+      "name": "manual-quarterly-nonempty.json",
+      "command": [
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/source-b-web-json-readback-04cae",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/agents/branch-completion/source-b-web-strict-save/web-roundtrip-04cae-v3/manual-quarterly-nonempty.json",
+        "/data1/baiyifan/workplace/stock_market_game/agents/branch-completion/source-b/resume-2026-10-27/canonical-combination/web-rust-readback-v3/manual-quarterly-nonempty.json"
+      ],
+      "exit": 0,
+      "wallSeconds": 0.6823715200007427,
+      "inputSha256": "1adb5e286c6434e2e587208cfd7a6ee7e65bcb46a29fef6bee543356e870dfac",
+      "outputSha256": "658c40095a57779aba4b0792b50d3e0a0b496d12b1b5651023b315bfaa2eab59",
+      "expectedProducerSha256": "658c40095a57779aba4b0792b50d3e0a0b496d12b1b5651023b315bfaa2eab59",
+      "matchesProducerBytes": true,
+      "stdout": "输入328280字节，真实Rust恢复后输出328284字节\n",
+      "stderr": ""
+    },
+    {
+      "name": "nonempty-legacy-group.json",
+      "command": [
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/source-b-web-json-readback-04cae",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/agents/branch-completion/source-b-web-strict-save/web-roundtrip-04cae-v3/nonempty-legacy-group.json",
+        "/data1/baiyifan/workplace/stock_market_game/agents/branch-completion/source-b/resume-2026-10-27/canonical-combination/web-rust-readback-v3/nonempty-legacy-group.json"
+      ],
+      "exit": 0,
+      "wallSeconds": 4.4217451509975945,
+      "inputSha256": "d87aff62f8a3e6a3fb4be6f3355a3e3b375afaff8062aebb95452794f1faad81",
+      "outputSha256": "590f5231eff9a7a79cdf88a8841042835437c48b268c9a7ef4ac203a7eaee3e5",
+      "expectedProducerSha256": "590f5231eff9a7a79cdf88a8841042835437c48b268c9a7ef4ac203a7eaee3e5",
+      "matchesProducerBytes": true,
+      "stdout": "输入4279593字节，真实Rust恢复后输出4279595字节\n",
+      "stderr": ""
+    }
+  ]
+}

@@ -1,5 +1,5 @@
 import type { HostFailure } from "./host-update.ts";
-import { record } from "./protocol/guards.ts";
+import { exact, field, record, safeU32, values } from "./protocol/guards.ts";
 import { ProtocolError } from "./protocol/types.ts";
 
 export function parseHostFailure(value: unknown, transportWhere?: string): HostFailure {
@@ -43,6 +43,16 @@ export function parseHostFailure(value: unknown, transportWhere?: string): HostF
       }
       details.recoveryActions = source.recoveryActions.map((action) => nonempty(action, "recoveryActions"));
     }
+  }
+  if (failure.code === "CATALOG_BASELINE_FAILED") {
+    const context = record(details.context, "HostFailure.context");
+    const fault = record(field(context, "fault", "HostFailure.context"), "HostFailure.context.fault");
+    exact(fault, ["code", "context"], "HostFailure.context.fault");
+    if (fault.code !== 3019) throw new ProtocolError("PROTOCOL_MALFORMED", "HostFailure.context.fault.code", "目录故障必须使用3019");
+    const slots = values(fault.context, "HostFailure.context.fault.context");
+    if (slots.length !== 1) throw new ProtocolError("PROTOCOL_MALFORMED", "HostFailure.context.fault.context", "目录故障必须恰含一个 CompanyId");
+    const company = safeU32(slots[0], "HostFailure.context.fault.context[0]");
+    return { ...failure, ...details, message: `公司 CompanyId ${company} 的上市证券缺少于当前 StockCatalog，无法建立可信 baseline` };
   }
   return { ...failure, ...details };
 }

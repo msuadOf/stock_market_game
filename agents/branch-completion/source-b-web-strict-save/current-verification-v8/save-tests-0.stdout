@@ -1,0 +1,28 @@
+✔ ArchiveStore 元数据严格拒绝旧字段、坏单位与重复槽位 (2.277126ms)
+✔ ArchiveStore 元数据管理不请求加载，错误不会降级为空列表 (1.186485ms)
+✔ ArchiveStore 选择元数据须确认提交，旧客户端响应不能冒称当前选择成功 (0.579447ms)
+✔ accounting parsers preserve a populated mature common company slice (82.753856ms)
+✔ accounting parsers reject malformed chart, journal, and specification fields (19.719553ms)
+✔ RealEstate 贷款保留到期日，允许逾期并拒绝缺失或非法日期 (4.268254ms)
+✔ parseIndustryBooks preserves a populated Industrial slice (90.035338ms)
+✔ IndustrialBooks 严格保存交易归属身份而非派生金额 (52.140426ms)
+✔ IndustrialBooks 严格保存库存来源身份而非派生金额或数量 (45.824743ms)
+✔ IndustrialBooks 所得税年度基准必须完整且拒绝旧亏损池结构 (119.501235ms)
+✔ parseIndustryBooks rejects malformed industrial inventory structures with paths (35.829842ms)
+✔ parseIndustryBooks preserves source-shaped empty Bank Insurance and RealEstate books (0.656439ms)
+✔ parseIndustryBooks rejects malformed exact nested fields and wire scalars (16.064617ms)
+✔ parseIndustryBooks accepts fully populated source-shaped subledgers (1.339319ms)
+✔ 当前存档保留单一 LegacyOperations groups 与职责运行时字段且拒绝代际字段 (9.330641ms)
+✔ setup 保留省略字段并严格解析显式 company config 与 groups (395.663185ms)
+✔ groups 拒绝重复 root、跨组重复成员、自持和不安全股份数 (0.724361ms)
+✔ PaymentFailure 保留正金额与事项并拒绝无效及 active 注入 (0.839724ms)
+✔ CompanyOperations 严格保留 payment_failures 并拒绝缺失及非法日期/记录 (882.203672ms)
+✔ 公开 PaymentFailure 公告保留单日事实且拒绝伪造幅度或持续期 (1.804012ms)
+ℹ tests 20
+ℹ suites 0
+ℹ pass 20
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1745.451403

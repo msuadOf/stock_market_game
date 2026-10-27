@@ -23,6 +23,7 @@ mod tests;
 
 /// 固定开局的母公司持股事实；股数单位为股，不随证券交易变化。
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[serde(deny_unknown_fields)]
 pub struct GroupHolding {
     pub company: CompanyId,
     #[serde(with = "crate::orderbook::js_safe_u64")]
@@ -32,6 +33,7 @@ pub struct GroupHolding {
 
 /// 单层固定集团；成员关系与股本从 CompanySpec 读取，不另存第二份关系。
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[serde(deny_unknown_fields)]
 pub struct GroupStructure {
     pub root: CompanyId,
     pub holdings: Vec<GroupHolding>,

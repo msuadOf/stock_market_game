@@ -43,11 +43,15 @@ seed 顺序会保留在 `runs` 中。所有可能超过 JavaScript 安全整数�
   包含动作/主要理由计数、完整期望增减股数与经 T+1、库存限制后的可执行增减股数。它明确区分
   “目标仓位”“可执行子单空间”和后续实际委托/成交，不能把目标股数当作成交量。该聚合是 session
   的瞬时诊断缓存，既不进入存档，也不被策略读取或消耗额外随机数。
-- 散户执行：`retail_execution` 通过订单 ID 跟踪实际提交、成交、撤销、仍在簿中的股数，并给出按
-  已提交股数计算的成交比例。预校验或制度拒绝按 `rejection_reason_counts` 明示；撤销与报告结束时
-  仍未成交的挂单分别列出。若集合竞价原子结算失败，未能写入连续簿的委托列为 `aborted_shares`，
-  绝不误报为仍在簿中或已成交。不能把“无承接/未成交”改写为成交。集合竞价的实际成交、可撤阶段撤单和
-  转入连续竞价的余单使用同一订单身份继续对账。
+- 散户执行：`retail_execution` 按真实 order-ID 生命周期跟踪申报尝试、成交、撤销和仍在簿中的股数。
+  `Submitted` 表示真实取号后的申报尝试，不等于 `OrderAccepted`；`submitted_shares` 与成交比例分母
+  包含这类尝试。stock 层取号后拒绝时，以原股数 `Submitted`、同 ID 的 `Aborted` 闭合尝试，同时
+  按 `rejection_reason_counts` 计一次 `Rejected`；两个指标分别描述股数与拒绝次数，不是重复成交。
+  group 预校验尚无 desk ID，只计 `Rejected`，不补造 `Submitted`、`Aborted` 或订单身份。
+  `aborted_shares` 不属于仍在簿中或已成交的股数；整拍失败不发布任何候选生命周期。
+  撤销、未成交挂单分别列出，不能把“无承接/未成交”改写为成交。集合竞价成交、可撤阶段撤单和
+  转入连续竞价的余单沿同一订单身份对账。两个默认 Retail Vec 仅在最近一次市场批次成功后替换；
+  失败保留前批，成功空 Tick 清空，成功 manual Drain 发布本批事件并清空无新 observe 的 decisions。
 - 参与归因：`participant_execution` 只从权威 `Trade` 事件读取 maker 与 taker，并按 `player` 或
   NPC 的具体公开策略档案（例如 `retail_panic`、`institution_deep_value`）统计参与股数。每笔成交会
   在 maker、taker 两端各记一次，因此 `two_sided_participant_shares` 必须精确等于市场逐笔成交量的两倍；

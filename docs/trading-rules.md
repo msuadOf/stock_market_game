@@ -153,6 +153,27 @@ SealAllocationSnapshot 的 `DecisionResourceSnapshot::seal` 读取报价过期�
   所有权模型下单即扣，该缺陷形态从根上消除（等价防御=组端 purse 校验）。旧管线
   防御面随其退役消亡，不再回补。
 
+## 公司模型选源与完整存档（2026-10-27 候选分支登记）
+
+本段描述 SOURCE-B 候选分支的契约；完整跨 Web 验证与独立终审通过前，不据此宣称
+main 已交付。`setup.company_system` 缺席时沿 `LegacyOperations` 的经营、前史和公开
+会计材料；选定 `Simple` 时只构造和推进 `CompanySystem`，公开材料标为
+`SimpleGenerated`，不创建或后台推进旧经营网络。`Simple` 携带 `company_operations`
+或非空 `groups` 时，在装配前按模式字段冲突明确拒绝；`Simulation` 仍明确不支持。
+公司会计类别 `CompanyKind` 不表示沪深证券板块，股本单位仍为股且保留 `u64`。
+
+完整 `SaveSlot` 只保存一个 required `company_state` 外部标记：
+`LegacyOperations { operations, closing, groups }` 或
+`CompanySystem { system, corporate_actions }`。旧并列运行字段不再接受，不提供迁移、
+别名或缺字段补值；创建参数中的 `setup.company_operations` 和 `setup.groups` 保留各自
+原语义。公开库和披露游标仍各只有一份，与选中模型、冻结时钟、报告来源和恢复资本事实
+同时勾稽。名册 `SettlementDayMarket.binding` 保留实际物理日的前驱、股数单位与最终
+确认或休市日历来源，不能简写成普通 `PublicMarket` 或丢弃 binding。
+
+`Simple` 是明确的游戏财务简化，不声称逐合同经营、真实公司现金来源或偿付能力已经仿真。
+此选源和存档改动不开放 R4 公司行为资产提交或 SRC-C live hook，不改变沪深撮合、
+T+1、税费、账户资金或股份守恒规则。
+
 ## Simple 偏好的局内配置入口（2026-10-25 登记）
 
 `GameSession` 与 `ProtocolSession` 提供 `company_simple_preferences` 和
@@ -162,7 +183,7 @@ SealAllocationSnapshot 的 `DecisionResourceSnapshot::seal` 读取报价过期�
 间隔沿用结算周期数。无公司线、未知公司、非法参数或两侧配置不一致均显式拒绝。
 
 编辑原子地同步公司系统及 setup 的偏好配置，不改变资产、已有方案、提案台账或个人信息。
-`GameSession.save` 包含已编辑配置；恢复时要求 `company_system.config` 与
+`GameSession.save` 包含已编辑配置；恢复时要求 `company_state.CompanySystem.system.config` 与
 `setup.company_system` 完整一致，单侧编辑存档会被拒绝。`ProtocolSession.save`
 仍返回上次已发布的日终存档，后续自然日日终发布才包含新配置。本入口不代表偏好自动提案
 与公司行为日终执行链已经接通，也未开放配股、增发、回购或拆股策略参数；宿主 wire/API
@@ -414,3 +435,52 @@ NPC 默认策略只在缴款首日日终对未显式申请的非玩家、非回�
 `lock_until=None` 的定向对象属于无长期限售的游戏简化，不代表满足第59条；真实长期限售支持须另批设计。
 
 拆股／缩股领域账簿沿用整数比例及汇总取整的游戏简化，不将其视为现行 A 股统一取整规则。以真实 R 日快照计算后，若换算后的总发行股数为 0，`allocate_share_split` 与 `ShareSplitBook::register` 在冻结成功前显式拒绝，账簿校验、严格 JSON 与直接内存 `SaveSlot` 恢复使用同一约束。领域错误及直接内存恢复的 `Error::source` 保留事件、证券、方向、比例与换算前后数量；严格 JSON 拒绝不可执行回执，`decode_save_slot` 仍沿用现有通用解码错误边界，宿主继续脱敏展示。普通账户可换算为 0 股，只要发行人总发行股数仍为正；不补足 1 股、不自动产生现金替代。该约束维护既有 `ShareRegistry`／`CompanySpec` 正发行股本不变量，不由买入申报的 100 股单位推导，也不改变[ADR-0039](decisions/0039-rights-placement-split-scope-and-toggle.md)的功能范围。
+
+## 分红与送转独立候选的支持边界（2026-10-26）
+
+`session/corporate_actions/distributions_day_end.rs` 仅准备隔离候选，尚未接入生产日终。
+调用前安装 R1 最终名册/税账；返回分红、送转、公司账面与发行人候选、逐笔税前股利、
+税款退出、新股可用数量，以及包括具名 `External` 持有人的来源和回执。`Paid`/`Credited`
+均是待提交候选状态，必须经组端真实行政回执逐笔勾稽后才能发布。公司 `Simple` 合成
+股利按 ADR-0038 保留来源；外部股东付款不计入游戏账户现金注入。没有真实账户直改、
+除权、长期限售或生产事务接线。
+
+- 税务模式沿 ADR-0040：`FlatWithholding` 按配置比例对每位账户持有人（包括机构）
+  的税前股利直接代扣，half-up 到分，不创建个人税账；具名外部股东无游戏账户，
+  不代扣属于引擎边界。`AShareIndividual` 复用已配置个人税账，非个人保持
+  `TreatmentNotConfigured`。`Exempt` 不自动开税账，仍保留 ADR-0040 允许的显式装配税账。
+- 个人差别化税务依据[财税〔2015〕101号](https://fgk.chinatax.gov.cn/zcfgk/c102416/c5203902/content.html)
+  第一、二条（2015-09-08 起执行）和其第三条继续适用的
+  [财税〔2012〕85号](https://fgk.chinatax.gov.cn/zcfgk/c102416/c5204415/content.html)
+  第二、三、六条（2013-01-01 起执行）：持股档位、转让扣收、FIFO、日终净增减与
+  资金不足通知补足。候选按最终真实可用现金部分收缴，保留实收与未清税款；不含在途
+  buy purse，不以默认零余额代替缺失账户。登记日冻结权利，登记后卖出不减少已登记股利。
+- 送转分配复用现有 `company::stock_distribution`，批准总量必须显式给出。
+  中国结算沪业字〔2026〕33号指南 2.5.1（四）7、深业〔2025〕68号指南
+  2.5.4（十）支持账户碎股降序、同数系统随机、依序补一股，但没有给出统一汇总
+  floor/ceil 总量通则。现有汇总可行区间与可复现 seed 是游戏算法约束，不冒充法定
+  总量推导。现有每股 micros 只支持深市参数的子集：沪市每股六位，深市每十股六位。
+  现行深市指南已删除零碎股转现金内容；候选不自行添加碎股现金补偿。
+- 回购专户失权，复用名册 `IssuerTreasury` 排除（深市指南 2.5.4（六）明确专户不参与
+  权益分派）。正向新股意图直接增加可用股数，不生成当日买入的 T+1 冻结；仍按既有
+  日终计算阶段准备，不能据此声称上市日盘中已经可交易。尚无组端长期限售权威，
+  新股 lot 若仍受限则显式拒绝，不以名册限售冒充真实账户不可卖。
+- [国税发〔1994〕089号](https://www.chinatax.gov.cn/chinatax/n810214/n810641/c102061/c102062/c5172932/content.html)
+  第十一条明确送股按票面金额作为股息红利收入；
+  [国税函〔1998〕289号](https://zhejiang.chinatax.gov.cn/art/1998/5/15/art_8409_11735.html)
+  第二条明确转增免税仅限股票溢价发行收入形成的资本公积，其他资本公积分配个人所得应税。
+  当前 `CapitalReserveConversion` 只扣减混合资本公积总科目，不能从 kind 推断免税。
+  对有个人税账的转增，候选要求逐事件显式 `StockPremium` 来源：非空证据、覆盖金额与
+  本次实际转增事实精确相等；缺失、其他来源、空证据或金额不符均 typed 拒绝。原来源
+  随候选输出，不能用字符串标签冒充已完成来源追溯。R4/finance 后续必须从真实权威来源
+  构造事实，正式受理与恢复须统一校验；本片不实现非溢价计税或资本公积来源追踪。
+  个人送股 `BonusShares` 在该候选明确 typed 拒绝：既有领域税基按新增 lot 的未来持期
+  计算本次红利，不能替代原登记权益的持期与转让关联。沪2026指南 2.5.3（三）4 的公式
+  是“每股面值×送股比例×缴税税率×待缴税股份数量”。原股长期持有者不能仅因次日卖出
+  新股而被改收短期红利税。本片保留 Flat／无个人税账送股与有凭据的溢价转增候选，
+  完整个税送股关联留后续独立实现；`Exempt` 显式个人税账同样受此能力门约束。
+  现有同日“先市场净额、后送转新 lot”分列税账仍是游戏简化：同日卖出与送转的
+  合并净额与 85号第三条存在差异，不能宣称完整还原逐日日终净增减。
+
+原文核对范围、取得日期、来源摘要和未验证项见
+[候选冻结记录](../agents/branch-completion/distributions-dayend-r2-2026-10-26.md)。
