@@ -131,7 +131,7 @@ impl GameSession {
         for (id, (_, value)) in &mut personals {
             if let Some(group) = &value.retail_experience {
                 value.retail_experience = Some(match self.state.retail_experience.get(id) {
-                    Some(existing) => existing.merged_with_group_authority(group),
+                    Some(existing) => existing.clone().merged_with_group_authority(group),
                     None => group.clone(),
                 });
             }
