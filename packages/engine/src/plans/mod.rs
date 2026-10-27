@@ -9,6 +9,7 @@ mod allocation;
 mod candidates;
 pub mod quote_policy;
 mod records;
+mod repurchase_origin;
 mod revision;
 mod state;
 pub mod urgency;
@@ -32,6 +33,7 @@ pub use quote_policy::{
     QuoteError, QuoteReason,
 };
 pub use revision::{PlanRevision, RevisionReason, RevisionRecord};
+pub use repurchase_origin::{RepurchaseExecutionPlan, RepurchaseExecutionStatus};
 pub use state::{
     OpinionSource, PauseReason, PlanExecutionLeg, PlanId, PlanOpen, PlanOpinion, PlanStatus,
     PlanTarget, ResumeReason, ReviewConditions, ReviewResources, TerminationReason, TradingPlan,
@@ -49,6 +51,14 @@ use validation::{validate_open, validate_policy};
 
 use crate::account::StockId;
 use crate::orderbook::{AccountId, OrderId, Side};
+
+/// 行政候选中的公司计划开启事实；身份仍由唯一 PlanBook 分配。
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub(crate) struct RepurchaseExecutionOpen {
+    pub owner: AccountId,
+    pub issuer: crate::company::CompanyId,
+    pub stock: StockId,
+}
 
 /// 个人期限按风格为 5/20/60 交易日；风格→期限映射由分析档案派生，这里固定参数。
 pub const HORIZON_TRADING_DAYS_SHORT: u32 = 5;
@@ -203,6 +213,16 @@ impl<'de> serde::Deserialize<'de> for PlanBook {
 }
 
 impl PlanBook {
+    /// RP-Origin 正式入口的可编译首红占位；尚未创建公司计划或推进游标。
+    pub(crate) fn create_issuer_repurchase(
+        &mut self,
+        _open: RepurchaseExecutionOpen,
+    ) -> Result<PlanId, PlanError> {
+        Err(PlanError::SaveInconsistent {
+            detail: "IssuerRepurchase 尚未接入唯一 PlanBook".to_owned(),
+        })
+    }
+
     pub(crate) fn record_resource_review(
         &mut self,
         plan_id: PlanId,
@@ -699,6 +719,9 @@ impl Default for PlanBook {
         Self::new(PlanPolicy::default()).expect("default plan policy is valid by construction")
     }
 }
+
+#[cfg(test)]
+mod origin_tests;
 
 #[cfg(test)]
 mod atomic_event_tests {
