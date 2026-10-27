@@ -13,7 +13,7 @@
 use super::bridge::{accounts_projection_from_session, world_spec_from_setup};
 use super::decision::{DecisionSetup, NpcProfile};
 use super::event_bridge::{
-    collect_lifecycle, project_auction_events, project_lifecycle_events, project_trade_events,
+    collect_lifecycle, project_auction_events, project_lifecycle_events,
 };
 use super::world::World;
 mod convergence;
@@ -21,6 +21,52 @@ pub(crate) use convergence::PreparedDriverStep;
 use crate::money::Money;
 use crate::strategy::StrategyData;
 use crate::{AccountId, Event, GameSession, SessionSetup};
+
+/// Trade 账户身份只取真实名册；整批解析与编号成功后才推进事件游标。
+fn project_trade_events_for_roster(
+    trades: &[super::protocol::DeskTradeFact],
+    id_map: &[AccountId],
+    accounts_per_group: usize,
+    next_seq: &mut u64,
+) -> Result<Vec<Event>, String> {
+    if accounts_per_group == 0 {
+        return Err("成交事件名册的 accounts_per_group 必须大于零".to_owned());
+    }
+    let resolve = |owner: super::Owner| {
+        let local = usize::try_from(owner.1)
+            .map_err(|_| format!("成交事件 Owner 局部坐标无法表示：{owner:?}"))?;
+        if local >= accounts_per_group {
+            return Err(format!("成交事件 Owner 局部坐标越界：{owner:?}"));
+        }
+        let index = usize::from(owner.0)
+            .checked_mul(accounts_per_group)
+            .and_then(|start| start.checked_add(local))
+            .ok_or_else(|| format!("成交事件 Owner 名册坐标溢出：{owner:?}"))?;
+        id_map.get(index).copied()
+            .ok_or_else(|| format!("成交事件 Owner 不在真实名册：{owner:?}"))
+    };
+    let mut candidate_seq = *next_seq;
+    let events = trades.iter().map(|trade| {
+        let maker = resolve(trade.maker)?;
+        let taker = resolve(trade.taker)?;
+        candidate_seq = candidate_seq.checked_add(1)
+            .ok_or_else(|| "成交事件 seq 溢出".to_owned())?;
+        Ok(Event::Trade {
+            seq: candidate_seq,
+            code: crate::StockId(u32::from(trade.stock)),
+            price: Money::from_cents(trade.price),
+            qty: trade.qty,
+            maker,
+            taker,
+        })
+    }).collect::<Result<Vec<_>, String>>()?;
+    *next_seq = candidate_seq;
+    Ok(events)
+}
+
+#[cfg(test)]
+#[path = "drive_event_identity_tests.rs"]
+mod event_identity_tests;
 
 /// Q2 批 3：账户分片覆盖校验——本拍 desk 事实（成交双腿/生命周期/回执）
 /// 的每个 owner 必须在对应组分片中（组端 undo 集漏标即红——不静默装
@@ -854,7 +900,9 @@ impl RuntimeDriver {
             crate::verification_evidence::enter_phase(
                 crate::session::pipeline::TickPhase::ReceiptAggregation,
             );
-            let mut events = project_trade_events(&trades, &mut self.next_seq);
+            let mut events = project_trade_events_for_roster(
+                &trades, &self.id_map, self.accounts_per_group, &mut self.next_seq,
+            )?;
             // B2 件 5：个人确认派生（同 seq 域——receipt_id=trade_seq×2+
             /// leg；owner→AccountId 缺失=名册投影缺口，显式失败）。空批
             /// 不触碰游标（take_seq 契约），此处 len 基准自洽。
@@ -1714,7 +1762,9 @@ impl RuntimeDriver {
         if trades.is_empty() {
             return Ok(Vec::new());
         }
-        let mut events = project_trade_events(&trades, &mut self.next_seq);
+        let mut events = project_trade_events_for_roster(
+                &trades, &self.id_map, self.accounts_per_group, &mut self.next_seq,
+            )?;
         let trade_count = trades.len() as u64;
         let first_trade_seq = self.next_seq + 1 - trade_count;
         let mut pending: Vec<

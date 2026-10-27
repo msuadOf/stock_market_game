@@ -3,6 +3,8 @@
 use super::*;
 use crate::diagnostics::causal::CausalFactKind;
 
+pub(in crate::session) mod retained_tests;
+
 fn game() -> GameSession {
     let mut setup = super::npc_working_quote_tests::quote_setup(0);
     setup.npcs.inst_count = 0;
@@ -174,7 +176,7 @@ fn d1_success_consumes_sideband_and_next_tick_cannot_repeat_it() {
 }
 
 #[test]
-fn d1_real_same_tick_fill_is_explicitly_unsupported_and_rolls_back_both_legs() {
+fn d2_real_same_tick_fill_publishes_exact_seller_buyer_and_execution() {
     let mut game = game();
     let seller = AccountId(99);
     let mut account = crate::Account::new(seller, crate::account::AccountKind::Player, Money::from_cents(1_000_000));
@@ -187,13 +189,26 @@ fn d1_real_same_tick_fill_is_explicitly_unsupported_and_rolls_back_both_legs() {
         price: crate::LimitPrice::Fixed(Money::from_cents(995)), qty: 100,
     }).unwrap();
     enqueue(&mut game);
-    let before = game.business_state_hash().unwrap();
-    let outcome = game.step();
-    assert!(matches!(outcome, Err(StepFatal::InvariantViolation { ref location, ref description })
-        if location == "runtime::diagnostics::prepare" && description.contains("Filled/Execution")),
-        "真实成交必须因未接Filled/Execution显式失败，不能留下假open：{outcome:?}");
-    assert!(game.causal_facts().is_empty());
-    assert_eq!(game.business_state_hash().unwrap(), before);
+    let events = game.step().expect("真实连续成交必须成功并发布双腿事实");
+    assert!(events.iter().any(|event| matches!(event,
+        Event::Trade { maker, taker, price, qty: 100, .. }
+        if *maker == seller && *taker == AccountId(0) && price.cents() == 995)));
+    let order_for = |account| game.causal_facts().iter().find_map(|fact| match &fact.kind {
+        CausalFactKind::Submitted(origin) if origin.account == account => Some(origin.order),
+        _ => None,
+    }).unwrap();
+    let (sell, buy) = (order_for(seller), order_for(AccountId(0)));
+    let filled = game.causal_facts().iter().filter_map(|fact| match fact.kind {
+        CausalFactKind::Filled { order, account, code, qty, value_before, gross } =>
+            Some((order, account, code, qty, value_before, gross)),
+        _ => None,
+    }).collect::<Vec<_>>();
+    assert_eq!(filled, vec![(sell, seller, StockId(0), 100, 0, 99_500), (buy, AccountId(0), StockId(0), 100, 0, 99_500)]);
+    assert!(game.causal_facts().iter().any(|fact| matches!(fact.kind,
+        CausalFactKind::Execution { maker, taker, side: Some(_), qty: 100, price_cents: 995, .. }
+        if maker == sell && taker == buy)));
+    assert_eq!(game.causal_diagnostics().unwrap().filled_qty, 200);
+
 }
 
 #[test]
@@ -231,3 +246,273 @@ fn d1_manual_drain_after_checkpoint_driver_rebuild_checks_real_seeded_orders() {
     assert_eq!(copied.business_state_hash().unwrap(), before);
     assert_eq!(copied.causal_facts().len(), 3);
 }
+
+pub(super) fn d2_game() -> GameSession {
+    let mut setup = super::npc_working_quote_tests::quote_setup(0);
+    setup.npcs.inst_count = 0;
+    setup.ticks_per_day = 30;
+    let mut second = setup.stocks[0].clone();
+    second.code = StockCode("600102".to_owned());
+    setup.stocks.push(second);
+    let mut game = GameSession::new(setup, 7).unwrap();
+    for id in [1, 2] {
+        let member = game.join_market(OpaqueSubjectId::new(format!("d2-player-{id}")).unwrap(), true).unwrap();
+        assert_eq!(member.account_id, AccountId(id));
+        let account = game.state.accounts.get_mut(&member.account_id).unwrap();
+        account.fixture_set_positions(std::collections::BTreeMap::from_iter([0, 1].map(|stock| (
+            StockId(stock), crate::account::Position::from_restored_parts(1000, 0, 1_000_000, 0),
+        ))));
+    }
+    game
+}
+
+fn d2_place(game: &mut GameSession, account: u64, stock: u32, side: crate::Side, price: i64, qty: u32) {
+    game.enqueue_player_intent(AccountId(account), Intent::PlaceLimit {
+        code: StockId(stock), side, price: crate::LimitPrice::Fixed(Money::from_cents(price)), qty,
+    }).unwrap();
+}
+
+fn d2_executions(game: &GameSession) -> Vec<(StockId, OrderId, OrderId, crate::Side, u32, i64, crate::diagnostics::causal::Quote)> {
+    game.causal_facts().iter().filter_map(|fact| match &fact.kind {
+        CausalFactKind::Execution { code, maker, taker, side: Some(side), qty, price_cents, before } =>
+            Some((*code, *maker, *taker, *side, *qty, *price_cents, before.clone())),
+        _ => None,
+    }).collect()
+}
+
+#[test]
+fn d2_both_active_directions_stock_one_and_same_local_serial_keep_exact_legs() {
+    for side in [crate::Side::Buy, crate::Side::Sell] {
+        let mut game = d2_game();
+        let initial = game.save().unwrap().snapshot.accounts;
+        let initial_cash: i64 = initial.values().map(|account| account.cash.cents()).sum();
+        let initial_shares: u64 = initial.values().flat_map(|account| account.positions.values()).map(|position| u64::from(position.qty)).sum();
+        for stock in [0, 1] {
+            if side == crate::Side::Buy { d2_place(&mut game, 2, stock, crate::Side::Sell, 995, 100); }
+            else { d2_place(&mut game, 0, stock, crate::Side::Buy, 995, 100); }
+        }
+        game.step().unwrap();
+        for stock in [0, 1] {
+            if side == crate::Side::Buy { d2_place(&mut game, 0, stock, side, 995, 100); }
+            else { d2_place(&mut game, 2, stock, side, 995, 100); }
+        }
+        let events = game.step().unwrap();
+        let executions = d2_executions(&game);
+        assert_eq!(executions.len(), 2);
+        for stock in [0, 1] {
+            let x = executions.iter().find(|x| x.0 == StockId(stock)).unwrap();
+            assert_eq!((x.3, x.4, x.5), (side, 100, 995));
+            assert_eq!(x.1.0 >> 32, u64::from(stock));
+            assert_eq!(x.2.0 >> 32, u64::from(stock));
+            let filled = game.causal_facts().iter().filter_map(|f| match f.kind {
+                CausalFactKind::Filled { order, account, code, qty, value_before, gross } if code == StockId(stock) => Some((order, account, qty, value_before, gross)), _ => None,
+            }).collect::<Vec<_>>();
+            assert_eq!(filled, vec![(x.1, AccountId(2), 100, 0, 99_500), (x.2, AccountId(0), 100, 0, 99_500)]);
+            assert!(events.iter().any(|event| matches!(event, Event::Trade { code, maker, taker, qty:100, .. } if *code == StockId(stock) && *maker == AccountId(2) && *taker == AccountId(0))));
+        }
+        assert_eq!(executions[0].1.0 & u64::from(u32::MAX), executions[1].1.0 & u64::from(u32::MAX));
+        assert_eq!(game.causal_diagnostics().unwrap().filled_qty, 400);
+        let final_accounts = game.save().unwrap().snapshot.accounts;
+        let final_cash: i64 = final_accounts.values().map(|account| account.cash.cents()).sum();
+        let fees: i64 = final_accounts.keys().flat_map(|account| game.personal_trade_confirmations_page(*account, None))
+            .map(|confirmation| confirmation.actual_fees.total().unwrap().cents()).sum();
+        assert!(fees > 0);
+        assert_eq!(final_cash + fees, initial_cash, "现金与真实双腿实收费用守恒");
+        assert_eq!(final_accounts.values().flat_map(|account| account.positions.values()).map(|position| u64::from(position.qty)).sum::<u64>(), initial_shares);
+        assert_eq!(game.account(AccountId(0)).unwrap().sellable_qty(&StockId(1)), 0, "新买股份仍受 T+1 约束");
+    }
+}
+
+#[test]
+fn d2_two_makers_share_incoming_quote_and_next_tick_retains_nonzero_before() {
+    let mut game = d2_game();
+    d2_place(&mut game, 1, 1, crate::Side::Sell, 990, 100);
+    d2_place(&mut game, 2, 1, crate::Side::Sell, 995, 100);
+    game.step().unwrap();
+    d2_place(&mut game, 0, 1, crate::Side::Buy, 1000, 300);
+    game.step().unwrap();
+    let first = d2_executions(&game);
+    assert_eq!(first.len(), 2);
+    assert_eq!((first[0].5, first[1].5), (990, 995));
+    assert_eq!(serde_json::to_value(&first[0].6).unwrap(), serde_json::to_value(&first[1].6).unwrap(), "同 incoming 全部 fills 使用同一次操作起点 Quote");
+    assert_eq!((first[0].6.ask_depth, first[0].6.ask_cents), (200, Some(990)));
+    let buyer = first[0].2;
+    assert_eq!(buyer, first[1].2);
+    let values = |game: &GameSession| game.causal_facts().iter().filter_map(|f| match f.kind {
+        CausalFactKind::Filled { order, value_before, gross, .. } if order == buyer => Some((value_before, gross)), _ => None,
+    }).collect::<Vec<_>>();
+    assert_eq!(values(&game), vec![(0, 99_000), (99_000, 99_500)]);
+    let legacy_before = serde_json::to_value(&game.state.causal).unwrap();
+    d2_place(&mut game, 2, 1, crate::Side::Sell, 1000, 100);
+    game.step().unwrap();
+    assert_eq!(values(&game), vec![(0, 99_000), (99_000, 99_500), (198_500, 100_000)]);
+    let legacy_after = serde_json::to_value(&game.state.causal).unwrap();
+    assert_eq!(legacy_before["filled_values"], serde_json::json!({}));
+    assert_eq!(legacy_before["filled_values"], legacy_after["filled_values"], "native 不增长 legacy tracker");
+    assert_eq!(game.causal_diagnostics().unwrap().filled_qty, 600);
+}
+
+#[test]
+fn d2_driver_adopt_preserves_partial_order_real_cumulative_value() {
+    let mut game = d2_game();
+    d2_place(&mut game, 2, 1, crate::Side::Sell, 995, 100);
+    game.step().unwrap();
+    d2_place(&mut game, 0, 1, crate::Side::Buy, 1000, 200);
+    game.step().unwrap();
+    let before_submitted = game.causal_facts().iter().filter(|f| matches!(f.kind, CausalFactKind::Submitted(_))).count();
+    let mut adopted = game.clone_for_tick_shadow().unwrap();
+    d2_place(&mut adopted, 2, 1, crate::Side::Sell, 1000, 100);
+    let mut rebuilt = driver(&mut adopted);
+    adopted.runtime_step_with_install(&mut rebuilt).unwrap();
+    assert!(adopted.causal_facts().iter().any(|f| matches!(f.kind, CausalFactKind::Filled { account: AccountId(0), value_before: 99_500, gross:100_000, .. })));
+    assert_eq!(adopted.causal_facts().iter().filter(|f| matches!(f.kind, CausalFactKind::Submitted(_))).count(), before_submitted + 1);
+}
+
+#[test]
+fn d2_nonempty_fill_rollback_plain_install_seal_validator_and_frame_callback() {
+    for failure in 0..4 {
+        let mut game = d2_game();
+        d2_place(&mut game, 2, 1, crate::Side::Sell, 995, 200);
+        game.step().unwrap();
+        assert!(!game.causal_facts().is_empty());
+        d2_place(&mut game, 0, 1, crate::Side::Buy, 995, 100);
+        let checkpoint = game.clone_for_tick_shadow().unwrap();
+        let facts = serde_json::to_value(game.causal_facts()).unwrap();
+        let business;
+        let mut candidate_called = false;
+        if failure == 3 {
+            business = game.business_state_hash().unwrap();
+            let error = game.step_frame_and_commit_via_runtime(|_, events| {
+                candidate_called = true;
+                assert!(events.iter().any(|f| matches!(f.event, Event::Trade { qty:100, .. })));
+                Err::<(),_>(StepFatal::InvariantViolation { location:"d2 callback".to_owned(), description:"拒绝真实成交候选".to_owned() })
+            });
+            assert!(error.is_err());
+            assert!(candidate_called);
+        } else {
+            let mut runtime = driver(&mut game);
+            // 手动入口在意图已冻结取出后开始；完整 hash 须取相同权威边界。
+            business = game.business_state_hash().unwrap();
+            match failure {
+                0 => game.inject_runtime_install_failure(),
+                1 => runtime.fail_seal_once_for_test(),
+                _ => runtime.set_world_validator_for_test(Box::new(|evidence| {
+                    assert_eq!(evidence.desk_trades.len(), 1);
+                    Err("拒绝真实成交".to_owned())
+                })),
+            }
+            assert!(game.runtime_step_with_install(&mut runtime).is_err());
+        }
+        assert_eq!(serde_json::to_value(game.causal_facts()).unwrap(), facts);
+        assert_eq!(game.business_state_hash().unwrap(), business, "poison metadata 不属于业务 hash");
+        game = checkpoint;
+        game.step().unwrap();
+        assert_eq!(d2_executions(&game).len(), 1, "健康 checkpoint retry 仅发布一次");
+        assert_eq!(game.causal_diagnostics().unwrap().filled_qty, 200);
+        let query_hash = game.business_state_hash().unwrap();
+        let saved = serde_json::to_value(game.save().unwrap()).unwrap();
+        game.causal_diagnostics().unwrap();
+        assert_eq!(query_hash, game.business_state_hash().unwrap());
+        assert_eq!(saved, serde_json::to_value(game.save().unwrap()).unwrap());
+    }
+}
+
+#[test]
+fn d2_restore_partial_order_keeps_nonzero_before_without_fabricated_origin() {
+    let mut game = d2_game();
+    d2_place(&mut game, 2, 1, crate::Side::Sell, 995, 100);
+    game.step().unwrap();
+    d2_place(&mut game, 0, 1, crate::Side::Buy, 1000, 200);
+    game.step().unwrap();
+    let slot = game.save().unwrap();
+    let partial = slot.runtime_state.live_envelopes.iter().find(|live| live.key.account == AccountId(0)).unwrap();
+    assert_eq!((partial.remaining_qty, partial.filled_qty, partial.filled_value.cents()), (100, 100, 99_500));
+    let mut restored = GameSession::restore(&slot).unwrap();
+    assert!(matches!(restored.causal_diagnostics(), Err(crate::diagnostics::causal::CausalError::RestoredObservation)));
+    d2_place(&mut restored, 2, 1, crate::Side::Sell, 1000, 100);
+    restored.step().unwrap();
+    d2_place(&mut game, 2, 1, crate::Side::Sell, 1000, 100);
+    game.step().unwrap();
+    assert_eq!(serde_json::to_value(game.save().unwrap().snapshot.accounts).unwrap(),
+        serde_json::to_value(restored.save().unwrap().snapshot.accounts).unwrap(), "恢复续成交保持真实费用、现金、持仓与 T+1");
+    for account in [AccountId(0), AccountId(2)] {
+        let continuous = game.personal_trade_confirmations_page(account, None);
+        let resumed = restored.personal_trade_confirmations_page(account, None);
+        assert_eq!(continuous[0].actual_fees, resumed[0].actual_fees, "双腿累计费用续链不归零");
+    }
+    assert!(restored.causal_facts().iter().any(|f| matches!(f.kind, CausalFactKind::Filled { account: AccountId(0), value_before:99_500,gross:100_000,.. })));
+    assert_eq!(restored.causal_facts().iter().filter(|f| matches!(f.kind,CausalFactKind::Submitted(_))).count(),1);
+    assert!(matches!(restored.causal_diagnostics(), Err(crate::diagnostics::causal::CausalError::RestoredObservation)));
+}
+
+#[cfg(feature = "verification-harness")]
+#[test]
+fn d2_protocol_checkpoint_after_real_fill_restores_exact_facts_sequence_and_queries() {
+    let mut game=d2_game();
+    d2_place(&mut game,2,1,crate::Side::Sell,995,300);
+    game.step().unwrap();
+    let mut protocol=crate::session::protocol::ProtocolSession::from_game_for_verification(game,None);
+    let buy=|| Intent::PlaceLimit {code:StockId(1),side:crate::Side::Buy,price:crate::LimitPrice::Fixed(Money::from_cents(995)),qty:100};
+    protocol.enqueue_player_intent(AccountId(0),buy()).unwrap();protocol.step_frame().unwrap();
+    let checkpoint=protocol.checkpoint().unwrap();
+    let before=serde_json::to_value(protocol.game().causal_facts()).unwrap();
+    let hash=protocol.game().business_state_hash().unwrap();
+    protocol.enqueue_player_intent(AccountId(0),buy()).unwrap();
+    // 只在独立 reader 观察已受理输入，不推进真实入口的 cutoff。
+    let observe_receipts = |protocol: &crate::session::protocol::ProtocolSession| {
+        let mut observed = protocol.game().clone_for_tick_shadow().unwrap();
+        observed.freeze_shared_ingress().unwrap();
+        observed.state.pending_player.clone()
+    };
+    let received = observe_receipts(&protocol);
+    assert_eq!(received.len(), 1);
+    assert_eq!((received[0].owner, received[0].account_ordinal, received[0].stock_ordinal), (AccountId(0), 1, 2));
+    let second_frame = serde_json::to_value(protocol.step_frame().unwrap()).unwrap();
+    let second_facts = serde_json::to_value(protocol.game().causal_facts()).unwrap();
+    let second_hash = protocol.game().business_state_hash().unwrap();
+    protocol.step_frame().unwrap();
+    assert_eq!(d2_executions(protocol.game()).len(),2);
+    protocol.rollback(checkpoint);
+    assert_eq!(serde_json::to_value(protocol.game().causal_facts()).unwrap(),before);
+    assert_eq!(protocol.game().business_state_hash().unwrap(),hash);
+    assert_eq!(protocol.game().causal_diagnostics().unwrap().filled_qty,200);
+    // checkpoint 不撤销外部受理事实；重放原 receipt，不能再次入队同一买单。
+    assert_eq!(serde_json::to_value(observe_receipts(&protocol)).unwrap(), serde_json::to_value(received).unwrap());
+    assert_eq!(serde_json::to_value(protocol.step_frame().unwrap()).unwrap(), second_frame);
+    assert_eq!(serde_json::to_value(protocol.game().causal_facts()).unwrap(), second_facts);
+    assert_eq!(protocol.game().business_state_hash().unwrap(), second_hash);
+    assert_eq!(d2_executions(protocol.game()).len(),2);
+    assert!(protocol.game().causal_facts().iter().enumerate().all(|(index,f)|f.sequence==index as u64));
+}
+
+#[test]
+fn d2_prepare_market_after_real_fill_restores_both_install_capture_modes() {
+    for capture in [false, true] {
+        let mut game = d2_game();
+        d2_place(&mut game, 2, 1, crate::Side::Sell, 995, 200);
+        game.step().unwrap();
+        let checkpoint = game.clone_for_tick_shadow().unwrap();
+        let prior_facts = serde_json::to_value(game.causal_facts()).unwrap();
+        game.enqueue_player_intent(AccountId(0), Intent::PlaceMarket { code: StockId(1), side: crate::Side::Buy, qty: 100 }).unwrap();
+        let mut runtime = driver(&mut game);
+        let before = game.business_state_hash().unwrap();
+        let error = if capture {
+            game.runtime_step_with_install_returning_baseline(&mut runtime).err().unwrap()
+        } else {
+            game.runtime_step_with_install(&mut runtime).err().unwrap()
+        };
+        assert!(matches!(error, StepFatal::InvariantViolation { ref location, ref description }
+            if location == "runtime::diagnostics::prepare" && description.contains("Market")));
+        assert_eq!(runtime.world_report_log().last().unwrap().desk_trades.len(), 1, "prepare 拒绝前真实 World 已产生一笔双腿成交");
+        assert_eq!(serde_json::to_value(game.causal_facts()).unwrap(), prior_facts);
+        assert_eq!(game.business_state_hash().unwrap(), before);
+        assert!(game.runtime_discard_driver_flag);
+        game = checkpoint;
+        d2_place(&mut game, 0, 1, crate::Side::Buy, 995, 100);
+        game.step().unwrap();
+        assert_eq!(d2_executions(&game).len(), 1);
+        assert_eq!(game.causal_diagnostics().unwrap().filled_qty, 200);
+    }
+}
+
+mod coordinator_source_tests;

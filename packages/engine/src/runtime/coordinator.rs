@@ -192,6 +192,12 @@ pub fn converge_round(
                         detail: format!("causal sideband 上下文错配：tick={tick} round={round} stock={}", r.stock),
                     });
                 }
+                #[cfg(all(test, feature = "simulation-diagnostics", not(target_arch = "wasm32")))]
+                let r = super::diagnostics::report_fault_tests::remove_execution_once(r);
+                #[cfg(feature = "simulation-diagnostics")]
+                if let Err(error) = super::diagnostics::validate_executions(r.stock, &r.causal, &r.trades) {
+                    return RoundOutcome::Failed(error);
+                }
                 desks_left -= 1;
                 entities_out += r.entities_out;
                 desk_hashes.push((r.stock, r.committed_hash));

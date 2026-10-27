@@ -2292,6 +2292,8 @@ impl GameSession {
         bars: Vec<Option<Vec<crate::runtime::MinuteBarFact>>>,
         date: crate::calendar::CivilDate,
     ) -> Result<std::sync::Arc<crate::runtime::publication::RetainedDaySnapshot>, String> {
+        #[cfg(all(test, feature = "simulation-diagnostics", not(target_arch = "wasm32")))]
+        let bars = super::runtime_diagnostics_tests::retained_tests::perturb_volume_once(bars);
         let n = self.stock_count_for_runtime();
         if bars.len() != n {
             return Err(format!(

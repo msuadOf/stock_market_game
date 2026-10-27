@@ -1293,7 +1293,10 @@ impl DeskState {
             }
             DeskPhase::PreOpen | DeskPhase::Continuous => {
                 let mut order = order;
-                self.match_incoming(tick, &mut order)?;
+                self.match_incoming(tick, &mut order,
+                    #[cfg(feature = "simulation-diagnostics")]
+                    if phase == DeskPhase::Continuous && !is_market { Some(causal_before) } else { None },
+                )?;
                 if order.qty == 0 {
                     // 全成：purse slack（最坏情况预留 − 实际扣费）退款 + Closed。
                     self.close_order_entities(&order);
@@ -1429,7 +1432,9 @@ impl DeskState {
     }
 
     /// 连续竞价撮合：逐档吃对面最优（价格时间优先），成交价取 maker 价。
-    fn match_incoming(&mut self, _tick: u64, order: &mut DeskOrder) -> Result<(), RuntimeError> {
+    fn match_incoming(&mut self, _tick: u64, order: &mut DeskOrder,
+        #[cfg(feature = "simulation-diagnostics")] causal_before: Option<super::diagnostics::DeskQuote>,
+    ) -> Result<(), RuntimeError> {
         loop {
             if order.qty == 0 {
                 break;
@@ -1479,7 +1484,9 @@ impl DeskState {
             let fill_qty = order.qty.min(maker.qty);
             // 连续竞价：成交价=maker 价（对手档申报价，价格改善归 taker）。
             let maker_price = maker.price;
-            self.settle_fill(order, maker, fill_qty, maker_price)?;
+            self.settle_fill(order, maker, fill_qty, maker_price,
+                #[cfg(feature = "simulation-diagnostics")] causal_before,
+            )?;
         }
         Ok(())
     }
@@ -1495,6 +1502,7 @@ impl DeskState {
         maker: DeskOrder,
         qty: u32,
         fill_price: i64,
+        #[cfg(feature = "simulation-diagnostics")] causal_before: Option<super::diagnostics::DeskQuote>,
     ) -> Result<(), RuntimeError> {
         // 刀 2a：成交行情写（last/high/low/量/额/K 演进）。
         self.bump_market_ver();
@@ -1674,6 +1682,8 @@ impl DeskState {
         // 方向统一 (sell_ref, buy_ref)——owner 已固定 (seller, buyer)，
         // 序号按原始方向交换会使主动卖时身份核跳过合法计划成交）。
         let (maker_order, taker_order) = (sell_ref, buy_ref);
+        #[cfg(feature = "simulation-diagnostics")]
+        let causal_ordinal = u64::try_from(self.trade_facts.len()).map_err(|_| over("causal trade ordinal 溢出"))?;
         self.trade_facts.push(super::protocol::DeskTradeFact {
             stock: self.setup.stock,
             price,
@@ -1699,9 +1709,19 @@ impl DeskState {
             taker_order_serial: (u64::from(taker_order.0) << 32) | taker_order.1,
         });
         #[cfg(feature = "simulation-diagnostics")]
-        self.note_causal(super::diagnostics::DeskCausalKind::Unsupported {
-            detail: "真实Filled/Execution生命周期尚未接通",
-        });
+        if let Some(before) = causal_before {
+            use super::diagnostics::{DeskCausalKind, DeskExecutionLeg};
+            self.note_causal(DeskCausalKind::Execution {
+                ordinal: causal_ordinal,
+                seller: DeskExecutionLeg { order: sell_ref, owner: sell_owner, value_before: sell_filled_before },
+                buyer: DeskExecutionLeg { order: buy_ref, owner: buy_owner, value_before: buy_filled_before },
+                qty, price_cents: price, side: taker_side, before,
+            });
+        } else {
+            self.note_causal(super::diagnostics::DeskCausalKind::Unsupported {
+                detail: "本切片尚未接通的Filled/Execution类型",
+            });
+        }
         // 实体互换：买方得股票、卖方得净额。
         let bg = buy_owner.0 as usize;
         self.out[bg].push(Entity::BoughtShares {
@@ -2346,7 +2366,9 @@ impl DeskState {
             // 价格原则——本函数的 price 形参），费用按成交价双边计。
             let mut taker = buy;
             let maker = sell;
-            self.settle_fill(&mut taker, maker, qty, price)?;
+            self.settle_fill(&mut taker, maker, qty, price,
+                #[cfg(feature = "simulation-diagnostics")] None,
+            )?;
             // taker 全成即闭合；部分成交写回簿（apply_maker_fill 只写 maker——
             // taker 也是簿内单，需对称写回）。
             self.write_back_taker(&taker)?;

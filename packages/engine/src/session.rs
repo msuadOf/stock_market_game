@@ -147,6 +147,8 @@ mod failure_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod runtime_sync_tests;
 mod runtime_mirror;
+#[cfg(all(test, not(feature = "simulation-diagnostics"), not(target_arch = "wasm32")))]
+mod retail_lifecycle_tests;
 #[cfg(all(test, feature = "simulation-diagnostics", not(target_arch = "wasm32")))]
 mod runtime_diagnostics_tests;
 #[cfg(test)]
