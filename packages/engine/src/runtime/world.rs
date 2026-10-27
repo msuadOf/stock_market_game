@@ -1471,6 +1471,9 @@ impl World {
                     out.push((group, updates));
                     left -= 1;
                 }
+                UpMsg::Failed { who, error } => {
+                    return Err(RuntimeError::WorkerFailed { who, error: Box::new(error) });
+                }
                 other => {
                     return Err(RuntimeError::Disconnected {
                         who: None,

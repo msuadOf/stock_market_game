@@ -144,6 +144,8 @@ mod envelope_projection_hydration_tests;
 mod envelope_projection_tests;
 #[cfg(test)]
 mod failure_tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod runtime_sync_tests;
 #[cfg(all(test, feature = "simulation-diagnostics", not(target_arch = "wasm32")))]
 mod runtime_diagnostics_tests;
 #[cfg(test)]
