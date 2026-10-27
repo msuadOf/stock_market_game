@@ -264,18 +264,41 @@ fn apply_operation(
     stock: StockIdx,
     operation: AdminOperation,
 ) -> Result<(), RuntimeError> {
-    let stock = stock as usize;
-    if stock >= account.shares.len() {
-        return Err(invalid("stock 越界"));
-    }
-    if account.frozen_today[stock] > account.shares[stock] {
-        return Err(invalid("冻结超过在手持仓"));
+    let stock_coordinate = stock;
+    let stock = usize::from(stock);
+    // 新资金原语先校验完整账户向量；旧操作保留原有坐标与冻结检查。
+    if matches!(
+        operation,
+        AdminOperation::CashDividend { .. }
+            | AdminOperation::WithholdingTax { .. }
+            | AdminOperation::ShareSplit { .. }
+            | AdminOperation::ShareReduction { .. }
+    ) {
+        if stock >= account.shares.len() {
+            return Err(invalid("stock 越界"));
+        }
+        if account.frozen_today[stock] > account.shares[stock] {
+            return Err(invalid("冻结超过在手持仓"));
+        }
     }
     match operation {
-        // P1正式通道红灯占位：只使用唯一真实prepare/inspect/commit/abort，尚不实施资金原语。
-        AdminOperation::PaymentDebit { .. }
-        | AdminOperation::SubscriptionRefund { .. }
-        | AdminOperation::SharesWithCost { .. } => {}
+        AdminOperation::PaymentDebit { amount, .. } => {
+            return super::admin_funds_cost::payment_debit(account, stock_coordinate, amount)
+                .map_err(|error| invalid(error.to_string()));
+        }
+        AdminOperation::SubscriptionRefund { amount, .. } => {
+            return super::admin_funds_cost::subscription_refund(account, stock_coordinate, amount)
+                .map_err(|error| invalid(error.to_string()));
+        }
+        AdminOperation::SharesWithCost { qty, subscription_cost, .. } => {
+            return super::admin_funds_cost::shares_with_cost(
+                account,
+                stock_coordinate,
+                qty,
+                subscription_cost,
+            )
+            .map_err(|error| invalid(error.to_string()));
+        }
         AdminOperation::CashDividend { amount, .. } => {
             if amount <= 0 {
                 return Err(invalid("股利必须为正分额"));

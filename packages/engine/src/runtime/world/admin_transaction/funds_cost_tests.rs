@@ -1,4 +1,4 @@
-//! FUNDS-P1 正式通道 fixture；INFO 冻结后由唯一writer注册，当前文件尚未编译。
+//! FUNDS-P1 正式通道 fixture：复用唯一行政事务验证资金、实缴成本与 INFO 的共同原子性。
 
 use super::*;
 use crate::runtime::group::{GroupAccount, TickPlan};
