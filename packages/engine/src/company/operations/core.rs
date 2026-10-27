@@ -554,3 +554,90 @@ impl CompanyOperations {
         self.books_of(id).and_then(|books| books.as_real_estate())
     }
 }
+
+/// 单次 Legacy owner 更正的只读基线与正式操作请求。
+pub(crate) struct LegacyDisclosureCorrectionCtx<'a> {
+    pub closing: &'a crate::accounting::closing::ClosingEngine,
+    pub base: &'a crate::information::PublicLibrary,
+    pub correction: crate::accounting::closing::CorrectionRequest,
+    pub publication: crate::information::PublicationRequest,
+    pub posted_on: CivilDate,
+}
+
+/// 与完整授权绑定的 Legacy 金融候选；原始 source 和公开库均不改变。
+pub(crate) struct PreparedLegacyDisclosureCorrection<'a> {
+    operations: CompanyOperations,
+    closing: crate::accounting::closing::ClosingEngine,
+    proof: crate::company::report_correction::ConfirmedDisclosureCorrections<'a>,
+}
+
+impl<'a> PreparedLegacyDisclosureCorrection<'a> {
+    pub(crate) fn source(
+        &self,
+    ) -> (
+        &CompanyOperations,
+        &crate::accounting::closing::ClosingEngine,
+    ) {
+        (&self.operations, &self.closing)
+    }
+    pub(crate) fn proof(
+        &self,
+    ) -> &crate::company::report_correction::ConfirmedDisclosureCorrections<'a> {
+        &self.proof
+    }
+    pub(crate) fn into_source(
+        self,
+    ) -> (CompanyOperations, crate::accounting::closing::ClosingEngine) {
+        (self.operations, self.closing)
+    }
+}
+
+impl CompanyOperations {
+    pub(crate) fn prepare_disclosure_correction<'a>(
+        &self,
+        company: &CompanyId,
+        ctx: LegacyDisclosureCorrectionCtx<'a>,
+    ) -> Result<
+        PreparedLegacyDisclosureCorrection<'a>,
+        crate::company::report_correction::DisclosureCorrectionPrepareError,
+    > {
+        let operation_sources = ctx
+            .correction
+            .entries
+            .iter()
+            .map(|entry| entry.source)
+            .collect();
+        let mut operations = self.clone();
+        let mut closing = ctx.closing.clone();
+        let mut private_library = ctx.base.clone();
+        let (_, main_publication) = operations.correct_company_report_for_session(
+            company,
+            OperatingReportCorrection {
+                closing: &mut closing,
+                library: &mut private_library,
+                correction: ctx.correction,
+                publication: ctx.publication,
+                posted_on: ctx.posted_on,
+            },
+        )?;
+        let proof =
+            crate::company::report_correction::ConfirmedDisclosureCorrections::from_owner_result(
+                ctx.base,
+                private_library,
+                main_publication,
+                None,
+                *company,
+                crate::information::PublicationSource::SimulationAccounting,
+                operation_sources,
+            )?;
+        Ok(PreparedLegacyDisclosureCorrection {
+            operations,
+            closing,
+            proof,
+        })
+    }
+}
+
+#[cfg(test)]
+#[path = "disclosure_correction_legacy_tests.rs"]
+mod disclosure_tests;

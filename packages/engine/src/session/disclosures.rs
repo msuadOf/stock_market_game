@@ -10,6 +10,9 @@
 //! [`disclosure_phase_observer`] 只观察时点，有状态派发由 `run_day_end` 执行。
 //! 观察者不得 panic，以保持日结失败的原子边界。
 
+#[path = "disclosure_candidate.rs"]
+pub(super) mod candidate;
+
 use crate::accounting::closing::ClosingEngine;
 use crate::calendar::{CivilDate, CivilDateError, CivilInstant};
 use crate::company::operations::{CompanyCloseError, CompanyOperations};

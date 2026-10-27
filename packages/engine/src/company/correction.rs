@@ -188,3 +188,67 @@ fn information(reason: String, cause: InformationError) -> super::CompanyCorrect
         cause: Box::new(cause),
     }
 }
+
+/// 真实 Simple owner 的私有金融候选与完整公开授权；不得拆改其中任一侧。
+pub(crate) struct PreparedSimpleDisclosureCorrection<'a> {
+    system: super::CompanySystem,
+    proof: super::report_correction::ConfirmedDisclosureCorrections<'a>,
+}
+
+impl<'a> PreparedSimpleDisclosureCorrection<'a> {
+    pub(crate) fn source(&self) -> &super::CompanySystem {
+        &self.system
+    }
+    pub(crate) fn proof(&self) -> &super::report_correction::ConfirmedDisclosureCorrections<'a> {
+        &self.proof
+    }
+    pub(crate) fn into_source(self) -> super::CompanySystem {
+        self.system
+    }
+}
+
+impl super::CompanySystem {
+    pub(crate) fn prepare_disclosure_correction<'a>(
+        &self,
+        company: &CompanyId,
+        correction: CorrectionRequest,
+        supersedes: PublicationId,
+        now: CivilInstant,
+        base: &'a PublicLibrary,
+    ) -> Result<
+        PreparedSimpleDisclosureCorrection<'a>,
+        super::report_correction::DisclosureCorrectionPrepareError,
+    > {
+        let reason = correction.reason.clone();
+        let operation_sources = correction
+            .entries
+            .iter()
+            .map(|entry| entry.source)
+            .collect();
+        let mut system = self.clone();
+        let mut private_library = base.clone();
+        let publications =
+            system.correct_report(company, correction, supersedes, now, &mut private_library)?;
+        let main_publication = publications.first().copied().ok_or_else(|| {
+            super::CompanyCorrectionError::InvalidInput {
+                reason: reason.clone(),
+                detail: "真实更正 owner 返回空 publication 集合".into(),
+            }
+        })?;
+        let proof = super::report_correction::ConfirmedDisclosureCorrections::from_owner_result(
+            base,
+            private_library,
+            main_publication,
+            Some(&publications),
+            *company,
+            PublicationSource::SimpleGenerated,
+            operation_sources,
+        )
+        .map_err(super::report_correction::DisclosureCorrectionPrepareError::from)?;
+        Ok(PreparedSimpleDisclosureCorrection { system, proof })
+    }
+}
+
+#[cfg(test)]
+#[path = "disclosure_correction_owner_tests.rs"]
+mod disclosure_tests;
