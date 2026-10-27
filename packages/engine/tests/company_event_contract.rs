@@ -1,3 +1,4 @@
+include!("../test-support/company_state.rs");
 use engine::account::StockCode;
 use engine::calendar::CivilDate;
 use engine::company::{ActiveShock, CompanyId, ShockKind};
@@ -217,7 +218,7 @@ fn announcement_event_follows_successful_immutable_library_insertion() {
     let mut save = session.save().expect("healthy save");
     let company = CompanyId(0);
     let date = save.civil_clock.current_date;
-    save.company_operations
+    legacy_saved_mut(&mut save).0
         .apply_company_shock(
             &company,
             ActiveShock {

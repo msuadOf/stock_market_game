@@ -1,0 +1,25 @@
+
+running 16 tests
+test session::pipeline::npc_decisions_quota_tests::d1_full_drives_falls_back_to_full_inline_without_dispatch ... ok
+test runtime::diagnostics::tests::d1_actual_expiry_keeps_an_explicit_unsupported_marker ... ok
+test runtime::diagnostics::tests::d1_non_player_place_and_cancel_all_keep_unresolved_real_sources ... ok
+test runtime::desk_semantics_tests::sol4r_continue_round1_failure_retry_emits_facts_exactly_once ... ok
+test runtime::diagnostics::tests::d1_desk_abort_drops_unpublished_sideband_before_same_tick_retry ... ok
+test session::runtime_diagnostics_tests::d1_success_consumes_sideband_and_next_tick_cannot_repeat_it ... ok
+test session::runtime_diagnostics_tests::d1_manual_drain_after_checkpoint_driver_rebuild_checks_real_seeded_orders ... ok
+test session::runtime_diagnostics_tests::d1_seal_failure_keeps_facts_and_retry_publishes_once ... ok
+test session::runtime_diagnostics_tests::d1_real_same_tick_fill_is_explicitly_unsupported_and_rolls_back_both_legs ... ok
+test session::runtime_diagnostics_tests::d1_callback_failure_discards_delta_then_retry_publishes_once ... ok
+test session::runtime_diagnostics_tests::d1_unresolved_source_at_frame_entry_discards_driver_before_callback ... ok
+test session::runtime_diagnostics_tests::d1_unresolved_source_reports_error_before_plain_step_install_and_rolls_back ... ok
+test session::runtime_diagnostics_tests::d1_install_failure_keeps_prior_facts_and_checkpoint_retry_has_no_duplicate ... ok
+test session::runtime_diagnostics_tests::d1_world_validator_abort_keeps_facts_and_successful_retry_publishes_once ... ok
+test session::runtime_diagnostics_tests::d1_each_manual_drain_entry_rejects_existing_resting_before_any_mutation ... ok
+PROBE info-check now=CivilInstant { date: CivilDate { year: 2026, month: 1, day: 5 }, second_of_day: 33540 } cadence=Daily { checks: 1 }
+PROBE info-check now=CivilInstant { date: CivilDate { year: 2026, month: 1, day: 5 }, second_of_day: 33960 } cadence=Daily { checks: 2 }
+PROBE info-check now=CivilInstant { date: CivilDate { year: 2026, month: 1, day: 5 }, second_of_day: 33540 } cadence=Daily { checks: 1 }
+PROBE info-check now=CivilInstant { date: CivilDate { year: 2026, month: 1, day: 5 }, second_of_day: 34520 } cadence=Daily { checks: 2 }
+test runtime::drive_tests::d1_runtime_decisions_use_session_strategy_params ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 2342 filtered out; finished in 3.06s
+

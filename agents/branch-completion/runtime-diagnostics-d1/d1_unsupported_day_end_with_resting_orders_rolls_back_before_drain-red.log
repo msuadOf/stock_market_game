@@ -1,0 +1,16 @@
+
+running 1 test
+test d1_unsupported_day_end_with_resting_orders_rolls_back_before_drain ... 
+thread 'd1_unsupported_day_end_with_resting_orders_rolls_back_before_drain' (3192357) panicked at packages/engine/tests/runtime_diagnostics_d1.rs:176:5:
+未接通的DayEnd终止不能仍报open订单：Ok([PriceTick { seq: 31, tick: 30, code: StockId(0), last_price: Money(1000), daily_candle: DailyCandle { time: 1893542400, open: Money(1000), high: Money(1000), low: Money(1000), close: Money(1000), volume: 0, trade_stats: Some(DailyTradeStats { turnover_cents: 0, trade_count: 0 }) }, bids: [(Money(995), 100)], asks: [] }, DayBoundary { seq: 32, day: 1, closed_daily_candles: {StockId(0): DailyCandle { time: 1893542400, open: Money(1000), high: Money(1000), low: Money(1000), close: Money(1000), volume: 0, trade_stats: Some(DailyTradeStats { turnover_cents: 0, trade_count: 0 }) }} }, OrderCanceled { seq: 33, account: AccountId(0), code: StockId(0), id: OrderId(1), remaining_qty: 100 }])
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+FAILED
+
+failures:
+
+failures:
+    d1_unsupported_day_end_with_resting_orders_rolls_back_before_drain
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 5 filtered out; finished in 0.25s
+
+bounded command exited with 101

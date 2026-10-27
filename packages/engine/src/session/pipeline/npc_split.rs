@@ -46,10 +46,8 @@ pub(in crate::session) struct SessionReadView<'a> {
     pub(in crate::session) candle_book: &'a SessionCandleBook,
     pub(in crate::session) urgency_policy: &'a UrgencyPolicy,
     pub(in crate::session) civil_clock: &'a CivilClock,
-    /// 公司域只读（issuer 翻译与公开信息库；observe_retail_analysis 消费）。
-    pub(in crate::session) company_registry: &'a std::sync::Arc<crate::company::CompanyRegistry>,
-    pub(in crate::session) operations:
-        &'a std::sync::Arc<crate::company::operations::CompanyOperations>,
+    /// 本次读视图的选定公司公开事实；不暴露经营账簿。
+    pub(in crate::session) company_facts: std::sync::Arc<crate::company::CompanyReadFacts>,
     pub(in crate::session) library: &'a std::sync::Arc<crate::information::PublicLibrary>,
     pub(in crate::session) tick: u64,
     pub(in crate::session) day: u32,
@@ -79,8 +77,9 @@ impl GameSession {
             candle_book: &self.state.candle_book,
             urgency_policy: &self.state.urgency_policy,
             civil_clock: &self.state.civil_clock,
-            company_registry: &self.state.company_registry,
-            operations: &self.state.operations,
+            company_facts: std::sync::Arc::new(self.state.company_read_facts().unwrap_or_else(|error| {
+                panic!("session 只读公司事实构造失败：{error}")
+            })),
             library: &self.state.library,
             tick: self.state.tick,
             day: self.state.day,
@@ -115,6 +114,9 @@ pub(in crate::session) struct NpcWriteFields<'a> {
 pub(in crate::session) fn npc_split(
     session: &mut GameSession,
 ) -> (SessionReadView<'_>, NpcWriteFields<'_>) {
+    let company_facts = std::sync::Arc::new(session.state.company_read_facts().unwrap_or_else(|error| {
+        panic!("NPC 分借用公司事实构造失败：{error}")
+    }));
     let state = &mut session.state;
     let read = SessionReadView {
         compute: &session.compute,
@@ -130,8 +132,7 @@ pub(in crate::session) fn npc_split(
         candle_book: &state.candle_book,
         urgency_policy: &state.urgency_policy,
         civil_clock: &state.civil_clock,
-        company_registry: &state.company_registry,
-        operations: &state.operations,
+        company_facts,
         library: &state.library,
         tick: state.tick,
         day: state.day,
@@ -204,16 +205,6 @@ impl<'a> SessionReadView<'a> {
             u32::try_from(second).expect("validated intraday seconds"),
         )
         .expect("validated civil session date")
-    }
-
-    /// 与 GameSession::issuer_of_stock 相同的数值 id → 发行人翻译。
-    pub(in crate::session) fn issuer_of_stock(
-        &self,
-        id: StockId,
-    ) -> Option<crate::company::CompanyId> {
-        let code = self.stocks.code(id)?;
-        self.company_registry
-            .issuer_of(&crate::account::StockCode(code.to_string()))
     }
 
     /// 与 [`GameSession::current_market_minute`] 相同的分钟推导。

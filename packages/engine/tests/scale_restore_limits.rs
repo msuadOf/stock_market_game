@@ -1,3 +1,4 @@
+include!("../test-support/company_state.rs");
 use engine::account::StockCode;
 use engine::money::Money;
 use engine::session::{
@@ -101,8 +102,8 @@ fn restore_rejects_tampered_report_reference_without_mutating_the_source_session
         .keys()
         .next()
         .expect("institution information state exists");
-    let company = save
-        .company_operations
+    let company = legacy_saved(&save)
+        .0
         .catalog()
         .id("C-600101")
         .expect("默认目录含 C-600101");
@@ -198,7 +199,7 @@ fn company_collection_decodes_without_quota_and_restore_checks_stock_mapping() {
             company
         })
         .collect::<Vec<_>>();
-    save.company_operations = engine::company::CompanyOperations::new(
+    *legacy_saved_mut(&mut save).0 = engine::company::CompanyOperations::new(
         engine::company::CompanyOperationsConfig {
             seed: 39,
             shock_params: company_fixtures::quiet_params(),

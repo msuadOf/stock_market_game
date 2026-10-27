@@ -50,10 +50,18 @@ fn personal_entry_key(
 
 fn assert_missing_field_is_rejected(field: &str) {
     let mut missing = seasoned_fixture().clone_save_value();
-    missing
+    let parts: Vec<_> = field.split('.').collect();
+    let (last, ancestors) = parts.split_last().unwrap();
+    let mut parent = &mut missing;
+    for ancestor in ancestors {
+        parent = parent
+            .get_mut(*ancestor)
+            .expect("required字段的父路径必须存在");
+    }
+    parent
         .as_object_mut()
         .unwrap()
-        .remove(field)
+        .remove(*last)
         .unwrap_or_else(|| panic!("field {field} must exist"));
     let error = expect_rejection(&missing);
     assert!(
@@ -77,8 +85,9 @@ macro_rules! missing_field_tests {
 
 missing_field_tests! {
     missing_runtime_state_field_is_rejected => "runtime_state",
-    missing_company_operations_is_rejected => "company_operations",
-    missing_closing_registry_is_rejected => "closing_registry",
+    missing_company_operations_is_rejected => "company_state.LegacyOperations.operations",
+    missing_closing_registry_is_rejected => "company_state.LegacyOperations.closing",
+    missing_company_state_is_rejected => "company_state",
     missing_public_library_is_rejected => "public_library",
     missing_disclosures_is_rejected => "disclosures",
     missing_plans_is_rejected => "plans",

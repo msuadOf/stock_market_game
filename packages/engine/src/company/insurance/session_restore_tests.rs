@@ -140,8 +140,7 @@ fn full_session_restore_rejects_corrupt_insurance_group_in_memory() {
     session.end_civil_day().unwrap();
     let mut saved = session.save().unwrap();
     let group_id = ContractId("RESTORE-GROUP".into());
-    let company = saved
-        .company_operations
+    let company = saved.company_state.legacy_for_test_mut().0
         .companies
         .get_mut(&company_id)
         .unwrap();
@@ -162,11 +161,10 @@ fn full_session_restore_rejects_corrupt_insurance_group_in_memory() {
         .unwrap();
     let restored = GameSession::restore(&saved).unwrap();
     assert_eq!(
-        restored.save().unwrap().company_operations,
-        saved.company_operations
+        restored.save().unwrap().company_state,
+        saved.company_state
     );
-    let company = saved
-        .company_operations
+    let company = saved.company_state.legacy_for_test_mut().0
         .companies
         .get_mut(&company_id)
         .unwrap();

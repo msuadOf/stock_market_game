@@ -35,9 +35,12 @@ mod protocol;
 pub mod bridge;
 pub mod coordinator;
 pub mod decision;
+#[cfg(feature = "simulation-diagnostics")]
+pub mod diagnostics;
 pub mod desk;
 pub mod drive;
 pub mod event_bridge;
+pub mod retail_lifecycle;
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod bridge_tests;

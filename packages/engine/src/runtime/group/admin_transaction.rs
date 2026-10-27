@@ -10,6 +10,7 @@ use std::collections::BTreeMap;
 pub(super) struct PendingAdmin {
     id: AdminTransactionId,
     before: Vec<(LocalIdx, Arc<GroupAccount>)>,
+    information: Option<PendingInformation>,
 }
 
 fn invalid(detail: impl Into<String>) -> RuntimeError {
@@ -19,10 +20,35 @@ fn invalid(detail: impl Into<String>) -> RuntimeError {
 }
 
 impl GroupState {
+    /// 初值仅允许构造静点安装；恢复世界的 initial tick 可以大于零。
+    pub(crate) fn install_initial_company_facts(&mut self, facts: Arc<crate::company::CompanyReadFacts>) -> Result<(), RuntimeError> {
+        if self.current_company_facts.is_some() || self.snapshot.is_some()
+            || self.admin_last_id != 0 || self.admin_pending.is_some()
+            || self.cur_tick != self.committed_tick
+        {
+            return Err(invalid("公司共同事实初值只能在首个 Start 前安装一次"));
+        }
+        self.current_company_facts = Some(facts);
+        Ok(())
+    }
+
+    pub(crate) fn current_company_facts(&self) -> Result<&Arc<crate::company::CompanyReadFacts>, RuntimeError> {
+        self.current_company_facts.as_ref().ok_or_else(|| invalid("组缺少 current CompanyReadFacts"))
+    }
+
     fn prepare_admin(
         &mut self,
         id: AdminTransactionId,
         operations: Vec<AdminOperation>,
+    ) -> Result<AdminGroupCandidate, RuntimeError> {
+        self.prepare_admin_with_information(id, operations, None)
+    }
+
+    fn prepare_admin_with_information(
+        &mut self,
+        id: AdminTransactionId,
+        operations: Vec<AdminOperation>,
+        information: Option<crate::runtime::protocol::InformationPreparePayload>,
     ) -> Result<AdminGroupCandidate, RuntimeError> {
         if id.0 <= self.admin_last_id {
             return Err(invalid(format!(
@@ -43,7 +69,7 @@ impl GroupState {
         {
             return Err(invalid(format!("组 {} 行政 prepare 不在静点", self.group)));
         }
-        if operations.is_empty() {
+        if operations.is_empty() && information.is_none() {
             return Err(invalid("行政参与组不得没有操作"));
         }
         let mut working = BTreeMap::new();
@@ -63,6 +89,8 @@ impl GroupState {
                 ))
             })?;
         }
+        // 信息计算读取同一事务资产候选，全部成功后才暂装资产 working。
+        let information = information.as_ref().map(|payload| self.prepare_information(payload, &working)).transpose()?;
         let before = working
             .keys()
             .map(|&local| (local, Arc::clone(&self.accounts[local as usize])))
@@ -70,13 +98,14 @@ impl GroupState {
         for (local, account) in working {
             self.accounts[local as usize] = Arc::new(account);
         }
-        self.admin_pending = Some(PendingAdmin { id, before });
+        self.admin_pending = Some(PendingAdmin { id, before, information });
         Ok(self.admin_candidate())
     }
 
     fn admin_candidate(&self) -> AdminGroupCandidate {
         let pending = self.admin_pending.as_ref().expect("候选必须有 pending");
         AdminGroupCandidate {
+            information: pending.information.as_ref().map(|info| info.prepared.clone()),
             group: self.group,
             accounts: pending
                 .before
@@ -109,7 +138,10 @@ impl GroupState {
         match phase {
             AdminPhase::Abort => self.discard_pending_admin(),
             AdminPhase::Commit => {
-                self.admin_pending = None;
+                let pending = self.admin_pending.take().expect("已校验 pending");
+                if let Some(information) = pending.information {
+                    self.commit_information(information);
+                }
                 // 旧日志退役后，同 tick Drain 仍必须拥有有效的 Seal 增量基线。
                 self.undo.clear();
                 if self.seal_acked_len.is_some() {
@@ -123,6 +155,7 @@ impl GroupState {
             AdminPhase::Prepare => return Err(invalid("prepare 不能走 complete")),
         }
         Ok(AdminGroupCandidate {
+            information: None,
             group: self.group,
             accounts: locals
                 .into_iter()
@@ -135,6 +168,9 @@ impl GroupState {
     /// 退出也只撤本行政 overlay；不得普通 rollback 倒放已发布市场事实。
     pub(super) fn discard_pending_admin(&mut self) {
         if let Some(pending) = self.admin_pending.take() {
+            if let Some(information) = pending.information {
+                self.abort_information(information);
+            }
             for (local, account) in pending.before {
                 self.accounts[local as usize] = account;
             }
@@ -146,6 +182,7 @@ impl GroupState {
         id: AdminTransactionId,
         phase: AdminPhase,
         operations: Vec<AdminOperation>,
+        information: Option<crate::runtime::protocol::InformationPreparePayload>,
         up: &Sender<UpMsg>,
         who: super::super::protocol::WorkerId,
     ) -> bool {
@@ -161,7 +198,7 @@ impl GroupState {
                 std::panic::panic_any(Arc::clone(payload));
             }
             if phase == AdminPhase::Prepare {
-                self.prepare_admin(id, operations)
+                self.prepare_admin_with_information(id, operations, information)
             } else {
                 self.complete_admin(id, phase)
             }
@@ -416,3 +453,9 @@ mod tests {
         assert!(s.prepare_admin(AdminTransactionId(1), credit()).is_err());
     }
 }
+
+mod information;
+use information::PendingInformation;
+
+#[cfg(test)]
+mod information_tests;

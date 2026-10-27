@@ -1,3 +1,4 @@
+include!("../../test-support/company_state.rs");
 use super::*;
 use engine::company::CompanyId;
 use engine::company::CompanyKind;
@@ -14,8 +15,8 @@ fn prepared_prior_session() -> (GameSession, AccountId, AccountId, StockId, u32)
         .save()
         .expect("healthy schedule source");
     // 发行人 id 必须取自会话自身目录（聚焦会话公司集合与全量默认目录序不同）。
-    let company = schedule_source
-        .company_operations
+    let company = legacy_saved(&schedule_source)
+        .0
         .catalog()
         .id("C-600101")
         .expect("会话目录含发行人");
@@ -65,12 +66,17 @@ fn prepared_prior_session() -> (GameSession, AccountId, AccountId, StockId, u32)
         .expect("seeded library must contain a prior annual report");
     assert_eq!(first_report.reports.period.year(), 2029);
     let observed = first_report.published_at;
+    let issued_shares = legacy_saved(&save)
+        .0
+        .company(&company)
+        .unwrap()
+        .spec()
+        .issued_shares;
     let state = save.information_states.get_mut(&first).unwrap();
     state
         .record_acquisition(first, &save.public_library, first_report.id, observed)
         .unwrap();
     let context = NpcObservationContext::new(first, state, &save.public_library, &()).unwrap();
-    let spec = save.company_operations.company(&company).unwrap().spec();
     save.belief_books
         .get_mut(&first)
         .unwrap()
@@ -83,7 +89,7 @@ fn prepared_prior_session() -> (GameSession, AccountId, AccountId, StockId, u32)
                 ctx: &context,
                 company: company.clone(),
                 kind: CompanyKind::Industrial,
-                total_issued_shares: spec.issued_shares,
+                total_issued_shares: issued_shares,
                 as_of_trading_day: 0,
             },
         )

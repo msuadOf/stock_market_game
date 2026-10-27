@@ -94,14 +94,9 @@ impl GameSession {
             runtime_envelope_undo: _,
             runtime_lifecycles_undo: _,
             runtime_retail_diag_undo: _,
-            company_registry: _,
-            company_system: _,
-            corporate_actions: _,
-            operations: _,
-            closing: _,
+            companies: _,
             library: _,
             disclosures: _,
-            groups: _,
             plans: _,
             urgency_policy: _,
             // Sol 六审段 1.3：运行时权威标志（非业务事实——不参与哈希）。
@@ -164,29 +159,37 @@ impl GameSession {
             .collect();
         queue.sort_unstable();
         hash.field(&queue)?;
-        hash.field(self.state.company_registry.as_ref())?;
-        // 公司 spine 权威状态（B4b）：缺席局序列化为 null（哈希流仍逐字段定界，
-        // 与公司局可区分）；公司局的日终推进/回滚等价验证（B4c R2 锚）自此
-        // 对公司状态分歧不再失明。
-        hash.field(&self.state.company_system.as_deref())?;
-        hash.field(&self.state.corporate_actions)?;
-        let operations = self.state.operations.hash_projection().map_err(|error| {
+        match &self.state.companies {
+            super::company_state::SessionCompanies::LegacyOperations(legacy) => {
+                hash.field(&0_u8)?;
+                hash.field(legacy.registry.as_ref())?;
+                hash.field(&legacy.operations.hash_projection().map_err(|error| {
             StepFatal::InvariantViolation {
                 description: error.to_string(),
                 location: "state_hash.company_operations".to_owned(),
             }
-        })?;
-        hash.field(&operations)?;
-        let closing = self.state.closing.hash_projection().map_err(|error| {
+                })?)?;
+                hash.field(&legacy.closing.hash_projection().map_err(|error| {
             StepFatal::InvariantViolation {
                 description: error.to_string(),
                 location: "state_hash.closing".to_owned(),
             }
-        })?;
-        hash.field(&closing)?;
+                })?)?;
+                hash.field(&legacy.groups)?;
+            }
+            super::company_state::SessionCompanies::CompanySystem(system) => {
+                hash.field(&1_u8)?;
+                hash.field(&system.system.hash_projection().map_err(|error| {
+                    StepFatal::InvariantViolation {
+                        description: error.to_string(),
+                        location: "state_hash.company_system".to_owned(),
+                    }
+                })?)?;
+                hash.field(&system.corporate_actions)?;
+            }
+        }
         hash.field(&self.state.library.hash_projection())?;
         hash.field(&self.state.disclosures)?;
-        hash.field(&self.state.groups)?;
         hash.field(&self.state.plans)?;
         hash.field(&self.state.urgency_policy)?;
         hash.field(
