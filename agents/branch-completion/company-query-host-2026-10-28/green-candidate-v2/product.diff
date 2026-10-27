@@ -1,0 +1,1536 @@
+diff --git a/apps/desktop/src-tauri/src/actor.rs b/apps/desktop/src-tauri/src/actor.rs
+index 088144de..67c4dbe3 100644
+--- a/apps/desktop/src-tauri/src/actor.rs
++++ b/apps/desktop/src-tauri/src/actor.rs
+@@ -79,6 +79,19 @@ pub struct GenerationResponse<T> {
+     pub value: T,
+ }
+ 
++#[derive(Debug, Serialize)]
++pub struct CompanyReadResponse {
++    pub generation: String,
++    pub owner: AccountId,
++    pub value: engine::session::protocol::CompanyReadResult,
++}
++
++#[derive(Debug)]
++pub enum CompanyReadHostError {
++    Session { message: String },
++    Query(engine::session::protocol::CompanyReadError),
++}
++
+ fn diagnostic_generation_response(
+     requested_generation: u64,
+     current_generation: u64,
+@@ -246,6 +259,11 @@ impl DesktopPacing {
+ /// `reply` 用 `Result` 而非裸值：engine 失败（`SessionError`）显式上抛，绝不静默吞（铁律二）。
+ #[derive(Debug)]
+ pub enum SessionCommand {
++    CompanyRead {
++        generation: u64,
++        query: engine::session::protocol::CompanyReadQuery,
++        reply: oneshot::Sender<Result<CompanyReadResponse, CompanyReadHostError>>,
++    },
+     /// 入队玩家意图（当前固定玩家 0）。Ok=已入队，Err=engine 拒绝。
+     Enqueue {
+         player_id: AccountId,
+@@ -355,6 +373,27 @@ pub struct SessionHandles {
+ }
+ 
+ impl SessionHandles {
++    pub async fn company_read_query(
++        &self,
++        generation: u64,
++        query: engine::session::protocol::CompanyReadQuery,
++    ) -> Result<CompanyReadResponse, CompanyReadHostError> {
++        let (reply, received) = oneshot::channel();
++        self.cmd_tx
++            .send(SessionCommand::CompanyRead {
++                generation,
++                query,
++                reply,
++            })
++            .map_err(|error| CompanyReadHostError::Session {
++                message: error.to_string(),
++            })?;
++        received
++            .await
++            .map_err(|error| CompanyReadHostError::Session {
++                message: error.to_string(),
++            })?
++    }
+     /// 便捷：入队玩家意图（固定 `AccountId(0)`），立即登记到共享 ingress。
+     pub async fn enqueue(&self, generation: u64, intent: Intent) -> Result<(), SendCommandError> {
+         self.enqueue_as(generation, AccountId(0), intent).await
+@@ -1034,6 +1073,29 @@ impl<R: Runtime> SessionActor<R> {
+             return;
+         }
+         match cmd {
++            SessionCommand::CompanyRead {
++                generation,
++                query,
++                reply,
++            } => {
++                let result = self
++                    .generation_response(generation, Ok(()))
++                    .map_err(|error| CompanyReadHostError::Session {
++                        message: error.to_string(),
++                    })
++                    .and_then(|_| {
++                        let owner = AccountId(0);
++                        self.game
++                            .company_read_query(owner, query)
++                            .map(|value| CompanyReadResponse {
++                                generation: self.generation.to_string(),
++                                owner,
++                                value,
++                            })
++                            .map_err(CompanyReadHostError::Query)
++                    });
++                let _ = reply.send(result);
++            }
+             SessionCommand::Enqueue {
+                 player_id,
+                 intent,
+diff --git a/apps/desktop/src-tauri/src/actor/protocol_tests.rs b/apps/desktop/src-tauri/src/actor/protocol_tests.rs
+index c9267195..04d4eee9 100644
+--- a/apps/desktop/src-tauri/src/actor/protocol_tests.rs
++++ b/apps/desktop/src-tauri/src/actor/protocol_tests.rs
+@@ -1,5 +1,124 @@
+ use super::*;
+ use engine::session::protocol::ReplayGuard;
++include!("../../../../../packages/engine/test-support/simple_company.rs");
++
++#[tokio::test]
++async fn company_read_command_preserves_actual_nonempty_data_and_local_owner() {
++    use engine::session::protocol::CompanyReadQuery;
++    let mut setup = super::tests::diagnostic_setup();
++    setup.npcs.inst_count = 0;
++    setup.stocks[0].float_shares = 0;
++    setup.history_len = 1;
++    setup.company_system = Some(simple_company_fixture!(engine; ["600101"]));
++    setup.dividend_tax_mode = Some(engine::company::CashDividendTaxMode::FlatWithholding);
++    setup.flat_withholding_bp = Some(1000);
++    setup.par_value_per_share = Some(engine::Money::from_cents(100));
++    setup.auto_corporate_foundation = true;
++    let game = ProtocolSession::new(setup, 7).unwrap();
++    let expected =
++        serde_json::to_value(game.account_dividend_tax_status(AccountId(0)).unwrap()).unwrap();
++    let before = serde_json::to_value(game.game().save().unwrap()).unwrap();
++    let mut harness = ActorHarness::new_protocol_actor(
++        game,
++        false,
++        PausePreferences::default(),
++        "company",
++        "one",
++    );
++    let (reply, received) = oneshot::channel();
++    harness
++        .actor
++        .handle_command(SessionCommand::CompanyRead {
++            generation: 1,
++            query: CompanyReadQuery::AccountDividendTaxStatus,
++            reply,
++        })
++        .await;
++    let response = received.await.unwrap().unwrap();
++    let wire = serde_json::to_value(response).unwrap();
++    assert_eq!(wire["generation"], "1");
++    assert_eq!(wire["owner"], "0");
++    assert_eq!(wire["value"]["data"], expected);
++    assert_eq!(wire["value"]["data"]["stocks"][0]["stock"], "600101");
++    for query in [
++        CompanyReadQuery::CompanyPeriodExplanation {
++            company: engine::company::CompanyId(0),
++            period_end: engine::CivilDate::from_iso("2029-12-31").unwrap(),
++        },
++        CompanyReadQuery::DividendTaxOutstandingViews,
++        CompanyReadQuery::OwnerFlatWithholdingReceipts,
++        CompanyReadQuery::CompanyCapabilities {
++            company: engine::company::CompanyId(0),
++        },
++        CompanyReadQuery::OwnerRightsOfferings,
++    ] {
++        let kind = serde_json::to_value(&query).unwrap()["kind"].clone();
++        let (reply, received) = oneshot::channel();
++        harness
++            .actor
++            .handle_command(SessionCommand::CompanyRead {
++                generation: 1,
++                query,
++                reply,
++            })
++            .await;
++        let wire = serde_json::to_value(received.await.unwrap().unwrap()).unwrap();
++        assert_eq!(wire["generation"], "1");
++        assert_eq!(wire["owner"], "0");
++        assert_eq!(wire["value"]["kind"], kind);
++    }
++    assert_eq!(
++        before,
++        serde_json::to_value(harness.actor.game.game().save().unwrap()).unwrap()
++    );
++}
++
++#[tokio::test]
++async fn company_read_command_checks_generation_and_preserves_typed_domain_failure() {
++    use engine::session::protocol::CompanyReadQuery;
++    let mut setup = super::tests::diagnostic_setup();
++    setup.npcs.inst_count = 0;
++    setup.history_len = 1;
++    let game = ProtocolSession::new(setup, 7).unwrap();
++    let before = serde_json::to_value(game.game().save().unwrap()).unwrap();
++    let mut harness = ActorHarness::new_protocol_actor(
++        game,
++        false,
++        PausePreferences::default(),
++        "company",
++        "one",
++    );
++    let (reply, received) = oneshot::channel();
++    harness
++        .actor
++        .handle_command(SessionCommand::CompanyRead {
++            generation: 2,
++            query: CompanyReadQuery::AccountDividendTaxStatus,
++            reply,
++        })
++        .await;
++    assert!(matches!(
++        received.await.unwrap(),
++        Err(CompanyReadHostError::Session { .. })
++    ));
++    let (reply, received) = oneshot::channel();
++    harness
++        .actor
++        .handle_command(SessionCommand::CompanyRead {
++            generation: 1,
++            query: CompanyReadQuery::AccountDividendTaxStatus,
++            reply,
++        })
++        .await;
++    assert!(matches!(
++        received.await.unwrap(),
++        Err(CompanyReadHostError::Query(_))
++    ));
++    assert_eq!(
++        before,
++        serde_json::to_value(harness.actor.game.game().save().unwrap()).unwrap()
++    );
++}
+ 
+ #[tokio::test]
+ async fn shared_ingress_receives_player_without_actor_command_polling() {
+diff --git a/apps/desktop/src-tauri/src/lib.rs b/apps/desktop/src-tauri/src/lib.rs
+index d18965fb..c63db209 100644
+--- a/apps/desktop/src-tauri/src/lib.rs
++++ b/apps/desktop/src-tauri/src/lib.rs
+@@ -221,6 +221,39 @@ async fn civil_date(
+         .map_err(map_send_error)
+ }
+ 
++#[derive(Debug, serde::Serialize)]
++#[serde(tag = "kind", content = "data")]
++enum CompanyReadIpcError {
++    Session { message: String },
++    Query(engine::session::protocol::CompanyReadFailure),
++}
++
++#[tauri::command]
++async fn company_read_query(
++    state: State<'_, DesktopState>,
++    session_id: String,
++    generation: String,
++    query: engine::session::protocol::CompanyReadQuery,
++) -> Result<actor::CompanyReadResponse, CompanyReadIpcError> {
++    let handles = lookup_handles(&state, &session_id)
++        .await
++        .map_err(|message| CompanyReadIpcError::Session { message })?;
++    let generation =
++        parse_generation(generation).map_err(|message| CompanyReadIpcError::Session { message })?;
++    handles
++        .company_read_query(generation, query)
++        .await
++        .map_err(|error| match error {
++            actor::CompanyReadHostError::Session { message } => {
++                CompanyReadIpcError::Session { message }
++            }
++            actor::CompanyReadHostError::Query(error) => {
++                eprintln!("desktop.company_read_query 领域拒绝：{error:?}");
++                CompanyReadIpcError::Query(error.public_failure())
++            }
++        })
++}
++
+ #[tauri::command]
+ async fn public_reports(
+     state: State<'_, DesktopState>,
+@@ -468,6 +501,7 @@ fn command_builder<R: Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R>
+             runtime_snapshot,
+             civil_date,
+             public_reports,
++            company_read_query,
+             public_report_by_id,
+             npc_decision_diagnostics,
+             speed_metrics,
+@@ -500,6 +534,7 @@ fn command_builder<R: Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R>
+             runtime_snapshot,
+             civil_date,
+             public_reports,
++            company_read_query,
+             public_report_by_id,
+             npc_decision_diagnostics,
+             speed_metrics,
+diff --git a/apps/desktop/src-tauri/src/lib_tests.rs b/apps/desktop/src-tauri/src/lib_tests.rs
+index d88616b6..c0c18727 100644
+--- a/apps/desktop/src-tauri/src/lib_tests.rs
++++ b/apps/desktop/src-tauri/src/lib_tests.rs
+@@ -5,6 +5,63 @@ use engine::{
+     StrategyParams,
+ };
+ use serde_json::{json, Value};
++include!("../../../../packages/engine/test-support/simple_company.rs");
++
++#[tokio::test]
++async fn company_read_ipc_registers_six_queries_and_preserves_typed_rejections() {
++    let app = command_builder(mock_builder())
++        .build(mock_context(noop_assets()))
++        .unwrap();
++    let webview = WebviewWindowBuilder::new(&app, "main", Default::default())
++        .build()
++        .unwrap();
++    let mut setup = diagnostic_setup();
++    setup.npcs.inst_count = 0;
++    setup.stocks[0].float_shares = 0;
++    setup.history_len = 1;
++    setup.company_system = Some(simple_company_fixture!(engine; ["600101"]));
++    setup.dividend_tax_mode = Some(engine::company::CashDividendTaxMode::FlatWithholding);
++    setup.flat_withholding_bp = Some(1000);
++    setup.par_value_per_share = Some(Money::from_cents(100));
++    setup.auto_corporate_foundation = true;
++    let session_id = invoke_json(
++        &webview,
++        "create_session",
++        json!({"setup":setup,"seed":"7"}),
++    )
++    .unwrap();
++    for query in [
++        json!({"kind":"CompanyPeriodExplanation","data":{"company":0,"period_end":"2029-12-31"}}),
++        json!({"kind":"AccountDividendTaxStatus"}),
++        json!({"kind":"DividendTaxOutstandingViews"}),
++        json!({"kind":"OwnerFlatWithholdingReceipts"}),
++        json!({"kind":"CompanyCapabilities","data":{"company":0}}),
++        json!({"kind":"OwnerRightsOfferings"}),
++    ] {
++        let response = invoke_json(
++            &webview,
++            "company_read_query",
++            json!({"sessionId":session_id,"generation":"1","query":query}),
++        )
++        .unwrap();
++        assert_eq!(response["generation"], "1");
++        assert_eq!(response["owner"], "0");
++        assert_eq!(response["value"]["kind"], query["kind"]);
++        println!("COMPANY_READ_TAURI_FIXTURE {response}");
++    }
++    let error = invoke_json(&webview,"company_read_query",json!({"sessionId":session_id,"generation":"1","query":{"kind":"CompanyPeriodExplanation","data":{"company":0,"period_end":"2030-01-31"}}})).unwrap_err();
++    assert_eq!(error["kind"], "Query");
++    assert_eq!(error["data"]["kind"], "Company");
++    assert_eq!(error["data"]["data"]["classification"], "BusinessCondition");
++    assert!(error["data"]["data"]["reason"]
++        .as_str()
++        .unwrap()
++        .contains("尚未结算"));
++    println!("COMPANY_READ_TAURI_FAILURE {error}");
++    let error = invoke_json(&webview,"company_read_query",json!({"sessionId":session_id,"generation":"999","query":{"kind":"AccountDividendTaxStatus"}})).unwrap_err();
++    assert_eq!(error["kind"], "Session");
++    invoke_json(&webview, "stop_session", json!({"sessionId":session_id})).unwrap();
++}
+ #[cfg(all(feature = "simulation-diagnostics", debug_assertions))]
+ use std::time::Duration;
+ use tauri::{
+diff --git a/apps/server/src/actor.rs b/apps/server/src/actor.rs
+index 3446a7b8..5c54da0b 100644
+--- a/apps/server/src/actor.rs
++++ b/apps/server/src/actor.rs
+@@ -556,9 +556,13 @@ pub enum SessionCommand {
+     },
+ }
+ 
+-/// 共享市场成员请求（B3 子集——B2 查询面与公司契约面不在本批）。
++/// 共享市场成员请求；本人公司查询由当前成员关系导出账户。
+ #[derive(Debug)]
+ pub enum MemberRequest {
++    CompanyRead {
++        generation: u64,
++        query: engine::session::protocol::CompanyReadQuery,
++    },
+     /// 重置市场（控制权 + 新 setup/seed；交易时钟配置必须与现会话一致）。
+     Reset {
+         generation: u64,
+@@ -603,6 +607,14 @@ pub enum MemberRequest {
+ 
+ #[derive(Debug)]
+ pub enum MemberResponse {
++    CompanyRead(
++        u64,
++        AccountId,
++        Result<
++            engine::session::protocol::CompanyReadResult,
++            engine::session::protocol::CompanyReadError,
++        >,
++    ),
+     Baseline(Result<PublicBaseline, engine::session::CompanyCatalogViewError>),
+     Context(MarketContext),
+     Membership(MarketMembership),
+@@ -807,6 +819,35 @@ pub struct SessionHandles {
+ }
+ 
+ impl SessionHandles {
++    pub async fn company_read_query_for(
++        &self,
++        generation: u64,
++        subject: OpaqueSubjectId,
++        query: engine::session::protocol::CompanyReadQuery,
++    ) -> Result<
++        (
++            u64,
++            AccountId,
++            Result<
++                engine::session::protocol::CompanyReadResult,
++                engine::session::protocol::CompanyReadError,
++            >,
++        ),
++        SendCommandError,
++    > {
++        match self
++            .member_request(subject, MemberRequest::CompanyRead { generation, query })
++            .await?
++        {
++            MemberResponse::CompanyRead(generation, owner, result) => {
++                Ok((generation, owner, result))
++            }
++            _ => Err(SendCommandError::Rejected(
++                "公司只读查询响应类型错误".into(),
++            )),
++        }
++    }
++
+     /// 订阅 actor 发布的更新；外部只持有 Receiver，不获得发布写权。
+     /// ```no_run
+     /// fn subscribe(handles: &server::SessionHandles) {
+@@ -2066,6 +2107,7 @@ impl SessionActor {
+             |error: engine::session::MembershipError| SendCommandError::Rejected(error.to_string());
+         let request_generation = match &request {
+             MemberRequest::AdmissionCash { generation, .. }
++            | MemberRequest::CompanyRead { generation, .. }
+             | MemberRequest::SetSpeed { generation, .. }
+             | MemberRequest::SetRunning { generation, .. }
+             | MemberRequest::SetPausePreferences { generation, .. } => Some(*generation),
+@@ -2075,6 +2117,22 @@ impl SessionActor {
+             return Err(SendCommandError::Rejected("STALE_SESSION_GENERATION".into()));
+         }
+         match request {
++            MemberRequest::CompanyRead { query, .. } => {
++                if let Some(error) = self.fatal_rejection() {
++                    return Err(SendCommandError::Rejected(error.to_string()));
++                }
++                let owner = self
++                    .game
++                    .market_membership(&subject)
++                    .map_err(reject)?
++                    .account_id;
++                Ok(MemberResponse::CompanyRead(
++                    self.timeline_generation,
++                    owner,
++                    self.game.company_read_query(owner, query),
++                ))
++            }
++
+             MemberRequest::Reset {
+                 generation,
+                 setup,
+diff --git a/apps/server/src/actor/fatal_tests.rs b/apps/server/src/actor/fatal_tests.rs
+index d688acba..4f8699c8 100644
+--- a/apps/server/src/actor/fatal_tests.rs
++++ b/apps/server/src/actor/fatal_tests.rs
+@@ -1,4 +1,104 @@
+ use super::*;
++include!("../../../../packages/engine/test-support/simple_company.rs");
++
++#[test]
++fn company_read_member_request_projects_the_actual_nonzero_members_data() {
++    use engine::session::protocol::{CompanyReadQuery, CompanyReadResult};
++    let (mut actor, _) = catalog_actor_fixture();
++    let mut setup = actor.game.export_setup_for_runtime();
++    setup.company_system = Some(simple_company_fixture!(engine; ["600101"]));
++    setup.dividend_tax_mode = Some(engine::company::CashDividendTaxMode::FlatWithholding);
++    setup.flat_withholding_bp = Some(1000);
++    setup.par_value_per_share = Some(engine::Money::from_cents(100));
++    setup.auto_corporate_foundation = true;
++    actor.game = ProtocolSession::new(setup, 7).unwrap();
++    actor.ingress = Arc::new(RwLock::new((1, actor.game.shared_ingress())));
++    let subject = OpaqueSubjectId::new("company-query-nonzero".into()).unwrap();
++    let owner = actor
++        .game
++        .join_market(subject.clone(), true)
++        .unwrap()
++        .account_id;
++    *actor.members.write().unwrap() = actor.game.trading_subject_accounts();
++    assert_ne!(owner, AccountId(0));
++    let expected = actor.game.account_dividend_tax_status(owner).unwrap();
++    let before = serde_json::to_value(actor.game.game().save().unwrap()).unwrap();
++    let response = actor
++        .handle_member_request(
++            subject,
++            MemberRequest::CompanyRead {
++                generation: 1,
++                query: CompanyReadQuery::AccountDividendTaxStatus,
++            },
++        )
++        .unwrap();
++    let MemberResponse::CompanyRead(
++        1,
++        response_owner,
++        Ok(CompanyReadResult::AccountDividendTaxStatus(view)),
++    ) = response
++    else {
++        panic!("响应类型错误")
++    };
++    assert_eq!(response_owner, owner);
++    assert_eq!(view, expected);
++    assert_eq!(view.stocks[0].stock.0, "600101");
++    assert_eq!(
++        before,
++        serde_json::to_value(actor.game.game().save().unwrap()).unwrap()
++    );
++}
++
++#[test]
++fn company_read_member_request_uses_current_nonzero_membership_and_rejects_stale_generation() {
++    use engine::session::protocol::{CompanyReadError, CompanyReadQuery};
++    let (mut actor, _) = catalog_actor_fixture();
++    let subject = OpaqueSubjectId::new("company-query-member".into()).unwrap();
++    let owner = actor
++        .game
++        .join_market(subject.clone(), true)
++        .unwrap()
++        .account_id;
++    assert_ne!(owner, AccountId(0));
++    let before = serde_json::to_value(actor.game.game().save().unwrap()).unwrap();
++    let response = actor
++        .handle_member_request(
++            subject.clone(),
++            MemberRequest::CompanyRead {
++                generation: 1,
++                query: CompanyReadQuery::AccountDividendTaxStatus,
++            },
++        )
++        .unwrap();
++    let MemberResponse::CompanyRead(generation, response_owner, result) = response else {
++        panic!("响应类型错误")
++    };
++    assert_eq!((generation, response_owner), (1, owner));
++    assert!(matches!(result, Err(CompanyReadError::Corporate(_))));
++    assert!(actor
++        .handle_member_request(
++            subject,
++            MemberRequest::CompanyRead {
++                generation: 2,
++                query: CompanyReadQuery::OwnerRightsOfferings
++            }
++        )
++        .is_err());
++    let outsider = OpaqueSubjectId::new("not-joined".into()).unwrap();
++    assert!(actor
++        .handle_member_request(
++            outsider,
++            MemberRequest::CompanyRead {
++                generation: 1,
++                query: CompanyReadQuery::AccountDividendTaxStatus
++            }
++        )
++        .is_err());
++    assert_eq!(
++        before,
++        serde_json::to_value(actor.game.game().save().unwrap()).unwrap()
++    );
++}
+ 
+ #[test]
+ fn production_actor_steps_and_delivers_tick_batches() {
+diff --git a/apps/server/src/lib.rs b/apps/server/src/lib.rs
+index e55d4403..bbc31bd1 100644
+--- a/apps/server/src/lib.rs
++++ b/apps/server/src/lib.rs
+@@ -74,6 +74,10 @@ fn app_router_with_state(state: AppState) -> Router {
+             post(routes::api_admission_cash),
+         )
+         .route("/api/intent", post(routes::api_intent))
++        .route(
++            "/api/company-read-query",
++            post(routes::api_company_read_query),
++        )
+         .route("/api/snapshot", get(routes::api_snapshot))
+         .route(
+             "/api/player-working-orders",
+diff --git a/apps/server/src/routes.rs b/apps/server/src/routes.rs
+index 5df95069..f2688782 100644
+--- a/apps/server/src/routes.rs
++++ b/apps/server/src/routes.rs
+@@ -258,6 +258,46 @@ pub struct IntentBody {
+     pub intent: engine::Intent,
+ }
+ 
++#[derive(Debug, Deserialize)]
++#[serde(deny_unknown_fields)]
++pub struct CompanyReadBody {
++    pub session_id: String,
++    pub generation: String,
++    pub query: engine::session::protocol::CompanyReadQuery,
++}
++
++/// 本人公司查询；账户在 actor 内按当前 subject 再次解析，不接受客户端选择。
++pub async fn api_company_read_query(
++    State(state): State<AppState>,
++    headers: HeaderMap,
++    body: Result<Json<CompanyReadBody>, JsonRejection>,
++) -> Response {
++    let Json(body) = match body {
++        Ok(body) => body,
++        Err(error) => return invalid_json_response(error),
++    };
++    let (handles, subject) =
++        match authorized_session(&state, &body.session_id, authorization_token(&headers)).await {
++            Ok(context) => context,
++            Err(response) => return *response,
++        };
++    let generation = match parse_host_parity_generation(&body.generation) {
++        Ok(generation) => generation,
++        Err(response) => return *response,
++    };
++    match handles.company_read_query_for(generation, subject, body.query.clone()).await {
++        Ok((generation, owner, Ok(value))) => Json(serde_json::json!({"generation": generation.to_string(), "owner": owner, "value": value})).into_response(),
++        Ok((_, _, Err(error))) => {
++            warn!(session = %body.session_id, query = ?body.query, error = ?error, "公司只读查询被领域拒绝");
++            (StatusCode::BAD_REQUEST, Json(serde_json::json!({"code": "COMPANY_READ_REJECTED", "failure": error.public_failure()}))).into_response()
++        }
++        Err(SendCommandError::ActorGone) => api_error(StatusCode::INTERNAL_SERVER_ERROR, "ACTOR_GONE", "会话 actor 已退出，请同步有效会话后重试"),
++        Err(SendCommandError::Rejected(reason)) if reason == "STALE_SESSION_GENERATION" => api_error(StatusCode::CONFLICT, "STALE_SESSION_GENERATION", reason),
++        Err(SendCommandError::Rejected(reason)) => api_error(StatusCode::BAD_REQUEST, "COMPANY_READ_REJECTED", reason),
++        Err(SendCommandError::InvalidSpeed(_)) => unreachable!("公司查询不校验倍速"),
++    }
++}
++
+ /// /api/speed 请求体。
+ #[derive(Debug, Deserialize)]
+ pub struct SpeedBody {
+diff --git a/apps/server/src/routes/auth_tests.rs b/apps/server/src/routes/auth_tests.rs
+index 3062082c..e655802e 100644
+--- a/apps/server/src/routes/auth_tests.rs
++++ b/apps/server/src/routes/auth_tests.rs
+@@ -5,6 +5,121 @@ use engine::strategy::Intent;
+ use engine::Side;
+ use serde_json::{json, Value};
+ use tower::ServiceExt;
++include!("../../../../packages/engine/test-support/simple_company.rs");
++
++#[tokio::test]
++async fn company_read_route_authenticates_and_preserves_owner_and_generation() {
++    let app = crate::app_router();
++    let mut company_setup: engine::SessionSetup = serde_json::from_value(setup()).unwrap();
++    company_setup.start_date = engine::CivilDate::from_iso("2030-01-08").unwrap();
++    company_setup.history_len = 1;
++    company_setup.company_system = Some(simple_company_fixture!(engine; ["600101"]));
++    company_setup.dividend_tax_mode = Some(engine::company::CashDividendTaxMode::FlatWithholding);
++    company_setup.flat_withholding_bp = Some(1000);
++    company_setup.par_value_per_share = Some(Money::from_cents(100));
++    company_setup.auto_corporate_foundation = true;
++    let (status, created) = request(
++        app.clone(),
++        "POST",
++        "/api/new",
++        Some(json!({"setup":company_setup,"seed":"71"})),
++        None,
++    )
++    .await;
++    assert_eq!(status, StatusCode::OK, "{created}");
++    let body = json!({"session_id":created["session_id"],"generation":created["generation"],"query":{"kind":"AccountDividendTaxStatus"}});
++    assert_eq!(
++        request(
++            app.clone(),
++            "POST",
++            "/api/company-read-query",
++            Some(body.clone()),
++            None
++        )
++        .await
++        .0,
++        StatusCode::UNAUTHORIZED
++    );
++    let credential = created["test_credential"].as_str().unwrap();
++    let (status, result) = request(
++        app.clone(),
++        "POST",
++        "/api/company-read-query",
++        Some(body.clone()),
++        Some(credential),
++    )
++    .await;
++    assert_eq!(status, StatusCode::OK, "{result}");
++    assert_eq!(result["owner"], "0");
++    assert_eq!(result["generation"], created["generation"]);
++    assert_eq!(result["value"]["kind"], "AccountDividendTaxStatus");
++    assert_eq!(result["value"]["data"]["stocks"][0]["stock"], "600101");
++    println!("COMPANY_READ_SERVER_FIXTURE {result}");
++    for query in [
++        json!({"kind":"CompanyPeriodExplanation","data":{"company":0,"period_end":"2029-12-31"}}),
++        json!({"kind":"DividendTaxOutstandingViews"}),
++        json!({"kind":"OwnerFlatWithholdingReceipts"}),
++        json!({"kind":"CompanyCapabilities","data":{"company":0}}),
++        json!({"kind":"OwnerRightsOfferings"}),
++    ] {
++        let mut request_body = body.clone();
++        request_body["query"] = query.clone();
++        let (status, response) = request(
++            app.clone(),
++            "POST",
++            "/api/company-read-query",
++            Some(request_body),
++            Some(credential),
++        )
++        .await;
++        assert_eq!(status, StatusCode::OK, "{response}");
++        assert_eq!(response["owner"], "0");
++        assert_eq!(response["generation"], created["generation"]);
++        assert_eq!(response["value"]["kind"], query["kind"]);
++        println!("COMPANY_READ_SERVER_FIXTURE {response}");
++    }
++    let mut stale = body.clone();
++    stale["generation"] = json!("999");
++    assert_eq!(
++        request(
++            app.clone(),
++            "POST",
++            "/api/company-read-query",
++            Some(stale),
++            Some(credential)
++        )
++        .await
++        .0,
++        StatusCode::CONFLICT
++    );
++    let unjoined = guest_token(app.clone()).await;
++    assert_eq!(
++        request(
++            app.clone(),
++            "POST",
++            "/api/company-read-query",
++            Some(body.clone()),
++            Some(&unjoined)
++        )
++        .await
++        .0,
++        StatusCode::FORBIDDEN
++    );
++    let mut forged = body;
++    forged["query"]["account"] = json!("99");
++    assert_eq!(
++        request(
++            app.clone(),
++            "POST",
++            "/api/company-read-query",
++            Some(forged),
++            Some(credential)
++        )
++        .await
++        .0,
++        StatusCode::BAD_REQUEST
++    );
++}
+ 
+ fn setup() -> Value {
+     json!({
+diff --git a/apps/web-wasm/src/lib.rs b/apps/web-wasm/src/lib.rs
+index f70c7bb9..71473b0d 100644
+--- a/apps/web-wasm/src/lib.rs
++++ b/apps/web-wasm/src/lib.rs
+@@ -39,6 +39,34 @@ fn public_dto_to_js<T: Serialize>(value: &T) -> Result<JsValue, JsValue> {
+         .map_err(|error| JsValue::from_str(&error.to_string()))
+ }
+ 
++#[derive(Debug, Serialize)]
++struct CompanyReadResponse {
++    owner: AccountId,
++    value: engine::session::protocol::CompanyReadResult,
++}
++
++fn query_company_reads(
++    session: &ProtocolSession,
++    query: engine::session::protocol::CompanyReadQuery,
++) -> Result<CompanyReadResponse, engine::session::protocol::CompanyReadError> {
++    let owner = AccountId(0);
++    session
++        .company_read_query(owner, query)
++        .map(|value| CompanyReadResponse { owner, value })
++}
++
++/// 只读公司事实；句柄来自实际 registry，账户不由 JS 请求指定。
++#[wasm_bindgen]
++pub fn company_read_query(handle: u32, query: JsValue) -> Result<JsValue, JsValue> {
++    let query = serde_wasm_bindgen::from_value(query)?;
++    with_session(handle, |session| {
++        match query_company_reads(session, query) {
++            Ok(response) => public_dto_to_js(&response),
++            Err(error) => Err(public_dto_to_js(&error.public_failure())?),
++        }
++    })
++}
++
+ fn save_to_js<T: Serialize>(value: &T) -> Result<JsValue, JsValue> {
+     to_js(value)
+ }
+diff --git a/apps/web-wasm/src/protocol_tests.rs b/apps/web-wasm/src/protocol_tests.rs
+index aba34939..b5cf2fef 100644
+--- a/apps/web-wasm/src/protocol_tests.rs
++++ b/apps/web-wasm/src/protocol_tests.rs
+@@ -2,6 +2,60 @@
+ mod fixture;
+ 
+ use super::*;
++include!("../../../packages/engine/test-support/simple_company.rs");
++
++#[test]
++fn company_read_registry_uses_real_session_owner_and_does_not_mutate_saved_facts() {
++    use engine::session::protocol::CompanyReadQuery;
++    let mut setup = fixture::civil_setup(engine::CivilDate::from_iso("2030-01-08").unwrap());
++    setup.npcs.retail_count = 0;
++    setup.npcs.inst_count = 0;
++    setup.npcs.hot_count = 0;
++    setup.history_len = 1;
++    setup.stocks[0].float_shares = 0;
++    setup.company_system = Some(simple_company_fixture!(engine; ["600101"]));
++    setup.dividend_tax_mode = Some(engine::company::CashDividendTaxMode::FlatWithholding);
++    setup.flat_withholding_bp = Some(1000);
++    setup.par_value_per_share = Some(engine::Money::from_cents(100));
++    setup.auto_corporate_foundation = true;
++    let mut registry = SessionRegistry::default();
++    let handle = registry.create(setup, 7).unwrap();
++    registry
++        .with_session(handle, |session| {
++            let before = serde_json::to_value(session.game().save().unwrap()).unwrap();
++            let response =
++                query_company_reads(session, CompanyReadQuery::AccountDividendTaxStatus).unwrap();
++            let wire = serde_json::to_value(response).unwrap();
++            assert_eq!(wire["owner"], "0");
++            assert_eq!(wire["value"]["kind"], "AccountDividendTaxStatus");
++            assert_eq!(wire["value"]["data"]["stocks"][0]["stock"], "600101");
++            for query in [
++                CompanyReadQuery::CompanyPeriodExplanation {
++                    company: engine::company::CompanyId(0),
++                    period_end: engine::CivilDate::from_iso("2029-12-31").unwrap(),
++                },
++                CompanyReadQuery::DividendTaxOutstandingViews,
++                CompanyReadQuery::OwnerFlatWithholdingReceipts,
++                CompanyReadQuery::CompanyCapabilities {
++                    company: engine::company::CompanyId(0),
++                },
++                CompanyReadQuery::OwnerRightsOfferings,
++            ] {
++                let kind = serde_json::to_value(&query).unwrap()["kind"].clone();
++                let response =
++                    serde_json::to_value(query_company_reads(session, query).unwrap()).unwrap();
++                assert_eq!(response["owner"], "0");
++                assert_eq!(response["value"]["kind"], kind);
++            }
++            assert_eq!(
++                before,
++                serde_json::to_value(session.game().save().unwrap()).unwrap()
++            );
++        })
++        .unwrap();
++    registry.remove(handle).unwrap();
++    assert!(registry.with_session(handle, |_| ()).is_err());
++}
+ 
+ fn ingress_cancel(id: u64) -> Intent {
+     Intent::Cancel {
+diff --git a/packages/engine/src/session/protocol.rs b/packages/engine/src/session/protocol.rs
+index 896eddb8..5fd2d6be 100644
+--- a/packages/engine/src/session/protocol.rs
++++ b/packages/engine/src/session/protocol.rs
+@@ -5,6 +5,8 @@ use super::{DailyCandle, Event, Snapshot, StockId, TradingPhase};
+ use std::collections::{BTreeMap, BTreeSet};
+ mod civil;
+ mod commit;
++mod company_reads;
++pub use company_reads::{CompanyReadError, CompanyReadFailure, CompanyReadQuery, CompanyReadResult};
+ mod delta;
+ mod facts;
+ mod optional_u64;
+diff --git a/packages/engine/src/session/protocol/company_reads.rs b/packages/engine/src/session/protocol/company_reads.rs
+new file mode 100644
+index 00000000..b54a4c09
+--- /dev/null
++++ b/packages/engine/src/session/protocol/company_reads.rs
+@@ -0,0 +1,179 @@
++//! 三宿主共用的公司只读边界；身份由宿主提供，不属于 wire 请求。
++
++use super::ProtocolSession;
++use crate::company::capabilities::CompanyCapabilities;
++use crate::company::simple::period::PeriodChangeExplanation;
++use crate::company::CompanyErrorClass;
++use crate::company::{CompanyId, CompanySystemError};
++use crate::session::{
++    AccountDividendTaxStatusView, CompanyCatalogViewError, DividendTaxOutstandingView,
++    FlatWithholdingReceipt, OwnerRightsOfferingView, SessionCorporateActionsError, StepFatal,
++};
++use crate::{AccountId, CivilDate, ValidationFault};
++
++/// CompanyId 来自本局 company_catalog；请求不能选择账户。
++#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
++#[serde(tag = "kind", content = "data", deny_unknown_fields)]
++pub enum CompanyReadQuery {
++    CompanyPeriodExplanation {
++        company: CompanyId,
++        period_end: CivilDate,
++    },
++    AccountDividendTaxStatus,
++    DividendTaxOutstandingViews,
++    OwnerFlatWithholdingReceipts,
++    CompanyCapabilities {
++        company: CompanyId,
++    },
++    OwnerRightsOfferings,
++}
++
++/// 仅包装已有领域视图，不重算金额、股数或能力。
++#[derive(Clone, Debug, serde::Serialize)]
++#[serde(tag = "kind", content = "data")]
++pub enum CompanyReadResult {
++    CompanyPeriodExplanation(PeriodChangeExplanation),
++    AccountDividendTaxStatus(AccountDividendTaxStatusView),
++    DividendTaxOutstandingViews(Vec<DividendTaxOutstandingView>),
++    OwnerFlatWithholdingReceipts(Vec<FlatWithholdingReceipt>),
++    CompanyCapabilities(CompanyCapabilities),
++    OwnerRightsOfferings(Vec<OwnerRightsOfferingView>),
++}
++
++/// 保留原始错误源供 Rust 诊断；wire 只交付分类与既有数值 fault。
++#[derive(Debug, thiserror::Error)]
++pub enum CompanyReadError {
++    #[error(transparent)]
++    Unhealthy(#[from] StepFatal),
++    #[error("公司查询账户不存在：{0:?}")]
++    UnknownOwner(AccountId),
++    #[error("公司不在本局目录：{0:?}")]
++    UnknownCompany(CompanyId),
++    #[error(transparent)]
++    Catalog(#[from] CompanyCatalogViewError),
++    #[error(transparent)]
++    Company(#[from] CompanySystemError),
++    #[error(transparent)]
++    Corporate(#[from] SessionCorporateActionsError),
++    #[error("未划收股息税汇总失败：{source}")]
++    DividendTaxOutstanding {
++        #[source]
++        source: SessionCorporateActionsError,
++    },
++}
++
++#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
++#[serde(tag = "kind", content = "data")]
++pub enum CompanyReadFailure {
++    Unhealthy,
++    UnknownOwner {
++        account: AccountId,
++    },
++    UnknownCompany {
++        company: CompanyId,
++    },
++    Catalog {
++        fault: ValidationFault,
++    },
++    Company {
++        classification: CompanyErrorClass,
++        reason: String,
++    },
++    CorporateState {
++        reason: String,
++    },
++    DividendTaxOutstanding {
++        reason: String,
++    },
++}
++
++impl CompanyReadError {
++    pub fn public_failure(&self) -> CompanyReadFailure {
++        match self {
++            Self::Unhealthy(_) => CompanyReadFailure::Unhealthy,
++            Self::UnknownOwner(account) => CompanyReadFailure::UnknownOwner { account: *account },
++            Self::UnknownCompany(company) => {
++                CompanyReadFailure::UnknownCompany { company: *company }
++            }
++            Self::Catalog(error) => CompanyReadFailure::Catalog {
++                fault: crate::session::company_catalog_fault(error),
++            },
++            Self::Company(error) => CompanyReadFailure::Company {
++                classification: error.classification(),
++                reason: error.to_string(),
++            },
++            Self::Corporate(SessionCorporateActionsError::Invalid(reason)) => CompanyReadFailure::CorporateState { reason: reason.clone() },
++            Self::Corporate(SessionCorporateActionsError::RegistryPositionMismatch { .. }) => CompanyReadFailure::CorporateState {
++                reason: "公司权益的持仓一致性校验失败，无法生成本人结果；请连同查询类型和当前会话信息反馈，公开错误不包含其他账户持仓".into(),
++            },
++            Self::DividendTaxOutstanding { .. } => CompanyReadFailure::DividendTaxOutstanding {
++                reason: "未划收股息税汇总读取失败，无法生成本人税额结果；完整原因可能涉及其他账户事实，公开错误不包含这些明细。请连同查询类型和当前会话信息反馈".into(),
++            },
++        }
++    }
++}
++
++impl ProtocolSession {
++    /// 宿主已认证账户只作为内部参数，六项 query 均不创建或推进 World。
++    pub fn company_read_query(
++        &self,
++        owner: AccountId,
++        query: CompanyReadQuery,
++    ) -> Result<CompanyReadResult, CompanyReadError> {
++        let game = self.game();
++        game.require_healthy()?;
++        if !game.state.accounts.contains_key(&owner) {
++            return Err(CompanyReadError::UnknownOwner(owner));
++        }
++        let company = match &query {
++            CompanyReadQuery::CompanyPeriodExplanation { company, .. }
++            | CompanyReadQuery::CompanyCapabilities { company } => Some(*company),
++            _ => None,
++        };
++        if let Some(company) = company {
++            if !game
++                .company_catalog_view()?
++                .iter()
++                .any(|entry| entry.id == company)
++            {
++                return Err(CompanyReadError::UnknownCompany(company));
++            }
++        }
++        Ok(match query {
++            CompanyReadQuery::CompanyPeriodExplanation {
++                company,
++                period_end,
++            } => CompanyReadResult::CompanyPeriodExplanation(
++                game.company_period_explanation(&company, period_end)?,
++            ),
++            CompanyReadQuery::AccountDividendTaxStatus => {
++                CompanyReadResult::AccountDividendTaxStatus(
++                    game.account_dividend_tax_status(owner)?,
++                )
++            }
++            CompanyReadQuery::DividendTaxOutstandingViews => {
++                CompanyReadResult::DividendTaxOutstandingViews(
++                    game.dividend_tax_outstanding_views()
++                        .map_err(|source| CompanyReadError::DividendTaxOutstanding { source })?
++                        .into_iter()
++                        .filter(|view| view.account == owner)
++                        .collect(),
++                )
++            }
++            CompanyReadQuery::OwnerFlatWithholdingReceipts => {
++                CompanyReadResult::OwnerFlatWithholdingReceipts(
++                    game.owner_flat_withholding_receipts(owner)?,
++                )
++            }
++            CompanyReadQuery::CompanyCapabilities { company } => {
++                CompanyReadResult::CompanyCapabilities(game.company_capabilities(&company, owner)?)
++            }
++            CompanyReadQuery::OwnerRightsOfferings => {
++                CompanyReadResult::OwnerRightsOfferings(game.owner_rights_offerings(owner)?)
++            }
++        })
++    }
++}
++
++#[cfg(test)]
++mod tests;
+diff --git a/packages/engine/src/session/protocol/company_reads/tests.rs b/packages/engine/src/session/protocol/company_reads/tests.rs
+new file mode 100644
+index 00000000..1c7cc426
+--- /dev/null
++++ b/packages/engine/src/session/protocol/company_reads/tests.rs
+@@ -0,0 +1,475 @@
++use super::*;
++use crate::company::cash_dividend_tax::{
++    CashDividendTaxBook, CashDividendTaxMode, DividendTaxProfile,
++};
++use crate::session::npc_working_quote_tests::quote_setup;
++include!("../../../../test-support/simple_company.rs");
++
++fn emit_wire_fixture(result: &CompanyReadResult) {
++    println!(
++        "COMPANY_READ_FIXTURE {}",
++        serde_json::json!({ "owner": AccountId(0), "value": result })
++    );
++}
++
++fn company_session(mode: CashDividendTaxMode) -> ProtocolSession {
++    let mut setup = quote_setup(0);
++    setup.npcs.inst_count = 0;
++    setup.history_len = 1;
++    setup.company_system = Some(simple_company_fixture!(crate; ["600888"]));
++    setup.dividend_tax_mode = Some(mode);
++    setup.flat_withholding_bp = (mode == CashDividendTaxMode::FlatWithholding).then_some(1000);
++    setup.par_value_per_share = Some(crate::Money::from_cents(100));
++    setup.auto_corporate_foundation = true;
++    setup.report_frequency = Some(crate::information::ReportFrequency::Quarterly);
++    ProtocolSession::new(setup, 7).unwrap()
++}
++
++#[test]
++fn company_views_preserve_nonempty_existing_domain_results_and_save_bytes() {
++    let session = company_session(CashDividendTaxMode::AShareIndividual);
++    assert!(session.runtime_driver_for_test().is_none());
++    let before = serde_json::to_value(session.game().save().unwrap()).unwrap();
++    for (query, expected) in [
++        (
++            CompanyReadQuery::AccountDividendTaxStatus,
++            serde_json::to_value(
++                session
++                    .game()
++                    .account_dividend_tax_status(AccountId(0))
++                    .unwrap(),
++            )
++            .unwrap(),
++        ),
++        (
++            CompanyReadQuery::CompanyCapabilities {
++                company: CompanyId(0),
++            },
++            serde_json::to_value(
++                session
++                    .game()
++                    .company_capabilities(&CompanyId(0), AccountId(0))
++                    .unwrap(),
++            )
++            .unwrap(),
++        ),
++        (
++            CompanyReadQuery::CompanyPeriodExplanation {
++                company: CompanyId(0),
++                period_end: CivilDate::from_iso("2029-12-31").unwrap(),
++            },
++            serde_json::to_value(
++                session
++                    .game()
++                    .company_period_explanation(
++                        &CompanyId(0),
++                        CivilDate::from_iso("2029-12-31").unwrap(),
++                    )
++                    .unwrap(),
++            )
++            .unwrap(),
++        ),
++    ] {
++        let result = session.company_read_query(AccountId(0), query).unwrap();
++        emit_wire_fixture(&result);
++        let wire = serde_json::to_value(result).unwrap();
++        assert_eq!(wire["data"], expected);
++    }
++    assert_eq!(
++        before,
++        serde_json::to_value(session.game().save().unwrap()).unwrap()
++    );
++    assert!(session.runtime_driver_for_test().is_none());
++}
++
++#[test]
++fn global_outstanding_is_filtered_to_the_authenticated_owner() {
++    let mut session = company_session(CashDividendTaxMode::AShareIndividual);
++    // 隔离验证读面过滤，不以装配的领域事实冒充日终结算 producer。
++    let today = session.civil_date();
++    let actions = session
++        .game_mut()
++        .state
++        .companies
++        .corporate_actions_mut()
++        .unwrap();
++    for owner in [AccountId(0), AccountId(99)] {
++        actions.dividend_tax_books.push(
++            CashDividendTaxBook::new(
++                owner,
++                crate::StockCode("600888".into()),
++                DividendTaxProfile::IndividualPublicMarket,
++                today,
++                Vec::new(),
++            )
++            .unwrap(),
++        );
++    }
++    let result = session
++        .company_read_query(AccountId(0), CompanyReadQuery::DividendTaxOutstandingViews)
++        .unwrap();
++    emit_wire_fixture(&result);
++    let CompanyReadResult::DividendTaxOutstandingViews(views) = result else {
++        panic!("结果类型错误")
++    };
++    assert_eq!(views.len(), 1);
++    assert_eq!(views[0].account, AccountId(0));
++}
++
++#[test]
++fn unhealthy_sessions_reject_before_reading_company_facts() {
++    let mut session = company_session(CashDividendTaxMode::AShareIndividual);
++    session.game_mut().poison = Some(StepFatal::InvariantViolation {
++        location: "只读边界测试".into(),
++        description: "测试已毒化会话".into(),
++    });
++    assert!(matches!(
++        session.company_read_query(AccountId(0), CompanyReadQuery::AccountDividendTaxStatus),
++        Err(CompanyReadError::Unhealthy(_))
++    ));
++}
++
++#[test]
++fn actual_owner_query_returns_the_existing_domain_view_without_state_changes() {
++    let mut setup = quote_setup(0);
++    setup.npcs.inst_count = 0;
++    setup.history_len = 1;
++    let session = ProtocolSession::new(setup, 7).unwrap();
++    let before = serde_json::to_value(session.game().save().unwrap()).unwrap();
++    // 无公司线也是明确的领域拒绝，而不是空视图或宿主 Unsupported stub。
++    let error = session
++        .company_read_query(AccountId(0), CompanyReadQuery::AccountDividendTaxStatus)
++        .unwrap_err();
++    assert!(matches!(error, CompanyReadError::Corporate(_)), "{error:?}");
++    let failure = serde_json::to_value(error.public_failure()).unwrap();
++    assert!(failure["data"]["reason"]
++        .as_str()
++        .unwrap()
++        .contains("未配置公司行为状态"));
++    assert_eq!(
++        before,
++        serde_json::to_value(session.game().save().unwrap()).unwrap()
++    );
++}
++
++#[test]
++fn unknown_owner_is_rejected_before_any_domain_query() {
++    let session = ProtocolSession::new(quote_setup(0), 7).unwrap();
++    assert!(matches!(
++        session.company_read_query(AccountId(u64::MAX), CompanyReadQuery::OwnerRightsOfferings),
++        Err(CompanyReadError::UnknownOwner(AccountId(u64::MAX)))
++    ));
++}
++
++#[test]
++fn company_identity_uses_the_actual_catalog_namespace() {
++    let session = ProtocolSession::new(quote_setup(0), 7).unwrap();
++    assert!(matches!(
++        session.company_read_query(
++            AccountId(0),
++            CompanyReadQuery::CompanyCapabilities {
++                company: CompanyId(u32::MAX)
++            }
++        ),
++        Err(CompanyReadError::UnknownCompany(CompanyId(u32::MAX)))
++    ));
++}
++
++#[test]
++fn requests_have_no_client_selected_owner_and_reject_unknown_fields() {
++    for input in [
++        r#"{"kind":"AccountDividendTaxStatus","account":1}"#,
++        r#"{"kind":"CompanyCapabilities","data":{"company":0,"account":1}}"#,
++    ] {
++        assert!(serde_json::from_str::<CompanyReadQuery>(input).is_err());
++    }
++}
++
++#[test]
++fn flat_receipts_return_nonempty_owner_facts_without_other_accounts() {
++    let mut session = company_session(CashDividendTaxMode::FlatWithholding);
++    let other = session
++        .join_market(
++            crate::session::OpaqueSubjectId::new("flat-reader-other".into()).unwrap(),
++            true,
++        )
++        .unwrap()
++        .account_id;
++    let paid_on = CivilDate::from_iso("2029-12-31").unwrap();
++    // 只读隔离 fixture：直接装配冻结回执，不冒充 Session 付款 producer。
++    let actions = session
++        .game_mut()
++        .state
++        .companies
++        .corporate_actions_mut()
++        .unwrap();
++    for account in [AccountId(0), AccountId(99), other] {
++        actions
++            .flat_withholding_receipts
++            .push(FlatWithholdingReceipt {
++                payment_id: "read-payment".into(),
++                plan_id: "read-plan".into(),
++                account,
++                paid_on,
++                gross: crate::Money::from_cents(if account == other { 200 } else { 100 }),
++                rate_bp: 1000,
++                withheld: crate::Money::from_cents(if account == other { 20 } else { 10 }),
++            });
++    }
++    let before = serde_json::to_value(session.game().save().unwrap()).unwrap();
++    let result = session
++        .company_read_query(AccountId(0), CompanyReadQuery::OwnerFlatWithholdingReceipts)
++        .unwrap();
++    emit_wire_fixture(&result);
++    let CompanyReadResult::OwnerFlatWithholdingReceipts(receipts) = result else {
++        panic!("结果类型错误")
++    };
++    assert_eq!(receipts.len(), 1);
++    assert_eq!(receipts[0].account, AccountId(0));
++    assert_eq!(
++        receipts,
++        session
++            .game()
++            .owner_flat_withholding_receipts(AccountId(0))
++            .unwrap()
++    );
++    let result = session
++        .company_read_query(other, CompanyReadQuery::OwnerFlatWithholdingReceipts)
++        .unwrap();
++    let CompanyReadResult::OwnerFlatWithholdingReceipts(other_receipts) = result else {
++        panic!("结果类型错误")
++    };
++    assert_eq!(other_receipts.len(), 1);
++    assert_eq!(other_receipts[0].account, other);
++    assert_eq!(other_receipts[0].gross.cents(), 200);
++    assert_ne!(other_receipts, receipts);
++    assert_eq!(
++        before,
++        serde_json::to_value(session.game().save().unwrap()).unwrap()
++    );
++}
++
++#[test]
++fn rights_offerings_return_nonempty_owner_entitlement_without_other_holders() {
++    use crate::company::rights_offering::*;
++    use crate::company::share_registry::{
++        AcquisitionSource, HolderId, ShareHolding, ShareLot, ShareRegistry, ShareRestriction,
++    };
++    let date = |text| CivilDate::from_iso(text).unwrap();
++    let mut session = company_session(CashDividendTaxMode::FlatWithholding);
++    let other = session
++        .join_market(
++            crate::session::OpaqueSubjectId::new("rights-reader-other".into()).unwrap(),
++            true,
++        )
++        .unwrap()
++        .account_id;
++    let plan = RightsOfferingEventPlan {
++        event_id: "read-rights".into(),
++        approval_reference: "只读 fixture 的明确批准".into(),
++        issuer: CompanyId(0),
++        stock: crate::StockCode("600888".into()),
++        exchange: crate::calendar::CalendarExchange::Sse,
++        approved_on: date("2029-12-20"),
++        announced_on: date("2029-12-21"),
++        registered_on: date("2029-12-24"),
++        payment_start_on: date("2029-12-25"),
++        payment_deadline_on: date("2029-12-31"),
++        ex_rights_on: date("2030-01-02"),
++        settlement_on: date("2030-01-03"),
++        listing_on: date("2030-01-03"),
++        price_per_share: crate::Money::from_cents(800),
++        mode: RightsOfferingMode::RightsToAllShareholders {
++            shares_per_existing_share_micros: 100_000,
++        },
++        npc_subscription_strategy: RightsSubscriptionStrategy::FullByDefault,
++    };
++    let holdings = [AccountId(0), other]
++        .into_iter()
++        .map(|account| ShareHolding {
++            holder: HolderId::Account(account),
++            lots: vec![ShareLot {
++                id: format!("opening-{}", account.0),
++                qty: if account == AccountId(0) { 100 } else { 200 },
++                acquired_on: date("2029-01-02"),
++                source: AcquisitionSource::InitialAllocation {
++                    evidence: "只读隔离 fixture".into(),
++                },
++                restriction: ShareRestriction::Unrestricted,
++            }],
++        })
++        .collect();
++    let mut registry = ShareRegistry::new(
++        plan.stock.clone(),
++        plan.issuer,
++        300,
++        plan.registered_on,
++        holdings,
++    )
++    .unwrap();
++    let snapshot = registry
++        .register(plan.event_id.clone(), plan.registered_on)
++        .unwrap()
++        .clone();
++    let mut book = RightsOfferingBook::new(plan).unwrap();
++    book.announce(book.plan().announced_on).unwrap();
++    book.entitle(
++        snapshot,
++        &crate::calendar::TradingCalendar::current_default_calendar().unwrap(),
++    )
++    .unwrap();
++    // 仅验证领域账簿的宿主投影，不把局部装配当成生产 Session 认购／结算。
++    session
++        .game_mut()
++        .state
++        .companies
++        .corporate_actions_mut()
++        .unwrap()
++        .rights_offerings
++        .push(book);
++    let expected_owner = session.game().owner_rights_offerings(AccountId(0)).unwrap();
++    let other_owner = session.game().owner_rights_offerings(other).unwrap();
++    assert_ne!(expected_owner, other_owner);
++    assert_eq!(
++        other_owner[0]
++            .owner_entitlement
++            .as_ref()
++            .unwrap()
++            .rights_shares,
++        20
++    );
++    let before = serde_json::to_value(session.game().save().unwrap()).unwrap();
++    let result = session
++        .company_read_query(AccountId(0), CompanyReadQuery::OwnerRightsOfferings)
++        .unwrap();
++    emit_wire_fixture(&result);
++    let CompanyReadResult::OwnerRightsOfferings(views) = result else {
++        panic!("结果类型错误")
++    };
++    assert_eq!(views.len(), 1);
++    assert_eq!(
++        views[0].owner_entitlement.as_ref().unwrap().rights_shares,
++        10
++    );
++    assert_eq!(
++        views,
++        session.game().owner_rights_offerings(AccountId(0)).unwrap()
++    );
++    assert_eq!(
++        before,
++        serde_json::to_value(session.game().save().unwrap()).unwrap()
++    );
++}
++
++#[test]
++fn public_failures_keep_specific_reasons_without_global_other_owner_facts() {
++    let internal = CompanyReadError::DividendTaxOutstanding {
++        source: SessionCorporateActionsError::Invalid("账户99的证券600999应税12345分失败".into()),
++    };
++    assert!(std::error::Error::source(&internal).is_some());
++    let public = serde_json::to_string(&internal.public_failure()).unwrap();
++    assert!(public.contains("未划收股息税汇总读取失败"));
++    assert!(!public.contains("99"));
++    assert!(!public.contains("600999"));
++    assert!(!public.contains("12345"));
++    let session = company_session(CashDividendTaxMode::AShareIndividual);
++    let error = session
++        .company_read_query(AccountId(0), CompanyReadQuery::OwnerFlatWithholdingReceipts)
++        .unwrap_err();
++    let public = serde_json::to_value(error.public_failure()).unwrap();
++    assert!(public["data"]["reason"]
++        .as_str()
++        .unwrap()
++        .contains("非 FlatWithholding"));
++    let error = session
++        .company_read_query(
++            AccountId(0),
++            CompanyReadQuery::CompanyPeriodExplanation {
++                company: CompanyId(0),
++                period_end: CivilDate::from_iso("2030-01-31").unwrap(),
++            },
++        )
++        .unwrap_err();
++    let public = serde_json::to_value(error.public_failure()).unwrap();
++    assert_eq!(public["data"]["classification"], "BusinessCondition");
++    assert!(public["data"]["reason"]
++        .as_str()
++        .unwrap()
++        .contains("尚未结算"));
++}
++
++#[test]
++fn company_query_uses_catalog_company_id_even_when_listed_stock_id_differs() {
++    let mut session = company_session(CashDividendTaxMode::FlatWithholding);
++    let listed = session
++        .game()
++        .company_system()
++        .unwrap()
++        .issuers()
++        .get(&CompanyId(0))
++        .unwrap()
++        .clone();
++    let mut unlisted = listed.clone();
++    unlisted.code = "A-UNLISTED".into();
++    unlisted.name = "未上市只读 fixture".into();
++    unlisted.listed_stock = None;
++    let crate::company::config::CompanySystemConfig::Simple(mut config) =
++        simple_company_fixture!(crate; ["UNLISTED", "600888"])
++    else {
++        unreachable!()
++    };
++    config.companies[1].generation.initial_revenue =
++        crate::accounting::AccountingAmount::from_cents(200_000_000);
++    let system = crate::company::CompanySystem::create(
++        vec![unlisted, listed],
++        crate::company::config::CompanySystemConfig::Simple(config),
++        session.civil_date(),
++        7,
++    )
++    .unwrap();
++    *session.game_mut().state.companies.system_arc_mut().unwrap() = std::sync::Arc::new(system);
++    *session
++        .game_mut()
++        .state
++        .companies
++        .corporate_actions_mut()
++        .unwrap() = crate::session::SessionCorporateActions::default();
++    let entry = session
++        .company_catalog_view()
++        .unwrap()
++        .into_iter()
++        .find(|entry| entry.listed_stock.is_some())
++        .unwrap();
++    assert_eq!(entry.id, CompanyId(1));
++    assert_eq!(entry.listed_stock, Some(crate::StockId(0)));
++    let period_end = CivilDate::from_iso("2029-12-31").unwrap();
++    let expected = session
++        .game()
++        .company_period_explanation(&entry.id, period_end)
++        .unwrap();
++    assert_ne!(
++        expected,
++        session
++            .game()
++            .company_period_explanation(&CompanyId(0), period_end)
++            .unwrap()
++    );
++    let before = serde_json::to_value(session.game().save().unwrap()).unwrap();
++    let result = session
++        .company_read_query(
++            AccountId(0),
++            CompanyReadQuery::CompanyPeriodExplanation {
++                company: entry.id,
++                period_end,
++            },
++        )
++        .unwrap();
++    let CompanyReadResult::CompanyPeriodExplanation(actual) = result else {
++        panic!("结果类型错误")
++    };
++    assert_eq!(actual, expected);
++    assert_eq!(
++        before,
++        serde_json::to_value(session.game().save().unwrap()).unwrap()
++    );
++}

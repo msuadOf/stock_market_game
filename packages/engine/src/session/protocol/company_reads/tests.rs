@@ -5,6 +5,13 @@ use crate::company::cash_dividend_tax::{
 use crate::session::npc_working_quote_tests::quote_setup;
 include!("../../../../test-support/simple_company.rs");
 
+fn emit_wire_fixture(result: &CompanyReadResult) {
+    println!(
+        "COMPANY_READ_FIXTURE {}",
+        serde_json::json!({ "owner": AccountId(0), "value": result })
+    );
+}
+
 fn company_session(mode: CashDividendTaxMode) -> ProtocolSession {
     let mut setup = quote_setup(0);
     setup.npcs.inst_count = 0;
@@ -21,6 +28,7 @@ fn company_session(mode: CashDividendTaxMode) -> ProtocolSession {
 #[test]
 fn company_views_preserve_nonempty_existing_domain_results_and_save_bytes() {
     let session = company_session(CashDividendTaxMode::AShareIndividual);
+    assert!(session.runtime_driver_for_test().is_none());
     let before = serde_json::to_value(session.game().save().unwrap()).unwrap();
     for (query, expected) in [
         (
@@ -62,14 +70,16 @@ fn company_views_preserve_nonempty_existing_domain_results_and_save_bytes() {
             .unwrap(),
         ),
     ] {
-        let wire =
-            serde_json::to_value(session.company_read_query(AccountId(0), query).unwrap()).unwrap();
+        let result = session.company_read_query(AccountId(0), query).unwrap();
+        emit_wire_fixture(&result);
+        let wire = serde_json::to_value(result).unwrap();
         assert_eq!(wire["data"], expected);
     }
     assert_eq!(
         before,
         serde_json::to_value(session.game().save().unwrap()).unwrap()
     );
+    assert!(session.runtime_driver_for_test().is_none());
 }
 
 #[test]
@@ -98,6 +108,7 @@ fn global_outstanding_is_filtered_to_the_authenticated_owner() {
     let result = session
         .company_read_query(AccountId(0), CompanyReadQuery::DividendTaxOutstandingViews)
         .unwrap();
+    emit_wire_fixture(&result);
     let CompanyReadResult::DividendTaxOutstandingViews(views) = result else {
         panic!("结果类型错误")
     };
@@ -130,6 +141,11 @@ fn actual_owner_query_returns_the_existing_domain_view_without_state_changes() {
         .company_read_query(AccountId(0), CompanyReadQuery::AccountDividendTaxStatus)
         .unwrap_err();
     assert!(matches!(error, CompanyReadError::Corporate(_)), "{error:?}");
+    let failure = serde_json::to_value(error.public_failure()).unwrap();
+    assert!(failure["data"]["reason"]
+        .as_str()
+        .unwrap()
+        .contains("未配置公司行为状态"));
     assert_eq!(
         before,
         serde_json::to_value(session.game().save().unwrap()).unwrap()
@@ -172,6 +188,13 @@ fn requests_have_no_client_selected_owner_and_reject_unknown_fields() {
 #[test]
 fn flat_receipts_return_nonempty_owner_facts_without_other_accounts() {
     let mut session = company_session(CashDividendTaxMode::FlatWithholding);
+    let other = session
+        .join_market(
+            crate::session::OpaqueSubjectId::new("flat-reader-other".into()).unwrap(),
+            true,
+        )
+        .unwrap()
+        .account_id;
     let paid_on = CivilDate::from_iso("2029-12-31").unwrap();
     // 只读隔离 fixture：直接装配冻结回执，不冒充 Session 付款 producer。
     let actions = session
@@ -180,7 +203,7 @@ fn flat_receipts_return_nonempty_owner_facts_without_other_accounts() {
         .companies
         .corporate_actions_mut()
         .unwrap();
-    for account in [AccountId(0), AccountId(99)] {
+    for account in [AccountId(0), AccountId(99), other] {
         actions
             .flat_withholding_receipts
             .push(FlatWithholdingReceipt {
@@ -188,15 +211,16 @@ fn flat_receipts_return_nonempty_owner_facts_without_other_accounts() {
                 plan_id: "read-plan".into(),
                 account,
                 paid_on,
-                gross: crate::Money::from_cents(100),
+                gross: crate::Money::from_cents(if account == other { 200 } else { 100 }),
                 rate_bp: 1000,
-                withheld: crate::Money::from_cents(10),
+                withheld: crate::Money::from_cents(if account == other { 20 } else { 10 }),
             });
     }
     let before = serde_json::to_value(session.game().save().unwrap()).unwrap();
     let result = session
         .company_read_query(AccountId(0), CompanyReadQuery::OwnerFlatWithholdingReceipts)
         .unwrap();
+    emit_wire_fixture(&result);
     let CompanyReadResult::OwnerFlatWithholdingReceipts(receipts) = result else {
         panic!("结果类型错误")
     };
@@ -209,6 +233,16 @@ fn flat_receipts_return_nonempty_owner_facts_without_other_accounts() {
             .owner_flat_withholding_receipts(AccountId(0))
             .unwrap()
     );
+    let result = session
+        .company_read_query(other, CompanyReadQuery::OwnerFlatWithholdingReceipts)
+        .unwrap();
+    let CompanyReadResult::OwnerFlatWithholdingReceipts(other_receipts) = result else {
+        panic!("结果类型错误")
+    };
+    assert_eq!(other_receipts.len(), 1);
+    assert_eq!(other_receipts[0].account, other);
+    assert_eq!(other_receipts[0].gross.cents(), 200);
+    assert_ne!(other_receipts, receipts);
     assert_eq!(
         before,
         serde_json::to_value(session.game().save().unwrap()).unwrap()
@@ -308,6 +342,7 @@ fn rights_offerings_return_nonempty_owner_entitlement_without_other_holders() {
     let result = session
         .company_read_query(AccountId(0), CompanyReadQuery::OwnerRightsOfferings)
         .unwrap();
+    emit_wire_fixture(&result);
     let CompanyReadResult::OwnerRightsOfferings(views) = result else {
         panic!("结果类型错误")
     };
@@ -324,6 +359,43 @@ fn rights_offerings_return_nonempty_owner_entitlement_without_other_holders() {
         before,
         serde_json::to_value(session.game().save().unwrap()).unwrap()
     );
+}
+
+#[test]
+fn public_failures_keep_specific_reasons_without_global_other_owner_facts() {
+    let internal = CompanyReadError::DividendTaxOutstanding {
+        source: SessionCorporateActionsError::Invalid("账户99的证券600999应税12345分失败".into()),
+    };
+    assert!(std::error::Error::source(&internal).is_some());
+    let public = serde_json::to_string(&internal.public_failure()).unwrap();
+    assert!(public.contains("未划收股息税汇总读取失败"));
+    assert!(!public.contains("99"));
+    assert!(!public.contains("600999"));
+    assert!(!public.contains("12345"));
+    let session = company_session(CashDividendTaxMode::AShareIndividual);
+    let error = session
+        .company_read_query(AccountId(0), CompanyReadQuery::OwnerFlatWithholdingReceipts)
+        .unwrap_err();
+    let public = serde_json::to_value(error.public_failure()).unwrap();
+    assert!(public["data"]["reason"]
+        .as_str()
+        .unwrap()
+        .contains("非 FlatWithholding"));
+    let error = session
+        .company_read_query(
+            AccountId(0),
+            CompanyReadQuery::CompanyPeriodExplanation {
+                company: CompanyId(0),
+                period_end: CivilDate::from_iso("2030-01-31").unwrap(),
+            },
+        )
+        .unwrap_err();
+    let public = serde_json::to_value(error.public_failure()).unwrap();
+    assert_eq!(public["data"]["classification"], "BusinessCondition");
+    assert!(public["data"]["reason"]
+        .as_str()
+        .unwrap()
+        .contains("尚未结算"));
 }
 
 #[test]

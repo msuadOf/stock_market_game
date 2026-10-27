@@ -1,4 +1,104 @@
 use super::*;
+include!("../../../../packages/engine/test-support/simple_company.rs");
+
+#[test]
+fn company_read_member_request_projects_the_actual_nonzero_members_data() {
+    use engine::session::protocol::{CompanyReadQuery, CompanyReadResult};
+    let (mut actor, _) = catalog_actor_fixture();
+    let mut setup = actor.game.export_setup_for_runtime();
+    setup.company_system = Some(simple_company_fixture!(engine; ["600101"]));
+    setup.dividend_tax_mode = Some(engine::company::CashDividendTaxMode::FlatWithholding);
+    setup.flat_withholding_bp = Some(1000);
+    setup.par_value_per_share = Some(engine::Money::from_cents(100));
+    setup.auto_corporate_foundation = true;
+    actor.game = ProtocolSession::new(setup, 7).unwrap();
+    actor.ingress = Arc::new(RwLock::new((1, actor.game.shared_ingress())));
+    let subject = OpaqueSubjectId::new("company-query-nonzero".into()).unwrap();
+    let owner = actor
+        .game
+        .join_market(subject.clone(), true)
+        .unwrap()
+        .account_id;
+    *actor.members.write().unwrap() = actor.game.trading_subject_accounts();
+    assert_ne!(owner, AccountId(0));
+    let expected = actor.game.account_dividend_tax_status(owner).unwrap();
+    let before = serde_json::to_value(actor.game.game().save().unwrap()).unwrap();
+    let response = actor
+        .handle_member_request(
+            subject,
+            MemberRequest::CompanyRead {
+                generation: 1,
+                query: CompanyReadQuery::AccountDividendTaxStatus,
+            },
+        )
+        .unwrap();
+    let MemberResponse::CompanyRead(
+        1,
+        response_owner,
+        Ok(CompanyReadResult::AccountDividendTaxStatus(view)),
+    ) = response
+    else {
+        panic!("响应类型错误")
+    };
+    assert_eq!(response_owner, owner);
+    assert_eq!(view, expected);
+    assert_eq!(view.stocks[0].stock.0, "600101");
+    assert_eq!(
+        before,
+        serde_json::to_value(actor.game.game().save().unwrap()).unwrap()
+    );
+}
+
+#[test]
+fn company_read_member_request_uses_current_nonzero_membership_and_rejects_stale_generation() {
+    use engine::session::protocol::{CompanyReadError, CompanyReadQuery};
+    let (mut actor, _) = catalog_actor_fixture();
+    let subject = OpaqueSubjectId::new("company-query-member".into()).unwrap();
+    let owner = actor
+        .game
+        .join_market(subject.clone(), true)
+        .unwrap()
+        .account_id;
+    assert_ne!(owner, AccountId(0));
+    let before = serde_json::to_value(actor.game.game().save().unwrap()).unwrap();
+    let response = actor
+        .handle_member_request(
+            subject.clone(),
+            MemberRequest::CompanyRead {
+                generation: 1,
+                query: CompanyReadQuery::AccountDividendTaxStatus,
+            },
+        )
+        .unwrap();
+    let MemberResponse::CompanyRead(generation, response_owner, result) = response else {
+        panic!("响应类型错误")
+    };
+    assert_eq!((generation, response_owner), (1, owner));
+    assert!(matches!(result, Err(CompanyReadError::Corporate(_))));
+    assert!(actor
+        .handle_member_request(
+            subject,
+            MemberRequest::CompanyRead {
+                generation: 2,
+                query: CompanyReadQuery::OwnerRightsOfferings
+            }
+        )
+        .is_err());
+    let outsider = OpaqueSubjectId::new("not-joined".into()).unwrap();
+    assert!(actor
+        .handle_member_request(
+            outsider,
+            MemberRequest::CompanyRead {
+                generation: 1,
+                query: CompanyReadQuery::AccountDividendTaxStatus
+            }
+        )
+        .is_err());
+    assert_eq!(
+        before,
+        serde_json::to_value(actor.game.game().save().unwrap()).unwrap()
+    );
+}
 
 #[test]
 fn production_actor_steps_and_delivers_tick_batches() {

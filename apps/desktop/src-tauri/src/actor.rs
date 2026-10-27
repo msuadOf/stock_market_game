@@ -79,6 +79,19 @@ pub struct GenerationResponse<T> {
     pub value: T,
 }
 
+#[derive(Debug, Serialize)]
+pub struct CompanyReadResponse {
+    pub generation: String,
+    pub owner: AccountId,
+    pub value: engine::session::protocol::CompanyReadResult,
+}
+
+#[derive(Debug)]
+pub enum CompanyReadHostError {
+    Session { message: String },
+    Query(engine::session::protocol::CompanyReadError),
+}
+
 fn diagnostic_generation_response(
     requested_generation: u64,
     current_generation: u64,
@@ -246,6 +259,11 @@ impl DesktopPacing {
 /// `reply` 用 `Result` 而非裸值：engine 失败（`SessionError`）显式上抛，绝不静默吞（铁律二）。
 #[derive(Debug)]
 pub enum SessionCommand {
+    CompanyRead {
+        generation: u64,
+        query: engine::session::protocol::CompanyReadQuery,
+        reply: oneshot::Sender<Result<CompanyReadResponse, CompanyReadHostError>>,
+    },
     /// 入队玩家意图（当前固定玩家 0）。Ok=已入队，Err=engine 拒绝。
     Enqueue {
         player_id: AccountId,
@@ -355,6 +373,27 @@ pub struct SessionHandles {
 }
 
 impl SessionHandles {
+    pub async fn company_read_query(
+        &self,
+        generation: u64,
+        query: engine::session::protocol::CompanyReadQuery,
+    ) -> Result<CompanyReadResponse, CompanyReadHostError> {
+        let (reply, received) = oneshot::channel();
+        self.cmd_tx
+            .send(SessionCommand::CompanyRead {
+                generation,
+                query,
+                reply,
+            })
+            .map_err(|error| CompanyReadHostError::Session {
+                message: error.to_string(),
+            })?;
+        received
+            .await
+            .map_err(|error| CompanyReadHostError::Session {
+                message: error.to_string(),
+            })?
+    }
     /// 便捷：入队玩家意图（固定 `AccountId(0)`），立即登记到共享 ingress。
     pub async fn enqueue(&self, generation: u64, intent: Intent) -> Result<(), SendCommandError> {
         self.enqueue_as(generation, AccountId(0), intent).await
@@ -1034,6 +1073,29 @@ impl<R: Runtime> SessionActor<R> {
             return;
         }
         match cmd {
+            SessionCommand::CompanyRead {
+                generation,
+                query,
+                reply,
+            } => {
+                let result = self
+                    .generation_response(generation, Ok(()))
+                    .map_err(|error| CompanyReadHostError::Session {
+                        message: error.to_string(),
+                    })
+                    .and_then(|_| {
+                        let owner = AccountId(0);
+                        self.game
+                            .company_read_query(owner, query)
+                            .map(|value| CompanyReadResponse {
+                                generation: self.generation.to_string(),
+                                owner,
+                                value,
+                            })
+                            .map_err(CompanyReadHostError::Query)
+                    });
+                let _ = reply.send(result);
+            }
             SessionCommand::Enqueue {
                 player_id,
                 intent,

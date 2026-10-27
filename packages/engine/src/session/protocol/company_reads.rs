@@ -2,8 +2,8 @@
 
 use super::ProtocolSession;
 use crate::company::capabilities::CompanyCapabilities;
-use crate::company::CompanyErrorClass;
 use crate::company::simple::period::PeriodChangeExplanation;
+use crate::company::CompanyErrorClass;
 use crate::company::{CompanyId, CompanySystemError};
 use crate::session::{
     AccountDividendTaxStatusView, CompanyCatalogViewError, DividendTaxOutstandingView,
@@ -55,17 +55,36 @@ pub enum CompanyReadError {
     Company(#[from] CompanySystemError),
     #[error(transparent)]
     Corporate(#[from] SessionCorporateActionsError),
+    #[error("未划收股息税汇总失败：{source}")]
+    DividendTaxOutstanding {
+        #[source]
+        source: SessionCorporateActionsError,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 #[serde(tag = "kind", content = "data")]
 pub enum CompanyReadFailure {
     Unhealthy,
-    UnknownOwner { account: AccountId },
-    UnknownCompany { company: CompanyId },
-    Catalog { fault: ValidationFault },
-    Company { classification: CompanyErrorClass },
-    CorporateState,
+    UnknownOwner {
+        account: AccountId,
+    },
+    UnknownCompany {
+        company: CompanyId,
+    },
+    Catalog {
+        fault: ValidationFault,
+    },
+    Company {
+        classification: CompanyErrorClass,
+        reason: String,
+    },
+    CorporateState {
+        reason: String,
+    },
+    DividendTaxOutstanding {
+        reason: String,
+    },
 }
 
 impl CompanyReadError {
@@ -81,8 +100,15 @@ impl CompanyReadError {
             },
             Self::Company(error) => CompanyReadFailure::Company {
                 classification: error.classification(),
+                reason: error.to_string(),
             },
-            Self::Corporate(_) => CompanyReadFailure::CorporateState,
+            Self::Corporate(SessionCorporateActionsError::Invalid(reason)) => CompanyReadFailure::CorporateState { reason: reason.clone() },
+            Self::Corporate(SessionCorporateActionsError::RegistryPositionMismatch { .. }) => CompanyReadFailure::CorporateState {
+                reason: "公司权益的持仓一致性校验失败，无法生成本人结果；请连同查询类型和当前会话信息反馈，公开错误不包含其他账户持仓".into(),
+            },
+            Self::DividendTaxOutstanding { .. } => CompanyReadFailure::DividendTaxOutstanding {
+                reason: "未划收股息税汇总读取失败，无法生成本人税额结果；完整原因可能涉及其他账户事实，公开错误不包含这些明细。请连同查询类型和当前会话信息反馈".into(),
+            },
         }
     }
 }
@@ -94,8 +120,58 @@ impl ProtocolSession {
         owner: AccountId,
         query: CompanyReadQuery,
     ) -> Result<CompanyReadResult, CompanyReadError> {
-        let _ = (owner, query);
-        Err(CompanySystemError::Unsupported("公司只读注册尚未实现".into()).into())
+        let game = self.game();
+        game.require_healthy()?;
+        if !game.state.accounts.contains_key(&owner) {
+            return Err(CompanyReadError::UnknownOwner(owner));
+        }
+        let company = match &query {
+            CompanyReadQuery::CompanyPeriodExplanation { company, .. }
+            | CompanyReadQuery::CompanyCapabilities { company } => Some(*company),
+            _ => None,
+        };
+        if let Some(company) = company {
+            if !game
+                .company_catalog_view()?
+                .iter()
+                .any(|entry| entry.id == company)
+            {
+                return Err(CompanyReadError::UnknownCompany(company));
+            }
+        }
+        Ok(match query {
+            CompanyReadQuery::CompanyPeriodExplanation {
+                company,
+                period_end,
+            } => CompanyReadResult::CompanyPeriodExplanation(
+                game.company_period_explanation(&company, period_end)?,
+            ),
+            CompanyReadQuery::AccountDividendTaxStatus => {
+                CompanyReadResult::AccountDividendTaxStatus(
+                    game.account_dividend_tax_status(owner)?,
+                )
+            }
+            CompanyReadQuery::DividendTaxOutstandingViews => {
+                CompanyReadResult::DividendTaxOutstandingViews(
+                    game.dividend_tax_outstanding_views()
+                        .map_err(|source| CompanyReadError::DividendTaxOutstanding { source })?
+                        .into_iter()
+                        .filter(|view| view.account == owner)
+                        .collect(),
+                )
+            }
+            CompanyReadQuery::OwnerFlatWithholdingReceipts => {
+                CompanyReadResult::OwnerFlatWithholdingReceipts(
+                    game.owner_flat_withholding_receipts(owner)?,
+                )
+            }
+            CompanyReadQuery::CompanyCapabilities { company } => {
+                CompanyReadResult::CompanyCapabilities(game.company_capabilities(&company, owner)?)
+            }
+            CompanyReadQuery::OwnerRightsOfferings => {
+                CompanyReadResult::OwnerRightsOfferings(game.owner_rights_offerings(owner)?)
+            }
+        })
     }
 }
 
