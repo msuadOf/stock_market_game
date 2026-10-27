@@ -9,6 +9,9 @@
 //!
 //! 代码本体零线程数管理概念：线程数 = G+N(+调用线程)，由世界构造参数决定。
 
+mod prepared_stop;
+pub(crate) use prepared_stop::StopReport;
+
 use super::coordinator::{
     broadcast_continue, broadcast_start, converge_round, no_op_validator, GlobalState,
     RoundOutcome, TickEvidence, Validator,
@@ -495,6 +498,11 @@ impl World {
         }
     }
 
+    /// prepared World 的失败由拥有者统一回收，不进入常态的 panic 重抛路径。
+    pub(crate) fn collect_personal_full_for_prepared(&mut self) -> Result<PersonalFullSnapshot, RuntimeError> {
+        self.collect_personal_full_inner()
+    }
+
     fn collect_personal_full_inner(&mut self) -> Result<PersonalFullSnapshot, RuntimeError> {
         if let Some(reason) = &self.dead_reason {
             return Err(RuntimeError::ProtocolInvariant { detail: format!("Full 读取拒绝已终止 World：{reason}") });
@@ -521,7 +529,7 @@ impl World {
                     groups.push((group, slots));
                 }
                 UpMsg::Failed { who, error } => return Err(RuntimeError::WorkerFailed { who, error: Box::new(error) }),
-                other => return Err(RuntimeError::ProtocolInvariant { detail: format!("Full 个人读取收到非预期消息：{other:?}") }),
+                other => return Err(prepared_stop::read_failure("Full 个人读取", other)),
             }
         }
         super::personal_full_validation::validate_personal_full(expected, &groups)
@@ -1443,14 +1451,7 @@ impl World {
                     out.push((group, plans));
                     left -= 1;
                 }
-                other => {
-                    return Err(RuntimeError::Disconnected {
-                        who: None,
-                        stage: format!(
-                            "collect_plans 期望 GroupPlans，收到 {other:?}"
-                        ),
-                    });
-                }
+                other => return Err(prepared_stop::read_failure("collect_plans", other)),
             }
         }
         out.sort_by_key(|(g, _)| *g);
@@ -1812,12 +1813,7 @@ impl World {
                     out.push((group, attention));
                     left -= 1;
                 }
-                other => {
-                    return Err(RuntimeError::Disconnected {
-                        who: None,
-                        stage: format!("collect_group_attention 期望 GroupAttention，收到 {other:?}"),
-                    });
-                }
+                other => return Err(prepared_stop::read_failure("collect_group_attention", other)),
             }
         }
         out.sort_by_key(|(g, _)| *g);
@@ -1859,14 +1855,7 @@ impl World {
                     }
                     left -= 1;
                 }
-                other => {
-                    return Err(RuntimeError::Disconnected {
-                        who: None,
-                        stage: format!(
-                            "collect_desk_resting 期望 DeskResting，收到 {other:?}"
-                        ),
-                    });
-                }
+                other => return Err(prepared_stop::read_failure("collect_desk_resting", other)),
             }
         }
         Ok((
@@ -1904,12 +1893,7 @@ impl World {
                     out.push((group, accounts));
                     left -= 1;
                 }
-                other => {
-                    return Err(RuntimeError::Disconnected {
-                        who: None,
-                        stage: format!("snapshot_accounts 期望 GroupEcho，收到 {other:?}"),
-                    });
-                }
+                other => return Err(prepared_stop::read_failure("snapshot_accounts", other)),
             }
         }
         out.sort_by_key(|(g, _)| *g);

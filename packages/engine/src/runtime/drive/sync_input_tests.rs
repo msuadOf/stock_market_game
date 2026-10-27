@@ -307,3 +307,53 @@ fn sparse_capture_after_successful_flush_preserves_failed_candidate_inputs() {
         "已接管 sparse 输入在 candidate 拒绝后保完整值"
     );
 }
+
+#[test]
+fn static_full_getters_preserve_sync_tables_and_reject_changed_source() {
+    let mut setup = crate::runtime::bridge_tests::setup_fixture();
+    setup.start_date = crate::calendar::CivilDate::from_ymd(2026, 1, 5).unwrap();
+    let mut session = GameSession::new(setup, 42).unwrap();
+    let mut driver = RuntimeDriver::from_session_grouped(&mut session, 2).unwrap();
+    driver.adopt_session_seq(&session);
+    let before = driver.pending_sync_inputs_for_test();
+    let input = driver.prepare_static_driver_projection(&session).unwrap();
+    let repeated = driver.prepare_static_driver_projection(&session).unwrap();
+    assert_eq!(input.accounts, repeated.accounts);
+    assert_eq!(input.personals, repeated.personals);
+    assert_eq!(serde_json::to_value(&input.plans).unwrap(), serde_json::to_value(&repeated.plans).unwrap());
+    assert_eq!(input.static_read.as_ref().unwrap().source, repeated.static_read.as_ref().unwrap().source);
+    assert_eq!(input.static_read.as_ref().unwrap().attention, repeated.static_read.as_ref().unwrap().attention);
+    assert_eq!(input.static_read.as_ref().unwrap().resting, repeated.static_read.as_ref().unwrap().resting);
+    assert_eq!(input.static_read.as_ref().unwrap().serials, repeated.static_read.as_ref().unwrap().serials);
+    let first = session.prepare_runtime_mirror(&mut driver, input.clone(), session.tick()).unwrap();
+    let _second = session.prepare_runtime_mirror(&mut driver, repeated, session.tick()).unwrap();
+    assert_eq!(driver.pending_sync_inputs_for_test(), before,
+        "Full getter 不登记 source_seq、不消费或清空三表");
+    let owner = driver.account_by_owner((1, 0)).unwrap();
+    driver.defer_due_for_test_at(&[owner], 99);
+    assert!(session.prepare_runtime_mirror(&mut driver, input, session.tick()).is_err(),
+        "getter 后来源变更不能把旧 payload 重贴成新来源");
+    assert!(session.validate_runtime_mirror_source(&driver, &first).is_err());
+    assert_eq!(driver.pending_sync_inputs_for_test(), before);
+}
+
+#[test]
+fn static_full_rejects_session_revision_changes_before_prepare_and_swap() {
+    let mut setup = crate::runtime::bridge_tests::setup_fixture();
+    setup.start_date = crate::calendar::CivilDate::from_ymd(2026, 1, 5).unwrap();
+    let mut session = GameSession::new(setup, 42).unwrap();
+    let mut driver = RuntimeDriver::from_session_grouped(&mut session, 2).unwrap();
+    driver.adopt_session_seq(&session);
+    let input = driver.prepare_static_driver_projection(&session).unwrap();
+    let first = session.prepare_runtime_mirror(&mut driver, input.clone(), session.tick()).unwrap();
+    let source = driver.mirror_source();
+    let pending = driver.pending_sync_inputs_for_test();
+    let account = driver.account_by_owner((1, 0)).unwrap();
+    let cash = session.account(account).unwrap().cash().cents();
+    session.fixture_account_mut(&account).unwrap().fixture_set_cash(crate::Money::from_cents(cash + 17));
+    assert_eq!(driver.mirror_source(), source, "本负控只改变 Session revision，不能靠 World 改源拒绝");
+    assert!(session.prepare_runtime_mirror(&mut driver, input, session.tick()).is_err());
+    assert!(session.validate_runtime_mirror_source(&driver, &first).is_err());
+    assert_eq!(driver.pending_sync_inputs_for_test(), pending);
+    assert_eq!(session.account(account).unwrap().cash().cents(), cash + 17);
+}

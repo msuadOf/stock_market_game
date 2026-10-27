@@ -18,6 +18,8 @@ use super::event_bridge::{
 use super::world::World;
 mod convergence;
 mod sync_inputs;
+mod static_projection;
+pub(crate) use static_projection::PreparedStaticRead;
 pub(crate) use convergence::PreparedDriverStep;
 use crate::money::Money;
 use crate::strategy::StrategyData;
@@ -168,6 +170,7 @@ where
 
 /// 常驻 runtime 驱动器。
 pub struct RuntimeDriver {
+    initial_static_seed: Option<static_projection::InitialStaticSeed>,
     world: World,
     /// 三张真实 owner 覆盖表接管尚未安装的最后整态；不保存逐拍事件历史。
     sync_inputs: crate::runtime::driver_sync::SyncAccumulator<
@@ -389,6 +392,28 @@ impl RuntimeDriver {
         n_groups: usize,
     ) -> Result<Self, String> {
         let authority_epoch = session.next_runtime_authority_epoch()?;
+        let mut driver = Self::build_from_session_grouped(session, n_groups, authority_epoch, false)?;
+        session.runtime_clear_resting_for_adoption();
+        session.install_runtime_authority_epoch(authority_epoch);
+        driver.initial_static_seed.as_mut().expect("构造期静点种子已准备").revision = session.external_revision();
+        Ok(driver)
+    }
+
+    /// lazy 接管先构造私有 World；旧 Session 在完整静点 candidate 校验前保持原值。
+    pub(crate) fn prepare_from_session_grouped(
+        session: &GameSession,
+        n_groups: usize,
+        authority_epoch: u64,
+    ) -> Result<Self, String> {
+        Self::build_from_session_grouped(session, n_groups, authority_epoch, true)
+    }
+
+    fn build_from_session_grouped(
+        session: &GameSession,
+        n_groups: usize,
+        authority_epoch: u64,
+        static_handover: bool,
+    ) -> Result<Self, String> {
         let mut setup: SessionSetup = session.export_setup_for_runtime();
         // StockId 按代码升序分配；交易部、账户矩阵与报价数组必须共用该顺序。
         setup.stocks.sort_unstable_by(|a, b| a.code.0.cmp(&b.code.0));
@@ -464,6 +489,13 @@ impl RuntimeDriver {
         // next_serial）投影为新 Desk 的起始 next_serial（空簿也保留
         // 已耗序号——R26）。
         spec.initial_desk_next_serial = session.runtime_book_next_sequences();
+        if static_handover {
+            if let Some(floor) = session.runtime_legacy_order_id_floor()? {
+                for cursor in &mut spec.initial_desk_next_serial {
+                    *cursor = (*cursor).max(floor);
+                }
+            }
+        }
         // D3a-2b Belief-1 + D3a-2c 件2：完整个人态构造期投影（id_map 序
         // ——None=非机构位；observe 直调的组内权威承载：六件全投影）。
         {
@@ -537,7 +569,7 @@ impl RuntimeDriver {
         ///   不变；restore 形态此前在 face 之上**加**余量=双计使可卖
         ///   翻倍——resting_sell_orders_reserve 显红；adopt 形态不扣
         ///   则成交后组侧幻影股，日结全量回写复活已卖持仓）。
-        let desk_order_seeds = resting_order_seeds_from_session(session, &ids, per_group)?;
+        let desk_order_seeds = resting_order_seeds_from_session(session, &ids, per_group, static_handover)?;
         {
             let mut purse_by_group = vec![vec![0i64; per_group]; n_groups];
             let mut pending_sell_by_group = vec![vec![vec![0u32; n_stocks]; per_group]; n_groups];
@@ -585,6 +617,7 @@ impl RuntimeDriver {
         // D0：世界从会话当前 tick 起步（锁步不变量的构造期对齐——
         // 全新会话即 0；恢复/接管场景相位按绝对 tick 推导）。
         spec.initial_committed_tick = session.tick();
+        spec.civil_start_date = session.civil_date();
         // Sol 终审四审 A2（restore 重复日结）：恢复形态的上一拍若为
         /// 日结拍（tick%tpd==0——session 日终迁移已完成）即视为该交易
         /// 日已日结，防首拍 run_ticks 自动日结重复归档日 K。
@@ -647,16 +680,20 @@ impl RuntimeDriver {
                  ids.len().saturating_sub(group * per_group).min(per_group) as super::LocalIdx)
             }),
         ).map_err(|error| error.to_string())?;
+        let initial_static_seed = static_projection::InitialStaticSeed {
+            revision: session.external_revision(),
+            market_views: (0..n_stocks).map(|index| {
+                session.runtime_static_market_seed(crate::StockId(index as u32))
+            }).collect::<Result<_, _>>()?,
+        };
         let mut world = World::spawn(spec).map_err(|e| format!("驱动器世界构造失败：{e:?}"))?;
         let presence = (0..n_groups).map(|group| {
             (group as super::GroupIdx, ids.iter().skip(group * per_group).take(per_group)
                 .map(|id| (*id, personal_presence[id])).collect())
         }).collect();
         world.install_personal_presence(authority_epoch, presence);
-        // 全部可失败构造已成功，才发布旧簿的所有权移交。
-        session.runtime_clear_resting_for_adoption();
-        session.install_runtime_authority_epoch(authority_epoch);
         let driver = Self {
+            initial_static_seed: Some(initial_static_seed),
             world,
             sync_inputs,
             sync_source_seq: 0,
@@ -1087,6 +1124,7 @@ impl RuntimeDriver {
             events,
             day_end: None,
             emit_price_tick: true,
+            static_read: None,
         };
         if let Some(source_seq) = next_sync_seq {
             self.capture_sync_inputs(&mut input, source_seq)?;
@@ -1391,6 +1429,17 @@ impl RuntimeDriver {
     }
 
     /// Owner(g,l) → AccountId（多组映射；上行消费统一入口）。
+    pub(crate) fn pending_retail_facts(&self) -> (
+        Vec<super::retail_lifecycle::Fact>,
+        Vec<(AccountId, crate::StockId, crate::RejectionReason)>,
+    ) {
+        (self.pending_retail.clone(), self.pending_retail_rejections.clone())
+    }
+
+    pub(crate) fn drained_retail_facts(&self) -> Vec<super::retail_lifecycle::Fact> {
+        self.world.drained_retail.clone()
+    }
+
     pub(crate) fn take_retail_facts(&mut self) -> (
         Vec<super::retail_lifecycle::Fact>,
         Vec<(AccountId, crate::StockId, crate::RejectionReason)>,
@@ -2821,6 +2870,7 @@ fn resting_order_seeds_from_session(
     session: &GameSession,
     id_map: &[crate::AccountId],
     accounts_per_group: usize,
+    static_handover: bool,
 ) -> Result<Vec<Vec<super::desk::DeskRestingSeed>>, String> {
     // D5 restore 等价：runtime 形态（旧簿空）下单权威=restore 重建的信封
     // 账本（save 的 live_envelopes）——desk 种子从账本键恢复（purse 与
@@ -2893,6 +2943,10 @@ fn resting_order_seeds_from_session(
                 // 过滤反向失真）。
                 serial: super::group::desk_order_serial(key.order.0),
             });
+        }
+        // ledger 的 owner 键顺序不表示同价 FIFO；持久化时 seq 已是本地 serial。
+        for orders in &mut seeds {
+            orders.sort_by_key(|order| order.serial);
         }
         return Ok(seeds);
     }
@@ -2975,11 +3029,13 @@ fn resting_order_seeds_from_session(
                 charged_commission: audit.charged.commission.cents(),
                 charged_stamp_tax: audit.charged.stamp_tax.cents(),
                 charged_transfer_fee: audit.charged.transfer_fee.cents(),
-                // live 构造期 adopt：受理事实照记（对齐旧管线 enqueue 后
-                // 首拍交付面）。
-                accepted_delivered: false,
-                // adopt 形态：构造期自然序（desk 域从此起步）。
-                serial: {
+                // static handover 只移交已经受理的旧单，不在下一 tick 重放 Accepted；
+                // public 自然 adopt 保持既有首拍交付契约。
+                accepted_delivered: static_handover,
+                // static handover 保原身份；public 构造器保持既有自然序契约。
+                serial: if static_handover {
+                    super::group::desk_order_serial(order.id.0)
+                } else {
                     let serial = adopt_serial;
                     adopt_serial += 1;
                     serial

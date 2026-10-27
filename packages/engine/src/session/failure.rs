@@ -9,6 +9,15 @@ pub enum StepFatal {
     },
 }
 
+/// 首次 lazy 接管的完整私有值；全部校验成功后只移动镜像和 driver。
+struct PreparedRuntimeHandover {
+    driver: crate::runtime::drive::RuntimeDriver,
+    mirror: super::runtime_mirror::PreparedRuntimeMirror,
+    ack: crate::runtime::source::PreparedMirrorAck,
+    authority_epoch: u64,
+    revision: u64,
+}
+
 impl GameSession {
     pub fn publication_ids(&self) -> Vec<crate::information::PublicationId> {
         self.state.library.publication_ids()
@@ -365,39 +374,58 @@ impl GameSession {
     }
 
     fn construct_runtime_driver_lazy(&mut self) -> Result<(), StepFatal> {
-        // 与 `with_routed_runtime_driver` 的构造段逐字一致（D0 惰性构造：
-        // initial_committed_tick 对齐当前 session.tick；cfg(test) 的 staged
-        /// handover 消费——首步与 end_civil_day 补冻结两消费面同源）。
-        #[cfg(test)]
-        let queued_intents = crate::session::pipeline::take_staged_intents_for_runtime(self);
-        let mut driver =
-            crate::runtime::drive::RuntimeDriver::from_session_grouped(
-                self,
-                self.runtime_group_count,
-            )
-            .map_err(|e| StepFatal::InvariantViolation {
-                location: "GameSession::ensure_runtime_driver".to_owned(),
-                description: e,
-            })?;
+        self.require_healthy()?;
+        let fail = |description| StepFatal::InvariantViolation {
+            location: "GameSession::ensure_runtime_driver".to_owned(), description,
+        };
+        // private markets 已去旧簿，activation 只有 mirror install 的一次 revision 写入。
+        let revision = self.external_revision();
+        revision.checked_add(1).ok_or_else(|| fail("静点移交 external revision 已耗尽".to_owned()))?;
+        let authority_epoch = self.next_runtime_authority_epoch().map_err(fail)?;
+        self.runtime_mirror_install_sequence.checked_add(1)
+            .ok_or_else(|| fail("静点移交 install_sequence 已耗尽".to_owned()))?;
+        crate::runtime::drive::RuntimeDriver::validate_static_adoption_identity(self).map_err(fail)?;
+        let mut driver = crate::runtime::drive::RuntimeDriver::prepare_from_session_grouped(
+            self, self.runtime_group_count, authority_epoch,
+        ).map_err(fail)?;
         driver.adopt_session_seq(self);
-        #[cfg(test)]
-        if let Some(intents) = queued_intents {
-            if !intents.is_empty() {
-                let upper: Vec<i64> = driver
-                    .world_public_views()
-                    .iter()
-                    .map(|v| v.daily_upper_limit)
-                    .collect();
-                driver
-                    .inject_player_intents(&intents, &upper)
-                    .map_err(|e| StepFatal::InvariantViolation {
-                        location: "GameSession::ensure_runtime_driver::queue 消费".to_owned(),
-                        description: e,
-                    })?;
+        let prepared = (|| {
+            let input = driver.prepare_static_driver_projection(self)?;
+            let mirror = self.prepare_runtime_handover_mirror(&mut driver, input)?;
+            // staged fixture 仅窥视；全部 prepare 成功前仍保留原批。
+            #[cfg(test)]
+            if let Some(queued) = crate::session::pipeline::staged_decision::peek_any() {
+                if !queued.intents().is_empty() {
+                    let upper: Vec<_> = driver.world_public_views().iter()
+                        .map(|view| view.daily_upper_limit).collect();
+                    driver.inject_player_intents(queued.intents(), &upper)?;
+                }
             }
-        }
+            let ack = self.validate_runtime_mirror_source(&driver, &mirror)
+                .map_err(|error| error.to_string())?;
+            Ok::<_, String>((mirror, ack))
+        })();
+        let (mirror, ack) = match prepared {
+            Ok(value) => value,
+            Err(error) => {
+                return match driver.stop_prepared_without_drain() {
+                    Ok(()) => Err(fail(error)),
+                    Err(cleanup) => Err(self.poison_runtime_step(fail(format!(
+                        "{error}；prepared World 回收失败：{cleanup}"
+                    )))),
+                };
+            }
+        };
+        let prepared = PreparedRuntimeHandover { driver, mirror, ack, authority_epoch, revision };
+        assert_eq!(self.external_revision(), prepared.revision, "prepare 与 activation 之间不允许 Session 来源改变");
+        self.install_runtime_authority_epoch(prepared.authority_epoch);
+        let mut driver = prepared.driver;
+        let events = self.install_runtime_mirror(&mut driver, prepared.mirror);
+        assert!(events.is_empty(), "静点接管不产生业务事件");
+        driver.ack_prepared_mirror(prepared.ack);
+        #[cfg(test)]
+        let _ = crate::session::pipeline::staged_decision::take_any();
         self.runtime_driver = Some(std::sync::Mutex::new(driver));
-        // Sol 六审段 1.3：信息投递权威归组（停跑门随 state 克隆链走）。
         self.state.runtime_information_authority = true;
         Ok(())
     }
@@ -944,6 +972,18 @@ impl GameSession {
     /// 序号）。取 desk 镜像 next_serial（运行中权威）与旧簿
     /// book_next_sequence（restore 后镜像空、旧簿载 save 值）的逐股
     /// max；输出按下标（StockId.0）索引。
+    /// 旧全局 ID 域的已消耗上界；desk 形态已有逐股 cursor，不把 encoded ID 塞入本地 serial。
+    pub(crate) fn runtime_legacy_order_id_floor(&self) -> Result<Option<u64>, String> {
+        if !self.state.desk_book_mirror.is_empty() {
+            return Ok(None);
+        }
+        let floor = self.state.next_order_id;
+        if floor > (1_u64 << 32) {
+            return Err(format!("初始静点接管不能保真旧全局 OrderId 游标：next_order_id={floor}"));
+        }
+        Ok(Some(floor))
+    }
+
     pub fn runtime_book_next_sequences(&self) -> Vec<u64> {
         let n = self
             .state
@@ -1670,6 +1710,13 @@ impl GameSession {
     /// desk 行情权威投影源）。活动 K 为空（日界空窗/竞价窗）→ None
     /// （desk 从构造零点=昨收锚定起，恰为新日起点语义）。昨收=日 K
     /// 历史末条 close，首日无历史时退初始价。
+    /// 构造 World 与首次 mirror 共用的行情/公开截点种子；不读取 v0 占位视图。
+    pub(crate) fn runtime_static_market_seed(&self, code: crate::StockId) -> Result<(i64, u64), String> {
+        let market = self.state.markets.get(&code)
+            .ok_or_else(|| format!("初始静点行情缺股票：{code:?}"))?;
+        Ok((market.last_price().cents(), self.runtime_public_cutoff_for(&code)))
+    }
+
     pub fn runtime_market_seeds(
         &self,
     ) -> std::collections::BTreeMap<crate::StockId, crate::runtime::desk::DeskMarketSeed> {

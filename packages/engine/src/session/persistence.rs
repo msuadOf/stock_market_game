@@ -2229,16 +2229,15 @@ pub(super) fn validate_saved_order_state(
                 vec![lifecycle.account.0],
             )));
         }
-        let live_orders: Vec<_> = session
-            .state
-            .markets
+        // desk 形态恢复时旧 book 保持空；校验同一份已完整验证的存档在场事实。
+        let live_orders = save
+            .resting_orders
             .get(&lifecycle.code)
-            .expect("lifecycle stock was validated against setup")
-            .resting_orders_for(lifecycle.account)
             .into_iter()
-            .filter(|order| order.id == lifecycle.order_id)
-            .collect();
-        if live_orders.len() != 1 {
+            .flat_map(|orders| orders.iter())
+            .filter(|order| order.owner == lifecycle.account && order.id == lifecycle.order_id)
+            .count();
+        if live_orders != 1 {
             // fault2170：NPC 报价生命周期订单未唯一对应一笔连续委托；ctx[0]=订单 id。
             return Err(SessionError::InvalidSave(ValidationFault::new(
                 2170,

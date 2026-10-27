@@ -32,10 +32,14 @@ pub(crate) struct PreparedRuntimeMirror {
     source: crate::runtime::source::WorldMirrorSource,
     captured_domains: crate::runtime::source::MirrorDomains,
     install_sequence: u64,
+    session_authority_epoch: u64,
+    is_handover: bool,
+    static_session_revision: Option<u64>,
     pub projection: protocol::PreparedTickProjection,
     pub events: Vec<Event>,
     retail_decisions: Vec<RetailDecisionTrace>,
     retail_order_events: Vec<RetailOrderDiagnosticEvent>,
+    npc_order_lifecycles: Vec<NpcOrderLifecycle>,
 }
 
 impl GameSession {
@@ -113,9 +117,43 @@ impl GameSession {
         input: PreparedDriverStep,
         tick: u64,
     ) -> Result<PreparedRuntimeMirror, String> {
-        let mut source = driver.mirror_source();
+        self.prepare_runtime_mirror_with_epoch(driver, input, tick, self.runtime_authority_epoch)
+    }
+
+    pub(crate) fn prepare_runtime_handover_mirror(
+        &self,
+        driver: &mut RuntimeDriver,
+        input: PreparedDriverStep,
+    ) -> Result<PreparedRuntimeMirror, String> {
+        if input.static_read.is_none() {
+            return Err("首次接管必须使用完整静点读面".to_owned());
+        }
+        let epoch = self.next_runtime_authority_epoch()?;
+        self.prepare_runtime_mirror_with_epoch(driver, input, self.tick(), epoch)
+    }
+
+    fn prepare_runtime_mirror_with_epoch(
+        &self,
+        driver: &mut RuntimeDriver,
+        input: PreparedDriverStep,
+        tick: u64,
+        expected_authority_epoch: u64,
+    ) -> Result<PreparedRuntimeMirror, String> {
+        let static_read = input.static_read;
+        let is_static = static_read.is_some();
+        let static_session_revision = static_read.as_ref().map(|read| read.session_revision);
+        if static_session_revision.is_some_and(|revision| revision != self.external_revision()) {
+            return Err("静点 Full 捕获后 Session revision 已改变".to_owned());
+        }
+        if is_static && (input.emit_price_tick || input.day_end.is_some() || !input.events.is_empty()) {
+            return Err("静点 Full 不得产生 tick、日结或业务事件".to_owned());
+        }
+        let mut source = static_read.as_ref().map_or_else(|| driver.mirror_source(), |read| read.source);
+        if source != driver.mirror_source() {
+            return Err("静点 Full 捕获来源已过期".to_owned());
+        }
         let captured_domains = driver.pending_mirror_domains();
-        if source.authority_epoch != self.runtime_authority_epoch || source.tick != tick {
+        if source.authority_epoch != expected_authority_epoch || source.tick != tick {
             return Err(format!(
                 "镜像 candidate authority 不一致：source={source:?} session_epoch={} tick={tick}",
                 self.runtime_authority_epoch
@@ -136,6 +174,7 @@ impl GameSession {
         let n_stocks = self.state.stocks.len();
         let day_end = input.day_end;
         let is_day_end = day_end.is_some();
+        let manual_day_end = day_end.as_ref().is_some_and(|data| !data.emit_boundary);
         for (group, rows) in input.accounts.iter().enumerate() {
             let mut seen = BTreeSet::new();
             for (local, raw) in rows.iter() {
@@ -321,6 +360,13 @@ impl GameSession {
             value.price_memory = participant.price_memory().clone();
         }
         let mut markets = self.state.markets.clone();
+        if is_static {
+            for market in markets.values_mut() {
+                for order in market.resting_orders() {
+                    market.cancel(order.id).map_err(|error| format!("静点旧簿私有清理失败：{error:?}"))?;
+                }
+            }
+        }
         let mut histories = self.state.price_history.clone();
         let mut minutes = self.state.market_minute_closes.clone();
         let mut minute_bars = self.state.market_minute_bars.clone();
@@ -339,6 +385,7 @@ impl GameSession {
             ));
         }
         let candle_time = self.candle_date_time_for_runtime();
+        if !is_static {
         for (index, view) in driver.world_public_views().iter().enumerate() {
             let code = StockId(index as u32);
             let market = markets
@@ -422,14 +469,24 @@ impl GameSession {
                 }
             }
         }
-        let attention = driver.sync_attention_for_projection()?;
-        let (facts, id_map) = driver.resting_snapshot_for_prepared(is_day_end)?;
+        }
+        let (attention, facts, id_map, serials, static_markets) = if let Some(read) = static_read {
+            (read.attention, read.resting, std::sync::Arc::new(driver.id_map.clone()), read.serials, Some(read.market_views))
+        } else {
+            let attention = driver.sync_attention_for_projection()?;
+            let (facts, ids) = driver.resting_snapshot_for_prepared(is_day_end)?;
+            (attention, facts, ids, driver.desk_next_serials().to_vec(), None)
+        };
         let mut mirrors = BTreeMap::new();
         for (index, rows) in facts.iter().enumerate() {
             let view = driver
                 .world_public_views()
                 .get(index)
                 .ok_or_else(|| format!("簿 candidate 缺股票行情：{index}"))?;
+            let (last_price, public_cutoff_serial) = match &static_markets {
+                Some(rows) => *rows.get(index).ok_or_else(|| format!("静点缺行情及截点种子：{index}"))?,
+                None => (view.last_price, view.public_cutoff_serial),
+            };
             let mut orders = Vec::new();
             for fact in rows.iter() {
                 let account = driver
@@ -449,10 +506,9 @@ impl GameSession {
                 StockId(index as u32),
                 DeskBookMirror {
                     orders,
-                    last_price: Money::from_cents(view.last_price),
-                    public_cutoff_serial: view.public_cutoff_serial,
-                    next_serial: *driver
-                        .desk_next_serials()
+                    last_price: Money::from_cents(last_price),
+                    public_cutoff_serial,
+                    next_serial: *serials
                         .get(index)
                         .ok_or_else(|| format!("簿 candidate 缺游标：{index}"))?,
                 },
@@ -673,18 +729,26 @@ impl GameSession {
         )
         .map_err(|error| error.to_string())?;
         let projection = protocol::PreparedTickProjection { snapshot, runtime };
-        let retail_decisions = driver
-            .collect_retail_traces()
-            .map_err(|error| format!("零售决策 candidate 收集失败：{error:?}"))?
-            .into_iter()
-            .flatten()
-            .collect();
-        let (mut retail_facts, retail_rejections) = driver.take_retail_facts();
+        let retail_decisions = if is_static {
+            self.state.last_retail_decisions.clone()
+        } else if manual_day_end {
+            Vec::new()
+        } else {
+            driver.collect_retail_traces()
+                .map_err(|error| format!("零售决策 candidate 收集失败：{error:?}"))?
+                .into_iter().flatten().collect()
+        };
+        let (mut retail_facts, retail_rejections) = if is_static || manual_day_end {
+            (Vec::new(), Vec::new())
+        } else {
+            driver.pending_retail_facts()
+        };
         if is_day_end {
-            retail_facts.extend(driver.take_drained_retail_facts());
+            retail_facts.extend(driver.drained_retail_facts());
         }
         let mut retail_candidate = super::retail_lifecycle::Candidate {
-            events: Vec::new(), decisions: retail_decisions,
+            events: if is_static { self.state.last_retail_order_events.clone() } else { Vec::new() },
+            decisions: retail_decisions,
         };
         self.append_runtime_retail_facts_at(driver, &mut retail_candidate, retail_facts, tick)
             .map_err(|error| error.to_string())?;
@@ -714,7 +778,7 @@ impl GameSession {
         }
         for (id, due, seed) in attention {
             if let Some(state) = npc_attention.get_mut(&id) {
-                state.next_attention_candidate_tick = due.max(tick);
+                state.next_attention_candidate_tick = if is_static { due } else { due.max(tick) };
                 state.rng_state = seed;
             }
         }
@@ -741,7 +805,7 @@ impl GameSession {
             retail,
             resting,
             mirrors,
-            serials: driver.desk_next_serials().to_vec(),
+            serials,
             receipts,
             receipt_watermark,
             tick,
@@ -749,10 +813,14 @@ impl GameSession {
             source,
             captured_domains,
             install_sequence,
+            session_authority_epoch: self.runtime_authority_epoch,
+            is_handover: expected_authority_epoch != self.runtime_authority_epoch,
+            static_session_revision,
             projection,
             events,
             retail_decisions,
             retail_order_events,
+            npc_order_lifecycles: if is_static { self.state.npc_order_lifecycles.clone() } else { Vec::new() },
         })
     }
 
@@ -795,7 +863,7 @@ impl GameSession {
                 .insert(account, history);
         }
         self.state.receipt_watermark = prepared.receipt_watermark;
-        self.state.npc_order_lifecycles = Vec::new();
+        self.state.npc_order_lifecycles = prepared.npc_order_lifecycles;
         self.state.last_retail_decisions = prepared.retail_decisions;
         self.state.last_retail_order_events = prepared.retail_order_events;
         #[cfg(feature = "simulation-diagnostics")]
@@ -831,7 +899,15 @@ impl GameSession {
             });
         }
         let source = driver.mirror_source();
-        if source != prepared.source || source.authority_epoch != self.runtime_authority_epoch {
+        let valid_authority = if prepared.is_handover {
+            self.runtime_authority_epoch.checked_add(1) == Some(source.authority_epoch)
+        } else {
+            source.authority_epoch == self.runtime_authority_epoch
+        };
+        if source != prepared.source || !valid_authority
+            || prepared.static_session_revision.is_some_and(|revision| revision != self.external_revision())
+            || prepared.session_authority_epoch != self.runtime_authority_epoch
+        {
             return Err(StepFatal::InvariantViolation {
                 location: "runtime_mirror::source".to_owned(),
                 description: format!(

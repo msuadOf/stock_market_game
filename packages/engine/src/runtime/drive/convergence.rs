@@ -32,6 +32,7 @@ pub(crate) struct PreparedDriverStep {
     pub events: Vec<Event>,
     pub day_end: Option<PreparedDriverDayEnd>,
     pub emit_price_tick: bool,
+    pub static_read: Option<super::PreparedStaticRead>,
 }
 
 #[derive(Clone)]
@@ -150,7 +151,11 @@ impl RuntimeDriver {
         #[cfg(not(test))]
         let _ = accounts;
         self.force_full_accounts = false;
+        self.initial_static_seed = None;
         self.sync_inputs.complete_flush(crate::runtime::driver_sync::FlushOutcome::Successful);
+        self.pending_retail.clear();
+        self.pending_retail_rejections.clear();
+        self.world.drained_retail.clear();
         self.pending_receipts.clear();
         self.pending_hold_inits.clear();
     }
@@ -416,6 +421,7 @@ impl RuntimeDriver {
             events: Vec::new(),
             day_end: None,
             emit_price_tick: false,
+            static_read: None,
         };
         // World 的日结 validator 拒绝仍由自身有效 Abort 窗处理；成功后投影失败不能重跑。
         let input = self
