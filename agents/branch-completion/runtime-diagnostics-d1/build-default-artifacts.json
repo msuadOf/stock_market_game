@@ -1,0 +1,19 @@
+{
+  "source_unchanged": true,
+  "artifacts": [
+    {
+      "target": "diagnostic_absence",
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/runtime-diagnostics-d1/target/debug/deps/diagnostic_absence-ec04148a42ef21ed",
+      "sha256": "b84e2df8c401fc015bd51ef9a7a9c2b7e7a53b6c9941534aa47808ca2ad598ae",
+      "bytes": 349203568,
+      "fresh": false
+    },
+    {
+      "target": "runtime_diagnostics_contract",
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/runtime-diagnostics-d1/target/debug/deps/runtime_diagnostics_contract-323cb6cdf0c51550",
+      "sha256": "1241752c04f61466490b978fd761d0dee946d8f01d0afedf3b462a3a9ceefe65",
+      "bytes": 349335640,
+      "fresh": false
+    }
+  ]
+}

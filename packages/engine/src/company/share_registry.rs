@@ -6,6 +6,8 @@ use thiserror::Error;
 use super::CompanyId;
 use crate::{account::StockCode, calendar::CivilDate, orderbook::AccountId};
 
+pub mod settlement_day;
+
 pub(crate) mod canonical_i128_decimal {
     use serde::{Deserialize, Deserializer, Serializer};
 
@@ -141,6 +143,8 @@ pub struct ShareDayRequest {
 #[serde(deny_unknown_fields)]
 pub enum MovementScope {
     PublicMarket,
+    /// typed 完整自然日的市场回执；相位与来源仅在此保存引用，不复制事实。
+    SettlementDayMarket { binding: settlement_day::ShareSettlementBinding },
     NonTradingTransfer { basis: String },
     /// 发行人回购注销：从回购专户（IssuerTreasury）核减已回购股份并同额减少
     /// 已发行股数（《公司法》第 162 条／证监会回购规则第 17 条）。只允许对
@@ -351,6 +355,9 @@ impl ShareRegistry {
         &mut self,
         request: ShareDayRequest,
     ) -> Result<ShareDayReceipt, ShareRegistryError> {
+        if matches!(request.scope, MovementScope::SettlementDayMarket { .. }) {
+            return Err(error("typed settlement marker requires prepare_settlement_day"));
+        }
         if let Some(receipt) = self
             .receipts
             .iter()
@@ -385,6 +392,26 @@ impl ShareRegistry {
             return Err(error("day settlement must follow the previous natural day"));
         }
         let mut candidate = self.clone();
+        let receipt = candidate.apply_movement(request)?;
+        if !same_day_non_trading {
+            candidate.settled_on = receipt.request.day;
+        }
+        candidate.validate()?;
+        *self = candidate;
+        Ok(receipt)
+    }
+
+    /// 只在可丢弃 candidate 或历史重放内执行；不推进日界、不安装半日状态。
+    fn apply_movement(
+        &mut self,
+        request: ShareDayRequest,
+    ) -> Result<ShareDayReceipt, ShareRegistryError> {
+        validate_request(&request)?;
+        for acquisition in request.changes.iter().filter_map(|change| change.acquisition.as_ref()) {
+            if self.has_lot_id(&acquisition.lot_id) {
+                return Err(error("share lot identity reused"));
+            }
+        }
         let mut disposals = Vec::new();
         let mut issued_new_shares = 0_u64;
         let redenomination_scope = matches!(
@@ -400,7 +427,7 @@ impl ShareRegistry {
                         .ok_or_else(|| error("negative share change overflow"))?,
                 )
                 .map_err(|_| error("share change exceeds u64"))?;
-                let holding = candidate
+                let holding = self
                     .holdings
                     .iter_mut()
                     .find(|holding| holding.holder == change.holder)
@@ -512,7 +539,7 @@ impl ShareRegistry {
                     .acquisition
                     .as_ref()
                     .ok_or_else(|| error("net acquisition facts are required"))?;
-                if candidate.has_lot_id(&acquisition.lot_id) {
+                if self.has_lot_id(&acquisition.lot_id) {
                     return Err(error("share lot identity reused"));
                 }
                 if matches!(
@@ -531,19 +558,19 @@ impl ShareRegistry {
                     source: acquisition.source.clone(),
                     restriction: acquisition.restriction.clone(),
                 };
-                if let Some(holding) = candidate
+                if let Some(holding) = self
                     .holdings
                     .iter_mut()
                     .find(|holding| holding.holder == change.holder)
                 {
                     holding.lots.push(lot);
                 } else {
-                    candidate.holdings.push(ShareHolding {
+                    self.holdings.push(ShareHolding {
                         holder: change.holder.clone(),
                         lots: vec![lot],
                     });
                 }
-            } else if !candidate
+            } else if !self
                 .holdings
                 .iter()
                 .any(|holding| holding.holder == change.holder)
@@ -554,7 +581,7 @@ impl ShareRegistry {
         let receipt = ShareDayReceipt { request, disposals };
         match &receipt.request.scope {
             MovementScope::NonTradingTransfer { .. } => {
-                candidate.issued_shares = candidate
+                self.issued_shares = self
                     .issued_shares
                     .checked_add(issued_new_shares)
                     .ok_or_else(|| error("issued share increase overflow"))?;
@@ -568,7 +595,7 @@ impl ShareRegistry {
                     .sum();
                 let cancelled = u64::try_from(net.unsigned_abs())
                     .map_err(|_| error("issuer repurchase cancellation total underflow"))?;
-                candidate.issued_shares = candidate
+                self.issued_shares = self
                     .issued_shares
                     .checked_sub(cancelled)
                     .ok_or_else(|| error("issuer repurchase cancellation underflows issued shares"))?;
@@ -581,27 +608,22 @@ impl ShareRegistry {
                     .iter()
                     .map(|change| change.change)
                     .sum();
-                candidate.issued_shares = if net > 0 {
-                    candidate.issued_shares.checked_add(issued_new_shares).ok_or_else(
+                self.issued_shares = if net > 0 {
+                    self.issued_shares.checked_add(issued_new_shares).ok_or_else(
                         || error("share re-denomination increase overflow"),
                     )?
                 } else {
                     let reduced = u64::try_from(net.unsigned_abs())
                         .map_err(|_| error("share re-denomination reduction overflow"))?;
-                    candidate
+                    self
                         .issued_shares
                         .checked_sub(reduced)
                         .ok_or_else(|| error("share re-denomination underflows issued shares"))?
                 };
             }
-            MovementScope::PublicMarket => {}
+            MovementScope::PublicMarket | MovementScope::SettlementDayMarket { .. } => {}
         }
-        if !same_day_non_trading {
-            candidate.settled_on = receipt.request.day;
-        }
-        candidate.receipts.push(receipt.clone());
-        candidate.validate()?;
-        *self = candidate;
+        self.receipts.push(receipt.clone());
         Ok(receipt)
     }
 
@@ -627,6 +649,14 @@ impl ShareRegistry {
             return Err(error(
                 "registration must capture the current completed day, not a historical or future balance",
             ));
+        }
+        if self.receipts.iter().any(|receipt| receipt.request.day == registered_on
+            && matches!(receipt.request.scope, MovementScope::SettlementDayMarket { .. }))
+        {
+            return Err(error("typed settlement captures must be listed in the complete day request"));
+        }
+        if self.is_typed_movement_identity(&event_id) {
+            return Err(error("registration identity collides with a typed day movement"));
         }
         self.validate()?;
         let settled_receipts = u64::try_from(self.receipts.len()).map_err(|_| {
@@ -677,9 +707,10 @@ impl ShareRegistry {
                     MovementScope::PublicMarket => {
                         receipt.request.day.days_since(previous) == 1
                     }
-                    MovementScope::NonTradingTransfer { .. }
-                    | MovementScope::ShareReDenomination { .. } => {
-                        receipt.request.day == previous
+                    MovementScope::NonTradingTransfer { .. } => receipt.request.day == previous,
+                    MovementScope::ShareReDenomination { .. }
+                    | MovementScope::SettlementDayMarket { .. } => {
+                        receipt.request.day == previous || receipt.request.day.days_since(previous) == 1
                     }
                     // 回购注销是独立的公司行为事件：允许与上一回执同日或其后任意
                     // 自然日（注销日期由方案决定，不与公开市场日结逐日绑定）。
@@ -807,7 +838,7 @@ impl ShareRegistry {
             let mut issued_after_registration = 0_i128;
             for receipt in self.receipts.iter().skip(settled_receipts) {
                 match receipt.request.scope {
-                    MovementScope::PublicMarket => continue,
+                    MovementScope::PublicMarket | MovementScope::SettlementDayMarket { .. } => continue,
                     MovementScope::NonTradingTransfer { .. }
                     | MovementScope::IssuerRepurchaseCancellation { .. }
                     | MovementScope::ShareReDenomination { .. } => {
@@ -820,7 +851,8 @@ impl ShareRegistry {
                 }
             }
             let issued_at_registration = u64::try_from(
-                i128::from(self.issued_shares) - issued_after_registration,
+                i128::from(self.issued_shares).checked_sub(issued_after_registration)
+                    .ok_or_else(|| error("issued share replay overflow"))?,
             )
             .map_err(|_| error("issued share replay underflow"))?;
             if snapshot.event_id.trim().is_empty()
@@ -839,6 +871,9 @@ impl ShareRegistry {
                 snapshot.issued_shares,
                 snapshot.registered_on,
             )?;
+            self.replay_registration_to(snapshot, self.receipts.len()).map_err(|cause| error(&format!(
+                "stock={} capture={} day={} frontier={} phase=registration-replay: {cause}",
+                self.stock.0, snapshot.event_id, snapshot.registered_on, snapshot.settled_receipts)))?;
             let expected_facts = self
                 .issuer_repurchase_account
                 .as_ref()
@@ -849,7 +884,47 @@ impl ShareRegistry {
                 ));
             }
         }
+        self.validate_settlement_bindings()?;
         Ok(())
+    }
+
+    /// snapshot 是指定 receipt 前缀的完整 anchor；逐后缀核销与当前终态必须全等。
+    fn replay_registration_to(
+        &self,
+        snapshot: &RegistrationSnapshot,
+        end: usize,
+    ) -> Result<Self, ShareRegistryError> {
+        let frontier = usize::try_from(snapshot.settled_receipts)
+            .map_err(|_| error("registration receipt count exceeds usize"))?;
+        if frontier > end || end > self.receipts.len()
+            || self.receipts.get(frontier.wrapping_sub(1))
+                .is_some_and(|receipt| receipt.request.day != snapshot.registered_on)
+            || self.receipts.get(frontier)
+                .is_some_and(|receipt| receipt.request.day < snapshot.registered_on)
+        {
+            return Err(error("registration date does not match its receipt frontier"));
+        }
+        snapshot.validate()?;
+        let mut replay = Self {
+            stock: self.stock.clone(), issuer: self.issuer,
+            issued_shares: snapshot.issued_shares,
+            issuer_repurchase_account: snapshot.issuer_repurchase_account.clone(),
+            settled_on: snapshot.registered_on,
+            holdings: snapshot.holdings.clone(),
+            receipts: self.receipts[..frontier].to_vec(), registrations: vec![],
+        };
+        for stored in &self.receipts[frontier..end] {
+            let actual = replay.apply_movement(stored.request.clone())?;
+            if actual != *stored {
+                return Err(error("registration suffix replay disagrees with disposal lot metadata"));
+            }
+        }
+        if end == self.receipts.len()
+            && (replay.holdings != self.holdings || replay.issued_shares != self.issued_shares)
+        {
+            return Err(error("registration frontier replay disagrees with current holder lots or capital"));
+        }
+        Ok(replay)
     }
 
     pub fn stock(&self) -> &StockCode {

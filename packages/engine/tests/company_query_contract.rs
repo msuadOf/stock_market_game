@@ -1,3 +1,4 @@
+include!("../test-support/company_state.rs");
 #[allow(dead_code)]
 #[path = "publications/fixture.rs"]
 mod fixture;
@@ -224,10 +225,9 @@ fn session_queries_use_its_current_civil_date() {
     let session = engine::GameSession::new(setup, 11).expect("session assembles");
     let page = session
         .query_public_reports(&PublicReportQuery {
-            company_id: session
+            company_id: legacy_saved(&session
                 .save()
-                .unwrap()
-                .company_operations
+                .unwrap()).0
                 .catalog()
                 .id("C-600101")
                 .unwrap()

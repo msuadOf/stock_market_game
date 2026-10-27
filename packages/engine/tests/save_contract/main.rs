@@ -5,6 +5,7 @@
 //! 仅接受完整当前结构；额外版本标记、旧字段与缺失字段显式拒绝，不提供兼容迁移。
 //! 恢复保留已发生事实与随机状态，未来自由并发受理不承诺仅凭同 seed 字节相等。
 
+include!("../../test-support/company_state.rs");
 use engine::account::StockCode;
 use engine::money::Money;
 use engine::session::{
@@ -328,7 +329,7 @@ fn frozen_policy_disclosure_and_retention_invariants_hold_on_real_saves() {
     assert_eq!(save.disclosures.published_through(), Some(phase));
     assert_eq!(save.disclosures.announced_through(), Some(settled));
     // 经营「存档后演化」状态在场：滚动利息类待办非空且不早于当前自然日。
-    let pending = save.company_operations.scheduler().pending();
+    let pending = legacy_saved(&save).0.scheduler().pending();
     assert!(
         !pending.is_empty(),
         "rolling operations dues must be pending"
@@ -357,8 +358,7 @@ fn frozen_policy_disclosure_and_retention_invariants_hold_on_real_saves() {
     );
     // 经营推进时点与自然日时钟一致。
     assert_eq!(
-        save.company_operations.next_expected_date(),
+        legacy_saved(&save).0.next_expected_date(),
         save.civil_clock.current_date
     );
 }
-

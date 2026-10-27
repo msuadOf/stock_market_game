@@ -48,6 +48,8 @@ pub mod stock_distribution;
 pub mod share_split;
 pub mod simple;
 mod system;
+mod read_facts;
+pub use read_facts::{CompanyReadFacts, CompanyReadFactsError};
 pub use system::{CompanySystem, CompanySystemError};
 pub mod cash_dividend_tax;
 pub use cash_dividend_tax::{CashDividendTaxBook, CashDividendTaxMode, DividendTaxProfile};
@@ -358,3 +360,6 @@ impl CompanyRegistry {
         self.companies.iter()
     }
 }
+
+#[cfg(test)]
+pub(crate) mod source_probe;

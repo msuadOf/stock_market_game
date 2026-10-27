@@ -1073,7 +1073,7 @@ fn d0_production_day_end_baseline_restores_sparse_account_assets() {
     let before_cash = game.account(remote).unwrap().cash();
     let before_positions = format!("{:?}", game.account(remote).unwrap().positions());
     let publication = driver.publication();
-    let (_, baseline) = game
+    let installed = game
         .runtime_step_with_install_returning_baseline(&mut driver)
         .expect("真实生产日结安装，保留失败回滚基线");
     assert_eq!(
@@ -1088,7 +1088,7 @@ fn d0_production_day_end_baseline_restores_sparse_account_assets() {
         StockId(0),
         crate::account::Position::from_restored_parts(200, 50, 200_000, 20_000),
     )]));
-    game.rollback_runtime_step(baseline);
+    game.rollback_runtime_step(installed.baseline);
     assert_eq!(
         game.account(remote).unwrap().cash(),
         before_cash,

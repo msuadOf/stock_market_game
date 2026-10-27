@@ -24,6 +24,8 @@ impl CompanyOperations {
         &mut self,
         date: CivilDate,
     ) -> Result<CompanyDayReport, OperationsError> {
+        #[cfg(test)]
+        crate::company::source_probe::record(crate::company::source_probe::Call::LegacyAdvance);
         OperatingDayRun::begin(self, date)?.advance()
     }
 }

@@ -964,6 +964,12 @@ impl CompanySystem {
     pub fn issuers(&self) -> &IssuerRegistry {
         &self.issuers
     }
+    /// 所选模型前史的实际起点；恢复时与同 setup 的确定性构造事实勾稽。
+    pub(crate) fn history_start(&self) -> CivilDate {
+        match &self.implementation {
+            CompanyImplementation::Simple(state) => state.history_start,
+        }
+    }
     pub fn advanced_through(&self) -> CivilDate {
         match &self.implementation {
             CompanyImplementation::Simple(state) => state.advanced_through,
@@ -1087,6 +1093,8 @@ impl CompanySystem {
         &mut self,
         date: CivilDate,
     ) -> Result<Vec<SimpleDisclosureCandidate>, CompanySystemError> {
+        #[cfg(test)]
+        crate::company::source_probe::record(crate::company::source_probe::Call::SimpleAdvance);
         let result = match &mut self.implementation {
             CompanyImplementation::Simple(state) => state.advance_day(date),
         };

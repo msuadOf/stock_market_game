@@ -1,3 +1,4 @@
+include!("../../test-support/company_state.rs");
 use super::*;
 use engine::accounting::consolidation::{MemberId, ScopeId};
 use engine::accounting::reports::ReportKind;
@@ -73,7 +74,7 @@ fn civil_information_chain_keeps_unread_beliefs_stable_and_closed_days_tick_free
         serde_json::to_vec(&after_closed.belief_books).unwrap()
     );
     assert!(
-        after_closed.company_operations.next_expected_date() > friday.settled_date,
+        legacy_saved(&after_closed).0.next_expected_date() > friday.settled_date,
         "closed civil operations must advance the accounting scheduler"
     );
 }
@@ -84,8 +85,8 @@ fn year_boundary_keeps_company_operations_and_disclosure_state_authoritative() {
     // Given: one year-end session with the full company operations and disclosure state.
     let base = focused_disclosure_session("2030-12-31");
     let mut controlled = base.save().expect("healthy save");
-    let company = controlled
-        .company_operations
+    let company = legacy_saved(&controlled)
+        .0
         .catalog()
         .id("C-600101")
         .expect("受测会话目录含发行人");
@@ -100,10 +101,8 @@ fn year_boundary_keeps_company_operations_and_disclosure_state_authoritative() {
     run_focused_trading_day(&mut year_end);
     let scope = ScopeId::Standalone(MemberId(company.0));
     let annual_period = AccountingPeriod::from_ymd(2030, 12).unwrap();
-    let closing_before = year_end
-        .save()
-        .expect("healthy save")
-        .closing_registry
+    let closing_before = legacy_saved(&year_end.save().expect("healthy save"))
+        .1
         .versions(&scope, annual_period, ReportKind::Annual)
         .len();
     let report = year_end
@@ -116,10 +115,8 @@ fn year_boundary_keeps_company_operations_and_disclosure_state_authoritative() {
         engine::CivilDate::from_iso("2031-01-01").unwrap()
     );
     assert!(
-        !year_end
-            .save()
-            .expect("healthy save")
-            .company_operations
+        !legacy_saved(&year_end.save().expect("healthy save"))
+            .0
             .scheduler()
             .pending()
             .is_empty(),
@@ -127,8 +124,8 @@ fn year_boundary_keeps_company_operations_and_disclosure_state_authoritative() {
     );
     let after_close = year_end.save().expect("healthy save");
     assert!(
-        after_close
-            .closing_registry
+        legacy_saved(&after_close)
+            .1
             .versions(&scope, annual_period, ReportKind::Annual)
             .len()
             > closing_before
@@ -182,7 +179,7 @@ fn year_boundary_keeps_company_operations_and_disclosure_state_authoritative() {
         annual.id.value(),
         annual.reports.period,
         annual.published_at.date(),
-        save.closing_registry
+        legacy_saved(&save).1
             .versions(&scope, annual_period, ReportKind::Annual)
             .len()
     );

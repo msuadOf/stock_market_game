@@ -13,7 +13,8 @@ pub use player_orders::{FrozenAsset, OrderVenue, PlayerWorkingOrder, SaveCandida
 mod replay;
 pub use civil::*;
 pub use commit::project_timeseries;
-pub(in crate::session) use commit::TickCandidateProjection;
+pub(in crate::session) use commit::{PreparedTickProjection, TickCandidateProjection};
+pub(in crate::session) use player_orders::working_orders_from_mirror;
 pub use delta::{PlayerOrderDelta, PublicRuntimeState, RuntimeDelta};
 pub use facts::{EventFact, SessionFactCursor};
 pub use replay::*;

@@ -101,7 +101,7 @@ impl NpcInformationCadence {
 }
 
 impl NpcAttentionState {
-    pub(super) fn information_check_due(&self, now: CivilInstant) -> bool {
+    pub(crate) fn information_check_due(&self, now: CivilInstant) -> bool {
         self.information_cadence == NpcInformationCadence::Immediate
             || now >= self.next_information_check
     }
@@ -122,7 +122,7 @@ impl NpcAttentionState {
 pub(crate) fn deliver_information_for_npc(
     id: AccountId,
     now: CivilInstant,
-    day: u64,
+    as_of_trading_day: &dyn Fn(StockId) -> Option<u64>,
     attention_in: &crate::session::attention::NpcAttentionState,
     information_in: &NpcInformationState,
     belief_in: &BeliefBook,
@@ -151,9 +151,9 @@ pub(crate) fn deliver_information_for_npc(
                         let mut information = information_in.clone();
         let mut belief = belief_in.clone();
         for code in &codes {
-            let Some(company) = issuer_of_stock(*code) else {
-                continue;
-            };
+            let missing = |description| SessionError::Step(crate::session::StepFatal::InvariantViolation { description, location: "deliver_information_for_npc".into() });
+            let company = issuer_of_stock(*code).ok_or_else(|| missing(format!("信息投递缺发行人：stock={code:?}")))?;
+            let day = as_of_trading_day(*code).ok_or_else(|| missing(format!("信息投递缺逐股 trading day：stock={code:?}")))?;
             let mut new_reports = false;
             let mut corrections = Vec::new();
             let mut defaults = Vec::new();
@@ -208,7 +208,7 @@ pub(crate) fn deliver_information_for_npc(
                         SessionError::InvalidSave(ValidationFault::new(1201, vec![0]))
                     })?;
             let (spec_kind, spec_issued) =
-                company_spec(&company).expect("发行人经营配置存在");
+                company_spec(&company).ok_or_else(|| missing(format!("信息投递缺发行人共同配置：company={company:?}")))?;
             let inputs = BeliefInputs {
                 ctx: &ctx,
                 company,
@@ -319,6 +319,7 @@ impl GameSession {
             return Ok(());
         }
         let market = self.build_market_view();
+        let company_facts = self.runtime_company_read_facts()?;
         let ids: Vec<_> = self.state.belief_participants.keys().copied().collect();
         let compute = self.compute.clone();
         let results = compute
@@ -339,21 +340,17 @@ impl GameSession {
                     .collect();
                 codes.extend(participant.watchlist().stocks.keys().cloned());
                 codes.extend(self.state.plans.active_codes(id).cloned());
-                let issuer_of = |code: StockId| self.state.issuer_of_stock(code);
+                let issuer_of = |code: StockId| company_facts.issuer_of_stock(code).ok();
                 deliver_information_for_npc(
                     id,
                     now,
-                    u64::from(self.state.day),
+                    &|_| Some(u64::from(self.state.day)),
                     attention,
                     participant.information(),
                     participant.belief(),
                     codes,
                     &issuer_of,
-                    &|company: &crate::company::CompanyId| {
-                        self.state.operations.company(company).map(|operating| {
-                            (operating.spec().kind, operating.spec().issued_shares)
-                        })
-                    },
+                    &|company: &crate::company::CompanyId| company_facts.company_spec(company).ok(),
                     self.state.library.as_ref(),
                     &market,
                 )
@@ -511,7 +508,7 @@ mod tests {
                 _ => unreachable!(),
             }
             let date = session.civil_date();
-            std::sync::Arc::make_mut(&mut session.state.operations)
+            std::sync::Arc::make_mut(&mut session.state.companies.legacy_mut().expect("此调用仅用于 Legacy 公司状态").operations)
                 .apply_company_shock(
                     &company,
                     crate::company::ActiveShock {
@@ -831,7 +828,7 @@ mod tests {
             .record_attention(&code, 0, 0)
             .unwrap();
         let date = session.civil_date();
-        std::sync::Arc::make_mut(&mut session.state.operations)
+        std::sync::Arc::make_mut(&mut session.state.companies.legacy_mut().expect("此调用仅用于 Legacy 公司状态").operations)
             .apply_company_shock(
                 &company,
                 crate::company::ActiveShock {
@@ -927,7 +924,7 @@ mod tests {
         let market = session.build_market_view();
         let ctx =
             NpcObservationContext::new(id, &information, &session.state.library, &market).unwrap();
-        let spec = session.state.operations.company(&company).unwrap().spec();
+        let spec = session.state.companies.legacy().expect("此调用仅用于 Legacy 公司状态").operations.company(&company).unwrap().spec();
         let mut inputs = BeliefInputs {
             ctx: &ctx,
             company,

@@ -5,6 +5,7 @@
 //! 范围边界（战役计划 §B4b）：只覆盖构造期与存读面；权益计算/日终推进/
 //! 命令通道属 B4c/B4d/B4e，不在本文件断言面内。
 
+include!("../test-support/company_state.rs");
 include!("../test-support/simple_company.rs");
 
 use engine::company::cash_dividend_tax::CashDividendTaxMode;
@@ -364,7 +365,7 @@ fn auto_foundation_builds_full_float_registry_and_legal_facts() {
     // 法定事实：注册资本 = 面值 100 分 × 100_000 股 = 10_000_000 分——按
     // 精确 JSON 路径取值断言（Simple 公司 0 的 finance.legal_facts）。
     let saved = session.save().unwrap();
-    let company_json = serde_json::to_value(&saved.company_system).unwrap();
+    let company_json = serde_json::to_value(&system_saved(&saved).0).unwrap();
     let capital = &company_json["implementation"]["state"]["companies"]["0"]["finance"]
         ["legal_facts"]["registered_capital"];
     assert_eq!(
@@ -445,7 +446,7 @@ fn restore_rejects_company_system_diverging_from_setup_issuers() {
     let other = GameSession::new(two_stock, 7).unwrap();
     let other_saved = other.save().unwrap();
     let mut tampered = saved.clone();
-    tampered.company_system = other_saved.company_system.clone();
+    *system_saved_mut(&mut tampered).0 = system_saved(&other_saved).0.clone();
     match GameSession::restore(&tampered) {
         Err(engine::SessionError::InvalidSave(fault)) => assert_eq!(fault.code, 1063),
         Err(other_err) => panic!("期望 InvalidSave(fault1063)，实际 {other_err}"),
@@ -472,14 +473,14 @@ fn save_restore_roundtrips_company_fields_bitwise() {
         session.step().expect("healthy step");
     }
     let saved = session.save().expect("healthy save");
-    let saved_company = saved.company_system.clone().expect("公司局存档必带公司系统");
-    let saved_actions = saved.corporate_actions.clone().expect("公司局存档必带公司行为");
+    let saved_company = system_saved(&saved).0.clone();
+    let saved_actions = system_saved(&saved).1.clone();
 
     let restored = GameSession::restore(&saved).expect("healthy restore");
     // 逐位比较：restore 后再存档，公司字段与原档完全一致。
     let resaved = restored.save().expect("healthy resave");
-    let resaved_company = resaved.company_system.expect("恢复后公司系统必须在档");
-    let resaved_actions = resaved.corporate_actions.expect("恢复后公司行为必须在档");
+    let resaved_company = system_saved(&resaved).0.clone();
+    let resaved_actions = system_saved(&resaved).1.clone();
     assert_eq!(saved_company, resaved_company, "公司系统字段逐位一致");
     assert_eq!(saved_actions, resaved_actions, "公司行为字段逐位一致");
     // 领域 Eq 之外再加 wire 形态逐字节（serde 投影面一致）。
@@ -504,7 +505,20 @@ fn incomplete_company_save_is_rejected() {
     let saved = session.save().unwrap();
     // 只带 company_system 丢 corporate_actions = 不完整档，显式拒绝。
     let mut stripped = saved.clone();
-    stripped.corporate_actions = None;
+    let mut malformed = serde_json::to_value(&saved).unwrap();
+    malformed["company_state"]["CompanySystem"]
+        .as_object_mut()
+        .unwrap()
+        .remove("corporate_actions");
+    assert!(
+        serde_json::from_value::<engine::SaveSlot>(malformed).is_err(),
+        "真实required字段不能缺席"
+    );
+    stripped.company_state = GameSession::new(plain_setup(), 7)
+        .unwrap()
+        .save()
+        .unwrap()
+        .company_state;
     match GameSession::restore(&stripped) {
         Err(engine::SessionError::InvalidSave(fault)) => assert_eq!(fault.code, 2101),
         Err(other) => panic!("期望 InvalidSave(fault2101)，实际其他错误：{other}"),
@@ -546,8 +560,14 @@ fn plain_sessions_save_json_carries_no_company_keys() {
     }
     // 无公司配置的 spine 读面：公司状态缺席（None）而非空容器。
     assert!(session.corporate_actions().is_none());
-    assert!(saved.company_system.is_none());
-    assert!(saved.corporate_actions.is_none());
+    assert!(matches!(
+        &saved.company_state,
+        engine::session::SavedSessionCompanies::LegacyOperations { .. }
+    ));
+    assert!(!matches!(
+        &saved.company_state,
+        engine::session::SavedSessionCompanies::CompanySystem { .. }
+    ));
 }
 
 #[test]
@@ -560,7 +580,13 @@ fn plain_sessions_restore_identically() {
     }
     let saved = session.save().unwrap();
     let restored = GameSession::restore(&saved).unwrap();
-    for id in [AccountId(0), AccountId(1), AccountId(2), AccountId(3), AccountId(4)] {
+    for id in [
+        AccountId(0),
+        AccountId(1),
+        AccountId(2),
+        AccountId(3),
+        AccountId(4),
+    ] {
         let before = session.account(id).expect("账户在册");
         let after = restored.account(id).expect("恢复后账户在册");
         assert_eq!(before.cash(), after.cash(), "账户 {id:?} 现金逐位一致");

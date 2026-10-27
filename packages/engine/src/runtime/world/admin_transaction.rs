@@ -34,6 +34,28 @@ impl World {
         grouped: Vec<(GroupIdx, Vec<AdminOperation>)>,
         inspect: impl FnOnce(&AdminCandidate) -> Result<P, RuntimeError>,
     ) -> Result<P, RuntimeError> {
+        self.with_admin_scope(grouped, None, inspect)
+    }
+
+    /// 与纯行政入口共用同一 id、pending 与三阶段；全部 live 组必须参与。
+    /// 只准备一个真实观察点，不代表已接生产 civil 或多观察点原子编排。
+    /// library 须由唯一 dispatcher 基于已提交库生成；inspect 必须校验
+    /// 完整 session candidate（包括未变个人引用）与该库一致，不在此认证历史来源。
+    pub fn with_information_transaction<P>(
+        &mut self,
+        grouped: Vec<(GroupIdx, Vec<AdminOperation>)>,
+        information: crate::runtime::protocol::InformationPreparePayload,
+        inspect: impl FnOnce(&AdminCandidate) -> Result<P, RuntimeError>,
+    ) -> Result<P, RuntimeError> {
+        self.with_admin_scope(grouped, Some(information), inspect)
+    }
+
+    fn with_admin_scope<P>(
+        &mut self,
+        grouped: Vec<(GroupIdx, Vec<AdminOperation>)>,
+        information: Option<crate::runtime::protocol::InformationPreparePayload>,
+        inspect: impl FnOnce(&AdminCandidate) -> Result<P, RuntimeError>,
+    ) -> Result<P, RuntimeError> {
         if let Some(reason) = &self.dead_reason {
             return Err(invalid(format!("world 已死亡，不可行政处理：{reason}")));
         }
@@ -59,7 +81,13 @@ impl World {
             }
             operations.insert(group, ops);
         }
-        operations.retain(|_, ops| !ops.is_empty());
+        if information.is_some() {
+            for group in 0..self.n_groups as GroupIdx {
+                operations.entry(group).or_insert_with(Vec::new);
+            }
+        } else {
+            operations.retain(|_, ops| !ops.is_empty());
+        }
         let expected: BTreeMap<_, Vec<_>> = operations
             .iter()
             .map(|(&group, ops)| {
@@ -74,7 +102,7 @@ impl World {
             })
             .collect();
         let mut sent = BTreeMap::new();
-        match self.execute_admin(id, operations, &expected, &mut sent, inspect) {
+        match self.execute_admin(id, operations, information, &expected, &mut sent, inspect) {
             Ok(value) => Ok(value),
             Err(failure) => self.finish_admin_failure(id, &sent, failure),
         }
@@ -145,6 +173,7 @@ impl World {
         &mut self,
         id: AdminTransactionId,
         operations: BTreeMap<GroupIdx, Vec<AdminOperation>>,
+        information: Option<crate::runtime::protocol::InformationPreparePayload>,
         expected: &BTreeMap<GroupIdx, Vec<super::super::LocalIdx>>,
         sent: &mut BTreeMap<GroupIdx, Vec<super::super::LocalIdx>>,
         inspect: impl FnOnce(&AdminCandidate) -> Result<P, RuntimeError>,
@@ -156,6 +185,7 @@ impl World {
                 GroupIn::AdminPrepare {
                     id,
                     operations: ops.clone(),
+                    information: information.clone(),
                 },
             )?;
             sent.insert(group, expected[&group].clone());
@@ -168,6 +198,7 @@ impl World {
                 self.receive_admin(id, AdminPhase::Prepare, expected, &mut seen)?;
             match result {
                 Ok(candidate) => {
+                    self.validate_information_candidate(&candidate, information.as_ref())?;
                     prepared.insert(group, candidate);
                 }
                 Err(error) => {
@@ -227,6 +258,32 @@ impl World {
                 })?;
         }
         Ok(value)
+    }
+
+    fn validate_information_candidate(
+        &self,
+        candidate: &AdminGroupCandidate,
+        payload: Option<&crate::runtime::protocol::InformationPreparePayload>,
+    ) -> Result<(), RuntimeError> {
+        match (candidate.information.as_ref(), payload) {
+            (None, None) => Ok(()),
+            (Some(info), Some(payload)) => {
+                if !Arc::ptr_eq(&info.library, &payload.library)
+                    || !Arc::ptr_eq(&info.current_facts, &payload.current_facts)
+                    || info.observed_through != payload.observation.as_ref().map(|p| p.through)
+                    || info.personals.windows(2).any(|pair| pair[0].0 >= pair[1].0)
+                    || info.personals.iter().any(|(local, account, snapshot)| {
+                        self.information_roster.get(candidate.group as usize).and_then(|roster| roster.get(*local as usize)) != Some(account)
+                            || snapshot.information.owner() != *account || snapshot.belief.npc() != *account
+                    })
+                    || (payload.observation.is_none() && !info.personals.is_empty())
+                {
+                    return Err(invalid(format!("组 {} 信息候选回执身份/输入不一致", candidate.group)));
+                }
+                Ok(())
+            }
+            _ => Err(invalid(format!("组 {} 信息候选作用域错配", candidate.group))),
+        }
     }
 
     fn abort_admin_preserving_error(
@@ -1241,6 +1298,7 @@ mod tests {
                 .send(GroupIn::AdminPrepare {
                     id: AdminTransactionId(91),
                     operations: vec![dividend(0, 1)],
+                    information: None,
                 })
                 .unwrap();
             assert!(matches!(
@@ -1322,3 +1380,6 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod information_tests;

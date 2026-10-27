@@ -29,12 +29,23 @@ pub(crate) struct RetailAnalysisCtx<'a> {
     pub tick: u64,
     /// 公共信息库。
     pub library: &'a crate::information::PublicLibrary,
-    /// 数值 id → 发行人（缺发行人的股 None）。
-    pub issuer_of: BTreeMap<StockId, Option<crate::company::CompanyId>>,
-    /// 公司域经营（spec 面）。
-    pub operations: &'a crate::company::operations::CompanyOperations,
+    /// 与机构 root 同源的公开发行人事实，不包含私有财务。
+    pub company_facts: &'a crate::company::CompanyReadFacts,
     /// 零售执行策略实例（data+style——成本信号与决策共用）。
     pub retail: RetailStrategyInstance,
+}
+
+impl RetailAnalysisCtx<'_> {
+    /// 零售信念输入与机构 root 读取相同范围的发行人公开规格。
+    pub(crate) fn company_spec(
+        &self,
+        company: &crate::company::CompanyId,
+    ) -> Result<(crate::company::CompanyKind, u64), StepFatal> {
+        self.company_facts.company_spec(company).map_err(|error| StepFatal::InvariantViolation {
+            description: error.to_string(),
+            location: "decision_chain::retail_company_spec".to_owned(),
+        })
+    }
 }
 
 /// D5 #4：零售执行策略的最小实例面（ZiNoise 生产态的组内可达投影）。
@@ -190,11 +201,6 @@ impl GameSession {
         else {
             panic!("retail {id:?} has no retail execution strategy");
         };
-        let issuer_of = view
-            .markets
-            .keys()
-            .map(|code| (*code, view.issuer_of_stock(*code)))
-            .collect();
         RetailAnalysisCtx {
             account: id,
             held,
@@ -206,8 +212,7 @@ impl GameSession {
             seed: view.seed,
             tick: view.tick,
             library: view.library,
-            issuer_of,
-            operations: view.operations,
+            company_facts: &view.company_facts,
             retail: RetailStrategyInstance {
                 data: retail.strategy_data(),
                 style: retail.retail_style().expect("retail style exists"),
@@ -260,9 +265,8 @@ impl GameSession {
                 .price_memory
                 .observe_price(code, stock.last_price, minute)
                 .map_err(|error| invariant(error.to_string()))?;
-            let Some(company) = ctx.issuer_of.get(code).cloned().flatten() else {
-                continue;
-            };
+            let company = ctx.company_facts.issuer_of_stock(*code)
+                .map_err(|error| invariant(error.to_string()))?;
             if !checks_information {
                 continue;
             }
@@ -319,21 +323,14 @@ impl GameSession {
         )
         .map_err(|error| invariant(error.to_string()))?;
         for code in &candidates {
-            let Some(company) = ctx.issuer_of.get(code).cloned().flatten() else {
-                continue;
-            };
-            let spec = ctx
-                .operations
-                .company(&company)
-                .ok_or_else(|| {
-                    invariant(format!("retail issuer {company:?} has no operating books"))
-                })?
-                .spec();
+            let company = ctx.company_facts.issuer_of_stock(*code)
+                .map_err(|error| invariant(error.to_string()))?;
+            let (kind, issued_shares) = ctx.company_spec(&company)?;
             let inputs = BeliefInputs {
                 ctx: &ctx_info,
                 company: company.clone(),
-                kind: spec.kind,
-                total_issued_shares: spec.issued_shares,
+                kind,
+                total_issued_shares: issued_shares,
                 as_of_trading_day: day,
             };
             if reports.contains_key(code) {

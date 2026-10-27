@@ -1,3 +1,4 @@
+include!("../../test-support/company_state.rs");
 use super::fixtures::*;
 use engine::account::StockCode;
 use engine::calendar::CivilDate;
@@ -97,7 +98,7 @@ fn real_session_failure_history_is_saved_restored_and_publicly_queryable() {
     let mut session = session(date, true);
     let report = session.end_civil_day().unwrap();
     let saved = session.save().unwrap();
-    let failures = saved.company_operations.payment_failures_on(date);
+    let failures = legacy_saved(&saved).0.payment_failures_on(date);
     assert!(!failures.is_empty());
     let mut published = 0;
     for event in report.events {
@@ -130,7 +131,7 @@ fn real_session_failure_history_is_saved_restored_and_publicly_queryable() {
     assert_eq!(published, failures.len());
     let restored = GameSession::restore(&saved).unwrap();
     let after = restored.save().unwrap();
-    assert_eq!(after.company_operations.payment_failures_on(date), failures);
+    assert_eq!(legacy_saved(&after).0.payment_failures_on(date), failures);
     assert_eq!(after.public_library.save(), saved.public_library.save());
 }
 
@@ -149,14 +150,17 @@ fn restored_run_matches_continuous_run_for_company_facts_across_rest_days() {
         target.end_civil_day().expect("civil day settles");
     }
     fn receivable_collections(save: &SaveSlot, start: CivilDate) -> usize {
-        save.company_operations
+        legacy_saved(&save)
+            .0
             .industrial_books(&CompanyId(0))
             .expect("industrial company present")
             .books()
             .journal()
             .entries()
-            .filter(|entry| entry.date >= start
-                && entry.kind == engine::accounting::BusinessKind::ReceivableCollection)
+            .filter(|entry| {
+                entry.date >= start
+                    && entry.kind == engine::accounting::BusinessKind::ReceivableCollection
+            })
             .count()
     }
 
@@ -178,8 +182,8 @@ fn restored_run_matches_continuous_run_for_company_facts_across_rest_days() {
     let final_restored = restored.save().expect("healthy save");
 
     assert_eq!(
-        serde_json::to_vec(&final_continuous.company_operations).unwrap(),
-        serde_json::to_vec(&final_restored.company_operations).unwrap(),
+        serde_json::to_vec(&legacy_saved(&final_continuous).0).unwrap(),
+        serde_json::to_vec(&legacy_saved(&final_restored).0).unwrap(),
         "连续与恢复运行的公司域必须字节一致（分录、到期派发、RNG 全量）"
     );
     assert_eq!(
@@ -202,19 +206,49 @@ fn assert_due_free_month_end_still_operates_and_discloses(mut target: GameSessio
     let date = target.civil_date();
     assert_eq!(target.civil_clock().phase(), CivilPhase::ClosedDay);
     let before = target.save().unwrap();
-    let entries_before = before.company_operations.company(&CompanyId(0)).unwrap()
-        .books().books().journal().entry_count();
-    let closed_before = serde_json::to_value(&before.closing_registry).unwrap()["versions"]
-        .as_array().unwrap().len();
-    let report = target.end_civil_day().expect("没有当日 due 仍须完成经营日/月末封账/披露");
+    let entries_before = legacy_saved(&before)
+        .0
+        .company(&CompanyId(0))
+        .unwrap()
+        .books()
+        .books()
+        .journal()
+        .entry_count();
+    let closed_before = serde_json::to_value(&legacy_saved(&before).1).unwrap()["versions"]
+        .as_array()
+        .unwrap()
+        .len();
+    let report = target
+        .end_civil_day()
+        .expect("没有当日 due 仍须完成经营日/月末封账/披露");
     let after = target.save().unwrap();
     assert_eq!(report.settled_date, date);
-    assert_eq!(after.company_operations.next_expected_date(), date.next().unwrap());
-    assert!(after.company_operations.company(&CompanyId(0)).unwrap().books().books()
-        .journal().entry_count() > entries_before, "每日经营不因没有当日 due 而跳过");
-    let closed = serde_json::to_value(&after.closing_registry).unwrap();
-    assert!(closed["versions"].as_array().unwrap().len() > closed_before, "月末封账必须产生真实期间版本");
-    assert_eq!(after.disclosures.announced_through(), Some(date), "18:00 披露相位照常完成");
+    assert_eq!(
+        legacy_saved(&after).0.next_expected_date(),
+        date.next().unwrap()
+    );
+    assert!(
+        legacy_saved(&after)
+            .0
+            .company(&CompanyId(0))
+            .unwrap()
+            .books()
+            .books()
+            .journal()
+            .entry_count()
+            > entries_before,
+        "每日经营不因没有当日 due 而跳过"
+    );
+    let closed = serde_json::to_value(&legacy_saved(&after).1).unwrap();
+    assert!(
+        closed["versions"].as_array().unwrap().len() > closed_before,
+        "月末封账必须产生真实期间版本"
+    );
+    assert_eq!(
+        after.disclosures.announced_through(),
+        Some(date),
+        "18:00 披露相位照常完成"
+    );
     assert_eq!(target.tick(), 0, "休市日经营/封账不伪造市场 tick");
 }
 
@@ -223,8 +257,11 @@ fn none_company_due_does_not_skip_daily_flows_month_close_or_disclosure() {
     let date = d("2030-03-31");
     let as_of = d("2027-12-31");
     let target = session_with_company(date, insurance_c(as_of), 1, quiet_params());
-    assert_eq!(target.save().unwrap().company_operations.next_due_date(), None,
-        "保险 fixture 没有计息/合同到期队列，但仍有每日经营");
+    assert_eq!(
+        legacy_saved(&target.save().unwrap()).0.next_due_date(),
+        None,
+        "保险 fixture 没有计息/合同到期队列，但仍有每日经营"
+    );
     assert_due_free_month_end_still_operates_and_discloses(target);
 }
 
@@ -236,10 +273,12 @@ fn future_company_due_does_not_skip_daily_flows_month_close_or_disclosure() {
     let mut value = serde_json::to_value(source.save().unwrap()).unwrap();
     // 当前可编辑日级事实中取消当日 due，保留将来到期合同；只改唯一 authority，
     // 不再需要同步修改一份时钟镜像。
-    value["company_operations"]["scheduler"]["pending"].as_array_mut().unwrap()
+    value["company_state"]["LegacyOperations"]["operations"]["scheduler"]["pending"]
+        .as_array_mut()
+        .unwrap()
         .retain(|due| due["due_date"].as_str().unwrap() > "2030-03-31");
     let save: SaveSlot = serde_json::from_value(value).unwrap();
-    assert!(save.company_operations.next_due_date().unwrap() > date);
+    assert!(legacy_saved(&save).0.next_due_date().unwrap() > date);
     let target = GameSession::restore(&save).expect("合法未来 due 不依赖公司镜像即可恢复");
     assert_due_free_month_end_still_operates_and_discloses(target);
 }
@@ -256,7 +295,7 @@ fn company_assembly_rejects_due_beyond_frozen_calendar_ceiling() {
     }
     match GameSession::new(setup, 1) {
         Err(SessionError::CivilClock(engine::session::CivilClockError::Calendar(
-            engine::calendar::CalendarError::AfterRuntimeCeiling { date, .. }
+            engine::calendar::CalendarError::AfterRuntimeCeiling { date, .. },
         ))) => assert!(date > d("2099-12-31")),
         Ok(_) => panic!("装配时的越界公司 due 不得通过"),
         Err(other) => panic!("装配须按冻结日历 horizon 拒绝，实际：{other}"),
@@ -275,7 +314,7 @@ fn day_end_new_due_beyond_calendar_ceiling_rolls_back_every_domain() {
     let before = serde_json::to_vec(&target.save().unwrap()).unwrap();
     match target.end_civil_day() {
         Err(SessionError::CivilClock(engine::session::CivilClockError::Calendar(
-            engine::calendar::CalendarError::AfterRuntimeCeiling { date, .. }
+            engine::calendar::CalendarError::AfterRuntimeCeiling { date, .. },
         ))) => assert_eq!(date, d("2100-01-01")),
         Ok(_) => panic!("29 日新增三天后回款已越界，日结必须整体失败"),
         Err(other) => panic!("新增 due 应按冻结日历 horizon 拒绝，实际：{other}"),
@@ -292,12 +331,13 @@ fn real_session_restore_rejects_payment_dates_outside_calendar_policy() {
     let saved = session.save().unwrap();
     for invalid in ["1997-12-31", "2100-01-01"] {
         let mut value = serde_json::to_value(&saved).unwrap();
-        let failures = value["company_operations"]["payment_failures"]
+        let failures = value["company_state"]["LegacyOperations"]["operations"]["payment_failures"]
             .as_object_mut()
             .unwrap()
             .remove(&date.to_iso())
             .unwrap();
-        value["company_operations"]["payment_failures"][invalid] = failures;
+        value["company_state"]["LegacyOperations"]["operations"]["payment_failures"][invalid] =
+            failures;
         let corrupt: SaveSlot = serde_json::from_value(value).unwrap();
         assert!(GameSession::restore(&corrupt).is_err());
     }
@@ -317,7 +357,8 @@ fn session_year_end_failure_rolls_back_tax_and_depreciation_before_retry() {
     // 整个日结回滚，税费/折旧不残留半成品。
     let good_save = session.save().unwrap();
     let mut exhausted_value = serde_json::to_value(&good_save).unwrap();
-    exhausted_value["company_operations"]["scheduler"]["next_seq"] = serde_json::json!(u64::MAX);
+    exhausted_value["company_state"]["LegacyOperations"]["operations"]["scheduler"]["next_seq"] =
+        serde_json::json!(u64::MAX);
     let exhausted: SaveSlot = serde_json::from_value(exhausted_value).unwrap();
     let mut exhausted_session = GameSession::restore(&exhausted).unwrap();
     let before = serde_json::to_vec(&exhausted_session.save().unwrap()).unwrap();
@@ -331,8 +372,8 @@ fn session_year_end_failure_rolls_back_tax_and_depreciation_before_retry() {
     // 健康会话对同一天重试：年末税费恰好一次入账，折旧照常结转。
     session.end_civil_day().unwrap();
     let saved = session.save().unwrap();
-    let books = saved
-        .company_operations
+    let books = legacy_saved(&saved)
+        .0
         .industrial_books(&CompanyId(0))
         .unwrap();
     assert_eq!(
