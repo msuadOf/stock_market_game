@@ -1,0 +1,24 @@
+error[E0433]: cannot find `calendar` in `crate`
+  --> /data1/baiyifan/workplace/stock_market_game/.worktree/tax-admin-projection/packages/engine/src/runtime/admin_tax_projection_tests.rs:29:34
+   |
+29 |         civil_start_date: crate::calendar::CivilDate::from_ymd(2026, 1, 5).expect("测试日期合法"),
+   |                                  ^^^^^^^^ could not find `calendar` in the crate root
+
+error[E0433]: cannot find `config` in `crate`
+  --> /data1/baiyifan/workplace/stock_market_game/.worktree/tax-admin-projection/packages/engine/src/runtime/admin_tax_projection_tests.rs:40:44
+   |
+40 |         config: std::sync::Arc::new(crate::config::GameConfig::proposed_defaults()),
+   |                                            ^^^^^^ could not find `config` in the crate root
+
+warning: unused import: `std::sync::Arc`
+ --> /data1/baiyifan/workplace/stock_market_game/.worktree/tax-admin-projection/packages/engine/src/runtime/admin_tax_projection_tests.rs:6:5
+  |
+6 | use std::sync::Arc;
+  |     ^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+error: aborting due to 2 previous errors; 1 warning emitted
+
+For more information about this error, try `rustc --explain E0433`.
+bounded command exited with 1
