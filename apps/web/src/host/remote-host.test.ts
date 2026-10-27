@@ -1,3 +1,5 @@
+import { market, dailyCandle } from "./protocol-test-fixtures.ts";
+import { catalogWireFixture } from "./catalog-test-fixture.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { SessionSetup } from "../types/engine.ts";
@@ -7,7 +9,7 @@ import { parseRemoteMessage } from "./remote-wire.ts";
 import { remotePausePreferencePayload } from "./remote-request.ts";
 
 const snapshot = {
-  seq: 0, tick: 0, day: 0, phase: "Continuous", markets: {}, accounts: {}, daily_candles: {}, active_daily_candles: {},
+  seq: 0, tick: 0, day: 0, phase: "Continuous", markets: { "0": market() }, accounts: {}, daily_candles: { "0": [] }, active_daily_candles: { "0": dailyCandle() },
 };
 
 test("Given the remote whole-update DTO, when parsed, then it preserves generation and opaque EngineUpdate", () => {
@@ -25,7 +27,7 @@ test("Given the remote whole-update DTO, when parsed, then it preserves generati
 });
 
 test("Given the remote baseline DTO, when parsed, then it preserves generation and public metadata", () => {
-  const parsed = parseRemoteMessage(JSON.stringify({ Baseline: {
+  const parsed = parseRemoteMessage(JSON.stringify({ Baseline: { ...catalogWireFixture(snapshot),
     timeline_generation: 2,
     snapshot,
     civil_date: "2030-01-02",
@@ -139,7 +141,7 @@ test("Given an authenticated remote host, when player orders are queried, then i
     },
   });
   await host.start(() => undefined);
-  socket!.onmessage!({ data: JSON.stringify({ Baseline: { timeline_generation: 2, snapshot, civil_date: "2030-01-02", public_revision: 0, public_report_ids: [] } }) } as MessageEvent);
+  socket!.onmessage!({ data: JSON.stringify({ Baseline: { ...catalogWireFixture(snapshot), timeline_generation: 2, snapshot, civil_date: "2030-01-02", public_revision: 0, public_report_ids: [] } }) } as MessageEvent);
   assert.deepEqual(await host.playerWorkingOrders(), [{
     id: 7, code: "000812", side: "Buy", price: "1234", remainingQty: 200, venue: "Continuous", frozen: "Cash",
   }]);
@@ -170,7 +172,7 @@ test("远程股票历史只通过显式 query endpoint 读取并绑定 generatio
     },
   });
   await host.start(() => undefined);
-  socket!.onmessage!({ data: JSON.stringify({ Baseline: { timeline_generation: 2, snapshot, civil_date: "2030-01-02", public_revision: 0, public_report_ids: [] } }) } as MessageEvent);
+  socket!.onmessage!({ data: JSON.stringify({ Baseline: { ...catalogWireFixture(snapshot), timeline_generation: 2, snapshot, civil_date: "2030-01-02", public_revision: 0, public_report_ids: [] } }) } as MessageEvent);
   assert.deepEqual(await host.queryStockHistory("000812"), { code: "000812", daily_candles: [], active_daily_candle: null });
   const request = requests.find(({ url }) => url.includes("/api/stock-history?"));
   assert.ok(request);
@@ -205,7 +207,7 @@ test("Given a keyed day-end save, when RemoteHost sends it, then the exact candi
   });
 
   await host.start(() => undefined);
-  socket.onmessage!({ data: JSON.stringify({ Baseline: { timeline_generation: 2, snapshot, civil_date: "2030-01-02", public_revision: 0, public_report_ids: [] } }) } as MessageEvent);
+  socket.onmessage!({ data: JSON.stringify({ Baseline: { ...catalogWireFixture(snapshot), timeline_generation: 2, snapshot, civil_date: "2030-01-02", public_revision: 0, public_report_ids: [] } }) } as MessageEvent);
   await host.save({ seq: 42, settledDate: "2030-01-02" });
 
   const request = requests.find(({ url }) => url.endsWith("/api/save"));
@@ -215,7 +217,7 @@ test("Given a keyed day-end save, when RemoteHost sends it, then the exact candi
   delaySave = true;
   const pending = host.save();
   assert.deepEqual(JSON.parse(String(requests.at(-1)!.init?.body)), { session_id: "session-1", generation: "2" });
-  socket.onmessage!({ data: JSON.stringify({ Baseline: { timeline_generation: 3, snapshot, civil_date: "2030-01-02", public_revision: 1, public_report_ids: [] } }) } as MessageEvent);
+  socket.onmessage!({ data: JSON.stringify({ Baseline: { ...catalogWireFixture(snapshot), timeline_generation: 3, snapshot, civil_date: "2030-01-02", public_revision: 1, public_report_ids: [] } }) } as MessageEvent);
   completeSave!(new Response(JSON.stringify({ old: true }), { status: 200 }));
   await assert.rejects(pending, /generation/);
 });
@@ -266,13 +268,13 @@ test("Given a same-generation Publisher resync, when refreshBaseline completes, 
     baseUrl: "http://127.0.0.1:3000",
     fetchFn,
     webSocketFactory: () => {
-      socket = { readyState: 1, close() {}, send() { queueMicrotask(() => socket?.onmessage?.({ data: JSON.stringify({ Baseline: { timeline_generation: 1, snapshot: { ...snapshot, seq: 3, tick: 3 }, civil_date: "2030-01-02", public_revision: 0, public_report_ids: [] } }) } as MessageEvent)); }, onmessage: null, onerror: null, onclose: null } as unknown as WebSocket;
+      socket = { readyState: 1, close() {}, send() { queueMicrotask(() => socket?.onmessage?.({ data: JSON.stringify({ Baseline: { ...catalogWireFixture({ ...snapshot, seq: 3, tick: 3 }), timeline_generation: 1, snapshot: { ...snapshot, seq: 3, tick: 3 }, civil_date: "2030-01-02", public_revision: 0, public_report_ids: [] } }) } as MessageEvent)); }, onmessage: null, onerror: null, onclose: null } as unknown as WebSocket;
       return socket;
     },
   });
   const received: unknown[] = [];
   await host.start((update) => { received.push(update); });
-  socket!.onmessage!({ data: JSON.stringify({ Baseline: { timeline_generation: 1, snapshot, civil_date: "2030-01-02", public_revision: 0, public_report_ids: [] } }) } as MessageEvent);
+  socket!.onmessage!({ data: JSON.stringify({ Baseline: { ...catalogWireFixture(snapshot), timeline_generation: 1, snapshot, civil_date: "2030-01-02", public_revision: 0, public_report_ids: [] } }) } as MessageEvent);
   await host.refreshBaseline();
   assert.equal(received.length, 2);
   assert.equal((received[1] as { generation: string }).generation, "1");

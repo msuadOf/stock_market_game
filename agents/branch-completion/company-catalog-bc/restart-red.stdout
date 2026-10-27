@@ -1,0 +1,46 @@
+✖ 已排队恢复重启在catalog失败后失效，微任务drain后仍停机 (2.995457ms)
+✖ 仅完整baseline通过且handle/generation仍一致才重启 (0.390031ms)
+ℹ tests 2
+ℹ suites 0
+ℹ pass 0
+ℹ fail 2
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 202.094142
+
+✖ failing tests:
+
+test at apps/web/src/host/wasm-restart-gate.test.ts:5:1
+✖ 已排队恢复重启在catalog失败后失效，微任务drain后仍停机 (2.995457ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  true !== false
+  
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/wasm-restart-gate.test.ts:12:10)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: true,
+    expected: false,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at apps/web/src/host/wasm-restart-gate.test.ts:15:1
+✖ 仅完整baseline通过且handle/generation仍一致才重启 (0.390031ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  1 !== 0
+  
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/wasm-restart-gate.test.ts:22:10)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 1,
+    expected: 0,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

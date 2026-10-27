@@ -1,0 +1,23 @@
+diff --git a/apps/web/src/App.tsx b/apps/web/src/App.tsx
+index 3065cbf8..e23aee98 100644
+--- a/apps/web/src/App.tsx
++++ b/apps/web/src/App.tsx
+@@ -290,13 +290,17 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
+   function connectProtocol(host: EngineHost) {
+     companyCoordinatorRef.current = new CompanyQueryCoordinator(host, store.dispatch);
+     protocolCoordinatorRef.current = new ProtocolCoordinator({
++      prepareBaseline(protocolState, baseline, companyGeneration) {
++        const company = companyCoordinatorRef.current;
++        if (company === null) throw new Error("公司协调器尚未准备 baseline");
++        return company.prepareBaseline({ civilDate: baseline.civilDate, revision: baseline.revision, seq: protocolState.snapshot.seq, catalogResolver: baseline.catalogResolver }, companyGeneration);
++      },
+       onBaseline(protocolState, baseline) {
+         if (quickTrading.jobs().some(job => job.enabled)) setNotice("已重新同步游戏，定时自动下单已停止，请核对后重新开启");
+         quickTrading.reset();
+         saveSelectionGenerationRef.current += 1;
+         dayEndPersistenceRef.current.install(baseline.generation);
+         clearPlayerOrders();
+-        companyCoordinatorRef.current?.installBaseline({ civilDate: baseline.civilDate, revision: baseline.revision, seq: protocolState.snapshot.seq });
+         installBaselineRef.current(protocolState);
+         setHostBaselineReady(true);
+         if (!TRADING_E2E_MODE) void refreshPlayerOrders();

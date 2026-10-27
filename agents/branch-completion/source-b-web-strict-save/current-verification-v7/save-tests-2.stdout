@@ -1,0 +1,28 @@
+✔ 当前存档严格保留必填 desk_mirrored_resting，不混入默认值 (10.830564ms)
+✔ 真实 InformationState 和 BeliefBook 保留 AccountId 字符串与数值 CompanyId (2.498442ms)
+✔ 个人存档拒绝非规范 AccountId、未知字段、错误 owner 和非数值 CompanyId (1.297027ms)
+✔ parseSetup 接入完整公司选项且保留独立 report_frequency (0.895906ms)
+✔ a completed closed civil day is a valid daily archive without a trading tick (7.004373ms)
+✔ an unsettled or intraday snapshot cannot be loaded as a persistent archive (1.102942ms)
+✔ daily archives cannot restore live unified-book orders, including legacy auction fields (1.689549ms)
+✔ daily archives reject live resource envelopes and order expiry timers (0.788523ms)
+✔ daily archives cannot contain unprocessed player requests; legacy pending_npc saves are rejected (1.001549ms)
+✔ daily archives cannot resume an unfinished intraday execution leg (0.883796ms)
+✔ day-end candidate matches both completed civil date and committed sequence (10.159325ms)
+✔ day-end persistence writes only captured completed-day candidates (2.033109ms)
+✔ day-end persistence rejects stale capture and serializes completed days (0.34778ms)
+✔ day-end persistence reports failure and allows the next completed day (0.718731ms)
+✔ day-end persistence invalidates an in-flight writer before its commit (0.31643ms)
+✔ day-end persistence preserves day order when captures resolve out of order (0.482754ms)
+✔ day-end persistence exposes capture failures without blocking later days (1.363719ms)
+✔ session replacement waits for a submitted atomic commit to finish (0.427952ms)
+✔ failed restore reinstalls the authoritative generation without reviving old captures (0.390811ms)
+✔ 读档屏障只等待调用前的队列，不被后来产生的日终无限延长 (0.654709ms)
+ℹ tests 20
+ℹ suites 0
+ℹ pass 20
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 228.009659

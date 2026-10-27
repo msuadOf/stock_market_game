@@ -1,0 +1,14 @@
+✔ 坏目录 prepare 不发布 Redux/protocol/App，新 baseline 同一次dispatch安装snapshot和company (6.260881ms)
+✔ Tauri 坏目录不覆盖 timeline、generation、query epoch 或 cached baseline (0.791452ms)
+✔ 三个transport共用数值目录fault生成中文why并保留进度 (2.292222ms)
+✔ catalog fault 缺键、多键、错码及非单一u32上下文都拒绝 (0.781592ms)
+✔ 单股本代 StockId0 在 baseline、日内 facts/timeseries 和 runtime delta 保持600101 (5.321264ms)
+✔ 两个宿主 resolver 交错翻译不共享当前目录 (1.501921ms)
+ℹ tests 6
+ℹ suites 0
+ℹ pass 6
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 283.972701

@@ -89,6 +89,8 @@ impl RuntimeDriver {
     }
 
     pub(crate) fn finish_mirror_install(&mut self, accounts: usize) {
+        #[cfg(feature = "simulation-diagnostics")]
+        self.pending_decision_traces.clear();
         #[cfg(test)]
         {
             self.account_writes += accounts as u64;

@@ -1,7 +1,8 @@
+import { catalogWireFixture } from "./catalog-test-fixture.ts";
 import { parseRemoteMessage } from "./remote-wire.ts";
 
 const message = parseRemoteMessage(JSON.stringify({
-  Baseline: {
+  Baseline: { ...catalogWireFixture({ seq: 0, tick: 0, day: 0, phase: "Continuous", markets: {}, accounts: {}, daily_candles: {}, active_daily_candles: {} }),
     timeline_generation: 1,
     snapshot: { seq: 0, tick: 0, day: 0, phase: "Continuous", markets: {}, accounts: {}, daily_candles: {}, active_daily_candles: {} },
     civil_date: "2030-01-01",

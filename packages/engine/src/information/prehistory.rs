@@ -127,6 +127,8 @@ pub fn assemble_seeded_prehistory(
     game_start: CivilDate,
     report_frequency: crate::information::ReportFrequency,
 ) -> Result<SeededPrehistory, InformationError> {
+    #[cfg(test)]
+    crate::company::source_probe::record(crate::company::source_probe::Call::LegacyPrehistory);
     let seed = config.seed;
     let mut ops = generate_history(config, game_start)
         .map_err(|err| InformationError::Operations(Box::new(err)))?;

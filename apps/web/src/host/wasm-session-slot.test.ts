@@ -61,7 +61,7 @@ test("WasmSessionSlot restore snapshot 失败清 candidate 并恢复运行意图
   assert.deepEqual(f.calls, ['stop', 'restore:{"saved":true}', 'snapshot:9', 'drop:9', 'restart']);
 });
 
-test("WasmSessionSlot restore 先 snapshot、交换 authority、drop 旧句柄再推进 generation", async () => {
+test("WasmSessionSlot restore 先 snapshot、交换 authority 并推进 generation，再 drop 旧句柄", async () => {
   const f = await fixture();
   f.slot.create({}, 1n);
   f.calls.length = 0;
@@ -73,7 +73,7 @@ test("WasmSessionSlot restore 先 snapshot、交换 authority、drop 旧句柄�
   assert.deepEqual(f.calls, ['stop', 'restore:{"saved":true}', 'snapshot:9', 'drop:7', 'restart', 'prepare:9']);
 });
 
-test("WasmSessionSlot restore 旧 drop 失败保留新 handle 与旧 generation", async () => {
+test("WasmSessionSlot restore 旧 drop 失败仍保留已提交新 handle 与新 generation", async () => {
   const f = await fixture();
   f.slot.create({}, 1n);
   f.calls.length = 0;
@@ -81,7 +81,7 @@ test("WasmSessionSlot restore 旧 drop 失败保留新 handle 与旧 generation"
   f.fail("drop");
   assert.throws(() => f.slot.restore({}, f.hooks), /drop failed/);
   assert.equal(f.slot.requireHandle()[0], 9);
-  assert.equal(f.slot.readGeneration(), 1);
+  assert.equal(f.slot.readGeneration(), 2);
   assert.deepEqual(f.calls, ['stop', 'restore:{}', 'snapshot:9', 'drop:7', 'restart']);
 });
 
@@ -112,7 +112,7 @@ test("WasmSessionSlot drop 失败保留句柄，成功才清空且不改变 gene
   assert.equal(f.calls.length, count);
 });
 
-test("WasmSessionSlot candidate 清理失败保留原 handle，沿用 finally 的 restart 未执行边界", async () => {
+test("WasmSessionSlot candidate 清理失败保留原 handle，仍恢复运行意图并保留双错", async () => {
   const f = await fixture();
   f.slot.create({}, 1n);
   f.calls.length = 0;
@@ -122,7 +122,7 @@ test("WasmSessionSlot candidate 清理失败保留原 handle，沿用 finally �
   assert.throws(() => f.slot.restore({}, f.hooks), /candidate cleanup failed/);
   assert.equal(f.slot.requireHandle()[0], 7);
   assert.equal(f.slot.readGeneration(), 1);
-  assert.deepEqual(f.calls, ["stop", "restore:{}", "snapshot:9", "drop:9"]);
+  assert.deepEqual(f.calls, ["stop", "restore:{}", "snapshot:9", "drop:9", "restart"]);
 });
 
 test("WasmSessionSlot restore 构造失败不清未创建的 candidate，仍恢复运行意图", async () => {

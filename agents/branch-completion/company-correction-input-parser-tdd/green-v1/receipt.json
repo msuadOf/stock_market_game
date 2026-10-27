@@ -1,0 +1,59 @@
+{
+  "results": [
+    {
+      "name": "test",
+      "command": [
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "--test",
+        "--test-timeout=10000",
+        "--test-concurrency=4",
+        "apps/web/src/host/report-corrections.test.ts"
+      ],
+      "exitCode": 0,
+      "error": null,
+      "wallSeconds": 0.185570099
+    },
+    {
+      "name": "types",
+      "command": [
+        "/data1/baiyifan/workplace/stock_market_game/apps/web/node_modules/.bin/tsc",
+        "--noEmit",
+        "--strict",
+        "--noUnusedLocals",
+        "--noUnusedParameters",
+        "--target",
+        "ES2023",
+        "--module",
+        "nodenext",
+        "--moduleResolution",
+        "nodenext",
+        "--allowImportingTsExtensions",
+        "--verbatimModuleSyntax",
+        "--types",
+        "node",
+        "--typeRoots",
+        "/data1/baiyifan/workplace/stock_market_game/apps/web/node_modules/@types",
+        "apps/web/src/host/report-corrections.ts",
+        "apps/web/src/host/report-corrections.test.ts"
+      ],
+      "exitCode": 1,
+      "error": "bounded command exited with 2",
+      "wallSeconds": 2.325127771
+    },
+    {
+      "name": "lint",
+      "command": [
+        "/data1/baiyifan/workplace/stock_market_game/apps/web/node_modules/.bin/oxlint",
+        "--deny-warnings",
+        "apps/web/src/host/report-corrections.ts",
+        "apps/web/src/host/report-corrections.test.ts"
+      ],
+      "exitCode": 0,
+      "error": null,
+      "wallSeconds": 0.180199474
+    }
+  ],
+  "deadlineEachMs": 10000,
+  "concurrentJobs": 3,
+  "sourceSha256": "5e02aae961447738e19ce91ef3de98e96e47c7d792aeb172c5c61a8421b72b14"
+}

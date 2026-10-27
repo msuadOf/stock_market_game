@@ -1,0 +1,17 @@
+✔ 真实Rust完整generated-company-state-registry.json对象/raw解析无损，只有一个公司权威tag (44.064906ms)
+✔ 真实Rust完整manual-company-state-registry.json对象/raw解析无损，只有一个公司权威tag (19.064471ms)
+✔ 真实Rust完整legacy-company-state.json对象/raw解析无损，只有一个公司权威tag (113.077306ms)
+✔ required单tag拒绝旧双源根字段、缺失/null/双tag/未知tag (70.181945ms)
+✔ setup模式与selected公司tag必须一致，不迁移旧源 (33.275039ms)
+✔ 真实REG SettlementDayMarket.binding五字段required且unknown逐层拒绝 (36.413582ms)
+✔ 公司状态全部真实非空结构拒绝未知字段，nullable必填不被默认掩盖 (514.814144ms)
+✔ rawJSON在覆盖前拒绝重复tag、转义后同键与REG binding重复键 (27.52168ms)
+✔ canonical整数字符串拒绝前导零/负零与unsafe裸数，保真实单位 (18.338169ms)
+ℹ tests 9
+ℹ suites 0
+ℹ pass 9
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1077.598628

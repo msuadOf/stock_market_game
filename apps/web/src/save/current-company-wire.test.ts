@@ -22,7 +22,7 @@ test("真实 CompanySpec 使用 code 和完整 u64 issued_shares", { timeout: 10
 })
 
 test("CompanyOperations 保留严格 catalog，拒绝重复代码、缺字段与派生索引", { timeout: 10_000 }, () => {
-  const saved = { ...(currentSaveFixture().company_operations as Record<string, unknown>), catalog: fragments.catalog }
+  const saved = { ...((currentSaveFixture().company_state as { LegacyOperations: { operations: Record<string, unknown> } }).LegacyOperations.operations), catalog: fragments.catalog }
   assert.deepEqual(parseCompanyOperations(saved), saved)
   const { catalog: _removed, ...missing } = saved
   assert.throws(() => parseCompanyOperations(missing), /catalog/)

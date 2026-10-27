@@ -1,3 +1,4 @@
+import { defaultCatalogFixture } from "./catalog-test-fixture.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { parseDailyCandle as parseWireCandle } from "./protocol/wire-values.ts";
@@ -39,16 +40,16 @@ test("VWAP 累计成交额只接受规范u128字符串而非单账户Money或数
 test("本人交割单严格保留完整u64 receipt与i64分金额边界（B2 wire：stock/price_cents/gross_cents）", { timeout: 10000 }, () => {
   // 000812 ↔ StockId 0（STOCK_LIST 代码升序，ADR 0041）。
   const row = { receipt_id: "18446744073709551615", civil_date: "2030-01-02", stock: 0, side: "Buy", price_cents: "1000", quantity_shares: 100, gross_cents: "100000", actual_fees: { commission: "500", stamp_tax: "0", transfer_fee: "1" } };
-  const normalized = normalizePersonalTradeConfirmations([row])[0]!;
+  const normalized = normalizePersonalTradeConfirmations([row], defaultCatalogFixture)[0]!;
   assert.equal(normalized.receipt_id, row.receipt_id);
   assert.equal(normalized.code, "000812");
   assert.equal(normalized.price, "1000");
   assert.equal(normalized.gross, "100000");
-  assert.throws(() => normalizePersonalTradeConfirmations([{ ...row, receipt_id: "18446744073709551616" }]), /u64/);
-  assert.throws(() => normalizePersonalTradeConfirmations([{ ...row, actual_fees: { ...row.actual_fees, commission: "9223372036854775808" } }]), /i64/);
-  assert.throws(() => normalizePersonalTradeConfirmations([{ ...row, quantity_shares: 4294967296 }]), /u32/);
-  assert.throws(() => normalizePersonalTradeConfirmations([{ ...row, stock: 99 }]), /未知股票/);
-  assert.throws(() => normalizePersonalTradeConfirmations([{ ...row, price_cents: "999" }]), /成交价、成交量与成交额不一致/);
+  assert.throws(() => normalizePersonalTradeConfirmations([{ ...row, receipt_id: "18446744073709551616" }], defaultCatalogFixture), /u64/);
+  assert.throws(() => normalizePersonalTradeConfirmations([{ ...row, actual_fees: { ...row.actual_fees, commission: "9223372036854775808" } }], defaultCatalogFixture), /i64/);
+  assert.throws(() => normalizePersonalTradeConfirmations([{ ...row, quantity_shares: 4294967296 }], defaultCatalogFixture), /u32/);
+  assert.throws(() => normalizePersonalTradeConfirmations([{ ...row, stock: 99 }], defaultCatalogFixture), /未知股票/);
+  assert.throws(() => normalizePersonalTradeConfirmations([{ ...row, price_cents: "999" }], defaultCatalogFixture), /成交价、成交量与成交额不一致/);
 });
 
 test("VWAP curve 校验同一请求键与有界样本并保留权威成交统计", { timeout: 10000 }, () => {

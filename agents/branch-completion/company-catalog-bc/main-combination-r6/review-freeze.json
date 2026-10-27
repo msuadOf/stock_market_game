@@ -1,0 +1,11 @@
+{
+  "savedCandidate": "2930f5532ed9976bfe6cc07c3116fee392732036",
+  "mergeMain": "9e7c3da2c41f89930d186e3061c11792fb60780a",
+  "productPaths": 107,
+  "productManifestSha256": "d06b1f1b4815fdfca03f319b59210f7e8f92310009792f0aac662a39ac81a9c9",
+  "productsDiffSha256": "504c318830743959aa85ba3147e38b151f34639ebf20acd645bd1b9baaaff8b5",
+  "resolutionDiffSha256": "b58b0d9427718af6c06e25ca164019e69cca28cd413afeb2bdeaddeeab185d3f",
+  "roleMatchesMain": true,
+  "identityGeneratedMatchesMain": true,
+  "state": "merge未commit，源码冻结供独立审查；无Cargo/无main写"
+}

@@ -1,3 +1,4 @@
+import { catalogWorkerFixture } from "./catalog-test-fixture.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createWorkerHost, refreshWorkerBaseline, restoreWorkerSlot } from "./worker-host.ts";
@@ -22,7 +23,7 @@ for (const operation of ["initial", "refresh", "restore"] as const) {
     try {
       const creating = createWorkerHost({} as Parameters<typeof createWorkerHost>[0], 42n);
       const worker = DateWorker.current;
-      worker.emit({ type: "baseline", generation: 1, snapshot: snapshot(0, 0), civilDate: "2030-01-02" });
+      worker.emit({ ...catalogWorkerFixture(snapshot(0, 0)), type: "baseline", generation: 1, snapshot: snapshot(0, 0), civilDate: "2030-01-02" });
       host = await creating;
       const updates: HostUpdate[] = [];
       const starting = host.start((update) => { updates.push(update); });
@@ -32,8 +33,8 @@ for (const operation of ["initial", "refresh", "restore"] as const) {
         const pending = operation === "restore" ? host.load(currentSaveFixture()) : host.refreshBaseline();
         const requestId = worker.sent.at(-1)!.requestId;
         worker.emit(operation === "restore"
-          ? { type: "restored", generation: 1, nextGeneration: 2, requestId, snapshot: snapshot(1, 1), civilDate: "2031-02-03" }
-          : { type: "refreshed", generation: 1, requestId, snapshot: snapshot(1, 1), civilDate: "2031-02-03" });
+          ? { ...catalogWorkerFixture(snapshot(1, 1)), type: "restored", generation: 1, nextGeneration: 2, requestId, snapshot: snapshot(1, 1), civilDate: "2031-02-03" }
+          : { ...catalogWorkerFixture(snapshot(1, 1)), type: "refreshed", generation: 1, requestId, snapshot: snapshot(1, 1), civilDate: "2031-02-03" });
         await pending;
       }
       assert.equal(updates.at(-1)?.civilDate, operation === "initial" ? "2030-01-02" : "2031-02-03");

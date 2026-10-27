@@ -1,0 +1,11 @@
+{
+  "command": [
+    "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+    "--test",
+    "--test-timeout=10000",
+    "--test-concurrency=4",
+    "apps/web/src/save/schema/company/state.test.ts"
+  ],
+  "exitCode": 1,
+  "error": "bounded command exited with 1"
+}

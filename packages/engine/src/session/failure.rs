@@ -11,6 +11,8 @@ pub enum StepFatal {
 
 /// 未交付的成功安装结果；诊断仍是待发布 delta。
 pub(in crate::session) struct RuntimeStepInstall {
+    #[cfg(feature = "simulation-diagnostics")]
+    pub decision_traces: crate::diagnostics::decision_trace::NpcDecisionTraceCollector,
     pub events: Vec<Event>,
     pub baseline: RuntimeInstallBaseline,
     pub retail: super::retail_lifecycle::Candidate,
@@ -638,6 +640,8 @@ impl GameSession {
             }
             let seq_from = session.current_seq();
             let RuntimeStepInstall {
+                #[cfg(feature = "simulation-diagnostics")]
+                decision_traces,
                 events,
                 baseline,
                 retail,
@@ -666,6 +670,11 @@ impl GameSession {
             /// 路径同式）。
             #[cfg(feature = "simulation-diagnostics")]
             session.publish_runtime_causal(causal);
+            #[cfg(feature = "simulation-diagnostics")]
+            {
+                session.install_runtime_decision_traces(decision_traces);
+                driver.finish_decision_trace_install();
+            }
             session.publish_runtime_retail(retail);
             session.runtime_clear_account_undo();
             Ok((projected, None))
@@ -693,6 +702,11 @@ impl GameSession {
         let installed = self.runtime_step_with_install_inner(driver, false)?;
         #[cfg(feature = "simulation-diagnostics")]
         self.publish_runtime_causal(installed.causal);
+        #[cfg(feature = "simulation-diagnostics")]
+        {
+            self.install_runtime_decision_traces(installed.decision_traces);
+            driver.finish_decision_trace_install();
+        }
         self.publish_runtime_retail(installed.retail);
         // P2-2b：成功 step 尾清账户写时 undo（失败路径已由 rollback 消费）。
         // 【P0 画像】undo_clear 段（成功尾清）。
@@ -1280,8 +1294,22 @@ impl GameSession {
             }
         }
         drop(_seg_dayend);
+        // 日结可能追加撤单事件并结束计划；trace 必须比较最终 events/plans。
+        #[cfg(feature = "simulation-diagnostics")]
+        let decision_traces = match self.prepare_runtime_decision_traces(driver, self.tick(), &self.state.plans, &events) {
+            Ok(candidate) => candidate,
+            Err(description) => {
+                self.rollback_runtime_step(baseline);
+                self.runtime_discard_driver_flag = true;
+                return Err(self.poison_runtime_step(StepFatal::InvariantViolation {
+                    location: "runtime::decision_trace::prepare".to_owned(), description,
+                }));
+            }
+        };
         // 接轨件 4：尾清与基线交付由调用方承载（见方法注释）。
         Ok(RuntimeStepInstall {
+            #[cfg(feature = "simulation-diagnostics")]
+            decision_traces,
             events,
             baseline,
             retail,

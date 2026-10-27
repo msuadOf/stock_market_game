@@ -1,0 +1,93 @@
+✔ ArchiveStore 元数据严格拒绝旧字段、坏单位与重复槽位 (1.889205ms)
+✔ ArchiveStore 元数据管理不请求加载，错误不会降级为空列表 (0.902716ms)
+✔ ArchiveStore 选择元数据须确认提交，旧客户端响应不能冒称当前选择成功 (0.467324ms)
+✔ accounting parsers preserve a populated mature common company slice (65.001602ms)
+✔ accounting parsers reject malformed chart, journal, and specification fields (16.842588ms)
+✔ RealEstate 贷款保留到期日，允许逾期并拒绝缺失或非法日期 (3.358817ms)
+✔ parseIndustryBooks preserves a populated Industrial slice (73.135107ms)
+✔ IndustrialBooks 严格保存交易归属身份而非派生金额 (47.579017ms)
+✔ IndustrialBooks 严格保存库存来源身份而非派生金额或数量 (46.530387ms)
+✔ IndustrialBooks 所得税年度基准必须完整且拒绝旧亏损池结构 (112.411744ms)
+✔ parseIndustryBooks rejects malformed industrial inventory structures with paths (37.863006ms)
+✖ parseIndustryBooks preserves source-shaped empty Bank Insurance and RealEstate books (0.422413ms)
+✖ parseIndustryBooks rejects malformed exact nested fields and wire scalars (0.843305ms)
+✖ parseIndustryBooks accepts fully populated source-shaped subledgers (0.412672ms)
+✔ 当前存档保留单一 LegacyOperations groups 与职责运行时字段且拒绝代际字段 (8.400983ms)
+✔ setup 保留省略字段并严格解析显式 company config 与 groups (307.876132ms)
+✔ groups 拒绝重复 root、跨组重复成员、自持和不安全股份数 (0.600348ms)
+✔ PaymentFailure 保留正金额与事项并拒绝无效及 active 注入 (0.68281ms)
+✔ CompanyOperations 严格保留 payment_failures 并拒绝缺失及非法日期/记录 (748.614549ms)
+✔ 公开 PaymentFailure 公告保留单日事实且拒绝伪造幅度或持续期 (1.025579ms)
+ℹ tests 20
+ℹ suites 0
+ℹ pass 17
+ℹ fail 3
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1406.889004
+
+✖ failing tests:
+
+test at src/save/company-books-schema.test.ts:63:1
+✖ parseIndustryBooks preserves source-shaped empty Bank Insurance and RealEstate books (0.422413ms)
+  Error [SaveSchemaError]: 存档 save.books.Bank.income_tax_policy 是必填字段
+      at exact (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/primitives.ts:71:33)
+      at parseBankBooks (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/books/bank.ts:19:3)
+      at parseIndustryBooks (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/books/index.ts:20:22)
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/company-books-schema.test.ts:64:20)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:911:18)
+      at Test.postRun (node:internal/test_runner/test:1465:19)
+      at Test.run (node:internal/test_runner/test:1390:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    path: 'save.books.Bank.income_tax_policy'
+  }
+
+test at src/save/company-books-schema.test.ts:69:1
+✖ parseIndustryBooks rejects malformed exact nested fields and wire scalars (0.843305ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /save\.books\.Bank\.next_event_id/. Input:
+  
+  'SaveSchemaError: 存档 save.books.Bank.income_tax_policy 是必填字段'
+  
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/company-books-schema.test.ts:70:10)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:911:18)
+      at Test.postRun (node:internal/test_runner/test:1465:19)
+      at Test.run (node:internal/test_runner/test:1390:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: SaveSchemaError: 存档 save.books.Bank.income_tax_policy 是必填字段
+        at exact (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/primitives.ts:71:33)
+        at parseBankBooks (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/books/bank.ts:19:3)
+        at parseIndustryBooks (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/books/index.ts:20:22)
+        at file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/company-books-schema.test.ts:70:23
+        at getActual (node:assert:611:5)
+        at strict.throws (node:assert:759:24)
+        at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/company-books-schema.test.ts:70:10)
+        at Test.runInAsyncScope (node:async_hooks:227:14)
+        at Test.run (node:internal/test_runner/test:1325:25)
+        at Test.processPendingSubtests (node:internal/test_runner/test:911:18),
+    expected: /save\.books\.Bank\.next_event_id/,
+    operator: 'throws',
+    diff: 'simple'
+  }
+
+test at src/save/company-books-schema.test.ts:81:1
+✖ parseIndustryBooks accepts fully populated source-shaped subledgers (0.412672ms)
+  Error [SaveSchemaError]: 存档 save.books.Bank.income_tax_policy 是必填字段
+      at exact (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/primitives.ts:71:33)
+      at parseBankBooks (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/books/bank.ts:19:3)
+      at parseIndustryBooks (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/books/index.ts:20:22)
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/company-books-schema.test.ts:85:20)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:911:18)
+      at Test.postRun (node:internal/test_runner/test:1465:19)
+      at Test.run (node:internal/test_runner/test:1390:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    path: 'save.books.Bank.income_tax_policy'
+  }

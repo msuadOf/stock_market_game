@@ -1,0 +1,50 @@
+✔ 真实Rust完整generated-company-state-registry.json对象/raw解析无损，只有一个公司权威tag (38.076306ms)
+✔ 真实Rust完整manual-company-state-registry.json对象/raw解析无损，只有一个公司权威tag (16.239786ms)
+✔ 真实Rust完整legacy-company-state.json对象/raw解析无损，只有一个公司权威tag (88.959776ms)
+✔ required单tag拒绝旧双源根字段、缺失/null/双tag/未知tag (62.346237ms)
+✔ setup模式与selected公司tag必须一致，不迁移旧源 (27.877117ms)
+✔ 真实REG SettlementDayMarket.binding五字段required且unknown逐层拒绝 (34.979705ms)
+✖ 公司状态全部真实非空结构拒绝未知字段，nullable必填不被默认掩盖 (236.608733ms)
+✔ rawJSON在覆盖前拒绝重复tag、转义后同键与REG binding重复键 (25.96591ms)
+✔ canonical整数字符串拒绝前导零/负零与unsafe裸数，保真实单位 (17.585955ms)
+ℹ tests 9
+ℹ suites 0
+ℹ pass 8
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 727.837959
+
+✖ failing tests:
+
+test at apps/web/src/save/schema/company/state.test.ts:30:1
+✖ 公司状态全部真实非空结构拒绝未知字段，nullable必填不被默认掩盖 (236.608733ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /unexpected/. Input:
+  
+  'SaveSchemaError: 存档 company_state.CompanySystem.system.implementation.state.companies.0.finance.closing.versions[0][0] 必须是单一范围变体'
+  
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/state.test.ts:35:256)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:911:18)
+      at Test.postRun (node:internal/test_runner/test:1465:19)
+      at Test.run (node:internal/test_runner/test:1390:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: SaveSchemaError: 存档 company_state.CompanySystem.system.implementation.state.companies.0.finance.closing.versions[0][0] 必须是单一范围变体
+        at parseScope (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/closing.ts:15:35)
+        at file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/closing.ts:29:13
+        at Array.map (<anonymous>)
+        at parseClosingRegistry (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/closing.ts:26:63)
+        at decode (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/state.ts:50:30)
+        at file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/state.ts:72:86
+        at Array.map (<anonymous>)
+        at decode (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/state.ts:72:56)
+        at decode (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/state.ts:65:137)
+        at file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/state.ts:72:86,
+    expected: /unexpected/,
+    operator: 'throws',
+    diff: 'simple'
+  }

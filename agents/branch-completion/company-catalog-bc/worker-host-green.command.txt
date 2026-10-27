@@ -1,0 +1,1 @@
+node scripts/run-with-deadline.mjs 10000 -- node --test --test-timeout=10000 --test-concurrency=4 apps/web/src/host/worker-host.test.ts

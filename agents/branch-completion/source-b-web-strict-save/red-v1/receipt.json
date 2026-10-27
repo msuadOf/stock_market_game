@@ -1,0 +1,13 @@
+{
+  "command": [
+    "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+    "--test",
+    "--test-timeout=10000",
+    "--test-concurrency=4",
+    "apps/web/src/save/schema/company/state.test.ts"
+  ],
+  "exitCode": 1,
+  "error": "bounded command exited with 1",
+  "testSha256": "1d3960777fbb526e425cd5ddac4160b6e50dae5dd1befbd776a1119baa5c5a4c",
+  "meaning": "existing production parser首次真实完整Rust新wire不接受的业务红，未写实现"
+}

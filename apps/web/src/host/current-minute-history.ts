@@ -13,8 +13,7 @@ import type { CivilDate } from "../types/generated/CivilDate.ts";
 import type { CurrentMinuteHistoryPhase } from "../types/generated/CurrentMinuteHistoryPhase.ts";
 import type { CurrentMinuteHistoryRequest as WireCurrentMinuteHistoryRequest } from "../types/generated/CurrentMinuteHistoryRequest.ts";
 import { exact, field, record, values } from "./protocol/guards.ts";
-import { stockCodeOf } from "./protocol/stock-identity.ts";
-import { stockIdOf } from "../config/stock-ids.ts";
+import type { CatalogResolver } from "./catalog-resolver.ts";
 import { tradeHistoryDate } from "./personal-trade-history.ts";
 import { normalizeMinuteBar } from "./market-history.ts";
 
@@ -34,8 +33,8 @@ export interface CurrentMinuteHistoryResponse {
 }
 
 /** 请求层翻译：视图 code 串 → wire 数值 StockId（wasm 请求侧，ADR-0041）。 */
-export function wireCurrentMinuteHistoryRequest(request: CurrentMinuteHistoryRequest): WireCurrentMinuteHistoryRequest {
-  return { stock: stockIdOf(request.code) };
+export function wireCurrentMinuteHistoryRequest(request: CurrentMinuteHistoryRequest, identity: CatalogResolver): WireCurrentMinuteHistoryRequest {
+  return { stock: identity.stockId(request.code) };
 }
 
 export function normalizeCurrentMinuteHistoryRequest(value: unknown): CurrentMinuteHistoryRequest {
@@ -45,13 +44,13 @@ export function normalizeCurrentMinuteHistoryRequest(value: unknown): CurrentMin
   return { code: source.code };
 }
 
-export function normalizeCurrentMinuteHistoryResponse(value: unknown, request: CurrentMinuteHistoryRequest): CurrentMinuteHistoryResponse {
+export function normalizeCurrentMinuteHistoryResponse(value: unknown, request: CurrentMinuteHistoryRequest, identity: CatalogResolver): CurrentMinuteHistoryResponse {
   const expected = normalizeCurrentMinuteHistoryRequest(request), source = record(value, "当前分钟历史响应");
   // wire 的 stock 为数值 StockId（ADR 0041）；摄入时译回代码串再与请求比对。
   exact(source, ["stock", "date", "live", "trading", "phase", "bars"], "当前分钟历史响应");
   const wireStock = field(source, "stock", "当前分钟历史响应");
   if (typeof wireStock !== "number" || !Number.isInteger(wireStock)) throw new Error("当前分钟响应证券必须为数值StockId");
-  const code = stockCodeOf(wireStock, "当前分钟历史响应.stock");
+  const code = identity.stockCode(wireStock, "当前分钟历史响应.stock");
   if (code !== expected.code || source.live !== true) throw new Error("当前分钟响应证券错配或不是明确live事实");
   const date = tradeHistoryDate(source.date, "当前分钟.date");
   if (typeof source.trading !== "boolean") throw new Error("当前分钟开市状态必须是布尔值");

@@ -1,0 +1,2 @@
+apps/web/src/host/tauri-host.ts(1,10): error TS2300: Duplicate identifier 'parseHostFailure'.
+apps/web/src/host/tauri-host.ts(12,10): error TS2300: Duplicate identifier 'parseHostFailure'.

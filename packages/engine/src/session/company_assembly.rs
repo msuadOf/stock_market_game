@@ -31,9 +31,9 @@ pub(super) fn assemble_companies(
         start_date: setup.start_date,
         // 报告频率 B4b 恢复 SessionSetup.report_frequency 后改接配置真值；
         // 缺席（None）= 既有行为（Quarterly），旧局零变化。
-        report_frequency: setup.report_frequency.unwrap_or(
-            crate::information::ReportFrequency::Quarterly,
-        ),
+        report_frequency: setup
+            .report_frequency
+            .unwrap_or(crate::information::ReportFrequency::Quarterly),
         seed,
         event_multiplier_bp,
     }).map_err(|source| SessionError::InvalidSetup(source.0))
@@ -135,4 +135,76 @@ pub(super) fn issuer_specs(setup: &SessionSetup) -> Result<Vec<CompanySpec>, Ses
             })
         })
         .collect()
+}
+
+/// 只创建所选模型；Simple 不构造 Legacy 经营网络或其前史。
+pub(super) fn assemble_selected(
+    setup: &SessionSetup,
+    seed: u64,
+    event_multiplier_bp: u16,
+) -> Result<
+    (
+        super::company_state::SessionCompanies,
+        crate::information::PublicLibrary,
+    ),
+    SessionError,
+> {
+    use super::company_state::{LegacyCompanyState, SessionCompanies, SystemCompanyState};
+    use std::sync::Arc;
+    match &setup.company_system {
+        None => {
+            let CompanyAssembly {
+                registry,
+                prehistory,
+            } = assemble_companies(setup, seed, event_multiplier_bp)?;
+            let crate::information::SeededPrehistory {
+                ops,
+                closing,
+                library,
+                ..
+            } = prehistory;
+            super::company_groups::validate_groups(&setup.groups, &ops)
+                .map_err(|_| SessionError::InvalidSetup(ValidationFault::new(1028, vec![0])))?;
+            Ok((
+                SessionCompanies::LegacyOperations(LegacyCompanyState {
+                    registry: Arc::new(registry),
+                    operations: Arc::new(ops),
+                    closing: Arc::new(closing),
+                    groups: setup.groups.clone(),
+                }),
+                library,
+            ))
+        }
+        Some(_) => {
+            let system = assemble_company_system(setup, seed)?;
+            let through = crate::calendar::CivilInstant::new(
+                setup
+                    .start_date
+                    .prev()
+                    .map_err(crate::calendar::CalendarError::from)?,
+                86_399,
+            )
+            .map_err(crate::calendar::CalendarError::from)?;
+            let mut library = crate::information::PublicLibrary::new();
+            crate::information::publish_simple_scheduled(
+                &system,
+                setup
+                    .report_frequency
+                    .unwrap_or(crate::information::ReportFrequency::Quarterly),
+                seed,
+                None,
+                through,
+                &mut library,
+                true,
+            )
+            .map_err(|error| SessionError::Information(Box::new(error)))?;
+            Ok((
+                SessionCompanies::CompanySystem(SystemCompanyState {
+                    system: Arc::new(system),
+                    corporate_actions: super::SessionCorporateActions::default(),
+                }),
+                library,
+            ))
+        }
+    }
 }

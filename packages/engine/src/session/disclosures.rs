@@ -10,6 +10,9 @@
 //! [`disclosure_phase_observer`] 只观察时点，有状态派发由 `run_day_end` 执行。
 //! 观察者不得 panic，以保持日结失败的原子边界。
 
+#[path = "disclosure_candidate.rs"]
+pub(super) mod candidate;
+
 use crate::accounting::closing::ClosingEngine;
 use crate::calendar::{CivilDate, CivilDateError, CivilInstant};
 use crate::company::operations::{CompanyCloseError, CompanyOperations};
@@ -87,6 +90,32 @@ impl DisclosureDispatch {
     pub fn install(&self, clock: &mut CivilClock) -> usize {
         clock.add_disclosure_observer(disclosure_phase_observer);
         1
+    }
+
+    /// Simple 的实际定稿材料沿同一公开库、同一排期和同一游标发布。
+    pub(super) fn run_simple_day_end(
+        &mut self,
+        system: &crate::company::CompanySystem,
+        frequency: crate::information::ReportFrequency,
+        seed: u64,
+        report: &CivilDayEndReport,
+        library: &mut PublicLibrary,
+    ) -> Result<DayEndDisclosures, DisclosureError> {
+        let reports_published = crate::information::publish_simple_scheduled(
+            system,
+            frequency,
+            seed,
+            self.published_through,
+            report.disclosure_instant,
+            library,
+            false,
+        )?;
+        self.published_through = Some(report.disclosure_instant);
+        self.announced_through = Some(report.settled_date);
+        Ok(DayEndDisclosures {
+            reports_published,
+            announcements_published: Vec::new(),
+        })
     }
 
     /// 18:00 披露派发（恰好一次语义：同日重复调用 = no-op）。

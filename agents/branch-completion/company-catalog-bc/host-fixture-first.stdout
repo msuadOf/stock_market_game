@@ -1,0 +1,351 @@
+✖ Given a host baseline and protocol update, when constructed, then both carry an authoritative generation (6.060535ms)
+✔ Given an invalid generation, when constructing a production host envelope, then it rejects it (0.585036ms)
+✔ UI delivery target uses a 16ms cadence above 60Hz (0.251671ms)
+✖ Remote SubmitIntent 严格携带权威 generation，不用默认值且旧代确认拒绝 (53.194591ms)
+✖ 并发 remote command 逆序确认只完成对应 request，重复确认显式失败 (1.280788ms)
+✖ request gateway error 只拒绝对应 command，HostFailure 批量拒绝其余 command (1.679096ms)
+✖ mode 切换丢弃旧 socket message/close，已同步的新连接沿用 protocol gate (4.354247ms)
+✖ 旧 socket onerror 不关闭新连接，恢复前仍保留 baseline gate (1.632744ms)
+✖ 并发 resync 共享权威 baseline，所有 waiter 均完成 (4.057843ms)
+✖ baseline callback 抛错时先安装 cache，waiter 由 fail 拒绝 (0.925522ms)
+✖ 同步 send throw 清理 command，dispose 显式拒绝未确认请求 (0.768745ms)
+✖ generation mismatch 和 ResyncRequired 请求重同步且同步前丢弃 protocol (1.043508ms)
+✖ load 新连接的 5000ms timer 在 baseline 到达后清除，超时显式失败 (10.795959ms)
+✖ 同 generation baseline 更新后 orders 沿用各自原有的 query guard (1.132732ms)
+✖ 同 generation baseline 更新后 diagnostics 沿用各自原有的 query guard (0.740324ms)
+✖ 同 generation baseline 更新后 save 沿用各自原有的 query guard (0.600687ms)
+✖ resync send 同步失败拒绝已登记 waiter，后续可显式重试 (0.571976ms)
+ℹ Error: Test "Remote SubmitIntent 严格携带权威 generation，不用默认值且旧代确认拒绝" at apps/web/src/host/remote-state-contract.test.ts:58:1 generated asynchronous activity after the test ended. This activity created the error "AssertionError [ERR_ASSERTION]: The input did not match the regular expression /已过期.*generation/. Input:
+
+'Error: 远程 Publisher 尚未完成权威基线同步，写请求未入队'
+" and would have caused the test to fail, but instead triggered an unhandledRejection event.
+ℹ Error: Test "并发 remote command 逆序确认只完成对应 request，重复确认显式失败" at apps/web/src/host/remote-state-contract.test.ts:77:1 generated asynchronous activity after the test ended. This activity created the error "Error: 远程 Publisher 尚未完成权威基线同步，写请求未入队" and would have caused the test to fail, but instead triggered an unhandledRejection event.
+ℹ Error: Test "并发 remote command 逆序确认只完成对应 request，重复确认显式失败" at apps/web/src/host/remote-state-contract.test.ts:77:1 generated asynchronous activity after the test ended. This activity created the error "Error: 远程 Publisher 尚未完成权威基线同步，写请求未入队" and would have caused the test to fail, but instead triggered an unhandledRejection event.
+ℹ Error: Test "request gateway error 只拒绝对应 command，HostFailure 批量拒绝其余 command" at apps/web/src/host/remote-state-contract.test.ts:95:1 generated asynchronous activity after the test ended. This activity created the error "AssertionError [ERR_ASSERTION]: The input did not match the regular expression /REJECTED: 请求失败/. Input:
+
+'Error: 远程 Publisher 尚未完成权威基线同步，写请求未入队'
+" and would have caused the test to fail, but instead triggered an unhandledRejection event.
+ℹ Error: Test "request gateway error 只拒绝对应 command，HostFailure 批量拒绝其余 command" at apps/web/src/host/remote-state-contract.test.ts:95:1 generated asynchronous activity after the test ended. This activity created the error "AssertionError [ERR_ASSERTION]: The input did not match the regular expression /BROKEN: 会话失败/. Input:
+
+'Error: 远程 Publisher 尚未完成权威基线同步，写请求未入队'
+" and would have caused the test to fail, but instead triggered an unhandledRejection event.
+ℹ Error: Test "request gateway error 只拒绝对应 command，HostFailure 批量拒绝其余 command" at apps/web/src/host/remote-state-contract.test.ts:95:1 generated asynchronous activity after the test ended. This activity created the error "AssertionError [ERR_ASSERTION]: The input did not match the regular expression /BROKEN: 会话失败/. Input:
+
+'Error: 远程 Publisher 尚未完成权威基线同步，写请求未入队'
+" and would have caused the test to fail, but instead triggered an unhandledRejection event.
+ℹ Error: Test "并发 resync 共享权威 baseline，所有 waiter 均完成" at apps/web/src/host/remote-state-contract.test.ts:143:1 generated asynchronous activity after the test ended. This activity created the error "Error: 远程 Publisher 未连接，无法请求基线重同步" and would have caused the test to fail, but instead triggered an unhandledRejection event.
+ℹ Error: Test "同 generation baseline 更新后 orders 沿用各自原有的 query guard" at apps/web/src/host/remote-state-contract.test.ts:228:3 generated asynchronous activity after the test ended. This activity created the error "AssertionError [ERR_ASSERTION]: The input did not match the regular expression /已过期会话 generation/. Input:
+
+'Error: 远程基线尚未就绪，不能查询玩家活动委托'
+" and would have caused the test to fail, but instead triggered an unhandledRejection event.
+ℹ Error: Test "同 generation baseline 更新后 diagnostics 沿用各自原有的 query guard" at apps/web/src/host/remote-state-contract.test.ts:228:3 generated asynchronous activity after the test ended. This activity created the error "AssertionError [ERR_ASSERTION]: The input did not match the regular expression /已过期会话 generation/. Input:
+
+'Error: 远程基线尚未就绪，不能查询 NPC 决策诊断'
+" and would have caused the test to fail, but instead triggered an unhandledRejection event.
+ℹ Error: Test "同 generation baseline 更新后 save 沿用各自原有的 query guard" at apps/web/src/host/remote-state-contract.test.ts:228:3 generated asynchronous activity after the test ended. This activity created the error "Error: 远程基线尚未就绪或已失效，不能保存" and would have caused the test to fail, but instead triggered an unhandledRejection event.
+✖ Tauri 三种 baseline 都携带对应会话的当前自然日 (2.903581ms)
+✖ Tauri 拒绝无效自然日并保留旧 baseline，restore 仍切换到新 authority (0.244541ms)
+✔ Tauri generation 在 Number.MAX_SAFE_INTEGER 之后仍精确递增 (0.296864ms)
+✖ Tauri 刷新解析失败只切换 timeline，保持旧 baseline 和 query epoch (0.22765ms)
+✖ Tauri dispose 只清 timeline/cache，保留 generation/epoch 的既有查询检查 (0.20466ms)
+ℹ tests 22
+ℹ suites 0
+ℹ pass 3
+ℹ fail 19
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 337.686703
+
+✖ failing tests:
+
+test at apps/web/src/host/host-update.test.ts:17:1
+✖ Given a host baseline and protocol update, when constructed, then both carry an authoritative generation (6.060535ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+  + actual - expected
+  
+    {
+  +   catalogResolver: {
+  +     companyCatalog: [],
+  +     companyCode: [Function: companyCode],
+  +     companyId: [Function: companyId],
+  +     reportScopeCode: [Function: reportScopeCode],
+  +     stockCatalog: [],
+  +     stockCode: [Function: stockCode]
+  +   },
+      civilDate: null,
+      generation: '1',
+      publicPublicationIds: [],
+      revision: null,
+      securities: [],
+  
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/host-update.test.ts:18:10)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.start (node:internal/test_runner/test:1096:17)
+      at startSubtestAfterBootstrap (node:internal/test_runner/harness:385:17) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: [Object],
+    expected: [Object],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }
+
+test at apps/web/src/host/remote-state-contract.test.ts:58:1
+✖ Remote SubmitIntent 严格携带权威 generation，不用默认值且旧代确认拒绝 (53.194591ms)
+  TypeError: Cannot read properties of undefined (reading 'SubmitIntent')
+      at commandId (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/remote-state-contract.test.ts:53:78)
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/remote-state-contract.test.ts:66:49)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3)
+
+test at apps/web/src/host/remote-state-contract.test.ts:77:1
+✖ 并发 remote command 逆序确认只完成对应 request，重复确认显式失败 (1.280788ms)
+  TypeError: Cannot read properties of undefined (reading 'SubmitIntent')
+      at commandId (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/remote-state-contract.test.ts:53:78)
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/remote-state-contract.test.ts:83:19)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7)
+
+test at apps/web/src/host/remote-state-contract.test.ts:95:1
+✖ request gateway error 只拒绝对应 command，HostFailure 批量拒绝其余 command (1.679096ms)
+  TypeError: Cannot read properties of undefined (reading 'SubmitIntent')
+      at commandId (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/remote-state-contract.test.ts:53:78)
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/remote-state-contract.test.ts:104:48)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7)
+
+test at apps/web/src/host/remote-state-contract.test.ts:113:1
+✖ mode 切换丢弃旧 socket message/close，已同步的新连接沿用 protocol gate (4.354247ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+  + actual - expected
+  
+  + []
+  - [
+  -   'baseline'
+  - ]
+  
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/remote-state-contract.test.ts:123:10)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: [],
+    expected: [ 'baseline' ],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }
+
+test at apps/web/src/host/remote-state-contract.test.ts:131:1
+✖ 旧 socket onerror 不关闭新连接，恢复前仍保留 baseline gate (1.632744ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  1 !== 0
+  
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/remote-state-contract.test.ts:138:10)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 1,
+    expected: 0,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at apps/web/src/host/remote-state-contract.test.ts:143:1
+✖ 并发 resync 共享权威 baseline，所有 waiter 均完成 (4.057843ms)
+  Error: 远程 Publisher 未连接，无法请求基线重同步
+      at requestResync (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/remote-host.ts:117:29)
+      at Object.refreshBaseline (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/remote-host.ts:371:13)
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/remote-state-contract.test.ts:148:23)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7)
+
+test at apps/web/src/host/remote-state-contract.test.ts:156:1
+✖ baseline callback 抛错时先安装 cache，waiter 由 fail 拒绝 (0.925522ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /REMOTE_PROTOCOL: callback broke/. Input:
+  
+  'Error: 远程 Publisher 未连接，无法请求基线重同步'
+  
+      at async TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/remote-state-contract.test.ts:164:3)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: Error: 远程 Publisher 未连接，无法请求基线重同步
+        at requestResync (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/remote-host.ts:117:29)
+        at Object.refreshBaseline (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/remote-host.ts:371:13)
+        at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/remote-state-contract.test.ts:160:24)
+        at async Test.run (node:internal/test_runner/test:1208:7)
+        at async Test.processPendingSubtests (node:internal/test_runner/test:831:7),
+    expected: /REMOTE_PROTOCOL: callback broke/,
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at apps/web/src/host/remote-state-contract.test.ts:169:1
+✖ 同步 send throw 清理 command，dispose 显式拒绝未确认请求 (0.768745ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /send broke/. Input:
+  
+  'Error: 远程 Publisher 尚未完成权威基线同步，写请求未入队'
+  
+      at async TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/remote-state-contract.test.ts:173:3)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: Error: 远程 Publisher 尚未完成权威基线同步，写请求未入队
+        at Object.submitIntent (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/remote-host.ts:331:110)
+        at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/remote-state-contract.test.ts:173:29)
+        at async Test.run (node:internal/test_runner/test:1208:7)
+        at async Test.processPendingSubtests (node:internal/test_runner/test:831:7),
+    expected: /send broke/,
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at apps/web/src/host/remote-state-contract.test.ts:183:1
+✖ generation mismatch 和 ResyncRequired 请求重同步且同步前丢弃 protocol (1.043508ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+  + actual - expected
+  
+  + []
+  - [
+  -   {
+  -     Resync: {}
+  -   }
+  - ]
+  
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/remote-state-contract.test.ts:189:10)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: [],
+    expected: [ { Resync: {} } ],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }
+
+test at apps/web/src/host/remote-state-contract.test.ts:199:1
+✖ load 新连接的 5000ms timer 在 baseline 到达后清除，超时显式失败 (10.795959ms)
+  Error: REMOTE_PROTOCOL: 远程 Baseline 字段不符合远程协议契约
+      at fail (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/remote-host.ts:106:20)
+      at next.onmessage (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/remote-host.ts:238:9)
+      at FakeSocket.receive (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/remote-state-contract.test.ts:27:45)
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/remote-state-contract.test.ts:208:26)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7)
+
+test at apps/web/src/host/remote-state-contract.test.ts:228:3
+✖ 同 generation baseline 更新后 orders 沿用各自原有的 query guard (1.132732ms)
+  TypeError: finish is not a function
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/remote-state-contract.test.ts:240:5)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7)
+
+test at apps/web/src/host/remote-state-contract.test.ts:228:3
+✖ 同 generation baseline 更新后 diagnostics 沿用各自原有的 query guard (0.740324ms)
+  TypeError: finish is not a function
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/remote-state-contract.test.ts:240:5)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7)
+
+test at apps/web/src/host/remote-state-contract.test.ts:228:3
+✖ 同 generation baseline 更新后 save 沿用各自原有的 query guard (0.600687ms)
+  TypeError: finish is not a function
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/remote-state-contract.test.ts:240:5)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7)
+
+test at apps/web/src/host/remote-state-contract.test.ts:247:1
+✖ resync send 同步失败拒绝已登记 waiter，后续可显式重试 (0.571976ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /resync send broke/. Input:
+  
+  'Error: 远程 Publisher 未连接，无法请求基线重同步'
+  
+      at async TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/remote-state-contract.test.ts:251:3)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: Error: 远程 Publisher 未连接，无法请求基线重同步
+        at requestResync (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/remote-host.ts:117:29)
+        at Object.refreshBaseline (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/remote-host.ts:371:13)
+        at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/remote-state-contract.test.ts:251:29)
+        at async Test.run (node:internal/test_runner/test:1208:7)
+        at async Test.processPendingSubtests (node:internal/test_runner/test:831:7),
+    expected: /resync send broke/,
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at apps/web/src/host/tauri-timeline-state.test.ts:7:1
+✖ Tauri 三种 baseline 都携带对应会话的当前自然日 (2.903581ms)
+  Error [ProtocolError]: stockCatalog 必须是数组
+      at malformed (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/protocol/guards.ts:6:9)
+      at values (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/protocol/guards.ts:80:30)
+      at prepareCatalogResolver (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/catalog-resolver.ts:27:24)
+      at prepareBaselineUpdate (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/host-update.ts:78:20)
+      at TauriTimelineState.installSnapshot (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/tauri-timeline-state.ts:90:23)
+      at TauriTimelineState.installInitialBaseline (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/tauri-timeline-state.ts:69:17)
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/tauri-timeline-state.test.ts:9:28)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.start (node:internal/test_runner/test:1096:17) {
+    code: 'PROTOCOL_MALFORMED',
+    where: 'stockCatalog'
+  }
+
+test at apps/web/src/host/tauri-timeline-state.test.ts:17:1
+✖ Tauri 拒绝无效自然日并保留旧 baseline，restore 仍切换到新 authority (0.244541ms)
+  Error [ProtocolError]: stockCatalog 必须是数组
+      at malformed (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/protocol/guards.ts:6:9)
+      at values (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/protocol/guards.ts:80:30)
+      at prepareCatalogResolver (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/catalog-resolver.ts:27:24)
+      at prepareBaselineUpdate (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/host-update.ts:78:20)
+      at TauriTimelineState.installSnapshot (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/tauri-timeline-state.ts:90:23)
+      at TauriTimelineState.installInitialBaseline (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/tauri-timeline-state.ts:69:17)
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/tauri-timeline-state.test.ts:19:29)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18) {
+    code: 'PROTOCOL_MALFORMED',
+    where: 'stockCatalog'
+  }
+
+test at apps/web/src/host/tauri-timeline-state.test.ts:36:1
+✖ Tauri 刷新解析失败只切换 timeline，保持旧 baseline 和 query epoch (0.22765ms)
+  Error [ProtocolError]: stockCatalog 必须是数组
+      at malformed (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/protocol/guards.ts:6:9)
+      at values (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/protocol/guards.ts:80:30)
+      at prepareCatalogResolver (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/catalog-resolver.ts:27:24)
+      at prepareBaselineUpdate (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/host-update.ts:78:20)
+      at TauriTimelineState.installSnapshot (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/tauri-timeline-state.ts:90:23)
+      at TauriTimelineState.installInitialBaseline (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/tauri-timeline-state.ts:69:17)
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/tauri-timeline-state.test.ts:40:29)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18) {
+    code: 'PROTOCOL_MALFORMED',
+    where: 'stockCatalog'
+  }
+
+test at apps/web/src/host/tauri-timeline-state.test.ts:51:1
+✖ Tauri dispose 只清 timeline/cache，保留 generation/epoch 的既有查询检查 (0.20466ms)
+  Error [ProtocolError]: stockCatalog 必须是数组
+      at malformed (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/protocol/guards.ts:6:9)
+      at values (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/protocol/guards.ts:80:30)
+      at prepareCatalogResolver (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/catalog-resolver.ts:27:24)
+      at prepareBaselineUpdate (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/host-update.ts:78:20)
+      at TauriTimelineState.installSnapshot (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/tauri-timeline-state.ts:90:23)
+      at TauriTimelineState.installInitialBaseline (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/tauri-timeline-state.ts:69:17)
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/tauri-timeline-state.test.ts:53:12)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18) {
+    code: 'PROTOCOL_MALFORMED',
+    where: 'stockCatalog'
+  }

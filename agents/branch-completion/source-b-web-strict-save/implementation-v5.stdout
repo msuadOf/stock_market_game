@@ -1,0 +1,43 @@
+✔ 真实Rust完整generated-company-state-registry.json对象/raw解析无损，只有一个公司权威tag (38.51283ms)
+✔ 真实Rust完整manual-company-state-registry.json对象/raw解析无损，只有一个公司权威tag (16.433722ms)
+✔ 真实Rust完整legacy-company-state.json对象/raw解析无损，只有一个公司权威tag (93.625277ms)
+✔ required单tag拒绝旧双源根字段、缺失/null/双tag/未知tag (62.761051ms)
+✔ setup模式与selected公司tag必须一致，不迁移旧源 (26.640752ms)
+✔ 真实REG SettlementDayMarket.binding五字段required且unknown逐层拒绝 (35.364578ms)
+✖ 公司状态全部真实非空结构拒绝未知字段，nullable必填不被默认掩盖 (265.50195ms)
+✔ rawJSON在覆盖前拒绝重复tag、转义后同键与REG binding重复键 (26.991862ms)
+✔ canonical整数字符串拒绝前导零/负零与unsafe裸数，保真实单位 (16.984999ms)
+ℹ tests 9
+ℹ suites 0
+ℹ pass 8
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 771.092033
+
+✖ failing tests:
+
+test at apps/web/src/save/schema/company/state.test.ts:31:1
+✖ 公司状态全部真实非空结构拒绝未知字段，nullable必填不被默认掩盖 (265.50195ms)
+  AssertionError [ERR_ASSERTION]: The expression evaluated to a falsy value:
+  
+    assert.ok(error instanceof SaveSchemaError)
+  
+      at Object.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/state.test.ts:36:407)
+      at expectedException (node:assert:578:17)
+      at expectsError (node:assert:703:21)
+      at strict.throws (node:assert:759:3)
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/state.test.ts:36:354)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:911:18)
+      at Test.postRun (node:internal/test_runner/test:1465:19)
+      at Test.run (node:internal/test_runner/test:1390:12) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }

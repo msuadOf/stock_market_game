@@ -7,7 +7,7 @@
  * 归一层译回视图词表（`code` 六位串 + `price`/`gross`，ADR-0041）。
  */
 import type { IntradayAverageCurveInput, IntradayAverageInput, IntradayAverageResult, PersonalTradeConfirmation } from "./engine-host.ts";
-import { stockCodeOf } from "./protocol/stock-identity.ts";
+import type { CatalogResolver } from "./catalog-resolver.ts";
 import { parseMoney } from "../utils/money.ts";
 import { parseTurnoverCents } from "../utils/turnover.ts";
 
@@ -69,7 +69,7 @@ export function normalizeIntradayAverageCurveResult(value: unknown, expectedCoun
   });
 }
 
-export function normalizePersonalTradeConfirmations(value: unknown): readonly PersonalTradeConfirmation[] {
+export function normalizePersonalTradeConfirmations(value: unknown, identity: CatalogResolver): readonly PersonalTradeConfirmation[] {
   if (!Array.isArray(value)) throw new Error("本人交割单必须是数组");
   return value.map((item, index) => {
     const where = `本人交割单[${index}]`;
@@ -85,7 +85,7 @@ export function normalizePersonalTradeConfirmations(value: unknown): readonly Pe
     if (typeof source.civil_date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(source.civil_date)
       || new Date(`${source.civil_date}T00:00:00.000Z`).toISOString().slice(0, 10) !== source.civil_date) throw new Error(`${where}.civil_date 必须是有效 ISO 自然日`);
     if (typeof source.stock !== "number" || !Number.isInteger(source.stock) || source.stock < 0) throw new Error(`${where}.stock 必须为数值StockId`);
-    const code = stockCodeOf(source.stock, `${where}.stock`);
+    const code = identity.stockCode(source.stock, `${where}.stock`);
     if (source.side !== "Buy" && source.side !== "Sell") throw new Error(`${where}.side 必须是 Buy 或 Sell`);
     const price = money(source.price_cents, `${where}.price_cents`);
     const gross = money(source.gross_cents, `${where}.gross_cents`);

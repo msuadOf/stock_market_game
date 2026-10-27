@@ -1,0 +1,5 @@
+apps/web/src/host/wasm-restore-transaction.ts:45:32: warning eslint(no-unsafe-finally): Unsafe `finally` block. help: Control flow inside `try` or `catch` blocks will be overwritten by this statement.
+apps/web/src/host/wasm-restore-transaction.ts:46:7: warning eslint(no-unsafe-finally): Unsafe `finally` block. help: Control flow inside `try` or `catch` blocks will be overwritten by this statement.
+apps/web/src/App.tsx:405:11: warning react-hooks(exhaustive-deps): React Hook useEffect has a missing dependency: 'hostRef' help: Either include it or remove the dependency array.
+apps/web/src/App.tsx:429:18: warning react-hooks(exhaustive-deps): React Hook useCallback has a missing dependency: 'hostRef' help: Either include it or remove the dependency array.
+apps/web/src/App.tsx:448:18: warning react-hooks(exhaustive-deps): React Hook useCallback has a missing dependency: 'hostRef' help: Either include it or remove the dependency array.

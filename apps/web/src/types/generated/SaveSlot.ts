@@ -46,7 +46,6 @@ export type SaveSlot = {
    */
   desk_mirrored_resting: boolean;
   setup: SessionSetup;
-  groups: import("../../save/schema/company/groups").GroupStructure[];
   seed: string;
   snapshot: SaveSnapshot;
   /**
@@ -132,11 +131,10 @@ export type SaveSlot = {
   /**
    * ── 权威状态连续性（完整存档）：公司域与个体决策链权威状态。全部必填；缺失任一字段
    *    的 JSON 不是当前 schema 的合法存档，走通用校验拒绝。──
-   * 经营编排（调度器/活跃冲击/各经营 RNG/账套——serde 全量持久化，分录与
-   * 余额在反序列化重放边界校验）。
+   * 唯一公司运行事实，外部 tag 与 setup 模式严格勾稽，无旧并列字段迁移。
    */
-  company_operations:
-    import("../../save/schema/company/operations").CompanyOperations;
+  company_state:
+    import("../../save/schema/company/state").SavedSessionCompanies;
   /**
    * 跨日个人交易计划簿（(账户,股票) 索引恢复时重建并校验）。
    */

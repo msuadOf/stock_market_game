@@ -1,0 +1,39 @@
+✔ an exhausted quick slot does not prevent updating the authorized day-end file (5.592572ms)
+✔ day-end target failures preserve both causes and report each successful target honestly (0.663679ms)
+✔ a stale quick-slot skip is never reported as an actual update (0.595048ms)
+✔ 原子日终输出的必要命令全部获授权，命令专属 scope 仅扩展到项目 UUID 临时文件 (1.594386ms)
+✔ 不增加 exists、全局 fs scope、全目录读写或非 main 窗口能力，风险明确登记 (0.35377ms)
+✔ 旧 saveToFile 出口拒绝日内保存，不请求权限、不下载或写当前状态 (414.422762ms)
+✔ 仅需保存选择器即可选择授权目标，后续两次日结复用同一 handle (7.738114ms)
+✔ 取消选择返回 null，授权失败可见，不支持覆盖时不伪装成下载 (0.637189ms)
+✔ 非法候选在创建 writable 前拒绝，不掩盖存档校验失败 (0.486764ms)
+✔ 序列化在第一个 await 前冻结输入，不读取后来已变动的盘中状态 (1.114502ms)
+✔ write 失败 abort 临时写入，绝不 finally close 提交损坏候选 (0.999129ms)
+✔ write 与 abort 都失败时保留两个真实错误及主 cause (1.102822ms)
+✔ close 失败也尝试 abort；创建 writable 的 AbortError 不能被当成取消选择 (1.552535ms)
+✔ 旧 generation 在创建前、创建后和 write await 后均拒绝；close 不得提交旧写 (1.873394ms)
+✔ loadFromFile 保留读档行为，读后不创建 writable 或写回文件 (3.104ms)
+✔ 选择正在写入的日终文件后等待提交，再获取新 File；取消不等待或取消写入 (1.922086ms)
+✔ 日终文件写入屏障失败明确拒绝读取旧内容 (0.365451ms)
+✔ 上传读档选中文件后等待屏障，屏障失败不读，取消不进入屏障 (1.962867ms)
+✔ Tauri 选中文件后等待屏障再读取路径；屏障失败不读旧文件 (2.07366ms)
+✔ Tauri 选择仅复用路径，两次写入都先生成独占同目录临时文件再 rename (2.138352ms)
+✔ Tauri 取消不写；非法选择路径明确拒绝 (0.301099ms)
+✔ Tauri 临时写入或 rename 失败均保旧并清理；创建冲突绝不删他人临时文件 (1.72452ms)
+✔ Tauri generation 在任意准备 await 后变旧时清理临时文件，绝不 rename (1.557906ms)
+✔ Tauri 写失败且清理失败时两个错误显式可见，目标旧档仍保留 (0.782263ms)
+✔ 快速槽事务写入 IndexedDB，LocalStorage 容量错误不能影响保存和恢复 (5.726186ms)
+✔ 新库无槽时只读已有同格式 LocalStorage 档，不在启动时复制写盘 (1.6981ms)
+✔ IndexedDB 坏档不会退回旧 LocalStorage 档掩盖损坏 (0.786453ms)
+✔ 等待开库期间变更 Session generation 不启动写事务 (0.231307ms)
+✔ put 完成前旧 Session 失效时 abort 事务，保留原有效快速槽 (0.311019ms)
+✔ IndexedDB quota 和 commit 失败均显式报错，保留原有效快速槽 (0.499314ms)
+✔ 数据库连接意外关闭后下一次显式操作重新开库 (0.36285ms)
+ℹ tests 31
+ℹ suites 0
+ℹ pass 31
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 759.731299

@@ -1,9 +1,10 @@
 import type { PublicReportNoteItem, PublicReportSummary } from "../../types/engine.ts";
-import { codeOfCompany } from "../../config/company-ids.ts";
+import type { CatalogResolver } from "../../host/catalog-resolver.ts";
 import { formatComparison, formatSecondOfDay } from "./company-presentation.ts";
 
 interface ReportNotesProps {
   readonly report: PublicReportSummary;
+  readonly catalogResolver: CatalogResolver;
 }
 
 function NoteDetails({ items, title }: { readonly items: readonly PublicReportNoteItem[]; readonly title: string }) {
@@ -17,11 +18,11 @@ function NoteDetails({ items, title }: { readonly items: readonly PublicReportNo
   </table>{items.length === 0 && <p>本报告未列报该类附注明细。</p>}</div>;
 }
 
-export function ReportNotes({ report }: ReportNotesProps) {
+export function ReportNotes({ report, catalogResolver }: ReportNotesProps) {
   const comparison = formatComparison(report.accounting.prior_year_net_income);
   const financials = report.financials;
-  // 报告范围按边界身份显示：wire 的 entity_id 是数值（ADR 0041），显示前经目录表译回公司代码串。
-  const scope = "Standalone" in financials.scope ? `单体 · ${codeOfCompany(financials.scope.Standalone.entity_id)}` : `合并 · 根公司 ${codeOfCompany(financials.scope.Consolidated.root_entity_id)}`;
+  const scopeCode = catalogResolver.reportScopeCode(report.company_id, financials.scope);
+  const scope = "Standalone" in financials.scope ? `单体 · ${scopeCode}` : `合并 · 根公司 ${scopeCode}`;
   return (
     <section className="company-notes" aria-labelledby="company-notes-title">
       <h4 id="company-notes-title">报表附注与口径</h4>

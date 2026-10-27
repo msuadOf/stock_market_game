@@ -22,6 +22,7 @@ pub mod capabilities;
 pub mod config;
 mod contracts;
 mod correction;
+pub(crate) use correction::PreparedSimpleDisclosureCorrection;
 mod counterparty;
 pub mod customer_finance;
 mod defaults;
@@ -360,3 +361,6 @@ impl CompanyRegistry {
         self.companies.iter()
     }
 }
+
+#[cfg(test)]
+pub(crate) mod source_probe;

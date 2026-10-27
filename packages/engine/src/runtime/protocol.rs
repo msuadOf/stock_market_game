@@ -513,6 +513,12 @@ pub struct AdminTransactionId(pub(crate) u64);
 /// 已由上层确定合法到账时点的数值操作，金额为分、数量为股。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AdminOperation {
+    /// 配股缴款只扣本人raw可用现金，金额为分。
+    PaymentDebit { local: LocalIdx, stock: StockIdx, amount: i64 },
+    /// 配股失败仅退回实缴本金，金额为分。
+    SubscriptionRefund { local: LocalIdx, stock: StockIdx, amount: i64 },
+    /// 新股按实缴总额增加成本，不重复扣款或增加买入冻结。
+    SharesWithCost { local: LocalIdx, stock: StockIdx, qty: u32, subscription_cost: i64 },
     CashDividend {
         local: LocalIdx,
         stock: StockIdx,
@@ -538,7 +544,10 @@ pub enum AdminOperation {
 impl AdminOperation {
     pub(crate) fn coordinates(self) -> (LocalIdx, StockIdx) {
         match self {
-            Self::CashDividend { local, stock, .. }
+            Self::PaymentDebit { local, stock, .. }
+            | Self::SubscriptionRefund { local, stock, .. }
+            | Self::SharesWithCost { local, stock, .. }
+            | Self::CashDividend { local, stock, .. }
             | Self::ShareSplit { local, stock, .. }
             | Self::WithholdingTax { local, stock, .. }
             | Self::ShareReduction { local, stock, .. } => (local, stock),
@@ -1261,6 +1270,9 @@ impl std::fmt::Debug for UpMsg {
 /// apply_deferred 后构建——含清仓经历行）；报告不再携带分片。
 #[derive(Clone, Debug, PartialEq)]
 pub struct GroupReport {
+    /// 仅本轮真实 observe 产生的增量；不含 Echo 派生或旧 trace。
+    #[cfg(feature = "simulation-diagnostics")]
+    pub decision_traces: Vec<super::diagnostics::GroupDecisionTrace>,
     /// 组索引。
     pub group: GroupIdx,
     /// tick 编号。

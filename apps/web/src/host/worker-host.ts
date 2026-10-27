@@ -1,3 +1,4 @@
+import type { CatalogResolver } from "./catalog-resolver.ts";
 import type {
   PublicReportPage,
   PublicReportQuery,
@@ -6,7 +7,7 @@ import type {
   StockCode,
   HistoricalStockData,
 } from "../types/engine.ts";
-import { wireIntentOf, type CodedSnapshot } from "./protocol/stock-identity.ts";
+import { wireIntentOf } from "./protocol/stock-identity.ts";
 import type { PausePreferences } from "../types/generated/PausePreferences.ts";
 import { parseSaveSlot } from "../save/save-schema.ts";
 import type { EngineHost, IndicatorCapabilities, SpeedMetrics } from "./engine-host.ts";
@@ -18,8 +19,7 @@ import { normalizeCurrentMinuteHistoryRequest, normalizeCurrentMinuteHistoryResp
 import { normalizeMarketHistoryRequest, normalizeMarketHistoryPage, wireMarketHistoryRequest } from "./market-history.ts";
 import { normalizePersonalTradeHistoryRequest, normalizePersonalTradeHistoryPage, wirePersonalTradeHistoryRequest } from "./personal-trade-history.ts";
 import { normalizeConfirmationCursor, normalizeIntradayAverageCurveInput, normalizeIntradayAverageCurveResult, normalizeIntradayAverageInput, normalizeIntradayAverageResult, normalizePersonalTradeConfirmations } from "./intraday-average.ts";
-import { createBaselineUpdate, createProtocolUpdate, type HostFailure, type HostUpdate, UI_TARGET_HZ } from "./host-update.ts";
-import { parseProtocolSnapshot } from "./protocol/index.ts";
+import { prepareBaselineUpdate, createProtocolUpdate, type HostFailure, type HostUpdate, UI_TARGET_HZ } from "./host-update.ts";
 import { parseIsoDate } from "./protocol/wire-values.ts";
 import { normalizePublicReportById, normalizePublicReportPage } from "./serde-normalize.ts";
 import { assertValidSpeedMultiplier, parseSpeedMetrics } from "./speed.ts";
@@ -70,14 +70,14 @@ export async function readWorkerSpeedMetrics(requests: WorkerRequestScope, reque
   return parseSpeedMetrics(response.metrics);
 }
 
-export async function readWorkerPlayerWorkingOrders(requests: WorkerRequestScope, requestId: number, currentGeneration: number): Promise<readonly PlayerWorkingOrder[]> {
+export async function readWorkerPlayerWorkingOrders(requests: WorkerRequestScope, requestId: number, currentGeneration: number, identity: CatalogResolver): Promise<readonly PlayerWorkingOrder[]> {
   const response = await requests.request({ type: "playerWorkingOrders", requestId, generation: currentGeneration }, "playerWorkingOrders");
-  return normalizePlayerWorkingOrders(response.orders);
+  return normalizePlayerWorkingOrders(response.orders, identity);
 }
 
-export async function readWorkerStockHistory(requests: WorkerRequestScope, requestId: number, currentGeneration: number, code: StockCode): Promise<HistoricalStockData> {
-  const response = await requests.request({ type: "stockHistory", requestId, generation: currentGeneration, code }, "stockHistory");
-  return parseHistoricalStockData(response.data, code);
+export async function readWorkerStockHistory(requests: WorkerRequestScope, requestId: number, currentGeneration: number, code: StockCode, identity: CatalogResolver): Promise<HistoricalStockData> {
+  const response = await requests.request({ type: "stockHistory", requestId, generation: currentGeneration, code: identity.stockId(code) }, "stockHistory");
+  return parseHistoricalStockData(response.data, code, identity);
 }
 
 export async function requestWorkerIndicators(requests: WorkerRequestScope, requestId: number, currentGeneration: number, input: IndicatorInput): Promise<IndicatorResults> {
@@ -88,27 +88,27 @@ export async function requestWorkerIndicators(requests: WorkerRequestScope, requ
 
 /** W3 查询面传输：主线程 → Worker → wasm FFI；请求在 worker 内完成
  *  code→StockId 数值化（`wire*Request`，ADR-0041），响应经归一层译回视图词表。 */
-export async function requestWorkerMarketHistory(requests: WorkerRequestScope, requestId: number, currentGeneration: number, request: MarketHistoryRequest): Promise<MarketHistoryPage> {
+export async function requestWorkerMarketHistory(requests: WorkerRequestScope, requestId: number, currentGeneration: number, request: MarketHistoryRequest, identity: CatalogResolver): Promise<MarketHistoryPage> {
   const normalized = normalizeMarketHistoryRequest(request);
-  const response = await requests.request({ type: "marketHistory", requestId, generation: currentGeneration, query: wireMarketHistoryRequest(normalized) }, "marketHistory");
-  return normalizeMarketHistoryPage(response.page, normalized);
+  const response = await requests.request({ type: "marketHistory", requestId, generation: currentGeneration, query: wireMarketHistoryRequest(normalized, identity) }, "marketHistory");
+  return normalizeMarketHistoryPage(response.page, normalized, identity);
 }
 
-export async function requestWorkerCurrentMinuteHistory(requests: WorkerRequestScope, requestId: number, currentGeneration: number, request: CurrentMinuteHistoryRequest): Promise<CurrentMinuteHistoryResponse> {
+export async function requestWorkerCurrentMinuteHistory(requests: WorkerRequestScope, requestId: number, currentGeneration: number, request: CurrentMinuteHistoryRequest, identity: CatalogResolver): Promise<CurrentMinuteHistoryResponse> {
   const normalized = normalizeCurrentMinuteHistoryRequest(request);
-  const response = await requests.request({ type: "currentMinuteHistory", requestId, generation: currentGeneration, query: wireCurrentMinuteHistoryRequest(normalized) }, "currentMinuteHistory");
-  return normalizeCurrentMinuteHistoryResponse(response.response, normalized);
+  const response = await requests.request({ type: "currentMinuteHistory", requestId, generation: currentGeneration, query: wireCurrentMinuteHistoryRequest(normalized, identity) }, "currentMinuteHistory");
+  return normalizeCurrentMinuteHistoryResponse(response.response, normalized, identity);
 }
 
-export async function requestWorkerPersonalTradeHistory(requests: WorkerRequestScope, requestId: number, currentGeneration: number, request: PersonalTradeHistoryRequest): Promise<PersonalTradeHistoryPage> {
+export async function requestWorkerPersonalTradeHistory(requests: WorkerRequestScope, requestId: number, currentGeneration: number, request: PersonalTradeHistoryRequest, identity: CatalogResolver): Promise<PersonalTradeHistoryPage> {
   const normalized = normalizePersonalTradeHistoryRequest(request);
-  const response = await requests.request({ type: "personalTradeHistory", requestId, generation: currentGeneration, query: wirePersonalTradeHistoryRequest(normalized) }, "personalTradeHistory");
-  return normalizePersonalTradeHistoryPage(response.page, normalized);
+  const response = await requests.request({ type: "personalTradeHistory", requestId, generation: currentGeneration, query: wirePersonalTradeHistoryRequest(normalized, identity) }, "personalTradeHistory");
+  return normalizePersonalTradeHistoryPage(response.page, normalized, identity);
 }
 
-export async function requestWorkerPersonalTradeConfirmations(requests: WorkerRequestScope, requestId: number, currentGeneration: number, beforeReceipt: string | null = null): Promise<readonly PersonalTradeConfirmation[]> {
+export async function requestWorkerPersonalTradeConfirmations(requests: WorkerRequestScope, requestId: number, currentGeneration: number, beforeReceipt: string | null = null, identity: CatalogResolver): Promise<readonly PersonalTradeConfirmation[]> {
   const response = await requests.request({ type: "personalTradeConfirmations", requestId, generation: currentGeneration, beforeReceipt: normalizeConfirmationCursor(beforeReceipt) }, "personalTradeConfirmations");
-  return normalizePersonalTradeConfirmations(response.confirmations);
+  return normalizePersonalTradeConfirmations(response.confirmations, identity);
 }
 
 export async function requestWorkerIntradayAverage(requests: WorkerRequestScope, requestId: number, currentGeneration: number, input: IntradayAverageInput): Promise<IntradayAverageResult | null> {
@@ -137,30 +137,28 @@ export async function restoreWorkerSlot(
   slot: unknown,
   requestId: number,
   currentGeneration: number,
-): Promise<{ readonly snapshot: CodedSnapshot; readonly civilDate: string; readonly nextGeneration: number }> {
+  onCommitted?: () => void,
+): Promise<Extract<HostUpdate, { type: "baseline" }> & { readonly nextGeneration: number }> {
   const response = await requests.request({
     type: "restore",
     requestId,
     generation: currentGeneration,
     slot,
   }, "restored");
+  onCommitted?.();
   const nextGeneration = generation(response.nextGeneration, "Worker restore generation");
   if (nextGeneration <= currentGeneration) {
     throw new Error(`Worker restore generation 必须大于当前 generation ${currentGeneration}，实际收到 ${nextGeneration}`);
   }
   return {
-    snapshot: parseProtocolSnapshot(response.snapshot, "Worker restored.snapshot"),
-    civilDate: parseIsoDate(response.civilDate, "Worker restored.civilDate"),
+    ...prepareBaselineUpdate(String(nextGeneration), response.snapshot, response.stockCatalog, response.companyCatalog, { civilDate: parseIsoDate(response.civilDate, "Worker restored.civilDate"), revision: null }),
     nextGeneration,
   };
 }
 
-export async function refreshWorkerBaseline(requests: WorkerRequestScope, requestId: number, currentGeneration: number): Promise<{ readonly snapshot: CodedSnapshot; readonly civilDate: string }> {
+export async function refreshWorkerBaseline(requests: WorkerRequestScope, requestId: number, currentGeneration: number): Promise<Extract<HostUpdate, { type: "baseline" }>> {
   const response = await requests.request({ type: "refreshBaseline", requestId, generation: currentGeneration }, "refreshed");
-  return {
-    snapshot: parseProtocolSnapshot(response.snapshot, "Worker refreshed.snapshot"),
-    civilDate: parseIsoDate(response.civilDate, "Worker refreshed.civilDate"),
-  };
+  return prepareBaselineUpdate(String(currentGeneration), response.snapshot, response.stockCatalog, response.companyCatalog, { civilDate: parseIsoDate(response.civilDate, "Worker refreshed.civilDate"), revision: null });
 }
 
 export function workerPausePreferenceRequest(
@@ -227,11 +225,11 @@ export function createWorkerHost(
       }
     }, 10_000);
 
-    const notifyFailure = (failure: HostFailure) => {
+    const notifyFailure = (failure: HostFailure, preserveVisibleBaseline = false) => {
       if (disposed) return;
       disposed = true;
       callback = null;
-      cachedBaseline = null;
+      if (!preserveVisibleBaseline) cachedBaseline = null;
       const reportFailure = fatalCallback;
       fatalCallback = null;
       requests.close(new Error(`${failure.code} @ ${failure.where}: ${failure.message}`));
@@ -324,10 +322,10 @@ export function createWorkerHost(
           case "baseline": {
             const nextGeneration = generation(incoming.generation, "Worker baseline generation");
             if (nextGeneration < currentGeneration) return;
-            currentGeneration = nextGeneration;
-            const next = createBaselineUpdate(String(nextGeneration), parseProtocolSnapshot(incoming.snapshot, "Worker baseline.snapshot"), {
+            const next = prepareBaselineUpdate(String(nextGeneration), incoming.snapshot, incoming.stockCatalog, incoming.companyCatalog, {
               civilDate: parseIsoDate(incoming.civilDate, "Worker baseline.civilDate"), revision: null,
             });
+            currentGeneration = nextGeneration;
             if (deliveredGeneration === next.generation) return;
             baselineEpoch += 1;
             cachedBaseline = next;
@@ -454,7 +452,7 @@ export function createWorkerHost(
           if (cachedBaseline === null) throw new Error("Worker 基线尚未就绪，不能查询玩家活动委托");
           const queryGeneration = currentGeneration;
           const queryEpoch = baselineEpoch;
-          const orders = await readWorkerPlayerWorkingOrders(requests, requests.nextRequestId(), queryGeneration);
+          const orders = await readWorkerPlayerWorkingOrders(requests, requests.nextRequestId(), queryGeneration, (() => { if (cachedBaseline === null) throw new Error("Worker 活动委托需要 baseline"); return cachedBaseline.catalogResolver; })());
           if (currentGeneration !== queryGeneration || baselineEpoch !== queryEpoch) throw new Error("Worker 玩家活动委托响应属于已过期会话 generation");
           return orders;
         },
@@ -462,7 +460,7 @@ export function createWorkerHost(
           if (cachedBaseline === null) throw new Error("Worker 基线尚未就绪，不能查询股票历史");
           const queryGeneration = currentGeneration;
           const queryEpoch = baselineEpoch;
-          const data = await readWorkerStockHistory(requests, requests.nextRequestId(), queryGeneration, code);
+          const data = await readWorkerStockHistory(requests, requests.nextRequestId(), queryGeneration, code, cachedBaseline.catalogResolver);
           if (currentGeneration !== queryGeneration || baselineEpoch !== queryEpoch) throw new Error("Worker 股票历史响应属于已过期会话 generation");
           return data;
         },
@@ -472,13 +470,18 @@ export function createWorkerHost(
           const queryEpoch = baselineEpoch;
           const response = await requests.request({ type: "initialAllocation", requestId: requests.nextRequestId(), generation: queryGeneration }, "initialAllocation");
           if (disposed || currentGeneration !== queryGeneration || baselineEpoch !== queryEpoch) throw new Error("Worker 初始分配响应属于已过期会话 generation");
-          return parseInitialAllocation(response.data, setup.stocks.map((stock) => stock.code));
+          return parseInitialAllocation(response.data, cachedBaseline.stockCatalog.map(stock => stock.code), cachedBaseline.catalogResolver);
         },
         async npcDecisionTrace(account: number): Promise<readonly NpcDecisionTraceRecord[]> {
           if (!npcDecisionDiagnostics) throw new Error("当前 WASM 后端未协商启用 NPC 决策诊断");
           if (!Number.isSafeInteger(account) || account < 0) throw new Error("NPC 账户 ID 必须是非负安全整数");
-          const response = await requests.request({ type: "npcDecisionTrace", requestId: requests.nextRequestId(), generation: currentGeneration, account }, "npcDecisionTrace");
-          return parseNpcDecisionTrace(response.records);
+          if (cachedBaseline === null) throw new Error("Worker NPC诊断需要baseline");
+          const identity = cachedBaseline.catalogResolver;
+          const queryGeneration = currentGeneration;
+          const queryEpoch = baselineEpoch;
+          const response = await requests.request({ type: "npcDecisionTrace", requestId: requests.nextRequestId(), generation: queryGeneration, account }, "npcDecisionTrace");
+          if (currentGeneration !== queryGeneration || baselineEpoch !== queryEpoch) throw new Error("Worker NPC诊断响应属于过期generation");
+          return parseNpcDecisionTrace(response.records, identity);
         },
         async calculateIndicators(input: IndicatorInput): Promise<IndicatorResults> {
           return requestWorkerIndicators(requests, requests.nextRequestId(), currentGeneration, input);
@@ -487,7 +490,7 @@ export function createWorkerHost(
           if (cachedBaseline === null) throw new Error("Worker 基线尚未就绪，不能查询保留历史");
           const queryGeneration = currentGeneration;
           const queryEpoch = baselineEpoch;
-          const page = await requestWorkerMarketHistory(requests, requests.nextRequestId(), queryGeneration, request);
+          const page = await requestWorkerMarketHistory(requests, requests.nextRequestId(), queryGeneration, request, cachedBaseline.catalogResolver);
           if (currentGeneration !== queryGeneration || baselineEpoch !== queryEpoch) throw new Error("Worker 保留历史响应属于已过期会话 generation");
           return page;
         },
@@ -495,7 +498,7 @@ export function createWorkerHost(
           if (cachedBaseline === null) throw new Error("Worker 基线尚未就绪，不能查询当日分钟K");
           const queryGeneration = currentGeneration;
           const queryEpoch = baselineEpoch;
-          const response = await requestWorkerCurrentMinuteHistory(requests, requests.nextRequestId(), queryGeneration, request);
+          const response = await requestWorkerCurrentMinuteHistory(requests, requests.nextRequestId(), queryGeneration, request, cachedBaseline.catalogResolver);
           if (currentGeneration !== queryGeneration || baselineEpoch !== queryEpoch) throw new Error("Worker 当日分钟K响应属于已过期会话 generation");
           return response;
         },
@@ -504,7 +507,7 @@ export function createWorkerHost(
           if (!personalTradeHistory) throw new Error("当前 WASM bindings 不支持本人交割历史查询，请重建 bindings");
           const queryGeneration = currentGeneration;
           const queryEpoch = baselineEpoch;
-          const page = await requestWorkerPersonalTradeHistory(requests, requests.nextRequestId(), queryGeneration, request);
+          const page = await requestWorkerPersonalTradeHistory(requests, requests.nextRequestId(), queryGeneration, request, cachedBaseline.catalogResolver);
           if (currentGeneration !== queryGeneration || baselineEpoch !== queryEpoch) throw new Error("Worker 本人交割历史响应属于已过期会话 generation");
           return page;
         },
@@ -513,7 +516,7 @@ export function createWorkerHost(
           if (!personalTradeHistory) throw new Error("当前 WASM bindings 不支持本人交割单查询，请重建 bindings");
           const queryGeneration = currentGeneration;
           const queryEpoch = baselineEpoch;
-          const rows = await requestWorkerPersonalTradeConfirmations(requests, requests.nextRequestId(), queryGeneration, beforeReceipt ?? null);
+          const rows = await requestWorkerPersonalTradeConfirmations(requests, requests.nextRequestId(), queryGeneration, beforeReceipt ?? null, cachedBaseline.catalogResolver);
           if (currentGeneration !== queryGeneration || baselineEpoch !== queryEpoch) throw new Error("Worker 本人交割单响应属于已过期会话 generation");
           return rows;
         },
@@ -530,10 +533,15 @@ export function createWorkerHost(
           return stepWorkerOnce(requests, requests.nextRequestId(), currentGeneration);
         },
         async submitIntent(intent) {
+          if (disposed) throw new Error("Worker会话已关闭，写请求未入队");
+          const baseline = cachedBaseline;
+          if (baseline === null) throw new Error("Worker intent需要已安装的权威baseline");
           const requestedGeneration = currentGeneration;
-          // 请求层翻译：公共 Intent 的代码串 code 译为数值 StockId 后再入队（ADR 0041）。
-          const wiredIntent = wireIntentOf(intent);
+          if (baseline.generation !== String(requestedGeneration)) throw new Error("Worker intent的baseline generation已过期");
+          // 同步捕获目录与 generation，翻译必须先于 pending、等待与发送。
+          const wiredIntent = wireIntentOf(intent, baseline.catalogResolver);
           if (serialIngress) {
+            if (requestedGeneration !== ingressGeneration) throw new Error("Worker ingress 请求属于已过期 generation");
             // 串行 substrate：ingress 桥不成立（非共享 memory 无法跨 worker 直写），
             // intent 经主通道直递 engine worker 会话队列；engine worker 内部
             // requireGeneration 校验过期代，响应后同享共享路径的过期防护。
@@ -581,7 +589,7 @@ export function createWorkerHost(
           const requestedGeneration = currentGeneration;
           const response = await refreshWorkerBaseline(requests, requests.nextRequestId(), requestedGeneration);
           if (disposed || currentGeneration !== requestedGeneration) throw new Error("Worker 基线刷新响应属于已过期会话 generation");
-          const baseline = createBaselineUpdate(String(requestedGeneration), response.snapshot, { civilDate: response.civilDate, revision: null });
+          const baseline = response;
           baselineEpoch += 1;
           cachedBaseline = baseline;
           deliverLiveBaseline(baseline);
@@ -589,11 +597,21 @@ export function createWorkerHost(
         async load(slot, onRestored) {
           const parsedSlot = parseSaveSlot(slot);
           const requestedGeneration = currentGeneration;
-          const restored = await restoreWorkerSlot(requests, parsedSlot, requests.nextRequestId(), requestedGeneration);
+          let restoreCommitted = false;
+          let restored: Awaited<ReturnType<typeof restoreWorkerSlot>>;
+          try {
+            restored = await restoreWorkerSlot(requests, parsedSlot, requests.nextRequestId(), requestedGeneration, () => { restoreCommitted = true; });
+          } catch (error) {
+            // 成功响应或新 ingress 均已表明旧 authority 不再可用；保留可见缓存但关闭真实发送通道。
+            if (restoreCommitted || ingressGeneration > requestedGeneration) {
+              notifyFailure({ code: "WASM_WORKER_RESTORE_BASELINE", where: "worker-host.load", message: error instanceof Error ? error.message : String(error), cause: error }, true);
+            }
+            throw error;
+          }
           if (disposed || currentGeneration !== requestedGeneration && currentGeneration !== restored.nextGeneration) throw new Error("Worker restore 响应属于已过期 generation");
+          const baseline = restored;
           currentGeneration = restored.nextGeneration;
           onRestored?.();
-          const baseline = createBaselineUpdate(String(restored.nextGeneration), restored.snapshot, { civilDate: restored.civilDate, revision: null });
           baselineEpoch += 1;
           cachedBaseline = baseline;
           if (callback !== null && deliveredGeneration !== baseline.generation) {

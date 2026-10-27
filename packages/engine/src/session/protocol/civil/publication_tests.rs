@@ -7,7 +7,7 @@ fn real_announcement_barrier_exposes_only_public_index_after_reconnect() {
     let mut save = session.save().unwrap();
     let company = CompanyId(0);
     let date = save.civil_clock.current_date;
-    save.company_operations
+    save.company_state.legacy_for_test_mut().0
         .apply_company_shock(
             &company,
             ActiveShock {

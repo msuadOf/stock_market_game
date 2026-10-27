@@ -266,6 +266,8 @@ pub type DayEndValidator = Box<dyn FnMut(&DayEndCandidate) -> Result<(), String>
 /// 每个已收敛 tick 的记录（测试与审计面）。
 #[derive(Clone, Debug)]
 pub struct TickRecord {
+    #[cfg(feature = "simulation-diagnostics")]
+    pub decision_traces: Vec<super::diagnostics::GroupDecisionTrace>,
     /// tick 编号。
     pub tick: u64,
     /// 实际轮数。
@@ -2143,6 +2145,8 @@ impl World {
             let mut acc_retail = Vec::new();
             #[cfg(feature = "simulation-diagnostics")]
             let mut acc_causal = Vec::new();
+            #[cfg(feature = "simulation-diagnostics")]
+            let mut acc_decision_traces = Vec::new();
             let mut acc_lifecycle = Vec::new();
             let mut acc_receipts = Vec::new();
             let mut acc_group_rejections = Vec::new();
@@ -2192,6 +2196,8 @@ impl World {
                 acc_retail.append(&mut evidence.retail);
                 #[cfg(feature = "simulation-diagnostics")]
                 acc_causal.append(&mut evidence.desk_causal);
+                #[cfg(feature = "simulation-diagnostics")]
+                acc_decision_traces.append(&mut evidence.decision_traces);
                 acc_lifecycle.extend(evidence.desk_lifecycle.iter().copied());
                 acc_receipts.extend(evidence.desk_receipts.iter().copied());
                 acc_group_rejections.extend(evidence.group_rejections.iter().copied());
@@ -2219,6 +2225,7 @@ impl World {
                     #[cfg(feature = "simulation-diagnostics")]
                     {
                         evidence.desk_causal = acc_causal;
+                        evidence.decision_traces = acc_decision_traces;
                     }
                     evidence.desk_lifecycle = acc_lifecycle;
                     evidence.desk_receipts = acc_receipts;
@@ -2620,6 +2627,8 @@ impl World {
         let group_hashes = evidence.group_hashes;
         let desk_hashes = evidence.desk_hashes;
         let record = TickRecord {
+            #[cfg(feature = "simulation-diagnostics")]
+            decision_traces: evidence.decision_traces,
             tick,
             rounds,
             group_hashes: group_hashes.clone(),

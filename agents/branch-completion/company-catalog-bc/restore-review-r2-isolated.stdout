@@ -1,0 +1,11 @@
+✔ 真实Worker已提交restore发送ingress失败fatal且不重启 (734.03288ms)
+✔ 真实Worker已提交restore发送restored失败fatal且不重启 (8.154711ms)
+✔ 真实Worker暂停旧会话的precommit恢复失败保持暂停 (7.10037ms)
+ℹ tests 3
+ℹ suites 0
+ℹ pass 3
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 989.763074

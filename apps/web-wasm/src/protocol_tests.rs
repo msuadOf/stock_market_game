@@ -720,3 +720,52 @@ fn event_name(event: &engine::Event) -> String {
         _ => "Other".into(),
     }
 }
+#[test]
+fn catalog_failure_closes_actual_shared_ingress_capability() {
+    let mut setup = fixture::civil_setup(engine::CivilDate::from_iso("2030-01-02").unwrap());
+    setup.npcs.retail_count = 0;
+    setup.npcs.inst_count = 0;
+    setup.npcs.hot_count = 0;
+    setup.history_len = 1;
+    let session = ProtocolSession::new(setup, 71).unwrap();
+    let ingress = session.shared_ingress();
+    let error = engine::session::CompanyCatalogViewError::UnknownListedStock {
+        company: engine::company::CompanyId(7),
+    };
+    let failure = finish_company_catalog(&session, Err(error)).unwrap_err();
+    assert_eq!(
+        failure.context.fault,
+        Some(engine::ValidationFault::new(3019, vec![7]))
+    );
+    assert!(ingress
+        .enqueue_player_intent(AccountId(0), ingress_cancel(1))
+        .is_err());
+}
+
+#[test]
+fn registry_baseline_catalogs_are_from_the_same_actual_session() {
+    let mut setup = fixture::civil_setup(engine::CivilDate::from_iso("2030-01-02").unwrap());
+    setup.npcs.retail_count = 0;
+    setup.npcs.inst_count = 0;
+    setup.npcs.hot_count = 0;
+    setup.history_len = 1;
+    let mut registry = SessionRegistry::default();
+    let handle = registry.create(setup, 71).unwrap();
+    registry
+        .with_session(handle, |session| {
+            let stocks = session.stock_catalog_view();
+            let companies = session.company_catalog_view().unwrap();
+            let snapshot = session.snapshot();
+            assert_eq!(stocks.len(), snapshot.markets.len());
+            assert_eq!(
+                companies
+                    .iter()
+                    .filter_map(|entry| entry.listed_stock)
+                    .collect::<Vec<_>>(),
+                stocks.iter().map(|entry| entry.id).collect::<Vec<_>>()
+            );
+            assert_eq!(stocks[0].code, "600101");
+        })
+        .unwrap();
+    registry.remove(handle).unwrap();
+}

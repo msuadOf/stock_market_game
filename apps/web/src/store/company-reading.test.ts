@@ -29,17 +29,17 @@ test("每家公司分别保存报告、报表和金额显示，局部操作不�
   let state = companyReducer(fixture(), readingAction(companyId, { selectedReportId: "8", selectedStatementId: "income", exactAmountsVisible: true }));
   state = companyReducer(state, readingAction(otherCompanyId, { selectedReportId: "7", selectedStatementId: "cash-flow" }));
   state = companyReducer(state, readingAction(companyId, { selectedStatementId: "equity" }));
-  assert.deepEqual(Reflect.get(state, "readingByCompany"), {
+  assert.deepEqual(Reflect.get(state, "readingByCompany"), Object.assign(Object.create(null), {
     [companyId]: { selectedReportId: "8", selectedStatementId: "equity", exactAmountsVisible: true },
     [otherCompanyId]: { selectedReportId: "7", selectedStatementId: "cash-flow", exactAmountsVisible: false },
-  });
+  }));
 });
 
 test("新 baseline 清空阅读状态，旧 generation 的界面操作不能写入新会话", () => {
   let state = companyReducer(fixture(), readingAction(companyId, { selectedReportId: "8", selectedStatementId: "income", exactAmountsVisible: true }));
   state = companyReducer(state, installCompanyBaseline({ generation: 2, civilDate: "2031-02-03", revision: "2", seq: 0 }));
   state = companyReducer(state, readingAction(companyId, { selectedReportId: "8" }));
-  assert.deepEqual(Reflect.get(state, "readingByCompany"), {});
+  assert.deepEqual(Reflect.get(state, "readingByCompany"), Object.create(null));
 });
 
 test("公开报告 loading 和 error 不清除阅读位置", () => {

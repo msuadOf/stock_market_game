@@ -1,0 +1,33 @@
+{
+  "command": [
+    "node",
+    "../../scripts/run-with-deadline.mjs",
+    "10000",
+    "--",
+    "node",
+    "node_modules/typescript/bin/tsc",
+    "-p",
+    "tsconfig.app.json",
+    "--noEmit",
+    "--pretty",
+    "false"
+  ],
+  "cwd": "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web",
+  "started_utc": "2026-10-26T16:22:37Z",
+  "elapsed_seconds": 8.057947837980464,
+  "exit_code": 0,
+  "source_manifest_sha256": "e72e8535a181b8b760ef073d5cdc425917d4beb76c4fc5500c38d4d55a4d89c8",
+  "source_unchanged": true,
+  "node": "v25.8.2",
+  "typescript": "Version 6.0.3",
+  "dependencies": "复用已有 node_modules 软链接，未执行 clean install",
+  "parallelism": "tsc 单个 project 无 worker 参数；独立 App 三版本 lint 与本命令并行",
+  "typescript_binary": {
+    "path": "/data1/baiyifan/workplace/stock_market_game/node_modules/.pnpm/typescript@6.0.3/node_modules/typescript/lib/tsc.js",
+    "sha256": "2cffde0b8c6760dfb0b5b0382bbb7e00ba6a8b2d981b9205b256a700a481d983"
+  },
+  "supervisor": {
+    "path": "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/scripts/run-with-deadline.mjs",
+    "sha256": "3f391c87ab5032c3c9acfea70a131a8d1694c0f94a27d1e3f69c1b43412f3233"
+  }
+}

@@ -1,0 +1,21 @@
+✔ 真实Rust完整generated-company-state-registry.json对象/raw解析无损，只有一个公司权威tag (38.001489ms)
+✔ 真实Rust完整manual-company-state-registry.json对象/raw解析无损，只有一个公司权威tag (15.933039ms)
+✔ 真实Rust完整legacy-company-state.json对象/raw解析无损，只有一个公司权威tag (96.598133ms)
+✔ required单tag拒绝旧双源根字段、缺失/null/双tag/未知tag (60.846711ms)
+✔ setup模式与selected公司tag必须一致，不迁移旧源 (30.559329ms)
+✔ 真实REG SettlementDayMarket.binding五字段required且unknown逐层拒绝 (34.078433ms)
+✔ 公司状态全部真实非空结构拒绝未知字段，nullable必填不被默认掩盖 (496.225765ms)
+✔ rawJSON在覆盖前拒绝重复tag、转义后同键与REG binding重复键 (26.945543ms)
+✔ canonical整数字符串拒绝前导零/负零与unsafe裸数，保真实单位 (16.884987ms)
+✔ 真实非空SimpleGenerated报告generated-custom-monthly-nonempty.json对象/raw与来源频率无损 (1137.399256ms)
+✔ 真实非空SimpleGenerated报告manual-custom-monthly-nonempty.json对象/raw与来源频率无损 (1007.668448ms)
+✔ 真实非空SimpleGenerated报告generated-quarterly-nonempty.json对象/raw与来源频率无损 (179.891905ms)
+✔ 真实非空SimpleGenerated报告manual-quarterly-nonempty.json对象/raw与来源频率无损 (177.04171ms)
+ℹ tests 13
+ℹ suites 0
+ℹ pass 13
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 3538.564746

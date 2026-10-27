@@ -1,0 +1,27 @@
+✖ GroupStructure的CompanyId为独立u32，两个真实母子持股结构无损 (1.092989ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 119.36669
+
+✖ failing tests:
+
+test at apps/web/src/save/schema/company/groups.test.ts:5:1
+✖ GroupStructure的CompanyId为独立u32，两个真实母子持股结构无损 (1.092989ms)
+  Error [SaveSchemaError]: 存档 groups[0].root 必须是字符串
+      at string (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/primitives.ts:82:40)
+      at companyId (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/groups.ts:6:18)
+      at file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/groups.ts:17:18
+      at Array.map (<anonymous>)
+      at parseGroups (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/groups.ts:13:29)
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/groups.test.ts:7:19)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at Test.start (node:internal/test_runner/test:1191:17)
+      at startSubtestAfterBootstrap (node:internal/test_runner/harness:385:17) {
+    path: 'groups[0].root'
+  }

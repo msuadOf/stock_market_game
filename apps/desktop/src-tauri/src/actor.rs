@@ -32,6 +32,7 @@ use tokio::sync::{mpsc, oneshot};
 
 use crate::EngineEventPayload;
 mod failure;
+pub(crate) use failure::HostFailure;
 #[cfg(test)]
 mod fatal_tests;
 #[cfg(test)]
@@ -65,6 +66,8 @@ pub struct SpeedMetrics {
 #[derive(Debug, Clone, Serialize)]
 pub struct RestoreResult {
     pub snapshot: Snapshot,
+    pub stock_catalog: Vec<engine::session::StockIdentityEntry>,
+    pub company_catalog: Vec<engine::session::CompanyCatalogEntry>,
     pub civil_date: CivilDate,
     pub timeline_id: String,
     pub generation: String,
@@ -268,7 +271,7 @@ pub enum SessionCommand {
     },
     QueryBaseline {
         generation: u64,
-        reply: oneshot::Sender<Result<RestoreResult, SessionError>>,
+        reply: oneshot::Sender<Result<RestoreResult, BaselineError>>,
     },
     /// 取不含 360 日历史的轻量运行快照，供高倍率跨日同步。
     RuntimeSnapshot { reply: oneshot::Sender<Snapshot> },
@@ -307,7 +310,7 @@ pub enum SessionCommand {
     Restore {
         generation: u64,
         slot: Box<SaveSlot>,
-        reply: oneshot::Sender<Result<RestoreResult, SessionError>>,
+        reply: oneshot::Sender<Result<RestoreResult, BaselineError>>,
     },
     #[cfg(feature = "host-parity")]
     AdvanceCivilDay {
@@ -441,7 +444,10 @@ impl SessionHandles {
             .map_err(|error| SendCommandError::Rejected(error.to_string()))
     }
 
-    pub async fn query_baseline(&self, generation: u64) -> Result<RestoreResult, SendCommandError> {
+    pub async fn query_baseline(
+        &self,
+        generation: u64,
+    ) -> Result<RestoreResult, BaselineRequestError> {
         let (tx, rx) = oneshot::channel();
         self.cmd_tx
             .send(SessionCommand::QueryBaseline {
@@ -451,7 +457,7 @@ impl SessionHandles {
             .map_err(|_| SendCommandError::ActorGone)?;
         rx.await
             .map_err(|_| SendCommandError::ActorGone)?
-            .map_err(|error| SendCommandError::Rejected(error.to_string()))
+            .map_err(BaselineRequestError::Baseline)
     }
 
     /// 取轻量运行快照，避免跨日反复复制全部历史 K 线。
@@ -565,7 +571,7 @@ impl SessionHandles {
         &self,
         generation: u64,
         slot: SaveSlot,
-    ) -> Result<RestoreResult, SendCommandError> {
+    ) -> Result<RestoreResult, BaselineRequestError> {
         let (tx, rx) = oneshot::channel();
         self.cmd_tx
             .send(SessionCommand::Restore {
@@ -576,7 +582,7 @@ impl SessionHandles {
             .map_err(|_| SendCommandError::ActorGone)?;
         rx.await
             .map_err(|_| SendCommandError::ActorGone)?
-            .map_err(|error| SendCommandError::Rejected(error.to_string()))
+            .map_err(BaselineRequestError::Baseline)
     }
 
     #[cfg(feature = "host-parity")]
@@ -651,6 +657,22 @@ impl SessionHandles {
 }
 
 /// 命令投递失败（actor 已退出 / engine 拒绝意图）。显式可见，不静默吞。
+#[derive(Debug, thiserror::Error)]
+pub enum BaselineError {
+    #[error(transparent)]
+    Session(#[from] SessionError),
+    #[error("公开公司身份目录构造失败")]
+    Catalog(#[from] engine::session::CompanyCatalogViewError),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum BaselineRequestError {
+    #[error(transparent)]
+    Command(#[from] SendCommandError),
+    #[error(transparent)]
+    Baseline(#[from] BaselineError),
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum SendCommandError {
     /// actor task 已退出（session 被 drop 或 panic）。
@@ -1060,22 +1082,12 @@ impl<R: Runtime> SessionActor<R> {
                 let _ = reply.send(result);
             }
             SessionCommand::QueryBaseline { generation, reply } => {
-                let result = if generation != self.generation {
-                    Err(SessionError::InvalidSave(
-                        engine::error::ValidationFault::new(
-                            1310,
-                            vec![generation, self.generation],
-                        ),
-                    ))
-                } else {
-                    self.game.prepare_public_baseline();
-                    Ok(RestoreResult {
-                        snapshot: self.game.snapshot(),
-                        civil_date: self.game.civil_date(),
-                        timeline_id: self.timeline_id.clone(),
-                        generation: self.generation.to_string(),
-                    })
-                };
+                let result = self
+                    .generation_response(generation, Ok(()))
+                    .map_err(BaselineError::Session)
+                    .and_then(|_| {
+                        self.baseline_candidate("query_baseline", "desktop.actor.query_baseline")
+                    });
                 let _ = reply.send(result);
             }
             SessionCommand::RuntimeSnapshot { reply } => {
@@ -1243,7 +1255,7 @@ impl<R: Runtime> SessionActor<R> {
         &mut self,
         generation: u64,
         slot: Box<SaveSlot>,
-    ) -> Result<RestoreResult, SessionError> {
+    ) -> Result<RestoreResult, BaselineError> {
         self.generation_response(generation, Ok(()))?;
         let restored = ProtocolSession::restore(&slot)?;
         let next_generation = self.generation.checked_add(1).ok_or_else(|| {
@@ -1263,8 +1275,41 @@ impl<R: Runtime> SessionActor<R> {
         self.timeline_id = uuid::Uuid::new_v4().to_string();
         self.generation = next_generation;
         self.pacing.reset_after_restore(self.game.tick());
+        self.baseline_candidate("restore", "desktop.actor.restore")
+    }
+
+    fn baseline_candidate(
+        &mut self,
+        operation: &'static str,
+        location: &'static str,
+    ) -> Result<RestoreResult, BaselineError> {
+        let catalog = self.game.company_catalog_view();
+        self.finish_catalog_baseline(catalog, operation, location)
+    }
+
+    fn finish_catalog_baseline(
+        &mut self,
+        catalog: Result<
+            Vec<engine::session::CompanyCatalogEntry>,
+            engine::session::CompanyCatalogViewError,
+        >,
+        operation: &'static str,
+        location: &'static str,
+    ) -> Result<RestoreResult, BaselineError> {
+        let company_catalog = match catalog {
+            Ok(catalog) => catalog,
+            Err(error) => {
+                self.stop_after_host_failure(failure::HostFailure::catalog(
+                    &error, operation, location,
+                ));
+                return Err(BaselineError::Catalog(error));
+            }
+        };
+        self.game.prepare_public_baseline();
         Ok(RestoreResult {
             snapshot: self.game.snapshot(),
+            stock_catalog: self.game.stock_catalog_view(),
+            company_catalog,
             civil_date: self.game.civil_date(),
             timeline_id: self.timeline_id.clone(),
             generation: self.generation.to_string(),

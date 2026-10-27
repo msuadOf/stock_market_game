@@ -1,3 +1,4 @@
+import type { CatalogResolver } from "../catalog-resolver.ts";
 /**
  * 股票身份摄入翻译层（ADR 0041）。
  *
@@ -8,10 +9,9 @@
  *
  * 翻译顺序契约：事件/事实必须先以原始数值形态通过 `validate.ts` 的
  * 稳定键与事件映射按数值比对（引擎不再生成 canonical payload 签名串），随后才能翻译；
- * 快照与 runtime delta 不含引擎签名串，可边解析边翻译。反向（请求层）翻译见
- * `wireIntentOf` 与 `config/stock-ids.ts` 的 `stockIdOf`。
+ * 快照与 runtime delta 不含引擎签名串，可边解析边翻译。反向（请求层）翻译由 `wireIntentOf` 显式消费该代实际目录。
  */
-import { codeOfStock, stockIdOf } from "../../config/stock-ids.ts";
+import { codeOfStock } from "../../config/stock-ids.ts";
 import { canonicalJson } from "./canonical.ts";
 import type { AccountId } from "../../types/generated/AccountId.ts";
 import type { AuctionPoint } from "../../types/generated/AuctionPoint.ts";
@@ -286,13 +286,20 @@ export function stockCodeOf(id: number, path: string): string {
   }
 }
 
+/** 翻译后事实的稳定身份：与 canonical.factIdentity 相同口径（稳定键 canonical JSON）。
+ * CodedEventStableKey 的实体已译为代码串，canonicalJson 按值序列化，Coded 形态内部排序/去重自洽。 */
+export function codedFactIdentity(fact: CodedEventFact): string {
+  return canonicalJson(fact.key);
+}
+
+function stockTranslator(identity: Pick<CatalogResolver, "stockCode">) {
 function codedStockKeys<T>(source: Readonly<Record<string, T>>, path: string): Record<string, T>;
 function codedStockKeys<T, U>(source: Readonly<Record<string, T>>, path: string, transform: (value: T, valuePath: string) => U): Record<string, U>;
 function codedStockKeys<T, U>(source: Readonly<Record<string, T>>, path: string, transform?: (value: T, valuePath: string) => U): Record<string, U> {
   const translated: Record<string, U> = Object.create(null);
   for (const [key, value] of Object.entries(source)) {
     if (!/^(0|[1-9]\d*)$/.test(key)) identityError(path, `${path} 键 ${key} 不是数值 StockId 的字符串形态`);
-    const code = stockCodeOf(Number(key), path);
+    const code = identity.stockCode(Number(key), path);
     // 无 transform 的重载保证 U === T，此处即恒等填充；实现签名无法表达该约束，故经 unknown 断言。
     translated[code] = transform === undefined ? value as unknown as U : transform(value, `${path}.${code}`);
   }
@@ -301,7 +308,7 @@ function codedStockKeys<T, U>(source: Readonly<Record<string, T>>, path: string,
 
 function codedEntity(entity: EntityTag, path: string): CodedEntityTag {
   if (entity === "Session") return "Session";
-  if ("Stock" in entity) return { Stock: stockCodeOf(entity.Stock, `${path}.Stock`) };
+  if ("Stock" in entity) return { Stock: identity.stockCode(entity.Stock, `${path}.Stock`) };
   return { Account: entity.Account };
 }
 
@@ -310,20 +317,20 @@ function codedStableKey(key: EventStableKey, path: string): CodedEventStableKey 
 }
 
 function codedEvent(event: WireEvent, path: string): CodedEvent {
-  if ("Trade" in event) return { Trade: { ...event.Trade, code: stockCodeOf(event.Trade.code, `${path}.Trade.code`) } };
-  if ("AuctionTick" in event) return { AuctionTick: { ...event.AuctionTick, code: stockCodeOf(event.AuctionTick.code, `${path}.AuctionTick.code`) } };
-  if ("AuctionCompleted" in event) return { AuctionCompleted: { ...event.AuctionCompleted, code: stockCodeOf(event.AuctionCompleted.code, `${path}.AuctionCompleted.code`) } };
-  if ("PriceTick" in event) return { PriceTick: { ...event.PriceTick, code: stockCodeOf(event.PriceTick.code, `${path}.PriceTick.code`) } };
+  if ("Trade" in event) return { Trade: { ...event.Trade, code: identity.stockCode(event.Trade.code, `${path}.Trade.code`) } };
+  if ("AuctionTick" in event) return { AuctionTick: { ...event.AuctionTick, code: identity.stockCode(event.AuctionTick.code, `${path}.AuctionTick.code`) } };
+  if ("AuctionCompleted" in event) return { AuctionCompleted: { ...event.AuctionCompleted, code: identity.stockCode(event.AuctionCompleted.code, `${path}.AuctionCompleted.code`) } };
+  if ("PriceTick" in event) return { PriceTick: { ...event.PriceTick, code: identity.stockCode(event.PriceTick.code, `${path}.PriceTick.code`) } };
   if ("DayBoundary" in event) {
     return { DayBoundary: { ...event.DayBoundary, closed_daily_candles: codedStockKeys(event.DayBoundary.closed_daily_candles, `${path}.DayBoundary.closed_daily_candles`) } };
   }
   if ("CivilDateAdvanced" in event) return { CivilDateAdvanced: { ...event.CivilDateAdvanced } };
   // CompanyId 在 wire 是数值；UI 的现有公司键只在此边界格式化为十进制，不冒充 StockCode。
   if ("CompanyDisclosurePublished" in event) return { CompanyDisclosurePublished: { ...event.CompanyDisclosurePublished, company: String(event.CompanyDisclosurePublished.company) } };
-  if ("IntentRejected" in event) return { IntentRejected: { ...event.IntentRejected, code: stockCodeOf(event.IntentRejected.code, `${path}.IntentRejected.code`) } };
-  if ("SettlementError" in event) return { SettlementError: { ...event.SettlementError, code: stockCodeOf(event.SettlementError.code, `${path}.SettlementError.code`) } };
-  if ("OrderCanceled" in event) return { OrderCanceled: { ...event.OrderCanceled, code: stockCodeOf(event.OrderCanceled.code, `${path}.OrderCanceled.code`) } };
-  if ("OrderAccepted" in event) return { OrderAccepted: { ...event.OrderAccepted, code: stockCodeOf(event.OrderAccepted.code, `${path}.OrderAccepted.code`) } };
+  if ("IntentRejected" in event) return { IntentRejected: { ...event.IntentRejected, code: identity.stockCode(event.IntentRejected.code, `${path}.IntentRejected.code`) } };
+  if ("SettlementError" in event) return { SettlementError: { ...event.SettlementError, code: identity.stockCode(event.SettlementError.code, `${path}.SettlementError.code`) } };
+  if ("OrderCanceled" in event) return { OrderCanceled: { ...event.OrderCanceled, code: identity.stockCode(event.OrderCanceled.code, `${path}.OrderCanceled.code`) } };
+  if ("OrderAccepted" in event) return { OrderAccepted: { ...event.OrderAccepted, code: identity.stockCode(event.OrderAccepted.code, `${path}.OrderAccepted.code`) } };
   return identityError(path, `${path} 包含未处理事件变体：${String(event)}`);
 }
 
@@ -332,12 +339,6 @@ function codedFact(fact: WireEventFact, path: string): CodedEventFact {
     key: codedStableKey(fact.key, `${path}.key`),
     event: codedEvent(fact.event, `${path}.event`),
   };
-}
-
-/** 翻译后事实的稳定身份：与 canonical.factIdentity 相同口径（稳定键 canonical JSON）。
- * CodedEventStableKey 的实体已译为代码串，canonicalJson 按值序列化，Coded 形态内部排序/去重自洽。 */
-export function codedFactIdentity(fact: CodedEventFact): string {
-  return canonicalJson(fact.key);
 }
 
 function codedAccount(account: WireAccountSnap, path: string): CodedAccountSnap {
@@ -350,7 +351,7 @@ function codedAccount(account: WireAccountSnap, path: string): CodedAccountSnap 
 }
 
 /** 快照摄入翻译：markets/daily_candles/active_daily_candles/positions 等键全部译为代码串。 */
-export function translateSnapshot(snapshot: WireSnapshot, path: string): CodedSnapshot {
+function translateSnapshot(snapshot: WireSnapshot, path: string): CodedSnapshot {
   const accounts: Record<string, CodedAccountSnap> = Object.create(null);
   for (const [accountId, account] of Object.entries(snapshot.accounts)) {
     accounts[accountId] = codedAccount(account, `${path}.accounts.${accountId}`);
@@ -389,7 +390,7 @@ function codedFrame(frame: WireTickFrame, path: string): CodedTickFrame {
 }
 
 /** runtime 增量摄入翻译：账户持仓键与活动委托 code 译为代码串。 */
-export function translateRuntimeDelta(delta: WireRuntimeDelta, path: string): CodedRuntimeDelta {
+function translateRuntimeDelta(delta: WireRuntimeDelta, path: string): CodedRuntimeDelta {
   const accounts: Record<string, CodedAccountSnap> = Object.create(null);
   for (const [accountId, account] of Object.entries(delta.accounts)) {
     accounts[accountId] = codedAccount(account, `${path}.accounts.${accountId}`);
@@ -405,7 +406,7 @@ export function translateRuntimeDelta(delta: WireRuntimeDelta, path: string): Co
       reset: delta.working_orders.reset,
       upserts: delta.working_orders.upserts.map((order, index) => ({
         ...order,
-        code: stockCodeOf(order.code, `${path}.working_orders.upserts[${index}].code`),
+        code: identity.stockCode(order.code, `${path}.working_orders.upserts[${index}].code`),
       })),
       removed: delta.working_orders.removed,
     },
@@ -413,7 +414,7 @@ export function translateRuntimeDelta(delta: WireRuntimeDelta, path: string): Co
 }
 
 /** 引擎更新摄入翻译：事件/事实/帧/快照/增量一次翻齐。 */
-export function translateEngineUpdate(update: WireEngineUpdate, path = "EngineUpdate"): CodedEngineUpdate {
+function translateEngineUpdate(update: WireEngineUpdate, path = "EngineUpdate"): CodedEngineUpdate {
   if ("TickBatch" in update) {
     const batch = update.TickBatch;
     return {
@@ -440,16 +441,31 @@ export function translateEngineUpdate(update: WireEngineUpdate, path = "EngineUp
   };
 }
 
+return { translateSnapshot, translateRuntimeDelta, translateEngineUpdate };
+}
+
+export function translateSnapshot(snapshot: WireSnapshot, path: string, identity: Pick<CatalogResolver, "stockCode">): CodedSnapshot {
+  return stockTranslator(identity).translateSnapshot(snapshot, path);
+}
+
+export function translateRuntimeDelta(delta: WireRuntimeDelta, path: string, identity: Pick<CatalogResolver, "stockCode">): CodedRuntimeDelta {
+  return stockTranslator(identity).translateRuntimeDelta(delta, path);
+}
+
+export function translateEngineUpdate(update: WireEngineUpdate, path: string, identity: Pick<CatalogResolver, "stockCode">): CodedEngineUpdate {
+  return stockTranslator(identity).translateEngineUpdate(update, path);
+}
+
 /** 请求层翻译：公共 Intent（code 代码串）→ wire Intent（code 数值 StockId）。 */
-export function wireIntentOf(intent: CodedIntent, path = "Intent"): Intent {
+export function wireIntentOf(intent: CodedIntent, identity: Pick<CatalogResolver, "stockId">, path = "Intent"): Intent {
   if ("PlaceLimit" in intent) {
-    return { PlaceLimit: { ...intent.PlaceLimit, code: stockIdOf(intent.PlaceLimit.code) } };
+    return { PlaceLimit: { ...intent.PlaceLimit, code: identity.stockId(intent.PlaceLimit.code) } };
   }
   if ("PlaceMarket" in intent) {
-    return { PlaceMarket: { ...intent.PlaceMarket, code: stockIdOf(intent.PlaceMarket.code) } };
+    return { PlaceMarket: { ...intent.PlaceMarket, code: identity.stockId(intent.PlaceMarket.code) } };
   }
   if ("Cancel" in intent) {
-    return { Cancel: { ...intent.Cancel, code: stockIdOf(intent.Cancel.code) } };
+    return { Cancel: { ...intent.Cancel, code: identity.stockId(intent.Cancel.code) } };
   }
   throw new ProtocolError("PROTOCOL_MALFORMED", path, `${path} 包含未处理意图变体：${String(intent)}`);
 }

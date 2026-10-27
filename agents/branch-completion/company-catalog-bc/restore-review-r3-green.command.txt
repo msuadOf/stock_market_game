@@ -1,0 +1,1 @@
+node scripts/run-with-deadline.mjs 10000 -- node --test --test-timeout=10000 --test-concurrency=4 apps/web/src/host/wasm-worker-ownership.test.ts apps/web/src/host/wasm-session-slot.test.ts apps/web/src/host/wasm-restart-gate.test.ts apps/web/src/host/wasm-restore-transaction.test.ts

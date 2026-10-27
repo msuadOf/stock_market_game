@@ -227,6 +227,8 @@ fn converge_round_skips_stale_seal_ack() {
     .expect("预置旧拍迟到 Ack");
     // 本轮合法收束面：1 组报告（n_stocks=0——零交易部世界）。
     tx.send(UpMsg::GroupReport(super::protocol::GroupReport {
+        #[cfg(feature = "simulation-diagnostics")]
+        decision_traces: Vec::new(),
         group: 0,
         tick: 7,
         round: 0,

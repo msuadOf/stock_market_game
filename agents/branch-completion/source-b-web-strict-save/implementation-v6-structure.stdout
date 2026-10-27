@@ -1,0 +1,31 @@
+✖ 公司状态全部真实非空结构拒绝未知字段，nullable必填不被默认掩盖 (319.601445ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 495.44554
+
+✖ failing tests:
+
+test at apps/web/src/save/schema/company/state.test.ts:31:1
+✖ 公司状态全部真实非空结构拒绝未知字段，nullable必填不被默认掩盖 (319.601445ms)
+  AssertionError [ERR_ASSERTION]: company_state.CompanySystem.system.implementation.state.companies.0.finance.closing.versions[0][3][0].roe: TypeError: company_state.CompanySystem.system.implementation.state.companies.0.finance.closing.versions[0][3][0].roe 字段不符合公共 DTO 契约
+      at Object.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/state.test.ts:36:407)
+      at expectedException (node:assert:578:17)
+      at expectsError (node:assert:703:21)
+      at strict.throws (node:assert:759:3)
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/state.test.ts:36:354)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at Test.start (node:internal/test_runner/test:1191:17)
+      at startSubtestAfterBootstrap (node:internal/test_runner/harness:385:17) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }

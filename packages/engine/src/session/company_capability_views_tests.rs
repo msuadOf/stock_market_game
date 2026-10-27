@@ -173,7 +173,7 @@ fn book(company: CompanyId, event: &str, public: bool) -> RightsOfferingBook {
 /// wrapper 测试从实际 Session 名册登记，发行人、证券、总股本与全部账户持仓一致。
 fn install(session: &mut GameSession, book: RightsOfferingBook) {
     let plan = book.plan().clone();
-    let actions = session.state.corporate_actions.as_mut().unwrap();
+    let actions = session.state.companies.corporate_actions_mut().unwrap();
     let registry = actions
         .registries
         .iter_mut()

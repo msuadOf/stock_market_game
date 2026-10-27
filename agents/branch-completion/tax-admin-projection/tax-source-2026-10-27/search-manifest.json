@@ -1,0 +1,78 @@
+[
+  {
+    "query": "红股 持股期限",
+    "url": "https://zs.kaipuyun.cn/search5/search/s",
+    "params": {
+      "siteCode": "N000000672",
+      "searchWord": "红股 持股期限",
+      "column": "全部",
+      "uc": "1",
+      "left_right_index": "0",
+      "activeStatus": "1",
+      "pageSize": "100",
+      "pageNum": "0"
+    },
+    "checked_on": "2026-10-27",
+    "status": 200,
+    "bytes": 17717,
+    "sha256": "7a889238ca4900668daf936387523c0c520e4f0e4b9abeeb4be95f174c7beb23",
+    "summary": "{'left_right_flag': '1', 'topical': '', 'pageSize': '100', 'searchUseTime': 616, 'language': 0, 'sonSiteCode': '', 'boxHeight': '', 'type': '中国结算投资者教育基地,资讯中心,法律规则,网上业务平台,服务支持', 'topicalRight': '', 'showLabel': '1', 'wordPlaceStamp': '0', 'uc': '1', 'orderByStamp': '0', 'orSearchType': '', 'dataTemplate': [], 'interactTemplates': [], 'openColumRecomd': 0, 'left_right_index': '0', 'columnsJson': '[{\"channel\":\"全部\",\"channelUrl\":\"\",\"citySearch\":0,\"id\":6623,\"indexChannel\":\"中国结算投资者教育基地,资讯中心,法律规则,网上业务平台,服务支持\",\"isDeleted\":0,\"isOpen\":0,\"lorder\":1,\"showLable\":1,\"siteCode\":\"N000000672\",\"style\":0},{\"channel\":\"资讯中心\",\"citySearch\":0,\"id\":6660,\"indexChannel\":\"资讯中心\",\"isDeleted\":0,\"isOpen\":0,\"lorder\":2,\"showLable\":1,\"siteCode\":\"N000000672\",\"style\":0},{\"channel\":\"法律规则\",\"citySearch\":0,\"id\":6659,\"indexChannel\":\"法律规则\",\"isDeleted\":0,\"isOpen\":0,\"lorder\":3,\"showLable\":1,\"siteCode\":\"N000000672\",\"style\":0},{\"channel\":\"服务支持\",\"citySearch\":0,\"id\":6661,\"indexChannel\":\"服务支持\",\"isDeleted\":0,\"isOpen\":0,\"lorder\":4,\"showLable\":1,\"siteCode\":\"N000000672\",\"style\":0},{\"channel\":\"服务表格\",\"channelUrl\":\"\",\"citySearch\":0,\"id\":6668,\"indexChannel\":\"服务支持\",\"isDeleted\":0,\"isOpen\":0,\"lorder\":5,\"showLable\":1,\"siteCode\":\"N000000672\",\"style\":0},{\"channel\":\"接口规范\",\"citySearch\":0,\"id\":9124,\"indexChannel\":\"全部\",\"isDeleted\":0,\"isOpen\":0,\"lorder\":8,\"showLable\":1,\"siteCode\":\"N000000672\",\"style\":0},{\"channel\":\"投资者教育\",\"citySearch\":0,\"id\":9919,\"indexChannel\":\"中国结算投资者教育基地\",\"isDeleted\":0,\"isOpen\":0,\"lorder\":9,\"showLable\":1,\"siteCode\":\"N00000067"
+  },
+  {
+    "query": "红股 到账 登记",
+    "url": "https://zs.kaipuyun.cn/search5/search/s",
+    "params": {
+      "siteCode": "N000000672",
+      "searchWord": "红股 到账 登记",
+      "column": "全部",
+      "uc": "1",
+      "left_right_index": "0",
+      "activeStatus": "1",
+      "pageSize": "100",
+      "pageNum": "0"
+    },
+    "checked_on": "2026-10-27",
+    "status": 200,
+    "bytes": 15019,
+    "sha256": "ef86bb4d0e74933e8bbcac21a5e971b479fcfcc6ae07c95592807b30763ec090",
+    "summary": "{'left_right_flag': '1', 'topical': '', 'pageSize': '100', 'searchUseTime': 297, 'language': 0, 'sonSiteCode': '', 'boxHeight': '', 'type': '中国结算投资者教育基地,资讯中心,法律规则,网上业务平台,服务支持', 'topicalRight': '', 'showLabel': '1', 'wordPlaceStamp': '0', 'uc': '1', 'orderByStamp': '0', 'orSearchType': '', 'dataTemplate': [], 'interactTemplates': [], 'openColumRecomd': 0, 'left_right_index': '0', 'columnsJson': '[{\"channel\":\"全部\",\"channelUrl\":\"\",\"citySearch\":0,\"id\":6623,\"indexChannel\":\"中国结算投资者教育基地,资讯中心,法律规则,网上业务平台,服务支持\",\"isDeleted\":0,\"isOpen\":0,\"lorder\":1,\"showLable\":1,\"siteCode\":\"N000000672\",\"style\":0},{\"channel\":\"资讯中心\",\"citySearch\":0,\"id\":6660,\"indexChannel\":\"资讯中心\",\"isDeleted\":0,\"isOpen\":0,\"lorder\":2,\"showLable\":1,\"siteCode\":\"N000000672\",\"style\":0},{\"channel\":\"法律规则\",\"citySearch\":0,\"id\":6659,\"indexChannel\":\"法律规则\",\"isDeleted\":0,\"isOpen\":0,\"lorder\":3,\"showLable\":1,\"siteCode\":\"N000000672\",\"style\":0},{\"channel\":\"服务支持\",\"citySearch\":0,\"id\":6661,\"indexChannel\":\"服务支持\",\"isDeleted\":0,\"isOpen\":0,\"lorder\":4,\"showLable\":1,\"siteCode\":\"N000000672\",\"style\":0},{\"channel\":\"服务表格\",\"channelUrl\":\"\",\"citySearch\":0,\"id\":6668,\"indexChannel\":\"服务支持\",\"isDeleted\":0,\"isOpen\":0,\"lorder\":5,\"showLable\":1,\"siteCode\":\"N000000672\",\"style\":0},{\"channel\":\"接口规范\",\"citySearch\":0,\"id\":9124,\"indexChannel\":\"全部\",\"isDeleted\":0,\"isOpen\":0,\"lorder\":8,\"showLable\":1,\"siteCode\":\"N000000672\",\"style\":0},{\"channel\":\"投资者教育\",\"citySearch\":0,\"id\":9919,\"indexChannel\":\"中国结算投资者教育基地\",\"isDeleted\":0,\"isOpen\":0,\"lorder\":9,\"showLable\":1,\"siteCode\":\"N00000067"
+  },
+  {
+    "query": "差别化 送股",
+    "url": "https://zs.kaipuyun.cn/search5/search/s",
+    "params": {
+      "siteCode": "N000000672",
+      "searchWord": "差别化 送股",
+      "column": "全部",
+      "uc": "1",
+      "left_right_index": "0",
+      "activeStatus": "1",
+      "pageSize": "100",
+      "pageNum": "0"
+    },
+    "checked_on": "2026-10-27",
+    "status": 200,
+    "bytes": 22889,
+    "sha256": "c5b56f0c7c9a4a91c08af4937910dc6ff783398db7c81e6f168dd9e38ba8ddf9",
+    "summary": "{'left_right_flag': '1', 'topical': '', 'pageSize': '100', 'searchUseTime': 367, 'language': 0, 'sonSiteCode': '', 'boxHeight': '', 'type': '中国结算投资者教育基地,资讯中心,法律规则,网上业务平台,服务支持', 'topicalRight': '', 'showLabel': '1', 'wordPlaceStamp': '0', 'uc': '1', 'orderByStamp': '0', 'orSearchType': '', 'dataTemplate': [], 'interactTemplates': [], 'openColumRecomd': 0, 'left_right_index': '0', 'columnsJson': '[{\"channel\":\"全部\",\"channelUrl\":\"\",\"citySearch\":0,\"id\":6623,\"indexChannel\":\"中国结算投资者教育基地,资讯中心,法律规则,网上业务平台,服务支持\",\"isDeleted\":0,\"isOpen\":0,\"lorder\":1,\"showLable\":1,\"siteCode\":\"N000000672\",\"style\":0},{\"channel\":\"资讯中心\",\"citySearch\":0,\"id\":6660,\"indexChannel\":\"资讯中心\",\"isDeleted\":0,\"isOpen\":0,\"lorder\":2,\"showLable\":1,\"siteCode\":\"N000000672\",\"style\":0},{\"channel\":\"法律规则\",\"citySearch\":0,\"id\":6659,\"indexChannel\":\"法律规则\",\"isDeleted\":0,\"isOpen\":0,\"lorder\":3,\"showLable\":1,\"siteCode\":\"N000000672\",\"style\":0},{\"channel\":\"服务支持\",\"citySearch\":0,\"id\":6661,\"indexChannel\":\"服务支持\",\"isDeleted\":0,\"isOpen\":0,\"lorder\":4,\"showLable\":1,\"siteCode\":\"N000000672\",\"style\":0},{\"channel\":\"服务表格\",\"channelUrl\":\"\",\"citySearch\":0,\"id\":6668,\"indexChannel\":\"服务支持\",\"isDeleted\":0,\"isOpen\":0,\"lorder\":5,\"showLable\":1,\"siteCode\":\"N000000672\",\"style\":0},{\"channel\":\"接口规范\",\"citySearch\":0,\"id\":9124,\"indexChannel\":\"全部\",\"isDeleted\":0,\"isOpen\":0,\"lorder\":8,\"showLable\":1,\"siteCode\":\"N000000672\",\"style\":0},{\"channel\":\"投资者教育\",\"citySearch\":0,\"id\":9919,\"indexChannel\":\"中国结算投资者教育基地\",\"isDeleted\":0,\"isOpen\":0,\"lorder\":9,\"showLable\":1,\"siteCode\":\"N00000067"
+  },
+  {
+    "query": "股份股利 登记",
+    "url": "https://zs.kaipuyun.cn/search5/search/s",
+    "params": {
+      "siteCode": "N000000672",
+      "searchWord": "股份股利 登记",
+      "column": "全部",
+      "uc": "1",
+      "left_right_index": "0",
+      "activeStatus": "1",
+      "pageSize": "100",
+      "pageNum": "0"
+    },
+    "checked_on": "2026-10-27",
+    "status": 200,
+    "bytes": 14282,
+    "sha256": "ad01e7b3579d1c53a0c4741471068a30ec08ad3c0e54f911bf43abb5ecd79239",
+    "summary": "{'left_right_flag': '1', 'topical': '', 'pageSize': '100', 'searchUseTime': 242, 'language': 0, 'sonSiteCode': '', 'boxHeight': '', 'type': '中国结算投资者教育基地,资讯中心,法律规则,网上业务平台,服务支持', 'topicalRight': '', 'showLabel': '1', 'wordPlaceStamp': '0', 'uc': '1', 'orderByStamp': '0', 'orSearchType': '', 'dataTemplate': [], 'interactTemplates': [], 'openColumRecomd': 0, 'left_right_index': '0', 'columnsJson': '[{\"channel\":\"全部\",\"channelUrl\":\"\",\"citySearch\":0,\"id\":6623,\"indexChannel\":\"中国结算投资者教育基地,资讯中心,法律规则,网上业务平台,服务支持\",\"isDeleted\":0,\"isOpen\":0,\"lorder\":1,\"showLable\":1,\"siteCode\":\"N000000672\",\"style\":0},{\"channel\":\"资讯中心\",\"citySearch\":0,\"id\":6660,\"indexChannel\":\"资讯中心\",\"isDeleted\":0,\"isOpen\":0,\"lorder\":2,\"showLable\":1,\"siteCode\":\"N000000672\",\"style\":0},{\"channel\":\"法律规则\",\"citySearch\":0,\"id\":6659,\"indexChannel\":\"法律规则\",\"isDeleted\":0,\"isOpen\":0,\"lorder\":3,\"showLable\":1,\"siteCode\":\"N000000672\",\"style\":0},{\"channel\":\"服务支持\",\"citySearch\":0,\"id\":6661,\"indexChannel\":\"服务支持\",\"isDeleted\":0,\"isOpen\":0,\"lorder\":4,\"showLable\":1,\"siteCode\":\"N000000672\",\"style\":0},{\"channel\":\"服务表格\",\"channelUrl\":\"\",\"citySearch\":0,\"id\":6668,\"indexChannel\":\"服务支持\",\"isDeleted\":0,\"isOpen\":0,\"lorder\":5,\"showLable\":1,\"siteCode\":\"N000000672\",\"style\":0},{\"channel\":\"接口规范\",\"citySearch\":0,\"id\":9124,\"indexChannel\":\"全部\",\"isDeleted\":0,\"isOpen\":0,\"lorder\":8,\"showLable\":1,\"siteCode\":\"N000000672\",\"style\":0},{\"channel\":\"投资者教育\",\"citySearch\":0,\"id\":9919,\"indexChannel\":\"中国结算投资者教育基地\",\"isDeleted\":0,\"isOpen\":0,\"lorder\":9,\"showLable\":1,\"siteCode\":\"N00000067"
+  }
+]

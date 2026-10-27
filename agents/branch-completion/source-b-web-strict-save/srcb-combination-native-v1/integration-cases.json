@@ -1,0 +1,14 @@
+{
+  "binaryTarget": "company_catalog_view",
+  "cases": [
+    "single_stock_uses_the_actual_selected_company_zero",
+    "subset_uses_local_stock_catalog_and_preserves_actual_issuer_ids",
+    "custom_registry_retains_unlisted_entities_unicode_and_special_codes",
+    "selected_simple_uses_its_only_issuer_source",
+    "selected_simple_explicitly_rejects_parallel_legacy_operations",
+    "query_is_pure_and_restore_uses_the_restored_selected_source",
+    "invalid_custom_issuer_mapping_and_duplicate_codes_are_rejected"
+  ],
+  "caseDeadlineMs": 10000,
+  "explicitlyNotActualTddRed": "只迁旧测试fixture和添加互斥合同断言，无生产更改；旧非法fixture仅静态确认会在2235构造失败"
+}

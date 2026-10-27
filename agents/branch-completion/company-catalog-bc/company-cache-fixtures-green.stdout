@@ -1,0 +1,152 @@
+✖ 公开报告刷新经过 loading 或 error 后保留仍可见的用户选择 (272.552558ms)
+✖ 公开报告真正 empty 后清除选择，重新出现报告时使用当前默认报告 (2.445924ms)
+✖ 切换公司时旧选择失效后使用新公司的可见报告 (1.29685ms)
+✖ 每家公司分别保存报告、报表和金额显示，局部操作不覆盖其他选择 (10.583871ms)
+✖ 新 baseline 清空阅读状态，旧 generation 的界面操作不能写入新会话 (1.838486ms)
+✔ 公开报告 loading 和 error 不清除阅读位置 (1.696391ms)
+✔ 无效阅读操作显式拒绝：{"selectedStatementId":"unsupported"} (1.294199ms)
+✔ 无效阅读操作显式拒绝：{"exactAmountsVisible":"true"} (0.965439ms)
+✔ 无效阅读操作显式拒绝：{"selectedReportId":"unknown"} (0.831755ms)
+✖ baseline atomically replaces old session public cache and selection (7.681963ms)
+✔ keeps report versions immutable and isolates same report id by company (2.227997ms)
+✔ models loading, failure, empty and unavailable comparison without numeric coercion (1.927869ms)
+✔ applies civil date and disclosure events without a trade while rejecting old sequence values (0.756953ms)
+✔ anchors company event ordering at the baseline sequence (0.232147ms)
+✔ does not regress public event coverage when a stale completion arrives (0.296679ms)
+ℹ tests 15
+ℹ suites 0
+ℹ pass 9
+ℹ fail 6
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 723.044135
+
+✖ failing tests:
+
+test at src/components/company/company-report-selection.test.ts:79:1
+✖ 公开报告刷新经过 loading 或 error 后保留仍可见的用户选择 (272.552558ms)
+  AssertionError [ERR_ASSERTION]: The expression evaluated to a falsy value:
+  
+    assert.ok(first)
+  
+      at selectionView (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/components/company/company-report-selection.test.ts:70:10)
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/components/company/company-report-selection.test.ts:85:18)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at src/components/company/company-report-selection.test.ts:92:1
+✖ 公开报告真正 empty 后清除选择，重新出现报告时使用当前默认报告 (2.445924ms)
+  AssertionError [ERR_ASSERTION]: The expression evaluated to a falsy value:
+  
+    assert.ok(first)
+  
+      at selectionView (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/components/company/company-report-selection.test.ts:70:10)
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/components/company/company-report-selection.test.ts:94:16)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at src/components/company/company-report-selection.test.ts:100:1
+✖ 切换公司时旧选择失效后使用新公司的可见报告 (1.29685ms)
+  AssertionError [ERR_ASSERTION]: The expression evaluated to a falsy value:
+  
+    assert.ok(first)
+  
+      at selectionView (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/components/company/company-report-selection.test.ts:70:10)
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/components/company/company-report-selection.test.ts:102:16)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at src/store/company-reading.test.ts:28:1
+✖ 每家公司分别保存报告、报表和金额显示，局部操作不覆盖其他选择 (10.583871ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+  + actual - expected
+  
+  + [Object: null prototype] {
+  - {
+      'C-002156': {
+        exactAmountsVisible: false,
+        selectedReportId: '7',
+        selectedStatementId: 'cash-flow'
+      },
+  
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/store/company-reading.test.ts:32:10)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.start (node:internal/test_runner/test:1096:17)
+      at startSubtestAfterBootstrap (node:internal/test_runner/harness:385:17) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: { 'C-600101': { selectedReportId: '8', selectedStatementId: 'equity', exactAmountsVisible: true }, 'C-002156': { selectedReportId: '7', selectedStatementId: 'cash-flow', exactAmountsVisible: false } },
+    expected: { 'C-600101': { selectedReportId: '8', selectedStatementId: 'equity', exactAmountsVisible: true }, 'C-002156': { selectedReportId: '7', selectedStatementId: 'cash-flow', exactAmountsVisible: false } },
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }
+
+test at src/store/company-reading.test.ts:38:1
+✖ 新 baseline 清空阅读状态，旧 generation 的界面操作不能写入新会话 (1.838486ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+  + actual - expected
+  
+  + [Object: null prototype] {}
+  - {}
+  
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/store/company-reading.test.ts:42:10)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: {},
+    expected: {},
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }
+
+test at src/store/company-slice.test.ts:33:1
+✖ baseline atomically replaces old session public cache and selection (7.681963ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+  + actual - expected
+  
+  + [Object: null prototype] {}
+  - {}
+  
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/store/company-slice.test.ts:37:10)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.start (node:internal/test_runner/test:1096:17)
+      at startSubtestAfterBootstrap (node:internal/test_runner/harness:385:17) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: {},
+    expected: {},
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }

@@ -1,0 +1,35 @@
+{
+  "groups": {
+    "engine": [
+      "session::company_catalog_fault::tests::listed_stock_missing_keeps_exact_company_context",
+      "session::company_catalog_view::tests::unknown_listed_stock_is_an_error_for_both_selected_sources"
+    ],
+    "server": [
+      "actor::catalog_boundary_tests::catalog_error_keeps_leaf_and_numeric_fault",
+      "actor::fatal_tests::catalog_failure_has_no_baseline_and_stops_actual_actor_ingress",
+      "actor::fatal_tests::public_baseline_catalogs_match_the_same_actor_session"
+    ],
+    "web_wasm": [
+      "catalog_boundary_tests::catalog_failure_keeps_numeric_company_context",
+      "protocol_tests::catalog_failure_closes_actual_shared_ingress_capability",
+      "protocol_tests::registry_baseline_catalogs_are_from_the_same_actual_session"
+    ],
+    "stock_market_game_lib": [
+      "actor::protocol_tests::baseline_catalogs_match_actual_desktop_session",
+      "actor::protocol_tests::baseline_error_source_chain_retains_typed_catalog_leaf",
+      "actor::protocol_tests::committed_restore_catalog_failure_keeps_generation_and_closes_desktop_actor",
+      "lib_tests::catalog_ipc_error_keeps_structured_fault_and_existing_string_shape"
+    ]
+  },
+  "cases": 12,
+  "expectedArtifacts": [
+    "engine",
+    "server",
+    "web_wasm",
+    "stock_market_game_lib"
+  ],
+  "deadlineEachMs": 10000,
+  "testThreads": 8,
+  "parallelIndependentCases": true,
+  "warning": "必须只取本批compiler-artifact且list核对存在性；不扩SRC/B4e/R4/浏览器准入"
+}

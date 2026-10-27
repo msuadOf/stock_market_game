@@ -1,0 +1,77 @@
+error[E0432]: unresolved import `num_bigint`
+   --> /tmp/tax-source-source-red-02/company/cash_dividend_tax/entitlement_units.rs:498:9
+    |
+498 |     use num_bigint::BigUint;
+    |         ^^^^^^^^^^ use of unresolved module or unlinked crate `num_bigint`
+    |
+    = help: you might be missing a crate named `num_bigint`
+
+error[E0432]: unresolved import `num_bigint`
+   --> /tmp/tax-source-source-red-02/company/cash_dividend_tax/entitlement_units.rs:527:9
+    |
+527 |     use num_bigint::BigUint;
+    |         ^^^^^^^^^^ use of unresolved module or unlinked crate `num_bigint`
+    |
+    = help: you might be missing a crate named `num_bigint`
+
+error[E0432]: unresolved import `num_bigint`
+   --> /tmp/tax-source-source-red-02/company/cash_dividend_tax/entitlement_units.rs:541:9
+    |
+541 |     use num_bigint::BigUint;
+    |         ^^^^^^^^^^ use of unresolved module or unlinked crate `num_bigint`
+    |
+    = help: you might be missing a crate named `num_bigint`
+
+error[E0432]: unresolved import `num_bigint`
+   --> /tmp/tax-source-source-red-02/company/cash_dividend_tax/entitlement_units.rs:578:9
+    |
+578 |     use num_bigint::BigUint;
+    |         ^^^^^^^^^^ use of unresolved module or unlinked crate `num_bigint`
+    |
+    = help: you might be missing a crate named `num_bigint`
+
+error[E0433]: cannot find module or crate `num_bigint` in this scope
+   --> /tmp/tax-source-source-red-02/company/cash_dividend_tax/entitlement_units.rs:508:16
+    |
+508 |     while b != num_bigint::BigUint::from(0u8) {
+    |                ^^^^^^^^^^ use of unresolved module or unlinked crate `num_bigint`
+    |
+    = help: you might be missing a crate named `num_bigint`
+
+error[E0433]: cannot find module or crate `num_bigint` in this scope
+   --> /tmp/tax-source-source-red-02/company/cash_dividend_tax/entitlement_units.rs:513:13
+    |
+513 |     if a == num_bigint::BigUint::from(0u8) {
+    |             ^^^^^^^^^^ use of unresolved module or unlinked crate `num_bigint`
+    |
+    = help: you might be missing a crate named `num_bigint`
+
+error[E0433]: cannot find module or crate `num_bigint` in this scope
+   --> /tmp/tax-source-source-red-02/company/cash_dividend_tax/entitlement_units.rs:549:17
+    |
+549 |     let mut n = num_bigint::BigUint::from(1u8);
+    |                 ^^^^^^^^^^ use of unresolved module or unlinked crate `num_bigint`
+    |
+    = help: you might be missing a crate named `num_bigint`
+
+error[E0433]: cannot find module or crate `num_bigint` in this scope
+   --> /tmp/tax-source-source-red-02/company/cash_dividend_tax/entitlement_units.rs:503:20
+    |
+503 |     mut numerator: num_bigint::BigUint,
+    |                    ^^^^^^^^^^ use of unresolved module or unlinked crate `num_bigint`
+    |
+    = help: you might be missing a crate named `num_bigint`
+
+error[E0433]: cannot find module or crate `num_bigint` in this scope
+   --> /tmp/tax-source-source-red-02/company/cash_dividend_tax/entitlement_units.rs:504:22
+    |
+504 |     mut denominator: num_bigint::BigUint,
+    |                      ^^^^^^^^^^ use of unresolved module or unlinked crate `num_bigint`
+    |
+    = help: you might be missing a crate named `num_bigint`
+
+error: aborting due to 9 previous errors
+
+Some errors have detailed explanations: E0432, E0433.
+For more information about an error, try `rustc --explain E0432`.
+bounded command exited with 1

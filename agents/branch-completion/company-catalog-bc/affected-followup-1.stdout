@@ -1,0 +1,181 @@
+✖ 公开报告刷新经过 loading 或 error 后保留仍可见的用户选择 (256.45052ms)
+✖ 公开报告真正 empty 后清除选择，重新出现报告时使用当前默认报告 (2.091534ms)
+✖ 切换公司时旧选择失效后使用新公司的可见报告 (1.473185ms)
+✔ 完整已公布金样通过 JSON 与 serde Map 边界，精确金额不丢失 (6.924111ms)
+✔ 四表取已公布科目、现金调节和真实权益滚动，不从汇总拼造 (0.763523ms)
+✔ 公共边界拒绝缺五产物、数值金额、非法比较项和私有字段 (2.123634ms)
+✔ 公开报告拒绝摘要与四表跨层漂移，以及单体少数股东列 (0.752723ms)
+✔ 公开报告拒绝不存在日期、未结束窗口与更正关系漂移 (0.903948ms)
+✔ 单体报表不冒充归母权益，不为行业补造未披露科目 (0.708072ms)
+✔ 可用上年年末合计必须呈现精确值，不冒充未列报 (0.287519ms)
+✔ 现金流表保留期末现金，资产负债表不把期末现金重复当作科目 (0.32806ms)
+✔ Given a CivilUpdate barrier, when reduced before a next tick, then it refreshes authority and preserves seq continuity (8.898141ms)
+✔ Given CivilUpdate refresh history, when reduced, then it does not replay historical effects (1.201337ms)
+✔ Given two CivilDateAdvanced facts in one barrier, when reduced, then it rejects the ambiguous barrier atomically (1.382523ms)
+✔ Given an AfterClose refresh whose history does not start at the settled-day first tick, when reduced, then it rejects atomically (1.218867ms)
+✔ NPC普通拒单不冒充玩家反馈，原始事件、玩家拒单和结算错误继续保留 (11.398377ms)
+✔ Given stable facts and timeseries, when projected, then notices, trades, and automatic points are type-grouped (0.554397ms)
+✔ 跨帧成交效果保留各自 tick，重试不重复追加 (1.266778ms)
+✔ Given an already filled cancellation, when projected, then the notice explains the failure (0.467234ms)
+✔ Given three frames including an empty one, when reduced, then every frame and timeseries survives (7.381466ms)
+✔ Given facts and events reversed together, when replayed, then it is exact and emits no effects (1.441994ms)
+✔ Given an event-fact pair moved between valid frames, when replayed, then it rejects changed tick boundaries (1.600359ms)
+✔ Given a coherent mutation ending at an accepted cursor, when replayed, then it rejects PROTOCOL_REPLAY (0.955069ms)
+✔ Given missing, duplicate, or mutated facts, when reduced, then input state remains unchanged (1.191906ms)
+✔ Given a snapshot mismatch or cursor gap, when reduced, then input state remains unchanged (0.955739ms)
+✔ Given a tick or sequence gap inside one batch, when reduced, then the whole batch is rejected (0.812004ms)
+✔ Given reversed fact arrays, when reduced, then effects and canonical state are invariant (1.367782ms)
+✔ Given JSON and WASM Map forms, when reduced, then they produce equal state (1.844657ms)
+✔ Given null final snapshot or a valid empty frame, when reduced, then the cursor advances without replacing authority (0.844455ms)
+✔ EventSourceIndex 使用 QuoteExpiry，保留 phase_rank 并拒绝旧 P0 (4.573129ms)
+✖ 每家公司分别保存报告、报表和金额显示，局部操作不覆盖其他选择 (11.48656ms)
+✖ 新 baseline 清空阅读状态，旧 generation 的界面操作不能写入新会话 (1.788285ms)
+✔ 公开报告 loading 和 error 不清除阅读位置 (1.449775ms)
+✔ 无效阅读操作显式拒绝：{"selectedStatementId":"unsupported"} (1.189186ms)
+✔ 无效阅读操作显式拒绝：{"exactAmountsVisible":"true"} (0.821815ms)
+✔ 无效阅读操作显式拒绝：{"selectedReportId":"unknown"} (0.833716ms)
+✖ baseline atomically replaces old session public cache and selection (7.627843ms)
+✔ keeps report versions immutable and isolates same report id by company (2.118125ms)
+✔ models loading, failure, empty and unavailable comparison without numeric coercion (1.687621ms)
+✔ applies civil date and disclosure events without a trade while rejecting old sequence values (0.702632ms)
+✔ anchors company event ordering at the baseline sequence (0.239708ms)
+✔ does not regress public event coverage when a stale completion arrives (0.269278ms)
+✔ 协议时间序列帧原子更新权威行情和游戏时钟 (3.6155ms)
+✔ 协议帧拒绝倒退序列，保持当前权威快照 (0.263098ms)
+ℹ tests 44
+ℹ suites 0
+ℹ pass 38
+ℹ fail 6
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 685.725941
+
+✖ failing tests:
+
+test at src/components/company/company-report-selection.test.ts:79:1
+✖ 公开报告刷新经过 loading 或 error 后保留仍可见的用户选择 (256.45052ms)
+  AssertionError [ERR_ASSERTION]: The expression evaluated to a falsy value:
+  
+    assert.ok(first)
+  
+      at selectionView (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/components/company/company-report-selection.test.ts:70:10)
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/components/company/company-report-selection.test.ts:85:18)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at src/components/company/company-report-selection.test.ts:92:1
+✖ 公开报告真正 empty 后清除选择，重新出现报告时使用当前默认报告 (2.091534ms)
+  AssertionError [ERR_ASSERTION]: The expression evaluated to a falsy value:
+  
+    assert.ok(first)
+  
+      at selectionView (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/components/company/company-report-selection.test.ts:70:10)
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/components/company/company-report-selection.test.ts:94:16)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at src/components/company/company-report-selection.test.ts:100:1
+✖ 切换公司时旧选择失效后使用新公司的可见报告 (1.473185ms)
+  AssertionError [ERR_ASSERTION]: The expression evaluated to a falsy value:
+  
+    assert.ok(first)
+  
+      at selectionView (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/components/company/company-report-selection.test.ts:70:10)
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/components/company/company-report-selection.test.ts:102:16)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at src/store/company-reading.test.ts:28:1
+✖ 每家公司分别保存报告、报表和金额显示，局部操作不覆盖其他选择 (11.48656ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+  + actual - expected
+  
+  + [Object: null prototype] {
+  - {
+      'C-002156': {
+        exactAmountsVisible: false,
+        selectedReportId: '7',
+        selectedStatementId: 'cash-flow'
+      },
+  
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/store/company-reading.test.ts:32:10)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.start (node:internal/test_runner/test:1096:17)
+      at startSubtestAfterBootstrap (node:internal/test_runner/harness:385:17) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: { 'C-600101': { selectedReportId: '8', selectedStatementId: 'equity', exactAmountsVisible: true }, 'C-002156': { selectedReportId: '7', selectedStatementId: 'cash-flow', exactAmountsVisible: false } },
+    expected: { 'C-600101': { selectedReportId: '8', selectedStatementId: 'equity', exactAmountsVisible: true }, 'C-002156': { selectedReportId: '7', selectedStatementId: 'cash-flow', exactAmountsVisible: false } },
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }
+
+test at src/store/company-reading.test.ts:38:1
+✖ 新 baseline 清空阅读状态，旧 generation 的界面操作不能写入新会话 (1.788285ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+  + actual - expected
+  
+  + [Object: null prototype] {}
+  - {}
+  
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/store/company-reading.test.ts:42:10)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: {},
+    expected: {},
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }
+
+test at src/store/company-slice.test.ts:33:1
+✖ baseline atomically replaces old session public cache and selection (7.627843ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+  + actual - expected
+  
+  + [Object: null prototype] {}
+  - {}
+  
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/store/company-slice.test.ts:37:10)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.start (node:internal/test_runner/test:1096:17)
+      at startSubtestAfterBootstrap (node:internal/test_runner/harness:385:17) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: {},
+    expected: {},
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }

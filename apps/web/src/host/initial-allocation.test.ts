@@ -1,3 +1,4 @@
+import { defaultCatalogFixture } from "./catalog-test-fixture.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { parseInitialAllocation } from "./initial-allocation.ts";
@@ -16,7 +17,7 @@ export const initialAllocationFixture = {
 };
 
 test("实际初始分配按整数股数对账并保留零持股人数", () => {
-  assert.deepEqual(parseInitialAllocation(wireInitialAllocationFixture, ["600101"]), initialAllocationFixture);
+  assert.deepEqual(parseInitialAllocation(wireInitialAllocationFixture, ["600101"], defaultCatalogFixture), initialAllocationFixture);
 });
 test("实际初始分配拒绝错股、重复类别、负数、未知字段和不守恒", () => {
   for (const mutate of [
@@ -28,6 +29,6 @@ test("实际初始分配拒绝错股、重复类别、负数、未知字段和�
     (value: typeof wireInitialAllocationFixture) => { Object.assign(value, { estimate: true }); },
   ]) {
     const value = structuredClone(wireInitialAllocationFixture); mutate(value);
-    assert.throws(() => parseInitialAllocation(value, ["600101"]));
+    assert.throws(() => parseInitialAllocation(value, ["600101"], defaultCatalogFixture));
   }
 });

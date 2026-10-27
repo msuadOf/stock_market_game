@@ -1,0 +1,4 @@
+
+thread 'actor::protocol_tests::committed_restore_catalog_failure_keeps_generation_and_closes_desktop_actor' (1192893) panicked at apps/desktop/src-tauri/src/actor/protocol_tests.rs:285:29:
+called `Result::unwrap()` on an `Err` value: InvalidSave(ValidationFault { code: 3015, context: [] })
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace

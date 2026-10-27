@@ -1,0 +1,48 @@
+{
+  "repositoryRoot": "/data1/baiyifan/workplace/stock_market_game",
+  "cwd": "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "engine",
+    "-p",
+    "server",
+    "-p",
+    "stock-market-game",
+    "-p",
+    "web-wasm",
+    "--lib",
+    "--no-default-features",
+    "catalog",
+    "--no-run",
+    "-j8",
+    "--message-format=json"
+  ],
+  "environment": {
+    "CARGO_TARGET_DIR": "/data1/baiyifan/workplace/stock_market_game/.tmp/company-catalog-bc/target",
+    "CARGO_BUILD_JOBS": "8",
+    "CARGO_INCREMENTAL": "0"
+  },
+  "sourceManifestSha256": "e4d09a208b60e38a32d051eabf4372fc2dee4a51fa1215cf53625bcd328f979e",
+  "profile": "default test profile; all four selected libraries no-default-features; server dev-dependency verification-harness feature is unified by Cargo; CARGO_INCREMENTAL=0",
+  "runnerSha256": "3cdf6fd012b573b5554237e1a8fa1ead6a069f7bef58c681f8aa181fcf88ef0f",
+  "deadlineHelpers": {
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs": "de7fd2a82bc66e7a62fbc487002727b71ad28b69c1e645f82fa84bbfdb068916",
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-long-validation.mjs": "2d25f286fdec2159a1997cb3aa724a94ae3c8d09bc9bc242f9cfce1bcd641dff"
+  },
+  "deadlineMs": 300000,
+  "noProgressMs": 60000,
+  "authorization": "静态ready；原未实施者核准新flags/profile且root正式交唯一Cargo槽后才可执行",
+  "outerCommand": [
+    "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-long-validation.mjs",
+    "300000",
+    "--",
+    "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/agents/branch-completion/company-catalog-bc/main-combination-r6/native-4libs-ready/run-build-nonincremental.mjs",
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/agents/branch-completion/company-catalog-bc/main-combination-r6/native-4libs-ready/build-plan.json"
+  ],
+  "sourceManifestPath": "agents/branch-completion/company-catalog-bc/main-combination-r6/native-4libs-ready/source.sha256",
+  "note": "main9e7c组合候选的新实际native门；merge commit与完整Sol新diff审尚待，不得执行。单Cargo四lib同target避免多个Cargo锁争用，j8共享300000ms/60s/20GiB。成功仅用本批compiler-artifact提取4testbinary，分别短跑目录/typed3019/真实ingress/restore seam；不冒浏览器/WASM制品或F5F6 API存在。"
+}

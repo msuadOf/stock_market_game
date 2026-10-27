@@ -1,6 +1,6 @@
 import { useEffect, useMemo, type KeyboardEvent } from "react";
 import { selectCompanyReading, type CompanyReading, type CompanyState } from "../../store/company-slice.ts";
-import { publicCompanies, publicCompanyById, type PublicCompany } from "./company-catalog.ts";
+import { actualPublicCompanies, type PublicCompany } from "./company-catalog.ts";
 import { DisclosureList } from "./DisclosureList.tsx";
 import { FinancialStatementTable } from "./FinancialStatementTable.tsx";
 import {
@@ -11,6 +11,7 @@ import {
   reportViewState,
   selectVisibleReportId,
 } from "./company-presentation.ts";
+import { prepareCatalogResolver } from "../../host/catalog-resolver.ts";
 import { ReportNotes } from "./ReportNotes.tsx";
 import { visibleReports } from "./company-view-model.ts";
 import "./company.css";
@@ -27,7 +28,7 @@ interface CompanyPanelProps {
 }
 
 function CompanyIdentity({ company }: { readonly company: PublicCompany }) {
-  return <div className="company-identity"><h3>{company.name}</h3><p>{company.industry} · {company.business}</p></div>;
+  return <div className="company-identity"><h3>{company.name}</h3><p>{[company.industry, company.business].filter(Boolean).join(" · ") || company.id}</p></div>;
 }
 
 function moveTabFocus(event: KeyboardEvent<HTMLButtonElement>, ids: readonly string[]): void {
@@ -40,8 +41,10 @@ function moveTabFocus(event: KeyboardEvent<HTMLButtonElement>, ids: readonly str
 }
 
 export function CompanyPanel({ allowCompanySelection = true, companyId, companyState, initialCivilDate, onCompanyChange, onReadingChange, onQuery, onAdvanceCivilDay }: CompanyPanelProps) {
-  const company = companyId === null ? undefined : publicCompanyById(companyId);
-  const cache = companyId === null ? undefined : companyState.companies[companyId];
+  const publicCompanies = useMemo(() => actualPublicCompanies(companyState.companyCatalog, companyState.stockCatalog), [companyState.companyCatalog, companyState.stockCatalog]);
+  const identity = useMemo(() => prepareCatalogResolver(companyState.stockCatalog, companyState.companyCatalog), [companyState.companyCatalog, companyState.stockCatalog]);
+  const company = companyId === null ? undefined : publicCompanies.find(item => item.id === companyId);
+  const cache = companyId === null || !Object.hasOwn(companyState.companies, companyId) ? undefined : companyState.companies[companyId];
   const rootPage = cache?.pages.root;
   const state = reportViewState(rootPage);
   const pageSummary = useMemo(() => visibleReports(cache), [cache]);
@@ -54,8 +57,8 @@ export function CompanyPanel({ allowCompanySelection = true, companyId, companyS
   const selectedStatement = statements.find((statement) => statement.id === selectedStatementId) ?? statements[0];
 
   useEffect(() => {
-    if (companyId !== null && rootPage === undefined) onQuery(companyId, null);
-  }, [companyId, onQuery, rootPage]);
+    if (company !== undefined && companyId !== null && rootPage === undefined) onQuery(companyId, null);
+  }, [company, companyId, onQuery, rootPage]);
 
   useEffect(() => {
     if (state.kind !== "ready" && state.kind !== "empty") return;
@@ -101,7 +104,7 @@ export function CompanyPanel({ allowCompanySelection = true, companyId, companyS
           <div id={`company-statement-panel-${selectedStatement.id}`} role="tabpanel" aria-labelledby={`company-statement-tab-${selectedStatement.id}`}>
             <FinancialStatementTable statement={selectedStatement} exactAmountsVisible={exactAmountsVisible} />
           </div>
-          <ReportNotes report={report} />
+          <ReportNotes report={report} catalogResolver={identity} />
         </div>
       )}
     </section>

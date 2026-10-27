@@ -1,7 +1,7 @@
+import type { CatalogResolver } from "./catalog-resolver.ts";
 import { parsePlanId } from "../utils/plan-identity.ts";
 import type { PlanId } from "../types/generated/PlanId.ts";
 import type { AccountId } from "../types/generated/AccountId.ts";
-import { stockCodeOf } from "./protocol/stock-identity.ts";
 
 export type NpcDecisionTraceRecord = {
   readonly account: AccountId;
@@ -19,7 +19,7 @@ export type NpcDecisionDiagnostics =
   | { readonly kind: "unsupported" }
   | { readonly kind: "supported"; readonly records: readonly NpcDecisionTraceRecord[] };
 
-export function parseNpcDecisionDiagnostics(value: unknown): NpcDecisionDiagnostics {
+export function parseNpcDecisionDiagnostics(value: unknown, identity: CatalogResolver): NpcDecisionDiagnostics {
   if (!isRecord(value) || typeof value["kind"] !== "string") {
     throw new Error("NPC 决策诊断响应必须包含 kind");
   }
@@ -29,18 +29,18 @@ export function parseNpcDecisionDiagnostics(value: unknown): NpcDecisionDiagnost
       return { kind: "unsupported" };
     case "supported":
       if (Object.keys(value).length !== 2 || !("records" in value)) throw new Error("诊断记录响应字段无效");
-      return { kind: "supported", records: parseNpcDecisionTrace(value["records"]) };
+      return { kind: "supported", records: parseNpcDecisionTrace(value["records"], identity) };
     default:
       throw new Error("未知的 NPC 决策诊断结果");
   }
 }
 
-export function parseNpcDecisionTrace(value: unknown): readonly NpcDecisionTraceRecord[] {
+export function parseNpcDecisionTrace(value: unknown, identity: CatalogResolver): readonly NpcDecisionTraceRecord[] {
   if (!Array.isArray(value)) throw new Error("NPC 决策诊断响应必须是数组");
-  return value.map((record, index) => parseRecord(record, index));
+  return value.map((record, index) => parseRecord(record, index, identity));
 }
 
-function parseRecord(value: unknown, index: number): NpcDecisionTraceRecord {
+function parseRecord(value: unknown, index: number, identity: CatalogResolver): NpcDecisionTraceRecord {
   if (!isRecord(value)) throw new Error(`NPC 决策诊断第 ${index} 条必须是对象`);
   const keys = [
     "account",
@@ -83,7 +83,7 @@ function parseRecord(value: unknown, index: number): NpcDecisionTraceRecord {
     budget_constraints: value["budget_constraints"],
     order_ids: value["order_ids"],
     // wire 的 codes 为数值 StockId 数组（ADR 0041）；摄入时逐个译回代码串。
-    codes: value["codes"].map((id, codeIndex) => stockCodeOf(id, `NPC 决策诊断第 ${index} 条 codes[${codeIndex}]`)),
+    codes: value["codes"].map((id, codeIndex) => identity.stockCode(id, `NPC 决策诊断第 ${index} 条 codes[${codeIndex}]`)),
   };
 }
 

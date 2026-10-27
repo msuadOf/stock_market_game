@@ -1,3 +1,4 @@
+import type { CatalogResolver } from "../catalog-resolver.ts";
 import { parseEngineUpdate } from "./parse.ts";
 import { ProtocolError, type NormalizedEngineUpdate, type NormalizedTickFrame } from "./types.ts";
 import { codedFactIdentity, type CodedEngineUpdate, type CodedTickFrame, translateEngineUpdate } from "./stock-identity.ts";
@@ -54,9 +55,9 @@ export function normalizeEngineUpdate(update: CodedEngineUpdate): NormalizedEngi
   };
 }
 
-export function parseNormalizedEngineUpdate(value: unknown): NormalizedEngineUpdate {
+export function parseNormalizedEngineUpdate(value: unknown, identity: CatalogResolver): NormalizedEngineUpdate {
   const update = parseEngineUpdate(value);
   // 事实先以数值形态通过稳定键与 seq 覆盖校验，再整体翻译为代码串。
-  validateEngineUpdate(update);
-  return normalizeEngineUpdate(translateEngineUpdate(update));
+  validateEngineUpdate(update, identity);
+  return normalizeEngineUpdate(translateEngineUpdate(update, "EngineUpdate", identity));
 }

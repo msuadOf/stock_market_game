@@ -1,0 +1,27 @@
+✖ selected公司权威与公开报告source一致，拒绝已知但来自另一模型的报告 (76.010341ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 245.529822
+
+✖ failing tests:
+
+test at apps/web/src/save/schema/company/state.test.ts:73:1
+✖ selected公司权威与公开报告source一致，拒绝已知但来自另一模型的报告 (76.010341ms)
+  AssertionError [ERR_ASSERTION]: Missing expected exception.
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/company/state.test.ts:75:484)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at Test.start (node:internal/test_runner/test:1191:17)
+      at startSubtestAfterBootstrap (node:internal/test_runner/harness:385:17) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: /public_library\.reports\[0\]\.source/,
+    operator: 'throws',
+    diff: 'simple'
+  }

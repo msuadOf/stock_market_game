@@ -2939,6 +2939,8 @@ fn p2_4a_sparse_echo_missing_item_fails_loud() {
     use crate::runtime::drive::ensure_fact_owners_covered;
     use crate::runtime::world::TickRecord;
     let record = TickRecord {
+        #[cfg(feature = "simulation-diagnostics")]
+        decision_traces: Vec::new(),
         retail: Vec::new(),
         tick: 1,
         rounds: 0,
@@ -2994,6 +2996,8 @@ fn p2_4a_arc_shard_cover_check_matches_value_form() {
     use std::sync::Arc;
 
     let record = TickRecord {
+        #[cfg(feature = "simulation-diagnostics")]
+        decision_traces: Vec::new(),
         retail: Vec::new(),
         tick: 1,
         rounds: 0,

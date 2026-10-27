@@ -153,6 +153,27 @@ SealAllocationSnapshot 的 `DecisionResourceSnapshot::seal` 读取报价过期�
   所有权模型下单即扣，该缺陷形态从根上消除（等价防御=组端 purse 校验）。旧管线
   防御面随其退役消亡，不再回补。
 
+## 公司模型选源与完整存档（2026-10-27 候选分支登记）
+
+本段描述 SOURCE-B 候选分支的契约；完整跨 Web 验证与独立终审通过前，不据此宣称
+main 已交付。`setup.company_system` 缺席时沿 `LegacyOperations` 的经营、前史和公开
+会计材料；选定 `Simple` 时只构造和推进 `CompanySystem`，公开材料标为
+`SimpleGenerated`，不创建或后台推进旧经营网络。`Simple` 携带 `company_operations`
+或非空 `groups` 时，在装配前按模式字段冲突明确拒绝；`Simulation` 仍明确不支持。
+公司会计类别 `CompanyKind` 不表示沪深证券板块，股本单位仍为股且保留 `u64`。
+
+完整 `SaveSlot` 只保存一个 required `company_state` 外部标记：
+`LegacyOperations { operations, closing, groups }` 或
+`CompanySystem { system, corporate_actions }`。旧并列运行字段不再接受，不提供迁移、
+别名或缺字段补值；创建参数中的 `setup.company_operations` 和 `setup.groups` 保留各自
+原语义。公开库和披露游标仍各只有一份，与选中模型、冻结时钟、报告来源和恢复资本事实
+同时勾稽。名册 `SettlementDayMarket.binding` 保留实际物理日的前驱、股数单位与最终
+确认或休市日历来源，不能简写成普通 `PublicMarket` 或丢弃 binding。
+
+`Simple` 是明确的游戏财务简化，不声称逐合同经营、真实公司现金来源或偿付能力已经仿真。
+此选源和存档改动不开放 R4 公司行为资产提交或 SRC-C live hook，不改变沪深撮合、
+T+1、税费、账户资金或股份守恒规则。
+
 ## Simple 偏好的局内配置入口（2026-10-25 登记）
 
 `GameSession` 与 `ProtocolSession` 提供 `company_simple_preferences` 和
@@ -162,7 +183,7 @@ SealAllocationSnapshot 的 `DecisionResourceSnapshot::seal` 读取报价过期�
 间隔沿用结算周期数。无公司线、未知公司、非法参数或两侧配置不一致均显式拒绝。
 
 编辑原子地同步公司系统及 setup 的偏好配置，不改变资产、已有方案、提案台账或个人信息。
-`GameSession.save` 包含已编辑配置；恢复时要求 `company_system.config` 与
+`GameSession.save` 包含已编辑配置；恢复时要求 `company_state.CompanySystem.system.config` 与
 `setup.company_system` 完整一致，单侧编辑存档会被拒绝。`ProtocolSession.save`
 仍返回上次已发布的日终存档，后续自然日日终发布才包含新配置。本入口不代表偏好自动提案
 与公司行为日终执行链已经接通，也未开放配股、增发、回购或拆股策略参数；宿主 wire/API
@@ -294,8 +315,9 @@ std-thread runtime 的日结编排（2026-10-17 登记）：市场推进内 `run
 
 ## 行政数值事务基座的支持边界（2026-10-25 登记）
 
-runtime 的独立 AdminTransaction 只承载上层已确定合法到账时点的 CashDividend、
-ShareSplit、WithholdingTax 和 ShareReduction 数值操作，尚未连接生产公司链。
+runtime 的独立 AdminTransaction 承载上层已确定合法到账时点的 CashDividend、
+ShareSplit、WithholdingTax、ShareReduction，以及 PaymentDebit、SubscriptionRefund 和
+SharesWithCost 数值操作，尚未连接生产公司链。
 金额为 i64 分、数量为 u32 股；行政股份变动不是买卖申报，不套用买入 100 股整数倍。
 ShareSplit 沿用既有命名，仅表示已经可流通的送转正向到账，不增加当日买入的
 frozen_today。ShareReduction 只从实际在手且可卖股份安全核减；在途卖股已从组端
@@ -306,6 +328,13 @@ shares 扣出，不能重复扣减，pending_sell_qty、在途票与 T+1 冻结�
 真清仓但仍有在途票的 ShareReduction 显式拒绝。正式公司命令及 restore 接线须先补齐
 这些制度，或对未支持输入显式拒绝。WithholdingTax 仅借记已经算出的正分额，
 只可使用实际可用 cash，不使用在途买单 purse；本批没有确定新税率、计税主体或舍入制度。
+
+配股资金原语（2026-10-28 登记）：PaymentDebit 按输入顺序精确扣除当前 raw cash，
+不使用在途 purse，也不以随后退款净额掩盖中间余额不足。SubscriptionRefund 只退回原实缴
+本金，不计退款利息，不改变股份或成本。SharesWithCost 仅在上层确认已经到合法上市流通日
+后增加股份与该账户原实缴总成本，保留 recovered，不再扣现金、不收二级市场交易费用、
+不增加 frozen_today；长期限售仍不支持。三原语沿同一个 PendingAdmin 与 INFO 候选共同
+prepare／commit／abort；数值通道接线不表示配股缴款、上市或回购生产流程已经启用。
 
 依据沿用 ADR-0031、ADR-0038、ADR-0039、ADR-0043 及已有中国结算取证：
 [上海分公司证券发行人业务指南 §2.5](https://www.chinaclear.cn/zdjs/yshsc/202503/bc6781d0a57340f598930115fe63e5c3/files/中国证券登记结算有限责任公司上海分公司证券发行人业务指南.pdf)、
@@ -434,6 +463,14 @@ NPC 默认策略只在缴款首日日终对未显式申请的非玩家、非回�
   第二、三、六条（2013-01-01 起执行）：持股档位、转让扣收、FIFO、日终净增减与
   资金不足通知补足。候选按最终真实可用现金部分收缴，保留实收与未清税款；不含在途
   buy purse，不以默认零余额代替缺失账户。登记日冻结权利，登记后卖出不减少已登记股利。
+- `cash_dividend_tax::day_boundary::TaxDayBoundaryFacts` 仅准备 ordinary 税日候选，尚无生产
+  caller。每证券一次消费 typed REG 完整自然日、最终确认全集与实际完成水位，零成交日和
+  休市日也记税日零净额。每本税账从自己的 `opened_on` 完成 frontier 核完整 opening lots，
+  其后每个 REG 自然日与税日的净额、取得和处置须逐项一致；当前同数量、同 lot 尾部不能
+  替代历史勾稽。登记归属只接受无任何公司或单位 movement 的普通路径，完整物理与税
+  lots 必须一致；physical90／tax100 显式拒绝，不按比例推导原权益。历史旧式无最终确认
+  绑定的 REG、公司或单位 movement、未经核实的法定限售资格均不支持。本入口不确定
+  公司变动的 R／R+1 税务日，不改变下述个人 `BonusShares` 拒绝门。
 - 送转分配复用现有 `company::stock_distribution`，批准总量必须显式给出。
   中国结算沪业字〔2026〕33号指南 2.5.1（四）7、深业〔2025〕68号指南
   2.5.4（十）支持账户碎股降序、同数系统随机、依序补一股，但没有给出统一汇总

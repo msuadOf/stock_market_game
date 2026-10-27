@@ -1,0 +1,12 @@
+{
+  "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/engine-006444ae8c4f3292",
+  "sha256": "a50d40f59d374a672e2abec398c8719ce02b4053f7d0d0920d3982efeb986362",
+  "bytes": 566556080,
+  "features": [],
+  "sealedExisting": "/tmp/stock-market-game-validation-2026-10-27-1311109/disc-p-green-v4-ram-2026-10-28/sealed-disc-green-unit",
+  "handoff": "E2首轮actualEXIT1 session46234/52.66756s，E0624导致无newunit；Cargo退出、6 owned pid alive[]，现存default仍DISC；不是E1新bin",
+  "canonicalDevice": 36,
+  "sourceInode": 52017,
+  "sealedInode": 52018,
+  "filesystem": "tmpfs"
+}

@@ -1,0 +1,3764 @@
+{
+  "roots": [
+    "SavedSessionCompanies",
+    "CompanySystem",
+    "CompanyImplementation",
+    "SimpleFundamentals",
+    "SimpleCompanyState",
+    "PeriodGenerationState",
+    "SimpleFinanceState",
+    "SessionCorporateActions",
+    "ShareSettlementBinding"
+  ],
+  "specialExistingParsers": [
+    "AccountId",
+    "AccountingAmount",
+    "AccountingPeriod",
+    "Books",
+    "BusinessEventId",
+    "CivilDate",
+    "CivilInstant",
+    "ClosingEngine",
+    "CompanyId",
+    "CompanyKind",
+    "CompanyOperations",
+    "GroupStructure",
+    "IndustryId",
+    "IssuerRegistry",
+    "LedgerAccountId",
+    "Money",
+    "OperatingRng",
+    "SimpleConfig",
+    "SimpleFinanceConfig",
+    "StockCode",
+    "StockId"
+  ],
+  "types": {
+    "SavedSessionCompanies": {
+      "kind": "enum",
+      "file": "session/company_state.rs",
+      "line": 32,
+      "fields": [
+        {
+          "variant": "LegacyOperations { operations: CompanyOperations, closing: ClosingEngine, groups: Vec<GroupStructure>, }",
+          "attributes": "LegacyOperations {\n        operations: CompanyOperations,\n        closing: ClosingEngine,\n        groups: Vec<GroupStructure>,\n    }"
+        },
+        {
+          "variant": "CompanySystem { system: CompanySystem, corporate_actions: SessionCorporateActions, }",
+          "attributes": "CompanySystem {\n        system: CompanySystem,\n        corporate_actions: SessionCorporateActions,\n    }"
+        }
+      ],
+      "sourceSha256": "f5fb3b6d95a5dba6a12436c00ade164a813644c826c075b9f7056cea3d624ac2"
+    },
+    "CompanySystem": {
+      "kind": "struct",
+      "file": "company/system.rs",
+      "line": 57,
+      "fields": [
+        {
+          "name": "issuers",
+          "type": "IssuerRegistry",
+          "attributes": ""
+        },
+        {
+          "name": "implementation",
+          "type": "CompanyImplementation",
+          "attributes": ""
+        },
+        {
+          "name": "hash_cache",
+          "type": "CompanySystemHashCache",
+          "attributes": "#[serde(skip)]\n    "
+        }
+      ],
+      "sourceSha256": "fd857e9a8affbfe2ff84ae875544f828d536514b0a090e45edac2f6bec4013fc"
+    },
+    "CompanyImplementation": {
+      "kind": "enum",
+      "file": "company/system.rs",
+      "line": 52,
+      "fields": [
+        {
+          "variant": "Simple(SimpleFundamentals)",
+          "attributes": "Simple(SimpleFundamentals)"
+        }
+      ],
+      "sourceSha256": "fd857e9a8affbfe2ff84ae875544f828d536514b0a090e45edac2f6bec4013fc"
+    },
+    "SimpleFundamentals": {
+      "kind": "struct",
+      "file": "company/simple/state.rs",
+      "line": 33,
+      "fields": [
+        {
+          "name": "config",
+          "type": "SimpleConfig",
+          "attributes": ""
+        },
+        {
+          "name": "history_start",
+          "type": "CivilDate",
+          "attributes": ""
+        },
+        {
+          "name": "advanced_through",
+          "type": "CivilDate",
+          "attributes": ""
+        },
+        {
+          "name": "environment_change_bp",
+          "type": "i32",
+          "attributes": ""
+        },
+        {
+          "name": "environment_rng",
+          "type": "OperatingRng",
+          "attributes": ""
+        },
+        {
+          "name": "companies",
+          "type": "BTreeMap<CompanyId, SimpleCompanyState>",
+          "attributes": "#[serde(deserialize_with = \"crate::company::persistence::unique_map\")]\n    "
+        },
+        {
+          "name": "history",
+          "type": "Vec<SimpleDisclosureCandidate>",
+          "attributes": ""
+        }
+      ],
+      "sourceSha256": "a40fe7a4f003dc3641e56e135bf9d026b395c5bb8acfafdfcedb8d23114fd9be"
+    },
+    "SimpleCompanyState": {
+      "kind": "struct",
+      "file": "company/simple/state.rs",
+      "line": 20,
+      "fields": [
+        {
+          "name": "generation",
+          "type": "PeriodGenerationState",
+          "attributes": ""
+        },
+        {
+          "name": "finance",
+          "type": "SimpleFinanceState",
+          "attributes": ""
+        },
+        {
+          "name": "pending_restart",
+          "type": "Option<(AccountingAmount, String)>",
+          "attributes": "#[serde(deserialize_with = \"crate::company::persistence::required_nullable\")]\n    "
+        },
+        {
+          "name": "preference_ledger",
+          "type": "super::preferences::SimplePreferenceLedger",
+          "attributes": ""
+        }
+      ],
+      "sourceSha256": "a40fe7a4f003dc3641e56e135bf9d026b395c5bb8acfafdfcedb8d23114fd9be"
+    },
+    "PeriodGenerationState": {
+      "kind": "struct",
+      "file": "company/simple/period.rs",
+      "line": 118,
+      "fields": [
+        {
+          "name": "amounts",
+          "type": "PeriodAmounts",
+          "attributes": ""
+        },
+        {
+          "name": "rng",
+          "type": "OperatingRng",
+          "attributes": ""
+        },
+        {
+          "name": "revenue_trend",
+          "type": "AnnualTrendState",
+          "attributes": ""
+        },
+        {
+          "name": "fixed_expense_trend",
+          "type": "AnnualTrendState",
+          "attributes": ""
+        },
+        {
+          "name": "variable_expense_trend",
+          "type": "Option<AnnualTrendState>",
+          "attributes": "#[serde(deserialize_with = \"crate::company::persistence::required_nullable\")]\n    "
+        }
+      ],
+      "sourceSha256": "06f5b359c734c349432747bcedb985b8e3b0b87313babc8d97c42e3d11d96197"
+    },
+    "SimpleFinanceState": {
+      "kind": "struct",
+      "file": "company/simple/finance.rs",
+      "line": 150,
+      "fields": [
+        {
+          "name": "company",
+          "type": "CompanyId",
+          "attributes": ""
+        },
+        {
+          "name": "kind",
+          "type": "CompanyKind",
+          "attributes": ""
+        },
+        {
+          "name": "config",
+          "type": "SimpleFinanceConfig",
+          "attributes": ""
+        },
+        {
+          "name": "books",
+          "type": "Books",
+          "attributes": ""
+        },
+        {
+          "name": "closing",
+          "type": "ClosingEngine",
+          "attributes": ""
+        },
+        {
+          "name": "opening_date",
+          "type": "CivilDate",
+          "attributes": ""
+        },
+        {
+          "name": "as_of",
+          "type": "CivilDate",
+          "attributes": ""
+        },
+        {
+          "name": "last_month",
+          "type": "AccountingPeriod",
+          "attributes": ""
+        },
+        {
+          "name": "next_event_id",
+          "type": "u64",
+          "attributes": "#[serde(with = \"crate::orderbook::canonical_u64_decimal\")]\n    "
+        },
+        {
+          "name": "income_tax_position",
+          "type": "IncomeTaxPosition",
+          "attributes": ""
+        },
+        {
+          "name": "recognized_periods",
+          "type": "Vec<(CivilDate, CivilDate)>",
+          "attributes": ""
+        },
+        {
+          "name": "dividends",
+          "type": "std::collections::BTreeMap<String, DividendPlanState>",
+          "attributes": ""
+        },
+        {
+          "name": "stock_distributions",
+          "type": "std::collections::BTreeMap<String, StockDistributionFinanceFact>",
+          "attributes": ""
+        },
+        {
+          "name": "share_splits",
+          "type": "std::collections::BTreeMap<String, crate::company::share_split::ShareSplitFinanceFact>",
+          "attributes": ""
+        },
+        {
+          "name": "rights_offerings",
+          "type": "std::collections::BTreeMap< String, crate::company::rights_offering::RightsOfferingFinanceFact, >",
+          "attributes": ""
+        },
+        {
+          "name": "issuer_repurchases",
+          "type": "std::collections::BTreeMap< String, crate::company::issuer_repurchase::IssuerRepurchaseFinanceFact, >",
+          "attributes": ""
+        },
+        {
+          "name": "legal_facts",
+          "type": "RequiredOption<DividendLegalFacts>",
+          "attributes": "#[serde(deserialize_with = \"deserialize_required_option\")]\n    "
+        },
+        {
+          "name": "cash_book",
+          "type": "AccountingAmount",
+          "attributes": ""
+        },
+        {
+          "name": "investment_book",
+          "type": "AccountingAmount",
+          "attributes": ""
+        }
+      ],
+      "sourceSha256": "95fd69b42a435b331bc17cb0b6b8fbc77d60fa75642fc04defaa0f6e3be3d6d3"
+    },
+    "SessionCorporateActions": {
+      "kind": "struct",
+      "file": "session/corporate_actions.rs",
+      "line": 31,
+      "fields": [
+        {
+          "name": "registries",
+          "type": "Vec<ShareRegistry>",
+          "attributes": ""
+        },
+        {
+          "name": "dividends",
+          "type": "Vec<crate::company::cash_dividend::CashDividendBook>",
+          "attributes": ""
+        },
+        {
+          "name": "dividend_tax_books",
+          "type": "Vec<crate::company::cash_dividend_tax::CashDividendTaxBook>",
+          "attributes": ""
+        },
+        {
+          "name": "flat_withholding_receipts",
+          "type": "Vec<FlatWithholdingReceipt>",
+          "attributes": ""
+        },
+        {
+          "name": "stock_distributions",
+          "type": "Vec<crate::company::stock_distribution::StockDistributionBook>",
+          "attributes": ""
+        },
+        {
+          "name": "share_splits",
+          "type": "Vec<crate::company::share_split::ShareSplitBook>",
+          "attributes": ""
+        },
+        {
+          "name": "rights_offerings",
+          "type": "Vec<crate::company::rights_offering::RightsOfferingBook>",
+          "attributes": ""
+        },
+        {
+          "name": "rights_subscription_queue",
+          "type": "Vec<QueuedRightsSubscription>",
+          "attributes": ""
+        },
+        {
+          "name": "rejected_rights_subscriptions",
+          "type": "Vec<RejectedRightsSubscription>",
+          "attributes": ""
+        },
+        {
+          "name": "issuer_repurchases",
+          "type": "Vec<crate::company::issuer_repurchase::IssuerRepurchaseBook>",
+          "attributes": ""
+        },
+        {
+          "name": "account_gross_receipts",
+          "type": "Vec<AccountDividendGrossReceipt>",
+          "attributes": ""
+        },
+        {
+          "name": "external_receipts",
+          "type": "Vec<ExternalDividendReceipt>",
+          "attributes": ""
+        },
+        {
+          "name": "applied_ex_reference_groups",
+          "type": "Vec<AppliedExReferenceGroup>",
+          "attributes": ""
+        }
+      ],
+      "sourceSha256": "9fe0ce7e1136023ae7e5ac6e270e5a063787d941d5f75e0e2c48ee93c2de2343"
+    },
+    "ShareSettlementBinding": {
+      "kind": "struct",
+      "file": "company/share_registry/settlement_day.rs",
+      "line": 71,
+      "fields": [
+        {
+          "name": "predecessor",
+          "type": "ShareDayFrontier",
+          "attributes": ""
+        },
+        {
+          "name": "opening",
+          "type": "Vec<OpeningMovementRef>",
+          "attributes": ""
+        },
+        {
+          "name": "market_unit",
+          "type": "ShareUnitIdentity",
+          "attributes": ""
+        },
+        {
+          "name": "market_source",
+          "type": "ShareMarketSource",
+          "attributes": ""
+        },
+        {
+          "name": "post",
+          "type": "Vec<SharePostActionRef>",
+          "attributes": ""
+        }
+      ],
+      "sourceSha256": "06f6fa65d6c5973567bbad009e79268367f50d90eabea748846f0990ae0c8f7e"
+    },
+    "SimpleDisclosureCandidate": {
+      "kind": "struct",
+      "file": "company/api.rs",
+      "line": 33,
+      "fields": [
+        {
+          "name": "company",
+          "type": "CompanyId",
+          "attributes": ""
+        },
+        {
+          "name": "period_start",
+          "type": "CivilDate",
+          "attributes": ""
+        },
+        {
+          "name": "period_end",
+          "type": "CivilDate",
+          "attributes": ""
+        },
+        {
+          "name": "amounts",
+          "type": "PeriodAmounts",
+          "attributes": ""
+        },
+        {
+          "name": "explanation",
+          "type": "super::simple::period::PeriodChangeExplanation",
+          "attributes": ""
+        }
+      ],
+      "sourceSha256": "24077bd538ebf12496b6642a5d2a798b1b8281b6d351be601489f22382e8dfa3"
+    },
+    "SimplePreferenceLedger": {
+      "kind": "struct",
+      "file": "company/simple/preferences.rs",
+      "line": 179,
+      "fields": [
+        {
+          "name": "rejections",
+          "type": "Vec<SimplePreferenceRejection>",
+          "attributes": ""
+        }
+      ],
+      "sourceSha256": "f90db919d29267b79648b3426209e5715763b9c6c187ef2e5f7782c54126e986"
+    },
+    "PeriodAmounts": {
+      "kind": "struct",
+      "file": "company/api.rs",
+      "line": 13,
+      "fields": [
+        {
+          "name": "revenue",
+          "type": "AccountingAmount",
+          "attributes": "#[ts(type = \"string\")]\n    "
+        },
+        {
+          "name": "fixed_expense",
+          "type": "AccountingAmount",
+          "attributes": "#[ts(type = \"string\")]\n    "
+        },
+        {
+          "name": "variable_expense",
+          "type": "AccountingAmount",
+          "attributes": "#[ts(type = \"string\")]\n    "
+        }
+      ],
+      "sourceSha256": "24077bd538ebf12496b6642a5d2a798b1b8281b6d351be601489f22382e8dfa3"
+    },
+    "AnnualTrendState": {
+      "kind": "struct",
+      "file": "company/simple/period.rs",
+      "line": 111,
+      "fields": [
+        {
+          "name": "annual_growth_bp",
+          "type": "i32",
+          "attributes": ""
+        },
+        {
+          "name": "remaining_months",
+          "type": "u16",
+          "attributes": ""
+        }
+      ],
+      "sourceSha256": "06f5b359c734c349432747bcedb985b8e3b0b87313babc8d97c42e3d11d96197"
+    },
+    "IncomeTaxPosition": {
+      "kind": "struct",
+      "file": "company/income_tax.rs",
+      "line": 36,
+      "fields": [
+        {
+          "name": "loss_pool",
+          "type": "Vec<LossEntry>",
+          "attributes": ""
+        },
+        {
+          "name": "assessments",
+          "type": "BTreeMap<i32, IncomeTaxAssessment>",
+          "attributes": ""
+        },
+        {
+          "name": "initial_deferred_tax_asset",
+          "type": "AccountingAmount",
+          "attributes": ""
+        },
+        {
+          "name": "restatements",
+          "type": "BTreeMap<BusinessEventId, AccountingPeriod>",
+          "attributes": ""
+        }
+      ],
+      "sourceSha256": "9f375615b079f671e74227cf261660fbbc86e77ad737af8a97b6d0a6967a3c64"
+    },
+    "DividendPlanState": {
+      "kind": "struct",
+      "file": "company/simple/finance.rs",
+      "line": 105,
+      "fields": [
+        {
+          "name": "declaration",
+          "type": "DividendDeclaration",
+          "attributes": ""
+        },
+        {
+          "name": "declaration_source",
+          "type": "BusinessEventId",
+          "attributes": ""
+        },
+        {
+          "name": "reserve",
+          "type": "AccountingAmount",
+          "attributes": ""
+        },
+        {
+          "name": "reserve_basis_year",
+          "type": "RequiredOption<i32>",
+          "attributes": "#[serde(deserialize_with = \"deserialize_required_option\")]\n    "
+        },
+        {
+          "name": "payments",
+          "type": "std::collections::BTreeMap<String, DividendPaymentState>",
+          "attributes": ""
+        }
+      ],
+      "sourceSha256": "95fd69b42a435b331bc17cb0b6b8fbc77d60fa75642fc04defaa0f6e3be3d6d3"
+    },
+    "StockDistributionFinanceFact": {
+      "kind": "struct",
+      "file": "company/stock_distribution.rs",
+      "line": 761,
+      "fields": [
+        {
+          "name": "event_id",
+          "type": "String",
+          "attributes": ""
+        },
+        {
+          "name": "approval_reference",
+          "type": "String",
+          "attributes": ""
+        },
+        {
+          "name": "kind",
+          "type": "StockDistributionKind",
+          "attributes": ""
+        },
+        {
+          "name": "approved_on",
+          "type": "CivilDate",
+          "attributes": ""
+        },
+        {
+          "name": "new_shares",
+          "type": "u64",
+          "attributes": "#[serde(with = \"crate::orderbook::canonical_u64_decimal\")]\n    "
+        },
+        {
+          "name": "par_value_per_share",
+          "type": "Money",
+          "attributes": ""
+        },
+        {
+          "name": "capital_increase",
+          "type": "AccountingAmount",
+          "attributes": ""
+        },
+        {
+          "name": "registered_capital_at_approval",
+          "type": "AccountingAmount",
+          "attributes": ""
+        },
+        {
+          "name": "credited_on",
+          "type": "Option<CivilDate>",
+          "attributes": ""
+        },
+        {
+          "name": "statutory_reserve",
+          "type": "AccountingAmount",
+          "attributes": ""
+        },
+        {
+          "name": "reserve_basis_year",
+          "type": "Option<i32>",
+          "attributes": "#[serde(deserialize_with = \"required_nullable_reserve_year\")]\n    "
+        }
+      ],
+      "sourceSha256": "6aa9dcd0bc388c42a49d185a57352602c39593adf1bee1a7a179e8a7a525655a"
+    },
+    "ShareSplitFinanceFact": {
+      "kind": "struct",
+      "file": "company/share_split.rs",
+      "line": 819,
+      "fields": [
+        {
+          "name": "event_id",
+          "type": "String",
+          "attributes": ""
+        },
+        {
+          "name": "approval_reference",
+          "type": "String",
+          "attributes": ""
+        },
+        {
+          "name": "direction",
+          "type": "ShareSplitDirection",
+          "attributes": ""
+        },
+        {
+          "name": "approved_on",
+          "type": "CivilDate",
+          "attributes": ""
+        },
+        {
+          "name": "ratio",
+          "type": "u64",
+          "attributes": "#[serde(with = \"crate::orderbook::canonical_u64_decimal\")]\n    "
+        },
+        {
+          "name": "par_value_before",
+          "type": "crate::money::Money",
+          "attributes": ""
+        },
+        {
+          "name": "par_value_after",
+          "type": "crate::money::Money",
+          "attributes": ""
+        },
+        {
+          "name": "registered_capital_at_approval",
+          "type": "crate::accounting::AccountingAmount",
+          "attributes": ""
+        },
+        {
+          "name": "issued_shares_before",
+          "type": "u64",
+          "attributes": "#[serde(with = \"crate::orderbook::canonical_u64_decimal\")]\n    "
+        },
+        {
+          "name": "issued_shares_after",
+          "type": "u64",
+          "attributes": "#[serde(with = \"crate::orderbook::canonical_u64_decimal\")]\n    "
+        },
+        {
+          "name": "destroyed_shares",
+          "type": "u64",
+          "attributes": "#[serde(with = \"crate::orderbook::canonical_u64_decimal\")]\n    "
+        },
+        {
+          "name": "registered_capital_reduction",
+          "type": "crate::accounting::AccountingAmount",
+          "attributes": ""
+        },
+        {
+          "name": "settled_on",
+          "type": "Option<CivilDate>",
+          "attributes": ""
+        }
+      ],
+      "sourceSha256": "e9de8a73b13c4d4efd7d7ea894e5afb8f7f88a2158914c8a25c2ddc8afd28904"
+    },
+    "RightsOfferingFinanceFact": {
+      "kind": "struct",
+      "file": "company/rights_offering.rs",
+      "line": 1335,
+      "fields": [
+        {
+          "name": "event_id",
+          "type": "String",
+          "attributes": ""
+        },
+        {
+          "name": "approval_reference",
+          "type": "String",
+          "attributes": ""
+        },
+        {
+          "name": "approved_on",
+          "type": "CivilDate",
+          "attributes": ""
+        },
+        {
+          "name": "price_per_share",
+          "type": "Money",
+          "attributes": ""
+        },
+        {
+          "name": "par_value_per_share",
+          "type": "Money",
+          "attributes": ""
+        },
+        {
+          "name": "registered_capital_at_approval",
+          "type": "crate::accounting::AccountingAmount",
+          "attributes": ""
+        },
+        {
+          "name": "settled_on",
+          "type": "Option<CivilDate>",
+          "attributes": ""
+        },
+        {
+          "name": "issued_shares",
+          "type": "u64",
+          "attributes": "#[serde(with = \"crate::orderbook::canonical_u64_decimal\")]\n    "
+        },
+        {
+          "name": "proceeds",
+          "type": "Option<crate::accounting::AccountingAmount>",
+          "attributes": ""
+        },
+        {
+          "name": "capital_increase",
+          "type": "Option<crate::accounting::AccountingAmount>",
+          "attributes": ""
+        }
+      ],
+      "sourceSha256": "8700cff25feb65750731e685a82548275e4f675295f5f7188ccfb25decabee7c"
+    },
+    "IssuerRepurchaseFinanceFact": {
+      "kind": "struct",
+      "file": "company/issuer_repurchase.rs",
+      "line": 1088,
+      "fields": [
+        {
+          "name": "event_id",
+          "type": "String",
+          "attributes": ""
+        },
+        {
+          "name": "approval_reference",
+          "type": "String",
+          "attributes": ""
+        },
+        {
+          "name": "approved_on",
+          "type": "CivilDate",
+          "attributes": ""
+        },
+        {
+          "name": "synthetic_funding",
+          "type": "crate::accounting::AccountingAmount",
+          "attributes": ""
+        },
+        {
+          "name": "purpose",
+          "type": "RepurchasePurpose",
+          "attributes": ""
+        },
+        {
+          "name": "spent",
+          "type": "Option<crate::accounting::AccountingAmount>",
+          "attributes": ""
+        },
+        {
+          "name": "withdrawn_remainder",
+          "type": "Option<crate::accounting::AccountingAmount>",
+          "attributes": ""
+        },
+        {
+          "name": "completed_on",
+          "type": "Option<CivilDate>",
+          "attributes": ""
+        },
+        {
+          "name": "cancelled_shares",
+          "type": "u64",
+          "attributes": "#[serde(with = \"crate::orderbook::canonical_u64_decimal\")]\n    "
+        },
+        {
+          "name": "cancelled_on",
+          "type": "Option<CivilDate>",
+          "attributes": ""
+        },
+        {
+          "name": "capital_reduction",
+          "type": "Option<crate::accounting::AccountingAmount>",
+          "attributes": ""
+        }
+      ],
+      "sourceSha256": "0d5a22f20cee3b65459aa722451b9444daba89c29cb3630c3ee58a2442b41f7c"
+    },
+    "DividendLegalFacts": {
+      "kind": "struct",
+      "file": "company/dividend.rs",
+      "line": 20,
+      "fields": [
+        {
+          "name": "registered_capital",
+          "type": "AccountingAmount",
+          "attributes": ""
+        },
+        {
+          "name": "source_evidence",
+          "type": "String",
+          "attributes": ""
+        }
+      ],
+      "sourceSha256": "5df23d1a7bec081c8c92d26cf0cddebb3d33500e1237a0e3957aebccbb8ae64e"
+    },
+    "ShareRegistry": {
+      "kind": "struct",
+      "file": "company/share_registry.rs",
+      "line": 231,
+      "fields": [
+        {
+          "name": "stock",
+          "type": "StockCode",
+          "attributes": ""
+        },
+        {
+          "name": "issuer",
+          "type": "CompanyId",
+          "attributes": ""
+        },
+        {
+          "name": "issued_shares",
+          "type": "u64",
+          "attributes": "#[serde(with = \"crate::orderbook::canonical_u64_decimal\")]\n    "
+        },
+        {
+          "name": "issuer_repurchase_account",
+          "type": "Option<IssuerRepurchaseAccountFacts>",
+          "attributes": "#[serde(deserialize_with = \"required_issuer_repurchase_account\")]\n    "
+        },
+        {
+          "name": "settled_on",
+          "type": "CivilDate",
+          "attributes": ""
+        },
+        {
+          "name": "holdings",
+          "type": "Vec<ShareHolding>",
+          "attributes": ""
+        },
+        {
+          "name": "receipts",
+          "type": "Vec<ShareDayReceipt>",
+          "attributes": ""
+        },
+        {
+          "name": "registrations",
+          "type": "Vec<RegistrationSnapshot>",
+          "attributes": ""
+        }
+      ],
+      "sourceSha256": "a6f064d0fc1e19933b941af0b5402a9bf47b49f25dd5fe90acb10fd1c728fc3c"
+    },
+    "CashDividendBook": {
+      "kind": "struct",
+      "file": "company/cash_dividend.rs",
+      "line": 288,
+      "fields": [
+        {
+          "name": "plan",
+          "type": "CashDividendPlan",
+          "attributes": ""
+        },
+        {
+          "name": "status",
+          "type": "CashDividendStatus",
+          "attributes": ""
+        },
+        {
+          "name": "registration",
+          "type": "Option<RegistrationSnapshot>",
+          "attributes": ""
+        },
+        {
+          "name": "entitlements",
+          "type": "Vec<CashDividendEntitlement>",
+          "attributes": ""
+        },
+        {
+          "name": "paid",
+          "type": "Vec<(HolderId, Money)>",
+          "attributes": ""
+        },
+        {
+          "name": "failures",
+          "type": "Vec<(HolderId, String)>",
+          "attributes": ""
+        },
+        {
+          "name": "payments",
+          "type": "Vec<CashDividendPaymentReceipt>",
+          "attributes": ""
+        }
+      ],
+      "sourceSha256": "15fe07e945c0776e0bb055712878358de6d88233292014dedfc624a3d383a7ad"
+    },
+    "CashDividendTaxBook": {
+      "kind": "struct",
+      "file": "company/cash_dividend_tax.rs",
+      "line": 352,
+      "fields": [
+        {
+          "name": "operation_seq",
+          "type": "u64",
+          "attributes": "#[serde(with = \"crate::orderbook::js_safe_u64\")]\n    "
+        },
+        {
+          "name": "account",
+          "type": "AccountId",
+          "attributes": ""
+        },
+        {
+          "name": "stock",
+          "type": "StockCode",
+          "attributes": ""
+        },
+        {
+          "name": "profile",
+          "type": "DividendTaxProfile",
+          "attributes": ""
+        },
+        {
+          "name": "opened_on",
+          "type": "CivilDate",
+          "attributes": ""
+        },
+        {
+          "name": "opening_lots",
+          "type": "Vec<DividendTaxLot>",
+          "attributes": ""
+        },
+        {
+          "name": "settled_on",
+          "type": "CivilDate",
+          "attributes": ""
+        },
+        {
+          "name": "lots",
+          "type": "Vec<DividendTaxLot>",
+          "attributes": ""
+        },
+        {
+          "name": "days",
+          "type": "Vec<TaxDayReceipt>",
+          "attributes": ""
+        },
+        {
+          "name": "dividends",
+          "type": "Vec<RegisteredTaxDividend>",
+          "attributes": ""
+        },
+        {
+          "name": "collections",
+          "type": "Vec<TaxCollectionReceipt>",
+          "attributes": ""
+        },
+        {
+          "name": "redenominations",
+          "type": "Vec<TaxRedenominationReceipt>",
+          "attributes": ""
+        },
+        {
+          "name": "stock_bonus_bases",
+          "type": "Vec<StockBonusTaxBasis>",
+          "attributes": ""
+        }
+      ],
+      "sourceSha256": "555390c1c2735b85c234bb599ef60954367f2333102101ddd0fdbdf6d161fdbf"
+    },
+    "FlatWithholdingReceipt": {
+      "kind": "struct",
+      "file": "session/corporate_actions.rs",
+      "line": 100,
+      "fields": [
+        {
+          "name": "payment_id",
+          "type": "String",
+          "attributes": ""
+        },
+        {
+          "name": "plan_id",
+          "type": "String",
+          "attributes": ""
+        },
+        {
+          "name": "account",
+          "type": "AccountId",
+          "attributes": ""
+        },
+        {
+          "name": "paid_on",
+          "type": "crate::calendar::CivilDate",
+          "attributes": ""
+        },
+        {
+          "name": "gross",
+          "type": "Money",
+          "attributes": ""
+        },
+        {
+          "name": "rate_bp",
+          "type": "u64",
+          "attributes": "#[serde(with = \"crate::orderbook::js_safe_u64\")]\n    "
+        },
+        {
+          "name": "withheld",
+          "type": "Money",
+          "attributes": ""
+        }
+      ],
+      "sourceSha256": "9fe0ce7e1136023ae7e5ac6e270e5a063787d941d5f75e0e2c48ee93c2de2343"
+    },
+    "StockDistributionBook": {
+      "kind": "struct",
+      "file": "company/stock_distribution.rs",
+      "line": 415,
+      "fields": [
+        {
+          "name": "plan",
+          "type": "StockDistributionEventPlan",
+          "attributes": ""
+        },
+        {
+          "name": "status",
+          "type": "StockDistributionStatus",
+          "attributes": ""
+        },
+        {
+          "name": "registration",
+          "type": "Option<RegistrationSnapshot>",
+          "attributes": "#[serde(deserialize_with = \"required_nullable_registration\")]\n    "
+        },
+        {
+          "name": "receipt",
+          "type": "Option<StockDistributionReceipt>",
+          "attributes": ""
+        },
+        {
+          "name": "credited_on",
+          "type": "Option<CivilDate>",
+          "attributes": ""
+        }
+      ],
+      "sourceSha256": "6aa9dcd0bc388c42a49d185a57352602c39593adf1bee1a7a179e8a7a525655a"
+    },
+    "ShareSplitBook": {
+      "kind": "struct",
+      "file": "company/share_split.rs",
+      "line": 570,
+      "fields": [
+        {
+          "name": "plan",
+          "type": "ShareSplitEventPlan",
+          "attributes": ""
+        },
+        {
+          "name": "status",
+          "type": "ShareSplitStatus",
+          "attributes": ""
+        },
+        {
+          "name": "registration",
+          "type": "Option<RegistrationSnapshot>",
+          "attributes": ""
+        },
+        {
+          "name": "receipt",
+          "type": "Option<ShareSplitReceipt>",
+          "attributes": ""
+        },
+        {
+          "name": "settled_on",
+          "type": "Option<CivilDate>",
+          "attributes": ""
+        }
+      ],
+      "sourceSha256": "e9de8a73b13c4d4efd7d7ea894e5afb8f7f88a2158914c8a25c2ddc8afd28904"
+    },
+    "RightsOfferingBook": {
+      "kind": "struct",
+      "file": "company/rights_offering.rs",
+      "line": 748,
+      "fields": [
+        {
+          "name": "plan",
+          "type": "RightsOfferingEventPlan",
+          "attributes": ""
+        },
+        {
+          "name": "status",
+          "type": "RightsOfferingStatus",
+          "attributes": ""
+        },
+        {
+          "name": "registration",
+          "type": "Option<RegistrationSnapshot>",
+          "attributes": "#[serde(deserialize_with = \"required_nullable_registration\")]\n    "
+        },
+        {
+          "name": "entitlement",
+          "type": "Option<RightsEntitlementReceipt>",
+          "attributes": ""
+        },
+        {
+          "name": "subscriptions",
+          "type": "Vec<RightsSubscriptionRecord>",
+          "attributes": ""
+        },
+        {
+          "name": "closed_on",
+          "type": "Option<CivilDate>",
+          "attributes": ""
+        },
+        {
+          "name": "settlement",
+          "type": "Option<RightsSettlementReceipt>",
+          "attributes": ""
+        },
+        {
+          "name": "credited_on",
+          "type": "Option<CivilDate>",
+          "attributes": ""
+        }
+      ],
+      "sourceSha256": "8700cff25feb65750731e685a82548275e4f675295f5f7188ccfb25decabee7c"
+    },
+    "QueuedRightsSubscription": {
+      "kind": "struct",
+      "file": "session/corporate_actions.rs",
+      "line": 56,
+      "fields": [
+        {
+          "name": "event_id",
+          "type": "String",
+          "attributes": ""
+        },
+        {
+          "name": "requested_shares",
+          "type": "u64",
+          "attributes": "#[serde(with = \"crate::orderbook::canonical_u64_decimal\")]\n    "
+        },
+        {
+          "name": "submitted_on",
+          "type": "crate::calendar::CivilDate",
+          "attributes": ""
+        },
+        {
+          "name": "account",
+          "type": "AccountId",
+          "attributes": ""
+        }
+      ],
+      "sourceSha256": "9fe0ce7e1136023ae7e5ac6e270e5a063787d941d5f75e0e2c48ee93c2de2343"
+    },
+    "RejectedRightsSubscription": {
+      "kind": "struct",
+      "file": "session/corporate_actions.rs",
+      "line": 69,
+      "fields": [
+        {
+          "name": "event_id",
+          "type": "String",
+          "attributes": ""
+        },
+        {
+          "name": "account",
+          "type": "AccountId",
+          "attributes": ""
+        },
+        {
+          "name": "requested_shares",
+          "type": "u64",
+          "attributes": "#[serde(with = \"crate::orderbook::canonical_u64_decimal\")]\n    "
+        },
+        {
+          "name": "submitted_on",
+          "type": "crate::calendar::CivilDate",
+          "attributes": ""
+        },
+        {
+          "name": "rejected_on",
+          "type": "crate::calendar::CivilDate",
+          "attributes": ""
+        },
+        {
+          "name": "reason",
+          "type": "String",
+          "attributes": ""
+        }
+      ],
+      "sourceSha256": "9fe0ce7e1136023ae7e5ac6e270e5a063787d941d5f75e0e2c48ee93c2de2343"
+    },
+    "IssuerRepurchaseBook": {
+      "kind": "struct",
+      "file": "company/issuer_repurchase.rs",
+      "line": 397,
+      "fields": [
+        {
+          "name": "plan",
+          "type": "IssuerRepurchasePlan",
+          "attributes": ""
+        },
+        {
+          "name": "status",
+          "type": "IssuerRepurchaseStatus",
+          "attributes": ""
+        },
+        {
+          "name": "fills",
+          "type": "Vec<RepurchaseFillRecord>",
+          "attributes": ""
+        },
+        {
+          "name": "share_unit_adjustments",
+          "type": "Vec<ShareUnitAdjustment>",
+          "attributes": ""
+        },
+        {
+          "name": "completed_on",
+          "type": "Option<CivilDate>",
+          "attributes": ""
+        },
+        {
+          "name": "withdrawn_remainder",
+          "type": "Option<Money>",
+          "attributes": ""
+        },
+        {
+          "name": "cancelled_on",
+          "type": "Option<CivilDate>",
+          "attributes": ""
+        },
+        {
+          "name": "cancelled_shares",
+          "type": "u64",
+          "attributes": "#[serde(with = \"crate::orderbook::canonical_u64_decimal\")]\n    "
+        },
+        {
+          "name": "last_order_day",
+          "type": "Option<CivilDate>",
+          "attributes": ""
+        }
+      ],
+      "sourceSha256": "0d5a22f20cee3b65459aa722451b9444daba89c29cb3630c3ee58a2442b41f7c"
+    },
+    "AccountDividendGrossReceipt": {
+      "kind": "struct",
+      "file": "session/corporate_actions.rs",
+      "line": 117,
+      "fields": [
+        {
+          "name": "payment_id",
+          "type": "String",
+          "attributes": ""
+        },
+        {
+          "name": "plan_id",
+          "type": "String",
+          "attributes": ""
+        },
+        {
+          "name": "account",
+          "type": "AccountId",
+          "attributes": ""
+        },
+        {
+          "name": "paid_on",
+          "type": "crate::calendar::CivilDate",
+          "attributes": ""
+        },
+        {
+          "name": "gross",
+          "type": "Money",
+          "attributes": ""
+        },
+        {
+          "name": "tax_status",
+          "type": "DividendTaxStatus",
+          "attributes": ""
+        }
+      ],
+      "sourceSha256": "9fe0ce7e1136023ae7e5ac6e270e5a063787d941d5f75e0e2c48ee93c2de2343"
+    },
+    "ExternalDividendReceipt": {
+      "kind": "struct",
+      "file": "session/corporate_actions.rs",
+      "line": 129,
+      "fields": [
+        {
+          "name": "payment_id",
+          "type": "String",
+          "attributes": ""
+        },
+        {
+          "name": "plan_id",
+          "type": "String",
+          "attributes": ""
+        },
+        {
+          "name": "holder",
+          "type": "crate::company::share_registry::HolderId",
+          "attributes": ""
+        },
+        {
+          "name": "paid_on",
+          "type": "crate::calendar::CivilDate",
+          "attributes": ""
+        },
+        {
+          "name": "gross",
+          "type": "Money",
+          "attributes": ""
+        },
+        {
+          "name": "tax_status",
+          "type": "DividendTaxStatus",
+          "attributes": ""
+        }
+      ],
+      "sourceSha256": "9fe0ce7e1136023ae7e5ac6e270e5a063787d941d5f75e0e2c48ee93c2de2343"
+    },
+    "AppliedExReferenceGroup": {
+      "kind": "struct",
+      "file": "session/corporate_actions.rs",
+      "line": 84,
+      "fields": [
+        {
+          "name": "date",
+          "type": "crate::calendar::CivilDate",
+          "attributes": ""
+        },
+        {
+          "name": "stock",
+          "type": "StockCode",
+          "attributes": ""
+        },
+        {
+          "name": "cash_plan_ids",
+          "type": "Vec<String>",
+          "attributes": ""
+        },
+        {
+          "name": "stock_event_ids",
+          "type": "Vec<String>",
+          "attributes": ""
+        },
+        {
+          "name": "rights_event_ids",
+          "type": "Vec<String>",
+          "attributes": ""
+        },
+        {
+          "name": "split_event_ids",
+          "type": "Vec<String>",
+          "attributes": ""
+        },
+        {
+          "name": "reference",
+          "type": "crate::company::ex_reference_price::ExReferencePrice",
+          "attributes": ""
+        }
+      ],
+      "sourceSha256": "9fe0ce7e1136023ae7e5ac6e270e5a063787d941d5f75e0e2c48ee93c2de2343"
+    },
+    "ShareDayFrontier": {
+      "kind": "struct",
+      "file": "company/share_registry/settlement_day.rs",
+      "line": 16,
+      "fields": [
+        {
+          "name": "settled_on",
+          "type": "CivilDate",
+          "attributes": ""
+        },
+        {
+          "name": "receipt_count",
+          "type": "u64",
+          "attributes": "#[serde(with = \"crate::orderbook::canonical_u64_decimal\")]\n    "
+        },
+        {
+          "name": "unit",
+          "type": "ShareUnitIdentity",
+          "attributes": ""
+        }
+      ],
+      "sourceSha256": "06f6fa65d6c5973567bbad009e79268367f50d90eabea748846f0990ae0c8f7e"
+    },
+    "OpeningMovementRef": {
+      "kind": "struct",
+      "file": "company/share_registry/settlement_day.rs",
+      "line": 25,
+      "fields": [
+        {
+          "name": "movement_event_id",
+          "type": "String",
+          "attributes": ""
+        },
+        {
+          "name": "registration_event_id",
+          "type": "String",
+          "attributes": ""
+        },
+        {
+          "name": "source_lots",
+          "type": "Vec<Vec<String>>",
+          "attributes": ""
+        },
+        {
+          "name": "from_unit",
+          "type": "ShareUnitIdentity",
+          "attributes": ""
+        },
+        {
+          "name": "to_unit",
+          "type": "ShareUnitIdentity",
+          "attributes": ""
+        }
+      ],
+      "sourceSha256": "06f6fa65d6c5973567bbad009e79268367f50d90eabea748846f0990ae0c8f7e"
+    },
+    "ShareUnitIdentity": {
+      "kind": "enum",
+      "file": "company/share_registry/settlement_day.rs",
+      "line": 9,
+      "fields": [
+        {
+          "variant": "Initial",
+          "attributes": "Initial"
+        },
+        {
+          "variant": "ReDenominated { movement_event_id: String }",
+          "attributes": "ReDenominated { movement_event_id: String }"
+        }
+      ],
+      "sourceSha256": "06f6fa65d6c5973567bbad009e79268367f50d90eabea748846f0990ae0c8f7e"
+    },
+    "ShareMarketSource": {
+      "kind": "enum",
+      "file": "company/share_registry/settlement_day.rs",
+      "line": 43,
+      "fields": [
+        {
+          "variant": "FinalConfirmations { receipts: Vec<ShareConfirmationRef>, }",
+          "attributes": "FinalConfirmations {\n        receipts: Vec<ShareConfirmationRef>,\n    }"
+        },
+        {
+          "variant": "CalendarClosed { exchange: CalendarExchange, policy_digest: String, }",
+          "attributes": "CalendarClosed {\n        exchange: CalendarExchange,\n        policy_digest: String,\n    }"
+        }
+      ],
+      "sourceSha256": "06f6fa65d6c5973567bbad009e79268367f50d90eabea748846f0990ae0c8f7e"
+    },
+    "SharePostActionRef": {
+      "kind": "enum",
+      "file": "company/share_registry/settlement_day.rs",
+      "line": 55,
+      "fields": [
+        {
+          "variant": "Movement { event_id: String, }",
+          "attributes": "Movement {\n        event_id: String,\n    }"
+        },
+        {
+          "variant": "UnitMovement { event_id: String, from_unit: ShareUnitIdentity, to_unit: ShareUnitIdentity, }",
+          "attributes": "UnitMovement {\n        event_id: String,\n        from_unit: ShareUnitIdentity,\n        to_unit: ShareUnitIdentity,\n    }"
+        },
+        {
+          "variant": "CaptureRegistration { event_id: String, }",
+          "attributes": "CaptureRegistration {\n        event_id: String,\n    }"
+        }
+      ],
+      "sourceSha256": "06f6fa65d6c5973567bbad009e79268367f50d90eabea748846f0990ae0c8f7e"
+    },
+    "PeriodChangeExplanation": {
+      "kind": "struct",
+      "file": "company/simple/period.rs",
+      "line": 139,
+      "fields": [
+        {
+          "name": "previous",
+          "type": "PeriodAmounts",
+          "attributes": ""
+        },
+        {
+          "name": "cycle",
+          "type": "SettlementCycle",
+          "attributes": ""
+        },
+        {
+          "name": "environment_change_bp",
+          "type": "i32",
+          "attributes": ""
+        },
+        {
+          "name": "demand_contribution_bp",
+          "type": "i32",
+          "attributes": ""
+        },
+        {
+          "name": "revenue_segments",
+          "type": "Vec<TrendSegment>",
+          "attributes": ""
+        },
+        {
+          "name": "fixed_expense_segments",
+          "type": "Vec<TrendSegment>",
+          "attributes": ""
+        },
+        {
+          "name": "variable_expense_segments",
+          "type": "Vec<TrendSegment>",
+          "attributes": ""
+        },
+        {
+          "name": "revenue_noise_bp",
+          "type": "i32",
+          "attributes": ""
+        },
+        {
+          "name": "fixed_expense_noise_bp",
+          "type": "i32",
+          "attributes": ""
+        },
+        {
+          "name": "variable_expense_noise_bp",
+          "type": "i32",
+          "attributes": ""
+        },
+        {
+          "name": "restart_revenue",
+          "type": "Option<AccountingAmount>",
+          "attributes": "#[serde(deserialize_with = \"crate::company::persistence::required_nullable\")]\n    #[ts(optional = false, type = \"string | null\")]\n    "
+        },
+        {
+          "name": "restart_source",
+          "type": "Option<String>",
+          "attributes": "#[serde(deserialize_with = \"crate::company::persistence::required_nullable\")]\n    #[ts(optional = false, type = \"string | null\")]\n    "
+        }
+      ],
+      "sourceSha256": "06f5b359c734c349432747bcedb985b8e3b0b87313babc8d97c42e3d11d96197"
+    },
+    "SimplePreferenceRejection": {
+      "kind": "struct",
+      "file": "company/simple/preferences.rs",
+      "line": 165,
+      "fields": [
+        {
+          "name": "company",
+          "type": "CompanyId",
+          "attributes": ""
+        },
+        {
+          "name": "evaluated_on",
+          "type": "CivilDate",
+          "attributes": ""
+        },
+        {
+          "name": "kind",
+          "type": "SimplePreferenceProposalKind",
+          "attributes": ""
+        },
+        {
+          "name": "detail",
+          "type": "String",
+          "attributes": ""
+        }
+      ],
+      "sourceSha256": "f90db919d29267b79648b3426209e5715763b9c6c187ef2e5f7782c54126e986"
+    },
+    "LossEntry": {
+      "kind": "struct",
+      "file": "accounting/tax.rs",
+      "line": 122,
+      "fields": [
+        {
+          "name": "origin_year",
+          "type": "i32",
+          "attributes": ""
+        },
+        {
+          "name": "remaining",
+          "type": "AccountingAmount",
+          "attributes": ""
+        }
+      ],
+      "sourceSha256": "07f00424f2eceb2fc8bfd0e27366c5636653849cbae590c8641e8caa16a9e192"
+    },
+    "IncomeTaxAssessment": {
+      "kind": "struct",
+      "file": "company/income_tax.rs",
+      "line": 45,
+      "fields": [
+        {
+          "name": "pretax",
+          "type": "AccountingAmount",
+          "attributes": ""
+        },
+        {
+          "name": "current_tax",
+          "type": "AccountingAmount",
+          "attributes": ""
+        },
+        {
+          "name": "opening_loss_pool",
+          "type": "Vec<LossEntry>",
+          "attributes": ""
+        },
+        {
+          "name": "deferred_tax_asset",
+          "type": "AccountingAmount",
+          "attributes": ""
+        }
+      ],
+      "sourceSha256": "9f375615b079f671e74227cf261660fbbc86e77ad737af8a97b6d0a6967a3c64"
+    },
+    "DividendDeclaration": {
+      "kind": "struct",
+      "file": "company/dividend.rs",
+      "line": 11,
+      "fields": [
+        {
+          "name": "plan_id",
+          "type": "String",
+          "attributes": ""
+        },
+        {
+          "name": "approved_on",
+          "type": "CivilDate",
+          "attributes": ""
+        },
+        {
+          "name": "total_gross",
+          "type": "AccountingAmount",
+          "attributes": ""
+        },
+        {
+          "name": "registered_capital",
+          "type": "AccountingAmount",
+          "attributes": ""
+        }
+      ],
+      "sourceSha256": "5df23d1a7bec081c8c92d26cf0cddebb3d33500e1237a0e3957aebccbb8ae64e"
+    },
+    "DividendPaymentState": {
+      "kind": "struct",
+      "file": "company/simple/finance.rs",
+      "line": 116,
+      "fields": [
+        {
+          "name": "source",
+          "type": "BusinessEventId",
+          "attributes": ""
+        },
+        {
+          "name": "paid_on",
+          "type": "CivilDate",
+          "attributes": ""
+        },
+        {
+          "name": "amount",
+          "type": "AccountingAmount",
+          "attributes": ""
+        }
+      ],
+      "sourceSha256": "95fd69b42a435b331bc17cb0b6b8fbc77d60fa75642fc04defaa0f6e3be3d6d3"
+    },
+    "StockDistributionKind": {
+      "kind": "enum",
+      "file": "company/stock_distribution.rs",
+      "line": 20,
+      "fields": [
+        {
+          "variant": "BonusShares",
+          "attributes": "BonusShares"
+        },
+        {
+          "variant": "CapitalReserveConversion",
+          "attributes": "CapitalReserveConversion"
+        }
+      ],
+      "sourceSha256": "6aa9dcd0bc388c42a49d185a57352602c39593adf1bee1a7a179e8a7a525655a"
+    },
+    "ShareSplitDirection": {
+      "kind": "enum",
+      "file": "company/share_split.rs",
+      "line": 38,
+      "fields": [
+        {
+          "variant": "Split",
+          "attributes": "Split"
+        },
+        {
+          "variant": "Consolidate",
+          "attributes": "Consolidate"
+        }
+      ],
+      "sourceSha256": "e9de8a73b13c4d4efd7d7ea894e5afb8f7f88a2158914c8a25c2ddc8afd28904"
+    },
+    "RepurchasePurpose": {
+      "kind": "enum",
+      "file": "company/issuer_repurchase.rs",
+      "line": 43,
+      "fields": [
+        {
+          "variant": "ReduceCapital",
+          "attributes": "ReduceCapital"
+        },
+        {
+          "variant": "EmployeeIncentive",
+          "attributes": "EmployeeIncentive"
+        },
+        {
+          "variant": "ConvertibleConversion",
+          "attributes": "ConvertibleConversion"
+        },
+        {
+          "variant": "ValueMaintenance",
+          "attributes": "ValueMaintenance"
+        }
+      ],
+      "sourceSha256": "0d5a22f20cee3b65459aa722451b9444daba89c29cb3630c3ee58a2442b41f7c"
+    },
+    "IssuerRepurchaseAccountFacts": {
+      "kind": "struct",
+      "file": "company/share_registry.rs",
+      "line": 75,
+      "fields": [
+        {
+          "name": "account_reference",
+          "type": "String",
+          "attributes": ""
+        },
+        {
+          "name": "source_evidence",
+          "type": "String",
+          "attributes": ""
+        },
+        {
+          "name": "established_on",
+          "type": "CivilDate",
+          "attributes": ""
+        }
+      ],
+      "sourceSha256": "a6f064d0fc1e19933b941af0b5402a9bf47b49f25dd5fe90acb10fd1c728fc3c"
+    },
+    "ShareHolding": {
+      "kind": "struct",
+      "file": "company/share_registry.rs",
+      "line": 94,
+      "fields": [
+        {
+          "name": "holder",
+          "type": "HolderId",
+          "attributes": ""
+        },
+        {
+          "name": "lots",
+          "type": "Vec<ShareLot>",
+          "attributes": ""
+        }
+      ],
+      "sourceSha256": "a6f064d0fc1e19933b941af0b5402a9bf47b49f25dd5fe90acb10fd1c728fc3c"
+    },
+    "ShareDayReceipt": {
+      "kind": "struct",
+      "file": "company/share_registry.rs",
+      "line": 171,
+      "fields": [
+        {
+          "name": "request",
+          "type": "ShareDayRequest",
+          "attributes": ""
+        },
+        {
+          "name": "disposals",
+          "type": "Vec<DisposedLot>",
+          "attributes": ""
+        }
+      ],
+      "sourceSha256": "a6f064d0fc1e19933b941af0b5402a9bf47b49f25dd5fe90acb10fd1c728fc3c"
+    },
+    "RegistrationSnapshot": {
+      "kind": "struct",
+      "file": "company/share_registry.rs",
+      "line": 178,
+      "fields": [
+        {
+          "name": "event_id",
+          "type": "String",
+          "attributes": ""
+        },
+        {
+          "name": "stock",
+          "type": "StockCode",
+          "attributes": ""
+        },
+        {
+          "name": "issuer",
+          "type": "CompanyId",
+          "attributes": ""
+        },
+        {
+          "name": "registered_on",
+          "type": "CivilDate",
+          "attributes": ""
+        },
+        {
+          "name": "issued_shares",
+          "type": "u64",
+          "attributes": "#[serde(with = \"crate::orderbook::canonical_u64_decimal\")]\n    "
+        },
+        {
+          "name": "settled_receipts",
+          "type": "u64",
+          "attributes": "#[serde(with = \"crate::orderbook::canonical_u64_decimal\")]\n    "
+        },
+        {
+          "name": "issuer_repurchase_account",
+          "type": "Option<IssuerRepurchaseAccountFacts>",
+          "attributes": "#[serde(deserialize_with = \"required_issuer_repurchase_account\")]\n    "
+        },
+        {
+          "name": "holdings",
+          "type": "Vec<ShareHolding>",
+          "attributes": ""
+        }
+      ],
+      "sourceSha256": "a6f064d0fc1e19933b941af0b5402a9bf47b49f25dd5fe90acb10fd1c728fc3c"
+    },
+    "CashDividendPlan": {
+      "kind": "struct",
+      "file": "company/cash_dividend.rs",
+      "line": 26,
+      "fields": [
+        {
+          "name": "plan_id",
+          "type": "String",
+          "attributes": ""
+        },
+        {
+          "name": "issuer",
+          "type": "CompanyId",
+          "attributes": ""
+        },
+        {
+          "name": "stock",
+          "type": "StockCode",
+          "attributes": ""
+        },
+        {
+          "name": "exchange",
+          "type": "CalendarExchange",
+          "attributes": ""
+        },
+        {
+          "name": "formula",
+          "type": "CashDividendFormula",
+          "attributes": ""
+        },
+        {
+          "name": "approved_on",
+          "type": "CivilDate",
+          "attributes": ""
+        },
+        {
+          "name": "announced_on",
+          "type": "CivilDate",
+          "attributes": ""
+        },
+        {
+          "name": "registered_on",
+          "type": "CivilDate",
+          "attributes": ""
+        },
+        {
+          "name": "ex_dividend_on",
+          "type": "CivilDate",
+          "attributes": ""
+        },
+        {
+          "name": "payable_on",
+          "type": "CivilDate",
+          "attributes": ""
+        },
+        {
+          "name": "gross_per_share",
+          "type": "Money",
+          "attributes": ""
+        },
+        {
+          "name": "distributable_amount",
+          "type": "Money",
+          "attributes": ""
+        }
+      ],
+      "sourceSha256": "15fe07e945c0776e0bb055712878358de6d88233292014dedfc624a3d383a7ad"
+    },
+    "CashDividendStatus": {
+      "kind": "enum",
+      "file": "company/cash_dividend.rs",
+      "line": 222,
+      "fields": [
+        {
+          "variant": "Approved",
+          "attributes": "Approved"
+        },
+        {
+          "variant": "Announced",
+          "attributes": "Announced"
+        },
+        {
+          "variant": "Registered",
+          "attributes": "Registered"
+        },
+        {
+          "variant": "Payable",
+          "attributes": "Payable"
+        },
+        {
+          "variant": "PartiallyPaid",
+          "attributes": "PartiallyPaid"
+        },
+        {
+          "variant": "Paid",
+          "attributes": "Paid"
+        }
+      ],
+      "sourceSha256": "15fe07e945c0776e0bb055712878358de6d88233292014dedfc624a3d383a7ad"
+    },
+    "CashDividendEntitlement": {
+      "kind": "struct",
+      "file": "company/cash_dividend.rs",
+      "line": 165,
+      "fields": [
+        {
+          "name": "holder",
+          "type": "HolderId",
+          "attributes": ""
+        },
+        {
+          "name": "shares",
+          "type": "u64",
+          "attributes": "#[serde(with = \"crate::orderbook::canonical_u64_decimal\")]\n    "
+        },
+        {
+          "name": "gross",
+          "type": "Money",
+          "attributes": ""
+        }
+      ],
+      "sourceSha256": "15fe07e945c0776e0bb055712878358de6d88233292014dedfc624a3d383a7ad"
+    },
+    "HolderId": {
+      "kind": "enum",
+      "file": "company/share_registry.rs",
+      "line": 48,
+      "fields": [
+        {
+          "variant": "Account(AccountId)",
+          "attributes": "Account(AccountId)"
+        },
+        {
+          "variant": "External(String)",
+          "attributes": "External(String)"
+        },
+        {
+          "variant": "IssuerTreasury",
+          "attributes": "IssuerTreasury"
+        }
+      ],
+      "sourceSha256": "a6f064d0fc1e19933b941af0b5402a9bf47b49f25dd5fe90acb10fd1c728fc3c"
+    },
+    "CashDividendPaymentReceipt": {
+      "kind": "struct",
+      "file": "company/cash_dividend.rs",
+      "line": 189,
+      "fields": [
+        {
+          "name": "payment_id",
+          "type": "String",
+          "attributes": ""
+        },
+        {
+          "name": "paid_on",
+          "type": "CivilDate",
+          "attributes": ""
+        },
+        {
+          "name": "within_six_month_deadline",
+          "type": "bool",
+          "attributes": ""
+        },
+        {
+          "name": "outcomes",
+          "type": "Vec<HolderPaymentOutcome>",
+          "attributes": ""
+        }
+      ],
+      "sourceSha256": "15fe07e945c0776e0bb055712878358de6d88233292014dedfc624a3d383a7ad"
+    },
+    "DividendTaxProfile": {
+      "kind": "enum",
+      "file": "company/cash_dividend_tax.rs",
+      "line": 10,
+      "fields": [
+        {
+          "variant": "IndividualPublicMarket",
+          "attributes": "IndividualPublicMarket"
+        },
+        {
+          "variant": "ResidentEnterprise",
+          "attributes": "ResidentEnterprise"
+        },
+        {
+          "variant": "SecuritiesFund",
+          "attributes": "SecuritiesFund"
+        },
+        {
+          "variant": "NonResident",
+          "attributes": "NonResident"
+        }
+      ],
+      "sourceSha256": "555390c1c2735b85c234bb599ef60954367f2333102101ddd0fdbdf6d161fdbf"
+    },
+    "DividendTaxLot": {
+      "kind": "struct",
+      "file": "company/cash_dividend_tax.rs",
+      "line": 103,
+      "fields": [
+        {
+          "name": "id",
+          "type": "String",
+          "attributes": ""
+        },
+        {
+          "name": "qty",
+          "type": "u64",
+          "attributes": "#[serde(with = \"crate::orderbook::canonical_u64_decimal\")]\n    "
+        },
+        {
+          "name": "acquired_on",
+          "type": "CivilDate",
+          "attributes": ""
+        },
+        {
+          "name": "source",
+          "type": "TaxAcquisitionSource",
+          "attributes": ""
+        },
+        {
+          "name": "class",
+          "type": "TaxShareClass",
+          "attributes": ""
+        }
+      ],
+      "sourceSha256": "555390c1c2735b85c234bb599ef60954367f2333102101ddd0fdbdf6d161fdbf"
+    },
+    "TaxDayReceipt": {
+      "kind": "struct",
+      "file": "company/cash_dividend_tax.rs",
+      "line": 259,
+      "fields": [
+        {
+          "name": "operation_seq",
+          "type": "u64",
+          "attributes": "#[serde(with = \"crate::orderbook::js_safe_u64\")]\n    "
+        },
+        {
+          "name": "event_id",
+          "type": "String",
+          "attributes": ""
+        },
+        {
+          "name": "day",
+          "type": "CivilDate",
+          "attributes": ""
+        },
+        {
+          "name": "net_change",
+          "type": "i128",
+          "attributes": "#[serde(with = \"crate::company::share_registry::canonical_i128_decimal\")]\n    "
+        },
+        {
+          "name": "acquisition",
+          "type": "Option<DividendTaxLot>",
+          "attributes": "#[serde(deserialize_with = \"required_lot\")]\n    "
+        },
+        {
+          "name": "dispositions",
+          "type": "Vec<TaxDisposition>",
+          "attributes": ""
+        }
+      ],
+      "sourceSha256": "555390c1c2735b85c234bb599ef60954367f2333102101ddd0fdbdf6d161fdbf"
+    },
+    "RegisteredTaxDividend": {
+      "kind": "struct",
+      "file": "company/cash_dividend_tax.rs",
+      "line": 284,
+      "fields": [
+        {
+          "name": "operation_seq",
+          "type": "u64",
+          "attributes": "#[serde(with = \"crate::orderbook::js_safe_u64\")]\n    "
+        },
+        {
+          "name": "event_id",
+          "type": "String",
+          "attributes": ""
+        },
+        {
+          "name": "registered_on",
+          "type": "CivilDate",
+          "attributes": ""
+        },
+        {
+          "name": "per_share",
+          "type": "ExactDividendTaxAmount",
+          "attributes": ""
+        },
+        {
+          "name": "lots",
+          "type": "Vec<DividendTaxLot>",
+          "attributes": ""
+        },
+        {
+          "name": "payments",
+          "type": "Vec<DividendCashReceipt>",
+          "attributes": ""
+        }
+      ],
+      "sourceSha256": "555390c1c2735b85c234bb599ef60954367f2333102101ddd0fdbdf6d161fdbf"
+    },
+    "TaxCollectionReceipt": {
+      "kind": "struct",
+      "file": "company/cash_dividend_tax.rs",
+      "line": 296,
+      "fields": [
+        {
+          "name": "operation_seq",
+          "type": "u64",
+          "attributes": "#[serde(with = \"crate::orderbook::js_safe_u64\")]\n    "
+        },
+        {
+          "name": "event_id",
+          "type": "String",
+          "attributes": ""
+        },
+        {
+          "name": "day",
+          "type": "CivilDate",
+          "attributes": ""
+        },
+        {
+          "name": "available_cash",
+          "type": "Money",
+          "attributes": ""
+        },
+        {
+          "name": "collected",
+          "type": "Money",
+          "attributes": ""
+        },
+        {
+          "name": "remaining_cash",
+          "type": "Money",
+          "attributes": ""
+        },
+        {
+          "name": "outstanding",
+          "type": "ExactDividendTaxAmount",
+          "attributes": ""
+        },
+        {
+          "name": "needs_funds",
+          "type": "bool",
+          "attributes": ""
+        }
+      ],
+      "sourceSha256": "555390c1c2735b85c234bb599ef60954367f2333102101ddd0fdbdf6d161fdbf"
+    },
+    "TaxRedenominationReceipt": {
+      "kind": "struct",
+      "file": "company/cash_dividend_tax.rs",
+      "line": 317,
+      "fields": [
+        {
+          "name": "operation_seq",
+          "type": "u64",
+          "attributes": "#[serde(with = \"crate::orderbook::js_safe_u64\")]\n    "
+        },
+        {
+          "name": "event_id",
+          "type": "String",
+          "attributes": ""
+        },
+        {
+          "name": "day",
+          "type": "CivilDate",
+          "attributes": ""
+        },
+        {
+          "name": "net_change",
+          "type": "i128",
+          "attributes": "#[serde(with = \"crate::company::share_registry::canonical_i128_decimal\")]\n    "
+        },
+        {
+          "name": "removed",
+          "type": "Vec<TaxDisposition>",
+          "attributes": ""
+        }
+      ],
+      "sourceSha256": "555390c1c2735b85c234bb599ef60954367f2333102101ddd0fdbdf6d161fdbf"
+    },
+    "StockBonusTaxBasis": {
+      "kind": "struct",
+      "file": "company/cash_dividend_tax.rs",
+      "line": 336,
+      "fields": [
+        {
+          "name": "operation_seq",
+          "type": "u64",
+          "attributes": "#[serde(with = \"crate::orderbook::js_safe_u64\")]\n    "
+        },
+        {
+          "name": "event_id",
+          "type": "String",
+          "attributes": ""
+        },
+        {
+          "name": "credited_on",
+          "type": "CivilDate",
+          "attributes": ""
+        },
+        {
+          "name": "lot_id",
+          "type": "String",
+          "attributes": ""
+        },
+        {
+          "name": "qty",
+          "type": "u64",
+          "attributes": "#[serde(with = \"crate::orderbook::canonical_u64_decimal\")]\n    "
+        },
+        {
+          "name": "par_value_per_share",
+          "type": "Money",
+          "attributes": ""
+        }
+      ],
+      "sourceSha256": "555390c1c2735b85c234bb599ef60954367f2333102101ddd0fdbdf6d161fdbf"
+    },
+    "StockDistributionEventPlan": {
+      "kind": "struct",
+      "file": "company/stock_distribution.rs",
+      "line": 323,
+      "fields": [
+        {
+          "name": "event_id",
+          "type": "String",
+          "attributes": ""
+        },
+        {
+          "name": "approval_reference",
+          "type": "String",
+          "attributes": ""
+        },
+        {
+          "name": "issuer",
+          "type": "CompanyId",
+          "attributes": ""
+        },
+        {
+          "name": "stock",
+          "type": "StockCode",
+          "attributes": ""
+        },
+        {
+          "name": "exchange",
+          "type": "CalendarExchange",
+          "attributes": ""
+        },
+        {
+          "name": "kind",
+          "type": "StockDistributionKind",
+          "attributes": ""
+        },
+        {
+          "name": "approved_on",
+          "type": "CivilDate",
+          "attributes": ""
+        },
+        {
+          "name": "announced_on",
+          "type": "CivilDate",
+          "attributes": ""
+        },
+        {
+          "name": "registered_on",
+          "type": "CivilDate",
+          "attributes": ""
+        },
+        {
+          "name": "ex_rights_on",
+          "type": "CivilDate",
+          "attributes": ""
+        },
+        {
+          "name": "shares_per_existing_share_micros",
+          "type": "u64",
+          "attributes": "#[serde(with = \"crate::orderbook::canonical_u64_decimal\")]\n    "
+        },
+        {
+          "name": "approved_total_new_shares",
+          "type": "u64",
+          "attributes": "#[serde(with = \"crate::orderbook::canonical_u64_decimal\")]\n    "
+        }
+      ],
+      "sourceSha256": "6aa9dcd0bc388c42a49d185a57352602c39593adf1bee1a7a179e8a7a525655a"
+    },
+    "StockDistributionStatus": {
+      "kind": "enum",
+      "file": "company/stock_distribution.rs",
+      "line": 401,
+      "fields": [
+        {
+          "variant": "Approved",
+          "attributes": "Approved"
+        },
+        {
+          "variant": "Announced",
+          "attributes": "Announced"
+        },
+        {
+          "variant": "Registered",
+          "attributes": "Registered"
+        },
+        {
+          "variant": "Credited",
+          "attributes": "Credited"
+        }
+      ],
+      "sourceSha256": "6aa9dcd0bc388c42a49d185a57352602c39593adf1bee1a7a179e8a7a525655a"
+    },
+    "StockDistributionReceipt": {
+      "kind": "struct",
+      "file": "company/stock_distribution.rs",
+      "line": 60,
+      "fields": [
+        {
+          "name": "event_id",
+          "type": "String",
+          "attributes": ""
+        },
+        {
+          "name": "approval_reference",
+          "type": "String",
+          "attributes": ""
+        },
+        {
+          "name": "registration_event_id",
+          "type": "String",
+          "attributes": ""
+        },
+        {
+          "name": "stock",
+          "type": "StockCode",
+          "attributes": ""
+        },
+        {
+          "name": "issuer",
+          "type": "CompanyId",
+          "attributes": ""
+        },
+        {
+          "name": "registered_on",
+          "type": "CivilDate",
+          "attributes": ""
+        },
+        {
+          "name": "issued_shares_before",
+          "type": "u64",
+          "attributes": "#[serde(with = \"crate::orderbook::canonical_u64_decimal\")]\n    "
+        },
+        {
+          "name": "issuer_treasury_shares_excluded",
+          "type": "u64",
+          "attributes": "#[serde(with = \"crate::orderbook::canonical_u64_decimal\")]\n    "
+        },
+        {
+          "name": "kind",
+          "type": "StockDistributionKind",
+          "attributes": ""
+        },
+        {
+          "name": "shares_per_existing_share_micros",
+          "type": "u64",
+          "attributes": "#[serde(with = \"crate::orderbook::canonical_u64_decimal\")]\n    "
+        },
+        {
+          "name": "approved_total_new_shares",
+          "type": "u64",
+          "attributes": "#[serde(with = \"crate::orderbook::canonical_u64_decimal\")]\n    "
+        },
+        {
+          "name": "tie_break_seed",
+          "type": "u64",
+          "attributes": "#[serde(with = \"crate::orderbook::canonical_u64_decimal\")]\n    "
+        },
+        {
+          "name": "source_lot_attribution",
+          "type": "SourceLotAttribution",
+          "attributes": ""
+        },
+        {
+          "name": "holders",
+          "type": "Vec<HolderDistribution>",
+          "attributes": ""
+        }
+      ],
+      "sourceSha256": "6aa9dcd0bc388c42a49d185a57352602c39593adf1bee1a7a179e8a7a525655a"
+    },
+    "ShareSplitEventPlan": {
+      "kind": "struct",
+      "file": "company/share_split.rs",
+      "line": 52,
+      "fields": [
+        {
+          "name": "event_id",
+          "type": "String",
+          "attributes": ""
+        },
+        {
+          "name": "approval_reference",
+          "type": "String",
+          "attributes": ""
+        },
+        {
+          "name": "issuer",
+          "type": "CompanyId",
+          "attributes": ""
+        },
+        {
+          "name": "stock",
+          "type": "StockCode",
+          "attributes": ""
+        },
+        {
+          "name": "exchange",
+          "type": "CalendarExchange",
+          "attributes": ""
+        },
+        {
+          "name": "direction",
+          "type": "ShareSplitDirection",
+          "attributes": ""
+        },
+        {
+          "name": "ratio",
+          "type": "u64",
+          "attributes": "#[serde(with = \"crate::orderbook::canonical_u64_decimal\")]\n    "
+        },
+        {
+          "name": "approved_on",
+          "type": "CivilDate",
+          "attributes": ""
+        },
+        {
+          "name": "announced_on",
+          "type": "CivilDate",
+          "attributes": ""
+        },
+        {
+          "name": "registered_on",
+          "type": "CivilDate",
+          "attributes": ""
+        },
+        {
+          "name": "ex_rights_on",
+          "type": "CivilDate",
+          "attributes": ""
+        }
+      ],
+      "sourceSha256": "e9de8a73b13c4d4efd7d7ea894e5afb8f7f88a2158914c8a25c2ddc8afd28904"
+    },
+    "ShareSplitStatus": {
+      "kind": "enum",
+      "file": "company/share_split.rs",
+      "line": 559,
+      "fields": [
+        {
+          "variant": "Approved",
+          "attributes": "Approved"
+        },
+        {
+          "variant": "Announced",
+          "attributes": "Announced"
+        },
+        {
+          "variant": "Registered",
+          "attributes": "Registered"
+        },
+        {
+          "variant": "Settled",
+          "attributes": "Settled"
+        }
+      ],
+      "sourceSha256": "e9de8a73b13c4d4efd7d7ea894e5afb8f7f88a2158914c8a25c2ddc8afd28904"
+    },
+    "ShareSplitReceipt": {
+      "kind": "struct",
+      "file": "company/share_split.rs",
+      "line": 188,
+      "fields": [
+        {
+          "name": "event_id",
+          "type": "String",
+          "attributes": ""
+        },
+        {
+          "name": "approval_reference",
+          "type": "String",
+          "attributes": ""
+        },
+        {
+          "name": "registration_event_id",
+          "type": "String",
+          "attributes": ""
+        },
+        {
+          "name": "stock",
+          "type": "StockCode",
+          "attributes": ""
+        },
+        {
+          "name": "issuer",
+          "type": "CompanyId",
+          "attributes": ""
+        },
+        {
+          "name": "registered_on",
+          "type": "CivilDate",
+          "attributes": ""
+        },
+        {
+          "name": "direction",
+          "type": "ShareSplitDirection",
+          "attributes": ""
+        },
+        {
+          "name": "ratio",
+          "type": "u64",
+          "attributes": "#[serde(with = \"crate::orderbook::canonical_u64_decimal\")]\n    "
+        },
+        {
+          "name": "issued_shares_before",
+          "type": "u64",
+          "attributes": "#[serde(with = \"crate::orderbook::canonical_u64_decimal\")]\n    "
+        },
+        {
+          "name": "issued_shares_after",
+          "type": "u64",
+          "attributes": "#[serde(with = \"crate::orderbook::canonical_u64_decimal\")]\n    "
+        },
+        {
+          "name": "tie_break_seed",
+          "type": "u64",
+          "attributes": "#[serde(with = \"crate::orderbook::canonical_u64_decimal\")]\n    "
+        },
+        {
+          "name": "holders",
+          "type": "Vec<HolderSplitOutcome>",
+          "attributes": ""
+        }
+      ],
+      "sourceSha256": "e9de8a73b13c4d4efd7d7ea894e5afb8f7f88a2158914c8a25c2ddc8afd28904"
+    },
+    "RightsOfferingEventPlan": {
+      "kind": "struct",
+      "file": "company/rights_offering.rs",
+      "line": 86,
+      "fields": [
+        {
+          "name": "event_id",
+          "type": "String",
+          "attributes": ""
+        },
+        {
+          "name": "approval_reference",
+          "type": "String",
+          "attributes": ""
+        },
+        {
+          "name": "issuer",
+          "type": "CompanyId",
+          "attributes": ""
+        },
+        {
+          "name": "stock",
+          "type": "StockCode",
+          "attributes": ""
+        },
+        {
+          "name": "exchange",
+          "type": "CalendarExchange",
+          "attributes": ""
+        },
+        {
+          "name": "approved_on",
+          "type": "CivilDate",
+          "attributes": ""
+        },
+        {
+          "name": "announced_on",
+          "type": "CivilDate",
+          "attributes": ""
+        },
+        {
+          "name": "registered_on",
+          "type": "CivilDate",
+          "attributes": ""
+        },
+        {
+          "name": "payment_start_on",
+          "type": "CivilDate",
+          "attributes": ""
+        },
+        {
+          "name": "payment_deadline_on",
+          "type": "CivilDate",
+          "attributes": ""
+        },
+        {
+          "name": "ex_rights_on",
+          "type": "CivilDate",
+          "attributes": ""
+        },
+        {
+          "name": "settlement_on",
+          "type": "CivilDate",
+          "attributes": ""
+        },
+        {
+          "name": "listing_on",
+          "type": "CivilDate",
+          "attributes": ""
+        },
+        {
+          "name": "price_per_share",
+          "type": "Money",
+          "attributes": ""
+        },
+        {
+          "name": "mode",
+          "type": "RightsOfferingMode",
+          "attributes": ""
+        },
+        {
+          "name": "npc_subscription_strategy",
+          "type": "RightsSubscriptionStrategy",
+          "attributes": ""
+        }
+      ],
+      "sourceSha256": "8700cff25feb65750731e685a82548275e4f675295f5f7188ccfb25decabee7c"
+    },
+    "RightsOfferingStatus": {
+      "kind": "enum",
+      "file": "company/rights_offering.rs",
+      "line": 733,
+      "fields": [
+        {
+          "variant": "Approved",
+          "attributes": "Approved"
+        },
+        {
+          "variant": "Announced",
+          "attributes": "Announced"
+        },
+        {
+          "variant": "Entitled",
+          "attributes": "Entitled"
+        },
+        {
+          "variant": "Closed",
+          "attributes": "Closed"
+        },
+        {
+          "variant": "Settled",
+          "attributes": "Settled"
+        }
+      ],
+      "sourceSha256": "8700cff25feb65750731e685a82548275e4f675295f5f7188ccfb25decabee7c"
+    },
+    "RightsEntitlementReceipt": {
+      "kind": "struct",
+      "file": "company/rights_offering.rs",
+      "line": 376,
+      "fields": [
+        {
+          "name": "event_id",
+          "type": "String",
+          "attributes": ""
+        },
+        {
+          "name": "approval_reference",
+          "type": "String",
+          "attributes": ""
+        },
+        {
+          "name": "registration_event_id",
+          "type": "String",
+          "attributes": ""
+        },
+        {
+          "name": "stock",
+          "type": "StockCode",
+          "attributes": ""
+        },
+        {
+          "name": "issuer",
+          "type": "CompanyId",
+          "attributes": ""
+        },
+        {
+          "name": "registered_on",
+          "type": "CivilDate",
+          "attributes": ""
+        },
+        {
+          "name": "issued_shares_before",
+          "type": "u64",
+          "attributes": "#[serde(with = \"crate::orderbook::canonical_u64_decimal\")]\n    "
+        },
+        {
+          "name": "issuer_treasury_shares_excluded",
+          "type": "u64",
+          "attributes": "#[serde(with = \"crate::orderbook::canonical_u64_decimal\")]\n    "
+        },
+        {
+          "name": "price_per_share",
+          "type": "Money",
+          "attributes": ""
+        },
+        {
+          "name": "mode",
+          "type": "RightsOfferingMode",
+          "attributes": ""
+        },
+        {
+          "name": "planned_total_rights_shares",
+          "type": "u64",
+          "attributes": "#[serde(with = \"crate::orderbook::canonical_u64_decimal\")]\n    "
+        },
+        {
+          "name": "tie_break_seed",
+          "type": "u64",
+          "attributes": "#[serde(with = \"crate::orderbook::canonical_u64_decimal\")]\n    "
+        },
+        {
+          "name": "entitlements",
+          "type": "Vec<RightsEntitlement>",
+          "attributes": ""
+        },
+        {
+          "name": "open_subscription_shares",
+          "type": "u64",
+          "attributes": "#[serde(with = \"crate::orderbook::canonical_u64_decimal\")]\n    "
+        }
+      ],
+      "sourceSha256": "8700cff25feb65750731e685a82548275e4f675295f5f7188ccfb25decabee7c"
+    },
+    "RightsSubscriptionRecord": {
+      "kind": "struct",
+      "file": "company/rights_offering.rs",
+      "line": 683,
+      "fields": [
+        {
+          "name": "holder",
+          "type": "HolderId",
+          "attributes": ""
+        },
+        {
+          "name": "requested_shares",
+          "type": "u64",
+          "attributes": "#[serde(with = \"crate::orderbook::canonical_u64_decimal\")]\n    "
+        },
+        {
+          "name": "price_per_share",
+          "type": "Money",
+          "attributes": ""
+        },
+        {
+          "name": "submitted_on",
+          "type": "CivilDate",
+          "attributes": ""
+        },
+        {
+          "name": "origin",
+          "type": "SubscriptionOrigin",
+          "attributes": ""
+        },
+        {
+          "name": "paid_shares",
+          "type": "u64",
+          "attributes": "#[serde(with = \"crate::orderbook::canonical_u64_decimal\")]\n    "
+        },
+        {
+          "name": "paid_amount",
+          "type": "Money",
+          "attributes": ""
+        },
+        {
+          "name": "waived_shares",
+          "type": "u64",
+          "attributes": "#[serde(with = \"crate::orderbook::canonical_u64_decimal\")]\n    "
+        }
+      ],
+      "sourceSha256": "8700cff25feb65750731e685a82548275e4f675295f5f7188ccfb25decabee7c"
+    },
+    "RightsSettlementReceipt": {
+      "kind": "struct",
+      "file": "company/rights_offering.rs",
+      "line": 718,
+      "fields": [
+        {
+          "name": "event_id",
+          "type": "String",
+          "attributes": ""
+        },
+        {
+          "name": "settlement_on",
+          "type": "CivilDate",
+          "attributes": ""
+        },
+        {
+          "name": "failed",
+          "type": "bool",
+          "attributes": ""
+        },
+        {
+          "name": "total_paid_shares",
+          "type": "u64",
+          "attributes": "#[serde(with = \"crate::orderbook::canonical_u64_decimal\")]\n    "
+        },
+        {
+          "name": "total_paid_amount",
+          "type": "Money",
+          "attributes": ""
+        },
+        {
+          "name": "refunded_total",
+          "type": "Money",
+          "attributes": ""
+        },
+        {
+          "name": "holders",
+          "type": "Vec<HolderRightsSettlement>",
+          "attributes": ""
+        }
+      ],
+      "sourceSha256": "8700cff25feb65750731e685a82548275e4f675295f5f7188ccfb25decabee7c"
+    },
+    "IssuerRepurchasePlan": {
+      "kind": "struct",
+      "file": "company/issuer_repurchase.rs",
+      "line": 73,
+      "fields": [
+        {
+          "name": "event_id",
+          "type": "String",
+          "attributes": ""
+        },
+        {
+          "name": "approval_reference",
+          "type": "String",
+          "attributes": ""
+        },
+        {
+          "name": "issuer",
+          "type": "CompanyId",
+          "attributes": ""
+        },
+        {
+          "name": "stock",
+          "type": "StockCode",
+          "attributes": ""
+        },
+        {
+          "name": "exchange",
+          "type": "CalendarExchange",
+          "attributes": ""
+        },
+        {
+          "name": "approved_on",
+          "type": "CivilDate",
+          "attributes": ""
+        },
+        {
+          "name": "announced_on",
+          "type": "CivilDate",
+          "attributes": ""
+        },
+        {
+          "name": "window_start_on",
+          "type": "CivilDate",
+          "attributes": ""
+        },
+        {
+          "name": "window_deadline_on",
+          "type": "CivilDate",
+          "attributes": ""
+        },
+        {
+          "name": "price_cap_per_share",
+          "type": "Money",
+          "attributes": ""
+        },
+        {
+          "name": "total_budget",
+          "type": "Money",
+          "attributes": ""
+        },
+        {
+          "name": "max_shares",
+          "type": "u64",
+          "attributes": "#[serde(with = \"crate::orderbook::canonical_u64_decimal\")]\n    "
+        },
+        {
+          "name": "purpose",
+          "type": "RepurchasePurpose",
+          "attributes": ""
+        },
+        {
+          "name": "completion_policy",
+          "type": "RepurchaseCompletionPolicy",
+          "attributes": ""
+        },
+        {
+          "name": "approval_unit_event_id",
+          "type": "Option<String>",
+          "attributes": "#[serde(deserialize_with = \"required_unit_anchor\")]\n    "
+        }
+      ],
+      "sourceSha256": "0d5a22f20cee3b65459aa722451b9444daba89c29cb3630c3ee58a2442b41f7c"
+    },
+    "IssuerRepurchaseStatus": {
+      "kind": "enum",
+      "file": "company/issuer_repurchase.rs",
+      "line": 379,
+      "fields": [
+        {
+          "variant": "Approved",
+          "attributes": "Approved"
+        },
+        {
+          "variant": "Announced",
+          "attributes": "Announced"
+        },
+        {
+          "variant": "Executing",
+          "attributes": "Executing"
+        },
+        {
+          "variant": "Completed",
+          "attributes": "Completed"
+        },
+        {
+          "variant": "Cancelled",
+          "attributes": "Cancelled"
+        }
+      ],
+      "sourceSha256": "0d5a22f20cee3b65459aa722451b9444daba89c29cb3630c3ee58a2442b41f7c"
+    },
+    "RepurchaseFillRecord": {
+      "kind": "struct",
+      "file": "company/issuer_repurchase.rs",
+      "line": 366,
+      "fields": [
+        {
+          "name": "stock",
+          "type": "StockCode",
+          "attributes": ""
+        },
+        {
+          "name": "day",
+          "type": "CivilDate",
+          "attributes": ""
+        },
+        {
+          "name": "shares",
+          "type": "u64",
+          "attributes": "#[serde(with = \"crate::orderbook::canonical_u64_decimal\")]\n    "
+        },
+        {
+          "name": "gross",
+          "type": "Money",
+          "attributes": ""
+        },
+        {
+          "name": "fees",
+          "type": "Money",
+          "attributes": ""
+        }
+      ],
+      "sourceSha256": "0d5a22f20cee3b65459aa722451b9444daba89c29cb3630c3ee58a2442b41f7c"
+    },
+    "ShareUnitAdjustment": {
+      "kind": "struct",
+      "file": "company/issuer_repurchase.rs",
+      "line": 109,
+      "fields": [
+        {
+          "name": "split_event_id",
+          "type": "String",
+          "attributes": ""
+        },
+        {
+          "name": "shares_before",
+          "type": "u64",
+          "attributes": "#[serde(with = \"crate::orderbook::canonical_u64_decimal\")]\n    "
+        },
+        {
+          "name": "shares_after",
+          "type": "u64",
+          "attributes": "#[serde(with = \"crate::orderbook::canonical_u64_decimal\")]\n    "
+        }
+      ],
+      "sourceSha256": "0d5a22f20cee3b65459aa722451b9444daba89c29cb3630c3ee58a2442b41f7c"
+    },
+    "DividendTaxStatus": {
+      "kind": "enum",
+      "file": "session/corporate_actions.rs",
+      "line": 140,
+      "fields": [
+        {
+          "variant": "FlatWithholding",
+          "attributes": "FlatWithholding"
+        },
+        {
+          "variant": "IndividualPublicMarket",
+          "attributes": "IndividualPublicMarket"
+        },
+        {
+          "variant": "TreatmentNotConfigured",
+          "attributes": "TreatmentNotConfigured"
+        }
+      ],
+      "sourceSha256": "9fe0ce7e1136023ae7e5ac6e270e5a063787d941d5f75e0e2c48ee93c2de2343"
+    },
+    "ExReferencePrice": {
+      "kind": "struct",
+      "file": "company/ex_reference_price.rs",
+      "line": 8,
+      "fields": [
+        {
+          "name": "ex_date",
+          "type": "CivilDate",
+          "attributes": ""
+        },
+        {
+          "name": "reference_price",
+          "type": "Money",
+          "attributes": ""
+        }
+      ],
+      "sourceSha256": "f544ff20572ee89b1210befcb97ad326237d3c920d867616df2b5ffe6a0c59fb"
+    },
+    "ShareConfirmationRef": {
+      "kind": "struct",
+      "file": "company/share_registry/settlement_day.rs",
+      "line": 35,
+      "fields": [
+        {
+          "name": "account",
+          "type": "AccountId",
+          "attributes": ""
+        },
+        {
+          "name": "receipt_id",
+          "type": "u64",
+          "attributes": "#[serde(with = \"crate::orderbook::canonical_u64_decimal\")]\n    "
+        }
+      ],
+      "sourceSha256": "06f6fa65d6c5973567bbad009e79268367f50d90eabea748846f0990ae0c8f7e"
+    },
+    "CalendarExchange": {
+      "kind": "enum",
+      "file": "calendar/policy/coverage.rs",
+      "line": 24,
+      "fields": [
+        {
+          "variant": "Sse",
+          "attributes": "Sse"
+        },
+        {
+          "variant": "Szse",
+          "attributes": "Szse"
+        }
+      ],
+      "sourceSha256": "ee2a13b791da91c8871e5950ed657aa1063ffc84f9b168463a029d68cb3cf871"
+    },
+    "SettlementCycle": {
+      "kind": "enum",
+      "file": "company/simple/period.rs",
+      "line": 11,
+      "fields": [
+        {
+          "variant": "Monthly",
+          "attributes": "Monthly"
+        },
+        {
+          "variant": "Quarterly",
+          "attributes": "Quarterly"
+        },
+        {
+          "variant": "HalfYear",
+          "attributes": "HalfYear"
+        },
+        {
+          "variant": "Annual",
+          "attributes": "Annual"
+        }
+      ],
+      "sourceSha256": "06f5b359c734c349432747bcedb985b8e3b0b87313babc8d97c42e3d11d96197"
+    },
+    "TrendSegment": {
+      "kind": "struct",
+      "file": "company/simple/period.rs",
+      "line": 130,
+      "fields": [
+        {
+          "name": "annual_growth_bp",
+          "type": "i32",
+          "attributes": ""
+        },
+        {
+          "name": "months",
+          "type": "u8",
+          "attributes": ""
+        }
+      ],
+      "sourceSha256": "06f5b359c734c349432747bcedb985b8e3b0b87313babc8d97c42e3d11d96197"
+    },
+    "SimplePreferenceProposalKind": {
+      "kind": "enum",
+      "file": "company/simple/preferences.rs",
+      "line": 148,
+      "fields": [
+        {
+          "variant": "CashDividend",
+          "attributes": "CashDividend"
+        },
+        {
+          "variant": "StockDistribution",
+          "attributes": "StockDistribution"
+        }
+      ],
+      "sourceSha256": "f90db919d29267b79648b3426209e5715763b9c6c187ef2e5f7782c54126e986"
+    },
+    "ShareLot": {
+      "kind": "struct",
+      "file": "company/share_registry.rs",
+      "line": 83,
+      "fields": [
+        {
+          "name": "id",
+          "type": "String",
+          "attributes": ""
+        },
+        {
+          "name": "qty",
+          "type": "u64",
+          "attributes": "#[serde(with = \"crate::orderbook::canonical_u64_decimal\")]\n    "
+        },
+        {
+          "name": "acquired_on",
+          "type": "CivilDate",
+          "attributes": ""
+        },
+        {
+          "name": "source",
+          "type": "AcquisitionSource",
+          "attributes": ""
+        },
+        {
+          "name": "restriction",
+          "type": "ShareRestriction",
+          "attributes": ""
+        }
+      ],
+      "sourceSha256": "a6f064d0fc1e19933b941af0b5402a9bf47b49f25dd5fe90acb10fd1c728fc3c"
+    },
+    "ShareDayRequest": {
+      "kind": "struct",
+      "file": "company/share_registry.rs",
+      "line": 135,
+      "fields": [
+        {
+          "name": "event_id",
+          "type": "String",
+          "attributes": ""
+        },
+        {
+          "name": "day",
+          "type": "CivilDate",
+          "attributes": ""
+        },
+        {
+          "name": "scope",
+          "type": "MovementScope",
+          "attributes": ""
+        },
+        {
+          "name": "changes",
+          "type": "Vec<DayNetChange>",
+          "attributes": ""
+        }
+      ],
+      "sourceSha256": "a6f064d0fc1e19933b941af0b5402a9bf47b49f25dd5fe90acb10fd1c728fc3c"
+    },
+    "DisposedLot": {
+      "kind": "struct",
+      "file": "company/share_registry.rs",
+      "line": 163,
+      "fields": [
+        {
+          "name": "holder",
+          "type": "HolderId",
+          "attributes": ""
+        },
+        {
+          "name": "lot",
+          "type": "ShareLot",
+          "attributes": ""
+        },
+        {
+          "name": "disposed_on",
+          "type": "CivilDate",
+          "attributes": ""
+        }
+      ],
+      "sourceSha256": "a6f064d0fc1e19933b941af0b5402a9bf47b49f25dd5fe90acb10fd1c728fc3c"
+    },
+    "CashDividendFormula": {
+      "kind": "enum",
+      "file": "company/ex_reference_price.rs",
+      "line": 15,
+      "fields": [
+        {
+          "variant": "StandardCashOnly",
+          "attributes": "StandardCashOnly"
+        },
+        {
+          "variant": "ExchangeApprovedAdjustment",
+          "attributes": "ExchangeApprovedAdjustment"
+        }
+      ],
+      "sourceSha256": "f544ff20572ee89b1210befcb97ad326237d3c920d867616df2b5ffe6a0c59fb"
+    },
+    "HolderPaymentOutcome": {
+      "kind": "enum",
+      "file": "company/cash_dividend.rs",
+      "line": 174,
+      "fields": [
+        {
+          "variant": "Paid { holder: HolderId, amount: Money }",
+          "attributes": "Paid { holder: HolderId, amount: Money }"
+        },
+        {
+          "variant": "Failed { holder: HolderId, reason: String }",
+          "attributes": "Failed { holder: HolderId, reason: String }"
+        }
+      ],
+      "sourceSha256": "15fe07e945c0776e0bb055712878358de6d88233292014dedfc624a3d383a7ad"
+    },
+    "TaxAcquisitionSource": {
+      "kind": "enum",
+      "file": "company/cash_dividend_tax.rs",
+      "line": 95,
+      "fields": [
+        {
+          "variant": "InitialAllocation { evidence: String }",
+          "attributes": "InitialAllocation { evidence: String }"
+        },
+        {
+          "variant": "SecondaryMarket { settlement: String }",
+          "attributes": "SecondaryMarket { settlement: String }"
+        },
+        {
+          "variant": "CorporateAction { event: String }",
+          "attributes": "CorporateAction { event: String }"
+        }
+      ],
+      "sourceSha256": "555390c1c2735b85c234bb599ef60954367f2333102101ddd0fdbdf6d161fdbf"
+    },
+    "TaxShareClass": {
+      "kind": "enum",
+      "file": "company/cash_dividend_tax.rs",
+      "line": 84,
+      "fields": [
+        {
+          "variant": "PublicMarket",
+          "attributes": "PublicMarket"
+        },
+        {
+          "variant": "StatutoryRestricted { release_on: CivilDate, basis: StatutoryRestrictedBasis, qualification_evidence: String, }",
+          "attributes": "StatutoryRestricted {\n        release_on: CivilDate,\n        basis: StatutoryRestrictedBasis,\n        qualification_evidence: String,\n    }"
+        }
+      ],
+      "sourceSha256": "555390c1c2735b85c234bb599ef60954367f2333102101ddd0fdbdf6d161fdbf"
+    },
+    "TaxDisposition": {
+      "kind": "struct",
+      "file": "company/cash_dividend_tax.rs",
+      "line": 252,
+      "fields": [
+        {
+          "name": "lot",
+          "type": "DividendTaxLot",
+          "attributes": ""
+        },
+        {
+          "name": "disposed_on",
+          "type": "CivilDate",
+          "attributes": ""
+        }
+      ],
+      "sourceSha256": "555390c1c2735b85c234bb599ef60954367f2333102101ddd0fdbdf6d161fdbf"
+    },
+    "ExactDividendTaxAmount": {
+      "kind": "struct",
+      "file": "company/cash_dividend_tax.rs",
+      "line": 114,
+      "fields": [
+        {
+          "name": "numerator",
+          "type": "i128",
+          "attributes": "#[serde(with = \"nonnegative_decimal\")]\n    "
+        },
+        {
+          "name": "denominator",
+          "type": "u64",
+          "attributes": "#[serde(with = \"crate::orderbook::canonical_u64_decimal\")]\n    "
+        }
+      ],
+      "sourceSha256": "555390c1c2735b85c234bb599ef60954367f2333102101ddd0fdbdf6d161fdbf"
+    },
+    "DividendCashReceipt": {
+      "kind": "struct",
+      "file": "company/cash_dividend_tax.rs",
+      "line": 273,
+      "fields": [
+        {
+          "name": "operation_seq",
+          "type": "u64",
+          "attributes": "#[serde(with = \"crate::orderbook::js_safe_u64\")]\n    "
+        },
+        {
+          "name": "payment_id",
+          "type": "String",
+          "attributes": ""
+        },
+        {
+          "name": "paid_on",
+          "type": "CivilDate",
+          "attributes": ""
+        },
+        {
+          "name": "received_gross",
+          "type": "Money",
+          "attributes": ""
+        },
+        {
+          "name": "evidence",
+          "type": "String",
+          "attributes": ""
+        }
+      ],
+      "sourceSha256": "555390c1c2735b85c234bb599ef60954367f2333102101ddd0fdbdf6d161fdbf"
+    },
+    "SourceLotAttribution": {
+      "kind": "enum",
+      "file": "company/stock_distribution.rs",
+      "line": 54,
+      "fields": [
+        {
+          "variant": "SourceLotAttributionPending",
+          "attributes": "SourceLotAttributionPending"
+        }
+      ],
+      "sourceSha256": "6aa9dcd0bc388c42a49d185a57352602c39593adf1bee1a7a179e8a7a525655a"
+    },
+    "HolderDistribution": {
+      "kind": "struct",
+      "file": "company/stock_distribution.rs",
+      "line": 39,
+      "fields": [
+        {
+          "name": "holder",
+          "type": "HolderId",
+          "attributes": ""
+        },
+        {
+          "name": "original_shares",
+          "type": "u64",
+          "attributes": "#[serde(with = \"crate::orderbook::canonical_u64_decimal\")]\n    "
+        },
+        {
+          "name": "whole_shares",
+          "type": "u64",
+          "attributes": "#[serde(with = \"crate::orderbook::canonical_u64_decimal\")]\n    "
+        },
+        {
+          "name": "fractional_numerator",
+          "type": "u64",
+          "attributes": "#[serde(with = \"crate::orderbook::canonical_u64_decimal\")]\n    "
+        },
+        {
+          "name": "original_lots",
+          "type": "Vec<ShareLot>",
+          "attributes": ""
+        }
+      ],
+      "sourceSha256": "6aa9dcd0bc388c42a49d185a57352602c39593adf1bee1a7a179e8a7a525655a"
+    },
+    "HolderSplitOutcome": {
+      "kind": "struct",
+      "file": "company/share_split.rs",
+      "line": 128,
+      "fields": [
+        {
+          "name": "holder",
+          "type": "HolderId",
+          "attributes": ""
+        },
+        {
+          "name": "original_shares",
+          "type": "u64",
+          "attributes": "#[serde(with = \"crate::orderbook::canonical_u64_decimal\")]\n    "
+        },
+        {
+          "name": "new_shares",
+          "type": "u64",
+          "attributes": "#[serde(with = \"crate::orderbook::canonical_u64_decimal\")]\n    "
+        },
+        {
+          "name": "fractional_numerator",
+          "type": "u64",
+          "attributes": "#[serde(with = \"crate::orderbook::canonical_u64_decimal\")]\n    "
+        },
+        {
+          "name": "tie_break_award",
+          "type": "u64",
+          "attributes": "#[serde(with = \"crate::orderbook::canonical_u64_decimal\")]\n    "
+        },
+        {
+          "name": "original_lots",
+          "type": "Vec<super::share_registry::ShareLot>",
+          "attributes": ""
+        }
+      ],
+      "sourceSha256": "e9de8a73b13c4d4efd7d7ea894e5afb8f7f88a2158914c8a25c2ddc8afd28904"
+    },
+    "RightsOfferingMode": {
+      "kind": "enum",
+      "file": "company/rights_offering.rs",
+      "line": 66,
+      "fields": [
+        {
+          "variant": "RightsToAllShareholders { shares_per_existing_share_micros: u64, }",
+          "attributes": "RightsToAllShareholders {\n        #[serde(with = \"crate::orderbook::canonical_u64_decimal\")]\n        shares_per_existing_share_micros: u64,\n    }"
+        },
+        {
+          "variant": "DirectedPlacement { targets: Vec<DirectedPlacementTarget> }",
+          "attributes": "DirectedPlacement { targets: Vec<DirectedPlacementTarget> }"
+        }
+      ],
+      "sourceSha256": "8700cff25feb65750731e685a82548275e4f675295f5f7188ccfb25decabee7c"
+    },
+    "RightsSubscriptionStrategy": {
+      "kind": "enum",
+      "file": "company/rights_offering.rs",
+      "line": 37,
+      "fields": [
+        {
+          "variant": "FullByDefault",
+          "attributes": "FullByDefault"
+        },
+        {
+          "variant": "StrategyBased",
+          "attributes": "StrategyBased"
+        }
+      ],
+      "sourceSha256": "8700cff25feb65750731e685a82548275e4f675295f5f7188ccfb25decabee7c"
+    },
+    "RightsEntitlement": {
+      "kind": "struct",
+      "file": "company/rights_offering.rs",
+      "line": 365,
+      "fields": [
+        {
+          "name": "holder",
+          "type": "HolderId",
+          "attributes": ""
+        },
+        {
+          "name": "rights_shares",
+          "type": "u64",
+          "attributes": "#[serde(with = \"crate::orderbook::canonical_u64_decimal\")]\n    "
+        },
+        {
+          "name": "lock_until",
+          "type": "Option<CivilDate>",
+          "attributes": ""
+        }
+      ],
+      "sourceSha256": "8700cff25feb65750731e685a82548275e4f675295f5f7188ccfb25decabee7c"
+    },
+    "SubscriptionOrigin": {
+      "kind": "enum",
+      "file": "company/rights_offering.rs",
+      "line": 673,
+      "fields": [
+        {
+          "variant": "Explicit",
+          "attributes": "Explicit"
+        },
+        {
+          "variant": "NpcFullByDefault",
+          "attributes": "NpcFullByDefault"
+        }
+      ],
+      "sourceSha256": "8700cff25feb65750731e685a82548275e4f675295f5f7188ccfb25decabee7c"
+    },
+    "HolderRightsSettlement": {
+      "kind": "struct",
+      "file": "company/rights_offering.rs",
+      "line": 704,
+      "fields": [
+        {
+          "name": "holder",
+          "type": "HolderId",
+          "attributes": ""
+        },
+        {
+          "name": "paid_shares",
+          "type": "u64",
+          "attributes": "#[serde(with = \"crate::orderbook::canonical_u64_decimal\")]\n    "
+        },
+        {
+          "name": "paid_amount",
+          "type": "Money",
+          "attributes": ""
+        },
+        {
+          "name": "waived_shares",
+          "type": "u64",
+          "attributes": "#[serde(with = \"crate::orderbook::canonical_u64_decimal\")]\n    "
+        },
+        {
+          "name": "refunded_amount",
+          "type": "Money",
+          "attributes": ""
+        }
+      ],
+      "sourceSha256": "8700cff25feb65750731e685a82548275e4f675295f5f7188ccfb25decabee7c"
+    },
+    "RepurchaseCompletionPolicy": {
+      "kind": "enum",
+      "file": "company/issuer_repurchase.rs",
+      "line": 64,
+      "fields": [
+        {
+          "variant": "CancelOnCompletion",
+          "attributes": "CancelOnCompletion"
+        }
+      ],
+      "sourceSha256": "0d5a22f20cee3b65459aa722451b9444daba89c29cb3630c3ee58a2442b41f7c"
+    },
+    "AcquisitionSource": {
+      "kind": "enum",
+      "file": "company/share_registry.rs",
+      "line": 56,
+      "fields": [
+        {
+          "variant": "InitialAllocation { evidence: String }",
+          "attributes": "InitialAllocation { evidence: String }"
+        },
+        {
+          "variant": "SecondaryMarket { settlement: String }",
+          "attributes": "SecondaryMarket { settlement: String }"
+        },
+        {
+          "variant": "CorporateAction { event: String }",
+          "attributes": "CorporateAction { event: String }"
+        }
+      ],
+      "sourceSha256": "a6f064d0fc1e19933b941af0b5402a9bf47b49f25dd5fe90acb10fd1c728fc3c"
+    },
+    "ShareRestriction": {
+      "kind": "enum",
+      "file": "company/share_registry.rs",
+      "line": 64,
+      "fields": [
+        {
+          "variant": "Unrestricted",
+          "attributes": "Unrestricted"
+        },
+        {
+          "variant": "Restricted { reason: String, release_on: CivilDate, }",
+          "attributes": "Restricted {\n        reason: String,\n        release_on: CivilDate,\n    }"
+        }
+      ],
+      "sourceSha256": "a6f064d0fc1e19933b941af0b5402a9bf47b49f25dd5fe90acb10fd1c728fc3c"
+    },
+    "MovementScope": {
+      "kind": "enum",
+      "file": "company/share_registry.rs",
+      "line": 144,
+      "fields": [
+        {
+          "variant": "PublicMarket",
+          "attributes": "PublicMarket"
+        },
+        {
+          "variant": "SettlementDayMarket { binding: settlement_day::ShareSettlementBinding }",
+          "attributes": "SettlementDayMarket { binding: settlement_day::ShareSettlementBinding }"
+        },
+        {
+          "variant": "NonTradingTransfer { basis: String }",
+          "attributes": "NonTradingTransfer { basis: String }"
+        },
+        {
+          "variant": "IssuerRepurchaseCancellation { basis: String }",
+          "attributes": "IssuerRepurchaseCancellation { basis: String }"
+        },
+        {
+          "variant": "ShareReDenomination { basis: String }",
+          "attributes": "ShareReDenomination { basis: String }"
+        }
+      ],
+      "sourceSha256": "a6f064d0fc1e19933b941af0b5402a9bf47b49f25dd5fe90acb10fd1c728fc3c"
+    },
+    "DayNetChange": {
+      "kind": "struct",
+      "file": "company/share_registry.rs",
+      "line": 121,
+      "fields": [
+        {
+          "name": "holder",
+          "type": "HolderId",
+          "attributes": ""
+        },
+        {
+          "name": "change",
+          "type": "i128",
+          "attributes": "#[serde(with = \"canonical_i128_decimal\")]\n    "
+        },
+        {
+          "name": "acquisition",
+          "type": "Option<NetAcquisition>",
+          "attributes": "#[serde(deserialize_with = \"required_acquisition\")]\n    "
+        },
+        {
+          "name": "consume",
+          "type": "Option<Vec<LotConsumption>>",
+          "attributes": "#[serde(deserialize_with = \"required_consume\")]\n    "
+        }
+      ],
+      "sourceSha256": "a6f064d0fc1e19933b941af0b5402a9bf47b49f25dd5fe90acb10fd1c728fc3c"
+    },
+    "StatutoryRestrictedBasis": {
+      "kind": "enum",
+      "file": "company/cash_dividend_tax.rs",
+      "line": 77,
+      "fields": [
+        {
+          "variant": "FinanceTax2009167",
+          "attributes": "FinanceTax2009167"
+        },
+        {
+          "variant": "FinanceTax201070",
+          "attributes": "FinanceTax201070"
+        }
+      ],
+      "sourceSha256": "555390c1c2735b85c234bb599ef60954367f2333102101ddd0fdbdf6d161fdbf"
+    },
+    "DirectedPlacementTarget": {
+      "kind": "enum",
+      "file": "company/rights_offering.rs",
+      "line": 47,
+      "fields": [
+        {
+          "variant": "NamedHolder { holder: HolderId, shares: u64, lock_until: Option<CivilDate>, }",
+          "attributes": "NamedHolder {\n        holder: HolderId,\n        #[serde(with = \"crate::orderbook::canonical_u64_decimal\")]\n        shares: u64,\n        lock_until: Option<CivilDate>,\n    }"
+        },
+        {
+          "variant": "OpenPublicSubscription { shares: u64, }",
+          "attributes": "OpenPublicSubscription {\n        #[serde(with = \"crate::orderbook::canonical_u64_decimal\")]\n        shares: u64,\n    }"
+        }
+      ],
+      "sourceSha256": "8700cff25feb65750731e685a82548275e4f675295f5f7188ccfb25decabee7c"
+    },
+    "NetAcquisition": {
+      "kind": "struct",
+      "file": "company/share_registry.rs",
+      "line": 101,
+      "fields": [
+        {
+          "name": "lot_id",
+          "type": "String",
+          "attributes": ""
+        },
+        {
+          "name": "source",
+          "type": "AcquisitionSource",
+          "attributes": ""
+        },
+        {
+          "name": "restriction",
+          "type": "ShareRestriction",
+          "attributes": ""
+        }
+      ],
+      "sourceSha256": "a6f064d0fc1e19933b941af0b5402a9bf47b49f25dd5fe90acb10fd1c728fc3c"
+    },
+    "LotConsumption": {
+      "kind": "struct",
+      "file": "company/share_registry.rs",
+      "line": 113,
+      "fields": [
+        {
+          "name": "lot_id",
+          "type": "String",
+          "attributes": ""
+        },
+        {
+          "name": "qty",
+          "type": "u64",
+          "attributes": "#[serde(with = \"crate::orderbook::canonical_u64_decimal\")]\n    "
+        }
+      ],
+      "sourceSha256": "a6f064d0fc1e19933b941af0b5402a9bf47b49f25dd5fe90acb10fd1c728fc3c"
+    }
+  },
+  "unresolved": []
+}

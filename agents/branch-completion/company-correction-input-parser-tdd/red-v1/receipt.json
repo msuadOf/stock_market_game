@@ -1,0 +1,24 @@
+{
+  "command": {
+    "command": "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+    "args": [
+      "--test",
+      "--test-timeout=10000",
+      "--test-concurrency=4",
+      "apps/web/src/host/report-corrections.test.ts"
+    ],
+    "cwd": "/data1/baiyifan/workplace/stock_market_game/.worktree/company-correction-input-parser-tdd",
+    "timeoutMs": 10000,
+    "captureOutput": true
+  },
+  "exitCode": 1,
+  "error": "bounded command exited with 1",
+  "hashes": {
+    "apps/web/src/host/report-corrections.ts": "091a03508cea851f4efeec7d7b18d522ef7648ce2974d0310d6bbcc3735754ab",
+    "apps/web/src/host/report-corrections.test.ts": "d72d43d83d33463d09ba3d73167bf8b89fce446e994f88f3cace25e9cf9b57d0",
+    "agents/branch-completion/company-correction-input-parser-tdd/red-v1/stub.ts": "091a03508cea851f4efeec7d7b18d522ef7648ce2974d0310d6bbcc3735754ab",
+    "agents/branch-completion/company-correction-input-parser-tdd/red-v1/spec.test.ts": "d72d43d83d33463d09ba3d73167bf8b89fce446e994f88f3cace25e9cf9b57d0"
+  },
+  "node": "v24.18.0",
+  "phase": "首次实现前业务红；所有case先验证真实request正向合同"
+}

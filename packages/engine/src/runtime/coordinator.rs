@@ -65,6 +65,8 @@ fn fnv(state: u64, value: u64) -> u64 {
 /// 一轮收束证据（PreCommit 校验注入点的输入）。
 #[derive(Clone, Debug)]
 pub struct TickEvidence {
+    #[cfg(feature = "simulation-diagnostics")]
+    pub decision_traces: Vec<super::diagnostics::GroupDecisionTrace>,
     /// tick 编号。
     pub tick: u64,
     /// 轮次。
@@ -152,6 +154,10 @@ pub fn converge_round(
     let mut retail_fragments = Vec::new();
     #[cfg(feature = "simulation-diagnostics")]
     let mut desk_causal = Vec::new();
+    #[cfg(feature = "simulation-diagnostics")]
+    let mut decision_traces = Vec::new();
+    #[cfg(feature = "simulation-diagnostics")]
+    let mut decision_trace_groups = std::collections::BTreeSet::new();
     let mut desk_lifecycle = Vec::new();
     let mut desk_receipts = Vec::new();
     let mut group_rejections = Vec::new();
@@ -174,6 +180,24 @@ pub fn converge_round(
                             r.tick, r.round
                         ),
                     });
+                }
+                #[cfg(feature = "simulation-diagnostics")]
+                {
+                    if usize::from(r.group) >= n_groups || !decision_trace_groups.insert(r.group) {
+                        return RoundOutcome::Failed(RuntimeError::ProtocolInvariant {
+                            detail: format!("机构 trace GroupReport 来源组越界或重复：{}", r.group),
+                        });
+                    }
+                    let mut locals = std::collections::BTreeSet::new();
+                    for trace in &r.decision_traces {
+                        if round != 0 || trace.owner.0 != r.group || trace.record.tick != tick
+                            || !locals.insert(trace.owner.1) {
+                            return RoundOutcome::Failed(RuntimeError::ProtocolInvariant {
+                                detail: format!("机构 trace 本轮来源错位或重复：group={} tick={tick} round={round} owner={:?}", r.group, trace.owner),
+                            });
+                        }
+                    }
+                    decision_traces.extend(r.decision_traces);
                 }
                 groups_left -= 1;
                 continuation_any |= r.continuation;
@@ -251,7 +275,11 @@ pub fn converge_round(
     }
     retail_fragments.sort_unstable_by_key(|(stock, _)| *stock);
     let retail = retail_fragments.into_iter().flat_map(|(_, facts)| facts).collect();
+    #[cfg(feature = "simulation-diagnostics")]
+    decision_traces.sort_unstable_by_key(|trace| trace.owner);
     wrap(Ok(TickEvidence {
+        #[cfg(feature = "simulation-diagnostics")]
+        decision_traces,
         tick,
         round,
         group_hashes,

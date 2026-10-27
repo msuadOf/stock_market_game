@@ -1,0 +1,49 @@
+✖ 三个transport共用数值目录fault生成中文why并保留进度 (3.821885ms)
+✖ catalog fault 缺键、多键、错码及非单一u32上下文都拒绝 (1.433793ms)
+ℹ tests 2
+ℹ suites 0
+ℹ pass 0
+ℹ fail 2
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 212.544793
+
+✖ failing tests:
+
+test at apps/web/src/host/catalog-failure.test.ts:7:1
+✖ 三个transport共用数值目录fault生成中文why并保留进度 (3.821885ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /CompanyId 7/. Input:
+  
+  '不可信 wire 说明'
+  
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/catalog-failure.test.ts:10:12)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.start (node:internal/test_runner/test:1096:17)
+      at startSubtestAfterBootstrap (node:internal/test_runner/harness:385:17) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: '不可信 wire 说明',
+    expected: /CompanyId 7/,
+    operator: 'match',
+    diff: 'simple'
+  }
+
+test at apps/web/src/host/catalog-failure.test.ts:17:1
+✖ catalog fault 缺键、多键、错码及非单一u32上下文都拒绝 (1.433793ms)
+  AssertionError [ERR_ASSERTION]: Missing expected exception.
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/catalog-failure.test.ts:19:12)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: undefined,
+    operator: 'throws',
+    diff: 'simple'
+  }

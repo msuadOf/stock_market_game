@@ -1,0 +1,12 @@
+✔ 三个transport共用数值目录fault生成中文why并保留进度 (2.301099ms)
+✔ catalog fault 缺键、多键、错码及非单一u32上下文都拒绝 (1.686651ms)
+✔ 错误边界保留可选未知详情和真实位置，既有三字段不要求虚构字段 (12.345953ms)
+✔ 非法核心字段、恢复标志和动作在边界明确拒绝，不回填默认值 (1.795715ms)
+ℹ tests 4
+ℹ suites 0
+ℹ pass 4
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 219.681709

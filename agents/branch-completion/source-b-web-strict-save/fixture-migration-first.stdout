@@ -1,0 +1,57 @@
+✔ 当前存档保留单一 LegacyOperations groups 与职责运行时字段且拒绝代际字段 (8.513341ms)
+✔ setup 保留省略字段并严格解析显式 company config 与 groups (406.186155ms)
+✔ groups 拒绝重复 root、跨组重复成员、自持和不安全股份数 (0.573586ms)
+✔ PaymentFailure 保留正金额与事项并拒绝无效及 active 注入 (0.71684ms)
+✔ CompanyOperations 严格保留 payment_failures 并拒绝缺失及非法日期/记录 (1007.098023ms)
+✔ 公开 PaymentFailure 公告保留单日事实且拒绝伪造幅度或持续期 (1.089291ms)
+✔ strict save boundary preserves a populated current-schema save (423.232117ms)
+✖ strict save boundary rejects malformed nested company and personal-state branches (2943.431897ms)
+✔ strict save boundary rejects unsafe company RNG numbers (156.857252ms)
+✔ strict save boundary rejects malformed company book and flow internals (214.914303ms)
+✔ strict save boundary rejects malformed representative fields for every flow variant (307.198951ms)
+✔ 真实 CompanySpec 使用 code 和完整 u64 issued_shares (2.460799ms)
+✔ CompanyOperations 保留严格 catalog，拒绝重复代码、缺字段与派生索引 (1.39892ms)
+✔ 真实报告保留来源和数值 CompanyId/MemberId，并拒绝旧字符串或越界身份 (3.996193ms)
+✔ 真实所得税仓位保留年度 assessments 链、初始递延资产与 restatements (204.188269ms)
+✔ 报告新增字段仍严格拒绝缺失、未知 ROE 与旧公告 event 包装 (0.935557ms)
+ℹ tests 16
+ℹ suites 0
+ℹ pass 15
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 4701.351115
+
+✖ failing tests:
+
+test at apps/web/src/save/complete-save-schema.test.ts:52:1
+✖ strict save boundary rejects malformed nested company and personal-state branches (2943.431897ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /institution_experience_policy/. Input:
+  
+  'SaveSchemaError: 存档 根节点.belief_books.13.institution_policy 不是 JSON 值'
+  
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/complete-save-schema.test.ts:127:55)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:911:18)
+      at Test.postRun (node:internal/test_runner/test:1465:19)
+      at Test.run (node:internal/test_runner/test:1390:12)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: SaveSchemaError: 存档 根节点.belief_books.13.institution_policy 不是 JSON 值
+        at validateSaveValue (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/primitives.ts:27:40)
+        at validateSaveValue (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/primitives.ts:38:7)
+        at validateSaveValue (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/primitives.ts:38:7)
+        at validateSaveValue (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/schema/primitives.ts:38:7)
+        at parseSaveSlot (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/save-schema.ts:6:3)
+        at file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/complete-save-schema.test.ts:127:68
+        at getActual (node:assert:611:5)
+        at strict.throws (node:assert:759:24)
+        at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/save/complete-save-schema.test.ts:127:55)
+        at Test.runInAsyncScope (node:async_hooks:227:14),
+    expected: /institution_experience_policy/,
+    operator: 'throws',
+    diff: 'simple'
+  }

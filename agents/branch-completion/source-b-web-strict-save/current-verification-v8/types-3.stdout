@@ -1,0 +1,1 @@
+src/save/schema/company/books/industrial.ts(4,18): error TS6133: 'period' is declared but its value is never read.

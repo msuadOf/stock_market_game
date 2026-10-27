@@ -1,0 +1,14 @@
+✔ 附注渲染单体范围、更正原因与已公布行业科目明细 (134.977123ms)
+✔ 利润表渲染当季、累计、比较列，缺历史有原因不填零 (1.76054ms)
+✔ ReportNotes 单股实际scope动态显示，未知与已知错公司scope均拒绝渲染 (3.273401ms)
+✔ 实际 UI C-code 查询使用本代数值 id，结果仍落 C-code 缓存，scope错公司显式错误 (11.148137ms)
+✔ 旧 generation resolve 与 reject 不能污染换代后的同 code (1.330914ms)
+✔ 含NUL合法公司 code 的 page/by-id 不同tuple不能碰撞 (1.17664ms)
+ℹ tests 6
+ℹ suites 0
+ℹ pass 6
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 569.996703

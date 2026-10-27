@@ -1519,3 +1519,6 @@ mod tests {
 
 #[cfg(test)]
 mod information_tests;
+
+#[cfg(test)]
+mod funds_cost_tests;
