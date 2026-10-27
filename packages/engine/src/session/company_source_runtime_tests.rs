@@ -144,7 +144,8 @@ fn selected_simple_new_publication_failure_preserves_library_cursor_and_rng_then
         MonthlyReportDelay, MonthlyReportSchedule, PublicationSource, ReportFrequency,
     };
     let mut setup = month_end_setup(true);
-    setup.start_date = crate::CivilDate::from_iso("2026-01-06").unwrap();
+    // 周日隔离未安装市场的 civil 候选拒绝；交易日已安装边界由下一独立用例固定。
+    setup.start_date = crate::CivilDate::from_iso("2026-09-06").unwrap();
     setup.report_frequency = Some(ReportFrequency::Monthly {
         schedule: MonthlyReportSchedule::Custom {
             day: 6,
@@ -156,6 +157,11 @@ fn selected_simple_new_publication_failure_preserves_library_cursor_and_rng_then
     if matches!(session.civil_clock().phase(), CivilPhase::IntradayTrading) {
         session.step().unwrap();
     }
+    assert!(
+        session.state.runtime_resting_snapshot.is_none(),
+        "本门必须未安装市场"
+    );
+    assert_eq!(session.tick(), 0, "周日披露不能靠推进市场制造");
     let before_save = session.save().unwrap();
     let old_reports = before_save.public_library.report_count();
     let before = serde_json::to_vec(&before_save).unwrap();
@@ -211,5 +217,109 @@ fn selected_simple_new_publication_failure_preserves_library_cursor_and_rng_then
         serde_json::to_vec(&session.save().unwrap()).unwrap(),
         serde_json::to_vec(&control.save().unwrap()).unwrap(),
         "新增公开报告失败后重试必须与无失败同seed控制逐字一致"
+    );
+}
+
+#[test]
+#[cfg(not(target_arch = "wasm32"))]
+fn selected_simple_publication_failure_after_market_install_is_terminal_without_retry() {
+    use crate::information::{
+        MonthlyReportDelay, MonthlyReportSchedule, PublicationSource, ReportFrequency,
+    };
+    let mut setup = month_end_setup(true);
+    setup.start_date = crate::CivilDate::from_iso("2026-01-06").unwrap();
+    setup.report_frequency = Some(ReportFrequency::Monthly {
+        schedule: MonthlyReportSchedule::Custom {
+            day: 6,
+            second_of_day: 20 * 3600,
+            delay: MonthlyReportDelay::None,
+        },
+    });
+    let mut session = GameSession::new(setup.clone(), 42).unwrap();
+    let mut driver = crate::runtime::drive::RuntimeDriver::from_session(&mut session).unwrap();
+    session.runtime_step_with_install(&mut driver).unwrap();
+    assert!(
+        session.state.runtime_resting_snapshot.is_some(),
+        "必须经过真实市场安装"
+    );
+    assert_eq!(
+        (session.tick(), session.day(), driver.world_committed_tick()),
+        (1, 1, 1)
+    );
+    let installed = session.save().unwrap();
+    let installed_bytes = serde_json::to_vec(&installed).unwrap();
+    let installed_hash = session.business_state_hash().unwrap();
+    let installed_snapshot = serde_json::to_value(session.snapshot_inner(true, true)).unwrap();
+    let published = driver.publication().load();
+    let old_reports = installed.public_library.report_count();
+    let fatal = StepFatal::InvariantViolation {
+        location: "source_b.installed_publication_projection_probe".into(),
+        description: "真实市场已安装，Simple新增报告候选的最后投影拒绝".into(),
+    };
+    source_probe::reset();
+    let result = session.with_prepared_civil_day(|candidate, report| {
+        let save = candidate.save().unwrap();
+        let library = save.public_library.save();
+        assert!(
+            library.reports.len() > old_reports,
+            "必须真实新增公开报告后失败"
+        );
+        assert!(library
+            .reports
+            .iter()
+            .all(|item| item.source == PublicationSource::SimpleGenerated));
+        assert!(library
+            .reports
+            .iter()
+            .any(|item| item.published_at.date() == setup.start_date
+                && item.published_at.second_of_day() == 20 * 3600));
+        assert_eq!(report.disclosure_instant.second_of_day(), 86_399);
+        Err::<(), _>(SessionError::Step(fatal.clone()))
+    });
+    assert!(matches!(result, Err(SessionError::Step(ref actual)) if actual == &fatal));
+    let counts = source_probe::snapshot();
+    assert_no_legacy(counts);
+    assert_eq!((counts.simple_advance, counts.simple_finalize), (1, 0));
+    assert_eq!(session.business_state_hash().unwrap(), installed_hash);
+    // 只在测试内比较已安装事实投影；对外 save 必须仍走 terminal 健康门拒绝。
+    assert_eq!(
+        serde_json::to_vec(&session.save_projection(installed.runtime_state.clone())).unwrap(),
+        installed_bytes,
+        "公司/RNG/公开库/游标与市场已装事实均不得回退或半推进"
+    );
+    assert_eq!(
+        serde_json::to_value(session.snapshot_inner(true, true)).unwrap(),
+        installed_snapshot
+    );
+    assert_eq!(
+        (session.tick(), session.day(), driver.world_committed_tick()),
+        (1, 1, 1)
+    );
+    let retained = driver.publication().load();
+    assert_eq!(
+        (retained.tick, retained.generation),
+        (published.tick, published.generation)
+    );
+    assert!(
+        std::sync::Arc::ptr_eq(&retained.retained, &published.retained),
+        "已发布retained不能撤回"
+    );
+    assert_eq!(session.poison_reason(), Some(&fatal));
+    assert_eq!(session.save().unwrap_err(), fatal);
+    assert_eq!(session.step().unwrap_err(), fatal);
+    assert!(
+        matches!(session.end_civil_day(), Err(SessionError::Step(ref actual)) if actual == &fatal)
+    );
+    assert_eq!(
+        session.poison_runtime_step(StepFatal::InvariantViolation {
+            location: "source_b.later_failure".into(),
+            description: "后错不得覆盖首错".into(),
+        }),
+        fatal
+    );
+    assert_eq!(
+        source_probe::snapshot(),
+        counts,
+        "terminal后重试不得再次推进Simple或发布报告"
     );
 }
