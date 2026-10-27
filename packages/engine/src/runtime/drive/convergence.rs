@@ -408,8 +408,9 @@ impl RuntimeDriver {
                     description
                 }
             })?;
+        let tick = self.world_committed_tick();
         let prepared = session
-            .prepare_runtime_mirror(self, input, self.world_committed_tick())
+            .prepare_runtime_mirror(self, input, tick)
             .map_err(|description| {
                 session
                     .poison_runtime_step(crate::session::StepFatal::InvariantViolation {
