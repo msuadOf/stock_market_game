@@ -128,6 +128,28 @@ impl GameSession {
                             data.closing_buy_vwap
                                 .contains_key(&(group as _, *local, stock as _))
                         });
+                        // 组整态合并不能先抹掉旧镜像的活跃 entry，从而掩盖重复首买或时钟错误。
+                        if let Some(ledger) = self.state.retail_experience.get(&id) {
+                            let mut checked = ledger.clone();
+                            let price = Money::from_cents(entry.max(1));
+                            let moment = crate::experience::ExperienceMoment {
+                                civil_date: self.civil_date(),
+                                market_minute: if closing_buy {
+                                    (u64::from(self.day()) + 1)
+                                        * u64::from(
+                                            crate::observation::GAME_INTRADAY_MINUTES_PER_DAY,
+                                        )
+                                } else {
+                                    self.current_market_minute()
+                                },
+                                trading_day: u64::from(self.day()),
+                            };
+                            checked
+                                .initialize_holding_dated(&code, Some(price), price, moment)
+                                .map_err(|error| {
+                                    format!("首买经历初始化失败（旧镜像校验）：{id:?} {error:?}")
+                                })?;
+                        }
                         hold_inits.push((global, id, code, entry, closing_buy));
                     }
                     positions.insert(
@@ -189,7 +211,9 @@ impl GameSession {
                         trading_day: u64::from(self.day()),
                     },
                 )
-                .map_err(|error| format!("首买经历初始化失败（私有 candidate）：{id:?} {error:?}"))?;
+                .map_err(|error| {
+                    format!("首买经历初始化失败（私有 candidate）：{id:?} {error:?}")
+                })?;
         }
         for (global, id) in input.touched {
             if !personals.contains_key(&id) {
@@ -710,6 +734,22 @@ impl GameSession {
         driver: &RuntimeDriver,
         prepared: &PreparedRuntimeMirror,
     ) -> Result<crate::runtime::source::PreparedMirrorAck, StepFatal> {
+        let expected_sequence = self
+            .runtime_mirror_install_sequence
+            .checked_add(1)
+            .ok_or_else(|| StepFatal::InvariantViolation {
+                location: "runtime_mirror::install_sequence".to_owned(),
+                description: "镜像 install_sequence 已耗尽，拒绝旧 candidate 安装".to_owned(),
+            })?;
+        if prepared.install_sequence != expected_sequence {
+            return Err(StepFatal::InvariantViolation {
+                location: "runtime_mirror::install_sequence".to_owned(),
+                description: format!(
+                    "镜像 candidate 安装序号已过期：prepared={} expected={expected_sequence}",
+                    prepared.install_sequence
+                ),
+            });
+        }
         let source = driver.mirror_source();
         if source != prepared.source || source.authority_epoch != self.runtime_authority_epoch {
             return Err(StepFatal::InvariantViolation {
@@ -758,5 +798,83 @@ impl PreparedRuntimeMirror {
                 ),
             )
         )
+    }
+}
+
+#[cfg(test)]
+mod source_tests {
+    use super::*;
+
+    #[test]
+    fn each_private_source_component_and_pending_mask_is_checked_before_swap() {
+        let mut setup = super::super::npc_working_quote_tests::quote_setup(0);
+        setup.start_date = crate::calendar::CivilDate::from_ymd(2026, 1, 5).unwrap();
+        setup.ticks_per_day = 8;
+        setup.auction_ticks = 3;
+        setup.closing_auction_ticks = 0;
+        let mut game = GameSession::new(setup, 42).unwrap();
+        let mut driver = RuntimeDriver::from_session(&mut game).unwrap();
+        driver.adopt_session_seq(&game);
+        let input = driver.prepare_driver_step(&game).unwrap();
+        let current = driver.mirror_source();
+        let mut sources = vec![current; 7];
+        sources[0].authority_epoch += 1;
+        sources[1].tick += 1;
+        sources[2].day += 1;
+        sources[3].generation += 1;
+        sources[4].day_end_stage = crate::runtime::source::MirrorDayEndStage::DayEndCommitted;
+        sources[5].non_tick_revision += 1;
+        sources[6].civil_date = crate::calendar::CivilDate::from_ymd(2026, 1, 6).unwrap();
+        let pending = driver.pending_mirror_domains();
+        let before = serde_json::to_value(game.snapshot_inner(true, true)).unwrap();
+        for source in sources {
+            let mut candidate = game
+                .prepare_runtime_mirror(&mut driver, input.clone(), 1)
+                .unwrap();
+            candidate.source = source;
+            assert!(
+                game.validate_runtime_mirror_source(&driver, &candidate)
+                    .is_err(),
+                "来源字段负控应拒绝：{source:?}"
+            );
+            assert_eq!(driver.pending_mirror_domains(), pending);
+            assert_eq!(game.runtime_mirror_install_sequence, 0);
+            assert_eq!(driver.account_writes_for_test(), 0);
+            assert_eq!(
+                serde_json::to_value(game.snapshot_inner(true, true)).unwrap(),
+                before
+            );
+        }
+        let mut candidate = game.prepare_runtime_mirror(&mut driver, input, 1).unwrap();
+        candidate.captured_domains.personal_full = true;
+        assert!(
+            game.validate_runtime_mirror_source(&driver, &candidate)
+                .is_err(),
+            "域掩码也必须精确匹配"
+        );
+        assert_eq!(driver.pending_mirror_domains(), pending);
+    }
+
+    #[test]
+    fn exhausted_install_sequence_rejects_before_swap_without_ack() {
+        let mut setup = super::super::npc_working_quote_tests::quote_setup(0);
+        setup.ticks_per_day = 8;
+        setup.auction_ticks = 3;
+        setup.closing_auction_ticks = 0;
+        let mut game = GameSession::new(setup, 42).unwrap();
+        let mut driver = RuntimeDriver::from_session(&mut game).unwrap();
+        let input = driver.prepare_driver_step(&game).unwrap();
+        let candidate = game.prepare_runtime_mirror(&mut driver, input, 1).unwrap();
+        let pending = driver.pending_mirror_domains();
+        game.runtime_mirror_install_sequence = u64::MAX;
+        let fatal = game
+            .validate_runtime_mirror_source(&driver, &candidate)
+            .err()
+            .expect("耗尽必须类型化拒绝");
+        assert!(fatal.to_string().contains("install_sequence"));
+        assert_eq!(driver.pending_mirror_domains(), pending);
+        assert_eq!(driver.account_writes_for_test(), 0);
+        assert_eq!(game.tick(), 0);
+        assert_eq!(game.runtime_mirror_install_sequence, u64::MAX);
     }
 }

@@ -56,6 +56,10 @@ impl RuntimeDriver {
         self.world.mirror_source()
     }
 
+    pub(crate) fn abort_unpublished_day_end(&mut self) {
+        self.world.abort_unpublished_day_end();
+    }
+
     pub(crate) fn pending_mirror_domains(&self) -> crate::runtime::source::MirrorDomains {
         self.world.pending_mirror_domains()
     }
@@ -409,16 +413,18 @@ impl RuntimeDriver {
                 }
             })?;
         let tick = self.world_committed_tick();
-        let prepared = session
-            .prepare_runtime_mirror(self, input, tick)
-            .map_err(|description| {
-                session
-                    .poison_runtime_step(crate::session::StepFatal::InvariantViolation {
-                        location: "RuntimeDriver::day_end::prepare".to_owned(),
-                        description,
-                    })
-                    .to_string()
-            })?;
+        let prepared =
+            session
+                .prepare_runtime_mirror(self, input, tick)
+                .map_err(|description| {
+                    self.abort_unpublished_day_end();
+                    session
+                        .poison_runtime_step(crate::session::StepFatal::InvariantViolation {
+                            location: "RuntimeDriver::day_end::prepare".to_owned(),
+                            description,
+                        })
+                        .to_string()
+                })?;
         let ack = session
             .validate_runtime_mirror_source(self, &prepared)
             .map_err(|fatal| session.poison_runtime_step(fatal).to_string())?;

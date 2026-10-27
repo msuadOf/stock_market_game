@@ -257,3 +257,68 @@ fn info_world_06_candidate_validator_rejects_bad_local_account_and_snapshot_owne
     }
     w.shutdown().unwrap();
 }
+
+/// None 观察的材料变化也要刷新；真实 no-op 不造 revision，过期 ack 不清旧原因。
+#[test]
+fn info_material_only_revision_noop_and_exact_ack_follow_actual_write_set() {
+    let mut w = world();
+    let mut p = payload(false);
+    announcement(&mut p, 0);
+    let source0 = w.mirror_source();
+    let groups = snapshot(&mut w, p.clone());
+    assert!(groups
+        .iter()
+        .all(|group| group.information.as_ref().unwrap().personals.is_empty()));
+    let source1 = w.mirror_source();
+    assert_eq!(
+        (source1.tick, source1.generation),
+        (source0.tick, source0.generation)
+    );
+    assert_eq!(source1.non_tick_revision, source0.non_tick_revision + 1);
+    let dirty1 = w.pending_mirror_domains();
+    assert!(
+        dirty1.personal_full,
+        "无personals但library/facts真改也需要Full"
+    );
+    snapshot(&mut w, p.clone());
+    assert_eq!(
+        w.mirror_source(),
+        source1,
+        "全材料相等的真实no-op不推进成功游标"
+    );
+    assert_eq!(w.pending_mirror_domains(), dirty1);
+    w.with_admin_transaction(
+        vec![(
+            0,
+            vec![AdminOperation::CashDividend {
+                local: 0,
+                stock: 0,
+                amount: 1,
+            }],
+        )],
+        |_| Ok(()),
+    )
+    .unwrap();
+    let source2 = w.mirror_source();
+    assert_eq!(source2.non_tick_revision, source1.non_tick_revision + 1);
+    let dirty2 = w.pending_mirror_domains();
+    assert!(
+        dirty2.accounts_full && dirty2.personal_full,
+        "连续同tick多域写集OR保留"
+    );
+    assert!(
+        w.prepare_mirror_ack(source1, dirty1).is_err(),
+        "旧来源不能ack较新写集"
+    );
+    assert_eq!(w.pending_mirror_domains(), dirty2, "失败ack不清任何旧原因");
+    let ack = w.prepare_mirror_ack(source2, dirty2).unwrap();
+    w.ack_prepared_mirror(ack);
+    assert!(
+        w.pending_mirror_domains().is_empty(),
+        "精确成功ack才清捕获原因"
+    );
+    snapshot(&mut w, p);
+    assert_eq!(w.mirror_source(), source2);
+    assert!(w.pending_mirror_domains().is_empty());
+    w.shutdown().unwrap();
+}

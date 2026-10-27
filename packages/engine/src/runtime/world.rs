@@ -2573,6 +2573,16 @@ impl World {
         self.run_day_end(day_final_tick)
     }
 
+    /// 只撤 F0 的未发布日结参与者；普通 tick 和 retained 发布后的静点均不可撤。
+    pub(crate) fn abort_unpublished_day_end(&mut self) {
+        if self.dead_reason.is_none()
+            && self.mirror_day_end_stage == super::source::MirrorDayEndStage::DayEndCommitted
+            && self.day_end_prior_public_views.is_some()
+        {
+            self.abort_day_end();
+        }
+    }
+
     /// 撤销一次**已成功**的日结（Sol 二审修复集 2）：广播 Abort——组按
     /// 日结隔离日志冲回（解冻/权益/Drain 落账），部冲回清簿撤单，回到
     /// 上一交易日收敛态；日结候选一并作废。仅在"日结成功但编排后续
@@ -2611,6 +2621,7 @@ impl World {
         }
         self.last_day_end_candidate = None;
         self.last_day_end_tick = None;
+        self.mirror_day_end_stage = super::source::MirrorDayEndStage::Tick;
     }
 
     fn run_day_end(&mut self, day_final_tick: u64) -> Result<(), RuntimeError> {

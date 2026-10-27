@@ -450,3 +450,55 @@ fn second_candidate_from_same_static_point_is_rejected_after_first_swap() {
         installed
     );
 }
+
+#[test]
+fn full_read_preserves_nonempty_pending_and_real_tick_dirty_rows() {
+    let mut game = short_runtime_session();
+    let mut driver = crate::runtime::drive::RuntimeDriver::from_session(&mut game).unwrap();
+    let initial = driver.collect_personal_full().unwrap();
+    let (local, id, mut row) = initial.groups[0]
+        .1
+        .iter()
+        .find_map(|(local, id, row)| row.as_ref().map(|row| (*local, *id, row.clone())))
+        .unwrap();
+    row.attention.rng_state ^= 0x5137;
+    driver.install_personal_for_test(local, row.clone());
+    for _ in 0..2 {
+        let full = driver.collect_personal_full().unwrap();
+        assert_eq!(
+            full.groups[0]
+                .1
+                .iter()
+                .find(|(_, owner, _)| *owner == id)
+                .unwrap()
+                .2
+                .as_ref(),
+            Some(&row)
+        );
+    }
+    let pending = driver.collect_group_belief_for_test().unwrap();
+    assert!(
+        pending[0]
+            .1
+            .iter()
+            .any(|(slot, actual)| *slot == local && actual == &row),
+        "Full 不能 take 非空 pending；首次 sparse 必须仍交付注入值"
+    );
+    let ids = driver.id_map.clone();
+    driver.force_due_for_test_at(&ids, 1);
+    game.runtime_step_with_install(&mut driver).unwrap();
+    let published = driver.published_belief_shard_for_test(0);
+    assert!(
+        !published.is_empty(),
+        "真实第一拍必须有个人演进，不能以空 dirty 自证"
+    );
+    let first = driver.collect_personal_full().unwrap();
+    let second = driver.collect_personal_full().unwrap();
+    assert_eq!(first.groups, second.groups);
+    let dirty = driver.collect_group_belief_for_test().unwrap();
+    assert_eq!(
+        &dirty[0].1,
+        published.as_ref(),
+        "Full 不清真实 tick dirty，也不丢七字段"
+    );
+}

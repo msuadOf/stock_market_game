@@ -4485,7 +4485,7 @@ fn d0_partial_account_install_failure_restores_mirrors_without_reverting_publish
         driver.install_market_views(&mut session).expect("行情");
         driver.install_candles(&mut session).expect("K");
     }
-    // 已有经历但公开持仓缺席：新增投影会先写账户，再在首买经历守卫明确失败。
+    // 已有经历但公开持仓缺席：私有首买校验必须拒绝，不能经组整态覆盖掩盖冲突。
     session
         .runtime_hold_experience_init(&crate::AccountId(4), &crate::StockId(0), 100, 1000)
         .expect("注入经历冲突");
@@ -4498,6 +4498,8 @@ fn d0_partial_account_install_failure_restores_mirrors_without_reverting_publish
         serde_json::to_value(session.personal_trade_confirmations(crate::AccountId(4))).unwrap();
     let publication = driver.publication();
     let before = publication.load();
+    let account_writes = driver.account_writes_for_test();
+    let personal_writes = driver.personal_installs_for_test();
     let err = driver
         .day_end_with_runtime_market_day(&mut session)
         .expect_err("首买经历冲突必须显式报错");
@@ -4505,7 +4507,7 @@ fn d0_partial_account_install_failure_restores_mirrors_without_reverting_publish
     assert_eq!(
         format!("{:?}", session.runtime_accounts_snapshot()),
         accounts,
-        "部分账户安装恢复"
+        "私有候选拒绝，账户镜像从未写入"
     );
     assert_eq!(
         format!(
@@ -4513,12 +4515,12 @@ fn d0_partial_account_install_failure_restores_mirrors_without_reverting_publish
             session.runtime_retail_experience_for(&crate::AccountId(4))
         ),
         retail,
-        "经历恢复"
+        "经历旧镜像保持"
     );
     assert_eq!(
         serde_json::to_value(session.personal_trade_confirmations(crate::AccountId(4))).unwrap(),
         receipts,
-        "个人确认恢复"
+        "个人确认旧镜像保持"
     );
     assert_eq!(publication.load().tick, before.tick, "已发布 tick 不回退");
     assert_eq!(
@@ -4535,4 +4537,11 @@ fn d0_partial_account_install_failure_restores_mirrors_without_reverting_publish
             .any(|a| a.foreign_active.iter().any(|&n| n > 0)),
         "只撤日结，恢复真实收盘在途单"
     );
+    assert_eq!(driver.account_writes_for_test(), account_writes, "F0 swap=0");
+    assert_eq!(driver.personal_installs_for_test(), personal_writes);
+    assert_eq!(publication.load().generation, before.generation, "F0未发布retained");
+    assert!(std::sync::Arc::ptr_eq(&publication.load().retained, &before.retained));
+    let fatal = session.poison_reason().expect("失败日结必须封首错不可重跑").clone();
+    assert_eq!(session.save().unwrap_err(), fatal);
+    assert_eq!(driver.step_frame_equivalent(&mut session).unwrap_err(), fatal);
 }

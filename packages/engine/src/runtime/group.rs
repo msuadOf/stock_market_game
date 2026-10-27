@@ -5479,7 +5479,10 @@ pub fn group_main(
             }
             GroupIn::EchoPersonalFull { source } => {
                 let full = (|| {
-                    if source.tick != state.committed_tick || state.cur_tick != state.committed_tick
+                    // SealAck 已确认本拍落账并由 World 发布；旧 committed_tick 到下一 Start 才隐式转正。
+                    let sealed_static = state.seal_acked_len.is_some() && state.batches_after_seal == 0
+                        && state.staging_deferred.is_empty();
+                    if source.tick != state.cur_tick || (state.cur_tick != state.committed_tick && !sealed_static)
                         || state.admin_pending.is_some()
                     {
                         return Err(RuntimeError::ProtocolInvariant {

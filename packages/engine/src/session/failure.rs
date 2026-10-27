@@ -585,6 +585,7 @@ impl GameSession {
         let causal_time = self.causal_time();
         let prepared = driver.prepare_driver_step(self).and_then(|input| self.prepare_runtime_mirror(driver, input, tick));
         let mut prepared = prepared.map_err(|description| {
+            driver.abort_unpublished_day_end();
             let fatal = StepFatal::InvariantViolation { location: "runtime_mirror::prepare".to_owned(), description };
             #[cfg(feature = "simulation-diagnostics")]
             driver.retain_pending_causal_failure(causal_time, fatal.clone());
