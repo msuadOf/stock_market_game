@@ -292,3 +292,51 @@ fn day_end_callback_failure_keeps_published_retained_and_old_mirror() {
     assert_eq!(game.save().unwrap_err(), fatal);
     assert_eq!(game.step_frame().unwrap_err(), fatal);
 }
+
+#[test]
+fn full_personal_read_covers_three_real_groups_without_consuming_sparse_state() {
+    let mut setup = super::npc_working_quote_tests::quote_setup(0);
+    setup.npcs.inst_count = 5;
+    setup.npcs.retail_count = 1;
+    let mut game = GameSession::new(setup, 42).unwrap();
+    let expected: BTreeSet<_> = game.runtime_personal_states().keys().copied().collect();
+    let mut driver =
+        crate::runtime::drive::RuntimeDriver::from_session_grouped(&mut game, 3).unwrap();
+    assert_eq!(driver.id_map.len(), 7);
+    assert_eq!(driver.accounts_per_group(), 3);
+    let first = driver.collect_personal_full().unwrap();
+    assert_eq!(
+        first
+            .groups
+            .iter()
+            .map(|(_, rows)| rows.len())
+            .collect::<Vec<_>>(),
+        [3, 3, 1]
+    );
+    let sparse_before = driver.collect_group_belief_for_test().unwrap();
+    let second = driver.collect_personal_full().unwrap();
+    assert_eq!(second.source, first.source);
+    assert_eq!(
+        second.groups, first.groups,
+        "重复读取保完整七字段且不推进个人权威"
+    );
+    let sparse_after = driver.collect_group_belief_for_test().unwrap();
+    assert_eq!(sparse_after, sparse_before, "Full 不消费 dirty 或 pending");
+    let owners: BTreeSet<_> = first
+        .groups
+        .iter()
+        .flat_map(|(_, rows)| rows)
+        .filter_map(|(_, id, value)| match value {
+            Some(value) => {
+                assert_eq!(value.information.owner(), *id);
+                assert_eq!(value.belief.npc(), *id);
+                Some(*id)
+            }
+            None => {
+                assert_eq!(*id, AccountId(0), "本夹具只有真实 Player 明确无个人能力");
+                None
+            }
+        })
+        .collect();
+    assert_eq!(owners, expected);
+}

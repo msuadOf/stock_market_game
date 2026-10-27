@@ -88,6 +88,12 @@ pub struct GroupInformationPayload {
     )>>,
 }
 
+/// 一次完整个人读面的真实槽；None 是明确缺乏能力，不代表缺少真实名册成员。
+pub(crate) struct PersonalFullSnapshot {
+    pub source: super::source::WorldMirrorSource,
+    pub groups: Vec<(GroupIdx, Vec<(super::LocalIdx, crate::AccountId, Option<BeliefParticipantSnapshot>)>)>,
+}
+
 /// 信念个人态快照（D3a-2b Belief-1：watchlist/价格记忆/信息态/信念书
 /// ——crate 纯类型直载；构造期自 session 投影进组，读面上行同源校验。
 /// D3a-2c 件2 增补 attention/history_reads（observe 直调的完整个人态承载
@@ -441,6 +447,13 @@ impl World {
 
     pub(crate) fn pending_mirror_domains(&self) -> super::source::MirrorDomains {
         self.pending_mirror_domains
+    }
+
+    /// TDD 首红接缝；尚未实现组只读 Full 协议时必须明确拒绝，不能拿稀疏缓存冒充。
+    pub(crate) fn collect_personal_full(&mut self) -> Result<PersonalFullSnapshot, RuntimeError> {
+        Err(RuntimeError::ProtocolInvariant {
+            detail: "完整个人态只读协议尚未接入；不能使用稀疏 EchoBelief 代替".to_owned(),
+        })
     }
 
     /// 构造世界并启动全部 worker 线程。

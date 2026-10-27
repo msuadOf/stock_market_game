@@ -32,6 +32,14 @@ pub(crate) struct PreparedDriverStep {
 }
 
 impl RuntimeDriver {
+    pub(crate) fn collect_personal_full(
+        &mut self,
+    ) -> Result<crate::runtime::world::PersonalFullSnapshot, String> {
+        self.world
+            .collect_personal_full()
+            .map_err(|error| format!("完整个人态收集失败：{error}"))
+    }
+
     #[cfg(feature = "simulation-diagnostics")]
     pub(crate) fn retain_terminal_causal(
         &mut self,
