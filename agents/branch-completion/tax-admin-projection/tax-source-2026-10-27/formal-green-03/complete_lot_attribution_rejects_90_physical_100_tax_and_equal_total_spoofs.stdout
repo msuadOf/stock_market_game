@@ -1,0 +1,6 @@
+
+running 1 test
+test company::cash_dividend_tax::day_boundary::tests::complete_lot_attribution_rejects_90_physical_100_tax_and_equal_total_spoofs ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2741 filtered out; finished in 0.01s
+

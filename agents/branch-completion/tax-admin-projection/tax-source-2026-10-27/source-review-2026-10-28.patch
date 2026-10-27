@@ -1,0 +1,821 @@
+diff --git a/packages/engine/src/company/cash_dividend_tax.rs b/packages/engine/src/company/cash_dividend_tax.rs
+index 22273b9b..ccd28689 100644
+--- a/packages/engine/src/company/cash_dividend_tax.rs
++++ b/packages/engine/src/company/cash_dividend_tax.rs
+@@ -1658,3 +1658,6 @@ mod nonnegative_decimal {
+ mod tests;
+ 
+ pub mod entitlement_units;
++
++/// 从真实 ordinary REG 日请求核验完整税务日候选；公司变动税日仍保门。
++pub(crate) mod day_boundary;
+diff --git a/packages/engine/src/company/cash_dividend_tax/day_boundary.rs b/packages/engine/src/company/cash_dividend_tax/day_boundary.rs
+new file mode 100644
+index 00000000..46a0729b
+--- /dev/null
++++ b/packages/engine/src/company/cash_dividend_tax/day_boundary.rs
+@@ -0,0 +1,239 @@
++//! 普通市场完整税日来源；不从上市日或公司物理到账日推导税务日。
++use super::*;
++use crate::company::share_registry::settlement_day::{
++    ShareMarketSourceContext, ShareSettlementDay,
++};
++use crate::company::share_registry::{ShareRegistry, ShareRegistryError};
++
++#[derive(Debug, thiserror::Error)]
++pub(crate) enum TaxBoundaryError {
++    #[error(transparent)]
++    Registry(#[from] ShareRegistryError),
++    #[error(transparent)]
++    Tax(#[from] DividendTaxError),
++    #[error("税务来源缺失：{0}")]
++    MissingSource(String),
++    #[error("税务登记归属缺失：account={account:?} stock={stock:?} day={day}: {detail}")]
++    MissingAttribution {
++        account: AccountId,
++        stock: StockCode,
++        day: CivilDate,
++        detail: String,
++    },
++}
++#[derive(Clone, Debug, PartialEq, Eq)]
++pub(crate) struct TaxRegistrationAttribution {
++    pub event_id: String,
++    pub registered_on: CivilDate,
++    pub account: AccountId,
++    pub stock: StockCode,
++    pub after_book_operation: u64,
++    pub settled_receipts: u64,
++    pub lots: Vec<DividendTaxLot>,
++}
++#[derive(Clone, Debug, PartialEq, Eq)]
++pub(crate) struct TaxDayBoundaryFacts {
++    registry: ShareRegistry,
++    book: CashDividendTaxBook,
++    registrations: Vec<TaxRegistrationAttribution>,
++}
++impl TaxDayBoundaryFacts {
++    pub fn prepare(
++        registry: &ShareRegistry,
++        book: &CashDividendTaxBook,
++        day: &ShareSettlementDay,
++        sources: &ShareMarketSourceContext<'_>,
++    ) -> Result<Self, TaxBoundaryError> {
++        use crate::company::share_registry::settlement_day::{
++            SharePostAction, SharePostActionRef, ShareUnitIdentity,
++        };
++        use crate::company::share_registry::{AcquisitionSource, HolderId, MovementScope};
++        book.validate()?;
++        // 普通入口不承诺任何公司变动或单位换算的税日；历史也须满足同一范围。
++        let ordinary_history =
++            registry
++                .receipts()
++                .iter()
++                .all(|receipt| match &receipt.request.scope {
++                    MovementScope::SettlementDayMarket { binding } => {
++                        binding.opening.is_empty()
++                            && binding.market_unit == ShareUnitIdentity::Initial
++                            && binding.post.iter().all(|action| {
++                                matches!(action, SharePostActionRef::CaptureRegistration { .. })
++                            })
++                    }
++                    _ => false,
++                });
++        if !ordinary_history
++            || !day.opening.is_empty()
++            || day.actual_market_close.unit != ShareUnitIdentity::Initial
++            || day
++                .post_market_actions
++                .iter()
++                .any(|action| !matches!(action, SharePostAction::CaptureRegistration { .. }))
++            || !book.redenominations.is_empty()
++            || !book.stock_bonus_bases.is_empty()
++        {
++            return Err(TaxBoundaryError::MissingSource(
++                "ordinary 税日不支持历史或当日公司/单位 movement，不能从物理日期推断税务日".into(),
++            ));
++        }
++        if registry.stock() != book.stock()
++            || registry.settled_on() != book.settled_on()
++            || book.settled_on() != day.predecessor.settled_on
++        {
++            return Err(attribution_error(
++                book,
++                day.day,
++                "账户税账与 registry 的证券或完整期初日不一致",
++            ));
++        }
++        verify_exact_lots(registry.holdings(), book, day.day)?;
++        // 由已有 REG 唯一实现核日历、水位、最终确认全集、前驱和物理净额。
++        let candidate_registry = registry.prepare_settlement_day(day, sources)?;
++        let change = day
++            .actual_market_close
++            .request
++            .changes
++            .iter()
++            .find(|change| change.holder == HolderId::Account(book.account()));
++        let (net_change, acquisition) = if let Some(change) = change {
++            let acquisition = if change.change > 0 {
++                let source = change.acquisition.as_ref().ok_or_else(|| {
++                    TaxBoundaryError::MissingSource("正净增缺失真实 acquisition".into())
++                })?;
++                if !matches!(source.source, AcquisitionSource::SecondaryMarket { .. }) {
++                    return Err(TaxBoundaryError::MissingSource(
++                        "普通税日正净增必须来自实际 SecondaryMarket".into(),
++                    ));
++                }
++                let class = public_market_class(&source.restriction)?;
++                Some(DividendTaxLot {
++                    id: format!("tax:{}", source.lot_id),
++                    qty: u64::try_from(change.change).map_err(|_| {
++                        TaxBoundaryError::MissingSource("实际税日净增超出 u64".into())
++                    })?,
++                    acquired_on: day.day,
++                    source: convert_tax_source(&source.source),
++                    class,
++                })
++            } else {
++                None
++            };
++            (change.change, acquisition)
++        } else {
++            (0, None)
++        };
++        let mut candidate_book = book.clone();
++        candidate_book.record_net_day(
++            format!(
++                "session-market:{}:{}:{}",
++                book.stock().0,
++                book.account().0,
++                day.day
++            ),
++            day.day,
++            net_change,
++            acquisition,
++        )?;
++        verify_exact_lots(candidate_registry.holdings(), &candidate_book, day.day)?;
++        let mut registrations = Vec::new();
++        for action in &day.post_market_actions {
++            let SharePostAction::CaptureRegistration { event_id } = action else {
++                unreachable!("ordinary 相位已校验");
++            };
++            let snapshot = candidate_registry.registration(event_id).ok_or_else(|| {
++                TaxBoundaryError::MissingSource(format!("capture={event_id} 缺少真实 REG snapshot"))
++            })?;
++            verify_exact_lots(snapshot.holdings(), &candidate_book, day.day)?;
++            registrations.push(TaxRegistrationAttribution {
++                event_id: event_id.clone(),
++                registered_on: snapshot.registered_on(),
++                account: candidate_book.account(),
++                stock: candidate_book.stock().clone(),
++                after_book_operation: candidate_book.operation_seq,
++                settled_receipts: snapshot.settled_receipts(),
++                lots: candidate_book.lots().to_vec(),
++            });
++        }
++        Ok(Self {
++            registry: candidate_registry,
++            book: candidate_book,
++            registrations,
++        })
++    }
++    pub fn registry(&self) -> &ShareRegistry {
++        &self.registry
++    }
++    pub fn book(&self) -> &CashDividendTaxBook {
++        &self.book
++    }
++    pub fn registrations(&self) -> &[TaxRegistrationAttribution] {
++        &self.registrations
++    }
++}
++fn attribution_error(
++    book: &CashDividendTaxBook,
++    day: CivilDate,
++    detail: impl Into<String>,
++) -> TaxBoundaryError {
++    TaxBoundaryError::MissingAttribution {
++        account: book.account(),
++        stock: book.stock().clone(),
++        day,
++        detail: detail.into(),
++    }
++}
++fn public_market_class(
++    restriction: &crate::company::share_registry::ShareRestriction,
++) -> Result<TaxShareClass, TaxBoundaryError> {
++    match restriction {
++        crate::company::share_registry::ShareRestriction::Unrestricted => {
++            Ok(TaxShareClass::PublicMarket)
++        }
++        _ => Err(TaxBoundaryError::MissingSource(
++            "ordinary 税日未取得法定限售税务资格，不能从物理 restriction 推断".into(),
++        )),
++    }
++}
++fn verify_exact_lots(
++    holdings: &[crate::company::share_registry::ShareHolding],
++    book: &CashDividendTaxBook,
++    day: CivilDate,
++) -> Result<(), TaxBoundaryError> {
++    use crate::company::share_registry::{AcquisitionSource, HolderId};
++    let mut expected = Vec::new();
++    if let Some(holding) = holdings
++        .iter()
++        .find(|holding| holding.holder == HolderId::Account(book.account()))
++    {
++        for lot in &holding.lots {
++            if matches!(lot.source, AcquisitionSource::CorporateAction { .. }) {
++                return Err(TaxBoundaryError::MissingSource(
++                    "ordinary 税日不支持公司来源 lot".into(),
++                ));
++            }
++            expected.push(DividendTaxLot {
++                id: format!("tax:{}", lot.id),
++                qty: lot.qty,
++                acquired_on: lot.acquired_on,
++                source: convert_tax_source(&lot.source),
++                class: public_market_class(&lot.restriction)?,
++            });
++        }
++    }
++    if expected != book.lots() {
++        return Err(attribution_error(
++            book,
++            day,
++            format!(
++                "完整 lot 归属不符：registry={expected:?} tax={:?}",
++                book.lots()
++            ),
++        ));
++    }
++    Ok(())
++}
++#[cfg(test)]
++#[path = "day_boundary_tests.rs"]
++mod tests;
+diff --git a/packages/engine/src/company/cash_dividend_tax/day_boundary_tests.rs b/packages/engine/src/company/cash_dividend_tax/day_boundary_tests.rs
+new file mode 100644
+index 00000000..641ac978
+--- /dev/null
++++ b/packages/engine/src/company/cash_dividend_tax/day_boundary_tests.rs
+@@ -0,0 +1,559 @@
++use super::*;
++use crate::calendar::{CalendarExchange, TradingCalendar};
++use crate::company::share_registry::settlement_day::*;
++use crate::company::share_registry::*;
++fn date(s: &str) -> CivilDate {
++    CivilDate::from_iso(s).unwrap()
++}
++fn fixture() -> (
++    ShareRegistry,
++    CashDividendTaxBook,
++    ShareSettlementDay,
++    TradingCalendar,
++) {
++    let registry = ShareRegistry::new(
++        StockCode("600001".into()),
++        crate::company::CompanyId(0),
++        100,
++        date("2026-01-05"),
++        vec![ShareHolding {
++            holder: HolderId::Account(AccountId(1)),
++            lots: vec![ShareLot {
++                id: "initial".into(),
++                qty: 100,
++                acquired_on: date("2024-01-02"),
++                source: AcquisitionSource::InitialAllocation {
++                    evidence: "真实装配期来源".into(),
++                },
++                restriction: ShareRestriction::Unrestricted,
++            }],
++        }],
++    )
++    .unwrap();
++    let book = CashDividendTaxBook::new(
++        AccountId(1),
++        registry.stock().clone(),
++        DividendTaxProfile::IndividualPublicMarket,
++        registry.settled_on(),
++        vec![DividendTaxLot {
++            id: "tax:initial".into(),
++            qty: 100,
++            acquired_on: date("2024-01-02"),
++            source: TaxAcquisitionSource::InitialAllocation {
++                evidence: "真实装配期来源".into(),
++            },
++            class: TaxShareClass::PublicMarket,
++        }],
++    )
++    .unwrap();
++    let day = ShareSettlementDay {
++        stock: registry.stock().clone(),
++        day: date("2026-01-06"),
++        predecessor: registry.settlement_frontier().unwrap(),
++        opening: vec![],
++        actual_market_close: ConfirmedShareMarketClose {
++            unit: ShareUnitIdentity::Initial,
++            source: ShareMarketSource::FinalConfirmations { receipts: vec![] },
++            request: ShareDayRequest {
++                event_id: "market:2026-01-06".into(),
++                day: date("2026-01-06"),
++                scope: MovementScope::PublicMarket,
++                changes: vec![],
++            },
++        },
++        post_market_actions: vec![SharePostAction::CaptureRegistration {
++            event_id: "actual-plan".into(),
++        }],
++    };
++    (
++        registry,
++        book,
++        day,
++        TradingCalendar::current_default_calendar().unwrap(),
++    )
++}
++fn context<'a>(
++    calendar: &'a TradingCalendar,
++    rows: &'a [ShareMarketConfirmation],
++    through: Option<CivilDate>,
++) -> ShareMarketSourceContext<'a> {
++    ShareMarketSourceContext {
++        calendar,
++        exchange: CalendarExchange::Sse,
++        confirmations: rows,
++        treasury_account: None,
++        completed_through: through,
++    }
++}
++#[test]
++fn actual_reg_prepare_zero_market_day_advances_tax_and_binds_exact_plan_capture() {
++    let (registry, book, day, calendar) = fixture();
++    let result = TaxDayBoundaryFacts::prepare(
++        &registry,
++        &book,
++        &day,
++        &context(&calendar, &[], Some(day.day)),
++    )
++    .expect("已完成普通零日也必须推进税日");
++    assert_eq!(result.book().settled_on(), day.day);
++    assert_eq!(result.book().lots(), book.lots());
++    assert_eq!(result.book().days.len(), 1);
++    assert_eq!(result.book().days[0].net_change, 0);
++    assert!(result.book().days[0].acquisition.is_none());
++    let capture = &result.registrations()[0];
++    assert_eq!(capture.event_id, "actual-plan");
++    assert_eq!(
++        capture.settled_receipts,
++        result.registry().receipts().len() as u64
++    );
++    assert_eq!(capture.lots, book.lots());
++    assert_eq!(capture.after_book_operation, result.book().operation_seq);
++    assert_eq!(book.settled_on(), date("2026-01-05"));
++}
++
++#[test]
++fn missing_watermark_and_omitted_confirmations_reject_without_mutating_inputs() {
++    let (registry, book, day, calendar) = fixture();
++    let before = (registry.clone(), book.clone());
++    assert!(
++        TaxDayBoundaryFacts::prepare(&registry, &book, &day, &context(&calendar, &[], None))
++            .is_err()
++    );
++    let rows = vec![ShareMarketConfirmation {
++        account: AccountId(1),
++        receipt_id: 70,
++        stock: registry.stock().clone(),
++        day: day.day,
++        side: crate::orderbook::Side::Sell,
++        qty: 10,
++    }];
++    assert!(TaxDayBoundaryFacts::prepare(
++        &registry,
++        &book,
++        &day,
++        &context(&calendar, &rows, Some(day.day))
++    )
++    .is_err());
++    assert_eq!((registry, book), before);
++}
++#[test]
++fn complete_lot_attribution_rejects_90_physical_100_tax_and_equal_total_spoofs() {
++    let (registry, book, day, calendar) = fixture();
++    for variant in 0..5 {
++        let mut changed = book.clone();
++        let mut lot = changed.lots()[0].clone();
++        match variant {
++            0 => lot.qty = 110,
++            1 => lot.id = "tax:impostor".into(),
++            2 => lot.acquired_on = date("2024-01-03"),
++            3 => {
++                lot.source = TaxAcquisitionSource::InitialAllocation {
++                    evidence: "无受控对应来源".into(),
++                }
++            }
++            4 => {
++                changed = CashDividendTaxBook::new(
++                    AccountId(2),
++                    registry.stock().clone(),
++                    DividendTaxProfile::IndividualPublicMarket,
++                    registry.settled_on(),
++                    changed.lots().to_vec(),
++                )
++                .unwrap();
++            }
++            _ => unreachable!(),
++        }
++        if variant != 4 {
++            changed = CashDividendTaxBook::new(
++                changed.account(),
++                changed.stock().clone(),
++                DividendTaxProfile::IndividualPublicMarket,
++                changed.settled_on(),
++                vec![lot],
++            )
++            .unwrap();
++        }
++        let failure = TaxDayBoundaryFacts::prepare(
++            &registry,
++            &changed,
++            &day,
++            &context(&calendar, &[], Some(day.day)),
++        )
++        .expect_err("完整 lot 对应不能由等总量、前缀或比例猜出");
++        assert!(
++            matches!(failure, TaxBoundaryError::MissingAttribution { .. }),
++            "{failure:?}"
++        );
++    }
++    let physical90 = ShareRegistry::new(
++        registry.stock().clone(),
++        crate::company::CompanyId(0),
++        90,
++        registry.settled_on(),
++        vec![ShareHolding {
++            holder: HolderId::Account(AccountId(1)),
++            lots: vec![ShareLot {
++                qty: 90,
++                ..registry.holdings()[0].lots[0].clone()
++            }],
++        }],
++    )
++    .unwrap();
++    let mut day90 = day.clone();
++    day90.predecessor = physical90.settlement_frontier().unwrap();
++    assert!(matches!(
++        TaxDayBoundaryFacts::prepare(
++            &physical90,
++            &book,
++            &day90,
++            &context(&calendar, &[], Some(day.day))
++        ),
++        Err(TaxBoundaryError::MissingAttribution { .. })
++    ));
++}
++#[test]
++fn calendar_closed_and_absent_holder_change_still_record_exactly_one_zero_tax_day() {
++    let (registry, book, mut day, calendar) = fixture();
++    day.day = date("2026-01-10");
++    let registry = ShareRegistry::new(
++        registry.stock().clone(),
++        crate::company::CompanyId(0),
++        100,
++        date("2026-01-09"),
++        registry.holdings().to_vec(),
++    )
++    .unwrap();
++    let book = CashDividendTaxBook::new(
++        book.account(),
++        book.stock().clone(),
++        DividendTaxProfile::IndividualPublicMarket,
++        registry.settled_on(),
++        book.lots().to_vec(),
++    )
++    .unwrap();
++    day.predecessor = registry.settlement_frontier().unwrap();
++    day.actual_market_close.request.day = day.day;
++    day.actual_market_close.source = ShareMarketSource::CalendarClosed {
++        exchange: CalendarExchange::Sse,
++        policy_digest: calendar.policy().content_digest().into(),
++    };
++    let result = TaxDayBoundaryFacts::prepare(
++        &registry,
++        &book,
++        &day,
++        &context(&calendar, &[], Some(day.day)),
++    )
++    .unwrap();
++    assert_eq!(result.book().days.len(), 1);
++    assert_eq!(result.book().days[0].net_change, 0);
++    assert_eq!(result.book().settled_on(), day.day);
++    assert_eq!(result.registrations().len(), 1);
++}
++#[test]
++fn any_current_or_historical_nonmarket_movement_is_explicitly_unsupported() {
++    let (registry, book, mut day, calendar) = fixture();
++    day.post_market_actions
++        .push(SharePostAction::Movement(ShareDayRequest {
++            event_id: "transfer".into(),
++            day: day.day,
++            scope: MovementScope::NonTradingTransfer {
++                basis: "真实过户另需税来源".into(),
++            },
++            changes: vec![],
++        }));
++    assert!(TaxDayBoundaryFacts::prepare(
++        &registry,
++        &book,
++        &day,
++        &context(&calendar, &[], Some(day.day))
++    )
++    .is_err());
++    let mut historical = registry.clone();
++    historical
++        .close_day(ShareDayRequest {
++            event_id: "historical-transfer".into(),
++            day: day.day,
++            scope: MovementScope::NonTradingTransfer {
++                basis: "不能忽略历史".into(),
++            },
++            changes: vec![DayNetChange {
++                holder: HolderId::Account(AccountId(1)),
++                change: 1,
++                acquisition: Some(NetAcquisition {
++                    lot_id: "historical-company".into(),
++                    source: AcquisitionSource::CorporateAction {
++                        event: "historical-transfer".into(),
++                    },
++                    restriction: ShareRestriction::Unrestricted,
++                }),
++                consume: None,
++            }],
++        })
++        .unwrap();
++    let book = CashDividendTaxBook::new(
++        book.account(),
++        book.stock().clone(),
++        DividendTaxProfile::IndividualPublicMarket,
++        historical.settled_on(),
++        book.lots().to_vec(),
++    )
++    .unwrap();
++    let mut later = day.clone();
++    later.day = date("2026-01-07");
++    later.predecessor = historical.settlement_frontier().unwrap();
++    later.actual_market_close.request.day = later.day;
++    later.actual_market_close.request.event_id = "later-market".into();
++    later.post_market_actions.clear();
++    assert!(TaxDayBoundaryFacts::prepare(
++        &historical,
++        &book,
++        &later,
++        &context(&calendar, &[], Some(later.day))
++    )
++    .is_err());
++}
++
++use crate::runtime::group::{GroupScript, PlaceSpec, TickPlan};
++use crate::runtime::watchdog::WatchdogConfig;
++use crate::runtime::world::{DeskStockSpec, World, WorldSpec};
++use crate::runtime::GroupIdx;
++use std::time::Duration;
++fn basic_spec(
++    n_groups: usize,
++    n_stocks: usize,
++    accounts_per_group: usize,
++    script_for: Box<dyn Fn(GroupIdx) -> GroupScript>,
++) -> WorldSpec {
++    let shares = vec![vec![vec![1_000u32; n_stocks]; accounts_per_group]; n_groups];
++    WorldSpec {
++        initial_plan_books: Vec::new(),
++        initial_desk_orders: Vec::new(),
++        initial_desk_next_serial: Vec::new(),
++        n_groups,
++        accounts_per_group,
++        initial_cash: 1_000_000,
++        initial_shares: shares,
++        initial_invested: Vec::new(),
++        initial_recovered: Vec::new(),
++        initial_ever_held: Vec::new(),
++        initial_frozen_today: Vec::new(),
++        initial_purse_held: Vec::new(),
++        initial_pending_sell: Vec::new(),
++        root_projection: None,
++        civil_start_date: crate::calendar::CivilDate::from_ymd(2026, 1, 5).expect("测试日期合法"),
++        script_for,
++        chunk: 8,
++        watchdog: WatchdogConfig {
++            normal: Duration::from_secs(5),
++            long: Duration::from_secs(10),
++        },
++        rounds_cap: 4,
++        stocks: (0..n_stocks)
++            .map(|_| DeskStockSpec::main_board(1000))
++            .collect(),
++        config: std::sync::Arc::new(crate::config::GameConfig::proposed_defaults()),
++        ticks_per_day: 30,
++        auction_ticks: 0,
++        closing_auction_ticks: 3,
++        order_ttl_ticks: 1_000_000,
++        history_len: 16,
++        initial_committed_tick: 0,
++        initial_last_day_end_tick: None,
++        belief_seeds: Vec::new(),
++        library: None,
++        decision: None,
++        rights_computer: None,
++        initial_cash_override: None,
++        plan_factory: None,
++    }
++}
++
++/// fixture 的 seq 由本测试的独立确认命名空间提供；成交与双腿确认均使用真实实现。
++fn actual_world_source() -> (
++    ShareRegistry,
++    ShareSettlementDay,
++    TradingCalendar,
++    Vec<ShareMarketConfirmation>,
++) {
++    let (_, _, mut day, calendar) = fixture();
++    let mut spec = basic_spec(
++        1,
++        1,
++        2,
++        Box::new(|_| {
++            Box::new(|tick, _| {
++                let mut plan = TickPlan::default();
++                if tick == 1 {
++                    plan.places.push(PlaceSpec {
++                        local: 0,
++                        stock: 0,
++                        side: crate::Side::Sell,
++                        price: 1000,
++                        qty: 100,
++                    });
++                }
++                if tick == 2 {
++                    plan.places.push(PlaceSpec {
++                        local: 1,
++                        stock: 0,
++                        side: crate::Side::Buy,
++                        price: 1000,
++                        qty: 100,
++                    });
++                }
++                plan
++            })
++        }),
++    );
++    spec.civil_start_date = day.day;
++    let mut world = World::spawn(spec).unwrap();
++    let before = world.snapshot_accounts().unwrap();
++    world.run_ticks(3).unwrap();
++    let after = world.snapshot_accounts().unwrap();
++    let mut confirmations = Vec::new();
++    let mut seq = 0;
++    for trade in world
++        .report_log
++        .iter()
++        .flat_map(|record| &record.desk_trades)
++    {
++        seq += 1;
++        let legs = crate::session::personal_trade_history::PersonalTradeConfirmation::from_legs(
++            seq, day.day, trade,
++        );
++        for (owner, row) in [trade.maker, trade.taker].into_iter().zip(legs) {
++            assert_eq!(owner.0, 0, "fixture 单组真实名册");
++            confirmations.push(ShareMarketConfirmation {
++                account: AccountId(u64::from(owner.1)),
++                receipt_id: row.receipt_id,
++                stock: day.stock.clone(),
++                day: row.civil_date,
++                side: row.side,
++                qty: u64::from(row.quantity_shares),
++            });
++        }
++    }
++    assert_eq!(confirmations.len(), 2, "fixture 必须产生真实双腿成交");
++    assert_eq!(after[0].1[0].shares[0], before[0].1[0].shares[0] - 100);
++    assert_eq!(after[0].1[1].shares[0], before[0].1[1].shares[0] + 100);
++    world.shutdown().unwrap();
++    let registry = ShareRegistry::new(
++        day.stock.clone(),
++        crate::company::CompanyId(0),
++        2000,
++        day.predecessor.settled_on,
++        (0..2)
++            .map(|local| ShareHolding {
++                holder: HolderId::Account(AccountId(local)),
++                lots: vec![ShareLot {
++                    id: format!("actual-initial:{local}"),
++                    qty: u64::from(before[0].1[local as usize].shares[0]),
++                    acquired_on: date("2024-01-02"),
++                    source: AcquisitionSource::InitialAllocation {
++                        evidence: "World装配期账户".into(),
++                    },
++                    restriction: ShareRestriction::Unrestricted,
++                }],
++            })
++            .collect(),
++    )
++    .unwrap();
++    day.predecessor = registry.settlement_frontier().unwrap();
++    day.actual_market_close.source = ShareMarketSource::FinalConfirmations {
++        receipts: confirmations
++            .iter()
++            .map(|row| ShareConfirmationRef {
++                account: row.account,
++                receipt_id: row.receipt_id,
++            })
++            .collect(),
++    };
++    day.actual_market_close.request.changes = vec![
++        DayNetChange {
++            holder: HolderId::Account(AccountId(0)),
++            change: -100,
++            acquisition: None,
++            consume: None,
++        },
++        DayNetChange {
++            holder: HolderId::Account(AccountId(1)),
++            change: 100,
++            acquisition: Some(NetAcquisition {
++                lot_id: "actual-buy".into(),
++                source: AcquisitionSource::SecondaryMarket {
++                    settlement: day.actual_market_close.request.event_id.clone(),
++                },
++                restriction: ShareRestriction::Unrestricted,
++            }),
++            consume: None,
++        },
++    ];
++    (registry, day, calendar, confirmations)
++}
++#[test]
++fn actual_world_fills_normalize_into_reg_and_exact_tax_net_acquisition_and_disposition() {
++    let (registry, day, calendar, rows) = actual_world_source();
++    for account in [AccountId(0), AccountId(1)] {
++        let lot = &registry
++            .holdings()
++            .iter()
++            .find(|holding| holding.holder == HolderId::Account(account))
++            .unwrap()
++            .lots[0];
++        let book = CashDividendTaxBook::new(
++            account,
++            registry.stock().clone(),
++            DividendTaxProfile::IndividualPublicMarket,
++            registry.settled_on(),
++            vec![DividendTaxLot {
++                id: format!("tax:{}", lot.id),
++                qty: lot.qty,
++                acquired_on: lot.acquired_on,
++                source: convert_tax_source(&lot.source),
++                class: TaxShareClass::PublicMarket,
++            }],
++        )
++        .unwrap();
++        let result = TaxDayBoundaryFacts::prepare(
++            &registry,
++            &book,
++            &day,
++            &context(&calendar, &rows, Some(day.day)),
++        )
++        .unwrap();
++        let expected = if account == AccountId(0) { 900 } else { 1100 };
++        assert_eq!(
++            result.book().lots().iter().map(|lot| lot.qty).sum::<u64>(),
++            expected
++        );
++        assert_eq!(
++            result.book().days[0].net_change,
++            if account == AccountId(0) { -100 } else { 100 }
++        );
++        assert_eq!(result.registrations()[0].lots, result.book().lots());
++        if account == AccountId(1) {
++            let acquired = result.book().days[0].acquisition.as_ref().unwrap();
++            assert_eq!(
++                (acquired.id.as_str(), acquired.acquired_on, acquired.qty),
++                ("tax:actual-buy", day.day, 100)
++            );
++        } else {
++            assert!(result.book().days[0].acquisition.is_none());
++            assert_eq!(result.book().days[0].dispositions.len(), 1);
++        }
++        let mut omitted = day.clone();
++        let ShareMarketSource::FinalConfirmations { receipts } =
++            &mut omitted.actual_market_close.source
++        else {
++            unreachable!()
++        };
++        receipts.pop();
++        assert!(TaxDayBoundaryFacts::prepare(
++            &registry,
++            &book,
++            &omitted,
++            &context(&calendar, &rows, Some(day.day))
++        )
++        .is_err());
++    }
++}

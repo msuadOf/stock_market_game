@@ -1,0 +1,19 @@
+{
+  "outerDeadlineMs": 300000,
+  "executionDeadlineMs": 299000,
+  "wallSeconds": 99.4846200190077,
+  "cargoJobs": 8,
+  "testWorkers": 8,
+  "caseCommandDeadlineMs": 10000,
+  "testCount": 11,
+  "allExpectedResults": true,
+  "sourceUnchanged": true,
+  "ownTemporaryDirectoryCleaned": true,
+  "priorProtectedUnchanged": true,
+  "resourceSamples": 194,
+  "maxCargoTreeThreads": 26,
+  "maxCargoTreeProcesses": 5,
+  "peakCpuTickDeltaPer500ms": 269,
+  "minAvailableGiB": 94.86296081542969,
+  "maxCaseWallSeconds": 0.0928443070006324
+}

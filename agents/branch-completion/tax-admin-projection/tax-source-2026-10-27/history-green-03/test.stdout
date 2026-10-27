@@ -1,0 +1,16 @@
+
+running 11 tests
+test company::cash_dividend_tax::day_boundary::tests::any_current_or_historical_nonmarket_movement_is_explicitly_unsupported ... ok
+test company::cash_dividend_tax::day_boundary::tests::actual_reg_prepare_zero_market_day_advances_tax_and_binds_exact_plan_capture ... ok
+test company::cash_dividend_tax::day_boundary::tests::calendar_closed_and_absent_holder_change_still_record_exactly_one_zero_tax_day ... ok
+test company::cash_dividend_tax::day_boundary::tests::late_first_buyer_opens_empty_tax_book_at_own_frontier_after_existing_registry_history ... ok
+test company::cash_dividend_tax::day_boundary::tests::complete_lot_attribution_rejects_90_physical_100_tax_and_equal_total_spoofs ... ok
+test company::cash_dividend_tax::day_boundary::tests::equal_tail_cannot_move_a_historical_sale_across_tax_holding_period_boundary ... ok
+test company::cash_dividend_tax::day_boundary::tests::actual_world_fills_normalize_into_reg_and_exact_tax_net_acquisition_and_disposition ... ok
+test company::cash_dividend_tax::day_boundary::tests::missing_watermark_and_omitted_confirmations_reject_without_mutating_inputs ... ok
+test company::cash_dividend_tax::day_boundary::tests::depleted_acquisition_and_opening_lot_sources_remain_bound_to_registry_history ... ok
+test company::cash_dividend_tax::day_boundary::tests::stock_batch_keeps_one_registry_and_rejects_duplicate_tax_book_accounts ... ok
+test company::cash_dividend_tax::day_boundary::tests::opening_requires_actual_frontier_and_batch_uses_account_identity ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 126 filtered out; finished in 0.01s
+

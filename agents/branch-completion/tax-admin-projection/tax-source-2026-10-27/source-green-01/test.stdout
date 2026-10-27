@@ -1,0 +1,10 @@
+
+running 5 tests
+test company::cash_dividend_tax::day_boundary::tests::any_current_or_historical_nonmarket_movement_is_explicitly_unsupported ... ok
+test company::cash_dividend_tax::day_boundary::tests::complete_lot_attribution_rejects_90_physical_100_tax_and_equal_total_spoofs ... ok
+test company::cash_dividend_tax::day_boundary::tests::calendar_closed_and_absent_holder_change_still_record_exactly_one_zero_tax_day ... ok
+test company::cash_dividend_tax::day_boundary::tests::actual_reg_prepare_zero_market_day_advances_tax_and_binds_exact_plan_capture ... ok
+test company::cash_dividend_tax::day_boundary::tests::missing_watermark_and_omitted_confirmations_reject_without_mutating_inputs ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 122 filtered out; finished in 0.01s
+
