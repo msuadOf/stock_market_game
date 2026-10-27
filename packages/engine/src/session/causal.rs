@@ -6,7 +6,8 @@ use crate::diagnostics::causal::{
 
 /// 仅含已校验的本拍增量，最外层全部成功后才可发布。
 pub(in crate::session) struct RuntimeCausalDelta {
-    time: FactTime,
+    pub time: FactTime,
+    pub raw: Vec<crate::runtime::diagnostics::DeskCausalFact>,
     kinds: Vec<CausalFactKind>,
 }
 
@@ -16,21 +17,46 @@ impl GameSession {
         driver: &mut crate::runtime::drive::RuntimeDriver,
         time: FactTime,
     ) -> Result<RuntimeCausalDelta, StepFatal> {
+        self.prepare_runtime_causal_at(driver, time, self.tick())
+    }
+
+    pub(in crate::session) fn prepare_runtime_causal_at(
+        &self,
+        driver: &mut crate::runtime::drive::RuntimeDriver,
+        time: FactTime,
+        tick: u64,
+    ) -> Result<RuntimeCausalDelta, StepFatal> {
+        let raw = driver.take_causal_facts();
+        match self.translate_runtime_causal(driver, tick, &raw) {
+            Ok(kinds) => Ok(RuntimeCausalDelta { time, raw, kinds }),
+            Err(fatal) => {
+                driver.retain_terminal_causal(time, raw, fatal.clone());
+                Err(fatal)
+            }
+        }
+    }
+
+    fn translate_runtime_causal(
+        &self,
+        driver: &crate::runtime::drive::RuntimeDriver,
+        tick: u64,
+        raw: &[crate::runtime::diagnostics::DeskCausalFact],
+    ) -> Result<Vec<CausalFactKind>, StepFatal> {
         use crate::runtime::diagnostics::{DeskCausalKind, OperationSource};
         let fail = |description: String| StepFatal::InvariantViolation {
             location: "runtime::diagnostics::prepare".to_owned(),
             description,
         };
-        if self.tick().is_multiple_of(self.state.setup.ticks_per_day) {
+        if tick.is_multiple_of(self.state.setup.ticks_per_day) {
             driver.ensure_causal_day_end_supported().map_err(fail)?;
         }
         let mut kinds = Vec::new();
-        for fact in driver.take_causal_facts() {
-            if fact.tick != self.tick() {
+        for fact in raw {
+            if fact.tick != tick {
                 return Err(fail(format!(
                     "causal tick 错位：fact={} session={}",
                     fact.tick,
-                    self.tick()
+                    tick
                 )));
             }
             let code = StockId(u32::from(fact.stock));
@@ -118,7 +144,7 @@ impl GameSession {
                     .map_err(|_| fail("causal delta 长度超出 sequence 域".to_owned()))?,
             )
             .ok_or_else(|| fail("causal sequence 溢出".to_owned()))?;
-        Ok(RuntimeCausalDelta { time, kinds })
+        Ok(kinds)
     }
 
     pub(in crate::session) fn publish_runtime_causal(&mut self, delta: RuntimeCausalDelta) {

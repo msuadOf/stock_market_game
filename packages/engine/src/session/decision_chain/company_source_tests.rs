@@ -3,16 +3,18 @@ include!("../../../test-support/simple_company.rs");
 
 /// 同 CompanyId 的 Simple 与 legacy 故意使用不同 kind 与股本，防止选错源假绿。
 fn divergent_company_source_session(kind: crate::company::CompanyKind) -> GameSession {
-    divergent_company_source_session_with_counts(kind, 1)
+    divergent_company_source_session_with_counts(kind, 1, 1_000_000)
 }
 
 fn divergent_company_source_session_with_counts(
     kind: crate::company::CompanyKind,
     inst_count: u32,
+    opening_shares: u64,
 ) -> GameSession {
     let mut setup = probe_session().state.setup.clone();
     setup.npcs.retail_count = 1;
     setup.npcs.inst_count = inst_count;
+    setup.stocks[0].total_shares = opening_shares;
     let mut config = simple_company_fixture!(crate; ["000812"]);
     let crate::company::config::CompanySystemConfig::Simple(simple) = &mut config else {
         unreachable!("fixture 必须是 Simple");
@@ -26,19 +28,6 @@ fn divergent_company_source_session_with_counts(
         }
         .to_owned(),
     );
-    // 股本刻意超过 u32；财务与利润同比放大，保 ROE 与每股估值的合法量级。
-    // 原始股本约4296倍，取同一10000倍规模覆盖各人的悲观情景，不修改估值结果。
-    let scale = |amount: crate::accounting::AccountingAmount| {
-        crate::accounting::AccountingAmount::from_cents(
-            amount.cents().checked_mul(10_000).expect("fixture 同比财务金额不得溢出"),
-        )
-    };
-    let company = &mut simple.companies[0];
-    company.generation.initial_revenue = scale(company.generation.initial_revenue);
-    company.generation.initial_fixed_expense = scale(company.generation.initial_fixed_expense);
-    for line in &mut company.finance.opening_lines {
-        line.amount = scale(line.amount);
-    }
     simple.prehistory_periods = 1;
     setup.company_system = Some(config);
     setup.dividend_tax_mode =
@@ -449,8 +438,11 @@ fn selected_company_source_private_reports_do_not_grant_acquisition_or_valuation
 #[test]
 fn selected_company_source_native_three_groups_tail_roots_use_simple() {
     use crate::strategy::FundamentalMethod;
-    let mut session =
-        divergent_company_source_session_with_counts(crate::company::CompanyKind::Bank, 5);
+    let mut session = divergent_company_source_session_with_counts(
+        crate::company::CompanyKind::Bank,
+        5,
+        u64::from(u32::MAX) + 1_000_000,
+    );
     // EchoOpenDerivation 只接受机构 root；此局用6机构+玩家保留原7名册/3组/尾组。
     let mut setup = session.state.setup.clone();
     setup.npcs.retail_count = 0;
@@ -460,6 +452,16 @@ fn selected_company_source_native_three_groups_tail_roots_use_simple() {
         .issuers
         .record_share_issuance(&crate::company::CompanyId(0), u64::from(u32::MAX) + 777)
         .unwrap();
+    // 构造期股本同步生成合法量级的既有公开前史；SRC-B 负责将该库切到 Simple。
+    // 所选 issuer 仍额外增发超过 u32 的股数，和 legacy 股本保持真实分歧。
+    let selected_shares = 1_000_000 + 2 * u64::from(u32::MAX) + 777;
+    assert_eq!(
+        RootReadContext::capture(&session)
+            .unwrap()
+            .company_spec(&crate::company::CompanyId(0))
+            .unwrap(),
+        (crate::company::CompanyKind::Bank, selected_shares),
+    );
     let stock = session.stock_id("000812").unwrap();
     let _ids = prepare_company_source_personal_inputs(&mut session, true);
     let mut driver =
@@ -484,6 +486,14 @@ fn selected_company_source_native_three_groups_tail_roots_use_simple() {
                 Some(FundamentalMethod::EquityRoe),
                 "Bank 规则必须来自所选 Simple kind，不能用 legacy 工商方法"
             );
+            assert!(
+                matches!(
+                    &entry.valuation,
+                    ValuationOutcome::Available { per_share, .. }
+                        if per_share.pessimistic.cents() > 0 && per_share.optimistic.cents() > 0
+                ),
+                "合法公开前史须让真实大股本 root 形成正每股区间"
+            );
         }
     }
     let snapshots = driver.collect_belief().unwrap();
@@ -494,8 +504,21 @@ fn selected_company_source_native_three_groups_tail_roots_use_simple() {
 #[test]
 fn selected_company_source_native_three_groups_tail_retail_uses_simple() {
     use crate::strategy::FundamentalMethod;
-    let mut session =
-        divergent_company_source_session_with_counts(crate::company::CompanyKind::Bank, 5);
+    let mut session = divergent_company_source_session_with_counts(
+        crate::company::CompanyKind::Bank,
+        5,
+        u64::from(u32::MAX) + 1_000_000,
+    );
+    // 构造期股本同步生成合法量级的既有公开前史；SRC-B 负责将该库切到 Simple。
+    // 所选 issuer 仍额外增发超过 u32 的股数，和 legacy 股本保持真实分歧。
+    let selected_shares = 1_000_000 + 2 * u64::from(u32::MAX) + 777;
+    assert_eq!(
+        RootReadContext::capture(&session)
+            .unwrap()
+            .company_spec(&crate::company::CompanyId(0))
+            .unwrap(),
+        (crate::company::CompanyKind::Bank, selected_shares),
+    );
     let stock = session.stock_id("000812").unwrap();
     prepare_company_source_personal_inputs(&mut session, true);
     let mut driver =
@@ -525,6 +548,14 @@ fn selected_company_source_native_three_groups_tail_retail_uses_simple() {
             .expect("真实 retail 观察形成条目")
             .method,
         Some(FundamentalMethod::EquityRoe)
+    );
+    assert!(
+        matches!(
+            &retail_state.belief.entry(&stock).unwrap().valuation,
+            ValuationOutcome::Available { per_share, .. }
+                if per_share.pessimistic.cents() > 0 && per_share.optimistic.cents() > 0
+        ),
+        "合法公开前史须让真实大股本 retail 形成正每股区间"
     );
 }
 

@@ -146,6 +146,7 @@ mod envelope_projection_tests;
 mod failure_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod runtime_sync_tests;
+mod runtime_mirror;
 #[cfg(all(test, feature = "simulation-diagnostics", not(target_arch = "wasm32")))]
 mod runtime_diagnostics_tests;
 #[cfg(test)]
@@ -3429,7 +3430,11 @@ impl GameSession {
     /// 当前交易阶段。`auction_ticks` 表示 09:15–09:30 的整段开盘时间；
     /// 前 2/3 接受集合竞价申报，后 1/3 为不接受申报的盘前窗口。
     pub fn phase(&self) -> TradingPhase {
-        let day_tick = self.state.tick % self.state.setup.ticks_per_day;
+        self.phase_at_tick(self.state.tick)
+    }
+
+    pub(in crate::session) fn phase_at_tick(&self, tick: u64) -> TradingPhase {
+        let day_tick = tick % self.state.setup.ticks_per_day;
         if day_tick < self.auction_entry_ticks() {
             TradingPhase::CallAuction
         } else if day_tick < self.state.setup.auction_ticks {
@@ -3769,6 +3774,11 @@ impl GameSession {
     /// 只对事件涉及账户查 retail_experience）。**输出序逐位等价**：按
     /// 账户升序分组（=原 retail_experience.keys() 迭代序）、组内事件序。
     fn record_retail_intent_rejections(&mut self, events: &[Event]) {
+        let prepared = self.prepare_retail_intent_rejections(events);
+        self.state.last_retail_order_events.extend(prepared);
+    }
+
+    fn prepare_retail_intent_rejections(&self, events: &[Event]) -> Vec<RetailOrderDiagnosticEvent> {
         let mut by_account: std::collections::BTreeMap<
             AccountId,
             Vec<(StockId, crate::RejectionReason)>,
@@ -3786,17 +3796,9 @@ impl GameSession {
                 }
             }
         }
-        for (account, items) in by_account {
-            for (code, reason) in items {
-                self.state
-                    .last_retail_order_events
-                    .push(RetailOrderDiagnosticEvent::Rejected {
-                        account,
-                        code,
-                        reason,
-                    });
-            }
-        }
+        by_account.into_iter().flat_map(|(account, items)| {
+            items.into_iter().map(move |(code, reason)| RetailOrderDiagnosticEvent::Rejected { account, code, reason })
+        }).collect()
     }
 
     fn reserved_cash_for_account(&self, account: AccountId) -> Result<Money, MoneyError> {

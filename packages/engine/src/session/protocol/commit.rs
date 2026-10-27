@@ -7,24 +7,50 @@ use crate::session::{Event, GameSession, StepFatal};
 /// 借用已准备 tick candidate 的只读结构；禁止深克隆 GameSession。
 /// frame/runtime 投影都来自同一版冻结 candidate，不重读 live authority（#4 冻结门禁）。
 pub(in crate::session) struct TickCandidateProjection<'candidate> {
-    candidate: &'candidate GameSession,
+    candidate: ProjectionSource<'candidate>,
     seq_from: u64,
+}
+
+enum ProjectionSource<'candidate> {
+    Session(&'candidate GameSession),
+    Prepared(&'candidate PreparedTickProjection),
+}
+
+pub(in crate::session) struct PreparedTickProjection {
+    pub snapshot: crate::Snapshot,
+    pub runtime: PublicRuntimeState,
 }
 
 impl<'candidate> TickCandidateProjection<'candidate> {
     pub(crate) fn new(candidate: &'candidate GameSession, seq_from: u64) -> Self {
         Self {
-            candidate,
+            candidate: ProjectionSource::Session(candidate),
+            seq_from,
+        }
+    }
+
+    pub(in crate::session) fn from_prepared(
+        candidate: &'candidate PreparedTickProjection,
+        seq_from: u64,
+    ) -> Self {
+        Self {
+            candidate: ProjectionSource::Prepared(candidate),
             seq_from,
         }
     }
 
     pub fn tick(&self) -> u64 {
-        self.candidate.tick()
+        match &self.candidate {
+            ProjectionSource::Session(candidate) => candidate.tick(),
+            ProjectionSource::Prepared(candidate) => candidate.snapshot.tick,
+        }
     }
 
     pub fn seq_to(&self) -> u64 {
-        self.candidate.seq()
+        match &self.candidate {
+            ProjectionSource::Session(candidate) => candidate.seq(),
+            ProjectionSource::Prepared(candidate) => candidate.snapshot.seq,
+        }
     }
 
     pub fn project_frame(&self, facts: Vec<EventFact>) -> Result<TickFrame, StepFatal> {
@@ -36,8 +62,16 @@ impl<'candidate> TickCandidateProjection<'candidate> {
         &self,
         facts: Vec<EventFact>,
     ) -> Result<(TickFrame, PublicRuntimeState), StepFatal> {
-        let snapshot = self.candidate.runtime_snapshot();
-        let runtime = self.candidate.public_runtime_from_snapshot(&snapshot)?;
+        let (snapshot, runtime) = match &self.candidate {
+            ProjectionSource::Session(candidate) => {
+                let snapshot = candidate.runtime_snapshot();
+                let runtime = candidate.public_runtime_from_snapshot(&snapshot)?;
+                (snapshot, runtime)
+            }
+            ProjectionSource::Prepared(candidate) => {
+                (candidate.snapshot.clone(), candidate.runtime.clone())
+            }
+        };
         let timeseries_payload = project_timeseries(&facts, snapshot);
         Ok((
             TickFrame {
