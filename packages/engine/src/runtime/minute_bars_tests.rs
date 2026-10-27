@@ -297,13 +297,17 @@ fn second_trading_day_minute_bars_restart_empty() {
     spec.ticks_per_day = 30;
     spec.auction_ticks = 0;
     spec.closing_auction_ticks = 3;
-    let mut world = World::spawn(
-        spec,
-        crate::calendar::TradingCalendar::current_default_calendar()
-            .expect("显式 raw Calendar 政策合法"),
-    )
-    .expect("世界构造");
-    world.run_ticks(31).expect("跨入第二日");
+    let first_date = spec.civil_start_date;
+    let calendar = crate::calendar::TradingCalendar::current_default_calendar().unwrap();
+    let mut world = World::spawn(spec, calendar.clone()).expect("世界构造");
+    world.run_ticks(30).expect("首日全部市场拍");
+    world.run_day_end_public().expect("显式首日市场日终");
+    let next_date = calendar.next_trading_day(
+        crate::calendar::CalendarExchange::Sse,
+        first_date,
+    ).unwrap();
+    world.set_civil_date(next_date);
+    world.run_ticks(1).expect("显式跨入第二日");
     let views = world.public_views().to_vec();
     assert!(
         views[0].minute_bars.is_empty(),

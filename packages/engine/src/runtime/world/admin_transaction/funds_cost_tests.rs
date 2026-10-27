@@ -51,7 +51,12 @@ fn shares(local: u32, qty: u32, subscription_cost: i64) -> AdminOperation {
 
 #[test]
 fn funds_p1_01_two_groups_commit_exact_cash_and_cost_then_real_next_tick_keeps_it() {
-    let mut world = World::spawn(spec()).unwrap();
+    let mut world = World::spawn(
+        spec(),
+        crate::calendar::TradingCalendar::current_default_calendar()
+            .expect("显式 raw Calendar 政策合法"),
+    )
+    .unwrap();
     let before = accounts(&mut world);
     let mut expected = before.clone();
     expected[0][0].cash = 0;
@@ -114,7 +119,12 @@ fn funds_p1_01_two_groups_commit_exact_cash_and_cost_then_real_next_tick_keeps_i
 
 #[test]
 fn funds_p1_02_second_group_insufficient_cash_aborts_first_group_without_partial_payment() {
-    let mut world = World::spawn(spec()).unwrap();
+    let mut world = World::spawn(
+        spec(),
+        crate::calendar::TradingCalendar::current_default_calendar()
+            .expect("显式 raw Calendar 政策合法"),
+    )
+    .unwrap();
     let before = accounts(&mut world);
     let mut inspected = false;
     let error = world
@@ -148,7 +158,12 @@ fn funds_p1_02_second_group_insufficient_cash_aborts_first_group_without_partial
 
 #[test]
 fn funds_p1_03_inspect_rejection_restores_all_cash_cost_frozen_and_pending_fields() {
-    let mut world = World::spawn(spec()).unwrap();
+    let mut world = World::spawn(
+        spec(),
+        crate::calendar::TradingCalendar::current_default_calendar()
+            .expect("显式 raw Calendar 政策合法"),
+    )
+    .unwrap();
     let before = accounts(&mut world);
     assert!(world
         .with_admin_transaction(
@@ -168,7 +183,12 @@ fn funds_p1_03_inspect_rejection_restores_all_cash_cost_frozen_and_pending_field
 
 #[test]
 fn funds_p1_04_same_group_late_failure_does_not_keep_earlier_new_shares_or_cost() {
-    let mut world = World::spawn(spec()).unwrap();
+    let mut world = World::spawn(
+        spec(),
+        crate::calendar::TradingCalendar::current_default_calendar()
+            .expect("显式 raw Calendar 政策合法"),
+    )
+    .unwrap();
     let before = accounts(&mut world);
     assert!(world
         .with_admin_transaction(vec![(0, vec![shares(0, 7, 5600), debit(1, 2401)])], |_| Ok(
@@ -183,7 +203,12 @@ fn funds_p1_04_same_group_late_failure_does_not_keep_earlier_new_shares_or_cost(
 fn funds_p1_05_cost_overflow_in_second_group_restores_other_group_payment() {
     let mut spec = spec();
     spec.initial_invested[1][1][0] = i64::MAX;
-    let mut world = World::spawn(spec).unwrap();
+    let mut world = World::spawn(
+        spec,
+        crate::calendar::TradingCalendar::current_default_calendar()
+            .expect("显式 raw Calendar 政策合法"),
+    )
+    .unwrap();
     let before = accounts(&mut world);
     assert!(world
         .with_admin_transaction(
@@ -201,7 +226,12 @@ fn funds_p1_06_zero_old_position_gets_original_paid_cost_and_remains_unfrozen_af
     spec.initial_shares[1][1][0] = 0;
     spec.initial_invested[1][1][0] = 0;
     spec.initial_recovered[1][1][0] = 0;
-    let mut world = World::spawn(spec).unwrap();
+    let mut world = World::spawn(
+        spec,
+        crate::calendar::TradingCalendar::current_default_calendar()
+            .expect("显式 raw Calendar 政策合法"),
+    )
+    .unwrap();
     let before = accounts(&mut world);
     world
         .with_admin_transaction(vec![(1, vec![shares(1, 7, 5600)])], |_| Ok(()))
@@ -238,7 +268,12 @@ fn funds_p1_07_real_resting_buy_purse_cannot_be_used_for_subscription() {
             plan
         })
     });
-    let mut world = World::spawn(spec).unwrap();
+    let mut world = World::spawn(
+        spec,
+        crate::calendar::TradingCalendar::current_default_calendar()
+            .expect("显式 raw Calendar 政策合法"),
+    )
+    .unwrap();
     world.run_ticks(1).unwrap();
     let before = accounts(&mut world);
     assert!(
@@ -266,7 +301,12 @@ fn funds_p1_07_real_resting_buy_purse_cannot_be_used_for_subscription() {
 fn funds_p1_08_same_local_debit_before_refund_cannot_be_netted_or_reordered() {
     let mut spec = spec();
     spec.initial_cash_override = Some(vec![vec![100; 2]; 2]);
-    let mut world = World::spawn(spec).unwrap();
+    let mut world = World::spawn(
+        spec,
+        crate::calendar::TradingCalendar::current_default_calendar()
+            .expect("显式 raw Calendar 政策合法"),
+    )
+    .unwrap();
     let before = accounts(&mut world);
     let refund = || AdminOperation::SubscriptionRefund {
         local: 0,
@@ -323,7 +363,12 @@ fn information_world() -> World {
         normal: Duration::from_millis(300),
         long: Duration::from_millis(300),
     };
-    World::spawn(spec).unwrap()
+    World::spawn(
+        spec,
+        crate::calendar::TradingCalendar::current_default_calendar()
+            .expect("显式 raw Calendar 政策合法"),
+    )
+    .unwrap()
 }
 
 fn assert_information_candidate(

@@ -675,13 +675,17 @@ fn p1_6_second_day_minute_keys_not_doubled() {
     spec.ticks_per_day = 240;
     spec.auction_ticks = 15;
     spec.closing_auction_ticks = 3;
-    let mut world = super::world::World::spawn(
-        spec,
-        crate::calendar::TradingCalendar::current_default_calendar()
-            .expect("显式 raw Calendar 政策合法"),
-    )
-    .expect("世界构造");
-    world.run_ticks(255).expect("跨日");
+    let first_date = spec.civil_start_date;
+    let calendar = crate::calendar::TradingCalendar::current_default_calendar().unwrap();
+    let mut world = super::world::World::spawn(spec, calendar.clone()).expect("世界构造");
+    world.run_ticks(240).expect("首日全部市场拍");
+    world.run_day_end_public().expect("显式首日市场日终");
+    let next_date = calendar.next_trading_day(
+        crate::calendar::CalendarExchange::Sse,
+        first_date,
+    ).unwrap();
+    world.set_civil_date(next_date);
+    world.run_ticks(15).expect("第二日连续窗起点");
     let views = world.public_views();
     for (minute, _) in &views[0].minute_closes {
         // 第二日（tick 241-255 ⇒ day=1）连续分钟=255-240-15=0——

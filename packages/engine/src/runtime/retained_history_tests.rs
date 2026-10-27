@@ -106,10 +106,8 @@ fn trading_day_end_freezes_retained_snapshot_with_exact_bars() {
 
 #[test]
 fn day_end_drain_carries_minute_bars_before_roll_day() {
-    // 两日各一笔成交（tick1 首日、tick31 第二日申报窗），单次 run_ticks(61)
-    // 覆盖两日与两次自动日结（tick31 日结 day0、tick61 日结 day1）：
-    // 待取桶=最近一次日结（day1）的当日桶——首日桶不残留（roll_day 暂存
-    // 每日结消费一次的合同）。
+    // 两日各一笔成交（tick1 首日、tick31 第二日申报窗），显式完成两次市场日终，
+    // 再按冻结 Calendar 推进 civil date；待取桶仍是第二日当日桶，首日不重放。
     let script = |_: GroupIdx| -> GroupScript {
         Box::new(|tick, _round| {
             let mut plan = TickPlan::default();
@@ -122,8 +120,27 @@ fn day_end_drain_carries_minute_bars_before_roll_day() {
             plan
         })
     };
-    let mut world = auction_world(Box::new(script));
-    world.run_ticks(61).expect("两日+两次自动日结");
+    let mut spec = basic_spec(1, 1, 3, Box::new(script));
+    spec.config = config_no_cage();
+    spec.ticks_per_day = 30;
+    spec.auction_ticks = 6;
+    spec.closing_auction_ticks = 3;
+    let first_date = spec.civil_start_date;
+    let calendar = crate::calendar::TradingCalendar::current_default_calendar().unwrap();
+    let mut world = World::spawn(spec, calendar.clone()).expect("显式冻结Calendar世界构造");
+    let second_date = calendar.next_trading_day(
+        crate::calendar::CalendarExchange::Sse, first_date,
+    ).unwrap();
+    let third_date = calendar.next_trading_day(
+        crate::calendar::CalendarExchange::Sse, second_date,
+    ).unwrap();
+    world.run_ticks(30).expect("首日全部市场拍");
+    world.run_day_end_public().expect("显式首日市场日终");
+    world.set_civil_date(second_date);
+    world.run_ticks(30).expect("第二日全部市场拍");
+    world.run_day_end_public().expect("显式第二日市场日终");
+    world.set_civil_date(third_date);
+    world.run_ticks(1).expect("第三日首拍保留第二日待取桶");
     let pending = world.take_pending_day_bars();
     let bars = pending[0].clone().expect("day1 bars");
     assert_eq!(bars.len(), 1, "第二日桶恰一桶（565 开盘清算）");

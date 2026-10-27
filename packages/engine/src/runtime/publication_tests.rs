@@ -58,7 +58,11 @@ fn publication_v0_then_monotonic_tick_sequence() {
 /// 跳变=有 tick 未经发布被跳过，回退=撕裂）。违约计数必须为 0。
 #[test]
 fn publication_concurrent_reader_zero_tears() {
-    let mut world = spawn_world(30);
+    let mut spec = basic_spec(1, 2, 2, idle_script());
+    spec.ticks_per_day = 30;
+    let first_date = spec.civil_start_date;
+    let calendar = crate::calendar::TradingCalendar::current_default_calendar().unwrap();
+    let mut world = World::spawn(spec, calendar.clone()).expect("显式冻结Calendar世界构造");
     let publication = world.publication();
     let violations = Arc::new(AtomicU64::new(0));
     let reads = Arc::new(AtomicU64::new(0));
@@ -90,7 +94,14 @@ fn publication_concurrent_reader_zero_tears() {
             }
         }));
     }
-    world.run_ticks(60).expect("60 tick 满速跑");
+    world.run_ticks(30).expect("首日30拍发布保持一致");
+    world.run_day_end_public().expect("显式首日市场日终");
+    let next_date = calendar.next_trading_day(
+        crate::calendar::CalendarExchange::Sse,
+        first_date,
+    ).unwrap();
+    world.set_civil_date(next_date);
+    world.run_ticks(30).expect("第二日30拍发布保持一致");
     stop.store(true, Ordering::Relaxed);
     for reader in readers {
         reader.join().expect("读者线程合并");
