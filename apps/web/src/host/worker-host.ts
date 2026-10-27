@@ -1,4 +1,5 @@
 import type { CatalogResolver } from "./catalog-resolver.ts";
+import { createCompanyReadQueries } from "./company-read.ts";
 import type {
   PublicReportPage,
   PublicReportQuery,
@@ -398,6 +399,14 @@ export function createWorkerHost(
 
     function host(): EngineHost & WorkerE2EHost {
       return {
+        ...createCompanyReadQueries(async query => {
+          if (disposed || pendingFailure !== null || cachedBaseline === null) throw new Error("Worker 公司查询需要健康的当前会话基线");
+          const queryGeneration = currentGeneration;
+          const queryEpoch = baselineEpoch;
+          const response = await requests.request({ type: "companyReadQuery", requestId: requests.nextRequestId(), generation: queryGeneration, query }, "companyReadQuery");
+          if (disposed || pendingFailure !== null || currentGeneration !== queryGeneration || baselineEpoch !== queryEpoch) throw new Error("Worker 公司查询响应属于已过期会话 generation");
+          return response.result;
+        }, () => { if (cachedBaseline === null) throw new Error("Worker 公司查询需要当前目录"); return cachedBaseline.catalogResolver; }, "0"),
         capabilities: {
           deliveryModes: [],
           targetUiHz: UI_TARGET_HZ,

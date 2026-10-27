@@ -1,0 +1,7 @@
+
+running 1 test
+test session::protocol::company_reads::tests::flat_receipts_return_nonempty_owner_facts_without_other_accounts ... COMPANY_READ_FIXTURE {"owner":"0","value":{"data":[{"account":"0","gross":"100","paid_on":"2029-12-31","payment_id":"read-payment","plan_id":"read-plan","rate_bp":1000,"withheld":"10"}],"kind":"OwnerFlatWithholdingReceipts"}}
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2830 filtered out; finished in 0.58s
+

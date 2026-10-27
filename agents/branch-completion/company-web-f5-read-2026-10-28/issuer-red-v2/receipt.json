@@ -1,0 +1,15 @@
+{
+  "argv": [
+    "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+    "10000",
+    "--",
+    "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+    "--test",
+    "--test-timeout=10000",
+    "--test-name-pattern=权益 issuer",
+    "apps/web/src/host/company-read.test.ts"
+  ],
+  "exit": 1,
+  "seconds": 0.3718345550005324
+}

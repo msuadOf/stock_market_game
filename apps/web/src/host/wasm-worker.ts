@@ -24,6 +24,7 @@ type WasmTransportExtensions = Omit<typeof import("../../wasm-pkg/web_wasm.js"),
   readonly player_working_orders?: (handle: number) => unknown;
   readonly query_stock_history?: (handle: number, code: number) => unknown;
   readonly initial_allocation?: (handle: number) => unknown;
+  readonly company_read_query?: (handle: number, query: unknown) => unknown;
   readonly calculate_indicators?: (prices: number[], candles: readonly { high: number; low: number; close: number }[]) => unknown;
   readonly npc_decision_trace?: WasmNpcDecisionTrace;
   readonly save_candidate?: (handle: number, key: { readonly seq: number; readonly settledDate: string }) => unknown;
@@ -407,6 +408,14 @@ ctx.addEventListener("message", (event) => {
           const [session, wasm] = slot.requireHandle();
           loop.publish(wasm.end_civil_day(session));
           ctx.postMessage({ type: "civilDayEnded", requestId: message.requestId, generation: requestedGeneration });
+          return;
+        }
+        case "companyReadQuery": {
+          const requestedGeneration = slot.requireGeneration(message.generation);
+          const [session, wasm] = slot.requireHandle();
+          const read = transportExtensions(wasm).company_read_query;
+          if (read === undefined) throw new Error("当前 WASM bindings 不支持公司只读查询，请重建 bindings");
+          ctx.postMessage({ type: "companyReadQuery", requestId: message.requestId, generation: requestedGeneration, result: read(session, message.query) });
           return;
         }
         case "publicReports": {

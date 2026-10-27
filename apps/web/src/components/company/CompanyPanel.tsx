@@ -13,6 +13,7 @@ import {
 } from "./company-presentation.ts";
 import { prepareCatalogResolver } from "../../host/catalog-resolver.ts";
 import { ReportNotes } from "./ReportNotes.tsx";
+import { CompanyReadPanel, type CompanyReadContext } from "./CompanyReadPanel.tsx";
 import { visibleReports } from "./company-view-model.ts";
 import "./company.css";
 
@@ -25,6 +26,7 @@ interface CompanyPanelProps {
   readonly onReadingChange: (changes: Partial<CompanyReading>) => void;
   readonly onQuery: (companyId: string, cursor: string | null) => void;
   readonly onAdvanceCivilDay: () => Promise<void>;
+  readonly contractReadContext?: CompanyReadContext;
 }
 
 function CompanyIdentity({ company }: { readonly company: PublicCompany }) {
@@ -40,7 +42,7 @@ function moveTabFocus(event: KeyboardEvent<HTMLButtonElement>, ids: readonly str
   buttons[(next + ids.length) % ids.length]?.focus();
 }
 
-export function CompanyPanel({ allowCompanySelection = true, companyId, companyState, initialCivilDate, onCompanyChange, onReadingChange, onQuery, onAdvanceCivilDay }: CompanyPanelProps) {
+export function CompanyPanel({ allowCompanySelection = true, companyId, companyState, initialCivilDate, onCompanyChange, onReadingChange, onQuery, onAdvanceCivilDay, contractReadContext }: CompanyPanelProps) {
   const publicCompanies = useMemo(() => actualPublicCompanies(companyState.companyCatalog, companyState.stockCatalog), [companyState.companyCatalog, companyState.stockCatalog]);
   const identity = useMemo(() => prepareCatalogResolver(companyState.stockCatalog, companyState.companyCatalog), [companyState.companyCatalog, companyState.stockCatalog]);
   const company = companyId === null ? undefined : publicCompanies.find(item => item.id === companyId);
@@ -107,6 +109,7 @@ export function CompanyPanel({ allowCompanySelection = true, companyId, companyS
           <ReportNotes report={report} catalogResolver={identity} />
         </div>
       )}
+      {contractReadContext !== undefined && <CompanyReadPanel companyCode={company.id} companyId={identity.companyId(company.id)} context={contractReadContext} />}
     </section>
   );
 }

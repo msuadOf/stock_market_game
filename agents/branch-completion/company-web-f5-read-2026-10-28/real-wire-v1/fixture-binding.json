@@ -1,0 +1,34 @@
+{
+  "producerObservedHead": "01d0ac7eb28ef11a0eb92a763e446bfc1cc6def4",
+  "actualWaitExit": 0,
+  "execSessionId": 57868,
+  "sourceCount": 1001,
+  "sourceUnchanged": true,
+  "fixtures": [
+    {
+      "name": "wire-engine.json",
+      "sourcePath": "/data1/baiyifan/workplace/stock_market_game/.worktree/company-query-host-2026-10-28/agents/branch-completion/company-query-host-2026-10-28/four-host-green-02/wire-engine.json",
+      "sha256": "241c0007905ad4e3f023c885980b618a79a20fd593dd900b3614bc717462b7da",
+      "bytes": 5083
+    },
+    {
+      "name": "wire-server.json",
+      "sourcePath": "/data1/baiyifan/workplace/stock_market_game/.worktree/company-query-host-2026-10-28/agents/branch-completion/company-query-host-2026-10-28/four-host-green-02/wire-server.json",
+      "sha256": "399e7a0831069d7602accf6fa25b8c3ad9ea9bf1d18cd45613345e8277b40c1a",
+      "bytes": 4115
+    },
+    {
+      "name": "wire-tauri.json",
+      "sourcePath": "/data1/baiyifan/workplace/stock_market_game/.worktree/company-query-host-2026-10-28/agents/branch-completion/company-query-host-2026-10-28/four-host-green-02/wire-tauri.json",
+      "sha256": "8939c269d5cbe7f41bd8e35b1a28cf5832ebe2dd8bf6d06822af640ff93b2a13",
+      "bytes": 4111
+    },
+    {
+      "name": "wire-tauri-failures.json",
+      "sourcePath": "/data1/baiyifan/workplace/stock_market_game/.worktree/company-query-host-2026-10-28/agents/branch-completion/company-query-host-2026-10-28/four-host-green-02/wire-tauri-failures.json",
+      "sha256": "a63eac0b5f3f0b68672d3b8419b9c9520cab0db9f9b859c4f6c3e45205f0bfa0",
+      "bytes": 292
+    }
+  ],
+  "scope": "原真实JSON字节副本；engine/nativeRegistry、ServerHTTP、Tauri mockIPC，非WASM JS export/browser"
+}

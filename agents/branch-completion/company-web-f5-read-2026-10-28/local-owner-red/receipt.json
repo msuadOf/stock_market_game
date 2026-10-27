@@ -1,0 +1,37 @@
+{
+  "maxParallel": 2,
+  "results": [
+    {
+      "name": "Worker",
+      "argv": [
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "--test",
+        "--test-timeout=10000",
+        "--test-name-pattern=Worker 本地",
+        "apps/web/src/host/company-read-hosts.test.ts"
+      ],
+      "exit": 1,
+      "seconds": 0.4505183000001125
+    },
+    {
+      "name": "Tauri",
+      "argv": [
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "--test",
+        "--test-timeout=10000",
+        "--test-name-pattern=Tauri 本地",
+        "apps/web/src/host/company-read-hosts.test.ts"
+      ],
+      "exit": 1,
+      "seconds": 0.431823835009709
+    }
+  ]
+}

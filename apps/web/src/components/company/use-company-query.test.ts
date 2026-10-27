@@ -3,7 +3,12 @@ import { after, before, test } from "node:test";
 import React, { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { createServer, type ViteDevServer } from "vite";
+import { Provider } from "react-redux";
 import { useCompanyQuery } from "./use-company-query.ts";
+import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { createRemoteHost } from "../../host/remote-host.ts";
+import { market } from "../../host/protocol-test-fixtures.ts";
 
 /** 仅实现 ReactDOM 所需的内存 DOM；hooks、调度、effect 与 cleanup 均由真实 React 执行。 */
 class MemoryNode {
@@ -54,14 +59,24 @@ let tax: typeof import("./DividendTaxPanel.tsx");
 let contract: typeof import("./CompanyContractPanel.tsx");
 let preferences: typeof import("./PreferenceRejectionsPanel.tsx");
 let rejections: typeof import("./RightsSubscriptionRejectionPanel.tsx");
+let companyPanel: typeof import("./CompanyPanel.tsx");
+let connected: typeof import("../../app/LocalRefreshViews.tsx");
+let marketProvider: typeof import("../../app/MarketRuntimeProvider.tsx");
+let appStore: typeof import("../../store/store.ts");
+let baselineActions: typeof import("../../store/host-baseline.ts");
 before(async () => {
   vite = await createServer({ configFile: false, root: new URL("../../../", import.meta.url).pathname, appType: "custom", server: { middlewareMode: true, ws: false }, optimizeDeps: { noDiscovery: true } });
-  [tax, contract, preferences, rejections] = await Promise.all([
+  [tax, contract, preferences, rejections, companyPanel] = await Promise.all([
     vite.ssrLoadModule("/src/components/company/DividendTaxPanel.tsx"),
     vite.ssrLoadModule("/src/components/company/CompanyContractPanel.tsx"),
     vite.ssrLoadModule("/src/components/company/PreferenceRejectionsPanel.tsx"),
     vite.ssrLoadModule("/src/components/company/RightsSubscriptionRejectionPanel.tsx"),
-  ]) as [typeof tax, typeof contract, typeof preferences, typeof rejections];
+    vite.ssrLoadModule("/src/components/company/CompanyPanel.tsx"),
+  ]) as [typeof tax, typeof contract, typeof preferences, typeof rejections, typeof companyPanel];
+  [connected, marketProvider, appStore, baselineActions] = await Promise.all([
+    vite.ssrLoadModule("/src/app/LocalRefreshViews.tsx"), vite.ssrLoadModule("/src/app/MarketRuntimeProvider.tsx"),
+    vite.ssrLoadModule("/src/store/store.ts"), vite.ssrLoadModule("/src/store/host-baseline.ts"),
+  ]) as [typeof connected, typeof marketProvider, typeof appStore, typeof baselineActions];
 });
 after(async () => { await vite.close(); if (savedWindow) Object.defineProperty(globalThis, "window", savedWindow); else Reflect.deleteProperty(globalThis, "window"); Reflect.deleteProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT"); });
 function mounted() {
@@ -183,6 +198,141 @@ function contractProps() {
   return { companyId: 2, refreshKey: "owner:g1", onCapabilitiesQuery: async () => capability,
     onOwnerRightsQuery: async () => [], onFlatReceiptsQuery: async () => [], onExplanationQuery: undefined };
 }
+
+// 仅构造 React 消费边界，不将这些回调当作 Rust producer 或宿主验收。
+function companyReadProps(host: import("../../host/engine-host.ts").EngineHost | null, owner: string | null = "9", refreshKey = "g1:9:2030-06-01") {
+  return {
+    allowCompanySelection: false, companyId: "实际发行人", initialCivilDate: "2030-06-01",
+    companyState: {
+      companyCatalog: [{ id: 7, code: "实际发行人", name: "真实选中公司", listed_stock: 0 }],
+      stockCatalog: [{ id: 0, code: "600101" }], generation: 1,
+      civilDate: "2030-06-01", dayStatus: null, revision: null, lastEventSeq: 0,
+      selectedCompanyId: "实际发行人", companies: {}, readingByCompany: {},
+    },
+    onCompanyChange: () => {}, onReadingChange: () => {}, onQuery: () => {},
+    onAdvanceCivilDay: async () => {}, contractReadContext: { host, owner, refreshKey },
+  };
+}
+
+test("App 公司面板连接只读能力与本人税务，使用实际公司代码且不启用写命令", { timeout: 10_000 }, async () => {
+  const calls: string[] = [];
+  const host = {
+    queryCompanyCapabilities: async (code: string) => { calls.push(code); return capability; },
+    queryOwnerRightsOfferings: async () => [], queryOwnerFlatWithholdingReceipts: async () => [],
+    queryAccountDividendTaxStatus: async () => ({ mode: "AShareIndividual", identity: "Personal", stocks: [] }),
+    queryDividendTaxOutstandingViews: async () => [{ account: "9", stock: "600101", outstanding: { numerator: "3", denominator: "2" }, latest_collection: null }],
+  } as unknown as import("../../host/engine-host.ts").EngineHost;
+  const view = mounted();
+  try {
+    await view.render(createElement(companyPanel.CompanyPanel, companyReadProps(host)));
+    assert.match(view.container.textContent, /公司能力面与当前方案/);
+    assert.match(view.container.textContent, /9007199254740993.*股/);
+    assert.match(view.container.textContent, /3\/2 分/);
+    assert.deepEqual(calls, ["实际发行人"]);
+    assert.doesNotMatch(view.container.textContent, /提交认购|提交提案|批准分红/);
+  } finally { await view.unmount(); }
+});
+
+test("App 本人读面在退出身份时清旧事实，迟到成功不能写回且不再查询本人", { timeout: 10_000 }, async () => {
+  const late = deferred<typeof capability>(); let calls = 0;
+  const host = { queryCompanyCapabilities: () => { calls++; return late.promise; } } as unknown as import("../../host/engine-host.ts").EngineHost;
+  const view = mounted();
+  try {
+    await view.render(createElement(companyPanel.CompanyPanel, companyReadProps(host)));
+    await view.render(createElement(companyPanel.CompanyPanel, companyReadProps(host, null, "g2:no-owner:2030-06-01")));
+    await act(async () => late.resolve(capability));
+    assert.match(view.container.textContent, /尚未加入市场.*本人/);
+    assert.doesNotMatch(view.container.textContent, /9007199254740993.*股/);
+    assert.equal(calls, 1);
+  } finally { await view.unmount(); }
+});
+
+test("App ConnectedCompanyPanel 实际消费 membership 就绪与 generation，身份失效立即撤销本人读面", { timeout: 10_000 }, async () => {
+  const late = deferred<typeof capability>(); let calls = 0;
+  const host = { capabilities: {}, queryCompanyCapabilities: () => { calls++; return late.promise; } } as unknown as import("../../host/engine-host.ts").EngineHost;
+  const stock = { last_price: "1000", last_close: "1000", best_bid: null, best_ask: null, bids: [], asks: [] };
+  appStore.store.dispatch(baselineActions.installHostBaseline({
+    generation: "7", companyGeneration: 1, companyCatalog: [{ id: 7, code: "实际发行人", name: "当前公司", listed_stock: 0 }],
+    stockCatalog: [{ id: 0, code: "600101" }], civilDate: "2030-06-01", revision: null,
+    snapshot: { seq: 0, tick: 0, day: 0, phase: "Continuous", markets: { "600101": stock }, accounts: {}, daily_candles: { "600101": [] }, active_daily_candles: {} },
+  }));
+  const membership = { remote: true, accountId: "9", canControl: false, needsRejoin: false, generation: "7", ready: false };
+  appStore.store.dispatch(appStore.setRemoteMembership(membership));
+  const view = mounted();
+  const panel = createElement(connected.ConnectedCompanyPanel, { stockContext: true, initialCivilDate: "2030-06-01", onCompanyQuery: () => {}, onAdvanceCivilDay: async () => {}, contractReadHost: host });
+  const marketProps = { autoOrderManagerRef: { current: null }, hostRef: { current: host }, setNotice: () => {}, children: panel };
+  const providerProps = { store: appStore.store, children: createElement(marketProvider.MarketRuntimeProvider, marketProps) };
+  const content = createElement(Provider, providerProps);
+  try {
+    await view.render(content);
+    assert.match(view.container.textContent, /尚未加入市场.*本人/);
+    assert.equal(calls, 0);
+    await act(async () => { appStore.store.dispatch(appStore.setRemoteMembership({ ...membership, ready: true })); });
+    assert.equal(calls, 1);
+    await act(async () => { appStore.store.dispatch(appStore.setRemoteMembership({ ...membership, ready: true, generation: "8" })); });
+    await act(async () => late.resolve(capability));
+    assert.match(view.container.textContent, /尚未加入市场.*本人/);
+    assert.doesNotMatch(view.container.textContent, /9007199254740993.*股/);
+  } finally { await view.unmount(); }
+});
+
+test("App ConnectedCompanyPanel 经真实 Remote host 展示 Rust 同局六种只读 JSON", { timeout: 10_000 }, async () => {
+  const bytes = readFileSync(new URL("../../host/fixtures/company-read/wire-server.json", import.meta.url));
+  assert.equal(createHash("sha256").update(bytes).digest("hex"), "399e7a0831069d7602accf6fa25b8c3ad9ea9bf1d18cd45613345e8277b40c1a");
+  const rows = JSON.parse(bytes.toString("utf8")) as { generation: string; owner: string; value: { kind: string; data: unknown } }[];
+  const byKind = new Map(rows.map(row => [row.value.kind, row]));
+  const calls: { session_id: string; generation: string; query: { kind: string; data?: unknown } }[] = [];
+  // 仅传输与 baseline 受控；查询响应逐字来自同一个真实 Rust server fixture。
+  const fetchFn = (async (input: string | URL | Request, init?: RequestInit) => {
+    const url = String(input);
+    if (url.endsWith("/api/new")) return new Response(JSON.stringify({ session_id: "fixture-session", session_token: "fixture-token" }));
+    if (url.includes("/api/host-capabilities?")) return new Response(JSON.stringify({ npcDecisionDiagnostics: false }));
+    if (url.endsWith("/api/running") && init?.method === "POST") return new Response(null);
+    if (url.endsWith("/api/company-read-query")) {
+      assert.equal(init?.method, "POST");
+      assert.equal(new Headers(init?.headers).get("authorization"), "Bearer fixture-token");
+      const request = JSON.parse(String(init?.body)) as typeof calls[number];
+      assert.deepEqual(Object.keys(request).sort(), ["generation", "query", "session_id"]);
+      assert.equal(request.session_id, "fixture-session"); assert.equal(request.generation, "1");
+      calls.push(request);
+      const row = byKind.get(request.query.kind); assert.ok(row);
+      return new Response(JSON.stringify(row));
+    }
+    if (url.endsWith("/api/session?session_id=fixture-session") && init?.method === "DELETE") return new Response(null);
+    throw new Error(`界面 fixture 不支持请求：${url}`);
+  }) as typeof fetch;
+  const socket = { readyState: 1, close() {}, send() {}, onmessage: null, onclose: null, onerror: null } as unknown as WebSocket;
+  const host = await createRemoteHost({} as import("../../types/engine.ts").SessionSetup, 1n, { baseUrl: "http://127.0.0.1:3000", fetchFn, webSocketFactory: () => socket });
+  const view = mounted();
+  try {
+    await host.start(() => undefined);
+    const stockCatalog = [{ id: 0, code: "600101" }];
+    const companyCatalog = [{ id: 0, code: "C-600101", name: "真实 fixture 公司", listed_stock: 0 }];
+    const snapshot = { seq: 0, tick: 0, day: 0, phase: "Continuous" as const, markets: { "0": market() }, accounts: {}, daily_candles: { "0": [] }, active_daily_candles: {} };
+    socket.onmessage!({ data: JSON.stringify({ Baseline: { timeline_generation: 1, snapshot, stock_catalog: stockCatalog, company_catalog: companyCatalog, civil_date: "2030-01-01", public_revision: 0, public_report_ids: [] } }) } as MessageEvent);
+    appStore.store.dispatch(baselineActions.installHostBaseline({ generation: "1", companyGeneration: 1, companyCatalog, stockCatalog, civilDate: "2030-01-01", revision: null, snapshot: host.snapshot() }));
+    appStore.store.dispatch(appStore.setRemoteMembership({ remote: true, accountId: "0", canControl: false, needsRejoin: false, generation: "1", ready: true }));
+    const panel = createElement(connected.ConnectedCompanyPanel, { stockContext: true, initialCivilDate: "2030-01-01", onCompanyQuery: () => {}, onAdvanceCivilDay: async () => {}, contractReadHost: host });
+    const runtimeProps = { autoOrderManagerRef: { current: null }, hostRef: { current: host }, setNotice: () => {}, children: panel };
+    const providerProps = { store: appStore.store, children: createElement(marketProvider.MarketRuntimeProvider, runtimeProps) };
+    await view.render(createElement(Provider, providerProps));
+    assert.match(view.container.textContent, /10000000 股/);
+    assert.match(view.container.textContent, /可分配 1710000\.00 元/);
+    assert.match(view.container.textContent, /简税（分红付款日按开局比例代扣/);
+    assert.match(view.container.textContent, /查询未返回本人个人股息税账记录/);
+    assert.match(view.container.textContent, /当前仅支持只读查询/);
+    const input = elements(view.container).find(node => node.attributes["aria-label"] === "期间解释期间末日"); assert.ok(input);
+    const key = Object.keys(input).find(name => name.startsWith("__reactProps$")); assert.ok(key);
+    const props = (input as unknown as Record<string, { onChange: (event: { currentTarget: { value: string } }) => void }>)[key]!;
+    await act(async () => props.onChange({ currentTarget: { value: "2029-12-31" } }));
+    await click(view.container, "查询期间解释");
+    assert.match(view.container.textContent, /上一期：营收 1000000\.00 元/);
+    assert.deepEqual(calls.map(call => call.query.kind).sort(), [...byKind.keys()].sort());
+    assert.deepEqual(calls.find(call => call.query.kind === "CompanyCapabilities")!.query, { kind: "CompanyCapabilities", data: { company: 0 } });
+    assert.deepEqual(calls.find(call => call.query.kind === "CompanyPeriodExplanation")!.query, { kind: "CompanyPeriodExplanation", data: { company: 0, period_end: "2029-12-31" } });
+    assert.doesNotMatch(view.container.textContent, /提交认购|提交提案|批准分红|已结清|查询失败/);
+  } finally { await view.unmount(); await host.dispose(); }
+});
 
 test("公司能力只读利润可用与实际结算不可用并列；真实空不冒查询失败", async () => {
   const view = mounted(); await view.render(createElement(contract.CompanyContractPanel, contractProps()));

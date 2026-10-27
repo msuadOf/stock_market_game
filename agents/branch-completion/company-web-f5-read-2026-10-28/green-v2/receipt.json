@@ -1,0 +1,99 @@
+{
+  "maxParallel": 6,
+  "results": [
+    {
+      "name": "decoder",
+      "argv": [
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "--test",
+        "--test-timeout=10000",
+        "apps/web/src/host/company-read.test.ts"
+      ],
+      "exit": 0,
+      "seconds": 0.20772688499710057
+    },
+    {
+      "name": "ui",
+      "argv": [
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "--test",
+        "--test-timeout=10000",
+        "apps/web/src/components/company/use-company-query.test.ts"
+      ],
+      "exit": 0,
+      "seconds": 2.040781475996482
+    },
+    {
+      "name": "wasm-listener",
+      "argv": [
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "--test",
+        "--test-timeout=10000",
+        "--test-name-pattern=Worker 公司查询 dispatch",
+        "apps/web/src/host/wasm-worker-ownership.test.ts"
+      ],
+      "exit": 0,
+      "seconds": 0.3012566160032293
+    },
+    {
+      "name": "Worker",
+      "argv": [
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "--test",
+        "--test-timeout=10000",
+        "--test-name-pattern=Worker",
+        "apps/web/src/host/company-read-hosts.test.ts"
+      ],
+      "exit": 0,
+      "seconds": 0.3181657590030227
+    },
+    {
+      "name": "Tauri",
+      "argv": [
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "--test",
+        "--test-timeout=10000",
+        "--test-name-pattern=Tauri",
+        "apps/web/src/host/company-read-hosts.test.ts"
+      ],
+      "exit": 0,
+      "seconds": 0.3234272720001172
+    },
+    {
+      "name": "Remote",
+      "argv": [
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "--test",
+        "--test-timeout=10000",
+        "--test-name-pattern=Remote",
+        "apps/web/src/host/company-read-hosts.test.ts"
+      ],
+      "exit": 0,
+      "seconds": 0.34390755800995976
+    }
+  ]
+}

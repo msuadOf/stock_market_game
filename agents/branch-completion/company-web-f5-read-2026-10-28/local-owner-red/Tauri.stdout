@@ -1,0 +1,27 @@
+✖ Tauri 本地固定玩家零不能接受改写为其他 owner 的完整回执 (7.624122ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 220.386598
+
+✖ failing tests:
+
+test at apps/web/src/host/company-read-hosts.test.ts:115:26
+✖ Tauri 本地固定玩家零不能接受改写为其他 owner 的完整回执 (7.624122ms)
+  AssertionError [ERR_ASSERTION]: Missing expected rejection.
+      at async file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/company-read-hosts.test.ts:118:7
+      at async withHost (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/company-read-hosts.test.ts:80:5)
+      at async TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/company-read-hosts.test.ts:116:5)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: /owner/,
+    operator: 'rejects',
+    diff: 'simple'
+  }

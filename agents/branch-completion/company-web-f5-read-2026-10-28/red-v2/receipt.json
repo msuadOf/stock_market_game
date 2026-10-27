@@ -1,0 +1,38 @@
+{
+  "sourceSha256": "69904c3ab65f737634aeb0cadfe4000b692c1dc3872e30b4b3e8b3eee3a6a10e",
+  "maxParallel": 2,
+  "results": [
+    {
+      "label": "read-panel",
+      "argv": [
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "--test",
+        "--test-timeout=10000",
+        "--test-name-pattern=App 公司",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/components/company/use-company-query.test.ts"
+      ],
+      "exit": 1,
+      "seconds": 0.8412096090032719
+    },
+    {
+      "label": "owner-removal",
+      "argv": [
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "--test",
+        "--test-timeout=10000",
+        "--test-name-pattern=App 本人",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/components/company/use-company-query.test.ts"
+      ],
+      "exit": 1,
+      "seconds": 0.8896968790068058
+    }
+  ]
+}

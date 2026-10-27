@@ -1,0 +1,188 @@
+[
+  {
+    "owner": "0",
+    "value": {
+      "data": {
+        "identity": "Personal",
+        "mode": "AShareIndividual",
+        "stocks": [
+          {
+            "status": "TreatmentNotConfigured",
+            "stock": "600888"
+          }
+        ]
+      },
+      "kind": "AccountDividendTaxStatus"
+    }
+  },
+  {
+    "owner": "0",
+    "value": {
+      "data": {
+        "action_readiness": [
+          {
+            "blockers": [
+              "公司行为命令与真实投资者结算尚未接线，当前仅支持只读查询"
+            ],
+            "kind": "CashDividend",
+            "ready": false
+          },
+          {
+            "blockers": [
+              "公司行为命令与真实投资者结算尚未接线，当前仅支持只读查询"
+            ],
+            "kind": "StockDistribution",
+            "ready": false
+          },
+          {
+            "blockers": [
+              "公司行为命令与真实投资者结算尚未接线，当前仅支持只读查询",
+              "新局未启用配股／增发机制（rights_offering_enabled=false）"
+            ],
+            "kind": "RightsOffering",
+            "ready": false
+          },
+          {
+            "blockers": [
+              "公司行为命令与真实投资者结算尚未接线，当前仅支持只读查询",
+              "新局未启用发行人回购机制（issuer_repurchase_enabled=false）"
+            ],
+            "kind": "IssuerRepurchase",
+            "ready": false
+          },
+          {
+            "blockers": [
+              "公司行为命令与真实投资者结算尚未接线，当前仅支持只读查询"
+            ],
+            "kind": "ShareSplit",
+            "ready": false
+          }
+        ],
+        "active_plans": [],
+        "cash_flow": true,
+        "cash_settlement": false,
+        "distributable_profit": {
+          "Available": {
+            "accumulated_after_loss_yuan": "1800000.00",
+            "available_for_distribution_yuan": "1710000.00",
+            "reserve_basis_year": 2029,
+            "statutory_reserve_yuan": "90000.00"
+          }
+        },
+        "equity": true,
+        "full_financial_statements": true,
+        "issued_shares": "10000000",
+        "net_income": true,
+        "owner_rights": [],
+        "par_value_per_share": {
+          "Unavailable": {
+            "reason": "尚无已入账的送转／拆股面值事实，在册每股面值不可用"
+          }
+        },
+        "registered_capital": {
+          "Available": {
+            "amount_yuan": "10000000.00"
+          }
+        },
+        "revenue": true,
+        "unsupported_reason": "汇总财务已接通；共同股本行为的实际投资者结算仍待接线，不能按模式缺资金拒绝或冒称已支持"
+      },
+      "kind": "CompanyCapabilities"
+    }
+  },
+  {
+    "owner": "0",
+    "value": {
+      "data": {
+        "cycle": "Monthly",
+        "demand_contribution_bp": 0,
+        "environment_change_bp": 0,
+        "fixed_expense_noise_bp": 0,
+        "fixed_expense_segments": [
+          {
+            "annual_growth_bp": 0,
+            "months": 1
+          }
+        ],
+        "previous": {
+          "fixed_expense": "900000.00",
+          "revenue": "1000000.00",
+          "variable_expense": "0.00"
+        },
+        "restart_revenue": null,
+        "restart_source": null,
+        "revenue_noise_bp": 0,
+        "revenue_segments": [
+          {
+            "annual_growth_bp": 0,
+            "months": 1
+          }
+        ],
+        "variable_expense_noise_bp": 0,
+        "variable_expense_segments": []
+      },
+      "kind": "CompanyPeriodExplanation"
+    }
+  },
+  {
+    "owner": "0",
+    "value": {
+      "data": [
+        {
+          "account": "0",
+          "latest_collection": null,
+          "outstanding": {
+            "denominator": "1",
+            "numerator": "0"
+          },
+          "stock": "600888"
+        }
+      ],
+      "kind": "DividendTaxOutstandingViews"
+    }
+  },
+  {
+    "owner": "0",
+    "value": {
+      "data": [
+        {
+          "account": "0",
+          "gross": "100",
+          "paid_on": "2029-12-31",
+          "payment_id": "read-payment",
+          "plan_id": "read-plan",
+          "rate_bp": 1000,
+          "withheld": "10"
+        }
+      ],
+      "kind": "OwnerFlatWithholdingReceipts"
+    }
+  },
+  {
+    "owner": "0",
+    "value": {
+      "data": [
+        {
+          "event_id": "read-rights",
+          "ex_rights_on": "2030-01-02",
+          "issuer": 0,
+          "open_subscription_remaining_shares": null,
+          "owner_entitlement": {
+            "lock_until": null,
+            "rights_shares": "10"
+          },
+          "payment_deadline_on": "2029-12-31",
+          "payment_start_on": "2029-12-25",
+          "payment_window": "Closed",
+          "price_per_share": "800",
+          "queued_subscription": null,
+          "settled_subscription": null,
+          "settlement_on": "2030-01-03",
+          "stage": "Entitled",
+          "stock": "600888"
+        }
+      ],
+      "kind": "OwnerRightsOfferings"
+    }
+  }
+]

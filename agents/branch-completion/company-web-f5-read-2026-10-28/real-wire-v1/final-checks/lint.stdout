@@ -1,0 +1,2 @@
+apps/web/src/components/company/use-company-query.test.ts:316:164: warning react(no-children-prop): Avoid passing children using a prop. help: The canonical way to pass children in React is to use JSX elements
+apps/web/src/components/company/use-company-query.test.ts:317:72: warning react(no-children-prop): Avoid passing children using a prop. help: The canonical way to pass children in React is to use JSX elements

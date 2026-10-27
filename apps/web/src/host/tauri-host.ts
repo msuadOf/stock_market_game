@@ -4,6 +4,8 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { HistoricalStockData, PublicReportPage, PublicReportQuery, PublicReportSummary, SaveSlot, SessionSetup, StockCode } from "../types/engine.ts";
 import type { PausePreferences } from "../types/generated/PausePreferences.ts";
 import type { EngineHost } from "./engine-host.ts";
+import { createCompanyReadQueries } from "./company-read.ts";
+import { describeWasmFailure } from "./wasm-failure.ts";
 import { createProtocolUpdate, type HostFailure, type HostUpdate, UI_TARGET_HZ } from "./host-update.ts";
 import { TauriTimelineState, type TauriBaselineResponse } from "./tauri-timeline-state.ts";
 import { normalizePublicReportById, normalizePublicReportPage } from "./serde-normalize.ts";
@@ -222,6 +224,18 @@ export async function createTauriHost(setup: SessionSetup, seed: bigint): Promis
   };
 
   return {
+    ...createCompanyReadQueries(async query => {
+      assertBaselineAvailable();
+      const cursor = timeline.captureQueryCursor();
+      let raw: unknown;
+      try { raw = await invoke<unknown>("company_read_query", { sessionId: requireSession(), generation: cursor.generation, query }); }
+      catch (error) { throw new Error(`Tauri 公司查询被拒绝：${describeWasmFailure(error)}`, { cause: error }); }
+      const response = record(raw, "Tauri company_read_query");
+      exact(response, ["generation", "owner", "value"], "Tauri company_read_query");
+      assertResponseCurrent(cursor.generation, "company_read_query");
+      timeline.assertQueryCursor(cursor, generation(response.generation, "Tauri company_read_query.generation"), "Tauri 公司查询响应属于已过期会话 generation");
+      return { owner: response.owner, value: response.value };
+    }, () => timeline.baselineForRead().catalogResolver, "0"),
     capabilities: { deliveryModes: [], targetUiHz: UI_TARGET_HZ, sharedMemory: false, reconnect: false, publicCompanyReports: true, npcDecisionDiagnostics: npcDiagnosticsEnabled },
     async start(onUpdate, onFatalError) {
       if (disposed) throw new Error("Tauri 会话已经销毁，不能重新启动");

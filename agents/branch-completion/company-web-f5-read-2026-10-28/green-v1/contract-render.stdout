@@ -1,0 +1,12 @@
+✔ SSR保持未查询状态并且零宿主调用 (91.382537ms)
+✔ 缺少callback明确显示当前宿主不支持 (1.253277ms)
+✔ SSR保持未查询状态并且零宿主调用 (83.682813ms)
+✔ 缺少callback明确显示当前宿主不支持 (0.525126ms)
+ℹ tests 4
+ℹ suites 0
+ℹ pass 4
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1330.603949

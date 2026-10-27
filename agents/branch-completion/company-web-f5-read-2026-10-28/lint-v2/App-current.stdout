@@ -1,0 +1,3 @@
+apps/web/src/App.tsx:405:11: warning react-hooks(exhaustive-deps): React Hook useEffect has a missing dependency: 'hostRef' help: Either include it or remove the dependency array.
+apps/web/src/App.tsx:429:18: warning react-hooks(exhaustive-deps): React Hook useCallback has a missing dependency: 'hostRef' help: Either include it or remove the dependency array.
+apps/web/src/App.tsx:448:18: warning react-hooks(exhaustive-deps): React Hook useCallback has a missing dependency: 'hostRef' help: Either include it or remove the dependency array.

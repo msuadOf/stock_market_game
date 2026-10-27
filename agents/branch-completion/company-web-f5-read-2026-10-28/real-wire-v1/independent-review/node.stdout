@@ -1,0 +1,44 @@
+✔ 移除宿主回调立即清除旧owner事实，迟到成功不能污染新面板 (1342.498142ms)
+✔ 股息税无实际划收回执时保留未划收额，不宣称资金不足、已尝试或结清 (4.602154ms)
+✔ 同一上下文逆序resolve/reject只保留后发成功；同步抛错显式展示 (2.155023ms)
+✔ callback更换、refreshKey变化与卸载使旧请求成功和错误全部失效 (2.276756ms)
+✔ 稳定provider不因内部setState重复请求；tuple避免合法NUL上下文碰撞 (1.478093ms)
+✔ 切owner期间旧税表及旧错误不会渗入新的税面板 (1.807722ms)
+✔ 历史部分收缴回执展示当时资金与精确分数，不能外推当前结清 (1.73505ms)
+✔ App 公司面板连接只读能力与本人税务，使用实际公司代码且不启用写命令 (7.259941ms)
+✔ App 本人读面在退出身份时清旧事实，迟到成功不能写回且不再查询本人 (2.40612ms)
+✔ App ConnectedCompanyPanel 实际消费 membership 就绪与 generation，身份失效立即撤销本人读面 (8.049604ms)
+✔ App ConnectedCompanyPanel 经真实 Remote host 展示 Rust 同局六种只读 JSON (20.543378ms)
+✔ 公司能力只读利润可用与实际结算不可用并列；真实空不冒查询失败 (2.293647ms)
+✔ 公司切换使能力旧成功与旧错误失效，provider每个上下文仅请求一次 (3.186993ms)
+✔ 偏好与认购拒绝分别保留真实台账日期、原因和未完成首日日终错误 (3.365508ms)
+✔ 本人认购申请、排队、缴款及弃配独立展示，日程锁定与价格保留真实单位 (3.78327ms)
+✔ 本人Flat回执保留精确分与bp，期间解释请求在修改日期和切公司时失效 (8.623241ms)
+✔ 同provider只切refreshKey也失效旧请求；移除callback后迟到错误不可写回 (1.39476ms)
+✔ Worker 真实 host 注册公司只读查询，发送同代请求且不能指定其他账户 (6.606922ms)
+✔ Worker 真实 host 拒绝其他账户回执与错 kind，不用空列表掩盖失败 (1.241856ms)
+✔ Worker 真实 host 销毁后拒绝迟到的本人查询成功 (0.711821ms)
+✔ Worker 本地固定玩家零不能接受改写为其他 owner 的完整回执 (0.518905ms)
+✔ Worker 同 generation 重装基线仍拒绝旧目录查询结果 (0.807913ms)
+✔ Tauri 真实 host 注册公司只读查询，发送同代请求且不能指定其他账户 (2.482712ms)
+✔ Tauri 真实 host 拒绝其他账户回执与错 kind，不用空列表掩盖失败 (0.601058ms)
+✔ Tauri 真实 host 销毁后拒绝迟到的本人查询成功 (0.604458ms)
+✔ Tauri 本地固定玩家零不能接受改写为其他 owner 的完整回执 (0.66464ms)
+✔ Tauri 同 generation 重装基线仍拒绝旧目录查询结果 (1.347269ms)
+✔ Remote 真实 host 注册公司只读查询，发送同代请求且不能指定其他账户 (23.682949ms)
+✔ Remote 真实 host 拒绝其他账户回执与错 kind，不用空列表掩盖失败 (1.468323ms)
+✔ Remote 真实 host 销毁后拒绝迟到的本人查询成功 (1.01662ms)
+✔ Remote 同 generation 重装基线仍拒绝旧目录查询结果 (0.987019ms)
+✔ Tauri 公司查询拒绝保留结构化失败的可见详情，不将对象显示成 object Object (0.757022ms)
+✔ Worker 真实 Rust 六 kind 原始 JSON 通过现有 TypeScript host 与严格 decoder (2.652667ms)
+✔ Tauri 真实 Rust 六 kind 原始 JSON 通过现有 TypeScript host 与严格 decoder (0.69719ms)
+✔ Remote 真实 Rust 六 kind 原始 JSON 通过现有 TypeScript host 与严格 decoder (1.765831ms)
+✔ Tauri 真实 IPC 领域拒绝保留 BusinessCondition 与尚未结算的具体原因 (0.716111ms)
+ℹ tests 36
+ℹ suites 0
+ℹ pass 36
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1750.109326

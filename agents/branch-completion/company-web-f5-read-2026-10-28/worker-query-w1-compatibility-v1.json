@@ -1,0 +1,16 @@
+{
+  "argv": [
+    "git",
+    "-C",
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/wasm-w1-delivery-2026-10-28",
+    "apply",
+    "--check",
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/agents/branch-completion/company-web-f5-read-2026-10-28/worker-query-narrow-v1.patch"
+  ],
+  "exit": 0,
+  "stdout": "",
+  "stderr": "",
+  "patchSha256": "51b00e1b8f6baa9c7c1b058872ac750894f5a4b86021146cb48b457837d26d31",
+  "w1Head": "9a1cf4eaf9267f3ce95f82c9603018c8f3db80a6",
+  "onlyStaticCheck": true
+}
