@@ -18,10 +18,16 @@ fn actual_owner_complete_result_produces_proof_without_exposing_temporary_ids() 
     )
     .unwrap();
     assert_eq!(proof.base(), &base_before);
-    assert_eq!(proof.reports().len(), ids.len());
-    assert_eq!(proof.reports()[0].1.version.sequence, 2);
-    assert_eq!(proof.reports()[0].0.supersedes, Some(PublicationId::new(0)));
-    assert_eq!(proof.operation_sources(), &[BusinessEventId::new(1000)]);
+    assert_eq!(proof.operations()[0].reports().len(), ids.len());
+    assert_eq!(proof.operations()[0].reports()[0].1.version.sequence, 2);
+    assert_eq!(
+        proof.operations()[0].reports()[0].0.supersedes,
+        Some(PublicationId::new(0))
+    );
+    assert_eq!(
+        proof.operations()[0].operation_sources(),
+        &[BusinessEventId::new(1000)]
+    );
     assert_eq!(base, base_before);
 }
 
@@ -180,7 +186,7 @@ fn actual_legacy_owner_allows_empty_operation_entries_without_new_source_identit
         vec![],
     )
     .unwrap();
-    assert_eq!(proof.operation_sources(), &[]);
-    assert_eq!(proof.reports().len(), 1);
-    assert_eq!(proof.reports()[0].1.version.sequence, 2);
+    assert_eq!(proof.operations()[0].operation_sources(), &[]);
+    assert_eq!(proof.operations()[0].reports().len(), 1);
+    assert_eq!(proof.operations()[0].reports()[0].1.version.sequence, 2);
 }

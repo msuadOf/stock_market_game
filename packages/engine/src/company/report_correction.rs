@@ -1,6 +1,7 @@
 #[path = "disclosure_correction_proof.rs"]
 mod disclosure_proof;
 pub(crate) use disclosure_proof::{ConfirmedDisclosureCorrections, DisclosureCorrectionProofError};
+pub(in crate::company) use disclosure_proof::DisclosureCorrectionOwnerResult;
 
 /// 私有更正候选保留实际 owner 与 proof 的 typed 错误及 source 链。
 #[derive(Debug, thiserror::Error)]

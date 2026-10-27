@@ -67,7 +67,7 @@ fn simple_wrapper_owns_changed_finance_and_all_cascade_reports_without_mutating_
         system.simple_book_display(&CompanyId(0)).unwrap()
     );
     assert_eq!(prepared.proof().base(), &base);
-    let reports = prepared.proof().reports();
+    let reports = prepared.proof().operations()[0].reports();
     assert_eq!(reports.len(), 2, "主更正和后续期间 cascade 不能遗漏");
     assert!(reports.iter().all(|(request, report, source)| request
         .supersedes
@@ -85,14 +85,13 @@ fn simple_wrapper_owns_changed_finance_and_all_cascade_reports_without_mutating_
         .unwrap();
     assert_eq!(prepared.source(), second.source());
     assert_eq!(
-        prepared.proof().reports().len(),
-        second.proof().reports().len()
+        prepared.proof().operations()[0].reports().len(),
+        second.proof().operations()[0].reports().len()
     );
-    for (left, right) in prepared
-        .proof()
+    for (left, right) in prepared.proof().operations()[0]
         .reports()
         .iter()
-        .zip(second.proof().reports())
+        .zip(second.proof().operations()[0].reports())
     {
         assert_eq!(left.0.supersedes, right.0.supersedes);
         assert_eq!(left.1, right.1);
