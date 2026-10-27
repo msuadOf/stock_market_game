@@ -1955,8 +1955,8 @@ pub(in crate::session) enum FieldId {
 
 /// commit_from 必须移交的字段全集（修复1·Astra 增量四复检 cfg 缺陷处置：按 cfg
 /// 条件化，与 commit_from 的条件 swap 对齐，绊线在所有真实构建组合内有效）。
-/// T3 已删除 speculative_prepare 与对应的 defer_swap；现行完整集合为 33/35 项
-/// （默认 33 项；simulation-diagnostics 追加 NpcDecisionTraces/Causal 两项）。
+/// T3 已删除 speculative_prepare 与对应的 defer_swap；现行完整集合为 28/30 项
+/// （默认 28 项；simulation-diagnostics 追加 NpcDecisionTraces/Causal 两项）。
 /// SpeculativePrepare 的历史 FieldId 数值槽保留，但不再属于可提交字段集合。
 /// 两套期望集除诊断项外逐项一致；诊断项位于 LastRetailOrderEvents 之后，
 /// 后续字段的数组下标随之变化，不能逐下标比较两套清单。

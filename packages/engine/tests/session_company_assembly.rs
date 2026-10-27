@@ -394,9 +394,9 @@ fn real_internal_sale_facts_in_editable_save_close_and_publish_through_session()
         .unwrap();
     let mut edited = serde_json::to_value(save).unwrap();
     // 公司 map 键为数值 id 文本（目录序：C-IND-A=0、C-IND-SUB=1）。
-    edited["company_operations"]["companies"]["0"]["books"] =
+    edited["company_state"]["LegacyOperations"]["operations"]["companies"]["0"]["books"] =
         serde_json::to_value(IndustryBooks::Industrial(root)).unwrap();
-    edited["company_operations"]["companies"]["1"]["books"] =
+    edited["company_state"]["LegacyOperations"]["operations"]["companies"]["1"]["books"] =
         serde_json::to_value(IndustryBooks::Industrial(child)).unwrap();
     let edited: engine::SaveSlot = serde_json::from_value(edited).unwrap();
     let mut session = GameSession::restore(&edited).unwrap();

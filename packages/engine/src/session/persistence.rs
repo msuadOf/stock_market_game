@@ -313,6 +313,11 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
             Some(crate::company::config::CompanySystemConfig::Simple(_)),
             SavedSessionCompanies::CompanySystem { system, .. },
         ) => {
+            let expected_listed: BTreeSet<_> = save.setup.stocks.iter().map(|stock| &stock.code).collect();
+            let actual_listed: BTreeSet<_> = system.issuers().iter().filter_map(|(_, spec)| spec.listed_stock.as_ref()).collect();
+            if actual_listed != expected_listed {
+                return Err(SessionError::InvalidSave(ValidationFault::new(1063, vec![0, 0])));
+            }
             if Some(system.config()) != save.setup.company_system {
         return Err(super::StepFatal::InvariantViolation {
                     description: "存档 company_state.CompanySystem.system.config 与 setup.company_system 不一致".into(),

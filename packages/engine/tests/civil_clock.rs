@@ -9,6 +9,7 @@
 //! 场景锚定 2030 年春节：02-02（周六，除夕）至 02-05（周二，正月初三）连续
 //! 4 个休市自然日，前一个交易日为周五 02-01，下一个交易日为周三 02-06。
 
+include!("../test-support/company_state.rs");
 use engine::account::StockCode;
 use engine::calendar::{CivilDate, CivilInstant, ClosedReason, DayStatus, HolidayKind};
 use engine::money::Money;
@@ -114,8 +115,7 @@ impl SpringFestivalScenario {
     }
 
     fn with_setup_and_seed(setup: SessionSetup, seed: u64) -> Self {
-        let session =
-            GameSession::new(setup, seed).expect("spring festival setup must be valid");
+        let session = GameSession::new(setup, seed).expect("spring festival setup must be valid");
         Self { session }
     }
 }
@@ -129,10 +129,8 @@ fn run_full_trading_session(session: &mut GameSession) {
 
 /// 会话存档中公司 due 的单一 authority 投影：最早待办自然日。
 fn company_next_due(session: &GameSession) -> Option<CivilDate> {
-    session
-        .save()
-        .expect("healthy save")
-        .company_operations
+    legacy_saved(&session.save().expect("healthy save"))
+        .0
         .next_due_date()
 }
 
@@ -448,8 +446,8 @@ fn closed_days_accrue_without_trading() {
     // 已派发的 dues 不回灌：全窗口后存档中不存在早于当前自然日的待办。
     let saved = scenario.session.save().expect("healthy save");
     assert!(
-        saved
-            .company_operations
+        legacy_saved(&saved)
+            .0
             .scheduler()
             .pending()
             .iter()
@@ -481,7 +479,7 @@ fn restored_period_boundary_is_exactly_once() {
     );
     // 单一 authority：恢复边界上，调度器只保留未派发（>= 当前自然日）的待办。
     assert_eq!(
-        save_after_friday.company_operations.next_due_date(),
+        legacy_saved(&save_after_friday).0.next_due_date(),
         Some(date(SPRING_FESTIVAL_CLOSED[0]))
     );
 
@@ -517,19 +515,20 @@ fn restored_period_boundary_is_exactly_once() {
 
     // 恢复后的会话照常逐日推进：调度器待办随自然日消费，不重复派发周五。
     for _ in 0..4 {
-        restored
-            .end_civil_day()
-            .expect("restored weekend advances");
+        restored.end_civil_day().expect("restored weekend advances");
     }
     run_full_trading_session(&mut restored);
     restored
         .end_civil_day()
         .expect("restored Wednesday day-end");
     let restored_saved = restored.save().expect("healthy save");
-    assert_eq!(restored_saved.civil_clock.settled_through, Some(date("2030-02-06")));
+    assert_eq!(
+        restored_saved.civil_clock.settled_through,
+        Some(date("2030-02-06"))
+    );
     assert!(
-        restored_saved
-            .company_operations
+        legacy_saved(&restored_saved)
+            .0
             .scheduler()
             .pending()
             .iter()
@@ -543,10 +542,8 @@ fn restored_period_boundary_is_exactly_once() {
     assert_eq!(restored_pre.civil_date(), date(PRE_HOLIDAY_FRIDAY));
     assert_eq!(restored_pre.civil_clock().settled_through(), None);
     assert_eq!(
-        restored_pre
-            .save()
-            .expect("healthy save")
-            .company_operations
+        legacy_saved(&restored_pre.save().expect("healthy save"))
+            .0
             .next_due_date(),
         Some(date(PRE_HOLIDAY_FRIDAY)),
         "未日结存档仍保留周五当日待办"
@@ -581,13 +578,13 @@ fn closed_start_date_is_preserved_not_shifted() {
     assert_eq!(report.settled_date, date("2030-01-01"));
     let saved = session.save().expect("healthy save");
     assert_eq!(
-        saved.company_operations.next_expected_date(),
+        legacy_saved(&saved).0.next_expected_date(),
         date("2030-01-02"),
         "开局休市日经营照常推进到次日"
     );
     assert!(
-        saved
-            .company_operations
+        legacy_saved(&saved)
+            .0
             .scheduler()
             .pending()
             .iter()
@@ -645,7 +642,7 @@ fn closed_civil_day_emits_one_date_advance_without_market_events() {
                 ..
             } => {
                 assert_eq!(
-                    saved.company_operations.catalog().code(*company),
+                    legacy_saved(&saved).0.catalog().code(*company),
                     Some("C-600101")
                 );
                 assert_eq!(*published_at, report.disclosure_instant);
@@ -830,7 +827,7 @@ fn skipping_a_day_with_unprocessed_dues_is_rejected() {
         "a rejected skip must not touch any state, scheduler dues included"
     );
     assert_eq!(
-        after.company_operations.next_due_date(),
+        legacy_saved(&after).0.next_due_date(),
         Some(date(SPRING_FESTIVAL_CLOSED[0])),
         "company dues stay intact in the single-authority scheduler"
     );
@@ -867,7 +864,7 @@ fn advancing_beyond_2099_is_rejected_without_state_change() {
     assert_eq!(session.civil_date(), date("2099-12-31"));
     assert_eq!(session.civil_clock().settled_through(), None);
     assert_eq!(
-        after.company_operations.next_due_date(),
+        legacy_saved(&after).0.next_due_date(),
         Some(date("2099-12-31")),
         "the final day's company dues stay pending in the scheduler"
     );
@@ -1007,7 +1004,9 @@ fn closed_day_fixture_facts_probe_is_deterministic_evidence() {
                         sells += 1;
                     }
                 }
-                Event::Trade { taker, maker, qty, .. } => {
+                Event::Trade {
+                    taker, maker, qty, ..
+                } => {
                     if taker == player || maker == player {
                         player_filled += qty;
                     }
@@ -1045,7 +1044,6 @@ fn closed_day_fixture_facts_probe_is_deterministic_evidence() {
     // 遗漏。此前「对照 fixture 卖单>0」断言实测不成立（同为零）——如实
     // 改道，不以不成立的对照作证据。
 }
-
 
 /// 合成年度覆盖只为验证 mixed 聚合，不冒称真实交易所公告。
 fn mixed_clock_session_save(

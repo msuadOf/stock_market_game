@@ -119,6 +119,12 @@ pub(crate) mod tests {
     }
 
     pub(crate) fn completed_fixture() -> (SaveSlot, Vec<ShareRegistry>) {
+        completed_fixture_with_foundation(false)
+    }
+
+    pub(crate) fn completed_fixture_with_foundation(
+        auto_corporate_foundation: bool,
+    ) -> (SaveSlot, Vec<ShareRegistry>) {
         let mut config = simple_company_fixture!(crate; ["600001"]);
         let crate::company::config::CompanySystemConfig::Simple(simple) = &mut config else {
             unreachable!()
@@ -174,7 +180,7 @@ pub(crate) mod tests {
             rights_offering_enabled: false,
             issuer_repurchase_enabled: false,
             par_value_per_share: Some(Money::from_cents(100)),
-            auto_corporate_foundation: false,
+            auto_corporate_foundation,
             report_frequency: None,
         };
         let mut game = GameSession::new(setup, 21).unwrap();
