@@ -148,7 +148,7 @@ test("全部变体逐字段缺键多键与null拒绝", {timeout:10000}, () => {
  for(const input of fixture){
   const [tag]=Object.keys(input);const payload=input[tag];
   for(const field of Object.keys(payload)){
-   const missing=structuredClone(payload);delete missing[field];
+   const missing: Record<string, unknown>=structuredClone(payload);delete missing[field];
    assert.throws(()=>parsePlayerCompanyProposal({[tag]:missing}),field);
    assert.throws(()=>parsePlayerCompanyProposal({[tag]:{...payload,[field]:null}}),field);
   }

@@ -1,0 +1,69 @@
+{
+  "base": "b9cdc70d49ca08fd48eeec6fe29b068a3a475d04",
+  "candidate": "87ddeb8d8bab1780edfaf152662969c6be4eeb25",
+  "results": [
+    {
+      "name": "test",
+      "command": [
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "--test",
+        "--test-timeout=10000",
+        "--test-concurrency=4",
+        "apps/web/src/host/player-proposals.test.ts"
+      ],
+      "exitCode": 0,
+      "error": null,
+      "wallSeconds": 0.257418651
+    },
+    {
+      "name": "types",
+      "command": [
+        "/data1/baiyifan/workplace/stock_market_game/apps/web/node_modules/.bin/tsc",
+        "--noEmit",
+        "--strict",
+        "--noUnusedLocals",
+        "--noUnusedParameters",
+        "--target",
+        "ES2023",
+        "--module",
+        "nodenext",
+        "--moduleResolution",
+        "nodenext",
+        "--allowImportingTsExtensions",
+        "--verbatimModuleSyntax",
+        "--types",
+        "node",
+        "--typeRoots",
+        "/data1/baiyifan/workplace/stock_market_game/apps/web/node_modules/@types",
+        "apps/web/src/host/player-proposals.ts",
+        "apps/web/src/host/player-proposals.test.ts",
+        "apps/web/src/utils/money.ts"
+      ],
+      "exitCode": 1,
+      "error": "bounded command exited with 2",
+      "wallSeconds": 2.253340592
+    },
+    {
+      "name": "lint",
+      "command": [
+        "/data1/baiyifan/workplace/stock_market_game/apps/web/node_modules/.bin/oxlint",
+        "--deny-warnings",
+        "apps/web/src/host/player-proposals.ts",
+        "apps/web/src/host/player-proposals.test.ts"
+      ],
+      "exitCode": 0,
+      "error": null,
+      "wallSeconds": 0.219109773
+    }
+  ],
+  "deadlineEachMs": 10000,
+  "concurrentJobs": 3,
+  "hashes": {
+    "apps/web/src/host/player-proposals.ts": "654337fbfc9e6fc24ac140ec3587a219de9aafda8b3d707428e82d018772a6fc",
+    "apps/web/src/host/player-proposals.test.ts": "d22b36c6441d6b0797ca6980bf8ad1e598d87155cdf2814058897a79b95d3c5b",
+    "apps/web/src/types/generated/PlanId.ts": "0747021326e9557a818edd83bf0af4bb08d0be3c4e331c0e90ff73c71d82adfc",
+    "apps/web/src/types/generated/AccountId.ts": "fac5ab7728b7291c3b4cb95eef3b36519e157346e375f1839c823f9706bfbaa7",
+    "scripts/run-with-deadline.mjs": "de7fd2a82bc66e7a62fbc487002727b71ad28b69c1e645f82fa84bbfdb068916"
+  },
+  "node": "v24.18.0"
+}
