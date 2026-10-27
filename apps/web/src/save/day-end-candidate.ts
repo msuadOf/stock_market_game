@@ -14,7 +14,9 @@ export function validateDayEndArchive(slot: StrictSaveEnvelope): StrictSaveEnvel
     // 架构项 8：母单执行状态唯一所有者是计划本体。日终必须整体结束执行腿
     // （引擎 end_of_trading_day 同时清除 execution 与 active_child_order_id），
     // 带腿或在途子单引用过日都不是合法日终存档。
-    || slot.plans.plans.some((plan) => plan.execution !== undefined || plan.active_child_order_id !== null)
+    || slot.plans.plans.some((entry) => "Investor" in entry
+      ? entry.Investor.execution !== undefined || entry.Investor.active_child_order_id !== null
+      : entry.IssuerRepurchase.execution !== null)
     || slot.runtime_state.live_envelopes.length > 0
     || slot.npc_order_lifecycles.length > 0) {
     throw new Error("日终存档不能包含日内活动委托或冻结资源");

@@ -3,10 +3,12 @@ import { externalTag, money, orderId, tagged } from "./common.ts"
 
 import { parsePlanId, parsePlanU64 } from "../../../utils/plan-identity.ts"
 import type { PlanId } from "../../../types/generated/PlanId.ts"
+import type { PlanEntry } from "../../../types/generated/PlanEntry.ts"
+import type { RepurchaseExecutionPlan } from "../../../types/generated/RepurchaseExecutionPlan.ts"
 import type { AccountId } from "../../../types/generated/AccountId.ts"
 
 export type OwnerSequence = { readonly owner: AccountId; readonly next_sequence: string | null }
-export type PlanBook = { readonly policy: PlanPolicy; readonly owner_sequences: readonly OwnerSequence[]; readonly plans: readonly TradingPlan[] }
+export type PlanBook = { readonly policy: PlanPolicy; readonly owner_sequences: readonly OwnerSequence[]; readonly plans: readonly PlanEntry[] }
 export type PlanPolicy = { readonly reverse_revision_threshold_bp: number; readonly review_signal_delta_bp: number; readonly review_price_change_bp: number }
 export type TradingPlan = { readonly plan_id: PlanId; readonly account: AccountId; readonly code: number; readonly direction: Side; readonly target: PlanTarget; readonly filled_qty: number; readonly opinion: PlanOpinion; readonly confidence_bp: number; readonly urgency: Urgency; readonly status: PlanStatus; readonly version: number; readonly last_revision: RevisionRecord | null; readonly last_resume: ResumeReason | null; readonly created_trading_day: number; readonly horizon_trading_days: number; readonly review: ReviewConditions; readonly active_child_order_id: number | null; readonly execution?: PlanExecutionLeg; readonly last_event_trading_day: number }
 /** 母单执行子状态：一次执行腿的调度参数与唯一在途子单事实（架构项 8：执行状态唯一所有者是计划本体）。 */
@@ -38,7 +40,7 @@ export function parsePlanBook(value: unknown, path = "plans"): PlanBook {
   exact(parsed, ["policy", "owner_sequences", "plans"], path)
   const policy = parsePolicy(parsed.policy, `${path}.policy`)
   const owner_sequences = array(parsed.owner_sequences, `${path}.owner_sequences`).map((entry, index) => parseOwnerSequence(entry, `${path}.owner_sequences[${index}]`))
-  const plans = array(parsed.plans, `${path}.plans`).map((entry, index) => parseTradingPlan(entry, `${path}.plans[${index}]`))
+  const plans = array(parsed.plans, `${path}.plans`).map((entry, index) => parsePlanEntry(entry, `${path}.plans[${index}]`))
   const cursors = new Map<string, string | null>()
   for (const [index, cursor] of owner_sequences.entries()) {
     if (cursors.has(cursor.owner)) throw new SaveSchemaError(`${path}.owner_sequences[${index}].owner`, "包含重复的 owner")
@@ -46,8 +48,13 @@ export function parsePlanBook(value: unknown, path = "plans"): PlanBook {
   }
   const identities = new Map<string, Set<string>>()
   const activeStocks = new Map<string, Set<number>>()
-  for (const [index, plan] of plans.entries()) {
+  for (const [index, entry] of plans.entries()) {
     const planPath = `${path}.plans[${index}]`
+    const plan = "Investor" in entry ? entry.Investor : entry.IssuerRepurchase
+    const stock = "Investor" in entry ? entry.Investor.code : entry.IssuerRepurchase.stock
+    const terminal = "Investor" in entry
+      ? entry.Investor.status === "Completed" || (typeof entry.Investor.status === "object" && "Terminated" in entry.Investor.status)
+      : entry.IssuerRepurchase.status === "Closed"
     const { owner, sequence } = plan.plan_id
     const sequences = identities.get(owner) ?? new Set<string>()
     if (sequences.has(sequence)) throw new SaveSchemaError(`${planPath}.plan_id`, "包含重复的 PlanId")
@@ -56,14 +63,34 @@ export function parsePlanBook(value: unknown, path = "plans"): PlanBook {
     const next = cursors.get(owner)
     if (next === undefined) throw new SaveSchemaError(`${path}.owner_sequences`, `缺少计划 owner=${owner} 的游标`)
     if (next !== null && BigInt(next) <= BigInt(sequence)) throw new SaveSchemaError(`${path}.owner_sequences`, "next_sequence 必须大于该 owner 的全部已存 sequence")
-    if (plan.status !== "Completed" && !(typeof plan.status === "object" && "Terminated" in plan.status)) {
+    if (!terminal) {
       const stocks = activeStocks.get(owner) ?? new Set<number>()
-      if (stocks.has(plan.code)) throw new SaveSchemaError(planPath, "同一账户和股票最多允许一个非终止计划")
-      stocks.add(plan.code)
+      if (stocks.has(stock)) throw new SaveSchemaError(planPath, "同一账户和股票最多允许一个非终止计划")
+      stocks.add(stock)
       activeStocks.set(owner, stocks)
     }
   }
   return { policy, owner_sequences, plans }
+}
+
+/** 外部 tag 是必填来源事实；不接受旧裸结构或隐式 Investor。 */
+function parsePlanEntry(value: unknown, path: string): PlanEntry {
+  const [tag, payload] = externalTag(value, path)
+  if (tag === "Investor") return { Investor: parseTradingPlan(payload, `${path}.Investor`) }
+  if (tag === "IssuerRepurchase") return { IssuerRepurchase: parseRepurchasePlan(payload, `${path}.IssuerRepurchase`) }
+  throw new SaveSchemaError(path, `未知计划 origin：${tag}`)
+}
+
+function parseRepurchasePlan(value: unknown, path: string): RepurchaseExecutionPlan {
+  const parsed = record(value, path)
+  exact(parsed, ["plan_id", "issuer", "stock", "status", "execution"], path)
+  const execution = nullable(parsed.execution, `${path}.execution`, parseExecutionLeg)
+  if (execution !== null && (execution.child_qty > 4_294_967_295 || BigInt(execution.limit_price) <= 0n || (execution.active_child_remaining_qty !== null && (execution.active_child_remaining_qty <= 0 || execution.active_child_remaining_qty > 4_294_967_295 || execution.active_child_remaining_qty > execution.child_qty)))) {
+    throw new SaveSchemaError(`${path}.execution`, "公司执行腿价格或活动余量非法")
+  }
+  const status = oneOf(parsed.status, `${path}.status`, ["Funded", "Draining", "Closed"] as const)
+  if (status === "Closed" && execution !== null && execution.active_child_remaining_qty !== null) throw new SaveSchemaError(path, "Closed 公司计划不能保留活动子单余量")
+  return { plan_id: parsePlanId(parsed.plan_id, `${path}.plan_id`), issuer: parseStock(parsed.issuer, `${path}.issuer`), stock: parseStock(parsed.stock, `${path}.stock`), status, execution }
 }
 
 export function parseTradingPlan(value: unknown, path: string): TradingPlan {

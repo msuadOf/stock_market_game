@@ -257,7 +257,7 @@ impl GameSession {
                 .positions()
                 .keys()
                 .copied()
-                .chain(input.plans.active_codes(id).copied())
+                .chain(input.plans.active_investor_codes(id).copied())
                 .collect();
             let mut participant = decision_chain::personal_state::BeliefParticipantState::new(
                 value.watchlist.clone(),

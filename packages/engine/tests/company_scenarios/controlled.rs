@@ -218,7 +218,7 @@ fn reading_diagnostics_does_not_change_authoritative_events_or_saves() {
         plain_events.extend(plain.step().expect("healthy step"));
         let _ = observed.decision_chain_diagnostics();
         observed_events.extend(observed.step().expect("healthy step"));
-        let _ = observed.plans_debug();
+        let _ = observed.investor_plans_debug();
     }
 
     // Then: canonical event and save bytes are identical.

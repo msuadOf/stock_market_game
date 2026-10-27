@@ -328,7 +328,7 @@ pub(crate) fn prepare_plan_seeds(
 ) -> Result<Vec<PreparedPlanSeed>, RuntimeError> {
     let bad = |detail: String| RuntimeError::ProtocolInvariant { detail };
     let needs_tickets = books.iter().any(|book| book.plan_ids().any(|id| {
-        book.plan(id).expect("计划迭代身份存在").active_child_order_id().is_some()
+        book.entry(id).expect("计划迭代身份存在").execution().is_some()
     }));
     let mut index = std::collections::BTreeMap::new();
     if needs_tickets {
@@ -350,7 +350,15 @@ pub(crate) fn prepare_plan_seeds(
     books.into_iter().map(|book| {
         let mut tickets = std::collections::BTreeMap::new();
         for id in book.plan_ids() {
-            let plan = book.plan(id).expect("计划迭代身份存在");
+            let plan = match book.entry(id).expect("计划迭代身份存在") {
+                crate::plans::PlanEntry::Investor(plan) => plan,
+                crate::plans::PlanEntry::IssuerRepurchase(plan) => {
+                    if plan.execution().is_some() {
+                        return Err(bad(format!("公司计划尚未接入真实子单来源：{id:?}")));
+                    }
+                    continue;
+                }
+            };
             let Some(order) = plan.active_child_order_id() else { continue; };
             if plan.is_terminal() {
                 return Err(bad(format!("terminal 计划仍引用子单：{id:?}")));
@@ -1134,20 +1142,41 @@ impl GroupState {
             }
         }
         for plan_id in self.plan_book.plan_ids() {
-            if let Ok(plan) = self.plan_book.plan(plan_id) {
-                h = fnv(h, plan_id.owner.0);
-                h = fnv(h, plan_id.sequence);
-                h = fnv(h, u64::from(plan.filled_qty()));
-                h = fnv(
-                    h,
-                    match plan.status() {
+            let entry = self.plan_book.entry(plan_id).expect("计划迭代身份存在");
+            h = fnv(h, plan_id.owner.0);
+            h = fnv(h, plan_id.sequence);
+            match entry {
+                crate::plans::PlanEntry::Investor(plan) => {
+                    h = fnv(h, 0);
+                    h = fnv(h, u64::from(plan.filled_qty()));
+                    h = fnv(h, match plan.status() {
                         crate::plans::PlanStatus::Active => 0,
                         crate::plans::PlanStatus::Paused { .. } => 1,
                         crate::plans::PlanStatus::Completed => 2,
                         crate::plans::PlanStatus::Terminated { .. } => 3,
-                    },
-                );
-                h = fnv(h, plan.active_child_order_id().map_or(0, |o| o.0));
+                    });
+                    h = fnv(h, plan.active_child_order_id().map_or(0, |o| o.0));
+                }
+                crate::plans::PlanEntry::IssuerRepurchase(plan) => {
+                    h = fnv(h, 1);
+                    h = fnv(h, u64::from(plan.issuer().0));
+                    h = fnv(h, u64::from(plan.stock().0));
+                    h = fnv(h, match plan.status() {
+                        crate::plans::RepurchaseExecutionStatus::Funded => 0,
+                        crate::plans::RepurchaseExecutionStatus::Draining => 1,
+                        crate::plans::RepurchaseExecutionStatus::Closed => 2,
+                    });
+                    h = fnv(h, plan.execution().is_some() as u64);
+                    if let Some(leg) = plan.execution() {
+                        h = fnv(h, u64::from(leg.child_qty()));
+                        h = fnv(h, leg.limit_price().cents() as u64);
+                        h = fnv(h, leg.expires_market_minute());
+                        h = fnv(h, leg.active_child_remaining_qty().is_some() as u64);
+                        if let Some(qty) = leg.active_child_remaining_qty() {
+                            h = fnv(h, u64::from(qty));
+                        }
+                    }
+                }
             }
         }
         for ((account, code), ticket) in &self.child_in_flight {
@@ -1725,12 +1754,14 @@ impl GroupState {
         let Some(mut ticket) = self.child_in_flight.get(&(account, code)).cloned() else {
             return Ok(());
         };
-        if self
-            .plan_book
-            .active_plan(account, &code)
-            .is_none_or(|plan| plan.direction() != fill.side)
-        {
-            return Ok(());
+        match self.plan_book.active_entry(account, &code) {
+            Some(crate::plans::PlanEntry::IssuerRepurchase(plan)) => {
+                return Err(RuntimeError::ProtocolInvariant {
+                    detail: format!("公司计划尚未接入真实成交来源：{:?}", plan.plan_id()),
+                });
+            }
+            Some(crate::plans::PlanEntry::Investor(plan)) if plan.direction() == fill.side => {}
+            _ => return Ok(()),
         }
         // Sol 终审四审 A2：日基准=(tick−1)/tpd（首拍属 day 0——与
         /// session.day 同基；此前 tick/tpd 使组内日历超前 1，plan 事件
@@ -1774,7 +1805,7 @@ impl GroupState {
             return Ok(());
         }
         let remaining = {
-            let Some(plan) = self.plan_book.active_plan(account, &code) else {
+            let Some(plan) = self.plan_book.active_investor_plan(account, &code) else {
                 return Ok(());
             };
             plan.active_child_remaining_qty()
@@ -1878,7 +1909,7 @@ impl GroupState {
             })
             .map(|(idx, _)| crate::StockId(idx as u32))
             .collect();
-        protected.extend(self.plan_book.active_codes(account).copied());
+        protected.extend(self.plan_book.active_investor_codes(account).copied());
         // 与 session 相同的裁剪原语（共享类型 pub 方法）。
         snap.watchlist.prune(&protected);
         snap.price_memory.prune(&protected);
@@ -2385,18 +2416,11 @@ impl GroupState {
         // 组内 PlanBook 是权威；session 镜像的日终迁移不能替代此处扫尾。
         // Drain 已释放子单，最后有效日结束时终止计划，其余计划跨日保留。
         self.save_plan_book_undo();
-        for plan_id in self.plan_book.active_plan_ids() {
-            self.plan_book
-                .apply(
-                    plan_id,
-                    crate::plans::PlanEvent::TradingDayEnded {
-                        trading_day: u64::from(directive.day),
-                    },
-                )
-                .map_err(|error| RuntimeError::ProtocolInvariant {
-                    detail: format!("组 {} 日终计划 {plan_id:?} 迁移失败：{error}", self.group),
-                })?;
-        }
+        self.plan_book
+            .end_trading_day(u64::from(directive.day))
+            .map_err(|error| RuntimeError::ProtocolInvariant {
+                detail: format!("组 {} 日终计划迁移失败：{error}", self.group),
+            })?;
         Ok(())
     }
 
@@ -3070,13 +3094,13 @@ impl GroupState {
         // 在开仓循环之前（此前在循环之后采集：同轮新开的计划全被归入
         // existing → 预算分类全成 ExistingPlan，NewOpportunity 不可达）。
         let existing_before: Vec<crate::plans::PlanId> =
-            self.plan_book.active_plan_ids_for_account(account);
+            self.plan_book.active_investor_plan_ids_for_account(account);
         // Sol 整改 1：读面（write_back=false）不消费开仓——纯观察（此前
         // 仅跳过 undo 快照仍 create，第二次读取因 active 分流产生不同
         // 结果——违反只读/幂等承诺，红证 solmid_echo_* 显红）。
         let consume_open = write_back;
         for (code, assessment) in &assessments {
-            if !consume_open || self.plan_book.active_plan(account, code).is_some() {
+            if !consume_open || self.plan_book.active_entry(account, code).is_some() {
                 continue;
             }
             let Some(group_account) = self.accounts.get(local as usize) else {
@@ -3248,7 +3272,7 @@ impl GroupState {
                     });
                 }
                 let before = trace_before.expect("真实 write_back 已取本账户计划基线");
-                let mut ids = self.plan_book.active_plan_ids_for_account(account);
+                let mut ids = self.plan_book.active_investor_plan_ids_for_account(account);
                 for plan_id in before.keys() {
                     if !ids.contains(plan_id) { ids.push(*plan_id); }
                 }
@@ -3496,7 +3520,7 @@ impl GroupState {
         let mut cancels: Vec<(LocalIdx, StockIdx, u64)> = Vec::new();
         // D3b 件 3：撤买终止目标（循环外 apply——借用隔离）。
         let mut withdrawals: Vec<crate::plans::PlanId> = Vec::new();
-        let plan_ids = self.plan_book.active_plan_ids_for_account(account);
+        let plan_ids = self.plan_book.active_investor_plan_ids_for_account(account);
         if plan_ids.is_empty() {
             return Ok((ops, cancels));
         }
@@ -6666,7 +6690,7 @@ mod sol_recheck3_tests {
             .expect("外来单成交跳过（不构成失败）");
         let plan = state
             .plan_book
-            .active_plan(crate::AccountId(9), &crate::StockId(0))
+            .active_investor_plan(crate::AccountId(9), &crate::StockId(0))
             .expect("计划仍在簿");
         assert_eq!(
             plan.active_child_remaining_qty(),
@@ -6818,7 +6842,7 @@ mod sol_recheck3_tests {
         );
         let plan = state
             .plan_book
-            .active_plan(crate::AccountId(9), &crate::StockId(0))
+            .active_investor_plan(crate::AccountId(9), &crate::StockId(0))
             .expect("计划仍在簿");
         assert!(
             plan.active_child_order_id().is_some(),
@@ -7106,7 +7130,7 @@ mod sol_recheck1_tests {
         let projection = correct.root_projection.clone().expect("投影在");
         let a = correct
             .plan_book
-            .active_plan(account, &crate::StockId(0))
+            .active_investor_plan(account, &crate::StockId(0))
             .expect("计划 A")
             .plan_id();
         let (ops, _) = correct
@@ -7122,7 +7146,7 @@ mod sol_recheck1_tests {
         let mut buggy = competing_plans_state();
         let b = buggy
             .plan_book
-            .active_plan(account, &crate::StockId(1))
+            .active_investor_plan(account, &crate::StockId(1))
             .expect("计划 B")
             .plan_id();
         let (ops, _) = buggy
@@ -7705,7 +7729,7 @@ mod roster_offset_tests {
             .expect("本组成交推进正常");
         let filled = state
             .plan_book
-            .active_plan(mine, &code)
+            .active_investor_plan(mine, &code)
             .expect("本组计划仍在")
             .filled_qty();
         assert_eq!(
@@ -7801,3 +7825,6 @@ mod roster_offset_tests {
 mod admin_transaction;
 
 mod admin_funds_cost;
+
+#[cfg(test)]
+mod origin_consumer_tests;

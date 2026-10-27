@@ -1107,7 +1107,7 @@ fn validate_parent_acceptance(
     order_id: OrderId,
     qty: u32,
 ) -> Result<(), StepFatal> {
-    if let Some(plan) = plans.active_plan(account, code) {
+    if let Some(plan) = plans.active_investor_plan(account, code) {
         if plan.active_child_order_id() == Some(order_id) {
             if plan.direction() != side || plan.active_child_remaining_qty() != Some(qty) {
                 return Err(invariant(
@@ -1189,7 +1189,7 @@ fn project_fill_values(
     _gross: crate::Money,
     terminal: bool,
 ) -> Result<(), StepFatal> {
-    if let Some(plan) = domain.plans().active_plan(key.account, &key.stock) {
+    if let Some(plan) = domain.plans().active_investor_plan(key.account, &key.stock) {
         if plan.direction() == key.side
             && plan.active_child_order_id() == Some(key.order)
             && (plan

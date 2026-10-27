@@ -171,12 +171,12 @@ test("计划执行腿作为 TradingPlan.execution 保存并拒绝非规范形态
   const current = currentSaveFixture()
   const policy = (current.plans as { policy: unknown }).policy
   const plan = planWithExecutionLeg()
-  const save = { ...current, plans: { policy, owner_sequences: [{ owner: "1", next_sequence: "2" }], plans: [plan] } }
+  const save = { ...current, plans: { policy, owner_sequences: [{ owner: "1", next_sequence: "2" }], plans: [{ Investor: plan }] } }
   const parsed = parseSaveSlot(save)
-  assert.deepEqual(parsed.plans.plans[0], plan)
+  assert.deepEqual(parsed.plans.plans[0], { Investor: plan })
   // 执行腿缺省（尚未执行或腿已结束）仍是合法计划。
   const { execution: _absent, active_child_order_id: _child, ...withoutLeg } = plan
-  assert.deepEqual(parseSaveSlot({ ...current, plans: { policy, owner_sequences: [{ owner: "1", next_sequence: "2" }], plans: [{ ...withoutLeg, active_child_order_id: null }] } }).plans.plans[0], { ...withoutLeg, active_child_order_id: null })
+  assert.deepEqual(parseSaveSlot({ ...current, plans: { policy, owner_sequences: [{ owner: "1", next_sequence: "2" }], plans: [{ Investor: { ...withoutLeg, active_child_order_id: null } }] } }).plans.plans[0], { Investor: { ...withoutLeg, active_child_order_id: null } })
   for (const execution of [
     null,
     { child_qty: 200, limit_price: "1000", expires_market_minute: 500, active_child_remaining_qty: 100, unexpected: true },
@@ -187,8 +187,8 @@ test("计划执行腿作为 TradingPlan.execution 保存并拒绝非规范形态
     { child_qty: 0, limit_price: "1000", expires_market_minute: 500, active_child_remaining_qty: 100 },
   ]) {
     assert.throws(
-      () => parseSaveSlot({ ...current, plans: { policy, owner_sequences: [{ owner: "1", next_sequence: "2" }], plans: [{ ...plan, execution }] } }),
-      /plans\.plans\[0\]\.execution/,
+      () => parseSaveSlot({ ...current, plans: { policy, owner_sequences: [{ owner: "1", next_sequence: "2" }], plans: [{ Investor: { ...plan, execution } }] } }),
+      /plans\.plans\[0\]\.Investor\.execution/,
       JSON.stringify(execution),
     )
   }

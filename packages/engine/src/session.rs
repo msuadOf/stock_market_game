@@ -3956,10 +3956,14 @@ impl GameSession {
         code: &StockId,
         order_id: OrderId,
     ) -> bool {
-        self.state
-            .plans
-            .active_plan(account, code)
-            .is_some_and(|plan| plan.active_child_order_id() == Some(order_id))
+        match self.state.plans.active_entry(account, code) {
+            Some(crate::plans::PlanEntry::Investor(plan)) => plan.active_child_order_id() == Some(order_id),
+            Some(crate::plans::PlanEntry::IssuerRepurchase(plan)) => {
+                assert!(plan.execution().is_none(), "公司计划尚未接入真实子单来源：{:?}", plan.plan_id());
+                false
+            }
+            None => false,
+        }
     }
 
     fn remove_npc_order_lifecycle(
@@ -4619,11 +4623,32 @@ impl GameSession {
         };
         sess.state.library = std::sync::Arc::new(save.public_library.clone());
         sess.state.disclosures = save.disclosures.clone();
+        for id in save.plans.plan_ids() {
+            let entry = save.plans.entry(id).expect("计划迭代身份存在");
+            let account = sess.state.accounts.get(&entry.account()).ok_or_else(|| {
+                SessionError::InvalidSave(ValidationFault::new(2142, id.error_context()))
+            })?;
+            if matches!(entry, crate::plans::PlanEntry::Investor(_))
+                && account.kind() == AccountKind::IssuerRepurchase
+            {
+                return Err(crate::company::CompanySystemError::SystemState(
+                    format!("回购专户 {:?} 不能持有 Investor 个人计划 {id:?}", entry.account()),
+                ).into());
+            }
+        }
         sess.state.plans = save.plans.clone();
         // 执行腿在途子单的剩余数量从真实订单簿/竞价队列重建（唯一 owner 的
         // restore 路径；旧 `parent_orders` 镜像已删除）。
         let active_plan_ids = sess.state.plans.active_plan_ids();
         for plan_id in active_plan_ids {
+            if let crate::plans::PlanEntry::IssuerRepurchase(plan) = sess.state.plans.entry(plan_id).expect("活动计划身份存在") {
+                if plan.execution().is_some() {
+                    return Err(SessionError::InvalidSave(ValidationFault::new(
+                        2183, plan_id.error_context(),
+                    )));
+                }
+                continue;
+            }
             let (account, code, direction, active_id) = {
                 let plan = sess
                     .state
@@ -6508,7 +6533,7 @@ mod npc_working_quote_tests {
             })
             .expect("旧镜像计划创建");
         assert!(
-            session.plans_debug().iter().any(|(.., status)| status == "Active"),
+            session.investor_plans_debug().iter().any(|(.., status)| status == "Active"),
             "前置：session 侧旧 Active 镜像在册"
         );
         // 组簿权威：同键计划的 terminal 记录（全额成交 ⇒ Completed）。
@@ -6543,7 +6568,7 @@ mod npc_working_quote_tests {
             "前置：组簿记录为 terminal（Completed）"
         );
         session.set_runtime_plans(book);
-        let debug = session.plans_debug();
+        let debug = session.investor_plans_debug();
         assert!(
             debug.iter().any(|(.., status)| status == "Completed"),
             "terminal 记录经交付点投影可见：{debug:?}"

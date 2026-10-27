@@ -128,7 +128,7 @@ pub use observation::{
 
 pub mod plans;
 pub use plans::{
-    OpinionSource, PauseReason, PlanBook, PlanError, PlanEvent, PlanId, PlanOpen, PlanOpinion,
+    OpinionSource, PauseReason, PlanBook, PlanEntry, PlanOrigin, PlanError, PlanEvent, PlanId, PlanOpen, PlanOpinion,
     PlanPolicy, PlanRevision, PlanStatus, PlanTarget, ResumeReason, ReviewConditions,
     RevisionReason, RevisionRecord, TerminationReason, TradingPlan, Urgency,
 };

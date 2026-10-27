@@ -1,7 +1,6 @@
 //! 所有交易阶段共用的交易日终迁移；不负责另一套订单或结算编排。
 
 use super::{event_collection::EventFact, EventStableKey, StepFatal};
-use crate::plans::PlanEvent;
 use crate::{Event, GameSession};
 
 pub(super) struct TradingDayEndTransition<'candidate> {
@@ -84,16 +83,8 @@ impl<'candidate> TradingDayEndTransition<'candidate> {
         let trading_day = self.trading_day;
         let session = &mut *self.candidate;
         let mut plans = std::mem::take(&mut session.state.plans);
-        let result = (|| {
-            for plan_id in plans.active_plan_ids() {
-                plans
-                    .apply(plan_id, PlanEvent::TradingDayEnded { trading_day })
-                    .map_err(|error| {
-                        invariant(&format!("日终计划 {plan_id:?} 迁移失败：{error}"))
-                    })?;
-            }
-            Ok(())
-        })();
+        let result = plans.end_trading_day(trading_day)
+            .map_err(|error| invariant(&format!("日终计划迁移失败：{error}")));
         session.state.plans = plans;
         result
     }

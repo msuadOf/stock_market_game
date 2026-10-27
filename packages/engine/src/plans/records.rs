@@ -1,4 +1,4 @@
-use super::{PlanId, TradingPlan};
+use super::{PlanEntry, PlanId};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -10,11 +10,11 @@ pub(super) struct PlanRecords {
 #[derive(Clone, Default, Debug, Eq, PartialEq)]
 struct Node {
     children: BTreeMap<u8, Arc<Node>>,
-    value: Option<(PlanId, TradingPlan)>,
+    value: Option<(PlanId, PlanEntry)>,
 }
 
 impl PlanRecords {
-    pub(super) fn get(&self, id: &PlanId) -> Option<&TradingPlan> {
+    pub(super) fn get(&self, id: &PlanId) -> Option<&PlanEntry> {
         let mut node = self.root.as_ref();
         for byte in id.key_bytes() {
             node = node.children.get(&byte)?.as_ref();
@@ -22,7 +22,7 @@ impl PlanRecords {
         node.value.as_ref().map(|(_, plan)| plan)
     }
 
-    pub(super) fn get_mut(&mut self, id: &PlanId) -> Option<&mut TradingPlan> {
+    pub(super) fn get_mut(&mut self, id: &PlanId) -> Option<&mut PlanEntry> {
         self.get(id)?;
         let mut node = Arc::make_mut(&mut self.root);
         for byte in id.key_bytes() {
@@ -31,7 +31,7 @@ impl PlanRecords {
         node.value.as_mut().map(|(_, plan)| plan)
     }
 
-    pub(super) fn insert(&mut self, id: PlanId, plan: TradingPlan) {
+    pub(super) fn insert(&mut self, id: PlanId, plan: PlanEntry) {
         let mut node = Arc::make_mut(&mut self.root);
         for byte in id.key_bytes() {
             node = Arc::make_mut(node.children.entry(byte).or_default());
@@ -39,7 +39,7 @@ impl PlanRecords {
         node.value = Some((id, plan));
     }
 
-    pub(super) fn iter(&self) -> impl Iterator<Item = (&PlanId, &TradingPlan)> {
+    pub(super) fn iter(&self) -> impl Iterator<Item = (&PlanId, &PlanEntry)> {
         self.root.iter()
     }
 
@@ -49,7 +49,7 @@ impl PlanRecords {
 }
 
 impl Node {
-    fn iter(&self) -> Box<dyn Iterator<Item = (&PlanId, &TradingPlan)> + '_> {
+    fn iter(&self) -> Box<dyn Iterator<Item = (&PlanId, &PlanEntry)> + '_> {
         Box::new(
             self.value
                 .iter()
@@ -59,8 +59,8 @@ impl Node {
     }
 }
 
-impl From<BTreeMap<PlanId, TradingPlan>> for PlanRecords {
-    fn from(plans: BTreeMap<PlanId, TradingPlan>) -> Self {
+impl From<BTreeMap<PlanId, PlanEntry>> for PlanRecords {
+    fn from(plans: BTreeMap<PlanId, PlanEntry>) -> Self {
         let mut records = Self::default();
         for (id, plan) in plans {
             records.insert(id, plan);

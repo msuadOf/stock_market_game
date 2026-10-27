@@ -218,7 +218,7 @@ impl ProtocolSession {
                 .plan_ids()
                 .any(|plan_id| {
                     slot.plans
-                        .plan(plan_id)
+                        .entry(plan_id)
                         .expect("plan_ids always resolve")
                         .execution()
                         .is_some()

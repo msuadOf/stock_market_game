@@ -150,7 +150,7 @@ test("WASM restore converts validated numeric account IDs back to numeric Map ke
     belief_books: {},
     watchlists: {},
     price_memories: {},
-    plans: { plans: {} },
+    plans: { plans: [] },
   };
 
   const prepared = prepareSaveForWasm(slot as unknown as {
@@ -162,7 +162,7 @@ test("WASM restore converts validated numeric account IDs back to numeric Map ke
     belief_books: Record<string, unknown>;
     watchlists: Record<string, unknown>;
     price_memories: Record<string, unknown>;
-    plans: { plans: Record<string, unknown> };
+    plans: { plans: readonly unknown[] };
   }) as {
     snapshot: { accounts: Map<number, unknown> };
     retail_experience: Map<number, unknown>;
@@ -193,24 +193,24 @@ test("WASM restore rehydrates every new-save account map without changing decima
     belief_books: { "1": {} },
     watchlists: { "1": {} },
     price_memories: { "1": {} },
-    plans: { plans: { "2": {} } },
+    plans: { plans: [{ Investor: { plan_id: { owner: "2", sequence: "0" } } }] },
   };
 
   const prepared = prepareSaveForWasm(slot as never) as Record<string, unknown>;
 
   for (const field of [
     "snapshot", "npc_attention", "runtime_state.strategy_states", "retail_experience",
-    "information_states", "belief_books", "watchlists", "price_memories", "plans",
+    "information_states", "belief_books", "watchlists", "price_memories",
   ]) {
     const value = field === "snapshot"
       ? (prepared.snapshot as { accounts: unknown }).accounts
       : field === "runtime_state.strategy_states"
         ? ((prepared.runtime_state as { strategy_states: unknown }).strategy_states)
-      : field === "plans"
-        ? (prepared.plans as { plans: unknown }).plans
       : prepared[field];
     assert.ok(value instanceof Map, `${field} must cross the WASM boundary as a Map`);
   }
+  assert.deepEqual((prepared.plans as { plans: unknown }).plans, slot.plans.plans);
+  assert.ok(Array.isArray((prepared.plans as { plans: unknown }).plans));
   assert.deepEqual(
     prepared.runtime_state,
     {

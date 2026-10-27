@@ -129,7 +129,7 @@ impl GroupState {
                     .map(|(stock, _)| StockId(stock as u32))
                     .collect();
                 codes.extend(snapshot.watchlist.stocks.keys().copied());
-                codes.extend(self.plan_book.active_codes(owner).copied());
+                codes.extend(self.plan_book.active_investor_codes(owner).copied());
                 for stock in &codes {
                     if !issuers.contains_key(stock) {
                         return Err(reject(InformationPrepareError::Identity {

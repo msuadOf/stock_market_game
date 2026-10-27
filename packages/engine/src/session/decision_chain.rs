@@ -588,7 +588,7 @@ fn root_candidate_codes(
 ) -> BTreeSet<StockId> {
     let mut candidates = held.clone();
     candidates.extend(watchlist.stocks.keys().cloned());
-    candidates.extend(plans.active_codes(account).cloned());
+    candidates.extend(plans.active_investor_codes(account).cloned());
     candidates.extend(discovered);
     candidates
 }
@@ -599,7 +599,7 @@ pub(crate) fn plan_trace_states(
     plans: &PlanBook,
 ) -> BTreeMap<PlanId, String> {
     plans
-        .active_plan_ids_for_account(account)
+        .active_investor_plan_ids_for_account(account)
         .into_iter()
         .map(|plan_id| {
             let plan = plans.plan(plan_id).expect("active diagnostic plan exists");
@@ -815,7 +815,7 @@ impl GameSession {
             .positions()
             .keys()
             .cloned()
-            .chain(plans.active_codes(account).cloned())
+            .chain(plans.active_investor_codes(account).cloned())
             .collect();
         let participant = self
             .state
@@ -937,7 +937,7 @@ impl GameSession {
                 })
             }));
         }
-        for account in self.state.plans.active_accounts() {
+        for account in self.state.plans.active_investor_accounts() {
             if self.active_plan_requires_review(account) {
                 ready.insert(account);
             }
@@ -988,7 +988,7 @@ impl GameSession {
         }
         self.state
             .plans
-            .active_plan_ids_for_account(account)
+            .active_investor_plan_ids_for_account(account)
             .into_iter()
             .any(|id| {
                 let plan = self
@@ -1170,7 +1170,7 @@ impl GameSession {
     ) {
         use crate::diagnostics::NpcDecisionTraceRecord;
 
-        let plan_ids = plans.active_plan_ids_for_account(account);
+        let plan_ids = plans.active_investor_plan_ids_for_account(account);
         let expectation_method = self
             .state
             .belief_participants
@@ -1233,7 +1233,7 @@ impl GameSession {
         let ids: BTreeSet<_> = before
             .keys()
             .copied()
-            .chain(plans.active_plan_ids_for_account(account))
+            .chain(plans.active_investor_plan_ids_for_account(account))
             .collect();
         let changed: Vec<_> = ids
             .into_iter()
@@ -1314,7 +1314,7 @@ impl GameSession {
             id,
             market_view,
             plans,
-            &plans.active_plan_ids_for_account(id).into_iter().collect(),
+            &plans.active_investor_plan_ids_for_account(id).into_iter().collect(),
         )
     }
 
@@ -1326,7 +1326,7 @@ impl GameSession {
         existing_plan_ids: &BTreeSet<PlanId>,
     ) -> Option<super::plan_chain_candidates::QuotePlans> {
         let active_plans: Vec<TradingPlan> = plans
-            .active_plan_ids_for_account(id)
+            .active_investor_plan_ids_for_account(id)
             .into_iter()
             .map(|plan_id| {
                 plans
@@ -1591,26 +1591,23 @@ impl GameSession {
         })
     }
 
-    /// 计划概览（诊断/测试）：(account, code, direction, target, filled, status) 列表。
-    pub fn plans_debug(&self) -> Vec<(AccountId, StockId, Side, u32, u32, String)> {
-        self.state
-            .plans
-            .plan_ids()
-            .filter_map(|plan_id| {
-                let plan = self.state.plans.plan(plan_id).ok()?;
-                Some((
-                    plan.account(),
-                    *plan.code(),
-                    plan.direction(),
-                    match plan.target() {
-                        crate::plans::PlanTarget::ShareCount(qty) => qty,
-                        crate::plans::PlanTarget::PositionFractionBp(_) => 0,
-                    },
-                    plan.filled_qty(),
-                    format!("{:?}", plan.status()),
-                ))
-            })
-            .collect()
+    /// 个人计划概览（诊断/测试）：公司条目通过 plan_entries_debug 查询。
+    pub fn investor_plans_debug(&self) -> Vec<(AccountId, StockId, Side, u32, u32, String)> {
+        self.state.plans.investor_plans().map(|plan| (
+            plan.account(), *plan.code(), plan.direction(),
+            match plan.target() {
+                crate::plans::PlanTarget::ShareCount(qty) => qty,
+                crate::plans::PlanTarget::PositionFractionBp(_) => 0,
+            },
+            plan.filled_qty(), format!("{:?}", plan.status()),
+        )).collect()
+    }
+
+    /// 全来源诊断保留明确 origin，不以个人字段表达公司授权。
+    pub fn plan_entries_debug(&self) -> Vec<crate::plans::PlanEntry> {
+        self.state.plans.plan_ids().map(|id| {
+            self.state.plans.entry(id).expect("计划迭代身份存在").clone()
+        }).collect()
     }
 
     /// 决策链诊断（只读；验收测试与离线对账用——不泄露任何隐藏市场信息，
@@ -1619,10 +1616,9 @@ impl GameSession {
         let mut per_stock: BTreeMap<StockId, usize> = BTreeMap::new();
         let mut plan_count = 0_usize;
         for plan_id in self.state.plans.plan_ids() {
-            if let Ok(plan) = self.state.plans.plan(plan_id) {
-                plan_count += 1;
-                *per_stock.entry(plan.code().clone()).or_default() += 1;
-            }
+            let entry = self.state.plans.entry(plan_id).expect("计划迭代身份存在");
+            plan_count += 1;
+            *per_stock.entry(*entry.code()).or_default() += 1;
         }
         let available_valuations: BTreeMap<StockId, usize> = self
             .state
@@ -2114,7 +2110,7 @@ mod chain_restructure_tests {
         let valid = session.save().unwrap();
         crate::session::persistence::validate_save_slot(&valid).unwrap();
         assert_eq!(valid.price_memories[&account].stock_count(), 9);
-        assert!(valid.plans.active_plan(account, &protected).is_some());
+        assert!(valid.plans.active_investor_plan(account, &protected).is_some());
     }
 
     #[test]
@@ -2315,7 +2311,7 @@ mod chain_restructure_tests {
             .any(|record| record.id == publication));
         personal.install(&mut session, account);
         crate::session::pipeline::commit_injected_plan_roots_for_test(&mut session, operations);
-        assert!(session.state.plans.active_plan(account, &faded).is_none());
+        assert!(session.state.plans.active_investor_plan(account, &faded).is_none());
     }
 
     #[test]
@@ -2402,14 +2398,14 @@ mod chain_restructure_tests {
         assert!(session
             .state
             .plans
-            .active_plan(account, &discovered)
+            .active_investor_plan(account, &discovered)
             .is_some());
         let participant = &session.state.belief_participants[&account];
         assert!(participant.price_memory().stock(&discovered).is_some());
         assert!(participant.watchlist().stock(&discovered).is_some());
         let protected: BTreeSet<_> = held
             .into_iter()
-            .chain(session.state.plans.active_codes(account).cloned())
+            .chain(session.state.plans.active_investor_codes(account).cloned())
             .collect();
         assert!(
             participant
@@ -2430,7 +2426,7 @@ mod chain_restructure_tests {
             let before = session
                 .state
                 .plans
-                .active_plan(AccountId(1), &code)
+                .active_investor_plan(AccountId(1), &code)
                 .unwrap()
                 .clone();
             let child = before.active_child_order_id().unwrap();
@@ -2457,7 +2453,7 @@ mod chain_restructure_tests {
         let id = session
             .state
             .plans
-            .active_plan(AccountId(1), &code)
+            .active_investor_plan(AccountId(1), &code)
             .unwrap()
             .plan_id();
         let resources = session.plan_review_resources(AccountId(1), &code);
@@ -2469,7 +2465,7 @@ mod chain_restructure_tests {
         let plan = session
             .state
             .plans
-            .active_plan(AccountId(1), &session.stock_id("000812").unwrap())
+            .active_investor_plan(AccountId(1), &session.stock_id("000812").unwrap())
             .unwrap();
         let score = plan.opinion().signal_score_bp - 1;
         assert!(score >= session.state.plans.policy().reverse_revision_threshold_bp);
@@ -2512,7 +2508,7 @@ mod chain_restructure_tests {
         let plan_id = session
             .state
             .plans
-            .active_plan(account, &session.stock_id("000812").unwrap())
+            .active_investor_plan(account, &session.stock_id("000812").unwrap())
             .unwrap()
             .plan_id();
         let equity = session.account_equity(account).unwrap();
@@ -2558,7 +2554,7 @@ mod chain_restructure_tests {
         let before = session
             .state
             .plans
-            .active_plan(account, &code)
+            .active_investor_plan(account, &code)
             .unwrap()
             .clone();
         let child = before.active_child_order_id().unwrap();
@@ -2830,7 +2826,7 @@ mod chain_restructure_tests {
         let original = session
             .state
             .plans
-            .active_plan(account, &code)
+            .active_investor_plan(account, &code)
             .unwrap()
             .clone();
         session.state.plans = PlanBook::default();
@@ -2983,7 +2979,7 @@ mod chain_restructure_tests {
         let plan_id = session
             .state
             .plans
-            .active_plan(AccountId(1), &session.stock_id("000812").unwrap())
+            .active_investor_plan(AccountId(1), &session.stock_id("000812").unwrap())
             .unwrap()
             .plan_id();
         let child_id = session
@@ -3224,8 +3220,8 @@ mod chain_restructure_tests {
             let code = session.stock_id("000812").unwrap();
             let mut encoded = serde_json::to_value(&session.state.plans).unwrap();
             let plan_index = encoded["plans"].as_array().unwrap().iter()
-                .position(|plan| plan["plan_id"] == serde_json::to_value(plan_id).unwrap()).unwrap();
-            encoded["plans"][plan_index]["status"] =
+                .position(|plan| plan["Investor"]["plan_id"] == serde_json::to_value(plan_id).unwrap()).unwrap();
+            encoded["plans"][plan_index]["Investor"]["status"] =
                 serde_json::json!({ "Paused": { "reason": original_reason } });
             session.state.plans = serde_json::from_value(encoded).unwrap();
             let policy = crate::strategy::InstitutionExperiencePolicy::new(
@@ -3386,7 +3382,7 @@ mod chain_restructure_tests {
         let account = AccountId(1);
         let code = session.stock_id("000812").unwrap();
         let (child_id, child) = {
-            let plan = session.state.plans.active_plan(account, &code).unwrap();
+            let plan = session.state.plans.active_investor_plan(account, &code).unwrap();
             (
                 plan.active_child_order_id().unwrap(),
                 *plan.execution().unwrap(),
@@ -3529,7 +3525,7 @@ mod chain_restructure_tests {
             session
                 .state
                 .plans
-                .active_plan(account, &code)
+                .active_investor_plan(account, &code)
                 .unwrap()
                 .filled_qty(),
             0
@@ -3564,7 +3560,7 @@ mod chain_restructure_tests {
             session.state.plans.plan(plan_id).unwrap().filled_qty(),
             filled
         );
-        assert!(session.state.plans.active_plan(account, &code).is_none());
+        assert!(session.state.plans.active_investor_plan(account, &code).is_none());
         assert!(events
             .iter()
             .any(|event| matches!(event, Event::OrderCanceled { id, .. } if *id == child_id)));
@@ -3576,7 +3572,7 @@ mod chain_restructure_tests {
         assert!(session
             .state
             .plans
-            .active_plan(account, &code)
+            .active_investor_plan(account, &code)
             .is_none_or(|plan| plan.execution().is_none()));
     }
 
@@ -3732,7 +3728,7 @@ mod chain_restructure_tests {
         let plan_id = session
             .state
             .plans
-            .active_plan(account, &code)
+            .active_investor_plan(account, &code)
             .unwrap()
             .plan_id();
         let child = session
@@ -3768,7 +3764,7 @@ mod chain_restructure_tests {
         let plan_id = session
             .state
             .plans
-            .active_plan(account, &code)
+            .active_investor_plan(account, &code)
             .unwrap()
             .plan_id();
         let paused = PlanEvent::Paused {
@@ -3840,7 +3836,7 @@ mod chain_restructure_tests {
         let plan_id = session
             .state
             .plans
-            .active_plan(account, &code)
+            .active_investor_plan(account, &code)
             .unwrap()
             .plan_id();
         session
@@ -3905,7 +3901,7 @@ mod chain_restructure_tests {
         let plan_id = session
             .state
             .plans
-            .active_plan(account, &code)
+            .active_investor_plan(account, &code)
             .unwrap()
             .plan_id();
         session
@@ -4554,7 +4550,7 @@ mod chain_restructure_tests {
             session
                 .state
                 .plans
-                .active_plan(owner, &code)
+                .active_investor_plan(owner, &code)
                 .and_then(|plan| plan.active_child_order_id())
                 .is_some(),
             "the accepted child must be linked to its plan execution leg"
@@ -4676,7 +4672,7 @@ mod chain_restructure_tests {
         let plan_id = session
             .state
             .plans
-            .active_plan(AccountId(1), &session.stock_id("000812").unwrap())
+            .active_investor_plan(AccountId(1), &session.stock_id("000812").unwrap())
             .unwrap()
             .plan_id();
         let plans = serde_json::to_value(&session.state.plans).unwrap();
@@ -4997,7 +4993,7 @@ mod chain_restructure_tests {
             let in_flight = session
                 .state
                 .plans
-                .active_plan(AccountId(1), &session.stock_id("000812").unwrap())
+                .active_investor_plan(AccountId(1), &session.stock_id("000812").unwrap())
                 .and_then(|plan| plan.active_child_order_id())
                 .is_some();
             if in_flight {
@@ -5005,7 +5001,7 @@ mod chain_restructure_tests {
             }
         }
         // 场景断言：计划 + 在途子单确实就位（后续测试依赖）。
-        let plans = session.plans_debug();
+        let plans = session.investor_plans_debug();
         assert!(
             plans.iter().any(|(account, code, direction, ..)| {
                 account == &AccountId(1)
@@ -5018,7 +5014,7 @@ mod chain_restructure_tests {
             session
                 .state
                 .plans
-                .active_plan(AccountId(1), &session.stock_id("000812").unwrap())
+                .active_investor_plan(AccountId(1), &session.stock_id("000812").unwrap())
                 .and_then(|plan| plan.active_child_order_id())
                 .is_some(),
             "seed scenario must leave an in-flight child order"
@@ -5030,7 +5026,7 @@ mod chain_restructure_tests {
     fn plan_identity_live_join_rebuild_keeps_original_child_and_resources() {
         let mut session = seeded_buy_plan_with_child();
         let code = session.stock_id("000812").unwrap();
-        let before = session.state.plans.active_plan(AccountId(1), &code).unwrap().clone();
+        let before = session.state.plans.active_investor_plan(AccountId(1), &code).unwrap().clone();
         let child = before.active_child_order_id().unwrap();
         let cash_before: i128 = session.account_roster().into_iter()
             .map(|owner| i128::from(session.account(owner).unwrap().cash().cents())).sum();
@@ -5062,7 +5058,7 @@ mod chain_restructure_tests {
         }
         let cancelled_seed = session.step().unwrap();
         assert!(cancelled_seed.iter().any(|event| matches!(event, Event::OrderCanceled { .. })));
-        let original = session.state.plans.active_plan(AccountId(1), &code).unwrap().clone();
+        let original = session.state.plans.active_investor_plan(AccountId(1), &code).unwrap().clone();
         let child = original.active_child_order_id().unwrap();
         let price = original.execution().unwrap().limit_price();
         assert!(original.active_child_remaining_qty().unwrap() > 100);
@@ -5111,7 +5107,7 @@ mod chain_restructure_tests {
         let mut session = seeded_buy_plan_with_child();
         let account = AccountId(1);
         let code = session.stock_id("000812").unwrap();
-        let plan = session.state.plans.active_plan(account, &code).unwrap();
+        let plan = session.state.plans.active_investor_plan(account, &code).unwrap();
         let leg = plan
             .execution()
             .expect("seeded plan carries an execution leg");
@@ -5146,7 +5142,7 @@ mod chain_restructure_tests {
             event,
             Event::OrderCanceled { id, .. } if *id == child_id
         )));
-        let current = session.state.plans.active_plan(account, &code).unwrap();
+        let current = session.state.plans.active_investor_plan(account, &code).unwrap();
         assert_eq!(current.target(), revision.target);
         assert_eq!(current.active_child_order_id(), None);
 
@@ -5169,7 +5165,7 @@ mod chain_restructure_tests {
         let mut session = seeded_buy_plan_with_child();
         let account = AccountId(1);
         let code = session.stock_id("000812").unwrap();
-        let plan = session.state.plans.active_plan(account, &code).unwrap();
+        let plan = session.state.plans.active_investor_plan(account, &code).unwrap();
         let leg = plan
             .execution()
             .expect("seeded plan carries an execution leg");
@@ -5214,7 +5210,7 @@ mod chain_restructure_tests {
         let plan_id = session
             .state
             .plans
-            .active_plan(account, &code)
+            .active_investor_plan(account, &code)
             .unwrap()
             .plan_id();
         session
@@ -5382,7 +5378,7 @@ mod chain_restructure_tests {
 
     fn plan_summary(session: &GameSession) -> (Side, u32, u32, String) {
         session
-            .plans_debug()
+            .investor_plans_debug()
             .into_iter()
             .find(|(account, ..)| account == &AccountId(1))
             .map(|(_, _, direction, target, filled, status)| (direction, target, filled, status))
@@ -5395,7 +5391,7 @@ mod chain_restructure_tests {
         let child_id = session
             .state
             .plans
-            .active_plan(AccountId(1), &session.stock_id("000812").unwrap())
+            .active_investor_plan(AccountId(1), &session.stock_id("000812").unwrap())
             .and_then(|plan| plan.active_child_order_id())
             .expect("child must be in flight");
 
@@ -5419,7 +5415,7 @@ mod chain_restructure_tests {
             session
                 .state
                 .plans
-                .active_plan(AccountId(1), &session.stock_id("000812").unwrap())
+                .active_investor_plan(AccountId(1), &session.stock_id("000812").unwrap())
                 .is_none_or(|plan| plan.active_child_order_id().is_none()),
             "the reversed plan must no longer carry the canceled child"
         );
@@ -5431,7 +5427,7 @@ mod chain_restructure_tests {
         let child_id = session
             .state
             .plans
-            .active_plan(AccountId(1), &session.stock_id("000812").unwrap())
+            .active_investor_plan(AccountId(1), &session.stock_id("000812").unwrap())
             .and_then(|plan| plan.active_child_order_id())
             .expect("child must be in flight");
         // 手工推进计划进度（计划簿事件路径）：filled 500_000 / target 599_300；
@@ -5476,7 +5472,7 @@ mod chain_restructure_tests {
             session
                 .state
                 .plans
-                .active_plan(AccountId(1), &session.stock_id("000812").unwrap())
+                .active_investor_plan(AccountId(1), &session.stock_id("000812").unwrap())
                 .is_none(),
             "the dead plan must leave the active index"
         );
@@ -5554,7 +5550,7 @@ mod chain_restructure_tests {
         let child_id = session
             .state
             .plans
-            .active_plan(AccountId(1), &session.stock_id("000812").unwrap())
+            .active_investor_plan(AccountId(1), &session.stock_id("000812").unwrap())
             .and_then(|plan| plan.active_child_order_id())
             .expect("child must be in flight");
         // ticks_per_day=100、closing_auction_ticks=10 ⇒ tick ≥ 90 为收盘集合
@@ -5597,7 +5593,7 @@ mod chain_restructure_tests {
             session
                 .state
                 .plans
-                .active_plan(AccountId(1), &session.stock_id("000812").unwrap())
+                .active_investor_plan(AccountId(1), &session.stock_id("000812").unwrap())
                 .and_then(|plan| plan.active_child_order_id()),
             Some(child_id),
             "the plan execution leg must still reference its child"
@@ -5736,7 +5732,7 @@ mod chain_restructure_tests {
         let old = session
             .state
             .plans
-            .active_plan(owner, &code)
+            .active_investor_plan(owner, &code)
             .unwrap()
             .clone();
         let plans_snapshot = serde_json::to_value(&session.state.plans).unwrap();

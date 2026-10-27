@@ -286,7 +286,7 @@ impl InstitutionDecisionRoot {
             market_minute: context.market_minute,
             trading_day: u64::from(context.day),
         };
-        operations.remember_existing_plans(plans.active_plan_ids_for_account(id));
+        operations.remember_existing_plans(plans.active_investor_plan_ids_for_account(id));
         // 股票簿可能已交给并行撮合线程；根观察只能读取它接受时固定的行情视图。
         let equity = context.accounts[&id]
             .positions()
@@ -354,7 +354,7 @@ impl InstitutionDecisionRoot {
         let protected: BTreeSet<StockId> = held
             .iter()
             .cloned()
-            .chain(plans.active_codes(id).cloned())
+            .chain(plans.active_investor_codes(id).cloned())
             .collect();
         let watchlist = &mut personal.watchlist;
         watchlist.prune(&protected);

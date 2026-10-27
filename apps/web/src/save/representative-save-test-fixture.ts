@@ -76,12 +76,12 @@ export function representativeCurrentSaveFixture(): Record<string, unknown> {
     plans: {
       policy: planBook.policy,
       owner_sequences,
-      plans: historicalPlans.map((plan) => ({
+      plans: historicalPlans.map((plan) => ({ Investor: {
         ...plan,
         account: String(plan.account),
         plan_id: { owner: String(plan.account), sequence: String(plan.plan_id) },
         review: { ...(plan.review as Record<string, unknown>), last_review_resources: null },
-      })),
+      } })),
     },
     snapshot: {
       ...savedSnapshot,

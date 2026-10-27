@@ -624,8 +624,8 @@ fn completed_plan_reports_a_stale_submit_without_reopening_it() {
     assert_eq!(plans, before, "终态计划不得被安装新执行腿");
     let mut forged = serde_json::to_value(&plans).unwrap();
     let plan_index = forged["plans"].as_array().unwrap().iter()
-        .position(|entry| entry["plan_id"] == serde_json::to_value(plan.plan_id()).unwrap()).unwrap();
-    forged["plans"][plan_index]["active_child_order_id"] =
+        .position(|entry| entry["Investor"]["plan_id"] == serde_json::to_value(plan.plan_id()).unwrap()).unwrap();
+    forged["plans"][plan_index]["Investor"]["active_child_order_id"] =
         serde_json::json!(order_id);
     let forged: PlanBook = serde_json::from_value(forged).unwrap();
     assert!(matches!(

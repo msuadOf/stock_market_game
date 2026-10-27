@@ -233,7 +233,7 @@ fn assert_pending(world: &mut World, remaining: [u32; 2]) {
         assert_eq!(world.public_views()[0].last_price, 1_000);
         let plan = plans[group]
             .1
-            .active_plan(OWNERS[group], &StockId(0))
+            .active_investor_plan(OWNERS[group], &StockId(0))
             .expect("在途计划");
         assert_eq!(plan.active_child_remaining_qty(), Some(remaining[group]));
     }
@@ -325,7 +325,7 @@ fn roster_open_held_survives_real_partial_fill_and_plan_termination() {
     let before = world.collect_plans().expect("真实部分成交计划");
     let old = before[1]
         .1
-        .active_plan(OWNERS[1], &StockId(0))
+        .active_investor_plan(OWNERS[1], &StockId(0))
         .expect("尾组旧卖计划");
     let old_id = old.plan_id();
     assert_eq!(old.filled_qty(), 800);
@@ -347,7 +347,7 @@ fn roster_open_held_survives_real_partial_fill_and_plan_termination() {
         .is_terminal());
     let new = books[1]
         .1
-        .active_plan(OWNERS[1], &StockId(0))
+        .active_investor_plan(OWNERS[1], &StockId(0))
         .expect("尾组新卖计划");
     assert_ne!(new.plan_id(), old_id);
     assert_eq!(new.direction(), Side::Sell);
@@ -367,7 +367,7 @@ fn roster_lifecycle_revision_consumes_own_pending_equity() {
     let books = world.collect_plans().expect("实际复审结果");
     let tail = books[1]
         .1
-        .active_plan(OWNERS[1], &StockId(0))
+        .active_investor_plan(OWNERS[1], &StockId(0))
         .expect("尾组复审后计划");
     assert_eq!(tail.direction(), Side::Buy);
     assert_eq!(
@@ -407,7 +407,7 @@ fn roster_open_equity_includes_own_other_stock_pending_sell() {
     let books = world.collect_plans().expect("生产开仓计划读面");
     let tail = books[1]
         .1
-        .active_plan(OWNERS[1], &StockId(1))
+        .active_investor_plan(OWNERS[1], &StockId(1))
         .expect("尾组另一股新买计划");
     assert_eq!(tail.direction(), Side::Buy);
     assert_eq!(
@@ -465,7 +465,7 @@ fn roster_urgency_after_own_observation_absorbs_missing_pending_in_peak_max() {
         );
         let plan = books[group]
             .1
-            .active_plan(OWNERS[group], &StockId(0))
+            .active_investor_plan(OWNERS[group], &StockId(0))
             .expect("既有在途卖计划仍存");
         assert_eq!(
             plan.review().last_review_price,
@@ -518,11 +518,11 @@ fn plan_identity_owner_order_does_not_override_real_child_fifo() {
     };
     // 高owner的真实计划子单先独立收束，低owner下一拍才报价，固定实际受理先后。
     quote_owner(&mut world, 1, 2);
-    let first = world.collect_plans().unwrap()[1].1.active_plan(OWNERS[1], &StockId(0)).unwrap().clone();
+    let first = world.collect_plans().unwrap()[1].1.active_investor_plan(OWNERS[1], &StockId(0)).unwrap().clone();
     let first_child = first.active_child_order_id().expect("高owner真实计划子单");
     quote_owner(&mut world, 0, 3);
     let books = world.collect_plans().unwrap();
-    let second = books[0].1.active_plan(OWNERS[0], &StockId(0)).unwrap().clone();
+    let second = books[0].1.active_investor_plan(OWNERS[0], &StockId(0)).unwrap().clone();
     let second_child = second.active_child_order_id().expect("低owner真实计划子单");
     assert!(first.plan_id() > second.plan_id(), "PlanId数值顺序与实际到达相反");
     assert!(first_child < second_child, "desk真实时间序保留先到顺序");

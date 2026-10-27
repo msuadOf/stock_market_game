@@ -29,7 +29,7 @@ test("Given a persisted decimal account map, when rehydrated for WASM, then nume
     belief_books: {},
     watchlists: {},
     price_memories: {},
-    plans: { plans: {} },
+    plans: { plans: [] },
   }) as { readonly snapshot: { readonly accounts: Map<number, unknown> } }
 
   assert.deepEqual([...prepared.snapshot.accounts.keys()], [0])

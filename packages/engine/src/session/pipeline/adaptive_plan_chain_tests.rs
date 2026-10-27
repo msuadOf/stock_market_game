@@ -528,7 +528,7 @@ fn conflicting_cancels_recheck_live_orders_after_another_account_fills_one() {
         session
             .state
             .plans
-            .active_plan(AccountId(1), &code)
+            .active_investor_plan(AccountId(1), &code)
             .unwrap()
             .filled_qty(),
         0

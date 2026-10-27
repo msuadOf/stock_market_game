@@ -260,3 +260,115 @@ fn origin_09_direct_company_execution_wire_rejects_zero_quantity_and_nonpositive
         );
     }
 }
+
+#[test]
+fn origin_10_personal_reads_report_wrong_origin_and_shared_reads_keep_company_identity() {
+    let mut book = PlanBook::default();
+    let id = book.create_issuer_repurchase(issuer(7)).unwrap();
+    assert_eq!(
+        book.plan(id),
+        Err(PlanError::WrongOrigin {
+            plan_id: id,
+            expected: PlanOrigin::Investor,
+            actual: PlanOrigin::IssuerRepurchase,
+        })
+    );
+    let absent = PlanId {
+        owner: id.owner,
+        sequence: id.sequence + 1,
+    };
+    assert_eq!(
+        book.plan(absent),
+        Err(PlanError::UnknownPlan { plan_id: absent })
+    );
+    assert_eq!(
+        book.active_entry(id.owner, &StockId(7)).unwrap().plan_id(),
+        id
+    );
+    assert!(book.active_investor_plan(id.owner, &StockId(7)).is_none());
+    assert_eq!(book.investor_plans().count(), 0);
+    assert_eq!(book.active_plan_ids_for_account(id.owner), vec![id]);
+    assert!(book
+        .active_investor_plan_ids_for_account(id.owner)
+        .is_empty());
+}
+
+#[test]
+fn origin_11_personal_events_and_child_installation_cannot_mutate_company_authorization() {
+    let mut book = PlanBook::default();
+    let id = book.create_issuer_repurchase(issuer(7)).unwrap();
+    let before = book.clone();
+    assert!(matches!(
+        book.apply(id, PlanEvent::ObservedNoChange { trading_day: 0 }),
+        Err(PlanError::WrongOrigin { .. })
+    ));
+    let unsupported = PlanError::IssuerChildNotConnected { plan_id: id };
+    assert_eq!(
+        book.install_execution(id, 100, crate::Money::from_cents(1234), 30),
+        Err(unsupported.clone())
+    );
+    assert_eq!(
+        book.record_child_submitted(id.owner, &StockId(7), Side::Buy, crate::OrderId(1), 100, 0),
+        Err(unsupported.clone())
+    );
+    assert_eq!(
+        book.record_child_fill(id.owner, &StockId(7), Side::Buy, crate::OrderId(1), 100, 0),
+        Err(unsupported.clone())
+    );
+    assert_eq!(
+        book.record_child_released(id.owner, &StockId(7), crate::OrderId(1), 0, false),
+        Err(unsupported)
+    );
+    assert_eq!(book, before);
+}
+
+#[test]
+fn origin_12_shared_day_end_expires_investor_and_retains_company_without_personal_horizon() {
+    let mut book = PlanBook::default();
+    let personal = book.create(investor(1, 2)).unwrap();
+    let company = book.create_issuer_repurchase(issuer(7)).unwrap();
+    let authorization = book.entry(company).unwrap().clone();
+    book.end_trading_day(4).unwrap();
+    assert!(book.plan(personal).unwrap().is_terminal());
+    assert_eq!(book.entry(company).unwrap(), &authorization);
+    assert_eq!(book.active_plan_ids(), vec![company]);
+}
+
+#[test]
+fn origin_13_day_end_rejects_company_execution_atomically_without_clearing_investor() {
+    let mut wire = mixed_wire();
+    wire["plans"][1]["IssuerRepurchase"]["execution"] = json!({
+        "child_qty": 100, "limit_price": "1234", "expires_market_minute": 30,
+        "active_child_remaining_qty": null,
+    });
+    let mut book: PlanBook = serde_json::from_value(wire).unwrap();
+    let before = book.clone();
+    assert_eq!(
+        book.end_trading_day(4),
+        Err(PlanError::IssuerChildNotConnected {
+            plan_id: PlanId {
+                owner: AccountId(17),
+                sequence: 0
+            },
+        })
+    );
+    assert_eq!(book, before);
+}
+
+#[test]
+fn origin_14_direct_mixed_restore_rejects_different_ids_sharing_one_active_owner_stock() {
+    let mut book = PlanBook::default();
+    let id = book.create(investor(17, 7)).unwrap();
+    let mut company = issuer_wire("Funded");
+    company["plan_id"]["sequence"] = json!("1");
+    let wire = json!({
+        "policy": book.policy(),
+        "owner_sequences": [{"owner":"17", "next_sequence":"2"}],
+        "plans": [{"Investor":book.plan(id).unwrap()}, {"IssuerRepurchase":company}],
+    });
+    let error = serde_json::from_value::<PlanBook>(wire).unwrap_err();
+    assert!(
+        error.to_string().contains("two non-terminal plans"),
+        "{error}"
+    );
+}

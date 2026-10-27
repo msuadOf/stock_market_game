@@ -1557,7 +1557,7 @@ fn validate_personal_states(context: &SaveValidationContext) -> Result<(), Sessi
         let protected: BTreeSet<_> = save.snapshot.accounts[id]
             .positions
             .keys()
-            .chain(save.plans.active_codes(*id))
+            .chain(save.plans.active_investor_codes(*id))
             .collect();
         if watchlist
             .stocks
@@ -1586,7 +1586,7 @@ fn validate_personal_states(context: &SaveValidationContext) -> Result<(), Sessi
         let protected: BTreeSet<_> = save.snapshot.accounts[id]
             .positions
             .keys()
-            .chain(save.plans.active_codes(*id))
+            .chain(save.plans.active_investor_codes(*id))
             .collect();
         if memory
             .stocks
@@ -1882,28 +1882,33 @@ fn validate_plan_contract(context: &SaveValidationContext) -> Result<(), Session
     let save = context.save;
     let saved_day = context.saved_day;
     let stock_codes = &context.stock_codes;
-    let npc_count = context.npc_count;
     for plan_id in save.plans.plan_ids() {
-        let plan = save.plans.plan(plan_id).expect("plan_ids always resolve");
+        let entry = save.plans.entry(plan_id).expect("计划迭代身份存在");
+        if !save.snapshot.accounts.contains_key(&entry.account()) {
+            return Err(SessionError::InvalidSave(ValidationFault::new(
+                2142,
+                plan_id.error_context_with([entry.account().0 >> 32, entry.account().0 & 0xffff_ffff]),
+            )));
+        }
+        if !stock_codes.contains(entry.code()) {
+            return Err(SessionError::InvalidSave(ValidationFault::new(
+                2143, plan_id.error_context_with([u64::from(entry.code().0)]),
+            )));
+        }
+        let plan = match entry {
+            crate::plans::PlanEntry::Investor(plan) => plan,
+            crate::plans::PlanEntry::IssuerRepurchase(_) => {
+                // Origin 值恢复不能代替批准事务产生的真实资金与公司绑定。
+                return Err(crate::company::CompanySystemError::SystemState(
+                    format!("公司计划 {plan_id:?} 缺少已提交的资金与公司授权 binding；当前不支持恢复"),
+                ).into());
+            }
+        };
         // 以下计划错误的 ctx[0..4] 均为 owner 高/低 u32、sequence 高/低 u32。
         // fault2141：计划持有期非法；ctx[4] 为既有原因占位码。
         plan.validate_horizon().map_err(|_| {
             SessionError::InvalidSave(ValidationFault::new(2141, plan_id.error_context_with([0])))
         })?;
-        if plan.account().0 > npc_count {
-            // fault2142：计划属于未知账户；ctx[4..6]=AccountId 高/低 u32。
-            return Err(SessionError::InvalidSave(ValidationFault::new(
-                2142,
-                plan_id.error_context_with([plan.account().0 >> 32, plan.account().0 & 0xffff_ffff]),
-            )));
-        }
-        if !stock_codes.contains(plan.code()) {
-            // fault2143：计划指向未知股票；ctx[4]=StockId。
-            return Err(SessionError::InvalidSave(ValidationFault::new(
-                2143,
-                plan_id.error_context_with([u64::from(plan.code().0)]),
-            )));
-        }
         if let crate::plans::PlanTarget::ShareCount(target) = plan.target() {
             if target == 0 || plan.filled_qty() > target {
                 // fault2144：计划份额目标/进度非法；仅身份前缀。
@@ -1981,7 +1986,7 @@ fn validate_plan_contract(context: &SaveValidationContext) -> Result<(), Session
         }
     }
     for cursor in save.plans.owner_sequences() {
-        if cursor.owner.0 > npc_count {
+        if !save.snapshot.accounts.contains_key(&cursor.owner) {
             // fault2690：游标属于未知账户，包含没有当前计划的历史游标。
             // ctx[0..2] = owner 高/低 u32。
             return Err(SessionError::InvalidSave(ValidationFault::new(
@@ -2245,11 +2250,19 @@ pub(super) fn validate_saved_order_state(
                 vec![lifecycle.order_id.0],
             )));
         }
-        if save
-            .plans
-            .active_plan(lifecycle.account, &lifecycle.code)
-            .is_some_and(|plan| plan.active_child_order_id() == Some(lifecycle.order_id))
-        {
+        let duplicates_plan_child = match save.plans.active_entry(lifecycle.account, &lifecycle.code) {
+            Some(crate::plans::PlanEntry::Investor(plan)) => plan.active_child_order_id() == Some(lifecycle.order_id),
+            Some(crate::plans::PlanEntry::IssuerRepurchase(plan)) => {
+                if plan.execution().is_some() {
+                    return Err(crate::company::CompanySystemError::SystemState(
+                        format!("公司计划 {:?} 尚未接入真实子单来源", plan.plan_id()),
+                    ).into());
+                }
+                false
+            }
+            None => false,
+        };
+        if duplicates_plan_child {
             // fault2171：NPC 报价生命周期订单与计划执行腿活跃子委托重复；ctx[0]=订单 id。
             return Err(SessionError::InvalidSave(ValidationFault::new(
                 2171,

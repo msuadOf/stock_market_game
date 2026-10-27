@@ -339,7 +339,7 @@ impl GameSession {
                     .cloned()
                     .collect();
                 codes.extend(participant.watchlist().stocks.keys().cloned());
-                codes.extend(self.state.plans.active_codes(id).cloned());
+                codes.extend(self.state.plans.active_investor_codes(id).cloned());
                 let issuer_of = |code: StockId| company_facts.issuer_of_stock(code).ok();
                 deliver_information_for_npc(
                     id,
@@ -494,7 +494,7 @@ mod tests {
                     .watchlist()
                     .stock(&code)
                     .is_some()),
-                "active_plan" => assert!(session.state.plans.active_plan(account, &code).is_some()),
+                "active_plan" => assert!(session.state.plans.active_investor_plan(account, &code).is_some()),
                 "faded" => {
                     assert!(!session.state.accounts[&account]
                         .positions()
@@ -503,7 +503,7 @@ mod tests {
                         .watchlist()
                         .stock(&code)
                         .is_none());
-                    assert!(session.state.plans.active_plan(account, &code).is_none());
+                    assert!(session.state.plans.active_investor_plan(account, &code).is_none());
                 }
                 _ => unreachable!(),
             }
@@ -557,7 +557,7 @@ mod tests {
                     .positions()
                     .contains_key(&code));
                 assert!(participant.watchlist().stock(&code).is_none());
-                assert!(session.state.plans.active_plan(account, &code).is_none());
+                assert!(session.state.plans.active_investor_plan(account, &code).is_none());
                 assert_eq!(
                     participant.information().observed_at_of(publication),
                     None,

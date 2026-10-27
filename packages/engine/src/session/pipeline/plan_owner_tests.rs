@@ -162,7 +162,7 @@ fn only_matching_settled_child_advances_and_completion_retains_linked_parent() {
     assert_eq!(owner.active_child_order_id(), None);
     assert_eq!(owner.active_child_remaining_qty(), None);
     assert!(owner.execution().is_none());
-    assert!(book.active_plan(AccountId(1), &StockId(0)).is_none());
+    assert!(book.active_investor_plan(AccountId(1), &StockId(0)).is_none());
     assert_eq!(before.plan(id).unwrap().filled_qty(), 0, "未修改的 snapshot 不受 owner 更新影响");
 }
 
