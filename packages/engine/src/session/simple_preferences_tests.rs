@@ -330,7 +330,7 @@ fn simple_preferences_restore_rejects_one_sided_config_edits_in_memory_and_json(
         assert!(matches!(super::persistence::validate_save_slot(&save),
             Err(SessionError::Step(StepFatal::InvariantViolation { location, description }))
                 if location == "validate_save_slot.company_system_config"
-                    && description.contains("company_system.config")
+                    && description.contains("company_state.CompanySystem.system.config")
                     && description.contains("setup.company_system")));
         assert!(GameSession::restore(&save).is_err());
         let decoded: SaveSlot =

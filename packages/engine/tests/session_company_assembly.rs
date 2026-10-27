@@ -525,7 +525,7 @@ include!("../test-support/simple_company.rs");
 
 #[test]
 fn source_b_simple_conflict_rejects_the_same_valid_legacy_group_before_assembly() {
-    let legacy = setup(&[CompanyKind::Industrial, CompanyKind::Industrial], true);
+    let legacy = setup(&[CompanyKind::Industrial, CompanyKind::Bank], true);
     GameSession::new(legacy.clone(), 17).expect("同一有效 Legacy 集团输入必须仍可创建");
     let mut selected = legacy;
     selected.company_system = Some(simple_company_fixture!(engine; ["600100", "600101"]));
