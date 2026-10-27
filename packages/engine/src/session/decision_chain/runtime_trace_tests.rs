@@ -18,13 +18,28 @@ fn d3_trace_session_with_day(institutions: u32, reports: bool, ticks_per_day: u6
         let crate::company::config::CompanySystemConfig::Simple(simple) = &mut config else {
             unreachable!("fixture 必须为 Simple");
         };
-        simple.prehistory_periods = 5;
+        // 所选 Simple 自己生成已公开年报，不借 Legacy 材料满足估值前置。
+        simple.prehistory_periods = 24;
         setup.company_system = Some(config);
         setup.dividend_tax_mode = Some(crate::company::cash_dividend_tax::CashDividendTaxMode::FlatWithholding);
         setup.flat_withholding_bp = Some(1_000);
         setup.par_value_per_share = Some(Money::from_cents(100));
     }
     let mut session = GameSession::new(setup, 42).unwrap();
+    if reports {
+        let stock = session.stock_id("000812").unwrap();
+        let company = session.state.issuer_of_stock(stock).unwrap();
+        let system = session.company_system().expect("报告正控必须选择 Simple");
+        assert_eq!(system.issuers().issuer_of(&StockCode("000812".to_owned())).unwrap(), company);
+        let through = session.chain_observation_instant();
+        let published = session.state.library.reports_for_company(&company, through);
+        assert!(!published.is_empty(), "D3 报告正控必须有所选公司真实已公开材料");
+        assert!(published.iter().all(|report| report.company == company
+            && report.source == crate::information::PublicationSource::SimpleGenerated
+            && report.published_at <= through), "D3 不得用 Legacy 或未来材料补足公开前置");
+        assert!(published.iter().any(|report| report.reports.kind == crate::accounting::reports::ReportKind::Annual),
+            "EarningsMultiple 正控必须已有真实公开年报");
+    }
     let ids = prepare_company_source_personal_inputs(&mut session, true);
     assert_eq!(ids.len(), institutions as usize);
     for account in &ids {
