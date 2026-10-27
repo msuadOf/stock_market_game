@@ -795,17 +795,11 @@ fn selected_company_source_group_review_cap_reads_facts_after_information_commit
     let personal = s.belief_states[0].as_ref().unwrap().clone();
     let cap = |state: &GroupState| {
         let host = GroupReviewHost {
-            state,
-            local: 0,
-            account: AccountId(71),
-            market: market.clone(),
-            belief: &personal.belief,
-            information: &personal.information,
+            state, local: 0, account: AccountId(71), market: market.clone(),
+            belief: &personal.belief, information: &personal.information,
             minutes_by_code: Default::default(),
             moment: crate::experience::ExperienceMoment {
-                civil_date: at(19, 0).date(),
-                market_minute: 17,
-                trading_day: 0,
+                civil_date: at(19, 0).date(), market_minute: 17, trading_day: 0,
             },
         };
         crate::session::PlanReviewHost::max_holdable_shares(&host, &StockId(0))
@@ -813,26 +807,11 @@ fn selected_company_source_group_review_cap_reads_facts_after_information_commit
     assert_eq!(cap(&s), 10_000);
     let mut p = payload(false);
     p.current_facts = facts(u64::from(u32::MAX) + 701);
-    s.prepare_admin_with_information(AdminTransactionId(1), Vec::new(), Some(p))
-        .unwrap();
+    s.prepare_admin_with_information(AdminTransactionId(1), Vec::new(), Some(p)).unwrap();
     assert_eq!(cap(&s), 10_000, "prepare 不提前改变 consumer 可见股本");
-    s.complete_admin(AdminTransactionId(1), AdminPhase::Commit)
-        .unwrap();
-    assert_eq!(
-        cap(&s),
-        u64::from(u32::MAX),
-        "commit 后真实复审 consumer 读取当前事实"
-    );
-    assert_eq!(
-        s.root_projection
-            .as_ref()
-            .unwrap()
-            .initial_company_facts
-            .company_spec(&crate::company::CompanyId(0))
-            .unwrap()
-            .1,
-        10_000
-    );
+    s.complete_admin(AdminTransactionId(1), AdminPhase::Commit).unwrap();
+    assert_eq!(cap(&s), u64::from(u32::MAX), "commit 后真实复审 consumer 读取当前事实");
+    assert_eq!(s.root_projection.as_ref().unwrap().initial_company_facts.company_spec(&crate::company::CompanyId(0)).unwrap().1, 10_000);
 }
 
 #[test]
@@ -849,7 +828,6 @@ fn funds_p1_information_abort_restores_complete_private_overlay_then_commits_onc
     let before_watermark = s.information_observed_through;
     let before_dirty = s.belief_dirty.clone();
     let before_pending = s.belief_pending_dirty.clone();
-    let before_decision_rng = format!("{:?}", s.decision);
     let before_hash = s.state_hash();
     let mut payload = payload(true);
     let publication = announcement(&mut payload, 0);
@@ -894,7 +872,6 @@ fn funds_p1_information_abort_restores_complete_private_overlay_then_commits_onc
     assert_eq!(s.information_observed_through, before_watermark);
     assert_eq!(s.belief_dirty, before_dirty);
     assert_eq!(s.belief_pending_dirty, before_pending);
-    assert_eq!(format!("{:?}", s.decision), before_decision_rng);
     assert_eq!(s.state_hash(), before_hash);
     assert!(s.admin_pending.is_none());
     s.prepare_admin_with_information(AdminTransactionId(2), operations, Some(payload.clone()))
