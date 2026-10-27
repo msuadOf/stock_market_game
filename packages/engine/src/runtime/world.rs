@@ -81,11 +81,11 @@ pub struct GroupInformationPayload {
     pub now: crate::calendar::CivilInstant,
     pub day: u64,
     pub library: std::sync::Arc<crate::information::PublicLibrary>,
-    pub attentions: Vec<(
+    pub attentions: Vec<Vec<(
         super::LocalIdx,
         crate::AccountId,
         crate::session::NpcAttentionState,
-    )>,
+    )>>,
 }
 
 /// 信念个人态快照（D3a-2b Belief-1：watchlist/价格记忆/信息态/信念书
@@ -1452,12 +1452,29 @@ impl World {
                 stage: "deliver_information 通道面与组数不一致（世界已断连）".to_owned(),
             });
         }
-        for tx in &self.group_txs {
+        if payload.attentions.len() != self.n_groups {
+            return Err(RuntimeError::ProtocolInvariant {
+                detail: "信息投递 attention 分组数与真实组数不同".to_owned(),
+            });
+        }
+        // 所有分组先校验；禁止广播后才发现后组身份错误而留下部分个人写入。
+        for (group, rows) in payload.attentions.iter().enumerate() {
+            let roster = &self.information_roster[group];
+            let mut seen = std::collections::BTreeSet::new();
+            for (local, account, _) in rows {
+                if roster.get(*local as usize) != Some(account) || !seen.insert(*local) {
+                    return Err(RuntimeError::ProtocolInvariant {
+                        detail: format!("信息投递身份不匹配或重复：group={group} local={local} account={account:?}"),
+                    });
+                }
+            }
+        }
+        for (tx, attentions) in self.group_txs.iter().zip(&payload.attentions) {
             tx.send(GroupIn::InformationDelivery {
                 now: payload.now,
                 day: payload.day,
                 library: std::sync::Arc::clone(&payload.library),
-                attentions: payload.attentions.clone(),
+                attentions: attentions.clone(),
             })
             .map_err(|_| RuntimeError::SendFailed {
                 detail: "InformationDelivery 广播失败".to_owned(),
@@ -1465,11 +1482,37 @@ impl World {
         }
         let mut out = Vec::with_capacity(self.n_groups);
         let mut left = self.n_groups;
+        let mut seen_groups = std::collections::BTreeSet::new();
+        let expected_locals: Vec<std::collections::BTreeSet<_>> = payload.attentions.iter()
+            .map(|rows| rows.iter().map(|(local, _, _)| *local).collect()).collect();
         while left > 0 {
             match recv_deadline(&self.up_rx, Phase::Drain, &self.watchdog)? {
                 UpMsg::GroupDeliveryDone { group, updates } => {
+                    let sent = expected_locals.get(usize::from(group)).ok_or_else(|| {
+                        RuntimeError::ProtocolInvariant {
+                            detail: format!("信息投递回执未知组：group={group}"),
+                        }
+                    })?;
+                    if !seen_groups.insert(group) {
+                        return Err(RuntimeError::ProtocolInvariant {
+                            detail: format!("信息投递回执重复组：group={group}"),
+                        });
+                    }
+                    let mut seen_locals = std::collections::BTreeSet::new();
+                    for (local, _) in &updates {
+                        if !sent.contains(local)
+                            || !seen_locals.insert(*local)
+                        {
+                            return Err(RuntimeError::ProtocolInvariant {
+                                detail: format!("信息投递回执 local 未请求或重复：group={group} local={local}"),
+                            });
+                        }
+                    }
                     out.push((group, updates));
                     left -= 1;
+                }
+                UpMsg::Failed { who, error } => {
+                    return Err(RuntimeError::WorkerFailed { who, error: Box::new(error) });
                 }
                 other => {
                     return Err(RuntimeError::Disconnected {

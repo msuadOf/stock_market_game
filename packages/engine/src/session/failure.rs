@@ -623,6 +623,9 @@ impl GameSession {
         self.check_step_start()
             .map_err(|fatal| self.poison_runtime_step(fatal))?;
         self.with_routed_runtime_driver(|session, driver| {
+            if !(session.tick() + 1).is_multiple_of(session.state.setup.ticks_per_day) {
+                return session.runtime_step_with_prepared_mirror(driver, project).map(|value| (value, None));
+            }
             let seq_from = session.current_seq();
             let RuntimeStepInstall {
                 events,
@@ -670,6 +673,11 @@ impl GameSession {
         &mut self,
         driver: &mut crate::runtime::drive::RuntimeDriver,
     ) -> Result<Vec<Event>, StepFatal> {
+        if !(self.tick() + 1).is_multiple_of(self.state.setup.ticks_per_day) {
+            return self.runtime_step_with_prepared_mirror(driver, |_, facts| {
+                Ok(facts.into_iter().map(|fact| fact.event).collect())
+            });
+        }
         let installed = self.runtime_step_with_install_inner(driver, false)?;
         #[cfg(feature = "simulation-diagnostics")]
         self.publish_runtime_causal(installed.causal);
@@ -681,6 +689,73 @@ impl GameSession {
         self.runtime_clear_account_undo();
         drop(_seg_undo);
         Ok(installed.events)
+    }
+
+    /// 普通拍在私有镜像与全部输出验证成功后一次安装；失败保留 World 已发布事实。
+    pub(in crate::session) fn runtime_step_with_prepared_mirror<P>(
+        &mut self,
+        driver: &mut crate::runtime::drive::RuntimeDriver,
+        project: impl FnOnce(crate::session::protocol::TickCandidateProjection<'_>, Vec<crate::session::protocol::EventFact>) -> Result<P, StepFatal>,
+    ) -> Result<P, StepFatal> {
+        self.require_healthy()?;
+        self.runtime_clear_account_undo();
+        #[cfg(test)]
+        self.compute_context().t1_probes.queue_attempt_seq.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let tick = self.tick().checked_add(1).ok_or_else(|| self.poison_runtime_step(StepFatal::InvariantViolation {
+            location: "runtime_mirror::prepare".to_owned(), description: "运行 tick 溢出".to_owned(),
+        }))?;
+        let seq_from = self.seq();
+        driver.adopt_session_seq(self);
+        crate::verification_evidence::begin_authoritative_tick(self.tick(), self.compute_context())?;
+        #[cfg(feature = "simulation-diagnostics")]
+        let causal_time = self.causal_time();
+        let prepared = driver.prepare_driver_step(self).and_then(|input| self.prepare_runtime_mirror(driver, input, tick));
+        let mut prepared = prepared.map_err(|description| {
+            let fatal = StepFatal::InvariantViolation { location: "runtime_mirror::prepare".to_owned(), description };
+            #[cfg(feature = "simulation-diagnostics")]
+            driver.retain_pending_causal_failure(causal_time, fatal.clone());
+            self.poison_runtime_step(fatal)
+        })?;
+        #[cfg(feature = "simulation-diagnostics")]
+        let causal = self.prepare_runtime_causal_at(driver, causal_time, tick)
+            .map_err(|fatal| self.poison_runtime_step(fatal))?;
+        #[cfg(test)]
+        if let Some(fatal) = self.post_shadow_failure.take() {
+            #[cfg(feature = "simulation-diagnostics")]
+            driver.retain_terminal_causal(causal.time, causal.raw, fatal.clone());
+            return Err(self.poison_runtime_step(fatal));
+        }
+        crate::verification_evidence::enter_phase(crate::session::pipeline::TickPhase::PreCommitValidation);
+        if let Err(fatal) = crate::verification_evidence::validate_precommit() {
+            #[cfg(feature = "simulation-diagnostics")]
+            driver.retain_terminal_causal(causal.time, causal.raw, fatal.clone());
+            return Err(self.poison_runtime_step(fatal));
+        }
+        #[cfg(test)]
+        let has_events = !prepared.events.is_empty();
+        let facts = crate::runtime::event_bridge::event_facts_with_stable_keys(std::mem::take(&mut prepared.events));
+        let value = match project(crate::session::protocol::TickCandidateProjection::from_prepared(&prepared.projection, seq_from), facts) {
+            Ok(value) => value,
+            Err(fatal) => {
+                #[cfg(feature = "simulation-diagnostics")]
+                driver.retain_terminal_causal(causal.time, causal.raw, fatal.clone());
+                return Err(self.poison_runtime_step(fatal));
+            }
+        };
+        if let Err(fatal) = self.validate_runtime_mirror_source(driver, &prepared) {
+            #[cfg(feature = "simulation-diagnostics")]
+            driver.retain_terminal_causal(causal.time, causal.raw, fatal.clone());
+            return Err(self.poison_runtime_step(fatal));
+        }
+        self.install_runtime_mirror(driver, prepared);
+        #[cfg(feature = "simulation-diagnostics")]
+        self.publish_runtime_causal(causal);
+        crate::verification_evidence::enter_phase(crate::session::pipeline::TickPhase::CommitTick);
+        crate::verification_evidence::mark_committed(tick);
+        #[cfg(test)]
+        crate::runtime::drive::RuntimeDriver::record_root_handover(self, tick, has_events);
+        self.runtime_clear_account_undo();
+        Ok(value)
     }
 
     /// step_frame 接轨件 4：同 [`Self::runtime_step_with_install`]，但
@@ -2069,6 +2144,11 @@ impl GameSession {
         }
     }
 
+    /// 只借用 participant 名册，避免仅判断存在性时深克隆全部个人态。
+    pub(crate) fn runtime_has_belief_participant(&self, account: crate::AccountId) -> bool {
+        self.state.belief_participants.contains_key(&account)
+    }
+
     /// 信念个人态只读投影（D3a-2b Belief-1：构造投影/同源校验源）。
     pub fn runtime_belief_states(
         &self,
@@ -2672,6 +2752,9 @@ impl GameSession {
 
 
     pub(super) fn poison_failed_step(&mut self, fatal: StepFatal) -> StepFatal {
+        if let Some(first) = &self.poison {
+            return first.clone();
+        }
         self.poison = Some(fatal.clone());
         fatal
     }

@@ -47,36 +47,7 @@ impl crate::session::GameSession {
         // D5 attention：runtime 形态（desk 镜像在位）——玩家在途从镜像
         /// （desk 权威）；venue=当前相位撮合模式。
         if !self.state.desk_book_mirror.is_empty() {
-            let auction = matches!(
-                self.phase(),
-                crate::TradingPhase::CallAuction | crate::TradingPhase::ClosingAuction
-            );
-            for (code, mirror) in &self.state.desk_book_mirror {
-                for (owner, side, price, qty, serial, _, _) in &mirror.orders {
-                    if *owner != crate::AccountId(0) || *qty == 0 {
-                        continue;
-                    }
-                    orders.push(PlayerWorkingOrder {
-                        id: *serial,
-                        code: code.clone(),
-                        side: *side,
-                        price: *price,
-                        remaining_qty: *qty,
-                        venue: if auction {
-                            OrderVenue::Auction
-                        } else {
-                            OrderVenue::Continuous
-                        },
-                        frozen: if *side == Side::Buy {
-                            FrozenAsset::Cash
-                        } else {
-                            FrozenAsset::Shares
-                        },
-                    });
-                }
-            }
-            orders.sort_by_key(|order| order.id);
-            return orders;
+            return working_orders_from_mirror(&self.state.desk_book_mirror, self.phase());
         }
         for (code, market) in &self.state.markets {
             for order in market.resting_orders_for(crate::AccountId(0)) {
@@ -105,4 +76,42 @@ impl crate::session::GameSession {
         orders.sort_by_key(|order| order.id);
         orders
     }
+}
+
+/// 生产读面与私有 candidate 共用同一簿投影，不临时安装后再读取。
+pub(in crate::session) fn working_orders_from_mirror(
+    mirrors: &std::collections::BTreeMap<StockId, crate::session::DeskBookMirror>,
+    phase: crate::TradingPhase,
+) -> Vec<PlayerWorkingOrder> {
+    let mut orders = Vec::new();
+    let auction = matches!(
+        phase,
+        crate::TradingPhase::CallAuction | crate::TradingPhase::ClosingAuction
+    );
+    for (code, mirror) in mirrors {
+        for (owner, side, price, qty, serial, _, _) in &mirror.orders {
+            if *owner != crate::AccountId(0) || *qty == 0 {
+                continue;
+            }
+            orders.push(PlayerWorkingOrder {
+                id: *serial,
+                code: code.clone(),
+                side: *side,
+                price: *price,
+                remaining_qty: *qty,
+                venue: if auction {
+                    OrderVenue::Auction
+                } else {
+                    OrderVenue::Continuous
+                },
+                frozen: if *side == Side::Buy {
+                    FrozenAsset::Cash
+                } else {
+                    FrozenAsset::Shares
+                },
+            });
+        }
+    }
+    orders.sort_by_key(|order| order.id);
+    orders
 }

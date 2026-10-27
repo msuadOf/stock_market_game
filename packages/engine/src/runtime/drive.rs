@@ -16,6 +16,8 @@ use super::event_bridge::{
     collect_lifecycle, project_auction_events, project_lifecycle_events, project_trade_events,
 };
 use super::world::World;
+mod convergence;
+pub(crate) use convergence::PreparedDriverStep;
 use crate::money::Money;
 use crate::strategy::StrategyData;
 use crate::{AccountId, Event, GameSession, SessionSetup};
@@ -164,6 +166,12 @@ pub struct RuntimeDriver {
     pending_receipts: Vec<crate::session::personal_trade_history::PendingTradeReceipt>,
     #[cfg(feature = "simulation-diagnostics")]
     pending_causal: Vec<super::diagnostics::DeskCausalFact>,
+    #[cfg(feature = "simulation-diagnostics")]
+    terminal_causal: Option<(
+        crate::diagnostics::causal::FactTime,
+        Vec<super::diagnostics::DeskCausalFact>,
+        crate::session::StepFatal,
+    )>,
     /// 初始发布 v0 的 resting 观察面为空；接管的真实种子在首拍前另记存在性。
     #[cfg(feature = "simulation-diagnostics")]
     initial_causal_resting: bool,
@@ -587,6 +595,8 @@ impl RuntimeDriver {
             #[cfg(feature = "simulation-diagnostics")]
             pending_causal: Vec::new(),
             #[cfg(feature = "simulation-diagnostics")]
+            terminal_causal: None,
+            #[cfg(feature = "simulation-diagnostics")]
             initial_causal_resting,
             #[cfg(all(test, feature = "simulation-diagnostics"))]
             unresolved_causal_source_for_test: false,
@@ -645,6 +655,7 @@ impl RuntimeDriver {
     /// 驱动一个 tick：runtime 收束 → 账户/行情回写会话 → 事件产出。
     /// 会话 tick 由调用方（或批 8e 的 step_frame 本体）推进。
     pub fn step(&mut self, session: &mut GameSession) -> Result<Vec<Event>, String> {
+        session.require_healthy().map_err(|fatal| fatal.to_string())?;
         // D3a-2c 件2：自然日同步（会话 civil clock 权威——快照 civil_date
         // 的唯一来源；休市日跳变经此传导）。
         self.world.set_civil_date(session.civil_date());
@@ -660,6 +671,11 @@ impl RuntimeDriver {
 
     /// step 本体（D4：捕获绑定已挂）——驱动器侧相位对齐旧管线 10 相。
     fn step_with_capture(&mut self, session: &mut GameSession) -> Result<Vec<Event>, String> {
+        let prepared = self.prepare_step_with_capture(session)?;
+        self.install_driver_projection(session, prepared)
+    }
+
+    fn prepare_step_with_capture(&mut self, session: &GameSession) -> Result<PreparedDriverStep, String> {
         // P0 画像：本函数各段用块作用域 + guard 计时（未启用=零成本）。
         use super::step_profile::{self, StepSegment};
         // D4 相位：密封分配快照段（tick 起点，组/部广播前）。
@@ -803,23 +819,6 @@ impl RuntimeDriver {
                 shards
             }
         };
-        // 【P0 画像】acct_writeback 段（session 镜像回写循环——Arc 借用）。
-        {
-            let _seg = step_profile::scope(StepSegment::AcctWriteback);
-            self.install_account_projection(
-                session,
-                snapshots.iter().enumerate().flat_map(|(g, accounts)| {
-                    accounts
-                        .iter()
-                        .map(move |(local, acct)| (g, *local, acct.as_ref()))
-                }),
-                &buy_vwap,
-                &last_prices,
-            );
-            // P2-1b：本 tick 事实集传下一拍（并集自身不传递——否则一旦
-            // dirty 永远 dirty）；日结强制标记在此消费（本次已全量）。
-            self.force_full_accounts = false;
-        }
         // 事件：Trade（双腿）+ 生命周期（受理/撤单/到期）+ 回执拒收。
         let rec = fact_rec;
         // Q2 批 4（D3 退役）：同拍成交公开投影删除——Seal 落账（批 2）
@@ -908,66 +907,31 @@ impl RuntimeDriver {
             }
             (trades, events)
         };
-        let outcome = Ok(events);
         // D4 相位：派生审计段（回写后对账面——本批为标记位，D3 候选
         // 校验接入后承载实质校验计时）。
         crate::verification_evidence::enter_phase(
             crate::session::pipeline::TickPhase::DerivationAudit,
         );
-        // Sol 整改个人态交付投影：组权威个人态（observe 演进）上行→
-        // session 镜像回写（reference/peak equity 等读面；Belief-1b 的
-        // information 域投递回写保持——整态覆盖与其同源）。
-        // 【P0 画像】belief_echo 段（D1 EchoBelief 残余=session 整态安装；
-        /// P2-2：独立 EchoBelief 往返退役——稀疏分片已随 GroupReport 上行
-        /// 进发布版本，此处从发布版本读（读面归 owner 内生维护）。
+        let mut personals = Vec::new();
         {
-            let _seg = step_profile::scope(StepSegment::BeliefEcho);
-            // P2-2e（bel 刀 a，零等价负担）：发布版本直接借用迭代——
-            /// 原 collect 逐条 clone 出中间 Vec+cache 再 clone 共两层冗余
-            /// 深拷贝；改为借用安装（&snapshot）后 cache move（同值所有权
-            /// 转移，语义不变：缓存条目==安装条目==发布条目）。
-            {
-                let published = self.world.publication().load();
-                if published.tick != self.world.global.committed_tick {
-                    return Err(format!(
-                        "发布版本滞后：published={} 而 committed={}（单点发布不变量破坏）",
-                        published.tick, self.world.global.committed_tick
-                    ));
-                }
-                for shard in &published.groups {
-                    // P2-2a：稀疏条目=本 tick 生产演进位（组端已滤非
-                    /// dirty——上行即 dirty）。逐条重装 session 镜像并
-                    /// 增量维护全量缓存（读面语义）。等价不变式：
-                    /// 缓存/镜像与组端只在 dirty 通道同步、构造期同源。
-                    for (local, snapshot) in shard.belief.iter() {
-                        let global =
-                            shard.group as usize * self.accounts_per_group + *local as usize;
-                        let Some(&id) = self.id_map.get(global) else {
-                            continue;
-                        };
-                        #[cfg(test)]
-                        {
-                            self.personal_installs += 1;
-                        }
-                        // 先借用安装、后 move 入缓存——省原顺序的
-                        /// snapshot.clone()（缓存持有的是安装的同一份值）。
-                        session.set_runtime_personal_state(id, snapshot);
-                        if let Some(slot) = self.belief_cache.get_mut(global) {
-                            *slot = Some(snapshot.clone());
-                        }
+            let published = self.world.publication().load();
+            if published.tick != self.world.global.committed_tick {
+                return Err(format!("个人态发布版本滞后：{} != {}", published.tick, self.world.global.committed_tick));
+            }
+            for shard in &published.groups {
+                for (local, snapshot) in shard.belief.iter() {
+                    let owner = (shard.group, *local);
+                    let id = self.account_by_owner(owner)
+                        .ok_or_else(|| format!("个人态 owner 不在真实名册：{owner:?}"))?;
+                    if snapshot.information.owner() != id || snapshot.belief.npc() != id {
+                        return Err(format!("个人态属主不匹配：owner={owner:?} account={id:?}"));
                     }
+                    personals.push((self.global_index(owner), id, snapshot.clone()));
                 }
             }
         }
-        // D5 #4：首买经历 init（回写/投影段收集——个人态整态回写之后
-        /// 执行，组权威经验行不冲掉首买条目）。
-        // 【P0 画像】hold_inits 段。
-        {
-            let _seg = step_profile::scope(StepSegment::HoldInits);
-            self.install_pending_hold_inits(session, None)?;
-        }
         // EveryTick 完整读取全部组；先验证唯一归属，再一次安装镜像。
-        {
+        let plans = {
             let _seg = step_profile::scope(StepSegment::PlansEcho);
             let shards = self.world.collect_plans()
                 .map_err(|error| format!("计划簿交付投影失败：{error:?}"))?;
@@ -975,28 +939,27 @@ impl RuntimeDriver {
                 shards, &self.id_map, self.world.n_groups(),
                 self.accounts_per_group, self.plan_policy,
             ).map_err(|error| format!("计划簿完整汇合失败：{error:?}"))?;
-            session.set_runtime_plans(plans);
-        }
-        // D3b 件 1：成交触达账户的个人记忆裁剪（同拍——组内 prune 在下一
-        // Start 落账；个人态同步在上方用组镜像整态覆盖，裁剪必须在其后；
-        // 下一拍组镜像已裁剪同值，双写不漂移）。
-        // 【P0 画像】memory_prune 段（D3）。
-        {
-            let _seg = step_profile::scope(StepSegment::MemoryPrune);
-            if !trades.is_empty() {
-                let mut touched: Vec<crate::AccountId> = trades
-                    .iter()
-                    .flat_map(|tr| [tr.maker, tr.taker])
-                    .filter_map(|owner| self.id_map.get(self.global_index(owner)).copied())
-                    .collect();
-                touched.sort();
-                touched.dedup();
-                for account in touched {
-                    session.runtime_prune_personal_memory(account);
-                }
+            plans
+        };
+        let mut touched = Vec::new();
+        for trade in &trades {
+            for owner in [trade.maker, trade.taker] {
+                let account = self.account_by_owner(owner)
+                    .ok_or_else(|| format!("成交个人裁剪 owner 不在真实名册：{owner:?}"))?;
+                touched.push((self.global_index(owner), account));
             }
         }
-        outcome
+        touched.sort();
+        touched.dedup();
+        Ok(PreparedDriverStep {
+            accounts: snapshots,
+            buy_vwap,
+            last_prices,
+            personals,
+            plans,
+            touched,
+            events,
+        })
     }
 
     /// 事件 seq 游标（诊断）。
@@ -1132,13 +1095,14 @@ impl RuntimeDriver {
     ///   恢复 day/seq 及本次账户/经历/个人确认镜像；既有 retained 发布
     ///   与 civil 其他域的跨域事务边界不由此局部镜像基线承诺。
     pub fn day_end(&mut self, session: &mut GameSession) -> Result<(), String> {
+        session.require_healthy().map_err(|fatal| fatal.to_string())?;
         #[cfg(feature = "simulation-diagnostics")]
         self.ensure_causal_day_end_supported()?;
         let restore_mirror = session.runtime_day_end_mirror_rollback();
         let pending_before = self.pending_hold_inits.clone();
         let force_before = self.force_full_accounts;
         let result = self.day_end_inner(session);
-        if result.is_err() {
+        if result.is_err() && session.poison_reason().is_none() {
             restore_mirror(session);
             self.pending_hold_inits = pending_before;
             self.force_full_accounts = force_before;
@@ -1204,14 +1168,14 @@ impl RuntimeDriver {
         }
         // 会话自然日推进（公司调度/关账/披露/civil clock——旧引擎权威）。
         if let Err(e) = session.end_civil_day() {
-            self.rollback_day_end(
-                session,
-                day_before,
-                seq_before,
-                next_seq_before,
-                drained_len_before,
-            );
-            return Err(format!("自然日推进失败（World 日结与账户镜像已回滚）：{e:?}"));
+            let fatal = match e {
+                crate::session::SessionError::Step(fatal) => fatal,
+                error => crate::session::StepFatal::InvariantViolation {
+                    location: "RuntimeDriver::day_end::civil".to_owned(),
+                    description: format!("市场日结安装后的自然日推进失败：{error}"),
+                },
+            };
+            return Err(session.poison_runtime_step(fatal).to_string());
         }
         // D3a-2c 件2：日结后同步自然日（快照 civil_date 跟随 civil clock）。
         self.world.set_civil_date(session.civil_date());
@@ -1856,13 +1820,14 @@ impl RuntimeDriver {
         &mut self,
         session: &mut GameSession,
     ) -> Result<(), String> {
+        session.require_healthy().map_err(|fatal| fatal.to_string())?;
         #[cfg(feature = "simulation-diagnostics")]
         self.ensure_causal_day_end_supported()?;
         let restore_mirror = session.runtime_day_end_mirror_rollback();
         let pending_before = self.pending_hold_inits.clone();
         let force_before = self.force_full_accounts;
         let result = self.day_end_with_runtime_market_day_inner(session);
-        if result.is_err() {
+        if result.is_err() && session.poison_reason().is_none() {
             restore_mirror(session);
             self.pending_hold_inits = pending_before;
             self.force_full_accounts = force_before;
@@ -1919,14 +1884,14 @@ impl RuntimeDriver {
         }
         // 会话自然日推进（公司调度/关账/披露/civil clock——旧引擎权威）。
         if let Err(e) = session.end_civil_day() {
-            self.rollback_day_end(
-                session,
-                day_before,
-                seq_before,
-                next_seq_before,
-                drained_len_before,
-            );
-            return Err(format!("自然日推进失败（World 日结与账户镜像已回滚）：{e:?}"));
+            let fatal = match e {
+                crate::session::SessionError::Step(fatal) => fatal,
+                error => crate::session::StepFatal::InvariantViolation {
+                    location: "RuntimeDriver::day_end_with_runtime_market_day::civil".to_owned(),
+                    description: format!("市场日结安装后的自然日推进失败：{error}"),
+                },
+            };
+            return Err(session.poison_runtime_step(fatal).to_string());
         }
         // Sol 六审段 1.2 取证修复：日结 drained 事件（含收盘竞价清算
         /// AuctionTick/AuctionCompleted）经 next_seq 分配后**回写会话
@@ -2178,6 +2143,7 @@ impl RuntimeDriver {
     /// 推进；回写**仅 information 域**——权威调和见设计注记）。
     /// 返回回写条数。
     pub fn deliver_information(&mut self, session: &mut GameSession) -> Result<usize, String> {
+        session.require_healthy().map_err(|fatal| fatal.to_string())?;
         let (version, library) = session.runtime_library_handle();
         if Some(version) == self.last_library_version {
             return Ok(0);
@@ -2193,6 +2159,7 @@ impl RuntimeDriver {
         &mut self,
         session: &mut GameSession,
     ) -> Result<usize, String> {
+        session.require_healthy().map_err(|fatal| fatal.to_string())?;
         let (version, library) = session.runtime_library_handle();
         let updates = self.collect_delivery(session, library)?;
         self.last_library_version = Some(version);
@@ -2212,11 +2179,28 @@ impl RuntimeDriver {
         let attentions_full = session.runtime_attention_full_states();
         let by_id: std::collections::BTreeMap<crate::AccountId, _> =
             attentions_full.into_iter().collect();
-        let mut attentions = Vec::new();
-        for (local, id) in self.id_map.iter().enumerate() {
-            if let Some(state) = by_id.get(id) {
-                attentions.push((local as super::LocalIdx, *id, state.clone()));
+        let mut attentions = vec![Vec::new(); self.world.n_groups()];
+        for (global, id) in self.id_map.iter().enumerate() {
+            let account = session.account(*id)
+                .ok_or_else(|| format!("信息投递名册账户缺失：{id:?}"))?;
+            let strategy = account.strategy();
+            let required = strategy.is_some_and(|strategy| {
+                strategy.retail_style().is_some() || strategy.belief_chain_params().is_some()
+            });
+            if !session.runtime_has_belief_participant(*id) {
+                if required {
+                    return Err(format!("信息投递实际策略要求个人态但 participant 缺失：{id:?}"));
+                }
+                // 无个人信息能力的真实账户不属于投递名册；不是缺少 attention 的 fallback。
+                continue;
             }
+            if strategy.is_none() {
+                return Err(format!("信息投递 participant 存在但无实际策略：{id:?}"));
+            }
+            let state = by_id.get(id)
+                .ok_or_else(|| format!("信息投递 participant 缺 attention：{id:?}"))?;
+            let (group, local) = (global / self.accounts_per_group, global % self.accounts_per_group);
+            attentions[group].push((local as super::LocalIdx, *id, state.clone()));
         }
         let payload = super::world::GroupInformationPayload {
             now,
@@ -2231,13 +2215,10 @@ impl RuntimeDriver {
         let mut updates = Vec::new();
         for (g, group_updates) in collected {
             for (local, state) in group_updates {
-                if let Some(id) = self
-                    .id_map
-                    .get(g as usize * self.accounts_per_group + local as usize)
-                    .copied()
-                {
-                    updates.push((id, state));
-                }
+                let id = self.account_by_owner((g, local)).ok_or_else(|| {
+                    format!("信息投递回执 owner 不在真实名册：group={g} local={local}")
+                })?;
+                updates.push((id, state));
             }
         }
         Ok(updates)
@@ -2575,46 +2556,7 @@ impl RuntimeDriver {
                 // 捕获首例抓栈。roots 非空标记=本 tick 事件非空（生产
                 // 产物面——映射登记）。
                 #[cfg(test)]
-                {
-                    let probes = &session.compute_context().t1_probes;
-                    let handover_seq = probes
-                        .root_handover_seq
-                        .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
-                        + 1;
-                    // 交付槽消费（同计数域：完成=奇数位、交付=紧邻偶数位
-                    // ——旧管线交付侧 fetch；runtime 交付即事件返回本身，
-                    // 槽位仍须成对推进以保奇偶语义）。
-                    let _delivery_slot = probes
-                        .root_handover_seq
-                        .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
-                        + 1;
-                    let attempt =
-                        probes.queue_attempt_seq.load(std::sync::atomic::Ordering::SeqCst);
-                    let roots = usize::from(!events.is_empty());
-                    let mut trace = probes
-                        .root_handover_trace
-                        .lock()
-                        .expect("root 交接见证锁被 poison");
-                    let capture_ordinal =
-                        trace.iter().filter(|r| r.tick == tick_after).count() as u32 + 1;
-                    let backtrace = if capture_ordinal >= 2
-                        && trace.iter().all(|r| r.backtrace.is_none())
-                    {
-                        Some(format!("{:?}", std::backtrace::Backtrace::force_capture()))
-                    } else {
-                        None
-                    };
-                    trace.push(crate::compute::RootHandoverRecord {
-                        // 旧口径：记录 tick=消费 tick（步进前值——交接
-                        // 发生在被消费 tick 的执行相位）。
-                        tick: tick_after - 1,
-                        attempt,
-                        roots,
-                        handover_seq,
-                        capture_ordinal,
-                        backtrace,
-                    });
-                }
+                Self::record_root_handover(session, tick_after, !events.is_empty());
                 Ok(events)
             }
             Err(runtime_err) => {
