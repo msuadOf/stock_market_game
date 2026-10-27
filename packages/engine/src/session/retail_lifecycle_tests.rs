@@ -135,6 +135,7 @@ fn partial_fill(game: &mut GameSession, driver: &mut RuntimeDriver) -> OrderId {
 #[test]
 fn d2b_retail_same_tick_300_fills_100_and_cancels_200() {
     let (mut game, mut driver) = fixture(100);
+    let cost = crate::runtime::retail_lifecycle::cost_probe::Arm::new();
     driver.collect_resting_facts_live().expect("读取真实初始 desk 游标");
     let first = driver.desk_next_serials()[0];
     // 两次 Place 后才处理同批 Cancel；预测仅用于命令，结果再对真实 Trade 身份。
@@ -169,6 +170,15 @@ fn d2b_retail_same_tick_300_fills_100_and_cancels_200() {
             if *account == BUYER && *code == CODE && *id == actual
     )));
     assert!(driver.collect_resting_facts().expect("同拍撤后真实订单簿")[0].is_empty());
+    let reports = cost.take();
+    assert_eq!(reports.len(), 1);
+    let report = &reports[0];
+    assert_eq!((report.raw_len, report.resolved_len), (4, 5));
+    assert!(report.raw_capacity <= 8 && report.resolved_capacity <= 8);
+    assert_eq!((report.raw_element_bytes, report.resolved_element_bytes), (32, 56));
+    assert!(driver.world_report_log().iter().all(|record| record.retail.is_empty()));
+    println!("D2b default 300/100/200 report cost: {reports:?}");
+
 }
 
 #[test]

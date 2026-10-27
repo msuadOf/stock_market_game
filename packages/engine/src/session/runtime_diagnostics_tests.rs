@@ -551,3 +551,24 @@ fn d2b_rich_desk_reject_is_explicit_unsupported_and_keeps_prior_candidate_unpubl
     checkpoint.poison_runtime_step(error);
     assert_eq!(game.session_state_hash().unwrap(), checkpoint.session_state_hash().unwrap());
 }
+
+#[test]
+fn d2b_feature_cost_300_100_200_uses_same_minimal_report_and_releases_record_copy() {
+    let mut game = d2_game();
+    let cost = crate::runtime::retail_lifecycle::cost_probe::Arm::new();
+    d2_place(&mut game, 2, 1, crate::Side::Sell, 995, 100);
+    d2_place(&mut game, 0, 1, crate::Side::Buy, 995, 300);
+    game.enqueue_player_intent(AccountId(0), Intent::Cancel { code:StockId(1), id:OrderId((1_u64<<32)|2) }).unwrap();
+    let events = game.step_via_runtime().unwrap();
+    assert_eq!(events.iter().filter(|event| matches!(event, Event::Trade { qty:100, .. })).count(), 1);
+    assert_eq!(game.causal_diagnostics().unwrap().filled_qty, 200);
+    let reports = cost.take();
+    assert_eq!(reports.len(), 1);
+    let report = &reports[0];
+    assert_eq!((report.raw_len, report.resolved_len), (4, 5));
+    assert!(report.raw_capacity <= 8 && report.resolved_capacity <= 8);
+    assert_eq!((report.raw_element_bytes, report.resolved_element_bytes), (32, 56));
+    let driver = game.runtime_driver.as_ref().unwrap().lock().unwrap();
+    assert!(driver.world_report_log().iter().all(|record| record.retail.is_empty()));
+    println!("D2b feature 300/100/200 report cost: {reports:?}");
+}

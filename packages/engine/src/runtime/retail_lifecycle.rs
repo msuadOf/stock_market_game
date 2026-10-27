@@ -86,6 +86,8 @@ pub(crate) fn resolve_report(
     raw: Vec<RawFact>,
     trades: &[super::protocol::DeskTradeFact],
 ) -> Result<Vec<Fact>, super::protocol::RuntimeError> {
+    #[cfg(test)]
+    let observation = cost_probe::begin(raw.len(), raw.capacity(), context);
     let stock = context.stock();
     let fail = |detail: &str| super::protocol::RuntimeError::ProtocolInvariant {
         detail: format!("retail lifecycle {context:?}：{detail}"),
@@ -174,6 +176,8 @@ pub(crate) fn resolve_report(
     if expected != trades.len() {
         return Err(fail("TradeRef 未完整覆盖原 trades"));
     }
+    #[cfg(test)]
+    cost_probe::finish(observation, result.len(), result.capacity());
     Ok(result)
 }
 
@@ -287,5 +291,50 @@ mod tests {
             &[]
         )
         .is_err());
+    }
+}
+
+/// 仅测试 arm 时记录真实报告，不给 release 路径增加计时或采样字段。
+#[cfg(test)]
+pub(crate) mod cost_probe {
+    use super::*;
+    use std::{cell::RefCell, time::Instant};
+    #[derive(Debug)]
+    pub(crate) struct Observation {
+        pub context: BatchContext,
+        pub raw_len: usize,
+        pub raw_capacity: usize,
+        pub resolved_len: usize,
+        pub resolved_capacity: usize,
+        pub raw_element_bytes: usize,
+        pub resolved_element_bytes: usize,
+        pub elapsed_ns: u128,
+    }
+    thread_local! { static STATE: RefCell<Option<Vec<Observation>>> = const { RefCell::new(None) }; }
+    pub(crate) struct Arm;
+    impl Arm {
+        pub(crate) fn new() -> Self {
+            STATE.with(|state| { assert!(state.borrow().is_none()); *state.borrow_mut() = Some(Vec::new()); });
+            Self
+        }
+        pub(crate) fn take(self) -> Vec<Observation> {
+            STATE.with(|state| state.borrow_mut().take().expect("成本观测必须已 arm"))
+        }
+    }
+    impl Drop for Arm {
+        fn drop(&mut self) { STATE.with(|state| *state.borrow_mut() = None); }
+    }
+    pub(super) fn begin(raw_len: usize, raw_capacity: usize, context: BatchContext)
+        -> Option<(Instant, usize, usize, BatchContext)> {
+        STATE.with(|state| state.borrow().as_ref().map(|_| (Instant::now(), raw_len, raw_capacity, context)))
+    }
+    pub(super) fn finish(input: Option<(Instant, usize, usize, BatchContext)>, len: usize, capacity: usize) {
+        if let Some((start, raw_len, raw_capacity, context)) = input {
+            STATE.with(|state| state.borrow_mut().as_mut().expect("观测期间必须保持 arm").push(Observation {
+                context, raw_len, raw_capacity, resolved_len:len, resolved_capacity:capacity,
+                raw_element_bytes:std::mem::size_of::<RawFact>(),
+                resolved_element_bytes:std::mem::size_of::<Fact>(), elapsed_ns:start.elapsed().as_nanos(),
+            }));
+        }
     }
 }
