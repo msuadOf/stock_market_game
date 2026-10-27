@@ -104,8 +104,8 @@ fn legacy_wrapper_preserves_real_finance_and_can_return_same_owned_candidate() {
             .books(),
         operations.company(&CompanyId(0)).unwrap().books().books()
     );
-    assert_eq!(prepared.proof().reports().len(), 1);
-    let expected = prepared.proof().reports()[0].1.clone();
+    assert_eq!(prepared.proof().operations()[0].reports().len(), 1);
+    let expected = prepared.proof().operations()[0].reports()[0].1.clone();
     let (final_operations, final_closing) = prepared.into_source();
     assert_ne!(final_operations, before);
     assert_eq!(
