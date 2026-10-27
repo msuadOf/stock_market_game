@@ -1,0 +1,69 @@
+{
+  "maxParallel": 3,
+  "results": [
+    {
+      "name": "changed-excluding-App",
+      "argv": [
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/node_modules/oxlint/bin/oxlint",
+        "--deny-warnings",
+        "--threads",
+        "4",
+        "--no-ignore",
+        "apps/web/src/app/LocalRefreshViews.tsx",
+        "apps/web/src/components/company/CompanyPanel.tsx",
+        "apps/web/src/components/company/use-company-query.test.ts",
+        "apps/web/src/host/engine-host.ts",
+        "apps/web/src/host/remote-host.ts",
+        "apps/web/src/host/tauri-host.ts",
+        "apps/web/src/host/wasm-worker-ownership.test.ts",
+        "apps/web/src/host/wasm-worker.ts",
+        "apps/web/src/host/worker-host.ts",
+        "apps/web/src/components/company/CompanyReadPanel.tsx",
+        "apps/web/src/host/company-read.ts",
+        "apps/web/src/host/company-read.test.ts",
+        "apps/web/src/host/company-read-hosts.test.ts"
+      ],
+      "exit": 1,
+      "seconds": 0.2857657139975345
+    },
+    {
+      "name": "App-current",
+      "argv": [
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/node_modules/oxlint/bin/oxlint",
+        "--deny-warnings",
+        "--no-ignore",
+        "apps/web/src/App.tsx"
+      ],
+      "exit": 1,
+      "seconds": 0.298279138005455
+    },
+    {
+      "name": "App-head",
+      "argv": [
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/node_modules/oxlint/bin/oxlint",
+        "--config",
+        "apps/web/.oxlintrc.json",
+        "--deny-warnings",
+        "--no-ignore",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/agents/branch-completion/company-web-f5-read-2026-10-28/inherited-app-lint-v1/App.tsx"
+      ],
+      "exit": 1,
+      "seconds": 0.31700673399609514
+    }
+  ]
+}

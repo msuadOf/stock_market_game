@@ -1,0 +1,116 @@
+{
+  "maxParallel": 5,
+  "typeRootCount": 761,
+  "newRoots": [
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/components/company/CompanyReadPanel.tsx",
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/company-read.ts",
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/company-read.test.ts",
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/company-read-hosts.test.ts"
+  ],
+  "results": [
+    {
+      "name": "types-0",
+      "argv": [
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "--max-old-space-size=8192",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/node_modules/typescript/bin/tsc",
+        "-p",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/agents/branch-completion/company-web-f5-read-2026-10-28/static-v1/tsconfig-0.json",
+        "--noEmit",
+        "--incremental",
+        "false"
+      ],
+      "exit": 0,
+      "seconds": 6.985140770993894
+    },
+    {
+      "name": "types-1",
+      "argv": [
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "--max-old-space-size=8192",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/node_modules/typescript/bin/tsc",
+        "-p",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/agents/branch-completion/company-web-f5-read-2026-10-28/static-v1/tsconfig-1.json",
+        "--noEmit",
+        "--incremental",
+        "false"
+      ],
+      "exit": 0,
+      "seconds": 6.38423493099981
+    },
+    {
+      "name": "types-2",
+      "argv": [
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "--max-old-space-size=8192",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/node_modules/typescript/bin/tsc",
+        "-p",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/agents/branch-completion/company-web-f5-read-2026-10-28/static-v1/tsconfig-2.json",
+        "--noEmit",
+        "--incremental",
+        "false"
+      ],
+      "exit": 0,
+      "seconds": 7.04401276599674
+    },
+    {
+      "name": "types-3",
+      "argv": [
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "--max-old-space-size=8192",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/node_modules/typescript/bin/tsc",
+        "-p",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/agents/branch-completion/company-web-f5-read-2026-10-28/static-v1/tsconfig-3.json",
+        "--noEmit",
+        "--incremental",
+        "false"
+      ],
+      "exit": 0,
+      "seconds": 6.386348521991749
+    },
+    {
+      "name": "lint",
+      "argv": [
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/node_modules/oxlint/bin/oxlint",
+        "--deny-warnings",
+        "--no-ignore",
+        "apps/web/src/App.tsx",
+        "apps/web/src/app/LocalRefreshViews.tsx",
+        "apps/web/src/components/company/CompanyPanel.tsx",
+        "apps/web/src/components/company/use-company-query.test.ts",
+        "apps/web/src/host/engine-host.ts",
+        "apps/web/src/host/remote-host.ts",
+        "apps/web/src/host/tauri-host.ts",
+        "apps/web/src/host/wasm-worker.ts",
+        "apps/web/src/host/worker-host.ts",
+        "apps/web/src/components/company/CompanyReadPanel.tsx",
+        "apps/web/src/host/company-read.ts",
+        "apps/web/src/host/company-read.test.ts",
+        "apps/web/src/host/company-read-hosts.test.ts"
+      ],
+      "exit": 1,
+      "seconds": 0.27967899599752855
+    }
+  ]
+}

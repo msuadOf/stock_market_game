@@ -1,0 +1,8 @@
+{
+  "sources": 14,
+  "relativeToStaticV2Changed": [
+    "apps/web/src/host/company-read.test.ts",
+    "apps/web/src/host/company-read.ts"
+  ],
+  "issuerGreenReceiptSha256": "1c59128e421e13aed02d1659b742774818f04f74598e5be189ae04c708214783"
+}
