@@ -1,0 +1,13 @@
+diff --git a/packages/engine/src/session/protocol.rs b/packages/engine/src/session/protocol.rs
+index 896eddb8..5fd2d6be 100644
+--- a/packages/engine/src/session/protocol.rs
++++ b/packages/engine/src/session/protocol.rs
+@@ -5,6 +5,8 @@ use super::{DailyCandle, Event, Snapshot, StockId, TradingPhase};
+ use std::collections::{BTreeMap, BTreeSet};
+ mod civil;
+ mod commit;
++mod company_reads;
++pub use company_reads::{CompanyReadError, CompanyReadFailure, CompanyReadQuery, CompanyReadResult};
+ mod delta;
+ mod facts;
+ mod optional_u64;

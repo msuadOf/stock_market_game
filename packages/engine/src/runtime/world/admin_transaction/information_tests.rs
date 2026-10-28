@@ -8,6 +8,10 @@ use crate::{AccountId, StockId};
 use fixture::*;
 
 fn world() -> World {
+    world_with_cadence(crate::session::notices::NpcInformationCadence::Daily { checks: 1 })
+}
+
+fn world_with_cadence(cadence: crate::session::notices::NpcInformationCadence) -> World {
     let ids = [11, 37, 51, 79, 113].map(AccountId);
     let mut spec = basic_spec(3, 2, 2, Box::new(|_| Box::new(|_, _| TickPlan::default())));
     spec.ticks_per_day = 100;
@@ -17,6 +21,7 @@ fn world() -> World {
         .enumerate()
         .map(|(i, &id)| {
             let mut p = personal(id);
+            p.attention.information_cadence = cadence;
             p.watchlist
                 .stocks
                 .insert(StockId(if i == 4 { 1 } else { 0 }), Default::default());
@@ -255,5 +260,278 @@ fn info_world_06_candidate_validator_rejects_bad_local_account_and_snapshot_owne
         }
         assert!(w.validate_information_candidate(&c, Some(&p)).is_err());
     }
+    w.shutdown().unwrap();
+}
+
+/// None 观察的材料变化也要刷新；真实 no-op 不造 revision，过期 ack 不清旧原因。
+#[test]
+fn info_material_only_revision_noop_and_exact_ack_follow_actual_write_set() {
+    let mut w = world();
+    let mut p = payload(false);
+    announcement(&mut p, 0);
+    let source0 = w.mirror_source();
+    let groups = snapshot(&mut w, p.clone());
+    assert!(groups
+        .iter()
+        .all(|group| group.information.as_ref().unwrap().personals.is_empty()));
+    let source1 = w.mirror_source();
+    assert_eq!(
+        (source1.tick, source1.generation),
+        (source0.tick, source0.generation)
+    );
+    assert_eq!(source1.non_tick_revision, source0.non_tick_revision + 1);
+    let dirty1 = w.pending_mirror_domains();
+    assert!(
+        dirty1.personal_full,
+        "无personals但library/facts真改也需要Full"
+    );
+    snapshot(&mut w, p.clone());
+    assert_eq!(
+        w.mirror_source(),
+        source1,
+        "全材料相等的真实no-op不推进成功游标"
+    );
+    assert_eq!(w.pending_mirror_domains(), dirty1);
+    w.with_admin_transaction(
+        vec![(
+            0,
+            vec![AdminOperation::CashDividend {
+                local: 0,
+                stock: 0,
+                amount: 1,
+            }],
+        )],
+        |_| Ok(()),
+    )
+    .unwrap();
+    let source2 = w.mirror_source();
+    assert_eq!(source2.non_tick_revision, source1.non_tick_revision + 1);
+    let dirty2 = w.pending_mirror_domains();
+    assert!(
+        dirty2.accounts_full && dirty2.personal_full,
+        "连续同tick多域写集OR保留"
+    );
+    assert!(
+        w.prepare_mirror_ack(source1, dirty1).is_err(),
+        "旧来源不能ack较新写集"
+    );
+    assert_eq!(w.pending_mirror_domains(), dirty2, "失败ack不清任何旧原因");
+    let ack = w.prepare_mirror_ack(source2, dirty2).unwrap();
+    w.ack_prepared_mirror(ack);
+    assert!(
+        w.pending_mirror_domains().is_empty(),
+        "精确成功ack才清捕获原因"
+    );
+    snapshot(&mut w, p);
+    assert_eq!(w.mirror_source(), source2);
+    assert!(w.pending_mirror_domains().is_empty());
+    w.shutdown().unwrap();
+}
+
+/// I2：Immediate 的 next_after(now)=now，只有完整签名才能拒绝重复本人计算。
+#[test]
+fn same_signature_immediate_information_does_not_recompute_personal() {
+    let mut w = world_with_cadence(crate::session::notices::NpcInformationCadence::Immediate);
+    let mut p = payload(true);
+    announcement(&mut p, 0);
+    let first = snapshot(&mut w, p.clone());
+    let first_count: usize = first
+        .iter()
+        .map(|group| group.information.as_ref().unwrap().personals.len())
+        .sum();
+    assert_eq!(
+        first_count, 5,
+        "首次三个真实组的五人都必须完成观察，不以空名册自证去重"
+    );
+    let source = w.mirror_source();
+    let pending = w.pending_mirror_domains();
+    let before = w.collect_group_belief().unwrap();
+    let second = snapshot(&mut w, p);
+    assert!(
+        second
+            .iter()
+            .all(|group| group.information.as_ref().unwrap().personals.is_empty()),
+        "Immediate 的同through/library/facts/market/day/owner/codes签名不得重复本人计算"
+    );
+    assert_eq!(
+        w.collect_group_belief().unwrap(),
+        before,
+        "相同观察不能改七字段或丢获知"
+    );
+    assert_eq!(
+        w.mirror_source(),
+        source,
+        "自己的revision/check回写不能变成新观察输入"
+    );
+    assert_eq!(w.pending_mirror_domains(), pending);
+    w.shutdown().unwrap();
+}
+
+#[test]
+fn library_only_install_does_not_consume_same_through_observation_eligibility() {
+    let mut w = world_with_cadence(crate::session::notices::NpcInformationCadence::Immediate);
+    let mut some = payload(true);
+    announcement(&mut some, 0);
+    let mut none = some.clone();
+    none.observation = None;
+    let materials = snapshot(&mut w, none);
+    assert!(materials
+        .iter()
+        .all(|group| group.information.as_ref().unwrap().personals.is_empty()));
+    let observed = snapshot(&mut w, some.clone());
+    assert_eq!(
+        observed
+            .iter()
+            .map(|group| group.information.as_ref().unwrap().personals.len())
+            .sum::<usize>(),
+        5,
+        "None没有本人观察，不能占用随后Some同through的资格"
+    );
+    let source = w.mirror_source();
+    let pending = w.pending_mirror_domains();
+    let repeated = snapshot(&mut w, some);
+    assert!(
+        repeated
+            .iter()
+            .all(|group| group.information.as_ref().unwrap().personals.is_empty()),
+        "第一次Some成功后，同签名必须去重"
+    );
+    assert_eq!(w.mirror_source(), source);
+    assert_eq!(w.pending_mirror_domains(), pending);
+    w.shutdown().unwrap();
+}
+
+/// 即使命中先前观察，仍先验证完整上下文；不能让版本/签名缓存绕过目录缺项。
+#[test]
+fn repeated_information_validates_full_context_before_cache_shortcut() {
+    let mut w = world_with_cadence(crate::session::notices::NpcInformationCadence::Immediate);
+    let mut p = payload(true);
+    announcement(&mut p, 0);
+    let first = snapshot(&mut w, p.clone());
+    assert_eq!(
+        first
+            .iter()
+            .map(|group| group.information.as_ref().unwrap().personals.len())
+            .sum::<usize>(),
+        5
+    );
+    let source = w.mirror_source();
+    let pending = w.pending_mirror_domains();
+    Arc::make_mut(&mut p.observation.as_mut().unwrap().market)
+        .stocks
+        .remove(&StockId(0));
+    let rejected = w.with_information_transaction(Vec::new(), p, |_| Ok(()));
+    assert!(
+        matches!(
+            &rejected,
+            Err(RuntimeError::InformationPrepare {
+                error: crate::runtime::protocol::InformationPrepareError::MissingMarket {
+                    stock: StockId(0)
+                },
+                ..
+            })
+        ),
+        "相同through/library仍要精确拒绝缺market字段：{rejected:?}"
+    );
+    assert_eq!(w.mirror_source(), source);
+    assert_eq!(w.pending_mirror_domains(), pending);
+    w.shutdown().unwrap();
+}
+
+#[test]
+fn signature_uses_working_owner_codes_after_same_through_admin() {
+    let mut w = world_with_cadence(crate::session::notices::NpcInformationCadence::Immediate);
+    let mut p = payload(true);
+    announcement(&mut p, 0);
+    let first = snapshot(&mut w, p.clone());
+    assert_eq!(
+        first
+            .iter()
+            .map(|group| group.information.as_ref().unwrap().personals.len())
+            .sum::<usize>(),
+        5
+    );
+    // 真实 working 操作移走非 watchlist 的股1，group0/local0关注集合从{0,1}变{0}。
+    let updated = w
+        .with_information_transaction(
+            vec![(
+                0,
+                vec![AdminOperation::ShareReduction {
+                    local: 0,
+                    stock: 1,
+                    qty: 1000,
+                }],
+            )],
+            p.clone(),
+            |candidate| Ok(candidate.groups.clone()),
+        )
+        .unwrap();
+    let rows = updated.iter().find(|group| group.group == 0).unwrap();
+    assert_eq!(
+        rows.accounts[0].1.shares[1], 0,
+        "同一prepared事务的最终working持仓是签名输入"
+    );
+    assert_eq!(
+        rows.information.as_ref().unwrap().personals.len(),
+        2,
+        "group0完整owner/codes签名变化，不能误用旧same-through缓存"
+    );
+    assert!(
+        updated
+            .iter()
+            .filter(|group| group.group != 0)
+            .all(|group| group.information.as_ref().unwrap().personals.is_empty()),
+        "其余组实际观察输入未变，保同签名去重"
+    );
+    let repeated = snapshot(&mut w, p);
+    assert!(repeated
+        .iter()
+        .all(|group| group.information.as_ref().unwrap().personals.is_empty()));
+    w.shutdown().unwrap();
+}
+
+#[test]
+fn rejected_information_prepare_does_not_consume_successful_signature() {
+    let mut w = world_with_cadence(crate::session::notices::NpcInformationCadence::Immediate);
+    let mut p = payload(true);
+    announcement(&mut p, 0);
+    let source = w.mirror_source();
+    let pending = w.pending_mirror_domains();
+    let rejected = w.with_information_transaction(Vec::new(), p.clone(), |_| {
+        Err::<(), _>(invalid("纯inspect拒绝首个签名"))
+    });
+    assert!(rejected.is_err());
+    assert_eq!(w.mirror_source(), source);
+    assert_eq!(w.pending_mirror_domains(), pending);
+    let accepted = snapshot(&mut w, p.clone());
+    assert_eq!(
+        accepted
+            .iter()
+            .map(|group| group.information.as_ref().unwrap().personals.len())
+            .sum::<usize>(),
+        5,
+        "失败prepare不能占签名，下一真实成功观察仍执行五人"
+    );
+    let mut changed = p.clone();
+    Arc::make_mut(&mut changed.observation.as_mut().unwrap().market)
+        .stocks
+        .get_mut(&StockId(0))
+        .unwrap()
+        .last_price = crate::Money::from_cents(1001);
+    let source = w.mirror_source();
+    let pending = w.pending_mirror_domains();
+    let rejected = w.with_information_transaction(Vec::new(), changed, |_| {
+        Err::<(), _>(invalid("纯inspect拒绝新行情签名"))
+    });
+    assert!(rejected.is_err());
+    assert_eq!(w.mirror_source(), source);
+    assert_eq!(w.pending_mirror_domains(), pending);
+    let original = snapshot(&mut w, p);
+    assert!(
+        original
+            .iter()
+            .all(|group| group.information.as_ref().unwrap().personals.is_empty()),
+        "Abort后最后成功签名保原值，不被失败的新行情污染"
+    );
     w.shutdown().unwrap();
 }

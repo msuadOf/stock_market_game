@@ -1,0 +1,1 @@
+{"pid": 3847333, "parentPid": 3847323, "argv": ["/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/stock_market_game_lib-1ce80ed0046e367e", "actor::protocol_tests::company_read_command_preserves_actual_nonempty_data_and_local_owner", "--exact", "--test-threads=1", "--nocapture"], "exit": 0, "seconds": 0.6221856869960902}

@@ -1,0 +1,12 @@
+[
+  {
+    "data": {
+      "data": {
+        "classification": "BusinessCondition",
+        "reason": "公司系统输入非法：期间 2030-01-31 尚未结算，暂无解释材料（最近已结算期间末日 2029-12-31）"
+      },
+      "kind": "Company"
+    },
+    "kind": "Query"
+  }
+]

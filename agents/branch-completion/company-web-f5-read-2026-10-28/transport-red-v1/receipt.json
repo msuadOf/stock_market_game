@@ -1,0 +1,24 @@
+{
+  "argv": [
+    "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+    "10000",
+    "--",
+    "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+    "--test",
+    "--test-timeout=10000",
+    "apps/web/src/host/company-read.test.ts"
+  ],
+  "exit": 1,
+  "seconds": 0.3591043749911478,
+  "sources": [
+    {
+      "path": "apps/web/src/host/company-read.ts",
+      "sha256": "a61f9629c721a0c8e7cf8d518488099215912ba75c775e6984c9731543385766"
+    },
+    {
+      "path": "apps/web/src/host/company-read.test.ts",
+      "sha256": "b9f62bd2411e615d58c2332dfa2ac731f0f7d004147318aad90641221e1c2df3"
+    }
+  ]
+}

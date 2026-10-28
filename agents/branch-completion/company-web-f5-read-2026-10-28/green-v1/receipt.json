@@ -1,0 +1,36 @@
+{
+  "maxParallel": 2,
+  "results": [
+    {
+      "label": "query-ui",
+      "argv": [
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "--test",
+        "--test-timeout=10000",
+        "apps/web/src/components/company/use-company-query.test.ts"
+      ],
+      "exit": 0,
+      "seconds": 0.7287536340008955
+    },
+    {
+      "label": "contract-render",
+      "argv": [
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "--test",
+        "--test-timeout=10000",
+        "apps/web/src/components/company/CompanyContractPanel.test.ts",
+        "apps/web/src/components/company/DividendTaxPanel.test.ts"
+      ],
+      "exit": 0,
+      "seconds": 1.4254851990117459
+    }
+  ]
+}

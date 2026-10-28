@@ -1,0 +1,346 @@
+{
+  "baseHead": "e2b831fd04bc8b7e6573e9eef4656756075b64b4",
+  "files": [
+    {
+      "path": "agents/branch-completion/company-web-f5-read-2026-10-28/README.md",
+      "sha256": "b3825eda7c595408a0843fc2265bc13f09f7bff2f9afd2e2759db2162ae59cdb",
+      "bytes": 4494
+    },
+    {
+      "path": "agents/branch-completion/company-web-f5-read-2026-10-28/real-wire-v1/README.md",
+      "sha256": "62b6828bac056937624003ec5546cd45514117d1f8af4f1c8ad6f4d5833f697b",
+      "bytes": 3558
+    },
+    {
+      "path": "agents/branch-completion/company-web-f5-read-2026-10-28/real-wire-v1/app-first-consumption/receipt.json",
+      "sha256": "01334efb8e1df3fdae50a339b97e3669b2daff77ee6a4ce696d1b2284444ce10",
+      "bytes": 522
+    },
+    {
+      "path": "agents/branch-completion/company-web-f5-read-2026-10-28/real-wire-v1/app-first-consumption/stderr",
+      "sha256": "d0ebb86e275cd92eb1d6df203cd2616b61cfe02d0cbdadfe0b71ebae146ec6e4",
+      "bytes": 30
+    },
+    {
+      "path": "agents/branch-completion/company-web-f5-read-2026-10-28/real-wire-v1/app-first-consumption/stdout",
+      "sha256": "08f23bd1e4e541e3cf25068e26433039fc66c7d56b3fb0e8f1d837cdfede0de7",
+      "bytes": 1639
+    },
+    {
+      "path": "agents/branch-completion/company-web-f5-read-2026-10-28/real-wire-v1/app-fourth-consumption/receipt.json",
+      "sha256": "ad79e66be745c44c48b1d54f29c013a53c762b95ebccd69bc6584f4450404df5",
+      "bytes": 522
+    },
+    {
+      "path": "agents/branch-completion/company-web-f5-read-2026-10-28/real-wire-v1/app-fourth-consumption/stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "agents/branch-completion/company-web-f5-read-2026-10-28/real-wire-v1/app-fourth-consumption/stdout",
+      "sha256": "404b87f0a93b92a4a64781ec4ed5bf9af3f993f9226df7cbc0e67a9bb7f855c5",
+      "bytes": 220
+    },
+    {
+      "path": "agents/branch-completion/company-web-f5-read-2026-10-28/real-wire-v1/app-second-consumption/receipt.json",
+      "sha256": "70aa68d6366b0ffc42d226527dbf59bcbcc226f37d5664fae7e46b6b20b2389e",
+      "bytes": 522
+    },
+    {
+      "path": "agents/branch-completion/company-web-f5-read-2026-10-28/real-wire-v1/app-second-consumption/stderr",
+      "sha256": "d0ebb86e275cd92eb1d6df203cd2616b61cfe02d0cbdadfe0b71ebae146ec6e4",
+      "bytes": 30
+    },
+    {
+      "path": "agents/branch-completion/company-web-f5-read-2026-10-28/real-wire-v1/app-second-consumption/stdout",
+      "sha256": "6964a235a8b90835d4462eb90e6f32061e50b7c5005ea9fa19e98fa45d74d473",
+      "bytes": 1752
+    },
+    {
+      "path": "agents/branch-completion/company-web-f5-read-2026-10-28/real-wire-v1/app-third-consumption/receipt.json",
+      "sha256": "ec0f746e1e652fe8fb5698cc1b2c70243f36b07a31f31a5e4189d7b9c38e9ee2",
+      "bytes": 522
+    },
+    {
+      "path": "agents/branch-completion/company-web-f5-read-2026-10-28/real-wire-v1/app-third-consumption/stderr",
+      "sha256": "d0ebb86e275cd92eb1d6df203cd2616b61cfe02d0cbdadfe0b71ebae146ec6e4",
+      "bytes": 30
+    },
+    {
+      "path": "agents/branch-completion/company-web-f5-read-2026-10-28/real-wire-v1/app-third-consumption/stdout",
+      "sha256": "47fbf3bc39779054746c7c497cf9c0df596339cef54279013637cd3d510359f4",
+      "bytes": 3260
+    },
+    {
+      "path": "agents/branch-completion/company-web-f5-read-2026-10-28/real-wire-v1/final-checks-v2/lint.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "agents/branch-completion/company-web-f5-read-2026-10-28/real-wire-v1/final-checks-v2/lint.stdout",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "agents/branch-completion/company-web-f5-read-2026-10-28/real-wire-v1/final-checks-v2/receipt.json",
+      "sha256": "ddcee87b0ba3259c478235dc4533b5b7dfd955403cdec6bb1b79844dfebfb21d",
+      "bytes": 5123
+    },
+    {
+      "path": "agents/branch-completion/company-web-f5-read-2026-10-28/real-wire-v1/final-checks-v2/types.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "agents/branch-completion/company-web-f5-read-2026-10-28/real-wire-v1/final-checks-v2/types.stdout",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "agents/branch-completion/company-web-f5-read-2026-10-28/real-wire-v1/final-checks-v2/ui.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "agents/branch-completion/company-web-f5-read-2026-10-28/real-wire-v1/final-checks-v2/ui.stdout",
+      "sha256": "55ec5ccd4b168a49bca323392d74883e22e8d8aaf4adb87e4222e13a43dd5a3e",
+      "bytes": 1930
+    },
+    {
+      "path": "agents/branch-completion/company-web-f5-read-2026-10-28/real-wire-v1/final-checks/host.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "agents/branch-completion/company-web-f5-read-2026-10-28/real-wire-v1/final-checks/host.stdout",
+      "sha256": "394bc8a5c77ad5780691c4d5e25d14147dd499dbdf66cf0d266f46de0b47abee",
+      "bytes": 1947
+    },
+    {
+      "path": "agents/branch-completion/company-web-f5-read-2026-10-28/real-wire-v1/final-checks/lint.stderr",
+      "sha256": "d0ebb86e275cd92eb1d6df203cd2616b61cfe02d0cbdadfe0b71ebae146ec6e4",
+      "bytes": 30
+    },
+    {
+      "path": "agents/branch-completion/company-web-f5-read-2026-10-28/real-wire-v1/final-checks/lint.stdout",
+      "sha256": "6ccff49381de9290fc8fd54fa6394efb70c13f13df1045512a746fd167f1122a",
+      "bytes": 419
+    },
+    {
+      "path": "agents/branch-completion/company-web-f5-read-2026-10-28/real-wire-v1/final-checks/receipt.json",
+      "sha256": "53cbf7f6150e66a459098331b9df42908d681740bcc02090e3d57c81e62612ca",
+      "bytes": 7860
+    },
+    {
+      "path": "agents/branch-completion/company-web-f5-read-2026-10-28/real-wire-v1/final-checks/types-0.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "agents/branch-completion/company-web-f5-read-2026-10-28/real-wire-v1/final-checks/types-0.stdout",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "agents/branch-completion/company-web-f5-read-2026-10-28/real-wire-v1/final-checks/types-1.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "agents/branch-completion/company-web-f5-read-2026-10-28/real-wire-v1/final-checks/types-1.stdout",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "agents/branch-completion/company-web-f5-read-2026-10-28/real-wire-v1/final-checks/types-2.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "agents/branch-completion/company-web-f5-read-2026-10-28/real-wire-v1/final-checks/types-2.stdout",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "agents/branch-completion/company-web-f5-read-2026-10-28/real-wire-v1/final-checks/types-3.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "agents/branch-completion/company-web-f5-read-2026-10-28/real-wire-v1/final-checks/types-3.stdout",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "agents/branch-completion/company-web-f5-read-2026-10-28/real-wire-v1/final-checks/ui.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "agents/branch-completion/company-web-f5-read-2026-10-28/real-wire-v1/final-checks/ui.stdout",
+      "sha256": "d473c9386a33bfb21d1191c9e692db7a3a15e358d93d315d87a963f62063f856",
+      "bytes": 1930
+    },
+    {
+      "path": "agents/branch-completion/company-web-f5-read-2026-10-28/real-wire-v1/fixture-binding.json",
+      "sha256": "6723e96638a9b6087f4bc3fc9397243f3e4640f75134bbed8097487952ff51ac",
+      "bytes": 1722
+    },
+    {
+      "path": "agents/branch-completion/company-web-f5-read-2026-10-28/real-wire-v1/rust-actual-wait-cleanup.json",
+      "sha256": "1bfa0eaf9aa3f878f0b066fb8eda3be6f13cd9c9d5e19ed45edba124ae3d7cb1",
+      "bytes": 6182
+    },
+    {
+      "path": "agents/branch-completion/company-web-f5-read-2026-10-28/real-wire-v1/rust-artifact-binding.json",
+      "sha256": "237870ae377a392d999d81402fec9314bc6a3e512a57f7914d5d8503a430731f",
+      "bytes": 2969
+    },
+    {
+      "path": "agents/branch-completion/company-web-f5-read-2026-10-28/real-wire-v1/rust-batch-receipt.json",
+      "sha256": "7abf5a0246009e3eb3f7fe7ce10d4c9c68ff891b76c6dbd950ab70ae0f7ff7cd",
+      "bytes": 69412
+    },
+    {
+      "path": "agents/branch-completion/company-web-f5-read-2026-10-28/real-wire-v1/rust-stdout/company_read_ipc_registers_six_queries_and_preserves_typed_rejections.stdout",
+      "sha256": "a021dd460772d16a7201bed4da5b30d5abc8e7143f2c7114881305c5b31d1971",
+      "bytes": 3244
+    },
+    {
+      "path": "agents/branch-completion/company-web-f5-read-2026-10-28/real-wire-v1/rust-stdout/company_read_route_authenticates_and_preserves_owner_and_generation.stdout",
+      "sha256": "3825961ce591ff703be433004872f371a2f4cc27f2b66a78964df061460f93fb",
+      "bytes": 3011
+    },
+    {
+      "path": "agents/branch-completion/company-web-f5-read-2026-10-28/real-wire-v1/rust-stdout/company_views_preserve_nonempty_existing_domain_results_and_save_bytes.stdout",
+      "sha256": "f0a9299298c2ab625212d205410a97f4fc9f9d3969f4a21d0a4d05ca4fa0d474",
+      "bytes": 2631
+    },
+    {
+      "path": "agents/branch-completion/company-web-f5-read-2026-10-28/real-wire-v1/rust-stdout/flat_receipts_return_nonempty_owner_facts_without_other_accounts.stdout",
+      "sha256": "0e3ce2ee5df64f5866f8ce62e701464f9811c109848f1c9deeed8fffb82df1de",
+      "bytes": 459
+    },
+    {
+      "path": "agents/branch-completion/company-web-f5-read-2026-10-28/real-wire-v1/rust-stdout/global_outstanding_is_filtered_to_the_authenticated_owner.stdout",
+      "sha256": "fb81de30c68689fce8002794efebd5afb45408968fae22ead5f83752ea705dec",
+      "bytes": 425
+    },
+    {
+      "path": "agents/branch-completion/company-web-f5-read-2026-10-28/real-wire-v1/rust-stdout/rights_offerings_return_nonempty_owner_entitlement_without_other_holders.stdout",
+      "sha256": "75014097a79fc2567c002136fcbc00e236a6b889f69c8ff431aaa75000ff3736",
+      "bytes": 731
+    },
+    {
+      "path": "agents/branch-completion/company-web-f5-read-2026-10-28/real-wire-v1/stdout-copy-binding.json",
+      "sha256": "c037f83c84053fbbf9c2c26ae27b7d78fe1400dc0a27fbad5392d71808539f30",
+      "bytes": 3866
+    },
+    {
+      "path": "agents/branch-completion/company-web-f5-read-2026-10-28/real-wire-v1/stdout-extraction-crosscheck.json",
+      "sha256": "24bd3eb235d8edd84418a8e83d9447b6604da4e0e8af46c48e889eaea055725c",
+      "bytes": 3796
+    },
+    {
+      "path": "agents/branch-completion/company-web-f5-read-2026-10-28/real-wire-v1/ts-first-consumption/Remote.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "agents/branch-completion/company-web-f5-read-2026-10-28/real-wire-v1/ts-first-consumption/Remote.stdout",
+      "sha256": "df44bef7b337563658e82930044ed8eac1d65df882273a5e511e48a057791225",
+      "bytes": 219
+    },
+    {
+      "path": "agents/branch-completion/company-web-f5-read-2026-10-28/real-wire-v1/ts-first-consumption/Tauri.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "agents/branch-completion/company-web-f5-read-2026-10-28/real-wire-v1/ts-first-consumption/Tauri.stdout",
+      "sha256": "63c1b9e4e2493a0ae9e8a7bc394dc17ba091c320d15660042c309e724cf88bde",
+      "bytes": 218
+    },
+    {
+      "path": "agents/branch-completion/company-web-f5-read-2026-10-28/real-wire-v1/ts-first-consumption/Worker.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "agents/branch-completion/company-web-f5-read-2026-10-28/real-wire-v1/ts-first-consumption/Worker.stdout",
+      "sha256": "0cd17af4afce92684cf104a0b7f0e1e233b95592a31415a6ef97323ddb02e6c7",
+      "bytes": 219
+    },
+    {
+      "path": "agents/branch-completion/company-web-f5-read-2026-10-28/real-wire-v1/ts-first-consumption/failure.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "agents/branch-completion/company-web-f5-read-2026-10-28/real-wire-v1/ts-first-consumption/failure.stdout",
+      "sha256": "d59710418f3345f3fc698b08a93561db88c3df4fe12cc0a54f26e403fa900a0e",
+      "bytes": 217
+    },
+    {
+      "path": "agents/branch-completion/company-web-f5-read-2026-10-28/real-wire-v1/ts-first-consumption/receipt.json",
+      "sha256": "b0dae53999b9c897b7e3b0d5b5a34b77f03ad7270067c1bfe87c3a3771cffa24",
+      "bytes": 2405
+    },
+    {
+      "path": "agents/branch-completion/company-web-f5-read-2026-10-28/real-wire-v1/wire-engine.json",
+      "sha256": "241c0007905ad4e3f023c885980b618a79a20fd593dd900b3614bc717462b7da",
+      "bytes": 5083
+    },
+    {
+      "path": "agents/branch-completion/company-web-f5-read-2026-10-28/real-wire-v1/wire-server.json",
+      "sha256": "399e7a0831069d7602accf6fa25b8c3ad9ea9bf1d18cd45613345e8277b40c1a",
+      "bytes": 4115
+    },
+    {
+      "path": "agents/branch-completion/company-web-f5-read-2026-10-28/real-wire-v1/wire-tauri-failures.json",
+      "sha256": "a63eac0b5f3f0b68672d3b8419b9c9520cab0db9f9b859c4f6c3e45205f0bfa0",
+      "bytes": 292
+    },
+    {
+      "path": "agents/branch-completion/company-web-f5-read-2026-10-28/real-wire-v1/wire-tauri.json",
+      "sha256": "8939c269d5cbe7f41bd8e35b1a28cf5832ebe2dd8bf6d06822af640ff93b2a13",
+      "bytes": 4111
+    },
+    {
+      "path": "apps/web/src/components/company/use-company-query.test.ts",
+      "sha256": "f71aacdcd9dc50c3d6004796c0394b1cd466dcc2b079edf13f2e29cd98044485",
+      "bytes": 32607
+    },
+    {
+      "path": "apps/web/src/host/company-read-hosts.test.ts",
+      "sha256": "a4b061da4b381a3d5c107c3e5348a06ec312d61fe1c72d2826649f780e36c520",
+      "bytes": 13756
+    },
+    {
+      "path": "apps/web/src/host/fixtures/company-read/README.md",
+      "sha256": "5c9cd12e5c0555b3a7b47168ac1107055da4c8dd117a12ff75c5dea199ac8a74",
+      "bytes": 677
+    },
+    {
+      "path": "apps/web/src/host/fixtures/company-read/wire-engine.json",
+      "sha256": "241c0007905ad4e3f023c885980b618a79a20fd593dd900b3614bc717462b7da",
+      "bytes": 5083
+    },
+    {
+      "path": "apps/web/src/host/fixtures/company-read/wire-server.json",
+      "sha256": "399e7a0831069d7602accf6fa25b8c3ad9ea9bf1d18cd45613345e8277b40c1a",
+      "bytes": 4115
+    },
+    {
+      "path": "apps/web/src/host/fixtures/company-read/wire-tauri-failures.json",
+      "sha256": "a63eac0b5f3f0b68672d3b8419b9c9520cab0db9f9b859c4f6c3e45205f0bfa0",
+      "bytes": 292
+    },
+    {
+      "path": "apps/web/src/host/fixtures/company-read/wire-tauri.json",
+      "sha256": "8939c269d5cbe7f41bd8e35b1a28cf5832ebe2dd8bf6d06822af640ff93b2a13",
+      "bytes": 4111
+    }
+  ],
+  "totalBytes": 212308
+}

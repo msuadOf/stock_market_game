@@ -39,6 +39,34 @@ fn public_dto_to_js<T: Serialize>(value: &T) -> Result<JsValue, JsValue> {
         .map_err(|error| JsValue::from_str(&error.to_string()))
 }
 
+#[derive(Debug, Serialize)]
+struct CompanyReadResponse {
+    owner: AccountId,
+    value: engine::session::protocol::CompanyReadResult,
+}
+
+fn query_company_reads(
+    session: &ProtocolSession,
+    query: engine::session::protocol::CompanyReadQuery,
+) -> Result<CompanyReadResponse, engine::session::protocol::CompanyReadError> {
+    let owner = AccountId(0);
+    session
+        .company_read_query(owner, query)
+        .map(|value| CompanyReadResponse { owner, value })
+}
+
+/// 只读公司事实；句柄来自实际 registry，账户不由 JS 请求指定。
+#[wasm_bindgen]
+pub fn company_read_query(handle: u32, query: JsValue) -> Result<JsValue, JsValue> {
+    let query = serde_wasm_bindgen::from_value(query)?;
+    with_session(handle, |session| {
+        match query_company_reads(session, query) {
+            Ok(response) => public_dto_to_js(&response),
+            Err(error) => Err(public_dto_to_js(&error.public_failure())?),
+        }
+    })
+}
+
 fn save_to_js<T: Serialize>(value: &T) -> Result<JsValue, JsValue> {
     to_js(value)
 }

@@ -1,0 +1,70 @@
+{
+  "testSha256": "a4b061da4b381a3d5c107c3e5348a06ec312d61fe1c72d2826649f780e36c520",
+  "maxParallel": 4,
+  "results": [
+    {
+      "kind": "Worker",
+      "argv": [
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "--test",
+        "--test-timeout=10000",
+        "--test-name-pattern=Worker 真实 Rust",
+        "apps/web/src/host/company-read-hosts.test.ts"
+      ],
+      "exit": 0,
+      "seconds": 0.3262226459919475
+    },
+    {
+      "kind": "Tauri",
+      "argv": [
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "--test",
+        "--test-timeout=10000",
+        "--test-name-pattern=Tauri 真实 Rust",
+        "apps/web/src/host/company-read-hosts.test.ts"
+      ],
+      "exit": 0,
+      "seconds": 0.3366218890005257
+    },
+    {
+      "kind": "Remote",
+      "argv": [
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "--test",
+        "--test-timeout=10000",
+        "--test-name-pattern=Remote 真实 Rust",
+        "apps/web/src/host/company-read-hosts.test.ts"
+      ],
+      "exit": 0,
+      "seconds": 0.34214770900143776
+    },
+    {
+      "kind": "failure",
+      "argv": [
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "--test",
+        "--test-timeout=10000",
+        "--test-name-pattern=Tauri 真实 IPC",
+        "apps/web/src/host/company-read-hosts.test.ts"
+      ],
+      "exit": 0,
+      "seconds": 0.32543704299314413
+    }
+  ]
+}

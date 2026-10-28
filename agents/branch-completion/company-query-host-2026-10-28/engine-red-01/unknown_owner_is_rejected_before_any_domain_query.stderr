@@ -1,0 +1,6 @@
+
+thread 'session::protocol::company_reads::tests::unknown_owner_is_rejected_before_any_domain_query' (3009993) panicked at packages/engine/src/session/protocol/company_reads/tests.rs:142:5:
+assertion failed: matches!(session.company_read_query(AccountId(u64::MAX),
+    CompanyReadQuery::OwnerRightsOfferings),
+    Err(CompanyReadError::UnknownOwner(AccountId(u64::MAX))))
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace

@@ -852,6 +852,8 @@ pub struct GroupState {
     current_company_facts: Option<Arc<crate::company::CompanyReadFacts>>,
     /// 只由成功信息 commit 推进；None 库刷新不声称观察。
     information_observed_through: Option<crate::calendar::CivilInstant>,
+    /// 最后成功 Some 观察输入；None 材料刷新不占用观察资格，不保存历史。
+    information_signature: Option<admin_transaction::InformationObservationSignature>,
     /// D3a-2 观察基：快照来源的每股（分钟收盘，日 K 条）——链观察的
     /// 纯输入（与 session 读面同源：desk 权威 minute_closes/daily_bars；
     /// 观察对象每 tick 由纯构建器现算，不累积不缓存——口径不可能漂移）。
@@ -1043,6 +1045,7 @@ impl GroupState {
             library: library_seed,
             current_company_facts: None,
             information_observed_through: None,
+            information_signature: None,
             root_projection,
             child_in_flight: Default::default(),
             admin_treasury_bindings: Vec::new(),
@@ -5558,6 +5561,45 @@ pub fn group_main(
                     break;
                 }
             }
+            GroupIn::EchoPersonalFull { source } => {
+                let full = (|| {
+                    // SealAck 已确认本拍落账并由 World 发布；旧 committed_tick 到下一 Start 才隐式转正。
+                    let sealed_static = state.seal_acked_len.is_some() && state.batches_after_seal == 0
+                        && state.staging_deferred.is_empty();
+                    if source.tick != state.cur_tick || (state.cur_tick != state.committed_tick && !sealed_static)
+                        || state.admin_pending.is_some()
+                    {
+                        return Err(RuntimeError::ProtocolInvariant {
+                            detail: format!("Full 个人读取不是已提交静点：group={} source={source:?} committed={} current={}", state.group, state.committed_tick, state.cur_tick),
+                        });
+                    }
+                    let root = state.root_projection.as_ref().ok_or_else(|| RuntimeError::ProtocolInvariant {
+                        detail: format!("Full 个人读取缺真实名册：group={}", state.group),
+                    })?;
+                    let mut slots = Vec::new();
+                    for (local, account) in root.account_ids.iter().skip(state.roster_offset).take(state.accounts.len()).enumerate() {
+                        let personal = state.belief_states.get(local).ok_or_else(|| RuntimeError::ProtocolInvariant {
+                            detail: format!("Full 个人真实名册缺槽：group={} local={local} account={account:?}", state.group),
+                        })?;
+                        slots.push((local as LocalIdx, *account, personal.clone()));
+                    }
+                    Ok(slots)
+                })();
+                match full {
+                    Ok(slots) => {
+                        if up_tx.send(UpMsg::GroupPersonalFull { group: state.group, source, slots }).is_err() {
+                            result = Err(RuntimeError::SendFailed { detail: "GroupPersonalFull 上行失败".to_owned() });
+                            break;
+                        }
+                    }
+                    Err(error) => {
+                        abort.store(true, Ordering::SeqCst);
+                        let _ = up_tx.send(UpMsg::Failed { who, error: error.clone() });
+                        result = Err(error);
+                        break;
+                    }
+                }
+            }
             GroupIn::EchoBelief => {
                 // P2-2a：稀疏上行——只 clone 本 tick dirty 且在册的条目
                 //（省全名册深拷贝；驱动器增量缓存承载全量读面语义）。
@@ -5968,6 +6010,7 @@ pub fn group_main(
                     Some((profiles, _)) => profiles
                         .iter()
                         .enumerate()
+                        .take(state.root_projection.as_ref().map_or(profiles.len(), |root| root.account_ids.len().saturating_sub(state.roster_offset).min(profiles.len())))
                         .map(|(i, p)| {
                             let mixed = (state.group as u64)
                                 .wrapping_mul(0x9E3779B97F4A7C15)

@@ -1,0 +1,65 @@
+{
+  "base": "8e5b32de305257b7cb9aeb284d19551cdf3ce2c3",
+  "redCommit": "b8ec2a66",
+  "status": "首次四包编译因Tauri类型错误失败；仅修复SendCommandError显式String转换，尚未重编译",
+  "sources": [
+    {
+      "path": "apps/desktop/src-tauri/src/actor.rs",
+      "sha256": "f1846a93641def68c3bb698b1246713dc0615c1d8d1605a0162ce655dfa1fe3e"
+    },
+    {
+      "path": "apps/desktop/src-tauri/src/actor/protocol_tests.rs",
+      "sha256": "40a25c24c69211780b9354d1c15f1a9ba6edf5a08fde2bea2869f373f0b98ee7"
+    },
+    {
+      "path": "apps/desktop/src-tauri/src/lib.rs",
+      "sha256": "bed9394a3f5842d0b9ec60943b84a8338d12e9813bb9659371fd254a3ca3d67a"
+    },
+    {
+      "path": "apps/desktop/src-tauri/src/lib_tests.rs",
+      "sha256": "64c1e8fe67167ade1accfc4985cd373d3fd01440f8d0c8537d934722094cfff6"
+    },
+    {
+      "path": "apps/server/src/actor.rs",
+      "sha256": "164b306feee33e386734b46f95f47135c00babf1981159a76b32bd3d65bd8821"
+    },
+    {
+      "path": "apps/server/src/actor/fatal_tests.rs",
+      "sha256": "c9ecd06bcf449d451648ca266788a55fe9169fc12506ec394f604c76757c099e"
+    },
+    {
+      "path": "apps/server/src/lib.rs",
+      "sha256": "4b6e6ed110a51132478daee937fc2e3d4d1fb37f68d14439a92734059824b2d2"
+    },
+    {
+      "path": "apps/server/src/routes.rs",
+      "sha256": "4ac65ad80f9c8746e866a052781dc7ae39051570b23e75d615942f4744aac5a3"
+    },
+    {
+      "path": "apps/server/src/routes/auth_tests.rs",
+      "sha256": "974a58672d78265c6e45ce04af2664d6969c8e9e0e80fc906010a40b99ff3251"
+    },
+    {
+      "path": "apps/web-wasm/src/lib.rs",
+      "sha256": "f00f90d6e9ef213e25935330525f5f51b70fcdb0b353de9c9cfe816faec95767"
+    },
+    {
+      "path": "apps/web-wasm/src/protocol_tests.rs",
+      "sha256": "539b34817704ce225ddb422af0bd9548a1daf1cadd94bb2705ff0667f2472f50"
+    },
+    {
+      "path": "packages/engine/src/session/protocol.rs",
+      "sha256": "76cd508f8a87658bf37fff4f3e4e2b0214e4dbfda47d7c433262016ba67a0a78"
+    },
+    {
+      "path": "packages/engine/src/session/protocol/company_reads.rs",
+      "sha256": "abf27d75cf98e1eb3b96209d85a0972b49541a5d0ae5d525643b07675b4fa0f6"
+    },
+    {
+      "path": "packages/engine/src/session/protocol/company_reads/tests.rs",
+      "sha256": "5ec710de97cc429b1ab4a7f38bc7ea7327bfa8ee3da25d080dd449d961e44e33"
+    }
+  ],
+  "priorCandidate": "cef172e6",
+  "failureReceipt": "../four-host-green-01/actual-wait-cleanup.json"
+}

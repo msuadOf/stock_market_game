@@ -1,5 +1,124 @@
 use super::*;
 use engine::session::protocol::ReplayGuard;
+include!("../../../../../packages/engine/test-support/simple_company.rs");
+
+#[tokio::test]
+async fn company_read_command_preserves_actual_nonempty_data_and_local_owner() {
+    use engine::session::protocol::CompanyReadQuery;
+    let mut setup = super::tests::diagnostic_setup();
+    setup.npcs.inst_count = 0;
+    setup.stocks[0].float_shares = 0;
+    setup.history_len = 1;
+    setup.company_system = Some(simple_company_fixture!(engine; ["600101"]));
+    setup.dividend_tax_mode = Some(engine::company::CashDividendTaxMode::FlatWithholding);
+    setup.flat_withholding_bp = Some(1000);
+    setup.par_value_per_share = Some(engine::Money::from_cents(100));
+    setup.auto_corporate_foundation = true;
+    let game = ProtocolSession::new(setup, 7).unwrap();
+    let expected =
+        serde_json::to_value(game.account_dividend_tax_status(AccountId(0)).unwrap()).unwrap();
+    let before = serde_json::to_value(game.game().save().unwrap()).unwrap();
+    let mut harness = ActorHarness::new_protocol_actor(
+        game,
+        false,
+        PausePreferences::default(),
+        "company",
+        "one",
+    );
+    let (reply, received) = oneshot::channel();
+    harness
+        .actor
+        .handle_command(SessionCommand::CompanyRead {
+            generation: 1,
+            query: CompanyReadQuery::AccountDividendTaxStatus,
+            reply,
+        })
+        .await;
+    let response = received.await.unwrap().unwrap();
+    let wire = serde_json::to_value(response).unwrap();
+    assert_eq!(wire["generation"], "1");
+    assert_eq!(wire["owner"], "0");
+    assert_eq!(wire["value"]["data"], expected);
+    assert_eq!(wire["value"]["data"]["stocks"][0]["stock"], "600101");
+    for query in [
+        CompanyReadQuery::CompanyPeriodExplanation {
+            company: engine::company::CompanyId(0),
+            period_end: engine::CivilDate::from_iso("2029-12-31").unwrap(),
+        },
+        CompanyReadQuery::DividendTaxOutstandingViews,
+        CompanyReadQuery::OwnerFlatWithholdingReceipts,
+        CompanyReadQuery::CompanyCapabilities {
+            company: engine::company::CompanyId(0),
+        },
+        CompanyReadQuery::OwnerRightsOfferings,
+    ] {
+        let kind = serde_json::to_value(&query).unwrap()["kind"].clone();
+        let (reply, received) = oneshot::channel();
+        harness
+            .actor
+            .handle_command(SessionCommand::CompanyRead {
+                generation: 1,
+                query,
+                reply,
+            })
+            .await;
+        let wire = serde_json::to_value(received.await.unwrap().unwrap()).unwrap();
+        assert_eq!(wire["generation"], "1");
+        assert_eq!(wire["owner"], "0");
+        assert_eq!(wire["value"]["kind"], kind);
+    }
+    assert_eq!(
+        before,
+        serde_json::to_value(harness.actor.game.game().save().unwrap()).unwrap()
+    );
+}
+
+#[tokio::test]
+async fn company_read_command_checks_generation_and_preserves_typed_domain_failure() {
+    use engine::session::protocol::CompanyReadQuery;
+    let mut setup = super::tests::diagnostic_setup();
+    setup.npcs.inst_count = 0;
+    setup.history_len = 1;
+    let game = ProtocolSession::new(setup, 7).unwrap();
+    let before = serde_json::to_value(game.game().save().unwrap()).unwrap();
+    let mut harness = ActorHarness::new_protocol_actor(
+        game,
+        false,
+        PausePreferences::default(),
+        "company",
+        "one",
+    );
+    let (reply, received) = oneshot::channel();
+    harness
+        .actor
+        .handle_command(SessionCommand::CompanyRead {
+            generation: 2,
+            query: CompanyReadQuery::AccountDividendTaxStatus,
+            reply,
+        })
+        .await;
+    assert!(matches!(
+        received.await.unwrap(),
+        Err(CompanyReadHostError::Session { .. })
+    ));
+    let (reply, received) = oneshot::channel();
+    harness
+        .actor
+        .handle_command(SessionCommand::CompanyRead {
+            generation: 1,
+            query: CompanyReadQuery::AccountDividendTaxStatus,
+            reply,
+        })
+        .await;
+    assert!(matches!(
+        received.await.unwrap(),
+        Err(CompanyReadHostError::Query(_))
+    ));
+    assert_eq!(
+        before,
+        serde_json::to_value(harness.actor.game.game().save().unwrap()).unwrap()
+    );
+}
 
 #[tokio::test]
 async fn shared_ingress_receives_player_without_actor_command_polling() {

@@ -1,0 +1,11 @@
+
+running 1 test
+test session::protocol::company_reads::tests::actual_owner_query_returns_the_existing_domain_view_without_state_changes ... FAILED
+
+failures:
+
+failures:
+    session::protocol::company_reads::tests::actual_owner_query_returns_the_existing_domain_view_without_state_changes
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2811 filtered out; finished in 0.24s
+

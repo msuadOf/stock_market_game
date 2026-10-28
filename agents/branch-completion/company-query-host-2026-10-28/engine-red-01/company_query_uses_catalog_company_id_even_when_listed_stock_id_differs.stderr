@@ -1,0 +1,4 @@
+
+thread 'session::protocol::company_reads::tests::company_query_uses_catalog_company_id_even_when_listed_stock_id_differs' (3010025) panicked at packages/engine/src/session/protocol/company_reads/tests.rs:394:10:
+called `Result::unwrap()` on an `Err` value: Company(Unsupported("公司只读注册尚未实现"))
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace

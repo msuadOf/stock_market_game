@@ -70,7 +70,7 @@ use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 
 /// 单只股票的市场视图（多股 MarketView 的元素）。
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct StockView {
     pub best_bid: Option<Money>,
     pub best_ask: Option<Money>,
@@ -96,7 +96,7 @@ pub struct StockView {
 }
 
 /// 整个市场快照（多股）。
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct MarketView {
     pub stocks: BTreeMap<StockId, StockView>,
     /// 当前权威游戏 tick；用于逐 tick 的注意力等采样。

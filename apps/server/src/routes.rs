@@ -258,6 +258,46 @@ pub struct IntentBody {
     pub intent: engine::Intent,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CompanyReadBody {
+    pub session_id: String,
+    pub generation: String,
+    pub query: engine::session::protocol::CompanyReadQuery,
+}
+
+/// 本人公司查询；账户在 actor 内按当前 subject 再次解析，不接受客户端选择。
+pub async fn api_company_read_query(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    body: Result<Json<CompanyReadBody>, JsonRejection>,
+) -> Response {
+    let Json(body) = match body {
+        Ok(body) => body,
+        Err(error) => return invalid_json_response(error),
+    };
+    let (handles, subject) =
+        match authorized_session(&state, &body.session_id, authorization_token(&headers)).await {
+            Ok(context) => context,
+            Err(response) => return *response,
+        };
+    let generation = match parse_host_parity_generation(&body.generation) {
+        Ok(generation) => generation,
+        Err(response) => return *response,
+    };
+    match handles.company_read_query_for(generation, subject, body.query.clone()).await {
+        Ok((generation, owner, Ok(value))) => Json(serde_json::json!({"generation": generation.to_string(), "owner": owner, "value": value})).into_response(),
+        Ok((_, _, Err(error))) => {
+            warn!(session = %body.session_id, query = ?body.query, error = ?error, "公司只读查询被领域拒绝");
+            (StatusCode::BAD_REQUEST, Json(serde_json::json!({"code": "COMPANY_READ_REJECTED", "failure": error.public_failure()}))).into_response()
+        }
+        Err(SendCommandError::ActorGone) => api_error(StatusCode::INTERNAL_SERVER_ERROR, "ACTOR_GONE", "会话 actor 已退出，请同步有效会话后重试"),
+        Err(SendCommandError::Rejected(reason)) if reason == "STALE_SESSION_GENERATION" => api_error(StatusCode::CONFLICT, "STALE_SESSION_GENERATION", reason),
+        Err(SendCommandError::Rejected(reason)) => api_error(StatusCode::BAD_REQUEST, "COMPANY_READ_REJECTED", reason),
+        Err(SendCommandError::InvalidSpeed(_)) => unreachable!("公司查询不校验倍速"),
+    }
+}
+
 /// /api/speed 请求体。
 #[derive(Debug, Deserialize)]
 pub struct SpeedBody {

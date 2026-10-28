@@ -1,0 +1,71 @@
+{
+  "pythonPid": 3494260,
+  "actualPythonArgv": [
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/company-query-host-2026-10-28/agents/branch-completion/company-query-host-2026-10-28/four-host-green-01/run-ram-batch.py",
+    "1793134683200",
+    "1793134685200",
+    "1793134686200"
+  ],
+  "actualParentArgv": [
+    "/home/linuxbrew/.linuxbrew/Cellar/node/25.8.2/bin/node",
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/company-query-host-2026-10-28/agents/branch-completion/company-query-host-2026-10-28/four-host-green-01/absolute-supervisor.mjs",
+    "1793134686200",
+    "/home/baiyifan/miniconda3/bin/python3",
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/company-query-host-2026-10-28/agents/branch-completion/company-query-host-2026-10-28/four-host-green-01/run-ram-batch.py",
+    "1793134683200",
+    "1793134685200",
+    "1793134686200"
+  ],
+  "target": "/tmp/stock-market-game-validation-2026-10-27-1311109/target",
+  "wholeTargetCopy": false,
+  "persistence": "RAM target 与封存单件均非持久；root统一保留复用",
+  "stages": [
+    {
+      "stage": "default-build",
+      "actualArgv": [
+        "/home/linuxbrew/.linuxbrew/Cellar/node/25.8.2/bin/node",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-long-validation.mjs",
+        "295762",
+        "--",
+        "/home/linuxbrew/.linuxbrew/Cellar/node/25.8.2/bin/node",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/runtime-sync-e1/agents/perf-intraday-independent/implementation/e2/day-end-full-source-tmpfs-batch-r2/run-build-guard-tmpfs.mjs",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/company-query-host-2026-10-28/agents/branch-completion/company-query-host-2026-10-28/four-host-green-01/default-plan.json"
+      ],
+      "pid": 3494305,
+      "exit": 1,
+      "seconds": 91.23537551300251
+    }
+  ],
+  "before": {
+    "outputAvailableBytes": 85144838144,
+    "sourceAvailableBytes": 5794062336,
+    "memAvailable": "156414700 kB"
+  },
+  "protectedPrior": {
+    "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/engine-006444ae8c4f3292",
+    "bytes": 613306496,
+    "sha256": "0c36d7c2d76e7b21065ebb38697589fecd47eae12eb492c550e4224352256821",
+    "sealedExisting": "/tmp/stock-market-game-validation-2026-10-27-1311109/origin-green-main8e5-r1-2026-10-28/sealed-origin-green-engine",
+    "source": "W1formal03 actualwait20726 EXIT1/owned[]/ECHILD/tmpAbsent；native4全前后SHA未改，复用Origin既有defaultseal不重复copy",
+    "sealed": "/tmp/stock-market-game-validation-2026-10-27-1311109/origin-green-main8e5-r1-2026-10-28/sealed-origin-green-engine",
+    "distinctInode": true,
+    "reusedExistingSeal": true,
+    "persistence": "仅RAM非持久，root统一保留"
+  },
+  "actualPlanSha256": "22d007334c7c352d78c9b0338993a296bb5c082c4f9223593b622ccfa6ac5881",
+  "status": "失败",
+  "error": "RuntimeError('真实 default 构建失败，不用旧 binary 跑新源码')",
+  "after": {
+    "outputAvailableBytes": 85113806848,
+    "sourceAvailableBytes": 5791387648,
+    "memAvailable": "154154656 kB"
+  },
+  "wallSeconds": 92.32617101400683,
+  "scratchCleanup": {
+    "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/company-query-four-host-green-01-2026-10-28/scratch",
+    "ownedByThisBatch": true,
+    "removed": true,
+    "seconds": 0.0023790699924575165
+  },
+  "scratchDisposition": "本批scratch已实际清理；保护单件binary仅RAM非持久由root保留"
+}

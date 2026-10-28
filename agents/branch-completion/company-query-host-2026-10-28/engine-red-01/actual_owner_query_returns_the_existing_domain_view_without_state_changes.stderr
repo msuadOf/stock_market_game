@@ -1,0 +1,4 @@
+
+thread 'session::protocol::company_reads::tests::actual_owner_query_returns_the_existing_domain_view_without_state_changes' (3009995) panicked at packages/engine/src/session/protocol/company_reads/tests.rs:132:5:
+Company(Unsupported("公司只读注册尚未实现"))
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace

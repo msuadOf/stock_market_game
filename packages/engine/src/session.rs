@@ -1757,6 +1757,8 @@ pub struct GameSession {
     /// 翻转批组参数化：runtime 世界的组数（探针负载用；生产默认 1——
     /// from_session 单组语义不变）。
     runtime_group_count: usize,
+    runtime_authority_epoch: u64,
+    runtime_mirror_install_sequence: u64,
     /// step_frame 接轨件 4：投影段失败后丢弃驱动器的标志（body 内设置、
     /// 驱动器共用段消费——world tick 已转正而会话已回滚，锁步断裂的
     /// 常驻实例不可复用；重试经 from_session 重建，等价旧管线"candidate
@@ -2234,6 +2236,8 @@ impl GameSession {
             runtime_install_failure: false,
             runtime_driver: None,
             runtime_group_count: 1,
+            runtime_authority_epoch: self.runtime_authority_epoch,
+            runtime_mirror_install_sequence: self.runtime_mirror_install_sequence,
             runtime_discard_driver_flag: false,
             state: self.state.clone_for_shadow()?,
         })
@@ -2400,6 +2404,8 @@ impl GameSession {
             runtime_install_failure: false,
             runtime_driver: None,
             runtime_group_count: 1,
+            runtime_authority_epoch: 0,
+            runtime_mirror_install_sequence: 0,
             runtime_discard_driver_flag: false,
             state: CommittableSessionState {
                 #[cfg(feature = "simulation-diagnostics")]

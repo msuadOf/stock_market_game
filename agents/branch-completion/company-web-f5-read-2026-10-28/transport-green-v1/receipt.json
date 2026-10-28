@@ -1,0 +1,68 @@
+{
+  "maxParallel": 4,
+  "results": [
+    {
+      "name": "decoder",
+      "argv": [
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "--test",
+        "--test-timeout=10000",
+        "apps/web/src/host/company-read.test.ts"
+      ],
+      "exit": 0,
+      "seconds": 0.21192782500293106
+    },
+    {
+      "name": "Worker",
+      "argv": [
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "--test",
+        "--test-timeout=10000",
+        "--test-name-pattern=Worker",
+        "apps/web/src/host/company-read-hosts.test.ts"
+      ],
+      "exit": 0,
+      "seconds": 0.32023993099574
+    },
+    {
+      "name": "Tauri",
+      "argv": [
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "--test",
+        "--test-timeout=10000",
+        "--test-name-pattern=Tauri",
+        "apps/web/src/host/company-read-hosts.test.ts"
+      ],
+      "exit": 0,
+      "seconds": 0.3154411799914669
+    },
+    {
+      "name": "Remote",
+      "argv": [
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "--test",
+        "--test-timeout=10000",
+        "--test-name-pattern=Remote",
+        "apps/web/src/host/company-read-hosts.test.ts"
+      ],
+      "exit": 0,
+      "seconds": 0.3382765959977405
+    }
+  ]
+}

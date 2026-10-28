@@ -221,6 +221,41 @@ async fn civil_date(
         .map_err(map_send_error)
 }
 
+#[derive(Debug, serde::Serialize)]
+#[serde(tag = "kind", content = "data")]
+enum CompanyReadIpcError {
+    Session { message: String },
+    Query(engine::session::protocol::CompanyReadFailure),
+}
+
+#[tauri::command]
+async fn company_read_query(
+    state: State<'_, DesktopState>,
+    session_id: String,
+    generation: String,
+    query: engine::session::protocol::CompanyReadQuery,
+) -> Result<actor::CompanyReadResponse, CompanyReadIpcError> {
+    let handles = lookup_handles(&state, &session_id)
+        .await
+        .map_err(|error| CompanyReadIpcError::Session {
+            message: error.to_string(),
+        })?;
+    let generation =
+        parse_generation(generation).map_err(|message| CompanyReadIpcError::Session { message })?;
+    handles
+        .company_read_query(generation, query)
+        .await
+        .map_err(|error| match error {
+            actor::CompanyReadHostError::Session { message } => {
+                CompanyReadIpcError::Session { message }
+            }
+            actor::CompanyReadHostError::Query(error) => {
+                eprintln!("desktop.company_read_query 领域拒绝：{error:?}");
+                CompanyReadIpcError::Query(error.public_failure())
+            }
+        })
+}
+
 #[tauri::command]
 async fn public_reports(
     state: State<'_, DesktopState>,
@@ -468,6 +503,7 @@ fn command_builder<R: Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> 
             runtime_snapshot,
             civil_date,
             public_reports,
+            company_read_query,
             public_report_by_id,
             npc_decision_diagnostics,
             speed_metrics,
@@ -500,6 +536,7 @@ fn command_builder<R: Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> 
             runtime_snapshot,
             civil_date,
             public_reports,
+            company_read_query,
             public_report_by_id,
             npc_decision_diagnostics,
             speed_metrics,

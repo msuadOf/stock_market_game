@@ -1,0 +1,59 @@
+{
+  "sources": [
+    {
+      "path": "apps/web/src/host/company-read-hosts.test.ts",
+      "sha256": "08509966d2b5b76b3df2aa54e2f747331d0aa0824b6da53eee2e9e5460759cd4"
+    }
+  ],
+  "maxParallel": 3,
+  "results": [
+    {
+      "name": "Worker",
+      "argv": [
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "--test",
+        "--test-timeout=10000",
+        "--test-name-pattern=Worker",
+        "apps/web/src/host/company-read-hosts.test.ts"
+      ],
+      "exit": 1,
+      "seconds": 0.4675503260077676
+    },
+    {
+      "name": "Tauri",
+      "argv": [
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "--test",
+        "--test-timeout=10000",
+        "--test-name-pattern=Tauri",
+        "apps/web/src/host/company-read-hosts.test.ts"
+      ],
+      "exit": 1,
+      "seconds": 0.43895195199002046
+    },
+    {
+      "name": "Remote",
+      "argv": [
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "--test",
+        "--test-timeout=10000",
+        "--test-name-pattern=Remote",
+        "apps/web/src/host/company-read-hosts.test.ts"
+      ],
+      "exit": 1,
+      "seconds": 0.47378904798824806
+    }
+  ]
+}

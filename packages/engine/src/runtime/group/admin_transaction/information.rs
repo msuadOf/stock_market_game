@@ -13,6 +13,26 @@ pub(super) struct PendingInformation {
     library: Arc<crate::information::PublicLibrary>,
     facts: Option<Arc<crate::company::CompanyReadFacts>>,
     observed_through: Option<crate::calendar::CivilInstant>,
+    signature: Option<InformationObservationSignature>,
+    prepared_signature: Option<InformationObservationSignature>,
+}
+
+impl PendingInformation {
+    pub(super) fn mirror_domains(&self) -> crate::runtime::source::MirrorDomains {
+        let material_changed = self.library.as_ref() != self.prepared.library.as_ref()
+            || self.facts.as_deref() != Some(self.prepared.current_facts.as_ref());
+        let through_changed = self.prepared.observed_through.is_some()
+            && self.prepared.observed_through != self.observed_through;
+        let personal_changed = self.before.iter().zip(&self.prepared.personals).any(
+            |((before_local, before, _), (local, _, after))| {
+                before_local != local || before != after
+            },
+        );
+        crate::runtime::source::MirrorDomains {
+            personal_full: material_changed || through_changed || personal_changed,
+            ..Default::default()
+        }
+    }
 }
 impl GroupState {
     fn information_error(&self, error: InformationPrepareError) -> RuntimeError {
@@ -29,6 +49,7 @@ impl GroupState {
         let reject = |error| self.information_error(error);
         let mut personals = Vec::new();
         let mut before = Vec::new();
+        let mut prepared_signature = None;
         if let Some(point) = &payload.observation {
             if self
                 .information_observed_through
@@ -80,6 +101,7 @@ impl GroupState {
                     return Err(reject(InformationPrepareError::MissingMarket { stock }));
                 }
             }
+            let mut observers = Vec::new();
             for local in 0..self.accounts.len() {
                 let slot = self.belief_states.get(local).and_then(Option::as_ref);
                 let owner = projection
@@ -137,50 +159,68 @@ impl GroupState {
                         }));
                     }
                 }
-                if !snapshot.attention.information_check_due(point.through) {
-                    continue;
-                }
-                let result = crate::session::notices::deliver_information_for_npc(
-                    owner,
-                    point.through,
-                    &|stock| point.as_of_trading_days.get(&stock).copied(),
-                    &snapshot.attention,
-                    &snapshot.information,
-                    &snapshot.belief,
-                    codes,
-                    &|stock| issuers.get(&stock).copied(),
-                    &|company| specs.get(company).copied(),
-                    &payload.library,
-                    &point.market,
-                )
-                .map_err(|e| {
-                    reject(InformationPrepareError::Revaluation {
-                        account: owner,
-                        detail: e.to_string(),
-                    })
-                })?;
-                if let Some((_, information, belief, attention)) = result {
-                    let dirty = *self.belief_dirty.get(local).ok_or_else(|| {
-                        reject(InformationPrepareError::Identity {
-                            detail: format!("local={local} 缺少 dirty 槽"),
+                observers.push((local, owner, snapshot, codes));
+            }
+            // 完整目录与全部真实 owner/codes 已验证后，才允许同签名跳过本人计算。
+            let signature = InformationObservationSignature {
+                through: point.through,
+                library: Arc::clone(&payload.library),
+                facts: Arc::clone(&point.company_facts),
+                market: Arc::clone(&point.market),
+                trading_days: point.as_of_trading_days.clone(),
+                owners_and_codes: observers
+                    .iter()
+                    .map(|(local, owner, _, codes)| (*local as LocalIdx, (*owner, codes.clone())))
+                    .collect(),
+            };
+            if self.information_signature.as_ref() != Some(&signature) {
+                for (local, owner, snapshot, codes) in observers {
+                    if !snapshot.attention.information_check_due(point.through) {
+                        continue;
+                    }
+                    let result = crate::session::notices::deliver_information_for_npc(
+                        owner,
+                        point.through,
+                        &|stock| point.as_of_trading_days.get(&stock).copied(),
+                        &snapshot.attention,
+                        &snapshot.information,
+                        &snapshot.belief,
+                        codes,
+                        &|stock| issuers.get(&stock).copied(),
+                        &|company| specs.get(company).copied(),
+                        &payload.library,
+                        &point.market,
+                    )
+                    .map_err(|e| {
+                        reject(InformationPrepareError::Revaluation {
+                            account: owner,
+                            detail: e.to_string(),
                         })
                     })?;
-                    before.push((local as LocalIdx, snapshot.clone(), dirty));
-                    personals.push((
-                        local as LocalIdx,
-                        owner,
-                        BeliefParticipantSnapshot {
-                            information,
-                            belief,
-                            attention,
-                            watchlist: snapshot.watchlist.clone(),
-                            price_memory: snapshot.price_memory.clone(),
-                            history_reads: snapshot.history_reads.clone(),
-                            retail_experience: snapshot.retail_experience.clone(),
-                        },
-                    ));
+                    if let Some((_, information, belief, attention)) = result {
+                        let dirty = *self.belief_dirty.get(local).ok_or_else(|| {
+                            reject(InformationPrepareError::Identity {
+                                detail: format!("local={local} 缺少 dirty 槽"),
+                            })
+                        })?;
+                        before.push((local as LocalIdx, snapshot.clone(), dirty));
+                        personals.push((
+                            local as LocalIdx,
+                            owner,
+                            BeliefParticipantSnapshot {
+                                information,
+                                belief,
+                                attention,
+                                watchlist: snapshot.watchlist.clone(),
+                                price_memory: snapshot.price_memory.clone(),
+                                history_reads: snapshot.history_reads.clone(),
+                                retail_experience: snapshot.retail_experience.clone(),
+                            },
+                        ));
+                    }
                 }
             }
+            prepared_signature = Some(signature);
         }
         Ok(PendingInformation {
             prepared: PreparedInformationResult {
@@ -194,6 +234,8 @@ impl GroupState {
             library: Arc::clone(&self.library),
             facts: self.current_company_facts.clone(),
             observed_through: self.information_observed_through,
+            signature: self.information_signature.clone(),
+            prepared_signature,
         })
     }
     pub(super) fn commit_information(&mut self, pending: PendingInformation) {
@@ -203,6 +245,7 @@ impl GroupState {
         }
         if pending.prepared.observed_through.is_some() {
             self.information_observed_through = pending.prepared.observed_through;
+            self.information_signature = pending.prepared_signature;
         }
         self.library = pending.prepared.library;
         self.current_company_facts = Some(pending.prepared.current_facts);
@@ -216,5 +259,6 @@ impl GroupState {
         self.library = pending.library;
         self.current_company_facts = pending.facts;
         self.information_observed_through = pending.observed_through;
+        self.information_signature = pending.signature;
     }
 }

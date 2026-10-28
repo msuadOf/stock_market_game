@@ -1,0 +1,203 @@
+{
+  "maxParallel": 7,
+  "sources": [
+    {
+      "path": "apps/web/src/App.tsx",
+      "sha256": "066df096e9751e87bcf0496e481e7999d632ff03938acceddf71567c9a7fd780"
+    },
+    {
+      "path": "apps/web/src/app/LocalRefreshViews.tsx",
+      "sha256": "2cf12126f62b6e05b72c21fea81a1232847f9cfae431e0902498fc20a52c7c78"
+    },
+    {
+      "path": "apps/web/src/components/company/CompanyPanel.tsx",
+      "sha256": "3501b3b549a36451965801be666c8bfcb96ad12eb8e41223df323782365dbcce"
+    },
+    {
+      "path": "apps/web/src/components/company/CompanyReadPanel.tsx",
+      "sha256": "f174c0ddba8afdc359d50145f45e23d495ae65344d84affd14e1aff0051cb34d"
+    },
+    {
+      "path": "apps/web/src/components/company/use-company-query.test.ts",
+      "sha256": "edf6cbe148832a0ec3b938f849bec3acb38e8e98d1d32fdaaba992b80ad5983b"
+    },
+    {
+      "path": "apps/web/src/host/company-read-hosts.test.ts",
+      "sha256": "a4b061da4b381a3d5c107c3e5348a06ec312d61fe1c72d2826649f780e36c520"
+    },
+    {
+      "path": "apps/web/src/host/company-read.test.ts",
+      "sha256": "4ddacd124dffed591c6e48b17bb8b3d431c12f34ce1fc377e676bacc1205c304"
+    },
+    {
+      "path": "apps/web/src/host/company-read.ts",
+      "sha256": "d1c0d85c1feda397a709e3385dfc5a3af43cb487cf6bfd65e72de43db212a355"
+    },
+    {
+      "path": "apps/web/src/host/engine-host.ts",
+      "sha256": "c60edb3210579fadbc975626da34ddcb7ed0301ceb59cd142b055483d90e3ccc"
+    },
+    {
+      "path": "apps/web/src/host/remote-host.ts",
+      "sha256": "6eae45dd7762e756d1ae680034a4135b8d25c8fe73b2259ce7adc9fb150fe174"
+    },
+    {
+      "path": "apps/web/src/host/tauri-host.ts",
+      "sha256": "b465ce51b2a9579e5473359f3d4baaae369050d1efd073cc02c9204fe6881471"
+    },
+    {
+      "path": "apps/web/src/host/wasm-worker-ownership.test.ts",
+      "sha256": "9dd1635101e18ff60d98862a0d311763d1f6f55bf0b09225dc15bed24169e28e"
+    },
+    {
+      "path": "apps/web/src/host/wasm-worker.ts",
+      "sha256": "ae27aecf3ae0405eb02e709e9b72d52cff602ecb3bd310bf9a26da8ccaaff430"
+    },
+    {
+      "path": "apps/web/src/host/worker-host.ts",
+      "sha256": "fb433f8da9c822b2839a798cc79f495383d0b2c5cc9bba39f9bb896ae62872b4"
+    },
+    {
+      "path": "apps/web/src/host/fixtures/company-read/wire-engine.json",
+      "sha256": "241c0007905ad4e3f023c885980b618a79a20fd593dd900b3614bc717462b7da"
+    },
+    {
+      "path": "apps/web/src/host/fixtures/company-read/wire-server.json",
+      "sha256": "399e7a0831069d7602accf6fa25b8c3ad9ea9bf1d18cd45613345e8277b40c1a"
+    },
+    {
+      "path": "apps/web/src/host/fixtures/company-read/wire-tauri-failures.json",
+      "sha256": "a63eac0b5f3f0b68672d3b8419b9c9520cab0db9f9b859c4f6c3e45205f0bfa0"
+    },
+    {
+      "path": "apps/web/src/host/fixtures/company-read/wire-tauri.json",
+      "sha256": "8939c269d5cbe7f41bd8e35b1a28cf5832ebe2dd8bf6d06822af640ff93b2a13"
+    }
+  ],
+  "sourceUnchanged": true,
+  "results": [
+    {
+      "name": "types-0",
+      "argv": [
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "/data1/baiyifan/workplace/stock_market_game/node_modules/.pnpm/typescript@6.0.3/node_modules/typescript/bin/tsc",
+        "-p",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/agents/branch-completion/company-web-f5-read-2026-10-28/static-v2/tsconfig-0.json",
+        "--noEmit",
+        "--incremental",
+        "false"
+      ],
+      "exit": 0,
+      "seconds": 7.028936277987668
+    },
+    {
+      "name": "types-1",
+      "argv": [
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "/data1/baiyifan/workplace/stock_market_game/node_modules/.pnpm/typescript@6.0.3/node_modules/typescript/bin/tsc",
+        "-p",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/agents/branch-completion/company-web-f5-read-2026-10-28/static-v2/tsconfig-1.json",
+        "--noEmit",
+        "--incremental",
+        "false"
+      ],
+      "exit": 0,
+      "seconds": 7.0603087920026155
+    },
+    {
+      "name": "types-2",
+      "argv": [
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "/data1/baiyifan/workplace/stock_market_game/node_modules/.pnpm/typescript@6.0.3/node_modules/typescript/bin/tsc",
+        "-p",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/agents/branch-completion/company-web-f5-read-2026-10-28/static-v2/tsconfig-2.json",
+        "--noEmit",
+        "--incremental",
+        "false"
+      ],
+      "exit": 0,
+      "seconds": 7.490648937004153
+    },
+    {
+      "name": "types-3",
+      "argv": [
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "/data1/baiyifan/workplace/stock_market_game/node_modules/.pnpm/typescript@6.0.3/node_modules/typescript/bin/tsc",
+        "-p",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/agents/branch-completion/company-web-f5-read-2026-10-28/static-v2/tsconfig-3.json",
+        "--noEmit",
+        "--incremental",
+        "false"
+      ],
+      "exit": 0,
+      "seconds": 6.590389173012227
+    },
+    {
+      "name": "host",
+      "argv": [
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "--test",
+        "--test-timeout=10000",
+        "apps/web/src/host/company-read-hosts.test.ts"
+      ],
+      "exit": 0,
+      "seconds": 0.3799520189932082
+    },
+    {
+      "name": "ui",
+      "argv": [
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "--test",
+        "--test-timeout=10000",
+        "apps/web/src/components/company/use-company-query.test.ts"
+      ],
+      "exit": 0,
+      "seconds": 2.2343254829902435
+    },
+    {
+      "name": "lint",
+      "argv": [
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "/data1/baiyifan/workplace/stock_market_game/node_modules/.pnpm/oxlint@1.71.0/node_modules/oxlint/bin/oxlint",
+        "--deny-warnings",
+        "--threads",
+        "2",
+        "--no-ignore",
+        "-c",
+        "apps/web/.oxlintrc.json",
+        "apps/web/src/host/company-read-hosts.test.ts",
+        "apps/web/src/components/company/use-company-query.test.ts"
+      ],
+      "exit": 1,
+      "seconds": 0.4097511469881283
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+
+running 1 test
+test session::protocol::company_reads::tests::company_views_preserve_nonempty_existing_domain_results_and_save_bytes ... FAILED
+
+failures:
+
+failures:
+    session::protocol::company_reads::tests::company_views_preserve_nonempty_existing_domain_results_and_save_bytes
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2811 filtered out; finished in 0.55s
+

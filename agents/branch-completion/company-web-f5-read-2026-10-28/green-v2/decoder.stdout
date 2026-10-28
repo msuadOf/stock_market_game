@@ -1,0 +1,12 @@
+✔ 六查询按实际公司目录发送已冻结 Rust kind，本人来自响应且大整数保持字符串 (4.034497ms)
+✔ 未知公司与非法日期在发送前拒绝，不能将公司代码当 StockId 或数字转换 (0.71152ms)
+✔ 查询响应严格拒绝缺失或数字 owner、错 kind、未知字段与其他账户款项 (0.533026ms)
+✔ 领域与 transport 失败原样拒绝，不冒充空权益或零未缴税额 (0.33167ms)
+ℹ tests 4
+ℹ suites 0
+ℹ pass 4
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 127.563572

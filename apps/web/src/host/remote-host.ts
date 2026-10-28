@@ -3,6 +3,7 @@ import type { CodedIntent, CodedSnapshot } from "./protocol/stock-identity.ts";
 import { wireIntentOf } from "./protocol/stock-identity.ts";
 import type { PausePreferences } from "../types/generated/PausePreferences.ts";
 import type { DeliveryMode, EngineHost } from "./engine-host.ts";
+import { createCompanyReadQueries } from "./company-read.ts";
 import type { HostFailure, HostUpdate } from "./host-update.ts";
 import { UI_TARGET_HZ } from "./host-update.ts";
 import { remoteBaseUrl, remoteJson, remotePausePreferencePayload, remotePost, remoteSession, remoteWsUrl, remoteWsProtocols } from "./remote-request.ts";
@@ -261,6 +262,15 @@ export async function createRemoteHost(setup: SessionSetup, seed: bigint, option
   });
 
   return {
+    ...createCompanyReadQueries(async query => {
+      if (disposed || !publisher.isProtocolReady()) throw new Error("远程公司查询需要健康的当前会话基线");
+      const cursor = publisher.captureQueryCursor("远程公司查询需要当前基线");
+      const response = record(await requestJson(`${baseUrl}/api/company-read-query`, remotePost({ session_id: created.id, generation: cursor.generation, query }, token)), "远程 company_read_query");
+      exact(response, ["generation", "owner", "value"], "远程 company_read_query");
+      if (disposed || !publisher.isProtocolReady()) throw new Error("远程公司查询响应属于已销毁或已中断会话");
+      publisher.assertQueryCursor(cursor, response.generation, "远程公司查询响应属于已过期会话 generation");
+      return { owner: response.owner, value: response.value };
+    }, requireCatalogResolver),
     capabilities: { deliveryModes: ["push", "pull"], targetUiHz: UI_TARGET_HZ, sharedMemory: false, reconnect: true, publicCompanyReports: true, npcDecisionDiagnostics: capabilityRecord.npcDecisionDiagnostics },
     async start(onUpdate, onFatalError) {
       if (disposed) throw new Error("远程会话已经销毁，不能重新启动");

@@ -556,9 +556,13 @@ pub enum SessionCommand {
     },
 }
 
-/// 共享市场成员请求（B3 子集——B2 查询面与公司契约面不在本批）。
+/// 共享市场成员请求；本人公司查询由当前成员关系导出账户。
 #[derive(Debug)]
 pub enum MemberRequest {
+    CompanyRead {
+        generation: u64,
+        query: engine::session::protocol::CompanyReadQuery,
+    },
     /// 重置市场（控制权 + 新 setup/seed；交易时钟配置必须与现会话一致）。
     Reset {
         generation: u64,
@@ -603,6 +607,14 @@ pub enum MemberRequest {
 
 #[derive(Debug)]
 pub enum MemberResponse {
+    CompanyRead(
+        u64,
+        AccountId,
+        Result<
+            engine::session::protocol::CompanyReadResult,
+            engine::session::protocol::CompanyReadError,
+        >,
+    ),
     Baseline(Result<PublicBaseline, engine::session::CompanyCatalogViewError>),
     Context(MarketContext),
     Membership(MarketMembership),
@@ -807,6 +819,35 @@ pub struct SessionHandles {
 }
 
 impl SessionHandles {
+    pub async fn company_read_query_for(
+        &self,
+        generation: u64,
+        subject: OpaqueSubjectId,
+        query: engine::session::protocol::CompanyReadQuery,
+    ) -> Result<
+        (
+            u64,
+            AccountId,
+            Result<
+                engine::session::protocol::CompanyReadResult,
+                engine::session::protocol::CompanyReadError,
+            >,
+        ),
+        SendCommandError,
+    > {
+        match self
+            .member_request(subject, MemberRequest::CompanyRead { generation, query })
+            .await?
+        {
+            MemberResponse::CompanyRead(generation, owner, result) => {
+                Ok((generation, owner, result))
+            }
+            _ => Err(SendCommandError::Rejected(
+                "公司只读查询响应类型错误".into(),
+            )),
+        }
+    }
+
     /// 订阅 actor 发布的更新；外部只持有 Receiver，不获得发布写权。
     /// ```no_run
     /// fn subscribe(handles: &server::SessionHandles) {
@@ -2066,6 +2107,7 @@ impl SessionActor {
             |error: engine::session::MembershipError| SendCommandError::Rejected(error.to_string());
         let request_generation = match &request {
             MemberRequest::AdmissionCash { generation, .. }
+            | MemberRequest::CompanyRead { generation, .. }
             | MemberRequest::SetSpeed { generation, .. }
             | MemberRequest::SetRunning { generation, .. }
             | MemberRequest::SetPausePreferences { generation, .. } => Some(*generation),
@@ -2075,6 +2117,22 @@ impl SessionActor {
             return Err(SendCommandError::Rejected("STALE_SESSION_GENERATION".into()));
         }
         match request {
+            MemberRequest::CompanyRead { query, .. } => {
+                if let Some(error) = self.fatal_rejection() {
+                    return Err(SendCommandError::Rejected(error.to_string()));
+                }
+                let owner = self
+                    .game
+                    .market_membership(&subject)
+                    .map_err(reject)?
+                    .account_id;
+                Ok(MemberResponse::CompanyRead(
+                    self.timeline_generation,
+                    owner,
+                    self.game.company_read_query(owner, query),
+                ))
+            }
+
             MemberRequest::Reset {
                 generation,
                 setup,

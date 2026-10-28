@@ -1,0 +1,12 @@
+✔ Remote 真实 host 注册公司只读查询，发送同代请求且不能指定其他账户 (32.225078ms)
+✔ Remote 真实 host 拒绝其他账户回执与错 kind，不用空列表掩盖失败 (2.354028ms)
+✔ Remote 真实 host 销毁后拒绝迟到的本人查询成功 (1.383171ms)
+✔ Remote 同 generation 重装基线仍拒绝旧目录查询结果 (1.281607ms)
+ℹ tests 4
+ℹ suites 0
+ℹ pass 4
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 260.946414

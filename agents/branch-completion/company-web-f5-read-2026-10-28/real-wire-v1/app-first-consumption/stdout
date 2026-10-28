@@ -1,0 +1,24 @@
+✖ App ConnectedCompanyPanel 经真实 Remote host 展示 Rust 同局六种只读 JSON (1441.433047ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1821.027856
+
+✖ failing tests:
+
+test at apps/web/src/components/company/use-company-query.test.ts:279:1
+✖ App ConnectedCompanyPanel 经真实 Remote host 展示 Rust 同局六种只读 JSON (1441.433047ms)
+  Error: 界面 fixture 不支持请求：http://127.0.0.1:3000/api/session?session_id=fixture-session
+      at fetchFn (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/components/company/use-company-query.test.ts:301:11)
+      at remoteJson (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/remote-request.ts:24:26)
+      at file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/remote-request-scope.ts:22:7
+      at new Promise (<anonymous>)
+      at RemoteRequestScope.request (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/remote-request-scope.ts:11:12)
+      at Object.dispose (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/remote-host.ts:303:22)
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/components/company/use-company-query.test.ts:332:48)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3)

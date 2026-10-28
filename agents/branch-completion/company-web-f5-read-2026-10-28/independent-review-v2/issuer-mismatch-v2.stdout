@@ -1,0 +1,25 @@
+✖ 审查复现：已存在但不匹配的 issuer/stock 不应作为真实配股事实接收 (4.395278ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 223.628225
+
+✖ failing tests:
+
+test at agents/branch-completion/company-web-f5-read-2026-10-28/independent-review-v2/issuer-mismatch.test.mjs:6:1
+✖ 审查复现：已存在但不匹配的 issuer/stock 不应作为真实配股事实接收 (4.395278ms)
+  AssertionError [ERR_ASSERTION]: Missing expected rejection.
+      at async TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/agents/branch-completion/company-web-f5-read-2026-10-28/independent-review-v2/issuer-mismatch.test.mjs:15:3)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: /issuer|发行人|证券|映射/,
+    operator: 'rejects',
+    diff: 'simple'
+  }

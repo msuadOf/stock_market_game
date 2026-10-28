@@ -74,6 +74,10 @@ fn app_router_with_state(state: AppState) -> Router {
             post(routes::api_admission_cash),
         )
         .route("/api/intent", post(routes::api_intent))
+        .route(
+            "/api/company-read-query",
+            post(routes::api_company_read_query),
+        )
         .route("/api/snapshot", get(routes::api_snapshot))
         .route(
             "/api/player-working-orders",

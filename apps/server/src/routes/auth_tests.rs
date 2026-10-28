@@ -5,6 +5,121 @@ use engine::strategy::Intent;
 use engine::Side;
 use serde_json::{json, Value};
 use tower::ServiceExt;
+include!("../../../../packages/engine/test-support/simple_company.rs");
+
+#[tokio::test]
+async fn company_read_route_authenticates_and_preserves_owner_and_generation() {
+    let app = crate::app_router();
+    let mut company_setup: engine::SessionSetup = serde_json::from_value(setup()).unwrap();
+    company_setup.start_date = engine::CivilDate::from_iso("2030-01-08").unwrap();
+    company_setup.history_len = 1;
+    company_setup.company_system = Some(simple_company_fixture!(engine; ["600101"]));
+    company_setup.dividend_tax_mode = Some(engine::company::CashDividendTaxMode::FlatWithholding);
+    company_setup.flat_withholding_bp = Some(1000);
+    company_setup.par_value_per_share = Some(Money::from_cents(100));
+    company_setup.auto_corporate_foundation = true;
+    let (status, created) = request(
+        app.clone(),
+        "POST",
+        "/api/new",
+        Some(json!({"setup":company_setup,"seed":"71"})),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{created}");
+    let body = json!({"session_id":created["session_id"],"generation":created["generation"],"query":{"kind":"AccountDividendTaxStatus"}});
+    assert_eq!(
+        request(
+            app.clone(),
+            "POST",
+            "/api/company-read-query",
+            Some(body.clone()),
+            None
+        )
+        .await
+        .0,
+        StatusCode::UNAUTHORIZED
+    );
+    let credential = created["test_credential"].as_str().unwrap();
+    let (status, result) = request(
+        app.clone(),
+        "POST",
+        "/api/company-read-query",
+        Some(body.clone()),
+        Some(credential),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{result}");
+    assert_eq!(result["owner"], "0");
+    assert_eq!(result["generation"], created["generation"]);
+    assert_eq!(result["value"]["kind"], "AccountDividendTaxStatus");
+    assert_eq!(result["value"]["data"]["stocks"][0]["stock"], "600101");
+    println!("COMPANY_READ_SERVER_FIXTURE {result}");
+    for query in [
+        json!({"kind":"CompanyPeriodExplanation","data":{"company":0,"period_end":"2029-12-31"}}),
+        json!({"kind":"DividendTaxOutstandingViews"}),
+        json!({"kind":"OwnerFlatWithholdingReceipts"}),
+        json!({"kind":"CompanyCapabilities","data":{"company":0}}),
+        json!({"kind":"OwnerRightsOfferings"}),
+    ] {
+        let mut request_body = body.clone();
+        request_body["query"] = query.clone();
+        let (status, response) = request(
+            app.clone(),
+            "POST",
+            "/api/company-read-query",
+            Some(request_body),
+            Some(credential),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{response}");
+        assert_eq!(response["owner"], "0");
+        assert_eq!(response["generation"], created["generation"]);
+        assert_eq!(response["value"]["kind"], query["kind"]);
+        println!("COMPANY_READ_SERVER_FIXTURE {response}");
+    }
+    let mut stale = body.clone();
+    stale["generation"] = json!("999");
+    assert_eq!(
+        request(
+            app.clone(),
+            "POST",
+            "/api/company-read-query",
+            Some(stale),
+            Some(credential)
+        )
+        .await
+        .0,
+        StatusCode::CONFLICT
+    );
+    let unjoined = guest_token(app.clone()).await;
+    assert_eq!(
+        request(
+            app.clone(),
+            "POST",
+            "/api/company-read-query",
+            Some(body.clone()),
+            Some(&unjoined)
+        )
+        .await
+        .0,
+        StatusCode::FORBIDDEN
+    );
+    let mut forged = body;
+    forged["query"]["account"] = json!("99");
+    assert_eq!(
+        request(
+            app.clone(),
+            "POST",
+            "/api/company-read-query",
+            Some(forged),
+            Some(credential)
+        )
+        .await
+        .0,
+        StatusCode::BAD_REQUEST
+    );
+}
 
 fn setup() -> Value {
     json!({

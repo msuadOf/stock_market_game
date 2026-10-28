@@ -1,0 +1,73 @@
+{
+  "fixtures": [
+    {
+      "name": "wire-engine.json",
+      "matchesActualStdout": true,
+      "rows": 6,
+      "sha256": "241c0007905ad4e3f023c885980b618a79a20fd593dd900b3614bc717462b7da",
+      "logs": [
+        {
+          "path": "/data1/baiyifan/workplace/stock_market_game/.worktree/company-query-host-2026-10-28/agents/branch-completion/company-query-host-2026-10-28/four-host-green-02/company_views_preserve_nonempty_existing_domain_results_and_save_bytes.stdout",
+          "sha256": "f0a9299298c2ab625212d205410a97f4fc9f9d3969f4a21d0a4d05ca4fa0d474",
+          "rows": 3
+        },
+        {
+          "path": "/data1/baiyifan/workplace/stock_market_game/.worktree/company-query-host-2026-10-28/agents/branch-completion/company-query-host-2026-10-28/four-host-green-02/flat_receipts_return_nonempty_owner_facts_without_other_accounts.stdout",
+          "sha256": "0e3ce2ee5df64f5866f8ce62e701464f9811c109848f1c9deeed8fffb82df1de",
+          "rows": 1
+        },
+        {
+          "path": "/data1/baiyifan/workplace/stock_market_game/.worktree/company-query-host-2026-10-28/agents/branch-completion/company-query-host-2026-10-28/four-host-green-02/global_outstanding_is_filtered_to_the_authenticated_owner.stdout",
+          "sha256": "fb81de30c68689fce8002794efebd5afb45408968fae22ead5f83752ea705dec",
+          "rows": 1
+        },
+        {
+          "path": "/data1/baiyifan/workplace/stock_market_game/.worktree/company-query-host-2026-10-28/agents/branch-completion/company-query-host-2026-10-28/four-host-green-02/rights_offerings_return_nonempty_owner_entitlement_without_other_holders.stdout",
+          "sha256": "75014097a79fc2567c002136fcbc00e236a6b889f69c8ff431aaa75000ff3736",
+          "rows": 1
+        }
+      ]
+    },
+    {
+      "name": "wire-server.json",
+      "matchesActualStdout": true,
+      "rows": 6,
+      "sha256": "399e7a0831069d7602accf6fa25b8c3ad9ea9bf1d18cd45613345e8277b40c1a",
+      "logs": [
+        {
+          "path": "/data1/baiyifan/workplace/stock_market_game/.worktree/company-query-host-2026-10-28/agents/branch-completion/company-query-host-2026-10-28/four-host-green-02/company_read_route_authenticates_and_preserves_owner_and_generation.stdout",
+          "sha256": "3825961ce591ff703be433004872f371a2f4cc27f2b66a78964df061460f93fb",
+          "rows": 6
+        }
+      ]
+    },
+    {
+      "name": "wire-tauri.json",
+      "matchesActualStdout": true,
+      "rows": 6,
+      "sha256": "8939c269d5cbe7f41bd8e35b1a28cf5832ebe2dd8bf6d06822af640ff93b2a13",
+      "logs": [
+        {
+          "path": "/data1/baiyifan/workplace/stock_market_game/.worktree/company-query-host-2026-10-28/agents/branch-completion/company-query-host-2026-10-28/four-host-green-02/company_read_ipc_registers_six_queries_and_preserves_typed_rejections.stdout",
+          "sha256": "a021dd460772d16a7201bed4da5b30d5abc8e7143f2c7114881305c5b31d1971",
+          "rows": 6
+        }
+      ]
+    },
+    {
+      "name": "wire-tauri-failures.json",
+      "matchesActualStdout": true,
+      "rows": 1,
+      "sha256": "a63eac0b5f3f0b68672d3b8419b9c9520cab0db9f9b859c4f6c3e45205f0bfa0",
+      "logs": [
+        {
+          "path": "/data1/baiyifan/workplace/stock_market_game/.worktree/company-query-host-2026-10-28/agents/branch-completion/company-query-host-2026-10-28/four-host-green-02/company_read_ipc_registers_six_queries_and_preserves_typed_rejections.stdout",
+          "sha256": "a021dd460772d16a7201bed4da5b30d5abc8e7143f2c7114881305c5b31d1971",
+          "rows": 1
+        }
+      ]
+    }
+  ],
+  "firstAttempt": "首轮startswith未识别Rust test harness行内前缀而拒绝比对；未修改fixture，第二轮显式校验已知harness前缀后逐条全等",
+  "scope": "逐条canonical JSON核原stdout；产品fixture原字节复制，不重构JSON"
+}

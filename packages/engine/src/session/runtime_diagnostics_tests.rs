@@ -534,7 +534,9 @@ fn d2_prepare_market_after_real_fill_restores_both_install_capture_modes() {
         let before = game.business_state_hash().unwrap();
         let mut poison_oracle = game.clone_for_tick_shadow().unwrap();
         let error = if capture {
-            game.runtime_step_with_install_returning_baseline(&mut runtime).err().unwrap()
+            game.runtime_step_with_prepared_mirror(&mut runtime, |_, facts| {
+                Ok(facts.into_iter().map(|fact| fact.event).collect::<Vec<_>>())
+            }).err().unwrap()
         } else {
             game.runtime_step_with_install(&mut runtime).err().unwrap()
         };
@@ -543,18 +545,15 @@ fn d2_prepare_market_after_real_fill_restores_both_install_capture_modes() {
         assert_eq!(runtime.world_report_log().last().unwrap().desk_trades.len(), 1, "prepare 拒绝前真实 World 已产生一笔双腿成交");
         assert_eq!(serde_json::to_value(game.causal_facts()).unwrap(), prior_facts);
         assert_eq!(game.business_state_hash().unwrap(), before);
-        if capture {
-            assert!(game.runtime_discard_driver_flag, "legacy returning-baseline 入口仍丢弃失败候选 driver");
-        } else {
-            assert!(!game.runtime_discard_driver_flag, "E2 ordinary 必须保留 terminal raw");
-            let terminal = runtime.terminal_causal_snapshot_for_test().unwrap();
-            assert!(!terminal.1.is_empty());
-            assert_eq!(terminal.2, error);
-            let world_tick = runtime.world_committed_tick();
-            assert_eq!(runtime.step_frame_equivalent(&mut game).unwrap_err(), error);
-            assert_eq!(runtime.world_committed_tick(), world_tick);
-            assert_eq!(runtime.terminal_causal_snapshot_for_test(), Some(terminal));
-        }
+        // E2 已退役 returning-baseline；两个聚合入口均保留 terminal driver 与首错 raw。
+        assert!(!game.runtime_discard_driver_flag, "E2 两入口均须保留 terminal raw");
+        let terminal = runtime.terminal_causal_snapshot_for_test().unwrap();
+        assert!(!terminal.1.is_empty());
+        assert_eq!(terminal.2, error);
+        let world_tick = runtime.world_committed_tick();
+        assert_eq!(runtime.step_frame_equivalent(&mut game).unwrap_err(), error);
+        assert_eq!(runtime.world_committed_tick(), world_tick);
+        assert_eq!(runtime.terminal_causal_snapshot_for_test(), Some(terminal));
         poison_oracle.poison_runtime_step(error);
         assert_eq!(game.session_state_hash().unwrap(), poison_oracle.session_state_hash().unwrap());
         game = checkpoint;

@@ -15,6 +15,10 @@ import type { InitialAllocation } from "./initial-allocation.ts";
 import type { MarketHistoryRequest, MarketHistoryPage } from "./market-history.ts";
 import type { CurrentMinuteHistoryRequest, CurrentMinuteHistoryResponse } from "./current-minute-history.ts";
 import type { PersonalTradeHistoryRequest, PersonalTradeHistoryPage } from "./personal-trade-history.ts";
+import type { CompanyCapabilities } from "../types/generated/CompanyCapabilities.ts";
+import type { PeriodChangeExplanation } from "../types/generated/PeriodChangeExplanation.ts";
+import type { OwnerRightsOfferingView } from "./company-contract-views.ts";
+import type { AccountDividendTaxStatusView, DividendTaxOutstandingView, FlatWithholdingReceipt } from "./dividend-tax.ts";
 export type { MarketHistoryRequest, MarketHistoryPage };
 export type { CurrentMinuteHistoryRequest, CurrentMinuteHistoryResponse };
 export type { PersonalTradeHistoryRequest, PersonalTradeHistoryPage };
@@ -131,6 +135,13 @@ export interface EngineHost {
   /** 恢复提交后、发布新基线或恢复运行前通知；后续失败不撤销已提交的恢复。 */
   load(slot: unknown, onRestored?: () => void): Promise<void>;
   queryPublicReports?(query: PublicReportQuery): Promise<PublicReportPage>;
+  /** 公司代码经当前实际目录解析；本人由宿主会话身份确定，调用者不能指定账户。 */
+  queryCompanyPeriodExplanation?(companyCode: string, periodEnd: string): Promise<PeriodChangeExplanation>;
+  queryCompanyCapabilities?(companyCode: string): Promise<CompanyCapabilities>;
+  queryAccountDividendTaxStatus?(): Promise<AccountDividendTaxStatusView>;
+  queryDividendTaxOutstandingViews?(): Promise<readonly DividendTaxOutstandingView[]>;
+  queryOwnerFlatWithholdingReceipts?(): Promise<readonly FlatWithholdingReceipt[]>;
+  queryOwnerRightsOfferings?(): Promise<readonly OwnerRightsOfferingView[]>;
   publicReportById?(id: string): Promise<PublicReportSummary>;
   npcDecisionTrace?(account: number): Promise<readonly NpcDecisionTraceRecord[]>;
 }

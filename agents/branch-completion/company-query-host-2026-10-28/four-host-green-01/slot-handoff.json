@@ -1,0 +1,14 @@
+{
+  "pendingSlotHandoff": false,
+  "rootAuthorized": true,
+  "priorBatch": "W1formal03",
+  "actualWaitSession": 20726,
+  "actualWaitExit": 1,
+  "priorReceipt": "/data1/baiyifan/workplace/stock_market_game/agents/branch-completion/wasm-w1/resume-2026-10-28/formal-03-post-wait-integrity.json",
+  "priorOwnedAlive": [],
+  "priorTmpAbsent": true,
+  "priorECHILD": true,
+  "wasmPkgRetainedAsFailureEvidence": "/tmp/stock-market-game-validation-2026-10-27-1311109/w1-artifacts/w1-20261028-03/pkg",
+  "rootAuthorization": "root明确W1formal03后四包18green默认唯一后继，未收到E2改序指令；actualhandoff后metadata窄核即launch",
+  "nextBatch": "执行后仅交root指定后继，未指定则回root，不自行重试或连跑"
+}

@@ -1,0 +1,28 @@
+✖ App 公司面板连接只读能力与本人税务，使用实际公司代码且不启用写命令 (260.527178ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 569.283019
+
+✖ failing tests:
+
+test at apps/web/src/components/company/use-company-query.test.ts:204:1
+✖ App 公司面板连接只读能力与本人税务，使用实际公司代码且不启用写命令 (260.527178ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /公司能力面与当前方案/. Input:
+  
+  '真实选中公司实际发行人模拟自然日2030-06-01日历状态等待权威事件推进模拟自然日正在请求已公开报告…'
+  
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/components/company/use-company-query.test.ts:215:12)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: '真实选中公司实际发行人模拟自然日2030-06-01日历状态等待权威事件推进模拟自然日正在请求已公开报告…',
+    expected: /公司能力面与当前方案/,
+    operator: 'match',
+    diff: 'simple'
+  }

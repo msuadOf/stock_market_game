@@ -1,0 +1,36 @@
+The above error occurred in the <select> component:
+
+    at select
+    at label
+    at div
+    at header
+    at section
+    at CompanyPanel (/data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/components/company/CompanyPanel.tsx:53:25)
+
+Consider adding an error boundary to your tree to customize error handling behavior.
+Visit https://reactjs.org/link/error-boundaries to learn more about error boundaries.
+✖ App 本人读面在退出身份时清旧事实，迟到成功不能写回且不再查询本人 (279.754198ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 609.507669
+
+✖ failing tests:
+
+test at apps/web/src/components/company/use-company-query.test.ts:223:1
+✖ App 本人读面在退出身份时清旧事实，迟到成功不能写回且不再查询本人 (279.754198ms)
+  TypeError: Cannot read properties of undefined (reading 'length')
+      at updateOptions (/data1/baiyifan/workplace/stock_market_game/node_modules/.pnpm/react-dom@18.3.1_react@18.3.1/node_modules/react-dom/cjs/react-dom.development.js:2137:37)
+      at postMountWrapper$2 (/data1/baiyifan/workplace/stock_market_game/node_modules/.pnpm/react-dom@18.3.1_react@18.3.1/node_modules/react-dom/cjs/react-dom.development.js:2205:5)
+      at setInitialProperties (/data1/baiyifan/workplace/stock_market_game/node_modules/.pnpm/react-dom@18.3.1_react@18.3.1/node_modules/react-dom/cjs/react-dom.development.js:9943:7)
+      at finalizeInitialChildren (/data1/baiyifan/workplace/stock_market_game/node_modules/.pnpm/react-dom@18.3.1_react@18.3.1/node_modules/react-dom/cjs/react-dom.development.js:10950:3)
+      at completeWork (/data1/baiyifan/workplace/stock_market_game/node_modules/.pnpm/react-dom@18.3.1_react@18.3.1/node_modules/react-dom/cjs/react-dom.development.js:22232:17)
+      at completeUnitOfWork (/data1/baiyifan/workplace/stock_market_game/node_modules/.pnpm/react-dom@18.3.1_react@18.3.1/node_modules/react-dom/cjs/react-dom.development.js:26632:16)
+      at performUnitOfWork (/data1/baiyifan/workplace/stock_market_game/node_modules/.pnpm/react-dom@18.3.1_react@18.3.1/node_modules/react-dom/cjs/react-dom.development.js:26607:5)
+      at workLoopSync (/data1/baiyifan/workplace/stock_market_game/node_modules/.pnpm/react-dom@18.3.1_react@18.3.1/node_modules/react-dom/cjs/react-dom.development.js:26505:5)
+      at renderRootSync (/data1/baiyifan/workplace/stock_market_game/node_modules/.pnpm/react-dom@18.3.1_react@18.3.1/node_modules/react-dom/cjs/react-dom.development.js:26473:7)
+      at recoverFromConcurrentError (/data1/baiyifan/workplace/stock_market_game/node_modules/.pnpm/react-dom@18.3.1_react@18.3.1/node_modules/react-dom/cjs/react-dom.development.js:25889:20)

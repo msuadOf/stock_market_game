@@ -1,0 +1,43 @@
+{
+  "priorReceiptSha256": "2a03f6752090b2e00daf0942a515dcc4b74d37f314e478665e0470f7e2bb48fe",
+  "planSha256": "4918dcea45fca55e7219cbd36e4291a35169609e35da75b77e4cfbfb862accc8",
+  "slotSha256": "3cfca725dfb50ad37e700c073591e2a41e3fabf03c3884d5ec56c5a81f6f0645",
+  "helperHead": "8e5b32de305257b7cb9aeb284d19551cdf3ce2c3",
+  "expectedHelperHead": "8e5b32de305257b7cb9aeb284d19551cdf3ce2c3",
+  "runnerChecks": [
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.worktree/company-query-host-2026-10-28/agents/branch-completion/company-query-host-2026-10-28/four-host-green-02/run-ram-batch.py",
+      "matches": true
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.worktree/company-query-host-2026-10-28/agents/branch-completion/company-query-host-2026-10-28/four-host-green-02/launch-batch.py",
+      "matches": true
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.worktree/company-query-host-2026-10-28/agents/branch-completion/company-query-host-2026-10-28/four-host-green-02/absolute-supervisor.mjs",
+      "matches": true
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.worktree/company-query-host-2026-10-28/agents/branch-completion/company-query-host-2026-10-28/four-host-green-02/cases.json",
+      "matches": true
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.worktree/runtime-sync-e1/agents/perf-intraday-independent/implementation/e2/day-end-full-source-tmpfs-batch-r2/run-build-guard-tmpfs.mjs",
+      "matches": true
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+      "matches": true
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-long-validation.mjs",
+      "matches": true
+    },
+    {
+      "path": "/data1/baiyifan/workplace/stock_market_game/agents/branch-completion/funds-production-resume-2026-10-27/p1-formal-red-2026-10-28/collect-child-status.py",
+      "matches": true
+    }
+  ],
+  "freshPolicy": "不要求fresh=false；真实Cargo四artifact原始fresh照录；仅Tauri源码已变必须真实编译，其他三个同源partial允许合法fresh复用",
+  "largeBinaryHashOrCopyBeforeSharedWindow": false
+}

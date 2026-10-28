@@ -1,0 +1,99 @@
+✖ 六查询按实际公司目录发送已冻结 Rust kind，本人来自响应且大整数保持字符串 (1.108053ms)
+✖ 未知公司与非法日期在发送前拒绝，不能将公司代码当 StockId 或数字转换 (0.927257ms)
+✖ 查询响应严格拒绝缺失或数字 owner、错 kind、未知字段与其他账户款项 (1.306598ms)
+✖ 领域与 transport 失败原样拒绝，不冒充空权益或零未缴税额 (0.296588ms)
+ℹ tests 4
+ℹ suites 0
+ℹ pass 0
+ℹ fail 4
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 114.345825
+
+✖ failing tests:
+
+test at apps/web/src/host/company-read.test.ts:18:1
+✖ 六查询按实际公司目录发送已冻结 Rust kind，本人来自响应且大整数保持字符串 (1.108053ms)
+  Error: 公司只读宿主适配尚未实现
+      at Object.unavailable (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/company-read.ts:13:59)
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/company-read.test.ts:26:32)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at Test.start (node:internal/test_runner/test:1191:17)
+      at startSubtestAfterBootstrap (node:internal/test_runner/harness:385:17)
+
+test at apps/web/src/host/company-read.test.ts:36:1
+✖ 未知公司与非法日期在发送前拒绝，不能将公司代码当 StockId 或数字转换 (0.927257ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /未知公司/. Input:
+  
+  'Error: 公司只读宿主适配尚未实现'
+  
+      at async TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/company-read.test.ts:39:3)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: Error: 公司只读宿主适配尚未实现
+        at Object.unavailable (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/company-read.ts:13:59)
+        at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/company-read.test.ts:39:30)
+        at Test.runInAsyncScope (node:async_hooks:227:14)
+        at Test.run (node:internal/test_runner/test:1325:25)
+        at Test.processPendingSubtests (node:internal/test_runner/test:911:18)
+        at Test.postRun (node:internal/test_runner/test:1465:19)
+        at Test.run (node:internal/test_runner/test:1390:12)
+        at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3),
+    expected: /未知公司/,
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at apps/web/src/host/company-read.test.ts:44:1
+✖ 查询响应严格拒绝缺失或数字 owner、错 kind、未知字段与其他账户款项 (1.306598ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /owner|kind|extra|account/. Input:
+  
+  'Error: 公司只读宿主适配尚未实现'
+  
+      at async TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/company-read.test.ts:53:5)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: Error: 公司只读宿主适配尚未实现
+        at Object.unavailable (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/company-read.ts:13:59)
+        at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/company-read.test.ts:53:32)
+        at Test.runInAsyncScope (node:async_hooks:227:14)
+        at Test.run (node:internal/test_runner/test:1325:25)
+        at Test.processPendingSubtests (node:internal/test_runner/test:911:18)
+        at Test.postRun (node:internal/test_runner/test:1465:19)
+        at Test.run (node:internal/test_runner/test:1390:12)
+        at async Test.processPendingSubtests (node:internal/test_runner/test:911:7),
+    expected: /owner|kind|extra|account/,
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at apps/web/src/host/company-read.test.ts:57:1
+✖ 领域与 transport 失败原样拒绝，不冒充空权益或零未缴税额 (0.296588ms)
+  AssertionError [ERR_ASSERTION]: The validation function is expected to return "true". Received false
+  
+  Caught error:
+  
+  Error: 公司只读宿主适配尚未实现
+      at async TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/company-read.test.ts:60:3)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: Error: 公司只读宿主适配尚未实现
+        at Object.unavailable (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/company-read.ts:13:59)
+        at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/company-catalog-bc/apps/web/src/host/company-read.test.ts:60:30)
+        at Test.runInAsyncScope (node:async_hooks:227:14)
+        at Test.run (node:internal/test_runner/test:1325:25)
+        at Test.processPendingSubtests (node:internal/test_runner/test:911:18)
+        at Test.postRun (node:internal/test_runner/test:1465:19)
+        at Test.run (node:internal/test_runner/test:1390:12)
+        at async Test.processPendingSubtests (node:internal/test_runner/test:911:7),
+    operator: 'rejects',
+    diff: 'simple'
+  }
