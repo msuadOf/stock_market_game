@@ -19,6 +19,7 @@ import type { CompanyCapabilities } from "../types/generated/CompanyCapabilities
 import type { PeriodChangeExplanation } from "../types/generated/PeriodChangeExplanation.ts";
 import type { OwnerRightsOfferingView } from "./company-contract-views.ts";
 import type { AccountDividendTaxStatusView, DividendTaxOutstandingView, FlatWithholdingReceipt } from "./dividend-tax.ts";
+import type { CompanyWriteCommands } from "./company-write.ts";
 export type { MarketHistoryRequest, MarketHistoryPage };
 export type { CurrentMinuteHistoryRequest, CurrentMinuteHistoryResponse };
 export type { PersonalTradeHistoryRequest, PersonalTradeHistoryPage };
@@ -142,6 +143,10 @@ export interface EngineHost {
   queryDividendTaxOutstandingViews?(): Promise<readonly DividendTaxOutstandingView[]>;
   queryOwnerFlatWithholdingReceipts?(): Promise<readonly FlatWithholdingReceipt[]>;
   queryOwnerRightsOfferings?(): Promise<readonly OwnerRightsOfferingView[]>;
+  /** 公司写能力按部署宿主接线；本人由可信会话身份决定，ack 不等于未来付款或更正完成。 */
+  proposePlayerCompanyAction?: CompanyWriteCommands["proposePlayerCompanyAction"];
+  enqueueReportCorrection?: CompanyWriteCommands["enqueueReportCorrection"];
+  cancelReportCorrection?: CompanyWriteCommands["cancelReportCorrection"];
   publicReportById?(id: string): Promise<PublicReportSummary>;
   npcDecisionTrace?(account: number): Promise<readonly NpcDecisionTraceRecord[]>;
 }

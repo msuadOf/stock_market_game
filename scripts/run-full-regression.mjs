@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { createHash } from "node:crypto";
+import { constants } from "node:fs";
 import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -46,11 +47,11 @@ export const FULL_REGRESSION_SOURCE_INPUTS = [
   "scripts",
 ];
 
-export function fullRegressionSteps(cpuCount = os.availableParallelism(), repoRoot = DEFAULT_REPO_ROOT, baseEnv = process.env, workspaceRoot = repoRoot) {
+export function fullRegressionSteps(cpuCount = os.availableParallelism(), repoRoot = DEFAULT_REPO_ROOT, baseEnv = process.env, workspaceRoot = repoRoot, targetDir) {
   if (!Number.isInteger(cpuCount) || cpuCount <= 0) throw new Error("full regression requires a positive CPU count");
   const resolvedRoot = path.resolve(repoRoot);
   const resolvedWorkspaceRoot = path.resolve(workspaceRoot);
-  const cargoTargetDir = path.join(resolvedWorkspaceRoot, ".tmp", "build-cache", "full-regression");
+  const cargoTargetDir = targetDir === undefined ? path.join(resolvedWorkspaceRoot, ".tmp", "build-cache", "full-regression") : targetDir;
   const processTmpDir = path.join(resolvedWorkspaceRoot, ".tmp", "process-tmp", "full-regression");
   const workspaceEnv = {
     ...baseEnv,
@@ -277,6 +278,32 @@ async function prepareInventoryPath(workspaceRoot, inventoryPath) {
   await fsp.mkdir(parent, { recursive: true });
   const validatedParent = await validateWorkspaceOutputPath(workspaceRoot, parent);
   return path.join(validatedParent, path.basename(candidate));
+}
+
+async function prepareFullRegressionPaths(sourceRoot, targetDir) {
+  let canonicalTarget;
+  if (targetDir !== undefined) {
+    if (typeof targetDir !== "string" || !path.isAbsolute(targetDir)) {
+      throw new Error("full regression target directory must be an absolute path");
+    }
+    // 先逐项检查原始路径，避免 resolve 消去 symbolic link 后的 .. 而漏检。
+    const root = path.parse(targetDir).root;
+    let current = root;
+    const separator = path.sep === "\\" ? /[\\/]/ : /\//;
+    for (const part of ["", ...targetDir.slice(root.length).split(separator)]) {
+      current = path.join(current, part);
+      let stat;
+      try { stat = await fsp.lstat(current); }
+      catch (error) { throw new Error(`full regression target directory is unavailable at ${current}: ${error.message}`, { cause: error }); }
+      if (stat.isSymbolicLink()) throw new Error(`full regression target directory must not contain a symbolic link: ${current}`);
+      if (!stat.isDirectory()) throw new Error(`full regression target path component is not a directory: ${current}`);
+    }
+    canonicalTarget = await fsp.realpath(targetDir);
+    try { await fsp.access(canonicalTarget, constants.W_OK); }
+    catch (error) { throw new Error(`full regression target directory is not writable at ${canonicalTarget}: ${error.message}`, { cause: error }); }
+  }
+  const workspacePaths = await prepareWorkspacePaths({ sourceRoot, scope: "full-regression" });
+  return canonicalTarget === undefined ? workspacePaths : { ...workspacePaths, cargoTargetDir: canonicalTarget };
 }
 
 async function readAndValidateInventory(inventoryPath, sourceRoot, workspacePaths, fingerprint, cpuCount, log, hashArtifacts) {
@@ -546,6 +573,7 @@ export async function buildFullRegressionArtifacts({
   cwd = DEFAULT_REPO_ROOT,
   baseEnv = process.env,
   inventoryPath,
+  targetDir,
   collectFingerprint = collectFullRegressionSourceFingerprint,
   hashArtifacts = hashArtifactFiles,
   log = () => undefined,
@@ -553,9 +581,9 @@ export async function buildFullRegressionArtifacts({
   progressIntervalMs = 30_000,
 } = {}) {
   const sourceRoot = await fsp.realpath(path.resolve(cwd));
-  const workspacePaths = await prepareWorkspacePaths({ sourceRoot, scope: "full-regression" });
+  const workspacePaths = await prepareFullRegressionPaths(sourceRoot, targetDir);
   const resolvedInventoryPath = await prepareInventoryPath(workspacePaths.workspaceRoot, inventoryPath);
-  const buildStep = fullRegressionSteps(cpuCount, sourceRoot, baseEnv, workspacePaths.workspaceRoot)
+  const buildStep = fullRegressionSteps(cpuCount, sourceRoot, baseEnv, workspacePaths.workspaceRoot, workspacePaths.cargoTargetDir)
     .find((step) => step.kind === "rust-test-build");
   const cargoBuildJobs = Number(buildStep.env.CARGO_BUILD_JOBS);
   log(JSON.stringify({ phase: "build-start", available_cpu_count: cpuCount, cargo_build_jobs: cargoBuildJobs }));
@@ -634,19 +662,20 @@ export async function executeFullRegression({
   cwd = DEFAULT_REPO_ROOT,
   baseEnv = process.env,
   inventoryPath,
+  targetDir,
   collectFingerprint = collectFullRegressionSourceFingerprint,
   hashArtifacts = hashArtifactFiles,
   log = () => undefined,
   runScripts = runScriptTestBatch,
 } = {}) {
   const sourceRoot = await fsp.realpath(path.resolve(cwd));
-  const workspacePaths = await prepareWorkspacePaths({ sourceRoot, scope: "full-regression" });
+  const workspacePaths = await prepareFullRegressionPaths(sourceRoot, targetDir);
   const resolvedInventoryPath = await prepareInventoryPath(workspacePaths.workspaceRoot, inventoryPath);
   const startedAt = now();
   const fingerprint = await collectFingerprint(sourceRoot);
   phaseRemainingMs(startedAt, now, "artifact inventory validation");
   const { artifacts } = await readAndValidateInventory(resolvedInventoryPath, sourceRoot, workspacePaths, fingerprint, cpuCount, log, hashArtifacts);
-  const steps = fullRegressionSteps(cpuCount, sourceRoot, baseEnv, workspacePaths.workspaceRoot);
+  const steps = fullRegressionSteps(cpuCount, sourceRoot, baseEnv, workspacePaths.workspaceRoot, workspacePaths.cargoTargetDir);
   const binaryStep = steps.find((step) => step.kind === "rust-test-binaries");
   const doctestStep = steps.find((step) => step.kind === "rust-doctests");
   const webStep = steps.find((step) => step.kind === "ordinary-command");
@@ -709,6 +738,7 @@ export async function runFullRegression({
   now = Date.now,
   cwd = DEFAULT_REPO_ROOT,
   inventoryPath,
+  targetDir,
   log = () => undefined,
   nodeExecutable = process.execPath,
 } = {}) {
@@ -717,7 +747,7 @@ export async function runFullRegression({
   const phases = [];
   for (const mode of ["build", "execute"]) {
     const phaseStartedAt = now();
-    await runFullRegressionPhase({ mode, run, cwd: sourceRoot, inventoryPath, nodeExecutable });
+    await runFullRegressionPhase({ mode, run, cwd: sourceRoot, inventoryPath, targetDir, nodeExecutable });
     const record = { phase: mode, wall_ms: now() - phaseStartedAt };
     phases.push(record);
     log(JSON.stringify(record));
@@ -730,11 +760,13 @@ export async function runFullRegressionPhase({
   run = runBoundedCommand,
   cwd = DEFAULT_REPO_ROOT,
   inventoryPath,
+  targetDir,
   nodeExecutable = process.execPath,
 } = {}) {
   if (!["build", "execute"].includes(mode)) throw new Error(`full regression phase is invalid: ${mode}`);
   const args = [fileURLToPath(import.meta.url), `--internal-${mode}`];
   if (inventoryPath !== undefined) args.push("--inventory", inventoryPath);
+  if (targetDir !== undefined) args.push("--target-dir", targetDir);
   return run({
     command: nodeExecutable,
     args,
@@ -752,25 +784,32 @@ export function parseFullRegressionArgs(argv) {
   const internal = rawMode.startsWith("--internal-");
   const mode = internal ? rawMode.slice("--internal-".length) : rawMode;
   if (!["all", "build", "execute"].includes(mode) || (internal && mode === "all")) {
-    throw new Error("usage: run-full-regression.mjs [all | build --inventory <workspace-.tmp-path> | execute --inventory <workspace-.tmp-path>]");
+    throw new Error("usage: run-full-regression.mjs [all | build --inventory <workspace-.tmp-path> | execute --inventory <workspace-.tmp-path>] [--target-dir <absolute-existing-real-dir>]");
   }
-  if (argv.length === 1 && mode === "all") return { mode, inventoryPath: undefined };
-  if (internal && argv.length === 1) return { mode, inventoryPath: undefined, internal: true };
-  if (argv.length !== 3 || argv[1] !== "--inventory" || argv[2].length === 0) {
-    throw new Error(`mode ${mode} requires exactly --inventory <workspace-.tmp-path>`);
+  const options = { mode, inventoryPath: undefined, ...(internal ? { internal: true } : {}) };
+  const seen = new Set();
+  for (let index = 1; index < argv.length; index += 2) {
+    const option = argv[index];
+    if (!["--inventory", "--target-dir"].includes(option)) throw new Error(`unknown full regression option: ${option}`);
+    if (seen.has(option)) throw new Error(`duplicate full regression option: ${option}`);
+    const value = argv[index + 1];
+    if (typeof value !== "string" || value.length === 0 || value.startsWith("--")) throw new Error(`full regression option ${option} requires a non-empty value`);
+    seen.add(option);
+    options[option === "--inventory" ? "inventoryPath" : "targetDir"] = value;
   }
-  return { mode, inventoryPath: argv[2], ...(internal ? { internal: true } : {}) };
+  if (!internal && mode !== "all" && options.inventoryPath === undefined) throw new Error(`mode ${mode} requires --inventory <workspace-.tmp-path>`);
+  return options;
 }
 
 export async function main(argv, env = process.env) {
   const options = parseFullRegressionArgs(argv);
-  const common = { inventoryPath: options.inventoryPath, log: console.log };
+  const common = { inventoryPath: options.inventoryPath, targetDir: options.targetDir, log: console.log };
   if (options.internal && env[FULL_REGRESSION_INTERNAL_PHASE_ENV] !== "1") {
     throw new Error("full regression internal phase workers must be started by the external five-minute supervisor");
   }
   if (options.internal && options.mode === "build") return buildFullRegressionArtifacts(common);
   if (options.internal && options.mode === "execute") return executeFullRegression(common);
-  if (options.mode === "build" || options.mode === "execute") return runFullRegressionPhase({ mode: options.mode, inventoryPath: options.inventoryPath });
+  if (options.mode === "build" || options.mode === "execute") return runFullRegressionPhase({ mode: options.mode, ...common });
   return runFullRegression(common);
 }
 

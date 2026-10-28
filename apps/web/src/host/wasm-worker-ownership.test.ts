@@ -10,7 +10,7 @@ type Message = Record<string, unknown> & { type: string };
 let fixtureId = 0;
 const bindingsKey = Symbol.for("stock-game-wasm-owner-tests");
 
-async function withWorker(run: (fixture: Awaited<ReturnType<typeof createFixture>>) => Promise<void>) {
+async function withWorker(run: (fixture: Awaited<ReturnType<typeof createFixture>>) => Promise<void>, missingWrites: boolean | "malformed" = false) {
   const globals = new Map<PropertyKey, PropertyDescriptor | undefined>();
   const replace = (key: PropertyKey, value: unknown) => {
     globals.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
@@ -26,7 +26,7 @@ async function withWorker(run: (fixture: Awaited<ReturnType<typeof createFixture
   });
   let hooks: ReturnType<typeof registerHooks> | undefined;
   try {
-    const f = await createFixture(replace, (registered) => { hooks = registered; });
+    const f = await createFixture(replace, (registered) => { hooks = registered; }, missingWrites);
     await run(f);
   } finally {
     for (const channel of channels) {
@@ -44,6 +44,7 @@ async function withWorker(run: (fixture: Awaited<ReturnType<typeof createFixture
 async function createFixture(
   replace: (key: PropertyKey, value: unknown) => void,
   register: (hooks: ReturnType<typeof registerHooks>) => void,
+  missingWrites: boolean | "malformed",
 ) {
   const posted: Message[] = [];
   let initialized: () => void = () => { throw new Error("初始化信号未安装"); };
@@ -54,6 +55,7 @@ async function createFixture(
   let handle = 7;
   let failing: "snapshot" | "prepare" | "drop" | "catalog" | "recoverable" | "snapshot-and-drop" | "company-read" | null = null;
   let failingPost: string | null = null;
+  let writeFailure: unknown;
   let listener: ((event: { data: Message }) => void) | undefined;
   const saved = currentSaveFixture();
   const layout = { baseAddr: 0, headerWords: HEADER_WORDS, slotStride: SLOT_STRIDE, joinStride: JOIN_STRIDE, capacity: 4, genBits: 29 };
@@ -81,6 +83,22 @@ async function createFixture(
       if (failing === "company-read") throw new Error("本人公司查询的实际拒绝原因");
       return { owner: "0", value: { kind: "OwnerRightsOfferings", data: [] } };
     },
+    // 三写返回值是 synthetic transport fixture，不证明真实 Rust 公司批准或 Correction 生命周期。
+    propose_player_company_action: (current: number, proposal: unknown) => {
+      calls.push(`proposal:${current}:${JSON.stringify(proposal)}`);
+      if (writeFailure !== undefined) throw writeFailure;
+      return { receipt: { account: "0", company: 0, kind: "CashDividend", event_id: "传输回执", approved_on: "2030-01-02" } };
+    },
+    enqueue_report_correction: (current: number, request: { operation_id: string }) => {
+      calls.push(`correction-enqueue:${current}:${JSON.stringify(request)}`);
+      if (writeFailure !== undefined) throw writeFailure;
+      return { operation_id: request.operation_id };
+    },
+    cancel_report_correction: (current: number, operationId: string) => {
+      calls.push(`correction-cancel:${current}:${operationId}`);
+      if (writeFailure !== undefined) throw writeFailure;
+      return { operation_id: operationId };
+    },
   };
   replace(bindingsKey, bindings);
   replace("self", { crossOriginIsolated: true, postMessage: (message: Message) => { if (message.type === failingPost) throw new DOMException("发送失败", "DataCloneError"); posted.push(message); if (message.type === "ready" || message.type === "failure") initialized(); }, addEventListener: (_type: string, callback: typeof listener) => { listener = callback; } });
@@ -100,7 +118,7 @@ async function createFixture(
     load(url, context, nextLoad) {
       if (url.startsWith("virtual:wasm-pkg:owner-")) {
         const exports = Object.keys(bindings)
-          .map((key) => `export const ${key} = (...args) => bindings.${key}(...args);`).join("\n");
+          .map((key) => missingWrites && ["propose_player_company_action", "enqueue_report_correction", "cancel_report_correction"].includes(key) ? `export const ${key} = ${missingWrites === "malformed" ? "17" : "undefined"};` : `export const ${key} = (...args) => bindings.${key}(...args);`).join("\n");
         return { shortCircuit: true, format: "module", source: `const bindings = globalThis[Symbol.for("stock-game-wasm-owner-tests")];\n${exports}` };
       }
       if (url.startsWith("virtual:owner-env:")) return { shortCircuit: true, format: "module", source: `import {createFacadeThreadBinding} from ${JSON.stringify(new URL("./facade-thread-binding.ts", import.meta.url).href)}; const binding=createFacadeThreadBinding({isWorker:()=>true}); export const {bindFacadeThreadEnvironment,installFacadeSlotLayout,getArenaView}=binding;` };
@@ -120,8 +138,125 @@ async function createFixture(
   await ready;
   assert.deepEqual(posted, [{ type: "ready" }]);
   posted.length = 0;
-  return { send, calls, posted: posted as Message[], timers, saved, handle: (next: number) => { handle = next; }, fail: (next: typeof failing) => { failing = next; }, failPost: (type: string | null) => { failingPost = type; } };
+  return { send, calls, posted: posted as Message[], timers, saved, handle: (next: number) => { handle = next; }, fail: (next: typeof failing) => { failing = next; }, failPost: (type: string | null) => { failingPost = type; }, failWrite: (error: unknown) => { writeFailure = error; } };
 }
+
+const correctionWriteRequest = { operation_id: "传输检查", company: 0, supersedes: 7, entries: [{ source: 900000001, date: "2030-01-02", kind: "CashRevenue", cash_flow: "Operating", lines: [{ account: "1002", side: "Debit", amount: "10.00" }, { account: "6001", side: "Credit", amount: "10.00" }] }], reason: "synthetic transport fixture" };
+const companyWrites = [
+  { type: "proposePlayerCompanyAction", payload: { proposal: { CashDividend: { company: 0, gross_per_share: "5" } } }, successType: "playerCompanyActionAcknowledged", result: { receipt: { account: "0", company: 0, kind: "CashDividend", event_id: "传输回执", approved_on: "2030-01-02" } }, call: 'proposal:7:{"CashDividend":{"company":0,"gross_per_share":"5"}}' },
+  { type: "enqueueReportCorrection", payload: { request: correctionWriteRequest }, successType: "reportCorrectionEnqueueAcknowledged", result: { operation_id: "传输检查" }, call: `correction-enqueue:7:${JSON.stringify(correctionWriteRequest)}` },
+  { type: "cancelReportCorrection", payload: { operation_id: "传输检查" }, successType: "reportCorrectionCancelAcknowledged", result: { operation_id: "传输检查" }, call: "correction-cancel:7:传输检查" },
+] as const;
+
+for (const row of companyWrites) {
+  test(`真实 Worker listener 注册 ${row.type} 并调用对应 binding`, { timeout: 10000 }, async () => {
+    await withWorker(async f => {
+      f.send({ type: "create", seed: 1n });
+      assert.equal(f.posted.some(message => message.type === "created" && message.generation === 1), true);
+      f.posted.length = 0;
+      f.send({ type: "civilDate", requestId: 50, generation: 1 });
+      assert.deepEqual(f.posted, [{ type: "civilDate", requestId: 50, generation: 1, date: "2030-01-02" }], "先证明当前 handle/generation 的既有请求正控成功");
+      f.posted.length = 0;
+      f.send({ type: row.type, requestId: 51, generation: 1, ...row.payload });
+      try {
+        assert.deepEqual(f.posted, [{ type: row.successType, requestId: 51, generation: 1, result: row.result }], "合法三写必须到达实际 listener 的对应命令分支");
+        assert.equal(f.calls.includes(row.call), true);
+      } finally { f.send({ type: "drop" }); }
+    });
+  });
+}
+
+for (const row of companyWrites) {
+  test(`Worker ${row.type} 调用前校验 generation、safe requestId 与 exact 顶层`, { timeout: 10000 }, async () => {
+    await withWorker(async f => {
+      f.send({ type: "create", seed: 1n });
+      const before = f.calls.length;
+      for (const requestId of [undefined, NaN, 0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
+        f.posted.length = 0;
+        f.send({ type: row.type, requestId, generation: 1, ...row.payload });
+        assert.match(String(f.posted[0].message), /requestId.*正安全整数/);
+      }
+      f.posted.length = 0;
+      f.send({ type: row.type, generation: 0, ...row.payload });
+      assert.match(String(f.posted[0].message), /过期会话/, "generation 门必须先于缺 requestId");
+      for (const extra of ["account", "day", "epoch", "nonce", "proof", "unknown"]) {
+        f.posted.length = 0;
+        f.send({ type: row.type, requestId: 7, generation: 1, ...row.payload, [extra]: 1 });
+        assert.match(String(f.posted[0].message), new RegExp(extra));
+      }
+      f.posted.length = 0;
+      f.send({ type: row.type, requestId: 7, generation: 1 });
+      assert.match(String(f.posted[0].message), /必填字段/);
+      assert.equal(f.calls.length, before, "非法 envelope 不得触发任何 Rust binding");
+      f.send({ type: "drop" });
+    });
+  });
+  test(`Worker ${row.type} 显式拒绝缺失 binding`, { timeout: 10000 }, async () => {
+    for (const missing of [true, "malformed"] as const) await withWorker(async f => {
+      f.send({ type: "create", seed: 1n }); f.posted.length = 0;
+      f.send({ type: row.type, requestId: 7, generation: 1, ...row.payload });
+      assert.equal(f.posted[0].type, "operationError");
+      assert.match(String(f.posted[0].message), /bindings.*不支持.*重建/);
+      assert.equal(Object.hasOwn(f.posted[0], "failure"), false);
+      f.send({ type: "drop" });
+    }, missing);
+  });
+}
+
+test("Worker 三写 typed 业务拒绝保关联与公开 failure，同会话继续可读", { timeout: 10000 }, async () => {
+  await withWorker(async f => {
+    f.send({ type: "create", seed: 1n });
+    for (const row of companyWrites) for (const classification of ["InvalidInput", "BusinessCondition", "UnsupportedOperation", "SystemState"]) {
+      const failure = row.type === "proposePlayerCompanyAction"
+        ? { kind: "PlayerProposal", data: { account: "0", company: 0, kind: "CashDividend", day: "2030-01-02", classification, reason: "具体业务拒绝，非 fatal" } }
+        : { kind: "ReportCorrection", data: { kind: "NotPending", data: { operation_id: "传输检查" } } };
+      f.failWrite(failure); f.posted.length = 0;
+      f.send({ type: row.type, requestId: 7, generation: 1, ...row.payload });
+      assert.equal(f.posted[0].type, "operationError");
+      assert.equal(f.posted[0].generation, 1); assert.equal(f.posted[0].requestId, 7);
+      assert.deepEqual(f.posted[0].failure, failure);
+      assert.match(String(f.posted[0].message), /具体业务拒绝|NotPending/);
+      f.send({ type: "civilDate", requestId: 8, generation: 1 });
+      assert.equal(f.posted.at(-1)?.type, "civilDate");
+    }
+    f.send({ type: "drop" });
+  });
+});
+
+test("Worker recognized 畸形或错 family 为协议故障，真正 Step 仍沿既有 fatal 链", { timeout: 10000 }, async () => {
+  for (const error of [
+    { kind: "PlayerProposal", data: {} }, { kind: "ReportCorrection", data: { kind: "StaleEpoch" } },
+    { code: "STEP_FATAL", message: "真实 Step 形状的故障", context: { tick: 7 } },
+  ]) await withWorker(async f => {
+    f.send({ type: "create", seed: 1n }); f.send({ type: "start", requestId: 1, generation: 1 });
+    f.failWrite(error); f.posted.length = 0;
+    f.send({ type: "proposePlayerCompanyAction", requestId: 7, generation: 1, proposal: companyWrites[0].payload.proposal });
+    assert.equal(f.posted[0].type, "failure"); assert.equal(f.timers.size, 0);
+    if ("code" in error) {
+      assert.equal(f.posted[0].code, error.code); assert.deepEqual(f.posted[0].context, error.context);
+    } else {
+      assert.equal(f.posted[0].code, "WASM_WORKER_PROTOCOL");
+      const cause = f.posted[0].cause as { failure: unknown; decoderError: unknown };
+      assert.deepEqual(cause.failure, error);
+      assert.ok(cause.decoderError instanceof Error, "协议故障保真实 decoder Error");
+      assert.match(String(f.posted[0].message), /协议/);
+    }
+    f.send({ type: "drop" });
+  });
+});
+
+test("Worker 发送 typed operationError 失败同时报告公开 failure 和发送原因", { timeout: 10000 }, async () => {
+  await withWorker(async f => {
+    f.send({ type: "create", seed: 1n });
+    const failure = { kind: "ReportCorrection", data: { kind: "StaleEpoch" } };
+    f.failWrite(failure); f.failPost("operationError"); f.posted.length = 0;
+    f.send({ type: "cancelReportCorrection", requestId: 7, generation: 1, operation_id: "传输检查" });
+    assert.equal(f.posted[0].type, "failure");
+    assert.match(String(f.posted[0].message), /发送 operationError 失败.*发送失败/);
+    assert.deepEqual((f.posted[0].cause as { failure: unknown }).failure, failure);
+    f.failPost(null); f.send({ type: "drop" });
+  });
+});
 
 test("Worker 全部会话 caller 共用 owner，restore 完整回应先于 microtask restart", { timeout: 10000 }, async () => {
   await withWorker(async (f) => {

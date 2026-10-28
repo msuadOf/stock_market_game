@@ -1,5 +1,6 @@
 import type { CatalogResolver } from "./catalog-resolver.ts";
 import { createCompanyReadQueries } from "./company-read.ts";
+import { createCompanyWriteCommands, type CompanyWriteCommands } from "./company-write.ts";
 import type {
   PublicReportPage,
   PublicReportQuery,
@@ -188,7 +189,7 @@ export function createWorkerHost(
   setup: SessionSetup,
   seed: bigint,
   options: WorkerHostOptions,
-): Promise<EngineHost & WorkerE2EHost> {
+): Promise<EngineHost & WorkerE2EHost & CompanyWriteCommands> {
   return new Promise((resolve, reject) => {
     if (options === null || typeof options !== "object" || typeof options.onSpawnFailure !== "function") {
       reject(new Error("WorkerHost 必须提供 onSpawnFailure callback"));
@@ -425,8 +426,28 @@ export function createWorkerHost(
       if (disposed || currentGeneration !== requestedGeneration) throw new Error(`Worker ${type} 响应属于已过期 generation`);
     }
 
-    function host(): EngineHost & WorkerE2EHost {
+    function host(): EngineHost & WorkerE2EHost & CompanyWriteCommands {
       return {
+        ...createCompanyWriteCommands(async command => {
+          if (disposed || pendingFailure !== null || cachedBaseline === null || restoringGeneration !== null || ingressGeneration !== currentGeneration) throw new Error("Worker 公司写命令需要健康的当前会话基线");
+          const requestedGeneration = currentGeneration, requestedEpoch = baselineEpoch;
+          const stale = () => disposed || pendingFailure !== null || currentGeneration !== requestedGeneration || baselineEpoch !== requestedEpoch || restoringGeneration !== null || ingressGeneration !== requestedGeneration;
+          const route = {
+            ProposePlayerCompanyAction: { type: "proposePlayerCompanyAction", success: "playerCompanyActionAcknowledged" },
+            EnqueueReportCorrection: { type: "enqueueReportCorrection", success: "reportCorrectionEnqueueAcknowledged" },
+            CancelReportCorrection: { type: "cancelReportCorrection", success: "reportCorrectionCancelAcknowledged" },
+          }[command.kind];
+          const { kind: _kind, ...payload } = command;
+          let response;
+          try {
+            response = await requests.request({ type: route.type, ...payload, requestId: requests.nextRequestId(), generation: requestedGeneration }, route.success);
+          } catch (error) {
+            if (stale()) throw new Error("Worker 公司写命令拒绝属于已过期或已销毁会话 generation", { cause: error });
+            throw error;
+          }
+          if (stale()) throw new Error("Worker 公司写命令确认属于已过期或已销毁会话 generation");
+          return response.result;
+        }, () => { if (disposed || pendingFailure !== null || cachedBaseline === null || restoringGeneration !== null || ingressGeneration !== currentGeneration) throw new Error("Worker 公司写命令需要健康的当前会话目录"); return cachedBaseline.catalogResolver; }, "0"),
         ...createCompanyReadQueries(async query => {
           if (disposed || pendingFailure !== null || cachedBaseline === null) throw new Error("Worker 公司查询需要健康的当前会话基线");
           const queryGeneration = currentGeneration;

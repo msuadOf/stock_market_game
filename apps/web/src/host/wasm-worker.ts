@@ -7,6 +7,8 @@ import { WasmTickLoop } from "./wasm-tick-loop.ts";
 import { WorkerTaskScheduler } from "./worker-task-scheduler.ts";
 import { classifyWasmFailure, describeWasmFailure, describeReadFailureFields, type WasmFailureClassification } from "./wasm-failure.ts";
 import { parseHostFailure } from "./protocol-failure.ts";
+import { CompanyWriteRejectedError, parseCompanyWriteFailure, type CompanyWriteFailure } from "./company-write.ts";
+import { exact } from "../save/schema/primitives.ts";
 import { shouldLoadDiagnosticsWasm } from "./wasm-build-mode.ts";
 import type { HostFailure } from "./host-update.ts";
 import type { NpcDecisionTraceRecord } from "./npc-decision-trace.ts";
@@ -27,6 +29,9 @@ type WasmTransportExtensions = Omit<typeof import("../../wasm-pkg/web_wasm.js"),
   readonly query_stock_history?: (handle: number, code: number) => unknown;
   readonly initial_allocation?: (handle: number) => unknown;
   readonly company_read_query?: (handle: number, query: unknown) => unknown;
+  readonly propose_player_company_action?: (handle: number, proposal: unknown) => unknown;
+  readonly enqueue_report_correction?: (handle: number, request: unknown) => unknown;
+  readonly cancel_report_correction?: (handle: number, operationId: unknown) => unknown;
   readonly calculate_indicators?: (prices: number[], candles: readonly { high: number; low: number; close: number }[]) => unknown;
   readonly npc_decision_trace?: WasmNpcDecisionTrace;
   readonly save_candidate?: (handle: number, key: { readonly seq: number; readonly settledDate: string }) => unknown;
@@ -207,17 +212,43 @@ function postIngressBridge(): void {
   });
 }
 
-function respondOperationError(message: WorkerMessage, failureMessage: string): void {
+function respondOperationError(message: WorkerMessage, failureMessage: string, failure?: CompanyWriteFailure): void {
   try {
-    ctx.postMessage({ type: "operationError", requestId: message.requestId, generation: message.generation, message: failureMessage });
+    ctx.postMessage({ type: "operationError", requestId: message.requestId, generation: message.generation, message: failureMessage, ...(failure === undefined ? {} : { failure }) });
   } catch (sendError) {
     const where = `wasm-worker.${message.type}`;
     postFailureDetails(where, {
       code: "WASM_WORKER_PROTOCOL", where,
       message: `发送 operationError 失败：${describeWasmFailure(sendError)}；原始错误：${failureMessage}`,
-      cause: { message: failureMessage },
+      cause: failure === undefined ? { message: failureMessage } : { message: failureMessage, failure, sendCause: describeWasmFailure(sendError) },
     });
   }
+}
+
+function companyWriteProtocolFailure(error: unknown, decoderError: unknown): HostFailure {
+  return { code: "WASM_WORKER_PROTOCOL", where: "wasm-worker.company-write",
+    message: `Worker 公司写命令失败协议无效：${describeWasmFailure(decoderError)}`,
+    cause: { failure: error, decoderError } };
+}
+
+function invokeCompanyWrite(message: WorkerMessage, requestedGeneration: number, successType: string, invoke: () => unknown): void {
+  let result: unknown;
+  try { result = invoke(); }
+  catch (error) {
+    let kind: unknown;
+    try { kind = error !== null && typeof error === "object" ? Reflect.get(error, "kind") : undefined; }
+    catch (decoderError) { throw companyWriteProtocolFailure(error, decoderError); }
+    // 未识别错误及真正 Step 保原对象进入既有错误链，不以四分类推断 fatal。
+    if (kind !== "PlayerProposal" && kind !== "ReportCorrection") throw error;
+    let failure: CompanyWriteFailure;
+    try {
+      failure = parseCompanyWriteFailure(error);
+      if (failure.kind !== (message.type === "proposePlayerCompanyAction" ? "PlayerProposal" : "ReportCorrection")) throw new Error("failure family 与当前公司写命令不符");
+    } catch (decoderError) { throw companyWriteProtocolFailure(error, decoderError); }
+    respondOperationError({ ...message, generation: requestedGeneration }, new CompanyWriteRejectedError(failure).message, failure);
+    return;
+  }
+  ctx.postMessage({ type: successType, requestId: message.requestId, generation: requestedGeneration, result });
 }
 
 async function loadEngineModule() {
@@ -395,6 +426,21 @@ ctx.addEventListener("message", (event) => {
           const [session, wasm] = slot.requireHandle();
           loop.publish(wasm.end_civil_day(session));
           ctx.postMessage({ type: "civilDayEnded", requestId: message.requestId, generation: requestedGeneration });
+          return;
+        }
+        case "proposePlayerCompanyAction":
+        case "enqueueReportCorrection":
+        case "cancelReportCorrection": {
+          const requestedGeneration = slot.requireGeneration(message.generation);
+          if (typeof message.requestId !== "number" || !Number.isSafeInteger(message.requestId) || message.requestId < 1) throw new Error("Worker 公司写命令 requestId 必须是正安全整数");
+          const field = message.type === "proposePlayerCompanyAction" ? "proposal" : message.type === "enqueueReportCorrection" ? "request" : "operation_id";
+          exact({ ...message }, ["type", "requestId", "generation", field], "Worker 公司写命令");
+          const [session, wasm] = slot.requireHandle();
+          const extensions = transportExtensions(wasm);
+          const binding = message.type === "proposePlayerCompanyAction" ? extensions.propose_player_company_action : message.type === "enqueueReportCorrection" ? extensions.enqueue_report_correction : extensions.cancel_report_correction;
+          if (typeof binding !== "function") throw new Error("当前 WASM bindings 不支持此公司写命令，请重建 bindings");
+          const successType = message.type === "proposePlayerCompanyAction" ? "playerCompanyActionAcknowledged" : message.type === "enqueueReportCorrection" ? "reportCorrectionEnqueueAcknowledged" : "reportCorrectionCancelAcknowledged";
+          invokeCompanyWrite(message, requestedGeneration, successType, () => binding(session, message[field]));
           return;
         }
         case "companyReadQuery": {

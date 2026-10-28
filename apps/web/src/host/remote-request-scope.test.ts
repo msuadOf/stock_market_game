@@ -23,3 +23,16 @@ test("RemoteRequestScope 无响应请求在 5000ms 显式结果未知而非永�
   context.mock.timers.tick(5000);
   await rejected;
 });
+
+test("RemoteRequestScope 专用 decoder 同步拒绝保原Error并清理取消资源", { timeout: 10000 }, async context => {
+  context.mock.timers.enable({ apis: ["setTimeout"] });
+  const scope = new RemoteRequestScope();
+  const failure = new Error("typed命令拒绝");
+  let signal: AbortSignal | null | undefined;
+  const decoder = (_fetch: typeof fetch, _url: string, init: RequestInit): Promise<unknown> => { signal = init.signal; throw failure; };
+  const pending = scope.request((() => { throw new Error("不应调用默认decoder"); }) as typeof fetch, "https://remote.example/api/company-write", {}, decoder);
+  await assert.rejects(pending, error => error === failure);
+  assert.ok(signal?.aborted);
+  scope.interrupt("旧scope资源不得残留");
+  context.mock.timers.tick(5000);
+});

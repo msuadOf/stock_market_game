@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { it } from "node:test";
 import { Worker } from "node:worker_threads";
 import { hashArtifactFiles } from "./full-regression-artifact-hash.mjs";
@@ -1142,6 +1142,123 @@ it("validates explicit build and execute CLI modes", () => {
   assert.deepEqual(parseFullRegressionArgs(["--internal-build"]), { mode: "build", inventoryPath: undefined, internal: true });
   assert.throws(() => parseFullRegressionArgs(["unknown"]), /usage:/i);
   assert.throws(() => parseFullRegressionArgs(["build"]), /--inventory/i);
+});
+
+it("显式 target-dir 在 all 和内部两阶段解析并完整转发", { timeout: 10000 }, async () => {
+  const targetDir = path.resolve("external-target");
+  const inventoryPath = path.resolve(".tmp/inventory.json");
+  for (const mode of ["all", "build", "execute", "--internal-build", "--internal-execute"]) {
+    for (const args of [["--inventory", inventoryPath, "--target-dir", targetDir], ["--target-dir", targetDir, "--inventory", inventoryPath]]) {
+      const parsed = parseFullRegressionArgs([mode, ...args]);
+      assert.equal(parsed.targetDir, targetDir);
+      assert.equal(parsed.inventoryPath, inventoryPath);
+    }
+  }
+  assert.equal(parseFullRegressionArgs(["all", "--target-dir", targetDir]).targetDir, targetDir);
+  assert.equal(parseFullRegressionArgs(["--internal-build", "--target-dir", targetDir]).targetDir, targetDir);
+  const calls = [];
+  await runFullRegression({ targetDir, inventoryPath, run: async (options) => { calls.push(options); } });
+  assert.deepEqual(calls.map(({ args }) => args.slice(1)), ["build", "execute"].map((mode) =>
+    [`--internal-${mode}`, "--inventory", inventoryPath, "--target-dir", targetDir]));
+  assert.ok(calls.every((call) => call.timeoutMs === 300000));
+});
+
+it("target-dir 与 inventory 参数拒绝重复、空值、缺值及未知选项", { timeout: 10000 }, () => {
+  for (const args of [
+    ["--target-dir", ""], ["--target-dir"], ["--target-dir", "--inventory", "file"],
+    ["--target-dir", "a", "--target-dir", "b"], ["--inventory", "a", "--inventory", "b"],
+    ["--inventory", ""], ["--unknown", "value"],
+  ]) assert.throws(() => parseFullRegressionArgs(["all", ...args]), /target-dir|inventory|unknown/i);
+});
+
+async function createExternalTargetFixture() {
+  const root = await mkdtemp(path.join(await resolveWorkspaceRoot(process.cwd()), ".tmp", "external-target-"));
+  const cwd = path.join(root, "workspace");
+  const targetDir = path.join(root, "target");
+  await Promise.all([mkdir(path.join(cwd, ".git"), { recursive: true }), mkdir(targetDir)]);
+  return { root, cwd, targetDir, cleanup: () => rm(root, { recursive: true, force: true }) };
+}
+
+it("外置 tiny artifact 在同一 target 封存和执行，跨 target inventory 显式拒绝", { timeout: 10000 }, async () => {
+  const fixture = await createExternalTargetFixture();
+  try {
+    const { cwd, targetDir } = fixture;
+    const artifact = path.join(targetDir, "fixture-binary");
+    await writeFile(artifact, "tiny sealed artifact");
+    const fingerprint = { algorithm: "test", algorithm_version: 1, files: [], digest: "b".repeat(64) };
+    const options = { cwd, targetDir: `${targetDir}${path.sep}.`, cpuCount: 4,
+      baseEnv: { CARGO_TARGET_DIR: "/hostile-target", TMPDIR: "/hostile-tmp" },
+      collectFingerprint: async () => fingerprint };
+    const checkEnv = (env) => {
+      assert.equal(env.CARGO_TARGET_DIR, targetDir);
+      for (const name of ["TMPDIR", "TMP", "TEMP"]) assert.equal(env[name], path.join(cwd, ".tmp/process-tmp/full-regression"));
+    };
+    const build = await buildFullRegressionArtifacts({ ...options, run: async ({ env }) => {
+      checkEnv(env);
+      return { stdout: JSON.stringify({ reason: "compiler-artifact", package_id: "fixture", target: { name: "company_scenarios", kind: ["test"], test: true }, profile: { test: true }, executable: artifact }) };
+    } });
+    assert.equal(build.inventory.cargo_target_dir, targetDir);
+    assert.equal(build.inventory.artifacts[0].executable_relative_path, "../target/fixture-binary");
+    const steps = fullRegressionSteps(4, cwd, options.baseEnv, cwd, targetDir);
+    steps.forEach(({ env }) => checkEnv(env));
+    let ordinaryExecutions = 0;
+    let scriptsObserved = false;
+    const execute = { ...options, inventoryPath: build.inventory_path,
+      runScripts: async ({ env }) => { checkEnv(env); scriptsObserved = true; return { file_count: 1 }; },
+      run: async ({ command, args, env }) => {
+        checkEnv(env);
+        if (args.includes("--list")) return { stdout: args.includes("--exact")
+          ? `${regression.REQUIRED_LONG_VALIDATIONS[0].filter}: test\n`
+          : (args.includes("--ignored") ? "" : "ordinary: test\n") };
+        if (command === artifact && args[0] === "ordinary") ordinaryExecutions += 1;
+        return { stdout: "" };
+      } };
+    await executeFullRegression(execute);
+    assert.equal(ordinaryExecutions, 1);
+    assert.equal(scriptsObserved, true);
+    const wrongTarget = path.join(fixture.root, "wrong-target");
+    await mkdir(wrongTarget);
+    await assert.rejects(executeFullRegression({ ...execute, targetDir: wrongTarget,
+      run: async () => { assert.fail("跨 target inventory 不能启动测试"); } }), /malformed, stale, or bound/i);
+    await assert.rejects(executeFullRegression({ ...execute, targetDir: undefined,
+      run: async () => { assert.fail("缺少 target-dir 不能复用外置 inventory"); } }), /malformed, stale, or bound/i);
+    await writeFile(artifact, "tiny changed artifact");
+    await assert.rejects(executeFullRegression(execute), /sealed inventory|SHA-256 mismatch/i);
+  } finally { await fixture.cleanup(); }
+});
+
+it("外置 target 拒绝相对路径、缺失、文件及目标或祖先 symbolic link", { timeout: 10000 }, async () => {
+  const fixture = await createExternalTargetFixture();
+  try {
+    const file = path.join(fixture.root, "file");
+    const directLink = path.join(fixture.root, "target-link");
+    const ancestorLink = path.join(fixture.root, "ancestor-link");
+    await Promise.all([writeFile(file, "not a directory"), symlink(fixture.targetDir, directLink, "dir"), symlink(fixture.root, ancestorLink, "dir")]);
+    const invalid = ["relative-target", "", path.join(fixture.root, "missing"), file, directLink, path.join(ancestorLink, "target"), `${directLink}${path.sep}..${path.sep}target`];
+    const results = await Promise.allSettled(invalid.flatMap((targetDir) => [buildFullRegressionArtifacts, executeFullRegression].map(async (phase) => {
+      await assert.rejects(phase({ cwd: fixture.cwd, targetDir,
+        collectFingerprint: async () => { assert.fail("非法 target 必须在扫描源码前拒绝"); },
+        run: async () => { assert.fail("非法 target 不能启动 child"); } }), /target.*absolute|target.*directory|symbolic link|target.*unavailable/i);
+    })));
+    for (const result of results) if (result.status === "rejected") throw result.reason;
+  } finally { await fixture.cleanup(); }
+});
+
+it("外置 target 在 POSIX 普通用户下拒绝不可写目录", {
+  timeout: 10000, skip: process.platform === "win32" || process.getuid?.() === 0,
+}, async () => {
+  const fixture = await createExternalTargetFixture();
+  try {
+    await chmod(fixture.targetDir, 0o555);
+    for (const phase of [buildFullRegressionArtifacts, executeFullRegression]) {
+      await assert.rejects(phase({ cwd: fixture.cwd, targetDir: fixture.targetDir,
+        collectFingerprint: async () => { assert.fail("不可写 target 必须在扫描源码前拒绝"); },
+      }), /target directory is not writable/i);
+    }
+  } finally {
+    await chmod(fixture.targetDir, 0o755);
+    await fixture.cleanup();
+  }
 });
 
 it("rejects direct invocation of an unsupervised internal phase worker", async () => {

@@ -4,6 +4,12 @@ import { wireIntentOf } from "./protocol/stock-identity.ts";
 import type { PausePreferences } from "../types/generated/PausePreferences.ts";
 import type { DeliveryMode, EngineHost } from "./engine-host.ts";
 import { createCompanyReadQueries } from "./company-read.ts";
+import { createCompanyWriteCommands, type CompanyWriteCommands } from "./company-write.ts";
+import { companyWriteHttpJson } from "./company-write-http.ts";
+import { parseRemoteMarketContext } from "./remote-market-context.ts";
+import { parsePlayerCompanyProposal } from "./player-proposals.ts";
+import { parseCompanyReportCorrection } from "./report-corrections.ts";
+import { string } from "../save/schema/primitives.ts";
 import type { HostFailure, HostUpdate } from "./host-update.ts";
 import { UI_TARGET_HZ } from "./host-update.ts";
 import { remoteBaseUrl, remoteJson, remotePausePreferencePayload, remotePost, remoteSession, remoteWsUrl, remoteWsProtocols } from "./remote-request.ts";
@@ -68,9 +74,9 @@ export async function createRemoteHost(setup: SessionSetup, seed: bigint, option
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let reconnectAttempts = 0;
   const requests = new RemoteRequestScope();
-  const requestJson = (url: string, init: RequestInit) => {
+  const requestJson = (url: string, init: RequestInit, decoder?: typeof remoteJson) => {
     if (disposed) return Promise.reject(new Error("远程会话已经销毁，请求未发送"));
-    return requests.request(fetchFn, url, init);
+    return requests.request(fetchFn, url, init, decoder);
   };
   const clearTransportTimers = () => {
     if (pullTimer !== null) clearInterval(pullTimer);
@@ -261,7 +267,58 @@ export async function createRemoteHost(setup: SessionSetup, seed: bigint, option
     }
   });
 
+  async function withCompanyWrite<T>(proposal: boolean, execute: (commands: CompanyWriteCommands) => Promise<T>): Promise<T> {
+    const hasCurrentConnection = () => publisher.currentSocket()?.readyState === 1;
+    if (disposed || !hasCurrentConnection() || !publisher.isProtocolReady()) throw new Error("远程公司写命令需要健康的当前连接与 baseline");
+    const cursor = publisher.captureQueryCursor("远程公司写命令缺少当前 baseline");
+    const catalog = requireCatalogResolver();
+    const assertCurrent = (responseGeneration: unknown = cursor.generation) => {
+      if (disposed || !hasCurrentConnection() || !publisher.isProtocolReady()) throw new Error("远程公司写命令确认已过期或会话已销毁；结果未知，请核对权威状态");
+      publisher.assertQueryCursor(cursor, responseGeneration, "远程公司写命令确认属于已过期 baseline/generation；结果未知，请核对权威状态");
+    };
+    async function settled<V>(action: () => Promise<V>): Promise<V> {
+      try { const value = await action(); assertCurrent(); return value; }
+      catch (error) {
+        try { assertCurrent(); }
+        catch (stale) { throw new Error(stale instanceof Error ? stale.message : "远程公司写命令确认已过期", { cause: error }); }
+        throw error;
+      }
+    }
+    const context = await settled(async () => parseRemoteMarketContext(await requestJson(`${baseUrl}/api/market/context?${new URLSearchParams({ session_id: created.id })}`, { method: "GET", headers: { authorization: `Bearer ${token}` } })));
+    assertCurrent(context.generation);
+    if (context.session_id !== created.id) throw new Error("远程公司写命令 context.session_id 与当前会话不一致");
+    if (proposal && (context.member === null || context.needs_rejoin)) throw new Error("远程公司提案需要当前可信 member 本人身份，请先加入市场");
+    if (!proposal && !context.can_control) throw new Error("当前可信 context 没有市场控制权限，不能发送报表更正命令");
+    const owner = proposal ? context.member!.account_id : undefined;
+    const commands = createCompanyWriteCommands(async command => {
+      assertCurrent();
+      const [path, payload, rejectedCode] = command.kind === "ProposePlayerCompanyAction"
+        ? ["propose-player-company-action", { proposal: command.proposal }, "PLAYER_COMPANY_ACTION_REJECTED"] as const
+        : command.kind === "EnqueueReportCorrection"
+          ? ["enqueue-report-correction", { request: command.request }, "REPORT_CORRECTION_REJECTED"] as const
+          : ["cancel-report-correction", { operation_id: command.operation_id }, "REPORT_CORRECTION_REJECTED"] as const;
+      const raw = await settled(() => requestJson(`${baseUrl}/api/${path}`, remotePost({ session_id: created.id, generation: cursor.generation, ...payload }, token), (fetcher, url, init) => companyWriteHttpJson(fetcher, url, init, rejectedCode)));
+      const response = record(raw, `远程 ${path}`);
+      exact(response, command.kind === "ProposePlayerCompanyAction" ? ["generation", "receipt"] : ["generation", "operation_id"], `远程 ${path}`);
+      assertCurrent(response.generation);
+      return command.kind === "ProposePlayerCompanyAction" ? { receipt: response.receipt } : { operation_id: response.operation_id };
+    }, () => catalog, owner);
+    return execute(commands);
+  }
+
   return {
+    async proposePlayerCompanyAction(input) {
+      const proposal = structuredClone(parsePlayerCompanyProposal(input));
+      return withCompanyWrite(true, commands => commands.proposePlayerCompanyAction(proposal));
+    },
+    async enqueueReportCorrection(input) {
+      const request = parseCompanyReportCorrection(input);
+      return withCompanyWrite(false, commands => commands.enqueueReportCorrection(request));
+    },
+    async cancelReportCorrection(input) {
+      const operationId = string(input, "company_write.operation_id");
+      return withCompanyWrite(false, commands => commands.cancelReportCorrection(operationId));
+    },
     ...createCompanyReadQueries(async query => {
       if (disposed || !publisher.isProtocolReady()) throw new Error("远程公司查询需要健康的当前会话基线");
       const cursor = publisher.captureQueryCursor("远程公司查询需要当前基线");

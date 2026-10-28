@@ -5,6 +5,7 @@ import type { HistoricalStockData, PublicReportPage, PublicReportQuery, PublicRe
 import type { PausePreferences } from "../types/generated/PausePreferences.ts";
 import type { EngineHost } from "./engine-host.ts";
 import { createCompanyReadQueries } from "./company-read.ts";
+import { CompanyWriteRejectedError, createCompanyWriteCommands, parseCompanyWriteFailure } from "./company-write.ts";
 import { describeWasmFailure } from "./wasm-failure.ts";
 import { createProtocolUpdate, type HostFailure, type HostUpdate, UI_TARGET_HZ } from "./host-update.ts";
 import { TauriTimelineState, type TauriBaselineResponse } from "./tauri-timeline-state.ts";
@@ -112,8 +113,10 @@ export async function createTauriHost(setup: SessionSetup, seed: bigint): Promis
   let failureUnlisten: UnlistenFn | null = null;
   let npcDiagnosticsEnabled = false;
   let deliveredGeneration: string | null = null;
+  let companyWriteFailure: HostFailure | null = null;
 
   const fail = (failure: HostFailure) => {
+    companyWriteFailure = failure;
     running = false;
     if (failure.code === "CATALOG_BASELINE_FAILED") baselineUnavailable = true;
     fatalCallback?.(failure);
@@ -224,6 +227,39 @@ export async function createTauriHost(setup: SessionSetup, seed: bigint): Promis
   };
 
   return {
+    ...createCompanyWriteCommands(async command => {
+      if (companyWriteFailure !== null) throw new Error("Tauri 公司写命令的当前 authority 已失效，须正常恢复新会话后再核对", { cause: companyWriteFailure });
+      const id = requireSession();
+      const cursor = timeline.captureQueryCursor();
+      const assertCurrent = (responseGeneration = cursor.generation) => {
+        if (companyWriteFailure !== null) throw new Error("Tauri 公司写命令确认属于已失效 authority；结果未知，请核对权威状态", { cause: companyWriteFailure });
+        assertResponseCurrent(cursor.generation, "company_write");
+        timeline.assertQueryCursor(cursor, responseGeneration, "Tauri 公司写命令确认属于已过期 baseline/generation；结果未知，请核对权威状态");
+      };
+      const [name, payload] = command.kind === "ProposePlayerCompanyAction"
+        ? ["propose_player_company_action", { proposal: command.proposal }] as const
+        : command.kind === "EnqueueReportCorrection"
+          ? ["enqueue_report_correction", { request: command.request }] as const
+          : ["cancel_report_correction", { operationId: command.operation_id }] as const;
+      let raw: unknown;
+      try { raw = await invoke<unknown>(name, { sessionId: id, generation: cursor.generation, ...payload }); }
+      catch (original) {
+        let rejection: Error;
+        const failureKind = original !== null && typeof original === "object" && Object.hasOwn(original, "kind") ? (original as Record<string, unknown>).kind : undefined;
+        if (failureKind === "PlayerProposal" || failureKind === "ReportCorrection") {
+          try { rejection = new CompanyWriteRejectedError(parseCompanyWriteFailure(original)); }
+          catch (decoderError) { rejection = new AggregateError([decoderError], "Tauri 公司写命令 typed 拒绝不符合协议", { cause: original }); }
+        } else rejection = original instanceof Error ? original : new Error(`Tauri 公司写命令失败：${describeWasmFailure(original)}`, { cause: original });
+        try { assertCurrent(); }
+        catch (stale) { throw new Error(stale instanceof Error ? stale.message : "Tauri 公司写命令确认已过期", { cause: rejection }); }
+        throw rejection;
+      }
+      assertCurrent();
+      const response = record(raw, `Tauri ${name}`);
+      exact(response, command.kind === "ProposePlayerCompanyAction" ? ["generation", "receipt"] : ["generation", "operation_id"], `Tauri ${name}`);
+      assertCurrent(generation(response.generation, `Tauri ${name}.generation`));
+      return command.kind === "ProposePlayerCompanyAction" ? { receipt: response.receipt } : { operation_id: response.operation_id };
+    }, () => timeline.baselineForRead().catalogResolver, "0"),
     ...createCompanyReadQueries(async query => {
       assertBaselineAvailable();
       const cursor = timeline.captureQueryCursor();
@@ -381,6 +417,7 @@ export async function createTauriHost(setup: SessionSetup, seed: bigint): Promis
         restored = parseRestore(response);
         assertResponseCurrent(requestedGeneration, "load");
         baseline = timeline.replaceRestoredBaseline(restored);
+        companyWriteFailure = null;
       } catch (error) {
         baselineUnavailable = true;
         fail({ code: "TAURI_RESTORE_BASELINE", where: "tauri-host.load", message: error instanceof Error ? error.message : String(error), cause: error });

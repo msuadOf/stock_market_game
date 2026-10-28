@@ -130,6 +130,14 @@ POSIX 帮助脚本进行 `.nvmrc` 诊断。CI 或隔离环境可将 `NODE_BIN` �
   手动开发 CI 通过现有 sealed `execute` 阶段纳入同一入口，无需另起一批测试；
   普通 commit、产品编译和标签发布仍不运行测试。
 - 无参数的 `scripts/run-full-regression.mjs` 只负责依次启动上述两个进程外阶段；构建耗时不挤占执行阶段，但任何一个长阶段都不得超过 5 分钟。doctest 保留 rustdoc 固有的 snippet compilation，不冒充预构建 binary 执行。
+- 完整回归默认强制使用 common workspace 的 `.tmp/build-cache/full-regression`，不接受环境变量
+  `CARGO_TARGET_DIR` 改写。需要复用外置 Cargo 缓存时，可显式运行
+  `node scripts/run-long-validation.mjs 300000 -- node scripts/run-full-regression.mjs all --target-dir <absolute-existing-real-dir>`；
+  `build --inventory <workspace-.tmp-path>` 和 `execute --inventory <workspace-.tmp-path>`
+  也接受同一选项。指定目录必须已存在、可写，目标与祖先均不得为 symbolic link；不会自动创建。
+  build 与 execute 必须指定同一 canonical target，漏传或改换目录会因 inventory 绑定不符而拒绝；
+  artifact 的路径限制、大小及 SHA-256 校验不变，process TMP 与 inventory 仍位于原 workspace `.tmp`。
+  上述进程外 supervisor 将整个 all 限制在共享 300000ms 内；all 自身仍只给两个 phase 各自设置期限。
 - 模拟验收的 `before` 语料已密封，只保留明确用于历史证据读取的解析层；它不属于当前游戏存档兼容；CLI 明确拒绝重跑，不将它当作当前长验收。
 - 当前模拟验收先在独立 300000ms 构建 deadline 内构建一次 fixture，再由 after/sensitivity 在各自的 300000ms 总 deadline 内直接执行预构建二进制；每个模拟验收批次遵循 299000ms 执行/发布 + 1000ms 收尾预留。二进制哈希和编译时嵌入的源指纹必须与当前密封源一致，否则在启动矩阵前失败。
 - 模拟验收的自由 rerun 分别保存并校验原始证据，不要求不同 worker、执行扰动或恢复后的自由继续运行产生相同整局字节。

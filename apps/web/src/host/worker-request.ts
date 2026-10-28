@@ -1,3 +1,5 @@
+import { CompanyWriteRejectedError, parseCompanyWriteFailure } from "./company-write.ts";
+
 export interface WorkerResponse {
   type: string;
   requestId?: number;
@@ -71,7 +73,23 @@ export class WorkerRequestScope {
           resource.resolve(response);
         } else if (response.type === "operationError") {
           cleanup();
-          resource.reject(new Error(String(response.message ?? "Worker 操作失败")));
+          if (["proposePlayerCompanyAction", "enqueueReportCorrection", "cancelReportCorrection"].includes(request.type)) {
+            let failure: unknown;
+            try {
+              if (Object.hasOwn(response, "failure")) {
+                failure = response.failure;
+                const parsed = parseCompanyWriteFailure(failure);
+                const family = request.type === "proposePlayerCompanyAction" ? "PlayerProposal" : "ReportCorrection";
+                if (parsed.kind !== family) throw new Error("Worker 公司写命令 failure family 与请求不符");
+                resource.reject(new CompanyWriteRejectedError(parsed));
+              } else {
+                if (typeof response.message !== "string" || response.message.trim().length === 0) throw new Error("Worker operationError.message 必须是非空字符串");
+                resource.reject(new Error(response.message, { cause: response }));
+              }
+            } catch (decoderError) {
+              resource.reject(new AggregateError([decoderError], "Worker 公司写命令响应协议无效", { cause: { response, failure, decoderError } }));
+            }
+          } else resource.reject(new Error(String(response.message ?? "Worker 操作失败")));
         }
       };
       const timeout = setTimeout(() => {
