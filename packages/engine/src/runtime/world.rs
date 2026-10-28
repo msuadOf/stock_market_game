@@ -569,6 +569,7 @@ impl World {
                 detail: "chunk 需为正（分段 flush 粒度）".to_owned(),
             });
         }
+        admin_treasury_binding::validate(&spec)?;
         let information_roster = (0..spec.n_groups).map(|group| {
             spec.root_projection.as_ref().map(|root| {
                 let start = group * spec.accounts_per_group;
@@ -3284,4 +3285,6 @@ mod failed_cleanup_tests {
 
 mod admin_transaction;
 
-pub use super::protocol::{AdminCandidate, AdminOperation, AdminTransactionId, InformationObservation, InformationPreparePayload, PreparedInformationResult, InformationPrepareError};
+pub use super::protocol::{AdminCandidate, AdminOperation, AdminTransactionId, AdminTreasuryBinding, InformationObservation, InformationPreparePayload, PreparedInformationResult, InformationPrepareError};
+
+mod admin_treasury_binding;

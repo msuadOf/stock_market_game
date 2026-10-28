@@ -672,6 +672,7 @@ impl RuntimeDriver {
         spec.initial_plan_books = super::plan_ownership::split(
             session.runtime_plans_snapshot().clone(), &ids, n_groups, per_group,
         ).map_err(|error| format!("计划构造移交失败：{error:?}"))?;
+        spec.admin_treasury_bindings = admin_treasury_bindings_from_session(session, &ids, per_group)?;
         // P2-2a：稀疏上行读面的全量缓存基线（构造期投影==组端初值）。
         let belief_cache = spec.belief_seeds.clone();
         let sync_inputs = crate::runtime::driver_sync::SyncAccumulator::new(
@@ -3055,13 +3056,43 @@ thread_local! {
     > = const { std::cell::RefCell::new(None) };
 }
 
-/// P2 tests-first 接缝；实现前明确拒绝，不将账户数字或 Funded 值作为角色授权。
+/// 从实际 AccountBook 和目录派生角色能力；不证明公司方案已批准或资金已提交。
 pub(crate) fn admin_treasury_bindings_from_session(
-    _session: &crate::GameSession,
-    _ids: &[crate::AccountId],
-    _accounts_per_group: usize,
+    session: &crate::GameSession,
+    ids: &[crate::AccountId],
+    accounts_per_group: usize,
 ) -> Result<Vec<super::protocol::AdminTreasuryBinding>, String> {
-    Err("实际 AccountBook 专户 binding 派生尚未实现（P2 tests-first）".into())
+    if accounts_per_group == 0 || ids != session.account_roster().as_slice() {
+        return Err("专户 binding 的完整账户名册或分组宽度与实际 AccountBook 不一致".into());
+    }
+    let mut treasury = None;
+    for (index, account) in ids.iter().enumerate() {
+        let actual = session.account(*account)
+            .ok_or_else(|| format!("专户 binding 名册账户不存在：{account:?}"))?;
+        if actual.kind() == crate::AccountKind::IssuerRepurchase {
+            if treasury.replace((index, *account)).is_some() {
+                return Err("专户 binding 不支持多个共享 IssuerRepurchase 账户".into());
+            }
+        }
+    }
+    let Some((index, account)) = treasury else { return Ok(Vec::new()); };
+    let owner = (
+        super::GroupIdx::try_from(index / accounts_per_group)
+            .map_err(|_| "专户 binding group 溢出")?,
+        super::LocalIdx::try_from(index % accounts_per_group)
+            .map_err(|_| "专户 binding local 溢出")?,
+    );
+    let catalog = session.export_setup_for_runtime().stock_catalog()
+        .map_err(|error| format!("专户 binding 股票目录无效：{error}"))?;
+    let system = session.company_system()
+        .ok_or_else(|| "专户 binding 缺少实际 CompanySystem".to_owned())?;
+    catalog.iter().map(|(stock, meta)| {
+        let issuer = system.issuers().issuer_of(&crate::StockCode(meta.code.clone()))
+            .ok_or_else(|| format!("专户 binding 股票缺少发行人：{stock:?}"))?;
+        let stock = super::StockIdx::try_from(stock.0)
+            .map_err(|_| "专户 binding stock 溢出")?;
+        Ok(super::protocol::AdminTreasuryBinding { owner, account, issuer, stock })
+    }).collect()
 }
 
 #[cfg(test)]

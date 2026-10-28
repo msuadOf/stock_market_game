@@ -85,6 +85,7 @@ impl GroupState {
         }
         let mut working = BTreeMap::new();
         for operation in operations {
+            self.validate_repurchase_funds_operation(operation)?;
             let (local, stock) = operation.coordinates();
             let account = self.accounts.get(local as usize).ok_or_else(|| {
                 invalid(format!(
@@ -300,9 +301,11 @@ fn apply_operation(
         }
     }
     match operation {
-        AdminOperation::SyntheticBudgetCredit { .. }
-        | AdminOperation::SyntheticBudgetRecycle { .. } => {
-            return Err(invalid("回购资金原语尚未实现（P2 tests-first）"));
+        AdminOperation::SyntheticBudgetCredit { amount, .. } => {
+            return super::admin_repurchase_funds::apply_cash(account, stock_coordinate, amount, false);
+        }
+        AdminOperation::SyntheticBudgetRecycle { amount, .. } => {
+            return super::admin_repurchase_funds::apply_cash(account, stock_coordinate, amount, true);
         }
         AdminOperation::PaymentDebit { amount, .. } => {
             return super::admin_funds_cost::payment_debit(account, stock_coordinate, amount)

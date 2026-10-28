@@ -7876,3 +7876,5 @@ mod admin_funds_cost;
 mod origin_consumer_tests;
 
 mod repurchase_funds_candidate;
+
+mod admin_repurchase_funds;

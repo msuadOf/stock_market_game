@@ -6,7 +6,7 @@ use crate::company::issuer_repurchase::{IssuerRepurchaseBook, IssuerRepurchaseSt
 use crate::company::share_registry::ShareRegistry;
 use crate::company::CompanyId;
 use crate::money::Money;
-use crate::orderbook::{AccountId, Side};
+use crate::orderbook::AccountId;
 use crate::plans::{PlanBook, PlanId};
 use crate::runtime::group::GroupAccount;
 
@@ -22,7 +22,10 @@ pub(super) enum RepurchaseFundsFailure {
     UnknownPlan {
         plan: PlanId,
     },
-    PlanStockOrDirectionMismatch {
+    WrongOrigin {
+        plan: PlanId,
+    },
+    PlanIdentityMismatch {
         plan: PlanId,
         expected_stock: StockId,
     },
@@ -89,17 +92,18 @@ fn identity_and_resources(
     let expected_stock = catalog
         .id(&book.plan().stock.0)
         .ok_or(RepurchaseFundsFailure::RegistryMismatch)?;
-    let canonical =
+    let entry =
         plans
-            .plan(execution_plan)
+            .entry(execution_plan)
             .map_err(|_| RepurchaseFundsFailure::UnknownPlan {
                 plan: execution_plan,
             })?;
-    if canonical.account() != account.id()
-        || canonical.code() != &expected_stock
-        || canonical.direction() != Side::Buy
-    {
-        return Err(RepurchaseFundsFailure::PlanStockOrDirectionMismatch {
+    let crate::plans::PlanEntry::IssuerRepurchase(canonical) = entry else {
+        return Err(RepurchaseFundsFailure::WrongOrigin { plan: execution_plan });
+    };
+    if entry.account() != account.id() || canonical.stock() != expected_stock
+        || canonical.issuer() != book.plan().issuer || entry.is_terminal() {
+        return Err(RepurchaseFundsFailure::PlanIdentityMismatch {
             plan: execution_plan,
             expected_stock,
         });
@@ -167,7 +171,7 @@ fn intent(
     }
 }
 
-/// canonical存在/owner/stock只证明身份，不将个人plan冒充IssuerRepurchase origin。
+/// canonical company origin 与 owner/issuer/stock 只证明身份，不证明实际批准和注资。
 /// 将来批准/执行adapter必须另经已审RP-ORIGIN与公司event绑定门，才能使用此候选实际发资金操作。
 pub(super) fn credit_candidate(
     book: &IssuerRepurchaseBook,
@@ -262,6 +266,7 @@ pub(super) fn closed_window_recycle_candidate(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::orderbook::Side;
     use crate::account::StockCode;
     use crate::company::issuer_repurchase::{
         IssuerRepurchasePlan, RepurchaseCompletionPolicy, RepurchaseFillRecord, RepurchasePurpose,
@@ -360,8 +365,9 @@ mod tests {
             opinion: PlanOpinion { signal_score_bp: 0, source: OpinionSource::Fundamental },
             confidence_bp: 0, urgency: Urgency::Patient, horizon_trading_days: 20, created_trading_day: 0,
         }).unwrap();
-        assert!(credit_candidate(&book(), &registry(), &account, &plans, id, &catalog(),
-            &GroupAccount::new(9_000_000, 2)).is_err(), "Investor 个人判断不能冒充发行人资金来源");
+        assert!(matches!(credit_candidate(&book(), &registry(), &account, &plans, id, &catalog(),
+            &GroupAccount::new(9_000_000, 2)), Err(RepurchaseFundsFailure::WrongOrigin { plan }) if plan == id),
+            "Investor 个人判断必须给明确 WrongOrigin，不能冒充发行人资金来源");
     }
     #[test]
     fn recycle_uses_real_book_fees_and_leaves_surplus_and_other_plan_money_untouched() {
@@ -505,7 +511,7 @@ mod tests {
                 .unwrap(),
                 &actual
             ),
-            Err(RepurchaseFundsFailure::PlanStockOrDirectionMismatch { .. })
+            Err(RepurchaseFundsFailure::PlanIdentityMismatch { .. })
         ));
     }
     #[test]

@@ -202,6 +202,23 @@ T+1、税费、账户资金或股份守恒规则。
 完整 Session 恢复明确拒绝未能证明已提交 binding 的公司条目。低层 `Funded` 值不代表批准成功或
 资金已经生成；回购制度与资金简化仍以 ADR-0038 和下节官方依据为准。
 
+## 回购资金数值通道边界（2026-10-28）
+
+`SyntheticBudgetCredit`／`SyntheticBudgetRecycle` 沿唯一 `PendingAdmin` 准备、检验、提交与撤销，
+金额为正整数分。专户能力由实际 `AccountBook` 的 `IssuerRepurchase` kind、完整名册与公司目录
+派生；组校验完整 `Owner`、`AccountId`、canonical company entry 的 issuer／stock，不用账户编号
+或低层 `Funded` 值证明批准。一个共享专户可绑定不同发行人／证券，属于现有游戏模型，
+不等同于已完整模拟现实中每发行人的独立证券账户。
+
+信用和回收只改变 raw cash，严格检查原值及候选 `cash + held` 溢出。回收要求整个共享专户所有
+证券都没有 held／foreign／pending 资源，也没有真实 child ticket；零余量残票仍须先完成真实回流。
+数值原语不证明金额属于该计划，精确未用预算须由同一次 inspect 按唯一公司 book、已提交资金
+binding 和真实成交／费用来源核验；不得按共享账户总现金回收或清掉其他计划与合法 surplus。
+
+本通道不新增资金余额簿或批准幂等集合，不改变普通投资者交易制度。合成资金仍是 ADR-0038
+已登记的 Simple 简化；批准 producer、公司执行资格、真实委托／成交／余款回收和完整公共恢复
+继续由后续同事务接线完成，不能据数值通道可用宣称回购全链已支持。
+
 ## 回购专户的自主交易隔离（2026-10-25 登记）
 
 `AccountKind::IssuerRepurchase` 禁止走普通 NPC 的自主决策下单通道。保留专户 kind、

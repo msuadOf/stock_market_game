@@ -45,19 +45,27 @@ fn credit(local: u32, stock: u16, id: PlanId, amount: i64) -> AdminOperation {
 fn funds_p2_world_01_commit_two_real_groups_keeps_tick_and_next_start_reads_credit() {
     let (spec, ids) = spec(); let mut w = World::spawn(spec).unwrap();
     let before = accounts(&mut w); let mut expected = before.clone();
+    let source_before = w.mirror_source(); let published = w.publication.load();
     expected[1][1].cash += 101; expected[2][0].cash += 203;
     w.with_admin_transaction(vec![(1, vec![credit(1, 0, ids[0], 101)]), (2, vec![credit(0, 1, ids[1], 203)])], |c| {
         assert_eq!(c.groups.len(), 2);
+        assert!(c.groups.iter().all(|group| group.mirror_domains.accounts_full));
         for g in &c.groups { for (local, actual) in &g.accounts {
             assert_eq!(actual.as_ref(), &expected[g.group as usize][*local as usize]);
         }} Ok(())
     }).unwrap();
     assert_eq!(w.global.committed_tick, 0); assert_eq!(accounts(&mut w), expected);
+    let source_after = w.mirror_source();
+    assert_eq!((source_after.tick, source_after.generation), (source_before.tick, source_before.generation));
+    assert_eq!(source_after.non_tick_revision, source_before.non_tick_revision + 1);
+    assert!(w.pending_mirror_domains().accounts_full);
+    assert!(Arc::ptr_eq(&published, &w.publication.load()), "行政信用不能发布新的市场 tick");
     w.run_ticks(1).unwrap(); assert_eq!(accounts(&mut w), expected); w.shutdown().unwrap();
 }
 #[test]
 fn funds_p2_world_02_late_group_reject_and_inspect_reject_abort_earlier_credit() {
     let (spec, ids) = spec(); let mut w = World::spawn(spec).unwrap(); let before = accounts(&mut w);
+    let source = w.mirror_source(); let pending = w.pending_mirror_domains();
     assert!(w.with_admin_transaction(vec![(1, vec![credit(1, 0, ids[0], 101)]),
         (2, vec![credit(0, 0, ids[1], 203)])], |_| -> Result<(), RuntimeError> { panic!("错stock不得进入inspect") }).is_err());
     assert_eq!(accounts(&mut w), before);
@@ -67,7 +75,9 @@ fn funds_p2_world_02_late_group_reject_and_inspect_reject_abort_earlier_credit()
             inspected = true; Err::<(), _>(invalid("公司预算与申请金额不一致"))
         }).is_err());
     assert!(inspected, "合法数值候选必须到达同一次公司预算inspect");
-    assert_eq!(accounts(&mut w), before); assert!(w.dead_reason.is_none()); w.shutdown().unwrap();
+    assert_eq!(accounts(&mut w), before); assert!(w.dead_reason.is_none());
+    assert_eq!(w.mirror_source(), source); assert_eq!(w.pending_mirror_domains(), pending);
+    w.shutdown().unwrap();
 }
 #[test]
 fn funds_p2_world_03_treasury_binding_preflight_rejects_duplicate_conflicting_and_tail_coordinates() {
@@ -87,4 +97,18 @@ fn funds_p2_world_03_treasury_binding_preflight_rejects_duplicate_conflicting_an
             Err(e) => assert!(e.to_string().contains("binding"), "{e}"),
         }
     }
+}
+
+#[test]
+fn funds_p2_world_04_exhausted_success_source_rejects_before_first_credit_commit() {
+    let (spec, ids) = spec(); let mut w = World::spawn(spec).unwrap();
+    w.non_tick_revision = u64::MAX;
+    let before = accounts(&mut w); let source = w.mirror_source(); let pending = w.pending_mirror_domains();
+    let mut inspected = false;
+    let error = w.with_admin_transaction(vec![(1, vec![credit(1, 0, ids[0], 101)])], |_| { inspected = true; Ok(()) }).unwrap_err();
+    assert!(inspected, "合法信用必须先到达真实 candidate 后由成功 source 耗尽拒绝 commit");
+    assert!(error.to_string().contains("游标已耗尽"), "{error}");
+    assert_eq!(accounts(&mut w), before); assert_eq!(w.mirror_source(), source);
+    assert_eq!(w.pending_mirror_domains(), pending); assert!(w.dead_reason.is_none());
+    w.shutdown().unwrap();
 }
