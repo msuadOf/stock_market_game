@@ -5,13 +5,25 @@ import { parseSessionCorporateActions } from "./state.ts";
 import { SaveSchemaError } from "../primitives.ts";
 import { parseSaveJson, parseSaveSlot } from "../../save-schema.ts";
 const names = ["generated-company-state-registry.json", "manual-company-state-registry.json", "legacy-company-state.json"] as const;
-const raw = names.map(name => readFileSync(new URL(`../../fixtures/source-b/${name}`, import.meta.url), "utf8"));
+const historicalRaw = names.map(name => readFileSync(new URL(`../../fixtures/source-b/${name}`, import.meta.url), "utf8"));
+// synthetic：仅为未改动的其他 codec 保留历史结构覆盖；补 [] 不代表当前 Rust producer 或恢复已验。
+function syntheticBindingsProjection(text: string): string {
+ const root=JSON.parse(text) as Record<string,any>;const company=root.company_state.CompanySystem;
+ if(company===undefined)return text;
+ assert.equal(Object.hasOwn(company.corporate_actions,"repurchase_execution_bindings"),false,"历史原件应保持旧字段集合");
+ return JSON.stringify({...root,company_state:{CompanySystem:{...company,corporate_actions:{...company.corporate_actions,repurchase_execution_bindings:[]}}}});
+}
+const raw = historicalRaw.map(syntheticBindingsProjection);
 function sample(index = 0): Record<string, unknown> { return JSON.parse(raw[index]); }
 function system(root: Record<string, unknown>): Record<string, any> { return (root.company_state as Record<string, any>).CompanySystem; }
 function binding(root: Record<string, unknown>): Record<string, any> { return system(root).corporate_actions.registries[0].receipts[0].request.scope.SettlementDayMarket.binding; }
-for(const [index,name] of names.entries()) test(`真实Rust完整${name}对象/raw解析无损，只有一个公司权威tag`, {timeout:10000}, () => {
+for(const [index,name] of names.entries()) test(`历史Rust${name}的synthetic bindings投影对象/raw无损且单一权威tag`, {timeout:10000}, () => {
  const value=sample(index);assert.deepEqual(parseSaveSlot(value),value);assert.deepEqual(parseSaveJson(raw[index]),value);
  assert.deepEqual(Object.keys(parseSaveSlot(value).company_state),[index===2?"LegacyOperations":"CompanySystem"]);
+});
+for(const index of [0,1])test(`历史Rust${names[index]}原件缺required bindings明确拒绝`,{timeout:10000},()=>{
+ assert.throws(()=>parseSaveSlot(JSON.parse(historicalRaw[index])),/repurchase_execution_bindings/);
+ assert.throws(()=>parseSaveJson(historicalRaw[index]),/repurchase_execution_bindings/);
 });
 test("required单tag拒绝旧双源根字段、缺失/null/双tag/未知tag", {timeout:10000}, () => {
  const value=sample();assert.deepEqual(parseSaveSlot(value),value);
@@ -47,8 +59,10 @@ test("canonical整数字符串拒绝前导零/负零与unsafe裸数，保真实�
  const bad=raw[0].replace('"company":0','"company":-0');assert.notEqual(bad,raw[0]);assert.throws(()=>parseSaveJson(bad),/company|负零/);
 });
 const nonempty = ["generated-custom-monthly-nonempty.json", "manual-custom-monthly-nonempty.json", "generated-quarterly-nonempty.json", "manual-quarterly-nonempty.json"];
-for(const name of nonempty) test(`真实非空SimpleGenerated报告${name}对象/raw与来源频率无损`, {timeout:10000}, () => {
- const text=readFileSync(new URL(`../../fixtures/source-b/${name}`,import.meta.url),"utf8");const value=JSON.parse(text);
+for(const name of nonempty) test(`历史非空SimpleGenerated报告${name}的synthetic bindings投影保留来源频率`, {timeout:10000}, () => {
+ const original=readFileSync(new URL(`../../fixtures/source-b/${name}`,import.meta.url),"utf8");
+ assert.throws(()=>parseSaveJson(original),/repurchase_execution_bindings/);
+ const text=syntheticBindingsProjection(original);const value=JSON.parse(text);
  assert.ok(value.public_library.reports.length>0);assert.deepEqual(parseSaveSlot(value),value);assert.deepEqual(parseSaveJson(text),value);
  for(const report of value.public_library.reports)assert.equal(report.source,"SimpleGenerated");
  for(const field of ["source","origin","reports"]){const changed=structuredClone(value);delete changed.public_library.reports[0][field];assert.throws(()=>parseSaveSlot(changed),new RegExp(field));}
@@ -71,7 +85,7 @@ test("全部已存在公司数组拒绝sparse与继承元素，raw整数拒绝�
  for(const token of ["-0","0.000000000000000000001","1e0","9007199254740993"]){const text=raw[0].replace('"company":0','"company":'+token);assert.throws(()=>parseSaveJson(text),/company|整数/);}
 });
 test("selected公司权威与公开报告source一致，拒绝已知但来自另一模型的报告",{timeout:10000},()=>{
- const legacy=sample(2);const simple=JSON.parse(readFileSync(new URL("../../fixtures/source-b/generated-quarterly-nonempty.json",import.meta.url),"utf8"));
+ const legacy=sample(2);const simple=JSON.parse(syntheticBindingsProjection(readFileSync(new URL("../../fixtures/source-b/generated-quarterly-nonempty.json",import.meta.url),"utf8")));
  for(const [root,source]of [[legacy,"SimulationAccounting"],[simple,"SimpleGenerated"]]as const){assert.deepEqual(parseSaveSlot(root),root);const reports=(root.public_library as {reports:{source:string}[]}).reports;assert.ok(reports.length>0);for(const report of reports)assert.equal(report.source,source);const bad=structuredClone(root);(bad.public_library as {reports:{source:string}[]}).reports[0].source=source==="SimpleGenerated"?"SimulationAccounting":"SimpleGenerated";assert.throws(()=>parseSaveSlot(bad),/public_library\.reports\[0\]\.source/);}
 });
 for(const [field,name]of bookCases){const original=JSON.parse(readFileSync(new URL(`../../fixtures/source-b/${name}`,import.meta.url),"utf8"));for(const nullableField of Object.keys(original).filter(key=>original[key]===null))test(`${name}.${nullableField}：显式null接受，missing拒绝`,{timeout:10000},()=>{

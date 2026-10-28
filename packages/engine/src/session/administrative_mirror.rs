@@ -1,0 +1,520 @@
+//! 同次真实行政候选的专用镜像；不消费 tick ingress、回执或同步覆盖表。
+
+use super::*;
+use crate::runtime::drive::{AdministrativeBaseline, RuntimeDriver};
+use crate::runtime::world::{
+    AdminCandidate, AdminOperation, BeliefParticipantSnapshot, InformationPreparePayload,
+    PreparedAdministrativeSource,
+};
+use crate::runtime::{GroupIdx, RuntimeError};
+use std::sync::Arc;
+
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum AdministrativeMirrorError {
+    #[error(transparent)]
+    Runtime(#[from] RuntimeError),
+    #[error(transparent)]
+    Session(#[from] StepFatal),
+    #[error("行政入口 civil_date 不一致：Session={expected}，World={actual}；请先完成原自然日同步")]
+    CivilDateMismatch {
+        expected: crate::calendar::CivilDate,
+        actual: crate::calendar::CivilDate,
+    },
+}
+
+fn invalid(detail: impl Into<String>) -> RuntimeError {
+    RuntimeError::ProtocolInvariant {
+        detail: detail.into(),
+    }
+}
+
+/// 全部可失败投影在首 Commit 前完成；成功尾只移动已验证的值。
+struct PreparedAdministrativeMirror {
+    accounts: super::account_book::AccountBook,
+    personals: Vec<(usize, AccountId, BeliefParticipantSnapshot)>,
+    personal_maps: Option<AdministrativePersonalMaps>,
+    library: Option<Arc<crate::information::PublicLibrary>>,
+    plans: Option<crate::plans::PlanBook>,
+    revision: u64,
+    install_sequence: u64,
+    changed: bool,
+}
+
+struct AdministrativePersonalMaps {
+    attention: AccountPagedMap<NpcAttentionState>,
+    beliefs: AccountPagedMap<BeliefParticipantState>,
+    histories: AccountPagedMap<crate::experience::PersonalHistoryReadLedger>,
+    retail: AccountPagedMap<RetailExperienceState>,
+}
+
+impl AdministrativeBaseline {
+    /// 保留个人态其余字段，只叠同源真实 scheduler 两字段；cache 仍保原 raw 候选。
+    fn attention_at(&self, id: AccountId, raw: &NpcAttentionState) -> Result<NpcAttentionState, RuntimeError> {
+        let &(due, seed) = self.attention.get(&id).ok_or_else(|| invalid(format!("行政完整调度缺账户：{id:?}")))?;
+        let mut attention = raw.clone();
+        attention.next_attention_candidate_tick = due;
+        attention.rng_state = seed;
+        Ok(attention)
+    }
+
+    fn account_id(
+        &self,
+        group: GroupIdx,
+        local: crate::runtime::LocalIdx,
+    ) -> Result<AccountId, RuntimeError> {
+        if local as usize >= self.per_group {
+            return Err(invalid("行政候选 local 超出真实分组宽度"));
+        }
+        let index = usize::from(group)
+            .checked_mul(self.per_group)
+            .and_then(|start| start.checked_add(local as usize))
+            .ok_or_else(|| invalid("行政候选 Owner 坐标溢出"))?;
+        self.roster
+            .get(index)
+            .copied()
+            .ok_or_else(|| invalid(format!("行政候选没有真实账户：group={group} local={local}")))
+    }
+}
+
+impl GameSession {
+    /// 短借用只持 driver 锁；不进入普通 tick 的 freeze、take 或 inject 玩家意图路径。
+    pub(in crate::session) fn apply_administrative_operations<P>(
+        &mut self,
+        grouped: Vec<(GroupIdx, Vec<AdminOperation>)>,
+        information: Option<InformationPreparePayload>,
+        inspect: impl FnOnce(&AdminCandidate) -> Result<P, RuntimeError>,
+    ) -> Result<P, AdministrativeMirrorError> {
+        self.apply_administrative_scope(grouped, information, None, inspect)
+    }
+
+    pub(in crate::session) fn apply_repurchase_administrative_operations<P>(
+        &mut self,
+        grouped: Vec<(GroupIdx, Vec<AdminOperation>)>,
+        information: Option<InformationPreparePayload>,
+        repurchase: crate::runtime::RepurchasePreparePayload,
+        inspect: impl FnOnce(&AdminCandidate) -> Result<P, RuntimeError>,
+    ) -> Result<P, AdministrativeMirrorError> {
+        self.apply_administrative_scope(grouped, information, Some(repurchase), inspect)
+    }
+
+    fn apply_administrative_scope<P>(
+        &mut self,
+        grouped: Vec<(GroupIdx, Vec<AdminOperation>)>,
+        information: Option<InformationPreparePayload>,
+        repurchase: Option<crate::runtime::RepurchasePreparePayload>,
+        inspect: impl FnOnce(&AdminCandidate) -> Result<P, RuntimeError>,
+    ) -> Result<P, AdministrativeMirrorError> {
+        self.require_healthy()?;
+        if self.runtime_driver.is_none() {
+            self.construct_runtime_driver_lazy()?;
+        }
+        let cell = self
+            .runtime_driver
+            .take()
+            .expect("行政入口已完成 lazy handover");
+        // catch 只保证锁单元与原 panic 一起归还；不把 panic 转成可恢复业务拒绝。
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let mut driver = cell.lock().map_err(|_| {
+                self.poison_runtime_step(StepFatal::InvariantViolation {
+                    location: "GameSession::apply_administrative_operations".into(),
+                    description: "行政入口的常驻 driver 锁被 poison".into(),
+                })
+            })?;
+            if driver.world_committed_tick() != self.tick()
+                || driver.mirror_source().authority_epoch != self.runtime_authority_epoch
+            {
+                return Err(AdministrativeMirrorError::Session(
+                    self.poison_runtime_step(StepFatal::InvariantViolation {
+                        location: "GameSession::apply_administrative_operations".into(),
+                        description: "行政入口 World 与 Session tick/authority 不一致".into(),
+                    }),
+                ));
+            }
+            let world_civil_date = driver.mirror_source().civil_date;
+            if !driver.administrative_world_is_terminal() && world_civil_date != self.civil_date() {
+                return Err(AdministrativeMirrorError::CivilDateMismatch {
+                    expected: self.civil_date(),
+                    actual: world_civil_date,
+                });
+            }
+            let baseline = match driver.prepare_administrative_baseline(self) {
+                Ok(value) => value,
+                Err(error) => {
+                    self.retain_administrative_terminal(&driver, &error);
+                    return Err(error.into());
+                }
+            };
+            self.validate_administrative_baseline(&baseline)?;
+            let revision = self.external_revision();
+            let sequence = self.runtime_mirror_install_sequence;
+            let expected_information = information.clone();
+            let result = driver.with_prepared_administrative_transaction(
+                grouped,
+                information,
+                repurchase,
+                |candidate, source| {
+                    let prepared = self.prepare_administrative_mirror(
+                        &baseline,
+                        candidate,
+                        source,
+                        expected_information.as_ref(),
+                        revision,
+                        sequence,
+                    )?;
+                    let value = inspect(candidate)?;
+                    if self.external_revision() != revision
+                        || self.runtime_mirror_install_sequence != sequence
+                    {
+                        return Err(invalid("行政 prepare 的 Session 来源在 inspect 期间改变"));
+                    }
+                    Ok((value, prepared))
+                },
+            );
+            let ((value, prepared), ack) = match result {
+                Ok(value) => value,
+                Err(error) => {
+                    self.retain_administrative_terminal(&driver, &error);
+                    return Err(error.into());
+                }
+            };
+            self.install_administrative_mirror(&mut driver, prepared);
+            driver.ack_prepared_mirror(ack);
+            Ok(value)
+        }));
+        self.runtime_driver = Some(cell);
+        match outcome {
+            Ok(value) => value,
+            Err(payload) => {
+                self.poison_runtime_step(StepFatal::InvariantViolation {
+                    location: "GameSession::apply_administrative_operations".into(),
+                    description: "行政运行时panic；原payload继续重抛，driver锁保留poison".into(),
+                });
+                std::panic::resume_unwind(payload)
+            }
+        }
+    }
+
+    fn retain_administrative_terminal(&mut self, driver: &RuntimeDriver, error: &RuntimeError) {
+        if driver.administrative_world_is_terminal() {
+            self.poison_runtime_step(StepFatal::InvariantViolation {
+                location: "GameSession::apply_administrative_operations".into(),
+                description: format!("行政运行时已经终止：{error}"),
+            });
+        }
+    }
+
+    fn administrative_account(
+        &self,
+        id: AccountId,
+        raw: &crate::runtime::group::GroupAccount,
+    ) -> Result<Account, RuntimeError> {
+        let stocks = self.state.stocks.len();
+        if [
+            raw.shares.len(),
+            raw.pending_sell_qty.len(),
+            raw.frozen_today.len(),
+            raw.invested_cents.len(),
+            raw.recovered_cents.len(),
+        ]
+        .iter()
+        .any(|width| *width != stocks)
+        {
+            return Err(invalid(format!("行政账户股票维度错误：account={id:?}")));
+        }
+        let mut account = self
+            .account(id)
+            .ok_or_else(|| invalid(format!("行政账户不在Session名册：{id:?}")))?
+            .clone();
+        let mut positions = account.positions().clone();
+        for stock in 0..stocks {
+            let code = StockId(u32::try_from(stock).map_err(|_| invalid("行政股票下标超出u32"))?);
+            let qty = raw.shares[stock]
+                .checked_add(raw.pending_sell_qty[stock])
+                .ok_or_else(|| invalid(format!("行政持仓溢出：account={id:?} stock={code:?}")))?;
+            if raw.frozen_today[stock] > qty {
+                return Err(invalid("行政T+1冻结超过真实持仓"));
+            }
+            if qty == 0 {
+                positions.remove(&code);
+            } else {
+                positions.insert(
+                    code,
+                    crate::account::Position::from_restored_parts(
+                        qty,
+                        raw.frozen_today[stock],
+                        raw.invested_cents[stock],
+                        raw.recovered_cents[stock],
+                    ),
+                );
+            }
+        }
+        let cash = raw
+            .cash
+            .checked_add(raw.buy_purse_held_cents)
+            .ok_or_else(|| invalid("行政现金加在途占用溢出"))?;
+        account.fixture_set_cash(Money::from_cents(cash));
+        account.fixture_set_positions(positions);
+        Ok(account)
+    }
+
+    fn validate_administrative_baseline(
+        &self,
+        baseline: &AdministrativeBaseline,
+    ) -> Result<(), RuntimeError> {
+        if baseline.source.tick != self.tick()
+            || baseline.source.authority_epoch != self.runtime_authority_epoch
+            || baseline.plans != self.state.plans
+        {
+            return Err(invalid("行政完整基线与Session来源或PlanBook不一致"));
+        }
+        let mut seen = BTreeSet::new();
+        for (group, rows) in &baseline.accounts {
+            for (local, raw) in rows.iter().enumerate() {
+                let local = crate::runtime::LocalIdx::try_from(local)
+                    .map_err(|_| invalid("行政基线local溢出"))?;
+                // 尾部 padding 不是账户；只接受完整零值，不能忽略真实资源。
+                let id = match baseline.account_id(*group, local) {
+                    Ok(id) => id,
+                    Err(error) => {
+                        if raw
+                            != &crate::runtime::group::GroupAccount::new(0, self.state.stocks.len())
+                        {
+                            return Err(error);
+                        }
+                        continue;
+                    }
+                };
+                if !seen.insert(id) {
+                    return Err(invalid("行政完整基线重复真实账户"));
+                }
+                let projected = self.administrative_account(id, raw)?;
+                let current = self
+                    .account(id)
+                    .ok_or_else(|| invalid("行政基线缺Session账户"))?;
+                let positions_equal = projected.positions().len() == current.positions().len()
+                    && projected.positions().iter().all(|(stock, left)| {
+                        current.position(stock).is_some_and(|right| {
+                            left.qty() == right.qty()
+                                && left.t1_locked() == right.t1_locked()
+                                && left.invested_cents() == right.invested_cents()
+                                && left.recovered_cents() == right.recovered_cents()
+                        })
+                    });
+                if projected.cash() != current.cash() || !positions_equal {
+                    return Err(invalid(format!("行政基线账户镜像陈旧：{id:?}")));
+                }
+            }
+        }
+        if seen.len() != baseline.roster.len() {
+            return Err(invalid("行政完整基线缺少真实账户"));
+        }
+        for (_, id, snapshot) in &baseline.personals {
+            match snapshot {
+                None if !self.runtime_has_belief_participant(*id) => {}
+                Some(value) => {
+                    let participant = self
+                        .state
+                        .belief_participants
+                        .get(id)
+                        .ok_or_else(|| invalid("行政基线缺个人认识"))?;
+                    let attention = baseline.attention_at(*id, &value.attention)?;
+                    if participant.watchlist() != &value.watchlist
+                        || participant.price_memory() != &value.price_memory
+                        || participant.information() != &value.information
+                        || participant.belief() != &value.belief
+                        || self.state.npc_attention.get(id) != Some(&attention)
+                        || self.state.history_reads.get(id) != Some(&value.history_reads)
+                        || self.state.retail_experience.get(id) != value.retail_experience.as_ref()
+                    {
+                        return Err(invalid(format!("行政基线个人镜像陈旧：{id:?}")));
+                    }
+                }
+                None => return Err(invalid(format!("行政基线错误缺失个人态：{id:?}"))),
+            }
+        }
+        Ok(())
+    }
+
+    fn prepare_administrative_mirror(
+        &self,
+        baseline: &AdministrativeBaseline,
+        candidate: &AdminCandidate,
+        source: &PreparedAdministrativeSource,
+        information: Option<&InformationPreparePayload>,
+        revision: u64,
+        sequence: u64,
+    ) -> Result<PreparedAdministrativeMirror, RuntimeError> {
+        if source.id() != candidate.id
+            || source.before() != baseline.source
+            || source.after().authority_epoch != self.runtime_authority_epoch
+            || source.after().tick != self.tick()
+        {
+            return Err(invalid("行政候选未绑定同一次真实Prepare来源"));
+        }
+        let plans = baseline.plans_after(candidate)?;
+        if source.captured().attention_full || (source.captured().plans_pending && plans.is_none())
+        {
+            return Err(invalid(
+                "行政镜像缺同次完整PlanBook或独立attention候选；拒绝确认该域",
+            ));
+        }
+        let changed = !source.captured().is_empty();
+        let next_revision = if changed {
+            revision
+                .checked_add(1)
+                .ok_or_else(|| invalid("行政Session revision已耗尽，拒绝首Commit"))?
+        } else {
+            revision
+        };
+        let install_sequence = if changed {
+            sequence
+                .checked_add(1)
+                .ok_or_else(|| invalid("行政mirror install_sequence已耗尽，拒绝首Commit"))?
+        } else {
+            sequence
+        };
+        let mut accounts = BTreeMap::new();
+        let mut personals = BTreeMap::new();
+        for group in &candidate.groups {
+            for (local, raw) in &group.accounts {
+                let id = baseline.account_id(group.group, *local)?;
+                if accounts
+                    .insert(id, self.administrative_account(id, raw)?)
+                    .is_some()
+                {
+                    return Err(invalid("行政候选重复账户"));
+                }
+            }
+            if let Some(info) = &group.information {
+                for (local, id, value) in &info.personals {
+                    let expected = baseline.account_id(group.group, *local)?;
+                    if expected != *id
+                        || value.information.owner() != *id
+                        || value.belief.npc() != *id
+                    {
+                        return Err(invalid("行政INFO候选属主错误"));
+                    }
+                    let index = usize::from(group.group) * baseline.per_group + *local as usize;
+                    let mut snapshot = value.clone();
+                    if let Some(group) = &snapshot.retail_experience {
+                        snapshot.retail_experience =
+                            Some(match self.runtime_retail_experience_for(id) {
+                                Some(existing) => existing.merged_with_group_authority(group),
+                                None => group.clone(),
+                            });
+                    }
+                    if personals.insert(*id, (index, *id, snapshot)).is_some() {
+                        return Err(invalid("行政INFO候选重复个人态"));
+                    }
+                }
+            }
+        }
+        let library = information.map(|info| Arc::clone(&info.library));
+        let reference_library = library.as_deref().unwrap_or(self.state.library.as_ref());
+        for (_, id, old) in &baseline.personals {
+            let snapshot = personals
+                .get(id)
+                .map(|(_, _, value)| value)
+                .or(old.as_ref());
+            if let Some(snapshot) = snapshot {
+                let mut rebuilt = crate::information::NpcInformationState::new(*id);
+                for (_, records) in snapshot.information.companies() {
+                    for record in records {
+                        rebuilt
+                            .record_acquisition(
+                                *id,
+                                reference_library,
+                                record.id,
+                                record.observed_at,
+                            )
+                            .map_err(|error| {
+                                invalid(format!(
+                                    "行政完整个人引用不属于同批库：account={id:?} {error}"
+                                ))
+                            })?;
+                    }
+                }
+                if rebuilt != snapshot.information {
+                    return Err(invalid("行政完整个人引用的company/kind与库不一致"));
+                }
+            }
+        }
+        // AccountBook 的页分离也在 Commit 前完成，成功尾不再 insert 或分配页。
+        let mut account_book = self.state.accounts.clone();
+        for (id, account) in accounts {
+            account_book.insert(id, account);
+        }
+        let personals: Vec<_> = personals.into_values().collect();
+        let personal_maps = if personals.is_empty() {
+            None
+        } else {
+            let mut maps = AdministrativePersonalMaps {
+                attention: self.state.npc_attention.clone(),
+                beliefs: self.state.belief_participants.clone(),
+                histories: self.state.history_reads.clone(),
+                retail: self.state.retail_experience.clone(),
+            };
+            for (_, id, value) in &personals {
+                maps.attention.insert(*id, baseline.attention_at(*id, &value.attention)?);
+                maps.beliefs.insert(
+                    *id,
+                    BeliefParticipantState::new(
+                        value.watchlist.clone(),
+                        value.price_memory.clone(),
+                        value.information.clone(),
+                        value.belief.clone(),
+                    ),
+                );
+                maps.histories.insert(*id, value.history_reads.clone());
+                if let Some(row) = &value.retail_experience {
+                    maps.retail.insert(*id, row.clone());
+                }
+            }
+            Some(maps)
+        };
+        Ok(PreparedAdministrativeMirror {
+            accounts: account_book,
+            personals,
+            personal_maps,
+            library,
+            plans,
+            revision: next_revision,
+            install_sequence,
+            changed,
+        })
+    }
+
+    fn install_administrative_mirror(
+        &mut self,
+        driver: &mut RuntimeDriver,
+        prepared: PreparedAdministrativeMirror,
+    ) {
+        if !prepared.changed {
+            return;
+        }
+        self.state.accounts = prepared.accounts;
+        for (index, id, snapshot) in prepared.personals {
+            driver.install_cached_personal_at(index, id, snapshot);
+        }
+        if let Some(maps) = prepared.personal_maps {
+            self.state.npc_attention = maps.attention;
+            self.state.belief_participants = maps.beliefs;
+            self.state.history_reads = maps.histories;
+            self.state.retail_experience = maps.retail;
+            self.state.runtime_heap_dirty = true;
+        }
+        if let Some(library) = prepared.library {
+            self.state.library = library;
+        }
+        if let Some(plans) = prepared.plans {
+            self.state.plans = plans;
+        }
+        self.revision
+            .store(prepared.revision, std::sync::atomic::Ordering::Relaxed);
+        self.runtime_mirror_install_sequence = prepared.install_sequence;
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+#[path = "administrative_mirror_tests.rs"]
+mod tests;

@@ -519,11 +519,93 @@ pub struct AdminTreasuryBinding {
     pub stock: StockIdx,
 }
 
+/// Created 引用只在本组原 flat operations 中有效，不是持久身份或第二个 allocator。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AdminPlanReference {
+    Existing(crate::plans::PlanId),
+    CreatedInThisPrepare { operation_index: u32 },
+}
+
+/// 只表达明确输入的限制来源；未知事实不能转成 Clear。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RepurchaseMaterialRestriction {
+    Clear,
+    Restricted,
+    NotModelled,
+}
+
+/// 不含公司 event 字符串的不可变执行读面；金额为 Money 分，数量为当前单位股数。
+/// 已消费基线只能由唯一公司 book 重放，组不得自增另一份 spent/remaining。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RepurchaseExecutionProjection {
+    pub account: crate::AccountId,
+    pub issuer: crate::company::CompanyId,
+    pub stock: StockIdx,
+    pub announced: bool,
+    pub announced_on: crate::calendar::CivilDate,
+    pub window_start_on: crate::calendar::CivilDate,
+    pub window_deadline_on: crate::calendar::CivilDate,
+    pub exchange: crate::calendar::CalendarExchange,
+    pub purpose: crate::company::issuer_repurchase::RepurchasePurpose,
+    pub funding_amount: crate::Money,
+    pub price_cap: crate::Money,
+    pub max_shares: u64,
+    pub unit_as_of: crate::calendar::CivilDate,
+    pub unit_revision: u64,
+    pub book_through_cursor: u64,
+    pub book_gross: crate::Money,
+    pub book_fees: crate::Money,
+    pub recycled: crate::Money,
+    pub inventory_shares: u64,
+    pub last_order_day: Option<crate::calendar::CivilDate>,
+    pub eligibility_revision: u64,
+    pub eligibility_as_of: crate::calendar::CivilInstant,
+    /// None 表示尚无可信发行实施 source；不能解释为允许执行。
+    pub issuance_in_progress: Option<bool>,
+    pub material_restriction: RepurchaseMaterialRestriction,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RepurchaseProjectionInput {
+    pub local: LocalIdx,
+    pub stock: StockIdx,
+    pub issuer: crate::company::CompanyId,
+    pub execution_plan: AdminPlanReference,
+    pub projection: RepurchaseExecutionProjection,
+}
+
+/// 外层只负责按真实组路由；每组 reference 继续指该组原 operations 的绝对下标。
+#[derive(Clone, Debug)]
+pub struct RepurchasePreparePayload {
+    pub groups: Vec<(GroupIdx, Vec<RepurchaseProjectionInput>)>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CreatedRepurchasePlan {
+    pub group: GroupIdx,
+    pub operation_index: u32,
+    pub local: LocalIdx,
+    pub stock: StockIdx,
+    pub issuer: crate::company::CompanyId,
+    pub plan_id: crate::plans::PlanId,
+}
+
+/// 只在 Prepare 回执携带；完整 book 保留历史及唯一 OwnerSequence。
+#[derive(Clone, Debug)]
+pub struct PreparedRepurchaseResult {
+    pub book: crate::plans::PlanBook,
+    pub created: Vec<CreatedRepurchasePlan>,
+    /// 本次输入行解析后的完整字段集合，keys 恰为本次 touched 计划；组权威仍保留全部投影。
+    pub projections: std::collections::BTreeMap<crate::plans::PlanId, RepurchaseExecutionProjection>,
+}
+
 /// 已由上层确定合法到账时点的数值操作，金额为分、数量为股。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AdminOperation {
+    /// 必须在同一次 Prepare 中配对一次正额 Credit 和完整执行读投影。
+    OpenIssuerRepurchase { local: LocalIdx, stock: StockIdx, issuer: crate::company::CompanyId },
     /// Simple 已批准回购的合成预算；批准与精确额度仍须由同事务 inspect 核验。
-    SyntheticBudgetCredit { local: LocalIdx, stock: StockIdx, execution_plan: crate::plans::PlanId, amount: i64 },
+    SyntheticBudgetCredit { local: LocalIdx, stock: StockIdx, execution_plan: AdminPlanReference, amount: i64 },
     /// 回收本计划的精确未用预算；不得按共享账户现金推断回收额。
     SyntheticBudgetRecycle { local: LocalIdx, stock: StockIdx, execution_plan: crate::plans::PlanId, amount: i64 },
     /// 配股缴款只扣本人raw可用现金，金额为分。
@@ -557,7 +639,8 @@ pub enum AdminOperation {
 impl AdminOperation {
     pub(crate) fn coordinates(self) -> (LocalIdx, StockIdx) {
         match self {
-            Self::SyntheticBudgetCredit { local, stock, .. }
+            Self::OpenIssuerRepurchase { local, stock, .. }
+            | Self::SyntheticBudgetCredit { local, stock, .. }
             | Self::SyntheticBudgetRecycle { local, stock, .. }
             | Self::PaymentDebit { local, stock, .. }
             | Self::SubscriptionRefund { local, stock, .. }
@@ -626,6 +709,7 @@ pub enum InformationPrepareError {
 pub struct AdminGroupCandidate {
     pub(crate) mirror_domains: super::source::MirrorDomains,
     pub information: Option<PreparedInformationResult>,
+    pub repurchase: Option<PreparedRepurchaseResult>,
     pub group: GroupIdx,
     pub accounts: Vec<(LocalIdx, std::sync::Arc<super::group::GroupAccount>)>,
     pub state_hash: u64,
@@ -649,6 +733,8 @@ pub enum AdminPhase {
 #[cfg(test)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AdminFault {
+    RepurchasePrepareCorruption(u8),
+    RepurchaseInControlReceipt,
     Panic(std::sync::Arc<String>),
     WrongId,
     WrongGroup,
@@ -704,7 +790,7 @@ pub struct DayEndDirective {
 /// FIFO + 收束因果序保证批次先于下一 Start 被处理）。
 pub enum GroupIn {
     /// 行政静点操作；事务生命周期不进入普通 tick 日志。
-    AdminPrepare { id: AdminTransactionId, operations: Vec<AdminOperation>, information: Option<InformationPreparePayload>, information_clock: Option<super::world::AuthenticatedInformationClock> },
+    AdminPrepare { id: AdminTransactionId, operations: Vec<AdminOperation>, information: Option<InformationPreparePayload>, information_clock: Option<super::world::AuthenticatedInformationClock>, repurchase: Option<Vec<RepurchaseProjectionInput>> },
     AdminCommit { id: AdminTransactionId },
     AdminAbort { id: AdminTransactionId },
     #[cfg(test)]

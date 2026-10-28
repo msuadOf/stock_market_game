@@ -31,6 +31,7 @@ pub type OrderRef = (StockIdx, u64);
 mod entities;
 mod facts;
 mod protocol;
+pub(crate) use protocol::{RepurchasePreparePayload, RepurchaseProjectionInput, RuntimeError};
 mod information_clock_context;
 pub use information_clock_context::InformationClockContext;
 
@@ -46,7 +47,9 @@ pub mod event_bridge;
 pub mod retail_lifecycle;
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
-mod bridge_tests;
+pub(crate) mod bridge_tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+pub(crate) use bridge_tests::setup_fixture as administrative_mirror_setup_for_test;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod candle_retirement_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]

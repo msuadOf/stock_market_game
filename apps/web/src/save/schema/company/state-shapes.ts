@@ -1,5 +1,6 @@
 // 当前 Rust 公司状态 wire 字段表；来源与逐文件 SHA 保存在 source-b-web-strict-save/rust-field-table.json。
 // 仅描述结构与 codec，不复制会计、权益、审批或日结业务算法。
+// repurchase_execution_bindings 增量依据冻结源码 6d45be0a；静态证据见 source-b-web-strict-save/repurchase-binding-web/static-contract.json。
 export type StateRule = string | readonly [string, ...unknown[]];
 export const STATE_SHAPES: Readonly<Record<string, StateRule>> = {
   "CompanySystem": [
@@ -110,6 +111,13 @@ export const STATE_SHAPES: Readonly<Record<string, StateRule>> = {
           "IssuerRepurchaseBook"
         ]
       ],
+      "repurchase_execution_bindings": [
+        "array",
+        [
+          "ref",
+          "RepurchaseExecutionBinding"
+        ]
+      ],
       "account_gross_receipts": [
         "array",
         [
@@ -131,6 +139,41 @@ export const STATE_SHAPES: Readonly<Record<string, StateRule>> = {
           "AppliedExReferenceGroup"
         ]
       ]
+    }
+  ],
+  "RepurchaseExecutionBinding": [
+    "object",
+    {
+      "event_id": "string",
+      "issuer": "u32",
+      "stock": "string",
+      "account": "account",
+      "plan_id": [
+        "ref",
+        "PlanId"
+      ],
+      "funding_committed": "boolean",
+      "funding_amount": "money",
+      "applied_fact_cursor": "canonicalU64",
+      "closing_state": [
+        "ref",
+        "RepurchaseBindingClosingState"
+      ]
+    }
+  ],
+  "PlanId": [
+    "object",
+    {
+      "owner": "account",
+      "sequence": "canonicalU64"
+    }
+  ],
+  "RepurchaseBindingClosingState": [
+    "enum",
+    {
+      "Active": null,
+      "Draining": null,
+      "Closed": null
     }
   ],
   "CompanyImplementation": [
@@ -2100,7 +2143,7 @@ import type { CompanyKind } from "./accounting/spec.ts";
 
 export type CompanySystemWire = { "issuers": Record<string, ReturnType<typeof parseCompanySpec>>; "implementation": CompanyImplementationWire };
 export type SimpleFundamentalsWire = { "config": SimpleConfig; "history_start": string; "advanced_through": string; "environment_change_bp": number; "environment_rng": { state: string }; "companies": Record<string, SimpleCompanyStateWire>; "history": (SimpleDisclosureCandidateWire)[] };
-export type SessionCorporateActionsWire = { "registries": (ShareRegistryWire)[]; "dividends": (CashDividendBookWire)[]; "dividend_tax_books": (CashDividendTaxBookWire)[]; "flat_withholding_receipts": (FlatWithholdingReceiptWire)[]; "stock_distributions": (StockDistributionBookWire)[]; "share_splits": (ShareSplitBookWire)[]; "rights_offerings": (RightsOfferingBookWire)[]; "rights_subscription_queue": (QueuedRightsSubscriptionWire)[]; "rejected_rights_subscriptions": (RejectedRightsSubscriptionWire)[]; "issuer_repurchases": (IssuerRepurchaseBookWire)[]; "account_gross_receipts": (AccountDividendGrossReceiptWire)[]; "external_receipts": (ExternalDividendReceiptWire)[]; "applied_ex_reference_groups": (AppliedExReferenceGroupWire)[] };
+export type SessionCorporateActionsWire = { "registries": (ShareRegistryWire)[]; "dividends": (CashDividendBookWire)[]; "dividend_tax_books": (CashDividendTaxBookWire)[]; "flat_withholding_receipts": (FlatWithholdingReceiptWire)[]; "stock_distributions": (StockDistributionBookWire)[]; "share_splits": (ShareSplitBookWire)[]; "rights_offerings": (RightsOfferingBookWire)[]; "rights_subscription_queue": (QueuedRightsSubscriptionWire)[]; "rejected_rights_subscriptions": (RejectedRightsSubscriptionWire)[]; "issuer_repurchases": (IssuerRepurchaseBookWire)[]; "repurchase_execution_bindings": (RepurchaseExecutionBindingWire)[]; "account_gross_receipts": (AccountDividendGrossReceiptWire)[]; "external_receipts": (ExternalDividendReceiptWire)[]; "applied_ex_reference_groups": (AppliedExReferenceGroupWire)[] };
 export type CompanyImplementationWire = { "mode": "Simple"; "state": SimpleFundamentalsWire };
 export type SimpleCompanyStateWire = { "generation": PeriodGenerationStateWire; "finance": SimpleFinanceStateWire; "pending_restart": ([string, string] | null); "preference_ledger": SimplePreferenceLedgerWire };
 export type SimpleDisclosureCandidateWire = { "company": number; "period_start": string; "period_end": string; "amounts": PeriodAmountsWire; "explanation": PeriodChangeExplanationWire };
@@ -2206,3 +2249,6 @@ export type ShareUnitIdentityWire = "Initial" | { "ReDenominated": { "movement_e
 export type ShareMarketSourceWire = { "FinalConfirmations": { "receipts": (ShareConfirmationRefWire)[] } } | { "CalendarClosed": { "exchange": CalendarExchangeWire; "policy_digest": string } };
 export type SharePostActionRefWire = { "Movement": { "event_id": string } } | { "UnitMovement": { "event_id": string; "from_unit": ShareUnitIdentityWire; "to_unit": ShareUnitIdentityWire } } | { "CaptureRegistration": { "event_id": string } };
 export type ShareConfirmationRefWire = { "account": string; "receipt_id": string };
+export type RepurchaseExecutionBindingWire = { "event_id": string; "issuer": number; "stock": string; "account": string; "plan_id": PlanIdWire; "funding_committed": boolean; "funding_amount": string; "applied_fact_cursor": string; "closing_state": RepurchaseBindingClosingStateWire };
+export type PlanIdWire = { "owner": string; "sequence": string };
+export type RepurchaseBindingClosingStateWire = "Active" | "Draining" | "Closed";

@@ -219,6 +219,28 @@ binding 和真实成交／费用来源核验；不得按共享账户总现金回
 已登记的 Simple 简化；批准 producer、公司执行资格、真实委托／成交／余款回收和完整公共恢复
 继续由后续同事务接线完成，不能据数值通道可用宣称回购全链已支持。
 
+### APPROVAL-C 实施候选的限制（2026-10-28，尚未完成验收）
+
+内部共同批准候选将 `OpenIssuerRepurchase`、正额 Credit、完整 `PlanBook`、执行投影与
+公司 book／finance／binding 放入同一次行政事务；当前仍等待与 R4 镜像通道组合验证，
+不据源码存在宣称生产批准、玩家命令或真实回购已可用。
+
+`repurchase_execution_bindings` 是公司行为容器的严格必填字段，禁用机制也输出空数组；
+Rust／Web 契约必须同步，不能把旧档缺字段解释为没有历史。完整 Session 的公司计划恢复
+仍显式拒绝，须待真实来源、已消费 cursor、日终无残票与投影重建全部验证后才能开放。
+
+批准投影只是不可执行的初始基线。`issuance_in_progress=None` 明确尚无可信发行实施
+source，不是 Clear；`material_restriction=NotModelled` 也不代表已完成重大事项识别。
+`eligibility_as_of`／revision 不能代替执行现场的完整 CivilInstant、calendar、phase 与
+价格限制 cut。不得从 `RightsOfferingStatus::Approved` 或其他状态猜发行已经开始实施。
+沪市指引第20条／深市指引第19条规定的起点为发送认购邀请书，或取得注册批复并启动
+向不特定对象发行，止点为新增股份完成登记；真实执行前仍须接入这些事实。
+
+**尚不支持法定期限的完整自动核验**：当前候选校验日期顺序与窗口首尾交易日，但未自动
+核验沪市第17条／深市第16条的一般12个月、维护价值3个月期限。窗口仍为显式参数，
+不得把候选注资成功描述为完整制度合法或允许申报；REPURCHASE-X 启用前须收口此门。
+本条沿用下节已登记官方原件与本轮独审读取的同一材料，不宣称新增联网核验。
+
 ## 玩家提案的 Session 批准入口（2026-10-28 登记）
 
 `GameSession::propose_player_company_action` 接入 `CashDividend`、`StockDistribution`、

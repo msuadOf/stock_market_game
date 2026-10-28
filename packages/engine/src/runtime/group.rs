@@ -743,6 +743,7 @@ pub struct GroupState {
     )>,
     admin_pending: Option<admin_transaction::PendingAdmin>,
     admin_last_id: u64,
+    repurchase_projections: std::collections::BTreeMap<crate::plans::PlanId, super::protocol::RepurchaseExecutionProjection>,
     #[cfg(test)]
     admin_fault: Option<(super::protocol::AdminPhase, super::protocol::AdminFault)>,
     /// 组索引。
@@ -1080,6 +1081,7 @@ impl GroupState {
             calendar_owner: None,
             admin_pending: None,
             admin_last_id: 0,
+            repurchase_projections: std::collections::BTreeMap::new(),
             #[cfg(test)]
             admin_fault: None,
             group,
@@ -1270,6 +1272,7 @@ impl GroupState {
                 }
             }
         }
+        h = self.hash_repurchase_projections(h);
         for ((account, code), ticket) in &self.child_in_flight {
             h = fnv(h, u64::from(account.0));
             h = fnv(h, u64::from(code.0));
@@ -5639,14 +5642,14 @@ pub fn group_main(
         match msg {
             #[cfg(test)]
             GroupIn::AdminFaultForTest { phase, fault } => state.admin_fault = Some((phase, fault)),
-            GroupIn::AdminPrepare { id, operations, information, information_clock } => {
-                if !state.handle_admin_message(id, super::protocol::AdminPhase::Prepare, operations, information, information_clock, &up_tx, who) { break; }
+            GroupIn::AdminPrepare { id, operations, information, information_clock, repurchase } => {
+                if !state.handle_admin_message(id, super::protocol::AdminPhase::Prepare, operations, information, information_clock, repurchase, &up_tx, who) { break; }
             }
             GroupIn::AdminCommit { id } => {
-                if !state.handle_admin_message(id, super::protocol::AdminPhase::Commit, Vec::new(), None, None, &up_tx, who) { break; }
+                if !state.handle_admin_message(id, super::protocol::AdminPhase::Commit, Vec::new(), None, None, None, &up_tx, who) { break; }
             }
             GroupIn::AdminAbort { id } => {
-                if !state.handle_admin_message(id, super::protocol::AdminPhase::Abort, Vec::new(), None, None, &up_tx, who) { break; }
+                if !state.handle_admin_message(id, super::protocol::AdminPhase::Abort, Vec::new(), None, None, None, &up_tx, who) { break; }
             }
             GroupIn::Batch(batch) => {
                 // eager 分域即时相：到达即应用 F1/F2/F3（等待窗=组空闲

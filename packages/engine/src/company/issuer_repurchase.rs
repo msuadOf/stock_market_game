@@ -35,6 +35,29 @@ use crate::account::StockCode;
 use crate::calendar::{CalendarExchange, CivilDate, TradingCalendar};
 use crate::money::Money;
 
+/// 唯一公司 event 与实际 PlanId 的冷路径关联；提交前的候选不得向宿主显示已注资。
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RepurchaseExecutionBinding {
+    pub event_id: String,
+    pub issuer: CompanyId,
+    pub stock: StockCode,
+    pub account: crate::AccountId,
+    pub plan_id: crate::plans::PlanId,
+    pub funding_committed: bool,
+    pub funding_amount: Money,
+    #[serde(with = "crate::orderbook::canonical_u64_decimal")]
+    pub applied_fact_cursor: u64,
+    pub closing_state: RepurchaseBindingClosingState,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub enum RepurchaseBindingClosingState {
+    Active,
+    Draining,
+    Closed,
+}
+
 /// 回购法定用途（63 号第 2 条四类）。用途决定法定期限与注销义务；本模块不硬编码
 /// 期限，由方案窗口参数承载。
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, ts_rs::TS)]

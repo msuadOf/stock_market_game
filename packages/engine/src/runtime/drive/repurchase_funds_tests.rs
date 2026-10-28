@@ -23,8 +23,8 @@ fn funds_p2_actual_driver_01_real_shared_treasury_nonzero_owner_credit_survives_
     let mut driver = RuntimeDriver::from_session_grouped(&mut session, 2).unwrap();
     assert_eq!(driver.account_by_owner((1, 1)), Some(owner));
     driver.world.with_admin_transaction(vec![(1, vec![
-        AdminOperation::SyntheticBudgetCredit { local: 1, stock: 0, execution_plan: ids[0], amount: 101 },
-        AdminOperation::SyntheticBudgetCredit { local: 1, stock: 1, execution_plan: ids[1], amount: 203 },
+        AdminOperation::SyntheticBudgetCredit { local: 1, stock: 0, execution_plan: crate::runtime::protocol::AdminPlanReference::Existing(ids[0]), amount: 101 },
+        AdminOperation::SyntheticBudgetCredit { local: 1, stock: 1, execution_plan: crate::runtime::protocol::AdminPlanReference::Existing(ids[1]), amount: 203 },
     ])], |_| Ok(())).unwrap();
     assert_eq!(session.account(owner).unwrap().cash(), Money::ZERO);
     driver.step_frame_equivalent(&mut session).unwrap();
@@ -55,7 +55,7 @@ fn funds_p2_actual_driver_03_lazy_builder_binding_is_live_before_session_activat
     assert_eq!(driver.account_by_owner((1, 1)), Some(owner));
     let initial_source = driver.mirror_source(); let published = driver.world.publication().load();
     driver.world.with_admin_transaction(vec![(1, vec![AdminOperation::SyntheticBudgetCredit {
-        local: 1, stock: 0, execution_plan: id, amount: 101,
+        local: 1, stock: 0, execution_plan: crate::runtime::protocol::AdminPlanReference::Existing(id), amount: 101,
     }])], |_| Ok(())).unwrap();
     let source = driver.mirror_source();
     assert_eq!((source.authority_epoch, source.tick, source.generation), (expected_epoch, initial_source.tick, initial_source.generation));
@@ -85,7 +85,7 @@ fn funds_p2_actual_driver_04_lazy_builder_cannot_fund_same_number_with_player_ki
     let mut driver = RuntimeDriver::prepare_from_session_grouped(&session, 2, epoch).unwrap();
     let before = driver.mirror_source(); let pending = driver.pending_mirror_domains();
     let error = driver.world.with_admin_transaction(vec![(1, vec![AdminOperation::SyntheticBudgetCredit {
-        local: 1, stock: 0, execution_plan: id, amount: 101,
+        local: 1, stock: 0, execution_plan: crate::runtime::protocol::AdminPlanReference::Existing(id), amount: 101,
     }])], |_| -> Result<(), crate::runtime::protocol::RuntimeError> { panic!("实际 Player kind 不得到达信用 inspect") }).unwrap_err();
     assert!(error.to_string().contains("binding"), "{error}");
     assert_eq!(driver.mirror_source(), before); assert_eq!(driver.pending_mirror_domains(), pending);

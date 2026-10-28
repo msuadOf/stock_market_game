@@ -23,7 +23,7 @@ fn state() -> (GroupState, [PlanId; 2]) {
     (s, ids)
 }
 fn credit(id: PlanId, stock: u16, amount: i64) -> AdminOperation {
-    AdminOperation::SyntheticBudgetCredit { local: 1, stock, execution_plan: id, amount }
+    AdminOperation::SyntheticBudgetCredit { local: 1, stock, execution_plan: crate::runtime::protocol::AdminPlanReference::Existing(id), amount }
 }
 fn recycle(id: PlanId, stock: u16, amount: i64) -> AdminOperation {
     AdminOperation::SyntheticBudgetRecycle { local: 1, stock, execution_plan: id, amount }

@@ -39,7 +39,7 @@ fn accounts(w: &mut World) -> Vec<Vec<GroupAccount>> {
     }} out
 }
 fn credit(local: u32, stock: u16, id: PlanId, amount: i64) -> AdminOperation {
-    AdminOperation::SyntheticBudgetCredit { local, stock, execution_plan: id, amount }
+    AdminOperation::SyntheticBudgetCredit { local, stock, execution_plan: crate::runtime::protocol::AdminPlanReference::Existing(id), amount }
 }
 #[test]
 fn funds_p2_world_01_commit_two_real_groups_keeps_tick_and_next_start_reads_credit() {

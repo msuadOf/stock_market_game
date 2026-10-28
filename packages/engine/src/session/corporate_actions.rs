@@ -45,6 +45,8 @@ pub struct SessionCorporateActions {
     /// 日终公开配售超额认购的显式拒绝回执（受理侧额度校验之后的极端竞态兜底）。
     pub rejected_rights_subscriptions: Vec<RejectedRightsSubscription>,
     pub issuer_repurchases: Vec<crate::company::issuer_repurchase::IssuerRepurchaseBook>,
+    /// 唯一公司 event 与实际计划、已提交资金来源的严格关联；旧档缺失时拒绝。
+    pub repurchase_execution_bindings: Vec<crate::company::issuer_repurchase::RepurchaseExecutionBinding>,
     pub account_gross_receipts: Vec<AccountDividendGrossReceipt>,
     pub external_receipts: Vec<ExternalDividendReceipt>,
     pub applied_ex_reference_groups: Vec<AppliedExReferenceGroup>,
@@ -424,7 +426,7 @@ mod tests {
                  \"flat_withholding_receipts\": [], \"stock_distributions\": [], \
                  \"share_splits\": [], \"rights_offerings\": [], \
                  \"rights_subscription_queue\": [], \"rejected_rights_subscriptions\": [], \
-                 \"issuer_repurchases\": [], \"account_gross_receipts\": [], \
+                 \"issuer_repurchases\": [], \"repurchase_execution_bindings\": [], \"account_gross_receipts\": [], \
                  \"external_receipts\": [], \"applied_ex_reference_groups\": [], \
                  \"unknown_field\": []}}"
             ))

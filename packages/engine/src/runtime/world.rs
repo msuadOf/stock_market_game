@@ -3662,7 +3662,8 @@ mod failed_cleanup_tests {
 }
 
 mod admin_transaction;
+pub(crate) use admin_transaction::PreparedAdministrativeSource;
 
-pub use super::protocol::{AdminCandidate, AdminOperation, AdminTransactionId, AdminTreasuryBinding, InformationObservation, InformationPreparePayload, PreparedInformationResult, InformationPrepareError};
+pub use super::protocol::{AdminCandidate, AdminOperation, AdminTransactionId, AdminTreasuryBinding, AdminPlanReference, CreatedRepurchasePlan, PreparedRepurchaseResult, RepurchaseExecutionProjection, RepurchaseMaterialRestriction, InformationObservation, InformationPreparePayload, PreparedInformationResult, InformationPrepareError};
 
 mod admin_treasury_binding;

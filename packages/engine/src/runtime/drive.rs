@@ -19,6 +19,8 @@ use super::world::World;
 use std::sync::Arc;
 mod convergence;
 mod company_commands;
+mod administrative_mirror;
+pub(crate) use administrative_mirror::AdministrativeBaseline;
 mod sync_inputs;
 mod static_projection;
 pub(crate) use static_projection::PreparedStaticRead;

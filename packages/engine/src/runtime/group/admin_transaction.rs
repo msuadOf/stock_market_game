@@ -5,6 +5,8 @@ use crate::runtime::protocol::{
     AdminGroupCandidate, AdminOperation, AdminPhase, AdminTransactionId,
 };
 use std::collections::BTreeMap;
+mod repurchase;
+use repurchase::PendingRepurchase;
 
 /// 仅保留最后成功观察的有限输入；Arc 按内容比较，不以地址或 hash 作为相等依据。
 #[derive(Clone, Debug, PartialEq)]
@@ -22,6 +24,7 @@ pub(super) struct PendingAdmin {
     id: AdminTransactionId,
     before: Vec<(LocalIdx, Arc<GroupAccount>)>,
     information: Option<PendingInformation>,
+    repurchase: Option<PendingRepurchase>,
 }
 
 fn invalid(detail: impl Into<String>) -> RuntimeError {
@@ -73,6 +76,31 @@ impl GroupState {
         information: Option<crate::runtime::protocol::InformationPreparePayload>,
         information_clock: Option<super::super::world::AuthenticatedInformationClock>,
     ) -> Result<AdminGroupCandidate, RuntimeError> {
+        self.prepare_admin_scope_with_clock(id, operations, information, None, information_clock)
+    }
+
+    /// 回购机制短 fixture 沿同一 sender 构造测试证明；生产走 World 认证后的 core。
+    #[cfg(test)]
+    fn prepare_admin_scope(
+        &mut self,
+        id: AdminTransactionId,
+        operations: Vec<AdminOperation>,
+        information: Option<crate::runtime::protocol::InformationPreparePayload>,
+        repurchase: Option<Vec<crate::runtime::protocol::RepurchaseProjectionInput>>,
+    ) -> Result<AdminGroupCandidate, RuntimeError> {
+        let proof = information.as_ref().and_then(|payload| payload.observation.as_ref())
+            .map(|point| super::super::world::AuthenticatedInformationClock::fixture(&point.clock));
+        self.prepare_admin_scope_with_clock(id, operations, information, repurchase, proof)
+    }
+
+    fn prepare_admin_scope_with_clock(
+        &mut self,
+        id: AdminTransactionId,
+        operations: Vec<AdminOperation>,
+        information: Option<crate::runtime::protocol::InformationPreparePayload>,
+        repurchase: Option<Vec<crate::runtime::protocol::RepurchaseProjectionInput>>,
+        information_clock: Option<super::super::world::AuthenticatedInformationClock>,
+    ) -> Result<AdminGroupCandidate, RuntimeError> {
         if id.0 <= self.admin_last_id {
             return Err(invalid(format!(
                 "组 {} 行政 prepare 重复/过期：{id:?}",
@@ -92,12 +120,14 @@ impl GroupState {
         {
             return Err(invalid(format!("组 {} 行政 prepare 不在静点", self.group)));
         }
-        if operations.is_empty() && information.is_none() {
+        if operations.is_empty() && information.is_none() && repurchase.is_none() {
             return Err(invalid("行政参与组不得没有操作"));
         }
+        let repurchase_working = repurchase.as_ref().map(|rows| self.prepare_repurchase_working(&operations, rows)).transpose()?;
+        let operations = repurchase_working.as_ref().map_or(operations, |working| working.operations.clone());
         let mut working = BTreeMap::new();
         for operation in operations {
-            self.validate_repurchase_funds_operation(operation)?;
+            if repurchase_working.is_none() { self.validate_repurchase_funds_operation(operation)?; }
             let (local, stock) = operation.coordinates();
             let account = self.accounts.get(local as usize).ok_or_else(|| {
                 invalid(format!(
@@ -106,12 +136,19 @@ impl GroupState {
                 ))
             })?;
             let candidate = working.entry(local).or_insert_with(|| (**account).clone());
+            if matches!(operation, AdminOperation::OpenIssuerRepurchase { .. }) && repurchase_working.is_some() { continue; }
             apply_operation(candidate, stock, operation).map_err(|e| {
                 invalid(format!(
                     "组 {} 行政 local={local}, stock={stock}：{e}",
                     self.group
                 ))
             })?;
+        }
+        if let Some(rows) = &repurchase {
+            for row in rows {
+                let account = self.accounts.get(row.local as usize).ok_or_else(|| invalid("执行投影账户越界"))?;
+                working.entry(row.local).or_insert_with(|| (**account).clone());
+            }
         }
         // 信息计算读取同一事务资产候选，全部成功后才暂装资产 working。
         let information = information.as_ref().map(|payload| self.prepare_information(payload, information_clock.as_ref(), &working)).transpose()?;
@@ -122,7 +159,18 @@ impl GroupState {
         for (local, account) in working {
             self.accounts[local as usize] = Arc::new(account);
         }
-        self.admin_pending = Some(PendingAdmin { id, before, information });
+        let repurchase = repurchase_working.map(|working| {
+            let pending = PendingRepurchase {
+                before_book: std::mem::replace(&mut self.plan_book, working.book),
+                before_dirty: self.plan_book_dirty,
+                before_projections: std::mem::replace(&mut self.repurchase_projections, working.projections),
+                created: working.created,
+                projected_ids: working.projected_ids,
+            };
+            if pending.before_book != self.plan_book || pending.before_projections != self.repurchase_projections { self.plan_book_dirty = true; }
+            pending
+        });
+        self.admin_pending = Some(PendingAdmin { id, before, information, repurchase });
         Ok(self.admin_candidate())
     }
 
@@ -133,9 +181,15 @@ impl GroupState {
         if let Some(information) = &pending.information {
             mirror_domains = mirror_domains.union(information.mirror_domains());
         }
+        if let Some(repurchase) = &pending.repurchase {
+            mirror_domains.plans_pending = repurchase.before_book != self.plan_book || repurchase.before_projections != self.repurchase_projections;
+        }
         AdminGroupCandidate {
             mirror_domains,
             information: pending.information.as_ref().map(|info| info.prepared.clone()),
+            repurchase: pending.repurchase.as_ref().map(|repurchase| crate::runtime::protocol::PreparedRepurchaseResult {
+                book: self.plan_book.clone(), created: repurchase.created.clone(), projections: repurchase.projected_ids.iter().map(|id| (*id, self.repurchase_projections[id].clone())).collect(),
+            }),
             group: self.group,
             accounts: pending
                 .before
@@ -187,6 +241,7 @@ impl GroupState {
         Ok(AdminGroupCandidate {
             mirror_domains: Default::default(),
             information: None,
+            repurchase: None,
             group: self.group,
             accounts: locals
                 .into_iter()
@@ -199,6 +254,11 @@ impl GroupState {
     /// 退出也只撤本行政 overlay；不得普通 rollback 倒放已发布市场事实。
     pub(super) fn discard_pending_admin(&mut self) {
         if let Some(pending) = self.admin_pending.take() {
+            if let Some(repurchase) = pending.repurchase {
+                self.plan_book = repurchase.before_book;
+                self.plan_book_dirty = repurchase.before_dirty;
+                self.repurchase_projections = repurchase.before_projections;
+            }
             if let Some(information) = pending.information {
                 self.abort_information(information);
             }
@@ -215,6 +275,7 @@ impl GroupState {
         operations: Vec<AdminOperation>,
         information: Option<crate::runtime::protocol::InformationPreparePayload>,
         information_clock: Option<super::super::world::AuthenticatedInformationClock>,
+        repurchase: Option<Vec<crate::runtime::protocol::RepurchaseProjectionInput>>,
         up: &Sender<UpMsg>,
         who: super::super::protocol::WorkerId,
     ) -> bool {
@@ -230,7 +291,7 @@ impl GroupState {
                 std::panic::panic_any(Arc::clone(payload));
             }
             if phase == AdminPhase::Prepare {
-                self.prepare_admin_with_information_clock(id, operations, information, information_clock)
+                self.prepare_admin_scope_with_clock(id, operations, information, repurchase, information_clock)
             } else {
                 self.complete_admin(id, phase)
             }
@@ -244,6 +305,32 @@ impl GroupState {
             Ok(mut result) => {
                 #[cfg(test)]
                 if let Ok(candidate) = &mut result {
+                    if let Some(AdminFault::RepurchasePrepareCorruption(mode)) = fault {
+                        if mode == 0 { candidate.repurchase = None; }
+                        else if let Some(prepared) = &mut candidate.repurchase {
+                            match mode {
+                                1 => prepared.created.clear(),
+                                2 => prepared.created.push(prepared.created[0].clone()),
+                                3 => prepared.created[0].operation_index += 1,
+                                4 => {
+                                    let (policy, mut cursors, entries) = prepared.book.clone().into_parts();
+                                    cursors[0].next_sequence = cursors[0].next_sequence.and_then(|value| value.checked_add(1));
+                                    prepared.book = crate::plans::PlanBook::from_parts(policy, cursors, entries).expect("故障只改变合法游标");
+                                }
+                                5 => prepared.projections.clear(),
+                                6 => prepared.projections.values_mut().next().expect("故障有合法投影").funding_amount = crate::Money::from_cents(999),
+                                7 => { prepared.book.create_issuer_repurchase(crate::plans::RepurchaseExecutionOpen {
+                                    owner: prepared.created[0].plan_id.owner, issuer: crate::company::CompanyId(1), stock: crate::StockId(1),
+                                }).expect("故障额外添加不同证券计划"); }
+                                _ => panic!("未知回购 Prepare 故障类型"),
+                            }
+                        }
+                    }
+                    if fault == Some(AdminFault::RepurchaseInControlReceipt) {
+                        candidate.repurchase = Some(crate::runtime::protocol::PreparedRepurchaseResult {
+                            book: self.plan_book.clone(), created: Vec::new(), projections: self.repurchase_projections.clone(),
+                        });
+                    }
                     if fault == Some(AdminFault::WrongLocals) {
                         candidate.accounts.clear();
                     }
@@ -314,6 +401,9 @@ fn apply_operation(
         }
     }
     match operation {
+        AdminOperation::OpenIssuerRepurchase { .. } => {
+            return Err(invalid("APPROVAL-C 同 PendingAdmin 创建计划尚未实现"));
+        }
         AdminOperation::SyntheticBudgetCredit { amount, .. } => {
             return super::admin_repurchase_funds::apply_cash(account, stock_coordinate, amount, false);
         }
@@ -556,3 +646,6 @@ mod information_tests;
 
 #[cfg(test)]
 mod repurchase_funds_tests;
+
+#[cfg(test)]
+mod repurchase_approval_tests;

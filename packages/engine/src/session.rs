@@ -33,6 +33,7 @@ mod company_groups;
 mod company_commands_types;
 mod capital_approval_context;
 mod capital_command_candidates;
+mod administrative_mirror;
 mod company_command_candidates;
 mod player_company_command_candidates;
 mod stock_distribution_command_candidate;
@@ -46,6 +47,10 @@ use company_state::SessionCompanies;
 mod company_capital_restore;
 mod continuous_cancellation;
 mod corporate_actions;
+mod issuer_repurchase_approval;
+pub use issuer_repurchase_approval::{RepurchaseApprovalError, RepurchaseApprovalReceipt};
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod issuer_repurchase_approval_tests;
 mod decision_chain;
 #[cfg(feature = "simulation-diagnostics")]
 pub(crate) use decision_chain::{plan_trace_state, plan_trace_states};
@@ -965,6 +970,8 @@ struct WorkingOrderSlices<'a> {
 /// session 操作失败（致命：构造非法 / 未知玩家）。绝不静默吞错（铁律二）。
 #[derive(Debug, Error)]
 pub enum SessionError {
+    #[error(transparent)]
+    RepurchaseApproval(#[from] RepurchaseApprovalError),
     #[error(transparent)]
     ComputeInitialization(#[from] crate::compute::ComputeInitError),
     #[error(transparent)]

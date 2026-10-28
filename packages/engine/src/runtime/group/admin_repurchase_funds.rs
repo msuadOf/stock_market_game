@@ -7,8 +7,17 @@ fn invalid(detail: impl Into<String>) -> RuntimeError {
 }
 impl GroupState {
     pub(super) fn validate_repurchase_funds_operation(&self, operation: AdminOperation) -> Result<(), RuntimeError> {
+        self.validate_repurchase_funds_in_book(operation, &self.plan_book)
+    }
+
+    pub(super) fn validate_repurchase_funds_in_book(&self, operation: AdminOperation, book: &crate::plans::PlanBook) -> Result<(), RuntimeError> {
         let (local, stock, id, recycle) = match operation {
-            AdminOperation::SyntheticBudgetCredit { local, stock, execution_plan, .. } => (local, stock, execution_plan, false),
+            AdminOperation::SyntheticBudgetCredit { local, stock, execution_plan, .. } => {
+                let crate::runtime::protocol::AdminPlanReference::Existing(id) = execution_plan else {
+                    return Err(invalid("APPROVAL-C CreatedInThisPrepare 引用尚未实现"));
+                };
+                (local, stock, id, false)
+            }
             AdminOperation::SyntheticBudgetRecycle { local, stock, execution_plan, .. } => (local, stock, execution_plan, true),
             _ => return Ok(()),
         };
@@ -19,7 +28,7 @@ impl GroupState {
         if local as usize >= self.accounts.len() || id.owner != account {
             return Err(reject("PlanId owner 与实际账户不一致"));
         }
-        let entry = self.plan_book.entry(id).map_err(|_| reject("未知 PlanId"))?;
+        let entry = book.entry(id).map_err(|_| reject("未知 PlanId"))?;
         let crate::plans::PlanEntry::IssuerRepurchase(plan) = entry else {
             return Err(reject("Investor 个人判断不能作为公司资金来源"));
         };
