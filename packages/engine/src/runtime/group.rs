@@ -6923,7 +6923,7 @@ mod sol_recheck3_tests {
         }));
         let account = crate::AccountId(9);
         let code = crate::StockId(0);
-        let plan_id = state.plan_book.active_plan(account, &code).unwrap().plan_id();
+        let plan_id = state.plan_book.active_investor_plan(account, &code).unwrap().plan_id();
         let mut market = crate::strategy::MarketView {
             tick: 240,
             market_minute: 240,
