@@ -178,6 +178,9 @@ pub(super) fn prepare_tick_shadow_plan_commit_with_evidence<'authority>(
     };
     #[cfg(test)]
     authority.run_post_shadow_hook()?;
+    // 所有 producer 已结束；在冻结提交前结束本拍暂存来源。
+    #[cfg(feature = "simulation-diagnostics")]
+    { candidate.state.causal.active_tick_context = None; }
     let prepared = prepare_candidate_commit(authority, candidate)?;
     Ok(PreparedTickPlanCommit {
         prepared,

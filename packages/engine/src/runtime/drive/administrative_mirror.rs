@@ -180,6 +180,11 @@ impl super::RuntimeDriver {
     pub(crate) fn administrative_world_is_terminal(&self) -> bool {
         self.world.is_terminal()
     }
+
+    /// civil 四域已在首 Commit 前验证；仅同步当前日期，不重写历史 Calendar 来源。
+    pub(crate) fn install_administrative_civil_date(&mut self, date: crate::calendar::CivilDate) {
+        self.world.set_civil_date(date);
+    }
 }
 
 impl AdministrativeBaseline {

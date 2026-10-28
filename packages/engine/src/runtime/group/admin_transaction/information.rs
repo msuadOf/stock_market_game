@@ -152,7 +152,7 @@ impl GroupState {
                 let account = accounts
                     .get(&(local as LocalIdx))
                     .unwrap_or(self.accounts[local].as_ref());
-                let mut codes: std::collections::BTreeSet<StockId> = account
+                let mut protected: std::collections::BTreeSet<StockId> = account
                     .shares
                     .iter()
                     .zip(&account.pending_sell_qty)
@@ -160,8 +160,9 @@ impl GroupState {
                     .filter(|(_, (&shares, &pending))| shares > 0 || pending > 0)
                     .map(|(stock, _)| StockId(stock as u32))
                     .collect();
+                protected.extend(self.plan_book.active_investor_codes(owner).copied());
+                let mut codes = protected.clone();
                 codes.extend(snapshot.watchlist.stocks.keys().copied());
-                codes.extend(self.plan_book.active_investor_codes(owner).copied());
                 for stock in &codes {
                     if !issuers.contains_key(stock) {
                         return Err(reject(InformationPrepareError::Identity {
@@ -173,7 +174,7 @@ impl GroupState {
                     .map_err(|error| reject(InformationPrepareError::Revaluation {
                         account: owner, detail: error.to_string(),
                     }))?;
-                observers.push((local, owner, snapshot, codes));
+                observers.push((local, owner, snapshot, codes, protected));
             }
             // 完整目录与全部真实 owner/codes 已验证后，才允许同签名跳过本人计算。
             let signature = InformationObservationSignature {
@@ -184,15 +185,15 @@ impl GroupState {
                 anchors: point.as_of_anchors.clone(),
                 owners_and_codes: observers
                     .iter()
-                    .map(|(local, owner, _, codes)| (*local as LocalIdx, (*owner, codes.clone())))
+                    .map(|(local, owner, _, codes, _)| {
+                        (*local as LocalIdx, (*owner, codes.clone()))
+                    })
                     .collect(),
             };
-            if self.information_signature.as_ref() != Some(&signature) {
-                for (local, owner, snapshot, codes) in observers {
-                    if !snapshot.attention.information_check_due(point.through) {
-                        continue;
-                    }
-                    let result = crate::session::notices::deliver_information_for_npc(
+            let observe = self.information_signature.as_ref() != Some(&signature);
+            for (local, owner, snapshot, codes, protected) in observers {
+                let result = if observe && snapshot.attention.information_check_due(point.through) {
+                    crate::session::notices::deliver_information_for_npc(
                         owner,
                         point.through,
                         &|stock| point.as_of_anchors.get(&stock).copied(),
@@ -210,28 +211,49 @@ impl GroupState {
                             account: owner,
                             detail: e.to_string(),
                         })
+                    })?
+                } else {
+                    None
+                };
+                let over_limit = |keys: &mut dyn Iterator<Item = &StockId>| {
+                    keys.filter(|stock| !protected.contains(stock))
+                        .take(crate::MAX_UNHELD_WATCHLIST_STOCKS + 1)
+                        .count()
+                        > crate::MAX_UNHELD_WATCHLIST_STOCKS
+                };
+                let needs_prune = point.memory_retention
+                    == crate::runtime::protocol::InformationMemoryRetention::CivilDayEnd
+                    && (over_limit(&mut snapshot.watchlist.stocks.keys())
+                        || over_limit(&mut snapshot.price_memory.stocks.keys()));
+                if result.is_none() && !needs_prune {
+                    continue;
+                }
+                let observed = result.is_some();
+                let mut next = match result {
+                    Some((_, information, belief, attention)) => BeliefParticipantSnapshot {
+                        information,
+                        belief,
+                        attention,
+                        watchlist: snapshot.watchlist.clone(),
+                        price_memory: snapshot.price_memory.clone(),
+                        history_reads: snapshot.history_reads.clone(),
+                        retail_experience: snapshot.retail_experience.clone(),
+                    },
+                    None => snapshot.clone(),
+                };
+                if needs_prune {
+                    // 先用原订阅获知；不 due 或同签名也必须执行日终裁剪，不改历史读取账。
+                    next.watchlist.prune(&protected);
+                    next.price_memory.prune(&protected);
+                }
+                if observed || &next != snapshot {
+                    let dirty = *self.belief_dirty.get(local).ok_or_else(|| {
+                        reject(InformationPrepareError::Identity {
+                            detail: format!("local={local} 缺少 dirty 槽"),
+                        })
                     })?;
-                    if let Some((_, information, belief, attention)) = result {
-                        let dirty = *self.belief_dirty.get(local).ok_or_else(|| {
-                            reject(InformationPrepareError::Identity {
-                                detail: format!("local={local} 缺少 dirty 槽"),
-                            })
-                        })?;
-                        before.push((local as LocalIdx, snapshot.clone(), dirty));
-                        personals.push((
-                            local as LocalIdx,
-                            owner,
-                            BeliefParticipantSnapshot {
-                                information,
-                                belief,
-                                attention,
-                                watchlist: snapshot.watchlist.clone(),
-                                price_memory: snapshot.price_memory.clone(),
-                                history_reads: snapshot.history_reads.clone(),
-                                retail_experience: snapshot.retail_experience.clone(),
-                            },
-                        ));
-                    }
+                    before.push((local as LocalIdx, snapshot.clone(), dirty));
+                    personals.push((local as LocalIdx, owner, next));
                 }
             }
             prepared_signature = Some(signature);

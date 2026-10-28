@@ -269,9 +269,10 @@ fn finish_market_execution(
                 .ok_or_else(|| invariant("股票配置不在权威目录"))
         })
         .collect::<Result<std::collections::BTreeMap<_, _>, _>>()?;
-    let (_, calendar_tick) = candidate
-        .prepare_market_calendar_tick()
-        .map_err(MarketTransactionError::Finalization)?;
+    #[cfg(feature = "simulation-diagnostics")]
+    let calendar_tick = std::sync::Arc::clone(candidate.causal_tick_context().map_err(MarketTransactionError::Finalization)?);
+    #[cfg(not(feature = "simulation-diagnostics"))]
+    let (_, calendar_tick) = candidate.prepare_market_calendar_tick().map_err(MarketTransactionError::Finalization)?;
     let finish = compute
         .parallel(|| {
             compute.record(crate::compute::ComputeWork::StockFinish);

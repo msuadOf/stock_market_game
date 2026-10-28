@@ -38,9 +38,14 @@ pub(super) fn read_failure(stage: &str, message: UpMsg) -> RuntimeError {
 
 impl World {
     pub(crate) fn stop_without_drain(mut self) -> Result<StopReport, RuntimeError> {
-        self.worker_shutdown.store(true, Ordering::SeqCst);
-        self.group_txs.clear();
-        self.desk_txs.clear();
+        #[cfg(target_family = "wasm")]
+        self.stop_permanently();
+        #[cfg(not(target_family = "wasm"))]
+        {
+            self.worker_shutdown.store(true, Ordering::SeqCst);
+            self.group_txs.clear();
+            self.desk_txs.clear();
+        }
         let mut errors = Vec::new();
         let mut joined_workers = 0;
         for (who, handle) in std::mem::take(&mut self.handles) {
@@ -102,5 +107,41 @@ mod tests {
         );
         assert!(error.to_string().contains("prepared-worker-original-panic"));
         assert!(error.to_string().contains("static Full"));
+    }
+
+    #[cfg(not(target_family = "wasm"))]
+    fn private_world() -> World {
+        World::spawn(
+            crate::runtime::skeleton_tests::basic_spec(2, 2, 1,
+                Box::new(|_| Box::new(|_, _| crate::runtime::group::TickPlan::default()))),
+            crate::calendar::TradingCalendar::current_default_calendar().expect("显式Calendar合法"),
+        ).expect("真实短prepared World构造成功")
+    }
+
+    #[test]
+    #[cfg(not(target_family = "wasm"))]
+    fn prepared_stop_joins_real_private_world_without_publishing_final() {
+        let world = private_world();
+        let publication = world.publication();
+        let before = publication.load();
+        let report = world.stop_without_drain().expect("私有World回收成功");
+        assert_eq!(report.joined_workers, 4);
+        assert!(Arc::ptr_eq(&before, &publication.load()), "回收不得安装Final或发布市场事实");
+    }
+
+    #[test]
+    #[cfg(not(target_family = "wasm"))]
+    fn prepared_stop_keeps_real_worker_error_after_joining_all_workers() {
+        let world = private_world();
+        world.group_txs[0].send(GroupIn::Continue { tick: 0, round: 0 }).expect("真实失序输入入队");
+        match recv_deadline(&world.up_rx, Phase::TickConverge, &world.watchdog).expect("原worker失败握手") {
+            UpMsg::Failed { who: WorkerId::Group(0), error: RuntimeError::ProtocolInvariant { detail } }
+                if detail.contains("Continue 错序") => {}
+            other => panic!("错误握手不是预期原worker失败：{other:?}"),
+        }
+        let error = world.stop_without_drain().expect_err("回收须返回原worker错误");
+        let detail = error.to_string();
+        assert!(detail.contains("Continue 错序"), "原错误不可丢失：{detail}");
+        assert!(detail.contains("joined_workers: 4"), "报告须证明全部真实handle已join：{detail}");
     }
 }

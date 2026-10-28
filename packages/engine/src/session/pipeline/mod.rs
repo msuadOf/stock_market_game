@@ -13,6 +13,8 @@ mod authoritative_tick;
 mod book_auction_boundary;
 #[cfg(test)]
 mod book_auction_boundary_tests;
+#[cfg(all(test, feature = "simulation-diagnostics"))]
+mod stock_clock_tests;
 mod candidate_commit;
 mod candidate_composition;
 mod commit_evidence;
@@ -274,9 +276,18 @@ impl TickShadowPlan {
     pub(in crate::session) fn capture_candidate(
         session: &GameSession,
     ) -> Result<GameSession, StepFatal> {
-        let (day, _) = session.prepare_market_calendar_tick()?;
+        #[cfg(feature = "simulation-diagnostics")]
+        if session.state.causal.active_tick_context.is_some() {
+            return Err(StepFatal::InvariantViolation { location: "TickShadowPlan::capture_candidate".to_owned(),
+                description: "活跃 causal TickArc 不允许重入 capture".to_owned() });
+        }
+        let (day, calendar_tick) = session.prepare_market_calendar_tick()?;
+        #[cfg(not(feature = "simulation-diagnostics"))]
+        let _ = calendar_tick;
         let mut candidate = session.clone_for_tick_shadow()?;
         candidate.install_market_calendar_day(day);
+        #[cfg(feature = "simulation-diagnostics")]
+        { candidate.state.causal.active_tick_context = Some(calendar_tick); }
         candidate.freeze_shared_ingress()?;
         Ok(candidate)
     }

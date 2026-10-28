@@ -10,7 +10,7 @@ const roe = { basis: { Unsupported: { reason: "MissingNonRecurringIncomeFacts" }
 const reportSet = { roe, scope: { Standalone: 0 }, period: "2030-03", kind: "Quarter", window: ["2030-01", "2030-03"], version: { sequence: 1, supersedes: null, kind: "Original" }, balance_sheet: balance, income: { report_period: columns, report_period_net_income_to_parent: null, quarter: columns, cumulative: columns, prior_year: { Unavailable: { reason: "NoPriorYearHistory" } }, minority_net_income: null, net_income_to_parent: null }, cash_flow: { operating: "0.00", investing: "0.00", financing: "0.00", net_change: "0.00", opening_cash: "0.00", closing_cash: "0.00", indirect: [] }, equity: { opening_parent: "0.00", net_income: "0.00", other_comprehensive: "0.00", capital_contributions: "0.00", distributions: "0.00", closing_parent: "0.00", opening_minority: null, minority_net_income: null, closing_minority: null }, notes: { items: [], consolidation_split_items: [] } }
 const publicLibrary = { next_seq: 2, reports: [{ id: 0, company: 0, source: "SimulationAccounting", policy: { chart_version: 2 }, approved_at: { date: "2030-04-20", second_of_day: 28800 }, published_at: instant, origin: { ScheduledDisclosure: { fiscal_year: 2030, kind: "Q1", offset_days: 0 } }, supersedes: null, reports: reportSet }], announcements: [{ id: 1, company: 0, occurred_on: "2030-04-20", published_at: instant, content: { kind: "Shock", value: { kind: "ContractWon", amplitude_bp: 100, starts_on: "2030-04-20", expires_on: "2030-04-25" } } }] }
 const operations = representativeCompanyOperationsFixture() as any
-const closingRegistry = { versions: [[{ Standalone: 0 }, "2030-03", "Quarter", [reportSet]]], restatements: [[{ Standalone: 0 }, [["18446744073709551615", "2030-03"]]]] }
+const closingRegistry = { versions: [[{ Standalone: 0 }, "2030-03", "Quarter", [reportSet]]], restatements: [[{ Standalone: 0 }, [[900000001, "2030-03"]]]] }
 
 test("company schema parsers preserve populated company slices", () => {
   assert.deepEqual(parseCompanyOperations(operations), operations)
@@ -23,5 +23,6 @@ test("company schema parsers reject malformed exact subdomains with paths", () =
   assert.throws(() => parseCompanyOperations({ ...operations, market_rng: { state: 42 } }), /company_operations\.market_rng\.state/)
   assert.throws(() => parsePublicLibrary({ ...publicLibrary, reports: [{ ...publicLibrary.reports[0], reports: { ...reportSet, balance_sheet: { ...balance, total_assets: "1.234" } } }] }), /public_library\.reports\[0\]\.reports\.balance_sheet\.total_assets/)
   assert.throws(() => parseClosingRegistry({ versions: [[{ BadScope: "C-1" }, "2030-03", "Quarter", []]], restatements: [] }), /closing_registry\.versions\[0\]\[0\]/)
+  assert.throws(() => parseClosingRegistry({ versions: [], restatements: [[{ Standalone: 0 }, [["18446744073709551615", "2030-03"]]]] }), /restatements\[0\]\[1\]\[0\]\[0\]/)
   assert.throws(() => parseDisclosureDispatch({ published_through: null }), /disclosures\.announced_through/)
 })

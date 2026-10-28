@@ -26,10 +26,18 @@ pub enum Termination {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+pub struct StockFactClock {
+    pub code: StockId,
+    #[serde(serialize_with = "crate::diagnostics::serialize_u64_decimal")]
+    pub completed_minutes: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 pub struct FactTime {
     pub phase: crate::TradingPhase,
     #[serde(serialize_with = "crate::diagnostics::serialize_u64_decimal")]
     pub market_minute: u64,
+    pub stock_clock: Option<StockFactClock>,
     pub civil: CivilInstant,
 }
 
@@ -122,6 +130,19 @@ pub enum CausalFactKind {
     },
 }
 
+impl CausalFactKind {
+    pub(crate) fn stock_code(&self) -> Option<StockId> {
+        match self {
+            Self::Submitted(origin) => Some(origin.code),
+            Self::Filled { code, .. } | Self::Terminated { code, .. }
+            | Self::Execution { code, .. } => Some(*code),
+            Self::Quote(quote) => Some(quote.code),
+            Self::ObservationRestart | Self::Acquisition { .. }
+            | Self::Decision { .. } | Self::Budget { .. } => None,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct CausalFact {
     #[serde(serialize_with = "crate::diagnostics::serialize_u64_decimal")]
@@ -130,9 +151,34 @@ pub struct CausalFact {
     pub kind: CausalFactKind,
 }
 
+impl CausalFact {
+    pub(crate) fn validate_stock_clock(&self) -> Result<(), CausalError> {
+        let expected = self.kind.stock_code();
+        let actual = self.time.stock_clock.map(|clock| clock.code);
+        if expected != actual {
+            return Err(CausalError::StockClock { sequence: self.sequence, expected, actual });
+        }
+        Ok(())
+    }
+}
+
+impl FactTime {
+    pub(super) fn stock_minutes(self, code: StockId, sequence: u64) -> Result<u64, CausalError> {
+        match self.stock_clock {
+            Some(clock) if clock.code == code => Ok(clock.completed_minutes),
+            other => Err(CausalError::StockClock {
+                sequence, expected: Some(code), actual: other.map(|clock| clock.code),
+            }),
+        }
+    }
+}
+
 #[derive(Debug, Default, Serialize)]
 pub(crate) struct CausalCollector {
     facts: AppendOnlyHistory<CausalFact>,
+    /// 仅私有 tick candidate 暂持实际 caller 的原 Arc；稳定点与存档均不携带。
+    #[serde(skip)]
+    pub(crate) active_tick_context: Option<std::sync::Arc<crate::runtime::MarketTickContext>>,
     /// 仅显式全量查询构建；checkpoint 不携带这份副本。
     #[serde(skip)]
     flat_facts: OnceLock<Vec<CausalFact>>,
@@ -147,6 +193,7 @@ impl Clone for CausalCollector {
     fn clone(&self) -> Self {
         Self {
             facts: self.facts.clone(),
+            active_tick_context: self.active_tick_context.clone(),
             flat_facts: OnceLock::new(),
             decision: self.decision.clone(),
             termination: self.termination,
@@ -346,7 +393,7 @@ mod tests {
     fn collector_filled_values_serialize_as_exact_decimal_cents() {
         let mut collector = CausalCollector::default();
         let code = StockId(1);
-        collector.record_continuous_fill(time(), OrderId(1), AccountId(1), &code, 100, i64::MAX);
+        collector.record_continuous_fill(stock_time(code), OrderId(1), AccountId(1), &code, 100, i64::MAX);
         let value = serde_json::to_value(collector).unwrap();
         assert_eq!(value["filled_values"]["1"], i64::MAX.to_string());
         assert_eq!(
@@ -355,10 +402,16 @@ mod tests {
         );
     }
 
+    // 纯存储 fixture 的本股常量；不作为真实 Calendar producer 证据。
+    fn stock_time(code: StockId) -> FactTime {
+        FactTime { stock_clock: Some(StockFactClock { code, completed_minutes: 1 }), ..time() }
+    }
+
     fn time() -> FactTime {
         FactTime {
             phase: crate::TradingPhase::Continuous,
             market_minute: 1,
+            stock_clock: None,
             civil: CivilInstant::new(crate::CivilDate::from_ymd(2030, 1, 1).unwrap(), 1).unwrap(),
         }
     }
@@ -391,8 +444,8 @@ mod tests {
         let mut collector = CausalCollector::default();
         let order = OrderId(1);
         let code = StockId(1);
-        collector.record_continuous_fill(time(), order, AccountId(1), &code, 100, i64::MAX);
-        collector.record_continuous_fill(time(), order, AccountId(1), &code, 100, 1);
+        collector.record_continuous_fill(stock_time(code), order, AccountId(1), &code, 100, i64::MAX);
+        collector.record_continuous_fill(stock_time(code), order, AccountId(1), &code, 100, 1);
         assert_eq!(*collector.filled_values.get(order.0).unwrap(), i64::MAX);
         assert_eq!(collector.facts().len(), 2);
         assert!(matches!(
@@ -412,7 +465,7 @@ mod tests {
         let code = StockId(1);
         assert_eq!(
             collector.record_auction_fill(
-                time(),
+                stock_time(code),
                 order,
                 AccountId(1),
                 &code,
@@ -432,13 +485,13 @@ mod tests {
         let order = OrderId(1);
         let code = StockId(1);
         assert_eq!(
-            collector.record_auction_fill(time(), order, AccountId(1), &code, 100, 1, 2),
+            collector.record_auction_fill(stock_time(code), order, AccountId(1), &code, 100, 1, 2),
             Err("auction causal fill value disagrees with the receipt chain")
         );
         assert_eq!(*collector.filled_values.get(order.0).unwrap(), 0);
         assert!(collector.facts().is_empty());
         collector
-            .record_auction_fill(time(), order, AccountId(1), &code, 100, 0, 10)
+            .record_auction_fill(stock_time(code), order, AccountId(1), &code, 100, 0, 10)
             .unwrap();
         assert_eq!(*collector.filled_values.get(order.0).unwrap(), 10);
         assert_eq!(collector.facts().len(), 1);
@@ -456,10 +509,16 @@ mod tests {
 #[cfg(test)]
 mod storage_tests {
     use super::*;
+    // 纯存储 fixture 的本股常量；不作为真实 Calendar producer 证据。
+    fn stock_time(code: StockId) -> FactTime {
+        FactTime { stock_clock: Some(StockFactClock { code, completed_minutes: 1 }), ..time() }
+    }
+
     fn time() -> FactTime {
         FactTime {
             phase: crate::TradingPhase::Continuous,
             market_minute: 1,
+            stock_clock: None,
             civil: CivilInstant::new(crate::CivilDate::from_ymd(2030, 1, 1).unwrap(), 1).unwrap(),
         }
     }
@@ -477,7 +536,7 @@ mod storage_tests {
                 }],
             );
             collector.record_continuous_fill(
-                time(),
+                stock_time(StockId(0)),
                 OrderId(key),
                 AccountId(key),
                 &StockId(0),
@@ -509,7 +568,7 @@ mod storage_tests {
             }],
         );
         collector.record_continuous_fill(
-            time(),
+            stock_time(StockId(0)),
             OrderId(1 << 32),
             AccountId(1 << 32),
             &StockId(0),

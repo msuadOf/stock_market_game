@@ -176,6 +176,18 @@ where
     Ok(())
 }
 
+/// 只证明同一内存 Session 与当前 epoch 的 owner 身份，不替代 World/Calendar 健康校验。
+pub(crate) struct RuntimeAuthorityLease {
+    session_identity: std::sync::Weak<()>,
+    epoch: u64,
+}
+
+impl RuntimeAuthorityLease {
+    pub(crate) fn matches(&self, session: &GameSession) -> bool {
+        session.matches_runtime_authority(&self.session_identity, self.epoch)
+    }
+}
+
 /// 常驻 runtime 驱动器。
 pub struct RuntimeDriver {
     initial_static_seed: Option<static_projection::InitialStaticSeed>,
@@ -269,9 +281,24 @@ pub struct RuntimeDriver {
     ///（增量路径 A/B 等价守卫的对照臂）。
     #[cfg(test)]
     force_full_envelope_rebuild: bool,
+    /// 最后释放：World 必须先 Drop/shutdown/join，再让 Session 的 Weak 失效。
+    authority_lease: std::sync::Arc<RuntimeAuthorityLease>,
 }
 
 impl RuntimeDriver {
+    pub(crate) fn ensure_session_authority(&self, session: &GameSession) -> Result<(), String> {
+        if !std::sync::Weak::ptr_eq(
+            &self.authority_lease.session_identity,
+            &session.runtime_authority_identity(),
+        ) {
+            return Err("driver Session 身份不匹配，拒绝写入其他会话".to_owned());
+        }
+        if !self.authority_lease.matches(session) {
+            return Err("driver authority_epoch 已失效，拒绝旧 owner 写入".to_owned());
+        }
+        Ok(())
+    }
+
     #[cfg(feature = "simulation-diagnostics")]
     pub(crate) fn pending_decision_traces(&self) -> &[super::diagnostics::GroupDecisionTrace] {
         &self.pending_decision_traces
@@ -396,11 +423,15 @@ impl RuntimeDriver {
         session: &mut GameSession,
         n_groups: usize,
     ) -> Result<Self, String> {
+        if session.has_internal_runtime_driver() {
+            return Err("公开 driver factory 不得替换活跃内部 runtime owner".to_owned());
+        }
         let authority_epoch = session.next_runtime_authority_epoch()?;
         let mut driver = Self::build_from_session_grouped(session, n_groups, authority_epoch, false)?;
         session.runtime_clear_resting_for_adoption();
         session.install_runtime_authority_epoch(authority_epoch);
         driver.initial_static_seed.as_mut().expect("构造期静点种子已准备").revision = session.external_revision();
+        session.install_external_runtime_authority(std::sync::Arc::downgrade(&driver.authority_lease));
         Ok(driver)
     }
 
@@ -698,6 +729,8 @@ impl RuntimeDriver {
             spec,
             std::sync::Arc::clone(session.market_calendar_source()),
             session.market_calendar_bindings().map_err(|error| error.to_string())?,
+            #[cfg(all(target_family = "wasm", feature = "verification-harness"))]
+            None,
         ).map_err(|e| format!("驱动器世界构造失败：{e:?}"))?;
         let presence = (0..n_groups).map(|group| {
             (group as super::GroupIdx, ids.iter().skip(group * per_group).take(per_group)
@@ -758,6 +791,10 @@ impl RuntimeDriver {
                 .collect(),
             #[cfg(test)]
             force_full_envelope_rebuild: false,
+            authority_lease: std::sync::Arc::new(RuntimeAuthorityLease {
+                session_identity: session.runtime_authority_identity(),
+                epoch: authority_epoch,
+            }),
         };
         Ok(driver)
     }
@@ -793,6 +830,7 @@ impl RuntimeDriver {
     /// 驱动一个 tick：runtime 收束 → 账户/行情回写会话 → 事件产出。
     /// 会话 tick 由调用方（或批 8e 的 step_frame 本体）推进。
     pub fn step(&mut self, session: &mut GameSession) -> Result<Vec<Event>, String> {
+        self.ensure_session_authority(session)?;
         session.require_healthy().map_err(|fatal| fatal.to_string())?;
         // D3a-2c 件2：自然日同步（会话 civil clock 权威——快照 civil_date
         // 的唯一来源；休市日跳变经此传导）。
@@ -1183,6 +1221,7 @@ impl RuntimeDriver {
         session: &mut GameSession,
         events: &mut Vec<Event>,
     ) -> Result<(), String> {
+        self.ensure_session_authority(session)?;
         // 相位基准=本拍**开始时**相位（tick−1 的 day_tick——与旧管线
         /// finish_market_data 的 boundary 政策同拍口径；用步后 tick 判
         /// 会使转连续过渡拍早一拍产 PriceTick，parity 对照显红）。
@@ -1531,6 +1570,7 @@ impl RuntimeDriver {
         &mut self,
         session: &mut GameSession,
     ) -> Result<(), String> {
+        self.ensure_session_authority(session)?;
         // B2 复核建议 3：同日二次调用幂等（step ends_day 已冻结后手动
         /// day_end 再入——末条==当日即跳过，防 day-1 bars 冻入 day-2）。
         if session
@@ -1557,6 +1597,7 @@ impl RuntimeDriver {
         session: &mut GameSession,
         date: crate::calendar::CivilDate,
     ) -> Result<(), String> {
+        self.ensure_session_authority(session)?;
         let empty: Vec<Option<Vec<super::protocol::MinuteBarFact>>> =
             vec![Some(Vec::new()); session.stock_count_for_runtime()];
         let snapshot = session.assemble_retained_day_snapshot(empty, date)?;
@@ -1787,6 +1828,21 @@ impl RuntimeDriver {
         self.world.committed_calendar_tick().map_err(|error| error.to_string())
     }
 
+    /// 构造或 restore 的日界标记不作已安装收盘证明；必须还有本 authority 的真实末拍。
+    pub(crate) fn has_committed_market_close_for_civil(
+        &self, tick: u64, date: crate::calendar::CivilDate,
+    ) -> Result<bool, super::RuntimeError> {
+        let Some(record) = self.world.committed_calendar_tick()? else { return Ok(false); };
+        let current = self.world.mirror_source();
+        Ok(record.source.authority_epoch == current.authority_epoch
+            && record.source.tick == tick && current.tick == tick
+            && current.civil_date == date
+            && record.calendar.day().day_model().current_date() == date
+            && record.calendar.after_input().tick == tick
+            && record.calendar.after_input().progress == crate::session::exchange_calendar_model::SharedDayProgress::TradingCompleted
+            && current.day_end_stage != crate::runtime::source::MirrorDayEndStage::Tick)
+    }
+
     /// D5 日界·world 段（ends_day 拍在 step 内编排——desk roll_day/组
     /// 日翻；civil 侧不在内，生产显式 day_end 编排的 world 部分等价）。
     /// 清簿撤单事实收集进 drained 缓冲（调用方 take_drained_events 取走）。
@@ -1797,6 +1853,7 @@ impl RuntimeDriver {
         session: &mut GameSession,
     ) -> Result<Vec<crate::session::personal_trade_history::PendingTradeReceipt>, String>
     {
+        self.ensure_session_authority(session)?;
         self.world
             .run_day_end_public()
             .map_err(|e| format!("runtime 世界日结失败（内部已 Abort 冲回）：{e:?}"))?;
@@ -2178,6 +2235,7 @@ impl RuntimeDriver {
         super::InformationClockContext,
         Arc<std::collections::BTreeMap<crate::StockId, crate::observation::information_clock::InformationTradingAnchor>>,
     ), String> {
+        self.ensure_session_authority(session)?;
         if self.world_committed_tick() < session.tick() {
             return Err("INFO World tick 落后 Session，不能冒充已提交市场拍后的领先来源".to_owned());
         }
@@ -2424,9 +2482,9 @@ impl RuntimeDriver {
 
     /// 消费本拍 sideband；report_log 不再永久保存第二份诊断历史。
     #[cfg(feature = "simulation-diagnostics")]
-    pub(crate) fn take_causal_facts(&mut self) -> (Vec<super::diagnostics::DeskCausalFact>, Option<crate::diagnostics::causal::FactTime>) {
+    pub(crate) fn take_causal_facts(&mut self) -> (Vec<super::diagnostics::DeskCausalFact>, Option<crate::diagnostics::causal::FactTime>, std::collections::BTreeMap<crate::StockId, u64>) {
         let mut facts = std::mem::take(&mut self.pending_causal);
-        let (mut drained, time) = self.take_drain_causal_facts();
+        let (mut drained, time, clocks) = self.take_drain_causal_facts();
         facts.append(&mut drained);
         #[cfg(test)]
         let facts = if self.unresolved_causal_source_for_test {
@@ -2446,7 +2504,7 @@ impl RuntimeDriver {
         } else {
             facts
         };
-        (facts, time)
+        (facts, time, clocks)
     }
 
     #[cfg(all(test, feature = "simulation-diagnostics"))]
@@ -2578,6 +2636,12 @@ impl RuntimeDriver {
         session: &mut GameSession,
     ) -> Result<Vec<Event>, crate::session::StepFatal> {
         session.require_healthy()?;
+        self.ensure_session_authority(session).map_err(|description| {
+            crate::session::StepFatal::InvariantViolation {
+                location: "RuntimeDriver::step_frame_equivalent::authority".to_owned(),
+                description,
+            }
+        })?;
         // step_frame 接轨件 4：seq 权威=会话，每拍从权威重取游标——
         /// civil 面（end_civil_day_update 走旧管线 candidate 的 session
         /// 侧 seq 分配）推进 state.seq 后驱动器游标即过期，本拍重取
@@ -2601,7 +2665,12 @@ impl RuntimeDriver {
                 crate::verification_evidence::enter_phase(
                     crate::session::pipeline::TickPhase::CommitTick,
                 );
-                self.sync_seq_into_session(session);
+                self.sync_seq_into_session(session).map_err(|description| {
+                    crate::session::StepFatal::InvariantViolation {
+                        location: "RuntimeDriver::step_frame_equivalent::authority".to_owned(),
+                        description,
+                    }
+                })?;
                 crate::verification_evidence::mark_committed(tick_after);
                 // D4（t3 读面对等）：root 完成交接见证——runtime 的等价
                 // 交付点=本 tick 事件即将返回（收束完成→交付）。计数域/
@@ -2632,8 +2701,10 @@ impl RuntimeDriver {
     /// 分配，安装后 `state.seq = collected.next_seq`。runtime 等价：
     /// driver 的全局 seq 游标在**构造时从 `session.state.seq` 初始化**、
     /// 每步安装后写回——两端 seq 空间合一（单调续接，无重号无跳号）。
-    pub fn sync_seq_into_session(&mut self, session: &mut GameSession) {
+    pub fn sync_seq_into_session(&mut self, session: &mut GameSession) -> Result<(), String> {
+        self.ensure_session_authority(session)?;
         session.set_runtime_seq(self.next_seq);
+        Ok(())
     }
 
     /// 从会话权威 seq 初始化驱动器游标（构造后、首步前调用一次）。
@@ -2654,6 +2725,7 @@ impl RuntimeDriver {
     /// 恢复事实写入口，校验后安装 last/last_close）——driver 每步把
     /// 收束点公共态写入会话 `markets`。逐步补齐其余域（登记）。
     pub fn install_market_views(&mut self, session: &mut GameSession) -> Result<(), String> {
+        self.ensure_session_authority(session)?;
         let views: Vec<super::protocol::StockPublic> = self.world_public_views().to_vec();
         // P1-5（Sol）：配置从会话真实 setup 读——不硬编码。
         let setup = session.export_setup_for_runtime();
@@ -2793,6 +2865,7 @@ impl RuntimeDriver {
         session: &mut GameSession,
         post_day_end: bool,
     ) -> Result<(), String> {
+        self.ensure_session_authority(session)?;
         let published = self.world.publication().load();
         if published.tick != self.world.global.committed_tick {
             return Err(format!(

@@ -699,7 +699,7 @@ fn project_continuous_causal_start(
                 *side,
                 *original_qty,
                 causal_quote(code, &quotes.before),
-            );
+            )?;
         }
         ContinuousExecutionOutcome::Cancel(ContinuousCancelFact::Canceled {
             account,
@@ -717,7 +717,7 @@ fn project_continuous_causal_start(
                 (*account, *order_id, *remaining_qty),
                 code,
                 cancel_termination,
-            );
+            )?;
         }
         ContinuousExecutionOutcome::Place {
             fact:
@@ -757,12 +757,12 @@ fn project_continuous_causal_start(
                 receipt.envelope.side,
                 *original_qty,
                 causal_quote(code, &quotes.before),
-            );
+            )?;
             domain.causal_terminated(
                 (*account, *order_id, *original_qty),
                 code,
                 crate::diagnostics::causal::Termination::Aborted,
-            );
+            )?;
         }
         ContinuousExecutionOutcome::Cancel(ContinuousCancelFact::Rejected { .. }) => {
             if quotes.is_some() {
@@ -859,7 +859,7 @@ fn project_continuous_causal_end(
             qty: trade.trade.qty,
             price_cents: trade.trade.price.cents(),
             before: causal_quote(code, &quotes.before),
-        });
+        })?;
     }
     if let Some(order_id) = incoming_order {
         for receipt in round.receipts.iter().filter(|receipt| {
@@ -876,10 +876,10 @@ fn project_continuous_causal_end(
                 (receipt.envelope.account, order_id, receipt.qty_before),
                 code,
                 Termination::MarketRemainder,
-            );
+            )?;
         }
     }
-    domain.causal_record(CausalFactKind::Quote(causal_quote(code, &quotes.after)));
+    domain.causal_record(CausalFactKind::Quote(causal_quote(code, &quotes.after)))?;
     Ok(())
 }
 
@@ -1217,8 +1217,7 @@ fn project_fill_values(
         gross: _gross,
     };
     domain
-        .record_parent_order_fills(&key.stock, &[fill])
-        .map_err(|error| invariant(&error.to_string()))?;
+        .record_parent_order_fills(&key.stock, &[fill])?;
     if terminal {
         domain.remove_npc_order_lifecycle(key.account, &key.stock, key.order);
     }

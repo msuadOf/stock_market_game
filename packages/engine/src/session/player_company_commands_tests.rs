@@ -9,17 +9,28 @@ include!("../../test-support/simple_company.rs");
 
 #[path = "player_company_capital_tests.rs"]
 mod capital_tests;
+#[path = "player_company_repurchase_tests.rs"]
+mod repurchase_tests;
 
 fn game(holding: bool) -> GameSession {
     game_with_features(holding, false, false)
 }
 
 fn game_with_features(holding: bool, rights: bool, repurchase: bool) -> GameSession {
+    game_with_features_on(holding, rights, repurchase, "2030-06-03")
+}
+
+fn game_with_features_on(
+    holding: bool,
+    rights: bool,
+    repurchase: bool,
+    start: &str,
+) -> GameSession {
     let mut setup = crate::session::npc_working_quote_tests::quote_setup(0);
     setup.stocks[0].code = crate::StockCode("600101".into());
     setup.stocks[0].total_shares = 1_000;
     setup.stocks[0].float_shares = 1_000;
-    setup.start_date = CivilDate::from_iso("2030-06-03").unwrap();
+    setup.start_date = CivilDate::from_iso(start).unwrap();
     setup.npcs.inst_count = 0;
     setup.npcs.hot_count = 1;
     setup.company_system = Some(simple_company_fixture!(crate; ["600101"]));
@@ -207,6 +218,78 @@ fn player_command_split_freezes_finance_fact_without_changing_share_units() {
     assert_eq!(
         serde_json::to_value(game.save().unwrap().snapshot).unwrap(),
         serde_json::to_value(before.snapshot).unwrap()
+    );
+    assert!(game.runtime_driver.is_some());
+}
+
+#[test]
+fn player_command_repurchase_funds_real_special_account_without_fabricated_fills() {
+    use crate::company::issuer_repurchase::IssuerRepurchaseStatus;
+    let mut game = game_with_features(true, false, true);
+    let special = game
+        .account_roster()
+        .into_iter()
+        .find(|account| game.account(*account).unwrap().kind() == AccountKind::IssuerRepurchase)
+        .expect("启用回购的新局必须已创建真实专户");
+    let before = game.save().unwrap();
+    assert_eq!(before.snapshot.accounts[&special].cash, Money::ZERO);
+    let receipt = game
+        .propose_player_company_action(AccountId(0), repurchase())
+        .unwrap();
+    assert_eq!(receipt.kind, PlayerProposalKind::IssuerRepurchase);
+    let actions = game.corporate_actions().unwrap();
+    assert_eq!(actions.issuer_repurchases.len(), 1);
+    let book = &actions.issuer_repurchases[0];
+    assert_eq!(book.plan().event_id, receipt.event_id);
+    assert_eq!(book.status(), &IssuerRepurchaseStatus::Approved);
+    assert!(book.fills().is_empty());
+    assert!(book.completed_on().is_none());
+    assert_eq!(book.cancelled_shares(), 0);
+    let facts = game
+        .company_system()
+        .unwrap()
+        .issuer_repurchase_facts(&CompanyId(0))
+        .unwrap();
+    assert_eq!(facts.len(), 1);
+    assert_eq!(facts[0].event_id, receipt.event_id);
+    assert_eq!(facts[0].synthetic_funding.cents(), 10_000);
+    assert!(facts[0].spent.is_none());
+    let after = game.save().unwrap();
+    let mut expected = before.snapshot;
+    expected.accounts.get_mut(&special).unwrap().cash = Money::from_cents(10_000);
+    assert_eq!(
+        serde_json::to_value(&after.snapshot).unwrap(),
+        serde_json::to_value(&expected).unwrap()
+    );
+    // 必须读真实组账户；仅改 Session 镜像的批准不能通过此正控。
+    let mut driver = game.runtime_driver.as_ref().unwrap().lock().unwrap();
+    let raw = driver.world_accounts_snapshot().unwrap();
+    let driver_ref = &*driver;
+    let mut special_accounts = raw.iter().flat_map(|(group, accounts)| {
+        accounts
+            .iter()
+            .enumerate()
+            .filter_map(move |(local, account)| {
+                (driver_ref
+                    .account_by_owner((*group, crate::runtime::LocalIdx::try_from(local).unwrap()))
+                    == Some(special))
+                .then_some(account)
+            })
+    });
+    assert_eq!(
+        special_accounts.next().unwrap(),
+        &crate::runtime::group::GroupAccount::new(10_000, expected.markets.len())
+    );
+    assert!(special_accounts.next().is_none());
+    drop(driver);
+    assert_eq!(
+        game.company_system()
+            .unwrap()
+            .issuers()
+            .get(&CompanyId(0))
+            .unwrap()
+            .issued_shares,
+        1_000
     );
     assert!(game.runtime_driver.is_some());
 }
@@ -432,7 +515,7 @@ fn terminal_failure(transport: bool) {
         .expect("World terminal 必须同步封闭 Session 健康门")
         .clone();
     assert_eq!(game.require_healthy().unwrap_err(), fatal);
-    assert_eq!(game.save().unwrap_err(), fatal);
+    assert!(matches!(game.save(), Err(crate::SessionError::Step(actual)) if actual == fatal));
     assert_eq!(game.step().unwrap_err(), fatal);
     assert!(
         matches!(game.end_civil_day(), Err(crate::SessionError::Step(ref error)) if error == &fatal)
@@ -513,7 +596,7 @@ fn player_command_poisoned_driver_lock_is_terminal() {
         .propose_player_company_action(AccountId(0), cash(1))
         .is_err());
     let fatal = game.poison_reason().unwrap();
-    assert_eq!(&game.save().unwrap_err(), fatal);
+    assert!(matches!(game.save(), Err(crate::SessionError::Step(actual)) if &actual == fatal));
     assert_eq!(
         serde_json::to_value(game.state.companies.save()).unwrap(),
         before
@@ -530,7 +613,7 @@ fn player_command_driver_tick_mismatch_is_terminal() {
         .propose_player_company_action(AccountId(0), cash(1))
         .is_err());
     let fatal = game.poison_reason().unwrap();
-    assert_eq!(&game.save().unwrap_err(), fatal);
+    assert!(matches!(game.save(), Err(crate::SessionError::Step(actual)) if &actual == fatal));
     assert_eq!(
         serde_json::to_value(game.state.companies.save()).unwrap(),
         before

@@ -21,52 +21,91 @@ use crate::calendar::CivilDate;
 use crate::company::income_tax::{IncomeTaxOwnerError, IncomeTaxPosition};
 use crate::information::{InformationError, PublicLibrary, PublicationId, PublicationRequest};
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug)]
 pub enum CompanyCorrectionError {
-    #[error("company correction failed for reason '{reason}': Simple finance: {cause}")]
     SimpleFinance {
         reason: String,
-        #[source]
         cause: Box<crate::company::simple::SimpleFinanceError>,
     },
-    #[error("company correction failed for reason '{reason}': owner: {cause}")]
     Owner {
         reason: String,
-        #[source]
         cause: Box<crate::company::operations::OperationsError>,
     },
-    #[error("company correction failed for reason '{reason}': owner restoration: {cause}")]
     Serialization {
         reason: String,
-        #[source]
         cause: Box<serde_json::Error>,
     },
-    #[error("company correction failed for reason '{reason}': accounting: {cause}")]
     Accounting {
         reason: String,
-        #[source]
         cause: Box<AccountingError>,
     },
-    #[error("company correction failed for reason '{reason}': tax state: {cause}")]
     TaxState {
         reason: String,
-        #[source]
         cause: Box<IncomeTaxOwnerError>,
     },
-    #[error("company correction failed for reason '{reason}': closing: {cause}")]
     Closing {
         reason: String,
-        #[source]
         cause: Box<ClosingError>,
     },
-    #[error("company correction failed for reason '{reason}': publication: {cause}")]
     Information {
         reason: String,
-        #[source]
         cause: Box<InformationError>,
     },
-    #[error("company correction rejected for reason '{reason}': {detail}")]
     InvalidInput { reason: String, detail: String },
+}
+
+impl std::fmt::Display for CompanyCorrectionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::SimpleFinance { reason, cause } => write!(
+                f,
+                "company correction failed for reason '{reason}': Simple finance: {cause}"
+            ),
+            Self::Owner { reason, cause } => write!(
+                f,
+                "company correction failed for reason '{reason}': owner: {cause}"
+            ),
+            Self::Serialization { reason, cause } => write!(
+                f,
+                "company correction failed for reason '{reason}': owner restoration: {cause}"
+            ),
+            Self::Accounting { reason, cause } => write!(
+                f,
+                "company correction failed for reason '{reason}': accounting: {cause}"
+            ),
+            Self::TaxState { reason, cause } => write!(
+                f,
+                "company correction failed for reason '{reason}': tax state: {cause}"
+            ),
+            Self::Closing { reason, cause } => write!(
+                f,
+                "company correction failed for reason '{reason}': closing: {cause}"
+            ),
+            Self::Information { reason, cause } => write!(
+                f,
+                "company correction failed for reason '{reason}': publication: {cause}"
+            ),
+            Self::InvalidInput { reason, detail } => write!(
+                f,
+                "company correction rejected for reason '{reason}': {detail}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for CompanyCorrectionError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::SimpleFinance { cause, .. } => Some(cause.as_ref()),
+            Self::Owner { cause, .. } => Some(cause.as_ref()),
+            Self::Serialization { cause, .. } => Some(cause.as_ref()),
+            Self::Accounting { cause, .. } => Some(cause.as_ref()),
+            Self::TaxState { cause, .. } => Some(cause.as_ref()),
+            Self::Closing { cause, .. } => Some(cause.as_ref()),
+            Self::Information { cause, .. } => Some(cause.as_ref()),
+            Self::InvalidInput { .. } => None,
+        }
+    }
 }
 
 pub(crate) struct CompanyCorrectionInput<'a> {
@@ -366,6 +405,123 @@ mod tests {
             side,
             amount: AccountingAmount::from_cents(amount),
         }
+    }
+
+    #[test]
+    fn company_correction_sources_expose_concrete_causes_and_preserve_display() {
+        use std::error::Error;
+
+        fn check<T: Error + 'static>(
+            cause: T,
+            label: &str,
+            wrap: impl FnOnce(Box<T>) -> CompanyCorrectionError,
+        ) -> CompanyCorrectionError {
+            let cause = Box::new(cause);
+            let expected_ptr = cause.as_ref() as *const T;
+            let expected_display =
+                format!("company correction failed for reason '保留原始 cause': {label}: {cause}");
+            let error = wrap(cause);
+            let source = error.source().expect("更正错误必须保留 cause");
+            let concrete = source
+                .downcast_ref::<T>()
+                .expect("source 必须暴露具体 cause 类型");
+            assert!(std::ptr::eq(concrete, expected_ptr));
+            assert_eq!(error.to_string(), expected_display);
+            error
+        }
+
+        let reason = || "保留原始 cause".to_string();
+        check(
+            crate::company::simple::SimpleFinanceError::Invalid("非法汇总".into()),
+            "Simple finance",
+            |cause| CompanyCorrectionError::SimpleFinance {
+                reason: reason(),
+                cause,
+            },
+        );
+        check(
+            crate::company::operations::OperationsError::InvalidConfig {
+                detail: "非法经营配置".into(),
+            },
+            "owner",
+            |cause| CompanyCorrectionError::Owner {
+                reason: reason(),
+                cause,
+            },
+        );
+        check(
+            serde_json::from_str::<serde_json::Value>("{").unwrap_err(),
+            "owner restoration",
+            |cause| CompanyCorrectionError::Serialization {
+                reason: reason(),
+                cause,
+            },
+        );
+        let accounting = check(
+            AccountingError::BatchAborted {
+                batch_len: 2,
+                failed_index: None,
+                cause: Box::new(AccountingError::NegativeCashProhibited {
+                    account: LedgerAccountId("1002".into()),
+                    projected: AccountingAmount::from_cents(-1),
+                }),
+            },
+            "accounting",
+            |cause| CompanyCorrectionError::Accounting {
+                reason: reason(),
+                cause,
+            },
+        );
+        let CompanyCorrectionError::Accounting { cause, .. } = accounting else {
+            panic!("Accounting cause 类型必须保持");
+        };
+        assert!(matches!(cause.as_ref(), AccountingError::BatchAborted {
+            batch_len: 2,
+            failed_index: None,
+            cause,
+        } if matches!(cause.as_ref(), AccountingError::NegativeCashProhibited {
+            account, projected,
+        } if account == &LedgerAccountId("1002".into())
+            && *projected == AccountingAmount::from_cents(-1))));
+        check(
+            IncomeTaxOwnerError::StateInconsistent {
+                detail: "税务身份不同".into(),
+            },
+            "tax state",
+            |cause| CompanyCorrectionError::TaxState {
+                reason: reason(),
+                cause,
+            },
+        );
+        check(
+            ClosingError::InvalidCorrectionPeriods {
+                detail: "更正期间不同".into(),
+            },
+            "closing",
+            |cause| CompanyCorrectionError::Closing {
+                reason: reason(),
+                cause,
+            },
+        );
+        check(
+            InformationError::UnknownPublication {
+                id: PublicationId::new(7),
+            },
+            "publication",
+            |cause| CompanyCorrectionError::Information {
+                reason: reason(),
+                cause,
+            },
+        );
+        let rejected = CompanyCorrectionError::InvalidInput {
+            reason: reason(),
+            detail: "输入不合法".into(),
+        };
+        assert!(rejected.source().is_none());
+        assert_eq!(
+            rejected.to_string(),
+            "company correction rejected for reason '保留原始 cause': 输入不合法"
+        );
     }
 
     #[test]

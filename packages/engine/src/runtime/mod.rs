@@ -34,6 +34,8 @@ mod protocol;
 pub(crate) use protocol::{RepurchasePreparePayload, RepurchaseProjectionInput, RuntimeError};
 mod information_clock_context;
 pub use information_clock_context::InformationClockContext;
+mod repurchase_transport;
+pub use repurchase_transport::{RepurchaseRequestKey, RepurchaseReturnKind, RepurchaseSourceFact, RepurchaseSourceKind};
 
 pub mod bridge;
 pub mod coordinator;
@@ -70,6 +72,10 @@ mod calendar_group_day_end_tests;
 mod calendar_drain_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod calendar_day_end_authority_tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod calendar_chain_caller_tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod calendar_public_restore_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod inline_account_tests;
 /// B2 件 2：desk 分钟K观察面语义测试（对照 18725d07 MinuteBar 基线）。
@@ -116,7 +122,13 @@ mod publication_tests;
 mod seal_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod plans_tests;
+#[cfg(target_family = "wasm")]
+mod wasm_wait;
 pub mod watchdog;
+#[cfg(all(target_family = "wasm", feature = "verification-harness"))]
+pub mod watchdog_verification;
+#[cfg(all(target_family = "wasm", feature = "verification-harness"))]
+pub mod watchdog_wait_verification;
 /// B-1' 组线程等待分级自旋合同（协调者批 2026-10-19）。
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod watchdog_spin_tests;

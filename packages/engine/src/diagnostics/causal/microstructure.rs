@@ -3,6 +3,9 @@ use std::collections::BTreeMap;
 
 type Analysis = (Option<f64>, Vec<ImpactSample>, Vec<RecoverySample>);
 
+#[cfg(test)]
+mod stock_clock_tests;
+
 #[derive(Debug, Serialize)]
 pub struct ImpactSample {
     #[serde(serialize_with = "crate::diagnostics::serialize_u64_decimal")]
@@ -139,9 +142,11 @@ impl<'a> QuoteResponseAccumulator<'a> {
                             recovered_sequence: recovered.map(|next| next.sequence),
                             market_minutes: recovered
                                 .map(|next| {
+                                    next.time.market_minute.checked_sub(fact.time.market_minute)
+                                        .ok_or(CausalError::Time(next.sequence))?;
                                     next.time
-                                        .market_minute
-                                        .checked_sub(fact.time.market_minute)
+                                        .stock_minutes(quote.code, next.sequence)?
+                                        .checked_sub(fact.time.stock_minutes(quote.code, fact.sequence)?)
                                         .ok_or(CausalError::Time(next.sequence))
                                 })
                                 .transpose()?,
@@ -169,6 +174,8 @@ impl<'a> QuoteResponseAccumulator<'a> {
 }
 
 pub(super) fn analyze(facts: &[CausalFact]) -> Result<Analysis, CausalError> {
+    // 独立入口先校验全部事实，恢复前瞻也不能读取未校验的域。
+    for fact in facts { fact.validate_stock_clock()?; }
     let mut directions = DirectionPersistenceAccumulator::new(facts);
     let mut quotes = QuoteResponseAccumulator::new(facts);
     for index in 0..facts.len() {
@@ -210,6 +217,7 @@ mod tests {
                 time: FactTime {
                     phase: crate::TradingPhase::Continuous,
                     market_minute: sequence as u64,
+                    stock_clock: Some(StockFactClock { code, completed_minutes: sequence as u64 }),
                     civil: CivilInstant::new(
                         crate::CivilDate::from_ymd(2030, 1, 1).unwrap(),
                         sequence as u32,
@@ -258,6 +266,7 @@ mod tests {
                 time: FactTime {
                     phase: crate::TradingPhase::Continuous,
                     market_minute: sequence as u64,
+                    stock_clock: kind.stock_code().map(|code| StockFactClock { code, completed_minutes: sequence as u64 }),
                     civil: CivilInstant::new(
                         crate::CivilDate::from_ymd(2030, 1, 1).unwrap(),
                         sequence as u32,

@@ -47,6 +47,7 @@ pub(crate) enum PlayerCommandIssue {
     ShareCountOverflow,
     NoNewShares,
     RightsOfferingDisabled,
+    NonPositiveRepurchaseWindow,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -73,6 +74,8 @@ pub(crate) enum PlayerCommandCause {
     RightsPlan(#[from] RightsOfferingError),
     #[error("{0}")]
     SplitPlan(#[from] crate::company::share_split::ShareSplitError),
+    #[error("{0}")]
+    RepurchasePlan(#[from] crate::company::issuer_repurchase::IssuerRepurchaseError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -429,6 +432,91 @@ pub(super) fn build_player_split_plan(
         announced_on: input.day,
         registered_on,
         ex_rights_on,
+    };
+    plan.validate().map_err(|cause| fail(cause.into()))?;
+    plan.validate_calendar(input.calendar)
+        .map_err(|cause| fail(cause.into()))?;
+    Ok(plan)
+}
+
+/// 只构造真实当前证券单位下的方案；资金、计划身份和批准只由共同入口提交。
+pub(super) fn build_player_repurchase_plan(
+    input: PlayerCompanyCommandInput<'_>,
+) -> Result<crate::company::issuer_repurchase::IssuerRepurchasePlan, PlayerCommandError> {
+    use crate::company::issuer_repurchase::{IssuerRepurchasePlan, RepurchaseCompletionPolicy};
+    let company = input.proposal.company();
+    let kind = input.proposal.kind();
+    let fail = |cause| PlayerCommandError {
+        account: input.requester.id(),
+        company,
+        kind,
+        day: input.day,
+        cause,
+    };
+    let PlayerCompanyProposal::IssuerRepurchase {
+        price_cap_per_share,
+        total_budget,
+        max_shares,
+        window_trading_days,
+        purpose,
+        ..
+    } = &input.proposal
+    else {
+        return Err(fail(PlayerCommandCause::Validation(
+            PlayerCommandIssue::UnexpectedProposalKind,
+        )));
+    };
+    let (_, stock, exchange) = player_holding_context(&input)?;
+    if *window_trading_days == 0 {
+        return Err(fail(PlayerCommandCause::Validation(
+            PlayerCommandIssue::NonPositiveRepurchaseWindow,
+        )));
+    }
+    // 公告后首个该交易所交易日起计，含起点共 N 个交易日；不按自然日相加。
+    let window_start_on = input
+        .calendar
+        .next_trading_day(exchange, input.day)
+        .map_err(|cause| fail(cause.into()))?;
+    let mut window_deadline_on = window_start_on;
+    for _ in 1..*window_trading_days {
+        window_deadline_on = input
+            .calendar
+            .next_trading_day(exchange, window_deadline_on)
+            .map_err(|cause| fail(cause.into()))?;
+    }
+    let approval_unit_event_id = input
+        .actions
+        .share_splits
+        .iter()
+        .filter(|book| {
+            book.plan().stock == stock
+                && book.receipt().is_some()
+                && book.plan().ex_rights_on <= input.day
+                && book.settled_on().is_some_and(|settled_on| settled_on <= input.day)
+        })
+        .max_by_key(|book| book.plan().ex_rights_on)
+        .map(|book| book.plan().event_id.clone());
+    let plan = IssuerRepurchasePlan {
+        event_id: format!(
+            "player-proposal:{}:repurchase:{}:{}",
+            company.0,
+            input.day,
+            input.actions.issuer_repurchases.len()
+        ),
+        approval_reference: format!("player-proposal:{:?}", input.requester.id()),
+        issuer: company,
+        stock,
+        exchange,
+        approved_on: input.day,
+        announced_on: input.day,
+        window_start_on,
+        window_deadline_on,
+        price_cap_per_share: *price_cap_per_share,
+        total_budget: *total_budget,
+        max_shares: *max_shares,
+        purpose: purpose.clone(),
+        completion_policy: RepurchaseCompletionPolicy::CancelOnCompletion,
+        approval_unit_event_id,
     };
     plan.validate().map_err(|cause| fail(cause.into()))?;
     plan.validate_calendar(input.calendar)

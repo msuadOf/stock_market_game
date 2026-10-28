@@ -1,4 +1,4 @@
-use super::{Event, GameSession, SaveSlot};
+use super::{Event, GameSession, SaveSlot, SessionError};
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, thiserror::Error)]
 pub enum StepFatal {
@@ -618,6 +618,12 @@ impl GameSession {
         project: impl FnOnce(crate::session::protocol::TickCandidateProjection<'_>, Vec<crate::session::protocol::EventFact>) -> Result<P, StepFatal>,
     ) -> Result<P, StepFatal> {
         self.require_healthy()?;
+        driver.ensure_session_authority(self).map_err(|description| {
+            StepFatal::InvariantViolation {
+                location: "runtime_mirror::authority".to_owned(),
+                description,
+            }
+        })?;
         self.runtime_clear_account_undo();
         #[cfg(test)]
         self.compute_context().t1_probes.queue_attempt_seq.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -628,7 +634,7 @@ impl GameSession {
         driver.adopt_session_seq(self);
         crate::verification_evidence::begin_authoritative_tick(self.tick(), self.compute_context())?;
         #[cfg(feature = "simulation-diagnostics")]
-        let causal_time = self.causal_time();
+        let causal_time = self.causal_time().map_err(|fatal| self.poison_runtime_step(fatal))?;
         let prepared = driver.prepare_driver_step(self).and_then(|input| self.prepare_runtime_mirror(driver, input, tick));
         let mut prepared = prepared.map_err(|description| {
             let fatal = StepFatal::InvariantViolation { location: "runtime_mirror::prepare".to_owned(), description };
@@ -638,7 +644,7 @@ impl GameSession {
             self.poison_runtime_step(fatal)
         })?;
         #[cfg(feature = "simulation-diagnostics")]
-        let causal = self.prepare_runtime_causal_at(driver, causal_time, tick, prepared.causal_plans())
+        let causal = self.prepare_runtime_causal_at(driver, causal_time, tick, prepared.causal_plans(), &prepared.causal_calendar)
             .map_err(|fatal| self.poison_runtime_step(fatal))?;
         #[cfg(test)]
         if let Some(fatal) = self.post_shadow_failure.take() {
@@ -1400,6 +1406,38 @@ impl GameSession {
     pub(crate) fn install_runtime_authority_epoch(&mut self, epoch: u64) {
         assert_eq!(self.runtime_authority_epoch.checked_add(1), Some(epoch), "driver epoch 已在 spawn 前验证且仅成功安装一次");
         self.runtime_authority_epoch = epoch;
+        self.runtime_external_authority = std::sync::Weak::new();
+    }
+
+    pub(crate) fn runtime_authority_identity(&self) -> std::sync::Weak<()> {
+        std::sync::Arc::downgrade(&self.runtime_authority_identity)
+    }
+
+    pub(crate) fn matches_runtime_authority(&self, identity: &std::sync::Weak<()>, epoch: u64) -> bool {
+        epoch == self.runtime_authority_epoch
+            && std::sync::Weak::ptr_eq(identity, &self.runtime_authority_identity())
+    }
+
+    pub(crate) fn has_internal_runtime_driver(&self) -> bool {
+        self.runtime_driver.is_some()
+    }
+
+    pub(crate) fn install_external_runtime_authority(
+        &mut self,
+        lease: std::sync::Weak<crate::runtime::drive::RuntimeAuthorityLease>,
+    ) {
+        self.runtime_external_authority = lease;
+    }
+
+    pub(super) fn has_current_external_runtime_authority(&self) -> bool {
+        self.runtime_external_authority
+            .upgrade()
+            .is_some_and(|lease| lease.matches(self))
+    }
+
+    pub(super) fn uses_runtime_civil_authority(&self) -> bool {
+        !self.has_current_external_runtime_authority()
+            && (self.state.runtime_information_authority || crate::runtime::step_runtime_enabled())
     }
 
     pub(crate) fn runtime_personal_presence(
@@ -2064,7 +2102,12 @@ impl GameSession {
         fatal
     }
 
-    pub fn save(&self) -> Result<SaveSlot, StepFatal> {
+    /// pending 更正尚未形成可持久的完成事实；先日终提交或取消，再生成当前状态存档。
+    pub fn save(&self) -> Result<SaveSlot, SessionError> {
+        self.require_healthy()?;
+        if self.has_pending_report_corrections() {
+            return Err(SessionError::PendingReportCorrections);
+        }
         let mut save = self.save_committed_projection()?;
         self.project_shared_ingress_save(&mut save)?;
         Ok(save)

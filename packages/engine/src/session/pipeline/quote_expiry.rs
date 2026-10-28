@@ -126,6 +126,9 @@ impl GameSession {
         if self.phase() != crate::TradingPhase::Continuous {
             return Ok((ExpiryOutput::default(), Vec::new(), Vec::new()));
         }
+        #[cfg(feature = "simulation-diagnostics")]
+        let calendar = std::sync::Arc::clone(self.causal_tick_context()?);
+        #[cfg(not(feature = "simulation-diagnostics"))]
         let (_, calendar) = self.prepare_market_calendar_tick()?;
         let mut expired: Vec<_> = self
             .state
@@ -271,6 +274,8 @@ fn cancellation_failure(
     error: crate::session::continuous_cancellation::ContinuousCancellationError,
 ) -> StepFatal {
     let description = match error {
+        #[cfg(feature = "simulation-diagnostics")]
+        crate::session::continuous_cancellation::ContinuousCancellationError::Causal(error) => return error,
         crate::session::continuous_cancellation::ContinuousCancellationError::UnknownStock => {
             "ExpiryShadow 撤单引用未知股票".to_owned()
         }

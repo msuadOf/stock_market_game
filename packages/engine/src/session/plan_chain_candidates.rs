@@ -981,7 +981,7 @@ impl PlanRootCoordinator {
                         .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                     personal.install(session, account);
                     #[cfg(feature = "simulation-diagnostics")]
-                    session.record_plan_root_diagnostics(account, diagnostics, &snapshot.plans);
+                    session.record_plan_root_diagnostics(account, diagnostics, &snapshot.plans)?;
                     #[cfg(not(feature = "simulation-diagnostics"))]
                     let _ = (diagnostics, snapshot);
                     if *remaining == 0 && pending.is_empty() {
@@ -1085,7 +1085,7 @@ impl PlanRootCoordinator {
                         let (account, personal, generated, diagnostics) = root;
                         personal.install(session, account);
                         #[cfg(feature = "simulation-diagnostics")]
-                        session.record_plan_root_diagnostics(account, diagnostics, &snapshot.plans);
+                        session.record_plan_root_diagnostics(account, diagnostics, &snapshot.plans)?;
                         #[cfg(not(feature = "simulation-diagnostics"))]
                         let _ = diagnostics;
                         if pending.is_empty() {

@@ -250,9 +250,18 @@ pub struct FailureCause {
 fn failure_description(error: &(dyn std::error::Error + 'static)) -> (&'static str, &'static str) {
     if let Some(error) = error.downcast_ref::<SessionError>() {
         return match error {
+            SessionError::ReportCorrectionDayEnd(source) => failure_description(source),
+            SessionError::CivilInformation(_) => (
+                "CIVIL_INFORMATION_FAILED",
+                "自然日信息事务失败（内部详情已脱敏）",
+            ),
             SessionError::Closing(_) => (
                 "SESSION_CLOSING_FAILED",
                 "自然日日终封账失败（私有详情已脱敏）",
+            ),
+            SessionError::ReportCorrectionRestore(_) => (
+                "SESSION_STATE_INVALID",
+                "更正完成事实与真实会计和公开版本不一致（原始详情已脱敏）",
             ),
             SessionError::InvalidSave(_) => (
                 "SESSION_STATE_INVALID",
@@ -264,6 +273,25 @@ fn failure_description(error: &(dyn std::error::Error + 'static)) -> (&'static s
             ),
             _ => ("SESSION_OPERATION_FAILED", "会话操作失败（原始详情已脱敏）"),
         };
+    }
+    if let Some(error) = error.downcast_ref::<engine::session::ReportCorrectionDayEndError>() {
+        return if error.classification() == engine::company::CompanyErrorClass::SystemState {
+            (
+                "REPORT_CORRECTION_FAILED",
+                "报表更正日终准备失败（内部详情已脱敏）",
+            )
+        } else {
+            (
+                "REPORT_CORRECTION_REJECTED",
+                "报表更正未满足提交条件（内部详情已脱敏）",
+            )
+        };
+    }
+    if error.is::<engine::session::CivilInformationError>() {
+        return (
+            "CIVIL_INFORMATION_FAILED",
+            "自然日信息事务失败（内部详情已脱敏）",
+        );
     }
     if let Some(error) = error.downcast_ref::<engine::accounting::closing::ClosingError>() {
         return match error {
@@ -297,6 +325,12 @@ fn failure_description(error: &(dyn std::error::Error + 'static)) -> (&'static s
         return (
             "INVARIANT_VIOLATION",
             "引擎不变量校验失败（原始详情已脱敏）",
+        );
+    }
+    if error.is::<engine::session::ReportCorrectionRestoreError>() {
+        return (
+            "REPORT_CORRECTION_RESTORE_FAILED",
+            "报表更正存档关联校验失败（原始详情已脱敏）",
         );
     }
     ("ERROR_DETAILS_REDACTED", "原始错误类型未识别，详情未公开")
@@ -920,6 +954,22 @@ pub fn facade_child_trampoline(slot: u32, gen: u32, worker_id: u32) -> u32 {
     engine::thread_facade::child_trampoline(slot, gen, worker_id)
 }
 
+/// wasm 收件显式一次初始化：四参数单位均为微秒；无默认策略，不允许同 memory 重置。
+#[cfg(target_family = "wasm")]
+#[wasm_bindgen]
+pub fn init_wasm_wait(spin_us: u32, quiet_us: u32, fine_us: u32, coarse_us: u32) -> Result<(), JsValue> {
+    engine::runtime::watchdog::init_wasm_wait(spin_us, quiet_us, fine_us, coarse_us)
+        .map_err(|error| JsValue::from_str(&error))
+}
+
+/// 返回同一 memory 的单向宿主 abort 字布局；只允许 Uint8Array 原子写入 1，bytes 必须为 1。
+#[cfg(target_family = "wasm")]
+#[wasm_bindgen]
+pub fn wasm_wait_abort_layout() -> Result<JsValue, JsValue> {
+    let layout = engine::runtime::watchdog::wasm_wait_abort_layout().map_err(|error| JsValue::from_str(&error))?;
+    serde_wasm_bindgen::to_value(&layout).map_err(|error| JsValue::from_str(&format!("wasm abort 布局序列化失败：{error}")))
+}
+
 // ---------------------------------------------------------------------------
 // 验证专用入口（feature = verification-harness；正式产物零暴露）。
 //
@@ -1090,6 +1140,99 @@ thread_local! {
 #[cfg(all(target_family = "wasm", feature = "verification-harness"))]
 fn facade_join_index_of(handle: &engine::thread_facade::JoinHandle<u32>) -> u32 {
     handle.join_index()
+}
+
+#[cfg(all(target_family = "wasm", feature = "verification-harness"))]
+thread_local! {
+    static WORLD_STOP_PROBE: RefCell<Option<Box<engine::runtime::world::WorldStopProbe>>> =
+        const { RefCell::new(None) };
+}
+
+/// 验证专用：每个独立engine实例仅准备一个短World case及其共享阶段观测字。
+#[cfg(all(target_family = "wasm", feature = "verification-harness"))]
+#[wasm_bindgen]
+pub fn verification_world_stop_prepare(mode: u32) -> Result<u32, JsValue> {
+    WORLD_STOP_PROBE.with(|store| {
+        let mut store = store.borrow_mut();
+        if store.is_some() { return Err(JsValue::from_str("World stop probe已准备，必须换独立实例")); }
+        let probe = Box::new(engine::runtime::world::WorldStopProbe::new(mode).map_err(|error| JsValue::from_str(&error))?);
+        let address = probe.address();
+        *store = Some(probe);
+        Ok(address)
+    })
+}
+
+/// 验证专用：同一dispatcher调用真实World构造、永久停止及join；不创建GameSession。
+#[cfg(all(target_family = "wasm", feature = "verification-harness"))]
+#[wasm_bindgen]
+pub fn verification_world_stop_run(mode: u32) -> Result<String, JsValue> {
+    WORLD_STOP_PROBE.with(|store| {
+        let store = store.borrow();
+        let probe = store.as_ref().ok_or_else(|| JsValue::from_str("World stop probe尚未准备"))?;
+        engine::runtime::world::verify_world_stop(mode, probe).map_err(|error| JsValue::from_str(&error))
+    })
+}
+
+#[cfg(all(target_family = "wasm", feature = "verification-harness"))]
+thread_local! {
+    static WATCHDOG_PROBE: RefCell<Option<std::sync::Arc<engine::runtime::watchdog_verification::WatchdogProbe>>> =
+        const { RefCell::new(None) };
+}
+
+/// 验证专用：首次实际收件前准备共享阶段字，不替代生产 watchdog。
+#[cfg(all(target_family = "wasm", feature = "verification-harness"))]
+#[wasm_bindgen]
+pub fn verification_watchdog_prepare(mode: u32) -> Result<u32, JsValue> {
+    WATCHDOG_PROBE.with(|store| {
+        let mut store = store.borrow_mut();
+        if store.is_some() { return Err(JsValue::from_str("watchdog probe 已准备，必须换独立实例")); }
+        let probe = std::sync::Arc::new(engine::runtime::watchdog_verification::WatchdogProbe::new(mode).map_err(|error| JsValue::from_str(&error))?);
+        engine::runtime::watchdog_verification::WatchdogProbe::install_panic_probe(&probe);
+        let address = probe.address();
+        *store = Some(probe);
+        Ok(address)
+    })
+}
+
+/// 验证专用：执行三种原生产入口中的一种，保留 FIFO 和排空后断连断言。
+#[cfg(all(target_family = "wasm", feature = "verification-harness"))]
+#[wasm_bindgen]
+pub fn verification_watchdog_run(mode: u32) -> Result<String, JsValue> {
+    WATCHDOG_PROBE.with(|store| {
+        let store = store.borrow();
+        let probe = store.as_ref().ok_or_else(|| JsValue::from_str("watchdog probe 尚未准备"))?;
+        engine::runtime::watchdog_verification::verify_watchdog_recv(mode, probe).map_err(|error| JsValue::from_str(&error))
+    })
+}
+
+#[cfg(all(target_family = "wasm", feature = "verification-harness"))]
+thread_local! {
+    static WATCHDOG_WAIT_PROBE: RefCell<Option<std::sync::Arc<engine::runtime::watchdog_wait_verification::WaitProbe>>> =
+        const { RefCell::new(None) };
+}
+
+/// 验证专用：同一 memory 一次准备实际收件边界 probe，配置仍由调用者显式初始化。
+#[cfg(all(target_family = "wasm", feature = "verification-harness"))]
+#[wasm_bindgen]
+pub fn verification_watchdog_wait_prepare(mode: u32) -> Result<u32, JsValue> {
+    WATCHDOG_WAIT_PROBE.with(|store| {
+        let mut store = store.borrow_mut();
+        if store.is_some() { return Err(JsValue::from_str("wait probe 已准备，必须换独立 memory")); }
+        let probe = std::sync::Arc::new(engine::runtime::watchdog_wait_verification::WaitProbe::new(mode).map_err(|error| JsValue::from_str(&error))?);
+        let address = probe.address();
+        *store = Some(probe);
+        Ok(address)
+    })
+}
+
+/// 验证专用：执行实际相位/Hot/quiet/裸 recv 选路与返回前过滤；不模拟 clock/channel。
+#[cfg(all(target_family = "wasm", feature = "verification-harness"))]
+#[wasm_bindgen]
+pub fn verification_watchdog_wait_boundary(mode: u32) -> Result<String, JsValue> {
+    WATCHDOG_WAIT_PROBE.with(|store| {
+        let probe = store.borrow().as_ref().cloned().ok_or_else(|| JsValue::from_str("wait probe 尚未准备"))?;
+        engine::runtime::watchdog_wait_verification::verify_wait_boundary(mode, probe).map_err(|error| JsValue::from_str(&error))
+    })
 }
 
 /// 句柄内执行闭包；句柄无效 → 抛 JsValue。

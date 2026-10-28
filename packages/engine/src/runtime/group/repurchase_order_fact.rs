@@ -1,16 +1,7 @@
 //! 回购来源票的纯数值投影；不持有账户、交易部或计划簿权威。
 
-use crate::StockId;
-use crate::plans::PlanId;
 use crate::runtime::{FillFact, OrderRef, Owner, StockIdx};
-
-/// 回购请求的来源身份。账户身份来自 `plan_id.owner`，不从 runtime `Owner` 推导。
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct RepurchaseRequestKey {
-    pub plan_id: PlanId,
-    pub stock: StockId,
-    pub requested_trading_day: u64,
-}
+pub use crate::runtime::RepurchaseRequestKey;
 
 /// 累计实际扣款与退款后的回购订单来源票。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -300,6 +291,7 @@ pub fn next_repurchase_fact_cursor(
 mod tests {
     use super::*;
     use crate::orderbook::{AccountId, Side};
+    use crate::{plans::PlanId, StockId};
 
     const OWNER: Owner = (3, 7);
     const STOCK_IDX: StockIdx = 4;

@@ -45,9 +45,12 @@ impl GameSession {
             runtime_driver: _,
             runtime_group_count: _,
             runtime_authority_epoch: _,
+            runtime_authority_identity: _,
+            runtime_external_authority: _,
             runtime_mirror_install_sequence: _,
             runtime_discard_driver_flag: _,
             revision: _,
+            report_correction_epoch: _,
         } = self;
         let super::CommittableSessionState {
             setup: _,
@@ -99,6 +102,7 @@ impl GameSession {
             runtime_lifecycles_undo: _,
             runtime_retail_diag_undo: _,
             companies: _,
+            report_corrections: _,
             library: _,
             disclosures: _,
             plans: _,
@@ -192,6 +196,7 @@ impl GameSession {
                 hash.field(&system.corporate_actions)?;
             }
         }
+        hash.field(&self.state.report_corrections)?;
         hash.field(&self.state.library.hash_projection())?;
         hash.field(&self.state.disclosures)?;
         hash.field(&self.state.plans)?;

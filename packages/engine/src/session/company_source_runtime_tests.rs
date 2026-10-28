@@ -305,7 +305,7 @@ fn selected_simple_publication_failure_after_market_install_is_terminal_without_
         "已发布retained不能撤回"
     );
     assert_eq!(session.poison_reason(), Some(&fatal));
-    assert_eq!(session.save().unwrap_err(), fatal);
+    assert!(matches!(session.save(), Err(crate::SessionError::Step(actual)) if actual == fatal));
     assert_eq!(session.step().unwrap_err(), fatal);
     assert!(
         matches!(session.end_civil_day(), Err(SessionError::Step(ref actual)) if actual == &fatal)

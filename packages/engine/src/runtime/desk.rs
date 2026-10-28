@@ -33,6 +33,7 @@ use std::collections::{BTreeMap, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::Arc;
+mod repurchase;
 
 /// 构造期迁入的在途挂单种子（adopt：会话旧簿单直入 desk 初始簿——
 /// 先于本 tick 新单（到簿序对齐旧管线；此前经 ExternalPlan 消息链晚于
@@ -338,6 +339,8 @@ struct DrainMarketSnapshot {
 /// 撤销日志条目（逆序回放恢复；覆盖面=全部可变状态）。
 #[derive(Clone, Debug)]
 enum DeskUndo {
+    /// 仅撤回真实订单的来源关联；订单数量、资金和费用仍由原 undo 负责。
+    RepurchaseRequest { order: OrderRef, before: Option<super::RepurchaseRequestKey> },
     /// 失败回滚恢复上一拍的同 owner 时钟。
     Calendar(Option<Arc<super::MarketTickContext>>),
     /// 新挂入订单（回滚=移除）。
@@ -417,6 +420,9 @@ pub struct DeskState {
     out: Vec<Vec<Entity>>,
     fills_out: Vec<Vec<FillFact>>,
     receipts_out: Vec<Vec<DeskReceipt>>,
+    repurchase_out: Vec<Vec<super::RepurchaseSourceFact>>,
+    /// 来源冷元数据，不另存数量、预算或资金；只随真实取号和 Closed 增删。
+    repurchase_requests: BTreeMap<OrderRef, super::RepurchaseRequestKey>,
     flushed: Vec<bool>,
     cur_tick: u64,
     #[cfg(test)]
@@ -629,6 +635,8 @@ impl DeskState {
             out: vec![Vec::new(); n_groups],
             fills_out: vec![Vec::new(); n_groups],
             receipts_out: vec![Vec::new(); n_groups],
+            repurchase_out: vec![Vec::new(); n_groups],
+            repurchase_requests: BTreeMap::new(),
             flushed: vec![false; n_groups],
             cur_tick: initial_tick,
             #[cfg(test)]
@@ -735,7 +743,7 @@ impl DeskState {
                 h = fnv(h, u64::from(o.filled_qty));
             }
         }
-        h
+        self.hash_repurchase_sources(h)
     }
 
     // ── 撤销日志 ──
@@ -796,6 +804,10 @@ impl DeskState {
         let undo = std::mem::take(&mut self.undo);
         for entry in undo.into_iter().rev() {
             match entry {
+                DeskUndo::RepurchaseRequest { order, before } => {
+                    if let Some(request) = before { self.repurchase_requests.insert(order, request); }
+                    else { self.repurchase_requests.remove(&order); }
+                }
                 DeskUndo::Calendar(previous) => self.calendar_tick = previous,
                 DeskUndo::Inserted(o) => {
                     self.remove_by_ref(&o.order_ref);
@@ -867,6 +879,9 @@ impl DeskState {
             buf.clear();
         }
         for buf in &mut self.receipts_out {
+            buf.clear();
+        }
+        for buf in &mut self.repurchase_out {
             buf.clear();
         }
         for f in &mut self.flushed {
@@ -1130,6 +1145,13 @@ impl DeskState {
         }
         for op in ops {
             match op {
+                DeskIn::PlaceIssuerRepurchase { owner, request, price, qty, purse } => {
+                    self.validate_repurchase_request(owner, request, purse)?;
+                    self.place(tick, owner, Side::Buy, RoutedPrice::Fixed(price), qty, purse, Some(request),
+                        #[cfg(feature = "simulation-diagnostics")]
+                        super::diagnostics::OperationSource::NonPlayerUnresolved,
+                    )?;
+                }
                 DeskIn::Place {
                     owner,
                     side,
@@ -1146,6 +1168,7 @@ impl DeskState {
                         price,
                         qty,
                         purse,
+                        None,
                         #[cfg(feature = "simulation-diagnostics")]
                         source,
                     )?;
@@ -1178,6 +1201,7 @@ impl DeskState {
         rp: RoutedPrice,
         qty: u32,
         purse: i64,
+        repurchase: Option<super::RepurchaseRequestKey>,
         #[cfg(feature = "simulation-diagnostics")] source: super::diagnostics::OperationSource,
     ) -> Result<(), RuntimeError> {
         // D5 复核（off-by-one 对齐）：本拍处理的委托属上一收束点到本拍
@@ -1188,7 +1212,7 @@ impl DeskState {
         let is_market = matches!(rp, RoutedPrice::Market);
         // 相位门禁：盘前拒收；竞价阶段只收限价。
         if phase == DeskPhase::PreOpen {
-            self.reject(tick, owner, side, qty, purse, ReceiptKind::PhaseRejected)?;
+            self.reject(tick, owner, side, qty, purse, ReceiptKind::PhaseRejected, repurchase)?;
             return Ok(());
         }
         if phase == DeskPhase::CallAuction || phase == DeskPhase::ClosingAuction {
@@ -1200,7 +1224,8 @@ impl DeskState {
                     qty,
                     purse,
                     ReceiptKind::AuctionLimitOrderRequired,
-                );
+                    repurchase,
+                )?;
                 return Ok(());
             }
         }
@@ -1219,18 +1244,18 @@ impl DeskState {
             });
         }
         if qty > cap {
-            self.reject(tick, owner, side, qty, purse, ReceiptKind::ExceedsOrderCap)?;
+            self.reject(tick, owner, side, qty, purse, ReceiptKind::ExceedsOrderCap, repurchase)?;
             return Ok(());
         }
         // 买入整手（卖出零股一次性由组端校验——持仓知识在本组）。
         if side == Side::Buy && qty % self.config.lot_size != 0 {
-            self.reject(tick, owner, side, qty, purse, ReceiptKind::NotRoundLot)?;
+            self.reject(tick, owner, side, qty, purse, ReceiptKind::NotRoundLot, repurchase)?;
             return Ok(());
         }
         // 价格：正数 + tick 整数倍（最小价位 0.01 元）。
         let (price, rest_remainder) = self.resolve_price(rp, side, tick)?;
         if price <= 0 || price % 1 != 0 {
-            self.reject(tick, owner, side, qty, purse, ReceiptKind::PriceOutOfBand)?;
+            self.reject(tick, owner, side, qty, purse, ReceiptKind::PriceOutOfBand, repurchase)?;
             return Ok(());
         }
         // 涨跌停带（闭区间）与价格笼子。市价按纯带校验（Sol 复审
@@ -1251,7 +1276,7 @@ impl DeskState {
             } else {
                 ReceiptKind::PriceOutOfBand
             };
-            self.reject(tick, owner, side, qty, purse, kind)?;
+            self.reject(tick, owner, side, qty, purse, kind, repurchase)?;
             return Ok(());
         }
         if purse < 0 || (side == Side::Sell && purse != 0) {
@@ -1310,6 +1335,9 @@ impl DeskState {
                 .checked_add(self.setup.order_ttl_ticks)
                 .ok_or_else(|| over("本股委托 TTL 溢出"))?,
         };
+        if let Some(request) = repurchase {
+            self.open_repurchase_source(&order, request)?;
+        }
         self.retail_facts.push(super::retail_lifecycle::RawFact::Submitted {
             order: order_ref, owner, side, qty,
         });
@@ -1707,6 +1735,12 @@ impl DeskState {
             }
             m
         };
+        // 同一个费用核定后的买腿事实先进入公司来源，再允许 maker 终结出口。
+        let buy_fill = FillFact {
+            order: buy_ref, owner: buy_owner, side: Side::Buy, price, qty,
+            commission: buy_commission_delta, stamp_tax: 0, transfer_fee: buy_transfer_delta,
+        };
+        self.note_repurchase_source(buy_ref, buy_owner, super::RepurchaseSourceKind::Fill(buy_fill));
         // maker 写回：档首扣减或移除。
         self.apply_maker_fill(&maker, maker_after)?;
         // 费用桶（守恒）：双边实收**费用**合计（charge 含成交额，须扣除）。
@@ -1790,16 +1824,7 @@ impl DeskState {
             amount: charged.deliver_cash.cents(),
         });
         // FillFact 双边（信息回流：计划续行/经验/回执聚合）。
-        self.fills_out[bg].push(FillFact {
-            order: buy_ref,
-            owner: buy_owner,
-            side: Side::Buy,
-            price,
-            qty,
-            commission: buy_commission_delta,
-            stamp_tax: 0,
-            transfer_fee: buy_transfer_delta,
-        });
+        self.fills_out[bg].push(buy_fill);
         self.fills_out[sg].push(FillFact {
             order: sell_ref,
             owner: sell_owner,
@@ -1950,11 +1975,15 @@ impl DeskState {
                     local: after.owner.1,
                     amount: after.purse,
                 });
+                self.note_repurchase_source(after.order_ref, after.owner, super::RepurchaseSourceKind::Return {
+                    amount: after.purse, kind: super::RepurchaseReturnKind::TerminalRefund,
+                });
             }
             self.out[g].push(Entity::Closed {
                 local: after.owner.1,
                 order_serial: (u64::from(after.order_ref.0) << 32) | after.order_ref.1,
             });
+            self.close_repurchase_source(after.order_ref, after.owner);
         } else {
             *front = after;
         }
@@ -2003,6 +2032,9 @@ impl DeskState {
                 local: order.owner.1,
                 amount: refund,
             });
+            self.note_repurchase_source(order.order_ref, order.owner, super::RepurchaseSourceKind::Return {
+                amount: refund, kind: super::RepurchaseReturnKind::PriceImprovement,
+            });
         }
         Ok(())
     }
@@ -2017,6 +2049,9 @@ impl DeskState {
                     self.out[g].push(Entity::CashRefund {
                         local: order.owner.1,
                         amount: order.purse,
+                    });
+                    self.note_repurchase_source(order.order_ref, order.owner, super::RepurchaseSourceKind::Return {
+                        amount: order.purse, kind: super::RepurchaseReturnKind::TerminalRefund,
                     });
                 }
             }
@@ -2033,6 +2068,7 @@ impl DeskState {
             local: order.owner.1,
             order_serial: (u64::from(order.order_ref.0) << 32) | order.order_ref.1,
         });
+        self.close_repurchase_source(order.order_ref, order.owner);
     }
 
     /// 移除挂单（记 Removed）。
@@ -2206,6 +2242,7 @@ impl DeskState {
         qty: u32,
         purse: i64,
         kind: ReceiptKind,
+        repurchase: Option<super::RepurchaseRequestKey>,
     ) -> Result<(), RuntimeError> {
         let g = owner.0 as usize;
         match side {
@@ -2250,6 +2287,21 @@ impl DeskState {
             detail: "真实 desk reject 的 rich 来源尚未接通",
         });
         self.receipts_out[g].push(DeskReceipt { order, owner, kind });
+        if let Some(request) = repurchase {
+            self.repurchase_out[g].push(super::RepurchaseSourceFact {
+                request_key: request, owner, order_ref: order,
+                kind: super::RepurchaseSourceKind::Rejected { reason: kind },
+            });
+            if purse > 0 {
+                self.repurchase_out[g].push(super::RepurchaseSourceFact {
+                    request_key: request, owner, order_ref: order,
+                    kind: super::RepurchaseSourceKind::Return { amount: purse, kind: super::RepurchaseReturnKind::TerminalRefund },
+                });
+            }
+            self.repurchase_out[g].push(super::RepurchaseSourceFact {
+                request_key: request, owner, order_ref: order, kind: super::RepurchaseSourceKind::Closed,
+            });
+        }
         self.skipped_orders += 1;
         self.undo.push(DeskUndo::Skipped(1));
         Ok(())
@@ -2890,13 +2942,15 @@ impl DeskState {
         for (g, entities) in out.into_iter().enumerate() {
             let fills = std::mem::take(&mut self.fills_out[g]);
             let receipts = std::mem::take(&mut self.receipts_out[g]);
-            if entities.is_empty() && fills.is_empty() && receipts.is_empty() {
+            let repurchase = std::mem::take(&mut self.repurchase_out[g]);
+            if entities.is_empty() && fills.is_empty() && receipts.is_empty() && repurchase.is_empty() {
                 continue;
             }
             entities_total += entities.len() as u64;
             fills_total += fills.len() as u64;
             receipts_total += receipts.len() as u64;
             let batch = DeskBatch {
+                repurchase,
                 stock,
                 tick,
                 round,
@@ -3086,6 +3140,10 @@ impl DeskState {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "desk_repurchase_transport_tests.rs"]
+mod repurchase_transport_tests;
 
 /// 边际费用 helper（与 fees.rs fee_delta 同口径）。
 fn marginal(

@@ -10,7 +10,32 @@
 //! 代码本体零线程数管理概念：线程数 = G+N(+调用线程)，由世界构造参数决定。
 
 mod prepared_stop;
+#[cfg(any(target_family = "wasm", test))]
+mod wasm_shutdown;
+#[cfg(all(target_family = "wasm", feature = "verification-harness"))]
+mod shutdown_verification;
+#[cfg(all(target_family = "wasm", feature = "verification-harness"))]
+pub use shutdown_verification::{verify_world_stop, WorldStopProbe};
 pub(crate) use prepared_stop::StopReport;
+
+#[cfg(target_family = "wasm")]
+type WasmConstructionGuard = wasm_shutdown::ConstructionGuard<
+    GroupIn,
+    DeskMsg,
+    WorkerId,
+    crate::thread_facade::JoinHandle<Result<(), RuntimeError>>,
+>;
+
+#[cfg(target_family = "wasm")]
+fn join_constructed_worker(
+    handle: crate::thread_facade::JoinHandle<Result<(), RuntimeError>>,
+) -> Result<(), String> {
+    match handle.join() {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(error)) => Err(format!("worker执行失败：{error}")),
+        Err(error) => Err(format!("join失败：{error}")),
+    }
+}
 
 use super::coordinator::{
     broadcast_continue, broadcast_start, converge_round, no_op_validator, GlobalState,
@@ -29,6 +54,8 @@ use super::{GroupIdx, StockIdx};
 use crate::config::GameConfig;
 use crate::money::Money;
 use crate::StockExchange;
+#[cfg(feature = "simulation-diagnostics")]
+use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use std::sync::mpsc::{channel, Receiver, Sender};
@@ -399,6 +426,8 @@ pub struct World {
     /// worker_recv 的退出判定源（与 abort 正交：abort=tick 级回滚语义，
     /// 可重试 Abort 窗口内 worker 存活）。
     worker_shutdown: Arc<AtomicBool>,
+    #[cfg(target_family = "wasm")]
+    shutdown_wake: Option<wasm_shutdown::WakeSenders<GroupIn, DeskMsg>>,
     /// Sol 五审再复核 P1-2（四审 A1 指定回归的确定性 seam）：正常关停
     /// 序列在组 Shutdown 广播**前**的可控停顿（cfg(test)——复现四审
     /// 竞态窗"协调者停顿>50ms 时空闲 worker 提前退出"）。None=不停顿
@@ -457,6 +486,8 @@ pub struct World {
     pub(crate) drained_causal: Vec<super::diagnostics::DeskCausalFact>,
     #[cfg(feature = "simulation-diagnostics")]
     pub(crate) drained_causal_time: Option<crate::diagnostics::causal::FactTime>,
+    #[cfg(feature = "simulation-diagnostics")]
+    pub(crate) drained_causal_clocks: BTreeMap<crate::StockId, u64>,
     /// 当前自然日（D3a-2c：快照 civil_date 来源——驱动器自会话同步，
     /// 自然日权威在会话 civil clock）。
     civil_date: crate::calendar::CivilDate,
@@ -620,13 +651,18 @@ impl World {
         .map_err(|error| RuntimeError::ProtocolInvariant {
             detail: error.to_string(),
         })?;
-        Self::spawn_with_calendar_source(spec, source, bindings)
+        Self::spawn_with_calendar_source(spec, source, bindings,
+            #[cfg(all(target_family = "wasm", feature = "verification-harness"))]
+            None,
+        )
     }
 
     pub(crate) fn spawn_with_calendar_source(
         spec: WorldSpec,
         calendar_source: Arc<crate::session::market_calendar_context::MarketCalendarSource>,
         calendar_bindings: Vec<(crate::StockId, crate::calendar::CalendarExchange)>,
+        #[cfg(all(target_family = "wasm", feature = "verification-harness"))]
+        construction_probe: Option<&WorldStopProbe>,
     ) -> Result<Self, RuntimeError> {
         let mut actual_bindings = std::collections::BTreeMap::new();
         for (index, stock) in spec.stocks.iter().enumerate() {
@@ -689,6 +725,8 @@ impl World {
             });
         }
         admin_treasury_binding::validate(&spec)?;
+        #[cfg(target_family = "wasm")]
+        super::watchdog::require_wasm_wait_initialized().map_err(|detail| RuntimeError::ProtocolInvariant { detail })?;
         let information_roster = (0..spec.n_groups).map(|group| {
             spec.root_projection.as_ref().map(|root| {
                 let start = group * spec.accounts_per_group;
@@ -798,7 +836,17 @@ impl World {
             desk_txs.push(tx);
             desk_rxs.push(rx);
         }
+        #[cfg(not(target_family = "wasm"))]
         let mut handles = Vec::with_capacity(n_groups + n_stocks);
+        #[cfg(target_family = "wasm")]
+        let mut construction = WasmConstructionGuard::new(
+            Arc::clone(&worker_shutdown),
+            wasm_shutdown::WakeSenders::new(
+                group_txs.clone(), desk_txs.clone(), || GroupIn::Shutdown, || DeskMsg::Shutdown,
+            ),
+            n_groups + n_stocks,
+            join_constructed_worker,
+        );
         for g in 0..n_groups as GroupIdx {
             let mut accounts = Vec::with_capacity(accounts_per_group);
             for l in 0..accounts_per_group {
@@ -938,11 +986,24 @@ impl World {
                     let watchdog = watchdog;
                     let capture = std::sync::Arc::clone(&capture_slot);
                     move || group_main(state, desk_txs, rx, up_tx, abort, shutdown, watchdog, capture)
-                })
-                .map_err(|e| RuntimeError::SendFailed {
-                    detail: format!("spawn rt-group-{g} 失败：{e}"),
-                })?;
+                });
+            #[cfg(not(target_family = "wasm"))]
+            let handle = handle.map_err(|e| RuntimeError::SendFailed {
+                detail: format!("spawn rt-group-{g} 失败：{e}"),
+            })?;
+            #[cfg(target_family = "wasm")]
+            let handle = match handle {
+                Ok(handle) => handle,
+                Err(error) => {
+                    return Err(RuntimeError::SendFailed {
+                        detail: construction.spawn_failure(format!("spawn rt-group-{g} 失败：{error}")),
+                    });
+                }
+            };
+            #[cfg(not(target_family = "wasm"))]
             handles.push((WorkerId::Group(g), handle));
+            #[cfg(target_family = "wasm")]
+            construction.push(WorkerId::Group(g), handle);
         }
         for (s, stock_spec) in stocks.into_iter().enumerate() {
             let s = s as StockIdx;
@@ -988,22 +1049,49 @@ impl World {
                             watchdog, capture,
                         )
                     }
-                })
-                .map_err(|e| RuntimeError::SendFailed {
-                    detail: format!("spawn rt-desk-{s} 失败：{e}"),
-                })?;
+                });
+            #[cfg(not(target_family = "wasm"))]
+            let handle = handle.map_err(|e| RuntimeError::SendFailed {
+                detail: format!("spawn rt-desk-{s} 失败：{e}"),
+            })?;
+            #[cfg(target_family = "wasm")]
+            let handle = match handle {
+                Ok(handle) => handle,
+                Err(error) => {
+                    return Err(RuntimeError::SendFailed {
+                        detail: construction.spawn_failure(format!("spawn rt-desk-{s} 失败：{error}")),
+                    });
+                }
+            };
+            #[cfg(not(target_family = "wasm"))]
             handles.push((WorkerId::Desk(s), handle));
+            #[cfg(target_family = "wasm")]
+            construction.push(WorkerId::Desk(s), handle);
         }
         // 世界不持上行发送端：全部 worker 退出后 recv 才会断连（显式失败面）。
         drop(up_tx);
         // Q1 发布槽 v0：初始公共态即第一个一致读点（tick=initial）。
+        #[cfg(all(target_family = "wasm", feature = "verification-harness"))]
+        if let Some(probe) = construction_probe {
+            probe.record_handles(construction.handles_for_verification());
+            if probe.mode() == 4 {
+                shutdown_verification::inject_calendar_binding_failure(
+                    probe, &group_txs, &mut desk_txs, &up_rx, &watchdog,
+                );
+            }
+        }
         for tx in &desk_txs {
-            tx.send(DeskMsg::BindCalendar {
+            if tx.send(DeskMsg::BindCalendar {
                 day: Arc::clone(&initial_calendar_day),
-            })
-            .map_err(|_| RuntimeError::SendFailed {
-                detail: "交易部 Calendar owner 绑定失败".to_owned(),
-            })?;
+            }).is_err() {
+                #[cfg(all(target_family = "wasm", feature = "verification-harness"))]
+                if let Some(probe) = construction_probe { probe.note_bind_failure(); }
+                let detail = "交易部 Calendar owner 绑定失败".to_owned();
+                // 普通 Err 必须显式回收，保留主错与全部次生错误，避免 Drop panic 覆盖主错。
+                #[cfg(target_family = "wasm")]
+                let detail = construction.spawn_failure(detail);
+                return Err(RuntimeError::SendFailed { detail });
+            }
         }
         let global_v0 = GlobalState {
             committed_tick: initial_committed_tick,
@@ -1039,6 +1127,8 @@ impl World {
                 },
             )),
         );
+        #[cfg(target_family = "wasm")]
+        let (shutdown_wake, handles) = construction.transfer();
         Ok(World {
             calendar_source,
             calendar_bindings,
@@ -1066,6 +1156,8 @@ impl World {
             handles,
             abort,
             worker_shutdown,
+            #[cfg(target_family = "wasm")]
+            shutdown_wake,
             #[cfg(test)]
             shutdown_stall_for_test: None,
             #[cfg(test)]
@@ -1099,6 +1191,8 @@ impl World {
             drained_causal: Vec::new(),
             #[cfg(feature = "simulation-diagnostics")]
             drained_causal_time: None,
+            #[cfg(feature = "simulation-diagnostics")]
+            drained_causal_clocks: BTreeMap::new(),
             civil_date: civil_start_date,
             publication,
             seal_ns_accumulated: 0,
@@ -2638,7 +2732,10 @@ impl World {
     ) -> RuntimeError {
         self.dead_reason = Some(format!("{stage}(tick={tick}) 失败，world 已终止且不可重试：{error}"));
         if stop_immediately {
+            #[cfg(not(target_family = "wasm"))]
             self.worker_shutdown.store(true, Ordering::SeqCst);
+            #[cfg(target_family = "wasm")]
+            self.stop_permanently();
         }
         let expected_failure = match &error {
             RuntimeError::WorkerFailed { who, error } => Some((*who, error.as_ref())),
@@ -3016,6 +3113,7 @@ impl World {
                 super::protocol::DayEndCalendar::MarketTick(context) => crate::diagnostics::causal::FactTime {
                     phase: context.phase_before(),
                     market_minute: context.after_projection().completed_shared_minute_count(),
+                    stock_clock: None,
                     civil: context.observation_instant_after(),
                 },
                 super::protocol::DayEndCalendar::ManualDayEnd(day) => {
@@ -3037,10 +3135,21 @@ impl World {
                         self.tick_layout.ticks_per_day, self.tick_layout.auction_ticks, self.tick_layout.closing_auction_ticks);
                     crate::diagnostics::causal::FactTime { phase,
                         market_minute: projection.completed_shared_minute_count(),
+                        stock_clock: None,
                         civil: crate::CivilInstant::new(day.day_model().current_date(), second).map_err(|error| fail(error.to_string()))?,
                     }
                 }
             };
+            let mut clocks = BTreeMap::new();
+            for fact in &self.drained_causal {
+                let code = crate::StockId(u32::from(fact.context.stock()));
+                let clock = projection.stock(code).map_err(|error| fail(error.to_string()))?;
+                if clock.date_session_ordinal().is_none() {
+                    return Err(fail(format!("Closed 证券不得产生 Drain causal 事实：{code:?}")));
+                }
+                clocks.insert(code, clock.completed_minute_count());
+            }
+            self.drained_causal_clocks = clocks;
             self.drained_causal_time = Some(time);
         }
         Ok(())
@@ -3087,7 +3196,7 @@ impl World {
         self.drained_day_trades.clear();
         self.drained_retail.clear();
         #[cfg(feature = "simulation-diagnostics")]
-        { self.drained_causal.clear(); self.drained_causal_time = None; }
+        { self.drained_causal.clear(); self.drained_causal_time = None; self.drained_causal_clocks.clear(); }
         for slot in &mut self.pending_day_candles {
             *slot = None;
         }
@@ -3105,7 +3214,7 @@ impl World {
         #[cfg(feature = "simulation-diagnostics")] projection: &crate::session::exchange_calendar_model::CalendarClockProjection,
     ) -> Result<(), RuntimeError> {
         #[cfg(feature = "simulation-diagnostics")]
-        { self.drained_causal.clear(); self.drained_causal_time = None; }
+        { self.drained_causal.clear(); self.drained_causal_time = None; self.drained_causal_clocks.clear(); }
         // Sol 收官再复核阻断 4：日结序列任一失败路径（Drain/组翻/校验）
         /// 都必须清空 Drain 期间上行的事实缓冲——重跑会重新 Drain 产生
         /// 同名事实，残留使缓冲双载（此前仅 abort_day_end 清，run_day_end
@@ -3133,7 +3242,7 @@ impl World {
             self.drained_day_trades.clear();
             self.drained_retail.clear();
             #[cfg(feature = "simulation-diagnostics")]
-            { self.drained_causal.clear(); self.drained_causal_time = None; }
+            { self.drained_causal.clear(); self.drained_causal_time = None; self.drained_causal_clocks.clear(); }
             // 复核建议 S1：终 K 暂存对称清理（良性缺口——下次成功 Drain
             /// 全槽覆写、take 仅在成功后发生；此处补齐与 abort_day_end 同式）。
             for slot in &mut self.pending_day_candles {
@@ -3637,13 +3746,25 @@ impl World {
         Ok(report)
     }
 
-    /// 切断协调者下行通道（断连显式失败测试面）：worker 见 Disconnected 退出。
-    pub fn sever(&mut self) {
-        // Sol 终审三审：置永久关停（worker_recv 分片窗口内观察退出）——
-        /// sever 后下行断连互等（组↔部互持 clone），消息不可达只能走标记。
-        self.worker_shutdown.store(true, Ordering::SeqCst);
+    #[cfg(target_family = "wasm")]
+    fn stop_permanently(&mut self) {
+        wasm_shutdown::permanent_stop(&self.worker_shutdown, &mut self.shutdown_wake);
         self.group_txs.clear();
         self.desk_txs.clear();
+    }
+
+    /// 切断协调者下行通道；wasm 先向互持Sender的组和交易部发送永久停止消息。
+    pub fn sever(&mut self) {
+        #[cfg(target_family = "wasm")]
+        self.stop_permanently();
+        #[cfg(not(target_family = "wasm"))]
+        {
+            // Sol 终审三审：置永久关停（worker_recv 分片窗口内观察退出）——
+            /// sever 后下行断连互等（组↔部互持 clone），消息不可达只能走标记。
+            self.worker_shutdown.store(true, Ordering::SeqCst);
+            self.group_txs.clear();
+            self.desk_txs.clear();
+        }
     }
 }
 
@@ -3660,12 +3781,17 @@ impl Drop for World {
     /// sol3_install_candles 的 10 秒硬上限实测击穿。断连检测语义
     /// 不变（P1 时代的通道面一致性守卫——send 侧显式报错不受影响）。
     fn drop(&mut self) {
-        self.worker_shutdown.store(true, Ordering::SeqCst);
-        for tx in &self.group_txs {
-            let _ = tx.send(GroupIn::Shutdown);
-        }
-        for tx in &self.desk_txs {
-            let _ = tx.send(DeskMsg::Shutdown);
+        #[cfg(target_family = "wasm")]
+        self.stop_permanently();
+        #[cfg(not(target_family = "wasm"))]
+        {
+            self.worker_shutdown.store(true, Ordering::SeqCst);
+            for tx in &self.group_txs {
+                let _ = tx.send(GroupIn::Shutdown);
+            }
+            for tx in &self.desk_txs {
+                let _ = tx.send(DeskMsg::Shutdown);
+            }
         }
         for (_, handle) in std::mem::take(&mut self.handles) {
             let _ = handle.join();
@@ -3806,6 +3932,6 @@ mod failed_cleanup_tests {
 mod admin_transaction;
 pub(crate) use admin_transaction::PreparedAdministrativeSource;
 
-pub use super::protocol::{AdminCandidate, AdminOperation, AdminTransactionId, AdminTreasuryBinding, AdminPlanReference, CreatedRepurchasePlan, PreparedRepurchaseResult, RepurchaseExecutionProjection, RepurchaseMaterialRestriction, InformationObservation, InformationPreparePayload, PreparedInformationResult, InformationPrepareError};
+pub use super::protocol::{AdminCandidate, AdminOperation, AdminTransactionId, AdminTreasuryBinding, AdminPlanReference, CreatedRepurchasePlan, PreparedRepurchaseResult, RepurchaseExecutionProjection, RepurchaseMaterialRestriction, InformationObservation, InformationMemoryRetention, InformationPreparePayload, PreparedInformationResult, InformationPrepareError};
 
 mod admin_treasury_binding;

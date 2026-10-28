@@ -5,6 +5,8 @@ use crate::diagnostics::causal::CausalFactKind;
 
 pub(in crate::session) mod retained_tests;
 mod rich_drain_tests;
+mod rich_lifecycle_tests;
+mod stock_clock_tests;
 
 fn game() -> GameSession {
     let mut setup = super::npc_working_quote_tests::quote_setup(0);
@@ -289,7 +291,10 @@ fn d3_manual_drain_after_checkpoint_rebuild_preserves_original_dayarc_and_real_s
     rebuilt.world_day_end_for_step(&mut copied).expect("原 DayArc 与 World tick 允许新 authority 清理真实旧单");
     assert!(rebuilt.collect_resting_facts_live().unwrap()[0].is_empty());
     assert_eq!(serde_json::to_value(copied.causal_facts()).unwrap(), before_facts, "低层入口不擅自发布 rich collector");
-    let (raw, time) = rebuilt.take_drain_causal_facts();
+    let (raw, time, clocks) = rebuilt.take_drain_causal_facts();
+    assert_eq!(clocks.len(), 1, "重建后本次真实 Drain 必须携新批本股 clock");
+    let (_, projection) = copied.prepare_market_calendar_projection().unwrap();
+    assert_eq!(clocks.get(&StockId(0)), Some(&projection.stock(StockId(0)).unwrap().completed_minute_count()));
     assert_eq!(raw.len(), 1);
     assert!(matches!(raw[0].kind, crate::runtime::diagnostics::DeskCausalKind::DayEnded { qty: 100, .. }));
     assert_eq!(time.unwrap().civil.date(), copied.civil_date());
@@ -478,6 +483,9 @@ fn d2_restore_partial_order_keeps_nonzero_before_without_fabricated_origin() {
     assert_eq!((partial.remaining_qty, partial.filled_qty, partial.filled_value.cents()), (100, 100, 99_500));
     let mut restored = GameSession::restore(&slot).unwrap();
     assert!(matches!(restored.causal_diagnostics(), Err(crate::diagnostics::causal::CausalError::RestoredObservation)));
+    assert!(restored.state.causal.active_tick_context.is_none());
+    assert_eq!(restored.causal_facts()[0].time.stock_clock, None);
+    assert!(matches!(restored.causal_facts()[0].kind, CausalFactKind::ObservationRestart));
     d2_place(&mut restored, 2, 1, crate::Side::Sell, 1000, 100);
     restored.step().unwrap();
     d2_place(&mut game, 2, 1, crate::Side::Sell, 1000, 100);

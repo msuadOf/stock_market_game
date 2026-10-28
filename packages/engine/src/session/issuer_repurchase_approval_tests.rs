@@ -30,6 +30,16 @@ fn plan(session: &GameSession, event: &str) -> IssuerRepurchasePlan {
 fn treasury(session: &GameSession) -> AccountId {
     session.account_roster().into_iter().find(|id| session.account(*id).unwrap().kind() == crate::AccountKind::IssuerRepurchase).unwrap()
 }
+// 仅测试取证启用外部 Web 回写；严格读取完整公司状态，并与同次真实生产候选逐字段比较。
+fn assert_web_companies_readback(session: &GameSession, variable: &str) {
+    if let Some(path) = std::env::var_os(variable) {
+        let bytes = std::fs::read(path).expect("Web 回写公司 JSON 必须存在且可读");
+        let decoded: SavedSessionCompanies = serde_json::from_slice(&bytes)
+            .expect("Web 回写公司状态必须通过 Rust strict serde");
+        assert_eq!(decoded, session.state.companies.save(), "Web 往返必须保留完整真实公司状态及回购 binding");
+        eprintln!("APPROVAL_C_WEB_READBACK_OK={variable}");
+    }
+}
 #[test]
 fn approval_c_session_01_return_means_actual_credit_book_finance_and_next_start_ready() {
     let mut session = session(true); let plan = plan(&session, "批准一"); let owner = treasury(&session);
@@ -50,6 +60,7 @@ fn approval_c_session_01_return_means_actual_credit_book_finance_and_next_start_
     assert_eq!(finance[0].synthetic_funding.to_money().unwrap(), plan.total_budget);
     // 同次真实成功输出供 Web 严格契约取证；不是手工拼接的 DTO。
     eprintln!("APPROVAL_C_FUNDED_COMPANIES_WIRE={}", serde_json::to_string(&session.state.companies.save()).unwrap());
+    assert_web_companies_readback(&session, "STOCK_GAME_APPROVAL_C_FUNDED_WEB_READBACK");
     assert_eq!(session.tick(), before_tick); assert!(session.runtime_driver_for_test().is_some());
     session.step().unwrap(); assert_eq!(session.account(owner).unwrap().cash(), plan.total_budget);
 }
@@ -100,6 +111,7 @@ fn approval_c_session_06_disabled_command_is_typed_and_does_not_construct_runtim
     assert_eq!(session.business_state_hash().unwrap(), hash); assert!(session.runtime_driver_for_test().is_none());
     // 禁用机制仍须输出严格必填的空 binding 集合，保留实际 CompanySystem 原件。
     eprintln!("APPROVAL_C_DISABLED_COMPANIES_WIRE={}", serde_json::to_string(&session.state.companies.save()).unwrap());
+    assert_web_companies_readback(&session, "STOCK_GAME_APPROVAL_C_DISABLED_WEB_READBACK");
 }
 #[test]
 fn approval_c_session_07_player_current_total_holding_includes_frozen_shares() {

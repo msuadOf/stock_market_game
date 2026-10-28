@@ -26,6 +26,8 @@ pub enum RoutedPrice {
 /// 组线程 → 交易部线程的操作。资源在组端已实体化扣出，所有权随消息转移。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DeskIn {
+    /// 公司来源的明确 Buy＋Fixed；实际资格与预算仍由唯一 group producer 校验。
+    PlaceIssuerRepurchase { owner: Owner, request: super::RepurchaseRequestKey, price: i64, qty: u32, purse: i64 },
     /// 下单。买单 `purse` = 现金实体（最坏情况对价 + 佣金上限 + 过户费上限，已从组
     /// 账户实际扣除）；卖单 `purse` = 0、`qty` 股已从持仓实际扣除。
     Place {
@@ -76,6 +78,8 @@ pub struct DeskBatch {
     pub fills: Vec<FillFact>,
     /// 受理/撤单回执（信息回流）。
     pub receipts: Vec<DeskReceipt>,
+    /// 只追加真实公司来源，保原产生顺序；不再次落账账户资源。
+    pub repurchase: Vec<super::RepurchaseSourceFact>,
 }
 
 /// `DeskBatch` 防御字段错配（显式失败载体，不静默落账）。
@@ -662,6 +666,14 @@ pub struct InformationObservation {
     pub as_of_anchors: std::collections::BTreeMap<crate::StockId, crate::observation::information_clock::InformationTradingAnchor>,
     pub market: std::sync::Arc<crate::strategy::MarketView>,
     pub company_facts: std::sync::Arc<crate::company::CompanyReadFacts>,
+    /// CivilDayEnd 在同一私有候选内完成获知后裁剪两类记忆；普通观察不改变裁剪时点。
+    pub memory_retention: InformationMemoryRetention,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InformationMemoryRetention {
+    Preserve,
+    CivilDayEnd,
 }
 
 /// Some 即有信息作用域；observation=None 仍向全部 live 组安装库及 current facts。
@@ -1651,6 +1663,13 @@ pub struct DeskReport {
 /// 运行时显式失败（不静默吞错）。panic 走 `TaskDied` 运输，不进本枚举。
 #[derive(Clone, Debug, PartialEq, thiserror::Error)]
 pub enum RuntimeError {
+    /// wasm 宿主永久 abort，与 tick Abort、相位超时及通道断连分开报告。
+    #[cfg(target_family = "wasm")]
+    #[error("wasm 宿主已永久终止：phase={phase:?}, who={who:?}")]
+    HostAborted {
+        phase: super::watchdog::Phase,
+        who: Option<WorkerId>,
+    },
     #[error("组 {group} 信息 prepare 失败：{error}")]
     InformationPrepare { group: GroupIdx, error: InformationPrepareError },
     /// 看门狗超时（携带相位上下文——相位感知，不静默放大全局阈值）。

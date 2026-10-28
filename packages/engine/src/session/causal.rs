@@ -1,38 +1,42 @@
+#[cfg(test)]
+mod stock_clock_calendar_tests;
+
 use super::*;
+use std::sync::Arc;
 use crate::diagnostics::causal::{
     CausalError, CausalFact, CausalFactKind, CausalReport, FactTime, OrderOrigin, Quote,
-    Termination,
+    StockFactClock, Termination,
 };
 
 /// 仅含已校验的本拍增量，最外层全部成功后才可发布。
 pub(crate) struct RuntimeCausalDelta {
     pub time: FactTime,
     pub raw: Vec<crate::runtime::diagnostics::DeskCausalFact>,
-    kinds: Vec<CausalFactKind>,
-    drain: Option<(usize, FactTime)>,
+    kinds: Vec<(FactTime, CausalFactKind)>,
 }
 
 impl GameSession {
-    pub(in crate::session) fn prepare_runtime_causal(
-        &self,
-        driver: &mut crate::runtime::drive::RuntimeDriver,
-        time: FactTime,
-    ) -> Result<RuntimeCausalDelta, StepFatal> {
-        self.prepare_runtime_causal_at(driver, time, self.tick(), &self.state.plans)
-    }
-
     pub(in crate::session) fn prepare_runtime_causal_at(
         &self,
         driver: &mut crate::runtime::drive::RuntimeDriver,
         time: FactTime,
         tick: u64,
         plans: &crate::plans::PlanBook,
+        calendar: &crate::runtime::drive::PreparedDriverCalendar,
     ) -> Result<RuntimeCausalDelta, StepFatal> {
-        let (raw, drain_time) = driver.take_causal_facts();
+        let (raw, drain_time, clocks) = driver.take_causal_facts();
         let result = self.translate_runtime_causal(driver, tick, &raw, driver.pending_decision_traces(), plans, drain_time)
-            .and_then(|(kinds, start)| self.runtime_causal_drain_boundary(drain_time, start).map(|drain| (kinds, drain)));
+            .and_then(|(kinds, start)| {
+                let drain = self.runtime_causal_drain_boundary(drain_time, start)?;
+                let tick_context = match calendar {
+                    crate::runtime::drive::PreparedDriverCalendar::MarketTick(context) => context,
+                    _ => return Err(causal_clock_failure("Tick causal 缺少原 MarketTickContext")),
+                };
+                let before = causal_tick_time(tick_context, None, false)?;
+                self.prepare_timed_runtime_kinds(kinds, Some(tick_context), drain, &clocks).map(|kinds| (before, kinds))
+            });
         match result {
-            Ok((kinds, drain)) => Ok(RuntimeCausalDelta { time, raw, kinds, drain }),
+            Ok((time, kinds)) => Ok(RuntimeCausalDelta { time, raw, kinds }),
             Err(fatal) => {
                 driver.retain_terminal_causal(time, raw, fatal.clone());
                 Err(fatal)
@@ -303,9 +307,10 @@ impl GameSession {
         driver: &mut crate::runtime::drive::RuntimeDriver,
         plans: &crate::plans::PlanBook,
     ) -> Result<Option<RuntimeCausalDelta>, StepFatal> {
-        let (raw, drain_time) = driver.take_drain_causal_facts();
+        let (raw, drain_time, clocks) = driver.take_drain_causal_facts();
         if raw.is_empty() {
             self.runtime_causal_drain_boundary(drain_time, None)?;
+            if !clocks.is_empty() { return Err(causal_clock_failure("空 Drain 不得携旧批 stock clocks")); }
             return Ok(None);
         }
         let time = match drain_time {
@@ -319,28 +324,63 @@ impl GameSession {
             }
         };
         let result = self.translate_runtime_causal(driver, self.tick(), &raw, &[], plans, Some(time))
-            .and_then(|(kinds, start)| self.runtime_causal_drain_boundary(Some(time), start).map(|drain| (kinds, drain)));
+            .and_then(|(kinds, start)| {
+                let drain = self.runtime_causal_drain_boundary(Some(time), start)?;
+                self.prepare_timed_runtime_kinds(kinds, None, drain, &clocks)
+            });
         match result {
-            Ok((kinds, drain)) => Ok(Some(RuntimeCausalDelta { time, raw, kinds, drain })),
+            Ok(kinds) => Ok(Some(RuntimeCausalDelta { time, raw, kinds })),
             Err(fatal) => { driver.retain_terminal_causal(time, raw, fatal.clone()); Err(fatal) }
         }
     }
 
-    // 保留直接纯校验测试接缝；真实入口按 E2 捕获原 raw 与 terminal 首错。
+    // 纯 raw 翻译 fixture；真实入口只消费 caller 已持有的原 Arc。
+    #[cfg(test)]
     fn prepare_runtime_causal_facts(
         &self,
         driver: &crate::runtime::drive::RuntimeDriver,
-        time: FactTime,
         facts: Vec<crate::runtime::diagnostics::DeskCausalFact>,
     ) -> Result<RuntimeCausalDelta, StepFatal> {
         let (kinds, start) = self.translate_runtime_causal(driver, self.tick(), &facts, driver.pending_decision_traces(), &self.state.plans, None)?;
         let drain = self.runtime_causal_drain_boundary(None, start)?;
-        Ok(RuntimeCausalDelta { time, raw: facts, kinds, drain })
+        let (_, context) = self.prepare_market_calendar_tick()?;
+        let time = causal_tick_time(&context, None, false)?;
+        let kinds = self.prepare_timed_runtime_kinds(kinds, Some(&context), drain, &BTreeMap::new())?;
+        Ok(RuntimeCausalDelta { time, raw: facts, kinds })
+    }
+
+    fn prepare_timed_runtime_kinds(
+        &self,
+        kinds: Vec<CausalFactKind>,
+        tick: Option<&crate::runtime::MarketTickContext>,
+        drain: Option<(usize, FactTime)>,
+        clocks: &BTreeMap<StockId, u64>,
+    ) -> Result<Vec<(FactTime, CausalFactKind)>, StepFatal> {
+        if drain.is_none() && !clocks.is_empty() {
+            return Err(causal_clock_failure("无 Drain 身份却携本股 clocks"));
+        }
+        if drain.is_some_and(|(_, time)| time.stock_clock.is_some()) {
+            return Err(causal_clock_failure("Drain shared 根时间不得携 stock clock"));
+        }
+        kinds.into_iter().enumerate().map(|(index, kind)| {
+            let code = kind.stock_code();
+            let time = if let Some((_, drain_time)) = drain.filter(|(start, _)| index >= *start) {
+                FactTime { stock_clock: code.map(|code| clocks.get(&code).copied()
+                    .map(|completed_minutes| StockFactClock { code, completed_minutes })
+                    .ok_or_else(|| causal_clock_failure(format!("Drain 缺本批证券 clock：{code:?}"))))
+                    .transpose()?, ..drain_time }
+            } else {
+                causal_tick_time(tick.ok_or_else(|| causal_clock_failure("非 Drain 证券事实缺原 TickArc"))?, code, false)?
+            };
+            let sequence = checked_runtime_sequence(self.state.causal.fact_count(), index).map_err(causal_clock_failure)?;
+            CausalFact { sequence, time, kind: kind.clone() }.validate_stock_clock()
+                .map_err(|error| causal_clock_failure(error.to_string()))?;
+            Ok((time, kind))
+        }).collect()
     }
 
     pub(crate) fn publish_runtime_causal(&mut self, delta: RuntimeCausalDelta) {
-        for (index, kind) in delta.kinds.into_iter().enumerate() {
-            let time = match delta.drain { Some((start, time)) if index >= start => time, _ => delta.time };
+        for (time, kind) in delta.kinds {
             if let CausalFactKind::Decision { account } = kind {
                 self.state.causal.record_plan_root(time, account, [CausalFactKind::Decision { account }]);
             } else {
@@ -357,28 +397,62 @@ impl GameSession {
         CausalReport::from_facts(self.state.seed, self.state.causal.facts())
     }
 
-    pub(super) fn causal_time(&self) -> FactTime {
-        let day_tick = self.state.tick - u64::from(self.state.day) * self.state.setup.ticks_per_day;
-        let continuous = self.state.setup.ticks_per_day
-            - self.state.setup.auction_ticks
-            - self.state.setup.closing_auction_ticks;
-        let elapsed = day_tick
-            .saturating_sub(self.state.setup.auction_ticks)
-            .min(continuous);
-        let market_minute = u64::from(self.state.day) * 240 + elapsed * 240 / continuous;
-        FactTime {
-            phase: self.phase(),
-            market_minute,
-            civil: self.observation_civil_instant(),
+    pub(super) fn causal_time(&self) -> Result<FactTime, StepFatal> {
+        if self.state.causal.active_tick_context.is_some() {
+            let context = self.causal_tick_context()?;
+            if context.before_input().tick != self.tick() {
+                return Err(causal_clock_failure("root causal 时点不属于本拍 before 输入"));
+            }
+            return causal_tick_time(context, None, false);
         }
+        self.causal_static_time()
     }
 
-    pub(super) fn causal_record(&mut self, kind: CausalFactKind) {
-        self.causal_record_at(self.causal_time(), kind);
+    pub(super) fn causal_static_time(&self) -> Result<FactTime, StepFatal> {
+        let (_, projection) = self.prepare_market_calendar_projection()?;
+        Ok(FactTime {
+            phase: self.phase(),
+            market_minute: projection.completed_shared_minute_count(),
+            stock_clock: None,
+            civil: self.observation_civil_instant(),
+        })
     }
 
-    pub(super) fn causal_record_at(&mut self, time: FactTime, kind: CausalFactKind) {
+    pub(super) fn causal_tick_context(&self) -> Result<&Arc<crate::runtime::MarketTickContext>, StepFatal> {
+        let context = self.state.causal.active_tick_context.as_ref()
+            .ok_or_else(|| causal_clock_failure("证券 causal producer 缺少本拍原 TickArc"))?;
+        context.validate_for(self.market_calendar_source(), &self.market_calendar_bindings()?, self.civil_date(),
+            super::exchange_calendar_model::SessionTickLayout {
+                ticks_per_day: self.state.setup.ticks_per_day,
+                auction_ticks: self.state.setup.auction_ticks,
+                closing_auction_ticks: self.state.setup.closing_auction_ticks,
+            }, context.before_input())
+            .map_err(|error| causal_clock_failure(error.to_string()))?;
+        Ok(context)
+    }
+
+    pub(super) fn causal_stock_time(&self, code: StockId, after: bool) -> Result<FactTime, StepFatal> {
+        let context = self.causal_tick_context()?;
+        let expected_tick = if after { context.after_input().tick } else { context.before_input().tick };
+        if expected_tick != self.tick() {
+            return Err(causal_clock_failure("证券 causal 时点不属于本拍 before/after 输入"));
+        }
+        causal_tick_time(context, Some(code), after)
+    }
+
+    pub(super) fn causal_record(&mut self, kind: CausalFactKind) -> Result<(), StepFatal> {
+        let time = match kind.stock_code() {
+            Some(code) => self.causal_stock_time(code, false)?,
+            None => self.causal_time()?,
+        };
+        self.causal_record_at(time, kind)
+    }
+
+    pub(super) fn causal_record_at(&mut self, time: FactTime, kind: CausalFactKind) -> Result<(), StepFatal> {
+        CausalFact { sequence: self.state.causal.fact_count() as u64, time, kind: kind.clone() }
+            .validate_stock_clock().map_err(|error| causal_clock_failure(error.to_string()))?;
         self.state.causal.record(time, kind);
+        Ok(())
     }
 
     pub(super) fn causal_quote(&self, code: &StockId) -> Quote {
@@ -392,18 +466,22 @@ impl GameSession {
         }
     }
 
-    pub(super) fn causal_snapshot(&mut self, code: &StockId) {
-        self.causal_snapshot_at(self.causal_time(), code);
+    pub(super) fn causal_snapshot(&mut self, code: &StockId) -> Result<(), StepFatal> {
+        self.causal_snapshot_at(self.causal_stock_time(*code, false)?, code)
     }
 
-    pub(super) fn causal_snapshot_at(&mut self, time: FactTime, code: &StockId) {
-        self.causal_record_at(time, CausalFactKind::Quote(self.causal_quote(code)));
+    pub(super) fn causal_snapshot_at(&mut self, time: FactTime, code: &StockId) -> Result<(), StepFatal> {
+        self.causal_record_at(time, CausalFactKind::Quote(self.causal_quote(code)))
     }
 
     #[cfg(test)]
-    pub(super) fn causal_submitted(&mut self, order: &Order, code: &StockId) {
+    pub(super) fn causal_submitted(&mut self, order: &Order, code: &StockId) -> Result<(), StepFatal> {
         let quote = self.causal_quote(code);
-        self.causal_submitted_with_quote(order.owner, order.id, code, order.side, order.qty, quote);
+        let (_, context) = self.prepare_market_calendar_tick()?;
+        self.state.causal.active_tick_context = Some(context);
+        let result = self.causal_submitted_with_quote(order.owner, order.id, code, order.side, order.qty, quote);
+        self.state.causal.active_tick_context = None;
+        result
     }
 
     pub(super) fn causal_submitted_with_quote(
@@ -414,8 +492,11 @@ impl GameSession {
         side: crate::Side,
         qty: u32,
         quote: Quote,
-    ) {
-        self.causal_record(CausalFactKind::Quote(quote));
+    ) -> Result<(), StepFatal> {
+        if quote.code != *code {
+            return Err(causal_clock_failure("Submitted 与 before Quote 证券错配"));
+        }
+        self.causal_record(CausalFactKind::Quote(quote))?;
         let plan = self
             .state
             .plans
@@ -431,7 +512,7 @@ impl GameSession {
             decision: self.state.causal.decision_for(account),
             side,
             qty,
-        }));
+        }))
     }
 
     pub(super) fn causal_terminated(
@@ -439,8 +520,8 @@ impl GameSession {
         order: (AccountId, OrderId, u32),
         code: &StockId,
         reason: Termination,
-    ) {
-        self.causal_terminated_at(self.causal_time(), order, code, reason);
+    ) -> Result<(), StepFatal> {
+        self.causal_terminated_at(self.causal_stock_time(*code, false)?, order, code, reason)
     }
 
     pub(super) fn causal_terminated_at(
@@ -449,7 +530,7 @@ impl GameSession {
         order: (AccountId, OrderId, u32),
         code: &StockId,
         reason: Termination,
-    ) {
+    ) -> Result<(), StepFatal> {
         self.causal_record_at(
             time,
             CausalFactKind::Terminated {
@@ -459,8 +540,25 @@ impl GameSession {
                 code: code.clone(),
                 reason,
             },
-        );
+        )
     }
+}
+
+fn causal_clock_failure(description: impl Into<String>) -> StepFatal {
+    StepFatal::InvariantViolation { location: "causal::clock".to_owned(), description: description.into() }
+}
+
+fn causal_tick_time(context: &crate::runtime::MarketTickContext, code: Option<StockId>, after: bool) -> Result<FactTime, StepFatal> {
+    let projection = if after { context.after_projection() } else { context.before_projection() };
+    let stock_clock = code.map(|code| {
+        let clock = projection.stock(code).map_err(|error| causal_clock_failure(error.to_string()))?;
+        if clock.date_session_ordinal().is_none() {
+            return Err(causal_clock_failure(format!("Closed 证券不得产生 causal 事实：{code:?}")));
+        }
+        Ok(StockFactClock { code, completed_minutes: clock.completed_minute_count() })
+    }).transpose()?;
+    Ok(FactTime { phase: context.phase_before(), market_minute: projection.completed_shared_minute_count(),
+        stock_clock, civil: context.observation_instant_after() })
 }
 
 fn checked_runtime_sequence(count: usize, delta: usize) -> Result<u64, String> {
@@ -518,6 +616,8 @@ mod tests {
         assert_ne!(stock.0, company.0, "夹具必须区分股票目录与公司目录的 id");
         let quote = session.causal_quote(&stock);
 
+        let (_, context) = session.prepare_market_calendar_tick().unwrap();
+        session.state.causal.active_tick_context = Some(context);
         session.causal_submitted_with_quote(
             AccountId(0),
             OrderId(1),
@@ -525,7 +625,8 @@ mod tests {
             crate::Side::Buy,
             100,
             quote,
-        );
+        ).unwrap();
+        session.state.causal.active_tick_context = None;
 
         let origin = session
             .causal_facts()
@@ -709,15 +810,15 @@ mod tests {
             seller.value_before=99_500; buyer.value_before=99_500;
         }
         facts.push(next);
-        let delta=game.prepare_runtime_causal_facts(&driver,game.causal_time(),facts.clone()).unwrap();
+        let delta=game.prepare_runtime_causal_facts(&driver,facts.clone()).unwrap();
         assert_eq!(delta.kinds.len(),10);
-        assert!(matches!(delta.kinds[4],CausalFactKind::Filled { order:OrderId(4294967303),value_before:0,gross:99_500,.. }));
-        assert!(matches!(delta.kinds[5],CausalFactKind::Filled { order:OrderId(4294967304),value_before:0,gross:99_500,.. }));
-        assert!(matches!(delta.kinds[7],CausalFactKind::Filled { value_before:99_500,.. }));
+        assert!(matches!(delta.kinds[4].1,CausalFactKind::Filled { order:OrderId(4294967303),value_before:0,gross:99_500,.. }));
+        assert!(matches!(delta.kinds[5].1,CausalFactKind::Filled { order:OrderId(4294967304),value_before:0,gross:99_500,.. }));
+        assert!(matches!(delta.kinds[7].1,CausalFactKind::Filled { value_before:99_500,.. }));
         let mut other=facts[2];other.context=crate::runtime::retail_lifecycle::BatchContext::Tick { tick:game.tick(),round:0,stock:0 };
         if let DeskCausalKind::Execution { seller,buyer,.. }=&mut other.kind { seller.order.0=0;buyer.order.0=0; }
         facts.push(other);
-        game.prepare_runtime_causal_facts(&driver,game.causal_time(),facts).unwrap();
+        game.prepare_runtime_causal_facts(&driver,facts).unwrap();
     }
 
     #[test]
@@ -746,12 +847,12 @@ mod tests {
                     _=>buyer.owner=seller.owner,
                 }
             }
-            assert!(game.prepare_runtime_causal_facts(&driver,game.causal_time(),bad).is_err(),"必须拒绝raw变体{mutation}");
+            assert!(game.prepare_runtime_causal_facts(&driver,bad).is_err(),"必须拒绝raw变体{mutation}");
         }
         // 旧单首次 before 可非零，但 after 的 checked 边界仍不可越过。
         let mut old=vec![facts[2]];
         if let DeskCausalKind::Execution { seller,.. }=&mut old[0].kind {seller.value_before=i64::MAX;}
-        let error=game.prepare_runtime_causal_facts(&driver,game.causal_time(),old).err().unwrap();
+        let error=game.prepare_runtime_causal_facts(&driver,old).err().unwrap();
         assert!(format!("{error:?}").contains("after 溢出"));
         if usize::BITS == 64 {
             assert!(checked_runtime_sequence(usize::MAX, 1).is_err());
@@ -783,7 +884,7 @@ mod tests {
             driver.inject_player_intents(&intents, &upper).unwrap();
             if auction { game.runtime_step_with_install(&mut driver).expect("真实开盘申报窗只受理"); }
             let input = driver.prepare_driver_step(&game).unwrap();
-            let (raw, drain_time) = driver.take_causal_facts();
+            let (raw, drain_time, _) = driver.take_causal_facts();
             assert!(drain_time.is_none());
             let index = raw.iter().position(|fact| matches!(fact.kind, DeskCausalKind::Execution { .. })).expect("必须真有成交才可检查方向域");
             let tick = driver.world_committed_tick();

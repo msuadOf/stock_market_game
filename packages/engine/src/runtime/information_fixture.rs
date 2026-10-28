@@ -128,6 +128,7 @@ pub fn payload(observe: bool) -> InformationPreparePayload {
                 market,
                 company_facts: current_facts,
                 as_of_anchors: clock_at(at(19, 0), 0).anchors().unwrap(),
+                memory_retention: crate::runtime::protocol::InformationMemoryRetention::Preserve,
             })
         } else {
             None

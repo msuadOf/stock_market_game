@@ -1613,7 +1613,7 @@ fn successful_cancel_records_termination_and_post_quote() {
         .unwrap()
         .place(order.clone())
         .unwrap();
-    authority.causal_submitted(&order, &code);
+    authority.causal_submitted(&order, &code).unwrap();
     authority.state.next_order_id = 701;
     authority.hydrate_or_validate_envelope_ledger().unwrap();
     authority

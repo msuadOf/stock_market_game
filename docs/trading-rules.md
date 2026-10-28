@@ -411,6 +411,17 @@ Tick 与 Drain 使用显式不同的报告身份域，各自局部 ordinal 不�
 DayArc、World 已验证 tick 与纯 Calendar projection，不补造 TickArc。没有真实 rich
 Drain 事实的 Closed 日终不构造市场时刻；手动输入本日零完成拍仅表示当前首窗口，
 其他输入表示最后完成窗口。shared market minute 的单位保持不变。
+`FactTime.market_minute` 始终为 shared 累计已完成分钟；证券事实另携
+`StockFactClock { code, completed_minutes }`，本股计数按该证券实际交易所日历推进。
+`Submitted/Filled/Terminated/Execution/Quote` 必须有匹配证券的 clock；
+`Decision/Acquisition/Budget/ObservationRestart` 必须不携证券 clock。两种分钟均以
+十进制字符串输出；寿命与盘口恢复仅按同股局部计数做 checked subtraction，缺失、
+错股或回退显式拒绝。shared 端点本身的回退仍独立拒绝，不以本股寿命替代该门。
+Tick/Continue 使用实际 caller 原 TickArc 的 before projection、
+phase_before 与 observation_instant_after；DayEnd 余单与清簿 Quote 使用原 after。
+serial 的 Arc 仅暂存于私有 candidate，冻结提交前清除，不进入存档或 hash；INFO 与
+restore 静点只读原 DayArc projection，不为 Closed 或 Completed 日期补造 TickArc。
+诊断观测不改变当日有效委托、T+1 或现有日历简化范围。
 Market 余量、拒单、TTL 到期、CancelAll 未解析来源及竞价自成交排除的 rich 生命周期
 仍未全部支持，遇到这些真实路径显式拒绝报告，不能用空报告冒充完整诊断。
 
@@ -630,8 +641,23 @@ NPC 默认策略只在缴款首日日终对未显式申请的非玩家、非回�
 
 显式 `RuntimeDriver::deliver_information` 的订阅资格仍是当前持仓与 watchlist；
 该旧入口尚未覆盖仅有 pending sell 或 active plan 的订阅，属于不支持边界。
-serial 与 Admin 信息观察入口包含 active plan，后续生产 civil 投递使用同事务 Admin
-入口；不能据 typed anchor 迁移宣称三个入口的订阅资格已经完全一致。
+serial 与 Admin 信息观察入口包含 active plan；不能据 typed anchor 迁移宣称三个
+入口的订阅资格已经完全一致。
+
+native runtime 的 `GameSession`／`ProtocolSession` 自然日日结在同一次 Admin 事务内准备
+全部 live Group 的本人获知、信念与两类记忆裁剪。观察使用原自然日的真实逐股
+Calendar projection 和本次报告的 `disclosure_instant`，不把已前进的次日当作披露日；
+休市日不制造市场 tick、不消费交易 intent 或市场 RNG。公开 callback 与日终存档读取
+同版候选，成功尾只安装同次镜像及预验证的公司、自然日时钟、披露游标和事件序号。
+
+日终先按原 watchlist、持仓及 active plan 完成本人观察，再裁 watchlist／price_memory；
+保护集包含在手股、pending sell 与 active plan，不裁 `history_reads`。即使本人 INFO
+检查未到期或命中同一观察签名，日终裁剪仍在同一个 Group 候选内完成。首个休市日的
+可逆投影拒绝保留原状态并允许重试；本 authority 已实际安装市场收盘后的 civil 失败
+保留收盘并终结该会话。构造／restore 的静点标记不冒充实际市场收盘。
+
+本条只说明普通自然日 INFO 入口；Correction queue 的完成、资本动作、税日 producer、
+三宿主恢复流程与 WASM runtime 迁移仍按各自登记边界验收，不由本条宣称完成。
 
 ### 共同 Calendar 日终来源与逐股迁移（2026-10-28）
 

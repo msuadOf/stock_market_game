@@ -7,6 +7,8 @@ use std::sync::Arc;
 /// 仅持本次镜像替换值；不克隆 GameSession、World 或运行线程。
 pub(crate) struct PreparedRuntimeMirror {
     #[cfg(feature = "simulation-diagnostics")]
+    pub(crate) causal_calendar: crate::runtime::drive::PreparedDriverCalendar,
+    #[cfg(feature = "simulation-diagnostics")]
     decision_traces: crate::diagnostics::decision_trace::NpcDecisionTraceCollector,
     accounts: BTreeMap<AccountId, Account>,
     personals: BTreeMap<AccountId, (usize, BeliefParticipantSnapshot)>,
@@ -157,6 +159,8 @@ impl GameSession {
         expected_authority_epoch: u64,
     ) -> Result<PreparedRuntimeMirror, String> {
         input.validate_calendar(self, tick, driver.world_committed_tick())?;
+        #[cfg(feature = "simulation-diagnostics")]
+        let causal_calendar = input.calendar.clone();
         let static_read = input.static_read;
         let is_static = static_read.is_some();
         let static_session_revision = static_read.as_ref().map(|read| read.session_revision);
@@ -813,6 +817,8 @@ impl GameSession {
             return Err("安装失败注入（私有镜像 candidate 校验失败）".to_owned());
         }
         Ok(PreparedRuntimeMirror {
+            #[cfg(feature = "simulation-diagnostics")]
+            causal_calendar,
             #[cfg(feature = "simulation-diagnostics")]
             decision_traces: if manual_day_end { self.state.npc_decision_traces.clone() }
                 else { self.prepare_runtime_decision_traces(driver, tick, &input.plans, &events)? },

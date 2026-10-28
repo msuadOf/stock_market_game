@@ -245,6 +245,7 @@ fn origin_mixed_stock_day_end_uses_real_group_and_rejects_closed_company_executi
     });
     group.seal_acked_len = Some(group.undo.len());
     group.apply_batch_immediate(DeskBatch {
+        repurchase: Vec::new(),
         stock: 0, tick: 9, round: 0,
         entities: vec![Entity::BoughtShares { local: 0, qty: 100 },
             Entity::CashRefund { local: 0, amount: 100_000 },

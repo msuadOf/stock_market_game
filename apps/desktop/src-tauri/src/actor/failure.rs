@@ -42,9 +42,18 @@ pub(super) fn failure_description(
 ) -> (&'static str, &'static str) {
     if let Some(error) = error.downcast_ref::<SessionError>() {
         return match error {
+            SessionError::ReportCorrectionDayEnd(source) => failure_description(source),
+            SessionError::CivilInformation(_) => (
+                "CIVIL_INFORMATION_FAILED",
+                "自然日信息事务失败（内部详情已脱敏）",
+            ),
             SessionError::Closing(_) => (
                 "SESSION_CLOSING_FAILED",
                 "自然日日终封账失败（私有详情已脱敏）",
+            ),
+            SessionError::ReportCorrectionRestore(_) => (
+                "SESSION_STATE_INVALID",
+                "更正完成事实与真实会计和公开版本不一致（原始详情已脱敏）",
             ),
             SessionError::InvalidSave(_) => (
                 "SESSION_STATE_INVALID",
@@ -56,6 +65,25 @@ pub(super) fn failure_description(
             ),
             _ => ("SESSION_OPERATION_FAILED", "会话操作失败（原始详情已脱敏）"),
         };
+    }
+    if let Some(error) = error.downcast_ref::<engine::session::ReportCorrectionDayEndError>() {
+        return if error.classification() == engine::company::CompanyErrorClass::SystemState {
+            (
+                "REPORT_CORRECTION_FAILED",
+                "报表更正日终准备失败（内部详情已脱敏）",
+            )
+        } else {
+            (
+                "REPORT_CORRECTION_REJECTED",
+                "报表更正未满足提交条件（内部详情已脱敏）",
+            )
+        };
+    }
+    if error.is::<engine::session::CivilInformationError>() {
+        return (
+            "CIVIL_INFORMATION_FAILED",
+            "自然日信息事务失败（内部详情已脱敏）",
+        );
     }
     if let Some(error) = error.downcast_ref::<engine::accounting::closing::ClosingError>() {
         return match error {
@@ -89,6 +117,12 @@ pub(super) fn failure_description(
         return (
             "INVARIANT_VIOLATION",
             "引擎不变量校验失败（原始详情已脱敏）",
+        );
+    }
+    if error.is::<engine::session::ReportCorrectionRestoreError>() {
+        return (
+            "REPORT_CORRECTION_RESTORE_FAILED",
+            "报表更正存档关联校验失败（原始详情已脱敏）",
         );
     }
     ("ERROR_DETAILS_REDACTED", "原始错误类型未识别，详情未公开")

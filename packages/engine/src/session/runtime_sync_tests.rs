@@ -36,7 +36,7 @@ fn candidate_validation_changes_no_session_domain() {
         mirror
     );
     assert_eq!(game.poison_reason(), Some(&fatal));
-    assert_eq!(game.save().unwrap_err(), fatal);
+    assert!(matches!(game.save(), Err(crate::SessionError::Step(actual)) if actual == fatal));
     assert_eq!(
         driver.account_writes_for_test(),
         before_account_writes,
@@ -98,7 +98,7 @@ fn civil_failure_after_swap_is_terminal_without_restore() {
         "已安装账户、T+1、K 与行情保持同一读点"
     );
     assert_eq!(game.poison_reason(), Some(&fatal), "失败必须封存同一首错");
-    assert_eq!(game.save().unwrap_err(), fatal);
+    assert!(matches!(game.save(), Err(crate::SessionError::Step(actual)) if actual == fatal));
     assert_eq!(game.step().unwrap_err(), fatal);
     assert!(matches!(game.end_civil_day(), Err(SessionError::Step(ref error)) if error == &fatal));
 }
@@ -139,7 +139,7 @@ fn ordinary_callback_failure_keeps_old_mirror_and_first_error() {
         description: "不得覆盖首错".to_owned(),
     };
     assert_eq!(game.poison_runtime_step(later), fatal);
-    assert_eq!(game.save().unwrap_err(), fatal);
+    assert!(matches!(game.save(), Err(crate::SessionError::Step(actual)) if actual == fatal));
 }
 
 #[test]
@@ -289,7 +289,7 @@ fn day_end_callback_failure_keeps_published_retained_and_old_mirror() {
         game.runtime_driver.is_some(),
         "保留已提交 World 及首错诊断，不能丢弃后重建"
     );
-    assert_eq!(game.save().unwrap_err(), fatal);
+    assert!(matches!(game.save(), Err(crate::SessionError::Step(actual)) if actual == fatal));
     assert_eq!(game.step_frame().unwrap_err(), fatal);
 }
 

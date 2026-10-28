@@ -166,16 +166,33 @@ fn d1_unsupported_market_operation_is_explicit_and_rolls_back() {
 
 #[test]
 fn d1_unsupported_day_end_with_resting_orders_rolls_back_before_drain() {
+    // 保留历史 exact 名称及原 30 拍输入；能力现已接通，验证真实 DayEnd 余单与守恒。
     let mut game = GameSession::new(setup(), 7).unwrap();
     let code = game.stock_id("600101").unwrap();
     game.enqueue_player_intent(AccountId(0), place(code)).unwrap();
-    for _ in 0..29 { game.step().unwrap(); }
-    let before = game.business_state_hash().unwrap();
-    let facts = serde_json::to_value(game.causal_facts()).unwrap();
-    let outcome = game.step();
-    assert!(matches!(outcome, Err(engine::session::StepFatal::InvariantViolation { ref location, ref description })
-        if location == "runtime::diagnostics::prepare" && description.contains("DayEnd")),
-        "未接通的DayEnd终止不能仍报open订单：{outcome:?}");
-    assert_eq!(game.business_state_hash().unwrap(), before);
-    assert_eq!(serde_json::to_value(game.causal_facts()).unwrap(), facts);
+    let mut order = None;
+    for _ in 0..29 {
+        for event in game.step().unwrap() {
+            if let Event::OrderAccepted { id, account: AccountId(0), .. } = event { order = Some(id); }
+        }
+    }
+    let order = order.expect("原输入必须产生真实 OrderId");
+    let date = game.civil_date();
+    let prefix = serde_json::to_value(game.causal_facts()).unwrap();
+    let count = game.causal_facts().len();
+    let events = game.step().expect("真实末拍已支持 DayEnd");
+    assert!(events.iter().any(|event| matches!(event, Event::OrderCanceled { id, remaining_qty: 100, .. } if *id == order)));
+    assert_eq!(serde_json::to_value(&game.causal_facts()[..count]).unwrap(), prefix);
+    let terminal = game.causal_facts()[count..].iter().find(|fact| matches!(fact.kind,
+        CausalFactKind::Terminated { order: id, code: actual, qty: 100, reason: Termination::DayEnd, .. } if id == order && actual == code)).unwrap();
+    assert_eq!(terminal.time.market_minute, 240);
+    assert_eq!(terminal.time.stock_clock.unwrap().completed_minutes, 240);
+    assert_eq!(terminal.time.stock_clock.unwrap().code, code);
+    assert_eq!(terminal.time.civil.date(), date);
+    assert_eq!(terminal.time.civil.second_of_day(), 15 * 3600);
+    let report = game.causal_diagnostics().unwrap();
+    let row = report.orders.iter().find(|row| row.origin.order == order).unwrap();
+    assert_eq!((row.origin.qty, row.filled_qty, row.canceled_qty, row.aborted_qty, row.open_qty), (100, 0, 100, 0, 0));
+    assert_eq!(row.lifetime_market_minutes, Some(240));
+    assert_eq!(report.submitted_qty, report.filled_qty + report.canceled_qty + report.aborted_qty + report.open_qty);
 }

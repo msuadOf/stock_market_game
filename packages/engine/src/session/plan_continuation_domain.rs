@@ -225,7 +225,7 @@ impl<'a> PlanContinuationDomain<'a> {
         &mut self,
         code: &StockId,
         fills: &[OrderFillSettlement],
-    ) -> Result<(), crate::plans::PlanError> {
+    ) -> Result<(), StepFatal> {
         self.session.record_parent_order_fills(code, fills)
     }
 
@@ -327,8 +327,8 @@ impl<'a> PlanContinuationDomain<'a> {
     pub(in crate::session) fn causal_record(
         &mut self,
         kind: crate::diagnostics::causal::CausalFactKind,
-    ) {
-        self.session.causal_record(kind);
+    ) -> Result<(), StepFatal> {
+        self.session.causal_record(kind)
     }
 
     /// diagnostics（simulation-diagnostics）：带报价的提交事实。
@@ -341,9 +341,9 @@ impl<'a> PlanContinuationDomain<'a> {
         side: Side,
         qty: u32,
         quote: crate::diagnostics::causal::Quote,
-    ) {
+    ) -> Result<(), StepFatal> {
         self.session
-            .causal_submitted_with_quote(account, order_id, code, side, qty, quote);
+            .causal_submitted_with_quote(account, order_id, code, side, qty, quote)
     }
 
     /// diagnostics（simulation-diagnostics）：终结事实。
@@ -353,8 +353,8 @@ impl<'a> PlanContinuationDomain<'a> {
         order: (AccountId, OrderId, u32),
         code: &StockId,
         reason: crate::diagnostics::causal::Termination,
-    ) {
-        self.session.causal_terminated(order, code, reason);
+    ) -> Result<(), StepFatal> {
+        self.session.causal_terminated(order, code, reason)
     }
 }
 

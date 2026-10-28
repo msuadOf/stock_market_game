@@ -1862,7 +1862,12 @@ mod d0b_storage_tests {
 
     fn seed(session: &mut ProtocolSession) {
         let game = &mut session.state.game;
-        let time = game.causal_time();
+        let time = game.causal_time().unwrap();
+        // 纯 storage fixture，固定本股值，不冒 Calendar producer 或有效成交报告。
+        let stock_time = crate::diagnostics::causal::FactTime {
+            stock_clock: Some(crate::diagnostics::causal::StockFactClock { code: StockId(0), completed_minutes: 0 }),
+            ..time
+        };
         for key in 0..257u64 {
             let account = AccountId(key << 32);
             game.state.causal.record_plan_root(
@@ -1871,7 +1876,7 @@ mod d0b_storage_tests {
                 [CausalFactKind::Decision { account }],
             );
             game.state.causal.record_continuous_fill(
-                time,
+                stock_time,
                 OrderId((1 << 40) + key),
                 account,
                 &StockId(0),
@@ -1903,7 +1908,12 @@ mod d0b_storage_tests {
 
     fn advance_seed(session: &mut ProtocolSession, tick: u64) {
         let game = &mut session.state.game;
-        let time = game.causal_time();
+        let time = game.causal_time().unwrap();
+        // 纯 storage fixture，固定本股值，不冒 Calendar producer 或有效成交报告。
+        let stock_time = crate::diagnostics::causal::FactTime {
+            stock_clock: Some(crate::diagnostics::causal::StockFactClock { code: StockId(0), completed_minutes: 0 }),
+            ..time
+        };
         game.state.causal.record_plan_root(
             time,
             AccountId(17 << 32),
@@ -1912,7 +1922,7 @@ mod d0b_storage_tests {
             }],
         );
         game.state.causal.record_continuous_fill(
-            time,
+            stock_time,
             OrderId((1 << 40) + 17),
             AccountId(17 << 32),
             &StockId(0),

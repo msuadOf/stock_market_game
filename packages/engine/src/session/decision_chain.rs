@@ -1173,8 +1173,17 @@ impl GameSession {
         id: AccountId,
         diagnostics: PlanRootDiagnostics,
         plans: &PlanBook,
-    ) {
-        let time = self.causal_time();
+    ) -> Result<(), StepFatal> {
+        let time = self.causal_time()?;
+        for (index, kind) in diagnostics.facts.iter().enumerate() {
+            let sequence = u64::try_from(self.state.causal.fact_count()).ok()
+                .and_then(|count| u64::try_from(index).ok().and_then(|index| count.checked_add(index)))
+                .ok_or_else(|| StepFatal::InvariantViolation { location: "causal::root".to_owned(), description: "root sequence 溢出".to_owned() })?;
+            crate::diagnostics::causal::CausalFact { sequence, time, kind: kind.clone() }
+                .validate_stock_clock().map_err(|error| StepFatal::InvariantViolation {
+                    location: "causal::root".to_owned(), description: error.to_string(),
+                })?;
+        }
         self.state
             .causal
             .record_plan_root(time, id, diagnostics.facts);
@@ -1185,6 +1194,7 @@ impl GameSession {
             plans,
             &[],
         );
+        Ok(())
     }
 
     #[cfg(feature = "simulation-diagnostics")]
@@ -4806,7 +4816,7 @@ mod chain_restructure_tests {
         #[cfg(feature = "simulation-diagnostics")]
         {
             let plans = session.state.plans.clone();
-            session.record_plan_root_diagnostics(account, diagnostics, &plans);
+            session.record_plan_root_diagnostics(account, diagnostics, &plans).unwrap();
         }
         #[cfg(not(feature = "simulation-diagnostics"))]
         let _ = diagnostics;

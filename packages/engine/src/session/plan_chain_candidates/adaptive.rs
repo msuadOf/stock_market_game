@@ -257,7 +257,7 @@ impl PlanChainOperationBatch {
                                         .map(|grant| grant.allocated_cash.cents())
                                         .collect(),
                                 },
-                            );
+                            )?;
                         }
                         self.push_quote_plans(cursor);
                     }

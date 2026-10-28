@@ -250,6 +250,14 @@ impl<'a> PreparedSimpleDisclosureCorrection<'a> {
     pub(crate) fn proof(&self) -> &super::report_correction::ConfirmedDisclosureCorrections<'a> {
         &self.proof
     }
+    /// 更正先入账，再由同一包推进经营与封账；失败时丢弃整个私有候选。
+    pub(crate) fn advance_day(
+        mut self,
+        date: crate::calendar::CivilDate,
+    ) -> Result<Self, super::CompanySystemError> {
+        self.system.advance_day(date)?;
+        Ok(self)
+    }
     pub(crate) fn into_source(self) -> super::CompanySystem {
         self.system
     }

@@ -239,6 +239,8 @@ fn day_end_causal_facts_keep_the_completed_continuous_phase() {
     for fact in [termination, closing_quote] {
         assert_eq!(fact.time.phase, TradingPhase::Continuous);
         assert_eq!(fact.time.market_minute, 240);
+        assert_eq!(fact.time.stock_clock.unwrap().code, code);
+        assert_eq!(fact.time.stock_clock.unwrap().completed_minutes, 240);
         assert_eq!(fact.time.civil, expected_civil);
     }
 }

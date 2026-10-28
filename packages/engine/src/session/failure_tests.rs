@@ -16,7 +16,7 @@ fn skeleton_failure_preserves_business_and_poison_context() {
     assert_ne!(game.session_state_hash().unwrap(), session);
     assert_eq!(game.poison_reason(), Some(&fatal));
     assert_eq!(game.step().unwrap_err(), fatal);
-    assert_eq!(game.save().unwrap_err(), fatal);
+    assert!(matches!(game.save(), Err(crate::SessionError::Step(actual)) if actual == fatal));
     assert!(matches!(game.end_civil_day(), Err(SessionError::Step(error)) if error == fatal));
     let poisoned = game.poison.take();
     assert_eq!(game.session_state_hash().unwrap(), session);
@@ -165,7 +165,7 @@ fn typed_private_plan_failure_is_poisoned_without_mutating_authority() {
     assert_ne!(game.session_state_hash().unwrap(), session_before);
     assert_eq!(game.poison_reason(), Some(&fatal));
     assert_eq!(game.step().unwrap_err(), fatal);
-    assert_eq!(game.save().unwrap_err(), fatal);
+    assert!(matches!(game.save(), Err(crate::SessionError::Step(actual)) if actual == fatal));
 }
 
 // ── Sol 二审修复集 3：runtime 步进失败立即停止安装 + 安装失败撤销已推进状态 ──
@@ -1094,5 +1094,5 @@ fn d0_day_end_candidate_rejection_preserves_sparse_account_mirror_and_market_sou
     assert_eq!(publication.load().retained.days.len(), 1, "已发布 retained 不撤回");
     assert_eq!(game.poison_reason(), Some(&fatal));
     assert_eq!(driver.step_frame_equivalent(&mut game).unwrap_err(), fatal);
-    assert_eq!(game.save().unwrap_err(), fatal);
+    assert!(matches!(game.save(), Err(crate::SessionError::Step(actual)) if actual == fatal));
 }

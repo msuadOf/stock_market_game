@@ -185,7 +185,7 @@ pub(super) fn finalize_continuous_tick(
             let qty = fact.qty();
             #[cfg(feature = "simulation-diagnostics")]
             {
-                let time = session.causal_time();
+                let time = session.causal_stock_time(receipt.envelope.stock, false).map_err(finalize_error)?;
                 session
                     .state
                     .causal
@@ -276,8 +276,6 @@ struct ContinuousDayEndLifecycleProjection<'a> {
     day_end_event_base: u64,
     facts: Vec<EventFact>,
     #[cfg(feature = "simulation-diagnostics")]
-    day_end_causal_time: crate::diagnostics::causal::FactTime,
-    #[cfg(feature = "simulation-diagnostics")]
     cleared_quote_codes: std::collections::BTreeSet<StockId>,
 }
 
@@ -287,12 +285,6 @@ impl<'a> ContinuousDayEndLifecycleProjection<'a> {
         receipts: &'a [super::EnvelopeReceipt],
         day_end_event_base: u64,
     ) -> Self {
-        #[cfg(feature = "simulation-diagnostics")]
-        let day_end_causal_time = {
-            let mut time = session.causal_time();
-            time.phase = TradingPhase::Continuous;
-            time
-        };
         let mut releases = receipts
             .iter()
             .filter(|receipt| matches!(receipt.local_key.source(), ReceiptSource::DayEnd(_)))
@@ -309,8 +301,6 @@ impl<'a> ContinuousDayEndLifecycleProjection<'a> {
             releases,
             day_end_event_base,
             facts: Vec::new(),
-            #[cfg(feature = "simulation-diagnostics")]
-            day_end_causal_time,
             #[cfg(feature = "simulation-diagnostics")]
             cleared_quote_codes,
         }
@@ -331,11 +321,11 @@ impl<'a> ContinuousDayEndLifecycleProjection<'a> {
         let key = &release.envelope;
         #[cfg(feature = "simulation-diagnostics")]
         self.candidate.causal_terminated_at(
-            self.day_end_causal_time,
+            self.candidate.causal_stock_time(key.stock, true)?,
             (key.account, key.order, release.qty_before),
             &key.stock,
             crate::diagnostics::causal::Termination::DayEnd,
-        );
+        )?;
         self.candidate
             .record_parent_order_canceled(key.account, &key.stock, key.order)
             .map_err(|error| invariant(&error.to_string()))?;
@@ -378,7 +368,7 @@ impl<'a> ContinuousDayEndLifecycleProjection<'a> {
         #[cfg(feature = "simulation-diagnostics")]
         for code in self.cleared_quote_codes {
             self.candidate
-                .causal_snapshot_at(self.day_end_causal_time, &code);
+                .causal_snapshot_at(self.candidate.causal_stock_time(code, true)?, &code)?;
         }
         // 计划日终迁移由 TradingDayEndTransition 统一扫描唯一 owner，
         // 本投影仅记录确认释放，不再维护第二份执行计划或待同步队列。
@@ -444,7 +434,14 @@ mod lifecycle_tests {
         let mut setup = crate::session::npc_working_quote_tests::two_stock_quote_setup();
         setup.npcs.retail_count = 1;
         setup.npcs.inst_count = 0;
-        GameSession::new(setup, 42).unwrap()
+        let mut session = GameSession::new(setup, 42).unwrap();
+        #[cfg(feature = "simulation-diagnostics")]
+        {
+            let (_, context) = session.prepare_market_calendar_tick().unwrap();
+            session.state.tick = context.after_input().tick;
+            session.state.causal.active_tick_context = Some(context);
+        }
+        session
     }
 
     fn release(code: StockId, account: AccountId, order: u64) -> super::super::EnvelopeReceipt {

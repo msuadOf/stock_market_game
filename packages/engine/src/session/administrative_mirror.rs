@@ -1,5 +1,6 @@
 //! 同次真实行政候选的专用镜像；不消费 tick ingress、回执或同步覆盖表。
 
+use super::civil_information::PreparedCivilFields;
 use super::*;
 use crate::runtime::drive::{AdministrativeBaseline, RuntimeDriver};
 use crate::runtime::world::{
@@ -9,13 +10,43 @@ use crate::runtime::world::{
 use crate::runtime::{GroupIdx, RuntimeError};
 use std::sync::Arc;
 
+/// 自然日 INFO 事务失败；保留真实 cause，内部 runtime 协议不作为公开 API。
+#[derive(Debug, thiserror::Error)]
+#[error("自然日 INFO 事务失败：date={date}，{source}")]
+pub struct CivilInformationError {
+    date: crate::calendar::CivilDate,
+    #[source]
+    source: Box<dyn std::error::Error + Send + Sync>,
+}
+
+impl CivilInformationError {
+    pub(super) fn new(date: crate::calendar::CivilDate, source: RuntimeError) -> Self {
+        Self {
+            date,
+            source: Box::new(source),
+        }
+    }
+
+    fn from_mirror(date: crate::calendar::CivilDate, source: AdministrativeMirrorError) -> Self {
+        match source {
+            AdministrativeMirrorError::Runtime(source) => Self::new(date, source),
+            source => Self {
+                date,
+                source: Box::new(source),
+            },
+        }
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum AdministrativeMirrorError {
     #[error(transparent)]
     Runtime(#[from] RuntimeError),
     #[error(transparent)]
     Session(#[from] StepFatal),
-    #[error("行政入口 civil_date 不一致：Session={expected}，World={actual}；请先完成原自然日同步")]
+    #[error(
+        "行政入口 civil_date 不一致：Session={expected}，World={actual}；请先完成原自然日同步"
+    )]
     CivilDateMismatch {
         expected: crate::calendar::CivilDate,
         actual: crate::calendar::CivilDate,
@@ -46,6 +77,57 @@ struct AdministrativePersonalMaps {
     histories: AccountPagedMap<crate::experience::PersonalHistoryReadLedger>,
     retail: AccountPagedMap<RetailExperienceState>,
 }
+
+/// 仅在同次 prepare callback 内借用；不构造第二份 authority 或持久 token。
+pub(super) struct PreparedAdministrativeProjection<'a> {
+    original: &'a GameSession,
+    prepared: &'a PreparedAdministrativeMirror,
+}
+
+impl PreparedAdministrativeProjection<'_> {
+    /// clone 和页分离均在首 Commit 前；None 域显式重置为原 Session 同版值。
+    pub(super) fn clone_into_civil_shadow(&self, shadow: &mut GameSession) {
+        shadow.state.accounts = self.prepared.accounts.clone();
+        let (attention, beliefs, histories, retail) = match &self.prepared.personal_maps {
+            Some(maps) => (
+                &maps.attention,
+                &maps.beliefs,
+                &maps.histories,
+                &maps.retail,
+            ),
+            None => (
+                &self.original.state.npc_attention,
+                &self.original.state.belief_participants,
+                &self.original.state.history_reads,
+                &self.original.state.retail_experience,
+            ),
+        };
+        shadow.state.npc_attention = attention.clone();
+        shadow.state.belief_participants = beliefs.clone();
+        shadow.state.history_reads = histories.clone();
+        shadow.state.retail_experience = retail.clone();
+        shadow.state.runtime_heap_dirty = true;
+        shadow.state.library = Arc::clone(
+            self.prepared
+                .library
+                .as_ref()
+                .unwrap_or(&self.original.state.library),
+        );
+        shadow.state.plans = self
+            .prepared
+            .plans
+            .as_ref()
+            .unwrap_or(&self.original.state.plans)
+            .clone();
+        shadow
+            .revision
+            .store(self.prepared.revision, std::sync::atomic::Ordering::Relaxed);
+        shadow.runtime_mirror_install_sequence = self.prepared.install_sequence;
+    }
+}
+
+// 仅供 World 沿既有错误通道 Abort；原 SessionError 保存在同一调用栈中。
+const CIVIL_PREPARATION_REJECTED: &str = "civil INFO precommit callback 已拒绝候选";
 
 impl AdministrativeBaseline {
     /// 保留个人态其余字段，只叠同源真实 scheduler 两字段；cache 仍保原 raw 候选。
@@ -84,7 +166,9 @@ impl GameSession {
         information: Option<InformationPreparePayload>,
         inspect: impl FnOnce(&AdminCandidate) -> Result<P, RuntimeError>,
     ) -> Result<P, AdministrativeMirrorError> {
-        self.apply_administrative_scope(grouped, information, None, inspect)
+        self.apply_administrative_scope(grouped, information, None, |candidate, _projection| {
+            inspect(candidate).map(|value| (None, value))
+        })
     }
 
     pub(in crate::session) fn apply_repurchase_administrative_operations<P>(
@@ -94,7 +178,56 @@ impl GameSession {
         repurchase: crate::runtime::RepurchasePreparePayload,
         inspect: impl FnOnce(&AdminCandidate) -> Result<P, RuntimeError>,
     ) -> Result<P, AdministrativeMirrorError> {
-        self.apply_administrative_scope(grouped, information, Some(repurchase), inspect)
+        self.apply_administrative_scope(
+            grouped,
+            information,
+            Some(repurchase),
+            |candidate, _projection| inspect(candidate).map(|value| (None, value)),
+        )
+    }
+
+    pub(in crate::session) fn apply_civil_information_administrative_operations<P>(
+        &mut self,
+        grouped: Vec<(GroupIdx, Vec<AdminOperation>)>,
+        information: InformationPreparePayload,
+        prepare: impl FnOnce(
+            &AdminCandidate,
+            &PreparedAdministrativeProjection<'_>,
+        ) -> Result<(PreparedCivilFields, P), SessionError>,
+    ) -> Result<P, SessionError> {
+        let date = self.civil_date();
+        let mut original_error = None;
+        let result = self.apply_administrative_scope(
+            grouped,
+            Some(information),
+            None,
+            |candidate, projection| match prepare(candidate, projection) {
+                Ok((fields, value)) => Ok((Some(fields), value)),
+                Err(error) => {
+                    original_error = Some(error);
+                    Err(invalid(CIVIL_PREPARATION_REJECTED))
+                }
+            },
+        );
+        match result {
+            Ok(value) => Ok(value),
+            Err(error) => {
+                // Abort／通信 terminal 保首错，不能被较早的业务拒绝遮蔽。
+                if let Some(fatal) = self.poison_reason() {
+                    return Err(SessionError::Step(fatal.clone()));
+                }
+                if let AdministrativeMirrorError::Session(fatal) = error {
+                    return Err(SessionError::Step(fatal));
+                }
+                // callback 失败后唯一余路为 World Abort；健康返回才取回原值，不解析文本。
+                if let Some(original) = original_error {
+                    return Err(original);
+                }
+                Err(SessionError::CivilInformation(
+                    CivilInformationError::from_mirror(date, error),
+                ))
+            }
+        }
     }
 
     fn apply_administrative_scope<P>(
@@ -102,7 +235,10 @@ impl GameSession {
         grouped: Vec<(GroupIdx, Vec<AdminOperation>)>,
         information: Option<InformationPreparePayload>,
         repurchase: Option<crate::runtime::RepurchasePreparePayload>,
-        inspect: impl FnOnce(&AdminCandidate) -> Result<P, RuntimeError>,
+        prepare: impl FnOnce(
+            &AdminCandidate,
+            &PreparedAdministrativeProjection<'_>,
+        ) -> Result<(Option<PreparedCivilFields>, P), RuntimeError>,
     ) -> Result<P, AdministrativeMirrorError> {
         self.require_healthy()?;
         if self.runtime_driver.is_none() {
@@ -161,16 +297,22 @@ impl GameSession {
                         revision,
                         sequence,
                     )?;
-                    let value = inspect(candidate)?;
+                    let projection = PreparedAdministrativeProjection {
+                        original: self,
+                        prepared: &prepared,
+                    };
+                    let (civil, value) = prepare(candidate, &projection)?;
                     if self.external_revision() != revision
                         || self.runtime_mirror_install_sequence != sequence
+                        || self.tick() != baseline.source.tick
+                        || self.runtime_authority_epoch != baseline.source.authority_epoch
                     {
                         return Err(invalid("行政 prepare 的 Session 来源在 inspect 期间改变"));
                     }
-                    Ok((value, prepared))
+                    Ok((value, prepared, civil))
                 },
             );
-            let ((value, prepared), ack) = match result {
+            let ((value, prepared, civil), ack) = match result {
                 Ok(value) => value,
                 Err(error) => {
                     self.retain_administrative_terminal(&driver, &error);
@@ -178,6 +320,11 @@ impl GameSession {
                 }
             };
             self.install_administrative_mirror(&mut driver, prepared);
+            if let Some(fields) = civil {
+                let next_date = fields.install_into(self);
+                driver.install_administrative_civil_date(next_date);
+                driver.adopt_session_seq(self);
+            }
             driver.ack_prepared_mirror(ack);
             Ok(value)
         }));

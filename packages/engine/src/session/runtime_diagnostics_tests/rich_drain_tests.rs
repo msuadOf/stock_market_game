@@ -89,6 +89,9 @@ fn assert_after_time(fact: &crate::diagnostics::causal::CausalFact, committed: &
     assert_eq!(fact.time.civil, committed.calendar.observation_instant_after(),
         "civil 必须来自原结束拍，不从次日 Session 或常量倒推");
     assert_eq!(fact.time.phase, committed.calendar.phase_before());
+    let clock = fact.time.stock_clock.expect("真实 Drain 证券事实必须携本股 clock");
+    assert_eq!(Some(clock.code), fact.kind.stock_code());
+    assert_eq!(clock.completed_minutes, committed.calendar.after_projection().stock(clock.code).unwrap().completed_minute_count());
 }
 
 fn assert_retained_current_source(driver: &RuntimeDriver, committed: &CommittedCalendarTick) {
@@ -130,6 +133,7 @@ fn assert_civil_acquisitions(
         assert_eq!(*account, SELLER);
         assert_eq!(acquired.date(), committed.calendar.day().day_model().current_date());
         assert_eq!(acquired.second_of_day(), 18 * 60 * 60, "本 fixture 的获知必须来自真实 18:00 披露窗口");
+        assert_eq!(fact.time.stock_clock, None, "INFO 不得携带证券时钟");
         assert_eq!(fact.time.civil, *acquired);
         assert_eq!(fact.time.phase, committed.calendar.phase_before());
         assert_eq!(fact.time.market_minute, committed.calendar.after_projection().completed_shared_minute_count());
@@ -304,7 +308,7 @@ fn d3_rich_manual_late_civil_failure_keeps_unpublished_prior_but_installed_accou
     assert!(retained.generation > generation);
     assert_eq!(retained.retained.days.len(), 1, "已发布 retained 不撤回");
     assert_eq!(game.civil_date(), date);
-    assert_eq!(game.save().unwrap_err(), fatal);
+    assert!(matches!(game.save().unwrap_err(), crate::SessionError::Step(actual) if actual == fatal));
     assert_eq!(driver.step_frame_equivalent(&mut game).unwrap_err(), fatal);
     assert_eq!(driver.day_end(&mut game).unwrap_err(), fatal.to_string(), "不能复活原 poison 实例重跑");
     assert!(Arc::ptr_eq(&publication.load().retained, &retained.retained));
@@ -354,6 +358,36 @@ fn d3_rich_healthy_manual_publishes_only_real_drain_and_keeps_pending_tick_roots
 }
 
 #[test]
+fn d3_rich_external_driver_keeps_authority_through_closed_days_and_next_step() {
+    // Closed 日没有既存 retained；不能让日终尾部又按全局 native 开关另建 authority。
+    let mut setup = crate::session::npc_working_quote_tests::retail_quote_setup();
+    setup.start_date = CivilDate::from_ymd(2030, 1, 5).unwrap();
+    setup.ticks_per_day = 4;
+    setup.auction_ticks = 0;
+    setup.closing_auction_ticks = 0;
+    setup.strategy_params.retail.arrival_rate = 0.0;
+    let mut closed = GameSession::new(setup, 21).expect("合法周末 Closed 日 fixture");
+    let mut closed_driver = RuntimeDriver::from_session(&mut closed).expect("外持 Closed 日唯一 driver");
+    let closed_epoch = closed_driver.mirror_source().authority_epoch;
+    assert!(closed_epoch > 0);
+    assert_eq!(closed.runtime_authority_epoch, closed_epoch);
+    assert!(closed.runtime_driver.is_none(), "fixture 必须由调用方持有唯一 driver");
+    assert!(!closed.state.runtime_information_authority);
+    assert!(closed.state.retained_market_days.is_empty());
+    for _ in 0..2 {
+        closed.end_civil_day().expect("外持 driver 的周末自然日推进");
+        assert!(closed.runtime_driver.is_none(), "Closed 日尾部不得暗建内部 driver");
+        assert_eq!(closed.runtime_authority_epoch, closed_epoch);
+    }
+    assert_eq!(closed.civil_date(), CivilDate::from_ymd(2030, 1, 7).unwrap());
+    let next = closed.runtime_step_with_install(&mut closed_driver);
+    assert!(next.is_ok(), "Closed 日推进后的原外持 driver 必须继续同一 authority：{next:?}");
+    assert_eq!(closed.runtime_authority_epoch, closed_epoch);
+    assert_eq!(closed_driver.mirror_source().authority_epoch, closed_epoch);
+    assert_eq!(closed.tick(), 1);
+}
+
+#[test]
 fn d3_rich_auto_and_manual_prepare_failure_preserve_drain_raw_before_abort() {
     use crate::runtime::{diagnostics::DeskCausalKind, retail_lifecycle::BatchContext};
     for manual in [false, true] {
@@ -400,7 +434,7 @@ fn d3_rich_auto_and_manual_prepare_failure_preserve_drain_raw_before_abort() {
         assert_eq!(live[0].len(), 1);
         assert_eq!(live[0][0].qty, 200, "真实日结余单在可逆窗口恢复");
         assert_eq!(driver.world_committed_tick(), 4, "已提交普通市场拍不回退");
-        assert_eq!(game.save().unwrap_err(), fatal);
+        assert!(matches!(game.save().unwrap_err(), crate::SessionError::Step(actual) if actual == fatal));
         assert_eq!(driver.step_frame_equivalent(&mut game).unwrap_err(), fatal);
     }
 }

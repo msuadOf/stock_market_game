@@ -199,9 +199,9 @@ impl RuntimeDriver {
     /// 事实与本批时间成对 move，空批保 None，不为手动日结补造市场拍。
     #[cfg(feature = "simulation-diagnostics")]
     pub(crate) fn take_drain_causal_facts(&mut self) -> (
-        Vec<super::super::diagnostics::DeskCausalFact>, Option<crate::diagnostics::causal::FactTime>,
+        Vec<super::super::diagnostics::DeskCausalFact>, Option<crate::diagnostics::causal::FactTime>, BTreeMap<crate::StockId, u64>,
     ) {
-        (std::mem::take(&mut self.world.drained_causal), self.world.drained_causal_time.take())
+        (std::mem::take(&mut self.world.drained_causal), self.world.drained_causal_time.take(), std::mem::take(&mut self.world.drained_causal_clocks))
     }
 
     #[cfg(feature = "simulation-diagnostics")]
@@ -230,7 +230,7 @@ impl RuntimeDriver {
         time: crate::diagnostics::causal::FactTime,
         fatal: crate::session::StepFatal,
     ) {
-        let (raw, _) = self.take_causal_facts();
+        let (raw, _, _) = self.take_causal_facts();
         self.retain_terminal_causal(time, raw, fatal);
     }
 
@@ -340,6 +340,7 @@ impl RuntimeDriver {
         &mut self,
         session: &GameSession,
     ) -> Result<PreparedDriverStep, String> {
+        self.ensure_session_authority(session)?;
         let next_tick = self.world_committed_tick().checked_add(1)
             .ok_or_else(|| "driver sync 下一 tick 已耗尽".to_owned())?;
         let registrations = if next_tick.is_multiple_of(session.export_setup_for_runtime().ticks_per_day) { 2 } else { 1 };
@@ -536,6 +537,7 @@ impl RuntimeDriver {
         session: &mut GameSession,
         advance_market_day: bool,
     ) -> Result<(), String> {
+        self.ensure_session_authority(session)?;
         session
             .require_healthy()
             .map_err(|fatal| fatal.to_string())?;
@@ -570,7 +572,7 @@ impl RuntimeDriver {
                     };
                     #[cfg(feature = "simulation-diagnostics")]
                     {
-                        let (raw, time) = self.take_drain_causal_facts();
+                        let (raw, time, _) = self.take_drain_causal_facts();
                         if !raw.is_empty() {
                             match time {
                                 Some(time) => self.retain_terminal_causal(time, raw, fatal.clone()),
@@ -593,7 +595,7 @@ impl RuntimeDriver {
                     };
                     #[cfg(feature = "simulation-diagnostics")]
                     {
-                        let (raw, time) = self.take_drain_causal_facts();
+                        let (raw, time, _) = self.take_drain_causal_facts();
                         if !raw.is_empty() {
                             match time {
                                 Some(time) => self.retain_terminal_causal(time, raw, fatal.clone()),

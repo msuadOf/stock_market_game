@@ -471,7 +471,7 @@ fn public_step_discards_each_phase_candidate_when_commit_preparation_fails() {
         assert_eq!(session.tick(), tick);
         assert_eq!(session.business_state_hash().unwrap(), expected_business);
         assert_eq!(session.poison_reason(), Some(&fatal));
-        assert_eq!(session.save().unwrap_err(), fatal);
+        assert!(matches!(session.save(), Err(crate::SessionError::Step(actual)) if actual == fatal));
     }
 }
 

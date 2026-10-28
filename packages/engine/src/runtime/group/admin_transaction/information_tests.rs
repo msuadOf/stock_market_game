@@ -957,3 +957,195 @@ fn typed_information_map_variant_is_validated_before_signature_and_cadence_short
         assert!(Arc::ptr_eq(&s.library, &library));
     }
 }
+
+/// 扩展已有 INFO fixture 的真实目录；不删 live 股票、不构造无来源 anchor map。
+fn civil_retention_state() -> (GroupState, InformationPreparePayload) {
+    use crate::runtime::protocol::InformationMemoryRetention;
+    use crate::session::exchange_calendar_model::{
+        SessionTickLayout, SharedClockInput, SharedDayProgress,
+    };
+    use crate::session::market_calendar_context::MarketCalendarSource;
+    let mut s = state(&[AccountId(71)]);
+    let codes = (0..11).map(StockId).collect::<Vec<_>>();
+    let facts = Arc::new(
+        crate::company::CompanyReadFacts::new(
+            codes
+                .iter()
+                .map(|&stock| (stock, crate::company::CompanyId(stock.0)))
+                .collect(),
+            codes
+                .iter()
+                .map(|stock| {
+                    (
+                        crate::company::CompanyId(stock.0),
+                        (crate::company::CompanyKind::Industrial, 10_000),
+                    )
+                })
+                .collect(),
+        )
+        .unwrap(),
+    );
+    let mut root = projection(vec![AccountId(71)]);
+    let mutable = Arc::get_mut(&mut root).unwrap();
+    mutable.catalog = crate::stock::StockCatalog::from_metas(
+        codes
+            .iter()
+            .map(|stock| crate::stock::StockMeta::new(&format!("600{:03}", stock.0)))
+            .collect(),
+    )
+    .unwrap();
+    mutable.initial_company_facts = Arc::clone(&facts);
+    s.root_projection = Some(root);
+    let mut account = GroupAccount::new(100_000, codes.len());
+    account.pending_sell_qty[0] = 100;
+    s.accounts[0] = Arc::new(account);
+    s.plan_book
+        .create(crate::plans::PlanOpen {
+            account: AccountId(71),
+            code: StockId(1),
+            direction: crate::Side::Buy,
+            target: crate::plans::PlanTarget::ShareCount(100),
+            opinion: crate::plans::PlanOpinion {
+                signal_score_bp: 5000,
+                source: crate::plans::OpinionSource::Blended,
+            },
+            confidence_bp: 7000,
+            urgency: crate::plans::Urgency::Normal,
+            horizon_trading_days: 5,
+            created_trading_day: 0,
+        })
+        .unwrap();
+    let personal = s.belief_states[0].as_mut().unwrap();
+    for stock in &codes {
+        personal.watchlist.record_attention(stock, 0, 0).unwrap();
+        personal
+            .price_memory
+            .observe_price(stock, crate::Money::from_cents(1000), 0)
+            .unwrap();
+    }
+    personal
+        .price_memory
+        .record_public_history_read(&StockId(2), 0, &mut personal.history_reads)
+        .unwrap();
+    let bindings = codes
+        .iter()
+        .map(|&stock| (stock, crate::calendar::CalendarExchange::Sse))
+        .collect::<Vec<_>>();
+    let source = MarketCalendarSource::new(
+        crate::TradingCalendar::current_default_calendar().unwrap(),
+        at(0, 0).date(),
+        bindings.clone(),
+    )
+    .unwrap();
+    s.bind_calendar(Arc::clone(&source), bindings);
+    let mut p = payload(true);
+    p.current_facts = Arc::clone(&facts);
+    let point = p.observation.as_mut().unwrap();
+    point.company_facts = facts;
+    let prototype = point.market.stocks[&StockId(0)].clone();
+    Arc::make_mut(&mut point.market).stocks = codes
+        .iter()
+        .map(|&stock| (stock, prototype.clone()))
+        .collect();
+    point.clock = crate::runtime::InformationClockContext::fixture_static(
+        source.day(at(0, 0).date()).unwrap(),
+        SessionTickLayout {
+            ticks_per_day: 100,
+            auction_ticks: 0,
+            closing_auction_ticks: 0,
+        },
+        SharedClockInput {
+            tick: 0,
+            completed_shared_sessions: 0,
+            progress: SharedDayProgress::Trading { completed_ticks: 0 },
+        },
+        point.through,
+    );
+    point.as_of_anchors = point.clock.anchors().unwrap();
+    point.memory_retention = InformationMemoryRetention::Preserve;
+    (s, p)
+}
+
+fn assert_civil_retention_candidate(s: &mut GroupState, mut p: InformationPreparePayload, id: u64) {
+    p.observation.as_mut().unwrap().memory_retention =
+        crate::runtime::protocol::InformationMemoryRetention::CivilDayEnd;
+    let before = s.belief_states.clone();
+    let result = s
+        .prepare_admin_with_information(AdminTransactionId(id), Vec::new(), Some(p))
+        .unwrap();
+    let personal = &result.information.as_ref().unwrap().personals[0].2;
+    let expected: std::collections::BTreeSet<_> =
+        (0..11).filter(|index| *index != 2).map(StockId).collect();
+    assert_eq!(
+        personal
+            .watchlist
+            .stocks
+            .keys()
+            .copied()
+            .collect::<std::collections::BTreeSet<_>>(),
+        expected
+    );
+    assert_eq!(
+        personal
+            .price_memory
+            .stocks
+            .keys()
+            .copied()
+            .collect::<std::collections::BTreeSet<_>>(),
+        expected
+    );
+    assert_eq!(
+        personal.history_reads,
+        before[0].as_ref().unwrap().history_reads
+    );
+    assert_eq!(personal.history_reads.stocks[&StockId(2)].read_count, 1);
+    assert_eq!(s.belief_states, before, "prepare 不安装裁剪候选");
+    s.complete_admin(AdminTransactionId(id), AdminPhase::Abort)
+        .unwrap();
+    assert_eq!(
+        s.belief_states, before,
+        "Abort 必须保留完整两类记忆及历史读取账"
+    );
+}
+
+#[test]
+fn civil_retention_prunes_not_due_with_pending_sell_and_active_plan_protected() {
+    let (mut s, p) = civil_retention_state();
+    s.belief_states[0]
+        .as_mut()
+        .unwrap()
+        .attention
+        .next_information_check =
+        CivilInstant::from_hms(at(0, 0).date().next().unwrap(), 18, 0, 0).unwrap();
+    let before = s.belief_states.clone();
+    let preserve = s
+        .prepare_admin_with_information(AdminTransactionId(1), Vec::new(), Some(p.clone()))
+        .unwrap();
+    assert!(
+        preserve.information.as_ref().unwrap().personals.is_empty(),
+        "普通 Preserve 不裁剪未到期个人态"
+    );
+    s.complete_admin(AdminTransactionId(1), AdminPhase::Abort)
+        .unwrap();
+    assert_eq!(s.belief_states, before);
+    assert_civil_retention_candidate(&mut s, p, 2);
+}
+
+#[test]
+fn civil_retention_prunes_same_signature_even_when_personal_check_is_due() {
+    let (mut s, p) = civil_retention_state();
+    s.prepare_admin_with_information(AdminTransactionId(1), Vec::new(), Some(p.clone()))
+        .unwrap();
+    s.complete_admin(AdminTransactionId(1), AdminPhase::Commit)
+        .unwrap();
+    assert_eq!(
+        s.belief_states[0].as_ref().unwrap().watchlist.stock_count(),
+        11
+    );
+    s.belief_states[0]
+        .as_mut()
+        .unwrap()
+        .attention
+        .next_information_check = at(9, 0);
+    assert_civil_retention_candidate(&mut s, p, 2);
+}

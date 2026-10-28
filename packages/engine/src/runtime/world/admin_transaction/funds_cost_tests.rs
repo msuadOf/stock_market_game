@@ -369,6 +369,8 @@ fn information_world() -> World {
     };
     World::spawn_with_calendar_source(
         spec, information_fixture::calendar_source(), information_fixture::calendar_bindings(),
+        #[cfg(all(target_family = "wasm", feature = "verification-harness"))]
+        None,
     )
     .unwrap()
 }

@@ -3,6 +3,41 @@
 use super::*;
 use crate::{AccountId, Intent, LimitPrice, Money, Side, StockId};
 
+#[test]
+fn civil_information_error_preserves_runtime_and_date_causes() {
+    use std::error::Error;
+
+    let date = crate::CivilDate::from_iso("2030-01-04").unwrap();
+    let error = SessionError::CivilInformation(CivilInformationError::new(
+        date,
+        RuntimeError::ProtocolInvariant {
+            detail: "private-runtime-detail".to_owned(),
+        },
+    ));
+    let opaque = error.source().unwrap();
+    assert!(opaque.is::<CivilInformationError>());
+    assert!(matches!(
+        opaque.source().unwrap().downcast_ref::<RuntimeError>(),
+        Some(RuntimeError::ProtocolInvariant { detail }) if detail == "private-runtime-detail"
+    ));
+    assert!(opaque.source().unwrap().source().is_none());
+
+    let next_date = date.next().unwrap();
+    let error = SessionError::CivilInformation(CivilInformationError::from_mirror(
+        date,
+        AdministrativeMirrorError::CivilDateMismatch {
+            expected: date,
+            actual: next_date,
+        },
+    ));
+    let source = error.source().unwrap().source().unwrap();
+    assert!(matches!(
+        source.downcast_ref::<AdministrativeMirrorError>(),
+        Some(AdministrativeMirrorError::CivilDateMismatch { expected, actual })
+            if *expected == date && *actual == next_date
+    ));
+}
+
 fn game() -> GameSession {
     let setup = crate::runtime::administrative_mirror_setup_for_test();
     let mut game = GameSession::new_with_runtime_groups(setup, 7, 3).unwrap();
@@ -303,6 +338,7 @@ fn administrative_mirror_04_information_observation_preserves_session_only_retai
             through,
             market: Arc::new(game.build_market_view()),
             company_facts: facts,
+            memory_retention: crate::runtime::world::InformationMemoryRetention::Preserve,
         }),
     };
     let mut reached = false;
@@ -368,7 +404,7 @@ fn administrative_mirror_05_inspect_panic_returns_driver_and_preserves_original_
     );
     let first = game.poison_reason().unwrap().clone();
     assert_eq!(game.require_healthy(), Err(first.clone()));
-    assert_eq!(game.save().unwrap_err(), first);
+    assert!(matches!(game.save(), Err(crate::SessionError::Step(actual)) if actual == first));
     assert!(game
         .apply_administrative_operations(Vec::new(), None, |_| Ok(()))
         .is_err());
@@ -409,7 +445,7 @@ fn administrative_mirror_06_baseline_disconnection_is_terminal_and_returns_drive
         pending
     );
     let first = game.poison_reason().unwrap().clone();
-    assert_eq!(game.save().unwrap_err(), first);
+    assert!(matches!(game.save(), Err(crate::SessionError::Step(actual)) if actual == first));
     assert!(game
         .apply_administrative_operations(Vec::new(), None, |_| Ok(()))
         .is_err());

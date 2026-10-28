@@ -608,6 +608,11 @@ fn adopted_plan_with_released_child(authority: &mut GameSession) -> crate::plans
             u64::from(authority.state.day),
         )
         .unwrap();
+    #[cfg(feature = "simulation-diagnostics")]
+    {
+        let (_, context) = authority.prepare_market_calendar_tick().unwrap();
+        authority.state.causal.active_tick_context = Some(context);
+    }
     authority
         .record_parent_order_fills(
             &StockId(0),
@@ -621,6 +626,8 @@ fn adopted_plan_with_released_child(authority: &mut GameSession) -> crate::plans
             }],
         )
         .unwrap();
+    #[cfg(feature = "simulation-diagnostics")]
+    { authority.state.causal.active_tick_context = None; }
     authority
         .record_parent_order_canceled(AccountId(1), &StockId(0), crate::OrderId(1))
         .unwrap();

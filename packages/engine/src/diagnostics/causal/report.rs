@@ -16,6 +16,8 @@ pub enum CausalError {
     Overflow,
     #[error("time moved backwards at fact {0}")]
     Time(u64),
+    #[error("stock clock domain mismatch at fact {sequence}: expected {expected:?}, actual {actual:?}")]
+    StockClock { sequence: u64, expected: Option<StockId>, actual: Option<StockId> },
     #[error("execution does not reconcile with bilateral fills")]
     ExecutionMismatch,
     #[error("diagnostic observation restarted at restore; pre-restore origins are unavailable")]

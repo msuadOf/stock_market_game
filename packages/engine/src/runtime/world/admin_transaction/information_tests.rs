@@ -38,6 +38,8 @@ fn world_with_cadence(cadence: crate::session::notices::NpcInformationCadence) -
     };
     World::spawn_with_calendar_source(
         spec, calendar_source(), calendar_bindings(),
+        #[cfg(all(target_family = "wasm", feature = "verification-harness"))]
+        None,
     )
     .unwrap()
 }

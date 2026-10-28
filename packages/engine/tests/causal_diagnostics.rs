@@ -112,6 +112,7 @@ fn causal_fact_json_preserves_large_time_sequence_and_depth() {
     let mut fact = session.causal_facts()[0].clone();
     fact.sequence = u64::MAX;
     fact.time.market_minute = u64::MAX;
+    fact.time.stock_clock.as_mut().unwrap().completed_minutes = u64::MAX;
     fact.kind = CausalFactKind::Quote(engine::diagnostics::causal::Quote {
         code: session.stock_id("600101").unwrap(),
         bid_cents: None,
@@ -122,8 +123,10 @@ fn causal_fact_json_preserves_large_time_sequence_and_depth() {
     let json = serde_json::to_value(&fact).unwrap();
     assert_eq!(json["sequence"], u64::MAX.to_string());
     assert_eq!(json["time"]["market_minute"], u64::MAX.to_string());
+    assert_eq!(json["time"]["stock_clock"]["completed_minutes"], u64::MAX.to_string());
     assert_eq!(json["kind"]["Quote"]["bid_depth"], u64::MAX.to_string());
     assert_eq!(json["kind"]["Quote"]["ask_depth"], "0");
+    fact.time.stock_clock = None;
     fact.kind = CausalFactKind::Acquisition {
         account: AccountId(0),
         company: legacy_saved(&session.save().unwrap()).0.catalog().id("C-600101").unwrap(),
@@ -434,6 +437,7 @@ fn quantity_and_budget_overflows_are_explicit_errors() {
     let mut facts = session.causal_facts().to_vec();
     let mut budget = facts.last().unwrap().clone();
     budget.sequence = facts.len() as u64;
+    budget.time.stock_clock = None;
     budget.kind = CausalFactKind::Budget {
         account: AccountId(0),
         available_cents: i64::MAX,

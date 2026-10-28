@@ -27,6 +27,11 @@ fn session_with_resting_npc_order() -> (GameSession, StockId, AccountId, OrderId
             _ => None,
         })
         .expect("fixture must create a resting order");
+    #[cfg(feature = "simulation-diagnostics")]
+    {
+        let (_, context) = session.prepare_market_calendar_tick().unwrap();
+        session.state.causal.active_tick_context = Some(context);
+    }
     (session, code, account, order_id)
 }
 

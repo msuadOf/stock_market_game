@@ -152,6 +152,15 @@ fn d3_causal_real_institution_submit_resolves_full_plan_and_current_decision() {
         result.expect("真实机构自动 quote 的 typed causal 来源必须接通");
         let facts = session.causal_facts();
         let new_facts = &facts[prior_count..];
+        let committed = driver.committed_calendar_tick().unwrap().unwrap();
+        for fact in new_facts {
+            assert_eq!(fact.time.market_minute, committed.calendar.before_projection().completed_shared_minute_count());
+            assert_eq!(fact.time.civil, committed.calendar.observation_instant_after());
+            assert_eq!(fact.time.stock_clock.map(|clock| clock.code), fact.kind.stock_code());
+            if let Some(clock) = fact.time.stock_clock {
+                assert_eq!(clock.completed_minutes, committed.calendar.before_projection().stock(clock.code).unwrap().completed_minute_count());
+            }
+        }
         let decisions: BTreeMap<_, _> = new_facts.iter().filter_map(|fact| match fact.kind {
             CausalFactKind::Decision { account } if institutions.contains(&account) => Some((account, fact.sequence)), _ => None,
         }).collect();

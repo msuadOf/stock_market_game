@@ -1470,6 +1470,9 @@ impl GroupState {
         expected_tick: u64,
         expected_round: u32,
     ) -> Result<(), RuntimeError> {
+        if !batch.repurchase.is_empty() {
+            return Err(RuntimeError::ProtocolInvariant { detail: "REPURCHASE-X 组来源消费者尚未实现".into() });
+        }
         batch
             .verify_tick_round(expected_tick, expected_round)
             .map_err(|m| RuntimeError::ProtocolInvariant {
@@ -6948,6 +6951,7 @@ mod v5_shutdown_idle_window_tests {
         // 在途资源：退款实体入 staging（未落账——正常关停的典型在途面）。
         group_tx
             .send(GroupIn::Batch(DeskBatch {
+                repurchase: Vec::new(),
                 stock: 0,
                 tick: 1,
                 round: 0,
@@ -7330,6 +7334,7 @@ mod sol_recheck3_tests {
 
     fn batch(entities: Vec<Entity>, fills: Vec<FillFact>) -> DeskBatch {
         DeskBatch {
+            repurchase: Vec::new(),
             stock: 0,
             tick: 1,
             round: 0,
@@ -7611,6 +7616,7 @@ mod sol_recheck3_tests {
         // desk 拒收形态：RefundedShares（卖单原路退回）+ Closed 与回执
         // 同批（reject() 三件套）。
         state.apply_batch_immediate(DeskBatch {
+            repurchase: Vec::new(),
             stock: 0,
             tick: 1,
             round: 0,
@@ -7924,6 +7930,7 @@ mod eager_domain_tests {
         // F3（Closed 在途减）+F4/F5/F6 延迟载荷（RefundedShares 曾持有
         /// 复位/拒收释放——延迟相重放，Abort 不得触碰）。
         let b1 = DeskBatch {
+            repurchase: Vec::new(),
             stock: 0,
             tick: 1,
             round: 0,
@@ -7949,6 +7956,7 @@ mod eager_domain_tests {
         // 批 2：买腿 fill（owner=组 0 位 1——BuyPurseHeld F2 减实付）+
         /// CashProceeds（F1 加）。
         let b2 = DeskBatch {
+            repurchase: Vec::new(),
             stock: 1,
             tick: 1,
             round: 0,

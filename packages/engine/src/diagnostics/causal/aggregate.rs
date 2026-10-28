@@ -1,6 +1,9 @@
 use super::*;
 use std::collections::{BTreeMap, BTreeSet};
 
+#[cfg(test)]
+mod stock_clock_tests;
+
 pub(super) fn seconds_between(end: CivilInstant, start: CivilInstant) -> i64 {
     end.date().days_since(start.date()) * 86_400 + i64::from(end.second_of_day())
         - i64::from(start.second_of_day())
@@ -39,6 +42,7 @@ impl<'a> CausalReportBuilder<'a> {
         if fact.sequence != index as u64 {
             return Err(CausalError::Sequence(fact.sequence));
         }
+        fact.validate_stock_clock()?;
         match &fact.kind {
             CausalFactKind::ObservationRestart => return Err(CausalError::RestoredObservation),
             CausalFactKind::Budget {
@@ -329,10 +333,12 @@ impl OrderLifecycle {
     fn finish_lifecycle(&mut self, fact: &CausalFact) -> Result<(), CausalError> {
         let row = self;
         if row.open_qty == 0 {
+            fact.time.market_minute.checked_sub(row.submitted_at.market_minute)
+                .ok_or(CausalError::Time(fact.sequence))?;
             row.lifetime_market_minutes = Some(
                 fact.time
-                    .market_minute
-                    .checked_sub(row.submitted_at.market_minute)
+                    .stock_minutes(row.origin.code, fact.sequence)?
+                    .checked_sub(row.submitted_at.stock_minutes(row.origin.code, row.source_sequence)?)
                     .ok_or(CausalError::Time(fact.sequence))?,
             );
             let seconds = seconds_between(fact.time.civil, row.submitted_at.civil);
@@ -354,6 +360,7 @@ mod tests {
         FactTime {
             phase: crate::TradingPhase::Continuous,
             market_minute: 1,
+            stock_clock: None,
             civil: CivilInstant::new(crate::CivilDate::from_ymd(2030, 1, 1).unwrap(), 1).unwrap(),
         }
     }
@@ -377,7 +384,7 @@ mod tests {
             .enumerate()
             .map(|(sequence, kind)| CausalFact {
                 sequence: sequence as u64,
-                time: time(),
+                time: FactTime { stock_clock: kind.stock_code().map(|code| StockFactClock { code, completed_minutes: 1 }), ..time() },
                 kind,
             })
             .collect()

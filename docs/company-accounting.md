@@ -186,6 +186,15 @@ GMM 简化登记：🎮 `game-assumption-insurance-gmm-simplifications`：D1 亏
 
 以上为版本化游戏假设，**不构成 CAS 28/30/31 合规声明**。
 
+Session 更正完成记录（B4e 候选分支契约）：`SaveSlot.report_correction_operations`
+只持久化成功完成的 `CompletedReportCorrection`；pending 请求留在内存，
+`GameSession::save` 显式拒绝保存尚有 pending 请求的当前状态。
+`publications` 保存完成时记录的公开版本链接；restore 校验已列出的链接及主 `supersedes`
+关联，**不证明历史 cascade 的输出全集**。仅删除仍保留主关联的非主 cascade 链接，当前
+校验可能接受，完成查询将少列链接；此编辑不删除或重写 `PublicLibrary`、`ClosingEngine`
+中的事实，也不改变下一期报表生成目标。同一 `(CompanyId, BusinessEventId)` 只能归属于
+一个 completed 操作；不同公司的 `Books` 可以合法使用相同 `BusinessEventId`。
+
 ### 2.8 NPC 个人关注发现权重游戏参数（Attention Discovery，任务 25）
 
 🎮 `game-assumption-attention-discovery-weights` 登记以下版本化游戏参数：基础发现权重

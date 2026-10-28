@@ -6,7 +6,7 @@ use super::capital_command_candidates::{
 };
 use super::company_state::{SessionCompanies, SystemCompanyState};
 use super::player_company_command_candidates::{
-    build_player_rights_plan, build_player_split_plan, player_holding_context,
+    build_player_repurchase_plan, build_player_rights_plan, build_player_split_plan, player_holding_context,
     prepare_player_cash_dividend, prepare_player_stock_distribution, PlayerCompanyCommandInput,
 };
 use super::{GameSession, PlayerCompanyProposal, PlayerProposalKind};
@@ -72,7 +72,7 @@ impl PlayerCompanyCommandError {
 
 impl GameSession {
     /// 账户由宿主鉴权绑定；日期、证券和名册只从当前 Session 读取。
-    /// 只批准方案；回购须等待真实资金 producer，不能由 Session 镜像冒充注资。
+    /// 只批准方案；回购资金与执行身份由唯一共同批准入口在同一事务提交。
     pub fn propose_player_company_action(
         &mut self,
         account: AccountId,
@@ -157,6 +157,29 @@ impl GameSession {
                 mechanism: "发行人回购",
                 setup_flag: "issuer_repurchase_enabled",
             })));
+        }
+        if kind == PlayerProposalKind::IssuerRepurchase {
+            let plan =
+                build_player_repurchase_plan(input).map_err(|error| fail(Box::new(error)))?;
+            let approved = self
+                .approve_issuer_repurchase(
+                    plan,
+                    super::issuer_repurchase_approval::RepurchaseApprovalSource::Player {
+                        requester: account,
+                    },
+                )
+                .map_err(|error| fail(Box::new(error)))?;
+            let event_id = match approved {
+                super::RepurchaseApprovalReceipt::Approved { event_id, .. }
+                | super::RepurchaseApprovalReceipt::AlreadyApproved { event_id, .. } => event_id,
+            };
+            return Ok(PlayerCompanyCommandReceipt {
+                account,
+                company,
+                kind,
+                event_id,
+                approved_on: day,
+            });
         }
         let capital = if matches!(
             kind,

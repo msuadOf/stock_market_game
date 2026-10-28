@@ -334,7 +334,7 @@ fn d2b_internal_late_callback_failure_preserves_prior_with_expected_poison() {
     assert_eq!(game.step_via_runtime().unwrap_err(), fatal);
     assert_eq!(game.runtime_driver.as_ref().unwrap().lock().unwrap().world_committed_tick(), world_tick,
         "terminal 后健康门必须拒绝再次推进 World");
-    assert_eq!(game.save().unwrap_err(), fatal);
+    assert!(matches!(game.save(), Err(crate::SessionError::Step(actual)) if actual == fatal));
 }
 
 

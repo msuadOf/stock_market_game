@@ -11,6 +11,9 @@ mod candles;
 #[cfg(feature = "simulation-diagnostics")]
 mod causal;
 mod civil_clock;
+mod civil_information;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod civil_information_runtime_tests;
 mod company_assembly;
 mod stock_identity_view;
 pub use stock_identity_view::StockIdentityEntry;
@@ -31,9 +34,18 @@ pub use owner_rights_views::{
 mod company_closing_tests;
 mod company_groups;
 mod company_commands_types;
+mod correction_commands_types;
+mod company_corrections;
+mod company_correction_restore;
+pub use company_correction_restore::{ReportCorrectionRestoreError, ReportCorrectionRestoreViolation};
+pub use correction_commands_types::{CompanyReportCorrection, CompletedReportCorrection, ReportCorrectionStatus};
+pub use company_corrections::{ReportCorrectionEpoch, ReportCorrectionError};
+#[cfg(test)]
+mod company_corrections_tests;
 mod capital_approval_context;
 mod capital_command_candidates;
 mod administrative_mirror;
+pub use administrative_mirror::CivilInformationError;
 mod company_command_candidates;
 mod player_company_command_candidates;
 mod stock_distribution_command_candidate;
@@ -45,6 +57,8 @@ mod company_state;
 pub use company_state::SavedSessionCompanies;
 use company_state::SessionCompanies;
 mod company_capital_restore;
+mod report_correction_day_end;
+pub use report_correction_day_end::ReportCorrectionDayEndError;
 mod continuous_cancellation;
 mod corporate_actions;
 mod issuer_repurchase_approval;
@@ -660,6 +674,10 @@ pub struct SaveSlot {
     /// 唯一公司运行事实，外部 tag 与 setup 模式严格勾稽，无旧并列字段迁移。
     #[ts(type = "import(\"../../save/schema/company/state\").SavedSessionCompanies")]
     pub company_state: SavedSessionCompanies,
+    /// 已完成更正的最少事实；pending 请求仅在内存，不进入存档。
+    #[serde(deserialize_with = "correction_commands_types::strict_completed")]
+    #[ts(type = "Record<string, import(\"../../host/report-corrections\").CompletedReportCorrectionInput>")]
+    pub report_correction_operations: BTreeMap<String, CompletedReportCorrection>,
     /// 公开信息库（报告 + 公告；恢复走 from_parts 逐条重验）。
     #[ts(skip)]
     pub public_library: crate::information::PublicLibrary,
@@ -1016,6 +1034,15 @@ pub enum SessionError {
     /// 存档 schema 或领域不变量不合法。数值码+数值上下文（ADR 0041）。
     #[error("invalid save: {0}")]
     InvalidSave(crate::error::ValidationFault),
+    /// pending 更正不能在保存时丢弃；健康会话可先日终提交或取消。
+    #[error("存在待处理报表更正，请先完成日终披露或取消更正后再保存")]
+    PendingReportCorrections,
+    /// 日终更正保留真实 cause，分类只控制健康业务拒绝与系统失败的处理方式。
+    #[error("report correction day end failed: {0}")]
+    ReportCorrectionDayEnd(#[source] ReportCorrectionDayEndError),
+    /// 导入更正事实校验失败只拒绝候选存档；不污染原健康会话。
+    #[error("报表更正存档无效：{0}")]
+    ReportCorrectionRestore(#[from] ReportCorrectionRestoreError),
     /// 存档拆股／缩股账簿校验失败，保留领域错误及其数值上下文。
     #[error("share split validation failed: {0}")]
     ShareSplit(#[from] crate::company::share_split::ShareSplitError),
@@ -1025,6 +1052,9 @@ pub enum SessionError {
     /// 透传自然日时钟错误（冻结日历与双时钟 日结验证/原子失败）。
     #[error(transparent)]
     CivilClock(#[from] CivilClockError),
+    /// 自然日 INFO 事务失败，公开 opaque 包装保留内部 typed cause。
+    #[error("civil information transaction failed: {0}")]
+    CivilInformation(#[source] CivilInformationError),
     /// 透传公司经营错误（会话装配与执行接线 日终编排：装配校验与逐日经营推进）。
     #[error(transparent)]
     CompanyOperations(Box<crate::company::operations::OperationsError>),
@@ -1782,6 +1812,8 @@ pub struct GameSession {
     /// plan_tick 之间改权威状态的行为必须自增（直改入口统一标记）。
     /// 不入 state 克隆链——shadow 克隆取值快照，commit 不回写。
     revision: std::sync::atomic::AtomicU64,
+    /// 当前内存市场的更正请求身份；shadow 共享，restore 经 new 换新。
+    report_correction_epoch: std::sync::Arc<()>,
     poison: Option<StepFatal>,
     fresh_initial_allocation: bool,
     #[cfg(test)]
@@ -1801,6 +1833,10 @@ pub struct GameSession {
     /// from_session 单组语义不变）。
     runtime_group_count: usize,
     runtime_authority_epoch: u64,
+    /// 同一内存 Session 的身份；shadow 共享，new/restore 重新生成，不进入存档或提交域。
+    runtime_authority_identity: std::sync::Arc<()>,
+    /// 当前公开 factory 返回的外持 owner；Weak 不延长 World 寿命。
+    runtime_external_authority: std::sync::Weak<crate::runtime::drive::RuntimeAuthorityLease>,
     runtime_mirror_install_sequence: u64,
     /// step_frame 接轨件 4：投影段失败后丢弃驱动器的标志（body 内设置、
     /// 驱动器共用段消费——world tick 已转正而会话已回滚，锁步断裂的
@@ -1919,6 +1955,8 @@ struct CommittableSessionState {
     // 公司域与完整决策链的权威状态；全部经完整存档保存恢复。
     /// 所选公司模型的唯一权威；Simple 不持有 Legacy 经营影子。
     companies: SessionCompanies,
+    /// 更正共同命令的内存状态，随 shadow 整体提交。
+    report_corrections: ReportCorrectionStatus,
     /// 公开信息库（公开信息；前史已播种）。
     library: std::sync::Arc<crate::information::PublicLibrary>,
     /// 披露派发游标。
@@ -2008,17 +2046,19 @@ pub(in crate::session) enum FieldId {
     CorporateActions,
     /// SOURCE-B：互斥公司 authority 的唯一移交域。
     Companies,
+    /// 更正命令状态随 shadow 整体移交，保留既有 FieldId 数值。
+    ReportCorrections,
 }
 
 /// commit_from 必须移交的字段全集（修复1·Astra 增量四复检 cfg 缺陷处置：按 cfg
 /// 条件化，与 commit_from 的条件 swap 对齐，绊线在所有真实构建组合内有效）。
-/// T3 已删除 speculative_prepare 与对应的 defer_swap；现行完整集合为 28/30 项
-/// （默认 28 项；simulation-diagnostics 追加 NpcDecisionTraces/Causal 两项）。
+/// T3 已删除 speculative_prepare 与对应的 defer_swap；现行完整集合为 29/31 项
+/// （默认 29 项；simulation-diagnostics 追加 NpcDecisionTraces/Causal 两项）。
 /// SpeculativePrepare 的历史 FieldId 数值槽保留，但不再属于可提交字段集合。
 /// 两套期望集除诊断项外逐项一致；诊断项位于 LastRetailOrderEvents 之后，
 /// 后续字段的数组下标随之变化，不能逐下标比较两套清单。
 #[cfg(not(feature = "simulation-diagnostics"))]
-pub(in crate::session) const COMMIT_FIELD_EXPECTED: [FieldId; 28] = [
+pub(in crate::session) const COMMIT_FIELD_EXPECTED: [FieldId; 29] = [
     FieldId::Setup,
     FieldId::ValidatedConfig,
     FieldId::Stocks,
@@ -2039,6 +2079,7 @@ pub(in crate::session) const COMMIT_FIELD_EXPECTED: [FieldId; 28] = [
     FieldId::LastRetailOrderEvents,
     FieldId::AttentionScheduler,
     FieldId::Companies,
+    FieldId::ReportCorrections,
     FieldId::Library,
     FieldId::Disclosures,
     FieldId::Plans,
@@ -2050,7 +2091,7 @@ pub(in crate::session) const COMMIT_FIELD_EXPECTED: [FieldId; 28] = [
 ];
 
 #[cfg(feature = "simulation-diagnostics")]
-pub(in crate::session) const COMMIT_FIELD_EXPECTED: [FieldId; 30] = [
+pub(in crate::session) const COMMIT_FIELD_EXPECTED: [FieldId; 31] = [
     FieldId::Setup,
     FieldId::ValidatedConfig,
     FieldId::Stocks,
@@ -2073,6 +2114,7 @@ pub(in crate::session) const COMMIT_FIELD_EXPECTED: [FieldId; 30] = [
     FieldId::Causal,
     FieldId::AttentionScheduler,
     FieldId::Companies,
+    FieldId::ReportCorrections,
     FieldId::Library,
     FieldId::Disclosures,
     FieldId::Plans,
@@ -2084,8 +2126,8 @@ pub(in crate::session) const COMMIT_FIELD_EXPECTED: [FieldId; 30] = [
 ];
 
 /// FieldId 历史槽位数（含诊断两项与 retired 槽），verify_metrics 计数数组长度。
-pub(in crate::session) const FIELD_ID_COUNT: usize = 37;
-const _: () = assert!(FieldId::Companies as usize == FIELD_ID_COUNT - 1);
+pub(in crate::session) const FIELD_ID_COUNT: usize = 38;
+const _: () = assert!(FieldId::ReportCorrections as usize == FIELD_ID_COUNT - 1);
 
 /// 一个真实进入散户策略判断路径的目标仓位样本。
 ///
@@ -2268,6 +2310,7 @@ impl GameSession {
                 .map(shared_ingress::IngressBinding::fork)
                 .transpose()
                 .map_err(shared_ingress::ingress_fatal)?,
+            report_correction_epoch: self.report_correction_epoch.clone(),
             poison: None,
             revision: std::sync::atomic::AtomicU64::new(
                 self.revision.load(std::sync::atomic::Ordering::Relaxed),
@@ -2282,6 +2325,8 @@ impl GameSession {
             runtime_driver: None,
             runtime_group_count: 1,
             runtime_authority_epoch: self.runtime_authority_epoch,
+            runtime_authority_identity: std::sync::Arc::clone(&self.runtime_authority_identity),
+            runtime_external_authority: self.runtime_external_authority.clone(),
             runtime_mirror_install_sequence: self.runtime_mirror_install_sequence,
             runtime_discard_driver_flag: false,
             state: self.state.clone_for_shadow()?,
@@ -2443,6 +2488,7 @@ impl GameSession {
             compute,
             ingress: None,
             revision: std::sync::atomic::AtomicU64::new(0),
+            report_correction_epoch: std::sync::Arc::new(()),
             poison: None,
             fresh_initial_allocation: true,
             #[cfg(test)]
@@ -2454,6 +2500,8 @@ impl GameSession {
             runtime_driver: None,
             runtime_group_count: DEFAULT_NEW_RUNTIME_GROUP_COUNT,
             runtime_authority_epoch: 0,
+            runtime_authority_identity: std::sync::Arc::new(()),
+            runtime_external_authority: std::sync::Weak::new(),
             runtime_mirror_install_sequence: 0,
             runtime_discard_driver_flag: false,
             state: CommittableSessionState {
@@ -2510,6 +2558,10 @@ impl GameSession {
                 runtime_lifecycles_undo: None,
                 runtime_retail_diag_undo: None,
                 companies,
+                report_corrections: ReportCorrectionStatus {
+                    pending: Vec::new(),
+                    completed: BTreeMap::new(),
+                },
                 library: std::sync::Arc::new(library),
                 disclosures,
                 plans: crate::plans::PlanBook::default(),
@@ -3559,7 +3611,7 @@ impl GameSession {
         /// 冻结——末条日期==settled_date 时跳过；休市日无 tick，此处按
         /// 每股日历如实补 Closed/NoTrades 条目并原子重发布）。仅 runtime
         /// 形态（惰性构造驱动器与 step 同路由）。
-        if crate::runtime::step_runtime_enabled() {
+        if self.uses_runtime_civil_authority() {
             self.freeze_closed_retained_day_if_needed(report.settled_date)?;
         } else {
             // B2 串行等价（W3 缺陷 1 修复）：wasm 串行无驱动器——休市/
@@ -3590,34 +3642,18 @@ impl GameSession {
                 },
             ));
         }
-        // native 市场已经交付的日结镜像不能因后续 civil 失败而恢复或重试。
-        // 这里只识别既有实际安装载体，不以构造过 driver 冒充成功安装。
-        let runtime_installed = self.state.runtime_resting_snapshot.is_some();
-        let prepared = (|| {
-            let mut candidate = self.clone_for_tick_shadow().map_err(|_error| {
-                // fault1034：自然日日终 candidate 捕获失败，保持数值错误契约。
-                SessionError::InvalidSave(ValidationFault::new(1034, vec![0]))
-            })?;
-            let report = candidate.end_civil_day_after_session_check()?;
-            candidate.market_calendar_day = None;
-            let instant = report.disclosure_instant;
-            let publication = project(&candidate, report)?;
-            Ok::<_, SessionError>((candidate, instant, publication))
-        })();
-        let (candidate, instant, publication) = match prepared {
-            Ok(prepared) => prepared,
-            Err(error) if runtime_installed => {
-                let fatal = match error {
-                    SessionError::Step(fatal) => fatal,
-                    error => StepFatal::InvariantViolation {
-                        location: "GameSession::with_prepared_civil_day".to_owned(),
-                        description: format!("已安装市场日结后的 civil 准备失败：{error}"),
-                    },
-                };
-                return Err(SessionError::Step(self.poison_runtime_step(fatal)));
-            }
-            Err(error) => return Err(error),
-        };
+        #[cfg(not(target_arch = "wasm32"))]
+        if self.uses_runtime_civil_authority() {
+            return self.with_prepared_runtime_civil_day(project);
+        }
+        let mut candidate = self.clone_for_tick_shadow().map_err(|_error| {
+            // fault1034：自然日日终 candidate 捕获失败，保持数值错误契约。
+            SessionError::InvalidSave(ValidationFault::new(1034, vec![0]))
+        })?;
+        let report = candidate.end_civil_day_after_session_check()?;
+        candidate.market_calendar_day = None;
+        let instant = report.disclosure_instant;
+        let publication = project(&candidate, report)?;
         self.commit_tick_shadow(candidate);
         for observer in self.state.civil_clock.disclosure_observers() {
             observer(instant);
@@ -3626,6 +3662,15 @@ impl GameSession {
     }
 
     fn end_civil_day_after_session_check(&mut self) -> Result<CivilDayEndReport, SessionError> {
+        let information_anchors = self.prepare_information_anchors()?;
+        let report = self.prepare_civil_day_disclosures()?;
+        self.deliver_public_information_with_anchors(report.disclosure_instant, &information_anchors)?;
+        self.prune_all_personal_memories();
+        Ok(report)
+    }
+
+    /// 公司经营与披露只形成候选；本人 INFO 与裁剪由对应 authority 的同次事务完成。
+    fn prepare_civil_day_disclosures(&mut self) -> Result<CivilDayEndReport, SessionError> {
         let company_work_date = match &self.state.companies {
             SessionCompanies::LegacyOperations(legacy) => {
                 let next = legacy.operations.next_expected_date();
@@ -3641,9 +3686,18 @@ impl GameSession {
                 .map_err(crate::calendar::CalendarError::from)?,
         };
         let next_work_date = company_work_date.min(self.state.civil_clock.next_civil_event_date());
-        let information_anchors = self.prepare_information_anchors()?;
         let mut report = self.state.civil_clock.end_day(next_work_date)?;
-        let disclosures = match &mut self.state.companies {
+        let correction_pending = self.has_pending_report_corrections();
+        // pending 更正由同一完整包先入账再推进当日；零 pending 保留普通经营路径。
+        let disclosures = if correction_pending {
+            if matches!(self.state.setup.report_frequency,
+                Some(crate::information::ReportFrequency::Monthly { .. })) {
+                report.disclosure_instant =
+                    crate::calendar::CivilInstant::new(report.settled_date, 86_399)
+                        .map_err(crate::calendar::CalendarError::from)?;
+            }
+            self.prepare_report_correction_day_end(&report)?
+        } else { match &mut self.state.companies {
             SessionCompanies::LegacyOperations(legacy) => {
                 std::sync::Arc::make_mut(&mut legacy.operations)
             .advance_civil_day(report.settled_date)?;
@@ -3701,10 +3755,8 @@ impl GameSession {
                     std::sync::Arc::make_mut(&mut self.state.library),
                 )?
             }
-        };
+        }};
         self.record_civil_day_events(&mut report, disclosures)?;
-        self.deliver_public_information_with_anchors(report.disclosure_instant, &information_anchors)?;
-        self.prune_all_personal_memories();
         Ok(report)
     }
 
@@ -4281,6 +4333,7 @@ impl GameSession {
             civil_clock: self.state.civil_clock.save(),
             // 权威状态连续性（完整存档）：公司域与个体决策链权威状态全量入档。
             company_state: self.state.companies.save(),
+            report_correction_operations: self.state.report_corrections.completed.clone(),
             public_library: self.state.library.as_ref().clone(),
             disclosures: self.state.disclosures.clone(),
             plans: self.state.plans.clone(),
@@ -4694,6 +4747,13 @@ impl GameSession {
         };
         sess.state.library = std::sync::Arc::new(save.public_library.clone());
         sess.state.disclosures = save.disclosures.clone();
+        company_correction_restore::validate_completed(
+            &save.report_correction_operations,
+            &sess.state.companies,
+            &sess.state.library,
+            sess.state.civil_clock.current_date(),
+        )?;
+        sess.state.report_corrections.completed = save.report_correction_operations.clone();
         for id in save.plans.plan_ids() {
             let entry = save.plans.entry(id).expect("计划迭代身份存在");
             let account = sess.state.accounts.get(&entry.account()).ok_or_else(|| {
@@ -4823,7 +4883,7 @@ impl GameSession {
         persistence::restore_runtime_state(&mut sess, &save.runtime_state)?;
 
         #[cfg(feature = "simulation-diagnostics")]
-        sess.causal_record(crate::diagnostics::causal::CausalFactKind::ObservationRestart);
+        sess.causal_record(crate::diagnostics::causal::CausalFactKind::ObservationRestart)?;
         Ok(sess)
     }
 }
@@ -7012,6 +7072,7 @@ impl CommittableSessionState {
             runtime_lifecycles_undo: _,
             runtime_retail_diag_undo: _,
             companies,
+            report_corrections,
             library,
             disclosures,
             plans,
@@ -7089,6 +7150,7 @@ impl CommittableSessionState {
             runtime_lifecycles_undo: None,
             runtime_retail_diag_undo: None,
             companies: companies.clone(),
+            report_corrections: report_corrections.clone(),
             library: library.clone(),
             disclosures: disclosures.clone(),
             plans: plans.clone(),
@@ -7164,6 +7226,7 @@ impl CommittableSessionState {
             runtime_lifecycles_undo: _,
             runtime_retail_diag_undo: _,
             companies,
+            report_corrections,
             library,
             disclosures,
             plans,
@@ -7286,6 +7349,11 @@ impl CommittableSessionState {
         // save 读 stale ledger：新挂单消失/旧单复活）。
         self.runtime_resting_snapshot = runtime_resting_snapshot;
         defer_swap(&mut self.companies, companies, FieldId::Companies);
+        defer_swap(
+            &mut self.report_corrections,
+            report_corrections,
+            FieldId::ReportCorrections,
+        );
         defer_swap(&mut self.library, library, FieldId::Library);
         defer_swap(&mut self.disclosures, disclosures, FieldId::Disclosures);
         defer_swap(&mut self.plans, plans, FieldId::Plans);

@@ -331,7 +331,7 @@ impl GameSession {
         /// self.runtime_driver，而 clone_for_tick_shadow 把驱动器置
         /// None，使自然日 candidate 内误走旧管线全量投递（休市日
         /// 零市场副作用的 attention 面漂移显红）。
-        if self.state.runtime_information_authority {
+        if self.state.runtime_information_authority && !self.has_current_external_runtime_authority() {
             return Ok(());
         }
         let market = self.build_market_view();
@@ -411,10 +411,10 @@ impl GameSession {
                         });
                     }
                 }
-                let mut time = self.causal_time();
+                let mut time = self.causal_static_time()?;
                 time.civil = now;
                 for fact in facts {
-                    self.causal_record_at(time, fact);
+                    self.causal_record_at(time, fact)?;
                 }
             }
             self.state
@@ -841,8 +841,43 @@ mod tests {
         assert!(entry.used_report_ids.contains(&corrected));
     }
 
+    /// 沿已有 serial_b2 探针模式隔离 OnceLock；父子都受既有进程树 deadline 监督。
+    fn run_serial_civil_test_in_child(exact: &str) -> bool {
+        if !crate::runtime::step_runtime_enabled() {
+            return false;
+        }
+        let helper = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../scripts/run-with-deadline.mjs");
+        let output = std::process::Command::new("node")
+            .arg(helper)
+            .args(["9000", "--"])
+            .arg(std::env::current_exe().expect("读取当前 test binary 失败"))
+            .args([exact, "--exact", "--test-threads=1"])
+            .env("ENGINE_STEP_RUNTIME", "0")
+            .output()
+            .expect("通过既有 deadline supervisor 启动 serial 子进程失败");
+        let stdout = std::str::from_utf8(&output.stdout).expect("serial 子进程 stdout 不是 UTF-8");
+        let stderr = std::str::from_utf8(&output.stderr).expect("serial 子进程 stderr 不是 UTF-8");
+        let expected_test = format!("test {exact} ... ok");
+        let exact_count = stdout.lines().filter(|line| *line == expected_test).count();
+        let summaries = stdout
+            .lines()
+            .filter(|line| line.starts_with("test result:"))
+            .collect::<Vec<_>>();
+        assert!(
+            output.status.success() && exact_count == 1 && summaries.len() == 1
+                && summaries[0].starts_with("test result: ok. 1 passed; 0 failed; 0 ignored;"),
+            "serial 子进程失败、超时或未执行唯一目标：status={}\nstdout:\n{stdout}\nstderr:\n{stderr}",
+            output.status,
+        );
+        true
+    }
+
     #[test]
     fn successful_nontrading_day_end_delivers_at_real_disclosure_boundary() {
+        if run_serial_civil_test_in_child("session::notices::tests::successful_nontrading_day_end_delivers_at_real_disclosure_boundary") {
+            return;
+        }
         let mut setup = crate::session::npc_working_quote_tests::quote_setup(0);
         setup.start_date = crate::CivilDate::from_ymd(2030, 1, 5).unwrap();
         let mut session = GameSession::new(setup, 42).unwrap();
@@ -888,6 +923,8 @@ mod tests {
         assert_eq!(session.state.next_order_id, next_order);
         assert!(session.state.history_reads[&id].stocks.is_empty());
         #[cfg(feature = "simulation-diagnostics")]
+        assert!(session.causal_facts().iter().all(|fact| fact.time.stock_clock.is_none()), "Closed INFO 不得携证券时钟");
+        #[cfg(feature = "simulation-diagnostics")]
         assert!(session.causal_facts().iter().any(|fact| matches!(&fact.kind, crate::diagnostics::causal::CausalFactKind::Acquisition { account, company: acquired_company, published, acquired, .. } if *account == id && *acquired_company == company && *published == day_end.disclosure_instant && *acquired == day_end.disclosure_instant)));
         let saved = session.save().unwrap();
         assert_eq!(
@@ -898,6 +935,9 @@ mod tests {
 
     #[test]
     fn information_revaluation_failure_rolls_back_entire_day_end() {
+        if run_serial_civil_test_in_child("session::notices::tests::information_revaluation_failure_rolls_back_entire_day_end") {
+            return;
+        }
         let mut setup = crate::session::npc_working_quote_tests::quote_setup(0);
         setup.start_date = crate::CivilDate::from_ymd(2030, 1, 5).unwrap();
         let mut session = GameSession::new(setup, 42).unwrap();

@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::error::ValidationFault;
+use super::exchange_calendar_model::{calendar_clock_projection, SessionTickLayout, SharedDayProgress};
 
 mod saved_runtime;
 mod registry_settlement;
@@ -298,6 +299,12 @@ impl<'a> SaveValidationContext<'a> {
     }
 }
 
+fn saved_calendar_error(error: impl std::fmt::Display) -> SessionError {
+    CivilClockError::SaveInconsistent {
+        detail: format!("存档市场 Calendar 进度不一致：{error}"),
+    }.into()
+}
+
 pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
     if save.setup.simulation_policy_id != SIMULATION_POLICY_ID {
         // fault2001：simulation_policy_id 与引擎政策不符；ctx[0] 待 C 批数值化（原文本 "{:?}" 策略 id）。
@@ -396,21 +403,42 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
         // fault2008：价格历史市场集合与 setup 不完全一致。
         return Err(SessionError::InvalidSave(ValidationFault::bare(2008)));
     }
+    // 市场集合守卫通过后才装配依赖 Calendar 的历史期望；沿用 restore 的冻结政策和 bindings。
+    // Calendar/digest/日期/共享计数错误统一保留 CivilClock 域，不能伪装成 history 长度错误。
+    let saved_clock = CivilClock::from_parts_for_exchanges(
+        save.setup.start_date,
+        &save.civil_clock,
+        save.setup.stocks.iter().map(|stock| session_calendar_exchange(stock.exchange)),
+    )?;
+    let calendar_source = GameSession::calendar_source_for(&save.setup, &save_catalog, &saved_clock)?;
+    let calendar_day = calendar_source.day(saved_clock.current_date()).map_err(saved_calendar_error)?;
+    let layout = SessionTickLayout {
+        ticks_per_day: save.setup.ticks_per_day,
+        auction_ticks: save.setup.auction_ticks,
+        closing_auction_ticks: save.setup.closing_auction_ticks,
+    };
+    let clock_input = super::market_calendar_live::calendar_clock_input(
+        &calendar_day, layout, save.snapshot.tick, saved_day,
+    ).map_err(saved_calendar_error)?;
+    let clock_projection = calendar_clock_projection(calendar_day.day_model(), layout, clock_input)
+        .map_err(saved_calendar_error)?;
+    let continuous_ticks_per_day = save.setup.ticks_per_day
+        - save.setup.auction_ticks - save.setup.closing_auction_ticks;
+    let current_continuous_ticks = match clock_input.progress {
+        SharedDayProgress::ClosedDay => 0,
+        SharedDayProgress::Trading { completed_ticks } => completed_ticks
+            .saturating_sub(save.setup.auction_ticks).min(continuous_ticks_per_day),
+        SharedDayProgress::TradingCompleted => continuous_ticks_per_day,
+    };
     for (code, prices) in &save.price_history {
-        let continuous_ticks_per_day = save
-            .setup
-            .ticks_per_day
-            .saturating_sub(save.setup.auction_ticks)
-            .saturating_sub(save.setup.closing_auction_ticks);
-        let completed_continuous_ticks = saved_day
+        let stock_day = calendar_day.day_model().stock(*code).map_err(saved_calendar_error)?;
+        let current_stock_ticks = if matches!(stock_day.status(), crate::calendar::DayStatus::Trading) {
+            current_continuous_ticks
+        } else { 0 };
+        // 本所历史完整会话 + 当日一次进度；TradingCompleted 不能重复计入完整会话。
+        let completed_continuous_ticks = stock_day.sessions_before_date()
             .checked_mul(continuous_ticks_per_day)
-            .and_then(|ticks| {
-                ticks.checked_add(
-                    (save.snapshot.tick % save.setup.ticks_per_day)
-                        .saturating_sub(save.setup.auction_ticks)
-                        .min(continuous_ticks_per_day),
-                )
-            })
+            .and_then(|ticks| ticks.checked_add(current_stock_ticks))
             .ok_or_else(|| {
                 // fault2009：价格历史长度计算溢出。
                 SessionError::InvalidSave(ValidationFault::bare(2009))
@@ -451,15 +479,22 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
             // fault2013：分钟计数子错误压平；ctx[0] 待 C 批数值化（原文本 "{error}"）。
             .map_err(|_| SessionError::InvalidSave(ValidationFault::new(2013, vec![0])))?,
     );
-    let expected_minute_keys = (0..completed_minutes)
-        .map(|minute_in_day| {
-            day_start.checked_add(minute_in_day).ok_or_else(|| {
-                // fault2014：市场分钟键计算溢出。
-                SessionError::InvalidSave(ValidationFault::bare(2014))
-            })
-        })
-        .collect::<Result<Vec<_>, _>>()?;
     for (code, minutes) in &save.market_minute_closes {
+        let stock_clock = clock_projection.stock(*code).map_err(saved_calendar_error)?;
+        // producer 在 TradingCompleted 清空当日桶；advanced 日期和 ClosedDay 也不能回填旧分钟。
+        let expected_minute_keys = if day_tick == 0 {
+            Vec::new()
+        } else {
+            match stock_clock.current_date_first_minute_key() {
+                None => Vec::new(),
+                Some(first) => (0..u64::from(stock_clock.current_date_completed_minute_count()))
+                    .map(|minute| first.checked_add(minute).ok_or_else(|| {
+                        // fault2014：市场分钟键计算溢出。
+                        SessionError::InvalidSave(ValidationFault::bare(2014))
+                    }))
+                    .collect::<Result<Vec<_>, _>>()?,
+            }
+        };
         let actual_keys: Vec<u64> = minutes
             .iter()
             .map(|sample| sample.absolute_trading_minute)
@@ -877,15 +912,8 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
         // fault2061：日 K 市场集合与 setup 不完全一致。
         return Err(SessionError::InvalidSave(ValidationFault::bare(2061)));
     }
-    // 日历政策属 civil_clock 域（save.civil_clock.policy）：政策/digest 校验失败
-    // 必须与会话恢复路径（CivilClock::from_parts）同域透传为
-    // SessionError::CivilClock(CivilClockError::Calendar(..))，不得经 From 直落
-    // SessionError::Calendar 造成同一篡改在两个校验点产生不同错误域。
-    let candle_calendar = crate::calendar::TradingCalendar::from_policy(
-        crate::calendar::CalendarPolicy::from_parts(save.civil_clock.policy.clone())
-            .map_err(CivilClockError::from)?,
-    )
-    .map_err(CivilClockError::from)?;
+    // 与 history/分钟校验复用同份冻结 Calendar，不重新读取默认政策。
+    let candle_calendar = saved_clock.calendar();
     for (code, candles) in &save.snapshot.daily_candles {
         if !expected_markets.contains(code) {
             // fault2062：日 K 含未知股票；ctx[0]=StockId。
@@ -894,7 +922,9 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
                 vec![u64::from(code.0)],
             )));
         }
-        let expected_candles = usize::try_from(context.saved_day)
+        let completed_stock_sessions = clock_projection.stock(*code)
+            .map_err(saved_calendar_error)?.completed_session_count();
+        let expected_candles = usize::try_from(completed_stock_sessions)
             .ok()
             .and_then(|completed_days| completed_days.checked_add(360))
             .ok_or_else(|| {
@@ -925,16 +955,19 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
             .expect("daily candle market is validated against setup");
         let exchange = session_calendar_exchange(stock.exchange);
         let mut expected_dates =
-            candles::preset_candle_dates(&candle_calendar, save.setup.start_date, stock.exchange)?;
-        let mut live_date = save.setup.start_date;
-        if !candle_calendar.is_trading_day(exchange, live_date)? {
-            live_date = candle_calendar.next_trading_day(exchange, live_date)?;
-        }
-        for completed in 0..context.saved_day {
-            if completed > 0 {
+            candles::preset_candle_dates(candle_calendar, save.setup.start_date, stock.exchange)?;
+        // 零已完成会话时只检查前史，不查询 ceiling 之外尚未发生的首个交易日。
+        if completed_stock_sessions > 0 {
+            let mut live_date = save.setup.start_date;
+            if !candle_calendar.is_trading_day(exchange, live_date)? {
                 live_date = candle_calendar.next_trading_day(exchange, live_date)?;
             }
-            expected_dates.push(live_date);
+            for completed in 0..completed_stock_sessions {
+                if completed > 0 {
+                    live_date = candle_calendar.next_trading_day(exchange, live_date)?;
+                }
+                expected_dates.push(live_date);
+            }
         }
         let mut previous_time = None;
         for (index, candle) in candles.iter().enumerate() {

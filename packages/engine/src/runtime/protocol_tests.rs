@@ -9,6 +9,7 @@ use std::collections::HashMap;
 
 fn sample_batch(stock: StockIdx, tick: u64, round: u32) -> DeskBatch {
     DeskBatch {
+        repurchase: Vec::new(),
         stock,
         tick,
         round,

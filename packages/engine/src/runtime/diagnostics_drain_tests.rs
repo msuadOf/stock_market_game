@@ -27,6 +27,7 @@ fn d3_real_drain_validator_abort_retries_once_and_checks_day_end_report_identity
     assert!(error.to_string().contains("D3 真实 Drain validator 拒绝"));
     assert!(world.drained_causal.is_empty());
     assert!(world.drained_causal_time.is_none());
+    assert!(world.drained_causal_clocks.is_empty());
     world.set_day_end_validator(Box::new(|_| Ok(())));
     world.run_day_end_public().unwrap();
     let raw = &world.drained_causal;
@@ -51,6 +52,7 @@ fn d3_real_drain_validator_abort_retries_once_and_checks_day_end_report_identity
     world.abort_day_end();
     assert!(world.drained_causal.is_empty());
     assert!(world.drained_causal_time.is_none());
+    assert!(world.drained_causal_clocks.is_empty());
     world.run_day_end_public().unwrap();
     assert_eq!(world.drained_causal.iter().filter(|fact| matches!(fact.kind, DeskCausalKind::DayEnded { .. })).count(), 1);
     world.shutdown().unwrap();
@@ -68,6 +70,7 @@ fn d3_real_drain_missing_execution_is_rejected_in_original_report_and_retry_has_
     assert_eq!(trades, 1);
     assert!(world.drained_causal.is_empty());
     assert!(world.drained_causal_time.is_none());
+    assert!(world.drained_causal_clocks.is_empty());
     drop(hook);
     world.run_day_end_public().unwrap();
     assert_eq!(world.drained_day_trades.len(), 1);

@@ -302,7 +302,7 @@ fn crossing_trade_has_a_complete_causal_chain() {
     let (mut authority, code) = session_with_resting_sell(true, LOT);
     // The fixture installs the maker directly. Seed its genuine pre-existing origin so the
     // diagnostic report can reconcile both sides of the Continuous execution.
-    authority.causal_submitted(&authority.state.markets[&code].resting_orders()[0], &code);
+    authority.causal_submitted(&authority.state.markets[&code].resting_orders()[0], &code).unwrap();
     authority
         .state
         .retail_experience

@@ -4486,7 +4486,7 @@ fn d0_civil_failure_preserves_installed_day_end_and_first_error() {
     assert!(retained.generation > generation, "已发布 retained 不撤回");
     assert_eq!(retained.retained.days.len(), 1);
     let fatal = session.poison_reason().expect("F2 必须 terminal").clone();
-    assert_eq!(session.save().unwrap_err(), fatal);
+    assert!(matches!(session.save(), Err(crate::SessionError::Step(actual)) if actual == fatal));
     assert_eq!(driver.step_frame_equivalent(&mut session).unwrap_err(), fatal);
     assert_eq!(driver.day_end(&mut session).unwrap_err(), fatal.to_string(), "禁止重跑日结");
     assert_eq!(driver.world_committed_tick(), 6);
@@ -4561,6 +4561,6 @@ fn d0_partial_account_install_failure_restores_mirrors_without_reverting_publish
     assert_eq!(publication.load().generation, before.generation, "F0未发布retained");
     assert!(std::sync::Arc::ptr_eq(&publication.load().retained, &before.retained));
     let fatal = session.poison_reason().expect("失败日结必须封首错不可重跑").clone();
-    assert_eq!(session.save().unwrap_err(), fatal);
+    assert!(matches!(session.save(), Err(crate::SessionError::Step(actual)) if actual == fatal));
     assert_eq!(driver.step_frame_equivalent(&mut session).unwrap_err(), fatal);
 }
