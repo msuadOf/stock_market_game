@@ -30,6 +30,15 @@ pub use owner_rights_views::{
 #[cfg(test)]
 mod company_closing_tests;
 mod company_groups;
+mod company_commands_types;
+mod capital_approval_context;
+mod capital_command_candidates;
+mod company_command_candidates;
+mod player_company_command_candidates;
+mod stock_distribution_command_candidate;
+mod player_company_commands;
+pub use company_commands_types::{PlayerCompanyProposal, PlayerProposalKind};
+pub use player_company_commands::{PlayerCompanyCommandError, PlayerCompanyCommandReceipt};
 mod company_read_views;
 mod company_state;
 pub use company_state::SavedSessionCompanies;
@@ -4613,6 +4622,7 @@ impl GameSession {
                         catalog: &sess.state.stocks,
                         calendar: sess.state.civil_clock.calendar(),
                         committed_through,
+                        approved_through: save.civil_clock.current_date,
                         initial_par: save
                             .setup
                             .auto_corporate_foundation

@@ -219,6 +219,42 @@ binding 和真实成交／费用来源核验；不得按共享账户总现金回
 已登记的 Simple 简化；批准 producer、公司执行资格、真实委托／成交／余款回收和完整公共恢复
 继续由后续同事务接线完成，不能据数值通道可用宣称回购全链已支持。
 
+## 玩家提案的 Session 批准入口（2026-10-28 登记）
+
+`GameSession::propose_player_company_action` 接入 `CashDividend`、`StockDistribution`、
+`RightsOffering`、`SecondaryOffering`、`ShareSplit` 的共同批准候选。
+沿 [ADR-0037 玩家提案追记](decisions/0037-company-action-initiator.md)，
+这是游戏化简化：当前玩家账户对上市证券的总持仓任意大于零即可提案，包含名册外持仓和
+T+1 锁定股；账户身份、日期、证券与日历取当前 Session，通过同一批准校验。
+返回的 receipt 只证明方案已批准，不证明未来登记、付款或新股到账；批准不改变玩家现金、
+股份或个人获知，不制造观察点。native 使用同一个 INFO 行政事务安装当前库与 facts；
+业务 prepare/inspect 拒绝保持可继续，World terminal、锁 poison 或 tick 漂移封存 Session 首错。
+`StockDistribution`、`ShareSplit`、`RightsOffering` 与 `IssuerRepurchase` 的资本
+restore 分别校验批准与已发生事实：`approved_on` 可到存档当前自然日；公告、登记、
+REG receipt、实际入账、回购下单记录与成交仍只能到已完成的前一自然日，不因批准窗口放宽。
+
+配股与增发受真实新局 `rights_offering_enabled` 开关控制；回购另受
+`issuer_repurchase_enabled` 控制，禁用在启动 driver 或安装方案前显式拒绝。
+玩家 `SecondaryOffering` 只定向本人 `NamedHolder`，缴款期为1交易日且
+`lock_until=None`，沿既有游戏简化，不冒充现实定向发行的完整限售条件；配股日程
+仍由真实冻结日历与显式缴款天数推导，NPC 默认 `FullByDefault` 不变。
+
+资本批准从当前已安装的完整 REG receipts、发行股数及注册资本事实派生面值，
+严格按整数分整除，不使用未来 split 声明的面值，也不把派生读取当作生产执行回执。
+自动 foundation 沿 setup 面值根；手工 foundation 沿真实已绑定资本，不用 setup
+面值替代。跨待生效 split 的单位与登记相位 producer 尚未接通：同 issuer、同 stock
+的发行／送转入账若在 split 登记当日或之后，两个提案受理顺序均显式拒绝；严格早于
+登记的独立资本动作可批准。已有 settled split 不受此 pending 门限制。同除权日
+非现金组合仍显式不支持；两个 pending split 仍受原 finance 声明链约束，不能据此
+宣称完整多事件单位组合能力。
+
+回购真实资金授权 binding／allocator 与同次 prepare producer，以及公司行为生产日终
+结算仍待接线，能力面不能据此宣称全部可执行。已对齐可信 E2 handover；Cash、
+StockDistribution、RightsOffering 与 ShareSplit 在单证券、单买单非空旧簿 checkpoint
+已实测通过首次移交、批准、raw World、save 与再次 restore。当日批准恢复与前一日
+实际事实截止已分离验证；不外推其它订单形态或完整公司行为生产链。
+Protocol、三宿主命令及数值 wire 拒绝面也须由后续真实接线验证。
+
 ## 回购专户的自主交易隔离（2026-10-25 登记）
 
 `AccountKind::IssuerRepurchase` 禁止走普通 NPC 的自主决策下单通道。保留专户 kind、

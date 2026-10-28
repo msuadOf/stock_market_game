@@ -17,6 +17,7 @@ use super::event_bridge::{
 };
 use super::world::World;
 mod convergence;
+mod company_commands;
 mod sync_inputs;
 mod static_projection;
 pub(crate) use static_projection::PreparedStaticRead;

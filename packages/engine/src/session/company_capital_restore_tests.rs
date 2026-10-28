@@ -39,6 +39,9 @@ use crate::orderbook::AccountId;
 use crate::session::{SecurityCategory, StockExchange, StockSpec};
 use crate::stock::StockMeta;
 
+#[path = "company_capital_approval_cutoff_tests.rs"]
+mod approval_cutoff_tests;
+
 fn date(text: &str) -> CivilDate {
     CivilDate::from_iso(text).unwrap()
 }
@@ -189,6 +192,14 @@ impl Fixture {
     }
 
     fn validate(&self, through: &str) -> Result<CapitalReplaySummary, CompanyCapitalRestoreError> {
+        self.validate_with_approval(through, through)
+    }
+
+    fn validate_with_approval(
+        &self,
+        committed_through: &str,
+        approved_through: &str,
+    ) -> Result<CapitalReplaySummary, CompanyCapitalRestoreError> {
         validate_company_capital_restore(CapitalRestoreInput {
             setup_stocks: &self.setup_stocks,
             setup_issuers: &self.initial,
@@ -196,7 +207,8 @@ impl Fixture {
             actions: &self.actions,
             catalog: &self.catalog,
             calendar: &self.calendar,
-            committed_through: date(through),
+            committed_through: date(committed_through),
+            approved_through: date(approved_through),
             initial_par: Some(Money::from_cents(100)),
         })
     }
@@ -474,15 +486,24 @@ fn capital_16_changed_current_issuer_2200_does_not_pass_real_split_replay() {
 
 impl Fixture {
     fn rights(&mut self, paid_shares: u64, settle: bool) -> CivilDate {
+        self.rights_approved_on(paid_shares, settle, date("2030-06-03"))
+    }
+
+    fn rights_approved_on(
+        &mut self,
+        paid_shares: u64,
+        settle: bool,
+        approved_on: CivilDate,
+    ) -> CivilDate {
         let mut plan = RightsOfferingEventPlan {
             event_id: "rights-a".into(),
             approval_reference: "批准-rights-a".into(),
             issuer: CompanyId(0),
             stock: code(),
             exchange: CalendarExchange::Sse,
-            approved_on: date("2030-06-03"),
-            announced_on: date("2030-06-03"),
-            registered_on: date("2030-06-03"),
+            approved_on,
+            announced_on: approved_on,
+            registered_on: approved_on,
             payment_start_on: date("2030-06-04"),
             payment_deadline_on: date("2030-06-04"),
             ex_rights_on: date("2030-06-04"),
@@ -816,6 +837,7 @@ impl Fixture {
             catalog: &self.catalog,
             calendar: &self.calendar,
             committed_through: date(through),
+            approved_through: date(through),
             initial_par: None,
         })
     }

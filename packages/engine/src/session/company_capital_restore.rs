@@ -1,4 +1,4 @@
-//! selected CompanySystem 的已提交资本恢复验证；不创建或修改持久事实。
+//! selected CompanySystem 的批准与已提交资本恢复验证；不创建或修改持久事实。
 
 use crate::Money;
 use crate::accounting::AccountingAmount;
@@ -20,7 +20,10 @@ pub(crate) struct CapitalRestoreInput<'a> {
     pub(crate) actions: &'a SessionCorporateActions,
     pub(crate) catalog: &'a StockCatalog,
     pub(crate) calendar: &'a TradingCalendar,
+    /// 日终已完成的实际事实截止；不因当日批准窗口而放宽。
     pub(crate) committed_through: CivilDate,
+    /// 同步命令已完成的批准截止；restore 可包含当前自然日的 Approved 方案。
+    pub(crate) approved_through: CivilDate,
     pub(crate) initial_par: Option<Money>,
 }
 
@@ -77,6 +80,11 @@ pub(crate) enum CompanyCapitalRestoreError {
     FutureFact {
         context: CapitalRestoreContext,
         committed_through: CivilDate,
+    },
+    #[error("资本恢复批准日期晚于批准截止 {approved_through}：{context:?}")]
+    FutureApproval {
+        context: CapitalRestoreContext,
+        approved_through: CivilDate,
     },
     #[error("资本恢复输入身份重复：{context:?}")]
     Duplicate { context: CapitalRestoreContext },
@@ -733,8 +741,8 @@ fn prepare_stock_distributions(
                 ("credited_on", fact.credited_on == book.credited_on()),
             ],
         )?;
+        validate_approval_cutoff(input, &context, plan.approved_on)?;
         for occurred in [
-            Some(plan.approved_on),
             (!matches!(
                 book.status(),
                 crate::company::stock_distribution::StockDistributionStatus::Approved
@@ -914,8 +922,8 @@ fn prepare_share_splits(
                 ("settled_on", fact.settled_on == book.settled_on()),
             ],
         )?;
+        validate_approval_cutoff(input, &context, plan.approved_on)?;
         for occurred in [
-            Some(plan.approved_on),
             (!matches!(
                 book.status(),
                 crate::company::share_split::ShareSplitStatus::Approved
@@ -1147,8 +1155,8 @@ fn prepare_rights_offerings(
                 ),
             ],
         )?;
+        validate_approval_cutoff(input, &context, plan.approved_on)?;
         for occurred in [
-            Some(plan.approved_on),
             (!matches!(
                 book.status(),
                 crate::company::rights_offering::RightsOfferingStatus::Approved
@@ -1409,13 +1417,14 @@ fn prepare_repurchase_cancellations(
                 ),
             ],
         )?;
+        validate_approval_cutoff(input, &context, plan.approved_on)?;
         for occurred in [
-            Some(plan.approved_on),
             (!matches!(
                 book.status(),
                 crate::company::issuer_repurchase::IssuerRepurchaseStatus::Approved
             ))
             .then_some(plan.announced_on),
+            book.last_order_day(),
             book.completed_on(),
             book.cancelled_on(),
         ]
@@ -1453,7 +1462,18 @@ fn prepare_repurchase_cancellations(
                 required: CapitalRestorePrerequisite::RepurchaseLotAttribution,
             });
         }
-        book.validate_share_units(&[], input.committed_through)
+        // 空库存的单位根只含批准锚；允许当日 Approved 不代表已执行下单或成交。
+        // 所有实际事实已在上面按 committed_through 核验，单位调整仍受前置门拒绝。
+        let inventory_through = if matches!(
+            book.status(),
+            crate::company::issuer_repurchase::IssuerRepurchaseStatus::Approved
+        ) && book.fills().is_empty()
+        {
+            input.committed_through.max(plan.approved_on)
+        } else {
+            input.committed_through
+        };
+        book.validate_share_units(&[], inventory_through)
             .map_err(|source| CompanyCapitalRestoreError::IssuerRepurchase {
                 context: context.clone(),
                 source,
@@ -1607,6 +1627,23 @@ fn prepare_repurchase_cancellations(
             },
             source,
         })?;
+    Ok(())
+}
+
+fn validate_approval_cutoff(
+    input: &CapitalRestoreInput<'_>,
+    context: &CapitalRestoreContext,
+    approved_on: CivilDate,
+) -> Result<(), CompanyCapitalRestoreError> {
+    if approved_on > input.approved_through {
+        return Err(CompanyCapitalRestoreError::FutureApproval {
+            context: CapitalRestoreContext {
+                day: Some(approved_on),
+                ..context.clone()
+            },
+            approved_through: input.approved_through,
+        });
+    }
     Ok(())
 }
 

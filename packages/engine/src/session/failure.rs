@@ -373,7 +373,7 @@ impl GameSession {
         self.construct_runtime_driver_lazy()
     }
 
-    fn construct_runtime_driver_lazy(&mut self) -> Result<(), StepFatal> {
+    pub(in crate::session) fn construct_runtime_driver_lazy(&mut self) -> Result<(), StepFatal> {
         self.require_healthy()?;
         let fail = |description| StepFatal::InvariantViolation {
             location: "GameSession::ensure_runtime_driver".to_owned(), description,

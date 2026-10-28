@@ -1978,6 +1978,11 @@ impl World {
         self.n_groups
     }
 
+    /// 读取既有失败生命周期，调用方不得把 terminal 失败作为业务拒绝重试。
+    pub(crate) fn is_terminal(&self) -> bool {
+        self.dead_reason.is_some()
+    }
+
     /// 运行 n 个 tick（协调者逻辑在本调用线程执行）。
     /// panic 运输：worker panic ⇒ 本函数以原 payload `resume_unwind`（不吞不改写）。
     pub fn run_ticks(&mut self, n: u64) -> Result<u64, RuntimeError> {
