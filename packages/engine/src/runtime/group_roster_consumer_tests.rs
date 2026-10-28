@@ -135,7 +135,12 @@ fn world_with_stocks_and_counterparty(n_stocks: usize, counterparty: bool) -> Wo
             retail_style: Some(crate::strategy::RetailStyle::Noise),
         });
     }
-    World::spawn(spec).expect("真实线程世界")
+    World::spawn(
+        spec,
+        crate::calendar::TradingCalendar::current_default_calendar()
+            .expect("显式 raw Calendar 政策合法"),
+    )
+    .expect("真实线程世界")
 }
 
 fn assessment(score: i32) -> BTreeMap<StockId, CandidateAssessment> {

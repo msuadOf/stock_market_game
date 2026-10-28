@@ -1,0 +1,6 @@
+
+running 1 test
+test market_calendar_context::tests::c09_closed_and_completed_are_read_only_and_final_tick_cannot_repeat ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 41 filtered out; finished in 0.00s
+

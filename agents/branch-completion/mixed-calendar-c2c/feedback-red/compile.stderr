@@ -1,0 +1,10 @@
+warning: constant `PRESET_HISTORY_DAYS` is never used
+  --> /data1/baiyifan/workplace/stock_market_game/.worktree/mixed-calendar-c2c/packages/engine/tests/common/mixed_calendar_c2c_fixture.rs:12:11
+   |
+12 | pub const PRESET_HISTORY_DAYS: usize = 360;
+   |           ^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: 1 warning emitted
+

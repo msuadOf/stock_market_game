@@ -1,0 +1,11 @@
+
+running 1 test
+test closed_first_tick_emits_no_price_fact_while_open_stock_progresses ... FAILED
+
+failures:
+
+failures:
+    closed_first_tick_emits_no_price_fact_while_open_stock_progresses
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 8 filtered out; finished in 0.75s
+

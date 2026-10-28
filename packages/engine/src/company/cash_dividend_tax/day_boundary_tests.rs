@@ -348,6 +348,8 @@ fn basic_spec(
         initial_pending_sell: Vec::new(),
         root_projection: None,
         civil_start_date: crate::calendar::CivilDate::from_ymd(2026, 1, 5).expect("测试日期合法"),
+        calendar_start_date: crate::calendar::CivilDate::from_ymd(2026, 1, 5)
+            .expect("测试计数起日合法"),
         script_for,
         chunk: 8,
         watchdog: WatchdogConfig {
@@ -413,7 +415,8 @@ fn actual_world_source() -> (
         }),
     );
     spec.civil_start_date = day.day;
-    let mut world = World::spawn(spec).unwrap();
+    spec.calendar_start_date = day.day;
+    let mut world = World::spawn(spec, calendar.clone()).unwrap();
     let before = world.snapshot_accounts().unwrap();
     world.run_ticks(3).unwrap();
     let after = world.snapshot_accounts().unwrap();

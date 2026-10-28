@@ -29,6 +29,8 @@ impl GameSession {
     /// Non-authoritative decision fixtures are rejected, never projected as production state.
     pub fn business_state_hash(&self) -> Result<StateHash, StepFatal> {
         let Self {
+            market_calendar_source: _,
+            market_calendar_day: _,
             compute: _,
             ingress: _,
             state,

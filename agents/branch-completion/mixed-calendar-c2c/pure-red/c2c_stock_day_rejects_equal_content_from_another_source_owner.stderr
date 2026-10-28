@@ -1,0 +1,5 @@
+
+thread 'market_calendar_context::tests::c2c_stock_day_rejects_equal_content_from_another_source_owner' (1755911) panicked at /data1/baiyifan/workplace/stock_market_game/.worktree/mixed-calendar-c2c/agents/branch-completion/mixed-calendar-c2c/../../../packages/engine/src/session/market_calendar_context_tests.rs:49:14:
+called `Result::unwrap_err()` on an `Ok` value: ()
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+bounded command exited with 101

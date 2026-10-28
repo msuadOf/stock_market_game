@@ -1,0 +1,70 @@
+{
+  "positive": {
+    "case": "open_limit_is_accepted_and_reserves_real_cash",
+    "prefix": "positive",
+    "command": [
+      "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+      "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+      "10000",
+      "--",
+      "/data1/baiyifan/workplace/stock_market_game/.tmp/mixed-calendar-c2c/c2c-feedback-first-6ac",
+      "open_limit_is_accepted_and_reserves_real_cash",
+      "--exact",
+      "--nocapture",
+      "--test-threads=1"
+    ],
+    "wrapper_exit_code": 0,
+    "wall_seconds": 0.8099180459976196
+  },
+  "cases": [
+    {
+      "case": "open_limit_is_accepted_and_reserves_real_cash",
+      "prefix": "parallel",
+      "command": [
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/mixed-calendar-c2c/c2c-feedback-first-6ac",
+        "open_limit_is_accepted_and_reserves_real_cash",
+        "--exact",
+        "--nocapture",
+        "--test-threads=1"
+      ],
+      "wrapper_exit_code": 0,
+      "wall_seconds": 0.8155042689759284
+    },
+    {
+      "case": "closed_limit_returns_strict_exchange_closed_feedback",
+      "prefix": "parallel",
+      "command": [
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/mixed-calendar-c2c/c2c-feedback-first-6ac",
+        "closed_limit_returns_strict_exchange_closed_feedback",
+        "--exact",
+        "--nocapture",
+        "--test-threads=1"
+      ],
+      "wrapper_exit_code": 1,
+      "wall_seconds": 0.9948479139711708
+    }
+  ],
+  "wall_seconds": 1.8068881470244378,
+  "source_before": {
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/mixed-calendar-c2c/packages/engine/tests/mixed_calendar_c2c_feedback.rs": "68a75d735ae39465c859a66ce9ad5a472a2b4e7c6d6e8cb6e945afc0b313bb8f",
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/mixed-calendar-c2c/packages/engine/tests/common/mixed_calendar_c2c_fixture.rs": "d1120a2ad62e3d0c1ca15ec1126ec44cf2050b48c4f84cb07e4dafbb5f4b2eb3"
+  },
+  "source_after": {
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/mixed-calendar-c2c/packages/engine/tests/mixed_calendar_c2c_feedback.rs": "68a75d735ae39465c859a66ce9ad5a472a2b4e7c6d6e8cb6e945afc0b313bb8f",
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/mixed-calendar-c2c/packages/engine/tests/common/mixed_calendar_c2c_fixture.rs": "d1120a2ad62e3d0c1ca15ec1126ec44cf2050b48c4f84cb07e4dafbb5f4b2eb3"
+  },
+  "binary": {
+    "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/mixed-calendar-c2c/c2c-feedback-first-6ac",
+    "bytes": 49320304,
+    "sha256": "6c6e5486eb8fe72eab560da5aebc4fc698049abbf09e9b5a30d54cd9e1f7a5f1"
+  },
+  "说明": "退出码为deadline CLI wrapper；原始stderr另保Rust失败文本，不归一化为raw child exit。"
+}

@@ -1,0 +1,27 @@
+{
+  "outer_argv": [
+    "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+    "10000",
+    "--",
+    "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+    "--test",
+    "--test-timeout=10000",
+    "--test-concurrency=2",
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/mixed-calendar-c2c/agents/branch-completion/mixed-calendar-c2c/verify-v11-build-bindings.test.mjs",
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/mixed-calendar-c2c/agents/branch-completion/mixed-calendar-c2c/assert-v11-public-trace.test.mjs"
+  ],
+  "case_timeout_ms": 10000,
+  "batch_deadline_ms": 10000,
+  "file_processes": 2,
+  "case_concurrency_per_suite": 4,
+  "max_concurrent_cases": 8,
+  "sources": {
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/mixed-calendar-c2c/agents/branch-completion/mixed-calendar-c2c/verify-v11-build-bindings.mjs": "7afc72e7d6edc5ec1c595aa164cf89f5a2937da982bdb186a7bbdc390c2f26a1",
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/mixed-calendar-c2c/agents/branch-completion/mixed-calendar-c2c/verify-v11-build-bindings.test.mjs": "5bc5ea9e6128742179bd64840c53f892c6cd657a2b1114add45609760a164124",
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/mixed-calendar-c2c/agents/branch-completion/mixed-calendar-c2c/assert-v11-public-trace.mjs": "4378ba1a4dc9f91ec1433198bf36d09933edd4dc50c4bc0536ca8a26956f7713",
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/mixed-calendar-c2c/agents/branch-completion/mixed-calendar-c2c/assert-v11-public-trace.test.mjs": "decbcd8d407bd21be258941bc6030dd6150b397ccfcc346e8dcd6d12d8e806e7",
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/mixed-calendar-c2c/agents/branch-completion/mixed-calendar-c2c/compare-native-wasm-public-fixture.mjs": "098812e520227618318ed6c64ee2ca7e4b91060fcd0d5b5bc1c026ec1e4e033d"
+  },
+  "说明": "前轮两个suite各8可并发16；此轮缩为2file×4case，源码改动仅suite并发参数，不改断言。"
+}

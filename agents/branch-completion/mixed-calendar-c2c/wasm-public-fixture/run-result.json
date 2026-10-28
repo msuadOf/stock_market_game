@@ -1,0 +1,17 @@
+{
+  "outer_argv": [
+    "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+    "scripts/run-with-deadline.mjs",
+    "10000",
+    "--",
+    "/data1/baiyifan/workplace/stock_market_game/.tmp/mixed-calendar-c2c/export-public-wasm-fixture-6ac",
+    "/data1/baiyifan/workplace/stock_market_game/.tmp/mixed-calendar-c2c/public-wasm-initial-6ac.json"
+  ],
+  "wrapper_exit_code": 0,
+  "wall_seconds": 1.6867419489426538,
+  "fixture": {
+    "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/mixed-calendar-c2c/public-wasm-initial-6ac.json",
+    "bytes": 2321588,
+    "sha256": "63d03f04a821ba9a84d8e35d20f2c032415afd95d0dca5d085ad37f00f3fb1ae"
+  }
+}

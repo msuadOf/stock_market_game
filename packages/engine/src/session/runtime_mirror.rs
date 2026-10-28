@@ -139,6 +139,7 @@ impl GameSession {
         tick: u64,
         expected_authority_epoch: u64,
     ) -> Result<PreparedRuntimeMirror, String> {
+        input.validate_calendar(self, tick, driver.world_committed_tick())?;
         let static_read = input.static_read;
         let is_static = static_read.is_some();
         let static_session_revision = static_read.as_ref().map(|read| read.session_revision);
@@ -153,7 +154,9 @@ impl GameSession {
             return Err("静点 Full 捕获来源已过期".to_owned());
         }
         let captured_domains = driver.pending_mirror_domains();
-        if source.authority_epoch != expected_authority_epoch || source.tick != tick {
+        if source.authority_epoch != expected_authority_epoch || source.tick != tick
+            || source.civil_date != self.civil_date()
+        {
             return Err(format!(
                 "镜像 candidate authority 不一致：source={source:?} session_epoch={} tick={tick}",
                 self.runtime_authority_epoch
@@ -373,10 +376,8 @@ impl GameSession {
         let mut active = self.state.candle_book.active().clone();
         let setup = &self.state.setup;
         let day_tick = tick % setup.ticks_per_day;
-        let continuous = setup.ticks_per_day - setup.auction_ticks - setup.closing_auction_ticks;
-        let completed = tick / setup.ticks_per_day * continuous
-            + day_tick.saturating_sub(setup.auction_ticks).min(continuous);
-        let history_len = (completed as usize).min(setup.history_len);
+        // desk 的 recent_prices 已按真实 open 拍及 history_len 限界；不再用共享日数裁本股历史。
+        let history_len = setup.history_len;
         let published = driver.publication().load();
         if published.tick != tick {
             return Err(format!(
@@ -388,6 +389,9 @@ impl GameSession {
         if !is_static {
         for (index, view) in driver.world_public_views().iter().enumerate() {
             let code = StockId(index as u32);
+            if !input.calendar.stock_is_open(code)? {
+                continue;
+            }
             let market = markets
                 .get_mut(&code)
                 .ok_or_else(|| format!("行情 candidate 未知股票：{code:?}"))?;
@@ -576,7 +580,9 @@ impl GameSession {
             None
         };
         let mut events = input.events;
-        if input.emit_price_tick && self.phase() == TradingPhase::Continuous {
+        if input.emit_price_tick
+            && input.calendar.market_phase_before() == Some(TradingPhase::Continuous)
+        {
             let views: Vec<_> = driver
                 .world_public_views()
                 .iter()
@@ -590,6 +596,9 @@ impl GameSession {
                 .collect();
             for (index, (last_price, bids, asks)) in views.into_iter().enumerate() {
                 let code = StockId(index as u32);
+                if !input.calendar.stock_is_open(code)? {
+                    continue;
+                }
                 let candle = if is_day_end { &closed } else { &active }
                     .get(&code)
                     .cloned()

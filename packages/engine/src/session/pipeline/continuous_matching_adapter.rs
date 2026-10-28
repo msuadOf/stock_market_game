@@ -46,7 +46,12 @@ pub(super) fn market_data_priors(
                     minute_closes: view.market_minute_closes.get(code).cloned(),
                     candle_time,
                     history_len: view.setup.history_len,
-                    day: u64::from(view.day),
+                    day: view
+                        .calendar_day
+                        .day_model()
+                        .stock(*code)
+                        .expect("StockMarketDataPrior 的证券必须属于实际 Calendar catalog")
+                        .sessions_before_date(),
                 },
             )
         })

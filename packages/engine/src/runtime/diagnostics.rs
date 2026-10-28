@@ -134,7 +134,12 @@ mod tests {
         spec.order_ttl_ticks = ttl;
         spec.ticks_per_day = 30;
         spec.auction_ticks = 0;
-        World::spawn(spec).unwrap()
+        World::spawn(
+            spec,
+            crate::calendar::TradingCalendar::current_default_calendar()
+                .expect("显式 raw Calendar 政策合法"),
+        )
+        .unwrap()
     }
 
     #[test]
@@ -185,7 +190,12 @@ mod tests {
         }) as GroupScript);
         let mut spec = basic_spec(1, 2, 4, script);
         spec.closing_auction_ticks = 0;
-        let mut world = World::spawn(spec).unwrap();
+        let mut world = World::spawn(
+            spec,
+            crate::calendar::TradingCalendar::current_default_calendar()
+                .expect("显式 raw Calendar 政策合法"),
+        )
+        .unwrap();
         world.run_ticks(1).unwrap();
         let records = world.report_log.clone();
         world.shutdown().unwrap();
@@ -245,27 +255,68 @@ mod tests {
 
     #[test]
     fn d2_real_world_continue_resets_report_ordinal_and_keeps_before_chain() {
-        let script = Box::new(|_group| Box::new(|tick: u64, round: u32| {
-            let mut plan=TickPlan::default();
-            if tick==1 && round==0 {
-                plan.places.push(PlaceSpec { local:0,stock:1,side:Side::Sell,price:995,qty:100 });
-                plan.places.push(PlaceSpec { local:1,stock:1,side:Side::Buy,price:1000,qty:200 });
-                plan.continuation=true;
-            } else if tick==1 && round==1 {
-                plan.places.push(PlaceSpec { local:2,stock:1,side:Side::Sell,price:1000,qty:100 });
-            }
-            plan
-        }) as GroupScript);
-        let mut spec=basic_spec(1,2,3,script);spec.closing_auction_ticks=0;
-        let mut world=World::spawn(spec).unwrap();world.run_ticks(1).unwrap();
-        let record=&world.report_log[0];assert_eq!(record.rounds,1);
-        let executions=record.desk_causal.iter().filter_map(|fact| match fact.kind {
-            DeskCausalKind::Execution { ordinal,buyer,.. }=>Some((fact.round,ordinal,buyer.order,buyer.value_before)),_=>None,
-        }).collect::<Vec<_>>();
-        assert_eq!(executions.len(),2);
-        assert_eq!((executions[0].0,executions[0].1,executions[0].3),(0,0,0));
-        assert_eq!((executions[1].0,executions[1].1,executions[1].3),(1,0,99_500));
-        assert_eq!(executions[0].2,executions[1].2);
+        let script = Box::new(|_group| {
+            Box::new(|tick: u64, round: u32| {
+                let mut plan = TickPlan::default();
+                if tick == 1 && round == 0 {
+                    plan.places.push(PlaceSpec {
+                        local: 0,
+                        stock: 1,
+                        side: Side::Sell,
+                        price: 995,
+                        qty: 100,
+                    });
+                    plan.places.push(PlaceSpec {
+                        local: 1,
+                        stock: 1,
+                        side: Side::Buy,
+                        price: 1000,
+                        qty: 200,
+                    });
+                    plan.continuation = true;
+                } else if tick == 1 && round == 1 {
+                    plan.places.push(PlaceSpec {
+                        local: 2,
+                        stock: 1,
+                        side: Side::Sell,
+                        price: 1000,
+                        qty: 100,
+                    });
+                }
+                plan
+            }) as GroupScript
+        });
+        let mut spec = basic_spec(1, 2, 3, script);
+        spec.closing_auction_ticks = 0;
+        let mut world = World::spawn(
+            spec,
+            crate::calendar::TradingCalendar::current_default_calendar()
+                .expect("显式 raw Calendar 政策合法"),
+        )
+        .unwrap();
+        world.run_ticks(1).unwrap();
+        let record = &world.report_log[0];
+        assert_eq!(record.rounds, 1);
+        let executions = record
+            .desk_causal
+            .iter()
+            .filter_map(|fact| match fact.kind {
+                DeskCausalKind::Execution { ordinal, buyer, .. } => {
+                    Some((fact.round, ordinal, buyer.order, buyer.value_before))
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(executions.len(), 2);
+        assert_eq!(
+            (executions[0].0, executions[0].1, executions[0].3),
+            (0, 0, 0)
+        );
+        assert_eq!(
+            (executions[1].0, executions[1].1, executions[1].3),
+            (1, 0, 99_500)
+        );
+        assert_eq!(executions[0].2, executions[1].2);
         world.shutdown().unwrap();
     }
 

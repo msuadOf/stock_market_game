@@ -126,7 +126,12 @@ fn bridged_world_converges_with_session_phase_parameters() {
     spec.accounts_per_group = 2;
     spec.initial_cash = 1_000_000;
     spec.initial_shares = vec![vec![vec![1_000u32; 2]; 2]];
-    let mut world = World::spawn(spec).expect("世界构造");
+    let mut world = World::spawn(
+        spec,
+        crate::calendar::TradingCalendar::current_default_calendar()
+            .expect("显式 raw Calendar 政策合法"),
+    )
+    .expect("世界构造");
     let committed = world.run_ticks(20).expect("20 tick 收敛（含一次日结）");
     assert_eq!(committed, 20);
     let no_day_end_yet = world.last_day_end_candidate.is_none();
@@ -235,7 +240,12 @@ fn world_reports_two_legged_trade_facts_end_to_end() {
     };
     let mut spec = super::skeleton_tests::basic_spec(1, 1, 2, Box::new(script));
     spec.decision = None;
-    let mut world = super::world::World::spawn(spec).expect("世界构造");
+    let mut world = super::world::World::spawn(
+        spec,
+        crate::calendar::TradingCalendar::current_default_calendar()
+            .expect("显式 raw Calendar 政策合法"),
+    )
+    .expect("世界构造");
     world.run_ticks(1).expect("收敛");
     let report = world.shutdown().expect("关停");
     // DeskReport.trades 在收束时出口（协调者路径）；Final 侧由成交计数
@@ -334,9 +344,12 @@ fn desk_report_view_carries_five_level_depth() {
             plan
         })
     };
-    let mut world =
-        super::world::World::spawn(super::skeleton_tests::basic_spec(1, 1, 2, Box::new(script)))
-            .expect("世界构造");
+    let mut world = super::world::World::spawn(
+        super::skeleton_tests::basic_spec(1, 1, 2, Box::new(script)),
+        crate::calendar::TradingCalendar::current_default_calendar()
+            .expect("显式 raw Calendar 政策合法"),
+    )
+    .expect("世界构造");
     world.run_ticks(1).expect("收敛");
     let views = world.public_views();
     // 两档卖盘（1005/1010）挂在簿上；买方 1000 挂簿。

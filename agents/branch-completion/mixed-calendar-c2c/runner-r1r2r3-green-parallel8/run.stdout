@@ -1,0 +1,33 @@
+▶ V11独立公开市场事实oracle
+  ✔ 接受已有snapshot与真实open行情及仅open终K (5.03898ms)
+  ✔ R3仅污染公开PriceTick为closed也必须拒绝 (3.025879ms)
+  ✔ R3仅污染公开Trade为closed也必须拒绝 (3.662464ms)
+  ✔ R3仅污染公开AuctionTick为closed也必须拒绝 (3.711075ms)
+  ✔ R3仅污染公开AuctionCompleted为closed也必须拒绝 (2.683589ms)
+  ✔ R3仅污染DayBoundary把closed终K加入也必须拒绝 (2.697509ms)
+  ✔ R3每个Jan2真实市场拍都必须有open行情正控 (1.243162ms)
+  ✔ R3仅污染公开timeseries active_daily_candles为closed也必须拒绝 (1.1588ms)
+  ✔ R3仅污染公开timeseries continuous_points为closed也必须拒绝 (1.142329ms)
+  ✔ R3仅污染公开timeseries auction_points为closed也必须拒绝 (1.210862ms)
+  ✔ R3仅污染公开timeseries closed_daily_candles为closed也必须拒绝 (1.004616ms)
+  ✔ R3 open行情timeseries缺失也必须拒绝 (0.847162ms)
+  ✔ R3 open终K timeseries缺失也必须拒绝 (0.507253ms)
+✔ V11独立公开市场事实oracle (10.532571ms)
+▶ V11 初始化前来源门
+  ✔ R1拒绝只有caller同源声明而缺少真实native/WASM receipt的输入 (2.808022ms)
+  ✔ R1已知native链逐层接受source/build/rlib/binary/input/trace的真实文件hash (38.557724ms)
+  ✔ R1即使caller都自报新source也拒绝实际旧native build receipt (29.034759ms)
+  ✔ R1拒绝trace run绑定另一个输入JSON (37.102697ms)
+  ✔ R1没有正式WASM schema时即使native合法也在初始化前明确拒绝 (39.378155ms)
+  ✔ R2拒绝目录合规game与manifest另一个old.wasm不相同 (0.39921ms)
+  ✔ R2拒绝checker没有唯一返回实际game (0.349499ms)
+  ✔ R2接受checker实际校验的同一个绝对game路径 (0.160384ms)
+✔ V11 初始化前来源门 (43.183663ms)
+ℹ tests 21
+ℹ suites 2
+ℹ pass 21
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 110.53621

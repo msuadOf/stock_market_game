@@ -1,0 +1,928 @@
+use super::super::exchange_calendar_model::calendar_clock_projection;
+use super::*;
+use crate::calendar::{
+    embedded_lunar_facts, CalendarPolicy, CalendarPolicySpec, DayStatus, OfficialCoverageEntry,
+    SimulatedFallbackRuleset,
+};
+use CalendarExchange::{Sse, Szse};
+use MarketCalendarContextError::*;
+use SharedDayProgress::{ClosedDay, Trading, TradingCompleted};
+
+#[test]
+fn c2c_stock_day_accepts_own_closed_and_open_rows_without_complete_bindings() {
+    let source = source();
+    let same_owner = Arc::clone(&source);
+    let day = source.day(date("2030-01-02")).unwrap();
+    for (stock, exchange) in BINDINGS {
+        day.validate_for_stock(&same_owner, stock, exchange, date("2030-01-02"))
+            .unwrap();
+    }
+    let reopen = source.day(date("2030-01-03")).unwrap();
+    reopen
+        .validate_for_stock(&same_owner, SSE, Sse, date("2030-01-03"))
+        .unwrap();
+    assert_eq!(
+        reopen
+            .day_model()
+            .stock(SSE)
+            .unwrap()
+            .sessions_before_date(),
+        0
+    );
+    assert_eq!(
+        reopen
+            .day_model()
+            .stock(SZSE)
+            .unwrap()
+            .sessions_before_date(),
+        1
+    );
+}
+
+#[test]
+fn c2c_stock_day_rejects_equal_content_from_another_source_owner() {
+    let source = source();
+    let other = self::source();
+    let day = source.day(date("2030-01-02")).unwrap();
+    assert_receiver_error(
+        day.validate_for_stock(&other, SSE, Sse, date("2030-01-02"))
+            .unwrap_err(),
+        "owner",
+    );
+}
+
+#[test]
+fn c2c_stock_day_rejects_unknown_stock_and_wrong_exchange_with_details() {
+    let source = source();
+    let day = source.day(date("2030-01-02")).unwrap();
+    for (stock, exchange, expected_actual) in [(StockId(88), Sse, None), (SSE, Szse, Some(Sse))] {
+        match day.validate_for_stock(&source, stock, exchange, date("2030-01-02")) {
+            Err(BindingMismatch {
+                stock: actual_stock,
+                expected,
+                actual,
+            }) => {
+                assert_eq!(actual_stock, stock);
+                assert_eq!(expected, Some(exchange));
+                assert_eq!(actual, expected_actual);
+            }
+            other => panic!("本股 binding 错误必须携完整详情：{other:?}"),
+        }
+    }
+}
+
+#[test]
+fn c2c_stock_day_rejects_wrong_date_with_expected_and_actual() {
+    let source = source();
+    let day = source.day(date("2030-01-02")).unwrap();
+    match day.validate_for_stock(&source, SSE, Sse, date("2030-01-03")) {
+        Err(DateMismatch { expected, actual }) => {
+            assert_eq!(expected, date("2030-01-03"));
+            assert_eq!(actual, date("2030-01-02"));
+        }
+        other => panic!("本股日期错误必须携完整详情：{other:?}"),
+    }
+}
+
+#[test]
+fn c2c_stock_tick_rejects_wrong_owner_stock_exchange_and_date() {
+    let source = source();
+    let other = self::source();
+    let tick = source
+        .day(date("2030-01-02"))
+        .unwrap()
+        .tick(layout(), first())
+        .unwrap();
+    for (owner, stock, exchange, current_date, expected) in [
+        (&other, SSE, Sse, date("2030-01-02"), "owner"),
+        (&source, StockId(88), Sse, date("2030-01-02"), "binding"),
+        (&source, SSE, Szse, date("2030-01-02"), "binding"),
+        (&source, SSE, Sse, date("2030-01-03"), "date"),
+    ] {
+        assert_receiver_error(
+            tick.validate_for_stock(owner, stock, exchange, current_date, layout(), first())
+                .unwrap_err(),
+            expected,
+        );
+    }
+}
+
+#[test]
+fn c2c_stock_tick_checks_each_layout_field() {
+    let source = source();
+    let tick = source
+        .day(date("2030-01-02"))
+        .unwrap()
+        .tick(layout(), first())
+        .unwrap();
+    for expected_layout in [
+        SessionTickLayout {
+            ticks_per_day: 3,
+            ..layout()
+        },
+        SessionTickLayout {
+            auction_ticks: 1,
+            ..layout()
+        },
+        SessionTickLayout {
+            closing_auction_ticks: 1,
+            ..layout()
+        },
+    ] {
+        match tick.validate_for_stock(
+            &source,
+            SZSE,
+            Szse,
+            date("2030-01-02"),
+            expected_layout,
+            first(),
+        ) {
+            Err(TickLayoutMismatch { expected, actual }) => {
+                assert_layout(expected, expected_layout);
+                assert_layout(actual, layout());
+            }
+            other => panic!("本股 Tick layout 错误必须携完整详情：{other:?}"),
+        }
+    }
+}
+
+#[test]
+fn c2c_stock_tick_checks_each_before_clock_field_without_mutating_context() {
+    let source = source();
+    let tick = source
+        .day(date("2030-01-02"))
+        .unwrap()
+        .tick(layout(), first())
+        .unwrap();
+    for expected_before in [
+        input(1, 0, Trading { completed_ticks: 0 }),
+        input(0, 1, Trading { completed_ticks: 0 }),
+        input(0, 0, Trading { completed_ticks: 1 }),
+        input(0, 0, ClosedDay),
+    ] {
+        match tick.validate_for_stock(
+            &source,
+            SZSE,
+            Szse,
+            date("2030-01-02"),
+            layout(),
+            expected_before,
+        ) {
+            Err(BeforeClockMismatch { expected, actual }) => {
+                assert_input(expected, expected_before);
+                assert_input(actual, first());
+            }
+            other => panic!("本股 before clock 错误必须携完整详情：{other:?}"),
+        }
+    }
+    assert_input(tick.before_input(), first());
+    assert_input(
+        tick.after_input(),
+        input(1, 0, Trading { completed_ticks: 1 }),
+    );
+}
+
+#[test]
+fn c2c_stock_validation_priority_is_owner_stock_date_layout_before() {
+    let source = source();
+    let other = self::source();
+    let day = source.day(date("2030-01-02")).unwrap();
+    let tick = day.tick(layout(), first()).unwrap();
+    let bad_layout = SessionTickLayout {
+        ticks_per_day: 3,
+        ..layout()
+    };
+    let bad_before = input(99, 99, ClosedDay);
+    for (owner, stock, exchange, current_date, tick_layout, expected) in [
+        (
+            &other,
+            StockId(88),
+            Szse,
+            date("2030-01-03"),
+            bad_layout,
+            "owner",
+        ),
+        (
+            &source,
+            StockId(88),
+            Sse,
+            date("2030-01-03"),
+            bad_layout,
+            "binding",
+        ),
+        (
+            &source,
+            SSE,
+            Szse,
+            date("2030-01-03"),
+            bad_layout,
+            "binding",
+        ),
+        (&source, SSE, Sse, date("2030-01-03"), bad_layout, "date"),
+        (&source, SSE, Sse, date("2030-01-02"), bad_layout, "layout"),
+        (&source, SSE, Sse, date("2030-01-02"), layout(), "before"),
+    ] {
+        assert_receiver_error(
+            tick.validate_for_stock(
+                owner,
+                stock,
+                exchange,
+                current_date,
+                tick_layout,
+                bad_before,
+            )
+            .unwrap_err(),
+            expected,
+        );
+        if expected != "layout" && expected != "before" {
+            assert_receiver_error(
+                day.validate_for_stock(owner, stock, exchange, current_date)
+                    .unwrap_err(),
+                expected,
+            );
+        }
+    }
+}
+
+#[test]
+fn c2c_stock_tick_accepts_same_owner_both_rows_and_both_tick_boundaries() {
+    let source = source();
+    let day = source.day(date("2030-01-02")).unwrap();
+    let mut before = first();
+    for _ in 0..2 {
+        let tick = day.tick(layout(), before).unwrap();
+        for (stock, exchange) in BINDINGS {
+            tick.validate_for_stock(
+                &source,
+                stock,
+                exchange,
+                date("2030-01-02"),
+                layout(),
+                before,
+            )
+            .unwrap();
+        }
+        before = tick.after_input();
+        assert!(Arc::ptr_eq(tick.day(), &day));
+    }
+    assert_eq!(before.progress, TradingCompleted);
+}
+
+const SSE: StockId = StockId(7);
+const SZSE: StockId = StockId(1009);
+const BINDINGS: [(StockId, CalendarExchange); 2] = [(SSE, Sse), (SZSE, Szse)];
+
+fn date(value: &str) -> CivilDate {
+    CivilDate::from_iso(value).unwrap()
+}
+
+fn calendar(mixed: bool) -> TradingCalendar {
+    // 2030 的差异休市仅为 synthetic-test，不预测交易所公告。
+    let official_coverage = if mixed {
+        vec![OfficialCoverageEntry::new(
+            Sse,
+            2030,
+            vec![(date("2030-01-01"), date("2030-01-02"))],
+            "synthetic-test".into(),
+            "synthetic-test".into(),
+        )]
+    } else {
+        vec![]
+    };
+    TradingCalendar::from_policy(
+        CalendarPolicy::from_parts(CalendarPolicySpec {
+            algorithm_version: 1,
+            default_start: date("2030-01-01"),
+            runtime_min_start: date("2000-01-01"),
+            runtime_max_end: date("2099-12-31"),
+            init_only_min_start: date("1998-01-01"),
+            official_coverage,
+            simulated_fallback: SimulatedFallbackRuleset::new(
+                1,
+                2026,
+                embedded_lunar_facts().unwrap(),
+            )
+            .unwrap(),
+        })
+        .unwrap(),
+    )
+    .unwrap()
+}
+
+fn source() -> Arc<MarketCalendarSource> {
+    MarketCalendarSource::new(calendar(true), date("2030-01-02"), BINDINGS.to_vec()).unwrap()
+}
+fn layout() -> SessionTickLayout {
+    SessionTickLayout {
+        ticks_per_day: 2,
+        auction_ticks: 0,
+        closing_auction_ticks: 0,
+    }
+}
+fn input(
+    tick: u64,
+    completed_shared_sessions: u64,
+    progress: SharedDayProgress,
+) -> SharedClockInput {
+    SharedClockInput {
+        tick,
+        completed_shared_sessions,
+        progress,
+    }
+}
+fn first() -> SharedClockInput {
+    input(0, 0, Trading { completed_ticks: 0 })
+}
+fn assert_input(actual: SharedClockInput, expected: SharedClockInput) {
+    assert_eq!(actual.tick, expected.tick);
+    assert_eq!(
+        actual.completed_shared_sessions,
+        expected.completed_shared_sessions
+    );
+    assert_eq!(actual.progress, expected.progress);
+}
+fn assert_layout(actual: SessionTickLayout, expected: SessionTickLayout) {
+    assert_eq!(actual.ticks_per_day, expected.ticks_per_day);
+    assert_eq!(actual.auction_ticks, expected.auction_ticks);
+    assert_eq!(actual.closing_auction_ticks, expected.closing_auction_ticks);
+}
+fn assert_receiver_error(error: MarketCalendarContextError, expected: &str) {
+    let actual = match error {
+        SourceMismatch => "owner",
+        DuplicateExpectedStock { .. } => "duplicate",
+        BindingMismatch { .. } => "binding",
+        DateMismatch { .. } => "date",
+        TickLayoutMismatch { .. } => "layout",
+        BeforeClockMismatch { .. } => "before",
+        other => panic!("非接收错误：{other:?}"),
+    };
+    assert_eq!(actual, expected);
+}
+
+#[test]
+fn c01_same_arc_owner_and_unordered_complete_bindings_are_accepted() {
+    let source = source();
+    let same_owner = Arc::clone(&source);
+    let day = source.day(date("2030-01-02")).unwrap();
+    let reversed = [(SZSE, Szse), (SSE, Sse)];
+    day.validate_for(&same_owner, &reversed, date("2030-01-02"))
+        .unwrap();
+    let tick = day.tick(layout(), first()).unwrap();
+    tick.validate_for(
+        &same_owner,
+        &reversed,
+        date("2030-01-02"),
+        layout(),
+        first(),
+    )
+    .unwrap();
+    assert!(Arc::ptr_eq(tick.day(), &day));
+    assert_layout(tick.layout(), layout());
+    assert_input(tick.before_input(), first());
+}
+
+#[test]
+fn c02_identical_or_different_source_values_never_share_owner() {
+    let source = source();
+    let day = source.day(date("2030-01-02")).unwrap();
+    let others = [
+        MarketCalendarSource::new(calendar(true), date("2030-01-02"), BINDINGS.to_vec()).unwrap(),
+        MarketCalendarSource::new(calendar(false), date("2030-01-02"), BINDINGS.to_vec()).unwrap(),
+        MarketCalendarSource::new(calendar(true), date("2030-01-01"), BINDINGS.to_vec()).unwrap(),
+        MarketCalendarSource::new(calendar(true), date("2030-01-02"), vec![(SSE, Szse)]).unwrap(),
+    ];
+    for other in &others {
+        assert_receiver_error(
+            day.validate_for(other, &BINDINGS, date("2030-01-02"))
+                .unwrap_err(),
+            "owner",
+        );
+    }
+    let tick = day.tick(layout(), first()).unwrap();
+    for other in &others {
+        assert_receiver_error(
+            tick.validate_for(other, &BINDINGS, date("2030-01-02"), layout(), first())
+                .unwrap_err(),
+            "owner",
+        );
+    }
+}
+
+#[test]
+fn c03_duplicate_missing_extra_replaced_and_wrong_exchange_are_typed() {
+    let source = source();
+    let day = source.day(date("2030-01-02")).unwrap();
+    let cases = [
+        (vec![(SSE, Sse), (SSE, Sse)], "duplicate"),
+        (vec![(SSE, Sse)], "binding"),
+        (vec![], "binding"),
+        (
+            vec![(SSE, Sse), (SZSE, Szse), (StockId(77), Sse)],
+            "binding",
+        ),
+        (vec![(SSE, Sse), (StockId(77), Szse)], "binding"),
+        (vec![(SSE, Szse), (SZSE, Szse)], "binding"),
+    ];
+    for (bindings, kind) in &cases {
+        assert_receiver_error(
+            day.validate_for(&source, bindings, date("2030-01-02"))
+                .unwrap_err(),
+            kind,
+        );
+    }
+    let tick = day.tick(layout(), first()).unwrap();
+    for (bindings, kind) in &cases {
+        assert_receiver_error(
+            tick.validate_for(&source, bindings, date("2030-01-02"), layout(), first())
+                .unwrap_err(),
+            kind,
+        );
+    }
+    match day
+        .validate_for(&source, &[(SSE, Szse), (SZSE, Szse)], date("2030-01-02"))
+        .unwrap_err()
+    {
+        BindingMismatch {
+            stock,
+            expected,
+            actual,
+        } => {
+            assert_eq!(stock, SSE);
+            assert_eq!(expected, Some(Szse));
+            assert_eq!(actual, Some(Sse));
+        }
+        other => panic!("错误绑定详情缺失：{other:?}"),
+    }
+    match day
+        .validate_for(&source, &[(SSE, Sse)], date("2030-01-02"))
+        .unwrap_err()
+    {
+        BindingMismatch {
+            stock,
+            expected,
+            actual,
+        } => {
+            assert_eq!(stock, SZSE);
+            assert_eq!(expected, None);
+            assert_eq!(actual, Some(Szse));
+        }
+        other => panic!("缺股详情缺失：{other:?}"),
+    }
+    match day
+        .validate_for(
+            &source,
+            &[(SSE, Sse), (SZSE, Szse), (StockId(77), Sse)],
+            date("2030-01-02"),
+        )
+        .unwrap_err()
+    {
+        BindingMismatch {
+            stock,
+            expected,
+            actual,
+        } => {
+            assert_eq!(stock, StockId(77));
+            assert_eq!(expected, Some(Sse));
+            assert_eq!(actual, None);
+        }
+        other => panic!("多股详情缺失：{other:?}"),
+    }
+}
+
+#[test]
+fn c04_receiver_validation_order_is_owner_bindings_date_layout_before() {
+    let source = source();
+    let day = source.day(date("2030-01-02")).unwrap();
+    let other = self::source();
+    assert_receiver_error(
+        day.validate_for(&other, &[], date("2030-01-03"))
+            .unwrap_err(),
+        "owner",
+    );
+    assert_receiver_error(
+        day.validate_for(&source, &[], date("2030-01-03"))
+            .unwrap_err(),
+        "binding",
+    );
+    let tick = day.tick(layout(), first()).unwrap();
+    let bad_layout = SessionTickLayout {
+        ticks_per_day: 3,
+        ..layout()
+    };
+    let bad_before = input(9, 9, ClosedDay);
+    for (owner, bindings, current, expected) in [
+        (&other, &[][..], date("2030-01-03"), "owner"),
+        (&source, &[][..], date("2030-01-03"), "binding"),
+        (&source, &BINDINGS[..], date("2030-01-03"), "date"),
+    ] {
+        assert_receiver_error(
+            tick.validate_for(owner, bindings, current, bad_layout, bad_before)
+                .unwrap_err(),
+            expected,
+        );
+    }
+    assert_receiver_error(
+        tick.validate_for(
+            &source,
+            &BINDINGS,
+            date("2030-01-02"),
+            bad_layout,
+            bad_before,
+        )
+        .unwrap_err(),
+        "layout",
+    );
+}
+
+#[test]
+fn c05_receiver_date_layout_and_before_compare_every_field() {
+    let source = source();
+    let day = source.day(date("2030-01-02")).unwrap();
+    match day
+        .validate_for(&source, &BINDINGS, date("2030-01-03"))
+        .unwrap_err()
+    {
+        DateMismatch { expected, actual } => {
+            assert_eq!(expected, date("2030-01-03"));
+            assert_eq!(actual, date("2030-01-02"));
+        }
+        other => panic!("日期详情缺失：{other:?}"),
+    }
+    let tick = day.tick(layout(), first()).unwrap();
+    for expected in [
+        SessionTickLayout {
+            ticks_per_day: 3,
+            ..layout()
+        },
+        SessionTickLayout {
+            auction_ticks: 1,
+            ..layout()
+        },
+        SessionTickLayout {
+            closing_auction_ticks: 1,
+            ..layout()
+        },
+    ] {
+        match tick
+            .validate_for(&source, &BINDINGS, date("2030-01-02"), expected, first())
+            .unwrap_err()
+        {
+            TickLayoutMismatch {
+                expected: received,
+                actual,
+            } => {
+                assert_layout(received, expected);
+                assert_layout(actual, layout());
+            }
+            other => panic!("layout 详情缺失：{other:?}"),
+        }
+    }
+    for expected in [
+        input(1, 0, first().progress),
+        input(0, 1, first().progress),
+        input(0, 0, TradingCompleted),
+    ] {
+        match tick
+            .validate_for(&source, &BINDINGS, date("2030-01-02"), layout(), expected)
+            .unwrap_err()
+        {
+            BeforeClockMismatch {
+                expected: received,
+                actual,
+            } => {
+                assert_input(received, expected);
+                assert_input(actual, first());
+            }
+            other => panic!("before 详情缺失：{other:?}"),
+        }
+    }
+}
+
+#[test]
+fn c06_mixed_first_and_last_tick_match_oracle_and_manual_minutes() {
+    let source = source();
+    let day = source.day(date("2030-01-02")).unwrap();
+    for (before, after, before_minutes, after_minutes) in [
+        (first(), input(1, 0, Trading { completed_ticks: 1 }), 0, 120),
+        (
+            input(1, 0, Trading { completed_ticks: 1 }),
+            input(2, 1, TradingCompleted),
+            120,
+            240,
+        ),
+    ] {
+        let tick = day.tick(layout(), before).unwrap();
+        assert_input(tick.after_input(), after);
+        assert_eq!(
+            tick.before_projection(),
+            &calendar_clock_projection(day.day_model(), layout(), before).unwrap()
+        );
+        assert_eq!(
+            tick.after_projection(),
+            &calendar_clock_projection(day.day_model(), layout(), after).unwrap()
+        );
+        assert_eq!(
+            tick.before_projection()
+                .stock(SZSE)
+                .unwrap()
+                .completed_minute_count(),
+            before_minutes
+        );
+        assert_eq!(
+            tick.after_projection()
+                .stock(SZSE)
+                .unwrap()
+                .completed_minute_count(),
+            after_minutes
+        );
+        assert_eq!(
+            tick.after_projection()
+                .stock(SZSE)
+                .unwrap()
+                .date_session_ordinal(),
+            Some(0)
+        );
+        let closed = tick.after_projection().stock(SSE).unwrap();
+        assert_eq!(closed.date_session_ordinal(), None);
+        assert_eq!(closed.completed_minute_count(), 0);
+        assert_eq!(closed.current_date_first_minute_key(), None);
+        assert_eq!(tick.day().day_model().current_date(), date("2030-01-02"));
+    }
+}
+
+#[test]
+fn c07_reopen_uses_own_session_count_and_original_sparse_stock_ids() {
+    let source = source();
+    let day = source.day(date("2030-01-03")).unwrap();
+    assert_eq!(day.day_model().shared_sessions_before_date(), 1);
+    assert_eq!(
+        day.day_model().stock(SSE).unwrap().sessions_before_date(),
+        0
+    );
+    assert_eq!(
+        day.day_model().stock(SZSE).unwrap().sessions_before_date(),
+        1
+    );
+    let tick = day
+        .tick(layout(), input(2, 1, Trading { completed_ticks: 0 }))
+        .unwrap();
+    for (stock, ordinal, base) in [(SSE, 0, 0), (SZSE, 1, 240)] {
+        let before = tick.before_projection().stock(stock).unwrap();
+        assert_eq!(before.date_session_ordinal(), Some(ordinal));
+        assert_eq!(before.current_date_first_minute_key(), Some(base));
+        assert_eq!(
+            tick.after_projection()
+                .stock(stock)
+                .unwrap()
+                .completed_minute_count(),
+            base + 120
+        );
+    }
+    assert!(matches!(
+        day.day_model().stock(StockId(0)),
+        Err(CalendarClockModelError::UnknownStock { stock: StockId(0) })
+    ));
+    assert!(matches!(
+        tick.after_projection().stock(StockId(0)),
+        Err(CalendarClockModelError::UnknownStock { stock: StockId(0) })
+    ));
+    let same_exchange = MarketCalendarSource::new(
+        calendar(true),
+        date("2030-01-02"),
+        vec![(SSE, Szse), (StockId(50001), Szse)],
+    )
+    .unwrap();
+    let same_day = same_exchange.day(date("2030-01-03")).unwrap();
+    let same_tick = same_day
+        .tick(layout(), input(2, 1, Trading { completed_ticks: 0 }))
+        .unwrap();
+    assert_eq!(same_day.day_model().stocks().len(), 2);
+    assert_eq!(
+        same_tick.before_projection().stock(SSE).unwrap(),
+        same_tick.before_projection().stock(StockId(50001)).unwrap()
+    );
+}
+
+#[test]
+fn c08_auction_boundaries_keep_240_minutes_before_completed_session() {
+    let source = source();
+    let day = source.day(date("2030-01-02")).unwrap();
+    let layout = SessionTickLayout {
+        ticks_per_day: 12,
+        auction_ticks: 3,
+        closing_auction_ticks: 3,
+    };
+    for (r, before_minutes, after_minutes) in [
+        (0, 0, 0),
+        (2, 0, 0),
+        (3, 0, 40),
+        (8, 200, 240),
+        (9, 240, 240),
+        (10, 240, 240),
+        (11, 240, 240),
+    ] {
+        let tick = day
+            .tick(layout, input(r, 0, Trading { completed_ticks: r }))
+            .unwrap();
+        assert_eq!(
+            tick.before_projection()
+                .stock(SZSE)
+                .unwrap()
+                .completed_minute_count(),
+            before_minutes
+        );
+        assert_eq!(
+            tick.after_projection()
+                .stock(SZSE)
+                .unwrap()
+                .completed_minute_count(),
+            after_minutes
+        );
+        assert_eq!(
+            tick.after_projection()
+                .stock(SZSE)
+                .unwrap()
+                .completed_session_count(),
+            u64::from(r == 11)
+        );
+        assert_eq!(
+            tick.after_projection(),
+            &calendar_clock_projection(day.day_model(), layout, tick.after_input()).unwrap()
+        );
+    }
+}
+
+#[test]
+fn c09_closed_and_completed_are_read_only_and_final_tick_cannot_repeat() {
+    let source = source();
+    let closed = source.day(date("2030-01-05")).unwrap();
+    closed
+        .validate_for(&source, &BINDINGS, date("2030-01-05"))
+        .unwrap();
+    assert!(!closed.day_model().shared_trading_on_date());
+    assert!(closed
+        .day_model()
+        .stocks()
+        .values()
+        .all(|row| *row.status() != DayStatus::Trading));
+    let before = closed.day_model().shared_sessions_before_date();
+    assert!(matches!(
+        closed.tick(layout(), input(before * 2, before, ClosedDay)),
+        Err(MarketTickRequiresTrading {
+            progress: ClosedDay
+        })
+    ));
+    let open = source.day(date("2030-01-02")).unwrap();
+    let last = open
+        .tick(layout(), input(1, 0, Trading { completed_ticks: 1 }))
+        .unwrap();
+    assert!(matches!(
+        open.tick(layout(), last.after_input()),
+        Err(MarketTickRequiresTrading {
+            progress: TradingCompleted
+        })
+    ));
+    assert_eq!(last.day().day_model().current_date(), date("2030-01-02"));
+}
+
+#[test]
+fn c10_invalid_layout_and_before_inputs_propagate_c1a_errors() {
+    let source = source();
+    let day = source.day(date("2030-01-02")).unwrap();
+    for bad in [
+        SessionTickLayout {
+            ticks_per_day: 0,
+            ..layout()
+        },
+        SessionTickLayout {
+            auction_ticks: 2,
+            ..layout()
+        },
+        SessionTickLayout {
+            auction_ticks: u64::MAX,
+            closing_auction_ticks: 1,
+            ..layout()
+        },
+    ] {
+        assert!(matches!(
+            day.tick(bad, first()),
+            Err(Model(CalendarClockModelError::InvalidTickLayout { .. }))
+        ));
+    }
+    for bad in [input(1, 0, first().progress), input(0, 1, first().progress)] {
+        assert!(matches!(
+            day.tick(layout(), bad),
+            Err(Model(CalendarClockModelError::CountersMismatch { .. }))
+        ));
+    }
+    assert!(matches!(
+        day.tick(layout(), input(2, 0, Trading { completed_ticks: 2 })),
+        Err(Model(
+            CalendarClockModelError::TradingTicksOutsideSession { .. }
+        ))
+    ));
+    assert!(matches!(
+        day.tick(layout(), input(0, 0, ClosedDay)),
+        Err(Model(
+            CalendarClockModelError::ProgressCalendarMismatch { .. }
+        ))
+    ));
+    assert!(matches!(
+        day.tick(layout(), input(0, 0, TradingCompleted)),
+        Err(Model(CalendarClockModelError::CountersMismatch { .. }))
+    ));
+    let closed = source.day(date("2030-01-05")).unwrap();
+    assert!(matches!(
+        closed.tick(layout(), input(0, 0, first().progress)),
+        Err(Model(
+            CalendarClockModelError::ProgressCalendarMismatch { .. }
+        ))
+    ));
+}
+
+#[test]
+fn c11_source_bindings_and_runtime_date_range_are_validated() {
+    assert!(matches!(
+        MarketCalendarSource::new(calendar(true), date("2030-01-02"), vec![]),
+        Err(Model(CalendarClockModelError::EmptyBindings))
+    ));
+    assert!(matches!(
+        MarketCalendarSource::new(
+            calendar(true),
+            date("2030-01-02"),
+            vec![(SSE, Sse), (SSE, Szse)]
+        ),
+        Err(Model(CalendarClockModelError::DuplicateStock {
+            stock: SSE
+        }))
+    ));
+    for bad in ["1999-12-31", "2100-01-01"] {
+        assert!(matches!(
+            MarketCalendarSource::new(calendar(true), date(bad), BINDINGS.to_vec()),
+            Err(Model(CalendarClockModelError::Calendar(_)))
+        ));
+    }
+    let source = source();
+    for bad in ["1999-12-31", "2100-01-01"] {
+        assert!(matches!(
+            source.day(date(bad)),
+            Err(Model(CalendarClockModelError::Calendar(_)))
+        ));
+    }
+    assert!(matches!(
+        source.day(date("2030-01-01")),
+        Err(Model(CalendarClockModelError::CurrentBeforeStart { .. }))
+    ));
+    assert!(CivilDate::from_iso("2030-02-30").is_err());
+}
+
+#[test]
+fn c12_checked_next_tick_overflow_rejects_legal_max_tick_before() {
+    let source =
+        MarketCalendarSource::new(calendar(false), date("2030-01-02"), BINDINGS.to_vec()).unwrap();
+    let day = source.day(date("2030-01-04")).unwrap();
+    assert_eq!(day.day_model().shared_sessions_before_date(), 2);
+    let layout = SessionTickLayout {
+        ticks_per_day: u64::MAX / 2,
+        auction_ticks: 0,
+        closing_auction_ticks: 0,
+    };
+    let before = input(u64::MAX, 2, Trading { completed_ticks: 1 });
+    assert!(calendar_clock_projection(day.day_model(), layout, before).is_ok());
+    assert!(matches!(
+        day.tick(layout, before),
+        Err(Model(CalendarClockModelError::ArithmeticOverflow))
+    ));
+}
+
+#[test]
+fn c13_failed_validation_preserves_all_context_facts() {
+    let source = source();
+    let day = source.day(date("2030-01-02")).unwrap();
+    let tick = day.tick(layout(), first()).unwrap();
+    let original_day = format!("{:?}", day.day_model());
+    let original_before = format!("{:?}", tick.before_projection());
+    let original_after = format!("{:?}", tick.after_projection());
+    assert!(tick
+        .validate_for(&source, &[], date("2030-01-03"), layout(), first())
+        .is_err());
+    assert!(tick
+        .validate_for(
+            &source,
+            &BINDINGS,
+            date("2030-01-02"),
+            layout(),
+            input(99, 0, first().progress)
+        )
+        .is_err());
+    assert_eq!(format!("{:?}", day.day_model()), original_day);
+    assert_eq!(format!("{:?}", tick.before_projection()), original_before);
+    assert_eq!(format!("{:?}", tick.after_projection()), original_after);
+    assert_input(tick.before_input(), first());
+    assert_input(
+        tick.after_input(),
+        input(1, 0, Trading { completed_ticks: 1 }),
+    );
+    assert_layout(tick.layout(), layout());
+    assert!(Arc::ptr_eq(tick.day(), &day));
+}

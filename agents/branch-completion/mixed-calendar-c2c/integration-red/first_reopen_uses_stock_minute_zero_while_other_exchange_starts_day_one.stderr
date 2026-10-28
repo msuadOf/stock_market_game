@@ -1,0 +1,7 @@
+
+thread 'first_reopen_uses_stock_minute_zero_while_other_exchange_starts_day_one' (1623303) panicked at /data1/baiyifan/workplace/stock_market_game/.worktree/mixed-calendar-c2c/packages/engine/tests/mixed_calendar_c2c.rs:249:5:
+assertion `left == right` failed: 本股尚无已完成开市日，分钟首键从 0 开始
+  left: 240
+ right: 0
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+bounded command exited with 101

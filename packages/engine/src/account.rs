@@ -246,6 +246,23 @@ impl Account {
         }
     }
 
+    /// 仅对本日所属交易所真实 open 的证券完成 T+1 解锁。
+    pub(crate) fn unlock_t1_for_stocks(&mut self, stocks: &std::collections::BTreeSet<StockId>) {
+        if !self
+            .state
+            .positions
+            .iter()
+            .any(|(stock, position)| stocks.contains(stock) && position.t1_locked > 0)
+        {
+            return;
+        }
+        for (stock, position) in &mut Arc::make_mut(&mut self.state).positions {
+            if stocks.contains(stock) {
+                position.t1_locked = 0;
+            }
+        }
+    }
+
     /// 可卖股数（持仓 − T+1 锁定）；无持仓返回 0。
     pub fn sellable_qty(&self, code: &StockId) -> u32 {
         self.state

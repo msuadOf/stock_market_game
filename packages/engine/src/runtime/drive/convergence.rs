@@ -5,6 +5,7 @@ use std::sync::Arc;
 /// World 已发布后的只读投影输入；构造它不写 Session 镜像或消费完整读取。
 #[derive(Clone)]
 pub(crate) struct PreparedDriverStep {
+    pub calendar: PreparedDriverCalendar,
     pub accounts: Vec<
         Arc<
             Vec<(
@@ -33,6 +34,115 @@ pub(crate) struct PreparedDriverStep {
     pub day_end: Option<PreparedDriverDayEnd>,
     pub emit_price_tick: bool,
     pub static_read: Option<super::PreparedStaticRead>,
+}
+
+/// 市场拍、静点 Full 与手动日终各自保留真实时间来源；后两者不构造市场拍。
+#[derive(Clone)]
+pub(crate) enum PreparedDriverCalendar {
+    MarketTick(Arc<crate::runtime::MarketTickContext>),
+    Static(Arc<crate::runtime::MarketDayContext>),
+    ManualDayEnd(Arc<crate::runtime::MarketDayContext>),
+}
+
+impl PreparedDriverCalendar {
+    pub(crate) fn day(&self) -> &Arc<crate::runtime::MarketDayContext> {
+        match self {
+            Self::MarketTick(tick) => tick.day(),
+            Self::Static(day) | Self::ManualDayEnd(day) => day,
+        }
+    }
+
+    pub(crate) fn market_phase_before(&self) -> Option<crate::TradingPhase> {
+        match self {
+            Self::MarketTick(tick) => Some(tick.phase_before()),
+            Self::Static(_) | Self::ManualDayEnd(_) => None,
+        }
+    }
+
+    pub(crate) fn stock_is_open(&self, code: crate::StockId) -> Result<bool, String> {
+        match self {
+            Self::MarketTick(tick) => Ok(tick.before_projection().stock(code)
+                .map_err(|error| error.to_string())?.date_session_ordinal().is_some()),
+            Self::Static(day) | Self::ManualDayEnd(day) => Ok(matches!(
+                day.day_model().stock(code).map_err(|error| error.to_string())?.status(),
+                crate::calendar::DayStatus::Trading
+            )),
+        }
+    }
+}
+
+impl PreparedDriverStep {
+    /// 在 candidate 投影、seq 与 retained 发布前拒绝模式或同局时间来源错配。
+    pub(crate) fn validate_calendar(&self, session: &GameSession, tick: u64, world_tick: u64) -> Result<(), String> {
+        let valid_mode = match &self.calendar {
+            PreparedDriverCalendar::Static(_) => self.static_read.is_some()
+                && !self.emit_price_tick && self.day_end.is_none() && self.events.is_empty(),
+            PreparedDriverCalendar::MarketTick(_) => self.static_read.is_none()
+                && self.day_end.as_ref().is_none_or(|data| data.emit_boundary),
+            PreparedDriverCalendar::ManualDayEnd(_) => self.static_read.is_none()
+                && !self.emit_price_tick
+                && self.day_end.as_ref().is_some_and(|data| !data.emit_boundary),
+        };
+        if !valid_mode {
+            return Err("镜像 Calendar 模式与静点/市场拍/手动日终输入不一致".to_owned());
+        }
+        let bindings = session.market_calendar_bindings().map_err(|error| error.to_string())?;
+        self.calendar.day().validate_for(
+            session.market_calendar_source(),
+            &bindings,
+            session.civil_date(),
+        ).map_err(|error| error.to_string())?;
+        match &self.calendar {
+            PreparedDriverCalendar::MarketTick(calendar) => {
+                let setup = session.export_setup_for_runtime();
+                let base = calendar.day().day_model().shared_sessions_before_date()
+                    .checked_mul(setup.ticks_per_day)
+                    .ok_or_else(|| "市场拍 Calendar 当日 tick 基线溢出".to_owned())?;
+                let before_tick = tick.checked_sub(1)
+                    .ok_or_else(|| "市场拍 Calendar 缺少前一 tick".to_owned())?;
+                // 延迟镜像只覆盖同一 civil date 的已真实提交输入，不跨日补拍或跳过 preflight。
+                if tick != world_tick || session.tick() < base || session.tick() > before_tick
+                    || u64::from(session.day()) != calendar.day().day_model().shared_sessions_before_date()
+                {
+                    return Err("市场拍 Calendar 不属于同日未安装输入窗口或当前 World 来源".to_owned());
+                }
+                let completed_ticks = before_tick.checked_sub(base)
+                    .ok_or_else(|| "市场拍 Calendar 早于当前 civil date".to_owned())?;
+                calendar.validate_for(
+                    session.market_calendar_source(),
+                    &bindings,
+                    session.civil_date(),
+                    crate::session::exchange_calendar_model::SessionTickLayout {
+                        ticks_per_day: setup.ticks_per_day,
+                        auction_ticks: setup.auction_ticks,
+                        closing_auction_ticks: setup.closing_auction_ticks,
+                    },
+                    crate::session::exchange_calendar_model::SharedClockInput {
+                        tick: before_tick,
+                        completed_shared_sessions: calendar.day().day_model().shared_sessions_before_date(),
+                        progress: crate::session::exchange_calendar_model::SharedDayProgress::Trading {
+                            completed_ticks,
+                        },
+                    },
+                ).map_err(|error| error.to_string())?;
+                if calendar.after_input().tick != tick {
+                    return Err("市场拍 Calendar after tick 与镜像输入不一致".to_owned());
+                }
+            }
+            PreparedDriverCalendar::Static(day) => {
+                if tick != session.tick() {
+                    return Err("非市场 Calendar 不得推进镜像 tick".to_owned());
+                }
+                session.market_calendar_projection_for_day(day).map_err(|error| error.to_string())?;
+            }
+            PreparedDriverCalendar::ManualDayEnd(_) => {
+                if tick != session.tick() {
+                    return Err("非市场 Calendar 不得推进镜像 tick".to_owned());
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone)]
@@ -200,6 +310,14 @@ impl RuntimeDriver {
         }
         self.force_full_accounts = false;
         Ok(prepared.events)
+    }
+
+    /// 只供 Session routed 入口在调用共享安装 core 前检查；direct driver 沿已有同 owner World 路径。
+    pub(crate) fn require_staged_calendar_tick(&self) -> Result<(), String> {
+        if self.world.staged_calendar_tick().is_none() {
+            return Err("Session 市场拍缺少已验证的 staged Calendar".to_owned());
+        }
+        Ok(())
     }
 
     pub(crate) fn prepare_driver_step(
@@ -404,9 +522,11 @@ impl RuntimeDriver {
             .map_err(|fatal| fatal.to_string())?;
         #[cfg(feature = "simulation-diagnostics")]
         self.ensure_causal_day_end_supported()?;
+        let calendar_day = session.prepare_market_calendar_day().map_err(|error| error.to_string())?;
         self.next_sync_source_sequence()?;
         self.world.set_civil_date(session.civil_date());
         let input = PreparedDriverStep {
+            calendar: PreparedDriverCalendar::ManualDayEnd(calendar_day),
             accounts: Vec::new(),
             buy_vwap: BTreeMap::new(),
             last_prices: self

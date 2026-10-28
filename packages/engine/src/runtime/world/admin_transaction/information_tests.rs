@@ -32,7 +32,12 @@ fn world_with_cadence(cadence: crate::session::notices::NpcInformationCadence) -
         normal: Duration::from_millis(300),
         long: Duration::from_millis(300),
     };
-    World::spawn(spec).unwrap()
+    World::spawn(
+        spec,
+        crate::calendar::TradingCalendar::current_default_calendar()
+            .expect("显式 raw Calendar 政策合法"),
+    )
+    .unwrap()
 }
 fn snapshot(
     w: &mut World,

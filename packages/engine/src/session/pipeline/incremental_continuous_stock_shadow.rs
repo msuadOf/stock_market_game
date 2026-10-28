@@ -437,6 +437,56 @@ impl IncrementalContinuousStockCoordinator {
         self.finish_owned(ends_day, None, None)
     }
 
+    /// closed 证券只交还未变估值；任何活动交易资源均为路由/恢复不变量错误。
+    pub(in crate::session::pipeline) fn finish_closed_tick(
+        self,
+    ) -> Result<IncrementalContinuousStockFinish, StockFinishFatal> {
+        if self.applied_operation_count != 0 || !self.detached_facts.is_empty() {
+            return Err(StockFinishFatal::Other(invariant(
+                "closed StockProcessing 收到交易 operation",
+            )));
+        }
+        let mut workers = Vec::new();
+        let mut prices = BTreeMap::new();
+        for (code, stock) in self.stocks {
+            if stock.market.resting_order_count() != 0
+                || stock.ledger.iter().next().is_some()
+                || !stock.created_envelopes.is_empty()
+                || !stock.receipts.is_empty()
+                || !stock.trades.is_empty()
+            {
+                return Err(StockFinishFatal::Other(invariant(
+                    "closed StockProcessing 保有活动簿或资源",
+                )));
+            }
+            prices.insert(
+                code,
+                ContinuousClosingPrice {
+                    last: stock.market.last_price(),
+                    bids: Vec::new(),
+                    asks: Vec::new(),
+                },
+            );
+            workers.push(ContinuousStockOutput {
+                market: stock.market,
+                created_envelopes: Vec::new(),
+                receipts: Vec::new(),
+                terminal_keys: Vec::new(),
+                trades: Vec::new(),
+                place_facts: Vec::new(),
+                cancel_facts: Vec::new(),
+                market_data: ContinuousMarketData::default(),
+            });
+        }
+        Ok(IncrementalContinuousStockFinish {
+            workers,
+            prices,
+            execution_facts: Vec::new(),
+            detached_facts: Vec::new(),
+            auctions: BTreeMap::new(),
+        })
+    }
+
     pub(in crate::session::pipeline) fn finish_for_market_tick(
         self,
         boundary: crate::session::pipeline::phase::MarketTickBoundary,

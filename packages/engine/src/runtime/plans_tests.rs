@@ -106,7 +106,12 @@ fn cross_stock_plan_drains_via_continue_rounds() {
             step: 0,
         })]
     }));
-    let mut world = World::spawn(spec).expect("世界构造");
+    let mut world = World::spawn(
+        spec,
+        crate::calendar::TradingCalendar::current_default_calendar()
+            .expect("显式 raw Calendar 政策合法"),
+    )
+    .expect("世界构造");
     world.run_ticks(1).expect("1 tick 收敛");
     // 轮 0：根命令买 A（与卖 A 成交）；轮 1：见 A 成交 ⇒ 买 B（与卖 B 成交）
     // ⇒ has_more=true 但轮 2 计划完成、无新单 ⇒ 终止。
@@ -155,7 +160,12 @@ fn completed_plan_reports_no_continuation() {
         Box::new(|_g| Box::new(|_t, _r| TickPlan::default())),
     );
     spec.plan_factory = Some(Box::new(|_g| vec![Box::new(OneShot((0, 0)))]));
-    let mut world = World::spawn(spec).expect("世界构造");
+    let mut world = World::spawn(
+        spec,
+        crate::calendar::TradingCalendar::current_default_calendar()
+            .expect("显式 raw Calendar 政策合法"),
+    )
+    .expect("世界构造");
     world.run_ticks(1).expect("收敛");
     assert_eq!(world.report_log[0].rounds, 0, "无续行 ⇒ 单轮");
 }
@@ -183,7 +193,12 @@ fn never_ending_plan_hits_rounds_cap_explicitly() {
     );
     spec.rounds_cap = 2;
     spec.plan_factory = Some(Box::new(|_g| vec![Box::new(NeverEnd)]));
-    let mut world = World::spawn(spec).expect("世界构造");
+    let mut world = World::spawn(
+        spec,
+        crate::calendar::TradingCalendar::current_default_calendar()
+            .expect("显式 raw Calendar 政策合法"),
+    )
+    .expect("世界构造");
     let err = world.run_ticks(1).expect_err("超轮数上限须显式失败");
     assert!(
         matches!(
@@ -218,7 +233,12 @@ fn abort_after_plan_rounds_rolls_back_to_tick_start() {
             step: 0,
         })]
     }));
-    let mut world = World::spawn(spec).expect("世界构造");
+    let mut world = World::spawn(
+        spec,
+        crate::calendar::TradingCalendar::current_default_calendar()
+            .expect("显式 raw Calendar 政策合法"),
+    )
+    .expect("世界构造");
     let fail: super::coordinator::Validator = Box::new(|ev| {
         if ev.round >= 1 {
             Err("注入：轮1 校验失败".to_owned())

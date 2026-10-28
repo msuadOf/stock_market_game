@@ -461,6 +461,8 @@ pub struct StockPublic {
 /// stocks 经 Arc 共享——广播免逐组 clone）。
 #[derive(Clone, Debug, PartialEq)]
 pub struct TickSnapshot {
+    /// 同拍唯一 owner 的 before/after 时钟，Continue 复用同一 Arc。
+    pub calendar: std::sync::Arc<super::MarketTickContext>,
     /// 当前 tick。
     pub tick: u64,
     /// 市场分钟数。
@@ -960,6 +962,10 @@ impl RestingDelta {
 
 /// 交易部收件消息。
 pub enum DeskMsg {
+    /// spawn 已验证的静点；只在任何 Start 前绑定一次 source owner。
+    BindCalendar {
+        day: std::sync::Arc<super::MarketDayContext>,
+    },
     /// D5 envelope 投影：在途单快照请求（desk 回 DeskResting）。
     EchoResting,
     /// tick 起点（D4：协调者在组 Start 前广播——交易部每 tick 必推进
@@ -968,6 +974,8 @@ pub enum DeskMsg {
     Start {
         /// tick 编号。
         tick: u64,
+        /// Session 预先验证的同拍上下文。
+        calendar: std::sync::Arc<super::MarketTickContext>,
     },
     /// 一组本轮的一批操作。`final_flush` = 该组本轮最后一批（可空——提交完成标记）；
     /// 交易部收齐全部组的 final_flush 即本轮撮合输入完毕（先 flush 实体批次再上报）。
@@ -990,7 +998,12 @@ pub enum DeskMsg {
     },
     /// 仅撤销已经开始的 Drain；未进入日结的交易部保留普通 tick。
     AbortDayEnd { tick: u64 },
-    /// 日终清簿：强撤全部挂单、实体回流、上交清簿后状态。
+    /// 市场日终只消费本日最后一拍已完成的同 owner DayContext。
+    DrainMarket {
+        tick: u64,
+        day: std::sync::Arc<super::MarketDayContext>,
+    },
+    /// 显式关停/旧 raw fixture 清簿；不得猜作新市场会话。
     Drain,
     /// 关停：上交 `DeskFinal` 后退出。
     Shutdown,

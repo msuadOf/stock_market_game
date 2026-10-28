@@ -1,0 +1,11 @@
+
+running 1 test
+test first_reopen_uses_stock_minute_zero_while_other_exchange_starts_day_one ... FAILED
+
+failures:
+
+failures:
+    first_reopen_uses_stock_minute_zero_while_other_exchange_starts_day_one
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 8 filtered out; finished in 0.77s
+

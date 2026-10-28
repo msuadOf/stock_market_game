@@ -191,3 +191,17 @@ Rust 侧用 cargo workspace 管理 `packages/engine`、`packages/engine-gpu`、`
 - [x] 并发模型：**std::thread 所有权转移运行时** ✅ [ADR-0043](decisions/0043-std-thread-ownership-runtime.md)
 
 > 已敲定的进 ADR（[`decisions/`](decisions/)）；未敲定的进开放问题清单，**不擅自拍板**。
+
+
+## 混合日历 raw runtime 接口（C2-C 候选）
+
+本节描述尚在独审与组合验证中的 C2-C 接口；不表示混合市场已完成验收。
+`World::spawn(spec, calendar)` 显式接收冻结的 `TradingCalendar`，
+`WorldSpec.calendar_start_date` 是共享/本股会话计数起日，
+`WorldSpec.civil_start_date` 是该 raw 世界当前自然日，二者不能用市场 tick 反推或互相替代。
+`run_ticks(n)` 在任何 Start 前校验整个区间；正数 n 超过当前 civil date 剩余市场拍时
+返回显式 `TickRangeCrossesCivilDay` 错误，不先执行合法前缀。零拍仍验证 source、catalog、日期与进度。
+raw caller 必须显式完成本日市场日终，再按真实 Calendar 设置下一自然日；接口不再自动跨日结算。
+生产 `GameSession` 仍独占自然日经营与提交，向 runtime 单向交付同 owner 的 immutable context；
+raw 世界不能替 Session 自动推进公司经营或补造另一份日期权威。新局/restore 创建新 source owner，
+同拍组与交易部共用同一个 Tick Arc，day cache 最多保留当前一日，且不进入 SaveSlot 或业务 hash。

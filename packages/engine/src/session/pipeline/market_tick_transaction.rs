@@ -25,7 +25,7 @@ use super::{
     session_fact_producers::adapt_account_validation_rejection_facts,
     stock_stream::{
         continuous_shards, detached_continuous_shard, drive_stock_stream_with_feedback,
-        finish_market_shards,
+        finish_market_shards_with_calendar,
     },
     AccountValidatorDriver, CandidateValidationOutcome, EnvelopeReceipt, IntentCandidate,
     IntentCandidateBatch, PhaseInput, StepFatal, TickShadowPlan,
@@ -269,10 +269,18 @@ fn finish_market_execution(
                 .ok_or_else(|| invariant("股票配置不在权威目录"))
         })
         .collect::<Result<std::collections::BTreeMap<_, _>, _>>()?;
+    let (_, calendar_tick) = candidate
+        .prepare_market_calendar_tick()
+        .map_err(MarketTransactionError::Finalization)?;
     let finish = compute
         .parallel(|| {
             compute.record(crate::compute::ComputeWork::StockFinish);
-            finish_market_shards(stock_execution, boundary, &exchanges)
+            finish_market_shards_with_calendar(
+                stock_execution,
+                boundary,
+                &exchanges,
+                &calendar_tick,
+            )
         })
         .map_err(|fatal| match fatal {
             // Astra T4 节点审·必修 2：行情面错误（owner 迁移前位于

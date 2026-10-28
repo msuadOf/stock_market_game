@@ -5,7 +5,6 @@ use crate::{Event, GameSession};
 
 pub(super) struct TradingDayEndTransition<'candidate> {
     candidate: &'candidate mut GameSession,
-    trading_day: u64,
 }
 
 /// D5 日界安装（runtime step 的 ends_day 拍）：复用同一交易日终迁移
@@ -24,14 +23,16 @@ pub(in crate::session) fn install_runtime_day_boundary(
 
 impl<'candidate> TradingDayEndTransition<'candidate> {
     pub(super) fn new(candidate: &'candidate mut GameSession) -> Self {
-        let trading_day = u64::from(candidate.state.day);
-        Self {
-            candidate,
-            trading_day,
-        }
+        Self { candidate }
     }
 
     pub(super) fn apply(mut self) -> Result<Vec<EventFact>, StepFatal> {
+        // 在任何日界写入前冻结本股交易日语义；自然日经营不经此 open mask。
+        let stock_days = self.candidate.stock_calendar_days()?;
+        let open_stocks = stock_days
+            .iter()
+            .filter_map(|(&stock, day)| day.is_some().then_some(stock))
+            .collect::<std::collections::BTreeSet<_>>();
         let session = &mut *self.candidate;
         // D5 runtime 形态：desk 簿权威（mirror/ledger 承载在途——清簿由
         /// install 段的 world 日结在 session 日终迁移后执行）；旧簿与
@@ -48,7 +49,7 @@ impl<'candidate> TradingDayEndTransition<'candidate> {
             return Err(invariant("DayEnd retained a live order or envelope"));
         }
         if session.state.setup.t1_enabled {
-            session.state.accounts.unlock_t1_positions();
+            session.state.accounts.unlock_t1_for_stocks(&open_stocks);
         }
         self.sweep_owned_plans()?;
         let session = &mut *self.candidate;
@@ -61,12 +62,16 @@ impl<'candidate> TradingDayEndTransition<'candidate> {
             .day
             .checked_add(1)
             .ok_or_else(|| invariant("trading day overflow"))?;
-        for history in session.state.market_minute_closes.values_mut() {
-            history.clear();
+        for (stock, history) in &mut session.state.market_minute_closes {
+            if open_stocks.contains(stock) {
+                history.clear();
+            }
         }
         // B2：分钟K桶同步清空（desk roll_day 清桶的会话镜像对齐）。
-        for bars in session.state.market_minute_bars.values_mut() {
-            bars.clear();
+        for (stock, bars) in &mut session.state.market_minute_bars {
+            if open_stocks.contains(stock) {
+                bars.clear();
+            }
         }
         let event = Event::DayBoundary {
             seq: 0,
@@ -80,11 +85,29 @@ impl<'candidate> TradingDayEndTransition<'candidate> {
     }
 
     fn sweep_owned_plans(&mut self) -> Result<(), StepFatal> {
-        let trading_day = self.trading_day;
+        let stock_days = self.candidate.stock_calendar_days()?;
         let session = &mut *self.candidate;
         let mut plans = std::mem::take(&mut session.state.plans);
-        let result = plans.end_trading_day(trading_day)
-            .map_err(|error| invariant(&format!("日终计划迁移失败：{error}")));
+        let result = (|| {
+            for plan_id in plans.active_plan_ids() {
+                let code = *plans
+                    .plan(plan_id)
+                    .map_err(|error| invariant(&error.to_string()))?
+                    .code();
+                let Some(trading_day) = *stock_days
+                    .get(&code)
+                    .ok_or_else(|| invariant("日终计划缺本股 Calendar row"))?
+                else {
+                    continue;
+                };
+                plans
+                    .apply(plan_id, crate::plans::PlanEvent::TradingDayEnded { trading_day })
+                    .map_err(|error| {
+                        invariant(&format!("日终计划 {plan_id:?} 迁移失败：{error}"))
+                    })?;
+            }
+            Ok(())
+        })();
         session.state.plans = plans;
         result
     }

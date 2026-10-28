@@ -41,6 +41,8 @@ pub(crate) fn basic_spec(
         initial_purse_held: Vec::new(),
         initial_pending_sell: Vec::new(),
         root_projection: None,
+        calendar_start_date: crate::calendar::CivilDate::from_ymd(2026, 1, 5)
+            .expect("测试计数起日合法"),
         civil_start_date: crate::calendar::CivilDate::from_ymd(2026, 1, 5).expect("测试日期合法"),
         script_for,
         chunk: 8,
@@ -93,8 +95,12 @@ fn sell(local: u32, stock: u16, price: i64, qty: u32) -> PlaceSpec {
 
 #[test]
 fn convergence_counts_g_plus_n_and_installs_each_tick() {
-    let mut world =
-        World::spawn(basic_spec(3, 2, 2, Box::new(|_| idle_script()))).expect("世界构造");
+    let mut world = World::spawn(
+        basic_spec(3, 2, 2, Box::new(|_| idle_script())),
+        crate::calendar::TradingCalendar::current_default_calendar()
+            .expect("显式 raw Calendar 政策合法"),
+    )
+    .expect("世界构造");
     let committed = world.run_ticks(4).expect("4 个 tick 全部收敛");
     assert_eq!(committed, 4);
     assert_eq!(world.global.committed_tick, 4);
@@ -141,7 +147,12 @@ fn entity_flow_holds_purse_at_desk_and_drain_refunds() {
             plan
         })
     };
-    let mut world = World::spawn(basic_spec(1, 2, 2, Box::new(script))).expect("世界构造");
+    let mut world = World::spawn(
+        basic_spec(1, 2, 2, Box::new(script)),
+        crate::calendar::TradingCalendar::current_default_calendar()
+            .expect("显式 raw Calendar 政策合法"),
+    )
+    .expect("世界构造");
     world.run_ticks(1).expect("tick1 收敛");
     // tick1 已提交：现金被扣（挂单在途，实体在交易部）。
     // 关停 Drain：强撤挂单 → purse 原路回流 → 期末名册现金复原。
@@ -171,7 +182,12 @@ fn entity_batches_arrive_before_next_start() {
             plan
         })
     };
-    let mut world = World::spawn(basic_spec(1, 1, 1, Box::new(script))).expect("世界构造");
+    let mut world = World::spawn(
+        basic_spec(1, 1, 1, Box::new(script)),
+        crate::calendar::TradingCalendar::current_default_calendar()
+            .expect("显式 raw Calendar 政策合法"),
+    )
+    .expect("世界构造");
     world.run_ticks(3).expect("3 tick 收敛");
     let report = world.shutdown().expect("关停");
     let observed = &report.group_finals[0].observed;
@@ -214,7 +230,12 @@ fn multi_round_continue_terminates_by_empty_continuation() {
             plan
         })
     };
-    let mut world = World::spawn(basic_spec(1, 1, 2, Box::new(script))).expect("世界构造");
+    let mut world = World::spawn(
+        basic_spec(1, 1, 2, Box::new(script)),
+        crate::calendar::TradingCalendar::current_default_calendar()
+            .expect("显式 raw Calendar 政策合法"),
+    )
+    .expect("世界构造");
     world.run_ticks(1).expect("多轮 tick 收敛");
     assert_eq!(world.report_log[0].rounds, 1, "轮 0+轮 1，最后轮号=1");
     let report = world.shutdown().expect("关停");
@@ -247,7 +268,12 @@ fn rounds_cap_exceeding_fails_explicitly() {
     };
     let mut spec = basic_spec(1, 1, 1, Box::new(script));
     spec.rounds_cap = 2;
-    let mut world = World::spawn(spec).expect("世界构造");
+    let mut world = World::spawn(
+        spec,
+        crate::calendar::TradingCalendar::current_default_calendar()
+            .expect("显式 raw Calendar 政策合法"),
+    )
+    .expect("世界构造");
     let err = world.run_ticks(1).expect_err("轮数超上限须显式失败");
     assert!(
         matches!(
@@ -282,7 +308,12 @@ fn abort_after_multi_round_rolls_back_three_layers_to_tick_start() {
             plan
         })
     };
-    let mut world = World::spawn(basic_spec(2, 2, 2, Box::new(script))).expect("世界构造");
+    let mut world = World::spawn(
+        basic_spec(2, 2, 2, Box::new(script)),
+        crate::calendar::TradingCalendar::current_default_calendar()
+            .expect("显式 raw Calendar 政策合法"),
+    )
+    .expect("世界构造");
     // 校验注入：tick2 轮 1 失败（多轮已完成后才判死）。
     let validator: Validator = Box::new(|ev| {
         if ev.tick == 2 && ev.round == 1 {
@@ -352,7 +383,12 @@ fn failed_tick_can_be_rerun_after_abort() {
             plan
         })
     };
-    let mut world = World::spawn(basic_spec(1, 1, 1, Box::new(script))).expect("世界构造");
+    let mut world = World::spawn(
+        basic_spec(1, 1, 1, Box::new(script)),
+        crate::calendar::TradingCalendar::current_default_calendar()
+            .expect("显式 raw Calendar 政策合法"),
+    )
+    .expect("世界构造");
     let fail_once: Validator = Box::new(|ev| {
         if ev.tick == 2 {
             Err("注入：tick2 首次失败".to_owned())
@@ -395,7 +431,12 @@ fn sol4_force_due_abort_rolls_back_to_pre_force_and_requires_resend() {
         }],
         attention_gap_ticks: 4,
     });
-    let mut world = World::spawn(spec).expect("世界构造");
+    let mut world = World::spawn(
+        spec,
+        crate::calendar::TradingCalendar::current_default_calendar()
+            .expect("显式 raw Calendar 政策合法"),
+    )
+    .expect("世界构造");
     // 强制 local 0 在 tick 1 到期（Start 间窗口——world 未跑任何 tick）。
     world.force_due_for_test(vec![0], 1);
     // tick 1 校验注入失败 → Abort（组回滚本 tick 日志域）。
@@ -448,7 +489,12 @@ fn sol3_continuation_round_acceptance_reaches_group_before_continue() {
             plan
         })
     };
-    let mut world = World::spawn(basic_spec(1, 1, 1, Box::new(script))).expect("世界构造");
+    let mut world = World::spawn(
+        basic_spec(1, 1, 1, Box::new(script)),
+        crate::calendar::TradingCalendar::current_default_calendar()
+            .expect("显式 raw Calendar 政策合法"),
+    )
+    .expect("世界构造");
     world.run_ticks(1).expect("多轮 tick 收敛");
     let report = world.shutdown().expect("关停对账");
     let observed = &report.group_finals[0].observed;
@@ -490,7 +536,12 @@ fn accepted_batch_keeps_continuation_timing_and_owner_targeting_in_multi_group()
             plan
         })
     };
-    let mut world = World::spawn(basic_spec(2, 1, 1, Box::new(script))).expect("世界构造");
+    let mut world = World::spawn(
+        basic_spec(2, 1, 1, Box::new(script)),
+        crate::calendar::TradingCalendar::current_default_calendar()
+            .expect("显式 raw Calendar 政策合法"),
+    )
+    .expect("世界构造");
     world.run_ticks(1).expect("多轮 tick 收敛");
     let report = world.shutdown().expect("关停对账");
     // ① owner 组时序：受理先于 Continue（批内逐条 Observed 记录保序）。
@@ -550,7 +601,12 @@ fn panic_transport_resumes_original_payload_and_survivors_rollback() {
             plan
         })
     };
-    let mut world = World::spawn(basic_spec(2, 1, 1, Box::new(script))).expect("世界构造");
+    let mut world = World::spawn(
+        basic_spec(2, 1, 1, Box::new(script)),
+        crate::calendar::TradingCalendar::current_default_calendar()
+            .expect("显式 raw Calendar 政策合法"),
+    )
+    .expect("世界构造");
     let payload = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| world.run_ticks(3)))
         .expect_err("panic 应穿透 run_ticks");
     let msg = payload
@@ -578,7 +634,12 @@ fn severed_control_channels_fail_explicitly() {
         normal: Duration::from_millis(200),
         long: Duration::from_millis(500),
     };
-    let mut world = World::spawn(spec).expect("世界构造");
+    let mut world = World::spawn(
+        spec,
+        crate::calendar::TradingCalendar::current_default_calendar()
+            .expect("显式 raw Calendar 政策合法"),
+    )
+    .expect("世界构造");
     world.sever();
     let err = world.run_ticks(1).expect_err("失联须显式失败");
     match &err {
@@ -619,7 +680,12 @@ fn watchdog_timeout_carries_phase_context() {
         normal: Duration::from_millis(100),
         long: Duration::from_secs(10),
     };
-    let mut world = World::spawn(spec).expect("世界构造");
+    let mut world = World::spawn(
+        spec,
+        crate::calendar::TradingCalendar::current_default_calendar()
+            .expect("显式 raw Calendar 政策合法"),
+    )
+    .expect("世界构造");
     let err = world.run_ticks(1).expect_err("停顿须触发看门狗");
     match &err {
         super::protocol::RuntimeError::Watchdog { phase, waited, .. } => {
@@ -687,7 +753,12 @@ fn desk_rejects_odd_lot_buy_and_refunds_via_entities() {
             plan
         })
     };
-    let mut world = World::spawn(basic_spec(1, 1, 1, Box::new(script))).expect("世界构造");
+    let mut world = World::spawn(
+        basic_spec(1, 1, 1, Box::new(script)),
+        crate::calendar::TradingCalendar::current_default_calendar()
+            .expect("显式 raw Calendar 政策合法"),
+    )
+    .expect("世界构造");
     world
         .run_ticks(1)
         .expect("tick1 收敛（拒绝是业务结果非失败）");
@@ -714,7 +785,12 @@ fn insufficient_cash_skips_explicitly_without_partial_execution() {
             plan
         })
     };
-    let mut world = World::spawn(basic_spec(1, 1, 1, Box::new(script))).expect("世界构造");
+    let mut world = World::spawn(
+        basic_spec(1, 1, 1, Box::new(script)),
+        crate::calendar::TradingCalendar::current_default_calendar()
+            .expect("显式 raw Calendar 政策合法"),
+    )
+    .expect("世界构造");
     world.run_ticks(1).expect("skip 是业务结果非失败");
     let report = world.shutdown().expect("关停");
     assert_eq!(
@@ -740,7 +816,12 @@ fn drain_shutdown_final_leaves_no_inflight_entities() {
             plan
         })
     };
-    let mut world = World::spawn(basic_spec(3, 2, 1, Box::new(script))).expect("世界构造");
+    let mut world = World::spawn(
+        basic_spec(3, 2, 1, Box::new(script)),
+        crate::calendar::TradingCalendar::current_default_calendar()
+            .expect("显式 raw Calendar 政策合法"),
+    )
+    .expect("世界构造");
     world.run_ticks(2).expect("2 tick 收敛");
     let report: ShutdownReport = world.shutdown().expect("关停对账");
     assert_eq!(report.group_finals.len(), 3, "每组 Final 恰一条");
@@ -788,10 +869,13 @@ fn d0_world_drop_shuts_down_workers() {
         std::fs::read_dir("/proc/self/task").map(|d| d.count()).unwrap_or(0)
     }
     let before = task_count();
-    let script = |_g: super::GroupIdx| -> GroupScript {
-        Box::new(|_t, _r| TickPlan::default())
-    };
-    let world = World::spawn(basic_spec(1, 2, 1, Box::new(script))).expect("世界构造");
+    let script = |_g: super::GroupIdx| -> GroupScript { Box::new(|_t, _r| TickPlan::default()) };
+    let world = World::spawn(
+        basic_spec(1, 2, 1, Box::new(script)),
+        crate::calendar::TradingCalendar::current_default_calendar()
+            .expect("显式 raw Calendar 政策合法"),
+    )
+    .expect("世界构造");
     // 注册等待已移除：spawn 返回即持有全部 worker 句柄（注册完成的
     // 同步证明=drop 内 join 返回本身）；原"c >= before+3"轮询在并行
     // 满载批下被其他测试的线程增减污染（before 采样于高峰、判定时
@@ -821,10 +905,13 @@ fn d0_world_drop_shuts_down_workers() {
 /// 睡 >50ms 再重跑：必须仍成功（红态=worker 已退出，通道断连）。
 #[test]
 fn solfinal4_abort_retry_after_delay_keeps_workers_alive() {
-    let script = |_g: GroupIdx| -> GroupScript {
-        Box::new(|_t, _r| TickPlan::default())
-    };
-    let mut world = World::spawn(basic_spec(1, 1, 1, Box::new(script))).expect("世界构造");
+    let script = |_g: GroupIdx| -> GroupScript { Box::new(|_t, _r| TickPlan::default()) };
+    let mut world = World::spawn(
+        basic_spec(1, 1, 1, Box::new(script)),
+        crate::calendar::TradingCalendar::current_default_calendar()
+            .expect("显式 raw Calendar 政策合法"),
+    )
+    .expect("世界构造");
     let fail_once: Validator = Box::new(|ev| {
         if ev.tick == 1 {
             Err("注入：tick1 首次失败（可重试 Abort）".to_owned())

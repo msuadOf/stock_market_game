@@ -28,6 +28,8 @@ fn basic_spec(
         initial_pending_sell: Vec::new(),
         root_projection: None,
         civil_start_date: crate::calendar::CivilDate::from_ymd(2026, 1, 5).expect("测试日期合法"),
+        calendar_start_date: crate::calendar::CivilDate::from_ymd(2026, 1, 5)
+            .expect("测试计数起日合法"),
         script_for,
         chunk: 8,
         watchdog: WatchdogConfig {
@@ -62,7 +64,12 @@ fn world() -> World {
         normal: Duration::from_millis(500),
         long: Duration::from_millis(500),
     };
-    World::spawn(spec).unwrap()
+    World::spawn(
+        spec,
+        crate::calendar::TradingCalendar::current_default_calendar()
+            .expect("显式 raw Calendar 政策合法"),
+    )
+    .unwrap()
 }
 fn ops() -> Vec<(GroupIdx, Vec<AdminOperation>)> {
     vec![

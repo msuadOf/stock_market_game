@@ -1,0 +1,145 @@
+▶ V11独立公开市场事实oracle
+  ✔ 接受已有snapshot与真实open行情及仅open终K (4.428065ms)
+  ✖ R3仅污染公开PriceTick为closed也必须拒绝 (3.356362ms)
+  ✖ R3仅污染公开Trade为closed也必须拒绝 (1.826119ms)
+  ✖ R3仅污染公开AuctionTick为closed也必须拒绝 (1.634265ms)
+  ✖ R3仅污染公开AuctionCompleted为closed也必须拒绝 (1.42695ms)
+  ✖ R3仅污染DayBoundary把closed终K加入也必须拒绝 (1.293428ms)
+  ✖ R3每个Jan2真实市场拍都必须有open行情正控 (1.064563ms)
+✖ V11独立公开市场事实oracle (5.300804ms)
+ℹ tests 7
+ℹ suites 1
+ℹ pass 1
+ℹ fail 6
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 75.352997
+
+✖ failing tests:
+
+test at agents/branch-completion/mixed-calendar-c2c/assert-v11-public-trace.test.mjs:26:5
+✖ R3仅污染公开PriceTick为closed也必须拒绝 (3.356362ms)
+  AssertionError [ERR_ASSERTION]: Missing expected exception.
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/mixed-calendar-c2c/agents/branch-completion/mixed-calendar-c2c/assert-v11-public-trace.test.mjs:29:14)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at Test.start (node:internal/test_runner/test:1191:17)
+      at node:internal/test_runner/test:1792:71
+      at node:internal/per_context/primordials:466:82
+      at new Promise (<anonymous>)
+      at new SafePromise (node:internal/per_context/primordials:435:3)
+      at node:internal/per_context/primordials:466:9
+      at Array.map (<anonymous>) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: /closed/,
+    operator: 'throws',
+    diff: 'simple'
+  }
+
+test at agents/branch-completion/mixed-calendar-c2c/assert-v11-public-trace.test.mjs:26:5
+✖ R3仅污染公开Trade为closed也必须拒绝 (1.826119ms)
+  AssertionError [ERR_ASSERTION]: Missing expected exception.
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/mixed-calendar-c2c/agents/branch-completion/mixed-calendar-c2c/assert-v11-public-trace.test.mjs:29:14)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at Test.start (node:internal/test_runner/test:1191:17)
+      at node:internal/test_runner/test:1792:71
+      at node:internal/per_context/primordials:466:82
+      at new Promise (<anonymous>)
+      at new SafePromise (node:internal/per_context/primordials:435:3)
+      at node:internal/per_context/primordials:466:9
+      at Array.map (<anonymous>) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: /closed/,
+    operator: 'throws',
+    diff: 'simple'
+  }
+
+test at agents/branch-completion/mixed-calendar-c2c/assert-v11-public-trace.test.mjs:26:5
+✖ R3仅污染公开AuctionTick为closed也必须拒绝 (1.634265ms)
+  AssertionError [ERR_ASSERTION]: Missing expected exception.
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/mixed-calendar-c2c/agents/branch-completion/mixed-calendar-c2c/assert-v11-public-trace.test.mjs:29:14)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at Test.start (node:internal/test_runner/test:1191:17)
+      at node:internal/test_runner/test:1792:71
+      at node:internal/per_context/primordials:466:82
+      at new Promise (<anonymous>)
+      at new SafePromise (node:internal/per_context/primordials:435:3)
+      at node:internal/per_context/primordials:466:9
+      at Array.map (<anonymous>) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: /closed/,
+    operator: 'throws',
+    diff: 'simple'
+  }
+
+test at agents/branch-completion/mixed-calendar-c2c/assert-v11-public-trace.test.mjs:26:5
+✖ R3仅污染公开AuctionCompleted为closed也必须拒绝 (1.42695ms)
+  AssertionError [ERR_ASSERTION]: Missing expected exception.
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/mixed-calendar-c2c/agents/branch-completion/mixed-calendar-c2c/assert-v11-public-trace.test.mjs:29:14)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at Test.start (node:internal/test_runner/test:1191:17)
+      at node:internal/test_runner/test:1792:71
+      at node:internal/per_context/primordials:466:82
+      at new Promise (<anonymous>)
+      at new SafePromise (node:internal/per_context/primordials:435:3)
+      at node:internal/per_context/primordials:466:9
+      at Array.map (<anonymous>) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: /closed/,
+    operator: 'throws',
+    diff: 'simple'
+  }
+
+test at agents/branch-completion/mixed-calendar-c2c/assert-v11-public-trace.test.mjs:33:3
+✖ R3仅污染DayBoundary把closed终K加入也必须拒绝 (1.293428ms)
+  AssertionError [ERR_ASSERTION]: Missing expected exception.
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/mixed-calendar-c2c/agents/branch-completion/mixed-calendar-c2c/assert-v11-public-trace.test.mjs:36:12)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at Test.start (node:internal/test_runner/test:1191:17)
+      at node:internal/test_runner/test:1792:71
+      at node:internal/per_context/primordials:466:82
+      at new Promise (<anonymous>)
+      at new SafePromise (node:internal/per_context/primordials:435:3)
+      at node:internal/per_context/primordials:466:9
+      at Array.map (<anonymous>) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: /DayBoundary/,
+    operator: 'throws',
+    diff: 'simple'
+  }
+
+test at agents/branch-completion/mixed-calendar-c2c/assert-v11-public-trace.test.mjs:39:3
+✖ R3每个Jan2真实市场拍都必须有open行情正控 (1.064563ms)
+  AssertionError [ERR_ASSERTION]: Missing expected exception.
+      at TestContext.<anonymous> (file:///data1/baiyifan/workplace/stock_market_game/.worktree/mixed-calendar-c2c/agents/branch-completion/mixed-calendar-c2c/assert-v11-public-trace.test.mjs:42:12)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at Test.start (node:internal/test_runner/test:1191:17)
+      at node:internal/test_runner/test:1792:71
+      at node:internal/per_context/primordials:466:82
+      at new Promise (<anonymous>)
+      at new SafePromise (node:internal/per_context/primordials:435:3)
+      at node:internal/per_context/primordials:466:9
+      at Array.map (<anonymous>) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: /open/,
+    operator: 'throws',
+    diff: 'simple'
+  }

@@ -1,0 +1,149 @@
+{
+  "phase": "behavior",
+  "cases": [
+    {
+      "case": "closed_current_minute_query_stays_closed_during_shared_market_tick",
+      "command": [
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "/data1/baiyifan/workplace/stock_market_game/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/mixed-calendar-c2c/integration-red-6ac167e1",
+        "closed_current_minute_query_stays_closed_during_shared_market_tick",
+        "--exact",
+        "--nocapture",
+        "--test-threads=1"
+      ],
+      "exit_code": 1,
+      "wall_seconds": 0.8976139060687274
+    },
+    {
+      "case": "closed_first_tick_adds_neither_price_history_nor_market_minute",
+      "command": [
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "/data1/baiyifan/workplace/stock_market_game/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/mixed-calendar-c2c/integration-red-6ac167e1",
+        "closed_first_tick_adds_neither_price_history_nor_market_minute",
+        "--exact",
+        "--nocapture",
+        "--test-threads=1"
+      ],
+      "exit_code": 1,
+      "wall_seconds": 0.846640576957725
+    },
+    {
+      "case": "closed_first_tick_emits_no_price_fact_while_open_stock_progresses",
+      "command": [
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "/data1/baiyifan/workplace/stock_market_game/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/mixed-calendar-c2c/integration-red-6ac167e1",
+        "closed_first_tick_emits_no_price_fact_while_open_stock_progresses",
+        "--exact",
+        "--nocapture",
+        "--test-threads=1"
+      ],
+      "exit_code": 1,
+      "wall_seconds": 0.8488313849084079
+    },
+    {
+      "case": "closed_first_tick_preserves_valuation_without_active_daily_candle",
+      "command": [
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "/data1/baiyifan/workplace/stock_market_game/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/mixed-calendar-c2c/integration-red-6ac167e1",
+        "closed_first_tick_preserves_valuation_without_active_daily_candle",
+        "--exact",
+        "--nocapture",
+        "--test-threads=1"
+      ],
+      "exit_code": 1,
+      "wall_seconds": 0.8542234220076352
+    },
+    {
+      "case": "closed_stock_produces_no_auction_facts_in_open_or_closing_window",
+      "command": [
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "/data1/baiyifan/workplace/stock_market_game/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/mixed-calendar-c2c/integration-red-6ac167e1",
+        "closed_stock_produces_no_auction_facts_in_open_or_closing_window",
+        "--exact",
+        "--nocapture",
+        "--test-threads=1"
+      ],
+      "exit_code": 1,
+      "wall_seconds": 0.850194517057389
+    },
+    {
+      "case": "first_reopen_uses_stock_minute_zero_while_other_exchange_starts_day_one",
+      "command": [
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "/data1/baiyifan/workplace/stock_market_game/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/mixed-calendar-c2c/integration-red-6ac167e1",
+        "first_reopen_uses_stock_minute_zero_while_other_exchange_starts_day_one",
+        "--exact",
+        "--nocapture",
+        "--test-threads=1"
+      ],
+      "exit_code": 1,
+      "wall_seconds": 0.8586254180409014
+    },
+    {
+      "case": "mixed_day_end_archives_only_open_stock_and_reports_only_its_final_candle",
+      "command": [
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "/data1/baiyifan/workplace/stock_market_game/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/mixed-calendar-c2c/integration-red-6ac167e1",
+        "mixed_day_end_archives_only_open_stock_and_reports_only_its_final_candle",
+        "--exact",
+        "--nocapture",
+        "--test-threads=1"
+      ],
+      "exit_code": 1,
+      "wall_seconds": 0.8402083979453892
+    },
+    {
+      "case": "retained_closed_and_open_no_trades_remain_distinct_after_civil_commit",
+      "command": [
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "/data1/baiyifan/workplace/stock_market_game/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/mixed-calendar-c2c/integration-red-6ac167e1",
+        "retained_closed_and_open_no_trades_remain_distinct_after_civil_commit",
+        "--exact",
+        "--nocapture",
+        "--test-threads=1"
+      ],
+      "exit_code": 1,
+      "wall_seconds": 0.8485796559834853
+    }
+  ],
+  "binary": {
+    "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/mixed-calendar-c2c/integration-red-6ac167e1",
+    "bytes": 49534504,
+    "sha256": "99f40845745fcda323d10af1dfa28c5ef20bf9050d6d36ba054dfbf0e4fb2060"
+  },
+  "source_before": {
+    "packages/engine/tests/mixed_calendar_c2c.rs": "7454768a5f03d43b19d2972e057225c8c58fa67280fb011764f43ca4494ea571",
+    "packages/engine/tests/common/mixed_calendar_c2c_fixture.rs": "d1120a2ad62e3d0c1ca15ec1126ec44cf2050b48c4f84cb07e4dafbb5f4b2eb3"
+  },
+  "source_after": {
+    "packages/engine/tests/mixed_calendar_c2c.rs": "7454768a5f03d43b19d2972e057225c8c58fa67280fb011764f43ca4494ea571",
+    "packages/engine/tests/common/mixed_calendar_c2c_fixture.rs": "d1120a2ad62e3d0c1ca15ec1126ec44cf2050b48c4f84cb07e4dafbb5f4b2eb3"
+  },
+  "source_unchanged": true,
+  "wall_seconds": 0.9030863650841638,
+  "说明": "exit_code 是实际 child 结果；任何编译失败不进入此表，行为失败须逐条读原始断言。"
+}

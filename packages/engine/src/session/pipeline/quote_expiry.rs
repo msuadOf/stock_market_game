@@ -126,10 +126,20 @@ impl GameSession {
         if self.phase() != crate::TradingPhase::Continuous {
             return Ok((ExpiryOutput::default(), Vec::new(), Vec::new()));
         }
-        let market_minute = self.current_market_minute();
-        let mut expired: Vec<_> = NpcOrderLifecycleBook::new(&mut self.state.npc_order_lifecycles)
-            .due_at(market_minute)
-            .cloned()
+        let (_, calendar) = self.prepare_market_calendar_tick()?;
+        let mut expired: Vec<_> = self
+            .state
+            .npc_order_lifecycles
+            .iter()
+            .filter_map(|lifecycle| {
+                let clock = calendar
+                    .before_projection()
+                    .stock(lifecycle.code)
+                    .expect("生命周期证券必须属于同一 Calendar catalog");
+                (clock.date_session_ordinal().is_some()
+                    && lifecycle.expires_market_minute <= clock.completed_minute_count())
+                .then(|| lifecycle.clone())
+            })
             .collect();
         if expired.is_empty() {
             return Ok((ExpiryOutput::default(), Vec::new(), Vec::new()));

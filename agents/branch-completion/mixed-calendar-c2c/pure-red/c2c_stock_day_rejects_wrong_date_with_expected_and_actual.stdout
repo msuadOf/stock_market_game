@@ -1,0 +1,11 @@
+
+running 1 test
+test market_calendar_context::tests::c2c_stock_day_rejects_wrong_date_with_expected_and_actual ... FAILED
+
+failures:
+
+failures:
+    market_calendar_context::tests::c2c_stock_day_rejects_wrong_date_with_expected_and_actual
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 41 filtered out; finished in 0.00s
+

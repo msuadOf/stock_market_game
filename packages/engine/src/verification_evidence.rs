@@ -1376,6 +1376,7 @@ fn project_disclosure_kind(kind: &crate::session::CompanyDisclosureKind) -> Valu
 
 fn rejection_reason(reason: &crate::RejectionReason) -> &'static str {
     match reason {
+        crate::RejectionReason::ExchangeClosed => "ExchangeClosed",
         crate::RejectionReason::InsufficientCash => "InsufficientCash",
         crate::RejectionReason::InsufficientShares => "InsufficientShares",
         crate::RejectionReason::LimitExceeded => "LimitExceeded",

@@ -1,0 +1,6 @@
+
+running 1 test
+test market_calendar_context::tests::c08_auction_boundaries_keep_240_minutes_before_completed_session ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 41 filtered out; finished in 0.00s
+

@@ -308,13 +308,17 @@ pub fn converge_round(
 pub fn broadcast_start(
     group_txs: &[Sender<super::protocol::GroupIn>],
     tick: u64,
-    civil_date: crate::calendar::CivilDate,
+    calendar: Arc<super::MarketTickContext>,
     stocks: &[super::protocol::StockPublic],
 ) -> Result<Arc<TickSnapshot>, RuntimeError> {
     let snapshot = Arc::new(TickSnapshot {
         tick,
-        market_minute: (tick / 60) as u32,
-        civil_date,
+        market_minute: u32::try_from(calendar.before_projection().completed_shared_minute_count())
+            .map_err(|_| RuntimeError::ProtocolInvariant {
+                detail: "共享 before minute 超过 u32".to_owned(),
+            })?,
+        civil_date: calendar.day().day_model().current_date(),
+        calendar,
         stocks: std::sync::Arc::new(stocks.to_vec()),
     });
     for tx in group_txs {

@@ -1,0 +1,9 @@
+{
+  "wrapper_exit_code": 0,
+  "wall_seconds": 0.7675802300218493,
+  "validator_after": {
+    "path": "/data1/baiyifan/workplace/stock_market_game/.worktree/mixed-calendar-c2c/agents/branch-completion/mixed-calendar-c2c/verify-v11-build-bindings.mjs",
+    "bytes": 5837,
+    "sha256": "7afc72e7d6edc5ec1c595aa164cf89f5a2937da982bdb186a7bbdc390c2f26a1"
+  }
+}

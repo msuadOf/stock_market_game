@@ -363,6 +363,7 @@ fn account_validation_sealed_indices_keep_rejected_slots_while_order_ids_only_co
                 crate::SecurityCategory::MainBoard,
                 crate::Money::from_cents(1_100),
                 crate::Money::from_cents(900),
+                true,
             ),
         )]),
     )
@@ -459,6 +460,7 @@ fn account_validation_contract_passes_cancel_and_materializes_limit_and_market_e
             crate::SecurityCategory::MainBoard,
             crate::Money::from_cents(1_100),
             crate::Money::from_cents(900),
+            true,
         ),
     )]);
     let output = CandidateValidationInput::new_with_context(
@@ -582,6 +584,7 @@ fn account_validation_rejects_unknown_quantity_cash_and_t1_share_failures_with_t
                 crate::SecurityCategory::MainBoard,
                 crate::Money::from_cents(1_100),
                 crate::Money::from_cents(900),
+                true,
             ),
         ),
         (
@@ -590,6 +593,7 @@ fn account_validation_rejects_unknown_quantity_cash_and_t1_share_failures_with_t
                 crate::SecurityCategory::ChiNext,
                 crate::Money::from_cents(1_200),
                 crate::Money::from_cents(800),
+                true,
             ),
         ),
     ]);
@@ -686,6 +690,7 @@ fn account_validation_cash_budget_contends_across_stocks_in_account_receipt_orde
         crate::SecurityCategory::MainBoard,
         crate::Money::from_cents(1_100),
         crate::Money::from_cents(900),
+        true,
     );
     let output = CandidateValidationInput::new_with_context(
         batch,
@@ -742,6 +747,7 @@ fn account_validation_near_order_id_overflow_is_fatal_before_any_output_is_obser
                 crate::SecurityCategory::MainBoard,
                 crate::Money::from_cents(1_100),
                 crate::Money::from_cents(900),
+                true,
             ),
         )]),
     )
@@ -827,6 +833,7 @@ fn account_validation_quantity_caps_accept_exact_limits_and_reject_the_next_boar
                     crate::SecurityCategory::MainBoard,
                     crate::Money::from_cents(1_100),
                     crate::Money::from_cents(900),
+                    true,
                 ),
             ),
             (
@@ -835,6 +842,7 @@ fn account_validation_quantity_caps_accept_exact_limits_and_reject_the_next_boar
                     crate::SecurityCategory::ChiNext,
                     crate::Money::from_cents(1_100),
                     crate::Money::from_cents(900),
+                    true,
                 ),
             ),
         ]),
@@ -922,6 +930,7 @@ fn account_validation_sell_candidates_compete_for_one_private_same_batch_share_b
                 crate::SecurityCategory::MainBoard,
                 crate::Money::from_cents(1_100),
                 crate::Money::from_cents(900),
+                true,
             ),
         )]),
     )

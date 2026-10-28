@@ -1,0 +1,6 @@
+
+running 1 test
+test market_calendar_context::tests::c11_source_bindings_and_runtime_date_range_are_validated ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 41 filtered out; finished in 0.02s
+

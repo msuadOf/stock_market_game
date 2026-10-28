@@ -29,6 +29,7 @@ pub(super) fn set_validation_reject_accounts_for_test(accounts: &[AccountId]) {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct StockValidation {
+    trading: bool,
     category: SecurityCategory,
     market_buy_protective_price: Money,
     market_sell_protective_price: Money,
@@ -39,8 +40,10 @@ impl StockValidation {
         category: SecurityCategory,
         market_buy_protective_price: Money,
         market_sell_protective_price: Money,
+        trading: bool,
     ) -> Self {
         Self {
+            trading,
             category,
             market_buy_protective_price,
             market_sell_protective_price,
@@ -594,6 +597,22 @@ impl AccountValidationState {
                 sealed_index,
                 reason: RejectionReason::InsufficientCash,
             });
+        }
+        let code = match candidate.intent() {
+            Intent::Cancel { code, .. }
+            | Intent::PlaceLimit { code, .. }
+            | Intent::PlaceMarket { code, .. } => code,
+        };
+        if let Some(stock) = self.context.stock(code) {
+            if !stock.trading {
+                self.next_sealed_index = next_sealed_index;
+                self.processed_count = next_processed_count;
+                return Ok(PreparedValidationStep::Rejected {
+                    key,
+                    sealed_index,
+                    reason: RejectionReason::ExchangeClosed,
+                });
+            }
         }
         let prepared = match candidate.intent() {
             Intent::Cancel { code, id } => PreparedValidationStep::Cancel {

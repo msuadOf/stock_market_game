@@ -1,0 +1,37 @@
+{
+  "phase": "initial",
+  "cases": [
+    {
+      "case": "initial_mixed_fixture_restores_with_frozen_policy_and_catalog",
+      "command": [
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/node24-env/node",
+        "/data1/baiyifan/workplace/stock_market_game/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "/data1/baiyifan/workplace/stock_market_game/.tmp/mixed-calendar-c2c/integration-red-6ac167e1",
+        "initial_mixed_fixture_restores_with_frozen_policy_and_catalog",
+        "--exact",
+        "--nocapture",
+        "--test-threads=1"
+      ],
+      "exit_code": 0,
+      "wall_seconds": 3.025317896041088
+    }
+  ],
+  "binary": {
+    "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/mixed-calendar-c2c/integration-red-6ac167e1",
+    "bytes": 49534504,
+    "sha256": "99f40845745fcda323d10af1dfa28c5ef20bf9050d6d36ba054dfbf0e4fb2060"
+  },
+  "source_before": {
+    "packages/engine/tests/mixed_calendar_c2c.rs": "7454768a5f03d43b19d2972e057225c8c58fa67280fb011764f43ca4494ea571",
+    "packages/engine/tests/common/mixed_calendar_c2c_fixture.rs": "d1120a2ad62e3d0c1ca15ec1126ec44cf2050b48c4f84cb07e4dafbb5f4b2eb3"
+  },
+  "source_after": {
+    "packages/engine/tests/mixed_calendar_c2c.rs": "7454768a5f03d43b19d2972e057225c8c58fa67280fb011764f43ca4494ea571",
+    "packages/engine/tests/common/mixed_calendar_c2c_fixture.rs": "d1120a2ad62e3d0c1ca15ec1126ec44cf2050b48c4f84cb07e4dafbb5f4b2eb3"
+  },
+  "source_unchanged": true,
+  "wall_seconds": 3.02644422207959,
+  "说明": "exit_code 是实际 child 结果；任何编译失败不进入此表，行为失败须逐条读原始断言。"
+}

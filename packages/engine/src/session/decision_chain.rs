@@ -681,7 +681,15 @@ pub(in crate::session) fn apply_plan_lifecycle_actions(
             let (price, acquired) = session.plan_review_facts(plan.account(), plan.code(), market);
             let resources = session.plan_review_resources(plan.account(), plan.code());
             plans
-                .record_review(plan_id, u64::from(session.state.day), price, acquired)
+                .record_review(
+                    plan_id,
+                    session
+                        .stock_calendar_day(*plan.code())
+                        .expect("复审本股 Calendar 合法")
+                        .expect("closed 证券不得复审"),
+                    price,
+                    acquired,
+                )
                 .unwrap_or_else(|error| panic!("plan review failed for {plan_id:?}: {error}"));
             plans
                 .record_resource_review(plan_id, resources)
@@ -743,13 +751,19 @@ pub(in crate::session) fn apply_plan_lifecycle_actions(
             PlanLifecycleAction::Create { open } => {
                 let account = open.account;
                 let code = open.code.clone();
+                let Some(stock_day) = session
+                    .stock_calendar_day(code)
+                    .expect("开仓本股 Calendar 合法")
+                else {
+                    continue;
+                };
                 let plan_id = plans.create(open).unwrap_or_else(|error| {
                     panic!("plan creation failed for {account:?} {code:?}: {error}")
                 });
                 let (price, acquired) = session.plan_review_facts(account, &code, market);
                 let resources = session.plan_review_resources(account, &code);
                 plans
-                    .record_review(plan_id, u64::from(session.state.day), price, acquired)
+                    .record_review(plan_id, stock_day, price, acquired)
                     .unwrap_or_else(|error| {
                         panic!("new plan review failed for {plan_id:?}: {error}")
                     });
@@ -781,7 +795,7 @@ pub(in crate::session) fn apply_plan_lifecycle_actions(
                             plan_id,
                             PlanEvent::Paused {
                                 reason,
-                                trading_day: u64::from(session.state.day),
+                                trading_day: stock_day,
                             },
                         )
                         .unwrap_or_else(|error| {
@@ -996,7 +1010,13 @@ impl GameSession {
                     .plans
                     .plan(id)
                     .expect("active index must resolve");
-                if u64::from(self.state.day) > plan.last_valid_trading_day() {
+                let Some(stock_day) = self
+                    .stock_calendar_day(*plan.code())
+                    .expect("复审调度本股 Calendar 合法")
+                else {
+                    return false;
+                };
+                if stock_day > plan.last_valid_trading_day() {
                     return false;
                 }
                 let Some(market) = self.state.markets.get(plan.code()) else {

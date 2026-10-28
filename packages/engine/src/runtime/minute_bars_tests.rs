@@ -56,7 +56,37 @@ fn empty_script() -> Box<dyn Fn(GroupIdx) -> GroupScript> {
 fn continuous_world(script: Box<dyn Fn(GroupIdx) -> GroupScript>) -> World {
     let mut spec = basic_spec(1, 1, 3, script);
     spec.config = config_no_cage();
-    World::spawn(spec).expect("世界构造")
+    World::spawn(
+        spec,
+        crate::calendar::TradingCalendar::current_default_calendar()
+            .expect("显式 raw Calendar 政策合法"),
+    )
+    .expect("世界构造")
+}
+
+/// 最后一拍仍归当日；没有收盘竞价窗时也须完成全部 240 个真实市场分钟。
+#[test]
+fn final_tick_completes_all_minutes_with_opening_window_and_no_closing_window() {
+    for (ticks_per_day, auction_ticks) in [(2, 1), (12, 3)] {
+        let mut spec = basic_spec(1, 1, 1, empty_script());
+        spec.ticks_per_day = ticks_per_day;
+        spec.auction_ticks = auction_ticks;
+        spec.closing_auction_ticks = 0;
+        let mut world = World::spawn(
+            spec,
+            crate::calendar::TradingCalendar::current_default_calendar().unwrap(),
+        ).unwrap();
+        world.run_ticks(ticks_per_day).expect("当日全部市场拍合法完成");
+        let view = &world.public_views()[0];
+        assert_eq!(view.minute_closes.len(), 240,
+            "T={ticks_per_day}, a={auction_ticks}：最后一拍不能按次日相位跳过分钟");
+        assert_eq!(view.minute_closes.first(), Some(&(0, 1_000)));
+        assert_eq!(view.minute_closes.last(), Some(&(239, 1_000)));
+        assert!(view.minute_bars.is_empty(), "零成交只补收盘观察，不伪造成交分钟 K");
+        assert_eq!(world.global.committed_tick, ticks_per_day);
+        let report = world.shutdown().expect("完整收束并回收 worker");
+        assert!(report.worker_results.iter().all(|(_, result)| result.is_ok()));
+    }
 }
 
 #[test]
@@ -129,7 +159,12 @@ fn fills_across_minute_boundaries_split_into_ordered_buckets() {
     spec.ticks_per_day = 60;
     spec.auction_ticks = 0;
     spec.closing_auction_ticks = 0;
-    let mut world = World::spawn(spec).expect("世界构造");
+    let mut world = World::spawn(
+        spec,
+        crate::calendar::TradingCalendar::current_default_calendar()
+            .expect("显式 raw Calendar 政策合法"),
+    )
+    .expect("世界构造");
     world.run_ticks(2).expect("2 tick 收敛");
     let report = world.shutdown().expect("关停");
     let bars = &report.desk_finals[0].market.minute_bars;
@@ -165,7 +200,12 @@ fn opening_auction_clearing_fills_land_at_minute_565() {
     spec.ticks_per_day = 30;
     spec.auction_ticks = 6;
     spec.closing_auction_ticks = 3;
-    let mut world = World::spawn(spec).expect("世界构造");
+    let mut world = World::spawn(
+        spec,
+        crate::calendar::TradingCalendar::current_default_calendar()
+            .expect("显式 raw Calendar 政策合法"),
+    )
+    .expect("世界构造");
     world.run_ticks(4).expect("tick4 触发开盘清算");
     let report = world.shutdown().expect("关停");
     let bars = &report.desk_finals[0].market.minute_bars;
@@ -194,7 +234,12 @@ fn closing_auction_drain_fills_land_at_minute_900() {
     spec.ticks_per_day = 30;
     spec.auction_ticks = 6;
     spec.closing_auction_ticks = 3;
-    let mut world = World::spawn(spec).expect("世界构造");
+    let mut world = World::spawn(
+        spec,
+        crate::calendar::TradingCalendar::current_default_calendar()
+            .expect("显式 raw Calendar 政策合法"),
+    )
+    .expect("世界构造");
     world.run_ticks(30).expect("跑到日末");
     let report = world.shutdown().expect("关停（Drain 收盘清算）");
     // 期末 Drain 应答捎带桶（跨日形态 live 已并入——观察面统一走
@@ -252,8 +297,17 @@ fn second_trading_day_minute_bars_restart_empty() {
     spec.ticks_per_day = 30;
     spec.auction_ticks = 0;
     spec.closing_auction_ticks = 3;
-    let mut world = World::spawn(spec).expect("世界构造");
-    world.run_ticks(31).expect("跨入第二日");
+    let first_date = spec.civil_start_date;
+    let calendar = crate::calendar::TradingCalendar::current_default_calendar().unwrap();
+    let mut world = World::spawn(spec, calendar.clone()).expect("世界构造");
+    world.run_ticks(30).expect("首日全部市场拍");
+    world.run_day_end_public().expect("显式首日市场日终");
+    let next_date = calendar.next_trading_day(
+        crate::calendar::CalendarExchange::Sse,
+        first_date,
+    ).unwrap();
+    world.set_civil_date(next_date);
+    world.run_ticks(1).expect("显式跨入第二日");
     let views = world.public_views().to_vec();
     assert!(
         views[0].minute_bars.is_empty(),

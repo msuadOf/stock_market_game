@@ -1,0 +1,5 @@
+
+thread 'closed_first_tick_preserves_valuation_without_active_daily_candle' (1623298) panicked at /data1/baiyifan/workplace/stock_market_game/.worktree/mixed-calendar-c2c/packages/engine/tests/mixed_calendar_c2c.rs:74:5:
+closed 股不能补零量 active K
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+bounded command exited with 101

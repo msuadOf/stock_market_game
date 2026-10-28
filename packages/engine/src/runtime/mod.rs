@@ -48,6 +48,10 @@ mod bridge_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod candle_retirement_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
+mod calendar_raw_range_tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod calendar_projection_tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod inline_account_tests;
 /// B2 件 2：desk 分钟K观察面语义测试（对照 18725d07 MinuteBar 基线）。
 #[cfg(all(test, not(target_arch = "wasm32")))]
@@ -169,3 +173,9 @@ pub fn step_runtime_enabled() -> bool {
         })
     }
 }
+
+// 公开消息只暴露 opaque context；构造与读取仍由 engine 内部受控。
+pub use crate::session::market_calendar_context::{MarketDayContext, MarketTickContext};
+
+#[cfg(test)]
+mod calendar_test_support;

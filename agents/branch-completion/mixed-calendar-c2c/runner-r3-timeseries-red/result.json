@@ -1,0 +1,8 @@
+{
+  "wrapper_exit_code": 1,
+  "wall_seconds": 0.37663566996343434,
+  "sources_after": {
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/mixed-calendar-c2c/agents/branch-completion/mixed-calendar-c2c/assert-v11-public-trace.mjs": "60513127ccba69ccbd0f3c23de1ee5fa75295bed37797578c1cbdb69f82984a8",
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/mixed-calendar-c2c/agents/branch-completion/mixed-calendar-c2c/assert-v11-public-trace.test.mjs": "db070aa1c81cf012cf7bf3f586b5d72e3fb70b20076fb363c81744f5989e1f0f"
+  }
+}

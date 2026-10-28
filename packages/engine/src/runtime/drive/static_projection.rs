@@ -56,6 +56,7 @@ impl RuntimeDriver {
         &mut self,
         session: &GameSession,
     ) -> Result<PreparedDriverStep, String> {
+        let (calendar_day, _) = session.prepare_market_calendar_projection().map_err(|error| error.to_string())?;
         let source = self.mirror_source();
         let initial = self
             .initial_static_seed
@@ -159,6 +160,7 @@ impl RuntimeDriver {
             return Err("静点 Full 读取期间 World 来源改变".to_owned());
         }
         Ok(PreparedDriverStep {
+            calendar: PreparedDriverCalendar::Static(calendar_day),
             accounts,
             buy_vwap: Default::default(),
             last_prices: self

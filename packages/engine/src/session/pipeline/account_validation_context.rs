@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) struct StockValidationFacts {
+    pub(super) trading: bool,
     pub(super) category: SecurityCategory,
     pub(super) market_buy_protective_price: crate::Money,
     pub(super) market_sell_protective_price: crate::Money,
@@ -28,6 +29,7 @@ pub(super) fn build_account_validation_context(
                 stock.category,
                 stock.market_buy_protective_price,
                 stock.market_sell_protective_price,
+                stock.trading,
             ),
         )
     }))
@@ -52,6 +54,7 @@ pub(super) fn collect_account_validation_context_facts(
             return Err(invariant("AccountValidation 上下文中 StockSpec 重复"));
         }
     }
+    let stock_days = session.stock_calendar_days()?;
     let stocks = session
         .state
         .markets
@@ -61,6 +64,10 @@ pub(super) fn collect_account_validation_context_facts(
                 .get(code)
                 .ok_or_else(|| invariant("configured market has no stock specification"))?;
             let stock = StockValidationFacts {
+                trading: stock_days
+                    .get(code)
+                    .ok_or_else(|| invariant("验证事实缺少本股 Calendar row"))?
+                    .is_some(),
                 category,
                 market_buy_protective_price: market
                     .up_stop()

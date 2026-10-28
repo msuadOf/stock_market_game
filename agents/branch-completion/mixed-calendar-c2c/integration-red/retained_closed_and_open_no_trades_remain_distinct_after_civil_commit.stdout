@@ -1,0 +1,11 @@
+
+running 1 test
+test retained_closed_and_open_no_trades_remain_distinct_after_civil_commit ... FAILED
+
+failures:
+
+failures:
+    retained_closed_and_open_no_trades_remain_distinct_after_civil_commit
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 8 filtered out; finished in 0.75s
+

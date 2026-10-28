@@ -1,0 +1,68 @@
+{
+  "cases": [
+    {
+      "case": "market_calendar_context::tests::c2c_stock_day_accepts_own_closed_and_open_rows_without_complete_bindings",
+      "wrapper_exit_code": 0,
+      "wall_seconds": 0.04331246204674244
+    },
+    {
+      "case": "market_calendar_context::tests::c2c_stock_day_rejects_equal_content_from_another_source_owner",
+      "wrapper_exit_code": 1,
+      "wall_seconds": 0.1063707679277286
+    },
+    {
+      "case": "market_calendar_context::tests::c2c_stock_day_rejects_unknown_stock_and_wrong_exchange_with_details",
+      "wrapper_exit_code": 1,
+      "wall_seconds": 0.1100141970673576
+    },
+    {
+      "case": "market_calendar_context::tests::c2c_stock_day_rejects_wrong_date_with_expected_and_actual",
+      "wrapper_exit_code": 1,
+      "wall_seconds": 0.10301990795414895
+    },
+    {
+      "case": "market_calendar_context::tests::c2c_stock_tick_accepts_same_owner_both_rows_and_both_tick_boundaries",
+      "wrapper_exit_code": 0,
+      "wall_seconds": 0.04804467596113682
+    },
+    {
+      "case": "market_calendar_context::tests::c2c_stock_tick_checks_each_before_clock_field_without_mutating_context",
+      "wrapper_exit_code": 1,
+      "wall_seconds": 0.10313236201182008
+    },
+    {
+      "case": "market_calendar_context::tests::c2c_stock_tick_checks_each_layout_field",
+      "wrapper_exit_code": 1,
+      "wall_seconds": 0.10386066604405642
+    },
+    {
+      "case": "market_calendar_context::tests::c2c_stock_tick_rejects_wrong_owner_stock_exchange_and_date",
+      "wrapper_exit_code": 1,
+      "wall_seconds": 0.1095547319855541
+    },
+    {
+      "case": "market_calendar_context::tests::c2c_stock_validation_priority_is_owner_stock_date_layout_before",
+      "wrapper_exit_code": 1,
+      "wall_seconds": 0.11885081499349326
+    }
+  ],
+  "wall_seconds": 0.16343068797141314,
+  "source_before": {
+    "packages/engine/src/session/exchange_calendar_model.rs": "173c0633b3489a852612458832046f3106e21b28c0c571d6f2ede90f8e33caf5",
+    "packages/engine/src/session/market_calendar_context.rs": "1b3f2332c6b4d524e6e4cb731a38536468886c2864fe8cff9e2520aad8b5230a",
+    "packages/engine/src/session/market_calendar_context_tests.rs": "940ded77d66c45fc5419d4d2b9b815d41d5b1fecb5c2587ef5a3e4e1823f5699",
+    "agents/branch-completion/mixed-calendar-c2c/pure-context-harness.rs": "52503e2aae4e02ed09fd9d5adef56aebd31000abd17a16f5fdf1978ca92b6645"
+  },
+  "source_after": {
+    "packages/engine/src/session/exchange_calendar_model.rs": "173c0633b3489a852612458832046f3106e21b28c0c571d6f2ede90f8e33caf5",
+    "packages/engine/src/session/market_calendar_context.rs": "1b3f2332c6b4d524e6e4cb731a38536468886c2864fe8cff9e2520aad8b5230a",
+    "packages/engine/src/session/market_calendar_context_tests.rs": "940ded77d66c45fc5419d4d2b9b815d41d5b1fecb5c2587ef5a3e4e1823f5699",
+    "agents/branch-completion/mixed-calendar-c2c/pure-context-harness.rs": "52503e2aae4e02ed09fd9d5adef56aebd31000abd17a16f5fdf1978ca92b6645"
+  },
+  "binary": {
+    "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/mixed-calendar-c2c/pure-context-red",
+    "bytes": 9087768,
+    "sha256": "e9304650bbae7a2b1596939e06bf1e6d871c7c75399dc99fc9511695332516bb"
+  },
+  "说明": "退出码是deadline CLI wrapper；内层Rust失败码仅按stderr原件报告。"
+}

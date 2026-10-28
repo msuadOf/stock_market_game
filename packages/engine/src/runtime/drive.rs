@@ -21,7 +21,7 @@ mod company_commands;
 mod sync_inputs;
 mod static_projection;
 pub(crate) use static_projection::PreparedStaticRead;
-pub(crate) use convergence::PreparedDriverStep;
+pub(crate) use convergence::{PreparedDriverCalendar, PreparedDriverStep};
 use crate::money::Money;
 use crate::strategy::StrategyData;
 use crate::{AccountId, Event, GameSession, SessionSetup};
@@ -50,20 +50,24 @@ fn project_trade_events_for_roster(
             .ok_or_else(|| format!("成交事件 Owner 不在真实名册：{owner:?}"))
     };
     let mut candidate_seq = *next_seq;
-    let events = trades.iter().map(|trade| {
-        let maker = resolve(trade.maker)?;
-        let taker = resolve(trade.taker)?;
-        candidate_seq = candidate_seq.checked_add(1)
-            .ok_or_else(|| "成交事件 seq 溢出".to_owned())?;
-        Ok(Event::Trade {
-            seq: candidate_seq,
-            code: crate::StockId(u32::from(trade.stock)),
-            price: Money::from_cents(trade.price),
-            qty: trade.qty,
-            maker,
-            taker,
+    let events = trades
+        .iter()
+        .map(|trade| {
+            let maker = resolve(trade.maker)?;
+            let taker = resolve(trade.taker)?;
+            candidate_seq = candidate_seq
+                .checked_add(1)
+                .ok_or_else(|| "成交事件 seq 溢出".to_owned())?;
+            Ok(Event::Trade {
+                seq: candidate_seq,
+                code: crate::StockId(u32::from(trade.stock)),
+                price: Money::from_cents(trade.price),
+                qty: trade.qty,
+                maker,
+                taker,
+            })
         })
-    }).collect::<Result<Vec<_>, String>>()?;
+        .collect::<Result<Vec<_>, String>>()?;
     *next_seq = candidate_seq;
     Ok(events)
 }
@@ -415,6 +419,10 @@ impl RuntimeDriver {
         authority_epoch: u64,
         static_handover: bool,
     ) -> Result<Self, String> {
+        // 两个 factory 都在旧簿接管、线程启动或任何输入消费前验证 Calendar。
+        session
+            .prepare_market_calendar_projection()
+            .map_err(|error| error.to_string())?;
         let mut setup: SessionSetup = session.export_setup_for_runtime();
         // StockId 按代码升序分配；交易部、账户矩阵与报价数组必须共用该顺序。
         setup.stocks.sort_unstable_by(|a, b| a.code.0.cmp(&b.code.0));
@@ -688,7 +696,11 @@ impl RuntimeDriver {
                 session.runtime_static_market_seed(crate::StockId(index as u32))
             }).collect::<Result<_, _>>()?,
         };
-        let mut world = World::spawn(spec).map_err(|e| format!("驱动器世界构造失败：{e:?}"))?;
+        let mut world = World::spawn_with_calendar_source(
+            spec,
+            std::sync::Arc::clone(session.market_calendar_source()),
+            session.market_calendar_bindings().map_err(|error| error.to_string())?,
+        ).map_err(|e| format!("驱动器世界构造失败：{e:?}"))?;
         let presence = (0..n_groups).map(|group| {
             (group as super::GroupIdx, ids.iter().skip(group * per_group).take(per_group)
                 .map(|id| (*id, personal_presence[id])).collect())
@@ -816,6 +828,17 @@ impl RuntimeDriver {
             Some(self.next_sync_source_sequence()?)
         } else {
             None
+        };
+        let calendar = match self.world.staged_calendar_tick() {
+            Some(calendar) => calendar,
+            None => {
+                // direct driver 可累计未安装输入；Calendar 使用同 owner World 的真实进度。
+                let calendar = self.world.prepare_raw_calendar_tick()
+                    .map_err(|error| error.to_string())?;
+                self.world
+                    .take_or_stage_calendar_tick(calendar)
+                    .map_err(|error| error.to_string())?
+            }
         };
         // P0 画像：本函数各段用块作用域 + guard 计时（未启用=零成本）。
         use super::step_profile::{self, StepSegment};
@@ -1117,6 +1140,7 @@ impl RuntimeDriver {
         touched.sort();
         touched.dedup();
         let mut input = PreparedDriverStep {
+            calendar: PreparedDriverCalendar::MarketTick(calendar),
             accounts: snapshots,
             buy_vwap,
             last_prices,
@@ -1712,15 +1736,19 @@ impl RuntimeDriver {
                 .collect();
             for fact in cur_book {
                 match prev_index.remove(&(fact.owner, fact.side, fact.order_serial)) {
-                    None => delta.entries.push(super::protocol::RestingDeltaEntry::Added {
-                        stock: stock as super::StockIdx,
-                        fact: fact.clone(),
-                    }),
-                    Some(prev_fact) if prev_fact != fact => {
-                        delta.entries.push(super::protocol::RestingDeltaEntry::Changed {
+                    None => delta
+                        .entries
+                        .push(super::protocol::RestingDeltaEntry::Added {
                             stock: stock as super::StockIdx,
                             fact: fact.clone(),
-                        })
+                        }),
+                    Some(prev_fact) if prev_fact != fact => {
+                        delta
+                            .entries
+                            .push(super::protocol::RestingDeltaEntry::Changed {
+                                stock: stock as super::StockIdx,
+                                fact: fact.clone(),
+                            })
                     }
                     Some(_) => {}
                 }
@@ -2054,6 +2082,17 @@ impl RuntimeDriver {
         ))
     }
 
+    pub(crate) fn stage_calendar_tick(
+        &mut self,
+        calendar: std::sync::Arc<super::MarketTickContext>,
+    ) -> Result<(), String> {
+        self.world
+            .set_civil_date(calendar.day().day_model().current_date());
+        self.world
+            .stage_calendar_tick(calendar)
+            .map_err(|error| error.to_string())
+    }
+
     /// 外部意图注入世界（D2/D1）：经 ExternalPlan 通道**按组定向**发送
     ///（Sol 终审修复 1c 同族——此前广播给组 0 且全局下标当 local，
     /// 多组下组 1 账户的单路由错组；单组语义不变）。owner 不在名册=
@@ -2377,17 +2416,22 @@ impl RuntimeDriver {
         let facts = std::mem::take(&mut self.pending_causal);
         #[cfg(test)]
         let facts = if self.unresolved_causal_source_for_test {
-            facts.into_iter().map(|mut fact| {
-                match &mut fact.kind {
-                    super::diagnostics::DeskCausalKind::Submitted { source, .. }
-                    | super::diagnostics::DeskCausalKind::Cancelled { source, .. } => {
-                        *source = super::diagnostics::OperationSource::NonPlayerUnresolved;
+            facts
+                .into_iter()
+                .map(|mut fact| {
+                    match &mut fact.kind {
+                        super::diagnostics::DeskCausalKind::Submitted { source, .. }
+                        | super::diagnostics::DeskCausalKind::Cancelled { source, .. } => {
+                            *source = super::diagnostics::OperationSource::NonPlayerUnresolved;
+                        }
+                        _ => {}
                     }
-                    _ => {}
-                }
-                fact
-            }).collect()
-        } else { facts };
+                    fact
+                })
+                .collect()
+        } else {
+            facts
+        };
         facts
     }
 

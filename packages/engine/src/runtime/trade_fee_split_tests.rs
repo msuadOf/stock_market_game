@@ -111,7 +111,12 @@ fn taker_buy_leg_records_minimum_commission_and_transfer_only() {
     };
     let mut spec = basic_spec(1, 1, 3, Box::new(script));
     spec.config = config_no_cage();
-    let mut world = World::spawn(spec).expect("世界构造");
+    let mut world = World::spawn(
+        spec,
+        crate::calendar::TradingCalendar::current_default_calendar()
+            .expect("显式 raw Calendar 政策合法"),
+    )
+    .expect("世界构造");
     world.run_ticks(1).expect("tick1");
     let trades = all_trades(&world);
     let _ = world.shutdown();
@@ -135,7 +140,12 @@ fn taker_sell_leg_normalizes_maker_as_seller_side() {
     };
     let mut spec = basic_spec(1, 1, 3, Box::new(script));
     spec.config = config_no_cage();
-    let mut world = World::spawn(spec).expect("世界构造");
+    let mut world = World::spawn(
+        spec,
+        crate::calendar::TradingCalendar::current_default_calendar()
+            .expect("显式 raw Calendar 政策合法"),
+    )
+    .expect("世界构造");
     world.run_ticks(1).expect("tick1");
     let trades = all_trades(&world);
     let _ = world.shutdown();
@@ -166,7 +176,12 @@ fn partial_fills_telescope_buy_commission_by_delta() {
     let mut spec = basic_spec(1, 1, 4, Box::new(script));
     spec.config = config_no_cage();
     spec.initial_cash = 100_000_000;
-    let mut world = World::spawn(spec).expect("世界构造");
+    let mut world = World::spawn(
+        spec,
+        crate::calendar::TradingCalendar::current_default_calendar()
+            .expect("显式 raw Calendar 政策合法"),
+    )
+    .expect("世界构造");
     world.run_ticks(2).expect("2 tick");
     let trades = all_trades(&world);
     let _ = world.shutdown();
@@ -199,7 +214,12 @@ fn proportional_commission_exact_bankers_rounding_on_large_notional() {
     // 缺省 1000 股/人会使卖单因可卖不足被组端整单拒收）。
     spec.initial_cash = 10_000_000_000;
     spec.initial_shares = vec![vec![vec![10_000_u32; 1]; 3]; 1];
-    let mut world = World::spawn(spec).expect("世界构造");
+    let mut world = World::spawn(
+        spec,
+        crate::calendar::TradingCalendar::current_default_calendar()
+            .expect("显式 raw Calendar 政策合法"),
+    )
+    .expect("世界构造");
     world.run_ticks(1).expect("tick1");
     let trades = all_trades(&world);
     let _ = world.shutdown();
@@ -225,7 +245,12 @@ fn opening_auction_clearing_records_both_leg_fee_splits() {
     spec.ticks_per_day = 30;
     spec.auction_ticks = 6;
     spec.closing_auction_ticks = 3;
-    let mut world = World::spawn(spec).expect("世界构造");
+    let mut world = World::spawn(
+        spec,
+        crate::calendar::TradingCalendar::current_default_calendar()
+            .expect("显式 raw Calendar 政策合法"),
+    )
+    .expect("世界构造");
     world.run_ticks(4).expect("tick4 开盘清算");
     let trades = all_trades(&world);
     let _ = world.shutdown();
@@ -249,7 +274,12 @@ fn aborted_tick_facts_never_reach_the_trade_log() {
     };
     let mut spec = basic_spec(1, 1, 3, Box::new(script));
     spec.config = config_no_cage();
-    let mut world = World::spawn(spec).expect("世界构造");
+    let mut world = World::spawn(
+        spec,
+        crate::calendar::TradingCalendar::current_default_calendar()
+            .expect("显式 raw Calendar 政策合法"),
+    )
+    .expect("世界构造");
     let fail: Validator = Box::new(|ev| {
         if ev.tick == 1 { Err("三分项 Abort 注入".to_owned()) } else { Ok(()) }
     });

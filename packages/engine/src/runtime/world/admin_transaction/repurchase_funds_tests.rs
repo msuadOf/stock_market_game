@@ -43,7 +43,7 @@ fn credit(local: u32, stock: u16, id: PlanId, amount: i64) -> AdminOperation {
 }
 #[test]
 fn funds_p2_world_01_commit_two_real_groups_keeps_tick_and_next_start_reads_credit() {
-    let (spec, ids) = spec(); let mut w = World::spawn(spec).unwrap();
+    let (spec, ids) = spec(); let mut w = World::spawn(spec, crate::calendar::TradingCalendar::current_default_calendar().unwrap()).unwrap();
     let before = accounts(&mut w); let mut expected = before.clone();
     let source_before = w.mirror_source(); let published = w.publication.load();
     expected[1][1].cash += 101; expected[2][0].cash += 203;
@@ -64,7 +64,7 @@ fn funds_p2_world_01_commit_two_real_groups_keeps_tick_and_next_start_reads_cred
 }
 #[test]
 fn funds_p2_world_02_late_group_reject_and_inspect_reject_abort_earlier_credit() {
-    let (spec, ids) = spec(); let mut w = World::spawn(spec).unwrap(); let before = accounts(&mut w);
+    let (spec, ids) = spec(); let mut w = World::spawn(spec, crate::calendar::TradingCalendar::current_default_calendar().unwrap()).unwrap(); let before = accounts(&mut w);
     let source = w.mirror_source(); let pending = w.pending_mirror_domains();
     assert!(w.with_admin_transaction(vec![(1, vec![credit(1, 0, ids[0], 101)]),
         (2, vec![credit(0, 0, ids[1], 203)])], |_| -> Result<(), RuntimeError> { panic!("错stock不得进入inspect") }).is_err());
@@ -92,7 +92,7 @@ fn funds_p2_world_03_treasury_binding_preflight_rejects_duplicate_conflicting_an
             5 => spec.admin_treasury_bindings.push(AdminTreasuryBinding { issuer: CompanyId(99), ..b }),
             _ => spec.root_projection = None,
         }
-        match World::spawn(spec) {
+        match World::spawn(spec, crate::calendar::TradingCalendar::current_default_calendar().unwrap()) {
             Ok(w) => { w.shutdown().unwrap(); panic!("错误专户 binding 必须在构造时拒绝：mode={mode}"); },
             Err(e) => assert!(e.to_string().contains("binding"), "{e}"),
         }
@@ -101,7 +101,7 @@ fn funds_p2_world_03_treasury_binding_preflight_rejects_duplicate_conflicting_an
 
 #[test]
 fn funds_p2_world_04_exhausted_success_source_rejects_before_first_credit_commit() {
-    let (spec, ids) = spec(); let mut w = World::spawn(spec).unwrap();
+    let (spec, ids) = spec(); let mut w = World::spawn(spec, crate::calendar::TradingCalendar::current_default_calendar().unwrap()).unwrap();
     w.non_tick_revision = u64::MAX;
     let before = accounts(&mut w); let source = w.mirror_source(); let pending = w.pending_mirror_domains();
     let mut inspected = false;

@@ -43,7 +43,12 @@ fn spawn_trading_world() -> World {
     spec.ticks_per_day = 30;
     // 全天连续（首拍即撮合——auction 申报窗不挡）。
     spec.auction_ticks = 0;
-    World::spawn(spec).expect("世界构造")
+    World::spawn(
+        spec,
+        crate::calendar::TradingCalendar::current_default_calendar()
+            .expect("显式 raw Calendar 政策合法"),
+    )
+    .expect("世界构造")
 }
 
 /// 合同 5（现状红）：Seal 后终轮尾巴恒空——TickRecord.unsettled_trades
@@ -169,7 +174,12 @@ fn seal_partial_ack_timeout_recovers_with_late_ack_tolerance() {
     let mut spec = basic_spec(2, 1, 4, trading_script(1, 2));
     spec.ticks_per_day = 30;
     spec.auction_ticks = 0;
-    let mut world = World::spawn(spec).expect("世界构造");
+    let mut world = World::spawn(
+        spec,
+        crate::calendar::TradingCalendar::current_default_calendar()
+            .expect("显式 raw Calendar 政策合法"),
+    )
+    .expect("世界构造");
     world.run_ticks(1).expect("首拍（驱动基线）");
     // 注入：广播后收 1 条真实 Ack（部分 Ack 形态）再合成超时。
     world.set_seal_ack_failure_once_for_test(1);

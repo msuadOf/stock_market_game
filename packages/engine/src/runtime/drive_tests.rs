@@ -324,7 +324,12 @@ fn d3a2c_cost_basis_ledger_tracks_fills_and_clears_on_flat() {
     // 全天连续形态（auction=0）：tick1 挂单即撮合——脚本时序按连续相位
     // 断言（竞价窗内挂单要等竞价点才成交）。
     spec.auction_ticks = 0;
-    let mut world = World::spawn(spec).expect("世界构造");
+    let mut world = World::spawn(
+        spec,
+        crate::calendar::TradingCalendar::current_default_calendar()
+            .expect("显式 raw Calendar 政策合法"),
+    )
+    .expect("世界构造");
     // tick1 成交批次在 tick2 的 Start 落账（协议时序：FIFO + 收束因果序）。
     world.run_ticks(2).expect("tick1 成交 + tick2 落账");
     let accounts = world.snapshot_accounts().expect("快照")[0].1.clone();
@@ -1143,7 +1148,9 @@ fn solmid_execution_leg_lifecycle_matches_independent_fills() {
     )> = None;
     for pid in plans.active_plan_ids() {
         let Ok(plan) = plans.plan(pid) else { continue };
-        let Some(leg) = plan.execution() else { continue };
+        let Some(leg) = plan.execution() else {
+            continue;
+        };
         if let Some(remaining) = leg.active_child_remaining_qty() {
             if remaining > 0 && remaining < leg.child_qty() {
                 same_child_partial = Some((
@@ -1257,10 +1264,10 @@ fn solmid_day_end_drain_releases_child_tickets() {
             }
         }
         let upper: Vec<i64> = views.iter().map(|v| v.last_price + 1).collect();
-        driver.inject_player_intents(&intents, &upper).expect("注入");
         driver
-            .step_frame_equivalent(&mut session)
-            .expect("步进");
+            .inject_player_intents(&intents, &upper)
+            .expect("注入");
+        driver.step_frame_equivalent(&mut session).expect("步进");
         driver.install_market_views(&mut session).expect("行情");
         driver.install_candles(&mut session).expect("K");
     }
@@ -1275,7 +1282,9 @@ fn solmid_day_end_drain_releases_child_tickets() {
         .expect("日结（清簿）");
     let drained = driver.collect_plans().expect("日结后簿").remove(0).1;
     for pid in drained.active_plan_ids() {
-        let Ok(plan) = drained.plan(pid) else { continue };
+        let Ok(plan) = drained.plan(pid) else {
+            continue;
+        };
         assert!(
             plan.active_child_order_id().is_none(),
             "日结清簿后计划 {pid:?} 的在途子单应释放（Closed/Refund→release_child_ticket）"
@@ -1332,10 +1341,10 @@ fn sol4_day_end_abort_restores_execution_leg_with_tickets() {
             }
         }
         let upper: Vec<i64> = views.iter().map(|v| v.last_price + 1).collect();
-        driver.inject_player_intents(&intents, &upper).expect("注入");
         driver
-            .step_frame_equivalent(&mut session)
-            .expect("步进");
+            .inject_player_intents(&intents, &upper)
+            .expect("注入");
+        driver.step_frame_equivalent(&mut session).expect("步进");
         driver.install_market_views(&mut session).expect("行情");
         driver.install_candles(&mut session).expect("K");
     }
@@ -1423,7 +1432,9 @@ fn sol4_day_end_abort_restores_execution_leg_with_tickets() {
         .expect("重跑日结成功");
     let drained = driver.collect_plans().expect("重跑后簿").remove(0).1;
     for pid in drained.active_plan_ids() {
-        let Ok(plan) = drained.plan(pid) else { continue };
+        let Ok(plan) = drained.plan(pid) else {
+            continue;
+        };
         assert!(
             plan.active_child_order_id().is_none(),
             "重跑日结后计划 {pid:?} 的在途子单应释放"
@@ -1470,10 +1481,10 @@ fn solmid_plan_projection_carries_terminal_records() {
             }
         }
         let upper: Vec<i64> = views.iter().map(|v| v.last_price + 1).collect();
-        driver.inject_player_intents(&intents, &upper).expect("注入");
         driver
-            .step_frame_equivalent(&mut session)
-            .expect("步进");
+            .inject_player_intents(&intents, &upper)
+            .expect("注入");
+        driver.step_frame_equivalent(&mut session).expect("步进");
         driver.install_market_views(&mut session).expect("行情");
         driver.install_candles(&mut session).expect("K");
     }
@@ -1493,7 +1504,9 @@ fn solmid_plan_projection_carries_terminal_records() {
     // 最后计划结束后旧镜像不残留的等价读面）。
     let debug = session.investor_plans_debug();
     for pid in &group_ids {
-        let Ok(plan) = group_plans.plan(*pid) else { continue };
+        let Ok(plan) = group_plans.plan(*pid) else {
+            continue;
+        };
         assert!(
             debug
                 .iter()
@@ -1605,10 +1618,10 @@ fn sol6th_same_tick_abort_leaks_nothing() {
         .iter()
         .map(|v| v.daily_upper_limit)
         .collect();
-    driver.inject_player_intents(&intents, &upper).expect("注入");
     driver
-        .step_frame_equivalent(&mut session)
-        .expect("挂单拍");
+        .inject_player_intents(&intents, &upper)
+        .expect("注入");
+    driver.step_frame_equivalent(&mut session).expect("挂单拍");
     driver.install_market_views(&mut session).expect("行情");
     driver.install_candles(&mut session).expect("K");
     let cash_before = session.account(buyer).unwrap().cash();
@@ -1875,10 +1888,10 @@ fn sol7th_foreign_same_key_fill_does_not_advance_plan_child() {
             }
         }
         let upper: Vec<i64> = views.iter().map(|v| v.last_price + 1).collect();
-        driver.inject_player_intents(&intents, &upper).expect("注入");
         driver
-            .step_frame_equivalent(&mut session)
-            .expect("步进");
+            .inject_player_intents(&intents, &upper)
+            .expect("注入");
+        driver.step_frame_equivalent(&mut session).expect("步进");
         driver.install_market_views(&mut session).expect("行情");
         driver.install_candles(&mut session).expect("K");
     }
@@ -2135,10 +2148,10 @@ fn d3b2_plan_event_injection_pauses_group_plan() {
             }
         }
         let upper: Vec<i64> = views.iter().map(|v| v.last_price + 1).collect();
-        driver.inject_player_intents(&intents, &upper).expect("注入");
         driver
-            .step_frame_equivalent(&mut session)
-            .expect("步进");
+            .inject_player_intents(&intents, &upper)
+            .expect("注入");
+        driver.step_frame_equivalent(&mut session).expect("步进");
         driver.install_market_views(&mut session).expect("行情");
         driver.install_candles(&mut session).expect("K");
     }
@@ -2230,10 +2243,10 @@ fn d3b3_paused_plan_with_child_routes_targeted_cancel() {
             }
         }
         let upper: Vec<i64> = views.iter().map(|v| v.last_price + 1).collect();
-        driver.inject_player_intents(&intents, &upper).expect("注入");
         driver
-            .step_frame_equivalent(&mut session)
-            .expect("步进");
+            .inject_player_intents(&intents, &upper)
+            .expect("注入");
+        driver.step_frame_equivalent(&mut session).expect("步进");
         driver.install_market_views(&mut session).expect("行情");
         driver.install_candles(&mut session).expect("K");
     }
@@ -2328,10 +2341,10 @@ fn d3b4_review_records_facts_in_group_book() {
             }
         }
         let upper: Vec<i64> = views.iter().map(|v| v.last_price + 1).collect();
-        driver.inject_player_intents(&intents, &upper).expect("注入");
         driver
-            .step_frame_equivalent(&mut session)
-            .expect("步进");
+            .inject_player_intents(&intents, &upper)
+            .expect("注入");
+        driver.step_frame_equivalent(&mut session).expect("步进");
         driver.install_market_views(&mut session).expect("行情");
         driver.install_candles(&mut session).expect("K");
     }

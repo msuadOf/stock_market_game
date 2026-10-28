@@ -1,0 +1,7 @@
+
+thread 'closed_first_tick_adds_neither_price_history_nor_market_minute' (1623300) panicked at /data1/baiyifan/workplace/stock_market_game/.worktree/mixed-calendar-c2c/packages/engine/tests/mixed_calendar_c2c.rs:96:5:
+assertion `left == right` failed: closed 股不能追加价格样本
+  left: 1
+ right: 0
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+bounded command exited with 101

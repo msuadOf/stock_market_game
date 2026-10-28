@@ -1,0 +1,11 @@
+
+running 1 test
+test closed_first_tick_adds_neither_price_history_nor_market_minute ... FAILED
+
+failures:
+
+failures:
+    closed_first_tick_adds_neither_price_history_nor_market_minute
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 8 filtered out; finished in 0.75s
+

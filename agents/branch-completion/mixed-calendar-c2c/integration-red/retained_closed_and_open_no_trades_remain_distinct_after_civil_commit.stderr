@@ -1,0 +1,7 @@
+
+thread 'retained_closed_and_open_no_trades_remain_distinct_after_civil_commit' (1623301) panicked at /data1/baiyifan/workplace/stock_market_game/.worktree/mixed-calendar-c2c/packages/engine/tests/mixed_calendar_c2c.rs:215:5:
+assertion `left == right` failed
+  left: NoTrades
+ right: Closed
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+bounded command exited with 101

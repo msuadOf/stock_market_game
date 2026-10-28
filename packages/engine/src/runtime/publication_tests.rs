@@ -19,7 +19,12 @@ fn idle_script() -> Box<dyn Fn(GroupIdx) -> super::group::GroupScript> {
 fn spawn_world(ticks_per_day: u64) -> World {
     let mut spec = basic_spec(1, 2, 2, idle_script());
     spec.ticks_per_day = ticks_per_day;
-    World::spawn(spec).expect("世界构造")
+    World::spawn(
+        spec,
+        crate::calendar::TradingCalendar::current_default_calendar()
+            .expect("显式 raw Calendar 政策合法"),
+    )
+    .expect("世界构造")
 }
 
 // ── J4 判据（一致性）：tick 序列与版本内分片一致 ──
@@ -53,7 +58,11 @@ fn publication_v0_then_monotonic_tick_sequence() {
 /// 跳变=有 tick 未经发布被跳过，回退=撕裂）。违约计数必须为 0。
 #[test]
 fn publication_concurrent_reader_zero_tears() {
-    let mut world = spawn_world(30);
+    let mut spec = basic_spec(1, 2, 2, idle_script());
+    spec.ticks_per_day = 30;
+    let first_date = spec.civil_start_date;
+    let calendar = crate::calendar::TradingCalendar::current_default_calendar().unwrap();
+    let mut world = World::spawn(spec, calendar.clone()).expect("显式冻结Calendar世界构造");
     let publication = world.publication();
     let violations = Arc::new(AtomicU64::new(0));
     let reads = Arc::new(AtomicU64::new(0));
@@ -85,7 +94,14 @@ fn publication_concurrent_reader_zero_tears() {
             }
         }));
     }
-    world.run_ticks(60).expect("60 tick 满速跑");
+    world.run_ticks(30).expect("首日30拍发布保持一致");
+    world.run_day_end_public().expect("显式首日市场日终");
+    let next_date = calendar.next_trading_day(
+        crate::calendar::CalendarExchange::Sse,
+        first_date,
+    ).unwrap();
+    world.set_civil_date(next_date);
+    world.run_ticks(30).expect("第二日30拍发布保持一致");
     stop.store(true, Ordering::Relaxed);
     for reader in readers {
         reader.join().expect("读者线程合并");
@@ -213,7 +229,12 @@ fn publication_group_belief_shard_matches_group_authority() {
     use super::skeleton_tests::basic_spec;
     let mut spec = basic_spec(2, 2, 4, idle_script());
     spec.ticks_per_day = 30;
-    let mut world = World::spawn(spec).expect("世界构造");
+    let mut world = World::spawn(
+        spec,
+        crate::calendar::TradingCalendar::current_default_calendar()
+            .expect("显式 raw Calendar 政策合法"),
+    )
+    .expect("世界构造");
     world.run_ticks(3).expect("3 tick");
     let version = world.publication().load();
     assert_eq!(version.tick, 3);
@@ -289,7 +310,12 @@ fn publication_resting_shard_matches_live_collection() {
         )
         .expect("测试配置合法"),
     );
-    let mut world = World::spawn(spec).expect("世界构造");
+    let mut world = World::spawn(
+        spec,
+        crate::calendar::TradingCalendar::current_default_calendar()
+            .expect("显式 raw Calendar 政策合法"),
+    )
+    .expect("世界构造");
     world.run_ticks(1).expect("1 tick（挂单拍——TTL 内在簿）");
     let version = world.publication().load();
     assert_eq!(version.tick, 1);
