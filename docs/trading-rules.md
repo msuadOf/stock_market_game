@@ -586,3 +586,19 @@ NPC 默认策略只在缴款首日日终对未显式申请的非玩家、非回�
 编码域时均可能被拒绝。持久化转入 desk 后的 `Order.seq` 使用本地 serial，不承诺旧
 `seq` 数字恒等；本片仅在上述条件内保持 FIFO 行为。没有新增或改写 A 股交易制度；
 价格时间优先和竞价信息公开边界仍以本文既有官方依据及已登记的游戏简化为准。
+
+### 共同 Calendar 日终来源与逐股迁移（2026-10-28）
+
+std-thread runtime 的 `DayEndCalendar` 明确区分 `MarketTick` 与 `ManualDayEnd`。
+自动市场日终只消费本 authority 已成功提交的原始 `MarketTickContext`，并验证末拍完成、
+当前日期、owner、bindings 与 tick layout；手动日终消费同 owner 的 `MarketDayContext`，
+以 World 已提交 tick 通过同一纯 Calendar projection 验证，允许日内与末拍手动日终，
+不依赖 Session 尚未安装的 `day`，不补造市场拍。`PreparedDriverCalendar::Static` 模式不发起日终，tick 0 不构成日终输入；
+合法 Closed 日期的手动 DayArc 保留原 API 范围，逐股无当日事件，不补造 Tick。
+
+`Group` 在退役 undo 或解冻前校验日历、所有活动公司 execution 与个人事件时间顺序；
+休市股个人计划保持原值且 T+1 不解冻，开市股计划按本股交易日 ordinal 迁移。
+公司计划尚未接通的 execution 无论本股是否休市都显式拒绝。真实 Drain 成交推进及余单
+释放完成后，更新后的 `PlanBook` 经唯一 clone/swap 算法迁移，避免旧簿覆盖回流事实。
+这些前置校验不改变 Drain、权益及其它原有失败的 undo/Abort 契约；不据此宣称公司回购
+真实执行、完整授权或其它未实现规则已支持。合成沪深差异测试不代表官方未来交易日安排。

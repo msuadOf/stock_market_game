@@ -87,29 +87,11 @@ impl<'candidate> TradingDayEndTransition<'candidate> {
     fn sweep_owned_plans(&mut self) -> Result<(), StepFatal> {
         let stock_days = self.candidate.stock_calendar_days()?;
         let session = &mut *self.candidate;
-        let mut plans = std::mem::take(&mut session.state.plans);
-        let result = (|| {
-            for plan_id in plans.active_plan_ids() {
-                let code = *plans
-                    .plan(plan_id)
-                    .map_err(|error| invariant(&error.to_string()))?
-                    .code();
-                let Some(trading_day) = *stock_days
-                    .get(&code)
-                    .ok_or_else(|| invariant("日终计划缺本股 Calendar row"))?
-                else {
-                    continue;
-                };
-                plans
-                    .apply(plan_id, crate::plans::PlanEvent::TradingDayEnded { trading_day })
-                    .map_err(|error| {
-                        invariant(&format!("日终计划 {plan_id:?} 迁移失败：{error}"))
-                    })?;
-            }
-            Ok(())
-        })();
-        session.state.plans = plans;
-        result
+        session.state.plans.end_trading_day_for_stocks(|code| {
+            stock_days.get(&code).copied().ok_or_else(|| crate::plans::PlanError::SaveInconsistent {
+                detail: format!("日终计划缺本股 Calendar row：{code:?}"),
+            })
+        }).map_err(|error| invariant(&format!("日终计划迁移失败：{error}")))
     }
 }
 

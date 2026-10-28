@@ -94,10 +94,22 @@ fn origin_state_hash_covers_issuer_stock_status_and_complete_execution_fields() 
 fn origin_group_day_end_keeps_company_authorization_and_shared_owner_sequence() {
     let book = company_book();
     let mut state = state(book.clone());
+    let date = crate::calendar::CivilDate::from_iso("2030-01-02").unwrap();
+    let bindings = vec![(StockId(0), crate::calendar::CalendarExchange::Sse)];
+    let source = crate::session::market_calendar_context::MarketCalendarSource::new(
+        crate::calendar::TradingCalendar::from_policy(
+            crate::calendar::CalendarPolicy::current_default_policy().unwrap()).unwrap(), date, bindings.clone(),
+    ).unwrap();
+    let day = source.day(date).unwrap();
+    state.bind_calendar(source, bindings);
+    state.cur_tick = 1;
+    state.committed_tick = 1;
     state
         .handle_day_end(&DayEndDirective {
-            tick: 0,
-            day: 99,
+            tick: 1,
+            day: 0,
+            civil_date: date,
+            calendar: super::super::protocol::DayEndCalendar::ManualDayEnd(day),
             rights: vec![],
         })
         .unwrap();
@@ -150,7 +162,8 @@ fn origin_mixed_stock_day_end_uses_real_group_and_rejects_closed_company_executi
     group.bind_calendar(Arc::clone(&source), bindings);
     group.plan_book = book.clone();
     group.cur_tick = 9; group.committed_tick = 9;
-    let directive = DayEndDirective { tick: 9, day: 4, rights: vec![] };
+    let directive = DayEndDirective { tick: 9, day: 4, civil_date: ended,
+        calendar: super::super::protocol::DayEndCalendar::ManualDayEnd(day), rights: vec![] };
     group.handle_day_end(&directive).unwrap();
     assert!(group.plan_book.plan(investor_open).unwrap().is_terminal(), "开市股须按本股 ordinal 到期");
     assert_eq!(group.plan_book.entry(investor_closed).unwrap(), &closed_plan, "休市股不得被共享 day 老化");
@@ -166,8 +179,89 @@ fn origin_mixed_stock_day_end_uses_real_group_and_rejects_closed_company_executi
     group.plan_book = serde_json::from_value(wire).unwrap();
     let before_book = group.plan_book.clone();
     let before_accounts = group.accounts.clone();
+    let before_undo = group.undo.len();
     let error = group.handle_day_end(&directive).unwrap_err();
     assert!(error.to_string().contains("尚未接线") || error.to_string().contains("IssuerChildNotConnected"), "{error}");
     assert_eq!(group.plan_book, before_book, "休市公司 execution 必须先拒绝且整簿不半迁移");
     assert_eq!(group.accounts, before_accounts, "拒绝前不得解冻或安装资产");
+    assert_eq!(group.undo.len(), before_undo, "公司拒绝前不得退役 undo");
+    let mut wire = serde_json::to_value(&book).unwrap();
+    for entry in wire["plans"].as_array_mut().unwrap() {
+        if let Some(investor) = entry.get_mut("Investor") {
+            if investor["code"] == serde_json::json!(0) {
+                investor["last_event_trading_day"] = serde_json::json!(5);
+            }
+        }
+    }
+    group.plan_book = serde_json::from_value(wire).unwrap();
+    let before_book = group.plan_book.clone();
+    let error = group.handle_day_end(&directive).unwrap_err();
+    assert!(error.to_string().contains("precedes"), "{error}");
+    assert_eq!(group.plan_book, before_book, "本股事件时间回拨须前置拒绝");
+    assert_eq!(group.accounts, before_accounts);
+    assert_eq!(group.undo.len(), before_undo);
+
+    // 真实 Drain 批次先即时落资产，再由 DayEnd 重放 F5/F6；迁移不能覆盖这些事实。
+    let mut drain_book = PlanBook::default();
+    let mut drain_open = open(1, 0);
+    drain_open.target = PlanTarget::ShareCount(300);
+    let drain_plan = drain_book.create(drain_open).unwrap();
+    drain_book.install_execution(drain_plan, 200, crate::Money::from_cents(1000), 30).unwrap();
+    group.plan_book = drain_book;
+    group.root_projection = Some(Arc::new(crate::runtime::world::RootProjection {
+        catalog: crate::stock::StockCatalog::from_metas(vec![
+            crate::stock::StockMeta::new("000001"), crate::stock::StockMeta::new("600001"),
+        ]).unwrap(),
+        initial_company_facts: Arc::new(crate::company::CompanyReadFacts::new(
+            (0..2).map(|id| (StockId(id), crate::company::CompanyId(id))).collect(),
+            (0..2).map(|id| (crate::company::CompanyId(id),
+                (crate::company::CompanyKind::Industrial, 1_000_000))).collect(),
+        ).unwrap()),
+        account_ids: vec![AccountId(1)], auction_ticks: 0, closing_auction_ticks: 0,
+        chain_params: vec![None], session_seed: 1,
+        urgency_policy: crate::plans::UrgencyPolicy::default(),
+        max_order_qty_limit: Default::default(), tick_size_cents: Default::default(),
+    }));
+    let tick = directive.calendar.day().tick(
+        crate::session::exchange_calendar_model::SessionTickLayout {
+            ticks_per_day: 2, auction_ticks: 0, closing_auction_ticks: 0,
+        },
+        crate::session::exchange_calendar_model::SharedClockInput {
+            tick: 8, completed_shared_sessions: 4,
+            progress: crate::session::exchange_calendar_model::SharedDayProgress::Trading { completed_ticks: 0 },
+        },
+    ).unwrap();
+    group.snapshot = Some(Arc::new(super::super::protocol::TickSnapshot {
+        calendar: tick, tick: 9, civil_date: ended, market_minute: 0, stocks: Arc::new(Vec::new()),
+    }));
+    let mut account = GroupAccount::new(0, 2);
+    account.buy_purse_held_cents = 200_000;
+    account.foreign_active[0] = 1;
+    account.shares[1] = 100;
+    account.frozen_today[1] = 100;
+    group.accounts = vec![Arc::new(account)];
+    group.child_in_flight.insert((AccountId(1), StockId(0)), ChildTicket {
+        qty: 200, side: Side::Buy, price: 1000, order_id: None, remaining: 200, charged_cents: 0,
+    });
+    group.seal_acked_len = Some(group.undo.len());
+    group.apply_batch_immediate(DeskBatch {
+        stock: 0, tick: 9, round: 0,
+        entities: vec![Entity::BoughtShares { local: 0, qty: 100 },
+            Entity::CashRefund { local: 0, amount: 100_000 },
+            Entity::Closed { local: 0, order_serial: 5 }],
+        fills: vec![FillFact { order: (0, 5), owner: (0, 0), side: Side::Buy,
+            price: 1000, qty: 100, commission: 0, stamp_tax: 0, transfer_fee: 0 }],
+        receipts: vec![],
+    }, 9, 0).unwrap();
+    group.handle_day_end(&directive).unwrap();
+    let after = group.plan_book.plan(drain_plan).unwrap();
+    assert_eq!(after.filled_qty(), 100, "Drain 成交量不得被旧预检簿覆盖");
+    assert!(after.is_terminal());
+    assert!(after.execution().is_none());
+    assert!(group.child_in_flight.is_empty(), "Drain Closed 必须释放真实余单票");
+    assert_eq!(group.accounts[0].cash, 100_000);
+    assert_eq!(group.accounts[0].shares.as_slice(), &[100, 100]);
+    assert_eq!(group.accounts[0].frozen_today.as_slice(), &[0, 100]);
+    assert_eq!(group.accounts[0].buy_purse_held_cents, 0);
+    assert_eq!(group.accounts[0].foreign_active[0], 0);
 }

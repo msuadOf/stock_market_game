@@ -356,8 +356,13 @@ impl RuntimeDriver {
         #[cfg(feature = "simulation-diagnostics")]
         self.ensure_causal_day_end_supported()?;
         let next_sync_seq = self.next_sync_source_sequence()?;
+        let calendar = match &input.calendar {
+            PreparedDriverCalendar::MarketTick(tick) => super::super::protocol::DayEndCalendar::MarketTick(Arc::clone(tick)),
+            PreparedDriverCalendar::ManualDayEnd(day) => super::super::protocol::DayEndCalendar::ManualDayEnd(Arc::clone(day)),
+            PreparedDriverCalendar::Static(_) => return Err("静点 Calendar 不得发起 DayEnd".to_owned()),
+        };
         self.world
-            .run_day_end_public()
+            .run_day_end_with_calendar(calendar)
             .map_err(|error| format!("日结私有准备失败：{error}"))?;
         let candidate = self
             .world

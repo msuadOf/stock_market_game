@@ -331,12 +331,20 @@ struct DayEndProgress {
     groups_reported: Vec<bool>,
 }
 
+/// 只记录本 authority 真正成功提交的最后市场拍及当时的发布身份。
+#[derive(Clone, Debug)]
+pub(crate) struct CommittedCalendarTick {
+    pub calendar: Arc<super::MarketTickContext>,
+    pub source: super::source::WorldMirrorSource,
+}
+
 /// 世界（协调者视角持有全部通道与线程句柄）。
 pub struct World {
     calendar_source: Arc<crate::session::market_calendar_context::MarketCalendarSource>,
     calendar_bindings: Vec<(crate::StockId, crate::calendar::CalendarExchange)>,
     tick_layout: crate::session::exchange_calendar_model::SessionTickLayout,
     pending_calendar_tick: Option<Arc<super::MarketTickContext>>,
+    last_committed_calendar: Option<CommittedCalendarTick>,
     admin_next_id: u64,
     authority_epoch: u64,
     non_tick_revision: u64,
@@ -1001,6 +1009,7 @@ impl World {
             calendar_bindings,
             tick_layout,
             pending_calendar_tick: None,
+            last_committed_calendar: None,
             admin_next_id: 0,
             authority_epoch: 0,
             non_tick_revision: 0,
@@ -2082,6 +2091,16 @@ impl World {
         Ok(())
     }
 
+    /// None 明确表示本 authority 尚未成功提交市场拍；不得由 pending 或 restore 补造。
+    pub(crate) fn committed_calendar_tick(&self) -> Result<Option<CommittedCalendarTick>, RuntimeError> {
+        if let Some(reason) = &self.dead_reason {
+            return Err(RuntimeError::ProtocolInvariant {
+                detail: format!("world 已死亡，不可读取已提交 Calendar：{reason}"),
+            });
+        }
+        Ok(self.last_committed_calendar.clone())
+    }
+
     pub(crate) fn staged_calendar_tick(&self) -> Option<Arc<super::MarketTickContext>> {
         self.pending_calendar_tick.as_ref().map(Arc::clone)
     }
@@ -2352,6 +2371,10 @@ impl World {
                     // 收齐 → install_tick（发布=提交=Abort 窗口关闭）。
                     let seal_shards = self.seal_round(tick, rounds)?;
                     self.install_tick(tick, rounds, evidence, seal_shards);
+                    self.last_committed_calendar = Some(CommittedCalendarTick {
+                        calendar: Arc::clone(&calendar),
+                        source: self.mirror_source(),
+                    });
                     break;
                 }
             }
@@ -2808,19 +2831,53 @@ impl World {
     ///    下一 Start 即隐式提交（可逆日志退役、Abort 窗口关闭）。
     /// 日结公开入口（驱动器编排：tick 参数由调用方给定）。
     pub fn run_day_end_public(&mut self) -> Result<(), RuntimeError> {
+        let day = self.calendar_source.day(self.civil_date).map_err(|error| RuntimeError::ProtocolInvariant {
+            detail: error.to_string(),
+        })?;
+        self.run_day_end_with_calendar(super::protocol::DayEndCalendar::ManualDayEnd(day))
+    }
+
+    /// 共用日结核心；所有来源与纯时钟投影校验必须先于 Drain 或参与者消息。
+    pub(crate) fn run_day_end_with_calendar(
+        &mut self,
+        calendar: super::protocol::DayEndCalendar,
+    ) -> Result<(), RuntimeError> {
+        use crate::session::exchange_calendar_model::{calendar_clock_projection, SharedDayProgress};
+        let fail = |detail: String| RuntimeError::ProtocolInvariant { detail };
         if let Some(reason) = &self.dead_reason {
-            return Err(RuntimeError::ProtocolInvariant {
-                detail: format!("world 已死亡，不可继续日结：{reason}"),
-            });
+            return Err(fail(format!("world 已死亡，不可继续日结：{reason}")));
         }
-        let day_final_tick = self.global.committed_tick;
-        // D0 互斥：同一交易日重复日结显式拒绝（自动路径已日结会跳过）。
-        if self.last_day_end_tick == Some(day_final_tick) {
-            return Err(RuntimeError::ProtocolInvariant {
-                detail: format!("交易日已日结（收尾 tick={day_final_tick}）——不得重复日结"),
-            });
+        let tick = self.global.committed_tick;
+        if tick == 0 {
+            return Err(fail("DayEnd 缺少真实已提交 tick".to_owned()));
         }
-        self.run_day_end(day_final_tick)
+        if self.last_day_end_tick == Some(tick) {
+            return Err(fail(format!("交易日已日结（收尾 tick={tick}）——不得重复日结")));
+        }
+        let day = calendar.day();
+        day.validate_for(&self.calendar_source, &self.calendar_bindings, self.civil_date)
+            .map_err(|error| fail(error.to_string()))?;
+        let sessions = tick.checked_div(self.ticks_per_day)
+            .ok_or_else(|| fail("DayEnd ticks_per_day 无效".to_owned()))?;
+        let input = crate::session::calendar_clock_input(day, self.tick_layout, tick, sessions)
+            .map_err(|error| fail(error.to_string()))?;
+        calendar_clock_projection(day.day_model(), self.tick_layout, input)
+            .map_err(|error| fail(error.to_string()))?;
+
+        if let super::protocol::DayEndCalendar::MarketTick(context) = &calendar {
+            let committed = self.committed_calendar_tick()?
+                .ok_or_else(|| fail("市场 DayEnd 缺少本 authority 已提交原始 TickArc".to_owned()))?;
+            context.validate_for(&self.calendar_source, &self.calendar_bindings, self.civil_date,
+                self.tick_layout, context.before_input()).map_err(|error| fail(error.to_string()))?;
+            if !Arc::ptr_eq(context, &committed.calendar)
+                || committed.source.authority_epoch != self.authority_epoch
+                || committed.source.tick != tick || committed.source.civil_date != self.civil_date
+                || context.after_input().tick != tick
+                || !matches!(context.after_input().progress, SharedDayProgress::TradingCompleted) {
+                return Err(fail("市场 DayEnd 原始已提交 Calendar 身份或末拍进度不一致".to_owned()));
+            }
+        }
+        self.run_day_end(tick, &calendar)
     }
 
     /// 只撤 F0 的未发布日结参与者；普通 tick 和 retained 发布后的静点均不可撤。
@@ -2875,7 +2932,7 @@ impl World {
         self.mirror_day_end_stage = super::source::MirrorDayEndStage::Tick;
     }
 
-    fn run_day_end(&mut self, day_final_tick: u64) -> Result<(), RuntimeError> {
+    fn run_day_end(&mut self, day_final_tick: u64, calendar: &super::protocol::DayEndCalendar) -> Result<(), RuntimeError> {
         // Sol 收官再复核阻断 4：日结序列任一失败路径（Drain/组翻/校验）
         /// 都必须清空 Drain 期间上行的事实缓冲——重跑会重新 Drain 产生
         /// 同名事实，残留使缓冲双载（此前仅 abort_day_end 清，run_day_end
@@ -2886,7 +2943,7 @@ impl World {
             desks_reported: vec![false; self.n_stocks],
             groups_reported: vec![false; self.n_groups],
         };
-        let mut result = self.run_day_end_inner(day_final_tick, &mut progress);
+        let mut result = self.run_day_end_inner(day_final_tick, calendar, &mut progress);
         if let Err(error) = &result {
             if let Err(rollback_error) = self.rollback_day_end_participants(day_final_tick, &mut progress) {
                 let detail = format!("日结失败且撤销未完整确认：{error}；{rollback_error}");
@@ -2978,7 +3035,9 @@ impl World {
                     let index = usize::from(group);
                     if index >= progress.groups_sent
                         || progress.groups_reported[index]
-                        || u64::from(day) != (tick - 1) / self.ticks_per_day
+                        || u64::from(day) != self.calendar_source.day(self.civil_date)
+                            .map_err(|error| RuntimeError::ProtocolInvariant { detail: error.to_string() })?
+                            .day_model().shared_sessions_before_date()
                     {
                         return Err(RuntimeError::ProtocolInvariant {
                             detail: format!("日结撤销收到未知、错位或重复 GroupDayDone：group={group}, day={day}"),
@@ -2995,8 +3054,9 @@ impl World {
         Ok(())
     }
 
-    fn run_day_end_inner(&mut self, day_final_tick: u64, progress: &mut DayEndProgress) -> Result<(), RuntimeError> {
-        let day = ((day_final_tick - 1) / self.ticks_per_day) as u32;
+    fn run_day_end_inner(&mut self, day_final_tick: u64, calendar: &super::protocol::DayEndCalendar, progress: &mut DayEndProgress) -> Result<(), RuntimeError> {
+        let day = u32::try_from(calendar.day().day_model().shared_sessions_before_date())
+            .map_err(|_| RuntimeError::ProtocolInvariant { detail: "DayEnd 共享 day 溢出".to_owned() })?;
         // ① Drain。
         for tx in &self.desk_txs {
             tx.send(DeskMsg::Drain)
@@ -3090,6 +3150,8 @@ impl World {
                 drop(rx);
                 tx.send(GroupIn::DayEnd(Box::new(DayEndDirective {
                     tick: day_final_tick,
+                    civil_date: self.civil_date,
+                    calendar: calendar.clone(),
                     day,
                     rights: Vec::new(),
                 }))).map_err(|_| RuntimeError::SendFailed {
@@ -3104,6 +3166,8 @@ impl World {
             self.group_txs[g as usize]
                 .send(GroupIn::DayEnd(Box::new(DayEndDirective {
                     tick: day_final_tick,
+                    civil_date: self.civil_date,
+                    calendar: calendar.clone(),
                     day,
                     rights,
                 })))

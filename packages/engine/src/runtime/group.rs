@@ -2419,6 +2419,58 @@ impl GroupState {
         Ok(())
     }
 
+    /// 先验证完整日历与计划迁移，再触碰 undo、账户或权益。
+    fn prepare_day_end_calendar(
+        &self,
+        directive: &DayEndDirective,
+    ) -> Result<(crate::session::exchange_calendar_model::CalendarClockProjection, std::collections::BTreeSet<crate::StockId>), RuntimeError> {
+        use super::protocol::DayEndCalendar;
+        use crate::session::exchange_calendar_model::{calendar_clock_projection, SessionTickLayout, SharedDayProgress};
+        let fail = |detail: String| RuntimeError::ProtocolInvariant { detail };
+        let (owner, bindings) = self.calendar_owner.as_ref()
+            .ok_or_else(|| fail(format!("组 {} DayEnd 缺少绑定 Calendar owner", self.group)))?;
+        let day = directive.calendar.day();
+        day.validate_for(owner, bindings, directive.civil_date).map_err(|error| fail(error.to_string()))?;
+        let layout = SessionTickLayout {
+            ticks_per_day: self.ticks_per_day,
+            auction_ticks: self.auction_ticks,
+            closing_auction_ticks: self.closing_auction_ticks,
+        };
+        let sessions = directive.tick.checked_div(self.ticks_per_day)
+            .filter(|_| directive.tick > 0)
+            .ok_or_else(|| fail("DayEnd 缺少真实已提交 tick 或布局无效".to_owned()))?;
+        if u64::from(directive.day) != day.day_model().shared_sessions_before_date() {
+            return Err(fail("DayEnd 共享 day 与当前 Calendar 不一致".to_owned()));
+        }
+        let input = crate::session::calendar_clock_input(day, layout, directive.tick, sessions)
+            .map_err(|error| fail(error.to_string()))?;
+        let projection = calendar_clock_projection(day.day_model(), layout, input)
+            .map_err(|error| fail(error.to_string()))?;
+
+        if let DayEndCalendar::MarketTick(calendar) = &directive.calendar {
+            calendar.validate_for(owner, bindings, directive.civil_date, layout, calendar.before_input())
+                .map_err(|error| fail(error.to_string()))?;
+            let snapshot = self.snapshot.as_ref()
+                .ok_or_else(|| fail("市场 DayEnd 缺少真实 Start snapshot".to_owned()))?;
+            if !Arc::ptr_eq(calendar, &snapshot.calendar) || snapshot.tick != directive.tick
+                || snapshot.civil_date != directive.civil_date
+                || calendar.after_input().tick != directive.tick
+                || !matches!(calendar.after_input().progress, SharedDayProgress::TradingCompleted) {
+                return Err(fail("市场 DayEnd 必须使用本组已完成原始 TickArc".to_owned()));
+            }
+        }
+        let mut open = std::collections::BTreeSet::new();
+        for (stock, _) in bindings {
+            if projection.stock(*stock).map_err(|error| fail(error.to_string()))?
+                .date_session_ordinal().is_some() { open.insert(*stock); }
+        }
+        self.plan_book.validate_end_trading_day_for_stocks(|stock| {
+            projection.stock(stock).map(|clock| clock.date_session_ordinal())
+                .map_err(|error| crate::plans::PlanError::SaveInconsistent { detail: error.to_string() })
+        }).map_err(|error| fail(format!("组 {} 日终计划迁移失败：{error}", self.group)))?;
+        Ok((projection, open))
+    }
+
     /// 日结相位（F §6.2 步骤 2/3）：Drain 回流落账 → T+1 解冻 → AdminBatch
     /// 权益落账——全部进可逆日志（日结校验失败 ⇒ Abort 整体冲回上一交易日
     /// 收敛态）；成功则由下一 `Start` 隐式转正（可逆日志退役=窗口关闭）。
@@ -2431,6 +2483,7 @@ impl GroupState {
                 ),
             });
         }
+        let (projection, open_stocks) = self.prepare_day_end_calendar(directive)?;
         // ⓪ 隐式转正上一 tick（日终 tick 已收敛——DayEnd 只在收束后发生）：
         // 隔离日结可逆日志，Abort 只冲回日结变更（回到上一交易日收敛态）。
         // Sol 二审修复集 4：快照标志随日志一并复位——此前保留 true 时，
@@ -2464,7 +2517,7 @@ impl GroupState {
         for local in 0..self.accounts.len() as LocalIdx {
             let frozen = self.accounts[local as usize].frozen_today.clone();
             for (stock, &f) in frozen.iter().enumerate() {
-                if f > 0 {
+                if f > 0 && open_stocks.contains(&crate::StockId(stock as u32)) {
                     std::sync::Arc::make_mut(&mut self.accounts[local as usize]).frozen_today[stock] = 0;
                     self.push_undo(GroupUndo::Frozen {
                         local,
@@ -2481,11 +2534,12 @@ impl GroupState {
         // 组内 PlanBook 是权威；session 镜像的日终迁移不能替代此处扫尾。
         // Drain 已释放子单，最后有效日结束时终止计划，其余计划跨日保留。
         self.save_plan_book_undo();
-        self.plan_book
-            .end_trading_day(u64::from(directive.day))
-            .map_err(|error| RuntimeError::ProtocolInvariant {
-                detail: format!("组 {} 日终计划迁移失败：{error}", self.group),
-            })?;
+        self.plan_book.end_trading_day_for_stocks(|stock| {
+            projection.stock(stock).map(|clock| clock.date_session_ordinal())
+                .map_err(|error| crate::plans::PlanError::SaveInconsistent { detail: error.to_string() })
+        }).map_err(|error| RuntimeError::ProtocolInvariant {
+            detail: format!("组 {} 日终计划迁移失败：{error}", self.group),
+        })?;
         Ok(())
     }
 

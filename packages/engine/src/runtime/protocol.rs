@@ -656,10 +656,41 @@ pub enum AdminFault {
     Duplicate,
 }
 
+/// 自动市场日终持有已提交原始 TickArc；手动日终只持有同 owner 的 DayArc。
+#[derive(Clone, Debug)]
+pub enum DayEndCalendar {
+    MarketTick(std::sync::Arc<super::MarketTickContext>),
+    ManualDayEnd(std::sync::Arc<super::MarketDayContext>),
+}
+
+impl PartialEq for DayEndCalendar {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::MarketTick(a), Self::MarketTick(b)) => std::sync::Arc::ptr_eq(a, b),
+            (Self::ManualDayEnd(a), Self::ManualDayEnd(b)) => std::sync::Arc::ptr_eq(a, b),
+            _ => false,
+        }
+    }
+}
+impl Eq for DayEndCalendar {}
+
+impl DayEndCalendar {
+    pub(crate) fn day(&self) -> &std::sync::Arc<super::MarketDayContext> {
+        match self {
+            Self::MarketTick(tick) => tick.day(),
+            Self::ManualDayEnd(day) => day,
+        }
+    }
+}
+
 /// 日结指令（F §6.2 步骤 2/3）：组端 Drain 回流落账 → T+1 解冻 → 权益落账
 /// （全部记逆操作，日结失败可整体冲回）→ 回执 GroupDayDone。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DayEndDirective {
+    /// 发送方认证的实际自然日期；接收方须与绑定 owner 共同校验。
+    pub civil_date: crate::calendar::CivilDate,
+    /// 显式区分市场末拍与手动日终，不用共享 day 代替本股时钟。
+    pub calendar: DayEndCalendar,
     /// 日终 tick（本交易日最后一 tick）。
     pub tick: u64,
     /// 交易日序号。

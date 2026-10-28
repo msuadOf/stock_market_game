@@ -1786,6 +1786,11 @@ impl RuntimeDriver {
         self.force_full_envelope_rebuild = on;
     }
 
+    /// 只转发本 World 真正提交的原始 Calendar 与历史 source，不从预览重建。
+    pub(crate) fn committed_calendar_tick(&self) -> Result<Option<super::world::CommittedCalendarTick>, String> {
+        self.world.committed_calendar_tick().map_err(|error| error.to_string())
+    }
+
     /// D5 日界·world 段（ends_day 拍在 step 内编排——desk roll_day/组
     /// 日翻；civil 侧不在内，生产显式 day_end 编排的 world 部分等价）。
     /// 清簿撤单事实收集进 drained 缓冲（调用方 take_drained_events 取走）。

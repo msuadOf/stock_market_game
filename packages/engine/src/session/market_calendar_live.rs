@@ -13,6 +13,44 @@ use super::{CivilClock, CivilClockError, GameSession, SessionError, SessionSetup
 use crate::calendar::CalendarExchange;
 use crate::stock::{StockCatalog, StockId};
 
+/// live 与 restore 使用同一个真实计数装配；合法性仍由同股 projection 交叉验证。
+pub(crate) fn calendar_clock_input(
+    day: &MarketDayContext,
+    layout: SessionTickLayout,
+    tick: u64,
+    completed_shared_sessions: u64,
+) -> Result<SharedClockInput, super::exchange_calendar_model::CalendarClockModelError> {
+    use super::exchange_calendar_model::CalendarClockModelError;
+    let model = day.day_model();
+    let before_sessions = model.shared_sessions_before_date();
+    let base = before_sessions
+        .checked_mul(layout.ticks_per_day)
+        .ok_or(CalendarClockModelError::ArithmeticOverflow)?;
+    let end = base
+        .checked_add(layout.ticks_per_day)
+        .ok_or(CalendarClockModelError::ArithmeticOverflow)?;
+    let progress = if !model.shared_trading_on_date() {
+        SharedDayProgress::ClosedDay
+    } else if tick == end {
+        SharedDayProgress::TradingCompleted
+    } else {
+        let completed_ticks =
+            tick.checked_sub(base)
+                .ok_or(CalendarClockModelError::CountersMismatch {
+                    expected_tick: base,
+                    actual_tick: tick,
+                    expected_shared_sessions: before_sessions,
+                    actual_shared_sessions: completed_shared_sessions,
+                })?;
+        SharedDayProgress::Trading { completed_ticks }
+    };
+    Ok(SharedClockInput {
+        tick,
+        completed_shared_sessions,
+        progress,
+    })
+}
+
 impl GameSession {
     pub(super) fn calendar_source_for(
         setup: &SessionSetup,
@@ -177,51 +215,17 @@ impl GameSession {
         &self,
         day: &MarketDayContext,
     ) -> Result<(SessionTickLayout, SharedClockInput), StepFatal> {
-        let fail = |error: MarketCalendarContextError| StepFatal::InvariantViolation {
-            location: "GameSession::prepare_market_calendar_tick".to_owned(),
-            description: error.to_string(),
-        };
         let layout = SessionTickLayout {
             ticks_per_day: self.state.setup.ticks_per_day,
             auction_ticks: self.state.setup.auction_ticks,
             closing_auction_ticks: self.state.setup.closing_auction_ticks,
         };
-        let model = day.day_model();
-        let before_sessions = model.shared_sessions_before_date();
-        let base = before_sessions
-            .checked_mul(layout.ticks_per_day)
-            .ok_or_else(|| {
-                fail(
-                    super::exchange_calendar_model::CalendarClockModelError::ArithmeticOverflow
-                        .into(),
-                )
+        let input = calendar_clock_input(day, layout, self.state.tick, u64::from(self.state.day))
+            .map_err(|error| StepFatal::InvariantViolation {
+                location: "GameSession::prepare_market_calendar_tick".to_owned(),
+                description: error.to_string(),
             })?;
-        let end = base.checked_add(layout.ticks_per_day).ok_or_else(|| {
-            fail(super::exchange_calendar_model::CalendarClockModelError::ArithmeticOverflow.into())
-        })?;
-        let progress = if !model.shared_trading_on_date() {
-            SharedDayProgress::ClosedDay
-        } else if self.state.tick == end {
-            SharedDayProgress::TradingCompleted
-        } else {
-            let completed_ticks = self.state.tick.checked_sub(base).ok_or_else(|| {
-                fail(
-                    super::exchange_calendar_model::CalendarClockModelError::CountersMismatch {
-                        expected_tick: base,
-                        actual_tick: self.state.tick,
-                        expected_shared_sessions: before_sessions,
-                        actual_shared_sessions: u64::from(self.state.day),
-                    }
-                    .into(),
-                )
-            })?;
-            SharedDayProgress::Trading { completed_ticks }
-        };
-        Ok((layout, SharedClockInput {
-            tick: self.state.tick,
-            completed_shared_sessions: u64::from(self.state.day),
-            progress,
-        }))
+        Ok((layout, input))
     }
 
     /// 只准备，不安装；任何失败都发生在 ingress 截取、ID 分配和 Start 之前。

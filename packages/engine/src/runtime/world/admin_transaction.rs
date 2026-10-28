@@ -1520,6 +1520,9 @@ mod tests {
                 _ => GroupIn::DayEnd(Box::new(crate::runtime::protocol::DayEndDirective {
                     tick: 1,
                     day: 0,
+                    civil_date: w.civil_date,
+                    calendar: crate::runtime::protocol::DayEndCalendar::ManualDayEnd(
+                        w.calendar_source.day(w.civil_date).unwrap()),
                     rights: Vec::new(),
                 })),
             };

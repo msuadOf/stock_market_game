@@ -314,11 +314,47 @@ impl PlanBook {
 
     /// 两类日终共用同一簿；未接真实来源的公司执行腿不能静默跨日或被清空。
     pub(crate) fn end_trading_day(&mut self, day: u64) -> Result<(), PlanError> {
+        self.end_trading_day_for_stocks(|_| Ok(Some(day)))
+    }
+
+    /// 前置只读门共用真实事件守卫；公司执行腿先于任何休市 mask 被拒绝。
+    pub(crate) fn validate_end_trading_day_for_stocks(
+        &self,
+        mut stock_day: impl FnMut(crate::StockId) -> Result<Option<u64>, PlanError>,
+    ) -> Result<(), PlanError> {
+        for id in self.active_plan_ids() {
+            if let PlanEntry::IssuerRepurchase(plan) = self.entry(id)? {
+                if plan.execution().is_some() {
+                    return Err(PlanError::IssuerChildNotConnected { plan_id: id });
+                }
+                stock_day(*plan.stock_ref())?;
+            }
+        }
+        for id in self.active_plan_ids() {
+            if let PlanEntry::Investor(plan) = self.entry(id)? {
+                if !plan.is_terminal() {
+                    if let Some(day) = stock_day(*plan.code())? {
+                        plan.ensure_event_allowed("day-end", day, true)?;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// 同一原子迁移算法；None 表示本股休市，缺失 row 必须由调用方显式报错。
+    pub(crate) fn end_trading_day_for_stocks(
+        &mut self,
+        mut stock_day: impl FnMut(crate::StockId) -> Result<Option<u64>, PlanError>,
+    ) -> Result<(), PlanError> {
+        self.validate_end_trading_day_for_stocks(&mut stock_day)?;
         let mut working = self.clone();
         for id in self.active_plan_ids() {
             match self.entry(id)? {
                 PlanEntry::Investor(plan) if !plan.is_terminal() => {
-                    working.apply(id, PlanEvent::TradingDayEnded { trading_day: day })?;
+                    if let Some(trading_day) = stock_day(*plan.code())? {
+                        working.apply(id, PlanEvent::TradingDayEnded { trading_day })?;
+                    }
                 }
                 PlanEntry::Investor(_) => {}
                 PlanEntry::IssuerRepurchase(plan) => {

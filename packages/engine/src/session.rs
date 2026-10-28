@@ -64,6 +64,7 @@ mod execution;
 pub(crate) mod exchange_calendar_model;
 pub(crate) mod market_calendar_context;
 mod market_calendar_live;
+pub(crate) use market_calendar_live::calendar_clock_input;
 mod failure;
 mod hash;
 mod history_reads;
