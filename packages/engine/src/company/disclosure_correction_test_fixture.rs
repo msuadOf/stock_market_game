@@ -115,6 +115,34 @@ pub(super) fn simple_model_with_cycle(
     system
 }
 
+pub(super) fn simple_models(prehistory_periods: u16, count: u32) -> CompanySystem {
+    let template = simple_model(prehistory_periods);
+    let crate::company::config::CompanySystemConfig::Simple(mut config) = template.config() else {
+        panic!("fixture 必须来自真实 Simple 配置");
+    };
+    let original_config = config.companies[0].clone();
+    let original_spec = template.issuers().get(&CompanyId(0)).unwrap().clone();
+    let mut specs = Vec::new();
+    config.companies.clear();
+    for index in 0..count {
+        let mut spec = original_spec.clone();
+        spec.code = format!("simple-batch-{index}");
+        spec.name = format!("批量更正公司{index}");
+        spec.listed_stock = Some(crate::account::StockCode(format!("{:06}", 600000 + index)));
+        specs.push(spec);
+        let mut company_config = original_config.clone();
+        company_config.company = CompanyId(index);
+        config.companies.push(company_config);
+    }
+    CompanySystem::create(
+        specs,
+        crate::company::config::CompanySystemConfig::Simple(config),
+        CivilDate::from_iso("2030-01-01").unwrap(),
+        17,
+    )
+    .unwrap()
+}
+
 pub(super) fn correction_operation(
     source: u64,
     date: CivilDate,

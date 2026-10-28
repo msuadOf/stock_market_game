@@ -234,35 +234,37 @@ pub(in crate::session) fn prepare_disclosures(
         if proof.base() != ctx.previous_library {
             return Err(DisclosurePrepareError::CorrectionBaseMismatch);
         }
-        for (request, approved_set, expected_source) in proof.reports() {
-            if !in_window(after, ctx.through, request.published_at) {
-                return Err(DisclosurePrepareError::CorrectionOutsideWindow {
-                    published_at: request.published_at,
-                    after,
-                    through: ctx.through,
-                });
+        for operation in proof.operations() {
+            for (request, approved_set, expected_source) in operation.reports() {
+                if !in_window(after, ctx.through, request.published_at) {
+                    return Err(DisclosurePrepareError::CorrectionOutsideWindow {
+                        published_at: request.published_at,
+                        after,
+                        through: ctx.through,
+                    });
+                }
+                let closing = source.closing(request.company)?;
+                let actual = closing
+                    .version(
+                        &request.scope,
+                        request.period,
+                        request.kind,
+                        request.sequence,
+                    )
+                    .ok_or_else(|| invalid("更正 proof 缺少同源定稿版本"))?;
+                if actual != approved_set || *expected_source != source.source_kind() {
+                    return Err(invalid(
+                        "更正 proof 的完整 ReportSet 或 source 与金融候选不一致",
+                    ));
+                }
+                pending.push(Pending::Report(ReportMaterial {
+                    closing,
+                    set: actual,
+                    source: *expected_source,
+                    request: request.clone(),
+                    operation_sources: operation.operation_sources(),
+                }));
             }
-            let closing = source.closing(request.company)?;
-            let actual = closing
-                .version(
-                    &request.scope,
-                    request.period,
-                    request.kind,
-                    request.sequence,
-                )
-                .ok_or_else(|| invalid("更正 proof 缺少同源定稿版本"))?;
-            if actual != approved_set || *expected_source != source.source_kind() {
-                return Err(invalid(
-                    "更正 proof 的完整 ReportSet 或 source 与金融候选不一致",
-                ));
-            }
-            pending.push(Pending::Report(ReportMaterial {
-                closing,
-                set: actual,
-                source: *expected_source,
-                request: request.clone(),
-                operation_sources: proof.operation_sources(),
-            }));
         }
     }
     let mut announced_through = ctx.previous_dispatch.announced_through();
@@ -927,3 +929,7 @@ fn collect_announcements<'a>(
 #[cfg(test)]
 #[path = "disclosure_candidate_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "disclosure_batch_candidate_tests.rs"]
+mod batch_tests;

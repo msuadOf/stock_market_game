@@ -44,6 +44,8 @@ impl GameSession {
                 runtime_install_failure: _,
             runtime_driver: _,
             runtime_group_count: _,
+            runtime_authority_epoch: _,
+            runtime_mirror_install_sequence: _,
             runtime_discard_driver_flag: _,
             revision: _,
         } = self;

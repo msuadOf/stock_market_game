@@ -39,6 +39,7 @@ pub mod decision;
 pub mod diagnostics;
 pub mod desk;
 pub mod drive;
+pub(crate) mod driver_sync;
 pub mod event_bridge;
 pub mod retail_lifecycle;
 
@@ -46,6 +47,10 @@ pub mod retail_lifecycle;
 mod bridge_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod candle_retirement_tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod calendar_raw_range_tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod calendar_projection_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod inline_account_tests;
 /// B2 件 2：desk 分钟K观察面语义测试（对照 18725d07 MinuteBar 基线）。
@@ -78,6 +83,8 @@ pub mod fees;
 pub mod group;
 pub mod plans;
 mod plan_ownership;
+pub(crate) mod personal_full_validation;
+pub(crate) mod source;
 /// P0 分段画像探针（视图内生战役）：driver 线程 step 各段 wall 计时。
 /// 默认零开销（探针显式 enable；生产恒关闭）。
 pub mod step_profile;

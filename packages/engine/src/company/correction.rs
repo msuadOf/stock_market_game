@@ -195,6 +195,54 @@ pub(crate) struct PreparedSimpleDisclosureCorrection<'a> {
     proof: super::report_correction::ConfirmedDisclosureCorrections<'a>,
 }
 
+/// Session 按接收顺序传入的公司域更正；operation_id 留在 Session。
+pub(crate) struct SimpleDisclosureCorrectionInput {
+    pub company: CompanyId,
+    pub correction: CorrectionRequest,
+    pub supersedes: PublicationId,
+}
+
+impl super::CompanySystem {
+    pub(crate) fn prepare_disclosure_corrections<'a>(
+        &self,
+        inputs: Vec<SimpleDisclosureCorrectionInput>,
+        now: CivilInstant,
+        base: &'a PublicLibrary,
+    ) -> Result<
+        PreparedSimpleDisclosureCorrection<'a>,
+        super::report_correction::DisclosureCorrectionPrepareError,
+    > {
+        if inputs.is_empty() {
+            return Err(super::report_correction::DisclosureCorrectionProofError::InvalidAppend {
+                detail: "真实 owner operation 集合不得为空",
+            }.into());
+        }
+        let mut system = self.clone();
+        let mut private_library = base.clone();
+        let mut results = Vec::with_capacity(inputs.len());
+        for input in inputs {
+            let reason = input.correction.reason.clone();
+            let operation_sources = input.correction.entries.iter().map(|entry| entry.source).collect();
+            let publications = system.correct_report(
+                &input.company, input.correction, input.supersedes, now, &mut private_library,
+            )?;
+            let main_publication = publications.first().copied().ok_or_else(|| {
+                super::CompanyCorrectionError::InvalidInput {
+                    reason, detail: "真实更正 owner 返回空 publication 集合".into(),
+                }
+            })?;
+            results.push(super::report_correction::DisclosureCorrectionOwnerResult {
+                main_publication, publications, company: input.company,
+                source: PublicationSource::SimpleGenerated, operation_sources,
+            });
+        }
+        let proof = super::report_correction::ConfirmedDisclosureCorrections::from_owner_results(
+            base, private_library, results,
+        )?;
+        Ok(PreparedSimpleDisclosureCorrection { system, proof })
+    }
+}
+
 impl<'a> PreparedSimpleDisclosureCorrection<'a> {
     pub(crate) fn source(&self) -> &super::CompanySystem {
         &self.system
@@ -219,36 +267,16 @@ impl super::CompanySystem {
         PreparedSimpleDisclosureCorrection<'a>,
         super::report_correction::DisclosureCorrectionPrepareError,
     > {
-        let reason = correction.reason.clone();
-        let operation_sources = correction
-            .entries
-            .iter()
-            .map(|entry| entry.source)
-            .collect();
-        let mut system = self.clone();
-        let mut private_library = base.clone();
-        let publications =
-            system.correct_report(company, correction, supersedes, now, &mut private_library)?;
-        let main_publication = publications.first().copied().ok_or_else(|| {
-            super::CompanyCorrectionError::InvalidInput {
-                reason: reason.clone(),
-                detail: "真实更正 owner 返回空 publication 集合".into(),
-            }
-        })?;
-        let proof = super::report_correction::ConfirmedDisclosureCorrections::from_owner_result(
-            base,
-            private_library,
-            main_publication,
-            Some(&publications),
-            *company,
-            PublicationSource::SimpleGenerated,
-            operation_sources,
-        )
-        .map_err(super::report_correction::DisclosureCorrectionPrepareError::from)?;
-        Ok(PreparedSimpleDisclosureCorrection { system, proof })
+        self.prepare_disclosure_corrections(vec![SimpleDisclosureCorrectionInput {
+            company: *company, correction, supersedes,
+        }], now, base)
     }
 }
 
 #[cfg(test)]
 #[path = "disclosure_correction_owner_tests.rs"]
 mod disclosure_tests;
+
+#[cfg(test)]
+#[path = "disclosure_correction_batch_tests.rs"]
+mod disclosure_batch_tests;

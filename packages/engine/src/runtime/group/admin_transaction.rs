@@ -6,6 +6,17 @@ use crate::runtime::protocol::{
 };
 use std::collections::BTreeMap;
 
+/// 仅保留最后成功观察的有限输入；Arc 按内容比较，不以地址或 hash 作为相等依据。
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct InformationObservationSignature {
+    through: crate::calendar::CivilInstant,
+    library: Arc<crate::information::PublicLibrary>,
+    facts: Arc<crate::company::CompanyReadFacts>,
+    market: Arc<crate::strategy::MarketView>,
+    trading_days: BTreeMap<crate::StockId, u64>,
+    owners_and_codes: BTreeMap<LocalIdx, (crate::AccountId, std::collections::BTreeSet<crate::StockId>)>,
+}
+
 /// 只保留 touched 账户前值，不借用有 i32 股数差额的普通日志。
 pub(super) struct PendingAdmin {
     id: AdminTransactionId,
@@ -104,7 +115,13 @@ impl GroupState {
 
     fn admin_candidate(&self) -> AdminGroupCandidate {
         let pending = self.admin_pending.as_ref().expect("候选必须有 pending");
+        let accounts_full = pending.before.iter().any(|(local, before)| before.as_ref() != self.accounts[*local as usize].as_ref());
+        let mut mirror_domains = super::super::source::MirrorDomains { accounts_full, ..Default::default() };
+        if let Some(information) = &pending.information {
+            mirror_domains = mirror_domains.union(information.mirror_domains());
+        }
         AdminGroupCandidate {
+            mirror_domains,
             information: pending.information.as_ref().map(|info| info.prepared.clone()),
             group: self.group,
             accounts: pending
@@ -155,6 +172,7 @@ impl GroupState {
             AdminPhase::Prepare => return Err(invalid("prepare 不能走 complete")),
         }
         Ok(AdminGroupCandidate {
+            mirror_domains: Default::default(),
             information: None,
             group: self.group,
             accounts: locals

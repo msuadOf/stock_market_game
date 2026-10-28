@@ -411,3 +411,198 @@ fn d2b_each_successful_manual_outer_publishes_only_drain_and_clears_decisions() 
         assert!(driver.collect_resting_facts_live().unwrap()[0].is_empty());
     }
 }
+
+
+#[test]
+fn prepared_retail_lifecycle_is_repeatable_and_failure_preserves_pending() {
+    let (mut game, mut driver) = fixture(100);
+    inject(&mut driver, vec![
+        (SELLER, limit(Side::Sell, 1_000, 100)),
+        (BUYER, limit(Side::Buy, 1_000, 300)),
+    ]);
+    let input = driver.prepare_driver_step(&game).unwrap();
+    assert_eq!(driver.world_report_log().last().unwrap().desk_trades.len(), 1,
+        "必须有真实部分成交，不能用空 pending 自证");
+    let first = game.prepare_runtime_mirror(&mut driver, input.clone(), 1).unwrap();
+    assert_eq!(first.retail_order_events_for_test().len(), 4,
+        "两 Retail 各有一 Submitted 和一 Filled");
+    let second = game.prepare_runtime_mirror(&mut driver, input.clone(), 1).unwrap();
+    assert_eq!(second.retail_order_events_for_test(), first.retail_order_events_for_test(),
+        "同一 World 静点的完整 candidate 不得消费待安装 Retail 生命周期事实");
+    game.runtime_install_failure = true;
+    assert!(game.prepare_runtime_mirror(&mut driver, input.clone(), 1).is_err());
+    game.runtime_install_failure = false;
+    let after_failure = game.prepare_runtime_mirror(&mut driver, input, 1).unwrap();
+    assert_eq!(after_failure.retail_order_events_for_test(), first.retail_order_events_for_test(),
+        "失败 prepare 必须保留全部待安装 Retail 生命周期事实");
+    let ack = game.validate_runtime_mirror_source(&driver, &after_failure).unwrap();
+    game.install_runtime_mirror(&mut driver, after_failure);
+    driver.ack_prepared_mirror(ack);
+    assert_eq!(game.last_retail_order_events(), first.retail_order_events_for_test());
+}
+
+fn legacy_closing_price_fixture(first_order_id: u64) -> GameSession {
+    let mut setup = super::npc_working_quote_tests::retail_quote_setup();
+    setup.npcs.retail_count = 2;
+    setup.npcs.inst_count = 0;
+    setup.npcs.hot_count = 0;
+    setup.stocks[0].float_shares = 2_000;
+    setup.float_allocation = FloatAllocation::class_percentages(
+        1.0, 0.0, 0.0, WithinKindDistribution::EqualPercentage,
+    );
+    setup.strategy_params.retail.arrival_rate = 0.0;
+    setup.ticks_per_day = 8;
+    setup.auction_ticks = 0;
+    setup.closing_auction_ticks = 2;
+    let mut game = GameSession::new(setup, 21).unwrap();
+    let mut seed_events = Vec::new();
+    game.state.next_order_id = first_order_id;
+    // Player 老单没有 NPC quote expiry，必须真实留到 Closing。
+    game.seed_order_for_test(AccountId(0), limit(Side::Buy, 990, 100), &mut seed_events);
+    game.seed_order_for_test(SELLER, limit(Side::Sell, 995, 100), &mut seed_events);
+    game.enqueue_player_intent(AccountId(0), limit(Side::Buy, 995, 100)).unwrap();
+    let traded = game.step_pipeline_contract().unwrap();
+    assert!(traded.iter().any(|event| matches!(event, Event::Trade { price, qty: 100, .. } if price.cents() == 995)),
+        "必须经真实撮合把最新价从开局 1000 改成 995");
+    for _ in 0..6 {
+        if game.phase() == TradingPhase::ClosingAuction { break; }
+        game.step_pipeline_contract().unwrap();
+    }
+    assert_eq!(game.phase(), TradingPhase::ClosingAuction);
+    assert_eq!(game.state.markets[&CODE].last_price().cents(), 995);
+    let cutoff = game.runtime_public_cutoff_for(&CODE);
+    assert!(cutoff > 0, "必须有真实收盘竞价公开截点，不能用零值自证");
+    let old = game.state.markets[&CODE].resting_orders().into_iter()
+        .find(|order| order.id == OrderId(first_order_id)).expect("Player 老买单必须留在真实旧簿");
+    assert_eq!(old.owner, AccountId(0));
+    assert_eq!(old.qty, 100);
+    assert!(old.seq < cutoff, "真实老单在旧公开截点之前");
+    game
+}
+
+#[test]
+fn lazy_static_handover_preserves_real_trade_price_and_closing_cutoff() {
+    let mut game = legacy_closing_price_fixture(1);
+    let cutoff = game.runtime_public_cutoff_for(&CODE);
+    let before = game.save().unwrap();
+    assert!(!before.desk_mirrored_resting);
+    let mut restored = GameSession::restore(&before).unwrap();
+    let snapshot = serde_json::to_value(restored.snapshot_inner(true, true)).unwrap();
+    restored.construct_runtime_driver_lazy_for_test().unwrap();
+    {
+        let driver = restored.runtime_driver.as_ref().unwrap().lock().unwrap();
+        assert_ne!(driver.world_public_views()[0].last_price, 995, "必须判别旧 v0 价格来源错误");
+        assert_ne!(driver.world_public_views()[0].public_cutoff_serial, cutoff, "必须判别旧 v0 截点来源错误");
+    }
+    assert_eq!(restored.runtime_public_cutoff_for(&CODE), cutoff,
+        "首次静点镜像不得把真实收盘截点降回 v0 的零值");
+    assert_eq!(restored.state.desk_book_mirror[&CODE].last_price.cents(), 995,
+        "首次静点镜像不得把真实成交价降回开局价");
+    assert_eq!(serde_json::to_value(restored.snapshot_inner(true, true)).unwrap(), snapshot);
+    GameSession::restore(&restored.save().unwrap()).unwrap();
+}
+
+#[test]
+fn lazy_handover_rejects_changed_closing_visibility_without_mutation() {
+    let mut game = legacy_closing_price_fixture(7);
+    let cutoff = game.runtime_public_cutoff_for(&CODE);
+    let old = game.state.markets[&CODE].resting_orders().into_iter()
+        .find(|order| order.id == OrderId(7)).expect("拒绝前必须有真实在场 id7");
+    assert_ne!(old.seq < cutoff, crate::runtime::group::desk_order_serial(old.id.0) < cutoff,
+        "负控必须真实覆盖旧 seq 与 desk serial 的公开分类不同");
+    let saved = game.save().unwrap();
+    let mut restored = GameSession::restore(&saved).expect("真实 closing 旧簿存档必须合法");
+    let before = serde_json::to_value(&saved).unwrap();
+    let revision = restored.external_revision();
+    let epoch = restored.runtime_authority_epoch;
+    let install = restored.runtime_mirror_install_sequence;
+    let error = restored.construct_runtime_driver_lazy_for_test().unwrap_err();
+    assert!(error.to_string().contains("公开截点"));
+    assert!(restored.require_healthy().is_ok());
+    assert!(restored.runtime_driver.is_none());
+    assert_eq!(restored.external_revision(), revision);
+    assert_eq!(restored.runtime_authority_epoch, epoch);
+    assert_eq!(restored.runtime_mirror_install_sequence, install);
+    assert_eq!(serde_json::to_value(restored.save().unwrap()).unwrap(), before);
+}
+
+#[test]
+fn lazy_handover_preserves_same_price_fifo_before_and_after_save_restore() {
+    let mut setup = super::npc_working_quote_tests::retail_quote_setup();
+    setup.npcs.retail_count = 3;
+    setup.npcs.inst_count = 0;
+    setup.npcs.hot_count = 0;
+    setup.stocks[0].float_shares = 3_000;
+    setup.float_allocation = FloatAllocation::class_percentages(
+        1.0, 0.0, 0.0, WithinKindDistribution::EqualPercentage,
+    );
+    setup.strategy_params.retail.arrival_rate = 0.0;
+    setup.auction_ticks = 0;
+    setup.closing_auction_ticks = 0;
+    let mut source = GameSession::new(setup.clone(), 21).unwrap();
+    source.state.next_order_id = 7;
+    let mut seed_events = Vec::new();
+    // 先到 owner2、后到 owner1，反向于 ledger 的 owner 键序。
+    source.seed_order_for_test(BUYER, limit(Side::Buy, 990, 100), &mut seed_events);
+    source.seed_order_for_test(SELLER, limit(Side::Buy, 990, 100), &mut seed_events);
+    let mut reversed = GameSession::new(setup, 21).unwrap();
+    reversed.state.next_order_id = 9;
+    reversed.seed_order_for_test(BUYER, limit(Side::Buy, 990, 100), &mut seed_events);
+    reversed.state.next_order_id = 7;
+    reversed.seed_order_for_test(SELLER, limit(Side::Buy, 990, 100), &mut seed_events);
+    reversed.state.next_order_id = 10;
+    let invalid = reversed.save().unwrap();
+    let mut rejected = GameSession::restore(&invalid).expect("ID顺序与时间序不同仍是合法源存档");
+    let revision = rejected.external_revision();
+    let epoch = rejected.runtime_authority_epoch;
+    let install = rejected.runtime_mirror_install_sequence;
+    let error = rejected.construct_runtime_driver_lazy_for_test().unwrap_err();
+    assert!(error.to_string().contains("同价 FIFO"));
+    assert!(rejected.require_healthy().is_ok());
+    assert!(rejected.runtime_driver.is_none());
+    assert_eq!(rejected.external_revision(), revision);
+    assert_eq!(rejected.runtime_authority_epoch, epoch);
+    assert_eq!(rejected.runtime_mirror_install_sequence, install);
+    assert_eq!(serde_json::to_value(rejected.save().unwrap()).unwrap(), serde_json::to_value(invalid).unwrap());
+
+    source.state.next_order_id = 21;
+    let saved = source.save().unwrap();
+    let mut first = GameSession::restore(&saved).unwrap();
+    first.construct_runtime_driver_lazy_for_test().unwrap();
+    let mirrored = first.save().unwrap();
+    assert!(mirrored.desk_mirrored_resting);
+    assert_eq!(mirrored.npc_order_lifecycles.len(), 2, "接管不能靠删除真实 lifecycle 逃过恢复校验");
+    for authority in [&saved, &mirrored] {
+        let mut missing_all = authority.clone();
+        missing_all.resting_orders.clear();
+        assert!(matches!(GameSession::restore(&missing_all), Err(SessionError::InvalidSave(fault)) if fault.code == 2170),
+            "整份在场订单表缺失也必须显式拒绝，不能 panic 或跳过 lifecycle 校验");
+        let mut missing = authority.clone();
+        missing.npc_order_lifecycles[0].order_id = OrderId(19);
+        assert!(matches!(GameSession::restore(&missing), Err(SessionError::InvalidSave(fault)) if fault.code == 2170),
+            "两种形态的 lifecycle 缺失订单仍必须拒绝");
+        let mut wrong_owner = authority.clone();
+        wrong_owner.npc_order_lifecycles[0].account = AccountId(3);
+        assert!(matches!(GameSession::restore(&wrong_owner), Err(SessionError::InvalidSave(fault)) if fault.code == 2170),
+            "两种形态的 lifecycle owner 错配仍必须拒绝");
+    }
+    let mut roundtrip = GameSession::restore(&mirrored).unwrap();
+    roundtrip.construct_runtime_driver_lazy_for_test().unwrap();
+    for game in [&mut first, &mut roundtrip] {
+        {
+            let mut driver = game.runtime_driver.as_ref().unwrap().lock().unwrap();
+            inject(&mut driver, vec![(AccountId(3), limit(Side::Sell, 990, 100))]);
+        }
+        let events = game.step_via_runtime().unwrap();
+        assert!(events.iter().all(|event| !matches!(event, Event::OrderAccepted { id, .. } if [OrderId(7), OrderId(8)].contains(id))),
+            "静点接管后的第一拍不能重发已受理旧单事件");
+        assert!(game.last_retail_order_events().iter().all(|event| !matches!(event,
+            RetailOrderDiagnosticEvent::Submitted { order_id, .. } if [OrderId(7), OrderId(8)].contains(order_id))),
+            "静点接管不能把历史旧单伪造为当前 Retail Submitted");
+        let buyers = events.iter().filter_map(|event| match event {
+            Event::Trade { taker, qty: 100, price, .. } if price.cents() == 990 => Some(*taker),
+            _ => None,
+        }).collect::<Vec<_>>();
+        assert_eq!(buyers, vec![BUYER], "真实同价成交必须优先分配给先到 owner2，不能按 ledger owner 键重排");
+    }
+}

@@ -2,7 +2,10 @@
 
 use std::sync::Arc;
 
-use super::exchange_calendar_model::{SessionTickLayout, SharedClockInput, SharedDayProgress};
+use super::exchange_calendar_model::{
+    calendar_clock_projection, CalendarClockProjection, SessionTickLayout, SharedClockInput,
+    SharedDayProgress,
+};
 use super::market_calendar_context::{
     MarketCalendarContextError, MarketCalendarSource, MarketDayContext, MarketTickContext,
 };
@@ -139,15 +142,45 @@ impl GameSession {
         Ok(day)
     }
 
-    /// 只准备，不安装；任何失败都发生在 ingress 截取、ID 分配和 Start 之前。
-    pub(crate) fn prepare_market_calendar_tick(
+    /// 静点只校验真实进度并生成纯 projection，不为 ClosedDay 或 TradingCompleted 造市场拍。
+    pub(crate) fn prepare_market_calendar_projection(
         &self,
-    ) -> Result<(Arc<MarketDayContext>, Arc<MarketTickContext>), StepFatal> {
+    ) -> Result<(Arc<MarketDayContext>, CalendarClockProjection), StepFatal> {
+        let day = self.prepare_market_calendar_day()?;
+        let projection = self.market_calendar_projection_for_day(&day)?;
+        Ok((day, projection))
+    }
+
+    pub(crate) fn market_calendar_projection_for_day(
+        &self,
+        day: &MarketDayContext,
+    ) -> Result<CalendarClockProjection, StepFatal> {
+        day.validate_for(
+            &self.market_calendar_source,
+            &self.market_calendar_bindings()?,
+            self.civil_date(),
+        ).map_err(|error| StepFatal::InvariantViolation {
+            location: "GameSession::prepare_market_calendar_projection".to_owned(),
+            description: error.to_string(),
+        })?;
+        let (layout, input) = self.market_calendar_clock_input(day)?;
+        calendar_clock_projection(day.day_model(), layout, input).map_err(|error| {
+            StepFatal::InvariantViolation {
+                location: "GameSession::prepare_market_calendar_projection".to_owned(),
+                description: error.to_string(),
+            }
+        })
+    }
+
+    /// 市场拍与静点共用唯一 before 输入计算；数值再由纯模型交叉验证。
+    fn market_calendar_clock_input(
+        &self,
+        day: &MarketDayContext,
+    ) -> Result<(SessionTickLayout, SharedClockInput), StepFatal> {
         let fail = |error: MarketCalendarContextError| StepFatal::InvariantViolation {
             location: "GameSession::prepare_market_calendar_tick".to_owned(),
             description: error.to_string(),
         };
-        let day = self.prepare_market_calendar_day()?;
         let layout = SessionTickLayout {
             ticks_per_day: self.state.setup.ticks_per_day,
             auction_ticks: self.state.setup.auction_ticks,
@@ -184,16 +217,23 @@ impl GameSession {
             })?;
             SharedDayProgress::Trading { completed_ticks }
         };
-        let context = day
-            .tick(
-                layout,
-                SharedClockInput {
-                    tick: self.state.tick,
-                    completed_shared_sessions: u64::from(self.state.day),
-                    progress,
-                },
-            )
-            .map_err(fail)?;
+        Ok((layout, SharedClockInput {
+            tick: self.state.tick,
+            completed_shared_sessions: u64::from(self.state.day),
+            progress,
+        }))
+    }
+
+    /// 只准备，不安装；任何失败都发生在 ingress 截取、ID 分配和 Start 之前。
+    pub(crate) fn prepare_market_calendar_tick(
+        &self,
+    ) -> Result<(Arc<MarketDayContext>, Arc<MarketTickContext>), StepFatal> {
+        let day = self.prepare_market_calendar_day()?;
+        let (layout, input) = self.market_calendar_clock_input(&day)?;
+        let context = day.tick(layout, input).map_err(|error| StepFatal::InvariantViolation {
+            location: "GameSession::prepare_market_calendar_tick".to_owned(),
+            description: error.to_string(),
+        })?;
         Ok((day, context))
     }
 

@@ -303,6 +303,23 @@ mod tests {
     use super::*;
 
     #[test]
+    fn closing_mirror_visibility_compares_local_serial_for_second_stock() {
+        let mirror = super::super::DeskBookMirror {
+            orders: vec![
+                (AccountId(1), Side::Buy, Money::from_cents(900), 100, (1_u64 << 32) | 7, 0, 0),
+                (AccountId(2), Side::Buy, Money::from_cents(900), 200, (1_u64 << 32) | 9, 0, 0),
+            ],
+            last_price: Money::from_cents(1_000),
+            public_cutoff_serial: 8,
+            next_serial: 10,
+        };
+        let closing = project_mirror_public_book(TradingPhase::ClosingAuction, &mirror);
+        assert_eq!(closing.bids, vec![(Money::from_cents(900), 100)]);
+        let continuous = project_mirror_public_book(TradingPhase::Continuous, &mirror);
+        assert_eq!(continuous.bids, vec![(Money::from_cents(900), 300)]);
+    }
+
+    #[test]
     fn player_snapshot_projects_only_player_reservations_but_full_snapshot_keeps_npcs() {
         let mut setup = super::super::npc_working_quote_tests::quote_setup(0);
         setup.npcs.inst_count = 1;
@@ -531,7 +548,7 @@ pub(super) fn project_mirror_public_book(
             mirror
                 .orders
                 .iter()
-                .filter(|(_, _, _, _, serial, _, _)| *serial < cutoff),
+                .filter(|(_, _, _, _, serial, _, _)| crate::runtime::group::desk_order_serial(*serial) < cutoff),
         ),
         crate::TradingPhase::PreOpen | crate::TradingPhase::Continuous => {
             Box::new(mirror.orders.iter())

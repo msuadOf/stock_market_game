@@ -663,8 +663,18 @@ fn execution_leg_wire_rejects_injected_unknown_fields() {
 
 /// 唯一 owner 在途子单存档 fixture：计划 400 股、已成交 100、真实簿余量 300。
 fn live_child_case() -> (GameSession, crate::plans::PlanId, StockId) {
-    let mut session = low_price_session();
-    let code = StockId(0);
+    live_child_case_at_session(low_price_session())
+}
+
+fn live_child_case_at_session(session: GameSession) -> (GameSession, crate::plans::PlanId, StockId) {
+    live_child_case_with_order(session, OrderId(1))
+}
+
+fn live_child_case_with_order(session: GameSession, child_order: OrderId) -> (GameSession, crate::plans::PlanId, StockId) {
+    live_child_case_at_stock(session, child_order, StockId(0))
+}
+
+fn live_child_case_at_stock(mut session: GameSession, child_order: OrderId, code: StockId) -> (GameSession, crate::plans::PlanId, StockId) {
     let account = crate::AccountId(1);
     let plan_id = session
         .state
@@ -692,7 +702,7 @@ fn live_child_case() -> (GameSession, crate::plans::PlanId, StockId) {
     session
         .state
         .plans
-        .record_child_submitted(account, &code, Side::Buy, OrderId(1), 400, 0)
+        .record_child_submitted(account, &code, Side::Buy, child_order, 400, 0)
         .unwrap();
     session
         .state
@@ -700,7 +710,7 @@ fn live_child_case() -> (GameSession, crate::plans::PlanId, StockId) {
         .apply(
             plan_id,
             crate::plans::PlanEvent::ChildOrderFilled {
-                order_id: OrderId(1),
+                order_id: child_order,
                 qty: 100,
                 child_complete: false,
                 trading_day: 0,
@@ -713,7 +723,7 @@ fn live_child_case() -> (GameSession, crate::plans::PlanId, StockId) {
         .get_mut(&code)
         .unwrap()
         .place(crate::Order {
-            id: OrderId(1),
+            id: child_order,
             side: Side::Buy,
             price: Money::from_cents(1),
             qty: 300,
@@ -724,7 +734,7 @@ fn live_child_case() -> (GameSession, crate::plans::PlanId, StockId) {
             seq: 0,
         })
         .unwrap();
-    session.state.next_order_id = 2;
+    session.state.next_order_id = child_order.0.checked_add(1).unwrap();
     session.hydrate_or_validate_envelope_ledger().unwrap();
     (session, plan_id, code)
 }
@@ -2291,4 +2301,361 @@ fn v6_order_id_encoding_stays_in_wire_domain_beyond_32_stocks() {
         encoded.is_ok(),
         "新编码域最大 id 须在 wire 域内——{encoded:?}"
     );
+}
+
+#[test]
+fn lazy_handover_preserves_live_child_in_immediate_save_without_market_tick() {
+    let (mut source, plan_id, code) = live_child_case();
+    let before = source.save().unwrap();
+    assert!(
+        !before.desk_mirrored_resting,
+        "必须覆盖真实旧簿而非已有 desk 镜像的正控"
+    );
+    assert_eq!(before.resting_orders[&code][0].qty, 300);
+    let mut session = GameSession::restore(&before).expect("接管前存档必须真实合法");
+    assert!(session.runtime_driver.is_none());
+    let tick = session.tick();
+    let seq = session.seq();
+    let day = session.day();
+    session.runtime_group_count = 2;
+    session.construct_runtime_driver_lazy_for_test().unwrap();
+    assert!(
+        session.state.markets[&code].resting_orders().is_empty(),
+        "接管后旧簿不再保存第二份在途权威"
+    );
+    {
+        let mut driver = session.runtime_driver.as_ref().unwrap().lock().unwrap();
+        let source = driver.mirror_source();
+        let live = driver.collect_resting_facts_live().unwrap();
+        assert_eq!(
+            live[code.0 as usize].iter().map(|row| row.qty).sum::<u32>(),
+            300
+        );
+        assert_eq!(driver.mirror_source(), source, "完整静点读取不得推进来源");
+    }
+    let after = session.save().unwrap();
+    assert_eq!(
+        after.resting_orders[&code]
+            .iter()
+            .map(|order| order.qty)
+            .sum::<u32>(),
+        300,
+        "首次接管后立即保存必须保留真实在途余量，不能只有 PlanBook 和 ledger"
+    );
+    assert!(
+        after.desk_mirrored_resting,
+        "接管须完成同来源静点 mirror 而非保留旧簿双权威"
+    );
+    assert_eq!(session.tick(), tick);
+    assert_eq!(session.seq(), seq);
+    assert_eq!(session.day(), day);
+    assert_eq!(
+        session
+            .runtime_driver
+            .as_ref()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .world_committed_tick(),
+        tick
+    );
+    assert_eq!(
+        after
+            .plans
+            .plan(plan_id)
+            .unwrap()
+            .active_child_remaining_qty(),
+        Some(300)
+    );
+    for (left, right) in [
+        (
+            serde_json::to_value(&before.snapshot.accounts).unwrap(),
+            serde_json::to_value(&after.snapshot.accounts).unwrap(),
+        ),
+        (
+            serde_json::to_value(&before.runtime_state.live_envelopes).unwrap(),
+            serde_json::to_value(&after.runtime_state.live_envelopes).unwrap(),
+        ),
+        (
+            serde_json::to_value(&before.npc_attention).unwrap(),
+            serde_json::to_value(&after.npc_attention).unwrap(),
+        ),
+        (
+            serde_json::to_value(&before.belief_books).unwrap(),
+            serde_json::to_value(&after.belief_books).unwrap(),
+        ),
+        (
+            serde_json::to_value(&before.history_reads).unwrap(),
+            serde_json::to_value(&after.history_reads).unwrap(),
+        ),
+        (
+            serde_json::to_value(&before.information_states).unwrap(),
+            serde_json::to_value(&after.information_states).unwrap(),
+        ),
+        (
+            serde_json::to_value(&before.watchlists).unwrap(),
+            serde_json::to_value(&after.watchlists).unwrap(),
+        ),
+        (
+            serde_json::to_value(&before.price_memories).unwrap(),
+            serde_json::to_value(&after.price_memories).unwrap(),
+        ),
+        (
+            serde_json::to_value(&before.retail_experience).unwrap(),
+            serde_json::to_value(&after.retail_experience).unwrap(),
+        ),
+        (
+            serde_json::to_value(&before.personal_trade_confirmations).unwrap(),
+            serde_json::to_value(&after.personal_trade_confirmations).unwrap(),
+        ),
+    ] {
+        assert_eq!(
+            right, left,
+            "静点接管不运行计算、撮合或结算，也不重复登记回执"
+        );
+    }
+    let restored = GameSession::restore(&after).expect("接管后的同点完整存档必须可恢复");
+    assert_eq!(
+        restored
+            .state
+            .plans
+            .plan(plan_id)
+            .unwrap()
+            .active_child_remaining_qty(),
+        Some(300)
+    );
+}
+
+#[test]
+fn lazy_handover_revision_exhaustion_preserves_old_authority() {
+    let (mut session, _, _) = live_child_case();
+    session
+        .revision
+        .store(u64::MAX, std::sync::atomic::Ordering::Relaxed);
+    let before = serde_json::to_value(session.save().unwrap()).unwrap();
+    let epoch = session.runtime_authority_epoch;
+    let install = session.runtime_mirror_install_sequence;
+    let result = session.construct_runtime_driver_lazy_for_test();
+    assert!(
+        result.is_err(),
+        "静点移交必须在构造与旧簿变更前预检实际 revision 写集"
+    );
+    assert_eq!(session.external_revision(), u64::MAX);
+    assert_eq!(session.runtime_authority_epoch, epoch);
+    assert_eq!(session.runtime_mirror_install_sequence, install);
+    assert!(session.runtime_driver.is_none());
+    assert!(session.require_healthy().is_ok());
+    assert_eq!(
+        serde_json::to_value(session.save().unwrap()).unwrap(),
+        before
+    );
+}
+
+#[test]
+fn lazy_handover_preserves_nonzero_tick_and_sequence_without_new_events() {
+    let mut session = low_price_session();
+    session.step_pipeline_contract().unwrap();
+    assert!(session.tick() > 0);
+    assert!(session.seq() > 0);
+    let (mut source, plan_id, code) = live_child_case_at_session(session);
+    let before = source.save().unwrap();
+    let mut session = GameSession::restore(&before).expect("非零进度的旧簿存档必须合法");
+    session.construct_runtime_driver_lazy_for_test().unwrap();
+    let after = session.save().unwrap();
+    assert_eq!(
+        after.snapshot.tick, before.snapshot.tick,
+        "静点 Full 不偷跑 tick"
+    );
+    assert_eq!(
+        after.snapshot.seq, before.snapshot.seq,
+        "静点 Full 不造事件或归零已有 seq"
+    );
+    assert_eq!(
+        after.resting_orders[&code]
+            .iter()
+            .map(|order| order.qty)
+            .sum::<u32>(),
+        300,
+        "非零进度接管后必须保留真实在途余量"
+    );
+    assert_eq!(
+        after
+            .plans
+            .plan(plan_id)
+            .unwrap()
+            .active_child_remaining_qty(),
+        Some(300)
+    );
+    assert_eq!(
+        serde_json::to_value(&after.runtime_state.live_envelopes).unwrap(),
+        serde_json::to_value(&before.runtime_state.live_envelopes).unwrap()
+    );
+    GameSession::restore(&after).expect("非零进度静点镜像必须可真实恢复");
+}
+
+#[test]
+fn lazy_handover_install_sequence_exhaustion_preserves_old_authority() {
+    let (mut session, _, _) = live_child_case();
+    session.runtime_mirror_install_sequence = u64::MAX;
+    let before = serde_json::to_value(session.save().unwrap()).unwrap();
+    let revision = session.external_revision();
+    let epoch = session.runtime_authority_epoch;
+    assert!(
+        session.construct_runtime_driver_lazy_for_test().is_err(),
+        "安装序号耗尽必须在发布接管前拒绝"
+    );
+    assert_eq!(session.runtime_mirror_install_sequence, u64::MAX);
+    assert_eq!(session.runtime_authority_epoch, epoch);
+    assert_eq!(session.external_revision(), revision);
+    assert!(session.runtime_driver.is_none());
+    assert!(session.require_healthy().is_ok());
+    assert_eq!(
+        serde_json::to_value(session.save().unwrap()).unwrap(),
+        before
+    );
+}
+
+#[test]
+fn lazy_handover_authority_epoch_exhaustion_preserves_old_authority() {
+    let (mut session, _, _) = live_child_case();
+    session.runtime_authority_epoch = u64::MAX;
+    let before = serde_json::to_value(session.save().unwrap()).unwrap();
+    let revision = session.external_revision();
+    let install = session.runtime_mirror_install_sequence;
+    assert!(
+        session.construct_runtime_driver_lazy_for_test().is_err(),
+        "authority epoch 耗尽必须在发布接管前拒绝"
+    );
+    assert_eq!(session.runtime_authority_epoch, u64::MAX);
+    assert_eq!(session.runtime_mirror_install_sequence, install);
+    assert_eq!(session.external_revision(), revision);
+    assert!(session.runtime_driver.is_none());
+    assert!(session.require_healthy().is_ok());
+    assert_eq!(
+        serde_json::to_value(session.save().unwrap()).unwrap(),
+        before
+    );
+}
+
+#[test]
+fn lazy_handover_prepare_failure_preserves_authority_and_can_retry() {
+    let (mut session, plan_id, _) = live_child_case();
+    let before = serde_json::to_value(session.save().unwrap()).unwrap();
+    let revision = session.external_revision();
+    let epoch = session.runtime_authority_epoch;
+    let install = session.runtime_mirror_install_sequence;
+    session.runtime_install_failure = true;
+    let error = session.construct_runtime_driver_lazy_for_test().unwrap_err();
+    assert!(error.to_string().contains("安装失败注入"));
+    assert!(session.runtime_driver.is_none());
+    assert!(session.require_healthy().is_ok(), "已回收 prepared workers 后保旧权威可重试");
+    assert_eq!(session.runtime_authority_epoch, epoch);
+    assert_eq!(session.runtime_mirror_install_sequence, install);
+    assert_eq!(session.external_revision(), revision);
+    assert_eq!(serde_json::to_value(session.save().unwrap()).unwrap(), before);
+    session.runtime_install_failure = false;
+    session.construct_runtime_driver_lazy_for_test().unwrap();
+    assert_eq!(session.external_revision(), revision + 1, "真实 activation 只有一次 revision 写入");
+    let saved = session.save().unwrap();
+    let restored = GameSession::restore(&saved).unwrap();
+    assert_eq!(restored.state.plans.plan(plan_id).unwrap().active_child_remaining_qty(), Some(300));
+}
+
+#[test]
+fn lazy_handover_rejects_unpreservable_old_order_identity_without_mutation() {
+    let old_id = OrderId(7);
+    let (mut session, plan_id, _) = live_child_case_at_stock(two_stock_low_price_session(), old_id, StockId(1));
+    let saved = session.save().unwrap();
+    GameSession::restore(&saved).expect("非连续旧委托身份的源存档必须合法");
+    let before = serde_json::to_value(&saved).unwrap();
+    let revision = session.external_revision();
+    let epoch = session.runtime_authority_epoch;
+    let install = session.runtime_mirror_install_sequence;
+    let error = session.construct_runtime_driver_lazy_for_test().unwrap_err();
+    assert!(error.to_string().contains("不能保真重编号"));
+    assert!(session.require_healthy().is_ok());
+    assert!(session.runtime_driver.is_none());
+    assert_eq!(session.runtime_authority_epoch, epoch);
+    assert_eq!(session.runtime_mirror_install_sequence, install);
+    assert_eq!(session.external_revision(), revision);
+    assert_eq!(session.state.plans.plan(plan_id).unwrap().active_child_order_id(), Some(old_id));
+    assert_eq!(serde_json::to_value(session.save().unwrap()).unwrap(), before);
+}
+
+#[test]
+fn lazy_handover_preserves_sparse_identity_and_consumed_id_floor() {
+    let (mut source, plan_id, code) = live_child_case_with_order(low_price_session(), OrderId(7));
+    // 已撤/已成交身份也不可再次取号；此上界与在场单及 book seq 独立。
+    source.state.next_order_id = 21;
+    let before = source.save().unwrap();
+    assert_eq!(before.resting_orders[&code][0].seq, 0);
+    let mut session = GameSession::restore(&before).unwrap();
+    session.construct_runtime_driver_lazy_for_test().unwrap();
+    let after = session.save().unwrap();
+    assert_eq!(after.resting_orders[&code][0].id, OrderId(7));
+    assert_eq!(after.resting_orders[&code][0].qty, 300);
+    assert!(after.book_next_sequences[&code] >= 21);
+    assert_eq!(serde_json::to_value(&after.runtime_state.live_envelopes).unwrap(),
+        serde_json::to_value(&before.runtime_state.live_envelopes).unwrap());
+    let mut restored = GameSession::restore(&after).unwrap();
+    restored.construct_runtime_driver_lazy_for_test().unwrap();
+    let again = restored.save().unwrap();
+    assert_eq!(again.resting_orders[&code][0].id, OrderId(7));
+    assert!(again.book_next_sequences[&code] >= 21);
+    assert_eq!(restored.state.plans.plan(plan_id).unwrap().active_child_order_id(), Some(OrderId(7)));
+    assert_eq!(restored.state.plans.plan(plan_id).unwrap().active_child_remaining_qty(), Some(300));
+}
+
+fn two_stock_low_price_session() -> GameSession {
+    let mut setup = super::super::npc_working_quote_tests::quote_setup(0);
+    setup.stocks[0].initial_price = Money::from_cents(1);
+    let mut second = setup.stocks[0].clone();
+    second.code = StockCode("600889".to_owned());
+    setup.stocks.push(second);
+    setup.company_operations = Some(order_id_boundary_companies(&setup));
+    setup.config.commission_min = Money::ZERO;
+    GameSession::new(setup, 42).unwrap()
+}
+
+#[test]
+fn lazy_handover_preserves_encoded_runtime_cursor_and_rejects_legacy_overflow() {
+    let (mut authority, _, code) = live_child_case_at_stock(
+        two_stock_low_price_session(), OrderId((1_u64 << 32) | 7), StockId(1),
+    );
+    let mut save = authority.save().unwrap();
+    // 合法 desk 存档使用本地 seq/cursor，next_order_id 则仍是完整 encoded ID。
+    save.desk_mirrored_resting = true;
+    save.resting_orders.get_mut(&code).unwrap()[0].seq = 7;
+    save.book_next_sequences.insert(code, 21);
+    let mut restored = GameSession::restore(&save).unwrap();
+    restored.construct_runtime_driver_lazy_for_test().unwrap();
+    let after = restored.save().unwrap();
+    assert_eq!(after.resting_orders[&code][0].id, OrderId((1_u64 << 32) | 7));
+    assert_eq!(after.book_next_sequences[&code], 21);
+    GameSession::restore(&after).unwrap();
+
+    let mut exhausted = low_price_session();
+    exhausted.state.next_order_id = 1_u64 << 32;
+    exhausted.construct_runtime_driver_lazy_for_test().unwrap();
+    assert_eq!(exhausted.save().unwrap().book_next_sequences[&StockId(0)], 1_u64 << 32,
+        "已耗尽的静点游标不回绕，也不在读取时假造下一笔下单");
+
+    let mut legacy = low_price_session();
+    legacy.state.next_order_id = (1_u64 << 32) + 1;
+    let before = serde_json::to_value(legacy.save().unwrap()).unwrap();
+    let revision = legacy.external_revision();
+    let epoch = legacy.runtime_authority_epoch;
+    let error = legacy.construct_runtime_driver_lazy_for_test().unwrap_err();
+    assert!(error.to_string().contains("旧全局 OrderId 游标"));
+    assert!(legacy.require_healthy().is_ok());
+    assert!(legacy.runtime_driver.is_none());
+    assert_eq!(legacy.external_revision(), revision);
+    assert_eq!(legacy.runtime_authority_epoch, epoch);
+    assert_eq!(serde_json::to_value(legacy.save().unwrap()).unwrap(), before);
+
+    let mut empty = low_price_session();
+    empty.state.next_order_id = 21;
+    assert!(empty.save().unwrap().resting_orders.values().all(Vec::is_empty));
+    empty.construct_runtime_driver_lazy_for_test().unwrap();
+    assert!(empty.save().unwrap().book_next_sequences.values().all(|cursor| *cursor >= 21));
 }

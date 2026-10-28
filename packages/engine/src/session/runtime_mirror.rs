@@ -5,7 +5,7 @@ use crate::runtime::world::BeliefParticipantSnapshot;
 use std::sync::Arc;
 
 /// 仅持本次镜像替换值；不克隆 GameSession、World 或运行线程。
-pub(in crate::session) struct PreparedRuntimeMirror {
+pub(crate) struct PreparedRuntimeMirror {
     #[cfg(feature = "simulation-diagnostics")]
     decision_traces: crate::diagnostics::decision_trace::NpcDecisionTraceCollector,
     accounts: BTreeMap<AccountId, Account>,
@@ -15,7 +15,9 @@ pub(in crate::session) struct PreparedRuntimeMirror {
     histories: BTreeMap<StockId, VecDeque<Money>>,
     minutes: BTreeMap<StockId, Vec<MarketMinuteClose>>,
     minute_bars: BTreeMap<StockId, Vec<crate::runtime::MinuteBarFact>>,
-    active: BTreeMap<StockId, DailyCandle>,
+    candle_book: SessionCandleBook,
+    day: u32,
+    retained: Option<std::sync::Arc<crate::runtime::publication::RetainedDaySnapshot>>,
     npc_attention: AccountPagedMap<NpcAttentionState>,
     beliefs: AccountPagedMap<BeliefParticipantState>,
     personal_history: AccountPagedMap<crate::experience::PersonalHistoryReadLedger>,
@@ -27,11 +29,17 @@ pub(in crate::session) struct PreparedRuntimeMirror {
     receipt_watermark: u64,
     tick: u64,
     seq: u64,
-    generation: u64,
+    source: crate::runtime::source::WorldMirrorSource,
+    captured_domains: crate::runtime::source::MirrorDomains,
+    install_sequence: u64,
+    session_authority_epoch: u64,
+    is_handover: bool,
+    static_session_revision: Option<u64>,
     pub projection: protocol::PreparedTickProjection,
     pub events: Vec<Event>,
     retail_decisions: Vec<RetailDecisionTrace>,
     retail_order_events: Vec<RetailOrderDiagnosticEvent>,
+    npc_order_lifecycles: Vec<NpcOrderLifecycle>,
 }
 
 impl GameSession {
@@ -103,12 +111,61 @@ impl GameSession {
         self.state.npc_decision_traces = traces;
     }
 
-    pub(in crate::session) fn prepare_runtime_mirror(
+    pub(crate) fn prepare_runtime_mirror(
         &self,
         driver: &mut RuntimeDriver,
         input: PreparedDriverStep,
         tick: u64,
     ) -> Result<PreparedRuntimeMirror, String> {
+        self.prepare_runtime_mirror_with_epoch(driver, input, tick, self.runtime_authority_epoch)
+    }
+
+    pub(crate) fn prepare_runtime_handover_mirror(
+        &self,
+        driver: &mut RuntimeDriver,
+        input: PreparedDriverStep,
+    ) -> Result<PreparedRuntimeMirror, String> {
+        if input.static_read.is_none() {
+            return Err("首次接管必须使用完整静点读面".to_owned());
+        }
+        let epoch = self.next_runtime_authority_epoch()?;
+        self.prepare_runtime_mirror_with_epoch(driver, input, self.tick(), epoch)
+    }
+
+    fn prepare_runtime_mirror_with_epoch(
+        &self,
+        driver: &mut RuntimeDriver,
+        input: PreparedDriverStep,
+        tick: u64,
+        expected_authority_epoch: u64,
+    ) -> Result<PreparedRuntimeMirror, String> {
+        input.validate_calendar(self, tick, driver.world_committed_tick())?;
+        let static_read = input.static_read;
+        let is_static = static_read.is_some();
+        let static_session_revision = static_read.as_ref().map(|read| read.session_revision);
+        if static_session_revision.is_some_and(|revision| revision != self.external_revision()) {
+            return Err("静点 Full 捕获后 Session revision 已改变".to_owned());
+        }
+        if is_static && (input.emit_price_tick || input.day_end.is_some() || !input.events.is_empty()) {
+            return Err("静点 Full 不得产生 tick、日结或业务事件".to_owned());
+        }
+        let mut source = static_read.as_ref().map_or_else(|| driver.mirror_source(), |read| read.source);
+        if source != driver.mirror_source() {
+            return Err("静点 Full 捕获来源已过期".to_owned());
+        }
+        let captured_domains = driver.pending_mirror_domains();
+        if source.authority_epoch != expected_authority_epoch || source.tick != tick
+            || source.civil_date != self.civil_date()
+        {
+            return Err(format!(
+                "镜像 candidate authority 不一致：source={source:?} session_epoch={} tick={tick}",
+                self.runtime_authority_epoch
+            ));
+        }
+        let install_sequence = self
+            .runtime_mirror_install_sequence
+            .checked_add(1)
+            .ok_or_else(|| "镜像 install_sequence 已耗尽".to_owned())?;
         let mut accounts = BTreeMap::new();
         let mut personals: BTreeMap<_, _> = input
             .personals
@@ -118,6 +175,9 @@ impl GameSession {
         let mut hold_inits = Vec::new();
         let per_group = driver.accounts_per_group();
         let n_stocks = self.state.stocks.len();
+        let day_end = input.day_end;
+        let is_day_end = day_end.is_some();
+        let manual_day_end = day_end.as_ref().is_some_and(|data| !data.emit_boundary);
         for (group, rows) in input.accounts.iter().enumerate() {
             let mut seen = BTreeSet::new();
             for (local, raw) in rows.iter() {
@@ -178,7 +238,33 @@ impl GameSession {
                             .ok_or_else(|| {
                                 format!("首买 candidate 缺价格：account={id:?} stock={code:?}")
                             })?;
-                        hold_inits.push((global, id, code, entry));
+                        let closing_buy = day_end.as_ref().is_some_and(|data| {
+                            data.closing_buy_vwap
+                                .contains_key(&(group as _, *local, stock as _))
+                        });
+                        // 组整态合并不能先抹掉旧镜像的活跃 entry，从而掩盖重复首买或时钟错误。
+                        if let Some(ledger) = self.state.retail_experience.get(&id) {
+                            let mut checked = ledger.clone();
+                            let price = Money::from_cents(entry.max(1));
+                            let moment = crate::experience::ExperienceMoment {
+                                civil_date: self.civil_date(),
+                                market_minute: if closing_buy {
+                                    (u64::from(self.day()) + 1)
+                                        * u64::from(
+                                            crate::observation::GAME_INTRADAY_MINUTES_PER_DAY,
+                                        )
+                                } else {
+                                    self.current_market_minute()
+                                },
+                                trading_day: u64::from(self.day()),
+                            };
+                            checked
+                                .initialize_holding_dated(&code, Some(price), price, moment)
+                                .map_err(|error| {
+                                    format!("首买经历初始化失败（旧镜像校验）：{id:?} {error:?}")
+                                })?;
+                        }
+                        hold_inits.push((global, id, code, entry, closing_buy));
                     }
                     positions.insert(
                         code,
@@ -208,7 +294,7 @@ impl GameSession {
                 });
             }
         }
-        for (global, id, code, entry) in hold_inits {
+        for (global, id, code, entry, closing_buy) in hold_inits {
             if !self.state.retail_experience.contains_key(&id) {
                 continue;
             }
@@ -230,11 +316,18 @@ impl GameSession {
                     price,
                     crate::experience::ExperienceMoment {
                         civil_date: self.civil_date(),
-                        market_minute: self.current_market_minute(),
+                        market_minute: if closing_buy {
+                            (u64::from(self.day()) + 1)
+                                * u64::from(crate::observation::GAME_INTRADAY_MINUTES_PER_DAY)
+                        } else {
+                            self.current_market_minute()
+                        },
                         trading_day: u64::from(self.day()),
                     },
                 )
-                .map_err(|error| format!("首买经历 candidate 失败：{id:?} {error:?}"))?;
+                .map_err(|error| {
+                    format!("首买经历初始化失败（私有 candidate）：{id:?} {error:?}")
+                })?;
         }
         for (global, id) in input.touched {
             if !personals.contains_key(&id) {
@@ -270,6 +363,13 @@ impl GameSession {
             value.price_memory = participant.price_memory().clone();
         }
         let mut markets = self.state.markets.clone();
+        if is_static {
+            for market in markets.values_mut() {
+                for order in market.resting_orders() {
+                    market.cancel(order.id).map_err(|error| format!("静点旧簿私有清理失败：{error:?}"))?;
+                }
+            }
+        }
         let mut histories = self.state.price_history.clone();
         let mut minutes = self.state.market_minute_closes.clone();
         let mut minute_bars = self.state.market_minute_bars.clone();
@@ -286,14 +386,10 @@ impl GameSession {
             ));
         }
         let candle_time = self.candle_date_time_for_runtime();
+        if !is_static {
         for (index, view) in driver.world_public_views().iter().enumerate() {
             let code = StockId(index as u32);
-            let clock = input
-                .calendar
-                .before_projection()
-                .stock(code)
-                .map_err(|error| error.to_string())?;
-            if clock.date_session_ordinal().is_none() {
+            if !input.calendar.stock_is_open(code)? {
                 continue;
             }
             let market = markets
@@ -377,24 +473,24 @@ impl GameSession {
                 }
             }
         }
-        let mut attention = Vec::new();
-        for (group, rows) in driver.collect_attention()? {
-            for (local, due, seed) in rows {
-                let Some(id) = driver.account_by_owner((group, local)) else {
-                    return Err(format!(
-                        "调度 candidate owner 不在真实名册：group={group} local={local}"
-                    ));
-                };
-                attention.push((id, due, seed));
-            }
         }
-        let (facts, id_map) = driver.resting_snapshot_for_session()?;
+        let (attention, facts, id_map, serials, static_markets) = if let Some(read) = static_read {
+            (read.attention, read.resting, std::sync::Arc::new(driver.id_map.clone()), read.serials, Some(read.market_views))
+        } else {
+            let attention = driver.sync_attention_for_projection()?;
+            let (facts, ids) = driver.resting_snapshot_for_prepared(is_day_end)?;
+            (attention, facts, ids, driver.desk_next_serials().to_vec(), None)
+        };
         let mut mirrors = BTreeMap::new();
         for (index, rows) in facts.iter().enumerate() {
             let view = driver
                 .world_public_views()
                 .get(index)
                 .ok_or_else(|| format!("簿 candidate 缺股票行情：{index}"))?;
+            let (last_price, public_cutoff_serial) = match &static_markets {
+                Some(rows) => *rows.get(index).ok_or_else(|| format!("静点缺行情及截点种子：{index}"))?,
+                None => (view.last_price, view.public_cutoff_serial),
+            };
             let mut orders = Vec::new();
             for fact in rows.iter() {
                 let account = driver
@@ -414,10 +510,9 @@ impl GameSession {
                 StockId(index as u32),
                 DeskBookMirror {
                     orders,
-                    last_price: Money::from_cents(view.last_price),
-                    public_cutoff_serial: view.public_cutoff_serial,
-                    next_serial: *driver
-                        .desk_next_serials()
+                    last_price: Money::from_cents(last_price),
+                    public_cutoff_serial,
+                    next_serial: *serials
                         .get(index)
                         .ok_or_else(|| format!("簿 candidate 缺游标：{index}"))?,
                 },
@@ -456,8 +551,38 @@ impl GameSession {
             );
             history.push(pending.confirmation.clone());
         }
+        let mut closed = BTreeMap::new();
+        let mut candle_book = self.state.candle_book.clone();
+        candle_book.replace_active(active.clone());
+        let day = day_end.as_ref().map_or(self.day(), |data| data.market_day);
+        let retained = if let Some(data) = &day_end {
+            for (code, candle) in &data.candles {
+                active.insert(*code, candle.clone());
+            }
+            candle_book.replace_active(active.clone());
+            closed = candle_book.commit_active();
+            let retained = self.assemble_retained_from_prepared(
+                data.bars.clone(),
+                self.civil_date(),
+                &closed,
+                true,
+            )?;
+            driver.publish_prepared_retained(std::sync::Arc::clone(&retained));
+            source = driver.mirror_source();
+            for values in minutes.values_mut() {
+                values.clear();
+            }
+            for values in minute_bars.values_mut() {
+                values.clear();
+            }
+            Some(retained)
+        } else {
+            None
+        };
         let mut events = input.events;
-        if input.calendar.phase_before() == TradingPhase::Continuous {
+        if input.emit_price_tick
+            && input.calendar.market_phase_before() == Some(TradingPhase::Continuous)
+        {
             let views: Vec<_> = driver
                 .world_public_views()
                 .iter()
@@ -471,17 +596,10 @@ impl GameSession {
                 .collect();
             for (index, (last_price, bids, asks)) in views.into_iter().enumerate() {
                 let code = StockId(index as u32);
-                if input
-                    .calendar
-                    .before_projection()
-                    .stock(code)
-                    .map_err(|error| error.to_string())?
-                    .date_session_ordinal()
-                    .is_none()
-                {
+                if !input.calendar.stock_is_open(code)? {
                     continue;
                 }
-                let candle = active
+                let candle = if is_day_end { &closed } else { &active }
                     .get(&code)
                     .cloned()
                     .ok_or_else(|| format!("连续行情 candidate 缺活动 K：{code:?}"))?;
@@ -502,6 +620,19 @@ impl GameSession {
                         .collect(),
                 });
             }
+        }
+        if let Some(data) = day_end {
+            events.extend(data.closing_events);
+            if data.emit_boundary {
+                let seq = driver.take_event_seq();
+                events.push(Event::DayBoundary {
+                    seq,
+                    day,
+                    closed_daily_candles: closed,
+                });
+            }
+            driver.collect_drained_lifecycle_after_boundary();
+            events.extend(driver.take_drained_events());
         }
         let seq = driver.next_seq();
         let phase = self.phase_at_tick(tick);
@@ -594,12 +725,12 @@ impl GameSession {
         let snapshot = Snapshot {
             tick,
             seq,
-            day: self.day(),
+            day,
             phase,
             markets: market_snaps,
             accounts: account_snaps,
             daily_candles: BTreeMap::new(),
-            active_daily_candles: active.clone(),
+            active_daily_candles: candle_book.active().clone(),
         };
         let runtime = GameSession::public_runtime_from_prepared(
             &snapshot,
@@ -607,15 +738,26 @@ impl GameSession {
         )
         .map_err(|error| error.to_string())?;
         let projection = protocol::PreparedTickProjection { snapshot, runtime };
-        let retail_decisions = driver
-            .collect_retail_traces()
-            .map_err(|error| format!("零售决策 candidate 收集失败：{error:?}"))?
-            .into_iter()
-            .flatten()
-            .collect();
-        let (retail_facts, retail_rejections) = driver.take_retail_facts();
+        let retail_decisions = if is_static {
+            self.state.last_retail_decisions.clone()
+        } else if manual_day_end {
+            Vec::new()
+        } else {
+            driver.collect_retail_traces()
+                .map_err(|error| format!("零售决策 candidate 收集失败：{error:?}"))?
+                .into_iter().flatten().collect()
+        };
+        let (mut retail_facts, retail_rejections) = if is_static || manual_day_end {
+            (Vec::new(), Vec::new())
+        } else {
+            driver.pending_retail_facts()
+        };
+        if is_day_end {
+            retail_facts.extend(driver.drained_retail_facts());
+        }
         let mut retail_candidate = super::retail_lifecycle::Candidate {
-            events: Vec::new(), decisions: retail_decisions,
+            events: if is_static { self.state.last_retail_order_events.clone() } else { Vec::new() },
+            decisions: retail_decisions,
         };
         self.append_runtime_retail_facts_at(driver, &mut retail_candidate, retail_facts, tick)
             .map_err(|error| error.to_string())?;
@@ -645,7 +787,7 @@ impl GameSession {
         }
         for (id, due, seed) in attention {
             if let Some(state) = npc_attention.get_mut(&id) {
-                state.next_attention_candidate_tick = due.max(tick);
+                state.next_attention_candidate_tick = if is_static { due } else { due.max(tick) };
                 state.rng_state = seed;
             }
         }
@@ -663,27 +805,35 @@ impl GameSession {
             histories,
             minutes,
             minute_bars,
-            active,
+            candle_book,
+            day,
+            retained,
             npc_attention,
             beliefs,
             personal_history,
             retail,
             resting,
             mirrors,
-            serials: driver.desk_next_serials().to_vec(),
+            serials,
             receipts,
             receipt_watermark,
             tick,
             seq,
-            generation: published.generation,
+            source,
+            captured_domains,
+            install_sequence,
+            session_authority_epoch: self.runtime_authority_epoch,
+            is_handover: expected_authority_epoch != self.runtime_authority_epoch,
+            static_session_revision,
             projection,
             events,
             retail_decisions,
             retail_order_events,
+            npc_order_lifecycles: if is_static { self.state.npc_order_lifecycles.clone() } else { Vec::new() },
         })
     }
 
-    pub(in crate::session) fn install_runtime_mirror(
+    pub(crate) fn install_runtime_mirror(
         &mut self,
         driver: &mut RuntimeDriver,
         prepared: PreparedRuntimeMirror,
@@ -701,7 +851,13 @@ impl GameSession {
         self.state.price_history = prepared.histories;
         self.state.market_minute_closes = prepared.minutes;
         self.state.market_minute_bars = prepared.minute_bars;
-        self.state.candle_book.replace_active(prepared.active);
+        self.state.candle_book = prepared.candle_book;
+        self.state.day = prepared.day;
+        if let Some(retained) = prepared.retained {
+            self.state
+                .retained_market_days
+                .push(crate::runtime::publication::SharedRetainedDay(retained));
+        }
         self.state.npc_attention = prepared.npc_attention;
         self.state.belief_participants = prepared.beliefs;
         self.state.history_reads = prepared.personal_history;
@@ -716,7 +872,7 @@ impl GameSession {
                 .insert(account, history);
         }
         self.state.receipt_watermark = prepared.receipt_watermark;
-        self.state.npc_order_lifecycles = Vec::new();
+        self.state.npc_order_lifecycles = prepared.npc_order_lifecycles;
         self.state.last_retail_decisions = prepared.retail_decisions;
         self.state.last_retail_order_events = prepared.retail_order_events;
         #[cfg(feature = "simulation-diagnostics")]
@@ -725,28 +881,169 @@ impl GameSession {
         }
         self.state.tick = prepared.tick;
         self.state.seq = prepared.seq;
+        self.runtime_mirror_install_sequence = prepared.install_sequence;
         driver.finish_mirror_install(count);
         prepared.events
     }
 
-    pub(in crate::session) fn validate_runtime_mirror_source(
+    pub(crate) fn validate_runtime_mirror_source(
         &self,
         driver: &RuntimeDriver,
         prepared: &PreparedRuntimeMirror,
-    ) -> Result<(), StepFatal> {
-        let source = driver.publication().load();
-        if source.tick != prepared.tick
-            || source.generation != prepared.generation
-            || driver.world_committed_tick() != prepared.tick
+    ) -> Result<crate::runtime::source::PreparedMirrorAck, StepFatal> {
+        let expected_sequence = self
+            .runtime_mirror_install_sequence
+            .checked_add(1)
+            .ok_or_else(|| StepFatal::InvariantViolation {
+                location: "runtime_mirror::install_sequence".to_owned(),
+                description: "镜像 install_sequence 已耗尽，拒绝旧 candidate 安装".to_owned(),
+            })?;
+        if prepared.install_sequence != expected_sequence {
+            return Err(StepFatal::InvariantViolation {
+                location: "runtime_mirror::install_sequence".to_owned(),
+                description: format!(
+                    "镜像 candidate 安装序号已过期：prepared={} expected={expected_sequence}",
+                    prepared.install_sequence
+                ),
+            });
+        }
+        let source = driver.mirror_source();
+        let valid_authority = if prepared.is_handover {
+            self.runtime_authority_epoch.checked_add(1) == Some(source.authority_epoch)
+        } else {
+            source.authority_epoch == self.runtime_authority_epoch
+        };
+        if source != prepared.source || !valid_authority
+            || prepared.static_session_revision.is_some_and(|revision| revision != self.external_revision())
+            || prepared.session_authority_epoch != self.runtime_authority_epoch
         {
             return Err(StepFatal::InvariantViolation {
                 location: "runtime_mirror::source".to_owned(),
                 description: format!(
                     "镜像 candidate 静点来源已改变：prepared=({}, {}) current=({}, {})",
-                    prepared.tick, prepared.generation, source.tick, source.generation
+                    prepared.source.tick,
+                    prepared.source.generation,
+                    source.tick,
+                    source.generation
                 ),
             });
         }
-        Ok(())
+        driver
+            .prepare_mirror_ack(prepared.source, prepared.captured_domains)
+            .map_err(|description| StepFatal::InvariantViolation {
+                location: "runtime_mirror::source_ack".to_owned(),
+                description,
+            })
+    }
+}
+
+#[cfg(test)]
+impl PreparedRuntimeMirror {
+    pub(in crate::session) fn retail_order_events_for_test(&self) -> &[RetailOrderDiagnosticEvent] {
+        &self.retail_order_events
+    }
+
+    pub(in crate::session) fn prepared_values_for_test(&self) -> String {
+        format!(
+            "{:?}",
+            (
+                (
+                    &self.projection.snapshot,
+                    &self.npc_attention,
+                    &self.beliefs,
+                    &self.personal_history,
+                    &self.retail,
+                    &self.plans,
+                    &self.markets
+                ),
+                (
+                    &self.histories,
+                    &self.minutes,
+                    &self.minute_bars,
+                    &self.receipts,
+                    self.receipt_watermark,
+                    self.source,
+                    self.captured_domains
+                ),
+            )
+        )
+    }
+}
+
+#[cfg(test)]
+mod source_tests {
+    use super::*;
+
+    #[test]
+    fn each_private_source_component_and_pending_mask_is_checked_before_swap() {
+        let mut setup = super::super::npc_working_quote_tests::quote_setup(0);
+        setup.start_date = crate::calendar::CivilDate::from_ymd(2026, 1, 5).unwrap();
+        setup.ticks_per_day = 8;
+        setup.auction_ticks = 3;
+        setup.closing_auction_ticks = 0;
+        let mut game = GameSession::new(setup, 42).unwrap();
+        let mut driver = RuntimeDriver::from_session(&mut game).unwrap();
+        driver.adopt_session_seq(&game);
+        let input = driver.prepare_driver_step(&game).unwrap();
+        let current = driver.mirror_source();
+        let mut sources = vec![current; 7];
+        sources[0].authority_epoch += 1;
+        sources[1].tick += 1;
+        sources[2].day += 1;
+        sources[3].generation += 1;
+        sources[4].day_end_stage = crate::runtime::source::MirrorDayEndStage::DayEndCommitted;
+        sources[5].non_tick_revision += 1;
+        sources[6].civil_date = crate::calendar::CivilDate::from_ymd(2026, 1, 6).unwrap();
+        let pending = driver.pending_mirror_domains();
+        let before = serde_json::to_value(game.snapshot_inner(true, true)).unwrap();
+        for source in sources {
+            let mut candidate = game
+                .prepare_runtime_mirror(&mut driver, input.clone(), 1)
+                .unwrap();
+            candidate.source = source;
+            assert!(
+                game.validate_runtime_mirror_source(&driver, &candidate)
+                    .is_err(),
+                "来源字段负控应拒绝：{source:?}"
+            );
+            assert_eq!(driver.pending_mirror_domains(), pending);
+            assert_eq!(game.runtime_mirror_install_sequence, 0);
+            assert_eq!(driver.account_writes_for_test(), 0);
+            assert_eq!(
+                serde_json::to_value(game.snapshot_inner(true, true)).unwrap(),
+                before
+            );
+        }
+        let mut candidate = game.prepare_runtime_mirror(&mut driver, input, 1).unwrap();
+        candidate.captured_domains.personal_full = true;
+        assert!(
+            game.validate_runtime_mirror_source(&driver, &candidate)
+                .is_err(),
+            "域掩码也必须精确匹配"
+        );
+        assert_eq!(driver.pending_mirror_domains(), pending);
+    }
+
+    #[test]
+    fn exhausted_install_sequence_rejects_before_swap_without_ack() {
+        let mut setup = super::super::npc_working_quote_tests::quote_setup(0);
+        setup.ticks_per_day = 8;
+        setup.auction_ticks = 3;
+        setup.closing_auction_ticks = 0;
+        let mut game = GameSession::new(setup, 42).unwrap();
+        let mut driver = RuntimeDriver::from_session(&mut game).unwrap();
+        let input = driver.prepare_driver_step(&game).unwrap();
+        let candidate = game.prepare_runtime_mirror(&mut driver, input, 1).unwrap();
+        let pending = driver.pending_mirror_domains();
+        game.runtime_mirror_install_sequence = u64::MAX;
+        let fatal = game
+            .validate_runtime_mirror_source(&driver, &candidate)
+            .err()
+            .expect("耗尽必须类型化拒绝");
+        assert!(fatal.to_string().contains("install_sequence"));
+        assert_eq!(driver.pending_mirror_domains(), pending);
+        assert_eq!(driver.account_writes_for_test(), 0);
+        assert_eq!(game.tick(), 0);
+        assert_eq!(game.runtime_mirror_install_sequence, u64::MAX);
     }
 }

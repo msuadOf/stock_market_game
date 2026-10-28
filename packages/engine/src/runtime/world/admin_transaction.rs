@@ -248,6 +248,19 @@ impl World {
                     })
                 }
             };
+        let domains = candidate.groups.iter().fold(crate::runtime::source::MirrorDomains::default(), |all, group| all.union(group.mirror_domains));
+        let next_revision = if domains.is_empty() {
+            self.non_tick_revision
+        } else {
+            match self.non_tick_revision.checked_add(1) {
+                Some(revision) => revision,
+                None => {
+                    let error = invalid("非 tick 成功来源游标已耗尽，拒绝首个 commit");
+                    self.abort_admin_preserving_error(id, expected, &error)?;
+                    return Err(AdminFailure { error, payload: None, terminal: false, committing: false });
+                }
+            }
+        };
         if !expected.is_empty() {
             // 首个 commit 发送前关窗；任何部分提交失败均不可复用 world。
             self.day_end_prior_public_views = None;
@@ -257,6 +270,8 @@ impl World {
                     failure
                 })?;
         }
+        self.non_tick_revision = next_revision;
+        self.pending_mirror_domains = self.pending_mirror_domains.union(domains);
         Ok(value)
     }
 
@@ -567,6 +582,71 @@ mod tests {
     fn credit() -> Vec<(GroupIdx, Vec<AdminOperation>)> {
         vec![(0, vec![dividend(0, 101)]), (1, vec![dividend(1, 202)])]
     }
+
+    #[test]
+    fn successful_non_tick_writes_advance_source_without_published_tick() {
+        let mut world = World::spawn(
+            spec(),
+            crate::calendar::TradingCalendar::current_default_calendar()
+                .expect("显式 raw Calendar 政策合法"),
+        ).unwrap();
+        let initial = world.mirror_source();
+        for revision in 1..=2 {
+            world.with_admin_transaction(credit(), |_| Ok(())).unwrap();
+            let source = world.mirror_source();
+            assert_eq!((source.tick, source.generation), (initial.tick, initial.generation));
+            assert_eq!(source.non_tick_revision, revision,
+                "成功 Admin 不是 attempt id；同 tick 连续写必须有独立成功来源");
+            assert!(world.pending_mirror_domains().accounts_full);
+        }
+        let source = world.mirror_source();
+        let pending = world.pending_mirror_domains();
+        let rejected = world.with_admin_transaction(credit(), |_| Err::<(), _>(invalid("纯 inspect 业务拒绝")));
+        assert!(rejected.is_err());
+        assert_eq!(world.mirror_source(), source, "失败不推进成功来源");
+        assert_eq!(world.pending_mirror_domains(), pending, "失败不清旧 dirty 原因");
+        world.shutdown().unwrap();
+    }
+
+    #[test]
+    fn non_tick_revision_exhaustion_rejects_before_first_commit() {
+        let mut world = World::spawn(
+            spec(),
+            crate::calendar::TradingCalendar::current_default_calendar()
+                .expect("显式 raw Calendar 政策合法"),
+        ).unwrap();
+        world.non_tick_revision = u64::MAX;
+        let before = accounts(&mut world);
+        let source = world.mirror_source();
+        let pending = world.pending_mirror_domains();
+        let rejected = world.with_admin_transaction(credit(), |_| Ok(()));
+        assert!(rejected.is_err(), "耗尽必须在首个不可撤 commit 前拒绝");
+        assert_eq!(accounts(&mut world), before, "不得先 commit 后发现来源游标耗尽");
+        assert_eq!(world.mirror_source(), source);
+        assert_eq!(world.pending_mirror_domains(), pending);
+        world.shutdown().unwrap();
+    }
+    #[test]
+    fn defer_due_revision_exhaustion_rejects_before_send() {
+        let mut world = World::spawn(
+            spec(),
+            crate::calendar::TradingCalendar::current_default_calendar()
+                .expect("显式 raw Calendar 政策合法"),
+        ).unwrap();
+        world.non_tick_revision = u64::MAX;
+        let source = world.mirror_source();
+        let pending = world.pending_mirror_domains();
+        let before = accounts(&mut world);
+        let rejected = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            world.defer_due_group_for_test(0, vec![0], 99);
+        }));
+        assert!(rejected.is_err(), "耗尽必须在发送测试控制消息前显式拒绝");
+        assert_eq!(world.mirror_source(), source);
+        assert_eq!(world.pending_mirror_domains(), pending);
+        assert_eq!(accounts(&mut world), before);
+        world.shutdown().unwrap();
+    }
+
     fn accounts(w: &mut World) -> Vec<Vec<GroupAccount>> {
         for tx in &w.group_txs {
             tx.send(GroupIn::EchoAccounts).unwrap();

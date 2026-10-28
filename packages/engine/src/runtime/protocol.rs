@@ -608,6 +608,7 @@ pub enum InformationPrepareError {
 /// 组端账户候选；locals 递增且只含本事务触达账户。
 #[derive(Clone, Debug)]
 pub struct AdminGroupCandidate {
+    pub(crate) mirror_domains: super::source::MirrorDomains,
     pub information: Option<PreparedInformationResult>,
     pub group: GroupIdx,
     pub accounts: Vec<(LocalIdx, std::sync::Arc<super::group::GroupAccount>)>,
@@ -703,6 +704,8 @@ pub enum GroupIn {
     EchoObservations,
     /// 信念个人态读面（D3a-2b：构造投影同源校验/后续驱动面）。
     EchoBelief,
+    /// 已验证静点的完整个人态读取；不消费 dirty/pending。
+    EchoPersonalFull { source: super::source::WorldMirrorSource },
     /// 信息投递（Belief-1b·下：稀疏——仅披露 tick 下行。携带库 Arc
     /// 刷新+per-NPC 注意力**镜像快照**（candidate 域=组权威值，见
     /// 设计注记）+issuer/spec 快照+时刻。组内纯函数推进，上行仅
@@ -1085,6 +1088,11 @@ pub enum UpMsg {
         /// 逐组内下标的更新后注意力态。
         updates: Vec<(LocalIdx, crate::session::NpcAttentionState)>,
     },
+    GroupPersonalFull {
+        group: GroupIdx,
+        source: super::source::WorldMirrorSource,
+        slots: Vec<(LocalIdx, crate::AccountId, Option<super::world::BeliefParticipantSnapshot>)>,
+    },
     /// 信念个人态回执（EchoBelief 应答）。P2-2a：**稀疏上行**——只含
     /// 本 tick dirty（生产演进面触碰）且在册的条目 `(组内下标, 快照)`；
     /// 驱动器侧增量维护全量缓存（collect_belief 读面语义不变）。省组端
@@ -1247,6 +1255,9 @@ impl std::fmt::Debug for UpMsg {
             }
             UpMsg::GroupBelief { group, states } => {
                 write!(f, "GroupBelief(group={group}, n={})", states.len())
+            }
+            UpMsg::GroupPersonalFull { group, slots, .. } => {
+                write!(f, "GroupPersonalFull(group={group}, n={})", slots.len())
             }
             UpMsg::GroupDeliveryDone { group, updates } => {
                 write!(f, "GroupDeliveryDone(group={group}, n={})", updates.len())
