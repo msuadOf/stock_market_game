@@ -888,6 +888,8 @@ pub struct GroupState {
     round_decision_traces: Vec<super::diagnostics::GroupDecisionTrace>,
     #[cfg(feature = "simulation-diagnostics")]
     quote_trace_constraints: Vec<String>,
+    #[cfg(feature = "simulation-diagnostics")]
+    quote_causal_budget: Option<crate::diagnostics::causal::CausalFactKind>,
     /// 翻转批组参数化：本组在全局名 roster 的偏移（RootProjection 的
     /// per-local 向量按全局序——组内 local 访问需加偏移；单组=0）。
     pub(crate) roster_offset: usize,
@@ -1103,6 +1105,8 @@ impl GroupState {
             round_decision_traces: Vec::new(),
             #[cfg(feature = "simulation-diagnostics")]
             quote_trace_constraints: Vec::new(),
+            #[cfg(feature = "simulation-diagnostics")]
+            quote_causal_budget: None,
             roster_offset: 0,
             attention_evolved: Vec::new(),
             #[cfg(test)]
@@ -1353,6 +1357,7 @@ impl GroupState {
         {
             self.round_decision_traces.clear();
             self.quote_trace_constraints.clear();
+            self.quote_causal_budget = None;
         }
         self.cur_tick = self.committed_tick;
         self.cur_round = 0;
@@ -2700,6 +2705,12 @@ impl GroupState {
             });
         };
         let profile = &profiles[local as usize];
+        #[cfg(feature = "simulation-diagnostics")]
+        if profile.strategy.kind != crate::AccountKind::Retail || snapshot.tick != tick {
+            return Err(RuntimeError::ProtocolInvariant {
+                detail: format!("Retail 观察来源 kind/tick 错配：account={account:?} kind={:?} snapshot={} tick={tick}", profile.strategy.kind, snapshot.tick),
+            });
+        }
         let Some(retail_style) = profile.retail_style else {
             return Err(RuntimeError::ProtocolInvariant {
                 detail: format!("组 {group} retail 位 {local} 缺零售风格投影"),
@@ -2829,7 +2840,7 @@ impl GroupState {
             information: snap.information,
             belief: snap.belief,
         };
-        let assessments = crate::GameSession::observe_retail_analysis_core(
+        let (assessments, mut _diagnostics) = crate::GameSession::observe_retail_analysis_core(
             &ctx,
             &self.plan_book,
             &experience,
@@ -2978,6 +2989,22 @@ impl GroupState {
                 ops.push(op);
             }
         }
+        #[cfg(feature = "simulation-diagnostics")]
+        {
+            let causal_facts = _diagnostics.take_runtime_facts();
+            let mut record = _diagnostics.into_runtime_trace(
+                account, tick, &personal.belief, Vec::new(), Vec::new(), Vec::new(),
+            );
+            // 分析候选与真实行为选股都属于本次检查；不能扩为未检查的全市场。
+            record.codes.extend(reviewed_stocks.iter().copied());
+            record.codes.extend(ops.iter().map(|op| crate::StockId(u32::from(op.stock))));
+            record.codes.sort_unstable();
+            record.codes.dedup();
+            self.round_decision_traces.push(super::diagnostics::GroupDecisionTrace {
+                owner: (group, local), kind: crate::AccountKind::Retail,
+                record: Arc::new(record), causal_facts, plan_before: Default::default(),
+            });
+        }
         // 组态写回（个人态六件+经验行）。P2-3d：undo 已在 take 时记录；
         /// 写回字段自 personal move（personal 此后无消费——六件 clone 归零）。
         if let Some(slot) = self.belief_states.get_mut(local as usize) {
@@ -3012,7 +3039,7 @@ impl GroupState {
     ) -> Result<
         (
             super::world::OpenDerivationRecord,
-            Vec<super::decision::PendingOp>,
+            Vec<(crate::PlanId, super::decision::PendingOp)>,
             Vec<(LocalIdx, StockIdx, u64)>,
         ),
         RuntimeError,
@@ -3079,7 +3106,7 @@ impl GroupState {
         let personal_in = personal.clone();
         #[cfg(feature = "simulation-diagnostics")]
         let trace_before = write_back.then(|| crate::session::plan_trace_states(account, &self.plan_book));
-        let (_account, out, operations, _diagnostics) =
+        let (_account, out, operations, mut _diagnostics) =
             crate::session::InstitutionDecisionRoot::new(account, personal)
                 .observe(&context, &observation);
         let mut assessments_map = operations
@@ -3388,7 +3415,10 @@ impl GroupState {
         // 循环之前，见上方 Sol 二审修复集 1 注记）。
         let (child_ops, chain_cancels) = if write_back {
             #[cfg(feature = "simulation-diagnostics")]
-            self.quote_trace_constraints.clear();
+            {
+                self.quote_trace_constraints.clear();
+                self.quote_causal_budget = None;
+            }
             self.chain_quote_children(
                 local,
                 account,
@@ -3409,9 +3439,11 @@ impl GroupState {
         if write_back {
             #[cfg(feature = "simulation-diagnostics")]
             {
-                if snapshot.tick != tick {
+                let kind = self.decision.as_ref().and_then(|(profiles, _)| profiles.get(local as usize))
+                    .map(|profile| profile.strategy.kind);
+                if snapshot.tick != tick || kind != Some(crate::AccountKind::Inst) {
                     return Err(RuntimeError::ProtocolInvariant {
-                        detail: format!("机构 trace snapshot tick 错配：{} != {tick}", snapshot.tick),
+                        detail: format!("机构 trace kind/snapshot tick 错配：kind={kind:?} snapshot={} tick={tick}", snapshot.tick),
                     });
                 }
                 let before = trace_before.expect("真实 write_back 已取本账户计划基线");
@@ -3419,12 +3451,17 @@ impl GroupState {
                 for plan_id in before.keys() {
                     if !ids.contains(plan_id) { ids.push(*plan_id); }
                 }
+                let mut causal_facts = _diagnostics.take_runtime_facts();
+                if let Some(budget) = self.quote_causal_budget.take() {
+                    causal_facts.push(budget);
+                }
                 let record = _diagnostics.into_runtime_trace(
                     account, tick, &out.belief, ids, Vec::new(),
                     std::mem::take(&mut self.quote_trace_constraints),
                 );
                 self.round_decision_traces.push(super::diagnostics::GroupDecisionTrace {
-                    owner: (group, local), record: Arc::new(record), plan_before: before,
+                    owner: (group, local), kind: crate::AccountKind::Inst,
+                    record: Arc::new(record), causal_facts, plan_before: before,
                 });
             }
             self.push_undo(GroupUndo::Personal {
@@ -3662,7 +3699,7 @@ impl GroupState {
         personal: &crate::session::PlanPersonalState,
         snapshot: &std::sync::Arc<TickSnapshot>,
         existing_before: &[crate::plans::PlanId],
-    ) -> Result<(Vec<super::decision::PendingOp>, Vec<(LocalIdx, StockIdx, u64)>), RuntimeError>
+    ) -> Result<(Vec<(crate::PlanId, super::decision::PendingOp)>, Vec<(LocalIdx, StockIdx, u64)>), RuntimeError>
     {
         let group = self.group;
         let mut ops = Vec::new();
@@ -3814,6 +3851,11 @@ impl GroupState {
         };
         #[cfg(feature = "simulation-diagnostics")]
         if let Some(allocation) = &grants {
+            self.quote_causal_budget = Some(crate::diagnostics::causal::CausalFactKind::Budget {
+                account,
+                available_cents: allocation.available_cash.cents(),
+                allocated_cents: allocation.grants.iter().map(|grant| grant.allocated_cash.cents()).collect(),
+            });
             self.quote_trace_constraints.extend(allocation.grants.iter().filter_map(|grant| {
                 grant.constraint.map(|constraint| format!("{:?}: {constraint:?}", grant.plan_id))
             }));
@@ -4089,14 +4131,14 @@ impl GroupState {
                 .unwrap_or_else(|error| {
                     panic!("组内执行腿登记失败 {account:?} {code:?}: {error}")
                 });
-            ops.push(super::decision::PendingOp {
+            ops.push((plan_id, super::decision::PendingOp {
                 local,
                 stock,
                 side,
                 routed: RoutedPrice::Fixed(price.cents()),
                 purse_reference: price.cents(),
                 qty,
-            });
+            }));
         }
         Ok((ops, cancels))
     }
@@ -4111,9 +4153,15 @@ impl GroupState {
     ) -> Result<(), RuntimeError> {
         #[cfg(feature = "simulation-diagnostics")]
         self.round_decision_traces.clear();
+        #[cfg(feature = "simulation-diagnostics")]
+        let group = self.group;
         // 决策来源：内联 decide_data（批 4）或测试脚本。
         enum Pending {
             Op(PendingOp),
+            #[cfg(feature = "simulation-diagnostics")]
+            InstitutionOp(crate::PlanId, PendingOp),
+            #[cfg(feature = "simulation-diagnostics")]
+            ObservedNpcOp { kind: crate::AccountKind, observed_tick: u64, op: PendingOp },
             #[cfg(feature = "simulation-diagnostics")]
             ExternalOp(PendingOp),
             CancelAll {
@@ -4308,7 +4356,40 @@ impl GroupState {
                             );
                             cancel_intents_skipped += cancels as u64;
                             self.cancel_intents_total += cancels as u64;
+                            #[cfg(feature = "simulation-diagnostics")]
+                            let observed_kind = if profiles[local as usize].strategy.kind == crate::AccountKind::Hot {
+                                if let Some(projection) = self.root_projection.as_ref() {
+                                    let account = projection.account_ids.get(self.roster_offset + local as usize)
+                                        .copied().ok_or_else(|| RuntimeError::ProtocolInvariant {
+                                            detail: format!("Hot 观察缺真实名册：group={group} local={local}"),
+                                        })?;
+                                    if snapshot.tick != tick {
+                                        return Err(RuntimeError::ProtocolInvariant {
+                                            detail: format!("Hot 观察 snapshot tick 错配：{} != {tick}", snapshot.tick),
+                                        });
+                                    }
+                                    self.round_decision_traces.push(super::diagnostics::GroupDecisionTrace {
+                                        owner: (group, local), kind: crate::AccountKind::Hot,
+                                        record: Arc::new(crate::diagnostics::NpcDecisionTraceRecord {
+                                            account, tick, source_report_ids: Vec::new(), expectation_method: None,
+                                            plan_ids: Vec::new(), plan_changes: Vec::new(), budget_constraints: Vec::new(),
+                                            order_ids: Vec::new(), codes: shared_market.stocks.keys().copied().collect(),
+                                        }),
+                                        causal_facts: vec![crate::diagnostics::causal::CausalFactKind::Decision { account }],
+                                        plan_before: Default::default(),
+                                    });
+                                    Some(crate::AccountKind::Hot)
+                                } else {
+                                    // 孤立协议 fixture 没有 Session 名册，不能补造来源身份。
+                                    None
+                                }
+                            } else { None };
                             for op in ops {
+                                #[cfg(feature = "simulation-diagnostics")]
+                                if let Some(kind) = observed_kind {
+                                    pendings.push(Pending::ObservedNpcOp { kind, observed_tick: tick, op });
+                                    continue;
+                                }
                                 pendings.push(Pending::Op(op));
                             }
                         }
@@ -4322,7 +4403,10 @@ impl GroupState {
                 for local in chain_due {
                     let (_record, child_ops, cancels) =
                         self.run_chain_decision(local, tick, true)?;
-                    for op in child_ops {
+                    for (_plan, op) in child_ops {
+                        #[cfg(feature = "simulation-diagnostics")]
+                        pendings.push(Pending::InstitutionOp(_plan, op));
+                        #[cfg(not(feature = "simulation-diagnostics"))]
                         pendings.push(Pending::Op(op));
                     }
                     chain_cancels.extend(cancels);
@@ -4378,6 +4462,9 @@ impl GroupState {
                             &behavior,
                         )?;
                         for op in ops {
+                            #[cfg(feature = "simulation-diagnostics")]
+                            pendings.push(Pending::ObservedNpcOp { kind: crate::AccountKind::Retail, observed_tick: tick, op });
+                            #[cfg(not(feature = "simulation-diagnostics"))]
                             pendings.push(Pending::Op(op));
                         }
                     }
@@ -4457,7 +4544,7 @@ impl GroupState {
                 owner: (group, local),
                 order: (stock, serial),
                 #[cfg(feature = "simulation-diagnostics")]
-                source: super::diagnostics::OperationSource::NonPlayerUnresolved,
+                source: super::diagnostics::OperationSource::InstitutionCancel,
             });
         }
         let mut external_cancel_buffer: Vec<(LocalIdx, super::StockIdx, u64)> = external_cancels;
@@ -4492,12 +4579,20 @@ impl GroupState {
             let p = match pending {
                 Pending::Op(op) => *op,
                 #[cfg(feature = "simulation-diagnostics")]
-                Pending::ExternalOp(op) => *op,
+                Pending::ExternalOp(op) | Pending::InstitutionOp(_, op) => *op,
+                #[cfg(feature = "simulation-diagnostics")]
+                Pending::ObservedNpcOp { op, .. } => *op,
                 _ => continue,
             };
             #[cfg(feature = "simulation-diagnostics")]
             let source = match pending {
                 Pending::ExternalOp(_) => super::diagnostics::OperationSource::PlayerExternal,
+                Pending::InstitutionOp(plan, _) => super::diagnostics::OperationSource::InstitutionPlan {
+                    plan: *plan, observed_tick: tick,
+                },
+                Pending::ObservedNpcOp { kind, observed_tick, .. } => super::diagnostics::OperationSource::ObservedNpc {
+                    kind: *kind, observed_tick: *observed_tick,
+                },
                 _ => super::diagnostics::OperationSource::NonPlayerUnresolved,
             };
             let owner = (group, p.local);
@@ -7592,9 +7687,9 @@ mod sol_recheck1_tests {
             .chain_quote_children(0, account, &projection, &personal(account), &snapshot, &[a])
             .expect("报价");
         assert!(
-            !ops.is_empty() && ops.iter().all(|op| op.stock == 0),
+            !ops.is_empty() && ops.iter().all(|(_, op)| op.stock == 0),
             "现金受限时既有计划（ExistingPlan 优先级 1）获预算挂出；NewOpportunity 让位（实际挂出 {:?}）",
-            ops.iter().map(|op| op.stock).collect::<Vec<_>>()
+            ops.iter().map(|(_, op)| op.stock).collect::<Vec<_>>()
         );
         // 错误输入（修复前行为）：existing=[A,B]——同轮新开 B 同类平手，
         // 信心 9000>3000 抢先获预算 → 股 1 挂出、股 0 无子单。
@@ -7608,9 +7703,9 @@ mod sol_recheck1_tests {
             .chain_quote_children(0, account, &projection, &personal(account), &snapshot, &[a, b])
             .expect("报价");
         assert!(
-            !ops.is_empty() && ops.iter().all(|op| op.stock == 1),
+            !ops.is_empty() && ops.iter().all(|(_, op)| op.stock == 1),
             "同轮新开被归入 existing 时信心序抢占预算（NewOpportunity 不可达的旧形态——股 1 挂出 {:?}）",
-            ops.iter().map(|op| op.stock).collect::<Vec<_>>()
+            ops.iter().map(|(_, op)| op.stock).collect::<Vec<_>>()
         );
     }
 }

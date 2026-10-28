@@ -638,7 +638,7 @@ impl GameSession {
             self.poison_runtime_step(fatal)
         })?;
         #[cfg(feature = "simulation-diagnostics")]
-        let causal = self.prepare_runtime_causal_at(driver, causal_time, tick)
+        let causal = self.prepare_runtime_causal_at(driver, causal_time, tick, prepared.causal_plans())
             .map_err(|fatal| self.poison_runtime_step(fatal))?;
         #[cfg(test)]
         if let Some(fatal) = self.post_shadow_failure.take() {

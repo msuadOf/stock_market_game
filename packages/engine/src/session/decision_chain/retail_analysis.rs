@@ -183,6 +183,7 @@ impl GameSession {
             observation,
             thirty_minute_market,
         )
+        .map(|(assessments, _diagnostics)| assessments)
     }
 
     /// D5 #4：读视图 → 零售分析上下文（view 依赖面的一次性提取）。
@@ -228,7 +229,7 @@ impl GameSession {
         personal: &mut PlanPersonalState,
         observation: &DecisionChainObservation,
         thirty_minute_market: &crate::observation::EqualWeightMarketObservation,
-    ) -> Result<BTreeMap<StockId, CandidateAssessment>, StepFatal> {
+    ) -> Result<(BTreeMap<StockId, CandidateAssessment>, PlanRootDiagnostics), StepFatal> {
         let invariant = |description: String| StepFatal::InvariantViolation {
             description,
             location: "decision_chain::retail_analysis".to_owned(),
@@ -252,6 +253,8 @@ impl GameSession {
         }
         personal.watchlist.prune(&protected);
         let candidates = root_candidate_codes(id, &held, &personal.watchlist, &plans, discovered);
+        #[cfg(feature = "simulation-diagnostics")]
+        let mut causal_facts = vec![crate::diagnostics::causal::CausalFactKind::Decision { account: id }];
         let day = ctx.day;
         let mut reports: BTreeMap<StockId, PublicationId> = BTreeMap::new();
         let mut credit_defaults = Vec::new();
@@ -283,6 +286,18 @@ impl GameSession {
                     .information
                     .record_acquisition(id, ctx.library, report, observation.now)
                     .map_err(|error| invariant(error.to_string()))?;
+                #[cfg(feature = "simulation-diagnostics")]
+                {
+                    let published = ctx.library.report(report, observation.now)
+                        .map(|material| material.published_at)
+                        .or_else(|_| ctx.library.announcement(report, observation.now)
+                            .map(|material| material.published_at))
+                        .map_err(|error| invariant(format!("Retail 已获知材料缺公开原件：{report:?} {error}")))?;
+                    causal_facts.push(crate::diagnostics::causal::CausalFactKind::Acquisition {
+                        account: id, company: company.clone(), publication: u64::from(report.value()),
+                        published, acquired: observation.now,
+                    });
+                }
                 if let Ok(material) = ctx.library.report(report, observation.now) {
                     if matches!(
                         material.origin,
@@ -415,7 +430,15 @@ impl GameSession {
         }
         personal.watchlist.prune(&protected);
         personal.price_memory.prune(&protected);
-        Ok(assessments)
+        #[cfg(feature = "simulation-diagnostics")]
+        let diagnostics = PlanRootDiagnostics {
+            facts: causal_facts,
+            reports: reports.into_iter().collect(),
+            candidates,
+        };
+        #[cfg(not(feature = "simulation-diagnostics"))]
+        let diagnostics = PlanRootDiagnostics;
+        Ok((assessments, diagnostics))
     }
 
     fn retail_candidate_signals(

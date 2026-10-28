@@ -246,6 +246,10 @@ pub(crate) struct PlanRootDiagnostics {
 
 #[cfg(feature = "simulation-diagnostics")]
 impl PlanRootDiagnostics {
+    pub(crate) fn take_runtime_facts(&mut self) -> Vec<crate::diagnostics::causal::CausalFactKind> {
+        std::mem::take(&mut self.facts)
+    }
+
     /// 仅消费当次真实 observe；不从 Session 的旧个人态补报告或方法。
     pub(crate) fn into_runtime_trace(
         self,
@@ -1768,6 +1772,10 @@ mod chain_restructure_tests {
     include!("decision_chain/company_source_tests.rs");
     #[cfg(all(feature = "simulation-diagnostics", not(target_arch = "wasm32")))]
     include!("decision_chain/runtime_trace_tests.rs");
+    #[cfg(all(feature = "simulation-diagnostics", not(target_arch = "wasm32")))]
+    include!("decision_chain/runtime_causal_tests.rs");
+    #[cfg(all(feature = "simulation-diagnostics", not(target_arch = "wasm32")))]
+    include!("decision_chain/runtime_other_npc_causal_tests.rs");
     use crate::session::plan_continuation_domain::PlanContinuationDomain;
 
     #[cfg(feature = "simulation-diagnostics")]

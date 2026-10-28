@@ -42,6 +42,13 @@ pub(crate) struct PreparedRuntimeMirror {
     npc_order_lifecycles: Vec<NpcOrderLifecycle>,
 }
 
+#[cfg(feature = "simulation-diagnostics")]
+impl PreparedRuntimeMirror {
+    pub(in crate::session) fn causal_plans(&self) -> &crate::plans::PlanBook {
+        &self.plans
+    }
+}
+
 impl GameSession {
     /// 只准备本拍真实观察的共享根；失败时 Session prior 与 driver pending 均保留。
     #[cfg(feature = "simulation-diagnostics")]
@@ -59,13 +66,23 @@ impl GameSession {
             if raw.owner.1 as usize >= driver.accounts_per_group()
                 || driver.account_by_owner(raw.owner) != Some(record.account)
                 || record.tick != tick || !seen.insert(record.account)
-                || self.account(record.account).map(|account| account.kind()) != Some(AccountKind::Inst) {
-                return Err(format!("机构 trace candidate 来源错配：owner={:?} account={:?} tick={} expected={tick}", raw.owner, record.account, record.tick));
+                || !matches!(raw.kind, AccountKind::Inst | AccountKind::Retail | AccountKind::Hot)
+                || self.account(record.account).map(|account| account.kind()) != Some(raw.kind) {
+                return Err(format!("NPC trace candidate 来源错配：owner={:?} kind={:?} account={:?} tick={} expected={tick}", raw.owner, raw.kind, record.account, record.tick));
+            }
+            if raw.kind != AccountKind::Inst
+                && (!raw.plan_before.is_empty() || !record.plan_ids.is_empty()
+                    || !record.plan_changes.is_empty() || !record.budget_constraints.is_empty()) {
+                return Err(format!("非机构 trace candidate 含机构计划或预算字段：account={:?}", record.account));
+            }
+            if raw.kind == AccountKind::Hot
+                && (!record.source_report_ids.is_empty() || record.expectation_method.is_some()) {
+                return Err(format!("Hot trace candidate 含未发生的公司材料或估值：account={:?}", record.account));
             }
             let mut codes = BTreeSet::new();
             for code in &record.codes {
                 if !self.state.markets.contains_key(code) || !codes.insert(*code) {
-                    return Err(format!("机构 trace candidate 股票不存在或重复：{code:?}"));
+                    return Err(format!("NPC trace candidate 股票不存在或重复：{code:?}"));
                 }
             }
             for plan_id in &record.plan_ids {

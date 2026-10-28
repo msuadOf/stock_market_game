@@ -3,19 +3,25 @@
 use super::{OrderRef, Owner, StockIdx};
 use crate::Side;
 
-/// 本轮真实机构观察；Owner 坐标由 driver 对真实名册再次校验。
+/// 本轮真实 NPC 观察；Owner 与 kind 由 Session 对真实名册再次校验。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GroupDecisionTrace {
     pub owner: Owner,
+    pub kind: crate::AccountKind,
     pub record: std::sync::Arc<crate::diagnostics::NpcDecisionTraceRecord>,
+    /// 当次真实根与 AllocationResult 的原事实；Echo 不生产此增量。
+    pub causal_facts: Vec<crate::diagnostics::causal::CausalFactKind>,
     /// 同一账户在本次 review/open/quote 之前的真实计划状态；仅候选阶段消费。
     pub plan_before: std::collections::BTreeMap<crate::PlanId, String>,
 }
 
-/// D1 只解析玩家外部操作；其他来源由后续真实计划归因接通。
+/// 实际生产路径携带的来源；未接通路径仍显式拒绝。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OperationSource {
     PlayerExternal,
+    InstitutionPlan { plan: crate::PlanId, observed_tick: u64 },
+    ObservedNpc { kind: crate::AccountKind, observed_tick: u64 },
+    InstitutionCancel,
     NonPlayerUnresolved,
 }
 

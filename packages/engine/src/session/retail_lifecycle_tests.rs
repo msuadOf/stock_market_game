@@ -282,10 +282,17 @@ fn d2b_plain_late_day_end_failure_preserves_nonempty_prior_with_expected_poison(
     let prior_decisions = game.last_retail_decisions().to_vec();
     let before_business = game.business_state_hash().expect("失败前业务 hash");
     let mut oracle = game.clone_for_tick_shadow().expect("健康 checkpoint oracle");
-    driver.set_day_end_validator_for_test(Box::new(|_| Err("D2b 日结晚失败".to_owned())));
+    let validator_hit = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let hit = std::sync::Arc::clone(&validator_hit);
+    driver.set_day_end_validator_for_test(Box::new(move |_| {
+        hit.store(true, std::sync::atomic::Ordering::SeqCst);
+        Err("D2b 日结晚失败".to_owned())
+    }));
     let fatal = game.runtime_step_with_install(&mut driver).expect_err("capture_undo=false 日结晚失败");
+    assert!(validator_hit.load(std::sync::atomic::Ordering::SeqCst), "必须真实到达日结 validator：{fatal:?}");
+    // cd6 后日结属于统一私有 prepare；仍精确核 kind、当前来源及原失败 marker。
     assert!(matches!(&fatal, StepFatal::InvariantViolation { location, description }
-        if location == "GameSession::step_via_runtime::day_end_world" && description.contains("D2b 日结晚失败")));
+        if location == "runtime_mirror::prepare" && description.contains("日结私有准备失败") && description.contains("D2b 日结晚失败")), "{fatal:?}");
     assert_eq!(game.poison_reason(), Some(&fatal));
     assert_eq!(game.last_retail_order_events(), prior_events.as_slice());
     assert_eq!(game.last_retail_decisions(), prior_decisions.as_slice());

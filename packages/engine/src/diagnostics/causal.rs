@@ -33,7 +33,7 @@ pub struct FactTime {
     pub civil: CivilInstant,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct OrderOrigin {
     pub order: OrderId,
     pub account: AccountId,
@@ -46,7 +46,7 @@ pub struct OrderOrigin {
     pub qty: u32,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct Quote {
     pub code: StockId,
     #[serde(serialize_with = "crate::money::cents_decimal::optional")]
@@ -68,7 +68,7 @@ impl Quote {
     }
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub enum CausalFactKind {
     Submitted(OrderOrigin),
     Filled {
