@@ -41,7 +41,17 @@ export function representativeCurrentSaveFixture(): Record<string, unknown> {
   }]))
   const belief_books = Object.fromEntries(Object.entries(save.belief_books as Record<string, { npc: number; entries: Record<string, Record<string, unknown>> }>).map(([owner, book]) => [owner, {
     ...book, npc: String(book.npc),
-    entries: Object.fromEntries(Object.entries(book.entries).map(([stock, entry]) => [stock, { ...entry, company: companyId(entry.company) }])),
+    entries: Object.fromEntries(Object.entries(book.entries).map(([stock, entry]) => {
+      const { anchor_trading_day: _historicalAnchor, last_cause, ...facts } = entry
+      // synthetic：固定无此前会话的 typed 锚，仅保持非空 schema 覆盖，不解释旧 scalar 的日历含义。
+      const anchor = { kind: "NoPriorSession" }
+      let cause: Record<string, unknown> | null = null
+      if (last_cause !== null) {
+        const { as_of_trading_day: _historicalCauseAnchor, ...record } = last_cause as Record<string, unknown>
+        cause = { ...record, as_of_anchor: anchor }
+      }
+      return [stock, { ...facts, company: companyId(entry.company), anchor, last_cause: cause }]
+    })),
   }]))
   // B2 保存域（W3 接入）迁入：旧 fixture 摄于 B2 之前，缺根级四字段。
   // 已结算日的日K stats 全零（零成交交易日）——保留链按日注入

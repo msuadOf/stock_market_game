@@ -66,6 +66,9 @@ impl World {
                 invalid("行政入口通道面与 world 拓扑不一致").into(),
             );
         }
+        if let Some(point) = information.as_ref().and_then(|payload| payload.observation.as_ref()) {
+            self.validate_information_clock(&point.clock, point.through, &point.as_of_anchors)?;
+        }
         self.admin_next_id = self
             .admin_next_id
             .checked_add(1)
@@ -178,6 +181,9 @@ impl World {
         sent: &mut BTreeMap<GroupIdx, Vec<super::super::LocalIdx>>,
         inspect: impl FnOnce(&AdminCandidate) -> Result<P, RuntimeError>,
     ) -> Result<P, AdminFailure> {
+        let information_clock = information.as_ref().and_then(|payload| payload.observation.as_ref())
+            .map(|point| self.authenticate_information_clock(&point.clock, point.through, Arc::new(point.as_of_anchors.clone())))
+            .transpose()?;
         for (&group, ops) in &operations {
             self.send_admin(
                 group,
@@ -186,6 +192,7 @@ impl World {
                     id,
                     operations: ops.clone(),
                     information: information.clone(),
+                    information_clock: information_clock.clone(),
                 },
             )?;
             sent.insert(group, expected[&group].clone());
@@ -1499,6 +1506,7 @@ mod tests {
                     id: AdminTransactionId(91),
                     operations: vec![dividend(0, 1)],
                     information: None,
+                    information_clock: None,
                 })
                 .unwrap();
             assert!(matches!(

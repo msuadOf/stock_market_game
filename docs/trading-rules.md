@@ -587,6 +587,18 @@ NPC 默认策略只在缴款首日日终对未显式申请的非玩家、非回�
 `seq` 数字恒等；本片仅在上述条件内保持 FIFO 行为。没有新增或改写 A 股交易制度；
 价格时间优先和竞价信息公开边界仍以本文既有官方依据及已登记的游戏简化为准。
 
+## 个人信息 anchor 与普通显式投递边界（2026-10-28）
+
+个人信息持有期使用逐股冻结 Calendar 的三态 `InformationTradingAnchor`：首会话前
+休市为 `NoPriorSession`，开市日期为 `TradingDay`，已有会话后的休市日期为
+`DayBefore`。后两者同 ordinal 的期限位置相同，历史先后仍区分；这不改变 T+1、
+撮合或 `PlanBook` 的逐股交易日定义。
+
+显式 `RuntimeDriver::deliver_information` 的订阅资格仍是当前持仓与 watchlist；
+该旧入口尚未覆盖仅有 pending sell 或 active plan 的订阅，属于不支持边界。
+serial 与 Admin 信息观察入口包含 active plan，后续生产 civil 投递使用同事务 Admin
+入口；不能据 typed anchor 迁移宣称三个入口的订阅资格已经完全一致。
+
 ### 共同 Calendar 日终来源与逐股迁移（2026-10-28）
 
 std-thread runtime 的 `DayEndCalendar` 明确区分 `MarketTick` 与 `ManualDayEnd`。

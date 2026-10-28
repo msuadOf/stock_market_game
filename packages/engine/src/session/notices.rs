@@ -122,7 +122,7 @@ impl NpcAttentionState {
 pub(crate) fn deliver_information_for_npc(
     id: AccountId,
     now: CivilInstant,
-    as_of_trading_day: &dyn Fn(StockId) -> Option<u64>,
+    as_of_anchor: &dyn Fn(StockId) -> Option<crate::observation::information_clock::InformationTradingAnchor>,
     attention_in: &crate::session::attention::NpcAttentionState,
     information_in: &NpcInformationState,
     belief_in: &BeliefBook,
@@ -144,6 +144,12 @@ pub(crate) fn deliver_information_for_npc(
     )>,
     SessionError,
 > {
+        belief_in.validate_information_anchors(as_of_anchor).map_err(|error| {
+            SessionError::Step(crate::session::StepFatal::InvariantViolation {
+                location: "deliver_information_for_npc".into(),
+                description: format!("信息投递锚校验失败：account={id:?}，{error}"),
+            })
+        })?;
         let mut attention = attention_in.clone();
         if !attention.information_check_due(now) {
             return Ok(None);
@@ -153,7 +159,7 @@ pub(crate) fn deliver_information_for_npc(
         for code in &codes {
             let missing = |description| SessionError::Step(crate::session::StepFatal::InvariantViolation { description, location: "deliver_information_for_npc".into() });
             let company = issuer_of_stock(*code).ok_or_else(|| missing(format!("信息投递缺发行人：stock={code:?}")))?;
-            let day = as_of_trading_day(*code).ok_or_else(|| missing(format!("信息投递缺逐股 trading day：stock={code:?}")))?;
+            let anchor = as_of_anchor(*code).ok_or_else(|| missing(format!("信息投递缺逐股 anchor：stock={code:?}")))?;
             let mut new_reports = false;
             let mut corrections = Vec::new();
             let mut defaults = Vec::new();
@@ -214,7 +220,7 @@ pub(crate) fn deliver_information_for_npc(
                 company,
                 kind: spec_kind,
                 total_issued_shares: spec_issued,
-                as_of_trading_day: day,
+                as_of_anchor: anchor,
             };
             if new_reports {
                 let report = crate::strategy::preferred_own_report(&ctx, &company)
@@ -307,6 +313,16 @@ impl GameSession {
         &mut self,
         now: CivilInstant,
     ) -> Result<(), SessionError> {
+        let anchors = self.prepare_information_anchors()?;
+        self.deliver_public_information_with_anchors(now, &anchors)
+    }
+
+    /// civil 日结在推进时钟前捕获同源 anchor；旧日披露不得按次日重算。
+    pub(super) fn deliver_public_information_with_anchors(
+        &mut self,
+        now: CivilInstant,
+        anchors: &BTreeMap<StockId, crate::observation::information_clock::InformationTradingAnchor>,
+    ) -> Result<(), SessionError> {
         // Belief-1b·下 权威调和：runtime 驱动器在位时投递计算下沉组内
         //（驱动器在日结编排后稀疏下行——见 RuntimeDriver::deliver_
         // information）；session 侧停跑防双权威漂移。旧管线（无驱动器）
@@ -329,9 +345,6 @@ impl GameSession {
             .into_par_iter()
             .map(|id| {
                 let attention = &self.state.npc_attention[&id];
-                if !attention.information_check_due(now) {
-                    return Ok(None);
-                }
                 let participant = &self.state.belief_participants[&id];
                 let mut codes: BTreeSet<_> = self.state.accounts[&id]
                     .positions()
@@ -344,7 +357,7 @@ impl GameSession {
                 deliver_information_for_npc(
                     id,
                     now,
-                    &|_| Some(u64::from(self.state.day)),
+                    &|stock| anchors.get(&stock).copied(),
                     attention,
                     participant.information(),
                     participant.belief(),
@@ -422,6 +435,23 @@ impl GameSession {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn disclosure_on_first_closed_day_keeps_no_prior_anchor_after_civil_advance() {
+        let mut setup = crate::session::npc_working_quote_tests::quote_setup(0);
+        setup.start_date = crate::CivilDate::from_ymd(2030, 1, 1).unwrap();
+        let mut session = GameSession::new(setup, 42).unwrap();
+        let id = AccountId(1);
+        let stock = StockId(0);
+        session.state.belief_participants.get_mut(&id).unwrap()
+            .watchlist_mut().record_attention(&stock, 0, 0).unwrap();
+        let report = session.end_civil_day().unwrap();
+        assert_eq!(session.civil_date(), report.settled_date.next().unwrap());
+        let entry = session.state.belief_participants[&id].belief().entry(&stock)
+            .expect("真实披露获取必须产生非空信念");
+        assert_eq!(entry.anchor, crate::observation::information_clock::InformationTradingAnchor::NoPriorSession);
+        assert_eq!(entry.last_cause.as_ref().unwrap().as_of_anchor, entry.anchor);
+    }
 
     #[test]
     fn day_end_information_subscription_requires_current_holding_watchlist_or_active_plan() {
@@ -930,7 +960,7 @@ mod tests {
             company,
             kind: spec.kind,
             total_issued_shares: spec.issued_shares,
-            as_of_trading_day: 0,
+            as_of_anchor: crate::observation::information_clock::InformationTradingAnchor::NoPriorSession,
         };
         let mut belief = session.state.belief_participants[&id].belief().clone();
         assert!(matches!(

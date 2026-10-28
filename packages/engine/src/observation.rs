@@ -4,6 +4,7 @@
 //! 具名技术指标（SMA/RSI/ATR，按完整日 K）在 [`technical`] 子模块，位于原有
 //! 30 分钟/5 日/区间/量价观测之旁，不改变它们的语义。
 
+pub mod information_clock;
 mod technical;
 
 pub(crate) use technical::build_technical_observation_from_recent_trades;

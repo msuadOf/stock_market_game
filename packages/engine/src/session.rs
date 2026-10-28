@@ -116,6 +116,7 @@ mod memberships_tests;
 mod plan_identity_runtime_tests;
 mod minimal_snapshot;
 mod observation_clock;
+pub(crate) mod information_anchor;
 mod persistence;
 pub mod pipeline;
 mod plan_chain_candidates;
@@ -3622,6 +3623,7 @@ impl GameSession {
                 .map_err(crate::calendar::CalendarError::from)?,
         };
         let next_work_date = company_work_date.min(self.state.civil_clock.next_civil_event_date());
+        let information_anchors = self.prepare_information_anchors()?;
         let mut report = self.state.civil_clock.end_day(next_work_date)?;
         let disclosures = match &mut self.state.companies {
             SessionCompanies::LegacyOperations(legacy) => {
@@ -3683,7 +3685,7 @@ impl GameSession {
             }
         };
         self.record_civil_day_events(&mut report, disclosures)?;
-        self.deliver_public_information(report.disclosure_instant)?;
+        self.deliver_public_information_with_anchors(report.disclosure_instant, &information_anchors)?;
         self.prune_all_personal_memories();
         Ok(report)
     }

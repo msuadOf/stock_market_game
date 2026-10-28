@@ -574,8 +574,9 @@ impl AdminOperation {
 /// 逐股日期、行情、发行人/spec 必须完整，不随个人 cadence 缩小；publication 不创建观察点。
 #[derive(Clone, Debug)]
 pub struct InformationObservation {
+    pub clock: super::InformationClockContext,
     pub through: crate::calendar::CivilInstant,
-    pub as_of_trading_days: std::collections::BTreeMap<crate::StockId, u64>,
+    pub as_of_anchors: std::collections::BTreeMap<crate::StockId, crate::observation::information_clock::InformationTradingAnchor>,
     pub market: std::sync::Arc<crate::strategy::MarketView>,
     pub company_facts: std::sync::Arc<crate::company::CompanyReadFacts>,
 }
@@ -602,8 +603,8 @@ pub struct PreparedInformationResult {
 /// 信息 prepare 的缺事实、身份与观察顺序拒绝，均发生在 commit 前。
 #[derive(Clone, Debug, PartialEq, thiserror::Error)]
 pub enum InformationPrepareError {
-    #[error("缺少逐股 trading day：{stock:?}")]
-    MissingTradingDay { stock: crate::StockId },
+    #[error("缺少逐股 information anchor：{stock:?}")]
+    MissingInformationAnchor { stock: crate::StockId },
     #[error("缺少 as-of 行情：{stock:?}")]
     MissingMarket { stock: crate::StockId },
     #[error("观察行情 tick 与组静点不一致：expected={expected}, actual={actual}")]
@@ -703,7 +704,7 @@ pub struct DayEndDirective {
 /// FIFO + 收束因果序保证批次先于下一 Start 被处理）。
 pub enum GroupIn {
     /// 行政静点操作；事务生命周期不进入普通 tick 日志。
-    AdminPrepare { id: AdminTransactionId, operations: Vec<AdminOperation>, information: Option<InformationPreparePayload> },
+    AdminPrepare { id: AdminTransactionId, operations: Vec<AdminOperation>, information: Option<InformationPreparePayload>, information_clock: Option<super::world::AuthenticatedInformationClock> },
     AdminCommit { id: AdminTransactionId },
     AdminAbort { id: AdminTransactionId },
     #[cfg(test)]
@@ -759,8 +760,8 @@ pub enum GroupIn {
     InformationDelivery {
         /// 观察时刻（披露相位）。
         now: crate::calendar::CivilInstant,
-        /// 交易日。
-        day: u64,
+        /// 本次真实 Calendar 来源与完整逐股锚。
+        clock: super::world::AuthenticatedInformationClock,
         /// 库刷新（Arc 共享——稀疏）。
         library: std::sync::Arc<crate::information::PublicLibrary>,
         /// per-NPC（组内下标, AccountId, 注意力镜像快照——AccountId

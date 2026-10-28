@@ -170,17 +170,21 @@ struct CandidateObservations<'a> {
     technical: Option<&'a TechnicalObservation>,
 }
 
-fn apply_institution_experience_feedback(belief: &mut BeliefBook, trading_day: u64) {
+fn apply_institution_experience_feedback(
+    belief: &mut BeliefBook,
+    anchors: &BTreeMap<StockId, crate::observation::information_clock::InformationTradingAnchor>,
+) {
     let experience = belief.experience().clone();
-    apply_personal_experience_feedback(belief, &experience, trading_day)
+    apply_personal_experience_feedback(belief, &experience, anchors)
         .unwrap_or_else(|error| panic!("institution experience confidence failed: {error}"));
 }
 
 fn apply_personal_experience_feedback(
     belief: &mut BeliefBook,
     experience: &crate::RetailExperienceState,
-    trading_day: u64,
+    anchors: &BTreeMap<StockId, crate::observation::information_clock::InformationTradingAnchor>,
 ) -> Result<(), crate::strategy::BeliefError> {
+    belief.validate_information_anchors(|stock| anchors.get(&stock).copied())?;
     let failures = experience
         .feedback
         .failure_events
@@ -230,7 +234,7 @@ fn apply_personal_experience_feedback(
                 cause,
                 order,
                 if profitable { 500 } else { -1_000 },
-                trading_day,
+                *anchors.get(&code).ok_or(crate::strategy::BeliefError::MissingInformationAnchor { stock: code })?,
             )?;
         }
     }
@@ -2776,7 +2780,7 @@ mod chain_restructure_tests {
                     trading_day: u64::from(session.state.day),
                 },
             });
-        apply_institution_experience_feedback(&mut belief, u64::from(session.state.day));
+        apply_institution_experience_feedback(&mut belief, &session.prepare_information_anchors().unwrap());
         let after = belief.entry(&code).unwrap();
         assert_eq!(
             after.confidence_bp,
@@ -2786,8 +2790,39 @@ mod chain_restructure_tests {
         assert_eq!(after.forecast, before.forecast);
         assert!(after.applied_experience_orders.contains(&999));
         let once = serde_json::to_vec(&belief).unwrap();
-        apply_institution_experience_feedback(&mut belief, u64::from(session.state.day));
+        apply_institution_experience_feedback(&mut belief, &session.prepare_information_anchors().unwrap());
         assert_eq!(serde_json::to_vec(&belief).unwrap(), once);
+    }
+
+    #[test]
+    fn feedback_rejects_other_stock_future_anchor_before_any_first_stock_update() {
+        let session = seeded_buy_plan_with_child();
+        let account = AccountId(1);
+        let code = session.stock_id("000812").unwrap();
+        let original = session.state.belief_participants[&account].belief();
+        let mut encoded = serde_json::to_value(original).unwrap();
+        let other = StockId(u32::MAX);
+        let mut future = encoded["entries"][code.0.to_string()].clone();
+        future["anchor"] = serde_json::to_value(crate::observation::information_clock::InformationTradingAnchor::DayBefore { ordinal: u64::MAX }).unwrap();
+        future["last_cause"] = serde_json::Value::Null;
+        encoded["entries"][other.0.to_string()] = future;
+        let mut belief: BeliefBook = serde_json::from_value(encoded).unwrap();
+        let mut experience = crate::RetailExperienceState::without_equity_reference();
+        experience.feedback.exit_records.push(crate::experience::ExitRecord {
+            code, order_id: Some(999), cooldown_until_market_minute: None, realized_profit: true,
+            moment: crate::experience::ExperienceMoment {
+                civil_date: session.civil_date(), market_minute: session.current_market_minute(),
+                trading_day: u64::from(session.day()),
+            },
+        });
+        let mut anchors = (*session.prepare_information_anchors().unwrap()).clone();
+        anchors.insert(other, crate::observation::information_clock::InformationTradingAnchor::TradingDay { ordinal: 0 });
+        let before = serde_json::to_vec(&belief).unwrap();
+        let error = apply_personal_experience_feedback(&mut belief, &experience, &anchors).unwrap_err();
+        assert!(matches!(error, crate::strategy::BeliefError::InformationClock(
+            crate::observation::information_clock::InformationHorizonError::TimeReversed { .. }
+        )));
+        assert_eq!(serde_json::to_vec(&belief).unwrap(), before, "后股非法必须阻止前股真实 profit event 被消费");
     }
 
     #[test]

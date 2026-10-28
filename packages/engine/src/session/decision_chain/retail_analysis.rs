@@ -21,6 +21,8 @@ pub(crate) struct RetailAnalysisCtx<'a> {
     pub minute: u64,
     /// 交易日（day 域）。
     pub day: u64,
+    /// 同批真实逐股信息锚，不借共享 day 代替。
+    pub information_anchors: &'a BTreeMap<StockId, crate::observation::information_clock::InformationTradingAnchor>,
     /// 自然日（经验时刻组装）。
     pub civil_date: crate::calendar::CivilDate,
     /// 会话种子（成本信号派生流输入）。
@@ -209,6 +211,7 @@ impl GameSession {
             positions,
             minute: view.current_market_minute(),
             day: u64::from(view.day),
+            information_anchors: &view.information_anchors,
             civil_date: view.civil_date(),
             seed: view.seed,
             tick: view.tick,
@@ -235,6 +238,8 @@ impl GameSession {
             location: "decision_chain::retail_analysis".to_owned(),
         };
         let id = ctx.account;
+        personal.belief.validate_information_anchors(|stock| ctx.information_anchors.get(&stock).copied())
+            .map_err(|error| invariant(error.to_string()))?;
         let held = ctx.held.clone();
         let mut protected = held.clone();
         protected.extend(plans.active_investor_codes(id).cloned());
@@ -255,7 +260,6 @@ impl GameSession {
         let candidates = root_candidate_codes(id, &held, &personal.watchlist, &plans, discovered);
         #[cfg(feature = "simulation-diagnostics")]
         let mut causal_facts = vec![crate::diagnostics::causal::CausalFactKind::Decision { account: id }];
-        let day = ctx.day;
         let mut reports: BTreeMap<StockId, PublicationId> = BTreeMap::new();
         let mut credit_defaults = Vec::new();
         let mut corrections = Vec::new();
@@ -346,7 +350,7 @@ impl GameSession {
                 company: company.clone(),
                 kind,
                 total_issued_shares: issued_shares,
-                as_of_trading_day: day,
+                as_of_anchor: *ctx.information_anchors.get(code).ok_or_else(|| invariant(format!("retail 本人信息锚缺失：stock={code:?}")))?,
             };
             if reports.contains_key(code) {
                 let report = crate::strategy::preferred_own_report(&ctx_info, &inputs.company)
@@ -384,13 +388,13 @@ impl GameSession {
                         .map_err(|error| invariant(error.to_string()))?;
                 }
             }
-            if personal.belief.entry(code).is_some_and(|entry| {
-                day >= entry.anchor_trading_day + u64::from(entry.horizon_trading_days)
-            }) {
-                personal
-                    .belief
-                    .apply_cause(code, BeliefCause::HorizonExpired, &inputs)
+            if let Some(entry) = personal.belief.entry(code) {
+                let remaining = crate::observation::information_clock::information_horizon_remaining(entry.anchor, entry.horizon_trading_days, inputs.as_of_anchor)
                     .map_err(|error| invariant(error.to_string()))?;
+                if remaining == 0 {
+                    personal.belief.apply_cause(code, BeliefCause::HorizonExpired, &inputs)
+                        .map_err(|error| invariant(error.to_string()))?;
+                }
             }
         }
         let account_experience = experience;
@@ -400,7 +404,7 @@ impl GameSession {
                 .record_information_check(observation.now)
                 .map_err(|error| invariant(error.to_string()))?;
         }
-        apply_personal_experience_feedback(&mut personal.belief, account_experience, day).map_err(
+        apply_personal_experience_feedback(&mut personal.belief, account_experience, ctx.information_anchors).map_err(
             |error| {
                 invariant(format!(
                     "retail {id:?} experience confidence failed: {error}"

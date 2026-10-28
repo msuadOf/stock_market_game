@@ -12,13 +12,15 @@ export type HotStyle = "Momentum" | "Reversal"
 export type AnalysisProfile = { readonly fundamental_bp: number; readonly trend_bp: number; readonly price_volume_bp: number; readonly technical_bp: number; readonly experience_cost_bp: number; readonly fundamental_method: FundamentalMethod | null }
 export type FundamentalMethod = "earnings_multiple" | "cash_flow" | "equity_roe"
 export type PersonalAssumptions = { readonly growth_deviation_bp: number; readonly quality_coefficient_bp: number; readonly pe_multiple: number; readonly equity_cost_bp: number; readonly terminal_growth_bp: number; readonly roe_deviation_bp: number }
-export type BeliefEntry = { readonly company: number; readonly method: FundamentalMethod | null; readonly forecast: ForecastState; readonly confidence_bp: number; readonly valuation: ValuationOutcome; readonly used_report_ids: readonly number[]; readonly anchor_trading_day: number; readonly horizon_trading_days: number; readonly last_cause: CauseRecord | null; readonly applied_experience_orders: readonly number[] }
+/** 与 Rust InformationTradingAnchor 同形；不把 Closed 锚合并为某个 Trading 时点。 */
+export type InformationTradingAnchor = { readonly kind: "NoPriorSession" } | { readonly kind: "TradingDay"; readonly ordinal: string } | { readonly kind: "DayBefore"; readonly ordinal: string }
+export type BeliefEntry = { readonly company: number; readonly method: FundamentalMethod | null; readonly forecast: ForecastState; readonly confidence_bp: number; readonly valuation: ValuationOutcome; readonly used_report_ids: readonly number[]; readonly anchor: InformationTradingAnchor; readonly horizon_trading_days: number; readonly last_cause: CauseRecord | null; readonly applied_experience_orders: readonly number[] }
 export type ForecastState = { readonly growth_bp: number | null; readonly basis: ForecastBasis }
 export type ForecastBasis = { readonly InitialTwoYear: { readonly observed_bp: number } } | "InitialWithoutHistory" | { readonly Revised: { readonly observed_bp: number } } | "Degenerate"
 export type ValuationOutcome = { readonly Available: { readonly total_equity_estimate: string; readonly per_share: PerShareRange } } | { readonly Unavailable: { readonly reason: ValuationUnavailable } }
 export type PerShareRange = { readonly pessimistic: string; readonly optimistic: string }
 export type ValuationUnavailable = "MethodDisabled" | { readonly CompanyMismatch: { readonly expected: number; readonly report: number } } | { readonly UnsupportedReportKind: { readonly kind: string } } | { readonly FutureDatedMaterial: { readonly report: number } } | "NonPositiveNetIncome" | { readonly NonPositivePe: { readonly pe: number } } | { readonly NonPositiveCost: { readonly cost_bp: number } } | { readonly TerminalGrowthNotBelowCost: { readonly terminal_bp: number; readonly cost_bp: number } } | "NonPositiveBookEquity" | "NonPositiveAverageEquity" | { readonly NonPositiveExpectedRoe: { readonly expected_bp: number } } | "NonPositiveValuationEstimate" | "GrowthPriorUnavailable" | "FinancingSplitUndeterminable" | "ConsolidatedCashFlowAttributionUnavailable" | "ConsolidatedNetIncomeAttributionUnavailable" | "ZeroIssuedShares" | { readonly Overflow: { readonly step: string } } | "PerShareOutOfRange"
-export type CauseRecord = { readonly cause: BeliefCause; readonly as_of_trading_day: number }
+export type CauseRecord = { readonly cause: BeliefCause; readonly as_of_anchor: InformationTradingAnchor }
 export type BeliefCause = { readonly NewMaterial: { readonly report: number } } | { readonly Correction: { readonly report: number } } | { readonly CreditDefault: { readonly announcement: number } } | "HorizonExpired" | { readonly ExperienceFailure: { readonly order: number } } | { readonly ProfitableExit: { readonly order: number } }
 
 const RETAIL = ["Dormant", "LongTerm", "Noise", "DipBuyer", "Momentum", "Panic"] as const
@@ -64,13 +66,24 @@ function parseAssumptions(value: unknown, path: string): PersonalAssumptions {
   return { growth_deviation_bp: i32(parsed.growth_deviation_bp, `${path}.growth_deviation_bp`), quality_coefficient_bp: i32(parsed.quality_coefficient_bp, `${path}.quality_coefficient_bp`), pe_multiple: i32(parsed.pe_multiple, `${path}.pe_multiple`), equity_cost_bp: i32(parsed.equity_cost_bp, `${path}.equity_cost_bp`), terminal_growth_bp: i32(parsed.terminal_growth_bp, `${path}.terminal_growth_bp`), roe_deviation_bp: i32(parsed.roe_deviation_bp, `${path}.roe_deviation_bp`) }
 }
 
+function parseInformationTradingAnchor(value: unknown, path: string): InformationTradingAnchor {
+  const parsed = record(value, path)
+  const kind = oneOf(parsed.kind, `${path}.kind`, ["NoPriorSession", "TradingDay", "DayBefore"] as const)
+  if (kind === "NoPriorSession") {
+    exact(parsed, ["kind"], path)
+    return { kind }
+  }
+  exact(parsed, ["kind", "ordinal"], path)
+  return { kind, ordinal: parsePlanU64(parsed.ordinal, `${path}.ordinal`) }
+}
+
 function parseEntry(value: unknown, path: string): BeliefEntry {
   const parsed = record(value, path)
-  exact(parsed, ["company", "method", "forecast", "confidence_bp", "valuation", "used_report_ids", "anchor_trading_day", "horizon_trading_days", "last_cause", "applied_experience_orders"], path)
+  exact(parsed, ["company", "method", "forecast", "confidence_bp", "valuation", "used_report_ids", "anchor", "horizon_trading_days", "last_cause", "applied_experience_orders"], path)
   const company = u32(parsed.company, `${path}.company`)
   const confidence = u16(parsed.confidence_bp, `${path}.confidence_bp`)
   if (confidence > 10_000) throw new SaveSchemaError(`${path}.confidence_bp`, "必须不大于 10000bp")
-  return { company, method: nullable(parsed.method, `${path}.method`, (nested, nestedPath) => oneOf(nested, nestedPath, METHODS)), forecast: parseForecast(parsed.forecast, `${path}.forecast`), confidence_bp: confidence, valuation: parseValuation(parsed.valuation, `${path}.valuation`), used_report_ids: array(parsed.used_report_ids, `${path}.used_report_ids`).map((id, index) => publicationId(id, `${path}.used_report_ids[${index}]`)), anchor_trading_day: integer(parsed.anchor_trading_day, `${path}.anchor_trading_day`, 0), horizon_trading_days: u16(parsed.horizon_trading_days, `${path}.horizon_trading_days`), last_cause: nullable(parsed.last_cause, `${path}.last_cause`, parseCauseRecord), applied_experience_orders: array(parsed.applied_experience_orders, `${path}.applied_experience_orders`).map((id, index) => integer(id, `${path}.applied_experience_orders[${index}]`, 0)) }
+  return { company, method: nullable(parsed.method, `${path}.method`, (nested, nestedPath) => oneOf(nested, nestedPath, METHODS)), forecast: parseForecast(parsed.forecast, `${path}.forecast`), confidence_bp: confidence, valuation: parseValuation(parsed.valuation, `${path}.valuation`), used_report_ids: array(parsed.used_report_ids, `${path}.used_report_ids`).map((id, index) => publicationId(id, `${path}.used_report_ids[${index}]`)), anchor: parseInformationTradingAnchor(parsed.anchor, `${path}.anchor`), horizon_trading_days: u16(parsed.horizon_trading_days, `${path}.horizon_trading_days`), last_cause: nullable(parsed.last_cause, `${path}.last_cause`, parseCauseRecord), applied_experience_orders: array(parsed.applied_experience_orders, `${path}.applied_experience_orders`).map((id, index) => integer(id, `${path}.applied_experience_orders[${index}]`, 0)) }
 }
 
 function parseForecast(value: unknown, path: string): ForecastState {
@@ -127,5 +140,5 @@ function parseUnavailable(value: unknown, path: string): ValuationUnavailable {
   return { Overflow: { step: string(payload.step, `${path}.${tag}.step`) } }
 }
 
-function parseCauseRecord(value: unknown, path: string): CauseRecord { const parsed = record(value, path); exact(parsed, ["cause", "as_of_trading_day"], path); return { cause: parseCause(parsed.cause, `${path}.cause`), as_of_trading_day: integer(parsed.as_of_trading_day, `${path}.as_of_trading_day`, 0) } }
+function parseCauseRecord(value: unknown, path: string): CauseRecord { const parsed = record(value, path); exact(parsed, ["cause", "as_of_anchor"], path); return { cause: parseCause(parsed.cause, `${path}.cause`), as_of_anchor: parseInformationTradingAnchor(parsed.as_of_anchor, `${path}.as_of_anchor`) } }
 function parseCause(value: unknown, path: string): BeliefCause { if (value === "HorizonExpired") return value; const [tag, payload] = tagged(value, path); if (tag === "NewMaterial") { exact(payload, ["report"], `${path}.NewMaterial`); return { NewMaterial: { report: publicationId(payload.report, `${path}.NewMaterial.report`) } } } if (tag === "Correction") { exact(payload, ["report"], `${path}.Correction`); return { Correction: { report: publicationId(payload.report, `${path}.Correction.report`) } } } if (tag === "CreditDefault") { exact(payload, ["announcement"], `${path}.CreditDefault`); return { CreditDefault: { announcement: publicationId(payload.announcement, `${path}.CreditDefault.announcement`) } } } if (tag === "ExperienceFailure") { exact(payload, ["order"], `${path}.ExperienceFailure`); return { ExperienceFailure: { order: orderId(payload.order, `${path}.ExperienceFailure.order`) } } } if (tag === "ProfitableExit") { exact(payload, ["order"], `${path}.ProfitableExit`); return { ProfitableExit: { order: orderId(payload.order, `${path}.ProfitableExit.order`) } } } throw new Error(`存档 ${path}.${tag} 不是已知信念成因`) }

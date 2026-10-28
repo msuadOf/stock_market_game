@@ -76,6 +76,23 @@ pub fn projection(ids: Vec<AccountId>) -> Arc<RootProjection> {
         tick_size_cents: BTreeMap::new(),
     })
 }
+/// 合成 Admin 机制 fixture 的冻结 owner；时钟与 map 仍由真实 Calendar 投影产生。
+pub fn calendar_source() -> Arc<crate::session::market_calendar_context::MarketCalendarSource> {
+    static SOURCE: std::sync::OnceLock<Arc<crate::session::market_calendar_context::MarketCalendarSource>> = std::sync::OnceLock::new();
+    Arc::clone(SOURCE.get_or_init(|| crate::session::market_calendar_context::MarketCalendarSource::new(
+        crate::TradingCalendar::current_default_calendar().unwrap(), at(0, 0).date(), calendar_bindings(),
+    ).unwrap()))
+}
+pub fn calendar_bindings() -> Vec<(StockId, crate::calendar::CalendarExchange)> {
+    vec![(StockId(0), crate::calendar::CalendarExchange::Sse), (StockId(1), crate::calendar::CalendarExchange::Sse)]
+}
+pub fn clock_at(through: CivilInstant, tick: u64) -> crate::runtime::InformationClockContext {
+    let day = calendar_source().day(through.date()).unwrap();
+    let layout = crate::session::exchange_calendar_model::SessionTickLayout { ticks_per_day: 100, auction_ticks: 0, closing_auction_ticks: 0 };
+    let input = crate::session::calendar_clock_input(&day, layout, tick, tick / 100).unwrap();
+    crate::runtime::InformationClockContext::fixture_static(day, layout, input, through)
+}
+
 pub fn payload(observe: bool) -> InformationPreparePayload {
     let current_facts = facts(10_000);
     let market = Arc::new(crate::strategy::MarketView {
@@ -106,10 +123,11 @@ pub fn payload(observe: bool) -> InformationPreparePayload {
         current_facts: Arc::clone(&current_facts),
         observation: if observe {
             Some(InformationObservation {
+                clock: clock_at(at(19, 0), 0),
                 through: at(19, 0),
                 market,
                 company_facts: current_facts,
-                as_of_trading_days: [(StockId(0), 7), (StockId(1), 12)].into(),
+                as_of_anchors: clock_at(at(19, 0), 0).anchors().unwrap(),
             })
         } else {
             None
@@ -157,6 +175,17 @@ pub fn reports_at(
     crate::information::PublicationId,
     Option<crate::information::PublicationId>,
 ) {
+    reports_on(payload, company, monthly, at(10, 30).date(), monthly_second)
+}
+
+/// 明确自然日的报告 fixture；Closed 晚间用例不借用数日前公开材料冒充当晚披露。
+pub fn reports_on(
+    payload: &mut InformationPreparePayload,
+    company: u32,
+    monthly: bool,
+    monthly_date: CivilDate,
+    monthly_second: u32,
+) -> (crate::information::PublicationId, Option<crate::information::PublicationId>) {
     use crate::accounting::consolidation::{MemberId, ScopeId};
     use crate::accounting::reports::{
         generate_report_set, IndustryPresentation, ReportKind, ReportRequest, ReportSource,
@@ -222,14 +251,14 @@ pub fn reports_at(
             ReportKind::Monthly,
             PublicationOrigin::MonthlyDisclosure {
                 schedule: MonthlyReportSchedule::Custom {
-                    day: 1,
+                    day: monthly_date.day(),
                     second_of_day: monthly_second,
                     delay: MonthlyReportDelay::None,
                 },
                 delay_days: 0,
                 seeded: false,
             },
-            CivilInstant::new(at(10, 30).date(), monthly_second).unwrap(),
+            CivilInstant::new(monthly_date, monthly_second).unwrap(),
         )
     });
     (annual, monthly)

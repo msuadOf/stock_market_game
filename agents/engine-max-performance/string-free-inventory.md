@@ -98,3 +98,6 @@
 
 未知 owner 的核心 `PlanBook::from_parts` 不假设账户数值连续或任意容量；名册校验留在
 session/runtime 所属边界。错误码2690对所有 owner 游标检查，不因没有计划而绕过。
+
+| 2790 | 槽0=AccountId，槽1=StockId，槽2=原因（1=历史回拨、2=零期限、3=其他 anchor 校验）；槽3..5=entry，槽6..8=cause，槽9..11=current；每组三槽为 tag（0=缺 cause、1=NoPriorSession、2=TradingDay、3=DayBefore）及完整 ordinal 高/低 u32 | 可编辑存档的个人信息 anchor 超过真实逐股 frontier 或历史次序非法；零期限仍先由既有 2139 拒绝 |
+| 2791 | 槽0=Calendar 模型原因（1=空bindings、2=重复stock、3=current早于start、4=layout、5=progress、6=日内tick越界、7=计数不一致、8=算术溢出、9=分钟投影、10=未知stock）；槽1=saved tick，槽2=ticks_per_day；余槽保留该错误的原数值参数，Calendar底层错误仍走Calendar域 | 个人信息 restore frontier 的冻结日历计数非法 |

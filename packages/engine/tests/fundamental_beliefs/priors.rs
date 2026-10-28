@@ -12,6 +12,7 @@
 use crate::{assumptions_rng, hour_after, market, scenario, ISSUED_SHARES};
 use engine::company::CompanyKind;
 use engine::information::{NpcInformationState, NpcObservationContext};
+use engine::observation::information_clock::InformationTradingAnchor::TradingDay;
 use engine::orderbook::{AccountId, OrderId};
 use engine::strategy::{
     AnalysisProfile, AnalysisWeights, BeliefBook, BeliefCause, BeliefError, BeliefInputs,
@@ -58,7 +59,7 @@ pub(crate) fn form_on(
         company: sc.company.clone(),
         kind: CompanyKind::Industrial,
         total_issued_shares: ISSUED_SHARES,
-        as_of_trading_day: day,
+        as_of_anchor: TradingDay { ordinal: day },
     };
     book.apply_cause(
         &stock_code(),
@@ -145,7 +146,7 @@ fn same_news_different_priors_revise_oppositely() {
     for book in [&book_a, &book_b] {
         let entry = book.entry(&stock_code()).unwrap();
         assert_eq!(entry.confidence_bp, 6_000);
-        assert_eq!(entry.anchor_trading_day, 850);
+        assert_eq!(entry.anchor, TradingDay { ordinal: 850 });
         assert_eq!(entry.used_report_ids, vec![sc.annual_ids[3]]);
     }
 }
@@ -177,7 +178,7 @@ fn no_trigger_keeps_belief_bytes_unchanged() {
         company: sc.company.clone(),
         kind: CompanyKind::Industrial,
         total_issued_shares: ISSUED_SHARES,
-        as_of_trading_day: 1_004,
+        as_of_anchor: TradingDay { ordinal: 1_004 },
     };
     let err = book
         .apply_cause(&stock_code(), BeliefCause::HorizonExpired, &inputs)
@@ -196,12 +197,12 @@ fn no_trigger_keeps_belief_bytes_unchanged() {
         company: sc.company.clone(),
         kind: CompanyKind::Industrial,
         total_issued_shares: ISSUED_SHARES,
-        as_of_trading_day: 1_005,
+        as_of_anchor: TradingDay { ordinal: 1_005 },
     };
     book.apply_cause(&stock_code(), BeliefCause::HorizonExpired, &inputs)
         .expect("expiry applies");
     let entry = book.entry(&stock_code()).unwrap();
-    assert_eq!(entry.anchor_trading_day, 1_005);
+    assert_eq!(entry.anchor, TradingDay { ordinal: 1_005 });
     assert_eq!(entry.forecast.growth_bp, Some(0));
     assert_eq!(
         total_of(&book),
@@ -236,7 +237,7 @@ fn experience_confidence_bounds_and_once_per_order() {
         company: sc.company.clone(),
         kind: CompanyKind::Industrial,
         total_issued_shares: ISSUED_SHARES,
-        as_of_trading_day: 1_001,
+        as_of_anchor: TradingDay { ordinal: 1_001 },
     };
 
     let apply = |book: &mut BeliefBook, cause: BeliefCause| {

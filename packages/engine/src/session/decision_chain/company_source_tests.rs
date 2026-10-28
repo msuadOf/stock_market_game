@@ -265,6 +265,7 @@ fn selected_company_source_root_parts_keep_independent_numeric_namespaces_and_ty
         crate::CivilDate::from_iso("2030-01-07").unwrap(),
         0,
         0,
+        std::sync::Arc::new([(stock, crate::observation::information_clock::InformationTradingAnchor::TradingDay { ordinal: 0 })].into()),
     );
     assert_eq!(root.issuer_of_stock(stock), Ok(company));
     assert_eq!(

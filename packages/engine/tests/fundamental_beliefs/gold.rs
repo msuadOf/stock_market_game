@@ -118,7 +118,12 @@ fn earnings_multiple_end_to_end_gold() {
     assert_eq!(entry.forecast.growth_bp, Some(2_000));
     assert_eq!(entry.confidence_bp, 6_000);
     assert_eq!(entry.horizon_trading_days, 5);
-    assert_eq!(entry.anchor_trading_day, 1_000);
+    assert_eq!(
+        entry.anchor,
+        engine::observation::information_clock::InformationTradingAnchor::TradingDay {
+            ordinal: 1_000
+        }
+    );
     assert_eq!(entry.used_report_ids, vec![case.scenario.annual_ids[3]]);
     let ValuationOutcome::Available {
         total_equity_estimate,

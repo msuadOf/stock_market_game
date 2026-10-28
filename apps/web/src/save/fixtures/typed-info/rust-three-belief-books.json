@@ -1,0 +1,265 @@
+[
+  {
+    "anchor": {
+      "kind": "NoPriorSession"
+    },
+    "book": {
+      "analysis": {
+        "experience_cost_bp": 2349,
+        "fundamental_bp": 6006,
+        "fundamental_method": "earnings_multiple",
+        "price_volume_bp": 429,
+        "technical_bp": 546,
+        "trend_bp": 670
+      },
+      "assumptions": {
+        "equity_cost_bp": 912,
+        "growth_deviation_bp": 753,
+        "pe_multiple": 12,
+        "quality_coefficient_bp": 9761,
+        "roe_deviation_bp": 129,
+        "terminal_growth_bp": 185
+      },
+      "entries": {
+        "0": {
+          "anchor": {
+            "kind": "NoPriorSession"
+          },
+          "applied_experience_orders": [],
+          "company": 0,
+          "confidence_bp": 3000,
+          "forecast": {
+            "basis": "Degenerate",
+            "growth_bp": null
+          },
+          "horizon_trading_days": 60,
+          "last_cause": {
+            "as_of_anchor": {
+              "kind": "NoPriorSession"
+            },
+            "cause": {
+              "NewMaterial": {
+                "report": 6
+              }
+            }
+          },
+          "method": "earnings_multiple",
+          "used_report_ids": [
+            3,
+            6
+          ],
+          "valuation": {
+            "Unavailable": {
+              "reason": "NonPositiveNetIncome"
+            }
+          }
+        }
+      },
+      "experience": {
+        "consecutive_failed_buys": 0,
+        "peak_equity": null,
+        "reference_equity": null,
+        "stocks": {}
+      },
+      "institution_account_risk_paused": false,
+      "institution_policy": {
+        "adverse_move_threshold_bp": 387,
+        "cost_loss_threshold_bp": 1099,
+        "cost_profit_threshold_bp": 3525,
+        "loss_response": "HoldOrAdd",
+        "policy_version": 1,
+        "risk_pause_drawdown_bp": 4354,
+        "risk_pause_failed_buys": 4,
+        "risk_resume_drawdown_bp": 2177
+      },
+      "npc": "1",
+      "profile": {
+        "Institution": "DeepValue"
+      }
+    },
+    "civil_date": "2030-01-01",
+    "scenario": "no-prior",
+    "through": {
+      "date": "2030-01-01",
+      "second_of_day": 34200
+    },
+    "tick": "0"
+  },
+  {
+    "anchor": {
+      "kind": "TradingDay",
+      "ordinal": "0"
+    },
+    "book": {
+      "analysis": {
+        "experience_cost_bp": 2349,
+        "fundamental_bp": 6006,
+        "fundamental_method": "earnings_multiple",
+        "price_volume_bp": 429,
+        "technical_bp": 546,
+        "trend_bp": 670
+      },
+      "assumptions": {
+        "equity_cost_bp": 912,
+        "growth_deviation_bp": 753,
+        "pe_multiple": 12,
+        "quality_coefficient_bp": 9761,
+        "roe_deviation_bp": 129,
+        "terminal_growth_bp": 185
+      },
+      "entries": {
+        "0": {
+          "anchor": {
+            "kind": "TradingDay",
+            "ordinal": "0"
+          },
+          "applied_experience_orders": [],
+          "company": 0,
+          "confidence_bp": 3000,
+          "forecast": {
+            "basis": "Degenerate",
+            "growth_bp": null
+          },
+          "horizon_trading_days": 60,
+          "last_cause": {
+            "as_of_anchor": {
+              "kind": "TradingDay",
+              "ordinal": "0"
+            },
+            "cause": {
+              "NewMaterial": {
+                "report": 6
+              }
+            }
+          },
+          "method": "earnings_multiple",
+          "used_report_ids": [
+            3,
+            6
+          ],
+          "valuation": {
+            "Unavailable": {
+              "reason": "NonPositiveNetIncome"
+            }
+          }
+        }
+      },
+      "experience": {
+        "consecutive_failed_buys": 0,
+        "peak_equity": null,
+        "reference_equity": null,
+        "stocks": {}
+      },
+      "institution_account_risk_paused": false,
+      "institution_policy": {
+        "adverse_move_threshold_bp": 387,
+        "cost_loss_threshold_bp": 1099,
+        "cost_profit_threshold_bp": 3525,
+        "loss_response": "HoldOrAdd",
+        "policy_version": 1,
+        "risk_pause_drawdown_bp": 4354,
+        "risk_pause_failed_buys": 4,
+        "risk_resume_drawdown_bp": 2177
+      },
+      "npc": "1",
+      "profile": {
+        "Institution": "DeepValue"
+      }
+    },
+    "civil_date": "2030-01-02",
+    "scenario": "trading-zero",
+    "through": {
+      "date": "2030-01-02",
+      "second_of_day": 34200
+    },
+    "tick": "0"
+  },
+  {
+    "anchor": {
+      "kind": "DayBefore",
+      "ordinal": "0"
+    },
+    "book": {
+      "analysis": {
+        "experience_cost_bp": 2349,
+        "fundamental_bp": 6006,
+        "fundamental_method": "earnings_multiple",
+        "price_volume_bp": 429,
+        "technical_bp": 546,
+        "trend_bp": 670
+      },
+      "assumptions": {
+        "equity_cost_bp": 912,
+        "growth_deviation_bp": 753,
+        "pe_multiple": 12,
+        "quality_coefficient_bp": 9761,
+        "roe_deviation_bp": 129,
+        "terminal_growth_bp": 185
+      },
+      "entries": {
+        "0": {
+          "anchor": {
+            "kind": "DayBefore",
+            "ordinal": "0"
+          },
+          "applied_experience_orders": [],
+          "company": 0,
+          "confidence_bp": 3000,
+          "forecast": {
+            "basis": "Degenerate",
+            "growth_bp": null
+          },
+          "horizon_trading_days": 60,
+          "last_cause": {
+            "as_of_anchor": {
+              "kind": "DayBefore",
+              "ordinal": "0"
+            },
+            "cause": {
+              "CreditDefault": {
+                "announcement": 7
+              }
+            }
+          },
+          "method": "earnings_multiple",
+          "used_report_ids": [
+            3
+          ],
+          "valuation": {
+            "Unavailable": {
+              "reason": "NonPositiveNetIncome"
+            }
+          }
+        }
+      },
+      "experience": {
+        "consecutive_failed_buys": 0,
+        "peak_equity": null,
+        "reference_equity": null,
+        "stocks": {}
+      },
+      "institution_account_risk_paused": false,
+      "institution_policy": {
+        "adverse_move_threshold_bp": 387,
+        "cost_loss_threshold_bp": 1099,
+        "cost_profit_threshold_bp": 3525,
+        "loss_response": "HoldOrAdd",
+        "policy_version": 1,
+        "risk_pause_drawdown_bp": 4354,
+        "risk_pause_failed_buys": 4,
+        "risk_resume_drawdown_bp": 2177
+      },
+      "npc": "1",
+      "profile": {
+        "Institution": "DeepValue"
+      }
+    },
+    "civil_date": "2030-01-05",
+    "scenario": "day-before-zero",
+    "through": {
+      "date": "2030-01-05",
+      "second_of_day": 34200
+    },
+    "tick": "2"
+  }
+]

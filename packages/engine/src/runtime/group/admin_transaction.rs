@@ -13,7 +13,7 @@ pub(super) struct InformationObservationSignature {
     library: Arc<crate::information::PublicLibrary>,
     facts: Arc<crate::company::CompanyReadFacts>,
     market: Arc<crate::strategy::MarketView>,
-    trading_days: BTreeMap<crate::StockId, u64>,
+    anchors: BTreeMap<crate::StockId, crate::observation::information_clock::InformationTradingAnchor>,
     owners_and_codes: BTreeMap<LocalIdx, (crate::AccountId, std::collections::BTreeSet<crate::StockId>)>,
 }
 
@@ -52,14 +52,26 @@ impl GroupState {
         id: AdminTransactionId,
         operations: Vec<AdminOperation>,
     ) -> Result<AdminGroupCandidate, RuntimeError> {
-        self.prepare_admin_with_information(id, operations, None)
+        self.prepare_admin_with_information_clock(id, operations, None, None)
     }
 
+    /// 直接 Group 测试的合成 sender；生产只接收 World 私有广播证明。
+    #[cfg(test)]
     fn prepare_admin_with_information(
+        &mut self, id: AdminTransactionId, operations: Vec<AdminOperation>,
+        information: Option<crate::runtime::protocol::InformationPreparePayload>,
+    ) -> Result<AdminGroupCandidate, RuntimeError> {
+        let proof = information.as_ref().and_then(|payload| payload.observation.as_ref())
+            .map(|point| super::super::world::AuthenticatedInformationClock::fixture(&point.clock));
+        self.prepare_admin_with_information_clock(id, operations, information, proof)
+    }
+
+    fn prepare_admin_with_information_clock(
         &mut self,
         id: AdminTransactionId,
         operations: Vec<AdminOperation>,
         information: Option<crate::runtime::protocol::InformationPreparePayload>,
+        information_clock: Option<super::super::world::AuthenticatedInformationClock>,
     ) -> Result<AdminGroupCandidate, RuntimeError> {
         if id.0 <= self.admin_last_id {
             return Err(invalid(format!(
@@ -102,7 +114,7 @@ impl GroupState {
             })?;
         }
         // 信息计算读取同一事务资产候选，全部成功后才暂装资产 working。
-        let information = information.as_ref().map(|payload| self.prepare_information(payload, &working)).transpose()?;
+        let information = information.as_ref().map(|payload| self.prepare_information(payload, information_clock.as_ref(), &working)).transpose()?;
         let before = working
             .keys()
             .map(|&local| (local, Arc::clone(&self.accounts[local as usize])))
@@ -202,6 +214,7 @@ impl GroupState {
         phase: AdminPhase,
         operations: Vec<AdminOperation>,
         information: Option<crate::runtime::protocol::InformationPreparePayload>,
+        information_clock: Option<super::super::world::AuthenticatedInformationClock>,
         up: &Sender<UpMsg>,
         who: super::super::protocol::WorkerId,
     ) -> bool {
@@ -217,7 +230,7 @@ impl GroupState {
                 std::panic::panic_any(Arc::clone(payload));
             }
             if phase == AdminPhase::Prepare {
-                self.prepare_admin_with_information(id, operations, information)
+                self.prepare_admin_with_information_clock(id, operations, information, information_clock)
             } else {
                 self.complete_admin(id, phase)
             }

@@ -11,6 +11,9 @@ mod registry_settlement_restore_tests;
 mod saved_runtime_tests;
 
 #[cfg(test)]
+mod information_anchor_tests;
+
+#[cfg(test)]
 #[test]
 fn direct_save_slot_rejects_missing_consolidated_parent_income() {
     let session = GameSession::new(super::npc_working_quote_tests::quote_setup(0), 42).unwrap();
@@ -101,7 +104,7 @@ fn institution_boundary_restore_rejects_confidence_above_10000() {
             "confidence_bp": confidence,
             "valuation": { "Unavailable": { "reason": "NonPositiveNetIncome" } },
             "used_report_ids": [],
-            "anchor_trading_day": 0,
+            "anchor": { "kind": "NoPriorSession" },
             "horizon_trading_days": 1,
             "last_cause": null,
             "applied_experience_orders": []
@@ -1057,6 +1060,7 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
     validate_company_domain(save)?;
     validate_disclosure_cursors(save)?;
     validate_personal_states(&context)?;
+    validate_saved_information_anchors(save, &save_catalog)?;
     validate_plan_contract(&context)?;
     // 内存 SaveSlot 可以绕过 serde；与严格 JSON 同样重放冻结账簿，保留原领域 cause。
     if let Some(actions) = save.company_state.actions() {
@@ -1065,6 +1069,142 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
         }
     }
     Ok(())
+}
+
+/// 冻结政策与保存进度只投影一次，不把共享 saved_day 当逐股 anchor。
+fn validate_saved_information_anchors(
+    save: &SaveSlot,
+    catalog: &StockCatalog,
+) -> Result<(), SessionError> {
+    let invalid = |description| {
+        SessionError::Step(StepFatal::InvariantViolation {
+            location: "validate_saved_information_anchors".to_owned(),
+            description,
+        })
+    };
+    let clock = CivilClock::from_parts_for_exchanges(
+        save.setup.start_date,
+        &save.civil_clock,
+        save.setup
+            .stocks
+            .iter()
+            .map(|stock| session_calendar_exchange(stock.exchange)),
+    )?;
+    let source = GameSession::calendar_source_for(&save.setup, catalog, &clock)?;
+    let day = source
+        .day(clock.current_date())
+        .map_err(|error| match error {
+            super::market_calendar_context::MarketCalendarContextError::Model(error) => saved_information_clock_error(save, error),
+            _ => invalid("构造日历 owner 返回不可能的 context 校验错误".to_owned()),
+        })?;
+    let layout = super::exchange_calendar_model::SessionTickLayout {
+        ticks_per_day: save.setup.ticks_per_day,
+        auction_ticks: save.setup.auction_ticks,
+        closing_auction_ticks: save.setup.closing_auction_ticks,
+    };
+    let input = super::market_calendar_live::calendar_clock_input(
+        &day,
+        layout,
+        save.snapshot.tick,
+        save.snapshot.tick / save.setup.ticks_per_day,
+    )
+    .map_err(|error| saved_information_clock_error(save, error))?;
+    let projection =
+        super::exchange_calendar_model::calendar_clock_projection(day.day_model(), layout, input)
+            .map_err(|error| saved_information_clock_error(save, error))?;
+    let anchors =
+        super::information_anchor::information_trading_anchors(day.day_model(), &projection)
+            .map_err(|error| invalid(error.to_string()))?;
+    for (id, book) in &save.belief_books {
+        for code in book.entry_stocks() {
+            let as_of = anchors.get(code).copied().ok_or_else(|| {
+                invalid(format!(
+                    "存档信念缺本股当前日历投影：account={id:?}, stock={code:?}"
+                ))
+            })?;
+            book.validate_information_anchor(code, as_of).map_err(|error| {
+                let entry = book.entry(code).expect("entry_stocks 的键必须存在");
+                let reason = match error {
+                    crate::strategy::BeliefError::InformationClock(
+                        crate::observation::information_clock::InformationHorizonError::TimeReversed { .. }
+                    ) => 1,
+                    crate::strategy::BeliefError::InformationClock(
+                        crate::observation::information_clock::InformationHorizonError::ZeroHorizon
+                    ) => 2,
+                    _ => 3,
+                };
+                let mut context = vec![id.0, u64::from(code.0), reason];
+                append_information_anchor_context(&mut context, Some(entry.anchor));
+                append_information_anchor_context(&mut context, entry.last_cause.as_ref().map(|cause| cause.as_of_anchor));
+                append_information_anchor_context(&mut context, Some(as_of));
+                SessionError::InvalidSave(ValidationFault::new(2790, context))
+            })?;
+        }
+    }
+    Ok(())
+}
+
+/// 错误保留保存输入与模型原因；底层 Calendar 错误沿原领域返回，不 stringify。
+fn saved_information_clock_error(
+    save: &SaveSlot,
+    error: super::exchange_calendar_model::CalendarClockModelError,
+) -> SessionError {
+    use super::exchange_calendar_model::{CalendarClockModelError as E, SharedDayProgress};
+    let mut context = vec![save.snapshot.tick, save.setup.ticks_per_day];
+    let progress = |value| match value {
+        SharedDayProgress::ClosedDay => vec![0, 0],
+        SharedDayProgress::Trading { completed_ticks } => vec![1, completed_ticks],
+        SharedDayProgress::TradingCompleted => vec![2, 0],
+    };
+    let (kind, detail) = match error {
+        E::Calendar(error) => return SessionError::Calendar(error),
+        E::EmptyBindings => (1, vec![]),
+        E::DuplicateStock { stock } => (2, vec![u64::from(stock.0)]),
+        E::CurrentBeforeStart { start, current } => (3, vec![
+            crate::error::ymd_context(start.year(), start.month(), start.day()),
+            crate::error::ymd_context(current.year(), current.month(), current.day()),
+        ]),
+        E::InvalidTickLayout { ticks_per_day, auction_ticks, closing_auction_ticks } =>
+            (4, vec![ticks_per_day, auction_ticks, closing_auction_ticks]),
+        E::ProgressCalendarMismatch { progress: actual, shared_open } => {
+            let mut detail = progress(actual);
+            detail.push(u64::from(shared_open));
+            (5, detail)
+        }
+        E::TradingTicksOutsideSession { completed_ticks, ticks_per_day } =>
+            (6, vec![completed_ticks, ticks_per_day]),
+        E::CountersMismatch { expected_tick, actual_tick, expected_shared_sessions, actual_shared_sessions } =>
+            (7, vec![expected_tick, actual_tick, expected_shared_sessions, actual_shared_sessions]),
+        E::ArithmeticOverflow => (8, vec![]),
+        E::Observation(error) => {
+            // 本投影只可能请求已完成 tick 到分钟映射，仍保留数值输入供边界复现。
+            let subkind = match error {
+                crate::observation::ObservationError::ZeroTicksPerDay => 1,
+                crate::observation::ObservationError::CompletedTicksOutsideDay { .. } => 2,
+                _ => 3,
+            };
+            (9, vec![subkind])
+        }
+        E::UnknownStock { stock } => (10, vec![u64::from(stock.0)]),
+    };
+    context.insert(0, kind);
+    context.extend(detail);
+    SessionError::InvalidSave(ValidationFault::new(2791, context))
+}
+
+/// tag：0=缺 cause，1=NoPriorSession，2=TradingDay，3=DayBefore；ordinal 拆高低 u32。
+fn append_information_anchor_context(
+    context: &mut Vec<u64>,
+    anchor: Option<crate::observation::information_clock::InformationTradingAnchor>,
+) {
+    use crate::observation::information_clock::InformationTradingAnchor::*;
+    let (tag, ordinal) = match anchor {
+        None => (0, 0),
+        Some(NoPriorSession) => (1, 0),
+        Some(TradingDay { ordinal }) => (2, ordinal),
+        Some(DayBefore { ordinal }) => (3, ordinal),
+    };
+    context.extend([tag, ordinal >> 32, ordinal & u64::from(u32::MAX)]);
 }
 
 /// 存档解码的默认字节上限；不限制市场中的公司数量。

@@ -16,6 +16,7 @@ use super::event_bridge::{
     collect_lifecycle, project_auction_events, project_lifecycle_events,
 };
 use super::world::World;
+use std::sync::Arc;
 mod convergence;
 mod company_commands;
 mod sync_inputs;
@@ -2179,16 +2180,37 @@ impl RuntimeDriver {
             .map_err(|e| format!("注意力收集失败：{e:?}"))
     }
 
+    /// 先选择真实来源并认证；版本 shortcut 不能隐藏非法静点，也不制造本人观察。
+    fn prepare_delivery_clock(&self, session: &GameSession) -> Result<(
+        super::InformationClockContext,
+        Arc<std::collections::BTreeMap<crate::StockId, crate::observation::information_clock::InformationTradingAnchor>>,
+    ), String> {
+        if self.world_committed_tick() < session.tick() {
+            return Err("INFO World tick 落后 Session，不能冒充已提交市场拍后的领先来源".to_owned());
+        }
+        let clock = if self.world_committed_tick() == session.tick() {
+            super::InformationClockContext::from_session(session).map_err(|error| error.to_string())?
+        } else {
+            let record = self.world.committed_calendar_tick().map_err(|error| error.to_string())?
+                .ok_or_else(|| "World 领先 Session 的 INFO 缺少真实已提交 TickArc".to_owned())?;
+            super::InformationClockContext::after_committed(record)
+        };
+        let anchors = Arc::new(clock.anchors().map_err(|error| error.to_string())?);
+        self.world.validate_information_clock(&clock, clock.cutoff(), &anchors).map_err(|error| error.to_string())?;
+        Ok((clock, anchors))
+    }
+
     /// 信息投递（Belief-1b·下：稀疏——披露版本变化才下行；组内纯函数
     /// 推进；回写**仅 information 域**——权威调和见设计注记）。
     /// 返回回写条数。
     pub fn deliver_information(&mut self, session: &mut GameSession) -> Result<usize, String> {
         session.require_healthy().map_err(|fatal| fatal.to_string())?;
         let (version, library) = session.runtime_library_handle();
+        let (clock, anchors) = self.prepare_delivery_clock(session)?;
         if Some(version) == self.last_library_version {
             return Ok(0);
         }
-        let updates = self.collect_delivery(session, library)?;
+        let updates = self.collect_delivery(session, library, clock, anchors)?;
         self.last_library_version = Some(version);
         session.set_runtime_information_checks(&updates);
         Ok(updates.len())
@@ -2201,7 +2223,8 @@ impl RuntimeDriver {
     ) -> Result<usize, String> {
         session.require_healthy().map_err(|fatal| fatal.to_string())?;
         let (version, library) = session.runtime_library_handle();
-        let updates = self.collect_delivery(session, library)?;
+        let (clock, anchors) = self.prepare_delivery_clock(session)?;
+        let updates = self.collect_delivery(session, library, clock, anchors)?;
         self.last_library_version = Some(version);
         session.set_runtime_information_checks(&updates);
         Ok(updates.len())
@@ -2213,9 +2236,10 @@ impl RuntimeDriver {
         &mut self,
         session: &GameSession,
         library: std::sync::Arc<crate::information::PublicLibrary>,
+        clock: super::InformationClockContext,
+        as_of_anchors: Arc<std::collections::BTreeMap<crate::StockId, crate::observation::information_clock::InformationTradingAnchor>>,
     ) -> Result<Vec<(crate::AccountId, crate::session::NpcAttentionState)>, String> {
-        let now = session.runtime_observation_instant();
-        let day = u64::from(session.day());
+        let now = clock.cutoff();
         let attentions_full = session.runtime_attention_full_states();
         let by_id: std::collections::BTreeMap<crate::AccountId, _> =
             attentions_full.into_iter().collect();
@@ -2244,7 +2268,8 @@ impl RuntimeDriver {
         }
         let payload = super::world::GroupInformationPayload {
             now,
-            day,
+            clock,
+            as_of_anchors,
             library,
             attentions,
         };
@@ -3170,3 +3195,6 @@ impl RuntimeDriver {
         }
     }
 }
+
+#[cfg(test)]
+mod typed_info_delivery_tests;

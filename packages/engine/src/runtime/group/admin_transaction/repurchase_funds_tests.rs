@@ -180,10 +180,10 @@ fn funds_p2_group_10_same_pending_info_failure_and_abort_restore_credit_and_libr
     let old_library = s.library.clone(); let before = s.accounts.clone(); let book = s.plan_book.clone();
     let personal = s.belief_states.clone();
     let mut broken = fixture::payload(true);
-    broken.observation.as_mut().unwrap().as_of_trading_days.remove(&StockId(0));
+    broken.observation.as_mut().unwrap().as_of_anchors.remove(&StockId(0));
     let error = s.prepare_admin_with_information(AdminTransactionId(1), vec![credit(ids[0], 0, 101)], Some(broken)).unwrap_err();
     assert!(matches!(error, RuntimeError::InformationPrepare { error:
-        crate::runtime::protocol::InformationPrepareError::MissingTradingDay { stock: StockId(0) }, .. }));
+        crate::runtime::protocol::InformationPrepareError::MissingInformationAnchor { stock: StockId(0) }, .. }));
     assert!(s.admin_pending.is_none()); assert_eq!(s.accounts, before); assert_eq!(s.plan_book, book);
     assert!(Arc::ptr_eq(&s.library, &old_library)); assert!(Arc::ptr_eq(s.current_company_facts().unwrap(), &old_facts));
     let payload = fixture::payload(false);

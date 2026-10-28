@@ -14,6 +14,9 @@ use crate::accounting::reports::ReportKind;
 use crate::company::{CompanyId, CompanyKind};
 use crate::experience::RetailExperienceState;
 use crate::information::{AcquisitionError, NpcObservationContext, PublicationId};
+use crate::observation::information_clock::{
+    ensure_information_anchor_not_after, InformationHorizonError, InformationTradingAnchor,
+};
 use crate::orderbook::AccountId;
 
 use super::analysis_profile::{AnalysisProfile, FundamentalMethod};
@@ -35,13 +38,15 @@ pub struct BeliefInputs<'a, Market> {
     /// 发行人固定的已发行普通股总股数（比较报价前验证正分母；绝不使用
     /// 流通股数）。
     pub total_issued_shares: u64,
-    pub as_of_trading_day: u64,
+    pub as_of_anchor: InformationTradingAnchor,
 }
 
 /// 信念编排错误（瞬态操作错误；**不可用状态存进条目**而非报错——NPC 保持
 /// 运转，其他信号路径照常）。
 #[derive(Debug, thiserror::Error)]
 pub enum BeliefError {
+    #[error(transparent)]
+    InformationClock(#[from] InformationHorizonError),
     #[error("acquisition guard rejected the material: {0}")]
     Acquisition(#[from] AcquisitionError),
     #[error("valuation facts unavailable: {0}")]
@@ -58,6 +63,8 @@ pub enum BeliefError {
     },
     #[error("horizon has {remaining_trading_days} trading day(s) remaining")]
     HorizonNotElapsed { remaining_trading_days: u64 },
+    #[error("个人信息缺少本股当前锚：{stock:?}")]
+    MissingInformationAnchor { stock: StockId },
     #[error("no belief entry for the stock yet")]
     NoBeliefEntry,
     #[error("no own-known annual material to re-estimate from")]
@@ -66,6 +73,7 @@ pub enum BeliefError {
 
 /// 逐股票信念条目。
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct BeliefEntry {
     pub company: CompanyId,
     /// 本次估值路径（`None` = 零基本权重——方法禁用，估值 Unavailable）。
@@ -76,7 +84,7 @@ pub struct BeliefEntry {
     pub valuation: ValuationOutcome,
     /// 当前估值所用的本人已获知报告 id。
     pub used_report_ids: Vec<PublicationId>,
-    pub anchor_trading_day: u64,
+    pub anchor: InformationTradingAnchor,
     pub horizon_trading_days: u16,
     pub last_cause: Option<CauseRecord>,
     /// 已消费的一次性经历订单 id（同一订单/事件只更新一次）。
@@ -248,6 +256,38 @@ impl BeliefBook {
         self.entries.keys()
     }
 
+    /// 多股 caller 先验证整本书，再做过滤或逐股更新，避免后项失败时前项已变。
+    pub(crate) fn validate_information_anchors(
+        &self,
+        as_of: impl Fn(StockId) -> Option<InformationTradingAnchor>,
+    ) -> Result<(), BeliefError> {
+        for stock in self.entry_stocks() {
+            let anchor = as_of(*stock).ok_or(BeliefError::MissingInformationAnchor { stock: *stock })?;
+            self.validate_information_anchor(stock, anchor)?;
+        }
+        Ok(())
+    }
+
+    /// 先核完整历史关系，调用方不得在此之前过滤已消费订单或已使用报告。
+    pub(crate) fn validate_information_anchor(
+        &self,
+        stock: &StockId,
+        as_of: InformationTradingAnchor,
+    ) -> Result<(), BeliefError> {
+        let Some(entry) = self.entries.get(stock) else {
+            return Ok(());
+        };
+        if entry.horizon_trading_days == 0 {
+            return Err(InformationHorizonError::ZeroHorizon.into());
+        }
+        ensure_information_anchor_not_after(entry.anchor, as_of)?;
+        if let Some(record) = &entry.last_cause {
+            ensure_information_anchor_not_after(entry.anchor, record.as_of_anchor)?;
+            ensure_information_anchor_not_after(record.as_of_anchor, as_of)?;
+        }
+        Ok(())
+    }
+
     /// 唯一变更入口：显式 cause（新材料/更正/违约/到期/经历）。无触发 ⇒
     /// 调用方根本不该调（模块不存在无 cause 的变更路径——no-trigger-stable
     /// 由测试以字节对比锁定）。
@@ -257,6 +297,7 @@ impl BeliefBook {
         cause: BeliefCause,
         inputs: &BeliefInputs<'_, M>,
     ) -> Result<&BeliefEntry, BeliefError> {
+        self.validate_information_anchor(stock, inputs.as_of_anchor)?;
         match cause {
             BeliefCause::ExperienceFailure { order } => {
                 self.apply_experience(
@@ -264,7 +305,7 @@ impl BeliefBook {
                     cause,
                     order,
                     FAILURE_CONFIDENCE_DELTA_BP,
-                    inputs.as_of_trading_day,
+                    inputs.as_of_anchor,
                 )?;
             }
             BeliefCause::ProfitableExit { order } => {
@@ -273,7 +314,7 @@ impl BeliefBook {
                     cause,
                     order,
                     PROFITABLE_EXIT_CONFIDENCE_DELTA_BP,
-                    inputs.as_of_trading_day,
+                    inputs.as_of_anchor,
                 )?;
             }
             BeliefCause::NewMaterial { report } => {

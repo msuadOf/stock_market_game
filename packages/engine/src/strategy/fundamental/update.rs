@@ -7,6 +7,9 @@ use crate::accounting::reports::ReportKind;
 use crate::accounting::AccountingPeriod;
 use crate::calendar::CivilInstant;
 use crate::information::{NpcObservationContext, PublicationId, PublishedReport};
+use crate::observation::information_clock::{
+    information_horizon_remaining, InformationTradingAnchor,
+};
 use crate::orderbook::OrderId;
 
 use super::facts::{extract_annual_facts, AnnualFacts};
@@ -36,9 +39,10 @@ pub enum BeliefCause {
 
 /// 因果记录（存档面：追溯最后一次信念变更的触发事件）。
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CauseRecord {
     pub cause: BeliefCause,
-    pub as_of_trading_day: u64,
+    pub as_of_anchor: InformationTradingAnchor,
 }
 
 /// 受挫经历的信心增量。
@@ -98,12 +102,6 @@ pub(crate) fn apply_confidence_delta(current_bp: u16, delta_bp: i32) -> u16 {
         .expect("clamped to the 0..=10000 bp scoring range")
 }
 
-/// 距到期剩余交易日（0 = 已到期）。
-pub(crate) fn horizon_remaining_trading_days(anchor: u64, horizon: u16, as_of: u64) -> u64 {
-    let expiry = anchor.saturating_add(u64::from(horizon));
-    expiry.saturating_sub(as_of)
-}
-
 impl BeliefBook {
     /// 经历触发：只动信心（`delta_bp` = −1000/+500、界限饱和），估值/预测
     /// 不动；同一订单只更新一次（重复触发幂等——字节不变）。
@@ -113,8 +111,9 @@ impl BeliefBook {
         cause: BeliefCause,
         order: OrderId,
         delta_bp: i32,
-        as_of_trading_day: u64,
+        as_of_anchor: InformationTradingAnchor,
     ) -> Result<(), BeliefError> {
+        self.validate_information_anchor(stock, as_of_anchor)?;
         let entry = self
             .entries
             .get_mut(stock)
@@ -125,7 +124,7 @@ impl BeliefBook {
         entry.confidence_bp = apply_confidence_delta(entry.confidence_bp, delta_bp);
         entry.last_cause = Some(CauseRecord {
             cause,
-            as_of_trading_day,
+            as_of_anchor,
         });
         Ok(())
     }
@@ -261,10 +260,10 @@ impl BeliefBook {
         }
         entry.valuation = valuation;
         entry.used_report_ids = vec![annual_id, report_id];
-        entry.anchor_trading_day = inputs.as_of_trading_day;
+        entry.anchor = inputs.as_of_anchor;
         entry.last_cause = Some(CauseRecord {
             cause,
-            as_of_trading_day: inputs.as_of_trading_day,
+            as_of_anchor: inputs.as_of_anchor,
         });
         Ok(())
     }
@@ -301,14 +300,14 @@ impl BeliefBook {
         inputs: &BeliefInputs<'_, impl Sized>,
     ) -> Result<(), BeliefError> {
         let entry = self.entries.get(stock).ok_or(BeliefError::NoBeliefEntry)?;
-        let remaining = horizon_remaining_trading_days(
-            entry.anchor_trading_day,
+        let remaining = information_horizon_remaining(
+            entry.anchor,
             entry.horizon_trading_days,
-            inputs.as_of_trading_day,
-        );
+            inputs.as_of_anchor,
+        )?;
         if remaining > 0 {
             return Err(BeliefError::HorizonNotElapsed {
-                remaining_trading_days: remaining,
+                remaining_trading_days: u64::from(remaining),
             });
         }
         let baseline_scope = entry
@@ -335,10 +334,10 @@ impl BeliefBook {
         if entry.used_report_ids.first() != Some(&report_id) {
             entry.used_report_ids = vec![report_id];
         }
-        entry.anchor_trading_day = inputs.as_of_trading_day;
+        entry.anchor = inputs.as_of_anchor;
         entry.last_cause = Some(CauseRecord {
             cause,
-            as_of_trading_day: inputs.as_of_trading_day,
+            as_of_anchor: inputs.as_of_anchor,
         });
         Ok(())
     }
@@ -379,11 +378,11 @@ impl BeliefBook {
             confidence_bp,
             valuation: self.valuation_for(&facts, forecast.growth_bp, inputs),
             used_report_ids: vec![report_id],
-            anchor_trading_day: inputs.as_of_trading_day,
+            anchor: inputs.as_of_anchor,
             horizon_trading_days: belief_horizon_days(&self.profile),
             last_cause: Some(CauseRecord {
                 cause,
-                as_of_trading_day: inputs.as_of_trading_day,
+                as_of_anchor: inputs.as_of_anchor,
             }),
             applied_experience_orders: old
                 .map(|old| old.applied_experience_orders.clone())

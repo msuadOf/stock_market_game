@@ -31,6 +31,8 @@ pub type OrderRef = (StockIdx, u64);
 mod entities;
 mod facts;
 mod protocol;
+mod information_clock_context;
+pub use information_clock_context::InformationClockContext;
 
 pub mod bridge;
 pub mod coordinator;

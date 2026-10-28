@@ -90,7 +90,8 @@ fn prepared_prior_session() -> (GameSession, AccountId, AccountId, StockId, u32)
                 company: company.clone(),
                 kind: CompanyKind::Industrial,
                 total_issued_shares: issued_shares,
-                as_of_trading_day: 0,
+                // 开局前已获知的历史材料，没有本局已开始的交易会话。
+                as_of_anchor: engine::observation::information_clock::InformationTradingAnchor::NoPriorSession,
             },
         )
         .unwrap();

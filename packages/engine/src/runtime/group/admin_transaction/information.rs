@@ -44,9 +44,13 @@ impl GroupState {
     pub(super) fn prepare_information(
         &self,
         payload: &InformationPreparePayload,
+        proof: Option<&crate::runtime::world::AuthenticatedInformationClock>,
         accounts: &BTreeMap<LocalIdx, GroupAccount>,
     ) -> Result<PendingInformation, RuntimeError> {
         let reject = |error| self.information_error(error);
+        if payload.observation.is_some() != proof.is_some() {
+            return Err(reject(InformationPrepareError::Identity { detail: "INFO 观察作用域与 World 证明作用域不同".to_owned() }));
+        }
         let mut personals = Vec::new();
         let mut before = Vec::new();
         let mut prepared_signature = None;
@@ -94,12 +98,18 @@ impl GroupState {
                     .map_err(|e| reject(e.into()))?;
                 issuers.insert(stock, company);
                 specs.insert(company, spec);
-                if !point.as_of_trading_days.contains_key(&stock) {
-                    return Err(reject(InformationPrepareError::MissingTradingDay { stock }));
+                if !point.as_of_anchors.contains_key(&stock) {
+                    return Err(reject(InformationPrepareError::MissingInformationAnchor { stock }));
                 }
                 if !point.market.stocks.contains_key(&stock) {
                     return Err(reject(InformationPrepareError::MissingMarket { stock }));
                 }
+            }
+            let proof = proof.ok_or_else(|| reject(InformationPrepareError::Identity { detail: "INFO 缺少 World 认证证明".to_owned() }))?;
+            self.validate_information_clock(proof)?;
+            if proof.through() != point.through || proof.anchors() != &point.as_of_anchors
+                || !proof.clock().same_source(&point.clock) {
+                return Err(reject(InformationPrepareError::Identity { detail: "INFO 原始观察与 World 认证证明绑定不同".to_owned() }));
             }
             let mut observers = Vec::new();
             for local in 0..self.accounts.len() {
@@ -159,6 +169,10 @@ impl GroupState {
                         }));
                     }
                 }
+                snapshot.belief.validate_information_anchors(|stock| point.as_of_anchors.get(&stock).copied())
+                    .map_err(|error| reject(InformationPrepareError::Revaluation {
+                        account: owner, detail: error.to_string(),
+                    }))?;
                 observers.push((local, owner, snapshot, codes));
             }
             // 完整目录与全部真实 owner/codes 已验证后，才允许同签名跳过本人计算。
@@ -167,7 +181,7 @@ impl GroupState {
                 library: Arc::clone(&payload.library),
                 facts: Arc::clone(&point.company_facts),
                 market: Arc::clone(&point.market),
-                trading_days: point.as_of_trading_days.clone(),
+                anchors: point.as_of_anchors.clone(),
                 owners_and_codes: observers
                     .iter()
                     .map(|(local, owner, _, codes)| (*local as LocalIdx, (*owner, codes.clone())))
@@ -181,7 +195,7 @@ impl GroupState {
                     let result = crate::session::notices::deliver_information_for_npc(
                         owner,
                         point.through,
-                        &|stock| point.as_of_trading_days.get(&stock).copied(),
+                        &|stock| point.as_of_anchors.get(&stock).copied(),
                         &snapshot.attention,
                         &snapshot.information,
                         &snapshot.belief,

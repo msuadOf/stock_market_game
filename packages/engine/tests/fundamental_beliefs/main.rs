@@ -14,6 +14,7 @@ mod hand;
 mod interim;
 mod per_share;
 mod priors;
+mod typed_clock;
 
 use engine::accounting::closing::ClosingEngine;
 use engine::accounting::consolidation::{MemberId, ScopeId};
@@ -155,6 +156,22 @@ impl FundamentalBeliefCase {
         cause: BeliefCause,
         as_of: u64,
     ) -> Result<(), BeliefError> {
+        self.apply_cause_at(
+            stock,
+            cause,
+            engine::observation::information_clock::InformationTradingAnchor::TradingDay {
+                ordinal: as_of,
+            },
+        )
+    }
+
+    /// 数字金样使用明确的 TradingDay；三态测试经此入口传完整个人信息锚。
+    pub fn apply_cause_at(
+        &mut self,
+        stock: &StockId,
+        cause: BeliefCause,
+        as_of_anchor: engine::observation::information_clock::InformationTradingAnchor,
+    ) -> Result<(), BeliefError> {
         let ctx = NpcObservationContext::new(
             self.npc,
             &self.state,
@@ -166,7 +183,7 @@ impl FundamentalBeliefCase {
             company: self.scenario.company.clone(),
             kind: self.issuer.kind,
             total_issued_shares: self.issuer.total_issued_shares,
-            as_of_trading_day: as_of,
+            as_of_anchor,
         };
         self.book.apply_cause(stock, cause, &inputs).map(|_| ())
     }

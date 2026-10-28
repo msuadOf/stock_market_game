@@ -1,6 +1,8 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import { parseBeliefBook } from "./beliefs.ts"
+import { parseRawSaveJson } from "../raw-json.ts"
+import { materializeSaveValue, SaveSchemaError } from "../primitives.ts"
 
 const base = {
   npc: "1",
@@ -43,6 +45,78 @@ const base = {
 
 const moment = { civil_date: "2030-01-02", market_minute: "22", trading_day: "1" }
 
+// synthetic：仅定义 Web 输入边界，不冒充 Rust producer 或真实 Calendar 场景。
+const syntheticEntry = {
+  company: 0, method: null,
+  forecast: { growth_bp: null, basis: "InitialWithoutHistory" }, confidence_bp: 3000,
+  valuation: { Unavailable: { reason: "MethodDisabled" } }, used_report_ids: [],
+  anchor: { kind: "NoPriorSession" }, horizon_trading_days: 1,
+  last_cause: { cause: "HorizonExpired", as_of_anchor: { kind: "NoPriorSession" } },
+  applied_experience_orders: [],
+}
+const syntheticBook = (entry: unknown) => ({ ...base, entries: { "0": entry } })
+
+test("typed INFO anchor 三态及完整 u64 字符串不合并、不丢精度（synthetic）", () => {
+  for (const anchor of [
+    { kind: "NoPriorSession" },
+    ...["TradingDay", "DayBefore"].flatMap(kind => ["0", "9007199254740993", "18446744073709551615"].map(ordinal => ({ kind, ordinal }))),
+  ]) {
+    const book = syntheticBook({ ...syntheticEntry, anchor, last_cause: { cause: "HorizonExpired", as_of_anchor: anchor } })
+    assert.deepEqual(parseBeliefBook(book, "book"), book)
+    assert.deepEqual(materializeSaveValue(parseBeliefBook(parseRawSaveJson(JSON.stringify(book)), "book")), book)
+  }
+})
+
+test("typed INFO anchor 旧 scalar 与旧字段分别显式拒绝，不建立 alias（synthetic）", () => {
+  const { anchor: _anchor, last_cause: _cause, ...entry } = syntheticEntry
+  assert.throws(() => parseBeliefBook(syntheticBook({ ...entry, anchor_trading_day: 0, last_cause: null }), "book"), /anchor/)
+  assert.throws(() => parseBeliefBook(syntheticBook({ ...syntheticEntry, anchor: 0 }), "book"), /anchor/)
+  assert.throws(() => parseBeliefBook(syntheticBook({ ...syntheticEntry, anchor_trading_day: 0 }), "book"), /anchor_trading_day/)
+  assert.throws(() => parseBeliefBook(syntheticBook({ ...syntheticEntry, last_cause: { cause: "HorizonExpired", as_of_trading_day: 0 } }), "book"), /as_of_anchor/)
+  assert.throws(() => parseBeliefBook(syntheticBook({ ...syntheticEntry, last_cause: { cause: "HorizonExpired", as_of_anchor: 0 } }), "book"), /as_of_anchor/)
+  assert.throws(() => parseBeliefBook(syntheticBook({ ...syntheticEntry, last_cause: { ...syntheticEntry.last_cause, as_of_trading_day: 0 } }), "book"), /as_of_trading_day/)
+})
+
+test("typed INFO CauseRecord 的旧 scalar 完整条目独立拒绝（synthetic）", () => {
+  const { anchor: _anchor, ...entry } = syntheticEntry
+  const legacy = syntheticBook({ ...entry, anchor_trading_day: 0, last_cause: { cause: "HorizonExpired", as_of_trading_day: 0 } })
+  assert.throws(() => parseBeliefBook(legacy, "book"), /anchor|as_of_anchor/)
+})
+
+test("typed INFO anchor 精确键集、kind 与 canonical ordinal 两字段均严格拒错（synthetic）", () => {
+  const invalid = [null, false, true, 0, "NoPriorSession", [], {}, { kind: "Unknown" },
+    { kind: "NoPriorSession", ordinal: "0" }, { kind: "NoPriorSession", extra: true },
+    { kind: "TradingDay" }, { kind: "DayBefore", ordinal: "0", extra: true },
+    ...[null, 0, -0, -1, "", "00", "01", "+0", "-0", "-1", "1.0", "1e0", " 0", "0\n", "０", "١", "18446744073709551616", "999999999999999999999"].flatMap(ordinal => ["TradingDay", "DayBefore"].map(kind => ({ kind, ordinal }))),
+  ]
+  for (const anchor of invalid) {
+    for (const field of ["anchor", "as_of_anchor"] as const) {
+      const entry = field === "anchor" ? { ...syntheticEntry, anchor } : { ...syntheticEntry, last_cause: { cause: "HorizonExpired", as_of_anchor: anchor } }
+      const expected = field === "anchor" ? "book.entries.0.anchor" : "book.entries.0.last_cause.as_of_anchor"
+      assert.throws(() => parseBeliefBook(syntheticBook(entry), "book"), error => {
+        assert.ok(error instanceof Error)
+        assert.ok(error.message.includes(expected), `必须定位当前字段 ${expected}：${error.message}`)
+        if (error instanceof SaveSchemaError) assert.ok(error.path === expected || error.path.startsWith(`${expected}.`))
+        return true
+      })
+    }
+  }
+})
+
+test("typed INFO anchor 原始 JSON 的重复 kind/ordinal 不经覆盖后进入 decoder（synthetic）", () => {
+  const raw = JSON.stringify(syntheticBook(syntheticEntry))
+  for (const duplicate of [
+    '{"kind":"NoPriorSession","kind":"TradingDay","ordinal":"0"}',
+    '{"kind":"TradingDay","ordinal":"0","ordinal":"1"}',
+  ]) {
+    for (const field of ["anchor", "as_of_anchor"]) {
+      const bad = raw.replace(`"${field}":{"kind":"NoPriorSession"}`, `"${field}":${duplicate}`)
+      assert.notEqual(bad, raw)
+      assert.throws(() => materializeSaveValue(parseBeliefBook(parseRawSaveJson(bad), "book")), /重复 JSON 键/)
+    }
+  }
+})
+
 test("Retail BeliefBook 不携带 Institution policy 或账户暂停状态", () => {
   const retail = { ...base, profile: { Retail: "Noise" }, institution_policy: null }
   assert.deepEqual(parseBeliefBook(retail, "book"), retail)
@@ -68,7 +142,7 @@ test("belief confidence rejects values above 10000 at the save boundary", () => 
     company: 0, method: null,
     forecast: { growth_bp: null, basis: "InitialWithoutHistory" },
     valuation: { Unavailable: { reason: "MethodDisabled" } },
-    used_report_ids: [], anchor_trading_day: 0, horizon_trading_days: 1,
+    used_report_ids: [], anchor: { kind: "NoPriorSession" }, horizon_trading_days: 1,
     last_cause: null, applied_experience_orders: [],
   }
   const withConfidence = (confidence: number) => ({

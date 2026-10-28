@@ -966,6 +966,40 @@ impl GroupState {
             })
     }
 
+    /// World 私有发送见证提供 civil frontier；组仍独立核绑定与已收束的本地 tick/layout。
+    fn validate_information_clock(&self, proof: &super::world::AuthenticatedInformationClock) -> Result<(), RuntimeError> {
+        let clock = proof.clock();
+        let through = proof.through();
+        let anchors = proof.anchors();
+        let frontier = proof.source();
+        let (owner, bindings) = self.calendar_owner.as_ref().ok_or_else(|| RuntimeError::ProtocolInvariant {
+            detail: "INFO 缺少构造期 Calendar owner".to_owned(),
+        })?;
+        if frontier.tick != self.cur_tick || !self.staging_deferred.is_empty() || self.batches_after_seal != 0
+            || (self.cur_tick != self.committed_tick && self.seal_acked_len.is_none()) {
+            return Err(RuntimeError::ProtocolInvariant { detail: "INFO World 见证与组已收束 tick 不一致".to_owned() });
+        }
+        let layout = crate::session::exchange_calendar_model::SessionTickLayout {
+            ticks_per_day: self.ticks_per_day, auction_ticks: self.auction_ticks,
+            closing_auction_ticks: self.closing_auction_ticks,
+        };
+        let input = crate::session::calendar_clock_input(clock.day(), layout, self.cur_tick, self.cur_tick / self.ticks_per_day)
+            .map_err(|error| RuntimeError::ProtocolInvariant { detail: error.to_string() })?;
+        clock.validate(owner, bindings, frontier.civil_date, layout, input, through, anchors)?;
+        if let Some(record) = clock.committed_record() {
+            let snapshot = self.snapshot.as_ref().ok_or_else(|| RuntimeError::ProtocolInvariant {
+                detail: "市场拍后 INFO 缺少本组真实 Start/Seal snapshot".to_owned(),
+            })?;
+            if !Arc::ptr_eq(&snapshot.calendar, &record.calendar) || record.source.tick != self.cur_tick
+                || record.source.authority_epoch != frontier.authority_epoch
+                || record.source.civil_date != frontier.civil_date
+                || record.source.generation > frontier.generation {
+                return Err(RuntimeError::ProtocolInvariant { detail: "INFO 已提交 TickArc 与组真实 Start/Seal 不一致".to_owned() });
+            }
+        }
+        Ok(())
+    }
+
     pub(crate) fn bind_calendar(
         &mut self,
         source: Arc<crate::session::market_calendar_context::MarketCalendarSource>,
@@ -2653,6 +2687,7 @@ impl GroupState {
         market: &crate::strategy::MarketView,
         chain: &crate::session::DecisionChainObservation,
         behavior: &crate::behavior::BehaviorMarketObservation,
+        information_anchors: &std::collections::BTreeMap<crate::StockId, crate::observation::information_clock::InformationTradingAnchor>,
     ) -> Result<Vec<super::decision::PendingOp>, RuntimeError> {
         let group = self.group;
         let company_facts = Arc::clone(self.current_company_facts()?);
@@ -2772,6 +2807,7 @@ impl GroupState {
             positions,
             minute,
             day,
+            information_anchors,
             civil_date: snapshot.civil_date,
             seed: projection.session_seed,
             tick,
@@ -3036,6 +3072,7 @@ impl GroupState {
         local: LocalIdx,
         tick: u64,
         write_back: bool,
+        information_anchors: Arc<std::collections::BTreeMap<crate::StockId, crate::observation::information_clock::InformationTradingAnchor>>,
     ) -> Result<
         (
             super::world::OpenDerivationRecord,
@@ -3085,6 +3122,7 @@ impl GroupState {
             self.ticks_per_day,
             &snapshot,
             self.roster_offset,
+            information_anchors,
         );
         let observation = build_chain_observation(
             &self.observation_inputs,
@@ -4400,9 +4438,15 @@ impl GroupState {
                     self.decide_calls_total += 1;
                     self.push_undo(GroupUndo::NextDue { local, prev: prev_due });
                 }
+                let information_anchors = if !chain_due.is_empty() || !retail_due.is_empty() {
+                    Some(Arc::new(crate::session::information_anchor::information_trading_anchors(
+                        snapshot.calendar.day().day_model(), snapshot.calendar.before_projection(),
+                    ).map_err(|error| RuntimeError::ProtocolInvariant { detail: error.to_string() })?))
+                } else { None };
                 for local in chain_due {
                     let (_record, child_ops, cancels) =
-                        self.run_chain_decision(local, tick, true)?;
+                        self.run_chain_decision(local, tick, true,
+                            Arc::clone(information_anchors.as_ref().expect("非空 chain_due 已准备同批 anchor")))?;
                     for (_plan, op) in child_ops {
                         #[cfg(feature = "simulation-diagnostics")]
                         pendings.push(Pending::InstitutionOp(_plan, op));
@@ -4452,6 +4496,7 @@ impl GroupState {
                         price_paths: chain.paths.clone(),
                         thirty_minute_market,
                     };
+                    let information_anchors = information_anchors.as_ref().expect("非空 retail_due 已准备同批 anchor");
                     for local in retail_due {
                         let ops = self.run_retail_decision(
                             local,
@@ -4460,6 +4505,7 @@ impl GroupState {
                             &shared_market,
                             &chain,
                             &behavior,
+                            &information_anchors,
                         )?;
                         for op in ops {
                             #[cfg(feature = "simulation-diagnostics")]
@@ -5360,6 +5406,7 @@ fn build_root_read_context(
     // 本组在全局名册的偏移（P0 缺陷修复：`account_ids` / `chain_params`
     // 均为全局名册序，组内 local 须加偏移；单组=0）。
     roster_offset: usize,
+    information_anchors: Arc<std::collections::BTreeMap<crate::StockId, crate::observation::information_clock::InformationTradingAnchor>>,
 ) -> crate::session::RootReadContext {
     // 在途卖股仍按本组名册匹配，现金占用直接由资源实体聚合。
     let roster = roster_slice(&projection.account_ids, roster_offset, accounts.len());
@@ -5431,6 +5478,7 @@ fn build_root_read_context(
         snapshot.civil_date,
         market_minute,
         day,
+        information_anchors,
     )
 }
 
@@ -5591,14 +5639,14 @@ pub fn group_main(
         match msg {
             #[cfg(test)]
             GroupIn::AdminFaultForTest { phase, fault } => state.admin_fault = Some((phase, fault)),
-            GroupIn::AdminPrepare { id, operations, information } => {
-                if !state.handle_admin_message(id, super::protocol::AdminPhase::Prepare, operations, information, &up_tx, who) { break; }
+            GroupIn::AdminPrepare { id, operations, information, information_clock } => {
+                if !state.handle_admin_message(id, super::protocol::AdminPhase::Prepare, operations, information, information_clock, &up_tx, who) { break; }
             }
             GroupIn::AdminCommit { id } => {
-                if !state.handle_admin_message(id, super::protocol::AdminPhase::Commit, Vec::new(), None, &up_tx, who) { break; }
+                if !state.handle_admin_message(id, super::protocol::AdminPhase::Commit, Vec::new(), None, None, &up_tx, who) { break; }
             }
             GroupIn::AdminAbort { id } => {
-                if !state.handle_admin_message(id, super::protocol::AdminPhase::Abort, Vec::new(), None, &up_tx, who) { break; }
+                if !state.handle_admin_message(id, super::protocol::AdminPhase::Abort, Vec::new(), None, None, &up_tx, who) { break; }
             }
             GroupIn::Batch(batch) => {
                 // eager 分域即时相：到达即应用 F1/F2/F3（等待窗=组空闲
@@ -5803,7 +5851,7 @@ pub fn group_main(
             }
             GroupIn::InformationDelivery {
                 now,
-                day,
+                clock,
                 library,
                 attentions,
             } => {
@@ -5811,12 +5859,22 @@ pub fn group_main(
                 // 演进）。codes=当前持仓∪watchlist（组账户无"曾持有"
                 // 零量条目面——差异登记）。快照缺席（未跑 tick 即投递）
                 // 如实上行空更新。
+                let as_of_anchors = clock.anchors();
                 let identities = (|| {
+                    state.validate_information_clock(&clock)?;
+                    if now != clock.through() {
+                        return Err(RuntimeError::ProtocolInvariant { detail: "普通 INFO through 与证明不同".to_owned() });
+                    }
                     let projection = state.root_projection.as_ref().ok_or_else(|| {
                         RuntimeError::ProtocolInvariant {
                             detail: "信息投递缺少真实账户名册".to_owned(),
                         }
                     })?;
+                    for (stock, _) in projection.catalog.iter() {
+                        if !as_of_anchors.contains_key(&stock) {
+                            return Err(RuntimeError::ProtocolInvariant { detail: format!("INFO 缺少完整目录 anchor：{stock:?}") });
+                        }
+                    }
                     let mut seen = std::collections::BTreeSet::new();
                     for (local, account_id, _) in &attentions {
                         let index = *local as usize;
@@ -5830,6 +5888,8 @@ pub fn group_main(
                             .ok_or_else(|| RuntimeError::ProtocolInvariant {
                                 detail: format!("组内信息投递缺个人态：group={} local={local} account={account_id:?}", state.group),
                             })?;
+                        personal.belief.validate_information_anchors(|stock| as_of_anchors.get(&stock).copied())
+                            .map_err(|error| RuntimeError::ProtocolInvariant { detail: format!("INFO 整 Book 校验失败：account={account_id:?}，{error}") })?;
                         if personal.information.owner() != *account_id || personal.belief.npc() != *account_id {
                             return Err(RuntimeError::ProtocolInvariant {
                                 detail: format!("组内信息投递个人属主错误：group={} local={local} account={account_id:?} information={:?} belief={:?}", state.group, personal.information.owner(), personal.belief.npc()),
@@ -5877,7 +5937,7 @@ pub fn group_main(
                         match crate::session::notices::deliver_information_for_npc(
                             account_id,
                             now,
-                            &|_| Some(day),
+                            &|stock| as_of_anchors.get(&stock).copied(),
                             &attention,
                             &snap.information,
                             &snap.belief,
@@ -6291,11 +6351,14 @@ pub fn group_main(
                             ),
                         )
                         .expect("快照自然日与日内秒构成合法 CivilInstant"));
+                        let information_anchors = Arc::new(crate::session::information_anchor::information_trading_anchors(
+                            snapshot.calendar.day().day_model(), snapshot.calendar.before_projection(),
+                        ).expect("Start 已完整验证同源 Calendar，读面不重造时钟"));
                         for local in 0..state.belief_states.len() as LocalIdx {
                             if state.belief_states[local as usize].is_none() {
                                 continue;
                             }
-                            match state.run_chain_decision(local, snapshot.tick, false) {
+                            match state.run_chain_decision(local, snapshot.tick, false, Arc::clone(&information_anchors)) {
                                 Ok((record, _, _)) => derivations.push(record),
                                 Err(e) => {
                                     abort.store(true, Ordering::SeqCst);

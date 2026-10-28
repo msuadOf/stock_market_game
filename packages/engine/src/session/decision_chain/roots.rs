@@ -11,6 +11,7 @@ pub(crate) struct RootReadContext {
     civil_date: crate::CivilDate,
     market_minute: u64,
     day: u32,
+    information_anchors: std::sync::Arc<BTreeMap<StockId, crate::observation::information_clock::InformationTradingAnchor>>,
 }
 
 impl RootReadContext {
@@ -49,6 +50,7 @@ impl RootReadContext {
             civil_date: session.civil_date(),
             market_minute: session.current_market_minute(),
             day: session.state.day,
+            information_anchors: session.prepare_information_anchors()?,
         })
     }
 
@@ -63,6 +65,7 @@ impl RootReadContext {
         civil_date: crate::CivilDate,
         market_minute: u64,
         day: u32,
+        information_anchors: std::sync::Arc<BTreeMap<StockId, crate::observation::information_clock::InformationTradingAnchor>>,
     ) -> Self {
         Self {
             accounts,
@@ -72,6 +75,7 @@ impl RootReadContext {
             civil_date,
             market_minute,
             day,
+            information_anchors,
         }
     }
 
@@ -280,6 +284,8 @@ impl InstitutionDecisionRoot {
         plans: &PlanBook,
         operations: &mut PlanChainOperationBatch,
     ) -> PlanRootDiagnostics {
+        personal.belief.validate_information_anchors(|stock| context.information_anchors.get(&stock).copied())
+            .unwrap_or_else(|error| panic!("root 个人信息时点验证失败：{error}"));
         let held: BTreeSet<StockId> = context.accounts[&id].positions().keys().cloned().collect();
         let moment = crate::experience::ExperienceMoment {
             civil_date: context.civil_date,
@@ -499,7 +505,6 @@ impl InstitutionDecisionRoot {
         let ctx =
             NpcObservationContext::new(id, &personal.information, &context.library, market_view)
                 .unwrap_or_else(|error| panic!("observation context failed for {id:?}: {error}"));
-        let as_of_trading_day = u64::from(context.day);
         let issuer_inputs: Vec<(StockId, BeliefInputs<'_, MarketView>)> = candidates
             .iter()
             .map(|code| {
@@ -516,7 +521,7 @@ impl InstitutionDecisionRoot {
                         company,
                         kind,
                         total_issued_shares: issued_shares,
-                        as_of_trading_day,
+                        as_of_anchor: *context.information_anchors.get(code).expect("完整目录的本人信息锚必须存在"),
                     },
                 )
             })
@@ -578,8 +583,9 @@ impl InstitutionDecisionRoot {
                 let Some(entry) = belief.entry(code) else {
                     continue;
                 };
-                let expiry = entry.anchor_trading_day + u64::from(entry.horizon_trading_days);
-                if as_of_trading_day >= expiry {
+                let remaining = crate::observation::information_clock::information_horizon_remaining(entry.anchor, entry.horizon_trading_days, inputs.as_of_anchor)
+                    .expect("整本信念已验证时点与正 horizon");
+                if remaining == 0 {
                     belief
                         .apply_cause(code, BeliefCause::HorizonExpired, inputs)
                         .unwrap_or_else(|error| {
@@ -590,7 +596,7 @@ impl InstitutionDecisionRoot {
         }
 
         // 先形成或更新本人信念，再按本次真实失败订单调整信心；新阅读不会吞掉受挫事件。
-        apply_institution_experience_feedback(&mut personal.belief, moment.trading_day);
+        apply_institution_experience_feedback(&mut personal.belief, &context.information_anchors);
 
         // 4–5. 混合分析与方向迟滞 聚合 + 计划生命周期。
         let assessments = context.assess_candidates(

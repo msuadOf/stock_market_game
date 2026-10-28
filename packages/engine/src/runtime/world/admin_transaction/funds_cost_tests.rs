@@ -346,6 +346,10 @@ fn information_world() -> World {
     let ids = [11, 37, 51, 79, 113].map(AccountId);
     let mut spec = basic_spec(3, 2, 2, Box::new(|_| Box::new(|_, _| TickPlan::default())));
     spec.ticks_per_day = 100;
+    spec.auction_ticks = 0;
+    spec.closing_auction_ticks = 0;
+    spec.calendar_start_date = information_fixture::at(0, 0).date();
+    spec.civil_start_date = information_fixture::at(0, 0).date();
     spec.root_projection = Some(information_fixture::projection(ids.to_vec()));
     spec.belief_seeds = ids
         .iter()
@@ -363,10 +367,8 @@ fn information_world() -> World {
         normal: Duration::from_millis(300),
         long: Duration::from_millis(300),
     };
-    World::spawn(
-        spec,
-        crate::calendar::TradingCalendar::current_default_calendar()
-            .expect("显式 raw Calendar 政策合法"),
+    World::spawn_with_calendar_source(
+        spec, information_fixture::calendar_source(), information_fixture::calendar_bindings(),
     )
     .unwrap()
 }

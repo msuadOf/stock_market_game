@@ -82,7 +82,8 @@ impl DeskStockSpec {
 /// 信息投递载荷（Belief-1b·下：驱动器组装——库 Arc+镜像快照+映射）。
 pub struct GroupInformationPayload {
     pub now: crate::calendar::CivilInstant,
-    pub day: u64,
+    pub clock: super::InformationClockContext,
+    pub as_of_anchors: Arc<std::collections::BTreeMap<crate::StockId, crate::observation::information_clock::InformationTradingAnchor>>,
     pub library: std::sync::Arc<crate::information::PublicLibrary>,
     pub attentions: Vec<Vec<(
         super::LocalIdx,
@@ -329,6 +330,36 @@ struct DayEndProgress {
     groups_sent: usize,
     desks_reported: Vec<bool>,
     groups_reported: Vec<bool>,
+}
+
+/// World 认证后只在私有同步发送作用域内交付；producer 不能构造或拿回此证明。
+#[derive(Clone, Debug)]
+pub struct AuthenticatedInformationClock {
+    clock: super::InformationClockContext,
+    through: crate::calendar::CivilInstant,
+    anchors: Arc<std::collections::BTreeMap<crate::StockId, crate::observation::information_clock::InformationTradingAnchor>>,
+    source: super::source::WorldMirrorSource,
+}
+
+impl AuthenticatedInformationClock {
+    pub(crate) fn clock(&self) -> &super::InformationClockContext { &self.clock }
+    pub(crate) fn through(&self) -> crate::calendar::CivilInstant { self.through }
+    pub(crate) fn anchors(&self) -> &std::collections::BTreeMap<crate::StockId, crate::observation::information_clock::InformationTradingAnchor> { &self.anchors }
+    pub(crate) fn source(&self) -> super::source::WorldMirrorSource { self.source }
+
+    /// 仅合成 Group 机制 fixture；不能认证生产 dispatcher 或 World 来源。
+    #[cfg(test)]
+    pub(crate) fn fixture(clock: &super::InformationClockContext) -> Self {
+        let input = clock.input();
+        Self {
+            clock: clock.clone(), through: clock.cutoff(), anchors: Arc::new(clock.anchors().unwrap()),
+            source: super::source::WorldMirrorSource {
+                authority_epoch: 0, tick: input.tick, day: (input.tick / clock.layout().ticks_per_day) as u32,
+                generation: 0, day_end_stage: super::source::MirrorDayEndStage::Tick,
+                non_tick_revision: 0, civil_date: clock.date(),
+            },
+        }
+    }
 }
 
 /// 只记录本 authority 真正成功提交的最后市场拍及当时的发布身份。
@@ -1685,6 +1716,7 @@ impl World {
                 stage: "deliver_information 通道面与组数不一致（世界已断连）".to_owned(),
             });
         }
+        self.validate_information_clock(&payload.clock, payload.now, &payload.as_of_anchors)?;
         if payload.attentions.len() != self.n_groups {
             return Err(RuntimeError::ProtocolInvariant {
                 detail: "信息投递 attention 分组数与真实组数不同".to_owned(),
@@ -1702,10 +1734,11 @@ impl World {
                 }
             }
         }
+        let clock = self.authenticate_information_clock(&payload.clock, payload.now, Arc::clone(&payload.as_of_anchors))?;
         for (tx, attentions) in self.group_txs.iter().zip(&payload.attentions) {
             tx.send(GroupIn::InformationDelivery {
                 now: payload.now,
-                day: payload.day,
+                clock: clock.clone(),
                 library: std::sync::Arc::clone(&payload.library),
                 attentions: attentions.clone(),
             })
@@ -2075,6 +2108,37 @@ impl World {
     /// (组, 组内下标) 分桶）。
     pub fn n_groups(&self) -> usize {
         self.n_groups
+    }
+
+    fn authenticate_information_clock(&self, clock: &super::InformationClockContext,
+        through: crate::calendar::CivilInstant,
+        anchors: Arc<std::collections::BTreeMap<crate::StockId, crate::observation::information_clock::InformationTradingAnchor>>,
+    ) -> Result<AuthenticatedInformationClock, RuntimeError> {
+        self.validate_information_clock(clock, through, &anchors)?;
+        Ok(AuthenticatedInformationClock { clock: clock.clone(), through, anchors, source: self.mirror_source() })
+    }
+
+    /// 两条 INFO 入口共用；广播前先认证来源，不能用 map 或当前 publication 重盖旧事实。
+    pub(crate) fn validate_information_clock(&self, clock: &super::InformationClockContext,
+        through: crate::calendar::CivilInstant,
+        anchors: &std::collections::BTreeMap<crate::StockId, crate::observation::information_clock::InformationTradingAnchor>,
+    ) -> Result<(), RuntimeError> {
+        if let Some(reason) = &self.dead_reason {
+            return Err(RuntimeError::ProtocolInvariant { detail: format!("world 已死亡，不可投递信息：{reason}") });
+        }
+        if let Some(record) = clock.committed_record() {
+            let actual = self.committed_calendar_tick()?.ok_or_else(|| RuntimeError::ProtocolInvariant {
+                detail: "INFO 缺少本 authority 已提交市场拍".to_owned(),
+            })?;
+            if record.source != actual.source || !Arc::ptr_eq(&record.calendar, &actual.calendar)
+                || record.calendar.after_input().tick != self.global.committed_tick {
+                return Err(RuntimeError::ProtocolInvariant { detail: "INFO 已提交 Calendar 历史身份或当前 tick 不一致".to_owned() });
+            }
+        }
+        let input = crate::session::calendar_clock_input(clock.day(), self.tick_layout,
+            self.global.committed_tick, self.global.committed_tick / self.ticks_per_day)
+            .map_err(|error| RuntimeError::ProtocolInvariant { detail: error.to_string() })?;
+        clock.validate(&self.calendar_source, &self.calendar_bindings, self.civil_date, self.tick_layout, input, through, anchors)
     }
 
     /// 读取既有失败生命周期，调用方不得把 terminal 失败作为业务拒绝重试。
@@ -3500,6 +3564,10 @@ pub(in crate::runtime) fn validate_sparse_echo_reply(
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "world/committed_calendar_tests.rs"]
+mod committed_calendar_tests;
 
 #[cfg(test)]
 #[path = "group_roster_consumer_tests.rs"]
