@@ -4,6 +4,7 @@ use super::*;
 use crate::diagnostics::causal::CausalFactKind;
 
 pub(in crate::session) mod retained_tests;
+mod rich_drain_tests;
 
 fn game() -> GameSession {
     let mut setup = super::npc_working_quote_tests::quote_setup(0);
@@ -248,7 +249,7 @@ fn d2_real_same_tick_fill_publishes_exact_seller_buyer_and_execution() {
 }
 
 #[test]
-fn d1_each_manual_drain_entry_rejects_existing_resting_before_any_mutation() {
+fn d3_each_manual_drain_entry_validator_failure_preserves_existing_resting_and_rich_prior() {
     for entry in 0..3 {
         let mut game = game();
         enqueue(&mut game);
@@ -256,12 +257,19 @@ fn d1_each_manual_drain_entry_rejects_existing_resting_before_any_mutation() {
         game.runtime_step_with_install(&mut driver).unwrap();
         let before = game.business_state_hash().unwrap();
         let before_facts = serde_json::to_value(game.causal_facts()).unwrap();
+        let hit = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let observed = std::sync::Arc::clone(&hit);
+        driver.set_day_end_validator_for_test(Box::new(move |_| {
+            observed.store(true, std::sync::atomic::Ordering::SeqCst);
+            Err("D3 真实日结 validator 拒绝".to_owned())
+        }));
         let error = match entry {
             0 => driver.day_end(&mut game).unwrap_err(),
             1 => driver.day_end_with_runtime_market_day(&mut game).unwrap_err(),
             _ => driver.world_day_end_for_step(&mut game).unwrap_err(),
         };
-        assert!(error.contains("causal DayEnd"), "真实余单必须在Drain前因诊断能力缺口拒绝：{error}");
+        assert!(hit.load(std::sync::atomic::Ordering::SeqCst), "必须真实越过 Drain 到达 validator：{error}");
+        assert!(error.contains("D3 真实日结 validator 拒绝"), "{error}");
         assert_eq!(game.business_state_hash().unwrap(), before);
         assert_eq!(serde_json::to_value(game.causal_facts()).unwrap(), before_facts);
         assert_eq!(driver.collect_resting_facts().unwrap()[0].len(), 1);
@@ -269,18 +277,23 @@ fn d1_each_manual_drain_entry_rejects_existing_resting_before_any_mutation() {
 }
 
 #[test]
-fn d1_manual_drain_after_checkpoint_driver_rebuild_checks_real_seeded_orders() {
+fn d3_manual_drain_after_checkpoint_rebuild_preserves_original_dayarc_and_real_seeded_orders() {
     let mut game = game();
     enqueue(&mut game);
     successful_submission(&mut game);
     let mut copied = game.clone_for_tick_shadow().unwrap();
     let mut rebuilt = crate::runtime::drive::RuntimeDriver::from_session(&mut copied).unwrap();
     assert!(rebuilt.world_report_log().is_empty(), "重建的发布v0没有旧逐拍记录");
-    let before = copied.business_state_hash().unwrap();
-    let error = rebuilt.world_day_end_for_step(&mut copied).unwrap_err();
-    assert!(error.contains("causal DayEnd"));
-    assert_eq!(copied.business_state_hash().unwrap(), before);
-    assert_eq!(copied.causal_facts().len(), 3);
+    assert!(rebuilt.committed_calendar_tick().unwrap().is_none());
+    let before_facts = serde_json::to_value(copied.causal_facts()).unwrap();
+    rebuilt.world_day_end_for_step(&mut copied).expect("原 DayArc 与 World tick 允许新 authority 清理真实旧单");
+    assert!(rebuilt.collect_resting_facts_live().unwrap()[0].is_empty());
+    assert_eq!(serde_json::to_value(copied.causal_facts()).unwrap(), before_facts, "低层入口不擅自发布 rich collector");
+    let (raw, time) = rebuilt.take_drain_causal_facts();
+    assert_eq!(raw.len(), 1);
+    assert!(matches!(raw[0].kind, crate::runtime::diagnostics::DeskCausalKind::DayEnded { qty: 100, .. }));
+    assert_eq!(time.unwrap().civil.date(), copied.civil_date());
+    assert!(rebuilt.committed_calendar_tick().unwrap().is_none(), "手动 DayArc 不能补造 TickArc");
 }
 
 pub(super) fn d2_game() -> GameSession {

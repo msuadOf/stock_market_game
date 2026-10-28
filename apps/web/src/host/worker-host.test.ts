@@ -1,12 +1,15 @@
 import { defaultCatalogFixture, catalogWorkerFixture } from "./catalog-test-fixture.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
+import { bootstrapLegacy, createLegacyHost, LegacyWorker } from "./worker-host-legacy.test-support.ts";
 import { parseProtocolSnapshot } from "./protocol/index.ts";
 import { assertWorkerE2EStepAllowed, createWorkerHost, parseWorkerFailure, readWorkerPlayerWorkingOrders, readWorkerStockHistory, readWorkerSpeedMetrics, refreshWorkerBaseline, requestWorkerIndicators, restoreWorkerSlot, stepWorkerOnce, workerPausePreferenceRequest } from "./worker-host.ts";
 import { WorkerRequestScope, type WorkerRequestPort } from "./worker-request.ts";
 import { ProtocolCoordinator } from "./protocol-coordinator.ts";
 import { frame, snapshot as protocolSnapshot, tickBatch, market, dailyCandle } from "./protocol-test-fixtures.ts";
 import { currentSaveFixture } from "../save/current-save-fixture.ts";
+import { drain as drainW1, fixture as fixtureW1 } from "./worker-host-w1.test-support.ts";
+
 
 class FakeWorker implements WorkerRequestPort {
   readonly listeners = new Set<(event: MessageEvent) => void>();
@@ -17,64 +20,35 @@ class FakeWorker implements WorkerRequestPort {
   emit(value: unknown): void { for (const listener of this.listeners) listener({ data: value } as MessageEvent); }
 }
 
-test("串行 substrate（shared:false ingress）不 spawn intake worker，submitIntent 走 engine 主通道 enqueue", { timeout: 10000 }, async () => {
-  const original = Object.getOwnPropertyDescriptor(globalThis, "Worker");
-  class IntakeWorker extends EventTarget {
-    static readonly instances: IntakeWorker[] = [];
-    readonly sent: Record<string, unknown>[] = [];
-    terminations = 0;
-    constructor() { super(); IntakeWorker.instances.push(this); }
-    postMessage(value: Record<string, unknown>) { this.sent.push(value); }
-    terminate() { this.terminations++; }
-    emit(value: unknown) { this.dispatchEvent(Object.assign(new Event("message"), { data: value })); }
-  }
-  Object.defineProperty(globalThis, "Worker", { configurable: true, value: IntakeWorker });
-  let host: Awaited<ReturnType<typeof createWorkerHost>> | undefined;
+test("非共享 substrate 显式失败，不生成 intake、不通过 engine enqueue 静默降级", { timeout: 10000 }, async () => {
+  const f = fixtureW1();
   try {
-    const creating = createWorkerHost({} as Parameters<typeof createWorkerHost>[0], 1n);
-    const engine = IntakeWorker.instances[0];
-    // 串行 substrate：engine worker 的 wasm memory 非共享，ingress 消息只声明
-    // 形态（shared:false），不携带 module/memory——独立 intake worker 无从
-    // 共享内存直写 engine 队列，submitIntent 必须降级走 engine 主通道。
-    engine.emit({ type: "ingress", generation: 1, shared: false });
-    engine.emit({ ...catalogWorkerFixture(protocolSnapshot(0, 0)), type: "baseline", civilDate: "2030-01-02", generation: 1, snapshot: protocolSnapshot(0, 0) });
-    host = await creating;
-    assert.equal(IntakeWorker.instances.length, 1, "串行 substrate 不得 spawn intake worker");
-    const intent = { Cancel: { code: "000812", id: 7 } } as Parameters<typeof host.submitIntent>[0];
-    const submitting = host.submitIntent(intent);
-    await Promise.resolve();
-    const request = engine.sent.at(-1)!;
-    assert.equal(request.type, "enqueue");
-    // 与共享路径同一词表：公共 Intent 代码串译为 wire 数值 StockId（ADR 0041）。
-    assert.deepEqual(request.intent, { Cancel: { code: 0, id: 7 } });
-    assert.equal(request.generation, 1);
-    engine.emit({ type: "enqueued", requestId: request.requestId, generation: 1 });
-    await submitting;
-    await host.dispose();
-    assert.equal(engine.terminations, 1);
-  } finally {
-    await host?.dispose();
-    if (original === undefined) delete (globalThis as { Worker?: unknown }).Worker;
-    else Object.defineProperty(globalThis, "Worker", original);
-  }
+    f.launch(); await drainW1();
+    f.ingress(1, 1, { shared: false }); f.baseline(); await drainW1();
+    assert.equal(f.outcome.status, "rejected", "不支持共享线程时必须显式失败，不能确认未执行的命令");
+    assert.equal(f.workers.length, 1, "非共享 substrate 不得 spawn intake worker");
+    assert.equal(f.workers[0].sent.some((request) => request.type === "enqueue"), false);
+    assert.equal(f.workers[0].terminations, 1);
+  } finally { await f.cleanup(); }
 });
 
 test("Browser engine worker 忙碌时 submitIntent 由独立 intake worker 确认，dispose 同时关闭两者", { timeout: 10000 }, async () => {
   const original = Object.getOwnPropertyDescriptor(globalThis, "Worker");
-  class IntakeWorker extends EventTarget {
+  class IntakeWorker extends LegacyWorker {
     static readonly instances: IntakeWorker[] = [];
     readonly sent: Record<string, unknown>[] = [];
     terminations = 0;
     constructor() { super(); IntakeWorker.instances.push(this); }
-    postMessage(value: Record<string, unknown>) { this.sent.push(value); }
+    postMessage(value: Record<string, unknown>) { this.prepare(value); this.sent.push(value); }
     terminate() { this.terminations++; }
     emit(value: unknown) { this.dispatchEvent(Object.assign(new Event("message"), { data: value })); }
   }
   Object.defineProperty(globalThis, "Worker", { configurable: true, value: IntakeWorker });
   let host: Awaited<ReturnType<typeof createWorkerHost>> | undefined;
   try {
-    const creating = createWorkerHost({} as Parameters<typeof createWorkerHost>[0], 1n);
+    const creating = createLegacyHost({} as Parameters<typeof createWorkerHost>[0], 1n);
     const engine = IntakeWorker.instances[0];
+    await bootstrapLegacy(engine, false);
     engine.emit({ type: "ingress", generation: 1, token: 42, shared: true });
     const intake = IntakeWorker.instances[1];
     const binding = intake.sent[0];
@@ -108,20 +82,21 @@ for (const scenario of ["consumerReject", "initializationTimeout", "staleEnqueue
   test(`Browser ingress ${scenario} 不泄漏 intake worker 或误报旧代成功`, { timeout: 10000 }, async (context) => {
     context.mock.timers.enable({ apis: ["setTimeout"] });
     const original = Object.getOwnPropertyDescriptor(globalThis, "Worker");
-    class IntakeWorker extends EventTarget {
+    class IntakeWorker extends LegacyWorker {
       static readonly instances: IntakeWorker[] = [];
       readonly sent: Record<string, unknown>[] = [];
       terminations = 0;
       constructor() { super(); IntakeWorker.instances.push(this); }
-      postMessage(value: Record<string, unknown>) { this.sent.push(value); }
+      postMessage(value: Record<string, unknown>) { this.prepare(value); this.sent.push(value); }
       terminate() { this.terminations++; }
       emit(value: unknown) { this.dispatchEvent(Object.assign(new Event("message"), { data: value })); }
     }
     Object.defineProperty(globalThis, "Worker", { configurable: true, value: IntakeWorker });
     let host: Awaited<ReturnType<typeof createWorkerHost>> | undefined;
     try {
-      const creating = createWorkerHost({} as Parameters<typeof createWorkerHost>[0], 1n);
+      const creating = createLegacyHost({} as Parameters<typeof createWorkerHost>[0], 1n);
       const engine = IntakeWorker.instances[0];
+      await bootstrapLegacy(engine, false);
       if (scenario === "initializationTimeout") context.mock.timers.tick(1);
       engine.emit({ type: "ingress", generation: 1, token: 42, shared: true });
       const intake = IntakeWorker.instances[1];
@@ -152,7 +127,7 @@ for (const scenario of ["consumerReject", "initializationTimeout", "staleEnqueue
         const request = intake.sent.at(-1)!;
         intake.emit({ type: "enqueued", generation: 1, requestId: request.requestId });
         if (scenario === "disposedEnqueued") await host.dispose();
-        else engine.emit({ ...catalogWorkerFixture(protocolSnapshot(1, 1)), type: "baseline", generation: 2, snapshot: protocolSnapshot(1, 1) });
+        else engine.emit({ ...catalogWorkerFixture(protocolSnapshot(1, 1)), type: "baseline", civilDate: "2030-01-02", generation: 2, snapshot: protocolSnapshot(1, 1) });
       }
       if (scenario === "consumerReject") {
         assert.equal(intake.terminations, 1);
@@ -182,20 +157,21 @@ test("Worker 股票历史请求绑定 requestId 与 generation，且不携带可
 for (const operation of ["baseline", "refreshBaseline", "load"] as const) {
   test(`Worker ${operation} baseline 被消费者拒绝时终止并显式失败`, { timeout: 10000 }, async () => {
     const original = Object.getOwnPropertyDescriptor(globalThis, "Worker");
-    class BaselineRejectingWorker extends EventTarget {
+    class BaselineRejectingWorker extends LegacyWorker {
       static current: BaselineRejectingWorker;
       readonly sent: Record<string, unknown>[] = [];
       terminations = 0;
       constructor() { super(); BaselineRejectingWorker.current = this; }
-      postMessage(value: Record<string, unknown>) { this.sent.push(value); }
+      postMessage(value: Record<string, unknown>) { this.prepare(value); this.sent.push(value); }
       terminate() { this.terminations++; }
       emit(value: unknown) { this.dispatchEvent(Object.assign(new Event("message"), { data: value })); }
     }
     Object.defineProperty(globalThis, "Worker", { configurable: true, value: BaselineRejectingWorker });
     let host: Awaited<ReturnType<typeof createWorkerHost>> | undefined;
     try {
-      const creating = createWorkerHost({} as Parameters<typeof createWorkerHost>[0], 1n);
+      const creating = createLegacyHost({} as Parameters<typeof createWorkerHost>[0], 1n);
       const worker = BaselineRejectingWorker.current;
+      await bootstrapLegacy(worker);
       worker.emit({ ...catalogWorkerFixture(protocolSnapshot(0, 0)), type: "baseline", civilDate: "2030-01-01", generation: 1, snapshot: protocolSnapshot(0, 0) });
       host = await creating;
       let accept = true;
@@ -256,19 +232,20 @@ test("审计G53：恢复代次拒绝零、负数、非安全整数和字符串",
 
 test("Worker refresh 已回包但 continuation 前 dispose 不得复活 baseline", { timeout: 10000 }, async () => {
   const original = Object.getOwnPropertyDescriptor(globalThis, "Worker");
-  class DisposedRefreshWorker extends EventTarget {
+  class DisposedRefreshWorker extends LegacyWorker {
     static current: DisposedRefreshWorker;
     readonly sent: Record<string, unknown>[] = [];
     constructor() { super(); DisposedRefreshWorker.current = this; }
-    postMessage(value: Record<string, unknown>) { this.sent.push(value); }
+    postMessage(value: Record<string, unknown>) { this.prepare(value); this.sent.push(value); }
     terminate() {}
     emit(value: unknown) { this.dispatchEvent(Object.assign(new Event("message"), { data: value })); }
   }
   Object.defineProperty(globalThis, "Worker", { configurable: true, value: DisposedRefreshWorker });
   let host: Awaited<ReturnType<typeof createWorkerHost>> | undefined;
   try {
-    const creating = createWorkerHost({} as Parameters<typeof createWorkerHost>[0], 1n);
+    const creating = createLegacyHost({} as Parameters<typeof createWorkerHost>[0], 1n);
     const worker = DisposedRefreshWorker.current;
+    await bootstrapLegacy(worker);
     worker.emit({ ...catalogWorkerFixture(protocolSnapshot(0, 0)), type: "baseline", civilDate: "2030-01-01", generation: 1, snapshot: protocolSnapshot(0, 0) });
     host = await creating;
     const pending = host.refreshBaseline();
@@ -286,18 +263,19 @@ test("Worker refresh 已回包但 continuation 前 dispose 不得复活 baseline
 
 test("Worker save pins candidate generation and rejects an old saved response after baseline replacement", async () => {
   const original = Object.getOwnPropertyDescriptor(globalThis, "Worker");
-  class SaveWorker extends EventTarget {
+  class SaveWorker extends LegacyWorker {
     static current: SaveWorker;
     readonly sent: Record<string, unknown>[] = [];
     constructor() { super(); SaveWorker.current = this; }
-    postMessage(value: Record<string, unknown>) { this.sent.push(value); }
+    postMessage(value: Record<string, unknown>) { this.prepare(value); this.sent.push(value); }
     terminate() {}
     emit(value: unknown) { this.dispatchEvent(Object.assign(new Event("message"), { data: value })); }
   }
   Object.defineProperty(globalThis, "Worker", { configurable: true, value: SaveWorker });
   try {
-    const ready = createWorkerHost({} as Parameters<typeof createWorkerHost>[0], 1n);
+    const ready = createLegacyHost({} as Parameters<typeof createWorkerHost>[0], 1n);
     const worker = SaveWorker.current;
+    await bootstrapLegacy(worker);
     const snapshot = { seq: 42, tick: 0, day: 0, phase: "Continuous", markets: {}, accounts: {}, daily_candles: {}, active_daily_candles: {} };
     worker.emit({ type: "created", generation: 1, capabilities: { npcDecisionDiagnostics: false, indicatorCapabilities: { intradayAverage: false, macd: false, priceKdj: false, candleKdj: false }, personalTradeHistory: false } });
     worker.emit({ ...catalogWorkerFixture(snapshot), type: "baseline", civilDate: "2030-01-01", generation: 1, snapshot });
@@ -423,12 +401,12 @@ test("Given production or a missing injected capability, Worker E2E stepping is 
 
 test("Worker initialization sends init without pool size and reports startup failure immediately", async () => {
   const original = Object.getOwnPropertyDescriptor(globalThis, "Worker");
-  class StartupWorker extends EventTarget {
+  class StartupWorker extends LegacyWorker {
     static current: StartupWorker;
     readonly sent: unknown[] = [];
     terminated = false;
     constructor() { super(); StartupWorker.current = this; }
-    postMessage(value: unknown): void { this.sent.push(value); }
+    postMessage(value: unknown): void { this.prepare(value as Record<string, unknown>); this.sent.push(value); }
     terminate(): void { this.terminated = true; }
     emit(value: unknown): void {
       this.dispatchEvent(Object.assign(new Event("message"), { data: value }));
@@ -436,9 +414,13 @@ test("Worker initialization sends init without pool size and reports startup fai
   }
   Object.defineProperty(globalThis, "Worker", { configurable: true, value: StartupWorker });
   try {
-    const pending = createWorkerHost({} as Parameters<typeof createWorkerHost>[0], 1n);
+    const pending = createLegacyHost({} as Parameters<typeof createWorkerHost>[0], 1n);
     const worker = StartupWorker.current;
-    assert.deepEqual(worker.sent, [{ type: "init" }]);
+    const init = worker.sent[0] as Record<string, unknown>;
+    assert.equal(init.type, "init");
+    assert.deepEqual(init.setup, {});
+    assert.ok(init.controlPort instanceof MessagePort);
+    assert.equal(Object.hasOwn(init, "poolSize"), false);
     worker.emit({ type: "failure", code: "WASM_WORKER_PROTOCOL", where: "wasm-worker.init", message: "初始化失败" });
     await assert.rejects(pending, /WASM_WORKER_PROTOCOL @ wasm-worker\.init: 初始化失败/);
     assert.equal(worker.terminated, true);
@@ -450,11 +432,11 @@ test("Worker initialization sends init without pool size and reports startup fai
 
 test("duplicate delivered baselines preserve pending order queries, while a new generation invalidates them", async () => {
   const original = Object.getOwnPropertyDescriptor(globalThis, "Worker");
-  class BaselineWorker extends EventTarget {
+  class BaselineWorker extends LegacyWorker {
     static current: BaselineWorker;
     readonly sent: Record<string, unknown>[] = [];
     constructor() { super(); BaselineWorker.current = this; }
-    postMessage(value: Record<string, unknown>): void { this.sent.push(value); }
+    postMessage(value: Record<string, unknown>): void { this.prepare(value); this.sent.push(value); }
     terminate(): void {}
     emit(value: unknown): void {
       this.dispatchEvent(Object.assign(new Event("message"), { data: value }));
@@ -464,8 +446,9 @@ test("duplicate delivered baselines preserve pending order queries, while a new 
   let host: Awaited<ReturnType<typeof createWorkerHost>> | undefined;
   const snapshot = { seq: 4, tick: 4, day: 0, phase: "Continuous", markets: {}, accounts: {}, daily_candles: {}, active_daily_candles: {} };
   try {
-    const creating = createWorkerHost({} as Parameters<typeof createWorkerHost>[0], 1n);
+    const creating = createLegacyHost({} as Parameters<typeof createWorkerHost>[0], 1n);
     const worker = BaselineWorker.current;
+    await bootstrapLegacy(worker);
     worker.emit({ ...catalogWorkerFixture(snapshot), type: "baseline", civilDate: "2030-01-01", generation: 1, snapshot });
     host = await creating;
     const updates: unknown[] = [];
@@ -498,20 +481,21 @@ test("duplicate delivered baselines preserve pending order queries, while a new 
 
 test("Worker 控制等待应用回执，protocolBatch 每个提交接纳后立即 ACK 且不等待 render", { timeout: 10000 }, async () => {
   const original = Object.getOwnPropertyDescriptor(globalThis, "Worker");
-  class ControlledWorker extends EventTarget {
+  class ControlledWorker extends LegacyWorker {
     static current: ControlledWorker;
     readonly sent: Record<string, unknown>[] = [];
     terminations = 0;
     constructor() { super(); ControlledWorker.current = this; }
-    postMessage(value: Record<string, unknown>) { this.sent.push(value); }
+    postMessage(value: Record<string, unknown>) { this.prepare(value); this.sent.push(value); }
     terminate() { this.terminations++; }
     emit(value: unknown) { this.dispatchEvent(Object.assign(new Event("message"), { data: value })); }
   }
   Object.defineProperty(globalThis, "Worker", { configurable: true, value: ControlledWorker });
   let host: Awaited<ReturnType<typeof createWorkerHost>> | undefined;
   try {
-    const creating = createWorkerHost({} as Parameters<typeof createWorkerHost>[0], 1n);
+    const creating = createLegacyHost({} as Parameters<typeof createWorkerHost>[0], 1n);
     const worker = ControlledWorker.current;
+    await bootstrapLegacy(worker);
     const snapshot = { seq: 0, tick: 0, day: 0, phase: "Continuous", markets: {}, accounts: {}, daily_candles: {}, active_daily_candles: {} };
     worker.emit({ ...catalogWorkerFixture(snapshot), type: "baseline", civilDate: "2030-01-01", generation: 1, snapshot });
     host = await creating;
@@ -551,11 +535,11 @@ test("Worker 控制等待应用回执，protocolBatch 每个提交接纳后立�
 
 test("Worker cached baseline 拒绝不启动或 ACK，显式重试仍交付且旧 host 不干扰新 host", { timeout: 10000 }, async () => {
   const original = Object.getOwnPropertyDescriptor(globalThis, "Worker");
-  class IsolatedWorker extends EventTarget {
+  class IsolatedWorker extends LegacyWorker {
     static current: IsolatedWorker;
     readonly sent: Record<string, unknown>[] = [];
     constructor() { super(); IsolatedWorker.current = this; }
-    postMessage(value: Record<string, unknown>) { this.sent.push(value); }
+    postMessage(value: Record<string, unknown>) { this.prepare(value); this.sent.push(value); }
     terminate() {}
     emit(value: unknown) { this.dispatchEvent(Object.assign(new Event("message"), { data: value })); }
   }
@@ -563,8 +547,9 @@ test("Worker cached baseline 拒绝不启动或 ACK，显式重试仍交付且�
   let oldHost: Awaited<ReturnType<typeof createWorkerHost>> | undefined;
   let newHost: Awaited<ReturnType<typeof createWorkerHost>> | undefined;
   try {
-    const oldCreating = createWorkerHost({} as Parameters<typeof createWorkerHost>[0], 1n);
+    const oldCreating = createLegacyHost({} as Parameters<typeof createWorkerHost>[0], 1n);
     const oldWorker = IsolatedWorker.current;
+    await bootstrapLegacy(oldWorker);
     oldWorker.emit({ ...catalogWorkerFixture(protocolSnapshot(0, 0)), type: "baseline", civilDate: "2030-01-01", generation: 1, snapshot: protocolSnapshot(0, 0) });
     oldHost = await oldCreating;
     const rejectingStart = oldHost.start(() => false);
@@ -572,8 +557,9 @@ test("Worker cached baseline 拒绝不启动或 ACK，显式重试仍交付且�
     if (unexpectedStart !== undefined) oldWorker.emit({ type: "started", generation: 1, requestId: unexpectedStart.requestId });
     await assert.rejects(rejectingStart, /消费者拒绝.*baseline/);
     assert.equal(oldWorker.sent.filter((message) => message.type === "start" || message.type === "uiFrame").length, 0);
-    const newCreating = createWorkerHost({} as Parameters<typeof createWorkerHost>[0], 2n);
+    const newCreating = createLegacyHost({} as Parameters<typeof createWorkerHost>[0], 2n);
     const newWorker = IsolatedWorker.current;
+    await bootstrapLegacy(newWorker);
     newWorker.emit({ ...catalogWorkerFixture(protocolSnapshot(9, 4)), type: "baseline", civilDate: "2030-01-01", generation: 1, snapshot: protocolSnapshot(9, 4) });
     newHost = await newCreating;
     const newUpdates: unknown[] = [];
@@ -607,20 +593,21 @@ test("Worker cached baseline 拒绝不启动或 ACK，显式重试仍交付且�
 test("Worker dispose 与 fatal 立即取消在途请求，释放监听并拒绝后续请求", async (context) => {
   context.mock.timers.enable({ apis: ["setTimeout"] });
   const original = Object.getOwnPropertyDescriptor(globalThis, "Worker");
-  class PendingWorker extends EventTarget {
+  class PendingWorker extends LegacyWorker {
     static current: PendingWorker;
     readonly sent: Record<string, unknown>[] = [];
     terminations = 0;
     constructor() { super(); PendingWorker.current = this; }
-    postMessage(value: Record<string, unknown>) { this.sent.push(value); }
+    postMessage(value: Record<string, unknown>) { this.prepare(value); this.sent.push(value); }
     terminate() { this.terminations += 1; }
     emit(value: unknown) { this.dispatchEvent(Object.assign(new Event("message"), { data: value })); }
   }
   Object.defineProperty(globalThis, "Worker", { configurable: true, value: PendingWorker });
   try {
     for (const reason of ["dispose", "fatal"]) {
-      const creating = createWorkerHost({} as Parameters<typeof createWorkerHost>[0], 1n);
+      const creating = createLegacyHost({} as Parameters<typeof createWorkerHost>[0], 1n);
       const worker = PendingWorker.current;
+      await bootstrapLegacy(worker);
       const snapshot = { seq: 0, tick: 0, day: 0, phase: "Continuous", markets: {}, accounts: {}, daily_candles: {}, active_daily_candles: {} };
       worker.emit({ ...catalogWorkerFixture(snapshot), type: "baseline", civilDate: "2030-01-01", generation: 1, snapshot });
       const host = await creating;
@@ -648,20 +635,21 @@ test("Worker dispose 与 fatal 立即取消在途请求，释放监听并拒绝�
 
 test("Worker 真实 coordinator 拒绝批次中间提交后不消费尾部、不 ACK、立即终止并取消控制", { timeout: 10000 }, async () => {
   const original = Object.getOwnPropertyDescriptor(globalThis, "Worker");
-  class RejectingWorker extends EventTarget {
+  class RejectingWorker extends LegacyWorker {
     static current: RejectingWorker;
     readonly sent: Record<string, unknown>[] = [];
     terminations = 0;
     constructor() { super(); RejectingWorker.current = this; }
-    postMessage(value: Record<string, unknown>) { this.sent.push(value); }
+    postMessage(value: Record<string, unknown>) { this.prepare(value); this.sent.push(value); }
     terminate() { this.terminations++; }
     emit(value: unknown) { this.dispatchEvent(Object.assign(new Event("message"), { data: value })); }
   }
   Object.defineProperty(globalThis, "Worker", { configurable: true, value: RejectingWorker });
   let host: Awaited<ReturnType<typeof createWorkerHost>> | undefined;
   try {
-    const creating = createWorkerHost({} as Parameters<typeof createWorkerHost>[0], 1n);
+    const creating = createLegacyHost({} as Parameters<typeof createWorkerHost>[0], 1n);
     const worker = RejectingWorker.current;
+    await bootstrapLegacy(worker);
     worker.emit({ ...catalogWorkerFixture(protocolSnapshot(0, 0)), type: "baseline", civilDate: "2030-01-01", generation: 1, snapshot: protocolSnapshot(0, 0) });
     host = await creating;
     let applications = 0;
@@ -696,20 +684,21 @@ test("Worker 真实 coordinator 拒绝批次中间提交后不消费尾部、不
 
 test("Worker reportError 的 error 事件将完整错误交付用户回调并终止会话", async () => {
   const original = Object.getOwnPropertyDescriptor(globalThis, "Worker");
-  class ReportingWorker extends EventTarget {
+  class ReportingWorker extends LegacyWorker {
     static current: ReportingWorker;
     readonly sent: Record<string, unknown>[] = [];
     terminated = false;
     constructor() { super(); ReportingWorker.current = this; }
-    postMessage(value: Record<string, unknown>) { this.sent.push(value); }
+    postMessage(value: Record<string, unknown>) { this.prepare(value); this.sent.push(value); }
     terminate() { this.terminated = true; }
     emit(value: unknown) { this.dispatchEvent(Object.assign(new Event("message"), { data: value })); }
   }
   Object.defineProperty(globalThis, "Worker", { configurable: true, value: ReportingWorker });
   let host: Awaited<ReturnType<typeof createWorkerHost>> | undefined;
   try {
-    const creating = createWorkerHost({} as Parameters<typeof createWorkerHost>[0], 1n);
+    const creating = createLegacyHost({} as Parameters<typeof createWorkerHost>[0], 1n);
     const worker = ReportingWorker.current;
+    await bootstrapLegacy(worker);
     worker.emit({ ...catalogWorkerFixture(protocolSnapshot(0, 0)), type: "baseline", civilDate: "2030-01-02", generation: 1, snapshot: protocolSnapshot(0, 0) });
     host = await creating;
     const failures: unknown[] = [];
@@ -718,7 +707,11 @@ test("Worker reportError 的 error 事件将完整错误交付用户回调并终
     const detail = "STEP_FATAL：原始故障；首次发送：port failure 1；再次发送：port failure 0";
     worker.dispatchEvent(Object.assign(new Event("error"), { message: detail }));
     await assert.rejects(starting, /STEP_FATAL.*原始故障.*port failure 1.*port failure 0/);
-    assert.deepEqual(failures, [{ code: "WASM_WORKER_SCRIPT", where: "worker-host", message: `WASM Worker 脚本加载或执行失败：${detail}` }]);
+    assert.deepEqual(failures.map((value) => {
+      const { code, where, message } = value as { code: string; where: string; message: string };
+      return { code, where, message };
+    }), [{ code: "WASM_WORKER_SCRIPT", where: "worker-host", message: `WASM Worker 脚本加载或执行失败：${detail}` }]);
+    assert.equal((failures[0] as { cause: { message: string } }).cause.message, detail);
     assert.equal(worker.terminated, true);
   } finally {
     await host?.dispose();
@@ -727,22 +720,23 @@ test("Worker reportError 的 error 事件将完整错误交付用户回调并终
   }
 });
 
-for (const shared of [false, true]) {
+for (const shared of [true]) {
   test(`实际单股Worker ${shared ? "shared ingress" : "serial"}三variant与unknown零enqueue`, { timeout: 10000 }, async () => {
     const original = Object.getOwnPropertyDescriptor(globalThis, "Worker");
-    class IntentWorker extends EventTarget {
+    class IntentWorker extends LegacyWorker {
       static instances: IntentWorker[] = [];
       sent: Record<string, unknown>[] = [];
       constructor() { super(); IntentWorker.instances.push(this); }
-      postMessage(value: Record<string, unknown>) { this.sent.push(value); }
+      postMessage(value: Record<string, unknown>) { this.prepare(value); this.sent.push(value); }
       terminate() {}
       emit(data: unknown) { this.dispatchEvent(Object.assign(new Event("message"), { data })); }
     }
     Object.defineProperty(globalThis, "Worker", { configurable: true, value: IntentWorker });
     let host: Awaited<ReturnType<typeof createWorkerHost>> | undefined;
     try {
-      const creating = createWorkerHost({} as never, 1n);
+      const creating = createLegacyHost({} as never, 1n);
       const engine = IntentWorker.instances[0];
+      await bootstrapLegacy(engine, false);
       engine.emit({ type: "ingress", generation: 1, token: 7, shared });
       const intake = shared ? IntentWorker.instances[1] : engine;
       if (shared) intake.emit({ type: "ingressBound", generation: 1, requestId: intake.sent[0].requestId });
@@ -785,5 +779,24 @@ for (const shared of [false, true]) {
       if (original === undefined) delete (globalThis as { Worker?: unknown }).Worker;
       else Object.defineProperty(globalThis, "Worker", original);
     }
+  });
+}
+
+for (const transition of ["dispose", "generation"] as const) {
+  test(`Worker civilDate 已回包但 continuation 前 ${transition} 必须拒绝旧结果`, { timeout: 10000 }, async () => {
+    const f = fixtureW1();
+    try {
+      f.launch(); await drainW1(); f.ingress(); f.baseline(); await drainW1(); f.ack(f.workers[1], 1); await drainW1();
+      const result = f.readOutcome();
+      assert.equal(result.status, "fulfilled");
+      if (result.status !== "fulfilled") throw new Error("fixture 未完成初始化");
+      const pending = result.host.civilDate!();
+      const rejected = assert.rejects(pending, /过期|销毁/);
+      const request = f.workers[0].sent.at(-1)!;
+      f.workers[0].emit({ type: "civilDate", generation: 1, requestId: request.requestId, date: "2030-01-02" });
+      if (transition === "dispose") await result.host.dispose();
+      else f.baseline(2);
+      await rejected;
+    } finally { await f.cleanup(); }
   });
 }

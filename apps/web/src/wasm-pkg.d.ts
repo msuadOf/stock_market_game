@@ -11,9 +11,18 @@ declare module "*wasm-pkg/web_wasm.js" {
   } from "./types/engine";
   import type { EngineUpdate } from "./types/generated/EngineUpdate";
 
-  const init: (input: BufferSource | WebAssembly.Module) => Promise<{ memory: WebAssembly.Memory }>;
+  export interface InitOutput {
+    readonly memory: WebAssembly.Memory;
+    readonly __wbindgen_thread_destroy: (tls: number, stack: number, stackSize: number) => void;
+  }
+  export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembly.Module;
+  const init: (input?: InitInput | Promise<InitInput> | { module_or_path: InitInput | Promise<InitInput>; memory?: WebAssembly.Memory; thread_stack_size?: number }, memory?: WebAssembly.Memory) => Promise<InitOutput>;
   export default init;
-  export function initSync(options: { module: WebAssembly.Module; memory: WebAssembly.Memory }): unknown;
+  export function initSync(options: { module: BufferSource | WebAssembly.Module; memory?: WebAssembly.Memory; thread_stack_size?: number } | BufferSource | WebAssembly.Module, memory?: WebAssembly.Memory): InitOutput;
+  export function facade_slot_init(capacity: number): void;
+  export function facade_slot_init_for_setup(setup: SessionSetup): void;
+  export function facade_slot_layout(): import("./host/facade-thread-binding.ts").FacadeSlotLayout;
+  export function facade_child_trampoline(slot: number, gen: number, workerId: number): number;
   export function ingress_token(handle: number): number;
   export function ingress_enqueue(token: number, intent: unknown): void;
   export function create_session(setup: SessionSetup, seed: bigint): number;

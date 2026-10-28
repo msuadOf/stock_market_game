@@ -1,4 +1,5 @@
 import { catalogWorkerFixture } from "./catalog-test-fixture.ts";
+import { bootstrapLegacy, createLegacyHost, LegacyWorker } from "./worker-host-legacy.test-support.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createWorkerHost, refreshWorkerBaseline, restoreWorkerSlot } from "./worker-host.ts";
@@ -10,19 +11,20 @@ import type { HostUpdate } from "./host-update.ts";
 for (const operation of ["initial", "refresh", "restore"] as const) {
   test(`Worker ${operation} baseline 使用同一权威会话的自然日`, { timeout: 10000 }, async () => {
     const original = Object.getOwnPropertyDescriptor(globalThis, "Worker");
-    class DateWorker extends EventTarget {
+    class DateWorker extends LegacyWorker {
       static current: DateWorker;
       sent: Record<string, unknown>[] = [];
       constructor() { super(); DateWorker.current = this; }
-      postMessage(value: Record<string, unknown>) { this.sent.push(value); }
+      postMessage(value: Record<string, unknown>) { this.prepare(value); this.sent.push(value); }
       terminate() {}
       emit(value: unknown) { this.dispatchEvent(Object.assign(new Event("message"), { data: value })); }
     }
     Object.defineProperty(globalThis, "Worker", { configurable: true, value: DateWorker });
     let host: Awaited<ReturnType<typeof createWorkerHost>> | undefined;
     try {
-      const creating = createWorkerHost({} as Parameters<typeof createWorkerHost>[0], 42n);
+      const creating = createLegacyHost({} as Parameters<typeof createWorkerHost>[0], 42n);
       const worker = DateWorker.current;
+      await bootstrapLegacy(worker);
       worker.emit({ ...catalogWorkerFixture(snapshot(0, 0)), type: "baseline", generation: 1, snapshot: snapshot(0, 0), civilDate: "2030-01-02" });
       host = await creating;
       const updates: HostUpdate[] = [];

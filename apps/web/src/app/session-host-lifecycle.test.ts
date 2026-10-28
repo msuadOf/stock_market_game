@@ -37,6 +37,7 @@ function fixture(overrides: Partial<SessionHostLifecyclePorts> = {}) {
     setActiveSetup: () => { calls.push("setup"); }, configureMarketTiming: () => { calls.push("timing"); }, setStartDateDraft: () => {}, setPriceCageEnabledDraft: () => {},
     setFloatAllocationDraft: () => {}, setInitialAllocation: () => {},
     setDeliveryModes: () => {}, setDeliveryModeState: () => {}, setNotice: (value) => calls.push(value), setReady: () => { calls.push("ready"); },
+    onSpawnFailure: () => { calls.push("spawn-failure"); },
     setError: (value) => { calls.push(String(value)); }, onRunning: (value) => { calls.push(`running:${value}`); }, onAutoTriggered: () => {}, ...overrides,
   };
   return { calls, host, source, ports, runtime: createSessionHostLifecycle(ports), update: () => update, failure: () => failure };
@@ -274,4 +275,77 @@ test("宿主callback同步传回协议失败，不将false变成void或继续消
   assert.equal(f.update()({} as HostUpdate), false);
   await f.runtime.dispose();
   assert.equal(f.update()({} as HostUpdate), false);
+});
+
+
+for (const stage of ["construction", "running", "paused", "stop"] as const) {
+  test(`spawn failure 在 ${stage} 立即交付原始结构且不走 fatal 或修改运行状态`, { timeout: 10000 }, async () => {
+    const reports: HostFailure[] = [];
+    const original: HostFailure = { code: "WORKER_SPAWN_FAILED", where: "wasm.spawn", message: stage,
+      cause: { name: "Error", message: "资源不足" }, context: { requestId: 17, phase: "Continuous" } };
+    let emit!: (value: HostFailure) => void;
+    const f = fixture({ isDocumentHidden: () => false, onSpawnFailure: (value) => reports.push(value) });
+    f.ports.createHost = async (...args: unknown[]) => {
+      assert.equal(typeof args[3], "function", "构造前必须安装 spawn failure sink");
+      emit = args[3] as typeof emit;
+      if (stage === "construction") {
+        assert.equal(f.ports.hostRef.current, null);
+        emit(original);
+        assert.equal(reports[0], original, "createHost resolve 前立即交付");
+      }
+      return f.host;
+    };
+    const runtime = createSessionHostLifecycle(f.ports);
+    await runtime.start();
+    assert.equal(typeof emit, "function", "启动必须将 sink 交给 createHost");
+    f.calls.length = 0;
+    if (stage === "paused") await f.host.stop();
+    if (stage === "stop") {
+      f.host.stop = async () => { emit(original); assert.equal(reports[0], original); };
+      await f.host.stop();
+    } else if (stage !== "construction") emit(original);
+    assert.equal(reports.length, 1);
+    assert.equal(reports[0], original);
+    assert.equal(reports[0].cause, original.cause);
+    assert.equal(reports[0].context, original.context);
+    assert.equal(f.calls.includes("failure"), false);
+    assert.equal(f.calls.some((value) => value.startsWith("running:")), false);
+    await runtime.dispose();
+    emit({ ...original, message: "旧生命周期晚到 failure" });
+    assert.equal(reports.length, 1, "cancel 后旧 sink 不得污染当前报告");
+  });
+}
+
+
+test("构造尚未 resolve 就可报告；取消旧 sink 后新 lifecycle 追加且保留未确认详情", { timeout: 10000 }, async () => {
+  const reports: HostFailure[] = [];
+  const original: HostFailure = { code: "WORKER_SPAWN_FAILED", where: "wasm.spawn", message: "构造期失败", cause: { message: "原cause" }, context: { requestId: 1 } };
+  let oldSink!: (failure: HostFailure) => void;
+  let complete!: (host: EngineHost) => void;
+  let entered!: () => void;
+  const creating = new Promise<void>((resolve) => { entered = resolve; });
+  const f = fixture({ onSpawnFailure: (failure) => reports.push(failure), createHost: async (_setup, _seed, _target, sink) => {
+    oldSink = sink;
+    entered();
+    return new Promise((resolve) => { complete = resolve; });
+  } });
+  const starting = f.runtime.start();
+  await creating;
+  oldSink(original);
+  assert.deepEqual(reports, [original]);
+  assert.equal(f.ports.hostRef.current, null);
+  await f.runtime.stopCurrentSession();
+  f.ports.createHost = async (_setup, _seed, _target, sink) => {
+    oldSink({ ...original, message: "旧错误不得追加" });
+    sink({ ...original, message: "新生命周期失败" });
+    return commandHostFixture({ ...f.host });
+  };
+  const next = createSessionHostLifecycle(f.ports);
+  await next.start();
+  complete(f.host);
+  await starting;
+  assert.equal(reports.length, 2);
+  assert.equal(reports[0], original);
+  assert.equal(reports[1].message, "新生命周期失败");
+  await next.dispose();
 });

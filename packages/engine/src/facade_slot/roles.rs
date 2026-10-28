@@ -338,9 +338,9 @@ pub fn engine_cancel<P: FacadePlatform>(
 /// trampoline 出口形态。
 #[derive(Debug)]
 pub enum TrampolineExit {
-    /// W1 闭包已消费、W2 join DONE 已写、W3 workerExit 已发。
+    /// W1 闭包已消费、W2 join DONE 已写、退出意图已记录；真实 W3 由 JS 收尾发出。
     Ran { worker_id: u32 },
-    /// 决策读非 (g,OK)（CANCELLED@旧代或换代）——不解引用载荷、W3 照发。
+    /// 决策读非 (g,OK)（CANCELLED@旧代或换代）——不解引用载荷、退出意图照常记录。
     Superseded,
 }
 
@@ -376,7 +376,7 @@ pub fn trampoline_run<P: FacadePlatform>(
     let w2 = arena.slot_word(slot).load(Ordering::SeqCst);
     if w2 != expected_ok {
         // 非 (g,OK) ⇒ 不解引用载荷（§9.2.1 "state≠OK 不解引用"守卫）；
-        // 旧子照常退出上报（W3；监督者幂等摘除/迟到丢弃，§9.2.5-2）。
+        // 旧子照常记录退出意图；返回 JS 并清理后才上报真实 W3（§9.2.5-2）。
         platform.worker_exit(worker_id, slot, gen);
         return TrampolineExit::Superseded;
     }
@@ -430,7 +430,7 @@ pub fn trampoline_run<P: FacadePlatform>(
             }
         }
     }
-    // W3：workerExit（W4 rust_done/W5 self.close 由宿主 import 承接）。
+    // 仅记录退出意图；须返回 JS 后 raw destroy，才能发真实 W3 并 close。
     platform.worker_exit(worker_id, slot, gen);
     TrampolineExit::Ran { worker_id }
 }

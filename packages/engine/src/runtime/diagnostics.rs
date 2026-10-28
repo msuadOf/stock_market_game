@@ -63,9 +63,10 @@ pub enum DeskCausalKind {
         buyer: DeskExecutionLeg,
         qty: u32,
         price_cents: i64,
-        side: Side,
+        side: Option<Side>,
         before: DeskQuote,
     },
+    DayEnded { order: OrderRef, owner: Owner, qty: u32 },
     Quote(DeskQuote),
     /// 中间 slice 尚未接通的真实路径；不能生成看似完整的报告。
     Unsupported { detail: &'static str },
@@ -73,9 +74,7 @@ pub enum DeskCausalKind {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DeskCausalFact {
-    pub tick: u64,
-    pub round: u32,
-    pub stock: StockIdx,
+    pub context: super::retail_lifecycle::BatchContext,
     pub kind: DeskCausalKind,
 }
 
@@ -84,12 +83,15 @@ pub(super) fn validate_executions(
     stock: StockIdx,
     causal: &[DeskCausalFact],
     trades: &[super::protocol::DeskTradeFact],
+    auction: bool,
 ) -> Result<(), super::protocol::RuntimeError> {
     let fail = |detail| super::protocol::RuntimeError::ProtocolInvariant { detail };
     let holes = causal.iter().any(|fact| matches!(fact.kind, DeskCausalKind::Unsupported { .. }));
     let mut expected = 0_u64;
     for fact in causal {
+        if fact.context.stock() != stock { return Err(fail(format!("causal 原报告股身份错配：stock={stock} fact={fact:?}"))); }
         if let DeskCausalKind::Execution { ordinal, seller, buyer, qty, price_cents, side, .. } = fact.kind {
+            if auction != side.is_none() { return Err(fail(format!("causal Execution 主动方向与原报告 auction 错配：stock={stock}"))); }
             if ordinal < expected || (!holes && ordinal != expected) {
                 return Err(fail(format!("causal Execution ordinal 非真实 Encounter order：stock={stock} expected={expected} actual={ordinal}")));
             }
@@ -102,7 +104,7 @@ pub(super) fn validate_executions(
             if trade.stock != stock || trade.maker != seller.owner || trade.taker != buyer.owner
                 || trade.maker_order_serial != super::group::desk_order_id(seller.order.0, seller.order.1)
                 || trade.taker_order_serial != super::group::desk_order_id(buyer.order.0, buyer.order.1)
-                || trade.qty != qty || trade.price != price_cents || trade.taker_side != side {
+                || trade.qty != qty || trade.price != price_cents || match side { Some(side) => trade.taker_side != side, None => trade.taker_side != Side::Buy } {
                 return Err(fail(format!("causal Execution 与真实 Trade 错配：stock={stock} ordinal={ordinal}")));
             }
             expected = ordinal.checked_add(1)
@@ -111,6 +113,28 @@ pub(super) fn validate_executions(
     }
     if !holes && usize::try_from(expected).ok() != Some(trades.len()) {
         return Err(fail(format!("causal Execution 缺失真实 Trade：stock={stock} count={expected} trades={}", trades.len())));
+    }
+    Ok(())
+}
+
+/// 日终余单必须与同一原始报告的真实终止逐项对应，不能漏记或把主动撤单混入。
+pub(super) fn validate_day_ends(
+    stock: StockIdx,
+    causal: &[DeskCausalFact],
+    lifecycle: &[super::protocol::DeskLifecycleFact],
+) -> Result<(), super::protocol::RuntimeError> {
+    let mut actual = causal.iter().filter_map(|fact| match fact.kind {
+        DeskCausalKind::DayEnded { order, owner, qty } => Some((order, owner, qty)), _ => None,
+    }).collect::<Vec<_>>();
+    let mut expected = lifecycle.iter().filter(|fact| matches!(fact.kind, super::protocol::LifecycleKind::Cancelled))
+        .map(|fact| ((fact.stock, fact.order_serial & u64::from(u32::MAX)), fact.owner, fact.remaining)).collect::<Vec<_>>();
+    actual.sort_unstable(); expected.sort_unstable();
+    if lifecycle.iter().any(|fact| fact.stock != stock || fact.order_serial >> 32 != u64::from(stock))
+        || actual != expected || actual.iter().any(|(order, _, qty)| order.0 != stock || *qty == 0)
+        || actual.windows(2).any(|pair| pair[0].0 == pair[1].0) {
+        return Err(super::protocol::RuntimeError::ProtocolInvariant {
+            detail: format!("Drain DayEnded 与原报告真实余单终止错配：stock={stock} actual={actual:?} expected={expected:?}"),
+        });
     }
     Ok(())
 }
@@ -157,6 +181,7 @@ mod tests {
             DeskCausalKind::Submitted { qty: 100, source: OperationSource::NonPlayerUnresolved, .. }));
         assert!(matches!(world.report_log[1].desk_causal[0].kind,
             DeskCausalKind::Cancelled { qty: 100, source: OperationSource::NonPlayerUnresolved, .. }));
+        assert!(!world.report_log[1].desk_causal.iter().any(|fact| matches!(fact.kind, DeskCausalKind::DayEnded { .. })), "普通 CancelAll 不能变成日终失效");
         world.shutdown().unwrap();
     }
 
@@ -212,15 +237,15 @@ mod tests {
     fn d2_real_report_matches_full_encoded_identity_both_directions_and_stock_reset() {
         let records = continuous_reports();
         for stock in [0, 1] {
-            let causal = records[0].desk_causal.iter().copied().filter(|f| f.stock == stock).collect::<Vec<_>>();
+            let causal = records[0].desk_causal.iter().copied().filter(|f| f.context.stock() == stock).collect::<Vec<_>>();
             let trades = records[0].desk_trades.iter().copied().filter(|f| f.stock == stock).collect::<Vec<_>>();
-            validate_executions(stock, &causal, &trades).unwrap();
+            validate_executions(stock, &causal, &trades, false).unwrap();
             let executions = causal.iter().filter_map(|f| match f.kind {
                 DeskCausalKind::Execution { ordinal, seller, buyer, side, .. } => Some((ordinal, seller, buyer, side)), _ => None,
             }).collect::<Vec<_>>();
             assert_eq!(executions.len(), 2);
             assert_eq!((executions[0].0, executions[1].0), (0, 1));
-            assert_eq!((executions[0].3, executions[1].3), (Side::Buy, Side::Sell));
+            assert_eq!((executions[0].3, executions[1].3), (Some(Side::Buy), Some(Side::Sell)));
             assert_eq!(trades[0].maker_order_serial, (u64::from(stock) << 32) | executions[0].1.order.1);
             if stock == 1 { assert!(trades[0].maker_order_serial > u64::from(u32::MAX)); }
         }
@@ -229,17 +254,17 @@ mod tests {
     #[test]
     fn d2_original_report_rejects_missing_duplicate_reversed_and_tuple_mismatch() {
         let records = continuous_reports();
-        let causal = records[0].desk_causal.iter().copied().filter(|f| f.stock == 1).collect::<Vec<_>>();
+        let causal = records[0].desk_causal.iter().copied().filter(|f| f.context.stock() == 1).collect::<Vec<_>>();
         let trades = records[0].desk_trades.iter().copied().filter(|f| f.stock == 1).collect::<Vec<_>>();
         let execution = causal.iter().position(|f| matches!(f.kind, DeskCausalKind::Execution { .. })).unwrap();
         let mut missing = causal.clone(); missing.remove(execution);
-        assert!(validate_executions(1, &missing, &trades).is_err());
+        assert!(validate_executions(1, &missing, &trades, false).is_err());
         let mut duplicate = causal.clone(); duplicate.insert(execution, causal[execution]);
-        assert!(validate_executions(1, &duplicate, &trades).is_err());
+        assert!(validate_executions(1, &duplicate, &trades, false).is_err());
         // 每段两张新单各保有 pre/post Quote，交换整个独立成交片段，仅破坏 ordinal 次序。
         let second = causal.iter().enumerate().filter(|(_, f)| matches!(f.kind, DeskCausalKind::Submitted { .. })).nth(2).unwrap().0;
         let mut reversed = causal[second..].to_vec(); reversed.extend_from_slice(&causal[..second]);
-        let error = validate_executions(1, &reversed, &trades).unwrap_err();
+        let error = validate_executions(1, &reversed, &trades, false).unwrap_err();
         assert!(format!("{error:?}").contains("Encounter order"));
         for mutation in 0..8 {
             let mut bad = causal.clone();
@@ -250,12 +275,12 @@ mod tests {
                     2 => buyer.owner.1 += 1,
                     3 => *qty += 1,
                     4 => *price_cents += 1,
-                    5 => *side = Side::Sell,
+                    5 => *side = Some(Side::Sell),
                     6 => *ordinal = 10,
                     _ => seller.order.1 = u64::from(u32::MAX) + 1,
                 }
             }
-            assert!(validate_executions(1, &bad, &trades).is_err(), "必须拒绝tuple变体{mutation}");
+            assert!(validate_executions(1, &bad, &trades, false).is_err(), "必须拒绝tuple变体{mutation}");
         }
     }
 
@@ -308,7 +333,7 @@ mod tests {
             .iter()
             .filter_map(|fact| match fact.kind {
                 DeskCausalKind::Execution { ordinal, buyer, .. } => {
-                    Some((fact.round, ordinal, buyer.order, buyer.value_before))
+                    Some((match fact.context { super::super::retail_lifecycle::BatchContext::Tick { round, .. } => round, _ => panic!("真实 Tick 报告不得含 Drain") }, ordinal, buyer.order, buyer.value_before))
                 }
                 _ => None,
             })
@@ -331,3 +356,7 @@ mod tests {
 #[cfg(all(test, not(target_arch = "wasm32")))]
 #[path = "diagnostics_report_fault_tests.rs"]
 pub(crate) mod report_fault_tests;
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+#[path = "diagnostics_drain_tests.rs"]
+mod drain_tests;

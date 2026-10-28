@@ -239,13 +239,10 @@ pub struct RuntimeDriver {
     pending_decision_traces: Vec<super::diagnostics::GroupDecisionTrace>,
     #[cfg(feature = "simulation-diagnostics")]
     terminal_causal: Option<(
-        crate::diagnostics::causal::FactTime,
+        Option<crate::diagnostics::causal::FactTime>,
         Vec<super::diagnostics::DeskCausalFact>,
         crate::session::StepFatal,
     )>,
-    /// 初始发布 v0 的 resting 观察面为空；接管的真实种子在首拍前另记存在性。
-    #[cfg(feature = "simulation-diagnostics")]
-    initial_causal_resting: bool,
     #[cfg(all(test, feature = "simulation-diagnostics"))]
     unresolved_causal_source_for_test: bool,
     /// 路由层拒收待投影（D5 组端校验：qty=0 等——(code, owner)，本拍
@@ -658,8 +655,6 @@ impl RuntimeDriver {
         // 消息链晚于外部新单到达，maker/taker 身分颠倒——live_plan_
         // partial_fill 红证）。owner 不在名册=投影缺口，显式失败。
         // （种子已在预留段先行计算——组端现金/持仓扣减与之同源。）
-        #[cfg(feature = "simulation-diagnostics")]
-        let initial_causal_resting = desk_order_seeds.iter().any(|orders| !orders.is_empty());
         spec.initial_desk_orders = desk_order_seeds;
         // D5 restore 等价：tick 价格历史投影（save fault2010 长度面）+
         /// 日内行情聚合种子（最后一层——活动 K/日内高低调/分钟收盘/昨收，
@@ -741,8 +736,6 @@ impl RuntimeDriver {
             pending_decision_traces: Vec::new(),
             #[cfg(feature = "simulation-diagnostics")]
             terminal_causal: None,
-            #[cfg(feature = "simulation-diagnostics")]
-            initial_causal_resting,
             #[cfg(all(test, feature = "simulation-diagnostics"))]
             unresolved_causal_source_for_test: false,
             pending_rejections: Vec::new(),
@@ -1804,8 +1797,6 @@ impl RuntimeDriver {
         session: &mut GameSession,
     ) -> Result<Vec<crate::session::personal_trade_history::PendingTradeReceipt>, String>
     {
-        #[cfg(feature = "simulation-diagnostics")]
-        self.ensure_causal_day_end_supported()?;
         self.world
             .run_day_end_public()
             .map_err(|e| format!("runtime 世界日结失败（内部已 Abort 冲回）：{e:?}"))?;
@@ -2431,21 +2422,12 @@ impl RuntimeDriver {
             .map_err(|e| format!("账户快照失败：{e:?}"))
     }
 
-    /// Drain 的能力门只读现有权威发布，不新增查询往返或伪造终止事实。
-    #[cfg(feature = "simulation-diagnostics")]
-    pub(crate) fn ensure_causal_day_end_supported(&self) -> Result<(), String> {
-        let published = self.world.publication().load();
-        if (self.world.report_log.is_empty() && self.initial_causal_resting)
-            || published.desks.iter().any(|desk| desk.resting_count > 0) {
-            return Err("causal DayEnd真实余单终止尚未接通".to_owned());
-        }
-        Ok(())
-    }
-
     /// 消费本拍 sideband；report_log 不再永久保存第二份诊断历史。
     #[cfg(feature = "simulation-diagnostics")]
-    pub(crate) fn take_causal_facts(&mut self) -> Vec<super::diagnostics::DeskCausalFact> {
-        let facts = std::mem::take(&mut self.pending_causal);
+    pub(crate) fn take_causal_facts(&mut self) -> (Vec<super::diagnostics::DeskCausalFact>, Option<crate::diagnostics::causal::FactTime>) {
+        let mut facts = std::mem::take(&mut self.pending_causal);
+        let (mut drained, time) = self.take_drain_causal_facts();
+        facts.append(&mut drained);
         #[cfg(test)]
         let facts = if self.unresolved_causal_source_for_test {
             facts
@@ -2464,7 +2446,7 @@ impl RuntimeDriver {
         } else {
             facts
         };
-        facts
+        (facts, time)
     }
 
     #[cfg(all(test, feature = "simulation-diagnostics"))]

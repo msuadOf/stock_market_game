@@ -166,6 +166,8 @@ mod continuous_cancellation_tests;
 #[cfg(test)]
 mod day_boundary_kline_tests;
 #[cfg(test)]
+mod default_new_runtime_topology_tests;
+#[cfg(test)]
 mod envelope_projection_hydration_tests;
 #[cfg(test)]
 mod envelope_projection_tests;
@@ -1342,7 +1344,16 @@ pub struct SessionSetup {
     pub simulation_policy_id: String,
 }
 
+// 默认 new 的 NPC group 数与只读宿主装配共用；不控制显式 override 或 restore。
+const DEFAULT_NEW_RUNTIME_GROUP_COUNT: usize = 1;
+
 impl SessionSetup {
+    /// 仅用于默认 new 的宿主装配；restore 与显式 runtime groups 不在此接口范围。
+    pub fn default_new_runtime_topology(&self) -> Result<(usize, usize), SessionError> {
+        self.validate()?;
+        Ok((DEFAULT_NEW_RUNTIME_GROUP_COUNT, self.stocks.len()))
+    }
+
     /// 由规格构造股票目录（ADR 0041）：按代码升序分配 id，id 序即代码序。
     /// `GameSession::new` 与读档路径共用，保证两端 id 分配一致。
     pub fn stock_catalog(&self) -> Result<StockCatalog, SessionError> {
@@ -2441,7 +2452,7 @@ impl GameSession {
             #[cfg(test)]
             runtime_install_failure: false,
             runtime_driver: None,
-            runtime_group_count: 1,
+            runtime_group_count: DEFAULT_NEW_RUNTIME_GROUP_COUNT,
             runtime_authority_epoch: 0,
             runtime_mirror_install_sequence: 0,
             runtime_discard_driver_flag: false,

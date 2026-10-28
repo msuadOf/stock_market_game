@@ -4,6 +4,7 @@ import { registerHooks } from "node:module";
 import test from "node:test";
 import { currentSaveFixture } from "../save/current-save-fixture.ts";
 import { civilUpdate, frame, snapshot, tickBatch } from "./protocol-test-fixtures.ts";
+import { CAPACITY, GEN_BITS, FREE_HEAD, FREE_HEAD_EMPTY, HEADER_WORDS, SLOT_STRIDE, JOIN_STRIDE } from "./facade-slot-protocol.ts";
 
 type Message = Record<string, unknown> & { type: string };
 let fixtureId = 0;
@@ -55,8 +56,12 @@ async function createFixture(
   let failingPost: string | null = null;
   let listener: ((event: { data: Message }) => void) | undefined;
   const saved = currentSaveFixture();
+  const layout = { baseAddr: 0, headerWords: HEADER_WORDS, slotStride: SLOT_STRIDE, joinStride: JOIN_STRIDE, capacity: 4, genBits: 29 };
+  let sharedMemory!: WebAssembly.Memory;
   const bindings = {
-    default: async () => ({ memory: new WebAssembly.Memory({ initial: 1, maximum: 1, shared: true }) }),
+    initSync: ({ memory }: { memory: WebAssembly.Memory }) => { sharedMemory = memory; return { memory, __wbindgen_thread_destroy() {} }; },
+    facade_slot_init_for_setup: () => { const words = new Int32Array(sharedMemory.buffer); Atomics.store(words, CAPACITY, 4); Atomics.store(words, GEN_BITS, 29); Atomics.store(words, FREE_HEAD, FREE_HEAD_EMPTY | 0); },
+    facade_slot_layout: () => layout,
     ingress_token: (current: number) => current,
     create_session: () => { calls.push(`create:${handle}`); return handle; },
     civil_date: (current: number) => current === 7 ? "2030-01-02" : "2031-02-03",
@@ -78,7 +83,7 @@ async function createFixture(
     },
   };
   replace(bindingsKey, bindings);
-  replace("self", { postMessage: (message: Message) => { if (message.type === failingPost) throw new DOMException("发送失败", "DataCloneError"); posted.push(message); if (message.type === "ready" || message.type === "failure") initialized(); }, addEventListener: (_type: string, callback: typeof listener) => { listener = callback; } });
+  replace("self", { crossOriginIsolated: true, postMessage: (message: Message) => { if (message.type === failingPost) throw new DOMException("发送失败", "DataCloneError"); posted.push(message); if (message.type === "ready" || message.type === "failure") initialized(); }, addEventListener: (_type: string, callback: typeof listener) => { listener = callback; } });
   replace("fetch", async () => ({ ok: true, arrayBuffer: async () => Uint8Array.from([0, 97, 115, 109, 1, 0, 0, 0]).buffer }));
   replace("setTimeout", (callback: () => void) => { const id = ++nextTimer; timers.set(id, callback); return id; });
   replace("clearTimeout", (id: number) => { timers.delete(id); });
@@ -89,14 +94,16 @@ async function createFixture(
       if (specifier === "../../wasm-pkg/web_wasm.js") {
         return { url: `virtual:wasm-pkg:owner-${id}`, shortCircuit: true };
       }
+      if (specifier === "./engine-clock-env.ts") return { url: `virtual:owner-env:${id}`, shortCircuit: true };
       return nextResolve(specifier, context);
     },
     load(url, context, nextLoad) {
       if (url.startsWith("virtual:wasm-pkg:owner-")) {
-        const exports = Object.keys(bindings).filter((key) => key !== "default")
+        const exports = Object.keys(bindings)
           .map((key) => `export const ${key} = (...args) => bindings.${key}(...args);`).join("\n");
-        return { shortCircuit: true, format: "module", source: `const bindings = globalThis[Symbol.for("stock-game-wasm-owner-tests")];\n${exports}\nexport default bindings.default;` };
+        return { shortCircuit: true, format: "module", source: `const bindings = globalThis[Symbol.for("stock-game-wasm-owner-tests")];\n${exports}` };
       }
+      if (url.startsWith("virtual:owner-env:")) return { shortCircuit: true, format: "module", source: `import {createFacadeThreadBinding} from ${JSON.stringify(new URL("./facade-thread-binding.ts", import.meta.url).href)}; const binding=createFacadeThreadBinding({isWorker:()=>true}); export const {bindFacadeThreadEnvironment,installFacadeSlotLayout,getArenaView}=binding;` };
       const loaded = nextLoad(url, context);
       if (url.includes("/wasm-worker.ts?owner-test=")) {
         // 仅替换 Node 缺少的 Vite import.meta.env；协议 listener 与 owner 使用原源码。
@@ -108,7 +115,8 @@ async function createFixture(
   await import(`./wasm-worker.ts?owner-test=${id}`);
   assert.ok(listener);
   const send = (message: Message) => { listener!({ data: message }); };
-  send({ type: "init" });
+  const control = new MessageChannel(); control.port1.addEventListener("message", () => { control.port1.postMessage({ type: "facadeEngineConfigured" }); }); control.port1.start();
+  send({ type: "init", setup: {}, controlPort: control.port2 });
   await ready;
   assert.deepEqual(posted, [{ type: "ready" }]);
   posted.length = 0;
@@ -117,12 +125,12 @@ async function createFixture(
 
 test("Worker 全部会话 caller 共用 owner，restore 完整回应先于 microtask restart", { timeout: 10000 }, async () => {
   await withWorker(async (f) => {
-    f.send({ type: "create", setup: {}, seed: 1n });
+    f.send({ type: "create", seed: 1n });
     assert.equal(f.posted[0].type, "ingress");
     assert.equal(f.posted[0].token, 7);
     assert.equal(f.posted[0].generation, 1);
-    assert.ok(f.posted[0].module instanceof WebAssembly.Module);
-    assert.ok((f.posted[0].memory as WebAssembly.Memory).buffer instanceof SharedArrayBuffer);
+    assert.equal(f.posted[0].shared, true);
+    assert.equal(Object.hasOwn(f.posted[0], "memory"), false, "ingress 复用 supervisor 已接收的唯一 substrate");
     assert.deepEqual(f.posted.slice(1), [
       { type: "created", generation: 1, capabilities: { npcDecisionDiagnostics: false, indicatorCapabilities: { intradayAverage: false, macd: false, priceKdj: false, candleKdj: false }, personalTradeHistory: false } },
       { ...catalogWorkerFixture(snapshot(0, 0)), type: "baseline", generation: 1, snapshot: snapshot(0, 0), civilDate: "2030-01-02" },
@@ -168,7 +176,7 @@ test("Worker 全部会话 caller 共用 owner，restore 完整回应先于 micro
 
 test("Worker restore提交前snapshot失败恢复旧运行，提交后prepare失败fatal关闭新会话", { timeout: 10000 }, async () => {
   await withWorker(async f => {
-    f.send({ type: "create", setup: {}, seed: 1n });
+    f.send({ type: "create", seed: 1n });
     f.send({ type: "start", generation: 1, requestId: 20 });
     f.handle(9); f.fail("snapshot"); f.posted.length = 0;
     f.send({ type: "restore", generation: 1, requestId: 10, slot: f.saved });
@@ -190,7 +198,7 @@ test("Worker restore提交前snapshot失败恢复旧运行，提交后prepare失
 
 test("真实Worker restore已换handle后catalog故障保持3019，drain后不重启或发成功", { timeout: 10000 }, async () => {
   await withWorker(async f => {
-    f.send({ type: "create", setup: {}, seed: 1n });
+    f.send({ type: "create", seed: 1n });
     f.send({ type: "start", generation: 1, requestId: 1 });
     f.handle(9);
     f.fail("catalog");
@@ -216,7 +224,7 @@ test("真实Worker restore已换handle后catalog故障保持3019，drain后不�
 
 test("真实Worker restore提交前snapshot失败按旧handle/generation恢复运行", { timeout: 10000 }, async () => {
   await withWorker(async f => {
-    f.send({ type: "create", setup: {}, seed: 1n });
+    f.send({ type: "create", seed: 1n });
     f.send({ type: "start", generation: 1, requestId: 1 });
     f.handle(9); f.fail("snapshot"); f.posted.length = 0;
     f.send({ type: "restore", generation: 1, requestId: 2, slot: f.saved });
@@ -231,7 +239,7 @@ test("真实Worker restore提交前snapshot失败按旧handle/generation恢复�
 
 test("真实Worker replace后旧drop失败属于已提交fatal，旧generation不能操作新handle", { timeout: 10000 }, async () => {
   await withWorker(async f => {
-    f.send({ type: "create", setup: {}, seed: 1n });
+    f.send({ type: "create", seed: 1n });
     f.send({ type: "start", generation: 1, requestId: 1 });
     f.handle(9); f.fail("drop"); f.posted.length = 0;
     f.send({ type: "restore", generation: 1, requestId: 2, slot: f.saved });
@@ -249,7 +257,7 @@ test("真实Worker replace后旧drop失败属于已提交fatal，旧generation�
 
 test("真实Worker refresh目录fatal关闭当前handle以撤销独立intake能力", { timeout: 10000 }, async () => {
   await withWorker(async f => {
-    f.send({ type: "create", setup: {}, seed: 1n });
+    f.send({ type: "create", seed: 1n });
     f.send({ type: "start", generation: 1, requestId: 1 });
     f.fail("catalog"); f.posted.length = 0;
     f.send({ type: "refreshBaseline", generation: 1, requestId: 2 });
@@ -270,7 +278,7 @@ test("真实Worker refresh目录fatal关闭当前handle以撤销独立intake能�
 for (const failureType of ["ingress", "restored"] as const) {
   test(`真实Worker已提交restore发送${failureType}失败fatal且不重启`, { timeout: 10000 }, async () => {
     await withWorker(async f => {
-      f.send({ type: "create", setup: {}, seed: 1n });
+      f.send({ type: "create", seed: 1n });
       f.send({ type: "start", generation: 1, requestId: 1 });
       f.handle(9); f.failPost(failureType); f.posted.length = 0;
       f.send({ type: "restore", generation: 1, requestId: 2, slot: f.saved });
@@ -291,7 +299,7 @@ for (const failureType of ["ingress", "restored"] as const) {
 
 test("真实Worker暂停旧会话的precommit恢复失败保持暂停", { timeout: 10000 }, async () => {
   await withWorker(async f => {
-    f.send({ type: "create", setup: {}, seed: 1n });
+    f.send({ type: "create", seed: 1n });
     f.handle(9); f.fail("snapshot"); f.posted.length = 0;
     f.send({ type: "restore", generation: 1, requestId: 2, slot: f.saved });
     await Promise.resolve(); await Promise.resolve();
@@ -308,7 +316,7 @@ test("真实Worker暂停旧会话的precommit恢复失败保持暂停", { timeou
 
 test("非目录可恢复structured故障维持既有stop与显错，不销毁当前handle", { timeout: 10000 }, async () => {
   await withWorker(async f => {
-    f.send({ type: "create", setup: {}, seed: 1n });
+    f.send({ type: "create", seed: 1n });
     f.fail("recoverable"); f.posted.length = 0;
     f.send({ type: "refreshBaseline", generation: 1, requestId: 1 });
     assert.equal(f.posted[0].type, "failure");
@@ -323,7 +331,7 @@ test("非目录可恢复structured故障维持既有stop与显错，不销毁当
 
 test("真实Worker precommit snapshot与candidate cleanup双失败保旧身份并恢复运行且显两错", { timeout: 10000 }, async () => {
   await withWorker(async f => {
-    f.send({ type: "create", setup: {}, seed: 1n });
+    f.send({ type: "create", seed: 1n });
     f.send({ type: "start", generation: 1, requestId: 1 });
     f.handle(9); f.fail("snapshot-and-drop"); f.posted.length = 0;
     f.send({ type: "restore", generation: 1, requestId: 2, slot: f.saved });
@@ -343,7 +351,7 @@ test("真实Worker precommit snapshot与candidate cleanup双失败保旧身份�
 
 test("Worker 公司查询 dispatch 使用当前唯一 handle，旧 generation 不读且域失败明确回传", { timeout: 10000 }, async () => {
   await withWorker(async f => {
-    f.send({ type: "create", setup: {}, seed: 1n });
+    f.send({ type: "create", seed: 1n });
     f.posted.length = 0;
     const query = { kind: "OwnerRightsOfferings" };
     f.send({ type: "companyReadQuery", requestId: 21, generation: 1, query });

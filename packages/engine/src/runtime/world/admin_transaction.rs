@@ -3,6 +3,12 @@ use crate::runtime::protocol::{AdminGroupCandidate, AdminPhase};
 use std::collections::{BTreeMap, BTreeSet};
 
 type PanicPayload = Box<dyn std::any::Any + Send>;
+
+/// wasm join 的 io::Error 是显式失败诊断，不是可 resume_unwind 的 native panic payload。
+#[cfg(any(test, target_family = "wasm"))]
+fn admin_wasm_join_diagnostic(who: WorkerId, error: std::io::Error) -> String {
+    format!("{who} wasm join 失败：kind={:?}；{error}", error.kind())
+}
 struct AdminFailure {
     error: RuntimeError,
     payload: Option<PanicPayload>,
@@ -222,7 +228,12 @@ impl World {
                         let diagnostic = match handle.join() {
                             Ok(Ok(())) => None,
                             Ok(Err(error)) => Some(format!("；收尾 join {who} 失败：{error}")),
+                            #[cfg(not(target_family = "wasm"))]
                             Err(_) => Some(format!("；收尾 join {who} 再次 panic")),
+                            #[cfg(target_family = "wasm")]
+                            Err(error) => Some(format!(
+                                "；收尾 {}", admin_wasm_join_diagnostic(who, error)
+                            )),
                         };
                         if let Some(diagnostic) = diagnostic {
                             self.dead_reason
@@ -685,16 +696,87 @@ impl World {
                 match handle.join() {
                     Ok(Ok(())) => {}
                     Ok(Err(error)) => diagnostics.push(format!("{who}：{error}")),
+                    #[cfg(not(target_family = "wasm"))]
                     Err(p) => {
                         diagnostics.push(format!("{who} 未运输 panic"));
                         if payload.is_none() {
                             payload = Some(p);
                         }
                     }
+                    #[cfg(target_family = "wasm")]
+                    Err(error) => {
+                        // DEAD kind/code 交给终态诊断；io::Error 不能填充原 panic payload。
+                        diagnostics.push(admin_wasm_join_diagnostic(who, error));
+                    }
                 }
             }
         }
         (payload, diagnostics.join("；"))
+    }
+}
+
+#[cfg(test)]
+mod wasm_join_diagnostic_tests {
+    use super::admin_wasm_join_diagnostic;
+    use crate::facade_slot::arena::SlotArena;
+    use crate::facade_slot::codec::{decode_join_state, JoinState, GEN_BITS_DEFAULT};
+    use crate::facade_slot::platform::NullPlatform;
+    use crate::facade_slot::roles::join_typed;
+    use crate::facade_slot::test_supervisor::{write_dead, DeadKind, DeadOutcome};
+    use crate::runtime::protocol::WorkerId;
+    use std::sync::atomic::Ordering;
+
+    fn assert_dead_join_diagnostic(who: WorkerId, kind: DeadKind, code: u32, expected: &str) {
+        let arena = SlotArena::alloc(1, GEN_BITS_DEFAULT);
+        assert_eq!(
+            write_dead(&arena, &NullPlatform, 0, 0, kind, code),
+            DeadOutcome::Written
+        );
+        let error = join_typed::<(), _>(&arena, &NullPlatform, 0, 0)
+            .expect_err("真实 DEAD join 必须交出 io::Error");
+        assert_eq!(error.kind(), std::io::ErrorKind::Other);
+        let rendered = error.to_string();
+        assert!(rendered.contains(expected));
+        let diagnostic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            admin_wasm_join_diagnostic(who, error)
+        }))
+        .expect("wasm join 失败必须返回诊断，不能伪装 panic payload");
+        assert!(
+            diagnostic.contains(&who.to_string()),
+            "诊断必须保留真实 worker 身份：{diagnostic}"
+        );
+        assert!(
+            diagnostic.contains("Other"),
+            "诊断必须保留 io::ErrorKind：{diagnostic}"
+        );
+        assert!(
+            diagnostic.contains(&rendered),
+            "死亡种类与结构化 code 不能丢失：{diagnostic}"
+        );
+        assert_eq!(
+            decode_join_state(arena.join_word(0).load(Ordering::SeqCst), GEN_BITS_DEFAULT),
+            JoinState::Consumed
+        );
+    }
+
+    #[test]
+    fn admin_wasm_join_hardtrap_keeps_real_identity_kind_code_and_consumes_join() {
+        assert_dead_join_diagnostic(
+            WorkerId::Group(3),
+            DeadKind::HardTrap,
+            0xD5,
+            "FACADE_DEAD_HARDTRAP:0xD5",
+        );
+    }
+
+    #[test]
+    fn admin_wasm_join_panic_signal_is_io_diagnostic_and_consumes_join() {
+        assert_dead_join_diagnostic(
+            WorkerId::Desk(5),
+            DeadKind::Panic,
+            0xA6,
+            "FACADE_DEAD_PANIC:0xA6",
+        );
     }
 }
 

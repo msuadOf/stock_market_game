@@ -16,11 +16,57 @@ mod chart;
 pub use chart::{AccountChart, AccountDef, AccountElement, LedgerAccountId};
 
 /// 单科目 T 型合计（借方总额 / 贷方总额；净额 = 借 − 贷）。
-#[derive(Clone, Copy, Eq, PartialEq, Debug, Default)]
+#[cfg_attr(not(test), derive(Clone))]
+#[derive(Copy, Eq, PartialEq, Debug, Default)]
 pub struct AccountBalance {
     debit_total: AccountingAmount,
     credit_total: AccountingAmount,
 }
+
+#[cfg(test)]
+#[allow(clippy::non_canonical_clone_impl)]
+impl Clone for AccountBalance {
+    fn clone(&self) -> Self {
+        balance_clone_probe::record();
+        *self
+    }
+}
+
+// 只在测试中观测真实余额值 Clone；生产仍使用原 derive，不增加计数或状态。
+#[cfg(test)]
+mod balance_clone_probe {
+    use std::cell::Cell;
+    thread_local! { static CLONES: Cell<Option<usize>> = const { Cell::new(None) }; }
+
+    pub(super) fn record() {
+        CLONES.with(|count| {
+            if let Some(value) = count.get() {
+                count.set(Some(value + 1));
+            }
+        });
+    }
+
+    pub(super) fn measure<T>(operation: impl FnOnce() -> T) -> (T, usize) {
+        struct Armed;
+        impl Drop for Armed {
+            fn drop(&mut self) {
+                CLONES.with(|count| count.set(None));
+            }
+        }
+        CLONES.with(|count| {
+            assert!(count.get().is_none(), "余额 Clone probe 不允许嵌套 arm");
+            count.set(Some(0));
+        });
+        let armed = Armed;
+        let result = operation();
+        let count = CLONES.with(|count| count.get().expect("余额 Clone probe 必须保持 armed"));
+        drop(armed);
+        (result, count)
+    }
+}
+
+#[cfg(test)]
+mod posting_trial_tests;
 
 impl AccountBalance {
     pub fn debit_total(&self) -> AccountingAmount {
@@ -57,6 +103,33 @@ pub struct Ledger {
     cash_flows: BTreeMap<(AccountingPeriod, CashFlowClass), AccountingAmount>,
 }
 
+/// 本批触键的首次旧值；None 表示原本无键，回滚必须删除而非写入零值。
+pub(super) struct LedgerUndo {
+    account_totals: BTreeMap<LedgerAccountId, Option<AccountBalance>>,
+    period_balances: BTreeMap<(LedgerAccountId, AccountingPeriod), Option<AccountBalance>>,
+    cash_flows: BTreeMap<(AccountingPeriod, CashFlowClass), Option<AccountingAmount>>,
+}
+
+impl LedgerUndo {
+    pub(super) fn restore(self, ledger: &mut Ledger) {
+        fn restore_keys<K: Ord, V>(map: &mut BTreeMap<K, V>, saved: BTreeMap<K, Option<V>>) {
+            for (key, old) in saved {
+                match old {
+                    Some(value) => {
+                        map.insert(key, value);
+                    }
+                    None => {
+                        map.remove(&key);
+                    }
+                }
+            }
+        }
+        restore_keys(&mut ledger.account_totals, self.account_totals);
+        restore_keys(&mut ledger.period_balances, self.period_balances);
+        restore_keys(&mut ledger.cash_flows, self.cash_flows);
+    }
+}
+
 impl Ledger {
     pub fn new(chart: AccountChart) -> Self {
         Self {
@@ -69,6 +142,34 @@ impl Ledger {
 
     pub fn chart(&self) -> &AccountChart {
         &self.chart
+    }
+
+    /// 只保留本批可能触及的键；不验证或应用分录，不改变原错误顺序。
+    pub(super) fn snapshot_batch_keys(&self, batch: &[JournalEntry]) -> LedgerUndo {
+        let mut undo = LedgerUndo {
+            account_totals: BTreeMap::new(),
+            period_balances: BTreeMap::new(),
+            cash_flows: BTreeMap::new(),
+        };
+        for entry in batch {
+            let period = entry.period();
+            for line in &entry.lines {
+                undo.account_totals
+                    .entry(line.account.clone())
+                    .or_insert_with(|| self.account_totals.get(&line.account).copied());
+                let period_key = (line.account.clone(), period);
+                undo.period_balances
+                    .entry(period_key.clone())
+                    .or_insert_with(|| self.period_balances.get(&period_key).copied());
+                if self.chart.is_cash(&line.account) {
+                    let cash_key = (period, entry.cash_flow);
+                    undo.cash_flows
+                        .entry(cash_key)
+                        .or_insert_with(|| self.cash_flows.get(&cash_key).copied());
+                }
+            }
+        }
+        undo
     }
 
     /// 增量计入一笔**已通过全部验证**的分录（仅在 Books 验证路径与恢复重放中

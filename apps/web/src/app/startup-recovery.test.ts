@@ -41,11 +41,15 @@ function memoryApp() {
     },
     useCallback(callback: unknown) { cursor++; return callback; },
   };
+  let root: ReactElement;
   function render(): ReactElement {
     const previous = internals.ReactCurrentDispatcher.current;
     internals.ReactCurrentDispatcher.current = dispatcher;
     cursor = 0;
-    try { return App(); } finally { internals.ReactCurrentDispatcher.current = previous; }
+    try {
+      root = App();
+      return Array.isArray(root.props.failures) ? root.props.children : root;
+    } finally { internals.ReactCurrentDispatcher.current = previous; }
   }
   function startRemote() {
     let screen = render();
@@ -60,7 +64,7 @@ function memoryApp() {
     }
     return render().props.children;
   }
-  return { render, startRemote };
+  return { render, startRemote, report: () => root };
 }
 
 test("重选等待已提交的原子 rename/close，下一局不能越过旧写入屏障", async () => {
@@ -132,4 +136,30 @@ test("自定义新局日期和价格笼子在取消或失败重挂后保留，�
     assert.equal(await shell.props.initialSaveSourceRef.current.read(async () => { reads++; return null; }), null);
   }
   assert.equal(reads, 0);
+});
+
+
+test("App 同一 paint 前连续 spawn failure 全部保留，重选新宿主不清报告，用户关闭才清空", { timeout: 10000 }, async () => {
+  const app = memoryApp();
+  const shell = app.startRemote();
+  assert.equal(typeof shell.props.onSpawnFailure, "function", "App 必须从构造开始提供非 fatal sink");
+  const first = { code: "WORKER_SPAWN_FAILED", where: "wasm.spawn", message: "第一次", cause: { message: "原cause" }, context: { requestId: 1 } };
+  const second = { ...first, message: "第二次", context: { requestId: 2 } };
+  shell.props.onSpawnFailure(first);
+  shell.props.onSpawnFailure(second);
+  app.render();
+  assert.deepEqual(app.report().props.failures, [first, second]);
+  assert.equal(app.report().props.failures[0], first);
+  assert.equal(app.report().props.failures[0].cause, first.cause);
+  await shell.props.onSelectHost(async () => {});
+  app.render();
+  assert.deepEqual(app.report().props.failures, [first, second]);
+  const nextShell = app.startRemote();
+  assert.deepEqual(app.report().props.failures, [first, second]);
+  for (let index = 0; index < 40; index++) nextShell.props.onSpawnFailure(first);
+  app.render();
+  assert.equal(app.report().props.failures.length, 42, "未确认报告不能静默截断");
+  app.report().props.onDismiss();
+  app.render();
+  assert.deepEqual(app.report().props.failures, []);
 });

@@ -1,3 +1,4 @@
+import { bootstrapLegacy, createLegacyHost, LegacyWorker } from "./worker-host-legacy.test-support.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
@@ -16,19 +17,20 @@ const allocation = { stocks: [{ code: 0, float_shares: 7, unallocated_shares: 0,
 
 test("Worker实际分配query绑定requestId/generation，refresh后旧响应失效", { timeout: 10000 }, async () => {
   const original = Object.getOwnPropertyDescriptor(globalThis, "Worker");
-  class AllocationWorker extends EventTarget {
+  class AllocationWorker extends LegacyWorker {
     static current: AllocationWorker;
     readonly sent: Record<string, unknown>[] = [];
     constructor() { super(); AllocationWorker.current = this; }
-    postMessage(value: Record<string, unknown>) { this.sent.push(value); }
+    postMessage(value: Record<string, unknown>) { this.prepare(value); this.sent.push(value); }
     terminate() {}
     emit(value: unknown) { this.dispatchEvent(Object.assign(new Event("message"), { data: value })); }
   }
   Object.defineProperty(globalThis, "Worker", { configurable: true, value: AllocationWorker });
   let host: Awaited<ReturnType<typeof createWorkerHost>> | undefined;
   try {
-    const creating = createWorkerHost(setup, 17n);
+    const creating = createLegacyHost(setup, 17n);
     const worker = AllocationWorker.current;
+      await bootstrapLegacy(worker);
     worker.emit({ ...{ stockCatalog: [{ id: 0, code: "600101" }], companyCatalog: [{ id: 0, code: "C-600101", name: "公司", listed_stock: 0 }] }, type: "baseline", generation: 1, snapshot: snapshot(0, 0), civilDate: "2024-01-02" });
     host = await creating;
     const current = host.initialAllocation();

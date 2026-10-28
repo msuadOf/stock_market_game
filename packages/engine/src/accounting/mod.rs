@@ -56,6 +56,7 @@ pub use tax::{
     InputVatSplit, LossEntry, TaxPolicy, TaxPolicyError, VatPolicy,
 };
 
+use ledger::LedgerUndo;
 use std::collections::HashMap;
 
 /// 公司账套 = 权威日记账 + 派生总账。投资者 `Account` 与公司经营账套
@@ -89,8 +90,7 @@ impl Books {
         if batch.is_empty() {
             return Ok(());
         }
-        let trial = self.trial_ledger_for(&batch)?;
-        self.ledger = trial;
+        self.apply_batch_candidate(&batch)?;
         self.journal.record_batch(batch);
         Ok(())
     }
@@ -103,23 +103,26 @@ impl Books {
         if batch.is_empty() {
             return operation(self).map_err(BooksTransactionError::Operation);
         }
-        let trial = self
-            .trial_ledger_for(&batch)
+        let undo = self
+            .apply_batch_candidate(&batch)
             .map_err(BooksTransactionError::Accounting)?;
-        let old_ledger = std::mem::replace(&mut self.ledger, trial);
         let batch_count = self.journal.batches.len();
         self.journal.record_batch(batch);
         match operation(self) {
             Ok(value) => Ok(value),
             Err(error) => {
                 self.journal.rollback_to_batch_count(batch_count);
-                self.ledger = old_ledger;
+                undo.restore(&mut self.ledger);
                 Err(BooksTransactionError::Operation(error))
             }
         }
     }
 
-    fn trial_ledger_for(&self, batch: &[JournalEntry]) -> Result<Ledger, AccountingError> {
+    /// 全批结构先校验，再在私有候选上按原顺序过账；错误用触键旧值完整回滚。
+    fn apply_batch_candidate(
+        &mut self,
+        batch: &[JournalEntry],
+    ) -> Result<LedgerUndo, AccountingError> {
         let batch_len = batch.len();
         let abort =
             |failed_index: Option<usize>, cause: AccountingError| AccountingError::BatchAborted {
@@ -144,17 +147,19 @@ impl Books {
             }
         }
 
-        let mut trial = self.ledger.clone();
+        let undo = self.ledger.snapshot_batch_keys(batch);
         for (idx, entry) in batch.iter().enumerate() {
-            if let Err(cause) = trial.apply_entry(entry) {
+            if let Err(cause) = self.ledger.apply_entry(entry) {
+                undo.restore(&mut self.ledger);
                 return Err(abort(Some(idx), cause));
             }
         }
-        if let Err(cause) = check_cash_floor(&trial) {
+        if let Err(cause) = check_cash_floor(&self.ledger) {
+            undo.restore(&mut self.ledger);
             return Err(abort(None, cause));
         }
 
-        Ok(trial)
+        Ok(undo)
     }
 
     /// 封账：状态 + 守卫（结账试算/结转/快照在 `closing`）。

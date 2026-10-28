@@ -30,7 +30,7 @@ pub enum RawFact {
 }
 
 /// Tick 与 Drain 明确分域，不用虚构 round 或次日日期补造同一来源。
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum BatchContext {
     Tick {
         tick: u64,

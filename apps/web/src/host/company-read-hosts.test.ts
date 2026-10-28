@@ -3,7 +3,7 @@ import test from "node:test";
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { createTauriHost } from "./tauri-host.ts";
 import { createRemoteHost } from "./remote-host.ts";
-import { createWorkerHost } from "./worker-host.ts";
+import { LegacyWorker, bootstrapLegacy, createLegacyHost } from "./worker-host-legacy.test-support.ts";
 import { market, dailyCandle } from "./protocol-test-fixtures.ts";
 import type { EngineHost } from "./engine-host.ts";
 import type { SessionSetup } from "../types/engine.ts";
@@ -27,10 +27,11 @@ async function withHost(kind: "Worker" | "Tauri" | "Remote", body: (host: Engine
   try {
     if (kind === "Worker") {
       const original = Object.getOwnPropertyDescriptor(globalThis, "Worker");
-      class QueryWorker extends EventTarget {
+      class QueryWorker extends LegacyWorker {
         static current: QueryWorker;
         constructor() { super(); QueryWorker.current = this; }
         postMessage(raw: Record<string, unknown>) {
+          this.prepare(raw);
           if (raw.type !== "companyReadQuery") return;
           calls.push({ query: raw.query, generation: raw.generation, account: raw.account });
           const query = raw.query as { kind: string };
@@ -41,11 +42,12 @@ async function withHost(kind: "Worker" | "Tauri" | "Remote", body: (host: Engine
       }
       Object.defineProperty(globalThis, "Worker", { configurable: true, value: QueryWorker });
       restore.push(() => { if (original) Object.defineProperty(globalThis, "Worker", original); else Reflect.deleteProperty(globalThis, "Worker"); });
-      const pending = createWorkerHost({} as SessionSetup, 1n);
-      QueryWorker.current.emit({ type: "ingress", generation: 1, shared: false });
-      QueryWorker.current.emit({ type: "baseline", generation: 1, snapshot, stockCatalog: catalog.stocks, companyCatalog: catalog.companies, civilDate: "2030-06-01" });
+      const pending = createLegacyHost({} as SessionSetup, 1n);
+      const engine = QueryWorker.current;
+      await bootstrapLegacy(engine);
+      engine.emit({ type: "baseline", generation: 1, snapshot, stockCatalog: catalog.stocks, companyCatalog: catalog.companies, civilDate: "2030-06-01" });
       host = await pending;
-      replaceBaseline = async () => QueryWorker.current.emit({ type: "baseline", generation: 1, snapshot, stockCatalog: catalog.stocks, companyCatalog: catalog.companies, civilDate: "2030-06-01" });
+      replaceBaseline = async () => engine.emit({ type: "baseline", generation: 1, snapshot, stockCatalog: catalog.stocks, companyCatalog: catalog.companies, civilDate: "2030-06-01" });
     } else if (kind === "Tauri") {
       const original = Object.getOwnPropertyDescriptor(globalThis, "window");
       Object.defineProperty(globalThis, "window", { configurable: true, value: { crypto: globalThis.crypto } });

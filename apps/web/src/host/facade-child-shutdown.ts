@@ -7,10 +7,12 @@
  * |----|------|--------|
  * | W1 | 闭包返回（确认无后续 Rust 工作） | Worker（Rust trampoline） |
  * | W2 | join 槽写 result + CAS WAITING→DONE + notify | Worker（Rust） |
- * | W3 | postMessage(workerExit) | Worker → 父队列（必达） |
+ * | W2a | exit import 记录意图，Rust trampoline 返回 JS | Worker（env/Rust） |
+ * | W2b | 校验返回码/退出意图，raw destroy(0,0,0)（最后 WASM 调用） | Worker bootstrap |
+ * | W3 | 控制端 postMessage(workerExit) | Worker → main 队列 |
  * | W4 | 置 bootstrap `rust_done` 标（迟到消息守卫） | Worker（本模块） |
  * | W5 | `self.close()`（专用 Worker 空事件循环不自动终止） | Worker（本模块） |
- * | W6 | trampoline JS 返回（事件循环已 closing） | Worker |
+ * | W6 | bootstrap JS 返回（事件循环已 closing） | Worker |
  * | S  | 收 workerExit → manifest 摘除 → 槽回收三门 | 主线程（facade-supervisor） |
  *
  * **迟到消息守卫**：W5 只丢弃**未派发**任务；已派发的 onmessage 会跑完。
@@ -27,8 +29,8 @@ export interface ChildBootstrapScope {
 }
 
 /**
- * Worker 侧关闭器：W3/W4/W5 的确定性序。调用方在 trampoline 返回后调用；
- * 返回后不应再有任何 Rust 调用进入本 Worker。
+ * Worker 侧关闭器：W3/W4/W5 的确定性序。调用方须在 trampoline 返回、意图校验、
+ * raw destroy 成功后调用；destroy 后不得调用 glue/free/getter 或再次进入 WASM。
  */
 export class ChildShutdown {
   private rustDone = false;
@@ -49,7 +51,7 @@ export class ChildShutdown {
   }
 
   /**
-   * W3→W5。先 post workerExit（父队列必达，不受本 Worker 后续 close 影响），
+   * W3→W5。先 post workerExit（入队不代表 main 已处理，宿主保留 exit 回执超时门），
    * 再置 rust_done 标，最后 self.close()。重复调用是显式错误（协议违约）。
    */
   shutdown(workerId: number, slot: number, gen: number): void {

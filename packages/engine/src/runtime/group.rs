@@ -705,6 +705,9 @@ pub enum Observed {
 /// 组线程期末上交状态。
 #[derive(Clone, Debug)]
 pub struct GroupFinalState {
+    /// fatal 后由真实 Final 读取完整 PlanBook，不能用旧公开镜像代替。
+    #[cfg(test)]
+    pub plan_book_for_test: crate::plans::PlanBook,
     /// 组索引。
     pub group: GroupIdx,
     /// 期末账户（含 Drain 回流落账）。
@@ -912,6 +915,15 @@ pub struct GroupState {
     /// 的确定性触发）。
     #[cfg(test)]
     force_continuation: bool,
+    /// 仅测试：在真实资源扣出后、最终 flush 前搬移一次缓冲并交付见证。
+    #[cfg(test)]
+    misroute_ops_once_for_test: Option<(StockIdx, StockIdx, std::sync::mpsc::Sender<super::protocol::MisroutedOpsForTest>, std::sync::mpsc::Receiver<()>)>,
+    /// 仅测试：另一组在其原 final flush 成功后发一次信号，不改变正常路由。
+    #[cfg(test)]
+    final_flush_sent_once_for_test: Option<std::sync::mpsc::Sender<()>>,
+    /// 仅测试：本组断连 sender 对应的下一次真实最终 flush 见证。
+    #[cfg(test)]
+    disconnected_flush_for_test: Option<(StockIdx, std::sync::mpsc::Sender<super::protocol::GroupFlushWitnessForTest>, std::sync::mpsc::Receiver<()>)>,
     /// 本组账户的计划权威；构造时按 AccountId 移交全部计划与游标。
     /// native 运行期间 session 只保留完整镜像，不作为特例 writer。
     plan_book: crate::plans::PlanBook,
@@ -1152,6 +1164,12 @@ impl GroupState {
             observation_overrides: std::collections::BTreeMap::new(),
             #[cfg(test)]
             force_continuation: false,
+            #[cfg(test)]
+            misroute_ops_once_for_test: None,
+            #[cfg(test)]
+            final_flush_sent_once_for_test: None,
+            #[cfg(test)]
+            disconnected_flush_for_test: None,
             plan_book: crate::plans::PlanBook::default(),
             due_heap: due_heap_seed,
             plan_book_dirty: true,
@@ -4836,8 +4854,47 @@ impl GroupState {
                 source: super::diagnostics::OperationSource::PlayerExternal,
             });
         }
+        #[cfg(test)]
+        if let Some((from, to, witness, after_final_flush)) = self.misroute_ops_once_for_test.take() {
+            if from == to || usize::from(from) >= buffers.len() || usize::from(to) >= buffers.len() {
+                return Err(RuntimeError::ProtocolInvariant { detail: "测试错路由要求两个不同合法证券".to_owned() });
+            }
+            let ops = std::mem::take(&mut buffers[usize::from(from)]);
+            if ops.is_empty() {
+                return Err(RuntimeError::ProtocolInvariant { detail: "测试错路由缺少真实非空最终缓冲，须缩小请求数或增大 chunk".to_owned() });
+            }
+            witness.send(super::protocol::MisroutedOpsForTest {
+                tick, round, source_stock: from, target_stock: to,
+                ops: ops.clone(), accounts: self.accounts.clone(),
+            }).map_err(|_| RuntimeError::SendFailed { detail: "测试错路由见证接收方已退出".to_owned() })?;
+            // 有界同步只固定目标故障前的真实发送因果；不能用 sleep 猜测另一组已发送。
+            after_final_flush.recv_timeout(Duration::from_millis(1000)).map_err(|error| {
+                RuntimeError::ProtocolInvariant { detail: format!("测试错路由等待另一组 final-flush-sent 超过1000ms或断连：{error}") }
+            })?;
+            buffers[usize::from(to)].extend(ops);
+        }
+        #[cfg(test)]
+        if let Some((stock, witness, after_final_flush)) = self.disconnected_flush_for_test.take() {
+            let ops = buffers.get(usize::from(stock)).expect("测试断连证券索引合法");
+            if ops.is_empty() {
+                return Err(RuntimeError::ProtocolInvariant { detail: "测试断连缺少真实扣资后的非空最终缓冲".to_owned() });
+            }
+            witness.send(super::protocol::GroupFlushWitnessForTest {
+                tick, round, stock, ops: ops.clone(), accounts: self.accounts.clone(),
+            }).map_err(|_| RuntimeError::SendFailed { detail: "测试断连见证接收方已退出".to_owned() })?;
+            // 另一组先真实发齐 final，避免本组失败清场关闭其仍在使用的健康 sender。
+            after_final_flush.recv_timeout(Duration::from_millis(1000)).map_err(|error| {
+                RuntimeError::ProtocolInvariant { detail: format!("测试断连等待另一组 final-flush-sent 超过1000ms或断连：{error}") }
+            })?;
+        }
         // 名册末尾：每股发 final_flush 空批作为本组本轮提交标记（可空）。
         ops_sent += flush_buffers(&mut buffers, desk_txs, tick, round, group, true)?;
+        #[cfg(test)]
+        if let Some(sent) = self.final_flush_sent_once_for_test.take() {
+            sent.send(()).map_err(|_| RuntimeError::SendFailed {
+                detail: "测试 final-flush-sent 接收方已退出".to_owned(),
+            })?;
+        }
         // P2-2（视图内生战役）跨轮保留机制：pending 在首轮构建时并入
         // dirty（消费一次、随 dirty 跨轮到 Seal——跨 Start 注入窗口语义
         // 保持）；dirty 在 Continue 轮间不清（清点在 Start）→ Seal 分片
@@ -4896,6 +4953,8 @@ impl GroupState {
     /// 期末上交。
     fn final_state(&self) -> GroupFinalState {
         GroupFinalState {
+            #[cfg(test)]
+            plan_book_for_test: self.plan_book.clone(),
             group: self.group,
             // 低频（shutdown 一次）：展开为值（Arc COW 的分片收益在
             /// SealAck 高频面——此处保持协议形状）。
@@ -5609,6 +5668,8 @@ pub fn group_main(
         crate::verification_evidence::with_phase_timing_binding(binding, work)
     }
     let who = WorkerId::Group(state.group);
+    #[cfg(test)]
+    let mut desk_txs = desk_txs;
     let mut state = state;
     let mut result = Ok(());
     loop {
@@ -5642,6 +5703,22 @@ pub fn group_main(
         match msg {
             #[cfg(test)]
             GroupIn::AdminFaultForTest { phase, fault } => state.admin_fault = Some((phase, fault)),
+            #[cfg(test)]
+            GroupIn::MisrouteOpsOnceForTest { from, to, witness, after_final_flush } => {
+                assert!(state.misroute_ops_once_for_test.replace((from, to, witness, after_final_flush)).is_none(), "测试错路由控制不能覆盖未消费的请求");
+            }
+            #[cfg(test)]
+            GroupIn::SignalFinalFlushOnceForTest { sent } => {
+                assert!(state.final_flush_sent_once_for_test.replace(sent).is_none(), "测试 final-flush-sent 不能覆盖未消费的信号");
+            }
+            #[cfg(test)]
+            GroupIn::DisconnectDeskSenderForTest { stock, witness, after_final_flush } => {
+                let (disconnected, receiver) = std::sync::mpsc::channel();
+                drop(receiver);
+                // 只替换本组已持有的 clone；World 与其他组的真实通道均保持连通。
+                *desk_txs.get_mut(usize::from(stock)).expect("测试断连证券索引合法") = disconnected;
+                assert!(state.disconnected_flush_for_test.replace((stock, witness, after_final_flush)).is_none(), "测试断连不能覆盖未消费的见证");
+            }
             GroupIn::AdminPrepare { id, operations, information, information_clock, repurchase } => {
                 if !state.handle_admin_message(id, super::protocol::AdminPhase::Prepare, operations, information, information_clock, repurchase, &up_tx, who) { break; }
             }
@@ -5730,12 +5807,17 @@ pub fn group_main(
                     break;
                 }
                 state.snapshot = Some(snapshot);
+                let start_prior_tick = state.cur_tick;
                 let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     with_capture(&capture, || state.handle_start(tick, &desk_txs, &up_tx))
                 }));
                 match outcome {
                     Ok(Ok(())) => {}
                     Ok(Err(e)) => {
+                        // 仅撤本拍已开启的 working；Start 前置拒绝不能倒放上一已发布拍的日志。
+                        if state.cur_tick != start_prior_tick {
+                            state.rollback();
+                        }
                         abort.store(true, Ordering::SeqCst);
                         let _ = up_tx.send(UpMsg::Failed {
                             who,

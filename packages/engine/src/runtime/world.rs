@@ -453,6 +453,10 @@ pub struct World {
     /// 消费入事件流+个人确认，取走即清）。
     pub drained_day_trades: Vec<super::protocol::DeskTradeFact>,
     pub(crate) drained_retail: Vec<super::retail_lifecycle::Fact>,
+    #[cfg(feature = "simulation-diagnostics")]
+    pub(crate) drained_causal: Vec<super::diagnostics::DeskCausalFact>,
+    #[cfg(feature = "simulation-diagnostics")]
+    pub(crate) drained_causal_time: Option<crate::diagnostics::causal::FactTime>,
     /// 当前自然日（D3a-2c：快照 civil_date 来源——驱动器自会话同步，
     /// 自然日权威在会话 civil clock）。
     civil_date: crate::calendar::CivilDate,
@@ -1091,6 +1095,10 @@ impl World {
             drained_auction: Vec::new(),
             drained_day_trades: Vec::new(),
             drained_retail: Vec::new(),
+            #[cfg(feature = "simulation-diagnostics")]
+            drained_causal: Vec::new(),
+            #[cfg(feature = "simulation-diagnostics")]
+            drained_causal_time: None,
             civil_date: civil_start_date,
             publication,
             seal_ns_accumulated: 0,
@@ -1210,6 +1218,50 @@ impl World {
     #[cfg(test)]
     pub fn live_workers_for_test(&self) -> usize {
         self.handles.len()
+    }
+
+    /// 仅控制组内已有 sender clone；World 的 Start 广播与健康交易部不受替换。
+    #[cfg(test)]
+    pub fn disconnect_group_desk_sender_for_test(
+        &self,
+        group: GroupIdx,
+        stock: StockIdx,
+        after_group: GroupIdx,
+    ) -> Receiver<super::protocol::GroupFlushWitnessForTest> {
+        assert!(usize::from(stock) < self.n_stocks, "测试断连证券索引合法");
+        assert!(self.n_groups == 2 && group != after_group, "测试断连同步只覆盖两个不同组");
+        let (sent, after_final_flush) = channel();
+        self.group_txs.get(usize::from(after_group)).expect("测试前件组索引合法")
+            .send(GroupIn::SignalFinalFlushOnceForTest { sent })
+            .expect("测试前件组必须存活");
+        let (witness, receiver) = channel();
+        self.group_txs.get(usize::from(group)).expect("测试断连组索引合法")
+            .send(GroupIn::DisconnectDeskSenderForTest { stock, witness, after_final_flush })
+            .expect("测试断连前组通道必须存活");
+        receiver
+    }
+
+    /// 两组通道 FIFO 先装 one-shot；另一组 final 真实发齐后才放行错路由。
+    /// 仅用于两个组的故障隔离，不替换正常 sender；组内等待硬上限1000ms。
+    #[cfg(test)]
+    pub fn misroute_next_group_ops_for_test(
+        &self,
+        group: GroupIdx,
+        from: StockIdx,
+        to: StockIdx,
+        after_group: GroupIdx,
+    ) -> Receiver<super::protocol::MisroutedOpsForTest> {
+        assert!(from != to && usize::from(from) < self.n_stocks && usize::from(to) < self.n_stocks);
+        assert!(self.n_groups == 2 && group != after_group, "测试同步只覆盖两个不同组");
+        let (sent, after_final_flush) = channel();
+        self.group_txs.get(usize::from(after_group)).expect("测试前件组索引合法")
+            .send(GroupIn::SignalFinalFlushOnceForTest { sent })
+            .expect("测试前件组必须存活");
+        let (witness, receiver) = channel();
+        self.group_txs.get(usize::from(group)).expect("测试组索引合法")
+            .send(GroupIn::MisrouteOpsOnceForTest { from, to, witness, after_final_flush })
+            .expect("测试组必须存活");
+        receiver
     }
 
     #[cfg(test)]
@@ -2925,8 +2977,10 @@ impl World {
             .ok_or_else(|| fail("DayEnd ticks_per_day 无效".to_owned()))?;
         let input = crate::session::calendar_clock_input(day, self.tick_layout, tick, sessions)
             .map_err(|error| fail(error.to_string()))?;
-        calendar_clock_projection(day.day_model(), self.tick_layout, input)
+        let projection = calendar_clock_projection(day.day_model(), self.tick_layout, input)
             .map_err(|error| fail(error.to_string()))?;
+        #[cfg(not(feature = "simulation-diagnostics"))]
+        let _ = projection;
 
         if let super::protocol::DayEndCalendar::MarketTick(context) = &calendar {
             let committed = self.committed_calendar_tick()?
@@ -2941,7 +2995,55 @@ impl World {
                 return Err(fail("市场 DayEnd 原始已提交 Calendar 身份或末拍进度不一致".to_owned()));
             }
         }
-        self.run_day_end(tick, &calendar)
+        self.run_day_end(tick, &calendar,
+            #[cfg(feature = "simulation-diagnostics")] input,
+            #[cfg(feature = "simulation-diagnostics")] &projection,
+        )
+    }
+
+    #[cfg(feature = "simulation-diagnostics")]
+    fn prepare_drained_causal_time(
+        &mut self,
+        calendar: &super::protocol::DayEndCalendar,
+        input: crate::session::exchange_calendar_model::SharedClockInput,
+        projection: &crate::session::exchange_calendar_model::CalendarClockProjection,
+    ) -> Result<(), RuntimeError> {
+        use crate::session::exchange_calendar_model::SharedDayProgress;
+        let fail = |detail: String| RuntimeError::ProtocolInvariant { detail };
+        if !self.drained_causal.is_empty() {
+            // 只在真实事实存在时取时；仍在日结 wrapper 的同一可 Abort 窗口内。
+            let time = match calendar {
+                super::protocol::DayEndCalendar::MarketTick(context) => crate::diagnostics::causal::FactTime {
+                    phase: context.phase_before(),
+                    market_minute: context.after_projection().completed_shared_minute_count(),
+                    civil: context.observation_instant_after(),
+                },
+                super::protocol::DayEndCalendar::ManualDayEnd(day) => {
+                    let completed = match input.progress {
+                        SharedDayProgress::Trading { completed_ticks } => completed_ticks,
+                        SharedDayProgress::TradingCompleted => self.tick_layout.ticks_per_day,
+                        SharedDayProgress::ClosedDay => return Err(fail("Closed 日期不得产生真实 Drain causal 事实".to_owned())),
+                    };
+                    // Manual 的零完成拍表示本日当前首窗口；其余为最后完成窗口，不构造市场拍。
+                    let window = if completed == 0 { 0 } else { completed - 1 };
+                    let phase = match super::desk::phase_at_tick(self.tick_layout.ticks_per_day,
+                        self.tick_layout.auction_ticks, self.tick_layout.closing_auction_ticks, window) {
+                        super::desk::DeskPhase::CallAuction => crate::TradingPhase::CallAuction,
+                        super::desk::DeskPhase::PreOpen => crate::TradingPhase::PreOpen,
+                        super::desk::DeskPhase::Continuous => crate::TradingPhase::Continuous,
+                        super::desk::DeskPhase::ClosingAuction => crate::TradingPhase::ClosingAuction,
+                    };
+                    let second = crate::session::exchange_calendar_model::intraday_observation_second(completed,
+                        self.tick_layout.ticks_per_day, self.tick_layout.auction_ticks, self.tick_layout.closing_auction_ticks);
+                    crate::diagnostics::causal::FactTime { phase,
+                        market_minute: projection.completed_shared_minute_count(),
+                        civil: crate::CivilInstant::new(day.day_model().current_date(), second).map_err(|error| fail(error.to_string()))?,
+                    }
+                }
+            };
+            self.drained_causal_time = Some(time);
+        }
+        Ok(())
     }
 
     /// 只撤 F0 的未发布日结参与者；普通 tick 和 retained 发布后的静点均不可撤。
@@ -2984,6 +3086,8 @@ impl World {
         // 日界批：drain 成交/终 K 同步作废（回滚对称——重跑重新收集）。
         self.drained_day_trades.clear();
         self.drained_retail.clear();
+        #[cfg(feature = "simulation-diagnostics")]
+        { self.drained_causal.clear(); self.drained_causal_time = None; }
         for slot in &mut self.pending_day_candles {
             *slot = None;
         }
@@ -2996,7 +3100,12 @@ impl World {
         self.mirror_day_end_stage = super::source::MirrorDayEndStage::Tick;
     }
 
-    fn run_day_end(&mut self, day_final_tick: u64, calendar: &super::protocol::DayEndCalendar) -> Result<(), RuntimeError> {
+    fn run_day_end(&mut self, day_final_tick: u64, calendar: &super::protocol::DayEndCalendar,
+        #[cfg(feature = "simulation-diagnostics")] input: crate::session::exchange_calendar_model::SharedClockInput,
+        #[cfg(feature = "simulation-diagnostics")] projection: &crate::session::exchange_calendar_model::CalendarClockProjection,
+    ) -> Result<(), RuntimeError> {
+        #[cfg(feature = "simulation-diagnostics")]
+        { self.drained_causal.clear(); self.drained_causal_time = None; }
         // Sol 收官再复核阻断 4：日结序列任一失败路径（Drain/组翻/校验）
         /// 都必须清空 Drain 期间上行的事实缓冲——重跑会重新 Drain 产生
         /// 同名事实，残留使缓冲双载（此前仅 abort_day_end 清，run_day_end
@@ -3007,7 +3116,10 @@ impl World {
             desks_reported: vec![false; self.n_stocks],
             groups_reported: vec![false; self.n_groups],
         };
-        let mut result = self.run_day_end_inner(day_final_tick, calendar, &mut progress);
+        let mut result = self.run_day_end_inner(day_final_tick, calendar, &mut progress,
+            #[cfg(feature = "simulation-diagnostics")] input,
+            #[cfg(feature = "simulation-diagnostics")] projection,
+        );
         if let Err(error) = &result {
             if let Err(rollback_error) = self.rollback_day_end_participants(day_final_tick, &mut progress) {
                 let detail = format!("日结失败且撤销未完整确认：{error}；{rollback_error}");
@@ -3020,6 +3132,8 @@ impl World {
             self.drained_auction.clear();
             self.drained_day_trades.clear();
             self.drained_retail.clear();
+            #[cfg(feature = "simulation-diagnostics")]
+            { self.drained_causal.clear(); self.drained_causal_time = None; }
             // 复核建议 S1：终 K 暂存对称清理（良性缺口——下次成功 Drain
             /// 全槽覆写、take 仅在成功后发生；此处补齐与 abort_day_end 同式）。
             for slot in &mut self.pending_day_candles {
@@ -3118,7 +3232,10 @@ impl World {
         Ok(())
     }
 
-    fn run_day_end_inner(&mut self, day_final_tick: u64, calendar: &super::protocol::DayEndCalendar, progress: &mut DayEndProgress) -> Result<(), RuntimeError> {
+    fn run_day_end_inner(&mut self, day_final_tick: u64, calendar: &super::protocol::DayEndCalendar, progress: &mut DayEndProgress,
+        #[cfg(feature = "simulation-diagnostics")] input: crate::session::exchange_calendar_model::SharedClockInput,
+        #[cfg(feature = "simulation-diagnostics")] projection: &crate::session::exchange_calendar_model::CalendarClockProjection,
+    ) -> Result<(), RuntimeError> {
         let day = u32::try_from(calendar.day().day_model().shared_sessions_before_date())
             .map_err(|_| RuntimeError::ProtocolInvariant { detail: "DayEnd 共享 day 溢出".to_owned() })?;
         // ① Drain。
@@ -3133,6 +3250,8 @@ impl World {
         let mut drained_views = vec![None; self.n_stocks];
         let mut drained = 0usize;
         let mut retail_fragments = Vec::new();
+        #[cfg(feature = "simulation-diagnostics")]
+        let mut causal_fragments = Vec::new();
         while drained < self.n_stocks {
             #[cfg(test)]
             if self.day_end_fail_after_drain_reports == Some(drained) {
@@ -3152,6 +3271,8 @@ impl World {
                     drained_minute_bars,
                     drained_trades,
                     drained_retail,
+                    #[cfg(feature = "simulation-diagnostics")]
+                    drained_causal,
                     drained_day_candle,
                 } => {
                     let slot = drained_views.get_mut(stock as usize).ok_or_else(|| {
@@ -3177,6 +3298,8 @@ impl World {
                     if let Some(slot) = self.pending_day_candles.get_mut(stock as usize) {
                         *slot = drained_day_candle;
                     }
+                    #[cfg(feature = "simulation-diagnostics")]
+                    super::diagnostics::validate_day_ends(stock, &drained_causal, &drained_lifecycle)?;
                     self.drained_lifecycle.extend(drained_lifecycle);
                     // Sol 六审段 1.2：日结收盘竞价事实（末拍清算事件源）。
                     self.drained_auction.extend(drained_auction);
@@ -3184,6 +3307,18 @@ impl World {
                     let context = super::retail_lifecycle::BatchContext::Drain {
                         ended_date: self.civil_date, final_tick: self.global.committed_tick, stock,
                     };
+                    #[cfg(all(test, feature = "simulation-diagnostics", not(target_arch = "wasm32")))]
+                    let mut drained_causal = drained_causal;
+                    #[cfg(all(test, feature = "simulation-diagnostics", not(target_arch = "wasm32")))]
+                    super::diagnostics::report_fault_tests::remove_drain_execution_once(stock, &mut drained_causal, &drained_trades);
+                    #[cfg(feature = "simulation-diagnostics")]
+                    {
+                        if drained_causal.iter().any(|fact| fact.context != context) {
+                            return Err(RuntimeError::ProtocolInvariant { detail: format!("Drain causal 原报告身份域错配：{context:?}") });
+                        }
+                        super::diagnostics::validate_executions(stock, &drained_causal, &drained_trades, true)?;
+                        causal_fragments.push((stock, drained_causal));
+                    }
                     let facts = super::retail_lifecycle::resolve_report(context, drained_retail, &drained_trades)?;
                     if !facts.is_empty() { retail_fragments.push((stock, facts)); }
                     self.drained_day_trades.extend(drained_trades);
@@ -3203,8 +3338,15 @@ impl World {
                 }
             }
         }
+        #[cfg(feature = "simulation-diagnostics")]
+        {
+            causal_fragments.sort_unstable_by_key(|(stock, _)| *stock);
+            self.drained_causal.extend(causal_fragments.into_iter().flat_map(|(_, facts)| facts));
+        }
         retail_fragments.sort_unstable_by_key(|(stock, _)| *stock);
         self.drained_retail.extend(retail_fragments.into_iter().flat_map(|(_, facts)| facts));
+        #[cfg(feature = "simulation-diagnostics")]
+        self.prepare_drained_causal_time(calendar, input, projection)?;
         // ② 组日翻转 + 权益落账（可逆）。
         for g in 0..self.n_groups as GroupIdx {
             #[cfg(test)]

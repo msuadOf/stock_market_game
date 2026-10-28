@@ -214,7 +214,7 @@ pub fn converge_round(
                     });
                 }
                 #[cfg(feature = "simulation-diagnostics")]
-                if r.causal.iter().any(|fact| fact.tick != tick || fact.round != round || fact.stock != r.stock) {
+                if r.causal.iter().any(|fact| fact.context != (super::retail_lifecycle::BatchContext::Tick { tick, round, stock: r.stock })) {
                     return RoundOutcome::Failed(RuntimeError::ProtocolInvariant {
                         detail: format!("causal sideband 上下文错配：tick={tick} round={round} stock={}", r.stock),
                     });
@@ -222,7 +222,7 @@ pub fn converge_round(
                 #[cfg(all(test, feature = "simulation-diagnostics", not(target_arch = "wasm32")))]
                 let r = super::diagnostics::report_fault_tests::remove_execution_once(r);
                 #[cfg(feature = "simulation-diagnostics")]
-                if let Err(error) = super::diagnostics::validate_executions(r.stock, &r.causal, &r.trades) {
+                if let Err(error) = super::diagnostics::validate_executions(r.stock, &r.causal, &r.trades, r.auction.iter().any(|fact| fact.completed && fact.matched_volume > 0)) {
                     return RoundOutcome::Failed(error);
                 }
                 if !r.retail.is_empty() || !r.trades.is_empty() {

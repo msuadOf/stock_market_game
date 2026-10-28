@@ -44,7 +44,7 @@ pub(crate) struct PreparedRuntimeMirror {
 
 #[cfg(feature = "simulation-diagnostics")]
 impl PreparedRuntimeMirror {
-    pub(in crate::session) fn causal_plans(&self) -> &crate::plans::PlanBook {
+    pub(crate) fn causal_plans(&self) -> &crate::plans::PlanBook {
         &self.plans
     }
 }
@@ -814,7 +814,8 @@ impl GameSession {
         }
         Ok(PreparedRuntimeMirror {
             #[cfg(feature = "simulation-diagnostics")]
-            decision_traces: self.prepare_runtime_decision_traces(driver, tick, &input.plans, &events)?,
+            decision_traces: if manual_day_end { self.state.npc_decision_traces.clone() }
+                else { self.prepare_runtime_decision_traces(driver, tick, &input.plans, &events)? },
             accounts,
             personals,
             plans: input.plans,

@@ -236,13 +236,21 @@ function recoveryGatesMet(arena: FacadeArenaView, state: SupervisorState, slot: 
 }
 
 /** 延迟回收检查点重试（下一 facadeSpawn / workerExit 事件驱动）。返回成功 push 数。 */
-export function recoverPending(arena: FacadeArenaView, state: SupervisorState): number {
+export function recoverPending(
+  arena: FacadeArenaView,
+  state: SupervisorState,
+  recovered?: Array<readonly [slot: number, gen: number]>,
+): number {
   let pushed = 0;
   // 先移走快照，评估期间只向下一批登记，绝不遍历仍在增长的数组。
   const pending = state.pendingRecovery.splice(0);
   for (const [slot, gen] of pending) {
     const outcome = evaluateOkRecovery(arena, state, slot, gen);
-    if (outcome === "pushed") pushed += 1;
+    if (outcome === "pushed") {
+      pushed += 1;
+      // evaluate 已经离开 H1 finally；这里只交出本次真实 push 的观测事实。
+      recovered?.push([slot, gen]);
+    }
   }
   return pushed;
 }

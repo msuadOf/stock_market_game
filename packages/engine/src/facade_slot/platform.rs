@@ -40,8 +40,8 @@ pub trait FacadePlatform: Sync {
     /// H5：REQ 已发布后向监督者发 facadeSpawn 消息（§13.2 时序：H4 之后、
     /// supervisor 一切槽操作之前——REQ 未发布而消息先到会使 A1 假性失败）。
     fn notify_spawn(&self, slot: u32, gen: u32, name: &str);
-    /// W3：trampoline 出口向监督者报 workerExit（W4 rust_done/W5 self.close
-    /// 由宿主 bootstrap 在本回调内承接，§10.2.2 关闭全序）。
+    /// 记录退出意图；Rust trampoline 返回 JS 后，bootstrap 校验并 raw destroy，
+    /// 最后才发真实 W3 workerExit、置 rust_done 并关闭。回调内不得 destroy 当前栈。
     fn worker_exit(&self, worker_id: u32, slot: u32, gen: u32);
     /// 迟到应答/取消后的 terminate 卫生义务（幂等；§12.1.3 表）。
     fn terminate_child(&self, worker_id: u32);
@@ -100,7 +100,7 @@ mod wasm_impl {
         fn facade_futex_notify(word_addr: u32);
         /// H5：facadeSpawn 消息（name 指针+len 指入共享线性内存）。
         fn facade_spawn_notify(slot_index: u32, gen: u32, name_ptr: u32, name_len: u32);
-        /// W3：workerExit（宿主承接 W4 rust_done + W5 self.close）。
+        /// 仅记录退出意图；真实 workerExit/close 在 Rust 返回及 raw destroy 成功后执行。
         fn facade_worker_exit_notify(worker_id: u32, slot_index: u32, gen: u32);
         /// 迟到构造子 terminate（幂等卫生）。
         fn facade_terminate_child(worker_id: u32);

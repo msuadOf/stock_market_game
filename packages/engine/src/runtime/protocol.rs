@@ -786,6 +786,29 @@ pub struct DayEndDirective {
     pub rights: Vec<AdminRight>,
 }
 
+/// 错路由测试见证：来自真实扣资后的组缓冲，不伪造 purse 或账户余额。
+#[cfg(test)]
+#[derive(Clone, Debug)]
+pub struct MisroutedOpsForTest {
+    pub tick: u64,
+    pub round: u32,
+    pub source_stock: StockIdx,
+    pub target_stock: StockIdx,
+    pub ops: Vec<DeskIn>,
+    pub accounts: Vec<std::sync::Arc<super::group::GroupAccount>>,
+}
+
+/// 发送故障测试见证：真实扣资后、原最终 flush 前的完整缓冲与账户。
+#[cfg(test)]
+#[derive(Clone, Debug)]
+pub struct GroupFlushWitnessForTest {
+    pub tick: u64,
+    pub round: u32,
+    pub stock: StockIdx,
+    pub ops: Vec<DeskIn>,
+    pub accounts: Vec<std::sync::Arc<super::group::GroupAccount>>,
+}
+
 /// 组线程收件消息（coordinator 的控制消息与交易部的实体批次共用一个 mpsc；
 /// FIFO + 收束因果序保证批次先于下一 Start 被处理）。
 pub enum GroupIn {
@@ -795,6 +818,24 @@ pub enum GroupIn {
     AdminAbort { id: AdminTransactionId },
     #[cfg(test)]
     AdminFaultForTest { phase: AdminPhase, fault: AdminFault },
+    /// 仅下一轮最终 flush 搬移一批真实 Ops；各股 final marker 仍按原协议各一次。
+    #[cfg(test)]
+    MisrouteOpsOnceForTest {
+        from: StockIdx,
+        to: StockIdx,
+        witness: std::sync::mpsc::Sender<MisroutedOpsForTest>,
+        after_final_flush: std::sync::mpsc::Receiver<()>,
+    },
+    /// 仅测试：本组各股 final 全部真实发送成功后才发一次信号。
+    #[cfg(test)]
+    SignalFinalFlushOnceForTest { sent: std::sync::mpsc::Sender<()> },
+    /// 仅测试：断开本组已有的交易部 sender clone，保留 World 的 Start 通道。
+    #[cfg(test)]
+    DisconnectDeskSenderForTest {
+        stock: StockIdx,
+        witness: std::sync::mpsc::Sender<GroupFlushWitnessForTest>,
+        after_final_flush: std::sync::mpsc::Receiver<()>,
+    },
     /// tick 开始：隐式转正上一 tick（落账 staging 后丢弃可逆日志）+ 本轮决策。
     Start {
         /// tick 编号。
@@ -1183,6 +1224,8 @@ pub enum UpMsg {
         drained_trades: Vec<DeskTradeFact>,
         /// 本次 Drain 自产的默认生命周期，不与 Tick ordinal 混域。
         drained_retail: Vec<super::retail_lifecycle::RawFact>,
+        #[cfg(feature = "simulation-diagnostics")]
+        drained_causal: Vec<super::diagnostics::DeskCausalFact>,
         /// 日界批：当日终 K（含收盘段——desk `drain_all` 收盘清算的
         /// reroll 产出；仅本次 Drain 实际执行收盘清算时携带（closing=0
         /// 几何/未跨日手动日结=None）。install 面/`DayBoundary` 事件的

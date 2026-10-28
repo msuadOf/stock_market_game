@@ -1,3 +1,4 @@
+import { bootstrapLegacy, createLegacyHost, LegacyWorker } from "./worker-host-legacy.test-support.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { prepareCatalogResolver } from "./catalog-resolver.ts";
@@ -43,27 +44,29 @@ test("真实WorkerHost只读请求按restore后实际子集发原StockId并拒�
   const { currentSaveFixture } = await import("../save/current-save-fixture.ts");
   const { snapshot, market, dailyCandle } = await import("./protocol-test-fixtures.ts");
   const original = Object.getOwnPropertyDescriptor(globalThis, "Worker");
-  class QueryWorker extends EventTarget {
+  class QueryWorker extends LegacyWorker {
     static current: QueryWorker;
     sent: Record<string, unknown>[] = [];
     constructor() { super(); QueryWorker.current = this; }
-    postMessage(value: Record<string, unknown>) { this.sent.push(value); }
+    postMessage(value: Record<string, unknown>) { this.prepare(value); this.sent.push(value); }
     terminate() {}
     emit(data: unknown) { this.dispatchEvent(Object.assign(new Event("message"), { data })); }
   }
   Object.defineProperty(globalThis, "Worker", { configurable: true, value: QueryWorker });
   let host: Awaited<ReturnType<typeof createWorkerHost>> | undefined;
   try {
-    const creating = createWorkerHost({} as never, 1n);
+    const creating = createLegacyHost({} as never, 1n);
     const worker = QueryWorker.current;
-    worker.emit({ type: "ingress", generation: 1, shared: false });
+    await bootstrapLegacy(worker);
+    const intake = QueryWorker.current;
     worker.emit({ type: "baseline", generation: 1, snapshot: snapshot(0, 0), civilDate: "2030-01-02",
       stockCatalog: identity.stockCatalog, companyCatalog: identity.companyCatalog });
     host = await creating;
     const beforeIntent = host.submitIntent({ PlaceMarket: { code: "600101", side: "Buy", qty: 100 } });
-    const beforeIntentRequest = worker.sent.at(-1)!;
+    await Promise.resolve();
+    const beforeIntentRequest = intake.sent.at(-1)!;
     assert.deepEqual(beforeIntentRequest.intent, { PlaceMarket: { code: 0, side: "Buy", qty: 100 } });
-    worker.emit({ type: "enqueued", generation: 1, requestId: beforeIntentRequest.requestId });
+    intake.emit({ type: "enqueued", generation: 1, requestId: beforeIntentRequest.requestId });
     await beforeIntent;
     const first = host.queryStockHistory("600101");
     const firstRequest = worker.sent.at(-1)!;
@@ -77,7 +80,7 @@ test("真实WorkerHost只读请求按restore后实际子集发原StockId并拒�
     const loading = host.load(currentSaveFixture());
     const request = worker.sent.at(-1)!;
     const stockCatalog = [{ id: 0, code: "002156" }, { id: 1, code: "600101" }];
-    worker.emit({ type: "ingress", generation: 2, shared: false });
+    worker.emit({ type: "ingress", generation: 2, shared: true, token: 2 });
     worker.emit({ type: "restored", generation: 1, nextGeneration: 2, requestId: request.requestId,
       snapshot: { ...snapshot(0, 0), markets: { "0": market(), "1": market() }, daily_candles: { "0": [], "1": [] }, active_daily_candles: { "0": dailyCandle(), "1": dailyCandle() } },
       stockCatalog, companyCatalog: stockCatalog.map(stock => ({ id: stock.id + 7, code: `C-${stock.code}`, name: stock.code, listed_stock: stock.id })), civilDate: "2030-02-02" });
@@ -93,10 +96,11 @@ test("真实WorkerHost只读请求按restore后实际子集发原StockId并拒�
       data: { code: 1, daily_candles: [], active_daily_candle: null } });
     assert.equal((await second).code, "600101");
     const afterIntent = host.submitIntent({ Cancel: { code: "600101", id: 7 } });
-    const afterIntentRequest = worker.sent.at(-1)!;
+    await Promise.resolve();
+    const afterIntentRequest = intake.sent.at(-1)!;
     assert.deepEqual(afterIntentRequest.intent, { Cancel: { code: 1, id: 7 } });
     assert.equal(afterIntentRequest.generation, 2);
-    worker.emit({ type: "enqueued", generation: 2, requestId: afterIntentRequest.requestId });
+    intake.emit({ type: "enqueued", generation: 2, requestId: afterIntentRequest.requestId });
     await afterIntent;
     await assert.rejects(host.queryStockHistory("600610"), /未知股票代码/);
   } finally {

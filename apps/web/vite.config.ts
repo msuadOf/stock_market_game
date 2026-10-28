@@ -1,6 +1,7 @@
 import { defineConfig, type PluginOption } from 'vite'
 import react from '@vitejs/plugin-react'
 import { createRequire } from 'node:module'
+import { ENGINE_ENV_BROWSER_URL, diagnosticsGluePlugin } from './config/diagnostics-glue.ts'
 
 // Rolldown 无法解析 Popper 的 ESM 星号转导出；使用其官方 main 入口，避免修改依赖文件。
 const blueprintRequire = createRequire(createRequire(import.meta.url).resolve('@blueprintjs/core'))
@@ -35,12 +36,12 @@ function crossOriginIsolation(): PluginOption {
 }
 
 export default defineConfig({
-  plugins: [react(), crossOriginIsolation()],
+  plugins: [react(), crossOriginIsolation(), diagnosticsGluePlugin({ packageDirectory: process.env.STOCK_GAME_DIAGNOSTICS_PKG })],
   assetsInclude: ['**/*.wasm'],
   resolve: {
     alias: [
       { find: /^@popperjs\/core$/, replacement: blueprintRequire.resolve('@popperjs/core') },
-      { find: /^env$/, replacement: new URL('./src/host/engine-clock-env.ts', import.meta.url).pathname },
+      { find: /^env$/, replacement: new URL(`.${ENGINE_ENV_BROWSER_URL}`, import.meta.url).pathname },
     ],
   },
   build: {

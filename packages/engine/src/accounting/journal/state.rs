@@ -80,7 +80,7 @@ impl Journal {
     }
 
     pub fn entry_count(&self) -> usize {
-        self.batches.iter().map(Vec::len).sum()
+        self.posted.len()
     }
 
     /// 全部已入账分录（跨批次展平，入账顺序）。
@@ -147,3 +147,6 @@ impl<'de> serde::Deserialize<'de> for Journal {
         Ok(journal)
     }
 }
+
+#[cfg(test)]
+mod tests;

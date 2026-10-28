@@ -1,5 +1,5 @@
 import { Button, HTMLSelect } from "@blueprintjs/core";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import type { DeliveryMode } from "../host/engine-host.ts";
 import type { HostFailure } from "../host/host-update.ts";
 import { buildErrorFeedback, copyErrorFeedback, redactFeedbackText, type FeedbackClipboard, type FeedbackCopyStatus } from "./error-details.ts";
@@ -54,4 +54,25 @@ export function DeliveryModeControl({ mode, modes, labels, onChange }: DeliveryM
       options={modes.map((supportedMode) => ({ label: labels[supportedMode], value: supportedMode }))}
     />
   </label>;
+}
+
+/** 未确认的 spawn failure 与当前页面并列，避免 fatal 或宿主重选吞掉报告。 */
+export function HostSpawnFailureReport({ failures, onDismiss, children }: {
+  readonly failures: readonly HostFailure[];
+  readonly onDismiss: () => void;
+  readonly children: ReactNode;
+}) {
+  return <>
+    {failures.length > 0 && <section className="app-error" role="alert" aria-live="assertive" aria-label="Worker 创建失败报告">
+      <h2>Worker 创建失败：{failures.length} 条</h2>
+      <p>子 Worker 创建未成功；请查看详情并反馈。报告会保留到你关闭，当前引擎是否可继续由其实际状态决定。</p>
+      <Button onClick={onDismiss}>关闭报告</Button>
+      {failures.map((failure, index) => <div key={index}>
+        <h3>第 {index + 1} 条</h3>
+        <FeedbackCopyButton onCopy={(report) => copyErrorFeedback(failure, report)} />
+        <pre aria-label={`Worker 创建失败详情 ${index + 1}`}>{buildErrorFeedback(failure)}</pre>
+      </div>)}
+    </section>}
+    {children}
+  </>;
 }

@@ -402,6 +402,18 @@ std-thread runtime 的日结编排（2026-10-17 登记）：市场推进内 `run
 日中手动 Drain 不提前翻日；同一 Start 后重复 Drain 仅读取诊断结果，不重复清算或归档。
 该时序不改变已登记的深市竞价参照简化和无收盘成交时沿用最后成交价的游戏口径。
 
+`simulation-diagnostics` 的 rich Drain 候选沿用上述真实执行路径：当日有效余单记录为
+`Termination::DayEnd`，只含剩余股数；不将其标成投资者主动撤单 `Voluntary`。
+集合竞价 `Execution.side=None`，双腿仍按 `maker=卖腿/taker=买腿` 对账；
+`before` 是每次真实执行前的内部完整簿，允许交叉报价，不冒充对外公开盘口。
+Tick 与 Drain 使用显式不同的报告身份域，各自局部 ordinal 不可互相覆盖。
+自动日终的 `FactTime` 取原提交 TickArc 的 after projection；手动日终取本次真实
+DayArc、World 已验证 tick 与纯 Calendar projection，不补造 TickArc。没有真实 rich
+Drain 事实的 Closed 日终不构造市场时刻；手动输入本日零完成拍仅表示当前首窗口，
+其他输入表示最后完成窗口。shared market minute 的单位保持不变。
+Market 余量、拒单、TTL 到期、CancelAll 未解析来源及竞价自成交排除的 rich 生命周期
+仍未全部支持，遇到这些真实路径显式拒绝报告，不能用空报告冒充完整诊断。
+
 内存验证投影保留每股挂单 `seq` 与 `book_next_sequences`，不重新编号或改变同价委托先后。
 下一序号按 u64 十进制字符串无损传输，股票键集必须与配置和市场一致，并严格大于该股
 现有挂单的 `seq`；空簿也保留已消耗的序号。它们是明确的序号事实，不是实施版本后缀。

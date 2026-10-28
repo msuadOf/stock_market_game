@@ -38,7 +38,8 @@ export interface SessionHostLifecyclePorts {
   setIndicatorCalculator(calculator: IndicatorCalculator): () => void;
   connectProtocol(host: EngineHost): void;
   disconnectProtocol(): void;
-  createHost(setup: SessionSetup, seed: bigint, target: StartupTarget): Promise<EngineHost>;
+  createHost(setup: SessionSetup, seed: bigint, target: StartupTarget, onSpawnFailure: (failure: HostFailure) => void): Promise<EngineHost>;
+  onSpawnFailure(failure: HostFailure): void;
   createSeed?(): bigint;
   checkWasmEnvironment(): void;
   isDocumentHidden(): boolean;
@@ -111,7 +112,10 @@ export function createSessionHostLifecycle(ports: SessionHostLifecyclePorts) {
       if (cancelled) return;
       const setup = initialSlot === null ? sessionSetup : initialSlot.setup;
       const seed = initialSlot === null ? (TRADING_E2E_MODE ? DEFAULT_SEED : createSeed()) : BigInt(initialSlot.seed);
-      const host = await createHost(setup, seed, startupTarget);
+      // 此 sink 属于本次 lifecycle；构造期尚无 hostRef，也必须立即交付。
+      const host = await createHost(setup, seed, startupTarget, (failure) => {
+        if (!cancelled) ports.onSpawnFailure(failure);
+      });
       ownedHost = host;
       if (cancelled) {
         // React StrictMode 会执行一次探测性挂载；异步创建完成后必须停掉该宿主，避免泄漏 Worker/线程池。
@@ -232,10 +236,11 @@ export function createSessionHostLifecycle(ports: SessionHostLifecyclePorts) {
   };
   return { start, stopCurrentSession, releaseOwnedHost, dispose };
 }
-function createSessionHost(setup: SessionSetup, seed: bigint, startupTarget: StartupTarget, tradingE2EMode: boolean): Promise<EngineHost> {
+function createSessionHost(setup: SessionSetup, seed: bigint, startupTarget: StartupTarget, tradingE2EMode: boolean, onSpawnFailure: (failure: HostFailure) => void): Promise<EngineHost> {
   if (startupTarget.kind === "tauri") return createTauriHost(setup, seed);
   if (startupTarget.kind === "remote") return createRemoteHost(setup, seed, { baseUrl: startupTarget.baseUrl });
-  return createWorkerHost(setup, seed, { enableE2EStepping: tradingE2EMode });
+  const options = { enableE2EStepping: tradingE2EMode, onSpawnFailure };
+  return createWorkerHost(setup, seed, options);
 }
 
 interface Options extends Omit<SessionHostLifecyclePorts, "createHost" | "checkWasmEnvironment" | "isDocumentHidden"> {
@@ -250,7 +255,7 @@ export function useSessionHostLifecycle(options: Options): void {
   const { sessionSetup, startupTarget, pausePreferencesReady, refreshPlayerOrders, setIndicatorCalculator } = options;
   useEffect(() => {
     const lifecycle = createSessionHostLifecycle({ ...options,
-      createHost: (setup, seed, target) => createSessionHost(setup, seed, target, options.TRADING_E2E_MODE),
+      createHost: (setup, seed, target, onSpawnFailure) => createSessionHost(setup, seed, target, options.TRADING_E2E_MODE, onSpawnFailure),
       checkWasmEnvironment: () => assertWasmEnvironment(browserWasmEnvironment()),
       isDocumentHidden: () => document.hidden,
     });

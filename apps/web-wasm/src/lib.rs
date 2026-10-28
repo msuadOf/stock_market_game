@@ -830,7 +830,58 @@ pub fn restore_json(save_json: String) -> Result<u32, JsValue> {
 #[cfg(target_family = "wasm")]
 #[wasm_bindgen]
 pub fn facade_slot_init(capacity: u32) -> Result<(), JsValue> {
+    // engine 单线程期先锚定共享 ORIGIN，之后才允许 child/ingress 首次取时。
+    let _ = engine::clock::Instant::now();
     engine::thread_facade::init_wasm_facade(capacity).map_err(JsValue::from_str)
+}
+
+#[cfg(any(target_family = "wasm", test))]
+fn facade_slot_capacity_for_topology(groups: usize, desks: usize) -> Result<u32, &'static str> {
+    let groups = u32::try_from(groups).map_err(|_| "facade topology 的 G 超出 u32 范围")?;
+    let desks = u32::try_from(desks).map_err(|_| "facade topology 的 N 超出 u32 范围")?;
+    groups
+        .checked_add(desks)
+        .and_then(|count| count.checked_add(2))
+        .and_then(|count| count.checked_mul(2))
+        .ok_or("facade topology 容量计算超出 u32 范围")
+}
+
+/// 仅按经过完整校验的默认 new setup 初始化 facade 槽；不创建 Session 或 World。
+#[cfg(target_family = "wasm")]
+#[wasm_bindgen]
+pub fn facade_slot_init_for_setup(setup: JsValue) -> Result<(), JsValue> {
+    let setup: SessionSetup = serde_wasm_bindgen::from_value(setup)?;
+    let (groups, desks) = setup
+        .default_new_runtime_topology()
+        .map_err(session_error_to_js)?;
+    let capacity = facade_slot_capacity_for_topology(groups, desks).map_err(JsValue::from_str)?;
+    facade_slot_init(capacity)
+}
+
+#[cfg(test)]
+mod facade_slot_capacity_tests {
+    use super::facade_slot_capacity_for_topology;
+
+    #[test]
+    fn facade_slot_capacity_matches_default_new_formula() {
+        for (desks, expected) in [(1, 8), (3, 12)] {
+            assert_eq!(facade_slot_capacity_for_topology(1, desks), Ok(expected));
+        }
+    }
+
+    #[test]
+    fn facade_slot_capacity_rejects_addition_and_multiplication_overflow() {
+        assert!(facade_slot_capacity_for_topology(u32::MAX as usize, 1).is_err());
+        assert!(facade_slot_capacity_for_topology((u32::MAX / 2) as usize, 0).is_err());
+    }
+
+    #[cfg(target_pointer_width = "64")]
+    #[test]
+    fn facade_slot_capacity_rejects_narrowing_before_arithmetic() {
+        let outside_u32 = u32::MAX as usize + 1;
+        assert!(facade_slot_capacity_for_topology(outside_u32, 1).is_err());
+        assert!(facade_slot_capacity_for_topology(1, outside_u32).is_err());
+    }
 }
 
 #[cfg(target_family = "wasm")]
@@ -877,8 +928,7 @@ pub fn facade_child_trampoline(slot: u32, gen: u32, worker_id: u32) -> u32 {
 // 故只在验证 feature 下导出。构建方式见 agents/wasm-thread-r4a/phase2-ledger.md。
 // ---------------------------------------------------------------------------
 
-/// 验证：发起一次槽协议 spawn（请求者侧 H1-H5），返回 join 句柄索引。
-/// 闭包忠实执行一次并返回常量，用于验证 W1-W3 与 join 取回。
+/// 验证：保持旧入口可重复 spawn/join 的常量闭包合同。
 #[cfg(all(target_family = "wasm", feature = "verification-harness"))]
 #[wasm_bindgen]
 pub fn verification_facade_spawn(ack_timeout_ms: u32) -> Result<u32, JsValue> {
@@ -899,6 +949,125 @@ pub fn verification_facade_spawn(ack_timeout_ms: u32) -> Result<u32, JsValue> {
         let _ = ack_timeout_ms; // 预留：门面当前固定 SPAWN_ACK_TIMEOUT_MS
         Ok(index)
     })
+}
+
+/// 验证：发起一次槽协议 spawn（请求者侧 H1-H5），返回 join 句柄索引。
+/// 闭包忠实执行一次并返回常量，用于验证 W1-W3 与 join 取回。
+#[cfg(all(target_family = "wasm", feature = "verification-harness"))]
+#[wasm_bindgen]
+pub fn verification_facade_spawn_probed(ack_timeout_ms: u32) -> Result<u32, JsValue> {
+    verification_begin_probe()?;
+    verification_capture_probe(0);
+    let handle = engine::thread_facade::Builder::new()
+        .name("verification-spawn".to_owned())
+        .spawn(|| {
+            verification_capture_probe(1);
+            0x5A5Au32
+        })
+        .map_err(|error| JsValue::from_str(&format!("verification_facade_spawn 失败：{error}")))?;
+    // JoinHandle 必须存活到 join；返回 join 槽索引供宿主侧 join。
+    let index = facade_join_index_of(&handle);
+    FACADE_VERIFY_HANDLES.with(|slot| {
+        let mut store = slot.borrow_mut();
+        if store.is_some() {
+            return Err(JsValue::from_str(
+                "verification_facade_spawn：已有在途句柄（验证入口一次只允许一个）",
+            ));
+        }
+        *store = Some(handle);
+        let _ = ack_timeout_ms; // 预留：门面当前固定 SPAWN_ACK_TIMEOUT_MS
+        Ok(index)
+    })
+}
+
+/// 验证：外层 child 同步 spawn/join grandchild；主线程必须独立接收嵌套 H5。
+#[cfg(all(target_family = "wasm", feature = "verification-harness"))]
+#[wasm_bindgen]
+pub fn verification_facade_spawn_nested() -> Result<u32, JsValue> {
+    verification_begin_probe()?;
+    verification_capture_probe(0);
+    let handle = engine::thread_facade::Builder::new()
+        .name("verification-outer".to_owned())
+        .spawn(|| {
+            verification_capture_probe(1);
+            engine::thread_facade::Builder::new()
+                .name("verification-inner".to_owned())
+                .spawn(|| {
+                    verification_capture_probe(2);
+                    0x5A5Au32
+                })
+                .expect("verification nested spawn 失败")
+                .join()
+                .expect("verification nested join 失败")
+        })
+        .map_err(|error| JsValue::from_str(&format!("verification nested spawn 失败：{error}")))?;
+    let index = facade_join_index_of(&handle);
+    FACADE_VERIFY_HANDLES.with(|slot| {
+        let mut store = slot.borrow_mut();
+        if store.is_some() {
+            return Err(JsValue::from_str("verification nested spawn：已有在途句柄"));
+        }
+        *store = Some(handle);
+        Ok(index)
+    })
+}
+
+// 固定三个角色记录，仅供验证读取；不形成运行时调度/业务状态或新生产 import。
+#[cfg(all(target_family = "wasm", feature = "verification-harness"))]
+static FACADE_VERIFY_PROBES: [AtomicU32; 15] = [const { AtomicU32::new(0) }; 15];
+
+#[cfg(all(target_family = "wasm", feature = "verification-harness"))]
+static FACADE_VERIFY_PROBE_STARTED: AtomicU32 = AtomicU32::new(0);
+
+#[cfg(all(target_family = "wasm", feature = "verification-harness"))]
+fn verification_begin_probe() -> Result<(), JsValue> {
+    FACADE_VERIFY_PROBE_STARTED
+        .compare_exchange(0, 1, Ordering::AcqRel, Ordering::Acquire)
+        .map(|_| ())
+        .map_err(|_| JsValue::from_str("verification probe 每实例只允许一轮；请创建独立实例"))
+}
+
+#[cfg(all(target_family = "wasm", feature = "verification-harness"))]
+thread_local! {
+    static FACADE_VERIFY_TLS: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(all(target_family = "wasm", feature = "verification-harness"))]
+fn verification_capture_probe(index: usize) {
+    assert!(
+        index < 3,
+        "verification probe 超出 engine/child/grandchild 范围"
+    );
+    let marker = 0x5A5Au32;
+    let stack_addr = &marker as *const u32 as u32;
+    let now = engine::clock::Instant::now();
+    let monotonic = engine::clock::Instant::now() >= now;
+    FACADE_VERIFY_TLS.with(|cell| {
+        let previous = cell.replace(marker);
+        for (offset, value) in [
+            stack_addr,
+            cell as *const _ as u32,
+            previous,
+            marker,
+            u32::from(monotonic),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            FACADE_VERIFY_PROBES[index * 5 + offset].store(value, Ordering::Release);
+        }
+    });
+}
+
+/// 验证：读取 engine/child/grandchild 的 stack/TLS 地址、TLS 前后值与 clock 单调标记。
+#[cfg(all(target_family = "wasm", feature = "verification-harness"))]
+#[wasm_bindgen]
+pub fn verification_facade_probe() -> Result<JsValue, JsValue> {
+    let probes: Vec<u32> = FACADE_VERIFY_PROBES
+        .iter()
+        .map(|value| value.load(Ordering::Acquire))
+        .collect();
+    to_js(&probes)
 }
 
 /// 验证：join 上一次 verification_facade_spawn 并返回 u32 结果。

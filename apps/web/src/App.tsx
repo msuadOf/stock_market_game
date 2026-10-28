@@ -24,7 +24,7 @@ import { PriceCageInput } from "./components/PriceCageInput.tsx";
 import { FloatAllocationInput } from "./components/FloatAllocationInput.tsx";
 import { InitialAllocationSummary } from "./components/InitialAllocationSummary.tsx";
 import type { InitialAllocation } from "./host/initial-allocation.ts";
-import { FatalHostError, SpeedMetricsAlert } from "./app/HostStatusViews.tsx";
+import { FatalHostError, HostSpawnFailureReport, SpeedMetricsAlert } from "./app/HostStatusViews.tsx";
 import { StartupScreen } from "./app/StartupScreen.tsx";
 import type { DesktopView } from "./app/DesktopTerminal.tsx";
 import { WorkspaceGrid } from "./app/WorkspaceGrid.tsx";
@@ -137,6 +137,7 @@ interface AppShellProps {
   returningToStartup: boolean;
   returningToStartupRef: MutableRefObject<boolean>;
   startupReturnError: string | null;
+  onSpawnFailure: (failure: HostFailure) => void;
   onSelectHost: (stopSession: () => Promise<void>) => Promise<void>;
   autoOrderMgrRef: MutableRefObject<AutoOrderManager | null>;
   hostRef: MutableRefObject<EngineHost | null>;
@@ -144,7 +145,7 @@ interface AppShellProps {
   setNotice: Dispatch<SetStateAction<string | null>>;
 }
 
-function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, sessionSetup, setSessionSetup, returningToStartup, returningToStartupRef, startupReturnError, onSelectHost, autoOrderMgrRef, hostRef, notice, setNotice }: AppShellProps) {
+function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, sessionSetup, setSessionSetup, returningToStartup, returningToStartupRef, startupReturnError, onSpawnFailure, onSelectHost, autoOrderMgrRef, hostRef, notice, setNotice }: AppShellProps) {
   const hasSnapshot = useSelector((s: RootState) => s.snapshot.snapshot !== null);
   const snapshotGeneration = useSelector((state: RootState) => state.snapshot.generation);
   const playerAccount = useSelector((s: RootState) => s.snapshot.snapshot?.accounts[PLAYER_ACCOUNT_KEY] ?? null);
@@ -369,7 +370,7 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
     startupTarget, sessionSetup, speed, pauseAfterClose, pauseBeforeOpen, TRADING_E2E_MODE, pausePreferencesReady,
     malformedProtocolFixture: () => import.meta.env.DEV && new URLSearchParams(window.location.search).get("protocolFixture") === "malformed",
     setIndicatorCalculator, configureMarketTiming, setActiveSetup, setStartDateDraft, setPriceCageEnabledDraft, setFloatAllocationDraft, setInitialAllocation, setDeliveryModes, setDeliveryModeState,
-    setNotice, setReady, setError, setHostBaselineReady, refreshPlayerOrders, getBrowserSaveRepository, connectProtocol,
+    setNotice, setReady, setError, onSpawnFailure, setHostBaselineReady, refreshPlayerOrders, getBrowserSaveRepository, connectProtocol,
     disconnectProtocol() {
       companyCoordinatorRef.current?.dispose();
       companyCoordinatorRef.current = null;
@@ -715,6 +716,11 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
 }
 
 function App() {
+  const [spawnFailures, setSpawnFailures] = useState<readonly HostFailure[]>([]);
+  const onSpawnFailure = useCallback((failure: HostFailure) => {
+    setSpawnFailures((visible) => [...visible, failure]);
+  }, []);
+  const dismissSpawnFailures = useCallback(() => setSpawnFailures([]), []);
   const initialSaveSourceRef = useRef(new InitialSaveSource<StrictSaveEnvelope>());
   const dayEndPersistenceRef = useRef(new DayEndPersistence());
   const [sessionSetup, setSessionSetup] = useState<SessionSetup>(INITIAL_SESSION_SETUP);
@@ -749,7 +755,7 @@ function App() {
     }
   }, []);
   if (startupTarget === null) {
-    return <StartupScreen mode={startupMode} remoteAddress={remoteAddress} error={startupError}
+    return <HostSpawnFailureReport failures={spawnFailures} onDismiss={dismissSpawnFailures}><StartupScreen mode={startupMode} remoteAddress={remoteAddress} error={startupError}
       developmentHint={import.meta.env.DEV && (import.meta.env.VITE_ENGINE_HOST !== undefined || import.meta.env.VITE_REMOTE_BASE_URL !== undefined)}
       onModeChange={(mode) => { setStartupMode(mode); setStartupError(null); }}
       onAddressChange={(address) => { setRemoteAddress(address); setStartupError(null); }}
@@ -761,15 +767,17 @@ function App() {
         } catch (startupFailure) {
           setStartupError(startupFailure instanceof Error ? startupFailure.message : String(startupFailure));
         }
-      }} />;
+      }} /></HostSpawnFailureReport>;
   }
   return (
+    <HostSpawnFailureReport failures={spawnFailures} onDismiss={dismissSpawnFailures}>
     <MarketRuntimeProvider autoOrderManagerRef={autoOrderMgrRef} setNotice={setNotice} hostRef={hostRef}>
-      <AppShell startupTarget={startupTarget} initialSaveSourceRef={initialSaveSourceRef} onSelectHost={returnToStartup}
+      <AppShell onSpawnFailure={onSpawnFailure} startupTarget={startupTarget} initialSaveSourceRef={initialSaveSourceRef} onSelectHost={returnToStartup}
         dayEndPersistenceRef={dayEndPersistenceRef} sessionSetup={sessionSetup} setSessionSetup={setSessionSetup}
         returningToStartup={returningToStartup} returningToStartupRef={returningToStartupRef} startupReturnError={startupReturnError}
         autoOrderMgrRef={autoOrderMgrRef} hostRef={hostRef} notice={notice} setNotice={setNotice} />
     </MarketRuntimeProvider>
+    </HostSpawnFailureReport>
   );
 }
 

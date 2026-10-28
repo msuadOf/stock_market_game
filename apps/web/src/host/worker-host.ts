@@ -29,7 +29,7 @@ import { parseHostFailure } from "./protocol-failure.ts";
 import { parseNpcDecisionTrace, type NpcDecisionTraceRecord } from "./npc-decision-trace.ts";
 import type { IndicatorInput, IndicatorResults } from "../components/indicator-results.ts";
 import { normalizeIndicatorInput, normalizeIndicatorResults } from "./indicator-transport.ts";
-import { createWorkerLifecycle } from "./worker-lifecycle.ts";
+import { createEngineSupervisor } from "./engine-supervisor.ts";
 import { WorkerRequestScope } from "./worker-request.ts";
 import { parseHistoricalStockData } from "./stock-history.ts";
 import { parseInitialAllocation } from "./initial-allocation.ts";
@@ -181,30 +181,31 @@ export function assertWorkerE2EStepAllowed(e2eBuild: boolean, injectedCapability
 
 interface WorkerHostOptions {
   readonly enableE2EStepping?: boolean;
+  readonly onSpawnFailure: (failure: HostFailure) => void;
 }
 
 export function createWorkerHost(
   setup: SessionSetup,
   seed: bigint,
-  options: WorkerHostOptions = {},
+  options: WorkerHostOptions,
 ): Promise<EngineHost & WorkerE2EHost> {
   return new Promise((resolve, reject) => {
+    if (options === null || typeof options !== "object" || typeof options.onSpawnFailure !== "function") {
+      reject(new Error("WorkerHost 必须提供 onSpawnFailure callback"));
+      return;
+    }
     const worker = new Worker(new URL("./wasm-worker.ts", import.meta.url), { type: "module" });
-    const lifecycle = createWorkerLifecycle(worker);
+    let supervisor: ReturnType<typeof createEngineSupervisor> | null = null;
     const requests = new WorkerRequestScope(worker);
     let ingressWorker: Worker | null = null;
     let ingressRequests: WorkerRequestScope | null = null;
     let ingressReady: Promise<unknown> | null = null;
     let ingressGeneration = 0;
-    // substrate 形态：engine worker 的 wasm memory 为共享（真线程）时走独立
-    // ingress worker；串行（非共享）时 ingress 桥不成立，submitIntent 降级走
-    // engine worker 主通道 enqueue（engine 侧两路径同入 enqueue_player_intent）。
-    let serialIngress = false;
+    let restoringGeneration: number | null = null;
     const closeIngress = (error: Error) => {
       ingressRequests?.close(error);
-      ingressWorker?.terminate();
-      ingressWorker = null;
       ingressRequests = null;
+      ingressReady = null;
     };
     let callback: ((update: HostUpdate) => void | boolean) | null = null;
     let fatalCallback: ((failure: HostFailure) => void) | null = null;
@@ -235,15 +236,22 @@ export function createWorkerHost(
       fatalCallback = null;
       requests.close(new Error(`${failure.code} @ ${failure.where}: ${failure.message}`));
       closeIngress(new Error(`${failure.code}: ${failure.message}`));
+      clearTimeout(timeout);
+      worker.removeEventListener("message", onMessage);
+      supervisor?.dispose();
+      ingressWorker = null;
       if (!initialized) {
-        clearTimeout(timeout);
-        lifecycle.dispose();
         reject(new Error(`${failure.code} @ ${failure.where}: ${failure.message}`));
         return;
       }
-      lifecycle.dispose();
-      if (reportFailure !== null) reportFailure(failure);
-      else pendingFailure = failure;
+      if (reportFailure !== null) {
+        try { reportFailure(failure); }
+        catch (error) {
+          // 消息入口会捕获同步异常；清理后的 callback 故障须独立交给全局错误处理。
+          const report = new AggregateError([failure, error], "WorkerHost fatal callback 失败；全部本人资源已清理");
+          queueMicrotask(() => { throw report; });
+        }
+      } else pendingFailure = failure;
     };
 
     const deliverLiveBaseline = (baseline: Extract<HostUpdate, { type: "baseline" }>): void => {
@@ -258,52 +266,61 @@ export function createWorkerHost(
       deliveredGeneration = baseline.generation;
     };
 
-    worker.addEventListener("error", (event) => {
-      const failure = {
-        code: "WASM_WORKER_SCRIPT",
-        where: "worker-host",
-        message: `WASM Worker 脚本加载或执行失败：${event.message || "浏览器未提供具体错误"}`,
-      };
-      notifyFailure(failure);
-    });
+    function waitForInitialization(): void {
+      const ready = ingressReady;
+      const boundGeneration = ingressGeneration;
+      if (ready === null) return;
+      const stillCurrent = () => !disposed && ready === ingressReady && boundGeneration === ingressGeneration;
+      void ready.then(() => {
+        if (!stillCurrent() || initialized || currentGeneration !== boundGeneration
+          || cachedBaseline?.generation !== String(boundGeneration)) return;
+        initialized = true;
+        clearTimeout(timeout);
+        resolve(host());
+      }, (error: unknown) => {
+        if (!stillCurrent()) return;
+        notifyFailure({ code: "WASM_INGRESS_BIND", where: "worker-host.ingress", message: error instanceof Error ? error.message : String(error) });
+      });
+    }
 
-    worker.addEventListener("message", (event: MessageEvent<unknown>) => {
+    function onMessage(event: MessageEvent<unknown>): void {
       if (disposed) return;
       try {
+        if (supervisor === null) throw new Error("Worker supervisor 尚未建立");
+        if (supervisor.handleGlobalMessage(worker, event.data)) return;
         const incoming = message(event.data);
         switch (incoming.type) {
           case "ingress": {
+            supervisor.assertConfigured();
+            if (Object.keys(incoming).sort().join(",") !== "generation,shared,token,type") throw new Error("Browser ingress 消息形状无效");
             const nextGeneration = generation(incoming.generation, "Browser ingress generation");
+            if (!Number.isInteger(incoming.token) || typeof incoming.token !== "number" || incoming.token < 1 || incoming.token > 0xffffffff) throw new Error("Browser ingress token 必须是正 u32");
+            if (incoming.shared !== true) throw new Error("Browser ingress 必须使用 shared memory");
             if (nextGeneration <= ingressGeneration) throw new Error("Browser ingress generation 必须严格推进");
+            if (nextGeneration !== currentGeneration && !(currentGeneration === 0 && ingressGeneration === 0 && nextGeneration === 1)
+              && !(ingressGeneration > 0 && restoringGeneration === currentGeneration && nextGeneration === currentGeneration + 1)) throw new Error("Browser ingress generation 没有当前会话或在途 restore 依据");
+            closeIngress(new Error("Browser ingress generation 已过期，操作已取消"));
             ingressGeneration = nextGeneration;
-            // 串行 substrate：engine worker 的 wasm memory 非共享，module/memory
-            // 不可跨 worker 共享（postMessage 即 DataCloneError），独立 ingress
-            // worker 无从直写 engine 队列——submitIntent 降级走 engine 主通道。
-            if (incoming.shared !== true) {
-              serialIngress = true;
-              return;
-            }
-            serialIngress = false;
-            if (ingressWorker === null) {
+            const first = ingressWorker === null;
+            if (first) {
               ingressWorker = new Worker(new URL("./wasm-ingress-worker.ts", import.meta.url), { type: "module" });
-              ingressRequests = new WorkerRequestScope(ingressWorker);
-              ingressWorker.addEventListener("error", (event) => {
-                notifyFailure({ code: "WASM_INGRESS_WORKER", where: "worker-host.ingress", message: event.message || "Browser ingress worker 执行失败" });
-              });
+              supervisor.attachIngress(ingressWorker);
             }
-            if (ingressRequests === null) throw new Error("Browser ingress request scope 尚未初始化");
+            if (ingressWorker === null) throw new Error("Browser ingress Worker 尚未初始化");
+            ingressRequests = new WorkerRequestScope(ingressWorker);
             ingressReady = ingressRequests.request({
-              ...incoming, type: "bindIngress", requestId: ingressRequests.nextRequestId(), generation: nextGeneration,
+              ...(first ? supervisor.getSubstrate() : {}), type: "bindIngress", shared: true, token: incoming.token,
+              requestId: ingressRequests.nextRequestId(), generation: nextGeneration,
             }, "ingressBound");
-            void ingressReady.catch((error: unknown) => {
-              notifyFailure({ code: "WASM_INGRESS_BIND", where: "worker-host.ingress", message: error instanceof Error ? error.message : String(error) });
-            });
+            waitForInitialization();
             return;
           }
           case "ready":
-            worker.postMessage({ type: "create", setup, seed });
+            supervisor.assertConfigured();
+            worker.postMessage({ type: "create", seed });
             return;
           case "created":
+            supervisor.assertConfigured();
             currentGeneration = generation(incoming.generation, "Worker created generation");
             {
               const workerCapabilities = record(incoming.capabilities, "Worker capabilities");
@@ -321,6 +338,7 @@ export function createWorkerHost(
             }
             return;
           case "baseline": {
+            supervisor.assertConfigured();
             const nextGeneration = generation(incoming.generation, "Worker baseline generation");
             if (nextGeneration < currentGeneration) return;
             const next = prepareBaselineUpdate(String(nextGeneration), incoming.snapshot, incoming.stockCatalog, incoming.companyCatalog, {
@@ -330,18 +348,7 @@ export function createWorkerHost(
             if (deliveredGeneration === next.generation) return;
             baselineEpoch += 1;
             cachedBaseline = next;
-            if (!initialized) {
-              const finishInitialization = () => {
-                if (disposed || initialized) return;
-                initialized = true;
-                clearTimeout(timeout);
-                resolve(host());
-              };
-              if (ingressReady === null) finishInitialization();
-              else void ingressReady.then(finishInitialization).catch((error: unknown) => {
-                notifyFailure({ code: "WASM_INGRESS_BIND", where: "worker-host.ingress", message: error instanceof Error ? error.message : String(error) });
-              });
-            }
+            if (!initialized) waitForInitialization();
             if (callback !== null && deliveredGeneration !== next.generation) {
               deliverLiveBaseline(next);
             }
@@ -362,7 +369,9 @@ export function createWorkerHost(
               if (accepted === false) {
                 requests.close(new Error("Worker 消费者拒绝协议更新，会话已停止"));
                 closeIngress(new Error("Worker 消费者拒绝协议更新，会话已停止"));
-                lifecycle.dispose();
+                clearTimeout(timeout);
+                worker.removeEventListener("message", onMessage);
+                supervisor.dispose();
                 disposed = true;
                 callback = null;
                 return;
@@ -387,9 +396,28 @@ export function createWorkerHost(
           message: error instanceof Error ? error.message : String(error),
         });
       }
-    });
+    }
 
-    worker.postMessage({ type: "init" });
+    try {
+      supervisor = createEngineSupervisor({
+        engine: worker,
+        createChildWorker: () => new Worker(new URL("./facade-child-worker.ts", import.meta.url), { type: "module" }),
+        onFatalFailure: notifyFailure,
+        onSpawnFailure: options.onSpawnFailure,
+      });
+      worker.addEventListener("message", onMessage);
+      supervisor.bootstrapEngine({ type: "init", setup });
+    } catch (error) {
+      notifyFailure({ code: "WASM_WORKER_TRANSPORT", where: "worker-host.initialize", message: error instanceof Error ? error.message : String(error) });
+    }
+
+    async function currentResult<T>(read: () => Promise<T>): Promise<T> {
+      const requestedGeneration = currentGeneration;
+      const scope = requests;
+      const result = await read();
+      if (disposed || currentGeneration !== requestedGeneration || requests !== scope) throw new Error("Worker 响应属于已过期或已销毁 generation");
+      return result;
+    }
 
     async function control(type: string, successType: string, payload: Record<string, unknown> = {}): Promise<void> {
       const requestedGeneration = currentGeneration;
@@ -442,7 +470,10 @@ export function createWorkerHost(
           callback = null;
           fatalCallback = null;
           cachedBaseline = null;
-          lifecycle.dispose();
+          clearTimeout(timeout);
+          worker.removeEventListener("message", onMessage);
+          supervisor?.dispose();
+          ingressWorker = null;
         },
         async setSpeed(multiplier) {
           assertValidSpeedMultiplier(multiplier);
@@ -455,14 +486,14 @@ export function createWorkerHost(
           worker.postMessage({ type: "setFrameRate", fps });
         },
         async readSpeedMetrics() {
-          return readWorkerSpeedMetrics(requests, requests.nextRequestId(), currentGeneration);
+          return currentResult(() => readWorkerSpeedMetrics(requests, requests.nextRequestId(), currentGeneration));
         },
         async playerWorkingOrders() {
           if (cachedBaseline === null) throw new Error("Worker 基线尚未就绪，不能查询玩家活动委托");
           const queryGeneration = currentGeneration;
           const queryEpoch = baselineEpoch;
           const orders = await readWorkerPlayerWorkingOrders(requests, requests.nextRequestId(), queryGeneration, (() => { if (cachedBaseline === null) throw new Error("Worker 活动委托需要 baseline"); return cachedBaseline.catalogResolver; })());
-          if (currentGeneration !== queryGeneration || baselineEpoch !== queryEpoch) throw new Error("Worker 玩家活动委托响应属于已过期会话 generation");
+          if (disposed || currentGeneration !== queryGeneration || baselineEpoch !== queryEpoch) throw new Error("Worker 玩家活动委托响应属于已过期会话 generation");
           return orders;
         },
         async queryStockHistory(code: StockCode): Promise<HistoricalStockData> {
@@ -470,7 +501,7 @@ export function createWorkerHost(
           const queryGeneration = currentGeneration;
           const queryEpoch = baselineEpoch;
           const data = await readWorkerStockHistory(requests, requests.nextRequestId(), queryGeneration, code, cachedBaseline.catalogResolver);
-          if (currentGeneration !== queryGeneration || baselineEpoch !== queryEpoch) throw new Error("Worker 股票历史响应属于已过期会话 generation");
+          if (disposed || currentGeneration !== queryGeneration || baselineEpoch !== queryEpoch) throw new Error("Worker 股票历史响应属于已过期会话 generation");
           return data;
         },
         async initialAllocation() {
@@ -489,18 +520,18 @@ export function createWorkerHost(
           const queryGeneration = currentGeneration;
           const queryEpoch = baselineEpoch;
           const response = await requests.request({ type: "npcDecisionTrace", requestId: requests.nextRequestId(), generation: queryGeneration, account }, "npcDecisionTrace");
-          if (currentGeneration !== queryGeneration || baselineEpoch !== queryEpoch) throw new Error("Worker NPC诊断响应属于过期generation");
+          if (disposed || currentGeneration !== queryGeneration || baselineEpoch !== queryEpoch) throw new Error("Worker NPC诊断响应属于过期generation");
           return parseNpcDecisionTrace(response.records, identity);
         },
         async calculateIndicators(input: IndicatorInput): Promise<IndicatorResults> {
-          return requestWorkerIndicators(requests, requests.nextRequestId(), currentGeneration, input);
+          return currentResult(() => requestWorkerIndicators(requests, requests.nextRequestId(), currentGeneration, input));
         },
         async queryMarketHistory(request: MarketHistoryRequest): Promise<MarketHistoryPage> {
           if (cachedBaseline === null) throw new Error("Worker 基线尚未就绪，不能查询保留历史");
           const queryGeneration = currentGeneration;
           const queryEpoch = baselineEpoch;
           const page = await requestWorkerMarketHistory(requests, requests.nextRequestId(), queryGeneration, request, cachedBaseline.catalogResolver);
-          if (currentGeneration !== queryGeneration || baselineEpoch !== queryEpoch) throw new Error("Worker 保留历史响应属于已过期会话 generation");
+          if (disposed || currentGeneration !== queryGeneration || baselineEpoch !== queryEpoch) throw new Error("Worker 保留历史响应属于已过期会话 generation");
           return page;
         },
         async queryCurrentMinuteHistory(request: CurrentMinuteHistoryRequest): Promise<CurrentMinuteHistoryResponse> {
@@ -508,7 +539,7 @@ export function createWorkerHost(
           const queryGeneration = currentGeneration;
           const queryEpoch = baselineEpoch;
           const response = await requestWorkerCurrentMinuteHistory(requests, requests.nextRequestId(), queryGeneration, request, cachedBaseline.catalogResolver);
-          if (currentGeneration !== queryGeneration || baselineEpoch !== queryEpoch) throw new Error("Worker 当日分钟K响应属于已过期会话 generation");
+          if (disposed || currentGeneration !== queryGeneration || baselineEpoch !== queryEpoch) throw new Error("Worker 当日分钟K响应属于已过期会话 generation");
           return response;
         },
         async queryPersonalTradeHistory(request: PersonalTradeHistoryRequest): Promise<PersonalTradeHistoryPage> {
@@ -517,7 +548,7 @@ export function createWorkerHost(
           const queryGeneration = currentGeneration;
           const queryEpoch = baselineEpoch;
           const page = await requestWorkerPersonalTradeHistory(requests, requests.nextRequestId(), queryGeneration, request, cachedBaseline.catalogResolver);
-          if (currentGeneration !== queryGeneration || baselineEpoch !== queryEpoch) throw new Error("Worker 本人交割历史响应属于已过期会话 generation");
+          if (disposed || currentGeneration !== queryGeneration || baselineEpoch !== queryEpoch) throw new Error("Worker 本人交割历史响应属于已过期会话 generation");
           return page;
         },
         async queryPersonalTradeConfirmations(beforeReceipt?: string | null): Promise<readonly PersonalTradeConfirmation[]> {
@@ -526,20 +557,20 @@ export function createWorkerHost(
           const queryGeneration = currentGeneration;
           const queryEpoch = baselineEpoch;
           const rows = await requestWorkerPersonalTradeConfirmations(requests, requests.nextRequestId(), queryGeneration, beforeReceipt ?? null, cachedBaseline.catalogResolver);
-          if (currentGeneration !== queryGeneration || baselineEpoch !== queryEpoch) throw new Error("Worker 本人交割单响应属于已过期会话 generation");
+          if (disposed || currentGeneration !== queryGeneration || baselineEpoch !== queryEpoch) throw new Error("Worker 本人交割单响应属于已过期会话 generation");
           return rows;
         },
         async calculateIntradayAverage(input: IntradayAverageInput): Promise<IntradayAverageResult | null> {
           if (!indicatorCapabilities.intradayAverage) throw new Error("当前 WASM bindings 不支持 Rust 分时均价计算，请重建 bindings");
-          return requestWorkerIntradayAverage(requests, requests.nextRequestId(), currentGeneration, input);
+          return currentResult(() => requestWorkerIntradayAverage(requests, requests.nextRequestId(), currentGeneration, input));
         },
         async calculateIntradayAverageCurve(input: IntradayAverageCurveInput): Promise<readonly (IntradayAverageResult | null)[]> {
           if (!indicatorCapabilities.intradayAverage) throw new Error("当前 WASM bindings 不支持 Rust 分时均价曲线计算，请重建 bindings");
-          return requestWorkerIntradayAverageCurve(requests, requests.nextRequestId(), currentGeneration, input);
+          return currentResult(() => requestWorkerIntradayAverageCurve(requests, requests.nextRequestId(), currentGeneration, input));
         },
         async stepOnceForE2E() {
           assertWorkerE2EStepAllowed(import.meta.env.MODE === "e2e", options.enableE2EStepping === true);
-          return stepWorkerOnce(requests, requests.nextRequestId(), currentGeneration);
+          return currentResult(() => stepWorkerOnce(requests, requests.nextRequestId(), currentGeneration));
         },
         async submitIntent(intent) {
           if (disposed) throw new Error("Worker会话已关闭，写请求未入队");
@@ -549,22 +580,14 @@ export function createWorkerHost(
           if (baseline.generation !== String(requestedGeneration)) throw new Error("Worker intent的baseline generation已过期");
           // 同步捕获目录与 generation，翻译必须先于 pending、等待与发送。
           const wiredIntent = wireIntentOf(intent, baseline.catalogResolver);
-          if (serialIngress) {
-            if (requestedGeneration !== ingressGeneration) throw new Error("Worker ingress 请求属于已过期 generation");
-            // 串行 substrate：ingress 桥不成立（非共享 memory 无法跨 worker 直写），
-            // intent 经主通道直递 engine worker 会话队列；engine worker 内部
-            // requireGeneration 校验过期代，响应后同享共享路径的过期防护。
-            await requests.request({ type: "enqueue", requestId: requests.nextRequestId(), generation: requestedGeneration, intent: wiredIntent }, "enqueued");
-            if (disposed || requestedGeneration !== currentGeneration) throw new Error("Worker 入队确认属于已过期或已销毁 generation，请核对权威委托状态，勿重复提交");
-            return;
-          }
           const ready = ingressReady;
+          const scope = ingressRequests;
           if (ready === null) throw new Error("Browser 共享 ingress 尚未就绪，请重建 WASM bindings");
           await ready;
-          if (disposed || requestedGeneration !== currentGeneration || requestedGeneration !== ingressGeneration) throw new Error("Browser ingress 请求属于已过期 generation");
-          if (ingressRequests === null) throw new Error("Browser ingress 已关闭");
-          await ingressRequests.request({ type: "enqueue", requestId: ingressRequests.nextRequestId(), generation: requestedGeneration, intent: wiredIntent }, "enqueued");
-          if (disposed || requestedGeneration !== currentGeneration || requestedGeneration !== ingressGeneration) throw new Error("Browser ingress 入队确认属于已过期或已销毁 generation，请核对权威委托状态，勿重复提交");
+          if (disposed || ready !== ingressReady || scope !== ingressRequests || requestedGeneration !== currentGeneration || requestedGeneration !== ingressGeneration) throw new Error("Browser ingress 请求属于已过期 generation");
+          if (scope === null) throw new Error("Browser ingress 已关闭");
+          await scope.request({ type: "enqueue", requestId: scope.nextRequestId(), generation: requestedGeneration, intent: wiredIntent }, "enqueued");
+          if (disposed || ready !== ingressReady || scope !== ingressRequests || requestedGeneration !== currentGeneration || requestedGeneration !== ingressGeneration) throw new Error("Browser ingress 入队确认属于已过期或已销毁 generation，请核对权威委托状态，勿重复提交");
         },
         snapshot() {
           if (cachedBaseline === null) throw new Error("快照尚未就绪");
@@ -579,12 +602,16 @@ export function createWorkerHost(
           return cachedBaseline.snapshot.day;
         },
         async civilDate() {
-          const response = await requests.request({ type: "civilDate", requestId: requests.nextRequestId(), generation: currentGeneration }, "civilDate");
+          const requestedGeneration = currentGeneration;
+          const response = await requests.request({ type: "civilDate", requestId: requests.nextRequestId(), generation: requestedGeneration }, "civilDate");
+          if (disposed || currentGeneration !== requestedGeneration) throw new Error("Worker 响应属于已过期或已销毁 generation");
           if (typeof response.date !== "string") throw new Error("Worker 返回的自然日无效");
           return response.date;
         },
         async endCivilDay() {
-          await requests.request({ type: "endCivilDay", requestId: requests.nextRequestId(), generation: currentGeneration }, "civilDayEnded");
+          const requestedGeneration = currentGeneration;
+          await requests.request({ type: "endCivilDay", requestId: requests.nextRequestId(), generation: requestedGeneration }, "civilDayEnded");
+          if (disposed || currentGeneration !== requestedGeneration) throw new Error("Worker 响应属于已过期或已销毁 generation");
         },
         async save(candidate?: { readonly seq: number; readonly settledDate: string }): Promise<unknown> {
           const queryGeneration = currentGeneration;
@@ -606,6 +633,8 @@ export function createWorkerHost(
         async load(slot, onRestored) {
           const parsedSlot = parseSaveSlot(slot);
           const requestedGeneration = currentGeneration;
+          if (restoringGeneration !== null) throw new Error("Worker restore 已在途");
+          restoringGeneration = requestedGeneration;
           let restoreCommitted = false;
           let restored: Awaited<ReturnType<typeof restoreWorkerSlot>>;
           try {
@@ -616,6 +645,8 @@ export function createWorkerHost(
               notifyFailure({ code: "WASM_WORKER_RESTORE_BASELINE", where: "worker-host.load", message: error instanceof Error ? error.message : String(error), cause: error }, true);
             }
             throw error;
+          } finally {
+            restoringGeneration = null;
           }
           if (disposed || currentGeneration !== requestedGeneration && currentGeneration !== restored.nextGeneration) throw new Error("Worker restore 响应属于已过期 generation");
           const baseline = restored;
@@ -628,11 +659,15 @@ export function createWorkerHost(
           }
         },
         async queryPublicReports(query: PublicReportQuery): Promise<PublicReportPage> {
-          const response = await requests.request({ type: "publicReports", requestId: requests.nextRequestId(), generation: currentGeneration, query }, "publicReports");
+          const requestedGeneration = currentGeneration;
+          const response = await requests.request({ type: "publicReports", requestId: requests.nextRequestId(), generation: requestedGeneration, query }, "publicReports");
+          if (disposed || currentGeneration !== requestedGeneration) throw new Error("Worker 响应属于已过期或已销毁 generation");
           return normalizePublicReportPage(response.page);
         },
         async publicReportById(id: string): Promise<PublicReportSummary> {
-          const response = await requests.request({ type: "publicReportById", requestId: requests.nextRequestId(), generation: currentGeneration, id }, "publicReportById");
+          const requestedGeneration = currentGeneration;
+          const response = await requests.request({ type: "publicReportById", requestId: requests.nextRequestId(), generation: requestedGeneration, id }, "publicReportById");
+          if (disposed || currentGeneration !== requestedGeneration) throw new Error("Worker 响应属于已过期或已销毁 generation");
           return normalizePublicReportById(response.report);
         },
       };

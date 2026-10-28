@@ -196,6 +196,14 @@ impl RuntimeDriver {
             .map_err(|error| format!("完整个人态收集失败：{error}"))
     }
 
+    /// 事实与本批时间成对 move，空批保 None，不为手动日结补造市场拍。
+    #[cfg(feature = "simulation-diagnostics")]
+    pub(crate) fn take_drain_causal_facts(&mut self) -> (
+        Vec<super::super::diagnostics::DeskCausalFact>, Option<crate::diagnostics::causal::FactTime>,
+    ) {
+        (std::mem::take(&mut self.world.drained_causal), self.world.drained_causal_time.take())
+    }
+
     #[cfg(feature = "simulation-diagnostics")]
     pub(crate) fn retain_terminal_causal(
         &mut self,
@@ -204,8 +212,16 @@ impl RuntimeDriver {
         fatal: crate::session::StepFatal,
     ) {
         if self.terminal_causal.is_none() {
-            self.terminal_causal = Some((time, raw, fatal));
+            self.terminal_causal = Some((Some(time), raw, fatal));
         }
+    }
+
+    /// 来源本身缺失时只封存真实 raw 与首错；None 明示没有可承诺的时间。
+    #[cfg(feature = "simulation-diagnostics")]
+    pub(crate) fn retain_terminal_causal_without_time(
+        &mut self, raw: Vec<crate::runtime::diagnostics::DeskCausalFact>, fatal: crate::session::StepFatal,
+    ) {
+        if self.terminal_causal.is_none() { self.terminal_causal = Some((None, raw, fatal)); }
     }
 
     #[cfg(feature = "simulation-diagnostics")]
@@ -214,13 +230,13 @@ impl RuntimeDriver {
         time: crate::diagnostics::causal::FactTime,
         fatal: crate::session::StepFatal,
     ) {
-        let raw = self.take_causal_facts();
+        let (raw, _) = self.take_causal_facts();
         self.retain_terminal_causal(time, raw, fatal);
     }
 
     #[cfg(all(test, feature = "simulation-diagnostics"))]
     pub(crate) fn terminal_causal_snapshot_for_test(&self) -> Option<(
-        crate::diagnostics::causal::FactTime,
+        Option<crate::diagnostics::causal::FactTime>,
         Vec<crate::runtime::diagnostics::DeskCausalFact>,
         crate::session::StepFatal,
     )> {
@@ -353,8 +369,6 @@ impl RuntimeDriver {
         advance_market_day: bool,
         emit_boundary: bool,
     ) -> Result<PreparedDriverStep, String> {
-        #[cfg(feature = "simulation-diagnostics")]
-        self.ensure_causal_day_end_supported()?;
         let next_sync_seq = self.next_sync_source_sequence()?;
         let calendar = match &input.calendar {
             PreparedDriverCalendar::MarketTick(tick) => super::super::protocol::DayEndCalendar::MarketTick(Arc::clone(tick)),
@@ -525,8 +539,6 @@ impl RuntimeDriver {
         session
             .require_healthy()
             .map_err(|fatal| fatal.to_string())?;
-        #[cfg(feature = "simulation-diagnostics")]
-        self.ensure_causal_day_end_supported()?;
         let calendar_day = session.prepare_market_calendar_day().map_err(|error| error.to_string())?;
         self.next_sync_source_sequence()?;
         self.world.set_civil_date(session.civil_date());
@@ -553,12 +565,20 @@ impl RuntimeDriver {
             .prepare_day_end_input(session, input, advance_market_day, false)
             .map_err(|description| {
                 if self.world.last_day_end_candidate.is_some() {
-                    session
-                        .poison_runtime_step(crate::session::StepFatal::InvariantViolation {
-                            location: "RuntimeDriver::day_end::collect".to_owned(),
-                            description,
-                        })
-                        .to_string()
+                    let fatal = crate::session::StepFatal::InvariantViolation {
+                        location: "RuntimeDriver::day_end::collect".to_owned(), description,
+                    };
+                    #[cfg(feature = "simulation-diagnostics")]
+                    {
+                        let (raw, time) = self.take_drain_causal_facts();
+                        if !raw.is_empty() {
+                            match time {
+                                Some(time) => self.retain_terminal_causal(time, raw, fatal.clone()),
+                                None => self.retain_terminal_causal_without_time(raw, fatal.clone()),
+                            }
+                        }
+                    }
+                    session.poison_runtime_step(fatal).to_string()
                 } else {
                     description
                 }
@@ -568,17 +588,33 @@ impl RuntimeDriver {
             session
                 .prepare_runtime_mirror(self, input, tick)
                 .map_err(|description| {
+                    let fatal = crate::session::StepFatal::InvariantViolation {
+                        location: "RuntimeDriver::day_end::prepare".to_owned(), description,
+                    };
+                    #[cfg(feature = "simulation-diagnostics")]
+                    {
+                        let (raw, time) = self.take_drain_causal_facts();
+                        if !raw.is_empty() {
+                            match time {
+                                Some(time) => self.retain_terminal_causal(time, raw, fatal.clone()),
+                                None => self.retain_terminal_causal_without_time(raw, fatal.clone()),
+                            }
+                        }
+                    }
                     self.abort_unpublished_day_end();
-                    session
-                        .poison_runtime_step(crate::session::StepFatal::InvariantViolation {
-                            location: "RuntimeDriver::day_end::prepare".to_owned(),
-                            description,
-                        })
-                        .to_string()
+                    session.poison_runtime_step(fatal).to_string()
                 })?;
-        let ack = session
-            .validate_runtime_mirror_source(self, &prepared)
+        #[cfg(feature = "simulation-diagnostics")]
+        let causal = session.prepare_runtime_drain_causal(self, prepared.causal_plans())
             .map_err(|fatal| session.poison_runtime_step(fatal).to_string())?;
+        let ack = match session.validate_runtime_mirror_source(self, &prepared) {
+            Ok(ack) => ack,
+            Err(fatal) => {
+                #[cfg(feature = "simulation-diagnostics")]
+                if let Some(causal) = causal { self.retain_terminal_causal(causal.time, causal.raw, fatal.clone()); }
+                return Err(session.poison_runtime_step(fatal).to_string());
+            }
+        };
         let events = session.install_runtime_mirror(self, prepared);
         self.ack_prepared_mirror(ack);
         self.drained_events.extend(events);
@@ -590,8 +626,12 @@ impl RuntimeDriver {
                     description: format!("市场日结安装后的自然日推进失败：{error}"),
                 },
             };
+            #[cfg(feature = "simulation-diagnostics")]
+            if let Some(causal) = causal { self.retain_terminal_causal(causal.time, causal.raw, fatal.clone()); }
             return Err(session.poison_runtime_step(fatal).to_string());
         }
+        #[cfg(feature = "simulation-diagnostics")]
+        if let Some(causal) = causal { session.publish_runtime_causal(causal); }
         self.world.set_civil_date(session.civil_date());
         Ok(())
     }

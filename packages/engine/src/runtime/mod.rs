@@ -57,6 +57,20 @@ mod calendar_raw_range_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod calendar_projection_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
+mod calendar_cancel_all_tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod calendar_misroute_tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod calendar_postroll_tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod calendar_reopen_lifecycle_tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod calendar_group_day_end_tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod calendar_drain_tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod calendar_day_end_authority_tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod inline_account_tests;
 /// B2 件 2：desk 分钟K观察面语义测试（对照 18725d07 MinuteBar 基线）。
 #[cfg(all(test, not(target_arch = "wasm32")))]

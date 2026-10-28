@@ -5,10 +5,11 @@ use crate::diagnostics::causal::{
 };
 
 /// 仅含已校验的本拍增量，最外层全部成功后才可发布。
-pub(in crate::session) struct RuntimeCausalDelta {
+pub(crate) struct RuntimeCausalDelta {
     pub time: FactTime,
     pub raw: Vec<crate::runtime::diagnostics::DeskCausalFact>,
     kinds: Vec<CausalFactKind>,
+    drain: Option<(usize, FactTime)>,
 }
 
 impl GameSession {
@@ -27,9 +28,11 @@ impl GameSession {
         tick: u64,
         plans: &crate::plans::PlanBook,
     ) -> Result<RuntimeCausalDelta, StepFatal> {
-        let raw = driver.take_causal_facts();
-        match self.translate_runtime_causal(driver, tick, &raw, driver.pending_decision_traces(), plans) {
-            Ok(kinds) => Ok(RuntimeCausalDelta { time, raw, kinds }),
+        let (raw, drain_time) = driver.take_causal_facts();
+        let result = self.translate_runtime_causal(driver, tick, &raw, driver.pending_decision_traces(), plans, drain_time)
+            .and_then(|(kinds, start)| self.runtime_causal_drain_boundary(drain_time, start).map(|drain| (kinds, drain)));
+        match result {
+            Ok((kinds, drain)) => Ok(RuntimeCausalDelta { time, raw, kinds, drain }),
             Err(fatal) => {
                 driver.retain_terminal_causal(time, raw, fatal.clone());
                 Err(fatal)
@@ -44,15 +47,13 @@ impl GameSession {
         raw: &[crate::runtime::diagnostics::DeskCausalFact],
         roots: &[crate::runtime::diagnostics::GroupDecisionTrace],
         plans: &crate::plans::PlanBook,
-    ) -> Result<Vec<CausalFactKind>, StepFatal> {
+        drain_time: Option<FactTime>,
+    ) -> Result<(Vec<CausalFactKind>, Option<usize>), StepFatal> {
         use crate::runtime::diagnostics::{DeskCausalKind, OperationSource};
         let fail = |description: String| StepFatal::InvariantViolation {
             location: "runtime::diagnostics::prepare".to_owned(),
             description,
         };
-        if tick.is_multiple_of(self.state.setup.ticks_per_day) {
-            driver.ensure_causal_day_end_supported().map_err(fail)?;
-        }
         let mut kinds = Vec::new();
         let mut decisions = std::collections::BTreeMap::new();
         // 真实 observe 根先于本拍 desk receipt；只解析本次增量，不继承 collector 的旧 Decision。
@@ -95,15 +96,17 @@ impl GameSession {
         // 仅本拍 touched orders；首次观察到旧单时保留真实累计值，不补造 Submitted。
         let mut touched = std::collections::BTreeMap::<OrderId, (AccountId, crate::Side, i64)>::new();
         let mut sources = std::collections::BTreeSet::new();
+        let mut drain_start = None;
         for fact in raw.iter().copied() {
-            if fact.tick != tick {
-                return Err(fail(format!(
-                    "causal tick 错位：fact={} session={}",
-                    fact.tick,
-                    tick
-                )));
-            }
-            let code = StockId(u32::from(fact.stock));
+            use crate::runtime::retail_lifecycle::BatchContext;
+            let drain = match fact.context {
+                BatchContext::Tick { tick: actual, .. } if actual == tick && drain_start.is_none() => false,
+                BatchContext::Drain { ended_date, final_tick, .. }
+                    if final_tick == tick && ended_date == self.civil_date() => { drain_start.get_or_insert(kinds.len()); true },
+                _ => return Err(fail(format!("causal batch 身份域或次序错配：session={tick} fact={fact:?}"))),
+            };
+            let stock = fact.context.stock();
+            let code = StockId(u32::from(stock));
             if !self.state.markets.contains_key(&code) {
                 return Err(fail(format!("causal stock 不存在：{code:?}")));
             }
@@ -115,10 +118,10 @@ impl GameSession {
                 ask_depth: raw.ask_depth,
             };
             let identity = |order: crate::runtime::OrderRef, owner: crate::runtime::Owner| {
-                if order.0 != fact.stock || order.1 > u64::from(u32::MAX) {
+                if order.0 != stock || order.1 > u64::from(u32::MAX) {
                     return Err(fail(format!(
                         "causal OrderRef 无效：stock={} order={order:?}",
-                        fact.stock
+                        stock
                     )));
                 }
                 if usize::try_from(owner.1).map_or(true, |local| local >= driver.accounts_per_group()) {
@@ -138,6 +141,7 @@ impl GameSession {
                     source,
                     before,
                 } => {
+                    if drain { return Err(fail("Drain 不得含 Submitted".to_owned())); }
                     let (order, account) = identity(order, owner)?;
                     let (plan, decision) = match source {
                         OperationSource::PlayerExternal => (None, None),
@@ -193,6 +197,7 @@ impl GameSession {
                     qty,
                     source,
                 } => {
+                    if drain { return Err(fail("Drain 不得含 Voluntary Cancelled".to_owned())); }
                     if !matches!(source, OperationSource::PlayerExternal | OperationSource::InstitutionCancel) {
                         return Err(fail(format!(
                             "causal Cancelled 来源尚未接通：{source:?} order={order:?}"
@@ -212,8 +217,24 @@ impl GameSession {
                     });
                 }
                 DeskCausalKind::Execution { ordinal, seller, buyer, qty, price_cents, side, before } => {
-                    if !sources.insert((fact.tick, fact.round, fact.stock, ordinal)) {
+                    if !sources.insert((fact.context, ordinal)) {
                         return Err(fail(format!("causal Execution source 重复：{fact:?}")));
+                    }
+                    if drain {
+                        let time = drain_time.ok_or_else(|| fail("Drain Execution 缺少本批已校验时间".to_owned()))?;
+                        if time.phase != TradingPhase::ClosingAuction || side.is_some() {
+                            return Err(fail("Drain Execution 必须为真实 ClosingAuction 且无主动方向".to_owned()));
+                        }
+                    } else {
+                        let committed = driver.committed_calendar_tick().map_err(&fail)?;
+                        if let Some(committed) = committed {
+                            let auction = matches!(committed.calendar.phase_before(), TradingPhase::CallAuction | TradingPhase::ClosingAuction);
+                            if committed.calendar.after_input().tick != tick || auction != side.is_none() {
+                                return Err(fail("Execution 主动方向与真实 Calendar auction 相位错配".to_owned()));
+                            }
+                        } else if side.is_none() {
+                            return Err(fail("auction Execution 缺少真实 Calendar".to_owned()));
+                        }
                     }
                     if qty == 0 || price_cents <= 0 || seller.order == buyer.order || seller.owner == buyer.owner {
                         return Err(fail(format!("causal Execution 双腿或价量无效：{fact:?}")));
@@ -240,16 +261,69 @@ impl GameSession {
                         kinds.push(CausalFactKind::Filled { order, account, code, qty, value_before, gross });
                     }
                     kinds.push(CausalFactKind::Execution {
-                        code, maker: sell_order, taker: buy_order, side: Some(side), qty,
+                        code, maker: sell_order, taker: buy_order, side, qty,
                         price_cents, before: quote(before),
                     });
+                }
+                DeskCausalKind::DayEnded { order, owner, qty } => {
+                    if !drain || qty == 0 { return Err(fail("DayEnded 必须来自真实非空 Drain 余单".to_owned())); }
+                    let (order, account) = identity(order, owner)?;
+                    kinds.push(CausalFactKind::Terminated { order, account, code, qty, reason: Termination::DayEnd });
                 }
                 DeskCausalKind::Quote(raw) => kinds.push(CausalFactKind::Quote(quote(raw))),
                 DeskCausalKind::Unsupported { detail } => return Err(fail(detail.to_owned())),
             }
         }
         checked_runtime_sequence(self.state.causal.fact_count(), kinds.len()).map_err(fail)?;
-        Ok(kinds)
+        Ok((kinds, drain_start))
+    }
+
+    fn runtime_causal_drain_boundary(
+        &self,
+        time: Option<FactTime>,
+        start: Option<usize>,
+    ) -> Result<Option<(usize, FactTime)>, StepFatal> {
+        let drain = if let Some(start) = start {
+            let time = time.ok_or_else(|| StepFatal::InvariantViolation {
+                location: "runtime::diagnostics::prepare".to_owned(), description: "非空 Drain 缺少本批已校验 Calendar 时间".to_owned(),
+            })?;
+            Some((start, time))
+        } else {
+            if time.is_some() { return Err(StepFatal::InvariantViolation {
+                location: "runtime::diagnostics::prepare".to_owned(), description: "空 Drain 不得携带旧批时间".to_owned(),
+            }); }
+            None
+        };
+        Ok(drain)
+    }
+
+    /// 手动日结仅解析本次 Drain，不借用上一次低层 step 留下的 Tick 或 Decision。
+    pub(crate) fn prepare_runtime_drain_causal(
+        &self,
+        driver: &mut crate::runtime::drive::RuntimeDriver,
+        plans: &crate::plans::PlanBook,
+    ) -> Result<Option<RuntimeCausalDelta>, StepFatal> {
+        let (raw, drain_time) = driver.take_drain_causal_facts();
+        if raw.is_empty() {
+            self.runtime_causal_drain_boundary(drain_time, None)?;
+            return Ok(None);
+        }
+        let time = match drain_time {
+            Some(time) => time,
+            None => {
+                let fatal = StepFatal::InvariantViolation {
+                    location: "runtime::diagnostics::prepare".to_owned(), description: "非空 Drain 缺少本批已校验 Calendar 时间".to_owned(),
+                };
+                driver.retain_terminal_causal_without_time(raw, fatal.clone());
+                return Err(fatal);
+            }
+        };
+        let result = self.translate_runtime_causal(driver, self.tick(), &raw, &[], plans, Some(time))
+            .and_then(|(kinds, start)| self.runtime_causal_drain_boundary(Some(time), start).map(|drain| (kinds, drain)));
+        match result {
+            Ok((kinds, drain)) => Ok(Some(RuntimeCausalDelta { time, raw, kinds, drain })),
+            Err(fatal) => { driver.retain_terminal_causal(time, raw, fatal.clone()); Err(fatal) }
+        }
     }
 
     // 保留直接纯校验测试接缝；真实入口按 E2 捕获原 raw 与 terminal 首错。
@@ -259,16 +333,18 @@ impl GameSession {
         time: FactTime,
         facts: Vec<crate::runtime::diagnostics::DeskCausalFact>,
     ) -> Result<RuntimeCausalDelta, StepFatal> {
-        let kinds = self.translate_runtime_causal(driver, self.tick(), &facts, driver.pending_decision_traces(), &self.state.plans)?;
-        Ok(RuntimeCausalDelta { time, raw: facts, kinds })
+        let (kinds, start) = self.translate_runtime_causal(driver, self.tick(), &facts, driver.pending_decision_traces(), &self.state.plans, None)?;
+        let drain = self.runtime_causal_drain_boundary(None, start)?;
+        Ok(RuntimeCausalDelta { time, raw: facts, kinds, drain })
     }
 
-    pub(in crate::session) fn publish_runtime_causal(&mut self, delta: RuntimeCausalDelta) {
-        for kind in delta.kinds {
+    pub(crate) fn publish_runtime_causal(&mut self, delta: RuntimeCausalDelta) {
+        for (index, kind) in delta.kinds.into_iter().enumerate() {
+            let time = match delta.drain { Some((start, time)) if index >= start => time, _ => delta.time };
             if let CausalFactKind::Decision { account } = kind {
-                self.state.causal.record_plan_root(delta.time, account, [CausalFactKind::Decision { account }]);
+                self.state.causal.record_plan_root(time, account, [CausalFactKind::Decision { account }]);
             } else {
-                self.state.causal.record(delta.time, kind);
+                self.state.causal.record(time, kind);
             }
         }
     }
@@ -504,7 +580,7 @@ mod tests {
             plan_before: std::collections::BTreeMap::new(),
         };
         let submitted = |plan, side, observed_tick| DeskCausalFact {
-            tick, round: 0, stock: 0,
+            context: crate::runtime::retail_lifecycle::BatchContext::Tick { tick, round: 0, stock: 0 },
             kind: DeskCausalKind::Submitted {
                 order: (0, 1), owner, side, qty: 100,
                 source: OperationSource::InstitutionPlan { plan, observed_tick },
@@ -512,8 +588,8 @@ mod tests {
             },
         };
         let translate = |fact, roots: &[GroupDecisionTrace]| game.translate_runtime_causal(
-            &driver, tick, &[fact], roots, &plans,
-        );
+            &driver, tick, &[fact], roots, &plans, None,
+        ).map(|(kinds, _)| kinds);
         let kinds = translate(submitted(correct, crate::Side::Buy, tick), std::slice::from_ref(&root)).unwrap();
         assert!(matches!(&kinds[2], CausalFactKind::Submitted(origin)
             if origin.plan == Some(correct) && origin.decision == Some(0)));
@@ -557,7 +633,7 @@ mod tests {
                 plan_before: std::collections::BTreeMap::new(),
             };
             let submitted = |source_kind, observed_tick| DeskCausalFact {
-                tick, round: 0, stock: 0,
+                context: crate::runtime::retail_lifecycle::BatchContext::Tick { tick, round: 0, stock: 0 },
                 kind: DeskCausalKind::Submitted {
                     order: (0, 1), owner, side: Side::Buy, qty: 100,
                     source: OperationSource::ObservedNpc { kind: source_kind, observed_tick },
@@ -565,8 +641,8 @@ mod tests {
                 },
             };
             let translate = |fact, roots: &[GroupDecisionTrace]| game.translate_runtime_causal(
-                &driver, tick, &[fact], roots, &game.state.plans,
-            );
+                &driver, tick, &[fact], roots, &game.state.plans, None,
+            ).map(|(kinds, _)| kinds);
             let kinds = translate(submitted(kind, tick), std::slice::from_ref(&root)).unwrap();
             assert!(matches!(&kinds[2], CausalFactKind::Submitted(origin)
                 if origin.account == account && origin.plan.is_none() && origin.decision == Some(0)));
@@ -614,12 +690,12 @@ mod tests {
             .find(|owner| driver.account_by_owner(*owner) == Some(AccountId(account))).unwrap();
         let seller = owner_for(2); let buyer = owner_for(0);
         let before = DeskQuote { bid_cents: None, ask_cents: None, bid_depth:0, ask_depth:0 };
-        let submitted = |order,owner,side| DeskCausalFact { tick:game.tick(), round:0, stock:1,
+        let submitted = |order,owner,side| DeskCausalFact { context: crate::runtime::retail_lifecycle::BatchContext::Tick { tick:game.tick(), round:0, stock:1 },
             kind:DeskCausalKind::Submitted { order,owner,side,qty:200,source:OperationSource::PlayerExternal,before } };
         let facts = vec![submitted((1,7),seller,crate::Side::Sell),submitted((1,8),buyer,crate::Side::Buy),
-            DeskCausalFact { tick:game.tick(),round:0,stock:1,kind:DeskCausalKind::Execution {
+            DeskCausalFact { context: crate::runtime::retail_lifecycle::BatchContext::Tick { tick:game.tick(),round:0,stock:1 },kind:DeskCausalKind::Execution {
                 ordinal:0,seller:DeskExecutionLeg { order:(1,7), owner:seller,value_before:0 },
-                buyer:DeskExecutionLeg { order:(1,8),owner:buyer,value_before:0 },qty:100,price_cents:995,side:crate::Side::Buy,before,
+                buyer:DeskExecutionLeg { order:(1,8),owner:buyer,value_before:0 },qty:100,price_cents:995,side:Some(crate::Side::Buy),before,
             }}];
         (game,driver,facts)
     }
@@ -628,7 +704,7 @@ mod tests {
     fn d2_prepare_real_typed_facts_expand_legs_and_round_stock_ordinals_reset() {
         use crate::runtime::diagnostics::DeskCausalKind;
         let (game,driver,mut facts) = d2_raw_fixture();
-        let mut next = facts[2]; next.round=1;
+        let mut next = facts[2]; next.context=crate::runtime::retail_lifecycle::BatchContext::Tick { tick:game.tick(),round:1,stock:1 };
         if let DeskCausalKind::Execution { seller,buyer,.. }=&mut next.kind {
             seller.value_before=99_500; buyer.value_before=99_500;
         }
@@ -638,7 +714,7 @@ mod tests {
         assert!(matches!(delta.kinds[4],CausalFactKind::Filled { order:OrderId(4294967303),value_before:0,gross:99_500,.. }));
         assert!(matches!(delta.kinds[5],CausalFactKind::Filled { order:OrderId(4294967304),value_before:0,gross:99_500,.. }));
         assert!(matches!(delta.kinds[7],CausalFactKind::Filled { value_before:99_500,.. }));
-        let mut other=facts[2];other.stock=0;
+        let mut other=facts[2];other.context=crate::runtime::retail_lifecycle::BatchContext::Tick { tick:game.tick(),round:0,stock:0 };
         if let DeskCausalKind::Execution { seller,buyer,.. }=&mut other.kind { seller.order.0=0;buyer.order.0=0; }
         facts.push(other);
         game.prepare_runtime_causal_facts(&driver,game.causal_time(),facts).unwrap();
@@ -652,10 +728,10 @@ mod tests {
             let mut bad=facts.clone();
             if mutation==0 { bad.push(bad[2]); }
             else if mutation==1 {
-                let mut next=bad[2];next.round=1;
+                let mut next=bad[2];next.context=crate::runtime::retail_lifecycle::BatchContext::Tick { tick:game.tick(),round:1,stock:1 };
                 if let DeskCausalKind::Execution { seller,buyer,.. }=&mut next.kind { seller.value_before=99_500;buyer.value_before=0; }
                 bad.push(next);
-            } else if mutation==2 { bad[2].tick=game.tick()+1; }
+            } else if mutation==2 { bad[2].context=crate::runtime::retail_lifecycle::BatchContext::Tick { tick:game.tick()+1,round:0,stock:1 }; }
             else if let DeskCausalKind::Execution { seller,buyer,qty,price_cents,.. }=&mut bad[2].kind {
                 match mutation {
                     3=>seller.order.0=0,
@@ -682,6 +758,74 @@ mod tests {
         } else {
             assert_eq!(checked_runtime_sequence(usize::MAX, 1).unwrap(), u64::from(u32::MAX) + 1);
         }
+    }
+
+
+    #[test]
+    fn d3_real_opening_and_continuous_execution_reject_opposite_aggressor_domains() {
+        use crate::runtime::diagnostics::DeskCausalKind;
+        for auction in [false, true] {
+            let mut setup = crate::session::npc_working_quote_tests::retail_quote_setup();
+            setup.ticks_per_day = 8;
+            setup.auction_ticks = if auction { 3 } else { 0 };
+            setup.closing_auction_ticks = 0;
+            setup.stocks[0].float_shares = 2_000;
+            setup.float_allocation = crate::FloatAllocation::class_percentages(1.0, 0.0, 0.0, crate::WithinKindDistribution::EqualPercentage);
+            setup.strategy_params.retail.arrival_rate = 0.0;
+            let mut game = GameSession::new(setup, 21).unwrap();
+            let mut driver = crate::runtime::drive::RuntimeDriver::from_session(&mut game).unwrap();
+            let upper = driver.world_public_views().iter().map(|view| view.daily_upper_limit).collect::<Vec<_>>();
+            let intents = [(AccountId(1), Side::Sell), (AccountId(0), Side::Buy)].into_iter().enumerate()
+                .map(|(index, (owner, side))| ReceiptBearingIntent { owner,
+                    intent: Intent::PlaceLimit { code: StockId(0), side, price: LimitPrice::Fixed(Money::from_cents(1_000)), qty: 100 },
+                    account_ordinal: index as u64, stock_ordinal: index as u64,
+                }).collect::<Vec<_>>();
+            driver.inject_player_intents(&intents, &upper).unwrap();
+            if auction { game.runtime_step_with_install(&mut driver).expect("真实开盘申报窗只受理"); }
+            let input = driver.prepare_driver_step(&game).unwrap();
+            let (raw, drain_time) = driver.take_causal_facts();
+            assert!(drain_time.is_none());
+            let index = raw.iter().position(|fact| matches!(fact.kind, DeskCausalKind::Execution { .. })).expect("必须真有成交才可检查方向域");
+            let tick = driver.world_committed_tick();
+            let before = serde_json::to_value(game.causal_facts()).unwrap();
+            let positive = game.translate_runtime_causal(&driver, tick, &raw, driver.pending_decision_traces(), &input.plans, None).unwrap();
+            assert_eq!(positive.0.iter().filter(|fact| matches!(fact, CausalFactKind::Execution { side, .. } if side.is_none() == auction)).count(), 1);
+            let mut bad = raw.clone();
+            if let DeskCausalKind::Execution { side, .. } = &mut bad[index].kind { *side = if auction { Some(Side::Buy) } else { None }; }
+            let error = game.translate_runtime_causal(&driver, tick, &bad, driver.pending_decision_traces(), &input.plans, None).unwrap_err();
+            assert!(error.to_string().contains("主动方向与真实 Calendar auction 相位错配"), "{error}");
+            assert_eq!(serde_json::to_value(game.causal_facts()).unwrap(), before, "正负只读校验均不得发布");
+        }
+    }
+
+
+    #[test]
+    fn d3_prepare_rejects_wrong_drain_domains_and_tick_after_drain() {
+        use crate::runtime::{diagnostics::DeskCausalKind, retail_lifecycle::BatchContext};
+        let (game, mut driver, raw) = d2_raw_fixture();
+        assert!(driver.committed_calendar_tick().unwrap().is_none());
+        assert!(game.prepare_runtime_drain_causal(&mut driver, &game.state.plans).unwrap().is_none(), "真实空批不构造市场时间或要求 TickArc");
+        let mut end = raw[0];
+        end.context = BatchContext::Drain { ended_date: game.civil_date(), final_tick: game.tick(), stock: 1 };
+        if let DeskCausalKind::Submitted { order, owner, qty, .. } = end.kind { end.kind = DeskCausalKind::DayEnded { order, owner, qty }; }
+        let positive = game.translate_runtime_causal(&driver, game.tick(), &[end], &[], &game.state.plans, None).unwrap();
+        assert_eq!(positive.1, Some(0));
+        assert!(matches!(positive.0[0], CausalFactKind::Terminated { reason: Termination::DayEnd, .. }));
+        for mutation in 0..6 {
+            let mut bad = vec![end];
+            match mutation {
+                0 => bad[0].kind = raw[0].kind,
+                1 => if let DeskCausalKind::DayEnded { order, owner, qty } = end.kind {
+                    bad[0].kind = DeskCausalKind::Cancelled { order, owner, qty, source: crate::runtime::diagnostics::OperationSource::PlayerExternal };
+                },
+                2 => bad[0].context = BatchContext::Drain { ended_date: game.civil_date().next().unwrap(), final_tick: game.tick(), stock: 1 },
+                3 => bad[0].context = BatchContext::Drain { ended_date: game.civil_date(), final_tick: game.tick() + 1, stock: 1 },
+                4 => bad[0].context = raw[0].context,
+                _ => bad.push(raw[0]),
+            }
+            assert!(game.translate_runtime_causal(&driver, game.tick(), &bad, &[], &game.state.plans, None).is_err(), "必须拒绝 Drain 身份域变体{mutation}");
+        }
+        assert!(game.causal_facts().is_empty());
     }
 
     }

@@ -1,8 +1,10 @@
 import { WasmIngressReceiver } from "./wasm-ingress.ts";
 import { describeWasmFailure } from "./wasm-failure.ts";
+import { bindFacadeThreadEnvironment, installFacadeSlotLayout, getArenaView } from "./engine-clock-env.ts";
+import { instantiateFacadeModule, type FacadeSyncInitializer } from "./facade-wasm-module.ts";
+import { parseFacadeEngineSubstrate } from "./facade-engine-protocol.ts";
 
-type IngressBindings = {
-  initSync(options: { module: WebAssembly.Module; memory: WebAssembly.Memory }): unknown;
+type IngressBindings = FacadeSyncInitializer & {
   ingress_enqueue(token: number, intent: unknown): void;
 };
 
@@ -19,16 +21,27 @@ self.addEventListener("message", (event: MessageEvent<Record<string, unknown>>) 
     try {
       switch (message.type) {
         case "bindIngress": {
+          if (typeof message.generation !== "number" || !Number.isSafeInteger(message.generation) || message.generation < 1) throw new Error("Browser ingress generation 必须是正安全整数");
+          if (typeof message.token !== "number" || !Number.isInteger(message.token) || message.token < 1 || message.token > 0xffffffff) throw new Error("Browser ingress token 必须是正 u32");
+          if (message.shared !== true) throw new Error("Browser ingress 必须使用 engine 已配置的共享 substrate");
           if (bindings === null) {
-            if (message.diagnostics === true) {
+            const substrate = parseFacadeEngineSubstrate({ type: "facadeEngineSubstrate", module: message.module, memory: message.memory, layout: message.layout, diagnostics: message.diagnostics });
+            bindFacadeThreadEnvironment({ memory: substrate.memory, role: "ingress", postControl() { throw new Error("ingress 禁止 facade 控制消息"); } });
+            let loaded: IngressBindings;
+            if (substrate.diagnostics) {
+              if (!import.meta.env.DEV) throw new Error("正式构建禁止加载 diagnostics WASM");
               const moduleUrl = new URL("/wasm-diagnostics-pkg/web_wasm.js", self.location.origin);
-              bindings = await import(/* @vite-ignore */ moduleUrl.href) as IngressBindings;
+              loaded = await import(/* @vite-ignore */ moduleUrl.href) as IngressBindings;
             } else {
-              bindings = await import("../../wasm-pkg/web_wasm.js") as unknown as IngressBindings;
+              loaded = await import("../../wasm-pkg/web_wasm.js") as unknown as IngressBindings;
             }
-            bindings.initSync({ module: message.module as WebAssembly.Module, memory: message.memory as WebAssembly.Memory });
+            instantiateFacadeModule(loaded, substrate.module, substrate.memory);
+            installFacadeSlotLayout(substrate.layout); getArenaView();
+            bindings = loaded;
+          } else if (["module", "memory", "layout", "diagnostics"].some((key) => Object.hasOwn(message, key))) {
+            throw new Error("Browser ingress 换代只接受新 token，禁止重复初始化 substrate");
           }
-          ingress.bind(Number(message.generation), Number(message.token));
+          ingress.bind(message.generation, message.token);
           self.postMessage({ type: "ingressBound", requestId: message.requestId, generation: message.generation });
           return;
         }
@@ -40,7 +53,14 @@ self.addEventListener("message", (event: MessageEvent<Record<string, unknown>>) 
           throw new Error(`未知 Browser ingress 消息：${String(message.type)}`);
       }
     } catch (error) {
-      self.postMessage({ type: "operationError", requestId: message.requestId, generation: message.generation, message: describeWasmFailure(error) });
+      const description = describeWasmFailure(error);
+      try {
+        self.postMessage({ type: "operationError", requestId: message.requestId, generation: message.generation, message: description.trim().length === 0 ? "Browser ingress 错误没有非空 message，请反馈详情" : description });
+      } catch (postError) {
+        const fatal = new AggregateError([error, postError], `Browser ingress 错误无法投递：${description}；发送错误：${describeWasmFailure(postError)}`);
+        if (typeof self.reportError === "function") self.reportError(fatal);
+        else queueMicrotask(() => { throw fatal; });
+      }
     }
   });
 });

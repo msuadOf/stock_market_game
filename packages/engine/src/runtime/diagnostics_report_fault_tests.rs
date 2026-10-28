@@ -22,6 +22,8 @@ pub(crate) struct RemovalEvidence {
 struct HookState {
     armed_stock: Option<u16>,
     evidence: Option<RemovalEvidence>,
+    drain: bool,
+    drain_evidence: Option<(super::DeskCausalFact, usize)>,
 }
 
 thread_local! {
@@ -37,8 +39,20 @@ impl HookArm {
             assert!(state.armed_stock.is_none(), "report hook 禁止嵌套 arm");
             state.armed_stock = Some(stock);
             state.evidence = None;
+            state.drain = false;
+            state.drain_evidence = None;
         });
         Self
+    }
+
+    pub(crate) fn new_drain(stock: u16) -> Self {
+        let arm = Self::new(stock);
+        HOOK.with(|state| state.borrow_mut().drain = true);
+        arm
+    }
+
+    pub(crate) fn drain_evidence(&self) -> (super::DeskCausalFact, usize) {
+        HOOK.with(|state| state.borrow().drain_evidence.expect("Drain hook 必须命中真实成交"))
     }
 
     pub(crate) fn evidence(&self) -> RemovalEvidence {
@@ -55,7 +69,7 @@ impl Drop for HookArm {
 pub(crate) fn remove_execution_once(mut report: DeskReport) -> DeskReport {
     HOOK.with(|state| {
         let mut state = state.borrow_mut();
-        if state.armed_stock != Some(report.stock) {
+        if state.drain || state.armed_stock != Some(report.stock) {
             return;
         }
         let Some(index) = report.causal.iter().position(|fact| matches!(fact.kind, DeskCausalKind::Execution { .. })) else {
@@ -78,4 +92,16 @@ pub(crate) fn remove_execution_once(mut report: DeskReport) -> DeskReport {
         state.armed_stock = None;
     });
     report
+}
+
+/// 与普通 report hook 共用同一测试线程入口，只删除真实 Drain 报告的 Execution。
+pub(crate) fn remove_drain_execution_once(stock: u16, causal: &mut Vec<super::DeskCausalFact>, trades: &[crate::runtime::protocol::DeskTradeFact]) {
+    HOOK.with(|state| {
+        let mut state = state.borrow_mut();
+        if !state.drain || state.armed_stock != Some(stock) { return; }
+        let Some(index) = causal.iter().position(|fact| matches!(fact.kind, DeskCausalKind::Execution { .. })) else { return; };
+        let removed = causal.remove(index);
+        state.drain_evidence = Some((removed, trades.len()));
+        state.armed_stock = None;
+    });
 }

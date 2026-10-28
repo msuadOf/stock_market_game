@@ -7,6 +7,33 @@ use std::sync::Arc;
 
 const CHUNK_CAPACITY: usize = 32;
 
+/// 仅测试计真实正向迭代yield；线程局部且只在量测闭包内armed，不进入生产路径。
+#[cfg(test)]
+pub(crate) mod yield_probe {
+    use std::cell::Cell;
+    thread_local! { static YIELDS: Cell<Option<usize>> = const { Cell::new(None) }; }
+    pub(super) fn record() {
+        YIELDS.with(|value| {
+            if let Some(count) = value.get() {
+                value.set(Some(count.checked_add(1).expect("测试yield计数溢出")));
+            }
+        });
+    }
+    pub(crate) fn measure<R>(operation: impl FnOnce() -> R) -> (R, usize) {
+        struct Reset(Option<usize>);
+        impl Drop for Reset {
+            fn drop(&mut self) {
+                YIELDS.with(|value| value.set(self.0));
+            }
+        }
+        let reset = Reset(YIELDS.with(|value| value.replace(Some(0))));
+        let result = operation();
+        let count = YIELDS.with(|value| value.get().expect("测试量测必须保持armed"));
+        drop(reset);
+        (result, count)
+    }
+}
+
 struct HistoryChunk<T> {
     previous: Option<Arc<HistoryChunk<T>>>,
     values: Vec<T>,
@@ -184,6 +211,8 @@ impl<'a, T> Iterator for HistoryIter<'a, T> {
             if let Some(value) = chunk.values.get(self.value_index) {
                 self.value_index += 1;
                 self.remaining -= 1;
+                #[cfg(test)]
+                yield_probe::record();
                 return Some(value);
             }
             self.chunk_index += 1;
