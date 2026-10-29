@@ -31,6 +31,14 @@ use crate::compute::join;
 use crate::session::plan_chain_candidates::PlanChainOperationBatch;
 use crate::{AccountId, AccountKind, GameSession, Intent, StockId};
 use std::collections::BTreeMap;
+
+#[cfg(test)]
+pub(in crate::session::pipeline) type NpcDecisionHandoverParts = (
+    u64,
+    Vec<AccountId>,
+    Vec<crate::ReceiptBearingIntent>,
+    Vec<(usize, usize)>,
+);
 #[cfg(test)]
 use std::sync::Arc;
 
@@ -1720,14 +1728,7 @@ impl NpcDecisionHandover {
 
     /// 解构（cfg(test)：测试适配器装回跨 tick pending 用）。
     #[cfg(test)]
-    pub(in crate::session::pipeline) fn into_parts(
-        self,
-    ) -> (
-        u64,
-        Vec<AccountId>,
-        Vec<crate::ReceiptBearingIntent>,
-        Vec<(usize, usize)>,
-    ) {
+    pub(in crate::session::pipeline) fn into_parts(self) -> NpcDecisionHandoverParts {
         (
             self.observed_tick,
             self.observed_accounts,

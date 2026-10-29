@@ -26,6 +26,22 @@ use crate::session::plan_continuation_domain::PlanContinuationDomain;
 use crate::session::PlanExecutionRequest;
 use crate::{AccountId, GameSession};
 
+type AdvanceWitness<'d> = fn(
+    &mut AdaptivePlanChainCoordinator,
+    &mut PlanContinuationDomain<'d>,
+    &[CandidateValidationOutcome],
+    Option<&mut ContinuousExecutionRound>,
+) -> Result<(), StepFatal>;
+type ProjectWitness<'d> = fn(
+    &mut AdaptivePlanChainCoordinator,
+    &mut PlanContinuationDomain<'d>,
+    &mut ContinuousExecutionRound,
+) -> Result<(), StepFatal>;
+type NextBatchWitness<'d> = fn(
+    &mut AdaptivePlanChainCoordinator,
+    &mut PlanContinuationDomain<'d>,
+) -> Result<Vec<IntentCandidate>, StepFatal>;
+
 fn fixture() -> (GameSession, PlanExecutionRequest) {
     crate::session::plan_chain_candidates_tests::execution_fixture()
 }
@@ -70,21 +86,9 @@ fn coordinator(
 #[test]
 fn continuation_entry_points_take_only_the_narrow_write_domain() {
     fn witness<'d>(
-        _advance: fn(
-            &mut AdaptivePlanChainCoordinator,
-            &mut PlanContinuationDomain<'d>,
-            &[CandidateValidationOutcome],
-            Option<&mut ContinuousExecutionRound>,
-        ) -> Result<(), StepFatal>,
-        _project: fn(
-            &mut AdaptivePlanChainCoordinator,
-            &mut PlanContinuationDomain<'d>,
-            &mut ContinuousExecutionRound,
-        ) -> Result<(), StepFatal>,
-        _next: fn(
-            &mut AdaptivePlanChainCoordinator,
-            &mut PlanContinuationDomain<'d>,
-        ) -> Result<Vec<IntentCandidate>, StepFatal>,
+        _advance: AdvanceWitness<'d>,
+        _project: ProjectWitness<'d>,
+        _next: NextBatchWitness<'d>,
     ) {
     }
     witness(

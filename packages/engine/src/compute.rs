@@ -54,7 +54,7 @@ pub struct ComputeContext {
     /// 上下文时后写者生效（与准入台账同域，登记为已知形状）。
     active_width: std::sync::atomic::AtomicUsize,
     #[cfg(any(test, feature = "verification-harness"))]
-    observer: std::sync::RwLock<Option<std::sync::Arc<dyn Fn(ComputeObservation) + Send + Sync>>>,
+    observer: std::sync::RwLock<Option<ComputeObserver>>,
     /// 派发门（测试/验证专用）：派发点成功预留之后、spawn 入队之前调用，
     /// 用于把「预留返回与 spawn 之间」的计数窗口钉成确定交错（round4
     /// ①-必修a 的红测试）。仅本上下文显式设置时生效，互不干扰。
@@ -253,6 +253,9 @@ pub enum ComputeWork {
     /// ReceiptAggregation 大账本完整校验（≥512 行的并行 row 审计）。
     ReceiptAggregationAudit,
 }
+
+#[cfg(any(test, feature = "verification-harness"))]
+type ComputeObserver = std::sync::Arc<dyn Fn(ComputeObservation) + Send + Sync>;
 
 #[cfg(any(test, feature = "verification-harness"))]
 #[derive(Clone, Copy, Debug, serde::Serialize)]

@@ -20,6 +20,9 @@ use super::{
 
 use crate::strategy::beliefs::{BeliefBook, BeliefEntry, BeliefError, BeliefInputs};
 
+type OwnKnownAnnualPriority = (AccountingPeriod, bool, u8, u32);
+type OwnKnownAnnualCandidate = (PublicationId, CivilInstant, OwnKnownAnnualPriority);
+
 /// 信念更新因果（唯一变更入口；携带事件/公布 id 供追溯）。
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum BeliefCause {
@@ -447,11 +450,7 @@ impl BeliefBook {
         inputs: &BeliefInputs<'_, impl Sized>,
         scope: Option<&crate::accounting::consolidation::ScopeId>,
     ) -> Result<Option<(PublicationId, CivilInstant)>, BeliefError> {
-        let mut best: Option<(
-            PublicationId,
-            CivilInstant,
-            (AccountingPeriod, bool, u8, u32),
-        )> = None;
+        let mut best: Option<OwnKnownAnnualCandidate> = None;
         for entry in inputs.ctx.acquired_reports() {
             if entry.company != inputs.company {
                 continue;

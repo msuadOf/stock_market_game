@@ -4,6 +4,9 @@
 //! 设计见 docs/superpowers/specs/2026-06-29-session-design.md。
 //! 纯逻辑、无 I/O、无全局可变状态（联机预留：实例即隔离）。
 
+/// 每只股票的日 K 行情历史与累计成交日数。
+pub type RuntimeDailyHistory = (Vec<(i64, i64, i64, i64, u64)>, u64);
+
 mod account_book;
 mod account_paged_map;
 mod attention;

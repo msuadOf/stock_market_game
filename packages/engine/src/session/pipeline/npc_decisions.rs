@@ -6,6 +6,9 @@ use crate::{AccountId, SplitMix64};
 use std::collections::BTreeSet;
 use std::sync::{mpsc, Arc};
 
+#[cfg(any(test, feature = "verification-harness"))]
+pub(in crate::session) type DecidePostSendHold = Arc<dyn Fn(AccountId) + Send + Sync>;
+
 /// NPC raw intent 携带身份；候选 composition 必须保留该身份。
 #[derive(Clone, Debug, serde::Serialize)]
 pub(in crate::session) struct NpcDecisionIntent {
@@ -289,9 +292,8 @@ pub(in crate::session) fn decide_npc_account_from_shared(
 /// 之前调用——用于确定性钉住「send 已发生、Drop 未发生」窗口（d2）与
 /// spawn/inline 分计探针（d3/d4）。阻塞回调会钉住该任务的 guard 持有期。
 #[cfg(any(test, feature = "verification-harness"))]
-static DECIDE_POST_SEND_HOLD: std::sync::Mutex<
-    Option<std::sync::Arc<dyn Fn(AccountId) + Send + Sync>>,
-> = std::sync::Mutex::new(None);
+static DECIDE_POST_SEND_HOLD: std::sync::Mutex<Option<DecidePostSendHold>> =
+    std::sync::Mutex::new(None);
 
 /// 测试/验证钩子：命中账户的 decide 任务在计算前 panic（p1/p2 原 payload
 /// 重抛验收；payload 为 &'static str 便于 downcast 判等）。
@@ -301,9 +303,7 @@ static DECIDE_PANIC_ACCOUNTS: std::sync::Mutex<std::collections::BTreeSet<Accoun
 
 /// 安装 send 后 guard 前的 hold 钩子（仅测试/验证构建）。
 #[cfg(any(test, feature = "verification-harness"))]
-pub(in crate::session) fn set_decide_post_send_hold(
-    hold: Option<std::sync::Arc<dyn Fn(AccountId) + Send + Sync>>,
-) {
+pub(in crate::session) fn set_decide_post_send_hold(hold: Option<DecidePostSendHold>) {
     *DECIDE_POST_SEND_HOLD.lock().expect("hold 钩子锁被 poison") = hold;
 }
 

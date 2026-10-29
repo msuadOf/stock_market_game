@@ -7,6 +7,9 @@ use super::tests::{amount, date, fixture};
 use super::*;
 use crate::company::simple::period::{PeriodNoiseConfig, SettlementCycle, TrendSegment};
 
+type ExpectedJournalLine = (String, PostingSide, AccountingAmount);
+type ExpectedJournalEntry<'a> = (&'a str, Vec<ExpectedJournalLine>);
+
 /// 结算末日账簿中「逐项分录」的期望形状（kind 字符串 + 借贷行）。
 /// 用字符串断言以兼容红测阶段（旧实现只有混合摘要分录，红测仍可编译运行）。
 fn kind_string(kind: &BusinessKind) -> String {
@@ -56,7 +59,7 @@ fn settlement_posts_one_journal_entry_per_explicit_item_with_dedicated_kinds() {
         })
         .collect();
     assert!(blended.is_empty(), "不得再用混合摘要分录承载多项明确项目");
-    let expected: Vec<(&str, Vec<(String, PostingSide, AccountingAmount)>)> = vec![
+    let expected: Vec<ExpectedJournalEntry<'_>> = vec![
         (
             "SimpleRevenueAccrual",
             vec![

@@ -1,4 +1,4 @@
-use super::{Event, GameSession, SaveSlot, SessionError};
+use super::{Event, GameSession, RuntimeDailyHistory, SaveSlot, SessionError};
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, thiserror::Error)]
 pub enum StepFatal {
@@ -1769,7 +1769,7 @@ impl GameSession {
     /// 侧分流）。
     pub fn runtime_daily_histories(
         &self,
-    ) -> std::collections::BTreeMap<crate::StockId, (Vec<(i64, i64, i64, i64, u64)>, u64)> {
+    ) -> std::collections::BTreeMap<crate::StockId, RuntimeDailyHistory> {
         self.state
             .candle_book
             .histories()

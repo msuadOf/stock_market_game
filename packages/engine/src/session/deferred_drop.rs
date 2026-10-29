@@ -59,9 +59,11 @@ pub(super) mod controlled {
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::mpsc::SyncSender;
 
+    type AnyObserver = Box<dyn FnMut(&dyn Any)>;
+
     struct Installed {
         backend: Backend,
-        observe: Option<Box<dyn FnMut(&dyn Any)>>,
+        observe: Option<AnyObserver>,
     }
 
     thread_local! {
@@ -94,7 +96,7 @@ pub(super) mod controlled {
         }
     }
 
-    fn install(backend: Backend, observe: Option<Box<dyn FnMut(&dyn Any)>>) -> Reset {
+    fn install(backend: Backend, observe: Option<AnyObserver>) -> Reset {
         BACKEND.with(|slot| {
             assert!(slot.borrow().is_none(), "controlled backend 不支持嵌套");
             *slot.borrow_mut() = Some(Installed { backend, observe });

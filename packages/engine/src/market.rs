@@ -13,6 +13,8 @@ use crate::strategy::LimitPrice;
 use std::collections::BTreeMap;
 use thiserror::Error;
 
+pub(crate) type MarketDepth = (Vec<(Money, u64)>, Vec<(Money, u64)>);
+
 /// market 操作失败。绝不静默吞掉（铁律二）。
 #[derive(Debug, Error)]
 pub enum MarketError {
@@ -397,10 +399,7 @@ impl Market {
         Ok(())
     }
 
-    pub(crate) fn depth_before_sequence(
-        &self,
-        cutoff: u64,
-    ) -> (Vec<(Money, u64)>, Vec<(Money, u64)>) {
+    pub(crate) fn depth_before_sequence(&self, cutoff: u64) -> MarketDepth {
         let mut bids = BTreeMap::<Money, u64>::new();
         let mut asks = BTreeMap::<Money, u64>::new();
         for order in self.resting_order_refs().filter(|order| order.seq < cutoff) {

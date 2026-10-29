@@ -3,6 +3,9 @@ use super::*;
 use crate::plans::{CandidateAssessment, PlanEvent, PlanId, PlanRevision};
 use std::collections::VecDeque;
 use std::sync::{mpsc, Arc};
+
+#[cfg(any(test, feature = "verification-harness"))]
+pub(in crate::session) type PlanRootAccountProbe = Arc<dyn Fn(AccountId) + Send + Sync>;
 mod adaptive;
 use super::decision_chain::{DecisionChainObservation, InstitutionDecisionRoot, RootReadContext};
 pub(in crate::session) use adaptive::FrozenPlanChainObservation;
@@ -256,15 +259,12 @@ pub(in crate::session) fn set_plan_root_drop_empty_probe(
 /// `sender.send(RootMessage::Prepared)` **成功后**以账户回调——F 已执行且
 /// 结果已发布的保持位锚点（早于协调者消费）。
 #[cfg(any(test, feature = "verification-harness"))]
-static PLAN_ROOT_PREPARED_PROBE: std::sync::Mutex<
-    Option<std::sync::Arc<dyn Fn(AccountId) + Send + Sync>>,
-> = std::sync::Mutex::new(None);
+static PLAN_ROOT_PREPARED_PROBE: std::sync::Mutex<Option<PlanRootAccountProbe>> =
+    std::sync::Mutex::new(None);
 
 /// 安装/清除 Prepared 发布探针（None=清除）。
 #[cfg(any(test, feature = "verification-harness"))]
-pub(in crate::session) fn set_plan_root_prepared_probe(
-    probe: Option<std::sync::Arc<dyn Fn(AccountId) + Send + Sync>>,
-) {
+pub(in crate::session) fn set_plan_root_prepared_probe(probe: Option<PlanRootAccountProbe>) {
     *PLAN_ROOT_PREPARED_PROBE
         .lock()
         .expect("Prepared 发布探针锁被 poison") = probe;
@@ -304,15 +304,12 @@ pub(in crate::session) fn clear_plan_root_published() {
 /// 账户入口探针（测试/验证专用；六审「账户身份明确化」）：bound 开头以
 /// 账户回调——观察点编排不再依赖无账户身份的 ordinal。
 #[cfg(any(test, feature = "verification-harness"))]
-static PLAN_ROOT_ACCOUNT_ENTRY_PROBE: std::sync::Mutex<
-    Option<std::sync::Arc<dyn Fn(AccountId) + Send + Sync>>,
-> = std::sync::Mutex::new(None);
+static PLAN_ROOT_ACCOUNT_ENTRY_PROBE: std::sync::Mutex<Option<PlanRootAccountProbe>> =
+    std::sync::Mutex::new(None);
 
 /// 安装/清除账户入口探针。
 #[cfg(any(test, feature = "verification-harness"))]
-pub(in crate::session) fn set_plan_root_account_entry_probe(
-    probe: Option<std::sync::Arc<dyn Fn(AccountId) + Send + Sync>>,
-) {
+pub(in crate::session) fn set_plan_root_account_entry_probe(probe: Option<PlanRootAccountProbe>) {
     *PLAN_ROOT_ACCOUNT_ENTRY_PROBE
         .lock()
         .expect("账户入口探针锁被 poison") = probe;
