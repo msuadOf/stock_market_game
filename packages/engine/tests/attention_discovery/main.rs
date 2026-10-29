@@ -117,11 +117,11 @@ fn discovery_weights_pin_every_public_signal_dimension() {
     let both_code = code("600104");
     let dropped_code = code("600105");
     let market = market_of(vec![
-        (quiet_code.clone(), quiet),
-        (moved_code.clone(), moved),
-        (volume_code.clone(), heavy_volume),
-        (both_code.clone(), moved_and_heavy),
-        (dropped_code.clone(), dropped),
+        (quiet_code, quiet),
+        (moved_code, moved),
+        (volume_code, heavy_volume),
+        (both_code, moved_and_heavy),
+        (dropped_code, dropped),
     ]);
 
     let weights = NpcAttentionState::discovery_weights(&market, &none);
@@ -131,11 +131,11 @@ fn discovery_weights_pin_every_public_signal_dimension() {
     assert_eq!(weights[&volume_code], 2.0, "异常相对量能 +1.0");
     assert_eq!(weights[&both_code], 3.0, "涨跌 + 量能叠加");
 
-    let exposed: BTreeSet<_> = [quiet_code.clone()].into_iter().collect();
+    let exposed: BTreeSet<_> = [quiet_code].into_iter().collect();
     let weights = NpcAttentionState::discovery_weights(&market, &exposed);
     assert_eq!(weights[&quiet_code], 3.0, "公告曝光 +2.0");
     assert_eq!(weights[&both_code], 3.0, "未曝光股票不受影响");
-    let exposed_all: BTreeSet<_> = [both_code.clone()].into_iter().collect();
+    let exposed_all: BTreeSet<_> = [both_code].into_iter().collect();
     let weights = NpcAttentionState::discovery_weights(&market, &exposed_all);
     assert_eq!(weights[&both_code], 5.0, "三信号全部命中 = 1+1+1+2");
 }

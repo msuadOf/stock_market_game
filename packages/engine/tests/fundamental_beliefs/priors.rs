@@ -56,7 +56,7 @@ pub(crate) fn form_on(
     let ctx = NpcObservationContext::new(npc, state, &sc.library, market_view).expect("ctx");
     let inputs = BeliefInputs {
         ctx: &ctx,
-        company: sc.company.clone(),
+        company: sc.company,
         kind: CompanyKind::Industrial,
         total_issued_shares: ISSUED_SHARES,
         as_of_anchor: TradingDay { ordinal: day },
@@ -175,7 +175,7 @@ fn no_trigger_keeps_belief_bytes_unchanged() {
     let ctx = NpcObservationContext::new(npc, &state, &sc.library, &market_view).expect("ctx");
     let inputs = BeliefInputs {
         ctx: &ctx,
-        company: sc.company.clone(),
+        company: sc.company,
         kind: CompanyKind::Industrial,
         total_issued_shares: ISSUED_SHARES,
         as_of_anchor: TradingDay { ordinal: 1_004 },
@@ -194,7 +194,7 @@ fn no_trigger_keeps_belief_bytes_unchanged() {
     // 真到期：同事实重估（数值不变），锚推进、原因记录。
     let inputs = BeliefInputs {
         ctx: &ctx,
-        company: sc.company.clone(),
+        company: sc.company,
         kind: CompanyKind::Industrial,
         total_issued_shares: ISSUED_SHARES,
         as_of_anchor: TradingDay { ordinal: 1_005 },
@@ -234,7 +234,7 @@ fn experience_confidence_bounds_and_once_per_order() {
     let ctx = NpcObservationContext::new(npc, &state, &sc.library, &market_view).expect("ctx");
     let inputs = BeliefInputs {
         ctx: &ctx,
-        company: sc.company.clone(),
+        company: sc.company,
         kind: CompanyKind::Industrial,
         total_issued_shares: ISSUED_SHARES,
         as_of_anchor: TradingDay { ordinal: 1_001 },

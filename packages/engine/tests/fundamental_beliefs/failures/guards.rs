@@ -175,7 +175,7 @@ fn unsupported_report_kind_and_company_mismatch() {
     assert_eq!(
         extract_annual_facts(&annual, &other, as_after_publication()),
         Err(ValuationUnavailable::CompanyMismatch {
-            expected: other.clone(),
+            expected: other,
             report: company(),
         })
     );

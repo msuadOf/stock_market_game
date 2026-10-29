@@ -190,7 +190,7 @@ fn one_public_announcement_never_synchronizes_all_npc_candidates() {
             let picked =
                 state.sample_discovery_stock(fixture.market(), &held, &watchlist, &exposed);
             if npc == 1 {
-                first_run.push(picked.clone());
+                first_run.push(picked);
             }
             match picked {
                 Some(picked) if picked == code("600101") => exposed_count += 1,

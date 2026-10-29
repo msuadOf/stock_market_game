@@ -180,7 +180,7 @@ fn closed_days_accrue_without_trading() {
         .enqueue_player_intent(
             player,
             Intent::PlaceLimit {
-                code: code.clone(),
+                code,
                 side: Side::Buy,
                 price: engine::LimitPrice::Highest,
                 qty: 100,
@@ -241,7 +241,7 @@ fn closed_days_accrue_without_trading() {
         .enqueue_player_intent(
             player,
             Intent::PlaceLimit {
-                code: code.clone(),
+                code,
                 side: Side::Sell,
                 price: engine::LimitPrice::Fixed(Money::from_cents(600)),
                 qty: 100,
@@ -986,7 +986,7 @@ fn closed_day_fixture_facts_probe_is_deterministic_evidence() {
         .enqueue_player_intent(
             player,
             Intent::PlaceLimit {
-                code: code.clone(),
+                code,
                 side: Side::Buy,
                 price: engine::LimitPrice::Highest,
                 qty: 100,

@@ -1715,14 +1715,12 @@ fn compact_fastest_events(
             }
             engine::Event::AuctionTick { tick, code, .. } => {
                 let day_tick = (tick.saturating_sub(1)) % safe_ticks_per_day;
-                auction_slot_ticks.insert((code.clone(), day_tick / 6), index);
+                auction_slot_ticks.insert((*code, day_tick / 6), index);
             }
             engine::Event::PriceTick { tick, code, .. } => {
                 let day_tick = (tick.saturating_sub(1)) % safe_ticks_per_day;
-                active_minute_ticks.insert(
-                    (code.clone(), day_tick.saturating_sub(auction_ticks) / 60),
-                    index,
-                );
+                active_minute_ticks
+                    .insert((*code, day_tick.saturating_sub(auction_ticks) / 60), index);
             }
             engine::Event::Trade { .. } => trade_indices.push(index),
             _ => {

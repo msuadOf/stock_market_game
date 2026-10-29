@@ -749,7 +749,7 @@ fn auction_fixture_preserves_exchange_identity_and_order_envelope_keys() {
         vec![
             engine::SavedEnvelopeKey {
                 account: AccountId(0),
-                stock: code.clone(),
+                stock: code,
                 order: engine::OrderId(1),
                 side: Side::Buy
             },
@@ -798,7 +798,7 @@ fn closing_auction_accepts_limit_orders_then_expires_an_unmatched_remainder_at_d
         .enqueue_player_intent(
             AccountId(0),
             Intent::PlaceLimit {
-                code: code.clone(),
+                code,
                 side: Side::Buy,
                 price: engine::LimitPrice::Fixed(Money::from_cents(9_900)),
                 qty: 100,
@@ -816,7 +816,7 @@ fn closing_auction_accepts_limit_orders_then_expires_an_unmatched_remainder_at_d
         .enqueue_player_intent(
             AccountId(0),
             Intent::Cancel {
-                code: code.clone(),
+                code,
                 id: engine::OrderId(1),
             },
         )
@@ -951,7 +951,7 @@ fn multi_stock_npc_auctions_report_only_real_trades_across_days() {
                 assert_eq!(*completed_phase, phase);
                 assert_eq!(*completed_tick, tick + 1);
                 assert!(completed
-                    .insert(code.clone(), (*clearing_price, *matched_volume))
+                    .insert(*code, (*clearing_price, *matched_volume))
                     .is_none());
             }
         }
@@ -1372,7 +1372,7 @@ fn restoring_mid_auction_preserves_deterministic_completion() {
         .enqueue_player_intent(
             AccountId(0),
             Intent::PlaceLimit {
-                code: code.clone(),
+                code,
                 side: Side::Buy,
                 price: engine::LimitPrice::Fixed(Money::from_cents(10_100)),
                 qty: 300,
@@ -1471,7 +1471,7 @@ fn auction_reserves_cash_across_multiple_orders() {
             .enqueue_player_intent(
                 AccountId(0),
                 Intent::PlaceLimit {
-                    code: code.clone(),
+                    code,
                     side: Side::Buy,
                     price: engine::LimitPrice::Fixed(Money::from_cents(10_000)),
                     qty: 100,
@@ -1517,7 +1517,7 @@ fn auction_reserves_sellable_shares_across_orders_and_restore() {
         .unwrap()
         .positions
         .insert(
-            code.clone(),
+            code,
             engine::PositionSnap {
                 qty: 100,
                 t1_locked: 0,
@@ -1531,7 +1531,7 @@ fn auction_reserves_sellable_shares_across_orders_and_restore() {
             .enqueue_player_intent(
                 AccountId(0),
                 Intent::PlaceLimit {
-                    code: code.clone(),
+                    code,
                     side: Side::Sell,
                     price: engine::LimitPrice::Fixed(Money::from_cents(10_000)),
                     qty: 100,
@@ -1572,7 +1572,7 @@ fn auction_reserves_sellable_shares_across_orders_and_restore() {
         .enqueue_player_intent(
             AccountId(0),
             Intent::PlaceLimit {
-                code: code.clone(),
+                code,
                 side: Side::Sell,
                 price: engine::LimitPrice::Fixed(Money::from_cents(10_000)),
                 qty: 100,
@@ -1626,7 +1626,7 @@ fn auction_order_can_be_canceled_during_the_first_third() {
         .enqueue_player_intent(
             AccountId(0),
             Intent::PlaceLimit {
-                code: code.clone(),
+                code,
                 side: Side::Buy,
                 price: engine::LimitPrice::Fixed(Money::from_cents(10_000)),
                 qty: 100,
@@ -1653,7 +1653,7 @@ fn auction_order_can_be_canceled_during_the_first_third() {
         .enqueue_player_intent(
             AccountId(0),
             Intent::Cancel {
-                code: code.clone(),
+                code,
                 id: engine::OrderId(1),
             },
         )
@@ -1692,7 +1692,7 @@ fn same_tick_auction_place_and_cancel_releases_the_order() {
         .enqueue_player_intent(
             AccountId(0),
             Intent::PlaceLimit {
-                code: code.clone(),
+                code,
                 side: Side::Buy,
                 price: engine::LimitPrice::Fixed(Money::from_cents(10_000)),
                 qty: 100,
@@ -1703,7 +1703,7 @@ fn same_tick_auction_place_and_cancel_releases_the_order() {
         .enqueue_player_intent(
             AccountId(0),
             Intent::Cancel {
-                code: code.clone(),
+                code,
                 id: engine::OrderId(1),
             },
         )
@@ -1747,7 +1747,7 @@ fn orders_are_rejected_during_the_0925_to_0930_preopen_window() {
         .enqueue_player_intent(
             AccountId(0),
             Intent::PlaceLimit {
-                code: code.clone(),
+                code,
                 side: Side::Buy,
                 price: engine::LimitPrice::Fixed(Money::from_cents(10_000)),
                 qty: 100,
@@ -1812,7 +1812,7 @@ fn symbolic_highest_opening_quote_keeps_its_resolved_price_after_restore_and_rol
         .enqueue_player_intent(
             AccountId(0),
             Intent::PlaceLimit {
-                code: code.clone(),
+                code,
                 side: Side::Buy,
                 price: engine::LimitPrice::Highest,
                 qty: 100,
@@ -1863,7 +1863,7 @@ fn symbolic_lowest_closing_quote_expires_and_releases_its_cash_at_day_end() {
         .enqueue_player_intent(
             AccountId(0),
             Intent::PlaceLimit {
-                code: code.clone(),
+                code,
                 side: Side::Buy,
                 price: engine::LimitPrice::Lowest,
                 qty: 100,

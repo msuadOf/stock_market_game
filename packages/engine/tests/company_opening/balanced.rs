@@ -203,8 +203,7 @@ fn default_registry_maps_five_stocks_with_exact_share_capital() {
     // 固定集团关系：测试工商实体是 600101 发行人的子公司（用于合并报表）。
     let parent = registry
         .issuer_of(&StockCode("600101".to_string()))
-        .expect("600101 issuer")
-        .clone();
+        .expect("600101 issuer");
     let subsidiary = registry
         .get(
             &registry

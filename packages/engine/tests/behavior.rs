@@ -91,7 +91,7 @@ impl BehaviorScenario {
             .keys()
             .map(|code| {
                 (
-                    code.clone(),
+                    *code,
                     StockView {
                         best_bid: Some(Money::from_cents(999)),
                         best_ask: Some(Money::from_cents(1_001)),
@@ -194,7 +194,7 @@ fn own_and_risk(
     let own = SelfView {
         cash: Money::from_cents(10_000_000),
         positions: [(
-            code.clone(),
+            *code,
             PositionView {
                 qty,
                 sellable_qty,
@@ -208,7 +208,7 @@ fn own_and_risk(
         return_from_reference: None,
         drawdown_from_peak: None,
         positions: [(
-            code.clone(),
+            *code,
             PositionRiskObservation {
                 market_value: Money::from_cents(i64::from(qty) * 1_000),
                 unrealized_return: Some(pnl),
@@ -313,8 +313,7 @@ fn unrelated_market_stocks_do_not_change_a_retailers_target() {
 #[test]
 fn position_risk_is_evaluated_after_a_deep_loss_goes_flat() {
     let code = StockId(0);
-    let scenario =
-        BehaviorScenario::from_paths([(code.clone(), path(Some(0.0), Some(-0.10)))], 0.3);
+    let scenario = BehaviorScenario::from_paths([(code, path(Some(0.0), Some(-0.10)))], 0.3);
     let (own, risk) = own_and_risk(&code, 1_000, 1_000, -0.10, 0.10);
 
     let decision = decide_retail_position(
@@ -338,8 +337,7 @@ fn position_risk_is_evaluated_after_a_deep_loss_goes_flat() {
 #[test]
 fn same_deep_loss_can_be_held_by_a_long_term_person() {
     let code = StockId(0);
-    let scenario =
-        BehaviorScenario::from_paths([(code.clone(), path(Some(0.002), Some(-0.10)))], 0.3);
+    let scenario = BehaviorScenario::from_paths([(code, path(Some(0.002), Some(-0.10)))], 0.3);
     let (own, risk) = own_and_risk(&code, 1_000, 1_000, -0.10, 0.10);
 
     let decision = decide_retail_position(
@@ -364,8 +362,7 @@ fn same_deep_loss_can_be_held_by_a_long_term_person() {
 #[test]
 fn long_term_style_still_has_a_small_chance_to_reduce_a_deep_loss() {
     let code = StockId(0);
-    let scenario =
-        BehaviorScenario::from_paths([(code.clone(), path(Some(0.0), Some(-0.10)))], 0.3);
+    let scenario = BehaviorScenario::from_paths([(code, path(Some(0.0), Some(-0.10)))], 0.3);
     let (own, risk) = own_and_risk(&code, 1_000, 1_000, -0.10, 0.10);
 
     let decision = decide_retail_position(
@@ -390,8 +387,7 @@ fn long_term_style_still_has_a_small_chance_to_reduce_a_deep_loss() {
 #[test]
 fn risk_intent_respects_t1_before_execution() {
     let code = StockId(0);
-    let scenario =
-        BehaviorScenario::from_paths([(code.clone(), path(Some(0.001), Some(-0.10)))], 0.8);
+    let scenario = BehaviorScenario::from_paths([(code, path(Some(0.001), Some(-0.10)))], 0.8);
     let (own, risk) = own_and_risk(&code, 1_000, 0, -0.10, 0.60);
 
     let decision = decide_retail_position(
@@ -417,7 +413,7 @@ fn risk_intent_respects_t1_before_execution() {
 #[test]
 fn account_drawdown_reduces_a_panic_retailer_even_without_a_single_stock_stop_loss() {
     let code = StockId(0);
-    let scenario = BehaviorScenario::from_paths([(code.clone(), path(Some(0.0), Some(0.0)))], 0.2);
+    let scenario = BehaviorScenario::from_paths([(code, path(Some(0.0), Some(0.0)))], 0.2);
     let (own, mut risk) = own_and_risk(&code, 1_000, 1_000, 0.0, 0.60);
     // 单股本身未亏损；触发来源只能是账户相对其权威历史净值峰值的回撤。
     risk.drawdown_from_peak = Some(-0.12);
@@ -445,7 +441,7 @@ fn account_drawdown_reduces_a_panic_retailer_even_without_a_single_stock_stop_lo
 #[test]
 fn account_drawdown_can_still_be_held_by_a_long_term_retailer() {
     let code = StockId(0);
-    let scenario = BehaviorScenario::from_paths([(code.clone(), path(Some(0.0), Some(0.0)))], 0.2);
+    let scenario = BehaviorScenario::from_paths([(code, path(Some(0.0), Some(0.0)))], 0.2);
     let (own, mut risk) = own_and_risk(&code, 1_000, 1_000, 0.0, 0.60);
     risk.drawdown_from_peak = Some(-0.12);
 
@@ -470,7 +466,7 @@ fn account_drawdown_can_still_be_held_by_a_long_term_retailer() {
 #[test]
 fn account_drawdown_keeps_the_sell_intent_when_t1_locks_the_position() {
     let code = StockId(0);
-    let scenario = BehaviorScenario::from_paths([(code.clone(), path(Some(0.0), Some(0.0)))], 0.2);
+    let scenario = BehaviorScenario::from_paths([(code, path(Some(0.0), Some(0.0)))], 0.2);
     let (own, mut risk) = own_and_risk(&code, 1_000, 0, 0.0, 0.60);
     risk.drawdown_from_peak = Some(-0.12);
 
@@ -499,8 +495,8 @@ fn account_drawdown_uses_the_smaller_stock_code_to_break_equal_weight_ties() {
     let higher_code = StockId(1);
     let scenario = BehaviorScenario::from_paths(
         [
-            (lower_code.clone(), path(Some(0.0), Some(0.0))),
-            (higher_code.clone(), path(Some(0.0), Some(0.0))),
+            (lower_code, path(Some(0.0), Some(0.0))),
+            (higher_code, path(Some(0.0), Some(0.0))),
         ],
         0.2,
     );
@@ -508,7 +504,7 @@ fn account_drawdown_uses_the_smaller_stock_code_to_break_equal_weight_ties() {
         cash: Money::from_cents(10_000_000),
         positions: [
             (
-                lower_code.clone(),
+                lower_code,
                 PositionView {
                     qty: 1_000,
                     sellable_qty: 1_000,
@@ -516,7 +512,7 @@ fn account_drawdown_uses_the_smaller_stock_code_to_break_equal_weight_ties() {
                 },
             ),
             (
-                higher_code.clone(),
+                higher_code,
                 PositionView {
                     qty: 1_000,
                     sellable_qty: 1_000,
@@ -532,7 +528,7 @@ fn account_drawdown_uses_the_smaller_stock_code_to_break_equal_weight_ties() {
         drawdown_from_peak: Some(-0.12),
         positions: [
             (
-                lower_code.clone(),
+                lower_code,
                 PositionRiskObservation {
                     market_value: Money::from_cents(1_000_000),
                     unrealized_return: Some(0.0),
@@ -541,7 +537,7 @@ fn account_drawdown_uses_the_smaller_stock_code_to_break_equal_weight_ties() {
                 },
             ),
             (
-                higher_code.clone(),
+                higher_code,
                 PositionRiskObservation {
                     market_value: Money::from_cents(1_000_000),
                     unrealized_return: Some(0.0),
@@ -575,7 +571,7 @@ fn account_drawdown_uses_the_smaller_stock_code_to_break_equal_weight_ties() {
 #[should_panic(expected = "invalid equity weight")]
 fn account_drawdown_rejects_a_non_finite_held_weight() {
     let code = StockId(0);
-    let scenario = BehaviorScenario::from_paths([(code.clone(), path(Some(0.0), Some(0.0)))], 0.2);
+    let scenario = BehaviorScenario::from_paths([(code, path(Some(0.0), Some(0.0)))], 0.2);
     let (own, mut risk) = own_and_risk(&code, 1_000, 1_000, 0.0, 0.60);
     risk.drawdown_from_peak = Some(-0.12);
     risk.positions.get_mut(&code).unwrap().equity_weight = Some(f64::NAN);
@@ -599,7 +595,7 @@ fn momentum_can_buy_a_volume_confirmed_breakout_of_the_prior_market_range() {
     let code = StockId(0);
     let mut price_path = path(Some(0.0), Some(0.0));
     price_path.prior_thirty_minute_range = Some(prior_range(true, false));
-    let scenario = BehaviorScenario::from_paths([(code.clone(), price_path)], 0.2);
+    let scenario = BehaviorScenario::from_paths([(code, price_path)], 0.2);
     let (own, risk) = no_position();
 
     let decision = decide_retail_position(
@@ -625,7 +621,7 @@ fn dip_buyer_can_try_a_small_order_after_a_prior_range_breakdown() {
     let code = StockId(0);
     let mut price_path = path(Some(0.0), Some(0.0));
     price_path.prior_thirty_minute_range = Some(prior_range(false, true));
-    let scenario = BehaviorScenario::from_paths([(code.clone(), price_path)], 0.2);
+    let scenario = BehaviorScenario::from_paths([(code, price_path)], 0.2);
     let (own, risk) = no_position();
 
     let decision = decide_retail_position(
@@ -653,7 +649,7 @@ fn momentum_range_breakdown_keeps_the_sell_intent_when_t1_locks_the_position() {
     price_path.prior_thirty_minute_range = Some(prior_range(false, true));
     let scenario = BehaviorScenario::from_paths(
         [
-            (code.clone(), price_path),
+            (code, price_path),
             (StockId(1), path(Some(0.0), Some(0.0))),
             (StockId(2), path(Some(0.0), Some(0.0))),
         ],
@@ -688,8 +684,8 @@ fn sellable_risk_is_handled_before_a_more_severe_t1_locked_position() {
     let sellable = StockId(1);
     let scenario = BehaviorScenario::from_paths(
         [
-            (locked.clone(), path(Some(0.0), Some(-0.20))),
-            (sellable.clone(), path(Some(0.0), Some(-0.10))),
+            (locked, path(Some(0.0), Some(-0.20))),
+            (sellable, path(Some(0.0), Some(-0.10))),
         ],
         0.3,
     );
@@ -697,7 +693,7 @@ fn sellable_risk_is_handled_before_a_more_severe_t1_locked_position() {
         cash: Money::from_cents(10_000_000),
         positions: [
             (
-                locked.clone(),
+                locked,
                 PositionView {
                     qty: 1_000,
                     sellable_qty: 0,
@@ -705,7 +701,7 @@ fn sellable_risk_is_handled_before_a_more_severe_t1_locked_position() {
                 },
             ),
             (
-                sellable.clone(),
+                sellable,
                 PositionView {
                     qty: 1_000,
                     sellable_qty: 1_000,
@@ -730,7 +726,7 @@ fn sellable_risk_is_handled_before_a_more_severe_t1_locked_position() {
                 },
             ),
             (
-                sellable.clone(),
+                sellable,
                 PositionRiskObservation {
                     market_value: Money::from_cents(1_000_000),
                     unrealized_return: Some(-0.10),
@@ -767,7 +763,7 @@ fn held_stock_is_observed_before_an_unheld_discovery_candidate() {
     let scenario = BehaviorScenario::from_paths(
         [
             (other, path(Some(0.04), Some(0.0))),
-            (held.clone(), path(Some(0.0), Some(0.0))),
+            (held, path(Some(0.0), Some(0.0))),
         ],
         0.2,
     );
@@ -796,8 +792,8 @@ fn market_discovery_can_select_an_unheld_stock_after_the_sixty_percent_boundary(
     let discovered = StockId(1);
     let scenario = BehaviorScenario::from_paths(
         [
-            (held.clone(), path(Some(0.0), Some(0.0))),
-            (discovered.clone(), path(Some(0.0), Some(0.0))),
+            (held, path(Some(0.0), Some(0.0))),
+            (discovered, path(Some(0.0), Some(0.0))),
         ],
         0.2,
     );
@@ -822,8 +818,7 @@ fn market_discovery_can_select_an_unheld_stock_after_the_sixty_percent_boundary(
 #[test]
 fn styles_can_interpret_the_same_slow_fall_in_opposite_ways() {
     let code = StockId(0);
-    let scenario =
-        BehaviorScenario::from_paths([(code.clone(), path(Some(-0.04), Some(0.06)))], 0.3);
+    let scenario = BehaviorScenario::from_paths([(code, path(Some(-0.04), Some(0.06)))], 0.3);
     let (own, risk) = no_position();
 
     let dip_buyer = decide_retail_position(
@@ -889,10 +884,8 @@ fn flat_price_never_claims_a_pullback_or_momentum_signal() {
 #[test]
 fn broad_market_decline_changes_a_heavy_holders_response() {
     let code = StockId(0);
-    let calm_scenario =
-        BehaviorScenario::from_paths([(code.clone(), path(Some(-0.01), Some(0.0)))], 0.3);
-    let stress_scenario =
-        BehaviorScenario::from_paths([(code.clone(), path(Some(-0.01), Some(0.0)))], 0.8);
+    let calm_scenario = BehaviorScenario::from_paths([(code, path(Some(-0.01), Some(0.0)))], 0.3);
+    let stress_scenario = BehaviorScenario::from_paths([(code, path(Some(-0.01), Some(0.0)))], 0.8);
     let (own, risk) = own_and_risk(&code, 5_000, 5_000, -0.03, 0.60);
 
     let calm = decide_retail_position(
@@ -929,8 +922,7 @@ fn broad_market_decline_changes_a_heavy_holders_response() {
 #[test]
 fn same_loss_creates_more_pressure_for_a_heavy_position() {
     let code = StockId(0);
-    let scenario =
-        BehaviorScenario::from_paths([(code.clone(), path(Some(-0.01), Some(0.0)))], 0.8);
+    let scenario = BehaviorScenario::from_paths([(code, path(Some(-0.01), Some(0.0)))], 0.8);
     let (light_own, light_risk) = own_and_risk(&code, 1_000, 1_000, -0.03, 0.10);
     let (heavy_own, heavy_risk) = own_and_risk(&code, 5_000, 5_000, -0.03, 0.60);
 
@@ -967,7 +959,7 @@ fn same_loss_creates_more_pressure_for_a_heavy_position() {
 #[test]
 fn same_market_price_is_interpreted_from_each_persons_cost_basis() {
     let code = StockId(0);
-    let scenario = BehaviorScenario::from_paths([(code.clone(), path(Some(0.0), Some(0.0)))], 0.3);
+    let scenario = BehaviorScenario::from_paths([(code, path(Some(0.0), Some(0.0)))], 0.3);
     let (losing_own, losing_risk) = own_and_risk(&code, 1_000, 1_000, -0.10, 0.10);
     let (winning_own, winning_risk) = own_and_risk(&code, 1_000, 1_000, 0.10, 0.10);
 
@@ -1005,7 +997,7 @@ fn same_market_price_is_interpreted_from_each_persons_cost_basis() {
 #[test]
 fn dip_buying_and_dormancy_are_tendencies_not_permanent_prohibitions() {
     let code = StockId(0);
-    let scenario = BehaviorScenario::from_paths([(code.clone(), path(Some(0.0), Some(0.0)))], 0.3);
+    let scenario = BehaviorScenario::from_paths([(code, path(Some(0.0), Some(0.0)))], 0.3);
     let (losing_own, losing_risk) = own_and_risk(&code, 1_000, 1_000, -0.10, 0.10);
     let dip_exit = decide_retail_position(
         &strategy(),
@@ -1041,8 +1033,7 @@ fn dip_buying_and_dormancy_are_tendencies_not_permanent_prohibitions() {
 #[test]
 fn adding_to_an_existing_odd_lot_preserves_the_remainder_and_buys_whole_lots() {
     let code = StockId(0);
-    let scenario =
-        BehaviorScenario::from_paths([(code.clone(), path(Some(-0.04), Some(0.0)))], 0.2);
+    let scenario = BehaviorScenario::from_paths([(code, path(Some(-0.04), Some(0.0)))], 0.2);
     let (own, risk) = own_and_risk(&code, 50, 50, 0.0, 0.005);
 
     let decision = decide_retail_position(
@@ -1070,7 +1061,7 @@ fn adding_to_an_existing_odd_lot_preserves_the_remainder_and_buys_whole_lots() {
 #[test]
 fn reducing_an_odd_lot_position_sells_whole_lots_without_turning_into_exit() {
     let code = StockId(0);
-    let scenario = BehaviorScenario::from_paths([(code.clone(), path(Some(0.0), Some(0.0)))], 0.2);
+    let scenario = BehaviorScenario::from_paths([(code, path(Some(0.0), Some(0.0)))], 0.2);
     let (own, risk) = own_and_risk(&code, 150, 150, 0.10, 0.015);
 
     let decision = decide_retail_position(
@@ -1096,7 +1087,7 @@ fn reducing_an_odd_lot_position_sells_whole_lots_without_turning_into_exit() {
 #[should_panic(expected = "missing its equity weight")]
 fn malformed_held_position_risk_never_silently_becomes_zero_weight() {
     let code = StockId(0);
-    let scenario = BehaviorScenario::from_paths([(code.clone(), path(Some(0.0), Some(0.0)))], 0.2);
+    let scenario = BehaviorScenario::from_paths([(code, path(Some(0.0), Some(0.0)))], 0.2);
     let (own, mut risk) = own_and_risk(&code, 100, 100, -0.10, 0.01);
     risk.positions.get_mut(&code).unwrap().equity_weight = None;
 
@@ -1117,7 +1108,7 @@ fn malformed_held_position_risk_never_silently_becomes_zero_weight() {
 #[test]
 fn unavailable_cost_return_is_skipped_without_fabricating_position_risk() {
     let code = StockId(0);
-    let scenario = BehaviorScenario::from_paths([(code.clone(), path(Some(0.0), Some(0.0)))], 0.2);
+    let scenario = BehaviorScenario::from_paths([(code, path(Some(0.0), Some(0.0)))], 0.2);
     let (own, mut risk) = own_and_risk(&code, 100, 100, 0.0, 0.01);
     risk.positions.get_mut(&code).unwrap().unrealized_return = None;
     let mut no_arrival = strategy();
@@ -1143,8 +1134,7 @@ fn unavailable_cost_return_is_skipped_without_fabricating_position_risk() {
 #[test]
 fn repeated_filled_buy_failures_reduce_willingness_to_try_the_same_pullback() {
     let code = StockId(0);
-    let scenario =
-        BehaviorScenario::from_paths([(code.clone(), path(Some(-0.04), Some(0.02)))], 0.2);
+    let scenario = BehaviorScenario::from_paths([(code, path(Some(-0.04), Some(0.02)))], 0.2);
     let (own, risk) = no_position();
     let mut experienced = RetailExperienceState::new(Money::from_cents(10_000_000)).unwrap();
     experienced.consecutive_failed_buys = 3;
@@ -1207,8 +1197,7 @@ fn repeated_filled_buy_failures_reduce_willingness_to_try_the_same_pullback() {
 #[test]
 fn post_exit_cooldown_blocks_reentry_but_not_later_discovery() {
     let code = StockId(0);
-    let scenario =
-        BehaviorScenario::from_paths([(code.clone(), path(Some(-0.04), Some(0.02)))], 0.2);
+    let scenario = BehaviorScenario::from_paths([(code, path(Some(-0.04), Some(0.02)))], 0.2);
     let (own, risk) = no_position();
     let mut experience = RetailExperienceState::new(Money::from_cents(10_000_000)).unwrap();
     experience
@@ -1271,8 +1260,7 @@ fn post_exit_cooldown_blocks_reentry_but_not_later_discovery() {
 #[test]
 fn a_previously_hurt_long_term_holder_can_reduce_near_break_even() {
     let code = StockId(0);
-    let scenario =
-        BehaviorScenario::from_paths([(code.clone(), path(Some(0.0), Some(-0.05)))], 0.2);
+    let scenario = BehaviorScenario::from_paths([(code, path(Some(0.0), Some(-0.05)))], 0.2);
     let (own, risk) = own_and_risk(&code, 1_000, 1_000, 0.005, 0.10);
     let mut experience = RetailExperienceState::new(Money::from_cents(10_000_000)).unwrap();
     experience.consecutive_failed_buys = 2;
@@ -1299,7 +1287,7 @@ fn a_previously_hurt_long_term_holder_can_reduce_near_break_even() {
 #[test]
 fn observed_profit_giveback_differs_from_a_fresh_position_at_the_same_cost_return() {
     let code = StockId(0);
-    let scenario = BehaviorScenario::from_paths([(code.clone(), path(Some(0.0), Some(0.0)))], 0.2);
+    let scenario = BehaviorScenario::from_paths([(code, path(Some(0.0), Some(0.0)))], 0.2);
     let (own, mut risk) = own_and_risk(&code, 1_000, 1_000, 0.03, 0.10);
     risk.positions
         .get_mut(&code)
@@ -1398,7 +1386,7 @@ fn thirty_market_minutes_drive_the_signal_instead_of_flat_tick_history() {
 #[test]
 fn unavailable_market_time_history_never_fabricates_a_trend_reason() {
     let code = StockId(0);
-    let scenario = BehaviorScenario::from_paths([(code.clone(), path(None, None))], 0.0);
+    let scenario = BehaviorScenario::from_paths([(code, path(None, None))], 0.0);
     let (own, risk) = no_position();
 
     let decision = decide_retail_position(
@@ -1421,7 +1409,7 @@ fn unavailable_market_time_history_never_fabricates_a_trend_reason() {
 #[test]
 fn base_trading_can_supply_liquidity_without_fabricating_a_trend_signal() {
     let code = StockId(0);
-    let scenario = BehaviorScenario::from_paths([(code.clone(), path(None, None))], 0.0);
+    let scenario = BehaviorScenario::from_paths([(code, path(None, None))], 0.0);
     let (own, risk) = no_position();
 
     let decision = decide_retail_position(
@@ -1446,8 +1434,7 @@ fn base_trading_can_supply_liquidity_without_fabricating_a_trend_signal() {
 #[test]
 fn target_position_is_split_into_a_legal_child_sell_order() {
     let code = StockId(0);
-    let scenario =
-        BehaviorScenario::from_paths([(code.clone(), path(Some(0.0), Some(-0.10)))], 0.3);
+    let scenario = BehaviorScenario::from_paths([(code, path(Some(0.0), Some(-0.10)))], 0.3);
     let (own, risk) = own_and_risk(&code, 1_000, 1_000, -0.10, 0.10);
     let mut strategy = ZiNoiseStrategy::new(1.0, 500, 0.5).unwrap();
 
@@ -1479,8 +1466,7 @@ fn target_position_is_split_into_a_legal_child_sell_order() {
 #[test]
 fn target_position_does_not_bypass_t1_when_forming_the_child_order() {
     let code = StockId(0);
-    let scenario =
-        BehaviorScenario::from_paths([(code.clone(), path(Some(0.0), Some(-0.10)))], 0.8);
+    let scenario = BehaviorScenario::from_paths([(code, path(Some(0.0), Some(-0.10)))], 0.8);
     let (own, risk) = own_and_risk(&code, 1_000, 0, -0.10, 0.60);
     let mut strategy = ZiNoiseStrategy::new(1.0, 500, 0.5).unwrap();
 
@@ -1503,7 +1489,7 @@ fn target_position_does_not_bypass_t1_when_forming_the_child_order() {
 #[test]
 fn behavior_noise_buy_uses_the_observed_highest_legal_limit() {
     let code = StockId(0);
-    let scenario = BehaviorScenario::from_paths([(code.clone(), path(None, None))], 0.0);
+    let scenario = BehaviorScenario::from_paths([(code, path(None, None))], 0.0);
     let (own, risk) = no_position();
     let mut strategy = ZiNoiseStrategy::new(1.0, 500, 0.0).unwrap();
     let decision = strategy.decide_with_behavior(

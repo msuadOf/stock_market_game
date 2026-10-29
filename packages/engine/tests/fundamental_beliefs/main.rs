@@ -180,7 +180,7 @@ impl FundamentalBeliefCase {
         )?;
         let inputs = BeliefInputs {
             ctx: &ctx,
-            company: self.scenario.company.clone(),
+            company: self.scenario.company,
             kind: self.issuer.kind,
             total_issued_shares: self.issuer.total_issued_shares,
             as_of_anchor,
@@ -249,7 +249,7 @@ pub(crate) fn scenario() -> Scenario {
             .publish_closed(
                 &closing,
                 PublicationRequest {
-                    company: company.clone(),
+                    company,
                     scope: ScopeId::Standalone(member.clone()),
                     period: AccountingPeriod::from_ymd(year, 12).expect("annual period"),
                     kind: ReportKind::Annual,
@@ -273,7 +273,7 @@ pub(crate) fn scenario() -> Scenario {
     let announcement_date = d("2031-04-01");
     let announcement_id = library
         .publish_announcement(AnnouncementRequest {
-            company: company.clone(),
+            company,
             occurred_on: announcement_date,
             published_at: CivilInstant::from_hms(announcement_date, 18, 0, 0).expect("phase"),
             content: engine::information::AnnouncementContent::Shock(AnnouncedEvent {

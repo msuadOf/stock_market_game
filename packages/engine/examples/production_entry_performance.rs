@@ -127,7 +127,7 @@ fn execute(workload: Workload, input_fingerprint: String) -> Result<serde_json::
                     .wrapping_mul(workload.player_orders_per_tick)
                     .wrapping_add(offset)
                     % stock_codes.len();
-                let code = stock_codes[stock_index].clone();
+                let code = stock_codes[stock_index];
                 let price = quotes
                     .get(&code)
                     .ok_or_else(|| format!("stock {code:?} has no runtime quote"))?

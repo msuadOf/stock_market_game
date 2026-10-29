@@ -87,7 +87,7 @@ fn prepared_prior_session() -> (GameSession, AccountId, AccountId, StockId, u32)
             },
             &BeliefInputs {
                 ctx: &context,
-                company: company.clone(),
+                company,
                 kind: CompanyKind::Industrial,
                 total_issued_shares: issued_shares,
                 // 开局前已获知的历史材料，没有本局已开始的交易会话。
@@ -103,7 +103,7 @@ fn prepared_prior_session() -> (GameSession, AccountId, AccountId, StockId, u32)
     let mut game = GameSession::restore(&save).unwrap();
     let annual_report_id = |game: &GameSession| {
         game.query_public_reports(&engine::company::PublicReportQuery {
-            company_id: company.0.clone(),
+            company_id: company.0,
             cursor: None,
             page_size: Some(100),
         })

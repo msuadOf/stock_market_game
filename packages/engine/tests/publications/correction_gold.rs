@@ -45,7 +45,7 @@ fn correction_preserves_previous_version() {
         .publish_closed(
             &closing,
             PublicationRequest {
-                company: company.clone(),
+                company,
                 scope: scope.clone(),
                 period: AccountingPeriod::from_ymd(2030, 12).expect("annual period"),
                 kind: ReportKind::Annual,
@@ -100,7 +100,7 @@ fn correction_preserves_previous_version() {
                 reason: "遗漏现金收入更正".to_string(),
             },
             PublicationRequest {
-                company: company.clone(),
+                company,
                 scope: scope.clone(),
                 period: AccountingPeriod::from_ymd(2030, 12).expect("annual period"),
                 kind: ReportKind::Annual,
@@ -144,7 +144,7 @@ fn correction_preserves_previous_version() {
                 reason: "遗漏现金收入更正".to_string(),
             },
             PublicationRequest {
-                company: company.clone(),
+                company,
                 scope: scope.clone(),
                 period: AccountingPeriod::from_ymd(2030, 12).expect("annual period"),
                 kind: ReportKind::Annual,

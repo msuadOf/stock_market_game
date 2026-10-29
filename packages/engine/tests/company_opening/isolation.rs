@@ -81,7 +81,7 @@ fn account_states(session: &GameSession) -> AccountStates {
                     .iter()
                     .map(|(code, position)| {
                         (
-                            code.0.clone(),
+                            code.0,
                             position.qty(),
                             position.t1_locked(),
                             position.invested_cents(),
@@ -192,8 +192,7 @@ fn initialization_does_not_pay_investors() {
     // 公司现金在公司账套内而非任何交易账户。
     let issuer = registry
         .issuer_of(&StockCode("600101".to_string()))
-        .expect("600101 issuer")
-        .clone();
+        .expect("600101 issuer");
     let company = registry.get(&issuer).expect("issuer registered");
     let lenders: Vec<_> = company
         .counterparties()

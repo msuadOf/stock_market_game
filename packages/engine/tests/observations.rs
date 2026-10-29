@@ -320,7 +320,7 @@ fn account_risk_accepts_nonpositive_net_cost_without_inventing_a_return() {
     let code = StockId(0);
     for cost in [None, Some(i64::MIN), Some(-157), Some(0)] {
         let positions = BTreeMap::from([(
-            code.clone(),
+            code,
             RiskPositionInput {
                 qty: 100,
                 cost_price: cost.map(price),
@@ -350,7 +350,7 @@ fn account_risk_accepts_nonpositive_net_cost_without_inventing_a_return() {
 fn account_risk_rejects_invalid_market_prices_peaks_and_references() {
     let code = StockId(0);
     let invalid_price = BTreeMap::from([(
-        code.clone(),
+        code,
         RiskPositionInput {
             qty: 100,
             cost_price: Some(price(-157)),

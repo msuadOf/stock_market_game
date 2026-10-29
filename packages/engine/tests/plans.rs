@@ -1073,14 +1073,13 @@ fn inconsistent_plan_book_state_is_rejected_on_restore() {
         })
         .unwrap()
         .account();
-    let code = restored
+    let code = *restored
         .plan(PlanId {
             owner: AccountId(7),
             sequence: 1,
         })
         .unwrap()
-        .code()
-        .clone();
+        .code();
     assert_eq!(
         restored
             .active_investor_plan(account, &code)

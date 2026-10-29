@@ -49,7 +49,7 @@ fn batch4_t1_unfreeze_clears_frozen_after_day_end() {
                 engine::ReceiptBearingIntent {
                     owner: engine::AccountId(1),
                     intent: engine::Intent::PlaceLimit {
-                        code: code.clone(),
+                        code,
                         side: engine::Side::Sell,
                         price: engine::strategy::LimitPrice::Fixed(price),
                         qty: 100,
@@ -60,7 +60,7 @@ fn batch4_t1_unfreeze_clears_frozen_after_day_end() {
                 engine::ReceiptBearingIntent {
                     owner: engine::AccountId(0),
                     intent: engine::Intent::PlaceLimit {
-                        code: code.clone(),
+                        code,
                         side: engine::Side::Buy,
                         price: engine::strategy::LimitPrice::Fixed(price),
                         qty: 100,

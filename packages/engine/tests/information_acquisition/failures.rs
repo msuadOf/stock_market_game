@@ -161,14 +161,12 @@ fn tampered_restore_rejected() {
         observed_at: t,
         kind: AcquiredKind::Report,
     };
-    let company = sc.company.clone();
+    let company = sc.company;
 
     // 公司内重复 id。
     let duplicated = NpcInformationStateSave {
         owner: a,
-        companies: [(company.clone(), vec![record(), record()])]
-            .into_iter()
-            .collect(),
+        companies: [(company, vec![record(), record()])].into_iter().collect(),
     };
     assert!(matches!(
         NpcInformationState::from_parts(duplicated).unwrap_err(),
@@ -183,9 +181,7 @@ fn tampered_restore_rejected() {
     };
     let unsorted = NpcInformationStateSave {
         owner: a,
-        companies: [(company.clone(), vec![later, record()])]
-            .into_iter()
-            .collect(),
+        companies: [(company, vec![later, record()])].into_iter().collect(),
     };
     assert!(matches!(
         NpcInformationState::from_parts(unsorted).unwrap_err(),
@@ -211,7 +207,7 @@ fn tampered_restore_rejected() {
         let mut save = NpcInformationStateSave {
             owner: a,
             companies: [(
-                sc.company.clone(),
+                sc.company,
                 vec![AcquisitionRecord {
                     id: sc.announcement_id,
                     observed_at: t,

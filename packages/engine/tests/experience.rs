@@ -266,7 +266,7 @@ fn watchlist_pruning_keeps_every_holding_and_only_the_most_recent_unheld_stocks(
         .record_fill(&held, Side::Buy, Money::from_cents(1_000), 0, 100, None, 20)
         .unwrap();
 
-    state.prune_watchlist(&BTreeSet::from([held.clone()]));
+    state.prune_watchlist(&BTreeSet::from([held]));
 
     assert!(state.stocks.contains_key(&held));
     assert_eq!(state.stocks.keys().filter(|code| **code != held).count(), 8);

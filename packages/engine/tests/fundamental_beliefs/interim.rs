@@ -62,7 +62,7 @@ fn own_known_interim_supplements_growth_without_replacing_annual_earnings() {
             .publish_closed(
                 &closing,
                 PublicationRequest {
-                    company: scenario.company.clone(),
+                    company: scenario.company,
                     scope: ScopeId::Standalone(member),
                     period: AccountingPeriod::from_ymd(2031, 6).unwrap(),
                     kind: ReportKind::HalfYear,

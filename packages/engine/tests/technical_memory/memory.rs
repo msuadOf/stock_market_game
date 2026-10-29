@@ -72,7 +72,7 @@ fn prune_keeps_protected_and_eight_most_recent_unheld_stocks() {
             .unwrap();
     }
 
-    let protected = BTreeSet::from([held.clone()]);
+    let protected = BTreeSet::from([held]);
     memory.prune(&protected);
 
     assert!(memory.stock(&held).is_some());

@@ -234,7 +234,7 @@ fn restore_rejects_duplicate_order_id_without_mutating_the_source_session() {
             .enqueue_player_intent(
                 AccountId(0),
                 Intent::PlaceLimit {
-                    code: code.clone(),
+                    code,
                     side: Side::Buy,
                     price: engine::LimitPrice::Fixed(Money::from_cents(1_000)),
                     qty: 100,

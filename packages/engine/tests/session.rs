@@ -244,7 +244,7 @@ impl TestOrderSaveFixture {
                 .unwrap()
                 .positions
                 .insert(
-                    code.clone(),
+                    code,
                     engine::PositionSnap {
                         qty: 100,
                         t1_locked: 0,
@@ -278,7 +278,7 @@ impl TestOrderSaveFixture {
                 seq: u64::from(offset),
             });
         }
-        save.resting_orders.insert(code.clone(), orders);
+        save.resting_orders.insert(code, orders);
         // 这些用例只验证既有挂单的结算与费用；避免卖方 NPC 在同一 tick 重新观察后
         // 按策略撤掉测试夹具中的挂单。
         for attention in save.npc_attention.values_mut() {
@@ -346,7 +346,7 @@ impl TestOrderSaveFixture {
                 envelopes.push(engine::SavedLiveEnvelope {
                     key: engine::SavedEnvelopeKey {
                         account: order.owner,
-                        stock: stock.clone(),
+                        stock: *stock,
                         order: order.id,
                         side: order.side,
                     },
@@ -402,7 +402,7 @@ impl TestOrderSaveFixture {
                             .expect("fixture order cash sum must fit Money");
                     }
                     Side::Sell => {
-                        let reserved = expected_sells.entry(code.clone()).or_insert(0_u32);
+                        let reserved = expected_sells.entry(*code).or_insert(0_u32);
                         *reserved = reserved
                             .checked_add(qty)
                             .expect("fixture order share sum must fit u32");
@@ -427,7 +427,7 @@ fn order_save_fixture_restores_envelopes_cursors_and_reservations() {
     );
     let save = fixture.save_mut();
     save.resting_orders.insert(
-        code.clone(),
+        code,
         vec![
             engine::Order {
                 id: engine::OrderId(1),
@@ -454,7 +454,7 @@ fn order_save_fixture_restores_envelopes_cursors_and_reservations() {
         ],
     );
     save.next_order_id = 3;
-    save.book_next_sequences.insert(code.clone(), 42);
+    save.book_next_sequences.insert(code, 42);
 
     let restored = fixture.restore().expect("coordinated orders must restore");
     let rebuilt = restored.snapshot();
@@ -596,7 +596,7 @@ fn chinext_enforces_limit_and_market_order_quantity_caps() {
     for (intent, should_reject) in [
         (
             engine::Intent::PlaceLimit {
-                code: code.clone(),
+                code,
                 side: engine::Side::Buy,
                 price: LimitPrice::Fixed(Money::from_cents(1000)),
                 qty: 300_000,
@@ -605,7 +605,7 @@ fn chinext_enforces_limit_and_market_order_quantity_caps() {
         ),
         (
             engine::Intent::PlaceLimit {
-                code: code.clone(),
+                code,
                 side: engine::Side::Buy,
                 price: LimitPrice::Fixed(Money::from_cents(1000)),
                 qty: 300_100,
@@ -614,7 +614,7 @@ fn chinext_enforces_limit_and_market_order_quantity_caps() {
         ),
         (
             engine::Intent::PlaceMarket {
-                code: code.clone(),
+                code,
                 side: engine::Side::Buy,
                 qty: 150_000,
             },
@@ -622,7 +622,7 @@ fn chinext_enforces_limit_and_market_order_quantity_caps() {
         ),
         (
             engine::Intent::PlaceMarket {
-                code: code.clone(),
+                code,
                 side: engine::Side::Buy,
                 qty: 150_100,
             },
@@ -652,7 +652,7 @@ fn continuous_limit_orders_obey_102_and_98_percent_price_cages() {
         .enqueue_player_intent(
             AccountId(0),
             engine::Intent::PlaceLimit {
-                code: code.clone(),
+                code,
                 side: engine::Side::Sell,
                 price: LimitPrice::Fixed(Money::from_cents(1000)),
                 qty: 100,
@@ -665,7 +665,7 @@ fn continuous_limit_orders_obey_102_and_98_percent_price_cages() {
         .enqueue_player_intent(
             AccountId(0),
             engine::Intent::PlaceLimit {
-                code: code.clone(),
+                code,
                 side: engine::Side::Buy,
                 price: LimitPrice::Fixed(Money::from_cents(1021)),
                 qty: 100,
@@ -762,7 +762,7 @@ fn observed_buy_limit_is_rechecked_after_an_earlier_order_changes_the_reference(
     let mut session = player_session_with_position(100, 10_000_000);
     // Observe the empty 10-yuan book before the earlier sell is admitted.
     let observed_buy = engine::Intent::PlaceLimit {
-        code: code.clone(),
+        code,
         side: engine::Side::Buy,
         price: LimitPrice::Fixed(Money::from_cents(1020)),
         qty: 100,
@@ -771,7 +771,7 @@ fn observed_buy_limit_is_rechecked_after_an_earlier_order_changes_the_reference(
         .enqueue_player_intent(
             AccountId(0),
             engine::Intent::PlaceLimit {
-                code: code.clone(),
+                code,
                 side: engine::Side::Sell,
                 price: LimitPrice::Fixed(Money::from_cents(990)),
                 qty: 100,
@@ -844,7 +844,7 @@ fn disabling_price_cage_allows_daily_limits_but_keeps_daily_band_validation() {
             .enqueue_player_intent(
                 AccountId(0),
                 engine::Intent::PlaceLimit {
-                    code: code.clone(),
+                    code,
                     side,
                     price: LimitPrice::Fixed(Money::from_cents(permitted)),
                     qty: 100,
@@ -1099,7 +1099,7 @@ fn restore_rebuilds_reservations_after_account_asset_edit() {
         .enqueue_player_intent(
             AccountId(0),
             Intent::PlaceLimit {
-                code: code.clone(),
+                code,
                 side: Side::Buy,
                 price: LimitPrice::Fixed(Money::from_cents(1_000)),
                 qty: 100,
@@ -1322,7 +1322,7 @@ fn auction_does_not_emit_regular_price_ticks_and_rejects_market_orders() {
         .enqueue_player_intent(
             AccountId(0),
             Intent::PlaceMarket {
-                code: code.clone(),
+                code,
                 side: Side::Buy,
                 // 合法整手数量使请求进入 Auction worker，并在那里拒绝不支持的市价委托。
                 // 不足一手的请求会先被 AccountValidation 拒绝，无法覆盖此竞价拒绝契约。
@@ -1440,7 +1440,7 @@ fn market_resources(session: &GameSession, account_count: usize) -> MarketResour
         cash += i128::from(account.cash().cents());
         for (code, position) in account.positions() {
             assert!(position.t1_locked() <= position.qty());
-            *shares.entry(code.clone()).or_default() += u64::from(position.qty());
+            *shares.entry(*code).or_default() += u64::from(position.qty());
         }
     }
     shares.retain(|_, qty| *qty > 0);
@@ -1463,10 +1463,10 @@ fn assert_tick_accounting(
             } => {
                 assert!(*qty > 0 && *price > Money::ZERO);
                 let gross = i128::from(price.cents()) * i128::from(*qty);
-                let totals = emitted.entry(code.clone()).or_default();
+                let totals = emitted.entry(*code).or_default();
                 totals.0 += u64::from(*qty);
                 totals.1 += gross;
-                let daily = trade_totals.entry(code.clone()).or_default();
+                let daily = trade_totals.entry(*code).or_default();
                 daily.0 += u64::from(*qty);
                 daily.1 += gross;
                 daily.2 += 1;
@@ -1506,7 +1506,7 @@ fn assert_tick_accounting(
                 &mut sell_fills
             }
         };
-        let totals = fills.entry(receipt.envelope.stock.clone()).or_default();
+        let totals = fills.entry(receipt.envelope.stock).or_default();
         totals.0 += u64::from(qty);
         totals.1 += i128::from(gross.cents());
     }
@@ -2010,7 +2010,7 @@ fn assert_large_population_roundtrip_and_complete_a_full_market_day(setup: Sessi
                         ..
                     } => {
                         assert_eq!(*event_tick, tick + 1);
-                        Some(code.clone())
+                        Some(*code)
                     }
                     _ => None,
                 })
@@ -3296,7 +3296,7 @@ fn allocated_market_produces_trades() {
         "初始流通盘分配必须给 NPC 至少一个卖出整手"
     );
     save.resting_orders.insert(
-        code.clone(),
+        code,
         vec![engine::Order {
             id: engine::OrderId(1),
             side: Side::Sell,
@@ -3408,7 +3408,7 @@ fn all_stocks_produce_trades_multistock() {
             .unwrap_or_else(|| panic!("{code_value} 的初始流通盘必须产生整手 NPC 持仓"));
         let price = save.snapshot.markets[&code].last_price;
         save.resting_orders.insert(
-            code.clone(),
+            code,
             vec![engine::Order {
                 id: engine::OrderId(next_order_id),
                 side: Side::Sell,
@@ -3517,7 +3517,7 @@ fn snapshot_depth_empty_initially_and_populated_after_order() {
     s.enqueue_player_intent(
         AccountId(0),
         engine::strategy::Intent::PlaceLimit {
-            code: code.clone(),
+            code,
             side: Side::Buy,
             price: LimitPrice::Fixed(Money::from_cents(1000)),
             qty: 100,
@@ -3583,7 +3583,7 @@ fn sell_order_with_zero_cash_is_accepted_without_cash_escrow() {
         .unwrap()
         .positions
         .insert(
-            code.clone(),
+            code,
             engine::PositionSnap {
                 qty: 100,
                 t1_locked: 0,
@@ -3596,7 +3596,7 @@ fn sell_order_with_zero_cash_is_accepted_without_cash_escrow() {
         .enqueue_player_intent(
             AccountId(0),
             Intent::PlaceLimit {
-                code: code.clone(),
+                code,
                 side: Side::Sell,
                 price: LimitPrice::Fixed(Money::from_cents(1)),
                 qty: 100,
@@ -3642,7 +3642,7 @@ fn sell_order_reserves_only_shares_for_a_possible_small_partial_fill() {
         .unwrap()
         .positions
         .insert(
-            code.clone(),
+            code,
             engine::PositionSnap {
                 qty: 1_000,
                 t1_locked: 0,
@@ -3655,7 +3655,7 @@ fn sell_order_reserves_only_shares_for_a_possible_small_partial_fill() {
         .enqueue_player_intent(
             AccountId(0),
             Intent::PlaceLimit {
-                code: code.clone(),
+                code,
                 side: Side::Sell,
                 price: LimitPrice::Fixed(Money::from_cents(1)),
                 qty: 1_000,
@@ -3702,7 +3702,7 @@ fn sell_order_does_not_consume_the_buy_orders_cash_reservation_budget() {
             .unwrap()
             .positions
             .insert(
-                code.clone(),
+                code,
                 engine::PositionSnap {
                     qty: 100,
                     t1_locked: 0,
@@ -3719,7 +3719,7 @@ fn sell_order_does_not_consume_the_buy_orders_cash_reservation_budget() {
             .enqueue_player_intent(
                 AccountId(0),
                 Intent::PlaceLimit {
-                    code: code.clone(),
+                    code,
                     side: first_side,
                     price: LimitPrice::Fixed(first_price),
                     qty: 100,
@@ -3744,7 +3744,7 @@ fn sell_order_does_not_consume_the_buy_orders_cash_reservation_budget() {
             .enqueue_player_intent(
                 AccountId(0),
                 Intent::PlaceLimit {
-                    code: code.clone(),
+                    code,
                     side: second_side,
                     price: LimitPrice::Fixed(second_price),
                     qty: 100,
@@ -3781,7 +3781,7 @@ fn continuous_multi_fill_charges_one_minimum_commission_per_account_batch() {
         .enqueue_player_intent(
             AccountId(0),
             Intent::PlaceLimit {
-                code: code.clone(),
+                code,
                 side: Side::Buy,
                 price: LimitPrice::Fixed(Money::from_cents(1_000)),
                 qty: 200,
@@ -3822,7 +3822,7 @@ fn daily_trade_turnover_uses_a_lossless_decimal_string_in_json() {
         .enqueue_player_intent(
             AccountId(0),
             Intent::PlaceLimit {
-                code: code.clone(),
+                code,
                 side: Side::Buy,
                 price: LimitPrice::Fixed(Money::from_cents(1_000)),
                 qty: 100,
@@ -3887,7 +3887,7 @@ fn resting_maker_buy_split_across_later_takers_stays_fully_reserved() {
         .unwrap()
         .positions
         .insert(
-            code.clone(),
+            code,
             engine::PositionSnap {
                 qty: 200,
                 t1_locked: 0,
@@ -3920,7 +3920,7 @@ fn resting_maker_buy_split_across_later_takers_stays_fully_reserved() {
             .enqueue_player_intent(
                 AccountId(0),
                 Intent::PlaceLimit {
-                    code: code.clone(),
+                    code,
                     side: Side::Sell,
                     price: LimitPrice::Fixed(Money::from_cents(1_000)),
                     qty: 100,
@@ -3959,7 +3959,7 @@ fn resting_sell_orders_reserve_shares_at_acceptance() {
             .enqueue_player_intent(
                 AccountId(0),
                 Intent::PlaceLimit {
-                    code: code.clone(),
+                    code,
                     side: Side::Sell,
                     price: LimitPrice::Fixed(Money::from_cents(1000)),
                     qty: 100,
@@ -3989,7 +3989,7 @@ fn resting_sell_orders_reserve_shares_at_acceptance() {
         .enqueue_player_intent(
             AccountId(0),
             Intent::PlaceLimit {
-                code: code.clone(),
+                code,
                 side: Side::Sell,
                 price: LimitPrice::Fixed(Money::from_cents(1000)),
                 qty: 100,
@@ -4022,7 +4022,7 @@ fn resting_buy_orders_reserve_cash_at_acceptance() {
             .enqueue_player_intent(
                 AccountId(0),
                 Intent::PlaceLimit {
-                    code: code.clone(),
+                    code,
                     side: Side::Buy,
                     price: LimitPrice::Fixed(Money::from_cents(1000)),
                     qty: 100,
@@ -4056,7 +4056,7 @@ fn continuous_cancel_removes_order_and_releases_reserved_cash() {
         .enqueue_player_intent(
             AccountId(0),
             Intent::PlaceLimit {
-                code: code.clone(),
+                code,
                 side: Side::Buy,
                 price: LimitPrice::Fixed(Money::from_cents(1000)),
                 qty: 100,
@@ -4073,13 +4073,7 @@ fn continuous_cancel_removes_order_and_releases_reserved_cash() {
         .expect("resting order must publish its id");
 
     session
-        .enqueue_player_intent(
-            AccountId(0),
-            Intent::Cancel {
-                code: code.clone(),
-                id: order_id,
-            },
-        )
+        .enqueue_player_intent(AccountId(0), Intent::Cancel { code, id: order_id })
         .unwrap();
     let canceled = session.step().expect("healthy step");
 
@@ -4126,7 +4120,7 @@ fn unfilled_market_order_never_rests_in_the_book() {
         .enqueue_player_intent(
             AccountId(0),
             Intent::PlaceMarket {
-                code: code.clone(),
+                code,
                 side: Side::Sell,
                 qty: 100,
             },
@@ -4164,7 +4158,7 @@ fn day_boundary_clears_daily_orders_and_releases_reservations() {
         .enqueue_player_intent(
             AccountId(0),
             Intent::PlaceLimit {
-                code: code.clone(),
+                code,
                 side: Side::Buy,
                 price: LimitPrice::Fixed(Money::from_cents(1000)),
                 qty: 100,
@@ -4287,7 +4281,7 @@ fn a_share_t1_locked_shares_unlock_at_the_day_boundary() {
         .unwrap()
         .positions
         .insert(
-            code.clone(),
+            code,
             engine::PositionSnap {
                 qty: 100,
                 t1_locked: 100,
@@ -4313,7 +4307,7 @@ fn save_restore_preserves_pending_player_intents() {
         .enqueue_player_intent(
             AccountId(0),
             Intent::PlaceLimit {
-                code: code.clone(),
+                code,
                 side: Side::Buy,
                 price: LimitPrice::Fixed(Money::from_cents(1_000)),
                 qty: 100,
@@ -4366,7 +4360,7 @@ fn save_restore_preserves_resting_orders_and_their_reservations() {
         .enqueue_player_intent(
             AccountId(0),
             Intent::PlaceLimit {
-                code: code.clone(),
+                code,
                 side: Side::Buy,
                 price: LimitPrice::Fixed(Money::from_cents(1000)),
                 qty: 100,
@@ -4393,7 +4387,7 @@ fn save_restore_preserves_resting_orders_and_their_reservations() {
         .enqueue_player_intent(
             AccountId(0),
             Intent::PlaceLimit {
-                code: code.clone(),
+                code,
                 side: Side::Buy,
                 price: LimitPrice::Fixed(Money::from_cents(1000)),
                 qty: 100,
@@ -4416,7 +4410,7 @@ fn save_restore_preserves_resting_orders_and_their_reservations() {
         .enqueue_player_intent(
             AccountId(0),
             Intent::Cancel {
-                code: code.clone(),
+                code,
                 id: original_id,
             },
         )
@@ -4435,7 +4429,7 @@ fn assert_book_cursor_continues_after_cancel(empty_book: bool) {
     let code = sid();
     let mut original = player_session_with_position(0, 10_000_000);
     let buy = Intent::PlaceLimit {
-        code: code.clone(),
+        code,
         side: Side::Buy,
         price: LimitPrice::Fixed(Money::from_cents(1000)),
         qty: 100,
@@ -4452,13 +4446,7 @@ fn assert_book_cursor_continues_after_cancel(empty_book: bool) {
     for order in &orders {
         if empty_book || order.seq != orders[1].seq {
             original
-                .enqueue_player_intent(
-                    AccountId(0),
-                    Intent::Cancel {
-                        code: code.clone(),
-                        id: order.id,
-                    },
-                )
+                .enqueue_player_intent(AccountId(0), Intent::Cancel { code, id: order.id })
                 .unwrap();
         }
     }
@@ -4518,7 +4506,7 @@ fn restore_preserves_sparse_same_price_fifo_before_matching() {
     // Saved array order is not the priority: owner 2 arrived before owner 1.
     orders[0].seq = 9;
     orders[1].seq = 3;
-    save.book_next_sequences.insert(code.clone(), 20);
+    save.book_next_sequences.insert(code, 20);
     let mut restored = GameSession::restore(&save).unwrap();
     assert_eq!(
         restored.save().unwrap().resting_orders[&code]
@@ -4531,7 +4519,7 @@ fn restore_preserves_sparse_same_price_fifo_before_matching() {
         .enqueue_player_intent(
             AccountId(0),
             Intent::PlaceLimit {
-                code: code.clone(),
+                code,
                 side: Side::Buy,
                 price: LimitPrice::Fixed(Money::from_cents(1000)),
                 qty: 100,
@@ -4599,9 +4587,7 @@ fn restore_rejects_missing_unknown_or_nonadvancing_book_cursors() {
     let order = &mut nonadvancing.resting_orders.get_mut(&code).unwrap()[0];
     order.seq = 5;
     for cursor in [0, 4, 5] {
-        nonadvancing
-            .book_next_sequences
-            .insert(code.clone(), cursor);
+        nonadvancing.book_next_sequences.insert(code, cursor);
         // 数值断言替代原文本断言 "below cursor"
         // （fault1038：恢复连续竞价挂单失败，内层 ProjectionMismatch::UnsafeSeq 被压平）。
         assert!(
@@ -4634,7 +4620,7 @@ fn book_cursors_are_required_decimal_u64_values_in_the_save_contract() {
     let source = player_session_with_position(0, 10_000_000);
     let mut save = source.save().unwrap();
     for cursor in [0, 9_007_199_254_740_992, u64::MAX] {
-        save.book_next_sequences.insert(code.clone(), cursor);
+        save.book_next_sequences.insert(code, cursor);
         let json = serde_json::to_value(&save).unwrap();
         assert_eq!(
             json["book_next_sequences"][code.0.to_string()],
@@ -4652,7 +4638,7 @@ fn book_cursors_are_required_decimal_u64_values_in_the_save_contract() {
     boundary.resting_orders.get_mut(&code).unwrap()[0].seq = 9_007_199_254_740_991;
     boundary
         .book_next_sequences
-        .insert(code.clone(), 9_007_199_254_740_992);
+        .insert(code, 9_007_199_254_740_992);
     let restored = GameSession::restore(&boundary).unwrap().save().unwrap();
     assert_eq!(
         serde_json::to_value(restored).unwrap(),
@@ -5264,14 +5250,14 @@ fn unified_book_restores_call_auction_resting_orders_in_auction_mode() {
             seq: 1,
         });
     save.next_order_id = 2;
-    save.book_next_sequences.insert(code.clone(), 2);
+    save.book_next_sequences.insert(code, 2);
     // 与真实存档一致：在场委托必须伴随 live envelope（未成交买单费用审计为零）。
     save.runtime_state
         .live_envelopes
         .push(engine::SavedLiveEnvelope {
             key: engine::SavedEnvelopeKey {
                 account: AccountId(0),
-                stock: code.clone(),
+                stock: code,
                 order: engine::OrderId(1),
                 side: Side::Buy,
             },
@@ -5317,7 +5303,7 @@ fn restore_rejects_unreachable_t1_locks() {
         .unwrap()
         .positions
         .insert(
-            code.clone(),
+            code,
             engine::PositionSnap {
                 qty: 100,
                 t1_locked: 100,
@@ -5366,7 +5352,7 @@ fn restore_rejects_split_odd_lot_sell_orders() {
     let session = player_session_with_position(150, 10_000_000);
     let mut save = session.save().expect("healthy save");
     save.resting_orders.insert(
-        code.clone(),
+        code,
         vec![
             engine::Order {
                 id: engine::OrderId(1),
@@ -5394,7 +5380,7 @@ fn restore_rejects_split_odd_lot_sell_orders() {
     );
     save.next_order_id = 3;
     // Keep the new cursor valid so the original quantity/value corruption is tested.
-    save.book_next_sequences.insert(code.clone(), 3);
+    save.book_next_sequences.insert(code, 3);
 
     // 数值断言替代原文本断言 "odd-lot"（fault2179：卖出数量拆分零股尾差违规）。
     assert!(matches!(
@@ -5425,7 +5411,7 @@ fn restore_accepts_non_lot_remainders_after_a_real_partial_fill() {
         .unwrap()
         .positions
         .insert(
-            code.clone(),
+            code,
             engine::PositionSnap {
                 qty: 25,
                 t1_locked: 0,
@@ -5449,7 +5435,7 @@ fn restore_accepts_non_lot_remainders_after_a_real_partial_fill() {
         )
         .unwrap();
     initial_save.resting_orders.insert(
-        code.clone(),
+        code,
         vec![engine::Order {
             id: engine::OrderId(1),
             side: Side::Sell,
@@ -5469,7 +5455,7 @@ fn restore_accepts_non_lot_remainders_after_a_real_partial_fill() {
         .enqueue_player_intent(
             AccountId(0),
             Intent::PlaceLimit {
-                code: code.clone(),
+                code,
                 side: Side::Buy,
                 price: LimitPrice::Fixed(Money::from_cents(1000)),
                 qty: 100,
@@ -5526,7 +5512,7 @@ fn restore_validates_multiple_partial_sell_orders_independently_of_storage_order
     ] {
         let mut fixture = TestOrderSaveFixture::from_save(session.save().expect("healthy save"));
         let save = fixture.save_mut();
-        save.resting_orders.insert(code.clone(), orders);
+        save.resting_orders.insert(code, orders);
         save.next_order_id = 3;
 
         assert!(fixture.restore().is_ok());
@@ -5539,7 +5525,7 @@ fn restore_rejects_filled_value_without_matching_quantity_progress() {
     let session = player_session_with_position(0, 10_000_000);
     let mut save = session.save().expect("healthy save");
     save.resting_orders.insert(
-        code.clone(),
+        code,
         vec![engine::Order {
             id: engine::OrderId(1),
             side: Side::Buy,
@@ -5554,7 +5540,7 @@ fn restore_rejects_filled_value_without_matching_quantity_progress() {
     );
     save.next_order_id = 2;
     // Keep the new cursor valid so the original quantity/value corruption is tested.
-    save.book_next_sequences.insert(code.clone(), 2);
+    save.book_next_sequences.insert(code, 2);
 
     // 数值断言替代原文本断言 "invalid saved resting order"
     // （fault2164：存档挂单字段非法，成交金额与数量进度不自洽）。
@@ -5571,7 +5557,7 @@ fn restore_rejects_partial_fill_values_that_violate_the_limit_price_direction() 
     let buy_session = player_session_with_position(0, 10_000_000);
     let mut buy_save = buy_session.save().expect("healthy save");
     buy_save.resting_orders.insert(
-        code.clone(),
+        code,
         vec![engine::Order {
             id: engine::OrderId(1),
             side: Side::Buy,
@@ -5586,7 +5572,7 @@ fn restore_rejects_partial_fill_values_that_violate_the_limit_price_direction() 
     );
     buy_save.next_order_id = 2;
     // Keep the new cursor valid so the original quantity/value corruption is tested.
-    buy_save.book_next_sequences.insert(code.clone(), 2);
+    buy_save.book_next_sequences.insert(code, 2);
     // 数值断言替代原文本断言 "filled value"（fault2176：已成交金额超出价格界限乘积）。
     assert!(matches!(
         GameSession::restore(&buy_save),
@@ -5596,7 +5582,7 @@ fn restore_rejects_partial_fill_values_that_violate_the_limit_price_direction() 
     let sell_session = player_session_with_position(200, 10_000_000);
     let mut sell_save = sell_session.save().expect("healthy save");
     sell_save.resting_orders.insert(
-        code.clone(),
+        code,
         vec![engine::Order {
             id: engine::OrderId(1),
             side: Side::Sell,
@@ -5611,7 +5597,7 @@ fn restore_rejects_partial_fill_values_that_violate_the_limit_price_direction() 
     );
     sell_save.next_order_id = 2;
     // Keep the new cursor valid so the original quantity/value corruption is tested.
-    sell_save.book_next_sequences.insert(code.clone(), 2);
+    sell_save.book_next_sequences.insert(code, 2);
     // 数值断言替代原文本断言 "filled value"（fault2176：已成交金额超出价格界限乘积）。
     assert!(matches!(
         GameSession::restore(&sell_save),
@@ -5645,7 +5631,7 @@ fn symbolic_highest_resolves_after_the_earlier_order_and_survives_save_as_a_fixe
     let mut fixture = TestOrderSaveFixture::new(setup, 42);
     fixture.add_position(
         AccountId(1),
-        code.clone(),
+        code,
         engine::PositionSnap {
             qty: 100,
             t1_locked: 0,
@@ -5672,7 +5658,7 @@ fn symbolic_highest_resolves_after_the_earlier_order_and_survives_save_as_a_fixe
             .unwrap();
         // 在先卖单（9.90×100）——受理先于 Highest（到达序即原语义）。
         save.resting_orders.insert(
-            code.clone(),
+            code,
             vec![engine::Order {
                 id: engine::OrderId(1),
                 side: Side::Sell,
@@ -5758,7 +5744,7 @@ fn symbolic_highest_admitted_before_the_sell_can_move_its_price_cage() {
         .enqueue_player_intent(
             AccountId(0),
             Intent::PlaceLimit {
-                code: code.clone(),
+                code,
                 side: Side::Sell,
                 price: LimitPrice::Fixed(Money::from_cents(990)),
                 qty: 100,
@@ -5842,7 +5828,7 @@ fn symbolic_buy_releases_excess_escrow_only_for_the_next_tick_across_stocks() {
 
     let mut session = GameSession::new(setup, 42).unwrap();
     let second_request = Intent::PlaceLimit {
-        code: second_code.clone(),
+        code: second_code,
         side: Side::Buy,
         price: LimitPrice::Fixed(Money::from_cents(50)),
         qty: 100,
@@ -5851,7 +5837,7 @@ fn symbolic_buy_releases_excess_escrow_only_for_the_next_tick_across_stocks() {
         .enqueue_player_intent(
             AccountId(0),
             Intent::PlaceLimit {
-                code: first_code.clone(),
+                code: first_code,
                 side: Side::Buy,
                 price: LimitPrice::Highest,
                 qty: 100,
@@ -5910,7 +5896,7 @@ fn zz_probe_s7_events() {
         .enqueue_player_intent(
             AccountId(0),
             Intent::PlaceLimit {
-                code: code.clone(),
+                code,
                 side: Side::Sell,
                 price: LimitPrice::Fixed(Money::from_cents(990)),
                 qty: 100,

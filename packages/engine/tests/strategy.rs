@@ -127,7 +127,7 @@ fn noise_orders_use_the_observed_highest_buy_and_lowest_sell_prices() {
     let own = SelfView {
         cash: Money::from_cents(1_000_000),
         positions: [(
-            code.clone(),
+            code,
             PositionView {
                 qty: 100,
                 sellable_qty: 100,
@@ -236,7 +236,7 @@ fn retail_random_sell_selects_an_actually_sellable_holding() {
     let held = engine::StockId(1);
     let mut stocks = one_stock_view(1_000).stocks;
     stocks.insert(
-        held.clone(),
+        held,
         StockView {
             best_bid: Some(Money::from_cents(999)),
             best_ask: Some(Money::from_cents(1_001)),
@@ -258,7 +258,7 @@ fn retail_random_sell_selects_an_actually_sellable_holding() {
     let own = SelfView {
         cash: Money::from_cents(1_000_000),
         positions: [(
-            held.clone(),
+            held,
             PositionView {
                 qty: 100,
                 sellable_qty: 100,

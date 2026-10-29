@@ -57,7 +57,7 @@ impl Base {
             .publish_closed(
                 &closing,
                 PublicationRequest {
-                    company: company.clone(),
+                    company,
                     scope: scope.clone(),
                     period: AccountingPeriod::from_ymd(2030, 3).expect("q1 period"),
                     kind: ReportKind::Quarter,

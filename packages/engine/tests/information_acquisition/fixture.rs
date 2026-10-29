@@ -211,7 +211,7 @@ impl Scenario {
             .publish_closed(
                 &closing,
                 PublicationRequest {
-                    company: company.clone(),
+                    company,
                     scope: ScopeId::Standalone(member.clone()),
                     period: AccountingPeriod::from_ymd(2030, 12).expect("annual period"),
                     kind: ReportKind::Annual,
@@ -235,7 +235,7 @@ impl Scenario {
             CivilInstant::from_hms(announcement_date, 18, 0, 0).expect("announcement phase");
         let announcement_id = library
             .publish_announcement(AnnouncementRequest {
-                company: company.clone(),
+                company,
                 occurred_on: announcement_date,
                 published_at: announcement_instant,
                 content: engine::information::AnnouncementContent::Shock(AnnouncedEvent {
@@ -296,7 +296,7 @@ impl Scenario {
             .publish_closed(
                 &self.closing,
                 PublicationRequest {
-                    company: self.company.clone(),
+                    company: self.company,
                     scope: ScopeId::Standalone(self.member.clone()),
                     period: AccountingPeriod::from_ymd(2030, 12).expect("annual period"),
                     kind: ReportKind::Annual,
