@@ -1,6 +1,8 @@
 //! 税阶段实际账户投影校验；不计算法定税额，不将 prepare 当作实收。
 use crate::runtime::group::GroupAccount;
-use crate::runtime::world::{AdminCandidate, AdminOperation, AdminTransactionId};
+#[cfg(test)]
+use crate::runtime::world::AdminCandidate;
+use crate::runtime::world::{AdminOperation, AdminTransactionId};
 use crate::runtime::{GroupIdx, LocalIdx, StockIdx};
 
 #[derive(Clone, Debug, PartialEq, Eq)]

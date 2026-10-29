@@ -1,12 +1,16 @@
 use std::collections::BTreeMap;
 
 use super::{chart::acct, line, RealEstateBooks, RealEstateError};
+#[cfg(test)]
+use crate::accounting::Books;
 use crate::accounting::{
-    AccountingAmount, AccountingPeriod, Books, BusinessEventId, BusinessKind, CashFlowClass,
+    AccountingAmount, AccountingPeriod, BusinessEventId, BusinessKind, CashFlowClass,
     IncomeTaxPolicy, JournalEntry, PostingSide,
 };
 use crate::calendar::CivilDate;
-use crate::company::income_tax::{IncomeTaxOwnerError, IncomeTaxPosition};
+use crate::company::income_tax::IncomeTaxOwnerError;
+#[cfg(test)]
+use crate::company::income_tax::IncomeTaxPosition;
 use crate::company::IncomeTaxOutcome;
 
 pub(super) fn map_tax_error(error: IncomeTaxOwnerError) -> RealEstateError {

@@ -2650,15 +2650,15 @@ impl World {
         .map_err(|error| RuntimeError::ProtocolInvariant {
             detail: error.to_string(),
         })?;
-        clock.validate(
-            &self.calendar_source,
-            &self.calendar_bindings,
-            self.civil_date,
-            self.tick_layout,
+        clock.validate(super::information_clock_context::ExpectedInformationClock {
+            source: &self.calendar_source,
+            bindings: &self.calendar_bindings,
+            date: self.civil_date,
+            layout: self.tick_layout,
             input,
             through,
             anchors,
-        )
+        })
     }
 
     /// 读取既有失败生命周期，调用方不得把 terminal 失败作为业务拒绝重试。

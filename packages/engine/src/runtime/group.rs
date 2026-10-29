@@ -7652,8 +7652,8 @@ pub(crate) fn group_main(
 mod v5_shutdown_idle_window_tests {
     #[cfg(test)]
     use super::{
-        group_main, Arc, AtomicBool, DeskBatch, Entity, GroupAccount, GroupIn, GroupState,
-        Observed, Ordering, TickPlan, UpMsg,
+        group_main, Arc, AtomicBool, DeskBatch, Entity, GroupAccount, GroupIn, GroupSetup,
+        GroupState, Observed, Ordering, TickPlan, UpMsg,
     };
 
     /// 四审 A1 关停竞态的确定性回归：正常关停（Drain→Shutdown→Final
