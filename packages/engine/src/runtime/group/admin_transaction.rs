@@ -684,6 +684,8 @@ impl GroupState {
             }
             Ok(result) => {
                 #[cfg(test)]
+                let mut result = result;
+                #[cfg(test)]
                 if let Ok(candidate) = &mut result {
                     if let Some(AdminFault::StagePrepareCorruption(mode)) = &fault {
                         let prepared = candidate

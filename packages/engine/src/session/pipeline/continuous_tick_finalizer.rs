@@ -440,6 +440,8 @@ mod lifecycle_tests {
         setup.npcs.inst_count = 0;
         let session = GameSession::new(setup, 42).unwrap();
         #[cfg(feature = "simulation-diagnostics")]
+        let mut session = session;
+        #[cfg(feature = "simulation-diagnostics")]
         {
             let (_, context) = session.prepare_market_calendar_tick().unwrap();
             session.state.tick = context.after_input().tick;

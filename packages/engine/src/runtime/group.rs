@@ -3399,6 +3399,8 @@ impl GroupState {
             .find(|(owner, _)| *owner == account)
             .map(|(_, by_code)| by_code)
             .unwrap_or_default();
+        #[cfg(test)]
+        let mut assessments_map = assessments_map;
         // D3b 件 4 fixture 通道：注入候选替代 observe 产物（复审块+开仓
         // 循环同源——chain_restructure 测试的 drive_once 等价面；一次
         // 消费即清，注入不跨拍）。
@@ -7497,6 +7499,8 @@ pub fn group_main(
                             .map(|acct| (local, acct.clone()))
                     })
                     .collect();
+                #[cfg(test)]
+                let mut accounts_sparse = accounts_sparse;
                 // Seal 攻顶批 旋钮（cfg(test) 突变判别）：①篡改首条目
                 // cash+1（分片内容源=组账户终态的判别面）；②丢末条目
                 //（dirty 集完整性判别面）。生产恒 false 零开销。
