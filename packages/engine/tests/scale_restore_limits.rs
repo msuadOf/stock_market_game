@@ -262,7 +262,7 @@ fn restore_rejects_duplicate_order_id_without_mutating_the_source_session() {
     // （v5 判 B 校准：runtime/desk 镜像档的同 id 重复先于旧簿装载命中
     // 结构断言 fault2162——跨集合 id 重复；旧管线的 fault1038 为旧簿
     // 装载路径 DuplicateOrderId 压平码，runtime 下不可达。保留"重复
-    /// id 仍被拒绝"+"源会话状态不变"两断言，仅校准错误码）。
+    // id 仍被拒绝"+"源会话状态不变"两断言，仅校准错误码）。
     assert!(
         matches!(&error, SessionError::InvalidSave(fault) if fault.code == 2162),
         "unexpected duplicate-order rejection: {error:?}"

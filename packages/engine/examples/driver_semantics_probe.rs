@@ -71,7 +71,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             events += {
                 // 【P0 画像】step_outer 段=完整 step() wall + 事件 Vec
-                /// drop（临时值延长到语句尾——drop 一并入段防漏计）。
+                // drop（临时值延长到语句尾——drop 一并入段防漏计）。
                 let _seg_outer = engine::runtime::step_profile::scope(
                     engine::runtime::step_profile::StepSegment::StepOuter,
                 );
@@ -110,7 +110,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .map(|(_, ns, _)| *ns)
                     .sum::<u128>();
             let mut rows: Vec<_> = ledger;
-            rows.sort_by(|a, b| b.1.cmp(&a.1));
+            rows.sort_by_key(|row| std::cmp::Reverse(row.1));
             for (name, ns, count) in rows {
                 let ratio = if nested.contains(&name) {
                     ns as f64 / total_ns as f64
@@ -126,8 +126,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         // 终态守恒对账：现金（+费用桶不可达——desk 权威内部；现金守恒以
         // 期末现金+持仓市值近似现金总量的股份守恒为主判据，对齐 s5 探针
-        /// 的"股份=初始"与现金面（费用桶经 fee_sink 为 desk 内部域——
-        /// 本口径经 session 读面取现金，费用分账在账户内体现）。
+        // 的"股份=初始"与现金面（费用桶经 fee_sink 为 desk 内部域——
+        // 本口径经 session 读面取现金，费用分账在账户内体现）。
         let mut cash_final = 0i64;
         let mut shares_final = 0i64;
         for i in 0..game.account_count() as u64 {

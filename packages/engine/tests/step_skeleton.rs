@@ -167,17 +167,17 @@ fn assert_complete_projection(auction_ticks: u64, expected: u64) {
 #[test]
 fn characterization_complete_projection_without_opening_auction() {
     // Sol 六审段 1.2 重锚（逐字段取证后）：对齐批修复日结竞价事件序
-    /// （AuctionTick/AuctionCompleted 先于 DayBoundary、窗相位 N−1
-    /// 基准、drain 收盘清算事实上行——60/60 拍事件序列与基线零差，
-    /// 取证落盘 /tmp/forensic-final vs forensic-baseline）后，残余
-    /// 字节差=3 类已判表示面：desk serial 游标起点 0→1（v5 E 提交）、
-    /// desk_mirrored_resting 新键（runtime 形态标记）、收盘 cutoff
-    /// 跨日残留值 1（新日 CallAuction 窗全隐藏——值无消费面）。
-    /// 旧锚保留：14_183_549_150_061_140_820。
-    /// B4a 公司域重锚：AccountId serde 切 canonical 十进制字符串（存档
-    /// 字节形态变化）+ main 侧公司经营/披露结构接线，投影字节随之变化；
-    /// 事件与业务事实语义不变（域测试与 save 契约独立覆盖）。旧锚保留：
-    /// 16_114_484_025_310_678_034。
+    // （AuctionTick/AuctionCompleted 先于 DayBoundary、窗相位 N−1
+    // 基准、drain 收盘清算事实上行——60/60 拍事件序列与基线零差，
+    // 取证落盘 /tmp/forensic-final vs forensic-baseline）后，残余
+    // 字节差=3 类已判表示面：desk serial 游标起点 0→1（v5 E 提交）、
+    // desk_mirrored_resting 新键（runtime 形态标记）、收盘 cutoff
+    // 跨日残留值 1（新日 CallAuction 窗全隐藏——值无消费面）。
+    // 旧锚保留：14_183_549_150_061_140_820。
+    // B4a 公司域重锚：AccountId serde 切 canonical 十进制字符串（存档
+    // 字节形态变化）+ main 侧公司经营/披露结构接线，投影字节随之变化；
+    // 事件与业务事实语义不变（域测试与 save 契约独立覆盖）。旧锚保留：
+    // 16_114_484_025_310_678_034。
     assert_complete_projection(0, 16_039_080_022_122_580_669);
 }
 

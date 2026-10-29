@@ -249,8 +249,8 @@ fn unified_production_book_restores_crossed_auction_without_early_fills_and_cons
     // D5 翻转后 pin（旧管线竞价契约族）：现金/股份预留回执（Insufficient-
     // Cash/InsufficientShares）、过期释放、K 线装配与竞价确定性等面为
     // 旧管线 staged/envelope 契约——runtime 的 purse 所有权+desk 权威
-    /// 无对应回执面。等价锚：翻转批 batch1 现金对拍+batch4 日结回滚；
-    /// 旧管线退役（批 9）时随语义一并处置。
+    // 无对应回执面。等价锚：翻转批 batch1 现金对拍+batch4 日结回滚；
+    // 旧管线退役（批 9）时随语义一并处置。
     if engine::runtime::step_runtime_enabled() {
         return;
     }
@@ -368,8 +368,8 @@ fn unified_production_book_cross_tick_same_price_fifo_survives_save_and_restore(
     // D5 翻转后 pin（旧管线竞价契约族）：现金/股份预留回执（Insufficient-
     // Cash/InsufficientShares）、过期释放、K 线装配与竞价确定性等面为
     // 旧管线 staged/envelope 契约——runtime 的 purse 所有权+desk 权威
-    /// 无对应回执面。等价锚：翻转批 batch1 现金对拍+batch4 日结回滚；
-    /// 旧管线退役（批 9）时随语义一并处置。
+    // 无对应回执面。等价锚：翻转批 batch1 现金对拍+batch4 日结回滚；
+    // 旧管线退役（批 9）时随语义一并处置。
     if engine::runtime::step_runtime_enabled() {
         return;
     }
@@ -491,8 +491,8 @@ fn unified_production_book_closing_uses_existing_orders_and_clears_once_without_
     // D5 翻转后 pin（旧管线竞价契约族）：现金/股份预留回执（Insufficient-
     // Cash/InsufficientShares）、过期释放、K 线装配与竞价确定性等面为
     // 旧管线 staged/envelope 契约——runtime 的 purse 所有权+desk 权威
-    /// 无对应回执面。等价锚：翻转批 batch1 现金对拍+batch4 日结回滚；
-    /// 旧管线退役（批 9）时随语义一并处置。
+    // 无对应回执面。等价锚：翻转批 batch1 现金对拍+batch4 日结回滚；
+    // 旧管线退役（批 9）时随语义一并处置。
     if engine::runtime::step_runtime_enabled() {
         return;
     }
@@ -782,8 +782,8 @@ fn closing_auction_accepts_limit_orders_then_expires_an_unmatched_remainder_at_d
     // D5 翻转后 pin（旧管线竞价契约族）：现金/股份预留回执（Insufficient-
     // Cash/InsufficientShares）、过期释放、K 线装配与竞价确定性等面为
     // 旧管线 staged/envelope 契约——runtime 的 purse 所有权+desk 权威
-    /// 无对应回执面。等价锚：翻转批 batch1 现金对拍+batch4 日结回滚；
-    /// 旧管线退役（批 9）时随语义一并处置。
+    // 无对应回执面。等价锚：翻转批 batch1 现金对拍+batch4 日结回滚；
+    // 旧管线退役（批 9）时随语义一并处置。
     if engine::runtime::step_runtime_enabled() {
         return;
     }
@@ -852,8 +852,8 @@ fn single_stock_npc_population_keeps_real_auction_activity_across_days() {
     // D5 翻转后 pin（旧管线竞价契约族）：现金/股份预留回执（Insufficient-
     // Cash/InsufficientShares）、过期释放、K 线装配与竞价确定性等面为
     // 旧管线 staged/envelope 契约——runtime 的 purse 所有权+desk 权威
-    /// 无对应回执面。等价锚：翻转批 batch1 现金对拍+batch4 日结回滚；
-    /// 旧管线退役（批 9）时随语义一并处置。
+    // 无对应回执面。等价锚：翻转批 batch1 现金对拍+batch4 日结回滚；
+    // 旧管线退役（批 9）时随语义一并处置。
     if engine::runtime::step_runtime_enabled() {
         return;
     }
@@ -898,8 +898,8 @@ fn multi_stock_npc_auctions_report_only_real_trades_across_days() {
     // D5 翻转后 pin（旧管线竞价契约族）：现金/股份预留回执（Insufficient-
     // Cash/InsufficientShares）、过期释放、K 线装配与竞价确定性等面为
     // 旧管线 staged/envelope 契约——runtime 的 purse 所有权+desk 权威
-    /// 无对应回执面。等价锚：翻转批 batch1 现金对拍+batch4 日结回滚；
-    /// 旧管线退役（批 9）时随语义一并处置。
+    // 无对应回执面。等价锚：翻转批 batch1 现金对拍+batch4 日结回滚；
+    // 旧管线退役（批 9）时随语义一并处置。
     if engine::runtime::step_runtime_enabled() {
         return;
     }
@@ -1136,8 +1136,8 @@ fn shenzhen_final_tie_break_chooses_the_candidate_nearest_previous_close() {
     // D5 翻转后 pin（旧管线竞价契约族）：现金/股份预留回执（Insufficient-
     // Cash/InsufficientShares）、过期释放、K 线装配与竞价确定性等面为
     // 旧管线 staged/envelope 契约——runtime 的 purse 所有权+desk 权威
-    /// 无对应回执面。等价锚：翻转批 batch1 现金对拍+batch4 日结回滚；
-    /// 旧管线退役（批 9）时随语义一并处置。
+    // 无对应回执面。等价锚：翻转批 batch1 现金对拍+batch4 日结回滚；
+    // 旧管线退役（批 9）时随语义一并处置。
     if engine::runtime::step_runtime_enabled() {
         return;
     }
@@ -1265,8 +1265,8 @@ fn auction_trade_sets_real_open_and_volume_in_active_daily_candle() {
     // D5 翻转后 pin（旧管线竞价契约族）：现金/股份预留回执（Insufficient-
     // Cash/InsufficientShares）、过期释放、K 线装配与竞价确定性等面为
     // 旧管线 staged/envelope 契约——runtime 的 purse 所有权+desk 权威
-    /// 无对应回执面。等价锚：翻转批 batch1 现金对拍+batch4 日结回滚；
-    /// 旧管线退役（批 9）时随语义一并处置。
+    // 无对应回执面。等价锚：翻转批 batch1 现金对拍+batch4 日结回滚；
+    // 旧管线退役（批 9）时随语义一并处置。
     if engine::runtime::step_runtime_enabled() {
         return;
     }
@@ -1305,8 +1305,8 @@ fn preopen_save_requires_every_market_candle_after_auction_completion() {
     // D5 翻转后 pin（旧管线竞价契约族）：现金/股份预留回执（Insufficient-
     // Cash/InsufficientShares）、过期释放、K 线装配与竞价确定性等面为
     // 旧管线 staged/envelope 契约——runtime 的 purse 所有权+desk 权威
-    /// 无对应回执面。等价锚：翻转批 batch1 现金对拍+batch4 日结回滚；
-    /// 旧管线退役（批 9）时随语义一并处置。
+    // 无对应回执面。等价锚：翻转批 batch1 现金对拍+batch4 日结回滚；
+    // 旧管线退役（批 9）时随语义一并处置。
     if engine::runtime::step_runtime_enabled() {
         return;
     }
@@ -1455,8 +1455,8 @@ fn auction_reserves_cash_across_multiple_orders() {
     // D5 翻转后 pin（旧管线竞价契约族）：现金/股份预留回执（Insufficient-
     // Cash/InsufficientShares）、过期释放、K 线装配与竞价确定性等面为
     // 旧管线 staged/envelope 契约——runtime 的 purse 所有权+desk 权威
-    /// 无对应回执面。等价锚：翻转批 batch1 现金对拍+batch4 日结回滚；
-    /// 旧管线退役（批 9）时随语义一并处置。
+    // 无对应回执面。等价锚：翻转批 batch1 现金对拍+batch4 日结回滚；
+    // 旧管线退役（批 9）时随语义一并处置。
     if engine::runtime::step_runtime_enabled() {
         return;
     }
@@ -1503,8 +1503,8 @@ fn auction_reserves_sellable_shares_across_orders_and_restore() {
     // D5 翻转后 pin（旧管线竞价契约族）：现金/股份预留回执（Insufficient-
     // Cash/InsufficientShares）、过期释放、K 线装配与竞价确定性等面为
     // 旧管线 staged/envelope 契约——runtime 的 purse 所有权+desk 权威
-    /// 无对应回执面。等价锚：翻转批 batch1 现金对拍+batch4 日结回滚；
-    /// 旧管线退役（批 9）时随语义一并处置。
+    // 无对应回执面。等价锚：翻转批 batch1 现金对拍+batch4 日结回滚；
+    // 旧管线退役（批 9）时随语义一并处置。
     if engine::runtime::step_runtime_enabled() {
         return;
     }
@@ -1846,8 +1846,8 @@ fn symbolic_lowest_closing_quote_expires_and_releases_its_cash_at_day_end() {
     // D5 翻转后 pin（旧管线竞价契约族）：现金/股份预留回执（Insufficient-
     // Cash/InsufficientShares）、过期释放、K 线装配与竞价确定性等面为
     // 旧管线 staged/envelope 契约——runtime 的 purse 所有权+desk 权威
-    /// 无对应回执面。等价锚：翻转批 batch1 现金对拍+batch4 日结回滚；
-    /// 旧管线退役（批 9）时随语义一并处置。
+    // 无对应回执面。等价锚：翻转批 batch1 现金对拍+batch4 日结回滚；
+    // 旧管线退役（批 9）时随语义一并处置。
     if engine::runtime::step_runtime_enabled() {
         return;
     }
@@ -1893,8 +1893,8 @@ fn multi_stock_auction_activity_facts_are_deterministic_evidence() {
     // D5 翻转后 pin（旧管线竞价契约族）：现金/股份预留回执（Insufficient-
     // Cash/InsufficientShares）、过期释放、K 线装配与竞价确定性等面为
     // 旧管线 staged/envelope 契约——runtime 的 purse 所有权+desk 权威
-    /// 无对应回执面。等价锚：翻转批 batch1 现金对拍+batch4 日结回滚；
-    /// 旧管线退役（批 9）时随语义一并处置。
+    // 无对应回执面。等价锚：翻转批 batch1 现金对拍+batch4 日结回滚；
+    // 旧管线退役（批 9）时随语义一并处置。
     if engine::runtime::step_runtime_enabled() {
         return;
     }
@@ -1950,7 +1950,7 @@ fn multi_stock_auction_activity_facts_are_deterministic_evidence() {
                     ..
                 } => {
                     day_completed_events += 1;
-                    day_matched += u64::from(*matched_volume);
+                    day_matched += *matched_volume;
                     let legal = match clearing_price {
                         None => *matched_volume == 0,
                         Some(p) => p.cents() > 0 && *matched_volume > 0,

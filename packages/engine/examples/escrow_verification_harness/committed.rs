@@ -500,9 +500,9 @@ fn initial_session_with_setup(
     compute: std::sync::Arc<engine::ComputeContext>,
 ) -> Result<ProtocolSession, String> {
     // C 桶预算注入修复（收官复核阻断 9）：会话经 GameSession::
-    /// new_with_compute 绑定 harness 预算池，再以
-    /// from_game_for_verification 装协议面——A5 退役生产注入面后
-    /// shared_default 恒绑 128 核全局池，预算隔离失效。
+    // new_with_compute 绑定 harness 预算池，再以
+    // from_game_for_verification 装协议面——A5 退役生产注入面后
+    // shared_default 恒绑 128 核全局池，预算隔离失效。
     let game = engine::GameSession::new_with_compute(setup, seed, compute.clone())
         .map_err(|e| e.to_string())?;
     let session =

@@ -162,7 +162,7 @@ fn run_probe(ticks: u64, n_groups: usize, per_group: usize) -> u64 {
     // 组端 drain/落账/分片构建反映在等待里）与每拍均值。
     let seal_pct = (seal_ns as f64) / (wall * 1e9) * 100.0;
     // Seal 地板分解：广播→首 Ack（最快组全链路）与首末 Ack 间隔
-    ///（组间长尾）——换向链固有 vs 组端不均的归因面。
+    //（组间长尾）——换向链固有 vs 组端不均的归因面。
     let first_ack_us = first_ack_ns as f64 / committed as f64 / 1000.0;
     let ack_spread_us = ack_spread_ns as f64 / committed as f64 / 1000.0;
     println!(
@@ -173,7 +173,7 @@ fn run_probe(ticks: u64, n_groups: usize, per_group: usize) -> u64 {
         "Seal 分解：广播→首Ack {first_ack_us:.0}μs/tick；首末Ack间隔 {ack_spread_us:.0}μs/tick（长尾）"
     );
     // B-1' 验证批：最晚 Ack 组身份分布（每组出现次数——唤醒级联假设的
-    /// 直接证据：集中在闲组=唤醒主导；集中在活跃组=组端处理主导）。
+    // 直接证据：集中在闲组=唤醒主导；集中在活跃组=组端处理主导）。
     {
         let mut counts = std::collections::BTreeMap::new();
         for g in &last_ack_groups {
