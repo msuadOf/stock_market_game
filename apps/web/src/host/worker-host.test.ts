@@ -619,13 +619,16 @@ test("Worker dispose 与 fatal 立即取消在途请求，释放监听并拒绝�
       let settled = false;
       const dateAssertion = assert.rejects(date, /已被销毁|TEST_FATAL/);
       void date.then(() => { settled = true; }, () => { settled = true; });
-      if (reason === "dispose") host.dispose();
-      else worker.emit({ type: "failure", code: "TEST_FATAL", where: "worker-test", message: "失败" });
+      const disposing = reason === "dispose" ? host.dispose() : undefined;
+      if (reason === "fatal") {
+        worker.emit({ type: "failure", code: "TEST_FATAL", where: "worker-test", message: "失败" });
+        assert.equal(worker.terminations, 1);
+      }
       await dateAssertion;
       assert.equal(settled, true);
+      if (disposing !== undefined) await disposing;
       assert.equal(worker.terminations, 1);
       await assert.rejects(host.readSpeedMetrics(), /已被销毁|TEST_FATAL/);
-      host.dispose();
     }
   } finally {
     if (original === undefined) delete (globalThis as { Worker?: unknown }).Worker;
