@@ -12,20 +12,20 @@ fn unified_stock_worker_accepts_and_reserves_crossed_auction_quotes_without_fill
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
     game.fixture_account_mut(&AccountId(0))
         .unwrap()
-        .grant_position(code.clone(), 100, Money::from_cents(1000))
+        .grant_position(code, 100, Money::from_cents(1000))
         .unwrap();
     let (operations, config) = validated_operations_in_session(
         &game,
         &code,
         vec![
             Intent::PlaceLimit {
-                code: code.clone(),
+                code: code,
                 side: Side::Buy,
                 price: LimitPrice::Fixed(Money::from_cents(1050)),
                 qty: 100,
             },
             Intent::PlaceLimit {
-                code: code.clone(),
+                code: code,
                 side: Side::Sell,
                 price: LimitPrice::Fixed(Money::from_cents(950)),
                 qty: 100,
@@ -63,7 +63,7 @@ fn highest_buy_resolves_at_receipt_time_and_releases_only_the_excess_reservation
     let market = empty_market(&code);
     let resolved = market.limit_order_price_bound(Side::Buy, true).unwrap();
     let (operations, config) = validated_operations(vec![Intent::PlaceLimit {
-        code: code.clone(),
+        code: code,
         side: Side::Buy,
         price: LimitPrice::Highest,
         qty: 100,
@@ -123,7 +123,7 @@ fn tick_start_owner_cancel_releases_the_full_envelope_and_returns_a_terminal_fac
         ContinuousCancelFact::Canceled {
             sealed_index: 42,
             account: AccountId(1),
-            code: fixture.code.clone(),
+            code: fixture.code,
             order_id: OrderId(7),
             side: Side::Buy,
             remaining_qty: 100,
@@ -252,7 +252,7 @@ fn fully_filled_cancel_has_a_distinct_business_failure_for_its_owner() {
             operation: ContinuousCancelOperation {
                 sealed_index: 9,
                 account,
-                code: fixture.code.clone(),
+                code: fixture.code,
                 order_id: OrderId(7),
             },
         })
@@ -263,7 +263,7 @@ fn fully_filled_cancel_has_a_distinct_business_failure_for_its_owner() {
             ContinuousCancelFact::Rejected {
                 sealed_index: 9,
                 account,
-                code: fixture.code.clone(),
+                code: fixture.code,
                 order_id: OrderId(7),
                 reason: expected,
             }
@@ -332,7 +332,7 @@ fn cancellation_after_an_earlier_fill_continues_the_receipt_audit_chain() {
         operation: ContinuousCancelOperation {
             sealed_index: 41,
             account: AccountId(1),
-            code: code.clone(),
+            code: code,
             order_id: OrderId(7),
         },
     };
@@ -415,7 +415,7 @@ fn seller_cancel_after_partial_fill_preserves_nonzero_nominal_and_charged_audit(
     assert!(transition.charged_after.total().unwrap() > Money::ZERO);
     let key = EnvelopeKey {
         account: AccountId(1),
-        stock: code.clone(),
+        stock: code,
         order: OrderId(17),
         side: Side::Sell,
     };
@@ -475,7 +475,7 @@ fn cancellation_fails_closed_for_missing_duplicate_or_drifted_snapshots() {
     let operation = ContinuousCancelOperation {
         sealed_index: 1,
         account: AccountId(1),
-        code: fixture.code.clone(),
+        code: fixture.code,
         order_id: OrderId(7),
     };
     let missing = cancel_continuous_order(ContinuousCancelInput {
@@ -520,7 +520,7 @@ fn cancellation_with_another_stock_code_is_an_explicit_unknown_stock_rejection()
         operation: ContinuousCancelOperation {
             sealed_index: 2,
             account: AccountId(1),
-            code: unknown.clone(),
+            code: unknown,
             order_id: OrderId(7),
         },
     })
@@ -545,13 +545,13 @@ fn stock_worker_assigns_time_priority_from_supplied_order_not_sealed_identity() 
     let code = StockId(0);
     let (mut operations, config) = validated_operations(vec![
         Intent::PlaceLimit {
-            code: code.clone(),
+            code: code,
             side: Side::Buy,
             price: crate::LimitPrice::Fixed(Money::from_cents(990)),
             qty: 100,
         },
         Intent::PlaceLimit {
-            code: code.clone(),
+            code: code,
             side: Side::Buy,
             price: crate::LimitPrice::Fixed(Money::from_cents(990)),
             qty: 100,
@@ -587,7 +587,7 @@ fn stock_worker_assigns_time_priority_from_supplied_order_not_sealed_identity() 
 fn continuous_limit_place_rests_with_its_preallocated_id_and_live_draft() {
     let code = StockId(0);
     let (operations, config) = validated_operations(vec![Intent::PlaceLimit {
-        code: code.clone(),
+        code: code,
         side: Side::Buy,
         price: crate::LimitPrice::Fixed(Money::from_cents(990)),
         qty: 100,
@@ -615,7 +615,7 @@ fn continuous_limit_place_rests_with_its_preallocated_id_and_live_draft() {
         vec![ContinuousPlaceFact::Resting {
             sealed_index: draft.sealed_index(),
             account: draft.owner(),
-            code: code.clone(),
+            code: code,
             order_id: draft.order_id(),
             side: Side::Buy,
             price: Money::from_cents(990),
@@ -629,7 +629,7 @@ fn continuous_limit_place_rests_with_its_preallocated_id_and_live_draft() {
 fn price_cage_reject_consumes_the_preallocated_id_and_releases_the_draft() {
     let code = StockId(0);
     let (operations, config) = validated_operations(vec![Intent::PlaceLimit {
-        code: code.clone(),
+        code: code,
         side: Side::Buy,
         price: crate::LimitPrice::Fixed(Money::from_cents(1_021)),
         qty: 100,
@@ -674,20 +674,20 @@ fn price_cage_rechecks_an_observed_buy_after_the_earlier_admitted_sell() {
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
     game.fixture_account_mut(&AccountId(0))
         .unwrap()
-        .grant_position(code.clone(), 100, Money::from_cents(1000))
+        .grant_position(code, 100, Money::from_cents(1000))
         .unwrap();
     let (operations, config) = validated_operations_in_session(
         &game,
         &code,
         vec![
             Intent::PlaceLimit {
-                code: code.clone(),
+                code: code,
                 side: Side::Sell,
                 price: LimitPrice::Fixed(Money::from_cents(990)),
                 qty: 100,
             },
             Intent::PlaceLimit {
-                code: code.clone(),
+                code: code,
                 side: Side::Buy,
                 price: LimitPrice::Fixed(Money::from_cents(1020)),
                 qty: 100,
@@ -712,7 +712,7 @@ fn price_cage_rechecks_an_observed_buy_after_the_earlier_admitted_sell() {
             ContinuousPlaceFact::Resting {
                 sealed_index: sell.sealed_index(),
                 account: sell.owner(),
-                code: code.clone(),
+                code: code,
                 order_id: sell.order_id(),
                 side: Side::Sell,
                 price: Money::from_cents(990),
@@ -754,7 +754,7 @@ fn limit_reject_after_dynamic_cage_still_terminates_the_preallocated_draft() {
         100,
     );
     let (operations, config) = validated_operations(vec![Intent::PlaceLimit {
-        code: code.clone(),
+        code: code,
         side: Side::Buy,
         price: crate::LimitPrice::Fixed(Money::from_cents(1_101)),
         qty: 100,
@@ -792,7 +792,7 @@ fn limit_reject_after_dynamic_cage_still_terminates_the_preallocated_draft() {
 fn auction_market_reject_releases_the_draft_without_routing_to_the_book() {
     let code = StockId(0);
     let (operations, config) = validated_operations(vec![Intent::PlaceMarket {
-        code: code.clone(),
+        code: code,
         side: Side::Buy,
         qty: 100,
     }]);
@@ -829,7 +829,7 @@ fn auction_market_reject_releases_the_draft_without_routing_to_the_book() {
 fn continuous_market_without_liquidity_releases_the_draft_and_reports_zero_filled() {
     let code = StockId(0);
     let (operations, config) = validated_operations(vec![Intent::PlaceMarket {
-        code: code.clone(),
+        code: code,
         side: Side::Buy,
         qty: 100,
     }]);
@@ -889,7 +889,7 @@ fn continuous_market_partial_fill_releases_remainder_with_the_next_ordinal() {
         100,
     );
     let (operations, config) = validated_operations(vec![Intent::PlaceMarket {
-        code: code.clone(),
+        code: code,
         side: Side::Buy,
         qty: 200,
     }]);
@@ -970,7 +970,7 @@ fn continuous_match_emits_per_envelope_ordinals_and_unnumbered_valid_receipts() 
         100,
     );
     let (operations, config) = validated_operations(vec![Intent::PlaceLimit {
-        code: code.clone(),
+        code: code,
         side: Side::Buy,
         price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
         qty: 200,
@@ -1172,13 +1172,13 @@ fn same_stock_competing_limits_fill_in_received_order_with_descending_identities
     );
     let (mut operations, config) = validated_operations(vec![
         Intent::PlaceLimit {
-            code: code.clone(),
+            code: code,
             side: Side::Buy,
             price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
             qty: 100,
         },
         Intent::PlaceLimit {
-            code: code.clone(),
+            code: code,
             side: Side::Buy,
             price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
             qty: 100,
@@ -1247,12 +1247,12 @@ fn trade_fact_identity_spans_multiple_sealed_operations_legs_and_makers() {
     ];
     let (operations, config) = validated_operations(vec![
         Intent::PlaceMarket {
-            code: code.clone(),
+            code: code,
             side: Side::Buy,
             qty: 200,
         },
         Intent::PlaceMarket {
-            code: code.clone(),
+            code: code,
             side: Side::Buy,
             qty: 100,
         },
@@ -1329,11 +1329,11 @@ fn account_facts_use_the_triggering_sealed_operation_as_identity() {
     );
     let (operations, config) = validated_operations(vec![
         Intent::Cancel {
-            code: code.clone(),
+            code: code,
             id: OrderId(100),
         },
         Intent::PlaceLimit {
-            code: code.clone(),
+            code: code,
             side: Side::Buy,
             price: crate::LimitPrice::Fixed(Money::from_cents(990)),
             qty: 100,
@@ -1357,7 +1357,7 @@ fn account_facts_use_the_triggering_sealed_operation_as_identity() {
         ContinuousCancelFact::Canceled {
             sealed_index: 0,
             account: AccountId(0),
-            code: code.clone(),
+            code: code,
             order_id: OrderId(100),
             side: Side::Buy,
             remaining_qty: 100,
@@ -1398,7 +1398,7 @@ fn each_stock_worker_numbers_trade_facts_from_zero() {
         let (operations, config) = validated_operations_for_stock(
             &code,
             vec![Intent::PlaceMarket {
-                code: code.clone(),
+                code: code,
                 side: Side::Buy,
                 qty: 100,
             }],
@@ -1436,7 +1436,7 @@ fn trade_fact_index_overflow_is_atomic() {
         taker_filled_value_before: Money::ZERO,
     };
     let sentinel = ContinuousTradeFact {
-        stock: code.clone(),
+        stock: code,
         triggering_sealed_index: 6,
         stock_local_trade_event_index: 9,
         trade: trade.clone(),
@@ -1465,7 +1465,7 @@ fn partial_seller_fill_keeps_live_shares_and_nonzero_fee_audit() {
         200,
     );
     let (operations, config) = validated_operations(vec![Intent::PlaceLimit {
-        code: code.clone(),
+        code: code,
         side: Side::Buy,
         price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
         qty: 100,
@@ -1577,7 +1577,7 @@ impl CancelFixture {
             operation: ContinuousCancelOperation {
                 sealed_index,
                 account,
-                code: self.code.clone(),
+                code: self.code,
                 order_id,
             },
         }
@@ -1585,13 +1585,8 @@ impl CancelFixture {
 }
 
 fn resting_market(code: &StockId, order: Order) -> Market {
-    let mut market = Market::new(
-        code.clone(),
-        Money::from_cents(1_000),
-        0.10,
-        Money::from_cents(1),
-    )
-    .unwrap();
+    let mut market =
+        Market::new(*code, Money::from_cents(1_000), 0.10, Money::from_cents(1)).unwrap();
     let result = market.place(order).unwrap();
     assert!(result.trades.is_empty());
     assert!(result.resting.is_some());
@@ -1601,7 +1596,7 @@ fn resting_market(code: &StockId, order: Order) -> Market {
 fn envelope_key(code: &StockId, order: OrderId) -> EnvelopeKey {
     EnvelopeKey {
         account: AccountId(1),
-        stock: code.clone(),
+        stock: *code,
         order,
         side: Side::Buy,
     }
@@ -1660,7 +1655,7 @@ fn validated_operations_in_session(
         .collect();
     let batch = IntentCandidateBatch::new(candidates).unwrap();
     let context = AccountValidationContext::new([(
-        code.clone(),
+        *code,
         StockValidation::new(
             SecurityCategory::MainBoard,
             Money::from_cents(1_100),
@@ -1693,13 +1688,7 @@ fn place_draft(operation: &ValidatedOperation) -> &EnvelopeDraft {
 }
 
 fn empty_market(code: &StockId) -> Market {
-    Market::new(
-        code.clone(),
-        Money::from_cents(1_000),
-        0.10,
-        Money::from_cents(1),
-    )
-    .unwrap()
+    Market::new(*code, Money::from_cents(1_000), 0.10, Money::from_cents(1)).unwrap()
 }
 
 fn add_resting_snapshot(
@@ -1727,7 +1716,7 @@ fn add_resting_snapshot(
     assert!(result.resting.is_some());
     let key = EnvelopeKey {
         account: owner,
-        stock: code.clone(),
+        stock: *code,
         order: order_id,
         side,
     };

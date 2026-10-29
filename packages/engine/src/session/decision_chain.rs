@@ -137,7 +137,7 @@ impl DecisionChainObservation {
                             candles.traded_count(),
                         ))
                     })();
-                    (code.clone(), observation)
+                    (*code, observation)
                 })
                 .collect::<Vec<_>>()
         });
@@ -192,7 +192,7 @@ fn apply_personal_experience_feedback(
         .filter_map(|event| {
             event
                 .order_id
-                .map(|order| (event.moment, event.code.clone(), OrderId(order), false))
+                .map(|order| (event.moment, event.code, OrderId(order), false))
         });
     let profits = experience
         .feedback
@@ -201,7 +201,7 @@ fn apply_personal_experience_feedback(
         .filter(|exit| exit.realized_profit)
         .filter_map(|exit| {
             exit.order_id
-                .map(|order| (exit.moment, exit.code.clone(), OrderId(order), true))
+                .map(|order| (exit.moment, exit.code, OrderId(order), true))
         });
     let mut events: Vec<_> = failures
         .chain(profits)
@@ -779,7 +779,7 @@ pub(in crate::session) fn apply_plan_lifecycle_actions(
             ),
             PlanLifecycleAction::Create { open } => {
                 let account = open.account;
-                let code = open.code.clone();
+                let code = open.code;
                 let Some(stock_day) = session
                     .stock_calendar_day(code)
                     .expect("开仓本股 Calendar 合法")
@@ -1426,7 +1426,7 @@ impl GameSession {
         let sellable_by_code: BTreeMap<StockId, u32> = self.state.accounts[&id]
             .positions()
             .keys()
-            .map(|code| (code.clone(), self.state.accounts[&id].sellable_qty(code)))
+            .map(|code| (*code, self.state.accounts[&id].sellable_qty(code)))
             .collect();
         // 6. 软预算（权威现金 = 账户现金；在途冻结单独传入，不由分配器重复计）。
         let frozen = self
@@ -1474,7 +1474,7 @@ impl GameSession {
                         buy_allocation_request(
                             &self.state.setup.config,
                             plan.plan_id(),
-                            plan.code().clone(),
+                            *plan.code(),
                             plan.confidence_bp(),
                             reservation_price,
                             remaining,
@@ -1507,7 +1507,7 @@ impl GameSession {
                         )?;
                         Some(AllocationRequest {
                             plan_id: plan.plan_id(),
-                            code: plan.code().clone(),
+                            code: *plan.code(),
                             side: Side::Sell,
                             class: AllocationClass::ExistingPlan,
                             confidence_bp: plan.confidence_bp(),
@@ -1548,13 +1548,13 @@ impl GameSession {
             .market_price_path_observations()
             .expect("price paths must build for urgency inputs")
             .iter()
-            .map(|(code, path)| (code.clone(), ratio_to_bp(path.one_minute.return_ratio)))
+            .map(|(code, path)| (*code, ratio_to_bp(path.one_minute.return_ratio)))
             .collect();
         let thirty_minute_bp: BTreeMap<StockId, Option<i32>> = self
             .market_price_path_observations()
             .expect("price paths must build for urgency inputs")
             .iter()
-            .map(|(code, path)| (code.clone(), ratio_to_bp(path.thirty_minute.return_ratio)))
+            .map(|(code, path)| (*code, ratio_to_bp(path.thirty_minute.return_ratio)))
             .collect();
         Some(super::plan_chain_candidates::QuotePlans {
             account: id,
@@ -1726,7 +1726,7 @@ impl GameSession {
             .map(|participant| participant.belief())
             .flat_map(|belief| belief.entry_stocks())
             .fold(BTreeMap::new(), |mut acc, code| {
-                *acc.entry(code.clone()).or_default() += 1;
+                *acc.entry(*code).or_default() += 1;
                 acc
             });
         DecisionChainDiagnostics {
@@ -1986,7 +1986,7 @@ mod chain_restructure_tests {
         let mut group = standalone.clone();
         group.id = group_id;
         group.reports.scope = crate::accounting::consolidation::ScopeId::Consolidated(
-            crate::accounting::consolidation::MemberId(group.company.0.clone()),
+            crate::accounting::consolidation::MemberId(group.company.0),
         );
         group.reports.income.net_income_to_parent =
             Some(group.reports.income.cumulative.net_income);
@@ -2091,8 +2091,8 @@ mod chain_restructure_tests {
         .unwrap();
         let account = AccountId(1);
         let codes: Vec<_> = session.state.markets.keys().cloned().collect();
-        let new = open_account_latch_plan(&mut session, account, codes[0].clone(), Side::Buy);
-        let existing = open_account_latch_plan(&mut session, account, codes[1].clone(), Side::Buy);
+        let new = open_account_latch_plan(&mut session, account, codes[0], Side::Buy);
+        let existing = open_account_latch_plan(&mut session, account, codes[1], Side::Buy);
         let reserve = buy_order_reservation(
             &session.state.setup.config,
             session.state.markets[&codes[1]].up_stop().unwrap(),
@@ -2207,8 +2207,8 @@ mod chain_restructure_tests {
     fn save_validation_protects_active_plan_memory_outside_the_eight_limit() {
         let (mut session, codes) = personal_memory_boundary_session();
         let account = AccountId(1);
-        let protected = codes[0].clone();
-        open_account_latch_plan(&mut session, account, protected.clone(), Side::Buy);
+        let protected = codes[0];
+        open_account_latch_plan(&mut session, account, protected, Side::Buy);
         let valid = session.save().unwrap();
         crate::session::persistence::validate_save_slot(&valid).unwrap();
         assert_eq!(valid.price_memories[&account].stock_count(), 9);
@@ -2222,12 +2222,12 @@ mod chain_restructure_tests {
     fn completed_sell_prunes_memory_before_quiet_point_save_validation() {
         let (mut session, codes) = personal_memory_boundary_session();
         let account = AccountId(1);
-        let code = codes[0].clone();
+        let code = codes[0];
         let price = session.state.markets[&code].last_price();
         session
             .fixture_account_mut(&account)
             .unwrap()
-            .grant_position(code.clone(), 100, price)
+            .grant_position(code, 100, price)
             .unwrap();
         let moment = crate::experience::ExperienceMoment {
             civil_date: session.civil_date(),
@@ -2254,7 +2254,7 @@ mod chain_restructure_tests {
         session.seed_order_for_test(
             account,
             Intent::PlaceLimit {
-                code: code.clone(),
+                code: code,
                 side: Side::Sell,
                 price: LimitPrice::Fixed(price),
                 qty: 100,
@@ -2277,7 +2277,7 @@ mod chain_restructure_tests {
             .enqueue_player_intent(
                 AccountId(0),
                 Intent::PlaceLimit {
-                    code: code.clone(),
+                    code: code,
                     side: Side::Buy,
                     price: LimitPrice::Fixed(price),
                     qty: 100,
@@ -2344,23 +2344,22 @@ mod chain_restructure_tests {
         .unwrap();
         let account = AccountId(1);
         observe_account_root_for_latch(&mut session, account);
-        let faded = session.state.belief_participants[&account]
+        let faded = *session.state.belief_participants[&account]
             .belief()
             .entry_stocks()
             .next()
-            .unwrap()
-            .clone();
+            .unwrap();
         let old = session.state.belief_participants[&account]
             .belief()
             .entry(&faded)
             .unwrap()
             .clone();
-        let company = session.state.issuer_of_stock(faded).unwrap().clone();
+        let company = session.state.issuer_of_stock(faded).unwrap();
         let date = session.civil_date().prev().unwrap();
         let expires_on = session.civil_date();
         let publication = std::sync::Arc::make_mut(&mut session.state.library)
             .publish_announcement(crate::information::AnnouncementRequest {
-                company: company.clone(),
+                company: company,
                 occurred_on: date,
                 published_at: crate::calendar::CivilInstant::from_hms(date, 18, 0, 0).unwrap(),
                 content: crate::information::AnnouncementContent::Shock(
@@ -2436,12 +2435,12 @@ mod chain_restructure_tests {
             .collect();
         let mut session = GameSession::new(setup, 42).unwrap();
         let account = AccountId(1);
-        let discovered = session.state.markets.keys().next().unwrap().clone();
+        let discovered = *session.state.markets.keys().next().unwrap();
         let price = session.state.markets[&discovered].last_price();
         session.seed_order_for_test(
             AccountId(0),
             Intent::PlaceLimit {
-                code: discovered.clone(),
+                code: discovered,
                 side: Side::Buy,
                 price: LimitPrice::Fixed(price),
                 qty: 100,
@@ -2485,7 +2484,7 @@ mod chain_restructure_tests {
                     &held,
                     &personal.watchlist,
                     &BTreeSet::new(),
-                ) == Some(discovered.clone())
+                ) == Some(discovered)
             })
             .unwrap();
         personal.attention.rng_state = seed;
@@ -2847,7 +2846,7 @@ mod chain_restructure_tests {
             .feedback
             .exit_records
             .push(crate::experience::ExitRecord {
-                code: code.clone(),
+                code: code,
                 order_id: Some(999),
                 cooldown_until_market_minute: None,
                 realized_profit: true,
@@ -2950,7 +2949,7 @@ mod chain_restructure_tests {
         let owner = session.fixture_account_mut(&account).unwrap();
         owner.fixture_set_cash(Money::from_cents(10_000_000));
         owner.fixture_insert_position(
-            code.clone(),
+            code,
             crate::Position::from_restored_parts(20_000, 0, 5_700_000, 0),
         );
         let profile = crate::strategy::StrategyProfile::Institution(style);
@@ -3198,7 +3197,7 @@ mod chain_restructure_tests {
             .fixture_account_mut(&account)
             .unwrap()
             .fixture_insert_position(
-                sell_code.clone(),
+                sell_code,
                 crate::Position::from_restored_parts(100, 0, 100, 0),
             );
         session
@@ -3231,7 +3230,7 @@ mod chain_restructure_tests {
             observe_account_root_for_latch(&mut session, owner);
         }
         let original = open_account_latch_plan(&mut session, account, original_code, Side::Buy);
-        let next = open_account_latch_plan(&mut session, account, next_code.clone(), Side::Buy);
+        let next = open_account_latch_plan(&mut session, account, next_code, Side::Buy);
         let sell = open_account_latch_plan(&mut session, account, sell_code, Side::Sell);
         let unrelated = open_account_latch_plan(&mut session, other, next_code, Side::Buy);
         session
@@ -3510,7 +3509,7 @@ mod chain_restructure_tests {
             .plans
             .create(PlanOpen {
                 account,
-                code: code.clone(),
+                code: code,
                 direction: Side::Buy,
                 target: PlanTarget::ShareCount(1000),
                 opinion: PlanOpinion {
@@ -3664,7 +3663,7 @@ mod chain_restructure_tests {
             .plans
             .create(PlanOpen {
                 account,
-                code: code.clone(),
+                code: code,
                 direction: Side::Buy,
                 target: PlanTarget::ShareCount(order_size),
                 opinion: PlanOpinion {
@@ -4237,7 +4236,7 @@ mod chain_restructure_tests {
                 account.fixture_clear_positions();
                 if side == Side::Sell {
                     account.fixture_insert_position(
-                        code.clone(),
+                        code,
                         crate::Position::from_restored_parts(100, 0, 28_500, 0),
                     );
                 }
@@ -4289,7 +4288,7 @@ mod chain_restructure_tests {
             .plans
             .create(PlanOpen {
                 account,
-                code: code.clone(),
+                code: code,
                 direction: Side::Buy,
                 target: PlanTarget::ShareCount(100),
                 opinion: PlanOpinion {
@@ -4485,7 +4484,7 @@ mod chain_restructure_tests {
             .plans
             .create(PlanOpen {
                 account: owner,
-                code: code.clone(),
+                code: code,
                 direction: Side::Buy,
                 target: PlanTarget::ShareCount(1_000),
                 opinion: PlanOpinion {
@@ -4498,7 +4497,7 @@ mod chain_restructure_tests {
                 created_trading_day: u64::from(session.state.day),
             })
             .unwrap();
-        let mut plans = std::mem::take(&mut session.state.plans);
+        let plans = std::mem::take(&mut session.state.plans);
         let view = session.build_market_view();
         let mut operations = PlanChainOperationBatch::empty();
 
@@ -4708,7 +4707,7 @@ mod chain_restructure_tests {
             .plans
             .create(PlanOpen {
                 account: owner,
-                code: code.clone(),
+                code: code,
                 direction: Side::Buy,
                 target: PlanTarget::ShareCount(parent_qty),
                 opinion: PlanOpinion {
@@ -4721,7 +4720,7 @@ mod chain_restructure_tests {
                 created_trading_day: u64::from(session.state.day),
             })
             .unwrap();
-        let mut plans = std::mem::take(&mut session.state.plans);
+        let plans = std::mem::take(&mut session.state.plans);
         let view = session.build_market_view();
         let mut operations = PlanChainOperationBatch::empty();
 
@@ -4990,7 +4989,7 @@ mod chain_restructure_tests {
             .plans
             .create(PlanOpen {
                 account,
-                code: code.clone(),
+                code: code,
                 direction: Side::Buy,
                 target: PlanTarget::ShareCount(100),
                 opinion: PlanOpinion {
@@ -5107,14 +5106,7 @@ mod chain_restructure_tests {
     #[test]
     fn technical_observation_uses_bounded_recent_samples_with_full_valid_count() {
         let mut session = probe_session();
-        let code = session
-            .state
-            .candle_book
-            .histories()
-            .keys()
-            .next()
-            .unwrap()
-            .clone();
+        let code = *session.state.candle_book.histories().keys().next().unwrap();
         let template = session.state.candle_book.histories()[&code][0].clone();
         let all = (0..6_000)
             .map(|day| DailyCandle {
@@ -5135,10 +5127,7 @@ mod chain_restructure_tests {
             })
             .collect::<Vec<_>>();
         let reference = build_technical_observation(&full_bars, 6_000).unwrap();
-        session
-            .state
-            .candle_book
-            .replace_history(code.clone(), all.into());
+        session.state.candle_book.replace_history(code, all.into());
 
         let observed = session.build_chain_technical_observations().unwrap();
 
@@ -5570,7 +5559,7 @@ mod chain_restructure_tests {
                 domain,
                 [(
                     account,
-                    code.clone(),
+                    code,
                     ready[0].chain_generation_index,
                     PlanRouteOutcome::Rejected(RejectionReason::OrderAlreadyFilled),
                 )],
@@ -5651,7 +5640,7 @@ mod chain_restructure_tests {
                 } => Event::OrderCanceled {
                     seq,
                     account,
-                    code: code.clone(),
+                    code: code,
                     id: OrderId(crate::runtime::group::desk_order_id(
                         code.0 as crate::runtime::StockIdx,
                         crate::runtime::group::desk_order_serial(id.0),
@@ -5669,7 +5658,7 @@ mod chain_restructure_tests {
                 } => Event::OrderAccepted {
                     seq,
                     account,
-                    code: code.clone(),
+                    code: code,
                     id: OrderId(crate::runtime::group::desk_order_id(
                         code.0 as crate::runtime::StockIdx,
                         crate::runtime::group::desk_order_serial(id.0),
@@ -5765,7 +5754,7 @@ mod chain_restructure_tests {
         {
             let code = session.stock_id("000812").unwrap();
             // 把真实在途子单的剩余量临时视为 500_100，推进 500_000 后仍余 100 在途。
-            let mut advance = move |plans: &mut crate::plans::PlanBook| {
+            let advance = move |plans: &mut crate::plans::PlanBook| {
                 plans
                     .restore_child_remaining_qty(
                         crate::plans::PlanId {
@@ -5820,7 +5809,7 @@ mod chain_restructure_tests {
         // D3b 件 4 适配：runtime 下同一变换经组簿通道（镜像写入组权威
         /// 不感知）。
         {
-            let mut relink = move |plans: &mut crate::plans::PlanBook| {
+            let relink = move |plans: &mut crate::plans::PlanBook| {
                 plans
                     .restore_child_remaining_qty(
                         PlanId {
@@ -6016,7 +6005,7 @@ mod chain_restructure_tests {
             .fixture_account_mut(&owner)
             .unwrap()
             .fixture_insert_position(
-                code.clone(),
+                code,
                 crate::Position::from_restored_parts(
                     holding_qty,
                     0,
@@ -6029,7 +6018,7 @@ mod chain_restructure_tests {
             .plans
             .create(PlanOpen {
                 account: owner,
-                code: code.clone(),
+                code: code,
                 direction: Side::Sell,
                 target: PlanTarget::ShareCount(target_qty),
                 opinion: PlanOpinion {
@@ -6042,7 +6031,7 @@ mod chain_restructure_tests {
                 created_trading_day: u64::from(session.state.day),
             })
             .unwrap();
-        let mut plans = std::mem::take(&mut session.state.plans);
+        let plans = std::mem::take(&mut session.state.plans);
         let view = session.build_market_view();
         let mut operations = PlanChainOperationBatch::empty();
 
@@ -6088,7 +6077,7 @@ mod chain_restructure_tests {
         batch.push_restructure(
             owner,
             old.plan_id(),
-            code.clone(),
+            code,
             Some(OrderId(999_999)),
             false,
             PlanRevision {

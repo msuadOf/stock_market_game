@@ -501,7 +501,7 @@ pub fn plan_tick(input: PhaseInput<'_>) -> Result<TickShadowPlan, StepFatal> {
     }
     drop(view);
     drop(writes);
-    let mut shadow = TickShadowPlan {
+    let shadow = TickShadowPlan {
         session: Some(candidate),
         decision_output: Some(decision_output),
         event_outbox: Vec::new(),

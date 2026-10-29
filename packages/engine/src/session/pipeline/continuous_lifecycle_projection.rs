@@ -98,7 +98,7 @@ pub(super) fn project_continuous_retail_lifecycle(
                             .insert(events.len(), (receipt.qty_before, receipt.qty_after));
                         events.push(RetailOrderDiagnosticEvent::Filled {
                             account: receipt.envelope.account,
-                            code: receipt.envelope.stock.clone(),
+                            code: receipt.envelope.stock,
                             side: receipt.envelope.side,
                             order_id: receipt.envelope.order,
                             qty,
@@ -471,7 +471,7 @@ fn project_operation(
             if session.state.retail_experience.contains_key(account) {
                 events.push(RetailOrderDiagnosticEvent::Submitted {
                     account: *account,
-                    code: code.clone(),
+                    code: *code,
                     side: *side,
                     order_id: *order_id,
                     qty: *original_qty,
@@ -498,7 +498,7 @@ fn project_operation(
             if session.state.retail_experience.contains_key(account) {
                 events.push(RetailOrderDiagnosticEvent::Canceled {
                     account: *account,
-                    code: code.clone(),
+                    code: *code,
                     order_id: *order_id,
                     remaining_qty: *remaining_qty,
                 });
@@ -539,7 +539,7 @@ fn push_rejected_payload(
     if session.state.retail_experience.contains_key(&account) {
         events.push(RetailOrderDiagnosticEvent::Rejected {
             account,
-            code: code.clone(),
+            code: *code,
             reason,
         });
     }
@@ -599,14 +599,14 @@ mod tests {
         let b = OrderId(11);
         let submitted = |order_id| RetailOrderDiagnosticEvent::Submitted {
             account: AccountId(1),
-            code: code.clone(),
+            code: code,
             side: Side::Buy,
             order_id,
             qty: 100,
         };
         let filled = |order_id| RetailOrderDiagnosticEvent::Filled {
             account: AccountId(1),
-            code: code.clone(),
+            code: code,
             side: Side::Buy,
             order_id,
             qty: 100,
@@ -636,14 +636,14 @@ mod tests {
         let order_id = OrderId(10);
         let submitted = RetailOrderDiagnosticEvent::Submitted {
             account: AccountId(1),
-            code: code.clone(),
+            code: code,
             side: Side::Buy,
             order_id,
             qty: 100,
         };
         let filled = |qty| RetailOrderDiagnosticEvent::Filled {
             account: AccountId(1),
-            code: code.clone(),
+            code: code,
             side: Side::Buy,
             order_id,
             qty,
@@ -665,7 +665,7 @@ mod tests {
         let order_id = OrderId(10);
         let filled = RetailOrderDiagnosticEvent::Filled {
             account: AccountId(1),
-            code: code.clone(),
+            code: code,
             side: Side::Buy,
             order_id,
             qty: 40,
@@ -692,21 +692,21 @@ mod tests {
         let order_id = OrderId(10);
         let submitted = RetailOrderDiagnosticEvent::Submitted {
             account: AccountId(1),
-            code: code.clone(),
+            code: code,
             side: Side::Buy,
             order_id,
             qty: 100,
         };
         let filled = |qty| RetailOrderDiagnosticEvent::Filled {
             account: AccountId(1),
-            code: code.clone(),
+            code: code,
             side: Side::Buy,
             order_id,
             qty,
         };
         let canceled = RetailOrderDiagnosticEvent::Canceled {
             account: AccountId(1),
-            code: code.clone(),
+            code: code,
             order_id,
             remaining_qty: 60,
         };

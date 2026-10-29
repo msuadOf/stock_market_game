@@ -172,7 +172,7 @@ pub fn project_timeseries(facts: &[EventFact], snapshot: crate::Snapshot) -> Tic
             } => {
                 timeseries_payload
                     .auction_points
-                    .entry(code.clone())
+                    .entry(*code)
                     .or_default()
                     .push(AuctionPoint {
                         key: fact.key.clone(),
@@ -194,7 +194,7 @@ pub fn project_timeseries(facts: &[EventFact], snapshot: crate::Snapshot) -> Tic
             } => {
                 timeseries_payload
                     .auction_points
-                    .entry(code.clone())
+                    .entry(*code)
                     .or_default()
                     .push(AuctionPoint {
                         key: fact.key.clone(),
@@ -216,7 +216,7 @@ pub fn project_timeseries(facts: &[EventFact], snapshot: crate::Snapshot) -> Tic
                 ..
             } => {
                 timeseries_payload.continuous_points.insert(
-                    code.clone(),
+                    *code,
                     ContinuousPoint {
                         tick: *tick,
                         phase: crate::TradingPhase::Continuous,

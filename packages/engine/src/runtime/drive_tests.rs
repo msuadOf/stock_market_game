@@ -684,7 +684,7 @@ fn d3a2c_plans_debug_projects_group_plan_book_at_delivery() {
         .active_plan_ids()
         .iter()
         .filter_map(|pid| plans.plan(*pid).ok())
-        .map(|plan| (plan.account(), plan.code().clone()))
+        .map(|plan| (plan.account(), *plan.code()))
         .collect();
     assert!(
         !expected.is_empty(),
@@ -882,7 +882,7 @@ fn independent_allocation_cash(
     let request = crate::session::buy_allocation_request(
         config,
         plan.plan_id(),
-        plan.code().clone(),
+        *plan.code(),
         plan.confidence_bp(),
         view.daily_upper_limit,
         remaining,
@@ -1140,7 +1140,7 @@ fn solmid_execution_leg_lifecycle_matches_independent_fills() {
             if remaining > 0 && remaining < leg.child_qty() {
                 same_child_partial = Some((
                     plan.account(),
-                    plan.code().clone(),
+                    *plan.code(),
                     plan.direction(),
                     leg.child_qty(),
                     remaining,
@@ -1564,7 +1564,7 @@ fn sol6th_same_tick_abort_leaks_nothing() {
     session
         .fixture_account_mut(&seller)
         .unwrap()
-        .grant_position(code.clone(), 100, price)
+        .grant_position(code, 100, price)
         .unwrap();
     let mut driver = RuntimeDriver::from_session(&mut session).expect("驱动器构造");
     driver.adopt_session_seq(&session);
@@ -1572,7 +1572,7 @@ fn sol6th_same_tick_abort_leaks_nothing() {
     let intents = vec![crate::session::ReceiptBearingIntent {
         owner: seller,
         intent: crate::Intent::PlaceLimit {
-            code: code.clone(),
+            code: code,
             side: Side::Sell,
             price: crate::strategy::LimitPrice::Fixed(price),
             qty: 100,
@@ -1596,7 +1596,7 @@ fn sol6th_same_tick_abort_leaks_nothing() {
     let buy = vec![crate::session::ReceiptBearingIntent {
         owner: buyer,
         intent: crate::Intent::PlaceLimit {
-            code: code.clone(),
+            code: code,
             side: Side::Buy,
             price: crate::strategy::LimitPrice::Fixed(price),
             qty: 100,
@@ -1690,7 +1690,7 @@ fn sol7th_projection_matrix_active_sell_passive_buy_and_add_on() {
     let intent = |owner, side, qty| crate::session::ReceiptBearingIntent {
         owner,
         intent: crate::Intent::PlaceLimit {
-            code: code.clone(),
+            code: code,
             side,
             price: crate::strategy::LimitPrice::Fixed(price),
             qty,
@@ -1905,7 +1905,7 @@ fn sol7th_foreign_same_key_fill_does_not_advance_plan_child() {
                 && p.active_child_remaining_qty().is_some_and(|r| r > 500)
         })
         .expect("fixture 须有大余量买入活动子单的计划");
-    let (account, code) = (target.account(), target.code().clone());
+    let (account, code) = (target.account(), *target.code());
     let r0 = target.active_child_remaining_qty().expect("活动子单有余量");
     let f0 = target.filled_qty();
     // 外来单（同账户+股+**同方向**、不同订单）：吃掉簿上对手档成交——
@@ -1920,7 +1920,7 @@ fn sol7th_foreign_same_key_fill_does_not_advance_plan_child() {
     let foreign = vec![crate::session::ReceiptBearingIntent {
         owner: account,
         intent: crate::Intent::PlaceLimit {
-            code: code.clone(),
+            code: code,
             side: foreign_side,
             price: crate::strategy::LimitPrice::Fixed(crate::money::Money::from_cents(cross_price)),
             qty: 100,
@@ -2040,7 +2040,7 @@ fn sol8th_retail_first_hold_experience_initializes_same_tick() {
                 crate::session::ReceiptBearingIntent {
                     owner: seller,
                     intent: crate::Intent::PlaceLimit {
-                        code: code.clone(),
+                        code: code,
                         side: Side::Sell,
                         price: crate::strategy::LimitPrice::Fixed(price),
                         qty: 100,
@@ -2051,7 +2051,7 @@ fn sol8th_retail_first_hold_experience_initializes_same_tick() {
                 crate::session::ReceiptBearingIntent {
                     owner: retail,
                     intent: crate::Intent::PlaceLimit {
-                        code: code.clone(),
+                        code: code,
                         side: Side::Buy,
                         price: crate::strategy::LimitPrice::Fixed(price),
                         qty: 100,
@@ -2252,7 +2252,7 @@ fn d3b3_paused_plan_with_child_routes_targeted_cancel() {
         .find(|p| p.active_child_order_id().is_some())
         .expect("fixture 须有带活动子单的计划");
     let child = target.active_child_order_id().unwrap();
-    let (account, code) = (target.account(), target.code().clone());
+    let (account, code) = (target.account(), *target.code());
     // 注入 Paused（连续相位可撤——decide_plan_quote 暂停分支产出 Cancel）。
     driver.apply_plan_events_for_test(vec![(
         target.plan_id(),
@@ -3975,7 +3975,7 @@ fn sol_r22_full_exit_experience_reaches_all_four_faces_same_tick() {
 fn sol_r22_restored_session_business_hash_reads_actual_ledger() {
     let mut setup = setup_fixture();
     setup.ticks_per_day = 240;
-    let (mut game, _seller) = p1_1_resting_fixture(setup);
+    let (game, _seller) = p1_1_resting_fixture(setup);
     // 前提：在途非空（信封账本面非平凡）。
     assert!(
         !game

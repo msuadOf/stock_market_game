@@ -184,7 +184,7 @@ fn two_npc_requests_and_player_request_share_stock_price_time_rules() {
                 .receive(
                     account,
                     Intent::PlaceLimit {
-                        code: code.clone(),
+                        code: code,
                         side: Side::Buy,
                         price: crate::LimitPrice::Fixed(Money::from_cents(900)),
                         qty: 200,
@@ -205,7 +205,7 @@ fn two_npc_requests_and_player_request_share_stock_price_time_rules() {
         .enqueue_player_intent(
             player,
             Intent::PlaceLimit {
-                code: code.clone(),
+                code: code,
                 side: Side::Buy,
                 price: crate::LimitPrice::Fixed(Money::from_cents(900)),
                 qty: 100,
@@ -501,7 +501,7 @@ fn public_step_routes_pre_open_rejection_and_continuous_place_cancel_lifecycle()
         session.step().unwrap();
     }
     assert_eq!(session.phase(), TradingPhase::PreOpen);
-    let code = session.state.markets.keys().next().unwrap().clone();
+    let code = *session.state.markets.keys().next().unwrap();
     session.state.retail_experience.insert(
         AccountId(0),
         crate::experience::RetailExperienceState::without_equity_reference(),
@@ -511,7 +511,7 @@ fn public_step_routes_pre_open_rejection_and_continuous_place_cancel_lifecycle()
         .enqueue_player_intent(
             AccountId(0),
             Intent::PlaceLimit {
-                code: code.clone(),
+                code: code,
                 side: Side::Buy,
                 price: crate::LimitPrice::Fixed(Money::from_cents(900)),
                 qty: 100,
@@ -522,7 +522,7 @@ fn public_step_routes_pre_open_rejection_and_continuous_place_cancel_lifecycle()
         .enqueue_player_intent(
             AccountId(0),
             Intent::Cancel {
-                code: code.clone(),
+                code: code,
                 id: OrderId(77),
             },
         )
@@ -574,7 +574,7 @@ fn public_step_routes_pre_open_rejection_and_continuous_place_cancel_lifecycle()
         .enqueue_player_intent(
             AccountId(0),
             Intent::PlaceLimit {
-                code: code.clone(),
+                code: code,
                 side: Side::Buy,
                 price: crate::LimitPrice::Fixed(Money::from_cents(900)),
                 qty: 100,
@@ -605,7 +605,7 @@ fn public_step_routes_pre_open_rejection_and_continuous_place_cancel_lifecycle()
         .enqueue_player_intent(
             AccountId(0),
             Intent::Cancel {
-                code: code.clone(),
+                code: code,
                 id: OrderId(order_id.0),
             },
         )
@@ -701,10 +701,7 @@ fn unified_market_post_clearing_failure_preserves_book_mode_cash_and_shares() {
     session
         .fixture_account_mut(&AccountId(1))
         .unwrap()
-        .fixture_insert_position(
-            code.clone(),
-            crate::Position::from_restored_parts(1_000, 0, 0, 0),
-        );
+        .fixture_insert_position(code, crate::Position::from_restored_parts(1_000, 0, 0, 0));
     crate::session::npc_working_quote_tests::force_attention_candidate(
         &mut session,
         AccountId(1),
@@ -829,7 +826,7 @@ fn unified_market_closing_auction_uses_the_same_resting_order_lifecycle() {
 #[test]
 fn public_step_reports_zero_quantity_in_event_and_retail_diagnostic() {
     let mut session = empty_session_at(900, 10);
-    let code = session.state.markets.keys().next().unwrap().clone();
+    let code = *session.state.markets.keys().next().unwrap();
     session.state.retail_experience.insert(
         AccountId(0),
         crate::experience::RetailExperienceState::without_equity_reference(),
@@ -838,7 +835,7 @@ fn public_step_reports_zero_quantity_in_event_and_retail_diagnostic() {
         .enqueue_player_intent(
             AccountId(0),
             Intent::PlaceLimit {
-                code: code.clone(),
+                code: code,
                 side: Side::Buy,
                 price: crate::LimitPrice::Fixed(Money::from_cents(900)),
                 qty: 0,

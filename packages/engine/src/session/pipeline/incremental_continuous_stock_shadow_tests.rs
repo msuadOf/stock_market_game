@@ -43,7 +43,7 @@ fn same_stock_cancellations_follow_supplied_order_even_when_identity_numbers_des
         candidate_key: IntentCandidateKey::player(key),
         sealed_index,
         account: AccountId(11),
-        code: code.clone(),
+        code: code,
         order_id: OrderId(100),
     };
 
@@ -81,13 +81,13 @@ fn post_quote_expiry_stock_shadow_survives_routes_and_same_tick_cancel_sees_the_
     let (operations, config, first_order_id) = validated_operations(&code, |next_order_id| {
         vec![
             Intent::PlaceLimit {
-                code: code.clone(),
+                code: code,
                 side: Side::Buy,
                 price: crate::LimitPrice::Fixed(Money::from_cents(990)),
                 qty: 100,
             },
             Intent::Cancel {
-                code: code.clone(),
+                code: code,
                 id: OrderId(next_order_id),
             },
         ]
@@ -160,13 +160,13 @@ fn private_stock_round_places_then_cancels_in_one_batch_with_complete_evidence()
     let (operations, config, order_id) = validated_operations(&code, |next_order_id| {
         vec![
             Intent::PlaceLimit {
-                code: code.clone(),
+                code: code,
                 side: Side::Buy,
                 price: crate::LimitPrice::Fixed(Money::from_cents(990)),
                 qty: 100,
             },
             Intent::Cancel {
-                code: code.clone(),
+                code: code,
                 id: OrderId(next_order_id),
             },
         ]
@@ -218,7 +218,7 @@ fn immediate_full_fill_has_a_typed_outcome_without_an_order_accepted_fact() {
     );
     let (operations, config, incoming_id) = validated_operations(&code, |_| {
         vec![Intent::PlaceMarket {
-            code: code.clone(),
+            code: code,
             side: Side::Buy,
             qty: 100,
         }]
@@ -279,7 +279,7 @@ fn one_incoming_order_fills_each_resting_maker_once() {
     );
     let (operations, config, _) = validated_operations(&code, |_| {
         vec![Intent::PlaceMarket {
-            code: code.clone(),
+            code: code,
             side: Side::Buy,
             qty: 200,
         }]
@@ -340,12 +340,12 @@ fn stock_local_trade_identity_continues_across_adaptive_routes() {
     let (operations, config, _) = validated_operations(&code, |_| {
         vec![
             Intent::PlaceMarket {
-                code: code.clone(),
+                code: code,
                 side: Side::Buy,
                 qty: 100,
             },
             Intent::PlaceMarket {
-                code: code.clone(),
+                code: code,
                 side: Side::Buy,
                 qty: 100,
             },
@@ -394,12 +394,12 @@ fn sell_maker_conservation_survives_partial_fills_across_routes() {
     let (operations, config, _) = validated_operations(&code, |_| {
         vec![
             Intent::PlaceMarket {
-                code: code.clone(),
+                code: code,
                 side: Side::Buy,
                 qty: 100,
             },
             Intent::PlaceMarket {
-                code: code.clone(),
+                code: code,
                 side: Side::Buy,
                 qty: 100,
             },
@@ -500,7 +500,7 @@ fn tick_start_maker_can_be_canceled_after_a_partial_fill_in_an_earlier_route() {
     );
     let (operations, config, _) = validated_operations(&code, |_| {
         vec![Intent::PlaceMarket {
-            code: code.clone(),
+            code: code,
             side: Side::Buy,
             qty: 100,
         }]
@@ -509,7 +509,7 @@ fn tick_start_maker_can_be_canceled_after_a_partial_fill_in_an_earlier_route() {
         candidate_key: IntentCandidateKey::player(1),
         sealed_index: 1,
         account: AccountId(11),
-        code: code.clone(),
+        code: code,
         order_id: OrderId(100),
     };
     let mut coordinator =
@@ -561,15 +561,15 @@ fn equal_stock_local_indices_are_isolated_by_full_candidate_and_stock_identity()
         100,
     );
     let (operations, config) = validated_operations_for_stocks(
-        &[first_code.clone(), second_code.clone()],
+        &[first_code, second_code],
         vec![
             Intent::PlaceMarket {
-                code: first_code.clone(),
+                code: first_code,
                 side: Side::Buy,
                 qty: 100,
             },
             Intent::PlaceMarket {
-                code: second_code.clone(),
+                code: second_code,
                 side: Side::Buy,
                 qty: 100,
             },
@@ -689,7 +689,7 @@ fn successful_cancel_cannot_hide_a_remaining_book_ledger_mismatch_at_finish() {
             candidate_key: IntentCandidateKey::player(0),
             sealed_index: 0,
             account: AccountId(11),
-            code: code.clone(),
+            code: code,
             order_id: OrderId(100),
         }])
         .unwrap();
@@ -809,20 +809,20 @@ fn one_stock_worker_failure_invalidates_the_discardable_tick_coordinator() {
         100,
     );
     let (operations, config) = validated_operations_for_stocks(
-        &[first_code.clone(), second_code.clone()],
+        &[first_code, second_code],
         vec![
             Intent::PlaceMarket {
-                code: first_code.clone(),
+                code: first_code,
                 side: Side::Buy,
                 qty: 100,
             },
             Intent::PlaceMarket {
-                code: first_code.clone(),
+                code: first_code,
                 side: Side::Buy,
                 qty: 100,
             },
             Intent::PlaceMarket {
-                code: second_code.clone(),
+                code: second_code,
                 side: Side::Buy,
                 qty: 100,
             },
@@ -877,15 +877,15 @@ fn two_stock_worker_errors_select_first_stock_under_reversed_delivery() {
         100,
     );
     let (operations, config) = validated_operations_for_stocks(
-        &[first_code.clone(), second_code.clone()],
+        &[first_code, second_code],
         vec![
             Intent::PlaceMarket {
-                code: first_code.clone(),
+                code: first_code,
                 side: Side::Buy,
                 qty: 100,
             },
             Intent::PlaceMarket {
-                code: second_code.clone(),
+                code: second_code,
                 side: Side::Buy,
                 qty: 100,
             },
@@ -909,12 +909,12 @@ fn two_stock_worker_errors_select_first_stock_under_reversed_delivery() {
 
     let first_error = coordinator.stocks[&first_code]
         .clone()
-        .apply_round(first_code.clone(), vec![operations[0].clone()])
+        .apply_round(first_code, vec![operations[0].clone()])
         .err()
         .expect("first stock must fail after trade index overflow");
     let second_error = coordinator.stocks[&second_code]
         .clone()
-        .apply_round(second_code.clone(), vec![operations[1].clone()])
+        .apply_round(second_code, vec![operations[1].clone()])
         .err()
         .expect("second stock must fail with a missing envelope");
     assert_ne!(first_error, second_error);
@@ -958,7 +958,7 @@ fn consuming_finish_settles_all_route_receipts_and_detached_facts_exactly_once()
     for (index, code) in codes.iter().enumerate() {
         game.fixture_account_mut(&account)
             .unwrap()
-            .grant_position(code.clone(), 100, Money::from_cents(1_000))
+            .grant_position(*code, 100, Money::from_cents(1_000))
             .unwrap();
         game.state
             .retail_experience
@@ -990,7 +990,7 @@ fn consuming_finish_settles_all_route_receipts_and_detached_facts_exactly_once()
         codes
             .iter()
             .map(|code| Intent::PlaceMarket {
-                code: code.clone(),
+                code: *code,
                 side: Side::Buy,
                 qty: 100,
             })
@@ -1025,7 +1025,7 @@ fn consuming_finish_settles_all_route_receipts_and_detached_facts_exactly_once()
             candidate_key: IntentCandidateKey::player(2),
             sealed_index: 2,
             account,
-            code: unknown.clone(),
+            code: unknown,
             order_id: OrderId(77),
         }])
         .unwrap();
@@ -1137,7 +1137,7 @@ fn validated_operations(
         .collect();
     let batch = IntentCandidateBatch::new(candidates).unwrap();
     let context = AccountValidationContext::new([(
-        code.clone(),
+        *code,
         StockValidation::new(
             SecurityCategory::MainBoard,
             Money::from_cents(1_100),
@@ -1216,7 +1216,7 @@ fn validated_sell_operations(code: &StockId) -> (Vec<ValidatedOperation>, GameCo
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
     game.fixture_account_mut(&account)
         .unwrap()
-        .grant_position(code.clone(), 200, Money::from_cents(1_000))
+        .grant_position(*code, 200, Money::from_cents(1_000))
         .unwrap();
     let config = game.state.setup.config.clone();
     let operations = validated_operations_in_session(
@@ -1224,12 +1224,12 @@ fn validated_sell_operations(code: &StockId) -> (Vec<ValidatedOperation>, GameCo
         account,
         vec![
             Intent::PlaceMarket {
-                code: code.clone(),
+                code: *code,
                 side: Side::Sell,
                 qty: 100,
             },
             Intent::PlaceMarket {
-                code: code.clone(),
+                code: *code,
                 side: Side::Sell,
                 qty: 100,
             },
@@ -1298,7 +1298,7 @@ fn cancel_operation(
         candidate_key,
         sealed_index,
         account,
-        code: code.clone(),
+        code: *code,
         order_id: OrderId(77),
     }
 }
@@ -1328,7 +1328,7 @@ pub(in crate::session::pipeline) fn add_resting(
     assert!(result.resting.is_some());
     let key = EnvelopeKey {
         account: owner,
-        stock: code.clone(),
+        stock: *code,
         order: order_id,
         side,
     };
@@ -1359,13 +1359,7 @@ pub(in crate::session::pipeline) fn add_resting(
 }
 
 pub(in crate::session::pipeline) fn empty_market(code: &StockId) -> Market {
-    Market::new(
-        code.clone(),
-        Money::from_cents(1_000),
-        0.10,
-        Money::from_cents(1),
-    )
-    .unwrap()
+    Market::new(*code, Money::from_cents(1_000), 0.10, Money::from_cents(1)).unwrap()
 }
 
 pub(in crate::session::pipeline) fn stock(value: &str) -> StockId {

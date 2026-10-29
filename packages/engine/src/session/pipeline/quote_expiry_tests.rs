@@ -16,14 +16,14 @@ fn expiring_npc_order(
     if side == crate::Side::Sell {
         game.fixture_account_mut(&account)
             .unwrap()
-            .grant_position(code.clone(), 100, crate::Money::from_cents(100_000))
+            .grant_position(code, 100, crate::Money::from_cents(100_000))
             .unwrap();
     }
     let mut events = Vec::new();
     game.seed_order_for_test(
         account,
         crate::Intent::PlaceLimit {
-            code: code.clone(),
+            code: code,
             side,
             price: crate::LimitPrice::Fixed(crate::Money::from_cents(990)),
             qty: 100,
@@ -59,7 +59,7 @@ fn expiring_retail_order() -> (
     game.seed_order_for_test(
         account,
         crate::Intent::PlaceLimit {
-            code: code.clone(),
+            code: code,
             side: crate::Side::Buy,
             price: crate::LimitPrice::Fixed(crate::Money::from_cents(990)),
             qty: 100,
@@ -188,7 +188,7 @@ fn quote_expiry_diagnostic_precedes_each_same_tick_diagnostic_exactly_once() {
         .receive(
             account,
             crate::Intent::PlaceLimit {
-                code: code.clone(),
+                code: code,
                 side: crate::Side::Buy,
                 price: crate::LimitPrice::Fixed(crate::Money::from_cents(980)),
                 qty: 100,
@@ -251,7 +251,7 @@ fn quote_expiry_leaves_auction_and_player_orders_unaffected() {
     game.seed_auction_order_for_test(
         player,
         crate::Intent::PlaceLimit {
-            code: code.clone(),
+            code: code,
             side: crate::Side::Buy,
             price: crate::LimitPrice::Fixed(crate::Money::from_cents(990)),
             qty: 100,
@@ -355,7 +355,7 @@ fn quote_expiry_assigns_deterministic_global_receipt_indices() {
         game.seed_order_for_test(
             account,
             crate::Intent::PlaceLimit {
-                code: code.clone(),
+                code: *code,
                 side: crate::Side::Buy,
                 price: crate::LimitPrice::Fixed(crate::Money::from_cents(price)),
                 qty: 100,
@@ -391,7 +391,7 @@ fn quote_expiry_pairs_sorted_receipts_with_their_multi_account_lifecycles() {
         game.seed_order_for_test(
             account,
             crate::Intent::PlaceLimit {
-                code: code.clone(),
+                code: code,
                 side: crate::Side::Buy,
                 price: crate::LimitPrice::Fixed(crate::Money::from_cents(price)),
                 qty: 100,

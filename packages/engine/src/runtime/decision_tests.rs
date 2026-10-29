@@ -140,7 +140,7 @@ fn decide_account_is_deterministic_per_seed_tick_and_reschedules() {
     let config = GameConfig::proposed_defaults();
     let snapshot = snapshot_one_stock(1000, 1100, 900);
     let account = GroupAccount::new(1_000_000, 1);
-    let mut profile = NpcProfile {
+    let profile = NpcProfile {
         strategy: StrategyData::retail(1.0, 100, 1.0),
         seed: 42,
         next_due: 0,

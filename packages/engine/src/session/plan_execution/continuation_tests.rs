@@ -327,7 +327,7 @@ fn a_new_plan_submit_keeps_parent_private_until_the_stock_accepts_it() {
     let (mut session, mut plans, plan, child) = fixture();
     let plan_id = plan.plan_id();
     let account = plan.account();
-    let code = plan.code().clone();
+    let code = *plan.code();
     let progress = session
         .prepare_working_cancels(plan, child, Vec::new())
         .expect("a new plan child must be routable");
@@ -543,7 +543,7 @@ fn partly_filled_child_supersedes_a_stale_submit_before_quantity_validation() {
         plan_id: plan.plan_id(),
         allocation: AllocationGrant {
             plan_id: plan.plan_id(),
-            code: plan.code().clone(),
+            code: *plan.code(),
             allocated_cash: Money::from_cents(1_000_000),
             constraint: None,
         },
@@ -570,7 +570,7 @@ fn partly_filled_child_supersedes_a_stale_submit_before_quantity_validation() {
 
 #[test]
 fn completed_plan_reports_a_stale_submit_without_reopening_it() {
-    let (mut session, mut plans, plan, child) = fixture();
+    let (session, mut plans, plan, child) = fixture();
     let order_id = OrderId(79);
     plans
         .apply(
@@ -597,7 +597,7 @@ fn completed_plan_reports_a_stale_submit_without_reopening_it() {
         plan_id: plan.plan_id(),
         allocation: AllocationGrant {
             plan_id: plan.plan_id(),
-            code: plan.code().clone(),
+            code: *plan.code(),
             allocated_cash: Money::from_cents(1_000_000),
             constraint: None,
         },
@@ -722,7 +722,7 @@ fn plan_working_orders_reads_only_the_target_stock_and_account() {
     }
     session
         .fixture_append_auction_orders(
-            target.clone(),
+            target,
             vec![
                 crate::session::AuctionOrderSnap {
                     owner,

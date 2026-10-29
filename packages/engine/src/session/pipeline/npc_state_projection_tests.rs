@@ -98,7 +98,7 @@ pub(super) fn use_buy_imbalance_analysis(session: &mut GameSession, account: Acc
             session.seed_order_for_test(
                 AccountId(0),
                 crate::Intent::PlaceLimit {
-                    code: code.clone(),
+                    code: code,
                     side: crate::Side::Buy,
                     price: crate::LimitPrice::Fixed(Money::from_cents(900)),
                     qty: 100,
@@ -139,7 +139,7 @@ fn rewritten_parent_child_shape_cannot_borrow_a_raw_key_by_stock_and_side() {
     let account = AccountId(1);
     let code = crate::StockId(0);
     let raw_intent = crate::Intent::PlaceLimit {
-        code: code.clone(),
+        code: code,
         side: crate::Side::Buy,
         price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
         qty: 400,
@@ -181,7 +181,7 @@ fn projection_applies_nonempty_source_without_routing_and_preserves_raw_identity
         .iter()
         .map(|(code, market)| {
             (
-                code.clone(),
+                *code,
                 serde_json::to_vec(&market.hash_projection()).unwrap(),
             )
         })
@@ -235,7 +235,7 @@ fn projection_applies_nonempty_source_without_routing_and_preserves_raw_identity
             .iter()
             .map(|(code, market)| {
                 (
-                    code.clone(),
+                    *code,
                     serde_json::to_vec(&market.hash_projection()).unwrap(),
                 )
             })
@@ -424,7 +424,7 @@ fn projection_exposes_working_decisions_before_residuals_without_canceling_the_b
     shadow.seed_order_for_test(
         account,
         crate::Intent::PlaceLimit {
-            code: code.clone(),
+            code: code,
             side: crate::Side::Buy,
             price: crate::LimitPrice::Fixed(Money::from_cents(900)),
             // 全部现金仍由该单冻结，但撤换时的 7% 试买目标须足够生成一手。
@@ -516,7 +516,7 @@ fn retail_review_reconciles_only_the_stock_actually_observed() {
         shadow.seed_order_for_test(
             account,
             crate::Intent::PlaceLimit {
-                code: code.clone(),
+                code: *code,
                 side: crate::Side::Buy,
                 price: crate::LimitPrice::Fixed(Money::from_cents(900)),
                 qty: 100,
@@ -528,7 +528,7 @@ fn retail_review_reconciles_only_the_stock_actually_observed() {
         .iter()
         .map(|code| {
             (
-                code.clone(),
+                *code,
                 shadow.state.markets[code].resting_orders_for(account)[0].id,
             )
         })
@@ -539,7 +539,7 @@ fn retail_review_reconciles_only_the_stock_actually_observed() {
         run_npc_decisions(snapshot.snapshot.clone(), &shadow.state.setup.config).unwrap();
     let reviewed = source.account_outputs()[0].reviewed_stocks();
     assert_eq!(reviewed.len(), 1);
-    let observed = reviewed.iter().next().unwrap().clone();
+    let observed = *reviewed.iter().next().unwrap();
 
     let projected = project_npc_state(&mut shadow, &snapshot, &mut source).unwrap();
 

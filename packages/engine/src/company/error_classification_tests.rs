@@ -238,7 +238,7 @@ fn restored_state_with_missing_company_maps_to_system_state() {
     let mut system = create_system();
     let missing = match &mut system.implementation {
         crate::company::system::CompanyImplementation::Simple(state) => {
-            let victim = state.config.companies[0].company.clone();
+            let victim = state.config.companies[0].company;
             assert!(
                 state.companies.remove(&victim).is_some(),
                 "fixture 前置：公司状态存在"

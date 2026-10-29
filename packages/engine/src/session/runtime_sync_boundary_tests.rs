@@ -53,7 +53,7 @@ fn protocol_flush_returns_current_snapshot_and_keeps_frame_publication_usable() 
 
 #[test]
 fn first_civil_day_save_reports_no_candidate_without_flushing_or_mutating_origin() {
-    let mut session =
+    let session =
         ProtocolSession::new(boundary_setup(crate::RuntimeSyncPolicy::OnDemand), 42).unwrap();
     let start = crate::calendar::CivilDate::from_ymd(2026, 1, 5).unwrap();
     let origin = session.game().runtime_mirror_origin();

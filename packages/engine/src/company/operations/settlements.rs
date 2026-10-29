@@ -31,7 +31,7 @@ impl CompanyOperations {
                         if matches!(error, IndustrialError::PaymentFailed { .. }) {
                             failures.push(PaymentFailureRecord {
                                 obligation_status: crate::company::events::PaymentObligationStatus::StatutoryPaymentFailure,
-                                company: id.clone(),
+                                company: *id,
                                 what: "overdue income tax payment".into(),
                                 amount: payable,
                             });
@@ -64,7 +64,7 @@ impl CompanyOperations {
                         key,
                         due_date: deposit.maturity_date().max(first_due),
                         action: ScheduledAction::ContractMaturity {
-                            company: id.clone(),
+                            company: *id,
                             reference: format!("DEP:{}", contract.0),
                         },
                     });
@@ -104,7 +104,7 @@ impl CompanyOperations {
                     key,
                     due_date: maturity.max(first_due),
                     action: ScheduledAction::ContractMaturity {
-                        company: id.clone(),
+                        company: *id,
                         reference: format!("DEBT:{}", contract.0),
                     },
                 });

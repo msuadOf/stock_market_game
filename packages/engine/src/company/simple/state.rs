@@ -68,14 +68,10 @@ impl SimpleFundamentals {
                     CompanySystemError::InvalidInput("Simple 财务开账缺少发行人".into())
                 })?
                 .kind;
-            let finance = SimpleFinanceState::create(
-                item.company.clone(),
-                kind,
-                &item.finance,
-                baseline_end,
-            )?;
+            let finance =
+                SimpleFinanceState::create(item.company, kind, &item.finance, baseline_end)?;
             companies.insert(
-                item.company.clone(),
+                item.company,
                 SimpleCompanyState {
                     generation,
                     finance,
@@ -157,7 +153,7 @@ impl SimpleFundamentals {
                 state.generation = generated.state;
                 state.pending_restart = None;
                 let candidate = SimpleDisclosureCandidate {
-                    company: config.company.clone(),
+                    company: config.company,
                     period_start,
                     period_end: date,
                     amounts: state.generation.amounts.clone(),
@@ -168,7 +164,7 @@ impl SimpleFundamentals {
             .collect();
         let mut generated = Vec::new();
         for (state, candidate) in candidates? {
-            self.companies.insert(candidate.company.clone(), state);
+            self.companies.insert(candidate.company, state);
             generated.push(candidate);
         }
         generated.sort_by(|left, right| left.company.cmp(&right.company));

@@ -19,7 +19,7 @@ fn auction_buy_and_sell_projection_use_arrival_identity_and_zero_cumulative_audi
     let mut game = fixture();
     let code = StockId(0);
     game.fixture_append_auction_orders(
-        code.clone(),
+        code,
         vec![
             AuctionOrderSnap {
                 owner: AccountId(1),
@@ -50,7 +50,7 @@ fn seller_projection_and_runtime_reservation_both_exclude_cash_escrow() {
     let mut game = fixture();
     let code = StockId(0);
     game.fixture_append_auction_orders(
-        code.clone(),
+        code,
         vec![AuctionOrderSnap {
             owner: AccountId(1),
             side: Side::Sell,
@@ -266,7 +266,7 @@ fn assert_envelope(envelope: &pipeline::Envelope, code: &StockId, expected: Expe
         envelope.key(),
         &pipeline::EnvelopeKey {
             account: expected.owner,
-            stock: code.clone(),
+            stock: *code,
             order: expected.id,
             side: expected.side
         }

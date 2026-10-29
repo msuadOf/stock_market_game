@@ -177,12 +177,12 @@ fn pick_weighted(
         cumulative +=
             stock_discovery_weight(&market.stocks[*code], announcement_exposed.contains(*code));
         if draw < cumulative {
-            return Some((*code).clone());
+            return Some(*(*code));
         }
     }
     // 末位候选拥有 [Σ前缀, total) 区间；next_f64 < 1 使 draw < total，
     // 浮点边缘也必须落在末位区间内，绝不静默丢弃。
-    Some((*candidates[candidates.len() - 1]).clone())
+    Some((*candidates[candidates.len() - 1]))
 }
 
 /// 个体发现选股内核：继承原候选结构（60% 持仓优先 → 70% 关注列表 →
@@ -202,7 +202,7 @@ fn select_discovery_stock(
         .collect();
     if !held_in_market.is_empty() && rng.next_f64() < HELD_PRIORITY_PROBABILITY {
         let index = rng.next_range_u32(0, held_in_market.len() as u32) as usize;
-        return Some(held_in_market[index].clone());
+        return Some(*held_in_market[index]);
     }
     let watched_in_market: Vec<&StockId> = watchlist
         .stocks
@@ -233,7 +233,7 @@ impl NpcAttentionState {
             .iter()
             .map(|(code, view)| {
                 (
-                    code.clone(),
+                    *code,
                     stock_discovery_weight(view, announcement_exposed.contains(code)),
                 )
             })

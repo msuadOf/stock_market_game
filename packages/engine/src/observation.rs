@@ -383,7 +383,7 @@ pub fn build_account_risk_observation(
         validate_position(code, position)?;
         let market_value = position.last_price.mul_shares(position.qty)?;
         equity = equity.add(market_value)?;
-        market_values.insert(code.clone(), market_value);
+        market_values.insert(*code, market_value);
     }
     if let Some(peak) = peak_equity {
         if peak < equity {
@@ -408,7 +408,7 @@ pub fn build_account_risk_observation(
             .peak_price_since_entry
             .map(|peak| return_between(position.last_price, peak));
         observations.insert(
-            code.clone(),
+            *code,
             PositionRiskObservation {
                 market_value,
                 unrealized_return,

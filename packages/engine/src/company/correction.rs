@@ -88,7 +88,7 @@ impl super::CompanySystem {
         let approved_at = CivilInstant::from_hms(now.date(), 8, 0, 0)
             .map_err(|error| invalid(error.to_string()))?;
         let publication = PublicationRequest {
-            company: company.clone(),
+            company: *company,
             scope: expected_scope,
             period: original.reports.period,
             kind: original.reports.kind,

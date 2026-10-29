@@ -25,8 +25,8 @@ pub(super) fn extract_interim_growth(
 ) -> Result<super::GrowthObservation, ValuationUnavailable> {
     if report.company != *expected_company {
         return Err(ValuationUnavailable::CompanyMismatch {
-            expected: expected_company.clone(),
-            report: report.company.clone(),
+            expected: *expected_company,
+            report: report.company,
         });
     }
     if !matches!(
@@ -105,8 +105,8 @@ pub fn extract_annual_facts(
 ) -> Result<AnnualFacts, ValuationUnavailable> {
     if report.company != *expected_company {
         return Err(ValuationUnavailable::CompanyMismatch {
-            expected: expected_company.clone(),
-            report: report.company.clone(),
+            expected: *expected_company,
+            report: report.company,
         });
     }
     if report.reports.kind != ReportKind::Annual {

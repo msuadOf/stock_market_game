@@ -267,7 +267,7 @@ fn market_remainder_is_not_reported_as_an_auction_abort() {
         .enqueue_player_intent(
             PLAYER,
             Intent::PlaceMarket {
-                code: code.clone(),
+                code: code,
                 side: Side::Buy,
                 qty: LOT * 2,
             },
@@ -431,10 +431,10 @@ fn session_with_resting_sell(t1_enabled: bool, sell_qty: u32) -> (GameSession, S
     // Product sessions are correctly fixed to A-share T+1. The false branch is an
     // in-crate test seam for the lower settlement transaction only.
     game.state.setup.t1_enabled = t1_enabled;
-    let code = game.state.markets.keys().next().unwrap().clone();
+    let code = *game.state.markets.keys().next().unwrap();
     let mut seller = Account::new(SELLER, AccountKind::Player, Money::ZERO);
     seller
-        .grant_position(code.clone(), sell_qty, Money::from_cents(PRICE_CENTS))
+        .grant_position(code, sell_qty, Money::from_cents(PRICE_CENTS))
         .unwrap();
     assert!(game.state.accounts.insert(SELLER, seller).is_none());
     let placed = game
@@ -473,7 +473,7 @@ fn enqueue_crossing_buy(game: &mut GameSession, code: &StockId) {
     game.enqueue_player_intent(
         PLAYER,
         Intent::PlaceLimit {
-            code: code.clone(),
+            code: *code,
             side: Side::Buy,
             price: crate::LimitPrice::Fixed(Money::from_cents(PRICE_CENTS)),
             qty: LOT,
@@ -494,7 +494,7 @@ fn assert_buy_receipt(receipt: &EnvelopeReceipt, code: &StockId) {
         receipt.envelope,
         EnvelopeKey {
             account: PLAYER,
-            stock: code.clone(),
+            stock: *code,
             order: FIRST_BUY_ORDER,
             side: Side::Buy,
         }
@@ -533,7 +533,7 @@ fn assert_sell_receipt(receipt: &EnvelopeReceipt, code: &StockId) {
         receipt.envelope,
         EnvelopeKey {
             account: SELLER,
-            stock: code.clone(),
+            stock: *code,
             order: SELL_ORDER,
             side: Side::Sell,
         }

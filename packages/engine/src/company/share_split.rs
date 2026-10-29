@@ -378,7 +378,7 @@ pub fn allocate_share_split(
         approval_reference: plan.approval_reference.clone(),
         registration_event_id: snapshot.event_id().to_owned(),
         stock: snapshot.stock().clone(),
-        issuer: snapshot.issuer().clone(),
+        issuer: *snapshot.issuer(),
         registered_on: snapshot.registered_on(),
         direction: plan.direction.clone(),
         ratio: plan.ratio,

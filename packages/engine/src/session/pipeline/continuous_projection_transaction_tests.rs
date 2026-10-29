@@ -12,15 +12,9 @@ fn stock_output(code: &str, sealed_index: u64) -> (StockId, StockExecutionOutput
         "600002" => StockId(1),
         other => panic!("未登记的 fixture 代码 rank 映射: {other}"),
     };
-    let market = Market::new(
-        code.clone(),
-        Money::from_cents(1_000),
-        0.10,
-        Money::from_cents(1),
-    )
-    .unwrap();
+    let market = Market::new(code, Money::from_cents(1_000), 0.10, Money::from_cents(1)).unwrap();
     (
-        code.clone(),
+        code,
         StockExecutionOutput {
             market,
             trades: Vec::new(),
@@ -42,7 +36,7 @@ fn stock_output_with_trade(code: &str) -> (StockId, StockExecutionOutput) {
     let (code, mut output) = stock_output(code, 7);
     output.place_facts.clear();
     output.trades.push(ContinuousTradeFact {
-        stock: code.clone(),
+        stock: code,
         triggering_sealed_index: 7,
         stock_local_trade_event_index: 0,
         trade: Trade {
@@ -63,7 +57,7 @@ fn stock_output_with_trade(code: &str) -> (StockId, StockExecutionOutput) {
 fn same_local_identity_on_two_stocks_collects_canonically_and_advances_seq() {
     let (beta_code, beta) = stock_output_with_trade("600002");
     let (alpha_code, alpha) = stock_output_with_trade("600001");
-    let stocks = BTreeMap::from([(beta_code, beta), (alpha_code.clone(), alpha)]);
+    let stocks = BTreeMap::from([(beta_code, beta), (alpha_code, alpha)]);
 
     let collected = collect_continuous_transaction_events(&stocks, 9, Vec::new()).unwrap();
 

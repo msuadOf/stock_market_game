@@ -56,9 +56,7 @@ impl CompanyOperations {
                 books.accrue_interest(date)?;
             }
             IndustryBooks::Insurance(_) => {
-                return Err(OperationsError::InterestAccrualWithoutDebtModel {
-                    company: company.clone(),
-                });
+                return Err(OperationsError::InterestAccrualWithoutDebtModel { company: *company });
             }
         }
         Ok(())
@@ -78,7 +76,7 @@ impl CompanyOperations {
             reference
                 .split_once(':')
                 .ok_or_else(|| OperationsError::UnknownMaturityReference {
-                    company: company.clone(),
+                    company: *company,
                     reference: reference.to_string(),
                 })?;
         if prefix == "DEBT" || prefix == "DEP" {
@@ -97,7 +95,7 @@ impl CompanyOperations {
                         key: format!("DEP:{}:{rest}", company.0),
                         due_date: date.next()?,
                         action: ScheduledAction::ContractMaturity {
-                            company: company.clone(),
+                            company: *company,
                             reference: reference.into(),
                         },
                     })?;
@@ -147,7 +145,7 @@ impl CompanyOperations {
                 Ok(())
             }
             _ => Err(OperationsError::UnknownMaturityReference {
-                company: company.clone(),
+                company: *company,
                 reference: reference.to_string(),
             }),
         }

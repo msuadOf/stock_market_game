@@ -373,7 +373,7 @@ pub(crate) fn ensure_scope_mirrors_company(
     };
     if member.0 != company.0 {
         return Err(InformationError::ScopeCompanyMismatch {
-            company: company.clone(),
+            company: *company,
             scope: scope.clone(),
         });
     }

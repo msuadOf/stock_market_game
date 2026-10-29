@@ -436,7 +436,7 @@ mod book {
     ) -> crate::company::share_registry::RegistrationSnapshot {
         let mut registry = ShareRegistry::new(
             stock.clone(),
-            issuer.clone(),
+            *issuer,
             issued_shares,
             date("2030-06-06"),
             holdings,

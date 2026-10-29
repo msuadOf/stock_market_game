@@ -11,7 +11,7 @@ fn candidate_observation(session: &GameSession) -> (StateHash, serde_json::Value
 fn fixture_with_two_live_orders() -> (GameSession, PlanExecutionRequest, Vec<OrderId>) {
     let (mut session, request) = super::super::plan_chain_candidates_tests::execution_fixture();
     let owner = AccountId(1);
-    let code = request.allocation.code.clone();
+    let code = request.allocation.code;
     // An NPC's normal-quote routing cancels its existing same-side quote before
     // placing the next one. This adapter fixture requires two simultaneously live
     // commands, so make its otherwise strategy-free account a player explicitly.
@@ -24,7 +24,7 @@ fn fixture_with_two_live_orders() -> (GameSession, PlanExecutionRequest, Vec<Ord
         session.seed_order_for_test(
             owner,
             Intent::PlaceLimit {
-                code: code.clone(),
+                code: code,
                 side: Side::Buy,
                 price: LimitPrice::Fixed(Money::from_cents(price)),
                 qty: 100,
@@ -58,7 +58,7 @@ fn fixture_with_two_live_orders() -> (GameSession, PlanExecutionRequest, Vec<Ord
 #[test]
 fn source_enumeration_preserves_multi_continuation_order_and_payload() {
     let (mut session, request, order_ids) = fixture_with_two_live_orders();
-    let code = request.allocation.code.clone();
+    let code = request.allocation.code;
     let mut plans = std::mem::take(&mut session.state.plans);
     let first_route = match session.prepare_plan_observation(&plans, request).unwrap() {
         PlanExecutionProgress::Route(route) => route,
@@ -74,7 +74,7 @@ fn source_enumeration_preserves_multi_continuation_order_and_payload() {
     session.seed_order_for_test(
         AccountId(1),
         Intent::Cancel {
-            code: code.clone(),
+            code: code,
             id: order_ids[0],
         },
         &mut cancel_events,
@@ -101,7 +101,7 @@ fn source_enumeration_preserves_multi_continuation_order_and_payload() {
     session.seed_order_for_test(
         AccountId(1),
         Intent::Cancel {
-            code: code.clone(),
+            code: code,
             id: order_ids[1],
         },
         &mut cancel_events,
@@ -150,11 +150,11 @@ fn source_enumeration_preserves_multi_continuation_order_and_payload() {
         .unwrap(),
         serde_json::to_value([
             Intent::Cancel {
-                code: code.clone(),
+                code: code,
                 id: order_ids[0],
             },
             Intent::Cancel {
-                code: code.clone(),
+                code: code,
                 id: order_ids[1],
             },
             Intent::PlaceLimit {

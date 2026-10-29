@@ -48,7 +48,7 @@ fn real_retail_auction_review_cancels_old_quote_before_accepting_new_quote() {
     authority.seed_auction_order_for_test(
         retail,
         Intent::PlaceLimit {
-            code: code.clone(),
+            code: code,
             side: Side::Buy,
             price: crate::LimitPrice::Fixed(Money::from_cents(900)),
             qty: 100,
@@ -167,7 +167,7 @@ fn production_market_rejection_consumes_id_and_does_not_refund_account_validatio
             .enqueue_player_intent(
                 AccountId(0),
                 Intent::PlaceMarket {
-                    code: code.clone(),
+                    code: code,
                     side: Side::Buy,
                     qty: 100,
                 },
@@ -249,7 +249,7 @@ fn production_market_rejection_consumes_the_shared_account_validation_budget_bef
         .enqueue_player_intent(
             AccountId(0),
             Intent::PlaceMarket {
-                code: code.clone(),
+                code: code,
                 side: Side::Buy,
                 qty: 100,
             },
@@ -322,17 +322,17 @@ fn production_market_validation_rejects_quantity_and_shares_before_allocating_id
     let code = request_code(&authority);
     for intent in [
         Intent::PlaceMarket {
-            code: code.clone(),
+            code: code,
             side: Side::Buy,
             qty: 1,
         },
         Intent::PlaceMarket {
-            code: code.clone(),
+            code: code,
             side: Side::Sell,
             qty: 100,
         },
         Intent::PlaceMarket {
-            code: code.clone(),
+            code: code,
             side: Side::Buy,
             qty: 100,
         },
@@ -413,7 +413,7 @@ fn opening_completion_fixture(
         .plans
         .create(PlanOpen {
             account: AccountId(1),
-            code: code.clone(),
+            code: code,
             direction: Side::Buy,
             target: PlanTarget::ShareCount(target_qty),
             opinion: PlanOpinion {
@@ -429,11 +429,11 @@ fn opening_completion_fixture(
     session
         .fixture_account_mut(&AccountId(0))
         .unwrap()
-        .grant_position(code.clone(), seller_qty, Money::from_cents(900))
+        .grant_position(code, seller_qty, Money::from_cents(900))
         .unwrap();
     session
         .fixture_append_auction_orders(
-            code.clone(),
+            code,
             vec![crate::AuctionOrderSnap {
                 owner: AccountId(0),
                 side: Side::Sell,
@@ -568,7 +568,7 @@ fn prepared_parent_auction_seam_commits_one_complete_tick() {
         .enqueue_player_intent(
             AccountId(0),
             Intent::PlaceLimit {
-                code: code.clone(),
+                code: code,
                 side: Side::Buy,
                 price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
                 qty: 100,
@@ -635,7 +635,7 @@ fn parent_transaction_applies_opening_completion_full_fill_once() {
 fn parent_transaction_applies_opening_completion_partial_fill_once() {
     let (mut authority, request) = opening_completion_fixture(200, 100);
     let plan_id = request.plan_id;
-    let code = request.allocation.code.clone();
+    let code = request.allocation.code;
 
     commit_with_roots(&mut authority, request);
 
@@ -658,5 +658,5 @@ fn parent_transaction_applies_opening_completion_partial_fill_once() {
 }
 
 fn request_code(session: &GameSession) -> crate::StockId {
-    session.state.markets.keys().next().unwrap().clone()
+    *session.state.markets.keys().next().unwrap()
 }

@@ -14,7 +14,7 @@ fn quote_expiry_hydrates_complete_live_books_without_expiring_a_lifecycle() {
     game.seed_order_for_test(
         npc,
         crate::Intent::PlaceLimit {
-            code: code.clone(),
+            code: code,
             side: crate::Side::Buy,
             price: crate::LimitPrice::Fixed(crate::Money::from_cents(990)),
             qty: 100,
@@ -24,7 +24,7 @@ fn quote_expiry_hydrates_complete_live_books_without_expiring_a_lifecycle() {
     game.seed_auction_order_for_test(
         player,
         crate::Intent::PlaceLimit {
-            code: code.clone(),
+            code: code,
             side: crate::Side::Buy,
             price: crate::LimitPrice::Fixed(crate::Money::from_cents(980)),
             qty: 100,

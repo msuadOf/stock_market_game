@@ -67,11 +67,11 @@ fn last_continuous_tick_keeps_its_price_point_before_closing_auction() {
 #[test]
 fn no_closing_auction_finishes_day_and_releases_new_orders_once() {
     let mut game = session(1, 0);
-    let code = game.state.markets.keys().next().unwrap().clone();
+    let code = *game.state.markets.keys().next().unwrap();
     game.enqueue_player_intent(
         AccountId(0),
         Intent::PlaceLimit {
-            code: code.clone(),
+            code: code,
             side: Side::Buy,
             price: crate::LimitPrice::Fixed(Money::from_cents(990)),
             qty: 100,
@@ -320,18 +320,18 @@ fn day_end_quotes_each_cleared_stock_and_skips_untouched_stocks() {
 
 fn trade_session(ticks_per_day: u64) -> (GameSession, crate::StockId) {
     let mut game = session(ticks_per_day, 0);
-    let code = game.state.markets.keys().next().unwrap().clone();
+    let code = *game.state.markets.keys().next().unwrap();
     // Existing player inventory avoids adding an account absent from the save setup.
     game.fixture_account_mut(&AccountId(0))
         .unwrap()
-        .grant_position(code.clone(), 400, Money::from_cents(1_000))
+        .grant_position(code, 400, Money::from_cents(1_000))
         .unwrap();
     for price in [1_010, 1_020] {
         for side in [Side::Sell, Side::Buy] {
             game.enqueue_player_intent(
                 AccountId(0),
                 Intent::PlaceLimit {
-                    code: code.clone(),
+                    code: code,
                     side,
                     price: crate::LimitPrice::Fixed(Money::from_cents(price)),
                     qty: 100,
@@ -509,7 +509,7 @@ fn candle_counter_overflow_returns_fatal_without_committing_the_tick() {
                 "count" => candle.trade_stats.as_mut().unwrap().trade_count = u64::MAX,
                 _ => unreachable!(),
             }
-            candidate.state.candle_book.set_active(code.clone(), candle);
+            candidate.state.candle_book.set_active(code, candle);
             Ok(())
         })
         .unwrap();
@@ -555,16 +555,16 @@ fn partial_fill_then_day_end_keeps_cross_source_receipts_and_cancellation_quanti
 
 fn partial_fill_then_day_end(maker: Side, taker: Side) {
     let mut game = session(2, 0);
-    let code = game.state.markets.keys().next().unwrap().clone();
+    let code = *game.state.markets.keys().next().unwrap();
     game.fixture_account_mut(&AccountId(0))
         .unwrap()
-        .grant_position(code.clone(), 200, Money::from_cents(1_000))
+        .grant_position(code, 200, Money::from_cents(1_000))
         .unwrap();
     for (side, qty) in [(maker, 200), (taker, 100)] {
         game.enqueue_player_intent(
             AccountId(0),
             Intent::PlaceLimit {
-                code: code.clone(),
+                code: code,
                 side,
                 price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
                 qty,

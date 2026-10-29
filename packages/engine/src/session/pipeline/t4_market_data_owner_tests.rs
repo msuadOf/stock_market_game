@@ -119,7 +119,7 @@ fn stock_owner_finish_computes_market_data_patch_for_continuous_tick() {
 #[test]
 fn finalize_installs_owner_market_data_patch_into_session() {
     let mut session = continuous_session();
-    let code = session.state.markets.keys().next().unwrap().clone();
+    let code = *session.state.markets.keys().next().unwrap();
     let pre_history_len = session.state.price_history[&code].len();
     let pre_minutes = session.state.market_minute_closes[&code].len();
     let _ = session.step().expect("健康 tick");
@@ -179,7 +179,7 @@ fn add_resting_at(
     assert!(result.resting.is_some());
     let key = EnvelopeKey {
         account: owner,
-        stock: code.clone(),
+        stock: *code,
         order: order_id,
         side: Side::Sell,
     };
@@ -214,7 +214,7 @@ fn owner_finish_candle_statistics_under_real_trades() {
         ),
     ] {
         let mut game = continuous_session();
-        let code = game.state.markets.keys().next().unwrap().clone();
+        let code = *game.state.markets.keys().next().unwrap();
         // 卖方账户真实持仓背书（allocation seal 的诚实不变量要求
         // ledger 卖出预留不超可卖量）。
         let moment = crate::experience::ExperienceMoment {
@@ -224,7 +224,7 @@ fn owner_finish_candle_statistics_under_real_trades() {
         };
         game.fixture_account_mut(&AccountId(1))
             .unwrap()
-            .grant_position(code.clone(), 200, Money::from_cents(1_000))
+            .grant_position(code, 200, Money::from_cents(1_000))
             .unwrap();
         // inst 账户无 retail_experience 记忆（quote_setup inst_count=1）；
         // 持仓背书只需账户 position，无需零售持有期初始化。
@@ -253,7 +253,7 @@ fn owner_finish_candle_statistics_under_real_trades() {
         game.state.next_order_id = 10_000;
         if let Some((open, close, volume)) = prior {
             game.state.candle_book.set_active(
-                code.clone(),
+                code,
                 crate::DailyCandle {
                     time: 0,
                     open,
@@ -272,7 +272,7 @@ fn owner_finish_candle_statistics_under_real_trades() {
             &game,
             AccountId(0),
             vec![crate::Intent::PlaceLimit {
-                code: code.clone(),
+                code: code,
                 side: Side::Buy,
                 price: crate::LimitPrice::Fixed(Money::from_cents(1_010)),
                 qty: 100,
@@ -345,14 +345,12 @@ fn owner_finish_candle_statistics_under_real_trades() {
 #[test]
 fn minute_history_prefix_is_preserved_when_owner_appends() {
     let mut game = continuous_session();
-    let code = game.state.markets.keys().next().unwrap().clone();
+    let code = *game.state.markets.keys().next().unwrap();
     let seeded = crate::MarketMinuteClose {
         absolute_trading_minute: 0,
         close: Money::from_cents(1_234),
     };
-    game.state
-        .market_minute_closes
-        .insert(code.clone(), vec![seeded.clone()]);
+    game.state.market_minute_closes.insert(code, vec![seeded]);
     let _ = game.step().expect("健康 tick");
     let minutes = &game.state.market_minute_closes[&code];
     assert!(
@@ -374,7 +372,7 @@ fn auction_event_order_and_no_trade_candle_mark() {
     let mut setup = crate::session::npc_working_quote_tests::quote_setup(3);
     setup.ticks_per_day = 15_300;
     let mut game = GameSession::new(setup, 42).unwrap();
-    let code = game.state.markets.keys().next().unwrap().clone();
+    let code = *game.state.markets.keys().next().unwrap();
     let tick1 = game.step().expect("竞价 tick 1");
     assert!(
         tick1
@@ -432,7 +430,7 @@ fn auction_event_order_and_no_trade_candle_mark() {
 fn stock_finish_fatal_classification_splits_market_data_from_other() {
     use super::continuous_matching::StockFinishFatal;
     let code = crate::StockId(0);
-    let mut market =
+    let market =
         super::continuous_matching::incremental_continuous_stock_shadow::tests::empty_market(&code);
     let input = super::continuous_matching::incremental_continuous_stock_shadow::tests::stock_input(
         market.clone(),
@@ -616,7 +614,7 @@ fn two_accepted_outcomes() -> (
     let mut setup = crate::session::npc_working_quote_tests::quote_setup(0);
     setup.ticks_per_day = 120;
     let game = GameSession::new(setup, 42).unwrap();
-    let code = game.state.markets.keys().next().unwrap().clone();
+    let code = *game.state.markets.keys().next().unwrap();
     let plan = super::plan_tick(PhaseInput { session: &game }).unwrap();
     let mut validator = AccountValidatorDriver::new(
         plan.decision_resources().unwrap().clone(),
@@ -631,7 +629,7 @@ fn two_accepted_outcomes() -> (
             IntentCandidateKey::player(index),
             AccountId(0),
             Intent::PlaceLimit {
-                code: code.clone(),
+                code: code,
                 side: Side::Buy,
                 price: crate::LimitPrice::Fixed(Money::from_cents(700)),
                 qty: 100,

@@ -135,7 +135,7 @@ fn saved_filled_identity_cannot_also_be_an_active_order() {
     session.seed_order_for_test(
         AccountId(0),
         Intent::PlaceLimit {
-            code: code.clone(),
+            code: code,
             side: Side::Buy,
             price: LimitPrice::Fixed(Money::from_cents(1_000)),
             qty: 100,
@@ -673,11 +673,7 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
                 vec![lifecycle.account.0],
             )));
         }
-        if !lifecycle_keys.insert((
-            lifecycle.account,
-            lifecycle.code.clone(),
-            lifecycle.order_id,
-        )) {
+        if !lifecycle_keys.insert((lifecycle.account, lifecycle.code, lifecycle.order_id)) {
             // fault2030：NPC 报价生命周期重复委托；ctx[0]=订单 id。
             return Err(SessionError::InvalidSave(ValidationFault::new(
                 2030,
@@ -1078,7 +1074,7 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
                 SessionError::InvalidSave(ValidationFault::new(2074, vec![u64::from(stock_code.0)]))
             })?;
         if received.stock_ordinal >= *next_stock
-            || !seen_stock_receipts.insert((stock_code.clone(), received.stock_ordinal))
+            || !seen_stock_receipts.insert((*stock_code, received.stock_ordinal))
         {
             // fault2075：pending intent 的股票回执序号非法或重复；ctx[0]=StockId。
             return Err(SessionError::InvalidSave(ValidationFault::new(
@@ -1370,7 +1366,7 @@ fn validate_pending_receipt_order(save: &SaveSlot) -> Result<(), SessionError> {
 
     // 批四：pending_npc 载体删除——先序图仅覆盖 pending_player（跨 lane 环
     // fault2084 的玩家路径见证保留；NPC 依赖边 fault2081 随载体退役）。
-    let mut intents = save.pending_player.clone();
+    let intents = save.pending_player.clone();
     let mut edges = vec![BTreeSet::new(); intents.len()];
     let mut resource_lanes = BTreeMap::<ResourceLane, Vec<(usize, u64)>>::new();
     let mut stock_lanes = BTreeMap::<StockId, Vec<(usize, u64)>>::new();
@@ -1379,15 +1375,15 @@ fn validate_pending_receipt_order(save: &SaveSlot) -> Result<(), SessionError> {
             Intent::PlaceLimit { code, side, .. } | Intent::PlaceMarket { code, side, .. } => {
                 let lane = match side {
                     Side::Buy => ResourceLane::Cash(received.owner),
-                    Side::Sell => ResourceLane::Shares(received.owner, code.clone()),
+                    Side::Sell => ResourceLane::Shares(received.owner, *code),
                 };
                 resource_lanes
                     .entry(lane)
                     .or_default()
                     .push((index, received.account_ordinal));
-                code.clone()
+                *code
             }
-            Intent::Cancel { code, .. } => code.clone(),
+            Intent::Cancel { code, .. } => *code,
         };
         stock_lanes
             .entry(code)
@@ -2319,7 +2315,7 @@ pub(super) fn validate_saved_order_state(
     for (code, orders) in &save.resting_orders {
         for order in orders.iter().filter(|order| order.side == Side::Sell) {
             let total = sell_filled_totals
-                .entry((order.owner, code.clone()))
+                .entry((order.owner, *code))
                 .or_insert(0_u64);
             *total = total
                 .checked_add(u64::from(order.filled_qty))
@@ -2391,7 +2387,7 @@ pub(super) fn validate_saved_order_state(
                     vec![order.id.0],
                 )));
             }
-            if !book_sequences.insert((code.clone(), order.seq)) {
+            if !book_sequences.insert((*code, order.seq)) {
                 // fault2165：簿序号重复；ctx[0]=seq，ctx[1]=StockId。
                 return Err(SessionError::InvalidSave(ValidationFault::new(
                     2165,
@@ -2643,7 +2639,7 @@ impl SavedReservations {
         let reconstructed_sellable = sellable
             .checked_add(
                 self.sell_filled_totals
-                    .get(&(owner, code.clone()))
+                    .get(&(owner, *code))
                     .copied()
                     .unwrap_or(0),
             )
@@ -2666,7 +2662,7 @@ impl SavedReservations {
         let odd_lot_is_valid = if is_board_lot {
             true
         } else {
-            let key = (owner, code.clone());
+            let key = (owner, *code);
             reconstructed_sellable % lot_size != 0
                 && original_qty % lot_size == reconstructed_sellable % lot_size
                 && self.validated_odd_lot_sells.insert(key)
@@ -2705,7 +2701,7 @@ impl SavedReservations {
                     })?;
             }
             Side::Sell => {
-                let reserved = self.sells.entry((owner, code.clone())).or_default();
+                let reserved = self.sells.entry((owner, *code)).or_default();
                 *reserved = reserved.checked_add(u64::from(order.qty)).ok_or_else(|| {
                     // fault2182：卖出股份预留累计溢出。
                     SessionError::InvalidSave(ValidationFault::bare(2182))

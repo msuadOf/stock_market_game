@@ -67,12 +67,12 @@ impl GameSession {
         #[cfg(feature = "simulation-diagnostics")]
         self.causal_terminated((account, order_id, order.qty), &code, cause.termination())
             .map_err(ContinuousCancellationError::Causal)?;
-        self.state.markets.insert(code.clone(), candidate_market);
+        self.state.markets.insert(code, candidate_market);
         #[cfg(feature = "simulation-diagnostics")]
         self.causal_snapshot(&code)
             .map_err(ContinuousCancellationError::Causal)?;
         self.remove_npc_order_lifecycle(account, &code, order_id);
-        self.record_retail_order_canceled(account, code.clone(), order_id, order.qty);
+        self.record_retail_order_canceled(account, code, order_id, order.qty);
 
         Ok(ContinuousCancellationFact {
             account,

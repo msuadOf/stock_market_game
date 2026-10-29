@@ -130,7 +130,7 @@ pub(super) fn continuous_shards(
     let mut initialized = inputs
         .into_par_iter()
         .map(|input| {
-            let code = input.market.code().clone();
+            let code = *input.market.code();
             let shard = IncrementalContinuousStockCoordinator::from_post_expiry(vec![input]);
             (code, shard)
         })
@@ -431,7 +431,7 @@ impl<S: StockShard> StockStreamCoordinator<S> {
         if expected.is_empty() {
             for operation in operations {
                 self.pending
-                    .entry(operation_code(&operation).clone())
+                    .entry(*operation_code(&operation))
                     .or_default()
                     .0
                     .push(operation);
@@ -439,10 +439,7 @@ impl<S: StockShard> StockStreamCoordinator<S> {
             return Ok(());
         }
         for (operation, outcome) in operations.into_iter().zip(expected) {
-            let entry = self
-                .pending
-                .entry(operation_code(&operation).clone())
-                .or_default();
+            let entry = self.pending.entry(*operation_code(&operation)).or_default();
             entry.0.push(operation);
             entry.1.push(outcome);
         }
@@ -518,7 +515,7 @@ impl<S: StockShard> StockStreamCoordinator<S> {
                 // in_place_scope spawn 不传播 TLS，worker 只读自身线程会拿到
                 // 空绑定或残留绑定，与内联路径读协调者绑定分叉（Astra P2-②）。
                 let bindings = StockTaskBindings::capture();
-                self.in_flight.insert(code.clone());
+                self.in_flight.insert(code);
                 scope.spawn(move |_| {
                     execute_stock_task(
                         &worker_compute,
@@ -585,7 +582,7 @@ impl<S: StockShard> StockStreamCoordinator<S> {
             Some(shard) => shard,
             None => detached(&code)?,
         };
-        self.in_flight.insert(code.clone());
+        self.in_flight.insert(code);
         let sender = self.sender.clone();
         let notifications = self.notifications.sender.clone();
         let compute = self.compute.clone();
@@ -702,7 +699,7 @@ impl<S: StockShard> StockStreamCoordinator<S> {
             .receiver
             .try_recv()
             .map_err(|_| invariant("stock notification has no completed book"))?;
-        if !self.in_flight.remove(&code) || self.available.insert(code.clone(), shard).is_some() {
+        if !self.in_flight.remove(&code) || self.available.insert(code, shard).is_some() {
             return Err(invariant("stock worker returned a duplicate book"));
         }
         let (round, outcomes) = round?;
@@ -1034,10 +1031,10 @@ mod tests {
             StockStreamNotifications::new(),
         );
         let code = StockId(0);
-        coordinator.in_flight.insert(code.clone());
+        coordinator.in_flight.insert(code);
         coordinator
             .sender
-            .send((code.clone(), EmptyShard, Ok(((), Vec::new()))))
+            .send((code, EmptyShard, Ok(((), Vec::new()))))
             .unwrap();
         coordinator.receive_completion().unwrap();
         coordinator
@@ -1184,7 +1181,7 @@ mod tests {
         });
         let code = StockId(0);
         let shard = MockShard {
-            code: code.clone(),
+            code: code,
             steps: 0,
             signals,
         };
@@ -1195,7 +1192,7 @@ mod tests {
             .install(|| {
                 drive_stock_stream(
                     &shared,
-                    BTreeMap::from([(code.clone(), shard)]),
+                    BTreeMap::from([(code, shard)]),
                     vec![cancel(StockId(0), 1)],
                     StockStreamNotifications::new(),
                     |_| Err(invariant("mock must not request a detached stock")),
@@ -1234,7 +1231,7 @@ mod tests {
                             // 分派前对齐独立宿主的 coordinator；迁入共享 pool 会占满 worker。
                             entered.wait();
                             Ok(MockShard {
-                                code: code.clone(),
+                                code: *code,
                                 steps: 0,
                                 signals: Arc::new(Signals {
                                     b_running: AtomicBool::new(true),
@@ -1431,7 +1428,7 @@ mod tests {
                         // 本轮无就绪操作（非完成）。
                         let idle = matches!(progress, StockStreamProgress::Idle);
                         if let StockStreamProgress::StockCompleted { code, round, .. } = progress {
-                            rounds.insert(code.clone(), *round);
+                            rounds.insert(*code, *round);
                         }
                         Ok(if idle {
                             FeedOutcome::Complete

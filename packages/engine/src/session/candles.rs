@@ -131,7 +131,7 @@ impl SessionCandleBook {
     /// （与 record_trade_or_mark 的 entry().or_insert() 语义一致：缺席即建立）。
     /// 历史 K 追加（runtime 驱动器回写面）。
     pub(crate) fn push_history(&mut self, code: &StockId, candle: DailyCandle) {
-        self.histories.entry(code.clone()).or_default().push(candle);
+        self.histories.entry(*code).or_default().push(candle);
     }
 
     /// 日界批：以日结 Drain 终 K 补真历史簿条目（`time` 匹配的**末条**
@@ -167,7 +167,7 @@ impl SessionCandleBook {
         price: Money,
         added_volume: u64,
     ) {
-        let candle = self.active.entry(code.clone()).or_insert(DailyCandle {
+        let candle = self.active.entry(*code).or_insert(DailyCandle {
             time,
             open: price,
             high: price,
@@ -211,7 +211,7 @@ impl SessionCandleBook {
     pub(super) fn commit_active(&mut self) -> BTreeMap<StockId, DailyCandle> {
         let closed = std::mem::take(&mut self.active);
         for (code, candle) in &closed {
-            let history = self.histories.entry(code.clone()).or_default();
+            let history = self.histories.entry(*code).or_default();
             history.push(candle.clone());
         }
         closed
@@ -438,7 +438,7 @@ mod candle_book_tests {
         let code = StockId(0);
         let mut book = SessionCandleBook::default();
         book.set_active(
-            code.clone(),
+            code,
             DailyCandle {
                 time: 0,
                 open: Money::from_cents(1_000),
@@ -458,7 +458,7 @@ mod candle_book_tests {
         let code = StockId(0);
         let mut book = SessionCandleBook::default();
         book.set_active(
-            code.clone(),
+            code,
             DailyCandle {
                 time: 0,
                 open: Money::from_cents(1_000),

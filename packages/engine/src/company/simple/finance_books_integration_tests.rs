@@ -475,7 +475,7 @@ fn book_display_investment_ratio_is_configurable() {
         let mut config = baseline.config().clone();
         config.book_display.investment_of_revenue_bp = bp;
         let mut state = SimpleFinanceState::create(
-            baseline.company_id().clone(),
+            *baseline.company_id(),
             baseline.kind(),
             &config,
             date(1, 1).prev().unwrap(),
@@ -741,7 +741,7 @@ fn correction_ready_system_with_prehistory(
             prehistory_periods,
             settlement_cycle: SettlementCycle::Monthly,
             companies: vec![SimpleCompanyConfig {
-                company: company.clone(),
+                company: company,
                 kind: CompanyKind::Industrial,
                 generation: PeriodGenerationParameters {
                     initial_revenue: AccountingAmount::from_cents(10_000),

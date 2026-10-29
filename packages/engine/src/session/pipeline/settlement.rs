@@ -73,7 +73,7 @@ impl ReceiptSettlementPlan {
         }
         let totals = self
             .totals_by_account_stock
-            .entry((fact.key().account, fact.key().stock.clone()))
+            .entry((fact.key().account, fact.key().stock))
             .or_default();
         let side_totals = match fact.key().side {
             Side::Buy => &mut totals.buy,
@@ -115,7 +115,7 @@ impl ReceiptSettlementPlan {
 
         let totals = self
             .totals_by_account_stock
-            .entry((receipt.envelope.account, receipt.envelope.stock.clone()))
+            .entry((receipt.envelope.account, receipt.envelope.stock))
             .or_default();
         let side_totals = match receipt.envelope.side {
             Side::Buy => &mut totals.buy,
@@ -157,7 +157,7 @@ impl ReceiptSettlementPlan {
                     for (stock, totals) in stocks {
                         if totals.buy.qty > 0 {
                             account
-                                .apply_settlement(Side::Buy, stock.clone(), totals.buy, t1_enabled)
+                                .apply_settlement(Side::Buy, stock, totals.buy, t1_enabled)
                                 .map_err(|error| invariant(&error.to_string()))?;
                             applied_groups = applied_groups
                                 .checked_add(1)

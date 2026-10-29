@@ -465,7 +465,7 @@ impl Account {
         let sellable = self.sellable_qty(&code);
         if settlement.qty > sellable {
             return Err(AccountError::InsufficientShares {
-                code: code.clone(),
+                code: code,
                 needed: settlement.qty,
                 have: sellable,
             });
@@ -722,7 +722,7 @@ mod shadow_tests {
         let mut authority =
             Account::new(AccountId(1), AccountKind::Player, Money::from_cents(1_000));
         authority
-            .grant_position(code.clone(), 100, Money::from_cents(10))
+            .grant_position(code, 100, Money::from_cents(10))
             .unwrap();
         let mut shadow = authority.clone_for_shadow().unwrap();
         assert!(Arc::ptr_eq(&authority.state, &shadow.state));
@@ -731,7 +731,7 @@ mod shadow_tests {
 
         shadow.fixture_set_cash(Money::from_cents(900));
         shadow
-            .grant_position(code.clone(), 200, Money::from_cents(20))
+            .grant_position(code, 200, Money::from_cents(20))
             .unwrap();
         assert!(!Arc::ptr_eq(&authority.state, &shadow.state));
         assert_eq!(authority.cash(), Money::from_cents(1_000));
@@ -745,15 +745,12 @@ mod shadow_tests {
         let mut authority =
             Account::new(AccountId(1), AccountKind::Player, Money::from_cents(1_000));
         authority
-            .grant_position(code.clone(), 100, Money::from_cents(10))
+            .grant_position(code, 100, Money::from_cents(10))
             .unwrap();
         let mut shadow = authority.clone_for_shadow().unwrap();
         shadow.restore_balances(
             Money::from_cents(900),
-            BTreeMap::from([(
-                code.clone(),
-                Position::from_restored_parts(200, 100, 2_000, 3_000),
-            )]),
+            BTreeMap::from([(code, Position::from_restored_parts(200, 100, 2_000, 3_000))]),
         );
         assert!(!Arc::ptr_eq(&authority.state, &shadow.state));
         assert_eq!(authority.cash(), Money::from_cents(1_000));

@@ -105,7 +105,7 @@ pub(super) fn compose_stock_execution_transaction_for_test(
     let mut worker_batches = Vec::new();
     let mut terminal_keys = Vec::new();
     for worker in workers {
-        let code = worker.market.code().clone();
+        let code = *worker.market.code();
         if stocks.contains_key(&code) {
             return Err(StockExecutionTransactionError::DuplicateStockWorker { code });
         }

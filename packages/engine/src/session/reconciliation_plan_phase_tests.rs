@@ -3,7 +3,7 @@ use super::*;
 
 fn buy(code: &StockId, price: i64) -> Intent {
     Intent::PlaceLimit {
-        code: code.clone(),
+        code: *code,
         side: Side::Buy,
         price: LimitPrice::Fixed(Money::from_cents(price)),
         qty: 100,
@@ -72,12 +72,12 @@ fn reconciliation_plan_multiple_orders_preserves_decision_and_residual_order() {
     session
         .fixture_account_mut(&account)
         .unwrap()
-        .grant_position(code.clone(), 100, Money::from_cents(90_000))
+        .grant_position(code, 100, Money::from_cents(90_000))
         .unwrap();
     session.seed_order_for_test(
         account,
         Intent::PlaceLimit {
-            code: code.clone(),
+            code: code,
             side: Side::Sell,
             price: LimitPrice::Fixed(Money::from_cents(1_100)),
             qty: 100,
@@ -95,7 +95,7 @@ fn reconciliation_plan_multiple_orders_preserves_decision_and_residual_order() {
         vec![
             buy(&code, 900),
             Intent::PlaceLimit {
-                code: code.clone(),
+                code: code,
                 side: Side::Sell,
                 price: LimitPrice::Fixed(Money::from_cents(1_090)),
                 qty: 100,
@@ -139,7 +139,7 @@ fn locked_auction_symbolic_crossing_uses_both_daily_boundaries() {
         session.seed_auction_order_for_test(
             account,
             Intent::PlaceLimit {
-                code: code.clone(),
+                code: code,
                 side: resting_side,
                 price: LimitPrice::Fixed(Money::from_cents(resting_price)),
                 qty: 100,
@@ -150,7 +150,7 @@ fn locked_auction_symbolic_crossing_uses_both_daily_boundaries() {
             &session,
             account,
             vec![Intent::PlaceLimit {
-                code: code.clone(),
+                code: code,
                 side: new_side,
                 price: new_price,
                 qty: 100,

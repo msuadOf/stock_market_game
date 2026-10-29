@@ -105,10 +105,7 @@ impl<'a> ReadyStockStream<'a> {
         // （与原 pending 派生精确等价——同股后续排队批的标记不受影响）。
         for outcome in matched {
             if let Some(operation) = outcome.operation() {
-                let route = (
-                    operation_owner(operation),
-                    operation_code(operation).clone(),
-                );
+                let route = (operation_owner(operation), *operation_code(operation));
                 match self.in_flight_routes.get_mut(&route) {
                     Some(count) if *count > 1 => *count -= 1,
                     Some(_) => {
@@ -167,10 +164,7 @@ impl<'a> ReadyStockStream<'a> {
                     // 侧身份约束，此处只按流出序成对）。
                     *self
                         .in_flight_routes
-                        .entry((
-                            operation_owner(&operation),
-                            operation_code(&operation).clone(),
-                        ))
+                        .entry((operation_owner(&operation), *operation_code(&operation)))
                         .or_default() += 1;
                     operations.push(operation);
                     expected.push(outcome);

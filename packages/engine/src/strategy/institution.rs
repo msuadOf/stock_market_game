@@ -42,7 +42,7 @@ pub(super) fn decide_inst(
                 .and_then(|qty| affordable_buy_qty(qty, buy_price, own.cash, config))
             {
                 out.push(Intent::PlaceLimit {
-                    code: code.clone(),
+                    code: *code,
                     side: Side::Buy,
                     price: LimitPrice::Fixed(buy_price),
                     qty,
@@ -52,7 +52,7 @@ pub(super) fn decide_inst(
             let sellable = own.positions.get(code).map(|p| p.sellable_qty).unwrap_or(0);
             if let Some(qty) = a_share_sell_qty(strategy.order_size, sellable) {
                 out.push(Intent::PlaceLimit {
-                    code: code.clone(),
+                    code: *code,
                     side: Side::Sell,
                     price: LimitPrice::Fixed(sell_price),
                     qty,

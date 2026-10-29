@@ -723,12 +723,12 @@ impl SeedDiagnostics {
                         qty,
                         seed,
                     )?;
-                    traded_codes.insert(code.clone());
+                    traded_codes.insert(code);
                     self.trade_events = checked_increment(self.trade_events, seed, "trade_events")?;
                     let stock = self.stocks.get_mut(&code).ok_or_else(|| {
                         BaselineError::MissingDailyCandles {
                             seed,
-                            code: code.clone(),
+                            code: code,
                             expected: trading_days,
                             actual: 0,
                         }
@@ -736,20 +736,14 @@ impl SeedDiagnostics {
                     stock.trade_event_volume = stock
                         .trade_event_volume
                         .checked_add(u64::from(qty))
-                        .ok_or_else(|| BaselineError::VolumeOverflow {
-                            seed,
-                            code: code.clone(),
-                        })?;
+                        .ok_or_else(|| BaselineError::VolumeOverflow { seed, code: code })?;
                     let turnover = u64::try_from(price.cents())
                         .ok()
                         .and_then(|price_cents| price_cents.checked_mul(u64::from(qty)))
                         .and_then(|fill_turnover| {
                             stock.trade_event_turnover.checked_add(fill_turnover)
                         })
-                        .ok_or_else(|| BaselineError::TurnoverOverflow {
-                            seed,
-                            code: code.clone(),
-                        })?;
+                        .ok_or_else(|| BaselineError::TurnoverOverflow { seed, code: code })?;
                     stock.trade_event_turnover = turnover;
                     let diagnostics = &mut stock.market;
                     match phase {
@@ -759,7 +753,7 @@ impl SeedDiagnostics {
                                 .checked_add(u64::from(qty))
                                 .ok_or_else(|| BaselineError::VolumeOverflow {
                                     seed,
-                                    code: code.clone(),
+                                    code: code,
                                 })?;
                             let phase_volume = match phase {
                                 TradingPhase::CallAuction => {
@@ -772,10 +766,7 @@ impl SeedDiagnostics {
                             };
                             *phase_volume =
                                 phase_volume.checked_add(u64::from(qty)).ok_or_else(|| {
-                                    BaselineError::VolumeOverflow {
-                                        seed,
-                                        code: code.clone(),
-                                    }
+                                    BaselineError::VolumeOverflow { seed, code: code }
                                 })?;
                         }
                         TradingPhase::Continuous => {
@@ -784,7 +775,7 @@ impl SeedDiagnostics {
                                 .checked_add(u64::from(qty))
                                 .ok_or_else(|| BaselineError::VolumeOverflow {
                                     seed,
-                                    code: code.clone(),
+                                    code: code,
                                 })?;
                             let continuous_ticks = setup
                                 .ticks_per_day
@@ -798,7 +789,7 @@ impl SeedDiagnostics {
                                 .checked_add(u64::from(qty))
                                 .ok_or_else(|| BaselineError::VolumeOverflow {
                                     seed,
-                                    code: code.clone(),
+                                    code: code,
                                 })?;
                         }
                         TradingPhase::PreOpen => {
@@ -814,7 +805,7 @@ impl SeedDiagnostics {
                         let stock = self.stocks.get_mut(&code).ok_or_else(|| {
                             BaselineError::MissingDailyCandles {
                                 seed,
-                                code: code.clone(),
+                                code: code,
                                 expected: trading_days,
                                 actual: 0,
                             }
@@ -1425,25 +1416,19 @@ fn summarize_stock(input: StockSummaryInput) -> Result<StockPriceVolumeReport, B
     for (day_index, candle) in candles.iter().enumerate() {
         total_daily_volume = total_daily_volume
             .checked_add(candle.volume)
-            .ok_or_else(|| BaselineError::VolumeOverflow {
-                seed,
-                code: code.clone(),
-            })?;
+            .ok_or_else(|| BaselineError::VolumeOverflow { seed, code: code })?;
         let stats =
             candle
                 .trade_stats
                 .as_ref()
                 .ok_or_else(|| BaselineError::MissingDailyTradeStats {
                     seed,
-                    code: code.clone(),
+                    code: code,
                     day: day_index as u32,
                 })?;
         total_daily_turnover_cents = total_daily_turnover_cents
             .checked_add(stats.turnover_cents)
-            .ok_or_else(|| BaselineError::TurnoverOverflow {
-                seed,
-                code: code.clone(),
-            })?;
+            .ok_or_else(|| BaselineError::TurnoverOverflow { seed, code: code })?;
         if candle.volume == 0 {
             current_zero_volume_streak += 1;
             max_zero_volume_streak = max_zero_volume_streak.max(current_zero_volume_streak);
@@ -1481,14 +1466,11 @@ fn summarize_stock(input: StockSummaryInput) -> Result<StockPriceVolumeReport, B
     let classified_volume = market_diagnostics
         .auction_volume
         .checked_add(market_diagnostics.continuous_volume)
-        .ok_or_else(|| BaselineError::VolumeOverflow {
-            seed,
-            code: code.clone(),
-        })?;
+        .ok_or_else(|| BaselineError::VolumeOverflow { seed, code: code })?;
     if trade_event_volume != total_daily_volume {
         return Err(BaselineError::VolumeMismatch {
             seed,
-            code: code.clone(),
+            code: code,
             event_volume: trade_event_volume,
             daily_volume: total_daily_volume,
         });
@@ -1496,7 +1478,7 @@ fn summarize_stock(input: StockSummaryInput) -> Result<StockPriceVolumeReport, B
     if classified_volume != total_daily_volume {
         return Err(BaselineError::VolumeMismatch {
             seed,
-            code: code.clone(),
+            code: code,
             event_volume: classified_volume,
             daily_volume: total_daily_volume,
         });
@@ -1504,7 +1486,7 @@ fn summarize_stock(input: StockSummaryInput) -> Result<StockPriceVolumeReport, B
     if trade_event_turnover_cents != total_daily_turnover_cents {
         return Err(BaselineError::TurnoverMismatch {
             seed,
-            code: code.clone(),
+            code: code,
             event_turnover_cents: trade_event_turnover_cents,
             daily_turnover_cents: total_daily_turnover_cents,
         });
@@ -2060,7 +2042,7 @@ mod tests {
         let quote = |bids, asks| crate::Event::PriceTick {
             seq: 0,
             tick: 1,
-            code: code.clone(),
+            code: code,
             last_price: Money::from_cents(1_000),
             daily_candle: candle(1_000, 1_000, 0),
             bids,
@@ -2131,7 +2113,7 @@ mod tests {
         let code = StockId(0);
         let event = crate::Event::Trade {
             seq: 0,
-            code: code.clone(),
+            code: code,
             price: Money::from_cents(1_000),
             qty: 100,
             maker: crate::AccountId(0),
@@ -2167,7 +2149,7 @@ mod tests {
         let code = StockId(0);
         let event = crate::Event::Trade {
             seq: 0,
-            code: code.clone(),
+            code: code,
             price: Money::from_cents(1_000),
             qty: 100,
             maker: crate::AccountId(0),
@@ -2343,7 +2325,7 @@ mod tests {
                 ..MarketDiagnosticsAccumulator::default()
             },
             seed: 42,
-            code: code.clone(),
+            code: code,
         });
         assert!(matches!(
             result,

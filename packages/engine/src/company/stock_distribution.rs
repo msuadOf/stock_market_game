@@ -251,7 +251,7 @@ pub fn allocate_stock_distribution(
         approval_reference: plan.approval_reference.clone(),
         registration_event_id: snapshot.event_id().to_owned(),
         stock: snapshot.stock().clone(),
-        issuer: snapshot.issuer().clone(),
+        issuer: *snapshot.issuer(),
         registered_on: snapshot.registered_on(),
         issued_shares_before: snapshot.issued_shares(),
         issuer_treasury_shares_excluded,

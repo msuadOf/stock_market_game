@@ -143,7 +143,7 @@ impl DisclosureDispatch {
                         continue;
                     }
                     let announcement = ctx.library.publish_announcement(AnnouncementRequest {
-                        company: id.clone(),
+                        company: *id,
                         occurred_on: settled,
                         published_at: phase,
                         content: crate::information::AnnouncementContent::Shock(
@@ -155,7 +155,7 @@ impl DisclosureDispatch {
             }
             for failure in ctx.ops.payment_failures_on(settled) {
                 let announcement = ctx.library.publish_announcement(AnnouncementRequest {
-                    company: failure.company.clone(),
+                    company: failure.company,
                     occurred_on: settled,
                     published_at: phase,
                     content: crate::information::AnnouncementContent::Shock(AnnouncedEvent {
@@ -240,7 +240,7 @@ impl DayEndDisclosureCtx<'_> {
         let publication = self.library.publish_closed(
             self.closing,
             PublicationRequest {
-                company: company_id.clone(),
+                company: *company_id,
                 scope: registered.scope,
                 period,
                 kind: kind.report_kind(),

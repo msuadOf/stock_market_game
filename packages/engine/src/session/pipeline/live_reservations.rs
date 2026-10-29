@@ -152,7 +152,7 @@ impl ReservationCache {
                     let live = envelope.live();
                     row.cash = row.cash.add(live.cash).map_err(allocation_money)?;
                     // 保留零股份条目：未知 StockId 即使 Buy shares=0 也须显式拒绝。
-                    let shares = row.sell.entry(key.stock.clone()).or_insert(0);
+                    let shares = row.sell.entry(key.stock).or_insert(0);
                     *shares = shares
                         .checked_add(live.shares)
                         .ok_or_else(|| allocation_invariant("live sell reservation overflow"))?;
@@ -299,7 +299,7 @@ mod tests {
                     sell: BTreeMap::new(),
                 });
             row.cash = row.cash.add(envelope.live().cash).unwrap();
-            let shares = row.sell.entry(key.stock.clone()).or_insert(0);
+            let shares = row.sell.entry(key.stock).or_insert(0);
             *shares = shares.checked_add(envelope.live().shares).unwrap();
         }
 

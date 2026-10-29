@@ -216,9 +216,7 @@ impl AccountValidationCheckpoint {
     }
 
     pub fn remaining_sellable(&self, account: AccountId, code: &StockId) -> Option<u32> {
-        self.remaining_sellable
-            .get(&(account, code.clone()))
-            .copied()
+        self.remaining_sellable.get(&(account, *code)).copied()
     }
 }
 

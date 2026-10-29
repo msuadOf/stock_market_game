@@ -54,7 +54,7 @@ pub(in crate::company::operations) fn advance_day(
     let record_failure = |failures: &mut Vec<PaymentFailureRecord>, what: &str, amount| {
         failures.push(PaymentFailureRecord {
             obligation_status: crate::company::events::PaymentObligationStatus::UncommittedExpense,
-            company: company.clone(),
+            company: company,
             what: what.to_string(),
             amount,
         });
@@ -128,7 +128,7 @@ pub(in crate::company::operations) fn advance_day(
             key: format!("MAT:{}:{}", company.0, outcome.receivable.0),
             due_date: due_on,
             action: ScheduledAction::ContractMaturity {
-                company: company.clone(),
+                company: company,
                 reference: format!("AR:{}", outcome.receivable.0),
             },
         })?;

@@ -146,7 +146,7 @@ impl BeliefBook {
         if report.company != inputs.company {
             return Err(BeliefError::MaterialNotForCompany {
                 report: report_id,
-                company: inputs.company.clone(),
+                company: inputs.company,
             });
         }
         if direct {
@@ -283,7 +283,7 @@ impl BeliefBook {
         if announcement.company != inputs.company {
             return Err(BeliefError::MaterialNotForCompany {
                 report: announcement_id,
-                company: inputs.company.clone(),
+                company: inputs.company,
             });
         }
         let (report_id, observed_at) = self
@@ -375,7 +375,7 @@ impl BeliefBook {
                 .unwrap_or_else(|| forecast.initial_confidence_bp())
         };
         let entry = BeliefEntry {
-            company: inputs.company.clone(),
+            company: inputs.company,
             method: self.analysis.method_for_company_kind(inputs.kind),
             forecast,
             confidence_bp,
@@ -391,7 +391,7 @@ impl BeliefBook {
                 .map(|old| old.applied_experience_orders.clone())
                 .unwrap_or_default(),
         };
-        self.entries.insert(stock.clone(), entry);
+        self.entries.insert(*stock, entry);
     }
 
     /// 方法分发（使用纯函数链接；`None` = 零基本权重 ⇒ 类型化
@@ -425,7 +425,7 @@ impl BeliefBook {
         if report.company != inputs.company {
             return Err(BeliefError::MaterialNotForCompany {
                 report: report_id,
-                company: inputs.company.clone(),
+                company: inputs.company,
             });
         }
         if report.reports.kind != ReportKind::Annual {

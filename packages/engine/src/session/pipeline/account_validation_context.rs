@@ -76,7 +76,7 @@ pub(super) fn collect_account_validation_context_facts(
                     .down_stop()
                     .map_err(|error| invariant(&error.to_string()))?,
             };
-            Ok((code.clone(), stock))
+            Ok((*code, stock))
         })
         .collect::<Result<BTreeMap<_, _>, StepFatal>>()?;
     Ok(AccountValidationFacts { stocks })

@@ -142,7 +142,7 @@ fn typed_private_plan_failure_is_poisoned_without_mutating_authority() {
         .fixture_set_strategy(None);
     game.fixture_account_mut(&account)
         .unwrap()
-        .grant_position(code.clone(), 2, Money::from_cents(1))
+        .grant_position(code, 2, Money::from_cents(1))
         .unwrap();
     game.state
         .markets

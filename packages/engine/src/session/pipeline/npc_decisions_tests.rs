@@ -157,7 +157,7 @@ fn retail_risk_snapshot(locked: bool, style: &str) -> Arc<DecisionSnapshot> {
         return_from_reference: None,
         drawdown_from_peak: Some(-0.20),
         positions: BTreeMap::from([(
-            code.clone(),
+            code,
             crate::observation::PositionRiskObservation {
                 market_value: Money::from_cents(1_000_000),
                 unrealized_return: Some(0.0),
@@ -261,7 +261,7 @@ fn retail_snapshot() -> Arc<DecisionSnapshot> {
     let code = StockId(0);
     let market = MarketView {
         stocks: [(
-            code.clone(),
+            code,
             StockView {
                 best_bid: Some(Money::from_cents(999)),
                 best_ask: Some(Money::from_cents(1_001)),
@@ -350,7 +350,7 @@ fn retail_personal_analysis_controls_direction_without_institution_execution() {
             .unwrap()
             .clone()
             .with_retail_analysis(Some(BTreeMap::from([(
-                code.clone(),
+                code,
                 crate::plans::CandidateAssessment::Scored {
                     score: crate::plans::SignalScore::new(score).unwrap(),
                     used_weight_bp: 10_000,

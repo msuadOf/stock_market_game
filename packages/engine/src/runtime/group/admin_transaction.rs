@@ -682,7 +682,7 @@ impl GroupState {
                 let _ = up.send(UpMsg::TaskDied { who, payload });
                 false
             }
-            Ok(mut result) => {
+            Ok(result) => {
                 #[cfg(test)]
                 if let Ok(candidate) = &mut result {
                     if let Some(AdminFault::StagePrepareCorruption(mode)) = &fault {

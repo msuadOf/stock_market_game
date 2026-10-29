@@ -83,7 +83,7 @@ pub(in crate::company::operations) fn advance_day(
                     failures.push(PaymentFailureRecord {
                         obligation_status:
                             crate::company::events::PaymentObligationStatus::ContractualPayable,
-                        company: company.clone(),
+                        company: company,
                         what: format!("claim payment {}", claim.0),
                         amount: params.claim_size,
                     });

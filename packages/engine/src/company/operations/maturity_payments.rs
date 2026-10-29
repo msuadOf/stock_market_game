@@ -19,7 +19,7 @@ pub(super) fn pay_maturity(
     let mut failed = |what: &str, amount| {
         failures.push(PaymentFailureRecord {
             obligation_status: crate::company::events::PaymentObligationStatus::ContractualOverdue,
-            company: company.clone(),
+            company: *company,
             what: format!("overdue {what}:{}", contract.0),
             amount,
         })
@@ -108,7 +108,7 @@ pub(super) fn pay_maturity(
         }
         _ => {
             return Err(OperationsError::UnknownMaturityReference {
-                company: company.clone(),
+                company: *company,
                 reference: format!("{prefix}:{reference}"),
             })
         }

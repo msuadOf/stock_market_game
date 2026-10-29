@@ -497,7 +497,7 @@ mod borrowed_projection_tests {
         let expected = Envelope::tick_start_existing(
             EnvelopeKey {
                 account: projection.account,
-                stock: stock.clone(),
+                stock: stock,
                 order: projection.order,
                 side: projection.side,
             },

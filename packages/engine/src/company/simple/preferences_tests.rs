@@ -919,7 +919,7 @@ fn ledger_records_rejections_idempotently_and_rejects_drift() {
             "不同原因".into(),
         )
         .is_err());
-    let known = std::collections::BTreeSet::from([company.clone()]);
+    let known = std::collections::BTreeSet::from([company]);
     assert!(ledger.validate(&known, d("2030-01-31")).is_ok());
     assert!(
         ledger.validate(&known, d("2030-01-30")).is_err(),

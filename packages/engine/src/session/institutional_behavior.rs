@@ -204,7 +204,7 @@ mod tests {
         let mut experience = RetailExperienceState::new(Money::from_cents(10_000)).unwrap();
         if real_buy {
             experience.stocks.insert(
-                code.clone(),
+                code,
                 crate::experience::RetailStockExperience {
                     last_buy_price: Some(Money::from_cents(1000)),
                     last_buy_order_id: Some(1),
@@ -316,7 +316,7 @@ mod tests {
                 .feedback
                 .failure_events
                 .push(crate::experience::FailureEventRecord {
-                    code: code.clone(),
+                    code: code,
                     order_id: Some(order),
                     moment: moment(order),
                 });
@@ -358,7 +358,7 @@ mod tests {
         let code = StockId(0);
         let mut experience = RetailExperienceState::new(Money::from_cents(10_000)).unwrap();
         experience.stocks.insert(
-            code.clone(),
+            code,
             crate::experience::RetailStockExperience {
                 entry_reference_price: Some(Money::from_cents(1000)),
                 peak_price_since_entry: Some(Money::from_cents(1100)),
@@ -368,7 +368,7 @@ mod tests {
             },
         );
         experience.feedback.stocks.insert(
-            code.clone(),
+            code,
             crate::experience::HoldingEpoch {
                 entry_moment: moment(1),
                 last_own_observation: None,

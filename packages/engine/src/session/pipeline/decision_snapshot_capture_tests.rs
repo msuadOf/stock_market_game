@@ -34,7 +34,7 @@ fn retail_capture_seals_personal_analysis_for_decision_source() {
     attention.rng_state = 3;
     shadow.state.attention_scheduler.clear();
     shadow.state.attention_scheduler.enqueue(0, account);
-    let code = shadow.state.markets.keys().next().unwrap().clone();
+    let code = *shadow.state.markets.keys().next().unwrap();
     shadow
         .state
         .markets
@@ -109,10 +109,10 @@ fn capture_only_copies_working_orders_owned_by_observed_npcs() {
     // 统一 book 下同一股票只能处于一个 venue：连续与竞价视图分别落在两只股票上，
     // 检查观察过滤逻辑仍按 owner 与 venue 归并。
     for (code, id, owner) in [
-        (codes[0].clone(), 9, observed),
-        (codes[0].clone(), 3, observed),
-        (codes[0].clone(), 4, unobserved),
-        (codes[0].clone(), 5, player),
+        (codes[0], 9, observed),
+        (codes[0], 3, observed),
+        (codes[0], 4, unobserved),
+        (codes[0], 5, player),
     ] {
         shadow
             .state
@@ -134,7 +134,7 @@ fn capture_only_copies_working_orders_owned_by_observed_npcs() {
     }
     shadow
         .fixture_append_auction_orders(
-            codes[1].clone(),
+            codes[1],
             vec![crate::session::AuctionOrderSnap {
                 owner: observed,
                 side: crate::Side::Buy,
@@ -165,19 +165,16 @@ fn capture_only_copies_working_orders_owned_by_observed_npcs() {
     assert_eq!(
         captured.working_continuous[&observed]
             .iter()
-            .map(|(code, order)| (code.clone(), order.id))
+            .map(|(code, order)| (*code, order.id))
             .collect::<Vec<_>>(),
-        vec![
-            (codes[0].clone(), crate::OrderId(9)),
-            (codes[0].clone(), crate::OrderId(3)),
-        ]
+        vec![(codes[0], crate::OrderId(9)), (codes[0], crate::OrderId(3)),]
     );
     assert_eq!(
         captured.working_auction[&observed]
             .iter()
-            .map(|(code, order)| (code.clone(), order.order_id))
+            .map(|(code, order)| (*code, order.order_id))
             .collect::<Vec<_>>(),
-        vec![(codes[1].clone(), 11)]
+        vec![(codes[1], 11)]
     );
 }
 
@@ -211,7 +208,7 @@ fn accepted_retail_observation_dates_a_fixture_buy_and_decays_only_its_influence
         .fixture_account_mut(&account)
         .unwrap()
         .fixture_insert_position(
-            code.clone(),
+            code,
             crate::Position::from_restored_parts(100, 100, price.cents() * 200, 0),
         );
     shadow
@@ -362,7 +359,7 @@ fn capture_reports_retail_experience_overflow() {
     shadow
         .fixture_account_mut(&account)
         .unwrap()
-        .grant_position(code.clone(), 100, last)
+        .grant_position(code, 100, last)
         .unwrap();
     let market_minute = shadow.current_market_minute();
     let moment = crate::experience::ExperienceMoment {
@@ -516,11 +513,9 @@ fn capture_held_retail_positions_share_equity_peaks_and_t1_with_experience() {
     for (index, qty, locked, peak) in [(0, 100, 40, 2_000), (1, 200, 150, 1_500)] {
         let price = source.state.markets[&codes[index]].last_price();
         let entry = source.fixture_account_mut(&account).unwrap();
-        entry
-            .grant_position(codes[index].clone(), qty, price)
-            .unwrap();
+        entry.grant_position(codes[index], qty, price).unwrap();
         entry.fixture_insert_position(
-            codes[index].clone(),
+            codes[index],
             crate::Position::from_restored_parts(qty, locked, i64::from(qty) * price.cents(), 0),
         );
         experience
@@ -596,12 +591,12 @@ fn capture_held_retail_positions_share_equity_peaks_and_t1_with_experience() {
 fn capture_non_retail_experience_keeps_self_positions_without_retail_risk() {
     let mut shadow = GameSession::new(npc_working_quote_tests::quote_setup(0), 59).unwrap();
     let account = AccountId(1);
-    let code = shadow.state.markets.keys().next().unwrap().clone();
+    let code = *shadow.state.markets.keys().next().unwrap();
     let price = shadow.state.markets[&code].last_price();
     shadow
         .fixture_account_mut(&account)
         .unwrap()
-        .grant_position(code.clone(), 100, price)
+        .grant_position(code, 100, price)
         .unwrap();
     let mut experience = crate::RetailExperienceState::without_equity_reference();
     experience
@@ -631,7 +626,7 @@ fn capture_missing_position_market_does_not_update_the_source_session() {
     source
         .fixture_account_mut(&account)
         .unwrap()
-        .grant_position(code.clone(), 100, Money::from_cents(1_000))
+        .grant_position(code, 100, Money::from_cents(1_000))
         .unwrap();
     let tick = source.state.tick;
     npc_working_quote_tests::force_attention_candidate(&mut source, account, tick);
@@ -650,7 +645,7 @@ fn capture_missing_position_market_does_not_update_the_source_session() {
 #[test]
 fn capture_equity_overflow_does_not_install_observed_experience() {
     let (mut source, _, account) = due_retail_shadow(67);
-    let code = source.state.markets.keys().next().unwrap().clone();
+    let code = *source.state.markets.keys().next().unwrap();
     let entry = source.fixture_account_mut(&account).unwrap();
     entry
         .grant_position(code, 100, Money::from_cents(1_000))
@@ -673,7 +668,7 @@ fn capture_equity_overflow_does_not_install_observed_experience() {
 #[test]
 fn capture_self_view_money_error_precedes_risk_and_missing_strategy() {
     let (_, mut shadow, account) = due_retail_shadow(71);
-    let code = shadow.state.markets.keys().next().unwrap().clone();
+    let code = *shadow.state.markets.keys().next().unwrap();
     let entry = shadow.fixture_account_mut(&account).unwrap();
     entry.fixture_set_cash(Money::from_cents(i64::MIN));
     entry.fixture_set_strategy(None);
@@ -725,7 +720,7 @@ fn capture_mixed_working_orders_only_restore_cash_for_the_cancelable_subset() {
     setup.closing_auction_ticks = 300;
     let source = GameSession::new(setup, 79).unwrap();
     let account = AccountId(1);
-    let code = source.state.markets.keys().next().unwrap().clone();
+    let code = *source.state.markets.keys().next().unwrap();
     for (tick, expected_phase, replaceable) in [
         (0, crate::TradingPhase::CallAuction, true),
         (300, crate::TradingPhase::CallAuction, false),

@@ -296,7 +296,7 @@ pub(in crate::session) fn receive_private_intent_on(
             let code = match &received.intent {
                 crate::Intent::PlaceLimit { code, .. }
                 | crate::Intent::PlaceMarket { code, .. }
-                | crate::Intent::Cancel { code, .. } => code.clone(),
+                | crate::Intent::Cancel { code, .. } => *code,
             };
             cursors
                 .next_stock_ordinal
@@ -356,7 +356,7 @@ mod tests {
         let cash_before = session.state.accounts.get(&account).unwrap().cash();
         let tick_before = session.state.tick;
         let seed_before = session.state.seed;
-        let (view, mut writes) = npc_split(&mut session);
+        let (view, writes) = npc_split(&mut session);
         let live_cash = crate::compute::join(
             || {
                 let entry = writes.accounts.get_mut(&account).unwrap();

@@ -916,14 +916,12 @@ fn comparison_event_key(
 
 fn expected_event_identity(event: &Event) -> (u8, EntityTag, EventSourceIndex) {
     match event {
-        Event::Trade { code, .. } => (4, EntityTag::Stock(code.clone()), EventSourceIndex::Sealed),
+        Event::Trade { code, .. } => (4, EntityTag::Stock(*code), EventSourceIndex::Sealed),
         Event::AuctionTick { code, .. }
         | Event::AuctionCompleted { code, .. }
-        | Event::PriceTick { code, .. } => (
-            4,
-            EntityTag::Stock(code.clone()),
-            EventSourceIndex::PriceTick,
-        ),
+        | Event::PriceTick { code, .. } => {
+            (4, EntityTag::Stock(*code), EventSourceIndex::PriceTick)
+        }
         Event::IntentRejected { account, .. }
         | Event::SettlementError { account, .. }
         | Event::OrderCanceled { account, .. }
@@ -1670,7 +1668,7 @@ fn project_execution_coverage(
             });
         }
         for envelope in &snapshot.envelopes {
-            stock_codes.insert(envelope.key.stock_code.clone());
+            stock_codes.insert(envelope.key.stock_code);
             if envelope
                 .receipts
                 .iter()

@@ -202,7 +202,7 @@ impl SimplePreferenceLedger {
             )));
         }
         self.rejections.push(SimplePreferenceRejection {
-            company: company.clone(),
+            company: *company,
             evaluated_on,
             kind,
             detail,
@@ -242,7 +242,7 @@ impl SimplePreferenceLedger {
             if !known.contains(&row.company)
                 || row.evaluated_on > advanced_through
                 || row.detail.trim().is_empty()
-                || !seen.insert((row.company.clone(), row.kind, row.evaluated_on))
+                || !seen.insert((row.company, row.kind, row.evaluated_on))
             {
                 return Err(CompanySystemError::Invalid(format!(
                     "偏好提案拒绝台账含未知公司、未来日期或重复键：{}",
@@ -490,7 +490,7 @@ pub(crate) fn evaluate_cash_dividend_preference(
     let plan_id = cash_dividend_plan_id(input.company, input.period_end);
     let plan = match CashDividendPlan::new(
         plan_id.clone(),
-        input.company.clone(),
+        *input.company,
         input.stock.clone(),
         input.exchange,
         crate::company::ex_reference_price::CashDividendFormula::StandardCashOnly,
@@ -734,7 +734,7 @@ pub(crate) fn evaluate_stock_distribution_preference(
                 "simple-preference:{}:{}",
                 input.company.0, input.period_end
             ),
-            issuer: input.company.clone(),
+            issuer: *input.company,
             stock: input.stock.clone(),
             exchange: input.exchange,
             kind: crate::company::stock_distribution::StockDistributionKind::BonusShares,

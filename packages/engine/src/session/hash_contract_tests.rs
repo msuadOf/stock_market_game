@@ -130,7 +130,7 @@ fn company_operations_shadow_shares_journals_until_an_actual_change() {
             .operations
     ));
 
-    let company = shadow
+    let company = *shadow
         .state
         .companies
         .legacy()
@@ -139,8 +139,7 @@ fn company_operations_shadow_shares_journals_until_an_actual_change() {
         .companies
         .keys()
         .next()
-        .unwrap()
-        .clone();
+        .unwrap();
     std::sync::Arc::make_mut(
         &mut shadow
             .state

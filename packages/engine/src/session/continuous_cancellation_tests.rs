@@ -13,7 +13,7 @@ fn session_with_resting_npc_order() -> (GameSession, StockId, AccountId, OrderId
     session.seed_order_for_test(
         account,
         Intent::PlaceLimit {
-            code: code.clone(),
+            code: code,
             side: Side::Buy,
             price: LimitPrice::Fixed(Money::from_cents(990)),
             qty: 100,
@@ -43,7 +43,7 @@ fn state_only_continuous_cancellation_returns_fact_without_consuming_seq() {
     let fact = session
         .cancel_continuous_order_state_only(
             account,
-            code.clone(),
+            code,
             order_id,
             ContinuousCancellationCause::Voluntary,
         )
@@ -71,7 +71,7 @@ fn state_only_continuous_cancellation_rejects_wrong_owner_without_mutation() {
     let error = session
         .cancel_continuous_order_state_only(
             AccountId(account.0 + 1),
-            code.clone(),
+            code,
             order_id,
             ContinuousCancellationCause::Voluntary,
         )

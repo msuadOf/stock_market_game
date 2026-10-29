@@ -45,7 +45,7 @@ impl RetailExperienceState {
             .record_own_observation(price, moment);
         if confirms_failure {
             self.feedback.failure_events.push(FailureEventRecord {
-                code: code.clone(),
+                code: *code,
                 order_id,
                 moment,
             });
@@ -149,7 +149,7 @@ impl RetailExperienceState {
             );
         if side == Side::Buy && before_qty == 0 {
             self.feedback.stocks.insert(
-                code.clone(),
+                *code,
                 HoldingEpoch {
                     entry_moment: moment,
                     last_own_observation: None,
@@ -163,7 +163,7 @@ impl RetailExperienceState {
         if side == Side::Sell && after_qty == 0 {
             self.feedback.stocks.remove(code);
             self.feedback.exit_records.push(ExitRecord {
-                code: code.clone(),
+                code: *code,
                 order_id: Some(order_id),
                 cooldown_until_market_minute: None,
                 realized_profit,
@@ -196,7 +196,7 @@ impl RetailExperienceState {
         )
         .reset_initial_holding(entry_reference_price, current_price, moment);
         self.feedback.advance_clocks(moment);
-        self.feedback.stocks.insert(code.clone(), epoch);
+        self.feedback.stocks.insert(*code, epoch);
         Ok(())
     }
 
@@ -278,7 +278,7 @@ impl RetailExperienceState {
         self.feedback.advance_clocks(moment);
         if side == Side::Buy && before_qty == 0 {
             self.feedback.stocks.insert(
-                code.clone(),
+                *code,
                 HoldingEpoch {
                     entry_moment: moment,
                     last_own_observation: None,
@@ -297,7 +297,7 @@ impl RetailExperienceState {
             .cooldown_until();
             self.feedback.stocks.remove(code);
             self.feedback.exit_records.push(ExitRecord {
-                code: code.clone(),
+                code: *code,
                 order_id,
                 cooldown_until_market_minute: Some(cooldown_until),
                 realized_profit,
@@ -306,7 +306,7 @@ impl RetailExperienceState {
         }
         if confirms_failure {
             self.feedback.failure_events.push(FailureEventRecord {
-                code: code.clone(),
+                code: *code,
                 order_id: confirmed_buy_order,
                 moment,
             });
@@ -344,7 +344,7 @@ impl RetailExperienceState {
             .record_own_observation(price, moment);
         if will_confirm {
             self.feedback.failure_events.push(FailureEventRecord {
-                code: code.clone(),
+                code: *code,
                 order_id: confirmed_buy_order,
                 moment,
             });

@@ -37,7 +37,7 @@ impl PersonalHistoryReadLedger {
             }
             None => {
                 self.stocks.insert(
-                    code.clone(),
+                    *code,
                     StockHistoryRead {
                         last_read_market_minute: market_minute,
                         read_count: 1,

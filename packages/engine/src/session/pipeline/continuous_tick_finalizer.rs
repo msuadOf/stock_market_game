@@ -95,7 +95,7 @@ pub(super) fn finalize_continuous_tick(
     let mut worker_batches = Vec::new();
     let mut terminal_keys = Vec::new();
     for worker in finish.workers {
-        let code = worker.market.code().clone();
+        let code = *worker.market.code();
         if markets.contains_key(&code) {
             return Err(stock_execution_error(
                 super::stock_execution_transaction::StockExecutionTransactionError::DuplicateStockWorker { code },
@@ -344,7 +344,7 @@ impl<'a> ContinuousDayEndLifecycleProjection<'a> {
             self.candidate.state.last_retail_order_events.push(
                 RetailOrderDiagnosticEvent::Canceled {
                     account: key.account,
-                    code: key.stock.clone(),
+                    code: key.stock,
                     order_id: key.order,
                     remaining_qty: release.qty_before,
                 },
@@ -358,7 +358,7 @@ impl<'a> ContinuousDayEndLifecycleProjection<'a> {
             Event::OrderCanceled {
                 seq: 0,
                 account: key.account,
-                code: key.stock.clone(),
+                code: key.stock,
                 id: key.order,
                 remaining_qty: release.qty_before,
             },
@@ -392,7 +392,7 @@ fn install_worker_market_data(
         session
             .state
             .candle_book
-            .install_active(code.clone(), candle.clone());
+            .install_active(*code, candle.clone());
     }
     if let Some(history) = &data.price_history {
         let entry = session
@@ -438,7 +438,7 @@ mod lifecycle_tests {
         let mut setup = crate::session::npc_working_quote_tests::two_stock_quote_setup();
         setup.npcs.retail_count = 1;
         setup.npcs.inst_count = 0;
-        let mut session = GameSession::new(setup, 42).unwrap();
+        let session = GameSession::new(setup, 42).unwrap();
         #[cfg(feature = "simulation-diagnostics")]
         {
             let (_, context) = session.prepare_market_calendar_tick().unwrap();
@@ -488,9 +488,9 @@ mod lifecycle_tests {
     #[test]
     fn day_end_release_projection_orders_envelopes_and_keeps_partial_candidate_on_index_error() {
         let mut session = candidate();
-        let code = session.state.markets.keys().next().unwrap().clone();
+        let code = *session.state.markets.keys().next().unwrap();
         let receipts = [
-            release(code.clone(), AccountId(1), 11),
+            release(code, AccountId(1), 11),
             release(code, AccountId(0), 10),
         ];
         let facts = ContinuousDayEndLifecycleProjection::new(&mut session, &receipts, 20)
@@ -502,14 +502,14 @@ mod lifecycle_tests {
                 &Event::OrderCanceled {
                     seq: 0,
                     account: AccountId(0),
-                    code: receipts[1].envelope.stock.clone(),
+                    code: receipts[1].envelope.stock,
                     id: OrderId(10),
                     remaining_qty: 100
                 },
                 &Event::OrderCanceled {
                     seq: 0,
                     account: AccountId(1),
-                    code: receipts[0].envelope.stock.clone(),
+                    code: receipts[0].envelope.stock,
                     id: OrderId(11),
                     remaining_qty: 100
                 },

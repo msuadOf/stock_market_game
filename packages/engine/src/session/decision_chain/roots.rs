@@ -150,7 +150,7 @@ impl RootReadContext {
                     panic!("candidate signals failed for {id:?} {code:?}: {error}")
                 });
             let assessment = blend_candidate(&weights, &signals);
-            out.insert(code.clone(), assessment);
+            out.insert(*code, assessment);
         }
         out
     }
@@ -475,7 +475,7 @@ impl InstitutionDecisionRoot {
                             .origin,
                         crate::information::PublicationOrigin::Correction
                     ) {
-                        corrections.push((code.clone(), publication_id));
+                        corrections.push((*code, publication_id));
                     }
                     if let Some((_, latest)) =
                         new_reports.iter_mut().find(|(stock, _)| stock == code)
@@ -494,7 +494,7 @@ impl InstitutionDecisionRoot {
                             *latest = publication_id;
                         }
                     } else {
-                        new_reports.push((code.clone(), publication_id));
+                        new_reports.push((*code, publication_id));
                     }
                 } else if let Some(cause) = crate::session::notices::credit_default_cause(
                     &context.library,
@@ -503,7 +503,7 @@ impl InstitutionDecisionRoot {
                 )
                 .expect("刚获知公告可读取")
                 {
-                    credit_defaults.push((code.clone(), cause));
+                    credit_defaults.push((*code, cause));
                 }
             }
         }
@@ -524,7 +524,7 @@ impl InstitutionDecisionRoot {
                     .company_spec(&company)
                     .unwrap_or_else(|error| panic!("发行人 {company:?} 规格读取失败：{error}"));
                 (
-                    code.clone(),
+                    *code,
                     BeliefInputs {
                         ctx: &ctx,
                         company,

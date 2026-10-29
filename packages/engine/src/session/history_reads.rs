@@ -27,9 +27,9 @@ impl GameSession {
             .candle_book
             .histories()
             .get(code)
-            .ok_or_else(|| SessionError::UnknownHistoryStock(code.clone()))?;
+            .ok_or_else(|| SessionError::UnknownHistoryStock(*code))?;
         let result = HistoricalStockData {
-            code: code.clone(),
+            code: *code,
             daily_candles: history.iter().cloned().collect(),
             active_daily_candle: self.state.candle_book.active().get(code).cloned(),
         };

@@ -174,7 +174,7 @@ fn cancel_command(
 ) -> PlanRouteCommand {
     PlanRouteCommand::Cancel {
         account: plan.account(),
-        code: plan.code().clone(),
+        code: *plan.code(),
         order_id,
         cause,
     }
@@ -202,7 +202,7 @@ impl GameSession {
             replaced: None,
             command: PlanRouteCommand::SubmitLimit {
                 account: plan.account(),
-                code: plan.code().clone(),
+                code: *plan.code(),
                 side: plan.direction(),
                 price: child.price,
                 qty: child.qty,

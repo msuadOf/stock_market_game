@@ -128,16 +128,12 @@ pub struct EventStableKey {
 impl EventStableKey {
     pub fn for_event(event: &Event, local_event_index: u64) -> Self {
         let (phase_rank, entity, source) = match event {
-            Event::Trade { code, .. } => {
-                (4, EntityTag::Stock(code.clone()), EventSourceIndex::Sealed)
-            }
+            Event::Trade { code, .. } => (4, EntityTag::Stock(*code), EventSourceIndex::Sealed),
             Event::AuctionTick { code, .. }
             | Event::AuctionCompleted { code, .. }
-            | Event::PriceTick { code, .. } => (
-                4,
-                EntityTag::Stock(code.clone()),
-                EventSourceIndex::PriceTick,
-            ),
+            | Event::PriceTick { code, .. } => {
+                (4, EntityTag::Stock(*code), EventSourceIndex::PriceTick)
+            }
             Event::DayBoundary { .. } => (5, EntityTag::Session, EventSourceIndex::DayEnd),
             Event::CivilDateAdvanced { .. } | Event::CompanyDisclosurePublished { .. } => {
                 (6, EntityTag::Session, EventSourceIndex::Session)

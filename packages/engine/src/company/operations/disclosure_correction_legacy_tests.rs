@@ -17,7 +17,7 @@ use fixture::legacy_fixture;
 
 #[test]
 fn legacy_wrapper_preserves_real_finance_and_can_return_same_owned_candidate() {
-    let (operations, mut closing) = legacy_fixture();
+    let (operations, closing) = legacy_fixture();
     let period = AccountingPeriod::from_ymd(2029, 12).unwrap();
     let mut operations = operations;
     operations

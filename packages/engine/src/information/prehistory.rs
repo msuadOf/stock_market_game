@@ -167,7 +167,7 @@ pub fn assemble_seeded_prehistory(
             for kind in report_frequency.scheduled_kinds() {
                 let instant = report_frequency.scheduled_instant(kind, fiscal_year, seed, code)?;
                 if instant < start_instant {
-                    due.push((instant, id.clone(), kind, fiscal_year));
+                    due.push((instant, *id, kind, fiscal_year));
                 }
             }
         }

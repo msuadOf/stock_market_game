@@ -684,7 +684,7 @@ impl ShareRegistry {
         self.registrations.push(RegistrationSnapshot {
             event_id,
             stock: self.stock.clone(),
-            issuer: self.issuer.clone(),
+            issuer: self.issuer,
             registered_on,
             issued_shares: self.issued_shares,
             settled_receipts,

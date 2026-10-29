@@ -26,14 +26,14 @@ fn matching_working_order_is_adopted_by_plan_without_allocating_another_order_id
     use crate::session::plan_chain_candidates::PlanChainOperationBatch;
 
     let (mut authority, request) = crate::session::plan_chain_candidates_tests::execution_fixture();
-    let code = request.allocation.code.clone();
+    let code = request.allocation.code;
     let owner = AccountId(1);
     let plan_id = request.plan_id;
     let mut setup_events = Vec::new();
     authority.seed_order_for_test(
         owner,
         Intent::PlaceLimit {
-            code: code.clone(),
+            code: code,
             side: Side::Buy,
             price: crate::LimitPrice::Fixed(Money::from_cents(900)),
             qty: 100,
@@ -91,7 +91,7 @@ fn player_and_other_accounts_plan_join_one_ready_stock_batch() {
     use crate::session::plan_chain_candidates::PlanChainOperationBatch;
 
     let (mut authority, request) = crate::session::plan_chain_candidates_tests::execution_fixture();
-    let code = request.allocation.code.clone();
+    let code = request.allocation.code;
     let plan_id = request.plan_id;
     let received = authority
         .state
@@ -99,7 +99,7 @@ fn player_and_other_accounts_plan_join_one_ready_stock_batch() {
         .receive(
             AccountId(0),
             Intent::PlaceLimit {
-                code: code.clone(),
+                code: code,
                 side: Side::Buy,
                 // Both arrival orders stay inside the price cage. This case checks
                 // shared admission, not the effect of moving the best bid.
@@ -174,13 +174,13 @@ fn queued_npc_cancel_reaches_the_book_before_plan_adopts_the_old_order() {
 
     let (mut authority, request) = crate::session::plan_chain_candidates_tests::execution_fixture();
     let plan_id = request.plan_id;
-    let code = request.allocation.code.clone();
+    let code = request.allocation.code;
     let owner = AccountId(1);
     let mut setup_events = Vec::new();
     authority.seed_order_for_test(
         owner,
         Intent::PlaceLimit {
-            code: code.clone(),
+            code: code,
             side: Side::Buy,
             price: crate::LimitPrice::Fixed(Money::from_cents(900)),
             qty: 100,
@@ -197,7 +197,7 @@ fn queued_npc_cancel_reaches_the_book_before_plan_adopts_the_old_order() {
         .receive(
             owner,
             Intent::Cancel {
-                code: code.clone(),
+                code: code,
                 id: old_id,
             },
         )
@@ -271,7 +271,7 @@ fn rejected_replace_cancel_keeps_child_parent_reservation_and_order_identity() {
     let (mut authority, mut request) =
         crate::session::plan_chain_candidates_tests::execution_fixture();
     let plan_id = request.plan_id;
-    let code = request.allocation.code.clone();
+    let code = request.allocation.code;
     let owner = AccountId(1);
     authority
         .state
@@ -382,7 +382,7 @@ fn live_buy_plan_case_with_day_ticks(
     authority
         .fixture_account_mut(&seller)
         .unwrap()
-        .grant_position(code.clone(), seller_holding, Money::from_cents(1_000))
+        .grant_position(code, seller_holding, Money::from_cents(1_000))
         .unwrap();
     authority
         .state
@@ -397,7 +397,7 @@ fn live_buy_plan_case_with_day_ticks(
         .plans
         .create(PlanOpen {
             account: AccountId(1),
-            code: code.clone(),
+            code: code,
             direction: Side::Buy,
             target: PlanTarget::ShareCount(400),
             opinion: PlanOpinion {
@@ -432,7 +432,7 @@ fn live_buy_plan_case_with_day_ticks(
         .enqueue_player_intent(
             seller,
             Intent::PlaceLimit {
-                code: code.clone(),
+                code: code,
                 side: Side::Sell,
                 price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
                 qty: seller_shares,
@@ -443,7 +443,7 @@ fn live_buy_plan_case_with_day_ticks(
         plan_id,
         allocation: AllocationGrant {
             plan_id,
-            code: code.clone(),
+            code: code,
             allocated_cash: Money::from_cents(1_000_000),
             constraint: None,
         },
@@ -474,12 +474,12 @@ fn fully_filled_first_plan_submit_makes_a_second_ready_submit_a_business_wait() 
     use crate::session::plan_chain_candidates::PlanChainOperationBatch;
 
     let (mut authority, request) = crate::session::plan_chain_candidates_tests::execution_fixture();
-    let code = request.allocation.code.clone();
+    let code = request.allocation.code;
     let plan_id = request.plan_id;
     authority
         .fixture_account_mut(&AccountId(0))
         .unwrap()
-        .grant_position(code.clone(), 100, Money::from_cents(900))
+        .grant_position(code, 100, Money::from_cents(900))
         .unwrap();
     authority
         .state
@@ -492,7 +492,7 @@ fn fully_filled_first_plan_submit_makes_a_second_ready_submit_a_business_wait() 
     authority.seed_order_for_test(
         AccountId(0),
         Intent::PlaceLimit {
-            code: code.clone(),
+            code: code,
             side: Side::Sell,
             price: crate::LimitPrice::Fixed(Money::from_cents(900)),
             qty: 100,
@@ -568,7 +568,7 @@ fn live_plan_partial_fill_survives_restore_and_second_real_tick_fill() {
             .enqueue_player_intent(
                 AccountId(0),
                 Intent::PlaceLimit {
-                    code: code.clone(),
+                    code: code,
                     side: Side::Sell,
                     price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
                     qty: 100,
@@ -649,7 +649,7 @@ fn live_buy_plan_does_not_round_a_fifty_share_remainder_into_a_new_lot() {
     let (_, mut request) = crate::session::plan_chain_candidates_tests::execution_fixture();
     request.plan_id = plan_id;
     request.allocation.plan_id = plan_id;
-    request.allocation.code = code.clone();
+    request.allocation.code = code;
     request.decision.action = QuoteAction::Cancel { order_id: old_id };
     let mut roots = PlanChainOperationBatch::empty();
     roots.push_execution(request.clone());
@@ -754,11 +754,11 @@ fn plan_chain_cash_rejection_reaches_final_event_and_report() {
 #[test]
 fn player_rejections_and_acceptance_keep_cash_order_and_order_identity() {
     let mut authority = player_only_session();
-    let code = authority.state.markets.keys().next().unwrap().clone();
+    let code = *authority.state.markets.keys().next().unwrap();
     let first_order_id = OrderId(authority.state.next_order_id);
     for intent in [
         Intent::PlaceLimit {
-            code: code.clone(),
+            code: code,
             side: Side::Buy,
             price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
             qty: 1,
@@ -768,7 +768,7 @@ fn player_rejections_and_acceptance_keep_cash_order_and_order_identity() {
             id: OrderId(123),
         },
         Intent::PlaceLimit {
-            code: code.clone(),
+            code: code,
             side: Side::Buy,
             price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
             qty: 100,
@@ -885,12 +885,12 @@ fn player_rejections_and_acceptance_keep_cash_order_and_order_identity() {
 #[test]
 fn joint_player_batch_reaches_rebased_commit() {
     let mut authority = player_only_session();
-    let code = authority.state.markets.keys().next().unwrap().clone();
+    let code = *authority.state.markets.keys().next().unwrap();
     authority
         .enqueue_player_intent(
             AccountId(0),
             Intent::PlaceLimit {
-                code: code.clone(),
+                code: code,
                 side: Side::Buy,
                 price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
                 qty: 100,
@@ -958,7 +958,7 @@ fn joint_player_batch_reaches_rebased_commit() {
 #[test]
 fn joint_downstream_failure_discards_all_three_source_preparation() {
     let mut authority = player_only_session();
-    let code = authority.state.markets.keys().next().unwrap().clone();
+    let code = *authority.state.markets.keys().next().unwrap();
     authority
         .enqueue_player_intent(
             AccountId(0),
@@ -999,7 +999,7 @@ fn multi_account_plan_cancel_batch_rolls_back_after_late_continuation_overflow()
         .plans
         .create(PlanOpen {
             account: AccountId(0),
-            code: first.allocation.code.clone(),
+            code: first.allocation.code,
             direction: Side::Buy,
             target: PlanTarget::ShareCount(100),
             opinion: PlanOpinion {
@@ -1149,7 +1149,7 @@ fn one_account_two_stocks_replace_children_without_waiting_for_other_stock() {
             .plans
             .create(PlanOpen {
                 account: AccountId(1),
-                code: code.clone(),
+                code: code,
                 direction: Side::Buy,
                 target: PlanTarget::ShareCount(100),
                 opinion: PlanOpinion {
@@ -1250,12 +1250,12 @@ fn one_account_two_stocks_replace_children_without_waiting_for_other_stock() {
 #[test]
 fn prepared_joint_entry_has_no_fallible_tail_after_commit_validation() {
     let mut authority = player_only_session();
-    let code = authority.state.markets.keys().next().unwrap().clone();
+    let code = *authority.state.markets.keys().next().unwrap();
     authority
         .enqueue_player_intent(
             AccountId(0),
             Intent::PlaceLimit {
-                code: code.clone(),
+                code: code,
                 side: Side::Buy,
                 price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
                 qty: 100,
@@ -1283,12 +1283,12 @@ fn retail_diagnostics_cover_account_validation_and_matching_rejections_in_sealed
         AccountId(0),
         RetailExperienceState::without_equity_reference(),
     );
-    let code = authority.state.markets.keys().next().unwrap().clone();
+    let code = *authority.state.markets.keys().next().unwrap();
     authority
         .enqueue_player_intent(
             AccountId(0),
             Intent::PlaceLimit {
-                code: code.clone(),
+                code: code,
                 side: Side::Buy,
                 price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
                 qty: 0,
@@ -1299,7 +1299,7 @@ fn retail_diagnostics_cover_account_validation_and_matching_rejections_in_sealed
         .enqueue_player_intent(
             AccountId(0),
             Intent::PlaceLimit {
-                code: code.clone(),
+                code: code,
                 side: Side::Buy,
                 price: crate::LimitPrice::Fixed(Money::from_cents(1_100)),
                 qty: 100,
@@ -1484,12 +1484,12 @@ fn retail_cancel_is_projected_once_and_preserves_quote_expiry_diagnostic_order()
         .fixture_account_mut(&retail)
         .unwrap()
         .fixture_set_strategy(None);
-    let code = authority.state.markets.keys().next().unwrap().clone();
+    let code = *authority.state.markets.keys().next().unwrap();
     let mut seeded_events = Vec::new();
     authority.seed_order_for_test(
         retail,
         Intent::PlaceLimit {
-            code: code.clone(),
+            code: code,
             side: Side::Buy,
             price: crate::LimitPrice::Fixed(Money::from_cents(980)),
             qty: 100,
@@ -1503,7 +1503,7 @@ fn retail_cancel_is_projected_once_and_preserves_quote_expiry_diagnostic_order()
         .enqueue_player_intent(
             AccountId(0),
             Intent::PlaceLimit {
-                code: code.clone(),
+                code: code,
                 side: Side::Buy,
                 price: crate::LimitPrice::Fixed(Money::from_cents(970)),
                 qty: 100,
@@ -1543,7 +1543,7 @@ fn successful_retail_cancel_is_projected_from_the_matching_fact() {
         .state
         .retail_experience
         .insert(account, RetailExperienceState::without_equity_reference());
-    let code = authority.state.markets.keys().next().unwrap().clone();
+    let code = *authority.state.markets.keys().next().unwrap();
     let order_id = OrderId(700);
     authority
         .state
@@ -1568,7 +1568,7 @@ fn successful_retail_cancel_is_projected_from_the_matching_fact() {
         .enqueue_player_intent(
             account,
             Intent::Cancel {
-                code: code.clone(),
+                code: code,
                 id: order_id,
             },
         )
@@ -1736,7 +1736,7 @@ enum FactIdentityCorruption {
 
 fn execution_identity_fixture() -> (Vec<CandidateValidationOutcome>, ContinuousExecutionRound) {
     let candidate = player_only_session();
-    let code = candidate.state.markets.keys().next().unwrap().clone();
+    let code = *candidate.state.markets.keys().next().unwrap();
     let plan = plan_tick(PhaseInput {
         session: &candidate,
     })
@@ -1751,7 +1751,7 @@ fn execution_identity_fixture() -> (Vec<CandidateValidationOutcome>, ContinuousE
     .unwrap();
     let outcomes = validator
         .consume_round([
-            limit_candidate(IntentCandidateKey::player(0), code.clone(), 980),
+            limit_candidate(IntentCandidateKey::player(0), code, 980),
             limit_candidate(IntentCandidateKey::player(1), code, 970),
         ])
         .unwrap();

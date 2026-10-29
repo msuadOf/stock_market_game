@@ -99,7 +99,7 @@ fn allocate_budgets(
         remaining -= allocated;
         grants.push(AllocationGrant {
             plan_id: request.plan_id,
-            code: request.code.clone(),
+            code: request.code,
             allocated_cash: Money::from_cents(allocated),
             constraint,
         });

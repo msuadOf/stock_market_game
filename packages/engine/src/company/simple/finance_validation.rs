@@ -644,15 +644,12 @@ impl SimpleFinanceState {
             let Some(cancelled_on) = fact.cancelled_on else {
                 continue;
             };
-            let reduction = fact
-                .capital_reduction
-                .ok_or_else(|| {
-                    SimpleFinanceError::Invalid(format!(
-                        "回购声明 {} 已注销但缺少核减金额",
-                        fact.event_id
-                    ))
-                })?
-                .clone();
+            let reduction = fact.capital_reduction.ok_or_else(|| {
+                SimpleFinanceError::Invalid(format!(
+                    "回购声明 {} 已注销但缺少核减金额",
+                    fact.event_id
+                ))
+            })?;
             expected.push((
                 BusinessKind::CompanyRepurchaseCancellation,
                 cancelled_on,

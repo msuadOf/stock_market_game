@@ -116,7 +116,7 @@ fn bonus_share_cap_uses_registered_capital_evolved_by_prior_credit() {
         ),
     ];
     let mut state = SimpleFinanceState::create(
-        baseline.company.clone(),
+        baseline.company,
         baseline.kind,
         &config,
         date(1, 1).prev().unwrap(),
@@ -408,7 +408,7 @@ fn capital_reserve_conversions_reserve_balance_at_declaration() {
         ),
     ];
     let mut state = SimpleFinanceState::create(
-        baseline.company.clone(),
+        baseline.company,
         baseline.kind,
         &config,
         date(1, 1).prev().unwrap(),

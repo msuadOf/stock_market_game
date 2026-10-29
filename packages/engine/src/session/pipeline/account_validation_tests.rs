@@ -15,7 +15,7 @@ fn symbolic_buy_reserves_its_account_validation_bound_and_keeps_the_requested_pr
         IntentCandidateKey::player(0),
         crate::AccountId(0),
         crate::Intent::PlaceLimit {
-            code: code.clone(),
+            code: code,
             side: crate::Side::Buy,
             price: crate::LimitPrice::Lowest,
             qty: 100,
@@ -74,7 +74,7 @@ fn highest_buy_needs_the_full_daily_limit_reservation_including_fees() {
             IntentCandidateKey::player(0),
             crate::AccountId(0),
             crate::Intent::PlaceLimit {
-                code: code.clone(),
+                code: code,
                 side: crate::Side::Buy,
                 price: crate::LimitPrice::Highest,
                 qty: 100,
@@ -122,7 +122,7 @@ fn account_validation_handoff_preserves_input_order_and_uses_sealed_budget_witho
             IntentCandidateKey::plan_chain(0),
             account,
             crate::Intent::PlaceLimit {
-                code: code.clone(),
+                code: code,
                 side: crate::Side::Buy,
                 price: crate::LimitPrice::Fixed(crate::Money::from_cents(900)),
                 qty: 100,
@@ -132,7 +132,7 @@ fn account_validation_handoff_preserves_input_order_and_uses_sealed_budget_witho
             IntentCandidateKey::npc(account, 0),
             account,
             crate::Intent::PlaceLimit {
-                code: code.clone(),
+                code: code,
                 side: crate::Side::Buy,
                 price: crate::LimitPrice::Fixed(crate::Money::from_cents(900)),
                 qty: 100,
@@ -142,7 +142,7 @@ fn account_validation_handoff_preserves_input_order_and_uses_sealed_budget_witho
             IntentCandidateKey::player(0),
             account,
             crate::Intent::PlaceLimit {
-                code: code.clone(),
+                code: code,
                 side: crate::Side::Sell,
                 price: crate::LimitPrice::Fixed(crate::Money::from_cents(900)),
                 qty: 100,
@@ -258,7 +258,7 @@ fn account_validation_handoff_passes_unknown_stock_cancel_to_the_stock_state_mac
         IntentCandidateKey::player(0),
         account,
         crate::Intent::Cancel {
-            code: unknown.clone(),
+            code: unknown,
             id: crate::OrderId(99),
         },
     )])
@@ -305,7 +305,7 @@ fn account_validation_sealed_indices_keep_rejected_slots_while_order_ids_only_co
             IntentCandidateKey::player(4),
             account,
             crate::Intent::PlaceMarket {
-                code: known.clone(),
+                code: known,
                 side: crate::Side::Buy,
                 qty: 100,
             },
@@ -314,17 +314,17 @@ fn account_validation_sealed_indices_keep_rejected_slots_while_order_ids_only_co
             IntentCandidateKey::player(0),
             account,
             crate::Intent::Cancel {
-                code: unknown.clone(),
+                code: unknown,
                 id: crate::OrderId(90),
             },
         ),
-        limit(2, account, known.clone(), crate::Side::Buy, 100),
+        limit(2, account, known, crate::Side::Buy, 100),
         limit(1, account, unknown, crate::Side::Buy, 100),
         IntentCandidate::new(
             IntentCandidateKey::player(3),
             account,
             crate::Intent::Cancel {
-                code: known.clone(),
+                code: known,
                 id: crate::OrderId(91),
             },
         ),
@@ -396,7 +396,7 @@ fn account_validation_contract_passes_cancel_and_materializes_limit_and_market_e
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
     game.fixture_account_mut(&account)
         .unwrap()
-        .grant_position(code.clone(), 150, crate::Money::from_cents(150_000))
+        .grant_position(code, 150, crate::Money::from_cents(150_000))
         .unwrap();
     let before = game.business_state_hash().unwrap();
     let plan = plan_tick(PhaseInput { session: &game }).unwrap();
@@ -405,7 +405,7 @@ fn account_validation_contract_passes_cancel_and_materializes_limit_and_market_e
             IntentCandidateKey::player(2),
             account,
             crate::Intent::PlaceLimit {
-                code: code.clone(),
+                code: code,
                 side: crate::Side::Sell,
                 price: crate::LimitPrice::Fixed(crate::Money::from_cents(900)),
                 qty: 50,
@@ -415,7 +415,7 @@ fn account_validation_contract_passes_cancel_and_materializes_limit_and_market_e
             IntentCandidateKey::player(0),
             account,
             crate::Intent::PlaceMarket {
-                code: code.clone(),
+                code: code,
                 side: crate::Side::Buy,
                 qty: 100,
             },
@@ -424,14 +424,14 @@ fn account_validation_contract_passes_cancel_and_materializes_limit_and_market_e
             IntentCandidateKey::player(1),
             account,
             crate::Intent::Cancel {
-                code: code.clone(),
+                code: code,
                 id: crate::OrderId(77),
             },
         ),
     ])
     .unwrap();
     let context = context([(
-        code.clone(),
+        code,
         StockValidation::new(
             crate::SecurityCategory::MainBoard,
             crate::Money::from_cents(1_100),
@@ -519,7 +519,7 @@ fn account_validation_rejects_unknown_quantity_cash_and_t1_share_failures_with_t
         .fixture_set_cash(crate::Money::ZERO);
     game.fixture_account_mut(&account)
         .unwrap()
-        .grant_position(main.clone(), 150, crate::Money::from_cents(150_000))
+        .grant_position(main, 150, crate::Money::from_cents(150_000))
         .unwrap();
     let holder = game.fixture_account_mut(&account).unwrap();
     let position = holder.position(&main).unwrap();
@@ -529,30 +529,30 @@ fn account_validation_rejects_unknown_quantity_cash_and_t1_share_failures_with_t
         position.invested_cents(),
         position.recovered_cents(),
     );
-    holder.fixture_insert_position(main.clone(), locked);
+    holder.fixture_insert_position(main, locked);
     let plan = plan_tick(PhaseInput { session: &game }).unwrap();
     let candidates = vec![
         limit(0, account, unknown, crate::Side::Buy, 100),
-        limit(1, account, main.clone(), crate::Side::Buy, 99),
-        limit(2, account, main.clone(), crate::Side::Buy, 100),
-        limit(3, account, main.clone(), crate::Side::Sell, 100),
-        limit(4, account, main.clone(), crate::Side::Sell, 25),
-        limit(5, account, main.clone(), crate::Side::Sell, 50),
-        limit(6, account, chinext.clone(), crate::Side::Buy, 300_100),
+        limit(1, account, main, crate::Side::Buy, 99),
+        limit(2, account, main, crate::Side::Buy, 100),
+        limit(3, account, main, crate::Side::Sell, 100),
+        limit(4, account, main, crate::Side::Sell, 25),
+        limit(5, account, main, crate::Side::Sell, 50),
+        limit(6, account, chinext, crate::Side::Buy, 300_100),
         IntentCandidate::new(
             IntentCandidateKey::player(7),
             account,
             crate::Intent::PlaceMarket {
-                code: chinext.clone(),
+                code: chinext,
                 side: crate::Side::Buy,
                 qty: 150_100,
             },
         ),
-        limit(8, account, main.clone(), crate::Side::Buy, 0),
+        limit(8, account, main, crate::Side::Buy, 0),
     ];
     let context = context([
         (
-            main.clone(),
+            main,
             StockValidation::new(
                 crate::SecurityCategory::MainBoard,
                 crate::Money::from_cents(1_100),
@@ -652,8 +652,8 @@ fn account_validation_cash_budget_contends_across_stocks_in_account_receipt_orde
         .fixture_set_cash(reservation);
     let plan = plan_tick(PhaseInput { session: &game }).unwrap();
     let batch = IntentCandidateBatch::new(vec![
-        limit(0, account, first.clone(), crate::Side::Buy, 100),
-        limit(1, account, second.clone(), crate::Side::Buy, 100),
+        limit(0, account, first, crate::Side::Buy, 100),
+        limit(1, account, second, crate::Side::Buy, 100),
     ])
     .unwrap();
     let validation = StockValidation::new(
@@ -698,8 +698,8 @@ fn account_validation_near_order_id_overflow_is_fatal_before_any_output_is_obser
     let plan = plan_tick(PhaseInput { session: &game }).unwrap();
     let ledger = plan.envelope_ledger().unwrap();
     let batch = IntentCandidateBatch::new(vec![
-        limit(0, account, code.clone(), crate::Side::Buy, 100),
-        limit(1, account, code.clone(), crate::Side::Buy, 100),
+        limit(0, account, code, crate::Side::Buy, 100),
+        limit(1, account, code, crate::Side::Buy, 100),
     ])
     .unwrap();
     let handoff = CandidateValidationInput::new_with_context(
@@ -743,13 +743,13 @@ fn account_validation_quantity_caps_accept_exact_limits_and_reject_the_next_boar
         .fixture_set_cash(crate::Money::from_cents(10_000_000_000));
     let plan = plan_tick(PhaseInput { session: &game }).unwrap();
     let candidates = vec![
-        limit(0, account, main.clone(), crate::Side::Buy, 1_000_000),
-        limit(1, account, main.clone(), crate::Side::Buy, 1_000_100),
+        limit(0, account, main, crate::Side::Buy, 1_000_000),
+        limit(1, account, main, crate::Side::Buy, 1_000_100),
         IntentCandidate::new(
             IntentCandidateKey::player(2),
             account,
             crate::Intent::PlaceMarket {
-                code: main.clone(),
+                code: main,
                 side: crate::Side::Buy,
                 qty: 1_000_000,
             },
@@ -758,18 +758,18 @@ fn account_validation_quantity_caps_accept_exact_limits_and_reject_the_next_boar
             IntentCandidateKey::player(3),
             account,
             crate::Intent::PlaceMarket {
-                code: main.clone(),
+                code: main,
                 side: crate::Side::Buy,
                 qty: 1_000_100,
             },
         ),
-        limit(4, account, chinext.clone(), crate::Side::Buy, 300_000),
-        limit(5, account, chinext.clone(), crate::Side::Buy, 300_100),
+        limit(4, account, chinext, crate::Side::Buy, 300_000),
+        limit(5, account, chinext, crate::Side::Buy, 300_100),
         IntentCandidate::new(
             IntentCandidateKey::player(6),
             account,
             crate::Intent::PlaceMarket {
-                code: chinext.clone(),
+                code: chinext,
                 side: crate::Side::Buy,
                 qty: 150_000,
             },
@@ -778,7 +778,7 @@ fn account_validation_quantity_caps_accept_exact_limits_and_reject_the_next_boar
             IntentCandidateKey::player(7),
             account,
             crate::Intent::PlaceMarket {
-                code: chinext.clone(),
+                code: chinext,
                 side: crate::Side::Buy,
                 qty: 150_100,
             },
@@ -871,14 +871,14 @@ fn account_validation_sell_candidates_compete_for_one_private_same_batch_share_b
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
     game.fixture_account_mut(&account)
         .unwrap()
-        .grant_position(code.clone(), 150, crate::Money::from_cents(150_000))
+        .grant_position(code, 150, crate::Money::from_cents(150_000))
         .unwrap();
     let plan = plan_tick(PhaseInput { session: &game }).unwrap();
     let output = CandidateValidationInput::new_with_context(
         IntentCandidateBatch::new(vec![
-            limit(0, account, code.clone(), crate::Side::Sell, 100),
-            limit(1, account, code.clone(), crate::Side::Sell, 50),
-            limit(2, account, code.clone(), crate::Side::Sell, 100),
+            limit(0, account, code, crate::Side::Sell, 100),
+            limit(1, account, code, crate::Side::Sell, 50),
+            limit(2, account, code, crate::Side::Sell, 100),
         ])
         .unwrap(),
         plan.decision_resources().unwrap().clone(),

@@ -260,7 +260,7 @@ pub(super) fn capture_decision_snapshot_on(
         accounts,
     )
     .map_err(DecisionSnapshotCaptureError::Snapshot)?
-    .with_urgency_policy(view.urgency_policy.clone())?;
+    .with_urgency_policy(*view.urgency_policy)?;
 
     for (tick, account) in scheduled {
         writes.attention_scheduler.enqueue(tick, account);
@@ -371,7 +371,7 @@ pub(super) fn validate_market_view_inputs_on(
             if !present {
                 return Err(DecisionSnapshotCaptureError::MissingMarketData {
                     location,
-                    code: code.clone(),
+                    code: *code,
                 });
             }
         }
@@ -443,7 +443,7 @@ impl CapturedExperienceObservation {
                 .get(code)
                 .ok_or_else(|| DecisionSnapshotCaptureError::MissingMarketData {
                     location: "retail experience position",
-                    code: code.clone(),
+                    code: *code,
                 })?
                 .last_price();
             equity = equity
@@ -459,9 +459,9 @@ impl CapturedExperienceObservation {
                     account,
                     source,
                 })?;
-            positions.push((code.clone(), price, position.qty(), position.cost_price()));
+            positions.push((*code, price, position.qty(), position.cost_price()));
             self_positions.insert(
-                code.clone(),
+                *code,
                 PositionView {
                     qty: position.qty(),
                     sellable_qty: position.sellable(),
@@ -500,7 +500,7 @@ impl CapturedExperienceObservation {
                 .map_err(|source| DecisionSnapshotCaptureError::Experience { account, source })?;
             if entry.kind() == AccountKind::Retail {
                 risk_positions.insert(
-                    code.clone(),
+                    code,
                     RiskPositionInput {
                         qty,
                         cost_price: cost_price.filter(|price| price.cents() > 0),
@@ -704,7 +704,7 @@ fn build_self_view_for(
             .iter()
             .map(|(code, position)| {
                 (
-                    code.clone(),
+                    *code,
                     PositionView {
                         qty: position.qty(),
                         sellable_qty: position.sellable(),
@@ -730,7 +730,7 @@ pub(super) fn build_behavior_market_checked(
         })?;
     let returns = price_paths
         .iter()
-        .map(|(code, path)| (code.clone(), path.thirty_minute.return_ratio))
+        .map(|(code, path)| (*code, path.thirty_minute.return_ratio))
         .collect();
     let thirty_minute_market =
         build_equal_weight_market_observation(&returns).map_err(|source| {

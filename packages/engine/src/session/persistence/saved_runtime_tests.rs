@@ -103,7 +103,7 @@ fn restore_keeps_cognitive_profiles_independent_from_execution_styles() {
         .fundamental_method()
         .is_some());
     let market = restored.build_market_view();
-    let code = market.stocks.keys().next().unwrap().clone();
+    let code = *market.stocks.keys().next().unwrap();
     let assessments = restored
         .capture_retail_analysis(&[retail], &market)
         .expect("explicit retail analysis must consume its cognition profile");
@@ -172,7 +172,7 @@ fn restore_rejects_plan_child_that_does_not_match_a_live_order() {
     session.seed_order_for_test(
         AccountId(0),
         Intent::PlaceLimit {
-            code: code.clone(),
+            code: code,
             side: Side::Buy,
             price: LimitPrice::Fixed(Money::from_cents(1_000)),
             qty: 100,
@@ -191,7 +191,7 @@ fn restore_rejects_plan_child_that_does_not_match_a_live_order() {
         .plans
         .create(crate::plans::PlanOpen {
             account: institution,
-            code: code.clone(),
+            code: code,
             direction: Side::Buy,
             target: crate::plans::PlanTarget::ShareCount(100),
             opinion: crate::plans::PlanOpinion {
@@ -253,7 +253,7 @@ fn install_live_buy(session: &mut GameSession) -> EnvelopeKey {
     let code = StockId(0);
     let key = EnvelopeKey {
         account: AccountId(1),
-        stock: code.clone(),
+        stock: code,
         order: OrderId(1),
         side: Side::Buy,
     };
@@ -311,7 +311,7 @@ fn install_partially_filled_sell(session: &mut GameSession) -> EnvelopeKey {
     let code = StockId(0);
     let key = EnvelopeKey {
         account: AccountId(1),
-        stock: code.clone(),
+        stock: code,
         order: OrderId(1),
         side: Side::Sell,
     };
@@ -319,7 +319,7 @@ fn install_partially_filled_sell(session: &mut GameSession) -> EnvelopeKey {
     session
         .fixture_account_mut(&key.account)
         .expect("fixture seller must exist")
-        .grant_position(code.clone(), 1, Money::from_cents(1))
+        .grant_position(code, 1, Money::from_cents(1))
         .expect("fixture historical holding must be valid");
     let result = session
         .state
@@ -380,7 +380,7 @@ fn install_gross_capped_sell(session: &mut GameSession) -> EnvelopeKey {
     let code = StockId(0);
     let key = EnvelopeKey {
         account: AccountId(1),
-        stock: code.clone(),
+        stock: code,
         order: OrderId(1),
         side: Side::Sell,
     };
@@ -388,7 +388,7 @@ fn install_gross_capped_sell(session: &mut GameSession) -> EnvelopeKey {
     session
         .fixture_account_mut(&key.account)
         .expect("fixture seller must exist")
-        .grant_position(code.clone(), 1, Money::from_cents(1))
+        .grant_position(code, 1, Money::from_cents(1))
         .expect("fixture historical holding must be valid");
     let result = session
         .state
@@ -449,14 +449,14 @@ fn install_unfilled_gross_capped_sell(session: &mut GameSession) -> EnvelopeKey 
     let code = StockId(0);
     let key = EnvelopeKey {
         account: AccountId(1),
-        stock: code.clone(),
+        stock: code,
         order: OrderId(1),
         side: Side::Sell,
     };
     session
         .fixture_account_mut(&key.account)
         .expect("fixture seller must exist")
-        .grant_position(code.clone(), 2, Money::from_cents(1))
+        .grant_position(code, 2, Money::from_cents(1))
         .expect("fixture historical holding must be valid");
     let result = session
         .state
@@ -694,7 +694,7 @@ fn live_child_case_at_stock(
         .plans
         .create(crate::plans::PlanOpen {
             account,
-            code: code.clone(),
+            code: code,
             direction: Side::Buy,
             target: crate::plans::PlanTarget::ShareCount(400),
             opinion: crate::plans::PlanOpinion {
@@ -754,7 +754,7 @@ fn live_child_case_at_stock(
 
 #[test]
 fn restore_rebuilds_remaining_from_live_book_when_serialized_value_is_stale() {
-    let (mut authority, plan_id, code) = live_child_case();
+    let (authority, plan_id, code) = live_child_case();
     let saved = authority.save().unwrap();
     let mut encoded = serde_json::to_value(&saved).unwrap();
     // 序列化余量(1) < 真实订单余量(300)：restore 必须以真实簿为准。
@@ -781,7 +781,7 @@ fn restore_rebuilds_remaining_from_live_book_when_serialized_value_is_stale() {
 
 #[test]
 fn restore_rebuilds_remaining_from_live_book_when_field_is_absent() {
-    let (mut authority, plan_id, code) = live_child_case();
+    let (authority, plan_id, code) = live_child_case();
     let saved = authority.save().unwrap();
     let mut encoded = serde_json::to_value(&saved).unwrap();
     // 字段缺失：唯一 owner 从真实订单簿重建。
@@ -810,7 +810,7 @@ fn restore_rebuilds_remaining_from_live_book_when_field_is_absent() {
 
 #[test]
 fn restore_rejects_live_exposure_beyond_target_with_fault2185() {
-    let (mut authority, plan_id, code) = live_child_case();
+    let (authority, plan_id, code) = live_child_case();
     let saved = authority.save().unwrap();
     let mut encoded = serde_json::to_value(&saved).unwrap();
     // filled=350（≤ target 400，2144 不触发），真实余量 300 ⇒ exposure 650 > 400。
@@ -832,7 +832,7 @@ fn restore_rejects_live_exposure_beyond_target_with_fault2185() {
 
 #[test]
 fn restore_rejects_inflated_serialized_remaining_with_fault2185() {
-    let (mut authority, plan_id, code) = live_child_case();
+    let (authority, plan_id, code) = live_child_case();
     let saved = authority.save().unwrap();
     let mut encoded = serde_json::to_value(&saved).unwrap();
     // 序列化余量(999) > 真实余量(300)：虚增敞口直接拒绝。
@@ -886,7 +886,7 @@ fn partial_plan_child_quantity_is_rebuilt_without_losing_fill_or_fee_history() {
         .plans
         .create(crate::plans::PlanOpen {
             account: key.account,
-            code: key.stock.clone(),
+            code: key.stock,
             direction: Side::Sell,
             target: crate::plans::PlanTarget::ShareCount(50_100),
             opinion: crate::plans::PlanOpinion {
@@ -975,7 +975,7 @@ fn per_fill_priority_history_survives_restore_and_next_tick() {
     let code = StockId(0);
     let key = EnvelopeKey {
         account: AccountId(1),
-        stock: code.clone(),
+        stock: code,
         order: OrderId(1),
         side: Side::Sell,
     };
@@ -1010,7 +1010,7 @@ fn per_fill_priority_history_survives_restore_and_next_tick() {
     source
         .fixture_account_mut(&key.account)
         .unwrap()
-        .grant_position(code.clone(), 1, Money::from_cents(1))
+        .grant_position(code, 1, Money::from_cents(1))
         .unwrap();
     source
         .state
@@ -1130,7 +1130,7 @@ fn real_step_settles_and_persists_gross_capped_seller_without_cash_reservation()
             // 后，种子挂量不得超过持有（此前的 100 持有挂 200 卖依赖
             // 种子通道绕过校验——做空形态；改为足额持有，"余 100 在途"
             // 的部分成交形态不变）。
-            .grant_position(code.clone(), 200, Money::from_cents(1))
+            .grant_position(code, 200, Money::from_cents(1))
             .expect("fixture holding must be valid");
         // fault2038（持仓必有经历）：测试中途 grant 的持仓需同步经历
         /// 条目（真实流量的持仓来自构造期分配或买腿成交——各自带条目）。
@@ -1154,7 +1154,7 @@ fn real_step_settles_and_persists_gross_capped_seller_without_cash_reservation()
         session.seed_order_for_test(
             AccountId(1),
             Intent::PlaceLimit {
-                code: code.clone(),
+                code: code,
                 side: Side::Sell,
                 price: LimitPrice::Fixed(Money::from_cents(1)),
                 // 200 挂出、买 100——余 100 在途（"partially-filled seller
@@ -1167,7 +1167,7 @@ fn real_step_settles_and_persists_gross_capped_seller_without_cash_reservation()
             .enqueue_player_intent(
                 AccountId(0),
                 Intent::PlaceLimit {
-                    code: code.clone(),
+                    code: code,
                     side: Side::Buy,
                     price: LimitPrice::Fixed(Money::from_cents(1)),
                     qty: 100,
@@ -1193,13 +1193,13 @@ fn real_step_settles_and_persists_gross_capped_seller_without_cash_reservation()
         session
             .fixture_account_mut(&AccountId(0))
             .expect("player must exist")
-            .grant_position(code.clone(), 200, Money::from_cents(1))
+            .grant_position(code, 200, Money::from_cents(1))
             .expect("fixture holding must be valid");
         session
             .enqueue_player_intent(
                 AccountId(0),
                 Intent::PlaceLimit {
-                    code: code.clone(),
+                    code: code,
                     side: Side::Buy,
                     price: LimitPrice::Fixed(Money::from_cents(1)),
                     qty: 100,
@@ -1212,7 +1212,7 @@ fn real_step_settles_and_persists_gross_capped_seller_without_cash_reservation()
             .enqueue_player_intent(
                 AccountId(0),
                 Intent::PlaceLimit {
-                    code: code.clone(),
+                    code: code,
                     side: Side::Sell,
                     price: LimitPrice::Fixed(Money::from_cents(1)),
                     qty: 200,
@@ -1258,7 +1258,7 @@ fn real_step_settles_and_persists_gross_capped_seller_without_cash_reservation()
             .enqueue_player_intent(
                 AccountId(0),
                 Intent::PlaceLimit {
-                    code: code.clone(),
+                    code: code,
                     side: Side::Buy,
                     price: LimitPrice::Fixed(Money::from_cents(1)),
                     qty: 100,
@@ -1298,13 +1298,13 @@ fn same_tick_routes_advance_one_seller_fee_debt_without_reusing_tick_start_audit
         session
             .fixture_account_mut(&AccountId(1))
             .expect("retail seller must exist")
-            .grant_position(code.clone(), 1_300, Money::from_cents(1))
+            .grant_position(code, 1_300, Money::from_cents(1))
             .expect("fixture holding must be valid");
         let mut seed_events = Vec::new();
         session.seed_order_for_test(
             AccountId(1),
             Intent::PlaceLimit {
-                code: code.clone(),
+                code: code,
                 side: Side::Sell,
                 price: LimitPrice::Fixed(Money::from_cents(1)),
                 qty: 1_300,
@@ -1315,13 +1315,13 @@ fn same_tick_routes_advance_one_seller_fee_debt_without_reusing_tick_start_audit
         session
             .fixture_account_mut(&AccountId(0))
             .expect("player must exist")
-            .grant_position(code.clone(), 1_300, Money::from_cents(1))
+            .grant_position(code, 1_300, Money::from_cents(1))
             .expect("fixture holding must be valid");
         session
             .enqueue_player_intent(
                 AccountId(0),
                 Intent::PlaceLimit {
-                    code: code.clone(),
+                    code: code,
                     side: Side::Sell,
                     price: LimitPrice::Fixed(Money::from_cents(1)),
                     qty: 1_300,
@@ -1336,7 +1336,7 @@ fn same_tick_routes_advance_one_seller_fee_debt_without_reusing_tick_start_audit
             .enqueue_player_intent(
                 AccountId(0),
                 Intent::PlaceLimit {
-                    code: code.clone(),
+                    code: code,
                     side: Side::Buy,
                     price: LimitPrice::Fixed(Money::from_cents(1)),
                     qty,
@@ -1403,13 +1403,13 @@ fn same_tick_new_seller_route_creates_and_advances_cumulative_fee_audit() {
         session
             .fixture_account_mut(&AccountId(1))
             .expect("retail seller must exist")
-            .grant_position(code.clone(), 1_300, Money::from_cents(1))
+            .grant_position(code, 1_300, Money::from_cents(1))
             .expect("fixture holding must be valid");
         let mut seed_events = Vec::new();
         session.seed_order_for_test(
             AccountId(1),
             Intent::PlaceLimit {
-                code: code.clone(),
+                code: code,
                 side: Side::Sell,
                 price: LimitPrice::Fixed(Money::from_cents(1)),
                 qty: 1_300,
@@ -1420,13 +1420,13 @@ fn same_tick_new_seller_route_creates_and_advances_cumulative_fee_audit() {
         session
             .fixture_account_mut(&AccountId(0))
             .expect("player must exist")
-            .grant_position(code.clone(), 1_300, Money::from_cents(1))
+            .grant_position(code, 1_300, Money::from_cents(1))
             .expect("fixture holding must be valid");
         session
             .enqueue_player_intent(
                 AccountId(0),
                 Intent::PlaceLimit {
-                    code: code.clone(),
+                    code: code,
                     side: Side::Sell,
                     price: LimitPrice::Fixed(Money::from_cents(1)),
                     qty: 1_300,
@@ -1439,7 +1439,7 @@ fn same_tick_new_seller_route_creates_and_advances_cumulative_fee_audit() {
             .enqueue_player_intent(
                 AccountId(0),
                 Intent::PlaceLimit {
-                    code: code.clone(),
+                    code: code,
                     side: Side::Buy,
                     price: LimitPrice::Fixed(Money::from_cents(1)),
                     qty,
@@ -1925,7 +1925,7 @@ fn restore_carries_true_fill_facts_and_continues_buy_with_cumulative_fees() {
     session
         .fixture_account_mut(&AccountId(1))
         .expect("retail seller must exist")
-        .grant_position(code.clone(), 400, crate::money::Money::from_cents(990))
+        .grant_position(code, 400, crate::money::Money::from_cents(990))
         .expect("fixture holding must be valid");
     session
         .state
@@ -1959,7 +1959,7 @@ fn restore_carries_true_fill_facts_and_continues_buy_with_cumulative_fees() {
             current.seed_order_for_test(
                 AccountId(1),
                 Intent::PlaceLimit {
-                    code: code.clone(),
+                    code: code,
                     side: Side::Sell,
                     price: LimitPrice::Fixed(crate::money::Money::from_cents(990)),
                     qty: 100,
@@ -1970,7 +1970,7 @@ fn restore_carries_true_fill_facts_and_continues_buy_with_cumulative_fees() {
                 .enqueue_player_intent(
                     AccountId(0),
                     Intent::PlaceLimit {
-                        code: code.clone(),
+                        code: code,
                         side: Side::Buy,
                         price: LimitPrice::Fixed(crate::money::Money::from_cents(1_000)),
                         qty: 300,
@@ -1981,7 +1981,7 @@ fn restore_carries_true_fill_facts_and_continues_buy_with_cumulative_fees() {
             current.seed_order_for_test(
                 AccountId(1),
                 Intent::PlaceLimit {
-                    code: code.clone(),
+                    code: code,
                     side: Side::Sell,
                     price: LimitPrice::Fixed(crate::money::Money::from_cents(990)),
                     qty: 100,
@@ -2071,7 +2071,7 @@ fn v5_adopt_partial_buy_seeds_exact_escrow_and_survives_quiet_save() {
             .expect("NPC 买方");
         account.cash = crate::money::Money::from_cents(500_000);
         account.positions.insert(
-            code.clone(),
+            code,
             crate::session::PositionSnap {
                 qty: 100,
                 t1_locked: 0,
@@ -2100,7 +2100,7 @@ fn v5_adopt_partial_buy_seeds_exact_escrow_and_survives_quiet_save() {
     }
     // 部分成交买腿（100@990 已成交、余 100@1000）——旧簿档（adopt 形态）。
     save.resting_orders.insert(
-        code.clone(),
+        code,
         vec![Order {
             id: OrderId(1),
             side: Side::Buy,
@@ -2114,7 +2114,7 @@ fn v5_adopt_partial_buy_seeds_exact_escrow_and_survives_quiet_save() {
         }],
     );
     // 簿序游标覆盖 crafted 序号（restore_resting_orders 的 seq<next 校验）。
-    save.book_next_sequences.insert(code.clone(), 2);
+    save.book_next_sequences.insert(code, 2);
     save.next_order_id = 2;
     // 活跃信封（fault2226 集合一致）：escrow=buy_order_reservation(限价,
     // 余量, 真实累计)=100_001；Buy charged==nominal(累计) 契约。
@@ -2136,7 +2136,7 @@ fn v5_adopt_partial_buy_seeds_exact_escrow_and_survives_quiet_save() {
         save.runtime_state.live_envelopes.push(SavedLiveEnvelope {
             key: SavedEnvelopeKey {
                 account: AccountId(1),
-                stock: code.clone(),
+                stock: code,
                 order: OrderId(1),
                 side: Side::Buy,
             },
@@ -2326,7 +2326,7 @@ fn v6_order_id_encoding_stays_in_wire_domain_beyond_32_stocks() {
 
 #[test]
 fn lazy_handover_preserves_live_child_in_immediate_save_without_market_tick() {
-    let (mut source, plan_id, code) = live_child_case();
+    let (source, plan_id, code) = live_child_case();
     let before = source.save().unwrap();
     assert!(
         !before.desk_mirrored_resting,
@@ -2478,7 +2478,7 @@ fn lazy_handover_preserves_nonzero_tick_and_sequence_without_new_events() {
     session.step_pipeline_contract().unwrap();
     assert!(session.tick() > 0);
     assert!(session.seq() > 0);
-    let (mut source, plan_id, code) = live_child_case_at_session(session);
+    let (source, plan_id, code) = live_child_case_at_session(session);
     let before = source.save().unwrap();
     let mut session = GameSession::restore(&before).expect("非零进度的旧簿存档必须合法");
     session.construct_runtime_driver_lazy_for_test().unwrap();
@@ -2692,7 +2692,7 @@ fn two_stock_low_price_session() -> GameSession {
 
 #[test]
 fn lazy_handover_preserves_encoded_runtime_cursor_and_rejects_legacy_overflow() {
-    let (mut authority, _, code) = live_child_case_at_stock(
+    let (authority, _, code) = live_child_case_at_stock(
         two_stock_low_price_session(),
         OrderId((1_u64 << 32) | 7),
         StockId(1),

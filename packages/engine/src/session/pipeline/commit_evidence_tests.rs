@@ -234,7 +234,7 @@ fn prepared_commit_reports_per_stock_finalizer_executions_from_the_real_tail() {
     assert_eq!(
         finalizers
             .iter()
-            .map(|execution| execution.stock().clone())
+            .map(|execution| *execution.stock())
             .collect::<Vec<_>>(),
         vec![StockId(0), StockId(1)]
     );
@@ -299,10 +299,10 @@ fn continuous_trade_session() -> (GameSession, StockId) {
     let mut setup = crate::session::npc_working_quote_tests::quote_setup(0);
     setup.npcs.inst_count = 0;
     let mut session = GameSession::new(setup, 42).unwrap();
-    let code = session.state.markets.keys().next().unwrap().clone();
+    let code = *session.state.markets.keys().next().unwrap();
     let mut seller = Account::new(SELLER, AccountKind::Player, Money::ZERO);
     seller
-        .grant_position(code.clone(), 100, Money::from_cents(100_000))
+        .grant_position(code, 100, Money::from_cents(100_000))
         .unwrap();
     assert!(session.state.accounts.insert(SELLER, seller).is_none());
     let placed = session
@@ -330,7 +330,7 @@ fn continuous_trade_session() -> (GameSession, StockId) {
         .enqueue_player_intent(
             PLAYER,
             Intent::PlaceLimit {
-                code: code.clone(),
+                code: code,
                 side: Side::Buy,
                 price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
                 qty: 100,
@@ -353,7 +353,7 @@ fn expiring_buy_session() -> (GameSession, StockId, AccountId, OrderId) {
     session.seed_order_for_test(
         account,
         Intent::PlaceLimit {
-            code: code.clone(),
+            code: code,
             side: Side::Buy,
             price: crate::LimitPrice::Fixed(Money::from_cents(990)),
             qty: 100,
@@ -382,7 +382,7 @@ fn mixed_quote_expiry_and_sealed_receipt_session() -> GameSession {
     session
         .fixture_account_mut(&seller)
         .unwrap()
-        .grant_position(code.clone(), 100, Money::from_cents(100_000))
+        .grant_position(code, 100, Money::from_cents(100_000))
         .unwrap();
     // Granted fixture shares need the same institutional facts as session initialization.
     session.reconcile_institutional_holdings().unwrap();
@@ -390,7 +390,7 @@ fn mixed_quote_expiry_and_sealed_receipt_session() -> GameSession {
     session.seed_order_for_test(
         seller,
         Intent::PlaceLimit {
-            code: code.clone(),
+            code: code,
             side: Side::Sell,
             price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
             qty: 100,

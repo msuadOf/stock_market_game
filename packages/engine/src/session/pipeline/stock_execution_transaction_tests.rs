@@ -19,13 +19,7 @@ fn code() -> StockId {
 }
 
 fn empty_market(code: &StockId) -> Market {
-    Market::new(
-        code.clone(),
-        Money::from_cents(1_000),
-        0.10,
-        Money::from_cents(1),
-    )
-    .unwrap()
+    Market::new(*code, Money::from_cents(1_000), 0.10, Money::from_cents(1)).unwrap()
 }
 
 fn account_validation_buy_operations(code: &StockId) -> (Vec<ValidatedOperation>, GameConfig) {
@@ -49,7 +43,7 @@ fn account_validation_buy_operations_for_quantities(
                     IntentCandidateKey::player(u64::try_from(index).unwrap()),
                     account,
                     Intent::PlaceLimit {
-                        code: code.clone(),
+                        code: *code,
                         side: Side::Buy,
                         price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
                         qty: *qty,
@@ -60,7 +54,7 @@ fn account_validation_buy_operations_for_quantities(
     )
     .unwrap();
     let context = AccountValidationContext::new([(
-        code.clone(),
+        *code,
         StockValidation::new(
             SecurityCategory::MainBoard,
             Money::from_cents(1_100),
@@ -120,7 +114,7 @@ fn resting_sell_snapshot_with_qty(
         envelope: Envelope::tick_start_existing(
             EnvelopeKey {
                 account: AccountId(0),
-                stock: code.clone(),
+                stock: *code,
                 order: OrderId(100),
                 side: Side::Sell,
             },
@@ -138,7 +132,7 @@ fn accounts_with_position(code: &StockId) -> AccountBook {
         Money::from_cents(300_000),
     );
     account
-        .grant_position(code.clone(), 100, Money::from_cents(1_000))
+        .grant_position(*code, 100, Money::from_cents(1_000))
         .unwrap();
     BTreeMap::from([(AccountId(0), account)]).into()
 }
@@ -170,7 +164,7 @@ fn inverse_identity_fills_keep_maker_receipt_chain_and_settle_both_trades() {
             Money::from_cents(300_000),
         );
         account
-            .grant_position(code.clone(), 200, Money::from_cents(1_000))
+            .grant_position(code, 200, Money::from_cents(1_000))
             .unwrap();
         BTreeMap::from([(AccountId(0), account)]).into()
     };
@@ -226,7 +220,7 @@ fn inverse_identity_partial_fill_then_cancel_keeps_maker_audit_and_t1() {
                 candidate_key: IntentCandidateKey::player(0),
                 sealed_index: 0,
                 account: AccountId(0),
-                code: code.clone(),
+                code: code,
                 order_id: OrderId(100),
             },
         ],
@@ -240,7 +234,7 @@ fn inverse_identity_partial_fill_then_cancel_keeps_maker_audit_and_t1() {
         Money::from_cents(300_000),
     );
     account
-        .grant_position(code.clone(), 200, Money::from_cents(1_000))
+        .grant_position(code, 200, Money::from_cents(1_000))
         .unwrap();
     let accounts: AccountBook = BTreeMap::from([(AccountId(0), account)]).into();
     let committed = apply_stock_execution_transaction(

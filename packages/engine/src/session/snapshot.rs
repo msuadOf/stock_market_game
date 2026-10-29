@@ -97,7 +97,7 @@ impl LiveOrderReservations {
                 .reserved_sell_qty
                 .entry(owner)
                 .or_default()
-                .entry(code.clone())
+                .entry(*code)
                 .or_default();
             *reserved = reserved
                 .checked_add(remaining_qty)
@@ -193,7 +193,7 @@ impl GameSession {
                         .map(|m| m.last_close())
                         .unwrap_or(mirror.last_price);
                     (
-                        code.clone(),
+                        *code,
                         MarketSnap {
                             last_price: mirror.last_price,
                             last_close,
@@ -212,7 +212,7 @@ impl GameSession {
                 .map(|(code, m)| {
                     let public = public_policy.project_public_book(m);
                     (
-                        code.clone(),
+                        *code,
                         MarketSnap {
                             last_price: m.last_price(),
                             last_close: m.last_close(),
@@ -262,7 +262,7 @@ impl GameSession {
                             .iter()
                             .map(|(c, p)| {
                                 (
-                                    c.clone(),
+                                    *c,
                                     PositionSnap {
                                         qty: p.qty(),
                                         t1_locked: p.t1_locked(),
@@ -291,7 +291,7 @@ impl GameSession {
                     .candle_book
                     .histories()
                     .iter()
-                    .map(|(code, history)| (code.clone(), history.iter().cloned().collect()))
+                    .map(|(code, history)| (*code, history.iter().cloned().collect()))
                     .collect()
             } else {
                 BTreeMap::new()

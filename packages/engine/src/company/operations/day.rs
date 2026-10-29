@@ -93,7 +93,7 @@ impl<'a> OperatingDayRun<'a> {
         for (id, company) in &mut self.operations.companies {
             for shock in company.economy.expire_before(self.date) {
                 self.expired.push(ExpiredShockRecord {
-                    company: id.clone(),
+                    company: *id,
                     kind: shock.kind,
                 });
             }
@@ -130,7 +130,7 @@ impl<'a> OperatingDayRun<'a> {
             for (id, company) in &mut operations.companies {
                 if company.spec.industry == industry && shock.kind.applies_to(company.spec.kind) {
                     self.activated.push(ActivatedShockRecord {
-                        company: Some(id.clone()),
+                        company: Some(*id),
                         kind: shock.kind.clone(),
                         amplitude_bp: shock.amplitude_bp,
                     });
@@ -146,7 +146,7 @@ impl<'a> OperatingDayRun<'a> {
                     continue;
                 }
                 self.activated.push(ActivatedShockRecord {
-                    company: Some(id.clone()),
+                    company: Some(*id),
                     kind: shock.kind.clone(),
                     amplitude_bp: shock.amplitude_bp,
                 });
@@ -171,7 +171,7 @@ impl<'a> OperatingDayRun<'a> {
             .iter()
             .map(|(id, company)| {
                 (
-                    id.clone(),
+                    *id,
                     company
                         .economy
                         .active()
@@ -186,7 +186,7 @@ impl<'a> OperatingDayRun<'a> {
             .expired
             .iter()
             .filter(|record| matches!(record.kind, ShockKind::ProductionInterruption))
-            .map(|record| record.company.clone())
+            .map(|record| record.company)
             .collect();
         let CompanyOperations {
             scheduler,
@@ -592,7 +592,7 @@ mod tests {
                 .companies
                 .iter()
                 .find(|(_, company)| company.spec.industry == *industry)
-                .map(|(id, _)| id.clone())
+                .map(|(id, _)| *id)
                 .expect("每个 Fixture 行业只有一家公司");
             expected.push(ActivatedShockRecord {
                 company: Some(id),
@@ -606,7 +606,7 @@ mod tests {
                     .expect("合法公司参数")
                     .expect("必中的公司候选");
             expected.push(ActivatedShockRecord {
-                company: Some(id.clone()),
+                company: Some(*id),
                 kind: shock.kind,
                 amplitude_bp: shock.amplitude_bp,
             });

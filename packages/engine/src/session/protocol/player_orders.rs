@@ -59,7 +59,7 @@ impl crate::session::GameSession {
                 }
                 orders.push(PlayerWorkingOrder {
                     id: order.id.0,
-                    code: code.clone(),
+                    code: *code,
                     side: order.side,
                     price: order.price,
                     remaining_qty: order.qty,
@@ -98,7 +98,7 @@ pub(in crate::session) fn working_orders_from_mirror(
             }
             orders.push(PlayerWorkingOrder {
                 id: *serial,
-                code: code.clone(),
+                code: *code,
                 side: *side,
                 price: *price,
                 remaining_qty: *qty,

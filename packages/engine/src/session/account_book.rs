@@ -587,7 +587,7 @@ mod tests {
         for id in [1, 32] {
             let mut account = Account::new(AccountId(id), AccountKind::Player, Money::ZERO);
             account
-                .grant_position(code.clone(), 100, Money::from_cents(1_000))
+                .grant_position(code, 100, Money::from_cents(1_000))
                 .unwrap();
             authority.insert(AccountId(id), account);
         }
@@ -601,7 +601,7 @@ mod tests {
         authority
             .get_mut(&AccountId(1))
             .unwrap()
-            .fixture_insert_position(code.clone(), locked);
+            .fixture_insert_position(code, locked);
         let mut shadow = authority.clone_for_shadow().unwrap();
 
         shadow.unlock_t1_positions();

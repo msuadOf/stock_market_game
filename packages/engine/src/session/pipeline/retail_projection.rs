@@ -493,14 +493,11 @@ impl<'a> AccountFillProjection<'a> {
         order: RetailOrderIdentity,
         aggregate: Aggregate,
     ) -> Result<(), RetailProjectionError> {
-        let before_qty = *self
-            .running_qty
-            .entry(order.stock.clone())
-            .or_insert_with(|| {
-                self.positions_before
-                    .and_then(|positions| positions.get(&order.stock))
-                    .map_or(0, |position| position.qty())
-            });
+        let before_qty = *self.running_qty.entry(order.stock).or_insert_with(|| {
+            self.positions_before
+                .and_then(|positions| positions.get(&order.stock))
+                .map_or(0, |position| position.qty())
+        });
         let after_qty = match aggregate.side {
             Side::Buy => before_qty.checked_add(aggregate.qty),
             Side::Sell => before_qty.checked_sub(aggregate.qty),
@@ -563,7 +560,7 @@ impl<'a> AccountFillProjection<'a> {
                     Side::Buy => {
                         let position = self
                             .running_positions
-                            .entry(order.stock.clone())
+                            .entry(order.stock)
                             .or_insert_with(|| Position::from_restored_parts(0, 0, 0, 0));
                         let invested_cents = position
                             .invested_cents()
@@ -632,7 +629,7 @@ impl<'a> AccountFillProjection<'a> {
                 )?;
             }
         }
-        self.running_qty.insert(order.stock.clone(), after_qty);
+        self.running_qty.insert(order.stock, after_qty);
         self.events.push(RetailReceiptEvent::Filled {
             account: self.account,
             stock: order.stock,
@@ -717,7 +714,7 @@ fn receipt_identity(receipt: &EnvelopeReceipt) -> RetailReceiptIdentity {
 fn order_identity(fact: &super::fill_fact::FillFact) -> RetailOrderIdentity {
     RetailOrderIdentity {
         account: fact.key().account,
-        stock: fact.key().stock.clone(),
+        stock: fact.key().stock,
         side_rank: match fact.key().side {
             Side::Buy => 0,
             Side::Sell => 1,

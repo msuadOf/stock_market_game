@@ -244,14 +244,14 @@ impl CompanySystem {
         }
         for fact in finance.share_split_facts()? {
             if fact.settled_on.is_some_and(|settled| settled > as_of) {
-                adjusted = adjusted.add(fact.registered_capital_reduction.clone())?;
+                adjusted = adjusted.add(fact.registered_capital_reduction)?;
             }
         }
         for fact in finance.issuer_repurchase_facts()? {
             if let (Some(cancelled), Some(reduction)) = (fact.cancelled_on, &fact.capital_reduction)
             {
                 if cancelled > as_of {
-                    adjusted = adjusted.add(reduction.clone())?;
+                    adjusted = adjusted.add(*reduction)?;
                 }
             }
         }
@@ -452,7 +452,7 @@ impl CompanySystem {
                 continue;
             };
             let facts = finance.stock_distribution_facts()?;
-            declared.insert(company.clone(), facts);
+            declared.insert(*company, facts);
         }
         let mut bound_events = BTreeSet::new();
         for book in books {
@@ -902,18 +902,11 @@ impl CompanySystem {
                             receipt.payment_id()
                         )));
                     }
-                    seen.insert((
-                        company.clone(),
-                        plan.plan_id.clone(),
-                        payment.payment_id.clone(),
-                    ));
+                    seen.insert((*company, plan.plan_id.clone(), payment.payment_id.clone()));
                 }
                 for payment in plan.payments {
-                    if !seen.contains(&(
-                        company.clone(),
-                        plan.plan_id.clone(),
-                        payment.payment_id.clone(),
-                    )) {
+                    if !seen.contains(&(*company, plan.plan_id.clone(), payment.payment_id.clone()))
+                    {
                         return Err(CompanySystemError::SystemState(format!(
                             "Simple 付款批次 {} 缺少匹配的持有人到账回执",
                             payment.payment_id

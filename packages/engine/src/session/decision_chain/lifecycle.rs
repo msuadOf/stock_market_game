@@ -82,7 +82,7 @@ pub(crate) fn open_position_action(
     let intraday = style == Some(crate::strategy::InstitutionStyle::ActiveTrader);
     let mut open = PlanOpen {
         account,
-        code: code.clone(),
+        code: *code,
         direction,
         target: PlanTarget::ShareCount(delta),
         opinion: PlanOpinion {
@@ -178,7 +178,7 @@ impl<'a> PlanLifecycleReview<'a> {
             .unwrap_or_else(|| panic!("belief account {account:?} must exist"))
             .positions()
             .iter()
-            .map(|(code, position)| (code.clone(), position.qty()))
+            .map(|(code, position)| (*code, position.qty()))
             .collect();
         let equity = session
             .account_equity(account)
@@ -375,7 +375,7 @@ impl<'a> PlanLifecycleReview<'a> {
                     if child_order_id.is_none() || host.child_cancellable_now() {
                         actions.push(PlanLifecycleAction::Terminate {
                             plan_id,
-                            code: code.clone(),
+                            code: *code,
                             child_order_id,
                             reason: TerminationReason::Cancelled,
                             trading_day,
@@ -489,7 +489,7 @@ impl<'a> PlanLifecycleReview<'a> {
                                             {
                                                 actions.push(PlanLifecycleAction::Terminate {
                                                     plan_id,
-                                                    code: code.clone(),
+                                                    code: *code,
                                                     child_order_id,
                                                     reason: TerminationReason::Cancelled,
                                                     trading_day,
@@ -626,7 +626,7 @@ impl<'a> PlanLifecycleReview<'a> {
                     actions.push(PlanLifecycleAction::Restructure {
                         account: id,
                         plan_id,
-                        code: code.clone(),
+                        code: *code,
                         child_order_id,
                         terminating: will_terminate,
                         revision,

@@ -9,7 +9,7 @@ fn nonempty_projection_is_pure_and_later_live_key_mismatch_preserves_hydrated_le
     let code = StockId(0);
     place(&mut game, &code, OrderId(41), 100);
     game.fixture_append_auction_orders(
-        code.clone(),
+        code,
         vec![AuctionOrderSnap {
             owner: AccountId(2),
             side: Side::Sell,
@@ -28,7 +28,7 @@ fn nonempty_projection_is_pure_and_later_live_key_mismatch_preserves_hydrated_le
         &projected[0],
         EnvelopeKey {
             account: AccountId(1),
-            stock: code.clone(),
+            stock: code,
             order: OrderId(41),
             side: Side::Buy,
         },
@@ -39,7 +39,7 @@ fn nonempty_projection_is_pure_and_later_live_key_mismatch_preserves_hydrated_le
         &projected[1],
         EnvelopeKey {
             account: AccountId(2),
-            stock: code.clone(),
+            stock: code,
             order: OrderId(42),
             side: Side::Sell,
         },
@@ -317,7 +317,7 @@ fn existing_ledger_validation_does_not_rebuild_owned_envelope_projections() {
     let code = StockId(0);
     place(&mut game, &code, OrderId(61), 100);
     game.fixture_append_auction_orders(
-        code.clone(),
+        code,
         vec![AuctionOrderSnap {
             owner: AccountId(2),
             side: Side::Sell,

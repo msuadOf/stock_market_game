@@ -19,7 +19,7 @@ fn continuous_inputs_capture_all_markets_without_preloaded_operations() {
     assert_eq!(
         inputs
             .iter()
-            .map(|input| input.market.code().clone())
+            .map(|input| *input.market.code())
             .collect::<Vec<_>>(),
         vec![first, second]
     );
@@ -396,7 +396,7 @@ fn dense_adapter_keeps_book_order_errors_when_envelope_keys_have_reverse_order()
         source.hydrate_or_validate_envelope_ledger().unwrap();
         let first = EnvelopeKey {
             account: AccountId(1),
-            stock: code.clone(),
+            stock: code,
             order: OrderId(5000),
             side: Side::Buy,
         };

@@ -541,7 +541,7 @@ mod t1_account_task_tests {
                         "同股 stock_ordinal 必须沿登记序严格递增（FIFO，workers={workers}）"
                     );
                 }
-                last_per_stock.insert(code.clone(), received.stock_ordinal);
+                last_per_stock.insert(*code, received.stock_ordinal);
             }
             // ④ 跨宽度顺序语义不变量（非字节全等；Intent 无 PartialEq，用
             //    Debug 形态比较多重集）。
@@ -678,7 +678,7 @@ mod t1_account_task_tests {
                 &mut writes.ingress_receipt_cursors,
                 player,
                 crate::Intent::Cancel {
-                    code: code.clone(),
+                    code: code,
                     id: crate::OrderId(7),
                 },
             )
@@ -1098,7 +1098,7 @@ pub(in crate::session) fn produce_decision_output_on(
             let returns = observation
                 .paths
                 .iter()
-                .map(|(stock, path)| (stock.clone(), path.thirty_minute.return_ratio))
+                .map(|(stock, path)| (*stock, path.thirty_minute.return_ratio))
                 .collect();
             let thirty_minute_market = crate::observation::build_equal_weight_market_observation(
                 &returns,
@@ -1119,7 +1119,7 @@ pub(in crate::session) fn produce_decision_output_on(
     } else {
         None
     };
-    let urgency_policy = view.urgency_policy.clone();
+    let urgency_policy = *view.urgency_policy;
     urgency_policy.validate().map_err(|error| {
         capture_err(
             super::decision_snapshot_capture::DecisionSnapshotCaptureError::UrgencyPolicy(error),
@@ -1413,7 +1413,7 @@ fn run_npc_account_task(
         .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     let observes;
     let next_attention_candidate_tick;
-    let (mut personal, mut attention);
+    let (mut personal, attention);
     match taken.personal {
         Some(mut state) => {
             validate_attention_probability(state.attention(), account)?;
@@ -1659,7 +1659,7 @@ fn validate_npc_account_input(
         {
             return Err(DecisionSnapshotError::UnknownRetailAnalysisStock {
                 account,
-                code: code.clone(),
+                code: *code,
             }
             .to_string());
         }
@@ -2043,11 +2043,11 @@ fn projected_ordered_intents(
         // then route the cash-capped residual once, as in the existing NPC executor.
         let ordered = by_account.entry(account).or_default();
         reconciliation_cancels
-            .entry((account, code.clone()))
+            .entry((account, *code))
             .or_default()
             .push(ordered.len());
         ordered.push(Intent::Cancel {
-            code: code.clone(),
+            code: *code,
             id: order_id,
         });
     }
@@ -2073,9 +2073,7 @@ fn projected_ordered_intents(
         if let Intent::PlaceLimit { code, .. } | Intent::PlaceMarket { code, .. } =
             intent.projected_intent()
         {
-            if let Some(cancellations) =
-                reconciliation_cancels.get(&(intent.account(), code.clone()))
-            {
+            if let Some(cancellations) = reconciliation_cancels.get(&(intent.account(), *code)) {
                 local_dependencies
                     .entry(intent.account())
                     .or_default()

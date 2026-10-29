@@ -216,7 +216,7 @@ impl PublicLibrary {
             {
                 return Err(InformationError::CorrectionTargetMismatch {
                     target,
-                    company: request.company.clone(),
+                    company: request.company,
                 });
             }
         }
@@ -239,7 +239,7 @@ impl PublicLibrary {
         let id = PublicationId::new(self.next_seq);
         let report = PublishedReport {
             id,
-            company: request.company.clone(),
+            company: request.company,
             source,
             policy: request.policy,
             approved_at: request.approved_at,
@@ -318,7 +318,7 @@ impl PublicLibrary {
                 {
                     return Err(InformationError::CorrectionTargetMismatch {
                         target: id,
-                        company: publication.company.clone(),
+                        company: publication.company,
                     });
                 }
                 if original.published_at > publication.published_at {
@@ -462,7 +462,7 @@ impl PublicLibrary {
 
     fn commit_prepared_report(&mut self, prepared: PreparedReportPublication) -> PublicationId {
         let id = prepared.report.id;
-        let company = prepared.report.company.clone();
+        let company = prepared.report.company;
         self.reports.insert(id, prepared.report);
         self.by_company.entry(company).or_default().insert(id);
         self.next_seq = prepared.next_seq;
@@ -480,7 +480,7 @@ impl PublicLibrary {
         let id = PublicationId::new(self.next_seq);
         let announcement = Announcement {
             id,
-            company: request.company.clone(),
+            company: request.company,
             occurred_on: request.occurred_on,
             published_at: request.published_at,
             content: request.content,
@@ -534,7 +534,7 @@ impl PublicLibrary {
                 &announcement.company,
                 announcement.occurred_on,
             )?;
-            let company = announcement.company.clone();
+            let company = announcement.company;
             let id = announcement.id;
             if library.announcements.insert(id, announcement).is_some() {
                 return Err(InformationError::DuplicatePublicationId { id });
@@ -632,7 +632,7 @@ impl PublicLibrary {
     // 调用方先完成验证；正常发布还须先成功计算 digest，恢复则在返回库前统一计算。
     fn commit_report_insertion(&mut self, report: PublishedReport, following: u32) {
         let id = report.id;
-        let company = report.company.clone();
+        let company = report.company;
         self.reports.insert(id, report);
         self.by_company.entry(company).or_default().insert(id);
         self.next_seq = self.next_seq.max(following);
@@ -661,7 +661,7 @@ impl PublicLibrary {
         {
             return Err(InformationError::CorrectionTargetMismatch {
                 target,
-                company: report.company.clone(),
+                company: report.company,
             });
         }
         if original.published_at > report.published_at {

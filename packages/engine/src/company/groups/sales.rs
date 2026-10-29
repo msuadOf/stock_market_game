@@ -136,8 +136,8 @@ pub(super) fn derive_sales(
     ops: &CompanyOperations,
     bound: Option<AccountingPeriod>,
 ) -> Result<Vec<IntercompanySale>, InformationError> {
-    let ids = std::iter::once(group.root.clone())
-        .chain(group.holdings.iter().map(|holding| holding.company.clone()))
+    let ids = std::iter::once(group.root)
+        .chain(group.holdings.iter().map(|holding| holding.company))
         .collect::<BTreeSet<_>>();
     let cutoff = match bound {
         Some(period) => period,
@@ -233,7 +233,7 @@ pub(super) fn derive_sales(
                 }
                 continue;
             }
-            if !pairs.insert((seller_id.clone(), buyer_id.clone())) {
+            if !pairs.insert((*seller_id, buyer_id)) {
                 return Err(invalid(format!(
                     "multiple internal sale batches for {} to {} unsupported",
                     seller_id.0, buyer_id.0
@@ -258,7 +258,7 @@ pub(super) fn derive_sales(
                 )));
             }
             sales.push(IntercompanySale {
-                seller: crate::accounting::consolidation::MemberId(seller_id.0.clone()),
+                seller: crate::accounting::consolidation::MemberId(seller_id.0),
                 buyer: crate::accounting::consolidation::MemberId(buyer_id.0),
                 revenue_account,
                 cost_account,

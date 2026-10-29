@@ -203,7 +203,7 @@ impl Strategy for ZiNoiseStrategy {
                     intents: retail_position_decision_to_intents(
                         &data, &decision, market, own, config,
                     ),
-                    reviewed_stocks: decision.code.clone().into_iter().collect(),
+                    reviewed_stocks: decision.code.into_iter().collect(),
                     position_decision: Some(decision),
                 }
             }
@@ -245,7 +245,7 @@ impl Strategy for ZiNoiseStrategy {
                     intents: retail_position_decision_to_intents(
                         &data, &decision, market, own, config,
                     ),
-                    reviewed_stocks: decision.code.clone().into_iter().collect(),
+                    reviewed_stocks: decision.code.into_iter().collect(),
                     position_decision: Some(decision),
                 }
             }
@@ -301,7 +301,7 @@ pub(crate) fn retail_position_decision_to_intents(
             Vec::new,
             |qty| {
                 vec![Intent::PlaceLimit {
-                    code: code.clone(),
+                    code: *code,
                     side: Side::Buy,
                     price: LimitPrice::Highest,
                     qty,
@@ -319,7 +319,7 @@ pub(crate) fn retail_position_decision_to_intents(
             .map_or(0, |value| value.sellable_qty);
         return a_share_sell_qty(desired, sellable).map_or_else(Vec::new, |qty| {
             vec![Intent::PlaceLimit {
-                code: code.clone(),
+                code: *code,
                 side: Side::Sell,
                 price: LimitPrice::Lowest,
                 qty,

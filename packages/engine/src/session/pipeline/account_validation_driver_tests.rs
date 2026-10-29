@@ -18,7 +18,7 @@ fn account_validation_independent_share_reservations_of_one_account_use_two_work
     for code in &codes {
         game.fixture_account_mut(&account)
             .unwrap()
-            .grant_position(code.clone(), 100, crate::Money::from_cents(1_000))
+            .grant_position(*code, 100, crate::Money::from_cents(1_000))
             .unwrap();
     }
     let plan = plan_tick(PhaseInput { session: &game }).unwrap();
@@ -63,7 +63,7 @@ fn account_validation_unrelated_cancels_do_not_occupy_the_cash_lane() {
     let game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
     let context = AccountValidationContext::new([(
-        code.clone(),
+        code,
         StockValidation::new(
             crate::SecurityCategory::MainBoard,
             crate::Money::from_cents(1_100),
@@ -79,11 +79,11 @@ fn account_validation_unrelated_cancels_do_not_occupy_the_cash_lane() {
                 IntentCandidateKey::player(0),
                 account,
                 crate::Intent::Cancel {
-                    code: code.clone(),
+                    code: code,
                     id: crate::OrderId(10),
                 },
             ),
-            limit_candidate(1, account, code.clone(), crate::Side::Buy, 100),
+            limit_candidate(1, account, code, crate::Side::Buy, 100),
             IntentCandidate::new(
                 IntentCandidateKey::player(2),
                 account,
@@ -128,8 +128,7 @@ fn account_validation_driver_shares_cash_budget_and_advances_rejected_sealed_slo
         true,
     );
     let context =
-        AccountValidationContext::new([(first.clone(), validation), (second.clone(), validation)])
-            .unwrap();
+        AccountValidationContext::new([(first, validation), (second, validation)]).unwrap();
     let mut driver = AccountValidatorDriver::new(
         plan.decision_resources().unwrap().clone(),
         plan.envelope_ledger().unwrap(),
@@ -176,10 +175,10 @@ fn account_validation_driver_rejections_do_not_consume_the_shared_sell_budget_or
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
     game.fixture_account_mut(&account)
         .unwrap()
-        .grant_position(code.clone(), 150, crate::Money::from_cents(150_000))
+        .grant_position(code, 150, crate::Money::from_cents(150_000))
         .unwrap();
     let context = AccountValidationContext::new([(
-        code.clone(),
+        code,
         StockValidation::new(
             crate::SecurityCategory::MainBoard,
             crate::Money::from_cents(1_100),
@@ -191,40 +190,16 @@ fn account_validation_driver_rejections_do_not_consume_the_shared_sell_budget_or
     let mut driver = driver(&game, context, game.state.next_order_id);
 
     let invalid = driver
-        .consume(limit_candidate(
-            0,
-            account,
-            code.clone(),
-            crate::Side::Sell,
-            25,
-        ))
+        .consume(limit_candidate(0, account, code, crate::Side::Sell, 25))
         .unwrap();
     let board_lot = driver
-        .consume(limit_candidate(
-            1,
-            account,
-            code.clone(),
-            crate::Side::Sell,
-            100,
-        ))
+        .consume(limit_candidate(1, account, code, crate::Side::Sell, 100))
         .unwrap();
     let odd_lot = driver
-        .consume(limit_candidate(
-            2,
-            account,
-            code.clone(),
-            crate::Side::Sell,
-            50,
-        ))
+        .consume(limit_candidate(2, account, code, crate::Side::Sell, 50))
         .unwrap();
     let exhausted = driver
-        .consume(limit_candidate(
-            3,
-            account,
-            code.clone(),
-            crate::Side::Sell,
-            100,
-        ))
+        .consume(limit_candidate(3, account, code, crate::Side::Sell, 100))
         .unwrap();
 
     assert!(matches!(
@@ -271,7 +246,7 @@ fn account_validation_driver_fatal_is_atomic_and_the_same_sealed_slot_can_be_ret
     let game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
     let context = AccountValidationContext::new([(
-        code.clone(),
+        code,
         StockValidation::new(
             crate::SecurityCategory::MainBoard,
             crate::Money::from_cents(1_100),
@@ -285,13 +260,7 @@ fn account_validation_driver_fatal_is_atomic_and_the_same_sealed_slot_can_be_ret
     let before_output = driver.output().clone();
 
     let error = driver
-        .consume(limit_candidate(
-            0,
-            account,
-            code.clone(),
-            crate::Side::Buy,
-            100,
-        ))
+        .consume(limit_candidate(0, account, code, crate::Side::Buy, 100))
         .unwrap_err();
 
     assert!(matches!(
@@ -330,7 +299,7 @@ fn account_validation_driver_preserves_key_regression_and_rejects_replayed_ident
     let game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
     let context = AccountValidationContext::new([(
-        code.clone(),
+        code,
         StockValidation::new(
             crate::SecurityCategory::MainBoard,
             crate::Money::from_cents(1_100),
@@ -345,7 +314,7 @@ fn account_validation_driver_preserves_key_regression_and_rejects_replayed_ident
             IntentCandidateKey::plan_chain(1),
             account,
             crate::Intent::Cancel {
-                code: code.clone(),
+                code: code,
                 id: crate::OrderId(77),
             },
         ))
@@ -355,7 +324,7 @@ fn account_validation_driver_preserves_key_regression_and_rejects_replayed_ident
             IntentCandidateKey::plan_chain(0),
             account,
             crate::Intent::Cancel {
-                code: code.clone(),
+                code: code,
                 id: crate::OrderId(78),
             },
         ))
@@ -396,7 +365,7 @@ fn account_validation_driver_final_output_matches_one_shot_batch_validation() {
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
     let plan = plan_tick(PhaseInput { session: &game }).unwrap();
     let context = AccountValidationContext::new([(
-        known.clone(),
+        known,
         StockValidation::new(
             crate::SecurityCategory::MainBoard,
             crate::Money::from_cents(1_100),
@@ -406,13 +375,13 @@ fn account_validation_driver_final_output_matches_one_shot_batch_validation() {
     )])
     .unwrap();
     let candidates = vec![
-        limit_candidate(0, account, known.clone(), crate::Side::Buy, 100),
+        limit_candidate(0, account, known, crate::Side::Buy, 100),
         limit_candidate(1, account, unknown, crate::Side::Buy, 100),
         IntentCandidate::new(
             IntentCandidateKey::plan_chain(2),
             account,
             crate::Intent::Cancel {
-                code: known.clone(),
+                code: known,
                 id: crate::OrderId(77),
             },
         ),
@@ -468,7 +437,7 @@ fn account_validation_driver_round_uses_two_pass_identity_allocation() {
         crate::Money::from_cents(900),
         true,
     );
-    let context = AccountValidationContext::new([(known.clone(), validation)]).unwrap();
+    let context = AccountValidationContext::new([(known, validation)]).unwrap();
     let start = game.state.next_order_id;
     let mut driver = driver(&game, context, start);
 
@@ -478,12 +447,12 @@ fn account_validation_driver_round_uses_two_pass_identity_allocation() {
                 IntentCandidateKey::plan_chain(0),
                 account,
                 crate::Intent::Cancel {
-                    code: known.clone(),
+                    code: known,
                     id: crate::OrderId(77),
                 },
             ),
             limit_candidate(1, account, unknown, crate::Side::Buy, 100),
-            limit_candidate(2, account, known.clone(), crate::Side::Buy, 100),
+            limit_candidate(2, account, known, crate::Side::Buy, 100),
             IntentCandidate::new(
                 IntentCandidateKey::plan_chain(3),
                 account,
@@ -554,7 +523,7 @@ fn account_validation_driver_later_round_order_id_overflow_discards_the_whole_ro
     let game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
     let context = AccountValidationContext::new([(
-        code.clone(),
+        code,
         StockValidation::new(
             crate::SecurityCategory::MainBoard,
             crate::Money::from_cents(1_100),
@@ -569,7 +538,7 @@ fn account_validation_driver_later_round_order_id_overflow_discards_the_whole_ro
             IntentCandidateKey::plan_chain(0),
             account,
             crate::Intent::Cancel {
-                code: code.clone(),
+                code: code,
                 id: crate::OrderId(77),
             },
         ))
@@ -579,7 +548,7 @@ fn account_validation_driver_later_round_order_id_overflow_discards_the_whole_ro
 
     let error = driver
         .consume_round([
-            limit_candidate(1, account, code.clone(), crate::Side::Buy, 100),
+            limit_candidate(1, account, code, crate::Side::Buy, 100),
             limit_candidate(2, account, code, crate::Side::Buy, 100),
         ])
         .unwrap_err();
@@ -601,7 +570,7 @@ fn account_validation_driver_later_round_sealed_overflow_preserves_the_prior_bou
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
     let plan = plan_tick(PhaseInput { session: &game }).unwrap();
     let context = AccountValidationContext::new([(
-        code.clone(),
+        code,
         StockValidation::new(
             crate::SecurityCategory::MainBoard,
             crate::Money::from_cents(1_100),
@@ -624,7 +593,7 @@ fn account_validation_driver_later_round_sealed_overflow_preserves_the_prior_bou
             IntentCandidateKey::plan_chain(0),
             account,
             crate::Intent::Cancel {
-                code: code.clone(),
+                code: code,
                 id: crate::OrderId(77),
             },
         ))

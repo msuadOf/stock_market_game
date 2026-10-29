@@ -53,7 +53,7 @@ fn request<'a>(
     let mut holdings = BTreeMap::new();
     for holding in &group.holdings {
         if holdings
-            .insert(holding.company.clone(), holding.parent_held_shares)
+            .insert(holding.company, holding.parent_held_shares)
             .is_some()
         {
             return Err(invalid(format!(
@@ -153,7 +153,7 @@ fn request<'a>(
                         )));
                     }
                     balances.push(IntercompanyBalance {
-                        member: MemberId(id.0.clone()),
+                        member: MemberId(id.0),
                         counterparty: MemberId(counterparty.0),
                         account: LedgerAccountId(account.into()),
                         amount,
@@ -224,7 +224,7 @@ pub(crate) fn ensure_group_report(
     period: AccountingPeriod,
     kind: ReportKind,
 ) -> Result<(), InformationError> {
-    let scope = ScopeId::Consolidated(MemberId(group.root.0.clone()));
+    let scope = ScopeId::Consolidated(MemberId(group.root.0));
     if !closing.versions(&scope, period, kind).is_empty() {
         return Ok(());
     }
@@ -287,12 +287,12 @@ pub(crate) fn seed_groups(
             for kind in ScheduledReportKind::ALL {
                 let instant = crate::information::scheduled_instant(kind, fiscal_year, offset)?;
                 if instant < start_instant {
-                    due.push((instant, group.root.clone(), fiscal_year, kind, offset));
+                    due.push((instant, group.root, fiscal_year, kind, offset));
                 }
             }
         }
     }
-    due.sort_by_key(|row| (row.0, row.1.clone(), row.2));
+    due.sort_by_key(|row| (row.0, row.1, row.2));
     for (instant, root_id, fiscal_year, kind, offset) in due {
         let group = groups
             .iter()

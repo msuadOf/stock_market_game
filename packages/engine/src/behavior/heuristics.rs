@@ -328,7 +328,7 @@ impl<'a> RetailPositionDecisionContext<'a> {
             _ => {}
         }
         PositionDecision {
-            code: Some(code.clone()),
+            code: Some(*code),
             action,
             reason,
             target_position_fraction: target_fraction,
@@ -348,7 +348,7 @@ mod position_context_tests {
         let code = StockId(0);
         let market = MarketView {
             stocks: [(
-                code.clone(),
+                code,
                 StockView {
                     best_bid: None,
                     best_ask: None,
@@ -496,7 +496,7 @@ mod position_context_tests {
         let own = SelfView {
             cash: Money::ZERO,
             positions: [(
-                code.clone(),
+                code,
                 crate::strategy::PositionView {
                     qty: 155,
                     sellable_qty: 50,
@@ -513,7 +513,7 @@ mod position_context_tests {
         );
         let mut risk = risk;
         risk.positions.insert(
-            code.clone(),
+            code,
             crate::observation::PositionRiskObservation {
                 market_value: Money::from_cents(15_500),
                 unrealized_return: None,

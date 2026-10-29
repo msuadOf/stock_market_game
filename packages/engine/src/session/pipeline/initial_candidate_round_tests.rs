@@ -29,7 +29,7 @@ fn fixture() -> (GameSession, AccountValidatorDriver, IntentCandidateBatch) {
             IntentCandidateKey::npc(AccountId(1), 0),
             AccountId(1),
             Intent::PlaceLimit {
-                code: codes[0].clone(),
+                code: codes[0],
                 side: Side::Buy,
                 price: crate::LimitPrice::Fixed(Money::from_cents(990)),
                 qty: 100,
@@ -39,7 +39,7 @@ fn fixture() -> (GameSession, AccountValidatorDriver, IntentCandidateBatch) {
             IntentCandidateKey::player(0),
             AccountId(0),
             Intent::PlaceLimit {
-                code: codes[1].clone(),
+                code: codes[1],
                 side: Side::Buy,
                 price: crate::LimitPrice::Fixed(Money::from_cents(990)),
                 qty: 100,
@@ -245,7 +245,7 @@ fn parallel_account_errors_report_first_canonical_candidate_without_mutation() {
         IntentCandidateKey::player(0),
         AccountId(0),
         Intent::PlaceLimit {
-            code: session.state.markets.keys().next().unwrap().clone(),
+            code: *session.state.markets.keys().next().unwrap(),
             side: Side::Buy,
             price: crate::LimitPrice::Fixed(Money::from_cents(i64::MAX)),
             qty: 100,
@@ -277,7 +277,7 @@ fn initial_batch_full_fill_completes_linked_parent_before_later_manual_acceptanc
     use crate::session::plan_chain_candidates::PlanChainOperationBatch;
 
     let (mut session, request) = crate::session::plan_chain_candidates_tests::execution_fixture();
-    let code = request.allocation.code.clone();
+    let code = request.allocation.code;
     let plan_id = request.plan_id;
     let mut setup = PlanChainOperationBatch::empty();
     setup.push_execution(request);
@@ -285,7 +285,7 @@ fn initial_batch_full_fill_completes_linked_parent_before_later_manual_acceptanc
     session
         .fixture_account_mut(&AccountId(0))
         .unwrap()
-        .grant_position(code.clone(), 100, Money::from_cents(90_000))
+        .grant_position(code, 100, Money::from_cents(90_000))
         .unwrap();
     session.hydrate_or_validate_envelope_ledger().unwrap();
     let mut validator = build_validator(&session);
@@ -301,7 +301,7 @@ fn initial_batch_full_fill_completes_linked_parent_before_later_manual_acceptanc
             IntentCandidateKey::player(0),
             AccountId(0),
             Intent::PlaceLimit {
-                code: code.clone(),
+                code: code,
                 side: Side::Sell,
                 price: crate::LimitPrice::Fixed(Money::from_cents(900)),
                 qty: 100,
@@ -311,7 +311,7 @@ fn initial_batch_full_fill_completes_linked_parent_before_later_manual_acceptanc
             IntentCandidateKey::player(1),
             AccountId(1),
             Intent::PlaceLimit {
-                code: code.clone(),
+                code: code,
                 side: Side::Buy,
                 price: crate::LimitPrice::Fixed(Money::from_cents(900)),
                 qty: 100,
@@ -358,11 +358,11 @@ fn initial_batch_full_fill_completes_linked_parent_before_later_manual_acceptanc
 #[test]
 fn batched_resting_acceptances_keep_each_operations_market_quote_and_order() {
     let (mut session, _, _) = fixture();
-    let code = session.state.markets.keys().next().unwrap().clone();
+    let code = *session.state.markets.keys().next().unwrap();
     session
         .fixture_account_mut(&AccountId(0))
         .unwrap()
-        .grant_position(code.clone(), 100, Money::from_cents(99_000))
+        .grant_position(code, 100, Money::from_cents(99_000))
         .unwrap();
     let mut validator = build_validator(&session);
     let initial = IntentCandidateBatch::new(vec![
@@ -370,7 +370,7 @@ fn batched_resting_acceptances_keep_each_operations_market_quote_and_order() {
             IntentCandidateKey::npc(AccountId(1), 0),
             AccountId(1),
             Intent::PlaceLimit {
-                code: code.clone(),
+                code: code,
                 side: Side::Buy,
                 price: crate::LimitPrice::Fixed(Money::from_cents(990)),
                 qty: 100,
@@ -380,7 +380,7 @@ fn batched_resting_acceptances_keep_each_operations_market_quote_and_order() {
             IntentCandidateKey::player(0),
             AccountId(0),
             Intent::PlaceLimit {
-                code: code.clone(),
+                code: code,
                 side: Side::Sell,
                 price: crate::LimitPrice::Fixed(Money::from_cents(990)),
                 qty: 100,
@@ -390,7 +390,7 @@ fn batched_resting_acceptances_keep_each_operations_market_quote_and_order() {
             IntentCandidateKey::player(1),
             AccountId(0),
             Intent::PlaceLimit {
-                code: code.clone(),
+                code: code,
                 side: Side::Buy,
                 price: crate::LimitPrice::Fixed(Money::from_cents(980)),
                 qty: 100,
@@ -460,7 +460,7 @@ fn account_shards_preserve_cross_stock_budget_competition_and_continuation_ids()
         IntentCandidateKey::npc(AccountId(1), 1),
         AccountId(1),
         Intent::PlaceLimit {
-            code: codes[1].clone(),
+            code: codes[1],
             side: Side::Buy,
             price: crate::LimitPrice::Fixed(Money::from_cents(990)),
             qty: 100,
@@ -501,7 +501,7 @@ fn account_shards_preserve_cross_stock_budget_competition_and_continuation_ids()
             IntentCandidateKey::plan_chain(0),
             AccountId(0),
             Intent::PlaceLimit {
-                code: codes[0].clone(),
+                code: codes[0],
                 side: Side::Buy,
                 price: crate::LimitPrice::Fixed(Money::from_cents(980)),
                 qty: 100,

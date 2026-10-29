@@ -3,7 +3,7 @@ use super::*;
 
 fn buy(code: &StockId, price: i64) -> Intent {
     Intent::PlaceLimit {
-        code: code.clone(),
+        code: *code,
         side: Side::Buy,
         price: LimitPrice::Fixed(Money::from_cents(price)),
         qty: 100,
@@ -103,7 +103,7 @@ fn symbolic_buy_replaces_equal_fixed_quote_without_consuming_raw_intent() {
         })
         .unwrap();
     let target = Intent::PlaceLimit {
-        code: code.clone(),
+        code: code,
         side: Side::Buy,
         price: LimitPrice::Highest,
         qty: 100,
@@ -131,13 +131,13 @@ fn symbolic_sell_replaces_equal_fixed_quote_without_consuming_raw_intent() {
     session
         .fixture_account_mut(&account)
         .unwrap()
-        .grant_position(code.clone(), 100, Money::from_cents(90_000))
+        .grant_position(code, 100, Money::from_cents(90_000))
         .unwrap();
     let mut events = Vec::new();
     session.seed_order_for_test(
         account,
         Intent::PlaceLimit {
-            code: code.clone(),
+            code: code,
             side: Side::Sell,
             price: LimitPrice::Fixed(Money::from_cents(900)),
             qty: 100,
@@ -196,10 +196,10 @@ fn reconciliation_plan_cancels_cross_side_without_consuming_opposite_target() {
     session
         .fixture_account_mut(&account)
         .unwrap()
-        .grant_position(code.clone(), 100, Money::from_cents(90_000))
+        .grant_position(code, 100, Money::from_cents(90_000))
         .unwrap();
     let target = Intent::PlaceLimit {
-        code: code.clone(),
+        code: code,
         side: Side::Sell,
         price: LimitPrice::Fixed(Money::from_cents(910)),
         qty: 100,
@@ -261,7 +261,7 @@ fn reconciliation_plan_locked_reviewed_auction_suppresses_opposite_target() {
         &session,
         account,
         vec![Intent::PlaceLimit {
-            code: code.clone(),
+            code: code,
             side: Side::Sell,
             price: LimitPrice::Fixed(Money::from_cents(1_100)),
             qty: 100,
@@ -278,7 +278,7 @@ fn reconciliation_plan_locked_auction_suppresses_same_side_and_crossing_targets(
     let (mut session, account, code, _order_id) = resting_auction_buy();
     session.state.tick = 300;
     let crossing = Intent::PlaceLimit {
-        code: code.clone(),
+        code: code,
         side: Side::Sell,
         price: LimitPrice::Fixed(Money::from_cents(900)),
         qty: 100,
@@ -303,7 +303,7 @@ fn reconciliation_plan_locked_reviewed_auction_suppresses_only_reviewed_stock() 
         &session,
         account,
         vec![buy(&code, 901), buy(&other, 900)],
-        ReconcileScope::ReviewedStocks([code.clone()].into()),
+        ReconcileScope::ReviewedStocks([code].into()),
     );
 
     assert!(plan.decisions.is_empty());

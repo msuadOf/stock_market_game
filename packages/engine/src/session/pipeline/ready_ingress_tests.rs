@@ -137,7 +137,7 @@ fn same_stock_fifo_uses_receipt_time_across_player_and_npc_queues() {
                 .enqueue_player_intent(
                     AccountId(0),
                     Intent::PlaceLimit {
-                        code: code.clone(),
+                        code: code,
                         side: Side::Buy,
                         price: crate::LimitPrice::Fixed(Money::from_cents(990)),
                         qty: 100,
@@ -150,7 +150,7 @@ fn same_stock_fifo_uses_receipt_time_across_player_and_npc_queues() {
                 .receive(
                     AccountId(1),
                     Intent::PlaceLimit {
-                        code: code.clone(),
+                        code: code,
                         side: Side::Buy,
                         price: crate::LimitPrice::Fixed(Money::from_cents(990)),
                         qty: 100,
@@ -243,7 +243,7 @@ fn enqueue_after_tick_capture_is_deferred_to_the_next_capture() {
         .stock_id(&session.state.setup.stocks[0].code.0)
         .unwrap();
     let intent = || Intent::PlaceLimit {
-        code: code.clone(),
+        code: code,
         side: Side::Buy,
         price: crate::LimitPrice::Fixed(Money::from_cents(990)),
         qty: 100,

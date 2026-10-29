@@ -367,7 +367,7 @@ fn legacy_zero_book(snapshot: RegistrationSnapshot, plan: ShareSplitEventPlan) -
         approval_reference: plan.approval_reference.clone(),
         registration_event_id: snapshot.event_id().to_owned(),
         stock: plan.stock.clone(),
-        issuer: plan.issuer.clone(),
+        issuer: plan.issuer,
         registered_on: plan.registered_on,
         direction: plan.direction.clone(),
         ratio: plan.ratio,

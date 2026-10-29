@@ -200,7 +200,7 @@ fn active_shutdown_keeps_original_task_died_payload_and_worker_identity() {
         })
     };
     let spec = crate::runtime::skeleton_tests::basic_spec(2, 2, 1, Box::new(script_for));
-    let mut world = World::spawn(
+    let world = World::spawn(
         spec,
         crate::calendar::TradingCalendar::current_default_calendar().expect("显式 Calendar 合法"),
     )

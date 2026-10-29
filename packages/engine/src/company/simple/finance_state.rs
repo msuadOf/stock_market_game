@@ -90,7 +90,7 @@ impl SimpleFinanceState {
         &self.closing
     }
     pub fn member_id(&self) -> MemberId {
-        MemberId(self.company.0.clone())
+        MemberId(self.company.0)
     }
     pub(crate) fn income_tax_position(&self) -> &IncomeTaxPosition {
         &self.income_tax_position

@@ -50,7 +50,7 @@ impl PlanChainCandidateSource {
             } => (
                 *account,
                 Intent::Cancel {
-                    code: code.clone(),
+                    code: *code,
                     id: *order_id,
                 },
             ),
@@ -63,7 +63,7 @@ impl PlanChainCandidateSource {
             } => (
                 *account,
                 Intent::PlaceLimit {
-                    code: code.clone(),
+                    code: *code,
                     side: *side,
                     price: LimitPrice::Fixed(*price),
                     qty: *qty,
@@ -182,7 +182,7 @@ impl StockRouteCoordination {
         &mut self,
         (account, code): (AccountId, StockId),
     ) -> Option<PlanChainOperation> {
-        if let Some((assessment, market)) = self.reconsideration.remove(&(account, code.clone())) {
+        if let Some((assessment, market)) = self.reconsideration.remove(&(account, code)) {
             Some(PlanChainOperation::Lifecycle {
                 account,
                 assessments: BTreeMap::from([(code, assessment)]),

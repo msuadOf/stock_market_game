@@ -123,7 +123,7 @@ impl PersonalWatchlist {
         }
         let newly_watched = !self.stocks.contains_key(code);
         self.stocks
-            .entry(code.clone())
+            .entry(*code)
             .or_default()
             .last_observed_market_minute = market_minute;
         self.latest_attention_minute = market_minute;

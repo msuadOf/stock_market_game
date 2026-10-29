@@ -181,7 +181,7 @@ mod tests {
                 !can_prepare(&game),
                 "阶段 {phase:?} 不允许把连续 shard 预计算提前到竞价/盘前 tick"
             );
-            let mut plan = plan_tick(PhaseInput { session: &game }).unwrap();
+            let plan = plan_tick(PhaseInput { session: &game }).unwrap();
             assert!(
                 plan.precomputed_stock_inputs.is_none() && plan.precomputed_stock_shards.is_none(),
                 "非连续阶段必须走内联准备，不得残留预计算 shard"
@@ -279,7 +279,7 @@ mod tests {
             if corrupt_hydration {
                 let key = super::super::EnvelopeKey {
                     account: AccountId(1),
-                    stock: code.clone(),
+                    stock: code,
                     order: OrderId(91),
                     side: Side::Buy,
                 };

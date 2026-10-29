@@ -129,7 +129,7 @@ mod tests {
         let own = SelfView {
             cash: Money::from_cents(200_000),
             positions: [(
-                code.clone(),
+                code,
                 PositionView {
                     qty: 800,
                     sellable_qty: 800,

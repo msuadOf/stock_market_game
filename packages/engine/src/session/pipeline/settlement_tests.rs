@@ -205,7 +205,7 @@ fn account_state(accounts: &AccountBook) -> AccountState {
                 .iter()
                 .map(|(code, position)| {
                     (
-                        code.clone(),
+                        *code,
                         position.qty(),
                         position.t1_locked(),
                         position.invested_cents(),

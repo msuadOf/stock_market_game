@@ -257,7 +257,7 @@ impl GameSession {
                 let code = match &received.intent {
                     Intent::PlaceLimit { code, .. }
                     | Intent::PlaceMarket { code, .. }
-                    | Intent::Cancel { code, .. } => code.clone(),
+                    | Intent::Cancel { code, .. } => *code,
                 };
                 self.state
                     .ingress_receipt_cursors

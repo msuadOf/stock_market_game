@@ -215,7 +215,7 @@ impl DecisionSnapshot {
                 {
                     return Err(DecisionSnapshotError::UnknownRetailAnalysisStock {
                         account: *account,
-                        code: code.clone(),
+                        code: *code,
                     });
                 }
             }

@@ -234,7 +234,7 @@ impl GameSession {
         Ok(pipeline::Envelope::tick_start_existing(
             pipeline::EnvelopeKey {
                 account: projection.account,
-                stock: projection.stock.clone(),
+                stock: *projection.stock,
                 order: projection.order,
                 side: projection.side,
             },

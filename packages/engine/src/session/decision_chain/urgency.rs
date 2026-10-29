@@ -91,7 +91,7 @@ impl GameSession {
                     .map(|(code, position)| {
                         let price = market_view.stocks[code].last_price;
                         (
-                            code.clone(),
+                            *code,
                             crate::observation::RiskPositionInput {
                                 qty: position.qty(),
                                 cost_price: position.cost_price().filter(|cost| cost.cents() > 0),

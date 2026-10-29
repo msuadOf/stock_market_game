@@ -202,7 +202,7 @@ impl AdaptivePlanChainCoordinator {
         self.unfinished_routes.extend(
             candidates
                 .iter()
-                .map(|candidate| (candidate.owner(), intent_code(candidate.intent()).clone())),
+                .map(|candidate| (candidate.owner(), *intent_code(candidate.intent()))),
         );
     }
 
@@ -376,7 +376,7 @@ impl AdaptivePlanChainCoordinator {
             };
             outcomes.push((
                 candidate.owner(),
-                intent_code(candidate.intent()).clone(),
+                *intent_code(candidate.intent()),
                 *chain_generation_index,
                 outcome,
             ));
@@ -508,7 +508,7 @@ impl AdaptivePlanChainCoordinator {
                     domain,
                     &[(
                         candidate.owner(),
-                        intent_code(candidate.intent()).clone(),
+                        *intent_code(candidate.intent()),
                         *chain_generation_index,
                         route_outcome(&fact.outcome),
                     )],

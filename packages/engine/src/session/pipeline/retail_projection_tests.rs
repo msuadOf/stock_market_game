@@ -686,7 +686,7 @@ fn retail_multiple_stock_fills_prune_only_unheld_watchlist_entries() {
     let account = AccountId(1);
     let held = StockId(1);
     let mut second = fill(2, Side::Buy, 11, 100, 100_000);
-    second.envelope.stock = held.clone();
+    second.envelope.stock = held;
     second.local_key = ReceiptLocalKey::new(
         JournalRank::SealedBatch,
         ReceiptSource::SealedIntent(2),
@@ -718,11 +718,8 @@ fn retail_multiple_stock_fills_prune_only_unheld_watchlist_entries() {
     after
         .get_mut(&account)
         .unwrap()
-        .insert(held.clone(), position.clone());
-    after
-        .get_mut(&account)
-        .unwrap()
-        .insert(untouched.clone(), position);
+        .insert(held, position.clone());
+    after.get_mut(&account).unwrap().insert(untouched, position);
     let input_states = BTreeMap::from([(account, experience)]).into();
     let result = project_retail_receipts(RetailProjectionInput {
         retail_experience: &input_states,

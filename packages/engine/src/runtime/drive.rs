@@ -157,7 +157,7 @@ where
     let Some(rec) = fact_rec else {
         return Ok(());
     };
-    let mut covered: Vec<Vec<bool>> = locals_per_group
+    let covered: Vec<Vec<bool>> = locals_per_group
         .map(|locals| {
             let mut flags = vec![false; accounts_per_group];
             for local in locals {
@@ -168,7 +168,7 @@ where
             flags
         })
         .collect();
-    let mut check = |owner: crate::runtime::Owner, what: &str| -> Result<(), String> {
+    let check = |owner: crate::runtime::Owner, what: &str| -> Result<(), String> {
         let (g, local) = (owner.0 as usize, owner.1 as usize);
         let ok = covered
             .get(g)
@@ -3165,7 +3165,7 @@ fn resting_order_seeds_from_session(
             let envelope = ledger
                 .get(&(
                     order.owner,
-                    code.clone(),
+                    code,
                     order.id,
                     u8::from(matches!(order.side, crate::orderbook::Side::Sell)),
                 ))

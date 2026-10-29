@@ -94,7 +94,7 @@ impl GameSession {
         let returns = observation
             .paths
             .iter()
-            .map(|(stock, path)| (stock.clone(), path.thirty_minute.return_ratio))
+            .map(|(stock, path)| (*stock, path.thirty_minute.return_ratio))
             .collect();
         let thirty_minute_market =
             build_equal_weight_market_observation(&returns).map_err(|error| {
@@ -325,7 +325,7 @@ impl GameSession {
                         material.origin,
                         crate::information::PublicationOrigin::Correction
                     ) {
-                        corrections.push((code.clone(), report));
+                        corrections.push((*code, report));
                     }
                     let newer = match reports.get(code) {
                         Some(prior) => {
@@ -339,7 +339,7 @@ impl GameSession {
                         None => true,
                     };
                     if newer {
-                        reports.insert(code.clone(), report);
+                        reports.insert(*code, report);
                     }
                 } else if let Some(cause) = crate::session::notices::credit_default_cause(
                     ctx.library,
@@ -348,7 +348,7 @@ impl GameSession {
                 )
                 .map_err(|error| invariant(error.to_string()))?
                 {
-                    credit_defaults.push((code.clone(), cause));
+                    credit_defaults.push((*code, cause));
                 }
             }
         }
@@ -363,7 +363,7 @@ impl GameSession {
             let (kind, issued_shares) = ctx.company_spec(&company)?;
             let inputs = BeliefInputs {
                 ctx: &ctx_info,
-                company: company.clone(),
+                company: company,
                 kind,
                 total_issued_shares: issued_shares,
                 as_of_anchor: *ctx
@@ -457,7 +457,7 @@ impl GameSession {
                 .record_public_history_read(code, minute, &mut personal.history_reads)
                 .map_err(|error| invariant(error.to_string()))?;
             assessments.insert(
-                code.clone(),
+                *code,
                 blend_candidate(&personal.belief.analysis().weights(), &signals),
             );
         }
@@ -646,7 +646,7 @@ impl GameSession {
                     .get(stock_code)
                     .ok_or_else(|| format!("held {stock_code:?} has no market"))?;
                 Ok((
-                    stock_code.clone(),
+                    *stock_code,
                     RiskPositionInput {
                         qty: position.qty(),
                         cost_price: position.cost_price(),
@@ -674,7 +674,7 @@ impl GameSession {
                 .get(code)
                 .map(|position| {
                     BTreeMap::from([(
-                        code.clone(),
+                        *code,
                         PositionView {
                             qty: position.qty(),
                             sellable_qty: position.sellable(),
@@ -685,14 +685,14 @@ impl GameSession {
                 .unwrap_or_default(),
         };
         let market = MarketView {
-            stocks: BTreeMap::from([(code.clone(), observation.market.stocks[code].clone())]),
+            stocks: BTreeMap::from([(*code, observation.market.stocks[code].clone())]),
             tick: observation.market.tick,
             market_minute: observation.market.market_minute,
         };
-        let paths = BTreeMap::from([(code.clone(), observation.paths[code].clone())]);
+        let paths = BTreeMap::from([(*code, observation.paths[code].clone())]);
         let behavior = BehaviorMarketObservation {
             price_paths: paths,
-            thirty_minute_market: thirty_minute_market.clone(),
+            thirty_minute_market: *thirty_minute_market,
         };
         let mut dated = account_experience.clone();
         dated.consecutive_failed_buys = dated
@@ -760,25 +760,14 @@ mod tests {
         for (recovered_price, expected_cost) in [(1_500, 0), (2_000, -1_000)] {
             let mut session = session();
             let id = AccountId(1);
-            let code = session
-                .build_market_view()
-                .stocks
-                .keys()
-                .next()
-                .unwrap()
-                .clone();
+            let code = *session.build_market_view().stocks.keys().next().unwrap();
             let config = session.state.setup.config.clone();
             let account = session.fixture_account_mut(&id).unwrap();
             account
-                .grant_position(code.clone(), 300, Money::from_cents(1_000))
+                .grant_position(code, 300, Money::from_cents(1_000))
                 .unwrap();
             account
-                .apply_sell(
-                    &config,
-                    code.clone(),
-                    Money::from_cents(recovered_price),
-                    200,
-                )
+                .apply_sell(&config, code, Money::from_cents(recovered_price), 200)
                 .unwrap();
             let cost = account.position(&code).unwrap().cost_price().unwrap();
             assert_eq!(cost.cents(), expected_cost);

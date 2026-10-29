@@ -2066,7 +2066,7 @@ impl GroupState {
             ticket.order_id = Some(order_id);
             self.push_undo(GroupUndo::ChildInFlight {
                 account,
-                code: code.clone(),
+                code: code,
                 prev: Some(ChildTicket {
                     qty: ticket.qty,
                     side: ticket.side,
@@ -2077,8 +2077,7 @@ impl GroupState {
                     repurchase: ticket.repurchase.clone(),
                 }),
             });
-            self.child_in_flight
-                .insert((account, code.clone()), ticket.clone());
+            self.child_in_flight.insert((account, code), ticket.clone());
         }
         let Some(order_id) = ticket.order_id else {
             return Ok(());
@@ -2147,11 +2146,10 @@ impl GroupState {
             }
             self.push_undo(GroupUndo::ChildInFlight {
                 account,
-                code: code.clone(),
+                code: code,
                 prev: Some(prev_ticket),
             });
-            self.child_in_flight
-                .insert((account, code.clone()), ticket.clone());
+            self.child_in_flight.insert((account, code), ticket.clone());
         }
         // 在途卖余量镜像已上移至 apply_staging 统一 fill 段（Sol 五审：
         // 外部/retail 卖单同口径——票域减法会造成外部单双计/漏计）。
@@ -2258,7 +2256,7 @@ impl GroupState {
         ticket.order_id = Some(order_id);
         self.push_undo(GroupUndo::ChildInFlight {
             account,
-            code: code.clone(),
+            code: code,
             prev: Some(ChildTicket {
                 qty,
                 side,
@@ -2311,7 +2309,7 @@ impl GroupState {
         };
         self.push_undo(GroupUndo::ChildInFlight {
             account,
-            code: code.clone(),
+            code: code,
             prev: Some(ticket.clone()),
         });
         // 在途卖余量镜像改由 RefundedShares 实体驱动（apply_staging 统一
@@ -3395,7 +3393,7 @@ impl GroupState {
         let (_account, out, operations, mut _diagnostics) =
             crate::session::InstitutionDecisionRoot::new(account, personal)
                 .observe(&context, &observation);
-        let mut assessments_map = operations
+        let assessments_map = operations
             .lifecycle_assessments()
             .into_iter()
             .find(|(owner, _)| *owner == account)
@@ -3915,7 +3913,7 @@ impl GroupState {
                     .plan_book
                     .plan(plan_id)
                     .unwrap_or_else(|e| panic!("组内复审动作计划读取失败 {plan_id:?}: {e:?}"));
-                plan.code().clone()
+                *plan.code()
             };
             let Some(trading_day) = self
                 .stock_trading_day(code)
@@ -4143,9 +4141,7 @@ impl GroupState {
                 plan.status(),
                 crate::plans::PlanStatus::Completed | crate::plans::PlanStatus::Terminated { .. }
             ) || (matches!(plan.status(), crate::plans::PlanStatus::Active)
-                && self
-                    .child_in_flight
-                    .contains_key(&(account, plan.code().clone())))
+                && self.child_in_flight.contains_key(&(account, *plan.code())))
             {
                 continue;
             }
@@ -4172,7 +4168,7 @@ impl GroupState {
                     crate::session::buy_allocation_request(
                         &self.config,
                         plan_id,
-                        code.clone(),
+                        *code,
                         plan.confidence_bp(),
                         reservation_price,
                         remaining,
@@ -4191,7 +4187,7 @@ impl GroupState {
                     );
                     qty.map(|qty| crate::plans::AllocationRequest {
                         plan_id,
-                        code: code.clone(),
+                        code: *code,
                         side: crate::orderbook::Side::Sell,
                         class: crate::plans::AllocationClass::RiskReduction,
                         confidence_bp: plan.confidence_bp(),
@@ -4282,9 +4278,7 @@ impl GroupState {
                 plan.status(),
                 crate::plans::PlanStatus::Completed | crate::plans::PlanStatus::Terminated { .. }
             ) || (matches!(plan.status(), crate::plans::PlanStatus::Active)
-                && self
-                    .child_in_flight
-                    .contains_key(&(account, plan.code().clone())))
+                && self.child_in_flight.contains_key(&(account, *plan.code())))
             {
                 continue;
             }
@@ -4432,7 +4426,7 @@ impl GroupState {
                     }
                     submits.push((
                         plan_id,
-                        code.clone(),
+                        *code,
                         stock_idx as StockIdx,
                         plan.direction(),
                         price,
@@ -4475,7 +4469,7 @@ impl GroupState {
         //（挂单 TTL 域登记——撤销/到期释放的腿清理随撤销路径补）。
         for (plan_id, code, stock, side, price, qty) in submits {
             let prev = self.child_in_flight.insert(
-                (account, code.clone()),
+                (account, code),
                 ChildTicket {
                     qty,
                     side,
@@ -4496,7 +4490,7 @@ impl GroupState {
             );
             self.push_undo(GroupUndo::ChildInFlight {
                 account,
-                code: code.clone(),
+                code: code,
                 prev: None,
             });
             // Sol 整改 1：簿快照覆盖全部簿变更（install/record 亦然）。
@@ -7494,7 +7488,7 @@ pub fn group_main(
                 /// 全部轮即时域落账的写点；等待窗/Seal drain 消化），Seal
                 /// 临界路径免原 O(undo_len) 全日志重扫。集合族与原扫描
                 /// 口径逐族一致（8 个账户域族），等价替换。
-                let mut accounts_sparse: Vec<(_, _)> = std::mem::take(&mut state.account_dirty_set)
+                let accounts_sparse: Vec<(_, _)> = std::mem::take(&mut state.account_dirty_set)
                     .into_iter()
                     .filter_map(|local| {
                         state
@@ -7873,7 +7867,7 @@ mod sol_recheck3_tests {
             .plan_book
             .create(crate::plans::PlanOpen {
                 account,
-                code: code.clone(),
+                code: code,
                 direction: side,
                 target: crate::plans::PlanTarget::ShareCount(target),
                 opinion: crate::plans::PlanOpinion {
@@ -8013,7 +8007,7 @@ mod sol_recheck3_tests {
             trading_day: 0,
             direction: Side::Buy,
             target: crate::plans::PlanTarget::ShareCount(300),
-            opinion: state.plan_book.plan(plan_id).unwrap().opinion().clone(),
+            opinion: state.plan_book.plan(plan_id).unwrap().opinion(),
             confidence_bp: 8_000,
             urgency: crate::plans::Urgency::Normal,
             below_filled_rationale: None,
@@ -9287,7 +9281,7 @@ mod roster_offset_tests {
             .plan_book
             .create(crate::plans::PlanOpen {
                 account: mine,
-                code: code.clone(),
+                code: code,
                 direction: Side::Buy,
                 target: crate::plans::PlanTarget::ShareCount(200),
                 opinion: crate::plans::PlanOpinion {
@@ -9309,7 +9303,7 @@ mod roster_offset_tests {
             .record_child_submitted(mine, &code, Side::Buy, order_id, 200, 0)
             .expect("子单身份登记");
         state.child_in_flight.insert(
-            (mine, code.clone()),
+            (mine, code),
             ChildTicket {
                 qty: 200,
                 side: Side::Buy,

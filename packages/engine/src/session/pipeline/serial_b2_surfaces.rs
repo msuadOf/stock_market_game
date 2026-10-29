@@ -78,7 +78,7 @@ impl GameSession {
                         )))
                     }
                 };
-                clearing.insert(code.clone(), key);
+                clearing.insert(*code, key);
             }
         }
         if !facts
@@ -124,11 +124,7 @@ impl GameSession {
                     .map_err(|e| invariant(&format!("串行分钟归一失败：{e:?}")))?
                 }
             };
-            let bars = self
-                .state
-                .market_minute_bars
-                .entry(code.clone())
-                .or_default();
+            let bars = self.state.market_minute_bars.entry(*code).or_default();
             minute_bar_apply(bars, minute_key.0, minute_key.1, *price, *qty)
                 .map_err(|e| invariant(&format!("串行分钟桶聚合失败：{e:?}")))?;
         }
@@ -247,7 +243,7 @@ fn serial_fill_confirmation(
                 // receipt_id＝ledger Fill 收据全局索引（单调唯一，持久续号）。
                 receipt_id: fact.index().0,
                 civil_date,
-                stock: key.stock.clone(),
+                stock: key.stock,
                 side: key.side,
                 price_cents,
                 quantity_shares: fact.qty(),

@@ -97,7 +97,7 @@ pub(in crate::session) fn plan_npc_working_order_reconciliation_standalone(
                 } else {
                     decisions.push(WorkingOrderDecision::Cancel {
                         order_id: order.id,
-                        code: code.clone(),
+                        code: *code,
                     });
                 }
             }
@@ -114,7 +114,7 @@ pub(in crate::session) fn plan_npc_working_order_reconciliation_standalone(
                 } else if cancelable_auction_window {
                     decisions.push(WorkingOrderDecision::Cancel {
                         order_id: OrderId(order.order_id),
-                        code: code.clone(),
+                        code: *code,
                     });
                 } else {
                     let market = markets.get(code).expect("working auction stock exists");
@@ -140,7 +140,7 @@ pub(in crate::session) fn plan_npc_working_order_reconciliation_standalone(
 fn intent_stock_side(intent: &Intent) -> Option<(StockId, Side)> {
     match intent {
         Intent::PlaceLimit { code, side, .. } | Intent::PlaceMarket { code, side, .. } => {
-            Some((code.clone(), *side))
+            Some((*code, *side))
         }
         Intent::Cancel { .. } => None,
     }

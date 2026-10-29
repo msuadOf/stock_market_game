@@ -191,7 +191,7 @@ fn statutory_reserve_uses_tax_after_profit_remaining_after_opening_loss() {
         line("4103", PostingSide::Debit, amount(500)),
     ];
     let mut state = SimpleFinanceState::create(
-        baseline.company.clone(),
+        baseline.company,
         baseline.kind,
         &config,
         date(1, 1).prev().unwrap(),

@@ -113,7 +113,7 @@ impl CompanyOperations {
             .companies
             .iter()
             .filter(|(_, company)| company.spec.kind != CompanyKind::Insurance)
-            .map(|(id, _)| id.clone())
+            .map(|(id, _)| *id)
             .collect();
         for id in ids {
             let key = format!("INT:{}:{}", id.0, date.to_iso());

@@ -488,7 +488,7 @@ mod tests {
             let mut session = GameSession::new(setup, 42).unwrap();
             let account = AccountId(1);
             let code = StockId(0);
-            let company = session.state.issuer_of_stock(code).unwrap().clone();
+            let company = session.state.issuer_of_stock(code).unwrap();
             session
                 .state
                 .belief_participants
@@ -524,7 +524,7 @@ mod tests {
                     .plans
                     .create(crate::plans::PlanOpen {
                         account,
-                        code: code.clone(),
+                        code: code,
                         direction: Side::Buy,
                         target: crate::plans::PlanTarget::ShareCount(100),
                         opinion: crate::plans::PlanOpinion {
@@ -928,7 +928,7 @@ mod tests {
         let mut session = GameSession::new(setup, 42).unwrap();
         let id = AccountId(1);
         let code = StockId(0);
-        let company = session.state.issuer_of_stock(code).unwrap().clone();
+        let company = session.state.issuer_of_stock(code).unwrap();
         session
             .state
             .belief_participants

@@ -149,7 +149,7 @@ fn save_decode_restore_preserves_seen_prefix_and_consumes_only_the_next_receipt(
     )
     .expect("runtime_state retail fixture must be valid");
     let code = StockId(0);
-    let old = receipt_for_stock(0, 1, code.clone());
+    let old = receipt_for_stock(0, 1, code);
     source.state.retail_projection_seen = RetailProjectionSeen::from_authoritative_identities(
         [(old.index, old.local_key.clone())],
         1,
@@ -181,7 +181,7 @@ fn save_decode_restore_preserves_seen_prefix_and_consumes_only_the_next_receipt(
 
     let next_key = EnvelopeKey {
         account: AccountId(1),
-        stock: code.clone(),
+        stock: code,
         order: OrderId(2),
         side: Side::Buy,
     };
@@ -198,7 +198,7 @@ fn save_decode_restore_preserves_seen_prefix_and_consumes_only_the_next_receipt(
             charged: FeeComponents::ZERO,
         },
     );
-    let candidate = receipt_for_stock(0, 2, code.clone());
+    let candidate = receipt_for_stock(0, 2, code);
     let committed = apply_session_receipt_transaction(
         &mut restored,
         vec![created],

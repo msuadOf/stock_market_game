@@ -39,7 +39,7 @@ pub(super) fn market_data_priors(
         .keys()
         .map(|code| {
             (
-                code.clone(),
+                *code,
                 StockMarketDataPrior {
                     candle: view.candle_book.active().get(code).cloned(),
                     price_history: view.price_history.get(code).cloned(),
@@ -78,7 +78,7 @@ pub(super) fn prepare_inputs_with_observer_on(
             .par_iter()
             .map(|(code, market)| {
                 (
-                    code.clone(),
+                    *code,
                     prepare_stock_input_on(view, code, market, &observe_row),
                 )
             })
@@ -143,7 +143,7 @@ fn prepare_stock_input_on(
     }
     let make_key = || EnvelopeKey {
         account: crate::AccountId(0),
-        stock: code.clone(),
+        stock: *code,
         order: crate::OrderId(0),
         side: crate::Side::Buy,
     };

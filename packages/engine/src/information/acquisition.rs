@@ -93,13 +93,13 @@ fn resolve_publication(
 ) -> Result<ResolvedPublication, InformationError> {
     match library.report(id, as_of) {
         Ok(report) => Ok(ResolvedPublication {
-            company: report.company.clone(),
+            company: report.company,
             kind: AcquiredKind::Report,
         }),
         Err(InformationError::UnknownPublication { .. }) => {
             let announcement = library.announcement(id, as_of)?;
             Ok(ResolvedPublication {
-                company: announcement.company.clone(),
+                company: announcement.company,
                 kind: AcquiredKind::Announcement,
             })
         }
@@ -152,7 +152,7 @@ impl NpcInformationState {
             });
         }
         let resolved = resolve_publication(library, publication_id, observed_at)?;
-        let records = self.companies.entry(resolved.company.clone()).or_default();
+        let records = self.companies.entry(resolved.company).or_default();
         match records.binary_search_by_key(&publication_id, |record| record.id) {
             Ok(index) => Ok(AcquisitionOutcome::AlreadyAcquired {
                 company: resolved.company,

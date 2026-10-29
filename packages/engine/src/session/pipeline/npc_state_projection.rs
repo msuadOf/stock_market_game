@@ -269,7 +269,7 @@ pub(in crate::session) fn plan_npc_account_decision(
             .decisions
             .iter()
             .filter_map(|decision| match decision {
-                WorkingOrderDecision::Cancel { order_id, code } => Some((code.clone(), *order_id)),
+                WorkingOrderDecision::Cancel { order_id, code } => Some((*code, *order_id)),
                 WorkingOrderDecision::Replace {
                     old_order_id,
                     new_intent,
@@ -277,7 +277,7 @@ pub(in crate::session) fn plan_npc_account_decision(
                     let code = match new_intent {
                         Intent::PlaceLimit { code, .. }
                         | Intent::PlaceMarket { code, .. }
-                        | Intent::Cancel { code, .. } => code.clone(),
+                        | Intent::Cancel { code, .. } => *code,
                     };
                     Some((code, *old_order_id))
                 }
@@ -292,7 +292,7 @@ pub(in crate::session) fn plan_npc_account_decision(
     let mut reconciliation_cancels: BTreeMap<StockId, Vec<usize>> = BTreeMap::new();
     for (code, order_id) in cancel_intents {
         reconciliation_cancels
-            .entry(code.clone())
+            .entry(code)
             .or_default()
             .push(ordered.len());
         ordered.push(Intent::Cancel { code, id: order_id });
@@ -615,7 +615,7 @@ fn working_intent(
     match phase {
         crate::TradingPhase::Continuous => working.continuous.iter().find_map(|(code, order)| {
             (order.id == order_id).then(|| Intent::PlaceLimit {
-                code: code.clone(),
+                code: *code,
                 side: order.side,
                 price: LimitPrice::Fixed(order.price),
                 qty: order.qty,
@@ -623,7 +623,7 @@ fn working_intent(
         }),
         crate::TradingPhase::CallAuction => working.auction.iter().find_map(|(code, order)| {
             (OrderId(order.order_id) == order_id).then(|| Intent::PlaceLimit {
-                code: code.clone(),
+                code: *code,
                 side: order.side,
                 price: LimitPrice::Fixed(order.limit),
                 qty: order.qty,
@@ -745,7 +745,7 @@ mod auction_identity_tests {
         let account = AccountId(1);
         let code = StockId(0);
         let auction = [(
-            code.clone(),
+            code,
             AuctionOrderSnap {
                 owner: account,
                 side: Side::Buy,

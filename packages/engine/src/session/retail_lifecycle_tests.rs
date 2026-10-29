@@ -823,7 +823,7 @@ fn legacy_closing_price_fixture(first_order_id: u64) -> GameSession {
 
 #[test]
 fn lazy_static_handover_preserves_real_trade_price_and_closing_cutoff() {
-    let mut game = legacy_closing_price_fixture(1);
+    let game = legacy_closing_price_fixture(1);
     let cutoff = game.runtime_public_cutoff_for(&CODE);
     let before = game.save().unwrap();
     assert!(!before.desk_mirrored_resting);
@@ -862,7 +862,7 @@ fn lazy_static_handover_preserves_real_trade_price_and_closing_cutoff() {
 
 #[test]
 fn lazy_handover_rejects_changed_closing_visibility_without_mutation() {
-    let mut game = legacy_closing_price_fixture(7);
+    let game = legacy_closing_price_fixture(7);
     let cutoff = game.runtime_public_cutoff_for(&CODE);
     let old = game.state.markets[&CODE]
         .resting_orders()

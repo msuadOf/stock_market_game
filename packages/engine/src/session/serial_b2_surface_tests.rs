@@ -40,7 +40,7 @@ fn execute_buy(session: &mut GameSession) -> crate::StockId {
     session.seed_order_for_test(
         crate::AccountId(1),
         crate::Intent::PlaceLimit {
-            code: code.clone(),
+            code: code,
             side: crate::orderbook::Side::Sell,
             price: crate::LimitPrice::Fixed(crate::money::Money::from_cents(1000)),
             qty: 100,
@@ -54,7 +54,7 @@ fn execute_buy(session: &mut GameSession) -> crate::StockId {
         .enqueue_player_intent(
             crate::AccountId(0),
             crate::Intent::PlaceLimit {
-                code: code.clone(),
+                code: code,
                 side: crate::orderbook::Side::Buy,
                 price: crate::LimitPrice::Fixed(crate::money::Money::from_cents(1005)),
                 qty: 100,
@@ -79,9 +79,7 @@ fn serial_four_surfaces_probe() {
     // 面板一：当日分钟K（G2 实时视图）——串行安装后 bars 非空且量/额/
     // 笔与真实成交一致（100 股 @1000 分）。
     let current = session
-        .current_minute_history(&crate::session::CurrentMinuteHistoryRequest {
-            stock: code.clone(),
-        })
+        .current_minute_history(&crate::session::CurrentMinuteHistoryRequest { stock: code })
         .unwrap();
     assert!(current.trading, "开市日 trading=true");
     assert!(!current.bars.is_empty(), "串行路径当日分钟桶必须出数");
@@ -121,7 +119,7 @@ fn serial_four_surfaces_probe() {
     // stats 与分钟桶互检逐字段一致。
     let page = session
         .market_history_page(&crate::session::MarketHistoryRequest {
-            stock: code.clone(),
+            stock: code,
             date_from: crate::CivilDate::from_iso("2030-01-02").unwrap(),
             date_to: crate::CivilDate::from_iso("2030-01-02").unwrap(),
             after: None,

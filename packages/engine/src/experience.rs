@@ -176,7 +176,7 @@ impl RetailExperienceState {
             require_positive("initial entry reference", reference)?;
         }
         self.stocks.insert(
-            code.clone(),
+            *code,
             RetailStockExperience {
                 entry_reference_price,
                 peak_price_since_entry: Some(current_price),
@@ -202,7 +202,7 @@ impl RetailExperienceState {
     /// 记录一次真实的个股查看。未持仓时只更新关注列表，不凭空生成成交经历。
     pub fn observe_stock(&mut self, code: &StockId, market_minute: u64) {
         self.stocks
-            .entry(code.clone())
+            .entry(*code)
             .or_default()
             .last_observed_market_minute = market_minute;
     }
@@ -290,7 +290,7 @@ impl RetailExperienceState {
                     stock
                         .last_trade_market_minute
                         .max(stock.last_observed_market_minute),
-                    code.clone(),
+                    *code,
                 )
             })
             .collect();

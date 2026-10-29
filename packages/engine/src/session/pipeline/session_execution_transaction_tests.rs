@@ -9,13 +9,13 @@ fn accepted_buy_worker(
     game: &GameSession,
     buyer: AccountId,
 ) -> super::continuous_matching::ContinuousStockOutput {
-    let code = game.state.markets.keys().next().unwrap().clone();
+    let code = *game.state.markets.keys().next().unwrap();
     let plan = plan_tick(PhaseInput { session: game }).unwrap();
     let batch = IntentCandidateBatch::new(vec![IntentCandidate::new(
         IntentCandidateKey::player(0),
         buyer,
         Intent::PlaceLimit {
-            code: code.clone(),
+            code: code,
             side: Side::Buy,
             price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
             qty: 100,
@@ -23,7 +23,7 @@ fn accepted_buy_worker(
     )])
     .unwrap();
     let context = AccountValidationContext::new([(
-        code.clone(),
+        code,
         StockValidation::new(
             SecurityCategory::MainBoard,
             Money::from_cents(1_100),
@@ -58,7 +58,7 @@ fn successful_candidate_installs_matching_through_projection_state_and_cursors_t
     let mut game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
     let worker = accepted_buy_worker(&game, AccountId(0));
-    let code = worker.market.code().clone();
+    let code = *worker.market.code();
     let seq_before = game.state.seq;
 
     let output = apply_session_execution_transaction(&mut game, vec![worker], Vec::new()).unwrap();
@@ -93,7 +93,7 @@ fn institutional_fill_updates_belief_and_preserves_participant_members_and_other
     let mut game = GameSession::new(setup, 42).unwrap();
     let buyer = AccountId(1);
     let other = AccountId(2);
-    let code = game.state.markets.keys().next().unwrap().clone();
+    let code = *game.state.markets.keys().next().unwrap();
     let market_minute = game.current_market_minute();
     let observed_at = game.observation_civil_instant();
     let publication = game.state.library.publication_ids()[0];
@@ -116,12 +116,12 @@ fn institutional_fill_updates_belief_and_preserves_participant_members_and_other
     let other_account_before = game.state.accounts[&other].clone();
     game.fixture_account_mut(&AccountId(0))
         .unwrap()
-        .grant_position(code.clone(), 100, Money::from_cents(1_000))
+        .grant_position(code, 100, Money::from_cents(1_000))
         .unwrap();
     game.seed_order_for_test(
         AccountId(0),
         Intent::PlaceLimit {
-            code: code.clone(),
+            code: code,
             side: Side::Sell,
             price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
             qty: 100,
@@ -167,7 +167,7 @@ fn institutional_fill_updates_belief_and_preserves_participant_members_and_other
             .iter()
             .map(|(code, position)| {
                 (
-                    code.clone(),
+                    *code,
                     (
                         position.qty(),
                         position.t1_locked(),

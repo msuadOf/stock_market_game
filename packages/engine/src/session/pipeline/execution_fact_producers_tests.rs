@@ -11,7 +11,7 @@ fn code(value: u32) -> StockId {
 
 fn trade(stock: &StockId, sealed_index: u64, local_index: u64) -> ContinuousTradeFact {
     ContinuousTradeFact {
-        stock: stock.clone(),
+        stock: *stock,
         triggering_sealed_index: sealed_index,
         stock_local_trade_event_index: local_index,
         trade: Trade {
@@ -35,7 +35,7 @@ fn continuous_adapter_projects_explicit_place_cancel_and_trade_identities() {
         ContinuousPlaceFact::Resting {
             sealed_index: 4,
             account: AccountId(7),
-            code: alpha.clone(),
+            code: alpha,
             order_id: OrderId(70),
             side: Side::Buy,
             price: Money::from_cents(1_010),
@@ -44,7 +44,7 @@ fn continuous_adapter_projects_explicit_place_cancel_and_trade_identities() {
         ContinuousPlaceFact::Filled {
             sealed_index: 5,
             account: AccountId(8),
-            code: alpha.clone(),
+            code: alpha,
             order_id: OrderId(80),
             side: Side::Sell,
             filled_qty: 100,
@@ -52,7 +52,7 @@ fn continuous_adapter_projects_explicit_place_cancel_and_trade_identities() {
         ContinuousPlaceFact::Rejected {
             sealed_index: 8,
             account: AccountId(9),
-            code: beta.clone(),
+            code: beta,
             order_id: OrderId(90),
             reason: RejectionReason::LimitExceeded,
         },
@@ -61,7 +61,7 @@ fn continuous_adapter_projects_explicit_place_cancel_and_trade_identities() {
         ContinuousCancelFact::Canceled {
             sealed_index: 6,
             account: AccountId(7),
-            code: alpha.clone(),
+            code: alpha,
             order_id: OrderId(22),
             side: Side::Buy,
             remaining_qty: 300,
@@ -69,7 +69,7 @@ fn continuous_adapter_projects_explicit_place_cancel_and_trade_identities() {
         ContinuousCancelFact::Rejected {
             sealed_index: 7,
             account: AccountId(10),
-            code: beta.clone(),
+            code: beta,
             order_id: OrderId(23),
             reason: ContinuousCancelRejection::OrderAlreadyFilled,
         },
@@ -84,7 +84,7 @@ fn continuous_adapter_projects_explicit_place_cancel_and_trade_identities() {
         Event::OrderAccepted {
             seq: 0,
             account: AccountId(7),
-            code: alpha.clone(),
+            code: alpha,
             id: OrderId(70),
             side: Side::Buy,
             price: Money::from_cents(1_010),
@@ -97,7 +97,7 @@ fn continuous_adapter_projects_explicit_place_cancel_and_trade_identities() {
         Event::IntentRejected {
             seq: 0,
             account: AccountId(9),
-            code: beta.clone(),
+            code: beta,
             reason: RejectionReason::LimitExceeded,
         }
     );
@@ -107,7 +107,7 @@ fn continuous_adapter_projects_explicit_place_cancel_and_trade_identities() {
         Event::OrderCanceled {
             seq: 0,
             account: AccountId(7),
-            code: alpha.clone(),
+            code: alpha,
             id: OrderId(22),
             remaining_qty: 300,
         }
@@ -118,7 +118,7 @@ fn continuous_adapter_projects_explicit_place_cancel_and_trade_identities() {
         Event::IntentRejected {
             seq: 0,
             account: AccountId(10),
-            code: beta.clone(),
+            code: beta,
             reason: RejectionReason::OrderAlreadyFilled,
         }
     );
@@ -127,7 +127,7 @@ fn continuous_adapter_projects_explicit_place_cancel_and_trade_identities() {
         facts[4].event,
         Event::Trade {
             seq: 0,
-            code: beta.clone(),
+            code: beta,
             price: Money::from_cents(1_000),
             qty: 100,
             maker: AccountId(3),
@@ -171,7 +171,7 @@ fn continuous_adapter_rejects_duplicate_explicit_event_identity_without_output()
     let places = [ContinuousPlaceFact::Resting {
         sealed_index: 4,
         account: AccountId(7),
-        code: alpha.clone(),
+        code: alpha,
         order_id: OrderId(70),
         side: Side::Buy,
         price: Money::from_cents(1_010),
@@ -180,7 +180,7 @@ fn continuous_adapter_rejects_duplicate_explicit_event_identity_without_output()
     let cancels = [ContinuousCancelFact::Canceled {
         sealed_index: 4,
         account: AccountId(7),
-        code: alpha.clone(),
+        code: alpha,
         order_id: OrderId(22),
         side: Side::Buy,
         remaining_qty: 300,

@@ -103,7 +103,7 @@ pub(in crate::session) fn build_market_view_on(view: &SessionReadView) -> Market
                 (bid_volume as f64 - ask_volume as f64) / depth_total as f64
             };
             (
-                code.clone(),
+                *code,
                 StockView {
                     best_bid: public.best_bid,
                     best_ask: public.best_ask,
@@ -183,7 +183,7 @@ pub(in crate::session) fn market_price_path_observations_on(
                     .filter(|candle| candle.volume > 0)
                     .map(|candle| candle.open);
                 build_price_path_observation(minutes, &daily, current_day_open)
-                    .map(|observation| (code.clone(), observation))
+                    .map(|observation| (*code, observation))
             })
             .collect::<Vec<_>>()
     });
@@ -217,7 +217,7 @@ impl GameSession {
             .expect("validated authoritative histories must produce behavior observations");
         let thirty_minute_returns = price_paths
             .iter()
-            .map(|(code, path)| (code.clone(), path.thirty_minute.return_ratio))
+            .map(|(code, path)| (*code, path.thirty_minute.return_ratio))
             .collect();
         let thirty_minute_market = build_equal_weight_market_observation(&thirty_minute_returns)
             .expect("validated market returns must produce equal-weight market observation");
@@ -255,7 +255,7 @@ impl GameSession {
                             })
                             .last_price();
                         (
-                            code.clone(),
+                            *code,
                             RiskPositionInput {
                                 qty: position.qty(),
                                 // 已实现盈利可能使剩余持仓的净成本降到零或以下；此时成本
@@ -341,7 +341,7 @@ mod tests {
         let codes = session.state.markets.keys().cloned().collect::<Vec<_>>();
         assert_eq!(codes.len(), 2);
         session.state.market_minute_closes.insert(
-            codes[0].clone(),
+            codes[0],
             vec![
                 MarketMinuteClose {
                     absolute_trading_minute: 1,
@@ -354,7 +354,7 @@ mod tests {
             ],
         );
         session.state.market_minute_closes.insert(
-            codes[1].clone(),
+            codes[1],
             vec![MarketMinuteClose {
                 absolute_trading_minute: 0,
                 close: Money::ZERO,

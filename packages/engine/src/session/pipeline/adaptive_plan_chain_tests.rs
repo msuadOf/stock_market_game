@@ -97,7 +97,7 @@ fn empty_account_source_finishes_without_a_frozen_observation() {
 #[test]
 fn plan_observation_waits_for_an_earlier_request_from_its_account_and_stock() {
     let (mut session, request) = fixture();
-    let code = request.allocation.code.clone();
+    let code = request.allocation.code;
     let mut chain = coordinator(&session, request);
     chain.block_unfinished_routes(&[IntentCandidate::new(
         IntentCandidateKey::npc(AccountId(1), 0),
@@ -126,7 +126,7 @@ fn plan_observation_waits_for_an_earlier_request_from_its_account_and_stock() {
 #[test]
 fn unrelated_account_request_on_the_same_stock_does_not_block_plan_root() {
     let (mut session, request) = fixture();
-    let code = request.allocation.code.clone();
+    let code = request.allocation.code;
     let mut chain = coordinator(&session, request);
     chain.block_unfinished_routes(&[IntentCandidate::new(
         IntentCandidateKey::npc(AccountId(2), 0),
@@ -186,7 +186,7 @@ fn working_orders(session: &mut GameSession, prices: &[i64]) -> Vec<OrderId> {
         session.seed_order_for_test(
             AccountId(1),
             Intent::PlaceLimit {
-                code: code.clone(),
+                code: code,
                 side: Side::Buy,
                 price: crate::LimitPrice::Fixed(Money::from_cents(*price)),
                 qty: 100,
@@ -329,7 +329,7 @@ fn adaptive_real_replace_cancels_old_child_then_installs_new_child() {
 #[test]
 fn replace_rechecks_plan_remaining_after_another_account_partially_fills_old_child() {
     let (mut session, mut request) = fixture();
-    let code = request.allocation.code.clone();
+    let code = request.allocation.code;
     let mut old = PlanChainOperationBatch::empty();
     old.push_execution(request.clone());
     commit_injected_plan_roots_for_test(&mut session, old);
@@ -349,7 +349,7 @@ fn replace_rechecks_plan_remaining_after_another_account_partially_fills_old_chi
         .fixture_account_mut(&AccountId(0))
         .unwrap()
         .fixture_insert_position(
-            code.clone(),
+            code,
             crate::account::Position::from_restored_parts(50, 0, 0, 0),
         );
     let (mut validator, mut stock_execution) = seal(&mut session);
@@ -364,7 +364,7 @@ fn replace_rechecks_plan_remaining_after_another_account_partially_fills_old_chi
         IntentCandidateKey::player(0),
         AccountId(0),
         Intent::PlaceLimit {
-            code: code.clone(),
+            code: code,
             side: Side::Sell,
             price: crate::LimitPrice::Fixed(Money::from_cents(900)),
             qty: 50,
@@ -426,13 +426,13 @@ fn replace_rechecks_plan_remaining_after_another_account_partially_fills_old_chi
 fn conflicting_cancels_recheck_live_orders_after_another_account_fills_one() {
     let (mut session, request) = fixture();
     let plan_id = request.plan_id;
-    let code = request.allocation.code.clone();
+    let code = request.allocation.code;
     let ids = working_orders(&mut session, &[901, 902]);
     session
         .fixture_account_mut(&AccountId(0))
         .unwrap()
         .fixture_insert_position(
-            code.clone(),
+            code,
             crate::account::Position::from_restored_parts(100, 0, 0, 0),
         );
     let (mut validator, mut stock_execution) = seal(&mut session);
@@ -447,7 +447,7 @@ fn conflicting_cancels_recheck_live_orders_after_another_account_fills_one() {
         IntentCandidateKey::player(0),
         AccountId(0),
         Intent::PlaceLimit {
-            code: code.clone(),
+            code: code,
             side: Side::Sell,
             price: crate::LimitPrice::Fixed(Money::from_cents(902)),
             qty: 100,
@@ -611,7 +611,7 @@ fn adaptive_cancel_release_never_refills_account_validation_cash_for_the_followu
 fn fill_case(resting_sell_qty: u32) {
     let (mut session, mut request) = fixture();
     let plan_id = request.plan_id;
-    let code = request.allocation.code.clone();
+    let code = request.allocation.code;
     request.decision.action = QuoteAction::Submit {
         price: Money::from_cents(1_000),
         qty: 100,
@@ -619,12 +619,12 @@ fn fill_case(resting_sell_qty: u32) {
     session
         .fixture_account_mut(&AccountId(0))
         .unwrap()
-        .grant_position(code.clone(), resting_sell_qty, Money::from_cents(1_000))
+        .grant_position(code, resting_sell_qty, Money::from_cents(1_000))
         .unwrap();
     session.seed_order_for_test(
         AccountId(0),
         Intent::PlaceLimit {
-            code: code.clone(),
+            code: code,
             side: Side::Sell,
             price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
             qty: resting_sell_qty,
@@ -733,7 +733,7 @@ fn adaptive_rejected_first_or_second_cancel_never_emits_dependent_place() {
                 outcome: ContinuousExecutionOutcome::Cancel(ContinuousCancelFact::Rejected {
                     sealed_index: outcome.sealed_index(),
                     account: candidate.owner(),
-                    code: code.clone(),
+                    code: *code,
                     order_id: *id,
                     reason: ContinuousCancelRejection::OrderNotFound,
                 }),
@@ -810,7 +810,7 @@ fn independent_accounts_share_one_round_and_late_bad_fact_cannot_commit() {
         .plans
         .create(PlanOpen {
             account: AccountId(0),
-            code: first.allocation.code.clone(),
+            code: first.allocation.code,
             direction: Side::Buy,
             target: PlanTarget::ShareCount(100),
             opinion: PlanOpinion {
@@ -893,7 +893,7 @@ fn run_independent_stock_round(
             .plans
             .create(PlanOpen {
                 account,
-                code: code.clone(),
+                code: code,
                 direction: Side::Buy,
                 target: PlanTarget::ShareCount(100),
                 opinion: PlanOpinion {
@@ -993,7 +993,7 @@ fn account_execution_quotes_two_existing_stocks_before_either_matching_result() 
                 .plans
                 .create(PlanOpen {
                     account: owner,
-                    code: code.clone(),
+                    code: *code,
                     direction: Side::Buy,
                     target: PlanTarget::ShareCount(100),
                     opinion: PlanOpinion {
@@ -1021,7 +1021,7 @@ fn account_execution_quotes_two_existing_stocks_before_either_matching_result() 
         batch
             .iter()
             .map(|candidate| match candidate.intent() {
-                Intent::PlaceLimit { code, .. } => code.clone(),
+                Intent::PlaceLimit { code, .. } => *code,
                 other => panic!("expected plan quote, got {other:?}"),
             })
             .collect::<Vec<_>>(),
@@ -1144,12 +1144,12 @@ fn adaptive_initial_player_partial_market_fill_is_projected_without_a_false_full
     session
         .fixture_account_mut(&AccountId(1))
         .unwrap()
-        .grant_position(code.clone(), 50, Money::from_cents(1_000))
+        .grant_position(code, 50, Money::from_cents(1_000))
         .unwrap();
     session.seed_order_for_test(
         AccountId(1),
         Intent::PlaceLimit {
-            code: code.clone(),
+            code: code,
             side: Side::Sell,
             price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
             qty: 50,

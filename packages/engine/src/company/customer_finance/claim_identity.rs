@@ -385,12 +385,12 @@ mod tests {
             vec![
                 (
                     first_id,
-                    DebtCreditor::Company(first.company().clone()),
+                    DebtCreditor::Company(*first.company()),
                     AccountingAmount::from_cents(100)
                 ),
                 (
                     second_id,
-                    DebtCreditor::Company(second.company().clone()),
+                    DebtCreditor::Company(*second.company()),
                     AccountingAmount::from_cents(50)
                 ),
             ]

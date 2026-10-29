@@ -15,14 +15,14 @@ fn decision_resources_fixture(
     if side == crate::Side::Sell {
         game.fixture_account_mut(&account)
             .unwrap()
-            .grant_position(code.clone(), 100, crate::Money::from_cents(100_000))
+            .grant_position(code, 100, crate::Money::from_cents(100_000))
             .unwrap();
     }
     let mut events = Vec::new();
     game.seed_order_for_test(
         account,
         crate::Intent::PlaceLimit {
-            code: code.clone(),
+            code: code,
             side,
             price: crate::LimitPrice::Fixed(crate::Money::from_cents(990)),
             qty: 100,
@@ -212,7 +212,7 @@ fn decision_resources_mixed_books_ignore_plan_legs_and_keep_seller_cash_unreserv
         .fixture_set_strategy(None);
     game.fixture_account_mut(&seller)
         .unwrap()
-        .grant_position(code.clone(), 100, crate::Money::from_cents(100_000))
+        .grant_position(code, 100, crate::Money::from_cents(100_000))
         .unwrap();
     let seller_cash = game.state.accounts[&seller].cash();
     let player_cash = game.state.accounts[&player].cash();
@@ -220,7 +220,7 @@ fn decision_resources_mixed_books_ignore_plan_legs_and_keep_seller_cash_unreserv
     game.seed_order_for_test(
         seller,
         crate::Intent::PlaceLimit {
-            code: code.clone(),
+            code: code,
             side: crate::Side::Sell,
             price: crate::LimitPrice::Fixed(crate::Money::from_cents(990)),
             qty: 100,
@@ -230,7 +230,7 @@ fn decision_resources_mixed_books_ignore_plan_legs_and_keep_seller_cash_unreserv
     game.seed_order_for_test(
         player,
         crate::Intent::PlaceLimit {
-            code: code.clone(),
+            code: code,
             side: crate::Side::Buy,
             price: crate::LimitPrice::Fixed(crate::Money::from_cents(980)),
             qty: 100,
@@ -243,7 +243,7 @@ fn decision_resources_mixed_books_ignore_plan_legs_and_keep_seller_cash_unreserv
         .plans
         .create(crate::plans::PlanOpen {
             account: player,
-            code: code.clone(),
+            code: code,
             direction: crate::Side::Buy,
             target: crate::plans::PlanTarget::ShareCount(400),
             opinion: crate::plans::PlanOpinion {
@@ -277,13 +277,13 @@ fn decision_resources_mixed_books_ignore_plan_legs_and_keep_seller_cash_unreserv
     without_leg
         .fixture_account_mut(&seller)
         .unwrap()
-        .grant_position(code.clone(), 100, crate::Money::from_cents(100_000))
+        .grant_position(code, 100, crate::Money::from_cents(100_000))
         .unwrap();
     let mut plain_events = Vec::new();
     without_leg.seed_order_for_test(
         seller,
         crate::Intent::PlaceLimit {
-            code: code.clone(),
+            code: code,
             side: crate::Side::Sell,
             price: crate::LimitPrice::Fixed(crate::Money::from_cents(990)),
             qty: 100,
@@ -293,7 +293,7 @@ fn decision_resources_mixed_books_ignore_plan_legs_and_keep_seller_cash_unreserv
     without_leg.seed_order_for_test(
         player,
         crate::Intent::PlaceLimit {
-            code: code.clone(),
+            code: code,
             side: crate::Side::Buy,
             price: crate::LimitPrice::Fixed(crate::Money::from_cents(980)),
             qty: 100,
@@ -330,7 +330,7 @@ fn seals_complete_decision_resources_from_post_quote_expiry_shadow() {
         .fixture_set_strategy(None);
     game.fixture_account_mut(&account)
         .unwrap()
-        .grant_position(held.clone(), 200, crate::Money::from_cents(1_000))
+        .grant_position(held, 200, crate::Money::from_cents(1_000))
         .unwrap();
     {
         let account = game.fixture_account_mut(&account).unwrap();
@@ -341,7 +341,7 @@ fn seals_complete_decision_resources_from_post_quote_expiry_shadow() {
             position.invested_cents(),
             position.recovered_cents(),
         );
-        account.fixture_insert_position(held.clone(), position);
+        account.fixture_insert_position(held, position);
     }
     game.fixture_account_mut(&account)
         .unwrap()
@@ -351,7 +351,7 @@ fn seals_complete_decision_resources_from_post_quote_expiry_shadow() {
     game.seed_order_for_test(
         account,
         crate::Intent::PlaceLimit {
-            code: held.clone(),
+            code: held,
             side: crate::Side::Sell,
             price: crate::LimitPrice::Fixed(crate::Money::from_cents(990)),
             qty: 100,
@@ -361,7 +361,7 @@ fn seals_complete_decision_resources_from_post_quote_expiry_shadow() {
     game.seed_order_for_test(
         account,
         crate::Intent::PlaceLimit {
-            code: unheld.clone(),
+            code: unheld,
             side: crate::Side::Buy,
             price: crate::LimitPrice::Fixed(crate::Money::from_cents(980)),
             qty: 100,
@@ -441,7 +441,7 @@ fn decision_resource_equity_overflow_fails_closed_without_authority_mutation() {
         .fixture_set_strategy(None);
     game.fixture_account_mut(&account)
         .unwrap()
-        .grant_position(code.clone(), 2, crate::Money::from_cents(1))
+        .grant_position(code, 2, crate::Money::from_cents(1))
         .unwrap();
     game.state
         .markets
@@ -477,7 +477,7 @@ fn account_resources_are_identical_with_one_or_four_workers() {
         game.fixture_account_mut(&account)
             .unwrap()
             .grant_position(
-                codes[index % codes.len()].clone(),
+                codes[index % codes.len()],
                 100,
                 crate::Money::from_cents(1_000),
             )
@@ -499,7 +499,7 @@ fn decision_resource_snapshot_keeps_sealed_values_after_account_and_market_chang
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
     game.fixture_account_mut(&account)
         .unwrap()
-        .grant_position(code.clone(), 100, crate::Money::from_cents(1_000))
+        .grant_position(code, 100, crate::Money::from_cents(1_000))
         .unwrap();
     let sealed = DecisionResourceSnapshot::seal(&game).unwrap();
     let cash = sealed.available_cash(account).unwrap();
@@ -517,7 +517,7 @@ fn decision_resource_snapshot_keeps_sealed_values_after_account_and_market_chang
             position.invested_cents(),
             position.recovered_cents(),
         );
-        account.fixture_insert_position(code.clone(), position);
+        account.fixture_insert_position(code, position);
     }
     game.state
         .markets
@@ -541,13 +541,13 @@ fn decision_resources_parallel_account_failures_reject_corrupt_resources() {
     let buyer = crate::AccountId(2);
     game.fixture_account_mut(&seller)
         .unwrap()
-        .grant_position(code.clone(), 100, crate::Money::from_cents(1_000))
+        .grant_position(code, 100, crate::Money::from_cents(1_000))
         .unwrap();
     let mut events = Vec::new();
     game.seed_order_for_test(
         seller,
         crate::Intent::PlaceLimit {
-            code: code.clone(),
+            code: code,
             side: crate::Side::Sell,
             price: crate::LimitPrice::Fixed(crate::Money::from_cents(1_100)),
             qty: 100,
@@ -557,7 +557,7 @@ fn decision_resources_parallel_account_failures_reject_corrupt_resources() {
     game.seed_order_for_test(
         buyer,
         crate::Intent::PlaceLimit {
-            code: code.clone(),
+            code: code,
             side: crate::Side::Buy,
             price: crate::LimitPrice::Fixed(crate::Money::from_cents(900)),
             qty: 100,
@@ -574,7 +574,7 @@ fn decision_resources_parallel_account_failures_reject_corrupt_resources() {
             position.invested_cents(),
             position.recovered_cents(),
         );
-        account.fixture_insert_position(code.clone(), position);
+        account.fixture_insert_position(code, position);
     }
     game.fixture_account_mut(&buyer)
         .unwrap()
@@ -604,11 +604,11 @@ fn decision_resources_parallel_equity_failures_reject_overflow() {
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
     game.fixture_account_mut(&player)
         .unwrap()
-        .grant_position(code.clone(), 2, crate::Money::from_cents(1))
+        .grant_position(code, 2, crate::Money::from_cents(1))
         .unwrap();
     game.fixture_account_mut(&npc)
         .unwrap()
-        .grant_position(code.clone(), 1, crate::Money::from_cents(1))
+        .grant_position(code, 1, crate::Money::from_cents(1))
         .unwrap();
     // 先建立成功缓存，再单独改变价格；旧成功结果不能掩盖后续溢出。
     DecisionResourceSnapshot::seal(&game).unwrap();
@@ -641,7 +641,7 @@ fn decision_resources_parallel_equity_failures_reject_overflow() {
             position.invested_cents(),
             position.recovered_cents(),
         );
-        account.fixture_insert_position(code.clone(), position);
+        account.fixture_insert_position(code, position);
     }
     let second = run(4, &game);
     assert!(matches!(

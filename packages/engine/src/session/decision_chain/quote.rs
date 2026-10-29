@@ -26,7 +26,7 @@ impl GameSession {
             else {
                 continue;
             };
-            if unfinished_routes.contains(&(id, plan.code().clone())) {
+            if unfinished_routes.contains(&(id, *plan.code())) {
                 cursor.plans.push_back(plan_id);
                 continue;
             }
@@ -54,7 +54,7 @@ impl GameSession {
                     plan_id,
                     allocation: crate::plans::AllocationGrant {
                         plan_id,
-                        code: plan.code().clone(),
+                        code: *plan.code(),
                         allocated_cash: Money::ZERO,
                         constraint: None,
                     },

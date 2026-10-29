@@ -1214,7 +1214,7 @@ impl GameSession {
         self.state
             .markets
             .iter()
-            .map(|(code, market)| (code.clone(), market.resting_orders()))
+            .map(|(code, market)| (*code, market.resting_orders()))
             .collect()
     }
 
@@ -1511,7 +1511,7 @@ impl GameSession {
     /// 紧迫度策略投影（D3a-2c 件4：组内 initial_urgency 输入——与 session
     /// `state.urgency_policy` 同一对象）。
     pub fn runtime_urgency_policy(&self) -> crate::plans::UrgencyPolicy {
-        self.state.urgency_policy.clone()
+        self.state.urgency_policy
     }
 
     /// 每股当前已发行股数；保留原始 u64，数量边界由策略与下单入口处理。
@@ -2288,7 +2288,7 @@ impl GameSession {
         candle: crate::session::DailyCandle,
     ) {
         self.mark_external_mutation();
-        self.state.candle_book.install_active(code.clone(), candle);
+        self.state.candle_book.install_active(*code, candle);
     }
 
     /// runtime 驱动器翻转面（D5 日界）：活动 K 清除（world 日结已把当日
@@ -2308,7 +2308,7 @@ impl GameSession {
         self.mark_external_mutation();
         self.state
             .price_history
-            .insert(code.clone(), prices.into_iter().collect());
+            .insert(*code, prices.into_iter().collect());
     }
 
     /// runtime 驱动器翻转面（翻转批）：市场分钟收盘整值替换。
@@ -2318,7 +2318,7 @@ impl GameSession {
         closes: Vec<crate::observation::MarketMinuteClose>,
     ) {
         self.mark_external_mutation();
-        self.state.market_minute_closes.insert(code.clone(), closes);
+        self.state.market_minute_closes.insert(*code, closes);
     }
 
     /// B2：当日分钟K桶安装（驱动器 install 段——发布版本读面投影进
@@ -2329,7 +2329,7 @@ impl GameSession {
         bars: Vec<crate::runtime::MinuteBarFact>,
     ) {
         self.mark_external_mutation();
-        self.state.market_minute_bars.insert(code.clone(), bars);
+        self.state.market_minute_bars.insert(*code, bars);
     }
 
     /// runtime 驱动器翻转面（翻转批）：注意力候选推进。

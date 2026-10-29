@@ -193,7 +193,7 @@ impl IncrementalContinuousStockCoordinator {
                     "增量 StockProcessing 初始化时包含了 sealed operations",
                 ));
             }
-            let code = input.market.code().clone();
+            let code = *input.market.code();
             if stocks.contains_key(&code) {
                 return Err(invariant("增量 StockProcessing 重复初始化同一股票 shadow"));
             }
@@ -292,7 +292,7 @@ impl IncrementalContinuousStockCoordinator {
             let sealed_index = operation.sealed_index();
             new_candidate_keys.insert(candidate_key.clone());
             new_sealed_indices.insert(sealed_index);
-            let code = operation_code(&operation).clone();
+            let code = *operation_code(&operation);
             if self.stocks.contains_key(&code) {
                 grouped.entry(code).or_default().push(operation);
                 continue;
@@ -350,7 +350,7 @@ impl IncrementalContinuousStockCoordinator {
         let results = work
             .into_par_iter()
             .map(|(code, shadow, operations)| {
-                let identity = code.clone();
+                let identity = code;
                 let result = shadow.apply_round(code, operations);
                 (identity, result)
             })
@@ -397,7 +397,7 @@ impl IncrementalContinuousStockCoordinator {
                 }
             }
             projections.insert(
-                result.code.clone(),
+                result.code,
                 ContinuousStockProjection {
                     market_delta: Some(result.market_delta),
                     acceptance_quotes: result.acceptance_quotes,
@@ -518,7 +518,7 @@ impl IncrementalContinuousStockCoordinator {
         let mut execution_facts = self.detached_facts.clone();
         let mut execution_count = self.detached_facts.len();
         for (_, stock) in self.stocks {
-            let code = stock.market.code().clone();
+            let code = *stock.market.code();
             let (worker, price, mut stock_facts, auction) =
                 stock.finish(ends_day, boundary, exchange)?;
             if let Some(auction) = auction {
@@ -715,7 +715,7 @@ impl IncrementalContinuousStockShadow {
             // finish_for_tick（测试/日终清簿路径）无市场边界：不产出行情 patch。
             return Ok(ContinuousMarketData::default());
         };
-        let code = self.market.code().clone();
+        let code = *self.market.code();
         let candle_time = self.market_prior.candle_time;
         // 逐笔成交标记先于阶段分支（与原 finalize 顺序一致：先全部成交标记，
         // 再按阶段做收盘标记/历史/分钟/事件）。
@@ -776,7 +776,7 @@ impl IncrementalContinuousStockShadow {
                 Event::PriceTick {
                     seq: 0,
                     tick: boundary.tick_after,
-                    code: code.clone(),
+                    code: code,
                     last_price: last,
                     daily_candle: data.candle.clone().expect("收盘标记后必有活动日 K"),
                     bids: price.bids.clone(),
@@ -791,7 +791,7 @@ impl IncrementalContinuousStockShadow {
                     seq: 0,
                     tick: boundary.tick_after,
                     phase: boundary.policy.phase(),
-                    code: code.clone(),
+                    code: code,
                     indicative_price: auction.indicative_price,
                     matched_volume: auction.matched_volume,
                     imbalance: auction.imbalance,

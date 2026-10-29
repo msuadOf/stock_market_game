@@ -64,7 +64,7 @@ pub fn publish_simple_scheduled(
             {
                 continue;
             }
-            pending.push((published_at, company.clone(), scheduled_kind, report));
+            pending.push((published_at, *company, scheduled_kind, report));
         }
     }
     pending.sort_by(|left, right| (left.0, &left.1, left.2).cmp(&(right.0, &right.1, right.2)));
@@ -75,7 +75,7 @@ pub fn publish_simple_scheduled(
     let mut ids = Vec::with_capacity(pending.len());
     for (published_at, company, kind, report) in pending {
         let request = PublicationRequest {
-            company: company.clone(),
+            company: company,
             scope: report.scope,
             period: report.period,
             kind: report.kind,

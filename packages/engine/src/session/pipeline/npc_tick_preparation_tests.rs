@@ -133,7 +133,7 @@ fn no_due_npc_queues_an_empty_batch_without_building_a_market_view() {
             .attention_scheduler
             .enqueue(future_tick, account);
     }
-    let code = session.state.markets.keys().next().unwrap().clone();
+    let code = *session.state.markets.keys().next().unwrap();
     session.state.market_minute_closes.remove(&code);
 
     super::queue_npc_for_next_tick(&mut session).unwrap();
@@ -171,7 +171,7 @@ fn pending_npc_dependencies_validate_only_explicit_same_stock_replacements() {
                 received(
                     AccountId(1),
                     Intent::Cancel {
-                        code: a.clone(),
+                        code: a,
                         id: crate::OrderId(1),
                     },
                     0,
@@ -180,13 +180,13 @@ fn pending_npc_dependencies_validate_only_explicit_same_stock_replacements() {
                 received(
                     AccountId(1),
                     Intent::Cancel {
-                        code: b.clone(),
+                        code: b,
                         id: crate::OrderId(2),
                     },
                     1,
                     0,
                 ),
-                received(AccountId(1), place(a.clone()), 2, 1),
+                received(AccountId(1), place(a), 2, 1),
                 received(AccountId(2), place(a), 0, 2),
                 received(AccountId(1), place(b), 3, 1),
             ],
@@ -241,7 +241,7 @@ fn restore_rejects_legacy_pending_while_live_consumption_validates_dependencies(
         crate::session::ReceiptBearingIntent {
             owner: npc,
             intent: Intent::Cancel {
-                code: code.clone(),
+                code: code,
                 id: crate::OrderId(9),
             },
             account_ordinal: 0,
@@ -250,7 +250,7 @@ fn restore_rejects_legacy_pending_while_live_consumption_validates_dependencies(
         crate::session::ReceiptBearingIntent {
             owner: npc,
             intent: Intent::PlaceLimit {
-                code: code.clone(),
+                code: code,
                 side: Side::Buy,
                 price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
                 qty: 100,
@@ -547,7 +547,7 @@ fn real_npc_working_quotes_cancel_before_one_replacement_with_contiguous_keys() 
         session.seed_order_for_test(
             npc,
             Intent::PlaceLimit {
-                code: code.clone(),
+                code: code,
                 side: Side::Buy,
                 price: crate::LimitPrice::Fixed(Money::from_cents(price)),
                 qty: 1_000,
@@ -714,7 +714,7 @@ fn npc_replacement_keeps_the_requested_place_for_next_tick_validation() {
     session.seed_order_for_test(
         npc,
         Intent::PlaceLimit {
-            code: code.clone(),
+            code: code,
             side: Side::Buy,
             price: crate::LimitPrice::Fixed(Money::from_cents(900)),
             // 仍将全部资金冻结；明确预算使当前策略的试买目标足够重新报一手。
@@ -753,7 +753,7 @@ fn real_npc_review_cancels_working_quote_in_and_cleans_lifecycle() {
     session.seed_order_for_test(
         npc,
         Intent::PlaceLimit {
-            code: code.clone(),
+            code: code,
             side: Side::Buy,
             price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
             qty: 100,
@@ -796,7 +796,7 @@ fn npc_reconciliation_local_indexes_restart_per_account_in_canonical_account_ord
         session.seed_order_for_test(
             npc,
             Intent::PlaceLimit {
-                code: code.clone(),
+                code: code,
                 side: Side::Buy,
                 price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
                 qty: 100,

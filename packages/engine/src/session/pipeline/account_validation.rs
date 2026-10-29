@@ -441,10 +441,8 @@ impl AccountValidationState {
                     code,
                     side: Side::Sell,
                     ..
-                } => AccountResourceLane::Shares(account, code.clone()),
-                Intent::Cancel { code, id } => {
-                    AccountResourceLane::Cancel(account, code.clone(), *id)
-                }
+                } => AccountResourceLane::Shares(account, *code),
+                Intent::Cancel { code, id } => AccountResourceLane::Cancel(account, *code, *id),
                 _ => AccountResourceLane::Cash(account),
             };
             grouped.entry(lane).or_default().push((index, candidate));
@@ -619,7 +617,7 @@ impl AccountValidationState {
                 key,
                 sealed_index,
                 account: candidate.owner(),
-                code: code.clone(),
+                code: *code,
                 order_id: *id,
             },
             Intent::PlaceLimit {
@@ -710,7 +708,7 @@ impl AccountValidationState {
             candidate_key: key.clone(),
             sealed_index,
             account: candidate.owner(),
-            code: code.clone(),
+            code: *code,
             side,
             kind,
             requested_price,
@@ -815,7 +813,7 @@ impl AccountValidationState {
             Side::Sell => Ok(Ok(PreparedReservation {
                 required: ResVec::new(Money::ZERO, place.qty),
                 budget_update: BudgetUpdate::Shares {
-                    code: place.code.clone(),
+                    code: place.code,
                     shares_after: available_sell
                         .ok_or_else(|| invariant("sell validation omitted available shares"))?
                         .checked_sub(place.qty)
@@ -874,7 +872,7 @@ impl AccountValidationState {
                 budget
                     .sellable
                     .iter()
-                    .map(|(code, qty)| ((*account, code.clone()), *qty))
+                    .map(|(code, qty)| ((*account, *code), *qty))
             })
             .collect()
     }
@@ -1208,7 +1206,7 @@ impl AccountBudget {
     ) -> Result<(), StepFatal> {
         if !self.sellable.contains_key(code) {
             let available = resources.available_sell_qty(account, code)?;
-            self.sellable.insert(code.clone(), available);
+            self.sellable.insert(*code, available);
         }
         Ok(())
     }

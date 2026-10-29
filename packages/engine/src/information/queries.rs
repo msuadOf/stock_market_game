@@ -53,10 +53,10 @@ impl PublicLibrary {
             .map_err(|error| InformationError::ReportNotPublishable(Box::new(error)))?;
         let scope = match &query.scope {
             PublicReportScope::Standalone { entity_id } => {
-                ScopeId::Standalone(MemberId(entity_id.clone()))
+                ScopeId::Standalone(MemberId(*entity_id))
             }
             PublicReportScope::Consolidated { root_entity_id } => {
-                ScopeId::Consolidated(MemberId(root_entity_id.clone()))
+                ScopeId::Consolidated(MemberId(*root_entity_id))
             }
         };
         super::publication::ensure_scope_mirrors_company(&company, &scope)?;
@@ -397,7 +397,7 @@ mod tests {
             let report = report_with_id(id, &set);
             library
                 .by_company
-                .entry(report.company.clone())
+                .entry(report.company)
                 .or_default()
                 .insert(report.id);
             library.reports.insert(report.id, report);

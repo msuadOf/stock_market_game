@@ -216,7 +216,7 @@ fn force_due_keep_base(
 /// 搜索一个「probe 接受」的 rng_state（接受侧构造自校验）。
 fn find_accepting_rng(session: &ProtocolSession, account: AccountId, tick: u64) -> u64 {
     for seed in 1..500u64 {
-        let mut probe_session = session;
+        let probe_session = session;
         // 临时改 rng 不可行（借用）；改为数学短路：克隆评估。
         let game = session.game();
         let attention = game.state.npc_attention.get(&account).unwrap().clone();

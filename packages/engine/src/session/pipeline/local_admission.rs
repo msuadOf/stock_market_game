@@ -67,7 +67,7 @@ pub(super) fn admit_ready_batch(
         }
         return Ok(candidates);
     }
-    let (mut plan, has_conflicts) =
+    let (plan, has_conflicts) =
         ReadyAdmissionPlan::prepare(candidates, receipts, has_dependencies)?;
     if !has_conflicts {
         return Ok(plan.candidates);
@@ -116,14 +116,14 @@ impl ReadyAdmissionPlan {
                 | Intent::PlaceMarket {
                     side: Side::Sell, ..
                 } => resource_groups
-                    .entry(ResourceLane::Shares(owner, stock.clone()))
+                    .entry(ResourceLane::Shares(owner, *stock))
                     .or_default()
                     .push((index, receipt)),
                 // 撤单只面向目标订单；后续计划由股票簿产生的 typed 结果唤醒。
                 Intent::Cancel { .. } => {}
             }
             stock_receipts
-                .entry(stock.clone())
+                .entry(*stock)
                 .or_default()
                 .push((index, candidate.ingress_order().map(|(_, ordinal)| ordinal)));
         }
@@ -253,7 +253,7 @@ impl ReadyAdmissionPlan {
         Ok(())
     }
 
-    fn finish_layout(mut self) -> Result<Vec<IntentCandidate>, StepFatal> {
+    fn finish_layout(self) -> Result<Vec<IntentCandidate>, StepFatal> {
         // 资源 lane 与 quote 依赖边直接拓扑排序（原并行 gate 到达边已随
         // gate 形态删除——Sol 终审·冗余收口：同股序由 FIFO 链边承载，
         // 单遍遍历即全部受理事实）；无关股票的输出布局不定义交易优先级。
@@ -428,8 +428,8 @@ mod tests {
         let x = StockId(0);
         let y = StockId(1);
         let requests = [
-            (AccountId(1), x.clone()),
-            (AccountId(1), y.clone()),
+            (AccountId(1), x),
+            (AccountId(1), y),
             (AccountId(2), y),
             (AccountId(2), x),
         ];
@@ -473,7 +473,7 @@ mod tests {
                 IntentCandidateKey::npc(AccountId(1), 0),
                 AccountId(1),
                 Intent::Cancel {
-                    code: stock.clone(),
+                    code: stock,
                     id: OrderId(7),
                 },
             )
@@ -482,7 +482,7 @@ mod tests {
                 IntentCandidateKey::npc(AccountId(1), 1),
                 AccountId(1),
                 Intent::PlaceLimit {
-                    code: stock.clone(),
+                    code: stock,
                     side: Side::Sell,
                     price: crate::LimitPrice::Fixed(Money::from_cents(100)),
                     qty: 100,
@@ -493,7 +493,7 @@ mod tests {
                 IntentCandidateKey::npc(AccountId(1), 2),
                 AccountId(1),
                 Intent::PlaceLimit {
-                    code: stock.clone(),
+                    code: stock,
                     side: Side::Sell,
                     price: crate::LimitPrice::Fixed(Money::from_cents(100)),
                     qty: 100,

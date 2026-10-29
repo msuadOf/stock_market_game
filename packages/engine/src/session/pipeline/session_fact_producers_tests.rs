@@ -19,7 +19,7 @@ fn account_validation_rejection_adapter_uses_candidate_payload_and_explicit_seal
             IntentCandidateKey::npc(AccountId(4), 0),
             4,
             Intent::Cancel {
-                code: alpha.clone(),
+                code: alpha,
                 id: OrderId(8),
             },
         ),
@@ -27,7 +27,7 @@ fn account_validation_rejection_adapter_uses_candidate_payload_and_explicit_seal
             IntentCandidateKey::player(5),
             7,
             Intent::PlaceLimit {
-                code: beta.clone(),
+                code: beta,
                 side: Side::Buy,
                 price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
                 qty: 100,
@@ -37,7 +37,7 @@ fn account_validation_rejection_adapter_uses_candidate_payload_and_explicit_seal
             IntentCandidateKey::plan_chain(9),
             11,
             Intent::PlaceMarket {
-                code: alpha.clone(),
+                code: alpha,
                 side: Side::Sell,
                 qty: 200,
             },
@@ -94,7 +94,7 @@ fn account_validation_rejection_adapter_rejects_duplicate_or_missing_candidate_c
         IntentCandidateKey::player(0),
         7,
         Intent::Cancel {
-            code: alpha.clone(),
+            code: alpha,
             id: OrderId(8),
         },
     )])
@@ -133,7 +133,7 @@ fn account_validation_rejection_adapter_rejects_a_candidate_key_and_sealed_ident
             IntentCandidateKey::player(0),
             7,
             Intent::Cancel {
-                code: alpha.clone(),
+                code: alpha,
                 id: OrderId(8),
             },
         ),

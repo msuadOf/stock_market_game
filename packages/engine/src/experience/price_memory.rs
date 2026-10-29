@@ -152,7 +152,7 @@ impl PersonalPriceMemory {
             Some(entry) => entry.observe_price(price, market_minute)?,
             None => {
                 self.stocks.insert(
-                    code.clone(),
+                    *code,
                     StockPriceMemory::first_observation(price, market_minute),
                 );
             }

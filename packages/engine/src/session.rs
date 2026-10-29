@@ -993,7 +993,7 @@ impl IngressReceiptCursors {
         let code = match &intent {
             Intent::PlaceLimit { code, .. }
             | Intent::PlaceMarket { code, .. }
-            | Intent::Cancel { code, .. } => code.clone(),
+            | Intent::Cancel { code, .. } => *code,
         };
         let account_ordinal = self.next_account_ordinal.get(&owner).copied().unwrap_or(0);
         let account_next = account_ordinal.checked_add(1).ok_or_else(|| {
@@ -3091,7 +3091,7 @@ impl GameSession {
                 .map(|(code, position)| {
                     let current = self.state.markets[code].last_price();
                     (
-                        code.clone(),
+                        *code,
                         position.cost_price().filter(|price| price.cents() > 0),
                         current,
                     )
@@ -3129,13 +3129,13 @@ impl GameSession {
                 .iter()
                 .map(|(code, position)| {
                     (
-                        code.clone(),
+                        *code,
                         position.cost_price().filter(|price| price.cents() > 0),
                         self.state.markets[code].last_price(),
                     )
                 })
                 .collect();
-            let held_codes: BTreeSet<_> = held.iter().map(|(code, _, _)| code.clone()).collect();
+            let held_codes: BTreeSet<_> = held.iter().map(|(code, _, _)| *code).collect();
             let mut participant = self
                 .state
                 .belief_participants
@@ -3195,7 +3195,7 @@ impl GameSession {
                 let positions: Vec<_> = self.state.accounts[id]
                     .positions()
                     .keys()
-                    .map(|code| (code.clone(), self.state.markets[code].last_price()))
+                    .map(|code| (*code, self.state.markets[code].last_price()))
                     .collect();
                 (*id, equity, positions)
             })
@@ -3209,7 +3209,7 @@ impl GameSession {
             if equity.cents() > 0 {
                 experience.observe_equity(equity)?;
             }
-            let held: BTreeSet<_> = positions.iter().map(|(code, _)| code.clone()).collect();
+            let held: BTreeSet<_> = positions.iter().map(|(code, _)| *code).collect();
             for (code, price) in positions {
                 experience.observe_position(&code, price, market_minute)?;
             }
@@ -3938,7 +3938,7 @@ impl GameSession {
                 .state
                 .library
                 .announcement(publication_id, report.disclosure_instant)
-                .map(|announcement| (announcement.company.clone(), announcement.published_at))
+                .map(|announcement| (announcement.company, announcement.published_at))
                 .map_err(|error| SessionError::Information(Box::new(error)))?;
             report.events.push(Event::CompanyDisclosurePublished {
                 seq: self.next_civil_seq()?,
@@ -3955,7 +3955,7 @@ impl GameSession {
                 .report(publication_id, report.disclosure_instant)
                 .map(|published| {
                     (
-                        published.company.clone(),
+                        published.company,
                         published.published_at,
                         published.reports.version.sequence,
                     )
@@ -4111,7 +4111,7 @@ impl GameSession {
         pipeline::quote_expiry::NpcOrderLifecycleBook::new(&mut self.state.npc_order_lifecycles)
             .append_prepared(NpcOrderLifecycle {
                 account,
-                code: code.clone(),
+                code: *code,
                 order_id: order.id,
                 placed_market_minute,
                 expires_market_minute,
@@ -4292,7 +4292,7 @@ impl GameSession {
                 .iter()
                 .map(|(code, market)| {
                     (
-                        code.clone(),
+                        *code,
                         SaveMarketSnap {
                             last_price: market.last_price(),
                             last_close: market.last_close(),
@@ -4314,7 +4314,7 @@ impl GameSession {
                                 .iter()
                                 .map(|(code, position)| {
                                     (
-                                        code.clone(),
+                                        *code,
                                         PositionSnap {
                                             qty: position.qty(),
                                             t1_locked: position.t1_locked(),
@@ -4333,7 +4333,7 @@ impl GameSession {
                 .candle_book
                 .histories()
                 .iter()
-                .map(|(code, history)| (code.clone(), history.iter().cloned().collect()))
+                .map(|(code, history)| (*code, history.iter().cloned().collect()))
                 .collect(),
             active_daily_candles: self.state.candle_book.active().clone(),
         }
@@ -4351,7 +4351,7 @@ impl GameSession {
                 self.state
                     .markets
                     .iter()
-                    .map(|(code, market)| (code.clone(), market.resting_orders()))
+                    .map(|(code, market)| (*code, market.resting_orders()))
                     .collect()
             } else {
                 // D5 fault1042 收口：runtime 形态的在场委托=desk 镜像
@@ -4363,7 +4363,7 @@ impl GameSession {
                     .iter()
                     .map(|(code, mirror)| {
                         (
-                            code.clone(),
+                            *code,
                             mirror
                                 .orders
                                 .iter()
@@ -4405,10 +4405,10 @@ impl GameSession {
                     .state
                     .markets
                     .iter()
-                    .map(|(code, market)| (code.clone(), market.book_next_sequence()))
+                    .map(|(code, market)| (*code, market.book_next_sequence()))
                     .collect();
                 for (code, mirror) in &self.state.desk_book_mirror {
-                    let slot = out.entry(code.clone()).or_insert(0);
+                    let slot = out.entry(*code).or_insert(0);
                     *slot = (*slot).max(mirror.next_serial);
                 }
                 for (idx, cursor) in self.state.runtime_desk_serial_cursors.iter().enumerate() {
@@ -4424,7 +4424,7 @@ impl GameSession {
                 .iter()
                 .map(|(code, market)| {
                     (
-                        code.clone(),
+                        *code,
                         market
                             .filled_orders()
                             .into_iter()
@@ -4437,7 +4437,7 @@ impl GameSession {
                 .state
                 .price_history
                 .iter()
-                .map(|(code, prices)| (code.clone(), prices.iter().copied().collect()))
+                .map(|(code, prices)| (*code, prices.iter().copied().collect()))
                 .collect(),
             market_minute_closes: self.state.market_minute_closes.clone(),
             market_minute_bars: self.state.market_minute_bars.clone(),
@@ -4581,7 +4581,7 @@ impl GameSession {
                     .iter()
                     .map(|(code, pos)| {
                         (
-                            code.clone(),
+                            *code,
                             crate::account::Position::from_restored_parts(
                                 pos.qty,
                                 pos.t1_locked,
@@ -4656,7 +4656,7 @@ impl GameSession {
                 let next_serial = save.book_next_sequences[code];
                 let last_price = market.last_price();
                 sess.state.desk_book_mirror.insert(
-                    code.clone(),
+                    *code,
                     DeskBookMirror {
                         orders,
                         last_price,
@@ -4733,7 +4733,7 @@ impl GameSession {
             save.snapshot
                 .daily_candles
                 .iter()
-                .map(|(code, candles)| (code.clone(), candles.clone().into()))
+                .map(|(code, candles)| (*code, candles.clone().into()))
                 .collect(),
         );
         sess.state
@@ -4742,7 +4742,7 @@ impl GameSession {
         sess.state.price_history = save
             .price_history
             .iter()
-            .map(|(code, prices)| (code.clone(), prices.iter().copied().collect()))
+            .map(|(code, prices)| (*code, prices.iter().copied().collect()))
             .collect();
         sess.state.market_minute_closes = save.market_minute_closes.clone();
         sess.state.market_minute_bars = save.market_minute_bars.clone();
@@ -4952,12 +4952,7 @@ impl GameSession {
                     .plan(plan_id)
                     .expect("active plan ids resolve");
                 match plan.active_child_order_id() {
-                    Some(active_id) => (
-                        plan.account(),
-                        plan.code().clone(),
-                        plan.direction(),
-                        active_id,
-                    ),
+                    Some(active_id) => (plan.account(), *plan.code(), plan.direction(), active_id),
                     None => continue,
                 }
             };
@@ -5422,7 +5417,7 @@ impl GameSession {
                             events.push(Event::OrderCanceled {
                                 seq: self.next_seq(),
                                 account,
-                                code: code.clone(),
+                                code: code,
                                 id: old.id,
                                 remaining_qty: old.qty,
                             });
@@ -5543,7 +5538,7 @@ mod b2_bars_rollback_tests {
         session.seed_order_for_test(
             AccountId(1),
             crate::Intent::PlaceLimit {
-                code: code.clone(),
+                code: code,
                 side: Side::Sell,
                 price: crate::LimitPrice::Fixed(crate::money::Money::from_cents(1000)),
                 qty: 100,
@@ -5558,7 +5553,7 @@ mod b2_bars_rollback_tests {
             .enqueue_player_intent(
                 AccountId(0),
                 crate::Intent::PlaceLimit {
-                    code: code.clone(),
+                    code: code,
                     side: Side::Buy,
                     price: crate::LimitPrice::Fixed(crate::money::Money::from_cents(1005)),
                     qty: 100,
@@ -5665,7 +5660,7 @@ mod b2_query_contract_tests {
         session.seed_order_for_test(
             AccountId(1),
             crate::Intent::PlaceLimit {
-                code: code.clone(),
+                code: code,
                 side: Side::Sell,
                 price: crate::LimitPrice::Fixed(crate::money::Money::from_cents(1000)),
                 qty: 100,
@@ -5676,7 +5671,7 @@ mod b2_query_contract_tests {
             .enqueue_player_intent(
                 AccountId(0),
                 crate::Intent::PlaceLimit {
-                    code: code.clone(),
+                    code: code,
                     side: Side::Buy,
                     price: crate::LimitPrice::Fixed(crate::money::Money::from_cents(1005)),
                     qty: 100,
@@ -6020,7 +6015,7 @@ mod personal_receipt_tests {
         session.seed_order_for_test(
             AccountId(1),
             crate::Intent::PlaceLimit {
-                code: code.clone(),
+                code: code,
                 side: crate::orderbook::Side::Sell,
                 price: crate::LimitPrice::Fixed(crate::money::Money::from_cents(1000)),
                 qty: 100,
@@ -6031,7 +6026,7 @@ mod personal_receipt_tests {
             .enqueue_player_intent(
                 AccountId(0),
                 crate::Intent::PlaceLimit {
-                    code: code.clone(),
+                    code: code,
                     side: crate::orderbook::Side::Buy,
                     price: crate::LimitPrice::Fixed(crate::money::Money::from_cents(1005)),
                     qty: 100,
@@ -6229,7 +6224,7 @@ mod retained_snapshot_tests {
         session.seed_order_for_test(
             AccountId(1),
             crate::Intent::PlaceLimit {
-                code: code.clone(),
+                code: code,
                 side: crate::orderbook::Side::Sell,
                 price: crate::LimitPrice::Fixed(crate::money::Money::from_cents(1000)),
                 qty: 100,
@@ -6240,7 +6235,7 @@ mod retained_snapshot_tests {
             .enqueue_player_intent(
                 AccountId(0),
                 crate::Intent::PlaceLimit {
-                    code: code.clone(),
+                    code: code,
                     side: crate::orderbook::Side::Buy,
                     price: crate::LimitPrice::Fixed(crate::money::Money::from_cents(1005)),
                     qty: 100,
@@ -6304,7 +6299,7 @@ mod retained_snapshot_tests {
         session.end_civil_day().unwrap();
         let page = session
             .market_history_page(&crate::session::MarketHistoryRequest {
-                stock: code.clone(),
+                stock: code,
                 date_from: crate::CivilDate::from_iso("2030-01-02").unwrap(),
                 date_to: crate::CivilDate::from_iso("2030-01-02").unwrap(),
                 after: None,
@@ -6358,9 +6353,7 @@ mod retained_snapshot_tests {
         let current = session
             .query_current_minute_history_for(
                 AccountId(0),
-                &crate::session::CurrentMinuteHistoryRequest {
-                    stock: code.clone(),
-                },
+                &crate::session::CurrentMinuteHistoryRequest { stock: code },
             )
             .unwrap();
         assert!(current.trading);
@@ -6396,7 +6389,7 @@ mod retained_snapshot_tests {
             .query_market_history_for(
                 AccountId(0),
                 &crate::session::MarketHistoryRequest {
-                    stock: code.clone(),
+                    stock: code,
                     date_from: crate::CivilDate::from_iso("2030-01-02").unwrap(),
                     date_to: crate::CivilDate::from_iso("2030-01-02").unwrap(),
                     after: None,
@@ -6560,7 +6553,7 @@ mod npc_working_quote_tests {
             .unwrap()
             .positions
             .insert(
-                code.clone(),
+                code,
                 PositionSnap {
                     qty: 100,
                     t1_locked: 0,
@@ -6780,7 +6773,7 @@ mod npc_working_quote_tests {
 
     fn buy(code: &StockId, price: i64) -> Intent {
         Intent::PlaceLimit {
-            code: code.clone(),
+            code: *code,
             side: Side::Buy,
             price: LimitPrice::Fixed(Money::from_cents(price)),
             qty: 100,
@@ -6859,7 +6852,7 @@ mod npc_working_quote_tests {
             .plans
             .create(crate::plans::PlanOpen {
                 account,
-                code: code.clone(),
+                code: code,
                 direction: Side::Buy,
                 target: crate::plans::PlanTarget::ShareCount(100),
                 opinion: crate::plans::PlanOpinion {
@@ -6884,7 +6877,7 @@ mod npc_working_quote_tests {
         let pid = book
             .create(crate::plans::PlanOpen {
                 account,
-                code: code.clone(),
+                code: code,
                 direction: Side::Buy,
                 target: crate::plans::PlanTarget::ShareCount(100),
                 opinion: crate::plans::PlanOpinion {
@@ -6943,12 +6936,12 @@ mod npc_working_quote_tests {
         session
             .fixture_account_mut(&seller)
             .unwrap()
-            .grant_position(code.clone(), 100, price)
+            .grant_position(code, 100, price)
             .unwrap();
         session.seed_order_for_test(
             seller,
             Intent::PlaceLimit {
-                code: code.clone(),
+                code: code,
                 side: Side::Sell,
                 price: LimitPrice::Fixed(price),
                 qty: 100,
@@ -6972,7 +6965,7 @@ mod npc_working_quote_tests {
             .enqueue_player_intent(
                 buyer,
                 Intent::PlaceLimit {
-                    code: code.clone(),
+                    code: code,
                     side: Side::Buy,
                     price: LimitPrice::Fixed(price),
                     qty: 100,
@@ -7076,13 +7069,13 @@ mod npc_working_quote_tests {
         let code = StockId(0);
         let mut session = GameSession::new(quote_setup(0), 1_001).unwrap();
         session.state.price_history.insert(
-            code.clone(),
+            code,
             [Money::from_cents(1_000), Money::from_cents(1_050)]
                 .into_iter()
                 .collect(),
         );
         session.state.market_minute_closes.insert(
-            code.clone(),
+            code,
             vec![
                 MarketMinuteClose {
                     absolute_trading_minute: 0,
@@ -7112,7 +7105,7 @@ mod npc_working_quote_tests {
         let mut session = GameSession::new(quote_setup(0), 120).unwrap();
         let template = session.state.candle_book.histories()[&code][0].clone();
         session.state.candle_book.replace_history(
-            code.clone(),
+            code,
             (0..6_000)
                 .map(|day| DailyCandle {
                     time: i64::from(day) * 86_400,
@@ -7123,7 +7116,7 @@ mod npc_working_quote_tests {
                 .into(),
         );
         session.state.market_minute_closes.insert(
-            code.clone(),
+            code,
             vec![MarketMinuteClose {
                 absolute_trading_minute: 0,
                 close: Money::from_cents(1_100),
@@ -7166,10 +7159,7 @@ mod npc_working_quote_tests {
                 .unwrap()
                 .clone()
         };
-        session
-            .state
-            .candle_book
-            .set_active(code.clone(), closed.clone());
+        session.state.candle_book.set_active(code, closed.clone());
 
         session.commit_active_daily_candles();
 
@@ -7193,10 +7183,10 @@ mod npc_working_quote_tests {
         let config = session.state.setup.config.clone();
         let holder = session.fixture_account_mut(&account).unwrap();
         holder
-            .grant_position(code.clone(), 1_000, Money::from_cents(1_000))
+            .grant_position(code, 1_000, Money::from_cents(1_000))
             .unwrap();
         holder
-            .apply_sell(&config, code.clone(), Money::from_cents(2_000), 500)
+            .apply_sell(&config, code, Money::from_cents(2_000), 500)
             .unwrap();
         session.observe_retail_experience(&[account]).unwrap();
 

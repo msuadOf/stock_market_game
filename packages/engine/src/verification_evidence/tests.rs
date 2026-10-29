@@ -928,13 +928,13 @@ fn tick_before_civil(stock: &StockId) -> TickFrame {
         Event::IntentRejected {
             seq: 1,
             account: AccountId(1),
-            code: stock.clone(),
+            code: *stock,
             reason: RejectionReason::PriceCageExceeded,
         },
         Event::OrderAccepted {
             seq: 2,
             account: AccountId(1),
-            code: stock.clone(),
+            code: *stock,
             id: OrderId(41),
             side: Side::Buy,
             price: Money::from_cents(1_000),
@@ -1218,7 +1218,7 @@ fn every_runtime_integer_projection_uses_canonical_decimal_strings() {
     let events = vec![
         Event::Trade {
             seq: u64::MAX,
-            code: code.clone(),
+            code: code,
             price: Money::from_cents(i64::MAX),
             qty: u32::MAX,
             maker: AccountId(u64::MAX),
@@ -1228,7 +1228,7 @@ fn every_runtime_integer_projection_uses_canonical_decimal_strings() {
             seq: u64::MAX,
             tick: u64::MAX,
             phase: TradingPhase::CallAuction,
-            code: code.clone(),
+            code: code,
             indicative_price: Some(Money::from_cents(i64::MAX)),
             matched_volume: u64::MAX,
             imbalance: u64::MAX,
@@ -1237,14 +1237,14 @@ fn every_runtime_integer_projection_uses_canonical_decimal_strings() {
             seq: u64::MAX,
             tick: u64::MAX,
             phase: TradingPhase::ClosingAuction,
-            code: code.clone(),
+            code: code,
             clearing_price: Some(Money::from_cents(i64::MAX)),
             matched_volume: u64::MAX,
         },
         Event::PriceTick {
             seq: u64::MAX,
             tick: u64::MAX,
-            code: code.clone(),
+            code: code,
             last_price: Money::from_cents(i64::MAX),
             daily_candle: extreme_candle.clone(),
             bids: vec![(Money::from_cents(i64::MAX), u64::MAX)],
@@ -1253,7 +1253,7 @@ fn every_runtime_integer_projection_uses_canonical_decimal_strings() {
         Event::DayBoundary {
             seq: u64::MAX,
             day: u32::MAX,
-            closed_daily_candles: BTreeMap::from([(code.clone(), extreme_candle.clone())]),
+            closed_daily_candles: BTreeMap::from([(code, extreme_candle.clone())]),
         },
         Event::CivilDateAdvanced {
             seq: u64::MAX,
@@ -1273,26 +1273,26 @@ fn every_runtime_integer_projection_uses_canonical_decimal_strings() {
         Event::IntentRejected {
             seq: u64::MAX,
             account: AccountId(u64::MAX),
-            code: code.clone(),
+            code: code,
             reason: RejectionReason::InsufficientCash,
         },
         Event::SettlementError {
             seq: u64::MAX,
             account: AccountId(u64::MAX),
-            code: code.clone(),
+            code: code,
             reason: "fixture".to_owned(),
         },
         Event::OrderCanceled {
             seq: u64::MAX,
             account: AccountId(u64::MAX),
-            code: code.clone(),
+            code: code,
             id: OrderId(u64::MAX),
             remaining_qty: u32::MAX,
         },
         Event::OrderAccepted {
             seq: u64::MAX,
             account: AccountId(u64::MAX),
-            code: code.clone(),
+            code: code,
             id: OrderId(u64::MAX),
             side: Side::Buy,
             price: Money::from_cents(i64::MAX),
@@ -1313,7 +1313,7 @@ fn every_runtime_integer_projection_uses_canonical_decimal_strings() {
 
     let timeseries = TickTimeseriesPayload {
         markets: BTreeMap::from([(
-            code.clone(),
+            code,
             MarketSnap {
                 last_price: Money::from_cents(i64::MAX),
                 last_close: Money::from_cents(i64::MIN),
@@ -1323,10 +1323,10 @@ fn every_runtime_integer_projection_uses_canonical_decimal_strings() {
                 asks: vec![(Money::from_cents(i64::MIN), u64::MAX)],
             },
         )]),
-        active_daily_candles: BTreeMap::from([(code.clone(), extreme_candle.clone())]),
+        active_daily_candles: BTreeMap::from([(code, extreme_candle.clone())]),
         closed_daily_candles: BTreeMap::new(),
         auction_points: BTreeMap::from([(
-            code.clone(),
+            code,
             vec![AuctionPoint {
                 key: key.clone(),
                 tick: u64::MAX,
@@ -1414,7 +1414,7 @@ fn coverage_snapshot(
     let stock = StockId(code);
     let envelope_key = EnvelopeKey {
         account: AccountId(1),
-        stock: stock.clone(),
+        stock: stock,
         order: OrderId(order),
         side: Side::Sell,
     };

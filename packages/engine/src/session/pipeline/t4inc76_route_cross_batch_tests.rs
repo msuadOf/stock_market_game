@@ -45,7 +45,7 @@ fn plan_request_for(
         .plans
         .create(PlanOpen {
             account,
-            code: code.clone(),
+            code: code,
             direction: Side::Buy,
             target: PlanTarget::ShareCount(u32::try_from(target).unwrap()),
             opinion: PlanOpinion {
@@ -91,7 +91,7 @@ fn route_rig() -> RouteRig {
     session
         .fixture_account_mut(&AccountId(1))
         .unwrap()
-        .grant_position(code.clone(), 400, Money::from_cents(900))
+        .grant_position(code, 400, Money::from_cents(900))
         .unwrap();
     let sell = super::continuous_matching::incremental_continuous_stock_shadow::tests::add_resting(
         session.fixture_market_mut(&code).unwrap(),
@@ -193,7 +193,7 @@ fn real_round(
 ) -> ContinuousExecutionRound {
     let mut shard = shards.remove(code).unwrap();
     let round = shard.apply_round(operations).unwrap();
-    shards.insert(code.clone(), shard);
+    shards.insert(*code, shard);
     round
 }
 

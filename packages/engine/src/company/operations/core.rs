@@ -260,7 +260,7 @@ impl CompanyOperations {
                 reason,
                 cause: Box::new(cause),
             })?;
-        self.companies.insert(id.clone(), trial);
+        self.companies.insert(*id, trial);
         *request.closing = scratch.closing;
         *request.library = scratch.library;
         self.invalidate_hash_projection();
@@ -302,9 +302,7 @@ impl CompanyOperations {
         {
             return Err(IndustrialCorrectionError::Industrial {
                 reason,
-                cause: IndustrialError::GroupedTaxCorrectionUnsupported {
-                    company: id.clone(),
-                },
+                cause: IndustrialError::GroupedTaxCorrectionUnsupported { company: *id },
             });
         }
         let member = crate::accounting::consolidation::MemberId(id.0);

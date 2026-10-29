@@ -411,7 +411,7 @@ fn mixed_restricted_and_public_shares_allow_only_real_public_disposal() {
     };
     let mut registry = ShareRegistry::new(
         original.stock().clone(),
-        original.issuer().clone(),
+        *original.issuer(),
         100,
         original.settled_on(),
         holdings,
@@ -837,7 +837,7 @@ fn explicitly_released_physical_lot_is_transferable_and_receipt_cannot_forge_unl
     };
     let mut registry = ShareRegistry::new(
         original.stock().clone(),
-        original.issuer().clone(),
+        *original.issuer(),
         100,
         original.settled_on(),
         holdings,
@@ -926,7 +926,7 @@ fn share_redenomination_consolidation_consumes_restricted_lots_and_shrinks_issue
     }
     let mut registry = ShareRegistry::new(
         original.stock().clone(),
-        original.issuer().clone(),
+        *original.issuer(),
         100,
         original.settled_on(),
         holdings,

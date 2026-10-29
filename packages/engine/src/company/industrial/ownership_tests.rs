@@ -764,7 +764,7 @@ fn tax_correction_fixture() -> (
         .publish_closed(
             &closing,
             PublicationRequest {
-                company: crate::company::CompanyId(member.0.clone()),
+                company: crate::company::CompanyId(member.0),
                 scope: crate::accounting::consolidation::ScopeId::Standalone(member.clone()),
                 period: crate::accounting::AccountingPeriod::from_ymd(2030, 12).unwrap(),
                 kind: crate::accounting::reports::ReportKind::Annual,
@@ -809,7 +809,7 @@ fn report_and_tax_correction_commits_same_effective_years_atomically_and_can_ret
                 }],
             },
             PublicationRequest {
-                company: crate::company::CompanyId(member.0.clone()),
+                company: crate::company::CompanyId(member.0),
                 scope: crate::accounting::consolidation::ScopeId::Standalone(member.clone()),
                 period: crate::accounting::AccountingPeriod::from_ymd(2030, 12).unwrap(),
                 kind: crate::accounting::reports::ReportKind::Annual,
@@ -928,7 +928,7 @@ fn tax_report_correction_rejects_future_dates_and_unstructured_subledger_changes
                 }],
             },
             publication: PublicationRequest {
-                company: crate::company::CompanyId(member.0.clone()),
+                company: crate::company::CompanyId(member.0),
                 scope: crate::accounting::consolidation::ScopeId::Standalone(member.clone()),
                 period: crate::accounting::AccountingPeriod::from_ymd(2030, 12).unwrap(),
                 kind: crate::accounting::reports::ReportKind::Annual,
@@ -985,7 +985,7 @@ fn tax_correction_revises_published_quarter_and_unpublished_annual_without_rewri
         .publish_closed(
             &closing,
             PublicationRequest {
-                company: crate::company::CompanyId(member.0.clone()),
+                company: crate::company::CompanyId(member.0),
                 scope: scope.clone(),
                 period: quarter,
                 kind: ReportKind::Quarter,
@@ -1030,7 +1030,7 @@ fn tax_correction_revises_published_quarter_and_unpublished_annual_without_rewri
                 }],
             },
             publication: PublicationRequest {
-                company: crate::company::CompanyId(member.0.clone()),
+                company: crate::company::CompanyId(member.0),
                 scope: scope.clone(),
                 period: crate::accounting::AccountingPeriod::from_ymd(2030, 12).unwrap(),
                 kind: ReportKind::Annual,
@@ -1105,7 +1105,7 @@ fn tax_correction_revises_published_quarter_and_unpublished_annual_without_rewri
         .publish_closed(
             &closing,
             PublicationRequest {
-                company: crate::company::CompanyId(member.0.clone()),
+                company: crate::company::CompanyId(member.0),
                 scope: scope.clone(),
                 period: annual_period,
                 kind: ReportKind::Annual,
@@ -1159,7 +1159,7 @@ fn tax_correction_cannot_publish_later_annual_revision_before_its_original_and_r
         .publish_closed(
             &closing,
             PublicationRequest {
-                company: crate::company::CompanyId(member.0.clone()),
+                company: crate::company::CompanyId(member.0),
                 scope: crate::accounting::consolidation::ScopeId::Standalone(member.clone()),
                 period: crate::accounting::AccountingPeriod::from_ymd(2031, 12).unwrap(),
                 kind: crate::accounting::reports::ReportKind::Annual,
@@ -1200,7 +1200,7 @@ fn tax_correction_cannot_publish_later_annual_revision_before_its_original_and_r
             }],
         },
         publication: PublicationRequest {
-            company: crate::company::CompanyId(member.0.clone()),
+            company: crate::company::CompanyId(member.0),
             scope: crate::accounting::consolidation::ScopeId::Standalone(member.clone()),
             period: crate::accounting::AccountingPeriod::from_ymd(2030, 12).unwrap(),
             kind: crate::accounting::reports::ReportKind::Annual,
@@ -1286,7 +1286,7 @@ fn operating_tax_correction_binds_company_owner_and_rejects_group_drift_without_
             })
             .unwrap();
     }
-    let company = CompanyId(member.0.clone());
+    let company = CompanyId(member.0);
     let spec = CompanySpec {
         code: "C-TAX".into(),
         name: "虚构税务测试公司".into(),
@@ -1343,7 +1343,7 @@ fn operating_tax_correction_binds_company_owner_and_rejects_group_drift_without_
     let before_closing = serde_json::to_value(&closing).unwrap();
     let before_library = library.clone();
     let publication = |owner: &CompanyId, scope| PublicationRequest {
-        company: owner.clone(),
+        company: *owner,
         scope,
         period: crate::accounting::AccountingPeriod::from_ymd(2030, 12).unwrap(),
         kind: crate::accounting::reports::ReportKind::Annual,
@@ -1440,7 +1440,7 @@ fn operating_tax_correction_binds_company_owner_and_rejects_group_drift_without_
     });
     let mut grouped = CompanyOperations::new(grouped_config, posted_on).unwrap();
     let before_grouped = serde_json::to_value(&grouped).unwrap();
-    for id in [company.clone(), parent] {
+    for id in [company, parent] {
         let result = grouped.correct_industrial_report(
             &id,
             crate::company::operations::OperatingReportCorrection {
@@ -1453,7 +1453,7 @@ fn operating_tax_correction_binds_company_owner_and_rejects_group_drift_without_
                 publication: publication(
                     &id,
                     crate::accounting::consolidation::ScopeId::Standalone(
-                        crate::accounting::consolidation::MemberId(id.0.clone()),
+                        crate::accounting::consolidation::MemberId(id.0),
                     ),
                 ),
                 posted_on,

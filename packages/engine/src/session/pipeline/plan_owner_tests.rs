@@ -459,7 +459,7 @@ fn same_side_reprice_replaces_the_leg_and_keeps_progress_and_target() {
         .unwrap()
         .active_child_order_id()
         .unwrap();
-    confirm_cancel_tick(&mut authority, AccountId(1), code.clone(), child);
+    confirm_cancel_tick(&mut authority, AccountId(1), code, child);
     let mut plans = std::mem::take(&mut authority.state.plans);
     plans
         .install_execution(id, 100, Money::from_cents(1_010), 240)
@@ -707,7 +707,7 @@ fn confirmed_cancel_clears_the_plan_child_and_allows_resubmission() {
     assert_eq!(authority.state.markets[&code].resting_order_count(), 0);
 
     // 重试：撤销后的计划报价必须能继续推进剩余目标，而不是致命失败。
-    let request = submit_request(&authority, plan_id, code.clone(), 1_000, 100);
+    let request = submit_request(&authority, plan_id, code, 1_000, 100);
     let mut roots = PlanChainOperationBatch::empty();
     roots.push_execution(request);
     let mut tick = plan_tick(PhaseInput {

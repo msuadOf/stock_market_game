@@ -6,7 +6,7 @@ use crate::{AccountId, Intent, Money, Side, StockId};
 
 fn place(code: &StockId) -> Intent {
     Intent::PlaceLimit {
-        code: code.clone(),
+        code: *code,
         side: Side::Buy,
         price: crate::LimitPrice::Fixed(Money::from_cents(900)),
         qty: 100,

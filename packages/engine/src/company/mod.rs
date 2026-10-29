@@ -309,13 +309,13 @@ impl CompanyRegistry {
                     .map(|(_, total)| *total)
                 else {
                     return Err(CompanyError::UnknownIssuerStock {
-                        company: id.clone(),
+                        company: *id,
                         stock: stock.clone(),
                     });
                 };
                 if company.spec.issued_shares != total_shares {
                     return Err(CompanyError::IssuedSharesMismatch {
-                        company: id.clone(),
+                        company: *id,
                         stock: stock.clone(),
                         issued_shares: company.spec.issued_shares,
                         total_shares,

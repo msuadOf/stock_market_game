@@ -685,7 +685,7 @@ impl SavedEnvelopeKey {
     fn from_runtime(key: &pipeline::EnvelopeKey) -> Self {
         Self {
             account: key.account,
-            stock: key.stock.clone(),
+            stock: key.stock,
             order: key.order,
             side: key.side,
         }
@@ -694,7 +694,7 @@ impl SavedEnvelopeKey {
     fn to_runtime(&self) -> pipeline::EnvelopeKey {
         pipeline::EnvelopeKey {
             account: self.account,
-            stock: self.stock.clone(),
+            stock: self.stock,
             order: self.order,
             side: self.side,
         }

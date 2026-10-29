@@ -77,7 +77,7 @@ fn solfinal2_real_trade_parity_cash_position_t1_cost() {
         eprintln!("ENGINE_STEP_RUNTIME=0：两臂同走旧管线，成交 parity 无判别力——跳过（默认模式的运行承载真对照）");
         return;
     }
-    let mut make = || {
+    let make = || {
         let code = crate::StockId(0);
         let mut setup = crate::session::npc_working_quote_tests::quote_setup(0);
         // retail NPC（经历账在 retail_experience——fixture 经历注入面可用；
@@ -243,7 +243,7 @@ fn solfinal2_real_trade_parity_cash_position_t1_cost() {
 
 fn sell_limit(code: &crate::StockId, price: i64, qty: u32) -> crate::Intent {
     crate::Intent::PlaceLimit {
-        code: code.clone(),
+        code: *code,
         side: crate::Side::Sell,
         price: crate::strategy::LimitPrice::Fixed(crate::money::Money::from_cents(price)),
         qty,

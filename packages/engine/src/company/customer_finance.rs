@@ -40,7 +40,7 @@ pub enum DebtCreditor {
 impl DebtCreditor {
     pub fn cash_endpoint(&self) -> CashEndpoint {
         match self {
-            Self::Company(company) => CashEndpoint::Company(company.clone()),
+            Self::Company(company) => CashEndpoint::Company(*company),
             Self::External(name) => CashEndpoint::External(name.clone()),
         }
     }
@@ -81,7 +81,7 @@ impl DebtId {
 
     fn validate_creditor(&self, creditor: &DebtCreditor) -> Result<(), CustomerFinanceError> {
         if let Some(claim) = self.company_claim()? {
-            if creditor != &DebtCreditor::Company(claim.company().clone()) {
+            if creditor != &DebtCreditor::Company(*claim.company()) {
                 return Err(CustomerFinanceError::InvalidClaimIdentity {
                     detail: format!(
                         "claim source company {:?} does not match debt creditor {creditor:?}",
@@ -286,7 +286,7 @@ impl CustomerFinanceBook {
             opened_on,
             due_on,
             principal,
-            DebtCreditor::Company(claim.company().clone()),
+            DebtCreditor::Company(*claim.company()),
         )?;
         Ok(debt)
     }

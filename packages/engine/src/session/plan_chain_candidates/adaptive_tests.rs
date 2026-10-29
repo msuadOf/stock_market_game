@@ -5,13 +5,13 @@ use crate::session::plan_execution::PlanExecutionDisposition;
 #[test]
 fn adaptive_source_generation_is_continuous_across_distinct_root_accounts() {
     let (mut session, request) = crate::session::plan_chain_candidates_tests::execution_fixture();
-    let code = request.allocation.code.clone();
+    let code = request.allocation.code;
     let second = session
         .state
         .plans
         .create(PlanOpen {
             account: AccountId(0),
-            code: request.allocation.code.clone(),
+            code: request.allocation.code,
             direction: Side::Buy,
             target: PlanTarget::ShareCount(100),
             opinion: PlanOpinion {
@@ -48,7 +48,7 @@ fn adaptive_source_generation_is_continuous_across_distinct_root_accounts() {
             [
                 (
                     AccountId(1),
-                    code.clone(),
+                    code,
                     0,
                     PlanRouteOutcome::Rejected(RejectionReason::InsufficientCash),
                 ),
@@ -110,7 +110,7 @@ fn lifecycle_skips_a_pending_stock_and_observes_an_independent_stock() {
                 .plans
                 .create(PlanOpen {
                     account: owner,
-                    code: code.clone(),
+                    code: *code,
                     direction: Side::Buy,
                     target: PlanTarget::ShareCount(100),
                     opinion: PlanOpinion {
@@ -136,11 +136,11 @@ fn lifecycle_skips_a_pending_stock_and_observes_an_independent_stock() {
         owner,
         BTreeMap::from([
             (
-                first.clone(),
+                first,
                 CandidateAssessment::InsufficientInformation { excluded: vec![] },
             ),
             (
-                second.clone(),
+                second,
                 CandidateAssessment::InsufficientInformation { excluded: vec![] },
             ),
         ]),
@@ -222,7 +222,7 @@ fn frozen_plan_observation_reuses_cash_market_and_reservation_after_private_canc
     session.seed_order_for_test(
         owner,
         Intent::PlaceLimit {
-            code: code.clone(),
+            code: code,
             side: Side::Buy,
             price: LimitPrice::Fixed(Money::from_cents(901)),
             qty: 100,
@@ -236,7 +236,7 @@ fn frozen_plan_observation_reuses_cash_market_and_reservation_after_private_canc
     session.seed_order_for_test(
         owner,
         Intent::Cancel {
-            code: code.clone(),
+            code: code,
             id: order_id,
         },
         &mut Vec::new(),
@@ -260,7 +260,7 @@ fn frozen_plan_observation_reuses_cash_market_and_reservation_after_private_canc
 #[test]
 fn adaptive_source_first_failed_conflict_cancel_stops_all_dependent_commands() {
     let (mut session, request) = crate::session::plan_chain_candidates_tests::execution_fixture();
-    let code = request.allocation.code.clone();
+    let code = request.allocation.code;
     session
         .fixture_account_mut(&AccountId(1))
         .unwrap()
@@ -269,7 +269,7 @@ fn adaptive_source_first_failed_conflict_cancel_stops_all_dependent_commands() {
         session.seed_order_for_test(
             AccountId(1),
             Intent::PlaceLimit {
-                code: request.allocation.code.clone(),
+                code: request.allocation.code,
                 side: Side::Buy,
                 price: LimitPrice::Fixed(Money::from_cents(price)),
                 qty: 100,
@@ -389,18 +389,18 @@ fn stock_route_followups_consume_reconsideration_before_retry_without_erasing_it
     let resource = (AccountId(1), StockId(0));
     let market = session.build_market_view();
     let mut routes = StockRouteCoordination::default();
-    routes.remember_retry(resource.clone(), market.clone());
+    routes.remember_retry(resource, market.clone());
     routes.remember_reconsideration(
-        resource.clone(),
+        resource,
         CandidateAssessment::InsufficientInformation { excluded: vec![] },
         market,
     );
     assert!(matches!(
-        routes.take_follow_up(resource.clone()),
+        routes.take_follow_up(resource),
         Some(PlanChainOperation::Lifecycle { .. })
     ));
     assert!(matches!(
-        routes.take_follow_up(resource.clone()),
+        routes.take_follow_up(resource),
         Some(PlanChainOperation::AccountExecution { .. })
     ));
     assert!(routes.take_follow_up(resource).is_none());
@@ -416,7 +416,7 @@ fn stock_route_wrong_generation_does_not_consume_pending_route() {
     };
     let resource = route_resource(route.command());
     let mut routes = StockRouteCoordination::default();
-    routes.install_pending(resource.clone(), 7, route);
+    routes.install_pending(resource, 7, route);
     assert!(routes.take_pending(&resource, 8).is_err());
     assert!(routes.pending_for_outcome(&resource, 7).is_ok());
 }

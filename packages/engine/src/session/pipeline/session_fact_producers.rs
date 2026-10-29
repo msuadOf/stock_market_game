@@ -37,7 +37,7 @@ pub(super) fn adapt_account_validation_rejection_facts(
                 let event = Event::IntentRejected {
                     seq: 0,
                     account: candidate.owner(),
-                    code: candidate_code(candidate)?.clone(),
+                    code: *candidate_code(candidate)?,
                     reason: reason.clone(),
                 };
                 facts.push(EventFact {

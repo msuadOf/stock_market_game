@@ -310,7 +310,7 @@ fn compute_correction(
                     reason: reason.clone(),
                 },
                 PublicationRequest {
-                    company: original.company.clone(),
+                    company: original.company,
                     scope: scope.clone(),
                     period: *period,
                     kind: *kind,
@@ -544,7 +544,7 @@ mod tests {
             .publish_closed(
                 &closing,
                 PublicationRequest {
-                    company: CompanyId(member.0.clone()),
+                    company: CompanyId(member.0),
                     scope: scope.clone(),
                     period,
                     kind: ReportKind::Annual,
@@ -582,7 +582,7 @@ mod tests {
                     }],
                 },
                 PublicationRequest {
-                    company: CompanyId(member.0.clone()),
+                    company: CompanyId(member.0),
                     scope: scope.clone(),
                     period,
                     kind: ReportKind::Annual,
@@ -615,7 +615,7 @@ mod tests {
                 entries: Vec::new(),
             },
             publication: PublicationRequest {
-                company: CompanyId(member.0.clone()),
+                company: CompanyId(member.0),
                 scope,
                 period,
                 kind: ReportKind::Annual,
@@ -732,7 +732,7 @@ mod tests {
                 .publish_closed(
                     &closing,
                     PublicationRequest {
-                        company: CompanyId(member.0.clone()),
+                        company: CompanyId(member.0),
                         scope: scope.clone(),
                         period,
                         kind: ReportKind::Annual,
@@ -764,7 +764,7 @@ mod tests {
                     .publish_closed(
                         &closing,
                         PublicationRequest {
-                            company: CompanyId(member.0.clone()),
+                            company: CompanyId(member.0),
                             scope: scope.clone(),
                             period: next_period,
                             kind: ReportKind::Annual,
@@ -820,7 +820,7 @@ mod tests {
                     }],
                 },
                 publication: PublicationRequest {
-                    company: CompanyId(member.0.clone()),
+                    company: CompanyId(member.0),
                     scope: scope.clone(),
                     period,
                     kind: ReportKind::Annual,

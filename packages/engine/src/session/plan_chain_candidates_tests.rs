@@ -29,7 +29,7 @@ pub(super) fn execution_fixture_with_compute_and_insts(
         .plans
         .create(PlanOpen {
             account: AccountId(1),
-            code: code.clone(),
+            code: code,
             direction: Side::Buy,
             target: PlanTarget::ShareCount(100),
             opinion: PlanOpinion {

@@ -58,7 +58,7 @@ pub(super) fn adapt_continuous_facts(
                 Event::OrderAccepted {
                     seq: 0,
                     account: *account,
-                    code: code.clone(),
+                    code: *code,
                     id: *order_id,
                     side: *side,
                     price: *price,
@@ -78,7 +78,7 @@ pub(super) fn adapt_continuous_facts(
                 Event::IntentRejected {
                     seq: 0,
                     account: *account,
-                    code: code.clone(),
+                    code: *code,
                     reason: reason.clone(),
                 },
                 *sealed_index,
@@ -99,7 +99,7 @@ pub(super) fn adapt_continuous_facts(
                 Event::OrderCanceled {
                     seq: 0,
                     account: *account,
-                    code: code.clone(),
+                    code: *code,
                     id: *order_id,
                     remaining_qty: *remaining_qty,
                 },
@@ -116,7 +116,7 @@ pub(super) fn adapt_continuous_facts(
                 Event::IntentRejected {
                     seq: 0,
                     account: *account,
-                    code: code.clone(),
+                    code: *code,
                     reason: cancellation_reason(*reason),
                 },
                 *sealed_index,
@@ -128,7 +128,7 @@ pub(super) fn adapt_continuous_facts(
             &mut facts,
             Event::Trade {
                 seq: 0,
-                code: trade.stock.clone(),
+                code: trade.stock,
                 price: trade.trade.price,
                 qty: trade.trade.qty,
                 maker: trade.trade.maker,

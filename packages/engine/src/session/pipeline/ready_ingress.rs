@@ -116,7 +116,7 @@ impl ReadyIngressSources {
         session: &mut GameSession,
         roots_override: Option<PlanChainOperationBatch>,
     ) -> Result<ReadyIngress, StepFatal> {
-        let mut roots = match roots_override {
+        let roots = match roots_override {
             Some(roots) => roots,
             None => session.capture_ready_decision_chain_roots(&self.observed_accounts)?,
         };
@@ -253,7 +253,7 @@ mod shared_receipt_tests {
             .stock_id(&session.state.setup.stocks[0].code.0)
             .unwrap();
         let intent = || Intent::PlaceLimit {
-            code: code.clone(),
+            code: code,
             side: Side::Buy,
             price: LimitPrice::Fixed(Money::from_cents(990)),
             qty: 100,

@@ -138,7 +138,7 @@ impl GameSession {
         if !self.state.markets.contains_key(plan.code()) {
             return Err(PlanExecutionError::UnknownStock {
                 plan_id: plan.plan_id(),
-                code: plan.code().clone(),
+                code: *plan.code(),
             });
         }
         let session_day = self.stock_calendar_day(*plan.code())?.ok_or_else(|| {
@@ -158,7 +158,7 @@ impl GameSession {
             return Err(PlanExecutionError::AllocationMismatch {
                 plan_id: plan.plan_id(),
                 allocation_plan_id: request.allocation.plan_id,
-                allocation_code: request.allocation.code.clone(),
+                allocation_code: request.allocation.code,
             });
         }
         Ok(())

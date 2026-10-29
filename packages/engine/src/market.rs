@@ -337,7 +337,7 @@ impl Market {
         let down = self.down_stop()?;
         if order.price < down || order.price > up {
             return Err(MarketError::LimitExceeded {
-                code: self.code.clone(),
+                code: self.code,
                 price: order.price,
                 down,
                 up,
@@ -507,7 +507,7 @@ impl Market {
             }));
         }
         Ok(MarketDelta {
-            code: self.code.clone(),
+            code: self.code,
             before_last_price,
             after_last_price: self.last_price,
             last_close: self.last_close,

@@ -146,7 +146,7 @@ impl PlanChainOperationBatch {
                                 .is_empty()
                         {
                             self.routes.remember_retry(
-                                (plan.account(), plan.code().clone()),
+                                (plan.account(), *plan.code()),
                                 cursor.market.clone(),
                             );
                         }
@@ -168,9 +168,7 @@ impl PlanChainOperationBatch {
                 } => {
                     let (ready, pending): (BTreeMap<_, _>, BTreeMap<_, _>) =
                         assessments.into_iter().partition(|(code, _)| {
-                            !self
-                                .routes
-                                .is_blocked(&(account, code.clone()), unfinished_routes)
+                            !self.routes.is_blocked(&(account, *code), unfinished_routes)
                         });
                     if !ready.is_empty() {
                         let mut generated = PlanChainOperationBatch::empty();
@@ -183,7 +181,7 @@ impl PlanChainOperationBatch {
                             {
                                 if let Some(assessment) = ready.get(code) {
                                     self.routes.remember_reconsideration(
-                                        (account, code.clone()),
+                                        (account, *code),
                                         assessment.clone(),
                                         market.clone(),
                                     );
@@ -306,7 +304,7 @@ impl PlanChainOperationBatch {
                 !assessments.is_empty()
                     && assessments.keys().all(|code| {
                         self.routes
-                            .is_blocked(&(*account, code.clone()), unfinished_routes)
+                            .is_blocked(&(*account, *code), unfinished_routes)
                     })
             }
             PlanChainOperation::Restructure { plan_id, .. }
@@ -316,7 +314,7 @@ impl PlanChainOperationBatch {
                     .plan(*plan_id)
                     .map_err(|error| invariant(&error.to_string()))?;
                 self.routes
-                    .is_blocked(&(plan.account(), plan.code().clone()), unfinished_routes)
+                    .is_blocked(&(plan.account(), *plan.code()), unfinished_routes)
             }
             // This operation computes shared account grants and discovers all active plans.
             // It must see prior lifecycle results before constructing the quote cursor.
@@ -332,7 +330,7 @@ impl PlanChainOperationBatch {
                                 .plan(plan_id)
                                 .expect("个人活动身份必须对应真实 Investor 条目")
                         })
-                        .any(|plan| unfinished_routes.contains(&(*account, plan.code().clone())))
+                        .any(|plan| unfinished_routes.contains(&(*account, *plan.code())))
             }
         })
     }
@@ -345,7 +343,7 @@ impl PlanChainOperationBatch {
         for (account, code, generation_index, outcome) in outcomes {
             let route = self
                 .routes
-                .pending_for_outcome(&(*account, code.clone()), *generation_index)?;
+                .pending_for_outcome(&(*account, *code), *generation_index)?;
             domain
                 .install_accepted_route(route, outcome)
                 .map_err(execution)?;
@@ -362,7 +360,7 @@ impl PlanChainOperationBatch {
         for (account, code, generation_index, outcome) in outcomes {
             let route = self
                 .routes
-                .take_pending(&(account, code.clone()), generation_index)?;
+                .take_pending(&(account, code), generation_index)?;
             #[cfg(feature = "simulation-diagnostics")]
             let trace_before =
                 super::super::decision_chain::plan_trace_states(account, domain.plans());
@@ -451,7 +449,7 @@ impl PlanChainOperationBatch {
 fn route_resource(command: &PlanRouteCommand) -> (AccountId, StockId) {
     match command {
         PlanRouteCommand::Cancel { account, code, .. }
-        | PlanRouteCommand::SubmitLimit { account, code, .. } => (*account, code.clone()),
+        | PlanRouteCommand::SubmitLimit { account, code, .. } => (*account, *code),
     }
 }
 

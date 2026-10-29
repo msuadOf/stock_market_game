@@ -38,7 +38,7 @@ fn player_candidate_capture_drains_interleaved_queue_once_in_global_fifo_order()
             &mut session,
             first_player,
             Intent::PlaceLimit {
-                code: first_code.clone(),
+                code: first_code,
                 side: Side::Buy,
                 price: LimitPrice::Fixed(Money::from_cents(900)),
                 qty: 100,
@@ -48,7 +48,7 @@ fn player_candidate_capture_drains_interleaved_queue_once_in_global_fifo_order()
             &mut session,
             second_player,
             Intent::Cancel {
-                code: second_code.clone(),
+                code: second_code,
                 id: OrderId(7),
             },
         ),
@@ -56,7 +56,7 @@ fn player_candidate_capture_drains_interleaved_queue_once_in_global_fifo_order()
             &mut session,
             first_player,
             Intent::PlaceMarket {
-                code: first_code.clone(),
+                code: first_code,
                 side: Side::Sell,
                 qty: 200,
             },
@@ -84,7 +84,7 @@ fn player_candidate_capture_preserves_same_account_payloads_without_normalizatio
             &mut session,
             player,
             Intent::PlaceLimit {
-                code: code.clone(),
+                code: code,
                 side: Side::Buy,
                 price: LimitPrice::Fixed(Money::from_cents(901)),
                 qty: 100,
@@ -94,7 +94,7 @@ fn player_candidate_capture_preserves_same_account_payloads_without_normalizatio
             &mut session,
             player,
             Intent::PlaceLimit {
-                code: code.clone(),
+                code: code,
                 side: Side::Sell,
                 price: LimitPrice::Fixed(Money::from_cents(899)),
                 qty: 200,
@@ -163,9 +163,9 @@ fn full_u64_receipt_ordinals_roundtrip_and_overflow_atomically() {
         .state
         .ingress_receipt_cursors
         .next_stock_ordinal
-        .insert(code.clone(), u64::MAX - 1);
+        .insert(code, u64::MAX - 1);
     let intent = Intent::PlaceLimit {
-        code: code.clone(),
+        code: code,
         side: Side::Buy,
         price: LimitPrice::Fixed(Money::from_cents(900)),
         qty: 100,
@@ -190,7 +190,7 @@ fn full_u64_receipt_ordinals_roundtrip_and_overflow_atomically() {
         .enqueue_player_intent(
             player,
             Intent::PlaceLimit {
-                code: code.clone(),
+                code: code,
                 side: Side::Buy,
                 price: LimitPrice::Fixed(Money::from_cents(900)),
                 qty: 100,
@@ -246,7 +246,7 @@ fn receipt_and_cursor_wire_values_reject_noncanonical_decimal_strings() {
         .enqueue_player_intent(
             AccountId(0),
             Intent::PlaceLimit {
-                code: code.clone(),
+                code: code,
                 side: Side::Buy,
                 price: LimitPrice::Fixed(Money::from_cents(900)),
                 qty: 100,
@@ -282,7 +282,7 @@ fn restore_rejects_cross_lane_receipt_cycle() {
             .enqueue_player_intent(
                 AccountId(0),
                 Intent::PlaceLimit {
-                    code: code.clone(),
+                    code: code,
                     side: Side::Buy,
                     price: LimitPrice::Fixed(Money::from_cents(price)),
                     qty: 100,

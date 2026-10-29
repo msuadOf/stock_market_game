@@ -217,7 +217,7 @@ impl GameSession {
             output.record_release(ExpiryRelease {
                 receipt_index: receipt.index,
                 account: fact.account,
-                stock: fact.code.clone(),
+                stock: fact.code,
                 order_id: fact.order_id,
                 side: fact.side,
                 resources: receipt.delta.released,

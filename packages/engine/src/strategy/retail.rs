@@ -27,7 +27,7 @@ pub(super) fn decide_retail(
                 .stocks
                 .get(c)
                 .expect("key 刚从同一 BTreeMap 取出，必存在（防御式：不可达则显式 panic）");
-            (c.clone(), v)
+            (*c, v)
         }
         None => return Vec::new(),
     };
@@ -45,7 +45,7 @@ pub(super) fn decide_retail(
         return Vec::new();
     }
     if rng.next_f64() < strategy.chase_prob {
-        let context = RetailDecisionContext::from_selected_stock(strategy, code.clone(), sv, own);
+        let context = RetailDecisionContext::from_selected_stock(strategy, code, sv, own);
         match context.classify_chase(strategy) {
             RetailSignal::TakeProfit | RetailSignal::StopLoss => {
                 if let Some(qty) =
@@ -99,8 +99,7 @@ pub(super) fn decide_retail(
         if sellable_codes.is_empty() {
             return Vec::new();
         }
-        let selected =
-            sellable_codes[rng.next_range_u32(0, sellable_codes.len() as u32) as usize].clone();
+        let selected = *sellable_codes[rng.next_range_u32(0, sellable_codes.len() as u32) as usize];
         let selected_view = market
             .stocks
             .get(&selected)
@@ -272,7 +271,7 @@ mod decision_context_tests {
         SelfView {
             cash: Money::from_cents(1_000_000),
             positions: [(
-                code.clone(),
+                *code,
                 PositionView {
                     qty: 100,
                     sellable_qty: sellable,
@@ -293,7 +292,7 @@ mod decision_context_tests {
     ) {
         let code = StockId(0);
         let market = MarketView {
-            stocks: [(code.clone(), stock)].into(),
+            stocks: [(code, stock)].into(),
             tick: 0,
             market_minute: 0,
         };
@@ -395,7 +394,7 @@ mod decision_context_tests {
         let market = MarketView {
             stocks: [
                 (first, stock(1000, &[], 0.0)),
-                (second.clone(), stock(900, &[], 0.0)),
+                (second, stock(900, &[], 0.0)),
             ]
             .into(),
             tick: 0,

@@ -103,7 +103,7 @@ impl<'a, Market> NpcObservationContext<'a, Market> {
             for record in records {
                 if record.kind == kind {
                     entries.push(AcquiredEntry {
-                        company: company.clone(),
+                        company: *company,
                         id: record.id,
                         observed_at: record.observed_at,
                     });

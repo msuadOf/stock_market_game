@@ -363,7 +363,7 @@ fn payment_window_subscription_and_close_state_machine() {
     late.submitted_on = date("2030-06-20");
     assert!(book.record_subscription(late).is_err());
     // 超权利认购拒绝。
-    let mut over = record(1, 99, 99);
+    let over = record(1, 99, 99);
     assert!(book.record_subscription(over).is_err());
     // 关窗（L=2030-06-11）。
     book.close_payment_window(date("2030-06-11")).unwrap();

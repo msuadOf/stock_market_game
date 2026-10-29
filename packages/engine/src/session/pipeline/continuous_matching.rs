@@ -617,7 +617,7 @@ impl ContinuousStockRoundProcessor {
                             self.output.place_facts.push(ContinuousPlaceFact::Resting {
                                 sealed_index: draft.sealed_index(),
                                 account: draft.owner(),
-                                code: draft.code().clone(),
+                                code: *draft.code(),
                                 order_id: draft.order_id(),
                                 side: draft.side(),
                                 price,
@@ -635,7 +635,7 @@ impl ContinuousStockRoundProcessor {
                     self.output.place_facts.push(ContinuousPlaceFact::Filled {
                         sealed_index: draft.sealed_index(),
                         account: draft.owner(),
-                        code: draft.code().clone(),
+                        code: *draft.code(),
                         order_id: draft.order_id(),
                         side: draft.side(),
                         filled_qty,
@@ -743,7 +743,7 @@ pub(super) fn append_trade_facts(
     let mut cursor = *next_index;
     for trade in trades {
         staged.push(ContinuousTradeFact {
-            stock: stock.clone(),
+            stock: *stock,
             triggering_sealed_index,
             stock_local_trade_event_index: cursor,
             trade: trade.clone(),
@@ -930,7 +930,7 @@ pub(super) fn validate_private_market_with_observer(
     let mut matched = 0_usize;
     let make_key = || EnvelopeKey {
         account: AccountId(0),
-        stock: market.code().clone(),
+        stock: *market.code(),
         order: OrderId(0),
         side: Side::Buy,
     };
@@ -1024,7 +1024,7 @@ impl ContinuousStockRoundProcessor {
         self.output.place_facts.push(ContinuousPlaceFact::Rejected {
             sealed_index: draft.sealed_index(),
             account: draft.owner(),
-            code: draft.code().clone(),
+            code: *draft.code(),
             order_id: draft.order_id(),
             reason,
         });
@@ -1158,14 +1158,14 @@ impl<'a> ContinuousFillReceiptProjection<'a> {
             let (buyer, buyer_before, seller, seller_before) = (
                 EnvelopeKey {
                     account: trade.taker,
-                    stock: self.draft.code().clone(),
+                    stock: *self.draft.code(),
                     order: trade.taker_order_id,
                     side: Side::Buy,
                 },
                 trade.taker_filled_value_before,
                 EnvelopeKey {
                     account: trade.maker,
-                    stock: self.draft.code().clone(),
+                    stock: *self.draft.code(),
                     order: trade.maker_order_id,
                     side: Side::Sell,
                 },
@@ -1299,7 +1299,7 @@ fn cancel_continuous_order_from_private_ledger(
     cancel_continuous_order_in_place(market, operation, |operation, order| {
         let key = EnvelopeKey {
             account: order.owner,
-            stock: operation.code.clone(),
+            stock: operation.code,
             order: order.id,
             side: order.side,
         };

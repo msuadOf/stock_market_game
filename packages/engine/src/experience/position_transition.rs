@@ -27,10 +27,7 @@ impl<'a> PositionExperienceTransition<'a> {
         epochs: &'a mut BTreeMap<StockId, HoldingEpoch>,
         code: &StockId,
     ) -> Self {
-        Self::new(
-            stocks.entry(code.clone()).or_default(),
-            epochs.get_mut(code),
-        )
+        Self::new(stocks.entry(*code).or_default(), epochs.get_mut(code))
     }
 
     pub(super) fn reset_initial_holding(

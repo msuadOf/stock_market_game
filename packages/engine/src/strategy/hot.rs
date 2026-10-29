@@ -30,7 +30,7 @@ pub(super) fn decide_hot(
                 affordable_buy_qty(strategy.order_size, sv.daily_upper_limit, own.cash, config)
             {
                 out.push(Intent::PlaceLimit {
-                    code: code.clone(),
+                    code: *code,
                     side: Side::Buy,
                     price: LimitPrice::Highest,
                     qty,
@@ -44,7 +44,7 @@ pub(super) fn decide_hot(
                 .unwrap_or(0);
             if let Some(qty) = a_share_sell_qty(strategy.order_size, sellable) {
                 out.push(Intent::PlaceLimit {
-                    code: code.clone(),
+                    code: *code,
                     side: Side::Sell,
                     price: LimitPrice::Lowest,
                     qty,
@@ -79,7 +79,7 @@ pub(super) fn decide_hot_reversal(
             let price = sv.best_bid.unwrap_or(sv.last_price).min(sv.max_buy_price);
             if let Some(qty) = affordable_buy_qty(strategy.order_size, price, own.cash, config) {
                 out.push(Intent::PlaceLimit {
-                    code: code.clone(),
+                    code: *code,
                     side: Side::Buy,
                     price: LimitPrice::Fixed(price),
                     qty,
@@ -93,7 +93,7 @@ pub(super) fn decide_hot_reversal(
                 .unwrap_or(0);
             if let Some(qty) = a_share_sell_qty(strategy.order_size, sellable) {
                 out.push(Intent::PlaceLimit {
-                    code: code.clone(),
+                    code: *code,
                     side: Side::Sell,
                     price: LimitPrice::Fixed(
                         sv.best_ask.unwrap_or(sv.last_price).max(sv.min_sell_price),
