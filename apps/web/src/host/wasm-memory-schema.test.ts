@@ -123,7 +123,7 @@ test("最终补4：仅修改诊断计数不改变 parser 结果和预算/重建�
   const lowCounter = reseal(entry(), { reloadCount: 999, highWater: { carry: 512 * MiB, reloadCount: 0 } });
   const rows = parse([lowCounter]);
   const normalRows = parse([entry()]);
-  const parameters = { maximumBytes: context.maximumBytes, reclaimBytes: 512 * MiB, measuredMaxLiveBytes: 768 * MiB };
+  const parameters = { maximumBytes: context.maximumBytes, reclaimBytes: 512 * MiB, liveUpperBoundBytes: 768 * MiB };
   const decision = (carryBase: number) => evaluateWasmMemoryBudget({ ...parameters, carryBase, sessionResident: 0, liveBytes: 0 }, "admission");
   assert.deepEqual(decision(rows[0].highWater.carry), decision(normalRows[0].highWater.carry));
   assert.equal(rebuildWasmResidualBytes(rows[0].highWater.carry, parameters), rebuildWasmResidualBytes(normalRows[0].highWater.carry, parameters));

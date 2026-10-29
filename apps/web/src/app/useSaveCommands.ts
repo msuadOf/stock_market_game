@@ -1,6 +1,7 @@
 import type { Dispatch, MutableRefObject, SetStateAction } from "react";
 import type { EngineHost, SpeedMetrics } from "../host/engine-host.ts";
 import type { HostFailure } from "../host/host-update.ts";
+import type { StartupTarget } from "../host/startup-policy.ts";
 import type { FloatAllocation, SessionSetup, Snapshot } from "../types/engine.ts";
 import type { AutoOrderManager } from "../components/auto-order-manager.ts";
 import type { PlayerOrderRefreshGate } from "../components/player-orders.ts";
@@ -16,6 +17,7 @@ import { parseStartDate, setupWithStartDate } from "../components/start-date.ts"
 import type { InitialAllocation } from "../host/initial-allocation.ts";
 
 export interface SaveCommandPorts {
+  startupTarget: StartupTarget;
   hostRef: MutableRefObject<EngineHost | null>;
   initialSaveSourceRef: MutableRefObject<InitialSaveSource<StrictSaveEnvelope>>;
   dayEndPersistenceRef: MutableRefObject<DayEndPersistence>;
@@ -64,6 +66,21 @@ export function createSaveCommands(ports: SaveCommandPorts) {
     setPriceCageEnabledDraft, setFloatAllocationDraft, setInitialAllocation, setStartDateError, setSpeedMetricsPollingGeneration, setSpeedMetrics,
     setSpeedMetricsError,
   } = ports;
+  const requestWasmReplacement = (slot: StrictSaveEnvelope) => {
+    initialSaveSourceRef.current.select(slot);
+    playerOrderRefreshGateRef.current.invalidate();
+    speedMetricsRequestGateRef.current.invalidate();
+    setSpeedMetricsPollingGeneration(speedMetricsRequestGateRef.current.capture());
+    setSpeedMetrics(null);
+    setSpeedMetricsError(null);
+    autoOrderMgrRef.current?.clear();
+    store.dispatch(clearAutoOrders());
+    clearPlayerOrders();
+    setError(null);
+    setReady(false);
+    setSessionSetup({ ...slot.setup });
+    setNotice("已选择日终存档，正在结束旧实例并恢复；新实例就绪后才确认读档成功。");
+  };
   // 存档/读档
   async function recoverFromFile() {
     const recoveryGeneration = sessionReplacementGateRef.current.begin();
@@ -115,6 +132,7 @@ export function createSaveCommands(ports: SaveCommandPorts) {
       dayEndPersistenceRef.current.invalidate();
       await dayEndPersistenceRef.current.idle();
       if (!isCurrent()) return;
+      if (ports.startupTarget.kind === "wasm") { requestWasmReplacement(slot); return; }
       playerOrderRefreshGateRef.current.invalidate();
       speedMetricsLoadInProgressRef.current = true;
       speedMetricsRequestGateRef.current.invalidate();
@@ -151,6 +169,10 @@ export function createSaveCommands(ports: SaveCommandPorts) {
       store.dispatch(clearAutoOrders());
       setNotice(`已读档（第 ${host.day() + 1} 个交易日）`);
     } catch (e) {
+      if (ports.startupTarget.kind === "wasm") {
+        if (isCurrent()) setNotice(`读取日终存档失败：${e instanceof Error ? e.message : String(e)}`);
+        return;
+      }
       const result = await synchronizeCurrentBaseline(() => host.refreshBaseline(), isCurrent);
       if (!isCurrent() || result.kind === "stale") return;
       if (result.kind === "failed") { fatalHostErrorRef.current(`读档后权威基线同步失败：${result.error instanceof Error ? result.error.message : String(result.error)}`); return; }
@@ -191,6 +213,7 @@ export function createSaveCommands(ports: SaveCommandPorts) {
       dayEndPersistenceRef.current.invalidate();
       await dayEndPersistenceRef.current.idle();
       if (!isCurrent()) return;
+      if (ports.startupTarget.kind === "wasm") { requestWasmReplacement(slot); return; }
       playerOrderRefreshGateRef.current.invalidate();
       speedMetricsLoadInProgressRef.current = true;
       speedMetricsRequestGateRef.current.invalidate();
@@ -227,6 +250,10 @@ export function createSaveCommands(ports: SaveCommandPorts) {
       store.dispatch(clearAutoOrders());
       setNotice(`已从文件读档（第 ${host.day() + 1} 个交易日）`);
     } catch (e) {
+      if (ports.startupTarget.kind === "wasm") {
+        if (isCurrent()) setNotice(`读取日终存档失败：${e instanceof Error ? e.message : String(e)}`);
+        return;
+      }
       const result = await synchronizeCurrentBaseline(() => host.refreshBaseline(), isCurrent);
       if (!isCurrent() || result.kind === "stale") return;
       if (result.kind === "failed") { fatalHostErrorRef.current(`文件读档后权威基线同步失败：${result.error instanceof Error ? result.error.message : String(result.error)}`); return; }

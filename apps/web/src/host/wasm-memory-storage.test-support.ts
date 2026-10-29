@@ -50,7 +50,7 @@ export function fixture(changes: Partial<WasmMemoryStorageOptions> = {}) {
   // 与预置 FORK_A / FORK_B 分离，碰撞行为由专门用例显式注入。
   let random = 64;
   const options: WasmMemoryStorageOptions = { session: session.port, ledger: ledger.port,
-    maximumBytes: 2048 * MiB, reclaimBytes: 512 * MiB, measuredMaxLiveBytes: 256 * MiB,
+    maximumBytes: 2048 * MiB, reclaimBytes: 512 * MiB, liveUpperBoundBytes: 256 * MiB,
     randomValues(bytes) { bytes.fill(random++); }, now: () => 1000, ...changes };
   const owner = () => new WasmMemoryStorage(options);
   const existing = (value: unknown = snapshot()) => {

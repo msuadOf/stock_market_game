@@ -413,7 +413,7 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
     refreshDailyChart();
   }, [chartCode, refreshDailyChart]);
 
-  const saveCommands = useSaveCommands({ hostRef, initialSaveSourceRef, dayEndPersistenceRef, autoOrderMgrRef,
+  const saveCommands = useSaveCommands({ hostRef, initialSaveSourceRef, dayEndPersistenceRef, autoOrderMgrRef, startupTarget,
     sessionReplacementGateRef, saveSelectionGenerationRef, dayEndFileTargetRef, playerOrderRefreshGateRef,
     speedMetricsLoadInProgressRef, speedMetricsRequestGateRef, fatalHostErrorRef,
     activeSetup, startDateDraft, priceCageEnabledDraft, floatAllocationDraft, loadFromFile, selectDayEndFileTarget, getBrowserSaveRepository,
@@ -482,6 +482,7 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
   if (!ready || !hostBaselineReady || !hasSnapshot) {
     return <div className="app-loading">
       <p role="status" aria-live="polite">正在加载行情引擎…</p>
+      {notice !== null && <p role="status" aria-live="polite">{notice}</p>}
       <Button onClick={selectHost}>取消加载，返回启动选择</Button>
       {startupReturnError !== null && <p role="alert">{startupReturnError}</p>}
     </div>;

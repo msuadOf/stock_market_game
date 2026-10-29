@@ -18,14 +18,14 @@ function fixture(overrides: Partial<SessionHostLifecyclePorts> = {}) {
   let update!: (value: HostUpdate) => void, failure!: (value: HostFailure) => void;
   const host = commandHostFixture({
     start: async (onUpdate: typeof update, onFailure: typeof failure) => { calls.push("start"); update = onUpdate; failure = onFailure; },
-    stop: async () => { calls.push("stop"); }, dispose: async () => { calls.push("dispose"); },
+    stop: async () => { calls.push("stop"); }, refreshBaseline: async () => {}, dispose: async () => { calls.push("dispose"); },
     setSpeed: async () => { calls.push("speed"); }, setPausePreferences: async () => { calls.push("preferences"); },
     load: async () => { calls.push("load"); }, submitIntent: async () => {},
     initialAllocation: async () => ({ stocks: [] }),
   });
   const source = new InitialSaveSource<StrictSaveEnvelope>();
   const ports: SessionHostLifecyclePorts = {
-    hostRef: { current: null }, initialSaveSourceRef: { current: source }, dayEndPersistenceRef: { current: new DayEndPersistence() },
+    hostRef: { current: null }, hostTransitionRef: { current: Promise.resolve({ kind: "released" }) }, initialSaveSourceRef: { current: source }, dayEndPersistenceRef: { current: new DayEndPersistence() },
     autoOrderMgrRef: { current: null }, sessionReplacementGateRef: { current: new SessionReplacementGate() }, saveSelectionGenerationRef: { current: 0 },
     playerOrderRefreshGateRef: { current: new PlayerOrderRefreshGate() },
     hostUpdateRef: { current: () => { calls.push("update"); } }, fatalHostErrorRef: { current: () => { calls.push("failure"); } },
@@ -40,7 +40,7 @@ function fixture(overrides: Partial<SessionHostLifecyclePorts> = {}) {
     setFloatAllocationDraft: () => {}, setInitialAllocation: () => {},
     setDeliveryModes: () => {}, setDeliveryModeState: () => {}, setNotice: (value) => calls.push(value), setReady: () => { calls.push("ready"); },
     onSpawnFailure: () => { calls.push("spawn-failure"); },
-    setError: (value) => { calls.push(String(value)); }, onRunning: (value) => { calls.push(`running:${value}`); }, onAutoTriggered: () => {}, ...overrides,
+    setError: (value) => { calls.push(typeof value === "string" ? value : `${value.message} ${value.cause instanceof Error ? value.cause.message : String(value.cause)}`); }, onRunning: (value) => { calls.push(`running:${value}`); }, onAutoTriggered: () => {}, ...overrides,
   };
   return { calls, host, source, ports, runtime: createSessionHostLifecycle(ports), update: () => update, failure: () => failure };
 }
@@ -343,9 +343,11 @@ test("构造尚未 resolve 就可报告；取消旧 sink 后新 lifecycle 追加
     return commandHostFixture({ ...f.host });
   };
   const next = createSessionHostLifecycle(f.ports);
-  await next.start();
+  const nextStarting = next.start();
+  await settleTasks();
+  assert.equal(reports.length, 1, "旧create未完成前不能启动下一组");
   complete(f.host);
-  await starting;
+  await Promise.all([starting, nextStarting]);
   assert.equal(reports.length, 2);
   assert.equal(reports[0], original);
   assert.equal(reports[1].message, "新生命周期失败");
@@ -391,4 +393,380 @@ test("WASM 启动档作为同一第五参数交给 createHost，构造前不调�
   await createSessionHostLifecycle(f.ports).start();
   assert.equal(f.calls.includes("load"), false, "WASM 不能先空建宿主再恢复");
   assert.equal(f.calls.includes("ready"), true);
+});
+
+function deferred<Value>() {
+  let resolve!: (value: Value) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<Value>((done, fail) => { resolve = done; reject = fail; });
+  return { promise, resolve, reject };
+}
+async function settleTasks() { for (let index = 0; index < 8; index++) await Promise.resolve(); }
+
+test("共享transition：下一create等待旧异步create和晚到host释放均完成", async () => {
+  const created = deferred<EngineHost>(), creating = deferred<void>();
+  const disposed = deferred<void>(), disposing = deferred<void>();
+  const f = fixture({ createHost: async () => { creating.resolve(); return created.promise; } });
+  f.host.dispose = async () => { disposing.resolve(); await disposed.promise; };
+  const oldStarting = f.runtime.start(); await creating.promise;
+  await f.runtime.dispose();
+  let nextCreates = 0;
+  const nextHost = commandHostFixture({ ...f.host, dispose: async () => {} });
+  const next = createSessionHostLifecycle({ ...f.ports, createHost: async () => { nextCreates++; return nextHost; } });
+  const nextStarting = next.start(); await settleTasks();
+  assert.equal(nextCreates, 0, "旧create未定时禁止第二组");
+  created.resolve(f.host); await disposing.promise; await settleTasks();
+  assert.equal(nextCreates, 0, "旧晚到host释放未定时禁止第二组");
+  disposed.resolve(); await Promise.all([oldStarting, nextStarting]);
+  assert.equal(nextCreates, 1); assert.equal(f.ports.hostRef.current, nextHost);
+  await next.dispose();
+});
+
+test("共享transition：旧已就绪host释放确认前新create为0", async () => {
+  const f = fixture(); await f.runtime.start();
+  const disposed = deferred<void>(), disposing = deferred<void>(); let nextCreates = 0;
+  f.host.dispose = async () => { disposing.resolve(); await disposed.promise; };
+  const closing = f.runtime.dispose(); await disposing.promise;
+  const next = createSessionHostLifecycle({ ...f.ports, createHost: async () => { nextCreates++; return commandHostFixture(); } });
+  const nextStarting = next.start(); await settleTasks(); assert.equal(nextCreates, 0);
+  disposed.resolve(); await Promise.all([closing, nextStarting]); assert.equal(nextCreates, 1);
+  await next.dispose();
+});
+
+test("共享transition：释放失败显式阻止下一create并保原error事实", async () => {
+  const f = fixture(); await f.runtime.start();
+  const cause = new Error("旧实例释放未获确认"); let nextCreates = 0;
+  f.host.dispose = async () => { throw cause; };
+  await assert.rejects(f.runtime.dispose(), (error) => error === cause);
+  const next = createSessionHostLifecycle({ ...f.ports, createHost: async () => { nextCreates++; return commandHostFixture(); } });
+  await next.start(); assert.equal(nextCreates, 0);
+  const outcome = await f.ports.hostTransitionRef.current;
+  assert.equal(outcome.kind, "failed"); if (outcome.kind === "failed") assert.equal(outcome.error, cause);
+  assert.ok(f.calls.some((value) => value.includes(cause.message)));
+});
+
+test("共享transition：同步dispose抛错同样锁存，下一UI保原cause", async () => {
+  const f = fixture(); await f.runtime.start();
+  const cause = new Error("dispose同步失败"); f.host.dispose = () => { throw cause; };
+  await assert.rejects(f.runtime.dispose(), (error) => error === cause);
+  let failure: string | HostFailure | null = null; let creates = 0;
+  await createSessionHostLifecycle({ ...f.ports, setError: (value) => { failure = value; },
+    createHost: async () => { creates++; return commandHostFixture(); } }).start();
+  assert.equal(creates, 0); assert.ok(failure !== null && typeof failure === "object");
+  assert.equal((failure as HostFailure).cause, cause);
+});
+
+test("共享transition：尚未取得前序资源owner的排队cleanup不清当前协议或manager", async () => {
+  const f = fixture(); await f.runtime.start(); const before = [...f.calls];
+  const selection = f.ports.saveSelectionGenerationRef.current;
+  const epoch = f.ports.sessionReplacementGateRef.current.begin()!;
+  const queued = createSessionHostLifecycle(f.ports); const starting = queued.start();
+  await queued.dispose(); assert.deepEqual(f.calls, before); assert.equal(f.ports.hostRef.current, f.host);
+  assert.equal(f.ports.saveSelectionGenerationRef.current, selection);
+  assert.equal(f.ports.sessionReplacementGateRef.current.isCurrent(epoch), true);
+  await f.runtime.dispose(); await starting;
+});
+
+test("共享transition：旧查询挂起但host释放成功后不阻塞下一create", async () => {
+  const queried = deferred<void>(), allocation = deferred<{ stocks: [] }>();
+  const f = fixture();
+  f.host.initialAllocation = async () => { queried.resolve(); return allocation.promise; };
+  const oldStarting = f.runtime.start(); await queried.promise; await f.runtime.dispose();
+  let nextCreates = 0;
+  const next = createSessionHostLifecycle({ ...f.ports, createHost: async () => { nextCreates++; return commandHostFixture(); } });
+  await next.start(); assert.equal(nextCreates, 1, "不等待已销毁host的旧查询");
+  const current = f.ports.hostRef.current;
+  allocation.resolve({ stocks: [] }); await oldStarting;
+  assert.equal(f.ports.hostRef.current, current); await next.dispose();
+});
+
+test("共享transition：排队effect取消不创建，后继仍等待最旧释放", async () => {
+  const f = fixture(); await f.runtime.start();
+  const disposed = deferred<void>(); f.host.dispose = () => disposed.promise;
+  const closing = f.runtime.dispose(); let cancelledCreates = 0; let finalCreates = 0;
+  const cancelled = createSessionHostLifecycle({ ...f.ports, createHost: async () => { cancelledCreates++; return commandHostFixture(); } });
+  const cancelledStarting = cancelled.start(); await cancelled.dispose();
+  const final = createSessionHostLifecycle({ ...f.ports, createHost: async () => { finalCreates++; return commandHostFixture(); } });
+  const finalStarting = final.start(); await settleTasks(); assert.equal(finalCreates, 0);
+  disposed.resolve(); await Promise.all([closing, cancelledStarting, finalStarting]);
+  assert.equal(cancelledCreates, 0); assert.equal(finalCreates, 1); await final.dispose();
+});
+
+test("共享transition：未start的effect不占位，旧dispose重复不触及新资源", async () => {
+  const f = fixture(); const before = f.ports.hostTransitionRef.current;
+  await createSessionHostLifecycle(f.ports).dispose(); assert.equal(f.ports.hostTransitionRef.current, before);
+  await f.runtime.start(); await f.runtime.dispose();
+  const next = createSessionHostLifecycle(f.ports); await next.start(); const calls = [...f.calls];
+  await f.runtime.dispose(); assert.deepEqual(f.calls, calls); assert.equal(f.ports.hostRef.current, f.host);
+  await next.dispose();
+});
+
+test("共享transition：重复start拒绝且不重新占尾，stop抛undefined也显式失败", async () => {
+  const f = fixture(); await f.runtime.start(); const tail = f.ports.hostTransitionRef.current;
+  await assert.rejects(f.runtime.start(), /只允许 start 一次/); assert.equal(f.ports.hostTransitionRef.current, tail);
+  f.host.stop = async () => { throw undefined; };
+  await assert.rejects(f.runtime.stopCurrentSession(), (error) => error === undefined);
+  const outcome = await tail;
+  assert.equal(outcome.kind, "failed"); if (outcome.kind === "failed") assert.equal(outcome.error, undefined);
+});
+
+test("共享transition：取消后create拒绝无late host，后继可继续且不丢诊断", async () => {
+  const created = deferred<EngineHost>(), entered = deferred<void>();
+  const f = fixture({ createHost: async () => { entered.resolve(); return created.promise; } });
+  const oldStarting = f.runtime.start(); await entered.promise; await f.runtime.dispose();
+  let creates = 0;
+  const next = createSessionHostLifecycle({ ...f.ports, createHost: async () => { creates++; return commandHostFixture(); } });
+  const nextStarting = next.start(); await settleTasks(); assert.equal(creates, 0);
+  created.reject(new Error("旧create失败，已清资源")); await Promise.all([oldStarting, nextStarting]);
+  assert.equal(creates, 1); assert.ok(f.calls.some((value) => value.includes("旧create失败，已清资源")));
+  await next.dispose();
+});
+
+
+import { WasmDocumentMemoryOwner } from "../host/wasm-document-memory-owner.ts";
+import type { WasmFinalRelease } from "../host/wasm-document-memory-owner.ts";
+import { WasmMemoryStorage } from "../host/wasm-memory-storage.ts";
+import { fixture as memoryFixture, MiB, SNAPSHOT_KEY } from "../host/wasm-memory-storage.test-support.ts";
+function memoryOwnerFixture() {
+  const memory = memoryFixture();
+  const owner = new WasmDocumentMemoryOwner({ maximumBytes: memory.options.maximumBytes, reclaimBytes: memory.options.reclaimBytes,
+    readCapacity: () => ({ kind: "enforced-capacity", initialPages: 1024, maximumPages: 4096, liveUpperBoundBytes: 256 * MiB }),
+    restoreCapabilities: { forArchive: () => ({ kind: "verified-package", wasmSha256: "a".repeat(64), glueSha256: "b".repeat(64), sourceSha256: "c".repeat(64), buildManifestSha256: "d".repeat(64), exports: ["restore_json", "facade_slot_init_for_restore_json"] }) },
+    createStorage: (liveUpperBoundBytes) => new WasmMemoryStorage({ ...memory.options, liveUpperBoundBytes }),
+    randomNonce: () => "1234567890abcdef1234567890abcdef" });
+  return { memory, owner };
+}
+
+test("document owner真实release回执晚于dispose时，下一effect不能分配且drop只计一次", { timeout: 10000 }, async () => {
+  const m = memoryOwnerFixture(), release = deferred<WasmFinalRelease>(); let creates = 0;
+  const f = fixture({ wasmMemoryOwner: m.owner, hostTransitionRef: m.owner.hostTransitionRef });
+  f.host.tick = () => 4; f.host.day = () => 1;
+  f.ports.createHost = async (_setup, _seed, _target, _sink, _archive, ticket) => {
+    creates++; assert.ok(ticket); ticket.registerRelease(release.promise); return f.host;
+  };
+  const first = createSessionHostLifecycle(f.ports); await first.start();
+  const closing = first.dispose(); await settleTasks();
+  const next = createSessionHostLifecycle({ ...f.ports, createHost: async (_setup, _seed, _target, _sink, _archive, ticket) => {
+    creates++; ticket!.registerRelease(Promise.resolve({ kind: "not-allocated" })); return commandHostFixture({ ...f.host, tick: () => 0, day: () => 0 });
+  } });
+  const starting = next.start(); await settleTasks(); assert.equal(creates, 1);
+  release.resolve({ kind: "released", finalBytes: 64 * MiB, growthStopped: true, referencesDropped: true });
+  await Promise.all([closing, starting]); assert.equal(creates, 2);
+  await first.dispose();
+  const snapshot = JSON.parse(m.memory.session.data.get(SNAPSHOT_KEY)!);
+  assert.equal(snapshot.sessionResident, 64 * MiB); assert.equal(snapshot.liveUpperBound, 256 * MiB);
+  await next.dispose();
+});
+
+test("pending完整X先获用户确认再传同一目标，只restore不读quickslot或空new+load", { timeout: 10000 }, async () => {
+  const m = memoryOwnerFixture(), archive = commandDayEndArchiveFixture();
+  for (let index = 0; index < 2; index++) {
+    const admitted = m.owner.admit({ kind: "new", setup: DEFAULT_SETUP, seed: "42" });
+    assert.equal(admitted.kind, "admitted"); if (admitted.kind !== "admitted") throw new Error("预期admitted");
+    m.owner.recordCommittedBoundary(admitted.ticket, { tick: 6, day: 2 });
+    admitted.ticket.registerRelease(Promise.resolve({ kind: "released", finalBytes: 256 * MiB, growthStopped: true, referencesDropped: true }));
+    await m.owner.finish(admitted.ticket);
+  }
+  assert.equal(m.owner.admit({ kind: "load", archive }).kind, "reload");
+  const nextOwner = new WasmDocumentMemoryOwner({ maximumBytes: m.memory.options.maximumBytes, reclaimBytes: m.memory.options.reclaimBytes,
+    readCapacity: () => ({ kind: "enforced-capacity", initialPages: 1024, maximumPages: 4096, liveUpperBoundBytes: 256 * MiB }),
+    restoreCapabilities: { forArchive: () => ({ kind: "verified-package", wasmSha256: "a".repeat(64), glueSha256: "b".repeat(64), sourceSha256: "c".repeat(64), buildManifestSha256: "d".repeat(64), exports: ["restore_json", "facade_slot_init_for_restore_json"] }) },
+    createStorage: (liveUpperBoundBytes) => new WasmMemoryStorage({ ...m.memory.options, liveUpperBoundBytes }) });
+  const confirmation = deferred<void>(); let confirms = 0, creates = 0;
+  const f = fixture({ wasmMemoryOwner: nextOwner, hostTransitionRef: nextOwner.hostTransitionRef,
+    confirmMemoryHandover: async (handover) => {
+      confirms++; await confirmation.promise;
+      assert.equal(handover.kind, "frozen"); return handover.kind === "frozen" ? handover.pendingIntent : null;
+    }, getBrowserSaveRepository: () => { throw new Error("pending确认不能重读quickslot"); } });
+  f.host.tick = () => 6; f.host.day = () => 2;
+  f.ports.createHost = async (_setup, seed, _target, sink, x, ticket) => {
+    creates++; assert.equal(seed, BigInt(archive.seed)); assert.equal(typeof sink, "function");
+    assert.deepEqual(x, archive); assert.ok(ticket);
+    assert.equal(JSON.parse(m.memory.session.data.get(SNAPSHOT_KEY)!).handover, undefined);
+    ticket.registerRelease(Promise.resolve({ kind: "not-allocated" })); return f.host;
+  };
+  const current = createSessionHostLifecycle(f.ports), starting = current.start(); await settleTasks();
+  assert.equal(confirms, 1); assert.equal(creates, 0);
+  confirmation.resolve(); await starting;
+  assert.equal(creates, 1); assert.equal(f.calls.includes("load"), false); assert.equal(f.calls.includes("ready"), true);
+  await current.dispose();
+});
+
+test("reload待确认X时用户明确改选Y，先确认Y再单次消费；不重读快速槽或复活X", { timeout: 10000 }, async () => {
+  const m = memoryOwnerFixture(), archive = commandDayEndArchiveFixture();
+  for (let index = 0; index < 2; index++) {
+    const result = m.owner.admit({ kind: "new", setup: DEFAULT_SETUP, seed: "42" });
+    if (result.kind !== "admitted") throw new Error("预期admitted");
+    m.owner.recordCommittedBoundary(result.ticket, { tick: 6, day: 2 });
+    result.ticket.registerRelease(Promise.resolve({ kind: "released", finalBytes: 256 * MiB, growthStopped: true, referencesDropped: true }));
+    await m.owner.finish(result.ticket);
+  }
+  m.owner.admit({ kind: "load", archive });
+  const next = new WasmDocumentMemoryOwner({ maximumBytes: m.memory.options.maximumBytes, reclaimBytes: m.memory.options.reclaimBytes,
+    readCapacity: () => ({ kind: "enforced-capacity", initialPages: 1024, maximumPages: 4096, liveUpperBoundBytes: 256 * MiB }),
+    restoreCapabilities: { forArchive: () => ({ kind: "verified-package", wasmSha256: "a".repeat(64), glueSha256: "b".repeat(64), sourceSha256: "c".repeat(64), buildManifestSha256: "d".repeat(64), exports: ["restore_json", "facade_slot_init_for_restore_json"] }) },
+    createStorage: (liveUpperBoundBytes) => new WasmMemoryStorage({ ...m.memory.options, liveUpperBoundBytes }) });
+  const y = { ...archive, seed: "99" }; let confirmed = 0, created = 0;
+  const f = fixture({ wasmMemoryOwner: next, hostTransitionRef: next.hostTransitionRef,
+    confirmMemoryHandover: async (old, explicit) => {
+      confirmed++; assert.equal(old.kind, "frozen");
+      assert.equal(explicit?.kind, "load"); if (explicit?.kind === "load") assert.equal(explicit.archive, y);
+      assert.equal(JSON.parse(m.memory.session.data.get(SNAPSHOT_KEY)!).handover.pendingIntent.archive.seed, archive.seed);
+      return explicit!;
+    }, getBrowserSaveRepository: () => { throw new Error("不得重读快速槽"); } });
+  f.source.select(y); f.host.tick = () => 6; f.host.day = () => 2;
+  f.ports.createHost = async (_setup, seed, _target, _sink, selected, ticket) => {
+    created++; assert.equal(seed, 99n); assert.deepEqual(selected, y);
+    assert.equal(JSON.parse(m.memory.session.data.get(SNAPSHOT_KEY)!).handover, undefined);
+    ticket!.registerRelease(Promise.resolve({ kind: "not-allocated" })); return f.host;
+  };
+  const current = createSessionHostLifecycle(f.ports); await current.start();
+  assert.equal(confirmed, 1); assert.equal(created, 1); assert.equal(f.calls.includes("load"), false);
+  await current.dispose();
+});
+
+test("旧create拒绝后仍等待已登记Memory回执，不能将create失败当零残留", { timeout: 10000 }, async () => {
+  const m = memoryOwnerFixture(), completion = deferred<WasmFinalRelease>(), creating = deferred<void>(), rejectCreate = deferred<EngineHost>();
+  const f = fixture({ wasmMemoryOwner: m.owner, hostTransitionRef: m.owner.hostTransitionRef });
+  f.ports.createHost = async (_setup, _seed, _target, _sink, _x, ticket) => {
+    ticket!.registerRelease(completion.promise); creating.resolve(); return rejectCreate.promise;
+  };
+  const first = createSessionHostLifecycle(f.ports), starting = first.start(); await creating.promise; await first.dispose();
+  let nextCreates = 0;
+  const next = createSessionHostLifecycle({ ...f.ports, createHost: async (_setup, _seed, _target, _sink, _x, ticket) => {
+    nextCreates++; ticket!.registerRelease(Promise.resolve({ kind: "not-allocated" })); return commandHostFixture({ ...f.host, tick: () => 0, day: () => 0 });
+  } });
+  const nextStarting = next.start(); rejectCreate.reject(new Error("构造失败，资源仍在终结")); await settleTasks();
+  assert.equal(nextCreates, 0); assert.equal(JSON.parse(m.memory.session.data.get(SNAPSHOT_KEY)!).liveUpperBound, 256 * MiB);
+  completion.resolve({ kind: "released", finalBytes: 64 * MiB, growthStopped: true, referencesDropped: true });
+  await Promise.all([starting, nextStarting]); assert.equal(nextCreates, 1);
+  assert.equal(JSON.parse(m.memory.session.data.get(SNAPSHOT_KEY)!).sessionResident, 64 * MiB);
+  await next.dispose();
+});
+
+test("协议registration清理抛错仍须dispose与真实receipt终结，保原失败并禁止后继", { timeout: 10000 }, async () => {
+  const m = memoryOwnerFixture(); const cause = new Error("协议解绑失败"); let disposed = 0;
+  const f = fixture({ wasmMemoryOwner: m.owner, hostTransitionRef: m.owner.hostTransitionRef, disconnectProtocol: () => { throw cause; } });
+  f.host.tick = () => 1; f.host.day = () => 0; f.host.dispose = async () => { disposed++; };
+  f.ports.createHost = async (_setup, _seed, _target, _sink, _x, ticket) => {
+    ticket!.registerRelease(Promise.resolve({ kind: "released", finalBytes: 64 * MiB, growthStopped: true, referencesDropped: true })); return f.host;
+  };
+  const current = createSessionHostLifecycle(f.ports); await current.start();
+  await assert.rejects(current.dispose(), (error) => error === cause);
+  assert.equal(disposed, 1); assert.equal(JSON.parse(m.memory.session.data.get(SNAPSHOT_KEY)!).liveUpperBound, 0);
+  let creates = 0; await createSessionHostLifecycle({ ...f.ports, createHost: async () => { creates++; return f.host; } }).start();
+  assert.equal(creates, 0);
+});
+
+test("真实factory坏runtime query在Worker前登记确定not-allocated，保原错且无残留计费", { timeout: 10000 }, async () => {
+  const module = await import("./useSessionHostLifecycle.ts");
+  const s = memoryOwnerFixture(), admitted = s.owner.admit({ kind: "new", setup: DEFAULT_SETUP, seed: "42" });
+  if (admitted.kind !== "admitted") throw new Error("预期admitted");
+  const oldWindow = globalThis.window;
+  Object.assign(globalThis, { window: { location: { search: "?wasmRuntime=bad" } } });
+  try {
+    assert.throws(() => module.createSessionHost(DEFAULT_SETUP, 42n, { kind: "wasm" }, false, () => {}, null, admitted.ticket), /wasmRuntime/);
+    await s.owner.finish(admitted.ticket);
+    assert.equal(JSON.parse(s.memory.session.data.get(SNAPSHOT_KEY)!).sessionResident, 0);
+    assert.equal(s.owner.admit({ kind: "new", setup: DEFAULT_SETUP, seed: "42" }).kind, "admitted");
+  } finally { Object.assign(globalThis, { window: oldWindow }); }
+});
+
+test("失败交接重试须确认原X，不读quickslot/抽新seed/受理Y，提示后才reload", { timeout: 10000 }, async () => {
+  const m = memoryOwnerFixture();
+  for (let index = 0; index < 2; index++) {
+    const a = m.owner.admit({ kind: "new", setup: DEFAULT_SETUP, seed: "42" });
+    if (a.kind !== "admitted") throw new Error("预期admitted");
+    m.owner.recordCommittedBoundary(a.ticket, { tick: 4, day: 1 });
+    a.ticket.registerRelease(Promise.resolve({ kind: "released", finalBytes: 256 * MiB, growthStopped: true, referencesDropped: true })); await m.owner.finish(a.ticket);
+  }
+  m.memory.session.onCall((call) => { if (call.operation === "set" && call.key === SNAPSHOT_KEY) throw new Error("quota"); });
+  assert.throws(() => m.owner.admit({ kind: "new", setup: DEFAULT_SETUP, seed: "42" }));
+  m.memory.session.onCall(null);
+  const confirmed = deferred<boolean>(); let prompts = 0, creates = 0, reloads = 0;
+  const f = fixture({ wasmMemoryOwner: m.owner, hostTransitionRef: m.owner.hostTransitionRef,
+    createSeed: () => { throw new Error("同事件重试不得再抽seed"); }, getBrowserSaveRepository: () => { throw new Error("同事件重试不得读quickslot"); },
+    createHost: async () => { creates++; throw new Error("reload前不得分配"); },
+    confirmMemoryReloadRetry: async (handover) => { prompts++; assert.equal(handover.pendingIntent?.kind, "new"); if (handover.pendingIntent?.kind === "new") assert.equal(handover.pendingIntent.seed, "42"); return confirmed.promise; },
+    reloadAfterMemoryNotice: async () => { reloads++; assert.ok(f.calls.some((call) => /已冻结本次选择/.test(call))); },
+  });
+  f.source.select({ ...commandDayEndArchiveFixture(), seed: "99" });
+  const current = createSessionHostLifecycle(f.ports), starting = current.start(); await settleTasks();
+  assert.equal(prompts, 1); assert.equal(reloads, 0); assert.equal(creates, 0);
+  confirmed.resolve(true); await starting;
+  assert.equal(reloads, 1); assert.equal(creates, 0);
+  assert.equal(JSON.parse(m.memory.session.data.get(SNAPSHOT_KEY)!).handover.pendingIntent.seed, "42");
+  assert.equal((await f.source.read(async () => null))!.seed, "99", "本次Y未被静默消费或覆盖");
+});
+
+test("坏query与回执登记同时失败，用户可见文本保留两个原始原因", { timeout: 10000 }, async () => {
+  const { createSessionHost } = await import("./useSessionHostLifecycle.ts");
+  const old = Object.getOwnPropertyDescriptor(globalThis, "window"), registration = new Error("登记端口拒绝");
+  Object.defineProperty(globalThis, "window", { configurable: true, value: { location: { search: "?wasmRuntime=bad" } } });
+  const admitted = memoryOwnerFixture().owner.admit({ kind: "new", setup: DEFAULT_SETUP, seed: "42" });
+  if (admitted.kind !== "admitted") throw new Error("预期admitted");
+  try {
+    assert.throws(() => createSessionHost(DEFAULT_SETUP, 42n, { kind: "wasm" }, false, () => {}, null,
+      { ...admitted.ticket, registerRelease: () => { throw registration; } }), (error: unknown) => {
+        assert.ok(error instanceof AggregateError); assert.ok(error.errors.includes(registration));
+        assert.match(fatalWasmInitializationMessage(error), /wasmRuntime.*登记端口拒绝/); return true;
+      });
+  } finally { if (old === undefined) Reflect.deleteProperty(globalThis, "window"); else Object.defineProperty(globalThis, "window", old); }
+});
+
+test("健康WASM释放先stop确认和refreshBaseline，再读取最终commit边界后dispose", { timeout: 10000 }, async () => {
+  const m = memoryOwnerFixture(); const order: string[] = []; let cachedTick = 0, paused = false;
+  const f = fixture({ wasmMemoryOwner: m.owner, hostTransitionRef: m.owner.hostTransitionRef });
+  f.host.tick = () => { order.push("tick"); return cachedTick; }; f.host.day = () => { order.push("day"); return 2; };
+  f.host.stop = async () => { order.push("stop"); paused = true; };
+  f.host.refreshBaseline = async () => { assert.equal(paused, true); order.push("baseline"); cachedTick = 9; };
+  f.host.dispose = async () => { order.push("dispose"); };
+  f.ports.createHost = async (_setup, _seed, _target, _sink, _x, ticket) => {
+    ticket!.registerRelease(Promise.resolve({ kind: "released", finalBytes: 64 * MiB, growthStopped: true, referencesDropped: true })); return f.host;
+  };
+  const captured: { tick: number; day: number }[] = [], record = m.owner.recordCommittedBoundary.bind(m.owner);
+  m.owner.recordCommittedBoundary = (ticket, boundary) => { captured.push(boundary); record(ticket, boundary); };
+  const current = createSessionHostLifecycle(f.ports); await current.start(); order.length = 0; paused = false;
+  await current.dispose();
+  assert.deepEqual(order, ["stop", "baseline", "tick", "day", "dispose"]);
+  assert.deepEqual(captured, [{ tick: 9, day: 2 }]);
+});
+
+test("WASM stop或baseline失败仍dispose与finish，不把旧cached值记为最终边界", { timeout: 10000 }, async () => {
+  for (const stage of ["stop", "baseline"] as const) {
+    const m = memoryOwnerFixture(), cause = new Error(`${stage}失败`); let stops = 0, disposed = 0, reads = 0, refreshes = 0;
+    const f = fixture({ wasmMemoryOwner: m.owner, hostTransitionRef: m.owner.hostTransitionRef, isDocumentHidden: () => false });
+    f.host.tick = () => { reads++; return 0; }; f.host.day = () => { reads++; return 0; };
+    f.host.stop = async () => { stops++; if (stage === "stop") throw cause; };
+    f.host.refreshBaseline = async () => { refreshes++; if (stage === "baseline") throw cause; };
+    f.host.dispose = async () => { disposed++; };
+    f.ports.createHost = async (_setup, _seed, _target, _sink, _x, ticket) => {
+      ticket!.registerRelease(Promise.resolve({ kind: "released", finalBytes: 64 * MiB, growthStopped: true, referencesDropped: true })); return f.host;
+    };
+    const current = createSessionHostLifecycle(f.ports); await current.start();
+    await assert.rejects(current.stopCurrentSession(), (error: unknown) => error === cause);
+    assert.equal(stops, 1); assert.equal(refreshes, stage === "stop" ? 0 : 1); assert.equal(reads, 0); assert.equal(disposed, 1);
+    assert.equal(JSON.parse(m.memory.session.data.get(SNAPSHOT_KEY)!).sessionResident, 64 * MiB);
+    const outcome = await m.owner.hostTransitionRef.current; assert.equal(outcome.kind, "failed");
+  }
+});
+
+test("释放清理相位仅内部ACK同宿主transport，取消UI不消费且相位结束仍拒绝", { timeout: 10000 }, async () => {
+  const m = memoryOwnerFixture(), f = fixture({ wasmMemoryOwner: m.owner, hostTransitionRef: m.owner.hostTransitionRef });
+  f.host.tick = () => 9; f.host.day = () => 2;
+  f.ports.createHost = async (_setup, _seed, _target, _sink, _x, ticket) => {
+    ticket!.registerRelease(Promise.resolve({ kind: "released", finalBytes: 64 * MiB, growthStopped: true, referencesDropped: true })); return f.host;
+  };
+  let baselineAck: unknown, protocolAck: unknown;
+  f.host.refreshBaseline = async () => {
+    baselineAck = f.update()({ type: "baseline" } as HostUpdate);
+    protocolAck = f.update()({ type: "protocol" } as HostUpdate);
+    if (baselineAck === false) throw new Error("Worker消费者拒绝baseline");
+  };
+  const current = createSessionHostLifecycle(f.ports); await current.start(); f.calls.length = 0;
+  await current.dispose();
+  assert.equal(baselineAck, true); assert.equal(protocolAck, true);
+  assert.equal(f.calls.includes("update"), false, "清理baseline不可消费到已取消UI");
+  assert.equal(f.update()({ type: "baseline" } as HostUpdate), false, "清理相位结束后旧baseline不再ACK");
+  assert.equal(f.update()({ type: "protocol" } as HostUpdate), false, "清理相位结束后旧protocol不再ACK");
 });

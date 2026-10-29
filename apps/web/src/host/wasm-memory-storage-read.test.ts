@@ -27,10 +27,10 @@ test("活动live三和F5只折叠一次，正推进落f5，起步锚清session/l
   assert.equal(f.owner().open().carriedResidualBytes, 832 * MiB);
 });
 
-test("快照红而ledger绿用max/highWater双补足；未知真实measurement显式not-ready不写新锚", () => {
+test("快照红而ledger绿用max/highWater双补足；未知可信构造上界显式not-ready不写新锚", () => {
   const f = fixture(); f.existing({ broken: true }); f.put(FORK_A, [ledgerEntry(0, 512 * MiB)]); f.put(FORK_B, [ledgerEntry(0, 1024 * MiB)]);
   assert.equal(f.owner().open().carriedResidualBytes, 1792 * MiB);
-  const g = fixture({ measuredMaxLiveBytes: null }); g.existing(null); g.put(FORK_A, [ledgerEntry()]);
+  const g = fixture({ liveUpperBoundBytes: null }); g.existing(null); g.put(FORK_A, [ledgerEntry()]);
   const before = [...g.session.data]; const result = g.owner().open();
   assert.equal(result.kind, "not-ready"); assert.equal(result.carriedResidualBytes, null); assert.deepEqual([...g.session.data], before);
 });
@@ -108,8 +108,8 @@ test("连续活动局F5正推进都落账，随后失快照重建封顶不洗残
   f.session.data.delete(SNAPSHOT_KEY); assert.equal(f.owner().open().carriedResidualBytes, 2048 * MiB);
 });
 
-test("重建not-ready后所有公开写门都保留同一typed measurement错误", () => {
-  const f = fixture({ measuredMaxLiveBytes: null }); f.existing(null); f.put(FORK_A, [ledgerEntry()]);
+test("重建not-ready后所有公开写门都保留同一typed上界错误", () => {
+  const f = fixture({ liveUpperBoundBytes: null }); f.existing(null); f.put(FORK_A, [ledgerEntry()]);
   const owner = f.owner(); assert.equal(owner.open().kind, "not-ready");
   const errors: unknown[] = [];
   for (const action of [() => owner.assertAdmissionWritable(), () => owner.append("f5", 0, 0),

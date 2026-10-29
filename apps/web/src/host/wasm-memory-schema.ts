@@ -1,3 +1,4 @@
+import { copyWasmMemoryHandoverJson, parseWasmMemoryHandover, type WasmMemoryHandover } from "./wasm-memory-handover.ts";
 import { addWasmMemoryBytes } from "./wasm-memory-budget.ts";
 
 // 这是首次实际格式标识，不承诺历史格式迁移。
@@ -29,8 +30,9 @@ export interface WasmMemoryLedgerEntry {
 export interface WasmMemoryGenesis extends Omit<WasmMemoryLedgerEntry, "outcome"> {
   outcome: "genesis";
 }
-// 本叶只解析常驻基础快照；handover / pendingIntent 协议须由后续实现明确扩展。
+// 普通锚和待确认handover共用一个carrier，由root唯一checksum覆盖。
 export interface WasmMemorySnapshot {
+  handover?: WasmMemoryHandover;
   schemaVersion: typeof WASM_MEMORY_SCHEMA_VERSION;
   chainId: string;
   carryBase: number;
@@ -176,8 +178,17 @@ export function parseWasmMemoryGenesis(value: unknown, context: WasmMemorySchema
 
 export function parseWasmMemorySnapshot(value: unknown, context: WasmMemorySchemaContext): WasmMemorySnapshot {
   validateContext(context);
-  const row = object(value, "snapshot");
-  exactFields(row, ["schemaVersion", "chainId", "carryBase", "sessionResident", "liveUpperBound", "reloadCount", "genesis", "checksum"], "snapshot");
+  const source = object(value, "snapshot");
+  const descriptors = Object.getOwnPropertyDescriptors(source);
+  const row: Record<string, unknown> = Object.create(null);
+  for (const key of Reflect.ownKeys(descriptors)) {
+    if (typeof key !== "string") throw new Error("snapshot 含非JSON字段");
+    const descriptor = descriptors[key]!;
+    if (!descriptor.enumerable || !Object.hasOwn(descriptor, "value")) throw new Error(`snapshot.${key} 必须为可枚举data字段，禁止访问器`);
+    row[key] = descriptor.value;
+  }
+  const hasHandover = Object.hasOwn(row, "handover");
+  exactFields(row, ["schemaVersion", "chainId", "carryBase", "sessionResident", "liveUpperBound", "reloadCount", "genesis", "checksum", ...(hasHandover ? ["handover"] : [])], "snapshot");
   identity(row, context);
   const carryBase = boundedBytes(row.carryBase, "carryBase", context.maximumBytes);
   const sessionResident = boundedBytes(row.sessionResident, "sessionResident", context.maximumBytes);
@@ -186,5 +197,12 @@ export function parseWasmMemorySnapshot(value: unknown, context: WasmMemorySchem
   if (addWasmMemoryBytes(carryBase, sessionResident, liveUpperBound) > context.maximumBytes) throw new Error("snapshot 三和超过 maximumBytes");
   if (typeof row.genesis !== "boolean") throw new Error("snapshot.genesis 必须为 boolean");
   if (row.genesis && (carryBase !== 0 || sessionResident !== 0 || liveUpperBound !== 0)) throw new Error("snapshot genesis 必须为零锚");
-  return { schemaVersion: WASM_MEMORY_SCHEMA_VERSION, chainId: context.chainId, carryBase, sessionResident, liveUpperBound, reloadCount, genesis: row.genesis, checksum: checksum(row) };
+  if (row.genesis && hasHandover) throw new Error("snapshot genesis 不能携带handover");
+  if (hasHandover && liveUpperBound !== 0) throw new Error("待确认handover的liveUpperBound必须为0");
+  // checksum与后续parser读取同一JSON副本；拒绝getter且不让语义归一改动原始校验载荷。
+  if (hasHandover) row.handover = copyWasmMemoryHandoverJson(row.handover);
+  const verifiedChecksum = checksum(row);
+  const handover = hasHandover ? parseWasmMemoryHandover(row.handover, context.maximumBytes) : undefined;
+  return { schemaVersion: WASM_MEMORY_SCHEMA_VERSION, chainId: context.chainId, carryBase, sessionResident, liveUpperBound, reloadCount,
+    genesis: row.genesis, checksum: verifiedChecksum, ...(handover === undefined ? {} : { handover }) };
 }

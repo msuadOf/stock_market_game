@@ -8,11 +8,11 @@ import {
 const MiB = 1024 * 1024;
 const maximumBytes = 2048 * MiB;
 const reclaimBytes = 512 * MiB;
-const input = (carryBase = 0, sessionResident = 0, measuredMaxLiveBytes: number | null = 768 * MiB) => ({
-  maximumBytes, reclaimBytes, measuredMaxLiveBytes, carryBase, sessionResident, liveBytes: 0,
+const input = (carryBase = 0, sessionResident = 0, liveUpperBoundBytes: number | null = 768 * MiB) => ({
+  maximumBytes, reclaimBytes, liveUpperBoundBytes, carryBase, sessionResident, liveBytes: 0,
 });
 
-test("工程预算明确为 2GiB / 512MiB，缺少真实 maxLive measurement 不准入", () => {
+test("工程预算明确为 2GiB / 512MiB，缺少可信 live 上界不准入", () => {
   assert.equal(WASM_MEMORY_MAXIMUM_BYTES, maximumBytes);
   assert.equal(WASM_MEMORY_RECLAIM_BYTES, reclaimBytes);
   assert.equal(evaluateWasmMemoryBudget(input(0, 0, null), "admission").status, "NOT_READY");
@@ -57,21 +57,21 @@ test("整除边界允许恰等准入，过冲直接 EXHAUSTED，起步超线亦�
   assert.equal(evaluateWasmMemoryBudget({ ...input(), liveBytes: maximumBytes + 1 }, "admission").status, "BUDGET_EXCEEDED");
 });
 
-test("重建使用 highWater + 收缩补足 + maxLive，并保序封顶，不用 reloadCount", () => {
+test("重建使用 highWater + 收缩补足 + live 上界，并保序封顶，不用 reloadCount", () => {
   assert.equal(rebuildWasmResidualBytes(512 * MiB, input()), 1792 * MiB);
   assert.equal(rebuildWasmResidualBytes(1536 * MiB, input(0, 0, 256 * MiB)), maximumBytes);
   assert.equal(rebuildWasmResidualBytes(maximumBytes, input()), maximumBytes);
   assert.equal(rebuildWasmResidualBytes(0, input(0, 0, null)), null);
 });
 
-test("所有 bytes 都拒绝错误单位、负数、非整数、溢出与无效标定", () => {
+test("所有 bytes 都拒绝错误单位、负数、非整数、溢出与无效上界", () => {
   for (const bad of [-1, 1.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1, "512MiB"]) {
     assert.throws(() => evaluateWasmMemoryBudget({ ...input(), carryBase: bad as number }, "admission"), /carryBase/);
     assert.throws(() => addWasmMemoryBytes(0, bad as number), /bytes/);
   }
   assert.throws(() => addWasmMemoryBytes(Number.MAX_SAFE_INTEGER, 1), /溢出/);
-  assert.throws(() => evaluateWasmMemoryBudget(input(0, 0, 0), "admission"), /measuredMaxLiveBytes/);
-  assert.throws(() => evaluateWasmMemoryBudget(input(0, 0, maximumBytes), "admission"), /标定/);
+  assert.throws(() => evaluateWasmMemoryBudget(input(0, 0, 0), "admission"), /liveUpperBoundBytes/);
+  assert.throws(() => evaluateWasmMemoryBudget(input(0, 0, maximumBytes), "admission"), /live 上界/);
   assert.throws(() => evaluateWasmMemoryBudget({ ...input(), liveBytes: 1 }, "drop"), /liveBytes/);
   assert.throws(() => evaluateWasmMemoryBudget(input(), "unknown" as "drop"), /phase/);
   assert.throws(() => evaluateWasmMemoryBudget({ ...input(), carryBase: Number.MAX_SAFE_INTEGER, sessionResident: 1 }, "admission"), /溢出/);

@@ -37,3 +37,13 @@ test("坏快速槽重选仍显式失败，只有明确新局或选择另一日�
   assert.equal(await source.read(load), null);
   assert.equal(reads, 1);
 });
+
+test("显式选档或新局与自动快速槽读取分离，完成后消费显式选择", { timeout: 10000 }, async () => {
+  const source = new InitialSaveSource<string>();
+  assert.equal(source.hasExplicitSelection(), false);
+  await source.read(async () => "快速槽"); assert.equal(source.hasExplicitSelection(), false);
+  source.select("Y"); assert.equal(source.hasExplicitSelection(), true);
+  source.complete(); assert.equal(source.hasExplicitSelection(), false);
+  source.reset(); assert.equal(source.hasExplicitSelection(), true);
+  assert.equal(await source.read(async () => { throw new Error("明确新局不得重读快速槽"); }), null);
+});

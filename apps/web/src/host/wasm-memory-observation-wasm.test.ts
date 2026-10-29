@@ -20,7 +20,7 @@ test("maximum是caller显式构造约束，当前长度不自动成为maxLive或
   const memory = new WebAssembly.Memory({ initial: 1, maximum: 2, shared: true });
   const result = observeWasmMemory(memory, 2 * PAGE_BYTES);
   assert.equal(result.bytes, PAGE_BYTES);
-  assert.equal(Object.hasOwn(result, "measuredMaxLiveBytes"), false);
+  assert.equal(Object.hasOwn(result, "liveUpperBoundBytes"), false);
   assert.equal(Object.hasOwn(result, "maximumBytes"), false);
   assert.equal(Object.hasOwn(result, "releasedBytes"), false);
   memory.grow(1);

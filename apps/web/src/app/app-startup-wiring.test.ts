@@ -71,3 +71,11 @@ test("重选后即使 Redux 留有旧行情，也必须等待当前宿主的权�
   assert.ok(baseline.indexOf("setHostBaselineReady(true)") > baseline.indexOf("installBaselineRef.current(protocolState)"));
   assert.ok(source.includes("if (!ready || !hostBaselineReady || !hasSnapshot)"));
 });
+
+test("Memory重载前的黄带notice必须在实际loading返回分支可见", { timeout: 10000 }, () => {
+  const start = source.indexOf("if (!ready || !hostBaselineReady || !hasSnapshot)");
+  const end = source.indexOf("const currentSpeedMetrics", start);
+  assert.ok(start > 0 && end > start, "锁定实际 App loading 分支");
+  const loading = source.slice(start, end);
+  assert.match(loading, /notice\s*!==\s*null[\s\S]*role="status"[\s\S]*aria-live="polite"[\s\S]*\{notice\}/, "Memory yellow notice必须在加载UI实际渲染，双rAF不能代替可见内容");
+});

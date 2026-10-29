@@ -1,5 +1,8 @@
 export class InitialSaveSource<Value> {
   private consumed = false;
+  private explicitlySelected = false;
+
+  hasExplicitSelection(): boolean { return this.explicitlySelected; }
   private pending: Promise<Value | null> | null = null;
 
   read(load: () => Promise<Value | null>): Promise<Value | null> {
@@ -9,17 +12,20 @@ export class InitialSaveSource<Value> {
   }
 
   complete(): void {
+    this.explicitlySelected = false;
     this.consumed = true;
     this.pending = null;
   }
 
   select(value: Value): void {
+    this.explicitlySelected = true;
     this.consumed = false;
     this.pending = Promise.resolve(value);
   }
 
   reset(): void {
     this.complete();
+    this.explicitlySelected = true;
   }
 }
 

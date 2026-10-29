@@ -1,3 +1,4 @@
+import { parseWasmMemoryHandover, type WasmMemoryHandover } from "./wasm-memory-handover.ts";
 import {
   checksumWasmMemoryRecord, parseWasmMemoryGenesis, parseWasmMemoryLedger, parseWasmMemorySnapshot,
   wasmMemoryGenesisKey, wasmMemoryLedgerKey, WASM_MEMORY_SCHEMA_VERSION,
@@ -14,7 +15,7 @@ export interface WasmMemoryStorageOptions {
   ledger: WasmMemoryStoragePort;
   maximumBytes: number;
   reclaimBytes: number;
-  measuredMaxLiveBytes: number | null;
+  liveUpperBoundBytes: number | null;
   ledgerMaxBytes?: number;
   randomValues?: (bytes: Uint8Array) => void;
   now?: () => number;
@@ -26,11 +27,17 @@ export interface WasmMemoryStorageDiagnostic {
   cause?: unknown;
 }
 export interface WasmMemoryStorageRecovery {
+  handover?: WasmMemoryHandover;
   kind: "restored" | "not-ready";
   chainId: string;
   carriedResidualBytes: number | null;
   reloadCount: number;
   source: "new-chain" | "snapshot" | "ledger" | "genesis";
+  diagnostics: readonly WasmMemoryStorageDiagnostic[];
+}
+export interface WasmMemoryReloadReady {
+  kind: "ready-for-reload";
+  degraded: boolean;
   diagnostics: readonly WasmMemoryStorageDiagnostic[];
 }
 export interface WasmMemorySnapshotAnchor {
@@ -49,6 +56,10 @@ export class WasmMemoryStorageError extends Error {
     this.code = code; this.where = where; this.context = context;
     this.recoveryActions = ["保留错误详情反馈", "关闭标签页后重新打开"];
   }
+}
+
+class StorageWriteFailedTwice extends AggregateError {
+  readonly attempts = 2;
 }
 
 const CHAIN_KEY = "wasm-chain";
@@ -79,13 +90,16 @@ export class WasmMemoryStorage {
   private dirty = false;
   private baseCarry: number | null = null;
   private resident = 0;
+  private pendingHandover: WasmMemoryHandover | undefined;
+  private latestAnchor: WasmMemorySnapshotAnchor | undefined;
+  private reloadRetry: { anchor: WasmMemorySnapshotAnchor; handover: Extract<WasmMemoryHandover, { kind: "frozen" }> } | undefined;
   private lastWrittenSeq: number | null = null;
   private lastWrittenCarry = 0;
 
   constructor(options: WasmMemoryStorageOptions) {
     this.options = options;
     evaluateWasmMemoryBudget({ maximumBytes: options.maximumBytes, reclaimBytes: options.reclaimBytes,
-      measuredMaxLiveBytes: options.measuredMaxLiveBytes, carryBase: 0, sessionResident: 0, liveBytes: 0 }, "admission");
+      liveUpperBoundBytes: options.liveUpperBoundBytes, carryBase: 0, sessionResident: 0, liveBytes: 0 }, "admission");
     this.ledgerMaxBytes = options.ledgerMaxBytes === undefined ? DEFAULT_LEDGER_MAX_BYTES : validInteger(options.ledgerMaxBytes, "ledgerMaxBytes");
     if (this.ledgerMaxBytes === 0) throw new Error("ledgerMaxBytes 必须为正 bytes");
     this.forkId = this.randomId();
@@ -113,17 +127,19 @@ export class WasmMemoryStorage {
     if (this.chainId === null) throw new Error("必须先 open 初始化残留链");
     return { chainId: this.chainId, maximumBytes: this.options.maximumBytes };
   }
-  private write(port: WasmMemoryStoragePort, key: string, encoded: string): void {
+  private write(port: WasmMemoryStoragePort, key: string, encoded: string, onFailedTwice?: (failure: StorageWriteFailedTwice) => void): void {
+    const setter = port.setItem;
+    if (typeof setter !== "function") throw new Error("storage.setItem 必须为函数");
     const failures: unknown[] = [];
     for (let attempt = 0; attempt < 2; attempt += 1) {
-      try {
-        port.setItem(key, encoded);
-        if (failures.length > 0) this.note("MEMORY_STORAGE_WRITE_RETRIED", `残留存储写入重试成功：${key}；首次错误保留供反馈`, failures[0]);
-        return;
-      }
-      catch (cause) { failures.push(cause); }
+      try { Reflect.apply(setter, port, [key, encoded]); }
+      catch (cause) { failures.push(cause); continue; }
+      if (failures.length > 0) this.note("MEMORY_STORAGE_WRITE_RETRIED", `残留存储写入重试成功：${key}；首次错误保留供反馈`, failures[0]);
+      return;
     }
-    throw new AggregateError(failures, `残留存储写入两次失败：${key}`);
+    const failure = new StorageWriteFailedTwice(failures, `残留存储写入两次失败：${key}`);
+    onFailedTwice?.(failure);
+    throw failure;
   }
   private requireOpen(): void {
     if (this.gate !== null) throw this.gate;
@@ -143,11 +159,21 @@ export class WasmMemoryStorage {
     catch (cause) { throw this.corrupt("CHAIN_ID_INVALID", cause); }
     this.chainId = chain;
     let snapshot: WasmMemorySnapshot | null = null;
+    let carrierRead = false;
     try {
       const encoded = this.options.session.getItem(SNAPSHOT_KEY);
-      if (encoded === null) this.note("MEMORY_SNAPSHOT_MISSING", "本链残留快照丢失，必须依赖可读ledger锚保守重建");
-      else if (!this.dirty) snapshot = parseWasmMemorySnapshot(JSON.parse(encoded), this.context());
-    } catch (cause) { this.note("MEMORY_SNAPSHOT_UNREADABLE", "残留快照无效，尝试已锚定台账重建", cause); }
+      carrierRead = true;
+      if (encoded === null) {
+        this.pendingHandover = { kind: "lost", reason: "carrier-unavailable" };
+        this.note("MEMORY_SNAPSHOT_MISSING", "本链残留快照丢失，必须依赖可读ledger锚保守重建；原目标不可恢复，需明确重新选择");
+      } else if (!this.dirty) {
+        snapshot = parseWasmMemorySnapshot(JSON.parse(encoded), this.context());
+        this.pendingHandover = snapshot.handover;
+      }
+    } catch (cause) {
+      this.pendingHandover = { kind: "lost", reason: carrierRead ? "schema-invalid" : "carrier-unavailable" };
+      this.note("MEMORY_SNAPSHOT_UNREADABLE", "残留快照无效，尝试已锚定台账重建；原目标不可恢复，需明确重新选择", cause);
+    }
     try {
       if (this.options.ledger.getItem(wasmMemoryLedgerKey(chain, this.forkId)) !== null) {
         throw this.error("MEMORY_HANDOVER_CORRUPT", "文档fork写者身份碰撞，禁止覆盖已有台账", { reason: "FORK_ID_COLLISION" });
@@ -190,20 +216,21 @@ export class WasmMemoryStorage {
         : "快照丢失且仅genesis锚可读，按maximum最坏上界继承，后续开局仍须预算预检");
     }
     if (carry === null) {
-      this.gate = this.error("MEMORY_MEASUREMENT_NOT_READY", "缺少真实全局maxLive标定，残留重建未就绪", { channel: "measurement" });
-      return { kind: "not-ready", chainId: chain, carriedResidualBytes: null, reloadCount, source, diagnostics: this.diagnostics() };
+      this.gate = this.error("MEMORY_MEASUREMENT_NOT_READY", "缺少可信全局Memory构造上界，残留重建未就绪", { channel: "measurement" });
+      return { kind: "not-ready", chainId: chain, carriedResidualBytes: null, reloadCount, source, diagnostics: this.diagnostics(), ...this.recoveryHandover() };
     }
     this.opened = true;
     this.baseCarry = carry;
     if (carry > 0 && (ledger === null || carry > ledger.carry)) {
       try { this.append("f5", carry, reloadCount); }
       catch (cause) {
+        if (cause instanceof WasmMemoryStorageError && cause.code === "MEMORY_HANDOVER_CORRUPT") throw cause;
         this.gate = this.error("MEMORY_HANDOVER_WRITE_FAILED", "恢复正推进checkpoint写入失败，禁止开局", { channel: "ledger", context: "recovery" }, cause);
         throw this.gate;
       }
     }
     this.writeSnapshot({ carryBase: carry, sessionResident: 0, liveUpperBound: 0, reloadCount });
-    return { kind: "restored", chainId: chain, carriedResidualBytes: carry, reloadCount, source, diagnostics: this.diagnostics() };
+    return { kind: "restored", chainId: chain, carriedResidualBytes: carry, reloadCount, source, diagnostics: this.diagnostics(), ...this.recoveryHandover() };
   }
 
   private createChain(): WasmMemoryStorageRecovery {
@@ -223,6 +250,7 @@ export class WasmMemoryStorage {
     }
     this.opened = true;
     this.baseCarry = 0;
+    this.latestAnchor = { carryBase: 0, sessionResident: 0, liveUpperBound: 0, reloadCount: 0 };
     return { kind: "restored", chainId, carriedResidualBytes: 0, reloadCount: 0, source: "new-chain", diagnostics: this.diagnostics() };
   }
 
@@ -320,12 +348,18 @@ export class WasmMemoryStorage {
     return result;
   }
 
-  append(outcome: WasmMemoryLedgerEntry["outcome"], carriedResidualBytes: number, reloadCount: number): void {
+  append(outcome: WasmMemoryLedgerEntry["outcome"], carriedResidualBytes: number, reloadCount: number, handoverNonce?: string): void {
     this.requireOpen();
+    if (handoverNonce !== undefined && (typeof handoverNonce !== "string" || !/^[0-9a-f]{32}$/.test(handoverNonce))) throw new Error("handoverNonce 必须为128bit小写hex");
     const context = this.context(); const key = wasmMemoryLedgerKey(context.chainId, this.forkId);
+    let confirmedWriteFailure: StorageWriteFailedTwice | undefined;
     try {
       const encoded = this.options.ledger.getItem(key);
-      const previous = encoded === null ? [] : this.readRows(key, encoded, false);
+      let previous: WasmMemoryLedgerEntry[] = [];
+      if (encoded !== null) {
+        try { previous = this.readRows(key, encoded, false); }
+        catch (cause) { throw this.corrupt("OWN_KEY_HISTORY_INVALID", cause); }
+      }
       const tail = previous.at(-1);
       if ((this.lastWrittenSeq === null && tail !== undefined) ||
           (this.lastWrittenSeq !== null && (tail === undefined || tail.seq !== this.lastWrittenSeq || tail.highWater.carry < this.lastWrittenCarry))) {
@@ -333,40 +367,139 @@ export class WasmMemoryStorage {
       }
       const seq = tail === undefined ? 0 : addWasmMemoryBytes(tail.seq, 1);
       const row = seal({ schemaVersion: WASM_MEMORY_SCHEMA_VERSION, seq, chainId: context.chainId,
-        carriedResidualBytes, reloadCount, handoverNonce: this.randomId(), outcome, ts: this.now(),
+        carriedResidualBytes, reloadCount, handoverNonce: handoverNonce === undefined ? this.randomId() : handoverNonce, outcome, ts: this.now(),
         highWater: { carry: Math.max(tail === undefined ? 0 : tail.highWater.carry, carriedResidualBytes), reloadCount: Math.max(tail === undefined ? 0 : tail.highWater.reloadCount, reloadCount) } });
       parseWasmMemoryLedger([row], { ...context, forkId: this.forkId }, key);
       const rows = [...previous, row];
       let text = JSON.stringify(rows);
       while (new TextEncoder().encode(text).byteLength > this.ledgerMaxBytes && rows.length > 1) { rows.shift(); text = JSON.stringify(rows); }
       if (new TextEncoder().encode(text).byteLength > this.ledgerMaxBytes) throw new Error("单条ledger超过per-key字节上限，不能丢弃最后highWater");
-      this.write(this.options.ledger, key, text);
+      this.write(this.options.ledger, key, text, (failure) => { confirmedWriteFailure = failure; });
       this.lastWrittenSeq = seq; this.lastWrittenCarry = row.highWater.carry;
-    } catch (cause) { throw this.error("MEMORY_HANDOVER_WRITE_FAILED", "台账写入失败，请保留原账并反馈", { channel: "ledger", context: "append", key }, cause); }
+    } catch (cause) {
+      if (cause instanceof WasmMemoryStorageError && cause.code === "MEMORY_HANDOVER_CORRUPT") { this.gate = cause; throw cause; }
+      const knownWriteFailure = confirmedWriteFailure !== undefined && confirmedWriteFailure === cause;
+      throw this.error("MEMORY_HANDOVER_WRITE_FAILED", "台账操作失败，请保留原账并反馈", {
+        channel: "ledger", context: "append", key, stage: knownWriteFailure ? "write" : "prepare", attempts: knownWriteFailure ? confirmedWriteFailure!.attempts : 0,
+      }, cause);
+    }
   }
 
-  writeSnapshot(anchor: WasmMemorySnapshotAnchor): void {
+  /** 仅使用 options 的可信全局构造上界，不从 observed sample 猜未来峰值。 */
+  freezeReloadHandover(anchor: WasmMemorySnapshotAnchor, value: unknown): WasmMemoryReloadReady {
+    this.requireOpen();
+    if (this.pendingHandover !== undefined || this.reloadRetry !== undefined) throw new Error("已有待确认或待重试的冻结事件，不能覆盖pending");
+    const { parsed } = this.prepareAnchor(anchor, false);
+    const decision = evaluateWasmMemoryBudget({ ...this.options, carryBase: parsed.carryBase, sessionResident: parsed.sessionResident, liveBytes: parsed.liveUpperBound }, "drop");
+    if (decision.status !== "RELOAD") {
+      if (decision.status === "READY") throw this.error("MEMORY_RELOAD_NOT_REQUIRED", "残留尚未达到阈值，无需重载", { thresholdEffective: decision.thresholdEffective });
+      const code = decision.status === "NOT_READY" ? "MEMORY_MEASUREMENT_NOT_READY"
+        : decision.status === "EXHAUSTED" ? "MEMORY_RESIDUAL_EXHAUSTED" : "MEMORY_BUDGET_EXCEEDED";
+      throw this.error(code, "当前drop预算不允许阈值重载", { status: decision.status, thresholdEffective: decision.thresholdEffective });
+    }
+    const previous = this.latestAnchor;
+    if (previous === undefined || previous.liveUpperBound !== 0 || parsed.liveUpperBound !== 0
+      || parsed.carryBase !== this.baseCarry || parsed.sessionResident !== this.resident || parsed.sessionResident !== previous.sessionResident) {
+      throw new Error("freeze必须匹配当前已记账的live0/drop锚，不能新增resident或改carry账");
+    }
+    const handover = parseWasmMemoryHandover(value, this.options.maximumBytes);
+    if (handover.kind !== "frozen") throw new Error("freeze需要完整frozen事件，不能传lost");
+    if (parsed.reloadCount !== addWasmMemoryBytes(previous.reloadCount, 1) || handover.reloadCount !== parsed.reloadCount
+      || handover.residualBytes !== parsed.sessionResident || handover.carriedResidualBytes !== addWasmMemoryBytes(parsed.carryBase, parsed.sessionResident)
+      || handover.thresholdEffective !== decision.thresholdEffective) throw new Error("冻结事件与当前drop账/threshold/reloadCount不一致");
+    this.reloadRetry = { anchor: { carryBase: parsed.carryBase, sessionResident: parsed.sessionResident, liveUpperBound: 0, reloadCount: parsed.reloadCount }, handover };
+    return this.writeFrozenReload();
+  }
+
+  retryReloadHandover(): WasmMemoryReloadReady {
+    this.requireOpen();
+    if (this.reloadRetry === undefined) throw new Error("没有可重试的失败冻结事件");
+    return this.writeFrozenReload();
+  }
+
+  private writeFrozenReload(): WasmMemoryReloadReady {
+    const captured = this.reloadRetry;
+    if (captured === undefined) throw new Error("缺少私有捕获的冻结事件");
+    if (this.latestAnchor === undefined || this.latestAnchor.liveUpperBound !== 0 || this.resident !== captured.anchor.sessionResident
+      || this.baseCarry !== captured.anchor.carryBase) throw new Error("失败冻结事件的drop账已失效，禁止重试");
+    this.pendingHandover = captured.handover;
+    let degraded = false;
+    try { this.append("reload", captured.handover.carriedResidualBytes, captured.handover.reloadCount, captured.handover.handoverNonce); }
+    catch (cause) {
+      if (!(cause instanceof WasmMemoryStorageError) || cause.code !== "MEMORY_HANDOVER_WRITE_FAILED"
+        || cause.context.stage !== "write" || cause.context.attempts !== 2) throw cause;
+      degraded = true;
+      this.note("MEMORY_LEDGER_RELOAD_WRITE_FAILED", "灾备台账写入已重试定败；本次交接仅单通道，须明确展示此诊断后才能重载", cause);
+    }
+    this.writeAnchor(captured.anchor, false, "freeze", !degraded);
+    this.reloadRetry = undefined;
+    return { kind: "ready-for-reload", degraded, diagnostics: this.diagnostics() };
+  }
+
+  private recoveryHandover(): { handover?: WasmMemoryHandover } {
+    return this.pendingHandover === undefined ? {} : { handover: structuredClone(this.pendingHandover) };
+  }
+
+  /** 仅写已通过目标/预算前检的开局锚；成功返回后caller才可分配。 */
+  writeAdmissionSnapshot(anchor: WasmMemorySnapshotAnchor): void { this.writeAnchor(anchor, true); }
+
+  writeSnapshot(anchor: WasmMemorySnapshotAnchor): void { this.writeAnchor(anchor, false); }
+
+  private primaryCarrierFailure(context: "freeze" | "consume", cause: unknown): WasmMemoryStorageError {
+    return this.error("MEMORY_HANDOVER_WRITE_FAILED", "主交接载荷未持久化；台账仅保账，本次目标尚未受理，禁止分配或自动重载，刷新可能丢失当前选择，请明确重试", {
+      channel: "session", context,
+    }, cause);
+  }
+
+  private prepareAnchor(anchor: WasmMemorySnapshotAnchor, admission: boolean) {
     this.requireOpen();
     const context = this.context();
     const fields = ["carryBase", "sessionResident", "liveUpperBound", "reloadCount"];
     if (anchor === null || typeof anchor !== "object" || Array.isArray(anchor) ||
         Reflect.ownKeys(anchor).some((key) => typeof key !== "string" || !fields.includes(key)) ||
         fields.some((key) => !Object.hasOwn(anchor, key))) throw new Error("snapshot anchor 含未知字段或缺少字段");
-    const candidate = seal({ ...anchor, schemaVersion: WASM_MEMORY_SCHEMA_VERSION, chainId: context.chainId, genesis: false });
+    const descriptors = Object.getOwnPropertyDescriptors(anchor);
+    const captured: Record<string, unknown> = Object.create(null);
+    for (const key of fields) {
+      const descriptor = descriptors[key]!;
+      if (!descriptor.enumerable || !Object.hasOwn(descriptor, "value")) throw new Error(`snapshot anchor.${key} 必须为可枚举data字段，禁止访问器`);
+      captured[key] = descriptor.value;
+    }
+    const candidate = seal({ ...captured, ...(admission ? {} : this.recoveryHandover()),
+      schemaVersion: WASM_MEMORY_SCHEMA_VERSION, chainId: context.chainId, genesis: false });
     const parsed = parseWasmMemorySnapshot(candidate, context);
+    return { candidate, parsed };
+  }
+
+  private writeAnchor(anchor: WasmMemorySnapshotAnchor, admission: boolean, primaryRequired?: "freeze", ledgerAlreadyWritten = false): void {
+    const consuming = admission && this.pendingHandover !== undefined;
+    const { candidate, parsed } = this.prepareAnchor(anchor, admission);
+    if (admission && parsed.liveUpperBound === 0) throw new Error("开局锚liveUpperBound必须大于0");
     if (parsed.carryBase !== this.baseCarry) throw new Error("carryBase 必须保持本次open继承值");
     if (parsed.sessionResident < this.resident) throw new Error("sessionResident 不得回退，drop终值累计只能增加");
     const total = addWasmMemoryBytes(parsed.carryBase, parsed.sessionResident, parsed.liveUpperBound);
     // 合法目标被接受后才推进内存账；持久化失败不能把事实退回旧锚。
     this.resident = parsed.sessionResident;
-    try { this.write(this.options.session, SNAPSHOT_KEY, JSON.stringify(candidate)); this.dirty = false; }
+    this.latestAnchor = { carryBase: parsed.carryBase, sessionResident: parsed.sessionResident, liveUpperBound: parsed.liveUpperBound, reloadCount: parsed.reloadCount };
+    try {
+      this.write(this.options.session, SNAPSHOT_KEY, JSON.stringify(candidate));
+      this.dirty = false;
+      if (admission) { this.pendingHandover = undefined; this.reloadRetry = undefined; }
+    }
     catch (cause) {
       this.dirty = true;
-      this.note("MEMORY_SNAPSHOT_WRITE_FAILED", "快照锚写入两败，已标记dirty并尝试台账备份", cause);
+      this.note("MEMORY_SNAPSHOT_WRITE_FAILED", ledgerAlreadyWritten
+        ? "快照锚写入两败，本轮冻结台账已写成功，保留同事件重试入口"
+        : "快照锚写入两败，已标记dirty并尝试台账备份", cause);
+      if (primaryRequired === "freeze" && ledgerAlreadyWritten) throw this.primaryCarrierFailure("freeze", cause);
       try { this.append("snapshot-write-fail", total, parsed.reloadCount); }
       catch (ledgerCause) {
+        if (ledgerCause instanceof WasmMemoryStorageError && ledgerCause.code === "MEMORY_HANDOVER_CORRUPT") throw ledgerCause;
         this.gate = this.error("MEMORY_HANDOVER_WRITE_FAILED", "快照与台账双通道写入失败，禁止开局", { channel: "both", context: "anchor" }, new AggregateError([cause, ledgerCause], "双通道写入失败"));
         throw this.gate;
+      }
+      if (consuming || primaryRequired === "freeze") {
+        throw this.primaryCarrierFailure(primaryRequired === "freeze" ? "freeze" : "consume", cause);
       }
     }
   }

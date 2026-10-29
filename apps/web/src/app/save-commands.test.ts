@@ -17,6 +17,7 @@ function fixture(archive = commandDayEndArchiveFixture()) {
     day: () => 3 });
   let setup: SessionSetup | null = null;
   const ports: SaveCommandPorts = {
+    startupTarget: { kind: "remote", baseUrl: "http://localhost" },
     hostRef: { current: host }, initialSaveSourceRef: { current: new InitialSaveSource<StrictSaveEnvelope>() }, dayEndPersistenceRef: { current: new DayEndPersistence() },
     autoOrderMgrRef: { current: null }, sessionReplacementGateRef: { current: new SessionReplacementGate() }, saveSelectionGenerationRef: { current: 0 },
     dayEndFileTargetRef: { current: null }, playerOrderRefreshGateRef: { current: new PlayerOrderRefreshGate() },
@@ -298,5 +299,33 @@ test("读档提交后恢复运行失败仍安装新时间配置，提交前失�
     assert.equal(f.calls.filter(call => call === "timing").length, 1);
     assert.equal(f.calls.includes("baseline"), true);
     assert.match(f.notices.at(-1)!, /读档失败.*提交后的恢复运行失败/);
+  }
+});
+
+test("WASM快速槽与文件读档冻结实际X后请求整实例替换，不调用旧host.load或报恢复成功", { timeout: 10000 }, async () => {
+  for (const operation of ["load", "loadFile"] as const) {
+    const f = fixture(); f.ports.startupTarget = { kind: "wasm" };
+    f.host.load = async () => { throw new Error("WASM禁止在旧Memory中load"); };
+    f.host.refreshBaseline = async () => { throw new Error("未改变旧实例无需同步基线"); };
+    await createSaveCommands(f.ports)[operation]();
+    assert.equal(f.ports.initialSaveSourceRef.current.hasExplicitSelection(), true);
+    assert.equal(await f.ports.initialSaveSourceRef.current.read(async () => { throw new Error("不得替换已选X"); }), f.archive);
+    assert.deepEqual(f.setup(), f.archive.setup); assert.notEqual(f.setup(), f.archive.setup);
+    assert.equal(f.calls.includes("session-setup"), true); assert.equal(f.calls.includes("ready:false"), true);
+    assert.equal(f.calls.includes("history"), false); assert.equal(f.calls.includes("active-setup"), false);
+    assert.equal(f.notices.some((notice) => /已读档|已从文件读档/.test(notice)), false);
+  }
+});
+
+test("WASM读取失败或取消不消费选择、不换局、不调用旧Memory load", { timeout: 10000 }, async () => {
+  for (const operation of ["load", "loadFile"] as const) {
+    const f = fixture(); f.ports.startupTarget = { kind: "wasm" };
+    f.ports.getBrowserSaveRepository = () => ({ load: async () => { throw new Error("读取实际X失败"); } });
+    f.ports.loadFromFile = async () => null;
+    await createSaveCommands(f.ports)[operation]();
+    assert.equal(f.setup(), null); assert.equal(f.ports.initialSaveSourceRef.current.hasExplicitSelection(), false);
+    assert.equal(f.calls.includes("load"), false); assert.equal(f.calls.includes("baseline"), false);
+    assert.equal(f.calls.includes("ready:false"), false);
+    assert.match(f.notices.at(-1)!, operation === "load" ? /读取实际X失败/ : /取消/);
   }
 });
