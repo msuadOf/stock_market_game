@@ -301,6 +301,10 @@ pub(crate) mod cost_probe {
     use std::{cell::RefCell, time::Instant};
     #[derive(Debug)]
     pub(crate) struct Observation {
+        #[expect(
+            dead_code,
+            reason = "仅通过成本观测的 Debug 报告保留批次上下文，当前用例不逐字段读取"
+        )]
         pub context: BatchContext,
         pub raw_len: usize,
         pub raw_capacity: usize,
@@ -308,6 +312,10 @@ pub(crate) mod cost_probe {
         pub resolved_capacity: usize,
         pub raw_element_bytes: usize,
         pub resolved_element_bytes: usize,
+        #[expect(
+            dead_code,
+            reason = "仅通过成本观测的 Debug 报告输出耗时，当前用例不逐字段读取"
+        )]
         pub elapsed_ns: u128,
     }
     thread_local! { static STATE: RefCell<Option<Vec<Observation>>> = const { RefCell::new(None) }; }

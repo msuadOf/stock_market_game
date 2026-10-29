@@ -1047,6 +1047,10 @@ pub(crate) enum GroupIn {
     /// 受理事实下行（Sol 整改注入通道配套：desk 的 Accepted lifecycle
     /// 经协调者转发组——受理即身份（OrderRef 合成），不等首笔 fill；
     /// 生产通道非测试面）。
+    #[expect(
+        dead_code,
+        reason = "当前生产以 AcceptedBatch 批发但保留单条受理载荷及 group consumer 的 adopt 语义"
+    )]
     ChildAccepted {
         /// 股索引。
         stock: StockIdx,
@@ -1197,6 +1201,13 @@ pub(crate) enum GroupIn {
         wanted: Vec<super::LocalIdx>,
     },
     /// K 线投影请求（驱动器回写 candle_book；轻量）。
+    #[cfg_attr(
+        not(all(test, not(target_family = "wasm"))),
+        expect(
+            dead_code,
+            reason = "K 线请求由协调者发往交易部；组收到时须保留显式错路由错误"
+        )
+    )]
     EchoCandles,
     /// D5 #4 retail 链：本拍零售决策 trace 请求（组回 RetailTraces——
     /// 驱动器投影 session.last_retail_decisions 的瞬态读面）。
@@ -1324,6 +1335,10 @@ pub enum DeskMsg {
     /// 仅撤销已经开始的 Drain；未进入日结的交易部保留普通 tick。
     AbortDayEnd { tick: u64 },
     /// 市场日终只消费本日最后一拍已完成的同 owner DayContext。
+    #[expect(
+        dead_code,
+        reason = "保留携带同 owner DayContext 的 typed 日终入口，交易部仍执行完整来源校验"
+    )]
     DrainMarket {
         tick: u64,
         day: std::sync::Arc<super::MarketDayContext>,
@@ -1521,6 +1536,10 @@ pub(crate) enum UpMsg {
         /// tick 编号。
         tick: u64,
         /// Seal 落账后组态哈希。
+        #[expect(
+            dead_code,
+            reason = "SealAck 保留 Seal 后观测哈希；当前协调者只用 Ack 收束而未读取该观测值"
+        )]
         final_hash: u64,
         /// Q2 批 3+Seal 攻顶 A-1：账户稀疏分片（Seal 落账后的 undo 集
         /// 口径——决策扣除/本拍全部成交/日结全含；替代驱动器

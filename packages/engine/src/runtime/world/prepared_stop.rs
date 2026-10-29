@@ -3,7 +3,21 @@ use super::*;
 
 #[derive(Debug)]
 pub(crate) struct StopReport {
+    #[cfg_attr(
+        not(any(
+            all(test, not(target_family = "wasm")),
+            all(target_family = "wasm", feature = "verification-harness")
+        )),
+        expect(
+            dead_code,
+            reason = "生产错误详情保留 join 数，native test 与 verification harness 逐字段核对"
+        )
+    )]
     pub joined_workers: usize,
+    #[expect(
+        dead_code,
+        reason = "保留被回收上行消息数，并随 StopReport Debug 错误详情呈现"
+    )]
     pub discarded_messages: usize,
 }
 
