@@ -5,8 +5,28 @@ use crate::runtime::calendar_public_restore_fixture as fixture;
 
 use crate::calendar::CalendarExchange;
 use crate::session::{MarketHistoryAvailability, MarketHistoryRequest};
-use crate::{GameSession, StockExchange, StockId};
+use crate::{
+    GameSession, RuntimeMirrorDayEndStage, RuntimeMirrorOrigin, Snapshot, StockExchange, StockId,
+    TradingPhase,
+};
 use fixture::{date, restore, START_DATE, TICKS_PER_DAY};
+
+fn assert_snapshot_with_expected_origins(
+    original: Snapshot,
+    restored: Snapshot,
+    original_origin: RuntimeMirrorOrigin,
+    restored_origin: RuntimeMirrorOrigin,
+) {
+    assert_eq!(original.mirror_origin, original_origin, "原会话来源必须精确匹配");
+    assert_eq!(restored.mirror_origin, restored_origin, "恢复会话来源必须精确匹配");
+    // origin 属于各自会话；保留完整 Snapshot，未来新增业务字段仍须逐字段相等。
+    let mut expected = original.clone();
+    expected.mirror_origin = restored_origin;
+    assert_eq!(
+        serde_json::to_value(restored).unwrap(),
+        serde_json::to_value(expected).unwrap()
+    );
+}
 
 fn retained(session: &GameSession, stock: StockId, day: &str) -> crate::session::MarketHistoryPage {
     session
@@ -43,9 +63,27 @@ fn strict_restore_and_continue(closed_exchange: CalendarExchange, first: StockEx
         serde_json::to_value(&save).unwrap(),
         "完整事实往返保持，不剔除不匹配字段"
     );
-    assert_eq!(
-        serde_json::to_value(restored.snapshot()).unwrap(),
-        serde_json::to_value(fixture.session.snapshot()).unwrap()
+    assert_snapshot_with_expected_origins(
+        fixture.session.snapshot(),
+        restored.snapshot(),
+        RuntimeMirrorOrigin {
+            authority_epoch: 1,
+            install_sequence: TICKS_PER_DAY + 1,
+            source_tick: TICKS_PER_DAY,
+            source_generation: TICKS_PER_DAY + 1,
+            day_end_stage: RuntimeMirrorDayEndStage::RetainedPublished,
+            non_tick_revision: 0,
+            mirror_phase: TradingPhase::Continuous,
+        },
+        RuntimeMirrorOrigin {
+            authority_epoch: 0,
+            install_sequence: 0,
+            source_tick: TICKS_PER_DAY,
+            source_generation: 0,
+            day_end_stage: RuntimeMirrorDayEndStage::Tick,
+            non_tick_revision: 0,
+            mirror_phase: TradingPhase::Continuous,
+        },
     );
     let closed = retained(&restored, fixture.closed, START_DATE);
     assert_eq!(closed.entries.len(), 1);
@@ -73,9 +111,34 @@ fn strict_restore_and_continue(closed_exchange: CalendarExchange, first: StockEx
             serde_json::to_value(expected).unwrap(),
             "零 NPC 固定输入的公共事实逐字段相同"
         );
-        assert_eq!(
-            serde_json::to_value(restored.snapshot()).unwrap(),
-            serde_json::to_value(fixture.session.snapshot()).unwrap()
+        let continued_ticks = tick - TICKS_PER_DAY;
+        let day_end_stage = if continued_ticks == TICKS_PER_DAY {
+            RuntimeMirrorDayEndStage::RetainedPublished
+        } else {
+            RuntimeMirrorDayEndStage::Tick
+        };
+        assert_snapshot_with_expected_origins(
+            fixture.session.snapshot(),
+            restored.snapshot(),
+            RuntimeMirrorOrigin {
+                authority_epoch: 1,
+                // 首次静点接管与首日 civil INFO 各占一次安装，市场拍各占一次。
+                install_sequence: tick + 2,
+                source_tick: tick,
+                source_generation: tick + tick / TICKS_PER_DAY,
+                day_end_stage,
+                non_tick_revision: 1,
+                mirror_phase: TradingPhase::Continuous,
+            },
+            RuntimeMirrorOrigin {
+                authority_epoch: 1,
+                install_sequence: continued_ticks + 1,
+                source_tick: tick,
+                source_generation: continued_ticks + continued_ticks / TICKS_PER_DAY,
+                day_end_stage,
+                non_tick_revision: 0,
+                mirror_phase: TradingPhase::Continuous,
+            },
         );
         if tick == 3 {
             let reopened = restored.runtime_minute_history(&fixture.closed);

@@ -4,6 +4,23 @@ use super::*;
 use crate::calendar::CalendarExchange;
 use crate::runtime::calendar_public_restore_fixture as fixture;
 
+fn assert_snapshot_with_expected_origins(
+    native: crate::Snapshot,
+    serial: crate::Snapshot,
+    native_origin: crate::RuntimeMirrorOrigin,
+    serial_origin: crate::RuntimeMirrorOrigin,
+) {
+    assert_eq!(native.mirror_origin, native_origin, "native 来源必须精确匹配");
+    assert_eq!(serial.mirror_origin, serial_origin, "serial 来源必须精确匹配");
+    // 两侧来源独立断言后，完整 Snapshot 仍比较全部业务字段和未来新增字段。
+    let mut expected = native.clone();
+    expected.mirror_origin = serial_origin;
+    assert_eq!(
+        serde_json::to_value(serial).unwrap(),
+        serde_json::to_value(expected).unwrap()
+    );
+}
+
 fn assert_phase_save_projection(
     native: &SaveSlot,
     serial: &SaveSlot,
@@ -418,19 +435,36 @@ fn assert_same_delivery(
     serial: &GameSession,
     native_events: &[Event],
     serial_events: &[Event],
+    expected_tick: u64,
 ) {
     assert_eq!(
         serde_json::to_value(native_events).unwrap(),
         serde_json::to_value(serial_events).unwrap()
     );
-    assert_eq!(
-        serde_json::to_value(native.snapshot_inner(true, true)).unwrap(),
-        serde_json::to_value(serial.snapshot_inner(true, true)).unwrap()
+    // 两侧均从日终档恢复、完成一次 civil INFO 后真实走 native 首拍。
+    let expected_origin = crate::RuntimeMirrorOrigin {
+        authority_epoch: 1,
+        install_sequence: 3,
+        source_tick: expected_tick,
+        source_generation: 1,
+        day_end_stage: crate::RuntimeMirrorDayEndStage::Tick,
+        non_tick_revision: 1,
+        mirror_phase: TradingPhase::Continuous,
+    };
+    assert_snapshot_with_expected_origins(
+        native.snapshot_inner(true, true),
+        serial.snapshot_inner(true, true),
+        expected_origin,
+        expected_origin,
     );
     assert_eq!(native.state.plans, serial.state.plans);
 }
 
-fn assert_save_restore_and_native_continuation(native_save: &SaveSlot, serial_save: &SaveSlot) {
+fn assert_save_restore_and_native_continuation(
+    native_save: &SaveSlot,
+    serial_save: &SaveSlot,
+    expected_tick: u64,
+) {
     let cursors = native_save
         .book_next_sequences
         .keys()
@@ -439,7 +473,13 @@ fn assert_save_restore_and_native_continuation(native_save: &SaveSlot, serial_sa
     let (mut native, mut serial) = native_continuation(native_save, serial_save);
     let native_events = native.step().unwrap();
     let serial_events = serial.step().unwrap();
-    assert_same_delivery(&native, &serial, &native_events, &serial_events);
+    assert_same_delivery(
+        &native,
+        &serial,
+        &native_events,
+        &serial_events,
+        expected_tick,
+    );
     let native_projection = native_semantic_projection(&native, native_save, &cursors, true);
     let serial_projection = native_semantic_projection(&serial, serial_save, &cursors, true);
     assert_native_semantics_equal(&native_projection, &serial_projection);
@@ -468,7 +508,13 @@ fn assert_save_restore_and_native_continuation(native_save: &SaveSlot, serial_sa
     }
     let native_events = native.step().unwrap();
     let serial_events = serial.step().unwrap();
-    assert_same_delivery(&native, &serial, &native_events, &serial_events);
+    assert_same_delivery(
+        &native,
+        &serial,
+        &native_events,
+        &serial_events,
+        expected_tick,
+    );
     let accepted = native_events
         .iter()
         .filter_map(|event| match event {
@@ -622,9 +668,33 @@ fn run_nonzero_plan_parity(exchange: CalendarExchange, continuation_phase: usize
                 serde_json::to_value(native_events).unwrap(),
                 serde_json::to_value(serial_events).unwrap()
             );
-            assert_eq!(
-                serde_json::to_value(native.snapshot_inner(true, true)).unwrap(),
-                serde_json::to_value(serial.snapshot_inner(true, true)).unwrap()
+            let completed_ticks = index + 1;
+            let expected_tick = phase as u64 * fixture::TICKS_PER_DAY + completed_ticks;
+            assert_snapshot_with_expected_origins(
+                native.snapshot_inner(true, true),
+                serial.snapshot_inner(true, true),
+                crate::RuntimeMirrorOrigin {
+                    authority_epoch: 1,
+                    install_sequence: completed_ticks + 1,
+                    source_tick: expected_tick,
+                    source_generation: completed_ticks + completed_ticks / fixture::TICKS_PER_DAY,
+                    day_end_stage: if completed_ticks == fixture::TICKS_PER_DAY {
+                        crate::RuntimeMirrorDayEndStage::RetainedPublished
+                    } else {
+                        crate::RuntimeMirrorDayEndStage::Tick
+                    },
+                    non_tick_revision: 0,
+                    mirror_phase: TradingPhase::Continuous,
+                },
+                crate::RuntimeMirrorOrigin {
+                    authority_epoch: 0,
+                    install_sequence: 0,
+                    source_tick: expected_tick,
+                    source_generation: 0,
+                    day_end_stage: crate::RuntimeMirrorDayEndStage::Tick,
+                    non_tick_revision: 0,
+                    mirror_phase: TradingPhase::Continuous,
+                },
             );
             if phase == 0 {
                 assert_eq!(
@@ -673,7 +743,11 @@ fn run_nonzero_plan_parity(exchange: CalendarExchange, continuation_phase: usize
         let serial_save = serial.save().unwrap();
         assert_phase_save_projection(&native_save, &serial_save, closed, open, phase);
         if phase == continuation_phase {
-            assert_save_restore_and_native_continuation(&native_save, &serial_save);
+            assert_save_restore_and_native_continuation(
+                &native_save,
+                &serial_save,
+                (phase as u64 + 1) * fixture::TICKS_PER_DAY + 1,
+            );
         }
         if phase == 0 {
             let old_open_terminal = native.state.plans.plan(open_id).unwrap().clone();
