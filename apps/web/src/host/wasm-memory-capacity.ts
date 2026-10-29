@@ -1,10 +1,5 @@
-import { WASM_MEMORY_MAXIMUM_BYTES, WASM_MEMORY_RECLAIM_BYTES } from "./wasm-memory-budget.ts";
-
 const WASM_PAGE_BYTES = 64 * 1024;
-const productCapacityBytes = Math.min(
-  WASM_MEMORY_MAXIMUM_BYTES - WASM_MEMORY_RECLAIM_BYTES,
-  Math.floor(WASM_MEMORY_MAXIMUM_BYTES / 2),
-);
+const productCapacityBytes = 1024 * 1024 * 1024;
 
 export const WASM_PRODUCT_MEMORY_INITIAL_BYTES = 64 * 1024 * 1024;
 export const WASM_PRODUCT_MEMORY_CAPACITY_BYTES = productCapacityBytes;

@@ -22,3 +22,11 @@ test("产品共享 memory 容量明确表示为可信构造上限", () => {
   assert.equal(Object.isFrozen(WASM_PRODUCT_MEMORY_CAPACITY), true);
   assert.equal(WASM_PRODUCT_MEMORY_CAPACITY.liveUpperBoundBytes, WASM_PRODUCT_MEMORY_CAPACITY_BYTES);
 });
+
+test("产品单 Memory 上界独立固定且满足总账扣除R与双实例约束", { timeout: 10000 }, async () => {
+  const { WASM_MEMORY_MAXIMUM_BYTES, WASM_MEMORY_RECLAIM_BYTES } = await import("./wasm-memory-budget.ts");
+  assert.equal(WASM_MEMORY_MAXIMUM_BYTES, 3072 * 1024 * 1024);
+  assert.equal(WASM_PRODUCT_MEMORY_CAPACITY_BYTES, 1024 * 1024 * 1024);
+  assert.ok(WASM_PRODUCT_MEMORY_CAPACITY_BYTES <= WASM_MEMORY_MAXIMUM_BYTES - WASM_MEMORY_RECLAIM_BYTES);
+  assert.ok(2 * WASM_PRODUCT_MEMORY_CAPACITY_BYTES <= WASM_MEMORY_MAXIMUM_BYTES);
+});

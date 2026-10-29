@@ -12,8 +12,8 @@ const input = (carryBase = 0, sessionResident = 0, liveUpperBoundBytes: number |
   maximumBytes, reclaimBytes, liveUpperBoundBytes, carryBase, sessionResident, liveBytes: 0,
 });
 
-test("工程预算明确为 2GiB / 512MiB，缺少可信 live 上界不准入", () => {
-  assert.equal(WASM_MEMORY_MAXIMUM_BYTES, maximumBytes);
+test("历史算法fixture仍按2GiB / 512MiB计算，缺少可信 live 上界不准入", () => {
+  assert.equal(WASM_MEMORY_MAXIMUM_BYTES, 3072 * MiB);
   assert.equal(WASM_MEMORY_RECLAIM_BYTES, reclaimBytes);
   assert.equal(evaluateWasmMemoryBudget(input(0, 0, null), "admission").status, "NOT_READY");
 });

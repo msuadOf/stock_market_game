@@ -101,6 +101,10 @@ std-thread runtime 的恢复=日终静点重建线程拓扑（NPC 组线程与�
     数据库坏档或打开失败仍显式报错，不回退旧槽掩盖问题。
 - 每次读取都做 **schema 校验**（[`error-handling.md`](error-handling.md) §5），脏数据 → 显式报错而非静默吞。
 
+## Web WASM 内存资源边界
+
+当前 Web WASM 宿主的保守总账上限为 3GiB；每个产品 `WebAssembly.Memory` 的真实构造 `maximum` 独立固定为 1GiB，`initial` 为 64MiB，残留重载阈值 R 为 512MiB。总账 B、单实例容量 C 与残留重载阈值 R 是独立约束，不从总账反推单实例上限。实例 drop 后以真实终值累计；正常阈值 reload 可跨 document 继续同一残留链，活动实例遭遇 F5 时按其 live 上界继承，未知 release 终值保留原 live 锚并锁门。该资源边界不改变 A 股制度，不保证任意负载，也不代表真实 World 步进或 Browser 二十次验收已经完成。
+
 ## 5. 目标目录结构（monorepo）
 
 > 选 monorepo 是因为多端共享同一个 engine，必须放同一仓库。

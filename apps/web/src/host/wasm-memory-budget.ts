@@ -1,4 +1,4 @@
-export const WASM_MEMORY_MAXIMUM_BYTES = 2 * 1024 * 1024 * 1024;
+export const WASM_MEMORY_MAXIMUM_BYTES = 3 * 1024 * 1024 * 1024;
 export const WASM_MEMORY_RECLAIM_BYTES = 512 * 1024 * 1024;
 
 export interface WasmMemoryBudgetInput {
