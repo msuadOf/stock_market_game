@@ -109,6 +109,7 @@ pub(in crate::session) struct BorrowedTickStartEnvelope<'a> {
     pub audit: EnvelopeAudit,
 }
 
+#[cfg(test)]
 impl BorrowedTickStartEnvelope<'_> {
     pub(in crate::session) fn identity(
         &self,

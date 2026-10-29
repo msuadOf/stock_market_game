@@ -83,15 +83,6 @@ pub(in crate::session::pipeline) enum StockFinishFatal {
     Other(StepFatal),
 }
 
-impl StockFinishFatal {
-    /// 归并为其承载的 fatal（分类判定已在上游完成）。
-    pub(in crate::session::pipeline) fn into_fatal(self) -> StepFatal {
-        match self {
-            Self::MarketData(fatal) | Self::Other(fatal) => fatal,
-        }
-    }
-}
-
 /// T4（ADR-0042 §6-T4「行情」面）：本股 owner 的行情**先验状态**——由 prepare
 /// 侧从只读 view 逐股构建、经 `continuous_shards` 注入；owner 连续持有并在
 /// 收尾一次产出 [`ContinuousMarketData`]。`None` 先验=会话侧缺该股票条目

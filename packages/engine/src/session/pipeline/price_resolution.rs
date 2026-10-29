@@ -76,14 +76,6 @@ pub(super) fn resolve_draft(
     Ok((price, Some(receipt)))
 }
 
-pub(super) fn apply_to_auction_order(
-    envelope: &mut Envelope,
-    receipt: &EnvelopeReceipt,
-) -> Result<(), StepFatal> {
-    let audit_after = super::ledger_validation::next_audit(receipt, envelope.audit())?;
-    envelope.apply(receipt.delta, audit_after, true)
-}
-
 fn invariant(description: &str) -> StepFatal {
     StepFatal::InvariantViolation {
         description: description.to_owned(),

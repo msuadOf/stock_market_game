@@ -94,6 +94,7 @@ pub(super) type RoundFeedbackFn<R> =
     ) -> Result<Vec<super::CandidateValidationOutcome>, StepFatal>;
 
 /// 测试直通匹配器（mock shard 无 Continuous 事实面；期望原样转交）。
+#[cfg(test)]
 pub(in crate::session::pipeline) fn passthrough_round_feedback<R>(
     _: &StockId,
     _: &mut R,
@@ -177,6 +178,7 @@ pub(super) fn finish_market_shards_with_calendar(
     })
 }
 
+#[cfg(test)]
 pub(super) fn finish_market_shards(
     shards: BTreeMap<StockId, IncrementalContinuousStockCoordinator>,
     boundary: super::phase::MarketTickBoundary,
@@ -945,16 +947,14 @@ mod tests {
         signals: Arc<Signals>,
     }
 
-    struct MockRound {
-        order: OrderId,
-    }
+    struct MockRound;
 
     impl StockShard for MockShard {
         type Round = MockRound;
         const DISPATCH_BOUNDARY: Option<ExecutorBoundary> = None;
 
         fn apply(&mut self, operations: Vec<ValidatedOperation>) -> Result<Self::Round, StepFatal> {
-            let [ValidatedOperation::Cancel { order_id, .. }] = operations.as_slice() else {
+            let [ValidatedOperation::Cancel { order_id: _, .. }] = operations.as_slice() else {
                 return Err(invariant("mock received an unexpected operation batch"));
             };
             self.steps += 1;
@@ -984,7 +984,7 @@ mod tests {
                 }
                 self.signals.b_running.store(false, Ordering::SeqCst);
             }
-            Ok(MockRound { order: *order_id })
+            Ok(MockRound)
         }
     }
 
@@ -1166,47 +1166,6 @@ mod tests {
             );
         }
     }
-
-    /// Astra P1 同池饱和夹具：两支股票互相等待对方启动（真实 mpsc 等待语义）。
-    /// 【契约外形状记录（round4 ①(3) 重分类）】两股任务互等启动信号超出
-    /// 调度活性契约的支持范围（契约要求每条流的任务自身独立，见
-    /// .tmp/spine/round5-fix/liveness-contract.md）——本测试保留为契约外证据，
-    /// 其 2s 截止是形状记录的完成方式，**不再作为契约内活性判据**；契约内
-    /// 活性门由 independent_finite_tasks_progress_under_saturation_and_
-    /// off_pool_mix 无阀承担。
-    struct SaturatedPairShard {
-        started: mpsc::Sender<()>,
-        peer_started: mpsc::Receiver<()>,
-    }
-
-    impl StockShard for SaturatedPairShard {
-        /// 是否在截止前等到对方启动。
-        type Round = bool;
-        const DISPATCH_BOUNDARY: Option<ExecutorBoundary> = None;
-
-        fn apply(&mut self, _: Vec<ValidatedOperation>) -> Result<bool, StepFatal> {
-            self.started.send(()).unwrap();
-            Ok(self
-                .peer_started
-                .recv_timeout(Duration::from_secs(2))
-                .is_ok())
-        }
-    }
-
-    // Astra P1 同池饱和活性：协调者经 pool.install 进入同一池（占用一个 worker 槽），
-    // 两支互相等待的股票任务超出剩余槽位。纯阻塞 recv 会形成循环等待：
-    // 在飞任务等未派发工作启动、未派发工作等空 worker 槽、最后一个槽被
-    // 阻塞在 recv 上的协调者占据。
-    // 【契约外形状记录（round4 ①(3)）】本断言的对象是任务互等形状的
-    // 完成事实（互等双方都等到对方启动），不是契约内无阀活性；契约外
-    // 形状以 2s 截止保险阀收尾并在此登记，不作活性判据。
-
-    /// 【契约外形状记录（round4 ①(3) 登记项，先于 round2 存在）】本测试
-    /// 断言的对象是**增量续行的重叠语义**（已完成股票的后续操作在另一股
-    /// 仍在跑时启动），非活性；其夹具以跨股信号（stock0 等待 stock1 运行
-    /// 标志）钉住重叠交错的确定性——任务间信号属契约外形状，2s 截止为
-    /// 交错钉住的保险，不作活性判据。生产语义本身（续行与在跑股重叠）
-    /// 不要求任务互等。
 
     #[test]
     fn one_worker_runs_a_stock_job_without_blocking_itself() {

@@ -11,8 +11,9 @@ use std::collections::BTreeMap;
 
 /// 终审修正：真删 Clone——深拷对 ReadOnlyStart 编译不可能（零拷由类型系统保证）。
 pub(in crate::session) struct ReadOnlyStart {
-    /// 捕获的交易制度截点与输入共同移交，不能只凭外层 tick/revision 猜测 shard 模式。
-    pub(super) policy: super::phase::PhasePolicy,
+    /// 与输入一起保留同一读视图的交易阶段截点，直到准备结果被消费。
+    /// 当前组装路径不再读取它；保留该 Copy 值不改变捕获时机或其余结果的析构时机。
+    pub(super) _policy: super::phase::PhasePolicy,
     pub(super) hydration: Result<(), StepFatal>,
     pub(super) resources: Result<DecisionResourceSnapshot, StepFatal>,
     /// 捕获错误照旧延迟到原 stock input 消费点传播；成功时输入所有权已移入 stock_shards。
@@ -122,7 +123,7 @@ fn prepare_on_with_observer(
         },
     );
     ReadOnlyStart {
-        policy: super::phase::PhasePolicy::capture_on(view),
+        _policy: super::phase::PhasePolicy::capture_on(view),
         hydration,
         resources,
         stock_inputs,
