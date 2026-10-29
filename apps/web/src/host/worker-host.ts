@@ -34,6 +34,7 @@ import { createEngineSupervisor } from "./engine-supervisor.ts";
 import { WorkerRequestScope } from "./worker-request.ts";
 import { parseHistoricalStockData } from "./stock-history.ts";
 import { parseInitialAllocation } from "./initial-allocation.ts";
+import { WasmHostInitializationError } from "./wasm-host-initialization-error.ts";
 
 type WorkerMessage = {
   readonly type: string;
@@ -242,7 +243,7 @@ export function createWorkerHost(
       supervisor?.dispose();
       ingressWorker = null;
       if (!initialized) {
-        reject(new Error(`${failure.code} @ ${failure.where}: ${failure.message}`));
+        reject(new WasmHostInitializationError(failure));
         return;
       }
       if (reportFailure !== null) {
