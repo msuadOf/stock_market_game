@@ -28,6 +28,13 @@ pub(crate) enum SyncDomain {
 /// 不定义具体业务提交版本；只保留待消费的 Full 原因。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum FullReason {
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "ExplicitRequest 是保留给明确全量同步请求的契约原因"
+        )
+    )]
     ExplicitRequest,
     DomainMutationWithoutFacts,
 }
@@ -47,6 +54,13 @@ pub(crate) enum RecordOutcome {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum FlushOutcome {
     Successful,
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "Failed 表示失败 flush 必须保留待同步窗口的契约结果"
+        )
+    )]
     Failed,
 }
 
@@ -179,6 +193,13 @@ impl<A: PartialEq, B: PartialEq, T: PartialEq> SyncAccumulator<A, B, T> {
     pub(crate) fn attentions(&self) -> &BTreeMap<SyncOwner, SyncValue<T>> {
         &self.attentions
     }
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "真实账户总数只由覆盖表单元测试读取；字段仍由此 getter 消费"
+        )
+    )]
     pub(crate) fn real_account_count(&self) -> usize {
         self.real_account_count
     }
@@ -191,6 +212,10 @@ impl<A: PartialEq, B: PartialEq, T: PartialEq> SyncAccumulator<A, B, T> {
     pub(crate) fn require_full(&mut self, reason: FullReason) {
         self.pending_full_reasons.insert(reason);
     }
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "待处理 Full 原因的只读视图只由覆盖表单元测试读取")
+    )]
     pub(crate) fn pending_full_reasons(&self) -> &BTreeSet<FullReason> {
         &self.pending_full_reasons
     }
@@ -259,3 +284,7 @@ fn record<T: PartialEq>(
     table.insert(owner, SyncValue { source_seq, value });
     Ok(RecordOutcome::Changed)
 }
+
+#[cfg(test)]
+#[path = "driver_sync_tests.rs"]
+mod tests;

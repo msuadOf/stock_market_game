@@ -1,10 +1,4 @@
-//! E1 直接包含同一生产源；别名与 runtime/mod.rs 保持一致，不复制覆盖算法。
-type GroupIdx = u16;
-type LocalIdx = u32;
-#[path = "../src/runtime/driver_sync.rs"]
-mod driver_sync;
-
-use driver_sync::*;
+use super::*;
 
 type Accumulator = SyncAccumulator<i64, (u64, u64), (u64, u64)>;
 fn owner(group: u16, local: u32) -> SyncOwner {
