@@ -26,6 +26,9 @@
 #[cfg(not(target_family = "wasm"))]
 pub use std::thread::{available_parallelism, Builder, JoinHandle};
 
+/// facade arena 既有 slot 上限，供宿主在分配前显式校验容量。
+pub const FACADE_SLOT_MAX_CAPACITY: u32 = 1 << 20;
+
 // ---------------------------------------------------------------------------
 // wasm32：槽协议接线（R4a 阶段 2，设计 §12-14）。native 侧零影响——本段
 // 仅 wasm 编译；协议核心见 crate::facade_slot。
