@@ -285,10 +285,6 @@ pub(super) enum RetailProjectionError {
         receipt_minute: u64,
         moment_minute: u64,
     },
-    #[error("retail receipt {index} has a regressing quantity chain")]
-    QuantityRegression { index: u64 },
-    #[error("retail receipt {index} has non-positive gross")]
-    NonPositiveGross { index: u64 },
     #[error("retail order {order:?} has a non-positive average price")]
     NonPositiveAveragePrice { order: OrderId },
     #[error("retail receipt identity {index} has conflicting payloads")]

@@ -5,7 +5,7 @@
 
 use super::{
     account_settlement::SettlementTransactionOutput, event_collection::EventFact,
-    stock_execution_transaction::StockExecutionTransactionError, StepFatal,
+    stock_execution_transaction::StockExecutionTransactionError,
 };
 // T5（批次八十）/Luna 快检（八十·1）：本模块 apply 族与辅助仅测试构建
 // （生产路径已并入 finalize 单点汇合）——测试专用导入统一 cfg(test)。
@@ -20,14 +20,18 @@ use super::stock_execution_transaction::{
     compose_stock_execution_transaction_for_test, StockExecutionTransactionOutput,
 };
 #[cfg(test)]
+use super::StepFatal;
+#[cfg(test)]
 use crate::GameSession;
 
 #[derive(Debug, thiserror::Error)]
 pub(super) enum SessionExecutionTransactionError {
+    #[cfg(test)]
     #[error("StockProcessing/DerivationAudit 会话前置检查失败：{0}")]
     Precondition(#[source] StepFatal),
     #[error("StockProcessing/SettlementShadow 事务失败：{0}")]
     StockExecution(#[source] StockExecutionTransactionError),
+    #[cfg(test)]
     #[error("DerivationAudit 事件收集失败：{0}")]
     Projection(#[source] StepFatal),
 }
@@ -174,6 +178,7 @@ fn validate_stock_ownership(
     Ok(())
 }
 
+#[cfg(test)]
 fn invariant(description: String) -> StepFatal {
     StepFatal::InvariantViolation {
         description,
