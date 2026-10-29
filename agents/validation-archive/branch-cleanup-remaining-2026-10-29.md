@@ -101,3 +101,10 @@ error: the branch 'fix/synthetic-history-policy' is not fully merged
 hint: If you are sure you want to delete it, run 'git branch -D fix/synthetic-history-policy'
 hint: Disable this message with "git config set advice.forceDeleteBranch false"
 ```
+
+
+## 最后保留项的替代命令复核（未执行删除）
+
+root 提议通过本命令临时配置 `remote=.`、`merge=refs/heads/main`，继续用普通 `branch -d` 对 main 检查。未实施 reviewer 发现该方法不能证明对 main 检查：`branch.<name>.merge` 是多值配置，`-c` 会追加而不是替换已有 merge。产品仓库只读 `config --get-all` 实证得到旧 `refs/heads/fix/synthetic-history-policy` 与新 `refs/heads/main` 两行；`remote=.` 会令旧 merge 解析为分支自身，reviewer 的 `rev-parse --symbolic-full-name ...@{upstream}` 实际得到自身。该方法不可采用，不以成功 exit 冒充 main 合并检查。
+
+两个隔离极小 Git probe 还证实普通 `branch -d` 会删除持久 branch 配置节；`GIT_CONFIG=临时副本` 不隔离这一写入，不能声称临时 `-c` 保证持久配置字节不变。probe 目录均已移除；真实分支、持久配置及 remote ref 未变。此前真实 exit 1 保留；未对产品仓库执行该替代删除命令，没有新增删除 exit。原 local `b89afb3346743a4b4fccf26c9ac9ff108595f696` 已由 main 可达，但继续保留。未实施 reviewer 对该双 `-c` 方法结论为 `NOT APPROVED`，确认真实 branch / main / remote ref、原 4 项 branch 配置和空 index 未变。root 已接受发现并撤回此方法，要求到此停止最后 1 支尝试；不再 probe、不做配置恢复框架、不改低层 ref、不 `-D`。累计真实删除仍为 87 个 branch、2 个旧 worktree，唯一保留项和原 exit 1 均不改写。
