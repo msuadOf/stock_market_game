@@ -176,6 +176,65 @@ mod protocol_tests;
 static NEXT: AtomicU32 = AtomicU32::new(1);
 static INGRESS: Mutex<Option<HashMap<u32, engine::SharedSessionIngress>>> = Mutex::new(None);
 
+#[derive(Debug)]
+struct UnsupportedRuntimeSyncPolicy {
+    code: &'static str,
+    policy: engine::RuntimeSyncPolicy,
+}
+
+impl std::fmt::Display for UnsupportedRuntimeSyncPolicy {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "{}：WASM 仅支持 every_tick，当前策略 {:?} 不受支持",
+            self.code,
+            self.policy
+        )
+    }
+}
+
+fn require_wasm_runtime_sync_policy(
+    policy: engine::RuntimeSyncPolicy,
+) -> Result<(), UnsupportedRuntimeSyncPolicy> {
+    match policy {
+        engine::RuntimeSyncPolicy::EveryTick => Ok(()),
+        unsupported => Err(UnsupportedRuntimeSyncPolicy {
+            code: "WASM_RUNTIME_SYNC_POLICY_UNSUPPORTED",
+            policy: unsupported,
+        }),
+    }
+}
+
+#[derive(Debug)]
+enum HostSessionInitError {
+    UnsupportedRuntimeSyncPolicy(UnsupportedRuntimeSyncPolicy),
+    Session(SessionError),
+}
+
+impl std::fmt::Display for HostSessionInitError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::UnsupportedRuntimeSyncPolicy(error) => std::fmt::Display::fmt(error, formatter),
+            Self::Session(error) => std::fmt::Display::fmt(error, formatter),
+        }
+    }
+}
+
+impl From<SessionError> for HostSessionInitError {
+    fn from(error: SessionError) -> Self {
+        Self::Session(error)
+    }
+}
+
+fn host_session_init_error_to_js(error: HostSessionInitError) -> JsValue {
+    match error {
+        HostSessionInitError::UnsupportedRuntimeSyncPolicy(error) => {
+            JsValue::from_str(&error.to_string())
+        }
+        HostSessionInitError::Session(error) => session_error_to_js(error),
+    }
+}
+
 fn ingress_operation<T>(
     operation: impl FnOnce(&mut HashMap<u32, engine::SharedSessionIngress>) -> Result<T, SessionError>,
 ) -> Result<T, SessionError> {
@@ -241,14 +300,18 @@ impl SessionRegistry {
         }
     }
 
-    fn create(&mut self, setup: SessionSetup, seed: u64) -> Result<u32, SessionError> {
+    fn create(&mut self, setup: SessionSetup, seed: u64) -> Result<u32, HostSessionInitError> {
+        require_wasm_runtime_sync_policy(setup.runtime_sync_policy)
+            .map_err(HostSessionInitError::UnsupportedRuntimeSyncPolicy)?;
         let session = ProtocolSession::new(setup, seed)?;
-        self.register(session, &NEXT)
+        self.register(session, &NEXT).map_err(Into::into)
     }
 
-    fn restore(&mut self, slot: &SaveSlot) -> Result<u32, SessionError> {
+    fn restore(&mut self, slot: &SaveSlot) -> Result<u32, HostSessionInitError> {
+        require_wasm_runtime_sync_policy(slot.setup.runtime_sync_policy)
+            .map_err(HostSessionInitError::UnsupportedRuntimeSyncPolicy)?;
         let session = ProtocolSession::restore(slot)?;
-        self.register(session, &NEXT)
+        self.register(session, &NEXT).map_err(Into::into)
     }
 
     fn with_session<T>(
@@ -580,7 +643,7 @@ pub fn create_session(setup: JsValue, seed: u64) -> Result<u32, JsValue> {
     let setup: SessionSetup = serde_wasm_bindgen::from_value(setup)?;
     REGISTRY
         .with(|registry| registry.borrow_mut().create(setup, seed))
-        .map_err(session_error_to_js)
+        .map_err(host_session_init_error_to_js)
 }
 
 /// Returns the next ordered protocol update.
@@ -952,7 +1015,7 @@ pub fn restore(save_slot: JsValue) -> Result<u32, JsValue> {
     let slot: SaveSlot = serde_wasm_bindgen::from_value(save_slot)?;
     REGISTRY
         .with(|registry| registry.borrow_mut().restore(&slot))
-        .map_err(session_error_to_js)
+        .map_err(host_session_init_error_to_js)
 }
 
 #[wasm_bindgen]
@@ -961,7 +1024,7 @@ pub fn restore_json(save_json: String) -> Result<u32, JsValue> {
         serde_json::from_str(&save_json).map_err(|error| JsValue::from_str(&error.to_string()))?;
     REGISTRY
         .with(|registry| registry.borrow_mut().restore(&slot))
-        .map_err(session_error_to_js)
+        .map_err(host_session_init_error_to_js)
 }
 
 // ---------------------------------------------------------------------------
@@ -1001,6 +1064,7 @@ fn facade_slot_capacity_for_topology(groups: usize, desks: usize) -> Result<u32,
 #[derive(Debug)]
 enum RestoreFacadeInitError {
     Decode(serde_json::Error),
+    UnsupportedRuntimeSyncPolicy(UnsupportedRuntimeSyncPolicy),
     Topology(SessionError),
     Capacity(&'static str),
 }
@@ -1009,6 +1073,8 @@ enum RestoreFacadeInitError {
 #[cfg(any(target_family = "wasm", test))]
 fn facade_slot_capacity_for_restore_json(save_json: &str) -> Result<u32, RestoreFacadeInitError> {
     let save: SaveSlot = serde_json::from_str(save_json).map_err(RestoreFacadeInitError::Decode)?;
+    require_wasm_runtime_sync_policy(save.setup.runtime_sync_policy)
+        .map_err(RestoreFacadeInitError::UnsupportedRuntimeSyncPolicy)?;
     let (groups, desks) = save
         .restore_runtime_topology()
         .map_err(RestoreFacadeInitError::Topology)?;
@@ -1020,6 +1086,8 @@ fn facade_slot_capacity_for_restore_json(save_json: &str) -> Result<u32, Restore
 #[wasm_bindgen]
 pub fn facade_slot_init_for_setup(setup: JsValue) -> Result<(), JsValue> {
     let setup: SessionSetup = serde_wasm_bindgen::from_value(setup)?;
+    require_wasm_runtime_sync_policy(setup.runtime_sync_policy)
+        .map_err(|error| JsValue::from_str(&error.to_string()))?;
     let (groups, desks) = setup
         .default_new_runtime_topology()
         .map_err(session_error_to_js)?;
@@ -1033,6 +1101,9 @@ pub fn facade_slot_init_for_setup(setup: JsValue) -> Result<(), JsValue> {
 pub fn facade_slot_init_for_restore_json(save_json: String) -> Result<(), JsValue> {
     let capacity = facade_slot_capacity_for_restore_json(&save_json).map_err(|error| match error {
         RestoreFacadeInitError::Decode(error) => JsValue::from_str(&error.to_string()),
+        RestoreFacadeInitError::UnsupportedRuntimeSyncPolicy(error) => {
+            JsValue::from_str(&error.to_string())
+        }
         RestoreFacadeInitError::Topology(error) => session_error_to_js(error),
         RestoreFacadeInitError::Capacity(error) => JsValue::from_str(error),
     })?;
@@ -1437,3 +1508,6 @@ mod catalog_boundary_tests {
         );
     }
 }
+
+#[cfg(test)]
+mod runtime_sync_policy_tests;

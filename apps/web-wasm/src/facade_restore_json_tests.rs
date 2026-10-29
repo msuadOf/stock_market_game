@@ -113,3 +113,36 @@ fn restore_json_capacity_success_is_not_complete_restore_success() {
         Err(error) => panic!("真实 restore 应保 fault2200，实际 {error:?}"),
     }
 }
+
+#[test]
+fn restore_json_capacity_rejects_unsupported_sync_policy_before_capacity_setup() {
+    for policy in [engine::RuntimeSyncPolicy::DayEnd, engine::RuntimeSyncPolicy::OnDemand] {
+        let mut save = save(1);
+        save.setup.runtime_sync_policy = policy;
+        let json = serde_json::to_string(&save).unwrap();
+        match facade_slot_capacity_for_restore_json(&json) {
+            Err(error) => assert!(
+                format!("{error:?}").contains("WASM_RUNTIME_SYNC_POLICY_UNSUPPORTED"),
+                "必须明确拒绝 WASM 不支持的策略 {policy:?}，实际：{error:?}"
+            ),
+            Ok(capacity) => panic!("策略 {policy:?} 应在 facade 容量预检前拒绝，得到容量 {capacity}"),
+        }
+    }
+}
+
+#[test]
+fn restore_json_capacity_rejects_unsupported_policy_before_topology_validation() {
+    for policy in [engine::RuntimeSyncPolicy::DayEnd, engine::RuntimeSyncPolicy::OnDemand] {
+        let mut save = save(1);
+        save.setup.runtime_sync_policy = policy;
+        save.setup.ticks_per_day = 0;
+        let json = serde_json::to_string(&save).unwrap();
+        match facade_slot_capacity_for_restore_json(&json) {
+            Err(error) => assert!(
+                format!("{error:?}").contains("WASM_RUNTIME_SYNC_POLICY_UNSUPPORTED"),
+                "策略拒绝应先于 topology 校验 {policy:?}，实际：{error:?}"
+            ),
+            Ok(capacity) => panic!("策略 {policy:?} 应在 topology 校验前拒绝，容量 {capacity}"),
+        }
+    }
+}

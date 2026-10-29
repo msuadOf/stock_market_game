@@ -28,6 +28,14 @@ SealAllocationSnapshot 的 `DecisionResourceSnapshot::seal` 读取报价过期�
 2.4.1 与深交所同规则 2.3.1（2026-07-06 起施行，2026-10-25 核验）；来源见
 [模拟日历政策](simulation-calendar.md) §1 与 [公司会计依据](company-accounting.md) §5。
 
+## RuntimeSyncPolicy 的 WASM 支持边界（2026-10-29）
+
+**不支持：** WASM 新局和读档当前仅接受 `runtime_sync_policy: "every_tick"`；显式
+`day_end` 或 `on_demand` 在构造 Session、登记句柄或初始化 facade arena 前报告
+`WASM_RUNTIME_SYNC_POLICY_UNSUPPORTED`，不能静默改成 EveryTick。新局省略字段时
+沿用 EveryTick；当前日终存档必须显式包含该字段。该限制只描述同步方式的支持范围，
+不改变撮合、现金分、股数、T+1 或交易日定义。
+
 ## 已实现
 
 - **全场休市市场门禁（2026-10-25 登记）**：`step`、runtime 与 frame 家族在
