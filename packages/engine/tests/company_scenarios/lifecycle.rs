@@ -1,4 +1,4 @@
-include!("../../test-support/company_state.rs");
+include!("../../test-support/company_state/legacy_saved.rs");
 use super::*;
 use engine::accounting::consolidation::{MemberId, ScopeId};
 use engine::accounting::reports::ReportKind;

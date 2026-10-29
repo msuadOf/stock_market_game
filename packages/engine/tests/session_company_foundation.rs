@@ -5,7 +5,8 @@
 //! 范围边界（战役计划 §B4b）：只覆盖构造期与存读面；权益计算/日终推进/
 //! 命令通道属 B4c/B4d/B4e，不在本文件断言面内。
 
-include!("../test-support/company_state.rs");
+include!("../test-support/company_state/system_saved.rs");
+include!("../test-support/company_state/system_saved_mut.rs");
 include!("../test-support/simple_company.rs");
 
 use engine::company::cash_dividend_tax::CashDividendTaxMode;

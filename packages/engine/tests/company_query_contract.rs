@@ -1,4 +1,4 @@
-include!("../test-support/company_state.rs");
+include!("../test-support/company_state/legacy_saved.rs");
 #[allow(dead_code)]
 #[path = "publications/fixture.rs"]
 mod fixture;
@@ -6,7 +6,7 @@ mod fixture;
 mod session_fixture;
 
 use engine::calendar::{CivilDate, CivilInstant};
-use engine::company::{CompanyId, PublicReportQuery};
+use engine::company::PublicReportQuery;
 use engine::information::assemble_seeded_prehistory;
 
 fn library_at_start() -> (engine::information::PublicLibrary, CivilInstant) {

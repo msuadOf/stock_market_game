@@ -9,7 +9,7 @@
 //! 场景锚定 2030 年春节：02-02（周六，除夕）至 02-05（周二，正月初三）连续
 //! 4 个休市自然日，前一个交易日为周五 02-01，下一个交易日为周三 02-06。
 
-include!("../test-support/company_state.rs");
+include!("../test-support/company_state/legacy_saved.rs");
 use engine::account::StockCode;
 use engine::calendar::{CivilDate, CivilInstant, ClosedReason, DayStatus, HolidayKind};
 use engine::money::Money;

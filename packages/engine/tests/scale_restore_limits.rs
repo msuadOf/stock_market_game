@@ -1,4 +1,5 @@
-include!("../test-support/company_state.rs");
+include!("../test-support/company_state/legacy_saved.rs");
+include!("../test-support/company_state/legacy_saved_mut.rs");
 use engine::account::StockCode;
 use engine::money::Money;
 use engine::session::{

@@ -14,8 +14,7 @@ use engine::company::operations::{
     CompanyOperationsConfig, FlowParams, IndustrialFlowParams, OperatingCompanyConfig,
 };
 use engine::company::{
-    CompanyId, CompanyKind, CompanySpec, CounterpartyId, CounterpartyKind, ExternalCounterparty,
-    IndustryId,
+    CompanyKind, CompanySpec, CounterpartyId, CounterpartyKind, ExternalCounterparty, IndustryId,
 };
 
 /// 经营域种子（测试固定值，确定性钉死）。

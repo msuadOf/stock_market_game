@@ -1,6 +1,6 @@
 //! B4e 最小只读切片：读取既有公司与税账事实，不调用日终或付款命令。
 
-include!("../test-support/company_state.rs");
+include!("../test-support/company_state/system_saved_mut.rs");
 #[allow(dead_code)]
 #[path = "publications/session_fixture.rs"]
 mod session_fixture;

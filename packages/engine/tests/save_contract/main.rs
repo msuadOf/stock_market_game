@@ -5,7 +5,7 @@
 //! 仅接受完整当前结构；额外版本标记、旧字段与缺失字段显式拒绝，不提供兼容迁移。
 //! 恢复保留已发生事实与随机状态，未来自由并发受理不承诺仅凭同 seed 字节相等。
 
-include!("../../test-support/company_state.rs");
+include!("../../test-support/company_state/legacy_saved.rs");
 use engine::account::StockCode;
 use engine::money::Money;
 use engine::session::{

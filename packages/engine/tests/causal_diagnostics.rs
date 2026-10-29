@@ -1,4 +1,4 @@
-include!("../test-support/company_state.rs");
+include!("../test-support/company_state/legacy_saved.rs");
 #[path = "diagnostic_parity.rs"]
 mod fixture;
 
