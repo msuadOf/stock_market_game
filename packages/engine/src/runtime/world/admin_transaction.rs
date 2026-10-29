@@ -91,6 +91,7 @@ impl World {
     }
 
     /// 仅转发到唯一行政作用域，不分配计划、不另作信用或 Commit 后安装。
+    #[cfg(test)]
     pub(crate) fn with_repurchase_transaction<P>(
         &mut self,
         grouped: Vec<(GroupIdx, Vec<AdminOperation>)>,

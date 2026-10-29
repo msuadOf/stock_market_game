@@ -10,16 +10,6 @@ use super::world::World;
 use super::{FillFact, GroupIdx, Owner};
 use crate::orderbook::Side;
 
-fn buy(local: u32, stock: u16, price: i64, qty: u32) -> PlaceSpec {
-    PlaceSpec {
-        local,
-        stock,
-        side: Side::Buy,
-        price,
-        qty,
-    }
-}
-
 fn sell(local: u32, stock: u16, price: i64, qty: u32) -> PlaceSpec {
     PlaceSpec {
         local,

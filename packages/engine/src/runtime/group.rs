@@ -3527,7 +3527,7 @@ impl GroupState {
                 let host = GroupReviewHost {
                     state: &*self,
                     local,
-                    account,
+                    _account: account,
                     market: observation.market.clone(),
                     // 复审时点面：observe 输出（assessments/behavior/acquired
                     // 同源——belief_states 是 observe 前旧态）。
@@ -5430,33 +5430,6 @@ impl GroupState {
     }
 }
 
-/// 组账户权益（现金+持仓×最新价——与 observe_personal 的 equity 口径同式：
-/// 溢出/缺视图 panic，不静默）。
-fn equity_cents(
-    account: &GroupAccount,
-    market: &crate::strategy::MarketView,
-) -> crate::money::Money {
-    let mut equity = crate::money::Money::from_cents(account.cash);
-    for (stock, &qty) in account.shares.iter().enumerate() {
-        if qty == 0 {
-            continue;
-        }
-        let price = market
-            .stocks
-            .get(&crate::StockId(stock as u32))
-            .map(|view| view.last_price)
-            .unwrap_or_else(|| {
-                panic!("组内权益计算缺股 {stock:?} 市场视图");
-            });
-        equity = equity
-            .add(price.mul_shares(qty).unwrap_or_else(|error| {
-                panic!("组内权益持仓估值失败 {stock:?}: {error:?}");
-            }))
-            .unwrap_or_else(|error| panic!("组内权益累加失败：{error:?}"));
-    }
-    equity
-}
-
 /// D3b 件 4：组线程复审宿主（PlanReviewHost 的组内实现——输入全部
 /// 组权威：账户（成本基/T+1/在途）、belief 簿（experience/policy）、
 /// 快照行情、观察基分钟序列、投影策略面）。接线于 run_chain_decision
@@ -5465,7 +5438,8 @@ fn equity_cents(
 struct GroupReviewHost<'a> {
     state: &'a GroupState,
     local: LocalIdx,
-    account: crate::AccountId,
+    // 复审上下文保留显式账户身份，当前 PlanReviewHost 方法暂不读取。
+    _account: crate::AccountId,
     market: crate::strategy::MarketView,
     /// 复审时点 belief（observe 输出——复审的 assessments 与行为面同源；
     /// belief_states 是 observe 前旧态，session 版复审定在 observe 后原地
@@ -5869,18 +5843,6 @@ fn phase_is_continuous(
     let day_tick = tick % ticks_per_day;
     let closing_start = ticks_per_day.saturating_sub(closing_ticks);
     day_tick >= auction_ticks && day_tick < closing_start
-}
-
-/// 交易日序号（(tick−1)/tpd——首拍属 day 0，与 session.day 同基；
-/// Sol 终审四审 A2：此前 tick/tpd 使组内观察/经历时刻的 trading_day
-/// 超前 1，与复审 as_of 错位触发 AsOfBeforeLatestEvent）。
-fn context_day(tick: u64, ticks_per_day: u64) -> u64 {
-    tick.saturating_sub(1) / ticks_per_day
-}
-
-/// 整手（世界配置——与 session setup.config.lot_size 同源投影）。
-fn self_lot(config: &std::sync::Arc<crate::config::GameConfig>) -> u32 {
-    config.lot_size
 }
 
 /// 组内初始紧迫度（与 session `initial_plan_urgency` 同一 `assess_urgency`

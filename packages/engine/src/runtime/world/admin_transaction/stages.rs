@@ -24,7 +24,15 @@ struct PreparedTaxStageGroup {
 
 #[derive(Debug)]
 struct PreparedTaxStageAccounts {
+    #[expect(
+        dead_code,
+        reason = "保留税阶段索引与账户快照到 inspect 结束，维持 Arc 生命周期及析构顺序"
+    )]
     stage_index: u32,
+    #[expect(
+        dead_code,
+        reason = "保留税阶段账户快照到 inspect 结束，维持 before/after Arc 生命周期及析构顺序"
+    )]
     groups: Vec<PreparedTaxStageGroup>,
 }
 
@@ -306,6 +314,7 @@ fn prepare_stage_requests(
 
 impl World {
     /// 资产阶段与最终 INFO 共用一个 pending/id；成功返回才代表最终 Commit 完成。
+    #[cfg(test)]
     pub(crate) fn with_staged_admin_transaction<P>(
         &mut self,
         stages: Vec<AdminOperationStage>,

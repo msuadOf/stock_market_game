@@ -299,11 +299,9 @@ pub struct RuntimeDriver {
     /// P2-4b：上一拍在途单快照基线（信封账本增量维护的差分源——
     /// None=基线缺失，首拍全量重建后建立）。
     resting_echo_prev: Option<Vec<Vec<super::protocol::RestingFact>>>,
-    /// Sol 终审四审 A2：每股构造期日 K 历史长度（install_candles 的
-    /// 归档上限基准——desk 侧 roll_day 按绝对 tick 界自动归档，超前
-    /// 于 session 日终（session.day 未推进时档校验 fault2064 期望少
-    /// 一条）；push 上限=initial+session.day（归档不超前日历）。
-    initial_candle_history_len: std::collections::BTreeMap<crate::StockId, usize>,
+    /// Sol 终审四审 A2：保留构造期日 K 历史长度快照的求值与生命周期；
+    /// 当前 install_candles 已改从发布版本读取，不消费此历史基准。
+    _initial_candle_history_len: std::collections::BTreeMap<crate::StockId, usize>,
     /// P2-4a→4b 红证旋钮（cfg(test)）：强制每拍全量重建信封账本
     ///（增量路径 A/B 等价守卫的对照臂）。
     #[cfg(test)]
@@ -834,7 +832,7 @@ impl RuntimeDriver {
             // 构造时 session.day）——restore 场景构造期长度已含已归档日
             // （361=360 预置+1 已归档），直接当 initial 会使归档上限
             // 双计（limit=361+day → push 超前一条，档校验 fault2064）。
-            initial_candle_history_len: session
+            _initial_candle_history_len: session
                 .runtime_candle_histories()
                 .into_iter()
                 .map(|(code, len)| {
@@ -850,35 +848,6 @@ impl RuntimeDriver {
             }),
         };
         Ok(driver)
-    }
-
-    /// Sol 二审修复集 5：会话旧簿在途挂单迁入世界（ExternalPlan 路由——
-    /// 与玩家意图注入同一通道）。仅构造期调用：runtime 步进开始后 session
-    /// 旧簿不再新增挂单（写面在组/desk），无重复迁移。owner 不在名册=
-    /// 投影缺口，显式失败（不静默丢单）。
-    /// Sol 终审修复 1c 同族：owner→(组, 组内 local) 换算+按组定向发送
-    ///（此前全局下标当 local 广播给组 0——多组下错归）。
-    fn adopt_session_resting_orders(&mut self, session: &GameSession) -> Result<(), String> {
-        let n_groups = self.world.n_groups();
-        let mut ops: Vec<Vec<super::decision::PendingOp>> = vec![Vec::new(); n_groups];
-        for (code, orders) in session.runtime_resting_orders_snapshot() {
-            for order in orders {
-                let (g, local) = self
-                    .owner_slot(order.owner)
-                    .map_err(|e| format!("旧簿挂单 {e}（无法迁移）：{:?}", code))?;
-                ops[g as usize].push(super::decision::PendingOp {
-                    local,
-                    stock: code.0 as super::StockIdx,
-                    side: order.side,
-                    routed: super::protocol::RoutedPrice::Fixed(order.price.cents()),
-                    purse_reference: order.price.cents(),
-                    qty: order.qty,
-                });
-            }
-        }
-        self.world
-            .send_external_plan_grouped(ops, vec![Vec::new(); n_groups]);
-        Ok(())
     }
 
     /// 提交一个真实市场 tick；三档共用 candidate、事实、来源校验与唯一安装。
@@ -1397,6 +1366,7 @@ impl RuntimeDriver {
     }
 
     /// tick 分片与日结完整 candidate 共用同一账户投影，保持现金、T+1、成本口径一致。
+    #[cfg(test)]
     fn install_account_projection<'a>(
         &mut self,
         session: &mut GameSession,
@@ -1488,6 +1458,7 @@ impl RuntimeDriver {
     }
 
     /// 日结成功回执已包含 Drain 结算及 T+1 解冻；在 civil 读取账户前立即交付。
+    #[cfg(test)]
     fn install_day_end_accounts(&mut self, session: &mut GameSession) -> Result<(), String> {
         let candidate = self
             .world
@@ -1541,6 +1512,7 @@ impl RuntimeDriver {
         Ok(())
     }
 
+    #[cfg(test)]
     fn install_pending_hold_inits(
         &mut self,
         session: &mut GameSession,
@@ -1578,22 +1550,6 @@ impl RuntimeDriver {
 
     pub(crate) fn drained_retail_facts(&self) -> Vec<super::retail_lifecycle::Fact> {
         self.world.drained_retail.clone()
-    }
-
-    pub(crate) fn take_retail_facts(
-        &mut self,
-    ) -> (
-        Vec<super::retail_lifecycle::Fact>,
-        Vec<(AccountId, crate::StockId, crate::RejectionReason)>,
-    ) {
-        (
-            std::mem::take(&mut self.pending_retail),
-            std::mem::take(&mut self.pending_retail_rejections),
-        )
-    }
-
-    pub(crate) fn take_drained_retail_facts(&mut self) -> Vec<super::retail_lifecycle::Fact> {
-        std::mem::take(&mut self.world.drained_retail)
     }
 
     pub fn account_by_owner(&self, owner: super::Owner) -> Option<crate::AccountId> {
@@ -1927,6 +1883,7 @@ impl RuntimeDriver {
     /// 清簿撤单事实收集进 drained 缓冲（调用方 take_drained_events 取走）。
     /// 日界批：收盘竞价成交随 Drain 应答上行——事件/个人确认在此消费
     /// （civil_date=当日；receipts 返回调用方即时入账）。
+    #[cfg(test)]
     pub(crate) fn world_day_end_for_step(
         &mut self,
         session: &mut GameSession,
