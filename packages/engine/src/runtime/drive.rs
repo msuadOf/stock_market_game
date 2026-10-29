@@ -1241,6 +1241,7 @@ impl RuntimeDriver {
         touched.dedup();
         let mut input = PreparedDriverStep {
             calendar: PreparedDriverCalendar::MarketTick(calendar),
+            sync_source: None,
             accounts: snapshots,
             buy_vwap,
             last_prices,

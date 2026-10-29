@@ -217,6 +217,7 @@ impl RuntimeDriver {
             return Err("静点 Full 读取期间 World 来源改变".to_owned());
         }
         Ok(PreparedDriverStep {
+            sync_source: None,
             calendar: PreparedDriverCalendar::Static(calendar_day),
             accounts,
             buy_vwap: Default::default(),

@@ -191,17 +191,19 @@ impl GameSession {
     fn prepare_runtime_mirror_with_epoch(
         &self,
         driver: &mut RuntimeDriver,
-        input: PreparedDriverStep,
+        mut input: PreparedDriverStep,
         tick: u64,
         expected_authority_epoch: u64,
     ) -> Result<PreparedRuntimeMirror, String> {
         input.validate_calendar(self, tick, driver.world_committed_tick())?;
         #[cfg(feature = "simulation-diagnostics")]
         let causal_calendar = input.calendar.clone();
-        let static_read = input.static_read;
-        let is_static = static_read.is_some();
-        let refresh_market = static_read.as_ref().is_some_and(|read| read.refresh_market);
-        let static_session_revision = static_read.as_ref().map(|read| read.session_revision);
+        let is_static = input.static_read.is_some();
+        let refresh_market = input
+            .static_read
+            .as_ref()
+            .is_some_and(|read| read.refresh_market);
+        let static_session_revision = input.static_read.as_ref().map(|read| read.session_revision);
         if static_session_revision.is_some_and(|revision| revision != self.external_revision()) {
             return Err("静点 Full 捕获后 Session revision 已改变".to_owned());
         }
@@ -210,7 +212,8 @@ impl GameSession {
         {
             return Err("静点 Full 不得产生 tick、日结或业务事件".to_owned());
         }
-        let mut source = static_read
+        let mut source = input
+            .static_read
             .as_ref()
             .map_or_else(|| driver.mirror_source(), |read| read.source);
         if source != driver.mirror_source() {
@@ -230,6 +233,8 @@ impl GameSession {
             .runtime_mirror_install_sequence
             .checked_add(1)
             .ok_or_else(|| "镜像 install_sequence 已耗尽".to_owned())?;
+        driver.materialize_sync_mirror_inputs(&mut input)?;
+        let static_read = input.static_read;
         let mut accounts = BTreeMap::new();
         let mut personals: BTreeMap<_, _> = input
             .personals

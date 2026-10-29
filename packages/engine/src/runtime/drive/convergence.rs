@@ -7,6 +7,8 @@ use std::sync::Arc;
 #[derive(Clone)]
 pub(crate) struct PreparedDriverStep {
     pub calendar: PreparedDriverCalendar,
+    /// None 为自带 raw Full；Some 表示本拍个人态已 move 到该真实来源的累计表。
+    pub sync_source: Option<crate::runtime::source::WorldMirrorSource>,
     pub accounts: Vec<GroupAccountShard>,
     pub buy_vwap: BTreeMap<
         (
@@ -655,6 +657,8 @@ impl RuntimeDriver {
             self.plan_policy,
         )
         .map_err(|error| error.to_string())?;
+        // 独立完整 getter 全部成功后保留其 raw 值，不再用累计表覆盖对照臂。
+        input.sync_source = None;
         Ok(input)
     }
 
@@ -675,6 +679,7 @@ impl RuntimeDriver {
         self.world.set_civil_date(session.civil_date());
         let input = PreparedDriverStep {
             calendar: PreparedDriverCalendar::ManualDayEnd(calendar_day),
+            sync_source: None,
             accounts: Vec::new(),
             buy_vwap: BTreeMap::new(),
             last_prices: self
