@@ -11,6 +11,17 @@ pub mod world {
     pub use engine::runtime::world::BeliefParticipantSnapshot;
 }
 
+mod type_aliases {
+    use super::{AccountId, BeliefParticipantSnapshot, GroupIdx, LocalIdx, PersonalPresence};
+
+    // 仅为同一验证器在独立测试 crate 中补齐其所需的类型闭包。
+    pub(super) type PersonalPresenceGroup = (GroupIdx, Vec<(AccountId, PersonalPresence)>);
+    pub(super) type PersonalFullGroup = (
+        GroupIdx,
+        Vec<(LocalIdx, AccountId, Option<BeliefParticipantSnapshot>)>,
+    );
+}
+
 #[path = "../src/runtime/personal_full_validation.rs"]
 mod personal_full_validation;
 
