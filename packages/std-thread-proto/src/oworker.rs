@@ -10,8 +10,8 @@
 //!
 //! 与跨股中转臂（xworker）的核心区别：xworker 是家端预留（reserved_cash）
 //! + 席位镜像 + 回执记账；本臂 NPC 账户在挂单期间**不含**该笔资金/股票
-//! （决策可见余额 = npc.cash，严格所有权口径——在途退款的差额由 skip
-//! 计数显式暴露，不静默掩盖）。
+//!   （决策可见余额 = npc.cash，严格所有权口径——在途退款的差额由 skip
+//!   计数显式暴露，不静默掩盖）。
 //!
 //! 时序关键不变量（正确性基石）：交易部在 DeskDone 之前 flush 全部实体
 //! 批次，coordinator 收齐全部 DeskDone 之后才广播下一 Start ⇒ 组线程收件
@@ -484,7 +484,7 @@ impl Desk {
         upper: i64,
     ) -> Result<(), ProtoError> {
         let price = resolve_rp(&rp, side, self.best_bid(), self.best_ask(), upper, lower);
-        if price <= 0 || qty == 0 || qty % 100 != 0 || price < lower || price > upper {
+        if price <= 0 || qty == 0 || !qty.is_multiple_of(100) || price < lower || price > upper {
             // 带外/非整手显式拒绝：实体原路退回（不静默吞资源）。
             self.skipped_orders += 1;
             let mut sink = DeskSink {
@@ -992,7 +992,7 @@ pub fn desk_main(
         match msg {
             DeskMsg::Ops {
                 tick,
-                group,
+                group: _,
                 ops,
                 final_flush,
             } => {
@@ -1204,7 +1204,7 @@ pub fn group_main(
         positions: BTreeMap::new(),
     };
     // 组内出现的持股掩码集合（静态）。
-    let mut views_masks: Vec<u8> = masks.iter().copied().collect();
+    let mut views_masks = masks.to_vec();
     views_masks.sort_unstable();
     views_masks.dedup();
 
@@ -1709,9 +1709,9 @@ fn build_views_own(
     let mut out: Vec<Option<Arc<MarketView>>> = (0..32).map(|_| None).collect();
     for &mask in views_masks {
         let mut map = BTreeMap::new();
-        for i in 0..n {
+        for (i, view) in base.iter().enumerate() {
             if mask & (1 << i) != 0 {
-                map.insert(identity.id(i), base[i].clone());
+                map.insert(identity.id(i), view.clone());
             }
         }
         out[mask as usize] = Some(Arc::new(MarketView {

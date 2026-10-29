@@ -25,6 +25,14 @@ use std::collections::{BTreeMap, HashMap, VecDeque};
 /// 外部账户身份：(home 股索引, 家端名册内 npc 索引)。
 pub type ForeignId = (u8, u32);
 
+/// 下单意图中由调用方提供的委托字段。
+pub struct PlacementRequest {
+    pub npc_idx: u32,
+    pub side: Side,
+    pub price: i64,
+    pub qty: u32,
+}
+
 /// 撮合回执：外部（跨股）订单的成交/终结事件。目标股 worker 产生 →
 /// coordinator 中转 → 家端 worker 在回执相位应用到次级仓位/现金。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -300,6 +308,12 @@ pub struct StockBook {
     pub resting_count: u64,
 }
 
+impl Default for StockBook {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl StockBook {
     pub fn new() -> Self {
         StockBook {
@@ -360,15 +374,18 @@ impl StockBook {
     pub fn place(
         &mut self,
         arena: &mut Arena,
-        npc_idx: u32,
-        side: Side,
-        price: i64,
-        qty: u32,
+        request: PlacementRequest,
         tick: u64,
         ttl: u64,
         fees: &FeeTable,
     ) -> Result<Placement, ProtoError> {
-        if price <= 0 || qty == 0 || qty % 100 != 0 {
+        let PlacementRequest {
+            npc_idx,
+            side,
+            price,
+            qty,
+        } = request;
+        if price <= 0 || qty == 0 || !qty.is_multiple_of(100) {
             self.skipped_orders += 1;
             return Ok(Placement::Skipped(SkipReason::NonLotQty));
         }

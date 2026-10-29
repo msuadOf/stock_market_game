@@ -254,7 +254,7 @@ pub fn xworker_main(
             m
         })
         .collect();
-    let mut views_masks: Vec<u8> = masks.iter().copied().collect();
+    let mut views_masks = masks.to_vec();
     views_masks.sort_unstable();
     views_masks.dedup();
 
@@ -671,10 +671,12 @@ fn phase1(
                 }
                 book.place(
                     &mut guard,
-                    npc_idx,
-                    side,
-                    price,
-                    qty,
+                    crate::book::PlacementRequest {
+                        npc_idx,
+                        side,
+                        price,
+                        qty,
+                    },
                     tick,
                     cfg.order_ttl_ticks,
                     fees,
@@ -839,7 +841,18 @@ fn apply_routed_place(
         *desks_peak = (*desks_peak).max(desk_index.len() as u64);
         slot
     };
-    let outcome = book.place(arena, slot, side, price, qty, tick, ttl, fees)?;
+    let outcome = book.place(
+        arena,
+        crate::book::PlacementRequest {
+            npc_idx: slot,
+            side,
+            price,
+            qty,
+        },
+        tick,
+        ttl,
+        fees,
+    )?;
     match outcome {
         Placement::FullyFilled | Placement::Rested => Ok(()),
         Placement::Skipped(_) => {
@@ -1176,9 +1189,9 @@ fn build_views(
     let mut out: Vec<Option<Arc<MarketView>>> = (0..32).map(|_| None).collect();
     for &mask in views_masks {
         let mut map = BTreeMap::new();
-        for i in 0..n {
+        for (i, view) in base.iter().enumerate() {
             if mask & (1 << i) != 0 {
-                map.insert(identity.id(i), base[i].clone());
+                map.insert(identity.id(i), view.clone());
             }
         }
         out[mask as usize] = Some(Arc::new(MarketView {

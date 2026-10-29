@@ -76,8 +76,7 @@ mod identity_tests {
             );
             let (records, stats) = decide_range(
                 &[npc],
-                0,
-                1,
+                0..1,
                 identity.id(0),
                 &market,
                 &engine::config::GameConfig::proposed_defaults(),
@@ -97,6 +96,12 @@ mod identity_tests {
 pub struct ThreadGauge {
     current: AtomicI32,
     peak: AtomicI32,
+}
+
+impl Default for ThreadGauge {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ThreadGauge {
@@ -428,8 +433,7 @@ fn run_tick(
             .map_err(|_| ProtoError::ChannelClosed("npcs 读锁中毒".into()))?;
         decide_range(
             guard.accounts(),
-            0,
-            guard.roster_len,
+            0..guard.roster_len,
             stock_id,
             &market,
             game_cfg,
@@ -481,12 +485,10 @@ fn run_tick(
                 let (from, to) = chunk_range(len, per_stock_threads, slot);
                 let roster = guard.accounts();
                 let market = &market;
-                let game_cfg = game_cfg;
-                let gauge = gauge;
                 handles.push(scope.spawn(move || {
                     gauge.enter();
                     let out =
-                        decide_range(roster, from, to, stock_id, market, game_cfg, seed, tick);
+                        decide_range(roster, from..to, stock_id, market, game_cfg, seed, tick);
                     gauge.exit();
                     out
                 }));
@@ -514,7 +516,15 @@ fn run_tick(
         let mut guard = write_arena(arena)?;
         book.expire_due(&mut guard, tick)?;
         // ── 相位 3：意图应用（工作单对齐 + 撮合）──
-        apply_intents(&mut guard, book, records, upper, lower, fees, tick, cfg)?;
+        apply_intents(
+            &mut guard,
+            book,
+            records,
+            PriceLimits { upper, lower },
+            fees,
+            tick,
+            cfg,
+        )?;
         // ── 相位 4：T+1 解冻 ──
         for npc in guard.accounts_mut() {
             npc.unfreeze_t1();
@@ -537,8 +547,7 @@ fn run_tick(
 /// 名册区间决策（所有模式共用的内核）。返回保持到达序（slot 升序、NPC 升序）。
 fn decide_range(
     npcs: &[Npc],
-    from: u32,
-    to: u32,
+    range: std::ops::Range<u32>,
     stock_id: StockId,
     market: &Arc<MarketView>,
     game_cfg: &engine::config::GameConfig,
@@ -561,7 +570,7 @@ fn decide_range(
     };
     let mut records = Vec::new();
     let mut stats = ChunkStats::default();
-    for idx in from..to {
+    for idx in range {
         let npc = &npcs[idx as usize];
         stats.decide_calls += 1;
         {
@@ -590,17 +599,22 @@ fn decide_range(
     (records, stats)
 }
 
+struct PriceLimits {
+    upper: i64,
+    lower: i64,
+}
+
 /// 应用意图：先做该 NPC 的工作单对齐（撤自己全部挂单），再解析价格并下单。
 fn apply_intents(
     arena: &mut Arena,
     book: &mut StockBook,
     records: Vec<IntentRecord>,
-    upper: i64,
-    lower: i64,
+    limits: PriceLimits,
     fees: &FeeTable,
     tick: u64,
     cfg: &ProtoConfig,
 ) -> Result<(), ProtoError> {
+    let PriceLimits { upper, lower } = limits;
     for rec in records {
         // 引擎语义：决策复核的股票两侧工作单与最新目标对齐。
         book.cancel_all_for(arena, rec.npc_idx)?;
@@ -628,10 +642,12 @@ fn apply_intents(
         }
         let outcome = book.place(
             arena,
-            rec.npc_idx,
-            side,
-            price,
-            qty,
+            crate::book::PlacementRequest {
+                npc_idx: rec.npc_idx,
+                side,
+                price,
+                qty,
+            },
             tick,
             cfg.order_ttl_ticks,
             fees,
@@ -736,17 +752,16 @@ fn spawn_persist_pool(
                 let out = arena
                     .read()
                     .map_err(|_| ProtoError::ChannelClosed("npcs 读锁中毒".into()))
-                    .and_then(|guard| {
-                        Ok(decide_range(
+                    .map(|guard| {
+                        decide_range(
                             guard.accounts(),
-                            work.npc_from,
-                            work.npc_to,
+                            work.npc_from..work.npc_to,
                             stock_id,
                             &work.market,
                             &game_cfg,
                             cfg.seed,
                             work.tick,
-                        ))
+                        )
                     });
                 match out {
                     Ok((records, stats)) => {

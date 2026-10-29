@@ -6,7 +6,7 @@
 //! 2. 交易部（一股一线程）收齐全部组的 final 标记后 flush 实体批次回
 //!    组线程、上交 DeskDone；
 //! 3. coordinator 收齐 G GroupStats + N DeskDone，安装公共状态 → 下一 tick。
-//! 数据面（订单/实体）全程不经 coordinator——这是与跨股中转臂的结构性差异。
+//!    数据面（订单/实体）全程不经 coordinator——这是与跨股中转臂的结构性差异。
 //!
 //! 收尾：Drain（交易部强撤全部挂单，实体回流）→ Shutdown（组线程落完
 //! 全部在途实体后上交期末名册）→ 审计（守恒 + 不变量，显式失败不静默）。
@@ -138,9 +138,9 @@ pub fn run_own_benchmark(
     let mut home_of_all: Vec<u8> = Vec::new();
     let mut remainders = vec![0u64; stocks];
     let mut hold_counts = [0u64; 4];
-    for s in 0..stocks {
+    for (s, remainder_slot) in remainders.iter_mut().enumerate() {
         let (roster, remainder, info) = build_cross_roster(cfg, s, cross_pct)?;
-        remainders[s] = remainder;
+        *remainder_slot = remainder;
         for (i, &c) in info.hold_counts.iter().enumerate() {
             hold_counts[i] += c;
         }
@@ -261,8 +261,8 @@ pub fn run_own_benchmark(
         handles.push((format!("own-group-{g}"), handle));
     }
     // 交易部线程（一股一线程）。
-    for s in 0..stocks {
-        let rx = std::mem::replace(&mut desk_rxs[s], channel::<DeskMsg>().1);
+    for (s, rx_slot) in desk_rxs.iter_mut().enumerate() {
+        let rx = std::mem::replace(rx_slot, channel::<DeskMsg>().1);
         let handle = std::thread::Builder::new()
             .name(format!("own-desk-{}", shared.cfg.stocks[s].code))
             .spawn({
@@ -623,7 +623,7 @@ fn install_done(public: &mut [StockPublicState], done: &TickDone, tick: u64) {
     if st.recent_prices.len() > 20 {
         st.recent_prices.remove(0);
     }
-    if tick % 60 == 0 {
+    if tick.is_multiple_of(60) {
         st.minute_prices.push(done.last_price);
         if st.minute_prices.len() > 20 {
             st.minute_prices.remove(0);

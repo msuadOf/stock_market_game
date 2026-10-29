@@ -386,8 +386,8 @@ pub fn run_cross_benchmark(
         spurious_cancels += f.spurious_cancels;
         foreign_skips += f.foreign_skips;
         cancel_intents += f.cancel_intents;
-        for i in 0..4 {
-            receipts_applied[i] += f.receipts_applied[i];
+        for (i, total) in receipts_applied.iter_mut().enumerate() {
+            *total += f.receipts_applied[i];
         }
         desks_peak = desks_peak.max(f.desks_peak);
         for (i, &c) in f.setup.hold_counts.iter().enumerate() {
@@ -482,19 +482,18 @@ pub fn run_cross_benchmark(
             max_trade_price_cents: f.max_trade_price.unwrap_or(0),
             trade_count: f.trade_count,
         });
-        if f.trade_count > 0 {
-            if f.min_trade_price.unwrap_or(0) < spec.initial_price_cents - band
-                || f.max_trade_price.unwrap_or(0) > spec.initial_price_cents + band
-            {
-                return Err(ProtoError::InvalidConfig(format!(
-                    "股票 {} 成交价越界：[{}, {}] 不在 [{}, {}]",
-                    spec.code,
-                    f.min_trade_price.unwrap_or(0),
-                    f.max_trade_price.unwrap_or(0),
-                    spec.initial_price_cents - band,
-                    spec.initial_price_cents + band
-                )));
-            }
+        if f.trade_count > 0
+            && (f.min_trade_price.unwrap_or(0) < spec.initial_price_cents - band
+                || f.max_trade_price.unwrap_or(0) > spec.initial_price_cents + band)
+        {
+            return Err(ProtoError::InvalidConfig(format!(
+                "股票 {} 成交价越界：[{}, {}] 不在 [{}, {}]",
+                spec.code,
+                f.min_trade_price.unwrap_or(0),
+                f.max_trade_price.unwrap_or(0),
+                spec.initial_price_cents - band,
+                spec.initial_price_cents + band
+            )));
         }
     }
     let retail_total: u64 = cfg.retail_per_stock as u64 * cfg.stocks.len() as u64;
@@ -555,7 +554,7 @@ fn install_done(public: &mut [StockPublicState], done: &TickDone, tick: u64) {
     if st.recent_prices.len() > 20 {
         st.recent_prices.remove(0);
     }
-    if tick % 60 == 0 {
+    if tick.is_multiple_of(60) {
         st.minute_prices.push(done.last_price);
         if st.minute_prices.len() > 20 {
             st.minute_prices.remove(0);

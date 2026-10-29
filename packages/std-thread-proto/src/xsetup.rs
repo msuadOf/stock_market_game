@@ -156,7 +156,7 @@ pub fn build_cross_roster(
         // 守恒口径：allocated 只计「本股的股份」——主仓属于本股流通股；
         // 次级仓属于目标股的流通股，由目标股的跨股池预算约束（见下）。
         allocated += npc.qty as u64;
-        debug_assert!(npc.qty % 100 == 0, "主仓必须整手");
+        debug_assert!(npc.qty.is_multiple_of(100), "主仓必须整手");
         npcs.push(npc);
     }
     // inst（与按股私有臂一致，53% 池）。

@@ -228,8 +228,7 @@ pub fn run_benchmark(
     for handle in handles {
         handle
             .join()
-            .map_err(|_| ProtoError::ChannelClosed("worker panic".into()))?
-            .map_err(|e| e)?;
+            .map_err(|_| ProtoError::ChannelClosed("worker panic".into()))??;
     }
     // 期末累计统计（以 FinalState 为权威）。
     let mut stats_trades = 0u64;
