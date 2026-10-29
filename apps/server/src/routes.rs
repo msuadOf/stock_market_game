@@ -1378,7 +1378,7 @@ pub async fn api_stock_history(
     headers: HeaderMap,
 ) -> Response {
     // 复核建议 2：本人股票历史——成员鉴权 + history_for（按成员账户查询
-    /// 与记账 read_count；此前 authorized_market+账户 0 通道使非成员可读
+    // 与记账 read_count；此前 authorized_market+账户 0 通道使非成员可读
     // 且经历账本记在账户 0 上越权）。
     let (handles, subject) =
         match authorized_session(&state, &query.session_id, authorization_token(&headers)).await {
@@ -1514,7 +1514,7 @@ pub async fn api_load(State(state): State<AppState>, headers: HeaderMap, body: B
             );
         }
     };
-    let (handles, subject) =
+    let (handles, _subject) =
         match authorized_market_controller(&state, &body.session_id, authorization_token(&headers))
             .await
         {

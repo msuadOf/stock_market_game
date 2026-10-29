@@ -1,3 +1,4 @@
+use super::session_fixture as fixture;
 use super::*;
 include!("../../../../packages/engine/test-support/simple_company.rs");
 
@@ -105,10 +106,10 @@ fn production_actor_steps_and_delivers_tick_batches() {
     // 批 9 A3（compute 注入退役）：原 compute_context_production_actor_
     // does_not_follow_callers_pool 的池隔离断言面（observer 采样/
     // ptr_eq 绑定）随 A1/A2 的注入面消亡整体退役——std-thread 模型
-    /// 决策/撮合在组/交易部线程，ComputeContext 池采样仅旧管线
-    /// （=0 逃生门）路径存在。保留的等价断言：actor 构造（无注入）
-    /// → run_protocol_batch 推进 tick → TickBatch 逐拍交付（原测试
-    /// 的交付面不变）。
+    // 决策/撮合在组/交易部线程，ComputeContext 池采样仅旧管线
+    // （=0 逃生门）路径存在。保留的等价断言：actor 构造（无注入）
+    // → run_protocol_batch 推进 tick → TickBatch 逐拍交付（原测试
+    // 的交付面不变）。
     let setup = fixture::civil_setup(engine::CivilDate::from_iso("2030-01-02").unwrap());
     let game = ProtocolSession::new(setup, 7).unwrap();
     let (_sender, cmd_rx) = mpsc::unbounded_channel();
@@ -146,7 +147,7 @@ fn production_actor_steps_and_delivers_tick_batches() {
 #[tokio::test]
 async fn session_manager_defaults_without_compute_injection() {
     // 批 9 A3：compute_workers/with_compute 面退役（A1/A2）——等价
-    /// 断言：默认构造可用且 new_session 正常登记。
+    // 断言：默认构造可用且 new_session 正常登记。
     let manager = SessionManager::with_base_ms(1);
     let setup = fixture::civil_setup(engine::CivilDate::from_iso("2030-01-02").unwrap());
     let id = manager
@@ -158,10 +159,10 @@ async fn session_manager_defaults_without_compute_injection() {
 #[tokio::test]
 async fn new_session_capacity_limit_still_guards_registration() {
     // 批 9 A3：Compute 失败变体退役（A1）——保留的容量/登记等价面：
-    /// Capacity 拒绝时不登记（原断言 active_count==0/sessions 空的
-    /// 等价语义，用容量满构造不可行（MAX_SESSIONS 大），改验正常
-    /// 登记计数一致——失败路径的"不登记"由 fetch_update 先于构造
-    /// 的既有顺序承载）。
+    // Capacity 拒绝时不登记（原断言 active_count==0/sessions 空的
+    // 等价语义，用容量满构造不可行（MAX_SESSIONS 大），改验正常
+    // 登记计数一致——失败路径的"不登记"由 fetch_update 先于构造
+    // 的既有顺序承载）。
     let manager = SessionManager::with_base_ms(1);
     let setup = fixture::civil_setup(engine::CivilDate::from_iso("2030-01-02").unwrap());
     let _ = manager.new_session(setup, 7).expect("session registers");
@@ -242,9 +243,6 @@ fn producer_failure_contains_real_location_and_recovery_details() {
         "StepFatal has no source: do not invent a cause"
     );
 }
-
-#[path = "../../../../packages/engine/tests/publications/session_fixture.rs"]
-mod fixture;
 
 fn assert_fatal_rejection(error: SessionError) {
     // fault1291：宿主致命失败后停机（数值码断言，ADR 0041）。
@@ -906,7 +904,7 @@ fn producer_failure_redacts_real_bare_amount_overflow_operands() {
 #[test]
 fn zero_step_batch_keeps_progress_origin_and_ingress_facts() {
     let setup = fixture::civil_setup(engine::CivilDate::from_iso("2030-01-02").unwrap());
-    let mut game = ProtocolSession::new(setup, 7).unwrap();
+    let game = ProtocolSession::new(setup, 7).unwrap();
     let (_sender, cmd_rx) = mpsc::unbounded_channel();
     let (event_tx, _receiver) = broadcast::channel(EVENT_CHANNEL_CAPACITY);
     let mut actor = SessionActor {

@@ -1,5 +1,6 @@
 //! 更正拒绝后的真实 actor／协议恢复边界；依赖已审 E2 与显式命令转发组合。
 
+use super::session_fixture as correction_fixture;
 use super::*;
 use engine::accounting::{
     AccountingAmount, BusinessEventId, BusinessKind, CashFlowClass, JournalEntry, JournalLine,
@@ -8,8 +9,6 @@ use engine::accounting::{
 use engine::session::protocol::ReplayGuard;
 use engine::session::CompanyReportCorrection;
 include!("../../../../packages/engine/test-support/simple_company.rs");
-#[path = "../../../../packages/engine/tests/publications/session_fixture.rs"]
-mod correction_fixture;
 
 fn correction_controller() -> OpaqueSubjectId {
     OpaqueSubjectId::new("b4e-correction-controller".into()).unwrap()

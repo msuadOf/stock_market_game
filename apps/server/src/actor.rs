@@ -20,7 +20,7 @@ use engine::session::protocol::{
     EngineUpdate as ProtocolUpdate, PausePreferences, ProtocolSession,
 };
 use engine::session::{MarketMembership, OpaqueSubjectId};
-use engine::{AccountId, Intent, SaveSlot, SessionError, SessionSetup, Snapshot, StockCode};
+use engine::{AccountId, Intent, SaveSlot, SessionError, SessionSetup, Snapshot};
 use serde::Serialize;
 use tokio::sync::{broadcast, mpsc, oneshot};
 use tracing::{debug, info, warn};
@@ -749,6 +749,10 @@ pub struct MarketContext {
     pub setup: SessionSetup,
     pub seed: String,
 }
+
+#[cfg(test)]
+#[path = "../../../packages/engine/tests/publications/session_fixture.rs"]
+mod session_fixture;
 
 #[cfg(test)]
 mod fatal_tests;
@@ -2147,7 +2151,7 @@ impl SessionActor {
             }
         }
         if let Err(failure) = self.prepare_civil_updates() {
-            self.stop_with_failure(failure);
+            self.stop_with_failure(*failure);
             return;
         }
         self.pacing.refresh_metrics(self.game.tick());
@@ -2216,11 +2220,11 @@ impl SessionActor {
         }
     }
 
-    fn prepare_civil_updates(&mut self) -> Result<(), HostFailure> {
+    fn prepare_civil_updates(&mut self) -> Result<(), Box<HostFailure>> {
         while self
             .game
             .civil_day_ready()
-            .map_err(|error| HostFailure::civil(&error))?
+            .map_err(|error| Box::new(HostFailure::civil(&error)))?
         {
             let date = self.game.civil_date();
             let update = match self.game.end_civil_day_update_classified() {
@@ -2233,11 +2237,11 @@ impl SessionActor {
                         && self.game.civil_date() == date
                         && self.game.civil_day_ready().is_ok_and(|ready| ready);
                     let error = failure.into_error();
-                    return Err(if prepare_rejected {
+                    return Err(Box::new(if prepare_rejected {
                         HostFailure::correction_prepare_rejected(&error)
                     } else {
                         HostFailure::civil(&error)
-                    });
+                    }));
                 }
             };
             let pause = self.pause_preferences.pauses(&update);
@@ -2437,7 +2441,7 @@ impl SessionActor {
                     .map_err(reject)?;
                 // 独立复核阻断 1 修复：Reset 是时间线替换（与 Restore 同型）——
                 // 必须同步替换 ingress（新代次+新会话的收件入口）与成员名册，
-                /// 并 renew 归档 writer 到新时间线（18725d07 replace_timeline 语义；
+                // 并 renew 归档 writer 到新时间线（18725d07 replace_timeline 语义；
                 // 此前漏换 ingress 使 reset 后新代次下单全部 STALE、旧单打进已
                 // 脱离的旧 ingress）。
                 let next_generation = self
@@ -2464,13 +2468,11 @@ impl SessionActor {
                         *members = replacement.trading_subject_accounts();
                         Ok(())
                     });
-                if let Err(error) = replacement_ingress {
-                    return Err(error);
-                }
+                replacement_ingress?;
                 let renewed_archive = match &self.archive {
                     Some(writer) => writer
                         .renew(None)
-                        .map(|next| Some(next))
+                        .map(Some)
                         .map_err(|error| SendCommandError::Rejected(error.to_string())),
                     None => Ok(None),
                 };
