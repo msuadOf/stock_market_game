@@ -415,7 +415,7 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
     };
     document.addEventListener("visibilitychange", syncHostVisibility);
     return () => document.removeEventListener("visibilitychange", syncHostVisibility);
-  }, [sessionControls]);
+  }, [hostRef, sessionControls]);
 
   useEffect(() => {
     refreshDailyChart();
@@ -447,7 +447,7 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
     } catch (deliveryError) {
       setNotice(`Publisher 模式切换失败：${deliveryError instanceof Error ? deliveryError.message : String(deliveryError)}`);
     }
-  }, [setNotice]);
+  }, [hostRef, setNotice]);
 
   const queryCompanyReports = useCallback((companyId: string, cursor: string | null) => {
     void companyCoordinatorRef.current?.query({ companyId, cursor });
@@ -464,7 +464,7 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
     } catch (advanceError) {
       setNotice(`推进模拟自然日失败：${advanceError instanceof Error ? advanceError.message : String(advanceError)}`);
     }
-  }, [setNotice]);
+  }, [hostRef, setNotice]);
 
   const selectHost = () => { void onSelectHost(stopStartupRef.current); };
 
