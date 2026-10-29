@@ -104,12 +104,20 @@ impl GameSession {
             Err(error) => return Err(self.poison_civil_authority(error).into()),
         };
         let mut correction_prepare_rejected = false;
+        let mut new_due_horizon_rejected = false;
         let prepared: Result<_, SessionError> = (|| {
             let mut shadow = self
                 .clone_for_tick_shadow()
                 .map_err(|_| SessionError::InvalidSave(ValidationFault::new(1034, vec![0])))?;
             let report = shadow
                 .prepare_civil_day_disclosures()
+                .map_err(|failure| match failure {
+                    CivilDayPreparationFailure::Ordinary(error) => error,
+                    CivilDayPreparationFailure::NewlyScheduledDueBeyondHorizon(error) => {
+                        new_due_horizon_rejected = true;
+                        error
+                    }
+                })
                 .inspect_err(|error| {
                     correction_prepare_rejected = self.poison_reason().is_none()
                         && matches!(error, SessionError::ReportCorrectionDayEnd(cause)
@@ -210,10 +218,14 @@ impl GameSession {
                     Ok(value) => value,
                     Err(error) => return Err(self.poison_civil_authority(error).into()),
                 };
+                if terminal {
+                    return Err(self.poison_civil_authority(error).into());
+                }
+                if new_due_horizon_rejected && self.poison_reason().is_none() {
+                    return Err(error.into());
+                }
                 if let SessionError::ReportCorrectionDayEnd(cause) = &error {
-                    if cause.classification() == crate::company::CompanyErrorClass::SystemState
-                        || terminal
-                    {
+                    if cause.classification() == crate::company::CompanyErrorClass::SystemState {
                         return Err(self.poison_civil_authority(error).into());
                     }
                     if correction_prepare_rejected {
@@ -223,7 +235,7 @@ impl GameSession {
                         ));
                     }
                 }
-                if terminal || market_installed {
+                if market_installed {
                     return Err(self.poison_civil_authority(error).into());
                 }
                 return Err(error.into());
