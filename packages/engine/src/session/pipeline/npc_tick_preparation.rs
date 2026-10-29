@@ -1240,7 +1240,7 @@ pub(in crate::session) fn produce_decision_output_on(
                         return;
                     }
                     #[cfg(test)]
-                    if intents.len() > before_intents {
+                    if intents.len() > _before_intents {
                         view.compute
                             .t1_probes
                             .queue_arrival_order

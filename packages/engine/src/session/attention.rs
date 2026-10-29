@@ -182,7 +182,7 @@ fn pick_weighted(
     }
     // 末位候选拥有 [Σ前缀, total) 区间；next_f64 < 1 使 draw < total，
     // 浮点边缘也必须落在末位区间内，绝不静默丢弃。
-    Some((*candidates[candidates.len() - 1]))
+    Some(*candidates[candidates.len() - 1])
 }
 
 /// 个体发现选股内核：继承原候选结构（60% 持仓优先 → 70% 关注列表 →

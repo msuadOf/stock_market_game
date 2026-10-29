@@ -1946,8 +1946,8 @@ impl RuntimeDriver {
         // boundary）。此前一次性编号使 DayBoundary(24) 晚于撤单(23)
         // 而输出在其前——seq 非单调。
         // 日界批：收盘成交事件段先于竞价事实编号（ Drain 缓冲按类分组、
-        /// 无法与 AuctionTick/Completed 逐条交错——真实序"指示价→成交
-        /// →完成"以类段近似，台账登记）。
+        // 无法与 AuctionTick/Completed 逐条交错——真实序"指示价→成交
+        // →完成"以类段近似，台账登记）。
         let receipts = self.project_drained_day_trades(civil_date)?;
         self.collect_drained_auction_events();
         Ok(receipts)
@@ -2834,7 +2834,7 @@ impl RuntimeDriver {
         //（只回本 tick 演进位；非演进位 session 镜像==组权威——不变式
         // 同 belief P2-2a。B fixture due≈20-40/tick vs 名册 20000）。
         // 【P0 画像】attention_heap 段（D6：稀疏收集 + heap 全名册镜像
-        /// 重建——set_runtime_attention 内 O(名册) collect）。
+        // 重建——set_runtime_attention 内 O(名册) collect）。
         {
             let _seg = super::step_profile::scope(super::step_profile::StepSegment::AttentionHeap);
             let collected = self
@@ -3071,9 +3071,9 @@ fn resting_order_seeds_from_session(
             // D5 restore 链最后一层：audit/ purse 数值面自 save 契约直取
             // （desk 权威——此前 remaining 退 1 股占位使续拍种子量错）。
             // Sol 终审四审符号价族：limit=受理价真值（runtime 信封已收口
-            /// 真价面）——1 分占位标记退役；非正=档损坏，显式失败（此前
-            /// 占位使 restore 后公开簿/笼子参考价错乱——bids=[(1,100)]
-            /// 形态、新单被 cage 误拒）。
+            // 真价面）——1 分占位标记退役；非正=档损坏，显式失败（此前
+            // 占位使 restore 后公开簿/笼子参考价错乱——bids=[(1,100)]
+            // 形态、新单被 cage 误拒）。
             let price = envelope.audit().limit.cents();
             if price <= 0 {
                 return Err(format!(

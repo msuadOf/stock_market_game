@@ -109,9 +109,9 @@ pub fn decide_account(
     // D5 #2：due/observe 门由调用方（run_round 的 evaluate 链）控制——
     // 本函数纯决策（此前内嵌 due 判在 evaluate 排期后恒假）。
     // 决策 RNG：注意力流（evaluate 续传）经组混合因子派生——决策流与
-    /// 调度流分离（旧管线策略流独立于 attention rng；组内经派生确定化）。
+    // 调度流分离（旧管线策略流独立于 attention rng；组内经派生确定化）。
     // P1-B（性能修复）：market 由调用方每轮共享传入（同 snapshot 的纯
-    /// 函数投影——逐位等价，RNG 流不变）。
+    // 函数投影——逐位等价，RNG 流不变）。
     let mut rng = SplitMix64::new(profile.seed ^ group_seed_mix ^ tick ^ local as u64);
     let own = build_self_view(account);
     let intents = decide_data(&profile.strategy, market, &own, &mut rng, config);

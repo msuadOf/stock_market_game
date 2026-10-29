@@ -3140,8 +3140,8 @@ impl GroupState {
         // 决策（旧管线 decide_with_experience+apply_personal_analysis 等价）：
         // behavior+risk+dated 经验输入；rng=npc_seed_base 同式派生。
         // own 自 ctx.positions 同源组装（决策内核要求 own.positions ⊆
-        /// risk.positions——build_self_view 不过滤零量股，多股/零仓形态
-        /// 集合漂移即 panic）。
+        // risk.positions——build_self_view 不过滤零量股，多股/零仓形态
+        // 集合漂移即 panic）。
         let own = crate::strategy::SelfView {
             cash: ctx.cash,
             positions: ctx
@@ -4885,8 +4885,8 @@ impl GroupState {
                 // P1-B：复用本轮共享公共视图（原每轮零售位再建一次——
                 // 同 snapshot 纯函数，逐位等价）。
                 // P2-3a：链观察/等权聚合/behavior 价径面同样上移每轮一次
-                ///（原每位 build_chain_observation+聚合+paths 克隆——组线程
-                /// 拷贝放大主源；同轮输入逐位相同 ⇒ 等价论证同 P1-B）。
+                //（原每位 build_chain_observation+聚合+paths 克隆——组线程
+                // 拷贝放大主源；同轮输入逐位相同 ⇒ 等价论证同 P1-B）。
                 if !retail_due.is_empty() {
                     let projection = self.root_projection.as_ref().ok_or_else(|| {
                         RuntimeError::ProtocolInvariant {
