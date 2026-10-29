@@ -120,7 +120,7 @@ pub fn no_op_validator() -> Validator {
 /// `resume_unwind` 原 payload（不吞、不改写）。
 pub enum RoundOutcome {
     /// 本轮收束完成。
-    Converged(TickEvidence),
+    Converged(Box<TickEvidence>),
     /// 显式失败（看门狗/断连/worker Failed/协议不变量）。
     Failed(RuntimeError),
     /// 来源门已拒绝分派本轮 Start；协调者核对后可先等待 producer 停止。
@@ -144,7 +144,7 @@ pub(crate) fn converge_round(
     watchdog: &WatchdogConfig,
 ) -> RoundOutcome {
     let wrap = |r: Result<TickEvidence, RuntimeError>| match r {
-        Ok(ev) => RoundOutcome::Converged(ev),
+        Ok(ev) => RoundOutcome::Converged(Box::new(ev)),
         Err(e) => RoundOutcome::Failed(e),
     };
     #[cfg(test)]
@@ -408,4 +408,16 @@ pub(crate) fn broadcast_continue(
             })?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod transport_layout_tests {
+    #[test]
+    fn round_outcome_envelope_stays_within_transport_budget() {
+        let size = std::mem::size_of::<super::RoundOutcome>();
+        assert!(
+            size <= 128,
+            "RoundOutcome 占 {size} 字节，超过 128 字节运输预算"
+        );
+    }
 }

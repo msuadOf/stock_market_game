@@ -3382,7 +3382,7 @@ impl World {
             &self.watchdog,
         );
         match outcome {
-            RoundOutcome::Converged(ev) => Ok(ev),
+            RoundOutcome::Converged(ev) => Ok(*ev),
             RoundOutcome::PendingStartRejected(rejection) => {
                 let who = WorkerId::Group(rejection.group);
                 if !Arc::ptr_eq(calendar, &rejection.calendar)

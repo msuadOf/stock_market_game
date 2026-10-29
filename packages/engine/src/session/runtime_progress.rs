@@ -4,8 +4,8 @@ use crate::runtime::drive::{PreparedDriverStep, RuntimeDriver};
 use crate::runtime::source::WorldMirrorSource;
 
 pub(crate) enum PreparedRuntimeCommit {
-    Mirror(super::runtime_mirror::PreparedRuntimeMirror),
-    Progress(PreparedRuntimeProgress),
+    Mirror(Box<super::runtime_mirror::PreparedRuntimeMirror>),
+    Progress(Box<PreparedRuntimeProgress>),
 }
 
 pub(crate) struct PreparedRuntimeProgress {
@@ -130,7 +130,7 @@ impl GameSession {
             };
             return driver
                 .prepare_flush_candidate(self, input, trigger)
-                .map(PreparedRuntimeCommit::Mirror);
+                .map(|value| PreparedRuntimeCommit::Mirror(Box::new(value)));
         }
         input.validate_calendar(self, tick, driver.world_committed_tick())?;
         let source = driver.mirror_source();
@@ -259,18 +259,20 @@ impl GameSession {
         if self.runtime_install_failure {
             return Err("安装失败注入（逐拍事实 candidate 校验失败）".to_owned());
         }
-        Ok(PreparedRuntimeCommit::Progress(PreparedRuntimeProgress {
-            source,
-            projection: protocol::PreparedTickProjection { snapshot, runtime },
-            events,
-            plans: input.plans,
-            calendar: input.calendar,
-            receipts,
-            receipt_watermark,
-            retail,
-            #[cfg(feature = "simulation-diagnostics")]
-            traces,
-        }))
+        Ok(PreparedRuntimeCommit::Progress(Box::new(
+            PreparedRuntimeProgress {
+                source,
+                projection: protocol::PreparedTickProjection { snapshot, runtime },
+                events,
+                plans: input.plans,
+                calendar: input.calendar,
+                receipts,
+                receipt_watermark,
+                retail,
+                #[cfg(feature = "simulation-diagnostics")]
+                traces,
+            },
+        )))
     }
 
     pub(crate) fn prepare_runtime_receipts(
@@ -323,9 +325,9 @@ impl GameSession {
         prepared: &PreparedRuntimeCommit,
     ) -> Result<Option<crate::runtime::source::PreparedMirrorAck>, StepFatal> {
         match prepared {
-            PreparedRuntimeCommit::Mirror(value) => {
-                self.validate_runtime_mirror_source(driver, value).map(Some)
-            }
+            PreparedRuntimeCommit::Mirror(value) => self
+                .validate_runtime_mirror_source(driver, value.as_ref())
+                .map(Some),
             PreparedRuntimeCommit::Progress(value) => {
                 if value.source != driver.mirror_source()
                     || value.source.authority_epoch != self.runtime_authority_epoch
@@ -347,9 +349,10 @@ impl GameSession {
     ) {
         match prepared {
             PreparedRuntimeCommit::Mirror(value) => {
-                self.install_runtime_mirror(driver, value);
+                self.install_runtime_mirror(driver, *value);
             }
             PreparedRuntimeCommit::Progress(value) => {
+                let value = *value;
                 if self.runtime_mirror_origin.is_none() {
                     self.runtime_mirror_origin = Some(value.projection.snapshot.mirror_origin);
                 }
@@ -370,5 +373,17 @@ impl GameSession {
                 driver.finish_tick_fact_install();
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod transport_layout_tests {
+    #[test]
+    fn runtime_commit_envelope_stays_within_transport_budget() {
+        let size = std::mem::size_of::<super::PreparedRuntimeCommit>();
+        assert!(
+            size <= 128,
+            "PreparedRuntimeCommit 占 {size} 字节，超过 128 字节运输预算"
+        );
     }
 }
