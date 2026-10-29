@@ -1,5 +1,5 @@
 use engine::session::protocol::{EngineUpdate as ProtocolUpdate, EventFact, TickBatch, TickFrame};
-use engine::{Event, Money, StockCode, TradingPhase};
+use engine::{Event, Money, TradingPhase};
 use server::{ClientFrameBuffer, EngineUpdate, MAX_BUFFERED_EVENTS_PER_CLIENT};
 
 fn update(tick: u64, seq: u64) -> EngineUpdate {

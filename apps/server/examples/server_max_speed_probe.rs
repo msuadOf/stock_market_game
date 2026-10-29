@@ -3,19 +3,6 @@ use engine::{session::protocol::EngineUpdate, SessionSetup};
 use server::SessionManager;
 use std::{env, fs, time::Instant};
 
-/// 基线没有独立 context API，实际计算使用唯一 Rayon global registry；
-/// 当前实现的同名 inherent getter 优先读取真实宿主 context，不创建第二个 global pool。
-trait BaselineRegistryAccess {
-    fn compute_workers(&self) -> Result<usize, Box<dyn std::error::Error>>;
-}
-impl BaselineRegistryAccess for SessionManager {
-    fn compute_workers(&self) -> Result<usize, Box<dyn std::error::Error>> {
-        Ok(std::thread::available_parallelism()
-            .map(|n| n.get())
-            .unwrap_or(1))
-    }
-}
-
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<_> = env::args().skip(1).collect();
     let [setup_path, ticks] = args.as_slice() else {
@@ -27,8 +14,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err("ticks 必须大于零".into());
     }
     // 批 9 A4（rayon 退役）：线程数参数与 RAYON_NUM_THREADS 注入退役——
-    /// std-thread 模型线程数由引擎内部决定，CPU 限制走 OS 级
-    /// cgroup/taskset（memory/project_std_thread_migration）。
+    // std-thread 模型线程数由引擎内部决定，CPU 限制走 OS 级
+    // cgroup/taskset（memory/project_std_thread_migration）。
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
         .enable_all()
