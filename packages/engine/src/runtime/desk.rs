@@ -1354,11 +1354,6 @@ impl DeskState {
                 source,
                 before: causal_before,
             });
-            if is_market || phase == DeskPhase::PreOpen {
-                self.note_causal(super::diagnostics::DeskCausalKind::Unsupported {
-                    detail: "Market或PreOpen申报生命周期尚未接通",
-                });
-            }
         }
         match phase {
             DeskPhase::CallAuction | DeskPhase::ClosingAuction => {
@@ -1371,7 +1366,7 @@ impl DeskState {
                 let mut order = order;
                 self.match_incoming(tick, &mut order,
                     #[cfg(feature = "simulation-diagnostics")]
-                    if phase == DeskPhase::Continuous && !is_market { Some(causal_before) } else { None },
+                    if phase == DeskPhase::Continuous { Some(causal_before) } else { None },
                 )?;
                 if order.qty == 0 {
                     // 全成：purse slack（最坏情况预留 − 实际扣费）退款 + Closed。
@@ -1384,6 +1379,12 @@ impl DeskState {
                     /// 复审修复 2：玩家逐请求可见结果——OrderCanceled
                     /// 的 remaining=余量，部分成交时注明撤销的是余量）。
                     self.note_terminated(&order, super::protocol::LifecycleKind::Cancelled);
+                    #[cfg(feature = "simulation-diagnostics")]
+                    self.note_causal(super::diagnostics::DeskCausalKind::MarketRemainder {
+                        order: order.order_ref,
+                        owner: order.owner,
+                        qty: order.qty,
+                    });
                     self.close_order_entities(&order);
                     self.cancelled_orders += 1;
                     self.undo.push(DeskUndo::Cancelled(1));

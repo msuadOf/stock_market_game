@@ -61,6 +61,8 @@ mod report_correction_day_end;
 pub use report_correction_day_end::ReportCorrectionDayEndError;
 mod continuous_cancellation;
 mod corporate_actions;
+mod ordinary_tax_day_end;
+pub use ordinary_tax_day_end::OrdinaryTaxDayEndError;
 mod issuer_repurchase_approval;
 pub use issuer_repurchase_approval::{RepurchaseApprovalError, RepurchaseApprovalReceipt};
 #[cfg(all(test, not(target_arch = "wasm32")))]
@@ -1055,6 +1057,9 @@ pub enum SessionError {
     /// 自然日 INFO 事务失败，公开 opaque 包装保留内部 typed cause。
     #[error("civil information transaction failed: {0}")]
     CivilInformation(#[source] CivilInformationError),
+    /// ordinary REG 与个人税日日结失败，保留日期、证券与原始领域 cause。
+    #[error(transparent)]
+    OrdinaryTaxDayEnd(#[from] OrdinaryTaxDayEndError),
     /// 透传公司经营错误（会话装配与执行接线 日终编排：装配校验与逐日经营推进）。
     #[error(transparent)]
     CompanyOperations(Box<crate::company::operations::OperationsError>),
@@ -3650,7 +3655,18 @@ impl GameSession {
             // fault1034：自然日日终 candidate 捕获失败，保持数值错误契约。
             SessionError::InvalidSave(ValidationFault::new(1034, vec![0]))
         })?;
-        let report = candidate.end_civil_day_after_session_check()?;
+        let report = candidate.end_civil_day_after_session_check().map_err(|error| {
+            if matches!(&error, SessionError::ReportCorrectionDayEnd(cause)
+                if cause.classification() == crate::company::CompanyErrorClass::SystemState)
+            {
+                // 外持 runtime 与串行分支也封存系统首错；首个返回仍保留原 typed cause。
+                self.poison_runtime_step(StepFatal::InvariantViolation {
+                    location: "GameSession::with_prepared_civil_day".to_owned(),
+                    description: format!("civil authority 无法继续运行：{error}"),
+                });
+            }
+            error
+        })?;
         candidate.market_calendar_day = None;
         let instant = report.disclosure_instant;
         let publication = project(&candidate, report)?;

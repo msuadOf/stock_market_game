@@ -403,7 +403,7 @@ fn treasury_market_lot_id(stock: &StockCode, day: CivilDate) -> String {
     format!("market:{}:issuer-treasury:{}", stock.0, day)
 }
 
-fn reconcile_registry(
+pub(in crate::session) fn reconcile_registry(
     registry: &ShareRegistry,
     stock: StockId,
     date: CivilDate,

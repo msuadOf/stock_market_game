@@ -152,16 +152,44 @@ fn d1_quote_depth_uses_the_complete_single_stock_book() {
 
 #[test]
 fn d1_unsupported_market_operation_is_explicit_and_rolls_back() {
+    // 保留历史 exact 名称；Market 已接通，改核原公开入口的真实余量与退款。
     let mut game = GameSession::new(setup(), 7).unwrap();
     let code = game.stock_id("600101").unwrap();
+    let initial_cash = game.account(AccountId(0)).unwrap().cash();
+    let before_minute = game.current_market_minute();
+    let before_phase = game.phase();
     game.enqueue_player_intent(AccountId(0), Intent::PlaceMarket { code, side: Side::Buy, qty: 100 }).unwrap();
-    let before = game.business_state_hash().unwrap();
-    let outcome = game.step();
-    assert!(matches!(outcome, Err(engine::session::StepFatal::InvariantViolation { ref location, ref description })
-        if location == "runtime::diagnostics::prepare" && description.contains("Market")),
-        "未接通的Market余量终止不能报成open订单：{outcome:?}");
-    assert!(game.causal_facts().is_empty());
-    assert_eq!(game.business_state_hash().unwrap(), before);
+    let events = game.step().expect("空簿市价必须发布真实余量撤销");
+    let canceled = events.iter().filter_map(|event| match event {
+        Event::OrderCanceled { account: AccountId(0), code: actual, id, remaining_qty: 100, .. }
+            if *actual == code => Some(*id),
+        _ => None,
+    }).collect::<Vec<_>>();
+    assert_eq!(canceled.len(), 1, "原100股即时单恰好撤销一次");
+    let order = canceled[0];
+    assert!(!events.iter().any(|event| matches!(event, Event::Trade { .. } | Event::OrderAccepted { .. })));
+    let report = game.causal_diagnostics().unwrap();
+    assert_eq!((report.submitted_qty, report.filled_qty, report.canceled_qty, report.open_qty), (100, 0, 100, 0));
+    assert_eq!(report.orders.len(), 1);
+    let row = &report.orders[0];
+    assert_eq!((row.origin.order, row.origin.account, row.origin.code, row.origin.qty), (order, AccountId(0), code, 100));
+    assert_eq!((row.origin.plan, row.origin.decision), (None, None));
+    assert_eq!(row.terminal_reason, Some(Termination::MarketRemainder));
+    let facts = game.causal_facts();
+    assert_eq!(facts.iter().filter(|fact| matches!(fact.kind, CausalFactKind::Submitted(_))).count(), 1);
+    assert_eq!(facts.iter().filter(|fact| matches!(fact.kind, CausalFactKind::Terminated {
+        order: actual, account: AccountId(0), code: actual_code, qty: 100, reason: Termination::MarketRemainder,
+    } if actual == order && actual_code == code)).count(), 1);
+    assert!(!facts.iter().any(|fact| matches!(fact.kind, CausalFactKind::Filled { .. } | CausalFactKind::Execution { .. })));
+    for fact in facts {
+        assert_eq!(fact.time.market_minute, before_minute);
+        let clock = fact.time.stock_clock.expect("真实证券事实必须有本股时钟");
+        assert_eq!((clock.code, clock.completed_minutes), (code, before_minute));
+        assert_eq!(fact.time.phase, before_phase);
+        assert_eq!(fact.time.civil, game.runtime_observation_instant());
+    }
+    assert_eq!(game.account(AccountId(0)).unwrap().cash(), initial_cash, "无成交原现金须全部退款");
+    assert!(game.save().unwrap().resting_orders.values().all(Vec::is_empty), "即时单余量不得进簿");
 }
 
 #[test]

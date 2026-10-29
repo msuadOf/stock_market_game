@@ -613,11 +613,15 @@ fn d2_prepare_market_after_real_fill_restores_both_install_capture_modes() {
     for capture in [false, true] {
         let mut game = d2_game();
         d2_place(&mut game, 2, 1, crate::Side::Sell, 995, 200);
-        game.step().unwrap();
+        let mut runtime = driver(&mut game);
+        game.runtime_step_with_install(&mut runtime).expect("同一外持 runtime 先真实挂卖单");
         let checkpoint = game.clone_for_tick_shadow().unwrap();
         let prior_facts = serde_json::to_value(game.causal_facts()).unwrap();
         game.enqueue_player_intent(AccountId(0), Intent::PlaceMarket { code: StockId(1), side: crate::Side::Buy, qty: 100 }).unwrap();
-        let mut runtime = driver(&mut game);
+        let intents = game.take_runtime_player_intents();
+        let upper = runtime.world_public_views().iter().map(|view| view.daily_upper_limit).collect::<Vec<_>>();
+        runtime.inject_player_intents(&intents, &upper).expect("原 Market receipt 只注入同一 runtime 一次");
+        runtime.unresolved_causal_source_for_test();
         let before = game.business_state_hash().unwrap();
         let mut poison_oracle = game.clone_for_tick_shadow().unwrap();
         let error = if capture {
@@ -628,7 +632,7 @@ fn d2_prepare_market_after_real_fill_restores_both_install_capture_modes() {
             game.runtime_step_with_install(&mut runtime).err().unwrap()
         };
         assert!(matches!(error, StepFatal::InvariantViolation { ref location, ref description }
-            if location == "runtime::diagnostics::prepare" && description.contains("Market")));
+            if location == "runtime::diagnostics::prepare" && description.contains("causal Submitted 来源尚未接通：NonPlayerUnresolved")));
         assert_eq!(runtime.world_report_log().last().unwrap().desk_trades.len(), 1, "prepare 拒绝前真实 World 已产生一笔双腿成交");
         assert_eq!(serde_json::to_value(game.causal_facts()).unwrap(), prior_facts);
         assert_eq!(game.business_state_hash().unwrap(), before);
@@ -643,6 +647,7 @@ fn d2_prepare_market_after_real_fill_restores_both_install_capture_modes() {
         assert_eq!(runtime.terminal_causal_snapshot_for_test(), Some(terminal));
         poison_oracle.poison_runtime_step(error);
         assert_eq!(game.session_state_hash().unwrap(), poison_oracle.session_state_hash().unwrap());
+        drop(runtime);
         game = checkpoint;
         d2_place(&mut game, 0, 1, crate::Side::Buy, 995, 100);
         game.step().unwrap();

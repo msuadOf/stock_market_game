@@ -27,7 +27,7 @@ pub struct IncomeTaxOutcome {
 pub enum IncomeTaxOwnerError {
     #[error("inconsistent income tax state: {detail}")]
     StateInconsistent { detail: String },
-    #[error(transparent)]
+    #[error("{0}")]
     Accounting(#[from] AccountingError),
 }
 

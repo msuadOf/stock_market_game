@@ -282,6 +282,11 @@ fn repurchase_x_group_01_source_only_acceptance_binds_real_order_and_abort_resto
         let ticket = &state.child_in_flight[&(ACCOUNT, StockId(3))];
         assert_eq!(ticket.order_id, Some(order_id_of(&order)));
         assert_eq!((ticket.remaining, ticket.charged_cents), (100, 0));
+        let tail = &state.repurchase_pending_tails[&request.plan_id];
+        assert_eq!(tail.cursor, 1);
+        assert_eq!(tail.facts.len(), 1);
+        assert_eq!((tail.facts[0].cursor, tail.facts[0].tick, tail.facts[0].round), (1, 1, 0));
+        assert_eq!(tail.facts[0].source, batch.repurchase[0]);
         assert_ne!(state.state_hash(), before, "真实受理身份必须进入业务 hash");
         assert_funded(&state, request.plan_id);
         state.rollback();
@@ -291,6 +296,7 @@ fn repurchase_x_group_01_source_only_acceptance_binds_real_order_and_abort_resto
         assert!(state.child_in_flight[&(ACCOUNT, StockId(3))]
             .order_id
             .is_none());
+        assert!(state.repurchase_pending_tails.is_empty());
     }
 }
 
@@ -466,6 +472,7 @@ fn reject_before_mutation(state: &mut GroupState, batch: DeskBatch) {
     let accounts = state.accounts.clone();
     let book = state.plan_book.clone();
     let tickets = state.child_in_flight.clone();
+    let tails = state.repurchase_pending_tails.clone();
     let undo_len = state.undo.len();
     let fills = state.plan_fills.clone();
     let deferred_len = state.staging_deferred.len();
@@ -475,6 +482,7 @@ fn reject_before_mutation(state: &mut GroupState, batch: DeskBatch) {
     assert_eq!(state.accounts, accounts);
     assert_eq!(state.plan_book, book);
     assert_eq!(state.child_in_flight, tickets);
+    assert_eq!(state.repurchase_pending_tails, tails);
     assert_eq!(state.undo.len(), undo_len);
     assert_eq!(state.plan_fills, fills);
     assert_eq!(state.staging_deferred.len(), deferred_len);
@@ -676,4 +684,47 @@ fn repurchase_x_group_12_multiple_equal_fills_in_one_real_batch_are_not_replay()
     state.rollback();
     assert_eq!(state.state_hash(), hash);
     assert_eq!(state.accounts, accounts);
+}
+
+#[test]
+fn repurchase_x_group_13_unsplit_real_maker_full_fill_preserves_original_entity_order() {
+    let (mut state, mut desk, request, purse) = state(1000, 100);
+    let hash = state.state_hash();
+    let accounts = state.accounts.clone();
+    let tickets = state.child_in_flight.clone();
+    desk.company_buy(request, 1000, 100, purse);
+    consume(&mut state, desk.flush_company());
+    desk.sell(1000, 100);
+    let batch = desk.flush_company();
+    assert!(matches!(batch.repurchase[0].kind, RepurchaseSourceKind::Fill(_)));
+    assert_eq!(batch.repurchase[1].kind, RepurchaseSourceKind::Closed);
+    assert!(matches!(batch.entities.as_slice(), [Entity::Closed { .. }, Entity::BoughtShares { qty: 100, .. }]));
+    let sources = batch.repurchase.clone();
+    consume(&mut state, batch);
+    assert_eq!(state.accounts[1].shares[3], 100);
+    assert_eq!(state.accounts[1].frozen_today[3], 100);
+    assert_eq!(state.accounts[1].buy_purse_held_cents, 0);
+    assert_eq!(state.accounts[1].foreign_active[3], 0);
+    assert!(!state.child_in_flight.contains_key(&(ACCOUNT, StockId(3))));
+    let tail = &state.repurchase_pending_tails[&request.plan_id];
+    assert_eq!(tail.cursor, 3);
+    assert_eq!(tail.facts[1..].iter().map(|fact| fact.source).collect::<Vec<_>>(), sources);
+    state.rollback();
+    assert_eq!(state.state_hash(), hash);
+    assert_eq!(state.accounts, accounts);
+    assert_eq!(state.child_in_flight, tickets);
+    assert!(state.repurchase_pending_tails.is_empty());
+}
+
+#[test]
+fn repurchase_x_group_14_missing_sources_cannot_hide_company_facts_in_another_stock_batch() {
+    let (mut state, mut desk, request, purse) = state(1090, 200);
+    desk.sell(1000, 100);
+    desk.company_buy(request, 1090, 200, purse);
+    let mut batch = desk.flush_company();
+    assert_eq!(batch.fills.len(), 1);
+    assert_eq!(batch.fills[0].order.0, STOCK);
+    batch.repurchase.clear();
+    batch.stock = 2;
+    reject_before_mutation(&mut state, batch);
 }

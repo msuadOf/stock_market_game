@@ -67,6 +67,7 @@ pub enum DeskCausalKind {
         before: DeskQuote,
     },
     DayEnded { order: OrderRef, owner: Owner, qty: u32 },
+    MarketRemainder { order: OrderRef, owner: Owner, qty: u32 },
     Quote(DeskQuote),
     /// 中间 slice 尚未接通的真实路径；不能生成看似完整的报告。
     Unsupported { detail: &'static str },

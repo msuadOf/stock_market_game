@@ -621,6 +621,16 @@ impl RuntimeDriver {
         self.ack_prepared_mirror(ack);
         self.drained_events.extend(events);
         if let Err(error) = session.end_civil_day() {
+            if matches!(&error, crate::session::SessionError::ReportCorrectionDayEnd(cause)
+                if cause.classification() != crate::company::CompanyErrorClass::SystemState)
+                && session.poison_reason().is_none()
+                && !self.administrative_world_is_terminal()
+            {
+                // 市场收盘已经提交；明确业务拒绝只保留 civil 重试，不毒化健康 authority。
+                #[cfg(feature = "simulation-diagnostics")]
+                if let Some(causal) = causal { session.publish_runtime_causal(causal); }
+                return Err(format!("市场日结安装后的自然日推进失败：{error}"));
+            }
             let fatal = match error {
                 crate::session::SessionError::Step(fatal) => fatal,
                 error => crate::session::StepFatal::InvariantViolation {

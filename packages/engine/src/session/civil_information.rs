@@ -99,6 +99,7 @@ impl GameSession {
                 .clone_for_tick_shadow()
                 .map_err(|_| SessionError::InvalidSave(ValidationFault::new(1034, vec![0])))?;
             let report = shadow.prepare_civil_day_disclosures()?;
+            shadow.prepare_ordinary_tax_day_end(report.settled_date, market_installed)?;
             let instant = report.disclosure_instant;
             let next_date = report.next_date;
             let seq_from = self.seq();

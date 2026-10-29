@@ -215,6 +215,8 @@ fn d3_rich_market_partial_fill_preserves_real_before_and_full_fill_has_no_remain
         assert_eq!(record.desk_lifecycle.len(), usize::from(submitted > 100));
         if submitted > 100 {
             let remainder = record.desk_lifecycle[0];
+            assert_eq!((u32::from(remainder.stock), remainder.owner, remainder.side),
+                (CODE.0, trade.taker, Side::Buy));
             assert_eq!(
                 (remainder.order_serial, remainder.remaining, remainder.kind),
                 (buy.0, 200, LifecycleKind::Cancelled)

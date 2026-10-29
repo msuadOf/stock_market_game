@@ -274,6 +274,11 @@ impl GameSession {
                     let (order, account) = identity(order, owner)?;
                     kinds.push(CausalFactKind::Terminated { order, account, code, qty, reason: Termination::DayEnd });
                 }
+                DeskCausalKind::MarketRemainder { order, owner, qty } => {
+                    if drain || qty == 0 { return Err(fail("MarketRemainder 必须来自本拍非空市价余量".to_owned())); }
+                    let (order, account) = identity(order, owner)?;
+                    kinds.push(CausalFactKind::Terminated { order, account, code, qty, reason: Termination::MarketRemainder });
+                }
                 DeskCausalKind::Quote(raw) => kinds.push(CausalFactKind::Quote(quote(raw))),
                 DeskCausalKind::Unsupported { detail } => return Err(fail(detail.to_owned())),
             }
@@ -819,6 +824,42 @@ mod tests {
         if let DeskCausalKind::Execution { seller,buyer,.. }=&mut other.kind { seller.order.0=0;buyer.order.0=0; }
         facts.push(other);
         game.prepare_runtime_causal_facts(&driver,facts).unwrap();
+    }
+
+    #[test]
+    fn d3_prepare_market_remainder_requires_nonempty_tick_local_identity() {
+        use crate::runtime::{diagnostics::DeskCausalKind, retail_lifecycle::BatchContext};
+        let (game, driver, facts) = d2_raw_fixture();
+        let owner = match facts[0].kind {
+            DeskCausalKind::Submitted { owner, .. } => owner,
+            _ => unreachable!("fixture 首项必须是 Submitted"),
+        };
+        let remainder = crate::runtime::diagnostics::DeskCausalFact {
+            context: BatchContext::Tick { tick: game.tick(), round: 1, stock: 1 },
+            kind: DeskCausalKind::MarketRemainder { order: (1, 7), owner, qty: 100 },
+        };
+        let mut valid = facts.clone();
+        valid.push(remainder);
+        let delta = game.prepare_runtime_causal_facts(&driver, valid).expect("合法本拍市价余量可准备");
+        assert!(delta.kinds.iter().any(|(_, fact)| matches!(fact,
+            CausalFactKind::Terminated { order, account: AccountId(2), code: StockId(1), qty: 100, reason: Termination::MarketRemainder } if *order == OrderId((1_u64 << 32) | 7))));
+        assert!(game.causal_facts().is_empty(), "typed 成功准备也不能提前发布");
+
+        for mutation in 0..6 {
+            let mut bad = facts.clone();
+            let mut candidate = remainder;
+            match mutation {
+                0 => if let DeskCausalKind::MarketRemainder { qty, .. } = &mut candidate.kind { *qty = 0; },
+                1 => candidate.context = BatchContext::Drain { ended_date: game.civil_date(), final_tick: game.tick(), stock: 1 },
+                2 => if let DeskCausalKind::MarketRemainder { order, .. } = &mut candidate.kind { order.0 = 0; },
+                3 => if let DeskCausalKind::MarketRemainder { order, .. } = &mut candidate.kind { order.1 = u64::from(u32::MAX) + 1; },
+                4 => if let DeskCausalKind::MarketRemainder { owner, .. } = &mut candidate.kind { owner.1 = u32::MAX; },
+                _ => if let DeskCausalKind::MarketRemainder { owner, .. } = &mut candidate.kind { *owner = (u16::MAX, 0); },
+            }
+            bad.push(candidate);
+            assert!(game.prepare_runtime_causal_facts(&driver, bad).is_err(), "必须拒绝 MarketRemainder typed 变体{mutation}");
+            assert!(game.causal_facts().is_empty(), "失败 typed prepare 不得发布变体{mutation}");
+        }
     }
 
     #[test]

@@ -422,8 +422,11 @@ phase_before 与 observation_instant_after；DayEnd 余单与清簿 Quote 使用
 serial 的 Arc 仅暂存于私有 candidate，冻结提交前清除，不进入存档或 hash；INFO 与
 restore 静点只读原 DayArc projection，不为 Closed 或 Completed 日期补造 TickArc。
 诊断观测不改变当日有效委托、T+1 或现有日历简化范围。
-Market 余量、拒单、TTL 到期、CancelAll 未解析来源及竞价自成交排除的 rich 生命周期
-仍未全部支持，遇到这些真实路径显式拒绝报告，不能用空报告冒充完整诊断。
+连续竞价 Market 的 rich 生命周期沿用原即时撮合：Submitted 与 Execution 使用原单及
+同一次 incoming 操作起点的真实盘口，非零未成交余量记为 `Termination::MarketRemainder`；全成不再生成
+终止事实。该观测不改变上述市价保护带、余量撤销和沪深类型尚未细分的游戏简化。
+拒单、TTL 到期、CancelAll 未解析来源及竞价自成交排除的 rich 生命周期仍未全部支持，
+遇到这些真实路径显式拒绝报告，不能用空报告冒充完整诊断。
 
 内存验证投影保留每股挂单 `seq` 与 `book_next_sequences`，不重新编号或改变同价委托先后。
 下一序号按 u64 十进制字符串无损传输，股票键集必须与配置和市场一致，并严格大于该股
@@ -580,8 +583,10 @@ NPC 默认策略只在缴款首日日终对未显式申请的非玩家、非回�
   第二、三、六条（2013-01-01 起执行）：持股档位、转让扣收、FIFO、日终净增减与
   资金不足通知补足。候选按最终真实可用现金部分收缴，保留实收与未清税款；不含在途
   buy purse，不以默认零余额代替缺失账户。登记日冻结权利，登记后卖出不减少已登记股利。
-- `cash_dividend_tax::day_boundary::TaxDayBoundaryFacts` 仅准备 ordinary 税日候选，尚无生产
-  caller。每证券一次消费 typed REG 完整自然日、最终确认全集与实际完成水位，零成交日和
+- `cash_dividend_tax::day_boundary::TaxDayBoundaryFacts` 由 native civil shadow 接入 ordinary
+  REG、个人税日及同日现金分红 capture，随唯一 INFO/Admin 固定成功尾安装；本批尚待正式
+  生产绿测，付款与 collection 仍待中央真实资金回执接线，不据此安装 `Paid`。每证券一次
+  消费 typed REG 完整自然日、最终确认全集与实际完成水位，零成交日和
   休市日也记税日零净额。每本税账从自己的 `opened_on` 完成 frontier 核完整 opening lots，
   其后每个 REG 自然日与税日的净额、取得和处置须逐项一致；当前同数量、同 lot 尾部不能
   替代历史勾稽。登记归属只接受无任何公司或单位 movement 的普通路径，完整物理与税

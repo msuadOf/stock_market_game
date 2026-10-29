@@ -1003,3 +1003,58 @@ fn correction_tax_cascade_overflow_preserves_actual_accounting_source() {
         "CORRECTION_TAX_OVERFLOW_SOURCE_MISSING：真实税务 AmountOverflow 必须保留在标准 source 链");
     assert!(session.require_healthy().is_err());
 }
+
+#[cfg(feature = "simulation-diagnostics")]
+#[test]
+fn correction_manual_system_state_keeps_same_first_fatal_in_terminal_drain() {
+    let mut setup = correction_setup("2030-06-07", None);
+    setup.ticks_per_day = 4;
+    setup.auction_ticks = 0;
+    setup.closing_auction_ticks = 0;
+    setup.npcs.retail_count = 0;
+    setup.npcs.inst_count = 0;
+    setup.npcs.hot_count = 0;
+    let mut session = GameSession::new_with_runtime_groups(setup, 7181, 3).unwrap();
+    let mut request = correction_request(&session, CompanyId(0));
+    let receivable = LedgerAccountId("1122".into());
+    assert!(session.company_system().unwrap().finance(&request.company).unwrap()
+        .books().ledger().account_balance(&receivable).debit_total().is_positive());
+    request.entries[0].kind = BusinessKind::CreditSale;
+    request.entries[0].cash_flow = CashFlowClass::NonCash;
+    request.entries[0].lines[0].account = receivable;
+    for line in &mut request.entries[0].lines { line.amount = AccountingAmount::MAX; }
+    request.entries[0].validate_invariants().unwrap();
+    let epoch = session.report_correction_epoch();
+    session.enqueue_report_correction(&epoch, request).unwrap();
+    session.enqueue_player_intent(AccountId(0), Intent::PlaceLimit {
+        code: StockId(0), side: Side::Buy,
+        price: LimitPrice::Fixed(Money::from_cents(995)), qty: 100,
+    }).unwrap();
+    let mut driver = crate::runtime::drive::RuntimeDriver::from_session(&mut session).unwrap();
+    let events = session.runtime_step_with_install(&mut driver).unwrap();
+    let order = events.iter().find_map(|event| match event {
+        Event::OrderAccepted { id, account: AccountId(0), remaining_qty: 100, .. } => Some(*id),
+        _ => None,
+    }).expect("真实未成交委托必须留给非空 Drain");
+    for _ in 0..3 {
+        driver.step_frame_equivalent(&mut session).unwrap();
+        driver.install_market_views(&mut session).unwrap();
+        driver.install_candles(&mut session).unwrap();
+    }
+    let date = session.civil_date();
+    let error = driver.day_end_with_runtime_market_day(&mut session).unwrap_err();
+    let fatal = session.poison_reason().expect("真实 AmountOverflow 必须封存首错").clone();
+    let terminal = driver.terminal_causal_snapshot_for_test().expect("真实 Drain 失败必须留证");
+    assert!(terminal.0.is_some());
+    assert_eq!(terminal.1.iter().filter(|fact| matches!(fact.kind,
+        crate::runtime::diagnostics::DeskCausalKind::DayEnded { order: raw, qty: 100, .. }
+            if crate::OrderId((u64::from(raw.0) << 32) | raw.1) == order)).count(), 1);
+    assert_eq!(terminal.2, fatal, "MANUAL_CORRECTION_FIRST_FATAL_DRIFT：Drain 与 Session 必须保留同一个首错");
+    assert_eq!(error, fatal.to_string());
+    assert_eq!((session.tick(), session.day(), driver.world_committed_tick()), (4, 1, 4));
+    assert_eq!(session.civil_date(), date);
+    assert!(driver.collect_resting_facts_live().unwrap()[0].is_empty());
+    assert!(matches!(session.save(), Err(SessionError::Step(actual)) if actual == fatal));
+    assert_eq!(driver.step_frame_equivalent(&mut session).unwrap_err(), fatal);
+    assert_eq!(driver.terminal_causal_snapshot_for_test(), Some(terminal));
+}

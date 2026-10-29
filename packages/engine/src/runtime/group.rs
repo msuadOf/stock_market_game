@@ -611,6 +611,11 @@ enum GroupUndo {
         code: crate::StockId,
         prev: Option<ChildTicket>,
     },
+    /// 未确认来源只追加；Abort 恢复旧长度与本计划 cursor，不复制增长尾。
+    RepurchaseTail {
+        plan_id: crate::plans::PlanId,
+        previous: Option<(usize, u64)>,
+    },
     /// 在途卖余量镜像回滚（Sol 整改 3：挂出加/成交终结减的逆增量）。
     PendingSell {
         local: LocalIdx,
@@ -768,6 +773,8 @@ pub struct GroupState {
     admin_pending: Option<admin_transaction::PendingAdmin>,
     admin_last_id: u64,
     repurchase_projections: std::collections::BTreeMap<crate::plans::PlanId, super::protocol::RepurchaseExecutionProjection>,
+    /// 公司日净确认前保留完整 prefix；原票 Closed 不得丢失来源。
+    repurchase_pending_tails: std::collections::BTreeMap<crate::plans::PlanId, repurchase_consumer::RepurchasePendingTail>,
     #[cfg(test)]
     admin_fault: Option<(super::protocol::AdminPhase, super::protocol::AdminFault)>,
     /// 组索引。
@@ -1115,6 +1122,7 @@ impl GroupState {
             admin_pending: None,
             admin_last_id: 0,
             repurchase_projections: std::collections::BTreeMap::new(),
+            repurchase_pending_tails: std::collections::BTreeMap::new(),
             #[cfg(test)]
             admin_fault: None,
             group,
@@ -1312,6 +1320,7 @@ impl GroupState {
             }
         }
         h = self.hash_repurchase_projections(h);
+        h = self.hash_repurchase_pending_tails(h);
         for ((account, code), ticket) in &self.child_in_flight {
             h = fnv(h, u64::from(account.0));
             h = fnv(h, u64::from(code.0));
@@ -1429,6 +1438,17 @@ impl GroupState {
                         }
                     }
                 }
+                GroupUndo::RepurchaseTail { plan_id, previous } => {
+                    match previous {
+                        Some((len, cursor)) => {
+                            let tail = self.repurchase_pending_tails.get_mut(&plan_id)
+                                .expect("追加来源的逆操作必须有原 tail");
+                            tail.facts.truncate(len);
+                            tail.cursor = cursor;
+                        }
+                        None => { self.repurchase_pending_tails.remove(&plan_id); }
+                    }
+                }
             }
         }
         self.staging_deferred.clear();
@@ -1485,7 +1505,8 @@ impl GroupState {
             GroupUndo::NextDue { .. }
             | GroupUndo::Personal { .. }
             | GroupUndo::PlanBook { .. }
-            | GroupUndo::ChildInFlight { .. } => {}
+            | GroupUndo::ChildInFlight { .. }
+            | GroupUndo::RepurchaseTail { .. } => {}
         }
         self.undo.push(entry);
     }
@@ -1504,9 +1525,6 @@ impl GroupState {
         expected_tick: u64,
         expected_round: u32,
     ) -> Result<(), RuntimeError> {
-        if !batch.repurchase.is_empty() {
-            return Err(RuntimeError::ProtocolInvariant { detail: "REPURCHASE-X 组来源消费者尚未实现".into() });
-        }
         batch
             .verify_tick_round(expected_tick, expected_round)
             .map_err(|m| RuntimeError::ProtocolInvariant {
@@ -1524,6 +1542,7 @@ impl GroupState {
             });
         }
         let stock = batch.stock;
+        let repurchase = self.prepare_repurchase_batch(&batch)?;
         // 成交事实即时进计划结果缓冲（信息回流：续行由 FillFact 驱动，
         // F §4.3——Continue 轮"先见 fills 再续行"语义不因分域改变）。
         self.plan_fills.extend(batch.fills.iter().copied());
@@ -1627,6 +1646,7 @@ impl GroupState {
         // cost_price 漂移）。曾持有翻转（F4）随 touched 延迟到批尾重放。
         self.clear_flat_cost_basis(&touched);
         deferred.touched = touched;
+        self.install_repurchase_batch(repurchase);
         self.staging_deferred.push(deferred);
         Ok(())
     }
@@ -1883,6 +1903,9 @@ impl GroupState {
         fill: &FillFact,
     ) -> Result<(), RuntimeError> {
         let group = self.group;
+        if self.company_child_at(fill.owner.1, stock) {
+            return Ok(());
+        }
         // P0 缺陷修复：`fill.owner.1` 是**组内** LocalIdx（Owner=(GroupIdx,
         // LocalIdx)，同文件 apply_fill_cost_basis 即以其索引 self.accounts），
         // 而 account_ids 为全局名册序 ⇒ 须加 roster_offset。漏偏移时组 g≥1
@@ -2092,6 +2115,9 @@ impl GroupState {
         local: LocalIdx,
         order_serial: u64,
     ) -> Result<(), RuntimeError> {
+        if self.company_child_at(local, stock) {
+            return Ok(());
+        }
         let Some(&account) = self
             .root_projection
             .as_ref()
@@ -2154,6 +2180,9 @@ impl GroupState {
         local: LocalIdx,
         order_serial: u64,
     ) -> Result<(), RuntimeError> {
+        if self.company_child_at(local, stock) {
+            return Ok(());
+        }
         let Some(&account) = self
             .root_projection
             .as_ref()
@@ -8577,3 +8606,5 @@ mod origin_consumer_tests;
 mod repurchase_funds_candidate;
 
 mod admin_repurchase_funds;
+
+mod repurchase_consumer;
