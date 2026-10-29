@@ -21,6 +21,7 @@ use super::fees::{buy_purse_limit, buyer_charge, seller_charge, FeeQuote};
 use super::protocol::{
     DeskBatch, DeskIn, DeskMsg, DeskReport, RoutedPrice, RuntimeError, UpMsg, WorkerId,
 };
+use super::type_aliases::CandleProjection;
 use super::watchdog::{worker_recv, WatchdogConfig};
 use super::{DeskReceipt, Entity, FillFact, OrderRef, Owner, ReceiptKind, StockIdx};
 use crate::config::GameConfig;
@@ -3273,12 +3274,7 @@ impl DeskState {
     }
 
     /// K 线投影（回写 candle_book 用）。
-    fn candle_projection(
-        &self,
-    ) -> (
-        Vec<(i64, i64, i64, i64, i64, u64, i64, u64)>,
-        Option<(i64, i64, i64, i64, i64, u64, i64, u64)>,
-    ) {
+    fn candle_projection(&self) -> (Vec<CandleProjection>, Option<CandleProjection>) {
         let hist = self
             .market
             .candles

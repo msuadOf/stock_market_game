@@ -42,6 +42,8 @@ pub fn set_step_runtime_override(enabled: bool) -> Result<(), &'static str> {
     wasm_step_override::set_step_runtime_override(&STEP_RUNTIME_OVERRIDE, enabled)
 }
 
+pub mod type_aliases;
+
 mod entities;
 mod facts;
 mod protocol;

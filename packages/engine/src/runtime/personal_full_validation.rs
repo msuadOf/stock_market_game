@@ -1,4 +1,3 @@
-use super::world::BeliefParticipantSnapshot;
 use super::{GroupIdx, LocalIdx};
 use crate::AccountId;
 use std::collections::{BTreeMap, BTreeSet};
@@ -62,11 +61,8 @@ pub(crate) enum PersonalFullError {
 }
 
 pub(crate) fn validate_personal_full(
-    expected: &[(GroupIdx, Vec<(AccountId, PersonalPresence)>)],
-    replies: &[(
-        GroupIdx,
-        Vec<(LocalIdx, AccountId, Option<BeliefParticipantSnapshot>)>,
-    )],
+    expected: &[super::type_aliases::PersonalPresenceGroup],
+    replies: &[super::type_aliases::PersonalFullGroup],
 ) -> Result<(), PersonalFullError> {
     let mut roster = BTreeMap::new();
     let mut owners = BTreeSet::new();

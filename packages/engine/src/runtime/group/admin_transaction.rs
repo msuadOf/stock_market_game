@@ -41,15 +41,7 @@ impl GroupState {
     pub(super) fn capture_information_handover(
         &self,
         source: crate::runtime::source::WorldMirrorSource,
-    ) -> Result<
-        (
-            crate::runtime::information_handover::GroupInformationHandover,
-            Arc<crate::information::PublicLibrary>,
-            Arc<crate::company::CompanyReadFacts>,
-            Vec<(crate::AccountId, u64, u64)>,
-        ),
-        RuntimeError,
-    > {
+    ) -> Result<super::super::type_aliases::InformationHandoverCapture, RuntimeError> {
         use crate::runtime::information_handover::{
             GroupInformationHandover, InformationHandoverMaterial, InformationHandoverSignature,
         };

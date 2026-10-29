@@ -39,6 +39,8 @@ pub(super) fn permanent_stop<G, D>(shutdown: &AtomicBool, wake: &mut Option<Wake
     }
 }
 
+pub(super) type ConstructionGuardTransfer<G, D, I, H> = (Option<WakeSenders<G, D>>, Vec<(I, H)>);
+
 pub(super) struct ConstructionGuard<G, D, I: std::fmt::Display, H> {
     shutdown: Arc<AtomicBool>,
     wake: Option<WakeSenders<G, D>>,
@@ -91,7 +93,7 @@ impl<G, D, I: std::fmt::Display, H> ConstructionGuard<G, D, I, H> {
         }
     }
 
-    pub(super) fn transfer(mut self) -> (Option<WakeSenders<G, D>>, Vec<(I, H)>) {
+    pub(super) fn transfer(mut self) -> ConstructionGuardTransfer<G, D, I, H> {
         (self.wake.take(), std::mem::take(&mut self.handles))
     }
 }

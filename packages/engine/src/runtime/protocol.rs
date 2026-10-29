@@ -7,7 +7,9 @@
 //! 同一批次（及同一 channel 先后批次）FIFO：同 NPC 的 `CancelAll`/`Cancel` 恒先于其
 //! `Place`（对齐撤单语义）。
 
+use super::type_aliases::CandleProjection;
 use super::{DeskReceipt, Entity, FillFact, OrderRef, Owner, StockIdx};
+
 use crate::orderbook::Side;
 
 /// 价格符号：组端看不到目标股活簿，符号在**交易部受理时**解析。
@@ -1427,9 +1429,9 @@ pub enum UpMsg {
         /// 股索引。
         stock: StockIdx,
         /// 已完成日 K（time, O, H, L, C, volume）。
-        history: Vec<(i64, i64, i64, i64, i64, u64, i64, u64)>,
+        history: Vec<CandleProjection>,
         /// 活动 K。
-        active: Option<(i64, i64, i64, i64, i64, u64, i64, u64)>,
+        active: Option<CandleProjection>,
     },
     /// 投递完成回执（Belief-1b·下：组内纯函数推进后的注意力态——
     /// 驱动器**仅回写 information 域**，不触碰 candidate/heap）。

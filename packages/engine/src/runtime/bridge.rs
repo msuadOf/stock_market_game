@@ -156,15 +156,7 @@ pub fn default_retail_decision(count: usize, seed_base: u64) -> DecisionSetup {
 pub fn accounts_projection_from_session(
     session: &crate::GameSession,
     n_stocks: usize,
-) -> (
-    Vec<i64>,
-    Vec<Vec<u32>>,
-    Vec<Vec<i64>>,
-    Vec<Vec<i64>>,
-    Vec<Vec<u32>>,
-    Vec<Vec<bool>>,
-    Vec<crate::AccountId>,
-) {
+) -> super::type_aliases::SessionAccountProjection {
     // B3 远程登录：名册取全量账户（id 升序）而非仅有策略的 NPC——共享
     // 市场的动态加入成员（无策略 Player，意图只走 ExternalPlan 路由）
     /// 必须在 id_map 内，否则 owner 路由显式失败。账户 0 仍由下方惯例位

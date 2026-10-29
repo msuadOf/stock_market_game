@@ -1,3 +1,4 @@
+use super::super::type_aliases::GroupAccountShard;
 use super::*;
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -6,14 +7,7 @@ use std::sync::Arc;
 #[derive(Clone)]
 pub(crate) struct PreparedDriverStep {
     pub calendar: PreparedDriverCalendar,
-    pub accounts: Vec<
-        Arc<
-            Vec<(
-                super::super::LocalIdx,
-                Arc<super::super::group::GroupAccount>,
-            )>,
-        >,
-    >,
+    pub accounts: Vec<GroupAccountShard>,
     pub buy_vwap: BTreeMap<
         (
             super::super::GroupIdx,
@@ -806,13 +800,7 @@ impl RuntimeDriver {
     pub(crate) fn resting_snapshot_for_prepared(
         &mut self,
         day_end: bool,
-    ) -> Result<
-        (
-            Vec<Arc<Vec<crate::runtime::RestingFact>>>,
-            Arc<Vec<AccountId>>,
-        ),
-        String,
-    > {
+    ) -> Result<super::super::type_aliases::RestingSessionSnapshot, String> {
         if day_end {
             let facts = self.collect_resting_facts_live()?;
             Ok((

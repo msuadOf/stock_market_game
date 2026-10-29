@@ -790,10 +790,7 @@ pub struct GroupFinalState {
 
 /// 组线程私有状态。
 pub struct GroupState {
-    calendar_owner: Option<(
-        Arc<crate::session::market_calendar_context::MarketCalendarSource>,
-        Vec<(crate::StockId, crate::calendar::CalendarExchange)>,
-    )>,
+    calendar_owner: Option<super::type_aliases::CalendarOwner>,
     admin_pending: Option<admin_transaction::PendingAdmin>,
     admin_last_id: u64,
     repurchase_projections: std::collections::BTreeMap<
@@ -3332,14 +3329,7 @@ impl GroupState {
                 crate::observation::information_clock::InformationTradingAnchor,
             >,
         >,
-    ) -> Result<
-        (
-            super::world::OpenDerivationRecord,
-            Vec<(crate::PlanId, super::decision::PendingOp)>,
-            Vec<(LocalIdx, StockIdx, u64)>,
-        ),
-        RuntimeError,
-    > {
+    ) -> Result<super::type_aliases::OpenDerivationPlanResult, RuntimeError> {
         let group = self.group;
         let company_facts = Arc::clone(self.current_company_facts()?);
         let (projection, snapshot) = match (self.root_projection.clone(), self.snapshot.clone()) {
@@ -4095,13 +4085,7 @@ impl GroupState {
         personal: &crate::session::PlanPersonalState,
         snapshot: &std::sync::Arc<TickSnapshot>,
         existing_before: &[crate::plans::PlanId],
-    ) -> Result<
-        (
-            Vec<(crate::PlanId, super::decision::PendingOp)>,
-            Vec<(LocalIdx, StockIdx, u64)>,
-        ),
-        RuntimeError,
-    > {
+    ) -> Result<super::type_aliases::GroupPlanOperations, RuntimeError> {
         let group = self.group;
         let mut ops = Vec::new();
         // D3b 件 3：定向撤单目标（local, stock, desk serial）——

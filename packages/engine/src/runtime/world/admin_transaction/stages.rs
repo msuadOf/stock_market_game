@@ -248,13 +248,7 @@ fn prepare_stage_requests(
     stages: &[AdminOperationStage],
     n_groups: usize,
     has_information: bool,
-) -> Result<
-    (
-        Vec<(GroupIdx, Vec<AdminOperation>)>,
-        BTreeMap<GroupIdx, AdminStageLayout>,
-    ),
-    RuntimeError,
-> {
+) -> Result<crate::runtime::type_aliases::PreparedAdminStageRequests, RuntimeError> {
     let mut grouped = BTreeMap::<GroupIdx, Vec<AdminOperation>>::new();
     let mut counts = BTreeMap::<GroupIdx, Vec<usize>>::new();
     let mut tax_stages = BTreeSet::new();

@@ -56,10 +56,10 @@ use super::coordinator::{
 use super::decision::DecisionSetup;
 use super::desk::{desk_main, DeskFinalState, DeskSetup};
 use super::group::{group_main, GroupAccount, GroupFinalState, GroupScript};
-use super::plans::PlanChain;
+use super::protocol::DayEndDirective;
 use super::protocol::StockPublic;
-use super::protocol::{AdminRight, DayEndDirective};
 use super::protocol::{DeskMsg, GroupIn, RuntimeError, UpMsg, WorkerId};
+use super::type_aliases::{PlanFactory, RightsComputer};
 use super::watchdog::{recv_deadline, Phase, WatchdogConfig};
 use super::DeskReceipt;
 use super::{GroupIdx, StockIdx};
@@ -141,14 +141,7 @@ pub struct GroupInformationPayload {
 /// 一次完整个人读面的真实槽；None 是明确缺乏能力，不代表缺少真实名册成员。
 pub(crate) struct PersonalFullSnapshot {
     pub source: super::source::WorldMirrorSource,
-    pub groups: Vec<(
-        GroupIdx,
-        Vec<(
-            super::LocalIdx,
-            crate::AccountId,
-            Option<BeliefParticipantSnapshot>,
-        )>,
-    )>,
+    pub groups: super::type_aliases::PersonalFullGroups,
 }
 
 /// 信念个人态快照（D3a-2b Belief-1：watchlist/价格记忆/信息态/信念书
@@ -287,11 +280,11 @@ pub struct WorldSpec {
     /// 内联决策装配（Some=decide_data 路径；None=测试脚本路径）。
     pub decision: Option<DecisionSetup>,
     /// 公司域权益产出（日结 AdminBatch 注入；None=无权益）。
-    pub rights_computer: Option<Box<dyn Fn(u32, GroupIdx) -> Vec<AdminRight> + Send>>,
+    pub rights_computer: Option<RightsComputer>,
     /// 按账户现金重建（存档候选往返；None=用 initial_cash 均一初始化）。
     pub initial_cash_override: Option<Vec<Vec<i64>>>,
     /// 计划链工厂（批 6：跨股多步计划经 Continue 轮排空）。
-    pub plan_factory: Option<Box<dyn Fn(GroupIdx) -> Vec<Box<dyn PlanChain>> + Send>>,
+    pub plan_factory: Option<PlanFactory>,
     /// D3a-2b：信念个人态种子（组 0 按下标承接——None=非机构位；
     /// 构造期一次性投影，日结披露驱动随 Belief-1b 下沉）。
     pub belief_seeds: Vec<Option<super::world::BeliefParticipantSnapshot>>,
@@ -484,15 +477,7 @@ pub struct World {
     mirror_day_end_stage: super::source::MirrorDayEndStage,
     /// 仅身份元数据，用于核对信息候选回执的组内 local/AccountId；不保存个人态。
     information_roster: Vec<Vec<crate::AccountId>>,
-    personal_presence: Option<
-        Vec<(
-            GroupIdx,
-            Vec<(
-                crate::AccountId,
-                super::personal_full_validation::PersonalPresence,
-            )>,
-        )>,
-    >,
+    personal_presence: Option<super::type_aliases::GroupPersonalPresence>,
     #[cfg(test)]
     admin_send_fault_for_test: Option<(super::protocol::AdminPhase, GroupIdx)>,
     /// 全局域权威（已收敛态）。
@@ -549,7 +534,7 @@ pub struct World {
     /// 成功日结的广播基撤销记录；下一真实 Start 关闭窗口，不参与 PublishedTick。
     day_end_prior_public_views: Option<Vec<StockPublic>>,
     /// 公司域权益产出（日结注入）。
-    rights_computer: Option<Box<dyn Fn(u32, GroupIdx) -> Vec<AdminRight> + Send>>,
+    rights_computer: Option<RightsComputer>,
     /// 每交易日 tick 数（日界判定）。
     ticks_per_day: u64,
     /// 日结候选校验器（F §6.2 步骤 4：候选组装与全部可失败校验成功后才提交）。
@@ -991,7 +976,7 @@ impl World {
         let mut prepared_plans = prepared_plans.into_iter();
         let library_seed: std::sync::Arc<crate::information::PublicLibrary> =
             library.unwrap_or_default();
-        let mut stock_seed_bars: Vec<Vec<(i64, i64, i64, i64, u64)>> = stocks
+        let mut stock_seed_bars: Vec<Vec<super::type_aliases::DailyBarSeed>> = stocks
             .iter()
             .map(|spec| spec.initial_daily_bars.clone())
             .collect();
@@ -1775,14 +1760,7 @@ impl World {
     /// 并返回部分数据——部分 K 安装=静默语义丢失）。
     pub fn take_candle_projection(
         &mut self,
-    ) -> Result<
-        Vec<(
-            super::StockIdx,
-            Vec<(i64, i64, i64, i64, i64, u64, i64, u64)>,
-            Option<(i64, i64, i64, i64, i64, u64, i64, u64)>,
-        )>,
-        RuntimeError,
-    > {
+    ) -> Result<Vec<super::type_aliases::StockCandleProjection>, RuntimeError> {
         // Sol 三审阻断 2：通道面一致性守卫——sever/死亡后 txs 清空而
         // 期望响应数不变，收集会空等 watchdog（30s）才失败。断连形态
         // 立即显式报错（防御式：不静默等待）。
@@ -2080,15 +2058,7 @@ impl World {
     /// 开仓派生读面收集（D3a-2c：EchoOpenDerivation 广播→收齐）。
     pub fn collect_open_derivations(
         &mut self,
-    ) -> Result<
-        Vec<(
-            GroupIdx,
-            crate::strategy::MarketView,
-            crate::calendar::CivilInstant,
-            Vec<super::world::OpenDerivationRecord>,
-        )>,
-        RuntimeError,
-    > {
+    ) -> Result<super::type_aliases::GroupOpenDerivations, RuntimeError> {
         if self.group_txs.len() != self.n_groups {
             return Err(RuntimeError::Disconnected {
                 who: None,
@@ -2135,16 +2105,7 @@ impl World {
     /// 观察基收集（D3a-1：EchoObservations 广播→收齐——计划链端读面）。
     pub fn collect_group_observations(
         &mut self,
-    ) -> Result<
-        Vec<(
-            GroupIdx,
-            Vec<(
-                crate::observation::PricePathObservation,
-                crate::observation::TechnicalObservation,
-            )>,
-        )>,
-        RuntimeError,
-    > {
+    ) -> Result<super::type_aliases::GroupObservations, RuntimeError> {
         if self.group_txs.len() != self.n_groups {
             return Err(RuntimeError::Disconnected {
                 who: None,
@@ -2191,13 +2152,7 @@ impl World {
     pub fn deliver_information(
         &mut self,
         payload: GroupInformationPayload,
-    ) -> Result<
-        Vec<(
-            GroupIdx,
-            Vec<(super::LocalIdx, crate::session::NpcAttentionState)>,
-        )>,
-        RuntimeError,
-    > {
+    ) -> Result<super::type_aliases::GroupAttentionUpdates, RuntimeError> {
         if self.group_txs.len() != self.n_groups {
             return Err(RuntimeError::Disconnected {
                 who: None,
@@ -2331,8 +2286,7 @@ impl World {
 
     pub fn collect_group_belief(
         &mut self,
-    ) -> Result<Vec<(GroupIdx, Vec<(super::LocalIdx, BeliefParticipantSnapshot)>)>, RuntimeError>
-    {
+    ) -> Result<super::type_aliases::GroupBeliefSnapshots, RuntimeError> {
         if self.group_txs.len() != self.n_groups {
             return Err(RuntimeError::Disconnected {
                 who: None,
@@ -2384,7 +2338,7 @@ impl World {
     /// 读面 collect_group_attention 不变，构造恢复/Abort 测试锚）。
     pub fn collect_group_attention_sparse(
         &mut self,
-    ) -> Result<Vec<(GroupIdx, Vec<(super::LocalIdx, u64, u64)>)>, RuntimeError> {
+    ) -> Result<super::type_aliases::GroupAttentionCounts, RuntimeError> {
         if self.group_txs.len() != self.n_groups {
             return Err(RuntimeError::Disconnected {
                 who: None,
@@ -2427,7 +2381,7 @@ impl World {
     /// 会话 npc_attention 的真实状态源）。
     pub fn collect_group_attention(
         &mut self,
-    ) -> Result<Vec<(GroupIdx, Vec<(super::LocalIdx, u64, u64)>)>, RuntimeError> {
+    ) -> Result<super::type_aliases::GroupAttentionCounts, RuntimeError> {
         if self.group_txs.len() != self.n_groups {
             return Err(RuntimeError::Disconnected {
                 who: None,

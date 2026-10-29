@@ -13,6 +13,7 @@
 use super::bridge::{accounts_projection_from_session, world_spec_from_setup};
 use super::decision::{DecisionSetup, NpcProfile};
 use super::event_bridge::{collect_lifecycle, project_auction_events, project_lifecycle_events};
+use super::type_aliases::{GroupAccountShard, GroupAccountShards};
 use super::world::World;
 use std::sync::Arc;
 mod administrative_mirror;
@@ -112,9 +113,7 @@ mod event_identity_tests;
 /// 等价物，请求集改述为本拍事实集）。独立自由函数供负控单测直击。
 pub(crate) fn ensure_fact_owners_covered_arc(
     fact_rec: Option<&super::world::TickRecord>,
-    snapshots: &[std::sync::Arc<
-        Vec<(super::LocalIdx, std::sync::Arc<super::group::GroupAccount>)>,
-    >],
+    snapshots: &[GroupAccountShard],
     accounts_per_group: usize,
 ) -> Result<(), String> {
     // 复核登记项收口（sealtop 批）：覆盖校验只消费 local 下标——Arc
@@ -1017,11 +1016,8 @@ impl RuntimeDriver {
                 let n_groups = self.world.n_groups();
                 // 归因优化：分片句柄直接借用（Arc deref）——免每拍全量
                 /// clone 重组（净机实测该 clone 占 A 税 ~140μs/tick）。
-                let mut shards: Vec<
-                    std::sync::Arc<
-                        Vec<(super::LocalIdx, std::sync::Arc<super::group::GroupAccount>)>,
-                    >,
-                > = vec![std::sync::Arc::new(Vec::new()); n_groups];
+                let mut shards: GroupAccountShards =
+                    vec![std::sync::Arc::new(Vec::new()); n_groups];
                 for shard in &published.groups {
                     let Some(slot) = shards.get_mut(shard.group as usize) else {
                         return Err(format!(
@@ -1315,7 +1311,7 @@ impl RuntimeDriver {
         let tick_after = session.tick();
         let candle_time = session.candle_date_time_for_runtime();
         // 逐字段借用（不 clone 整个 StockPublic——recent/minute 等大面无关）。
-        let views: Vec<(i64, Vec<(i64, u64)>, Vec<(i64, u64)>)> = self
+        let views: Vec<super::type_aliases::MarketDepthLevels> = self
             .world_public_views()
             .iter()
             .map(|v| (v.last_price, v.depth_bids.clone(), v.depth_asks.clone()))
@@ -1761,13 +1757,7 @@ impl RuntimeDriver {
     /// 同步自发布版本（mirror/save 投影源）。
     pub fn resting_snapshot_for_session(
         &mut self,
-    ) -> Result<
-        (
-            Vec<std::sync::Arc<Vec<super::protocol::RestingFact>>>,
-            std::sync::Arc<Vec<AccountId>>,
-        ),
-        String,
-    > {
+    ) -> Result<super::type_aliases::RestingSessionSnapshot, String> {
         let published = self.world.publication().load();
         if published.tick != self.world.global.committed_tick {
             return Err(format!(
@@ -2090,13 +2080,7 @@ impl RuntimeDriver {
         &mut self,
         intents: &[crate::session::ReceiptBearingIntent],
         upper_limits: &[i64],
-    ) -> Result<
-        (
-            Vec<Vec<super::decision::PendingOp>>,
-            Vec<Vec<(super::LocalIdx, super::StockIdx, u64)>>,
-        ),
-        String,
-    > {
+    ) -> Result<super::type_aliases::RoutedExternalIntents, String> {
         // Sol 终审修复 1c 同族：多组名册的 owner→(组, 组内 local) 换算
         ///（此前全局下标直接当 local——双组下组 1 账户的单被发给组 0
         /// 的越界 local，tick 失败）。产物按组号分桶，定向发送。
@@ -2305,7 +2289,7 @@ impl RuntimeDriver {
 
     pub fn collect_attention(
         &mut self,
-    ) -> Result<Vec<(super::GroupIdx, Vec<(super::LocalIdx, u64, u64)>)>, String> {
+    ) -> Result<super::type_aliases::GroupAttentionCounts, String> {
         self.world
             .collect_group_attention()
             .map_err(|e| format!("注意力收集失败：{e:?}"))
@@ -2487,13 +2471,7 @@ impl RuntimeDriver {
     /// P2-1a：随附 dirty 掩码（读面一般忽略；同源校验可用）。
     pub fn collect_belief(
         &self,
-    ) -> Result<
-        Vec<(
-            super::GroupIdx,
-            Vec<Option<super::world::BeliefParticipantSnapshot>>,
-        )>,
-        String,
-    > {
+    ) -> Result<super::type_aliases::GroupOptionalBeliefSnapshots, String> {
         // P2-2a：读面不经组线程（上行已稀疏化）——由增量缓存承载
         //（构造期投影基线+每 tick dirty 增量合并，与组端权威同源）。
         let per = self.accounts_per_group.max(1);
@@ -2517,13 +2495,7 @@ impl RuntimeDriver {
     #[cfg(test)]
     pub fn collect_group_belief_for_test(
         &mut self,
-    ) -> Result<
-        Vec<(
-            super::GroupIdx,
-            Vec<(super::LocalIdx, super::world::BeliefParticipantSnapshot)>,
-        )>,
-        String,
-    > {
+    ) -> Result<super::type_aliases::GroupBeliefSnapshots, String> {
         self.world
             .collect_group_belief()
             .map_err(|e| format!("belief 组读面失败：{e:?}"))
@@ -2562,15 +2534,7 @@ impl RuntimeDriver {
     /// 开仓派生读面收集（D3a-2c：组线程 observe 直调的派生——红证锚）。
     pub fn collect_open_derivations(
         &mut self,
-    ) -> Result<
-        Vec<(
-            super::GroupIdx,
-            crate::strategy::MarketView,
-            crate::calendar::CivilInstant,
-            Vec<super::world::OpenDerivationRecord>,
-        )>,
-        String,
-    > {
+    ) -> Result<super::type_aliases::GroupOpenDerivations, String> {
         self.world
             .collect_open_derivations()
             .map_err(|e| format!("开仓派生收集失败：{e:?}"))
@@ -2580,16 +2544,7 @@ impl RuntimeDriver {
     /// 测试面）。
     pub fn collect_observations(
         &mut self,
-    ) -> Result<
-        Vec<(
-            super::GroupIdx,
-            Vec<(
-                crate::observation::PricePathObservation,
-                crate::observation::TechnicalObservation,
-            )>,
-        )>,
-        String,
-    > {
+    ) -> Result<super::type_aliases::GroupObservations, String> {
         self.world
             .collect_group_observations()
             .map_err(|e| format!("观察基收集失败：{e:?}"))
@@ -3065,14 +3020,8 @@ impl RuntimeDriver {
     /// Sol 二审修复集 3：收集错误全传播（不吞发送失败/异常消息）。
     pub(crate) fn world_desk_finals_for_candles(
         &mut self,
-    ) -> Result<
-        Vec<(
-            super::StockIdx,
-            Vec<(i64, i64, i64, i64, i64, u64, i64, u64)>,
-            Option<(i64, i64, i64, i64, i64, u64, i64, u64)>,
-        )>,
-        super::protocol::RuntimeError,
-    > {
+    ) -> Result<Vec<super::type_aliases::StockCandleProjection>, super::protocol::RuntimeError>
+    {
         self.world.take_candle_projection()
     }
 }
@@ -3264,9 +3213,7 @@ fn resting_order_seeds_from_session(
 /// ——等价守卫的 fixture 前置断言数据源。
 #[cfg(test)]
 thread_local! {
-    pub static RESTING_DELTA_FACE_COUNTS: std::cell::RefCell<
-        Option<std::sync::Arc<std::sync::Mutex<(usize, usize, usize)>>>
-    > = const { std::cell::RefCell::new(None) };
+    pub static RESTING_DELTA_FACE_COUNTS: std::cell::RefCell<Option<std::sync::Arc<std::sync::Mutex<super::type_aliases::RestingDeltaFaceCounts>>>> = const { std::cell::RefCell::new(None) };
 }
 
 /// 从实际 AccountBook 和目录派生角色能力；不证明公司方案已批准或资金已提交。

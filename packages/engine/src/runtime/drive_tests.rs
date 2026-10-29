@@ -3010,26 +3010,20 @@ fn p2_4a_arc_shard_cover_check_matches_value_form() {
         desk_causal: Vec::new(),
     };
     // Arc 分片形态（生产形态：组分片条目 Arc 共享——Seal 攻顶 A-1）。
-    let make_shards = |locals: &[crate::runtime::LocalIdx]| -> Vec<
-        Arc<
-            Vec<(
-                crate::runtime::LocalIdx,
-                Arc<crate::runtime::group::GroupAccount>,
-            )>,
-        >,
-    > {
-        vec![Arc::new(
-            locals
-                .iter()
-                .map(|&local| {
-                    (
-                        local,
-                        Arc::new(crate::runtime::group::GroupAccount::new(1_000_000, 1)),
-                    )
-                })
-                .collect(),
-        )]
-    };
+    let make_shards =
+        |locals: &[crate::runtime::LocalIdx]| -> super::type_aliases::GroupAccountShards {
+            vec![Arc::new(
+                locals
+                    .iter()
+                    .map(|&local| {
+                        (
+                            local,
+                            Arc::new(crate::runtime::group::GroupAccount::new(1_000_000, 1)),
+                        )
+                    })
+                    .collect(),
+            )]
+        };
     // 负例：只含 maker local 0——taker local 3 缺项必须显式失败。
     let partial = make_shards(&[0]);
     let err_arc = ensure_fact_owners_covered_arc(Some(&record), &partial, 8)
