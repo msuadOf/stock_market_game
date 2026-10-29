@@ -567,7 +567,7 @@ NPC 默认策略只在缴款首日日终对未显式申请的非玩家、非回�
 ## 分红与送转独立候选的支持边界（2026-10-26）
 
 `session/corporate_actions/distributions_day_end.rs` 准备隔离候选；native civil 已接现金分红
-与个人税收缴的生产候选，尚待本轮正式绿测。送转仍只准备独立候选。
+与个人税收缴；送转仍只准备独立候选。
 调用前安装 R1 最终名册/税账；返回分红、送转、公司账面与发行人候选、逐笔税前股利、
 税款退出、新股可用数量，以及包括具名 `External` 持有人的来源和回执。`Paid`/`Credited`
 均是待提交候选状态，必须经组端真实行政回执逐笔勾稽后才能发布。公司 `Simple` 合成
@@ -589,8 +589,9 @@ NPC 默认策略只在缴款首日日终对未显式申请的非玩家、非回�
   `civil_cash_distributions` 从同一次完整行政基线读取 raw cash，沿候选原顺序准备 cash／tax-only
   stages，并在同一个 pending/id 的最终 INFO 与镜像检查中勾稽原 intent、借用的原 typed operand、
   真实税阶段和完整最终账户；成功 Commit 后才随固定尾安装公司付款、`Paid`、payment 与
-  collection 候选。零税额不制造零额 `WithholdingTax`，不借 buy purse 或补钱；付款与收缴本轮
-  尚待实际绿测，不代表 WASM 或完整送转链已完成。每证券一次
+  collection 候选。零税额不制造零额 `WithholdingTax`，不借 buy purse 或补钱；当前已验证
+  native 现金付款、简税代扣、真实转让后的个人收缴、恢复续行不重付和最终投影拒绝回滚，
+  不代表 WASM 或完整送转链已完成。每证券一次
   消费 typed REG 完整自然日、最终确认全集与实际完成水位，零成交日和
   休市日也记税日零净额。每本税账从自己的 `opened_on` 完成 frontier 核完整 opening lots，
   其后每个 REG 自然日与税日的净额、取得和处置须逐项一致；当前同数量、同 lot 尾部不能
