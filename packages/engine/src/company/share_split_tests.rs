@@ -421,7 +421,7 @@ mod whole_save {
     use crate::{GameConfig, HotParams, InstParams, Money, RetailParams, StrategyParams};
     include!("../../test-support/simple_company.rs");
 
-    fn session() -> GameSession {
+    fn session() -> (GameSession, ShareRegistry) {
         let mut session = GameSession::new(
             SessionSetup {
                 stocks: vec![StockSpec {
@@ -482,41 +482,126 @@ mod whole_save {
             71,
         )
         .unwrap();
-        // 先完成真实 R 日日终，名册快照只能冻结当前已完成日。
+        let system = std::sync::Arc::make_mut(session.state.companies.system_arc_mut().unwrap());
+        system
+            .declare_share_split(
+                &CompanyId(0),
+                crate::company::share_split::ShareSplitDeclaration {
+                    event_id: "split-1".into(),
+                    approval_reference: "shareholders-resolution-1".into(),
+                    direction: ShareSplitDirection::Consolidate,
+                    approved_on: date("2030-06-01"),
+                    ratio: 2,
+                    par_value_before: Money::from_cents(100),
+                    par_value_after: Money::from_cents(200),
+                    registered_capital_at_approval:
+                        crate::accounting::AccountingAmount::from_cents(10_000_000),
+                },
+            )
+            .unwrap();
+
+        let registry_before = session
+            .save()
+            .unwrap()
+            .company_state
+            .actions()
+            .unwrap()
+            .registries[0]
+            .clone();
+        // 先完成真实 R 日日终；零流通股与零到达率保证当日没有成交确认。
         session.step().unwrap();
         session.end_civil_day().unwrap();
-        session
+        (session, registry_before)
     }
 
-    fn freeze(registry: &mut ShareRegistry) -> RegistrationSnapshot {
-        use crate::company::share_registry::{MovementScope, ShareDayRequest};
-        // 当前 main 尚未安装 R 日日终候选，显式以无成交名册事实补齐已完成日。
-        while registry.settled_on() < date("2030-06-03") {
-            let day = registry.settled_on().next().unwrap();
-            registry
-                .close_day(ShareDayRequest {
-                    event_id: format!("fixture-market:{day}"),
-                    day,
-                    scope: MovementScope::PublicMarket,
-                    changes: Vec::new(),
-                })
-                .unwrap();
-        }
-        registry
-            .register("split-1".into(), date("2030-06-03"))
-            .unwrap()
-            .clone()
+    fn save_with_split_capture(
+        session: &GameSession,
+        registry_before: &ShareRegistry,
+    ) -> SaveSlot {
+        use crate::company::share_registry::settlement_day::{
+            ConfirmedShareMarketClose, ShareMarketSource, ShareMarketSourceContext,
+            SharePostAction, ShareSettlementDay,
+        };
+        use crate::company::share_registry::MovementScope;
+
+        let mut save = session.save().unwrap();
+        let settled_registry = save.company_state.actions().unwrap().registries[0].clone();
+        let market_receipt = settled_registry
+            .receipts()
+            .iter()
+            .find(|receipt| {
+                matches!(
+                    receipt.request.scope,
+                    MovementScope::SettlementDayMarket { .. }
+                )
+            })
+            .expect("真实 R 日日结应保留 typed 市场回执")
+            .clone();
+        let MovementScope::SettlementDayMarket { binding } = &market_receipt.request.scope else {
+            unreachable!()
+        };
+        assert!(binding.opening.is_empty());
+        assert!(binding.post.is_empty());
+        assert!(matches!(
+            &binding.market_source,
+            ShareMarketSource::FinalConfirmations { receipts } if receipts.is_empty()
+        ));
+        assert!(market_receipt
+            .request
+            .changes
+            .iter()
+            .all(|change| change.change == 0));
+
+        let mut market_request = market_receipt.request.clone();
+        market_request.scope = MovementScope::PublicMarket;
+        let day = market_request.day;
+        let settlement = ShareSettlementDay {
+            stock: settled_registry.stock().clone(),
+            day,
+            predecessor: binding.predecessor.clone(),
+            opening: vec![],
+            actual_market_close: ConfirmedShareMarketClose {
+                unit: binding.market_unit.clone(),
+                source: binding.market_source.clone(),
+                request: market_request,
+            },
+            post_market_actions: vec![SharePostAction::CaptureRegistration {
+                event_id: "split-1".into(),
+            }],
+        };
+        let calendar = crate::calendar::TradingCalendar::current_default_calendar().unwrap();
+        let captured_registry = registry_before
+            .prepare_settlement_day(
+                &settlement,
+                &ShareMarketSourceContext {
+                    calendar: &calendar,
+                    exchange: crate::calendar::CalendarExchange::Sse,
+                    confirmations: &[],
+                    treasury_account: None,
+                    completed_through: Some(day),
+                },
+            )
+            .unwrap();
+        save.company_state
+            .actions_for_test_mut()
+            .registries[0] = captured_registry;
+        save
     }
 
     #[test]
     fn whole_save_rejects_unexecuted_zero_receipt_without_changing_positive_issuer() {
-        let session = session();
-        let mut save = session.save().unwrap();
-        let original = serde_json::to_vec(&save).unwrap();
+        let (session, registry_before) = session();
+        let original_live = serde_json::to_vec(&session.save().unwrap()).unwrap();
+        let mut save = save_with_split_capture(&session, &registry_before);
+        let original_synthetic = serde_json::to_vec(&save).unwrap();
         let actions = save.company_state.actions_for_test_mut();
         let registry = &mut actions.registries[0];
         assert_eq!(registry.issued_shares(), 100_000);
-        let snapshot = freeze(registry);
+        // 使用夹具中真实 typed settlement 已登记的快照，避免手工补造冻结事实。
+        let snapshot = registry
+            .registration("split-1")
+            .expect("typed settlement capture must freeze the split registration")
+            .clone();
         actions.share_splits.push(legacy_zero_book(
             snapshot,
             plan(ShareSplitDirection::Consolidate, 100_001),
@@ -552,17 +637,21 @@ mod whole_save {
         assert_eq!(serde_json::to_vec(&save).unwrap(), edited);
         assert_eq!(
             serde_json::to_vec(&session.save().unwrap()).unwrap(),
-            original
+            original_live
         );
+        assert_ne!(original_synthetic, edited);
         assert!(session.poison_reason().is_none());
     }
 
     #[test]
     fn whole_save_preserves_nonzero_registered_consolidation() {
-        let session = session();
-        let mut save = session.save().unwrap();
+        let (session, registry_before) = session();
+        let mut save = save_with_split_capture(&session, &registry_before);
         let actions = save.company_state.actions_for_test_mut();
-        let snapshot = freeze(&mut actions.registries[0]);
+        let snapshot = actions.registries[0]
+            .registration("split-1")
+            .expect("typed settlement capture must freeze the split registration")
+            .clone();
         let mut book = ShareSplitBook::new(plan(ShareSplitDirection::Consolidate, 2)).unwrap();
         book.announce(date("2030-06-02")).unwrap();
         book.register(
