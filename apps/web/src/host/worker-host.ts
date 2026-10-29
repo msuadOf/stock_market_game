@@ -252,6 +252,7 @@ export function createWorkerHost(
     let initialized = false;
     let disposed = false;
     let closing = false;
+    let closingCancellation: Error | null = null;
     let disposal: Promise<void> | undefined;
     let currentGeneration = 0;
     let npcDecisionDiagnostics = false;
@@ -318,7 +319,7 @@ export function createWorkerHost(
         clearTimeout(timeout);
         resolve(host());
       }, (error: unknown) => {
-        if (!stillCurrent()) return;
+        if (!stillCurrent() || error === closingCancellation) return;
         notifyFailure({ code: "WASM_INGRESS_BIND", where: "worker-host.ingress", message: error instanceof Error ? error.message : String(error) });
       });
     }
@@ -477,14 +478,14 @@ export function createWorkerHost(
       const requestedGeneration = currentGeneration;
       const scope = requests;
       const result = await read();
-      if (disposed || currentGeneration !== requestedGeneration || requests !== scope) throw new Error("Worker 响应属于已过期或已销毁 generation");
+      if (disposed || closing || currentGeneration !== requestedGeneration || requests !== scope) throw new Error("Worker 响应属于已过期或已销毁 generation");
       return result;
     }
 
     async function control(type: string, successType: string, payload: Record<string, unknown> = {}): Promise<void> {
       const requestedGeneration = currentGeneration;
       await requests.request({ type, ...payload, requestId: requests.nextRequestId(), generation: requestedGeneration }, successType);
-      if (disposed || currentGeneration !== requestedGeneration) throw new Error(`Worker ${type} 响应属于已过期 generation`);
+      if (disposed || closing || currentGeneration !== requestedGeneration) throw new Error(`Worker ${type} 响应属于已过期 generation`);
     }
 
     function host(): EngineHost & WorkerE2EHost & CompanyWriteCommands {
@@ -492,7 +493,7 @@ export function createWorkerHost(
         ...createCompanyWriteCommands(async command => {
           if (disposed || closing || pendingFailure !== null || cachedBaseline === null || restoringGeneration !== null || ingressGeneration !== currentGeneration) throw new Error("Worker 公司写命令需要健康的当前会话基线");
           const requestedGeneration = currentGeneration, requestedEpoch = baselineEpoch;
-          const stale = () => disposed || pendingFailure !== null || currentGeneration !== requestedGeneration || baselineEpoch !== requestedEpoch || restoringGeneration !== null || ingressGeneration !== requestedGeneration;
+          const stale = () => disposed || closing || pendingFailure !== null || currentGeneration !== requestedGeneration || baselineEpoch !== requestedEpoch || restoringGeneration !== null || ingressGeneration !== requestedGeneration;
           const route = {
             ProposePlayerCompanyAction: { type: "proposePlayerCompanyAction", success: "playerCompanyActionAcknowledged" },
             EnqueueReportCorrection: { type: "enqueueReportCorrection", success: "reportCorrectionEnqueueAcknowledged" },
@@ -549,7 +550,8 @@ export function createWorkerHost(
           if (disposed) { disposal = Promise.resolve(); return disposal; }
           closing = true;
           callback = null; fatalCallback = null;
-          const cancellation = new Error("WASM Worker 正在关闭，业务操作已取消");
+          const cancellation = new Error("WASM Worker 已被销毁或正在关闭，业务操作已取消");
+          closingCancellation = cancellation;
           requests.beginClosing("shutdown", cancellation);
           ingressRequests?.beginClosing("quiesceIngress", cancellation);
           const until = performance.now() + 2000;
@@ -619,7 +621,7 @@ export function createWorkerHost(
           const queryGeneration = currentGeneration;
           const queryEpoch = baselineEpoch;
           const orders = await readWorkerPlayerWorkingOrders(requests, requests.nextRequestId(), queryGeneration, (() => { if (cachedBaseline === null) throw new Error("Worker 活动委托需要 baseline"); return cachedBaseline.catalogResolver; })());
-          if (disposed || currentGeneration !== queryGeneration || baselineEpoch !== queryEpoch) throw new Error("Worker 玩家活动委托响应属于已过期会话 generation");
+          if (disposed || closing || currentGeneration !== queryGeneration || baselineEpoch !== queryEpoch) throw new Error("Worker 玩家活动委托响应属于已过期会话 generation");
           return orders;
         },
         async queryStockHistory(code: StockCode): Promise<HistoricalStockData> {
@@ -627,7 +629,7 @@ export function createWorkerHost(
           const queryGeneration = currentGeneration;
           const queryEpoch = baselineEpoch;
           const data = await readWorkerStockHistory(requests, requests.nextRequestId(), queryGeneration, code, cachedBaseline.catalogResolver);
-          if (disposed || currentGeneration !== queryGeneration || baselineEpoch !== queryEpoch) throw new Error("Worker 股票历史响应属于已过期会话 generation");
+          if (disposed || closing || currentGeneration !== queryGeneration || baselineEpoch !== queryEpoch) throw new Error("Worker 股票历史响应属于已过期会话 generation");
           return data;
         },
         async initialAllocation() {
@@ -635,7 +637,7 @@ export function createWorkerHost(
           const queryGeneration = currentGeneration;
           const queryEpoch = baselineEpoch;
           const response = await requests.request({ type: "initialAllocation", requestId: requests.nextRequestId(), generation: queryGeneration }, "initialAllocation");
-          if (disposed || currentGeneration !== queryGeneration || baselineEpoch !== queryEpoch) throw new Error("Worker 初始分配响应属于已过期会话 generation");
+          if (disposed || closing || currentGeneration !== queryGeneration || baselineEpoch !== queryEpoch) throw new Error("Worker 初始分配响应属于已过期会话 generation");
           return parseInitialAllocation(response.data, cachedBaseline.stockCatalog.map(stock => stock.code), cachedBaseline.catalogResolver);
         },
         async npcDecisionTrace(account: number): Promise<readonly NpcDecisionTraceRecord[]> {
@@ -646,7 +648,7 @@ export function createWorkerHost(
           const queryGeneration = currentGeneration;
           const queryEpoch = baselineEpoch;
           const response = await requests.request({ type: "npcDecisionTrace", requestId: requests.nextRequestId(), generation: queryGeneration, account }, "npcDecisionTrace");
-          if (disposed || currentGeneration !== queryGeneration || baselineEpoch !== queryEpoch) throw new Error("Worker NPC诊断响应属于过期generation");
+          if (disposed || closing || currentGeneration !== queryGeneration || baselineEpoch !== queryEpoch) throw new Error("Worker NPC诊断响应属于过期generation");
           return parseNpcDecisionTrace(response.records, identity);
         },
         async calculateIndicators(input: IndicatorInput): Promise<IndicatorResults> {
@@ -657,7 +659,7 @@ export function createWorkerHost(
           const queryGeneration = currentGeneration;
           const queryEpoch = baselineEpoch;
           const page = await requestWorkerMarketHistory(requests, requests.nextRequestId(), queryGeneration, request, cachedBaseline.catalogResolver);
-          if (disposed || currentGeneration !== queryGeneration || baselineEpoch !== queryEpoch) throw new Error("Worker 保留历史响应属于已过期会话 generation");
+          if (disposed || closing || currentGeneration !== queryGeneration || baselineEpoch !== queryEpoch) throw new Error("Worker 保留历史响应属于已过期会话 generation");
           return page;
         },
         async queryCurrentMinuteHistory(request: CurrentMinuteHistoryRequest): Promise<CurrentMinuteHistoryResponse> {
@@ -665,7 +667,7 @@ export function createWorkerHost(
           const queryGeneration = currentGeneration;
           const queryEpoch = baselineEpoch;
           const response = await requestWorkerCurrentMinuteHistory(requests, requests.nextRequestId(), queryGeneration, request, cachedBaseline.catalogResolver);
-          if (disposed || currentGeneration !== queryGeneration || baselineEpoch !== queryEpoch) throw new Error("Worker 当日分钟K响应属于已过期会话 generation");
+          if (disposed || closing || currentGeneration !== queryGeneration || baselineEpoch !== queryEpoch) throw new Error("Worker 当日分钟K响应属于已过期会话 generation");
           return response;
         },
         async queryPersonalTradeHistory(request: PersonalTradeHistoryRequest): Promise<PersonalTradeHistoryPage> {
@@ -674,7 +676,7 @@ export function createWorkerHost(
           const queryGeneration = currentGeneration;
           const queryEpoch = baselineEpoch;
           const page = await requestWorkerPersonalTradeHistory(requests, requests.nextRequestId(), queryGeneration, request, cachedBaseline.catalogResolver);
-          if (disposed || currentGeneration !== queryGeneration || baselineEpoch !== queryEpoch) throw new Error("Worker 本人交割历史响应属于已过期会话 generation");
+          if (disposed || closing || currentGeneration !== queryGeneration || baselineEpoch !== queryEpoch) throw new Error("Worker 本人交割历史响应属于已过期会话 generation");
           return page;
         },
         async queryPersonalTradeConfirmations(beforeReceipt?: string | null): Promise<readonly PersonalTradeConfirmation[]> {
@@ -683,7 +685,7 @@ export function createWorkerHost(
           const queryGeneration = currentGeneration;
           const queryEpoch = baselineEpoch;
           const rows = await requestWorkerPersonalTradeConfirmations(requests, requests.nextRequestId(), queryGeneration, beforeReceipt ?? null, cachedBaseline.catalogResolver);
-          if (disposed || currentGeneration !== queryGeneration || baselineEpoch !== queryEpoch) throw new Error("Worker 本人交割单响应属于已过期会话 generation");
+          if (disposed || closing || currentGeneration !== queryGeneration || baselineEpoch !== queryEpoch) throw new Error("Worker 本人交割单响应属于已过期会话 generation");
           return rows;
         },
         async calculateIntradayAverage(input: IntradayAverageInput): Promise<IntradayAverageResult | null> {
@@ -710,10 +712,10 @@ export function createWorkerHost(
           const scope = ingressRequests;
           if (ready === null) throw new Error("Browser 共享 ingress 尚未就绪，请重建 WASM bindings");
           await ready;
-          if (disposed || ready !== ingressReady || scope !== ingressRequests || requestedGeneration !== currentGeneration || requestedGeneration !== ingressGeneration) throw new Error("Browser ingress 请求属于已过期 generation");
+          if (disposed || closing || ready !== ingressReady || scope !== ingressRequests || requestedGeneration !== currentGeneration || requestedGeneration !== ingressGeneration) throw new Error("Browser ingress 请求属于已过期 generation");
           if (scope === null) throw new Error("Browser ingress 已关闭");
           await scope.request({ type: "enqueue", requestId: scope.nextRequestId(), generation: requestedGeneration, intent: wiredIntent }, "enqueued");
-          if (disposed || ready !== ingressReady || scope !== ingressRequests || requestedGeneration !== currentGeneration || requestedGeneration !== ingressGeneration) throw new Error("Browser ingress 入队确认属于已过期或已销毁 generation，请核对权威委托状态，勿重复提交");
+          if (disposed || closing || ready !== ingressReady || scope !== ingressRequests || requestedGeneration !== currentGeneration || requestedGeneration !== ingressGeneration) throw new Error("Browser ingress 入队确认属于已过期或已销毁 generation，请核对权威委托状态，勿重复提交");
         },
         snapshot() {
           if (cachedBaseline === null) throw new Error("快照尚未就绪");
@@ -730,27 +732,27 @@ export function createWorkerHost(
         async civilDate() {
           const requestedGeneration = currentGeneration;
           const response = await requests.request({ type: "civilDate", requestId: requests.nextRequestId(), generation: requestedGeneration }, "civilDate");
-          if (disposed || currentGeneration !== requestedGeneration) throw new Error("Worker 响应属于已过期或已销毁 generation");
+          if (disposed || closing || currentGeneration !== requestedGeneration) throw new Error("Worker 响应属于已过期或已销毁 generation");
           if (typeof response.date !== "string") throw new Error("Worker 返回的自然日无效");
           return response.date;
         },
         async endCivilDay() {
           const requestedGeneration = currentGeneration;
           await requests.request({ type: "endCivilDay", requestId: requests.nextRequestId(), generation: requestedGeneration }, "civilDayEnded");
-          if (disposed || currentGeneration !== requestedGeneration) throw new Error("Worker 响应属于已过期或已销毁 generation");
+          if (disposed || closing || currentGeneration !== requestedGeneration) throw new Error("Worker 响应属于已过期或已销毁 generation");
         },
         async save(candidate?: { readonly seq: number; readonly settledDate: string }): Promise<unknown> {
           const queryGeneration = currentGeneration;
           const response = await requests.request(candidate === undefined
             ? { type: "save", requestId: requests.nextRequestId(), generation: queryGeneration }
             : { type: "save", requestId: requests.nextRequestId(), generation: queryGeneration, candidate }, "saved");
-          if (disposed || currentGeneration !== queryGeneration) throw new Error("Worker 存档响应属于已过期会话 generation");
+          if (disposed || closing || currentGeneration !== queryGeneration) throw new Error("Worker 存档响应属于已过期会话 generation");
           return response.slot;
         },
         async refreshBaseline() {
           const requestedGeneration = currentGeneration;
           const response = await refreshWorkerBaseline(requests, requests.nextRequestId(), requestedGeneration);
-          if (disposed || currentGeneration !== requestedGeneration) throw new Error("Worker 基线刷新响应属于已过期会话 generation");
+          if (disposed || closing || currentGeneration !== requestedGeneration) throw new Error("Worker 基线刷新响应属于已过期会话 generation");
           const baseline = response;
           baselineEpoch += 1;
           cachedBaseline = baseline;
@@ -768,14 +770,14 @@ export function createWorkerHost(
             restored = await restoreWorkerSlot(requests, parsedSlot, requests.nextRequestId(), requestedGeneration, () => { restoreCommitted = true; });
           } catch (error) {
             // 成功响应或新 ingress 均已表明旧 authority 不再可用；保留可见缓存但关闭真实发送通道。
-            if (restoreCommitted || ingressGeneration > requestedGeneration) {
+            if (error !== closingCancellation && (restoreCommitted || ingressGeneration > requestedGeneration)) {
               notifyFailure({ code: "WASM_WORKER_RESTORE_BASELINE", where: "worker-host.load", message: error instanceof Error ? error.message : String(error), cause: error }, true);
             }
             throw error;
           } finally {
             restoringGeneration = null;
           }
-          if (disposed || currentGeneration !== requestedGeneration && currentGeneration !== restored.nextGeneration) throw new Error("Worker restore 响应属于已过期 generation");
+          if (disposed || closing || currentGeneration !== requestedGeneration && currentGeneration !== restored.nextGeneration) throw new Error("Worker restore 响应属于已过期 generation");
           const baseline = restored;
           currentGeneration = restored.nextGeneration;
           onRestored?.();
@@ -788,13 +790,13 @@ export function createWorkerHost(
         async queryPublicReports(query: PublicReportQuery): Promise<PublicReportPage> {
           const requestedGeneration = currentGeneration;
           const response = await requests.request({ type: "publicReports", requestId: requests.nextRequestId(), generation: requestedGeneration, query }, "publicReports");
-          if (disposed || currentGeneration !== requestedGeneration) throw new Error("Worker 响应属于已过期或已销毁 generation");
+          if (disposed || closing || currentGeneration !== requestedGeneration) throw new Error("Worker 响应属于已过期或已销毁 generation");
           return normalizePublicReportPage(response.page);
         },
         async publicReportById(id: string): Promise<PublicReportSummary> {
           const requestedGeneration = currentGeneration;
           const response = await requests.request({ type: "publicReportById", requestId: requests.nextRequestId(), generation: requestedGeneration, id }, "publicReportById");
-          if (disposed || currentGeneration !== requestedGeneration) throw new Error("Worker 响应属于已过期或已销毁 generation");
+          if (disposed || closing || currentGeneration !== requestedGeneration) throw new Error("Worker 响应属于已过期或已销毁 generation");
           return normalizePublicReportById(response.report);
         },
       };
