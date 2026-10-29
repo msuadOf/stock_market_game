@@ -136,8 +136,15 @@ impl SharedSessionIngress {
     }
 
     pub fn close(&self) -> Result<(), SessionError> {
-        self.lock()?.closed = true;
-        Ok(())
+        match self.inner.lock() {
+            Ok(mut state) => {
+                state.closed = true;
+                Ok(())
+            }
+            Err(_) => Err(SessionError::ResourceLimit(
+                crate::error::ValidationFault::bare(1250),
+            )),
+        }
     }
 
     pub(super) fn receive_private(
