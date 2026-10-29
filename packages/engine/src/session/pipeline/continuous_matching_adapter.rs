@@ -58,13 +58,6 @@ pub(super) fn market_data_priors(
         .collect()
 }
 
-pub(super) fn prepare_inputs_with_observer(
-    session: &GameSession,
-    observe_row: impl Fn() + Sync,
-) -> Result<Vec<ContinuousStockInput>, StepFatal> {
-    prepare_inputs_with_observer_on(&session.read_view(), observe_row)
-}
-
 /// 读视图版本（读集：phase 经 view 推导，markets/envelope_ledger）。
 pub(super) fn prepare_inputs_with_observer_on(
     view: &SessionReadView<'_>,

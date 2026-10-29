@@ -1,5 +1,6 @@
 use super::fill_fact::ReceiptBatch;
 use super::{Envelope, EnvelopeKey, EnvelopeLedger, EnvelopeReceipt, StepFatal};
+#[cfg(test)]
 use crate::GameSession;
 
 /// Applies ReceiptAggregation to a private ledger candidate and advances both authoritative
@@ -7,6 +8,7 @@ use crate::GameSession;
 /// condition to repair by choosing one side.
 ///
 /// 返回（收据，typed Fill 事实）：收据是审计记录；事实在产出点派生一次供下游消费。
+#[cfg(test)]
 pub(super) fn apply_session_receipt_transaction(
     session: &mut GameSession,
     created_envelopes: Vec<Envelope>,
@@ -32,6 +34,7 @@ pub(super) fn apply_session_receipt_transaction(
     Ok(batch)
 }
 
+#[cfg(test)]
 fn session_cursor_mismatch(session_cursor: u64, ledger_cursor: u64) -> StepFatal {
     StepFatal::InvariantViolation {
         description: format!(
@@ -47,6 +50,7 @@ fn session_cursor_mismatch(session_cursor: u64, ledger_cursor: u64) -> StepFatal
 /// which become terminal in the same batch. Worker indices remain untrusted
 /// placeholders. The caller's ledger is replaced only after every ledger check and
 /// the receipt-cursor check succeeds.
+#[cfg(test)]
 pub(super) fn apply_receipt_transaction(
     ledger: &mut EnvelopeLedger,
     created_envelopes: Vec<Envelope>,

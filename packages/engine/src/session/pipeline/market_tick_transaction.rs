@@ -4,12 +4,14 @@
 //! 持久 AccountValidation validator 与逐股 StockProcessing shadow。
 //! operation stream 排空后，ReceiptAggregation/Projection 恰好运行一次。
 
+#[cfg(test)]
+use super::candidate_commit::CandidateTickCommitResult;
 use super::continuous_matching::IncrementalContinuousStockCoordinator;
 #[cfg(test)]
 use super::AccountValidationOutput;
 use super::{
     account_validation_context::build_account_validation_context,
-    candidate_commit::{CandidateTickCommitResult, PreparedTickPlanCommit},
+    candidate_commit::PreparedTickPlanCommit,
     continuous_matching::{ContinuousExecutionRound, ContinuousStockInput},
     continuous_matching_adapter::{market_data_priors, prepare_incremental_continuous_inputs},
     continuous_tick_finalizer::{
@@ -89,6 +91,7 @@ pub(super) struct PreparedMarketTick<'authority> {
     output: MarketTransactionOutput,
 }
 
+#[cfg(test)]
 pub(super) struct MarketTickResult {
     pub(super) commit: CandidateTickCommitResult,
     #[cfg(test)]

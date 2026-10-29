@@ -338,10 +338,6 @@ impl TickShadowPlan {
             .clone())
     }
 
-    pub(super) fn into_session(self) -> Result<GameSession, StepFatal> {
-        self.session.ok_or_else(Self::consumed_shadow)
-    }
-
     #[cfg(test)]
     pub(super) fn strategy_state(
         &self,

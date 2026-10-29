@@ -5,9 +5,11 @@ use crate::session::StateHash;
 use crate::GameSession;
 use std::collections::BTreeSet;
 
+#[cfg(test)]
+use super::TickCommitResult;
 use super::{
     validate_receipt_keys, EnvelopeLedger, EnvelopeReceipt, JournalRank, ReceiptLocalKey,
-    ReceiptSource, StepFatal, TickCommitEvidence, TickCommitResult, TickShadowPlan,
+    ReceiptSource, StepFatal, TickCommitEvidence, TickShadowPlan,
 };
 
 pub(super) struct PreparedCandidateCommit<'authority> {
@@ -114,6 +116,7 @@ pub(super) struct PreparedTickPlanCommit<'authority> {
     evidence: Option<TickCommitEvidence>,
 }
 
+#[cfg(test)]
 pub(super) struct CandidateTickCommitResult {
     pub(super) tick: TickCommitResult,
     #[cfg(test)]
