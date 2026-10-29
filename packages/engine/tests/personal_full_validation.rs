@@ -229,3 +229,33 @@ fn accepts_complete_rows_when_group_replies_arrive_in_reverse_order_without_muta
     assert_eq!(expected, expected_before);
     assert_eq!(replies, replies_before);
 }
+
+#[test]
+fn no_belief_participant_requires_an_explicit_absent_slot_without_mutation() {
+    let account = AccountId(1);
+    let expected = vec![(
+        0,
+        vec![(
+            account,
+            PersonalPresence::Absent(PersonalAbsenceReason::NoBeliefParticipant),
+        )],
+    )];
+    let mut replies = vec![(0, vec![(0, account, None)])];
+    let expected_before = expected.clone();
+    let absent_before = replies.clone();
+    assert_eq!(validate_personal_full(&expected, &replies), Ok(()));
+    assert_eq!(expected, expected_before);
+    assert_eq!(replies, absent_before);
+
+    let mut setup = fixture::setup_1stock();
+    setup.npcs.retail_count = 1;
+    let session = GameSession::new(setup, 42).expect("真实单 NPC 会话可构造");
+    replies[0].1[0].2 = Some(snapshot(&session, account));
+    let unexpected_before = replies.clone();
+    assert_eq!(
+        validate_personal_full(&expected, &replies),
+        Err(personal_full_validation::PersonalFullError::UnexpectedPersonal { account })
+    );
+    assert_eq!(expected, expected_before);
+    assert_eq!(replies, unexpected_before);
+}
