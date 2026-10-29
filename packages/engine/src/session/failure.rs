@@ -1219,6 +1219,7 @@ impl GameSession {
     }
 
     /// 手动日结只撤销新增账户投影、经历与个人确认；不承诺回退已发布市场 tick。
+    #[cfg(test)]
     pub(crate) fn runtime_day_end_mirror_rollback(&self) -> impl FnOnce(&mut Self) {
         let accounts = self.runtime_accounts_snapshot();
         let retail = self.state.retail_experience.clone();

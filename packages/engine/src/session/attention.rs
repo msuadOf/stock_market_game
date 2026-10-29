@@ -325,17 +325,6 @@ impl NpcAttentionScheduler {
     }
 }
 
-impl GameSession {
-    pub(super) fn pop_due_npc_ids(&mut self, tick: u64) -> (Vec<AccountId>, Vec<(u64, AccountId)>) {
-        let attention = &self.state.npc_attention;
-        self.state.attention_scheduler.pop_due(tick, |id| {
-            attention
-                .get(&id)
-                .map(|state| state.next_attention_candidate_tick)
-        })
-    }
-}
-
 impl NpcAttentionState {
     pub(super) fn evaluate_candidate_with_signal(
         &mut self,

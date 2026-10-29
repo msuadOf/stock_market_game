@@ -305,6 +305,7 @@ impl RuntimeDriver {
     pub(crate) fn ack_prepared_mirror(&mut self, ack: crate::runtime::source::PreparedMirrorAck) {
         self.world.ack_prepared_mirror(ack);
     }
+    #[cfg(test)]
     pub(crate) fn collect_personal_full(
         &mut self,
     ) -> Result<crate::runtime::world::PersonalFullSnapshot, String> {
@@ -440,6 +441,7 @@ impl RuntimeDriver {
         Ok(())
     }
 
+    #[cfg(test)]
     pub(crate) fn prepare_driver_step(
         &mut self,
         session: &GameSession,

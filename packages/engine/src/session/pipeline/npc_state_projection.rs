@@ -4,17 +4,23 @@
 //! candidate composer 在投影后为每个账户分配连续局部序号，
 //! 保留 reconciliation 在 residual 之前的顺序，不重用 raw strategy 身份。
 
+#[cfg(test)]
 use super::decision_snapshot_capture::CapturedDecisionSnapshot;
 use super::npc_decisions::{NpcDecisionSourceOutput, NpcStrategyUpdate};
 use super::IntentCandidateKey;
 use crate::session::execution::reconcile_plan::WorkingOrderDecision;
-use crate::session::{GameSession, ReconcileScope, RetailDecisionTrace, WorkingOrderSlices};
+#[cfg(test)]
+use crate::session::GameSession;
+use crate::session::{ReconcileScope, RetailDecisionTrace, WorkingOrderSlices};
 use crate::strategy::Intent;
-use crate::{AccountId, AccountKind, LimitPrice, OrderId, StockId};
+#[cfg(test)]
+use crate::LimitPrice;
+use crate::{AccountId, AccountKind, OrderId, StockId};
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 
 #[derive(Clone, Debug)]
+#[cfg(test)]
 pub(in crate::session) struct ProjectedNpcIntent {
     account: AccountId,
     source_key: Option<IntentCandidateKey>,
@@ -23,6 +29,7 @@ pub(in crate::session) struct ProjectedNpcIntent {
     projected_intent: Intent,
 }
 
+#[cfg(test)]
 impl ProjectedNpcIntent {
     pub(in crate::session) const fn account(&self) -> AccountId {
         self.account
@@ -43,11 +50,10 @@ impl ProjectedNpcIntent {
 }
 
 #[derive(Clone, Debug)]
+#[cfg(test)]
 pub(in crate::session) enum NpcReconciliationDecision {
     Keep {
-        #[cfg(test)]
         account: AccountId,
-        #[cfg(test)]
         order_id: OrderId,
     },
     Cancel {
@@ -62,6 +68,7 @@ pub(in crate::session) enum NpcReconciliationDecision {
     },
 }
 
+#[cfg(test)]
 impl NpcReconciliationDecision {
     #[cfg(test)]
     pub(in crate::session) const fn contract_parts(
@@ -84,6 +91,7 @@ impl NpcReconciliationDecision {
 }
 
 #[derive(Clone, Debug)]
+#[cfg(test)]
 pub(in crate::session) struct NpcDecisionProjectionOutput {
     #[cfg(test)]
     accepted_due_npc_ids: Vec<AccountId>,
@@ -91,6 +99,7 @@ pub(in crate::session) struct NpcDecisionProjectionOutput {
     residual_intents: Vec<ProjectedNpcIntent>,
 }
 
+#[cfg(test)]
 impl NpcDecisionProjectionOutput {
     #[cfg(test)]
     pub(in crate::session) fn accepted_due_npc_ids(&self) -> &[AccountId] {
@@ -109,6 +118,7 @@ impl NpcDecisionProjectionOutput {
 
 #[derive(Debug, thiserror::Error)]
 pub(in crate::session) enum NpcDecisionProjectionError {
+    #[cfg(test)]
     #[error(
         "DecisionAndContinuation NPC 投影时钟不一致：shadow tick/phase {shadow_tick}/{shadow_phase:?}，snapshot {snapshot_tick}/{snapshot_phase:?}"
     )]
@@ -122,6 +132,7 @@ pub(in crate::session) enum NpcDecisionProjectionError {
     AccountOrderMismatch,
     #[error("DecisionAndContinuation NPC 投影缺少 shadow 账户 {0:?}")]
     MissingAccount(AccountId),
+    #[cfg(test)]
     #[error("DecisionAndContinuation NPC 投影账户 {0:?} 的 kind 在捕获后发生变化")]
     AccountKindMismatch(AccountId),
     #[error("DecisionAndContinuation NPC 投影账户 {0:?} 缺少 retail experience state")]
@@ -369,6 +380,7 @@ pub(in crate::session) fn install_npc_account_patch(
     Ok(())
 }
 
+#[cfg(test)]
 pub(in crate::session) fn project_npc_state(
     shadow: &mut GameSession,
     captured: &CapturedDecisionSnapshot,
@@ -396,43 +408,7 @@ pub(in crate::session) fn project_npc_state(
     project_npc_state_in_place(shadow, captured, source, false)
 }
 
-/// 将一个已完成的 NPC 账户结果投影到可丢弃 tick shadow。
-/// 调用方拥有账户完成 channel；任一账户投影失败都必须丢弃整个 candidate。
-pub(in crate::session) fn project_npc_account(
-    shadow: &mut GameSession,
-    captured: &CapturedDecisionSnapshot,
-    source: &mut NpcDecisionSourceOutput,
-) -> Result<NpcDecisionProjectionOutput, NpcDecisionProjectionError> {
-    let (view, mut writes) = super::npc_split::npc_split(shadow);
-    project_npc_account_on(&view, &mut writes, captured, source)
-}
-
-/// 读视图+写组版本（queue 链转换目标形态）。
-pub(in crate::session) fn project_npc_account_on(
-    view: &super::npc_split::SessionReadView<'_>,
-    writes: &mut super::npc_split::NpcWriteFields<'_>,
-    captured: &CapturedDecisionSnapshot,
-    source: &mut NpcDecisionSourceOutput,
-) -> Result<NpcDecisionProjectionOutput, NpcDecisionProjectionError> {
-    let snapshot = &captured.snapshot;
-    if view.tick != snapshot.tick() || view.phase() != snapshot.phase() {
-        return Err(NpcDecisionProjectionError::ClockMismatch {
-            shadow_tick: view.tick,
-            shadow_phase: view.phase(),
-            snapshot_tick: snapshot.tick(),
-            snapshot_phase: snapshot.phase(),
-        });
-    }
-    if source.accounts().len() != 1
-        || source.account_outputs().len() != 1
-        || source.accounts()[0] != source.account_outputs()[0].account()
-        || !snapshot.due_npc_ids().contains(&source.accounts()[0])
-    {
-        return Err(NpcDecisionProjectionError::AccountOrderMismatch);
-    }
-    project_npc_state_in_place_on(view, writes, captured, source, true)
-}
-
+#[cfg(test)]
 fn project_npc_state_in_place(
     shadow: &mut GameSession,
     captured: &CapturedDecisionSnapshot,
@@ -444,6 +420,7 @@ fn project_npc_state_in_place(
 }
 
 /// 读视图+写组版本。
+#[cfg(test)]
 fn project_npc_state_in_place_on(
     view: &super::npc_split::SessionReadView<'_>,
     writes: &mut super::npc_split::NpcWriteFields<'_>,
@@ -607,6 +584,7 @@ fn project_npc_state_in_place_on(
     })
 }
 
+#[cfg(test)]
 fn working_intent(
     order_id: OrderId,
     phase: crate::TradingPhase,
@@ -633,6 +611,7 @@ fn working_intent(
     }
 }
 
+#[cfg(test)]
 pub(super) fn remove_first_matching_raw(
     raw: &mut Vec<(IntentCandidateKey, Intent)>,
     consumed: &Intent,
@@ -645,6 +624,7 @@ pub(super) fn remove_first_matching_raw(
     }
 }
 
+#[cfg(test)]
 pub(super) fn take_exact_raw_source(
     raw: &mut Vec<(IntentCandidateKey, Intent)>,
     projected: &Intent,
@@ -654,22 +634,15 @@ pub(super) fn take_exact_raw_source(
         .map(|index| raw.remove(index))
 }
 
+#[cfg(test)]
 fn project_reconciliation_decision(
     account: AccountId,
     decision: WorkingOrderDecision,
 ) -> NpcReconciliationDecision {
     match decision {
-        WorkingOrderDecision::Keep {
-            #[cfg(test)]
-            order_id,
-            #[cfg(not(test))]
-                order_id: _,
-        } => NpcReconciliationDecision::Keep {
-            #[cfg(test)]
-            account,
-            #[cfg(test)]
-            order_id,
-        },
+        WorkingOrderDecision::Keep { order_id } => {
+            NpcReconciliationDecision::Keep { account, order_id }
+        }
         WorkingOrderDecision::Cancel { order_id, code } => NpcReconciliationDecision::Cancel {
             account,
             order_id,
@@ -686,6 +659,7 @@ fn project_reconciliation_decision(
     }
 }
 
+#[cfg(test)]
 fn intents_equal(left: &Intent, right: &Intent) -> bool {
     match (left, right) {
         (

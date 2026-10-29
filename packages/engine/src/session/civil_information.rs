@@ -65,6 +65,7 @@ impl GameSession {
             }
         }
     }
+    #[cfg(test)]
     pub(super) fn with_prepared_runtime_civil_day<P>(
         &mut self,
         project: impl FnOnce(&GameSession, CivilDayEndReport) -> Result<P, SessionError>,

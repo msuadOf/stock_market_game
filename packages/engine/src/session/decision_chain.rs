@@ -1170,6 +1170,7 @@ impl GameSession {
 
     /// 技术面观察只读（D3a-2：runtime 组线程观察同源校验用——与
     /// build_chain_technical_observations 同一构建器）。
+    #[cfg(test)]
     pub(crate) fn technical_observations_read(
         &self,
     ) -> Result<BTreeMap<StockId, TechnicalObservation>, StepFatal> {

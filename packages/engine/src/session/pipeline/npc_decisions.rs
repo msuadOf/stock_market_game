@@ -1,5 +1,7 @@
 //! 运行纯 NPC 决策源。
-use super::{DecisionAccountInput, DecisionSnapshot, DecisionSnapshotError, IntentCandidateKey};
+use super::{DecisionAccountInput, IntentCandidateKey};
+#[cfg(test)]
+use super::{DecisionSnapshot, DecisionSnapshotError};
 use crate::account::StoredStrategy;
 use crate::strategy::{Intent, StrategyDecision, StrategyState, StrategyStateError};
 use crate::{AccountId, SplitMix64};
@@ -137,6 +139,7 @@ pub(in crate::session) enum NpcDecisionSourceError {
         source: crate::plans::UrgencyError,
     },
     #[error("DecisionAndContinuation NPC 来源快照错误：{0}")]
+    #[cfg(test)]
     Snapshot(DecisionSnapshotError),
     #[error("DecisionAndContinuation NPC 来源无法恢复账户 {account:?} 的 strategy：{source}")]
     StrategyHydration {
@@ -154,6 +157,7 @@ pub(crate) fn npc_rng_seed(base: u64, tick: u64, account: AccountId) -> u64 {
     base ^ tick.wrapping_mul(0x9E3779B97F4A7C15) ^ account.0.wrapping_mul(0x6A09E667F3BCC908)
 }
 
+#[cfg(test)]
 pub(in crate::session) struct NpcAccountDecision {
     #[cfg(test)]
     pub(in crate::session) account: AccountId,
@@ -162,10 +166,12 @@ pub(in crate::session) struct NpcAccountDecision {
 
 #[derive(Debug)]
 pub(in crate::session) enum NpcDecisionStreamError<E> {
+    #[cfg(test)]
     Decision(NpcDecisionSourceError),
     Consumer(E),
 }
 
+#[cfg(test)]
 pub(in crate::session) fn decide_npc_account(
     snapshot: &DecisionSnapshot,
     config: &crate::GameConfig,
@@ -314,6 +320,7 @@ pub(in crate::session) fn set_decide_panic_accounts(accounts: &[AccountId]) {
         accounts.iter().copied().collect();
 }
 
+#[cfg(test)]
 pub(in crate::session) fn stream_npc_decisions<E>(
     snapshot: Arc<DecisionSnapshot>,
     config: &crate::GameConfig,
@@ -339,6 +346,7 @@ where
 /// 运输原 panic payload（不恢复不转换，ADR-0017:117 边界内），绑定释放后发送
 /// TaskDied；协调者收到即停止派发（pending 冻结）、排空其余在飞、最后重抛原
 /// payload。原始 sender 持有至排空完成（Disconnected 仅作冗余断言）。
+#[cfg(test)]
 pub(super) fn stream_npc_decisions_with<E, B, R>(
     snapshot: Arc<DecisionSnapshot>,
     config: &crate::GameConfig,
@@ -730,31 +738,6 @@ where
         }
         select_stream_error(errors)
     })
-}
-
-fn stream_npc_decisions_inline<E>(
-    snapshot: Arc<DecisionSnapshot>,
-    config: &crate::GameConfig,
-    before_decide: impl Fn(AccountId),
-    mut receive: impl FnMut(NpcAccountDecision) -> Result<(), E>,
-) -> Result<(), NpcDecisionStreamError<E>> {
-    let mut errors = Vec::new();
-    for account in snapshot.due_npc_ids().iter().copied() {
-        before_decide(account);
-        match decide_npc_account(&snapshot, config, account) {
-            Ok(output) => {
-                if let Err(error) = receive(NpcAccountDecision {
-                    #[cfg(test)]
-                    account,
-                    output,
-                }) {
-                    errors.push((account, NpcDecisionStreamError::Consumer(error)));
-                }
-            }
-            Err(error) => errors.push((account, NpcDecisionStreamError::Decision(error))),
-        }
-    }
-    select_stream_error(errors)
 }
 
 /// 泛化错误记账（T1）：merge 回调返回 Err ⇒ Consumer 错误；任务结果 Err ⇒

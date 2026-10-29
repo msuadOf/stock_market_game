@@ -2,15 +2,21 @@
 
 use super::*;
 use crate::calendar::CivilDate;
+#[cfg(test)]
 use crate::company::cash_dividend_tax::CashDividendTaxBook;
+#[cfg(test)]
 use crate::company::share_registry::{
     AcquisitionSource, DayNetChange, MovementScope, NetAcquisition, ShareDayRequest,
     ShareRestriction,
 };
+#[cfg(test)]
 use crate::session::PersonalTradeConfirmation;
-use crate::stock::{StockCatalog, StockId};
+#[cfg(test)]
+use crate::stock::StockCatalog;
+use crate::stock::StockId;
 
 /// 输入必须是普通撮合与收盘集合竞价全部完成后的最终持仓事实。
+#[cfg(test)]
 pub(crate) struct RegistryDayEndInput<'a> {
     pub day: CivilDate,
     pub catalog: &'a StockCatalog,
@@ -23,11 +29,13 @@ pub(crate) struct RegistryDayEndInput<'a> {
 
 /// 仅包含本相位计算出的候选事实；调用者决定是否安装。
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[cfg(test)]
 pub(crate) struct RegistryDayEndCandidate {
     pub registries: Vec<ShareRegistry>,
     pub dividend_tax_books: Vec<CashDividendTaxBook>,
 }
 
+#[cfg(test)]
 impl SessionCorporateActions {
     /// 历史名册与税账须已通过整链校验；这里只新增 PublicMarket 日结事实。
     /// 不推进分红付款、回购 fill/cancel、除权或真实账户，尚无生产调用。
@@ -88,6 +96,7 @@ impl SessionCorporateActions {
     }
 }
 
+#[cfg(test)]
 impl RegistryDayEndCandidate {
     /// 日终推进股东名册。`late_holder_tax_accounts` 是「后入股东自动开税账」
     /// 的资格集合（N2a，2026-10-08 决策）：仅 `AShareIndividual` 模式由 Session
@@ -391,6 +400,7 @@ impl RegistryDayEndCandidate {
 fn invalid(reason: impl Into<String>) -> SessionCorporateActionsError {
     SessionCorporateActionsError::Invalid(reason.into())
 }
+#[cfg(test)]
 fn resolve_stock_id(
     catalog: &StockCatalog,
     stock: &StockCode,
@@ -399,6 +409,7 @@ fn resolve_stock_id(
         .id(&stock.0)
         .ok_or_else(|| invalid(format!("名册未知证券 {}", stock.0)))
 }
+#[cfg(test)]
 fn treasury_market_lot_id(stock: &StockCode, day: CivilDate) -> String {
     format!("market:{}:issuer-treasury:{}", stock.0, day)
 }

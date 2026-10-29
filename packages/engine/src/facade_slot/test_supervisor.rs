@@ -9,7 +9,6 @@ use std::sync::atomic::Ordering;
 use super::arena::{AnswerField, SlotArena};
 use super::codec::{decode_gen, decode_join_state, encode_join, encode_w, JoinState, SlotState};
 use super::platform::FacadePlatform;
-use super::roles::SpawnFailure;
 
 /// A1-A3 应答结果。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -288,18 +287,4 @@ pub fn recover_pending<P: FacadePlatform>(
         }
     }
     pushed
-}
-
-/// 兼容面：SpawnFailure 归 io 映射由门面承担（见 thread_facade wasm 段）。
-pub fn spawn_failure_message(failure: &SpawnFailure) -> String {
-    match failure {
-        SpawnFailure::SlotPoolExhausted {
-            retired_fail_unacked,
-            retired_gen_exhausted,
-        } => format!(
-            "SLOT_POOL_EXHAUSTED{{retired_fail_unacked={retired_fail_unacked},retired_gen_exhausted={retired_gen_exhausted}}}"
-        ),
-        SpawnFailure::AckTimeout => "SPAWN_ACK_TIMEOUT".to_owned(),
-        SpawnFailure::WorkerFailed { errcode } => format!("SPAWN_WORKER_FAILED{{errcode={errcode}}}"),
-    }
 }

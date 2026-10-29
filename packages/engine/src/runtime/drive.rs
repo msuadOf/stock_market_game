@@ -1746,6 +1746,7 @@ impl RuntimeDriver {
     }
 
     /// B2 件 5：取走本拍待安装的个人确认（安装成功点消费——恰一次）。
+    #[cfg(test)]
     pub(crate) fn take_pending_receipts(
         &mut self,
     ) -> Vec<crate::session::personal_trade_history::PendingTradeReceipt> {
@@ -1896,6 +1897,7 @@ impl RuntimeDriver {
     }
 
     /// 只转发本 World 真正提交的原始 Calendar 与历史 source，不从预览重建。
+    #[cfg(any(test, feature = "simulation-diagnostics"))]
     pub(crate) fn committed_calendar_tick(
         &self,
     ) -> Result<Option<super::world::CommittedCalendarTick>, String> {
@@ -3020,6 +3022,7 @@ impl RuntimeDriver {
     /// 形态——刀 1 落地后生产侧零引用（仅本 pub(crate) 测试面+sever
     /// 断连守卫单测），复活生产调用须经 candle 设计稿复核）。
     /// Sol 二审修复集 3：收集错误全传播（不吞发送失败/异常消息）。
+    #[cfg(test)]
     pub(crate) fn world_desk_finals_for_candles(
         &mut self,
     ) -> Result<Vec<super::type_aliases::StockCandleProjection>, super::protocol::RuntimeError>

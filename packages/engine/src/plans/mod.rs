@@ -313,6 +313,7 @@ impl PlanBook {
     }
 
     /// 两类日终共用同一簿；未接真实来源的公司执行腿不能静默跨日或被清空。
+    #[cfg(test)]
     pub(crate) fn end_trading_day(&mut self, day: u64) -> Result<(), PlanError> {
         self.end_trading_day_for_stocks(|_| Ok(Some(day)))
     }
@@ -755,6 +756,7 @@ impl PlanBook {
     /// previously terminal plan is invalid. A fact after a completion earlier in
     /// this same batch is consumed without another transition. A failed transition
     /// publishes none of the staged changes.
+    #[cfg(test)]
     pub(crate) fn apply_active_events_atomically(
         &mut self,
         events: &[(PlanId, PlanEvent)],

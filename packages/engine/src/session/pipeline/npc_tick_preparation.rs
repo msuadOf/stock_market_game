@@ -3,29 +3,36 @@
 //! 后续账户校验、股票处理、结算、最终事件与权威提交由完整 tick coordinator 负责。
 
 #[cfg(test)]
+use super::candidate_composition::CandidateCompositionError;
+#[cfg(test)]
 use super::decision_snapshot_capture::capture_decision_snapshot;
 #[cfg(test)]
 use super::decision_snapshot_capture::CapturedDecisionSnapshot;
 #[cfg(test)]
 use super::npc_decisions::run_npc_decisions;
 #[cfg(test)]
+use super::npc_decisions::{NpcDecisionSourceError, NpcDecisionSourceOutput};
+#[cfg(test)]
 use super::npc_state_projection::project_npc_state;
 #[cfg(test)]
+use super::npc_state_projection::{
+    NpcDecisionProjectionError, NpcDecisionProjectionOutput, NpcReconciliationDecision,
+};
+#[cfg(test)]
 use super::DecisionSnapshot;
+#[cfg(test)]
+use super::IntentCandidateError;
 use super::{
-    candidate_composition::CandidateCompositionError,
-    decision_snapshot_capture::DecisionSnapshotCaptureError,
-    npc_decisions::{NpcDecisionSourceError, NpcDecisionSourceOutput, NpcDecisionStreamError},
-    npc_state_projection::{
-        NpcDecisionProjectionError, NpcDecisionProjectionOutput, NpcReconciliationDecision,
-    },
-    IntentCandidate, IntentCandidateBatch, IntentCandidateError, IntentCandidateKey, StepFatal,
+    decision_snapshot_capture::DecisionSnapshotCaptureError, npc_decisions::NpcDecisionStreamError,
+    IntentCandidate, IntentCandidateBatch, IntentCandidateKey, StepFatal,
 };
 #[cfg(test)]
 use crate::compute::join;
 #[cfg(test)]
 use crate::session::plan_chain_candidates::PlanChainOperationBatch;
-use crate::{AccountId, AccountKind, GameSession, Intent, StockId};
+use crate::{AccountId, AccountKind, GameSession};
+#[cfg(test)]
+use crate::{Intent, StockId};
 use std::collections::BTreeMap;
 
 #[cfg(test)]
@@ -38,6 +45,7 @@ pub(in crate::session::pipeline) type NpcDecisionHandoverParts = (
 #[cfg(test)]
 use std::sync::Arc;
 
+#[cfg(test)]
 #[derive(Debug, thiserror::Error)]
 pub(super) enum NpcDecisionPreparationError {
     #[error("NPC decision snapshot capture failed: {0}")]
@@ -1254,6 +1262,7 @@ pub(in crate::session) fn produce_decision_output_on(
     *writes.plans = plans;
     if let Err(error) = stream_error {
         let description = match error {
+            #[cfg(test)]
             NpcDecisionStreamError::Decision(error) => error.to_string(),
             NpcDecisionStreamError::Consumer(error) => error,
         };
@@ -1963,6 +1972,7 @@ fn projected_candidates(
         .map_err(Into::into)
 }
 
+#[cfg(test)]
 struct ProjectedNpcIntents {
     intents: Vec<(AccountId, Intent)>,
     dependencies: Vec<(usize, usize)>,
@@ -1989,6 +1999,7 @@ fn with_dependencies(
         .collect()
 }
 
+#[cfg(test)]
 fn projected_ordered_intents(
     source: &NpcDecisionSourceOutput,
     projection: &NpcDecisionProjectionOutput,

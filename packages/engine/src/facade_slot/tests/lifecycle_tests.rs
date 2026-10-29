@@ -67,9 +67,9 @@ fn 全链ok_闭包恰跑一次join取回结果() {
         .expect("请求者线程不应 panic")
         .expect("全链 OK 应返回句柄");
     let child_out = child.join().expect("trampoline 不应 panic");
-    assert!(matches!(child_out, TrampolineExit::Ran { .. }));
-    let (): () =
-        join_typed(&arena, &platform, handle.join_index, handle.gen).expect("join DONE 应取回结果");
+    assert!(matches!(child_out, TrampolineExit::Ran));
+    let (): () = join_typed(&handle.arena, &platform, handle.join_index, handle.gen)
+        .expect("join DONE 应取回结果");
     // join 槽 → CONSUMED。
     assert_eq!(
         arena.join_word(0).load(Ordering::SeqCst),
@@ -395,7 +395,7 @@ fn 迟到应答零槽写与terminate卫生() {
     let outcome1 = test_supervisor::answer_ok(&arena, &platform, 0, 1, 10);
     assert!(matches!(outcome1, test_supervisor::AnswerOutcome::Answered));
     let ran = trampoline_run(&arena, &platform, 0, 1, 10);
-    assert!(matches!(ran, TrampolineExit::Ran { .. }));
+    assert!(matches!(ran, TrampolineExit::Ran));
     let (): () = join_typed(&arena, &platform, 0, 1).expect("g+1 join");
     assert_eq!(counters.run.load(Ordering::SeqCst), 1);
 }
@@ -550,7 +550,7 @@ fn trampoline输给死亡信号结果恰一释放() {
         test_supervisor::answer_ok(&arena, &platform, published.slot, published.gen, 1);
         assert!(matches!(
             trampoline_run(&arena, &platform, 0, 0, 1),
-            TrampolineExit::Ran { .. }
+            TrampolineExit::Ran
         ));
         assert_eq!(drops.drop.load(Ordering::SeqCst), 1, "D5输家结果恰一次释放");
         assert_eq!(arena.tombstone_word().load(Ordering::SeqCst), 0);

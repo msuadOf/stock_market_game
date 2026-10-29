@@ -297,11 +297,6 @@ impl Market {
         self.last_close = last_close;
     }
 
-    /// 竞价 caller 在完成撮合后应用其 clearing price，不重新改变输入接受集。
-    pub(crate) fn apply_auction_price(&mut self, price: Money) {
-        self.last_price = price;
-    }
-
     #[cfg(test)]
     pub(crate) fn fixture_set_last_price(&mut self, price: Money) {
         self.last_price = price;
@@ -546,6 +541,7 @@ impl Market {
         Ok(())
     }
 
+    #[cfg(test)]
     pub(crate) fn record_filled_order(
         &mut self,
         id: OrderId,
@@ -553,13 +549,6 @@ impl Market {
     ) -> Result<(), MarketError> {
         self.book.restore_filled_orders([(id, owner)])?;
         Ok(())
-    }
-
-    pub(crate) fn resting_orders_for_owners(
-        &self,
-        owners: &std::collections::BTreeSet<AccountId>,
-    ) -> Vec<Order> {
-        self.book.resting_orders_for_owners(owners)
     }
 
     pub fn resting_order_count(&self) -> usize {

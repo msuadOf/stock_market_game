@@ -80,7 +80,7 @@ mod wasm_impl {
             "facade_child_trampoline 在 runtime 未初始化时不可达（spawn 先行 ⇒ init 先行）",
         );
         match trampoline_run(&**arena, &WasmFacadePlatform, slot, gen, worker_id) {
-            TrampolineExit::Ran { .. } => 0,
+            TrampolineExit::Ran => 0,
             TrampolineExit::Superseded => 1,
         }
     }

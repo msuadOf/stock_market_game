@@ -1,5 +1,6 @@
 use super::*;
 
+#[cfg(test)]
 use crate::session::pipeline::npc_split::SessionReadView;
 
 #[derive(Clone, Debug)]
@@ -11,6 +12,7 @@ pub(in crate::session) struct ReconciliationPlan {
 #[derive(Clone, Debug)]
 pub(in crate::session) enum WorkingOrderDecision {
     Keep {
+        #[cfg(test)]
         order_id: OrderId,
     },
     Cancel {
@@ -24,6 +26,7 @@ pub(in crate::session) enum WorkingOrderDecision {
 }
 
 impl GameSession {
+    #[cfg(test)]
     pub(in crate::session) fn plan_npc_working_order_reconciliation(
         &self,
         desired: Vec<Intent>,
@@ -44,6 +47,7 @@ impl GameSession {
     /// 窗口判定）与 markets（压制判定所需的行情快照），其余依赖经参数传入。
     /// 读视图版本（queue 链转换目标形态）：会话读集仅 tick/setup（竞价不可撤销
     /// 窗口判定）与 markets（压制判定所需的行情快照），其余依赖经参数传入。
+    #[cfg(test)]
     pub(in crate::session) fn plan_npc_working_order_reconciliation_on(
         view: &SessionReadView<'_>,
         desired: Vec<Intent>,
@@ -84,7 +88,10 @@ pub(in crate::session) fn plan_npc_working_order_reconciliation_standalone(
                     continue;
                 }
                 if take_exact(&mut desired, code, order.side, order.price, order.qty) {
-                    decisions.push(WorkingOrderDecision::Keep { order_id: order.id });
+                    decisions.push(WorkingOrderDecision::Keep {
+                        #[cfg(test)]
+                        order_id: order.id,
+                    });
                 } else if let Some(intent) = desired
                     .iter()
                     .find(|intent| same_side(intent, code, order.side))
@@ -109,6 +116,7 @@ pub(in crate::session) fn plan_npc_working_order_reconciliation_standalone(
                 }
                 if take_exact(&mut desired, code, order.side, order.limit, order.qty) {
                     decisions.push(WorkingOrderDecision::Keep {
+                        #[cfg(test)]
                         order_id: OrderId(order.order_id),
                     });
                 } else if cancelable_auction_window {

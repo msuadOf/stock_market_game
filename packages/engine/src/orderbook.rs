@@ -4,7 +4,7 @@
 //! ADR-0005 §3 撮合驱动价格的核心；纯逻辑，只依赖 Money，与 account/market/strategy 解耦。
 
 use std::cmp::Reverse;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use thiserror::Error;
 
@@ -975,12 +975,6 @@ impl OrderBook {
             .collect();
         orders.sort_by_key(|order| order.seq);
         orders
-    }
-
-    /// Snapshot only orders belonging to the accounts observed in this tick.
-    /// The selected orders keep the same per-stock arrival order as `resting_orders`.
-    pub(crate) fn resting_orders_for_owners(&self, owners: &BTreeSet<AccountId>) -> Vec<Order> {
-        self.resting_orders_matching(|order| owners.contains(&order.owner))
     }
 
     pub fn resting_order_count(&self) -> usize {

@@ -212,6 +212,7 @@ impl GameSession {
     }
 
     /// 短借用只持 driver 锁；不进入普通 tick 的 freeze、take 或 inject 玩家意图路径。
+    #[cfg(test)]
     pub(in crate::session) fn apply_administrative_operations<P>(
         &mut self,
         grouped: Vec<(GroupIdx, Vec<AdminOperation>)>,

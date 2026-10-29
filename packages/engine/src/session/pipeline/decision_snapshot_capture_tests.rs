@@ -306,7 +306,7 @@ fn capture_advances_attention_and_seals_owned_views_on_shadow_only() {
         serde_json::to_vec(&shadow.state.retail_experience[&account]).unwrap()
     );
     // 注意力在 shadow 上推进：唯一账户候选刻后移，新候选已入队，且无逾期条目残留
-    // （重复入队由 pop_due_npc_ids 的 next_attention_candidate_tick 比对过滤，属设计容忍）。
+    // （重复入队由 NpcAttentionScheduler::pop_due 的 next_attention_candidate_tick 比对过滤，属设计容忍）。
     assert_ne!(shadow.state.npc_attention[&account], attention_before);
     assert!(shadow.state.npc_attention[&account].next_attention_candidate_tick > shadow.state.tick);
     let next = shadow.state.npc_attention[&account].next_attention_candidate_tick;

@@ -49,6 +49,7 @@ impl SessionCompanies {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn legacy_mut(&mut self) -> Option<&mut LegacyCompanyState> {
         match self {
             Self::LegacyOperations(state) => Some(state),

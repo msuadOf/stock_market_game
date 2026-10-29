@@ -84,7 +84,7 @@ fn n1_跨代载荷负测() {
     platform.seams.a.release_once();
     platform.seams.a.release_once();
     let new_out = new_child.join().expect("新子不应 panic");
-    assert!(matches!(new_out, TrampolineExit::Ran { .. }));
+    assert!(matches!(new_out, TrampolineExit::Ran));
     let (): () = join_typed(&arena, &platform, handle.join_index, handle.gen).expect("g+1 join");
     assert_eq!(
         counters1.run.load(Ordering::SeqCst),
@@ -167,7 +167,7 @@ fn n1b_合法ok载荷窗口() {
     // 放行：子消费 → DONE → join CONSUMED → 门链闭合 → 回收成功。
     platform.seams.a2.release_once();
     let out = child.join().expect("子不应 panic");
-    assert!(matches!(out, TrampolineExit::Ran { .. }));
+    assert!(matches!(out, TrampolineExit::Ran));
     let (): () = join_typed(&arena, &platform, handle.join_index, handle.gen).expect("join");
     match test_supervisor::on_worker_exit(&arena, &platform, &mut sup, 0, 0) {
         test_supervisor::RecoveryOutcome::Pushed => {}
@@ -267,7 +267,7 @@ fn n3_迟到应答跨代cas负测() {
         .expect("请求者不应 panic")
         .expect("g+1 成功");
     let out = child.join().expect("子不应 panic");
-    assert!(matches!(out, TrampolineExit::Ran { .. }));
+    assert!(matches!(out, TrampolineExit::Ran));
     let (): () = join_typed(&arena, &platform, handle.join_index, handle.gen).expect("join");
     assert_eq!(counters1.run.load(Ordering::SeqCst), 1);
     assert_eq!(counters0.run.load(Ordering::SeqCst), 0);
@@ -335,7 +335,7 @@ fn n3b_写权获取窗口() {
         .expect("请求者不应 panic")
         .expect("迟到成功也是成功");
     let out = child.join().expect("子不应 panic");
-    assert!(matches!(out, TrampolineExit::Ran { .. }));
+    assert!(matches!(out, TrampolineExit::Ran));
     let (): () = join_typed(&arena, &platform, handle.join_index, handle.gen).expect("join");
     assert_eq!(counters.run.load(Ordering::SeqCst), 1);
     assert_eq!(arena.tombstone_word().load(Ordering::SeqCst), 0);

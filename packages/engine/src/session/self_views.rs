@@ -54,6 +54,7 @@ pub(in crate::session) fn working_orders_for_accounts_on(
 
 impl GameSession {
     /// 按股票并行读取本轮观察账户的工作单，再归并为账户视图。
+    #[cfg(test)]
     pub(super) fn working_orders_for_accounts(
         &self,
         owners: &BTreeSet<AccountId>,

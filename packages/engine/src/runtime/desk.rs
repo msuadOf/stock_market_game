@@ -1515,20 +1515,6 @@ impl DeskState {
         });
     }
 
-    /// 记录受理事实（Accepted）。
-    fn note_accepted(&mut self, order: &DeskOrder) {
-        self.lifecycle_facts
-            .push(super::protocol::DeskLifecycleFact {
-                stock: self.setup.stock,
-                owner: order.owner,
-                order_serial: (u64::from(order.order_ref.0) << 32) | order.order_ref.1,
-                remaining: order.qty,
-                side: order.side,
-                price: order.price,
-                kind: super::protocol::LifecycleKind::Accepted,
-            });
-    }
-
     /// 记录终结事实（Cancelled/Expired）。
     fn note_terminated(&mut self, order: &DeskOrder, kind: super::protocol::LifecycleKind) {
         self.retail_facts
@@ -3001,18 +2987,6 @@ impl DeskState {
         })
     }
 
-    /// 前五档买卖失衡（照搬原型 `top5_imbalance`）。
-    fn top5_imbalance(&self) -> f64 {
-        let bid: u64 = self.bids.values().rev().take(5).map(count_qty).sum();
-        let ask: u64 = self.asks.values().take(5).map(count_qty).sum();
-        let total = bid + ask;
-        if total == 0 {
-            0.0
-        } else {
-            (bid as f64 - ask as f64) / total as f64
-        }
-    }
-
     /// 本轮收束：行情收尾（tick 收盘价历史、分钟收盘、零成交 K 占位）→
     /// 出口缓冲 flush（先于 DeskReport，因果基石）。
     fn finish_round(&mut self, tick: u64) -> Result<(), RuntimeError> {
@@ -3358,10 +3332,6 @@ pub fn bound_price(reference: Money, ratio_bps: u32, upward: bool) -> Result<Mon
         bound = reference.sub(tick).map_err(|e| format!("{e}"))?.max(tick);
     }
     Ok(bound)
-}
-
-fn count_qty(level: &VecDeque<DeskOrder>) -> u64 {
-    level.iter().map(|o| o.qty as u64).sum()
 }
 
 fn fnv(state: u64, value: u64) -> u64 {

@@ -237,10 +237,12 @@ impl SlotArena {
         arena
     }
 
+    #[cfg(target_family = "wasm")]
     pub fn capacity(&self) -> u32 {
         self.capacity
     }
     /// 共享字区首地址（宿主建 Int32Array 视图的锚；wasm32 上为 u32 域）。
+    #[cfg(target_family = "wasm")]
     pub fn shared_words_addr(&self) -> usize {
         self.raw.as_ptr() as usize
     }
@@ -333,9 +335,6 @@ impl SlotArena {
     }
     pub fn facade_ra_total_word(&self) -> &AtomicU32 {
         self.word(FACADE_RA_TOTAL)
-    }
-    pub fn facade_rb_total_word(&self) -> &AtomicU32 {
-        self.word(FACADE_RB_TOTAL)
     }
     pub fn timeout_hit_answering_word(&self) -> &AtomicU32 {
         self.word(TIMEOUT_HIT_ANSWERING)

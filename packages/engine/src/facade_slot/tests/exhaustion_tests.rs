@@ -24,7 +24,7 @@ fn healthy_cycle(
     let published = publish_spawn(arena, platform, job).expect("健康路径发布应成功");
     test_supervisor::answer_ok(arena, platform, published.slot, published.gen, worker_id);
     let out = trampoline_run(arena, platform, published.slot, published.gen, worker_id);
-    assert!(matches!(out, TrampolineExit::Ran { .. }));
+    assert!(matches!(out, TrampolineExit::Ran));
     let (): () = join_typed(arena, platform, published.slot, published.gen).expect("join");
     match test_supervisor::on_worker_exit(arena, platform, sup, published.slot, published.gen) {
         test_supervisor::RecoveryOutcome::Pushed => {}
@@ -97,7 +97,7 @@ fn t耗2_全池耗尽显式失败恒等式() {
                     spawned,
                 );
                 let out = trampoline_run(&arena, &platform, published.slot, published.gen, spawned);
-                assert!(matches!(out, TrampolineExit::Ran { .. }));
+                assert!(matches!(out, TrampolineExit::Ran));
                 let (): () = join_typed(&arena, &platform, published.slot, published.gen).unwrap();
                 match test_supervisor::on_worker_exit(
                     &arena,

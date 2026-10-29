@@ -3,13 +3,16 @@
 //! 只推进密封 strategy 输入所需的 attention/retail-observation 状态。
 //! 不路由 intent，不修改订单簿。
 
-use super::{DecisionAccountInput, DecisionSnapshot, DecisionSnapshotError};
+use super::DecisionAccountInput;
+#[cfg(test)]
+use super::DecisionSnapshot;
 use crate::behavior::BehaviorMarketObservation;
 use crate::compute::parallel::*;
 use crate::observation::{
     build_account_risk_observation, build_equal_weight_market_observation, AccountRiskObservation,
     ObservationError, RiskPositionInput,
 };
+#[cfg(test)]
 use crate::session::{AuctionOrdersByAccount, ContinuousOrdersByAccount};
 use crate::strategy::{PositionView, SelfView, StrategyStateError};
 use crate::{
@@ -18,6 +21,7 @@ use crate::{
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
+#[cfg(test)]
 #[derive(Debug)]
 pub(in crate::session) struct CapturedDecisionSnapshot {
     pub(super) snapshot: Arc<DecisionSnapshot>,
@@ -87,8 +91,9 @@ pub(in crate::session) enum DecisionSnapshotCaptureError {
         #[source]
         source: ObservationError,
     },
+    #[cfg(test)]
     #[error("DecisionAndContinuation 决策快照契约拒绝捕获的输入：{0}")]
-    Snapshot(#[source] DecisionSnapshotError),
+    Snapshot(#[source] super::DecisionSnapshotError),
     #[error("DecisionAndContinuation urgency policy 校验失败：{0}")]
     UrgencyPolicy(#[from] crate::plans::UrgencyError),
     #[error("DecisionAndContinuation 散户个人分析失败: {0}")]
@@ -100,6 +105,7 @@ pub(in crate::session) enum DecisionSnapshotCaptureError {
 ///
 /// 此处仅修改到期 attention 与受理的散户观察；
 /// 捕获失败时调用方丢弃完整 tick candidate。
+#[cfg(test)]
 pub(in crate::session) fn capture_decision_snapshot(
     shadow: &mut super::GameSession,
 ) -> Result<CapturedDecisionSnapshot, DecisionSnapshotCaptureError> {
@@ -108,6 +114,7 @@ pub(in crate::session) fn capture_decision_snapshot(
 }
 
 /// 读视图+写组版本（queue 链转换目标形态）。
+#[cfg(test)]
 pub(super) fn capture_decision_snapshot_on(
     view: &super::npc_split::SessionReadView<'_>,
     writes: &mut super::npc_split::NpcWriteFields<'_>,
@@ -272,12 +279,6 @@ pub(super) fn capture_decision_snapshot_on(
     })
 }
 
-fn validate_market_view_inputs(
-    session: &super::GameSession,
-) -> Result<(), DecisionSnapshotCaptureError> {
-    validate_market_view_inputs_on(&session.read_view())
-}
-
 /// T1·两阶段（ADR-0042 §T1）：单账户**个人观察 + 密封输入组装**的纯输出。
 pub(in crate::session) struct NpcObservedAccount {
     /// 密封决策输入（未挂 retail_analysis；持有经验行的 Arc 快照）。
@@ -396,32 +397,6 @@ struct CapturedAccountObservation {
 }
 
 impl CapturedExperienceObservation {
-    fn capture(
-        session: &super::GameSession,
-        account: AccountId,
-        market_minute: u64,
-    ) -> Result<Self, DecisionSnapshotCaptureError> {
-        Self::capture_on(
-            &session.state.retail_experience,
-            &session.read_view(),
-            account,
-            market_minute,
-        )
-    }
-
-    /// 读视图+写组再借用版本：retail_experience 由调用方经 &*writes 再借用传入。
-    fn capture_on(
-        experience: &crate::session::AccountPagedMap<crate::RetailExperienceState>,
-        view: &super::npc_split::SessionReadView<'_>,
-        account: AccountId,
-        market_minute: u64,
-    ) -> Result<Self, DecisionSnapshotCaptureError> {
-        match experience.get(&account).cloned() {
-            Some(row) => Self::capture_from_row(row, view, account, market_minute),
-            None => Ok(Self::NoExperience),
-        }
-    }
-
     /// T1·两阶段（ADR-0042 §T1）：owned 经验行版本——queue 链账户任务在
     /// 任务内对已 take 的个人经验行做个人观察（纯计算）。
     fn capture_from_row(

@@ -9,15 +9,6 @@ pub(crate) struct Candidate {
 }
 
 impl GameSession {
-    pub(crate) fn append_runtime_retail_facts(
-        &self,
-        driver: &crate::runtime::drive::RuntimeDriver,
-        candidate: &mut Candidate,
-        facts: Vec<Fact>,
-    ) -> Result<(), StepFatal> {
-        self.append_runtime_retail_facts_at(driver, candidate, facts, self.tick())
-    }
-
     pub(crate) fn append_runtime_retail_facts_at(
         &self,
         driver: &crate::runtime::drive::RuntimeDriver,

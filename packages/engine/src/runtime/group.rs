@@ -1299,6 +1299,7 @@ impl GroupState {
 
     /// 当前态哈希（FNV-1a，按名册与股序确定序遍历）。仅域内容（账户），不含
     /// 协议位置字段（tick/轮）——跨 tick 可比（Abort 回滚等价判据）。
+    #[cfg(test)]
     fn owns_plan_account(&self, owner: crate::AccountId) -> bool {
         self.root_projection.as_ref().is_some_and(|root| {
             roster_slice(&root.account_ids, self.roster_offset, self.accounts.len())
@@ -1306,6 +1307,7 @@ impl GroupState {
         })
     }
 
+    #[cfg(test)]
     fn validate_plan_writer(
         &self,
         owner: crate::AccountId,

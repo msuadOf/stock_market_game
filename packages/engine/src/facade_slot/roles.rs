@@ -339,7 +339,7 @@ pub fn engine_cancel<P: FacadePlatform>(
 #[derive(Debug)]
 pub enum TrampolineExit {
     /// W1 闭包已消费、W2 join DONE 已写、退出意图已记录；真实 W3 由 JS 收尾发出。
-    Ran { worker_id: u32 },
+    Ran,
     /// 决策读非 (g,OK)（CANCELLED@旧代或换代）——不解引用载荷、退出意图照常记录。
     Superseded,
 }
@@ -432,7 +432,7 @@ pub fn trampoline_run<P: FacadePlatform>(
     }
     // 仅记录退出意图；须返回 JS 后 raw destroy，才能发真实 W3 并 close。
     platform.worker_exit(worker_id, slot, gen);
-    TrampolineExit::Ran { worker_id }
+    TrampolineExit::Ran
 }
 
 /// JoinHandle::join（§9.2.3 消费面）：终态读取 → CONSUMED；死亡信号映射
