@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { copyFile, lstat, mkdir, readFile, realpath, stat } from "node:fs/promises";
 import path from "node:path";
+import { captureWasmBuildSourceIdentity, invalidateWasmPackageMetadata, isDefaultFeaturesRelease, produceWasmPackageMetadata } from "./wasm-package-capability.mjs";
 
 async function licenseSnapshot(filename) {
   try {
@@ -48,10 +49,15 @@ export async function executeWasmPackBuild(root, command, commandRunner) {
   // 先解析真实 outDir，再处理 ../..，避免目录符号链改变文件系统实际目标。
   const wasmPackLicense = async () => path.resolve(await realpath(outDir), "../../LICENSE");
   const packageLicense = path.join(outDir, "LICENSE");
+  const releaseDefaultFeatures = isDefaultFeaturesRelease(command);
+  const producesCapability = releaseDefaultFeatures && command.env?.RUSTUP_TOOLCHAIN === "nightly-2026-09-05";
+  const sourceSnapshot = producesCapability ? await captureWasmBuildSourceIdentity(root) : undefined;
   const before = await licenseSnapshot(sourceFile);
   await mkdir(outDir, { recursive: true });
   await assertLicenseTarget(before, await wasmPackLicense());
   await assertLicenseTarget(before, packageLicense);
+  await invalidateWasmPackageMetadata(outDir);
+  if (releaseDefaultFeatures && !producesCapability) throw new Error("WASM package metadata requires the actual release command to pin RUSTUP_TOOLCHAIN=nightly-2026-09-05.");
   let buildError;
   try { await commandRunner(command); } catch (error) { buildError = error; }
   let currentSource;
@@ -67,4 +73,5 @@ export async function executeWasmPackBuild(root, command, commandRunner) {
   const packaged = await licenseSnapshot(packageLicense);
   if (packaged.hash !== before.hash) throw new Error(`LICENSE package content mismatch at ${packageLicense}; no artifact may be published.`);
   await assertUnchanged(sourceFile, before);
+  if (producesCapability) await produceWasmPackageMetadata({ root, outDir, command, sourceSnapshot });
 }

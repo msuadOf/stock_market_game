@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { copyFile, link, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { test } from "node:test";
@@ -11,12 +12,58 @@ async function fixture(run) {
     await mkdir(path.join(root, "apps/web-wasm"), { recursive: true });
     await writeFile(path.join(root, "apps/web-wasm/Cargo.toml"), '[package]\nlicense-file = "../../LICENSE"\n');
     await writeFile(path.join(root, "LICENSE"), "MIT fixture license\n");
+    for (const relative of ["Cargo.toml", "Cargo.lock", "rust-toolchain.toml", ".cargo/config.toml", "apps/web-wasm/.cargo/config.toml", "apps/web-wasm/src/lib.rs", "packages/engine/Cargo.toml", "packages/engine/src/lib.rs"]) {
+      const filename = path.join(root, relative);
+      await mkdir(path.dirname(filename), { recursive: true });
+      await writeFile(filename, "// fixture\n");
+    }
     await run(root);
   } finally { await rm(root, { recursive: true, force: true }); }
 }
 
-const command = (root, outDir) => ({ command: "wasm-pack", args: ["build", "apps/web-wasm", "--target", "web", "--release", "--out-dir", outDir], cwd: root, env: { CARGO_BUILD_JOBS: "4" } });
+const command = (root, outDir) => ({ command: "wasm-pack", args: ["build", "apps/web-wasm", "--target", "web", "--release", "--out-dir", outDir], cwd: root, env: { CARGO_BUILD_JOBS: "4", RUSTUP_TOOLCHAIN: "nightly-2026-09-05" } });
 const api = () => import("./wasm-pack-build.mjs");
+
+function wasmPackageFixture() {
+  const names = ["restore_json", "facade_slot_init_for_restore_json", "set_step_runtime_override", "init_wasm_wait", "wasm_wait_abort_layout", "shutdown_session"];
+  const uleb = (value) => { const bytes = []; do { let byte = value & 0x7f; value >>>= 7; if (value !== 0) byte |= 0x80; bytes.push(byte); } while (value !== 0); return bytes; };
+  const section = (id, payload) => [id, ...uleb(payload.length), ...payload];
+  const type = section(1, [1, 0x60, 0, 0]);
+  const functions = section(3, [names.length, ...names.map(() => 0)]);
+  const exports = section(7, [names.length, ...names.flatMap((name, index) => [...uleb(Buffer.byteLength(name)), ...Buffer.from(name), 0, index])]);
+  const code = section(10, [names.length, ...names.flatMap(() => [2, 0, 0x0b])]);
+  return { wasm: Buffer.from([0, 0x61, 0x73, 0x6d, 1, 0, 0, 0, ...type, ...functions, ...exports, ...code]), glue: `export function ${names.join("() {}\nexport function ")}() {}\n` };
+}
+
+
+test("成功的默认 release wasm-pack 构建生成精确绑定实际 pkg bytes 的共享 metadata", { timeout: 10000 }, async () => fixture(async (root) => {
+  const { executeWasmPackBuild } = await api();
+  const outDir = path.join(root, "safe/wasm/pkg");
+  const build = command(root, outDir);
+  build.env.RUSTUP_TOOLCHAIN = "nightly-2026-09-05";
+  const { wasm, glue } = wasmPackageFixture();
+  await executeWasmPackBuild(root, build, async () => {
+    await mkdir(outDir, { recursive: true });
+    await writeFile(path.join(outDir, "web_wasm_bg.wasm"), wasm);
+    await writeFile(path.join(outDir, "web_wasm.js"), glue);
+  });
+  const provenanceBytes = await readFile(path.join(outDir, "wasm-build-provenance.json"));
+  const capabilityBytes = await readFile(path.join(outDir, "verified-restore-capability.json"));
+  const provenance = JSON.parse(provenanceBytes);
+  const capability = JSON.parse(capabilityBytes);
+  assert.deepEqual(Object.keys(provenance), ["kind", "sourceSha256", "wasmSha256", "glueSha256", "profile", "toolchain"]);
+  assert.deepEqual(Object.keys(capability), ["kind", "wasmSha256", "glueSha256", "sourceSha256", "buildManifestSha256", "exports"]);
+  assert.equal(provenance.kind, "wasm-build-provenance");
+  assert.equal(provenance.profile, "release");
+  assert.equal(provenance.toolchain, build.env.RUSTUP_TOOLCHAIN);
+  assert.equal(capability.kind, "verified-package");
+  assert.equal(capability.buildManifestSha256, createHash("sha256").update(provenanceBytes).digest("hex"));
+  assert.equal(capability.wasmSha256, createHash("sha256").update(wasm).digest("hex"));
+  assert.equal(capability.glueSha256, createHash("sha256").update(glue).digest("hex"));
+  assert.deepEqual(capability.exports, ["facade_slot_init_for_restore_json", "init_wasm_wait", "restore_json", "set_step_runtime_override", "shutdown_session", "wasm_wait_abort_layout"]);
+  assert.ok(provenanceBytes.toString("utf8").endsWith("\n"));
+  assert.ok(capabilityBytes.toString("utf8").endsWith("\n"));
+}));
 
 test("wasm-pack 构建显式补齐并验证实际 pkg/LICENSE", { timeout: 10000 }, async () => fixture(async (root) => {
   const { executeWasmPackBuild } = await api();
@@ -27,7 +74,10 @@ test("wasm-pack 构建显式补齐并验证实际 pkg/LICENSE", { timeout: 10000
     await executeWasmPackBuild(root, build, async (received) => {
       calls += 1;
       assert.equal(received, build);
-      // 复刻 wasm-pack 0.13.1 的复制目标，证明它并未提供 pkg/LICENSE。
+      // 复刻 wasm-pack 输出与 LICENSE 行为，证明 metadata 来自实际 pkg files。
+      const { wasm, glue } = wasmPackageFixture();
+      await writeFile(path.join(outDir, "web_wasm_bg.wasm"), wasm);
+      await writeFile(path.join(outDir, "web_wasm.js"), glue);
       await copyFile(path.join(root, "LICENSE"), path.resolve(outDir, "../../LICENSE"));
     });
     assert.equal(calls, 1);
@@ -167,6 +217,9 @@ for (const content of ["", "wrong previous license"]) {
     const { executeWasmPackBuild } = await api();
     const outDir = path.join(root, "safe/wasm/pkg");
     await executeWasmPackBuild(root, command(root, outDir), async () => {
+      const { wasm, glue } = wasmPackageFixture();
+      await writeFile(path.join(outDir, "web_wasm_bg.wasm"), wasm);
+      await writeFile(path.join(outDir, "web_wasm.js"), glue);
       await writeFile(path.join(outDir, "LICENSE"), content);
     });
     assert.deepEqual(await readFile(path.join(outDir, "LICENSE")), await readFile(path.join(root, "LICENSE")));
@@ -219,3 +272,51 @@ for (const linkKind of ["symlink", "hardlink"]) {
     assert.equal(await readFile(unrelated, "utf8"), "user-owned notice");
   }));
 }
+
+
+test("diagnostics build invalidates stale release metadata and does not publish a capability", { timeout: 10000 }, async () => fixture(async (root) => {
+  const { executeWasmPackBuild } = await api();
+  const outDir = path.join(root, "safe/wasm/pkg");
+  await mkdir(outDir, { recursive: true });
+  for (const name of ["wasm-build-provenance.json", "verified-restore-capability.json"]) await writeFile(path.join(outDir, name), "stale release identity\n");
+  const diagnostic = command(root, outDir);
+  diagnostic.args.push("--features", "simulation-diagnostics");
+  await executeWasmPackBuild(root, diagnostic, async () => {
+    const { wasm, glue } = wasmPackageFixture();
+    await writeFile(path.join(outDir, "web_wasm_bg.wasm"), wasm);
+    await writeFile(path.join(outDir, "web_wasm.js"), glue);
+  });
+  for (const name of ["wasm-build-provenance.json", "verified-restore-capability.json"]) await assert.rejects(readFile(path.join(outDir, name)), { code: "ENOENT" });
+}));
+
+
+for (const featureArgs of [["--features=simulation-diagnostics"], ["-F", "simulation-diagnostics"], ["-Fsimulation-diagnostics"], ["-F=simulation-diagnostics"]]) {
+  test(`显式 feature 参数 ${featureArgs.join(" ")} 清除旧 metadata 且不发布正式身份`, { timeout: 10000 }, async () => fixture(async (root) => {
+    const { executeWasmPackBuild } = await api();
+    const outDir = path.join(root, "safe/wasm/pkg");
+    await mkdir(outDir, { recursive: true });
+    for (const name of ["wasm-build-provenance.json", "verified-restore-capability.json"]) await writeFile(path.join(outDir, name), "stale release identity\n");
+    const diagnostic = command(root, outDir);
+    diagnostic.args.push(...featureArgs);
+    const { wasm, glue } = wasmPackageFixture();
+    await executeWasmPackBuild(root, diagnostic, async () => {
+      await writeFile(path.join(outDir, "web_wasm_bg.wasm"), wasm);
+      await writeFile(path.join(outDir, "web_wasm.js"), glue);
+    });
+    assert.deepEqual(await readFile(path.join(outDir, "web_wasm_bg.wasm")), wasm);
+    assert.equal(await readFile(path.join(outDir, "web_wasm.js"), "utf8"), glue);
+    for (const name of ["wasm-build-provenance.json", "verified-restore-capability.json"]) await assert.rejects(readFile(path.join(outDir, name)), { code: "ENOENT" });
+  }));
+}
+
+test("release 命令的 source pre/post 漂移会阻止 metadata 发布", { timeout: 10000 }, async () => fixture(async (root) => {
+  const { executeWasmPackBuild } = await api();
+  const outDir = path.join(root, "safe/wasm/pkg");
+  await assert.rejects(executeWasmPackBuild(root, command(root, outDir), async () => {
+    await writeFile(path.join(root, "apps/web-wasm/src/lib.rs"), "// changed during build\n");
+    const { wasm, glue } = wasmPackageFixture();
+    await writeFile(path.join(outDir, "web_wasm_bg.wasm"), wasm);
+    await writeFile(path.join(outDir, "web_wasm.js"), glue);
+  }), /source closure changed/);
+  await assert.rejects(readFile(path.join(outDir, "wasm-build-provenance.json")), { code: "ENOENT" });
+}));

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { pathToFileURL } from "node:url";
 import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -223,6 +224,8 @@ test("fresh frontend staging excludes old assets, keeps TS build-info local, and
     await writeFile(path.join(source, "node_modules/react/package.json"), '{}');
     await writeFile(path.join(source, "node_modules/.tmp/user-data"), "keep");
     await writeFile(path.join(root, "LICENSE"), "original license");
+    await mkdir(path.join(root, "scripts"), { recursive: true });
+    await writeFile(path.join(root, "scripts/wasm-package-capability.mjs"), "export {};\n");
     await writeFile(path.join(source, "index.html"), "fresh entry");
     await writeFile(path.join(source, ".env.production"), "VITE_ENGINE_HOST=remote");
     for (const name of ["dist", "wasm-pkg", "wasm-diagnostics-pkg"]) {
@@ -526,8 +529,19 @@ test("native UI 构建在 wasm-pack 修改 LICENSE 后停止，不运行 Cargo �
   await mkdir(scratch, { recursive: true });
   const root = await mkdtemp(path.join(scratch, "w0l-native-ui-license-"));
   try {
-    await mkdir(path.join(root, "apps/web-wasm"), { recursive: true });
+    await mkdir(path.join(root, "apps/web-wasm/src"), { recursive: true });
+    await mkdir(path.join(root, "packages/engine/src"), { recursive: true });
+    await mkdir(path.join(root, ".cargo"), { recursive: true });
+    await mkdir(path.join(root, "apps/web-wasm/.cargo"), { recursive: true });
     await writeFile(path.join(root, "apps/web-wasm/Cargo.toml"), '[package]\nlicense-file = "../../LICENSE"\n');
+    await writeFile(path.join(root, "packages/engine/Cargo.toml"), "[package]\n");
+    await writeFile(path.join(root, "Cargo.toml"), "[workspace]\n");
+    await writeFile(path.join(root, "Cargo.lock"), "version = 4\n");
+    await writeFile(path.join(root, "rust-toolchain.toml"), "[toolchain]\nchannel = \"nightly-2026-09-05\"\n");
+    await writeFile(path.join(root, ".cargo/config.toml"), "[build]\n");
+    await writeFile(path.join(root, "apps/web-wasm/.cargo/config.toml"), "[build]\n");
+    await writeFile(path.join(root, "apps/web-wasm/src/lib.rs"), "// fixture\n");
+    await writeFile(path.join(root, "packages/engine/src/lib.rs"), "// fixture\n");
     await writeFile(path.join(root, "LICENSE"), "fixture license");
     await assert.rejects(executeBuild(parseBuildArgs(["webui", "--jobs", "4"]), {
       root, host: "linux", buildId: "license", commandRunner: async (command) => {
@@ -537,5 +551,46 @@ test("native UI 构建在 wasm-pack 修改 LICENSE 后停止，不运行 Cargo �
       },
     }), /LICENSE.*changed/);
     await assert.rejects(lstat(path.join(root, "target/build-artifacts/webui")), { code: "ENOENT" });
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+
+test("正式 stageFrontend 布局通过命令显式定位同 bytes 的共享 metadata module", { timeout: 10000 }, async () => {
+  const { stageFrontend, createBuildPlan, parseBuildArgs } = await api();
+  const scratch = path.join(repository, ".tmp");
+  await mkdir(scratch, { recursive: true });
+  const root = await mkdtemp(path.join(scratch, "frontend-metadata-stage-"));
+  try {
+    const source = path.join(root, "apps/web");
+    await mkdir(path.join(source, "config"), { recursive: true });
+    await mkdir(path.join(source, "node_modules"));
+    await writeFile(path.join(source, "package.json"), '{"type":"module"}');
+    const pluginBytes = await readFile(path.join(repository, "apps/web/config/wasm-package-capability.ts"));
+    await writeFile(path.join(source, "config/wasm-package-capability.ts"), pluginBytes);
+    await mkdir(path.join(root, "scripts"));
+    const helperBytes = await readFile(path.join(repository, "scripts/wasm-package-capability.mjs"));
+    await writeFile(path.join(root, "scripts/wasm-package-capability.mjs"), helperBytes);
+    await writeFile(path.join(root, "LICENSE"), "fixture license");
+    const plan = createBuildPlan(parseBuildArgs(["webui", "--jobs", "4"]), { root, host: "linux", buildId: "metadata" });
+    await mkdir(plan.work, { recursive: true });
+    await mkdir(plan.wasmPackage, { recursive: true });
+    await writeFile(path.join(plan.wasmPackage, "web_wasm.js"), "fixture glue");
+    await stageFrontend(plan);
+    const vite = plan.commands.find(({ args }) => args.some((arg) => arg.endsWith("vite.js")));
+    const moduleUrl = pathToFileURL(path.join(plan.frontend, "config/wasm-package-capability.ts")).href;
+    const probe = spawnSync(process.execPath, ["--input-type=module", "-e", "const module = await import(process.argv[1]); if (module.wasmPackageCapabilityPlugin().name !== 'wasm-package-capability-metadata') throw new Error('plugin missing')", moduleUrl], {
+      cwd: plan.frontend, env: { ...process.env, ...vite.env }, encoding: "utf8", timeout: 2000,
+    });
+    assert.equal(probe.status, 0, probe.stderr);
+    const helper = vite.env.STOCK_GAME_WASM_METADATA_MODULE;
+    assert.equal(helper, path.join(plan.work, "scripts/wasm-package-capability.mjs"));
+    assert.deepEqual(await readFile(helper), helperBytes);
+    for (const configuredModule of [path.join(plan.work, "missing.mjs"), "relative.mjs"]) {
+      const invalid = spawnSync(process.execPath, ["--input-type=module", "-e", "await import(process.argv[1])", moduleUrl], {
+        cwd: plan.frontend, env: { ...process.env, ...vite.env, STOCK_GAME_WASM_METADATA_MODULE: configuredModule }, encoding: "utf8", timeout: 2000,
+      });
+      assert.notEqual(invalid.status, 0);
+      assert.match(invalid.stderr, /missing\.mjs|must be an absolute module path/);
+    }
   } finally { await rm(root, { recursive: true, force: true }); }
 });

@@ -80,7 +80,7 @@ export function createBuildPlan(options, { root = rootDirectory, host = hostName
   if (target !== "server" && options.frontendDist !== undefined) {
     commands.push({ action: "check-frontend", command: "check-frontend", args: [frontendDist], cwd: root, env });
   } else if (target !== "server") {
-    commands.push(...createFrontendCommands({ root, host, jobs: options.jobs, frontend, wasmPackage, env, staged: true }));
+    commands.push(...createFrontendCommands({ root, host, jobs: options.jobs, frontend, wasmPackage, env: { ...env, STOCK_GAME_WASM_METADATA_MODULE: path.join(work, "scripts/wasm-package-capability.mjs") }, staged: true }));
   }
   let files;
   let startArgs;
@@ -306,6 +306,9 @@ class BuildRun {
 export async function stageFrontend(plan) {
   const source = path.join(plan.root, "apps/web");
   await mkdir(plan.frontend);
+  // stage 私有副本保留共享 module 原始 bytes，避免依赖 repo 与 build-work 的相对层级。
+  await mkdir(path.join(plan.work, "scripts"));
+  await copyFile(path.join(plan.root, "scripts/wasm-package-capability.mjs"), path.join(plan.work, "scripts/wasm-package-capability.mjs"));
   const entries = await readdir(source, { withFileTypes: true });
   await Promise.all(entries.filter(({ name }) => !["node_modules", "dist", "build", "wasm-pkg", "wasm-diagnostics-pkg"].includes(name) && !name.startsWith(".env")).map(({ name }) =>
     cp(path.join(source, name), path.join(plan.frontend, name), { recursive: true, dereference: true })));
