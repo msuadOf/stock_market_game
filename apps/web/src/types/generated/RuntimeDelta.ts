@@ -2,6 +2,7 @@
 import type { AccountId } from "./AccountId";
 import type { AccountSnap } from "./AccountSnap";
 import type { PlayerOrderDelta } from "./PlayerOrderDelta";
+import type { RuntimeMirrorOrigin } from "./RuntimeMirrorOrigin";
 import type { TradingPhase } from "./TradingPhase";
 
 export type RuntimeDelta = {
@@ -10,6 +11,7 @@ export type RuntimeDelta = {
   tick: number;
   day: number;
   phase: TradingPhase;
+  mirror_origin: RuntimeMirrorOrigin;
   accounts: { [key in AccountId]: AccountSnap };
   working_orders: PlayerOrderDelta;
 };

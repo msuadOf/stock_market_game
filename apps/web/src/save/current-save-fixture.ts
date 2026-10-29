@@ -63,6 +63,7 @@ export function currentSaveFixture(): JsonObject {
       },
       start_date: "2030-01-01",
       simulation_policy_id: "a-share-simulation",
+      runtime_sync_policy: "every_tick",
     },
     seed: "42",
     snapshot: {

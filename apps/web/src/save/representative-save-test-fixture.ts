@@ -72,6 +72,8 @@ export function representativeCurrentSaveFixture(): Record<string, unknown> {
   }
   return {
     ...currentBookSave,
+    // synthetic：仅为当前 schema 测试显式选择策略，不改写历史原件或冒充 Rust 恢复证据。
+    setup: { ...(save.setup as Record<string, unknown>), runtime_sync_policy: "every_tick" },
     desk_mirrored_resting: false,
     company_state: { LegacyOperations: { operations: projectHistoricalCompanyOperations(save.company_operations as Record<string, unknown>), closing: closing_registry, groups } },
     public_library,

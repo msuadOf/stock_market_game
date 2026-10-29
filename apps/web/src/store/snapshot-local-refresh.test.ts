@@ -7,6 +7,7 @@ const SNAPSHOT = {
   tick: 0,
   day: 0,
   phase: "Continuous" as const,
+  mirror_origin: { authority_epoch: 1, install_sequence: 2, source_tick: 0, source_generation: 0, day_end_stage: "tick", non_tick_revision: 0, mirror_phase: "Continuous" } as const,
   markets: {
     "600101": { last_price: "1000", last_close: "1000", best_bid: null, best_ask: null, bids: [], asks: [], price_history: [] },
     "000001": { last_price: "2000", last_close: "2000", best_bid: null, best_ask: null, bids: [], asks: [], price_history: [] },

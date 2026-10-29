@@ -10,6 +10,7 @@ describe("Rust K-line snapshot sync", () => {
       tick: 1,
       day: 0,
       phase: "Continuous",
+      mirror_origin: { authority_epoch: 1, install_sequence: 2, source_tick: 1, source_generation: 0, day_end_stage: "tick", non_tick_revision: 0, mirror_phase: "Continuous" },
       markets: {},
       accounts: {},
       daily_candles: {

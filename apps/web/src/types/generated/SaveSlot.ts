@@ -136,6 +136,13 @@ export type SaveSlot = {
   company_state:
     import("../../save/schema/company/state").SavedSessionCompanies;
   /**
+   * 已完成更正的最少事实；pending 请求仅在内存，不进入存档。
+   */
+  report_correction_operations: Record<
+    string,
+    import("../../host/report-corrections").CompletedReportCorrectionInput
+  >;
+  /**
    * 跨日个人交易计划簿（(账户,股票) 索引恢复时重建并校验）。
    */
   plans: PlanBook;

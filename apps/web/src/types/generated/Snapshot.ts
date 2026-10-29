@@ -3,6 +3,7 @@ import type { AccountId } from "./AccountId";
 import type { AccountSnap } from "./AccountSnap";
 import type { DailyCandle } from "./DailyCandle";
 import type { MarketSnap } from "./MarketSnap";
+import type { RuntimeMirrorOrigin } from "./RuntimeMirrorOrigin";
 import type { StockId } from "./StockId";
 import type { TradingPhase } from "./TradingPhase";
 
@@ -14,6 +15,7 @@ export type Snapshot = {
   tick: number;
   day: number;
   phase: TradingPhase;
+  mirror_origin: RuntimeMirrorOrigin;
   markets: { [key in StockId]: MarketSnap };
   accounts: { [key in AccountId]: AccountSnap };
   /**

@@ -2,11 +2,25 @@ import type { PlayerWorkingOrder } from "../player-working-orders.ts";
 import { canonicalJson } from "./canonical.ts";
 import { boolean, enumValue, exact, field, mapEntries, record, safeInteger, safeU32, text, values } from "./guards.ts";
 import { ProtocolError, type ProtocolState } from "./types.ts";
-import { type CodedRuntimeDelta, type CodedSnapshot, type WireAccountSnap, type WirePlayerWorkingOrder, type WireRuntimeDelta } from "./stock-identity.ts";
+import { type CodedRuntimeDelta, type CodedSnapshot, type RuntimeMirrorOrigin, type WireAccountSnap, type WirePlayerWorkingOrder, type WireRuntimeDelta } from "./stock-identity.ts";
 import { parseMoney, TRADING_PHASES } from "./wire-values.ts";
 
 function malformed(where: string, message: string): never {
   throw new ProtocolError("PROTOCOL_MALFORMED", where, message);
+}
+
+export function parseRuntimeMirrorOrigin(value: unknown, path: string): RuntimeMirrorOrigin {
+  const source = record(value, path);
+  exact(source, ["authority_epoch", "install_sequence", "source_tick", "source_generation", "day_end_stage", "non_tick_revision", "mirror_phase"], path);
+  return {
+    authority_epoch: safeInteger(field(source, "authority_epoch", path), `${path}.authority_epoch`),
+    install_sequence: safeInteger(field(source, "install_sequence", path), `${path}.install_sequence`),
+    source_tick: safeInteger(field(source, "source_tick", path), `${path}.source_tick`),
+    source_generation: safeInteger(field(source, "source_generation", path), `${path}.source_generation`),
+    day_end_stage: enumValue(field(source, "day_end_stage", path), ["tick", "day_end_committed", "retained_published"] as const, `${path}.day_end_stage`),
+    non_tick_revision: safeInteger(field(source, "non_tick_revision", path), `${path}.non_tick_revision`),
+    mirror_phase: enumValue(field(source, "mirror_phase", path), TRADING_PHASES, `${path}.mirror_phase`),
+  };
 }
 
 /** wire 活动委托：code 为数值 StockId（ADR 0041），翻译发生在 stock-identity.ts。 */
@@ -85,7 +99,10 @@ export function parseRuntimeDelta(
   parseAccount: (value: unknown, path: string) => WireAccountSnap,
 ): WireRuntimeDelta {
   const source = record(value, path);
-  exact(source, ["seq_from", "seq_to", "tick", "day", "phase", "accounts", "working_orders"], path);
+  exact(source, ["seq_from", "seq_to", "tick", "day", "phase", "mirror_origin", "accounts", "working_orders"], path);
+  const mirror_origin = parseRuntimeMirrorOrigin(field(source, "mirror_origin", path), `${path}.mirror_origin`);
+  const tick = safeInteger(field(source, "tick", path), `${path}.tick`);
+  if (mirror_origin.source_tick > tick) malformed(`${path}.mirror_origin.source_tick`, "来源 tick 不得晚于运行 tick");
   const accounts = mapEntries(field(source, "accounts", path), `${path}.accounts`, parseAccount);
   for (const [id, account] of Object.entries(accounts)) {
     if (id !== "0") malformed(`${path}.accounts.${id}`, "增量只允许公开玩家账户，不允许 NPC 私有账户");
@@ -106,9 +123,10 @@ export function parseRuntimeDelta(
   return {
     seq_from: safeInteger(field(source, "seq_from", path), `${path}.seq_from`),
     seq_to: safeInteger(field(source, "seq_to", path), `${path}.seq_to`),
-    tick: safeInteger(field(source, "tick", path), `${path}.tick`),
+    tick,
     day: safeU32(field(source, "day", path), `${path}.day`),
     phase: enumValue(field(source, "phase", path), TRADING_PHASES, `${path}.phase`),
+    mirror_origin,
     accounts,
     working_orders: { reset, upserts, removed },
   };
@@ -144,7 +162,7 @@ export function applyRuntimeDelta(
   }
   return {
     snapshot: {
-      ...state.snapshot, tick: delta.tick, seq: delta.seq_to, day: delta.day, phase: delta.phase, accounts,
+      ...state.snapshot, tick: delta.tick, seq: delta.seq_to, day: delta.day, phase: delta.phase, mirror_origin: delta.mirror_origin, accounts,
       markets: retainUnchangedEntries(state.snapshot.markets, markets),
       active_daily_candles: retainUnchangedEntries(state.snapshot.active_daily_candles, activeDailyCandles),
     },

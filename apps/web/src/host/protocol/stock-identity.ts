@@ -32,11 +32,14 @@ import type { MarketSnap } from "../../types/generated/MarketSnap.ts";
 import type { Money } from "../../types/generated/Money.ts";
 import type { PositionSnap } from "../../types/generated/PositionSnap.ts";
 import type { RejectionReason } from "../../types/generated/RejectionReason.ts";
+import type { RuntimeMirrorOrigin } from "../../types/generated/RuntimeMirrorOrigin.ts";
 import type { Side } from "../../types/generated/Side.ts";
 import type { StockSpec } from "../../types/generated/StockSpec.ts";
 import type { TradingPhase } from "../../types/generated/TradingPhase.ts";
 import type { PlayerWorkingOrder } from "../player-working-orders.ts";
 import { ProtocolError } from "./types.ts";
+
+export type { RuntimeMirrorOrigin } from "../../types/generated/RuntimeMirrorOrigin.ts";
 
 // ── 原始 wire 形态类型（Wire*：数值 StockId，map 键为 JSON 字符串形态）──
 //
@@ -67,6 +70,7 @@ export type WireSnapshot = {
   readonly tick: number;
   readonly day: number;
   readonly phase: TradingPhase;
+  readonly mirror_origin: RuntimeMirrorOrigin;
   readonly markets: Readonly<Record<string, MarketSnap>>;
   readonly accounts: Readonly<Record<string, WireAccountSnap>>;
   readonly daily_candles: Readonly<Record<string, readonly DailyCandle[]>>;
@@ -83,6 +87,7 @@ export type WireRuntimeDelta = {
   readonly tick: number;
   readonly day: number;
   readonly phase: TradingPhase;
+  readonly mirror_origin: RuntimeMirrorOrigin;
   readonly accounts: Readonly<Record<string, WireAccountSnap>>;
   readonly working_orders: { readonly reset: boolean; readonly upserts: readonly WirePlayerWorkingOrder[]; readonly removed: readonly number[] };
 };
@@ -181,6 +186,7 @@ export type CodedSnapshot = {
   tick: number;
   day: number;
   phase: TradingPhase;
+  mirror_origin: RuntimeMirrorOrigin;
   markets: Record<string, MarketSnap>;
   accounts: Record<string, CodedAccountSnap>;
   daily_candles: Record<string, DailyCandle[]>;
@@ -201,6 +207,7 @@ export type CodedRuntimeDelta = {
   readonly tick: number;
   readonly day: number;
   readonly phase: TradingPhase;
+  readonly mirror_origin: RuntimeMirrorOrigin;
   readonly accounts: Readonly<Record<string, CodedAccountSnap>>;
   readonly working_orders: CodedPlayerOrderDelta;
 };
@@ -361,6 +368,7 @@ function translateSnapshot(snapshot: WireSnapshot, path: string): CodedSnapshot 
     tick: snapshot.tick,
     day: snapshot.day,
     phase: snapshot.phase,
+    mirror_origin: snapshot.mirror_origin,
     markets: codedStockKeys(snapshot.markets, `${path}.markets`),
     accounts,
     // 元素数组复制为可变：CodedSnapshot.daily_candles 已为 Immer draft 放宽为可变数组。
@@ -401,6 +409,7 @@ function translateRuntimeDelta(delta: WireRuntimeDelta, path: string): CodedRunt
     tick: delta.tick,
     day: delta.day,
     phase: delta.phase,
+    mirror_origin: delta.mirror_origin,
     accounts,
     working_orders: {
       reset: delta.working_orders.reset,

@@ -4,7 +4,8 @@ import test from "node:test";
 import { createProtocolState, ProtocolError } from "./types.ts";
 import { parseEngineUpdate, parseProtocolSnapshot } from "./parse.ts";
 import { reduceEngineUpdate } from "./reduce.ts";
-import { frame, snapshot } from "../protocol-test-fixtures.ts";
+import { civilUpdate, frame, snapshot } from "../protocol-test-fixtures.ts";
+import type { RuntimeMirrorOrigin, WireEngineUpdate } from "./stock-identity.ts";
 
 // wire 形态：持仓键与活动委托 code 为数值 StockId（ADR 0041）；id 0 ↔ 代码串 "000812"。
 const account = {
@@ -16,18 +17,24 @@ const order = { id: 1, code: 0, side: "Buy" as const, price: "1000", remainingQt
 const codedOrder = { ...order, code: "000812" };
 
 function initial() {
-  return createProtocolState(parseProtocolSnapshot({ ...snapshot(0, 0), accounts: { "0": account } }, "test.fixture", defaultCatalogFixture), "1", catalogFixtureForSnapshot(parseProtocolSnapshot({ ...snapshot(0, 0), accounts: { "0": account } }, "test.fixture", defaultCatalogFixture)));
+  const parsed = parseProtocolSnapshot({ ...snapshot(0, 0), mirror_origin: origin(0, 1), accounts: { "0": account } }, "test.fixture", defaultCatalogFixture);
+  return createProtocolState(parsed, "1", catalogFixtureForSnapshot(parsed));
 }
 
 type DeltaWire = {
   tick: number; seq_from: number; seq_to: number; day: number; phase: string;
+  mirror_origin: Readonly<Record<string, unknown>>;
   accounts: Readonly<Record<string, unknown>>;
   working_orders: { reset: boolean; upserts: readonly unknown[]; removed: readonly number[] };
 };
 
+function origin(sourceTick: number, sourceGeneration = 0, authorityEpoch = 1, installSequence = 2): RuntimeMirrorOrigin {
+  return { authority_epoch: authorityEpoch, install_sequence: installSequence, source_tick: sourceTick, source_generation: sourceGeneration, day_end_stage: "tick", non_tick_revision: 0, mirror_phase: "Continuous" };
+}
+
 function delta(tick = 1, seqFrom = 0, seqTo = 1): DeltaWire {
   return {
-    tick, seq_from: seqFrom, seq_to: seqTo, day: 0, phase: "Continuous",
+    tick, seq_from: seqFrom, seq_to: seqTo, day: 0, phase: "Continuous", mirror_origin: origin(tick, 1),
     accounts: { "0": { ...account, cash: "99000" } },
     working_orders: { reset: tick === 1, upserts: [order], removed: [] as number[] },
   };
@@ -150,11 +157,103 @@ test("a supported full snapshot invalidates order authority and requires a new e
   const first = reduceEngineUpdate(initial(), "1", batch());
   const full = reduceEngineUpdate(first.state, "1", { TickBatch: {
     frames: [frame(2, 1, [0])],
-    runtime_snapshot: { ...snapshot(2, 2), accounts: { "0": account } },
+    runtime_snapshot: { ...snapshot(2, 2), mirror_origin: origin(2, 1), accounts: { "0": account } },
   } });
   assert.deepEqual(Reflect.get(full.state, "playerWorkingOrders"), {});
   assert.equal(Reflect.get(full.state, "playerOrdersReady"), false);
   assert.throws(() => reduceEngineUpdate(full.state, "1", batch(delta(3, 2, 3))), { code: "PROTOCOL_MALFORMED" });
   const reset = reduceEngineUpdate(full.state, "1", batch({ ...delta(3, 2, 3), working_orders: { reset: true, upserts: [], removed: [] } }));
   assert.deepEqual(Reflect.get(reset.state, "playerWorkingOrders"), {});
+});
+
+
+test("runtime delta keeps an older same-generation mirror origin while tick facts advance", () => {
+  const earlier = reduceEngineUpdate(initial(), "1", batch());
+  const lagging = { ...delta(2, 1, 2), mirror_origin: origin(1, 1) };
+  const next = reduceEngineUpdate(earlier.state, "1", batch(lagging));
+  assert.deepEqual(next.state.snapshot.mirror_origin, origin(1, 1));
+  assert.equal(next.state.cursor.tick, 2);
+  assert.equal(next.update.kind, "tick-batch");
+});
+
+test("runtime delta rejects a regressing mirror install cursor and authority epoch", () => {
+  const earlier = reduceEngineUpdate(initial(), "1", batch());
+  for (const mirror_origin of [
+    origin(2, 1, 1, 1),
+    origin(2, 1, 0, 3),
+  ]) {
+    assert.throws(() => reduceEngineUpdate(earlier.state, "1", batch({ ...delta(2, 1, 2), mirror_origin })), { code: "PROTOCOL_MALFORMED" });
+  }
+  assert.throws(() => reduceEngineUpdate(earlier.state, "1", batch({
+    ...delta(2, 1, 2), mirror_origin: origin(2, 2, 0, 0),
+  })), { code: "PROTOCOL_MALFORMED" });
+  const newBaseline = parseProtocolSnapshot({ ...snapshot(0, 0), mirror_origin: origin(0, 2, 0, 0) }, "test.baseline", defaultCatalogFixture);
+  assert.deepEqual(createProtocolState(newBaseline, "2", defaultCatalogFixture).snapshot.mirror_origin, origin(0, 2, 0, 0));
+});
+
+test("runtime origin publication generation may change while the host generation cursor advances", () => {
+  for (const [authorityEpoch, installSequence] of [[1, 2], [1, 3], [2, 0]] as const) {
+    const state = createProtocolState(
+      parseProtocolSnapshot({ ...snapshot(0, 0), mirror_origin: origin(0, 2, 1, 2), accounts: { "0": account } }, "test.fixture", defaultCatalogFixture),
+      "1",
+      defaultCatalogFixture,
+    );
+    const nextOrigin = origin(1, 0, authorityEpoch, installSequence);
+    const next = reduceEngineUpdate(state, "1", batch({
+      ...delta(), mirror_origin: nextOrigin,
+    }));
+    assert.deepEqual(next.state.snapshot.mirror_origin, nextOrigin);
+  }
+});
+
+test("exact delta, snapshot, and civil retries survive later mirror-origin advancement", () => {
+  const firstDelta = batch();
+  const deltaState = reduceEngineUpdate(initial(), "1", firstDelta).state;
+  const afterDelta = reduceEngineUpdate(deltaState, "1", batch({
+    ...delta(2, 1, 2), mirror_origin: origin(2, 0, 1, 3),
+    accounts: {}, working_orders: { reset: false, upserts: [], removed: [] },
+  })).state;
+  const retriedDelta = reduceEngineUpdate(afterDelta, "1", firstDelta);
+  assert.equal(retriedDelta.kind, "exact-retry");
+  assert.equal(retriedDelta.state, afterDelta);
+  assert.deepEqual(retriedDelta.effects, []);
+
+  const firstSnapshot = { TickBatch: {
+    frames: [frame(1, 0, [0])], runtime_snapshot: { ...snapshot(1, 1), mirror_origin: origin(1, 1, 1, 2) },
+  } };
+  const snapshotState = reduceEngineUpdate(initial(), "1", firstSnapshot).state;
+  const afterSnapshot = reduceEngineUpdate(snapshotState, "1", batch({
+    ...delta(2, 1, 2), mirror_origin: origin(2, 0, 1, 3),
+    accounts: {}, working_orders: { reset: true, upserts: [], removed: [] },
+  })).state;
+  const retriedSnapshot = reduceEngineUpdate(afterSnapshot, "1", firstSnapshot);
+  assert.equal(retriedSnapshot.kind, "exact-retry");
+  assert.equal(retriedSnapshot.state, afterSnapshot);
+  assert.deepEqual(retriedSnapshot.effects, []);
+
+  const firstCivilTick = reduceEngineUpdate(initial(), "1", batch());
+  const parsedCivil = parseEngineUpdate(civilUpdate());
+  assert.ok("CivilUpdate" in parsedCivil);
+  const firstCivil: WireEngineUpdate = { CivilUpdate: {
+    ...parsedCivil.CivilUpdate,
+    refresh: {
+      ...parsedCivil.CivilUpdate.refresh,
+      snapshot: { ...parsedCivil.CivilUpdate.refresh.snapshot, mirror_origin: origin(1, 2, 1, 3) },
+    },
+  } };
+  const civilState = reduceEngineUpdate(firstCivilTick.state, "1", firstCivil).state;
+  const afterCivil = reduceEngineUpdate(civilState, "1", {
+    TickBatch: {
+      frames: [frame(2, 2, [0])],
+      runtime_snapshot: null,
+      runtime_delta: {
+        ...delta(2, 2, 3), mirror_origin: origin(2, 0, 1, 4),
+        accounts: {}, working_orders: { reset: true, upserts: [], removed: [] },
+      },
+    },
+  }).state;
+  const retriedCivil = reduceEngineUpdate(afterCivil, "1", firstCivil);
+  assert.equal(retriedCivil.kind, "exact-retry");
+  assert.equal(retriedCivil.state, afterCivil);
+  assert.deepEqual(retriedCivil.effects, []);
 });

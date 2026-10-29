@@ -47,6 +47,22 @@ function exactRetry(state: ProtocolState, range: ReturnType<typeof updateRange>,
   throw new ProtocolError("PROTOCOL_REPLAY", "protocol.reduce.replay", "相同结束游标包含不同规范更新");
 }
 
+function validateMirrorOriginTransition(state: ProtocolState, update: WireEngineUpdate): void {
+  const previous = state.snapshot.mirror_origin;
+  let current = previous;
+  if ("TickBatch" in update) {
+    const batch = update.TickBatch;
+    if (batch.runtime_delta !== undefined) current = batch.runtime_delta.mirror_origin;
+    else if (batch.runtime_snapshot !== null) current = batch.runtime_snapshot.mirror_origin;
+  } else {
+    current = update.CivilUpdate.refresh.snapshot.mirror_origin;
+  }
+  if (current.authority_epoch < previous.authority_epoch
+    || (current.authority_epoch === previous.authority_epoch && current.install_sequence < previous.install_sequence)) {
+    throw new ProtocolError("PROTOCOL_MALFORMED", "protocol.mirror_origin", "运行镜像 authority epoch 或 install_sequence 倒退");
+  }
+}
+
 function expectedCursor(state: ProtocolState, range: ReturnType<typeof updateRange>): void {
   const expectedTick = range.civil ? state.cursor.tick : state.cursor.tick + 1;
   if (range.firstTick !== expectedTick || range.from !== state.cursor.seq) {
@@ -117,6 +133,7 @@ export function reduceEngineUpdate(
   if (exactRetry(state, range, canonical)) {
     return { kind: "exact-retry", state, update: normalizedUpdate, effects: [] };
   }
+  validateMirrorOriginTransition(state, update);
   expectedCursor(state, range);
   return {
     kind: "applied",

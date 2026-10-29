@@ -7,6 +7,7 @@ import type { GameConfig } from "./GameConfig";
 import type { Money } from "./Money";
 import type { NpcSetup } from "./NpcSetup";
 import type { ReportFrequency } from "./ReportFrequency";
+import type { RuntimeSyncPolicy } from "./RuntimeSyncPolicy";
 import type { StockSpec } from "./StockSpec";
 import type { StrategyParams } from "./StrategyParams";
 
@@ -14,6 +15,10 @@ import type { StrategyParams } from "./StrategyParams";
  * session 初始化参数。
  */
 export type SessionSetup = {
+  /**
+   * 新局缺省 EveryTick；运行中固定，日终三档均强制汇合。
+   */
+  runtime_sync_policy: RuntimeSyncPolicy;
   stocks: Array<StockSpec>;
   company_operations?:
     | import("../../save/schema/company/operations").CompanyOperationsConfig

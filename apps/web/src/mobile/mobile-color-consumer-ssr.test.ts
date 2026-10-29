@@ -49,6 +49,7 @@ const snapshot: Snapshot = {
   tick: 0,
   day: 0,
   phase: "Continuous",
+  mirror_origin: { authority_epoch: 1, install_sequence: 2, source_tick: 0, source_generation: 0, day_end_stage: "tick", non_tick_revision: 0, mirror_phase: "Continuous" },
   markets: { "600101": market },
   accounts: { "0": { cash: "100000", reserved_cash: "0", reserved_sell_qty: {}, positions: { "600101": { qty: 100, t1_locked: 0, invested_cents: "100000", recovered_cents: "0" } } } },
   daily_candles: {},

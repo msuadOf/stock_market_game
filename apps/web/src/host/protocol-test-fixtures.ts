@@ -26,12 +26,17 @@ export function market(): JsonRecord {
 export const FIXTURE_STOCK_ID = 0;
 export const FIXTURE_STOCK_CODE = "000812";
 
+export function mirrorOrigin(sourceTick: number, sourceGeneration = 0, authorityEpoch = 1, installSequence = 2): JsonRecord {
+  return { authority_epoch: authorityEpoch, install_sequence: installSequence, source_tick: sourceTick, source_generation: sourceGeneration, day_end_stage: "tick", non_tick_revision: 0, mirror_phase: "Continuous" };
+}
+
 export function snapshot(tick: number, seq: number): JsonRecord {
   return {
     seq,
     tick,
     day: 0,
     phase: "Continuous",
+    mirror_origin: mirrorOrigin(tick),
     markets: { "0": market() },
     accounts: {},
     daily_candles: { "0": [] },

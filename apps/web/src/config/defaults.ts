@@ -117,6 +117,7 @@ export const DEFAULT_SETUP: SessionSetup = {
   },
   start_date: "2030-01-01",
   simulation_policy_id: "a-share-simulation",
+  runtime_sync_policy: "every_tick",
 };
 
 /** 会话随机种子。 */

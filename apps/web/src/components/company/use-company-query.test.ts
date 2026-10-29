@@ -254,7 +254,7 @@ test("App ConnectedCompanyPanel 实际消费 membership 就绪与 generation，�
   appStore.store.dispatch(baselineActions.installHostBaseline({
     generation: "7", companyGeneration: 1, companyCatalog: [{ id: 7, code: "实际发行人", name: "当前公司", listed_stock: 0 }],
     stockCatalog: [{ id: 0, code: "600101" }], civilDate: "2030-06-01", revision: null,
-    snapshot: { seq: 0, tick: 0, day: 0, phase: "Continuous", markets: { "600101": stock }, accounts: {}, daily_candles: { "600101": [] }, active_daily_candles: {} },
+    snapshot: { seq: 0, tick: 0, day: 0, phase: "Continuous", mirror_origin: { authority_epoch: 1, install_sequence: 2, source_tick: 0, source_generation: 0, day_end_stage: "tick", non_tick_revision: 0, mirror_phase: "Continuous" }, markets: { "600101": stock }, accounts: {}, daily_candles: { "600101": [] }, active_daily_candles: {} },
   }));
   const membership = { remote: true, accountId: "9", canControl: false, needsRejoin: false, generation: "7", ready: false };
   appStore.store.dispatch(appStore.setRemoteMembership(membership));
@@ -308,7 +308,7 @@ test("App ConnectedCompanyPanel 经真实 Remote host 展示 Rust 同局六种�
     await host.start(() => undefined);
     const stockCatalog = [{ id: 0, code: "600101" }];
     const companyCatalog = [{ id: 0, code: "C-600101", name: "真实 fixture 公司", listed_stock: 0 }];
-    const snapshot = { seq: 0, tick: 0, day: 0, phase: "Continuous" as const, markets: { "0": market() }, accounts: {}, daily_candles: { "0": [] }, active_daily_candles: {} };
+    const snapshot = { seq: 0, tick: 0, day: 0, phase: "Continuous" as const, mirror_origin: { authority_epoch: 1, install_sequence: 2, source_tick: 0, source_generation: 0, day_end_stage: "tick", non_tick_revision: 0, mirror_phase: "Continuous" }, markets: { "0": market() }, accounts: {}, daily_candles: { "0": [] }, active_daily_candles: {} };
     socket.onmessage!({ data: JSON.stringify({ Baseline: { timeline_generation: 1, snapshot, stock_catalog: stockCatalog, company_catalog: companyCatalog, civil_date: "2030-01-01", public_revision: 0, public_report_ids: [] } }) } as MessageEvent);
     appStore.store.dispatch(baselineActions.installHostBaseline({ generation: "1", companyGeneration: 1, companyCatalog, stockCatalog, civilDate: "2030-01-01", revision: null, snapshot: host.snapshot() }));
     appStore.store.dispatch(appStore.setRemoteMembership({ remote: true, accountId: "0", canControl: false, needsRejoin: false, generation: "1", ready: true }));

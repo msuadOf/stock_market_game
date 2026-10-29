@@ -18,7 +18,7 @@ import {
   type WireTickFrame,
   type WireTickTimeseriesPayload,
 } from "./stock-identity.ts";
-import { parseRuntimeDelta } from "./runtime-delta.ts";
+import { parseRuntimeDelta, parseRuntimeMirrorOrigin } from "./runtime-delta.ts";
 import {
   parseDayStatus,
   parseDailyCandle,
@@ -163,17 +163,19 @@ function payload(value: unknown, path: string): WireTickTimeseriesPayload {
 /** 原始（数值 StockId 键）快照解析：仅供 parseEngineUpdate 组装原始 EngineUpdate 使用。 */
 export function parseSnapshotRaw(value: unknown, path = "Snapshot"): WireSnapshot {
   const source = record(normalizeSerdeValue(value, path), path);
-  exact(source, ["seq", "tick", "day", "phase", "markets", "accounts", "daily_candles", "active_daily_candles"], path);
+  exact(source, ["seq", "tick", "day", "phase", "mirror_origin", "markets", "accounts", "daily_candles", "active_daily_candles"], path);
   const snapshot: WireSnapshot = {
     seq: safeInteger(field(source, "seq", path), `${path}.seq`),
     tick: safeInteger(field(source, "tick", path), `${path}.tick`),
     day: safeU32(field(source, "day", path), `${path}.day`),
     phase: enumValue(field(source, "phase", path), TRADING_PHASES, `${path}.phase`),
+    mirror_origin: parseRuntimeMirrorOrigin(field(source, "mirror_origin", path), `${path}.mirror_origin`),
     markets: mapEntries(field(source, "markets", path), `${path}.markets`, parseMarket),
     accounts: mapEntries(field(source, "accounts", path), `${path}.accounts`, account),
     daily_candles: mapEntries(field(source, "daily_candles", path), `${path}.daily_candles`, (candles, candlePath) => values(candles, candlePath).map((candle, index) => parseDailyCandle(candle, `${candlePath}[${index}]`))),
     active_daily_candles: mapEntries(field(source, "active_daily_candles", path), `${path}.active_daily_candles`, parseDailyCandle),
   };
+  if (snapshot.mirror_origin.source_tick > snapshot.tick) malformed(`${path}.mirror_origin.source_tick`, "来源 tick 不得晚于运行 tick");
   return snapshot;
 }
 

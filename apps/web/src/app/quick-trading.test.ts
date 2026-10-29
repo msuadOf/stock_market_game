@@ -4,7 +4,7 @@ import { QuickTrading, fractionLots, pickBookDraft, buyingCapacity, applyFeeRate
 import { DEFAULT_SETUP } from "../config/defaults.ts";
 import type { Snapshot, Intent } from "../types/engine.ts";
 function snapshot(tick = 0): Snapshot {
-  return { tick, seq: tick, day: 0, phase: "Continuous", markets: {
+  return { tick, seq: tick, day: 0, phase: "Continuous", mirror_origin: { authority_epoch: 1, install_sequence: 2, source_tick: tick, source_generation: 0, day_end_stage: "tick", non_tick_revision: 0, mirror_phase: "Continuous" }, markets: {
     "600101": { last_price: "1000", last_close: "1000", best_bid: "999", best_ask: "1000", bids: [["999", 100], ["998", 200]], asks: [["1000", 100], ["1001", 250]] },
     "002156": { last_price: "2000", last_close: "2000", best_bid: "1999", best_ask: "2000", bids: [], asks: [] },
   }, accounts: { 0: { cash: "200000", reserved_cash: "0", positions: { "600101": { qty: 350, t1_locked: 100, invested_cents: "350000", recovered_cents: "0" } }, reserved_sell_qty: { "600101": 100 } } }, daily_candles: {}, active_daily_candles: {} };

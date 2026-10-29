@@ -13,7 +13,7 @@ test("单股本代 StockId0 在 baseline、日内 facts/timeseries 和 runtime d
   const next = translateEngineUpdate(parseEngineUpdate({ TickBatch: { frames: [frame(1, 0, [0])], runtime_snapshot: raw } }), "actual.tick", identity);
   assert.ok("TickBatch" in next);
   assert.equal(Object.keys(next.TickBatch.frames[0].timeseries_payload.markets)[0], "600101");
-  const delta = translateRuntimeDelta({ seq_from: 0, seq_to: 1, tick: 1, day: 0, phase: "Continuous", accounts: {}, working_orders: { reset: true, upserts: [{ id: 1, code: 0, side: "Buy", price: "100", remainingQty: 100, venue: "Continuous", frozen: "Cash" }], removed: [] } }, "actual.delta", identity);
+  const delta = translateRuntimeDelta({ seq_from: 0, seq_to: 1, tick: 1, day: 0, phase: "Continuous", mirror_origin: { authority_epoch: 1, install_sequence: 2, source_tick: 0, source_generation: 0, day_end_stage: "tick", non_tick_revision: 0, mirror_phase: "Continuous" }, accounts: {}, working_orders: { reset: true, upserts: [{ id: 1, code: 0, side: "Buy", price: "100", remainingQty: 100, venue: "Continuous", frozen: "Cash" }], removed: [] } }, "actual.delta", identity);
   assert.equal(delta.working_orders.upserts[0].code, "600101");
   assert.throws(() => translateSnapshot({ ...raw, markets: { "3": Object.values(raw.markets)[0] } }, "actual.unknown", identity), /StockId/);
 });
