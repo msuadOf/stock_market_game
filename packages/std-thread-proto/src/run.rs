@@ -78,9 +78,7 @@ pub fn run_benchmark(
     width: u32,
 ) -> Result<RunReport, ProtoError> {
     if cfg.stocks.is_empty() || cfg.ticks == 0 {
-        return Err(ProtoError::InvalidConfig(
-            "stocks 与 ticks 必须非空".into(),
-        ));
+        return Err(ProtoError::InvalidConfig("stocks 与 ticks 必须非空".into()));
     }
     let stocks = cfg.stocks.len() as u32;
     let per_stock_threads = if width == 0 {
@@ -219,8 +217,7 @@ pub fn run_benchmark(
         tx.send(TickMsg::Shutdown)
             .map_err(|_| ProtoError::ChannelClosed("shutdown".into()))?;
     }
-    let mut finals: Vec<Option<FinalState>> =
-        (0..tick_txs.len()).map(|_| None).collect();
+    let mut finals: Vec<Option<FinalState>> = (0..tick_txs.len()).map(|_| None).collect();
     for _ in 0..tick_txs.len() {
         let f = final_rx
             .recv()

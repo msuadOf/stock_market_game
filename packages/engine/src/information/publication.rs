@@ -14,13 +14,13 @@
 //! 该时点已确认事实（事件条款）；未来合同现金流是预测，类型上就没有
 //! 「已实现」标记位。
 
-use crate::accounting::AccountingPeriod;
 use crate::accounting::consolidation::ScopeId;
 use crate::accounting::reports::{ReportKind, ReportSet};
+use crate::accounting::AccountingPeriod;
 use crate::calendar::{CivilDate, CivilInstant};
 use crate::company::CompanyId;
 use crate::information::{
-    InformationError, SCHEDULE_OFFSET_MAX, ScheduledReportKind, scheduled_instant,
+    scheduled_instant, InformationError, ScheduledReportKind, SCHEDULE_OFFSET_MAX,
 };
 
 /// 批准时点的游戏约定（公布日 08:00；排期/装配/派发统一使用）。

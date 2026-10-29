@@ -55,7 +55,12 @@ pub enum FillReceipt {
         release: i64,
     },
     /// 外部卖单终结：家端次级仓 reserved_shares -= qty、sellable += qty。
-    SellClosed { home: u8, npc: u32, stock: u8, qty: u32 },
+    SellClosed {
+        home: u8,
+        npc: u32,
+        stock: u8,
+        qty: u32,
+    },
 }
 
 impl FillReceipt {
@@ -126,7 +131,10 @@ impl Arena {
         self.accounts.push(Npc::desk(cash, shares));
         self.foreign.push(Some(id));
         if crate::xdbg() {
-            eprintln!("[desk alloc] slot={slot} id={id:?} cash={cash} shares={shares} stock={}", self.stock_idx);
+            eprintln!(
+                "[desk alloc] slot={slot} id={id:?} cash={cash} shares={shares} stock={}",
+                self.stock_idx
+            );
         }
         slot
     }
@@ -465,14 +473,8 @@ impl StockBook {
                 resting_count,
                 ..
             } = self;
-            let opposite = if inc.side == Side::Buy {
-                asks
-            } else {
-                bids
-            };
-            let level = opposite
-                .get_mut(&level_price)
-                .expect("上面已确认档位存在");
+            let opposite = if inc.side == Side::Buy { asks } else { bids };
+            let level = opposite.get_mut(&level_price).expect("上面已确认档位存在");
             while inc.qty > 0 {
                 let q = match level.front() {
                     Some(maker) => inc.qty.min(maker.qty),
@@ -510,10 +512,7 @@ impl StockBook {
                     break; // maker 部分成交，incoming 已耗尽。
                 }
             }
-            if opposite
-                .get(&level_price)
-                .is_some_and(|lvl| lvl.is_empty())
-            {
+            if opposite.get(&level_price).is_some_and(|lvl| lvl.is_empty()) {
                 opposite.remove(&level_price);
             }
         }
@@ -522,11 +521,7 @@ impl StockBook {
 
     /// 工作单对齐：撤掉某竞技场槽位的全部挂单（两侧），释放资金/可卖。
     /// 跨股臂：外部槽位撤单同样产生终结回执（escrow 回流家端）。
-    pub fn cancel_all_for(
-        &mut self,
-        arena: &mut Arena,
-        npc_idx: u32,
-    ) -> Result<u64, ProtoError> {
+    pub fn cancel_all_for(&mut self, arena: &mut Arena, npc_idx: u32) -> Result<u64, ProtoError> {
         let ids = match self.by_npc.remove(&npc_idx) {
             Some(ids) => ids,
             None => return Ok(0),
@@ -541,9 +536,7 @@ impl StockBook {
             } else {
                 &mut self.asks
             };
-            let level = side_map
-                .get_mut(&price)
-                .expect("index 命中则档位必须存在");
+            let level = side_map.get_mut(&price).expect("index 命中则档位必须存在");
             let pos = level
                 .iter()
                 .position(|o| o.id == id)
@@ -586,9 +579,7 @@ impl StockBook {
             } else {
                 &mut self.asks
             };
-            let level = side_map
-                .get_mut(&price)
-                .expect("index 命中则档位必须存在");
+            let level = side_map.get_mut(&price).expect("index 命中则档位必须存在");
             let pos = level
                 .iter()
                 .position(|o| o.id == id)

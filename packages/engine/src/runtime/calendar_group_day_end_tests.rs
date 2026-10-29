@@ -212,40 +212,93 @@ fn reopen_group_day_end_ages_plans_by_own_session_ordinal() {
 
 #[test]
 fn mixed_nonzero_open_plan_and_t1_day_end_changes_abort_and_retry_restore_real_group_authority() {
-    for (closed, exchange) in [(StockId(1), CalendarExchange::Sse), (StockId(0), CalendarExchange::Szse)] {
+    for (closed, exchange) in [
+        (StockId(1), CalendarExchange::Sse),
+        (StockId(0), CalendarExchange::Szse),
+    ] {
         let open = StockId(1 - closed.0);
         let (mut spec, _) = mixed_spec(Box::new(|_| Box::new(|_, _| TickPlan::default())));
-        let book = plans(closed, 1);let ids = book.plan_ids().collect::<Vec<_>>();
-        let closed_id = ids[0];let open_id = ids[1];
-        spec.initial_plan_books = super::plan_ownership::split(book, &[AccountId(0), AccountId(1), AccountId(2)], 2, 2).unwrap();
-        spec.initial_frozen_today = vec![vec![vec![100, 200], vec![0, 0]], vec![vec![0, 0], vec![0, 0]]];
-        let mut world = World::spawn(spec, calendar(exchange)).unwrap();world.run_ticks(12).unwrap();
+        let book = plans(closed, 1);
+        let ids = book.plan_ids().collect::<Vec<_>>();
+        let closed_id = ids[0];
+        let open_id = ids[1];
+        spec.initial_plan_books =
+            super::plan_ownership::split(book, &[AccountId(0), AccountId(1), AccountId(2)], 2, 2)
+                .unwrap();
+        spec.initial_frozen_today = vec![
+            vec![vec![100, 200], vec![0, 0]],
+            vec![vec![0, 0], vec![0, 0]],
+        ];
+        let mut world = World::spawn(spec, calendar(exchange)).unwrap();
+        world.run_ticks(12).unwrap();
         let tick = world.committed_calendar_tick().unwrap().unwrap().calendar;
-        let before_accounts = world.snapshot_accounts().unwrap();let before_books = world.collect_plans().unwrap();
-        let before_resting = world.collect_desk_resting().unwrap();let before_public = world.publication().load();
-        assert_eq!(before_accounts[0].1[0].frozen_today.as_slice(), &[100, 200], "双股非零sentinel必须真实保到DayEnd前");
-        assert_eq!(before_books[0].1.plan(closed_id).unwrap().status(), PlanStatus::Active);
-        assert_eq!(before_books[1].1.plan(open_id).unwrap().status(), PlanStatus::Active);
-        assert_eq!(before_accounts[0].1[0].frozen_today[open.0 as usize], if open == StockId(0) { 100 } else { 200 });
-        world.run_day_end_with_calendar(DayEndCalendar::MarketTick(Arc::clone(&tick))).unwrap();
-        let ended_accounts = world.snapshot_accounts().unwrap();let ended_books = world.collect_plans().unwrap();
-        assert_eq!(ended_accounts[0].1[0].frozen_today[open.0 as usize], 0, "open非零T+1必须真实先解锁");
-        assert_eq!(ended_accounts[0].1[0].frozen_today[closed.0 as usize], before_accounts[0].1[0].frozen_today[closed.0 as usize]);
-        assert_eq!(ended_books[1].1.plan(open_id).unwrap().status(), PlanStatus::Terminated { reason: TerminationReason::HorizonExpired });
+        let before_accounts = world.snapshot_accounts().unwrap();
+        let before_books = world.collect_plans().unwrap();
+        let before_resting = world.collect_desk_resting().unwrap();
+        let before_public = world.publication().load();
+        assert_eq!(
+            before_accounts[0].1[0].frozen_today.as_slice(),
+            &[100, 200],
+            "双股非零sentinel必须真实保到DayEnd前"
+        );
+        assert_eq!(
+            before_books[0].1.plan(closed_id).unwrap().status(),
+            PlanStatus::Active
+        );
+        assert_eq!(
+            before_books[1].1.plan(open_id).unwrap().status(),
+            PlanStatus::Active
+        );
+        assert_eq!(
+            before_accounts[0].1[0].frozen_today[open.0 as usize],
+            if open == StockId(0) { 100 } else { 200 }
+        );
+        world
+            .run_day_end_with_calendar(DayEndCalendar::MarketTick(Arc::clone(&tick)))
+            .unwrap();
+        let ended_accounts = world.snapshot_accounts().unwrap();
+        let ended_books = world.collect_plans().unwrap();
+        assert_eq!(
+            ended_accounts[0].1[0].frozen_today[open.0 as usize], 0,
+            "open非零T+1必须真实先解锁"
+        );
+        assert_eq!(
+            ended_accounts[0].1[0].frozen_today[closed.0 as usize],
+            before_accounts[0].1[0].frozen_today[closed.0 as usize]
+        );
+        assert_eq!(
+            ended_books[1].1.plan(open_id).unwrap().status(),
+            PlanStatus::Terminated {
+                reason: TerminationReason::HorizonExpired
+            }
+        );
         assert_eq!(ended_books[0].1, before_books[0].1, "closed计划完整不变");
-        assert_ne!(ended_books[1].1, before_books[1].1, "必须真实发生计划迁移，不能用全空Book证明Abort");
+        assert_ne!(
+            ended_books[1].1, before_books[1].1,
+            "必须真实发生计划迁移，不能用全空Book证明Abort"
+        );
         world.abort_day_end();
         assert_eq!(world.snapshot_accounts().unwrap(), before_accounts);
-        assert_eq!(world.collect_plans().unwrap(), before_books, "真实完整组PlanBook含execution/终结/owner游标全部恢复");
+        assert_eq!(
+            world.collect_plans().unwrap(),
+            before_books,
+            "真实完整组PlanBook含execution/终结/owner游标全部恢复"
+        );
         assert_eq!(world.collect_desk_resting().unwrap(), before_resting);
         assert!(Arc::ptr_eq(&before_public, &world.publication().load()));
         assert!(world.take_pending_day_bars().iter().all(Option::is_none));
         assert!(world.take_pending_day_candles().iter().all(Option::is_none));
         // 同一真实committed TickArc合法重试；不能伪造preview或偷偷跑下个Start退役undo。
-        world.run_day_end_with_calendar(DayEndCalendar::MarketTick(tick)).unwrap();
+        world
+            .run_day_end_with_calendar(DayEndCalendar::MarketTick(tick))
+            .unwrap();
         assert_eq!(world.snapshot_accounts().unwrap(), ended_accounts);
         assert_eq!(world.collect_plans().unwrap(), ended_books);
-        let report = world.shutdown().unwrap();assert_eq!(report.worker_results.len(), 4);
-        assert!(report.worker_results.iter().all(|(_, result)| result.is_ok()));
+        let report = world.shutdown().unwrap();
+        assert_eq!(report.worker_results.len(), 4);
+        assert!(report
+            .worker_results
+            .iter()
+            .all(|(_, result)| result.is_ok()));
     }
 }

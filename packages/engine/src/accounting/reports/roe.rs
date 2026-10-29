@@ -1,6 +1,6 @@
 use crate::accounting::disclosure_roe::{
-    ActualEquityEvent, DisclosureAttributionBasis, DisclosureRoeInput, DisclosureReportPeriod,
-    EquityEventKind, PublicReportIdentity, ReportFact, calculate_disclosure_roe,
+    calculate_disclosure_roe, ActualEquityEvent, DisclosureAttributionBasis,
+    DisclosureReportPeriod, DisclosureRoeInput, EquityEventKind, PublicReportIdentity, ReportFact,
 };
 use crate::accounting::journal::BusinessKind;
 use crate::accounting::ledger::AccountElement;
@@ -155,15 +155,12 @@ fn non_recurring_income_items(
         }
         let mut touches_income = false;
         for line in &entry.lines {
-            if definitions
-                .get(&line.account)
-                .is_some_and(|definition| {
-                    matches!(
-                        definition.element,
-                        AccountElement::Revenue | AccountElement::Expense
-                    )
-                })
-            {
+            if definitions.get(&line.account).is_some_and(|definition| {
+                matches!(
+                    definition.element,
+                    AccountElement::Revenue | AccountElement::Expense
+                )
+            }) {
                 touches_income = true;
             }
         }
@@ -259,17 +256,13 @@ fn actual_equity_events(
             BusinessKind::CompanyDividendDeclaration if delta.is_negative() => {
                 (EquityEventKind::Decrease, delta.neg()?)
             }
-            BusinessKind::CompanyDividendDeclaration => {
-                return Ok(None)
-            }
+            BusinessKind::CompanyDividendDeclaration => return Ok(None),
             // 配股／增发结算使归母权益增加（募集资金按面值+溢价计入权益），
             // 属规则9口径的权益增加事项（按实际生效日加权）。
             BusinessKind::CompanyRightsOfferingSettlement if delta.is_positive() => {
                 (EquityEventKind::Increase, delta)
             }
-            BusinessKind::CompanyRightsOfferingSettlement => {
-                return Ok(None)
-            }
+            BusinessKind::CompanyRightsOfferingSettlement => return Ok(None),
             _ => return Ok(None),
         };
         events.push(ActualEquityEvent {
@@ -319,10 +312,11 @@ pub(super) fn period_dates(
     first: crate::accounting::AccountingPeriod,
     last: crate::accounting::AccountingPeriod,
 ) -> Result<DisclosureReportPeriod, ReportError> {
-    let start = CivilDate::from_ymd(first.year(), first.month(), 1)
-        .map_err(|error| ReportError::InternalWindowInconsistent {
+    let start = CivilDate::from_ymd(first.year(), first.month(), 1).map_err(|error| {
+        ReportError::InternalWindowInconsistent {
             detail: error.to_string(),
-        })?;
+        }
+    })?;
     let end = CivilDate::from_ymd(
         last.year(),
         last.month(),

@@ -139,8 +139,6 @@ fn conservation_apply_rechecks_the_aggregate_before_installing_receipts() {
     assert_eq!(ledger, before);
 }
 
-
-
 #[test]
 fn dense_conservation_without_explicit_context_stays_on_the_caller_thread() {
     // ≥512 行 + 未显式传 compute：row 守恒校验必须全部在调用线程串行执行。
@@ -207,10 +205,7 @@ fn conservation_row_chunks_keep_source_error_order_and_skip_small_task_paralleli
     let pool = crate::compute::ComputeContext::from_workers(4);
     pool.install(|| {
         let rows = super::ledger_conservation::map_rows(&small_rows, None, |_| {
-            workers
-                .lock()
-                .unwrap()
-                .insert(0usize);
+            workers.lock().unwrap().insert(0usize);
             Ok(())
         });
         rows.into_iter().collect::<Result<Vec<_>, _>>()

@@ -31,11 +31,11 @@ pub use bank::BankFlowParams;
 pub use closing::CompanyCloseError;
 pub use config::{CompanyOperationsConfig, FlowParams, IndustryBooks, OperatingCompanyConfig};
 pub use core::OperatingReportCorrection;
-pub(crate) use core::{LegacyDisclosureCorrectionCtx, PreparedLegacyDisclosureCorrection};
 pub use core::{
     ActivatedShockRecord, CompanyDayReport, CompanyOperations, ExpiredShockRecord,
     OperatingCompany, PaymentFailureRecord,
 };
+pub(crate) use core::{LegacyDisclosureCorrectionCtx, PreparedLegacyDisclosureCorrection};
 pub use error::OperationsError;
 pub use history::{generate_history, HistoryMeta};
 pub use industrial::IndustrialFlowParams;

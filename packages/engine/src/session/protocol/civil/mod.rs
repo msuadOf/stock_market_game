@@ -170,9 +170,7 @@ impl CivilUpdate {
             let history = &self.refresh.intraday;
             super::validate_frames(history)?;
             if u64::try_from(history.len()).ok() != Some(self.refresh.ticks_per_day)
-                || history
-                    .last()
-                    .map(|frame| (frame.tick, frame.seq_to))
+                || history.last().map(|frame| (frame.tick, frame.seq_to))
                     != Some((self.tick, self.seq_from))
             {
                 return Err(ProtocolError::CivilBoundary);

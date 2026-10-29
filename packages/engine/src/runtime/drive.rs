@@ -12,24 +12,22 @@
 
 use super::bridge::{accounts_projection_from_session, world_spec_from_setup};
 use super::decision::{DecisionSetup, NpcProfile};
-use super::event_bridge::{
-    collect_lifecycle, project_auction_events, project_lifecycle_events,
-};
+use super::event_bridge::{collect_lifecycle, project_auction_events, project_lifecycle_events};
 use super::world::World;
 use std::sync::Arc;
-mod convergence;
-mod company_commands;
 mod administrative_mirror;
+mod company_commands;
+mod convergence;
 pub(crate) use administrative_mirror::AdministrativeBaseline;
-mod sync_inputs;
-mod static_projection;
 mod handover;
 mod shutdown;
-pub(crate) use static_projection::PreparedStaticRead;
-pub(crate) use convergence::{PreparedDriverCalendar, PreparedDriverStep};
+mod static_projection;
+mod sync_inputs;
 use crate::money::Money;
 use crate::strategy::StrategyData;
 use crate::{AccountId, Event, GameSession, SessionSetup};
+pub(crate) use convergence::{PreparedDriverCalendar, PreparedDriverStep};
+pub(crate) use static_projection::PreparedStaticRead;
 
 #[derive(Debug)]
 pub(crate) struct RuntimeDriverConstructionError {
@@ -38,13 +36,22 @@ pub(crate) struct RuntimeDriverConstructionError {
 }
 
 impl From<String> for RuntimeDriverConstructionError {
-    fn from(description: String) -> Self { Self { description, cleanup_failed: false } }
+    fn from(description: String) -> Self {
+        Self {
+            description,
+            cleanup_failed: false,
+        }
+    }
 }
 impl From<&str> for RuntimeDriverConstructionError {
-    fn from(description: &str) -> Self { description.to_owned().into() }
+    fn from(description: &str) -> Self {
+        description.to_owned().into()
+    }
 }
 impl std::fmt::Display for RuntimeDriverConstructionError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { self.description.fmt(f) }
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.description.fmt(f)
+    }
 }
 
 /// Trade 账户身份只取真实名册；整批解析与编号成功后才推进事件游标。
@@ -67,7 +74,9 @@ fn project_trade_events_for_roster(
             .checked_mul(accounts_per_group)
             .and_then(|start| start.checked_add(local))
             .ok_or_else(|| format!("成交事件 Owner 名册坐标溢出：{owner:?}"))?;
-        id_map.get(index).copied()
+        id_map
+            .get(index)
+            .copied()
             .ok_or_else(|| format!("成交事件 Owner 不在真实名册：{owner:?}"))
     };
     let mut candidate_seq = *next_seq;
@@ -104,10 +113,7 @@ mod event_identity_tests;
 pub(crate) fn ensure_fact_owners_covered_arc(
     fact_rec: Option<&super::world::TickRecord>,
     snapshots: &[std::sync::Arc<
-        Vec<(
-            super::LocalIdx,
-            std::sync::Arc<super::group::GroupAccount>,
-        )>,
+        Vec<(super::LocalIdx, std::sync::Arc<super::group::GroupAccount>)>,
     >],
     accounts_per_group: usize,
 ) -> Result<(), String> {
@@ -130,7 +136,9 @@ pub(crate) fn ensure_fact_owners_covered(
 ) -> Result<(), String> {
     ensure_fact_owners_covered_locals(
         fact_rec,
-        snapshots.iter().map(|group| group.iter().map(|(local, _)| *local)),
+        snapshots
+            .iter()
+            .map(|group| group.iter().map(|(local, _)| *local)),
         accounts_per_group,
     )
 }
@@ -380,21 +388,19 @@ impl RuntimeDriver {
                     }
                 } else {
                     match account.and_then(|a| a.strategy()) {
-                        Some(strategy) => {
-                            Self::individual_strategy_data(strategy).unwrap_or_else(|e| {
-                                panic!("个体策略投影失败：{e}")
-                            })
-                        }
+                        Some(strategy) => Self::individual_strategy_data(strategy)
+                            .unwrap_or_else(|e| panic!("个体策略投影失败：{e}")),
                         None => Self::baseline_strategy_data(setup, i),
                     }
                 };
                 let fallback_due = if id.is_none()
-                    || account.is_some_and(|a| matches!(
-                        a.kind(),
-                        crate::account::AccountKind::Player
-                            | crate::account::AccountKind::IssuerRepurchase
-                    ))
-                {
+                    || account.is_some_and(|a| {
+                        matches!(
+                            a.kind(),
+                            crate::account::AccountKind::Player
+                                | crate::account::AccountKind::IssuerRepurchase
+                        )
+                    }) {
                     u64::MAX
                 } else {
                     (i % 8) as u64
@@ -404,9 +410,9 @@ impl RuntimeDriver {
                     .unwrap_or(None)
                     // 无 attention 的非自主账户永不到期，占位值不会参与观察。
                     .unwrap_or(1.0);
-                let retail_style = id.and_then(|id| session.account(id)).and_then(|a| {
-                    a.strategy().and_then(|s| s.retail_style())
-                });
+                let retail_style = id
+                    .and_then(|id| session.account(id))
+                    .and_then(|a| a.strategy().and_then(|s| s.retail_style()));
                 let (due, seed) = match attention_entry {
                     Some((due, rng)) => (due, rng),
                     None => (
@@ -443,21 +449,31 @@ impl RuntimeDriver {
     ) -> Result<Self, String> {
         session.check_external_runtime_factory()?;
         let authority_epoch = session.next_runtime_authority_epoch()?;
-        let mut driver = Self::build_from_session_grouped(session, n_groups, authority_epoch, false)
-            .map_err(|error| {
-                let description = error.to_string();
-                if error.cleanup_failed {
-                    session.poison_runtime_step(crate::session::StepFatal::InvariantViolation {
-                        location: "RuntimeDriver::from_session_grouped::cleanup".to_owned(), description: description.clone(),
-                    });
-                }
-                description
-            })?;
+        let mut driver =
+            Self::build_from_session_grouped(session, n_groups, authority_epoch, false).map_err(
+                |error| {
+                    let description = error.to_string();
+                    if error.cleanup_failed {
+                        session.poison_runtime_step(
+                            crate::session::StepFatal::InvariantViolation {
+                                location: "RuntimeDriver::from_session_grouped::cleanup".to_owned(),
+                                description: description.clone(),
+                            },
+                        );
+                    }
+                    description
+                },
+            )?;
         session.retire_replaced_internal_runtime_driver();
         session.runtime_clear_resting_for_adoption();
         session.install_runtime_authority_epoch(authority_epoch);
-        driver.initial_static_seed.as_mut().expect("构造期静点种子已准备").revision = session.external_revision();
-        session.install_external_runtime_authority(std::sync::Arc::downgrade(&driver.authority_lease));
+        driver
+            .initial_static_seed
+            .as_mut()
+            .expect("构造期静点种子已准备")
+            .revision = session.external_revision();
+        session
+            .install_external_runtime_authority(std::sync::Arc::downgrade(&driver.authority_lease));
         Ok(driver)
     }
 
@@ -482,7 +498,9 @@ impl RuntimeDriver {
             .map_err(|error| error.to_string())?;
         let mut setup: SessionSetup = session.export_setup_for_runtime();
         // StockId 按代码升序分配；交易部、账户矩阵与报价数组必须共用该顺序。
-        setup.stocks.sort_unstable_by(|a, b| a.code.0.cmp(&b.code.0));
+        setup
+            .stocks
+            .sort_unstable_by(|a, b| a.code.0.cmp(&b.code.0));
         let n_stocks = setup.stocks.len();
         let (cash_raw, shares_raw, invested_raw, recovered_raw, frozen_raw, ever_held_raw, ids) =
             accounts_projection_from_session(session, n_stocks);
@@ -509,36 +527,11 @@ impl RuntimeDriver {
         }
         // 尾组零位：Vec 行按股数定长（world 的 copy_from_slice 要求）。
         let mut cash = split_rows(cash_raw, n_groups, per_group, 0i64);
-        let mut shares = split_rows(
-            shares_raw,
-            n_groups,
-            per_group,
-            vec![0u32; n_stocks],
-        );
-        let invested = split_rows(
-            invested_raw,
-            n_groups,
-            per_group,
-            vec![0i64; n_stocks],
-        );
-        let recovered = split_rows(
-            recovered_raw,
-            n_groups,
-            per_group,
-            vec![0i64; n_stocks],
-        );
-        let frozen = split_rows(
-            frozen_raw,
-            n_groups,
-            per_group,
-            vec![0u32; n_stocks],
-        );
-        let ever_held = split_rows(
-            ever_held_raw,
-            n_groups,
-            per_group,
-            vec![false; n_stocks],
-        );
+        let mut shares = split_rows(shares_raw, n_groups, per_group, vec![0u32; n_stocks]);
+        let invested = split_rows(invested_raw, n_groups, per_group, vec![0i64; n_stocks]);
+        let recovered = split_rows(recovered_raw, n_groups, per_group, vec![0i64; n_stocks]);
+        let frozen = split_rows(frozen_raw, n_groups, per_group, vec![0u32; n_stocks]);
+        let ever_held = split_rows(ever_held_raw, n_groups, per_group, vec![false; n_stocks]);
         let profiles = Self::profiles_from_session(session, &setup, &ids);
         let decision = DecisionSetup {
             profiles,
@@ -569,17 +562,18 @@ impl RuntimeDriver {
             spec.belief_seeds = (0..npcs.max(1))
                 .map(|i| {
                     let id = ids.get(i).copied()?;
-                    personals.get(&id).map(|p| super::world::BeliefParticipantSnapshot {
-                        watchlist: p.watchlist.clone(),
-                        price_memory: p.price_memory.clone(),
-                        information: p.information.clone(),
-                        belief: p.belief.clone(),
-                        attention: p.attention.clone(),
-                        history_reads: p.history_reads.clone(),
-                        // D5 #4：零售经验行（retail 位 Some）。
-                        retail_experience: session
-                            .runtime_retail_experience_for(&id),
-                    })
+                    personals
+                        .get(&id)
+                        .map(|p| super::world::BeliefParticipantSnapshot {
+                            watchlist: p.watchlist.clone(),
+                            price_memory: p.price_memory.clone(),
+                            information: p.information.clone(),
+                            belief: p.belief.clone(),
+                            attention: p.attention.clone(),
+                            history_reads: p.history_reads.clone(),
+                            // D5 #4：零售经验行（retail 位 Some）。
+                            retail_experience: session.runtime_retail_experience_for(&id),
+                        })
                 })
                 .collect();
         }
@@ -590,7 +584,9 @@ impl RuntimeDriver {
         // D3a-2c 件2：决策链根组装投影（catalog 克隆、初始 CompanyReadFacts
         // Arc 共享、名册 AccountId、相位参数——observe 直调的组内输入面）。
         {
-            let (catalog, initial_company_facts) = session.runtime_company_handles().map_err(|error| error.to_string())?;
+            let (catalog, initial_company_facts) = session
+                .runtime_company_handles()
+                .map_err(|error| error.to_string())?;
             let setup_civil = session.export_setup_for_runtime();
             let chain_params_by_id = session.runtime_chain_params();
             spec.root_projection = Some(std::sync::Arc::new(super::world::RootProjection {
@@ -635,7 +631,8 @@ impl RuntimeDriver {
         ///   不变；restore 形态此前在 face 之上**加**余量=双计使可卖
         ///   翻倍——resting_sell_orders_reserve 显红；adopt 形态不扣
         ///   则成交后组侧幻影股，日结全量回写复活已卖持仓）。
-        let desk_order_seeds = resting_order_seeds_from_session(session, &ids, per_group, static_handover)?;
+        let desk_order_seeds =
+            resting_order_seeds_from_session(session, &ids, per_group, static_handover)?;
         {
             let mut purse_by_group = vec![vec![0i64; per_group]; n_groups];
             let mut pending_sell_by_group = vec![vec![vec![0u32; n_stocks]; per_group]; n_groups];
@@ -643,7 +640,8 @@ impl RuntimeDriver {
                 if stock >= n_stocks {
                     return Err(format!(
                         "desk 种子股索引越界（无法投影）：stock={stock}（股数 {n_stocks}）"
-                    ).into());
+                    )
+                    .into());
                 }
                 for seed in seeds {
                     let (g, l) = (seed.owner.0 as usize, seed.owner.1 as usize);
@@ -688,12 +686,12 @@ impl RuntimeDriver {
         /// 日结拍（tick%tpd==0——session 日终迁移已完成）即视为该交易
         /// 日已日结，防首拍 run_ticks 自动日结重复归档日 K。
         let restore_tpd = u64::from(session.export_setup_for_runtime().ticks_per_day).max(1);
-        spec.initial_last_day_end_tick =
-            if session.tick() > 0 && session.tick() % restore_tpd == 0 {
-                Some(session.tick())
-            } else {
-                None
-            };
+        spec.initial_last_day_end_tick = if session.tick() > 0 && session.tick() % restore_tpd == 0
+        {
+            Some(session.tick())
+        } else {
+            None
+        };
         spec.accounts_per_group = per_group;
         spec.initial_cash = 0;
         spec.initial_cash_override = Some(cash);
@@ -728,28 +726,35 @@ impl RuntimeDriver {
                 stock_spec.initial_market = market_seeds.get(&crate::StockId(idx as u32)).cloned();
                 // D5 attention：收盘竞价公开截点投影（restore 链——market
                 // 域承载；desk 权威自此起步）。
-                stock_spec.initial_public_cutoff = session
-                    .runtime_public_cutoff_for(&crate::StockId(idx as u32));
+                stock_spec.initial_public_cutoff =
+                    session.runtime_public_cutoff_for(&crate::StockId(idx as u32));
             }
         }
         let plan_policy = *session.runtime_plans_snapshot().policy();
         spec.initial_plan_books = super::plan_ownership::split(
-            session.runtime_plans_snapshot().clone(), &ids, n_groups, per_group,
-        ).map_err(|error| format!("计划构造移交失败：{error:?}"))?;
-        spec.admin_treasury_bindings = admin_treasury_bindings_from_session(session, &ids, per_group)?;
+            session.runtime_plans_snapshot().clone(),
+            &ids,
+            n_groups,
+            per_group,
+        )
+        .map_err(|error| format!("计划构造移交失败：{error:?}"))?;
+        spec.admin_treasury_bindings =
+            admin_treasury_bindings_from_session(session, &ids, per_group)?;
         // P2-2a：稀疏上行读面的全量缓存基线（构造期投影==组端初值）。
         let belief_cache = spec.belief_seeds.clone();
-        let sync_inputs = crate::runtime::driver_sync::SyncAccumulator::new(
-            (0..n_groups).map(|group| {
-                (group as super::GroupIdx,
-                 ids.len().saturating_sub(group * per_group).min(per_group) as super::LocalIdx)
-            }),
-        ).map_err(|error| error.to_string())?;
+        let sync_inputs =
+            crate::runtime::driver_sync::SyncAccumulator::new((0..n_groups).map(|group| {
+                (
+                    group as super::GroupIdx,
+                    ids.len().saturating_sub(group * per_group).min(per_group) as super::LocalIdx,
+                )
+            }))
+            .map_err(|error| error.to_string())?;
         let initial_static_seed = static_projection::InitialStaticSeed {
             revision: session.external_revision(),
-            market_views: (0..n_stocks).map(|index| {
-                session.runtime_static_market_seed(crate::StockId(index as u32))
-            }).collect::<Result<_, _>>()?,
+            market_views: (0..n_stocks)
+                .map(|index| session.runtime_static_market_seed(crate::StockId(index as u32)))
+                .collect::<Result<_, _>>()?,
         };
         let mut world = World::spawn_with_calendar_source(
             spec,
@@ -761,10 +766,18 @@ impl RuntimeDriver {
             cleanup_failed: matches!(&error, super::RuntimeError::ConstructionFailure { cleanup_errors, .. } if !cleanup_errors.is_empty()),
             description: format!("驱动器世界构造失败：{error}"),
         })?;
-        let presence = (0..n_groups).map(|group| {
-            (group as super::GroupIdx, ids.iter().skip(group * per_group).take(per_group)
-                .map(|id| (*id, personal_presence[id])).collect())
-        }).collect();
+        let presence = (0..n_groups)
+            .map(|group| {
+                (
+                    group as super::GroupIdx,
+                    ids.iter()
+                        .skip(group * per_group)
+                        .take(per_group)
+                        .map(|id| (*id, personal_presence[id]))
+                        .collect(),
+                )
+            })
+            .collect();
         world.install_personal_presence(authority_epoch, presence);
         let driver = Self {
             initial_static_seed: Some(initial_static_seed),
@@ -839,9 +852,9 @@ impl RuntimeDriver {
         let mut ops: Vec<Vec<super::decision::PendingOp>> = vec![Vec::new(); n_groups];
         for (code, orders) in session.runtime_resting_orders_snapshot() {
             for order in orders {
-                let (g, local) = self.owner_slot(order.owner).map_err(|e| {
-                    format!("旧簿挂单 {e}（无法迁移）：{:?}", code)
-                })?;
+                let (g, local) = self
+                    .owner_slot(order.owner)
+                    .map_err(|e| format!("旧簿挂单 {e}（无法迁移）：{:?}", code))?;
                 ops[g as usize].push(super::decision::PendingOp {
                     local,
                     stock: code.0 as super::StockIdx,
@@ -852,14 +865,17 @@ impl RuntimeDriver {
                 });
             }
         }
-        self.world.send_external_plan_grouped(ops, vec![Vec::new(); n_groups]);
+        self.world
+            .send_external_plan_grouped(ops, vec![Vec::new(); n_groups]);
         Ok(())
     }
 
     /// 提交一个真实市场 tick；三档共用 candidate、事实、来源校验与唯一安装。
     /// 成功返回前推进 Session tick/seq；市场日结仍由既有显式日结 API 触发。
     pub fn step(&mut self, session: &mut GameSession) -> Result<Vec<Event>, String> {
-        session.step_with_external_runtime_driver(self).map_err(|fatal| fatal.to_string())
+        session
+            .step_with_external_runtime_driver(self)
+            .map_err(|fatal| fatal.to_string())
     }
 
     fn prepare_step_with_capture(
@@ -878,7 +894,9 @@ impl RuntimeDriver {
             Some(calendar) => calendar,
             None => {
                 // direct driver 可累计未安装输入；Calendar 使用同 owner World 的真实进度。
-                let calendar = self.world.prepare_raw_calendar_tick()
+                let calendar = self
+                    .world
+                    .prepare_raw_calendar_tick()
                     .map_err(|error| error.to_string())?;
                 self.world
                     .take_or_stage_calendar_tick(calendar)
@@ -938,7 +956,10 @@ impl RuntimeDriver {
             sums.into_iter()
                 .filter_map(|(k, (value, qty))| {
                     (qty > 0).then(|| {
-                        (k, i64::try_from(value / i128::from(qty)).unwrap_or(1).max(1))
+                        (
+                            k,
+                            i64::try_from(value / i128::from(qty)).unwrap_or(1).max(1),
+                        )
                     })
                 })
                 .collect()
@@ -962,12 +983,18 @@ impl RuntimeDriver {
         ///（force_full/日结/调试）仍走 EchoAccounts。
         #[cfg(feature = "simulation-diagnostics")]
         {
-            let record = self.world.report_log.last_mut()
+            let record = self
+                .world
+                .report_log
+                .last_mut()
                 .ok_or_else(|| "runtime 成功收束但缺少 causal TickRecord".to_owned())?;
             self.pending_causal = std::mem::take(&mut record.desk_causal);
             self.pending_decision_traces = std::mem::take(&mut record.decision_traces);
         }
-        let record = self.world.report_log.last_mut()
+        let record = self
+            .world
+            .report_log
+            .last_mut()
             .ok_or_else(|| "runtime 成功收束但缺少 Retail TickRecord".to_owned())?;
         self.pending_retail = std::mem::take(&mut record.retail);
         self.pending_retail_rejections.clear();
@@ -977,7 +1004,8 @@ impl RuntimeDriver {
         /// fact_rec 的 clone 归 remainder——事件面 R4 必留）。
         let snapshots = {
             let _seg = step_profile::scope(StepSegment::AcctEchoCollect);
-            let skip_all = !self.force_full_accounts && !self.world.pending_mirror_domains().accounts_full;
+            let skip_all =
+                !self.force_full_accounts && !self.world.pending_mirror_domains().accounts_full;
             if skip_all {
                 let published = self.world.publication().load();
                 if published.tick != self.world.global.committed_tick {
@@ -990,7 +1018,9 @@ impl RuntimeDriver {
                 // 归因优化：分片句柄直接借用（Arc deref）——免每拍全量
                 /// clone 重组（净机实测该 clone 占 A 税 ~140μs/tick）。
                 let mut shards: Vec<
-                    std::sync::Arc<Vec<(super::LocalIdx, std::sync::Arc<super::group::GroupAccount>)>>,
+                    std::sync::Arc<
+                        Vec<(super::LocalIdx, std::sync::Arc<super::group::GroupAccount>)>,
+                    >,
                 > = vec![std::sync::Arc::new(Vec::new()); n_groups];
                 for shard in &published.groups {
                     let Some(slot) = shards.get_mut(shard.group as usize) else {
@@ -1014,8 +1044,7 @@ impl RuntimeDriver {
                     .world
                     .snapshot_accounts()
                     .map_err(|e| format!("账户快照失败：{e:?}"))?;
-                let mut shards =
-                    vec![std::sync::Arc::new(Vec::new()); self.world.n_groups()];
+                let mut shards = vec![std::sync::Arc::new(Vec::new()); self.world.n_groups()];
                 for (g, accounts) in dense {
                     let slot = shards
                         .get_mut(g as usize)
@@ -1069,7 +1098,10 @@ impl RuntimeDriver {
                 crate::session::pipeline::TickPhase::ReceiptAggregation,
             );
             let mut events = project_trade_events_for_roster(
-                &trades, &self.id_map, self.accounts_per_group, &mut self.next_seq,
+                &trades,
+                &self.id_map,
+                self.accounts_per_group,
+                &mut self.next_seq,
             )?;
             // B2 件 5：个人确认派生（同 seq 域——receipt_id=trade_seq×2+
             /// leg；owner→AccountId 缺失=名册投影缺口，显式失败）。空批
@@ -1078,16 +1110,19 @@ impl RuntimeDriver {
                 let trade_count = trades.len() as u64;
                 let first_trade_seq = self.next_seq + 1 - trade_count;
                 let civil_date = session.civil_date();
-                let mut pending: Vec<
-                    crate::session::personal_trade_history::PendingTradeReceipt,
-                > = Vec::with_capacity(trades.len() * 2);
+                let mut pending: Vec<crate::session::personal_trade_history::PendingTradeReceipt> =
+                    Vec::with_capacity(trades.len() * 2);
                 for (offset, fact) in trades.iter().enumerate() {
                     let trade_seq = first_trade_seq + offset as u64;
                     let legs = crate::session::personal_trade_history::PersonalTradeConfirmation::from_legs(
                         trade_seq, civil_date, fact,
                     );
                     for (leg_index, confirmation) in legs.into_iter().enumerate() {
-                        let owner = if leg_index == 0 { fact.maker } else { fact.taker };
+                        let owner = if leg_index == 0 {
+                            fact.maker
+                        } else {
+                            fact.taker
+                        };
                         let account = self.account_by_owner(owner).ok_or_else(|| {
                             format!(
                                 "个人确认归户缺口：owner=({},{}) 不在名册（股 {}）",
@@ -1105,11 +1140,20 @@ impl RuntimeDriver {
                 self.pending_receipts = pending;
             }
             for receipt in &receipts {
-                let account = self.account_by_owner(receipt.owner)
-                    .filter(|_| usize::try_from(receipt.owner.1).is_ok_and(|local| local < self.accounts_per_group))
-                    .ok_or_else(|| format!("Retail 拒单 Owner 不在真实名册：{:?}", receipt.owner))?;
-                self.pending_retail_rejections.push((account, crate::StockId(u32::from(receipt.order.0)),
-                    super::event_bridge::rejection_reason(receipt.kind)));
+                let account = self
+                    .account_by_owner(receipt.owner)
+                    .filter(|_| {
+                        usize::try_from(receipt.owner.1)
+                            .is_ok_and(|local| local < self.accounts_per_group)
+                    })
+                    .ok_or_else(|| {
+                        format!("Retail 拒单 Owner 不在真实名册：{:?}", receipt.owner)
+                    })?;
+                self.pending_retail_rejections.push((
+                    account,
+                    crate::StockId(u32::from(receipt.order.0)),
+                    super::event_bridge::rejection_reason(receipt.kind),
+                ));
             }
             let input = collect_lifecycle(&lifecycle, &receipts);
             events.extend(project_lifecycle_events(&input, &mut self.next_seq));
@@ -1117,11 +1161,12 @@ impl RuntimeDriver {
             // D5 组端校验拒收（路由层 qty=0 等）——本拍事件流投影。
             // step_frame 接轨件 2：先加后取（对齐旧管线 collect 语义）。
             for (code, owner) in std::mem::take(&mut self.pending_rejections) {
-                self.pending_retail_rejections.push((owner, code, crate::RejectionReason::InvalidQuantity));
-                self.next_seq = self
-                    .next_seq
-                    .checked_add(1)
-                    .expect("事件 seq 溢出");
+                self.pending_retail_rejections.push((
+                    owner,
+                    code,
+                    crate::RejectionReason::InvalidQuantity,
+                ));
+                self.next_seq = self.next_seq.checked_add(1).expect("事件 seq 溢出");
                 events.push(Event::IntentRejected {
                     seq: self.next_seq,
                     account: owner,
@@ -1138,7 +1183,10 @@ impl RuntimeDriver {
         );
         let mut personals = Vec::new();
         if self.world.pending_mirror_domains().personal_full {
-            let full = self.world.collect_personal_full().map_err(|error| error.to_string())?;
+            let full = self
+                .world
+                .collect_personal_full()
+                .map_err(|error| error.to_string())?;
             for (group, rows) in full.groups {
                 for (local, id, value) in rows {
                     if let Some(value) = value {
@@ -1149,12 +1197,16 @@ impl RuntimeDriver {
         } else {
             let published = self.world.publication().load();
             if published.tick != self.world.global.committed_tick {
-                return Err(format!("个人态发布版本滞后：{} != {}", published.tick, self.world.global.committed_tick));
+                return Err(format!(
+                    "个人态发布版本滞后：{} != {}",
+                    published.tick, self.world.global.committed_tick
+                ));
             }
             for shard in &published.groups {
                 for (local, snapshot) in shard.belief.iter() {
                     let owner = (shard.group, *local);
-                    let id = self.account_by_owner(owner)
+                    let id = self
+                        .account_by_owner(owner)
                         .ok_or_else(|| format!("个人态 owner 不在真实名册：{owner:?}"))?;
                     if snapshot.information.owner() != id || snapshot.belief.npc() != id {
                         return Err(format!("个人态属主不匹配：owner={owner:?} account={id:?}"));
@@ -1166,18 +1218,25 @@ impl RuntimeDriver {
         // EveryTick 完整读取全部组；先验证唯一归属，再一次安装镜像。
         let plans = {
             let _seg = step_profile::scope(StepSegment::PlansEcho);
-            let shards = self.world.collect_plans()
+            let shards = self
+                .world
+                .collect_plans()
                 .map_err(|error| format!("计划簿交付投影失败：{error:?}"))?;
             let plans = super::plan_ownership::merge(
-                shards, &self.id_map, self.world.n_groups(),
-                self.accounts_per_group, self.plan_policy,
-            ).map_err(|error| format!("计划簿完整汇合失败：{error:?}"))?;
+                shards,
+                &self.id_map,
+                self.world.n_groups(),
+                self.accounts_per_group,
+                self.plan_policy,
+            )
+            .map_err(|error| format!("计划簿完整汇合失败：{error:?}"))?;
             plans
         };
         let mut touched = Vec::new();
         for trade in &trades {
             for owner in [trade.maker, trade.taker] {
-                let account = self.account_by_owner(owner)
+                let account = self
+                    .account_by_owner(owner)
                     .ok_or_else(|| format!("成交个人裁剪 owner 不在真实名册：{owner:?}"))?;
                 touched.push((self.global_index(owner), account));
             }
@@ -1262,24 +1321,26 @@ impl RuntimeDriver {
             .map(|v| (v.last_price, v.depth_bids.clone(), v.depth_asks.clone()))
             .collect();
         for (idx, (last_price, bids, asks)) in views.into_iter().enumerate() {
-            let code = crate::StockId(u32::try_from(idx).map_err(|_| {
-                format!("PriceTick 生成：股下标 {idx} 超 u32（世界规模越界）")
-            })?);
+            let code = crate::StockId(
+                u32::try_from(idx)
+                    .map_err(|_| format!("PriceTick 生成：股下标 {idx} 超 u32（世界规模越界）"))?,
+            );
             let last = crate::money::Money::from_cents(last_price.max(1));
             // 活动 K：session 侧（install_candles 已装，含 stats）优先；
             // 空拍缺席合成零成交占位（o=h=l=c=last——对齐旧管线
             // checked_mark_candle(None, time, last, 0) 的占位语义）。
-            let daily_candle = session.runtime_active_candle(&code).unwrap_or(
-                crate::session::DailyCandle {
-                    time: candle_time,
-                    open: last,
-                    high: last,
-                    low: last,
-                    close: last,
-                    volume: 0,
-                    trade_stats: Some(Default::default()),
-                },
-            );
+            let daily_candle =
+                session
+                    .runtime_active_candle(&code)
+                    .unwrap_or(crate::session::DailyCandle {
+                        time: candle_time,
+                        open: last,
+                        high: last,
+                        low: last,
+                        close: last,
+                        volume: 0,
+                        trade_stats: Some(Default::default()),
+                    });
             let seq = self.take_event_seq();
             events.push(Event::PriceTick {
                 seq,
@@ -1314,9 +1375,7 @@ impl RuntimeDriver {
 
     /// Q1 发布槽句柄（驱动器侧转发——session/server/测试读者经此取
     /// 一致读点；install_tick 单点发布，load 一次 clone）。
-    pub fn publication(
-        &self,
-    ) -> std::sync::Arc<super::publication::ViewPublication> {
+    pub fn publication(&self) -> std::sync::Arc<super::publication::ViewPublication> {
         self.world.publication()
     }
 
@@ -1501,22 +1560,32 @@ impl RuntimeDriver {
     }
 
     /// Owner(g,l) → AccountId（多组映射；上行消费统一入口）。
-    pub(crate) fn pending_retail_facts(&self) -> (
+    pub(crate) fn pending_retail_facts(
+        &self,
+    ) -> (
         Vec<super::retail_lifecycle::Fact>,
         Vec<(AccountId, crate::StockId, crate::RejectionReason)>,
     ) {
-        (self.pending_retail.clone(), self.pending_retail_rejections.clone())
+        (
+            self.pending_retail.clone(),
+            self.pending_retail_rejections.clone(),
+        )
     }
 
     pub(crate) fn drained_retail_facts(&self) -> Vec<super::retail_lifecycle::Fact> {
         self.world.drained_retail.clone()
     }
 
-    pub(crate) fn take_retail_facts(&mut self) -> (
+    pub(crate) fn take_retail_facts(
+        &mut self,
+    ) -> (
         Vec<super::retail_lifecycle::Fact>,
         Vec<(AccountId, crate::StockId, crate::RejectionReason)>,
     ) {
-        (std::mem::take(&mut self.pending_retail), std::mem::take(&mut self.pending_retail_rejections))
+        (
+            std::mem::take(&mut self.pending_retail),
+            std::mem::take(&mut self.pending_retail_rejections),
+        )
     }
 
     pub(crate) fn take_drained_retail_facts(&mut self) -> Vec<super::retail_lifecycle::Fact> {
@@ -1577,10 +1646,7 @@ impl RuntimeDriver {
     /// 开市股与当日日K逐位对账（量/额/笔/OHLC——对照旧
     /// `validate_bars_against_candle`），休市股强制空桶。组装后
     /// `world.freeze_retained_day`（push+原子重发）+ session 镜像 push。
-    pub fn freeze_retained_trading_day(
-        &mut self,
-        session: &mut GameSession,
-    ) -> Result<(), String> {
+    pub fn freeze_retained_trading_day(&mut self, session: &mut GameSession) -> Result<(), String> {
         self.ensure_session_authority(session)?;
         // B2 复核建议 3：同日二次调用幂等（step ends_day 已冻结后手动
         /// day_end 再入——末条==当日即跳过，防 day-1 bars 冻入 day-2）。
@@ -1661,9 +1727,10 @@ impl RuntimeDriver {
                 continue;
             };
             out.push((
-                crate::StockId(u32::try_from(idx).map_err(|_| {
-                    format!("日结终 K 股下标 {idx} 超 u32（世界规模越界）")
-                })?),
+                crate::StockId(
+                    u32::try_from(idx)
+                        .map_err(|_| format!("日结终 K 股下标 {idx} 超 u32（世界规模越界）"))?,
+                ),
                 crate::session::DailyCandle {
                     time,
                     open: Money::from_cents(k.open),
@@ -1814,7 +1881,9 @@ impl RuntimeDriver {
         }
         self.resting_echo_prev = Some(current.to_vec());
         #[cfg(test)]
-        if let Some(counts) = crate::runtime::drive::RESTING_DELTA_FACE_COUNTS.with(|c| c.borrow().clone()) {
+        if let Some(counts) =
+            crate::runtime::drive::RESTING_DELTA_FACE_COUNTS.with(|c| c.borrow().clone())
+        {
             let mut counts = counts.lock().expect("面计数锁");
             for e in &delta.entries {
                 match e {
@@ -1835,13 +1904,19 @@ impl RuntimeDriver {
     }
 
     /// 只转发本 World 真正提交的原始 Calendar 与历史 source，不从预览重建。
-    pub(crate) fn committed_calendar_tick(&self) -> Result<Option<super::world::CommittedCalendarTick>, String> {
-        self.world.committed_calendar_tick().map_err(|error| error.to_string())
+    pub(crate) fn committed_calendar_tick(
+        &self,
+    ) -> Result<Option<super::world::CommittedCalendarTick>, String> {
+        self.world
+            .committed_calendar_tick()
+            .map_err(|error| error.to_string())
     }
 
     /// 构造或 restore 的日界标记不作已安装收盘证明；必须还有本 authority 的真实末拍。
     pub(crate) fn has_committed_market_close_for_civil(
-        &self, tick: u64, date: crate::calendar::CivilDate,
+        &self,
+        tick: u64,
+        date: crate::calendar::CivilDate,
     ) -> Result<bool, super::RuntimeError> {
         self.world.has_committed_market_close_for_civil(tick, date)
     }
@@ -1854,8 +1929,7 @@ impl RuntimeDriver {
     pub fn world_day_end_for_step(
         &mut self,
         session: &mut GameSession,
-    ) -> Result<Vec<crate::session::personal_trade_history::PendingTradeReceipt>, String>
-    {
+    ) -> Result<Vec<crate::session::personal_trade_history::PendingTradeReceipt>, String> {
         self.ensure_session_authority(session)?;
         self.world
             .run_day_end_public()
@@ -1897,21 +1971,26 @@ impl RuntimeDriver {
             return Ok(Vec::new());
         }
         let mut events = project_trade_events_for_roster(
-                &trades, &self.id_map, self.accounts_per_group, &mut self.next_seq,
-            )?;
+            &trades,
+            &self.id_map,
+            self.accounts_per_group,
+            &mut self.next_seq,
+        )?;
         let trade_count = trades.len() as u64;
         let first_trade_seq = self.next_seq + 1 - trade_count;
-        let mut pending: Vec<
-            crate::session::personal_trade_history::PendingTradeReceipt,
-        > = Vec::with_capacity(trades.len() * 2);
+        let mut pending: Vec<crate::session::personal_trade_history::PendingTradeReceipt> =
+            Vec::with_capacity(trades.len() * 2);
         for (offset, fact) in trades.iter().enumerate() {
             let trade_seq = first_trade_seq + offset as u64;
-            let legs =
-                crate::session::personal_trade_history::PersonalTradeConfirmation::from_legs(
-                    trade_seq, civil_date, fact,
-                );
+            let legs = crate::session::personal_trade_history::PersonalTradeConfirmation::from_legs(
+                trade_seq, civil_date, fact,
+            );
             for (leg_index, confirmation) in legs.into_iter().enumerate() {
-                let owner = if leg_index == 0 { fact.maker } else { fact.taker };
+                let owner = if leg_index == 0 {
+                    fact.maker
+                } else {
+                    fact.taker
+                };
                 let account = self.account_by_owner(owner).ok_or_else(|| {
                     format!(
                         "收盘成交个人确认归户缺口：owner=({},{}) 不在名册（股 {}）",
@@ -1967,9 +2046,7 @@ impl RuntimeDriver {
         self.drained_events.retain(|event| {
             let is_pre_boundary = matches!(
                 event,
-                Event::AuctionTick { .. }
-                    | Event::AuctionCompleted { .. }
-                    | Event::Trade { .. }
+                Event::AuctionTick { .. } | Event::AuctionCompleted { .. } | Event::Trade { .. }
             );
             if is_pre_boundary {
                 out.push(event.clone());
@@ -1986,7 +2063,6 @@ impl RuntimeDriver {
     ) -> Result<(), String> {
         self.install_manual_day_end(session, true)
     }
-
 }
 
 impl RuntimeDriver {
@@ -2040,7 +2116,13 @@ impl RuntimeDriver {
                 ));
                 continue;
             }
-            let crate::Intent::PlaceLimit { code, side, price, qty } = &r.intent else {
+            let crate::Intent::PlaceLimit {
+                code,
+                side,
+                price,
+                qty,
+            } = &r.intent
+            else {
                 // PlaceMarket（sol-103 上报项 2 修复）：此前此处静默
                 // continue——默认翻转后玩家市价单经 step() 被静默丢弃
                 // （铁律二违规）。desk 已完整支持 RoutedPrice::Market
@@ -2049,16 +2131,10 @@ impl RuntimeDriver {
                 let crate::Intent::PlaceMarket { code, side, qty } = &r.intent else {
                     // 词表只剩以上三种（scope_boundary 编译期锚）——
                     // 不可达；防御式显式失败不静默。
-                    return Err(format!(
-                        "外部意图词表外变体（无法路由）：{:?}",
-                        r.intent
-                    ));
+                    return Err(format!("外部意图词表外变体（无法路由）：{:?}", r.intent));
                 };
                 let (g, local) = self.owner_slot(r.owner)?;
-                let upper = upper_limits
-                    .get(code.0 as usize)
-                    .copied()
-                    .unwrap_or(0);
+                let upper = upper_limits.get(code.0 as usize).copied().unwrap_or(0);
                 // D5 组端校验：qty=0 意图路由层拒收（同限价臂）。
                 if *qty == 0 {
                     self.pending_rejections.push((*code, r.owner));
@@ -2077,10 +2153,7 @@ impl RuntimeDriver {
                 continue;
             };
             let (g, local) = self.owner_slot(r.owner)?;
-            let upper = upper_limits
-                .get(code.0 as usize)
-                .copied()
-                .unwrap_or(0);
+            let upper = upper_limits.get(code.0 as usize).copied().unwrap_or(0);
             let (routed, purse_reference) = match price {
                 crate::strategy::LimitPrice::Fixed(p) => {
                     (super::protocol::RoutedPrice::Fixed(p.cents()), p.cents())
@@ -2193,10 +2266,15 @@ impl RuntimeDriver {
     }
 
     #[cfg(test)]
-    fn attention_groups_for_test(&self, ids: &[crate::AccountId]) -> std::collections::BTreeMap<super::GroupIdx, Vec<super::LocalIdx>> {
+    fn attention_groups_for_test(
+        &self,
+        ids: &[crate::AccountId],
+    ) -> std::collections::BTreeMap<super::GroupIdx, Vec<super::LocalIdx>> {
         let mut groups = std::collections::BTreeMap::<super::GroupIdx, Vec<super::LocalIdx>>::new();
         for &id in ids {
-            let (group, local) = self.owner_slot(id).unwrap_or_else(|error| panic!("注意力注入归属失败：{error}"));
+            let (group, local) = self
+                .owner_slot(id)
+                .unwrap_or_else(|error| panic!("注意力注入归属失败：{error}"));
             groups.entry(group).or_default().push(local);
         }
         groups
@@ -2215,9 +2293,9 @@ impl RuntimeDriver {
     pub fn collect_retail_traces(
         &mut self,
     ) -> Result<Vec<Vec<crate::session::RetailDecisionTrace>>, super::protocol::RuntimeError> {
-        self.world.collect_retail_traces().map(|collected| {
-            collected.into_iter().map(|(_, traces)| traces).collect()
-        })
+        self.world
+            .collect_retail_traces()
+            .map(|collected| collected.into_iter().map(|(_, traces)| traces).collect())
     }
 
     /// Owner(g, l) → 全局名册下标（多组映射基；单组 g=0 时退化为 l）。
@@ -2234,23 +2312,42 @@ impl RuntimeDriver {
     }
 
     /// 先选择真实来源并认证；版本 shortcut 不能隐藏非法静点，也不制造本人观察。
-    fn prepare_delivery_clock(&self, session: &GameSession) -> Result<(
-        super::InformationClockContext,
-        Arc<std::collections::BTreeMap<crate::StockId, crate::observation::information_clock::InformationTradingAnchor>>,
-    ), String> {
+    fn prepare_delivery_clock(
+        &self,
+        session: &GameSession,
+    ) -> Result<
+        (
+            super::InformationClockContext,
+            Arc<
+                std::collections::BTreeMap<
+                    crate::StockId,
+                    crate::observation::information_clock::InformationTradingAnchor,
+                >,
+            >,
+        ),
+        String,
+    > {
         self.ensure_session_authority(session)?;
         if self.world_committed_tick() < session.tick() {
-            return Err("INFO World tick 落后 Session，不能冒充已提交市场拍后的领先来源".to_owned());
+            return Err(
+                "INFO World tick 落后 Session，不能冒充已提交市场拍后的领先来源".to_owned(),
+            );
         }
         let clock = if self.world_committed_tick() == session.tick() {
-            super::InformationClockContext::from_session(session).map_err(|error| error.to_string())?
+            super::InformationClockContext::from_session(session)
+                .map_err(|error| error.to_string())?
         } else {
-            let record = self.world.committed_calendar_tick().map_err(|error| error.to_string())?
+            let record = self
+                .world
+                .committed_calendar_tick()
+                .map_err(|error| error.to_string())?
                 .ok_or_else(|| "World 领先 Session 的 INFO 缺少真实已提交 TickArc".to_owned())?;
             super::InformationClockContext::after_committed(record)
         };
         let anchors = Arc::new(clock.anchors().map_err(|error| error.to_string())?);
-        self.world.validate_information_clock(&clock, clock.cutoff(), &anchors).map_err(|error| error.to_string())?;
+        self.world
+            .validate_information_clock(&clock, clock.cutoff(), &anchors)
+            .map_err(|error| error.to_string())?;
         Ok((clock, anchors))
     }
 
@@ -2258,7 +2355,9 @@ impl RuntimeDriver {
     /// 推进；回写**仅 information 域**——权威调和见设计注记）。
     /// 返回回写条数。
     pub fn deliver_information(&mut self, session: &mut GameSession) -> Result<usize, String> {
-        session.require_healthy().map_err(|fatal| fatal.to_string())?;
+        session
+            .require_healthy()
+            .map_err(|fatal| fatal.to_string())?;
         let (version, library) = session.runtime_library_handle();
         let (clock, anchors) = self.prepare_delivery_clock(session)?;
         if Some(version) == self.last_library_version {
@@ -2275,7 +2374,9 @@ impl RuntimeDriver {
         &mut self,
         session: &mut GameSession,
     ) -> Result<usize, String> {
-        session.require_healthy().map_err(|fatal| fatal.to_string())?;
+        session
+            .require_healthy()
+            .map_err(|fatal| fatal.to_string())?;
         let (version, library) = session.runtime_library_handle();
         let (clock, anchors) = self.prepare_delivery_clock(session)?;
         let updates = self.collect_delivery(session, library, clock, anchors)?;
@@ -2291,7 +2392,12 @@ impl RuntimeDriver {
         session: &GameSession,
         library: std::sync::Arc<crate::information::PublicLibrary>,
         clock: super::InformationClockContext,
-        as_of_anchors: Arc<std::collections::BTreeMap<crate::StockId, crate::observation::information_clock::InformationTradingAnchor>>,
+        as_of_anchors: Arc<
+            std::collections::BTreeMap<
+                crate::StockId,
+                crate::observation::information_clock::InformationTradingAnchor,
+            >,
+        >,
     ) -> Result<Vec<(crate::AccountId, crate::session::NpcAttentionState)>, String> {
         let now = clock.cutoff();
         let attentions_full = session.runtime_attention_full_states();
@@ -2299,7 +2405,8 @@ impl RuntimeDriver {
             attentions_full.into_iter().collect();
         let mut attentions = vec![Vec::new(); self.world.n_groups()];
         for (global, id) in self.id_map.iter().enumerate() {
-            let account = session.account(*id)
+            let account = session
+                .account(*id)
                 .ok_or_else(|| format!("信息投递名册账户缺失：{id:?}"))?;
             let strategy = account.strategy();
             let required = strategy.is_some_and(|strategy| {
@@ -2307,7 +2414,9 @@ impl RuntimeDriver {
             });
             if !session.runtime_has_belief_participant(*id) {
                 if required {
-                    return Err(format!("信息投递实际策略要求个人态但 participant 缺失：{id:?}"));
+                    return Err(format!(
+                        "信息投递实际策略要求个人态但 participant 缺失：{id:?}"
+                    ));
                 }
                 // 无个人信息能力的真实账户不属于投递名册；不是缺少 attention 的 fallback。
                 continue;
@@ -2315,9 +2424,13 @@ impl RuntimeDriver {
             if strategy.is_none() {
                 return Err(format!("信息投递 participant 存在但无实际策略：{id:?}"));
             }
-            let state = by_id.get(id)
+            let state = by_id
+                .get(id)
                 .ok_or_else(|| format!("信息投递 participant 缺 attention：{id:?}"))?;
-            let (group, local) = (global / self.accounts_per_group, global % self.accounts_per_group);
+            let (group, local) = (
+                global / self.accounts_per_group,
+                global % self.accounts_per_group,
+            );
             attentions[group].push((local as super::LocalIdx, *id, state.clone()));
         }
         let payload = super::world::GroupInformationPayload {
@@ -2374,8 +2487,13 @@ impl RuntimeDriver {
     /// P2-1a：随附 dirty 掩码（读面一般忽略；同源校验可用）。
     pub fn collect_belief(
         &self,
-    ) -> Result<Vec<(super::GroupIdx, Vec<Option<super::world::BeliefParticipantSnapshot>>)>, String>
-    {
+    ) -> Result<
+        Vec<(
+            super::GroupIdx,
+            Vec<Option<super::world::BeliefParticipantSnapshot>>,
+        )>,
+        String,
+    > {
         // P2-2a：读面不经组线程（上行已稀疏化）——由增量缓存承载
         //（构造期投影基线+每 tick dirty 增量合并，与组端权威同源）。
         let per = self.accounts_per_group.max(1);
@@ -2383,7 +2501,11 @@ impl RuntimeDriver {
             .map(|g| {
                 (
                     g as super::GroupIdx,
-                    self.belief_cache[g * per..].iter().take(per).cloned().collect(),
+                    self.belief_cache[g * per..]
+                        .iter()
+                        .take(per)
+                        .cloned()
+                        .collect(),
                 )
             })
             .collect())
@@ -2413,9 +2535,7 @@ impl RuntimeDriver {
     pub fn published_belief_shard_for_test(
         &self,
         group: super::GroupIdx,
-    ) -> std::sync::Arc<
-        Vec<(super::LocalIdx, super::world::BeliefParticipantSnapshot)>,
-    > {
+    ) -> std::sync::Arc<Vec<(super::LocalIdx, super::world::BeliefParticipantSnapshot)>> {
         let published = self.world.publication().load();
         published.groups[group as usize].belief.clone()
     }
@@ -2425,7 +2545,9 @@ impl RuntimeDriver {
     pub fn collect_plans(
         &mut self,
     ) -> Result<Vec<(super::GroupIdx, crate::plans::PlanBook)>, String> {
-        self.world.collect_plans().map_err(|e| format!("计划簿收集失败：{e:?}"))
+        self.world
+            .collect_plans()
+            .map_err(|e| format!("计划簿收集失败：{e:?}"))
     }
 
     /// 保留 EchoPlans 的 dirty 诊断读面；EveryTick 完整交付使用 collect_plans。
@@ -2494,7 +2616,13 @@ impl RuntimeDriver {
 
     /// 消费本拍 sideband；report_log 不再永久保存第二份诊断历史。
     #[cfg(feature = "simulation-diagnostics")]
-    pub(crate) fn take_causal_facts(&mut self) -> (Vec<super::diagnostics::DeskCausalFact>, Option<crate::diagnostics::causal::FactTime>, std::collections::BTreeMap<crate::StockId, u64>) {
+    pub(crate) fn take_causal_facts(
+        &mut self,
+    ) -> (
+        Vec<super::diagnostics::DeskCausalFact>,
+        Option<crate::diagnostics::causal::FactTime>,
+        std::collections::BTreeMap<crate::StockId, u64>,
+    ) {
         let mut facts = std::mem::take(&mut self.pending_causal);
         let (mut drained, time, clocks) = self.take_drain_causal_facts();
         facts.append(&mut drained);
@@ -2581,7 +2709,8 @@ impl RuntimeDriver {
         assessments: std::collections::BTreeMap<crate::StockId, crate::plans::CandidateAssessment>,
     ) {
         let group = self.plan_group_for_test(account);
-        self.world.inject_review_assessments_for_test(group, account, assessments);
+        self.world
+            .inject_review_assessments_for_test(group, account, assessments);
     }
 
     /// D3b 件 4 fixture 通道（cfg(test)）：组簿测试变换按 owner 下行所属组（手工
@@ -2598,7 +2727,10 @@ impl RuntimeDriver {
 
     #[cfg(test)]
     fn plan_group_for_test(&self, owner: crate::AccountId) -> super::GroupIdx {
-        let index = self.id_map.iter().position(|&id| id == owner)
+        let index = self
+            .id_map
+            .iter()
+            .position(|&id| id == owner)
             .unwrap_or_else(|| panic!("PlanWriterOwnershipViolation：注入owner={owner:?}不在名册"));
         (index / self.accounts_per_group) as super::GroupIdx
     }
@@ -2606,12 +2738,9 @@ impl RuntimeDriver {
     /// D3b 件 4 fixture 通道（cfg(test)）：观察基分钟序列注入下行组 0
     ///（set_urgency_minutes 的组内等价）。
     #[cfg(test)]
-    pub fn inject_observation_minutes_for_test(
-        &mut self,
-        stock: u16,
-        minutes: Vec<(u64, i64)>,
-    ) {
-        self.world.inject_observation_minutes_for_test(stock, minutes);
+    pub fn inject_observation_minutes_for_test(&mut self, stock: u16, minutes: Vec<(u64, i64)>) {
+        self.world
+            .inject_observation_minutes_for_test(stock, minutes);
     }
 
     /// D3b 件 4 fixture 通道（cfg(test)）：belief 簿测试变换下行组 0
@@ -2639,7 +2768,6 @@ impl RuntimeDriver {
     ) -> Result<Vec<Event>, crate::session::StepFatal> {
         session.step_with_external_runtime_driver(self)
     }
-
 }
 
 impl RuntimeDriver {
@@ -2716,9 +2844,8 @@ impl RuntimeDriver {
             // 追加 desk 本日新增段（旧管线=owner 补丁"先验逐字节保留+
             // 追加段=本 tick 收盘价"；此前整值替换丢先验）。跨日由
             // 日结清会话侧历史对齐（desk roll_day 清、键带当日偏移）。
-            let mut merged: Vec<crate::observation::MarketMinuteClose> = session
-                .runtime_minute_history(&code)
-                .to_vec();
+            let mut merged: Vec<crate::observation::MarketMinuteClose> =
+                session.runtime_minute_history(&code).to_vec();
             let skip = merged.len();
             for &(minute, c) in view.minute_closes.iter().skip(skip) {
                 merged.push(crate::observation::MarketMinuteClose {
@@ -2732,12 +2859,15 @@ impl RuntimeDriver {
             /// 当日桶直到日结冻结后清——desk 列表恒为镜像尾部延续；
             /// 镜像内不再重建整 Vec——性能配对归因项：每 tick 全量
             /// 重建曾占 ~100μs/tick）。
-            let skip_bars = session
-                .runtime_minute_bars(&code)
-                .len();
+            let skip_bars = session.runtime_minute_bars(&code).len();
             session.runtime_append_minute_bars(
                 &code,
-                &view.minute_bars.iter().skip(skip_bars).copied().collect::<Vec<_>>(),
+                &view
+                    .minute_bars
+                    .iter()
+                    .skip(skip_bars)
+                    .copied()
+                    .collect::<Vec<_>>(),
             );
         }
         // P1-10（Sol）：注意力候选真实写回——组线程 next_due 是调度
@@ -2860,9 +2990,7 @@ impl RuntimeDriver {
             /// session 侧已有当日活动 K（time 匹配——真实终态，日终迁移
             /// commit_active 的唯一归档输入）时跳过安装，否则真实量/
             /// 额/笔被零值整体覆盖归档（W3 接线实证缺陷）。
-            let view_is_placeholder = view
-                .daily_active
-                .is_none_or(|(_, _, _, _, v)| v == 0);
+            let view_is_placeholder = view.daily_active.is_none_or(|(_, _, _, _, v)| v == 0);
             if view_is_placeholder && !active_must_be_empty && !post_day_end {
                 let existing = session.runtime_active_candle(&code);
                 let placeholder_needed = existing
@@ -2893,7 +3021,11 @@ impl RuntimeDriver {
                 // 旋钮 1（cfg(test) 突变判别）：close 篡改 +1 分——判别
                 /// 安装数据源真为发布版本读路径（合同 1 负控）。
                 #[cfg(test)]
-                let c = if self.candle_knob_tamper_active { c + 1 } else { c };
+                let c = if self.candle_knob_tamper_active {
+                    c + 1
+                } else {
+                    c
+                };
                 // 旋钮 2：turnover 置 0——判别 stats 2 字段贯通。
                 #[cfg(test)]
                 let turnover = if self.candle_knob_drop_turnover {
@@ -3148,7 +3280,8 @@ pub(crate) fn admin_treasury_bindings_from_session(
     }
     let mut treasury = None;
     for (index, account) in ids.iter().enumerate() {
-        let actual = session.account(*account)
+        let actual = session
+            .account(*account)
             .ok_or_else(|| format!("专户 binding 名册账户不存在：{account:?}"))?;
         if actual.kind() == crate::AccountKind::IssuerRepurchase {
             if treasury.replace((index, *account)).is_some() {
@@ -3156,24 +3289,39 @@ pub(crate) fn admin_treasury_bindings_from_session(
             }
         }
     }
-    let Some((index, account)) = treasury else { return Ok(Vec::new()); };
+    let Some((index, account)) = treasury else {
+        return Ok(Vec::new());
+    };
     let owner = (
         super::GroupIdx::try_from(index / accounts_per_group)
             .map_err(|_| "专户 binding group 溢出")?,
         super::LocalIdx::try_from(index % accounts_per_group)
             .map_err(|_| "专户 binding local 溢出")?,
     );
-    let catalog = session.export_setup_for_runtime().stock_catalog()
+    let catalog = session
+        .export_setup_for_runtime()
+        .stock_catalog()
         .map_err(|error| format!("专户 binding 股票目录无效：{error}"))?;
-    let system = session.company_system()
+    let system = session
+        .company_system()
         .ok_or_else(|| "专户 binding 缺少实际 CompanySystem".to_owned())?;
-    catalog.iter().map(|(stock, meta)| {
-        let issuer = system.issuers().issuer_of(&crate::StockCode(meta.code.clone()))
-            .ok_or_else(|| format!("专户 binding 股票缺少发行人：{stock:?}"))?;
-        let stock = super::StockIdx::try_from(stock.0)
-            .map_err(|_| "专户 binding stock 溢出")?;
-        Ok(super::protocol::AdminTreasuryBinding { owner, account, issuer, stock })
-    }).collect()
+    catalog
+        .iter()
+        .map(|(stock, meta)| {
+            let issuer = system
+                .issuers()
+                .issuer_of(&crate::StockCode(meta.code.clone()))
+                .ok_or_else(|| format!("专户 binding 股票缺少发行人：{stock:?}"))?;
+            let stock =
+                super::StockIdx::try_from(stock.0).map_err(|_| "专户 binding stock 溢出")?;
+            Ok(super::protocol::AdminTreasuryBinding {
+                owner,
+                account,
+                issuer,
+                stock,
+            })
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -3186,8 +3334,13 @@ impl RuntimeDriver {
     /// E1 生产接线首红读面；返回真实覆盖表数量与私有输入序号。
     #[cfg(test)]
     fn pending_sync_inputs_for_test(&self) -> (usize, usize, usize, bool, u64) {
-        (self.sync_inputs.accounts().len(), self.sync_inputs.beliefs().len(),
-         self.sync_inputs.attentions().len(), self.sync_inputs.plans_pending(), self.sync_source_seq)
+        (
+            self.sync_inputs.accounts().len(),
+            self.sync_inputs.beliefs().len(),
+            self.sync_inputs.attentions().len(),
+            self.sync_inputs.plans_pending(),
+            self.sync_source_seq,
+        )
     }
 }
 
@@ -3195,9 +3348,29 @@ impl RuntimeDriver {
     #[cfg(all(test, not(target_arch = "wasm32")))]
     fn pending_sync_values_for_test(&self) -> sync_input_tests::SyncValuesForTest {
         sync_input_tests::SyncValuesForTest {
-            accounts: self.sync_inputs.accounts().iter().map(|(owner, row)| ((owner.group, owner.local), std::sync::Arc::clone(&row.value))).collect(),
-            personals: self.sync_inputs.beliefs().iter().map(|(owner, row)| ((owner.group, owner.local), row.value.clone())).collect(),
-            attentions: self.sync_inputs.attentions().iter().map(|(owner, row)| ((owner.group, owner.local), row.value)).collect(),
+            accounts: self
+                .sync_inputs
+                .accounts()
+                .iter()
+                .map(|(owner, row)| {
+                    (
+                        (owner.group, owner.local),
+                        std::sync::Arc::clone(&row.value),
+                    )
+                })
+                .collect(),
+            personals: self
+                .sync_inputs
+                .beliefs()
+                .iter()
+                .map(|(owner, row)| ((owner.group, owner.local), row.value.clone()))
+                .collect(),
+            attentions: self
+                .sync_inputs
+                .attentions()
+                .iter()
+                .map(|(owner, row)| ((owner.group, owner.local), row.value))
+                .collect(),
         }
     }
 }

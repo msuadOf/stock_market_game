@@ -213,8 +213,14 @@ fn state_09_real_legacy_operations_rejects_unknown_fields() {
 fn state_10_legacy_nullable_facts_are_required_fields() {
     for field in ["next_expected", "history"] {
         let mut value = serde_json::to_value(legacy_state().save()).unwrap();
-        value["LegacyOperations"]["operations"].as_object_mut().unwrap().remove(field);
-        assert!(serde_json::from_value::<SavedSessionCompanies>(value).is_err(), "缺少 {field}");
+        value["LegacyOperations"]["operations"]
+            .as_object_mut()
+            .unwrap()
+            .remove(field);
+        assert!(
+            serde_json::from_value::<SavedSessionCompanies>(value).is_err(),
+            "缺少 {field}"
+        );
     }
 }
 

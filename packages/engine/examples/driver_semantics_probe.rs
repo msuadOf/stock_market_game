@@ -22,9 +22,7 @@ use std::{collections::BTreeMap, env, fs, time::Instant};
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<_> = env::args().skip(1).collect();
     let [setup_path, ticks, groups] = args.as_slice() else {
-        return Err(
-            "用法：driver_semantics_probe <setup.json> <ticks> <runtime_groups>".into(),
-        );
+        return Err("用法：driver_semantics_probe <setup.json> <ticks> <runtime_groups>".into());
     };
     let setup: SessionSetup = serde_json::from_slice(&fs::read(setup_path)?)?;
     let ticks: u64 = ticks.parse()?;
@@ -40,12 +38,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut game = GameSession::new_with_runtime_groups(setup, 42, groups)?;
         let accounts_initial: Vec<_> = (0..game.account_count() as u64)
             .map(|i| {
-                let acct = game
-                    .account(engine::AccountId(i))
-                    .expect("名册账户必在");
+                let acct = game.account(engine::AccountId(i)).expect("名册账户必在");
                 (
                     acct.cash().cents(),
-                    acct.positions().values().map(|p| p.qty() as i64).sum::<i64>(),
+                    acct.positions()
+                        .values()
+                        .map(|p| p.qty() as i64)
+                        .sum::<i64>(),
                 )
             })
             .collect();
@@ -62,7 +61,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         for _ in 0..ticks {
             loop {
                 let t0 = std::time::Instant::now();
-                let due_now = game.day() == game.civil_clock().completed_trading_sessions_expected()?;
+                let due_now =
+                    game.day() == game.civil_clock().completed_trading_sessions_expected()?;
                 civil_ns += t0.elapsed().as_nanos();
                 if !due_now {
                     break;
@@ -96,7 +96,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             // 注意：market_install 内嵌 attention_heap；step_outer 内嵌
             // 全部子段（完整 step wall）——占比按"去嵌套分母"解释。
             eprintln!("--- step 分段画像（累计 ns / 次 / 占分段和比例）---");
-            let nested = ["attention_heap", "step_outer", "driver_step", "belief_collect", "envelope_collect"];
+            let nested = [
+                "attention_heap",
+                "step_outer",
+                "driver_step",
+                "belief_collect",
+                "envelope_collect",
+            ];
             let net_total: u128 = total_ns
                 - ledger
                     .iter()
@@ -127,7 +133,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         for i in 0..game.account_count() as u64 {
             let acct = game.account(engine::AccountId(i)).expect("名册账户必在");
             cash_final += acct.cash().cents();
-            shares_final += acct.positions().values().map(|p| p.qty() as i64).sum::<i64>();
+            shares_final += acct
+                .positions()
+                .values()
+                .map(|p| p.qty() as i64)
+                .sum::<i64>();
         }
         let cash_initial: i64 = accounts_initial.iter().map(|(c, _)| *c).sum();
         let shares_initial: i64 = accounts_initial.iter().map(|(_, s)| *s).sum();

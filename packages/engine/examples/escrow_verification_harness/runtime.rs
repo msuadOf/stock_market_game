@@ -1101,7 +1101,9 @@ mod tests {
     fn public_payload_probe_uses_real_identities_and_negative_controls_diverge() {
         let capture = committed::capture_runtime(
             43,
-            engine::ComputeContext::shared_default().map_err(|error| error.to_string()).unwrap(),
+            engine::ComputeContext::shared_default()
+                .map_err(|error| error.to_string())
+                .unwrap(),
         )
         .unwrap();
         let rows = collector_rows(&capture).unwrap();

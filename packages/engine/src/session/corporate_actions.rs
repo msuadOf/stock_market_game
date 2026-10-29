@@ -46,7 +46,8 @@ pub struct SessionCorporateActions {
     pub rejected_rights_subscriptions: Vec<RejectedRightsSubscription>,
     pub issuer_repurchases: Vec<crate::company::issuer_repurchase::IssuerRepurchaseBook>,
     /// 唯一公司 event 与实际计划、已提交资金来源的严格关联；旧档缺失时拒绝。
-    pub repurchase_execution_bindings: Vec<crate::company::issuer_repurchase::RepurchaseExecutionBinding>,
+    pub repurchase_execution_bindings:
+        Vec<crate::company::issuer_repurchase::RepurchaseExecutionBinding>,
     pub account_gross_receipts: Vec<AccountDividendGrossReceipt>,
     pub external_receipts: Vec<ExternalDividendReceipt>,
     pub applied_ex_reference_groups: Vec<AppliedExReferenceGroup>,

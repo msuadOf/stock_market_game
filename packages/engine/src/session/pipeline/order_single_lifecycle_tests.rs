@@ -19,9 +19,7 @@ use super::{
     IntentCandidateKey, PhaseInput, StepFatal,
 };
 use crate::session::npc_working_quote_tests::quote_setup;
-use crate::{
-    AccountId, GameSession, Intent, LimitPrice, Money, Order, OrderId, Side, StockId,
-};
+use crate::{AccountId, GameSession, Intent, LimitPrice, Money, Order, OrderId, Side, StockId};
 
 fn resting(side: Side, id: OrderId, owner: AccountId) -> Order {
     Order {
@@ -59,10 +57,7 @@ fn game_with_resting(side: Side) -> GameSession {
 #[test]
 fn envelope_draft_places_book_order_via_single_typed_constructor() {
     let game = GameSession::new(quote_setup(0), 42).unwrap();
-    let plan = super::plan_tick(PhaseInput {
-        session: &game,
-    })
-    .unwrap();
+    let plan = super::plan_tick(PhaseInput { session: &game }).unwrap();
     let batch = IntentCandidateBatch::new(vec![IntentCandidate::new(
         IntentCandidateKey::player(0),
         AccountId(0),
@@ -143,7 +138,12 @@ fn tampered_ledger_audit_for_unchanged_order_is_caught_at_capture() {
     let cursor = game.state.envelope_ledger.next_receipt_index();
     game.state.envelope_ledger = EnvelopeLedger::new(
         cursor,
-        [Envelope::tick_start_existing(key, live.cash, live.shares, tampered)],
+        [Envelope::tick_start_existing(
+            key,
+            live.cash,
+            live.shares,
+            tampered,
+        )],
     )
     .unwrap();
 

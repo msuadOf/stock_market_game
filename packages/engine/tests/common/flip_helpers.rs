@@ -279,8 +279,8 @@ pub fn assert_order_event_invariants(events: &[Event]) {
 #[cfg(test)]
 mod closure_tests {
     use super::assert_order_event_invariants;
-    use engine::{Event, Money, OrderId, StockId, AccountId};
     use engine::orderbook::Side;
+    use engine::{AccountId, Event, Money, OrderId, StockId};
 
     fn accept(seq: u64, id: u64, rem: u32) -> Event {
         Event::OrderAccepted {
@@ -316,7 +316,10 @@ mod closure_tests {
             cancel(4, 1, 100),
         ];
         let result = std::panic::catch_unwind(|| assert_order_event_invariants(&events));
-        assert!(result.is_err(), "同 id 双撤单必须被闭环断言拒绝（Sol 反例）");
+        assert!(
+            result.is_err(),
+            "同 id 双撤单必须被闭环断言拒绝（Sol 反例）"
+        );
     }
 
     // 正例：每张受理单恰一条撤单（无成交场景）——聚合差 0 ≤ 触碰 0。

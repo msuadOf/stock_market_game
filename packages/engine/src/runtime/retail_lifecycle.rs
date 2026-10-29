@@ -314,7 +314,10 @@ pub(crate) mod cost_probe {
     pub(crate) struct Arm;
     impl Arm {
         pub(crate) fn new() -> Self {
-            STATE.with(|state| { assert!(state.borrow().is_none()); *state.borrow_mut() = Some(Vec::new()); });
+            STATE.with(|state| {
+                assert!(state.borrow().is_none());
+                *state.borrow_mut() = Some(Vec::new());
+            });
             Self
         }
         pub(crate) fn take(self) -> Vec<Observation> {
@@ -322,19 +325,44 @@ pub(crate) mod cost_probe {
         }
     }
     impl Drop for Arm {
-        fn drop(&mut self) { STATE.with(|state| *state.borrow_mut() = None); }
+        fn drop(&mut self) {
+            STATE.with(|state| *state.borrow_mut() = None);
+        }
     }
-    pub(super) fn begin(raw_len: usize, raw_capacity: usize, context: BatchContext)
-        -> Option<(Instant, usize, usize, BatchContext)> {
-        STATE.with(|state| state.borrow().as_ref().map(|_| (Instant::now(), raw_len, raw_capacity, context)))
+    pub(super) fn begin(
+        raw_len: usize,
+        raw_capacity: usize,
+        context: BatchContext,
+    ) -> Option<(Instant, usize, usize, BatchContext)> {
+        STATE.with(|state| {
+            state
+                .borrow()
+                .as_ref()
+                .map(|_| (Instant::now(), raw_len, raw_capacity, context))
+        })
     }
-    pub(super) fn finish(input: Option<(Instant, usize, usize, BatchContext)>, len: usize, capacity: usize) {
+    pub(super) fn finish(
+        input: Option<(Instant, usize, usize, BatchContext)>,
+        len: usize,
+        capacity: usize,
+    ) {
         if let Some((start, raw_len, raw_capacity, context)) = input {
-            STATE.with(|state| state.borrow_mut().as_mut().expect("观测期间必须保持 arm").push(Observation {
-                context, raw_len, raw_capacity, resolved_len:len, resolved_capacity:capacity,
-                raw_element_bytes:std::mem::size_of::<RawFact>(),
-                resolved_element_bytes:std::mem::size_of::<Fact>(), elapsed_ns:start.elapsed().as_nanos(),
-            }));
+            STATE.with(|state| {
+                state
+                    .borrow_mut()
+                    .as_mut()
+                    .expect("观测期间必须保持 arm")
+                    .push(Observation {
+                        context,
+                        raw_len,
+                        raw_capacity,
+                        resolved_len: len,
+                        resolved_capacity: capacity,
+                        raw_element_bytes: std::mem::size_of::<RawFact>(),
+                        resolved_element_bytes: std::mem::size_of::<Fact>(),
+                        elapsed_ns: start.elapsed().as_nanos(),
+                    })
+            });
         }
     }
 }

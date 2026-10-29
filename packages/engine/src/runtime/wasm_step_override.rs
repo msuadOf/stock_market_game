@@ -31,8 +31,14 @@ mod tests {
             Ok(()),
             "OVERRIDE_FIRST_TRUE_SET"
         );
-        assert!(step_runtime_override_enabled(&override_lock), "OVERRIDE_TRUE_READ");
-        assert!(step_runtime_override_enabled(&override_lock), "OVERRIDE_TRUE_READ_STABLE");
+        assert!(
+            step_runtime_override_enabled(&override_lock),
+            "OVERRIDE_TRUE_READ"
+        );
+        assert!(
+            step_runtime_override_enabled(&override_lock),
+            "OVERRIDE_TRUE_READ_STABLE"
+        );
     }
 
     #[test]
@@ -44,8 +50,14 @@ mod tests {
             Ok(()),
             "OVERRIDE_FIRST_FALSE_SET"
         );
-        assert!(!step_runtime_override_enabled(&override_lock), "OVERRIDE_FALSE_READ");
-        assert!(!step_runtime_override_enabled(&override_lock), "OVERRIDE_FALSE_READ_STABLE");
+        assert!(
+            !step_runtime_override_enabled(&override_lock),
+            "OVERRIDE_FALSE_READ"
+        );
+        assert!(
+            !step_runtime_override_enabled(&override_lock),
+            "OVERRIDE_FALSE_READ_STABLE"
+        );
     }
 
     #[test]
@@ -67,14 +79,20 @@ mod tests {
             Err("step runtime override 已设置或已读取"),
             "OVERRIDE_REPEAT_FALSE_REJECTED"
         );
-        assert!(step_runtime_override_enabled(&override_lock), "OVERRIDE_REPEAT_VALUE_PRESERVED");
+        assert!(
+            step_runtime_override_enabled(&override_lock),
+            "OVERRIDE_REPEAT_VALUE_PRESERVED"
+        );
     }
 
     #[test]
     fn 首次读取缺省_false_后迟到设置_true_或_false_均拒绝且保持_false() {
         let override_lock = OnceLock::new();
 
-        assert!(!step_runtime_override_enabled(&override_lock), "OVERRIDE_DEFAULT_FALSE");
+        assert!(
+            !step_runtime_override_enabled(&override_lock),
+            "OVERRIDE_DEFAULT_FALSE"
+        );
         assert!(
             set_step_runtime_override(&override_lock, true).is_err(),
             "OVERRIDE_LATE_TRUE_REJECTED"
@@ -83,6 +101,9 @@ mod tests {
             set_step_runtime_override(&override_lock, false).is_err(),
             "OVERRIDE_LATE_FALSE_REJECTED"
         );
-        assert!(!step_runtime_override_enabled(&override_lock), "OVERRIDE_LATE_VALUE_PRESERVED");
+        assert!(
+            !step_runtime_override_enabled(&override_lock),
+            "OVERRIDE_LATE_VALUE_PRESERVED"
+        );
     }
 }

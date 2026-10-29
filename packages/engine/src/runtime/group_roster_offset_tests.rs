@@ -41,9 +41,7 @@ fn grouped_world(n_groups: usize, inst_count: u32) -> (GameSession, RuntimeDrive
 
 /// 推进一拍（会话锁步：步进 + 行情/K 安装——与 d3a2c 红证同式）。
 fn advance_one_tick(session: &mut GameSession, driver: &mut RuntimeDriver) {
-    driver
-        .step_frame_equivalent(session)
-        .expect("步进");
+    driver.step_frame_equivalent(session).expect("步进");
     driver.install_market_views(session).expect("行情安装");
     driver.install_candles(session).expect("K 安装");
 }

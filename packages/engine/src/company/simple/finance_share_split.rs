@@ -21,24 +21,17 @@ use super::*;
 impl SimpleFinanceState {
     pub fn share_split_facts(
         &self,
-    ) -> Result<Vec<crate::company::share_split::ShareSplitFinanceFact>, SimpleFinanceError>
-    {
+    ) -> Result<Vec<crate::company::share_split::ShareSplitFinanceFact>, SimpleFinanceError> {
         Ok(self.share_splits.values().cloned().collect())
     }
 
     /// 当前每股面值权威：最近的拆股／缩股声明重锚其后沿用；无重新计值事实时
     /// 沿用送转 bind-once 面值（送转声明须彼此一致，不一致返回 `None` 由调用方
     /// 显式处理，不静默取第一个）。
-    pub fn current_par_value(
-        &self,
-    ) -> Result<Option<crate::money::Money>, SimpleFinanceError> {
-        if let Some(latest) = self
-            .share_splits
-            .values()
-            .max_by(|left, right| {
-                (left.approved_on, &left.event_id).cmp(&(right.approved_on, &right.event_id))
-            })
-        {
+    pub fn current_par_value(&self) -> Result<Option<crate::money::Money>, SimpleFinanceError> {
+        if let Some(latest) = self.share_splits.values().max_by(|left, right| {
+            (left.approved_on, &left.event_id).cmp(&(right.approved_on, &right.event_id))
+        }) {
             return Ok(Some(latest.par_value_after));
         }
         let mut pars = self
@@ -173,21 +166,20 @@ impl SimpleFinanceState {
                     || after_cents != before_cents / (declaration.ratio as i64)
                 {
                     return Err(SimpleFinanceError::ShareSplitInvalid(
-                        "拆股面值必须按整数比例整除缩小（面值×股本守恒，注册资本不变）"
-                            .into(),
+                        "拆股面值必须按整数比例整除缩小（面值×股本守恒，注册资本不变）".into(),
                     ));
                 }
             }
             ShareSplitDirection::Consolidate => {
-                if after_cents != before_cents
-                    .checked_mul(declaration.ratio as i64)
-                    .ok_or_else(|| {
-                        SimpleFinanceError::ShareSplitInvalid("缩股面值溢出".into())
-                    })?
+                if after_cents
+                    != before_cents
+                        .checked_mul(declaration.ratio as i64)
+                        .ok_or_else(|| {
+                            SimpleFinanceError::ShareSplitInvalid("缩股面值溢出".into())
+                        })?
                 {
                     return Err(SimpleFinanceError::ShareSplitInvalid(
-                        "缩股面值必须按整数比例放大（面值×股本近似守恒，碎股面值核减）"
-                            .into(),
+                        "缩股面值必须按整数比例放大（面值×股本近似守恒，碎股面值核减）".into(),
                     ));
                 }
             }
@@ -253,11 +245,12 @@ impl SimpleFinanceState {
             // 拆股：股数必须精确放大 ratio 倍。
             match fact.direction {
                 crate::company::share_split::ShareSplitDirection::Split => {
-                    let expected = issued_shares_before
-                        .checked_mul(fact.ratio)
-                        .ok_or_else(|| {
-                            SimpleFinanceError::ShareSplitInvalid("拆股股数溢出".into())
-                        })?;
+                    let expected =
+                        issued_shares_before
+                            .checked_mul(fact.ratio)
+                            .ok_or_else(|| {
+                                SimpleFinanceError::ShareSplitInvalid("拆股股数溢出".into())
+                            })?;
                     if issued_shares_after != expected {
                         return Err(SimpleFinanceError::ShareSplitInvalid(format!(
                             "拆股事件 {event_id} 的入账股数与比例换算不一致"
@@ -273,11 +266,9 @@ impl SimpleFinanceState {
         }
         let destroyed = match fact.direction {
             crate::company::share_split::ShareSplitDirection::Split => 0,
-            crate::company::share_split::ShareSplitDirection::Consolidate => {
-                issued_shares_before.checked_sub(issued_shares_after).ok_or_else(|| {
-                    SimpleFinanceError::ShareSplitInvalid("缩股消灭股数下溢".into())
-                })?
-            }
+            crate::company::share_split::ShareSplitDirection::Consolidate => issued_shares_before
+                .checked_sub(issued_shares_after)
+                .ok_or_else(|| SimpleFinanceError::ShareSplitInvalid("缩股消灭股数下溢".into()))?,
         };
         // 注册资本核减按「旧股口径的消灭面值」计：每 N 股旧股（面值 par_before）
         // 换 1 股新股（面值 N×par_before），面值逐旧股守恒；碎股消灭部分的旧股
@@ -285,13 +276,9 @@ impl SimpleFinanceState {
         let old_equivalent_destroyed = match fact.direction {
             crate::company::share_split::ShareSplitDirection::Split => 0,
             crate::company::share_split::ShareSplitDirection::Consolidate => issued_shares_before
-                .checked_sub(
-                    fact.ratio
-                        .checked_mul(issued_shares_after)
-                        .ok_or_else(|| {
-                            SimpleFinanceError::ShareSplitInvalid("缩股换算等价量溢出".into())
-                        })?,
-                )
+                .checked_sub(fact.ratio.checked_mul(issued_shares_after).ok_or_else(|| {
+                    SimpleFinanceError::ShareSplitInvalid("缩股换算等价量溢出".into())
+                })?)
                 .ok_or_else(|| {
                     SimpleFinanceError::ShareSplitInvalid("缩股换算等价量下溢".into())
                 })?,

@@ -52,11 +52,22 @@ impl HookArm {
     }
 
     pub(crate) fn drain_evidence(&self) -> (super::DeskCausalFact, usize) {
-        HOOK.with(|state| state.borrow().drain_evidence.expect("Drain hook 必须命中真实成交"))
+        HOOK.with(|state| {
+            state
+                .borrow()
+                .drain_evidence
+                .expect("Drain hook 必须命中真实成交")
+        })
     }
 
     pub(crate) fn evidence(&self) -> RemovalEvidence {
-        HOOK.with(|state| state.borrow().evidence.clone().expect("report hook 必须命中真实成交"))
+        HOOK.with(|state| {
+            state
+                .borrow()
+                .evidence
+                .clone()
+                .expect("report hook 必须命中真实成交")
+        })
     }
 }
 
@@ -72,22 +83,48 @@ pub(crate) fn remove_execution_once(mut report: DeskReport) -> DeskReport {
         if state.drain || state.armed_stock != Some(report.stock) {
             return;
         }
-        let Some(index) = report.causal.iter().position(|fact| matches!(fact.kind, DeskCausalKind::Execution { .. })) else {
+        let Some(index) = report
+            .causal
+            .iter()
+            .position(|fact| matches!(fact.kind, DeskCausalKind::Execution { .. }))
+        else {
             return;
         };
-        let executions_before = report.causal.iter().filter(|fact| matches!(fact.kind, DeskCausalKind::Execution { .. })).count();
+        let executions_before = report
+            .causal
+            .iter()
+            .filter(|fact| matches!(fact.kind, DeskCausalKind::Execution { .. }))
+            .count();
         let original_trades = report.trades.clone();
         let removed = report.causal.remove(index);
-        let DeskCausalKind::Execution { seller, buyer, qty, price_cents, .. } = removed.kind else {
+        let DeskCausalKind::Execution {
+            seller,
+            buyer,
+            qty,
+            price_cents,
+            ..
+        } = removed.kind
+        else {
             unreachable!("position 已确认真实 Execution");
         };
-        let executions_after = report.causal.iter().filter(|fact| matches!(fact.kind, DeskCausalKind::Execution { .. })).count();
+        let executions_after = report
+            .causal
+            .iter()
+            .filter(|fact| matches!(fact.kind, DeskCausalKind::Execution { .. }))
+            .count();
         assert_eq!(report.trades, original_trades, "不得改变真实成交");
         assert_eq!(executions_before, executions_after + 1);
         state.evidence = Some(RemovalEvidence {
-            tick: report.tick, round: report.round, stock: report.stock,
-            seller, buyer, qty, price_cents,
-            original_trades: original_trades.len(), executions_before, executions_after,
+            tick: report.tick,
+            round: report.round,
+            stock: report.stock,
+            seller,
+            buyer,
+            qty,
+            price_cents,
+            original_trades: original_trades.len(),
+            executions_before,
+            executions_after,
         });
         state.armed_stock = None;
     });
@@ -95,11 +132,22 @@ pub(crate) fn remove_execution_once(mut report: DeskReport) -> DeskReport {
 }
 
 /// 与普通 report hook 共用同一测试线程入口，只删除真实 Drain 报告的 Execution。
-pub(crate) fn remove_drain_execution_once(stock: u16, causal: &mut Vec<super::DeskCausalFact>, trades: &[crate::runtime::protocol::DeskTradeFact]) {
+pub(crate) fn remove_drain_execution_once(
+    stock: u16,
+    causal: &mut Vec<super::DeskCausalFact>,
+    trades: &[crate::runtime::protocol::DeskTradeFact],
+) {
     HOOK.with(|state| {
         let mut state = state.borrow_mut();
-        if !state.drain || state.armed_stock != Some(stock) { return; }
-        let Some(index) = causal.iter().position(|fact| matches!(fact.kind, DeskCausalKind::Execution { .. })) else { return; };
+        if !state.drain || state.armed_stock != Some(stock) {
+            return;
+        }
+        let Some(index) = causal
+            .iter()
+            .position(|fact| matches!(fact.kind, DeskCausalKind::Execution { .. }))
+        else {
+            return;
+        };
         let removed = causal.remove(index);
         state.drain_evidence = Some((removed, trades.len()));
         state.armed_stock = None;

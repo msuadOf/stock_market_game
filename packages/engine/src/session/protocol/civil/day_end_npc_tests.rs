@@ -26,7 +26,10 @@ fn active_npc_two_day_archive_restores_and_continues_without_pending_inputs() {
     session
         .game_mut()
         .rebind_compute_for_verification(crate::compute::ComputeContext::with_workers(2).unwrap());
-    let _ = session.game().compute_context().take_queue_attention_trace();
+    let _ = session
+        .game()
+        .compute_context()
+        .take_queue_attention_trace();
     let mut npc_accepted = 0;
     for day in 1..=2 {
         for tick_in_day in 0..4 {
@@ -78,7 +81,10 @@ fn active_npc_two_day_archive_restores_and_continues_without_pending_inputs() {
                 // A 类（业务强度·不执行下一日 epoch）：全日实际调用见证中**无
                 // 任何以 tick=4 为基准的 evaluate**（pop 视界不越过日末已提交
                 // tick；wait>1 的合法跨日 next 不构成 epoch-4 评估）。
-                let day_trace = session.game().compute_context().take_queue_attention_trace();
+                let day_trace = session
+                    .game()
+                    .compute_context()
+                    .take_queue_attention_trace();
                 let day_last_tick = day * 4 - 1;
                 assert!(
                     day_trace.iter().all(|record| record.tick <= day_last_tick),
@@ -91,7 +97,11 @@ fn active_npc_two_day_archive_restores_and_continues_without_pending_inputs() {
                 let cursors_after = session.game().save().unwrap().ingress_receipt_cursors;
                 for (account, ordinal) in &receipt_cursors_before.next_account_ordinal {
                     assert!(
-                        cursors_after.next_account_ordinal.get(account).copied().unwrap_or(0)
+                        cursors_after
+                            .next_account_ordinal
+                            .get(account)
+                            .copied()
+                            .unwrap_or(0)
                             >= *ordinal,
                         "日末调用游标单调不减（D(3) receipt 登记于本调用）"
                     );
@@ -107,7 +117,10 @@ fn active_npc_two_day_archive_restores_and_continues_without_pending_inputs() {
         // 批四：跨 tick 载体删除——档结构上不含 pending_npc 键（键存在即
         // 旧格式，解码边界 fault2100）；「日终不提前准备下一日批次」语义
         // 由键缺失结构性承载。
-        assert!(serde_json::to_value(&daily).unwrap().get("pending_npc").is_none());
+        assert!(serde_json::to_value(&daily)
+            .unwrap()
+            .get("pending_npc")
+            .is_none());
         ProtocolSession::restore(&daily).expect("每个已完成交易日日终候选都必须可恢复");
     }
     assert!(npc_accepted > 0, "真实活跃 NPC 必须产生已受理事实");
@@ -116,7 +129,10 @@ fn active_npc_two_day_archive_restores_and_continues_without_pending_inputs() {
     let mut restored = ProtocolSession::restore(&saved)
         .expect("真实活跃 NPC 的公共日终候选必须可恢复，不得新生成跨日待受理输入");
     assert!(
-        serde_json::to_value(&saved).unwrap().get("pending_npc").is_none(),
+        serde_json::to_value(&saved)
+            .unwrap()
+            .get("pending_npc")
+            .is_none(),
         "日终档不保留跨日 NPC 待处理批次"
     );
     assert_eq!(

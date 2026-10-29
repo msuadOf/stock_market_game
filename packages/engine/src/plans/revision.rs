@@ -161,9 +161,11 @@ impl TradingPlan {
         // 沿用既有 child_complete 输入；真实生产执行必有腿与剩余数量。
         let remaining_after = match self.execution.as_ref() {
             Some(leg) => {
-                let before = leg.active_child_remaining_qty.ok_or(PlanError::MissingExecutionLeg {
-                    plan_id: self.plan_id,
-                })?;
+                let before =
+                    leg.active_child_remaining_qty
+                        .ok_or(PlanError::MissingExecutionLeg {
+                            plan_id: self.plan_id,
+                        })?;
                 let after = before.checked_sub(qty).ok_or(PlanError::FillExceedsChild {
                     plan_id: self.plan_id,
                     order_id,
@@ -171,7 +173,9 @@ impl TradingPlan {
                     fill_qty: qty,
                 })?;
                 if (after == 0) != child_complete {
-                    return Err(PlanError::ChildCompletionMismatch { plan_id: self.plan_id });
+                    return Err(PlanError::ChildCompletionMismatch {
+                        plan_id: self.plan_id,
+                    });
                 }
                 Some(after)
             }
@@ -241,7 +245,6 @@ impl TradingPlan {
     }
 }
 
-
 impl TradingPlan {
     /// 安装/替换执行腿调度参数（新子单报价前调用）。仅 `Active` 计划可安装；
     /// 反向修订、终止、到期与日终都会整体结束执行腿（置 `None`）。
@@ -259,10 +262,14 @@ impl TradingPlan {
             });
         }
         if child_qty == 0 || limit_price.cents() <= 0 {
-            return Err(PlanError::InvalidExecutionParameters { plan_id: self.plan_id });
+            return Err(PlanError::InvalidExecutionParameters {
+                plan_id: self.plan_id,
+            });
         }
         if self.active_child_order_id.is_some() {
-            return Err(PlanError::SecondActiveChild { plan_id: self.plan_id });
+            return Err(PlanError::SecondActiveChild {
+                plan_id: self.plan_id,
+            });
         }
         self.execution = Some(super::state::PlanExecutionLeg {
             child_qty,
@@ -282,11 +289,16 @@ impl TradingPlan {
         trading_day: u64,
     ) -> Result<(), PlanError> {
         self.ensure_event_allowed("child-order-accepted", trading_day, false)?;
-        let leg = self.execution.as_mut().ok_or(PlanError::MissingExecutionLeg {
-            plan_id: self.plan_id,
-        })?;
+        let leg = self
+            .execution
+            .as_mut()
+            .ok_or(PlanError::MissingExecutionLeg {
+                plan_id: self.plan_id,
+            })?;
         if self.active_child_order_id.is_some() {
-            return Err(PlanError::SecondActiveChild { plan_id: self.plan_id });
+            return Err(PlanError::SecondActiveChild {
+                plan_id: self.plan_id,
+            });
         }
         if qty == 0 {
             return Err(PlanError::ZeroFillQuantity {
@@ -297,11 +309,10 @@ impl TradingPlan {
         // typed 命令与普通来源委托同走本收口）的子单数量不得超过 target-filled。
         // 反例形状（target=400/filled=100/子单已撤腿保留 + 普通 Buy 400）在此被拒。
         if matches!(self.target, crate::plans::PlanTarget::ShareCount(_) if qty
-            > match self.target {
-                crate::plans::PlanTarget::ShareCount(target) => target.saturating_sub(self.filled_qty),
-                crate::plans::PlanTarget::PositionFractionBp(_) => u32::MAX,
-            })
-        {
+        > match self.target {
+            crate::plans::PlanTarget::ShareCount(target) => target.saturating_sub(self.filled_qty),
+            crate::plans::PlanTarget::PositionFractionBp(_) => u32::MAX,
+        }) {
             return Err(PlanError::AdoptionExceedsRemaining {
                 plan_id: self.plan_id,
                 qty,

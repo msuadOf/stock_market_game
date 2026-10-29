@@ -4,8 +4,8 @@ use crate::accounting::{AccountingPeriod, JournalEntry};
 use crate::calendar::CivilInstant;
 use crate::company::CompanyId;
 use crate::information::{
-    InformationError, PublicationId, PublicationOrigin,
-    PublicationRequest, PublicationSource, PublicLibrary,
+    InformationError, PublicLibrary, PublicationId, PublicationOrigin, PublicationRequest,
+    PublicationSource,
 };
 
 impl super::CompanySystem {
@@ -25,8 +25,9 @@ impl super::CompanySystem {
         if reason.trim().is_empty() || correction.entries.is_empty() {
             return Err(invalid("更正理由和调整凭证均不能为空".into()));
         }
-        if now != CivilInstant::from_hms(now.date(), 18, 0, 0)
-            .map_err(|error| invalid(error.to_string()))?
+        if now
+            != CivilInstant::from_hms(now.date(), 18, 0, 0)
+                .map_err(|error| invalid(error.to_string()))?
         {
             return Err(invalid("更正公布时点必须为披露日 18:00".into()));
         }
@@ -37,8 +38,10 @@ impl super::CompanySystem {
             .map_err(|error| invalid(error.to_string()))?;
         let original = match candidate_library.report(supersedes, now) {
             Ok(original) => original.clone(),
-            Err(error @ (InformationError::UnknownPublication { .. }
-            | InformationError::EarlyRead { .. })) => {
+            Err(
+                error @ (InformationError::UnknownPublication { .. }
+                | InformationError::EarlyRead { .. }),
+            ) => {
                 return Err(invalid(error.to_string()));
             }
             Err(cause) => return Err(information(reason.clone(), cause)),
@@ -57,7 +60,11 @@ impl super::CompanySystem {
         if latest.id != supersedes {
             return Err(invalid("只能更正该公司该期间该类型的最新公开版本".into()));
         }
-        if correction.entries.iter().any(|entry| entry.date > now.date()) {
+        if correction
+            .entries
+            .iter()
+            .any(|entry| entry.date > now.date())
+        {
             return Err(invalid("调整凭证实际日期不得晚于披露日".into()));
         }
         for entry in &correction.entries {
@@ -106,8 +113,7 @@ impl super::CompanySystem {
                 publication,
                 posted_on: now.date(),
             },
-        )
-        ?;
+        )?;
         let publications = scratch.publications.clone();
         candidate_library = scratch.library;
         candidate
@@ -134,12 +140,12 @@ impl super::CompanySystem {
         entries: &[JournalEntry],
         period: AccountingPeriod,
     ) -> Result<(), super::CompanyCorrectionError> {
-        let finance = self
-            .finance(company)
-            .map_err(|error| super::CompanyCorrectionError::InvalidInput {
-                reason: "校验已完成的 Simple 报表更正".into(),
-                detail: error.to_string(),
-            })?;
+        let finance =
+            self.finance(company)
+                .map_err(|error| super::CompanyCorrectionError::InvalidInput {
+                    reason: "校验已完成的 Simple 报表更正".into(),
+                    detail: error.to_string(),
+                })?;
         for expected in entries {
             let actual = finance
                 .books()
@@ -149,7 +155,10 @@ impl super::CompanySystem {
             if actual != Some(expected) {
                 return Err(super::CompanyCorrectionError::InvalidInput {
                     reason: "校验已完成的 Simple 报表更正".into(),
-                    detail: format!("调整凭证来源 {} 不存在或内容不一致", expected.source.value()),
+                    detail: format!(
+                        "调整凭证来源 {} 不存在或内容不一致",
+                        expected.source.value()
+                    ),
                 });
             }
         }
@@ -213,31 +222,49 @@ impl super::CompanySystem {
         super::report_correction::DisclosureCorrectionPrepareError,
     > {
         if inputs.is_empty() {
-            return Err(super::report_correction::DisclosureCorrectionProofError::InvalidAppend {
-                detail: "真实 owner operation 集合不得为空",
-            }.into());
+            return Err(
+                super::report_correction::DisclosureCorrectionProofError::InvalidAppend {
+                    detail: "真实 owner operation 集合不得为空",
+                }
+                .into(),
+            );
         }
         let mut system = self.clone();
         let mut private_library = base.clone();
         let mut results = Vec::with_capacity(inputs.len());
         for input in inputs {
             let reason = input.correction.reason.clone();
-            let operation_sources = input.correction.entries.iter().map(|entry| entry.source).collect();
+            let operation_sources = input
+                .correction
+                .entries
+                .iter()
+                .map(|entry| entry.source)
+                .collect();
             let publications = system.correct_report(
-                &input.company, input.correction, input.supersedes, now, &mut private_library,
+                &input.company,
+                input.correction,
+                input.supersedes,
+                now,
+                &mut private_library,
             )?;
             let main_publication = publications.first().copied().ok_or_else(|| {
                 super::CompanyCorrectionError::InvalidInput {
-                    reason, detail: "真实更正 owner 返回空 publication 集合".into(),
+                    reason,
+                    detail: "真实更正 owner 返回空 publication 集合".into(),
                 }
             })?;
             results.push(super::report_correction::DisclosureCorrectionOwnerResult {
-                main_publication, publications, company: input.company,
-                source: PublicationSource::SimpleGenerated, operation_sources,
+                main_publication,
+                publications,
+                company: input.company,
+                source: PublicationSource::SimpleGenerated,
+                operation_sources,
             });
         }
         let proof = super::report_correction::ConfirmedDisclosureCorrections::from_owner_results(
-            base, private_library, results,
+            base,
+            private_library,
+            results,
         )?;
         Ok(PreparedSimpleDisclosureCorrection { system, proof })
     }
@@ -275,9 +302,15 @@ impl super::CompanySystem {
         PreparedSimpleDisclosureCorrection<'a>,
         super::report_correction::DisclosureCorrectionPrepareError,
     > {
-        self.prepare_disclosure_corrections(vec![SimpleDisclosureCorrectionInput {
-            company: *company, correction, supersedes,
-        }], now, base)
+        self.prepare_disclosure_corrections(
+            vec![SimpleDisclosureCorrectionInput {
+                company: *company,
+                correction,
+                supersedes,
+            }],
+            now,
+            base,
+        )
     }
 }
 

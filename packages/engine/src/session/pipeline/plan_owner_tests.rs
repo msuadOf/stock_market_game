@@ -10,15 +10,15 @@
 use super::*;
 use crate::plans::quote_policy::{QuoteAction, QuoteDecision, QuoteReason};
 use crate::plans::{AllocationGrant, PlanBook, PlanOpen, PlanOpinion, PlanTarget, Urgency};
+use crate::session::failure::StepFatal;
 use crate::session::npc_working_quote_tests::two_stock_quote_setup;
 use crate::session::plan_chain_candidates::PlanChainOperationBatch;
 use crate::session::PlanExecutionDisposition;
 use crate::session::PlanExecutionRequest;
-use crate::session::failure::StepFatal;
 use crate::{AccountId, Event, Intent, Money, Side, StockId};
 
-use super::market_tick_transaction::apply_tick_shadow_market_transaction_with_roots_for_test;
 use super::continuous_tick_transaction_tests::live_buy_plan_case;
+use super::market_tick_transaction::apply_tick_shadow_market_transaction_with_roots_for_test;
 
 /// 使用真实已登记 NPC 请求驱动普通撤单；不伪造成功事实，不手工释放资源。
 fn confirm_cancel_tick(
@@ -30,7 +30,14 @@ fn confirm_cancel_tick(
     let received = authority
         .receive_private_intent(owner, Intent::Cancel { code, id: order_id })
         .unwrap();
-    crate::session::pipeline::staged_decision::stage(crate::session::pipeline::NpcDecisionHandover::new(authority.state.tick, Vec::new(), vec![received], Vec::new()));
+    crate::session::pipeline::staged_decision::stage(
+        crate::session::pipeline::NpcDecisionHandover::new(
+            authority.state.tick,
+            Vec::new(),
+            vec![received],
+            Vec::new(),
+        ),
+    );
     let before = authority.state.plans.clone();
     let mut candidate = plan_tick(PhaseInput::of(authority)).unwrap();
     let output = apply_tick_shadow_market_transaction_with_roots_for_test(
@@ -47,7 +54,10 @@ fn confirm_cancel_tick(
     assert!(output.receipts.iter().any(|receipt| {
         receipt.envelope.order == order_id && receipt.kind == super::ReceiptKind::Release
     }));
-    assert_eq!(authority.state.plans, before, "候选不得提前安装计划 authority");
+    assert_eq!(
+        authority.state.plans, before,
+        "候选不得提前安装计划 authority"
+    );
     super::candidate_commit::prepare_tick_shadow_plan_commit(authority, candidate)
         .unwrap()
         .commit();
@@ -98,14 +108,24 @@ fn open_buy_plan(
 
 fn owner_book(target: u32) -> (PlanBook, crate::plans::PlanId) {
     let mut book = PlanBook::default();
-    let id = book.create(PlanOpen {
-        account: AccountId(1), code: StockId(0), direction: Side::Buy,
-        target: PlanTarget::ShareCount(target),
-        opinion: PlanOpinion { signal_score_bp: 3000, source: crate::plans::OpinionSource::Blended },
-        confidence_bp: 8000, urgency: Urgency::Normal,
-        horizon_trading_days: 5, created_trading_day: 0,
-    }).unwrap();
-    book.install_execution(id, 100, Money::from_cents(1000), 240).unwrap();
+    let id = book
+        .create(PlanOpen {
+            account: AccountId(1),
+            code: StockId(0),
+            direction: Side::Buy,
+            target: PlanTarget::ShareCount(target),
+            opinion: PlanOpinion {
+                signal_score_bp: 3000,
+                source: crate::plans::OpinionSource::Blended,
+            },
+            confidence_bp: 8000,
+            urgency: Urgency::Normal,
+            horizon_trading_days: 5,
+            created_trading_day: 0,
+        })
+        .unwrap();
+    book.install_execution(id, 100, Money::from_cents(1000), 240)
+        .unwrap();
     (book, id)
 }
 
@@ -116,13 +136,24 @@ fn commit_roots(authority: &mut GameSession, roots: PlanChainOperationBatch) -> 
     // 输出为 MarketTransactionOutput（facts 承载事件，无 events/auction 字段）。
     let events = if phase == crate::TradingPhase::Continuous {
         apply_tick_shadow_market_transaction_with_roots_for_test(&mut tick, roots)
-            .unwrap().facts.iter().map(|fact| fact.event.clone()).collect()
+            .unwrap()
+            .facts
+            .iter()
+            .map(|fact| fact.event.clone())
+            .collect()
     } else {
         super::market_tick_transaction::apply_tick_shadow_market_transaction_with_roots_for_test(
             &mut tick, roots,
-        ).unwrap().facts.iter().map(|fact| fact.event.clone()).collect()
+        )
+        .unwrap()
+        .facts
+        .iter()
+        .map(|fact| fact.event.clone())
+        .collect()
     };
-    super::candidate_commit::prepare_tick_shadow_plan_commit(authority, tick).unwrap().commit();
+    super::candidate_commit::prepare_tick_shadow_plan_commit(authority, tick)
+        .unwrap()
+        .commit();
     events
 }
 
@@ -132,49 +163,150 @@ fn closing_child() -> (GameSession, crate::plans::PlanId, crate::OrderId) {
     setup.closing_auction_ticks = 1;
     let mut authority = GameSession::new(setup, 47).unwrap();
     authority.state.attention_scheduler.clear();
-    authority.state.npc_attention.get_mut(&AccountId(1)).unwrap().next_attention_candidate_tick = u64::MAX;
+    authority
+        .state
+        .npc_attention
+        .get_mut(&AccountId(1))
+        .unwrap()
+        .next_attention_candidate_tick = u64::MAX;
     let id = open_buy_plan(&mut authority, AccountId(1), StockId(0), 400);
     let mut roots = PlanChainOperationBatch::empty();
     roots.push_execution(submit_request(&authority, id, StockId(0), 1000, 100));
     commit_roots(&mut authority, roots);
     assert_eq!(authority.phase(), crate::TradingPhase::ClosingAuction);
-    let child = authority.state.plans.plan(id).unwrap().active_child_order_id().unwrap();
+    let child = authority
+        .state
+        .plans
+        .plan(id)
+        .unwrap()
+        .active_child_order_id()
+        .unwrap();
     (authority, id, child)
 }
 
 #[test]
 fn only_matching_settled_child_advances_and_completion_retains_linked_parent() {
     let (mut book, id) = owner_book(100);
-    assert!(!book.record_child_submitted(AccountId(1), &StockId(0), Side::Sell, crate::OrderId(1), 100, 0).unwrap());
-    assert!(book.record_child_submitted(AccountId(1), &StockId(0), Side::Buy, crate::OrderId(1), 100, 0).unwrap());
+    assert!(!book
+        .record_child_submitted(
+            AccountId(1),
+            &StockId(0),
+            Side::Sell,
+            crate::OrderId(1),
+            100,
+            0
+        )
+        .unwrap());
+    assert!(book
+        .record_child_submitted(
+            AccountId(1),
+            &StockId(0),
+            Side::Buy,
+            crate::OrderId(1),
+            100,
+            0
+        )
+        .unwrap());
     let before = book.clone();
-    assert!(!book.record_child_fill(AccountId(1), &StockId(0), Side::Sell, crate::OrderId(1), 10, 0).unwrap());
-    assert!(!book.record_child_fill(AccountId(1), &StockId(0), Side::Buy, crate::OrderId(2), 10, 0).unwrap());
-    assert!(!book.record_child_released(AccountId(1), &StockId(0), crate::OrderId(2), 0, false).unwrap());
+    assert!(!book
+        .record_child_fill(
+            AccountId(1),
+            &StockId(0),
+            Side::Sell,
+            crate::OrderId(1),
+            10,
+            0
+        )
+        .unwrap());
+    assert!(!book
+        .record_child_fill(
+            AccountId(1),
+            &StockId(0),
+            Side::Buy,
+            crate::OrderId(2),
+            10,
+            0
+        )
+        .unwrap());
+    assert!(!book
+        .record_child_released(AccountId(1), &StockId(0), crate::OrderId(2), 0, false)
+        .unwrap());
     assert_eq!(book, before);
-    book.record_child_fill(AccountId(1), &StockId(0), Side::Buy, crate::OrderId(1), 40, 0).unwrap();
+    book.record_child_fill(
+        AccountId(1),
+        &StockId(0),
+        Side::Buy,
+        crate::OrderId(1),
+        40,
+        0,
+    )
+    .unwrap();
     assert_eq!(book.plan(id).unwrap().filled_qty(), 40);
-    assert_eq!(book.plan(id).unwrap().active_child_remaining_qty(), Some(60));
-    book.record_child_fill(AccountId(1), &StockId(0), Side::Buy, crate::OrderId(1), 60, 0).unwrap();
+    assert_eq!(
+        book.plan(id).unwrap().active_child_remaining_qty(),
+        Some(60)
+    );
+    book.record_child_fill(
+        AccountId(1),
+        &StockId(0),
+        Side::Buy,
+        crate::OrderId(1),
+        60,
+        0,
+    )
+    .unwrap();
     let owner = book.plan(id).unwrap();
     assert_eq!(owner.filled_qty(), 100);
     assert_eq!(owner.status(), crate::plans::PlanStatus::Completed);
     assert_eq!(owner.active_child_order_id(), None);
     assert_eq!(owner.active_child_remaining_qty(), None);
     assert!(owner.execution().is_none());
-    assert!(book.active_investor_plan(AccountId(1), &StockId(0)).is_none());
-    assert_eq!(before.plan(id).unwrap().filled_qty(), 0, "未修改的 snapshot 不受 owner 更新影响");
+    assert!(book
+        .active_investor_plan(AccountId(1), &StockId(0))
+        .is_none());
+    assert_eq!(
+        before.plan(id).unwrap().filled_qty(),
+        0,
+        "未修改的 snapshot 不受 owner 更新影响"
+    );
 }
 
 #[test]
 fn auction_invalid_transitions_preserve_candidate_parent() {
     let (mut book, id) = owner_book(400);
-    book.record_child_submitted(AccountId(1), &StockId(0), Side::Buy, crate::OrderId(1), 100, 0).unwrap();
+    book.record_child_submitted(
+        AccountId(1),
+        &StockId(0),
+        Side::Buy,
+        crate::OrderId(1),
+        100,
+        0,
+    )
+    .unwrap();
     let before = book.clone();
-    assert!(book.record_child_submitted(AccountId(1), &StockId(0), Side::Buy, crate::OrderId(2), 100, 0).is_err());
-    assert!(book.record_child_fill(AccountId(1), &StockId(0), Side::Buy, crate::OrderId(1), 101, 0).is_err());
+    assert!(book
+        .record_child_submitted(
+            AccountId(1),
+            &StockId(0),
+            Side::Buy,
+            crate::OrderId(2),
+            100,
+            0
+        )
+        .is_err());
+    assert!(book
+        .record_child_fill(
+            AccountId(1),
+            &StockId(0),
+            Side::Buy,
+            crate::OrderId(1),
+            101,
+            0
+        )
+        .is_err());
     assert_eq!(book, before);
-    book.record_child_released(AccountId(1), &StockId(0), crate::OrderId(1), 0, false).unwrap();
+    book.record_child_released(AccountId(1), &StockId(0), crate::OrderId(1), 0, false)
+        .unwrap();
     assert_eq!(book.plan(id).unwrap().filled_qty(), 0);
     assert_eq!(book.plan(id).unwrap().active_child_order_id(), None);
 }
@@ -184,28 +316,79 @@ fn continuous_assert_and_auction_checked_fill_keep_distinct_failure_boundaries()
     // 两种撮合事实最终都经过同一 owner；非法 fill 必须显式失败且不污染进度。
     for target in [100, 400] {
         let (mut book, id) = owner_book(target);
-        book.record_child_submitted(AccountId(1), &StockId(0), Side::Buy, crate::OrderId(1), 100, 0).unwrap();
+        book.record_child_submitted(
+            AccountId(1),
+            &StockId(0),
+            Side::Buy,
+            crate::OrderId(1),
+            100,
+            0,
+        )
+        .unwrap();
         let before = book.clone();
-        assert!(book.record_child_fill(AccountId(1), &StockId(0), Side::Buy, crate::OrderId(1), 101, 0).is_err());
+        assert!(book
+            .record_child_fill(
+                AccountId(1),
+                &StockId(0),
+                Side::Buy,
+                crate::OrderId(1),
+                101,
+                0
+            )
+            .is_err());
         assert_eq!(book, before);
         assert_eq!(book.plan(id).unwrap().filled_qty(), 0);
-        assert_eq!(book.plan(id).unwrap().active_child_remaining_qty(), Some(100));
+        assert_eq!(
+            book.plan(id).unwrap().active_child_remaining_qty(),
+            Some(100)
+        );
     }
 }
 
 #[test]
 fn unlinked_parent_reverse_rebuilds_execution_from_the_new_target() {
     let (mut book, id) = owner_book(400);
-    book.record_child_submitted(AccountId(1), &StockId(0), Side::Buy, crate::OrderId(17), 100, 0).unwrap();
-    book.record_child_fill(AccountId(1), &StockId(0), Side::Buy, crate::OrderId(17), 40, 0).unwrap();
-    book.record_child_released(AccountId(1), &StockId(0), crate::OrderId(17), 0, false).unwrap();
-    book.apply(id, crate::plans::PlanEvent::Revised { revision: crate::plans::PlanRevision {
-        reason: crate::plans::RevisionReason::SignalShift, trading_day: 0,
-        direction: Side::Sell, target: PlanTarget::ShareCount(800),
-        opinion: PlanOpinion { signal_score_bp: -3000, source: crate::plans::OpinionSource::Blended },
-        confidence_bp: 8000, urgency: Urgency::Normal, below_filled_rationale: None,
-    }}).unwrap();
-    book.install_execution(id, 200, Money::from_cents(980), 247).unwrap();
+    book.record_child_submitted(
+        AccountId(1),
+        &StockId(0),
+        Side::Buy,
+        crate::OrderId(17),
+        100,
+        0,
+    )
+    .unwrap();
+    book.record_child_fill(
+        AccountId(1),
+        &StockId(0),
+        Side::Buy,
+        crate::OrderId(17),
+        40,
+        0,
+    )
+    .unwrap();
+    book.record_child_released(AccountId(1), &StockId(0), crate::OrderId(17), 0, false)
+        .unwrap();
+    book.apply(
+        id,
+        crate::plans::PlanEvent::Revised {
+            revision: crate::plans::PlanRevision {
+                reason: crate::plans::RevisionReason::SignalShift,
+                trading_day: 0,
+                direction: Side::Sell,
+                target: PlanTarget::ShareCount(800),
+                opinion: PlanOpinion {
+                    signal_score_bp: -3000,
+                    source: crate::plans::OpinionSource::Blended,
+                },
+                confidence_bp: 8000,
+                urgency: Urgency::Normal,
+                below_filled_rationale: None,
+            },
+        },
+    )
+    .unwrap();
+    book.install_execution(id, 200, Money::from_cents(980), 247)
+        .unwrap();
     let owner = book.plan(id).unwrap();
     assert_eq!(owner.direction(), Side::Sell);
     assert_eq!(owner.target(), PlanTarget::ShareCount(800));
@@ -215,27 +398,47 @@ fn unlinked_parent_reverse_rebuilds_execution_from_the_new_target() {
     assert_eq!(leg.child_qty(), 200);
     assert_eq!(leg.limit_price(), Money::from_cents(980));
     assert_eq!(leg.expires_market_minute(), 247);
-    assert_eq!(owner.plan_id(), id, "反向修订仍由原 owner 管理，不创建另一份执行计划");
+    assert_eq!(
+        owner.plan_id(),
+        id,
+        "反向修订仍由原 owner 管理，不创建另一份执行计划"
+    );
 }
 
 fn assert_sub_lot_is_not_overbought() {
     let (mut authority, id, code) = live_buy_plan_case(350, 350);
-    let child = authority.state.plans.plan(id).unwrap().active_child_order_id().unwrap();
+    let child = authority
+        .state
+        .plans
+        .plan(id)
+        .unwrap()
+        .active_child_order_id()
+        .unwrap();
     confirm_cancel_tick(&mut authority, AccountId(1), code, child);
     let before = authority.state.plans.clone();
     let mut roots = PlanChainOperationBatch::empty();
     roots.push_execution(submit_request(&authority, id, code, 1010, 100));
     let mut tick = plan_tick(PhaseInput::of(&authority)).unwrap();
-    let output = apply_tick_shadow_market_transaction_with_roots_for_test(&mut tick, roots).unwrap();
-    assert!(output.plan_reports.iter().any(|report| matches!(report.disposition,
-        PlanExecutionDisposition::RemainingBelowBoardLot { remaining_qty: 50 })));
-    super::candidate_commit::prepare_tick_shadow_plan_commit(&mut authority, tick).unwrap().commit();
+    let output =
+        apply_tick_shadow_market_transaction_with_roots_for_test(&mut tick, roots).unwrap();
+    assert!(output.plan_reports.iter().any(|report| matches!(
+        report.disposition,
+        PlanExecutionDisposition::RemainingBelowBoardLot { remaining_qty: 50 }
+    )));
+    super::candidate_commit::prepare_tick_shadow_plan_commit(&mut authority, tick)
+        .unwrap()
+        .commit();
     let owner = authority.state.plans.plan(id).unwrap();
     assert_eq!(owner.filled_qty(), 350);
     assert_eq!(owner.remaining_share_qty(), Some(50));
     assert_eq!(owner.target(), PlanTarget::ShareCount(400));
-    assert!(authority.state.markets[&code].resting_orders_for(AccountId(1)).is_empty());
-    assert_eq!(authority.state.accounts[&AccountId(1)].positions()[&code].qty(), 350);
+    assert!(authority.state.markets[&code]
+        .resting_orders_for(AccountId(1))
+        .is_empty());
+    assert_eq!(
+        authority.state.accounts[&AccountId(1)].positions()[&code].qty(),
+        350
+    );
     assert_eq!(before.plan(id).unwrap().filled_qty(), 350);
 }
 
@@ -249,16 +452,27 @@ fn same_side_reprice_replaces_the_leg_and_keeps_progress_and_target() {
     // 生产同向再报价走 QuoteAction::Replace → 撤旧子单 → 新 submit →
     // install_execution 替换执行腿：限价与子单规模更新，进度与目标保留。
     let (mut authority, id, code) = live_buy_plan_case(100, 200);
-    let child = authority.state.plans.plan(id).unwrap().active_child_order_id().unwrap();
+    let child = authority
+        .state
+        .plans
+        .plan(id)
+        .unwrap()
+        .active_child_order_id()
+        .unwrap();
     confirm_cancel_tick(&mut authority, AccountId(1), code.clone(), child);
     let mut plans = std::mem::take(&mut authority.state.plans);
-    plans.install_execution(id, 100, Money::from_cents(1_010), 240).unwrap();
+    plans
+        .install_execution(id, 100, Money::from_cents(1_010), 240)
+        .unwrap();
     // 同向（Buy）替换成功：限价更新、进度与目标保持、剩余目标不受影响。
     let leg = plans.plan(id).unwrap().execution().unwrap();
     assert_eq!(leg.limit_price(), Money::from_cents(1_010));
     assert_eq!(leg.child_qty(), 100);
     assert_eq!(plans.plan(id).unwrap().filled_qty(), 100);
-    assert_eq!(plans.plan(id).unwrap().target(), PlanTarget::ShareCount(400));
+    assert_eq!(
+        plans.plan(id).unwrap().target(),
+        PlanTarget::ShareCount(400)
+    );
     // 反向（Sell）提交不采纳为子单：owner 状态不变（旧 revise 反向拒绝语义）。
     let before = plans.clone();
     assert!(!plans
@@ -268,8 +482,13 @@ fn same_side_reprice_replaces_the_leg_and_keeps_progress_and_target() {
     authority.state.plans = plans;
     // 再次同向替换限价：进度仍保留（同向修订不重置执行进度）。
     let mut plans = std::mem::take(&mut authority.state.plans);
-    plans.install_execution(id, 100, Money::from_cents(1_020), 240).unwrap();
-    assert_eq!(plans.plan(id).unwrap().execution().unwrap().limit_price(), Money::from_cents(1_020));
+    plans
+        .install_execution(id, 100, Money::from_cents(1_020), 240)
+        .unwrap();
+    assert_eq!(
+        plans.plan(id).unwrap().execution().unwrap().limit_price(),
+        Money::from_cents(1_020)
+    );
     assert_eq!(plans.plan(id).unwrap().filled_qty(), 100);
     authority.state.plans = plans;
 }
@@ -280,10 +499,22 @@ fn closing_auction_does_not_duplicate_a_parent_child_still_resting_in_continuous
     let mut roots = PlanChainOperationBatch::empty();
     roots.push_execution(submit_request(&authority, id, StockId(0), 1000, 100));
     let events = commit_roots(&mut authority, roots);
-    assert!(!events.iter().any(|event| matches!(event, Event::OrderAccepted { .. })));
-    assert!(events.iter().any(|event| matches!(event, Event::OrderCanceled { id, remaining_qty: 100, .. } if *id == child)));
+    assert!(!events
+        .iter()
+        .any(|event| matches!(event, Event::OrderAccepted { .. })));
+    assert!(events.iter().any(
+        |event| matches!(event, Event::OrderCanceled { id, remaining_qty: 100, .. } if *id == child)
+    ));
     assert_eq!(authority.state.plans.plan(id).unwrap().filled_qty(), 0);
-    assert_eq!(authority.state.plans.plan(id).unwrap().active_child_order_id(), None);
+    assert_eq!(
+        authority
+            .state
+            .plans
+            .plan(id)
+            .unwrap()
+            .active_child_order_id(),
+        None
+    );
     // auction_orders 状态快照随统一路径删除（owner8 合并树无此字段）；等价覆盖=上方腿清空断言。
 }
 
@@ -293,10 +524,29 @@ fn closing_auction_restores_a_parent_child_that_remains_in_continuous_book() {
     let saved = authority.save().unwrap();
     let restored = GameSession::restore(&saved).unwrap();
     assert_eq!(restored.phase(), crate::TradingPhase::ClosingAuction);
-    assert_eq!(restored.state.plans.plan(id).unwrap().active_child_order_id(), Some(child));
-    assert_eq!(restored.state.plans.plan(id).unwrap().active_child_remaining_qty(), Some(100));
+    assert_eq!(
+        restored
+            .state
+            .plans
+            .plan(id)
+            .unwrap()
+            .active_child_order_id(),
+        Some(child)
+    );
+    assert_eq!(
+        restored
+            .state
+            .plans
+            .plan(id)
+            .unwrap()
+            .active_child_remaining_qty(),
+        Some(100)
+    );
     assert_eq!(restored.state.plans, authority.state.plans);
-    assert_eq!(restored.reserved_cash_for_account(AccountId(1)).unwrap(), authority.reserved_cash_for_account(AccountId(1)).unwrap());
+    assert_eq!(
+        restored.reserved_cash_for_account(AccountId(1)).unwrap(),
+        authority.reserved_cash_for_account(AccountId(1)).unwrap()
+    );
 }
 
 #[test]
@@ -306,30 +556,85 @@ fn closing_auction_never_duplicates_a_live_continuous_child_and_expiry_stops_int
     let mut roots = PlanChainOperationBatch::empty();
     roots.push_execution(submit_request(&authority, id, StockId(0), 1000, 100));
     let events = commit_roots(&mut authority, roots);
-    assert!(!events.iter().any(|event| matches!(event, Event::OrderAccepted { .. })));
+    assert!(!events
+        .iter()
+        .any(|event| matches!(event, Event::OrderAccepted { .. })));
     assert_eq!(authority.state.next_order_id, before_next);
-    assert!(authority.state.plans.plan(id).unwrap().execution().is_none());
+    assert!(authority
+        .state
+        .plans
+        .plan(id)
+        .unwrap()
+        .execution()
+        .is_none());
     assert_eq!(authority.state.plans.plan(id).unwrap().filled_qty(), 0);
 }
 
 fn ordinary_quotes(with_old_owner: bool, prices: &[crate::LimitPrice]) {
-    let mut authority = GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 47).unwrap();
+    let mut authority =
+        GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 47).unwrap();
     authority.state.attention_scheduler.clear();
-    authority.state.npc_attention.get_mut(&AccountId(1)).unwrap().next_attention_candidate_tick = u64::MAX;
+    authority
+        .state
+        .npc_attention
+        .get_mut(&AccountId(1))
+        .unwrap()
+        .next_attention_candidate_tick = u64::MAX;
     let existing = if with_old_owner {
         let id = open_buy_plan(&mut authority, AccountId(1), StockId(0), 400);
-        authority.state.plans.install_execution(id, 100, Money::from_cents(950), 240).unwrap();
+        authority
+            .state
+            .plans
+            .install_execution(id, 100, Money::from_cents(950), 240)
+            .unwrap();
         Some((id, authority.state.plans.clone()))
-    } else { None };
-    let received = prices.iter().map(|price| authority.receive_private_intent(AccountId(1), Intent::PlaceLimit {
-        code: StockId(0), side: Side::Buy, price: *price, qty: 100,
-    }).unwrap()).collect();
-    crate::session::pipeline::staged_decision::stage(crate::session::pipeline::NpcDecisionHandover::new(authority.state.tick, Vec::new(), received, Vec::new()));
+    } else {
+        None
+    };
+    let received = prices
+        .iter()
+        .map(|price| {
+            authority
+                .receive_private_intent(
+                    AccountId(1),
+                    Intent::PlaceLimit {
+                        code: StockId(0),
+                        side: Side::Buy,
+                        price: *price,
+                        qty: 100,
+                    },
+                )
+                .unwrap()
+        })
+        .collect();
+    crate::session::pipeline::staged_decision::stage(
+        crate::session::pipeline::NpcDecisionHandover::new(
+            authority.state.tick,
+            Vec::new(),
+            received,
+            Vec::new(),
+        ),
+    );
     let mut tick = plan_tick(PhaseInput::of(&authority)).unwrap();
-    let output = apply_tick_shadow_market_transaction_with_roots_for_test(&mut tick, PlanChainOperationBatch::empty()).unwrap();
-    let submitted = output.candidates.candidates().iter().filter(|candidate| matches!(candidate.intent(), Intent::PlaceLimit { .. })).count();
-    assert_eq!(submitted, prices.len(), "固定与符号报价均须进入权威校验，不能被旧母单适配器吞掉");
-    super::candidate_commit::prepare_tick_shadow_plan_commit(&mut authority, tick).unwrap().commit();
+    let output = apply_tick_shadow_market_transaction_with_roots_for_test(
+        &mut tick,
+        PlanChainOperationBatch::empty(),
+    )
+    .unwrap();
+    let submitted = output
+        .candidates
+        .candidates()
+        .iter()
+        .filter(|candidate| matches!(candidate.intent(), Intent::PlaceLimit { .. }))
+        .count();
+    assert_eq!(
+        submitted,
+        prices.len(),
+        "固定与符号报价均须进入权威校验，不能被旧母单适配器吞掉"
+    );
+    super::candidate_commit::prepare_tick_shadow_plan_commit(&mut authority, tick)
+        .unwrap()
+        .commit();
     if let Some((id, _before)) = existing {
         // 与旧镜像一致：计划账户/股票/方向的已接受 Buy 委托被唯一 owner 采纳，
         // 但受理本身绝不推进成交进度。
@@ -373,7 +678,10 @@ fn submit_request(
 fn confirmed_cancel_clears_the_plan_child_and_allows_resubmission() {
     let (mut authority, plan_id, code) = live_buy_plan_case(100, 200);
     let owner = AccountId(1);
-    assert_eq!(authority.state.plans.plan(plan_id).unwrap().filled_qty(), 100);
+    assert_eq!(
+        authority.state.plans.plan(plan_id).unwrap().filled_qty(),
+        100
+    );
     let child_id = authority
         .state
         .plans
@@ -391,18 +699,23 @@ fn confirmed_cancel_clears_the_plan_child_and_allows_resubmission() {
         None,
         "a confirmed cancel must clear the plan-owned child reference"
     );
-    assert_eq!(plan.filled_qty(), 100, "cancellation keeps real fill progress");
+    assert_eq!(
+        plan.filled_qty(),
+        100,
+        "cancellation keeps real fill progress"
+    );
     assert_eq!(authority.state.markets[&code].resting_order_count(), 0);
 
     // 重试：撤销后的计划报价必须能继续推进剩余目标，而不是致命失败。
     let request = submit_request(&authority, plan_id, code.clone(), 1_000, 100);
     let mut roots = PlanChainOperationBatch::empty();
     roots.push_execution(request);
-    let mut tick = plan_tick(PhaseInput { session: &authority })
+    let mut tick = plan_tick(PhaseInput {
+        session: &authority,
+    })
     .unwrap();
-    let output =
-        apply_tick_shadow_market_transaction_with_roots_for_test(&mut tick, roots)
-            .expect("the plan must resubmit after a confirmed cancel");
+    let output = apply_tick_shadow_market_transaction_with_roots_for_test(&mut tick, roots)
+        .expect("the plan must resubmit after a confirmed cancel");
     assert!(
         output.plan_reports.iter().any(|report| matches!(
             report.disposition,
@@ -442,7 +755,9 @@ fn cross_stock_plans_keep_independent_children_and_escrow_after_a_cancel() {
     let mut roots = PlanChainOperationBatch::empty();
     roots.push_execution(submit_request(&authority, plan_a, StockId(0), 1_000, 400));
     roots.push_execution(submit_request(&authority, plan_b, StockId(1), 1_000, 400));
-    let mut tick = plan_tick(PhaseInput { session: &authority })
+    let mut tick = plan_tick(PhaseInput {
+        session: &authority,
+    })
     .unwrap();
     let output = apply_tick_shadow_market_transaction_with_roots_for_test(&mut tick, roots)
         .expect("both plan children submit");
@@ -466,7 +781,10 @@ fn cross_stock_plans_keep_independent_children_and_escrow_after_a_cancel() {
         .active_child_order_id()
         .expect("plan B child in flight");
     let reserved_both = authority.reserved_cash_for_account(AccountId(1)).unwrap();
-    assert!(reserved_both > Money::ZERO, "two buy children both escrow cash");
+    assert!(
+        reserved_both > Money::ZERO,
+        "two buy children both escrow cash"
+    );
 
     // 已确认撤销只针对股票 A 的子单。
     confirm_cancel_tick(&mut authority, AccountId(1), StockId(0), child_a);
@@ -480,7 +798,12 @@ fn cross_stock_plans_keep_independent_children_and_escrow_after_a_cancel() {
     assert_eq!(plan_a_now.filled_qty(), 0);
     // 股票 B 的计划子单不受影响。
     assert_eq!(
-        authority.state.plans.plan(plan_b).unwrap().active_child_order_id(),
+        authority
+            .state
+            .plans
+            .plan(plan_b)
+            .unwrap()
+            .active_child_order_id(),
         Some(child_b),
         "plan B's child must stay in flight"
     );
@@ -547,7 +870,12 @@ fn save_restore_never_resurrects_a_canceled_plan_child() {
     let saved = authority.save().expect("healthy save");
     let restored = GameSession::restore(&saved).expect("healthy restore");
     assert_eq!(
-        restored.state.plans.plan(plan_id).unwrap().active_child_order_id(),
+        restored
+            .state
+            .plans
+            .plan(plan_id)
+            .unwrap()
+            .active_child_order_id(),
         Some(child_id)
     );
     assert_eq!(
@@ -557,7 +885,12 @@ fn save_restore_never_resurrects_a_canceled_plan_child() {
 
     confirm_cancel_tick(&mut authority, owner, code, child_id);
     assert_eq!(
-        authority.state.plans.plan(plan_id).unwrap().active_child_order_id(),
+        authority
+            .state
+            .plans
+            .plan(plan_id)
+            .unwrap()
+            .active_child_order_id(),
         None
     );
 
@@ -574,7 +907,12 @@ fn save_restore_never_resurrects_a_canceled_plan_child() {
         "restore must not resurrect a canceled child reference"
     );
     assert_eq!(
-        restored_after_cancel.state.plans.plan(plan_id).unwrap().filled_qty(),
+        restored_after_cancel
+            .state
+            .plans
+            .plan(plan_id)
+            .unwrap()
+            .filled_qty(),
         100
     );
 }
@@ -584,8 +922,14 @@ fn save_restore_never_resurrects_a_canceled_plan_child() {
 /// 接线增量八遗留的未调用 helper：固定/符号报价在有/无旧 owner 计划时都必须进入权威校验。
 #[test]
 fn ordinary_quotes_reach_authority_with_and_without_old_owner() {
-    ordinary_quotes(false, &[crate::strategy::LimitPrice::Fixed(Money::from_cents(1_000))]);
-    ordinary_quotes(true, &[crate::strategy::LimitPrice::Fixed(Money::from_cents(1_000))]);
+    ordinary_quotes(
+        false,
+        &[crate::strategy::LimitPrice::Fixed(Money::from_cents(1_000))],
+    );
+    ordinary_quotes(
+        true,
+        &[crate::strategy::LimitPrice::Fixed(Money::from_cents(1_000))],
+    );
 }
 
 /// Astra 反例形状：target=400 / filled=100 / 子单已撤、execution 保留——仅剩 300 额度。
@@ -627,7 +971,9 @@ fn adopted_plan_with_released_child(authority: &mut GameSession) -> crate::plans
         )
         .unwrap();
     #[cfg(feature = "simulation-diagnostics")]
-    { authority.state.causal.active_tick_context = None; }
+    {
+        authority.state.causal.active_tick_context = None;
+    }
     authority
         .record_parent_order_canceled(AccountId(1), &StockId(0), crate::OrderId(1))
         .unwrap();
@@ -654,7 +1000,14 @@ fn enqueue_ordinary_buy(authority: &mut GameSession, qty: u32) {
             },
         )
         .unwrap();
-    crate::session::pipeline::staged_decision::stage(crate::session::pipeline::NpcDecisionHandover::new(authority.state.tick, Vec::new(), vec![received], Vec::new()));
+    crate::session::pipeline::staged_decision::stage(
+        crate::session::pipeline::NpcDecisionHandover::new(
+            authority.state.tick,
+            Vec::new(),
+            vec![received],
+            Vec::new(),
+        ),
+    );
 }
 
 /// 形态 1（红→绿）：普通来源超剩余数量必须拒绝——step 失败、不采纳、计划无残留。
@@ -669,11 +1022,8 @@ fn ordinary_adoption_rejects_exceeding_remaining_quantity() {
     if crate::runtime::step_runtime_enabled() {
         return;
     }
-    let mut authority = GameSession::new(
-        crate::session::npc_working_quote_tests::quote_setup(0),
-        49,
-    )
-    .unwrap();
+    let mut authority =
+        GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 49).unwrap();
     let id = adopted_plan_with_released_child(&mut authority);
     let before = authority.state.plans.clone();
     enqueue_ordinary_buy(&mut authority, 400);
@@ -693,11 +1043,8 @@ fn ordinary_adoption_within_remaining_passes() {
     if crate::runtime::step_runtime_enabled() {
         return;
     }
-    let mut authority = GameSession::new(
-        crate::session::npc_working_quote_tests::quote_setup(0),
-        53,
-    )
-    .unwrap();
+    let mut authority =
+        GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 53).unwrap();
     let id = adopted_plan_with_released_child(&mut authority);
     enqueue_ordinary_buy(&mut authority, 300);
     assert!(authority.step().is_ok());
@@ -709,11 +1056,8 @@ fn ordinary_adoption_within_remaining_passes() {
 /// 形态 3（守卫）：candidate 提交失败整体回滚，采纳不残留到 authority。
 #[test]
 fn failed_candidate_rolls_back_adoption_without_residue() {
-    let mut authority = GameSession::new(
-        crate::session::npc_working_quote_tests::quote_setup(0),
-        59,
-    )
-    .unwrap();
+    let mut authority =
+        GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 59).unwrap();
     let id = adopted_plan_with_released_child(&mut authority);
     let before = authority.state.plans.clone();
     enqueue_ordinary_buy(&mut authority, 300);
@@ -727,7 +1071,12 @@ fn failed_candidate_rolls_back_adoption_without_residue() {
         "失败的候选不得把采纳残留到 authority"
     );
     assert_eq!(
-        authority.state.plans.plan(id).unwrap().active_child_order_id(),
+        authority
+            .state
+            .plans
+            .plan(id)
+            .unwrap()
+            .active_child_order_id(),
         None
     );
 }

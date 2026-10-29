@@ -10,10 +10,10 @@
 //!
 //! 相位等待时间与分拣/发送时间是「路由税/同步税」的直接计量。
 
+use crate::book::FillReceipt;
 use crate::setup::ProtoConfig;
 use crate::worker::{MarketSnapshot, StockPublicState, ThreadGauge, TickDone};
 use crate::xworker::{xworker_main, RoutedOp, XMsg, XUp};
-use crate::book::FillReceipt;
 use crate::ProtoError;
 use std::sync::mpsc::channel;
 use std::sync::Arc;
@@ -94,12 +94,14 @@ pub fn run_cross_benchmark(
     cross_pct: u32,
 ) -> Result<XRunReport, ProtoError> {
     if cfg.stocks.is_empty() || cfg.ticks == 0 {
-        return Err(ProtoError::InvalidConfig(
-            "stocks 与 ticks 必须非空".into(),
-        ));
+        return Err(ProtoError::InvalidConfig("stocks 与 ticks 必须非空".into()));
     }
     let stocks = cfg.stocks.len() as u32;
-    let per_stock_threads = if width == 0 { 0 } else { (width / stocks).max(1) };
+    let per_stock_threads = if width == 0 {
+        0
+    } else {
+        (width / stocks).max(1)
+    };
 
     // 与 default-setup.json 对齐的权威费用/整手配置（与按股私有臂同参）。
     let game_cfg = Arc::new(
@@ -221,10 +223,16 @@ pub fn run_cross_benchmark(
         // ── 分拣：按目标股，先撤后挂（保持各家端内部顺序）──
         let t1 = Instant::now();
         let mut routes: Vec<Vec<RoutedOp>> = (0..txs.len()).map(|_| Vec::new()).collect();
-        for op in all_ops.iter().filter(|o| matches!(o, RoutedOp::CancelAll { .. })) {
+        for op in all_ops
+            .iter()
+            .filter(|o| matches!(o, RoutedOp::CancelAll { .. }))
+        {
             routes[op.target() as usize].push(*op);
         }
-        for op in all_ops.iter().filter(|o| matches!(o, RoutedOp::Place { .. })) {
+        for op in all_ops
+            .iter()
+            .filter(|o| matches!(o, RoutedOp::Place { .. }))
+        {
             routes[op.target() as usize].push(*op);
         }
         for (target, ops) in routes.into_iter().enumerate() {
@@ -259,7 +267,10 @@ pub fn run_cross_benchmark(
         }
         let w2 = t2.elapsed();
         if crate::xdbg() {
-            eprintln!("[coord] tick {tick} 收齐 Phase2（receipts={}）", receipts.len());
+            eprintln!(
+                "[coord] tick {tick} 收齐 Phase2（receipts={}）",
+                receipts.len()
+            );
         }
         // ── 分拣回执：按家端下发（相位 3 无屏障）──
         let t3 = Instant::now();
@@ -442,7 +453,9 @@ pub fn run_cross_benchmark(
                 .collect();
             eprintln!(
                 "[audit] stock {s}({}) held={} remainder={} 每家端贡献 {}",
-                spec.code, held_per_stock[s], remainder_per_stock[s],
+                spec.code,
+                held_per_stock[s],
+                remainder_per_stock[s],
                 per_home.join(" ")
             );
         }

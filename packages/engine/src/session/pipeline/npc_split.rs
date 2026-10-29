@@ -8,8 +8,8 @@
 //! 持有它们的可写 authority，不需要复制目录或 Vec。
 
 use crate::{
-    GameSession, MarketMinuteClose, NpcAttentionState, RetailExperienceState,
-    SessionSetup, StockCatalog, StockId,
+    GameSession, MarketMinuteClose, NpcAttentionState, RetailExperienceState, SessionSetup,
+    StockCatalog, StockId,
 };
 use std::borrow::Cow;
 use std::collections::{BTreeMap, VecDeque};
@@ -31,7 +31,9 @@ use crate::session::{
 /// markets、账本、行情和公司公开信息只共享不可变借用；个人状态与计划只在写组。
 /// 新消费方若需要在 view 生存期内修改某域，必须先隔离该域，不能借用可写 authority。
 pub(in crate::session) struct SessionReadView<'a> {
-    pub(in crate::session) information_anchors: std::sync::Arc<BTreeMap<StockId, crate::observation::information_clock::InformationTradingAnchor>>,
+    pub(in crate::session) information_anchors: std::sync::Arc<
+        BTreeMap<StockId, crate::observation::information_clock::InformationTradingAnchor>,
+    >,
     pub(in crate::session) calendar_day:
         std::sync::Arc<super::super::market_calendar_context::MarketDayContext>,
     pub(in crate::session) compute: &'a std::sync::Arc<crate::compute::ComputeContext>,
@@ -57,20 +59,23 @@ pub(in crate::session) struct SessionReadView<'a> {
     /// npc_split 持有独立目录 snapshot，账户页/strategy 的写入由 COW 隔离。
     pub(in crate::session) accounts: Cow<'a, AccountBook>,
     /// D5 attention：desk 簿镜像（runtime 形态的公开面源；空=旧管线）。
-    pub(in crate::session) desk_book_mirror: &'a std::collections::BTreeMap<
-        StockId,
-        crate::session::DeskBookMirror,
-    >,
+    pub(in crate::session) desk_book_mirror:
+        &'a std::collections::BTreeMap<StockId, crate::session::DeskBookMirror>,
 }
 
 impl GameSession {
     /// 普通 &self 消费方：全部借用，不复制账户目录或 lifecycle Vec。
     pub(in crate::session) fn read_view(&self) -> SessionReadView<'_> {
-        let (calendar_day, projection) = self.prepare_market_calendar_projection()
+        let (calendar_day, projection) = self
+            .prepare_market_calendar_projection()
             .expect("只读视图的当前 Calendar projection 必须合法");
         let information_anchors = std::sync::Arc::new(
-            super::super::information_anchor::information_trading_anchors(calendar_day.day_model(), &projection)
-                .expect("只读视图的逐股个人信息锚必须合法"));
+            super::super::information_anchor::information_trading_anchors(
+                calendar_day.day_model(),
+                &projection,
+            )
+            .expect("只读视图的逐股个人信息锚必须合法"),
+        );
         SessionReadView {
             information_anchors,
             calendar_day,
@@ -87,9 +92,11 @@ impl GameSession {
             candle_book: &self.state.candle_book,
             urgency_policy: &self.state.urgency_policy,
             civil_clock: &self.state.civil_clock,
-            company_facts: std::sync::Arc::new(self.state.company_read_facts().unwrap_or_else(|error| {
-                panic!("session 只读公司事实构造失败：{error}")
-            })),
+            company_facts: std::sync::Arc::new(
+                self.state
+                    .company_read_facts()
+                    .unwrap_or_else(|error| panic!("session 只读公司事实构造失败：{error}")),
+            ),
             library: &self.state.library,
             tick: self.state.tick,
             day: self.state.day,
@@ -130,11 +137,16 @@ pub(in crate::session) fn npc_split(
             .company_read_facts()
             .unwrap_or_else(|error| panic!("NPC 分借用公司事实构造失败：{error}")),
     );
-    let (calendar_day, projection) = session.prepare_market_calendar_projection()
+    let (calendar_day, projection) = session
+        .prepare_market_calendar_projection()
         .expect("NPC 只读 Calendar projection 必须合法");
     let information_anchors = std::sync::Arc::new(
-        super::super::information_anchor::information_trading_anchors(calendar_day.day_model(), &projection)
-            .expect("NPC 分借用的逐股个人信息锚必须合法"));
+        super::super::information_anchor::information_trading_anchors(
+            calendar_day.day_model(),
+            &projection,
+        )
+        .expect("NPC 分借用的逐股个人信息锚必须合法"),
+    );
     let state = &mut session.state;
     let read = SessionReadView {
         information_anchors,
@@ -321,9 +333,18 @@ mod tests {
         let view = session.read_view();
         let accounts: &AccountBook = &view.accounts;
         let lifecycles: &[NpcOrderLifecycle] = &view.npc_order_lifecycles;
-        assert!(std::ptr::eq(accounts, &session.state.accounts), "普通 view 复制了账户目录");
-        assert!(std::ptr::eq(lifecycles, session.state.npc_order_lifecycles.as_slice()), "普通 view 复制了 lifecycle Vec");
-        assert_eq!(session.revision.load(std::sync::atomic::Ordering::Relaxed), revision);
+        assert!(
+            std::ptr::eq(accounts, &session.state.accounts),
+            "普通 view 复制了账户目录"
+        );
+        assert!(
+            std::ptr::eq(lifecycles, session.state.npc_order_lifecycles.as_slice()),
+            "普通 view 复制了 lifecycle Vec"
+        );
+        assert_eq!(
+            session.revision.load(std::sync::atomic::Ordering::Relaxed),
+            revision
+        );
     }
 
     /// 拆分后两组借用必须能在 rayon::join 中并存，且写侧对 accounts 的变更
@@ -390,12 +411,19 @@ mod tests {
         assert!(matches!(view.npc_order_lifecycles, Cow::Owned(_)));
         let ((), observed) = crate::compute::join(
             || {
-                writes.accounts.get_mut(&account).unwrap().restore_strategy(None);
+                writes
+                    .accounts
+                    .get_mut(&account)
+                    .unwrap()
+                    .restore_strategy(None);
                 writes.npc_order_lifecycles[0].expires_market_minute = 99;
                 writes.npc_order_lifecycles.clear();
             },
             || {
-                (view.accounts[&account].has_strategy(), view.npc_order_lifecycles[0].expires_market_minute)
+                (
+                    view.accounts[&account].has_strategy(),
+                    view.npc_order_lifecycles[0].expires_market_minute,
+                )
             },
         );
         assert_eq!(observed, (true, 9));
@@ -414,10 +442,15 @@ mod tests {
         let account = AccountId(1);
         let stock = StockId(0);
         // quote_setup(0) 不分配流通股；显式建立合法 Position，禁止条件分支空转。
-        session.state.accounts.get_mut(&account).unwrap().fixture_insert_position(
-            stock,
-            crate::account::Position::from_restored_parts(300, 100, 300_000, 0),
-        );
+        session
+            .state
+            .accounts
+            .get_mut(&account)
+            .unwrap()
+            .fixture_insert_position(
+                stock,
+                crate::account::Position::from_restored_parts(300, 100, 300_000, 0),
+            );
         let cash = session.state.accounts[&account].cash();
         let position = session.state.accounts[&account]
             .position(&stock)
@@ -429,24 +462,59 @@ mod tests {
         let view = session.read_view();
         let borrowed_position = view.accounts[&account].position(&stock).unwrap();
         assert!(std::ptr::eq(position, borrowed_position));
-        let resources = super::super::decision_resources::DecisionResourceSnapshot::seal_on(&view).unwrap();
-        assert_eq!(resources.total_held_qty(account, &stock).unwrap(), borrowed_position.qty());
-        assert_eq!(resources.sellable_before_reservation(account, &stock).unwrap(), borrowed_position.sellable());
-        assert_eq!(resources.total_held_qty(account, &stock).unwrap() - resources.sellable_before_reservation(account, &stock).unwrap(), borrowed_position.t1_locked());
+        let resources =
+            super::super::decision_resources::DecisionResourceSnapshot::seal_on(&view).unwrap();
+        assert_eq!(
+            resources.total_held_qty(account, &stock).unwrap(),
+            borrowed_position.qty()
+        );
+        assert_eq!(
+            resources
+                .sellable_before_reservation(account, &stock)
+                .unwrap(),
+            borrowed_position.sellable()
+        );
+        assert_eq!(
+            resources.total_held_qty(account, &stock).unwrap()
+                - resources
+                    .sellable_before_reservation(account, &stock)
+                    .unwrap(),
+            borrowed_position.t1_locked()
+        );
         drop(view);
 
         let entry = session.state.accounts.get_mut(&account).unwrap();
         entry.fixture_set_cash(Money::from_cents(cash.cents() + 123));
-        entry.fixture_insert_position(stock, crate::account::Position::from_restored_parts(500, 200, 500_000, 0));
+        entry.fixture_insert_position(
+            stock,
+            crate::account::Position::from_restored_parts(500, 200, 500_000, 0),
+        );
         assert_eq!(resources.raw_cash(account).unwrap(), cash);
         assert_eq!(resources.total_held_qty(account, &stock).unwrap(), 300);
-        assert_eq!(resources.sellable_before_reservation(account, &stock).unwrap(), 200);
+        assert_eq!(
+            resources
+                .sellable_before_reservation(account, &stock)
+                .unwrap(),
+            200
+        );
         assert_eq!(resources.available_sell_qty(account, &stock).unwrap(), 200);
         assert_eq!(resources.reserved_sell_qty(account, &stock).unwrap(), 0);
-        assert_eq!(resources.total_held_qty(account, &stock).unwrap() - resources.sellable_before_reservation(account, &stock).unwrap(), 100);
+        assert_eq!(
+            resources.total_held_qty(account, &stock).unwrap()
+                - resources
+                    .sellable_before_reservation(account, &stock)
+                    .unwrap(),
+            100
+        );
         let live = session.state.accounts[&account].position(&stock).unwrap();
-        assert_eq!(session.state.accounts[&account].cash().cents(), cash.cents() + 123);
-        assert_eq!((live.qty(), live.sellable(), live.t1_locked()), (500, 300, 200));
+        assert_eq!(
+            session.state.accounts[&account].cash().cents(),
+            cash.cents() + 123
+        );
+        assert_eq!(
+            (live.qty(), live.sellable(), live.t1_locked()),
+            (500, 300, 200)
+        );
     }
 
     /// 非空挂卖预留的封前事实：authority 预留增长后，旧 snapshot 不回灌；
@@ -457,10 +525,15 @@ mod tests {
         // 用 Player 账户：seed helper 对 NPC 账户会先撤销同向旧挂单，无法累积两笔。
         let account = AccountId(0);
         let stock = StockId(0);
-        session.state.accounts.get_mut(&account).unwrap().fixture_insert_position(
-            stock,
-            crate::account::Position::from_restored_parts(300, 100, 300_000, 0),
-        );
+        session
+            .state
+            .accounts
+            .get_mut(&account)
+            .unwrap()
+            .fixture_insert_position(
+                stock,
+                crate::account::Position::from_restored_parts(300, 100, 300_000, 0),
+            );
         session.seed_order_for_test(
             account,
             crate::Intent::PlaceLimit {
@@ -475,14 +548,24 @@ mod tests {
         // 前置：挂卖预留确实非空（quote_setup(0) 的账户 1 无其他挂单）。
         let live_before = session.state.envelope_ledger.live_reservations().unwrap();
         assert_eq!(
-            live_before.get(account).and_then(|row| row.sell.get(&stock).copied()),
+            live_before
+                .get(account)
+                .and_then(|row| row.sell.get(&stock).copied()),
             Some(50),
             "前置失败：预留为空，后续断言将空转"
         );
 
-        let resources = super::super::decision_resources::DecisionResourceSnapshot::seal_on(&session.read_view()).unwrap();
+        let resources = super::super::decision_resources::DecisionResourceSnapshot::seal_on(
+            &session.read_view(),
+        )
+        .unwrap();
         assert_eq!(resources.total_held_qty(account, &stock).unwrap(), 300);
-        assert_eq!(resources.sellable_before_reservation(account, &stock).unwrap(), 200);
+        assert_eq!(
+            resources
+                .sellable_before_reservation(account, &stock)
+                .unwrap(),
+            200
+        );
         assert_eq!(resources.reserved_sell_qty(account, &stock).unwrap(), 50);
         assert_eq!(resources.available_sell_qty(account, &stock).unwrap(), 150);
 
@@ -500,14 +583,19 @@ mod tests {
         session.hydrate_or_validate_envelope_ledger().unwrap();
         let live_after = session.state.envelope_ledger.live_reservations().unwrap();
         assert_eq!(
-            live_after.get(account).and_then(|row| row.sell.get(&stock).copied()),
+            live_after
+                .get(account)
+                .and_then(|row| row.sell.get(&stock).copied()),
             Some(80)
         );
 
         // 旧 snapshot 保持封前事实；新 seal 反映增长。
         assert_eq!(resources.reserved_sell_qty(account, &stock).unwrap(), 50);
         assert_eq!(resources.available_sell_qty(account, &stock).unwrap(), 150);
-        let fresh = super::super::decision_resources::DecisionResourceSnapshot::seal_on(&session.read_view()).unwrap();
+        let fresh = super::super::decision_resources::DecisionResourceSnapshot::seal_on(
+            &session.read_view(),
+        )
+        .unwrap();
         assert_eq!(fresh.reserved_sell_qty(account, &stock).unwrap(), 80);
         assert_eq!(fresh.available_sell_qty(account, &stock).unwrap(), 120);
     }

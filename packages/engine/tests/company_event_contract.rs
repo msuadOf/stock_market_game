@@ -219,7 +219,8 @@ fn announcement_event_follows_successful_immutable_library_insertion() {
     let mut save = session.save().expect("healthy save");
     let company = CompanyId(0);
     let date = save.civil_clock.current_date;
-    legacy_saved_mut(&mut save).0
+    legacy_saved_mut(&mut save)
+        .0
         .apply_company_shock(
             &company,
             ActiveShock {

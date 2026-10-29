@@ -448,7 +448,6 @@ fn runtime_after_market_close_numeric_failure_keeps_original_fault_and_terminal_
     assert_eq!(game.step_via_runtime().unwrap_err(), fatal);
 }
 
-
 #[test]
 fn runtime_first_civil_candidate_save_matches_committed_authority_after_lazy_handover() {
     let mut setup = super::npc_working_quote_tests::quote_setup(0);

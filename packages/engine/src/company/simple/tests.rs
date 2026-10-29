@@ -11,8 +11,8 @@ use crate::{
     },
     calendar::CivilDate,
     company::{
-        CompanyId, CompanyKind, CompanySpec, CompanySystem, CompanySystemError, IndustryId,
-        api::CompanyCommand, config::CompanySystemConfig,
+        api::CompanyCommand, config::CompanySystemConfig, CompanyId, CompanyKind, CompanySpec,
+        CompanySystem, CompanySystemError, IndustryId,
     },
 };
 
@@ -142,14 +142,30 @@ fn aggregate_restore_rejects_income_tax_restatements_without_matching_closing_wo
     serde_json::from_value::<CompanySystem>(encoded.clone()).expect("合法聚合存档必须先恢复");
     let finance_value = &mut encoded["implementation"]["state"]["companies"]["0"]["finance"];
     let finance: SimpleFinanceState = serde_json::from_value(finance_value.clone()).unwrap();
-    let source = finance.books().journal().entries().next().unwrap().source.value().to_string();
-    let target = crate::accounting::AccountingPeriod::from_ymd(finance.opening_date().year() - 1, finance.opening_date().month()).unwrap();
+    let source = finance
+        .books()
+        .journal()
+        .entries()
+        .next()
+        .unwrap()
+        .source
+        .value()
+        .to_string();
+    let target = crate::accounting::AccountingPeriod::from_ymd(
+        finance.opening_date().year() - 1,
+        finance.opening_date().month(),
+    )
+    .unwrap();
     let restatements = &mut finance_value["income_tax_position"]["restatements"];
     assert!(restatements.as_object().unwrap().is_empty());
     // CompanySystem 聚合恢复同时拥有 tax 与 closing，合法历史映射必须交叉勾稽而不能只过低层校验。
     restatements[&source] = serde_json::to_value(target).unwrap();
-    let error = serde_json::from_value::<CompanySystem>(encoded).expect_err("税务与结账重述映射不一致必须拒绝");
-    assert!(error.to_string().contains("税务与报告更正工作底稿不同步"), "{error}");
+    let error = serde_json::from_value::<CompanySystem>(encoded)
+        .expect_err("税务与结账重述映射不一致必须拒绝");
+    assert!(
+        error.to_string().contains("税务与报告更正工作底稿不同步"),
+        "{error}"
+    );
 }
 
 fn create(config: SimpleConfig) -> CompanySystem {
@@ -180,15 +196,13 @@ fn explicit_config_kind_is_required_and_must_match_issuer() {
     assert!(serde_json::from_value::<SimpleConfig>(saved).is_err());
     let mut cfg = config();
     cfg.companies[0].kind = CompanyKind::Bank;
-    assert!(
-        CompanySystem::create(
-            vec![spec()],
-            CompanySystemConfig::Simple(cfg),
-            date("2030-01-01"),
-            19,
-        )
-        .is_err()
-    );
+    assert!(CompanySystem::create(
+        vec![spec()],
+        CompanySystemConfig::Simple(cfg),
+        date("2030-01-01"),
+        19,
+    )
+    .is_err());
 }
 
 #[test]
@@ -231,12 +245,10 @@ fn simple_creates_dated_summary_prehistory_with_expense_derived_loss() {
 fn simple_month_end_generates_facts_without_owning_publication_schedule() {
     let mut state = create(config());
     for day in 1..31 {
-        assert!(
-            state
-                .advance_day(CivilDate::from_ymd(2030, 1, day).unwrap())
-                .unwrap()
-                .is_empty()
-        );
+        assert!(state
+            .advance_day(CivilDate::from_ymd(2030, 1, day).unwrap())
+            .unwrap()
+            .is_empty());
     }
     let generated = state.advance_day(date("2030-01-31")).unwrap();
     assert_eq!(generated.len(), 1);
@@ -261,15 +273,13 @@ fn simple_zero_revenue_needs_explicit_restart_without_investor_funding() {
             .unwrap();
     }
     assert_eq!(state.history()[0].amounts.revenue, amount(0));
-    assert!(
-        state
-            .submit_command(CompanyCommand::RestartRevenue {
-                company: COMPANY,
-                revenue: amount(1000),
-                source: "".into()
-            })
-            .is_err()
-    );
+    assert!(state
+        .submit_command(CompanyCommand::RestartRevenue {
+            company: COMPANY,
+            revenue: amount(1000),
+            source: "".into()
+        })
+        .is_err());
     state
         .submit_command(CompanyCommand::RestartRevenue {
             company: COMPANY,
@@ -316,15 +326,13 @@ fn simple_invalid_growth_and_simulation_are_not_fallbacks() {
     cfg.companies[0].generation.revenue_trend = AnnualTrendConfig::Fixed {
         annual_growth_bp: -10_001,
     };
-    assert!(
-        CompanySystem::create(
-            vec![spec()],
-            CompanySystemConfig::Simple(cfg),
-            date("2030-01-01"),
-            1
-        )
-        .is_err()
-    );
+    assert!(CompanySystem::create(
+        vec![spec()],
+        CompanySystemConfig::Simple(cfg),
+        date("2030-01-01"),
+        1
+    )
+    .is_err());
     assert!(matches!(
         CompanySystem::create(
             vec![spec()],
@@ -481,8 +489,7 @@ fn simple_restore_rejects_duplicate_map_identities() {
             .unwrap_or_else(|| panic!("{path} 序列化应是非空 map"));
         let entry = serde_json::to_string(&object[&first_key]).unwrap();
         let unique = format!("\"{path}\":{{\"{first_key}\":{entry}}}");
-        let duplicate =
-            format!("\"{path}\":{{\"{first_key}\":{entry}}},\"{first_key}\":{entry}}}");
+        let duplicate = format!("\"{path}\":{{\"{first_key}\":{entry}}},\"{first_key}\":{entry}}}");
         let serialized = serde_json::to_string(&value).unwrap();
         assert!(serialized.contains(&unique));
         assert!(

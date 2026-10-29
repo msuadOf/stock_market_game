@@ -13,8 +13,6 @@ mod authoritative_tick;
 mod book_auction_boundary;
 #[cfg(test)]
 mod book_auction_boundary_tests;
-#[cfg(all(test, feature = "simulation-diagnostics"))]
-mod stock_clock_tests;
 mod candidate_commit;
 mod candidate_composition;
 mod commit_evidence;
@@ -25,8 +23,6 @@ mod continuous_matching_adapter;
 mod continuous_projection_transaction;
 mod continuous_tick_finalizer;
 mod day_end;
-mod market_tick_transaction;
-mod order_receipts;
 mod decision_resources;
 mod decision_snapshot;
 mod decision_snapshot_capture;
@@ -48,7 +44,11 @@ mod ledger_paged_map;
 mod ledger_rows;
 mod ledger_validation;
 mod live_reservations;
+mod market_tick_transaction;
+mod order_receipts;
 mod private_stock_ledger;
+#[cfg(all(test, feature = "simulation-diagnostics"))]
+mod stock_clock_tests;
 pub(in crate::session) use live_reservations::{
     LiveReservations, ReservationPage, RESERVATION_PAGE_SHIFT,
 };
@@ -66,10 +66,10 @@ mod ready_stock_stream;
 mod receipt_aggregation;
 mod receipt_key;
 mod retail_projection;
+mod serial_b2_surfaces;
 mod session_execution_transaction;
 mod session_fact_producers;
 mod settlement;
-mod serial_b2_surfaces;
 mod stock_execution_transaction;
 mod stock_stream;
 pub(in crate::session) use stock_stream::TickWorkReady;
@@ -174,22 +174,19 @@ mod ledger_state_tests;
 #[cfg(test)]
 mod ledger_tests;
 #[cfg(test)]
-mod npc_decisions_tests;
-#[cfg(test)]
 mod npc_decisions_quota_tests;
+#[cfg(test)]
+mod npc_decisions_tests;
 #[cfg(test)]
 mod npc_state_projection_tests;
 #[cfg(test)]
-mod plan_owner_tests;
-#[cfg(test)]
 mod npc_tick_preparation_tests;
-#[cfg(test)]
-#[path = "t3_boundary_tests.rs"]
-mod t3_boundary_tests;
 #[cfg(test)]
 mod order_single_lifecycle_tests;
 #[cfg(test)]
 mod plan_continuation_domain_tests;
+#[cfg(test)]
+mod plan_owner_tests;
 #[cfg(test)]
 mod plan_quota_dead_zone_tests;
 #[cfg(test)]
@@ -218,6 +215,9 @@ mod settlement_tests;
 mod spine_v0_contract_tests;
 #[cfg(test)]
 mod stock_execution_transaction_tests;
+#[cfg(test)]
+#[path = "t3_boundary_tests.rs"]
+mod t3_boundary_tests;
 #[cfg(test)]
 mod t4_market_data_owner_tests;
 #[cfg(test)]
@@ -278,8 +278,10 @@ impl TickShadowPlan {
     ) -> Result<GameSession, StepFatal> {
         #[cfg(feature = "simulation-diagnostics")]
         if session.state.causal.active_tick_context.is_some() {
-            return Err(StepFatal::InvariantViolation { location: "TickShadowPlan::capture_candidate".to_owned(),
-                description: "活跃 causal TickArc 不允许重入 capture".to_owned() });
+            return Err(StepFatal::InvariantViolation {
+                location: "TickShadowPlan::capture_candidate".to_owned(),
+                description: "活跃 causal TickArc 不允许重入 capture".to_owned(),
+            });
         }
         let (day, calendar_tick) = session.prepare_market_calendar_tick()?;
         #[cfg(not(feature = "simulation-diagnostics"))]
@@ -287,7 +289,9 @@ impl TickShadowPlan {
         let mut candidate = session.clone_for_tick_shadow()?;
         candidate.install_market_calendar_day(day);
         #[cfg(feature = "simulation-diagnostics")]
-        { candidate.state.causal.active_tick_context = Some(calendar_tick); }
+        {
+            candidate.state.causal.active_tick_context = Some(calendar_tick);
+        }
         candidate.freeze_shared_ingress()?;
         Ok(candidate)
     }
@@ -471,8 +475,7 @@ pub fn plan_tick(input: PhaseInput<'_>) -> Result<TickShadowPlan, StepFatal> {
                     Err(std::sync::mpsc::TryRecvError::Empty) => crate::compute::yield_work(),
                     Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                         return Err(StepFatal::InvariantViolation {
-                            description: "read-only prepare task ended without a result"
-                                .to_owned(),
+                            description: "read-only prepare task ended without a result".to_owned(),
                             location: "pipeline::plan_tick".to_owned(),
                         })
                     }
@@ -553,7 +556,7 @@ pub(in crate::session) fn commit_injected_plan_roots_for_test(
         .expect("plan-root fixture must have a valid starting ledger");
     let phase = authority.phase();
     let mut plan = plan_tick(PhaseInput { session: authority })
-    .expect("计划根 tick 的 ExpiryShadow/SealAllocationSnapshot");
+        .expect("计划根 tick 的 ExpiryShadow/SealAllocationSnapshot");
     market_tick_transaction::apply_tick_shadow_market_transaction_with_roots_for_test(
         &mut plan, roots,
     )
@@ -579,16 +582,18 @@ pub(in crate::session) fn run_injected_roots_market_tick_for_test(
         .hydrate_or_validate_envelope_ledger()
         .expect("plan-root fixture must have a valid starting ledger");
     let mut plan = plan_tick(PhaseInput { session: authority })
-    .expect("计划根 tick 的 ExpiryShadow/SealAllocationSnapshot");
+        .expect("计划根 tick 的 ExpiryShadow/SealAllocationSnapshot");
     market_tick_transaction::apply_tick_shadow_market_transaction_with_roots_for_test(
         &mut plan, roots,
     )
     .map_err(|error| error.into_fatal())?;
-    Ok(candidate_commit::prepare_tick_shadow_plan_commit(authority, plan)
-        .expect("计划根 tick 的 CommitTick 准备（市场事务已成功，此处无注入失败路径）")
-        .commit()
-        .tick
-        .event_values())
+    Ok(
+        candidate_commit::prepare_tick_shadow_plan_commit(authority, plan)
+            .expect("计划根 tick 的 CommitTick 准备（市场事务已成功，此处无注入失败路径）")
+            .commit()
+            .tick
+            .event_values(),
+    )
 }
 
 /// Events produced by a successfully committed tick.
@@ -612,7 +617,7 @@ impl TickCommitResult {
 #[cfg(test)]
 pub(in crate::session) use npc_tick_preparation::queue_npc_for_next_tick;
 #[cfg(test)]
-pub(in crate::session) use npc_tick_preparation::take_staged_intents_for_runtime;
-#[cfg(test)]
 pub(in crate::session) use npc_tick_preparation::staged_decision;
+#[cfg(test)]
+pub(in crate::session) use npc_tick_preparation::take_staged_intents_for_runtime;
 pub(in crate::session) use npc_tick_preparation::NpcDecisionHandover;

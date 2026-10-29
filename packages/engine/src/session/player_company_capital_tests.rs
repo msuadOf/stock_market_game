@@ -509,7 +509,7 @@ fn capital_context_missing_registry_is_rejected_before_world_or_approval() {
 fn install_settled_split_history(game: &mut GameSession) {
     use crate::company::issuer_repurchase::SplitUnitContext;
     use crate::session::corporate_actions::share_transform_day_end::{
-        ShareTransformDayEndInput, share_transform_day_end_candidate,
+        share_transform_day_end_candidate, ShareTransformDayEndInput,
     };
     let (registered_on, ex_on) = crate::company::simple::preferences::preference_ex_dates(
         game.state.civil_clock.calendar(),

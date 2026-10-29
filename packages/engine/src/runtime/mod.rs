@@ -52,14 +52,16 @@ mod information_clock_context;
 pub(crate) mod information_handover;
 pub use information_clock_context::InformationClockContext;
 mod repurchase_transport;
-pub use repurchase_transport::{RepurchaseRequestKey, RepurchaseReturnKind, RepurchaseSourceFact, RepurchaseSourceKind};
+pub use repurchase_transport::{
+    RepurchaseRequestKey, RepurchaseReturnKind, RepurchaseSourceFact, RepurchaseSourceKind,
+};
 
 pub mod bridge;
 pub mod coordinator;
 pub mod decision;
+pub mod desk;
 #[cfg(feature = "simulation-diagnostics")]
 pub mod diagnostics;
-pub mod desk;
 pub mod drive;
 pub(crate) mod driver_sync;
 pub mod event_bridge;
@@ -70,91 +72,91 @@ pub(crate) mod bridge_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 pub(crate) use bridge_tests::setup_fixture as administrative_mirror_setup_for_test;
 #[cfg(all(test, not(target_arch = "wasm32")))]
-mod candle_retirement_tests;
-#[cfg(all(test, not(target_arch = "wasm32")))]
-mod calendar_raw_range_tests;
-#[cfg(all(test, not(target_arch = "wasm32")))]
-mod calendar_projection_tests;
-#[cfg(all(test, not(target_arch = "wasm32")))]
 mod calendar_cancel_all_tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod calendar_chain_caller_tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod calendar_day_end_authority_tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod calendar_drain_tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod calendar_group_day_end_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod calendar_misroute_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod calendar_postroll_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
-mod calendar_reopen_lifecycle_tests;
-#[cfg(all(test, not(target_arch = "wasm32")))]
-mod calendar_group_day_end_tests;
-#[cfg(all(test, not(target_arch = "wasm32")))]
-mod calendar_drain_tests;
-#[cfg(all(test, not(target_arch = "wasm32")))]
-mod calendar_day_end_authority_tests;
-#[cfg(all(test, not(target_arch = "wasm32")))]
-mod calendar_chain_caller_tests;
+mod calendar_projection_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod calendar_public_restore_tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod calendar_raw_range_tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod calendar_reopen_lifecycle_tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod candle_retirement_tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod day_end_public_views_tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod day_end_tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod decision_tests;
+/// 刀 2a desk 投影轮间缓存合同（协调者刀单裁决②，2026-10-19）。
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod desk_projection_cache_tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod drive_tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod equivalence_tests;
+pub mod fees;
+pub mod group;
+/// P0 预存缺陷红证：多组名册偏移（组端坐标 vs 全局投影坐标）。
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod group_roster_offset_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod inline_account_tests;
 /// B2 件 2：desk 分钟K观察面语义测试（对照 18725d07 MinuteBar 基线）。
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod minute_bars_tests;
-/// B2 件 3：DeskTradeFact 双腿费用三分项测试（旧收据 actual_fees 基线）。
-#[cfg(all(test, not(target_arch = "wasm32")))]
-mod trade_fee_split_tests;
-/// B2 件 4：保留历史快照链测试（18725d07 RetainedHistoryDay 基线）。
-#[cfg(all(test, not(target_arch = "wasm32")))]
-mod retained_history_tests;
-#[cfg(all(test, not(target_arch = "wasm32")))]
-mod drive_tests;
+pub(crate) mod personal_full_validation;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod plan_identity_tests;
-/// P0 预存缺陷红证：多组名册偏移（组端坐标 vs 全局投影坐标）。
-#[cfg(all(test, not(target_arch = "wasm32")))]
-mod group_roster_offset_tests;
-#[cfg(all(test, not(target_arch = "wasm32")))]
-mod treasury_autonomy_tests;
-#[cfg(all(test, not(target_arch = "wasm32")))]
-mod day_end_tests;
-#[cfg(all(test, not(target_arch = "wasm32")))]
-mod day_end_public_views_tests;
-#[cfg(all(test, not(target_arch = "wasm32")))]
-mod decision_tests;
-#[cfg(all(test, not(target_arch = "wasm32")))]
-mod equivalence_tests;
-pub mod fees;
-pub mod group;
-pub mod plans;
 mod plan_ownership;
-pub(crate) mod personal_full_validation;
-pub(crate) mod source;
-/// P0 分段画像探针（视图内生战役）：driver 线程 step 各段 wall 计时。
-/// 默认零开销（探针显式 enable；生产恒关闭）。
-pub mod step_profile;
+pub mod plans;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod plans_tests;
 /// Q1 版化发布协议（方案 A·RwLock 先行版）：Arc<PublishedTick> 单点发布。
 pub mod publication;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod publication_tests;
+/// B2 件 4：保留历史快照链测试（18725d07 RetainedHistoryDay 基线）。
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod retained_history_tests;
 /// Q2 Seal 收尾确认相位——行为合同测试（批 1 红先行）。
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod seal_tests;
+pub(crate) mod source;
+/// P0 分段画像探针（视图内生战役）：driver 线程 step 各段 wall 计时。
+/// 默认零开销（探针显式 enable；生产恒关闭）。
+pub mod step_profile;
+/// B2 件 3：DeskTradeFact 双腿费用三分项测试（旧收据 actual_fees 基线）。
 #[cfg(all(test, not(target_arch = "wasm32")))]
-mod plans_tests;
+mod trade_fee_split_tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod treasury_autonomy_tests;
+/// 等待点分层账静态锚（wasm 线程抽象层 R4a 阶段 1——设计 §10.1/§11.1）。
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod wait_ledger_tests;
 #[cfg(target_family = "wasm")]
 mod wasm_wait;
 pub mod watchdog;
+/// B-1' 组线程等待分级自旋合同（协调者批 2026-10-19）。
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod watchdog_spin_tests;
 #[cfg(all(target_family = "wasm", feature = "verification-harness"))]
 pub mod watchdog_verification;
 #[cfg(all(target_family = "wasm", feature = "verification-harness"))]
 pub mod watchdog_wait_verification;
-/// B-1' 组线程等待分级自旋合同（协调者批 2026-10-19）。
-#[cfg(all(test, not(target_arch = "wasm32")))]
-mod watchdog_spin_tests;
-/// 等待点分层账静态锚（wasm 线程抽象层 R4a 阶段 1——设计 §10.1/§11.1）。
-#[cfg(all(test, not(target_arch = "wasm32")))]
-mod wait_ledger_tests;
-/// 刀 2a desk 投影轮间缓存合同（协调者刀单裁决②，2026-10-19）。
-#[cfg(all(test, not(target_arch = "wasm32")))]
-mod desk_projection_cache_tests;
 // D5 wasm 方向 A：world 不再按 wasm 门控（session/bridge/drive 的类型
 // 引用面在 wasm 下编译必需）；wasm 宿主没有 OS 线程。串行 fallback 是缺省值，
 // 宿主可在首次读取前显式设置 step runtime override。
@@ -163,11 +165,12 @@ pub mod world;
 pub use entities::Entity;
 pub use facts::{DeskReceipt, FillFact, FillFactError, ReceiptKind};
 pub use protocol::{DeskBatch, DeskBatchMismatch, DeskIn, DeskTradeFact, RoutedPrice};
-pub use protocol::{MinuteBarFact, MinuteBarPhase, RestingDelta, RestingDeltaEntry, RestingFact, StockPublic};
+pub use protocol::{
+    MinuteBarFact, MinuteBarPhase, RestingDelta, RestingDeltaEntry, RestingFact, StockPublic,
+};
 // B2 单一事实源纯函数/常量（desk 与串行安装共用——serial_b2_surfaces 经此路径引用）。
 pub use protocol::{
-    minute_bar_apply, continuous_minute_of_day, CLOSING_AUCTION_BAR_MINUTE,
-    OPEN_AUCTION_BAR_MINUTE,
+    continuous_minute_of_day, minute_bar_apply, CLOSING_AUCTION_BAR_MINUTE, OPEN_AUCTION_BAR_MINUTE,
 };
 
 /// WASM 默认串行冒烟的编译级断言定义；不能据此认定默认行为已实测。

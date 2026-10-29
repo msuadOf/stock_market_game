@@ -333,12 +333,17 @@ impl OrderLifecycle {
     fn finish_lifecycle(&mut self, fact: &CausalFact) -> Result<(), CausalError> {
         let row = self;
         if row.open_qty == 0 {
-            fact.time.market_minute.checked_sub(row.submitted_at.market_minute)
+            fact.time
+                .market_minute
+                .checked_sub(row.submitted_at.market_minute)
                 .ok_or(CausalError::Time(fact.sequence))?;
             row.lifetime_market_minutes = Some(
                 fact.time
                     .stock_minutes(row.origin.code, fact.sequence)?
-                    .checked_sub(row.submitted_at.stock_minutes(row.origin.code, row.source_sequence)?)
+                    .checked_sub(
+                        row.submitted_at
+                            .stock_minutes(row.origin.code, row.source_sequence)?,
+                    )
                     .ok_or(CausalError::Time(fact.sequence))?,
             );
             let seconds = seconds_between(fact.time.civil, row.submitted_at.civil);
@@ -384,7 +389,13 @@ mod tests {
             .enumerate()
             .map(|(sequence, kind)| CausalFact {
                 sequence: sequence as u64,
-                time: FactTime { stock_clock: kind.stock_code().map(|code| StockFactClock { code, completed_minutes: 1 }), ..time() },
+                time: FactTime {
+                    stock_clock: kind.stock_code().map(|code| StockFactClock {
+                        code,
+                        completed_minutes: 1,
+                    }),
+                    ..time()
+                },
                 kind,
             })
             .collect()

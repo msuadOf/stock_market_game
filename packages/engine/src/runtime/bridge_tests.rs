@@ -385,7 +385,13 @@ fn runtime_driver_steps_session_with_account_writeback_and_events() {
     for tick in 1..=20 {
         let events = driver.step(&mut session).expect("驱动 tick");
         assert_eq!(session.tick(), tick);
-        assert_eq!(events.iter().filter(|event| matches!(event, crate::Event::PriceTick { .. })).count(), session.stock_count_for_runtime());
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(event, crate::Event::PriceTick { .. }))
+                .count(),
+            session.stock_count_for_runtime()
+        );
         for e in &events {
             let seq = match e {
                 crate::Event::Trade { seq, .. } => *seq,

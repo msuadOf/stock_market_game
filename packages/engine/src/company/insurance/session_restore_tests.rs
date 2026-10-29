@@ -56,14 +56,14 @@ fn full_session_restore_rejects_corrupt_insurance_group_in_memory() {
     .unwrap();
     let mut session = GameSession::new(
         SessionSetup {
-        company_system: None,
-        dividend_tax_mode: None,
-        flat_withholding_bp: None,
-        rights_offering_enabled: false,
-        issuer_repurchase_enabled: false,
-        par_value_per_share: None,
-        auto_corporate_foundation: false,
-        report_frequency: None,
+            company_system: None,
+            dividend_tax_mode: None,
+            flat_withholding_bp: None,
+            rights_offering_enabled: false,
+            issuer_repurchase_enabled: false,
+            par_value_per_share: None,
+            auto_corporate_foundation: false,
+            report_frequency: None,
             stocks: vec![StockSpec {
                 code: stock.clone(),
                 exchange: StockExchange::Shanghai,
@@ -141,7 +141,10 @@ fn full_session_restore_rejects_corrupt_insurance_group_in_memory() {
     session.end_civil_day().unwrap();
     let mut saved = session.save().unwrap();
     let group_id = ContractId("RESTORE-GROUP".into());
-    let company = saved.company_state.legacy_for_test_mut().0
+    let company = saved
+        .company_state
+        .legacy_for_test_mut()
+        .0
         .companies
         .get_mut(&company_id)
         .unwrap();
@@ -161,11 +164,11 @@ fn full_session_restore_rejects_corrupt_insurance_group_in_memory() {
         )
         .unwrap();
     let restored = GameSession::restore(&saved).unwrap();
-    assert_eq!(
-        restored.save().unwrap().company_state,
-        saved.company_state
-    );
-    let company = saved.company_state.legacy_for_test_mut().0
+    assert_eq!(restored.save().unwrap().company_state, saved.company_state);
+    let company = saved
+        .company_state
+        .legacy_for_test_mut()
+        .0
         .companies
         .get_mut(&company_id)
         .unwrap();

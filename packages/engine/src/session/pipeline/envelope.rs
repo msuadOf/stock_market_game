@@ -29,9 +29,12 @@ struct FeeInputs {
 }
 impl FeeInputs {
     fn capture(config: &crate::GameConfig) -> Self {
-        Self { commission_rate_bits: config.commission_rate.to_bits(), commission_min: config.commission_min,
+        Self {
+            commission_rate_bits: config.commission_rate.to_bits(),
+            commission_min: config.commission_min,
             stamp_tax_rate_bits: config.stamp_tax_rate.to_bits(),
-            transfer_rate_bits: crate::config::A_SHARE_TRANSFER_FEE_RATE.to_bits() }
+            transfer_rate_bits: crate::config::A_SHARE_TRANSFER_FEE_RATE.to_bits(),
+        }
     }
 }
 
@@ -50,10 +53,16 @@ enum FeeFailure {
     LiveResources,
 }
 impl From<StepFatal> for FeeFailure {
-    fn from(value: StepFatal) -> Self { Self::Fatal(value) }
+    fn from(value: StepFatal) -> Self {
+        Self::Fatal(value)
+    }
 }
 #[derive(Clone, Copy)]
-enum FeeCheckSite { Generic, BookCapture, StockRound }
+enum FeeCheckSite {
+    Generic,
+    BookCapture,
+    StockRound,
+}
 
 /// 每个规范Envelope持有自己的证明。clone/COW共享同内容的不可变证明，
 /// 财务内容改变时换新OnceLock；同page其他订单不受粗粒度失效影响。
@@ -68,7 +77,9 @@ impl std::fmt::Debug for FinancialRuntime {
     }
 }
 impl PartialEq for FinancialRuntime {
-    fn eq(&self, _other: &Self) -> bool { true }
+    fn eq(&self, _other: &Self) -> bool {
+        true
+    }
 }
 impl Eq for FinancialRuntime {}
 
@@ -235,13 +246,22 @@ impl Envelope {
 
     /// 获得同一规范订单的已验证资源事实；所有消费者复用此入口，不再重建费用。
     /// 一般basis/spent/released守恒每次照常检查，不在FeeProof的缓存覆盖范围内。
-    pub(in crate::session) fn verified_live(&self, config: &crate::GameConfig) -> Result<ResVec, StepFatal> {
+    pub(in crate::session) fn verified_live(
+        &self,
+        config: &crate::GameConfig,
+    ) -> Result<ResVec, StepFatal> {
         self.verified_live_at(config, FeeCheckSite::Generic)
     }
-    pub(super) fn verified_live_for_capture(&self, config: &crate::GameConfig) -> Result<ResVec, StepFatal> {
+    pub(super) fn verified_live_for_capture(
+        &self,
+        config: &crate::GameConfig,
+    ) -> Result<ResVec, StepFatal> {
         self.verified_live_at(config, FeeCheckSite::BookCapture)
     }
-    pub(super) fn verified_live_for_stock(&self, config: &crate::GameConfig) -> Result<ResVec, StepFatal> {
+    pub(super) fn verified_live_for_stock(
+        &self,
+        config: &crate::GameConfig,
+    ) -> Result<ResVec, StepFatal> {
         self.verified_live_at(config, FeeCheckSite::StockRound)
     }
     /// 出生财务不变量（零成交额 ⇒ 零已计/已收费用）。不在通用`validate()`中：
@@ -250,60 +270,109 @@ impl Envelope {
     /// 回归纯结构校验（green006曾放构造器导致2219压平2228，green007纠正）。
     pub(in crate::session) fn validate_financial_birth(&self) -> Result<(), StepFatal> {
         if self.audit.filled_value == Money::ZERO
-            && (self.audit.nominal != FeeComponents::ZERO || self.audit.charged != FeeComponents::ZERO) {
+            && (self.audit.nominal != FeeComponents::ZERO
+                || self.audit.charged != FeeComponents::ZERO)
+        {
             return Err(StepFatal::InvariantViolation {
-                description: "live-order nominal fee audit disagrees with cumulative filled value".to_owned(),
+                description: "live-order nominal fee audit disagrees with cumulative filled value"
+                    .to_owned(),
                 location: "GameSession::project_live_envelopes".to_owned(),
             });
         }
         Ok(())
     }
 
-    fn verified_live_at(&self, config: &crate::GameConfig, site: FeeCheckSite) -> Result<ResVec, StepFatal> {
+    fn verified_live_at(
+        &self,
+        config: &crate::GameConfig,
+        site: FeeCheckSite,
+    ) -> Result<ResVec, StepFatal> {
         self.validate()?;
         self.validate_financial_birth()?;
         let inputs = FeeInputs::capture(config);
         let result = self.financial_runtime.proof.get_or_init(|| {
-            config.validate().map_err(|error| super::ledger_validation::invariant(&error.to_string()))?;
+            config
+                .validate()
+                .map_err(|error| super::ledger_validation::invariant(&error.to_string()))?;
             let nominal = crate::session::envelope_projection::cumulative_nominal_fees(
-                config, self.key.side, self.audit.filled_value)?;
+                config,
+                self.key.side,
+                self.audit.filled_value,
+            )?;
             if self.audit.nominal != nominal {
                 return Err(StepFatal::InvariantViolation {
-                    description: "live-order nominal fee audit disagrees with cumulative filled value".to_owned(),
+                    description:
+                        "live-order nominal fee audit disagrees with cumulative filled value"
+                            .to_owned(),
                     location: "GameSession::project_live_envelopes".to_owned(),
-                }.into());
+                }
+                .into());
             }
-            crate::session::envelope_projection::validate_hydrated_charged_audit(self.key.side, self.audit)?;
+            crate::session::envelope_projection::validate_hydrated_charged_audit(
+                self.key.side,
+                self.audit,
+            )?;
             // terminal Release可保留尚未成交qty，资源已经为零；活动行则必须精确匹配预留。
             if self.live != ResVec::ZERO {
                 let expected = match self.key.side {
-                    crate::Side::Buy => ResVec::new(crate::config::buy_order_reservation(
-                        config, self.audit.limit, self.audit.remaining_qty, self.audit.filled_value)
-                        .map_err(|error| super::ledger_validation::invariant(&error.to_string()))?, 0),
+                    crate::Side::Buy => ResVec::new(
+                        crate::config::buy_order_reservation(
+                            config,
+                            self.audit.limit,
+                            self.audit.remaining_qty,
+                            self.audit.filled_value,
+                        )
+                        .map_err(|error| super::ledger_validation::invariant(&error.to_string()))?,
+                        0,
+                    ),
                     crate::Side::Sell => ResVec::new(Money::ZERO, self.audit.remaining_qty),
                 };
                 if self.live != expected {
                     return Err(FeeFailure::LiveResources);
                 }
             }
-            Ok(FeeProof { inputs, content_revision: self.financial_runtime.content_revision, calculator: config.clone() })
+            Ok(FeeProof {
+                inputs,
+                content_revision: self.financial_runtime.content_revision,
+                calculator: config.clone(),
+            })
         });
         let proof = result.as_ref().map_err(|failure| match failure {
             FeeFailure::Fatal(error) => error.clone(),
             FeeFailure::LiveResources => {
                 let (description, location) = match site {
-                    FeeCheckSite::Generic => ("live envelope projection disagrees with ledger", "pipeline::EnvelopeLedger"),
-                    FeeCheckSite::BookCapture => ("continuous order books disagree with live envelope resources", "pipeline::continuous_matching_adapter"),
-                    FeeCheckSite::StockRound => (match self.key.side {
-                        crate::Side::Buy => "resting buy envelope disagrees with its exact reservation",
-                        crate::Side::Sell => "resting sell envelope disagrees with its quantity",
-                    }, "pipeline::continuous_matching"),
+                    FeeCheckSite::Generic => (
+                        "live envelope projection disagrees with ledger",
+                        "pipeline::EnvelopeLedger",
+                    ),
+                    FeeCheckSite::BookCapture => (
+                        "continuous order books disagree with live envelope resources",
+                        "pipeline::continuous_matching_adapter",
+                    ),
+                    FeeCheckSite::StockRound => (
+                        match self.key.side {
+                            crate::Side::Buy => {
+                                "resting buy envelope disagrees with its exact reservation"
+                            }
+                            crate::Side::Sell => {
+                                "resting sell envelope disagrees with its quantity"
+                            }
+                        },
+                        "pipeline::continuous_matching",
+                    ),
                 };
-                StepFatal::InvariantViolation { description: description.to_owned(), location: location.to_owned() }
+                StepFatal::InvariantViolation {
+                    description: description.to_owned(),
+                    location: location.to_owned(),
+                }
             }
         })?;
-        if proof.inputs != inputs || proof.content_revision != self.financial_runtime.content_revision {
-            return Err(super::ledger_validation::invariant("订单财务证明的费用输入或内容版本不一致"));
+        if proof.inputs != inputs
+            || proof.content_revision != self.financial_runtime.content_revision
+        {
+            return Err(super::ledger_validation::invariant(
+                "订单财务证明的费用输入或内容版本不一致",
+            ));
         }
         Ok(self.live)
     }
@@ -353,8 +422,14 @@ impl Envelope {
             candidate.pending_price = None;
         }
         candidate.validate()?;
-        if candidate.audit != self.audit || candidate.live != self.live || candidate.pending_price != self.pending_price {
-            candidate.financial_runtime.content_revision = self.financial_runtime.content_revision.checked_add(1)
+        if candidate.audit != self.audit
+            || candidate.live != self.live
+            || candidate.pending_price != self.pending_price
+        {
+            candidate.financial_runtime.content_revision = self
+                .financial_runtime
+                .content_revision
+                .checked_add(1)
                 .ok_or_else(|| super::ledger_validation::invariant("订单财务内容版本耗尽"))?;
             candidate.financial_runtime.proof = std::sync::Arc::default();
             if let Some(Ok(proof)) = self.financial_runtime.proof.get() {

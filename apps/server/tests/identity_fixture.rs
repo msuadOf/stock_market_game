@@ -19,7 +19,10 @@ pub async fn create_market(
     let (id, created) = manager
         .new_shared_session(setup, seed, subject.clone())
         .expect("shared market should be created");
-    assert!(created, "fresh test manager should create its shared market");
+    assert!(
+        created,
+        "fresh test manager should create its shared market"
+    );
     (id, subject, token)
 }
 

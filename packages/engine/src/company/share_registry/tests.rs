@@ -175,11 +175,9 @@ fn registered_entitlement_does_not_follow_later_sale_or_include_treasury() {
     assert_eq!(snapshot.entitled_holdings().count(), 2);
     registry.close_day(transfer(50)).unwrap();
     assert_eq!(registry.registration("dividend"), Some(&snapshot));
-    assert!(
-        registry
-            .register("backdated".into(), day("2030-01-01"))
-            .is_err()
-    );
+    assert!(registry
+        .register("backdated".into(), day("2030-01-01"))
+        .is_err());
     assert_eq!(
         registry
             .register("dividend".into(), day("2030-01-01"))
@@ -501,15 +499,12 @@ fn issuer_repurchase_account_fact_is_validated_and_copied_into_registration() {
     registry
         .set_issuer_repurchase_account(facts.clone())
         .unwrap();
-    let registry_roundtrip = serde_json::from_value::<ShareRegistry>(
-        serde_json::to_value(&registry).unwrap(),
-    )
-    .unwrap();
+    let registry_roundtrip =
+        serde_json::from_value::<ShareRegistry>(serde_json::to_value(&registry).unwrap()).unwrap();
     assert_eq!(registry_roundtrip, registry);
-    let snapshot_roundtrip = serde_json::from_value::<RegistrationSnapshot>(
-        serde_json::to_value(&snapshot).unwrap(),
-    )
-    .unwrap();
+    let snapshot_roundtrip =
+        serde_json::from_value::<RegistrationSnapshot>(serde_json::to_value(&snapshot).unwrap())
+            .unwrap();
     assert_eq!(snapshot_roundtrip, snapshot);
 
     let mut no_treasury_holding = ShareRegistry::new(
@@ -526,9 +521,7 @@ fn issuer_repurchase_account_fact_is_validated_and_copied_into_registration() {
     no_treasury_holding
         .set_issuer_repurchase_account(facts)
         .unwrap();
-    assert!(no_treasury_holding
-        .issuer_repurchase_account()
-        .is_some());
+    assert!(no_treasury_holding.issuer_repurchase_account().is_some());
 }
 
 #[test]
@@ -546,9 +539,7 @@ fn issuer_repurchase_account_fact_cannot_be_future_dated_or_empty() {
             established_on: day("2029-12-31"),
         },
     ] {
-        assert!(registry
-            .set_issuer_repurchase_account(facts)
-            .is_err());
+        assert!(registry.set_issuer_repurchase_account(facts).is_err());
     }
 }
 
@@ -677,7 +668,9 @@ fn non_trading_transfer_issues_new_shares_on_the_settled_day_and_grows_issued_sh
     let mut registry = registry();
     registry.close_day(transfer(5)).unwrap();
     let settled = registry.settled_on();
-    let receipt = registry.close_day(issuance_request("2030-01-02", "issue-1")).unwrap();
+    let receipt = registry
+        .close_day(issuance_request("2030-01-02", "issue-1"))
+        .unwrap();
     assert!(receipt.disposals.is_empty());
     assert_eq!(registry.settled_on(), settled);
     assert_eq!(registry.issued_shares(), 150);
@@ -699,10 +692,8 @@ fn non_trading_transfer_issues_new_shares_on_the_settled_day_and_grows_issued_sh
             changes: vec![],
         })
         .unwrap();
-    let mut restored = serde_json::from_value::<ShareRegistry>(
-        serde_json::to_value(&registry).unwrap(),
-    )
-    .unwrap();
+    let mut restored =
+        serde_json::from_value::<ShareRegistry>(serde_json::to_value(&registry).unwrap()).unwrap();
     assert_eq!(restored.issued_shares(), 150);
     restored
         .register("record-after-issue".into(), restored.settled_on())
@@ -758,8 +749,16 @@ fn registration_snapshots_replay_issued_shares_before_later_non_trading_issuance
         registry.registration("record-2").unwrap().issued_shares(),
         100
     );
-    assert_eq!(registry.registration("record-2").unwrap().settled_receipts(), 1);
-    registry.close_day(issuance_request("2030-01-02", "issue-1")).unwrap();
+    assert_eq!(
+        registry
+            .registration("record-2")
+            .unwrap()
+            .settled_receipts(),
+        1
+    );
+    registry
+        .close_day(issuance_request("2030-01-02", "issue-1"))
+        .unwrap();
     // 同日"先送转入账、再登记"（另一事件）同样合法，快照冻结在增发后。
     registry
         .register("record-3".into(), day("2030-01-02"))
@@ -768,7 +767,13 @@ fn registration_snapshots_replay_issued_shares_before_later_non_trading_issuance
         registry.registration("record-3").unwrap().issued_shares(),
         150
     );
-    assert_eq!(registry.registration("record-3").unwrap().settled_receipts(), 2);
+    assert_eq!(
+        registry
+            .registration("record-3")
+            .unwrap()
+            .settled_receipts(),
+        2
+    );
     registry
         .close_day(ShareDayRequest {
             event_id: "day3-empty".into(),
@@ -898,7 +903,10 @@ fn share_redenomination_split_grows_issued_shares_and_appends_new_lots() {
     assert_eq!(account_one.lots.len(), 3);
     assert_eq!(account_one.lots.last().unwrap().id, "split-a1");
     assert_eq!(account_one.lots.last().unwrap().qty, 50);
-    assert_eq!(account_one.lots.last().unwrap().acquired_on, day("2030-01-02"));
+    assert_eq!(
+        account_one.lots.last().unwrap().acquired_on,
+        day("2030-01-02")
+    );
     // serde 往返 + 恢复校验保留该回执。
     let restored: ShareRegistry =
         serde_json::from_str(&serde_json::to_string(&registry).unwrap()).unwrap();
@@ -1034,19 +1042,28 @@ fn share_redenomination_validates_scope_specific_rules() {
     let duplicate = redenomination(
         "dup-1",
         "2030-01-02",
-        vec![split_change(account(1), 10, "d1"), split_change(account(1), 5, "d2")],
+        vec![
+            split_change(account(1), 10, "d1"),
+            split_change(account(1), 5, "d2"),
+        ],
     );
     let mut bucketed = registry.clone();
     bucketed.close_day(duplicate).unwrap();
     assert_ne!(bucketed, before);
     // 空 basis 拒绝。
-    let mut empty_basis =
-        redenomination("b-1", "2030-01-02", vec![split_change(account(1), 10, "b1")]);
+    let mut empty_basis = redenomination(
+        "b-1",
+        "2030-01-02",
+        vec![split_change(account(1), 10, "b1")],
+    );
     empty_basis.scope = MovementScope::ShareReDenomination { basis: "  ".into() };
     assert!(registry.close_day(empty_basis).is_err());
     // 正向变动的取得来源必须是公司行为（与 NonTradingTransfer 同纪律）。
-    let mut secondary =
-        redenomination("s-1", "2030-01-02", vec![split_change(account(1), 10, "s1")]);
+    let mut secondary = redenomination(
+        "s-1",
+        "2030-01-02",
+        vec![split_change(account(1), 10, "s1")],
+    );
     if let Some(acquisition) = secondary.changes[0].acquisition.as_mut() {
         acquisition.source = AcquisitionSource::SecondaryMarket {
             settlement: "fake".into(),
@@ -1220,7 +1237,6 @@ fn explicit_lot_consumption_is_rejected_in_public_market_scope() {
     );
 }
 
-
 #[test]
 fn legacy_registration_and_receipt_identity_domains_remain_separate_without_typed_days() {
     let mut registry = registry();
@@ -1228,6 +1244,7 @@ fn legacy_registration_and_receipt_identity_domains_remain_separate_without_type
     registry.close_day(request.clone()).unwrap();
     registry.register(request.event_id, request.day).unwrap();
     registry.validate().unwrap();
-    let restored: ShareRegistry = serde_json::from_value(serde_json::to_value(&registry).unwrap()).unwrap();
+    let restored: ShareRegistry =
+        serde_json::from_value(serde_json::to_value(&registry).unwrap()).unwrap();
     assert_eq!(restored, registry);
 }

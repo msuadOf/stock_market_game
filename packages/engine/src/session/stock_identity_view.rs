@@ -16,7 +16,10 @@ impl GameSession {
     pub fn stock_catalog_view(&self) -> Vec<StockIdentityEntry> {
         self.stock_catalog()
             .iter()
-            .map(|(id, meta)| StockIdentityEntry { id, code: meta.code.clone() })
+            .map(|(id, meta)| StockIdentityEntry {
+                id,
+                code: meta.code.clone(),
+            })
             .collect()
     }
 }

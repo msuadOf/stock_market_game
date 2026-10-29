@@ -130,7 +130,9 @@ impl SimpleFinanceState {
                 .stock_distributions
                 .values()
                 .filter(|fact| fact.reserve_basis_year == Some(year))
-                .try_fold(AccountingAmount::ZERO, |sum, fact| sum.add(fact.statutory_reserve))?;
+                .try_fold(AccountingAmount::ZERO, |sum, fact| {
+                    sum.add(fact.statutory_reserve)
+                })?;
             let already_reserved = already_reserved_dividends.add(already_reserved_stock)?;
             let remaining = target.sub(already_reserved)?;
             if remaining.is_positive() {

@@ -262,7 +262,8 @@ impl BeliefBook {
         as_of: impl Fn(StockId) -> Option<InformationTradingAnchor>,
     ) -> Result<(), BeliefError> {
         for stock in self.entry_stocks() {
-            let anchor = as_of(*stock).ok_or(BeliefError::MissingInformationAnchor { stock: *stock })?;
+            let anchor =
+                as_of(*stock).ok_or(BeliefError::MissingInformationAnchor { stock: *stock })?;
             self.validate_information_anchor(stock, anchor)?;
         }
         Ok(())

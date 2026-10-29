@@ -326,7 +326,9 @@ fn cancellation_after_an_earlier_fill_continues_the_receipt_audit_chain() {
     );
     let input = ContinuousCancelInput {
         market,
-        envelopes: vec![ContinuousEnvelopeSnapshot { envelope: after_fill }],
+        envelopes: vec![ContinuousEnvelopeSnapshot {
+            envelope: after_fill,
+        }],
         operation: ContinuousCancelOperation {
             sealed_index: 41,
             account: AccountId(1),
@@ -1644,10 +1646,7 @@ fn validated_operations_in_session(
     intents: Vec<Intent>,
 ) -> (Vec<ValidatedOperation>, GameConfig) {
     let account = AccountId(0);
-    let plan = plan_tick(PhaseInput {
-        session: game,
-    })
-    .unwrap();
+    let plan = plan_tick(PhaseInput { session: game }).unwrap();
     let candidates = intents
         .into_iter()
         .enumerate()
@@ -1854,7 +1853,6 @@ fn symbolic_resolution_and_two_makers_keep_source_local_fill_ordinals() {
     }
     validate_worker_receipts(&initial, &output);
 }
-
 
 #[test]
 fn dense_private_market_errors_follow_book_order_across_parallel_threshold() {

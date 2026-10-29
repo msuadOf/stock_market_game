@@ -283,10 +283,7 @@ fn rejects_missing_approval_reference_and_zero_ratio() {
 
 #[test]
 fn capital_reserve_conversion_requires_registered_repurchase_account_facts_for_treasury() {
-    let holdings = vec![holding(
-        HolderId::IssuerTreasury,
-        vec![lot("treasury", 1)],
-    )];
+    let holdings = vec![holding(HolderId::IssuerTreasury, vec![lot("treasury", 1)])];
     let mut registry = ShareRegistry::new(
         StockCode("600001".to_owned()),
         CompanyId(0),
@@ -311,10 +308,7 @@ fn capital_reserve_conversion_requires_registered_repurchase_account_facts_for_t
         CompanyId(0),
         1,
         date("2030-06-03"),
-        vec![holding(
-            HolderId::IssuerTreasury,
-            vec![lot("treasury", 1)],
-        )],
+        vec![holding(HolderId::IssuerTreasury, vec![lot("treasury", 1)])],
     )
     .unwrap();
     registry
@@ -337,10 +331,7 @@ fn serializes_full_width_ratio_and_tie_seed_as_canonical_decimal_strings() {
     let mut full_width = plan(0);
     full_width.shares_per_existing_share_micros = u64::MAX;
     let snapshot = snapshot(
-        vec![holding(
-            HolderId::IssuerTreasury,
-            vec![lot("treasury", 1)],
-        )],
+        vec![holding(HolderId::IssuerTreasury, vec![lot("treasury", 1)])],
         1,
     );
     let receipt = allocate_stock_distribution(&snapshot, &full_width, u64::MAX).unwrap();
@@ -487,7 +478,9 @@ mod book {
     fn event_plan_requires_ordered_dates_and_next_trading_day_ex_date() {
         let calendar = TradingCalendar::current_default_calendar().unwrap();
         assert!(event_plan("2030-06-07").validate().is_ok());
-        assert!(event_plan("2030-06-07").validate_calendar(&calendar).is_ok());
+        assert!(event_plan("2030-06-07")
+            .validate_calendar(&calendar)
+            .is_ok());
         assert!(matches!(
             event_plan("2030-06-08").validate_calendar(&calendar),
             Err(StockDistributionError::InvalidExRightsDate { .. })
@@ -652,9 +645,6 @@ mod book {
             .iter()
             .find(|lot| lot.holder == HolderId::External("matured-holder".into()))
             .unwrap();
-        assert_eq!(
-            matured_lot.restriction,
-            ShareRestriction::Unrestricted
-        );
+        assert_eq!(matured_lot.restriction, ShareRestriction::Unrestricted);
     }
 }

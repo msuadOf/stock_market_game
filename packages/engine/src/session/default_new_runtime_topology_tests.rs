@@ -176,7 +176,9 @@ fn default_new_runtime_topology_rejects_the_same_invalid_setup_as_validate() {
             (SessionError::InvalidSetup(actual), SessionError::InvalidSetup(expected)) => {
                 assert_eq!(actual, expected, "不能只数股票而绕过完整 setup 校验");
             }
-            (actual, expected) => panic!("错误类型不一致：actual={actual:?}, expected={expected:?}"),
+            (actual, expected) => {
+                panic!("错误类型不一致：actual={actual:?}, expected={expected:?}")
+            }
         }
     }
 }
@@ -189,6 +191,9 @@ fn default_new_runtime_topology_matches_real_default_new() {
         let session = GameSession::new(setup, 42).unwrap();
         assert_eq!(session.runtime_group_count, expected.0);
         assert_eq!(session.state.markets.len(), expected.1);
-        assert!(session.runtime_driver.is_none(), "只做默认 new，不提前启动 World");
+        assert!(
+            session.runtime_driver.is_none(),
+            "只做默认 new，不提前启动 World"
+        );
     }
 }

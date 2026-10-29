@@ -14,7 +14,7 @@ use crate::setup::ProtoConfig;
 use crate::ProtoError;
 use engine::money::Money;
 use engine::session::SplitMix64;
-use engine::strategy::{StrategyData, Rng, TargetPolicy};
+use engine::strategy::{Rng, StrategyData, TargetPolicy};
 
 /// 跨股构造的统计（报告与自检用）。
 #[derive(Clone, Debug)]
@@ -109,8 +109,7 @@ pub fn build_cross_roster(
         if demand[s] == 0 {
             continue;
         }
-        let cross_pool =
-            (target_spec.float_shares as f64 * cfg.float_split.0 * cross_rate) as u64;
+        let cross_pool = (target_spec.float_shares as f64 * cfg.float_split.0 * cross_rate) as u64;
         secondary_lot[s] = align_lot(cross_pool / demand[s]);
     }
 
@@ -129,7 +128,11 @@ pub fn build_cross_roster(
         let id = id_base + i;
         let mut npc = Npc::new(
             id,
-            StrategyData::retail(cfg.retail_params.0, cfg.retail_params.1, cfg.retail_params.2),
+            StrategyData::retail(
+                cfg.retail_params.0,
+                cfg.retail_params.1,
+                cfg.retail_params.2,
+            ),
             cfg.retail_cash_cents,
             per_retail,
             spec.initial_price_cents,

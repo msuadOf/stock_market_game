@@ -12,13 +12,20 @@ fn assert_phase_save_projection(
     open: StockId,
     phase: usize,
 ) {
-    let expected_cursors = |value| std::collections::BTreeMap::from([(closed, value), (open, value)]);
-    let (native_cursor, native_next_id, native_mirrored, serial_cursor, serial_next_id, serial_mirrored) =
-        if phase == 0 {
-            (1, 4_294_967_297, true, 0, 1, false)
-        } else {
-            (1, 4_294_967_297, true, 1, 4_294_967_297, true)
-        };
+    let expected_cursors =
+        |value| std::collections::BTreeMap::from([(closed, value), (open, value)]);
+    let (
+        native_cursor,
+        native_next_id,
+        native_mirrored,
+        serial_cursor,
+        serial_next_id,
+        serial_mirrored,
+    ) = if phase == 0 {
+        (1, 4_294_967_297, true, 0, 1, false)
+    } else {
+        (1, 4_294_967_297, true, 1, 4_294_967_297, true)
+    };
     assert_eq!(native.book_next_sequences, expected_cursors(native_cursor));
     assert_eq!(native.next_order_id, native_next_id);
     assert_eq!(native.desk_mirrored_resting, native_mirrored);
@@ -40,12 +47,18 @@ fn assert_phase_save_projection(
         native_value["desk_mirrored_resting"] = serde_json::json!(true);
         serial_value["desk_mirrored_resting"] = serde_json::json!(true);
     }
-    assert_eq!(native_value, serial_value, "完整SaveSlot除已验证的phase表示标量外必须相等");
+    assert_eq!(
+        native_value, serial_value,
+        "完整SaveSlot除已验证的phase表示标量外必须相等"
+    );
 }
 
-
 fn business_hash_field_labels(session: &GameSession) -> Vec<String> {
-    let mut labels = vec!["setup".to_owned(), "seed".to_owned(), "rng.state".to_owned()];
+    let mut labels = vec![
+        "setup".to_owned(),
+        "seed".to_owned(),
+        "rng.state".to_owned(),
+    ];
     for id in session.state.accounts.keys() {
         labels.push(format!("account[{id:?}].core"));
         labels.push(format!("account[{id:?}].strategy.production_state"));
@@ -98,7 +111,11 @@ fn business_hash_field_labels(session: &GameSession) -> Vec<String> {
     labels
 }
 
-fn collect_json_leaves(value: &serde_json::Value, path: &str, out: &mut Vec<(String, serde_json::Value)>) {
+fn collect_json_leaves(
+    value: &serde_json::Value,
+    path: &str,
+    out: &mut Vec<(String, serde_json::Value)>,
+) {
     match value {
         serde_json::Value::Object(object) if object.is_empty() => {
             out.push((path.to_owned(), value.clone()));
@@ -127,11 +144,8 @@ fn print_json_differences(label: &str, left: &serde_json::Value, right: &serde_j
     collect_json_leaves(right, "$", &mut right_leaves);
     let left_map: std::collections::BTreeMap<_, _> = left_leaves.into_iter().collect();
     let right_map: std::collections::BTreeMap<_, _> = right_leaves.into_iter().collect();
-    let paths: std::collections::BTreeSet<_> = left_map
-        .keys()
-        .chain(right_map.keys())
-        .cloned()
-        .collect();
+    let paths: std::collections::BTreeSet<_> =
+        left_map.keys().chain(right_map.keys()).cloned().collect();
     for path in paths {
         if left_map.get(&path) != right_map.get(&path) {
             eprintln!(
@@ -159,7 +173,10 @@ fn restore_exactly(saved: &SaveSlot) -> GameSession {
     for (stock, cursor) in &saved.book_next_sequences {
         assert_eq!(restored.state.markets[stock].book_next_sequence(), *cursor);
     }
-    assert_eq!(serde_json::to_vec(&restored.save().unwrap()).unwrap(), bytes);
+    assert_eq!(
+        serde_json::to_vec(&restored.save().unwrap()).unwrap(),
+        bytes
+    );
     assert_eq!(restored.state.plans, saved.plans);
     restored
 }
@@ -179,14 +196,24 @@ fn native_semantic_projection(
     assert!(saved.desk_mirrored_resting);
     assert_eq!(&saved.book_next_sequences, expected_cursors);
     assert_eq!(session.state.next_order_id, raw.next_order_id);
-    let effective_id = expected_cursors.iter().map(|(stock, cursor)| {
-        assert!(*cursor < (1_u64 << 32), "不得归一已耗尽的desk序号");
-        crate::runtime::group::desk_order_id(stock.0 as crate::runtime::StockIdx, *cursor)
-    }).max().unwrap().max(raw.next_order_id);
+    let effective_id = expected_cursors
+        .iter()
+        .map(|(stock, cursor)| {
+            assert!(*cursor < (1_u64 << 32), "不得归一已耗尽的desk序号");
+            crate::runtime::group::desk_order_id(stock.0 as crate::runtime::StockIdx, *cursor)
+        })
+        .max()
+        .unwrap()
+        .max(raw.next_order_id);
     assert_eq!(saved.next_order_id, effective_id);
     let mut live_facts = None;
     if live {
-        let mut driver = session.runtime_driver.as_ref().expect("必须已进入真实native owner").lock().unwrap();
+        let mut driver = session
+            .runtime_driver
+            .as_ref()
+            .expect("必须已进入真实native owner")
+            .lock()
+            .unwrap();
         let facts = driver.collect_resting_facts_live().unwrap();
         assert_eq!(facts.len(), 2);
         let publication = driver.publication().load();
@@ -195,23 +222,46 @@ fn native_semantic_projection(
         assert_eq!(session.state.runtime_desk_serial_cursors.len(), 2);
         for (stock, cursor) in expected_cursors {
             let index = stock.0 as usize;
-            let shard = publication.desks.iter().find(|row| usize::from(row.stock) == index).unwrap();
-            assert_eq!(driver.desk_next_serials()[index], *cursor, "真实desk有效游标不得分歧");
+            let shard = publication
+                .desks
+                .iter()
+                .find(|row| usize::from(row.stock) == index)
+                .unwrap();
+            assert_eq!(
+                driver.desk_next_serials()[index],
+                *cursor,
+                "真实desk有效游标不得分歧"
+            );
             assert_eq!(session.state.runtime_desk_serial_cursors[index], *cursor);
             assert_eq!(shard.next_serial, *cursor);
             assert_eq!(shard.resting.as_ref(), &facts[index]);
             assert_eq!(shard.resting_count as usize, facts[index].len());
             let mirror = &session.state.desk_book_mirror[stock];
-            let expected_orders = facts[index].iter().map(|fact| (
-                driver.account_by_owner(fact.owner).unwrap(), fact.side,
-                Money::from_cents(fact.price), fact.qty, fact.order_serial,
-                fact.filled_value, fact.filled_qty,
-            )).collect::<Vec<_>>();
-            assert_eq!(mirror.orders, expected_orders, "完整镜像必须来自真实desk事实");
+            let expected_orders = facts[index]
+                .iter()
+                .map(|fact| {
+                    (
+                        driver.account_by_owner(fact.owner).unwrap(),
+                        fact.side,
+                        Money::from_cents(fact.price),
+                        fact.qty,
+                        fact.order_serial,
+                        fact.filled_value,
+                        fact.filled_qty,
+                    )
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(
+                mirror.orders, expected_orders,
+                "完整镜像必须来自真实desk事实"
+            );
         }
         live_facts = Some(facts);
     } else {
-        assert!(session.runtime_driver.is_none(), "恢复静点不得暗用live owner");
+        assert!(
+            session.runtime_driver.is_none(),
+            "恢复静点不得暗用live owner"
+        );
         assert!(session.state.runtime_desk_serial_cursors.is_empty());
     }
     assert_eq!(session.state.markets.len(), 2);
@@ -219,28 +269,61 @@ fn native_semantic_projection(
     for (stock, market) in &session.state.markets {
         let raw_cursor = raw.book_next_sequences[stock];
         let effective = expected_cursors[stock];
-        assert_eq!(market.book_next_sequence(), raw_cursor, "每侧退役旧簿游标按原save事实精确核对");
+        assert_eq!(
+            market.book_next_sequence(),
+            raw_cursor,
+            "每侧退役旧簿游标按原save事实精确核对"
+        );
         assert!(raw_cursor <= effective);
-        assert!(market.resting_orders().is_empty(), "非空旧簿不得使用此语义投影");
-        assert!(market.filled_orders().is_empty(), "旧成交身份不得被归一隐藏");
+        assert!(
+            market.resting_orders().is_empty(),
+            "非空旧簿不得使用此语义投影"
+        );
+        assert!(
+            market.filled_orders().is_empty(),
+            "旧成交身份不得被归一隐藏"
+        );
         let mirror = &session.state.desk_book_mirror[stock];
         assert_eq!(mirror.next_serial, effective);
         assert_eq!(mirror.last_price, market.last_price());
-        let saved_orders = saved.resting_orders[stock].iter().map(|order| (
-            order.owner, order.side, order.price, order.qty, order.id.0,
-            order.filled_value.cents(), order.filled_qty,
-        )).collect::<Vec<_>>();
+        let saved_orders = saved.resting_orders[stock]
+            .iter()
+            .map(|order| {
+                (
+                    order.owner,
+                    order.side,
+                    order.price,
+                    order.qty,
+                    order.id.0,
+                    order.filled_value.cents(),
+                    order.filled_qty,
+                )
+            })
+            .collect::<Vec<_>>();
         assert_eq!(mirror.orders, saved_orders);
         for order in &saved.resting_orders[stock] {
-            assert_eq!(order.seq, crate::runtime::group::desk_order_serial(order.id.0));
+            assert_eq!(
+                order.seq,
+                crate::runtime::group::desk_order_serial(order.id.0)
+            );
             assert!(order.seq < effective);
         }
         if let Some(facts) = &live_facts {
-            assert_eq!(saved.resting_orders[stock].len(), facts[stock.0 as usize].len());
+            assert_eq!(
+                saved.resting_orders[stock].len(),
+                facts[stock.0 as usize].len()
+            );
         }
-        let index = labels.iter().position(|label| label == &format!("market[{stock:?}].hash_projection")).unwrap();
+        let index = labels
+            .iter()
+            .position(|label| label == &format!("market[{stock:?}].hash_projection"))
+            .unwrap();
         let mut value: serde_json::Value = serde_json::from_slice(&fields[index]).unwrap();
-        assert_eq!(serde_json::to_vec(&value).unwrap(), fields[index], "已映射field须可逐bytes往返");
+        assert_eq!(
+            serde_json::to_vec(&value).unwrap(),
+            fields[index],
+            "已映射field须可逐bytes往返"
+        );
         assert_eq!(value.as_array().unwrap().len(), 2);
         assert_eq!(value[0], serde_json::to_value(stock).unwrap());
         assert_eq!(value[1].as_array().unwrap().len(), 7);
@@ -253,7 +336,10 @@ fn native_semantic_projection(
         book[1] = serde_json::json!(effective);
         fields[index] = serde_json::to_vec(&value).unwrap();
     }
-    let index = labels.iter().position(|label| label == "counters.next_order_id_tick_day_seq_next_receipt_base").unwrap();
+    let index = labels
+        .iter()
+        .position(|label| label == "counters.next_order_id_tick_day_seq_next_receipt_base")
+        .unwrap();
     let mut counters: serde_json::Value = serde_json::from_slice(&fields[index]).unwrap();
     assert_eq!(serde_json::to_vec(&counters).unwrap(), fields[index]);
     assert_eq!(counters.as_array().unwrap().len(), 5);
@@ -261,13 +347,31 @@ fn native_semantic_projection(
     counters[0] = serde_json::json!(effective_id);
     fields[index] = serde_json::to_vec(&counters).unwrap();
     let save = serde_json::to_vec(&saved).unwrap();
-    assert_eq!(session.business_state_hash().unwrap(), hash, "save/真实只读观察不得改变raw hash");
-    assert_eq!(session.clone_for_tick_shadow().unwrap().business_state_hash().unwrap(), hash);
+    assert_eq!(
+        session.business_state_hash().unwrap(),
+        hash,
+        "save/真实只读观察不得改变raw hash"
+    );
+    assert_eq!(
+        session
+            .clone_for_tick_shadow()
+            .unwrap()
+            .business_state_hash()
+            .unwrap(),
+        hash
+    );
     eprintln!("G8 raw hash={hash:?}，live={live}，old cursors={:?}，raw ID={}，effective={expected_cursors:?}", raw.book_next_sequences, raw.next_order_id);
-    NativeSemanticProjection { labels, fields, save }
+    NativeSemanticProjection {
+        labels,
+        fields,
+        save,
+    }
 }
 
-fn assert_native_semantics_equal(left: &NativeSemanticProjection, right: &NativeSemanticProjection) {
+fn assert_native_semantics_equal(
+    left: &NativeSemanticProjection,
+    right: &NativeSemanticProjection,
+) {
     assert_eq!(left.labels, right.labels);
     for (index, label) in left.labels.iter().enumerate() {
         if left.fields[index] != right.fields[index] {
@@ -277,12 +381,23 @@ fn assert_native_semantics_equal(left: &NativeSemanticProjection, right: &Native
         }
     }
     if left.save != right.save {
-        print_json_differences("完整SaveSlot", &serde_json::from_slice(&left.save).unwrap(), &serde_json::from_slice(&right.save).unwrap());
+        print_json_differences(
+            "完整SaveSlot",
+            &serde_json::from_slice(&left.save).unwrap(),
+            &serde_json::from_slice(&right.save).unwrap(),
+        );
     }
-    assert_eq!(left, right, "完整36 field bytes与完整SaveSlot除已证明三叶表示映射外必须相等");
+    assert_eq!(
+        left, right,
+        "完整36 field bytes与完整SaveSlot除已证明三叶表示映射外必须相等"
+    );
 }
 
-fn assert_native_restore_stable(session: &GameSession, raw: &SaveSlot, cursors: &std::collections::BTreeMap<StockId, u64>) {
+fn assert_native_restore_stable(
+    session: &GameSession,
+    raw: &SaveSlot,
+    cursors: &std::collections::BTreeMap<StockId, u64>,
+) {
     let live = native_semantic_projection(session, raw, cursors, true);
     let saved = session.save().unwrap();
     let restored = restore_exactly(&saved);
@@ -299,14 +414,29 @@ fn native_continuation(native: &SaveSlot, serial: &SaveSlot) -> (GameSession, Ga
     (native, serial)
 }
 
-fn assert_same_delivery(native: &GameSession, serial: &GameSession, native_events: &[Event], serial_events: &[Event]) {
-    assert_eq!(serde_json::to_value(native_events).unwrap(), serde_json::to_value(serial_events).unwrap());
-    assert_eq!(serde_json::to_value(native.snapshot_inner(true, true)).unwrap(), serde_json::to_value(serial.snapshot_inner(true, true)).unwrap());
+fn assert_same_delivery(
+    native: &GameSession,
+    serial: &GameSession,
+    native_events: &[Event],
+    serial_events: &[Event],
+) {
+    assert_eq!(
+        serde_json::to_value(native_events).unwrap(),
+        serde_json::to_value(serial_events).unwrap()
+    );
+    assert_eq!(
+        serde_json::to_value(native.snapshot_inner(true, true)).unwrap(),
+        serde_json::to_value(serial.snapshot_inner(true, true)).unwrap()
+    );
     assert_eq!(native.state.plans, serial.state.plans);
 }
 
 fn assert_save_restore_and_native_continuation(native_save: &SaveSlot, serial_save: &SaveSlot) {
-    let cursors = native_save.book_next_sequences.keys().map(|stock| (*stock, 1)).collect::<std::collections::BTreeMap<_, _>>();
+    let cursors = native_save
+        .book_next_sequences
+        .keys()
+        .map(|stock| (*stock, 1))
+        .collect::<std::collections::BTreeMap<_, _>>();
     let (mut native, mut serial) = native_continuation(native_save, serial_save);
     let native_events = native.step().unwrap();
     let serial_events = serial.step().unwrap();
@@ -324,122 +454,242 @@ fn assert_save_restore_and_native_continuation(native_save: &SaveSlot, serial_sa
     for session in [&mut native, &mut serial] {
         assert!(session.account(AccountId(0)).unwrap().cash().cents() > 301_000);
         for qty in [100, 200] {
-            session.enqueue_player_intent(AccountId(0), Intent::PlaceLimit {
-                code: stock, side: Side::Buy, price: LimitPrice::Fixed(Money::from_cents(1_000)), qty,
-            }).unwrap();
+            session
+                .enqueue_player_intent(
+                    AccountId(0),
+                    Intent::PlaceLimit {
+                        code: stock,
+                        side: Side::Buy,
+                        price: LimitPrice::Fixed(Money::from_cents(1_000)),
+                        qty,
+                    },
+                )
+                .unwrap();
         }
     }
     let native_events = native.step().unwrap();
     let serial_events = serial.step().unwrap();
     assert_same_delivery(&native, &serial, &native_events, &serial_events);
-    let accepted = native_events.iter().filter_map(|event| match event {
-        Event::OrderAccepted { account, code, id, side, price, remaining_qty, .. } => Some((*account, *code, *id, *side, *price, *remaining_qty)),
-        _ => None,
-    }).collect::<Vec<_>>();
+    let accepted = native_events
+        .iter()
+        .filter_map(|event| match event {
+            Event::OrderAccepted {
+                account,
+                code,
+                id,
+                side,
+                price,
+                remaining_qty,
+                ..
+            } => Some((*account, *code, *id, *side, *price, *remaining_qty)),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
     let first = crate::runtime::group::desk_order_id(1, 1);
-    assert_eq!(accepted, vec![
-        (AccountId(0), stock, OrderId(first), Side::Buy, Money::from_cents(1_000), 100),
-        (AccountId(0), stock, OrderId(first + 1), Side::Buy, Money::from_cents(1_000), 200),
-    ]);
+    assert_eq!(
+        accepted,
+        vec![
+            (
+                AccountId(0),
+                stock,
+                OrderId(first),
+                Side::Buy,
+                Money::from_cents(1_000),
+                100
+            ),
+            (
+                AccountId(0),
+                stock,
+                OrderId(first + 1),
+                Side::Buy,
+                Money::from_cents(1_000),
+                200
+            ),
+        ]
+    );
     let saved = native.save().unwrap();
     let orders = &saved.resting_orders[&stock];
     assert_eq!(orders.len(), 2);
-    assert_eq!(orders.iter().map(|order| (order.id, order.seq, order.qty, order.original_qty, order.filled_qty, order.filled_value)).collect::<Vec<_>>(), vec![
-        (OrderId(first), 1, 100, 100, 0, Money::ZERO),
-        (OrderId(first + 1), 2, 200, 200, 0, Money::ZERO),
-    ], "真实同价在场顺序/数量与取号不得漂移或复用");
+    assert_eq!(
+        orders
+            .iter()
+            .map(|order| (
+                order.id,
+                order.seq,
+                order.qty,
+                order.original_qty,
+                order.filled_qty,
+                order.filled_value
+            ))
+            .collect::<Vec<_>>(),
+        vec![
+            (OrderId(first), 1, 100, 100, 0, Money::ZERO),
+            (OrderId(first + 1), 2, 200, 200, 0, Money::ZERO),
+        ],
+        "真实同价在场顺序/数量与取号不得漂移或复用"
+    );
     let mut next_cursors = cursors;
     next_cursors.insert(stock, 3);
     assert_native_semantics_equal(
         &native_semantic_projection(&native, native_save, &next_cursors, true),
         &native_semantic_projection(&serial, serial_save, &next_cursors, true),
     );
-    let native_accounts = native.runtime_driver.as_ref().unwrap().lock().unwrap().world_accounts_snapshot().unwrap();
-    let serial_accounts = serial.runtime_driver.as_ref().unwrap().lock().unwrap().world_accounts_snapshot().unwrap();
-    assert_eq!(native_accounts, serial_accounts, "真实组完整working账户事实必须一致");
+    let native_accounts = native
+        .runtime_driver
+        .as_ref()
+        .unwrap()
+        .lock()
+        .unwrap()
+        .world_accounts_snapshot()
+        .unwrap();
+    let serial_accounts = serial
+        .runtime_driver
+        .as_ref()
+        .unwrap()
+        .lock()
+        .unwrap()
+        .world_accounts_snapshot()
+        .unwrap();
+    assert_eq!(
+        native_accounts, serial_accounts,
+        "真实组完整working账户事实必须一致"
+    );
     assert_native_restore_stable(&native, native_save, &next_cursors);
     assert_native_restore_stable(&serial, serial_save, &next_cursors);
 }
 
 fn run_nonzero_plan_parity(exchange: CalendarExchange, continuation_phase: usize) {
-        let first = if exchange == CalendarExchange::Sse { StockExchange::Shanghai } else { StockExchange::Shenzhen };
-        let initial = fixture::restore(exchange, first, false);
-        let (source, closed, open) = (initial.session, initial.closed, initial.open);
-        assert_eq!(source.civil_date(), fixture::date("2030-01-02"));
-        let days = source.stock_calendar_days().unwrap();
-        assert_eq!(days[&closed], None);assert_eq!(days[&open], Some(0));
-        let mut edited = source.save().unwrap();
-        let make_open = |stock, day| crate::plans::PlanOpen {
-            account: AccountId(0), code: stock, direction: Side::Buy,
-            target: crate::plans::PlanTarget::ShareCount(100),
-            opinion: crate::plans::PlanOpinion { signal_score_bp: 3_000, source: crate::plans::OpinionSource::Blended },
-            confidence_bp: 8_000, urgency: crate::plans::Urgency::Normal,
-            horizon_trading_days: 1, created_trading_day: day,
-        };
-        // 在首次restore前编辑完整初始档；closed的合法day0初态并不代表Jan2已交易。
-        let closed_id = edited.plans.create(make_open(closed, 0)).unwrap();
-        let open_id = edited.plans.create(make_open(open, 0)).unwrap();
-        let closed_initial = edited.plans.plan(closed_id).unwrap().clone();
-        let mut ids = vec![closed_id, open_id];
-        for phase in 0..=continuation_phase {
-            let bytes = serde_json::to_vec(&edited).unwrap();
-            let decoded = crate::decode_save_slot(&bytes, &crate::SaveDecodeLimits::default()).unwrap();
-            let mut native = GameSession::restore(&decoded).unwrap();
-            let mut serial = GameSession::restore(&decoded).unwrap();
-            assert_eq!(native.state.plans, serial.state.plans);
-            assert_eq!(native.state.plans.plan_ids().collect::<Vec<_>>(), ids);
-            assert!(native.runtime_driver.is_none());assert!(serial.runtime_driver.is_none());
-            for index in 0..fixture::TICKS_PER_DAY {
-                let native_events = native.step().unwrap();
-                let serial_events = serial.step_pipeline_contract().unwrap();
-                assert!(native.runtime_driver.is_some(), "native必须真实使用组权威");
-                assert!(serial.runtime_driver.is_none(), "serial不得暗用native World使对照自证");
-                let mut driver = native.runtime_driver.as_ref().unwrap().lock().unwrap();
-                let shards = driver.collect_plans().unwrap();assert_eq!(shards.len(), 1);
-                assert_eq!(shards[0].1, native.state.plans, "镜像必须等真实组完整Book，不独立重算覆盖");
-                drop(driver);
-                assert_eq!(native.state.plans, serial.state.plans, "每拍完整非零计划/游标/状态一致");
-                assert_eq!(serde_json::to_value(native_events).unwrap(), serde_json::to_value(serial_events).unwrap());
-                assert_eq!(serde_json::to_value(native.snapshot_inner(true, true)).unwrap(), serde_json::to_value(serial.snapshot_inner(true, true)).unwrap());
-                if phase == 0 {
-                    assert_eq!(native.state.plans.plan(closed_id).unwrap(), &closed_initial, "Jan2 closed整日不老化、不添事件");
-                }
-                if index + 1 < fixture::TICKS_PER_DAY {
-                    let active_id = if phase == 0 { open_id } else { ids[2] };
-                    assert_eq!(native.state.plans.plan(active_id).unwrap().status(), crate::plans::PlanStatus::Active);
-                }
-            }
-            let expected_terminal = crate::plans::PlanStatus::Terminated { reason: crate::plans::TerminationReason::HorizonExpired };
-            assert_eq!(native.state.plans.plan(open_id).unwrap().status(), expected_terminal);
-            for (id, own_day) in if phase == 0 { vec![(open_id, 0)] } else { vec![(closed_id, 0), (open_id, 0), (ids[2], 1)] } {
-                let plan = native.state.plans.plan(id).unwrap();
-                assert_eq!(plan.created_trading_day(), own_day);
-                assert_eq!(plan.last_event_trading_day(), own_day);
-                assert_eq!(plan.status(), expected_terminal);assert!(plan.execution().is_none());
-            }
-            assert_eq!(native.state.plans.plan_ids().collect::<Vec<_>>(), ids);
-            assert_eq!(native.state.plans.owner_sequences().collect::<Vec<_>>(), edited.plans.owner_sequences().collect::<Vec<_>>());
-            assert_eq!(native.business_state_hash().unwrap(), serial.business_state_hash().unwrap());
-            // save()用于完整SaveSlot观察值比较，不冒公共日终档已发布。
-            let native_save = native.save().unwrap();
-            let serial_save = serial.save().unwrap();
-            assert_phase_save_projection(&native_save, &serial_save, closed, open, phase);
-            if phase == continuation_phase {
-                assert_save_restore_and_native_continuation(&native_save, &serial_save);
-            }
+    let first = if exchange == CalendarExchange::Sse {
+        StockExchange::Shanghai
+    } else {
+        StockExchange::Shenzhen
+    };
+    let initial = fixture::restore(exchange, first, false);
+    let (source, closed, open) = (initial.session, initial.closed, initial.open);
+    assert_eq!(source.civil_date(), fixture::date("2030-01-02"));
+    let days = source.stock_calendar_days().unwrap();
+    assert_eq!(days[&closed], None);
+    assert_eq!(days[&open], Some(0));
+    let mut edited = source.save().unwrap();
+    let make_open = |stock, day| crate::plans::PlanOpen {
+        account: AccountId(0),
+        code: stock,
+        direction: Side::Buy,
+        target: crate::plans::PlanTarget::ShareCount(100),
+        opinion: crate::plans::PlanOpinion {
+            signal_score_bp: 3_000,
+            source: crate::plans::OpinionSource::Blended,
+        },
+        confidence_bp: 8_000,
+        urgency: crate::plans::Urgency::Normal,
+        horizon_trading_days: 1,
+        created_trading_day: day,
+    };
+    // 在首次restore前编辑完整初始档；closed的合法day0初态并不代表Jan2已交易。
+    let closed_id = edited.plans.create(make_open(closed, 0)).unwrap();
+    let open_id = edited.plans.create(make_open(open, 0)).unwrap();
+    let closed_initial = edited.plans.plan(closed_id).unwrap().clone();
+    let mut ids = vec![closed_id, open_id];
+    for phase in 0..=continuation_phase {
+        let bytes = serde_json::to_vec(&edited).unwrap();
+        let decoded = crate::decode_save_slot(&bytes, &crate::SaveDecodeLimits::default()).unwrap();
+        let mut native = GameSession::restore(&decoded).unwrap();
+        let mut serial = GameSession::restore(&decoded).unwrap();
+        assert_eq!(native.state.plans, serial.state.plans);
+        assert_eq!(native.state.plans.plan_ids().collect::<Vec<_>>(), ids);
+        assert!(native.runtime_driver.is_none());
+        assert!(serial.runtime_driver.is_none());
+        for index in 0..fixture::TICKS_PER_DAY {
+            let native_events = native.step().unwrap();
+            let serial_events = serial.step_pipeline_contract().unwrap();
+            assert!(native.runtime_driver.is_some(), "native必须真实使用组权威");
+            assert!(
+                serial.runtime_driver.is_none(),
+                "serial不得暗用native World使对照自证"
+            );
+            let mut driver = native.runtime_driver.as_ref().unwrap().lock().unwrap();
+            let shards = driver.collect_plans().unwrap();
+            assert_eq!(shards.len(), 1);
+            assert_eq!(
+                shards[0].1, native.state.plans,
+                "镜像必须等真实组完整Book，不独立重算覆盖"
+            );
+            drop(driver);
+            assert_eq!(
+                native.state.plans, serial.state.plans,
+                "每拍完整非零计划/游标/状态一致"
+            );
+            assert_eq!(
+                serde_json::to_value(native_events).unwrap(),
+                serde_json::to_value(serial_events).unwrap()
+            );
+            assert_eq!(
+                serde_json::to_value(native.snapshot_inner(true, true)).unwrap(),
+                serde_json::to_value(serial.snapshot_inner(true, true)).unwrap()
+            );
             if phase == 0 {
-                let old_open_terminal = native.state.plans.plan(open_id).unwrap().clone();
-                native.end_civil_day().unwrap();
-                assert_eq!(native.civil_date(), fixture::date("2030-01-03"));
-                let days = native.stock_calendar_days().unwrap();
-                assert_eq!(days[&closed], Some(0));assert_eq!(days[&open], Some(1));
-                // 仅native完成真实civil；下一日严格decode同字节重建两个分支，不冒serial civil对拍。
-                edited = native.save().unwrap();
-                assert_eq!(edited.plans.plan(closed_id).unwrap(), &closed_initial);
-                assert_eq!(edited.plans.plan(open_id).unwrap(), &old_open_terminal);
-                ids.push(edited.plans.create(make_open(open, 1)).unwrap());
+                assert_eq!(
+                    native.state.plans.plan(closed_id).unwrap(),
+                    &closed_initial,
+                    "Jan2 closed整日不老化、不添事件"
+                );
+            }
+            if index + 1 < fixture::TICKS_PER_DAY {
+                let active_id = if phase == 0 { open_id } else { ids[2] };
+                assert_eq!(
+                    native.state.plans.plan(active_id).unwrap().status(),
+                    crate::plans::PlanStatus::Active
+                );
             }
         }
+        let expected_terminal = crate::plans::PlanStatus::Terminated {
+            reason: crate::plans::TerminationReason::HorizonExpired,
+        };
+        assert_eq!(
+            native.state.plans.plan(open_id).unwrap().status(),
+            expected_terminal
+        );
+        for (id, own_day) in if phase == 0 {
+            vec![(open_id, 0)]
+        } else {
+            vec![(closed_id, 0), (open_id, 0), (ids[2], 1)]
+        } {
+            let plan = native.state.plans.plan(id).unwrap();
+            assert_eq!(plan.created_trading_day(), own_day);
+            assert_eq!(plan.last_event_trading_day(), own_day);
+            assert_eq!(plan.status(), expected_terminal);
+            assert!(plan.execution().is_none());
+        }
+        assert_eq!(native.state.plans.plan_ids().collect::<Vec<_>>(), ids);
+        assert_eq!(
+            native.state.plans.owner_sequences().collect::<Vec<_>>(),
+            edited.plans.owner_sequences().collect::<Vec<_>>()
+        );
+        assert_eq!(
+            native.business_state_hash().unwrap(),
+            serial.business_state_hash().unwrap()
+        );
+        // save()用于完整SaveSlot观察值比较，不冒公共日终档已发布。
+        let native_save = native.save().unwrap();
+        let serial_save = serial.save().unwrap();
+        assert_phase_save_projection(&native_save, &serial_save, closed, open, phase);
+        if phase == continuation_phase {
+            assert_save_restore_and_native_continuation(&native_save, &serial_save);
+        }
+        if phase == 0 {
+            let old_open_terminal = native.state.plans.plan(open_id).unwrap().clone();
+            native.end_civil_day().unwrap();
+            assert_eq!(native.civil_date(), fixture::date("2030-01-03"));
+            let days = native.stock_calendar_days().unwrap();
+            assert_eq!(days[&closed], Some(0));
+            assert_eq!(days[&open], Some(1));
+            // 仅native完成真实civil；下一日严格decode同字节重建两个分支，不冒serial civil对拍。
+            edited = native.save().unwrap();
+            assert_eq!(edited.plans.plan(closed_id).unwrap(), &closed_initial);
+            assert_eq!(edited.plans.plan(open_id).unwrap(), &old_open_terminal);
+            ids.push(edited.plans.create(make_open(open, 1)).unwrap());
+        }
+    }
 }
 
 // 每个exchange/phase有独立十秒case预算，全部恢复与委托断言均保留。

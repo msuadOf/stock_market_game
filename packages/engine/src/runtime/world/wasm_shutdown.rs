@@ -17,7 +17,12 @@ impl<G, D> WakeSenders<G, D> {
         group_shutdown: fn() -> G,
         desk_shutdown: fn() -> D,
     ) -> Self {
-        Self { groups, desks, group_shutdown, desk_shutdown }
+        Self {
+            groups,
+            desks,
+            group_shutdown,
+            desk_shutdown,
+        }
     }
 }
 
@@ -42,9 +47,18 @@ pub(super) struct ConstructionGuard<G, D, I: std::fmt::Display, H> {
 }
 
 impl<G, D, I: std::fmt::Display, H> ConstructionGuard<G, D, I, H> {
-    pub(super) fn new(shutdown: Arc<AtomicBool>, wake: WakeSenders<G, D>,
-        capacity: usize, join: fn(H) -> Result<(), String>) -> Self {
-        Self { shutdown, wake: Some(wake), handles: Vec::with_capacity(capacity), join }
+    pub(super) fn new(
+        shutdown: Arc<AtomicBool>,
+        wake: WakeSenders<G, D>,
+        capacity: usize,
+        join: fn(H) -> Result<(), String>,
+    ) -> Self {
+        Self {
+            shutdown,
+            wake: Some(wake),
+            handles: Vec::with_capacity(capacity),
+            join,
+        }
     }
 
     pub(super) fn push(&mut self, who: I, handle: H) {
@@ -70,8 +84,11 @@ impl<G, D, I: std::fmt::Display, H> ConstructionGuard<G, D, I, H> {
 
     pub(super) fn spawn_failure(&mut self, primary: String) -> String {
         let secondary = self.stop_and_join();
-        if secondary.is_empty() { primary }
-        else { format!("{primary}；构造清理附加错误={secondary:?}") }
+        if secondary.is_empty() {
+            primary
+        } else {
+            format!("{primary}；构造清理附加错误={secondary:?}")
+        }
     }
 
     pub(super) fn transfer(mut self) -> (Option<WakeSenders<G, D>>, Vec<(I, H)>) {
@@ -91,11 +108,11 @@ impl<G, D, I: std::fmt::Display, H> Drop for ConstructionGuard<G, D, I, H> {
             }
             #[cfg(not(target_family = "wasm"))]
             {
-            use std::io::Write;
-            for error in errors {
-                // native析构诊断的写失败不能再panic，避免覆盖正在运输的主错误。
-                let _ = writeln!(std::io::stderr(), "构造guard Drop清理错误：{error}");
-            }
+                use std::io::Write;
+                for error in errors {
+                    // native析构诊断的写失败不能再panic，避免覆盖正在运输的主错误。
+                    let _ = writeln!(std::io::stderr(), "构造guard Drop清理错误：{error}");
+                }
             }
         }
     }

@@ -8,8 +8,8 @@ use std::sync::atomic::AtomicBool;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
-use super::watchdog::{worker_recv_spin, SpinConfig, WatchdogConfig};
 use super::protocol::WorkerId;
+use super::watchdog::{worker_recv_spin, SpinConfig, WatchdogConfig};
 
 fn who() -> WorkerId {
     WorkerId::Group(0)

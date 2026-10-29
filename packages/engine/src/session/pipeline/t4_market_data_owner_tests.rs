@@ -94,7 +94,11 @@ fn stock_owner_finish_computes_market_data_patch_for_continuous_tick() {
             assert_eq!(close.close, worker.market.last_price());
         }
         // 行情事件：恰一条 PriceTick，daily_candle=owner 终值（同一事实单一载体）。
-        assert_eq!(patch.events.len(), 1, "Continuous tick 每股恰一条 PriceTick");
+        assert_eq!(
+            patch.events.len(),
+            1,
+            "Continuous tick 每股恰一条 PriceTick"
+        );
         match &patch.events[0].event {
             crate::Event::PriceTick {
                 code: event_code,
@@ -141,17 +145,13 @@ fn finalize_installs_owner_market_data_patch_into_session() {
     assert_eq!(candle.close, session.state.markets[&code].last_price());
 }
 
-
 // ――― Luna 快检四项覆盖缺口补齐（增量七十一）―――
 // 竞价事件顺序/竞价无成交 K 线标记/真实成交 candle 统计/分钟历史前缀保留。
 
+use super::continuous_matching::incremental_continuous_stock_shadow::tests::validated_operations_in_session;
 use super::continuous_matching::{ContinuousEnvelopeSnapshot, StockMarketDataPrior};
-use super::continuous_matching::incremental_continuous_stock_shadow::tests::{
-    validated_operations_in_session,
-};
 use crate::session::pipeline::EnvelopeLedger;
 use crate::{AccountId, Money, OrderId, Side};
-
 
 /// add_resting 的限价参数化变体（测试内局部构造；与共享 helper 同构）。
 fn add_resting_at(
@@ -203,9 +203,15 @@ fn add_resting_at(
 fn owner_finish_candle_statistics_under_real_trades() {
     for (prior, expect_prior_high) in [
         (None, Money::from_cents(1_010)),
-        (Some((Money::from_cents(900), Money::from_cents(950), 40_u64)), Money::from_cents(1_010)),
+        (
+            Some((Money::from_cents(900), Money::from_cents(950), 40_u64)),
+            Money::from_cents(1_010),
+        ),
         // Luna 建议：先验 high 高于全部成交价 → 保留分支。
-        (Some((Money::from_cents(900), Money::from_cents(1_200), 40_u64)), Money::from_cents(1_200)),
+        (
+            Some((Money::from_cents(900), Money::from_cents(1_200), 40_u64)),
+            Money::from_cents(1_200),
+        ),
     ] {
         let mut game = continuous_session();
         let code = game.state.markets.keys().next().unwrap().clone();
@@ -308,17 +314,27 @@ fn owner_finish_candle_statistics_under_real_trades() {
             candle.high, expect_prior_high,
             "high=先验与全部成交价的极大值（保留/抬升两分支）"
         );
-        assert_eq!(candle.low, if prior.is_some() {
-            Money::from_cents(900)
-        } else {
-            Money::from_cents(1_000)
-        });
+        assert_eq!(
+            candle.low,
+            if prior.is_some() {
+                Money::from_cents(900)
+            } else {
+                Money::from_cents(1_000)
+            }
+        );
         assert_eq!(candle.close, worker.market.last_price());
-        assert_eq!(stats.turnover_cents, 50 * 1_000 + 50 * 1_010
-            + prior.map_or(0, |(open, _, volume)| open.cents() as u64 * volume));
+        assert_eq!(
+            stats.turnover_cents,
+            50 * 1_000
+                + 50 * 1_010
+                + prior.map_or(0, |(open, _, volume)| open.cents() as u64 * volume)
+        );
         match &patch.events[0].event {
             crate::Event::PriceTick { daily_candle, .. } => {
-                assert_eq!(daily_candle, candle, "事件内日 K=owner 终值（同一事实单一载体）");
+                assert_eq!(
+                    daily_candle, candle,
+                    "事件内日 K=owner 终值（同一事实单一载体）"
+                );
             }
             other => panic!("期望 PriceTick，实际 {other:?}"),
         }
@@ -334,10 +350,15 @@ fn minute_history_prefix_is_preserved_when_owner_appends() {
         absolute_trading_minute: 0,
         close: Money::from_cents(1_234),
     };
-    game.state.market_minute_closes.insert(code.clone(), vec![seeded.clone()]);
+    game.state
+        .market_minute_closes
+        .insert(code.clone(), vec![seeded.clone()]);
     let _ = game.step().expect("健康 tick");
     let minutes = &game.state.market_minute_closes[&code];
-    assert!(minutes.len() > 1, "本 tick 至少回填一条（completed>recorded）");
+    assert!(
+        minutes.len() > 1,
+        "本 tick 至少回填一条（completed>recorded）"
+    );
     assert_eq!(minutes[0], seeded, "先验前缀逐字节保留");
     let last = game.state.markets[&code].last_price();
     assert!(
@@ -379,14 +400,15 @@ fn auction_event_order_and_no_trade_candle_mark() {
     let (done_pos, matched_volume) = tick2
         .iter()
         .position(|event| matches!(event, crate::Event::AuctionCompleted { .. }))
-        .zip(
-            tick2.iter().find_map(|event| match event {
-                crate::Event::AuctionCompleted { matched_volume, .. } => Some(*matched_volume),
-                _ => None,
-            }),
-        )
+        .zip(tick2.iter().find_map(|event| match event {
+            crate::Event::AuctionCompleted { matched_volume, .. } => Some(*matched_volume),
+            _ => None,
+        }))
         .expect("完结 tick 产出 AuctionCompleted");
-    assert!(tick_pos < done_pos, "AuctionTick 先于 AuctionCompleted（事件顺序）");
+    assert!(
+        tick_pos < done_pos,
+        "AuctionTick 先于 AuctionCompleted（事件顺序）"
+    );
     assert_eq!(
         matched_volume, 0,
         "空簿竞价清算量恰为零（Luna 建议：无成交清算的精确断言）"
@@ -398,7 +420,10 @@ fn auction_event_order_and_no_trade_candle_mark() {
         .get(&code)
         .expect("完结竞价 tick 标记日 K");
     assert_eq!(candle.close, game.state.markets[&code].last_price());
-    assert_eq!(candle.volume, matched_volume, "日 K 成交量=清算成交量（自洽钉）");
+    assert_eq!(
+        candle.volume, matched_volume,
+        "日 K 成交量=清算成交量（自洽钉）"
+    );
 }
 
 /// Astra T4 节点审·必修 2 佐证：股票收尾错误分类判别——行情面=MarketData
@@ -407,14 +432,18 @@ fn auction_event_order_and_no_trade_candle_mark() {
 fn stock_finish_fatal_classification_splits_market_data_from_other() {
     use super::continuous_matching::StockFinishFatal;
     let code = crate::StockId(0);
-    let mut market = super::continuous_matching::incremental_continuous_stock_shadow::tests::empty_market(&code);
-    let input =
-        super::continuous_matching::incremental_continuous_stock_shadow::tests::stock_input(
-            market.clone(),
-            Vec::new(),
-            crate::GameConfig::proposed_defaults(),
-        );
-    let mut coordinator = super::continuous_matching::IncrementalContinuousStockCoordinator::from_post_expiry(vec![input]).unwrap();
+    let mut market =
+        super::continuous_matching::incremental_continuous_stock_shadow::tests::empty_market(&code);
+    let input = super::continuous_matching::incremental_continuous_stock_shadow::tests::stock_input(
+        market.clone(),
+        Vec::new(),
+        crate::GameConfig::proposed_defaults(),
+    );
+    let mut coordinator =
+        super::continuous_matching::IncrementalContinuousStockCoordinator::from_post_expiry(vec![
+            input,
+        ])
+        .unwrap();
     // 行情面：先验 price_history 缺席 + Continuous 边界 → MarketData 分类。
     coordinator
         .install_market_prior(&code, StockMarketDataPrior::default())
@@ -449,7 +478,11 @@ fn stock_finish_fatal_classification_splits_market_data_from_other() {
             Vec::new(),
             crate::GameConfig::proposed_defaults(),
         );
-    let coordinator2 = super::continuous_matching::IncrementalContinuousStockCoordinator::from_post_expiry(vec![input2]).unwrap();
+    let coordinator2 =
+        super::continuous_matching::IncrementalContinuousStockCoordinator::from_post_expiry(vec![
+            input2,
+        ])
+        .unwrap();
     let error2 = coordinator2
         .finish_for_market_tick(
             ContinuousTickBoundary {
@@ -482,26 +515,26 @@ fn stock_finish_fatal_classification_splits_market_data_from_other() {
 #[test]
 fn owner_matcher_rejects_leftover_expected_partial_facts() {
     let (code, ops, expected) = two_accepted_outcomes();
-    let input =
-        super::continuous_matching::incremental_continuous_stock_shadow::tests::stock_input(
-            super::continuous_matching::incremental_continuous_stock_shadow::tests::empty_market(&code),
-            Vec::new(),
-            crate::GameConfig::proposed_defaults(),
-        );
+    let input = super::continuous_matching::incremental_continuous_stock_shadow::tests::stock_input(
+        super::continuous_matching::incremental_continuous_stock_shadow::tests::empty_market(&code),
+        Vec::new(),
+        crate::GameConfig::proposed_defaults(),
+    );
     let mut coordinator =
-        super::continuous_matching::IncrementalContinuousStockCoordinator::from_post_expiry(vec![input])
-            .unwrap();
+        super::continuous_matching::IncrementalContinuousStockCoordinator::from_post_expiry(vec![
+            input,
+        ])
+        .unwrap();
     // 部分事实形态：仅执行第一个操作（第二个期望无事实）。
     let mut round = coordinator.apply_round(vec![ops[0].clone()]).unwrap();
-    let error = super::market_tick_transaction::match_continuous_feedback(
-        &code,
-        &mut round,
-        expected,
-    )
-    .err()
-    .expect("部分事实（期望未清空）必须失败");
+    let error =
+        super::market_tick_transaction::match_continuous_feedback(&code, &mut round, expected)
+            .err()
+            .expect("部分事实（期望未清空）必须失败");
     assert!(
-        error.to_string().contains("StockProcessing 的已受理候选缺少 typed feedback"),
+        error
+            .to_string()
+            .contains("StockProcessing 的已受理候选缺少 typed feedback"),
         "实际 {error:?}"
     );
 }
@@ -509,26 +542,26 @@ fn owner_matcher_rejects_leftover_expected_partial_facts() {
 #[test]
 fn owner_matcher_rejects_leftover_expected_zero_facts() {
     let (code, _ops, expected) = two_accepted_outcomes();
-    let input =
-        super::continuous_matching::incremental_continuous_stock_shadow::tests::stock_input(
-            super::continuous_matching::incremental_continuous_stock_shadow::tests::empty_market(&code),
-            Vec::new(),
-            crate::GameConfig::proposed_defaults(),
-        );
+    let input = super::continuous_matching::incremental_continuous_stock_shadow::tests::stock_input(
+        super::continuous_matching::incremental_continuous_stock_shadow::tests::empty_market(&code),
+        Vec::new(),
+        crate::GameConfig::proposed_defaults(),
+    );
     let mut coordinator =
-        super::continuous_matching::IncrementalContinuousStockCoordinator::from_post_expiry(vec![input])
-            .unwrap();
+        super::continuous_matching::IncrementalContinuousStockCoordinator::from_post_expiry(vec![
+            input,
+        ])
+        .unwrap();
     // 零事实形态：空操作轮（全部期望无事实）。
     let mut round = coordinator.apply_round(Vec::new()).unwrap();
-    let error = super::market_tick_transaction::match_continuous_feedback(
-        &code,
-        &mut round,
-        expected,
-    )
-    .err()
-    .expect("零事实（期望未清空）必须失败");
+    let error =
+        super::market_tick_transaction::match_continuous_feedback(&code, &mut round, expected)
+            .err()
+            .expect("零事实（期望未清空）必须失败");
     assert!(
-        error.to_string().contains("StockProcessing 的已受理候选缺少 typed feedback"),
+        error
+            .to_string()
+            .contains("StockProcessing 的已受理候选缺少 typed feedback"),
         "实际 {error:?}"
     );
 }
@@ -536,15 +569,16 @@ fn owner_matcher_rejects_leftover_expected_zero_facts() {
 #[test]
 fn owner_matcher_matches_complete_round_in_fact_order() {
     let (code, ops, expected) = two_accepted_outcomes();
-    let input =
-        super::continuous_matching::incremental_continuous_stock_shadow::tests::stock_input(
-            super::continuous_matching::incremental_continuous_stock_shadow::tests::empty_market(&code),
-            Vec::new(),
-            crate::GameConfig::proposed_defaults(),
-        );
+    let input = super::continuous_matching::incremental_continuous_stock_shadow::tests::stock_input(
+        super::continuous_matching::incremental_continuous_stock_shadow::tests::empty_market(&code),
+        Vec::new(),
+        crate::GameConfig::proposed_defaults(),
+    );
     let mut coordinator =
-        super::continuous_matching::IncrementalContinuousStockCoordinator::from_post_expiry(vec![input])
-            .unwrap();
+        super::continuous_matching::IncrementalContinuousStockCoordinator::from_post_expiry(vec![
+            input,
+        ])
+        .unwrap();
     let mut round = coordinator.apply_round(ops).unwrap();
     assert_eq!(round.facts.len(), 2);
     // 完整乱序形态：期望按与事实相反的顺序传入——匹配按事实序完成。
@@ -571,8 +605,11 @@ fn owner_matcher_matches_complete_round_in_fact_order() {
 }
 
 /// 两笔真实受理（玩家买单；期望含 operation）。
-fn two_accepted_outcomes()
--> (crate::StockId, Vec<crate::session::pipeline::ValidatedOperation>, Vec<super::CandidateValidationOutcome>) {
+fn two_accepted_outcomes() -> (
+    crate::StockId,
+    Vec<crate::session::pipeline::ValidatedOperation>,
+    Vec<super::CandidateValidationOutcome>,
+) {
     use super::account_validation_context::build_account_validation_context;
     use super::{AccountValidatorDriver, IntentCandidate, IntentCandidateKey, PhaseInput};
     use crate::{AccountId, Intent, Money, Side};

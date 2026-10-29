@@ -1,7 +1,9 @@
 //! raw 单元 fixture 显式构造合法 Calendar 上下文；不在生产路径补默认值。
 
 use crate::calendar::{CalendarExchange, CivilDate, TradingCalendar};
-use crate::session::exchange_calendar_model::{SessionTickLayout, SharedClockInput, SharedDayProgress};
+use crate::session::exchange_calendar_model::{
+    SessionTickLayout, SharedClockInput, SharedDayProgress,
+};
 use crate::session::market_calendar_context::MarketCalendarSource;
 use std::sync::Arc;
 

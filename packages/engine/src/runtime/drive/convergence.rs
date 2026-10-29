@@ -61,10 +61,17 @@ impl PreparedDriverCalendar {
 
     pub(crate) fn stock_is_open(&self, code: crate::StockId) -> Result<bool, String> {
         match self {
-            Self::MarketTick(tick) => Ok(tick.before_projection().stock(code)
-                .map_err(|error| error.to_string())?.date_session_ordinal().is_some()),
+            Self::MarketTick(tick) => Ok(tick
+                .before_projection()
+                .stock(code)
+                .map_err(|error| error.to_string())?
+                .date_session_ordinal()
+                .is_some()),
             Self::Static(day) | Self::ManualDayEnd(day) => Ok(matches!(
-                day.day_model().stock(code).map_err(|error| error.to_string())?.status(),
+                day.day_model()
+                    .stock(code)
+                    .map_err(|error| error.to_string())?
+                    .status(),
                 crate::calendar::DayStatus::Trading
             )),
         }
@@ -73,40 +80,71 @@ impl PreparedDriverCalendar {
 
 impl PreparedDriverStep {
     /// 在 candidate 投影、seq 与 retained 发布前拒绝模式或同局时间来源错配。
-    pub(crate) fn validate_calendar(&self, session: &GameSession, tick: u64, world_tick: u64) -> Result<(), String> {
+    pub(crate) fn validate_calendar(
+        &self,
+        session: &GameSession,
+        tick: u64,
+        world_tick: u64,
+    ) -> Result<(), String> {
         let valid_mode = match &self.calendar {
-            PreparedDriverCalendar::Static(_) => self.static_read.is_some()
-                && !self.emit_price_tick && self.day_end.is_none() && self.events.is_empty(),
-            PreparedDriverCalendar::MarketTick(_) => self.static_read.is_none()
-                && self.day_end.as_ref().is_none_or(|data| data.emit_boundary),
-            PreparedDriverCalendar::ManualDayEnd(_) => self.static_read.is_none()
-                && !self.emit_price_tick
-                && self.day_end.as_ref().is_some_and(|data| !data.emit_boundary),
+            PreparedDriverCalendar::Static(_) => {
+                self.static_read.is_some()
+                    && !self.emit_price_tick
+                    && self.day_end.is_none()
+                    && self.events.is_empty()
+            }
+            PreparedDriverCalendar::MarketTick(_) => {
+                self.static_read.is_none()
+                    && self.day_end.as_ref().is_none_or(|data| data.emit_boundary)
+            }
+            PreparedDriverCalendar::ManualDayEnd(_) => {
+                self.static_read.is_none()
+                    && !self.emit_price_tick
+                    && self
+                        .day_end
+                        .as_ref()
+                        .is_some_and(|data| !data.emit_boundary)
+            }
         };
         if !valid_mode {
             return Err("镜像 Calendar 模式与静点/市场拍/手动日终输入不一致".to_owned());
         }
-        let bindings = session.market_calendar_bindings().map_err(|error| error.to_string())?;
-        self.calendar.day().validate_for(
-            session.market_calendar_source(),
-            &bindings,
-            session.civil_date(),
-        ).map_err(|error| error.to_string())?;
+        let bindings = session
+            .market_calendar_bindings()
+            .map_err(|error| error.to_string())?;
+        self.calendar
+            .day()
+            .validate_for(
+                session.market_calendar_source(),
+                &bindings,
+                session.civil_date(),
+            )
+            .map_err(|error| error.to_string())?;
         match &self.calendar {
             PreparedDriverCalendar::MarketTick(calendar) => {
                 let setup = session.export_setup_for_runtime();
-                let base = calendar.day().day_model().shared_sessions_before_date()
+                let base = calendar
+                    .day()
+                    .day_model()
+                    .shared_sessions_before_date()
                     .checked_mul(setup.ticks_per_day)
                     .ok_or_else(|| "市场拍 Calendar 当日 tick 基线溢出".to_owned())?;
-                let before_tick = tick.checked_sub(1)
+                let before_tick = tick
+                    .checked_sub(1)
                     .ok_or_else(|| "市场拍 Calendar 缺少前一 tick".to_owned())?;
                 // 延迟镜像只覆盖同一 civil date 的已真实提交输入，不跨日补拍或跳过 preflight。
-                if tick != world_tick || session.tick() < base || session.tick() > before_tick
-                    || u64::from(session.day()) != calendar.day().day_model().shared_sessions_before_date()
+                if tick != world_tick
+                    || session.tick() < base
+                    || session.tick() > before_tick
+                    || u64::from(session.day())
+                        != calendar.day().day_model().shared_sessions_before_date()
                 {
-                    return Err("市场拍 Calendar 不属于同日未安装输入窗口或当前 World 来源".to_owned());
+                    return Err(
+                        "市场拍 Calendar 不属于同日未安装输入窗口或当前 World 来源".to_owned()
+                    );
                 }
-                let completed_ticks = before_tick.checked_sub(base)
+                let completed_ticks = before_tick
+                    .checked_sub(base)
                     .ok_or_else(|| "市场拍 Calendar 早于当前 civil date".to_owned())?;
                 calendar.validate_for(
                     session.market_calendar_source(),
@@ -133,7 +171,9 @@ impl PreparedDriverStep {
                 if tick != session.tick() {
                     return Err("非市场 Calendar 不得推进镜像 tick".to_owned());
                 }
-                session.market_calendar_projection_for_day(day).map_err(|error| error.to_string())?;
+                session
+                    .market_calendar_projection_for_day(day)
+                    .map_err(|error| error.to_string())?;
             }
             PreparedDriverCalendar::ManualDayEnd(_) => {
                 if tick != session.tick() {
@@ -170,44 +210,74 @@ impl RuntimeDriver {
 
     /// 三档及计算消费点共用的静点汇合；trigger 只标识调用时机。
     pub(crate) fn flush_candidate(
-        &mut self, session: &mut GameSession, trigger: crate::runtime::sync_policy::FlushTrigger,
+        &mut self,
+        session: &mut GameSession,
+        trigger: crate::runtime::sync_policy::FlushTrigger,
     ) -> Result<(), String> {
         self.ensure_session_authority(session)?;
-        session.require_healthy().map_err(|fatal| fatal.to_string())?;
+        session
+            .require_healthy()
+            .map_err(|fatal| fatal.to_string())?;
         let source = self.mirror_source();
         if source.civil_date != session.civil_date() {
-            return Err(session.poison_runtime_step(crate::session::StepFatal::InvariantViolation {
-                location: "runtime::flush_candidate".to_owned(), description: "World 与 Session civil date 不一致".to_owned(),
-            }).to_string());
+            return Err(session
+                .poison_runtime_step(crate::session::StepFatal::InvariantViolation {
+                    location: "runtime::flush_candidate".to_owned(),
+                    description: "World 与 Session civil date 不一致".to_owned(),
+                })
+                .to_string());
         }
         let origin = session.runtime_mirror_origin();
         let current_stage = match source.day_end_stage {
-            crate::runtime::source::MirrorDayEndStage::Tick => crate::RuntimeMirrorDayEndStage::Tick,
-            crate::runtime::source::MirrorDayEndStage::DayEndCommitted => crate::RuntimeMirrorDayEndStage::DayEndCommitted,
-            crate::runtime::source::MirrorDayEndStage::RetainedPublished => crate::RuntimeMirrorDayEndStage::RetainedPublished,
+            crate::runtime::source::MirrorDayEndStage::Tick => {
+                crate::RuntimeMirrorDayEndStage::Tick
+            }
+            crate::runtime::source::MirrorDayEndStage::DayEndCommitted => {
+                crate::RuntimeMirrorDayEndStage::DayEndCommitted
+            }
+            crate::runtime::source::MirrorDayEndStage::RetainedPublished => {
+                crate::RuntimeMirrorDayEndStage::RetainedPublished
+            }
         };
-        if origin.install_sequence > 0 && origin.authority_epoch == source.authority_epoch
-            && origin.source_tick == source.tick && origin.source_generation == source.generation
-            && origin.non_tick_revision == source.non_tick_revision && origin.day_end_stage == current_stage
-            && self.pending_mirror_domains().is_empty() && !self.sync_inputs.plans_pending()
-        { return Ok(()); }
+        if origin.install_sequence > 0
+            && origin.authority_epoch == source.authority_epoch
+            && origin.source_tick == source.tick
+            && origin.source_generation == source.generation
+            && origin.non_tick_revision == source.non_tick_revision
+            && origin.day_end_stage == current_stage
+            && self.pending_mirror_domains().is_empty()
+            && !self.sync_inputs.plans_pending()
+        {
+            return Ok(());
+        }
         let result = (|| {
             let input = self.prepare_flush_driver_projection(session)?;
             let prepared = self.prepare_flush_candidate(session, input, trigger)?;
-            if !prepared.events.is_empty() { return Err("静点 flush 不得产生市场事件".to_owned()); }
-            let ack = session.validate_runtime_mirror_source(self, &prepared).map_err(|fatal| fatal.to_string())?;
+            if !prepared.events.is_empty() {
+                return Err("静点 flush 不得产生市场事件".to_owned());
+            }
+            let ack = session
+                .validate_runtime_mirror_source(self, &prepared)
+                .map_err(|fatal| fatal.to_string())?;
             session.install_runtime_mirror(self, prepared);
             self.ack_prepared_mirror(ack);
             Ok(())
         })();
-        result.map_err(|description| session.poison_runtime_step(crate::session::StepFatal::InvariantViolation {
-            location: "runtime::flush_candidate".to_owned(), description,
-        }).to_string())
+        result.map_err(|description| {
+            session
+                .poison_runtime_step(crate::session::StepFatal::InvariantViolation {
+                    location: "runtime::flush_candidate".to_owned(),
+                    description,
+                })
+                .to_string()
+        })
     }
 
     /// 市场拍与静点均在同一prepare/validate/move安装实现上构造镜像。
     pub(crate) fn prepare_flush_candidate(
-        &mut self, session: &GameSession, input: PreparedDriverStep,
+        &mut self,
+        session: &GameSession,
+        input: PreparedDriverStep,
         _trigger: crate::runtime::sync_policy::FlushTrigger,
     ) -> Result<crate::session::PreparedRuntimeMirror, String> {
         let tick = self.world_committed_tick();
@@ -249,10 +319,18 @@ impl RuntimeDriver {
 
     /// 事实与本批时间成对 move，空批保 None，不为手动日结补造市场拍。
     #[cfg(feature = "simulation-diagnostics")]
-    pub(crate) fn take_drain_causal_facts(&mut self) -> (
-        Vec<super::super::diagnostics::DeskCausalFact>, Option<crate::diagnostics::causal::FactTime>, BTreeMap<crate::StockId, u64>,
+    pub(crate) fn take_drain_causal_facts(
+        &mut self,
+    ) -> (
+        Vec<super::super::diagnostics::DeskCausalFact>,
+        Option<crate::diagnostics::causal::FactTime>,
+        BTreeMap<crate::StockId, u64>,
     ) {
-        (std::mem::take(&mut self.world.drained_causal), self.world.drained_causal_time.take(), std::mem::take(&mut self.world.drained_causal_clocks))
+        (
+            std::mem::take(&mut self.world.drained_causal),
+            self.world.drained_causal_time.take(),
+            std::mem::take(&mut self.world.drained_causal_clocks),
+        )
     }
 
     #[cfg(feature = "simulation-diagnostics")]
@@ -270,9 +348,13 @@ impl RuntimeDriver {
     /// 来源本身缺失时只封存真实 raw 与首错；None 明示没有可承诺的时间。
     #[cfg(feature = "simulation-diagnostics")]
     pub(crate) fn retain_terminal_causal_without_time(
-        &mut self, raw: Vec<crate::runtime::diagnostics::DeskCausalFact>, fatal: crate::session::StepFatal,
+        &mut self,
+        raw: Vec<crate::runtime::diagnostics::DeskCausalFact>,
+        fatal: crate::session::StepFatal,
     ) {
-        if self.terminal_causal.is_none() { self.terminal_causal = Some((None, raw, fatal)); }
+        if self.terminal_causal.is_none() {
+            self.terminal_causal = Some((None, raw, fatal));
+        }
     }
 
     #[cfg(feature = "simulation-diagnostics")]
@@ -286,7 +368,9 @@ impl RuntimeDriver {
     }
 
     #[cfg(all(test, feature = "simulation-diagnostics"))]
-    pub(crate) fn terminal_causal_snapshot_for_test(&self) -> Option<(
+    pub(crate) fn terminal_causal_snapshot_for_test(
+        &self,
+    ) -> Option<(
         Option<crate::diagnostics::causal::FactTime>,
         Vec<crate::runtime::diagnostics::DeskCausalFact>,
         crate::session::StepFatal,
@@ -330,7 +414,8 @@ impl RuntimeDriver {
         if !self.world.report_log.is_empty() {
             self.initial_static_seed = None;
         }
-        self.sync_inputs.complete_flush(crate::runtime::driver_sync::FlushOutcome::Successful);
+        self.sync_inputs
+            .complete_flush(crate::runtime::driver_sync::FlushOutcome::Successful);
         self.finish_tick_fact_install();
     }
 
@@ -372,10 +457,19 @@ impl RuntimeDriver {
         automatic_day_end: bool,
     ) -> Result<PreparedDriverStep, String> {
         self.ensure_session_authority(session)?;
-        let next_tick = self.world_committed_tick().checked_add(1)
+        let next_tick = self
+            .world_committed_tick()
+            .checked_add(1)
             .ok_or_else(|| "driver sync 下一 tick 已耗尽".to_owned())?;
-        let registrations = if automatic_day_end && next_tick.is_multiple_of(session.export_setup_for_runtime().ticks_per_day) { 2 } else { 1 };
-        self.sync_source_seq.checked_add(registrations)
+        let registrations = if automatic_day_end
+            && next_tick.is_multiple_of(session.export_setup_for_runtime().ticks_per_day)
+        {
+            2
+        } else {
+            1
+        };
+        self.sync_source_seq
+            .checked_add(registrations)
             .ok_or_else(|| "driver sync source_seq 在本拍完整登记前已耗尽".to_owned())?;
         self.world.set_civil_date(session.civil_date());
         self.world
@@ -384,7 +478,9 @@ impl RuntimeDriver {
             .prepare_step_with_capture(session, true)
             .and_then(|mut input| {
                 let tick = self.world.global.committed_tick;
-                if automatic_day_end && tick.is_multiple_of(session.export_setup_for_runtime().ticks_per_day) {
+                if automatic_day_end
+                    && tick.is_multiple_of(session.export_setup_for_runtime().ticks_per_day)
+                {
                     input = self.prepare_day_end_input(session, input, true, true)?;
                 }
                 Ok(input)
@@ -403,9 +499,15 @@ impl RuntimeDriver {
     ) -> Result<PreparedDriverStep, String> {
         let next_sync_seq = self.next_sync_source_sequence()?;
         let calendar = match &input.calendar {
-            PreparedDriverCalendar::MarketTick(tick) => super::super::protocol::DayEndCalendar::MarketTick(Arc::clone(tick)),
-            PreparedDriverCalendar::ManualDayEnd(day) => super::super::protocol::DayEndCalendar::ManualDayEnd(Arc::clone(day)),
-            PreparedDriverCalendar::Static(_) => return Err("静点 Calendar 不得发起 DayEnd".to_owned()),
+            PreparedDriverCalendar::MarketTick(tick) => {
+                super::super::protocol::DayEndCalendar::MarketTick(Arc::clone(tick))
+            }
+            PreparedDriverCalendar::ManualDayEnd(day) => {
+                super::super::protocol::DayEndCalendar::ManualDayEnd(Arc::clone(day))
+            }
+            PreparedDriverCalendar::Static(_) => {
+                return Err("静点 Calendar 不得发起 DayEnd".to_owned())
+            }
         };
         self.world
             .run_day_end_with_calendar(calendar)
@@ -572,7 +674,9 @@ impl RuntimeDriver {
         session
             .require_healthy()
             .map_err(|fatal| fatal.to_string())?;
-        let calendar_day = session.prepare_market_calendar_day().map_err(|error| error.to_string())?;
+        let calendar_day = session
+            .prepare_market_calendar_day()
+            .map_err(|error| error.to_string())?;
         self.next_sync_source_sequence()?;
         self.world.set_civil_date(session.civil_date());
         let input = PreparedDriverStep {
@@ -599,7 +703,8 @@ impl RuntimeDriver {
             .map_err(|description| {
                 if self.world.last_day_end_candidate.is_some() {
                     let fatal = crate::session::StepFatal::InvariantViolation {
-                        location: "RuntimeDriver::day_end::collect".to_owned(), description,
+                        location: "RuntimeDriver::day_end::collect".to_owned(),
+                        description,
                     };
                     #[cfg(feature = "simulation-diagnostics")]
                     {
@@ -607,7 +712,9 @@ impl RuntimeDriver {
                         if !raw.is_empty() {
                             match time {
                                 Some(time) => self.retain_terminal_causal(time, raw, fatal.clone()),
-                                None => self.retain_terminal_causal_without_time(raw, fatal.clone()),
+                                None => {
+                                    self.retain_terminal_causal_without_time(raw, fatal.clone())
+                                }
                             }
                         }
                     }
@@ -616,34 +723,41 @@ impl RuntimeDriver {
                     description
                 }
             })?;
-        let prepared =
-            self
-                .prepare_flush_candidate(session, input, crate::runtime::sync_policy::FlushTrigger::DayEnd)
-                .map_err(|description| {
-                    let fatal = crate::session::StepFatal::InvariantViolation {
-                        location: "RuntimeDriver::day_end::prepare".to_owned(), description,
-                    };
-                    #[cfg(feature = "simulation-diagnostics")]
-                    {
-                        let (raw, time, _) = self.take_drain_causal_facts();
-                        if !raw.is_empty() {
-                            match time {
-                                Some(time) => self.retain_terminal_causal(time, raw, fatal.clone()),
-                                None => self.retain_terminal_causal_without_time(raw, fatal.clone()),
-                            }
+        let prepared = self
+            .prepare_flush_candidate(
+                session,
+                input,
+                crate::runtime::sync_policy::FlushTrigger::DayEnd,
+            )
+            .map_err(|description| {
+                let fatal = crate::session::StepFatal::InvariantViolation {
+                    location: "RuntimeDriver::day_end::prepare".to_owned(),
+                    description,
+                };
+                #[cfg(feature = "simulation-diagnostics")]
+                {
+                    let (raw, time, _) = self.take_drain_causal_facts();
+                    if !raw.is_empty() {
+                        match time {
+                            Some(time) => self.retain_terminal_causal(time, raw, fatal.clone()),
+                            None => self.retain_terminal_causal_without_time(raw, fatal.clone()),
                         }
                     }
-                    self.abort_unpublished_day_end();
-                    session.poison_runtime_step(fatal).to_string()
-                })?;
+                }
+                self.abort_unpublished_day_end();
+                session.poison_runtime_step(fatal).to_string()
+            })?;
         #[cfg(feature = "simulation-diagnostics")]
-        let causal = session.prepare_runtime_drain_causal(self, prepared.causal_plans())
+        let causal = session
+            .prepare_runtime_drain_causal(self, prepared.causal_plans())
             .map_err(|fatal| session.poison_runtime_step(fatal).to_string())?;
         let ack = match session.validate_runtime_mirror_source(self, &prepared) {
             Ok(ack) => ack,
             Err(fatal) => {
                 #[cfg(feature = "simulation-diagnostics")]
-                if let Some(causal) = causal { self.retain_terminal_causal(causal.time, causal.raw, fatal.clone()); }
+                if let Some(causal) = causal {
+                    self.retain_terminal_causal(causal.time, causal.raw, fatal.clone());
+                }
                 return Err(session.poison_runtime_step(fatal).to_string());
             }
         };
@@ -660,7 +774,9 @@ impl RuntimeDriver {
             {
                 // 市场收盘已经提交；明确业务拒绝只保留 civil 重试，不毒化健康 authority。
                 #[cfg(feature = "simulation-diagnostics")]
-                if let Some(causal) = causal { session.publish_runtime_causal(causal); }
+                if let Some(causal) = causal {
+                    session.publish_runtime_causal(causal);
+                }
                 return Err(format!("市场日结安装后的自然日推进失败：{error}"));
             }
             let fatal = match session.poison_reason() {
@@ -674,11 +790,15 @@ impl RuntimeDriver {
                 },
             };
             #[cfg(feature = "simulation-diagnostics")]
-            if let Some(causal) = causal { self.retain_terminal_causal(causal.time, causal.raw, fatal.clone()); }
+            if let Some(causal) = causal {
+                self.retain_terminal_causal(causal.time, causal.raw, fatal.clone());
+            }
             return Err(session.poison_runtime_step(fatal).to_string());
         }
         #[cfg(feature = "simulation-diagnostics")]
-        if let Some(causal) = causal { session.publish_runtime_causal(causal); }
+        if let Some(causal) = causal {
+            session.publish_runtime_causal(causal);
+        }
         self.world.set_civil_date(session.civil_date());
         Ok(())
     }

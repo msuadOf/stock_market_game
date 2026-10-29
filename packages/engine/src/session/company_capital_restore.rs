@@ -1,15 +1,15 @@
 //! selected CompanySystem 的批准与已提交资本恢复验证；不创建或修改持久事实。
 
-use crate::Money;
 use crate::accounting::AccountingAmount;
 use crate::calendar::{CalendarExchange, CivilDate, TradingCalendar};
 use crate::company::identity::IssuerRegistry;
 use crate::company::share_registry::{HolderId, MovementScope, ShareDayReceipt};
-use crate::company::share_split::{ShareSplitReceipt, holder_inherited_restriction};
-use crate::company::stock_distribution::{HolderCreditLot, holder_credit_lots};
+use crate::company::share_split::{holder_inherited_restriction, ShareSplitReceipt};
+use crate::company::stock_distribution::{holder_credit_lots, HolderCreditLot};
 use crate::company::{CompanyId, CompanySystem, CompanySystemError};
 use crate::session::SessionCorporateActions;
 use crate::stock::{StockCatalog, StockId};
+use crate::Money;
 use std::collections::BTreeMap;
 
 /// 日期校验借用本局冻结 policy，不在恢复时另建默认日历。
@@ -339,7 +339,10 @@ pub(crate) fn validate_company_capital_restore(
                     .ok_or_else(|| CompanyCapitalRestoreError::Arithmetic {
                         context: receipt_context.clone(),
                     })?;
-                if matches!(receipt.request.scope, MovementScope::PublicMarket | MovementScope::SettlementDayMarket { .. }) {
+                if matches!(
+                    receipt.request.scope,
+                    MovementScope::PublicMarket | MovementScope::SettlementDayMarket { .. }
+                ) {
                     check_shares(issued_shares, after, receipt_context.clone())?;
                 } else {
                     let movement = bindings
@@ -1496,7 +1499,11 @@ fn prepare_repurchase_cancellations(
                     .iter()
                     .filter(|receipt| {
                         receipt.request.day == fill.day
-                            && matches!(receipt.request.scope, MovementScope::PublicMarket | MovementScope::SettlementDayMarket { .. })
+                            && matches!(
+                                receipt.request.scope,
+                                MovementScope::PublicMarket
+                                    | MovementScope::SettlementDayMarket { .. }
+                            )
                     })
                     .collect::<Vec<_>>();
                 if matching.len() != 1 {

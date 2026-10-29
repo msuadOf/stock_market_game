@@ -37,8 +37,12 @@ pub struct PublicReportAvailabilityQuery {
 #[serde(tag = "status")]
 #[ts(export)]
 pub enum PublicReportAvailability {
-    Available { report: PublicReportSummary },
-    Unavailable { reason: PublicReportUnavailableReason },
+    Available {
+        report: PublicReportSummary,
+    },
+    Unavailable {
+        reason: PublicReportUnavailableReason,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, ts_rs::TS)]

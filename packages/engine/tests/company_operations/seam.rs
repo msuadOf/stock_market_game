@@ -206,9 +206,7 @@ fn interest_phase_precedes_maturity_even_when_maturity_was_submitted_first() {
         .books()
         .journal()
         .entry_count();
-    let report = ops
-        .advance_civil_day(target)
-        .expect("maturity day runs");
+    let report = ops.advance_civil_day(target).expect("maturity day runs");
     assert!(report.dispatched_due >= 2, "计息与合同到期同日派发");
 
     // 当日新增分录里，计息分录必须先于收本/收息分录入账。

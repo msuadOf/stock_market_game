@@ -565,7 +565,10 @@ mod tests {
         let actual = super::calculate_indicators(&prices, &candles, Some(&context)).unwrap();
         assert_eq!(actual, expected);
         assert_eq!(
-            super::calculate_indicators(&[], &[], None).unwrap().macd.dif,
+            super::calculate_indicators(&[], &[], None)
+                .unwrap()
+                .macd
+                .dif,
             Vec::<f64>::new()
         );
     }
@@ -591,8 +594,7 @@ fn indicators_over_2048_points_do_not_spawn_threads() {
     fn task_count() -> usize {
         // /proc/self/task 条目数=线程数（与 /proc/self/status Threads 等效）。
         // 修2b：读取/遍历失败显式 panic（防御式原则，不吞错不用默认值）。
-        let entries = std::fs::read_dir("/proc/self/task")
-            .expect("linux 必须可读 /proc/self/task");
+        let entries = std::fs::read_dir("/proc/self/task").expect("linux 必须可读 /proc/self/task");
         let mut count = 0;
         for entry in entries {
             entry.expect("task 条目读取不得失败");
@@ -645,5 +647,3 @@ fn indicators_over_2048_points_do_not_spawn_threads() {
         "≥2048 点指标计算不得触发线程增长（before={before} max_observed={max_observed} after={after} samples={samples_count}；期望零增长，容差 2）"
     );
 }
-
-

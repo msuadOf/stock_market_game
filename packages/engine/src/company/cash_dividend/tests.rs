@@ -9,8 +9,16 @@ fn entitlement_share_quantity_uses_exact_canonical_decimal_wire() {
     };
     let encoded = serde_json::to_value(&entitlement).unwrap();
     assert_eq!(encoded["shares"], "9007199254740993");
-    assert_eq!(serde_json::from_value::<CashDividendEntitlement>(encoded.clone()).unwrap(), entitlement);
-    for invalid in [serde_json::json!(9_007_199_254_740_993_u64), serde_json::json!("09007199254740993"), serde_json::json!("+1"), serde_json::json!("18446744073709551616")] {
+    assert_eq!(
+        serde_json::from_value::<CashDividendEntitlement>(encoded.clone()).unwrap(),
+        entitlement
+    );
+    for invalid in [
+        serde_json::json!(9_007_199_254_740_993_u64),
+        serde_json::json!("09007199254740993"),
+        serde_json::json!("+1"),
+        serde_json::json!("18446744073709551616"),
+    ] {
         let mut changed = encoded.clone();
         changed["shares"] = invalid;
         assert!(serde_json::from_value::<CashDividendEntitlement>(changed).is_err());

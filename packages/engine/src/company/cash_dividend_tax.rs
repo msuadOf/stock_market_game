@@ -50,10 +50,7 @@ pub const MAX_FLAT_WITHHOLDING_BP: u32 = 10_000;
 /// 与个人差别化口径的「每笔分红合计应纳税额四舍五入到分」实现口径一致。
 /// 防御性拒绝负数税前应得：小幅负值经 `+5000` 的 half-up 偏移会被截断成 0，
 /// 必须在入口显式报错而不是静默返回零代扣。
-pub fn flat_withholding_cents(
-    gross_cents: i64,
-    rate_bp: u32,
-) -> Result<i64, DividendTaxError> {
+pub fn flat_withholding_cents(gross_cents: i64, rate_bp: u32) -> Result<i64, DividendTaxError> {
     if gross_cents < 0 {
         return Err(invalid(
             "flat withholding requires a nonnegative gross entitlement",
@@ -1071,16 +1068,15 @@ impl CashDividendTaxBook {
                 .iter()
                 .find(|receipt| receipt.operation_seq == *sequence)
             {
-                let removed =
-                    apply_redenomination_reduction(&mut replayed, reduction.day, {
-                        u64::try_from(
-                            reduction
-                                .net_change
-                                .checked_neg()
-                                .ok_or_else(|| overflow("negative redenomination shares"))?,
-                        )
-                        .map_err(|_| invalid("redenomination reduction exceeds u64"))?
-                    })?;
+                let removed = apply_redenomination_reduction(&mut replayed, reduction.day, {
+                    u64::try_from(
+                        reduction
+                            .net_change
+                            .checked_neg()
+                            .ok_or_else(|| overflow("negative redenomination shares"))?,
+                    )
+                    .map_err(|_| invalid("redenomination reduction exceeds u64"))?
+                })?;
                 if removed != reduction.removed {
                     return Err(invalid(
                         "redenomination removed fragments contradict FIFO replay",

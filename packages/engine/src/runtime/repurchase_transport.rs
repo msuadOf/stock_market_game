@@ -10,14 +10,26 @@ pub struct RepurchaseRequestKey {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum RepurchaseReturnKind { PriceImprovement, TerminalRefund }
+pub enum RepurchaseReturnKind {
+    PriceImprovement,
+    TerminalRefund,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RepurchaseSourceKind {
-    Accepted { price: i64, qty: u32, purse_initial: i64 },
-    Rejected { reason: ReceiptKind },
+    Accepted {
+        price: i64,
+        qty: u32,
+        purse_initial: i64,
+    },
+    Rejected {
+        reason: ReceiptKind,
+    },
     Fill(FillFact),
-    Return { amount: i64, kind: RepurchaseReturnKind },
+    Return {
+        amount: i64,
+        kind: RepurchaseReturnKind,
+    },
     Closed,
 }
 

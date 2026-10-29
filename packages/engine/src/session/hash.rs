@@ -1,8 +1,8 @@
 use super::{GameSession, StepFatal};
 use serde::Serialize;
-use std::collections::BTreeMap;
 #[cfg(test)]
 use std::cell::RefCell;
+use std::collections::BTreeMap;
 
 /// FNV-1a over length-delimited canonical JSON fields; not a security digest.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -230,16 +230,16 @@ impl GameSession {
                 hash.field(&0_u8)?;
                 hash.field(legacy.registry.as_ref())?;
                 hash.field(&legacy.operations.hash_projection().map_err(|error| {
-            StepFatal::InvariantViolation {
-                description: error.to_string(),
-                location: "state_hash.company_operations".to_owned(),
-            }
+                    StepFatal::InvariantViolation {
+                        description: error.to_string(),
+                        location: "state_hash.company_operations".to_owned(),
+                    }
                 })?)?;
                 hash.field(&legacy.closing.hash_projection().map_err(|error| {
-            StepFatal::InvariantViolation {
-                description: error.to_string(),
-                location: "state_hash.closing".to_owned(),
-            }
+                    StepFatal::InvariantViolation {
+                        description: error.to_string(),
+                        location: "state_hash.closing".to_owned(),
+                    }
                 })?)?;
                 hash.field(&legacy.groups)?;
             }

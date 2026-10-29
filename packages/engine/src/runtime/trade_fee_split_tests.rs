@@ -41,11 +41,23 @@ fn config_no_cage() -> Arc<GameConfig> {
 }
 
 fn sell(local: u32, price: i64, qty: u32) -> PlaceSpec {
-    PlaceSpec { local, stock: 0, side: Side::Sell, price, qty }
+    PlaceSpec {
+        local,
+        stock: 0,
+        side: Side::Sell,
+        price,
+        qty,
+    }
 }
 
 fn buy(local: u32, price: i64, qty: u32) -> PlaceSpec {
-    PlaceSpec { local, stock: 0, side: Side::Buy, price, qty }
+    PlaceSpec {
+        local,
+        stock: 0,
+        side: Side::Buy,
+        price,
+        qty,
+    }
 }
 
 /// 累计全部已提交 tick 的双腿成交事实。
@@ -281,7 +293,11 @@ fn aborted_tick_facts_never_reach_the_trade_log() {
     )
     .expect("世界构造");
     let fail: Validator = Box::new(|ev| {
-        if ev.tick == 1 { Err("三分项 Abort 注入".to_owned()) } else { Ok(()) }
+        if ev.tick == 1 {
+            Err("三分项 Abort 注入".to_owned())
+        } else {
+            Ok(())
+        }
     });
     world.set_validator(fail);
     assert!(world.run_ticks(1).is_err(), "tick1 Abort");

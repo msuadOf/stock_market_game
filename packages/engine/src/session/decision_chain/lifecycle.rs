@@ -66,9 +66,9 @@ pub(crate) fn open_position_action(
             )
             .map(|proposal| proposal.target_qty())
             .unwrap_or_else(|error| match error {
-                CandidateError::InvalidPositionFraction { .. } => panic!(
-                    "target weight failed for {account:?} {code:?}: {error}"
-                ),
+                CandidateError::InvalidPositionFraction { .. } => {
+                    panic!("target weight failed for {account:?} {code:?}: {error}")
+                }
                 _ => panic!("target quantity failed for {account:?} {code:?}: {error}"),
             })
         }
@@ -94,8 +94,12 @@ pub(crate) fn open_position_action(
         horizon_trading_days: if intraday {
             1
         } else {
-            u32::from(entry.expect("fundamental plan has a belief entry").horizon_trading_days)
-                .max(1)
+            u32::from(
+                entry
+                    .expect("fundamental plan has a belief entry")
+                    .horizon_trading_days,
+            )
+            .max(1)
         },
         created_trading_day: trading_day,
     };
@@ -247,8 +251,6 @@ impl<'a> PlanLifecycleReview<'a> {
             ),
         })
     }
-
-
 
     fn assess_one(
         &self,
@@ -567,8 +569,7 @@ impl<'a> PlanLifecycleReview<'a> {
                         change < i128::from(plan.review().min_price_change_bp)
                     })
                     && acquired_count == plan.review().last_review_acquired_count
-                    && plan.review().last_review_resources
-                        == Some(host.review_resources(id, code))
+                    && plan.review().last_review_resources == Some(host.review_resources(id, code))
                     && plan.confidence_bp() == confidence
                     && plan.urgency() == reviewed_urgency.urgency;
                 if quiet {
@@ -607,9 +608,8 @@ impl<'a> PlanLifecycleReview<'a> {
                 // record_parent_order_submission 的「第二在途子单」断言。
                 let will_terminate = revision.below_filled_rationale.is_some();
                 let child_order_id = plan.active_child_order_id();
-                let child_would_exceed_new_target = plan
-                    .active_child_remaining_qty()
-                    .is_some_and(|remaining| {
+                let child_would_exceed_new_target =
+                    plan.active_child_remaining_qty().is_some_and(|remaining| {
                         plan.filled_qty()
                             .checked_add(remaining)
                             .expect("linked child exposure must fit in u32")

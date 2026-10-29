@@ -346,7 +346,11 @@ fn non_fill_accrual_within_nominal_headroom_is_rejected_by_the_zero_fee_guard() 
     capped_reject.charged.commission = Money::from_cents(1);
     capped_reject.charged_before = seller_audit.charged;
     capped_reject.charged_after = FeeComponents {
-        commission: seller_audit.charged.commission.add(Money::from_cents(1)).unwrap(),
+        commission: seller_audit
+            .charged
+            .commission
+            .add(Money::from_cents(1))
+            .unwrap(),
         ..seller_audit.charged
     };
     let capped_error = capped_ledger

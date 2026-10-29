@@ -125,7 +125,9 @@ fn removed_registry_token_closes_existing_capability_without_allocating_receipts
         .unwrap()
         .unwrap();
     let mut observer = ProtocolSession::new(setup.clone(), 73).unwrap();
-    observer.rollback(checkpoint).expect("真实 serial 0/0 checkpoint 必须仍可机械恢复");
+    observer
+        .rollback(checkpoint)
+        .expect("真实 serial 0/0 checkpoint 必须仍可机械恢复");
     let before = observer.game().save().unwrap();
     registry.remove(token).unwrap();
     assert!(registry.with_session(token, |_| ()).is_err());
@@ -652,8 +654,13 @@ fn w3_query_surfaces_return_real_traded_data() {
                     }
                     if matches!(
                         event,
-                        engine::Event::Trade { maker: AccountId(0), .. }
-                            | engine::Event::Trade { taker: AccountId(0), .. }
+                        engine::Event::Trade {
+                            maker: AccountId(0),
+                            ..
+                        } | engine::Event::Trade {
+                            taker: AccountId(0),
+                            ..
+                        }
                     ) {
                         player_traded = true;
                     }
@@ -688,7 +695,10 @@ fn w3_query_surfaces_return_real_traded_data() {
         .unwrap();
     assert!(current.trading, "开市日 trading=true");
     assert!(!current.bars.is_empty(), "当日分钟桶必须含真实成交");
-    println!("w3 current_minute_history wire: {}", serde_json::to_string(&current).unwrap());
+    println!(
+        "w3 current_minute_history wire: {}",
+        serde_json::to_string(&current).unwrap()
+    );
 
     // 面板二/三：本人交割单游标分页（G5）与个人历史（G6）——双腿费用真实落账。
     let confirmations = REGISTRY
@@ -724,7 +734,10 @@ fn w3_query_surfaces_return_real_traded_data() {
         })
         .unwrap();
     assert!(!history.confirmations.is_empty(), "分页查询同源出数");
-    println!("w3 personal_trade_history wire: {}", serde_json::to_string(&history).unwrap());
+    println!(
+        "w3 personal_trade_history wire: {}",
+        serde_json::to_string(&history).unwrap()
+    );
 
     // 日结后面板四：保留历史（G8）——冻结日 Traded + bars 非空。
     for _ in 0..130 {
@@ -757,7 +770,10 @@ fn w3_query_surfaces_return_real_traded_data() {
         "已结算开市日=Traded"
     );
     assert!(!page.entries[0].bars.is_empty(), "保留链冻结真实分钟 bars");
-    println!("w3 market_history wire: {}", serde_json::to_string(&page).unwrap());
+    println!(
+        "w3 market_history wire: {}",
+        serde_json::to_string(&page).unwrap()
+    );
 
     drop_session(handle).unwrap();
 }
@@ -829,12 +845,29 @@ fn target_day_not_ready_uses_the_actual_session_error_conversion() {
     let setup = fixture::civil_setup(engine::CivilDate::from_iso("2030-01-02").unwrap());
     let game = ProtocolSession::new(setup, 41).unwrap();
     let error = game.save_current_day(game.civil_date()).unwrap_err();
-    assert!(matches!(&error, SessionError::InvalidSave(fault) if fault.code == 3018 && fault.context.is_empty()));
-    assert_eq!(failure_description(&error), ("SAVE_TARGET_DAY_NOT_READY", "目标自然日尚未完成日终，当前日存档不可用（原始详情已脱敏）"));
-    assert_eq!(session_error_to_step_update_error(error), StepUpdateError::Operation("SAVE_TARGET_DAY_NOT_READY: 目标自然日尚未完成日终，当前日存档不可用（原始详情已脱敏）".into()));
+    assert!(
+        matches!(&error, SessionError::InvalidSave(fault) if fault.code == 3018 && fault.context.is_empty())
+    );
+    assert_eq!(
+        failure_description(&error),
+        (
+            "SAVE_TARGET_DAY_NOT_READY",
+            "目标自然日尚未完成日终，当前日存档不可用（原始详情已脱敏）"
+        )
+    );
+    assert_eq!(
+        session_error_to_step_update_error(error),
+        StepUpdateError::Operation(
+            "SAVE_TARGET_DAY_NOT_READY: 目标自然日尚未完成日终，当前日存档不可用（原始详情已脱敏）"
+                .into()
+        )
+    );
     for code in [3015, 3016, 3017] {
         let error = SessionError::InvalidSave(engine::ValidationFault::bare(code));
         let message = error.to_string();
-        assert_eq!(session_error_to_step_update_error(error), StepUpdateError::Operation(message));
+        assert_eq!(
+            session_error_to_step_update_error(error),
+            StepUpdateError::Operation(message)
+        );
     }
 }

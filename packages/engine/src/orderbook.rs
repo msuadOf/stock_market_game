@@ -129,7 +129,9 @@ pub(crate) mod canonical_u128_decimal {
 
     pub fn parse(value: &str) -> Result<u128, String> {
         let bytes = value.as_bytes();
-        let nonzero_prefix = bytes.first().is_some_and(|byte| (b'1'..=b'9').contains(byte));
+        let nonzero_prefix = bytes
+            .first()
+            .is_some_and(|byte| (b'1'..=b'9').contains(byte));
         if bytes != b"0" && !(nonzero_prefix && bytes.iter().all(u8::is_ascii_digit)) {
             return Err("成交额必须使用规范非负十进制分字符串".to_owned());
         }
@@ -655,9 +657,15 @@ impl OrderBook {
             // 腿方向语义（2026-10-16 契约）：maker≡卖腿/taker≡买腿——
             // incoming=Sell 时 resting（maker 变量）为买方，成组互换。
             let (sell_leg, buy_leg) = if side == Side::Buy {
-                ((maker.owner, maker.id, maker_filled_value_before), (taker, order.id, taker_filled_value_before))
+                (
+                    (maker.owner, maker.id, maker_filled_value_before),
+                    (taker, order.id, taker_filled_value_before),
+                )
             } else {
-                ((taker, order.id, taker_filled_value_before), (maker.owner, maker.id, maker_filled_value_before))
+                (
+                    (taker, order.id, taker_filled_value_before),
+                    (maker.owner, maker.id, maker_filled_value_before),
+                )
             };
             trades.push(Trade {
                 price: fill_price,

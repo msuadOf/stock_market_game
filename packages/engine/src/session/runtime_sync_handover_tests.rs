@@ -65,19 +65,35 @@ fn direct_driver_entries_commit_one_progress_and_keep_each_policy_mirror_source(
             input.static_read.unwrap().refresh_market,
             "延迟策略首个真实 tick 后即使还未安装镜像，也必须使用真实行情"
         );
-        let expected_markets: Vec<_> = driver.world_public_views().iter()
-            .map(|view| (view.last_price, view.public_cutoff_serial)).collect();
-        let expected_histories: Vec<_> = driver.world_public_views().iter()
-            .map(|view| view.recent_prices.clone()).collect();
+        let expected_markets: Vec<_> = driver
+            .world_public_views()
+            .iter()
+            .map(|view| (view.last_price, view.public_cutoff_serial))
+            .collect();
+        let expected_histories: Vec<_> = driver
+            .world_public_views()
+            .iter()
+            .map(|view| view.recent_prices.clone())
+            .collect();
         driver.flush_now(&mut game).unwrap();
         assert_eq!(game.runtime_mirror_origin().source_tick, 2);
         assert_eq!(game.tick(), 2);
         assert_eq!(game.seq(), previous_seq, "静点 flush 不重复产生 PriceTick");
         let installed_markets: Vec<_> = (0..expected_markets.len())
-            .map(|stock| game.runtime_static_market_seed(StockId(stock as u32)).unwrap())
+            .map(|stock| {
+                game.runtime_static_market_seed(StockId(stock as u32))
+                    .unwrap()
+            })
             .collect();
-        assert_eq!(installed_markets, expected_markets, "首个延迟 flush 安装真实行情与公开截点");
-        assert_eq!(game.runtime_price_histories(), expected_histories, "行情历史不滞留初始种子");
+        assert_eq!(
+            installed_markets, expected_markets,
+            "首个延迟 flush 安装真实行情与公开截点"
+        );
+        assert_eq!(
+            game.runtime_price_histories(),
+            expected_histories,
+            "行情历史不滞留初始种子"
+        );
     }
     let mut game = GameSession::new(setup(crate::RuntimeSyncPolicy::EveryTick), 43).unwrap();
     let mut driver = RuntimeDriver::from_session_grouped(&mut game, 2).unwrap();
@@ -115,7 +131,11 @@ fn initial_market_seed_survives_static_install_and_closed_retained_republication
     assert_eq!(game.runtime_static_market_seed(StockId(0)).unwrap().0, 1095);
     let origin = game.runtime_mirror_origin();
     driver.flush_now(&mut game).unwrap();
-    assert_eq!(game.runtime_mirror_origin(), origin, "初始静点重复 flush 幂等");
+    assert_eq!(
+        game.runtime_mirror_origin(),
+        origin,
+        "初始静点重复 flush 幂等"
+    );
     driver.freeze_retained_closed_day(&mut game, date).unwrap();
     let input = driver.prepare_flush_driver_projection(&game).unwrap();
     let read = input.static_read.unwrap();

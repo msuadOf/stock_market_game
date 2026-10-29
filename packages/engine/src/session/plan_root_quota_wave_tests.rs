@@ -227,8 +227,7 @@ fn assert_token_identity(
     let expected = super::plan_chain_candidates::root_panic_token_addr()
         .unwrap_or_else(|| panic!("{case}: 注入地址登记缺失"));
     assert_eq!(
-        &**token as *const RootPanicToken as usize,
-        expected,
+        &**token as *const RootPanicToken as usize, expected,
         "{case}: 对象身份（同地址判等，非同内容重建）"
     );
 }
@@ -344,7 +343,10 @@ fn r5_true_capacity_pressure_inline_or_late_dispatch_completes() {
         );
         assert!(Instant::now() < wait, "4c 内联推进不得挂起");
     }
-    assert!(delivered >= 1, "4c 内联必须实际交付至少一个 root（非空转 Ok）");
+    assert!(
+        delivered >= 1,
+        "4c 内联必须实际交付至少一个 root（非空转 Ok）"
+    );
     drop(held);
     drop(drives);
     let _ = batch;
@@ -518,11 +520,9 @@ fn a1_panic_pending_form_real_transaction() {
     let taskdied_received = Arc::new(AtomicBool::new(false));
     {
         let received = Arc::clone(&taskdied_received);
-        super::plan_chain_candidates::set_plan_root_taskdied_probe(Some(Arc::new(
-            move || {
-                received.store(true, Ordering::SeqCst);
-            },
-        )));
+        super::plan_chain_candidates::set_plan_root_taskdied_probe(Some(Arc::new(move || {
+            received.store(true, Ordering::SeqCst);
+        })));
     }
     let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         super::pipeline::run_injected_roots_market_tick_for_test(&mut session, roots)
@@ -611,9 +611,7 @@ fn a1_panic_inflight_late_form_real_transaction() {
                     return;
                 }
                 let (open, signal) = &*gate_for_entry;
-                let mut open = open
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                let mut open = open.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
                 while !*open {
                     open = match signal.wait(open) {
                         Ok(guard) => guard,
@@ -623,11 +621,9 @@ fn a1_panic_inflight_late_form_real_transaction() {
             },
         )));
         let received = Arc::clone(&taskdied_received);
-        super::plan_chain_candidates::set_plan_root_taskdied_probe(Some(Arc::new(
-            move || {
-                received.store(true, Ordering::SeqCst);
-            },
-        )));
+        super::plan_chain_candidates::set_plan_root_taskdied_probe(Some(Arc::new(move || {
+            received.store(true, Ordering::SeqCst);
+        })));
         let fourb = Arc::clone(&fourb_after_failure);
         let early = Arc::clone(&early_4b);
         let gate_for_4b = Arc::clone(&other_gate);
@@ -638,9 +634,7 @@ fn a1_panic_inflight_late_form_real_transaction() {
             }
             fourb.store(true, Ordering::SeqCst);
             let (open, signal) = &*gate_for_4b;
-            let mut open = open
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let mut open = open.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
             *open = true;
             signal.notify_all();
         })));
@@ -686,8 +680,6 @@ fn a1_panic_inflight_late_form_real_transaction() {
     assert_guards_returned(&compute);
 }
 
-
-
 /// 失败后 4b 确定性证据（六审分支锚点+七轮强化：**other-first FIFO 编排**与
 /// early-4b 断言）：roots FIFO=[other(1), panic(2)]——other 在账户入口门
 /// 等待（**失败后 4b** flag，由条件化 4b 探针在
@@ -732,9 +724,7 @@ fn a1_4b_wait_branch_is_actually_entered() {
                     return;
                 }
                 let (open, signal) = &*gate_for_entry;
-                let mut open = open
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                let mut open = open.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
                 while !*open {
                     open = match signal.wait(open) {
                         Ok(guard) => guard,
@@ -744,11 +734,9 @@ fn a1_4b_wait_branch_is_actually_entered() {
             },
         )));
         let received = Arc::clone(&taskdied_received);
-        super::plan_chain_candidates::set_plan_root_taskdied_probe(Some(Arc::new(
-            move || {
-                received.store(true, Ordering::SeqCst);
-            },
-        )));
+        super::plan_chain_candidates::set_plan_root_taskdied_probe(Some(Arc::new(move || {
+            received.store(true, Ordering::SeqCst);
+        })));
         let fourb = Arc::clone(&fourb_after_failure);
         let early = Arc::clone(&early_4b);
         let gate_for_4b = Arc::clone(&other_gate);
@@ -760,9 +748,7 @@ fn a1_4b_wait_branch_is_actually_entered() {
             }
             fourb.store(true, Ordering::SeqCst);
             let (open, signal) = &*gate_for_4b;
-            let mut open = open
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let mut open = open.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
             *open = true;
             signal.notify_all();
         })));
@@ -825,9 +811,7 @@ fn a1_double_panic_guard_preserves_original_failure() {
                     return;
                 }
                 let (open, signal) = &*gate;
-                let mut open = open
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                let mut open = open.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
                 while !*open {
                     open = match signal.wait(open) {
                         Ok(guard) => guard,
@@ -837,11 +821,9 @@ fn a1_double_panic_guard_preserves_original_failure() {
             },
         )));
         let received = Arc::clone(&taskdied_received);
-        super::plan_chain_candidates::set_plan_root_taskdied_probe(Some(Arc::new(
-            move || {
-                received.store(true, Ordering::SeqCst);
-            },
-        )));
+        super::plan_chain_candidates::set_plan_root_taskdied_probe(Some(Arc::new(move || {
+            received.store(true, Ordering::SeqCst);
+        })));
     }
     let original = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let mut batch = two_root_batch(&session);
@@ -850,9 +832,7 @@ fn a1_double_panic_guard_preserves_original_failure() {
         impl Drop for AccountGateReleaser {
             fn drop(&mut self) {
                 let (open, signal) = &*self.0;
-                let mut open = open
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                let mut open = open.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
                 *open = true;
                 signal.notify_all();
             }
@@ -875,10 +855,11 @@ fn a1_double_panic_guard_preserves_original_failure() {
     super::plan_chain_candidates::set_root_panic_accounts(&[]);
     super::plan_chain_candidates::set_plan_root_account_entry_probe(None);
     super::plan_chain_candidates::set_plan_root_taskdied_probe(None);
-    let message = original
-        .downcast_ref::<String>()
-        .cloned()
-        .or_else(|| original.downcast_ref::<&str>().map(|text| (*text).to_string()));
+    let message = original.downcast_ref::<String>().cloned().or_else(|| {
+        original
+            .downcast_ref::<&str>()
+            .map(|text| (*text).to_string())
+    });
     assert_eq!(
         message.as_deref(),
         Some("a1 mid-unwind original failure"),
@@ -920,11 +901,9 @@ fn p3_binding_order_and_payload_identity() {
     {
         let record = Arc::clone(&received_strong_count);
         let count_probe = timing_binding.clone();
-        super::plan_chain_candidates::set_plan_root_taskdied_probe(Some(Arc::new(
-            move || {
-                record.store(count_probe.strong_count(), Ordering::SeqCst);
-            },
-        )));
+        super::plan_chain_candidates::set_plan_root_taskdied_probe(Some(Arc::new(move || {
+            record.store(count_probe.strong_count(), Ordering::SeqCst);
+        })));
     }
     super::plan_chain_candidates::set_root_panic_accounts(&[AccountId(1)]);
     let payload = crate::verification_evidence::with_phase_timing_binding(timing_binding, || {
@@ -978,9 +957,10 @@ fn p3_binding_order_and_payload_identity() {
     );
     // 终态复核：强计数回落基线（测试侧两 clone 随作用域结束 Drop；任务侧
     // timing 已在发布前随绑定作用域卸载）。
-    wait_until("phase timing 绑定强计数回落基线（终态实际释放）", || {
-        probe_binding.strong_count() == binding_baseline
-    });
+    wait_until(
+        "phase timing 绑定强计数回落基线（终态实际释放）",
+        || probe_binding.strong_count() == binding_baseline,
+    );
     assert_eq!(
         probe_binding.strong_count(),
         binding_baseline,
@@ -1012,7 +992,9 @@ fn a1_queued_taskdied_survives_coordinator_drop() {
         PrepareReady::Progress(false) => {}
         _ => panic!("root 闩住期间不应有交付或信号"),
     }
-    wait_until("panic root 进入 bound（被闩）", || entered.load(Ordering::SeqCst) == 1);
+    wait_until("panic root 进入 bound（被闩）", || {
+        entered.load(Ordering::SeqCst) == 1
+    });
     let business_at_drop = session.business_state_hash().unwrap();
     // 迟到 TaskDied 窗口钉死（四审）：注入 Drop「已见 Empty」探针——探针在
     // Drop 首次观察到空队列的**同一线程时点**回调，回调内才放行 panic root：
@@ -1022,12 +1004,10 @@ fn a1_queued_taskdied_survives_coordinator_drop() {
     {
         let fired = Arc::clone(&empty_probe_fired);
         let gate_for_probe = Arc::clone(&gate);
-        super::plan_chain_candidates::set_plan_root_drop_empty_probe(Some(Arc::new(
-            move || {
-                fired.store(true, Ordering::SeqCst);
-                release_roots(&gate_for_probe);
-            },
-        )));
+        super::plan_chain_candidates::set_plan_root_drop_empty_probe(Some(Arc::new(move || {
+            fired.store(true, Ordering::SeqCst);
+            release_roots(&gate_for_probe);
+        })));
     }
     let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| drop(batch)));
     super::plan_chain_candidates::set_plan_root_drop_empty_probe(None);
@@ -1086,9 +1066,7 @@ fn a1_saved_taskdied_with_late_result_survives_coordinator_drop() {
                     return;
                 }
                 let (open, signal) = &*gate;
-                let mut open = open
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                let mut open = open.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
                 while !*open {
                     open = match signal.wait(open) {
                         Ok(guard) => guard,
@@ -1098,20 +1076,16 @@ fn a1_saved_taskdied_with_late_result_survives_coordinator_drop() {
             },
         )));
         let received = Arc::clone(&taskdied_received);
-        super::plan_chain_candidates::set_plan_root_taskdied_probe(Some(Arc::new(
-            move || {
-                received.store(true, Ordering::SeqCst);
-            },
-        )));
+        super::plan_chain_candidates::set_plan_root_taskdied_probe(Some(Arc::new(move || {
+            received.store(true, Ordering::SeqCst);
+        })));
     }
     // unwind 安全 guard：任何失败路径先开账户门（防 Drop 收满死等被闩 root）。
     struct AccountGateReleaser(Arc<(Mutex<bool>, Condvar)>);
     impl Drop for AccountGateReleaser {
         fn drop(&mut self) {
             let (open, signal) = &*self.0;
-            let mut open = open
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let mut open = open.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
             *open = true;
             signal.notify_all();
         }
@@ -1136,17 +1110,13 @@ fn a1_saved_taskdied_with_late_result_survives_coordinator_drop() {
     {
         let fired = Arc::clone(&empty_probe_fired);
         let gate_for_probe = Arc::clone(&account_gate);
-        super::plan_chain_candidates::set_plan_root_drop_empty_probe(Some(Arc::new(
-            move || {
-                fired.store(true, Ordering::SeqCst);
-                let (open, signal) = &*gate_for_probe;
-                let mut open = open
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner());
-                *open = true;
-                signal.notify_all();
-            },
-        )));
+        super::plan_chain_candidates::set_plan_root_drop_empty_probe(Some(Arc::new(move || {
+            fired.store(true, Ordering::SeqCst);
+            let (open, signal) = &*gate_for_probe;
+            let mut open = open.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            *open = true;
+            signal.notify_all();
+        })));
     }
     let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| drop(batch)));
     super::plan_chain_candidates::set_plan_root_drop_empty_probe(None);
@@ -1175,7 +1145,6 @@ fn a1_saved_taskdied_with_late_result_survives_coordinator_drop() {
     assert_guards_returned(&compute);
 }
 
-
 /// e2（死区形态·root 在飞）：F 侧候选全被 AccountValidation 拒绝的完整 tick
 /// 链路属集成层（`pipeline/plan_quota_dead_zone_tests.rs` 增量二十已补）；
 /// 本单元承载死区核心断言——候选产出为空且 roots 在飞时，blocking prepare
@@ -1196,10 +1165,7 @@ fn e2_inflight_roots_dead_zone_keeps_progressing_to_delivery() {
             PrepareReady::Progress(false) => break,
             PrepareReady::PendingCapacity => compute.wait_for_spawn_capacity(),
         }
-        assert!(
-            Instant::now() < wait,
-            "整体推进超时（死区挂死即缺陷）"
-        );
+        assert!(Instant::now() < wait, "整体推进超时（死区挂死即缺陷）");
     }
     assert_eq!(deliveries, 2, "两 root 恰各交付一次");
 }
@@ -1298,7 +1264,10 @@ fn e1_pending_only_dead_zone_closes_after_capacity_recovery() {
             PrepareReady::Progress(false) => break,
             PrepareReady::PendingCapacity => {
                 signals += 1;
-                assert!(Instant::now() < wait, "死区不得挂起：pending-only 必须上提信号");
+                assert!(
+                    Instant::now() < wait,
+                    "死区不得挂起：pending-only 必须上提信号"
+                );
                 if !held.is_empty() {
                     held.pop();
                 }

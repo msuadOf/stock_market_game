@@ -741,8 +741,11 @@ fn capture_mixed_working_orders_only_restore_cash_for_the_cancelable_subset() {
         // 可撤销性由阶段窗口（开盘前1/3、连续、其余不可撤）决定。
         let mode = crate::session::pipeline::phase::PhasePolicy::capture(&shadow).matching_mode();
         // 卖单资源与买单cash约束独立；fixture必须真实拥有这些可售股数。
-        shadow.fixture_account_mut(&account).unwrap()
-            .grant_position(code, 100, Money::from_cents(100_000)).unwrap();
+        shadow
+            .fixture_account_mut(&account)
+            .unwrap()
+            .grant_position(code, 100, Money::from_cents(100_000))
+            .unwrap();
         for (id, side) in [(1, crate::Side::Buy), (2, crate::Side::Sell)] {
             let market = shadow.state.markets.get_mut(&code).unwrap();
             market.set_matching_mode(mode).unwrap();

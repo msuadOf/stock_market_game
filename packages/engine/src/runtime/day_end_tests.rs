@@ -65,9 +65,12 @@ fn day_end_drains_inflight_and_conserves_across_days() {
     let spec = day_spec(Box::new(script));
     let calendar = crate::calendar::TradingCalendar::current_default_calendar()
         .expect("显式 raw Calendar 政策合法");
-    let next_date = calendar.next_trading_day(
-        crate::calendar::CalendarExchange::Sse, spec.civil_start_date,
-    ).expect("fixture 下一 SSE trading date 合法");
+    let next_date = calendar
+        .next_trading_day(
+            crate::calendar::CalendarExchange::Sse,
+            spec.civil_start_date,
+        )
+        .expect("fixture 下一 SSE trading date 合法");
     let mut world = World::spawn(spec, calendar).expect("世界构造");
     world.run_ticks(4).expect("首日四拍收敛");
     world.run_day_end_public().expect("显式首日市场日终");
@@ -120,21 +123,32 @@ fn admin_rights_apply_reversibly_and_validate_before_commit() {
     }));
     let calendar = crate::calendar::TradingCalendar::current_default_calendar()
         .expect("显式 raw Calendar 政策合法");
-    let next_date = calendar.next_trading_day(
-        crate::calendar::CalendarExchange::Sse, spec.civil_start_date,
-    ).expect("fixture 下一 SSE trading date 合法");
+    let next_date = calendar
+        .next_trading_day(
+            crate::calendar::CalendarExchange::Sse,
+            spec.civil_start_date,
+        )
+        .expect("fixture 下一 SSE trading date 合法");
     let mut world = World::spawn(spec, calendar).expect("世界构造");
     // 四个已发布市场拍保留；失败仅冲回本次日结，仍可在同一 tick 重试。
     let fail: super::world::DayEndValidator = Box::new(|_| Err("注入：日结校验失败".to_owned()));
     world.run_ticks(4).expect("先完成首日四个已发布市场拍");
     world.set_day_end_validator(fail);
-    let err = world.run_day_end_public().expect_err("日结校验失败须显式失败");
+    let err = world
+        .run_day_end_public()
+        .expect_err("日结校验失败须显式失败");
     assert!(
         matches!(err, RuntimeError::DayEndValidation { day: 0, .. }),
         "应为 DayEndValidation：{err:?}"
     );
-    assert_eq!(world.global.committed_tick, 4, "失败日结不得回滚已发布的四拍");
-    assert!(world.last_day_end_candidate.is_none(), "失败日结不得保留成功候选");
+    assert_eq!(
+        world.global.committed_tick, 4,
+        "失败日结不得回滚已发布的四拍"
+    );
+    assert!(
+        world.last_day_end_candidate.is_none(),
+        "失败日结不得保留成功候选"
+    );
     // 换回通过校验器重跑同一日结（Abort 后 worker 存活可继续）。
     world.set_day_end_validator(Box::new(|_| Ok(())));
     world.run_day_end_public().expect("同一 tick 重跑日结成功");
@@ -171,9 +185,12 @@ fn fee_sink_surrendered_in_candidate_and_conserves() {
     let spec = day_spec(Box::new(script));
     let calendar = crate::calendar::TradingCalendar::current_default_calendar()
         .expect("显式 raw Calendar 政策合法");
-    let next_date = calendar.next_trading_day(
-        crate::calendar::CalendarExchange::Sse, spec.civil_start_date,
-    ).expect("fixture 下一 SSE trading date 合法");
+    let next_date = calendar
+        .next_trading_day(
+            crate::calendar::CalendarExchange::Sse,
+            spec.civil_start_date,
+        )
+        .expect("fixture 下一 SSE trading date 合法");
     let mut world = World::spawn(spec, calendar).expect("世界构造");
     world.run_ticks(4).expect("首日四拍收敛");
     world.run_day_end_public().expect("显式首日市场日终");
@@ -210,9 +227,12 @@ fn day_rollover_updates_last_close_and_archives_candle() {
     let spec = day_spec(Box::new(script));
     let calendar = crate::calendar::TradingCalendar::current_default_calendar()
         .expect("显式 raw Calendar 政策合法");
-    let next_date = calendar.next_trading_day(
-        crate::calendar::CalendarExchange::Sse, spec.civil_start_date,
-    ).expect("fixture 下一 SSE trading date 合法");
+    let next_date = calendar
+        .next_trading_day(
+            crate::calendar::CalendarExchange::Sse,
+            spec.civil_start_date,
+        )
+        .expect("fixture 下一 SSE trading date 合法");
     let mut world = World::spawn(spec, calendar).expect("世界构造");
     world.run_ticks(4).expect("首日四拍收敛");
     world.run_day_end_public().expect("显式首日市场日终");
@@ -250,9 +270,12 @@ fn day_end_candidate_roundtrip_rebuilds_equivalent_world() {
     let spec = day_spec(Box::new(script));
     let calendar = crate::calendar::TradingCalendar::current_default_calendar()
         .expect("显式 raw Calendar 政策合法");
-    let next_date = calendar.next_trading_day(
-        crate::calendar::CalendarExchange::Sse, spec.civil_start_date,
-    ).expect("fixture 下一 SSE trading date 合法");
+    let next_date = calendar
+        .next_trading_day(
+            crate::calendar::CalendarExchange::Sse,
+            spec.civil_start_date,
+        )
+        .expect("fixture 下一 SSE trading date 合法");
     let mut world = World::spawn(spec, calendar).expect("世界构造");
     world.run_ticks(4).expect("day0 收敛");
     world.run_day_end_public().expect("显式首日市场日终");
@@ -319,9 +342,12 @@ fn day_end_group_hash_matches_post_apply_state() {
     }));
     let calendar = crate::calendar::TradingCalendar::current_default_calendar()
         .expect("显式 raw Calendar 政策合法");
-    let next_date = calendar.next_trading_day(
-        crate::calendar::CalendarExchange::Sse, spec.civil_start_date,
-    ).expect("fixture 下一 SSE trading date 合法");
+    let next_date = calendar
+        .next_trading_day(
+            crate::calendar::CalendarExchange::Sse,
+            spec.civil_start_date,
+        )
+        .expect("fixture 下一 SSE trading date 合法");
     let mut world = World::spawn(spec, calendar).expect("世界构造");
     world.run_ticks(4).expect("首日四拍收敛");
     world.run_day_end_public().expect("显式首日市场日终");
@@ -355,18 +381,19 @@ fn d0_manual_and_auto_day_end_are_mutually_exclusive() {
     use super::skeleton_tests::basic_spec;
     use super::world::World;
     use crate::orderbook::Side;
-    let script = |_g: super::GroupIdx| -> GroupScript {
-        Box::new(|_t, _r| TickPlan::default())
-    };
+    let script = |_g: super::GroupIdx| -> GroupScript { Box::new(|_t, _r| TickPlan::default()) };
     let mut spec = basic_spec(1, 1, 1, Box::new(script));
     spec.ticks_per_day = 4; // day0=tick1..4；日结成功后显式推进下一日期
     spec.auction_ticks = 0;
     spec.closing_auction_ticks = 0;
     let calendar = crate::calendar::TradingCalendar::current_default_calendar()
         .expect("显式 raw Calendar 政策合法");
-    let next_date = calendar.next_trading_day(
-        crate::calendar::CalendarExchange::Sse, spec.civil_start_date,
-    ).expect("fixture 下一 SSE trading date 合法");
+    let next_date = calendar
+        .next_trading_day(
+            crate::calendar::CalendarExchange::Sse,
+            spec.civil_start_date,
+        )
+        .expect("fixture 下一 SSE trading date 合法");
     let mut world = World::spawn(spec, calendar).expect("世界构造");
     world.run_ticks(4).expect("day0 四 tick");
     world.run_day_end_public().expect("手动日结（tick4）");

@@ -56,7 +56,9 @@ fn measured_day_end_advance(ops: &mut Arc<CompanyOperations>) -> u64 {
 
 #[test]
 fn day_end_append_cost_stays_flat_as_history_grows() {
-    let _guard = measurement_lock().lock().unwrap_or_else(|poison| poison.into_inner());
+    let _guard = measurement_lock()
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner());
     let mut small = Arc::new(build_with_history(20));
     let mut large = Arc::new(build_with_history(160));
     let small_clones = measured_day_end_advance(&mut small);
@@ -71,19 +73,36 @@ fn day_end_append_cost_stays_flat_as_history_grows() {
 
 #[test]
 fn long_history_keeps_facts_order_and_roundtrips_identically() {
-    let _guard = measurement_lock().lock().unwrap_or_else(|poison| poison.into_inner());
+    let _guard = measurement_lock()
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner());
     let ops = build_with_history(120);
     let ids: Vec<CompanyId> = ops.catalog().iter().map(|(id, _)| id).collect();
     let counts: usize = ids
         .iter()
-        .map(|id| ops.company(id).unwrap().books().books().journal().entry_count())
+        .map(|id| {
+            ops.company(id)
+                .unwrap()
+                .books()
+                .books()
+                .journal()
+                .entry_count()
+        })
         .sum();
     assert!(counts > 1000, "120 日四行业须积累足量分录：{counts}");
     let wire = serde_json::to_vec(&ops).expect("serializes");
     let restored: CompanyOperations = serde_json::from_slice(&wire).expect("restores");
     let restored_counts: usize = ids
         .iter()
-        .map(|id| restored.company(id).unwrap().books().books().journal().entry_count())
+        .map(|id| {
+            restored
+                .company(id)
+                .unwrap()
+                .books()
+                .books()
+                .journal()
+                .entry_count()
+        })
         .sum();
     assert_eq!(restored_counts, counts, "存档投影不得丢批");
     assert_eq!(
@@ -95,11 +114,13 @@ fn long_history_keeps_facts_order_and_roundtrips_identically() {
 
 #[test]
 fn surviving_snapshot_stays_frozen_while_history_advances() {
-    let _guard = measurement_lock().lock().unwrap_or_else(|poison| poison.into_inner());
+    let _guard = measurement_lock()
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner());
     let mut ops = Arc::new(build_with_history(40));
     let snapshot = Arc::clone(&ops);
-    let snapshot_wire = serde_json::to_vec(snapshot.company(&CompanyId(1)).unwrap())
-        .expect("snapshot serializes");
+    let snapshot_wire =
+        serde_json::to_vec(snapshot.company(&CompanyId(1)).unwrap()).expect("snapshot serializes");
     let snapshot_count = snapshot
         .company(&CompanyId(1))
         .unwrap()
@@ -140,7 +161,9 @@ fn surviving_snapshot_stays_frozen_while_history_advances() {
 
 #[test]
 fn concurrent_final_owner_drop_releases_long_history_without_recursion() {
-    let _guard = measurement_lock().lock().unwrap_or_else(|poison| poison.into_inner());
+    let _guard = measurement_lock()
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner());
     let ops = Arc::new(build_with_history(80));
     let clone = Arc::clone(&ops);
     let barrier = Arc::new(std::sync::Barrier::new(2));
@@ -156,14 +179,13 @@ fn concurrent_final_owner_drop_releases_long_history_without_recursion() {
 
 #[test]
 fn failed_advance_leaves_mutable_copy_unchanged_after_make_mut() {
-    let _guard = measurement_lock().lock().unwrap_or_else(|poison| poison.into_inner());
+    let _guard = measurement_lock()
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner());
     let mut ops = Arc::new(build_with_history(15));
     let before = serde_json::to_vec(&ops).expect("serializes");
     let snapshot = Arc::clone(&ops);
-    let wrong_date = ops
-        .next_expected_date()
-        .next()
-        .expect("跳过一日即非法");
+    let wrong_date = ops.next_expected_date().next().expect("跳过一日即非法");
     assert!(
         std::sync::Arc::make_mut(&mut ops)
             .advance_civil_day(wrong_date)

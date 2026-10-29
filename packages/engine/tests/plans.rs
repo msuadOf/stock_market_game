@@ -538,7 +538,13 @@ fn terminated_plan_slot_allows_a_new_plan_with_a_new_stable_plan_id() {
         .create(buy_open())
         .expect("re-open after termination");
     assert_ne!(second_id, first_id, "plan ids are never reused");
-    assert_eq!(second_id, PlanId { owner: AccountId(7), sequence: 1 });
+    assert_eq!(
+        second_id,
+        PlanId {
+            owner: AccountId(7),
+            sequence: 1
+        }
+    );
     assert_eq!(
         scenario.book.plan(first_id).unwrap().status(),
         PlanStatus::Terminated {
@@ -789,15 +795,30 @@ fn unknown_plan_id_reference_is_rejected() {
 
     let err = scenario
         .book
-        .apply(PlanId { owner: AccountId(7), sequence: 999 }, PlanEvent::ObservedNoChange { trading_day: 0 })
+        .apply(
+            PlanId {
+                owner: AccountId(7),
+                sequence: 999,
+            },
+            PlanEvent::ObservedNoChange { trading_day: 0 },
+        )
         .expect_err("unknown plan id must be rejected");
     assert!(matches!(
         err,
         PlanError::UnknownPlan {
-            plan_id: PlanId { owner: AccountId(7), sequence: 999 }
+            plan_id: PlanId {
+                owner: AccountId(7),
+                sequence: 999
+            }
         }
     ));
-    assert!(scenario.book.plan(PlanId { owner: AccountId(7), sequence: 999 }).is_err());
+    assert!(scenario
+        .book
+        .plan(PlanId {
+            owner: AccountId(7),
+            sequence: 999
+        })
+        .is_err());
 }
 
 #[test]
@@ -927,31 +948,86 @@ fn inconsistent_plan_book_state_is_rejected_on_restore() {
     // 同一账户+股票出现两个计划。
     let mut plans = BTreeMap::new();
     plans.insert(
-        PlanId { owner: AccountId(7), sequence: 0 },
-        TradingPlan::from_open(PlanId { owner: AccountId(7), sequence: 0 }, buy_open(), &policy).unwrap(),
+        PlanId {
+            owner: AccountId(7),
+            sequence: 0,
+        },
+        TradingPlan::from_open(
+            PlanId {
+                owner: AccountId(7),
+                sequence: 0,
+            },
+            buy_open(),
+            &policy,
+        )
+        .unwrap(),
     );
     plans.insert(
-        PlanId { owner: AccountId(7), sequence: 1 },
-        TradingPlan::from_open(PlanId { owner: AccountId(7), sequence: 1 }, buy_open(), &policy).unwrap(),
+        PlanId {
+            owner: AccountId(7),
+            sequence: 1,
+        },
+        TradingPlan::from_open(
+            PlanId {
+                owner: AccountId(7),
+                sequence: 1,
+            },
+            buy_open(),
+            &policy,
+        )
+        .unwrap(),
     );
-    let err = PlanBook::from_parts(policy, vec![OwnerSequence { owner: AccountId(7), next_sequence: Some(2) }], plans.into_values().map(Into::into).collect())
-        .expect_err("duplicate account+stock must fail restore");
+    let err = PlanBook::from_parts(
+        policy,
+        vec![OwnerSequence {
+            owner: AccountId(7),
+            next_sequence: Some(2),
+        }],
+        plans.into_values().map(Into::into).collect(),
+    )
+    .expect_err("duplicate account+stock must fail restore");
     assert!(matches!(err, PlanError::SaveInconsistent { .. }));
 
     // 计划 id 超出分配序：存档损坏。
     let mut plans = BTreeMap::new();
     plans.insert(
-        PlanId { owner: AccountId(7), sequence: 5 },
-        TradingPlan::from_open(PlanId { owner: AccountId(7), sequence: 5 }, buy_open(), &policy).unwrap(),
+        PlanId {
+            owner: AccountId(7),
+            sequence: 5,
+        },
+        TradingPlan::from_open(
+            PlanId {
+                owner: AccountId(7),
+                sequence: 5,
+            },
+            buy_open(),
+            &policy,
+        )
+        .unwrap(),
     );
-    let err =
-        PlanBook::from_parts(policy, vec![OwnerSequence { owner: AccountId(7), next_sequence: Some(2) }], plans.into_values().map(Into::into).collect()).expect_err("id out of range must fail restore");
+    let err = PlanBook::from_parts(
+        policy,
+        vec![OwnerSequence {
+            owner: AccountId(7),
+            next_sequence: Some(2),
+        }],
+        plans.into_values().map(Into::into).collect(),
+    )
+    .expect_err("id out of range must fail restore");
     assert!(matches!(err, PlanError::InvalidPlanSequence { .. }));
 
     // 存档契约：终止计划 + 同键后继活跃计划是合法簿（create 在旧
     // 计划终止后分配新 PlanId；索引指向最新一条）。
     let mut plans = BTreeMap::new();
-    let initial = TradingPlan::from_open(PlanId { owner: AccountId(7), sequence: 0 }, buy_open(), &policy).unwrap();
+    let initial = TradingPlan::from_open(
+        PlanId {
+            owner: AccountId(7),
+            sequence: 0,
+        },
+        buy_open(),
+        &policy,
+    )
+    .unwrap();
     let mut terminated_json = serde_json::to_value(initial).unwrap();
     terminated_json["status"] = serde_json::to_value(PlanStatus::Terminated {
         reason: TerminationReason::Cancelled,
@@ -959,20 +1035,60 @@ fn inconsistent_plan_book_state_is_rejected_on_restore() {
     .unwrap();
     let terminated: TradingPlan = serde_json::from_value(terminated_json).unwrap();
     assert!(terminated.is_terminal());
-    plans.insert(PlanId { owner: AccountId(7), sequence: 0 }, terminated);
     plans.insert(
-        PlanId { owner: AccountId(7), sequence: 1 },
-        TradingPlan::from_open(PlanId { owner: AccountId(7), sequence: 1 }, buy_open(), &policy).unwrap(),
+        PlanId {
+            owner: AccountId(7),
+            sequence: 0,
+        },
+        terminated,
     );
-    let restored = PlanBook::from_parts(policy, vec![OwnerSequence { owner: AccountId(7), next_sequence: Some(2) }], plans.into_values().map(Into::into).collect())
-        .expect("a terminated plan plus its successor for the same account+stock is a legal save");
-    let account = restored.plan(PlanId { owner: AccountId(7), sequence: 1 }).unwrap().account();
-    let code = restored.plan(PlanId { owner: AccountId(7), sequence: 1 }).unwrap().code().clone();
+    plans.insert(
+        PlanId {
+            owner: AccountId(7),
+            sequence: 1,
+        },
+        TradingPlan::from_open(
+            PlanId {
+                owner: AccountId(7),
+                sequence: 1,
+            },
+            buy_open(),
+            &policy,
+        )
+        .unwrap(),
+    );
+    let restored = PlanBook::from_parts(
+        policy,
+        vec![OwnerSequence {
+            owner: AccountId(7),
+            next_sequence: Some(2),
+        }],
+        plans.into_values().map(Into::into).collect(),
+    )
+    .expect("a terminated plan plus its successor for the same account+stock is a legal save");
+    let account = restored
+        .plan(PlanId {
+            owner: AccountId(7),
+            sequence: 1,
+        })
+        .unwrap()
+        .account();
+    let code = restored
+        .plan(PlanId {
+            owner: AccountId(7),
+            sequence: 1,
+        })
+        .unwrap()
+        .code()
+        .clone();
     assert_eq!(
         restored
             .active_investor_plan(account, &code)
             .map(|plan| plan.plan_id()),
-        Some(PlanId { owner: AccountId(7), sequence: 1 }),
+        Some(PlanId {
+            owner: AccountId(7),
+            sequence: 1
+        }),
         "the index must point at the newest plan for the key"
     );
 }

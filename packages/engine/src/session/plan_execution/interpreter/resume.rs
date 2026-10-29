@@ -95,12 +95,10 @@ impl GameSession {
             },
             Continuation::Submit { plan, child } => {
                 let disposition = match outcome {
-                    PlanRouteOutcome::Accepted(order_id) => {
-                        PlanExecutionDisposition::Submitted {
-                            order_id,
-                            reason: child.reason,
-                        }
-                    }
+                    PlanRouteOutcome::Accepted(order_id) => PlanExecutionDisposition::Submitted {
+                        order_id,
+                        reason: child.reason,
+                    },
                     other => other.failure()?,
                 };
                 PlanExecutionProgress::Complete(PlanExecutionReport { disposition })

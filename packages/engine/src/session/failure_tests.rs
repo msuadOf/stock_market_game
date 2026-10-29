@@ -152,9 +152,7 @@ fn typed_private_plan_failure_is_poisoned_without_mutating_authority() {
     let business_before = game.business_state_hash().unwrap();
     let session_before = game.session_state_hash().unwrap();
 
-    let fatal = match super::pipeline::plan_tick(super::pipeline::PhaseInput {
-        session: &game,
-    }) {
+    let fatal = match super::pipeline::plan_tick(super::pipeline::PhaseInput { session: &game }) {
         Ok(_) => panic!("private plan must reject the overflowing allocation snapshot"),
         Err(fatal) => fatal,
     };
@@ -458,15 +456,14 @@ fn p2r1_day_end_step_failure_rolls_back_t1_unlock() {
     setup.t1_enabled = true; // 解锁分支进入（否则日结迁移不触碰冻结）
     setup.strategy_params.retail.arrival_rate = 0.0; // 无决策干扰
     let mut session = GameSession::new(setup, 91).expect("会话构造");
-    let mut driver = crate::runtime::drive::RuntimeDriver::from_session(&mut session).expect("驱动器构造");
+    let mut driver =
+        crate::runtime::drive::RuntimeDriver::from_session(&mut session).expect("驱动器构造");
     driver.adopt_session_seq(&session);
     // 前 3 拍正常推进（复审返工：ends_day 判定读 step 后 tick——第 4 拍
     // step 后 tick=4 触发日结段；4 次循环会使失败落在 run_ticks 自动日界
     // 的 ? 路径而非 day_end_world——红证链路错位，复审突变实证）。
     for _ in 0..3 {
-        driver
-            .step_frame_equivalent(&mut session)
-            .expect("步进");
+        driver.step_frame_equivalent(&mut session).expect("步进");
         driver.install_market_views(&mut session).expect("行情");
         driver.install_candles(&mut session).expect("K");
     }
@@ -536,8 +533,8 @@ fn p2_3b_domain_undo_rolls_back_attention_personal_and_heap() {
     // 不跨日结（日结拍全量快照面由 p2r1 守卫承载）。
     setup.ticks_per_day = 64;
     let mut game = GameSession::new(setup, 53).expect("会话构造");
-    let mut driver = crate::runtime::drive::RuntimeDriver::from_session(&mut game)
-        .expect("驱动器构造");
+    let mut driver =
+        crate::runtime::drive::RuntimeDriver::from_session(&mut game).expect("驱动器构造");
     driver.adopt_session_seq(&game);
     // 一拍正常推进（建立 dirty 流与 attention 写入节奏）。
     game.runtime_step_with_install(&mut driver).expect("首拍");
@@ -602,8 +599,8 @@ fn p2_3c_retail_rejection_dispatch_keeps_account_grouped_order() {
     setup.auction_ticks = 0;
     setup.ticks_per_day = 64;
     let mut game = GameSession::new(setup, 173).expect("会话构造");
-    let mut driver = crate::runtime::drive::RuntimeDriver::from_session(&mut game)
-        .expect("驱动器构造");
+    let mut driver =
+        crate::runtime::drive::RuntimeDriver::from_session(&mut game).expect("驱动器构造");
     driver.adopt_session_seq(&game);
     let views = driver.world_public_views().to_vec();
     let upper: Vec<i64> = views.iter().map(|v| v.daily_upper_limit).collect();
@@ -622,7 +619,13 @@ fn p2_3c_retail_rejection_dispatch_keeps_account_grouped_order() {
     };
     // 注入序倒置（账户 2 先、账户 1 后）——派发必须仍按账户升序分组。
     driver
-        .inject_player_intents(&[zero_qty(crate::AccountId(2), 0), zero_qty(crate::AccountId(1), 1)], &upper)
+        .inject_player_intents(
+            &[
+                zero_qty(crate::AccountId(2), 0),
+                zero_qty(crate::AccountId(1), 1),
+            ],
+            &upper,
+        )
         .expect("注入");
     let events = game
         .runtime_step_with_install(&mut driver)
@@ -675,19 +678,16 @@ fn p2_3e_sparse_attention_uplink_keeps_session_mirror_equal() {
     setup.strategy_params.retail.arrival_rate = 1.0;
     setup.strategy_params.retail.order_size_mean = 100;
     let mut game = GameSession::new(setup, 223).expect("会话构造");
-    let mut driver = crate::runtime::drive::RuntimeDriver::from_session(&mut game).expect("驱动器构造");
+    let mut driver =
+        crate::runtime::drive::RuntimeDriver::from_session(&mut game).expect("驱动器构造");
     driver.adopt_session_seq(&game);
     for _ in 0..3 {
-        game
-            .runtime_step_with_install(&mut driver)
+        game.runtime_step_with_install(&mut driver)
             .expect("步进+安装（稀疏注意力写回）");
     }
     // 前置：三拍内确有演进（attention Evolve 面——否则守卫空转）。用
     // trace 证决策跑过（决策⊂演进）。
-    let traces = driver
-        .collect_retail_traces()
-        .expect("trace 读面")
-        .concat();
+    let traces = driver.collect_retail_traces().expect("trace 读面").concat();
     assert!(
         !traces.is_empty(),
         "三拍内必须有零售决策（演进面存在——守卫空转防护）"
@@ -1077,21 +1077,37 @@ fn d0_day_end_candidate_rejection_preserves_sparse_account_mirror_and_market_sou
         location: "failure_tests::sparse_day_end_candidate".to_owned(),
         description: "拒绝完整日结候选，不恢复已发布市场".to_owned(),
     };
-    let failed: Result<(), StepFatal> = game.runtime_step_with_prepared_mirror(&mut driver, |projection, facts| {
-        assert_eq!(projection.tick(), 4);
-        projection.project_frame(facts)?.validate().map_err(|error| StepFatal::InvariantViolation {
-            location: "failure_tests::sparse_projection".to_owned(), description: error.to_string(),
-        })?;
-        Err(fatal.clone())
-    });
+    let failed: Result<(), StepFatal> =
+        game.runtime_step_with_prepared_mirror(&mut driver, |projection, facts| {
+            assert_eq!(projection.tick(), 4);
+            projection
+                .project_frame(facts)?
+                .validate()
+                .map_err(|error| StepFatal::InvariantViolation {
+                    location: "failure_tests::sparse_projection".to_owned(),
+                    description: error.to_string(),
+                })?;
+            Err(fatal.clone())
+        });
     assert_eq!(failed.unwrap_err(), fatal);
-    assert_eq!(game.account(remote).unwrap().cash(), before_cash, "未 swap 不写稀疏账户现金");
-    assert_eq!(format!("{:?}", game.account(remote).unwrap().positions()), before_positions,
-        "未 swap 保完整持仓、T+1 和成本旧镜像");
+    assert_eq!(
+        game.account(remote).unwrap().cash(),
+        before_cash,
+        "未 swap 不写稀疏账户现金"
+    );
+    assert_eq!(
+        format!("{:?}", game.account(remote).unwrap().positions()),
+        before_positions,
+        "未 swap 保完整持仓、T+1 和成本旧镜像"
+    );
     assert_eq!(game.tick(), 3, "镜像保旧读点");
     assert_eq!(publication.load().tick, 4, "已发布市场 tick 不回退");
     assert_eq!(driver.world_committed_tick(), 4);
-    assert_eq!(publication.load().retained.days.len(), 1, "已发布 retained 不撤回");
+    assert_eq!(
+        publication.load().retained.days.len(),
+        1,
+        "已发布 retained 不撤回"
+    );
     assert_eq!(game.poison_reason(), Some(&fatal));
     assert_eq!(driver.step_frame_equivalent(&mut game).unwrap_err(), fatal);
     assert!(matches!(game.save(), Err(crate::SessionError::Step(actual)) if actual == fatal));

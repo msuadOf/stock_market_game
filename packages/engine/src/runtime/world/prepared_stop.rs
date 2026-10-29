@@ -44,11 +44,16 @@ impl World {
     /// 真正使一个 worker 因失序消息退出；仅用于验证移交尾的错误与全部 join。
     #[cfg(test)]
     pub(crate) fn inject_stop_failure_for_test(&self) -> Result<(), RuntimeError> {
-        self.group_txs[0].send(GroupIn::Continue { tick: 0, round: 0 })
-            .map_err(|_| RuntimeError::SendFailed { detail: "停止失败 fixture 无法发送失序 Continue".to_owned() })?;
+        self.group_txs[0]
+            .send(GroupIn::Continue { tick: 0, round: 0 })
+            .map_err(|_| RuntimeError::SendFailed {
+                detail: "停止失败 fixture 无法发送失序 Continue".to_owned(),
+            })?;
         match recv_deadline(&self.up_rx, Phase::TickConverge, &self.watchdog)? {
-            UpMsg::Failed { who: WorkerId::Group(0), error: RuntimeError::ProtocolInvariant { detail } }
-                if detail.contains("Continue 错序") => Ok(()),
+            UpMsg::Failed {
+                who: WorkerId::Group(0),
+                error: RuntimeError::ProtocolInvariant { detail },
+            } if detail.contains("Continue 错序") => Ok(()),
             other => Err(read_failure("停止失败 fixture", other)),
         }
     }
@@ -84,7 +89,8 @@ impl World {
             match message {
                 UpMsg::PendingStartRejected(rejection) => errors.push(format!(
                     "未交付 pending Start 错误：worker {}：{}",
-                    WorkerId::Group(rejection.group), rejection.error
+                    WorkerId::Group(rejection.group),
+                    rejection.error
                 )),
                 UpMsg::Failed { who, error } => {
                     errors.push(format!("未交付 worker {who} 错误：{error}"))
@@ -132,10 +138,15 @@ mod tests {
     #[cfg(not(target_family = "wasm"))]
     fn private_world() -> World {
         World::spawn(
-            crate::runtime::skeleton_tests::basic_spec(2, 2, 1,
-                Box::new(|_| Box::new(|_, _| crate::runtime::group::TickPlan::default()))),
+            crate::runtime::skeleton_tests::basic_spec(
+                2,
+                2,
+                1,
+                Box::new(|_| Box::new(|_, _| crate::runtime::group::TickPlan::default())),
+            ),
             crate::calendar::TradingCalendar::current_default_calendar().expect("显式Calendar合法"),
-        ).expect("真实短prepared World构造成功")
+        )
+        .expect("真实短prepared World构造成功")
     }
 
     #[test]
@@ -146,22 +157,36 @@ mod tests {
         let before = publication.load();
         let report = world.stop_without_drain().expect("私有World回收成功");
         assert_eq!(report.joined_workers, 4);
-        assert!(Arc::ptr_eq(&before, &publication.load()), "回收不得安装Final或发布市场事实");
+        assert!(
+            Arc::ptr_eq(&before, &publication.load()),
+            "回收不得安装Final或发布市场事实"
+        );
     }
 
     #[test]
     #[cfg(not(target_family = "wasm"))]
     fn prepared_stop_keeps_real_worker_error_after_joining_all_workers() {
         let world = private_world();
-        world.group_txs[0].send(GroupIn::Continue { tick: 0, round: 0 }).expect("真实失序输入入队");
-        match recv_deadline(&world.up_rx, Phase::TickConverge, &world.watchdog).expect("原worker失败握手") {
-            UpMsg::Failed { who: WorkerId::Group(0), error: RuntimeError::ProtocolInvariant { detail } }
-                if detail.contains("Continue 错序") => {}
+        world.group_txs[0]
+            .send(GroupIn::Continue { tick: 0, round: 0 })
+            .expect("真实失序输入入队");
+        match recv_deadline(&world.up_rx, Phase::TickConverge, &world.watchdog)
+            .expect("原worker失败握手")
+        {
+            UpMsg::Failed {
+                who: WorkerId::Group(0),
+                error: RuntimeError::ProtocolInvariant { detail },
+            } if detail.contains("Continue 错序") => {}
             other => panic!("错误握手不是预期原worker失败：{other:?}"),
         }
-        let error = world.stop_without_drain().expect_err("回收须返回原worker错误");
+        let error = world
+            .stop_without_drain()
+            .expect_err("回收须返回原worker错误");
         let detail = error.to_string();
         assert!(detail.contains("Continue 错序"), "原错误不可丢失：{detail}");
-        assert!(detail.contains("joined_workers: 4"), "报告须证明全部真实handle已join：{detail}");
+        assert!(
+            detail.contains("joined_workers: 4"),
+            "报告须证明全部真实handle已join：{detail}"
+        );
     }
 }

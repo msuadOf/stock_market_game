@@ -78,11 +78,7 @@ pub struct PendingOp {
 /// D5 #2：signal-based attention evaluate（旧管线 `evaluate_candidate_
 /// with_signal` 同式——共享流续传（profile.seed=注意力 rng_state 同源）+
 /// observe 门 + wait 采样；返回 (observe 判定, 排期前值)。每 due 恰一次。
-pub fn evaluate_attention(
-    profile: &mut NpcProfile,
-    signal: f64,
-    tick: u64,
-) -> (bool, u64) {
+pub fn evaluate_attention(profile: &mut NpcProfile, signal: f64, tick: u64) -> (bool, u64) {
     // P1-B（性能修复）：signal 由调用方**每轮共享传入**——公共视图对全组
     /// NPC 相同（同 snapshot 的纯函数），此前每 due NPC 重建全市场视图
     /// 只为算一个公共 signal（构造次数 ≈3.4× 放大，见
@@ -91,8 +87,7 @@ pub fn evaluate_attention(
     let kind = profile.strategy.kind;
     let base = profile.attention_base;
     let mut rng = crate::session::SplitMix64::new(profile.seed);
-    let observes =
-        crate::session::attention_candidate_is_observation(kind, base, signal, &mut rng);
+    let observes = crate::session::attention_candidate_is_observation(kind, base, signal, &mut rng);
     let wait = crate::session::sample_attention_wait(
         crate::session::maximum_observation_probability(kind, base),
         &mut rng,
@@ -184,7 +179,6 @@ fn symbol_routed(price: LimitPrice) -> RoutedPrice {
 
 /// D3a-3：到期重排提取（retail 与 belief 链位同一公式——next_due 演进
 /// 是组内调度权威 P1-10；Sol 二审修复集 5 的 undo 语义由调用方承接）。
-
 
 fn daily_upper(market: &MarketView, code: StockId) -> i64 {
     market

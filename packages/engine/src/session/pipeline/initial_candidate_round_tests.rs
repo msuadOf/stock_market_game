@@ -91,43 +91,42 @@ fn continuous_initial_round_batches_independent_accounts_and_stocks() {
 #[test]
 fn pre_open_initial_round_batches_independent_accounts_and_stocks_before_phase_rejection() {
     let run = |threads| {
-        crate::compute::ComputeContext::from_workers(threads)
-            .install(|| {
-                let (mut session, _, initial) = fixture();
-                session.state.setup.auction_ticks = 900;
-                session.state.setup.ticks_per_day = 15_300;
-                session.state.tick = 600;
-                assert_eq!(session.phase(), crate::TradingPhase::PreOpen);
-                let mut validator = build_validator(&session);
-                let mut stock_execution = IncrementalContinuousStockCoordinator::from_post_expiry(
-                    prepare_incremental_continuous_inputs(&session).unwrap(),
-                )
-                .unwrap();
+        crate::compute::ComputeContext::from_workers(threads).install(|| {
+            let (mut session, _, initial) = fixture();
+            session.state.setup.auction_ticks = 900;
+            session.state.setup.ticks_per_day = 15_300;
+            session.state.tick = 600;
+            assert_eq!(session.phase(), crate::TradingPhase::PreOpen);
+            let mut validator = build_validator(&session);
+            let mut stock_execution = IncrementalContinuousStockCoordinator::from_post_expiry(
+                prepare_incremental_continuous_inputs(&session).unwrap(),
+            )
+            .unwrap();
 
-                let rounds = super::market_tick_transaction::apply_initial_candidate_stream(
-                    &mut validator,
-                    &mut stock_execution,
-                    &initial,
-                )
-                .unwrap();
+            let rounds = super::market_tick_transaction::apply_initial_candidate_stream(
+                &mut validator,
+                &mut stock_execution,
+                &initial,
+            )
+            .unwrap();
 
-                assert_eq!(rounds.len(), 1);
-                assert_eq!(rounds[0].projections.len(), 2);
-                assert_eq!(rounds[0].facts.len(), 2);
-                assert_eq!(validator.last_round_account_shards(), 2);
+            assert_eq!(rounds.len(), 1);
+            assert_eq!(rounds[0].projections.len(), 2);
+            assert_eq!(rounds[0].facts.len(), 2);
+            assert_eq!(validator.last_round_account_shards(), 2);
 
-                assert!(rounds[0].facts.iter().all(|fact| matches!(
-                    fact.outcome,
-                    super::continuous_matching::ContinuousExecutionOutcome::Place {
-                        fact: super::continuous_matching::ContinuousPlaceFact::Rejected {
-                            reason: crate::RejectionReason::AuctionOrderEntryClosed,
-                            ..
-                        },
+            assert!(rounds[0].facts.iter().all(|fact| matches!(
+                fact.outcome,
+                super::continuous_matching::ContinuousExecutionOutcome::Place {
+                    fact: super::continuous_matching::ContinuousPlaceFact::Rejected {
+                        reason: crate::RejectionReason::AuctionOrderEntryClosed,
                         ..
-                    }
-                )));
-                (rounds[0].facts.clone(), validator.checkpoint())
-            })
+                    },
+                    ..
+                }
+            )));
+            (rounds[0].facts.clone(), validator.checkpoint())
+        })
     };
 
     assert_eq!(run(1), run(2));
@@ -335,7 +334,10 @@ fn initial_batch_full_fill_completes_linked_parent_before_later_manual_acceptanc
     assert!(session
         .state
         .plans
-        .plan(crate::plans::PlanId { owner: AccountId(1), sequence: 0 })
+        .plan(crate::plans::PlanId {
+            owner: AccountId(1),
+            sequence: 0
+        })
         .is_ok_and(|plan| plan.execution().is_none()));
     assert_eq!(session.state.markets[&code].resting_order_count(), 1);
     assert_eq!(

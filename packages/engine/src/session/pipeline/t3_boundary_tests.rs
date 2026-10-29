@@ -21,7 +21,8 @@ fn boundary_setup() -> GameSession {
     let mut setup = crate::session::npc_working_quote_tests::retail_quote_setup();
     setup.npcs.retail_count = 2;
     let mut session = GameSession::new(setup, 11).unwrap();
-    session.rebind_compute_for_verification(crate::compute::ComputeContext::with_workers(1).unwrap());
+    session
+        .rebind_compute_for_verification(crate::compute::ComputeContext::with_workers(1).unwrap());
     let tick = session.state.tick;
     for account in [AccountId(1), AccountId(2)] {
         let attention = session.state.npc_attention.get_mut(&account).unwrap();
@@ -111,7 +112,9 @@ fn staged_injection_is_not_counted_as_production() {
     ));
     // D4 登记：staged_decision=测试适配注入面（runtime 决策在组线程，
     // 无 session 侧 handover）——显式走旧管线契约入口。
-    session.step_pipeline_contract().expect("staged 批消费的 tick");
+    session
+        .step_pipeline_contract()
+        .expect("staged 批消费的 tick");
     assert_eq!(
         attempt_seq(&session),
         before,
@@ -222,7 +225,10 @@ fn stale_traces_are_cleared_when_the_next_tick_produces_none() {
             break;
         }
     }
-    assert!(produced_tick.is_some(), "fixture 前提：先到达一个有 trace 的 tick");
+    assert!(
+        produced_tick.is_some(),
+        "fixture 前提：先到达一个有 trace 的 tick"
+    );
     // 清空调度 ⇒ 后续 tick 无 due ⇒ 无新 trace ⇒ 上一 tick 的残留被清。
     // D5 #4 fixture 适配：runtime 下调度权威在组（session 直改不感知）
     /// ——经 DeferDueForTest 通道推远组内 next_due（"无 due tick"形态
@@ -385,7 +391,8 @@ fn nonempty_root_handover_pairs_completion_with_delivery_per_tick() {
     let mut session =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 8).unwrap();
     // 独立池隔离见证（共享默认池会混入并行测试的交接记录）。
-    session.rebind_compute_for_verification(crate::compute::ComputeContext::with_workers(1).unwrap());
+    session
+        .rebind_compute_for_verification(crate::compute::ComputeContext::with_workers(1).unwrap());
     let institution = AccountId(1);
     let due_tick = session.state.tick;
     crate::session::npc_working_quote_tests::force_attention_candidate(
@@ -436,8 +443,10 @@ fn nonempty_root_handover_pairs_completion_with_delivery_per_tick() {
         .store(0, std::sync::atomic::Ordering::SeqCst);
     for _ in 0..4 {
         // D4 登记：seed_order_for_test=旧簿注入面（见上注释）——显式走旧
-    // 管线契约入口。
-    session.step_pipeline_contract().expect("机构 due+到期报价的健康 tick");
+        // 管线契约入口。
+        session
+            .step_pipeline_contract()
+            .expect("机构 due+到期报价的健康 tick");
     }
     let trace = session
         .compute_context()
@@ -475,7 +484,8 @@ fn nonempty_root_handover_pairs_completion_with_delivery_per_tick() {
                 assert!(
                     record.attempt > prev_attempt,
                     "跨 tick attempt 严格递增（每 tick 恰一次生产）：{prev_attempt}→{} @tick{}",
-                    record.attempt, record.tick
+                    record.attempt,
+                    record.tick
                 );
             } else {
                 assert_eq!(
@@ -515,7 +525,9 @@ fn nonempty_root_handover_pairs_completion_with_delivery_per_tick() {
         assert!(
             completion.handover_seq < delivery.delivery_seq,
             "完成序号 {} < 交付序号 {}（tick {}）",
-            completion.handover_seq, delivery.delivery_seq, delivery.tick
+            completion.handover_seq,
+            delivery.delivery_seq,
+            delivery.tick
         );
     }
     // 六轮：实际双 capture 调用路径证据——本例若出现重捕获即打印其调用栈
@@ -545,7 +557,8 @@ fn civil_fixture_sell_direction_is_absent_at_production_source() {
     setup.npcs.inst_count = 20;
     setup.ticks_per_day = 120;
     let mut session = GameSession::new(setup, 42).unwrap();
-    session.rebind_compute_for_verification(crate::compute::ComputeContext::with_workers(1).unwrap());
+    session
+        .rebind_compute_for_verification(crate::compute::ComputeContext::with_workers(1).unwrap());
     let mut produced_sells = 0usize;
     let mut produced_buys = 0usize;
     let mut player_admissions = 0usize;
@@ -585,8 +598,13 @@ fn civil_fixture_sell_direction_is_absent_at_production_source() {
             let output = npc_tick_preparation::produce_decision_output(&mut shadow).unwrap();
             for received in output.intents() {
                 match &received.intent {
-                    crate::Intent::PlaceLimit { side, .. } | crate::Intent::PlaceMarket { side, .. } => {
-                        if *side == crate::Side::Sell { produced_sells += 1; } else { produced_buys += 1; }
+                    crate::Intent::PlaceLimit { side, .. }
+                    | crate::Intent::PlaceMarket { side, .. } => {
+                        if *side == crate::Side::Sell {
+                            produced_sells += 1;
+                        } else {
+                            produced_buys += 1;
+                        }
                     }
                     crate::Intent::Cancel { .. } => {}
                 }
@@ -609,7 +627,8 @@ fn civil_fixture_sell_direction_is_absent_at_production_source() {
                     // 来源对应（九轮：分来源独立计数）：账户 0=玩家 enqueue；
                     // 1..=NPC 生产。两来源各自计数，断言互不替代。
                     assert!(
-                        *account == AccountId(0) || session.state.npc_attention.contains_key(account),
+                        *account == AccountId(0)
+                            || session.state.npc_attention.contains_key(account),
                         "事件账户必须可归源（玩家或 NPC 生产）：{event:?}"
                     );
                     if *account == AccountId(0) {

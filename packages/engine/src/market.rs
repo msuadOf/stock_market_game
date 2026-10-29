@@ -366,9 +366,12 @@ impl Market {
         let before = self.book.mode();
         self.book.set_mode(mode)?;
         if before != mode {
-            self.auction_public_cutoff_sequence = if mode == crate::orderbook::MatchingMode::Auction {
+            self.auction_public_cutoff_sequence = if mode == crate::orderbook::MatchingMode::Auction
+            {
                 self.book.next_sequence()
-            } else { 0 };
+            } else {
+                0
+            };
         }
         Ok(())
     }
@@ -378,24 +381,38 @@ impl Market {
     }
 
     /// 恢复受理时序事实；合法性在安装到 authority 之前由存档完整校验确认。
-    pub(crate) fn restore_auction_public_cutoff_sequence(&mut self, cutoff: u64) -> Result<(), MarketError> {
+    pub(crate) fn restore_auction_public_cutoff_sequence(
+        &mut self,
+        cutoff: u64,
+    ) -> Result<(), MarketError> {
         // D5 attention：runtime 形态（desk 簿权威——restore 时 session 簿
         /// 恒空、next_sequence=0）——空簿时截点不与本簿对拍（desk 恢复
         /// 域接管；旧簿单恢复后仍按原校验）。
         if cutoff > self.book.next_sequence() && self.book.next_sequence() > 0 {
-            return Err(MarketError::InvalidParams { reason: "公开可见性截点超过 book 下一受理序号".to_owned() });
+            return Err(MarketError::InvalidParams {
+                reason: "公开可见性截点超过 book 下一受理序号".to_owned(),
+            });
         }
         self.auction_public_cutoff_sequence = cutoff;
         Ok(())
     }
 
-    pub(crate) fn depth_before_sequence(&self, cutoff: u64) -> (Vec<(Money, u64)>, Vec<(Money, u64)>) {
+    pub(crate) fn depth_before_sequence(
+        &self,
+        cutoff: u64,
+    ) -> (Vec<(Money, u64)>, Vec<(Money, u64)>) {
         let mut bids = BTreeMap::<Money, u64>::new();
         let mut asks = BTreeMap::<Money, u64>::new();
         for order in self.resting_order_refs().filter(|order| order.seq < cutoff) {
-            let level = match order.side { Side::Buy => &mut bids, Side::Sell => &mut asks }
-                .entry(order.price).or_default();
-            *level = level.checked_add(u64::from(order.qty)).expect("公开盘口数量不能溢出");
+            let level = match order.side {
+                Side::Buy => &mut bids,
+                Side::Sell => &mut asks,
+            }
+            .entry(order.price)
+            .or_default();
+            *level = level
+                .checked_add(u64::from(order.qty))
+                .expect("公开盘口数量不能溢出");
         }
         (bids.into_iter().rev().collect(), asks.into_iter().collect())
     }

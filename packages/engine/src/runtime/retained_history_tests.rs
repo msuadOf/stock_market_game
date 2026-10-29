@@ -59,8 +59,20 @@ fn trading_day_end_freezes_retained_snapshot_with_exact_bars() {
             let mut plan = TickPlan::default();
             if tick == 1 {
                 plan.places = vec![
-                    PlaceSpec { local: 1, stock: 0, side: Side::Sell, price: 1000, qty: 100 },
-                    PlaceSpec { local: 0, stock: 0, side: Side::Buy, price: 1000, qty: 100 },
+                    PlaceSpec {
+                        local: 1,
+                        stock: 0,
+                        side: Side::Sell,
+                        price: 1000,
+                        qty: 100,
+                    },
+                    PlaceSpec {
+                        local: 0,
+                        stock: 0,
+                        side: Side::Buy,
+                        price: 1000,
+                        qty: 100,
+                    },
                 ];
             }
             plan
@@ -77,7 +89,9 @@ fn trading_day_end_freezes_retained_snapshot_with_exact_bars() {
     {
         let pending = world.take_pending_day_bars();
         assert_eq!(pending.len(), 1, "恰一股 pending bars");
-        let bars = pending[0].clone().expect("交易日必有 bars 投影（可为空桶）");
+        let bars = pending[0]
+            .clone()
+            .expect("交易日必有 bars 投影（可为空桶）");
         assert_eq!(bars.len(), 1, "开盘清算成交恰一桶（565）");
         assert_eq!(bars[0].minute_of_day, 565);
         assert_eq!(bars[0].volume_shares, 100);
@@ -98,7 +112,10 @@ fn trading_day_end_freezes_retained_snapshot_with_exact_bars() {
     }
     let retained = world.retained_days();
     assert_eq!(retained.len(), 1, "保留链恰一条（ADR-0034 全保留）");
-    assert!(Arc::ptr_eq(&retained[0], &snapshot_seen.expect("已冻结")), "协调者持同一不可变句柄");
+    assert!(
+        Arc::ptr_eq(&retained[0], &snapshot_seen.expect("已冻结")),
+        "协调者持同一不可变句柄"
+    );
     let committed_final = world.global.committed_tick;
     let _ = world.shutdown();
     assert!(committed_final >= committed_before, "tick 前进不变量");
@@ -113,8 +130,20 @@ fn day_end_drain_carries_minute_bars_before_roll_day() {
             let mut plan = TickPlan::default();
             if tick == 1 || tick == 31 {
                 plan.places = vec![
-                    PlaceSpec { local: 1, stock: 0, side: Side::Sell, price: 1000, qty: 100 },
-                    PlaceSpec { local: 0, stock: 0, side: Side::Buy, price: 1005, qty: 100 },
+                    PlaceSpec {
+                        local: 1,
+                        stock: 0,
+                        side: Side::Sell,
+                        price: 1000,
+                        qty: 100,
+                    },
+                    PlaceSpec {
+                        local: 0,
+                        stock: 0,
+                        side: Side::Buy,
+                        price: 1005,
+                        qty: 100,
+                    },
                 ];
             }
             plan
@@ -128,12 +157,12 @@ fn day_end_drain_carries_minute_bars_before_roll_day() {
     let first_date = spec.civil_start_date;
     let calendar = crate::calendar::TradingCalendar::current_default_calendar().unwrap();
     let mut world = World::spawn(spec, calendar.clone()).expect("显式冻结Calendar世界构造");
-    let second_date = calendar.next_trading_day(
-        crate::calendar::CalendarExchange::Sse, first_date,
-    ).unwrap();
-    let third_date = calendar.next_trading_day(
-        crate::calendar::CalendarExchange::Sse, second_date,
-    ).unwrap();
+    let second_date = calendar
+        .next_trading_day(crate::calendar::CalendarExchange::Sse, first_date)
+        .unwrap();
+    let third_date = calendar
+        .next_trading_day(crate::calendar::CalendarExchange::Sse, second_date)
+        .unwrap();
     world.run_ticks(30).expect("首日全部市场拍");
     world.run_day_end_public().expect("显式首日市场日终");
     world.set_civil_date(second_date);
@@ -153,9 +182,7 @@ fn published_retained_and_generation_advance_atomically_on_freeze() {
     // 发布面：冻结后 PublishedTick.retained 携带新链、generation 递增
     // （同 tick 的 civil 推进版本区分）；未冻结时沿用旧 Arc（封闭块共享
     // ——非冻结 tick 不复制历史）。
-    let script = |_: GroupIdx| -> GroupScript {
-        Box::new(|_t, _r| TickPlan::default())
-    };
+    let script = |_: GroupIdx| -> GroupScript { Box::new(|_t, _r| TickPlan::default()) };
     let mut spec = basic_spec(1, 1, 3, Box::new(script));
     spec.config = config_no_cage();
     spec.ticks_per_day = 30;
@@ -164,9 +191,9 @@ fn published_retained_and_generation_advance_atomically_on_freeze() {
     let first_date = spec.civil_start_date;
     let calendar = crate::calendar::TradingCalendar::current_default_calendar()
         .expect("显式 raw Calendar 政策合法");
-    let next_date = calendar.next_trading_day(
-        crate::calendar::CalendarExchange::Sse, first_date,
-    ).expect("fixture 下一 SSE trading date 合法");
+    let next_date = calendar
+        .next_trading_day(crate::calendar::CalendarExchange::Sse, first_date)
+        .expect("fixture 下一 SSE trading date 合法");
     let mut world = World::spawn(spec, calendar).expect("世界构造");
     world.run_ticks(1).expect("tick1");
     let published_before = world.publication().load();
@@ -182,15 +209,22 @@ fn published_retained_and_generation_advance_atomically_on_freeze() {
     let empty = Arc::new(Vec::new());
     world.freeze_retained_day(Arc::new(RetainedDaySnapshot {
         date: first_date,
-        securities: [(0_u32, super::publication::RetainedMinuteSession {
-            trading: true,
-            bars: empty,
-        })]
+        securities: [(
+            0_u32,
+            super::publication::RetainedMinuteSession {
+                trading: true,
+                bars: empty,
+            },
+        )]
         .into_iter()
         .collect(),
     }));
     let published_after = world.publication().load();
-    assert_eq!(published_after.tick, published_before.tick + 30, "tick 正常推进");
+    assert_eq!(
+        published_after.tick,
+        published_before.tick + 30,
+        "tick 正常推进"
+    );
     assert_eq!(published_after.retained.days.len(), 1, "冻结原子进发布版本");
     assert!(
         published_after.generation > gen_before,

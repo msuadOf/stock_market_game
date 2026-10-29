@@ -6,9 +6,9 @@ use super::capital_command_candidates::{
 };
 use super::company_state::{SessionCompanies, SystemCompanyState};
 use super::player_company_command_candidates::{
-    PlayerCompanyCommandInput, build_player_repurchase_plan, build_player_rights_plan,
-    build_player_split_plan, player_holding_context, prepare_player_cash_dividend,
-    prepare_player_stock_distribution,
+    build_player_repurchase_plan, build_player_rights_plan, build_player_split_plan,
+    player_holding_context, prepare_player_cash_dividend, prepare_player_stock_distribution,
+    PlayerCompanyCommandInput,
 };
 use super::{GameSession, PlayerCompanyProposal, PlayerProposalKind};
 use crate::company::{CompanyErrorClass, CompanyId, CompanySystem};
@@ -16,7 +16,7 @@ use crate::company::{CompanyErrorClass, CompanyId, CompanySystem};
 mod classification;
 use crate::runtime::world::InformationPreparePayload;
 use crate::{AccountId, AccountKind, CivilDate};
-use std::sync::{Arc, atomic::Ordering};
+use std::sync::{atomic::Ordering, Arc};
 
 /// 只证明该公司方案已经批准并安装；不证明未来付款、登记或股份到账。
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]

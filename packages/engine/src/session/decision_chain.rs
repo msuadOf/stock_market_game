@@ -61,8 +61,8 @@ mod urgency;
 pub(crate) use personal_state::PlanPersonalState;
 // D3a-2c 件4：开仓派生共享函数（lifecycle 提取——组线程消费同源）。
 pub(crate) use lifecycle::open_position_action;
-pub(crate) use lifecycle::PlanReviewHost;
 pub(crate) use lifecycle::PlanLifecycleReview;
+pub(crate) use lifecycle::PlanReviewHost;
 pub(crate) use roots::{InstitutionDecisionRoot, RootReadContext};
 
 /// 同批账户 root 使用同一市场、路径、技术、时刻与曝光观察。
@@ -234,7 +234,9 @@ fn apply_personal_experience_feedback(
                 cause,
                 order,
                 if profitable { 500 } else { -1_000 },
-                *anchors.get(&code).ok_or(crate::strategy::BeliefError::MissingInformationAnchor { stock: code })?,
+                *anchors.get(&code).ok_or(
+                    crate::strategy::BeliefError::MissingInformationAnchor { stock: code },
+                )?,
             )?;
         }
     }
@@ -264,15 +266,25 @@ impl PlanRootDiagnostics {
         plan_changes: Vec<String>,
         budget_constraints: Vec<String>,
     ) -> crate::diagnostics::NpcDecisionTraceRecord {
-        let expectation_method = self.candidates.iter()
+        let expectation_method = self
+            .candidates
+            .iter()
             .find_map(|code| belief.entry(code))
             .and_then(|entry| entry.method)
             .map(|method| format!("{method:?}"));
-        let mut reports: BTreeSet<_> = self.reports.iter()
-            .map(|(_, report)| report.value().to_string()).collect();
+        let mut reports: BTreeSet<_> = self
+            .reports
+            .iter()
+            .map(|(_, report)| report.value().to_string())
+            .collect();
         for code in &self.candidates {
             if let Some(entry) = belief.entry(code) {
-                reports.extend(entry.used_report_ids.iter().map(|id| id.value().to_string()));
+                reports.extend(
+                    entry
+                        .used_report_ids
+                        .iter()
+                        .map(|id| id.value().to_string()),
+                );
             }
         }
         crate::diagnostics::NpcDecisionTraceRecord {
@@ -402,7 +414,9 @@ pub(crate) struct PlanQuoteInputs<'a> {
 /// 报价决策共享核心（D3a-3 件4b）：book_top 组装（含竞价回退）→
 /// protection_limit（个人每股区间 ∩ 合法界）→ 可路由数量 → decide_quote
 /// → 买入 affordable 复核。`None`=无子单（desired_qty 为零）。
-pub(crate) fn decide_plan_quote(inputs: PlanQuoteInputs<'_>) -> Option<crate::plans::QuoteDecision> {
+pub(crate) fn decide_plan_quote(
+    inputs: PlanQuoteInputs<'_>,
+) -> Option<crate::plans::QuoteDecision> {
     let PlanQuoteInputs {
         account,
         plan,
@@ -439,10 +453,12 @@ pub(crate) fn decide_plan_quote(inputs: PlanQuoteInputs<'_>) -> Option<crate::pl
         Side::Sell => per_share.map_or(legal_bound, |range| range.pessimistic.max(legal_bound)),
     };
     let desired_qty = match plan.direction() {
-        Side::Buy => next_routable_buy_qty(remaining, order_size, lot, max_order_qty)
-            .unwrap_or_default(),
-        Side::Sell => next_routable_sell_qty(remaining, sellable, lot, max_order_qty)
-            .unwrap_or_default(),
+        Side::Buy => {
+            next_routable_buy_qty(remaining, order_size, lot, max_order_qty).unwrap_or_default()
+        }
+        Side::Sell => {
+            next_routable_sell_qty(remaining, sellable, lot, max_order_qty).unwrap_or_default()
+        }
     };
     if desired_qty == 0 {
         return None;
@@ -473,8 +489,9 @@ pub(crate) fn decide_plan_quote(inputs: PlanQuoteInputs<'_>) -> Option<crate::pl
             match crate::strategy::affordable_buy_qty(qty, price, allocation_cash, config) {
                 Some(funded_qty) => {
                     quote_inputs.desired_qty = funded_qty;
-                    decision = decide_quote(&quote_inputs)
-                        .unwrap_or_else(|error| panic!("funded quote decision failed for {account:?}: {error}"));
+                    decision = decide_quote(&quote_inputs).unwrap_or_else(|error| {
+                        panic!("funded quote decision failed for {account:?}: {error}")
+                    });
                 }
                 None => {
                     decision = crate::plans::QuoteDecision {
@@ -567,15 +584,22 @@ impl lifecycle::PlanReviewHost for SessionReviewHost<'_> {
         )
     }
     fn max_holdable_shares(&self, code: &StockId) -> u64 {
-        let (_, spec) = self.session.state.company_spec_of_stock(*code).unwrap_or_else(|error| {
-            panic!("策略发行人股本读取失败：{error}")
-        });
+        let (_, spec) = self
+            .session
+            .state
+            .company_spec_of_stock(*code)
+            .unwrap_or_else(|error| panic!("策略发行人股本读取失败：{error}"));
         let issued_shares = spec.issued_shares;
         issued_shares.min(u64::from(u32::MAX))
     }
 }
 
-pub(crate) fn desired_delta_shares(direction: Side, target_qty: u32, held_qty: u32, lot: u32) -> Option<u32> {
+pub(crate) fn desired_delta_shares(
+    direction: Side,
+    target_qty: u32,
+    held_qty: u32,
+    lot: u32,
+) -> Option<u32> {
     let delta = match direction {
         Side::Buy => target_qty.saturating_sub(held_qty),
         Side::Sell => held_qty.saturating_sub(target_qty),
@@ -602,10 +626,7 @@ fn root_candidate_codes(
 }
 
 #[cfg(feature = "simulation-diagnostics")]
-pub(crate) fn plan_trace_states(
-    account: AccountId,
-    plans: &PlanBook,
-) -> BTreeMap<PlanId, String> {
+pub(crate) fn plan_trace_states(account: AccountId, plans: &PlanBook) -> BTreeMap<PlanId, String> {
     plans
         .active_investor_plan_ids_for_account(account)
         .into_iter()
@@ -1176,13 +1197,27 @@ impl GameSession {
     ) -> Result<(), StepFatal> {
         let time = self.causal_time()?;
         for (index, kind) in diagnostics.facts.iter().enumerate() {
-            let sequence = u64::try_from(self.state.causal.fact_count()).ok()
-                .and_then(|count| u64::try_from(index).ok().and_then(|index| count.checked_add(index)))
-                .ok_or_else(|| StepFatal::InvariantViolation { location: "causal::root".to_owned(), description: "root sequence 溢出".to_owned() })?;
-            crate::diagnostics::causal::CausalFact { sequence, time, kind: kind.clone() }
-                .validate_stock_clock().map_err(|error| StepFatal::InvariantViolation {
-                    location: "causal::root".to_owned(), description: error.to_string(),
+            let sequence = u64::try_from(self.state.causal.fact_count())
+                .ok()
+                .and_then(|count| {
+                    u64::try_from(index)
+                        .ok()
+                        .and_then(|index| count.checked_add(index))
+                })
+                .ok_or_else(|| StepFatal::InvariantViolation {
+                    location: "causal::root".to_owned(),
+                    description: "root sequence 溢出".to_owned(),
                 })?;
+            crate::diagnostics::causal::CausalFact {
+                sequence,
+                time,
+                kind: kind.clone(),
+            }
+            .validate_stock_clock()
+            .map_err(|error| StepFatal::InvariantViolation {
+                location: "causal::root".to_owned(),
+                description: error.to_string(),
+            })?;
         }
         self.state
             .causal
@@ -1313,7 +1348,13 @@ impl GameSession {
         lifecycle::PlanLifecycleReview::capture(self, id, market_view, plans).map_or_else(
             Vec::new,
             |review| {
-                review.collect(&SessionReviewHost { session: self, account: id }, assessments)
+                review.collect(
+                    &SessionReviewHost {
+                        session: self,
+                        account: id,
+                    },
+                    assessments,
+                )
             },
         )
     }
@@ -1352,7 +1393,10 @@ impl GameSession {
             id,
             market_view,
             plans,
-            &plans.active_investor_plan_ids_for_account(id).into_iter().collect(),
+            &plans
+                .active_investor_plan_ids_for_account(id)
+                .into_iter()
+                .collect(),
         )
     }
 
@@ -1631,21 +1675,38 @@ impl GameSession {
 
     /// 个人计划概览（诊断/测试）：公司条目通过 plan_entries_debug 查询。
     pub fn investor_plans_debug(&self) -> Vec<(AccountId, StockId, Side, u32, u32, String)> {
-        self.state.plans.investor_plans().map(|plan| (
-            plan.account(), *plan.code(), plan.direction(),
-            match plan.target() {
-                crate::plans::PlanTarget::ShareCount(qty) => qty,
-                crate::plans::PlanTarget::PositionFractionBp(_) => 0,
-            },
-            plan.filled_qty(), format!("{:?}", plan.status()),
-        )).collect()
+        self.state
+            .plans
+            .investor_plans()
+            .map(|plan| {
+                (
+                    plan.account(),
+                    *plan.code(),
+                    plan.direction(),
+                    match plan.target() {
+                        crate::plans::PlanTarget::ShareCount(qty) => qty,
+                        crate::plans::PlanTarget::PositionFractionBp(_) => 0,
+                    },
+                    plan.filled_qty(),
+                    format!("{:?}", plan.status()),
+                )
+            })
+            .collect()
     }
 
     /// 全来源诊断保留明确 origin，不以个人字段表达公司授权。
     pub fn plan_entries_debug(&self) -> Vec<crate::plans::PlanEntry> {
-        self.state.plans.plan_ids().map(|id| {
-            self.state.plans.entry(id).expect("计划迭代身份存在").clone()
-        }).collect()
+        self.state
+            .plans
+            .plan_ids()
+            .map(|id| {
+                self.state
+                    .plans
+                    .entry(id)
+                    .expect("计划迭代身份存在")
+                    .clone()
+            })
+            .collect()
     }
 
     /// 决策链诊断（只读；验收测试与离线对账用——不泄露任何隐藏市场信息，
@@ -1935,16 +1996,15 @@ mod chain_restructure_tests {
         // 合并归母权益事件尚不支持，ROE 必须与 generate_report_set 的 Unsupported 产物同构。
         let reason =
             crate::accounting::reports::ReportRoeUnavailable::ConsolidatedAttributionFactsUnavailable;
-        let unavailable = crate::accounting::reports::ReportRoeValue::Unavailable {
-            reason,
-        };
+        let unavailable = crate::accounting::reports::ReportRoeValue::Unavailable { reason };
         group.reports.roe = crate::accounting::reports::ReportRoe {
             basis: crate::accounting::reports::ReportRoeBasis::Unsupported { reason },
             ordinary_roe: unavailable.clone(),
             adjusted_roe: unavailable.clone(),
             weighted_average_parent_equity_cents: unavailable.clone(),
-            non_recurring:
-                crate::accounting::reports::ReportRoeNonRecurring::Unavailable { reason },
+            non_recurring: crate::accounting::reports::ReportRoeNonRecurring::Unavailable {
+                reason,
+            },
             equity_events: crate::accounting::reports::ReportRoeEquityEventBreakdown {
                 attributable_to_parent:
                     crate::accounting::reports::ReportRoeEquityEventListing::Unavailable { reason },
@@ -2152,7 +2212,10 @@ mod chain_restructure_tests {
         let valid = session.save().unwrap();
         crate::session::persistence::validate_save_slot(&valid).unwrap();
         assert_eq!(valid.price_memories[&account].stock_count(), 9);
-        assert!(valid.plans.active_investor_plan(account, &protected).is_some());
+        assert!(valid
+            .plans
+            .active_investor_plan(account, &protected)
+            .is_some());
     }
 
     #[test]
@@ -2353,7 +2416,11 @@ mod chain_restructure_tests {
             .any(|record| record.id == publication));
         personal.install(&mut session, account);
         crate::session::pipeline::commit_injected_plan_roots_for_test(&mut session, operations);
-        assert!(session.state.plans.active_investor_plan(account, &faded).is_none());
+        assert!(session
+            .state
+            .plans
+            .active_investor_plan(account, &faded)
+            .is_none());
     }
 
     #[test]
@@ -2790,7 +2857,10 @@ mod chain_restructure_tests {
                     trading_day: u64::from(session.state.day),
                 },
             });
-        apply_institution_experience_feedback(&mut belief, &session.prepare_information_anchors().unwrap());
+        apply_institution_experience_feedback(
+            &mut belief,
+            &session.prepare_information_anchors().unwrap(),
+        );
         let after = belief.entry(&code).unwrap();
         assert_eq!(
             after.confidence_bp,
@@ -2800,7 +2870,10 @@ mod chain_restructure_tests {
         assert_eq!(after.forecast, before.forecast);
         assert!(after.applied_experience_orders.contains(&999));
         let once = serde_json::to_vec(&belief).unwrap();
-        apply_institution_experience_feedback(&mut belief, &session.prepare_information_anchors().unwrap());
+        apply_institution_experience_feedback(
+            &mut belief,
+            &session.prepare_information_anchors().unwrap(),
+        );
         assert_eq!(serde_json::to_vec(&belief).unwrap(), once);
     }
 
@@ -2813,26 +2886,51 @@ mod chain_restructure_tests {
         let mut encoded = serde_json::to_value(original).unwrap();
         let other = StockId(u32::MAX);
         let mut future = encoded["entries"][code.0.to_string()].clone();
-        future["anchor"] = serde_json::to_value(crate::observation::information_clock::InformationTradingAnchor::DayBefore { ordinal: u64::MAX }).unwrap();
+        future["anchor"] = serde_json::to_value(
+            crate::observation::information_clock::InformationTradingAnchor::DayBefore {
+                ordinal: u64::MAX,
+            },
+        )
+        .unwrap();
         future["last_cause"] = serde_json::Value::Null;
         encoded["entries"][other.0.to_string()] = future;
         let mut belief: BeliefBook = serde_json::from_value(encoded).unwrap();
         let mut experience = crate::RetailExperienceState::without_equity_reference();
-        experience.feedback.exit_records.push(crate::experience::ExitRecord {
-            code, order_id: Some(999), cooldown_until_market_minute: None, realized_profit: true,
-            moment: crate::experience::ExperienceMoment {
-                civil_date: session.civil_date(), market_minute: session.current_market_minute(),
-                trading_day: u64::from(session.day()),
-            },
-        });
+        experience
+            .feedback
+            .exit_records
+            .push(crate::experience::ExitRecord {
+                code,
+                order_id: Some(999),
+                cooldown_until_market_minute: None,
+                realized_profit: true,
+                moment: crate::experience::ExperienceMoment {
+                    civil_date: session.civil_date(),
+                    market_minute: session.current_market_minute(),
+                    trading_day: u64::from(session.day()),
+                },
+            });
         let mut anchors = (*session.prepare_information_anchors().unwrap()).clone();
-        anchors.insert(other, crate::observation::information_clock::InformationTradingAnchor::TradingDay { ordinal: 0 });
+        anchors.insert(
+            other,
+            crate::observation::information_clock::InformationTradingAnchor::TradingDay {
+                ordinal: 0,
+            },
+        );
         let before = serde_json::to_vec(&belief).unwrap();
-        let error = apply_personal_experience_feedback(&mut belief, &experience, &anchors).unwrap_err();
-        assert!(matches!(error, crate::strategy::BeliefError::InformationClock(
-            crate::observation::information_clock::InformationHorizonError::TimeReversed { .. }
-        )));
-        assert_eq!(serde_json::to_vec(&belief).unwrap(), before, "后股非法必须阻止前股真实 profit event 被消费");
+        let error =
+            apply_personal_experience_feedback(&mut belief, &experience, &anchors).unwrap_err();
+        assert!(matches!(
+            error,
+            crate::strategy::BeliefError::InformationClock(
+                crate::observation::information_clock::InformationHorizonError::TimeReversed { .. }
+            )
+        ));
+        assert_eq!(
+            serde_json::to_vec(&belief).unwrap(),
+            before,
+            "后股非法必须阻止前股真实 profit event 被消费"
+        );
     }
 
     #[test]
@@ -3292,8 +3390,14 @@ mod chain_restructure_tests {
             let account = AccountId(1);
             let code = session.stock_id("000812").unwrap();
             let mut encoded = serde_json::to_value(&session.state.plans).unwrap();
-            let plan_index = encoded["plans"].as_array().unwrap().iter()
-                .position(|plan| plan["Investor"]["plan_id"] == serde_json::to_value(plan_id).unwrap()).unwrap();
+            let plan_index = encoded["plans"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .position(|plan| {
+                    plan["Investor"]["plan_id"] == serde_json::to_value(plan_id).unwrap()
+                })
+                .unwrap();
             encoded["plans"][plan_index]["Investor"]["status"] =
                 serde_json::json!({ "Paused": { "reason": original_reason } });
             session.state.plans = serde_json::from_value(encoded).unwrap();
@@ -3455,7 +3559,11 @@ mod chain_restructure_tests {
         let account = AccountId(1);
         let code = session.stock_id("000812").unwrap();
         let (child_id, child) = {
-            let plan = session.state.plans.active_investor_plan(account, &code).unwrap();
+            let plan = session
+                .state
+                .plans
+                .active_investor_plan(account, &code)
+                .unwrap();
             (
                 plan.active_child_order_id().unwrap(),
                 *plan.execution().unwrap(),
@@ -3633,7 +3741,11 @@ mod chain_restructure_tests {
             session.state.plans.plan(plan_id).unwrap().filled_qty(),
             filled
         );
-        assert!(session.state.plans.active_investor_plan(account, &code).is_none());
+        assert!(session
+            .state
+            .plans
+            .active_investor_plan(account, &code)
+            .is_none());
         assert!(events
             .iter()
             .any(|event| matches!(event, Event::OrderCanceled { id, .. } if *id == child_id)));
@@ -3767,7 +3879,11 @@ mod chain_restructure_tests {
                 .map(|minute| {
                     (
                         minute,
-                        if falling && minute + 1 == end { 270 } else { 285 },
+                        if falling && minute + 1 == end {
+                            270
+                        } else {
+                            285
+                        },
                     )
                 })
                 .collect();
@@ -3859,8 +3975,11 @@ mod chain_restructure_tests {
             let mut cursor = session
                 .prepare_plan_quotes_for_account(account, &view, &session.state.plans)
                 .unwrap();
-            let request = session
-                .generate_next_plan_quote(&mut cursor, &session.state.plans, &BTreeSet::new());
+            let request = session.generate_next_plan_quote(
+                &mut cursor,
+                &session.state.plans,
+                &BTreeSet::new(),
+            );
             assert!(
                 request.is_some(),
                 "paused child still needs a cancellation request"
@@ -4420,7 +4539,10 @@ mod chain_restructure_tests {
         let config = crate::config::GameConfig::proposed_defaults();
         let request = buy_allocation_request(
             &config,
-            PlanId { owner: AccountId(1), sequence: 0 },
+            PlanId {
+                owner: AccountId(1),
+                sequence: 0,
+            },
             StockId(0),
             8_000,
             Money::from_cents(2_000),
@@ -4816,7 +4938,9 @@ mod chain_restructure_tests {
         #[cfg(feature = "simulation-diagnostics")]
         {
             let plans = session.state.plans.clone();
-            session.record_plan_root_diagnostics(account, diagnostics, &plans).unwrap();
+            session
+                .record_plan_root_diagnostics(account, diagnostics, &plans)
+                .unwrap();
         }
         #[cfg(not(feature = "simulation-diagnostics"))]
         let _ = diagnostics;
@@ -5036,8 +5160,11 @@ mod chain_restructure_tests {
         let mut session = probe_session();
         if player_shares > 0 {
             let code = session.stock_id("000812").unwrap();
-            session.fixture_account_mut(&AccountId(0)).unwrap()
-                .grant_position(code, player_shares, Money::from_cents(285)).unwrap();
+            session
+                .fixture_account_mut(&AccountId(0))
+                .unwrap()
+                .grant_position(code, player_shares, Money::from_cents(285))
+                .unwrap();
         }
         let mut seed_events = Vec::new();
         session.seed_order_for_test(
@@ -5099,67 +5226,182 @@ mod chain_restructure_tests {
     fn plan_identity_live_join_rebuild_keeps_original_child_and_resources() {
         let mut session = seeded_buy_plan_with_child();
         let code = session.stock_id("000812").unwrap();
-        let before = session.state.plans.active_investor_plan(AccountId(1), &code).unwrap().clone();
+        let before = session
+            .state
+            .plans
+            .active_investor_plan(AccountId(1), &code)
+            .unwrap()
+            .clone();
         let child = before.active_child_order_id().unwrap();
-        let cash_before: i128 = session.account_roster().into_iter()
-            .map(|owner| i128::from(session.account(owner).unwrap().cash().cents())).sum();
+        let cash_before: i128 = session
+            .account_roster()
+            .into_iter()
+            .map(|owner| i128::from(session.account(owner).unwrap().cash().cents()))
+            .sum();
         session.runtime_group_count = 3;
-        let member = session.join_market(
-            crate::session::OpaqueSubjectId::new("plan-identity-live-join".to_owned()).unwrap(), false,
-        ).unwrap();
+        let member = session
+            .join_market(
+                crate::session::OpaqueSubjectId::new("plan-identity-live-join".to_owned()).unwrap(),
+                false,
+            )
+            .unwrap();
         let events = session.step().expect("join后的真实native重建与步进");
         let after = session.state.plans.plan(before.plan_id()).unwrap();
-        assert_eq!(after.active_child_order_id(), Some(child), "原child不能被丢票后重复报价替换");
-        assert_eq!(after.active_child_remaining_qty(), before.active_child_remaining_qty());
+        assert_eq!(
+            after.active_child_order_id(),
+            Some(child),
+            "原child不能被丢票后重复报价替换"
+        );
+        assert_eq!(
+            after.active_child_remaining_qty(),
+            before.active_child_remaining_qty()
+        );
         assert_eq!(after.filled_qty(), before.filled_qty());
-        assert!(!events.iter().any(|event| matches!(event, Event::OrderAccepted { id, .. } if *id == child)), "重建不重发Accepted");
-        assert!(!events.iter().any(|event| matches!(event, Event::Trade { .. })), "fixture没有卖向对手单");
-        let cash_after: i128 = session.account_roster().into_iter()
-            .map(|owner| i128::from(session.account(owner).unwrap().cash().cents())).sum();
-        assert_eq!(cash_after, cash_before + i128::from(member.admission_funding.external_cash.cents()), "重建不补扣补退资金");
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, Event::OrderAccepted { id, .. } if *id == child)),
+            "重建不重发Accepted"
+        );
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, Event::Trade { .. })),
+            "fixture没有卖向对手单"
+        );
+        let cash_after: i128 = session
+            .account_roster()
+            .into_iter()
+            .map(|owner| i128::from(session.account(owner).unwrap().cash().cents()))
+            .sum();
+        assert_eq!(
+            cash_after,
+            cash_before + i128::from(member.admission_funding.external_cash.cents()),
+            "重建不补扣补退资金"
+        );
     }
 
     #[test]
     fn plan_identity_partial_child_live_join_keeps_fills_fees_and_cancel_reference() {
         let (mut session, _) = seeded_buy_plan_with_child_and_shares(100);
         let code = session.stock_id("000812").unwrap();
-        session.runtime_driver.as_mut().unwrap().lock().unwrap()
+        session
+            .runtime_driver
+            .as_mut()
+            .unwrap()
+            .lock()
+            .unwrap()
             .defer_due_for_test_at(&[AccountId(1)], u64::MAX);
         // 去掉用于引出机构报价的玩家原买单，避免既有自成交保护挡住玩家卖单。
         for order in session.player_working_orders() {
-            session.enqueue_player_intent(AccountId(0), Intent::Cancel { code: order.code, id: OrderId(order.id) }).unwrap();
+            session
+                .enqueue_player_intent(
+                    AccountId(0),
+                    Intent::Cancel {
+                        code: order.code,
+                        id: OrderId(order.id),
+                    },
+                )
+                .unwrap();
         }
         let cancelled_seed = session.step().unwrap();
-        assert!(cancelled_seed.iter().any(|event| matches!(event, Event::OrderCanceled { .. })));
-        let original = session.state.plans.active_investor_plan(AccountId(1), &code).unwrap().clone();
+        assert!(cancelled_seed
+            .iter()
+            .any(|event| matches!(event, Event::OrderCanceled { .. })));
+        let original = session
+            .state
+            .plans
+            .active_investor_plan(AccountId(1), &code)
+            .unwrap()
+            .clone();
         let child = original.active_child_order_id().unwrap();
         let price = original.execution().unwrap().limit_price();
         assert!(original.active_child_remaining_qty().unwrap() > 100);
-        session.enqueue_player_intent(AccountId(0), Intent::PlaceLimit {
-            code, side: Side::Sell, price: LimitPrice::Fixed(price), qty: 100,
-        }).unwrap();
+        session
+            .enqueue_player_intent(
+                AccountId(0),
+                Intent::PlaceLimit {
+                    code,
+                    side: Side::Sell,
+                    price: LimitPrice::Fixed(price),
+                    qty: 100,
+                },
+            )
+            .unwrap();
         let events = session.step().unwrap();
-        assert!(events.iter().any(|event| matches!(event, Event::Trade { qty: 100, .. })), "原child真实部分成交：{events:?}");
-        let partial = session.state.plans.plan(original.plan_id()).unwrap().clone();
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event, Event::Trade { qty: 100, .. })),
+            "原child真实部分成交：{events:?}"
+        );
+        let partial = session
+            .state
+            .plans
+            .plan(original.plan_id())
+            .unwrap()
+            .clone();
         assert_eq!(partial.filled_qty(), original.filled_qty() + 100);
         assert_eq!(partial.active_child_order_id(), Some(child));
         let ledger_before = session.project_live_envelopes().unwrap();
         session.runtime_group_count = 3;
-        session.join_market(OpaqueSubjectId::new("partial-child-join".to_owned()).unwrap(), false).unwrap();
+        session
+            .join_market(
+                OpaqueSubjectId::new("partial-child-join".to_owned()).unwrap(),
+                false,
+            )
+            .unwrap();
         // join 已释放 native writer，静点设置下一注意力种子，隔离恢复与自然复审。
         assert!(session.runtime_driver.is_none());
-        session.state.npc_attention.get_mut(&AccountId(1)).unwrap().next_attention_candidate_tick = u64::MAX;
+        session
+            .state
+            .npc_attention
+            .get_mut(&AccountId(1))
+            .unwrap()
+            .next_attention_candidate_tick = u64::MAX;
         session.state.attention_scheduler.clear();
-        session.state.attention_scheduler.enqueue(u64::MAX, AccountId(1));
+        session
+            .state
+            .attention_scheduler
+            .enqueue(u64::MAX, AccountId(1));
         let rebuilt_events = session.step().expect("部分成交child换组重建");
-        assert!(!rebuilt_events.iter().any(|event| matches!(event, Event::OrderAccepted { id, .. } if *id == child)));
-        assert_eq!(session.state.plans.plan(original.plan_id()).unwrap(), &partial);
+        assert!(!rebuilt_events
+            .iter()
+            .any(|event| matches!(event, Event::OrderAccepted { id, .. } if *id == child)));
+        assert_eq!(
+            session.state.plans.plan(original.plan_id()).unwrap(),
+            &partial
+        );
         let ledger_after = session.project_live_envelopes().unwrap();
-        assert_eq!(ledger_after, ledger_before, "原child的purse/费用/数量事实不重算、不重放");
+        assert_eq!(
+            ledger_after, ledger_before,
+            "原child的purse/费用/数量事实不重算、不重放"
+        );
         let cancelled = drive_once(&mut session, &reversal_assessment(0));
-        assert!(cancelled.iter().any(|event| matches!(event, Event::OrderCanceled { id, .. } if *id == child)), "恢复票必须支持原OrderId撤单");
-        assert_eq!(session.state.plans.plan(original.plan_id()).unwrap().active_child_order_id(), None);
-        assert_eq!(session.state.plans.plan(original.plan_id()).unwrap().filled_qty(), partial.filled_qty());
+        assert!(
+            cancelled
+                .iter()
+                .any(|event| matches!(event, Event::OrderCanceled { id, .. } if *id == child)),
+            "恢复票必须支持原OrderId撤单"
+        );
+        assert_eq!(
+            session
+                .state
+                .plans
+                .plan(original.plan_id())
+                .unwrap()
+                .active_child_order_id(),
+            None
+        );
+        assert_eq!(
+            session
+                .state
+                .plans
+                .plan(original.plan_id())
+                .unwrap()
+                .filled_qty(),
+            partial.filled_qty()
+        );
     }
 
     fn reversal_assessment(score_bp: i32) -> BTreeMap<StockId, CandidateAssessment> {
@@ -5180,7 +5422,11 @@ mod chain_restructure_tests {
         let mut session = seeded_buy_plan_with_child();
         let account = AccountId(1);
         let code = session.stock_id("000812").unwrap();
-        let plan = session.state.plans.active_investor_plan(account, &code).unwrap();
+        let plan = session
+            .state
+            .plans
+            .active_investor_plan(account, &code)
+            .unwrap();
         let leg = plan
             .execution()
             .expect("seeded plan carries an execution leg");
@@ -5215,7 +5461,11 @@ mod chain_restructure_tests {
             event,
             Event::OrderCanceled { id, .. } if *id == child_id
         )));
-        let current = session.state.plans.active_investor_plan(account, &code).unwrap();
+        let current = session
+            .state
+            .plans
+            .active_investor_plan(account, &code)
+            .unwrap();
         assert_eq!(current.target(), revision.target);
         assert_eq!(current.active_child_order_id(), None);
 
@@ -5238,7 +5488,11 @@ mod chain_restructure_tests {
         let mut session = seeded_buy_plan_with_child();
         let account = AccountId(1);
         let code = session.stock_id("000812").unwrap();
-        let plan = session.state.plans.active_investor_plan(account, &code).unwrap();
+        let plan = session
+            .state
+            .plans
+            .active_investor_plan(account, &code)
+            .unwrap();
         let leg = plan
             .execution()
             .expect("seeded plan carries an execution leg");
@@ -5513,7 +5767,13 @@ mod chain_restructure_tests {
             // 把真实在途子单的剩余量临时视为 500_100，推进 500_000 后仍余 100 在途。
             let mut advance = move |plans: &mut crate::plans::PlanBook| {
                 plans
-                    .restore_child_remaining_qty(crate::plans::PlanId { owner: AccountId(1), sequence: 0 }, Some(500_100))
+                    .restore_child_remaining_qty(
+                        crate::plans::PlanId {
+                            owner: AccountId(1),
+                            sequence: 0,
+                        },
+                        Some(500_100),
+                    )
                     .unwrap();
                 plans
                     .record_child_fill(AccountId(1), &code, crate::Side::Buy, child_id, 500_000, 0)
@@ -5562,10 +5822,19 @@ mod chain_restructure_tests {
         {
             let mut relink = move |plans: &mut crate::plans::PlanBook| {
                 plans
-                    .restore_child_remaining_qty(PlanId { owner: AccountId(1), sequence: 0 }, Some(500_100))
+                    .restore_child_remaining_qty(
+                        PlanId {
+                            owner: AccountId(1),
+                            sequence: 0,
+                        },
+                        Some(500_100),
+                    )
                     .unwrap();
                 let real_child = plans
-                    .plan(PlanId { owner: AccountId(1), sequence: 0 })
+                    .plan(PlanId {
+                        owner: AccountId(1),
+                        sequence: 0,
+                    })
                     .unwrap()
                     .active_child_order_id()
                     .unwrap();
@@ -5602,7 +5871,10 @@ mod chain_restructure_tests {
             session
                 .state
                 .plans
-                .plan(PlanId { owner: AccountId(1), sequence: 0 })
+                .plan(PlanId {
+                    owner: AccountId(1),
+                    sequence: 0
+                })
                 .unwrap()
                 .execution()
                 .is_none(),
@@ -5675,14 +5947,14 @@ mod chain_restructure_tests {
 
     fn probe_session() -> GameSession {
         let setup = SessionSetup {
-        company_system: None,
-        dividend_tax_mode: None,
-        flat_withholding_bp: None,
-        rights_offering_enabled: false,
-        issuer_repurchase_enabled: false,
-        par_value_per_share: None,
-        auto_corporate_foundation: false,
-        report_frequency: None,
+            company_system: None,
+            dividend_tax_mode: None,
+            flat_withholding_bp: None,
+            rights_offering_enabled: false,
+            issuer_repurchase_enabled: false,
+            par_value_per_share: None,
+            auto_corporate_foundation: false,
+            report_frequency: None,
             company_operations: None,
             groups: Vec::new(),
             stocks: vec![StockSpec {

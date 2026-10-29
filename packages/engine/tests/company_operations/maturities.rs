@@ -40,15 +40,17 @@ fn rest_day_deposit_maturity_pays_principal_and_interest_once_after_restore() {
     let contract = ContractId("REST-DAY-DEPOSIT".into());
     let mut company = bank_c(friday);
     if let engine::company::operations::IndustryBooks::Bank(books) = &mut company.books {
-        books.accept_deposit(
-            engine::company::bank::BankProductKind::TermDeposit,
-            contract.clone(),
-            &CounterpartyId("EXT-DEP".into()),
-            yuan(1_000),
-            150,
-            friday,
-            sunday,
-        ).expect("周五存入、周日到期的真实合同");
+        books
+            .accept_deposit(
+                engine::company::bank::BankProductKind::TermDeposit,
+                contract.clone(),
+                &CounterpartyId("EXT-DEP".into()),
+                yuan(1_000),
+                150,
+                friday,
+                sunday,
+            )
+            .expect("周五存入、周日到期的真实合同");
     }
     let mut continuous = CompanyOperations::new(
         CompanyOperationsConfig {
@@ -58,7 +60,8 @@ fn rest_day_deposit_maturity_pays_principal_and_interest_once_after_restore() {
             companies: vec![company],
         },
         saturday,
-    ).unwrap();
+    )
+    .unwrap();
     continuous.advance_civil_day(saturday).unwrap();
     let snapshot = serde_json::to_vec(&continuous).unwrap();
     let mut restored: CompanyOperations = serde_json::from_slice(&snapshot).unwrap();
@@ -68,9 +71,15 @@ fn rest_day_deposit_maturity_pays_principal_and_interest_once_after_restore() {
     let mut preview = restored.bank_books(&bank).unwrap().clone();
     let prior_interest = preview.deposit(&contract).unwrap().accrued_payable();
     let day_accrual = preview.accrue_deposit_interest(sunday).unwrap();
-    let expected_interest = prior_interest.add(
-        day_accrual.iter().find(|item| item.deposit == contract).unwrap().amount
-    ).unwrap();
+    let expected_interest = prior_interest
+        .add(
+            day_accrual
+                .iter()
+                .find(|item| item.deposit == contract)
+                .unwrap()
+                .amount,
+        )
+        .unwrap();
     assert!(expected_interest.is_positive(), "到期须有真实应付利息");
 
     continuous.advance_civil_day(sunday).unwrap();
@@ -80,25 +89,52 @@ fn rest_day_deposit_maturity_pays_principal_and_interest_once_after_restore() {
         let deposit = books.deposit(&contract).unwrap();
         assert!(deposit.principal().is_zero(), "到期本金已真实付清");
         assert!(deposit.accrued_payable().is_zero(), "到期利息已真实付清");
-        let paid: Vec<_> = books.books().journal().entries()
-            .filter(|entry| entry.date == sunday && matches!(
-                entry.kind,
-                BusinessKind::CustomerWithdrawal | BusinessKind::DepositInterestPaid
-            ))
+        let paid: Vec<_> = books
+            .books()
+            .journal()
+            .entries()
+            .filter(|entry| {
+                entry.date == sunday
+                    && matches!(
+                        entry.kind,
+                        BusinessKind::CustomerWithdrawal | BusinessKind::DepositInterestPaid
+                    )
+            })
             .map(|entry| (entry.kind, entry.lines[0].amount))
             .collect();
         assert_eq!(paid.len(), 2, "周日恰好一笔本金与一笔利息分录");
-        assert_eq!(paid.iter().filter(|(kind, _)| *kind == BusinessKind::CustomerWithdrawal).count(), 1);
-        assert_eq!(paid.iter().filter(|(kind, _)| *kind == BusinessKind::DepositInterestPaid).count(), 1);
+        assert_eq!(
+            paid.iter()
+                .filter(|(kind, _)| *kind == BusinessKind::CustomerWithdrawal)
+                .count(),
+            1
+        );
+        assert_eq!(
+            paid.iter()
+                .filter(|(kind, _)| *kind == BusinessKind::DepositInterestPaid)
+                .count(),
+            1
+        );
         assert!(paid.contains(&(BusinessKind::CustomerWithdrawal, yuan(1_000))));
         assert!(paid.contains(&(BusinessKind::DepositInterestPaid, expected_interest)));
         paid
     };
-    assert_eq!(facts(&continuous), facts(&restored), "连续与恢复运行的到期本金/利息事实一致");
+    assert_eq!(
+        facts(&continuous),
+        facts(&restored),
+        "连续与恢复运行的到期本金/利息事实一致"
+    );
     let after_sunday = serde_json::to_vec(&restored).unwrap();
     let mut after_restore: CompanyOperations = serde_json::from_slice(&after_sunday).unwrap();
-    assert!(after_restore.advance_civil_day(sunday).is_err(), "恢复后不能再次结算周日");
-    assert_eq!(serde_json::to_vec(&after_restore).unwrap(), after_sunday, "重复日结拒绝不得改账");
+    assert!(
+        after_restore.advance_civil_day(sunday).is_err(),
+        "恢复后不能再次结算周日"
+    );
+    assert_eq!(
+        serde_json::to_vec(&after_restore).unwrap(),
+        after_sunday,
+        "重复日结拒绝不得改账"
+    );
 }
 
 #[test]
@@ -274,7 +310,10 @@ fn project_borrowing_maturity_has_real_operating_payment_caller() {
             suspension_min_days: 90,
         },
         max_projects: 2,
-        income_tax_policy: engine::accounting::IncomeTaxPolicy { rate_bp: 2500, loss_carryforward_years: 5 },
+        income_tax_policy: engine::accounting::IncomeTaxPolicy {
+            rate_bp: 2500,
+            loss_carryforward_years: 5,
+        },
     })
     .unwrap();
     let contract = engine::company::ContractId("PROJECT-DEBT".into());

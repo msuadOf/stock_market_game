@@ -107,9 +107,7 @@ pub(super) fn prepare_market_tick_with_evidence(
     authority: &mut GameSession,
     capture_commit_evidence: bool,
 ) -> Result<PreparedMarketTick<'_>, MarketTransactionError> {
-    let mut plan = match plan_tick(PhaseInput {
-        session: authority,
-    }) {
+    let mut plan = match plan_tick(PhaseInput { session: authority }) {
         Ok(plan) => plan,
         Err(error) => return Err(error.into()),
     };
@@ -205,7 +203,8 @@ fn apply_tick_shadow_market_transaction_with_roots(
     let mut stock_batch = std::mem::take(&mut output.receipts).into_raw();
     plan.applied_receipts.append(&mut stock_batch);
     plan.event_outbox.append(&mut output.facts);
-    plan.auction_finalizers.append(&mut output.auction_finalizers);
+    plan.auction_finalizers
+        .append(&mut output.auction_finalizers);
     #[cfg(test)]
     {
         output.receipts = inspect.0;
@@ -270,9 +269,15 @@ fn finish_market_execution(
         })
         .collect::<Result<std::collections::BTreeMap<_, _>, _>>()?;
     #[cfg(feature = "simulation-diagnostics")]
-    let calendar_tick = std::sync::Arc::clone(candidate.causal_tick_context().map_err(MarketTransactionError::Finalization)?);
+    let calendar_tick = std::sync::Arc::clone(
+        candidate
+            .causal_tick_context()
+            .map_err(MarketTransactionError::Finalization)?,
+    );
     #[cfg(not(feature = "simulation-diagnostics"))]
-    let (_, calendar_tick) = candidate.prepare_market_calendar_tick().map_err(MarketTransactionError::Finalization)?;
+    let (_, calendar_tick) = candidate
+        .prepare_market_calendar_tick()
+        .map_err(MarketTransactionError::Finalization)?;
     let finish = compute
         .parallel(|| {
             compute.record(crate::compute::ComputeWork::StockFinish);
@@ -335,9 +340,9 @@ pub(in crate::session::pipeline) fn match_continuous_feedback(
             .position(|outcome| outcome.candidate_key() == key)
             .ok_or_else(|| invariant("StockProcessing 返回了非待处理候选"))?;
         let outcome = expected.remove(index);
-        let operation = outcome.operation().ok_or_else(|| {
-            invariant("StockProcessing 返回了 AccountValidation 已拒绝的候选")
-        })?;
+        let operation = outcome
+            .operation()
+            .ok_or_else(|| invariant("StockProcessing 返回了 AccountValidation 已拒绝的候选"))?;
         if super::stock_stream::operation_code(operation) != code {
             return Err(invariant("StockProcessing completion 来自其他股票"));
         }
@@ -458,7 +463,7 @@ fn apply_session_market_transaction(
         consumed,
         auction_finalizers,
         #[cfg(test)]
-        plan_reports: _plan_reports,
+            plan_reports: _plan_reports,
     } = execution;
     #[cfg(test)]
     let execution_facts = finish.execution_facts.clone();

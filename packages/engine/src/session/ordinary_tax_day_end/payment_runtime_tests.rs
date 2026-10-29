@@ -224,11 +224,9 @@ fn r4_cash_01_payable_credits_gross_and_activates_personal_income_once() {
     assert_eq!(actions.account_gross_receipts.len(), RETAIL_HOLDERS.len());
     assert_eq!(actions.flat_withholding_receipts.len(), 0);
     for tax_book in &actions.dividend_tax_books {
-        assert!(
-            tax_book
-                .payment_by_id(&format!("dividend-payment:{PLAN_ID}:{PAYMENT_DAY}"))
-                .is_some()
-        );
+        assert!(tax_book
+            .payment_by_id(&format!("dividend-payment:{PLAN_ID}:{PAYMENT_DAY}"))
+            .is_some());
         let serialized_tax_book = serde_json::to_value(tax_book).unwrap();
         assert_eq!(
             serialized_tax_book["dividends"][0]["payments"]
@@ -237,12 +235,10 @@ fn r4_cash_01_payable_credits_gross_and_activates_personal_income_once() {
                 .len(),
             1
         );
-        assert!(
-            tax_book
-                .collections()
-                .iter()
-                .all(|receipt| receipt.collected == Money::ZERO)
-        );
+        assert!(tax_book
+            .collections()
+            .iter()
+            .all(|receipt| receipt.collected == Money::ZERO));
         assert_eq!(tax_book.outstanding_tax().unwrap().numerator(), 0);
     }
 
@@ -261,13 +257,11 @@ fn r4_cash_01_payable_credits_gross_and_activates_personal_income_once() {
         .expect("恢复后使用本局冻结 Calendar 求下一真实交易日");
     while restored.civil_date() < next_market_date {
         let closed_date = restored.civil_date();
-        assert!(
-            !restored
-                .civil_clock()
-                .calendar()
-                .is_trading_day(crate::calendar::CalendarExchange::Sse, closed_date)
-                .expect("恢复后中间自然日的冻结 Calendar 判定有效")
-        );
+        assert!(!restored
+            .civil_clock()
+            .calendar()
+            .is_trading_day(crate::calendar::CalendarExchange::Sse, closed_date)
+            .expect("恢复后中间自然日的冻结 Calendar 判定有效"));
         let market_progress = (restored.tick(), restored.day());
         let report = restored
             .end_civil_day()
@@ -436,15 +430,13 @@ fn r4_cash_03_actual_sale_before_payment_collects_personal_tax() {
         .unwrap();
     assert_eq!(seller_position.qty(), 100);
     assert_eq!(seller_position.sellable(), before_sellable - 100);
-    assert!(
-        session
-            .personal_trade_confirmations(seller)
-            .unwrap()
-            .iter()
-            .any(|confirmation| confirmation.civil_date == date(PAYMENT_DAY)
-                && confirmation.side == Side::Sell
-                && confirmation.quantity_shares == 100)
-    );
+    assert!(session
+        .personal_trade_confirmations(seller)
+        .unwrap()
+        .iter()
+        .any(|confirmation| confirmation.civil_date == date(PAYMENT_DAY)
+            && confirmation.side == Side::Sell
+            && confirmation.quantity_shares == 100));
     let seller_cash_before_payment = cash(&session, seller);
     let buyer_cash_before_payment = cash(&session, buyer);
     session
@@ -462,13 +454,11 @@ fn r4_cash_03_actual_sale_before_payment_collects_personal_tax() {
         buyer_cash_before_payment,
         "登记后首次买入者不得获得既有股利"
     );
-    assert!(
-        !actions.dividends[0]
-            .entitlements()
-            .unwrap()
-            .iter()
-            .any(|entitlement| entitlement.holder == HolderId::Account(buyer))
-    );
+    assert!(!actions.dividends[0]
+        .entitlements()
+        .unwrap()
+        .iter()
+        .any(|entitlement| entitlement.holder == HolderId::Account(buyer)));
     let seller_tax = actions
         .dividend_tax_books
         .iter()
@@ -531,12 +521,10 @@ fn r4_cash_04_final_projection_rejection_aborts_payment_and_company_candidates()
             ),
         ))
     });
-    assert!(
-        result
-            .unwrap_err()
-            .to_string()
-            .contains("R4 付款最终公开投影主动拒绝")
-    );
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("R4 付款最终公开投影主动拒绝"));
     assert_eq!(inspect_calls, 1);
     assert_eq!(session.business_state_hash().unwrap(), before_hash);
     assert_eq!(session.corporate_actions().unwrap(), &before_actions);
@@ -550,5 +538,8 @@ fn r4_cash_04_final_projection_rejection_aborts_payment_and_company_candidates()
         driver.administrative_cache_snapshot_for_test(),
         before_runtime
     );
-    assert_eq!(driver.world_accounts_snapshot().unwrap(), before_raw_accounts);
+    assert_eq!(
+        driver.world_accounts_snapshot().unwrap(),
+        before_raw_accounts
+    );
 }

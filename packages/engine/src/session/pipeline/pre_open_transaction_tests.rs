@@ -1,6 +1,6 @@
 use super::market_tick_transaction::{
-    apply_tick_shadow_market_transaction_with_roots_for_test,
-    prepare_market_tick_with_evidence, MarketTransactionError,
+    apply_tick_shadow_market_transaction_with_roots_for_test, prepare_market_tick_with_evidence,
+    MarketTransactionError,
 };
 use super::*;
 use crate::session::plan_chain_candidates::PlanChainOperationBatch;
@@ -352,13 +352,18 @@ fn real_npc_and_player_candidates_share_the_pre_open_shadow_and_commit_strategy_
         .iter()
         .any(|key| matches!(key, IntentCandidateKey::Npc { account, .. } if *account == npc)));
     assert!(keys.contains(&IntentCandidateKey::player(0)));
-    assert!(committed.commit.tick.event_values().iter().all(|event| matches!(
-        event,
-        Event::IntentRejected {
-            reason: RejectionReason::AuctionOrderEntryClosed,
-            ..
-        }
-    )));
+    assert!(committed
+        .commit
+        .tick
+        .event_values()
+        .iter()
+        .all(|event| matches!(
+            event,
+            Event::IntentRejected {
+                reason: RejectionReason::AuctionOrderEntryClosed,
+                ..
+            }
+        )));
     assert_ne!(
         authority.state.npc_attention[&npc].next_attention_candidate_tick, attention_before,
         "the accepted NPC attention schedule must advance on the committed shadow",
@@ -389,7 +394,9 @@ fn plan_chain_candidate_receives_typed_entry_closed_outcome_without_installing_a
     let next_order_before = authority.state.next_order_id;
     let mut roots = PlanChainOperationBatch::empty();
     roots.push_execution(request);
-    let mut plan = plan_tick(PhaseInput { session: &authority })
+    let mut plan = plan_tick(PhaseInput {
+        session: &authority,
+    })
     .unwrap();
 
     let output =
@@ -424,11 +431,13 @@ fn plan_chain_candidate_receives_typed_entry_closed_outcome_without_installing_a
             .active_child_order_id(),
         None,
     );
-    assert!(authority
+    assert!(authority.state.plans.plan_ids().all(|plan_id| authority
         .state
         .plans
-        .plan_ids()
-        .all(|plan_id| authority.state.plans.plan(plan_id).unwrap().execution().is_none()));
+        .plan(plan_id)
+        .unwrap()
+        .execution()
+        .is_none()));
 }
 
 #[test]
@@ -458,20 +467,21 @@ fn late_pre_open_failure_discards_candidate_tick_rng_strategy_queue_receipts_and
         .unwrap()
         .production_state()
         .unwrap();
-    let mut plan = plan_tick(PhaseInput { session: &authority })
+    let mut plan = plan_tick(PhaseInput {
+        session: &authority,
+    })
     .unwrap();
-    plan
-        .execute(|candidate| {
-            candidate.state.next_receipt_base = receipt_base_before.checked_add(1).unwrap();
-            Ok(())
-        })
-        .unwrap();
+    plan.execute(|candidate| {
+        candidate.state.next_receipt_base = receipt_base_before.checked_add(1).unwrap();
+        Ok(())
+    })
+    .unwrap();
 
-    let error = match super::market_tick_transaction::apply_tick_shadow_market_transaction(&mut plan)
-    {
-        Ok(_) => panic!("malformed receipt cursor must fail the PreOpen transaction"),
-        Err(error) => error.into_fatal(),
-    };
+    let error =
+        match super::market_tick_transaction::apply_tick_shadow_market_transaction(&mut plan) {
+            Ok(_) => panic!("malformed receipt cursor must fail the PreOpen transaction"),
+            Err(error) => error.into_fatal(),
+        };
 
     assert!(matches!(error, StepFatal::InvariantViolation { .. }));
     assert!(plan.execute(|_| Ok(())).is_err());

@@ -13,13 +13,19 @@ impl GameSession {
     pub fn shutdown(mut self) -> Result<SessionShutdownReport, ShutdownFailure> {
         let mut issues = Vec::new();
         if let Some(poison) = self.poison.take() {
-            issues.push(ShutdownIssue { stage: "session_poison".to_owned(), worker: None,
-                detail: format!("{poison:?}") });
+            issues.push(ShutdownIssue {
+                stage: "session_poison".to_owned(),
+                worker: None,
+                detail: format!("{poison:?}"),
+            });
         }
         if let Some(binding) = &self.ingress {
             if let Err(error) = binding.source.close() {
-                issues.push(ShutdownIssue { stage: "ingress_close".to_owned(), worker: None,
-                    detail: error.to_string() });
+                issues.push(ShutdownIssue {
+                    stage: "ingress_close".to_owned(),
+                    worker: None,
+                    detail: error.to_string(),
+                });
             }
         }
         let mut completion = None;
@@ -27,8 +33,11 @@ impl GameSession {
             let driver = match driver.into_inner() {
                 Ok(driver) => driver,
                 Err(poison) => {
-                    issues.push(ShutdownIssue { stage: "runtime_driver_mutex".to_owned(), worker: None,
-                        detail: "runtime driver Mutex poison；仅取回 owner 作失败销毁".to_owned() });
+                    issues.push(ShutdownIssue {
+                        stage: "runtime_driver_mutex".to_owned(),
+                        worker: None,
+                        detail: "runtime driver Mutex poison；仅取回 owner 作失败销毁".to_owned(),
+                    });
                     poison.into_inner()
                 }
             };
@@ -47,10 +56,17 @@ impl GameSession {
                 issues.extend(secondary);
             }
         }
-        if issues.is_empty() { Ok(SessionShutdownReport { runtime: completion }) }
-        else {
+        if issues.is_empty() {
+            Ok(SessionShutdownReport {
+                runtime: completion,
+            })
+        } else {
             let primary = issues.remove(0);
-            Err(ShutdownFailure { primary, secondary: issues, completion })
+            Err(ShutdownFailure {
+                primary,
+                secondary: issues,
+                completion,
+            })
         }
     }
 }

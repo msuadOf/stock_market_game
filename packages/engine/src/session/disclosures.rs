@@ -19,9 +19,9 @@ use crate::company::operations::{CompanyCloseError, CompanyOperations};
 use crate::company::CompanyId;
 
 use crate::information::{
-    scheduled_instant, stable_company_offset,
-    AnnouncedEvent, AnnouncementRequest, InformationError, PublicLibrary,
-    PublicationId, PublicationOrigin, PublicationRequest, ScheduledReportKind, APPROVAL_HOUR,
+    scheduled_instant, stable_company_offset, AnnouncedEvent, AnnouncementRequest,
+    InformationError, PublicLibrary, PublicationId, PublicationOrigin, PublicationRequest,
+    ScheduledReportKind, APPROVAL_HOUR,
 };
 use crate::session::civil_clock::{CivilClock, CivilDayEndReport};
 use thiserror::Error;
@@ -231,7 +231,10 @@ impl DayEndDisclosureCtx<'_> {
     ) -> Result<PublicationId, DisclosureError> {
         let period = kind.landing_period(fiscal_year)?;
         let registered = self.ops.prepare_report_for_publication(
-            *company_id, period, kind.report_kind(), self.closing,
+            *company_id,
+            period,
+            kind.report_kind(),
+            self.closing,
         )?;
         let approval = CivilInstant::from_hms(instant.date(), APPROVAL_HOUR, 0, 0)?;
         let publication = self.library.publish_closed(

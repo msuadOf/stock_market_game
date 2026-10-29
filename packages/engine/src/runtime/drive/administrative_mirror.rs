@@ -126,7 +126,8 @@ impl super::RuntimeDriver {
                 return Err(self.world.stop_failed_administrative_read(error));
             }
             for (local, due, seed) in rows {
-                let id = self.account_by_owner((group, local))
+                let id = self
+                    .account_by_owner((group, local))
                     .filter(|_| (local as usize) < self.accounts_per_group);
                 let Some(id) = id else {
                     let error = invalid(format!("行政完整调度属主不在真实名册：{group}/{local}"));

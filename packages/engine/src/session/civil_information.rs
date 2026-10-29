@@ -216,7 +216,9 @@ impl GameSession {
                     }
                     if correction_prepare_rejected {
                         // 仅真实更正 prepare 的两类业务拒绝允许取消后重试 civil。
-                        return Err(protocol::CivilDayEndFailure::correction_prepare_rejected(error));
+                        return Err(protocol::CivilDayEndFailure::correction_prepare_rejected(
+                            error,
+                        ));
                     }
                 }
                 if terminal || market_installed {

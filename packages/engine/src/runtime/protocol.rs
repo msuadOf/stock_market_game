@@ -27,7 +27,13 @@ pub enum RoutedPrice {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DeskIn {
     /// 公司来源的明确 Buy＋Fixed；实际资格与预算仍由唯一 group producer 校验。
-    PlaceIssuerRepurchase { owner: Owner, request: super::RepurchaseRequestKey, price: i64, qty: u32, purse: i64 },
+    PlaceIssuerRepurchase {
+        owner: Owner,
+        request: super::RepurchaseRequestKey,
+        price: i64,
+        qty: u32,
+        purse: i64,
+    },
     /// 下单。买单 `purse` = 现金实体（最坏情况对价 + 佣金上限 + 过户费上限，已从组
     /// 账户实际扣除）；卖单 `purse` = 0、`qty` 股已从持仓实际扣除。
     Place {
@@ -168,7 +174,18 @@ impl std::fmt::Display for WorkerId {
 /// 分钟K交易阶段（B2 市场域观察面）：竞价分钟固定 565/900（旧契约
 /// `HistoryTradingPhase` 语义——竞价成交按清算完成事实归一，不从指示
 /// 价或成交时刻反推）。
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    serde::Serialize,
+    serde::Deserialize,
+    ts_rs::TS,
+)]
 #[serde(rename_all = "PascalCase")]
 #[ts(export)]
 pub enum MinuteBarPhase {
@@ -256,8 +273,7 @@ pub fn continuous_minute_of_day(
         });
     }
     // u128 乘防溢出（与 desk 原实现同式）。
-    let idx = u128::from(cont_tick)
-        * u128::from(crate::observation::GAME_INTRADAY_MINUTES_PER_DAY)
+    let idx = u128::from(cont_tick) * u128::from(crate::observation::GAME_INTRADAY_MINUTES_PER_DAY)
         / u128::from(continuous);
     let wall = if idx < 120 {
         570 + idx
@@ -270,10 +286,8 @@ pub fn continuous_minute_of_day(
     };
     u16::try_from(wall)
         .map(|minute| (minute, MinuteBarPhase::Continuous))
-        .map_err(|_| {
-            RuntimeError::ProtocolInvariant {
-                detail: format!("墙钟分钟越界：{wall}"),
-            }
+        .map_err(|_| RuntimeError::ProtocolInvariant {
+            detail: format!("墙钟分钟越界：{wall}"),
         })
 }
 
@@ -289,10 +303,8 @@ pub fn minute_bar_apply(
 ) -> Result<(), RuntimeError> {
     // 价恒非负（Money 语义）；负值/转换溢出均为事实链破坏——显式报错
     // （复核修复：不静默钳 0 兜底）。
-    let cents = u128::try_from(price.cents()).map_err(|_| {
-        RuntimeError::ProtocolInvariant {
-            detail: format!("分钟桶成交价非法（负值或转 u128 溢出）：{}", price.cents()),
-        }
+    let cents = u128::try_from(price.cents()).map_err(|_| RuntimeError::ProtocolInvariant {
+        detail: format!("分钟桶成交价非法（负值或转 u128 溢出）：{}", price.cents()),
     })?;
     let turnover = cents * u128::from(qty);
     let same_bucket = bars
@@ -600,24 +612,52 @@ pub struct PreparedRepurchaseResult {
     pub book: crate::plans::PlanBook,
     pub created: Vec<CreatedRepurchasePlan>,
     /// 本次输入行解析后的完整字段集合，keys 恰为本次 touched 计划；组权威仍保留全部投影。
-    pub projections: std::collections::BTreeMap<crate::plans::PlanId, RepurchaseExecutionProjection>,
+    pub projections:
+        std::collections::BTreeMap<crate::plans::PlanId, RepurchaseExecutionProjection>,
 }
 
 /// 已由上层确定合法到账时点的数值操作，金额为分、数量为股。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AdminOperation {
     /// 必须在同一次 Prepare 中配对一次正额 Credit 和完整执行读投影。
-    OpenIssuerRepurchase { local: LocalIdx, stock: StockIdx, issuer: crate::company::CompanyId },
+    OpenIssuerRepurchase {
+        local: LocalIdx,
+        stock: StockIdx,
+        issuer: crate::company::CompanyId,
+    },
     /// Simple 已批准回购的合成预算；批准与精确额度仍须由同事务 inspect 核验。
-    SyntheticBudgetCredit { local: LocalIdx, stock: StockIdx, execution_plan: AdminPlanReference, amount: i64 },
+    SyntheticBudgetCredit {
+        local: LocalIdx,
+        stock: StockIdx,
+        execution_plan: AdminPlanReference,
+        amount: i64,
+    },
     /// 回收本计划的精确未用预算；不得按共享账户现金推断回收额。
-    SyntheticBudgetRecycle { local: LocalIdx, stock: StockIdx, execution_plan: crate::plans::PlanId, amount: i64 },
+    SyntheticBudgetRecycle {
+        local: LocalIdx,
+        stock: StockIdx,
+        execution_plan: crate::plans::PlanId,
+        amount: i64,
+    },
     /// 配股缴款只扣本人raw可用现金，金额为分。
-    PaymentDebit { local: LocalIdx, stock: StockIdx, amount: i64 },
+    PaymentDebit {
+        local: LocalIdx,
+        stock: StockIdx,
+        amount: i64,
+    },
     /// 配股失败仅退回实缴本金，金额为分。
-    SubscriptionRefund { local: LocalIdx, stock: StockIdx, amount: i64 },
+    SubscriptionRefund {
+        local: LocalIdx,
+        stock: StockIdx,
+        amount: i64,
+    },
     /// 新股按实缴总额增加成本，不重复扣款或增加买入冻结。
-    SharesWithCost { local: LocalIdx, stock: StockIdx, qty: u32, subscription_cost: i64 },
+    SharesWithCost {
+        local: LocalIdx,
+        stock: StockIdx,
+        qty: u32,
+        subscription_cost: i64,
+    },
     CashDividend {
         local: LocalIdx,
         stock: StockIdx,
@@ -663,7 +703,10 @@ impl AdminOperation {
 pub struct InformationObservation {
     pub clock: super::InformationClockContext,
     pub through: crate::calendar::CivilInstant,
-    pub as_of_anchors: std::collections::BTreeMap<crate::StockId, crate::observation::information_clock::InformationTradingAnchor>,
+    pub as_of_anchors: std::collections::BTreeMap<
+        crate::StockId,
+        crate::observation::information_clock::InformationTradingAnchor,
+    >,
     pub market: std::sync::Arc<crate::strategy::MarketView>,
     pub company_facts: std::sync::Arc<crate::company::CompanyReadFacts>,
     /// CivilDayEnd 在同一私有候选内完成获知后裁剪两类记忆；普通观察不改变裁剪时点。
@@ -689,7 +732,11 @@ pub struct InformationPreparePayload {
 /// 个人快照含未变字段；按实际组内 local、AccountId 返回，不广播全局 local。
 #[derive(Clone, Debug)]
 pub struct PreparedInformationResult {
-    pub personals: Vec<(LocalIdx, crate::AccountId, super::world::BeliefParticipantSnapshot)>,
+    pub personals: Vec<(
+        LocalIdx,
+        crate::AccountId,
+        super::world::BeliefParticipantSnapshot,
+    )>,
     pub observed_through: Option<crate::calendar::CivilInstant>,
     pub library: std::sync::Arc<crate::information::PublicLibrary>,
     pub current_facts: std::sync::Arc<crate::company::CompanyReadFacts>,
@@ -713,7 +760,10 @@ pub enum InformationPrepareError {
     #[error("单点观察 facts 与 commit current facts 不一致")]
     ObservationFactsMismatch,
     #[error("信息重估失败：account={account:?}，{detail}")]
-    Revaluation { account: crate::AccountId, detail: String },
+    Revaluation {
+        account: crate::AccountId,
+        detail: String,
+    },
 }
 
 /// 每个公共阶段在本组的操作数；原 typed operands 仍只保留在 flat operations。
@@ -733,7 +783,11 @@ pub(crate) struct PreparedAdminOperationPosition {
 #[derive(Clone, Debug)]
 pub(crate) struct PreparedTaxStageAccounts {
     pub stage_index: u32,
-    pub accounts: Vec<(LocalIdx, std::sync::Arc<super::group::GroupAccount>, std::sync::Arc<super::group::GroupAccount>)>,
+    pub accounts: Vec<(
+        LocalIdx,
+        std::sync::Arc<super::group::GroupAccount>,
+        std::sync::Arc<super::group::GroupAccount>,
+    )>,
 }
 
 #[derive(Clone, Debug)]
@@ -853,11 +907,25 @@ pub struct GroupFlushWitnessForTest {
 /// FIFO + 收束因果序保证批次先于下一 Start 被处理）。
 pub enum GroupIn {
     /// 行政静点操作；事务生命周期不进入普通 tick 日志。
-    AdminPrepare { id: AdminTransactionId, operations: Vec<AdminOperation>, stage_layout: Option<AdminStageLayout>, information: Option<InformationPreparePayload>, information_clock: Option<super::world::AuthenticatedInformationClock>, repurchase: Option<Vec<RepurchaseProjectionInput>> },
-    AdminCommit { id: AdminTransactionId },
-    AdminAbort { id: AdminTransactionId },
+    AdminPrepare {
+        id: AdminTransactionId,
+        operations: Vec<AdminOperation>,
+        stage_layout: Option<AdminStageLayout>,
+        information: Option<InformationPreparePayload>,
+        information_clock: Option<super::world::AuthenticatedInformationClock>,
+        repurchase: Option<Vec<RepurchaseProjectionInput>>,
+    },
+    AdminCommit {
+        id: AdminTransactionId,
+    },
+    AdminAbort {
+        id: AdminTransactionId,
+    },
     #[cfg(test)]
-    AdminFaultForTest { phase: AdminPhase, fault: AdminFault },
+    AdminFaultForTest {
+        phase: AdminPhase,
+        fault: AdminFault,
+    },
     /// 仅下一轮最终 flush 搬移一批真实 Ops；各股 final marker 仍按原协议各一次。
     #[cfg(test)]
     MisrouteOpsOnceForTest {
@@ -868,7 +936,9 @@ pub enum GroupIn {
     },
     /// 仅测试：本组各股 final 全部真实发送成功后才发一次信号。
     #[cfg(test)]
-    SignalFinalFlushOnceForTest { sent: std::sync::mpsc::Sender<()> },
+    SignalFinalFlushOnceForTest {
+        sent: std::sync::mpsc::Sender<()>,
+    },
     /// 仅测试：断开本组已有的交易部 sender clone，保留 World 的 Start 通道。
     #[cfg(test)]
     DisconnectDeskSenderForTest {
@@ -900,7 +970,9 @@ pub enum GroupIn {
         tick: u64,
     },
     /// 仅撤销 Seal 之后的日结增量，不得倒放已发布的普通 tick。
-    AbortDayEnd { tick: u64 },
+    AbortDayEnd {
+        tick: u64,
+    },
     /// 日结相位（F §6.2）：Drain 回流落账 → T+1 解冻 → AdminBatch 权益落账
     /// （全部进可逆日志）→ GroupDayDone 回执。
     DayEnd(Box<DayEndDirective>),
@@ -919,9 +991,13 @@ pub enum GroupIn {
     /// 信念个人态读面（D3a-2b：构造投影同源校验/后续驱动面）。
     EchoBelief,
     /// 已验证静点的完整个人态读取；不消费 dirty/pending。
-    EchoPersonalFull { source: super::source::WorldMirrorSource },
+    EchoPersonalFull {
+        source: super::source::WorldMirrorSource,
+    },
     /// 静点只读捕获当前共同输入及最后成功观察，不消费 dirty/pending。
-    EchoInformationHandover { source: super::source::WorldMirrorSource },
+    EchoInformationHandover {
+        source: super::source::WorldMirrorSource,
+    },
     /// 仅 prepared 世界首个 Start 前安装完整初值；不是常态 INFO 或 Admin。
     InstallInitialInformationHandover {
         source: super::source::WorldMirrorSource,
@@ -930,7 +1006,10 @@ pub enum GroupIn {
         library: std::sync::Arc<crate::information::PublicLibrary>,
         facts: std::sync::Arc<crate::company::CompanyReadFacts>,
         accounts: Vec<(crate::AccountId, super::group::GroupAccount)>,
-        personals: Vec<(crate::AccountId, Option<super::world::BeliefParticipantSnapshot>)>,
+        personals: Vec<(
+            crate::AccountId,
+            Option<super::world::BeliefParticipantSnapshot>,
+        )>,
         /// 完整移交的内部 (next_due, seed)；不使用 EchoAttention 的布局编码。
         attention: Vec<(crate::AccountId, u64, u64)>,
         inherited_calendar: Option<super::world::InheritedCalendarCommit>,
@@ -1178,8 +1257,21 @@ impl RestingDelta {
 #[cfg(test)]
 #[derive(Debug)]
 pub enum DeskFatalCleanupEventForTest {
-    AbortApplied { stock: StockIdx, tick: u64, cur_tick: u64, calendar_tick: Option<u64> },
-    OpsDequeued { stock: StockIdx, tick: u64, round: u32, group: GroupIdx, final_flush: bool, ops_len: usize, cur_tick: u64 },
+    AbortApplied {
+        stock: StockIdx,
+        tick: u64,
+        cur_tick: u64,
+        calendar_tick: Option<u64>,
+    },
+    OpsDequeued {
+        stock: StockIdx,
+        tick: u64,
+        round: u32,
+        group: GroupIdx,
+        final_flush: bool,
+        ops_len: usize,
+        cur_tick: u64,
+    },
 }
 
 /// 仅具名失败拍使用的有界观察门；不替代真实消息、回滚或处理结果。
@@ -1350,7 +1442,11 @@ pub enum UpMsg {
     GroupPersonalFull {
         group: GroupIdx,
         source: super::source::WorldMirrorSource,
-        slots: Vec<(LocalIdx, crate::AccountId, Option<super::world::BeliefParticipantSnapshot>)>,
+        slots: Vec<(
+            LocalIdx,
+            crate::AccountId,
+            Option<super::world::BeliefParticipantSnapshot>,
+        )>,
     },
     GroupInformationHandover {
         group: GroupIdx,
@@ -1435,8 +1531,7 @@ pub enum UpMsg {
         /// Seal 的 apply_deferred 之后——含清仓经历转移行；此前随
         /// GroupReport 决策相构建早于延迟相，终轮清仓后发布/session
         /// 仍留持仓经历）。稀疏语义不变（dirty ∪ 跨 Start pending）。
-        belief_sparse:
-            std::sync::Arc<Vec<(LocalIdx, super::world::BeliefParticipantSnapshot)>>,
+        belief_sparse: std::sync::Arc<Vec<(LocalIdx, super::world::BeliefParticipantSnapshot)>>,
     },
     /// D5 #4 retail 链：本拍零售决策 trace 回执（瞬态——每拍清+装）。
     RetailTraces {
@@ -1479,12 +1574,32 @@ pub enum UpMsg {
 impl std::fmt::Debug for UpMsg {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            UpMsg::PendingStartRejected(rejection) => write!(f, "PendingStartRejected(group={}, tick={}, prior_tick={}, error={:?})", rejection.group, rejection.tick, rejection.prior_tick, rejection.error),
-            UpMsg::AdminReceipt { id, group, phase, result } => write!(f, "AdminReceipt({id:?}, group={group}, phase={phase:?}, ok={})", result.is_ok()),
+            UpMsg::PendingStartRejected(rejection) => write!(
+                f,
+                "PendingStartRejected(group={}, tick={}, prior_tick={}, error={:?})",
+                rejection.group, rejection.tick, rejection.prior_tick, rejection.error
+            ),
+            UpMsg::AdminReceipt {
+                id,
+                group,
+                phase,
+                result,
+            } => write!(
+                f,
+                "AdminReceipt({id:?}, group={group}, phase={phase:?}, ok={})",
+                result.is_ok()
+            ),
             UpMsg::DayEndAborted { who, tick } => write!(f, "DayEndAborted({who}, tick={tick})"),
             #[cfg(test)]
-            UpMsg::GroupTickForTest { group, tick, committed_tick } => {
-                write!(f, "GroupTickForTest(group={group}, tick={tick}, committed={committed_tick})")
+            UpMsg::GroupTickForTest {
+                group,
+                tick,
+                committed_tick,
+            } => {
+                write!(
+                    f,
+                    "GroupTickForTest(group={group}, tick={tick}, committed={committed_tick})"
+                )
             }
             UpMsg::DeskResting {
                 stock,
@@ -1520,7 +1635,11 @@ impl std::fmt::Debug for UpMsg {
             UpMsg::GroupOpenDerivations {
                 group, derivations, ..
             } => {
-                write!(f, "GroupOpenDerivations(group={group}, n={})", derivations.len())
+                write!(
+                    f,
+                    "GroupOpenDerivations(group={group}, n={})",
+                    derivations.len()
+                )
             }
             UpMsg::DeskFinal(x) => write!(f, "DeskFinal(stock={})", x.stock),
             UpMsg::GroupObservations { group, .. } => {
@@ -1532,8 +1651,12 @@ impl std::fmt::Debug for UpMsg {
             UpMsg::GroupPersonalFull { group, slots, .. } => {
                 write!(f, "GroupPersonalFull(group={group}, n={})", slots.len())
             }
-            UpMsg::GroupInformationHandover { group, .. } => write!(f, "GroupInformationHandover(group={group})"),
-            UpMsg::GroupInformationHandoverInstalled { group, .. } => write!(f, "GroupInformationHandoverInstalled(group={group})"),
+            UpMsg::GroupInformationHandover { group, .. } => {
+                write!(f, "GroupInformationHandover(group={group})")
+            }
+            UpMsg::GroupInformationHandoverInstalled { group, .. } => {
+                write!(f, "GroupInformationHandoverInstalled(group={group})")
+            }
             UpMsg::GroupDeliveryDone { group, updates } => {
                 write!(f, "GroupDeliveryDone(group={group}, n={})", updates.len())
             }
@@ -1768,7 +1891,11 @@ pub struct DeskReport {
 pub enum RuntimeError {
     /// World 尚未形成时的主错误与全部已启动 worker 的回收结果。
     #[error("{primary}；native construction 已 join {joined_workers} 个 worker；回收错误={cleanup_errors:?}")]
-    ConstructionFailure { primary: String, joined_workers: usize, cleanup_errors: Vec<String> },
+    ConstructionFailure {
+        primary: String,
+        joined_workers: usize,
+        cleanup_errors: Vec<String>,
+    },
     /// wasm 宿主永久 abort，与 tick Abort、相位超时及通道断连分开报告。
     #[cfg(target_family = "wasm")]
     #[error("wasm 宿主已永久终止：phase={phase:?}, who={who:?}")]
@@ -1777,7 +1904,10 @@ pub enum RuntimeError {
         who: Option<WorkerId>,
     },
     #[error("组 {group} 信息 prepare 失败：{error}")]
-    InformationPrepare { group: GroupIdx, error: InformationPrepareError },
+    InformationPrepare {
+        group: GroupIdx,
+        error: InformationPrepareError,
+    },
     /// 看门狗超时（携带相位上下文——相位感知，不静默放大全局阈值）。
     #[error("看门狗超时：phase={phase:?}, waited={waited:?}：{detail}")]
     Watchdog {

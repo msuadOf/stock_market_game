@@ -50,7 +50,10 @@ pub(super) type Job = Box<dyn FnOnce() + Send>;
 /// 不新增生产开关，不读取全进程计数，也不替换提交或旧状态的 Drop。
 #[cfg(all(test, not(target_family = "wasm")))]
 pub(super) mod controlled {
-    use super::{backend_degradation, dispatch_on, Backend, DeferredDropDegradation, Job, RunningBackend, Submission};
+    use super::{
+        backend_degradation, dispatch_on, Backend, DeferredDropDegradation, Job, RunningBackend,
+        Submission,
+    };
     use std::any::Any;
     use std::cell::RefCell;
     use std::sync::atomic::{AtomicBool, Ordering};
@@ -144,7 +147,6 @@ pub(super) mod controlled {
         });
         (output, degradation.flatten())
     }
-
 }
 
 /// 有界队列容量。裁决 (d) 后每条 Job 是一个旧权威字段（账户页/账本/日历等
@@ -248,9 +250,13 @@ pub fn defer<T: Send + 'static>(value: T) {
     #[cfg(feature = "verification-harness")]
     {
         use crate::session::verify_metrics::JobKind;
-        let kind = if std::any::TypeId::of::<T>() == std::any::TypeId::of::<super::CommittableSessionState>() {
+        let kind = if std::any::TypeId::of::<T>()
+            == std::any::TypeId::of::<super::CommittableSessionState>()
+        {
             JobKind::CommitState
-        } else if std::any::TypeId::of::<T>() == std::any::TypeId::of::<super::protocol::ProtocolCheckpoint>() {
+        } else if std::any::TypeId::of::<T>()
+            == std::any::TypeId::of::<super::protocol::ProtocolCheckpoint>()
+        {
             JobKind::BatchCheckpoint
         } else {
             JobKind::Other
@@ -287,17 +293,29 @@ pub(super) fn defer_swap<T: Send + 'static>(
 
 /// Kind 随本次移交值进入 closure，不用线程本位的隐式标签。
 #[cfg(feature = "verification-harness")]
-pub(in crate::session) fn defer_tagged<T: Send + 'static>(value: T, kind: crate::session::verify_metrics::JobKind) {
+pub(in crate::session) fn defer_tagged<T: Send + 'static>(
+    value: T,
+    kind: crate::session::verify_metrics::JobKind,
+) {
     defer_value(value, kind);
 }
 #[cfg(not(feature = "verification-harness"))]
-fn defer_tagged<T: Send + 'static>(value: T) { defer_value(value); }
+fn defer_tagged<T: Send + 'static>(value: T) {
+    defer_value(value);
+}
 
-fn defer_value<T: Send + 'static>(value: T, #[cfg(feature = "verification-harness")] kind: crate::session::verify_metrics::JobKind) {
+fn defer_value<T: Send + 'static>(
+    value: T,
+    #[cfg(feature = "verification-harness")] kind: crate::session::verify_metrics::JobKind,
+) {
     #[cfg(all(test, not(target_family = "wasm")))]
     controlled::observe(&value);
     #[cfg(feature = "verification-harness")]
-    let (value, ticket) = crate::session::verify_metrics::Tracked::new(value, &crate::session::verify_metrics::METRICS, kind);
+    let (value, ticket) = crate::session::verify_metrics::Tracked::new(
+        value,
+        &crate::session::verify_metrics::METRICS,
+        kind,
+    );
     #[cfg(not(target_family = "wasm"))]
     {
         let job: Job = Box::new(move || drop(value));
@@ -308,13 +326,19 @@ fn defer_value<T: Send + 'static>(value: T, #[cfg(feature = "verification-harnes
         };
         #[cfg(not(test))]
         let outcome = dispatch_on(backend(), job);
-        if outcome == Submission::Queued { DEFERRED_COUNT.fetch_add(1, Ordering::Relaxed); }
+        if outcome == Submission::Queued {
+            DEFERRED_COUNT.fetch_add(1, Ordering::Relaxed);
+        }
         #[cfg(feature = "verification-harness")]
         ticket.outcome(match outcome {
             Submission::Queued => crate::session::verify_metrics::Outcome::Queued,
             Submission::FullInline => crate::session::verify_metrics::Outcome::FullInline,
-            Submission::DisconnectedInline => crate::session::verify_metrics::Outcome::DisconnectedInline,
-            Submission::SpawnFailedInline => crate::session::verify_metrics::Outcome::SpawnFailedInline,
+            Submission::DisconnectedInline => {
+                crate::session::verify_metrics::Outcome::DisconnectedInline
+            }
+            Submission::SpawnFailedInline => {
+                crate::session::verify_metrics::Outcome::SpawnFailedInline
+            }
         });
     }
     #[cfg(target_family = "wasm")]
@@ -391,38 +415,59 @@ pub fn host_deferred_degradation() -> Option<DeferredDropDegradation> {
 /// 仅诊断用的尾部 drain 失败，不影响任何 tick 提交。
 #[cfg(feature = "verification-harness")]
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
-pub enum DrainFailure { Timeout, WorkerDisconnected, ProducerStillActive, LedgerInvalid(u8), InvalidAcknowledgement }
+pub enum DrainFailure {
+    Timeout,
+    WorkerDisconnected,
+    ProducerStillActive,
+    LedgerInvalid(u8),
+    InvalidAcknowledgement,
+}
 
 /// Producer 已经退出后，由同一 FIFO 队列发 marker 并等待执行回执。
 /// 在 marker 前后登记数变化或仍有未完成 id，都拒绝称为完整 drain。
 #[cfg(all(feature = "verification-harness", not(target_family = "wasm")))]
-fn drain_running(running: &RunningBackend, metrics: &super::verify_metrics::VerifyMetrics, timeout: std::time::Duration) -> Result<super::verify_metrics::VerifySnapshot, DrainFailure> {
+fn drain_running(
+    running: &RunningBackend,
+    metrics: &super::verify_metrics::VerifyMetrics,
+    timeout: std::time::Duration,
+) -> Result<super::verify_metrics::VerifySnapshot, DrainFailure> {
     let deadline = crate::clock::Instant::now() + timeout;
-    let before = metrics.snapshot().map_err(|e| DrainFailure::LedgerInvalid(e.code))?;
-    if before.actor_producers != 0 { return Err(DrainFailure::ProducerStillActive); }
+    let before = metrics
+        .snapshot()
+        .map_err(|e| DrainFailure::LedgerInvalid(e.code))?;
+    if before.actor_producers != 0 {
+        return Err(DrainFailure::ProducerStillActive);
+    }
     let (ack_tx, ack_rx) = mpsc::sync_channel(1);
     let mut marker: Job = Box::new(move || {
         // 请求方 deadline 已结束时接收端会关闭；这里只是验证回执被取消，不是交易失败。
         let _ = ack_tx.send(());
     });
     loop {
-        if crate::clock::Instant::now() >= deadline { return Err(DrainFailure::Timeout); }
+        if crate::clock::Instant::now() >= deadline {
+            return Err(DrainFailure::Timeout);
+        }
         match running.sender.try_send(marker) {
             Ok(()) => break,
             Err(mpsc::TrySendError::Full(returned)) => {
                 marker = returned;
                 std::thread::yield_now();
             }
-            Err(mpsc::TrySendError::Disconnected(_)) => return Err(DrainFailure::WorkerDisconnected),
+            Err(mpsc::TrySendError::Disconnected(_)) => {
+                return Err(DrainFailure::WorkerDisconnected)
+            }
         }
     }
     match ack_rx.recv_timeout(deadline.saturating_duration_since(crate::clock::Instant::now())) {
-        Ok(()) => {},
+        Ok(()) => {}
         Err(mpsc::RecvTimeoutError::Timeout) => return Err(DrainFailure::Timeout),
         Err(mpsc::RecvTimeoutError::Disconnected) => return Err(DrainFailure::WorkerDisconnected),
     }
-    let after = metrics.snapshot().map_err(|e| DrainFailure::LedgerInvalid(e.code))?;
-    if before.registered != after.registered || after.actor_producers != 0 || !after.all_ids_paired {
+    let after = metrics
+        .snapshot()
+        .map_err(|e| DrainFailure::LedgerInvalid(e.code))?;
+    if before.registered != after.registered || after.actor_producers != 0 || !after.all_ids_paired
+    {
         return Err(DrainFailure::ProducerStillActive);
     }
     Ok(after)
@@ -430,13 +475,21 @@ fn drain_running(running: &RunningBackend, metrics: &super::verify_metrics::Veri
 
 #[cfg(feature = "verification-harness")]
 #[doc(hidden)]
-pub fn drain(timeout: std::time::Duration) -> Result<super::verify_metrics::VerifySnapshot, DrainFailure> {
+pub fn drain(
+    timeout: std::time::Duration,
+) -> Result<super::verify_metrics::VerifySnapshot, DrainFailure> {
     #[cfg(not(target_family = "wasm"))]
     if let Some(Backend::Running(running)) = BACKEND.get() {
         return drain_running(running, &super::verify_metrics::METRICS, timeout);
     }
-    let snap = super::verify_metrics::METRICS.snapshot().map_err(|e| DrainFailure::LedgerInvalid(e.code))?;
-    if snap.actor_producers == 0 && snap.all_ids_paired { Ok(snap) } else { Err(DrainFailure::ProducerStillActive) }
+    let snap = super::verify_metrics::METRICS
+        .snapshot()
+        .map_err(|e| DrainFailure::LedgerInvalid(e.code))?;
+    if snap.actor_producers == 0 && snap.all_ids_paired {
+        Ok(snap)
+    } else {
+        Err(DrainFailure::ProducerStillActive)
+    }
 }
 
 // D5 wasm 方向 A：deferred_drop 测试面依赖专用线程 backend（wasm 宿主
@@ -458,9 +511,12 @@ mod tests {
         let backend = running(sender);
         std::thread::scope(|scope| {
             scope.spawn(move || {
-                for _ in 0..2 { receiver.recv().unwrap()(); }
+                for _ in 0..2 {
+                    receiver.recv().unwrap()();
+                }
             });
-            let snap = drain_running(&backend, &metrics, std::time::Duration::from_secs(1)).unwrap();
+            let snap =
+                drain_running(&backend, &metrics, std::time::Duration::from_secs(1)).unwrap();
             assert!(snap.all_ids_paired);
             assert_eq!(dropped.load(Ordering::SeqCst), 1);
         });
@@ -469,28 +525,39 @@ mod tests {
     #[test]
     #[cfg(all(feature = "verification-harness", not(target_family = "wasm")))]
     fn fifo_barrier_rejects_a_late_registration_even_when_all_ids_completed() {
-        use super::super::verify_metrics::{VerifyMetrics, Tracked, JobKind, Outcome};
+        use super::super::verify_metrics::{JobKind, Outcome, Tracked, VerifyMetrics};
         let metrics = Arc::new(VerifyMetrics::new());
         let worker_metrics = metrics.clone();
         let (sender, receiver) = mpsc::sync_channel::<Job>(2);
-        sender.try_send(Box::new(move || {
-            let (value, ticket) = Tracked::new((), worker_metrics.as_ref(), JobKind::Other);
-            drop(value);
-            ticket.outcome(Outcome::Queued);
-        })).unwrap();
+        sender
+            .try_send(Box::new(move || {
+                let (value, ticket) = Tracked::new((), worker_metrics.as_ref(), JobKind::Other);
+                drop(value);
+                ticket.outcome(Outcome::Queued);
+            }))
+            .unwrap();
         let backend = running(sender);
         std::thread::scope(|scope| {
             scope.spawn(move || {
                 // 等待 marker 入队才执行前一个 Job，确保注册发生在 before-snapshot 后。
                 let earlier = receiver.recv().unwrap();
                 let marker = receiver.recv().unwrap();
-                earlier(); marker();
+                earlier();
+                marker();
             });
-            assert!(matches!(drain_running(&backend, metrics.as_ref(), std::time::Duration::from_secs(1)),
-                Err(DrainFailure::ProducerStillActive)));
+            assert!(matches!(
+                drain_running(
+                    &backend,
+                    metrics.as_ref(),
+                    std::time::Duration::from_secs(1)
+                ),
+                Err(DrainFailure::ProducerStillActive)
+            ));
         });
-        assert!(metrics.snapshot().unwrap().all_ids_paired,
-            "仅看到计数相等会误验收，marker必须同时拒绝迟到注册");
+        assert!(
+            metrics.snapshot().unwrap().all_ids_paired,
+            "仅看到计数相等会误验收，marker必须同时拒绝迟到注册"
+        );
     }
 
     #[test]
@@ -500,11 +567,15 @@ mod tests {
         let (sender, receiver) = mpsc::sync_channel::<Job>(1);
         drop(receiver);
         let backend = running(sender);
-        assert!(matches!(drain_running(&backend, &metrics, std::time::Duration::from_millis(100)),
-            Err(DrainFailure::WorkerDisconnected)));
+        assert!(matches!(
+            drain_running(&backend, &metrics, std::time::Duration::from_millis(100)),
+            Err(DrainFailure::WorkerDisconnected)
+        ));
         metrics.actor_producers.store(1, Ordering::Release);
-        assert!(matches!(drain_running(&backend, &metrics, std::time::Duration::from_millis(100)),
-            Err(DrainFailure::ProducerStillActive)));
+        assert!(matches!(
+            drain_running(&backend, &metrics, std::time::Duration::from_millis(100)),
+            Err(DrainFailure::ProducerStillActive)
+        ));
     }
 
     #[test]
@@ -558,7 +629,9 @@ mod tests {
             match submit(&backend, Box::new(move || drop(probe))) {
                 Submission::Queued => queued += 1,
                 Submission::FullInline => synchronous += 1,
-                Submission::DisconnectedInline | Submission::SpawnFailedInline => panic!("受控 receiver 不应退出或启动失败"),
+                Submission::DisconnectedInline | Submission::SpawnFailedInline => {
+                    panic!("受控 receiver 不应退出或启动失败")
+                }
             }
         }
         assert_eq!(queued, QUEUE_CAPACITY);
@@ -662,9 +735,17 @@ mod tests {
         let dropped = Arc::new(AtomicUsize::new(0));
         for _ in 0..2 {
             let probe = CountingProbe(dropped.clone());
-            assert_eq!(dispatch_on(&built, Box::new(move || drop(probe))), Submission::SpawnFailedInline, "创建失败的同一 backend 不能成功入队或自动重试");
+            assert_eq!(
+                dispatch_on(&built, Box::new(move || drop(probe))),
+                Submission::SpawnFailedInline,
+                "创建失败的同一 backend 不能成功入队或自动重试"
+            );
         }
-        assert_eq!(dropped.load(Ordering::SeqCst), 2, "两个真实派发值都已同步释放");
+        assert_eq!(
+            dropped.load(Ordering::SeqCst),
+            2,
+            "两个真实派发值都已同步释放"
+        );
         assert_eq!(
             backend_degradation(&built),
             Some(DeferredDropDegradation::SpawnFailed { os_errno })
@@ -680,9 +761,13 @@ mod tests {
         let (sender, receiver) = mpsc::sync_channel(QUEUE_CAPACITY);
         std::thread::spawn(move || drop(receiver)).join().unwrap();
         let before = deferred_count();
-        let ((), degradation) = controlled::with_running_backend(sender, |_| {}, || {
-            defer(CountingProbe(dropped.clone()));
-        });
+        let ((), degradation) = controlled::with_running_backend(
+            sender,
+            |_| {},
+            || {
+                defer(CountingProbe(dropped.clone()));
+            },
+        );
         assert_eq!(dropped.load(Ordering::SeqCst), 1);
         assert_eq!(deferred_count(), before);
         assert_eq!(
@@ -697,10 +782,14 @@ mod tests {
     fn full_queue_backpressure_is_not_a_degradation() {
         let dropped = Arc::new(AtomicUsize::new(0));
         let (sender, receiver) = mpsc::sync_channel(1);
-        let ((), degradation) = controlled::with_running_backend(sender, |_| {}, || {
-            defer(CountingProbe(dropped.clone()));
-            defer(CountingProbe(dropped.clone()));
-        });
+        let ((), degradation) = controlled::with_running_backend(
+            sender,
+            |_| {},
+            || {
+                defer(CountingProbe(dropped.clone()));
+                defer(CountingProbe(dropped.clone()));
+            },
+        );
         drop(receiver);
         assert_eq!(dropped.load(Ordering::SeqCst), 2);
         assert_eq!(degradation, None, "FullInline 是正常背压，不算退化");

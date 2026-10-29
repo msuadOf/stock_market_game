@@ -16,21 +16,16 @@
 use crate::book::{Arena, FillReceipt, ForeignId, Placement, StockBook};
 use crate::npc::{FeeTable, Npc, XPos};
 use crate::setup::ProtoConfig;
-use crate::worker::{
-    ChunkStats, MarketSnapshot, RoutedPrice, ThreadGauge, TickDone,
-};
+use crate::stock_identity::StockIdentity;
+use crate::worker::{ChunkStats, MarketSnapshot, RoutedPrice, ThreadGauge, TickDone};
 use crate::xsetup::{build_cross_roster, CrossSetupInfo};
 use crate::ProtoError;
-use crate::stock_identity::StockIdentity;
 use engine::money::Money;
 use engine::session::SplitMix64;
-use engine::strategy::{
-    decide_data, Intent, MarketView, PositionView, SelfView, StockView,
-};
+use engine::strategy::{decide_data, Intent, MarketView, PositionView, SelfView, StockView};
 use std::collections::{BTreeMap, HashMap};
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{Arc, RwLock};
-
 
 #[cfg(test)]
 mod identity_tests {
@@ -241,7 +236,10 @@ pub fn xworker_main(
         .iter()
         .map(|s| {
             let band = (s.initial_price_cents as f64 * s.limit_pct) as i64;
-            ((s.initial_price_cents - band).max(1), s.initial_price_cents + band)
+            (
+                (s.initial_price_cents - band).max(1),
+                s.initial_price_cents + band,
+            )
         })
         .collect();
     let initial_prices: Vec<i64> = cfg.stocks.iter().map(|s| s.initial_price_cents).collect();
@@ -337,7 +335,12 @@ pub fn xworker_main(
                         pending_decide = decide_calls;
                         pending_intents = intents;
                         if xdbg {
-                            eprintln!("[w{}] Phase1 完成 ops={} tick={}", stock_idx, ops.len(), cur_tick);
+                            eprintln!(
+                                "[w{}] Phase1 完成 ops={} tick={}",
+                                stock_idx,
+                                ops.len(),
+                                cur_tick
+                            );
                         }
                         if up_tx.send(XUp::Phase1(ops)).is_err() {
                             result = Err(ProtoError::ChannelClosed("up_tx Phase1".into()));
@@ -360,7 +363,12 @@ pub fn xworker_main(
                             eprintln!("[w{stock_idx}] {v}");
                         }
                     }
-                    eprintln!("[w{}] 收到 Route ops={} tick={}", stock_idx, ops.len(), cur_tick);
+                    eprintln!(
+                        "[w{}] 收到 Route ops={} tick={}",
+                        stock_idx,
+                        ops.len(),
+                        cur_tick
+                    );
                 }
                 // ── 相位 2：先撤后挂 + 撮合，回执随 TickDone 上交 ──
                 let arena_rc = Arc::clone(&arena);
@@ -587,15 +595,7 @@ fn phase1(
                     handles.push(scope.spawn(move || {
                         gauge.enter();
                         let out = decide_range_x(
-                            roster,
-                            masks,
-                            from,
-                            to,
-                            home,
-                            identity,
-                            views,
-                            game_cfg,
-                            cfg.seed,
+                            roster, masks, from, to, home, identity, views, game_cfg, cfg.seed,
                             tick,
                         );
                         gauge.exit();
@@ -651,12 +651,10 @@ fn phase1(
                 }
             }
             let Some((side, rp, qty)) = (match &rec.intent {
-                Intent::PlaceLimit { side, price, qty, .. } => {
-                    Some((*side, RoutedPrice::from_limit(price, false), *qty))
-                }
-                Intent::PlaceMarket { side, qty, .. } => {
-                    Some((*side, RoutedPrice::Market, *qty))
-                }
+                Intent::PlaceLimit {
+                    side, price, qty, ..
+                } => Some((*side, RoutedPrice::from_limit(price, false), *qty)),
+                Intent::PlaceMarket { side, qty, .. } => Some((*side, RoutedPrice::Market, *qty)),
                 // 策略层不产 Cancel（会话层职责）；出现即显式计数，不静默。
                 Intent::Cancel { .. } => None,
             }) else {
@@ -693,17 +691,18 @@ fn phase1(
                             RoutedPrice::Fixed(p) => p,
                             _ => upper_t,
                         };
-                        let value = p
-                            .checked_mul(qty as i64)
-                            .ok_or_else(|| ProtoError::Overflow {
-                                op: "escrow price*qty",
-                                operand: format!("{p}*{qty}"),
-                            })?;
-                        let escrow = value
-                            .checked_add(fees.commission(value)?)
-                            .ok_or_else(|| ProtoError::Overflow {
-                                op: "escrow+fee",
-                                operand: format!("{value}"),
+                        let value =
+                            p.checked_mul(qty as i64)
+                                .ok_or_else(|| ProtoError::Overflow {
+                                    op: "escrow price*qty",
+                                    operand: format!("{p}*{qty}"),
+                                })?;
+                        let escrow =
+                            value.checked_add(fees.commission(value)?).ok_or_else(|| {
+                                ProtoError::Overflow {
+                                    op: "escrow+fee",
+                                    operand: format!("{value}"),
+                                }
                             })?;
                         if npc.available_cash() < escrow {
                             book.skipped_orders += 1;
@@ -724,10 +723,7 @@ fn phase1(
                     }
                     engine::orderbook::Side::Sell => {
                         // 次级仓可卖 escrow（主仓卖出必然 target==home，不会走到这里）。
-                        let Some(pos) = npc
-                            .secondaries
-                            .iter_mut()
-                            .find(|p| p.stock_idx == target)
+                        let Some(pos) = npc.secondaries.iter_mut().find(|p| p.stock_idx == target)
                         else {
                             book.skipped_orders += 1;
                             *foreign_skips += 1;
@@ -803,8 +799,16 @@ fn apply_routed_place(
         return Ok(());
     }
     let id = (h, npc);
-    let buy_cash = if side == engine::orderbook::Side::Buy { escrow_cash } else { 0 };
-    let sell_shares = if side == engine::orderbook::Side::Sell { qty } else { 0 };
+    let buy_cash = if side == engine::orderbook::Side::Buy {
+        escrow_cash
+    } else {
+        0
+    };
+    let sell_shares = if side == engine::orderbook::Side::Sell {
+        qty
+    } else {
+        0
+    };
     if crate::xdbg() {
         eprintln!(
             "[place] stock={home_stock} tick={tick} id={id:?} side={side:?} price={price:?} qty={qty} escrow={escrow_cash} desk_entry={:?} free={:?}",
@@ -872,24 +876,27 @@ fn apply_receipts(
     for r in receipts {
         match r {
             FillReceipt::BuyFill {
-                npc, stock, qty, charge, ..
+                npc,
+                stock,
+                qty,
+                charge,
+                ..
             } => {
                 receipts_applied[0] += 1;
                 let acct = &mut arena.accounts[npc as usize];
-                acct.reserved_cash = acct
-                    .reserved_cash
-                    .checked_sub(charge)
-                    .ok_or_else(|| ProtoError::InvalidConfig(format!(
+                acct.reserved_cash = acct.reserved_cash.checked_sub(charge).ok_or_else(|| {
+                    ProtoError::InvalidConfig(format!(
                         "BuyFill 回执导致 reserved_cash 下溢：npc={npc} charge={charge}"
-                    )))?;
-                acct.cash = acct
-                    .cash
-                    .checked_sub(charge)
-                    .ok_or_else(|| ProtoError::NegativeCash {
-                        code: format!("npc-{}", npc),
-                        npc,
-                        cash: acct.cash - charge,
-                    })?;
+                    ))
+                })?;
+                acct.cash =
+                    acct.cash
+                        .checked_sub(charge)
+                        .ok_or_else(|| ProtoError::NegativeCash {
+                            code: format!("npc-{}", npc),
+                            npc,
+                            cash: acct.cash - charge,
+                        })?;
                 // 次级仓找或建（运行期掩码静态 ⇒ 理论必命中；建分支防御保留）。
                 if let Some(pos) = acct.secondaries.iter_mut().find(|p| p.stock_idx == stock) {
                     pos.qty += qty;
@@ -906,7 +913,11 @@ fn apply_receipts(
                 }
             }
             FillReceipt::SellFill {
-                npc, stock, qty, net, ..
+                npc,
+                stock,
+                qty,
+                net,
+                ..
             } => {
                 receipts_applied[1] += 1;
                 let acct = &mut arena.accounts[npc as usize];
@@ -915,31 +926,31 @@ fn apply_receipts(
                         "SellFill 回执无对应次级仓：npc={npc} stock={stock}"
                     )));
                 };
-                pos.qty = pos
-                    .qty
-                    .checked_sub(qty)
-                    .ok_or_else(|| ProtoError::InvalidConfig(format!(
+                pos.qty = pos.qty.checked_sub(qty).ok_or_else(|| {
+                    ProtoError::InvalidConfig(format!(
                         "SellFill 回执导致持仓下溢：npc={npc} stock={stock}"
-                    )))?;
-                pos.reserved_shares = pos
-                    .reserved_shares
-                    .checked_sub(qty)
-                    .ok_or_else(|| ProtoError::InvalidConfig(format!(
+                    ))
+                })?;
+                pos.reserved_shares = pos.reserved_shares.checked_sub(qty).ok_or_else(|| {
+                    ProtoError::InvalidConfig(format!(
                         "SellFill 回执导致预留下溢：npc={npc} stock={stock}"
-                    )))?;
+                    ))
+                })?;
                 acct.cash += net; // 卖出净额只增现金
             }
             FillReceipt::BuyClosed {
-                npc, stock, release, ..
+                npc,
+                stock,
+                release,
+                ..
             } => {
                 receipts_applied[2] += 1;
                 let acct = &mut arena.accounts[npc as usize];
-                acct.reserved_cash = acct
-                    .reserved_cash
-                    .checked_sub(release)
-                    .ok_or_else(|| ProtoError::InvalidConfig(format!(
+                acct.reserved_cash = acct.reserved_cash.checked_sub(release).ok_or_else(|| {
+                    ProtoError::InvalidConfig(format!(
                         "BuyClosed 回执导致 reserved_cash 下溢：npc={npc} release={release}"
-                    )))?;
+                    ))
+                })?;
                 decrement_active(foreign_active, npc, stock)?;
             }
             FillReceipt::SellClosed {
@@ -952,12 +963,11 @@ fn apply_receipts(
                         "SellClosed 回执无对应次级仓：npc={npc} stock={stock}"
                     )));
                 };
-                pos.reserved_shares = pos
-                    .reserved_shares
-                    .checked_sub(qty)
-                    .ok_or_else(|| ProtoError::InvalidConfig(format!(
+                pos.reserved_shares = pos.reserved_shares.checked_sub(qty).ok_or_else(|| {
+                    ProtoError::InvalidConfig(format!(
                         "SellClosed 回执导致预留下溢：npc={npc} stock={stock}"
-                    )))?;
+                    ))
+                })?;
                 pos.sellable += qty;
                 decrement_active(foreign_active, npc, stock)?;
             }
@@ -1148,7 +1158,11 @@ fn build_views(
                 max_buy_price: Money::from_cents(upper),
                 daily_upper_limit: Money::from_cents(upper),
                 min_sell_price: Money::from_cents(lower),
-                recent_prices: st.recent_prices.iter().map(|&c| Money::from_cents(c)).collect(),
+                recent_prices: st
+                    .recent_prices
+                    .iter()
+                    .map(|&c| Money::from_cents(c))
+                    .collect(),
                 recent_market_minute_prices: st
                     .minute_prices
                     .iter()

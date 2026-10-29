@@ -20,9 +20,9 @@ mod replay;
 pub use civil::*;
 pub use commit::project_timeseries;
 pub(in crate::session) use commit::{PreparedTickProjection, TickCandidateProjection};
-pub(in crate::session) use player_orders::working_orders_from_mirror;
 pub use delta::{PlayerOrderDelta, PublicRuntimeState, RuntimeDelta};
 pub use facts::{EventFact, SessionFactCursor};
+pub(in crate::session) use player_orders::working_orders_from_mirror;
 pub use replay::*;
 
 #[cfg(test)]
@@ -121,8 +121,13 @@ impl Clone for TickFrame {
             let (frames, facts) = count.get();
             count.set((frames + 1, facts + self.facts.len()));
         });
-        Self { tick: self.tick, facts: self.facts.clone(), timeseries_payload: self.timeseries_payload.clone(),
-            seq_from: self.seq_from, seq_to: self.seq_to }
+        Self {
+            tick: self.tick,
+            facts: self.facts.clone(),
+            timeseries_payload: self.timeseries_payload.clone(),
+            seq_from: self.seq_from,
+            seq_to: self.seq_to,
+        }
     }
 }
 
@@ -206,13 +211,20 @@ impl TickFrame {
 /// market/Civil 共用借用校验，不为检查连续性构造临时 TickBatch 或复制事实记录。
 pub fn validate_frames(frames: &[TickFrame]) -> Result<&TickFrame, ProtocolError> {
     let last = frames.last().ok_or(ProtocolError::EmptyBatch)?;
-    for frame in frames { frame.validate()?; }
+    for frame in frames {
+        frame.validate()?;
+    }
     for adjacent in frames.windows(2) {
         let previous = &adjacent[0];
         let next = &adjacent[1];
-        if previous.tick.checked_add(1) != Some(next.tick) { return Err(ProtocolError::TickContinuity { tick: next.tick }); }
+        if previous.tick.checked_add(1) != Some(next.tick) {
+            return Err(ProtocolError::TickContinuity { tick: next.tick });
+        }
         if previous.seq_to != next.seq_from {
-            return Err(ProtocolError::SequenceCoverage { from: previous.seq_to, to: next.seq_from });
+            return Err(ProtocolError::SequenceCoverage {
+                from: previous.seq_to,
+                to: next.seq_from,
+            });
         }
     }
     Ok(last)

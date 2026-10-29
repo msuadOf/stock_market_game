@@ -197,8 +197,11 @@ pub fn converge_round(
                     }
                     let mut locals = std::collections::BTreeSet::new();
                     for trace in &r.decision_traces {
-                        if round != 0 || trace.owner.0 != r.group || trace.record.tick != tick
-                            || !locals.insert(trace.owner.1) {
+                        if round != 0
+                            || trace.owner.0 != r.group
+                            || trace.record.tick != tick
+                            || !locals.insert(trace.owner.1)
+                        {
                             return RoundOutcome::Failed(RuntimeError::ProtocolInvariant {
                                 detail: format!("机构 trace 本轮来源错位或重复：group={} tick={tick} round={round} owner={:?}", r.group, trace.owner),
                             });
@@ -223,19 +226,40 @@ pub fn converge_round(
                     });
                 }
                 #[cfg(feature = "simulation-diagnostics")]
-                if r.causal.iter().any(|fact| fact.context != (super::retail_lifecycle::BatchContext::Tick { tick, round, stock: r.stock })) {
+                if r.causal.iter().any(|fact| {
+                    fact.context
+                        != (super::retail_lifecycle::BatchContext::Tick {
+                            tick,
+                            round,
+                            stock: r.stock,
+                        })
+                }) {
                     return RoundOutcome::Failed(RuntimeError::ProtocolInvariant {
-                        detail: format!("causal sideband 上下文错配：tick={tick} round={round} stock={}", r.stock),
+                        detail: format!(
+                            "causal sideband 上下文错配：tick={tick} round={round} stock={}",
+                            r.stock
+                        ),
                     });
                 }
                 #[cfg(all(test, feature = "simulation-diagnostics", not(target_arch = "wasm32")))]
                 let r = super::diagnostics::report_fault_tests::remove_execution_once(r);
                 #[cfg(feature = "simulation-diagnostics")]
-                if let Err(error) = super::diagnostics::validate_executions(r.stock, &r.causal, &r.trades, r.auction.iter().any(|fact| fact.completed && fact.matched_volume > 0)) {
+                if let Err(error) = super::diagnostics::validate_executions(
+                    r.stock,
+                    &r.causal,
+                    &r.trades,
+                    r.auction
+                        .iter()
+                        .any(|fact| fact.completed && fact.matched_volume > 0),
+                ) {
                     return RoundOutcome::Failed(error);
                 }
                 if !r.retail.is_empty() || !r.trades.is_empty() {
-                    let context = super::retail_lifecycle::BatchContext::Tick { tick, round, stock: r.stock };
+                    let context = super::retail_lifecycle::BatchContext::Tick {
+                        tick,
+                        round,
+                        stock: r.stock,
+                    };
                     match super::retail_lifecycle::resolve_report(context, r.retail, &r.trades) {
                         Ok(facts) => retail_fragments.push((r.stock, facts)),
                         Err(error) => return RoundOutcome::Failed(error),
@@ -273,11 +297,15 @@ pub fn converge_round(
                 });
             }
             UpMsg::PendingStartRejected(rejection) => {
-                if usize::from(rejection.group) >= n_groups || round != 0
-                    || rejection.tick != tick || rejection.prior_tick.checked_add(1) != Some(tick)
+                if usize::from(rejection.group) >= n_groups
+                    || round != 0
+                    || rejection.tick != tick
+                    || rejection.prior_tick.checked_add(1) != Some(tick)
                     || rejection.calendar.before_input().tick != rejection.prior_tick
                     || rejection.calendar.after_input().tick != tick
-                    || group_hashes.iter().any(|(group, _)| *group == rejection.group)
+                    || group_hashes
+                        .iter()
+                        .any(|(group, _)| *group == rejection.group)
                 {
                     return RoundOutcome::Failed(RuntimeError::WorkerFailed {
                         who: WorkerId::Group(rejection.group),
@@ -299,7 +327,10 @@ pub fn converge_round(
         }
     }
     retail_fragments.sort_unstable_by_key(|(stock, _)| *stock);
-    let retail = retail_fragments.into_iter().flat_map(|(_, facts)| facts).collect();
+    let retail = retail_fragments
+        .into_iter()
+        .flat_map(|(_, facts)| facts)
+        .collect();
     #[cfg(feature = "simulation-diagnostics")]
     decision_traces.sort_unstable_by_key(|trace| trace.owner);
     wrap(Ok(TickEvidence {
@@ -350,7 +381,9 @@ pub fn broadcast_start(
     });
     for tx in group_txs {
         #[cfg(all(test, not(target_family = "wasm")))]
-        crate::session::calendar_entry_cache_tests::record_entry_call(crate::session::calendar_entry_cache_tests::EntryCall::Start);
+        crate::session::calendar_entry_cache_tests::record_entry_call(
+            crate::session::calendar_entry_cache_tests::EntryCall::Start,
+        );
         tx.send(super::protocol::GroupIn::Start {
             tick,
             snapshot: Arc::clone(&snapshot),

@@ -71,7 +71,10 @@ pub(in crate::session) fn perturb_volume_once(
             .expect("retained volume hook 的真实 volume_shares 必须可加一");
         bar.volume_shares = modified_volume;
         hook.armed = false;
-        hook.hits = hook.hits.checked_add(1).expect("retained hook 次数必须可计数");
+        hook.hits = hook
+            .hits
+            .checked_add(1)
+            .expect("retained hook 次数必须可计数");
         hook.evidence = Some(PerturbationEvidence {
             hits: hook.hits,
             original_volume,
@@ -97,15 +100,20 @@ fn retained_game() -> GameSession {
     setup.npcs.hot_count = 0;
     let mut game = GameSession::new(setup, 7).unwrap();
     let member = game
-        .join_market(crate::session::OpaqueSubjectId::new("retained-seller".to_owned()).unwrap(), true)
+        .join_market(
+            crate::session::OpaqueSubjectId::new("retained-seller".to_owned()).unwrap(),
+            true,
+        )
         .unwrap();
     assert_eq!(member.account_id, SELLER);
-    game.state.accounts.get_mut(&SELLER).unwrap().fixture_set_positions(
-        std::collections::BTreeMap::from([(
+    game.state
+        .accounts
+        .get_mut(&SELLER)
+        .unwrap()
+        .fixture_set_positions(std::collections::BTreeMap::from([(
             TEST_STOCK,
             crate::account::Position::from_restored_parts(ORDER_SHARES, 0, 99_500, 0),
-        )]),
-    );
+        )]));
     game.enqueue_player_intent(
         SELLER,
         Intent::PlaceLimit {
@@ -117,9 +125,13 @@ fn retained_game() -> GameSession {
     )
     .unwrap();
     let events = game.step_via_runtime().unwrap();
-    assert!(events.iter().any(|event| matches!(event, Event::OrderAccepted { .. })));
-    assert!(game.causal_facts().iter().any(|fact| matches!(&fact.kind,
-        crate::diagnostics::causal::CausalFactKind::Submitted(origin) if origin.account == SELLER)));
+    assert!(events
+        .iter()
+        .any(|event| matches!(event, Event::OrderAccepted { .. })));
+    assert!(
+        game.causal_facts().iter().any(|fact| matches!(&fact.kind,
+        crate::diagnostics::causal::CausalFactKind::Submitted(origin) if origin.account == SELLER))
+    );
     game.enqueue_player_intent(
         BUYER,
         Intent::PlaceLimit {
@@ -146,7 +158,10 @@ fn assert_failed_surfaces_match_checkpoint(game: &GameSession, checkpoint: &Game
         serde_json::to_value(game.causal_facts()).unwrap(),
         serde_json::to_value(checkpoint.causal_facts()).unwrap()
     );
-    assert_eq!(game.state.market_minute_bars, checkpoint.state.market_minute_bars);
+    assert_eq!(
+        game.state.market_minute_bars,
+        checkpoint.state.market_minute_bars
+    );
     assert_eq!(
         serde_json::to_value(game.retained_market_days()).unwrap(),
         serde_json::to_value(checkpoint.retained_market_days()).unwrap()
@@ -154,10 +169,30 @@ fn assert_failed_surfaces_match_checkpoint(game: &GameSession, checkpoint: &Game
     let expected = checkpoint.runtime_derive_envelopes().unwrap();
     assert_eq!(expected.len(), 1, "checkpoint 必须有真实 runtime 卖余单");
     let key = expected[0].key();
-    assert_eq!((key.account, key.stock, key.order, key.side, expected[0].audit().remaining_qty),
-        (SELLER, TEST_STOCK, OrderId(1), crate::Side::Sell, ORDER_SHARES));
-    let project = |session: &GameSession| session.runtime_derive_envelopes().unwrap().into_iter()
-        .map(|envelope| (envelope.key().clone(), envelope.audit())).collect::<Vec<_>>();
+    assert_eq!(
+        (
+            key.account,
+            key.stock,
+            key.order,
+            key.side,
+            expected[0].audit().remaining_qty
+        ),
+        (
+            SELLER,
+            TEST_STOCK,
+            OrderId(1),
+            crate::Side::Sell,
+            ORDER_SHARES
+        )
+    );
+    let project = |session: &GameSession| {
+        session
+            .runtime_derive_envelopes()
+            .unwrap()
+            .into_iter()
+            .map(|envelope| (envelope.key().clone(), envelope.audit()))
+            .collect::<Vec<_>>()
+    };
     assert_eq!(project(game), project(checkpoint));
     for account_id in [BUYER, SELLER] {
         let actual = game.account(account_id).unwrap();
@@ -165,9 +200,14 @@ fn assert_failed_surfaces_match_checkpoint(game: &GameSession, checkpoint: &Game
         assert_eq!(actual.cash(), expected.cash());
         assert_eq!(
             actual.position(&TEST_STOCK).map(|position| position.qty()),
-            expected.position(&TEST_STOCK).map(|position| position.qty())
+            expected
+                .position(&TEST_STOCK)
+                .map(|position| position.qty())
         );
-        assert_eq!(actual.sellable_qty(&TEST_STOCK), expected.sellable_qty(&TEST_STOCK));
+        assert_eq!(
+            actual.sellable_qty(&TEST_STOCK),
+            expected.sellable_qty(&TEST_STOCK)
+        );
     }
 }
 
@@ -177,30 +217,69 @@ fn assert_healthy_retry(checkpoint: &GameSession) {
     let trades = events
         .iter()
         .filter_map(|event| match event {
-            Event::Trade { maker, taker, price, qty, .. } => {
-                Some((*maker, *taker, price.cents(), *qty))
-            }
+            Event::Trade {
+                maker,
+                taker,
+                price,
+                qty,
+                ..
+            } => Some((*maker, *taker, price.cents(), *qty)),
             _ => None,
         })
         .collect::<Vec<_>>();
-    assert_eq!(trades, vec![(SELLER, BUYER, ORDER_PRICE_CENTS, ORDER_SHARES)]);
-    assert!(retry.runtime_derive_envelopes().unwrap().is_empty(), "真实 runtime 双腿订单全部成交后无余单");
+    assert_eq!(
+        trades,
+        vec![(SELLER, BUYER, ORDER_PRICE_CENTS, ORDER_SHARES)]
+    );
+    assert!(
+        retry.runtime_derive_envelopes().unwrap().is_empty(),
+        "真实 runtime 双腿订单全部成交后无余单"
+    );
     assert_eq!(retry.retained_market_days().len(), 1);
     assert!(retry.state.market_minute_bars.values().all(Vec::is_empty));
-    assert!(retry.account(SELLER).unwrap().position(&TEST_STOCK).is_none(), "卖腿全部成交后无剩余持仓");
-    assert_eq!(retry.account(BUYER).unwrap().position(&TEST_STOCK).unwrap().qty(), ORDER_SHARES);
+    assert!(
+        retry
+            .account(SELLER)
+            .unwrap()
+            .position(&TEST_STOCK)
+            .is_none(),
+        "卖腿全部成交后无剩余持仓"
+    );
+    assert_eq!(
+        retry
+            .account(BUYER)
+            .unwrap()
+            .position(&TEST_STOCK)
+            .unwrap()
+            .qty(),
+        ORDER_SHARES
+    );
     let executions = retry
         .causal_facts()
         .iter()
-        .filter(|fact| matches!(fact.kind,
-            crate::diagnostics::causal::CausalFactKind::Execution { qty: ORDER_SHARES, .. }))
+        .filter(|fact| {
+            matches!(
+                fact.kind,
+                crate::diagnostics::causal::CausalFactKind::Execution {
+                    qty: ORDER_SHARES,
+                    ..
+                }
+            )
+        })
         .count();
     assert_eq!(executions, 1);
     let filled = retry
         .causal_facts()
         .iter()
-        .filter(|fact| matches!(fact.kind,
-            crate::diagnostics::causal::CausalFactKind::Filled { qty: ORDER_SHARES, .. }))
+        .filter(|fact| {
+            matches!(
+                fact.kind,
+                crate::diagnostics::causal::CausalFactKind::Filled {
+                    qty: ORDER_SHARES,
+                    ..
+                }
+            )
+        })
         .count();
     assert_eq!(filled, 2);
 }
@@ -225,7 +304,10 @@ fn ordinary_runtime_step_rejects_corrupt_retained_volume_and_checkpoint_retry_fi
     let evidence = hook.evidence();
     drop(hook);
 
-    assert!(mismatch(&error), "实际错误必须来自 retained 日K成交量对账：{error:?}");
+    assert!(
+        mismatch(&error),
+        "实际错误必须来自 retained 日K成交量对账：{error:?}"
+    );
     assert_eq!(evidence.hits, 1);
     assert_eq!((evidence.original_volume, evidence.trade_count), (100, 1));
     assert_eq!(evidence.modified_volume, 101);
@@ -248,8 +330,14 @@ fn runtime_frame_retained_failure_skips_callback_and_checkpoint_retry_fills_once
     let evidence = hook.evidence();
     drop(hook);
 
-    assert!(!callback_called, "retained freeze 失败须先于 frame project callback");
-    assert!(mismatch(&error), "实际错误必须来自 retained 日K成交量对账：{error:?}");
+    assert!(
+        !callback_called,
+        "retained freeze 失败须先于 frame project callback"
+    );
+    assert!(
+        mismatch(&error),
+        "实际错误必须来自 retained 日K成交量对账：{error:?}"
+    );
     assert_eq!(evidence.hits, 1);
     assert_eq!((evidence.original_volume, evidence.trade_count), (100, 1));
     assert_eq!(evidence.modified_volume, 101);

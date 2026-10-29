@@ -377,7 +377,6 @@ fn adapter_validates_order_resources_without_materializing_an_extra_projection_e
     );
 }
 
-
 #[test]
 fn dense_adapter_keeps_book_order_errors_when_envelope_keys_have_reverse_order() {
     for count in [511, 512, 513] {
@@ -427,7 +426,12 @@ fn dense_adapter_keeps_book_order_errors_when_envelope_keys_have_reverse_order()
             };
             game.state.envelope_ledger.envelopes.insert(
                 tampered.clone(),
-                Envelope::tick_start_existing(tampered.clone(), live.cash, live.shares, tampered_audit),
+                Envelope::tick_start_existing(
+                    tampered.clone(),
+                    live.cash,
+                    live.shares,
+                    tampered_audit,
+                ),
             );
             game.state.envelope_ledger.envelopes.remove(missing);
             let before = game.state.envelope_ledger.clone();

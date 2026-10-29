@@ -285,7 +285,14 @@ fn repurchase_x_group_01_source_only_acceptance_binds_real_order_and_abort_resto
         let tail = &state.repurchase_pending_tails[&request.plan_id];
         assert_eq!(tail.cursor, 1);
         assert_eq!(tail.facts.len(), 1);
-        assert_eq!((tail.facts[0].cursor, tail.facts[0].tick, tail.facts[0].round), (1, 1, 0));
+        assert_eq!(
+            (
+                tail.facts[0].cursor,
+                tail.facts[0].tick,
+                tail.facts[0].round
+            ),
+            (1, 1, 0)
+        );
         assert_eq!(tail.facts[0].source, batch.repurchase[0]);
         assert_ne!(state.state_hash(), before, "真实受理身份必须进入业务 hash");
         assert_funded(&state, request.plan_id);
@@ -465,7 +472,6 @@ fn repurchase_x_group_04_real_rejected_order_returns_original_purse_and_abort_re
     }
 }
 
-
 /// 各负控必须在即时资源落账前失败；具体 Abort 重试由前缀测试核对。
 fn reject_before_mutation(state: &mut GroupState, batch: DeskBatch) {
     let hash = state.state_hash();
@@ -476,8 +482,13 @@ fn reject_before_mutation(state: &mut GroupState, batch: DeskBatch) {
     let undo_len = state.undo.len();
     let fills = state.plan_fills.clone();
     let deferred_len = state.staging_deferred.len();
-    let error = state.apply_batch_immediate(batch, 1, 0).expect_err("不一致来源必须拒绝");
-    assert!(error.to_string().contains("回购来源校验"), "应命中真实来源校验而非未实现 stub：{error}");
+    let error = state
+        .apply_batch_immediate(batch, 1, 0)
+        .expect_err("不一致来源必须拒绝");
+    assert!(
+        error.to_string().contains("回购来源校验"),
+        "应命中真实来源校验而非未实现 stub：{error}"
+    );
     assert_eq!(state.state_hash(), hash);
     assert_eq!(state.accounts, accounts);
     assert_eq!(state.plan_book, book);
@@ -495,7 +506,13 @@ fn repurchase_x_group_05_frozen_request_and_raw_order_identity_reject_before_res
         desk.company_buy(request, 1000, 100, purse);
         let mut batch = desk.flush_company();
         match mode {
-            0 => { state.child_in_flight.get_mut(&(ACCOUNT, StockId(3))).unwrap().repurchase = None; }
+            0 => {
+                state
+                    .child_in_flight
+                    .get_mut(&(ACCOUNT, StockId(3)))
+                    .unwrap()
+                    .repurchase = None;
+            }
             1 => batch.repurchase[0].request_key.plan_id.sequence += 1,
             2 => batch.repurchase[0].request_key.plan_id.owner = AccountId(51),
             3 => batch.repurchase[0].request_key.requested_trading_day += 1,
@@ -504,9 +521,17 @@ fn repurchase_x_group_05_frozen_request_and_raw_order_identity_reject_before_res
             6 => batch.repurchase[0].owner.1 = 0,
             7 => batch.repurchase[0].order_ref.0 = 2,
             8 => batch.repurchase[0].order_ref.1 += 1_u64 << 32,
-            9 => { batch.stock = 2; }
-            10 => { state.admin_treasury_bindings[0].issuer = CompanyId(2); }
-            _ => { state.admin_treasury_bindings.push(state.admin_treasury_bindings[0]); }
+            9 => {
+                batch.stock = 2;
+            }
+            10 => {
+                state.admin_treasury_bindings[0].issuer = CompanyId(2);
+            }
+            _ => {
+                state
+                    .admin_treasury_bindings
+                    .push(state.admin_treasury_bindings[0]);
+            }
         }
         reject_before_mutation(&mut state, batch);
     }
@@ -519,19 +544,56 @@ fn repurchase_x_group_06_source_and_original_facts_match_with_multiplicity() {
         desk.sell(1000, 100);
         desk.company_buy(request, 1090, 200, purse);
         let mut batch = desk.flush_company();
-        let fill_at = batch.repurchase.iter().position(|f| matches!(f.kind, RepurchaseSourceKind::Fill(_))).unwrap();
-        let return_at = batch.repurchase.iter().position(|f| matches!(f.kind, RepurchaseSourceKind::Return { .. })).unwrap();
+        let fill_at = batch
+            .repurchase
+            .iter()
+            .position(|f| matches!(f.kind, RepurchaseSourceKind::Fill(_)))
+            .unwrap();
+        let return_at = batch
+            .repurchase
+            .iter()
+            .position(|f| matches!(f.kind, RepurchaseSourceKind::Return { .. }))
+            .unwrap();
         match mode {
             0 => batch.repurchase.clear(),
-            1 => { batch.repurchase.remove(fill_at); }
-            2 => { batch.repurchase.remove(return_at); }
+            1 => {
+                batch.repurchase.remove(fill_at);
+            }
+            2 => {
+                batch.repurchase.remove(return_at);
+            }
             3 => batch.fills.push(batch.fills[0]),
             4 => batch.repurchase.push(batch.repurchase[fill_at]),
-            5 => { if let RepurchaseSourceKind::Fill(ref mut fill) = batch.repurchase[fill_at].kind { fill.commission += 1; } }
-            6 => { batch.entities.retain(|e| !matches!(e, Entity::BoughtShares { .. })); }
-            7 => { let entity = *batch.entities.iter().find(|e| matches!(e, Entity::CashRefund { .. })).unwrap(); batch.entities.push(entity); }
-            8 => { batch.entities.push(Entity::CashProceeds { local: 1, amount: 1 }); }
-            _ => { batch.repurchase[return_at].kind = RepurchaseSourceKind::Return { amount: -1, kind: crate::runtime::RepurchaseReturnKind::PriceImprovement }; }
+            5 => {
+                if let RepurchaseSourceKind::Fill(ref mut fill) = batch.repurchase[fill_at].kind {
+                    fill.commission += 1;
+                }
+            }
+            6 => {
+                batch
+                    .entities
+                    .retain(|e| !matches!(e, Entity::BoughtShares { .. }));
+            }
+            7 => {
+                let entity = *batch
+                    .entities
+                    .iter()
+                    .find(|e| matches!(e, Entity::CashRefund { .. }))
+                    .unwrap();
+                batch.entities.push(entity);
+            }
+            8 => {
+                batch.entities.push(Entity::CashProceeds {
+                    local: 1,
+                    amount: 1,
+                });
+            }
+            _ => {
+                batch.repurchase[return_at].kind = RepurchaseSourceKind::Return {
+                    amount: -1,
+                    kind: crate::runtime::RepurchaseReturnKind::PriceImprovement,
+                };
+            }
         }
         reject_before_mutation(&mut state, batch);
     }
@@ -545,17 +607,46 @@ fn repurchase_x_group_07_lifecycle_and_accepted_numbers_cannot_reset_the_ticket(
         let mut batch = desk.flush_company();
         match mode {
             0 => batch.repurchase.push(batch.repurchase[0]),
-            1 => { if let RepurchaseSourceKind::Accepted { ref mut qty, .. } = batch.repurchase[0].kind { *qty += 100; } }
-            2 => { if let RepurchaseSourceKind::Accepted { ref mut price, .. } = batch.repurchase[0].kind { *price += 1; } }
-            3 => { if let RepurchaseSourceKind::Accepted { ref mut purse_initial, .. } = batch.repurchase[0].kind { *purse_initial += 1; } }
-            4 => { batch.repurchase[0].kind = RepurchaseSourceKind::Closed; batch.entities.push(Entity::Closed { local: 1, order_serial: order_id_of(&batch.repurchase[0].order_ref).0 }); }
-            5 => { consume(&mut state, batch.clone()); }
-            _ => { consume(&mut state, batch.clone()); batch.repurchase[0].order_ref.1 += 1; }
+            1 => {
+                if let RepurchaseSourceKind::Accepted { ref mut qty, .. } = batch.repurchase[0].kind
+                {
+                    *qty += 100;
+                }
+            }
+            2 => {
+                if let RepurchaseSourceKind::Accepted { ref mut price, .. } =
+                    batch.repurchase[0].kind
+                {
+                    *price += 1;
+                }
+            }
+            3 => {
+                if let RepurchaseSourceKind::Accepted {
+                    ref mut purse_initial,
+                    ..
+                } = batch.repurchase[0].kind
+                {
+                    *purse_initial += 1;
+                }
+            }
+            4 => {
+                batch.repurchase[0].kind = RepurchaseSourceKind::Closed;
+                batch.entities.push(Entity::Closed {
+                    local: 1,
+                    order_serial: order_id_of(&batch.repurchase[0].order_ref).0,
+                });
+            }
+            5 => {
+                consume(&mut state, batch.clone());
+            }
+            _ => {
+                consume(&mut state, batch.clone());
+                batch.repurchase[0].order_ref.1 += 1;
+            }
         }
         reject_before_mutation(&mut state, batch);
     }
 }
-
 
 #[test]
 fn repurchase_x_group_08_bad_fill_suffix_abort_restores_frozen_baseline() {
@@ -569,13 +660,36 @@ fn repurchase_x_group_08_bad_fill_suffix_abort_restores_frozen_baseline() {
         consume(&mut state, desk.flush_company());
         desk.sell(1000, 100);
         let mut batch = desk.flush_company();
-        let index = batch.repurchase.iter().position(|f| matches!(f.kind, RepurchaseSourceKind::Fill(_))).unwrap();
+        let index = batch
+            .repurchase
+            .iter()
+            .position(|f| matches!(f.kind, RepurchaseSourceKind::Fill(_)))
+            .unwrap();
         match mode {
-            0 => { batch.repurchase.push(batch.repurchase[index]); batch.fills.push(batch.fills[0]); batch.entities.push(Entity::BoughtShares { local: 1, qty: 100 }); }
-            1 => { batch.fills[0].price = i64::MAX; batch.repurchase[index].kind = RepurchaseSourceKind::Fill(batch.fills[0]); }
-            2 => { batch.fills[0].qty = 0; batch.repurchase[index].kind = RepurchaseSourceKind::Fill(batch.fills[0]); }
-            3 => { batch.fills[0].order.1 += 1; batch.repurchase[index].order_ref = batch.fills[0].order; batch.repurchase[index].kind = RepurchaseSourceKind::Fill(batch.fills[0]); }
-            _ => { batch.fills[0].stamp_tax = 1; batch.repurchase[index].kind = RepurchaseSourceKind::Fill(batch.fills[0]); }
+            0 => {
+                batch.repurchase.push(batch.repurchase[index]);
+                batch.fills.push(batch.fills[0]);
+                batch
+                    .entities
+                    .push(Entity::BoughtShares { local: 1, qty: 100 });
+            }
+            1 => {
+                batch.fills[0].price = i64::MAX;
+                batch.repurchase[index].kind = RepurchaseSourceKind::Fill(batch.fills[0]);
+            }
+            2 => {
+                batch.fills[0].qty = 0;
+                batch.repurchase[index].kind = RepurchaseSourceKind::Fill(batch.fills[0]);
+            }
+            3 => {
+                batch.fills[0].order.1 += 1;
+                batch.repurchase[index].order_ref = batch.fills[0].order;
+                batch.repurchase[index].kind = RepurchaseSourceKind::Fill(batch.fills[0]);
+            }
+            _ => {
+                batch.fills[0].stamp_tax = 1;
+                batch.repurchase[index].kind = RepurchaseSourceKind::Fill(batch.fills[0]);
+            }
         }
         reject_before_mutation(&mut state, batch);
         state.rollback();
@@ -594,11 +708,34 @@ fn repurchase_x_group_09_rejection_return_and_closed_require_original_ordered_ev
         let mut batch = desk.flush_company();
         match mode {
             0 => batch.repurchase.swap(0, 1),
-            1 => { batch.receipts.clear(); }
+            1 => {
+                batch.receipts.clear();
+            }
             2 => batch.repurchase.swap(1, 2),
-            3 => { batch.repurchase.insert(1, crate::runtime::RepurchaseSourceFact { kind: RepurchaseSourceKind::Accepted { price: 1200, qty: 100, purse_initial: purse }, ..batch.repurchase[0] }); }
-            4 => { batch.entities.retain(|e| !matches!(e, Entity::Closed { .. })); }
-            _ => { batch.repurchase[1].kind = RepurchaseSourceKind::Return { amount: purse, kind: crate::runtime::RepurchaseReturnKind::PriceImprovement }; }
+            3 => {
+                batch.repurchase.insert(
+                    1,
+                    crate::runtime::RepurchaseSourceFact {
+                        kind: RepurchaseSourceKind::Accepted {
+                            price: 1200,
+                            qty: 100,
+                            purse_initial: purse,
+                        },
+                        ..batch.repurchase[0]
+                    },
+                );
+            }
+            4 => {
+                batch
+                    .entities
+                    .retain(|e| !matches!(e, Entity::Closed { .. }));
+            }
+            _ => {
+                batch.repurchase[1].kind = RepurchaseSourceKind::Return {
+                    amount: purse,
+                    kind: crate::runtime::RepurchaseReturnKind::PriceImprovement,
+                };
+            }
         }
         reject_before_mutation(&mut state, batch);
     }
@@ -616,14 +753,25 @@ fn repurchase_x_group_10_terminal_refund_prefix_preserves_ticket_and_forbids_mor
     let mut prefix = desk.flush_company();
     let closed = prefix.repurchase.pop().unwrap();
     assert_eq!(closed.kind, RepurchaseSourceKind::Closed);
-    let index = prefix.entities.iter().position(|e| matches!(e, Entity::Closed { .. })).unwrap();
+    let index = prefix
+        .entities
+        .iter()
+        .position(|e| matches!(e, Entity::Closed { .. }))
+        .unwrap();
     let entity = prefix.entities.remove(index);
     consume(&mut state, prefix.clone());
     assert_eq!(state.accounts[1].buy_purse_held_cents, 0);
     assert_eq!(state.accounts[1].foreign_active[3], 1);
     assert!(state.child_in_flight.contains_key(&(ACCOUNT, StockId(3))));
     reject_before_mutation(&mut state, prefix);
-    let suffix = DeskBatch { stock: STOCK, tick: 1, round: 0, repurchase: vec![closed], entities: vec![entity], ..Default::default() };
+    let suffix = DeskBatch {
+        stock: STOCK,
+        tick: 1,
+        round: 0,
+        repurchase: vec![closed],
+        entities: vec![entity],
+        ..Default::default()
+    };
     consume(&mut state, suffix.clone());
     reject_before_mutation(&mut state, suffix);
     assert!(!state.child_in_flight.contains_key(&(ACCOUNT, StockId(3))));
@@ -632,7 +780,6 @@ fn repurchase_x_group_10_terminal_refund_prefix_preserves_ticket_and_forbids_mor
     assert_eq!(state.accounts, accounts);
     assert_eq!(state.child_in_flight, tickets);
 }
-
 
 #[test]
 fn repurchase_x_group_11_partial_maker_progress_replay_is_rejected_but_next_round_is_valid() {
@@ -645,14 +792,20 @@ fn repurchase_x_group_11_partial_maker_progress_replay_is_rejected_but_next_roun
     desk.sell(1000, 100);
     let first = desk.flush_company();
     assert_eq!(first.fills.len(), 1);
-    assert!(!first.repurchase.iter().any(|f| matches!(f.kind, RepurchaseSourceKind::Accepted { .. } | RepurchaseSourceKind::Closed)));
+    assert!(!first.repurchase.iter().any(|f| matches!(
+        f.kind,
+        RepurchaseSourceKind::Accepted { .. } | RepurchaseSourceKind::Closed
+    )));
     consume(&mut state, first.clone());
     assert_eq!(state.child_in_flight[&(ACCOUNT, StockId(3))].remaining, 200);
     reject_before_mutation(&mut state, first);
     desk.sell(1000, 100);
     let next = desk.flush_company_round(1);
     let result = state.apply_batch_immediate(next, 1, 1);
-    assert!(result.is_ok(), "原 Desk 输出按下一 round 交付时必须保留相同量 Fill：{result:?}");
+    assert!(
+        result.is_ok(),
+        "原 Desk 输出按下一 round 交付时必须保留相同量 Fill：{result:?}"
+    );
     state.apply_deferred().unwrap();
     assert_eq!(state.child_in_flight[&(ACCOUNT, StockId(3))].remaining, 100);
     assert_eq!(state.accounts[1].shares[3], 200);
@@ -674,7 +827,11 @@ fn repurchase_x_group_12_multiple_equal_fills_in_one_real_batch_are_not_replay()
     assert_eq!(batch.fills.len(), 2);
     assert_eq!(batch.fills[0].qty, batch.fills[1].qty);
     assert_eq!(batch.fills[0].price, batch.fills[1].price);
-    let charged: i64 = batch.fills.iter().map(|f| f.price * i64::from(f.qty) + f.commission + f.transfer_fee).sum();
+    let charged: i64 = batch
+        .fills
+        .iter()
+        .map(|f| f.price * i64::from(f.qty) + f.commission + f.transfer_fee)
+        .sum();
     consume(&mut state, batch);
     assert_eq!(state.accounts[1].shares[3], 200);
     assert_eq!(state.accounts[1].frozen_today[3], 200);
@@ -696,9 +853,15 @@ fn repurchase_x_group_13_unsplit_real_maker_full_fill_preserves_original_entity_
     consume(&mut state, desk.flush_company());
     desk.sell(1000, 100);
     let batch = desk.flush_company();
-    assert!(matches!(batch.repurchase[0].kind, RepurchaseSourceKind::Fill(_)));
+    assert!(matches!(
+        batch.repurchase[0].kind,
+        RepurchaseSourceKind::Fill(_)
+    ));
     assert_eq!(batch.repurchase[1].kind, RepurchaseSourceKind::Closed);
-    assert!(matches!(batch.entities.as_slice(), [Entity::Closed { .. }, Entity::BoughtShares { qty: 100, .. }]));
+    assert!(matches!(
+        batch.entities.as_slice(),
+        [Entity::Closed { .. }, Entity::BoughtShares { qty: 100, .. }]
+    ));
     let sources = batch.repurchase.clone();
     consume(&mut state, batch);
     assert_eq!(state.accounts[1].shares[3], 100);
@@ -708,7 +871,13 @@ fn repurchase_x_group_13_unsplit_real_maker_full_fill_preserves_original_entity_
     assert!(!state.child_in_flight.contains_key(&(ACCOUNT, StockId(3))));
     let tail = &state.repurchase_pending_tails[&request.plan_id];
     assert_eq!(tail.cursor, 3);
-    assert_eq!(tail.facts[1..].iter().map(|fact| fact.source).collect::<Vec<_>>(), sources);
+    assert_eq!(
+        tail.facts[1..]
+            .iter()
+            .map(|fact| fact.source)
+            .collect::<Vec<_>>(),
+        sources
+    );
     state.rollback();
     assert_eq!(state.state_hash(), hash);
     assert_eq!(state.accounts, accounts);
@@ -737,30 +906,51 @@ fn repurchase_x_group_15_real_start_commits_tail_and_next_tick_abort_keeps_compl
     let accepted_tail = state.repurchase_pending_tails.clone();
     assert_eq!(accepted_tail[&request.plan_id].cursor, 1);
     let date = crate::CivilDate::from_iso("2026-01-05").unwrap();
-    let calendar = source().day(date).unwrap().tick(
-        crate::session::exchange_calendar_model::SessionTickLayout {
-            ticks_per_day: 100, auction_ticks: 0, closing_auction_ticks: 0,
-        },
-        crate::session::exchange_calendar_model::SharedClockInput {
-            tick: 1, completed_shared_sessions: 0,
-            progress: crate::session::exchange_calendar_model::SharedDayProgress::Trading { completed_ticks: 1 },
-        },
-    ).unwrap();
+    let calendar = source()
+        .day(date)
+        .unwrap()
+        .tick(
+            crate::session::exchange_calendar_model::SessionTickLayout {
+                ticks_per_day: 100,
+                auction_ticks: 0,
+                closing_auction_ticks: 0,
+            },
+            crate::session::exchange_calendar_model::SharedClockInput {
+                tick: 1,
+                completed_shared_sessions: 0,
+                progress: crate::session::exchange_calendar_model::SharedDayProgress::Trading {
+                    completed_ticks: 1,
+                },
+            },
+        )
+        .unwrap();
     let stocks = Arc::clone(&state.snapshot.as_ref().unwrap().stocks);
-    state.snapshot = Some(Arc::new(TickSnapshot { calendar: Arc::clone(&calendar), tick: 2,
-        market_minute: 1, civil_date: date, stocks }));
+    state.snapshot = Some(Arc::new(TickSnapshot {
+        calendar: Arc::clone(&calendar),
+        tick: 2,
+        market_minute: 1,
+        civil_date: date,
+        stocks,
+    }));
     let channels: Vec<_> = (0..4).map(|_| std::sync::mpsc::channel()).collect();
     let desk_txs: Vec<_> = channels.iter().map(|(sender, _)| sender.clone()).collect();
     let (up_tx, up_rx) = std::sync::mpsc::channel();
     state.handle_start(2, &desk_txs, &up_tx).unwrap();
     assert_eq!((state.cur_tick, state.committed_tick), (2, 1));
     assert!(state.undo.is_empty(), "真实 Start 应退役前拍 Undo");
-    assert_eq!(state.repurchase_pending_tails, accepted_tail, "Start 不能丢失未确认前缀");
-    assert!(matches!(up_rx.try_recv().unwrap(), UpMsg::GroupReport(report) if report.tick == 2 && report.round == 0 && report.ops_sent == 0));
+    assert_eq!(
+        state.repurchase_pending_tails, accepted_tail,
+        "Start 不能丢失未确认前缀"
+    );
+    assert!(
+        matches!(up_rx.try_recv().unwrap(), UpMsg::GroupReport(report) if report.tick == 2 && report.round == 0 && report.ops_sent == 0)
+    );
     for (_, receiver) in &channels {
-        assert!(matches!(receiver.try_recv().unwrap(), super::super::super::protocol::DeskMsg::Ops {
+        assert!(
+            matches!(receiver.try_recv().unwrap(), super::super::super::protocol::DeskMsg::Ops {
             tick: 2, round: 0, ops, final_flush: true, ..
-        } if ops.is_empty()));
+        } if ops.is_empty())
+        );
     }
     let hash = state.state_hash();
     let accounts = state.accounts.clone();
@@ -777,7 +967,9 @@ fn repurchase_x_group_15_real_start_commits_tail_and_next_tick_abort_keeps_compl
     let tail = &state.repurchase_pending_tails[&request.plan_id];
     assert!(tail.cursor > accepted_tail[&request.plan_id].cursor);
     assert_eq!(tail.facts[0], accepted_tail[&request.plan_id].facts[0]);
-    assert!(tail.facts[1..].iter().all(|fact| (fact.tick, fact.round) == (2, 0)));
+    assert!(tail.facts[1..]
+        .iter()
+        .all(|fact| (fact.tick, fact.round) == (2, 0)));
     state.rollback();
     assert_eq!(state.cur_tick, 1);
     assert_eq!(state.state_hash(), hash);
@@ -790,33 +982,48 @@ fn repurchase_x_group_15_real_start_commits_tail_and_next_tick_abort_keeps_compl
 #[test]
 fn repurchase_x_group_16_source_less_closed_and_rejected_prefix_keep_raw_stock_identity() {
     {
-    let (mut state, mut desk, request, purse) = state(1000, 100);
-    desk.company_buy(request, 1000, 100, purse);
-    consume(&mut state, desk.flush_company());
-    desk.sell(1000, 100);
-    let mut prefix = desk.flush_company();
-    let closed_source = prefix.repurchase.pop().unwrap();
-    assert_eq!(closed_source.kind, RepurchaseSourceKind::Closed);
-    let at = prefix.entities.iter().position(|entity| matches!(entity, Entity::Closed { .. })).unwrap();
-    let closed_entity = prefix.entities.remove(at);
-    consume(&mut state, prefix);
-    assert_eq!(state.accounts[1].buy_purse_held_cents, 0);
-    assert!(state.child_in_flight.contains_key(&(ACCOUNT, StockId(3))));
-    // 原 H0 Closed 后缀没有 Fill；删 source、改 Batch.stock 仍不能变成普通闭单。
-    reject_before_mutation(&mut state, DeskBatch { stock: 2, tick: 1, round: 0,
-        entities: vec![closed_entity], ..Default::default() });
+        let (mut state, mut desk, request, purse) = state(1000, 100);
+        desk.company_buy(request, 1000, 100, purse);
+        consume(&mut state, desk.flush_company());
+        desk.sell(1000, 100);
+        let mut prefix = desk.flush_company();
+        let closed_source = prefix.repurchase.pop().unwrap();
+        assert_eq!(closed_source.kind, RepurchaseSourceKind::Closed);
+        let at = prefix
+            .entities
+            .iter()
+            .position(|entity| matches!(entity, Entity::Closed { .. }))
+            .unwrap();
+        let closed_entity = prefix.entities.remove(at);
+        consume(&mut state, prefix);
+        assert_eq!(state.accounts[1].buy_purse_held_cents, 0);
+        assert!(state.child_in_flight.contains_key(&(ACCOUNT, StockId(3))));
+        // 原 H0 Closed 后缀没有 Fill；删 source、改 Batch.stock 仍不能变成普通闭单。
+        reject_before_mutation(
+            &mut state,
+            DeskBatch {
+                stock: 2,
+                tick: 1,
+                round: 0,
+                entities: vec![closed_entity],
+                ..Default::default()
+            },
+        );
     }
     {
-    let (mut state, mut desk, request, purse) = state(1200, 100);
-    desk.company_buy(request, 1200, 100, purse);
-    let mut rejected = desk.flush_company();
-    assert!(matches!(rejected.repurchase[0].kind, RepurchaseSourceKind::Rejected { .. }));
-    assert_eq!(rejected.receipts.len(), 1);
-    assert_eq!(rejected.receipts[0].order.0, STOCK);
-    // 真实 Rejected receipt 前缀也没有 Fill/Entity；原 Ref 的股身份仍须核对。
-    rejected.entities.clear();
-    rejected.repurchase.clear();
-    rejected.stock = 2;
-    reject_before_mutation(&mut state, rejected);
+        let (mut state, mut desk, request, purse) = state(1200, 100);
+        desk.company_buy(request, 1200, 100, purse);
+        let mut rejected = desk.flush_company();
+        assert!(matches!(
+            rejected.repurchase[0].kind,
+            RepurchaseSourceKind::Rejected { .. }
+        ));
+        assert_eq!(rejected.receipts.len(), 1);
+        assert_eq!(rejected.receipts[0].order.0, STOCK);
+        // 真实 Rejected receipt 前缀也没有 Fill/Entity；原 Ref 的股身份仍须核对。
+        rejected.entities.clear();
+        rejected.repurchase.clear();
+        rejected.stock = 2;
+        reject_before_mutation(&mut state, rejected);
     }
 }

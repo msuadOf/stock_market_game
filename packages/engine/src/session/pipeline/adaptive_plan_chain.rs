@@ -1216,8 +1216,7 @@ fn project_fill_values(
         #[cfg(feature = "simulation-diagnostics")]
         gross: _gross,
     };
-    domain
-        .record_parent_order_fills(&key.stock, &[fill])?;
+    domain.record_parent_order_fills(&key.stock, &[fill])?;
     if terminal {
         domain.remove_npc_order_lifecycle(key.account, &key.stock, key.order);
     }

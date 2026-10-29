@@ -83,10 +83,7 @@ impl ShareSplitEventPlan {
     }
 
     /// 使用调用方提供的权威日历校验登记日与 R+1 日期；不默认补齐日历。
-    pub fn validate_calendar(
-        &self,
-        calendar: &TradingCalendar,
-    ) -> Result<(), ShareSplitError> {
+    pub fn validate_calendar(&self, calendar: &TradingCalendar) -> Result<(), ShareSplitError> {
         let is_registration_day = calendar
             .is_trading_day(self.exchange, self.registered_on)
             .map_err(|error| ShareSplitError::CalendarLookup {

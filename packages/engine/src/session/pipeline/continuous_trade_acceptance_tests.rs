@@ -1,6 +1,4 @@
-use super::market_tick_transaction::{
-    apply_tick_shadow_market_transaction, prepare_market_tick,
-};
+use super::market_tick_transaction::{apply_tick_shadow_market_transaction, prepare_market_tick};
 use super::*;
 use crate::session::RetailOrderDiagnosticEvent;
 use crate::{
@@ -33,7 +31,9 @@ fn two_player_inputs_keep_fifo_identity_through_fills_events_and_commit_rebase()
         enqueue_crossing_buy(&mut authority, &code);
     }
     let authority_before = authority.business_state_hash().unwrap();
-    let mut plan = plan_tick(PhaseInput { session: &authority })
+    let mut plan = plan_tick(PhaseInput {
+        session: &authority,
+    })
     .unwrap();
 
     let output = apply_tick_shadow_market_transaction(&mut plan).unwrap();
@@ -302,7 +302,9 @@ fn crossing_trade_has_a_complete_causal_chain() {
     let (mut authority, code) = session_with_resting_sell(true, LOT);
     // The fixture installs the maker directly. Seed its genuine pre-existing origin so the
     // diagnostic report can reconcile both sides of the Continuous execution.
-    authority.causal_submitted(&authority.state.markets[&code].resting_orders()[0], &code).unwrap();
+    authority
+        .causal_submitted(&authority.state.markets[&code].resting_orders()[0], &code)
+        .unwrap();
     authority
         .state
         .retail_experience
@@ -340,7 +342,9 @@ fn run_single_trade_acceptance(t1_enabled: bool, expected_locked: u32, expected_
     let (mut authority, code) = session_with_resting_sell(t1_enabled, LOT);
     enqueue_crossing_buy(&mut authority, &code);
     let authority_before = authority.business_state_hash().unwrap();
-    let mut plan = plan_tick(PhaseInput { session: &authority })
+    let mut plan = plan_tick(PhaseInput {
+        session: &authority,
+    })
     .unwrap();
 
     let output = apply_tick_shadow_market_transaction(&mut plan).unwrap();

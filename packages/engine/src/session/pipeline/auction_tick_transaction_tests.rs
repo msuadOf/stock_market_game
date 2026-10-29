@@ -194,20 +194,30 @@ fn production_market_rejection_consumes_id_and_does_not_refund_account_validatio
     assert_eq!(committed.output.receipts.len(), 1);
     assert_eq!(committed.output.receipts[0].kind, ReceiptKind::Reject);
     assert_eq!(committed.output.receipts[0].envelope.order, rejected_id);
-    assert!(committed.commit.tick.event_values().iter().any(|event| matches!(
-        event,
-        Event::IntentRejected {
-            reason: RejectionReason::AuctionLimitOrderRequired,
-            ..
-        }
-    )));
-    assert!(committed.commit.tick.event_values().iter().any(|event| matches!(
-        event,
-        Event::IntentRejected {
-            reason: RejectionReason::InsufficientCash,
-            ..
-        }
-    )));
+    assert!(committed
+        .commit
+        .tick
+        .event_values()
+        .iter()
+        .any(|event| matches!(
+            event,
+            Event::IntentRejected {
+                reason: RejectionReason::AuctionLimitOrderRequired,
+                ..
+            }
+        )));
+    assert!(committed
+        .commit
+        .tick
+        .event_values()
+        .iter()
+        .any(|event| matches!(
+            event,
+            Event::IntentRejected {
+                reason: RejectionReason::InsufficientCash,
+                ..
+            }
+        )));
     assert_eq!(
         authority.state.accounts[&AccountId(0)].cash(),
         one_order_cash
@@ -280,20 +290,30 @@ fn production_market_rejection_consumes_the_shared_account_validation_budget_bef
         committed.output.receipts[0].envelope.order,
         rejected_market_id
     );
-    assert!(committed.commit.tick.event_values().iter().any(|event| matches!(
-        event,
-        Event::IntentRejected {
-            reason: RejectionReason::AuctionLimitOrderRequired,
-            ..
-        }
-    )));
-    assert!(committed.commit.tick.event_values().iter().any(|event| matches!(
-        event,
-        Event::IntentRejected {
-            reason: RejectionReason::InsufficientCash,
-            ..
-        }
-    )));
+    assert!(committed
+        .commit
+        .tick
+        .event_values()
+        .iter()
+        .any(|event| matches!(
+            event,
+            Event::IntentRejected {
+                reason: RejectionReason::AuctionLimitOrderRequired,
+                ..
+            }
+        )));
+    assert!(committed
+        .commit
+        .tick
+        .event_values()
+        .iter()
+        .any(|event| matches!(
+            event,
+            Event::IntentRejected {
+                reason: RejectionReason::InsufficientCash,
+                ..
+            }
+        )));
 }
 
 #[test]
@@ -458,8 +478,7 @@ fn commit_with_roots_returning(
     super::npc_tick_preparation::queue_npc_for_next_tick(authority).unwrap();
     let mut roots = PlanChainOperationBatch::empty();
     roots.push_execution(request);
-    let mut plan = plan_tick(PhaseInput { session: authority })
-    .unwrap();
+    let mut plan = plan_tick(PhaseInput { session: authority }).unwrap();
     apply_tick_shadow_market_transaction_with_roots_for_test(&mut plan, roots).unwrap();
     Ok(
         super::candidate_commit::prepare_tick_shadow_plan_commit(authority, plan)
@@ -509,7 +528,9 @@ fn parent_transaction_seam_rolls_back_every_authoritative_family_on_later_round_
         serde_json::to_value(&authority.auction_order_projection_for_test()).unwrap();
     let ledger_before = authority.state.envelope_ledger.clone();
     let plans_before = serde_json::to_value(&authority.state.plans).unwrap();
-    let mut plan = plan_tick(PhaseInput { session: &authority })
+    let mut plan = plan_tick(PhaseInput {
+        session: &authority,
+    })
     .unwrap();
 
     let result = apply_tick_shadow_market_transaction_with_roots_for_test(&mut plan, roots);

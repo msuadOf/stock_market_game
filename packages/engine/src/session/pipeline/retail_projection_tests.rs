@@ -594,17 +594,16 @@ fn independent_retail_accounts_project_identically_with_one_or_four_workers() {
         (AccountId(2), positions(200).remove(&AccountId(1)).unwrap()),
     ]);
     let run = |workers| {
-        crate::compute::ComputeContext::from_workers(workers)
-            .install(|| {
-                project_retail_receipts(RetailProjectionInput {
-                    retail_experience: &experience,
-                    retail_accounts: &accounts,
-                    positions_before: &before,
-                    positions_after: &after,
-                    market_minute: 10,
-                    fill_facts: FillFactView::all(&fill_facts),
-                })
+        crate::compute::ComputeContext::from_workers(workers).install(|| {
+            project_retail_receipts(RetailProjectionInput {
+                retail_experience: &experience,
+                retail_accounts: &accounts,
+                positions_before: &before,
+                positions_after: &after,
+                market_minute: 10,
+                fill_facts: FillFactView::all(&fill_facts),
             })
+        })
     };
     let single = run(1).unwrap();
     assert_eq!(single, run(4).unwrap());

@@ -96,7 +96,7 @@ fn desk_in_place_carries_owner_side_price_qty_purse() {
         qty,
         purse,
         #[cfg(feature = "simulation-diagnostics")]
-        source: _,
+            source: _,
     } = op
     else {
         panic!("应构造出 Place 变体");

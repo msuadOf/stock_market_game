@@ -15,7 +15,6 @@ impl GameSession {
             self.state.setup.auction_ticks,
             self.state.setup.closing_auction_ticks,
         );
-        CivilInstant::new(self.civil_date(), second)
-            .expect("validated civil session date")
+        CivilInstant::new(self.civil_date(), second).expect("validated civil session date")
     }
 }

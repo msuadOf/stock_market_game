@@ -190,10 +190,14 @@ impl Accumulator {
     ) -> Result<(), AccountingError> {
         let (first, last) = self.window;
         let in_win = first <= effective && effective <= last;
-        if in_win && entry.kind == crate::accounting::journal::BusinessKind::CompanyDividendDeclaration {
+        if in_win
+            && entry.kind == crate::accounting::journal::BusinessKind::CompanyDividendDeclaration
+        {
             let mut equity_delta = AccountingAmount::ZERO;
             for row in &entry.lines {
-                if defs.get(&row.account).is_some_and(|def| def.element == crate::accounting::ledger::AccountElement::Equity) {
+                if defs.get(&row.account).is_some_and(|def| {
+                    def.element == crate::accounting::ledger::AccountElement::Equity
+                }) {
                     equity_delta = match row.side {
                         PostingSide::Debit => equity_delta.add(row.amount)?,
                         PostingSide::Credit => equity_delta.sub(row.amount)?,

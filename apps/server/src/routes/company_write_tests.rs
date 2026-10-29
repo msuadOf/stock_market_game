@@ -151,7 +151,8 @@ async fn correction_enqueue_http_accepts_controller_without_financial_membership
     let identities = crate::identity::IdentityService::new(manager.database());
     let creator = identities.guest().unwrap();
     let controller = identities.guest().unwrap();
-    let creator_subject = engine::session::OpaqueSubjectId::new(creator.subject.subject_id).unwrap();
+    let creator_subject =
+        engine::session::OpaqueSubjectId::new(creator.subject.subject_id).unwrap();
     let controller_subject =
         engine::session::OpaqueSubjectId::new(controller.subject.subject_id).unwrap();
     manager
@@ -216,7 +217,8 @@ async fn correction_cancel_http_accepts_controller_without_financial_membership(
     let identities = crate::identity::IdentityService::new(manager.database());
     let creator = identities.guest().unwrap();
     let controller = identities.guest().unwrap();
-    let creator_subject = engine::session::OpaqueSubjectId::new(creator.subject.subject_id).unwrap();
+    let creator_subject =
+        engine::session::OpaqueSubjectId::new(creator.subject.subject_id).unwrap();
     let controller_subject =
         engine::session::OpaqueSubjectId::new(controller.subject.subject_id).unwrap();
     manager

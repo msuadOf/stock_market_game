@@ -34,15 +34,27 @@ fn market_world(reopen: bool) -> World {
         spec.initial_last_day_end_tick = Some(12);
     }
     let mut world = World::spawn(spec, calendar).unwrap();
-    world.run_ticks(12).expect("真实日内成交与末拍 Continue 成功");
+    world
+        .run_ticks(12)
+        .expect("真实日内成交与末拍 Continue 成功");
     assert_eq!(world.report_log.last().unwrap().rounds, 1);
-    let real = world.report_log.iter().flat_map(|record| &record.desk_trades).collect::<Vec<_>>();
+    let real = world
+        .report_log
+        .iter()
+        .flat_map(|record| &record.desk_trades)
+        .collect::<Vec<_>>();
     assert_eq!(real.len(), 1, "日内一笔已成交，收盘批仍待真实 Drain 清算");
     assert_eq!(real[0].stock, stock);
     let current = world.committed_calendar_tick().unwrap().unwrap();
     let projected = current.calendar.after_projection();
-    assert_eq!(projected.stock(StockId(0)).unwrap().date_session_ordinal(), Some(if reopen { 1 } else { 0 }));
-    assert_eq!(projected.stock(StockId(1)).unwrap().date_session_ordinal(), if reopen { Some(0) } else { None });
+    assert_eq!(
+        projected.stock(StockId(0)).unwrap().date_session_ordinal(),
+        Some(if reopen { 1 } else { 0 })
+    );
+    assert_eq!(
+        projected.stock(StockId(1)).unwrap().date_session_ordinal(),
+        if reopen { Some(0) } else { None }
+    );
     world
 }
 
@@ -51,28 +63,51 @@ fn end_market(world: &mut World) {
     let tick = Arc::clone(&committed.calendar);
     let again = world.committed_calendar_tick().unwrap().unwrap();
     assert!(Arc::ptr_eq(&tick, &again.calendar));
-    world.run_day_end_with_calendar(DayEndCalendar::MarketTick(tick)).unwrap();
+    world
+        .run_day_end_with_calendar(DayEndCalendar::MarketTick(tick))
+        .unwrap();
 }
 
 fn totals(bars: &[MinuteBarFact]) -> (u64, u128, u64) {
-    bars.iter().fold((0, 0, 0), |(volume, amount, count), bar|
-        (volume + bar.volume_shares, amount + bar.turnover_cents, count + bar.trade_count))
+    bars.iter().fold((0, 0, 0), |(volume, amount, count), bar| {
+        (
+            volume + bar.volume_shares,
+            amount + bar.turnover_cents,
+            count + bar.trade_count,
+        )
+    })
 }
 
 fn check_final(report: &ShutdownReport, reopen: bool) {
     assert_eq!(report.worker_results.len(), 4);
-    assert!(report.worker_results.iter().all(|(_, result)| result.is_ok()));
+    assert!(report
+        .worker_results
+        .iter()
+        .all(|(_, result)| result.is_ok()));
     assert_eq!(report.group_finals.len(), 2);
     assert_eq!(report.desk_finals.len(), 2);
-    assert!(report.group_finals.iter().flat_map(|group| &group.accounts)
-        .all(|account| account.buy_purse_held_cents == 0 && account.pending_sell_qty.iter().all(|&qty| qty == 0)));
+    assert!(report
+        .group_finals
+        .iter()
+        .flat_map(|group| &group.accounts)
+        .all(|account| account.buy_purse_held_cents == 0
+            && account.pending_sell_qty.iter().all(|&qty| qty == 0)));
     for desk in &report.desk_finals {
         assert!(desk.resting.is_empty());
         let traded = usize::from(desk.stock) == usize::from(reopen);
         if traded {
             assert_eq!(desk.market.candles.len(), 1);
             let candle = &desk.market.candles[0];
-            assert_eq!((candle.open, candle.high, candle.low, candle.close, candle.volume), (1000, 1000, 1000, 1000, 200));
+            assert_eq!(
+                (
+                    candle.open,
+                    candle.high,
+                    candle.low,
+                    candle.close,
+                    candle.volume
+                ),
+                (1000, 1000, 1000, 1000, 200)
+            );
         } else if !reopen {
             assert!(desk.market.candles.is_empty(), "closed 不产生伪终 K");
             assert!(desk.market.minute_closes.is_empty());
@@ -89,10 +124,23 @@ fn check_final(report: &ShutdownReport, reopen: bool) {
 fn unconsumed(reopen: bool) {
     let mut world = market_world(reopen);
     end_market(&mut world);
-    assert_eq!(world.drained_day_trades.len(), 1, "Drain 产生一笔真实收盘成交");
-    let report = world.shutdown().expect("未消费桶必须复用，不再次空 Drain 覆盖");
+    assert_eq!(
+        world.drained_day_trades.len(),
+        1,
+        "Drain 产生一笔真实收盘成交"
+    );
+    let report = world
+        .shutdown()
+        .expect("未消费桶必须复用，不再次空 Drain 覆盖");
     check_final(&report, reopen);
-    assert_eq!(totals(report.drained_minute_bars[usize::from(reopen)].as_ref().unwrap()), (200, 200_000, 2));
+    assert_eq!(
+        totals(
+            report.drained_minute_bars[usize::from(reopen)]
+                .as_ref()
+                .unwrap()
+        ),
+        (200, 200_000, 2)
+    );
     if !reopen {
         assert!(report.drained_minute_bars[1].as_ref().unwrap().is_empty());
     }
@@ -117,11 +165,17 @@ fn mixed_market_day_end_consumed_bars_are_not_replayed_by_shutdown() {
     assert!(bars[1].as_ref().unwrap().is_empty());
     let candles = world.take_pending_day_candles();
     let candle = candles[0].as_ref().unwrap();
-    assert_eq!((candle.volume, candle.turnover_cents, candle.trade_count), (200, 200_000, 2));
+    assert_eq!(
+        (candle.volume, candle.turnover_cents, candle.trade_count),
+        (200, 200_000, 2)
+    );
     assert!(candles[1].is_none());
     let report = world.shutdown().unwrap();
     check_final(&report, false);
-    assert!(report.drained_minute_bars.iter().all(Option::is_none), "已消费事实不得重发");
+    assert!(
+        report.drained_minute_bars.iter().all(Option::is_none),
+        "已消费事实不得重发"
+    );
 }
 
 #[test]
@@ -139,9 +193,14 @@ fn mixed_market_day_end_abort_shutdown_uses_real_drain_again() {
     assert!(Arc::ptr_eq(&before, &world.publication().load()));
     assert!(world.take_pending_day_bars().iter().all(Option::is_none));
     assert!(world.take_pending_day_candles().iter().all(Option::is_none));
-    let report = world.shutdown().expect("Abort 后真实 Drain 不能沿用已作废空槽");
+    let report = world
+        .shutdown()
+        .expect("Abort 后真实 Drain 不能沿用已作废空槽");
     check_final(&report, false);
-    assert_eq!(totals(report.drained_minute_bars[0].as_ref().unwrap()), (200, 200_000, 2));
+    assert_eq!(
+        totals(report.drained_minute_bars[0].as_ref().unwrap()),
+        (200, 200_000, 2)
+    );
     assert!(report.drained_minute_bars[1].as_ref().unwrap().is_empty());
 }
 
@@ -158,7 +217,9 @@ fn partial_day_end_failure(fail_after_drain: bool) {
         world.fail_day_end_before_group_for_test(1);
     }
     let tick = world.committed_calendar_tick().unwrap().unwrap().calendar;
-    let error = world.run_day_end_with_calendar(DayEndCalendar::MarketTick(Arc::clone(&tick))).expect_err("部分参与者后显式故障");
+    let error = world
+        .run_day_end_with_calendar(DayEndCalendar::MarketTick(Arc::clone(&tick)))
+        .expect_err("部分参与者后显式故障");
     if fail_after_drain {
         assert!(matches!(&error, RuntimeError::ProtocolInvariant { detail }
             if detail == "【测试注入】收到 1 个真实 DeskDrained 后收集失败"));
@@ -173,22 +234,37 @@ fn partial_day_end_failure(fail_after_drain: bool) {
     assert!(Arc::ptr_eq(&before, &world.publication().load()));
     assert!(world.take_pending_day_bars().iter().all(Option::is_none));
     assert!(world.take_pending_day_candles().iter().all(Option::is_none));
-    assert_eq!(world.live_workers_for_test(), 4, "真实 AbortDayEnd 确认后原四worker仍受World拥有");
+    assert_eq!(
+        world.live_workers_for_test(),
+        4,
+        "真实 AbortDayEnd 确认后原四worker仍受World拥有"
+    );
     if fail_after_drain {
         end_market(&mut world);
     } else {
-        let retry = world.run_day_end_with_calendar(DayEndCalendar::MarketTick(tick))
+        let retry = world
+            .run_day_end_with_calendar(DayEndCalendar::MarketTick(tick))
             .expect_err("发送故障即terminal，不能把原typed日结当作可重试");
-        assert_eq!(retry, RuntimeError::ProtocolInvariant {
-            detail: format!("world 已死亡，不可继续日结：日结参与者断连，不可继续运行：{error}"),
-        });
-        assert!(matches!(world.run_ticks(0), Err(RuntimeError::ProtocolInvariant { detail })
-            if detail.starts_with("world 已死亡，不可继续跑 tick：日结参与者断连，不可继续运行：")));
+        assert_eq!(
+            retry,
+            RuntimeError::ProtocolInvariant {
+                detail: format!(
+                    "world 已死亡，不可继续日结：日结参与者断连，不可继续运行：{error}"
+                ),
+            }
+        );
+        assert!(
+            matches!(world.run_ticks(0), Err(RuntimeError::ProtocolInvariant { detail })
+            if detail.starts_with("world 已死亡，不可继续跑 tick：日结参与者断连，不可继续运行："))
+        );
         assert!(Arc::ptr_eq(&before, &world.publication().load()));
     }
     let report = world.shutdown().unwrap();
     check_final(&report, false);
-    assert_eq!(totals(report.drained_minute_bars[0].as_ref().unwrap()), (200, 200_000, 2));
+    assert_eq!(
+        totals(report.drained_minute_bars[0].as_ref().unwrap()),
+        (200, 200_000, 2)
+    );
 }
 
 #[test]
@@ -225,20 +301,37 @@ fn reopen_partial_desk_start_preserves_prior_day_end_and_joins_without_replaying
     assert_eq!(world.report_log.len(), 12);
     assert!(Arc::ptr_eq(&before, &world.publication().load()));
     world.abort_day_end();
-    assert_eq!(world.public_views(), next_views.as_slice(), "首个Start已经关闭旧日结撤销窗口");
-    assert!(matches!(world.run_ticks(0), Err(RuntimeError::ProtocolInvariant { detail })
-        if detail.contains("world 已死亡")));
-    let report = world.shutdown().expect("取真实失败Final，不能重跑已消费或旧日结Drain");
+    assert_eq!(
+        world.public_views(),
+        next_views.as_slice(),
+        "首个Start已经关闭旧日结撤销窗口"
+    );
+    assert!(
+        matches!(world.run_ticks(0), Err(RuntimeError::ProtocolInvariant { detail })
+        if detail.contains("world 已死亡"))
+    );
+    let report = world
+        .shutdown()
+        .expect("取真实失败Final，不能重跑已消费或旧日结Drain");
     check_final(&report, false);
     for group in &report.group_finals {
-        assert_eq!(group.accounts, accounts[usize::from(group.group)].1,
-            "未收到新Start的组保留上日成功日结资源，不倒放已发布拍");
-        assert_eq!(group.plan_book_for_test, books[usize::from(group.group)].1,
-            "完整PlanBook来自实际Final，不能用旧发布镜像自证");
+        assert_eq!(
+            group.accounts,
+            accounts[usize::from(group.group)].1,
+            "未收到新Start的组保留上日成功日结资源，不倒放已发布拍"
+        );
+        assert_eq!(
+            group.plan_book_for_test,
+            books[usize::from(group.group)].1,
+            "完整PlanBook来自实际Final，不能用旧发布镜像自证"
+        );
     }
     assert_eq!(report.desk_finals[0].cur_tick_for_test, 13);
     assert_eq!(report.desk_finals[1].cur_tick_for_test, 12);
-    assert_eq!(totals(report.drained_minute_bars[0].as_ref().unwrap()), (200, 200_000, 2),
-        "部分Start失败不能将原未消费真实日结桶覆盖为空");
+    assert_eq!(
+        totals(report.drained_minute_bars[0].as_ref().unwrap()),
+        (200, 200_000, 2),
+        "部分Start失败不能将原未消费真实日结桶覆盖为空"
+    );
     assert!(report.drained_minute_bars[1].as_ref().unwrap().is_empty());
 }

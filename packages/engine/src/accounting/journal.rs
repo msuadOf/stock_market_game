@@ -230,8 +230,7 @@ pub struct JournalEntry {
 /// 生产开销说明：每次 `JournalEntry::clone` 一次 relaxed 原子自增（无锁、
 /// 无分配），量级远低于克隆本身；迁移到诊断 feature 留作后续批次（迁移会
 /// 使非诊断构建与诊断构建的代码路径分叉，需单独评审）。
-static JOURNAL_ENTRY_CLONES: std::sync::atomic::AtomicU64 =
-    std::sync::atomic::AtomicU64::new(0);
+static JOURNAL_ENTRY_CLONES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// 当前累计的 `JournalEntry` 深拷贝次数（测试/诊断读取）。
 pub fn journal_entry_clone_count() -> u64 {

@@ -79,8 +79,8 @@ fn restore_runtime_topology_uses_complete_json_archive_for_three_stocks() {
 
 #[test]
 fn restore_runtime_topology_does_not_persist_explicit_source_group_override() {
-    let source = GameSession::new_with_runtime_groups(setup(1), 42, 3)
-        .expect("显式多组源会话必须可以构造");
+    let source =
+        GameSession::new_with_runtime_groups(setup(1), 42, 3).expect("显式多组源会话必须可以构造");
     assert_eq!(source.runtime_group_count, 3);
     let save = source.save().unwrap();
     assert_eq!(save.restore_runtime_topology().unwrap(), (1, 1));

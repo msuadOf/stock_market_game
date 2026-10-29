@@ -243,9 +243,12 @@ impl GameSession {
                     .values()
                     .map(|member| member.account_id)
                     .collect();
-                Box::new(self.state.accounts.iter().filter(move |(id, _)| {
-                    member_accounts.contains(id) || **id == player
-                }))
+                Box::new(
+                    self.state
+                        .accounts
+                        .iter()
+                        .filter(move |(id, _)| member_accounts.contains(id) || **id == player),
+                )
             };
         let accounts = selected_accounts
             .map(|(id, a)| {
@@ -308,8 +311,24 @@ mod tests {
     fn closing_mirror_visibility_compares_local_serial_for_second_stock() {
         let mirror = super::super::DeskBookMirror {
             orders: vec![
-                (AccountId(1), Side::Buy, Money::from_cents(900), 100, (1_u64 << 32) | 7, 0, 0),
-                (AccountId(2), Side::Buy, Money::from_cents(900), 200, (1_u64 << 32) | 9, 0, 0),
+                (
+                    AccountId(1),
+                    Side::Buy,
+                    Money::from_cents(900),
+                    100,
+                    (1_u64 << 32) | 7,
+                    0,
+                    0,
+                ),
+                (
+                    AccountId(2),
+                    Side::Buy,
+                    Money::from_cents(900),
+                    200,
+                    (1_u64 << 32) | 9,
+                    0,
+                    0,
+                ),
             ],
             last_price: Money::from_cents(1_000),
             public_cutoff_serial: 8,
@@ -531,7 +550,6 @@ mod tests {
     }
 }
 
-
 /// D5 attention：镜像公开投影（desk 簿镜像+相位/截点门禁——与 desk
 /// build_public 的公开面同式：CallAuction 公开簿空、ClosingAuction 揭示
 /// 截点前老单、PreOpen/Continuous 全簿）。
@@ -543,15 +561,24 @@ pub(super) fn project_mirror_public_book(
     let cutoff = mirror.public_cutoff_serial;
     #[allow(clippy::type_complexity)]
     let visible: Box<
-        dyn Iterator<Item = &(crate::AccountId, crate::Side, crate::Money, u32, u64, i64, u32)>,
+        dyn Iterator<
+            Item = &(
+                crate::AccountId,
+                crate::Side,
+                crate::Money,
+                u32,
+                u64,
+                i64,
+                u32,
+            ),
+        >,
     > = match phase {
         crate::TradingPhase::CallAuction => Box::new(std::iter::empty()),
-        crate::TradingPhase::ClosingAuction => Box::new(
-            mirror
-                .orders
-                .iter()
-                .filter(|(_, _, _, _, serial, _, _)| crate::runtime::group::desk_order_serial(*serial) < cutoff),
-        ),
+        crate::TradingPhase::ClosingAuction => {
+            Box::new(mirror.orders.iter().filter(|(_, _, _, _, serial, _, _)| {
+                crate::runtime::group::desk_order_serial(*serial) < cutoff
+            }))
+        }
         crate::TradingPhase::PreOpen | crate::TradingPhase::Continuous => {
             Box::new(mirror.orders.iter())
         }

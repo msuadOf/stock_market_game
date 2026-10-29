@@ -1,7 +1,7 @@
 //! 从当前 Session 已安装的资本事实读取批准口径；不执行资本动作或补造来源。
 
 use super::company_capital_restore::{
-    CapitalRestoreInput, CompanyCapitalRestoreError, validate_company_capital_restore,
+    validate_company_capital_restore, CapitalRestoreInput, CompanyCapitalRestoreError,
 };
 use super::company_state::SessionCompanies;
 use super::{GameSession, SessionError};

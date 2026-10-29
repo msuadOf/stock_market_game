@@ -214,7 +214,11 @@ fn price_band_is_closed_interval_and_cage_only_continuous() {
     assert_eq!(a0.shares[0], 1_100, "边界买单成交");
     assert_eq!(a0.cash, 1_000_000 - 110_501, "买方付 maker 价+费用");
     let a1 = &report.group_finals[0].accounts[1];
-    assert_eq!(a1.cash, 1_000_000 + 109_444, "卖方净得（110_000−556=佣金 500+印花 55+过户 1）");
+    assert_eq!(
+        a1.cash,
+        1_000_000 + 109_444,
+        "卖方净得（110_000−556=佣金 500+印花 55+过户 1）"
+    );
 }
 
 #[test]
@@ -394,7 +398,10 @@ fn preopen_rejects_and_auction_requires_limit_orders() {
     // tick1..3 积累不撮合；tick4 开盘清算（100 股 @1000）。
     assert_eq!(desk.market.volume_today, 100, "开盘清算一次撮合");
     assert_eq!(desk.market.trade_count, 1);
-    assert_eq!(desk.skipped_orders, 1, "PreOpen 拒收 tick5 申报（phase(4)=PreOpen）");
+    assert_eq!(
+        desk.skipped_orders, 1,
+        "PreOpen 拒收 tick5 申报（phase(4)=PreOpen）"
+    );
     let a0 = &report.group_finals[0].accounts[0];
     // 买方两单：清算成交 100 + PreOpen 拒单退款 ⇒ 持股 1100、现金扣一笔费用。
     assert_eq!(a0.shares[0], 1_100);
@@ -576,9 +583,27 @@ fn p1_auction_self_trade_double_cancel_refunds_and_reports_actual_volume() {
         Box::new(|tick, _round| {
             let mut plan = TickPlan::default();
             if tick == 1 {
-                plan.places.push(PlaceSpec { local: 0, stock: 0, side: Side::Buy, price: 1000, qty: 100 });
-                plan.places.push(PlaceSpec { local: 0, stock: 0, side: Side::Sell, price: 1000, qty: 100 });
-                plan.places.push(PlaceSpec { local: 1, stock: 0, side: Side::Sell, price: 1000, qty: 100 });
+                plan.places.push(PlaceSpec {
+                    local: 0,
+                    stock: 0,
+                    side: Side::Buy,
+                    price: 1000,
+                    qty: 100,
+                });
+                plan.places.push(PlaceSpec {
+                    local: 0,
+                    stock: 0,
+                    side: Side::Sell,
+                    price: 1000,
+                    qty: 100,
+                });
+                plan.places.push(PlaceSpec {
+                    local: 1,
+                    stock: 0,
+                    side: Side::Sell,
+                    price: 1000,
+                    qty: 100,
+                });
             }
             plan
         })
@@ -598,18 +623,27 @@ fn p1_auction_self_trade_double_cancel_refunds_and_reports_actual_volume() {
     // P1-1+P1-2 修正后语义：acct0 买 × acct1 卖成交 100（非自单配对——
     // 第三方流动性不被消耗）；acct0 自卖单撤回（资源闭合）。
     let a0 = &report.group_finals[0].accounts[0];
-    assert_eq!(a0.cash, 1_000_000 - 100_501, "买成交实扣（1000×100+佣金500+过户1）");
+    assert_eq!(
+        a0.cash,
+        1_000_000 - 100_501,
+        "买成交实扣（1000×100+佣金500+过户1）"
+    );
     assert_eq!(a0.shares[0], 1_100, "买入 100 股入账（T+1 冻结）");
     assert_eq!(a0.frozen_today[0], 100, "当日买入冻结");
-    assert!(a0.foreign_active.iter().all(|&x| x == 0), "在途全闭合（P1-1）");
+    assert!(
+        a0.foreign_active.iter().all(|&x| x == 0),
+        "在途全闭合（P1-1）"
+    );
     // 自卖撤回：acct1 卖 100 给 acct0 ⇒ acct1 shares=900；acct0 自卖
     // 单 Cancelled（资源退回已含在上列）。
     let a1 = &report.group_finals[0].accounts[1];
     assert_eq!(a1.shares[0], 900, "第三方卖成交扣股");
     // P1-2：实际成交量 100（选择量 200 含自单对——剔除后按实际）。
-    assert_eq!(report.desk_finals[0].market.volume_today, 100, "实际成交量（P1-2）");
+    assert_eq!(
+        report.desk_finals[0].market.volume_today, 100,
+        "实际成交量（P1-2）"
+    );
 }
-
 
 // ── Sol P1-3/P1-4/P1-6 反例红→绿 ──
 
@@ -627,10 +661,28 @@ fn p1_3_undo_replay_clears_self_trade_index() {
             let mut plan = TickPlan::default();
             if tick == 1 {
                 if !fr.swap(true, Ordering::SeqCst) {
-                    plan.places.push(PlaceSpec { local: 0, stock: 0, side: Side::Sell, price: 1000, qty: 100 });
+                    plan.places.push(PlaceSpec {
+                        local: 0,
+                        stock: 0,
+                        side: Side::Sell,
+                        price: 1000,
+                        qty: 100,
+                    });
                 } else {
-                    plan.places.push(PlaceSpec { local: 1, stock: 0, side: Side::Sell, price: 1000, qty: 100 });
-                    plan.places.push(PlaceSpec { local: 0, stock: 0, side: Side::Buy, price: 1000, qty: 100 });
+                    plan.places.push(PlaceSpec {
+                        local: 1,
+                        stock: 0,
+                        side: Side::Sell,
+                        price: 1000,
+                        qty: 100,
+                    });
+                    plan.places.push(PlaceSpec {
+                        local: 0,
+                        stock: 0,
+                        side: Side::Buy,
+                        price: 1000,
+                        qty: 100,
+                    });
                 }
             }
             plan
@@ -658,7 +710,10 @@ fn p1_3_undo_replay_clears_self_trade_index() {
     world.set_validator(Box::new(|_| Ok(())));
     world.run_ticks(1).expect("tick1 重跑成功");
     let report = world.shutdown().expect("关停");
-    assert_eq!(report.desk_finals[0].market.volume_today, 100, "P1-3 回放清索引");
+    assert_eq!(
+        report.desk_finals[0].market.volume_today, 100,
+        "P1-3 回放清索引"
+    );
     let a0 = &report.group_finals[0].accounts[0];
     assert_eq!(a0.shares[0], 1_100, "买入入账");
 }
@@ -668,9 +723,7 @@ fn p1_6_second_day_minute_keys_not_doubled() {
     // 反例（Sol）：第二日 tick 255 连续分钟为零——不应填出 240 条偏移记录。
     // 经 desk 状态直达验证（世界跨日后的公共态分钟键域）。
     use super::group::{GroupScript, TickPlan};
-    let script = |_g: super::GroupIdx| -> GroupScript {
-        Box::new(|_t, _r| TickPlan::default())
-    };
+    let script = |_g: super::GroupIdx| -> GroupScript { Box::new(|_t, _r| TickPlan::default()) };
     let mut spec = super::skeleton_tests::basic_spec(1, 1, 1, Box::new(script));
     spec.ticks_per_day = 240;
     spec.auction_ticks = 15;
@@ -680,10 +733,9 @@ fn p1_6_second_day_minute_keys_not_doubled() {
     let mut world = super::world::World::spawn(spec, calendar.clone()).expect("世界构造");
     world.run_ticks(240).expect("首日全部市场拍");
     world.run_day_end_public().expect("显式首日市场日终");
-    let next_date = calendar.next_trading_day(
-        crate::calendar::CalendarExchange::Sse,
-        first_date,
-    ).unwrap();
+    let next_date = calendar
+        .next_trading_day(crate::calendar::CalendarExchange::Sse, first_date)
+        .unwrap();
     world.set_civil_date(next_date);
     world.run_ticks(15).expect("第二日连续窗起点");
     let views = world.public_views();
@@ -761,7 +813,10 @@ fn sol2_abort_replay_empty_level_does_not_break_auction_clearing() {
         }
     });
     world.set_validator(fail);
-    assert!(world.run_ticks(1).is_err(), "tick1 注入失败（Abort 回放删 900 档）");
+    assert!(
+        world.run_ticks(1).is_err(),
+        "tick1 注入失败（Abort 回放删 900 档）"
+    );
     world.set_validator(Box::new(|_| Ok(())));
     world.run_ticks(4).expect("tick1-4 重跑+开盘清算");
     // 开盘清算事实（completed）：实际成交量必须 100（空档残留时为 0）。
@@ -838,7 +893,10 @@ fn sol4_turnover_rolls_back_on_abort() {
     world.run_ticks(1).expect("tick1 重跑（同批单再成交）");
     let report = world.shutdown().expect("关停");
     let market = &report.desk_finals[0].market;
-    assert_eq!(market.turnover_today, 100_000, "turnover 回滚后恰一轮成交额");
+    assert_eq!(
+        market.turnover_today, 100_000,
+        "turnover 回滚后恰一轮成交额"
+    );
     assert_eq!(market.volume_today, 100, "成交量回滚后恰 100 股");
     assert_eq!(market.trade_count, 1, "笔数回滚后恰 1 笔");
 }
@@ -879,7 +937,11 @@ fn r21_capacity_convention_no_fixed_count_rejection() {
     // 途中（挂单在簿）：全量受理、无按条数拒收。
     let accounts = world.snapshot_accounts().expect("账户快照");
     let a0 = &accounts[0].1[0];
-    assert_eq!(a0.cash, 100_000_000 - 27_150_300, "300 张 purse 全额预留（容量内不拒）");
+    assert_eq!(
+        a0.cash,
+        100_000_000 - 27_150_300,
+        "300 张 purse 全额预留（容量内不拒）"
+    );
     assert_eq!(a0.foreign_active[0], 300, "300 张在途");
     let views = world.public_views().to_vec();
     assert_eq!(
@@ -889,7 +951,10 @@ fn r21_capacity_convention_no_fixed_count_rejection() {
     );
     // 关停 Drain 全量回流（容量场景的守恒闭合）。
     let report = world.shutdown().expect("关停");
-    assert_eq!(report.desk_finals[0].skipped_orders, 0, "零拒收（不按条数拒）");
+    assert_eq!(
+        report.desk_finals[0].skipped_orders, 0,
+        "零拒收（不按条数拒）"
+    );
     let a0 = &report.group_finals[0].accounts[0];
     assert_eq!(a0.cash, 100_000_000, "Drain 后全额回流");
     assert_eq!(a0.foreign_active[0], 0);
@@ -947,7 +1012,10 @@ fn r16_market_intent_fills_walks_book_and_refunds_remainder() {
     assert_eq!(desk.market.trade_count, 1);
     let a0 = &report.group_finals[0].accounts[0];
     assert_eq!(a0.shares[0], 1_100, "得 100 股");
-    assert_eq!(a0.cash, 899_499, "实付 100_501（对价+最低佣金 500+过户 1），余量全额退款");
+    assert_eq!(
+        a0.cash, 899_499,
+        "实付 100_501（对价+最低佣金 500+过户 1），余量全额退款"
+    );
 
     // 限价对照组（同场景 discriminator）：300@1000 限价 ⇒ 余量 200 挂簿。
     let script = |_g: GroupIdx| -> GroupScript {
@@ -1025,7 +1093,11 @@ fn r19_symbolic_prices_resolve_to_daily_band_edges() {
     );
     world.run_ticks(1).expect("收敛");
     let views = world.public_views().to_vec();
-    assert_eq!(views[0].best_bid, Some(1100), "Highest 买解析=涨停价（挂簿价）");
+    assert_eq!(
+        views[0].best_bid,
+        Some(1100),
+        "Highest 买解析=涨停价（挂簿价）"
+    );
     let accounts = world.snapshot_accounts().expect("账户快照");
     assert_eq!(
         accounts[0].1[0].cash, 889_499,
@@ -1063,7 +1135,11 @@ fn r19_symbolic_prices_resolve_to_daily_band_edges() {
     );
     world.run_ticks(1).expect("收敛");
     let views = world.public_views().to_vec();
-    assert_eq!(views[0].best_ask, Some(900), "Lowest 卖解析=跌停价（挂簿价）");
+    assert_eq!(
+        views[0].best_ask,
+        Some(900),
+        "Lowest 卖解析=跌停价（挂簿价）"
+    );
     let accounts = world.snapshot_accounts().expect("账户快照");
     let a1 = &accounts[0].1[1];
     assert_eq!(a1.cash, 1_000_000, "卖单不占现金（R17 共享资源口径）");
@@ -1100,7 +1176,10 @@ fn ext_cancel(local: u32, serial: u64) -> (u32, u16, u64) {
 fn tick_facts(
     world: &World,
     tick: u64,
-) -> (Vec<super::DeskReceipt>, Vec<super::protocol::DeskLifecycleFact>) {
+) -> (
+    Vec<super::DeskReceipt>,
+    Vec<super::protocol::DeskLifecycleFact>,
+) {
     let rec = world
         .report_log
         .iter()
@@ -1216,15 +1295,29 @@ fn r08_cancel_window_partition_by_receipt_and_clearing_participation() {
     world.run_ticks(1).expect("t6 清算");
     let report = world.shutdown().expect("关停");
     let desk = &report.desk_finals[0];
-    assert_eq!(desk.market.volume_today, 100, "恰 100 股（被撤的买#1 不在清算面）");
+    assert_eq!(
+        desk.market.volume_today, 100,
+        "恰 100 股（被撤的买#1 不在清算面）"
+    );
     assert_eq!(desk.market.trade_count, 1);
-    assert_eq!(desk.market.last_price, 1000, "清算价=双边同价申报（单候选）");
+    assert_eq!(
+        desk.market.last_price, 1000,
+        "清算价=双边同价申报（单候选）"
+    );
     let a0 = &report.group_finals[0].accounts[0];
     let a1 = &report.group_finals[0].accounts[1];
     assert_eq!(a0.shares[0], 1_100, "买#2 成交 100 股");
-    assert_eq!(a0.cash, 1_000_000 - 100_501, "买方：对价+最低佣金 500+过户 1");
+    assert_eq!(
+        a0.cash,
+        1_000_000 - 100_501,
+        "买方：对价+最低佣金 500+过户 1"
+    );
     assert_eq!(a1.shares[0], 900, "卖方出 100 股");
-    assert_eq!(a1.cash, 1_000_000 + 100_000 - 551, "卖方净得：佣金 500+印花 50+过户 1");
+    assert_eq!(
+        a1.cash,
+        1_000_000 + 100_000 - 551,
+        "卖方净得：佣金 500+印花 50+过户 1"
+    );
 }
 
 /// R9 部分成交撤单（弱面强化——此前 rt 侧仅 ReceiptKind 枚举相等性）：
@@ -1263,7 +1356,11 @@ fn r09_partial_fill_cancel_releases_remainder_only() {
         .map(|f| f.order_serial)
         .expect("玩家买单受理（余量 200 挂簿）");
     let views = world.public_views().to_vec();
-    assert_eq!(views[0].depth_bids, vec![(1000, 200)], "撤单前余量 200 挂簿");
+    assert_eq!(
+        views[0].depth_bids,
+        vec![(1000, 200)],
+        "撤单前余量 200 挂簿"
+    );
     // t2：撤单——只撤余量。
     world.broadcast_external_plan(vec![], vec![ext_cancel(0, buy_serial)]);
     world.run_ticks(1).expect("t2 撤单拍");
@@ -1286,7 +1383,11 @@ fn r09_partial_fill_cancel_releases_remainder_only() {
     let report = world.shutdown().expect("关停");
     let a0 = &report.group_finals[0].accounts[0];
     assert_eq!(a0.shares[0], 1_100, "成交的 100 股保持");
-    assert_eq!(a0.cash, 1_000_000 - 100_501, "实付 100_501；余量 purse 全额退款");
+    assert_eq!(
+        a0.cash,
+        1_000_000 - 100_501,
+        "实付 100_501；余量 purse 全额退款"
+    );
 }
 
 /// R9 已全成撤单（弱面强化）：全成订单撤单=明确业务失败回执 AlreadyFilled
@@ -1345,8 +1446,16 @@ fn r09_fully_filled_cancel_returns_already_filled_receipt() {
     world.run_ticks(1).expect("t3 回执拍");
     let (receipts3, life3) = tick_facts(&world, 3);
     let count = |k: super::ReceiptKind| receipts3.iter().filter(|r| r.kind == k).count();
-    assert_eq!(count(super::ReceiptKind::AlreadyFilled), 2, "全成+本主不存在 ⇒ AlreadyFilled：{receipts3:?}");
-    assert_eq!(count(super::ReceiptKind::OrderNotFound), 1, "他人挂单 ⇒ OrderNotFound：{receipts3:?}");
+    assert_eq!(
+        count(super::ReceiptKind::AlreadyFilled),
+        2,
+        "全成+本主不存在 ⇒ AlreadyFilled：{receipts3:?}"
+    );
+    assert_eq!(
+        count(super::ReceiptKind::OrderNotFound),
+        1,
+        "他人挂单 ⇒ OrderNotFound：{receipts3:?}"
+    );
     assert!(
         !life3
             .iter()
@@ -1356,7 +1465,11 @@ fn r09_fully_filled_cancel_returns_already_filled_receipt() {
     let report = world.shutdown().expect("关停");
     let a0 = &report.group_finals[0].accounts[0];
     assert_eq!(a0.shares[0], 1_300, "全成 300 股保持");
-    assert_eq!(a0.cash, 1_000_000 - 300_503, "结算不被撤单触碰（佣金 500+过户 3）");
+    assert_eq!(
+        a0.cash,
+        1_000_000 - 300_503,
+        "结算不被撤单触碰（佣金 500+过户 3）"
+    );
     let a1 = &report.group_finals[0].accounts[1];
     assert_eq!(a1.shares[0], 700, "卖 300（1100 挂单被 Drain 退回）");
     assert_eq!(
@@ -1406,11 +1519,7 @@ fn r07_continuous_self_cross_terminates_without_self_trade() {
         rec.desk_trades
     );
     let views = world.public_views().to_vec();
-    assert_eq!(
-        views[0].best_ask,
-        Some(1000),
-        "自单（卖）原位保留在簿"
-    );
+    assert_eq!(views[0].best_ask, Some(1000), "自单（卖）原位保留在簿");
     assert_eq!(
         views[0].best_bid,
         Some(1000),
@@ -1484,10 +1593,7 @@ fn auction_fills_settle_at_single_clearing_price() {
     let a0 = &report.group_finals[0].accounts[0];
     let a1 = &report.group_finals[0].accounts[1];
     assert_eq!(a0.shares[0], 1_100, "买方得 100 股");
-    assert_eq!(
-        a0.cash, 904_499,
-        "买方按清算价实付：95_000+佣金 500+过户 1"
-    );
+    assert_eq!(a0.cash, 904_499, "买方按清算价实付：95_000+佣金 500+过户 1");
     assert_eq!(a1.shares[0], 900, "卖方出 100 股");
     assert_eq!(
         a1.cash, 1_094_451,
@@ -1535,11 +1641,7 @@ fn sol1_market_protection_uses_daily_band_not_cage_across_levels() {
     );
     world.run_ticks(1).expect("收敛");
     let rec = &world.report_log[0];
-    let prices: Vec<(u32, i64)> = rec
-        .desk_trades
-        .iter()
-        .map(|f| (f.qty, f.price))
-        .collect();
+    let prices: Vec<(u32, i64)> = rec.desk_trades.iter().map(|f| (f.qty, f.price)).collect();
     assert_eq!(
         prices,
         vec![(100, 1000), (100, 1050)],
@@ -1777,9 +1879,12 @@ fn sol5b_market_sell_on_empty_book_cancels_with_share_refund() {
 #[test]
 fn sol5c_symbolic_four_directions_purse_thresholds() {
     // Lowest 买：现金恰 90_501 ⇒ 受理挂簿 900。
-    let mut spec = basic_spec(1, 1, 2, Box::new(|_g| {
-        Box::new(|_t, _r| TickPlan::default())
-    }));
+    let mut spec = basic_spec(
+        1,
+        1,
+        2,
+        Box::new(|_g| Box::new(|_t, _r| TickPlan::default())),
+    );
     spec.auction_ticks = 0;
     spec.initial_cash = 90_501;
     spec.config = config_with_cage(false);
@@ -1808,9 +1913,12 @@ fn sol5c_symbolic_four_directions_purse_thresholds() {
     let _ = world.shutdown();
 
     // Highest 买：现金恰 110_501 ⇒ 受理；110_500 ⇒ 显式 InsufficientCash。
-    let mut spec = basic_spec(1, 1, 2, Box::new(|_g| {
-        Box::new(|_t, _r| TickPlan::default())
-    }));
+    let mut spec = basic_spec(
+        1,
+        1,
+        2,
+        Box::new(|_g| Box::new(|_t, _r| TickPlan::default())),
+    );
     spec.auction_ticks = 0;
     spec.initial_cash = 110_501;
     spec.config = config_with_cage(false);
@@ -1833,11 +1941,18 @@ fn sol5c_symbolic_four_directions_purse_thresholds() {
     );
     world.run_ticks(1).expect("收敛");
     let views = world.public_views().to_vec();
-    assert_eq!(views[0].best_bid, Some(1100), "涨停预留恰够 ⇒ 受理挂簿 1100");
+    assert_eq!(
+        views[0].best_bid,
+        Some(1100),
+        "涨停预留恰够 ⇒ 受理挂簿 1100"
+    );
 
-    let mut spec = basic_spec(1, 1, 2, Box::new(|_g| {
-        Box::new(|_t, _r| TickPlan::default())
-    }));
+    let mut spec = basic_spec(
+        1,
+        1,
+        2,
+        Box::new(|_g| Box::new(|_t, _r| TickPlan::default())),
+    );
     spec.auction_ticks = 0;
     spec.initial_cash = 110_500;
     spec.config = config_with_cage(false);
@@ -1875,9 +1990,12 @@ fn sol5c_symbolic_four_directions_purse_thresholds() {
 
     // 卖向（现金 0）：Highest/Lowest 均受理（无现金预留）。
     for routed in [RoutedPrice::Highest, RoutedPrice::Lowest] {
-        let mut spec = basic_spec(1, 1, 2, Box::new(|_g| {
-            Box::new(|_t, _r| TickPlan::default())
-        }));
+        let mut spec = basic_spec(
+            1,
+            1,
+            2,
+            Box::new(|_g| Box::new(|_t, _r| TickPlan::default())),
+        );
         spec.auction_ticks = 0;
         spec.initial_cash = 0;
         spec.config = config_with_cage(false);
@@ -1986,9 +2104,12 @@ fn sol3r_continue_preserves_early_round_facts() {
 /// 两条 Cancelled 同 ID、挂簿单复用）。
 #[test]
 fn sol3r_immediate_orders_consume_unique_serials() {
-    let mut spec = basic_spec(1, 1, 2, Box::new(|_g| {
-        Box::new(|_t, _r| TickPlan::default())
-    }));
+    let mut spec = basic_spec(
+        1,
+        1,
+        2,
+        Box::new(|_g| Box::new(|_t, _r| TickPlan::default())),
+    );
     spec.auction_ticks = 0;
     let mut world = World::spawn(
         spec,
@@ -2067,9 +2188,7 @@ fn sol3r_immediate_orders_consume_unique_serials() {
 /// 受理事实恰一条（不重复、不丢失）。
 #[test]
 fn sol3r_failed_tick_retry_emits_facts_exactly_once() {
-    let script = |_g: GroupIdx| -> GroupScript {
-        Box::new(|_t, _r| TickPlan::default())
-    };
+    let script = |_g: GroupIdx| -> GroupScript { Box::new(|_t, _r| TickPlan::default()) };
     let mut spec = basic_spec(1, 1, 2, Box::new(script));
     spec.auction_ticks = 0;
     let mut world = World::spawn(
@@ -2275,7 +2394,10 @@ fn sol4r_continue_round1_failure_retry_emits_facts_exactly_once() {
         }
     });
     world.set_validator(fail);
-    assert!(world.run_ticks(1).is_err(), "轮 1 失败必须显式失败（Abort 回滚）");
+    assert!(
+        world.run_ticks(1).is_err(),
+        "轮 1 失败必须显式失败（Abort 回滚）"
+    );
     world.set_validator(Box::new(|_| Ok(())));
     inject(&mut world); // 重播（失败拍已消费注入）
     world.run_ticks(1).expect("重跑成功");

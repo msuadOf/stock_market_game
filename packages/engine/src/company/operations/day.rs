@@ -710,12 +710,7 @@ mod tests {
     fn flow_error_retains_prior_maturity_and_does_not_queue_next_interest() {
         let mut ops = with_receivable(0);
         // 零费用已表示不发生收付；用真正非法的负费用注入保留流程中途失败的覆盖。
-        let FlowParams::Industrial(params) = &mut ops
-            .companies
-            .values_mut()
-            .next()
-            .unwrap()
-            .params
+        let FlowParams::Industrial(params) = &mut ops.companies.values_mut().next().unwrap().params
         else {
             panic!("工商参数");
         };

@@ -1122,10 +1122,7 @@ fn validated_operations(
     let account = AccountId(0);
     let game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
-    let plan = plan_tick(PhaseInput {
-        session: &game,
-    })
-    .unwrap();
+    let plan = plan_tick(PhaseInput { session: &game }).unwrap();
     let first_order_id = OrderId(game.state.next_order_id);
     let candidates = build(game.state.next_order_id)
         .into_iter()
@@ -1172,10 +1169,7 @@ fn validated_operations_for_stocks(
     let account = AccountId(0);
     let game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
-    let plan = plan_tick(PhaseInput {
-        session: &game,
-    })
-    .unwrap();
+    let plan = plan_tick(PhaseInput { session: &game }).unwrap();
     let candidates = intents
         .into_iter()
         .enumerate()
@@ -1249,10 +1243,7 @@ pub(in crate::session::pipeline) fn validated_operations_in_session(
     account: AccountId,
     intents: Vec<Intent>,
 ) -> Vec<ValidatedOperation> {
-    let plan = plan_tick(PhaseInput {
-        session: game,
-    })
-    .unwrap();
+    let plan = plan_tick(PhaseInput { session: game }).unwrap();
     let candidates = intents
         .into_iter()
         .enumerate()

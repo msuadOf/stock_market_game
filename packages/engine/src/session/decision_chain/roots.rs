@@ -11,7 +11,9 @@ pub(crate) struct RootReadContext {
     civil_date: crate::CivilDate,
     market_minute: u64,
     day: u32,
-    information_anchors: std::sync::Arc<BTreeMap<StockId, crate::observation::information_clock::InformationTradingAnchor>>,
+    information_anchors: std::sync::Arc<
+        BTreeMap<StockId, crate::observation::information_clock::InformationTradingAnchor>,
+    >,
 }
 
 impl RootReadContext {
@@ -28,20 +30,23 @@ impl RootReadContext {
         &self,
         company: &crate::company::CompanyId,
     ) -> Result<(crate::company::CompanyKind, u64), StepFatal> {
-        self.company_facts.company_spec(company).map_err(|error| StepFatal::InvariantViolation {
-            description: error.to_string(),
-            location: "decision_chain::root_company_spec".to_owned(),
-        })
+        self.company_facts
+            .company_spec(company)
+            .map_err(|error| StepFatal::InvariantViolation {
+                description: error.to_string(),
+                location: "decision_chain::root_company_spec".to_owned(),
+            })
     }
 
     pub(crate) fn capture(session: &GameSession) -> Result<Self, StepFatal> {
         let accounts = session.state.accounts.clone();
-        let company_facts = std::sync::Arc::new(session.state.company_read_facts().map_err(|error| {
-            StepFatal::InvariantViolation {
-                description: error.to_string(),
-                location: "decision_chain::root_company_facts".to_owned(),
-            }
-        })?);
+        let company_facts =
+            std::sync::Arc::new(session.state.company_read_facts().map_err(|error| {
+                StepFatal::InvariantViolation {
+                    description: error.to_string(),
+                    location: "decision_chain::root_company_facts".to_owned(),
+                }
+            })?);
         Ok(Self {
             accounts,
             company_facts,
@@ -65,7 +70,9 @@ impl RootReadContext {
         civil_date: crate::CivilDate,
         market_minute: u64,
         day: u32,
-        information_anchors: std::sync::Arc<BTreeMap<StockId, crate::observation::information_clock::InformationTradingAnchor>>,
+        information_anchors: std::sync::Arc<
+            BTreeMap<StockId, crate::observation::information_clock::InformationTradingAnchor>,
+        >,
     ) -> Self {
         Self {
             accounts,
@@ -284,7 +291,9 @@ impl InstitutionDecisionRoot {
         plans: &PlanBook,
         operations: &mut PlanChainOperationBatch,
     ) -> PlanRootDiagnostics {
-        personal.belief.validate_information_anchors(|stock| context.information_anchors.get(&stock).copied())
+        personal
+            .belief
+            .validate_information_anchors(|stock| context.information_anchors.get(&stock).copied())
             .unwrap_or_else(|error| panic!("root 个人信息时点验证失败：{error}"));
         let held: BTreeSet<StockId> = context.accounts[&id].positions().keys().cloned().collect();
         let moment = crate::experience::ExperienceMoment {
@@ -404,9 +413,9 @@ impl InstitutionDecisionRoot {
         let mut credit_defaults = Vec::new();
         let mut corrections = Vec::new();
         for code in &candidates {
-            let company_id = context.issuer_of_stock(*code).unwrap_or_else(|error| {
-                panic!("root 候选发行人读取失败：{error}")
-            });
+            let company_id = context
+                .issuer_of_stock(*code)
+                .unwrap_or_else(|error| panic!("root 候选发行人读取失败：{error}"));
             for publication_id in discovery_candidates(&context.library, &company_id, now) {
                 let already = personal
                     .information
@@ -508,9 +517,9 @@ impl InstitutionDecisionRoot {
         let issuer_inputs: Vec<(StockId, BeliefInputs<'_, MarketView>)> = candidates
             .iter()
             .map(|code| {
-                let company = context.issuer_of_stock(*code).unwrap_or_else(|error| {
-                    panic!("root 信念发行人读取失败：{error}")
-                });
+                let company = context
+                    .issuer_of_stock(*code)
+                    .unwrap_or_else(|error| panic!("root 信念发行人读取失败：{error}"));
                 let (kind, issued_shares) = context
                     .company_spec(&company)
                     .unwrap_or_else(|error| panic!("发行人 {company:?} 规格读取失败：{error}"));
@@ -521,7 +530,10 @@ impl InstitutionDecisionRoot {
                         company,
                         kind,
                         total_issued_shares: issued_shares,
-                        as_of_anchor: *context.information_anchors.get(code).expect("完整目录的本人信息锚必须存在"),
+                        as_of_anchor: *context
+                            .information_anchors
+                            .get(code)
+                            .expect("完整目录的本人信息锚必须存在"),
                     },
                 )
             })
@@ -583,7 +595,12 @@ impl InstitutionDecisionRoot {
                 let Some(entry) = belief.entry(code) else {
                     continue;
                 };
-                let remaining = crate::observation::information_clock::information_horizon_remaining(entry.anchor, entry.horizon_trading_days, inputs.as_of_anchor)
+                let remaining =
+                    crate::observation::information_clock::information_horizon_remaining(
+                        entry.anchor,
+                        entry.horizon_trading_days,
+                        inputs.as_of_anchor,
+                    )
                     .expect("整本信念已验证时点与正 horizon");
                 if remaining == 0 {
                     belief

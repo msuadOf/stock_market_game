@@ -479,7 +479,7 @@ fn institutional_exit_profit_requires_net_cash_after_actual_fees() {
         (12, fill(3, Side::Sell, 12, 4, 4_080)),
     ] {
         apply_settlement_transaction_with_beliefs(
-        &crate::ComputeContext::shared_default().unwrap(),
+            &crate::ComputeContext::shared_default().unwrap(),
             &mut accounts,
             &mut retail_experience,
             &mut books,

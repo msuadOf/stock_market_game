@@ -77,14 +77,22 @@ pub fn company_read_query(handle: u32, query: JsValue) -> Result<JsValue, JsValu
 fn propose_company_action(
     session: &mut ProtocolSession,
     proposal: engine::session::PlayerCompanyProposal,
-) -> Result<engine::session::PlayerCompanyCommandReceipt, engine::session::protocol::CompanyWriteError> {
-    session.propose_player_company_action(AccountId(0), proposal).map_err(Into::into)
+) -> Result<
+    engine::session::PlayerCompanyCommandReceipt,
+    engine::session::protocol::CompanyWriteError,
+> {
+    session
+        .propose_player_company_action(AccountId(0), proposal)
+        .map_err(Into::into)
 }
 
 fn enqueue_correction(
     session: &mut ProtocolSession,
     request: engine::session::CompanyReportCorrection,
-) -> Result<engine::session::protocol::ReportCorrectionAcknowledgement, engine::session::protocol::CompanyWriteError> {
+) -> Result<
+    engine::session::protocol::ReportCorrectionAcknowledgement,
+    engine::session::protocol::CompanyWriteError,
+> {
     let epoch = session.game().report_correction_epoch();
     let operation_id = request.operation_id.clone();
     session.enqueue_report_correction(&epoch, request)?;
@@ -94,10 +102,15 @@ fn enqueue_correction(
 fn cancel_correction(
     session: &mut ProtocolSession,
     operation_id: &str,
-) -> Result<engine::session::protocol::ReportCorrectionAcknowledgement, engine::session::protocol::CompanyWriteError> {
+) -> Result<
+    engine::session::protocol::ReportCorrectionAcknowledgement,
+    engine::session::protocol::CompanyWriteError,
+> {
     let epoch = session.game().report_correction_epoch();
     session.cancel_report_correction(&epoch, operation_id)?;
-    Ok(engine::session::protocol::ReportCorrectionAcknowledgement { operation_id: operation_id.to_owned() })
+    Ok(engine::session::protocol::ReportCorrectionAcknowledgement {
+        operation_id: operation_id.to_owned(),
+    })
 }
 
 fn company_write_error_to_js(
@@ -106,7 +119,11 @@ fn company_write_error_to_js(
 ) -> Result<JsValue, JsValue> {
     // JavaScript 只接收公开投影；可信 console 保留本地 Session 的原 typed cause。
     log_company_write_error(&error);
-    if let Some(fatal) = session.require_healthy().err().or_else(|| error.step_fatal().cloned()) {
+    if let Some(fatal) = session
+        .require_healthy()
+        .err()
+        .or_else(|| error.step_fatal().cloned())
+    {
         return Err(step_update_error_to_js(StepUpdateError::Fatal(Box::new(
             HostFailure::step(fatal).at_session(session),
         ))));
@@ -187,8 +204,7 @@ impl std::fmt::Display for UnsupportedRuntimeSyncPolicy {
         write!(
             formatter,
             "{}：WASM 仅支持 every_tick，当前策略 {:?} 不受支持",
-            self.code,
-            self.policy
+            self.code, self.policy
         )
     }
 }
@@ -424,10 +440,14 @@ fn failure_description(error: &(dyn std::error::Error + 'static)) -> (&'static s
                 "SESSION_STATE_INVALID",
                 "更正完成事实与真实会计和公开版本不一致（原始详情已脱敏）",
             ),
-            SessionError::InvalidSave(fault) if fault.code == engine::error::SAVE_TARGET_DAY_NOT_READY => (
-                "SAVE_TARGET_DAY_NOT_READY",
-                "目标自然日尚未完成日终，当前日存档不可用（原始详情已脱敏）",
-            ),
+            SessionError::InvalidSave(fault)
+                if fault.code == engine::error::SAVE_TARGET_DAY_NOT_READY =>
+            {
+                (
+                    "SAVE_TARGET_DAY_NOT_READY",
+                    "目标自然日尚未完成日终，当前日存档不可用（原始详情已脱敏）",
+                )
+            }
             SessionError::InvalidSave(_) => (
                 "SESSION_STATE_INVALID",
                 "日终存档或协议状态校验失败（原始详情已脱敏）",
@@ -628,7 +648,9 @@ fn step_update_error_to_js(error: StepUpdateError) -> JsValue {
 fn session_error_to_step_update_error(error: SessionError) -> StepUpdateError {
     match error {
         SessionError::Step(fatal) => StepUpdateError::Fatal(Box::new(fatal.into())),
-        SessionError::InvalidSave(ref fault) if fault.code == engine::error::SAVE_TARGET_DAY_NOT_READY => {
+        SessionError::InvalidSave(ref fault)
+            if fault.code == engine::error::SAVE_TARGET_DAY_NOT_READY =>
+        {
             let (code, message) = failure_description(&error);
             StepUpdateError::Operation(format!("{code}: {message}"))
         }
@@ -987,11 +1009,20 @@ pub fn drop_session(handle: u32) -> Result<(), JsValue> {
 #[wasm_bindgen]
 pub fn shutdown_session(handle: u32) -> Result<JsValue, JsValue> {
     match REGISTRY.with(|registry| registry.borrow_mut().shutdown(handle)) {
-        Ok(report) => serde_wasm_bindgen::to_value(&shutdown::SessionShutdownReply { handle, result: report })
-            .map_err(|error| JsValue::from_str(&format!("shutdown 成功事实序列化失败：{error}"))),
+        Ok(report) => serde_wasm_bindgen::to_value(&shutdown::SessionShutdownReply {
+            handle,
+            result: report,
+        })
+        .map_err(|error| JsValue::from_str(&format!("shutdown 成功事实序列化失败：{error}"))),
         Err(failure) => {
-            let wire = serde_wasm_bindgen::to_value(&shutdown::SessionShutdownReply { handle, result: &failure }).map_err(|error| {
-                JsValue::from_str(&format!("shutdown 失败事实序列化失败：{error}；原错误={failure:?}"))
+            let wire = serde_wasm_bindgen::to_value(&shutdown::SessionShutdownReply {
+                handle,
+                result: &failure,
+            })
+            .map_err(|error| {
+                JsValue::from_str(&format!(
+                    "shutdown 失败事实序列化失败：{error}；原错误={failure:?}"
+                ))
             })?;
             Err(wire)
         }
@@ -1107,14 +1138,15 @@ pub fn facade_slot_init_for_setup(setup: JsValue) -> Result<(), JsValue> {
 #[cfg(target_family = "wasm")]
 #[wasm_bindgen]
 pub fn facade_slot_init_for_restore_json(save_json: String) -> Result<(), JsValue> {
-    let capacity = facade_slot_capacity_for_restore_json(&save_json).map_err(|error| match error {
-        RestoreFacadeInitError::Decode(error) => JsValue::from_str(&error.to_string()),
-        RestoreFacadeInitError::UnsupportedRuntimeSyncPolicy(error) => {
-            JsValue::from_str(&error.to_string())
-        }
-        RestoreFacadeInitError::Topology(error) => session_error_to_js(error),
-        RestoreFacadeInitError::Capacity(error) => JsValue::from_str(error),
-    })?;
+    let capacity =
+        facade_slot_capacity_for_restore_json(&save_json).map_err(|error| match error {
+            RestoreFacadeInitError::Decode(error) => JsValue::from_str(&error.to_string()),
+            RestoreFacadeInitError::UnsupportedRuntimeSyncPolicy(error) => {
+                JsValue::from_str(&error.to_string())
+            }
+            RestoreFacadeInitError::Topology(error) => session_error_to_js(error),
+            RestoreFacadeInitError::Capacity(error) => JsValue::from_str(error),
+        })?;
     facade_slot_init(capacity)
 }
 
@@ -1196,7 +1228,12 @@ pub fn facade_child_trampoline(slot: u32, gen: u32, worker_id: u32) -> u32 {
 /// wasm 收件显式一次初始化：四参数单位均为微秒；无默认策略，不允许同 memory 重置。
 #[cfg(target_family = "wasm")]
 #[wasm_bindgen]
-pub fn init_wasm_wait(spin_us: u32, quiet_us: u32, fine_us: u32, coarse_us: u32) -> Result<(), JsValue> {
+pub fn init_wasm_wait(
+    spin_us: u32,
+    quiet_us: u32,
+    fine_us: u32,
+    coarse_us: u32,
+) -> Result<(), JsValue> {
     engine::runtime::watchdog::init_wasm_wait(spin_us, quiet_us, fine_us, coarse_us)
         .map_err(|error| JsValue::from_str(&error))
 }
@@ -1205,8 +1242,10 @@ pub fn init_wasm_wait(spin_us: u32, quiet_us: u32, fine_us: u32, coarse_us: u32)
 #[cfg(target_family = "wasm")]
 #[wasm_bindgen]
 pub fn wasm_wait_abort_layout() -> Result<JsValue, JsValue> {
-    let layout = engine::runtime::watchdog::wasm_wait_abort_layout().map_err(|error| JsValue::from_str(&error))?;
-    serde_wasm_bindgen::to_value(&layout).map_err(|error| JsValue::from_str(&format!("wasm abort 布局序列化失败：{error}")))
+    let layout = engine::runtime::watchdog::wasm_wait_abort_layout()
+        .map_err(|error| JsValue::from_str(&error))?;
+    serde_wasm_bindgen::to_value(&layout)
+        .map_err(|error| JsValue::from_str(&format!("wasm abort 布局序列化失败：{error}")))
 }
 
 // ---------------------------------------------------------------------------
@@ -1393,8 +1432,13 @@ thread_local! {
 pub fn verification_world_stop_prepare(mode: u32) -> Result<u32, JsValue> {
     WORLD_STOP_PROBE.with(|store| {
         let mut store = store.borrow_mut();
-        if store.is_some() { return Err(JsValue::from_str("World stop probe已准备，必须换独立实例")); }
-        let probe = Box::new(engine::runtime::world::WorldStopProbe::new(mode).map_err(|error| JsValue::from_str(&error))?);
+        if store.is_some() {
+            return Err(JsValue::from_str("World stop probe已准备，必须换独立实例"));
+        }
+        let probe = Box::new(
+            engine::runtime::world::WorldStopProbe::new(mode)
+                .map_err(|error| JsValue::from_str(&error))?,
+        );
         let address = probe.address();
         *store = Some(probe);
         Ok(address)
@@ -1407,8 +1451,11 @@ pub fn verification_world_stop_prepare(mode: u32) -> Result<u32, JsValue> {
 pub fn verification_world_stop_run(mode: u32) -> Result<String, JsValue> {
     WORLD_STOP_PROBE.with(|store| {
         let store = store.borrow();
-        let probe = store.as_ref().ok_or_else(|| JsValue::from_str("World stop probe尚未准备"))?;
-        engine::runtime::world::verify_world_stop(mode, probe).map_err(|error| JsValue::from_str(&error))
+        let probe = store
+            .as_ref()
+            .ok_or_else(|| JsValue::from_str("World stop probe尚未准备"))?;
+        engine::runtime::world::verify_world_stop(mode, probe)
+            .map_err(|error| JsValue::from_str(&error))
     })
 }
 
@@ -1424,8 +1471,13 @@ thread_local! {
 pub fn verification_watchdog_prepare(mode: u32) -> Result<u32, JsValue> {
     WATCHDOG_PROBE.with(|store| {
         let mut store = store.borrow_mut();
-        if store.is_some() { return Err(JsValue::from_str("watchdog probe 已准备，必须换独立实例")); }
-        let probe = std::sync::Arc::new(engine::runtime::watchdog_verification::WatchdogProbe::new(mode).map_err(|error| JsValue::from_str(&error))?);
+        if store.is_some() {
+            return Err(JsValue::from_str("watchdog probe 已准备，必须换独立实例"));
+        }
+        let probe = std::sync::Arc::new(
+            engine::runtime::watchdog_verification::WatchdogProbe::new(mode)
+                .map_err(|error| JsValue::from_str(&error))?,
+        );
         engine::runtime::watchdog_verification::WatchdogProbe::install_panic_probe(&probe);
         let address = probe.address();
         *store = Some(probe);
@@ -1439,8 +1491,11 @@ pub fn verification_watchdog_prepare(mode: u32) -> Result<u32, JsValue> {
 pub fn verification_watchdog_run(mode: u32) -> Result<String, JsValue> {
     WATCHDOG_PROBE.with(|store| {
         let store = store.borrow();
-        let probe = store.as_ref().ok_or_else(|| JsValue::from_str("watchdog probe 尚未准备"))?;
-        engine::runtime::watchdog_verification::verify_watchdog_recv(mode, probe).map_err(|error| JsValue::from_str(&error))
+        let probe = store
+            .as_ref()
+            .ok_or_else(|| JsValue::from_str("watchdog probe 尚未准备"))?;
+        engine::runtime::watchdog_verification::verify_watchdog_recv(mode, probe)
+            .map_err(|error| JsValue::from_str(&error))
     })
 }
 
@@ -1456,8 +1511,13 @@ thread_local! {
 pub fn verification_watchdog_wait_prepare(mode: u32) -> Result<u32, JsValue> {
     WATCHDOG_WAIT_PROBE.with(|store| {
         let mut store = store.borrow_mut();
-        if store.is_some() { return Err(JsValue::from_str("wait probe 已准备，必须换独立 memory")); }
-        let probe = std::sync::Arc::new(engine::runtime::watchdog_wait_verification::WaitProbe::new(mode).map_err(|error| JsValue::from_str(&error))?);
+        if store.is_some() {
+            return Err(JsValue::from_str("wait probe 已准备，必须换独立 memory"));
+        }
+        let probe = std::sync::Arc::new(
+            engine::runtime::watchdog_wait_verification::WaitProbe::new(mode)
+                .map_err(|error| JsValue::from_str(&error))?,
+        );
         let address = probe.address();
         *store = Some(probe);
         Ok(address)
@@ -1469,8 +1529,13 @@ pub fn verification_watchdog_wait_prepare(mode: u32) -> Result<u32, JsValue> {
 #[wasm_bindgen]
 pub fn verification_watchdog_wait_boundary(mode: u32) -> Result<String, JsValue> {
     WATCHDOG_WAIT_PROBE.with(|store| {
-        let probe = store.borrow().as_ref().cloned().ok_or_else(|| JsValue::from_str("wait probe 尚未准备"))?;
-        engine::runtime::watchdog_wait_verification::verify_wait_boundary(mode, probe).map_err(|error| JsValue::from_str(&error))
+        let probe = store
+            .borrow()
+            .as_ref()
+            .cloned()
+            .ok_or_else(|| JsValue::from_str("wait probe 尚未准备"))?;
+        engine::runtime::watchdog_wait_verification::verify_wait_boundary(mode, probe)
+            .map_err(|error| JsValue::from_str(&error))
     })
 }
 

@@ -27,8 +27,8 @@ mod publication;
 mod queries;
 mod schedule;
 mod simple_disclosures;
-pub use simple_disclosures::publish_simple_scheduled;
 pub use monthly_schedule::{MonthlyReportDelay, MonthlyReportPreset, MonthlyReportSchedule};
+pub use simple_disclosures::publish_simple_scheduled;
 #[cfg(test)]
 mod source_tests;
 

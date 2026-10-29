@@ -304,11 +304,11 @@ impl EquityPresentation {
         let facts = windows.consolidation.as_ref();
         // 实收资本：合并口径 = Σ成员 − 非根成员贡献（根成员 4001）。
         let mut paid_in = signed_sum(&windows.closing, classification, BsLine::PaidInCapital)?;
-        let capital_reserve =
-            signed_sum(&windows.closing, classification, BsLine::CapitalReserve)?;
+        let capital_reserve = signed_sum(&windows.closing, classification, BsLine::CapitalReserve)?;
         let show_capital_reserve =
             has_line(classification, BsLine::CapitalReserve, &windows.closing);
-        let statutory_reserve = signed_sum(&windows.closing, classification, BsLine::StatutoryReserve)?;
+        let statutory_reserve =
+            signed_sum(&windows.closing, classification, BsLine::StatutoryReserve)?;
         if let Some(facts) = facts {
             for (code, credit) in &facts.non_root_equity {
                 if matches!(
@@ -353,7 +353,8 @@ impl EquityPresentation {
             None => {
                 let paid_in = signed_sum(prior, classification, BsLine::PaidInCapital)?;
                 let capital_reserve = signed_sum(prior, classification, BsLine::CapitalReserve)?;
-                let statutory_reserve = signed_sum(prior, classification, BsLine::StatutoryReserve)?;
+                let statutory_reserve =
+                    signed_sum(prior, classification, BsLine::StatutoryReserve)?;
                 let retained = net_income_of(prior, &windows.defs)?.add(signed_sum(
                     prior,
                     classification,
@@ -364,10 +365,21 @@ impl EquityPresentation {
             Some(facts) => match &facts.prior_split {
                 None => return Ok(None),
                 Some(split) => {
-                    let capital_reserve = signed_sum(prior, classification, BsLine::CapitalReserve)?;
-                    let statutory_reserve = signed_sum(prior, classification, BsLine::StatutoryReserve)?;
-                    (split.root_capital, capital_reserve, statutory_reserve,
-                        split.parent.sub(split.root_capital)?.sub(capital_reserve)?.sub(statutory_reserve)?, Some(split.minority))
+                    let capital_reserve =
+                        signed_sum(prior, classification, BsLine::CapitalReserve)?;
+                    let statutory_reserve =
+                        signed_sum(prior, classification, BsLine::StatutoryReserve)?;
+                    (
+                        split.root_capital,
+                        capital_reserve,
+                        statutory_reserve,
+                        split
+                            .parent
+                            .sub(split.root_capital)?
+                            .sub(capital_reserve)?
+                            .sub(statutory_reserve)?,
+                        Some(split.minority),
+                    )
                 }
             },
         };
@@ -482,7 +494,10 @@ mod tests {
         let prior = prior_lines(&windows.closing, &classification, &windows, None).unwrap();
         assert!(prior.contains(&(BsLine::RetainedEarnings, cents(-7))));
         assert_eq!(
-            prior.iter().filter(|(line, _)| *line == BsLine::StatutoryReserve).count(),
+            prior
+                .iter()
+                .filter(|(line, _)| *line == BsLine::StatutoryReserve)
+                .count(),
             1,
             "比较项的权益行只由 EquityPresentation 列示一次"
         );

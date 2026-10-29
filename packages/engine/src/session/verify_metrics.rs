@@ -5,12 +5,12 @@
 //! 精确计数与 id 配对用于验证机制。任何账本异常都使诊断失效，不改变交易提交。
 
 use super::{FieldId, FIELD_ID_COUNT};
+use crate::clock::Instant;
 use std::collections::BTreeMap;
 use std::sync::{
     atomic::{AtomicU64, AtomicU8, Ordering},
     Mutex, MutexGuard,
 };
-use crate::clock::Instant;
 
 /// 固定 Job 领域分类，不是 worker 数或调度参数。
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
@@ -208,11 +208,7 @@ impl VerifyMetrics {
             by_kind: [KindSnapshot::new(); 4],
             by_field: [0; FIELD_ID_COUNT],
         };
-        for (slot, counter) in snap
-            .by_field
-            .iter_mut()
-            .zip(self.commit_fields.iter())
-        {
+        for (slot, counter) in snap.by_field.iter_mut().zip(self.commit_fields.iter()) {
             *slot = counter.load(Ordering::Relaxed);
         }
         if let Some(ledger) = self.lock() {

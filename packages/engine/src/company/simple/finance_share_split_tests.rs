@@ -181,7 +181,10 @@ fn par_authority_chain_anchors_to_latest_split_and_validates_consistency() {
     let restored: SimpleFinanceState =
         serde_json::from_str(&serde_json::to_string(&state).unwrap()).unwrap();
     assert_eq!(restored, state);
-    assert_eq!(restored.current_par_value().unwrap(), Some(Money::from_cents(2)));
+    assert_eq!(
+        restored.current_par_value().unwrap(),
+        Some(Money::from_cents(2))
+    );
     // 严格持久化：未知字段显式拒绝。
     let mut injected = serde_json::to_value(&state).unwrap();
     injected

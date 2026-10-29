@@ -31,11 +31,16 @@ pub(super) struct IngressBinding {
 
 impl IngressState {
     fn require_player_policy(&self) -> Result<(), SessionError> {
-        if let Some(first) = &self.terminal { return Err(SessionError::Step(first.clone())); }
+        if let Some(first) = &self.terminal {
+            return Err(SessionError::Step(first.clone()));
+        }
         if !self.policy.allows_player_ingress() {
-            return Err(SessionError::SyncPolicyViolation(crate::error::ValidationFault::new(
-                crate::error::RUNTIME_SYNC_POLICY_VIOLATION, vec![1, self.runtime_tick, self.runtime_generation],
-            )));
+            return Err(SessionError::SyncPolicyViolation(
+                crate::error::ValidationFault::new(
+                    crate::error::RUNTIME_SYNC_POLICY_VIOLATION,
+                    vec![1, self.runtime_tick, self.runtime_generation],
+                ),
+            ));
         }
         Ok(())
     }
@@ -58,7 +63,9 @@ impl SharedSessionIngress {
 
     fn lock(&self) -> Result<MutexGuard<'_, IngressState>, SessionError> {
         self.inner.lock().map_err(|poison| {
-            if let Some(first) = &poison.get_ref().terminal { return SessionError::Step(first.clone()); }
+            if let Some(first) = &poison.get_ref().terminal {
+                return SessionError::Step(first.clone());
+            }
             // 1250：ingress 元数据锁中毒（防御式显式暴露）。
             SessionError::ResourceLimit(crate::error::ValidationFault::bare(1250))
         })
@@ -105,7 +112,11 @@ impl SharedSessionIngress {
         Ok(())
     }
 
-    pub(super) fn update_runtime_progress(&self, tick: u64, generation: u64) -> Result<(), SessionError> {
+    pub(super) fn update_runtime_progress(
+        &self,
+        tick: u64,
+        generation: u64,
+    ) -> Result<(), SessionError> {
         let mut state = self.lock()?;
         state.runtime_tick = tick;
         state.runtime_generation = generation;
@@ -114,8 +125,13 @@ impl SharedSessionIngress {
 
     pub(super) fn publish_terminal(&self, fatal: StepFatal) {
         // lock poison 只允许封存首错并关闭，不恢复入队能力。
-        let mut state = match self.inner.lock() { Ok(state) => state, Err(poison) => poison.into_inner() };
-        if state.terminal.is_none() { state.terminal = Some(fatal); }
+        let mut state = match self.inner.lock() {
+            Ok(state) => state,
+            Err(poison) => poison.into_inner(),
+        };
+        if state.terminal.is_none() {
+            state.terminal = Some(fatal);
+        }
         state.closed = true;
     }
 
@@ -214,7 +230,9 @@ impl GameSession {
 
     pub(super) fn freeze_shared_ingress(&mut self) -> Result<(), StepFatal> {
         #[cfg(all(test, not(target_family = "wasm")))]
-        crate::session::calendar_entry_cache_tests::record_entry_call(crate::session::calendar_entry_cache_tests::EntryCall::Freeze);
+        crate::session::calendar_entry_cache_tests::record_entry_call(
+            crate::session::calendar_entry_cache_tests::EntryCall::Freeze,
+        );
         if let Some(binding) = &self.ingress {
             let (inputs, cursors, cutoff) = binding.snapshot().map_err(ingress_fatal)?;
             self.state.pending_player.extend(inputs);
@@ -280,16 +298,25 @@ mod tests {
     #[cfg(not(target_family = "wasm"))]
     fn shutdown_ingress_close_failure_still_consumes_real_driver() {
         let mut game = game();
-        game.construct_runtime_driver_lazy_for_test().expect("真实 driver 已构造");
+        game.construct_runtime_driver_lazy_for_test()
+            .expect("真实 driver 已构造");
         let source = game.shared_ingress();
         assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let _guard = source.inner.lock().expect("首次 ingress 加锁正常");
             panic!("shutdown-ingress-poison-fixture");
-        })).is_err());
-        let failure = game.shutdown().expect_err("ingress close 失败不能回成功 ack");
+        }))
+        .is_err());
+        let failure = game
+            .shutdown()
+            .expect_err("ingress close 失败不能回成功 ack");
         assert_eq!(failure.primary.stage, "ingress_close");
-        assert!(failure.primary.detail.contains("1250"), "保留真实 ingress poison fault");
-        let completion = failure.completion.expect("close 失败不能提前跳过原 driver 清理");
+        assert!(
+            failure.primary.detail.contains("1250"),
+            "保留真实 ingress poison fault"
+        );
+        let completion = failure
+            .completion
+            .expect("close 失败不能提前跳过原 driver 清理");
         assert_eq!(completion.owned_workers, 3);
         assert_eq!(completion.joined_workers, 3);
         assert_eq!(completion.worker_results.len(), 3);
@@ -299,7 +326,8 @@ mod tests {
     #[cfg(not(target_family = "wasm"))]
     fn shutdown_retains_session_primary_and_ingress_secondary_after_real_cleanup() {
         let mut game = game();
-        game.construct_runtime_driver_lazy_for_test().expect("真实 driver 已构造");
+        game.construct_runtime_driver_lazy_for_test()
+            .expect("真实 driver 已构造");
         game.poison = Some(StepFatal::InvariantViolation {
             location: "shutdown-original-primary".to_owned(),
             description: "活动 session 首错".to_owned(),
@@ -308,13 +336,18 @@ mod tests {
         assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let _guard = source.inner.lock().expect("首次 ingress 加锁正常");
             panic!("shutdown-ingress-secondary-fixture");
-        })).is_err());
+        }))
+        .is_err());
         let failure = game.shutdown().expect_err("首错与 close 次错不得洗成成功");
         assert_eq!(failure.primary.stage, "session_poison");
         assert!(failure.primary.detail.contains("shutdown-original-primary"));
-        assert!(failure.secondary.iter().any(|issue|
-            issue.stage == "ingress_close" && issue.detail.contains("1250")
-        ), "ingress close 的真实失败不能丢失");
+        assert!(
+            failure
+                .secondary
+                .iter()
+                .any(|issue| issue.stage == "ingress_close" && issue.detail.contains("1250")),
+            "ingress close 的真实失败不能丢失"
+        );
         let completion = failure.completion.expect("多个错误仍需真实清理原 owner");
         assert_eq!(completion.owned_workers, 3);
         assert_eq!(completion.joined_workers, 3);
@@ -360,18 +393,12 @@ mod tests {
                 .unwrap();
             // D2 登记：staged handover 注入面为旧管线专有——显式走旧管线契约入口。
             let events = game.step_pipeline_contract().unwrap();
-            accepted.extend(
-                events
-                    .iter()
-                    .filter_map(|event| match event {
-                        crate::Event::OrderAccepted { account, id, .. }
-                            if *account == AccountId(0) =>
-                        {
-                            Some(id.0)
-                        }
-                        _ => None,
-                    }),
-            );
+            accepted.extend(events.iter().filter_map(|event| match event {
+                crate::Event::OrderAccepted { account, id, .. } if *account == AccountId(0) => {
+                    Some(id.0)
+                }
+                _ => None,
+            }));
             assert!(
                 !events.iter().any(
                     |event| matches!(event, crate::Event::IntentRejected { account, .. } if *account == AccountId(0))
@@ -381,7 +408,11 @@ mod tests {
         }
         assert_eq!(accepted.len(), 4, "每笔外部输入恰好受理一次（不丢不重）");
         let distinct: std::collections::BTreeSet<_> = accepted.iter().collect();
-        assert_eq!(distinct.len(), accepted.len(), "订单 id 不得重复（重复受理）");
+        assert_eq!(
+            distinct.len(),
+            accepted.len(),
+            "订单 id 不得重复（重复受理）"
+        );
         assert!(
             game.save().unwrap().pending_player.is_empty(),
             "全部输入已被消费，无滞留"
@@ -565,7 +596,14 @@ mod tests {
                 source.enqueue_player_intent(AccountId(0), player).unwrap();
                 receipt
             };
-            crate::session::pipeline::staged_decision::stage(crate::session::pipeline::NpcDecisionHandover::new(game.tick(), Vec::new(), vec![receipt], Vec::new()));
+            crate::session::pipeline::staged_decision::stage(
+                crate::session::pipeline::NpcDecisionHandover::new(
+                    game.tick(),
+                    Vec::new(),
+                    vec![receipt],
+                    Vec::new(),
+                ),
+            );
             // D2 登记：staged handover 注入面为旧管线专有——显式走旧管线契约入口。
             let events = game.step_pipeline_contract().unwrap();
             let accepted = events
@@ -609,7 +647,14 @@ mod tests {
                 source.enqueue_player_intent(AccountId(0), player).unwrap();
                 received
             };
-            crate::session::pipeline::staged_decision::stage(crate::session::pipeline::NpcDecisionHandover::new(game.tick(), Vec::new(), vec![received], Vec::new()));
+            crate::session::pipeline::staged_decision::stage(
+                crate::session::pipeline::NpcDecisionHandover::new(
+                    game.tick(),
+                    Vec::new(),
+                    vec![received],
+                    Vec::new(),
+                ),
+            );
             // D2 登记：staged handover 注入面为旧管线专有——显式走旧管线契约入口。
             let events = game.step_pipeline_contract().unwrap();
             let accepted = events
@@ -646,7 +691,14 @@ mod tests {
         let receipt = discarded
             .receive_private_intent(AccountId(0), buy(&game, 0))
             .unwrap();
-        crate::session::pipeline::staged_decision::stage(crate::session::pipeline::NpcDecisionHandover::new(discarded.tick(), Vec::new(), vec![receipt], Vec::new()));
+        crate::session::pipeline::staged_decision::stage(
+            crate::session::pipeline::NpcDecisionHandover::new(
+                discarded.tick(),
+                Vec::new(),
+                vec![receipt],
+                Vec::new(),
+            ),
+        );
         drop(discarded);
         source
             .enqueue_player_intent(AccountId(0), buy(&game, 0))
@@ -660,7 +712,10 @@ mod tests {
             vec![0, 2]
         );
         // 批四：save 结构上不含 pending_npc 键（跨 tick 载体删除）。
-        assert!(serde_json::to_value(&save).unwrap().get("pending_npc").is_none());
+        assert!(serde_json::to_value(&save)
+            .unwrap()
+            .get("pending_npc")
+            .is_none());
         assert_eq!(
             save.ingress_receipt_cursors.next_account_ordinal[&AccountId(0)],
             3

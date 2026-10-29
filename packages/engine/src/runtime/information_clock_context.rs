@@ -76,7 +76,8 @@ impl InformationClockContext {
         cutoff: CivilInstant,
     ) -> Result<Self, crate::session::StepFatal> {
         let fail = |description| crate::session::StepFatal::InvariantViolation {
-            location: "InformationClockContext::for_civil_disclosure".to_owned(), description,
+            location: "InformationClockContext::for_civil_disclosure".to_owned(),
+            description,
         };
         if cutoff.date() != session.civil_date() {
             return Err(fail("civil 披露 cutoff 与原 Session 日期不一致".to_owned()));
@@ -88,9 +89,16 @@ impl InformationClockContext {
             auction_ticks: setup.auction_ticks,
             closing_auction_ticks: setup.closing_auction_ticks,
         };
-        let input = crate::session::calendar_clock_input(&day, layout, session.tick(), u64::from(session.day()))
-            .map_err(|error| fail(error.to_string()))?;
-        Ok(Self::from_static_projection(day, layout, input, projection, cutoff))
+        let input = crate::session::calendar_clock_input(
+            &day,
+            layout,
+            session.tick(),
+            u64::from(session.day()),
+        )
+        .map_err(|error| fail(error.to_string()))?;
+        Ok(Self::from_static_projection(
+            day, layout, input, projection, cutoff,
+        ))
     }
 
     fn from_static_projection(

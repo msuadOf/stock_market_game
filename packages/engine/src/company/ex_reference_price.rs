@@ -172,19 +172,20 @@ pub fn share_split_ex_rights_reference_price(
     }
     // 参考价 = (前收 − 红利) ÷ (新股/旧股) = (前收 − 红利) × denominator /
     // numerator，银行家舍入到分。
-    let scaled = numerator_cents
-        .checked_mul(i128::from(denominator))
-        .ok_or(ExReferencePriceError::NonPositiveExRightsNumerator {
+    let scaled = numerator_cents.checked_mul(i128::from(denominator)).ok_or(
+        ExReferencePriceError::NonPositiveExRightsNumerator {
             cents: numerator_cents,
-        })?;
+        },
+    )?;
     let divisor = i128::from(numerator);
     let quotient = scaled / divisor;
     let remainder = scaled % divisor;
-    let doubled_remainder = remainder
-        .checked_mul(2)
-        .ok_or(ExReferencePriceError::NonPositiveExRightsNumerator {
-            cents: numerator_cents,
-        })?;
+    let doubled_remainder =
+        remainder
+            .checked_mul(2)
+            .ok_or(ExReferencePriceError::NonPositiveExRightsNumerator {
+                cents: numerator_cents,
+            })?;
     let reference_cents = match doubled_remainder.cmp(&divisor) {
         std::cmp::Ordering::Less => quotient,
         std::cmp::Ordering::Greater => quotient + 1,
@@ -192,8 +193,11 @@ pub fn share_split_ex_rights_reference_price(
         std::cmp::Ordering::Equal if quotient % 2 == 0 => quotient,
         std::cmp::Ordering::Equal => quotient + 1,
     };
-    let reference_cents = i64::try_from(reference_cents)
-        .map_err(|_| ExReferencePriceError::ReferenceCentsOverflow { cents: reference_cents })?;
+    let reference_cents = i64::try_from(reference_cents).map_err(|_| {
+        ExReferencePriceError::ReferenceCentsOverflow {
+            cents: reference_cents,
+        }
+    })?;
     let reference_price = Money::from_cents(reference_cents);
     if reference_price <= Money::ZERO {
         return Err(ExReferencePriceError::NonPositiveReferencePrice {
@@ -369,19 +373,23 @@ pub fn stock_distribution_ex_rights_reference_price(
     let denominator = 1_000_000_i128 + i128::from(ratio_micros);
     let quotient = scaled / denominator;
     let remainder = scaled % denominator;
-    let doubled_remainder = remainder
-        .checked_mul(2)
-        .ok_or(ExReferencePriceError::NonPositiveExRightsNumerator {
-            cents: numerator_cents,
-        })?;
+    let doubled_remainder =
+        remainder
+            .checked_mul(2)
+            .ok_or(ExReferencePriceError::NonPositiveExRightsNumerator {
+                cents: numerator_cents,
+            })?;
     let reference_cents = match doubled_remainder.cmp(&denominator) {
         std::cmp::Ordering::Less => quotient,
         std::cmp::Ordering::Greater => quotient + 1,
         std::cmp::Ordering::Equal if quotient % 2 == 0 => quotient,
         std::cmp::Ordering::Equal => quotient + 1,
     };
-    let reference_cents = i64::try_from(reference_cents)
-        .map_err(|_| ExReferencePriceError::ReferenceCentsOverflow { cents: reference_cents })?;
+    let reference_cents = i64::try_from(reference_cents).map_err(|_| {
+        ExReferencePriceError::ReferenceCentsOverflow {
+            cents: reference_cents,
+        }
+    })?;
     let reference_price = Money::from_cents(reference_cents);
     if reference_price <= Money::ZERO {
         return Err(ExReferencePriceError::NonPositiveReferencePrice {
@@ -461,22 +469,18 @@ pub fn rights_offering_ex_rights_reference_price(
     }
     let ex_date = calendar.next_trading_day(exchange, payment_deadline)?;
     // 分子（按百万分之一缩放）：(前收 − 红利) × 1e6 + 配股价 × 比例。
-    let base_cents = i128::from(previous_close.cents()) - i128::from(cash_dividend_per_share.cents());
+    let base_cents =
+        i128::from(previous_close.cents()) - i128::from(cash_dividend_per_share.cents());
     if base_cents <= 0 {
-        return Err(ExReferencePriceError::NonPositiveExRightsNumerator {
-            cents: base_cents,
-        });
+        return Err(ExReferencePriceError::NonPositiveExRightsNumerator { cents: base_cents });
     }
     let numerator_scaled = i128::from(base_cents)
         .checked_mul(1_000_000)
         .and_then(|scaled| {
-            scaled.checked_add(
-                i128::from(rights_price_per_share.cents()) * i128::from(ratio_micros),
-            )
+            scaled
+                .checked_add(i128::from(rights_price_per_share.cents()) * i128::from(ratio_micros))
         })
-        .ok_or(ExReferencePriceError::NonPositiveExRightsNumerator {
-            cents: base_cents,
-        })?;
+        .ok_or(ExReferencePriceError::NonPositiveExRightsNumerator { cents: base_cents })?;
     if numerator_scaled <= 0 {
         return Err(ExReferencePriceError::NonPositiveExRightsNumerator {
             cents: numerator_scaled,
@@ -485,11 +489,12 @@ pub fn rights_offering_ex_rights_reference_price(
     let denominator = 1_000_000_i128 + i128::from(ratio_micros);
     let quotient = numerator_scaled / denominator;
     let remainder = numerator_scaled % denominator;
-    let doubled_remainder = remainder
-        .checked_mul(2)
-        .ok_or(ExReferencePriceError::NonPositiveExRightsNumerator {
-            cents: numerator_scaled,
-        })?;
+    let doubled_remainder =
+        remainder
+            .checked_mul(2)
+            .ok_or(ExReferencePriceError::NonPositiveExRightsNumerator {
+                cents: numerator_scaled,
+            })?;
     let reference_cents = match doubled_remainder.cmp(&denominator) {
         std::cmp::Ordering::Less => quotient,
         std::cmp::Ordering::Greater => quotient + 1,
@@ -497,8 +502,11 @@ pub fn rights_offering_ex_rights_reference_price(
         std::cmp::Ordering::Equal if quotient % 2 == 0 => quotient,
         std::cmp::Ordering::Equal => quotient + 1,
     };
-    let reference_cents = i64::try_from(reference_cents)
-        .map_err(|_| ExReferencePriceError::ReferenceCentsOverflow { cents: reference_cents })?;
+    let reference_cents = i64::try_from(reference_cents).map_err(|_| {
+        ExReferencePriceError::ReferenceCentsOverflow {
+            cents: reference_cents,
+        }
+    })?;
     let reference_price = Money::from_cents(reference_cents);
     if reference_price <= Money::ZERO {
         return Err(ExReferencePriceError::NonPositiveReferencePrice {

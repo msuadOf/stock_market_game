@@ -16,8 +16,10 @@ pub(super) struct InformationObservationSignature {
     library: Arc<crate::information::PublicLibrary>,
     facts: Arc<crate::company::CompanyReadFacts>,
     market: Arc<crate::strategy::MarketView>,
-    anchors: BTreeMap<crate::StockId, crate::observation::information_clock::InformationTradingAnchor>,
-    owners_and_codes: BTreeMap<LocalIdx, (crate::AccountId, std::collections::BTreeSet<crate::StockId>)>,
+    anchors:
+        BTreeMap<crate::StockId, crate::observation::information_clock::InformationTradingAnchor>,
+    owners_and_codes:
+        BTreeMap<LocalIdx, (crate::AccountId, std::collections::BTreeSet<crate::StockId>)>,
 }
 
 /// 只保留 touched 账户前值，不借用有 i32 股数差额的普通日志。
@@ -39,23 +41,43 @@ impl GroupState {
     pub(super) fn capture_information_handover(
         &self,
         source: crate::runtime::source::WorldMirrorSource,
-    ) -> Result<(
-        crate::runtime::information_handover::GroupInformationHandover,
-        Arc<crate::information::PublicLibrary>,
-        Arc<crate::company::CompanyReadFacts>,
-        Vec<(crate::AccountId, u64, u64)>,
-    ), RuntimeError> {
-        use crate::runtime::information_handover::{GroupInformationHandover, InformationHandoverMaterial, InformationHandoverSignature};
-        let sealed_static = self.seal_acked_len.is_some() && self.batches_after_seal == 0
+    ) -> Result<
+        (
+            crate::runtime::information_handover::GroupInformationHandover,
+            Arc<crate::information::PublicLibrary>,
+            Arc<crate::company::CompanyReadFacts>,
+            Vec<(crate::AccountId, u64, u64)>,
+        ),
+        RuntimeError,
+    > {
+        use crate::runtime::information_handover::{
+            GroupInformationHandover, InformationHandoverMaterial, InformationHandoverSignature,
+        };
+        let sealed_static = self.seal_acked_len.is_some()
+            && self.batches_after_seal == 0
             && self.staging_deferred.is_empty();
-        if source.tick != self.cur_tick || self.admin_pending.is_some()
-            || !self.staging_deferred.is_empty() || self.batches_after_seal != 0
+        if source.tick != self.cur_tick
+            || self.admin_pending.is_some()
+            || !self.staging_deferred.is_empty()
+            || self.batches_after_seal != 0
             || (self.cur_tick != self.committed_tick && !sealed_static)
         {
-            return Err(invalid(format!("INFO 移交捕获不是已提交静点：group={} source={source:?}", self.group)));
+            return Err(invalid(format!(
+                "INFO 移交捕获不是已提交静点：group={} source={source:?}",
+                self.group
+            )));
         }
-        let root = self.root_projection.as_ref().ok_or_else(|| invalid("INFO 移交捕获缺真实名册"))?;
-        let roster: Vec<_> = root.account_ids.iter().skip(self.roster_offset).take(self.accounts.len()).copied().collect();
+        let root = self
+            .root_projection
+            .as_ref()
+            .ok_or_else(|| invalid("INFO 移交捕获缺真实名册"))?;
+        let roster: Vec<_> = root
+            .account_ids
+            .iter()
+            .skip(self.roster_offset)
+            .take(self.accounts.len())
+            .copied()
+            .collect();
         let signature = self.information_signature.as_ref().map(|signature| {
             if Some(signature.through) != self.information_observed_through {
                 return Err(invalid("INFO 移交签名 through 与观察水位不同"));
@@ -85,12 +107,23 @@ impl GroupState {
                 if profiles.len() < roster.len() {
                     return Err(invalid("INFO 移交捕获 profile 缺少真实账户槽"));
                 }
-                roster.iter().zip(profiles).map(|(&owner, profile)| (owner, profile.next_due, profile.seed)).collect()
+                roster
+                    .iter()
+                    .zip(profiles)
+                    .map(|(&owner, profile)| (owner, profile.next_due, profile.seed))
+                    .collect()
             }
             None => Vec::new(),
         };
-        Ok((GroupInformationHandover { observed_through: self.information_observed_through, signature },
-            Arc::clone(&self.library), Arc::clone(self.current_company_facts()?), profiles))
+        Ok((
+            GroupInformationHandover {
+                observed_through: self.information_observed_through,
+                signature,
+            },
+            Arc::clone(&self.library),
+            Arc::clone(self.current_company_facts()?),
+            profiles,
+        ))
     }
 
     /// 原始账户、profile 和 INFO checkpoint 是同一完整初值；全部校验后才 move 安装。
@@ -103,82 +136,176 @@ impl GroupState {
         library: Arc<crate::information::PublicLibrary>,
         facts: Arc<crate::company::CompanyReadFacts>,
         accounts: Vec<(crate::AccountId, GroupAccount)>,
-        personals: Vec<(crate::AccountId, Option<crate::runtime::world::BeliefParticipantSnapshot>)>,
+        personals: Vec<(
+            crate::AccountId,
+            Option<crate::runtime::world::BeliefParticipantSnapshot>,
+        )>,
         attention: Vec<(crate::AccountId, u64, u64)>,
         inherited_calendar: Option<crate::runtime::world::InheritedCalendarCommit>,
     ) -> Result<(), RuntimeError> {
-        if self.information_handover_installed || self.snapshot.is_some()
-            || self.admin_last_id != 0 || self.admin_pending.is_some()
-            || self.cur_tick != self.committed_tick || source.tick != self.cur_tick
-            || self.information_signature.is_some() || self.information_observed_through.is_some()
-            || !self.staging_deferred.is_empty() || self.batches_after_seal != 0
-            || !self.external_pending.is_empty() || !self.external_cancels.is_empty()
+        if self.information_handover_installed
+            || self.snapshot.is_some()
+            || self.admin_last_id != 0
+            || self.admin_pending.is_some()
+            || self.cur_tick != self.committed_tick
+            || source.tick != self.cur_tick
+            || self.information_signature.is_some()
+            || self.information_observed_through.is_some()
+            || !self.staging_deferred.is_empty()
+            || self.batches_after_seal != 0
+            || !self.external_pending.is_empty()
+            || !self.external_cancels.is_empty()
             || !self.pending_force_due.is_empty()
             || !self.observed.is_empty()
         {
-            return Err(invalid(format!("完整移交初值只能在首个 Start 前安装一次：group={}", self.group)));
+            return Err(invalid(format!(
+                "完整移交初值只能在首个 Start 前安装一次：group={}",
+                self.group
+            )));
         }
-        let root = self.root_projection.as_ref().ok_or_else(|| invalid("完整移交初值缺真实名册"))?;
+        let root = self
+            .root_projection
+            .as_ref()
+            .ok_or_else(|| invalid("完整移交初值缺真实名册"))?;
         if let Some(inherited) = &inherited_calendar {
-            let (owner, bindings) = self.calendar_owner.as_ref().ok_or_else(|| invalid("Calendar 移交缺组构造 owner"))?;
-            inherited.validate_install(owner, bindings, crate::session::exchange_calendar_model::SessionTickLayout {
-                ticks_per_day: self.ticks_per_day, auction_ticks: self.auction_ticks, closing_auction_ticks: self.closing_auction_ticks,
-            }, source)?;
+            let (owner, bindings) = self
+                .calendar_owner
+                .as_ref()
+                .ok_or_else(|| invalid("Calendar 移交缺组构造 owner"))?;
+            inherited.validate_install(
+                owner,
+                bindings,
+                crate::session::exchange_calendar_model::SessionTickLayout {
+                    ticks_per_day: self.ticks_per_day,
+                    auction_ticks: self.auction_ticks,
+                    closing_auction_ticks: self.closing_auction_ticks,
+                },
+                source,
+            )?;
         }
-        let expected: Vec<_> = root.account_ids.iter().skip(self.roster_offset).take(self.accounts.len()).copied().collect();
-        if expected != roster.iter().map(|(owner, _)| *owner).collect::<Vec<_>>() || accounts.len() != roster.len()
-            || personals.iter().map(|(owner, _)| *owner).collect::<Vec<_>>() != expected
+        let expected: Vec<_> = root
+            .account_ids
+            .iter()
+            .skip(self.roster_offset)
+            .take(self.accounts.len())
+            .copied()
+            .collect();
+        if expected != roster.iter().map(|(owner, _)| *owner).collect::<Vec<_>>()
+            || accounts.len() != roster.len()
+            || personals
+                .iter()
+                .map(|(owner, _)| *owner)
+                .collect::<Vec<_>>()
+                != expected
         {
-            return Err(invalid(format!("完整移交初值与真实组名册不同：group={}", self.group)));
+            return Err(invalid(format!(
+                "完整移交初值与真实组名册不同：group={}",
+                self.group
+            )));
         }
-        for (local, ((owner, required), (account_owner, account))) in roster.iter().zip(&accounts).enumerate() {
+        for (local, ((owner, required), (account_owner, account))) in
+            roster.iter().zip(&accounts).enumerate()
+        {
             if account_owner != owner {
-                return Err(invalid(format!("完整移交账户 owner 错位：group={} local={local}", self.group)));
+                return Err(invalid(format!(
+                    "完整移交账户 owner 错位：group={} local={local}",
+                    self.group
+                )));
             }
-            let personal = self.belief_states.get(local).ok_or_else(|| invalid("完整移交个人态缺真实槽"))?;
+            let personal = self
+                .belief_states
+                .get(local)
+                .ok_or_else(|| invalid("完整移交个人态缺真实槽"))?;
             let incoming = &personals[local].1;
-            if personal.is_some() != *required || incoming.is_some() != *required
-                || incoming.as_ref().is_some_and(|personal| personal.information.owner() != *owner || personal.belief.npc() != *owner) {
-                return Err(invalid(format!("完整移交个人态与 Required 名册不同：group={} owner={owner:?}", self.group)));
+            if personal.is_some() != *required
+                || incoming.is_some() != *required
+                || incoming.as_ref().is_some_and(|personal| {
+                    personal.information.owner() != *owner || personal.belief.npc() != *owner
+                })
+            {
+                return Err(invalid(format!(
+                    "完整移交个人态与 Required 名册不同：group={} owner={owner:?}",
+                    self.group
+                )));
             }
             let stocks = root.catalog.len();
-            if [account.shares.len(), account.frozen_today.len(), account.foreign_active.len(), account.invested_cents.len(), account.recovered_cents.len(), account.ever_held.len(), account.pending_sell_qty.len()].iter().any(|&len| len != stocks)
-                || account.frozen_today.iter().zip(&account.shares).any(|(&frozen, &shares)| frozen > shares)
+            if [
+                account.shares.len(),
+                account.frozen_today.len(),
+                account.foreign_active.len(),
+                account.invested_cents.len(),
+                account.recovered_cents.len(),
+                account.ever_held.len(),
+                account.pending_sell_qty.len(),
+            ]
+            .iter()
+            .any(|&len| len != stocks)
+                || account
+                    .frozen_today
+                    .iter()
+                    .zip(&account.shares)
+                    .any(|(&frozen, &shares)| frozen > shares)
             {
-                return Err(invalid(format!("完整移交账户股票拓扑或 T+1 冻结非法：owner={owner:?}")));
+                return Err(invalid(format!(
+                    "完整移交账户股票拓扑或 T+1 冻结非法：owner={owner:?}"
+                )));
             }
         }
-        let required: std::collections::BTreeSet<_> = roster.iter().filter(|(_, required)| *required).map(|(owner, _)| *owner).collect();
-        let signature = handover.signature.map(|signature| {
-            if Some(signature.material.through) != handover.observed_through
-                || signature.owners_and_codes.keys().copied().collect::<std::collections::BTreeSet<_>>() != required
-            {
-                return Err(invalid("INFO 初值签名 through 或 Required owner 集合不一致"));
-            }
-            let mut owners_and_codes = BTreeMap::new();
-            for (local, (owner, _)) in roster.iter().enumerate() {
-                if let Some(codes) = signature.owners_and_codes.get(owner) {
-                    let local = LocalIdx::try_from(local).map_err(|_| invalid("INFO 初值 local 超出 LocalIdx"))?;
-                    owners_and_codes.insert(local, (*owner, codes.clone()));
+        let required: std::collections::BTreeSet<_> = roster
+            .iter()
+            .filter(|(_, required)| *required)
+            .map(|(owner, _)| *owner)
+            .collect();
+        let signature = handover
+            .signature
+            .map(|signature| {
+                if Some(signature.material.through) != handover.observed_through
+                    || signature
+                        .owners_and_codes
+                        .keys()
+                        .copied()
+                        .collect::<std::collections::BTreeSet<_>>()
+                        != required
+                {
+                    return Err(invalid(
+                        "INFO 初值签名 through 或 Required owner 集合不一致",
+                    ));
                 }
-            }
-            Ok(InformationObservationSignature {
-                through: signature.material.through,
-                library: Arc::clone(&signature.material.library),
-                facts: Arc::clone(&signature.material.facts),
-                market: Arc::clone(&signature.material.market),
-                anchors: signature.material.anchors.clone(),
-                owners_and_codes,
+                let mut owners_and_codes = BTreeMap::new();
+                for (local, (owner, _)) in roster.iter().enumerate() {
+                    if let Some(codes) = signature.owners_and_codes.get(owner) {
+                        let local = LocalIdx::try_from(local)
+                            .map_err(|_| invalid("INFO 初值 local 超出 LocalIdx"))?;
+                        owners_and_codes.insert(local, (*owner, codes.clone()));
+                    }
+                }
+                Ok(InformationObservationSignature {
+                    through: signature.material.through,
+                    library: Arc::clone(&signature.material.library),
+                    facts: Arc::clone(&signature.material.facts),
+                    market: Arc::clone(&signature.material.market),
+                    anchors: signature.material.anchors.clone(),
+                    owners_and_codes,
+                })
             })
-        }).transpose()?;
+            .transpose()?;
         if signature.is_none() && handover.observed_through.is_some() && !required.is_empty() {
             return Err(invalid("INFO 初值 Required 有观察水位却缺签名"));
         }
         match &self.decision {
-            Some((profiles, _)) if profiles.len() >= roster.len()
-                && attention.iter().map(|(owner, _, _)| *owner).collect::<Vec<_>>() == expected => {}
+            Some((profiles, _))
+                if profiles.len() >= roster.len()
+                    && attention
+                        .iter()
+                        .map(|(owner, _, _)| *owner)
+                        .collect::<Vec<_>>()
+                        == expected => {}
             None if attention.is_empty() => {}
-            _ => return Err(invalid("完整移交初值 profile/attention 与真实名册不完整或错位")),
+            _ => {
+                return Err(invalid(
+                    "完整移交初值 profile/attention 与真实名册不完整或错位",
+                ))
+            }
         }
         let mut next_accounts = self.accounts.clone();
         let mut next_decision = self.decision.clone();
@@ -195,8 +322,18 @@ impl GroupState {
                 profiles[local].seed = seed;
             }
         }
-        let next_heap = next_decision.as_ref().map(|(profiles, _)| profiles.iter().enumerate()
-            .map(|(local, profile)| std::cmp::Reverse((profile.next_due, local as LocalIdx))).collect()).unwrap_or_default();
+        let next_heap = next_decision
+            .as_ref()
+            .map(|(profiles, _)| {
+                profiles
+                    .iter()
+                    .enumerate()
+                    .map(|(local, profile)| {
+                        std::cmp::Reverse((profile.next_due, local as LocalIdx))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
         self.accounts = next_accounts;
         self.decision = next_decision;
         self.belief_states = next_personals;
@@ -211,9 +348,14 @@ impl GroupState {
     }
 
     /// 初值仅允许构造静点安装；恢复世界的 initial tick 可以大于零。
-    pub(crate) fn install_initial_company_facts(&mut self, facts: Arc<crate::company::CompanyReadFacts>) -> Result<(), RuntimeError> {
-        if self.current_company_facts.is_some() || self.snapshot.is_some()
-            || self.admin_last_id != 0 || self.admin_pending.is_some()
+    pub(crate) fn install_initial_company_facts(
+        &mut self,
+        facts: Arc<crate::company::CompanyReadFacts>,
+    ) -> Result<(), RuntimeError> {
+        if self.current_company_facts.is_some()
+            || self.snapshot.is_some()
+            || self.admin_last_id != 0
+            || self.admin_pending.is_some()
             || self.cur_tick != self.committed_tick
         {
             return Err(invalid("公司共同事实初值只能在首个 Start 前安装一次"));
@@ -222,8 +364,12 @@ impl GroupState {
         Ok(())
     }
 
-    pub(crate) fn current_company_facts(&self) -> Result<&Arc<crate::company::CompanyReadFacts>, RuntimeError> {
-        self.current_company_facts.as_ref().ok_or_else(|| invalid("组缺少 current CompanyReadFacts"))
+    pub(crate) fn current_company_facts(
+        &self,
+    ) -> Result<&Arc<crate::company::CompanyReadFacts>, RuntimeError> {
+        self.current_company_facts
+            .as_ref()
+            .ok_or_else(|| invalid("组缺少 current CompanyReadFacts"))
     }
 
     fn prepare_admin(
@@ -237,10 +383,14 @@ impl GroupState {
     /// 直接 Group 测试的合成 sender；生产只接收 World 私有广播证明。
     #[cfg(test)]
     fn prepare_admin_with_information(
-        &mut self, id: AdminTransactionId, operations: Vec<AdminOperation>,
+        &mut self,
+        id: AdminTransactionId,
+        operations: Vec<AdminOperation>,
         information: Option<crate::runtime::protocol::InformationPreparePayload>,
     ) -> Result<AdminGroupCandidate, RuntimeError> {
-        let proof = information.as_ref().and_then(|payload| payload.observation.as_ref())
+        let proof = information
+            .as_ref()
+            .and_then(|payload| payload.observation.as_ref())
             .map(|point| super::super::world::AuthenticatedInformationClock::fixture(&point.clock));
         self.prepare_admin_with_information_clock(id, operations, information, proof)
     }
@@ -264,7 +414,9 @@ impl GroupState {
         information: Option<crate::runtime::protocol::InformationPreparePayload>,
         repurchase: Option<Vec<crate::runtime::protocol::RepurchaseProjectionInput>>,
     ) -> Result<AdminGroupCandidate, RuntimeError> {
-        let proof = information.as_ref().and_then(|payload| payload.observation.as_ref())
+        let proof = information
+            .as_ref()
+            .and_then(|payload| payload.observation.as_ref())
             .map(|point| super::super::world::AuthenticatedInformationClock::fixture(&point.clock));
         self.prepare_admin_scope_with_clock(id, operations, information, repurchase, proof)
     }
@@ -277,7 +429,14 @@ impl GroupState {
         repurchase: Option<Vec<crate::runtime::protocol::RepurchaseProjectionInput>>,
         information_clock: Option<super::super::world::AuthenticatedInformationClock>,
     ) -> Result<AdminGroupCandidate, RuntimeError> {
-        self.prepare_admin_ordered_scope(id, operations, None, information, repurchase, information_clock)
+        self.prepare_admin_ordered_scope(
+            id,
+            operations,
+            None,
+            information,
+            repurchase,
+            information_clock,
+        )
     }
 
     fn prepare_admin_ordered_scope(
@@ -311,17 +470,35 @@ impl GroupState {
         if operations.is_empty() && information.is_none() && repurchase.is_none() {
             return Err(invalid("行政参与组不得没有操作"));
         }
-        let repurchase_working = repurchase.as_ref().map(|rows| self.prepare_repurchase_working(&operations, rows)).transpose()?;
-        let operations = repurchase_working.as_ref().map_or(operations, |working| working.operations.clone());
-        let (mut working, stages) = stages::prepare_working(self, &operations, stage_layout.as_ref(), repurchase_working.is_some())?;
+        let repurchase_working = repurchase
+            .as_ref()
+            .map(|rows| self.prepare_repurchase_working(&operations, rows))
+            .transpose()?;
+        let operations = repurchase_working
+            .as_ref()
+            .map_or(operations, |working| working.operations.clone());
+        let (mut working, stages) = stages::prepare_working(
+            self,
+            &operations,
+            stage_layout.as_ref(),
+            repurchase_working.is_some(),
+        )?;
         if let Some(rows) = &repurchase {
             for row in rows {
-                let account = self.accounts.get(row.local as usize).ok_or_else(|| invalid("执行投影账户越界"))?;
-                working.entry(row.local).or_insert_with(|| (**account).clone());
+                let account = self
+                    .accounts
+                    .get(row.local as usize)
+                    .ok_or_else(|| invalid("执行投影账户越界"))?;
+                working
+                    .entry(row.local)
+                    .or_insert_with(|| (**account).clone());
             }
         }
         // 信息计算读取同一事务资产候选，全部成功后才暂装资产 working。
-        let information = information.as_ref().map(|payload| self.prepare_information(payload, information_clock.as_ref(), &working)).transpose()?;
+        let information = information
+            .as_ref()
+            .map(|payload| self.prepare_information(payload, information_clock.as_ref(), &working))
+            .transpose()?;
         let before = working
             .keys()
             .map(|&local| (local, Arc::clone(&self.accounts[local as usize])))
@@ -333,33 +510,64 @@ impl GroupState {
             let pending = PendingRepurchase {
                 before_book: std::mem::replace(&mut self.plan_book, working.book),
                 before_dirty: self.plan_book_dirty,
-                before_projections: std::mem::replace(&mut self.repurchase_projections, working.projections),
+                before_projections: std::mem::replace(
+                    &mut self.repurchase_projections,
+                    working.projections,
+                ),
                 created: working.created,
                 projected_ids: working.projected_ids,
             };
-            if pending.before_book != self.plan_book || pending.before_projections != self.repurchase_projections { self.plan_book_dirty = true; }
+            if pending.before_book != self.plan_book
+                || pending.before_projections != self.repurchase_projections
+            {
+                self.plan_book_dirty = true;
+            }
             pending
         });
-        self.admin_pending = Some(PendingAdmin { id, before, stages, information, repurchase });
+        self.admin_pending = Some(PendingAdmin {
+            id,
+            before,
+            stages,
+            information,
+            repurchase,
+        });
         Ok(self.admin_candidate())
     }
 
     fn admin_candidate(&self) -> AdminGroupCandidate {
         let pending = self.admin_pending.as_ref().expect("候选必须有 pending");
-        let accounts_full = pending.before.iter().any(|(local, before)| before.as_ref() != self.accounts[*local as usize].as_ref());
-        let mut mirror_domains = super::super::source::MirrorDomains { accounts_full, ..Default::default() };
+        let accounts_full = pending
+            .before
+            .iter()
+            .any(|(local, before)| before.as_ref() != self.accounts[*local as usize].as_ref());
+        let mut mirror_domains = super::super::source::MirrorDomains {
+            accounts_full,
+            ..Default::default()
+        };
         if let Some(information) = &pending.information {
             mirror_domains = mirror_domains.union(information.mirror_domains());
         }
         if let Some(repurchase) = &pending.repurchase {
-            mirror_domains.plans_pending = repurchase.before_book != self.plan_book || repurchase.before_projections != self.repurchase_projections;
+            mirror_domains.plans_pending = repurchase.before_book != self.plan_book
+                || repurchase.before_projections != self.repurchase_projections;
         }
         AdminGroupCandidate {
             stages: pending.stages.clone(),
             mirror_domains,
-            information: pending.information.as_ref().map(|info| info.prepared.clone()),
-            repurchase: pending.repurchase.as_ref().map(|repurchase| crate::runtime::protocol::PreparedRepurchaseResult {
-                book: self.plan_book.clone(), created: repurchase.created.clone(), projections: repurchase.projected_ids.iter().map(|id| (*id, self.repurchase_projections[id].clone())).collect(),
+            information: pending
+                .information
+                .as_ref()
+                .map(|info| info.prepared.clone()),
+            repurchase: pending.repurchase.as_ref().map(|repurchase| {
+                crate::runtime::protocol::PreparedRepurchaseResult {
+                    book: self.plan_book.clone(),
+                    created: repurchase.created.clone(),
+                    projections: repurchase
+                        .projected_ids
+                        .iter()
+                        .map(|id| (*id, self.repurchase_projections[id].clone()))
+                        .collect(),
+                }
             }),
             group: self.group,
             accounts: pending
@@ -464,7 +672,14 @@ impl GroupState {
                 std::panic::panic_any(Arc::clone(payload));
             }
             if phase == AdminPhase::Prepare {
-                self.prepare_admin_ordered_scope(id, operations, stage_layout, information, repurchase, information_clock)
+                self.prepare_admin_ordered_scope(
+                    id,
+                    operations,
+                    stage_layout,
+                    information,
+                    repurchase,
+                    information_clock,
+                )
             } else {
                 self.complete_admin(id, phase)
             }
@@ -479,10 +694,17 @@ impl GroupState {
                 #[cfg(test)]
                 if let Ok(candidate) = &mut result {
                     if let Some(AdminFault::StagePrepareCorruption(mode)) = &fault {
-                        let prepared = candidate.stages.as_mut().expect("阶段故障必须来自真实 stage prepare");
+                        let prepared = candidate
+                            .stages
+                            .as_mut()
+                            .expect("阶段故障必须来自真实 stage prepare");
                         match mode {
-                            0 => { prepared.operation_indices.remove(0); }
-                            1 => prepared.operation_indices.push(prepared.operation_indices[0]),
+                            0 => {
+                                prepared.operation_indices.remove(0);
+                            }
+                            1 => prepared
+                                .operation_indices
+                                .push(prepared.operation_indices[0]),
                             2 => prepared.operation_indices.swap(0, 1),
                             3 => Arc::make_mut(&mut prepared.tax_stages[0].accounts[0].2).cash -= 1,
                             4 => prepared.tax_stages.push(prepared.tax_stages[0].clone()),
@@ -491,30 +713,56 @@ impl GroupState {
                         }
                     }
                     if let Some(AdminFault::RepurchasePrepareCorruption(mode)) = fault {
-                        if mode == 0 { candidate.repurchase = None; }
-                        else if let Some(prepared) = &mut candidate.repurchase {
+                        if mode == 0 {
+                            candidate.repurchase = None;
+                        } else if let Some(prepared) = &mut candidate.repurchase {
                             match mode {
                                 1 => prepared.created.clear(),
                                 2 => prepared.created.push(prepared.created[0].clone()),
                                 3 => prepared.created[0].operation_index += 1,
                                 4 => {
-                                    let (policy, mut cursors, entries) = prepared.book.clone().into_parts();
-                                    cursors[0].next_sequence = cursors[0].next_sequence.and_then(|value| value.checked_add(1));
-                                    prepared.book = crate::plans::PlanBook::from_parts(policy, cursors, entries).expect("故障只改变合法游标");
+                                    let (policy, mut cursors, entries) =
+                                        prepared.book.clone().into_parts();
+                                    cursors[0].next_sequence = cursors[0]
+                                        .next_sequence
+                                        .and_then(|value| value.checked_add(1));
+                                    prepared.book = crate::plans::PlanBook::from_parts(
+                                        policy, cursors, entries,
+                                    )
+                                    .expect("故障只改变合法游标");
                                 }
                                 5 => prepared.projections.clear(),
-                                6 => prepared.projections.values_mut().next().expect("故障有合法投影").funding_amount = crate::Money::from_cents(999),
-                                7 => { prepared.book.create_issuer_repurchase(crate::plans::RepurchaseExecutionOpen {
-                                    owner: prepared.created[0].plan_id.owner, issuer: crate::company::CompanyId(1), stock: crate::StockId(1),
-                                }).expect("故障额外添加不同证券计划"); }
+                                6 => {
+                                    prepared
+                                        .projections
+                                        .values_mut()
+                                        .next()
+                                        .expect("故障有合法投影")
+                                        .funding_amount = crate::Money::from_cents(999)
+                                }
+                                7 => {
+                                    prepared
+                                        .book
+                                        .create_issuer_repurchase(
+                                            crate::plans::RepurchaseExecutionOpen {
+                                                owner: prepared.created[0].plan_id.owner,
+                                                issuer: crate::company::CompanyId(1),
+                                                stock: crate::StockId(1),
+                                            },
+                                        )
+                                        .expect("故障额外添加不同证券计划");
+                                }
                                 _ => panic!("未知回购 Prepare 故障类型"),
                             }
                         }
                     }
                     if fault == Some(AdminFault::RepurchaseInControlReceipt) {
-                        candidate.repurchase = Some(crate::runtime::protocol::PreparedRepurchaseResult {
-                            book: self.plan_book.clone(), created: Vec::new(), projections: self.repurchase_projections.clone(),
-                        });
+                        candidate.repurchase =
+                            Some(crate::runtime::protocol::PreparedRepurchaseResult {
+                                book: self.plan_book.clone(),
+                                created: Vec::new(),
+                                projections: self.repurchase_projections.clone(),
+                            });
                     }
                     if fault == Some(AdminFault::WrongLocals) {
                         candidate.accounts.clear();
@@ -590,10 +838,20 @@ fn apply_operation(
             return Err(invalid("APPROVAL-C 同 PendingAdmin 创建计划尚未实现"));
         }
         AdminOperation::SyntheticBudgetCredit { amount, .. } => {
-            return super::admin_repurchase_funds::apply_cash(account, stock_coordinate, amount, false);
+            return super::admin_repurchase_funds::apply_cash(
+                account,
+                stock_coordinate,
+                amount,
+                false,
+            );
         }
         AdminOperation::SyntheticBudgetRecycle { amount, .. } => {
-            return super::admin_repurchase_funds::apply_cash(account, stock_coordinate, amount, true);
+            return super::admin_repurchase_funds::apply_cash(
+                account,
+                stock_coordinate,
+                amount,
+                true,
+            );
         }
         AdminOperation::PaymentDebit { amount, .. } => {
             return super::admin_funds_cost::payment_debit(account, stock_coordinate, amount)
@@ -603,7 +861,11 @@ fn apply_operation(
             return super::admin_funds_cost::subscription_refund(account, stock_coordinate, amount)
                 .map_err(|error| invalid(error.to_string()));
         }
-        AdminOperation::SharesWithCost { qty, subscription_cost, .. } => {
+        AdminOperation::SharesWithCost {
+            qty,
+            subscription_cost,
+            ..
+        } => {
             return super::admin_funds_cost::shares_with_cost(
                 account,
                 stock_coordinate,
@@ -679,9 +941,22 @@ mod tests {
     fn funds_p1_dispatcher_rejects_short_vectors_without_panic_or_mutation() {
         use crate::runtime::group::InlineVec;
         for operation in [
-            AdminOperation::PaymentDebit { local: 0, stock: 0, amount: 1 },
-            AdminOperation::SubscriptionRefund { local: 0, stock: 0, amount: 1 },
-            AdminOperation::SharesWithCost { local: 0, stock: 0, qty: 1, subscription_cost: 1 },
+            AdminOperation::PaymentDebit {
+                local: 0,
+                stock: 0,
+                amount: 1,
+            },
+            AdminOperation::SubscriptionRefund {
+                local: 0,
+                stock: 0,
+                amount: 1,
+            },
+            AdminOperation::SharesWithCost {
+                local: 0,
+                stock: 0,
+                qty: 1,
+                subscription_cost: 1,
+            },
         ] {
             for short in 0..6 {
                 let mut account = GroupAccount::new(100, 1);
@@ -695,10 +970,17 @@ mod tests {
                     _ => account.ever_held = InlineVec::filled(0, false),
                 }
                 let before = account.clone();
-                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(||
-                    apply_operation(&mut account, 0, operation)));
-                assert!(result.is_ok(), "真实dispatcher必须显式拒绝短向量而非panic：{operation:?}/{short}");
-                assert!(result.unwrap().is_err(), "短向量不得通过：{operation:?}/{short}");
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    apply_operation(&mut account, 0, operation)
+                }));
+                assert!(
+                    result.is_ok(),
+                    "真实dispatcher必须显式拒绝短向量而非panic：{operation:?}/{short}"
+                );
+                assert!(
+                    result.unwrap().is_err(),
+                    "短向量不得通过：{operation:?}/{short}"
+                );
                 assert_eq!(account, before);
             }
         }

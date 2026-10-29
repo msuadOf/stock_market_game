@@ -233,7 +233,9 @@ pub enum ReportRoeNonRecurring {
         /// 归母净利润 − Σ项目（税后归母）；同一账套窗口派生，不跨期累计。
         parent_net_income_after_deduction: AccountingAmount,
     },
-    Unavailable { reason: ReportRoeUnavailable },
+    Unavailable {
+        reason: ReportRoeUnavailable,
+    },
 }
 
 /// 权益事件实际生效类别（与公式层 EquityEventKind 同语义的披露投影）。

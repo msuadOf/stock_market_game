@@ -1,11 +1,11 @@
 use super::{
-    allocate_share_split, HolderSplitOutcome, ShareSplitBook, ShareSplitDirection,
-    ShareSplitError, ShareSplitEventPlan, ShareSplitStatus,
+    allocate_share_split, HolderSplitOutcome, ShareSplitBook, ShareSplitDirection, ShareSplitError,
+    ShareSplitEventPlan, ShareSplitStatus,
 };
 use crate::company::{
     share_registry::{
-        AcquisitionSource, HolderId, RegistrationSnapshot, ShareHolding, ShareLot,
-        ShareRegistry, ShareRestriction,
+        AcquisitionSource, HolderId, RegistrationSnapshot, ShareHolding, ShareLot, ShareRegistry,
+        ShareRestriction,
     },
     CompanyId,
 };
@@ -102,9 +102,10 @@ fn split_multiplies_every_holder_including_issuer_treasury_without_fragments() {
         holder_outcome(&receipt, &HolderId::IssuerTreasury).new_shares,
         20
     );
-    assert!(receipt.holders.iter().all(|outcome| {
-        outcome.fractional_numerator == 0 && outcome.tie_break_award == 0
-    }));
+    assert!(receipt
+        .holders
+        .iter()
+        .all(|outcome| { outcome.fractional_numerator == 0 && outcome.tie_break_award == 0 }));
 }
 
 #[test]
@@ -223,9 +224,7 @@ fn book_state_machine_advances_and_replays_restored_receipt() {
     let mut premature = book.clone();
     premature.status = ShareSplitStatus::Approved;
     let calendar = crate::calendar::TradingCalendar::current_default_calendar().unwrap();
-    assert!(premature
-        .register(snapshot.clone(), &calendar)
-        .is_err());
+    assert!(premature.register(snapshot.clone(), &calendar).is_err());
     let receipt = book
         .register(snapshot, &calendar)
         .expect("registration freezes allocation")
@@ -245,8 +244,8 @@ fn book_state_machine_advances_and_replays_restored_receipt() {
     assert!(book.mark_settled(date("2030-06-03")).is_err());
     book.mark_settled(date("2030-06-04")).unwrap();
     assert_eq!(*book.status(), ShareSplitStatus::Settled);
-    let settled: ShareSplitBook = serde_json::from_str(&serde_json::to_string(&book).unwrap())
-        .unwrap();
+    let settled: ShareSplitBook =
+        serde_json::from_str(&serde_json::to_string(&book).unwrap()).unwrap();
     assert_eq!(settled.settled_on(), Some(date("2030-06-04")));
     // 篡改回执在恢复校验中被拒。
     let mut tampered = book.clone();
@@ -336,11 +335,17 @@ fn allocation_rejects_zero_total_but_allows_an_account_to_receive_zero() {
                     crate::calendar::TradingCalendar::current_default_calendar().unwrap();
                 let registered = book.register(snapshot, &calendar).map(|_| ());
                 assert_eq!((allocation.is_err(), registered.is_err()), (true, true));
-                assert_eq!(allocation.unwrap_err(), ShareSplitError::ZeroIssuedShares {
-                    event_id: "split-1".into(), stock: StockCode("600001".into()),
-                    direction: ShareSplitDirection::Consolidate, ratio: 3,
-                    issued_shares_before: 2, issued_shares_after: 0,
-                });
+                assert_eq!(
+                    allocation.unwrap_err(),
+                    ShareSplitError::ZeroIssuedShares {
+                        event_id: "split-1".into(),
+                        stock: StockCode("600001".into()),
+                        direction: ShareSplitDirection::Consolidate,
+                        ratio: 3,
+                        issued_shares_before: 2,
+                        issued_shares_after: 0,
+                    }
+                );
                 assert_eq!(book, before, "失败不得冻结 registration 或发布成功回执");
             }
             Some(total) => {
@@ -488,14 +493,19 @@ mod whole_save {
         // 当前 main 尚未安装 R 日日终候选，显式以无成交名册事实补齐已完成日。
         while registry.settled_on() < date("2030-06-03") {
             let day = registry.settled_on().next().unwrap();
-            registry.close_day(ShareDayRequest {
-                event_id: format!("fixture-market:{day}"),
-                day,
-                scope: MovementScope::PublicMarket,
-                changes: Vec::new(),
-            }).unwrap();
+            registry
+                .close_day(ShareDayRequest {
+                    event_id: format!("fixture-market:{day}"),
+                    day,
+                    scope: MovementScope::PublicMarket,
+                    changes: Vec::new(),
+                })
+                .unwrap();
         }
-        registry.register("split-1".into(), date("2030-06-03")).unwrap().clone()
+        registry
+            .register("split-1".into(), date("2030-06-03"))
+            .unwrap()
+            .clone()
     }
 
     #[test]
@@ -520,13 +530,21 @@ mod whole_save {
             "内存 SaveSlot 与完整 JSON 均不得导入 Registered 零发行量回执"
         );
         let error = restored.err().unwrap();
-        let cause = std::error::Error::source(&error).unwrap()
-            .downcast_ref::<ShareSplitError>().unwrap();
-        assert_eq!(cause, &ShareSplitError::ZeroIssuedShares {
-            event_id: "split-1".into(), stock: StockCode("600001".into()),
-            direction: ShareSplitDirection::Consolidate, ratio: 100_001,
-            issued_shares_before: 100_000, issued_shares_after: 0,
-        });
+        let cause = std::error::Error::source(&error)
+            .unwrap()
+            .downcast_ref::<ShareSplitError>()
+            .unwrap();
+        assert_eq!(
+            cause,
+            &ShareSplitError::ZeroIssuedShares {
+                event_id: "split-1".into(),
+                stock: StockCode("600001".into()),
+                direction: ShareSplitDirection::Consolidate,
+                ratio: 100_001,
+                issued_shares_before: 100_000,
+                issued_shares_after: 0,
+            }
+        );
         assert_eq!(
             save.company_state.actions().unwrap().registries[0].issued_shares(),
             100_000

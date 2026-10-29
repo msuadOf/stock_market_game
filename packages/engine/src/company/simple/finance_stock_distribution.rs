@@ -35,7 +35,8 @@ impl SimpleFinanceState {
                 && existing.new_shares == declaration.new_shares
                 && existing.par_value_per_share == declaration.par_value_per_share
                 && existing.capital_increase == declaration.capital_increase
-                && existing.registered_capital_at_approval == declaration.registered_capital_at_approval
+                && existing.registered_capital_at_approval
+                    == declaration.registered_capital_at_approval
             {
                 return Ok(true);
             }

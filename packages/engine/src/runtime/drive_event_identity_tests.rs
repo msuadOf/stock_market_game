@@ -27,15 +27,41 @@ fn sparse_account_ids_and_three_group_tail_preserve_exact_trade_fields() {
     let trades = [trade((0, 1), (1, 2)), trade((2, 0), (0, 0))];
     let mut seq = 41;
     let events = project_trade_events_for_roster(&trades, &ids, 3, &mut seq).unwrap();
-    let fields = events.into_iter().map(|event| match event {
-        Event::Trade { seq, code, price, qty, maker, taker } =>
-            (seq, code, price, qty, maker, taker),
-        other => panic!("Trade 投影产生其他事件：{other:?}"),
-    }).collect::<Vec<_>>();
-    assert_eq!(fields, vec![
-        (42, StockId(1), Money::from_cents(995), 100, AccountId(99), AccountId(699)),
-        (43, StockId(1), Money::from_cents(995), 100, AccountId(900), AccountId(0)),
-    ]);
+    let fields = events
+        .into_iter()
+        .map(|event| match event {
+            Event::Trade {
+                seq,
+                code,
+                price,
+                qty,
+                maker,
+                taker,
+            } => (seq, code, price, qty, maker, taker),
+            other => panic!("Trade 投影产生其他事件：{other:?}"),
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        fields,
+        vec![
+            (
+                42,
+                StockId(1),
+                Money::from_cents(995),
+                100,
+                AccountId(99),
+                AccountId(699)
+            ),
+            (
+                43,
+                StockId(1),
+                Money::from_cents(995),
+                100,
+                AccountId(900),
+                AccountId(0)
+            ),
+        ]
+    );
     assert_eq!(seq, 43);
 }
 
@@ -45,11 +71,17 @@ fn invalid_owner_after_valid_trade_rejects_batch_without_advancing_seq() {
     // 非法 local 不能别名到下一组；未知 group 与尾组空位不能造账户。
     for invalid in [(0, 3), (3, 0), (2, 1)] {
         for bad_maker in [false, true] {
-            let invalid_trade = if bad_maker { trade(invalid, (0, 0)) }
-                else { trade((0, 0), invalid) };
+            let invalid_trade = if bad_maker {
+                trade(invalid, (0, 0))
+            } else {
+                trade((0, 0), invalid)
+            };
             let mut seq = 41;
             let result = project_trade_events_for_roster(
-                &[trade((0, 1), (1, 2)), invalid_trade], &ids, 3, &mut seq,
+                &[trade((0, 1), (1, 2)), invalid_trade],
+                &ids,
+                3,
+                &mut seq,
             );
             assert!(result.is_err(), "必须拒绝原始 Owner：{invalid:?}");
             assert_eq!(seq, 41, "后条失败不得消费前条事件序号");
@@ -65,14 +97,22 @@ fn zero_group_width_and_sequence_overflow_are_explicit_and_atomic() {
     assert_eq!(seq, 41);
     seq = u64::MAX - 1;
     assert!(project_trade_events_for_roster(
-        &[trade((0, 1), (0, 0)), trade((0, 1), (0, 0))], &ids, 2, &mut seq,
-    ).is_err());
+        &[trade((0, 1), (0, 0)), trade((0, 1), (0, 0))],
+        &ids,
+        2,
+        &mut seq,
+    )
+    .is_err());
     assert_eq!(seq, u64::MAX - 1);
 }
 
 #[test]
 fn empty_success_does_not_consume_sequence() {
     let mut seq = 41;
-    assert!(project_trade_events_for_roster(&[], &[AccountId(0)], 1, &mut seq).unwrap().is_empty());
+    assert!(
+        project_trade_events_for_roster(&[], &[AccountId(0)], 1, &mut seq)
+            .unwrap()
+            .is_empty()
+    );
     assert_eq!(seq, 41);
 }

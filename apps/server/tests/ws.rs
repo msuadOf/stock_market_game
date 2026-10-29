@@ -5,7 +5,6 @@
 //! - 随后持续收到 Event[] JSON（各带 seq）；
 //! - 缺 token / 未知 session → 握手失败（HTTP 错误状态，非 101）。
 
-
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
@@ -81,7 +80,15 @@ impl ServerFixture {
         }
     }
 
-    async fn session(&self, seed: u64) -> (String, std::sync::Arc<server::SessionHandles>, String, String) {
+    async fn session(
+        &self,
+        seed: u64,
+    ) -> (
+        String,
+        std::sync::Arc<server::SessionHandles>,
+        String,
+        String,
+    ) {
         let setup = serde_json::from_value(sample_setup_json()).expect("WS fixture setup 应合法");
         self.session_with_setup(setup, seed).await
     }
@@ -90,9 +97,16 @@ impl ServerFixture {
         &self,
         setup: engine::SessionSetup,
         seed: u64,
-    ) -> (String, std::sync::Arc<server::SessionHandles>, String, String) {
+    ) -> (
+        String,
+        std::sync::Arc<server::SessionHandles>,
+        String,
+        String,
+    ) {
         let (subject, token) = identity_fixture::guest(&self.manager);
-        let (id, created) = self.manager.new_shared_session(setup, seed, subject)
+        let (id, created) = self
+            .manager
+            .new_shared_session(setup, seed, subject)
             .expect("WS fixture actor 应启动");
         assert!(created, "fresh WS fixture should create market");
         self.session_ids
@@ -466,10 +480,7 @@ async fn ws_rejects_missing_or_query_string_credentials() {
 async fn browser_subprotocol_credentials_authorize_only_the_matching_session() {
     ServerFixture::run(1_000, |fixture| async move {
         let (id, handles, token, _generation) = fixture.session(47).await;
-        let encoded: String = token
-            .bytes()
-            .map(|byte| format!("{byte:02x}"))
-            .collect();
+        let encoded: String = token.bytes().map(|byte| format!("{byte:02x}")).collect();
         for credential in ["00", "not-hex", "", &encoded] {
             let request = WsRequest::builder()
                 .method("GET")
@@ -795,26 +806,59 @@ async fn server_fixture_cleans_resources_after_assertion_panic() {
 include!("../../../packages/engine/test-support/simple_company.rs");
 include!("../../../packages/engine/test-support/host_company_writes.rs");
 
-async fn correction_response(app: axum::Router, method: &str, path: &str, token: &str, payload: Option<serde_json::Value>) -> (axum::http::StatusCode, axum::body::Bytes) {
+async fn correction_response(
+    app: axum::Router,
+    method: &str,
+    path: &str,
+    token: &str,
+    payload: Option<serde_json::Value>,
+) -> (axum::http::StatusCode, axum::body::Bytes) {
     use tower::ServiceExt;
-    let request = axum::http::Request::builder().method(method).uri(path)
+    let request = axum::http::Request::builder()
+        .method(method)
+        .uri(path)
         .header("authorization", format!("Bearer {token}"))
         .header("content-type", "application/json")
-        .body(axum::body::Body::from(payload.map(|value| value.to_string()).unwrap_or_default())).unwrap();
+        .body(axum::body::Body::from(
+            payload.map(|value| value.to_string()).unwrap_or_default(),
+        ))
+        .unwrap();
     let response = app.oneshot(request).await.unwrap();
     let status = response.status();
-    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
-    assert!(status.is_success(), "真实 router 失败 {method} {path} {status}：{}", String::from_utf8_lossy(&bytes));
+    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    assert!(
+        status.is_success(),
+        "真实 router 失败 {method} {path} {status}：{}",
+        String::from_utf8_lossy(&bytes)
+    );
     (status, bytes)
 }
 
-async fn correction_http(app: axum::Router, method: &str, path: &str, token: &str, payload: Option<serde_json::Value>) -> serde_json::Value {
+async fn correction_http(
+    app: axum::Router,
+    method: &str,
+    path: &str,
+    token: &str,
+    payload: Option<serde_json::Value>,
+) -> serde_json::Value {
     let (status, bytes) = correction_response(app, method, path, token, payload).await;
-    assert_eq!(status, axum::http::StatusCode::OK, "JSON 响应状态不符：{method} {path}");
+    assert_eq!(
+        status,
+        axum::http::StatusCode::OK,
+        "JSON 响应状态不符：{method} {path}"
+    );
     serde_json::from_slice(&bytes).expect("JSON 路由必须返回完整有效的 JSON body")
 }
 
-async fn correction_control(app: axum::Router, path: &str, token: &str, payload: serde_json::Value, expected_status: axum::http::StatusCode) {
+async fn correction_control(
+    app: axum::Router,
+    path: &str,
+    token: &str,
+    payload: serde_json::Value,
+    expected_status: axum::http::StatusCode,
+) {
     let (status, bytes) = correction_response(app, "POST", path, token, Some(payload)).await;
     assert_eq!(status, expected_status, "控制路由状态不符：{path}");
     assert!(bytes.is_empty(), "控制路由必须返回空 body：{path} {status}");

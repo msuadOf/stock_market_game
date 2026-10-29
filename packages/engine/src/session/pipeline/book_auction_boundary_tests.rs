@@ -106,23 +106,26 @@ fn coordinator(
 fn finish(
     rows: &[(Order, Envelope)],
     policy: PhasePolicy,
-) -> Result<IncrementalContinuousStockFinish, crate::session::pipeline::continuous_matching::StockFinishFatal> {
+) -> Result<
+    IncrementalContinuousStockFinish,
+    crate::session::pipeline::continuous_matching::StockFinishFatal,
+> {
     coordinator(rows, policy)
         .map_err(crate::session::pipeline::continuous_matching::StockFinishFatal::Other)?
         .finish_for_market_tick(
-        MarketTickBoundary {
-            policy,
-            tick_after: if policy.phase() == TradingPhase::ClosingAuction {
-                10
-            } else {
-                600
+            MarketTickBoundary {
+                policy,
+                tick_after: if policy.phase() == TradingPhase::ClosingAuction {
+                    10
+                } else {
+                    600
+                },
+                finishes_auction: true,
+                ends_day: policy.phase() == TradingPhase::ClosingAuction,
+                completed_minutes: None,
             },
-            finishes_auction: true,
-            ends_day: policy.phase() == TradingPhase::ClosingAuction,
-            completed_minutes: None,
-        },
-        StockExchange::Shanghai,
-    )
+            StockExchange::Shanghai,
+        )
 }
 
 fn receipt<'a>(
@@ -163,33 +166,71 @@ fn market_order_rejected_after_account_validation_consumes_its_order_id_in_aucti
     let mut setup = crate::session::npc_working_quote_tests::quote_setup(3);
     setup.npcs.inst_count = 0;
     let config = setup.config.clone();
-    let reserved = crate::session::buy_order_reservation(&config, Money::from_cents(1_100), 100, Money::ZERO).unwrap();
+    let reserved =
+        crate::session::buy_order_reservation(&config, Money::from_cents(1_100), 100, Money::ZERO)
+            .unwrap();
     setup.config.starting_cash = reserved;
     let mut game = crate::GameSession::new(setup, 913).unwrap();
-    game.enqueue_player_intent(AccountId(0), crate::Intent::PlaceMarket {
-        code: StockId(0), side: Side::Buy, qty: 100,
-    }).unwrap();
-    game.enqueue_player_intent(AccountId(0), crate::Intent::PlaceLimit {
-        code: StockId(0), side: Side::Buy,
-        price: crate::LimitPrice::Fixed(Money::from_cents(1_100)), qty: 100,
-    }).unwrap();
+    game.enqueue_player_intent(
+        AccountId(0),
+        crate::Intent::PlaceMarket {
+            code: StockId(0),
+            side: Side::Buy,
+            qty: 100,
+        },
+    )
+    .unwrap();
+    game.enqueue_player_intent(
+        AccountId(0),
+        crate::Intent::PlaceLimit {
+            code: StockId(0),
+            side: Side::Buy,
+            price: crate::LimitPrice::Fixed(Money::from_cents(1_100)),
+            qty: 100,
+        },
+    )
+    .unwrap();
     let (events, evidence) = game.step_with_commit_evidence().unwrap();
-    let market_order_rejected = events.iter().any(|event| matches!(event, crate::Event::IntentRejected {
-        reason: crate::RejectionReason::AuctionLimitOrderRequired, .. }));
-    let cash_rejected = events.iter().any(|event| matches!(event, crate::Event::IntentRejected {
-        reason: crate::RejectionReason::InsufficientCash, .. }));
-    assert!(market_order_rejected || cash_rejected,
-        "竞价市价单必须被显式拒绝，实际事件：{events:?}");
+    let market_order_rejected = events.iter().any(|event| {
+        matches!(
+            event,
+            crate::Event::IntentRejected {
+                reason: crate::RejectionReason::AuctionLimitOrderRequired,
+                ..
+            }
+        )
+    });
+    let cash_rejected = events.iter().any(|event| {
+        matches!(
+            event,
+            crate::Event::IntentRejected {
+                reason: crate::RejectionReason::InsufficientCash,
+                ..
+            }
+        )
+    });
+    assert!(
+        market_order_rejected || cash_rejected,
+        "竞价市价单必须被显式拒绝，实际事件：{events:?}"
+    );
     if market_order_rejected {
         // 同批限价单在市价单之后受理；资金只够一张单。
-        assert!(cash_rejected, "拒绝在股票层发生时，第二张限价单必须因同批预算拒绝：{events:?}");
+        assert!(
+            cash_rejected,
+            "拒绝在股票层发生时，第二张限价单必须因同批预算拒绝：{events:?}"
+        );
         assert_eq!(evidence.receipts().len(), 1);
         assert_eq!(evidence.receipts()[0].kind, ReceiptKind::Reject);
         assert_eq!(evidence.receipts()[0].envelope.order, crate::OrderId(1));
-        assert_eq!(game.state.next_order_id, 2, "股票层拒绝必须仍消耗预分配OrderId 1");
+        assert_eq!(
+            game.state.next_order_id, 2,
+            "股票层拒绝必须仍消耗预分配OrderId 1"
+        );
         assert_eq!(game.state.markets[&StockId(0)].resting_order_count(), 0);
     } else {
-        assert!(events.iter().all(|event| !matches!(event, crate::Event::OrderAccepted { .. })));
+        assert!(events
+            .iter()
+            .all(|event| !matches!(event, crate::Event::OrderAccepted { .. })));
     }
 }
 
@@ -606,16 +647,22 @@ fn closing_day_end_source_domain_includes_all_existing_and_new_book_remainders()
 }
 
 fn second_leg_overflow_rows() -> Vec<(Order, Envelope)> {
-    let mut rows = vec![row(0, 1, Side::Buy, 1_000, 200, 0),
-        row(1, 2, Side::Sell, 1_000, 100, 1), row(1, 3, Side::Sell, 1_000, 100, 2)];
+    let mut rows = vec![
+        row(0, 1, Side::Buy, 1_000, 200, 0),
+        row(1, 2, Side::Sell, 1_000, 100, 1),
+        row(1, 3, Side::Sell, 1_000, 100, 2),
+    ];
     let config = GameConfig::proposed_defaults();
     let before_value = Money::from_cents(i64::MAX - 50_000);
     rows[2].0.original_qty = 200;
     rows[2].0.filled_qty = 100;
     rows[2].0.filled_value = before_value;
     let original = rows[2].1.clone();
-    let nominal = FeeComponents { commission: config.commission(before_value).unwrap(),
-        stamp_tax: config.stamp_tax(before_value).unwrap(), transfer_fee: config.transfer_fee(before_value).unwrap() };
+    let nominal = FeeComponents {
+        commission: config.commission(before_value).unwrap(),
+        stamp_tax: config.stamp_tax(before_value).unwrap(),
+        transfer_fee: config.transfer_fee(before_value).unwrap(),
+    };
     let mut audit = original.audit();
     audit.filled_qty = 100;
     audit.filled_value = before_value;
@@ -625,33 +672,66 @@ fn second_leg_overflow_rows() -> Vec<(Order, Envelope)> {
 }
 
 #[test]
-fn low_level_clearing_second_leg_money_overflow_keeps_real_partial_book_change_not_fake_atomicity() {
+fn low_level_clearing_second_leg_money_overflow_keeps_real_partial_book_change_not_fake_atomicity()
+{
     let rows = second_leg_overflow_rows();
     let mut market = input(&rows, opening(599)).market;
     let before_price = market.last_price();
-    let error = market.execute_auction_clearing(StockExchange::Shanghai).err().expect("第二腿累计金额必须 overflow");
-    assert!(matches!(error, crate::MarketError::OrderBook(crate::orderbook::OrderError::Money(_))));
+    let error = market
+        .execute_auction_clearing(StockExchange::Shanghai)
+        .err()
+        .expect("第二腿累计金额必须 overflow");
+    assert!(matches!(
+        error,
+        crate::MarketError::OrderBook(crate::orderbook::OrderError::Money(_))
+    ));
     let after = market.resting_orders();
     assert_eq!(after.len(), 2);
     let buyer = after.iter().find(|order| order.id == OrderId(1)).unwrap();
-    assert_eq!((buyer.qty, buyer.filled_qty, buyer.filled_value), (100, 100, Money::from_cents(100_000)));
-    assert!(after.iter().all(|order| order.id != OrderId(2)), "第一卖腿真实完成，不能声称底层未变");
+    assert_eq!(
+        (buyer.qty, buyer.filled_qty, buyer.filled_value),
+        (100, 100, Money::from_cents(100_000))
+    );
+    assert!(
+        after.iter().all(|order| order.id != OrderId(2)),
+        "第一卖腿真实完成，不能声称底层未变"
+    );
     assert_eq!(market.filled_order_owner(OrderId(2)), Some(AccountId(1)));
     assert_eq!(market.last_price(), before_price);
-    assert_eq!(market.matching_mode(), crate::orderbook::MatchingMode::Auction);
+    assert_eq!(
+        market.matching_mode(),
+        crate::orderbook::MatchingMode::Auction
+    );
 }
 
 #[test]
-fn real_market_tick_discards_second_clearing_leg_overflow_with_all_authority_and_outboxes_untouched() {
+fn real_market_tick_discards_second_clearing_leg_overflow_with_all_authority_and_outboxes_untouched(
+) {
     let rows = second_leg_overflow_rows();
     let setup = crate::session::npc_working_quote_tests::quote_setup(1);
     let mut game = crate::GameSession::new(setup, 912).unwrap();
-    game.fixture_account_mut(&AccountId(1)).unwrap().grant_position(StockId(0), 1_000, Money::from_cents(1_000)).unwrap();
-    crate::session::npc_working_quote_tests::force_attention_candidate(&mut game, AccountId(1), 100);
+    game.fixture_account_mut(&AccountId(1))
+        .unwrap()
+        .grant_position(StockId(0), 1_000, Money::from_cents(1_000))
+        .unwrap();
+    crate::session::npc_working_quote_tests::force_attention_candidate(
+        &mut game,
+        AccountId(1),
+        100,
+    );
     let market = game.state.markets.get_mut(&StockId(0)).unwrap();
-    market.restore_resting_orders(&rows.iter().map(|(order, _)| order.clone()).collect::<Vec<_>>(), 3).unwrap();
+    market
+        .restore_resting_orders(
+            &rows
+                .iter()
+                .map(|(order, _)| order.clone())
+                .collect::<Vec<_>>(),
+            3,
+        )
+        .unwrap();
     game.state.next_order_id = 4;
-    game.state.envelope_ledger = EnvelopeLedger::new(0, rows.iter().map(|(_, envelope)| envelope.clone())).unwrap();
+    game.state.envelope_ledger =
+        EnvelopeLedger::new(0, rows.iter().map(|(_, envelope)| envelope.clone())).unwrap();
     game.hydrate_or_validate_envelope_ledger().unwrap();
     let before_hash = game.business_state_hash().unwrap();
     let before_orders = game.state.markets[&StockId(0)].resting_orders();
@@ -659,25 +739,47 @@ fn real_market_tick_discards_second_clearing_leg_overflow_with_all_authority_and
     let before_ledger = game.state.envelope_ledger.clone();
     let before_snapshot = game.snapshot_inner(false, true);
     let mut plan = super::plan_tick(super::PhaseInput::of(&game)).unwrap();
-    assert!(super::market_tick_transaction::apply_tick_shadow_market_transaction(&mut plan).is_err());
+    assert!(
+        super::market_tick_transaction::apply_tick_shadow_market_transaction(&mut plan).is_err()
+    );
     assert!(plan.event_outbox.is_empty());
     // T2：receipt 事实单载体——key 序列由 applied_receipts 派生，无独立载体可断言。
     assert!(plan.applied_receipts.is_empty());
     assert_eq!(game.business_state_hash().unwrap(), before_hash);
-    assert!(game.step_with_commit_evidence().is_err(), "真实生产入口不能安装部分 book 或财务");
+    assert!(
+        game.step_with_commit_evidence().is_err(),
+        "真实生产入口不能安装部分 book 或财务"
+    );
     assert_eq!(game.business_state_hash().unwrap(), before_hash);
     assert_eq!(game.tick(), 0);
-    assert_eq!(game.state.markets[&StockId(0)].resting_orders(), before_orders);
+    assert_eq!(
+        game.state.markets[&StockId(0)].resting_orders(),
+        before_orders
+    );
     assert_eq!(game.state.markets[&StockId(0)].last_price(), before_price);
-    assert_eq!(game.state.markets[&StockId(0)].matching_mode(), crate::orderbook::MatchingMode::Auction);
+    assert_eq!(
+        game.state.markets[&StockId(0)].matching_mode(),
+        crate::orderbook::MatchingMode::Auction
+    );
     assert_eq!(game.state.envelope_ledger, before_ledger);
     let after = game.snapshot_inner(false, true);
     for account in [AccountId(0), AccountId(1)] {
-        assert_eq!(after.accounts[&account].cash, before_snapshot.accounts[&account].cash);
-        assert_eq!(serde_json::to_value(&after.accounts[&account].positions).unwrap(),
-            serde_json::to_value(&before_snapshot.accounts[&account].positions).unwrap());
-        assert_eq!(after.accounts[&account].reserved_cash, before_snapshot.accounts[&account].reserved_cash);
-        assert_eq!(after.accounts[&account].reserved_sell_qty, before_snapshot.accounts[&account].reserved_sell_qty);
+        assert_eq!(
+            after.accounts[&account].cash,
+            before_snapshot.accounts[&account].cash
+        );
+        assert_eq!(
+            serde_json::to_value(&after.accounts[&account].positions).unwrap(),
+            serde_json::to_value(&before_snapshot.accounts[&account].positions).unwrap()
+        );
+        assert_eq!(
+            after.accounts[&account].reserved_cash,
+            before_snapshot.accounts[&account].reserved_cash
+        );
+        assert_eq!(
+            after.accounts[&account].reserved_sell_qty,
+            before_snapshot.accounts[&account].reserved_sell_qty
+        );
     }
 }
 

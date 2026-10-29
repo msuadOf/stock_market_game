@@ -1,6 +1,4 @@
-use engine::session::protocol::{
-    EventFact, EngineUpdate as ProtocolUpdate, TickBatch, TickFrame,
-};
+use engine::session::protocol::{EngineUpdate as ProtocolUpdate, EventFact, TickBatch, TickFrame};
 use engine::{Event, Money, StockCode, TradingPhase};
 use server::{ClientFrameBuffer, EngineUpdate, MAX_BUFFERED_EVENTS_PER_CLIENT};
 
@@ -19,9 +17,13 @@ fn update(tick: u64, seq: u64) -> EngineUpdate {
             TickBatch {
                 frames: vec![TickFrame {
                     tick,
-                    facts: events.into_iter().map(|event| EventFact {
-                        key: engine::session::pipeline::EventStableKey::for_event(&event, 0), event,
-                    }).collect(),
+                    facts: events
+                        .into_iter()
+                        .map(|event| EventFact {
+                            key: engine::session::pipeline::EventStableKey::for_event(&event, 0),
+                            event,
+                        })
+                        .collect(),
                     timeseries_payload: Default::default(),
                     seq_from: seq - 1,
                     seq_to: seq,
@@ -180,7 +182,7 @@ fn publisher_preserves_an_oversized_update_when_backlog_is_flushed() {
             TickBatch {
                 frames: vec![TickFrame {
                     tick: next_tick,
-                            facts: vec![],
+                    facts: vec![],
                     timeseries_payload: Default::default(),
                     seq_from: 0,
                     seq_to: 0,

@@ -161,7 +161,7 @@ pub(in crate::session) struct NpcAccountPatch {
     /// 散户决策 trace（Retail 且有 position_decision）。归并时 push。
     pub(in crate::session) retail_trace: Option<RetailDecisionTrace>,
     /// 个人经验行**终值**（观察更新 + 复核股票 observe + prune 均在任务内
-/// 完成；归并时整体安装，无逐股计算）。
+    /// 完成；归并时整体安装，无逐股计算）。
     pub(in crate::session) experience_row: Option<crate::RetailExperienceState>,
     /// 本账户有序 intents（reconciliation 撤单在前、residual 在后——与
     /// projected_ordered_intents 的账户内语义一致）。
@@ -199,11 +199,13 @@ pub(in crate::session) fn plan_npc_account_decision(
     };
     let retail_trace = (kind == AccountKind::Retail)
         .then(|| {
-            account_output.position_decision().map(|decision| RetailDecisionTrace {
-                account,
-                decision: decision.clone(),
-                execution_urgency: account_output.execution_urgency().clone(),
-            })
+            account_output
+                .position_decision()
+                .map(|decision| RetailDecisionTrace {
+                    account,
+                    decision: decision.clone(),
+                    execution_urgency: account_output.execution_urgency().clone(),
+                })
         })
         .flatten();
     // 经验行终值（任务内）：复核股票 observe_stock + 未持仓修剪——归并只安装。
@@ -268,7 +270,10 @@ pub(in crate::session) fn plan_npc_account_decision(
             .iter()
             .filter_map(|decision| match decision {
                 WorkingOrderDecision::Cancel { order_id, code } => Some((code.clone(), *order_id)),
-                WorkingOrderDecision::Replace { old_order_id, new_intent } => {
+                WorkingOrderDecision::Replace {
+                    old_order_id,
+                    new_intent,
+                } => {
                     let code = match new_intent {
                         Intent::PlaceLimit { code, .. }
                         | Intent::PlaceMarket { code, .. }
@@ -339,7 +344,10 @@ pub(in crate::session) fn install_npc_account_patch(
     }
     if let Some(attention) = patch.attention.take() {
         assert!(
-            writes.npc_attention.insert(patch.account, attention).is_none(),
+            writes
+                .npc_attention
+                .insert(patch.account, attention)
+                .is_none(),
             "queue 链账户 {account:?} 的 attention 状态必须恰安装一次",
             account = patch.account
         );

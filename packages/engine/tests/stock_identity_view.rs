@@ -28,8 +28,14 @@ fn actual_stock_identity_preserves_catalog_ids_after_restore() {
     setup.history_len = 1;
     let game = GameSession::new(setup, 42).unwrap();
     let expected = vec![
-        StockIdentityEntry { id: StockId(0), code: "002156".to_owned() },
-        StockIdentityEntry { id: StockId(1), code: "600610".to_owned() },
+        StockIdentityEntry {
+            id: StockId(0),
+            code: "002156".to_owned(),
+        },
+        StockIdentityEntry {
+            id: StockId(1),
+            code: "600610".to_owned(),
+        },
     ];
     assert_eq!(game.stock_catalog_view(), expected);
     let restored = GameSession::restore(&game.save().unwrap()).unwrap();

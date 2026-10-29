@@ -380,10 +380,7 @@ impl ReportSet {
                         detail: "扣非归母净利润必须与项目列示及归母净利润勾稽",
                     });
                 }
-                match (
-                    &roe.adjusted_roe,
-                    average.0.sign() != Sign::Plus,
-                ) {
+                match (&roe.adjusted_roe, average.0.sign() != Sign::Plus) {
                     (
                         super::ReportRoeValue::Unavailable {
                             reason: super::ReportRoeUnavailable::NonPositiveAverageEquity,
@@ -421,10 +418,7 @@ impl ReportSet {
                 }
             }
         }
-        match (
-            &roe.ordinary_roe,
-            average.0.sign() != Sign::Plus,
-        ) {
+        match (&roe.ordinary_roe, average.0.sign() != Sign::Plus) {
             (
                 super::ReportRoeValue::Unavailable {
                     reason: super::ReportRoeUnavailable::NonPositiveAverageEquity,
@@ -449,9 +443,7 @@ impl ReportSet {
             }
             (super::ReportRoeValue::Available(value), false) => {
                 let rate = parse_report_rational(value)?;
-                if &rate.0 * &average.0
-                    != BigInt::from(net_income.cents()) * average.1 * rate.1
-                {
+                if &rate.0 * &average.0 != BigInt::from(net_income.cents()) * average.1 * rate.1 {
                     return Err(ReportError::InvalidRoe {
                         detail: "普通 ROE 与同期间归母净利润及平均归母权益不一致",
                     });
@@ -462,9 +454,7 @@ impl ReportSet {
     }
 }
 
-fn parse_report_rational(
-    value: &super::ReportRational,
-) -> Result<(BigInt, BigInt), ReportError> {
+fn parse_report_rational(value: &super::ReportRational) -> Result<(BigInt, BigInt), ReportError> {
     let numerator = value
         .numerator
         .parse::<BigInt>()

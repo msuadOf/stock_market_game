@@ -15,9 +15,9 @@
 //! 历史公开库由 `information` 提供，会话装配由 `session` 负责。
 //! 公司注册表独立构建，不依赖 `session`；依赖方向为 session → company。
 
+pub mod api;
 pub(crate) mod assembly;
 pub mod bank;
-pub mod api;
 pub mod capabilities;
 pub mod config;
 mod contracts;
@@ -30,39 +30,39 @@ mod error;
 pub mod events;
 pub mod groups;
 pub mod identity;
-pub mod industrial;
 pub(crate) mod income_tax;
+pub mod industrial;
 pub mod insurance;
+pub mod issuer_repurchase;
 mod opening;
 pub mod operations;
 pub mod persistence;
 pub mod query;
+mod read_facts;
 pub mod real_estate;
-pub mod rng;
 pub(crate) mod report_correction;
 pub mod rights_offering;
-pub mod issuer_repurchase;
+pub mod rng;
 pub mod scheduler;
-mod spec;
 pub mod share_registry;
-pub mod stock_distribution;
 pub mod share_split;
 pub mod simple;
+mod spec;
+pub mod stock_distribution;
 mod system;
-mod read_facts;
 pub use read_facts::{CompanyReadFacts, CompanyReadFactsError};
 pub use system::{CompanySystem, CompanySystemError};
 pub mod cash_dividend_tax;
 pub use cash_dividend_tax::{CashDividendTaxBook, CashDividendTaxMode, DividendTaxProfile};
 pub mod cash_dividend;
-pub mod ex_reference_price;
 mod dividend;
-pub use income_tax::{IncomeTaxOutcome, IncomeTaxOwnerError};
-pub use report_correction::CompanyCorrectionError;
+pub mod ex_reference_price;
 pub use dividend::{
     DistributableProfit, DividendDeclaration, DividendLegalFacts, DividendPaymentFact,
     DividendPaymentReceipt, DividendPlanFact, DividendPlanReceipt,
 };
+pub use income_tax::{IncomeTaxOutcome, IncomeTaxOwnerError};
+pub use report_correction::CompanyCorrectionError;
 
 #[cfg(test)]
 mod capabilities_tests;

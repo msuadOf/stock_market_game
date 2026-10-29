@@ -7,10 +7,10 @@ use super::share_registry::{
     HolderId, RegistrationSnapshot, ShareLot, ShareRegistryError, ShareRestriction,
 };
 use super::CompanyId;
+use crate::account::StockCode;
 use crate::accounting::AccountingAmount;
 use crate::calendar::{CalendarExchange, CivilDate, TradingCalendar};
 use crate::money::Money;
-use crate::account::StockCode;
 
 const RATIO_DENOMINATOR: u64 = 1_000_000;
 
@@ -508,12 +508,11 @@ impl StockDistributionBook {
         self.plan.validate_calendar(calendar)?;
         if let Some(existing) = &self.registration {
             if existing == &snapshot {
-                return self
-                    .receipt
-                    .as_ref()
-                    .ok_or_else(|| StockDistributionError::SnapshotMismatch {
+                return self.receipt.as_ref().ok_or_else(|| {
+                    StockDistributionError::SnapshotMismatch {
                         detail: "registered book is missing its allocation receipt".into(),
-                    });
+                    }
+                });
             }
             return Err(StockDistributionError::SnapshotMismatch {
                 detail: "registration was already frozen for this plan".into(),
@@ -536,10 +535,9 @@ impl StockDistributionBook {
                     .into(),
             });
         }
-        let receipt =
-            allocate_stock_distribution(&snapshot, &self.plan.allocation_plan(), {
-                tie_break_seed(&self.plan.event_id)
-            })?;
+        let receipt = allocate_stock_distribution(&snapshot, &self.plan.allocation_plan(), {
+            tie_break_seed(&self.plan.event_id)
+        })?;
         self.registration = Some(snapshot);
         self.receipt = Some(receipt);
         self.status = StockDistributionStatus::Registered;
@@ -610,10 +608,9 @@ impl StockDistributionBook {
                     detail: "restored registration does not match the plan".into(),
                 });
             }
-            let expected =
-                allocate_stock_distribution(snapshot, &self.plan.allocation_plan(), {
-                    tie_break_seed(&self.plan.event_id)
-                })?;
+            let expected = allocate_stock_distribution(snapshot, &self.plan.allocation_plan(), {
+                tie_break_seed(&self.plan.event_id)
+            })?;
             if self.receipt.as_ref() != Some(&expected) {
                 return Err(StockDistributionError::SnapshotMismatch {
                     detail: "restored allocation receipt does not replay the frozen registration"
@@ -707,7 +704,9 @@ fn inherited_restriction(
         }
     }
     match common {
-        None => Err(invalid("registered holder has no source lots to inherit from")),
+        None => Err(invalid(
+            "registered holder has no source lots to inherit from",
+        )),
         Some(ShareRestriction::Unrestricted) => Ok(ShareRestriction::Unrestricted),
         Some(ShareRestriction::Restricted { reason, release_on }) => {
             if *release_on >= acquired_on {

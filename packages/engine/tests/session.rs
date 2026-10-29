@@ -1702,7 +1702,11 @@ fn market_holiday_gate_rejects_step_but_trading_day_still_fills() {
     let hash_before = holiday.business_state_hash().unwrap();
 
     let rejected = holiday.step().expect_err("休市日 step 必须被拒（#116）");
-    assert_eq!(holiday.poison_reason(), Some(&rejected), "沿用 StepFatal 的停止会话契约");
+    assert_eq!(
+        holiday.poison_reason(),
+        Some(&rejected),
+        "沿用 StepFatal 的停止会话契约"
+    );
     assert!(
         matches!(&rejected, engine::session::StepFatal::InvariantViolation { description, .. }
             if description.contains("休市")),
@@ -5250,24 +5254,25 @@ fn unified_book_restores_call_auction_resting_orders_in_auction_mode() {
     save.next_order_id = 2;
     save.book_next_sequences.insert(code.clone(), 2);
     // 与真实存档一致：在场委托必须伴随 live envelope（未成交买单费用审计为零）。
-    save.runtime_state.live_envelopes.push(engine::SavedLiveEnvelope {
-        key: engine::SavedEnvelopeKey {
-            account: AccountId(0),
-            stock: code.clone(),
-            order: engine::OrderId(1),
-            side: Side::Buy,
-        },
-        charged: engine::SavedFeeComponents::default(),
-        remaining_qty: 100,
-        filled_qty: 0,
-        filled_value: Money::ZERO,
-        limit: Money::from_cents(1000),
-        purse: Money::from_cents(100 * 100),
-    });
+    save.runtime_state
+        .live_envelopes
+        .push(engine::SavedLiveEnvelope {
+            key: engine::SavedEnvelopeKey {
+                account: AccountId(0),
+                stock: code.clone(),
+                order: engine::OrderId(1),
+                side: Side::Buy,
+            },
+            charged: engine::SavedFeeComponents::default(),
+            remaining_qty: 100,
+            filled_qty: 0,
+            filled_value: Money::ZERO,
+            limit: Money::from_cents(1000),
+            purse: Money::from_cents(100 * 100),
+        });
     // 统一 book：集合竞价阶段的合法委托就在唯一 resting_orders 里。
     // 旧 fault2155（竞价存档不得含连续挂单）随双容器结构一并退役。
-    let restored = GameSession::restore(&save)
-        .expect("统一 book 下集合竞价阶段挂单必须可恢复");
+    let restored = GameSession::restore(&save).expect("统一 book 下集合竞价阶段挂单必须可恢复");
     assert_eq!(restored.phase(), engine::TradingPhase::CallAuction);
     let orders = restored.player_working_orders();
     assert_eq!(orders.len(), 1, "委托必须在统一 book 中且对本人可见");
@@ -5278,7 +5283,10 @@ fn unified_book_restores_call_auction_resting_orders_in_auction_mode() {
         "集合竞价阶段的同一委托必须投影为 Auction venue"
     );
     let snapshot = restored.snapshot();
-    assert!(snapshot.markets[&code].bids.is_empty(), "公开投影不得泄漏未清算竞价单");
+    assert!(
+        snapshot.markets[&code].bids.is_empty(),
+        "公开投影不得泄漏未清算竞价单"
+    );
     assert!(snapshot.accounts[&AccountId(0)].reserved_cash > Money::ZERO);
 }
 
@@ -5880,7 +5888,6 @@ fn symbolic_buy_releases_excess_escrow_only_for_the_next_tick_across_stocks() {
     );
 }
 
-
 // ===== 临时探针（17 任取证用，跑完即删）=====
 #[test]
 fn zz_probe_s7_events() {
@@ -5910,11 +5917,15 @@ fn zz_probe_s7_events() {
     );
     eprintln!(
         "PROBE s7 resting={:?}",
-        session.save().unwrap().resting_orders.values().collect::<Vec<_>>()
+        session
+            .save()
+            .unwrap()
+            .resting_orders
+            .values()
+            .collect::<Vec<_>>()
     );
     let events = session.step().unwrap();
     for event in &events {
         eprintln!("PROBE s7 event: {event:?}");
     }
 }
-

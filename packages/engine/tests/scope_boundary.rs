@@ -80,10 +80,13 @@ fn intent_vocabulary_has_no_scheduled_margin_or_block_variants() {
         },
     ];
     // 穷举 helper 名集（编译期门覆盖）。
-    let names: std::collections::BTreeSet<&str> = intents.iter().map(intent_variant_names).collect();
+    let names: std::collections::BTreeSet<&str> =
+        intents.iter().map(intent_variant_names).collect();
     assert_eq!(
         names,
-        ["Cancel", "PlaceLimit", "PlaceMarket"].into_iter().collect(),
+        ["Cancel", "PlaceLimit", "PlaceMarket"]
+            .into_iter()
+            .collect(),
         "委托词表=限价/市价/撤单（R30：定时自动非委托类型；R33：两融/大宗非委托类型）"
     );
     // serde 标签快照（运行期词表与序列化契约一致——Web/存档契约面）。
@@ -118,7 +121,9 @@ fn security_category_vocabulary_excludes_star_and_bse() {
         categories.iter().map(security_category_name).collect();
     assert_eq!(
         names,
-        ["ChiNext", "MainBoard", "StMainBoard"].into_iter().collect(),
+        ["ChiNext", "MainBoard", "StMainBoard"]
+            .into_iter()
+            .collect(),
         "类别词表无科创板/北交所（R33 尚未模拟——新增须显式登记涨跌幅/单笔上限等全套规则）"
     );
 }

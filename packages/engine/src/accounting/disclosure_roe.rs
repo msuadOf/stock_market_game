@@ -183,12 +183,20 @@ pub fn calculate_disclosure_roe(
         return Err(DisclosureRoeError::IncompleteEquityEventHistory);
     }
     if input.report.attribution != DisclosureAttributionBasis::AttributableToOrdinaryShareholders {
-        return Err(DisclosureRoeError::FactAttributionMismatch { fact: "public report" });
+        return Err(DisclosureRoeError::FactAttributionMismatch {
+            fact: "public report",
+        });
     }
     for (name, fact) in [
         ("opening parent equity", &input.opening_parent_equity),
-        ("ordinary parent net income", &input.ordinary_parent_net_income),
-        ("adjusted parent net income", &input.adjusted_parent_net_income),
+        (
+            "ordinary parent net income",
+            &input.ordinary_parent_net_income,
+        ),
+        (
+            "adjusted parent net income",
+            &input.adjusted_parent_net_income,
+        ),
     ] {
         if fact.period != period {
             return Err(DisclosureRoeError::FactPeriodMismatch { fact: name });
@@ -280,7 +288,8 @@ pub fn calculate_ordinary_disclosure_roe(
             }
             _ => {}
         }
-        let months_after_effective_month = month_index(period.end) - month_index(event.effective_on);
+        let months_after_effective_month =
+            month_index(period.end) - month_index(event.effective_on);
         let signed_cents = match event.kind {
             EquityEventKind::Increase => cents,
             EquityEventKind::Decrease => -cents,

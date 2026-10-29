@@ -63,7 +63,11 @@ fn diagnostic_setup() -> SessionSetup {
 }
 
 fn diagnostic_stock_id() -> StockId {
-    diagnostic_setup().stock_catalog().unwrap().id("600101").unwrap()
+    diagnostic_setup()
+        .stock_catalog()
+        .unwrap()
+        .id("600101")
+        .unwrap()
 }
 
 #[test]

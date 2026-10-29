@@ -120,7 +120,10 @@ async fn guest_identity(app: &axum::Router) -> (String, String) {
             .as_str()
             .expect("guest 响应含 subject_id")
             .to_owned(),
-        body["token"].as_str().expect("guest 响应含 token").to_owned(),
+        body["token"]
+            .as_str()
+            .expect("guest 响应含 token")
+            .to_owned(),
     )
 }
 
@@ -135,12 +138,8 @@ async fn new_session_credentials(app: axum::Router) -> (String, String) {
 
 async fn new_session_credentials_with(app: axum::Router, setup: Value) -> (String, String) {
     let (_, token) = guest_identity(&app).await;
-    let (status, body) = new_session_as(
-        app,
-        json!({ "setup": setup, "seed": "42" }),
-        Some(&token),
-    )
-    .await;
+    let (status, body) =
+        new_session_as(app, json!({ "setup": setup, "seed": "42" }), Some(&token)).await;
     assert_eq!(
         status,
         StatusCode::OK,
@@ -466,7 +465,10 @@ async fn assert_successful_intent(response: axum::response::Response, message: &
             .expect("non-200 intent response should contain a JSON error");
         panic!("{message}: {error}");
     }
-    assert!(body.is_empty(), "successful intent acknowledgment should be empty");
+    assert!(
+        body.is_empty(),
+        "successful intent acknowledgment should be empty"
+    );
 }
 
 async fn response_json(response: axum::response::Response) -> (StatusCode, Value) {
@@ -641,7 +643,10 @@ async fn snapshot_returns_snapshot_json() {
     )
     .await;
     let id = body["session_id"].as_str().unwrap().to_string();
-    let generation = body["generation"].as_str().expect("generation required").to_string();
+    let generation = body["generation"]
+        .as_str()
+        .expect("generation required")
+        .to_string();
     let token = creator_token;
 
     // GET /api/snapshot 对刚创建的 session → 200 + Snapshot JSON。
@@ -723,11 +728,9 @@ async fn public_report_page_requires_the_owning_session_token() {
     );
     assert!(body["reports"].is_array());
     assert!(
-        body["reports"]
-            .as_array()
-            .is_some_and(|reports| reports
-                .iter()
-                .all(|report| report["company_id"] == json!(0u32))),
+        body["reports"].as_array().is_some_and(|reports| reports
+            .iter()
+            .all(|report| report["company_id"] == json!(0u32))),
         "单公司 fixture 的页面只含 CompanyId(0): {body}"
     );
     for field in ["period", "approved_date", "published_date"] {
@@ -926,10 +929,12 @@ async fn public_report_by_id_rejects_unknown_and_company_mismatched_reports() {
             .await
             .expect("request must return a response");
         let (status, page) = response_json(page).await;
-        assert_eq!(status, StatusCode::OK, "公司 {company_id} 页面应可读: {page}");
-        let reports = page["reports"]
-            .as_array()
-            .expect("reports 必须是数组");
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "公司 {company_id} 页面应可读: {page}"
+        );
+        let reports = page["reports"].as_array().expect("reports 必须是数组");
         assert!(!reports.is_empty(), "公司 {company_id} 必须有公开报表");
         assert!(
             reports
@@ -1137,7 +1142,10 @@ async fn intent_requires_current_canonical_generation() {
         .market_context_for(subject.clone())
         .await
         .unwrap();
-    assert!(context.member.is_none(), "restore fixture must begin without membership");
+    assert!(
+        context.member.is_none(),
+        "restore fixture must begin without membership"
+    );
     let response = app
         .clone()
         .oneshot(Request::builder().method("POST").uri("/api/intent").header("authorization", format!("Bearer {token}")).header("content-type", "application/json").body(axum::body::Body::from(json!({ "session_id": session_id, "generation": current_generation, "intent": player_buy_intent() }).to_string())).unwrap())
@@ -1155,22 +1163,31 @@ async fn intent_requires_current_canonical_generation() {
                 .uri("/api/markets/join")
                 .header("authorization", format!("Bearer {token}"))
                 .header("content-type", "application/json")
-                .body(axum::body::Body::from(json!({
-                    "session_id": session_id,
-                    "generation": current_generation,
-                    "confirmed_rejoin": true
-                }).to_string()))
+                .body(axum::body::Body::from(
+                    json!({
+                        "session_id": session_id,
+                        "generation": current_generation,
+                        "confirmed_rejoin": true
+                    })
+                    .to_string(),
+                ))
                 .unwrap(),
         )
         .await
         .unwrap();
     let (join_status, joined) = response_json(join).await;
-    assert_eq!(join_status, StatusCode::OK, "真实 join route 应完成重新加入：{joined}");
-    assert!(joined["member"].is_object(), "join route 应返回本人 membership");
+    assert_eq!(
+        join_status,
+        StatusCode::OK,
+        "真实 join route 应完成重新加入：{joined}"
+    );
+    assert!(
+        joined["member"].is_object(),
+        "join route 应返回本人 membership"
+    );
     let joined_account_id = joined["member"]["account_id"].as_str().unwrap();
     assert_eq!(
-        joined["member"]["admission_funding"]["external_cash"],
-        expected_admission_cash,
+        joined["member"]["admission_funding"]["external_cash"], expected_admission_cash,
         "真实 join route 应按市场当前设置记录 AdmissionFunding"
     );
     let join_generation = joined["generation"].as_str().unwrap();
@@ -1183,21 +1200,27 @@ async fn intent_requires_current_canonical_generation() {
                 .uri("/api/markets/join")
                 .header("authorization", format!("Bearer {token}"))
                 .header("content-type", "application/json")
-                .body(axum::body::Body::from(json!({
-                    "session_id": session_id,
-                    "generation": join_generation,
-                    "confirmed_rejoin": true
-                }).to_string()))
+                .body(axum::body::Body::from(
+                    json!({
+                        "session_id": session_id,
+                        "generation": join_generation,
+                        "confirmed_rejoin": true
+                    })
+                    .to_string(),
+                ))
                 .unwrap(),
         )
         .await
         .unwrap();
     let (repeat_status, repeated) = response_json(repeated_join).await;
-    assert_eq!(repeat_status, StatusCode::OK, "重复 join 应保持当前成员关系：{repeated}");
+    assert_eq!(
+        repeat_status,
+        StatusCode::OK,
+        "重复 join 应保持当前成员关系：{repeated}"
+    );
     assert_eq!(repeated["member"]["account_id"], joined_account_id);
     assert_eq!(
-        repeated["member"]["admission_funding"]["external_cash"],
-        expected_admission_cash,
+        repeated["member"]["admission_funding"]["external_cash"], expected_admission_cash,
         "重复 join 不得再次改变 AdmissionFunding"
     );
     let current_context = manager
@@ -1207,7 +1230,13 @@ async fn intent_requires_current_canonical_generation() {
         .await
         .unwrap();
     assert_eq!(
-        current_context.member.as_ref().unwrap().account_id.0.to_string(),
+        current_context
+            .member
+            .as_ref()
+            .unwrap()
+            .account_id
+            .0
+            .to_string(),
         joined_account_id,
         "current context must retain the actual account allocated by join"
     );
@@ -1221,7 +1250,6 @@ async fn intent_requires_current_canonical_generation() {
         .await
         .unwrap();
 }
-
 
 #[tokio::test]
 async fn intent_unknown_session_with_token_is_forbidden() {
@@ -1277,7 +1305,10 @@ async fn intent_known_session_returns_200() {
     )
     .await;
     let id = body["session_id"].as_str().unwrap().to_string();
-    let generation = body["generation"].as_str().expect("generation required").to_string();
+    let generation = body["generation"]
+        .as_str()
+        .expect("generation required")
+        .to_string();
     let token = creator_token;
 
     let res = app
@@ -1351,7 +1382,10 @@ async fn speed_known_session_returns_200() {
     )
     .await;
     let id = body["session_id"].as_str().unwrap().to_string();
-    let generation = body["generation"].as_str().expect("generation required").to_string();
+    let generation = body["generation"]
+        .as_str()
+        .expect("generation required")
+        .to_string();
     let token = creator_token;
 
     let res = app
@@ -1424,7 +1458,8 @@ async fn excessive_numeric_speed_is_rejected() {
                 .uri("/api/speed")
                 .header("content-type", "application/json")
                 .body(axum::body::Body::from(
-                    json!({ "session_id": id, "generation": generation, "speed": 1e100 }).to_string(),
+                    json!({ "session_id": id, "generation": generation, "speed": 1e100 })
+                        .to_string(),
                 ))
                 .unwrap(),
         )
@@ -1558,7 +1593,8 @@ async fn fastest_speed_mode_is_accepted() {
                 .uri("/api/speed")
                 .header("content-type", "application/json")
                 .body(axum::body::Body::from(
-                    json!({ "session_id": id, "generation": generation, "speed": "Fastest" }).to_string(),
+                    json!({ "session_id": id, "generation": generation, "speed": "Fastest" })
+                        .to_string(),
                 ))
                 .unwrap(),
         )
@@ -1591,7 +1627,8 @@ async fn speed_metrics_reports_requested_mode_and_actual_sampling_fields() {
                 .uri("/api/speed")
                 .header("content-type", "application/json")
                 .body(axum::body::Body::from(
-                    json!({ "session_id": id, "generation": generation, "speed": "Fastest" }).to_string(),
+                    json!({ "session_id": id, "generation": generation, "speed": "Fastest" })
+                        .to_string(),
                 ))
                 .unwrap(),
         )
@@ -1640,7 +1677,9 @@ async fn delete_session_stops_and_removes_it() {
             Request::builder()
                 .header("authorization", format!("Bearer {token}"))
                 .method("DELETE")
-                .uri(format!("/api/session?session_id={id}&generation={generation}"))
+                .uri(format!(
+                    "/api/session?session_id={id}&generation={generation}"
+                ))
                 .body(axum::body::Body::empty())
                 .unwrap(),
         )
@@ -1655,7 +1694,9 @@ async fn delete_session_stops_and_removes_it() {
             Request::builder()
                 .header("authorization", format!("Bearer {token}"))
                 .method("DELETE")
-                .uri(format!("/api/session?session_id={id}&generation={generation}"))
+                .uri(format!(
+                    "/api/session?session_id={id}&generation={generation}"
+                ))
                 .body(axum::body::Body::empty())
                 .unwrap(),
         )

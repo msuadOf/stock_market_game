@@ -1,6 +1,7 @@
 //! 在 Continuous private candidate 上执行 stock_processing 收尾与唯一一次 ReceiptAggregation/Projection。
 
 use super::{
+    account_settlement::prepare_settlement_transaction_with_beliefs,
     adaptive_plan_chain::PlanChainFactConsumption,
     continuous_lifecycle_projection::project_continuous_retail_lifecycle,
     continuous_matching::IncrementalContinuousStockFinish,
@@ -8,20 +9,19 @@ use super::{
     event_collection::{collect_events, EventFact},
     execution_fact_producers::{adapt_continuous_execution_facts, adapt_continuous_facts},
     market_tick_transaction::MarketTransactionError as ContinuousTransactionError,
+    receipt_aggregation::apply_owned_receipt_transaction,
     session_execution_transaction::{
         SessionExecutionTransactionError, SessionExecutionTransactionOutput,
     },
-    account_settlement::prepare_settlement_transaction_with_beliefs,
-    receipt_aggregation::apply_owned_receipt_transaction,
     AccountValidationOutput, EventStableKey, IntentCandidateBatch, ReceiptSource, StepFatal,
 };
 use crate::session::{completed_market_minute_count, RetailOrderDiagnosticEvent};
-use std::collections::BTreeMap;
-use crate::{Event, GameSession, StockId};
-#[cfg(feature = "simulation-diagnostics")]
-use crate::TradingPhase;
 #[cfg(test)]
 use crate::Money;
+#[cfg(feature = "simulation-diagnostics")]
+use crate::TradingPhase;
+use crate::{Event, GameSession, StockId};
+use std::collections::BTreeMap;
 
 pub(super) type ContinuousTickBoundary = super::phase::MarketTickBoundary;
 
@@ -72,8 +72,13 @@ pub(super) fn finalize_continuous_tick(
         // T4（ADR-0042 §6-T4「行情」面）：本股行情已由股票 owner 在收尾一次
         // 计算（worker.market_data patch），此处仅机械安装——同位 extend 保持
         // 事件顺序与 seq 派号；在场检查保留（缺席条目不以默认值掩盖）。
-        install_worker_market_data(session, &mut facts, worker.market.code(), &worker.market_data)
-            .map_err(finalize_error)?;
+        install_worker_market_data(
+            session,
+            &mut facts,
+            worker.market.code(),
+            &worker.market_data,
+        )
+        .map_err(finalize_error)?;
     }
 
     // T5（批次八十·内层事务归并）：一次汇合——worker 输出→receipt 聚合→
@@ -103,19 +108,20 @@ pub(super) fn finalize_continuous_tick(
     }
     crate::verification_evidence::enter_phase(super::TickPhase::ReceiptAggregation);
     let compute = session.compute_context();
-    let (ledger_candidate, receipts) =
-        apply_owned_receipt_transaction(
-            session.state.envelope_ledger.clone(),
-            created_envelopes,
-            worker_batches,
-            terminal_keys,
-            &compute,
+    let (ledger_candidate, receipts) = apply_owned_receipt_transaction(
+        session.state.envelope_ledger.clone(),
+        created_envelopes,
+        worker_batches,
+        terminal_keys,
+        &compute,
+    )
+    .map_err(|error| {
+        stock_execution_error(
+            super::stock_execution_transaction::StockExecutionTransactionError::ReceiptAggregation(
+                error,
+            ),
         )
-        .map_err(|error| {
-            stock_execution_error(
-                super::stock_execution_transaction::StockExecutionTransactionError::ReceiptAggregation(error),
-            )
-        })?;
+    })?;
     crate::verification_evidence::enter_phase(super::TickPhase::SettlementShadow);
     // Settlement 消费完整审计链（PreSeal Release 前缀+本股票批）；借用的合并
     // 载体只搬元数据并复用聚合事实。输出保持股票批契约：不含前缀。
@@ -185,7 +191,9 @@ pub(super) fn finalize_continuous_tick(
             let qty = fact.qty();
             #[cfg(feature = "simulation-diagnostics")]
             {
-                let time = session.causal_stock_time(receipt.envelope.stock, false).map_err(finalize_error)?;
+                let time = session
+                    .causal_stock_time(receipt.envelope.stock, false)
+                    .map_err(finalize_error)?;
                 session
                     .state
                     .causal
@@ -231,13 +239,9 @@ pub(super) fn finalize_continuous_tick(
 
     if boundary.ends_day {
         facts.extend(
-            ContinuousDayEndLifecycleProjection::new(
-                session,
-                &receipts,
-                day_end_event_base,
-            )
-            .apply()
-            .map_err(finalize_error)?,
+            ContinuousDayEndLifecycleProjection::new(session, &receipts, day_end_event_base)
+                .apply()
+                .map_err(finalize_error)?,
         );
         // 当日分钟桶镜像在迁移内清空——迁移前 take 当日完整 bars，
         // 迁移（日K已提交）后冻结保留快照（runtime freeze_retained_

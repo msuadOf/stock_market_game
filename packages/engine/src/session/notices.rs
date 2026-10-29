@@ -111,7 +111,10 @@ impl NpcAttentionState {
         now: CivilInstant,
     ) -> Result<(), CivilDateError> {
         #[cfg(test)]
-        eprintln!("PROBE info-check now={:?} cadence={:?}", now, self.information_cadence);
+        eprintln!(
+            "PROBE info-check now={:?} cadence={:?}",
+            now, self.information_cadence
+        );
         self.next_information_check = self.information_cadence.next_after(now)?;
         Ok(())
     }
@@ -122,7 +125,11 @@ impl NpcAttentionState {
 pub(crate) fn deliver_information_for_npc(
     id: AccountId,
     now: CivilInstant,
-    as_of_anchor: &dyn Fn(StockId) -> Option<crate::observation::information_clock::InformationTradingAnchor>,
+    as_of_anchor: &dyn Fn(
+        StockId,
+    ) -> Option<
+        crate::observation::information_clock::InformationTradingAnchor,
+    >,
     attention_in: &crate::session::attention::NpcAttentionState,
     information_in: &NpcInformationState,
     belief_in: &BeliefBook,
@@ -130,9 +137,7 @@ pub(crate) fn deliver_information_for_npc(
     issuer_of_stock: &dyn Fn(StockId) -> Option<crate::company::CompanyId>,
     // 发行人 spec 快照查表（Belief-1b·下：组内以快照承载——session
     // 侧闭包经 operations.company().spec() 等价供数）。
-    company_spec: &dyn Fn(
-        &crate::company::CompanyId,
-    ) -> Option<(crate::company::CompanyKind, u64)>,
+    company_spec: &dyn Fn(&crate::company::CompanyId) -> Option<(crate::company::CompanyKind, u64)>,
     library: &crate::information::PublicLibrary,
     market: &crate::strategy::MarketView,
 ) -> Result<
@@ -144,132 +149,133 @@ pub(crate) fn deliver_information_for_npc(
     )>,
     SessionError,
 > {
-        belief_in.validate_information_anchors(as_of_anchor).map_err(|error| {
+    belief_in
+        .validate_information_anchors(as_of_anchor)
+        .map_err(|error| {
             SessionError::Step(crate::session::StepFatal::InvariantViolation {
                 location: "deliver_information_for_npc".into(),
                 description: format!("信息投递锚校验失败：account={id:?}，{error}"),
             })
         })?;
-        let mut attention = attention_in.clone();
-        if !attention.information_check_due(now) {
-            return Ok(None);
-        }
-                        let mut information = information_in.clone();
-        let mut belief = belief_in.clone();
-        for code in &codes {
-            let missing = |description| SessionError::Step(crate::session::StepFatal::InvariantViolation { description, location: "deliver_information_for_npc".into() });
-            let company = issuer_of_stock(*code).ok_or_else(|| missing(format!("信息投递缺发行人：stock={code:?}")))?;
-            let anchor = as_of_anchor(*code).ok_or_else(|| missing(format!("信息投递缺逐股 anchor：stock={code:?}")))?;
-            let mut new_reports = false;
-            let mut corrections = Vec::new();
-            let mut defaults = Vec::new();
-            for publication in
-                crate::information::discovery_candidates(library, &company, now)
+    let mut attention = attention_in.clone();
+    if !attention.information_check_due(now) {
+        return Ok(None);
+    }
+    let mut information = information_in.clone();
+    let mut belief = belief_in.clone();
+    for code in &codes {
+        let missing = |description| {
+            SessionError::Step(crate::session::StepFatal::InvariantViolation {
+                description,
+                location: "deliver_information_for_npc".into(),
+            })
+        };
+        let company = issuer_of_stock(*code)
+            .ok_or_else(|| missing(format!("信息投递缺发行人：stock={code:?}")))?;
+        let anchor = as_of_anchor(*code)
+            .ok_or_else(|| missing(format!("信息投递缺逐股 anchor：stock={code:?}")))?;
+        let mut new_reports = false;
+        let mut corrections = Vec::new();
+        let mut defaults = Vec::new();
+        for publication in crate::information::discovery_candidates(library, &company, now) {
+            if information.observed_at_of(publication).is_some() {
+                continue;
+            }
+            information
+                .record_acquisition(id, library, publication, now)
+                .map_err(|_error| {
+                    // fault1200: NPC 公告送达（信息获取登记）失败。
+                    // ctx[0] = 账户 id；槽1 待 C 批数值化（原文本为内层 AcquisitionError 文本）。
+                    SessionError::InvalidSave(ValidationFault::new(1200, vec![id.0, 0]))
+                })?;
+            match information
+                .records_for_company(&company)
+                .iter()
+                .find(|record| record.id == publication)
+                .expect("刚登记的本人材料存在")
+                .kind
             {
-                if information.observed_at_of(publication).is_some() {
-                    continue;
-                }
-                information
-                    .record_acquisition(id, library, publication, now)
-                    .map_err(|_error| {
-                        // fault1200: NPC 公告送达（信息获取登记）失败。
-                        // ctx[0] = 账户 id；槽1 待 C 批数值化（原文本为内层 AcquisitionError 文本）。
-                        SessionError::InvalidSave(ValidationFault::new(1200, vec![id.0, 0]))
-                    })?;
-                match information
-                    .records_for_company(&company)
-                    .iter()
-                    .find(|record| record.id == publication)
-                    .expect("刚登记的本人材料存在")
-                    .kind
-                {
-                    AcquiredKind::Report => {
-                        new_reports = true;
-                        if matches!(
-                            library
-                                .report(publication, now)
-                                .expect("刚获知报告可读取")
-                                .origin,
-                            PublicationOrigin::Correction
-                        ) {
-                            corrections.push(publication);
-                        }
-                    }
-                    AcquiredKind::Announcement => {
-                        if let Some(cause) =
-                            credit_default_cause(library, publication, now)
-                                .map_err(|error| {
-                                    SessionError::Information(Box::new(error))
-                                })?
-                        {
-                            defaults.push(cause);
-                        }
+                AcquiredKind::Report => {
+                    new_reports = true;
+                    if matches!(
+                        library
+                            .report(publication, now)
+                            .expect("刚获知报告可读取")
+                            .origin,
+                        PublicationOrigin::Correction
+                    ) {
+                        corrections.push(publication);
                     }
                 }
-            }
-            let ctx =
-                NpcObservationContext::new(id, &information, library, &market)
-                    .map_err(|_error| {
-                        // fault1201: NPC 观察上下文构造失败。槽0 待 C 批数值化（原文本为内层错误文本）。
-                        SessionError::InvalidSave(ValidationFault::new(1201, vec![0]))
-                    })?;
-            let (spec_kind, spec_issued) =
-                company_spec(&company).ok_or_else(|| missing(format!("信息投递缺发行人共同配置：company={company:?}")))?;
-            let inputs = BeliefInputs {
-                ctx: &ctx,
-                company,
-                kind: spec_kind,
-                total_issued_shares: spec_issued,
-                as_of_anchor: anchor,
-            };
-            if new_reports {
-                let report = crate::strategy::preferred_own_report(&ctx, &company)
-                    .map_err(|_error| {
-                        // fault1202: NPC 无本人已获知的定期报告可选（公告重估取材失败）。
-                        // 槽0 待 C 批数值化（原文本为内层 BeliefError 文本）。
-                        SessionError::InvalidSave(ValidationFault::new(1202, vec![0]))
-                    })?
-                    .expect("新获知报告存在");
-                belief
-                    .apply_cause(
-                        code,
-                        material_cause(library, report, now)
-                            .map_err(|error| SessionError::Information(Box::new(error)))?,
-                        &inputs,
-                    )
-                    .map_err(|_error| {
-                        // fault1203: NPC 新公告重估失败。ctx[0] = 账户 id，
-                        // ctx[1] = StockId；槽2 待 C 批数值化（原文本为内层 BeliefError 文本，
-                        // 如 NoOwnAnnualMaterial 的 "no own-known annual material"）。
-                        SessionError::InvalidSave(ValidationFault::new(
-                            1203,
-                            vec![id.0, u64::from(code.0), 0],
-                        ))
-                    })?;
-            }
-            for report in corrections {
-                // fault1204: NPC 更正公告重估失败。槽0 待 C 批数值化（原文本为内层 BeliefError 文本）。
-                belief
-                    .apply_cause(code, BeliefCause::Correction { report }, &inputs)
-                    .map_err(|_error| {
-                        SessionError::InvalidSave(ValidationFault::new(1204, vec![0]))
-                    })?;
-            }
-            for cause in defaults {
-                if belief.entry(code).is_some() {
-                    // fault1205: NPC 违约公告重估失败。槽0 待 C 批数值化（原文本为内层 BeliefError 文本）。
-                    belief.apply_cause(code, cause, &inputs).map_err(|_error| {
-                        SessionError::InvalidSave(ValidationFault::new(1205, vec![0]))
-                    })?;
+                AcquiredKind::Announcement => {
+                    if let Some(cause) = credit_default_cause(library, publication, now)
+                        .map_err(|error| SessionError::Information(Box::new(error)))?
+                    {
+                        defaults.push(cause);
+                    }
                 }
             }
         }
-        attention.record_information_check(now).map_err(|_error| {
-            // fault1206: NPC 信息检查节奏推进失败（CivilDateError）。
-            // 槽0 待 C 批数值化（原文本为内层 CivilDateError 文本）。
-            SessionError::InvalidSave(ValidationFault::new(1206, vec![0]))
-        })?;
-        Ok::<_, SessionError>(Some((id, information, belief, attention)))
+        let ctx =
+            NpcObservationContext::new(id, &information, library, &market).map_err(|_error| {
+                // fault1201: NPC 观察上下文构造失败。槽0 待 C 批数值化（原文本为内层错误文本）。
+                SessionError::InvalidSave(ValidationFault::new(1201, vec![0]))
+            })?;
+        let (spec_kind, spec_issued) = company_spec(&company)
+            .ok_or_else(|| missing(format!("信息投递缺发行人共同配置：company={company:?}")))?;
+        let inputs = BeliefInputs {
+            ctx: &ctx,
+            company,
+            kind: spec_kind,
+            total_issued_shares: spec_issued,
+            as_of_anchor: anchor,
+        };
+        if new_reports {
+            let report = crate::strategy::preferred_own_report(&ctx, &company)
+                .map_err(|_error| {
+                    // fault1202: NPC 无本人已获知的定期报告可选（公告重估取材失败）。
+                    // 槽0 待 C 批数值化（原文本为内层 BeliefError 文本）。
+                    SessionError::InvalidSave(ValidationFault::new(1202, vec![0]))
+                })?
+                .expect("新获知报告存在");
+            belief
+                .apply_cause(
+                    code,
+                    material_cause(library, report, now)
+                        .map_err(|error| SessionError::Information(Box::new(error)))?,
+                    &inputs,
+                )
+                .map_err(|_error| {
+                    // fault1203: NPC 新公告重估失败。ctx[0] = 账户 id，
+                    // ctx[1] = StockId；槽2 待 C 批数值化（原文本为内层 BeliefError 文本，
+                    // 如 NoOwnAnnualMaterial 的 "no own-known annual material"）。
+                    SessionError::InvalidSave(ValidationFault::new(
+                        1203,
+                        vec![id.0, u64::from(code.0), 0],
+                    ))
+                })?;
+        }
+        for report in corrections {
+            // fault1204: NPC 更正公告重估失败。槽0 待 C 批数值化（原文本为内层 BeliefError 文本）。
+            belief
+                .apply_cause(code, BeliefCause::Correction { report }, &inputs)
+                .map_err(|_error| SessionError::InvalidSave(ValidationFault::new(1204, vec![0])))?;
+        }
+        for cause in defaults {
+            if belief.entry(code).is_some() {
+                // fault1205: NPC 违约公告重估失败。槽0 待 C 批数值化（原文本为内层 BeliefError 文本）。
+                belief.apply_cause(code, cause, &inputs).map_err(|_error| {
+                    SessionError::InvalidSave(ValidationFault::new(1205, vec![0]))
+                })?;
+            }
+        }
+    }
+    attention.record_information_check(now).map_err(|_error| {
+        // fault1206: NPC 信息检查节奏推进失败（CivilDateError）。
+        // 槽0 待 C 批数值化（原文本为内层 CivilDateError 文本）。
+        SessionError::InvalidSave(ValidationFault::new(1206, vec![0]))
+    })?;
+    Ok::<_, SessionError>(Some((id, information, belief, attention)))
 }
 
 pub(super) fn material_cause(
@@ -299,7 +305,8 @@ pub(super) fn credit_default_cause(
         announcement.content,
         crate::information::AnnouncementContent::Shock(crate::information::AnnouncedEvent {
             kind: crate::company::ShockKind::PaymentFailure {
-                obligation_status: crate::company::events::PaymentObligationStatus::ContractualOverdue,
+                obligation_status:
+                    crate::company::events::PaymentObligationStatus::ContractualOverdue,
                 ..
             },
             ..
@@ -321,7 +328,10 @@ impl GameSession {
     pub(super) fn deliver_public_information_with_anchors(
         &mut self,
         now: CivilInstant,
-        anchors: &BTreeMap<StockId, crate::observation::information_clock::InformationTradingAnchor>,
+        anchors: &BTreeMap<
+            StockId,
+            crate::observation::information_clock::InformationTradingAnchor,
+        >,
     ) -> Result<(), SessionError> {
         // Belief-1b·下 权威调和：runtime 驱动器在位时投递计算下沉组内
         //（驱动器在日结编排后稀疏下行——见 RuntimeDriver::deliver_
@@ -331,47 +341,49 @@ impl GameSession {
         /// self.runtime_driver，而 clone_for_tick_shadow 把驱动器置
         /// None，使自然日 candidate 内误走旧管线全量投递（休市日
         /// 零市场副作用的 attention 面漂移显红）。
-        if self.state.runtime_information_authority && !self.has_current_external_runtime_authority() {
+        if self.state.runtime_information_authority
+            && !self.has_current_external_runtime_authority()
+        {
             return Ok(());
         }
         let market = self.build_market_view();
         let company_facts = self.runtime_company_read_facts()?;
         let ids: Vec<_> = self.state.belief_participants.keys().copied().collect();
         let compute = self.compute.clone();
-        let results = compute
-            .parallel(|| {
+        let results = compute.parallel(|| {
             compute.record(crate::compute::ComputeWork::DayEndDeliver);
-            ids
-            .into_par_iter()
-            .map(|id| {
-                let attention = &self.state.npc_attention[&id];
-                let participant = &self.state.belief_participants[&id];
-                let mut codes: BTreeSet<_> = self.state.accounts[&id]
-                    .positions()
-                    .keys()
-                    .cloned()
-                    .collect();
-                codes.extend(participant.watchlist().stocks.keys().cloned());
-                codes.extend(self.state.plans.active_investor_codes(id).cloned());
-                let issuer_of = |code: StockId| company_facts.issuer_of_stock(code).ok();
-                deliver_information_for_npc(
-                    id,
-                    now,
-                    &|stock| anchors.get(&stock).copied(),
-                    attention,
-                    participant.information(),
-                    participant.belief(),
-                    codes,
-                    &issuer_of,
-                    &|company: &crate::company::CompanyId| company_facts.company_spec(company).ok(),
-                    self.state.library.as_ref(),
-                    &market,
-                )
-            })
-            .collect::<Vec<_>>()
-            .into_iter()
-            .collect::<Result<Vec<_>, _>>()
-            })?;
+            ids.into_par_iter()
+                .map(|id| {
+                    let attention = &self.state.npc_attention[&id];
+                    let participant = &self.state.belief_participants[&id];
+                    let mut codes: BTreeSet<_> = self.state.accounts[&id]
+                        .positions()
+                        .keys()
+                        .cloned()
+                        .collect();
+                    codes.extend(participant.watchlist().stocks.keys().cloned());
+                    codes.extend(self.state.plans.active_investor_codes(id).cloned());
+                    let issuer_of = |code: StockId| company_facts.issuer_of_stock(code).ok();
+                    deliver_information_for_npc(
+                        id,
+                        now,
+                        &|stock| anchors.get(&stock).copied(),
+                        attention,
+                        participant.information(),
+                        participant.belief(),
+                        codes,
+                        &issuer_of,
+                        &|company: &crate::company::CompanyId| {
+                            company_facts.company_spec(company).ok()
+                        },
+                        self.state.library.as_ref(),
+                        &market,
+                    )
+                })
+                .collect::<Vec<_>>()
+                .into_iter()
+                .collect::<Result<Vec<_>, _>>()
+        })?;
         for result in results.into_iter().flatten() {
             let (id, information, belief, attention) = result;
             #[cfg(feature = "simulation-diagnostics")]
@@ -443,14 +455,28 @@ mod tests {
         let mut session = GameSession::new(setup, 42).unwrap();
         let id = AccountId(1);
         let stock = StockId(0);
-        session.state.belief_participants.get_mut(&id).unwrap()
-            .watchlist_mut().record_attention(&stock, 0, 0).unwrap();
+        session
+            .state
+            .belief_participants
+            .get_mut(&id)
+            .unwrap()
+            .watchlist_mut()
+            .record_attention(&stock, 0, 0)
+            .unwrap();
         let report = session.end_civil_day().unwrap();
         assert_eq!(session.civil_date(), report.settled_date.next().unwrap());
-        let entry = session.state.belief_participants[&id].belief().entry(&stock)
+        let entry = session.state.belief_participants[&id]
+            .belief()
+            .entry(&stock)
             .expect("真实披露获取必须产生非空信念");
-        assert_eq!(entry.anchor, crate::observation::information_clock::InformationTradingAnchor::NoPriorSession);
-        assert_eq!(entry.last_cause.as_ref().unwrap().as_of_anchor, entry.anchor);
+        assert_eq!(
+            entry.anchor,
+            crate::observation::information_clock::InformationTradingAnchor::NoPriorSession
+        );
+        assert_eq!(
+            entry.last_cause.as_ref().unwrap().as_of_anchor,
+            entry.anchor
+        );
     }
 
     #[test]
@@ -524,7 +550,11 @@ mod tests {
                     .watchlist()
                     .stock(&code)
                     .is_some()),
-                "active_plan" => assert!(session.state.plans.active_investor_plan(account, &code).is_some()),
+                "active_plan" => assert!(session
+                    .state
+                    .plans
+                    .active_investor_plan(account, &code)
+                    .is_some()),
                 "faded" => {
                     assert!(!session.state.accounts[&account]
                         .positions()
@@ -533,22 +563,33 @@ mod tests {
                         .watchlist()
                         .stock(&code)
                         .is_none());
-                    assert!(session.state.plans.active_investor_plan(account, &code).is_none());
+                    assert!(session
+                        .state
+                        .plans
+                        .active_investor_plan(account, &code)
+                        .is_none());
                 }
                 _ => unreachable!(),
             }
             let date = session.civil_date();
-            std::sync::Arc::make_mut(&mut session.state.companies.legacy_mut().expect("此调用仅用于 Legacy 公司状态").operations)
-                .apply_company_shock(
-                    &company,
-                    crate::company::ActiveShock {
-                        kind: crate::company::ShockKind::ContractWon,
-                        amplitude_bp: 500,
-                        starts_on: date,
-                        expires_on: date.next().unwrap(),
-                    },
-                )
-                .unwrap();
+            std::sync::Arc::make_mut(
+                &mut session
+                    .state
+                    .companies
+                    .legacy_mut()
+                    .expect("此调用仅用于 Legacy 公司状态")
+                    .operations,
+            )
+            .apply_company_shock(
+                &company,
+                crate::company::ActiveShock {
+                    kind: crate::company::ShockKind::ContractWon,
+                    amplitude_bp: 500,
+                    starts_on: date,
+                    expires_on: date.next().unwrap(),
+                },
+            )
+            .unwrap();
             let day_end = session.end_civil_day().unwrap();
             let publication = day_end
                 .events
@@ -587,7 +628,11 @@ mod tests {
                     .positions()
                     .contains_key(&code));
                 assert!(participant.watchlist().stock(&code).is_none());
-                assert!(session.state.plans.active_investor_plan(account, &code).is_none());
+                assert!(session
+                    .state
+                    .plans
+                    .active_investor_plan(account, &code)
+                    .is_none());
                 assert_eq!(
                     participant.information().observed_at_of(publication),
                     None,
@@ -893,17 +938,24 @@ mod tests {
             .record_attention(&code, 0, 0)
             .unwrap();
         let date = session.civil_date();
-        std::sync::Arc::make_mut(&mut session.state.companies.legacy_mut().expect("此调用仅用于 Legacy 公司状态").operations)
-            .apply_company_shock(
-                &company,
-                crate::company::ActiveShock {
-                    kind: crate::company::ShockKind::ContractWon,
-                    amplitude_bp: 500,
-                    starts_on: date,
-                    expires_on: date.next().unwrap(),
-                },
-            )
-            .unwrap();
+        std::sync::Arc::make_mut(
+            &mut session
+                .state
+                .companies
+                .legacy_mut()
+                .expect("此调用仅用于 Legacy 公司状态")
+                .operations,
+        )
+        .apply_company_shock(
+            &company,
+            crate::company::ActiveShock {
+                kind: crate::company::ShockKind::ContractWon,
+                amplitude_bp: 500,
+                starts_on: date,
+                expires_on: date.next().unwrap(),
+            },
+        )
+        .unwrap();
         let cash = session.state.accounts[&id].cash();
         let next_order = session.state.next_order_id;
         assert_eq!(
@@ -923,7 +975,13 @@ mod tests {
         assert_eq!(session.state.next_order_id, next_order);
         assert!(session.state.history_reads[&id].stocks.is_empty());
         #[cfg(feature = "simulation-diagnostics")]
-        assert!(session.causal_facts().iter().all(|fact| fact.time.stock_clock.is_none()), "Closed INFO 不得携证券时钟");
+        assert!(
+            session
+                .causal_facts()
+                .iter()
+                .all(|fact| fact.time.stock_clock.is_none()),
+            "Closed INFO 不得携证券时钟"
+        );
         #[cfg(feature = "simulation-diagnostics")]
         assert!(session.causal_facts().iter().any(|fact| matches!(&fact.kind, crate::diagnostics::causal::CausalFactKind::Acquisition { account, company: acquired_company, published, acquired, .. } if *account == id && *acquired_company == company && *published == day_end.disclosure_instant && *acquired == day_end.disclosure_instant)));
         let saved = session.save().unwrap();
@@ -935,7 +993,9 @@ mod tests {
 
     #[test]
     fn information_revaluation_failure_rolls_back_entire_day_end() {
-        if run_serial_civil_test_in_child("session::notices::tests::information_revaluation_failure_rolls_back_entire_day_end") {
+        if run_serial_civil_test_in_child(
+            "session::notices::tests::information_revaluation_failure_rolls_back_entire_day_end",
+        ) {
             return;
         }
         let mut setup = crate::session::npc_working_quote_tests::quote_setup(0);
@@ -994,13 +1054,22 @@ mod tests {
         let market = session.build_market_view();
         let ctx =
             NpcObservationContext::new(id, &information, &session.state.library, &market).unwrap();
-        let spec = session.state.companies.legacy().expect("此调用仅用于 Legacy 公司状态").operations.company(&company).unwrap().spec();
+        let spec = session
+            .state
+            .companies
+            .legacy()
+            .expect("此调用仅用于 Legacy 公司状态")
+            .operations
+            .company(&company)
+            .unwrap()
+            .spec();
         let mut inputs = BeliefInputs {
             ctx: &ctx,
             company,
             kind: spec.kind,
             total_issued_shares: spec.issued_shares,
-            as_of_anchor: crate::observation::information_clock::InformationTradingAnchor::NoPriorSession,
+            as_of_anchor:
+                crate::observation::information_clock::InformationTradingAnchor::NoPriorSession,
         };
         let mut belief = session.state.belief_participants[&id].belief().clone();
         assert!(matches!(

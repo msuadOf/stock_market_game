@@ -231,7 +231,7 @@ fn repurchase_plan_at_registered_split_boundary(
         ShareSplitBook, ShareSplitDirection, ShareSplitEventPlan, ShareSplitStatus,
     };
     use crate::session::player_company_command_candidates::{
-        PlayerCompanyCommandInput, build_player_repurchase_plan,
+        build_player_repurchase_plan, PlayerCompanyCommandInput,
     };
     let game = game_with_features_on(true, false, true, "2030-06-04");
     let registered_on = CivilDate::from_iso("2030-06-03").unwrap();

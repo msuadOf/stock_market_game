@@ -134,11 +134,14 @@ impl CausalFactKind {
     pub(crate) fn stock_code(&self) -> Option<StockId> {
         match self {
             Self::Submitted(origin) => Some(origin.code),
-            Self::Filled { code, .. } | Self::Terminated { code, .. }
+            Self::Filled { code, .. }
+            | Self::Terminated { code, .. }
             | Self::Execution { code, .. } => Some(*code),
             Self::Quote(quote) => Some(quote.code),
-            Self::ObservationRestart | Self::Acquisition { .. }
-            | Self::Decision { .. } | Self::Budget { .. } => None,
+            Self::ObservationRestart
+            | Self::Acquisition { .. }
+            | Self::Decision { .. }
+            | Self::Budget { .. } => None,
         }
     }
 }
@@ -156,7 +159,11 @@ impl CausalFact {
         let expected = self.kind.stock_code();
         let actual = self.time.stock_clock.map(|clock| clock.code);
         if expected != actual {
-            return Err(CausalError::StockClock { sequence: self.sequence, expected, actual });
+            return Err(CausalError::StockClock {
+                sequence: self.sequence,
+                expected,
+                actual,
+            });
         }
         Ok(())
     }
@@ -167,7 +174,9 @@ impl FactTime {
         match self.stock_clock {
             Some(clock) if clock.code == code => Ok(clock.completed_minutes),
             other => Err(CausalError::StockClock {
-                sequence, expected: Some(code), actual: other.map(|clock| clock.code),
+                sequence,
+                expected: Some(code),
+                actual: other.map(|clock| clock.code),
             }),
         }
     }
@@ -393,7 +402,14 @@ mod tests {
     fn collector_filled_values_serialize_as_exact_decimal_cents() {
         let mut collector = CausalCollector::default();
         let code = StockId(1);
-        collector.record_continuous_fill(stock_time(code), OrderId(1), AccountId(1), &code, 100, i64::MAX);
+        collector.record_continuous_fill(
+            stock_time(code),
+            OrderId(1),
+            AccountId(1),
+            &code,
+            100,
+            i64::MAX,
+        );
         let value = serde_json::to_value(collector).unwrap();
         assert_eq!(value["filled_values"]["1"], i64::MAX.to_string());
         assert_eq!(
@@ -404,7 +420,13 @@ mod tests {
 
     // 纯存储 fixture 的本股常量；不作为真实 Calendar producer 证据。
     fn stock_time(code: StockId) -> FactTime {
-        FactTime { stock_clock: Some(StockFactClock { code, completed_minutes: 1 }), ..time() }
+        FactTime {
+            stock_clock: Some(StockFactClock {
+                code,
+                completed_minutes: 1,
+            }),
+            ..time()
+        }
     }
 
     fn time() -> FactTime {
@@ -444,7 +466,14 @@ mod tests {
         let mut collector = CausalCollector::default();
         let order = OrderId(1);
         let code = StockId(1);
-        collector.record_continuous_fill(stock_time(code), order, AccountId(1), &code, 100, i64::MAX);
+        collector.record_continuous_fill(
+            stock_time(code),
+            order,
+            AccountId(1),
+            &code,
+            100,
+            i64::MAX,
+        );
         collector.record_continuous_fill(stock_time(code), order, AccountId(1), &code, 100, 1);
         assert_eq!(*collector.filled_values.get(order.0).unwrap(), i64::MAX);
         assert_eq!(collector.facts().len(), 2);
@@ -511,7 +540,13 @@ mod storage_tests {
     use super::*;
     // 纯存储 fixture 的本股常量；不作为真实 Calendar producer 证据。
     fn stock_time(code: StockId) -> FactTime {
-        FactTime { stock_clock: Some(StockFactClock { code, completed_minutes: 1 }), ..time() }
+        FactTime {
+            stock_clock: Some(StockFactClock {
+                code,
+                completed_minutes: 1,
+            }),
+            ..time()
+        }
     }
 
     fn time() -> FactTime {

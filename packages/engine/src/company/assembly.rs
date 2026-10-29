@@ -30,7 +30,8 @@ use crate::company::industrial::{
     industrial_account_chart, IndustrialBooks, IndustrialConfig, OpeningAssetItem, OpeningDebtTerms,
 };
 use crate::company::operations::{
-    CompanyOperations, CompanyOperationsConfig, FlowParams, IndustrialFlowParams, OperatingCompanyConfig,
+    CompanyOperations, CompanyOperationsConfig, FlowParams, IndustrialFlowParams,
+    OperatingCompanyConfig,
 };
 use crate::company::{
     default_companies, CompanyConfig, CompanyId, CompanyKind, CompanyRegistry, CompanySpec,
@@ -78,7 +79,6 @@ impl CompanyOperations {
         assemble_companies(&ctx)
     }
 }
-
 
 /// 单只上市公司的装配产物：CompanyConfig 注册表配置与 OperatingCompanyConfig 经营配置。
 struct ListedCompanyConfigs {
@@ -140,15 +140,12 @@ fn assemble_companies(
     };
     // 报告频率 B4b 起=配置真值（SessionSetup.report_frequency 解析后传入；
     // 缺席回落 Quarterly=既有披露行为）。
-    let prehistory = assemble_seeded_prehistory(
-        operations_config,
-        ctx.start_date,
-        ctx.report_frequency,
-    )
-    .map_err(|_error| {
-            // fault1152: 经营前史装配失败。槽0 待 C 批数值化（原文本为内层装配错误文本）。
-            CompanyAssemblyError(ValidationFault::new(1152, vec![0]))
-        })?;
+    let prehistory =
+        assemble_seeded_prehistory(operations_config, ctx.start_date, ctx.report_frequency)
+            .map_err(|_error| {
+                // fault1152: 经营前史装配失败。槽0 待 C 批数值化（原文本为内层装配错误文本）。
+                CompanyAssemblyError(ValidationFault::new(1152, vec![0]))
+            })?;
     Ok(CompanyAssembly {
         registry,
         prehistory,
@@ -207,23 +204,18 @@ fn assemble_custom_companies(
         CompanyRegistry::new(registry_configs).map_err(company_error("custom registry"))?;
     registry
         .validate_issuer_mapping(
-            &ctx
-                .issuers
+            &ctx.issuers
                 .iter()
                 .map(|stock| ((*stock.code).clone(), stock.total_shares))
                 .collect::<Vec<_>>(),
         )
         .map_err(company_error("custom issuer mapping"))?;
     scale_shock_params(&mut config.shock_params, event_multiplier_bp)?;
-    let mut prehistory = assemble_seeded_prehistory(
-        config,
-        ctx.start_date,
-        ctx.report_frequency,
-    )
-    .map_err(|_error| {
-            // fault1155: 自定义公司经营前史装配失败。槽0 待 C 批数值化（原文本为内层装配错误文本）。
-            CompanyAssemblyError(ValidationFault::new(1155, vec![0]))
-        })?;
+    let mut prehistory = assemble_seeded_prehistory(config, ctx.start_date, ctx.report_frequency)
+        .map_err(|_error| {
+        // fault1155: 自定义公司经营前史装配失败。槽0 待 C 批数值化（原文本为内层装配错误文本）。
+        CompanyAssemblyError(ValidationFault::new(1155, vec![0]))
+    })?;
     crate::company::groups::seed_groups(ctx.groups, &mut prehistory, ctx.start_date).map_err(
         |_error| {
             // fault1156: 自定义公司分组前史播种失败。槽0 待 C 批数值化（原文本为内层播种错误文本）。
@@ -236,7 +228,10 @@ fn assemble_custom_companies(
     })
 }
 
-fn scale_shock_params(params: &mut ShockParams, multiplier_bp: u16) -> Result<(), CompanyAssemblyError> {
+fn scale_shock_params(
+    params: &mut ShockParams,
+    multiplier_bp: u16,
+) -> Result<(), CompanyAssemblyError> {
     let scale = |_name: &str, value: i32| -> Result<i32, CompanyAssemblyError> {
         let scaled = i64::from(value) * i64::from(multiplier_bp) / 10_000;
         i32::try_from(scaled).map_err(|_| {
@@ -262,7 +257,9 @@ fn scale_shock_params(params: &mut ShockParams, multiplier_bp: u16) -> Result<()
     })
 }
 
-fn company_error(_stage: &'static str) -> impl Fn(crate::company::CompanyError) -> CompanyAssemblyError {
+fn company_error(
+    _stage: &'static str,
+) -> impl Fn(crate::company::CompanyError) -> CompanyAssemblyError {
     move |_error| {
         // fault1159: 公司域装配某阶段失败。槽0 待 C 批数值化（原阶段名 "{_stage}"，
         // 取值 "default companies"/"registry"/"custom operating budget"/"custom registry"/
@@ -595,7 +592,10 @@ mod tests {
     fn odd_share_company_opening_allocates_actual_funding_without_rounding_loss() {
         let as_of = CivilDate::from_ymd(2027, 12, 31).unwrap();
         let code = StockCode("600101".to_string());
-        let mut stock = IssuerFacts { code: &code, total_shares: 1 };
+        let mut stock = IssuerFacts {
+            code: &code,
+            total_shares: 1,
+        };
         stock.total_shares = 101;
         let listed = assemble_listed_company(
             &stock,
@@ -681,7 +681,10 @@ mod tests {
             })
             .unwrap();
         let code = StockCode("600101".to_string());
-        let mut stock = IssuerFacts { code: &code, total_shares: 1 };
+        let mut stock = IssuerFacts {
+            code: &code,
+            total_shares: 1,
+        };
         stock.code = row.spec.listed_stock.as_ref().unwrap();
         stock.total_shares = row.spec.issued_shares;
         let exact = OpeningFigures::for_stock(&stock, &defaults);
@@ -725,7 +728,10 @@ mod tests {
         let as_of = CivilDate::from_ymd(2027, 12, 31).unwrap();
         for total_shares in [1, 2, 9, 10, 99, 100, 109, u64::MAX] {
             let code = StockCode("600101".to_string());
-            let mut stock = IssuerFacts { code: &code, total_shares: 1 };
+            let mut stock = IssuerFacts {
+                code: &code,
+                total_shares: 1,
+            };
             stock.total_shares = total_shares;
             let figures = OpeningFigures::from_total_shares(total_shares);
             let capital = i128::from(total_shares);
@@ -757,7 +763,10 @@ mod tests {
     fn zero_share_company_still_rejects_invalid_issuer_specification() {
         let as_of = CivilDate::from_ymd(2027, 12, 31).unwrap();
         let code = StockCode("600101".to_string());
-        let mut stock = IssuerFacts { code: &code, total_shares: 1 };
+        let mut stock = IssuerFacts {
+            code: &code,
+            total_shares: 1,
+        };
         stock.total_shares = 0;
         let result = assemble_listed_company(&stock, OpeningFigures::from_total_shares(0), as_of);
         // 数值断言替代原文本断言（"company spec failed:" 前缀 + "zero issued shares"）：

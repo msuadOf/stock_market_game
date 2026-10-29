@@ -169,10 +169,8 @@ async fn combined_exposes_identity_routes_and_protects_identity_lookup() {
         .await
         .unwrap();
     assert_eq!(guest.status(), StatusCode::CREATED);
-    let guest_body: serde_json::Value = serde_json::from_slice(
-        &to_bytes(guest.into_body(), 4096).await.unwrap(),
-    )
-    .unwrap();
+    let guest_body: serde_json::Value =
+        serde_json::from_slice(&to_bytes(guest.into_body(), 4096).await.unwrap()).unwrap();
     assert!(guest_body["token"].as_str().is_some());
     assert!(guest_body["subject"]["subject_id"].as_str().is_some());
 

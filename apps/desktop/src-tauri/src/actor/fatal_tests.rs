@@ -72,27 +72,53 @@ async fn assert_auto_step_fatal(fastest: bool, successful_steps: usize) {
     assert_eq!(committed_tick, tick + successful_steps as u64);
     let committed_business = actor.game.business_state_hash().unwrap();
     let committed_save = serde_json::to_value(actor.game.game().save().unwrap()).unwrap();
-    if successful_steps == 0 { assert_eq!(committed_business, business); assert_eq!(committed_save, saved_before); }
+    if successful_steps == 0 {
+        assert_eq!(committed_business, business);
+        assert_eq!(committed_save, saved_before);
+    }
     let mut replay = engine::session::protocol::ReplayGuard::new(tick, seq);
     let mut delivered = Vec::new();
     let mut delivered_frames = Vec::new();
     while let Ok(payload) = events_rx.try_recv() {
         let value: serde_json::Value = serde_json::from_str(&payload).unwrap();
         let update: EngineUpdate = serde_json::from_value(value["update"].clone()).unwrap();
-        let EngineUpdate::TickBatch(batch) = &update else { panic!("失败前缀只能包含真实已成功市场帧") };
+        let EngineUpdate::TickBatch(batch) = &update else {
+            panic!("失败前缀只能包含真实已成功市场帧")
+        };
         delivered.extend(batch.frames.iter().map(|frame| frame.tick));
         delivered_frames.extend(batch.frames.iter().cloned());
         replay.ingest(&update).unwrap();
     }
-    assert_eq!(delivered, (1..=successful_steps as u64).map(|offset| tick + offset).collect::<Vec<_>>());
+    assert_eq!(
+        delivered,
+        (1..=successful_steps as u64)
+            .map(|offset| tick + offset)
+            .collect::<Vec<_>>()
+    );
     let (expected_saved, expected_origin, expected_business, expected_frames) = {
         let capture = capture.lock().unwrap();
-        (capture.saved.clone().unwrap(), capture.origin.unwrap(), capture.business.unwrap(), capture.frames.clone())
+        (
+            capture.saved.clone().unwrap(),
+            capture.origin.unwrap(),
+            capture.business.unwrap(),
+            capture.frames.clone(),
+        )
     };
-    assert_eq!(committed_save, expected_saved, "失败处理不能改写同 Session 失败前已提交的全部事实");
+    assert_eq!(
+        committed_save, expected_saved,
+        "失败处理不能改写同 Session 失败前已提交的全部事实"
+    );
     assert_eq!(actor.game.runtime_mirror_origin(), expected_origin);
-    assert_eq!(actor.game.business_state_hash().unwrap(), expected_business, "真实业务指纹必须与同 Session fatal 返回前完全一致");
-    assert_eq!(serde_json::to_value(&delivered_frames).unwrap(), serde_json::to_value(&expected_frames).unwrap(), "全部成功前缀事实必须原样交付且恰好一次");
+    assert_eq!(
+        actor.game.business_state_hash().unwrap(),
+        expected_business,
+        "真实业务指纹必须与同 Session fatal 返回前完全一致"
+    );
+    assert_eq!(
+        serde_json::to_value(&delivered_frames).unwrap(),
+        serde_json::to_value(&expected_frames).unwrap(),
+        "全部成功前缀事实必须原样交付且恰好一次"
+    );
     let payload = notices_rx.try_recv().expect("fatal notification required");
     let value: serde_json::Value = serde_json::from_str(&payload).unwrap();
     assert_eq!(
@@ -130,7 +156,10 @@ async fn assert_auto_step_fatal(fastest: bool, successful_steps: usize) {
     assert!(!actor.pacing.is_running());
     assert_eq!(actor.game.tick(), committed_tick);
     assert_eq!(actor.game.seq(), committed_seq);
-    assert_eq!(actor.game.business_state_hash().unwrap(), committed_business);
+    assert_eq!(
+        actor.game.business_state_hash().unwrap(),
+        committed_business
+    );
     assert_eq!(
         serde_json::to_value(actor.game.game().save().unwrap()).unwrap(),
         committed_save
@@ -138,7 +167,10 @@ async fn assert_auto_step_fatal(fastest: bool, successful_steps: usize) {
     actor.tick_and_emit().await;
     actor.run_fastest_batch().await;
     assert_eq!(actor.game.tick(), committed_tick);
-    assert_eq!(actor.game.business_state_hash().unwrap(), committed_business);
+    assert_eq!(
+        actor.game.business_state_hash().unwrap(),
+        committed_business
+    );
     assert!(notices_rx.try_recv().is_err());
     assert!(events_rx.try_recv().is_err());
     for _ in committed_tick..30 {
@@ -146,8 +178,14 @@ async fn assert_auto_step_fatal(fastest: bool, successful_steps: usize) {
     }
     let civil = actor.game.end_civil_day_update().unwrap();
     assert_eq!(civil.refresh.intraday.len(), 30);
-    let expected_prefix = std::iter::once(retained).chain(expected_frames.iter().cloned()).collect::<Vec<_>>();
-    assert_eq!(serde_json::to_value(&civil.refresh.intraday[..expected_prefix.len()]).unwrap(), serde_json::to_value(expected_prefix).unwrap(), "日终 retained 必须保留失败前全部真实帧");
+    let expected_prefix = std::iter::once(retained)
+        .chain(expected_frames.iter().cloned())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        serde_json::to_value(&civil.refresh.intraday[..expected_prefix.len()]).unwrap(),
+        serde_json::to_value(expected_prefix).unwrap(),
+        "日终 retained 必须保留失败前全部真实帧"
+    );
     tokio::time::timeout(Duration::from_secs(1), harness.actor.run())
         .await
         .unwrap();

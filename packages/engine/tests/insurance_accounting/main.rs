@@ -96,7 +96,10 @@ pub(crate) fn base_config() -> InsuranceConfig {
         ],
         counterparties: counterparties(),
         discount: fixture_discount(),
-        income_tax_policy: engine::accounting::IncomeTaxPolicy { rate_bp: 2_500, loss_carryforward_years: 5 },
+        income_tax_policy: engine::accounting::IncomeTaxPolicy {
+            rate_bp: 2_500,
+            loss_carryforward_years: 5,
+        },
     }
 }
 

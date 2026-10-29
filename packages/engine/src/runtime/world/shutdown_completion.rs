@@ -46,8 +46,13 @@ impl World {
         if let Some(reason) = self.dead_reason.clone() {
             let (completion, secondary) = self.stop_failed_with_completion();
             return Err(ShutdownFailure {
-                primary: ShutdownIssue { stage: "world_terminated".to_owned(), worker: None, detail: reason },
-                secondary, completion: Some(completion),
+                primary: ShutdownIssue {
+                    stage: "world_terminated".to_owned(),
+                    worker: None,
+                    detail: reason,
+                },
+                secondary,
+                completion: Some(completion),
             });
         }
         let mut stage = "shutdown_state";
@@ -59,13 +64,19 @@ impl World {
             Err(error) => {
                 let primary = runtime_issue(stage, error);
                 let (completion, secondary) = self.stop_failed_with_completion();
-                Err(ShutdownFailure { primary, secondary, completion: Some(completion) })
+                Err(ShutdownFailure {
+                    primary,
+                    secondary,
+                    completion: Some(completion),
+                })
             }
         }
     }
 
     /// 已毒化 owner 只作失败销毁；不执行健康 Drain，也不安装 Final。
-    pub(crate) fn stop_failed_with_completion(mut self) -> (ShutdownCompletion, Vec<ShutdownIssue>) {
+    pub(crate) fn stop_failed_with_completion(
+        mut self,
+    ) -> (ShutdownCompletion, Vec<ShutdownIssue>) {
         let owned = self.n_groups + self.n_stocks;
         // 既有失败路径可能已真实 join 并保存报告；不能丢失这些已取得的事实。
         let mut results = match self.dead_finals.take() {
@@ -79,10 +90,13 @@ impl World {
         for message in self.up_rx.try_iter() {
             match message {
                 UpMsg::Failed { who, error } => issues.push(ShutdownIssue {
-                    stage: "shutdown_upstream".to_owned(), worker: Some(who.to_string()), detail: error.to_string(),
+                    stage: "shutdown_upstream".to_owned(),
+                    worker: Some(who.to_string()),
+                    detail: error.to_string(),
                 }),
                 UpMsg::TaskDied { who, payload } => issues.push(ShutdownIssue {
-                    stage: "shutdown_upstream".to_owned(), worker: Some(who.to_string()),
+                    stage: "shutdown_upstream".to_owned(),
+                    worker: Some(who.to_string()),
                     detail: super::prepared_stop::panic_detail(payload.as_ref()),
                 }),
                 // 失败路径只耗尽未发布事实，不能把它们冒作已核验的正常 Final。
@@ -91,12 +105,18 @@ impl World {
         }
         let (worker_results, worker_issues) = completion_worker_results(results);
         issues.extend(worker_issues);
-        (ShutdownCompletion {
-            owned_workers: owned, joined_workers: worker_results.len(), worker_results,
-            group_finals: 0, desk_finals: 0,
-            #[cfg(test)]
-            observed_group_shutdowns: Vec::new(),
-        }, issues)
+        (
+            ShutdownCompletion {
+                owned_workers: owned,
+                joined_workers: worker_results.len(),
+                worker_results,
+                group_finals: 0,
+                desk_finals: 0,
+                #[cfg(test)]
+                observed_group_shutdowns: Vec::new(),
+            },
+            issues,
+        )
     }
 }
 
@@ -106,24 +126,49 @@ fn complete_shutdown_report(
     report: ShutdownReport,
 ) -> Result<ShutdownCompletion, ShutdownFailure> {
     #[cfg(test)]
-    let observed_group_shutdowns = report.group_finals.iter().filter(|group| {
-        group.observed.iter().any(|observed| matches!(observed, crate::runtime::group::Observed::Shutdown))
-    }).map(|group| format!("group-{}", group.group)).collect();
+    let observed_group_shutdowns = report
+        .group_finals
+        .iter()
+        .filter(|group| {
+            group
+                .observed
+                .iter()
+                .any(|observed| matches!(observed, crate::runtime::group::Observed::Shutdown))
+        })
+        .map(|group| format!("group-{}", group.group))
+        .collect();
     let (worker_results, mut issues) = completion_worker_results(report.worker_results);
     let completion = ShutdownCompletion {
-        owned_workers, joined_workers: worker_results.len(), worker_results,
-        group_finals: report.group_finals.len(), desk_finals: report.desk_finals.len(),
+        owned_workers,
+        joined_workers: worker_results.len(),
+        worker_results,
+        group_finals: report.group_finals.len(),
+        desk_finals: report.desk_finals.len(),
         #[cfg(test)]
         observed_group_shutdowns,
     };
     if completion.joined_workers != owned_workers {
-        issues.insert(0, ShutdownIssue { stage: "join_count".to_owned(), worker: None,
-            detail: format!("owned={owned_workers}，实际join={}", completion.joined_workers) });
+        issues.insert(
+            0,
+            ShutdownIssue {
+                stage: "join_count".to_owned(),
+                worker: None,
+                detail: format!(
+                    "owned={owned_workers}，实际join={}",
+                    completion.joined_workers
+                ),
+            },
+        );
     }
-    if issues.is_empty() { Ok(completion) }
-    else {
+    if issues.is_empty() {
+        Ok(completion)
+    } else {
         let primary = issues.remove(0);
-        Err(ShutdownFailure { primary, secondary: issues, completion: Some(completion) })
+        Err(ShutdownFailure {
+            primary,
+            secondary: issues,
+            completion: Some(completion),
+        })
     }
 }
 
@@ -135,18 +180,34 @@ fn runtime_issue(stage: &str, error: RuntimeError) -> ShutdownIssue {
         RuntimeError::HostAborted { who, .. } => who.map(|who| who.to_string()),
         _ => None,
     };
-    ShutdownIssue { stage: stage.to_owned(), worker, detail: error.to_string() }
+    ShutdownIssue {
+        stage: stage.to_owned(),
+        worker,
+        detail: error.to_string(),
+    }
 }
 
-fn completion_worker_results(results: Vec<(WorkerId, Result<(), RuntimeError>)>) -> (Vec<ShutdownWorkerResult>, Vec<ShutdownIssue>) {
+fn completion_worker_results(
+    results: Vec<(WorkerId, Result<(), RuntimeError>)>,
+) -> (Vec<ShutdownWorkerResult>, Vec<ShutdownIssue>) {
     let mut issues = Vec::new();
-    let workers = results.into_iter().map(|(who, result)| {
-        let result = result.map_err(|error| error.to_string());
-        if let Err(detail) = &result {
-            issues.push(ShutdownIssue { stage: "worker_join".to_owned(), worker: Some(who.to_string()), detail: detail.clone() });
-        }
-        ShutdownWorkerResult { worker: who.to_string(), result }
-    }).collect();
+    let workers = results
+        .into_iter()
+        .map(|(who, result)| {
+            let result = result.map_err(|error| error.to_string());
+            if let Err(detail) = &result {
+                issues.push(ShutdownIssue {
+                    stage: "worker_join".to_owned(),
+                    worker: Some(who.to_string()),
+                    detail: detail.clone(),
+                });
+            }
+            ShutdownWorkerResult {
+                worker: who.to_string(),
+                result,
+            }
+        })
+        .collect();
     (workers, issues)
 }
 

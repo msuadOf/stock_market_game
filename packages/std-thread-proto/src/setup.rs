@@ -223,13 +223,12 @@ pub fn build_roster(
         );
         push(npc, &mut npcs, &mut allocated);
     }
-    let remainder = spec
-        .float_shares
-        .checked_sub(allocated)
-        .ok_or_else(|| ProtoError::InvalidConfig(format!(
+    let remainder = spec.float_shares.checked_sub(allocated).ok_or_else(|| {
+        ProtoError::InvalidConfig(format!(
             "股票 {} 切分溢出：float={} allocated={}",
             spec.code, spec.float_shares, allocated
-        )))?;
+        ))
+    })?;
     Ok((npcs, remainder))
 }
 

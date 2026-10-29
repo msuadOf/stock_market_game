@@ -294,7 +294,9 @@ impl super::GameSession {
                 .entry(pending.account)
                 .or_default();
             // 单调校验（防御式：同 id 重复=Continue 双投影的结构性 bug）。
-            if history.last().is_some_and(|last| last.receipt_id >= pending.confirmation.receipt_id)
+            if history
+                .last()
+                .is_some_and(|last| last.receipt_id >= pending.confirmation.receipt_id)
             {
                 return Err(format!(
                     "个人确认 receipt_id 回退或重复：last>={:?} 新={}",

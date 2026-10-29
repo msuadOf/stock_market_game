@@ -38,17 +38,17 @@ fn publication_v0_then_monotonic_tick_sequence() {
     assert_eq!(v0.global.committed_tick, 0);
     assert_eq!(v0.desks.len(), 2, "分片数=股数");
     assert!(v0.groups.is_empty(), "P1 组分片占位恒空");
-    assert!(v0.events.seq_to <= v0.events.seq_from, "P1 事件段占位为空段");
+    assert!(
+        v0.events.seq_to <= v0.events.seq_from,
+        "P1 事件段占位为空段"
+    );
 
     world.run_ticks(5).expect("5 tick");
     let v5 = publication.load();
     assert_eq!(v5.tick, 5);
     assert_eq!(v5.global.committed_tick, 5, "global 与版本身份同拍");
     for shard in &v5.desks {
-        assert_eq!(
-            u64::from(shard.stock), shard.stock as u64,
-            "分片身份自洽"
-        );
+        assert_eq!(u64::from(shard.stock), shard.stock as u64, "分片身份自洽");
     }
     world.shutdown().expect("关停");
 }
@@ -79,11 +79,18 @@ fn publication_concurrent_reader_zero_tears() {
                 let version = publication.load();
                 reads.fetch_add(1, Ordering::Relaxed);
                 if version.tick != version.global.committed_tick {
-                    eprintln!("违约[tick!=global]: tick={} global={}", version.tick, version.global.committed_tick);
+                    eprintln!(
+                        "违约[tick!=global]: tick={} global={}",
+                        version.tick, version.global.committed_tick
+                    );
                     violations.fetch_add(1, Ordering::Relaxed);
                 }
                 if version.desks.len() != 2 {
-                    eprintln!("违约[分片数]: tick={} desks={}", version.tick, version.desks.len());
+                    eprintln!(
+                        "违约[分片数]: tick={} desks={}",
+                        version.tick,
+                        version.desks.len()
+                    );
                     violations.fetch_add(1, Ordering::Relaxed);
                 }
                 if version.tick < last_tick {
@@ -96,10 +103,9 @@ fn publication_concurrent_reader_zero_tears() {
     }
     world.run_ticks(30).expect("首日30拍发布保持一致");
     world.run_day_end_public().expect("显式首日市场日终");
-    let next_date = calendar.next_trading_day(
-        crate::calendar::CalendarExchange::Sse,
-        first_date,
-    ).unwrap();
+    let next_date = calendar
+        .next_trading_day(crate::calendar::CalendarExchange::Sse, first_date)
+        .unwrap();
     world.set_civil_date(next_date);
     world.run_ticks(30).expect("第二日30拍发布保持一致");
     stop.store(true, Ordering::Relaxed);
@@ -107,7 +113,10 @@ fn publication_concurrent_reader_zero_tears() {
         reader.join().expect("读者线程合并");
     }
     let total_reads = reads.load(Ordering::Relaxed);
-    assert!(total_reads > 100, "锤击读者应有足量读（实际 {total_reads}）");
+    assert!(
+        total_reads > 100,
+        "锤击读者应有足量读（实际 {total_reads}）"
+    );
     assert_eq!(
         violations.load(Ordering::Relaxed),
         0,
@@ -133,17 +142,18 @@ fn publication_failed_tick_never_published() {
     let failed = world.run_ticks(1);
     assert!(failed.is_err(), "validator 拒绝必须显式失败");
     let after = publication.load();
-    assert_eq!(
-        after.tick, 3,
-        "失败 tick 零外泄——读者仍见 N-1 版本"
-    );
+    assert_eq!(after.tick, 3, "失败 tick 零外泄——读者仍见 N-1 版本");
     assert_eq!(
         after.global.committed_tick, 3,
         "全局域与发布版本一致（candidate 不触碰权威）"
     );
     assert_eq!(
         after.hashes.desks.len(),
-        world.report_log.last().map(|r| r.desk_hashes.len()).unwrap_or(0),
+        world
+            .report_log
+            .last()
+            .map(|r| r.desk_hashes.len())
+            .unwrap_or(0),
         "发布版本哈希族与 report_log 末条一致"
     );
     world.shutdown().expect("关停");
@@ -238,11 +248,7 @@ fn publication_group_belief_shard_matches_group_authority() {
     world.run_ticks(3).expect("3 tick");
     let version = world.publication().load();
     assert_eq!(version.tick, 3);
-    assert_eq!(
-        version.groups.len(),
-        2,
-        "组数=2——分片齐"
-    );
+    assert_eq!(version.groups.len(), 2, "组数=2——分片齐");
     // 行级对账：发布条目逐一与组权威同位行相等（Seal 后权威面）。
     let authority = world.collect_group_belief().expect("组权威读面");
     for shard in &version.groups {
@@ -257,10 +263,7 @@ fn publication_group_belief_shard_matches_group_authority() {
                 .find(|(l, _)| l == local)
                 .map(|(_, s)| s)
                 .unwrap_or_else(|| {
-                    panic!(
-                        "发布分片行 (组{}, local{local}) 在组权威缺席",
-                        shard.group
-                    )
+                    panic!("发布分片行 (组{}, local{local}) 在组权威缺席", shard.group)
                 });
             assert_eq!(
                 snapshot, matching,

@@ -27,11 +27,14 @@ use super::protocol::{RuntimeError, WorkerId};
 #[cfg(target_family = "wasm")]
 mod wasm;
 #[cfg(target_family = "wasm")]
-pub use wasm::{init_wasm_wait, wasm_wait_abort_layout, recv_deadline, spin_config, worker_recv, worker_recv_spin, WasmWaitAbortLayout};
-#[cfg(target_family = "wasm")]
 pub(crate) use wasm::require_wasm_wait_initialized;
+#[cfg(target_family = "wasm")]
+pub use wasm::{
+    init_wasm_wait, recv_deadline, spin_config, wasm_wait_abort_layout, worker_recv,
+    worker_recv_spin, WasmWaitAbortLayout,
+};
 #[cfg(all(target_family = "wasm", feature = "verification-harness"))]
-pub(crate) use wasm::{verify_worker_recv, verify_coordinator_recv, verify_host_aborted};
+pub(crate) use wasm::{verify_coordinator_recv, verify_host_aborted, verify_worker_recv};
 
 /// 等待相位：决定看门狗阈值档位。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

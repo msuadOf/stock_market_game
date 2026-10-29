@@ -85,7 +85,9 @@ fn simple_preferences_read_is_pure_and_edit_only_changes_both_configs() {
             .publication()
     ));
     let after = game.save().unwrap();
-    before.company_state.system_for_test_mut()
+    before
+        .company_state
+        .system_for_test_mut()
         .set_simple_preferences(&COMPANY, preferences())
         .unwrap();
     let Some(CompanySystemConfig::Simple(config)) = &mut before.setup.company_system else {
@@ -323,7 +325,8 @@ fn simple_preferences_restore_rejects_one_sided_config_edits_in_memory_and_json(
             };
             config.companies[0].preferences = preferences();
         } else {
-            save.company_state.system_for_test_mut()
+            save.company_state
+                .system_for_test_mut()
                 .set_simple_preferences(&COMPANY, preferences())
                 .unwrap();
         }

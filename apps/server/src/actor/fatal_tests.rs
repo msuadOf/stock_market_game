@@ -149,10 +149,11 @@ async fn session_manager_defaults_without_compute_injection() {
     /// 断言：默认构造可用且 new_session 正常登记。
     let manager = SessionManager::with_base_ms(1);
     let setup = fixture::civil_setup(engine::CivilDate::from_iso("2030-01-02").unwrap());
-    let id = manager.new_session(setup, 7).expect("default manager creates sessions");
+    let id = manager
+        .new_session(setup, 7)
+        .expect("default manager creates sessions");
     assert!(manager.sessions.contains_key(&id));
 }
-
 
 #[tokio::test]
 async fn new_session_capacity_limit_still_guards_registration() {
@@ -167,7 +168,6 @@ async fn new_session_capacity_limit_still_guards_registration() {
     assert_eq!(manager.active_session_count(), 1);
     assert_eq!(manager.sessions.len(), 1);
 }
-
 
 #[tokio::test]
 async fn shared_ingress_receives_player_without_actor_command_polling() {
@@ -272,10 +272,16 @@ fn assert_failed_cycle_preserves_business_and_ingress_facts(
         .remove("ingress_receipt_cursors")
         .unwrap();
     if successful_steps == 0 {
-        assert_eq!(after_business, before_business, "没有成功 tick 时业务事实和未消费 receipt 不变");
+        assert_eq!(
+            after_business, before_business,
+            "没有成功 tick 时业务事实和未消费 receipt 不变"
+        );
     } else {
-        assert_eq!(saved_after.snapshot.tick, saved_before["snapshot"]["tick"].as_u64().unwrap() + successful_steps as u64,
-            "后续失败不能撤销已经成功安装的市场前缀");
+        assert_eq!(
+            saved_after.snapshot.tick,
+            saved_before["snapshot"]["tick"].as_u64().unwrap() + successful_steps as u64,
+            "后续失败不能撤销已经成功安装的市场前缀"
+        );
     }
     let previous: engine::session::IngressReceiptCursors =
         serde_json::from_value(before_cursors.clone()).unwrap();
@@ -384,28 +390,63 @@ async fn capture(successful_steps: usize) {
     let failure = loop {
         let message = receiver.try_recv().unwrap();
         if let Some(update) = &message.update {
-            let ProtocolUpdate::TickBatch(batch) = update else { panic!("失败前缀只能是已提交市场帧") };
+            let ProtocolUpdate::TickBatch(batch) = update else {
+                panic!("失败前缀只能是已提交市场帧")
+            };
             delivered.extend(batch.frames.iter().map(|frame| frame.tick));
             delivered_frames.extend(batch.frames.iter().cloned());
             replay.ingest(update).unwrap();
-        } else { break message; }
+        } else {
+            break message;
+        }
     };
-    assert_eq!(delivered, (1..=successful_steps as u64).map(|offset| before.0 + offset).collect::<Vec<_>>());
+    assert_eq!(
+        delivered,
+        (1..=successful_steps as u64)
+            .map(|offset| before.0 + offset)
+            .collect::<Vec<_>>()
+    );
     assert!(failure.update.is_none());
     assert_eq!(failure.failure.as_ref().unwrap().code, "STEP_FATAL");
-    assert_eq!(failure.failure.as_ref().unwrap().message, "引擎不变量校验失败（原始详情已脱敏）");
-    let after = (actor.game.tick(), actor.game.seq(), actor.game.business_state_hash().unwrap());
+    assert_eq!(
+        failure.failure.as_ref().unwrap().message,
+        "引擎不变量校验失败（原始详情已脱敏）"
+    );
+    let after = (
+        actor.game.tick(),
+        actor.game.seq(),
+        actor.game.business_state_hash().unwrap(),
+    );
     let (expected_saved, expected_origin, expected_business, expected_frames) = {
         let capture = capture.lock().unwrap();
-        (capture.saved.clone().unwrap(), capture.origin.unwrap(), capture.business.unwrap(), capture.frames.clone())
+        (
+            capture.saved.clone().unwrap(),
+            capture.origin.unwrap(),
+            capture.business.unwrap(),
+            capture.frames.clone(),
+        )
     };
-    assert_eq!(serde_json::to_value(actor.game.game().save().unwrap()).unwrap(), expected_saved, "失败处理不能改写同 Session 失败前已提交的全部事实");
+    assert_eq!(
+        serde_json::to_value(actor.game.game().save().unwrap()).unwrap(),
+        expected_saved,
+        "失败处理不能改写同 Session 失败前已提交的全部事实"
+    );
     assert_eq!(actor.game.runtime_mirror_origin(), expected_origin);
-    assert_eq!(actor.game.business_state_hash().unwrap(), expected_business, "真实业务指纹必须与同 Session fatal 返回前完全一致");
-    assert_eq!(serde_json::to_value(&delivered_frames).unwrap(), serde_json::to_value(&expected_frames).unwrap(), "全部成功前缀事实必须原样交付且恰好一次");
+    assert_eq!(
+        actor.game.business_state_hash().unwrap(),
+        expected_business,
+        "真实业务指纹必须与同 Session fatal 返回前完全一致"
+    );
+    assert_eq!(
+        serde_json::to_value(&delivered_frames).unwrap(),
+        serde_json::to_value(&expected_frames).unwrap(),
+        "全部成功前缀事实必须原样交付且恰好一次"
+    );
     assert_eq!(after.0, before.0 + successful_steps as u64);
     assert!(after.1 >= before.1);
-    if successful_steps == 0 { assert_eq!(after, before); }
+    if successful_steps == 0 {
+        assert_eq!(after, before);
+    }
     assert_eq!(actor.public_revision, 4);
     assert_failed_cycle_preserves_business_and_ingress_facts(
         &saved_before,
@@ -530,8 +571,14 @@ async fn capture(successful_steps: usize) {
         civil.refresh.intraday.len(),
         usize::try_from(fixture::TICKS_PER_DAY).unwrap()
     );
-    let expected_prefix = std::iter::once(retained).chain(expected_frames.iter().cloned()).collect::<Vec<_>>();
-    assert_eq!(serde_json::to_value(&civil.refresh.intraday[..expected_prefix.len()]).unwrap(), serde_json::to_value(expected_prefix).unwrap(), "日终 retained 必须保留失败前全部真实帧");
+    let expected_prefix = std::iter::once(retained)
+        .chain(expected_frames.iter().cloned())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        serde_json::to_value(&civil.refresh.intraday[..expected_prefix.len()]).unwrap(),
+        serde_json::to_value(expected_prefix).unwrap(),
+        "日终 retained 必须保留失败前全部真实帧"
+    );
     println!("server failed after {successful_steps} successful steps; committed tick={} seq={}; host_stopped=1; {}", before.0, before.1, serde_json::to_string(&failure).unwrap());
 }
 
@@ -890,7 +937,10 @@ fn zero_step_batch_keeps_progress_origin_and_ingress_facts() {
     let before = serde_json::to_value(actor.game.game().save().unwrap()).unwrap();
     let origin = actor.game.runtime_mirror_origin();
     actor.run_protocol_batch(0);
-    assert_eq!(serde_json::to_value(actor.game.game().save().unwrap()).unwrap(), before);
+    assert_eq!(
+        serde_json::to_value(actor.game.game().save().unwrap()).unwrap(),
+        before
+    );
     assert_eq!(actor.game.runtime_mirror_origin(), origin);
     assert!(actor.game.require_healthy().is_ok());
     assert!(actor.fatal_failure.is_none());

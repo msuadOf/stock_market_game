@@ -42,7 +42,13 @@ fn snap_attention(session: &ProtocolSession) -> AttentionSnap {
         .state
         .npc_attention
         .iter()
-        .map(|(account, state)| (*account, state.next_attention_candidate_tick, state.rng_state))
+        .map(|(account, state)| {
+            (
+                *account,
+                state.next_attention_candidate_tick,
+                state.rng_state,
+            )
+        })
         .collect()
 }
 
@@ -184,7 +190,12 @@ fn force_due_with_base(
 
 /// 只钉 due 调度（tick+rng_state），**不动 base_probability**——用于需要
 /// save/restore 的场景（fault1041：恢复侧按 setup 确定性重建 base，改动即拒）。
-fn force_due_keep_base(session: &mut ProtocolSession, account: AccountId, tick: u64, rng_state: u64) {
+fn force_due_keep_base(
+    session: &mut ProtocolSession,
+    account: AccountId,
+    tick: u64,
+    rng_state: u64,
+) {
     {
         let game = session.game_mut();
         let attention = game
@@ -271,7 +282,10 @@ fn epoch_alignment_first_call_records_entry_and_tail_epochs() {
     // 内嵌自校验（A3：拒绝侧构造显式 probe 自校验）。
     {
         let (accepted, _) = probe_attention(&session, b, 0);
-        assert!(!accepted, "B 的 rng={b_rng} 应在 epoch 0 拒绝（fixture 前提）");
+        assert!(
+            !accepted,
+            "B 的 rng={b_rng} 应在 epoch 0 拒绝（fixture 前提）"
+        );
     }
     let attention_before = snap_attention(&session);
     // 逐 epoch 冻结 signal（v3·发现 1）：D(0) 的观察基 = S_0——首拍 step 前
@@ -291,7 +305,11 @@ fn epoch_alignment_first_call_records_entry_and_tail_epochs() {
         probe_chain_from(&session, a, &attention_before, &[(0, signal_at_epoch0)]);
     let (accepts_b, state_b) =
         probe_chain_from(&session, b, &attention_before, &[(0, signal_at_epoch0)]);
-    assert_eq!(accepts_a, vec![true], "A base=1.0 epoch 0 接受（首调用仅 D(0)）");
+    assert_eq!(
+        accepts_a,
+        vec![true],
+        "A base=1.0 epoch 0 接受（首调用仅 D(0)）"
+    );
     assert!(!accepts_b[0], "B epoch 0 拒绝（probe oracle）");
     let after_a = attention_after
         .iter()
@@ -308,16 +326,11 @@ fn epoch_alignment_first_call_records_entry_and_tail_epochs() {
     // 其额外抽样使受理账户的 rng 终值不可由纯 evaluate probe 预测；A3 §一
     // 「rng_state 变化次数仅作辅助」口径。
     assert_eq!(
-        after_a.1,
-        state_a0.next_attention_candidate_tick,
+        after_a.1, state_a0.next_attention_candidate_tick,
         "A 类：A epoch 0 恰一次评估（首调用 next=probe[0] 链）"
     );
     assert!(
-        after_a.2 != attention_before
-            .iter()
-            .find(|(x, _, _)| *x == a)
-            .unwrap()
-            .2,
+        after_a.2 != attention_before.iter().find(|(x, _, _)| *x == a).unwrap().2,
         "A 类（辅助）：A 的 RNG 流确有推进"
     );
     assert_eq!(
@@ -349,7 +362,10 @@ fn epoch_alignment_first_call_records_entry_and_tail_epochs() {
     // epoch 事实移至第二拍见证（覆盖不删）。
     let save = session.game().save().unwrap();
     assert!(
-        serde_json::to_value(&save).unwrap().get("pending_npc").is_none(),
+        serde_json::to_value(&save)
+            .unwrap()
+            .get("pending_npc")
+            .is_none(),
         "B 类（新契约）：step 返回不携带跨 tick 批次"
     );
     // 第二拍：D(1) 于 (1→2) 调用入口现算——A（base=1 链式 due）恰一次评估，
@@ -373,7 +389,13 @@ fn epoch_alignment_first_call_records_entry_and_tail_epochs() {
         "A 类：第二拍 D(1) 恰一次评估（[0,1] probe 链闭合；全窗 A 恰两次）"
     );
     let save2 = session.game().save().unwrap();
-    assert!(serde_json::to_value(&save2).unwrap().get("pending_npc").is_none(), "B 类（新契约）：第二拍后 pending 仍 None");
+    assert!(
+        serde_json::to_value(&save2)
+            .unwrap()
+            .get("pending_npc")
+            .is_none(),
+        "B 类（新契约）：第二拍后 pending 仍 None"
+    );
     // D(1) 受理 ⇒ 终值覆写为 f(1)=step 后权威分钟（v3 精确：最后实际写入=D(1)）。
     let stock_after = &session.game().state.retail_experience[&a]
         .stocks
@@ -430,7 +452,8 @@ fn epoch_alignment_intraday_tick_consumes_one_epoch_and_produces_next() {
     let attention_after = snap_attention(&session);
     // A 类：本调用仅 D(5)（epoch 6 移至第二拍）——probe 链拆分：第一拍 [5]，
     // 第二拍 [5,6]/[6] 闭合（A/B 拆分纪律：epoch 事实 A 类、调用分组 B 类）。
-    let (_, state_a5_first) = probe_chain_from(&session, a, &attention_before, &[(5, signal_at_epoch5)]);
+    let (_, state_a5_first) =
+        probe_chain_from(&session, a, &attention_before, &[(5, signal_at_epoch5)]);
     let (_, state_b6) = probe_chain_from(&session, b, &attention_before, &[(6, signal_at_epoch6)]);
     let after_a = attention_after
         .iter()
@@ -441,8 +464,7 @@ fn epoch_alignment_intraday_tick_consumes_one_epoch_and_produces_next() {
         .find(|(account, _, _)| *account == b)
         .unwrap();
     assert_eq!(
-        after_a.1,
-        state_a5_first.next_attention_candidate_tick,
+        after_a.1, state_a5_first.next_attention_candidate_tick,
         "A 类：第一拍 A 在 epoch 5 恰一次评估（base=1.0 ⇒ 每 tick due，next=[5] 链）"
     );
     // T3（A/B 拆分）：本调用仅 D(5)（epoch 6 移至下一调用，下方第二拍）。
@@ -458,12 +480,18 @@ fn epoch_alignment_intraday_tick_consumes_one_epoch_and_produces_next() {
         stock.last_observed_market_minute, minute_at_epoch5,
         "A 类（v3）：终值==D(5) 的观察分钟 f(5)=100"
     );
-    assert_eq!(minute_at_epoch5, 100, "epoch-5 版本分钟实测锚（fixture 自证）");
+    assert_eq!(
+        minute_at_epoch5, 100,
+        "epoch-5 版本分钟实测锚（fixture 自证）"
+    );
     // B 类：T3 契约重登记——「tick 5 提交后携带 epoch 6 批次」随跨 tick 载体
     // 退役（pending 恒 None）；epoch 6 事实移至第二拍（覆盖不删）。
     let save = session.game().save().unwrap();
     assert!(
-        serde_json::to_value(&save).unwrap().get("pending_npc").is_none(),
+        serde_json::to_value(&save)
+            .unwrap()
+            .get("pending_npc")
+            .is_none(),
         "B 类（新契约）：tick 5 提交后不携带跨 tick 批次"
     );
     // 第二拍 (6→7)：D(6) 入口现算——A（链式 due）恰一次评估受理、B 恰一次
@@ -508,13 +536,7 @@ fn epoch_alignment_intraday_tick_consumes_one_epoch_and_produces_next() {
 #[test]
 fn epoch_alignment_last_tick_does_not_execute_next_day_epoch() {
     let mut session = ProtocolSession::new(active_npc_setup(), 2).unwrap();
-    let accounts: Vec<AccountId> = session
-        .game()
-        .state
-        .npc_attention
-        .keys()
-        .copied()
-        .collect();
+    let accounts: Vec<AccountId> = session.game().state.npc_attention.keys().copied().collect();
     // 全账户钉 due 链：base=1.0 ⇒ 每 epoch due（wait=1），覆盖 0..=3。
     for account in &accounts {
         force_due(&mut session, *account, 0, 3);
@@ -572,7 +594,10 @@ fn epoch_alignment_last_tick_does_not_execute_next_day_epoch() {
         assert!(cursors_ge(&pair[1], &pair[0]), "A 类：游标单调不减");
     }
     // A 类（业务强度·当日）：真实活跃 NPC 产生已受理事实。
-    assert!(npc_accepted_total > 0, "A 类：当日 npc_accepted>0（业务强度）");
+    assert!(
+        npc_accepted_total > 0,
+        "A 类：当日 npc_accepted>0（业务强度）"
+    );
     // A 类（业务强度·次日恢复）：存在账户 next ∈ (4, 8]——次日有真实 due。
     // fixture note：base=1.0 ⇒ wait=1 确定性 ⇒ next==4（恰为日界 epoch-4
     // 的 due）——A3 (4,8] 形态假设 wait>1 可能；取 [4,8] 含边界（业务强度
@@ -594,7 +619,13 @@ fn epoch_alignment_last_tick_does_not_execute_next_day_epoch() {
     // B 类：CivilUpdate 后日终档不带跨日批次、tick==4。
     session.end_civil_day_update().unwrap();
     let daily = session.game().save().unwrap();
-    assert!(serde_json::to_value(&daily).unwrap().get("pending_npc").is_none(), "B 类：日终档不带 pending 批次");
+    assert!(
+        serde_json::to_value(&daily)
+            .unwrap()
+            .get("pending_npc")
+            .is_none(),
+        "B 类：日终档不带 pending 批次"
+    );
     assert_eq!(daily.snapshot.tick, 4);
 }
 
@@ -605,13 +636,7 @@ fn epoch_alignment_last_tick_does_not_execute_next_day_epoch() {
 #[test]
 fn epoch_alignment_after_civil_update_first_tick_evaluates_day_boundary_epoch() {
     let mut session = ProtocolSession::new(active_npc_setup(), 2).unwrap();
-    let accounts: Vec<AccountId> = session
-        .game()
-        .state
-        .npc_attention
-        .keys()
-        .copied()
-        .collect();
+    let accounts: Vec<AccountId> = session.game().state.npc_attention.keys().copied().collect();
     // 只钉调度与 rng，不动 base（restore 校验约束）。
     for account in &accounts {
         force_due_keep_base(&mut session, *account, 0, 3);
@@ -630,7 +655,10 @@ fn epoch_alignment_after_civil_update_first_tick_evaluates_day_boundary_epoch() 
     restored
         .game_mut()
         .rebind_compute_for_verification(crate::compute::ComputeContext::with_workers(2).unwrap());
-    let _ = restored.game().compute_context().take_queue_attention_trace();
+    let _ = restored
+        .game()
+        .compute_context()
+        .take_queue_attention_trace();
     // A 类：失败回滚对照——首 tick 失败不消耗 NPC 随机流。
     let attention_at_restore = snap_attention(&restored);
     restored.malformed_frame = true;
@@ -646,7 +674,10 @@ fn epoch_alignment_after_civil_update_first_tick_evaluates_day_boundary_epoch() 
         "A 类：首 tick 失败不消耗权威随机流（attention 逐位不变）"
     );
     assert!(
-        serde_json::to_value(&restored.game().save().unwrap()).unwrap().get("pending_npc").is_none(),
+        serde_json::to_value(&restored.game().save().unwrap())
+            .unwrap()
+            .get("pending_npc")
+            .is_none(),
         "A 类：失败 tick 不安装批次"
     );
     restored.malformed_frame = false;
@@ -678,8 +709,12 @@ fn epoch_alignment_after_civil_update_first_tick_evaluates_day_boundary_epoch() 
     let signal_at_epoch4 = frozen_signal(&restored);
     let mut oracle_states = Vec::new();
     for (account, _) in &accepting {
-        let (accepts4, probed4) =
-            probe_chain_from(&restored, *account, &attention_at_inject, &[(4, signal_at_epoch4)]);
+        let (accepts4, probed4) = probe_chain_from(
+            &restored,
+            *account,
+            &attention_at_inject,
+            &[(4, signal_at_epoch4)],
+        );
         assert!(accepts4[0], "注入 rng 应使 epoch 4 接受（自校验）");
         oracle_states.push((*account, probed4));
     }
@@ -687,7 +722,10 @@ fn epoch_alignment_after_civil_update_first_tick_evaluates_day_boundary_epoch() 
     let attention_after_day2_first = snap_attention(&restored);
     // B 类（新契约）：跨 tick 载体退役——首调用后 pending 恒 None。
     assert!(
-        serde_json::to_value(&restored.game().save().unwrap()).unwrap().get("pending_npc").is_none(),
+        serde_json::to_value(&restored.game().save().unwrap())
+            .unwrap()
+            .get("pending_npc")
+            .is_none(),
         "B 类（新契约）：次日首调用不携带跨 tick 批次"
     );
     // 分钟精确见证·第一拍（A3 v3·发现 4）：首调用仅 D(4) 受理 ⇒ 受理账户的
@@ -707,7 +745,8 @@ fn epoch_alignment_after_civil_update_first_tick_evaluates_day_boundary_epoch() 
         if let Some(row) = restored.game().state.retail_experience.get(account) {
             for (stock_id, stock) in &row.stocks {
                 assert_eq!(
-                    stock.last_observed_market_minute, 1 * 240,
+                    stock.last_observed_market_minute,
+                    1 * 240,
                     "A 类（v3 分钟精确）：{account:?}/{stock_id:?} 第一拍终值==D(4) 的观察分钟 240"
                 );
             }
@@ -719,9 +758,7 @@ fn epoch_alignment_after_civil_update_first_tick_evaluates_day_boundary_epoch() 
         "A 类：业务强度·次日观察恢复（受理账户经验行更新）"
     );
     assert!(
-        resumed
-            .events()
-            .any(|event| matches!(event,
+        resumed.events().any(|event| matches!(event,
                 Event::OrderAccepted { account, .. } | Event::IntentRejected { account, .. }
                     if observed_accepted.contains(account))),
         "A 类：次日 NPC 请求真实执行"
@@ -732,7 +769,10 @@ fn epoch_alignment_after_civil_update_first_tick_evaluates_day_boundary_epoch() 
     // f(5)=第二拍前的权威分钟（D(5) 的冻结观察基）。
     let minute_at_epoch5_day2 = restored.game().current_market_minute();
     let _ = restored.step_frame_pipeline_contract().unwrap();
-    let trace_day2 = restored.game().compute_context().take_queue_attention_trace();
+    let trace_day2 = restored
+        .game()
+        .compute_context()
+        .take_queue_attention_trace();
     assert!(
         trace_day2.iter().any(|record| record.tick == 5),
         "A 类：第二拍实际评估 D(5)（覆盖不删）"
@@ -784,7 +824,10 @@ fn epoch_alignment_intraday_restore_resumes_exact_pending_epoch() {
     // 「日内必携」分支随批三入口切换失效——批四随字段删除整体改写）。
     let slot = live.save().unwrap();
     assert!(
-        serde_json::to_value(&slot).unwrap().get("pending_npc").is_none(),
+        serde_json::to_value(&slot)
+            .unwrap()
+            .get("pending_npc")
+            .is_none(),
         "B 类（新契约）：日内静点档不携带跨 tick 批次"
     );
     assert_eq!(slot.snapshot.tick, 5, "日内档 tick 锚（fixture 自证）");
@@ -880,11 +923,7 @@ fn cursors_ge(
         }
     }
     for (code, value) in &before.next_stock_ordinal {
-        let after_value = after
-            .next_stock_ordinal
-            .get(code)
-            .copied()
-            .unwrap_or(0);
+        let after_value = after.next_stock_ordinal.get(code).copied().unwrap_or(0);
         if after_value < *value {
             return false;
         }
@@ -916,7 +955,13 @@ fn snap_attention_game(game: &GameSession) -> AttentionSnap {
     game.state
         .npc_attention
         .iter()
-        .map(|(account, state)| (*account, state.next_attention_candidate_tick, state.rng_state))
+        .map(|(account, state)| {
+            (
+                *account,
+                state.next_attention_candidate_tick,
+                state.rng_state,
+            )
+        })
         .collect()
 }
 
@@ -950,28 +995,34 @@ fn epoch_alignment_attention_call_trace_witnesses_one_eval_per_epoch_account() {
     session
         .game_mut()
         .rebind_compute_for_verification(crate::compute::ComputeContext::with_workers(2).unwrap());
-    let _ = session.game().compute_context().take_queue_attention_trace();
-    let accounts: Vec<AccountId> = session
+    let _ = session
         .game()
-        .state
-        .npc_attention
-        .keys()
-        .copied()
-        .collect();
+        .compute_context()
+        .take_queue_attention_trace();
+    let accounts: Vec<AccountId> = session.game().state.npc_attention.keys().copied().collect();
     for account in &accounts {
         force_due(&mut session, *account, 0, 3);
     }
     let mut window: Vec<(u64 /*call*/, Vec<crate::compute::AttentionCallRecord>)> = Vec::new();
     for call in 0..4 {
         session.step_frame_pipeline_contract().unwrap();
-        window.push((call, session.game().compute_context().take_queue_attention_trace()));
+        window.push((
+            call,
+            session
+                .game()
+                .compute_context()
+                .take_queue_attention_trace(),
+        ));
     }
     session.end_civil_day_update().unwrap();
     session.step_frame_pipeline_contract().unwrap();
     // B 类（T3 已重登记）：交易日首次调用=唯一入口生产，单 attempt 单视界
     // {4}（旧形状同窗双 epoch {4,5} 的分组差已消除——t3-stop-register 冲突 1
     // 的形状；D(5) 移至下一调用，覆盖由 epoch 覆盖断言承载）。
-    let day2_first = session.game().compute_context().take_queue_attention_trace();
+    let day2_first = session
+        .game()
+        .compute_context()
+        .take_queue_attention_trace();
     let day2_ticks: std::collections::BTreeSet<u64> =
         day2_first.iter().map(|record| record.tick).collect();
     assert_eq!(
@@ -1015,7 +1066,10 @@ fn epoch_alignment_attention_call_trace_witnesses_one_eval_per_epoch_account() {
     let mut by_attempt: std::collections::BTreeMap<u64, std::collections::BTreeSet<u64>> =
         std::collections::BTreeMap::new();
     for record in window.iter().flat_map(|(_, records)| records.iter()) {
-        by_attempt.entry(record.attempt).or_default().insert(record.tick);
+        by_attempt
+            .entry(record.attempt)
+            .or_default()
+            .insert(record.tick);
     }
     for (attempt, ticks) in &by_attempt {
         assert_eq!(
@@ -1050,19 +1104,28 @@ fn epoch_alignment_rejected_account_rng_is_exact_at_evaluate_boundary() {
     session
         .game_mut()
         .rebind_compute_for_verification(crate::compute::ComputeContext::with_workers(2).unwrap());
-    let _ = session.game().compute_context().take_queue_attention_trace();
+    let _ = session
+        .game()
+        .compute_context()
+        .take_queue_attention_trace();
     let a = AccountId(1);
     let b = AccountId(2);
     force_due(&mut session, a, 0, 3);
     let b_rng = find_rejecting_rng(&session, b, 0, 0.1, 2);
     force_due_with_base(&mut session, b, 0, b_rng, 0.1);
     session.step_frame_pipeline_contract().unwrap();
-    let trace = session.game().compute_context().take_queue_attention_trace();
+    let trace = session
+        .game()
+        .compute_context()
+        .take_queue_attention_trace();
     let record_b = trace
         .iter()
         .find(|record| record.account == b && record.tick == 0)
         .expect("B 在 epoch 0 必须有实际调用见证");
-    assert!(!record_b.accepted, "B 的生产判定=拒绝（与 probe oracle 一致）");
+    assert!(
+        !record_b.accepted,
+        "B 的生产判定=拒绝（与 probe oracle 一致）"
+    );
     let final_b = snap_attention(&session)
         .into_iter()
         .find(|(account, _, _)| *account == b)
@@ -1077,7 +1140,10 @@ fn epoch_alignment_rejected_account_rng_is_exact_at_evaluate_boundary() {
         .find(|record| record.account == a && record.tick == 0)
         .expect("A 在 epoch 0 必须有实际调用见证");
     assert!(record_a.accepted, "A base=1.0 的生产判定=接受");
-    assert_ne!(record_a.rng_before, record_a.rng_after, "A 类：evaluate 边界推进");
+    assert_ne!(
+        record_a.rng_before, record_a.rng_after,
+        "A 类：evaluate 边界推进"
+    );
 }
 
 /// 接受账户的**共享 RNG 终态精确见证**（Astra 入口切换检查点 P1 修复；
@@ -1102,7 +1168,10 @@ fn epoch_alignment_accepted_account_personal_rng_terminal_is_exact() {
     session
         .game_mut()
         .rebind_compute_for_verification(crate::compute::ComputeContext::with_workers(1).unwrap());
-    let _ = session.game().compute_context().take_queue_attention_trace();
+    let _ = session
+        .game()
+        .compute_context()
+        .take_queue_attention_trace();
     let a = AccountId(1);
     // 只钉调度与 rng（不动 base——fault1041：恢复侧按 setup 确定性重建 base，
     // 改动即拒；与场景 4/5 的 keep-base 注入同款）。接受性由
@@ -1124,7 +1193,10 @@ fn epoch_alignment_accepted_account_personal_rng_terminal_is_exact() {
 
     // 1. 调用见证：恰一次 evaluate（trace 内 (A,0) 唯一），accepted，边界
     //    rng_before == step 前权威值。
-    let trace = session.game().compute_context().take_queue_attention_trace();
+    let trace = session
+        .game()
+        .compute_context()
+        .take_queue_attention_trace();
     let records_a: Vec<_> = trace
         .iter()
         .filter(|record| record.account == a && record.tick == 0)
@@ -1135,7 +1207,10 @@ fn epoch_alignment_accepted_account_personal_rng_terminal_is_exact() {
         "A 类：(A, epoch 0) 恰一次 evaluate（实际调用见证）"
     );
     let record = records_a[0];
-    assert!(record.accepted, "A 的生产判定=接受（搜索 rng 的 fixture 前提）");
+    assert!(
+        record.accepted,
+        "A 的生产判定=接受（搜索 rng 的 fixture 前提）"
+    );
     assert_eq!(
         record.rng_before, rng_before,
         "A 类：evaluate 边界前值==step 前权威 rng"
@@ -1188,12 +1263,8 @@ fn epoch_alignment_accepted_account_personal_rng_terminal_is_exact() {
 
     // 补充对拍：evaluate 恰一次的 next 推进与冻结 signal probe 一致（next
     // 链独立于个人分析续抽）。
-    let (accepts, probed) = probe_chain_from(
-        &session,
-        a,
-        &attention_before,
-        &[(0, signal_at_epoch0)],
-    );
+    let (accepts, probed) =
+        probe_chain_from(&session, a, &attention_before, &[(0, signal_at_epoch0)]);
     assert!(accepts[0], "fixture 自校验：probe 判定=接受");
     assert_eq!(
         terminal_live.1, probed.next_attention_candidate_tick,

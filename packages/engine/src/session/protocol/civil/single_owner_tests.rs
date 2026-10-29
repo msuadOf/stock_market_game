@@ -165,12 +165,26 @@ fn disclosure_public_index_and_private_acquisition_stay_separate() {
         starts_on: date,
         expires_on: date.next().unwrap(),
     };
-    std::sync::Arc::make_mut(&mut acquired.state.companies.legacy_mut().expect("此调用仅用于 Legacy 公司状态").operations)
-        .apply_company_shock(&crate::company::CompanyId(0), shock.clone())
-        .unwrap();
-    std::sync::Arc::make_mut(&mut session.state.companies.legacy_mut().expect("此调用仅用于 Legacy 公司状态").operations)
-        .apply_company_shock(&crate::company::CompanyId(0), shock)
-        .unwrap();
+    std::sync::Arc::make_mut(
+        &mut acquired
+            .state
+            .companies
+            .legacy_mut()
+            .expect("此调用仅用于 Legacy 公司状态")
+            .operations,
+    )
+    .apply_company_shock(&crate::company::CompanyId(0), shock.clone())
+    .unwrap();
+    std::sync::Arc::make_mut(
+        &mut session
+            .state
+            .companies
+            .legacy_mut()
+            .expect("此调用仅用于 Legacy 公司状态")
+            .operations,
+    )
+    .apply_company_shock(&crate::company::CompanyId(0), shock)
+    .unwrap();
     assert_ne!(acquired.business_state_hash().unwrap(), business_before);
     assert_eq!(
         acquired.state.library.all_publication_ids().unwrap(),
@@ -275,7 +289,10 @@ fn disclosure_public_index_and_private_acquisition_stay_separate() {
 fn failed_tick_publishes_no_facts_and_retries_from_untouched_cursor() {
     // 旧 serial 注入失败仍可机械重放；真实 runtime terminal 由独立边界测试覆盖。
     let mut session = super::ProtocolSession::new(two_stock_setup(), 64).unwrap();
-    let first = session.step_frame_with_commit_evidence().map(|(frame, _)| frame).unwrap();
+    let first = session
+        .step_frame_with_commit_evidence()
+        .map(|(frame, _)| frame)
+        .unwrap();
     let mut published = std::collections::BTreeSet::new();
     published.extend(
         first
@@ -293,7 +310,10 @@ fn failed_tick_publishes_no_facts_and_retries_from_untouched_cursor() {
             description: "测试注入的失败".into(),
             location: "single_owner_tests".into(),
         });
-    let failure = session.step_frame_with_commit_evidence().map(|(frame, _)| frame).unwrap_err();
+    let failure = session
+        .step_frame_with_commit_evidence()
+        .map(|(frame, _)| frame)
+        .unwrap_err();
     assert!(matches!(
         failure,
         StepFatal::InvariantViolation { ref description, .. } if description == "测试注入的失败"
@@ -301,7 +321,10 @@ fn failed_tick_publishes_no_facts_and_retries_from_untouched_cursor() {
     assert_eq!(session.seq(), before_seq, "失败不得推进权威 seq 游标");
 
     session.rollback(checkpoint).unwrap();
-    let retry = session.step_frame_with_commit_evidence().map(|(frame, _)| frame).unwrap();
+    let retry = session
+        .step_frame_with_commit_evidence()
+        .map(|(frame, _)| frame)
+        .unwrap();
     retry.validate().unwrap();
     for fact in &retry.facts {
         assert!(
@@ -378,7 +401,14 @@ fn real_trade_fact_retains_both_receipt_legs_and_t1_delivery() {
             },
         )
         .unwrap();
-    crate::session::pipeline::staged_decision::stage(crate::session::pipeline::NpcDecisionHandover::new(game.tick(), vec![seller], vec![received], Vec::new()));
+    crate::session::pipeline::staged_decision::stage(
+        crate::session::pipeline::NpcDecisionHandover::new(
+            game.tick(),
+            vec![seller],
+            vec![received],
+            Vec::new(),
+        ),
+    );
     game.enqueue_player_intent(
         AccountId(0),
         Intent::PlaceLimit {

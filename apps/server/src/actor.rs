@@ -115,10 +115,14 @@ fn failure_description(error: &(dyn std::error::Error + 'static)) -> (&'static s
                 "SESSION_STATE_INVALID",
                 "更正完成事实与真实会计和公开版本不一致（原始详情已脱敏）",
             ),
-            SessionError::InvalidSave(fault) if fault.code == engine::error::SAVE_TARGET_DAY_NOT_READY => (
-                "SAVE_TARGET_DAY_NOT_READY",
-                "目标自然日尚未完成日终，当前日存档不可用（原始详情已脱敏）",
-            ),
+            SessionError::InvalidSave(fault)
+                if fault.code == engine::error::SAVE_TARGET_DAY_NOT_READY =>
+            {
+                (
+                    "SAVE_TARGET_DAY_NOT_READY",
+                    "目标自然日尚未完成日终，当前日存档不可用（原始详情已脱敏）",
+                )
+            }
             SessionError::InvalidSave(_) => (
                 "SESSION_STATE_INVALID",
                 "日终存档或协议状态校验失败（原始详情已脱敏）",
@@ -193,7 +197,8 @@ fn failure_description(error: &(dyn std::error::Error + 'static)) -> (&'static s
 }
 
 fn save_error_message(error: SessionError) -> String {
-    if matches!(&error, SessionError::InvalidSave(fault) if fault.code == engine::error::SAVE_TARGET_DAY_NOT_READY) {
+    if matches!(&error, SessionError::InvalidSave(fault) if fault.code == engine::error::SAVE_TARGET_DAY_NOT_READY)
+    {
         let (code, message) = failure_description(&error);
         format!("{code}: {message}")
     } else {
@@ -286,18 +291,27 @@ impl HostFailure {
         failure.code = "REPORT_CORRECTION_PREPARE_REJECTED";
         failure.r#where = "server.actor.prepare_civil_updates".into();
         failure.recoverable = true;
-        failure.recovery_actions = vec!["取消或修正待处理更正后恢复推进并重试日终", "复制脱敏错误详情反馈"];
+        failure.recovery_actions = vec![
+            "取消或修正待处理更正后恢复推进并重试日终",
+            "复制脱敏错误详情反馈",
+        ];
         failure
     }
 
     pub(crate) fn is_correction_prepare_rejected(&self, generation: u64) -> bool {
         self.code == "REPORT_CORRECTION_PREPARE_REJECTED"
             && self.r#where == "server.actor.prepare_civil_updates"
-            && self.recoverable && self.context.operation == "endCivilDay"
-            && self.context.fault.is_none() && self.context.tick.is_some()
-            && self.context.seq.is_some() && self.context.day.is_some()
+            && self.recoverable
+            && self.context.operation == "endCivilDay"
+            && self.context.fault.is_none()
+            && self.context.tick.is_some()
+            && self.context.seq.is_some()
+            && self.context.day.is_some()
             && self.context.generation.as_deref() == Some(generation.to_string().as_str())
-            && self.cause.as_ref().is_some_and(|cause| cause.code == "REPORT_CORRECTION_REJECTED")
+            && self
+                .cause
+                .as_ref()
+                .is_some_and(|cause| cause.code == "REPORT_CORRECTION_REJECTED")
     }
 
     /// B3 远程登录（18725d07 语义）：日终已完成、SQLite 保存失败——上一份
@@ -671,9 +685,15 @@ pub enum MemberRequest {
     /// 本人在途委托。
     WorkingOrders { generation: u64 },
     /// 本人股票历史。
-    History { generation: u64, code: engine::StockId },
+    History {
+        generation: u64,
+        code: engine::StockId,
+    },
     /// 调整入场资金（控制权）。
-    AdmissionCash { generation: u64, cash: engine::Money },
+    AdmissionCash {
+        generation: u64,
+        cash: engine::Money,
+    },
     /// 改速（控制权 Subject 化——取代裸 SetSpeed 的远程形态）。
     SetSpeed { generation: u64, speed: f64 },
     /// 启停（控制权 Subject 化）。
@@ -738,9 +758,7 @@ mod correction_recovery_tests;
 
 #[cfg(test)]
 mod interval_tests {
-    use super::{
-        fixed_tick_duration, gate_deferred_drop_report, SpeedMeter, FASTEST_BATCH_BUDGET,
-    };
+    use super::{fixed_tick_duration, gate_deferred_drop_report, SpeedMeter, FASTEST_BATCH_BUDGET};
     use std::time::Duration;
 
     #[test]
@@ -1016,9 +1034,7 @@ impl SessionHandles {
             )));
         }
         let account = members.get(&subject).copied().ok_or_else(|| {
-            SendCommandError::Rejected(
-                "当前市场没有该主体的成员关系，请确认重新加入".into(),
-            )
+            SendCommandError::Rejected("当前市场没有该主体的成员关系，请确认重新加入".into())
         })?;
         ingress
             .1
@@ -1082,10 +1098,7 @@ impl SessionHandles {
     }
 
     /// 控制权校验（重置/停止/改速等控制面路由共用）。
-    pub async fn require_control(
-        &self,
-        subject: OpaqueSubjectId,
-    ) -> Result<(), SendCommandError> {
+    pub async fn require_control(&self, subject: OpaqueSubjectId) -> Result<(), SendCommandError> {
         match self.member_request(subject, MemberRequest::Control).await? {
             MemberResponse::Control => Ok(()),
             _ => Err(SendCommandError::Rejected("市场控制响应类型错误".into())),
@@ -1186,10 +1199,7 @@ impl SessionHandles {
         cash: engine::Money,
     ) -> Result<(), SendCommandError> {
         match self
-            .member_request(
-                subject,
-                MemberRequest::AdmissionCash { generation, cash },
-            )
+            .member_request(subject, MemberRequest::AdmissionCash { generation, cash })
             .await?
         {
             MemberResponse::Control => Ok(()),
@@ -1228,7 +1238,10 @@ impl SessionHandles {
         match self
             .member_request(
                 subject,
-                MemberRequest::SetRunning { generation, running },
+                MemberRequest::SetRunning {
+                    generation,
+                    running,
+                },
             )
             .await?
         {
@@ -1264,7 +1277,10 @@ impl SessionHandles {
         &self,
         subject: OpaqueSubjectId,
     ) -> Result<Snapshot, SendCommandError> {
-        match self.member_request(subject, MemberRequest::Snapshot).await? {
+        match self
+            .member_request(subject, MemberRequest::Snapshot)
+            .await?
+        {
             MemberResponse::Snapshot(snapshot) => Ok(snapshot),
             _ => Err(SendCommandError::Rejected("成员快照响应类型错误".into())),
         }
@@ -1664,15 +1680,11 @@ impl SessionManager {
     pub fn with_base_ms(base_ms: u64) -> Self {
         Self::with_base_ms_and_database(
             base_ms,
-            native_store::NativeDatabase::open_in_memory()
-                .expect("测试 SQLite 初始化失败"),
+            native_store::NativeDatabase::open_in_memory().expect("测试 SQLite 初始化失败"),
         )
     }
 
-    fn with_base_ms_and_database(
-        base_ms: u64,
-        database: native_store::NativeDatabase,
-    ) -> Self {
+    fn with_base_ms_and_database(base_ms: u64, database: native_store::NativeDatabase) -> Self {
         Self {
             database,
             shared_market_gate: Arc::new(std::sync::Mutex::new(())),
@@ -1803,16 +1815,16 @@ impl SessionManager {
                 return Err(NewSessionError::Text(error.to_string()));
             }
         };
-        let mut controllers: std::collections::BTreeSet<OpaqueSubjectId> =
-            self.database
-                .market_controllers("shared-market")
-                .map_err(|error| {
-                    self.active_count.fetch_sub(1, Ordering::AcqRel);
-                    NewSessionError::Text(error.to_string())
-                })?
-                .into_iter()
-                .filter_map(|subject| OpaqueSubjectId::new(subject).ok())
-                .collect();
+        let mut controllers: std::collections::BTreeSet<OpaqueSubjectId> = self
+            .database
+            .market_controllers("shared-market")
+            .map_err(|error| {
+                self.active_count.fetch_sub(1, Ordering::AcqRel);
+                NewSessionError::Text(error.to_string())
+            })?
+            .into_iter()
+            .filter_map(|subject| OpaqueSubjectId::new(subject).ok())
+            .collect();
         if let Some(creator) = &creator {
             self.database
                 .grant_market_control("shared-market", creator.as_str())
@@ -1947,7 +1959,11 @@ struct SessionActor {
     /// 失效后的降级；日终档不再写）。
     archive: Option<native_store::ArchiveWriter>,
     #[cfg(test)]
-    injected_step_failure: Option<(usize, engine::session::StepFatal, Arc<std::sync::Mutex<StepFailureCapture>>)>,
+    injected_step_failure: Option<(
+        usize,
+        engine::session::StepFatal,
+        Arc<std::sync::Mutex<StepFailureCapture>>,
+    )>,
     pacing: ServerPacing,
     game: ProtocolSession,
     cmd_rx: mpsc::UnboundedReceiver<SessionCommand>,
@@ -1963,12 +1979,16 @@ struct SessionActor {
 
 impl SessionActor {
     fn fatal_rejection(&self) -> Option<SessionError> {
-        self.game.require_healthy().err().map(SessionError::Step).or_else(|| {
-            // 1291 仅表示健康 engine 的 Host fatal；engine poison 必须保留原首错。
-            self.fatal_failure.as_ref().map(|_| {
-                SessionError::InvalidSave(engine::error::ValidationFault::bare(1291))
+        self.game
+            .require_healthy()
+            .err()
+            .map(SessionError::Step)
+            .or_else(|| {
+                // 1291 仅表示健康 engine 的 Host fatal；engine poison 必须保留原首错。
+                self.fatal_failure
+                    .as_ref()
+                    .map(|_| SessionError::InvalidSave(engine::error::ValidationFault::bare(1291)))
             })
-        })
     }
 
     fn step_game(
@@ -1978,14 +1998,17 @@ impl SessionActor {
         let capture = if let Some((remaining, error, capture)) = &mut self.injected_step_failure {
             if *remaining == 0 {
                 let mut observed = capture.lock().unwrap();
-                observed.saved = Some(serde_json::to_value(self.game.game().save().unwrap()).unwrap());
+                observed.saved =
+                    Some(serde_json::to_value(self.game.game().save().unwrap()).unwrap());
                 observed.origin = Some(self.game.runtime_mirror_origin());
                 observed.business = Some(self.game.business_state_hash().unwrap());
                 return Err(error.clone());
             }
             *remaining -= 1;
             Some(Arc::clone(capture))
-        } else { None };
+        } else {
+            None
+        };
         let result = self.game.step_frame();
         #[cfg(test)]
         if let (Some(capture), Ok(frame)) = (capture, &result) {
@@ -2106,9 +2129,15 @@ impl SessionActor {
             }
         }
         if !frames.is_empty() {
-            let range = frames.first().zip(frames.last()).map(|(first, last)| (first.tick, last.tick, first.seq_from, last.seq_to));
+            let range = frames
+                .first()
+                .zip(frames.last())
+                .map(|(first, last)| (first.tick, last.tick, first.seq_from, last.seq_to));
             match self.game.tick_batch(frames) {
-                Ok(batch) => self.broadcast_at(ProtocolUpdate::TickBatch(Box::new(batch)), self.game.civil_date().to_iso()),
+                Ok(batch) => self.broadcast_at(
+                    ProtocolUpdate::TickBatch(Box::new(batch)),
+                    self.game.civil_date().to_iso(),
+                ),
                 Err(error) => {
                     let mut failure = HostFailure::step(&error);
                     Self::describe_unpublished_frames(&mut failure, range);
@@ -2131,14 +2160,27 @@ impl SessionActor {
         }
     }
 
-    fn stop_cycle_with_unpublished_frames(&mut self, frames: Vec<engine::session::protocol::TickFrame>, error: SessionError) {
+    fn stop_cycle_with_unpublished_frames(
+        &mut self,
+        frames: Vec<engine::session::protocol::TickFrame>,
+        error: SessionError,
+    ) {
         let mut failure = HostFailure::civil(&error);
         if !frames.is_empty() {
-            let range = frames.first().zip(frames.last()).map(|(first, last)| (first.tick, last.tick, first.seq_from, last.seq_to));
+            let range = frames
+                .first()
+                .zip(frames.last())
+                .map(|(first, last)| (first.tick, last.tick, first.seq_from, last.seq_to));
             match self.game.tick_batch(frames) {
-                Ok(batch) => self.broadcast_at(ProtocolUpdate::TickBatch(Box::new(batch)), self.game.civil_date().to_iso()),
+                Ok(batch) => self.broadcast_at(
+                    ProtocolUpdate::TickBatch(Box::new(batch)),
+                    self.game.civil_date().to_iso(),
+                ),
                 Err(publication_error) => {
-                    warn!(?publication_error, "fatal 后成功前缀无法通过健康门，保留原首错和未交付范围");
+                    warn!(
+                        ?publication_error,
+                        "fatal 后成功前缀无法通过健康门，保留原首错和未交付范围"
+                    );
                     Self::describe_unpublished_frames(&mut failure, range);
                 }
             }
@@ -2175,22 +2217,35 @@ impl SessionActor {
     }
 
     fn prepare_civil_updates(&mut self) -> Result<(), HostFailure> {
-        while self.game.civil_day_ready().map_err(|error| HostFailure::civil(&error))? {
+        while self
+            .game
+            .civil_day_ready()
+            .map_err(|error| HostFailure::civil(&error))?
+        {
             let date = self.game.civil_date();
             let update = match self.game.end_civil_day_update_classified() {
                 Ok(update) => update,
                 Err(failure) => {
-                    let prepare_rejected = failure.recovery() == engine::session::protocol::CivilRecovery::CorrectionPrepareRejected
-                        && self.fatal_failure.is_none() && self.game.require_healthy().is_ok()
-                        && self.game.civil_date() == date && self.game.civil_day_ready().is_ok_and(|ready| ready);
+                    let prepare_rejected = failure.recovery()
+                        == engine::session::protocol::CivilRecovery::CorrectionPrepareRejected
+                        && self.fatal_failure.is_none()
+                        && self.game.require_healthy().is_ok()
+                        && self.game.civil_date() == date
+                        && self.game.civil_day_ready().is_ok_and(|ready| ready);
                     let error = failure.into_error();
-                    return Err(if prepare_rejected { HostFailure::correction_prepare_rejected(&error) } else { HostFailure::civil(&error) });
+                    return Err(if prepare_rejected {
+                        HostFailure::correction_prepare_rejected(&error)
+                    } else {
+                        HostFailure::civil(&error)
+                    });
                 }
             };
             let pause = self.pause_preferences.pauses(&update);
             // 趁本日候选仍通过健康门时捕获并交付，下一自然日失败不能抹掉成功前缀。
             self.publish_civil_update(update);
-            if pause { break; }
+            if pause {
+                break;
+            }
         }
         Ok(())
     }
@@ -2207,17 +2262,18 @@ impl SessionActor {
         };
         let saved = native_store::DayEndCandidate::capture(&self.game, &key)
             .map_err(|error| error.to_string())
-            .and_then(|slot| writer.save_day_end(&slot).map_err(|error| error.to_string()));
+            .and_then(|slot| {
+                writer
+                    .save_day_end(&slot)
+                    .map_err(|error| error.to_string())
+            });
         if let Err(error) = saved {
             self.stop_with_failure(HostFailure::archive(&error));
         }
     }
 
     /// 控制权门禁：subject 必须在 controllers 集内。
-    fn require_market_control(
-        &self,
-        subject: &OpaqueSubjectId,
-    ) -> Result<(), SendCommandError> {
+    fn require_market_control(&self, subject: &OpaqueSubjectId) -> Result<(), SendCommandError> {
         if self.controllers.contains(subject) {
             Ok(())
         } else {
@@ -2231,7 +2287,10 @@ impl SessionActor {
         &mut self,
         error: Option<&engine::session::protocol::CompanyWriteError>,
     ) -> Option<MemberResponse> {
-        let fatal = self.game.require_healthy().err()
+        let fatal = self
+            .game
+            .require_healthy()
+            .err()
             .or_else(|| error.and_then(|error| error.step_fatal().cloned()))?;
         // 公开 fatal 只含脱敏投影；原 typed cause 在转换前进入可信宿主日志。
         if let Some(error) = error {
@@ -2364,7 +2423,8 @@ impl SessionActor {
                 self.require_market_control(&subject)?;
                 if setup.ticks_per_day != self.game.current_setup().ticks_per_day
                     || setup.auction_ticks != self.game.current_setup().auction_ticks
-                    || setup.closing_auction_ticks != self.game.current_setup().closing_auction_ticks
+                    || setup.closing_auction_ticks
+                        != self.game.current_setup().closing_auction_ticks
                 {
                     return Err(SendCommandError::Rejected(
                         "重置市场的交易时钟配置必须与当前共享会话一致".into(),
@@ -2816,10 +2876,10 @@ impl SessionActor {
                 };
                 let _ = reply.send(result);
             }
-            SessionCommand::Restore { slot, reply } => match self.fatal_rejection().map_or_else(
-                || ProtocolSession::restore(&slot),
-                Err,
-            ) {
+            SessionCommand::Restore { slot, reply } => match self
+                .fatal_rejection()
+                .map_or_else(|| ProtocolSession::restore(&slot), Err)
+            {
                 Ok(restored) => {
                     let next_generation = match self.timeline_generation.checked_add(1) {
                         Some(generation) => generation,
@@ -2847,9 +2907,9 @@ impl SessionActor {
                             // 两段的失败窗会留下部分替换状态）。
                             let mut members = self.members.write().map_err(|_| {
                                 // 1293：成员名册锁中毒（与 ingress 同码域）。
-                                SessionError::ResourceLimit(
-                                    engine::error::ValidationFault::bare(1293),
-                                )
+                                SessionError::ResourceLimit(engine::error::ValidationFault::bare(
+                                    1293,
+                                ))
                             })?;
                             *members = restored.trading_subject_accounts();
                             Ok(())
@@ -3039,7 +3099,9 @@ impl SessionActor {
                 reply,
             } => {
                 let result = if generation != self.timeline_generation {
-                    Err(SendCommandError::Rejected("STALE_SESSION_GENERATION".into()))
+                    Err(SendCommandError::Rejected(
+                        "STALE_SESSION_GENERATION".into(),
+                    ))
                 } else {
                     self.require_market_control(&subject).and_then(|()| {
                         let writer = self.archive.as_ref().ok_or_else(|| {
@@ -3067,7 +3129,9 @@ impl SessionActor {
                 reply,
             } => {
                 let result = if generation != self.timeline_generation {
-                    Err(SendCommandError::Rejected("STALE_SESSION_GENERATION".into()))
+                    Err(SendCommandError::Rejected(
+                        "STALE_SESSION_GENERATION".into(),
+                    ))
                 } else {
                     self.require_market_control(&subject).and_then(|()| {
                         let writer = self.archive.as_ref().ok_or_else(|| {
@@ -3089,7 +3153,9 @@ impl SessionActor {
                 reply,
             } => {
                 let result = if generation != self.timeline_generation {
-                    Err(SendCommandError::Rejected("STALE_SESSION_GENERATION".into()))
+                    Err(SendCommandError::Rejected(
+                        "STALE_SESSION_GENERATION".into(),
+                    ))
                 } else {
                     self.require_market_control(&subject).and_then(|()| {
                         self.archive

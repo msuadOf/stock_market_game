@@ -307,8 +307,7 @@ fn interim_announcement_publishes_at_next_disclosure_phase() {
         announcement.published_at,
         saturday_report.disclosure_instant
     );
-    let engine::information::AnnouncementContent::Shock(announcement_event) =
-        &announcement.content
+    let engine::information::AnnouncementContent::Shock(announcement_event) = &announcement.content
     else {
         panic!("周末冲击公告内容必须是冲击");
     };

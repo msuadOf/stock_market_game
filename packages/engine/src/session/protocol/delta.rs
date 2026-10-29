@@ -343,7 +343,11 @@ mod mirror_origin_tests {
     use super::{origin_is_not_older, validate_mirror_origin};
     use crate::{RuntimeMirrorDayEndStage, RuntimeMirrorOrigin, TradingPhase};
 
-    fn origin(authority_epoch: u64, install_sequence: u64, source_tick: u64) -> RuntimeMirrorOrigin {
+    fn origin(
+        authority_epoch: u64,
+        install_sequence: u64,
+        source_tick: u64,
+    ) -> RuntimeMirrorOrigin {
         RuntimeMirrorOrigin {
             authority_epoch,
             install_sequence,

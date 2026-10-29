@@ -436,7 +436,9 @@ fn index_candidates(
     let mut indexed = BTreeMap::new();
     for candidate in candidates.candidates() {
         if indexed.insert(candidate.key(), candidate).is_some() {
-            return Err(invariant("Continuous DecisionAndContinuation 批次含有重复 key"));
+            return Err(invariant(
+                "Continuous DecisionAndContinuation 批次含有重复 key",
+            ));
         }
     }
     Ok(indexed)

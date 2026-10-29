@@ -367,31 +367,28 @@ mod tests {
         for _threads in [1, 4] {
             // rayon 退役（批 7）：install 的串行等价=直接执行（缩进保留）。
             if true {
-                    let admitted =
-                        admit_ready_batch(candidates.clone(), &mut AccountReceipts::default())
-                            .unwrap();
-                    assert_eq!(admitted.len(), candidates.len());
-                    let position = |index| {
-                        admitted
-                            .iter()
-                            .position(|candidate| {
-                                candidate.key() == &IntentCandidateKey::player(index)
-                            })
-                            .unwrap()
-                    };
-                    assert!(position(0) < position(2));
-                    assert!(position(1) < position(2));
-                    assert!(position(0) < position(3));
-                    assert!(position(1) < position(3));
-                    assert!(position(2) < position(4));
-                    assert_eq!(
-                        admitted
-                            .iter()
-                            .map(IntentCandidate::key)
-                            .collect::<std::collections::BTreeSet<_>>()
-                            .len(),
-                        candidates.len()
-                    );
+                let admitted =
+                    admit_ready_batch(candidates.clone(), &mut AccountReceipts::default()).unwrap();
+                assert_eq!(admitted.len(), candidates.len());
+                let position = |index| {
+                    admitted
+                        .iter()
+                        .position(|candidate| candidate.key() == &IntentCandidateKey::player(index))
+                        .unwrap()
+                };
+                assert!(position(0) < position(2));
+                assert!(position(1) < position(2));
+                assert!(position(0) < position(3));
+                assert!(position(1) < position(3));
+                assert!(position(2) < position(4));
+                assert_eq!(
+                    admitted
+                        .iter()
+                        .map(IntentCandidate::key)
+                        .collect::<std::collections::BTreeSet<_>>()
+                        .len(),
+                    candidates.len()
+                );
             }
         }
     }

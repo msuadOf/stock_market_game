@@ -55,27 +55,39 @@ impl FeeHelperProbe {
 
     pub(crate) fn reset(&self) {
         if let Some(counts) = &self.0 {
-            counts.buy_reservation.store(0, std::sync::atomic::Ordering::Relaxed);
-            counts.nominal.store(0, std::sync::atomic::Ordering::Relaxed);
+            counts
+                .buy_reservation
+                .store(0, std::sync::atomic::Ordering::Relaxed);
+            counts
+                .nominal
+                .store(0, std::sync::atomic::Ordering::Relaxed);
         }
     }
 
     pub(crate) fn snapshot(&self) -> (usize, usize) {
         self.0.as_ref().map_or((0, 0), |counts| {
-            (counts.buy_reservation.load(std::sync::atomic::Ordering::Relaxed),
-             counts.nominal.load(std::sync::atomic::Ordering::Relaxed))
+            (
+                counts
+                    .buy_reservation
+                    .load(std::sync::atomic::Ordering::Relaxed),
+                counts.nominal.load(std::sync::atomic::Ordering::Relaxed),
+            )
         })
     }
 
     fn record_buy_reservation(&self) {
         if let Some(counts) = &self.0 {
-            counts.buy_reservation.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            counts
+                .buy_reservation
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         }
     }
 
     pub(crate) fn record_nominal(&self) {
         if let Some(counts) = &self.0 {
-            counts.nominal.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            counts
+                .nominal
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         }
     }
 }

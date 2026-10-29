@@ -75,13 +75,24 @@ fn full_year() -> DisclosureReportPeriod {
 
 #[test]
 fn computes_both_disclosed_numerators_over_np_adjusted_weighted_equity() {
-    let DisclosureRoeOutcome::Available(result) = calculate_disclosure_roe(&report(full_year())).unwrap() else {
+    let DisclosureRoeOutcome::Available(result) =
+        calculate_disclosure_roe(&report(full_year())).unwrap()
+    else {
         panic!("positive average equity is available")
     };
 
-    assert_eq!(result.ordinary_roe, DisclosureRoeValue::Available(ratio(576_000, 2_688_000)));
-    assert_eq!(result.adjusted_roe, DisclosureRoeValue::Available(ratio(288_000, 2_688_000)));
-    assert_eq!(result.weighted_average_parent_equity_cents, ratio(2_688_000, 24));
+    assert_eq!(
+        result.ordinary_roe,
+        DisclosureRoeValue::Available(ratio(576_000, 2_688_000))
+    );
+    assert_eq!(
+        result.adjusted_roe,
+        DisclosureRoeValue::Available(ratio(288_000, 2_688_000))
+    );
+    assert_eq!(
+        result.weighted_average_parent_equity_cents,
+        ratio(2_688_000, 24)
+    );
 }
 
 #[test]
@@ -99,7 +110,10 @@ fn weights_equity_change_from_month_after_its_actual_effective_date() {
     let DisclosureRoeOutcome::Available(result) = calculate_disclosure_roe(&input).unwrap() else {
         panic!("positive average equity is available")
     };
-    assert_eq!(result.weighted_average_parent_equity_cents, ratio(2_880_000, 24));
+    assert_eq!(
+        result.weighted_average_parent_equity_cents,
+        ratio(2_880_000, 24)
+    );
 }
 
 #[test]
@@ -109,16 +123,24 @@ fn validates_fact_scope_period_and_future_publication_boundary() {
         start: date(2030, 1, 1),
         end: date(2030, 6, 30),
     };
-    assert!(matches!(calculate_disclosure_roe(&input), Err(DisclosureRoeError::FactPeriodMismatch { .. })));
+    assert!(matches!(
+        calculate_disclosure_roe(&input),
+        Err(DisclosureRoeError::FactPeriodMismatch { .. })
+    ));
 
     let mut input = report(full_year());
-    input.adjusted_parent_net_income.scope =
-        ScopeId::Standalone(MemberId(1));
-    assert!(matches!(calculate_disclosure_roe(&input), Err(DisclosureRoeError::FactScopeMismatch { .. })));
+    input.adjusted_parent_net_income.scope = ScopeId::Standalone(MemberId(1));
+    assert!(matches!(
+        calculate_disclosure_roe(&input),
+        Err(DisclosureRoeError::FactScopeMismatch { .. })
+    ));
 
     let mut future_input = report(full_year());
     future_input.report.published_on = date(2030, 6, 30);
-    assert!(matches!(calculate_disclosure_roe(&future_input), Err(DisclosureRoeError::ReportNotYetEnded { .. })));
+    assert!(matches!(
+        calculate_disclosure_roe(&future_input),
+        Err(DisclosureRoeError::ReportNotYetEnded { .. })
+    ));
 }
 
 #[test]
@@ -138,7 +160,9 @@ fn rejects_total_consolidated_income_mixed_with_parent_equity_basis() {
     input.report.attribution = DisclosureAttributionBasis::ConsolidatedIncludingMinorityInterest;
     assert!(matches!(
         calculate_disclosure_roe(&input),
-        Err(DisclosureRoeError::FactAttributionMismatch { fact: "public report" })
+        Err(DisclosureRoeError::FactAttributionMismatch {
+            fact: "public report"
+        })
     ));
 }
 
@@ -147,69 +171,100 @@ fn refuses_comparative_special_rules_explicitly() {
     // 比较期间特殊处理需要比较期事实输入模型，repo 未登记 → 显式不支持。
     let mut input = report(full_year());
     input.comparative_period = true;
-    assert_eq!(calculate_disclosure_roe(&input), Err(DisclosureRoeError::Unsupported(DisclosureRoeUnsupported::ComparativePeriodSpecialTreatment)));
+    assert_eq!(
+        calculate_disclosure_roe(&input),
+        Err(DisclosureRoeError::Unsupported(
+            DisclosureRoeUnsupported::ComparativePeriodSpecialTreatment
+        ))
+    );
 }
 
 #[test]
 fn same_control_combined_assets_weight_from_period_start_for_ordinary_roe() {
     // 规则9第4条已登记条文：报告期普通 ROE 被合并方净资产自报告期初加权。
     let mut input = report(full_year());
-    input.same_control_combinations.push(SameControlCombination {
-        period: full_year(),
-        scope: scope(),
-        attribution: attribution(),
-        combined_on: date(2030, 4, 1),
-        combined_net_assets: amount(48_000),
-    });
+    input
+        .same_control_combinations
+        .push(SameControlCombination {
+            period: full_year(),
+            scope: scope(),
+            attribution: attribution(),
+            combined_on: date(2030, 4, 1),
+            combined_net_assets: amount(48_000),
+        });
 
     let DisclosureRoeOutcome::Available(result) = calculate_disclosure_roe(&input).unwrap() else {
         panic!("同一控制报告期路径已按已登记条文实现");
     };
     // 普通分母：(100_000×12 + 48_000×12)×2 + 24_000×12 = 3_840_000，除 24。
-    assert_eq!(result.weighted_average_parent_equity_cents, ratio(3_840_000, 24));
-    assert_eq!(result.ordinary_roe, DisclosureRoeValue::Available(ratio(576_000, 3_840_000)));
+    assert_eq!(
+        result.weighted_average_parent_equity_cents,
+        ratio(3_840_000, 24)
+    );
+    assert_eq!(
+        result.ordinary_roe,
+        DisclosureRoeValue::Available(ratio(576_000, 3_840_000))
+    );
 }
 
 #[test]
 fn same_control_combined_assets_weight_from_month_after_combination_for_adjusted_roe() {
     // 规则9第4条已登记条文：报告期扣非 ROE 被合并方净资产自合并日次月起加权。
     let mut input = report(full_year());
-    input.same_control_combinations.push(SameControlCombination {
-        period: full_year(),
-        scope: scope(),
-        attribution: attribution(),
-        combined_on: date(2030, 4, 1),
-        combined_net_assets: amount(48_000),
-    });
+    input
+        .same_control_combinations
+        .push(SameControlCombination {
+            period: full_year(),
+            scope: scope(),
+            attribution: attribution(),
+            combined_on: date(2030, 4, 1),
+            combined_net_assets: amount(48_000),
+        });
 
     let DisclosureRoeOutcome::Available(result) = calculate_disclosure_roe(&input).unwrap() else {
         panic!("同一控制报告期路径已按已登记条文实现");
     };
     // 4月1日合并 → 次月起计权 8 个月：(100_000×12 + 48_000×8)×2 + 24_000×12 = 3_456_000。
-    assert_eq!(result.adjusted_weighted_average_parent_equity_cents, ratio(3_456_000, 24));
-    assert_eq!(result.adjusted_roe, DisclosureRoeValue::Available(ratio(288_000, 3_456_000)));
+    assert_eq!(
+        result.adjusted_weighted_average_parent_equity_cents,
+        ratio(3_456_000, 24)
+    );
+    assert_eq!(
+        result.adjusted_roe,
+        DisclosureRoeValue::Available(ratio(288_000, 3_456_000))
+    );
 }
 
 #[test]
 fn same_control_combination_outside_the_report_period_is_rejected() {
     let mut input = report(full_year());
-    input.same_control_combinations.push(SameControlCombination {
-        period: full_year(),
-        scope: scope(),
-        attribution: attribution(),
-        combined_on: date(2029, 12, 31),
-        combined_net_assets: amount(48_000),
-    });
-    assert!(matches!(calculate_disclosure_roe(&input), Err(DisclosureRoeError::EventOutsidePeriod { .. })));
+    input
+        .same_control_combinations
+        .push(SameControlCombination {
+            period: full_year(),
+            scope: scope(),
+            attribution: attribution(),
+            combined_on: date(2029, 12, 31),
+            combined_net_assets: amount(48_000),
+        });
+    assert!(matches!(
+        calculate_disclosure_roe(&input),
+        Err(DisclosureRoeError::EventOutsidePeriod { .. })
+    ));
 }
 
 #[test]
 fn denominators_coincide_without_same_control_combinations() {
     // 无同一控制事项时两个公式分母一致（既有一般公式行为不回归）。
-    let DisclosureRoeOutcome::Available(result) = calculate_disclosure_roe(&report(full_year())).unwrap() else {
+    let DisclosureRoeOutcome::Available(result) =
+        calculate_disclosure_roe(&report(full_year())).unwrap()
+    else {
         panic!("positive average equity is available")
     };
-    assert_eq!(result.weighted_average_parent_equity_cents, result.adjusted_weighted_average_parent_equity_cents);
+    assert_eq!(
+        result.weighted_average_parent_equity_cents,
+        result.adjusted_weighted_average_parent_equity_cents
+    );
 }
 
 #[test]
@@ -219,12 +274,19 @@ fn zero_profit_with_nonpositive_average_equity_is_unavailable() {
     input.adjusted_parent_net_income.value = amount(0);
     input.opening_parent_equity.value = amount(-100_000);
 
-    assert_eq!(calculate_disclosure_roe(&input).unwrap(), DisclosureRoeOutcome::Available(DisclosureRoeResult {
-        ordinary_roe: DisclosureRoeValue::Unavailable(DisclosureRoeUnavailable::NonPositiveAverageEquity),
-        adjusted_roe: DisclosureRoeValue::Unavailable(DisclosureRoeUnavailable::NonPositiveAverageEquity),
-        weighted_average_parent_equity_cents: ratio(-2_400_000, 24),
-        adjusted_weighted_average_parent_equity_cents: ratio(-2_400_000, 24),
-    }));
+    assert_eq!(
+        calculate_disclosure_roe(&input).unwrap(),
+        DisclosureRoeOutcome::Available(DisclosureRoeResult {
+            ordinary_roe: DisclosureRoeValue::Unavailable(
+                DisclosureRoeUnavailable::NonPositiveAverageEquity
+            ),
+            adjusted_roe: DisclosureRoeValue::Unavailable(
+                DisclosureRoeUnavailable::NonPositiveAverageEquity
+            ),
+            weighted_average_parent_equity_cents: ratio(-2_400_000, 24),
+            adjusted_weighted_average_parent_equity_cents: ratio(-2_400_000, 24),
+        })
+    );
 }
 
 #[test]
@@ -236,9 +298,18 @@ fn zero_profit_with_positive_average_equity_has_zero_roe() {
     let DisclosureRoeOutcome::Available(result) = calculate_disclosure_roe(&input).unwrap() else {
         panic!("positive average equity is available")
     };
-    assert_eq!(result.ordinary_roe, DisclosureRoeValue::Available(ratio(0, 1)));
-    assert_eq!(result.adjusted_roe, DisclosureRoeValue::Available(ratio(0, 1)));
-    assert_eq!(result.weighted_average_parent_equity_cents, ratio(2_400_000, 24));
+    assert_eq!(
+        result.ordinary_roe,
+        DisclosureRoeValue::Available(ratio(0, 1))
+    );
+    assert_eq!(
+        result.adjusted_roe,
+        DisclosureRoeValue::Available(ratio(0, 1))
+    );
+    assert_eq!(
+        result.weighted_average_parent_equity_cents,
+        ratio(2_400_000, 24)
+    );
 }
 
 #[test]
@@ -246,12 +317,19 @@ fn positive_profit_with_nonpositive_average_equity_is_unavailable() {
     let mut input = report(full_year());
     input.opening_parent_equity.value = amount(-200_000);
 
-    assert_eq!(calculate_disclosure_roe(&input).unwrap(), DisclosureRoeOutcome::Available(DisclosureRoeResult {
-        ordinary_roe: DisclosureRoeValue::Unavailable(DisclosureRoeUnavailable::NonPositiveAverageEquity),
-        adjusted_roe: DisclosureRoeValue::Unavailable(DisclosureRoeUnavailable::NonPositiveAverageEquity),
-        weighted_average_parent_equity_cents: ratio(-4_512_000, 24),
-        adjusted_weighted_average_parent_equity_cents: ratio(-4_512_000, 24),
-    }));
+    assert_eq!(
+        calculate_disclosure_roe(&input).unwrap(),
+        DisclosureRoeOutcome::Available(DisclosureRoeResult {
+            ordinary_roe: DisclosureRoeValue::Unavailable(
+                DisclosureRoeUnavailable::NonPositiveAverageEquity
+            ),
+            adjusted_roe: DisclosureRoeValue::Unavailable(
+                DisclosureRoeUnavailable::NonPositiveAverageEquity
+            ),
+            weighted_average_parent_equity_cents: ratio(-4_512_000, 24),
+            adjusted_weighted_average_parent_equity_cents: ratio(-4_512_000, 24),
+        })
+    );
 }
 
 #[test]
@@ -263,8 +341,14 @@ fn a_zero_profit_line_is_unavailable_when_average_equity_is_nonpositive() {
     let DisclosureRoeOutcome::Available(result) = calculate_disclosure_roe(&input).unwrap() else {
         panic!("ROE lines have separate availability")
     };
-    assert_eq!(result.ordinary_roe, DisclosureRoeValue::Unavailable(DisclosureRoeUnavailable::NonPositiveAverageEquity));
-    assert_eq!(result.adjusted_roe, DisclosureRoeValue::Unavailable(DisclosureRoeUnavailable::NonPositiveAverageEquity));
+    assert_eq!(
+        result.ordinary_roe,
+        DisclosureRoeValue::Unavailable(DisclosureRoeUnavailable::NonPositiveAverageEquity)
+    );
+    assert_eq!(
+        result.adjusted_roe,
+        DisclosureRoeValue::Unavailable(DisclosureRoeUnavailable::NonPositiveAverageEquity)
+    );
 }
 
 #[test]
@@ -272,7 +356,10 @@ fn rejects_incomplete_equity_history_instead_of_assuming_no_events() {
     let mut input = report(full_year());
     input.equity_event_history_complete = false;
 
-    assert_eq!(calculate_disclosure_roe(&input), Err(DisclosureRoeError::IncompleteEquityEventHistory));
+    assert_eq!(
+        calculate_disclosure_roe(&input),
+        Err(DisclosureRoeError::IncompleteEquityEventHistory)
+    );
 }
 
 #[test]
@@ -289,14 +376,24 @@ fn rejects_invalid_month_aligned_period_and_effective_date_not_in_period() {
     let DisclosureRoeOutcome::Available(result) = calculate_disclosure_roe(&input).unwrap() else {
         panic!("positive average equity is available")
     };
-    assert_eq!(result.weighted_average_parent_equity_cents, ratio(2_688_000, 24));
+    assert_eq!(
+        result.weighted_average_parent_equity_cents,
+        ratio(2_688_000, 24)
+    );
 
     let mut input = report(full_year());
     input.equity_events.push(ActualEquityEvent {
-        period: full_year(), scope: scope(), attribution: attribution(), effective_on: date(2029, 12, 31),
-        kind: EquityEventKind::Increase, amount: amount(1_000),
+        period: full_year(),
+        scope: scope(),
+        attribution: attribution(),
+        effective_on: date(2029, 12, 31),
+        kind: EquityEventKind::Increase,
+        amount: amount(1_000),
     });
-    assert!(matches!(calculate_disclosure_roe(&input), Err(DisclosureRoeError::EventOutsidePeriod { .. })));
+    assert!(matches!(
+        calculate_disclosure_roe(&input),
+        Err(DisclosureRoeError::EventOutsidePeriod { .. })
+    ));
 }
 
 #[test]
@@ -313,8 +410,14 @@ fn three_month_period_uses_its_actual_month_count() {
     let DisclosureRoeOutcome::Available(result) = calculate_disclosure_roe(&input).unwrap() else {
         panic!("positive average equity is available")
     };
-    assert_eq!(result.weighted_average_parent_equity_cents, ratio(690_000, 6));
-    assert_eq!(result.ordinary_roe, DisclosureRoeValue::Available(ratio(180_000, 690_000)));
+    assert_eq!(
+        result.weighted_average_parent_equity_cents,
+        ratio(690_000, 6)
+    );
+    assert_eq!(
+        result.ordinary_roe,
+        DisclosureRoeValue::Available(ratio(180_000, 690_000))
+    );
 }
 
 #[test]

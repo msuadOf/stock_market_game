@@ -9,26 +9,38 @@ impl GameSession {
         code: &StockId,
         fills: &[OrderFillSettlement],
     ) -> Result<(), StepFatal> {
-        let stock_day = self.stock_calendar_day(*code)?.ok_or_else(|| StepFatal::InvariantViolation {
-            location: "pipeline::adaptive_plan_chain".to_owned(), description: "Closed 证券不可产生执行事实".to_owned(),
-        })?;
+        let stock_day =
+            self.stock_calendar_day(*code)?
+                .ok_or_else(|| StepFatal::InvariantViolation {
+                    location: "pipeline::adaptive_plan_chain".to_owned(),
+                    description: "Closed 证券不可产生执行事实".to_owned(),
+                })?;
         #[cfg(feature = "simulation-diagnostics")]
         let time = self.causal_stock_time(*code, false)?;
         for fill in fills {
-            self.state.plans.record_child_fill(
-                fill.account,
-                code,
-                fill.side,
-                fill.order_id,
-                fill.qty,
-                stock_day,
-            ).map_err(|error| StepFatal::InvariantViolation {
-                location: "pipeline::adaptive_plan_chain".to_owned(), description: error.to_string(),
-            })?;
+            self.state
+                .plans
+                .record_child_fill(
+                    fill.account,
+                    code,
+                    fill.side,
+                    fill.order_id,
+                    fill.qty,
+                    stock_day,
+                )
+                .map_err(|error| StepFatal::InvariantViolation {
+                    location: "pipeline::adaptive_plan_chain".to_owned(),
+                    description: error.to_string(),
+                })?;
             #[cfg(feature = "simulation-diagnostics")]
             {
                 self.state.causal.record_continuous_fill(
-                    time, fill.order_id, fill.account, code, fill.qty, fill.gross.cents(),
+                    time,
+                    fill.order_id,
+                    fill.account,
+                    code,
+                    fill.qty,
+                    fill.gross.cents(),
                 );
             }
         }

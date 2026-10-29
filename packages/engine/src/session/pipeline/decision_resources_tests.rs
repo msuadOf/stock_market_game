@@ -54,10 +54,7 @@ fn decision_resources_expired_buy_releases_exactly_one_zero_free_cash_reservatio
         session: &before_expiry,
     })
     .unwrap();
-    let plan = plan_tick(PhaseInput {
-        session: &game,
-    })
-    .unwrap();
+    let plan = plan_tick(PhaseInput { session: &game }).unwrap();
 
     assert_eq!(before_reservation, reservation);
     assert_eq!(
@@ -102,10 +99,7 @@ fn decision_resources_expired_sell_releases_exactly_one_fully_reserved_position(
         session: &before_expiry,
     })
     .unwrap();
-    let plan = plan_tick(PhaseInput {
-        session: &game,
-    })
-    .unwrap();
+    let plan = plan_tick(PhaseInput { session: &game }).unwrap();
 
     assert_eq!(reserved, sellable_before);
     assert_eq!(
@@ -139,10 +133,7 @@ fn decision_resources_expired_sell_releases_exactly_one_fully_reserved_position(
 #[test]
 fn decision_resources_subtracts_live_buy_and_sell_reservations_and_rejects_unknown_keys() {
     let (buy_game, buy_account, buy_code) = decision_resources_fixture(crate::Side::Buy, false);
-    let buy_plan = plan_tick(PhaseInput {
-        session: &buy_game,
-    })
-    .unwrap();
+    let buy_plan = plan_tick(PhaseInput { session: &buy_game }).unwrap();
     assert!(
         buy_plan
             .decision_resources()
@@ -270,21 +261,15 @@ fn decision_resources_mixed_books_ignore_plan_legs_and_keep_seller_cash_unreserv
         .install_execution(plan_id, 100, crate::Money::from_cents(980), 240)
         .unwrap();
 
-    let plan = plan_tick(PhaseInput {
-        session: &game,
-    })
-    .unwrap();
+    let plan = plan_tick(PhaseInput { session: &game }).unwrap();
     let allocation = plan.decision_resources().unwrap();
 
     assert_eq!(allocation.available_cash(seller).unwrap(), seller_cash);
     assert_eq!(allocation.available_sell_qty(seller, &code).unwrap(), 0);
     assert!(allocation.available_cash(player).unwrap() < player_cash);
     // 执行腿只描述已提交子单，不重复冻结资产：与无计划腿的基线一致。
-    let mut without_leg = GameSession::new(
-        crate::session::npc_working_quote_tests::quote_setup(2),
-        42,
-    )
-    .unwrap();
+    let mut without_leg =
+        GameSession::new(crate::session::npc_working_quote_tests::quote_setup(2), 42).unwrap();
     without_leg
         .fixture_account_mut(&seller)
         .unwrap()
@@ -315,7 +300,10 @@ fn decision_resources_mixed_books_ignore_plan_legs_and_keep_seller_cash_unreserv
         },
         &mut plain_events,
     );
-    let baseline = plan_tick(PhaseInput { session: &without_leg }).unwrap();
+    let baseline = plan_tick(PhaseInput {
+        session: &without_leg,
+    })
+    .unwrap();
     assert_eq!(
         allocation.available_cash(player).unwrap(),
         baseline
@@ -391,10 +379,7 @@ fn seals_complete_decision_resources_from_post_quote_expiry_shadow() {
         .unwrap();
     let before = game.business_state_hash().unwrap();
 
-    let plan = plan_tick(PhaseInput {
-        session: &game,
-    })
-    .unwrap();
+    let plan = plan_tick(PhaseInput { session: &game }).unwrap();
     let resources = plan.decision_resources().unwrap();
 
     assert_eq!(resources.raw_cash(account).unwrap(), raw_cash);
@@ -465,9 +450,7 @@ fn decision_resource_equity_overflow_fails_closed_without_authority_mutation() {
         .fixture_set_last_price(crate::Money::from_cents(i64::MAX));
     let before = game.business_state_hash().unwrap();
 
-    let error = match plan_tick(PhaseInput {
-        session: &game,
-    }) {
+    let error = match plan_tick(PhaseInput { session: &game }) {
         Ok(_) => panic!("资产溢出必须使 SealAllocationSnapshot 密封失败"),
         Err(error) => error,
     };
@@ -635,10 +618,9 @@ fn decision_resources_parallel_equity_failures_reject_overflow() {
         .unwrap()
         .fixture_set_last_price(crate::Money::from_cents(i64::MAX));
     let run = |threads, session: &GameSession| {
-        crate::compute::ComputeContext::from_workers(threads)
-            .install(|| {
-                DecisionResourceSnapshot::seal(session).expect_err("equity overflow must fail")
-            })
+        crate::compute::ComputeContext::from_workers(threads).install(|| {
+            DecisionResourceSnapshot::seal(session).expect_err("equity overflow must fail")
+        })
     };
     for threads in [1, 4] {
         assert!(matches!(

@@ -180,7 +180,10 @@ impl GameSession {
         self.state
             .envelope_ledger
             .apply_in(&mut receipts, &compute)?;
-        let terminal_keys: Vec<_> = prepared.iter().map(|(_, envelope)| envelope.clone()).collect();
+        let terminal_keys: Vec<_> = prepared
+            .iter()
+            .map(|(_, envelope)| envelope.clone())
+            .collect();
         self.state
             .envelope_ledger
             .remove_terminal_in(&terminal_keys, &compute)?;

@@ -61,7 +61,8 @@ fn calculate_indicators(
     prices: Vec<f64>,
     candles: Vec<engine::indicators::OhlcBar>,
 ) -> Result<engine::indicators::IndicatorResults, String> {
-    engine::indicators::calculate_indicators(&prices, &candles, None).map_err(|error| error.to_string())
+    engine::indicators::calculate_indicators(&prices, &candles, None)
+        .map_err(|error| error.to_string())
 }
 
 // ── Tauri 命令 ──────────────────────────────────────────────────────────────
@@ -149,7 +150,9 @@ async fn engine_baseline(
     session_id: String,
     generation: String,
 ) -> Result<actor::RestoreResult, BaselineIpcError> {
-    let handles = lookup_handles(&state, &session_id).await.map_err(map_send_error)?;
+    let handles = lookup_handles(&state, &session_id)
+        .await
+        .map_err(map_send_error)?;
     handles
         .query_baseline(parse_generation(generation)?)
         .await
@@ -235,11 +238,11 @@ async fn company_read_query(
     generation: String,
     query: engine::session::protocol::CompanyReadQuery,
 ) -> Result<actor::CompanyReadResponse, CompanyReadIpcError> {
-    let handles = lookup_handles(&state, &session_id)
-        .await
-        .map_err(|error| CompanyReadIpcError::Session {
+    let handles = lookup_handles(&state, &session_id).await.map_err(|error| {
+        CompanyReadIpcError::Session {
             message: error.to_string(),
-        })?;
+        }
+    })?;
     let generation =
         parse_generation(generation).map_err(|message| CompanyReadIpcError::Session { message })?;
     handles
@@ -263,9 +266,11 @@ async fn propose_player_company_action(
     generation: String,
     proposal: engine::session::PlayerCompanyProposal,
 ) -> Result<actor::CompanyProposalResponse, actor::CompanyWriteHostFailure> {
-    let handles = lookup_handles(&state, &session_id)
-        .await
-        .map_err(|error| actor::CompanyWriteHostFailure::Session { message: error.to_string() })?;
+    let handles = lookup_handles(&state, &session_id).await.map_err(|error| {
+        actor::CompanyWriteHostFailure::Session {
+            message: error.to_string(),
+        }
+    })?;
     let generation = parse_generation(generation)
         .map_err(|message| actor::CompanyWriteHostFailure::Session { message })?;
     handles
@@ -284,9 +289,11 @@ async fn enqueue_report_correction(
     generation: String,
     request: engine::session::CompanyReportCorrection,
 ) -> Result<actor::ReportCorrectionResponse, actor::CompanyWriteHostFailure> {
-    let handles = lookup_handles(&state, &session_id)
-        .await
-        .map_err(|error| actor::CompanyWriteHostFailure::Session { message: error.to_string() })?;
+    let handles = lookup_handles(&state, &session_id).await.map_err(|error| {
+        actor::CompanyWriteHostFailure::Session {
+            message: error.to_string(),
+        }
+    })?;
     let generation = parse_generation(generation)
         .map_err(|message| actor::CompanyWriteHostFailure::Session { message })?;
     handles
@@ -305,9 +312,11 @@ async fn cancel_report_correction(
     generation: String,
     operation_id: String,
 ) -> Result<actor::ReportCorrectionResponse, actor::CompanyWriteHostFailure> {
-    let handles = lookup_handles(&state, &session_id)
-        .await
-        .map_err(|error| actor::CompanyWriteHostFailure::Session { message: error.to_string() })?;
+    let handles = lookup_handles(&state, &session_id).await.map_err(|error| {
+        actor::CompanyWriteHostFailure::Session {
+            message: error.to_string(),
+        }
+    })?;
     let generation = parse_generation(generation)
         .map_err(|message| actor::CompanyWriteHostFailure::Session { message })?;
     handles
@@ -397,7 +406,9 @@ async fn restore_session(
     generation: String,
     slot: SaveSlot,
 ) -> Result<actor::RestoreResult, BaselineIpcError> {
-    let handles = lookup_handles(&state, &session_id).await.map_err(map_send_error)?;
+    let handles = lookup_handles(&state, &session_id)
+        .await
+        .map_err(map_send_error)?;
     handles
         .restore(parse_generation(generation)?, slot)
         .await

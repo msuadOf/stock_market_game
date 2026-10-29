@@ -149,14 +149,21 @@ fn closed_limit_keeps_public_assets_serial_and_plan_projection_unchanged() {
     // 首次静点接管会建立 desk cursor；目标请求前先取得同一 authority 的真实基线。
     let warmup = fixture.session.step().expect("无意图首拍完成真实 handover");
     assert_eq!(fixture.session.tick(), 1);
-    assert!(!warmup.iter().any(|event| matches!(event,
-        Event::OrderAccepted { .. } | Event::OrderCanceled { .. } | Event::Trade { .. }
-    )), "无意图正控不能先产生订单或成交");
+    assert!(
+        !warmup.iter().any(|event| matches!(
+            event,
+            Event::OrderAccepted { .. } | Event::OrderCanceled { .. } | Event::Trade { .. }
+        )),
+        "无意图正控不能先产生订单或成交"
+    );
     let before = fixture
         .session
         .save()
         .expect("健康内存投影，不用于跨日restore");
-    assert!(before.book_next_sequences[&fixture.closed] > 0, "正控须已安装真实 desk cursor");
+    assert!(
+        before.book_next_sequences[&fixture.closed] > 0,
+        "正控须已安装真实 desk cursor"
+    );
     assert!(before.resting_orders.values().all(Vec::is_empty));
     let account_before = fixture.session.snapshot().accounts[&AccountId(0)].clone();
     fixture
@@ -267,8 +274,14 @@ fn open_limit_keeps_existing_acceptance_and_resource_reservation() {
 #[test]
 fn open_unknown_cancel_keeps_existing_already_filled_approximation() {
     let mut fixture = fixture::restore(CalendarExchange::Sse, StockExchange::Shanghai, false);
-    fixture.session.step().expect("无意图首拍建立真实 native authority");
-    let before = fixture.session.save().expect("同 authority 的真实撤单前投影");
+    fixture
+        .session
+        .step()
+        .expect("无意图首拍建立真实 native authority");
+    let before = fixture
+        .session
+        .save()
+        .expect("同 authority 的真实撤单前投影");
     let accounts = fixture.session.snapshot().accounts;
     fixture
         .session
@@ -276,15 +289,29 @@ fn open_unknown_cancel_keeps_existing_already_filled_approximation() {
         .unwrap();
     let events = fixture.session.step().expect("open未知撤单业务回执");
     // native desk 尚未区分本主未知与已结束订单，保留既有明确回执近似。
-    let rejected: Vec<_> = events.iter().filter_map(|event| match event {
-        Event::IntentRejected { account: AccountId(0), code, reason, .. }
-            if *code == fixture.open => Some(reason.clone()),
-        _ => None,
-    }).collect();
+    let rejected: Vec<_> = events
+        .iter()
+        .filter_map(|event| match event {
+            Event::IntentRejected {
+                account: AccountId(0),
+                code,
+                reason,
+                ..
+            } if *code == fixture.open => Some(reason.clone()),
+            _ => None,
+        })
+        .collect();
     assert_eq!(rejected, vec![engine::RejectionReason::OrderAlreadyFilled]);
-    assert!(!events.iter().any(|event| matches!(event,
-        Event::OrderAccepted { .. } | Event::OrderCanceled { .. } | Event::Trade { .. }
-    )), "失败撤单不能产生受理、撤销或成交事实");
+    assert!(
+        !events.iter().any(|event| matches!(
+            event,
+            Event::OrderAccepted { .. } | Event::OrderCanceled { .. } | Event::Trade { .. }
+        )),
+        "失败撤单不能产生受理、撤销或成交事实"
+    );
     assert_eq!(fixture.session.snapshot().accounts, accounts);
-    assert_eq!(fixture.session.save().unwrap().book_next_sequences, before.book_next_sequences);
+    assert_eq!(
+        fixture.session.save().unwrap().book_next_sequences,
+        before.book_next_sequences
+    );
 }

@@ -19,10 +19,11 @@ use crate::market::MarketDelta;
 use crate::session::pipeline::event_collection::EventFact;
 use crate::session::pipeline::private_stock_ledger::PrivateStockLedger;
 use crate::session::pipeline::{
-    EnvelopeKey, EnvelopeReceipt, EventStableKey, IntentCandidateKey, StepFatal,
-    ValidatedOperation,
+    EnvelopeKey, EnvelopeReceipt, EventStableKey, IntentCandidateKey, StepFatal, ValidatedOperation,
 };
-use crate::{DailyCandle, Event, GameConfig, Market, MarketMinuteClose, Money, StockId, TradingPhase};
+use crate::{
+    DailyCandle, Event, GameConfig, Market, MarketMinuteClose, Money, StockId, TradingPhase,
+};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 #[cfg(test)]
 use std::sync::atomic::AtomicUsize;
@@ -524,9 +525,11 @@ impl IncrementalContinuousStockCoordinator {
                 auctions.insert(code, auction);
             }
             prices.insert(code, price);
-            execution_count = execution_count.checked_add(stock_facts.len()).ok_or_else(|| {
-                StockFinishFatal::Other(invariant("增量 StockProcessing 事实数量溢出"))
-            })?;
+            execution_count = execution_count
+                .checked_add(stock_facts.len())
+                .ok_or_else(|| {
+                    StockFinishFatal::Other(invariant("增量 StockProcessing 事实数量溢出"))
+                })?;
             execution_facts.append(&mut stock_facts);
             workers.push(worker);
         }
@@ -621,8 +624,9 @@ impl IncrementalContinuousStockShadow {
         let auction = if self.policy.is_auction() {
             let boundary = boundary
                 .ok_or_else(|| StockFinishFatal::Other(invariant("Auction stock 缺少合法边界")))?;
-            let exchange = exchange
-                .ok_or_else(|| StockFinishFatal::Other(invariant("Auction stock 缺少交易所事实")))?;
+            let exchange = exchange.ok_or_else(|| {
+                StockFinishFatal::Other(invariant("Auction stock 缺少交易所事实"))
+            })?;
             let tail = crate::session::pipeline::book_auction_boundary::finish_book_auction(
                 &mut self.market,
                 &mut self.ledger,
@@ -636,9 +640,9 @@ impl IncrementalContinuousStockShadow {
             self.terminal_keys.extend(tail.terminal_keys);
             for trade in tail.trades {
                 let index = self.next_trade_event_index;
-                self.next_trade_event_index = index.checked_add(1).ok_or_else(|| {
-                    StockFinishFatal::Other(invariant("清算成交事件身份溢出"))
-                })?;
+                self.next_trade_event_index = index
+                    .checked_add(1)
+                    .ok_or_else(|| StockFinishFatal::Other(invariant("清算成交事件身份溢出")))?;
                 self.trades.push(ContinuousTradeFact {
                     stock: *self.market.code(),
                     triggering_sealed_index: 0,
@@ -781,8 +785,7 @@ impl IncrementalContinuousStockShadow {
                 0,
             ));
         } else if boundary.policy.is_auction() {
-            let auction = auction
-                .ok_or_else(|| invariant("竞价 stock 缺少实际边界输出"))?;
+            let auction = auction.ok_or_else(|| invariant("竞价 stock 缺少实际边界输出"))?;
             data.events.push(owned_market_event(
                 Event::AuctionTick {
                     seq: 0,

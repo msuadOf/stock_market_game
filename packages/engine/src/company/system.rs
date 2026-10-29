@@ -1,6 +1,6 @@
 use super::{
-    CompanyId, CompanySpec, api::*, config::CompanySystemConfig, identity::IssuerRegistry,
-    simple::SimpleFundamentals,
+    api::*, config::CompanySystemConfig, identity::IssuerRegistry, simple::SimpleFundamentals,
+    CompanyId, CompanySpec,
 };
 use crate::calendar::CivilDate;
 
@@ -272,7 +272,9 @@ impl CompanySystem {
         company: &CompanyId,
         declaration: super::share_split::ShareSplitDeclaration,
     ) -> Result<bool, CompanySystemError> {
-        let already_declared = self.finance_mut(company)?.declare_share_split(declaration)?;
+        let already_declared = self
+            .finance_mut(company)?
+            .declare_share_split(declaration)?;
         Ok(already_declared)
     }
 
@@ -296,10 +298,8 @@ impl CompanySystem {
         )?;
         if !already_credited {
             if issued_shares_after > issued_shares_before {
-                self.issuers.record_share_issuance(
-                    company,
-                    issued_shares_after - issued_shares_before,
-                )?;
+                self.issuers
+                    .record_share_issuance(company, issued_shares_after - issued_shares_before)?;
             } else if issued_shares_after < issued_shares_before {
                 self.issuers.record_share_cancellation(
                     company,
@@ -404,15 +404,9 @@ impl CompanySystem {
                     plan.event_id
                 )));
             }
-            let issuer = self
-                .issuers
-                .get(&plan.issuer)
-                .ok_or_else(|| {
-                    CompanySystemError::SystemState(format!(
-                        "送转账簿引用未知发行人 {}",
-                        plan.issuer.0
-                    ))
-                })?;
+            let issuer = self.issuers.get(&plan.issuer).ok_or_else(|| {
+                CompanySystemError::SystemState(format!("送转账簿引用未知发行人 {}", plan.issuer.0))
+            })?;
             if issuer.listed_stock.as_ref() != Some(&plan.stock) {
                 return Err(CompanySystemError::SystemState(format!(
                     "送转事件 {} 的证券与发行人不匹配",
@@ -488,8 +482,7 @@ impl CompanySystem {
     pub fn rights_offering_facts(
         &self,
         company: &CompanyId,
-    ) -> Result<Vec<super::rights_offering::RightsOfferingFinanceFact>, CompanySystemError>
-    {
+    ) -> Result<Vec<super::rights_offering::RightsOfferingFinanceFact>, CompanySystemError> {
         Ok(self.finance(company)?.rights_offering_facts()?)
     }
 
@@ -514,12 +507,9 @@ impl CompanySystem {
         issued_shares: u64,
         proceeds: crate::accounting::AccountingAmount,
     ) -> Result<bool, CompanySystemError> {
-        let already_settled = self.finance_mut(company)?.record_rights_offering_settlement(
-            event_id,
-            settled_on,
-            issued_shares,
-            proceeds,
-        )?;
+        let already_settled = self
+            .finance_mut(company)?
+            .record_rights_offering_settlement(event_id, settled_on, issued_shares, proceeds)?;
         if !already_settled && issued_shares > 0 {
             self.issuers.record_share_issuance(company, issued_shares)?;
         }
@@ -540,9 +530,7 @@ impl CompanySystem {
         company: &CompanyId,
         fact: super::issuer_repurchase::IssuerRepurchaseFinanceFact,
     ) -> Result<bool, CompanySystemError> {
-        let already = self
-            .finance_mut(company)?
-            .declare_issuer_repurchase(fact)?;
+        let already = self.finance_mut(company)?.declare_issuer_repurchase(fact)?;
         Ok(already)
     }
 
@@ -555,12 +543,14 @@ impl CompanySystem {
         spent: crate::accounting::AccountingAmount,
         withdrawn_remainder: crate::accounting::AccountingAmount,
     ) -> Result<bool, CompanySystemError> {
-        let already = self.finance_mut(company)?.record_issuer_repurchase_completion(
-            event_id,
-            completed_on,
-            spent,
-            withdrawn_remainder,
-        )?;
+        let already = self
+            .finance_mut(company)?
+            .record_issuer_repurchase_completion(
+                event_id,
+                completed_on,
+                spent,
+                withdrawn_remainder,
+            )?;
         Ok(already)
     }
 
@@ -573,12 +563,14 @@ impl CompanySystem {
         cancelled_shares: u64,
         issued_shares_before: u64,
     ) -> Result<bool, CompanySystemError> {
-        let already = self.finance_mut(company)?.record_issuer_repurchase_cancellation(
-            event_id,
-            cancelled_on,
-            cancelled_shares,
-            issued_shares_before,
-        )?;
+        let already = self
+            .finance_mut(company)?
+            .record_issuer_repurchase_cancellation(
+                event_id,
+                cancelled_on,
+                cancelled_shares,
+                issued_shares_before,
+            )?;
         if !already {
             self.issuers
                 .record_share_cancellation(company, cancelled_shares)?;
@@ -633,26 +625,26 @@ impl CompanySystem {
                     plan.event_id
                 )));
             }
-            match (book.completed_on(), fact.completed_on, fact.spent, fact.withdrawn_remainder)
-            {
+            match (
+                book.completed_on(),
+                fact.completed_on,
+                fact.spent,
+                fact.withdrawn_remainder,
+            ) {
                 (None, None, None, None) => {}
-                (
-                    Some(book_date),
-                    Some(fact_date),
-                    Some(spent),
-                    Some(withdrawn),
-                ) if book_date == fact_date
-                    && spent
-                        == crate::accounting::AccountingAmount::from_money(
-                            book.total_spent()
-                                .map_err(|error| {
+                (Some(book_date), Some(fact_date), Some(spent), Some(withdrawn))
+                    if book_date == fact_date
+                        && spent
+                            == crate::accounting::AccountingAmount::from_money(
+                                book.total_spent().map_err(|error| {
                                     CompanySystemError::Invalid(error.to_string())
                                 })?,
-                        )
-                    && withdrawn
-                        == crate::accounting::AccountingAmount::from_money(
-                            book.withdrawn_remainder().unwrap_or(crate::money::Money::ZERO),
-                        ) => {}
+                            )
+                        && withdrawn
+                            == crate::accounting::AccountingAmount::from_money(
+                                book.withdrawn_remainder()
+                                    .unwrap_or(crate::money::Money::ZERO),
+                            ) => {}
                 _ => {
                     return Err(CompanySystemError::SystemState(format!(
                         "回购方案 {} 的完成事实与 Simple 账面回填不一致",
@@ -756,21 +748,22 @@ impl CompanySystem {
                 (
                     settled_on,
                     fact.issued_shares,
-                    fact
-                        .proceeds
+                    fact.proceeds
                         .unwrap_or(crate::accounting::AccountingAmount::from_cents(0)),
                     fact.issued_shares == 0,
                 )
             });
             match (book_settled, fact_settled) {
                 (None, None) => {}
-                (Some((book_date, book_shares, book_amount, failed)), Some((fact_date, fact_shares, fact_proceeds, fact_failed)))
-                    if book_date == fact_date
-                        && book_shares == fact_shares
-                        && !failed
-                        && !fact_failed
-                        && crate::accounting::AccountingAmount::from_money(book_amount)
-                            == fact_proceeds => {}
+                (
+                    Some((book_date, book_shares, book_amount, failed)),
+                    Some((fact_date, fact_shares, fact_proceeds, fact_failed)),
+                ) if book_date == fact_date
+                    && book_shares == fact_shares
+                    && !failed
+                    && !fact_failed
+                    && crate::accounting::AccountingAmount::from_money(book_amount)
+                        == fact_proceeds => {}
                 // 失败路径：账簿保留「已缴款后全额退款」事实，账面按零发行登记。
                 (
                     Some((book_date, _book_shares, _book_amount, true)),
@@ -1042,10 +1035,9 @@ impl CompanySystem {
             let state = match &mut self.implementation {
                 CompanyImplementation::Simple(state) => state,
             };
-            let entry = state
-                .companies
-                .get_mut(company)
-                .ok_or_else(|| CompanySystemError::InvalidInput(format!("未知公司 {}", company.0)))?;
+            let entry = state.companies.get_mut(company).ok_or_else(|| {
+                CompanySystemError::InvalidInput(format!("未知公司 {}", company.0))
+            })?;
             entry
                 .preference_ledger
                 .record_rejection(company, kind, evaluated_on, detail)
@@ -1230,11 +1222,9 @@ impl CompanySystem {
             },
         };
         let registered_capital = match finance.legal_facts() {
-            Some(facts) if facts.registered_capital.is_positive() => {
-                CapabilityAmount::Available {
-                    amount_yuan: facts.registered_capital.to_yuan_string(),
-                }
-            }
+            Some(facts) if facts.registered_capital.is_positive() => CapabilityAmount::Available {
+                amount_yuan: facts.registered_capital.to_yuan_string(),
+            },
             Some(_) => CapabilityAmount::Unavailable {
                 reason: "注册资本法定事实为非正数，不可用".into(),
             },
@@ -1311,9 +1301,11 @@ impl CompanySystem {
                 state.history_start
             )));
         }
-        if let Some(entry) = state.history.iter().find(|entry| {
-            &entry.company == company && entry.period_end == period_end
-        }) {
+        if let Some(entry) = state
+            .history
+            .iter()
+            .find(|entry| &entry.company == company && entry.period_end == period_end)
+        {
             return Ok(entry.explanation.clone());
         }
         Err(CompanySystemError::SystemState(format!(

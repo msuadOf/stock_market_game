@@ -302,8 +302,8 @@ fn books_with_later_cash_adjustment() -> Books {
 
 #[test]
 fn later_effective_restatements_leave_all_earlier_report_kinds_unchanged() {
-    use crate::accounting::AccountingPeriod;
     use crate::accounting::reports::ReportKind;
+    use crate::accounting::AccountingPeriod;
     use std::collections::BTreeMap;
 
     let original_books = books();
@@ -316,7 +316,10 @@ fn later_effective_restatements_leave_all_earlier_report_kinds_unchanged() {
     ] {
         let period = AccountingPeriod::from_iso(period).unwrap();
         let original = generated_report(&original_books, period, kind, &BTreeMap::new());
-        assert!(matches!(original.roe.ordinary_roe, ReportRoeValue::Available(_)));
+        assert!(matches!(
+            original.roe.ordinary_roe,
+            ReportRoeValue::Available(_)
+        ));
         let adjustments = BTreeMap::from([(
             BusinessEventId::new(2),
             AccountingPeriod::from_iso(target).unwrap(),
@@ -328,8 +331,8 @@ fn later_effective_restatements_leave_all_earlier_report_kinds_unchanged() {
 
 #[test]
 fn restatements_at_or_before_report_end_keep_equity_history_unavailable() {
-    use crate::accounting::AccountingPeriod;
     use crate::accounting::reports::ReportKind;
+    use crate::accounting::AccountingPeriod;
     use std::collections::BTreeMap;
 
     let books = books_with_later_cash_adjustment();
@@ -341,9 +344,12 @@ fn restatements_at_or_before_report_end_keep_equity_history_unavailable() {
         let unavailable = ReportRoeValue::Unavailable {
             reason: ReportRoeUnavailable::IncompleteEquityEventHistory,
         };
-        assert_eq!(report.roe.basis, ReportRoeBasis::Unsupported {
-            reason: ReportRoeUnavailable::IncompleteEquityEventHistory,
-        });
+        assert_eq!(
+            report.roe.basis,
+            ReportRoeBasis::Unsupported {
+                reason: ReportRoeUnavailable::IncompleteEquityEventHistory,
+            }
+        );
         assert_eq!(report.roe.ordinary_roe, unavailable);
         assert_eq!(report.roe.adjusted_roe, unavailable);
         assert_eq!(report.roe.weighted_average_parent_equity_cents, unavailable);
@@ -366,20 +372,26 @@ fn restatements_at_or_before_report_end_keep_equity_history_unavailable() {
             }
         );
         let before_window = target < AccountingPeriod::from_iso("2030-04").unwrap();
-        assert_eq!(report.equity.opening_parent, amount(if before_window { 11_000 } else { 10_000 }));
-        assert_eq!(report.income.report_period.net_income, amount(if before_window { 0 } else { 1_000 }));
+        assert_eq!(
+            report.equity.opening_parent,
+            amount(if before_window { 11_000 } else { 10_000 })
+        );
+        assert_eq!(
+            report.income.report_period.net_income,
+            amount(if before_window { 0 } else { 1_000 })
+        );
         assert_eq!(report.cash_flow.operating, amount(0), "现金不回写有效期间");
     }
 }
 
 #[test]
 fn consolidated_sources_reject_unnamespaced_adjustments_even_after_report_end() {
-    use crate::accounting::AccountingPeriod;
     use crate::accounting::consolidation::{ConsolidationRequest, GroupMember, MemberSpec};
     use crate::accounting::reports::{
         generate_report_set, ReportError, ReportKind, ReportRequest, ReportSource, ReportVersion,
         VersionKind,
     };
+    use crate::accounting::AccountingPeriod;
     use std::collections::BTreeMap;
 
     let books = books_with_later_cash_adjustment();
@@ -415,23 +427,35 @@ fn consolidated_sources_reject_unnamespaced_adjustments_even_after_report_end() 
     let member_adjustments = BTreeMap::new();
     let no_adjustments = BTreeMap::new();
     for restated_source in [false, true] {
-        let source = || if restated_source {
-            ReportSource::ConsolidatedRestated { request: group(), member_adjustments: &member_adjustments }
-        } else {
-            ReportSource::Consolidated { request: group() }
+        let source = || {
+            if restated_source {
+                ReportSource::ConsolidatedRestated {
+                    request: group(),
+                    member_adjustments: &member_adjustments,
+                }
+            } else {
+                ReportSource::Consolidated { request: group() }
+            }
         };
         let request = |adjustments| ReportRequest {
             period: AccountingPeriod::from_iso("2030-01").unwrap(),
             kind: ReportKind::Monthly,
             source: source(),
-            version: ReportVersion { sequence: 1, supersedes: None, kind: VersionKind::Original },
+            version: ReportVersion {
+                sequence: 1,
+                supersedes: None,
+                kind: VersionKind::Original,
+            },
             adjustments,
         };
         let legal = generate_report_set(request(&no_adjustments)).unwrap();
         legal.validate().unwrap();
-        assert_eq!(legal.roe.basis, ReportRoeBasis::Unsupported {
-            reason: ReportRoeUnavailable::ConsolidatedAttributionFactsUnavailable,
-        });
+        assert_eq!(
+            legal.roe.basis,
+            ReportRoeBasis::Unsupported {
+                reason: ReportRoeUnavailable::ConsolidatedAttributionFactsUnavailable,
+            }
+        );
         // 合并口径逐项归属不可得：两列均显式 unavailable，不以零金额事件冒充。
         assert_eq!(
             legal.roe.equity_events,
@@ -452,10 +476,15 @@ fn consolidated_sources_reject_unnamespaced_adjustments_even_after_report_end() 
         );
         let error = generate_report_set(request(&adjustments)).unwrap_err();
         if restated_source {
-            assert!(matches!(error, ReportError::InternalWindowInconsistent { detail }
-                if detail.contains("成员命名空间")));
+            assert!(
+                matches!(error, ReportError::InternalWindowInconsistent { detail }
+                if detail.contains("成员命名空间"))
+            );
         } else {
-            assert!(matches!(error, ReportError::ConsolidatedRestatementUnsupported));
+            assert!(matches!(
+                error,
+                ReportError::ConsolidatedRestatementUnsupported
+            ));
         }
     }
 }
@@ -475,8 +504,8 @@ fn final_supported_month_has_a_representable_month_end() {
 
 #[test]
 fn validate_rejects_deducted_income_that_breaks_cross_foot_with_the_listing() {
-    use crate::accounting::AccountingPeriod;
     use crate::accounting::reports::ReportKind;
+    use crate::accounting::AccountingPeriod;
     use std::collections::BTreeMap;
 
     let books = books();
@@ -492,8 +521,8 @@ fn validate_rejects_deducted_income_that_breaks_cross_foot_with_the_listing() {
 
 #[test]
 fn validate_rejects_adjusted_roe_inconsistent_with_deducted_income() {
-    use crate::accounting::AccountingPeriod;
     use crate::accounting::reports::ReportKind;
+    use crate::accounting::AccountingPeriod;
     use std::collections::BTreeMap;
 
     let books = books();
@@ -509,15 +538,14 @@ fn validate_rejects_adjusted_roe_inconsistent_with_deducted_income() {
 
 #[test]
 fn validate_rejects_standalone_minority_listing_fabricated_as_items() {
-    use crate::accounting::AccountingPeriod;
     use crate::accounting::reports::ReportKind;
+    use crate::accounting::AccountingPeriod;
     use std::collections::BTreeMap;
 
     let books = books();
     let period = AccountingPeriod::from_iso("2030-03").unwrap();
     let mut report = generated_report(&books, period, ReportKind::Quarter, &BTreeMap::new());
     // 捏造：单体报告把少数股东事件列示成空 Items（应显式 unavailable，不填零）。
-    report.roe.equity_events.minority_interest =
-        ReportRoeEquityEventListing::Items(vec![]);
+    report.roe.equity_events.minority_interest = ReportRoeEquityEventListing::Items(vec![]);
     assert!(report.validate().is_err());
 }

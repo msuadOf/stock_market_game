@@ -132,12 +132,7 @@ impl GameSession {
                         plan_id: plan.plan_id(),
                     });
                 }
-                self.install_plan_execution(
-                    plans,
-                    &plan,
-                    child,
-                    Some((order_id, child.qty)),
-                )?;
+                self.install_plan_execution(plans, &plan, child, Some((order_id, child.qty)))?;
                 self.remove_npc_order_lifecycle(plan.account(), plan.code(), order_id);
                 let disposition = match replaced {
                     Some(canceled_order_id) => PlanExecutionDisposition::Replaced {

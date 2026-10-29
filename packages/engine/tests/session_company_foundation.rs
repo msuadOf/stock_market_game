@@ -10,9 +10,9 @@ include!("../test-support/simple_company.rs");
 
 use engine::company::cash_dividend_tax::CashDividendTaxMode;
 use engine::{
-    AccountId, AccountKind, FloatAllocation, GameConfig, GameSession, HotParams, InstParams,
-    Money, NpcSetup, RetailParams, SecurityCategory, SessionSetup, StockCode, StockExchange,
-    StockSpec, StrategyParams,
+    AccountId, AccountKind, FloatAllocation, GameConfig, GameSession, HotParams, InstParams, Money,
+    NpcSetup, RetailParams, SecurityCategory, SessionSetup, StockCode, StockExchange, StockSpec,
+    StrategyParams,
 };
 
 /// 无公司配置的旧局 setup（公司字段全缺省）。
@@ -218,8 +218,8 @@ mod tax_mode_stamp_tax_contract {
 
     #[test]
     fn exempt_restore_rejects_saved_positive_stamp_tax_including_epsilon() {
-        let session = GameSession::new(setup(CashDividendTaxMode::Exempt, 0.0), 7)
-            .expect("合法 Exempt 新局");
+        let session =
+            GameSession::new(setup(CashDividendTaxMode::Exempt, 0.0), 7).expect("合法 Exempt 新局");
         let saved = session.save().expect("真实保存生成合法存档");
         for actual in [f64::from_bits(1), 1e-16, f64::EPSILON, 0.0005] {
             let mut edited = saved.clone();
@@ -300,10 +300,7 @@ fn new_game_with_company_opens_repurchase_account_without_float() {
     let repurchase = AccountId(5);
     let account = session.account(repurchase).expect("回购专户必须开立");
     assert_eq!(account.kind(), AccountKind::IssuerRepurchase);
-    assert!(
-        account.positions().is_empty(),
-        "回购专户不得参与流通盘分配"
-    );
+    assert!(account.positions().is_empty(), "回购专户不得参与流通盘分配");
     assert_eq!(account.cash(), Money::ZERO, "回购专户零现金起步");
 }
 
@@ -554,10 +551,7 @@ fn plain_sessions_save_json_carries_no_company_keys() {
         "par_value_per_share",
         "auto_corporate_foundation",
     ] {
-        assert!(
-            setup_json.get(key).is_none(),
-            "旧局 setup 不得携带 {key}"
-        );
+        assert!(setup_json.get(key).is_none(), "旧局 setup 不得携带 {key}");
     }
     // 无公司配置的 spine 读面：公司状态缺席（None）而非空容器。
     assert!(session.corporate_actions().is_none());

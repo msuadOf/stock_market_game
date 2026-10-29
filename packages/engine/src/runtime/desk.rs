@@ -343,7 +343,10 @@ struct DrainMarketSnapshot {
 #[derive(Clone, Debug)]
 enum DeskUndo {
     /// 仅撤回真实订单的来源关联；订单数量、资金和费用仍由原 undo 负责。
-    RepurchaseRequest { order: OrderRef, before: Option<super::RepurchaseRequestKey> },
+    RepurchaseRequest {
+        order: OrderRef,
+        before: Option<super::RepurchaseRequestKey>,
+    },
     /// 失败回滚恢复上一拍的同 owner 时钟。
     Calendar(Option<Arc<super::MarketTickContext>>),
     /// 新挂入订单（回滚=移除）。
@@ -611,13 +614,17 @@ impl DeskState {
             minute_closes: Vec::new(),
             minute_bars: Vec::new(),
             recent_prices: VecDeque::new(),
-            candles: setup.initial_daily_bars.iter().map(|&(o, h, l, c, v)| DeskCandle {
-                open: o,
-                high: h,
-                low: l,
-                close: c,
-                volume: v,
-            }).collect(),
+            candles: setup
+                .initial_daily_bars
+                .iter()
+                .map(|&(o, h, l, c, v)| DeskCandle {
+                    open: o,
+                    high: h,
+                    low: l,
+                    close: c,
+                    volume: v,
+                })
+                .collect(),
             traded_days_total: setup.initial_traded_days
                 + setup
                     .initial_daily_bars
@@ -778,28 +785,29 @@ impl DeskState {
     /// 日结会覆写尾 K、消费 rolled 暂存，普通 tick 的 truncate 撤销不足以恢复。
     fn snapshot_drain_market(&mut self) {
         let m = &self.market;
-        self.undo.push(DeskUndo::DrainMarket(Box::new(DrainMarketSnapshot {
-            market: DeskMarket {
-                last_price: m.last_price,
-                last_close: m.last_close,
-                day_high: m.day_high,
-                day_low: m.day_low,
-                volume_today: m.volume_today,
-                turnover_today: m.turnover_today,
-                trade_count: m.trade_count,
-                candle: m.candle,
-                minute_closes: m.minute_closes.clone(),
-                minute_bars: m.minute_bars.clone(),
-                recent_prices: m.recent_prices.clone(),
-                candles: m.candles.last().copied().into_iter().collect(),
-                traded_days_total: m.traded_days_total,
-            },
-            candles_len: m.candles.len(),
-            rolled_day_bars: self.rolled_day_bars.clone(),
-            drain_cleared_closing: self.drain_cleared_closing,
-            bars_shipped_today: self.bars_shipped_today,
-            opening_cleared: self.opening_cleared,
-        })));
+        self.undo
+            .push(DeskUndo::DrainMarket(Box::new(DrainMarketSnapshot {
+                market: DeskMarket {
+                    last_price: m.last_price,
+                    last_close: m.last_close,
+                    day_high: m.day_high,
+                    day_low: m.day_low,
+                    volume_today: m.volume_today,
+                    turnover_today: m.turnover_today,
+                    trade_count: m.trade_count,
+                    candle: m.candle,
+                    minute_closes: m.minute_closes.clone(),
+                    minute_bars: m.minute_bars.clone(),
+                    recent_prices: m.recent_prices.clone(),
+                    candles: m.candles.last().copied().into_iter().collect(),
+                    traded_days_total: m.traded_days_total,
+                },
+                candles_len: m.candles.len(),
+                rolled_day_bars: self.rolled_day_bars.clone(),
+                drain_cleared_closing: self.drain_cleared_closing,
+                bars_shipped_today: self.bars_shipped_today,
+                opening_cleared: self.opening_cleared,
+            })));
     }
 
     /// 逆序回放撤销日志 + 清出口缓冲（Abort/panic 回滚）。
@@ -812,8 +820,11 @@ impl DeskState {
         for entry in undo.into_iter().rev() {
             match entry {
                 DeskUndo::RepurchaseRequest { order, before } => {
-                    if let Some(request) = before { self.repurchase_requests.insert(order, request); }
-                    else { self.repurchase_requests.remove(&order); }
+                    if let Some(request) = before {
+                        self.repurchase_requests.insert(order, request);
+                    } else {
+                        self.repurchase_requests.remove(&order);
+                    }
                 }
                 DeskUndo::Calendar(previous) => self.calendar_tick = previous,
                 DeskUndo::Inserted(o) => {
@@ -899,7 +910,9 @@ impl DeskState {
         #[cfg(feature = "simulation-diagnostics")]
         self.causal_facts.clear();
         #[cfg(feature = "simulation-diagnostics")]
-        { self.causal_drain_date = None; }
+        {
+            self.causal_drain_date = None;
+        }
         self.lifecycle_facts.clear();
         self.auction_facts.clear();
         self.cur_tick = self.committed_tick;
@@ -1091,7 +1104,11 @@ impl DeskState {
             .price_bound(Self::money(last_close), 10_000 + self.setup.limit_bps, true)?
             .cents();
         let down = self
-            .price_bound(Self::money(last_close), 10_000 - self.setup.limit_bps, false)?
+            .price_bound(
+                Self::money(last_close),
+                10_000 - self.setup.limit_bps,
+                false,
+            )?
             .cents();
         if !cage || !self.setup.cage_applies(tick) {
             return Ok((down, up));
@@ -1152,9 +1169,22 @@ impl DeskState {
         }
         for op in ops {
             match op {
-                DeskIn::PlaceIssuerRepurchase { owner, request, price, qty, purse } => {
+                DeskIn::PlaceIssuerRepurchase {
+                    owner,
+                    request,
+                    price,
+                    qty,
+                    purse,
+                } => {
                     self.validate_repurchase_request(owner, request, purse)?;
-                    self.place(tick, owner, Side::Buy, RoutedPrice::Fixed(price), qty, purse, Some(request),
+                    self.place(
+                        tick,
+                        owner,
+                        Side::Buy,
+                        RoutedPrice::Fixed(price),
+                        qty,
+                        purse,
+                        Some(request),
                         #[cfg(feature = "simulation-diagnostics")]
                         super::diagnostics::OperationSource::NonPlayerUnresolved,
                     )?;
@@ -1219,7 +1249,15 @@ impl DeskState {
         let is_market = matches!(rp, RoutedPrice::Market);
         // 相位门禁：盘前拒收；竞价阶段只收限价。
         if phase == DeskPhase::PreOpen {
-            self.reject(tick, owner, side, qty, purse, ReceiptKind::PhaseRejected, repurchase)?;
+            self.reject(
+                tick,
+                owner,
+                side,
+                qty,
+                purse,
+                ReceiptKind::PhaseRejected,
+                repurchase,
+            )?;
             return Ok(());
         }
         if phase == DeskPhase::CallAuction || phase == DeskPhase::ClosingAuction {
@@ -1251,18 +1289,42 @@ impl DeskState {
             });
         }
         if qty > cap {
-            self.reject(tick, owner, side, qty, purse, ReceiptKind::ExceedsOrderCap, repurchase)?;
+            self.reject(
+                tick,
+                owner,
+                side,
+                qty,
+                purse,
+                ReceiptKind::ExceedsOrderCap,
+                repurchase,
+            )?;
             return Ok(());
         }
         // 买入整手（卖出零股一次性由组端校验——持仓知识在本组）。
         if side == Side::Buy && qty % self.config.lot_size != 0 {
-            self.reject(tick, owner, side, qty, purse, ReceiptKind::NotRoundLot, repurchase)?;
+            self.reject(
+                tick,
+                owner,
+                side,
+                qty,
+                purse,
+                ReceiptKind::NotRoundLot,
+                repurchase,
+            )?;
             return Ok(());
         }
         // 价格：正数 + tick 整数倍（最小价位 0.01 元）。
         let (price, rest_remainder) = self.resolve_price(rp, side, tick)?;
         if price <= 0 || price % 1 != 0 {
-            self.reject(tick, owner, side, qty, purse, ReceiptKind::PriceOutOfBand, repurchase)?;
+            self.reject(
+                tick,
+                owner,
+                side,
+                qty,
+                purse,
+                ReceiptKind::PriceOutOfBand,
+                repurchase,
+            )?;
             return Ok(());
         }
         // 涨跌停带（闭区间）与价格笼子。市价按纯带校验（Sol 复审
@@ -1302,9 +1364,14 @@ impl DeskState {
                 Side::Buy => before.bid_depth,
                 Side::Sell => before.ask_depth,
             };
-            depth.checked_add(u64::from(qty)).ok_or_else(|| RuntimeError::ProtocolInvariant {
-                detail: format!("causal Quote 申报增量溢出：stock={} qty={qty}", self.setup.stock),
-            })?;
+            depth
+                .checked_add(u64::from(qty))
+                .ok_or_else(|| RuntimeError::ProtocolInvariant {
+                    detail: format!(
+                        "causal Quote 申报增量溢出：stock={} qty={qty}",
+                        self.setup.stock
+                    ),
+                })?;
             before
         };
         // Sol 三轮修复 2（即时单序号推进）：申报取号即消费（A 股语义：
@@ -1345,9 +1412,13 @@ impl DeskState {
         if let Some(request) = repurchase {
             self.open_repurchase_source(&order, request)?;
         }
-        self.retail_facts.push(super::retail_lifecycle::RawFact::Submitted {
-            order: order_ref, owner, side, qty,
-        });
+        self.retail_facts
+            .push(super::retail_lifecycle::RawFact::Submitted {
+                order: order_ref,
+                owner,
+                side,
+                qty,
+            });
         #[cfg(feature = "simulation-diagnostics")]
         {
             self.note_causal(super::diagnostics::DeskCausalKind::Submitted {
@@ -1368,9 +1439,15 @@ impl DeskState {
             }
             DeskPhase::PreOpen | DeskPhase::Continuous => {
                 let mut order = order;
-                self.match_incoming(tick, &mut order,
+                self.match_incoming(
+                    tick,
+                    &mut order,
                     #[cfg(feature = "simulation-diagnostics")]
-                    if phase == DeskPhase::Continuous { Some(causal_before) } else { None },
+                    if phase == DeskPhase::Continuous {
+                        Some(causal_before)
+                    } else {
+                        None
+                    },
                 )?;
                 if order.qty == 0 {
                     // 全成：purse slack（最坏情况预留 − 实际扣费）退款 + Closed。
@@ -1430,10 +1507,15 @@ impl DeskState {
             context: if let Some(ended_date) = self.causal_drain_date {
                 super::retail_lifecycle::BatchContext::Drain {
                     ended_date,
-                    final_tick: self.cur_tick, stock: self.setup.stock,
+                    final_tick: self.cur_tick,
+                    stock: self.setup.stock,
                 }
             } else {
-                super::retail_lifecycle::BatchContext::Tick { tick: self.cur_tick, round: self.cur_round, stock: self.setup.stock }
+                super::retail_lifecycle::BatchContext::Tick {
+                    tick: self.cur_tick,
+                    round: self.cur_round,
+                    stock: self.setup.stock,
+                }
             },
             kind,
         });
@@ -1455,10 +1537,13 @@ impl DeskState {
 
     /// 记录终结事实（Cancelled/Expired）。
     fn note_terminated(&mut self, order: &DeskOrder, kind: super::protocol::LifecycleKind) {
-        self.retail_facts.push(super::retail_lifecycle::RawFact::Terminated {
-            order: order.order_ref, owner: order.owner, qty: order.qty,
-            end: super::retail_lifecycle::Termination::Canceled,
-        });
+        self.retail_facts
+            .push(super::retail_lifecycle::RawFact::Terminated {
+                order: order.order_ref,
+                owner: order.owner,
+                qty: order.qty,
+                end: super::retail_lifecycle::Termination::Canceled,
+            });
         self.lifecycle_facts
             .push(super::protocol::DeskLifecycleFact {
                 stock: self.setup.stock,
@@ -1522,8 +1607,13 @@ impl DeskState {
     }
 
     /// 连续竞价撮合：逐档吃对面最优（价格时间优先），成交价取 maker 价。
-    fn match_incoming(&mut self, _tick: u64, order: &mut DeskOrder,
-        #[cfg(feature = "simulation-diagnostics")] causal_before: Option<super::diagnostics::DeskQuote>,
+    fn match_incoming(
+        &mut self,
+        _tick: u64,
+        order: &mut DeskOrder,
+        #[cfg(feature = "simulation-diagnostics")] causal_before: Option<
+            super::diagnostics::DeskQuote,
+        >,
     ) -> Result<(), RuntimeError> {
         loop {
             if order.qty == 0 {
@@ -1574,8 +1664,13 @@ impl DeskState {
             let fill_qty = order.qty.min(maker.qty);
             // 连续竞价：成交价=maker 价（对手档申报价，价格改善归 taker）。
             let maker_price = maker.price;
-            self.settle_fill(order, maker, fill_qty, maker_price,
-                #[cfg(feature = "simulation-diagnostics")] causal_before,
+            self.settle_fill(
+                order,
+                maker,
+                fill_qty,
+                maker_price,
+                #[cfg(feature = "simulation-diagnostics")]
+                causal_before,
             )?;
         }
         Ok(())
@@ -1592,7 +1687,9 @@ impl DeskState {
         maker: DeskOrder,
         qty: u32,
         fill_price: i64,
-        #[cfg(feature = "simulation-diagnostics")] causal_before: Option<super::diagnostics::DeskQuote>,
+        #[cfg(feature = "simulation-diagnostics")] causal_before: Option<
+            super::diagnostics::DeskQuote,
+        >,
     ) -> Result<(), RuntimeError> {
         // 刀 2a：成交行情写（last/high/low/量/额/K 演进）。
         self.bump_market_ver();
@@ -1745,10 +1842,20 @@ impl DeskState {
         };
         // 同一个费用核定后的买腿事实先进入公司来源，再允许 maker 终结出口。
         let buy_fill = FillFact {
-            order: buy_ref, owner: buy_owner, side: Side::Buy, price, qty,
-            commission: buy_commission_delta, stamp_tax: 0, transfer_fee: buy_transfer_delta,
+            order: buy_ref,
+            owner: buy_owner,
+            side: Side::Buy,
+            price,
+            qty,
+            commission: buy_commission_delta,
+            stamp_tax: 0,
+            transfer_fee: buy_transfer_delta,
         };
-        self.note_repurchase_source(buy_ref, buy_owner, super::RepurchaseSourceKind::Fill(buy_fill));
+        self.note_repurchase_source(
+            buy_ref,
+            buy_owner,
+            super::RepurchaseSourceKind::Fill(buy_fill),
+        );
         // maker 写回：档首扣减或移除。
         self.apply_maker_fill(&maker, maker_after)?;
         // 费用桶（守恒）：双边实收**费用**合计（charge 含成交额，须扣除）。
@@ -1770,16 +1877,19 @@ impl DeskState {
         // 六审修复 1：maker 字段恒为卖方、taker 恒为买方——此前按原始
         // taker_side 交换，主动卖时双方费用互换、本拍现金错）。
         let buy_fees = charge - value;
-        let sell_fees = charged.commission.cents()
-            + charged.stamp_tax.cents()
-            + charged.transfer_fee.cents();
+        let sell_fees =
+            charged.commission.cents() + charged.stamp_tax.cents() + charged.transfer_fee.cents();
         // 双腿订单身份（归一化同序——Sol 六审修复 2：同拍执行腿投影
         // 按真实订单推进，外部单不得误挂计划子单。Sol 七审修复 1：两
         // 方向统一 (sell_ref, buy_ref)——owner 已固定 (seller, buyer)，
         // 序号按原始方向交换会使主动卖时身份核跳过合法计划成交）。
         let (maker_order, taker_order) = (sell_ref, buy_ref);
-        let trade_ordinal = u64::try_from(self.trade_facts.len()).map_err(|_| over("trade ordinal 溢出"))?;
-        self.retail_facts.push(super::retail_lifecycle::RawFact::TradeRef { ordinal: trade_ordinal });
+        let trade_ordinal =
+            u64::try_from(self.trade_facts.len()).map_err(|_| over("trade ordinal 溢出"))?;
+        self.retail_facts
+            .push(super::retail_lifecycle::RawFact::TradeRef {
+                ordinal: trade_ordinal,
+            });
         #[cfg(feature = "simulation-diagnostics")]
         let causal_ordinal = trade_ordinal;
         self.trade_facts.push(super::protocol::DeskTradeFact {
@@ -1811,9 +1921,24 @@ impl DeskState {
             use super::diagnostics::{DeskCausalKind, DeskExecutionLeg};
             self.note_causal(DeskCausalKind::Execution {
                 ordinal: causal_ordinal,
-                seller: DeskExecutionLeg { order: sell_ref, owner: sell_owner, value_before: sell_filled_before },
-                buyer: DeskExecutionLeg { order: buy_ref, owner: buy_owner, value_before: buy_filled_before },
-                qty, price_cents: price, side: if self.clearing_minute.is_some() { None } else { Some(taker_side) }, before,
+                seller: DeskExecutionLeg {
+                    order: sell_ref,
+                    owner: sell_owner,
+                    value_before: sell_filled_before,
+                },
+                buyer: DeskExecutionLeg {
+                    order: buy_ref,
+                    owner: buy_owner,
+                    value_before: buy_filled_before,
+                },
+                qty,
+                price_cents: price,
+                side: if self.clearing_minute.is_some() {
+                    None
+                } else {
+                    Some(taker_side)
+                },
+                before,
             });
         } else {
             self.note_causal(super::diagnostics::DeskCausalKind::Unsupported {
@@ -1894,9 +2019,7 @@ impl DeskState {
     /// 置位）取固定分钟 565/900（旧契约：竞价完成事实归一，不从指示价
     /// 反推）；否则连续竞价按 tick 推导墙钟分钟。其他相位（申报窗/盘前/
     /// 收盘竞价窗）产生连续成交=结构性 bug，显式失败。
-    fn trade_minute_key(
-        &self,
-    ) -> Result<(u16, super::protocol::MinuteBarPhase), RuntimeError> {
+    fn trade_minute_key(&self) -> Result<(u16, super::protocol::MinuteBarPhase), RuntimeError> {
         if let Some(key) = self.clearing_minute {
             return Ok(key);
         }
@@ -1983,9 +2106,14 @@ impl DeskState {
                     local: after.owner.1,
                     amount: after.purse,
                 });
-                self.note_repurchase_source(after.order_ref, after.owner, super::RepurchaseSourceKind::Return {
-                    amount: after.purse, kind: super::RepurchaseReturnKind::TerminalRefund,
-                });
+                self.note_repurchase_source(
+                    after.order_ref,
+                    after.owner,
+                    super::RepurchaseSourceKind::Return {
+                        amount: after.purse,
+                        kind: super::RepurchaseReturnKind::TerminalRefund,
+                    },
+                );
             }
             self.out[g].push(Entity::Closed {
                 local: after.owner.1,
@@ -2040,9 +2168,14 @@ impl DeskState {
                 local: order.owner.1,
                 amount: refund,
             });
-            self.note_repurchase_source(order.order_ref, order.owner, super::RepurchaseSourceKind::Return {
-                amount: refund, kind: super::RepurchaseReturnKind::PriceImprovement,
-            });
+            self.note_repurchase_source(
+                order.order_ref,
+                order.owner,
+                super::RepurchaseSourceKind::Return {
+                    amount: refund,
+                    kind: super::RepurchaseReturnKind::PriceImprovement,
+                },
+            );
         }
         Ok(())
     }
@@ -2058,9 +2191,14 @@ impl DeskState {
                         local: order.owner.1,
                         amount: order.purse,
                     });
-                    self.note_repurchase_source(order.order_ref, order.owner, super::RepurchaseSourceKind::Return {
-                        amount: order.purse, kind: super::RepurchaseReturnKind::TerminalRefund,
-                    });
+                    self.note_repurchase_source(
+                        order.order_ref,
+                        order.owner,
+                        super::RepurchaseSourceKind::Return {
+                            amount: order.purse,
+                            kind: super::RepurchaseReturnKind::TerminalRefund,
+                        },
+                    );
                 }
             }
             Side::Sell => {
@@ -2158,10 +2296,14 @@ impl DeskState {
             #[cfg(feature = "simulation-diagnostics")]
             {
                 self.note_causal(super::diagnostics::DeskCausalKind::Cancelled {
-                    order: o.order_ref, owner, qty: o.qty,
+                    order: o.order_ref,
+                    owner,
+                    qty: o.qty,
                     source: super::diagnostics::OperationSource::NonPlayerUnresolved,
                 });
-                self.note_causal(super::diagnostics::DeskCausalKind::Quote(self.causal_quote()?));
+                self.note_causal(super::diagnostics::DeskCausalKind::Quote(
+                    self.causal_quote()?,
+                ));
             }
         }
         Ok(())
@@ -2286,10 +2428,20 @@ impl DeskState {
                 ),
             })?;
         self.undo.push(DeskUndo::Serial);
-        self.retail_facts.push(super::retail_lifecycle::RawFact::Submitted { order, owner, side, qty });
-        self.retail_facts.push(super::retail_lifecycle::RawFact::Terminated {
-            order, owner, qty, end: super::retail_lifecycle::Termination::Aborted,
-        });
+        self.retail_facts
+            .push(super::retail_lifecycle::RawFact::Submitted {
+                order,
+                owner,
+                side,
+                qty,
+            });
+        self.retail_facts
+            .push(super::retail_lifecycle::RawFact::Terminated {
+                order,
+                owner,
+                qty,
+                end: super::retail_lifecycle::Termination::Aborted,
+            });
         #[cfg(feature = "simulation-diagnostics")]
         self.note_causal(super::diagnostics::DeskCausalKind::Unsupported {
             detail: "真实 desk reject 的 rich 来源尚未接通",
@@ -2297,17 +2449,27 @@ impl DeskState {
         self.receipts_out[g].push(DeskReceipt { order, owner, kind });
         if let Some(request) = repurchase {
             self.repurchase_out[g].push(super::RepurchaseSourceFact {
-                request_key: request, owner, order_ref: order,
+                request_key: request,
+                owner,
+                order_ref: order,
                 kind: super::RepurchaseSourceKind::Rejected { reason: kind },
             });
             if purse > 0 {
                 self.repurchase_out[g].push(super::RepurchaseSourceFact {
-                    request_key: request, owner, order_ref: order,
-                    kind: super::RepurchaseSourceKind::Return { amount: purse, kind: super::RepurchaseReturnKind::TerminalRefund },
+                    request_key: request,
+                    owner,
+                    order_ref: order,
+                    kind: super::RepurchaseSourceKind::Return {
+                        amount: purse,
+                        kind: super::RepurchaseReturnKind::TerminalRefund,
+                    },
                 });
             }
             self.repurchase_out[g].push(super::RepurchaseSourceFact {
-                request_key: request, owner, order_ref: order, kind: super::RepurchaseSourceKind::Closed,
+                request_key: request,
+                owner,
+                order_ref: order,
+                kind: super::RepurchaseSourceKind::Closed,
             });
         }
         self.skipped_orders += 1;
@@ -2408,7 +2570,10 @@ impl DeskState {
         let actual = self.execute_clearing_at(
             price,
             sel.volume,
-            (super::protocol::OPEN_AUCTION_BAR_MINUTE, super::protocol::MinuteBarPhase::OpenAuction),
+            (
+                super::protocol::OPEN_AUCTION_BAR_MINUTE,
+                super::protocol::MinuteBarPhase::OpenAuction,
+            ),
         )?;
         self.auction_facts.push(super::protocol::DeskAuctionFact {
             stock: self.setup.stock,
@@ -2476,7 +2641,9 @@ impl DeskState {
                 // 该终止与"双撤"只是资源闭合结论相同，行为面是
                 // 只撤卖侧——措辞以此为准）。
                 #[cfg(feature = "simulation-diagnostics")]
-                self.note_causal(super::diagnostics::DeskCausalKind::Unsupported { detail: "auction 自成交排除终止尚未接通" });
+                self.note_causal(super::diagnostics::DeskCausalKind::Unsupported {
+                    detail: "auction 自成交排除终止尚未接通",
+                });
                 self.note_terminated(&sell, super::protocol::LifecycleKind::Cancelled);
                 self.remove_order(&sell);
                 self.close_order_entities(&sell);
@@ -2494,8 +2661,13 @@ impl DeskState {
             let maker = sell;
             #[cfg(feature = "simulation-diagnostics")]
             let before = self.causal_quote()?;
-            self.settle_fill(&mut taker, maker, qty, price,
-                #[cfg(feature = "simulation-diagnostics")] Some(before),
+            self.settle_fill(
+                &mut taker,
+                maker,
+                qty,
+                price,
+                #[cfg(feature = "simulation-diagnostics")]
+                Some(before),
             )?;
             // taker 全成即闭合；部分成交写回簿（apply_maker_fill 只写 maker——
             // taker 也是簿内单，需对称写回）。
@@ -2630,7 +2802,9 @@ impl DeskState {
         /// 引入同相位内的 cutoff 动态演进，此隐式依赖破坏——必须改为
         /// 显式 bump**（独立复核证实现状成立，注释锚定防漂移）。
         if phase == DeskPhase::ClosingAuction
-            && self.last_phase.is_some_and(|p| p != DeskPhase::ClosingAuction)
+            && self
+                .last_phase
+                .is_some_and(|p| p != DeskPhase::ClosingAuction)
         {
             self.public_cutoff_serial = self.next_serial;
         }
@@ -2732,14 +2906,10 @@ impl DeskState {
     }
 
     /// 本收束点公共态（协调者安装进下一 tick 广播）。
-    fn build_public(
-        &self,
-        tick: u64,
-    ) -> Result<super::protocol::StockPublic, RuntimeError> {
+    fn build_public(&self, tick: u64) -> Result<super::protocol::StockPublic, RuntimeError> {
         // 买向取日涨停与买笼子的较低上界，卖向取日跌停与卖笼子的较高下界。
         // 不得复用买向下界充当卖向下限——连续竞价阶段卖笼子下界高于日跌停。
-        let (_, up_buy) =
-            self.price_bound_for(Side::Buy, tick, self.config.price_cage_enabled)?;
+        let (_, up_buy) = self.price_bound_for(Side::Buy, tick, self.config.price_cage_enabled)?;
         let (down_sell, _) =
             self.price_bound_for(Side::Sell, tick, self.config.price_cage_enabled)?;
         // D5 attention 公开可见性门禁（A 股制度面）：开盘集合竞价申报窗
@@ -2779,7 +2949,11 @@ impl DeskState {
             let bid: u64 = pub_bids.values().rev().take(5).sum();
             let ask: u64 = pub_asks.values().take(5).sum();
             let total = bid + ask;
-            if total == 0 { 0.0 } else { (bid as f64 - ask as f64) / total as f64 }
+            if total == 0 {
+                0.0
+            } else {
+                (bid as f64 - ask as f64) / total as f64
+            }
         };
         Ok(super::protocol::StockPublic {
             last_price: self.market.last_price,
@@ -2864,11 +3038,7 @@ impl DeskState {
         /// view 依赖域内容实际变化时推进 market_ver（占位 K 建立/close
         /// 变化/recent 窗口滑动不同值/分钟回填），保证零成交稳态轮的
         /// view 缓存命中。判定收敛到函数末尾统一 bump。
-        let candle_close_changed = self
-            .market
-            .candle
-            .as_ref()
-            .is_none_or(|c| c.close != last);
+        let candle_close_changed = self.market.candle.as_ref().is_none_or(|c| c.close != last);
         let window_full = self.market.recent_prices.len() >= self.setup.history_len;
         let popped_front = if window_full {
             self.market.recent_prices.front().copied()
@@ -2951,7 +3121,11 @@ impl DeskState {
             let fills = std::mem::take(&mut self.fills_out[g]);
             let receipts = std::mem::take(&mut self.receipts_out[g]);
             let repurchase = std::mem::take(&mut self.repurchase_out[g]);
-            if entities.is_empty() && fills.is_empty() && receipts.is_empty() && repurchase.is_empty() {
+            if entities.is_empty()
+                && fills.is_empty()
+                && receipts.is_empty()
+                && repurchase.is_empty()
+            {
                 continue;
             }
             entities_total += entities.len() as u64;
@@ -2987,8 +3161,7 @@ impl DeskState {
         /// 此前按 phase_at(cur_tick)+!opening_cleared 判定使日结拍恒走
         /// 强撤分支：末拍 AuctionTick/AuctionCompleted 全缺
         /// （a0/a3/a6 t19 取证实证）。
-        if self.cur_tick > 0
-            && self.setup.phase_at(self.cur_tick - 1) == DeskPhase::ClosingAuction
+        if self.cur_tick > 0 && self.setup.phase_at(self.cur_tick - 1) == DeskPhase::ClosingAuction
         {
             // 清算前保留真正前一交易日昨收，不能先 roll 再用当日价冒充昨收。
             let orders: Vec<ClearingOrder> = self
@@ -3037,7 +3210,10 @@ impl DeskState {
                 let actual = self.execute_clearing_at(
                     price,
                     sel.volume,
-                    (super::protocol::CLOSING_AUCTION_BAR_MINUTE, super::protocol::MinuteBarPhase::ClosingAuction),
+                    (
+                        super::protocol::CLOSING_AUCTION_BAR_MINUTE,
+                        super::protocol::MinuteBarPhase::ClosingAuction,
+                    ),
                 )?;
                 self.auction_facts.push(super::protocol::DeskAuctionFact {
                     stock: self.setup.stock,
@@ -3085,7 +3261,11 @@ impl DeskState {
             .collect();
         for o in targets {
             #[cfg(feature = "simulation-diagnostics")]
-            self.note_causal(super::diagnostics::DeskCausalKind::DayEnded { order: o.order_ref, owner: o.owner, qty: o.qty });
+            self.note_causal(super::diagnostics::DeskCausalKind::DayEnded {
+                order: o.order_ref,
+                owner: o.owner,
+                qty: o.qty,
+            });
             self.note_terminated(&o, super::protocol::LifecycleKind::Cancelled);
             self.remove_order(&o);
             self.close_order_entities(&o);
@@ -3210,7 +3390,10 @@ fn fnv(state: u64, value: u64) -> u64 {
 /// 余量直取 desk 权威）。DeskReport 携带与 EchoResting 应答共用同源。
 fn build_resting_facts(state: &DeskState) -> Vec<super::protocol::RestingFact> {
     let mut orders = Vec::new();
-    for (side, book) in [(crate::orderbook::Side::Buy, &state.bids), (crate::orderbook::Side::Sell, &state.asks)] {
+    for (side, book) in [
+        (crate::orderbook::Side::Buy, &state.bids),
+        (crate::orderbook::Side::Sell, &state.asks),
+    ] {
         for (_price, level) in book.iter() {
             for order in level.iter() {
                 orders.push(super::protocol::RestingFact {
@@ -3249,10 +3432,7 @@ pub fn desk_main(
         capture: &Arc<std::sync::Mutex<crate::verification_evidence::PhaseTimingBinding>>,
         work: impl FnOnce() -> R,
     ) -> R {
-        let binding = capture
-            .lock()
-            .expect("capture 槽锁被 poison")
-            .clone();
+        let binding = capture.lock().expect("capture 槽锁被 poison").clone();
         crate::verification_evidence::with_phase_timing_binding(binding, work)
     }
     let who = WorkerId::Desk(setup.stock);
@@ -3369,7 +3549,9 @@ pub fn desk_main(
             _ => {}
         }
         let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            with_capture(&capture, || process_msg(&mut state, &group_txs, &up_tx, msg))
+            with_capture(&capture, || {
+                process_msg(&mut state, &group_txs, &up_tx, msg)
+            })
         }));
         match outcome {
             Ok(Ok(())) => {}
@@ -3444,7 +3626,10 @@ fn process_msg(
     match msg {
         #[cfg(test)]
         DeskMsg::InstallFatalCleanupProbeForTest(probe) => {
-            assert!(state.fatal_cleanup_probe_for_test.replace(probe).is_none(), "失败清理观察门不得覆盖未消费配置");
+            assert!(
+                state.fatal_cleanup_probe_for_test.replace(probe).is_none(),
+                "失败清理观察门不得覆盖未消费配置"
+            );
         }
         DeskMsg::EchoResting => {
             // D5 envelope 投影：在途单快照（bids+asks 全量——费用
@@ -3524,7 +3709,9 @@ fn process_msg(
                 return Err(over("closed 交易部仍有活动簿或在途实体"));
             }
             #[cfg(feature = "simulation-diagnostics")]
-            { state.causal_drain_date = None; }
+            {
+                state.causal_drain_date = None;
+            }
             let previous = state.calendar_tick.clone();
             if open {
                 crate::verification_evidence::enter_phase(
@@ -3557,10 +3744,23 @@ fn process_msg(
             final_flush,
         } => {
             #[cfg(test)]
-            if let Some(probe) = state.fatal_cleanup_probe_for_test.as_ref().filter(|probe| probe.tick == tick) {
-                probe.events.send(super::protocol::DeskFatalCleanupEventForTest::OpsDequeued {
-                    stock: state.setup.stock, tick, round, group, final_flush, ops_len: ops.len(), cur_tick: state.cur_tick,
-                }).map_err(|error| over(&format!("失败清理Ops观察通道断连：{error}")))?;
+            if let Some(probe) = state
+                .fatal_cleanup_probe_for_test
+                .as_ref()
+                .filter(|probe| probe.tick == tick)
+            {
+                probe
+                    .events
+                    .send(super::protocol::DeskFatalCleanupEventForTest::OpsDequeued {
+                        stock: state.setup.stock,
+                        tick,
+                        round,
+                        group,
+                        final_flush,
+                        ops_len: ops.len(),
+                        cur_tick: state.cur_tick,
+                    })
+                    .map_err(|error| over(&format!("失败清理Ops观察通道断连：{error}")))?;
             }
             if tick != state.cur_tick
                 || state
@@ -3667,27 +3867,56 @@ fn process_msg(
             state.rollback();
             state.rollback_hash = Some(state.state_hash());
             #[cfg(test)]
-            if let Some(probe) = state.fatal_cleanup_probe_for_test.as_ref().filter(|probe| probe.tick == tick) {
-                probe.events.send(super::protocol::DeskFatalCleanupEventForTest::AbortApplied {
-                    stock: state.setup.stock, tick, cur_tick: state.cur_tick,
-                    calendar_tick: state.calendar_tick.as_ref().map(|calendar| calendar.after_input().tick),
-                }).map_err(|error| over(&format!("失败清理Abort观察通道断连：{error}")))?;
-                probe.after_abort.recv_timeout(std::time::Duration::from_millis(1000))
-                    .map_err(|error| over(&format!("失败清理Abort观察门超过1000ms或断连：{error}")))?;
+            if let Some(probe) = state
+                .fatal_cleanup_probe_for_test
+                .as_ref()
+                .filter(|probe| probe.tick == tick)
+            {
+                probe
+                    .events
+                    .send(
+                        super::protocol::DeskFatalCleanupEventForTest::AbortApplied {
+                            stock: state.setup.stock,
+                            tick,
+                            cur_tick: state.cur_tick,
+                            calendar_tick: state
+                                .calendar_tick
+                                .as_ref()
+                                .map(|calendar| calendar.after_input().tick),
+                        },
+                    )
+                    .map_err(|error| over(&format!("失败清理Abort观察通道断连：{error}")))?;
+                probe
+                    .after_abort
+                    .recv_timeout(std::time::Duration::from_millis(1000))
+                    .map_err(|error| {
+                        over(&format!("失败清理Abort观察门超过1000ms或断连：{error}"))
+                    })?;
             }
         }
         DeskMsg::AbortDayEnd { tick } => {
             if tick != state.cur_tick {
                 return Err(RuntimeError::ProtocolInvariant {
-                    detail: format!("交易部 {} 日结撤销 tick 错配：{tick} != {}", state.setup.stock, state.cur_tick),
+                    detail: format!(
+                        "交易部 {} 日结撤销 tick 错配：{tick} != {}",
+                        state.setup.stock, state.cur_tick
+                    ),
                 });
             }
             // 未进入 Drain 的交易部仍持普通 tick 日志，不可回放。
-            if state.undo.iter().any(|entry| matches!(entry, DeskUndo::DrainMarket(_))) {
+            if state
+                .undo
+                .iter()
+                .any(|entry| matches!(entry, DeskUndo::DrainMarket(_)))
+            {
                 state.rollback();
                 state.rollback_hash = Some(state.state_hash());
             }
-            up_tx.send(UpMsg::DayEndAborted { who: WorkerId::Desk(state.setup.stock), tick })
+            up_tx
+                .send(UpMsg::DayEndAborted {
+                    who: WorkerId::Desk(state.setup.stock),
+                    tick,
+                })
                 .map_err(|_| RuntimeError::SendFailed {
                     detail: format!("交易部 {} 日结撤销确认发送失败", state.setup.stock),
                 })?;
@@ -3726,7 +3955,10 @@ fn process_msg(
                 state.snapshot_drain_market();
                 #[cfg(feature = "simulation-diagnostics")]
                 {
-                    let day = state.calendar_tick.as_ref().map(|tick| tick.day())
+                    let day = state
+                        .calendar_tick
+                        .as_ref()
+                        .map(|tick| tick.day())
                         .or(state.initial_calendar_day.as_ref())
                         .ok_or_else(|| over("Drain causal 缺少已校验 DayContext"))?;
                     state.causal_drain_date = Some(day.day_model().current_date());
@@ -3734,12 +3966,23 @@ fn process_msg(
                 state.drain_all()?;
                 if state.cur_tick > 0 && state.cur_tick % state.setup.ticks_per_day == 0 {
                     if state.setup.phase_at(state.cur_tick - 1) == DeskPhase::ClosingAuction {
-                        let candle = state.market.candle.ok_or_else(|| RuntimeError::ProtocolInvariant {
-                            detail: format!("交易部 {} 日末清算后缺终 K", state.setup.stock),
-                        })?;
+                        let candle =
+                            state
+                                .market
+                                .candle
+                                .ok_or_else(|| RuntimeError::ProtocolInvariant {
+                                    detail: format!(
+                                        "交易部 {} 日末清算后缺终 K",
+                                        state.setup.stock
+                                    ),
+                                })?;
                         state.drain_cleared_closing = Some(super::protocol::DeskDayCandleFinal {
-                            open: candle.open, high: candle.high, low: candle.low, close: candle.close,
-                            volume: candle.volume, turnover_cents: state.market.turnover_today,
+                            open: candle.open,
+                            high: candle.high,
+                            low: candle.low,
+                            close: candle.close,
+                            volume: candle.volume,
+                            turnover_cents: state.market.turnover_today,
                             trade_count: state.market.trade_count,
                         });
                     }

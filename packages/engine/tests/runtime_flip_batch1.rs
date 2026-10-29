@@ -145,9 +145,7 @@ fn batch1_trade_event_fields_wellformed() {
             .step_frame_equivalent(&mut session)
             .expect("runtime tick（含安装）");
         events.extend(evs);
-        driver
-            .install_market_views(&mut session)
-            .expect("行情安装");
+        driver.install_market_views(&mut session).expect("行情安装");
         driver.install_candles(&mut session).expect("K 安装");
     }
     let trades: Vec<&Event> = events
@@ -186,10 +184,7 @@ fn batch1_trade_event_fields_wellformed() {
             saw_injected_pair = true;
         }
     }
-    assert!(
-        saw_injected_pair,
-        "注入对必须真实成交（否则 fixture 失效）"
-    );
+    assert!(saw_injected_pair, "注入对必须真实成交（否则 fixture 失效）");
 }
 
 // 9. 现金守恒方向（两路径现金总量不增——无外部注入）。
@@ -240,8 +235,8 @@ fn batch1_phase_window_consistency() {
     }
     assert!(call_seen_tick.is_some(), "前 15 tick 应有开盘竞价事件");
     for e in &events {
-        if let Event::AuctionTick { tick, phase, .. } | Event::AuctionCompleted { tick, phase, .. } =
-            e
+        if let Event::AuctionTick { tick, phase, .. }
+        | Event::AuctionCompleted { tick, phase, .. } = e
         {
             assert!(
                 !(*tick > 15 && *tick <= 30 && matches!(phase, engine::TradingPhase::CallAuction)),

@@ -1,5 +1,5 @@
 use super::{FeeComponents, ReceiptDelta, ResVec};
-use crate::{GameConfig, Money, session::buy_order_reservation, session::fee_delta};
+use crate::{session::buy_order_reservation, session::fee_delta, GameConfig, Money};
 
 #[derive(Clone, Copy)]
 pub struct BuyFillInput<'a> {

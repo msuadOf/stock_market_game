@@ -108,7 +108,11 @@ fn old_pipeline_and_runtime_driver_both_drive_without_divergence() {
             last_seq = Some(seq);
         }
     }
-    assert_eq!(session_b.tick(), ticks, "公开 direct driver 返回前提交真实进度");
+    assert_eq!(
+        session_b.tick(),
+        ticks,
+        "公开 direct driver 返回前提交真实进度"
+    );
     // 账户面对照：两会话账户数一致；现金均为有限值（无 NaN/溢出路径）。
     assert_eq!(session_a.account_count(), session_b.account_count());
     for id in [crate::AccountId(0)] {

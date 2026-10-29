@@ -214,8 +214,12 @@ fn restore_rejects_plan_child_that_does_not_match_a_live_order() {
         .expect("an execution leg without a child is valid");
     {
         let mut encoded = serde_json::to_value(&forged).unwrap();
-        let plan_index = encoded["plans"]["plans"].as_array().unwrap().iter()
-            .position(|plan| plan["Investor"]["plan_id"] == serde_json::to_value(plan_id).unwrap()).unwrap();
+        let plan_index = encoded["plans"]["plans"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .position(|plan| plan["Investor"]["plan_id"] == serde_json::to_value(plan_id).unwrap())
+            .unwrap();
         encoded["plans"]["plans"][plan_index]["Investor"]["active_child_order_id"] =
             serde_json::json!(player_order.0);
         forged = serde_json::from_value(encoded).unwrap();
@@ -666,15 +670,24 @@ fn live_child_case() -> (GameSession, crate::plans::PlanId, StockId) {
     live_child_case_at_session(low_price_session())
 }
 
-fn live_child_case_at_session(session: GameSession) -> (GameSession, crate::plans::PlanId, StockId) {
+fn live_child_case_at_session(
+    session: GameSession,
+) -> (GameSession, crate::plans::PlanId, StockId) {
     live_child_case_with_order(session, OrderId(1))
 }
 
-fn live_child_case_with_order(session: GameSession, child_order: OrderId) -> (GameSession, crate::plans::PlanId, StockId) {
+fn live_child_case_with_order(
+    session: GameSession,
+    child_order: OrderId,
+) -> (GameSession, crate::plans::PlanId, StockId) {
     live_child_case_at_stock(session, child_order, StockId(0))
 }
 
-fn live_child_case_at_stock(mut session: GameSession, child_order: OrderId, code: StockId) -> (GameSession, crate::plans::PlanId, StockId) {
+fn live_child_case_at_stock(
+    mut session: GameSession,
+    child_order: OrderId,
+    code: StockId,
+) -> (GameSession, crate::plans::PlanId, StockId) {
     let account = crate::AccountId(1);
     let plan_id = session
         .state
@@ -745,10 +758,14 @@ fn restore_rebuilds_remaining_from_live_book_when_serialized_value_is_stale() {
     let saved = authority.save().unwrap();
     let mut encoded = serde_json::to_value(&saved).unwrap();
     // 序列化余量(1) < 真实订单余量(300)：restore 必须以真实簿为准。
-    let plan_index = encoded["plans"]["plans"].as_array().unwrap().iter()
-        .position(|plan| plan["Investor"]["plan_id"] == serde_json::to_value(plan_id).unwrap()).unwrap();
-    encoded["plans"]["plans"][plan_index]["Investor"]["execution"]
-        ["active_child_remaining_qty"] = serde_json::json!(1);
+    let plan_index = encoded["plans"]["plans"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .position(|plan| plan["Investor"]["plan_id"] == serde_json::to_value(plan_id).unwrap())
+        .unwrap();
+    encoded["plans"]["plans"][plan_index]["Investor"]["execution"]["active_child_remaining_qty"] =
+        serde_json::json!(1);
     let forged: crate::SaveSlot = serde_json::from_value(encoded).unwrap();
     let restored = GameSession::restore(&forged).expect("stale serialized remaining is rebuilt");
     assert_eq!(
@@ -768,8 +785,12 @@ fn restore_rebuilds_remaining_from_live_book_when_field_is_absent() {
     let saved = authority.save().unwrap();
     let mut encoded = serde_json::to_value(&saved).unwrap();
     // 字段缺失：唯一 owner 从真实订单簿重建。
-    let plan_index = encoded["plans"]["plans"].as_array().unwrap().iter()
-        .position(|plan| plan["Investor"]["plan_id"] == serde_json::to_value(plan_id).unwrap()).unwrap();
+    let plan_index = encoded["plans"]["plans"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .position(|plan| plan["Investor"]["plan_id"] == serde_json::to_value(plan_id).unwrap())
+        .unwrap();
     encoded["plans"]["plans"][plan_index]["Investor"]["execution"]
         .as_object_mut()
         .unwrap()
@@ -793,8 +814,12 @@ fn restore_rejects_live_exposure_beyond_target_with_fault2185() {
     let saved = authority.save().unwrap();
     let mut encoded = serde_json::to_value(&saved).unwrap();
     // filled=350（≤ target 400，2144 不触发），真实余量 300 ⇒ exposure 650 > 400。
-    let plan_index = encoded["plans"]["plans"].as_array().unwrap().iter()
-        .position(|plan| plan["Investor"]["plan_id"] == serde_json::to_value(plan_id).unwrap()).unwrap();
+    let plan_index = encoded["plans"]["plans"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .position(|plan| plan["Investor"]["plan_id"] == serde_json::to_value(plan_id).unwrap())
+        .unwrap();
     encoded["plans"]["plans"][plan_index]["Investor"]["filled_qty"] = serde_json::json!(350);
     let forged: crate::SaveSlot = serde_json::from_value(encoded).unwrap();
     assert!(matches!(
@@ -811,10 +836,14 @@ fn restore_rejects_inflated_serialized_remaining_with_fault2185() {
     let saved = authority.save().unwrap();
     let mut encoded = serde_json::to_value(&saved).unwrap();
     // 序列化余量(999) > 真实余量(300)：虚增敞口直接拒绝。
-    let plan_index = encoded["plans"]["plans"].as_array().unwrap().iter()
-        .position(|plan| plan["Investor"]["plan_id"] == serde_json::to_value(plan_id).unwrap()).unwrap();
-    encoded["plans"]["plans"][plan_index]["Investor"]["execution"]
-        ["active_child_remaining_qty"] = serde_json::json!(999);
+    let plan_index = encoded["plans"]["plans"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .position(|plan| plan["Investor"]["plan_id"] == serde_json::to_value(plan_id).unwrap())
+        .unwrap();
+    encoded["plans"]["plans"][plan_index]["Investor"]["execution"]["active_child_remaining_qty"] =
+        serde_json::json!(999);
     let forged: crate::SaveSlot = serde_json::from_value(encoded).unwrap();
     assert!(matches!(
         GameSession::restore(&forged),
@@ -878,14 +907,7 @@ fn partial_plan_child_quantity_is_rebuilt_without_losing_fill_or_fee_history() {
     source
         .state
         .plans
-        .record_child_submitted(
-            key.account,
-            &key.stock,
-            Side::Sell,
-            key.order,
-            50_002,
-            0,
-        )
+        .record_child_submitted(key.account, &key.stock, Side::Sell, key.order, 50_002, 0)
         .unwrap();
     source
         .state
@@ -904,10 +926,7 @@ fn partial_plan_child_quantity_is_rebuilt_without_losing_fill_or_fee_history() {
     let restored = GameSession::restore(&saved).expect("plan must rebuild from its live child");
     let plan = restored.state.plans.plan(plan_id).unwrap();
     assert_eq!(plan.active_child_remaining_qty(), Some(1));
-    assert_eq!(
-        plan.target(),
-        crate::plans::PlanTarget::ShareCount(50_100)
-    );
+    assert_eq!(plan.target(), crate::plans::PlanTarget::ShareCount(50_100));
     assert_eq!(plan.filled_qty(), 50_001);
     assert_eq!(
         restored.state.markets[&key.stock].resting_orders_for(key.account)[0].qty,
@@ -1155,7 +1174,9 @@ fn real_step_settles_and_persists_gross_capped_seller_without_cash_reservation()
                 },
             )
             .unwrap();
-        session.step().expect("buyer crosses seeded seller tick must commit");
+        session
+            .step()
+            .expect("buyer crosses seeded seller tick must commit");
         cash_before_fill = session.state.accounts[&AccountId(0)].cash();
         // 双账户下买方首拍即付（gross 断言的"卖拍后现金"基线=首拍后值）。
         let gross_pre = Money::from_cents(100);
@@ -1164,9 +1185,7 @@ fn real_step_settles_and_persists_gross_capped_seller_without_cash_reservation()
             .unwrap()
             .add(session.state.setup.config.transfer_fee(gross_pre).unwrap())
             .unwrap();
-        cash_before_fill = session
-            .state
-            .accounts[&AccountId(0)]
+        cash_before_fill = session.state.accounts[&AccountId(0)]
             .cash()
             .add(pre_cost)
             .unwrap();
@@ -1988,8 +2007,7 @@ fn restore_carries_true_fill_facts_and_continues_buy_with_cumulative_fees() {
                 .unwrap_or_else(|| panic!("leg{leg} 买余量在册"));
             assert_eq!(buy.qty, remaining, "leg{leg} 余量");
             assert_eq!(
-                buy.filled_qty,
-                expected_filled,
+                buy.filled_qty, expected_filled,
                 "leg{leg} 真实成交数量贯穿（价优换算不成立——判决反例 99）"
             );
             assert_eq!(buy.original_qty, 300, "原始委托量=余量+真实成交量");
@@ -2046,7 +2064,11 @@ fn v5_adopt_partial_buy_seeds_exact_escrow_and_survives_quiet_save() {
     let base = GameSession::new(setup, 42).expect("fixture 必须有效");
     let mut save = base.save().expect("基线档");
     {
-        let account = save.snapshot.accounts.get_mut(&AccountId(1)).expect("NPC 买方");
+        let account = save
+            .snapshot
+            .accounts
+            .get_mut(&AccountId(1))
+            .expect("NPC 买方");
         account.cash = crate::money::Money::from_cents(500_000);
         account.positions.insert(
             code.clone(),
@@ -2284,8 +2306,7 @@ fn v6_order_id_encoding_stays_in_wire_domain_beyond_32_stocks() {
         )
         .expect("入队");
     let events = session.step().expect("步进");
-    let json = serde_json::to_value(&events)
-        .expect("事件面序列化");
+    let json = serde_json::to_value(&events).expect("事件面序列化");
     assert!(json.to_string().len() > 0);
     let save = session.save().expect("存档");
     GameSession::restore(&save).expect("33 股局档往返");
@@ -2545,41 +2566,75 @@ fn lazy_handover_prepare_failure_preserves_authority_and_can_retry() {
     let epoch = session.runtime_authority_epoch;
     let install = session.runtime_mirror_install_sequence;
     session.runtime_install_failure = true;
-    let error = session.construct_runtime_driver_lazy_for_test().unwrap_err();
+    let error = session
+        .construct_runtime_driver_lazy_for_test()
+        .unwrap_err();
     assert!(error.to_string().contains("安装失败注入"));
     assert!(session.runtime_driver.is_none());
-    assert!(session.require_healthy().is_ok(), "已回收 prepared workers 后保旧权威可重试");
+    assert!(
+        session.require_healthy().is_ok(),
+        "已回收 prepared workers 后保旧权威可重试"
+    );
     assert_eq!(session.runtime_authority_epoch, epoch);
     assert_eq!(session.runtime_mirror_install_sequence, install);
     assert_eq!(session.external_revision(), revision);
-    assert_eq!(serde_json::to_value(session.save().unwrap()).unwrap(), before);
+    assert_eq!(
+        serde_json::to_value(session.save().unwrap()).unwrap(),
+        before
+    );
     session.runtime_install_failure = false;
     session.construct_runtime_driver_lazy_for_test().unwrap();
-    assert_eq!(session.external_revision(), revision + 1, "真实 activation 只有一次 revision 写入");
+    assert_eq!(
+        session.external_revision(),
+        revision + 1,
+        "真实 activation 只有一次 revision 写入"
+    );
     let saved = session.save().unwrap();
     let restored = GameSession::restore(&saved).unwrap();
-    assert_eq!(restored.state.plans.plan(plan_id).unwrap().active_child_remaining_qty(), Some(300));
+    assert_eq!(
+        restored
+            .state
+            .plans
+            .plan(plan_id)
+            .unwrap()
+            .active_child_remaining_qty(),
+        Some(300)
+    );
 }
 
 #[test]
 fn lazy_handover_rejects_unpreservable_old_order_identity_without_mutation() {
     let old_id = OrderId(7);
-    let (mut session, plan_id, _) = live_child_case_at_stock(two_stock_low_price_session(), old_id, StockId(1));
+    let (mut session, plan_id, _) =
+        live_child_case_at_stock(two_stock_low_price_session(), old_id, StockId(1));
     let saved = session.save().unwrap();
     GameSession::restore(&saved).expect("非连续旧委托身份的源存档必须合法");
     let before = serde_json::to_value(&saved).unwrap();
     let revision = session.external_revision();
     let epoch = session.runtime_authority_epoch;
     let install = session.runtime_mirror_install_sequence;
-    let error = session.construct_runtime_driver_lazy_for_test().unwrap_err();
+    let error = session
+        .construct_runtime_driver_lazy_for_test()
+        .unwrap_err();
     assert!(error.to_string().contains("不能保真重编号"));
     assert!(session.require_healthy().is_ok());
     assert!(session.runtime_driver.is_none());
     assert_eq!(session.runtime_authority_epoch, epoch);
     assert_eq!(session.runtime_mirror_install_sequence, install);
     assert_eq!(session.external_revision(), revision);
-    assert_eq!(session.state.plans.plan(plan_id).unwrap().active_child_order_id(), Some(old_id));
-    assert_eq!(serde_json::to_value(session.save().unwrap()).unwrap(), before);
+    assert_eq!(
+        session
+            .state
+            .plans
+            .plan(plan_id)
+            .unwrap()
+            .active_child_order_id(),
+        Some(old_id)
+    );
+    assert_eq!(
+        serde_json::to_value(session.save().unwrap()).unwrap(),
+        before
+    );
 }
 
 #[test]
@@ -2595,15 +2650,33 @@ fn lazy_handover_preserves_sparse_identity_and_consumed_id_floor() {
     assert_eq!(after.resting_orders[&code][0].id, OrderId(7));
     assert_eq!(after.resting_orders[&code][0].qty, 300);
     assert!(after.book_next_sequences[&code] >= 21);
-    assert_eq!(serde_json::to_value(&after.runtime_state.live_envelopes).unwrap(),
-        serde_json::to_value(&before.runtime_state.live_envelopes).unwrap());
+    assert_eq!(
+        serde_json::to_value(&after.runtime_state.live_envelopes).unwrap(),
+        serde_json::to_value(&before.runtime_state.live_envelopes).unwrap()
+    );
     let mut restored = GameSession::restore(&after).unwrap();
     restored.construct_runtime_driver_lazy_for_test().unwrap();
     let again = restored.save().unwrap();
     assert_eq!(again.resting_orders[&code][0].id, OrderId(7));
     assert!(again.book_next_sequences[&code] >= 21);
-    assert_eq!(restored.state.plans.plan(plan_id).unwrap().active_child_order_id(), Some(OrderId(7)));
-    assert_eq!(restored.state.plans.plan(plan_id).unwrap().active_child_remaining_qty(), Some(300));
+    assert_eq!(
+        restored
+            .state
+            .plans
+            .plan(plan_id)
+            .unwrap()
+            .active_child_order_id(),
+        Some(OrderId(7))
+    );
+    assert_eq!(
+        restored
+            .state
+            .plans
+            .plan(plan_id)
+            .unwrap()
+            .active_child_remaining_qty(),
+        Some(300)
+    );
 }
 
 fn two_stock_low_price_session() -> GameSession {
@@ -2620,7 +2693,9 @@ fn two_stock_low_price_session() -> GameSession {
 #[test]
 fn lazy_handover_preserves_encoded_runtime_cursor_and_rejects_legacy_overflow() {
     let (mut authority, _, code) = live_child_case_at_stock(
-        two_stock_low_price_session(), OrderId((1_u64 << 32) | 7), StockId(1),
+        two_stock_low_price_session(),
+        OrderId((1_u64 << 32) | 7),
+        StockId(1),
     );
     let mut save = authority.save().unwrap();
     // 合法 desk 存档使用本地 seq/cursor，next_order_id 则仍是完整 encoded ID。
@@ -2630,15 +2705,21 @@ fn lazy_handover_preserves_encoded_runtime_cursor_and_rejects_legacy_overflow() 
     let mut restored = GameSession::restore(&save).unwrap();
     restored.construct_runtime_driver_lazy_for_test().unwrap();
     let after = restored.save().unwrap();
-    assert_eq!(after.resting_orders[&code][0].id, OrderId((1_u64 << 32) | 7));
+    assert_eq!(
+        after.resting_orders[&code][0].id,
+        OrderId((1_u64 << 32) | 7)
+    );
     assert_eq!(after.book_next_sequences[&code], 21);
     GameSession::restore(&after).unwrap();
 
     let mut exhausted = low_price_session();
     exhausted.state.next_order_id = 1_u64 << 32;
     exhausted.construct_runtime_driver_lazy_for_test().unwrap();
-    assert_eq!(exhausted.save().unwrap().book_next_sequences[&StockId(0)], 1_u64 << 32,
-        "已耗尽的静点游标不回绕，也不在读取时假造下一笔下单");
+    assert_eq!(
+        exhausted.save().unwrap().book_next_sequences[&StockId(0)],
+        1_u64 << 32,
+        "已耗尽的静点游标不回绕，也不在读取时假造下一笔下单"
+    );
 
     let mut legacy = low_price_session();
     legacy.state.next_order_id = (1_u64 << 32) + 1;
@@ -2651,11 +2732,24 @@ fn lazy_handover_preserves_encoded_runtime_cursor_and_rejects_legacy_overflow() 
     assert!(legacy.runtime_driver.is_none());
     assert_eq!(legacy.external_revision(), revision);
     assert_eq!(legacy.runtime_authority_epoch, epoch);
-    assert_eq!(serde_json::to_value(legacy.save().unwrap()).unwrap(), before);
+    assert_eq!(
+        serde_json::to_value(legacy.save().unwrap()).unwrap(),
+        before
+    );
 
     let mut empty = low_price_session();
     empty.state.next_order_id = 21;
-    assert!(empty.save().unwrap().resting_orders.values().all(Vec::is_empty));
+    assert!(empty
+        .save()
+        .unwrap()
+        .resting_orders
+        .values()
+        .all(Vec::is_empty));
     empty.construct_runtime_driver_lazy_for_test().unwrap();
-    assert!(empty.save().unwrap().book_next_sequences.values().all(|cursor| *cursor >= 21));
+    assert!(empty
+        .save()
+        .unwrap()
+        .book_next_sequences
+        .values()
+        .all(|cursor| *cursor >= 21));
 }

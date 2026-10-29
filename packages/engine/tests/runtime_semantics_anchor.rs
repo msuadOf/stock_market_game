@@ -102,9 +102,7 @@ fn t1_today_buy_frozen_and_day_end_unfreeze() {
     let mut driver = RuntimeDriver::from_session(&mut session).expect("驱动器");
     driver.adopt_session_seq(&session);
     inject_crossing_pair_at_1000(&mut driver);
-    driver
-        .step_frame_equivalent(&mut session)
-        .expect("成交拍");
+    driver.step_frame_equivalent(&mut session).expect("成交拍");
     driver.install_market_views(&mut session).expect("行情");
     driver.install_candles(&mut session).expect("K");
     for _ in 2..=240 {
@@ -132,7 +130,10 @@ fn t1_today_buy_frozen_and_day_end_unfreeze() {
         .flat_map(|(_, accounts)| accounts)
         .map(|a| a.frozen_today.iter().sum::<u32>())
         .sum();
-    assert_eq!(frozen_after, 0, "T+1：日结解冻恰在日界（frozen_today 全零）");
+    assert_eq!(
+        frozen_after, 0,
+        "T+1：日结解冻恰在日界（frozen_today 全零）"
+    );
 }
 
 /// #18：恰 240 tick（日终点口径）日终清簿后无悬挂挂单——逐单闭环
@@ -160,7 +161,9 @@ fn exact_closure_on_no_trade_fixture() {
         }
     }
     assert!(
-        events.iter().any(|e| matches!(e, Event::OrderAccepted { .. })),
+        events
+            .iter()
+            .any(|e| matches!(e, Event::OrderAccepted { .. })),
         "候选序 300..340 内存在有受理且无成交形态"
     );
     let mut orders: BTreeMap<(u64, u32, u64), (u32, u32, u32)> = BTreeMap::new();
@@ -168,12 +171,20 @@ fn exact_closure_on_no_trade_fixture() {
     for e in &events {
         match e {
             Event::OrderAccepted {
-                account, code, id, remaining_qty, ..
+                account,
+                code,
+                id,
+                remaining_qty,
+                ..
             } => {
                 orders.entry((account.0, code.0, id.0)).or_default().0 += *remaining_qty;
             }
             Event::OrderCanceled {
-                account, code, id, remaining_qty, ..
+                account,
+                code,
+                id,
+                remaining_qty,
+                ..
             } => {
                 let slot = orders.entry((account.0, code.0, id.0)).or_default();
                 slot.1 += 1;
@@ -231,7 +242,10 @@ fn civil_day_end_failure_rolls_back_and_retries_once() {
     let mut canceled_ids = BTreeSet::new();
     for e in &drained {
         if let Event::OrderCanceled { id, .. } = e {
-            assert!(canceled_ids.insert(*id), "清簿撤单不重复（重试恰一次）：{id:?}");
+            assert!(
+                canceled_ids.insert(*id),
+                "清簿撤单不重复（重试恰一次）：{id:?}"
+            );
         }
     }
     driver
@@ -402,7 +416,10 @@ fn fee_settlement_formulas_with_minimum_commission_and_marginal_split() {
     let mut driver = RuntimeDriver::from_session(&mut session).expect("驱动器");
     driver.adopt_session_seq(&session);
     let seller_shares0 = driver.world_accounts_snapshot().expect("初始快照")[0].1[1].shares[0];
-    assert!(seller_shares0 >= 3_000, "前置：卖方 float 持仓充足（实测 {seller_shares0}）");
+    assert!(
+        seller_shares0 >= 3_000,
+        "前置：卖方 float 持仓充足（实测 {seller_shares0}）"
+    );
     let sell = |qty: u32| engine::ReceiptBearingIntent {
         owner: engine::AccountId(1),
         intent: engine::Intent::PlaceLimit {
@@ -489,9 +506,18 @@ fn fee_settlement_formulas_with_minimum_commission_and_marginal_split() {
         .iter()
         .find(|(q, _, _)| *q == 2_900)
         .expect("卖腿 2900 在事实流");
-    assert_eq!(leg_100.2, 501, "买腿 1：佣金下限 500+过户 1（单张累计吃满下限）");
-    assert_eq!(leg_100.1, 551, "卖腿 1（100 股单）：佣金下限 500+印花 50+过户 1");
-    assert_eq!(leg_2900.2, 279, "买腿 2：佣金补差 250（累计 rated 750−已收 500）+过户 29");
+    assert_eq!(
+        leg_100.2, 501,
+        "买腿 1：佣金下限 500+过户 1（单张累计吃满下限）"
+    );
+    assert_eq!(
+        leg_100.1, 551,
+        "卖腿 1（100 股单）：佣金下限 500+印花 50+过户 1"
+    );
+    assert_eq!(
+        leg_2900.2, 279,
+        "买腿 2：佣金补差 250（累计 rated 750−已收 500）+过户 29"
+    );
     assert_eq!(
         leg_2900.1, 2_204,
         "卖腿 2（2900 股单）：佣金 max(725,500)=725+印花 1_450+过户 29"
@@ -608,9 +634,7 @@ fn player_market_and_symbolic_intents_route_into_runtime_world() {
             &upper,
         )
         .expect("注入");
-    let events = driver
-        .step_frame_equivalent(&mut session)
-        .expect("市价拍");
+    let events = driver.step_frame_equivalent(&mut session).expect("市价拍");
     driver.install_market_views(&mut session).expect("行情");
     driver.install_candles(&mut session).expect("K");
     assert!(
@@ -624,9 +648,7 @@ fn player_market_and_symbolic_intents_route_into_runtime_world() {
     );
     // 实体跨拍落账（R10 口径）：tick1 产 BoughtShares/CashRefund 实体，
     // 下一拍 start 应用——账面断言在空拍后取（desk 面断言不受影响）。
-    let _ = driver
-        .step_frame_equivalent(&mut session)
-        .expect("落账拍");
+    let _ = driver.step_frame_equivalent(&mut session).expect("落账拍");
     driver.install_market_views(&mut session).expect("行情");
     driver.install_candles(&mut session).expect("K");
     let accounts = driver.world_accounts_snapshot().expect("组快照");
@@ -738,9 +760,7 @@ fn sol23_group_skips_emit_player_receipts_with_reasons() {
                 intent: engine::Intent::PlaceLimit {
                     code: engine::StockId(0),
                     side: engine::Side::Sell,
-                    price: engine::strategy::LimitPrice::Fixed(engine::Money::from_cents(
-                        1_000,
-                    )),
+                    price: engine::strategy::LimitPrice::Fixed(engine::Money::from_cents(1_000)),
                     qty: 100,
                 },
                 account_ordinal: 0,
@@ -807,9 +827,7 @@ fn sol23_group_skips_emit_player_receipts_with_reasons() {
                 intent: engine::Intent::PlaceLimit {
                     code: engine::StockId(0),
                     side: engine::Side::Sell,
-                    price: engine::strategy::LimitPrice::Fixed(engine::Money::from_cents(
-                        1_000,
-                    )),
+                    price: engine::strategy::LimitPrice::Fixed(engine::Money::from_cents(1_000)),
                     qty: 150,
                 },
                 account_ordinal: 0,
@@ -975,9 +993,7 @@ fn sol3r_lowest_buy_penny_boundary_at_drive_level() {
                     .collect::<Vec<_>>(),
             )
             .expect("注入");
-        let events = driver
-            .step_frame_equivalent(&mut session)
-            .expect("步进");
+        let events = driver.step_frame_equivalent(&mut session).expect("步进");
         driver.install_market_views(&mut session).expect("行情");
         if want_accepted {
             let views = driver.world_public_views();
@@ -1039,19 +1055,19 @@ fn sol3r_multi_request_exact_receipt_counts_and_unique_ids() {
             &uppers,
         )
         .expect("注入");
-    let mut events = driver
-        .step_frame_equivalent(&mut session)
-        .expect("回执拍");
+    let mut events = driver.step_frame_equivalent(&mut session).expect("回执拍");
     let lot_rejects = events
         .iter()
-        .filter(|e| matches!(
-            e,
-            Event::IntentRejected {
-                account: engine::AccountId(1),
-                reason: engine::RejectionReason::InvalidQuantity,
-                ..
-            }
-        ))
+        .filter(|e| {
+            matches!(
+                e,
+                Event::IntentRejected {
+                    account: engine::AccountId(1),
+                    reason: engine::RejectionReason::InvalidQuantity,
+                    ..
+                }
+            )
+        })
         .count();
     assert_eq!(
         lot_rejects, 3,
@@ -1074,9 +1090,7 @@ fn sol3r_multi_request_exact_receipt_counts_and_unique_ids() {
                 &uppers,
             )
             .expect("注入");
-        let evs = driver
-            .step_frame_equivalent(&mut session)
-            .expect("市价拍");
+        let evs = driver.step_frame_equivalent(&mut session).expect("市价拍");
         events.extend(evs);
     }
     let cancel_ids: Vec<u64> = events

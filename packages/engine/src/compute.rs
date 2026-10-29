@@ -264,8 +264,6 @@ pub struct ComputeObservation {
     pub owner_worker: Option<usize>,
 }
 
-
-
 #[cfg(test)]
 mod context_tests {
     use super::*;
@@ -279,7 +277,6 @@ mod context_tests {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn compute_context_default_uses_available_os_resources() {
@@ -312,12 +309,20 @@ mod context_tests {
         ran.sort_unstable();
         assert_eq!(ran, (0..7).collect::<Vec<_>>(), "每索引恰一次");
         assert_eq!(
-            compute.t1_probes.parallel_gather_chunks.swap(0, std::sync::atomic::Ordering::SeqCst),
+            compute
+                .t1_probes
+                .parallel_gather_chunks
+                .swap(0, std::sync::atomic::Ordering::SeqCst),
             2,
             "chunk 任务数必须=min(len,active_width)=2"
         );
-        let err: Result<Vec<u64>, usize> =
-            compute.parallel_map_chunks(7, |i| if i == 3 || i == 5 { Err(i) } else { Ok(i as u64) });
+        let err: Result<Vec<u64>, usize> = compute.parallel_map_chunks(7, |i| {
+            if i == 3 || i == 5 {
+                Err(i)
+            } else {
+                Ok(i as u64)
+            }
+        });
         assert_eq!(err, Err(3), "首错必须按索引序而非完成序");
     }
 
@@ -340,8 +345,16 @@ mod context_tests {
     fn parallel_grain_targets_worker_aligned_chunk_count() {
         use super::parallel_grain;
         assert_eq!(parallel_grain(7, 2), 4, "ceil(7/min(7,2))=4 ⇒ 2 个 chunk");
-        assert_eq!(parallel_grain(4, 128), 1, "due≤workers ⇒ 单账户 chunk（旧行为）");
-        assert_eq!(parallel_grain(20000, 128), 157, "ceil(20000/128)=157 ⇒ 128 个 chunk");
+        assert_eq!(
+            parallel_grain(4, 128),
+            1,
+            "due≤workers ⇒ 单账户 chunk（旧行为）"
+        );
+        assert_eq!(
+            parallel_grain(20000, 128),
+            157,
+            "ceil(20000/128)=157 ⇒ 128 个 chunk"
+        );
         assert_eq!(parallel_grain(627, 16), 40, "ceil(627/16)=40 ⇒ 16 个 chunk");
         assert_eq!(parallel_grain(0, 8), 1, "空集粒度无意义但保持正数");
         assert_eq!(parallel_grain(9, 1), 9, "单 worker ⇒ 单 chunk 全串行");
@@ -370,7 +383,9 @@ impl ComputeContext {
     /// 计数 >0 可红。按上下文隔离，避免并行测试互相污染。
     #[cfg(test)]
     pub(crate) fn begin_install_roundtrip_probe(&self) {
-        self.t1_probes.install_roundtrip_count.store(0, std::sync::atomic::Ordering::SeqCst);
+        self.t1_probes
+            .install_roundtrip_count
+            .store(0, std::sync::atomic::Ordering::SeqCst);
         self.t1_probes
             .install_roundtrip_probe_active
             .store(true, std::sync::atomic::Ordering::SeqCst);
@@ -402,9 +417,15 @@ impl ComputeContext {
     #[cfg(test)]
     pub(crate) fn take_stream_workload_counts(&self) -> (u64, u64, u64) {
         (
-            self.t1_probes.stream_spawned.swap(0, std::sync::atomic::Ordering::SeqCst),
-            self.t1_probes.stream_payloads.swap(0, std::sync::atomic::Ordering::SeqCst),
-            self.t1_probes.stream_inline.swap(0, std::sync::atomic::Ordering::SeqCst),
+            self.t1_probes
+                .stream_spawned
+                .swap(0, std::sync::atomic::Ordering::SeqCst),
+            self.t1_probes
+                .stream_payloads
+                .swap(0, std::sync::atomic::Ordering::SeqCst),
+            self.t1_probes
+                .stream_inline
+                .swap(0, std::sync::atomic::Ordering::SeqCst),
         )
     }
 
@@ -413,21 +434,31 @@ impl ComputeContext {
     #[cfg(test)]
     pub(crate) fn take_queue_stage_counts(&self) -> (u64, u64, u64, u64, u64, u64) {
         (
-            self.t1_probes.queue_stage_attention.swap(0, std::sync::atomic::Ordering::SeqCst),
-            self.t1_probes.queue_stage_observation.swap(0, std::sync::atomic::Ordering::SeqCst),
-            self.t1_probes.queue_stage_analysis.swap(0, std::sync::atomic::Ordering::SeqCst),
-            self.t1_probes.queue_stage_decide.swap(0, std::sync::atomic::Ordering::SeqCst),
-            self.t1_probes.queue_stage_projection.swap(0, std::sync::atomic::Ordering::SeqCst),
-            self.t1_probes.queue_stage_captures.swap(0, std::sync::atomic::Ordering::SeqCst),
+            self.t1_probes
+                .queue_stage_attention
+                .swap(0, std::sync::atomic::Ordering::SeqCst),
+            self.t1_probes
+                .queue_stage_observation
+                .swap(0, std::sync::atomic::Ordering::SeqCst),
+            self.t1_probes
+                .queue_stage_analysis
+                .swap(0, std::sync::atomic::Ordering::SeqCst),
+            self.t1_probes
+                .queue_stage_decide
+                .swap(0, std::sync::atomic::Ordering::SeqCst),
+            self.t1_probes
+                .queue_stage_projection
+                .swap(0, std::sync::atomic::Ordering::SeqCst),
+            self.t1_probes
+                .queue_stage_captures
+                .swap(0, std::sync::atomic::Ordering::SeqCst),
         )
     }
 
     /// 读取并清空 attention 调用见证记录（T3·Astra 四发现裁定·发现 1，测试用）。
     /// 恰一次评估的**实际调用证据**从这里取证。
     #[cfg(test)]
-    pub(crate) fn take_queue_attention_trace(
-        &self,
-    ) -> Vec<crate::compute::AttentionCallRecord> {
+    pub(crate) fn take_queue_attention_trace(&self) -> Vec<crate::compute::AttentionCallRecord> {
         std::mem::take(
             &mut *self
                 .t1_probes
@@ -484,8 +515,6 @@ impl ComputeContext {
         DEFAULT.get_or_init(Self::available).clone()
     }
 
-
-
     /// 尝试登记一个正在占用本池 worker 槽的协调循环；必须由已在本池内的
     /// 线程调用（`is_worker()` 为真），守卫存活期间协调者始终在该槽上。
     /// 入口即条件准入（round4 ①-必修a）：台账锁内联合校验
@@ -506,8 +535,7 @@ impl ComputeContext {
     /// 特例，round5-③ 表述限定）。
     pub(crate) fn try_enter_pool_drive_slot(self: &std::sync::Arc<Self>) -> Option<PoolDriveSlot> {
         let mut admission = self.admission.lock().expect("池准入台账锁被 poison");
-        let admitted =
-            self.workers() <= 1 || admission.drives + admission.spawned < self.workers();
+        let admitted = self.workers() <= 1 || admission.drives + admission.spawned < self.workers();
         if !admitted {
             return None;
         }
@@ -667,9 +695,7 @@ impl ComputeContext {
 
     /// 方向B·宽度封顶：读取实际参与宽度（恒在 [1, workers()]）。
     pub fn active_width(&self) -> usize {
-        let width = self
-            .active_width
-            .load(std::sync::atomic::Ordering::Relaxed);
+        let width = self.active_width.load(std::sync::atomic::Ordering::Relaxed);
         width.clamp(1, self.workers())
     }
 
@@ -722,13 +748,15 @@ impl ComputeContext {
             Died(Box<dyn std::any::Any + Send>),
         }
 
-        let ranges: std::collections::VecDeque<std::ops::Range<usize>> =
-            (0..chunk_count).map(|c| (c * chunk_size)..((c + 1) * chunk_size).min(len)).collect();
+        let ranges: std::collections::VecDeque<std::ops::Range<usize>> = (0..chunk_count)
+            .map(|c| (c * chunk_size)..((c + 1) * chunk_size).min(len))
+            .collect();
         self.in_place_scope(|scope| {
             let (sender, receiver) = std::sync::mpsc::channel::<ChunkMessage<R, E>>();
             let mut origin_sender = Some(sender);
             let mut pending = ranges;
-            let mut slots: Vec<Option<Vec<Result<R, E>>>> = (0..chunk_count).map(|_| None).collect();
+            let mut slots: Vec<Option<Vec<Result<R, E>>>> =
+                (0..chunk_count).map(|_| None).collect();
             let mut in_flight = 0usize;
             let mut died: Option<Box<dyn std::any::Any + Send>> = None;
             loop {
@@ -779,9 +807,11 @@ impl ComputeContext {
                     scope.spawn(move |_| {
                         // 工作量探针：spawned chunk 任务计 1（cfg(test)）。
                         #[cfg(test)]
-                        self.t1_probes.parallel_gather_chunks.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                        let segment = std::panic::catch_unwind(
-                            std::panic::AssertUnwindSafe(move || {
+                        self.t1_probes
+                            .parallel_gather_chunks
+                            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                        let segment =
+                            std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
                                 crate::verification_evidence::with_phase_timing_binding(
                                     timing,
                                     move || {
@@ -790,7 +820,8 @@ impl ComputeContext {
                                             crate::session::pipeline::with_executor_binding(
                                                 executor,
                                                 move || {
-                                                    range.clone()
+                                                    range
+                                                        .clone()
                                                         .map(|i| item(i))
                                                         .collect::<Vec<_>>()
                                                 },
@@ -802,8 +833,7 @@ impl ComputeContext {
                                         }
                                     },
                                 )
-                            }),
-                        );
+                            }));
                         match segment {
                             Ok(segment) => {
                                 let _ = sender.send(ChunkMessage::Done(index, segment));
@@ -824,7 +854,9 @@ impl ComputeContext {
                     // (c) R1-a 零在飞推进：协调线程内联一个 chunk（同步完成）。
                     let range = pending.pop_front().expect("R1-a 内联项来自非空 pending");
                     #[cfg(test)]
-                    self.t1_probes.parallel_gather_inline.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    self.t1_probes
+                        .parallel_gather_inline
+                        .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                     let index = range.start / chunk_size;
                     slots[index] = Some(range.map(&item).collect());
                     continue;
@@ -860,9 +892,8 @@ impl ComputeContext {
             // 归并：按 chunk 序拼接，首错按索引序。
             let mut out = Vec::with_capacity(len);
             for (index, segment) in slots.into_iter().enumerate() {
-                let segment = segment.unwrap_or_else(|| {
-                    panic!("gather chunk {index} 缺少结果（流协议破坏）")
-                });
+                let segment = segment
+                    .unwrap_or_else(|| panic!("gather chunk {index} 缺少结果（流协议破坏）"));
                 for result in segment {
                     out.push(result?);
                 }
@@ -944,7 +975,10 @@ impl ComputeContext {
     /// 安装容量等待探针（见字段注释；仅测试/验证构建）。
     #[cfg(any(test, feature = "verification-harness"))]
     pub fn set_capacity_wait_probe(&self, probe: std::sync::Arc<dyn Fn() + Send + Sync>) {
-        *self.capacity_wait_probe.write().expect("容量探针锁被 poison") = Some(probe);
+        *self
+            .capacity_wait_probe
+            .write()
+            .expect("容量探针锁被 poison") = Some(probe);
     }
 
     /// 运行容量等待探针（若已安装）：`wait_for_spawn_capacity` 在台账锁内、

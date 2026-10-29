@@ -198,7 +198,11 @@ mod r22b_tests {
     impl Rng for FixedRng {
         fn next_f64(&mut self) -> f64 {
             self.0 = !self.0;
-            if self.0 { 0.7 } else { 0.3 }
+            if self.0 {
+                0.7
+            } else {
+                0.3
+            }
         }
         fn next_range_u32(&mut self, lo: u32, hi: u32) -> u32 {
             lo + (hi - lo) / 2
@@ -240,20 +244,54 @@ mod r22b_tests {
         // 数值手算：p(x)=1−e^(−x/240)（python: 1-math.exp(-x/240)）。
         let cases: [(u32, InstitutionStyle, bool, f64, f64); 5] = [
             // p(0.1)=0.000416579873、p(0.4)=0.001665278549
-            (0, InstitutionStyle::DeepValue, false, 0.000416579873, 0.001665278549),
+            (
+                0,
+                InstitutionStyle::DeepValue,
+                false,
+                0.000416579873,
+                0.001665278549,
+            ),
             // p(20)=0.079955585371、p(55)=0.204804010205
-            (1, InstitutionStyle::Growth, true, 0.079955585371, 0.204804010205),
+            (
+                1,
+                InstitutionStyle::Growth,
+                true,
+                0.079955585371,
+                0.204804010205,
+            ),
             // p(20)=0.079955585371、p(50)=0.188063653849
-            (2, InstitutionStyle::Balanced, true, 0.079955585371, 0.188063653849),
+            (
+                2,
+                InstitutionStyle::Balanced,
+                true,
+                0.079955585371,
+                0.188063653849,
+            ),
             // p(0.25)=0.001041124320、p(0.75)=0.003120122270
-            (3, InstitutionStyle::Defensive, false, 0.001041124320, 0.003120122270),
+            (
+                3,
+                InstitutionStyle::Defensive,
+                false,
+                0.001041124320,
+                0.003120122270,
+            ),
             // p(50)=0.188063653849、p(100)=0.340759369800
-            (4, InstitutionStyle::ActiveTrader, true, 0.188063653849, 0.340759369800),
+            (
+                4,
+                InstitutionStyle::ActiveTrader,
+                true,
+                0.188063653849,
+                0.340759369800,
+            ),
         ];
         const ONE_PER_DAY: f64 = 0.004157998155; // p(1.0/日)——低/高频判别线
         for (ordinal, want_style, want_review, lo, hi) in cases {
             let s = build_institution(ordinal);
-            assert_eq!(s.profile(), StrategyProfile::Institution(want_style), "ordinal {ordinal}");
+            assert_eq!(
+                s.profile(),
+                StrategyProfile::Institution(want_style),
+                "ordinal {ordinal}"
+            );
             let params = s.belief_chain_params().expect("机构必有链参数");
             assert_eq!(
                 params.daily_plan_review, want_review,

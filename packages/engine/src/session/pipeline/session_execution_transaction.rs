@@ -4,10 +4,8 @@
 //! 因此 typed 失败保持 candidate 完全不变；此处不安装到权威状态。
 
 use super::{
-    account_settlement::SettlementTransactionOutput,
-    event_collection::EventFact,
-    stock_execution_transaction::StockExecutionTransactionError,
-    StepFatal,
+    account_settlement::SettlementTransactionOutput, event_collection::EventFact,
+    stock_execution_transaction::StockExecutionTransactionError, StepFatal,
 };
 // T5（批次八十）/Luna 快检（八十·1）：本模块 apply 族与辅助仅测试构建
 // （生产路径已并入 finalize 单点汇合）——测试专用导入统一 cfg(test)。

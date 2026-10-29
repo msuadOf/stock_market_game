@@ -73,7 +73,11 @@ fn batch5_civil_date_advances() {
     // 裁决（翻转批）：日历推进语义一致（两侧都在市场日完成后推自然日）；
     // 差异仅在"谁调用"——runtime 编排自动 vs 旧管线宿主显式（ADR-0025
     // 宿主责任）。helpers 对齐口径后严格断言一致。
-    assert_eq!(rt.civil_date(), pipe.civil_date(), "跨日后 civil date 双路径一致");
+    assert_eq!(
+        rt.civil_date(),
+        pipe.civil_date(),
+        "跨日后 civil date 双路径一致"
+    );
 }
 
 // 7. 驱动后查询股票历史（读侧通道）不失败。
@@ -175,5 +179,8 @@ fn flip_opt_in_runtime_step_drives_and_old_default_unchanged() {
         .env("ENGINE_STEP_RUNTIME", "1")
         .output()
         .expect("子进程");
-    assert!(out.status.success() || out.status.code() == Some(0), "开关不破坏测试运行器");
+    assert!(
+        out.status.success() || out.status.code() == Some(0),
+        "开关不破坏测试运行器"
+    );
 }

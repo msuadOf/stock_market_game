@@ -310,9 +310,8 @@ pub(in crate::session) fn set_decide_post_send_hold(
 /// 配置 decide panic 注入账户集合（仅测试/验证构建）。
 #[cfg(any(test, feature = "verification-harness"))]
 pub(in crate::session) fn set_decide_panic_accounts(accounts: &[AccountId]) {
-    *DECIDE_PANIC_ACCOUNTS
-        .lock()
-        .expect("panic 注入锁被 poison") = accounts.iter().copied().collect();
+    *DECIDE_PANIC_ACCOUNTS.lock().expect("panic 注入锁被 poison") =
+        accounts.iter().copied().collect();
 }
 
 pub(in crate::session) fn stream_npc_decisions<E>(
@@ -474,20 +473,24 @@ where
             while in_flight > 0 {
                 let message = match receiver.try_recv() {
                     Ok(message) => message,
-                    Err(mpsc::TryRecvError::Empty) | Err(mpsc::TryRecvError::Disconnected) => {
-                        break
-                    }
+                    Err(mpsc::TryRecvError::Empty) | Err(mpsc::TryRecvError::Disconnected) => break,
                 };
                 in_flight -= 1;
                 match message {
                     DecideMessage::Payload(account, result) => {
                         // 工作量探针：spawned 任务的载荷消息计 1（cfg(test)，按本上下文隔离）。
                         #[cfg(test)]
-                        compute.t1_probes.stream_payloads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                        compute
+                            .t1_probes
+                            .stream_payloads
+                            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                         let before = errors.len();
                         record_stream_error_generic(account, result, &mut merge, &mut errors);
                         if errors.len() > before
-                            && matches!(errors.last(), Some((_, NpcDecisionStreamError::Consumer(_))))
+                            && matches!(
+                                errors.last(),
+                                Some((_, NpcDecisionStreamError::Consumer(_)))
+                            )
                         {
                             consumer_failed = true;
                         }
@@ -512,11 +515,17 @@ where
                     match receiver.recv() {
                         Ok(DecideMessage::Payload(account, result)) => {
                             #[cfg(test)]
-                            compute.t1_probes.stream_payloads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                            compute
+                                .t1_probes
+                                .stream_payloads
+                                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                             let before = errors.len();
                             record_stream_error_generic(account, result, &mut merge, &mut errors);
                             if errors.len() > before
-                                && matches!(errors.last(), Some((_, NpcDecisionStreamError::Consumer(_))))
+                                && matches!(
+                                    errors.last(),
+                                    Some((_, NpcDecisionStreamError::Consumer(_)))
+                                )
                             {
                                 consumer_failed = true;
                             }
@@ -539,7 +548,10 @@ where
                     pending.pop_front();
                     #[cfg(any(test, feature = "verification-harness"))]
                     compute.run_dispatch_gate();
-                    let sender = origin_sender.as_ref().expect("派发阶段原始 sender 必须仍在").clone();
+                    let sender = origin_sender
+                        .as_ref()
+                        .expect("派发阶段原始 sender 必须仍在")
+                        .clone();
                     let before_task = &before_task;
                     let work = &work;
                     let timing = crate::verification_evidence::current_phase_timing_binding();
@@ -553,7 +565,10 @@ where
                         // 工作量探针：spawned 任务（chunk）计 1（cfg(test)，按本
                         // 上下文隔离）——任务数=min(due,workers) 不随池宽放大。
                         #[cfg(test)]
-                        compute.t1_probes.stream_spawned.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                        compute
+                            .t1_probes
+                            .stream_spawned
+                            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                         // 两段式：决策在继承绑定内完成；结果发送移到绑定释放后。
                         // P-a：unwind 路径 catch 仅运输原 panic payload（不恢复不转换），
                         // 绑定释放（catch 返回即 with_phase_timing_binding 作用域退出）
@@ -585,8 +600,8 @@ where
                                 before_task(account);
                                 (account, work(account))
                             };
-                            let outcome = std::panic::catch_unwind(
-                                std::panic::AssertUnwindSafe(move || {
+                            let outcome =
+                                std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
                                     crate::verification_evidence::with_phase_timing_binding(
                                         timing,
                                         move || {
@@ -596,14 +611,16 @@ where
                                                     executor, bound,
                                                 )
                                             }
-                                            #[cfg(not(any(test, feature = "verification-harness")))]
+                                            #[cfg(not(any(
+                                                test,
+                                                feature = "verification-harness"
+                                            )))]
                                             {
                                                 bound()
                                             }
                                         },
                                     )
-                                }),
-                            );
+                                }));
                             match outcome {
                                 Ok((account, result)) => {
                                     let _ = sender.send(DecideMessage::Payload(account, result));
@@ -642,14 +659,25 @@ where
                         // 工作量探针：R1-a 内联执行逐账户计 1（cfg(test)，按本
                         // 上下文隔离）——payloads + inline == due 恰一次交付不变式。
                         #[cfg(test)]
-                        compute.t1_probes.stream_inline.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                        compute
+                            .t1_probes
+                            .stream_inline
+                            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                         before_task(account);
                         // 增量十八 P2（Astra 终审）：内联消费与 spawned 消费同一失败
                         // 纪律——merge 出错即冻结（consumer_failed），不得继续内联/派发。
                         let before = errors.len();
-                        record_stream_error_generic(account, work(account), &mut merge, &mut errors);
+                        record_stream_error_generic(
+                            account,
+                            work(account),
+                            &mut merge,
+                            &mut errors,
+                        );
                         if errors.len() > before
-                            && matches!(errors.last(), Some((_, NpcDecisionStreamError::Consumer(_))))
+                            && matches!(
+                                errors.last(),
+                                Some((_, NpcDecisionStreamError::Consumer(_)))
+                            )
                         {
                             consumer_failed = true;
                             break;
@@ -679,11 +707,17 @@ where
                 DecideMessage::Payload(account, result) => {
                     // 工作量探针：spawned 任务的载荷消息计 1（cfg(test)，按本上下文隔离）。
                     #[cfg(test)]
-                    compute.t1_probes.stream_payloads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    compute
+                        .t1_probes
+                        .stream_payloads
+                        .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                     let before = errors.len();
                     record_stream_error_generic(account, result, &mut merge, &mut errors);
                     if errors.len() > before
-                        && matches!(errors.last(), Some((_, NpcDecisionStreamError::Consumer(_))))
+                        && matches!(
+                            errors.last(),
+                            Some((_, NpcDecisionStreamError::Consumer(_)))
+                        )
                     {
                         consumer_failed = true;
                     }

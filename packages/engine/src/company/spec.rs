@@ -342,7 +342,10 @@ mod tests {
             let value = format!(
                 "{{\"code\":\"C-600101\",\"name\":\"公司\",\"industry\":\"listed-simple\",\"kind\":\"Industrial\",\"listed_stock\":\"600101\",\"issued_shares\":\"{invalid}\",\"group_parent\":null}}"
             );
-            assert!(serde_json::from_str::<CompanySpec>(&value).is_err(), "{invalid}");
+            assert!(
+                serde_json::from_str::<CompanySpec>(&value).is_err(),
+                "{invalid}"
+            );
         }
         // 数字形态（非字符串）同样拒绝——canonical 十进制字符串是唯一形态。
         let numeric = encoded.replace("\"18446744073709551615\"", "18446744073709551615");

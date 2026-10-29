@@ -412,15 +412,14 @@ fn fnv1a64(bytes: &[u8]) -> u64 {
 #[test]
 fn captured_saves_roundtrip_authoritatively() {
     let capture = run_replay(REPLAY_SEED);
-    for (label, bytes) in
-        [("mid-scenario", &capture.save_mid_bytes), ("end-of-scenario", &capture.save_end_bytes)]
-    {
+    for (label, bytes) in [
+        ("mid-scenario", &capture.save_mid_bytes),
+        ("end-of-scenario", &capture.save_end_bytes),
+    ] {
         let save = serde_json::from_slice::<engine::SaveSlot>(bytes)
             .unwrap_or_else(|error| panic!("{label} save must deserialize: {error}"));
-        let restored =
-            engine::session::GameSession::restore(&save).unwrap_or_else(|error| {
-                panic!("{label} save must restore: {error}")
-            });
+        let restored = engine::session::GameSession::restore(&save)
+            .unwrap_or_else(|error| panic!("{label} save must restore: {error}"));
         let resaved = serde_json::to_vec(&restored.save().expect("restored save"))
             .expect("restored save must serialize");
         // 收口证据（Astra 二轮 item 4）：逐字节等价的原始绿证据——落链
@@ -434,8 +433,7 @@ fn captured_saves_roundtrip_authoritatively() {
             resaved == *bytes
         );
         assert_eq!(
-            resaved,
-            *bytes,
+            resaved, *bytes,
             "{label}: restore must retain every authoritative field byte-for-byte"
         );
     }

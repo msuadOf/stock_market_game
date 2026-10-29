@@ -451,7 +451,11 @@ fn sol4_force_due_abort_rolls_back_to_pre_force_and_requires_resend() {
     // Abort 后完整状态：next_due 恢复强制前值 100（指令失效）。
     let attention = world.collect_group_attention().expect("注意力收集");
     assert_eq!(
-        attention[0].1.iter().map(|(l, due, _)| (*l, *due)).collect::<Vec<_>>(),
+        attention[0]
+            .1
+            .iter()
+            .map(|(l, due, _)| (*l, *due))
+            .collect::<Vec<_>>(),
         vec![(0, 100)],
         "Abort 冲回强制前 next_due（指令失效需重发）"
     );
@@ -462,7 +466,11 @@ fn sol4_force_due_abort_rolls_back_to_pre_force_and_requires_resend() {
     world.run_ticks(1).expect("Abort 后重跑 tick1 成功");
     let attention = world.collect_group_attention().expect("再收集");
     assert_eq!(
-        attention[0].1.iter().map(|(l, due, _)| (*l, *due)).collect::<Vec<_>>(),
+        attention[0]
+            .1
+            .iter()
+            .map(|(l, due, _)| (*l, *due))
+            .collect::<Vec<_>>(),
         vec![(0, 100)],
         "未重发的指令不生效——重跑轮 NPC 不到期"
     );
@@ -866,7 +874,9 @@ fn drain_shutdown_final_leaves_no_inflight_entities() {
 #[test]
 fn d0_world_drop_shuts_down_workers() {
     fn task_count() -> usize {
-        std::fs::read_dir("/proc/self/task").map(|d| d.count()).unwrap_or(0)
+        std::fs::read_dir("/proc/self/task")
+            .map(|d| d.count())
+            .unwrap_or(0)
     }
     let before = task_count();
     let script = |_g: super::GroupIdx| -> GroupScript { Box::new(|_t, _r| TickPlan::default()) };

@@ -213,7 +213,8 @@ fn executor_perturbation_allows_stock_output_reordering() {
         let perturbation = config(ExecutorPermutation::Reverse);
         for _ in 0..8 {
             let before_tick = game.state.tick;
-            let (result, _) = with_executor_perturbation(perturbation, || game.step_pipeline_contract()).unwrap();
+            let (result, _) =
+                with_executor_perturbation(perturbation, || game.step_pipeline_contract()).unwrap();
             result.expect("cross-stock output order must not fail the tick");
             assert_eq!(game.state.tick, before_tick + 1);
             assert!(game.poison_reason().is_none());
@@ -255,10 +256,13 @@ fn compute_context_executor_binding_restores_after_error_unwind_and_nested_burst
     with_executor_perturbation(ExecutorPerturbation::default(), || {
         let original = super::executor_perturbation::current_executor_binding();
         let result: Result<(), ()> = super::executor_perturbation::with_executor_binding(
-            super::executor_perturbation::ExecutorBinding::empty(), || {
+            super::executor_perturbation::ExecutorBinding::empty(),
+            || {
                 assert!(super::executor_perturbation::current_executor_binding().is_empty());
                 super::executor_perturbation::with_executor_binding(original.clone(), || {
-                    assert!(super::executor_perturbation::current_executor_binding().same_as(&original));
+                    assert!(
+                        super::executor_perturbation::current_executor_binding().same_as(&original)
+                    );
                 });
                 Err(())
             },
@@ -266,11 +270,15 @@ fn compute_context_executor_binding_restores_after_error_unwind_and_nested_burst
         assert!(result.is_err());
         assert!(super::executor_perturbation::current_executor_binding().same_as(&original));
         let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            super::executor_perturbation::with_executor_binding(super::executor_perturbation::ExecutorBinding::empty(), || panic!("测试扰动绑定 unwind"));
+            super::executor_perturbation::with_executor_binding(
+                super::executor_perturbation::ExecutorBinding::empty(),
+                || panic!("测试扰动绑定 unwind"),
+            );
         }));
         assert!(panic.is_err());
         assert!(super::executor_perturbation::current_executor_binding().same_as(&original));
-    }).unwrap();
+    })
+    .unwrap();
     assert!(super::executor_perturbation::current_executor_binding().is_empty());
 }
 
@@ -284,8 +292,13 @@ fn compute_context_shared_host_sessions_keep_executor_controls_isolated() {
                 let mut game = fixture(false);
                 game.rebind_compute_for_verification(compute);
                 let (result, records) = with_executor_perturbation(
-                    ExecutorPerturbation { stock_shards, ..Default::default() }, || game.step_pipeline_contract(),
-                ).unwrap();
+                    ExecutorPerturbation {
+                        stock_shards,
+                        ..Default::default()
+                    },
+                    || game.step_pipeline_contract(),
+                )
+                .unwrap();
                 result.unwrap();
                 assert!(!records_at(&records, ExecutorBoundary::ContinuousStockShards).is_empty());
             });
@@ -299,10 +312,17 @@ fn compute_context_foreign_caller_preserves_real_executor_controls() {
     game.rebind_compute_for_verification(crate::ComputeContext::with_workers(1).unwrap());
     let foreign_workers = 3;
     let foreign = crate::compute::ComputeContext::from_workers(foreign_workers);
-    let (result, records) = foreign.install(|| with_executor_perturbation(
-        ExecutorPerturbation { stock_shards: ExecutorPermutation::Reverse, ..Default::default() },
-        || game.step_pipeline_contract(),
-    )).unwrap();
+    let (result, records) = foreign
+        .install(|| {
+            with_executor_perturbation(
+                ExecutorPerturbation {
+                    stock_shards: ExecutorPermutation::Reverse,
+                    ..Default::default()
+                },
+                || game.step_pipeline_contract(),
+            )
+        })
+        .unwrap();
     result.unwrap();
     assert!(!records_at(&records, ExecutorBoundary::ContinuousStockShards).is_empty());
     assert!(!records_at(&records, ExecutorBoundary::ContinuousWorkerResults).is_empty());
@@ -314,8 +334,18 @@ fn compute_context_spawned_tasks_inherit_scope_and_sessions_do_not_cross() {
     let right = crate::ComputeContext::with_workers(2).unwrap();
     std::thread::scope(|threads| {
         for (name, compute, boundary, permutation) in [
-            ('a', &left, ExecutorBoundary::ContinuousWorkerResults, ExecutorPermutation::Reverse),
-            ('b', &right, ExecutorBoundary::AuctionWorkerResults, ExecutorPermutation::RotateLeft),
+            (
+                'a',
+                &left,
+                ExecutorBoundary::ContinuousWorkerResults,
+                ExecutorPermutation::Reverse,
+            ),
+            (
+                'b',
+                &right,
+                ExecutorBoundary::AuctionWorkerResults,
+                ExecutorPermutation::RotateLeft,
+            ),
         ] {
             threads.spawn(move || {
                 let (ran_tx, ran_rx) = std::sync::mpsc::channel();
@@ -338,7 +368,10 @@ fn compute_context_spawned_tasks_inherit_scope_and_sessions_do_not_cross() {
                 })
                 .unwrap();
                 // 继承：派发任务内的 reorder 必须落入同一捕获
-                assert!(!records_at(&records, boundary).is_empty(), "任务未继承扰动捕获 {name}");
+                assert!(
+                    !records_at(&records, boundary).is_empty(),
+                    "任务未继承扰动捕获 {name}"
+                );
                 // 隔离：另一会话的边界不得串入本捕获
                 let other = if boundary == ExecutorBoundary::ContinuousWorkerResults {
                     ExecutorBoundary::AuctionWorkerResults

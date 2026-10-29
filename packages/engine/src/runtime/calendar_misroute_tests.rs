@@ -183,51 +183,106 @@ fn disconnected_group_desk_sender_after_real_purse_restores_all_final_accounts_a
     let books = world.collect_plans().unwrap();
     let (resting, serials) = world.collect_desk_resting().unwrap();
     assert_eq!(resting.len(), 2);
-    assert!(resting.iter().all(Vec::is_empty), "两真实交易部均无活动委托");
-    assert_eq!(books.iter().map(|(_, book)| book.plan_ids().count()).sum::<usize>(), 2);
+    assert!(
+        resting.iter().all(Vec::is_empty),
+        "两真实交易部均无活动委托"
+    );
+    assert_eq!(
+        books
+            .iter()
+            .map(|(_, book)| book.plan_ids().count())
+            .sum::<usize>(),
+        2
+    );
     assert_eq!(accounts.len(), 2);
     assert_eq!(accounts[1].1[1].cash, 0, "尾空位不冒充第四个 owner");
 
     let witness = world.disconnect_group_desk_sender_for_test(0, 0, 1);
-    let error = world.run_ticks(1).expect_err("真实扣资后的组内 Ops 发送必须失败");
+    let error = world
+        .run_ticks(1)
+        .expect_err("真实扣资后的组内 Ops 发送必须失败");
     assert!(
         matches!(error, RuntimeError::WorkerFailed { who: WorkerId::Group(0), error }
             if matches!(*error, RuntimeError::SendFailed { ref detail }
                 if detail == "组 0 → 交易部 0 Ops 发送失败")),
         "必须由真实组内 flush 断连报错，不能由 World Start 广播失败或超时代替"
     );
-    let seen = witness.recv_timeout(Duration::from_secs(1)).expect("真实扣资见证必须可达");
+    let seen = witness
+        .recv_timeout(Duration::from_secs(1))
+        .expect("真实扣资见证必须可达");
     assert_eq!((seen.tick, seen.round, seen.stock), (4, 0, 0));
-    let [DeskIn::Place { owner, side: Side::Buy, purse, qty: 100, .. }] = seen.ops.as_slice() else {
+    let [DeskIn::Place {
+        owner,
+        side: Side::Buy,
+        purse,
+        qty: 100,
+        ..
+    }] = seen.ops.as_slice()
+    else {
         panic!("见证必须是原始非空买腿：{:?}", seen.ops);
     };
     assert_eq!(*owner, (0, 0));
     assert!(*purse > 0);
     assert_eq!(seen.accounts[0].cash, accounts[0].1[0].cash - purse);
     assert_eq!(seen.accounts[0].buy_purse_held_cents, *purse);
-    assert_eq!(seen.accounts[0].foreign_active[0], 1, "故障确在真实扣资登记后");
-    assert_eq!(world.live_workers_for_test(), 0, "fatal 返回前 join 全部 worker");
+    assert_eq!(
+        seen.accounts[0].foreign_active[0], 1,
+        "故障确在真实扣资登记后"
+    );
+    assert_eq!(
+        world.live_workers_for_test(),
+        0,
+        "fatal 返回前 join 全部 worker"
+    );
     assert_eq!(world.global.committed_tick, 3);
     assert_eq!(world.report_log.len(), 3);
-    assert!(Arc::ptr_eq(&before, &world.publication().load()), "失败拍不安装公开投影");
+    assert!(
+        Arc::ptr_eq(&before, &world.publication().load()),
+        "失败拍不安装公开投影"
+    );
 
-    let report = world.shutdown().expect("直接读取失败撤退已收齐的真实 Final");
+    let report = world
+        .shutdown()
+        .expect("直接读取失败撤退已收齐的真实 Final");
     assert_eq!(report.group_finals.len(), 2);
     assert_eq!(report.desk_finals.len(), 2);
     assert_eq!(report.worker_results.len(), 4);
-    assert_eq!(report.worker_results.iter().filter(|(_, result)| result.is_err()).count(), 1);
-    assert!(report.worker_results.iter().any(|(who, result)|
-        *who == WorkerId::Group(0) && matches!(result, Err(RuntimeError::SendFailed { detail })
+    assert_eq!(
+        report
+            .worker_results
+            .iter()
+            .filter(|(_, result)| result.is_err())
+            .count(),
+        1
+    );
+    assert!(report
+        .worker_results
+        .iter()
+        .any(|(who, result)| *who == WorkerId::Group(0)
+            && matches!(result, Err(RuntimeError::SendFailed { detail })
             if detail == "组 0 → 交易部 0 Ops 发送失败")));
     for group in &report.group_finals {
-        assert_eq!(group.plan_book_for_test, books[usize::from(group.group)].1,
-            "全部 PlanBook、终结计划和 owner cursor 必须来自真实 Final 且保持完整");
-        assert_eq!(group.accounts, accounts[usize::from(group.group)].1,
-            "发送失败组退出前必须回滚完整 cash/shares/frozen/foreign_active/purse/卖在途");
+        assert_eq!(
+            group.plan_book_for_test,
+            books[usize::from(group.group)].1,
+            "全部 PlanBook、终结计划和 owner cursor 必须来自真实 Final 且保持完整"
+        );
+        assert_eq!(
+            group.accounts,
+            accounts[usize::from(group.group)].1,
+            "发送失败组退出前必须回滚完整 cash/shares/frozen/foreign_active/purse/卖在途"
+        );
     }
     for desk in &report.desk_finals {
-        assert_eq!(desk.last_applied_start_for_test, Some(4), "World Start 仍真实交付全部健康交易部");
-        assert_eq!(desk.cur_tick_for_test, 3, "健康交易部收到Abort后严格回滚到上一提交拍");
+        assert_eq!(
+            desk.last_applied_start_for_test,
+            Some(4),
+            "World Start 仍真实交付全部健康交易部"
+        );
+        assert_eq!(
+            desk.cur_tick_for_test, 3,
+            "健康交易部收到Abort后严格回滚到上一提交拍"
+        );
         assert_eq!(desk.next_serial_for_test, serials[usize::from(desk.stock)]);
         assert!(desk.resting.is_empty());
         assert_eq!(desk.fee_sink, 0);

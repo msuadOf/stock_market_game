@@ -19,15 +19,30 @@ use super::GroupIdx;
 use crate::orderbook::Side;
 
 fn buy(local: u32, stock: u16, price: i64, qty: u32) -> PlaceSpec {
-    PlaceSpec { local, stock, side: Side::Buy, price, qty }
+    PlaceSpec {
+        local,
+        stock,
+        side: Side::Buy,
+        price,
+        qty,
+    }
 }
 
 fn sell(local: u32, stock: u16, price: i64, qty: u32) -> PlaceSpec {
-    PlaceSpec { local, stock, side: Side::Sell, price, qty }
+    PlaceSpec {
+        local,
+        stock,
+        side: Side::Sell,
+        price,
+        qty,
+    }
 }
 
 fn place_at(_tick: u64, places: Vec<PlaceSpec>) -> TickPlan {
-    TickPlan { places, ..TickPlan::default() }
+    TickPlan {
+        places,
+        ..TickPlan::default()
+    }
 }
 
 /// 相位布局：tpd=10（短日——快覆盖日结/跨日）、auction_ticks=0（无
@@ -40,7 +55,11 @@ fn spec_for_run() -> WorldSpec {
             // 三档卖单 1010/1005/1000（matching_walks 原样开局）。
             1 => place_at(
                 1,
-                vec![sell(1, 0, 1010, 100), sell(1, 0, 1005, 100), sell(1, 0, 1000, 100)],
+                vec![
+                    sell(1, 0, 1010, 100),
+                    sell(1, 0, 1005, 100),
+                    sell(1, 0, 1000, 100),
+                ],
             ),
             // 买单限价 1010 全吃三档（成交 300——簿+行情双变主路径）。
             2 => place_at(2, vec![buy(0, 0, 1010, 300)]),
@@ -116,7 +135,8 @@ fn desk_projection_cache_contract_equivalence_and_stale_mutation() {
     assert_eq!(cached.len(), 13, "双跑 tick 数一致");
     for (tick, (a, b)) in direct.iter().zip(cached.iter()).enumerate() {
         assert_eq!(
-            a, b,
+            a,
+            b,
             "tick {} 发布面 desks view 必须整结构相等（缓存不得改值）",
             tick + 1
         );

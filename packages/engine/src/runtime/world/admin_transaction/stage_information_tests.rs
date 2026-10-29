@@ -113,9 +113,13 @@ fn r4_stage_05_late_rejection_preserves_information_and_world_source() {
     let before_pending = world.pending_mirror_domains();
 
     let insufficient = world
-        .with_staged_admin_transaction(stages(111), Some(information.clone()), |_, _| -> Result<(), RuntimeError> {
-            panic!("尾阶段现金不足时不得调用 inspect")
-        })
+        .with_staged_admin_transaction(
+            stages(111),
+            Some(information.clone()),
+            |_, _| -> Result<(), RuntimeError> {
+                panic!("尾阶段现金不足时不得调用 inspect")
+            },
+        )
         .expect_err("末扣 111 应因可用现金不足而拒绝");
     assert!(
         insufficient.to_string().contains("InsufficientCash"),

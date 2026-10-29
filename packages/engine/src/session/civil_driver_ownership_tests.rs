@@ -25,7 +25,9 @@ fn external_installed_market_close_numeric_failure_keeps_typed_fault_and_first_p
     for _ in 0..4 {
         game.runtime_step_with_install(&mut driver).unwrap();
     }
-    assert!(driver.has_committed_market_close_for_civil(game.tick(), game.civil_date()).unwrap());
+    assert!(driver
+        .has_committed_market_close_for_civil(game.tick(), game.civil_date())
+        .unwrap());
     let epoch = game.runtime_authority_epoch;
     let before = game.business_state_hash().unwrap();
     let publication = driver.publication().load();
@@ -38,11 +40,20 @@ fn external_installed_market_close_numeric_failure_keeps_typed_fault_and_first_p
     assert!(reached);
     assert!(matches!(result, Err(SessionError::InvalidSave(actual)) if actual == fault));
     assert_eq!(game.business_state_hash().unwrap(), before);
-    let fatal = game.poison_reason().expect("外持 owner 实际收盘后的失败必须终结").clone();
-    assert!(game.runtime_driver.is_none(), "封存首错不能偷偷替换外 owner");
+    let fatal = game
+        .poison_reason()
+        .expect("外持 owner 实际收盘后的失败必须终结")
+        .clone();
+    assert!(
+        game.runtime_driver.is_none(),
+        "封存首错不能偷偷替换外 owner"
+    );
     assert_eq!(game.runtime_authority_epoch, epoch);
     assert_eq!(driver.world_committed_tick(), 4);
-    assert!(std::sync::Arc::ptr_eq(&publication, &driver.publication().load()));
+    assert!(std::sync::Arc::ptr_eq(
+        &publication,
+        &driver.publication().load()
+    ));
     assert!(matches!(game.save(), Err(SessionError::Step(actual)) if actual == fatal));
     assert_eq!(game.step().unwrap_err(), fatal);
     assert!(matches!(game.end_civil_day(), Err(SessionError::Step(actual)) if actual == fatal));
@@ -56,7 +67,10 @@ fn external_prior_day_market_close_does_not_poison_next_closed_day_projection_re
         game.runtime_step_with_install(&mut driver).unwrap();
     }
     let settled = game.end_civil_day().unwrap();
-    assert_eq!(settled.next_date, crate::CivilDate::from_iso("2030-01-05").unwrap());
+    assert_eq!(
+        settled.next_date,
+        crate::CivilDate::from_iso("2030-01-05").unwrap()
+    );
     let before = game.business_state_hash().unwrap();
     let epoch = game.runtime_authority_epoch;
     let fault = ValidationFault::new(1034, vec![76, 14]);
@@ -65,11 +79,15 @@ fn external_prior_day_market_close_does_not_poison_next_closed_day_projection_re
         Err(SessionError::InvalidSave(fault.clone()))
     });
     assert!(matches!(result, Err(SessionError::InvalidSave(actual)) if actual == fault));
-    assert!(game.poison_reason().is_none(), "昨日真实收盘不能冒充本休市日的安装事实");
+    assert!(
+        game.poison_reason().is_none(),
+        "昨日真实收盘不能冒充本休市日的安装事实"
+    );
     assert_eq!(game.business_state_hash().unwrap(), before);
     assert_eq!(game.runtime_authority_epoch, epoch);
     assert!(game.runtime_driver.is_none());
-    game.end_civil_day().expect("同一外持 owner 的可逆休市失败仍可重试");
+    game.end_civil_day()
+        .expect("同一外持 owner 的可逆休市失败仍可重试");
     assert_eq!(game.runtime_authority_epoch, epoch);
     assert_eq!(driver.world_committed_tick(), 4);
 }

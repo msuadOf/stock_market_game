@@ -108,7 +108,9 @@ pub(in crate::session) fn plan_npc_working_order_reconciliation_standalone(
                     continue;
                 }
                 if take_exact(&mut desired, code, order.side, order.limit, order.qty) {
-                    decisions.push(WorkingOrderDecision::Keep { order_id: OrderId(order.order_id) });
+                    decisions.push(WorkingOrderDecision::Keep {
+                        order_id: OrderId(order.order_id),
+                    });
                 } else if cancelable_auction_window {
                     decisions.push(WorkingOrderDecision::Cancel {
                         order_id: OrderId(order.order_id),

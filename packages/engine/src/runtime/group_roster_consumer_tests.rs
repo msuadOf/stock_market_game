@@ -31,7 +31,8 @@ fn world_with_stocks_and_counterparty(n_stocks: usize, counterparty: bool) -> Wo
     // 本组证据只隔离名册消费；价格笼子由既有独立套件覆盖。
     setup.config.price_cage_enabled = false;
     let session = GameSession::new(setup.clone(), 17).expect("合法机构会话");
-    let (catalog, initial_company_facts) = session.runtime_company_handles().expect("选定公司事实合法");
+    let (catalog, initial_company_facts) =
+        session.runtime_company_handles().expect("选定公司事实合法");
     let style = crate::strategy::InstitutionStyle::ActiveTrader;
     let mut spec = basic_spec(
         2,
@@ -124,14 +125,19 @@ fn world_with_stocks_and_counterparty(n_stocks: usize, counterparty: bool) -> Wo
         // 独立第三账户只作真实对手盘，避免既有自成交保护挡住同价队列。
         spec.n_groups = 3;
         spec.initial_shares.push(vec![vec![0; n_stocks]]);
-        spec.initial_cash_override.as_mut().unwrap().push(vec![1_000_000]);
+        spec.initial_cash_override
+            .as_mut()
+            .unwrap()
+            .push(vec![1_000_000]);
         spec.belief_seeds.push(None);
         let root = Arc::get_mut(spec.root_projection.as_mut().unwrap()).unwrap();
         root.account_ids.push(AccountId(0));
         root.chain_params.push(None);
         spec.decision.as_mut().unwrap().profiles.push(NpcProfile {
             strategy: crate::strategy::StrategyData::retail(0.0, 100, 0.0),
-            seed: 91, next_due: u64::MAX, attention_base: 0.0,
+            seed: 91,
+            next_due: u64::MAX,
+            attention_base: 0.0,
             retail_style: Some(crate::strategy::RetailStyle::Noise),
         });
     }
@@ -194,23 +200,26 @@ fn pending_world_with_stocks(n_stocks: usize) -> World {
 fn pending_world_with_targets(n_stocks: usize, remaining: [u32; 2]) -> World {
     let mut world = world_with_stocks(n_stocks);
     for (group, tx) in world.group_txs.iter().enumerate() {
-        tx.send(GroupIn::MutatePlanBookForTest { owner: OWNERS[group], mutate: Box::new(move |book| {
-            book.create(PlanOpen {
-                account: OWNERS[group],
-                code: StockId(0),
-                direction: Side::Sell,
-                target: PlanTarget::ShareCount(remaining[group]),
-                opinion: PlanOpinion {
-                    signal_score_bp: -10_000,
-                    source: crate::plans::OpinionSource::Blended,
-                },
-                confidence_bp: 8_000,
-                urgency: crate::plans::Urgency::Urgent,
-                horizon_trading_days: 5,
-                created_trading_day: 0,
-            })
-            .expect("种子卖计划");
-        }) })
+        tx.send(GroupIn::MutatePlanBookForTest {
+            owner: OWNERS[group],
+            mutate: Box::new(move |book| {
+                book.create(PlanOpen {
+                    account: OWNERS[group],
+                    code: StockId(0),
+                    direction: Side::Sell,
+                    target: PlanTarget::ShareCount(remaining[group]),
+                    opinion: PlanOpinion {
+                        signal_score_bp: -10_000,
+                        source: crate::plans::OpinionSource::Blended,
+                    },
+                    confidence_bp: 8_000,
+                    urgency: crate::plans::Urgency::Urgent,
+                    horizon_trading_days: 5,
+                    created_trading_day: 0,
+                })
+                .expect("种子卖计划");
+            }),
+        })
         .expect("种子计划投递");
     }
     prepare_tick(&mut world, 1, None);
@@ -307,23 +316,26 @@ fn roster_open_held_survives_real_partial_fill_and_plan_termination() {
     );
     world.run_ticks(1).expect("先挂真实买单");
     world.group_txs[1]
-        .send(GroupIn::MutatePlanBookForTest { owner: OWNERS[1], mutate: Box::new(|book| {
-            book.create(PlanOpen {
-                account: OWNERS[1],
-                code: StockId(0),
-                direction: Side::Sell,
-                target: PlanTarget::ShareCount(900),
-                opinion: PlanOpinion {
-                    signal_score_bp: -10_000,
-                    source: crate::plans::OpinionSource::Blended,
-                },
-                confidence_bp: 8_000,
-                urgency: crate::plans::Urgency::Urgent,
-                horizon_trading_days: 5,
-                created_trading_day: 0,
-            })
-            .expect("卖计划种子");
-        }) })
+        .send(GroupIn::MutatePlanBookForTest {
+            owner: OWNERS[1],
+            mutate: Box::new(|book| {
+                book.create(PlanOpen {
+                    account: OWNERS[1],
+                    code: StockId(0),
+                    direction: Side::Sell,
+                    target: PlanTarget::ShareCount(900),
+                    opinion: PlanOpinion {
+                        signal_score_bp: -10_000,
+                        source: crate::plans::OpinionSource::Blended,
+                    },
+                    confidence_bp: 8_000,
+                    urgency: crate::plans::Urgency::Urgent,
+                    horizon_trading_days: 5,
+                    created_trading_day: 0,
+                })
+                .expect("卖计划种子");
+            }),
+        })
         .expect("种子计划投递");
     prepare_tick(&mut world, 2, None);
     world.run_ticks(1).expect("真实卖子单部分成交");
@@ -485,65 +497,142 @@ fn roster_urgency_after_own_observation_absorbs_missing_pending_in_peak_max() {
 fn plan_identity_owner_order_does_not_override_real_child_fifo() {
     let mut world = world_with_stocks_and_counterparty(1, true);
     // 真实成交先把价格打到主板10%跌停900分，同价卖单不能继续向下改善。
-    world.send_external_plan_grouped(vec![vec![crate::runtime::decision::PendingOp {
-        local: 0, stock: 0, side: Side::Buy,
-        routed: crate::runtime::protocol::RoutedPrice::Fixed(900), purse_reference: 900, qty: 100,
-    }], vec![crate::runtime::decision::PendingOp {
-        local: 0, stock: 0, side: Side::Sell,
-        routed: crate::runtime::protocol::RoutedPrice::Fixed(900), purse_reference: 900, qty: 100,
-    }]], vec![Vec::new(); 2]);
+    world.send_external_plan_grouped(
+        vec![
+            vec![crate::runtime::decision::PendingOp {
+                local: 0,
+                stock: 0,
+                side: Side::Buy,
+                routed: crate::runtime::protocol::RoutedPrice::Fixed(900),
+                purse_reference: 900,
+                qty: 100,
+            }],
+            vec![crate::runtime::decision::PendingOp {
+                local: 0,
+                stock: 0,
+                side: Side::Sell,
+                routed: crate::runtime::protocol::RoutedPrice::Fixed(900),
+                purse_reference: 900,
+                qty: 100,
+            }],
+        ],
+        vec![Vec::new(); 2],
+    );
     world.run_ticks(1).unwrap();
     let quote_owner = |world: &mut World, group: usize, tick| {
-        world.group_txs[group].send(GroupIn::MutatePlanBookForTest {
-            owner: OWNERS[group],
-            mutate: Box::new(move |book| {
-                let id = book.create(PlanOpen {
-                    account: OWNERS[group], code: StockId(0), direction: Side::Sell,
-                    target: PlanTarget::ShareCount(100),
-                    opinion: PlanOpinion { signal_score_bp: -10_000, source: crate::plans::OpinionSource::Blended },
-                    confidence_bp: 8_000, urgency: crate::plans::Urgency::Urgent,
-                    horizon_trading_days: 5, created_trading_day: 0,
-                }).unwrap();
-                assert_eq!(id.sequence, 0);
-            }),
-        }).unwrap();
-        world.group_txs[group].send(GroupIn::InjectReviewAssessments {
-            account: OWNERS[group], assessments: BTreeMap::new(),
-        }).unwrap();
-        world.group_txs[group].send(GroupIn::InjectObservationMinutes {
-            stock: 0, minutes: vec![(0, 1_000), (1, 1_000)],
-        }).unwrap();
-        world.group_txs[group].send(GroupIn::ForceDue {
-            locals: vec![0], tick, ensure_observe: true,
-        }).unwrap();
+        world.group_txs[group]
+            .send(GroupIn::MutatePlanBookForTest {
+                owner: OWNERS[group],
+                mutate: Box::new(move |book| {
+                    let id = book
+                        .create(PlanOpen {
+                            account: OWNERS[group],
+                            code: StockId(0),
+                            direction: Side::Sell,
+                            target: PlanTarget::ShareCount(100),
+                            opinion: PlanOpinion {
+                                signal_score_bp: -10_000,
+                                source: crate::plans::OpinionSource::Blended,
+                            },
+                            confidence_bp: 8_000,
+                            urgency: crate::plans::Urgency::Urgent,
+                            horizon_trading_days: 5,
+                            created_trading_day: 0,
+                        })
+                        .unwrap();
+                    assert_eq!(id.sequence, 0);
+                }),
+            })
+            .unwrap();
+        world.group_txs[group]
+            .send(GroupIn::InjectReviewAssessments {
+                account: OWNERS[group],
+                assessments: BTreeMap::new(),
+            })
+            .unwrap();
+        world.group_txs[group]
+            .send(GroupIn::InjectObservationMinutes {
+                stock: 0,
+                minutes: vec![(0, 1_000), (1, 1_000)],
+            })
+            .unwrap();
+        world.group_txs[group]
+            .send(GroupIn::ForceDue {
+                locals: vec![0],
+                tick,
+                ensure_observe: true,
+            })
+            .unwrap();
         world.run_ticks(1).unwrap();
-        world.group_txs[group].send(GroupIn::DeferDueForTest {
-            locals: vec![0], tick: u64::MAX,
-        }).unwrap();
+        world.group_txs[group]
+            .send(GroupIn::DeferDueForTest {
+                locals: vec![0],
+                tick: u64::MAX,
+            })
+            .unwrap();
     };
     // 高owner的真实计划子单先独立收束，低owner下一拍才报价，固定实际受理先后。
     quote_owner(&mut world, 1, 2);
-    let first = world.collect_plans().unwrap()[1].1.active_investor_plan(OWNERS[1], &StockId(0)).unwrap().clone();
+    let first = world.collect_plans().unwrap()[1]
+        .1
+        .active_investor_plan(OWNERS[1], &StockId(0))
+        .unwrap()
+        .clone();
     let first_child = first.active_child_order_id().expect("高owner真实计划子单");
     quote_owner(&mut world, 0, 3);
     let books = world.collect_plans().unwrap();
-    let second = books[0].1.active_investor_plan(OWNERS[0], &StockId(0)).unwrap().clone();
+    let second = books[0]
+        .1
+        .active_investor_plan(OWNERS[0], &StockId(0))
+        .unwrap()
+        .clone();
     let second_child = second.active_child_order_id().expect("低owner真实计划子单");
-    assert!(first.plan_id() > second.plan_id(), "PlanId数值顺序与实际到达相反");
+    assert!(
+        first.plan_id() > second.plan_id(),
+        "PlanId数值顺序与实际到达相反"
+    );
     assert!(first_child < second_child, "desk真实时间序保留先到顺序");
     let (resting, _) = world.collect_desk_resting().unwrap();
     assert_eq!(resting[0].len(), 2);
-    assert!(resting[0].iter().all(|order| order.price == 900 && order.side == Side::Sell && order.qty == 100), "两个真实计划子单必须同价同向：{resting:?}");
+    assert!(
+        resting[0]
+            .iter()
+            .all(|order| order.price == 900 && order.side == Side::Sell && order.qty == 100),
+        "两个真实计划子单必须同价同向：{resting:?}"
+    );
     // 对手单只成交100股，必须消耗先到的高owner计划子单。
-    world.send_external_plan_grouped(vec![Vec::new(), Vec::new(), vec![crate::runtime::decision::PendingOp {
-        local: 0, stock: 0, side: Side::Buy,
-        routed: crate::runtime::protocol::RoutedPrice::Fixed(900), purse_reference: 900, qty: 100,
-    }]], vec![Vec::new(); 3]);
+    world.send_external_plan_grouped(
+        vec![
+            Vec::new(),
+            Vec::new(),
+            vec![crate::runtime::decision::PendingOp {
+                local: 0,
+                stock: 0,
+                side: Side::Buy,
+                routed: crate::runtime::protocol::RoutedPrice::Fixed(900),
+                purse_reference: 900,
+                qty: 100,
+            }],
+        ],
+        vec![Vec::new(); 3],
+    );
     world.run_ticks(1).unwrap();
     let books = world.collect_plans().unwrap();
-    assert_eq!(books[1].1.plan(first.plan_id()).unwrap().filled_qty(), 100, "真实受理先到者应先成交：{:?}", world.report_log.last());
+    assert_eq!(
+        books[1].1.plan(first.plan_id()).unwrap().filled_qty(),
+        100,
+        "真实受理先到者应先成交：{:?}",
+        world.report_log.last()
+    );
     assert_eq!(books[0].1.plan(second.plan_id()).unwrap().filled_qty(), 0);
-    assert_eq!(books[0].1.plan(second.plan_id()).unwrap().active_child_order_id(), Some(second_child));
+    assert_eq!(
+        books[0]
+            .1
+            .plan(second.plan_id())
+            .unwrap()
+            .active_child_order_id(),
+        Some(second_child)
+    );
     world.shutdown().unwrap();
 }
 
@@ -554,10 +643,27 @@ fn plan_identity_failed_tick_leaves_no_plans_cursors_children_or_publication() {
     let accounts = world.snapshot_accounts().unwrap();
     prepare_tick(&mut world, 1, Some(-10_000));
     world.set_validator(Box::new(|_| Err("计划身份失败tick回滚验证".to_owned())));
-    assert!(matches!(world.run_ticks(1), Err(RuntimeError::TickValidation { .. })));
+    assert!(matches!(
+        world.run_ticks(1),
+        Err(RuntimeError::TickValidation { .. })
+    ));
     let books = world.collect_plans().unwrap();
-    assert!(books.iter().all(|(_, book)| book.plan_ids().next().is_none() && book.owner_sequences().next().is_none()), "本tick新计划和游标全部撤销");
-    assert!(world.collect_desk_resting().unwrap().0.iter().all(Vec::is_empty), "失败tick不留子单");
+    assert!(
+        books
+            .iter()
+            .all(|(_, book)| book.plan_ids().next().is_none()
+                && book.owner_sequences().next().is_none()),
+        "本tick新计划和游标全部撤销"
+    );
+    assert!(
+        world
+            .collect_desk_resting()
+            .unwrap()
+            .0
+            .iter()
+            .all(Vec::is_empty),
+        "失败tick不留子单"
+    );
     let after = world.snapshot_accounts().unwrap();
     for (group, rows) in accounts {
         for (index, old) in rows.iter().enumerate() {
@@ -568,7 +674,10 @@ fn plan_identity_failed_tick_leaves_no_plans_cursors_children_or_publication() {
             assert_eq!(current.pending_sell_qty, old.pending_sell_qty);
         }
     }
-    assert!(Arc::ptr_eq(&before, &world.publication().load()), "失败tick不发布任何新事件版本");
+    assert!(
+        Arc::ptr_eq(&before, &world.publication().load()),
+        "失败tick不发布任何新事件版本"
+    );
     assert_eq!(world.global.committed_tick, 0);
     world.shutdown().unwrap();
 }

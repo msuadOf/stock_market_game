@@ -24,7 +24,8 @@ fn price_improvement_world() -> World {
         .expect("技术分析机构参数");
     personal.belief = crate::strategy::BeliefBook::new(OWNER, profile, analysis, &mut rng);
     assert_eq!(personal.belief.analysis().weights().fundamental_bp(), 0);
-    let (catalog, initial_company_facts) = session.runtime_company_handles().expect("选定公司事实合法");
+    let (catalog, initial_company_facts) =
+        session.runtime_company_handles().expect("选定公司事实合法");
     let params = crate::strategy::BeliefChainParams {
         position_step_bp: 5_000,
         margin: 0.01,
@@ -94,7 +95,8 @@ fn price_improvement_world() -> World {
 
 fn install_buy_assessment(world: &mut World) {
     world.inject_review_assessments_for_test(
-        0, OWNER,
+        0,
+        OWNER,
         std::collections::BTreeMap::from([(
             StockId(0),
             crate::plans::CandidateAssessment::Scored {

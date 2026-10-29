@@ -70,7 +70,10 @@ pub struct DayEndCandidate {
 }
 
 impl DayEndCandidate {
-    pub fn capture(game: &ProtocolSession, key: &engine::session::protocol::SaveCandidateKey) -> Result<Self, StoreError> {
+    pub fn capture(
+        game: &ProtocolSession,
+        key: &engine::session::protocol::SaveCandidateKey,
+    ) -> Result<Self, StoreError> {
         let slot = game.save_candidate(key)?;
         ProtocolSession::restore(&slot)?;
         Ok(Self { slot })
@@ -134,8 +137,18 @@ impl NativeDatabase {
                 ))
             })?;
         }
-        let lock = std::fs::OpenOptions::new().read(true).write(true).create(true).truncate(false).open(path)
-            .map_err(|error| StoreError::Invalid(format!("无法打开 SQLite writer 锁 {}：{error}", path.display())))?;
+        let lock = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(path)
+            .map_err(|error| {
+                StoreError::Invalid(format!(
+                    "无法打开 SQLite writer 锁 {}：{error}",
+                    path.display()
+                ))
+            })?;
         writer_lock::try_lock(&lock).map_err(|error| StoreError::Invalid(format!("SQLite 文件 {} 已被另一 Native writer 使用或无法取得独占 writer lock：{error}；请关闭另一个 Server/Desktop 实例后重试", path.display())))?;
         let mut database = Self::from_connection(Connection::open(path)?)?;
         database.file_lock = Some(Arc::new(lock));
@@ -373,7 +386,11 @@ impl NativeDatabase {
 
 impl ArchiveWriter {
     pub fn rename_slot(&self, slot_id: &str, name: &str) -> Result<(), StoreError> {
-        let generations = self.database.generations.lock().map_err(|error| StoreError::Invalid(format!("存档代际锁失效：{error}")))?;
+        let generations = self
+            .database
+            .generations
+            .lock()
+            .map_err(|error| StoreError::Invalid(format!("存档代际锁失效：{error}")))?;
         self.require_current_owner(&generations)?;
         self.database.rename(slot_id, name)
     }
@@ -384,18 +401,37 @@ impl ArchiveWriter {
         target: &str,
         name: &str,
     ) -> Result<ArchiveMetadata, StoreError> {
-        let generations = self.database.generations.lock().map_err(|error| StoreError::Invalid(format!("存档代际锁失效：{error}")))?;
+        let generations = self
+            .database
+            .generations
+            .lock()
+            .map_err(|error| StoreError::Invalid(format!("存档代际锁失效：{error}")))?;
         self.require_current_owner(&generations)?;
         self.database.copy(slot_id, target, name)
     }
     pub fn delete_slot(&self, slot_id: &str, new_slot_id: &str) -> Result<Self, StoreError> {
         validate_text(slot_id, "slot_id")?;
-        let mut generations = self.database.generations.lock().map_err(|error| StoreError::Invalid(format!("存档代际锁失效：{error}")))?;
+        let mut generations = self
+            .database
+            .generations
+            .lock()
+            .map_err(|error| StoreError::Invalid(format!("存档代际锁失效：{error}")))?;
         self.require_current_owner(&generations)?;
         if slot_id != self.slot_id {
-            let next = generations.get(slot_id).map_or(Ok(1), |state| state.generation.checked_add(1).ok_or_else(|| StoreError::Invalid("存档代际耗尽".into())))?;
+            let next = generations.get(slot_id).map_or(Ok(1), |state| {
+                state
+                    .generation
+                    .checked_add(1)
+                    .ok_or_else(|| StoreError::Invalid("存档代际耗尽".into()))
+            })?;
             self.database.delete_payload(slot_id)?;
-            generations.insert(slot_id.into(), WriteGeneration { generation: next, last_seq: None });
+            generations.insert(
+                slot_id.into(),
+                WriteGeneration {
+                    generation: next,
+                    last_seq: None,
+                },
+            );
             return Ok(self.clone());
         }
         validate_text(new_slot_id, "new_slot_id")?;
@@ -455,9 +491,17 @@ impl ArchiveWriter {
         })
     }
 
-    fn require_current_owner(&self, generations: &BTreeMap<String, WriteGeneration>) -> Result<(), StoreError> {
-        if generations.get(&self.slot_id).is_none_or(|state| state.generation != self.generation) {
-            return Err(StoreError::Invalid("旧时间线的 writer 已失效，不能修改当前存档目标或槽元数据".into()));
+    fn require_current_owner(
+        &self,
+        generations: &BTreeMap<String, WriteGeneration>,
+    ) -> Result<(), StoreError> {
+        if generations
+            .get(&self.slot_id)
+            .is_none_or(|state| state.generation != self.generation)
+        {
+            return Err(StoreError::Invalid(
+                "旧时间线的 writer 已失效，不能修改当前存档目标或槽元数据".into(),
+            ));
         }
         Ok(())
     }
@@ -527,8 +571,13 @@ impl ArchiveWriter {
             .generations
             .lock()
             .map_err(|error| StoreError::Invalid(format!("存档代际锁失效：{error}")))?;
-        if generations.get(&self.slot_id).is_none_or(|state| state.generation != self.generation) {
-            return Err(StoreError::Invalid("旧时间线的 writer 不能抢占当前保存目标或提交新时间线".into()));
+        if generations
+            .get(&self.slot_id)
+            .is_none_or(|state| state.generation != self.generation)
+        {
+            return Err(StoreError::Invalid(
+                "旧时间线的 writer 不能抢占当前保存目标或提交新时间线".into(),
+            ));
         }
         let next_generation = |slot_id: &str| {
             generations.get(slot_id).map_or(Ok(1), |state| {

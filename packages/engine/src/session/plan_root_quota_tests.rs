@@ -132,9 +132,7 @@ fn r5_pool_coordinator_inlines_pending_root_under_capacity_pressure() {
         )
     };
     let before = session.business_state_hash().unwrap();
-    let outcome = compute.install(|| {
-        batch.prepare_ready_accounts(&mut session, true)
-    });
+    let outcome = compute.install(|| batch.prepare_ready_accounts(&mut session, true));
     // 池内：4c 内联推进（或容量已释放正常派发）——绝不 PendingCapacity。
     match outcome {
         Ok(crate::session::plan_chain_candidates::PrepareReady::PendingCapacity) => {

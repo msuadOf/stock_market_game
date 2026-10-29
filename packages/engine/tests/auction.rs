@@ -13,14 +13,14 @@ struct AuctionFixture {
 impl AuctionFixture {
     fn quiet(auction_ticks: u64, seed: u64) -> Self {
         let setup = SessionSetup {
-        company_system: None,
-        dividend_tax_mode: None,
-        flat_withholding_bp: None,
-        rights_offering_enabled: false,
-        issuer_repurchase_enabled: false,
-        par_value_per_share: None,
-        auto_corporate_foundation: false,
-        report_frequency: None,
+            company_system: None,
+            dividend_tax_mode: None,
+            flat_withholding_bp: None,
+            rights_offering_enabled: false,
+            issuer_repurchase_enabled: false,
+            par_value_per_share: None,
+            auto_corporate_foundation: false,
+            report_frequency: None,
             company_operations: None,
             groups: Vec::new(),
             stocks: vec![StockSpec {
@@ -84,14 +84,14 @@ impl AuctionFixture {
             float_shares: 1_000_000,
         };
         let setup = SessionSetup {
-        company_system: None,
-        dividend_tax_mode: None,
-        flat_withholding_bp: None,
-        rights_offering_enabled: false,
-        issuer_repurchase_enabled: false,
-        par_value_per_share: None,
-        auto_corporate_foundation: false,
-        report_frequency: None,
+            company_system: None,
+            dividend_tax_mode: None,
+            flat_withholding_bp: None,
+            rights_offering_enabled: false,
+            issuer_repurchase_enabled: false,
+            par_value_per_share: None,
+            auto_corporate_foundation: false,
+            report_frequency: None,
             company_operations: None,
             groups: Vec::new(),
             stocks: vec![
@@ -284,10 +284,16 @@ fn unified_production_book_restores_crossed_auction_without_early_fills_and_cons
     assert!(session.snapshot().markets[&code].asks.is_empty());
     let crossed = session.save().unwrap();
     assert_eq!(crossed.resting_orders[&code].len(), 2);
-    assert!(crossed.resting_orders[&code].iter().any(|order| order.side == Side::Buy
-        && order.price == Money::from_cents(10_000) && order.qty == 200));
-    assert!(crossed.resting_orders[&code].iter().any(|order| order.side == Side::Sell
-        && order.price == Money::from_cents(10_000) && order.qty == 100));
+    assert!(crossed.resting_orders[&code]
+        .iter()
+        .any(|order| order.side == Side::Buy
+            && order.price == Money::from_cents(10_000)
+            && order.qty == 200));
+    assert!(crossed.resting_orders[&code]
+        .iter()
+        .any(|order| order.side == Side::Sell
+            && order.price == Money::from_cents(10_000)
+            && order.qty == 100));
     let original_seq = crossed.resting_orders[&code]
         .iter()
         .find(|order| order.id == engine::OrderId(10))
@@ -923,9 +929,7 @@ fn multi_stock_npc_auctions_report_only_real_trades_across_days() {
         let events = session.step().expect("healthy step");
         let day_index = (tick / ticks_per_day) as usize;
         for event in &events {
-            if phase == TradingPhase::CallAuction
-                && matches!(event, Event::OrderAccepted { .. })
-            {
+            if phase == TradingPhase::CallAuction && matches!(event, Event::OrderAccepted { .. }) {
                 auction_accepts_per_day[day_index] += 1;
             }
             if matches!(event, Event::Trade { .. }) {
@@ -1995,10 +1999,7 @@ fn multi_stock_auction_activity_facts_are_deterministic_evidence() {
     // completed 事件存在性 + (price, volume) 域合法性（有交叉与否由
     // fixture 真实决定，不伪造）。
     let total_matched: u64 = daily_facts.iter().map(|f| f.4).sum();
-    let total_accepts: u64 = daily_facts
-        .iter()
-        .map(|f| f.1 + f.2)
-        .sum();
+    let total_accepts: u64 = daily_facts.iter().map(|f| f.1 + f.2).sum();
     assert!(total_accepts > 0, "三日累计受理>0（生产/派发运转）");
     assert!(
         day_completed_events > 0,

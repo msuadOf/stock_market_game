@@ -3,9 +3,15 @@
 //! 后续账户校验、股票处理、结算、最终事件与权威提交由完整 tick coordinator 负责。
 
 #[cfg(test)]
+use super::decision_snapshot_capture::capture_decision_snapshot;
+#[cfg(test)]
 use super::decision_snapshot_capture::CapturedDecisionSnapshot;
 #[cfg(test)]
 use super::npc_decisions::run_npc_decisions;
+#[cfg(test)]
+use super::npc_decisions::stream_npc_decisions_with;
+#[cfg(test)]
+use super::npc_state_projection::project_npc_account;
 #[cfg(test)]
 use super::npc_state_projection::project_npc_state;
 #[cfg(test)]
@@ -19,12 +25,6 @@ use super::{
     },
     IntentCandidate, IntentCandidateBatch, IntentCandidateError, IntentCandidateKey, StepFatal,
 };
-#[cfg(test)]
-use super::decision_snapshot_capture::capture_decision_snapshot;
-#[cfg(test)]
-use super::npc_decisions::stream_npc_decisions_with;
-#[cfg(test)]
-use super::npc_state_projection::project_npc_account;
 #[cfg(test)]
 use crate::compute::join;
 #[cfg(test)]
@@ -126,9 +126,16 @@ mod t1_account_task_tests {
         let seed = 311u64;
         let mut session = due_session(1, seed, true);
         super::queue_npc_for_next_tick(&mut session).unwrap();
-        session.state.npc_attention.get_mut(&crate::AccountId(1)).unwrap().next_attention_candidate_tick = 3;
+        session
+            .state
+            .npc_attention
+            .get_mut(&crate::AccountId(1))
+            .unwrap()
+            .next_attention_candidate_tick = 3;
         let events = session.step().expect("首步");
-        for e in &events { eprintln!("EVENT: {e:?}"); }
+        for e in &events {
+            eprintln!("EVENT: {e:?}");
+        }
     }
 
     /// Sol 三审修复 2 红证：首步前 queue 接通——staged handover 由驱动器
@@ -151,7 +158,10 @@ mod t1_account_task_tests {
         let handover = super::produce_decision_output(&mut twin).expect("孪生 staged 消费");
         let expected = handover.intents().len();
         drop(twin);
-        assert!(expected >= 1, "fixture 须产生 staged intents（否则断言空转）");
+        assert!(
+            expected >= 1,
+            "fixture 须产生 staged intents（否则断言空转）"
+        );
         let mut session = due_session(1, seed, true);
         super::queue_npc_for_next_tick(&mut session).unwrap();
         // fixture 安排：观察概率 1.0 下 queue 重排恒落在 tick+1——长重排
@@ -169,13 +179,15 @@ mod t1_account_task_tests {
         /// 构造期迁移同样受理（不过滤则与 staged 数巧合相等）。
         let accepted1 = events
             .iter()
-            .filter(|event| matches!(
-                event,
-                crate::Event::OrderAccepted {
-                    account: crate::AccountId(1),
-                    ..
-                }
-            ))
+            .filter(|event| {
+                matches!(
+                    event,
+                    crate::Event::OrderAccepted {
+                        account: crate::AccountId(1),
+                        ..
+                    }
+                )
+            })
             .count();
         assert_eq!(
             accepted1, expected,
@@ -185,20 +197,21 @@ mod t1_account_task_tests {
         let events2 = session.step().expect("第二拍");
         let accepted2 = events2
             .iter()
-            .filter(|event| matches!(
-                event,
-                crate::Event::OrderAccepted {
-                    account: crate::AccountId(1),
-                    ..
-                }
-            ))
+            .filter(|event| {
+                matches!(
+                    event,
+                    crate::Event::OrderAccepted {
+                        account: crate::AccountId(1),
+                        ..
+                    }
+                )
+            })
             .count();
         assert_eq!(
             accepted2, 0,
             "queue 的决策不重复执行（attention 已由 produce 推进、构造器恢复）"
         );
     }
-
 
     /// Sol 四审修复 2：构造消费**零推进**直接断言（真实 due=1 边界——
     /// 不手改调度）：queue 后镜像 due=1；消费 staged（含注入意图的取走）
@@ -219,7 +232,10 @@ mod t1_account_task_tests {
             .get(&crate::AccountId(1))
             .unwrap()
             .next_attention_candidate_tick;
-        assert_eq!(mirror_due, 1, "fixture 前提：重排落在消费拍（概率 1.0 恒成立）");
+        assert_eq!(
+            mirror_due, 1,
+            "fixture 前提：重排落在消费拍（概率 1.0 恒成立）"
+        );
         // 消费（与 step_via_runtime 同一入口；intents 取走即消费完成）。
         let intents = crate::session::pipeline::take_staged_intents_for_runtime(&mut session)
             .expect("staged 批在场");
@@ -239,9 +255,7 @@ mod t1_account_task_tests {
             "构造消费零推进：组 next_due==queue 后镜像值 {mirror_due}"
         );
         // 首步恰一次决策：due 推进到 [2,6)（一次重排；未决策则仍=1）。
-        driver
-            .step_frame_equivalent(&mut session)
-            .expect("首步");
+        driver.step_frame_equivalent(&mut session).expect("首步");
         let collected = driver.collect_attention().expect("再收集");
         let due_after = collected[0]
             .1
@@ -288,10 +302,9 @@ mod t1_account_task_tests {
             }
             super::queue_npc_for_next_tick(&mut session).unwrap();
             let events = session.step().expect("第二步");
-            let decided_by_order = events.iter().any(|event| matches!(
-                event,
-                crate::Event::OrderAccepted { .. }
-            ));
+            let decided_by_order = events
+                .iter()
+                .any(|event| matches!(event, crate::Event::OrderAccepted { .. }));
             let dues_after: Vec<u64> = (1..=5)
                 .map(|i| {
                     session
@@ -389,13 +402,15 @@ mod t1_account_task_tests {
         let mut session = due_session(3, 11, true);
         let _ = session.compute_context().take_queue_stage_counts();
         super::queue_npc_for_next_tick(&mut session).unwrap();
-        let (attention, observation, analysis, decide, projection, captures) = session
-            .compute_context()
-            .take_queue_stage_counts();
+        let (attention, observation, analysis, decide, projection, captures) =
+            session.compute_context().take_queue_stage_counts();
         assert_eq!(captures, 1, "共享输入捕获每 tick 恰一次（不随池宽放大）");
         assert_eq!(attention, 3, "attention 判定应在每个账户任务内恰好一次");
         assert_eq!(observation, 3, "个人观察应在受理账户任务内完成");
-        assert_eq!(analysis, 3, "个人分析（计划/经验前置）应在受理零售任务内完成");
+        assert_eq!(
+            analysis, 3,
+            "个人分析（计划/经验前置）应在受理零售任务内完成"
+        );
         assert_eq!(decide, 3, "策略决策应在受理账户任务内完成");
         assert_eq!(projection, 3, "quote/plan 个人投影应在受理账户任务内完成");
         let batch = super::staged_decision::take_any().expect("queue 后 staged 批必在");
@@ -434,17 +449,26 @@ mod t1_account_task_tests {
             // 协调线程内联执行的账户数。不变式：payloads+inline==due（每账户
             // 恰一次交付），任务数不随池宽放大（上限=min(due,workers)）。
             assert_eq!(
-                spawned, (4usize.min(workers)) as u64,
+                spawned,
+                (4usize.min(workers)) as u64,
                 "chunk 任务数=min(due,workers)（workers={workers}；spawned={spawned}）"
             );
             assert_eq!(
-                payloads + inline, 4,
+                payloads + inline,
+                4,
                 "每账户恰一次交付（workers={workers}；payloads={payloads} inline={inline}）"
             );
             let (attention, observation, analysis, decide, projection, captures) =
                 compute.take_queue_stage_counts();
             assert_eq!(
-                (attention, observation, analysis, decide, projection, captures),
+                (
+                    attention,
+                    observation,
+                    analysis,
+                    decide,
+                    projection,
+                    captures
+                ),
                 (4, 4, 4, 4, 4, 1),
                 "五阶段计数（含 attention）与捕获不随池宽放大（workers={workers}）"
             );
@@ -463,8 +487,11 @@ mod t1_account_task_tests {
                 "fixture 前提自证：买入失衡分析应使各账户产生同股 intents（workers={workers}）"
             );
             // ① 真实接收序：登记序=到达序（到达记录仅在 patch 含 intents 时追加）。
-            let owners: Vec<crate::AccountId> =
-                batch.intents().iter().map(|received| received.owner).collect();
+            let owners: Vec<crate::AccountId> = batch
+                .intents()
+                .iter()
+                .map(|received| received.owner)
+                .collect();
             let arrival_with_intents = arrival;
             assert_eq!(
                 owners, arrival_with_intents,
@@ -474,10 +501,8 @@ mod t1_account_task_tests {
             //    并跨宽度直接比较 Vec（增量三十五·Luna 快检：不压扁为末值；
             //    当前 fixture 每账户单 intent ⇒ 序列长 1，多 intent 一般序由
             //    ②递增断言+单元用例多 intent 保序实证承载）。
-            let mut sequences_per_account: std::collections::BTreeMap<
-                crate::AccountId,
-                Vec<u64>,
-            > = std::collections::BTreeMap::new();
+            let mut sequences_per_account: std::collections::BTreeMap<crate::AccountId, Vec<u64>> =
+                std::collections::BTreeMap::new();
             for received in batch.intents() {
                 if let Some(last) = sequences_per_account
                     .get(&received.owner)
@@ -497,8 +522,8 @@ mod t1_account_task_tests {
             let mut last_per_stock: std::collections::BTreeMap<crate::StockId, u64> =
                 std::collections::BTreeMap::new();
             for received in batch.intents() {
-                let (crate::Intent::PlaceLimit { code, .. } | crate::Intent::PlaceMarket { code, .. }) =
-                    &received.intent
+                let (crate::Intent::PlaceLimit { code, .. }
+                | crate::Intent::PlaceMarket { code, .. }) = &received.intent
                 else {
                     continue;
                 };
@@ -623,7 +648,8 @@ mod t1_account_task_tests {
             "B 账户内同股两笔 stock_ordinal 递增（多 intent FIFO）"
         );
         assert_eq!(
-            dependencies, vec![(0usize, 1usize)],
+            dependencies,
+            vec![(0usize, 1usize)],
             "局部依赖 (0,1) 随 B 的登记偏移平移为全局 (0,1)"
         );
     }
@@ -643,7 +669,10 @@ mod t1_account_task_tests {
                 writes.ingress,
                 &mut writes.ingress_receipt_cursors,
                 player,
-                crate::Intent::Cancel { code: code.clone(), id: crate::OrderId(7) },
+                crate::Intent::Cancel {
+                    code: code.clone(),
+                    id: crate::OrderId(7),
+                },
             )
             .unwrap()
         };
@@ -670,7 +699,11 @@ mod t1_account_task_tests {
         // positive, got 0 cents”）在 behavior 捕获链路失败——与 observing
         // 对照用例同一实际错误（非 InvalidMarketReturn；增量三十五口径统一）。
         {
-            let closes = session.state.market_minute_closes.get_mut(&crate::StockId(0)).unwrap();
+            let closes = session
+                .state
+                .market_minute_closes
+                .get_mut(&crate::StockId(0))
+                .unwrap();
             let next_minute = closes
                 .last()
                 .map(|close| close.absolute_trading_minute + 1)
@@ -694,7 +727,11 @@ mod t1_account_task_tests {
     fn npc_queue_observing_retail_surfaces_shared_capture_failure() {
         let mut session = due_session(2, 43, true);
         {
-            let closes = session.state.market_minute_closes.get_mut(&crate::StockId(0)).unwrap();
+            let closes = session
+                .state
+                .market_minute_closes
+                .get_mut(&crate::StockId(0))
+                .unwrap();
             let next_minute = closes
                 .last()
                 .map(|close| close.absolute_trading_minute + 1)
@@ -758,7 +795,11 @@ mod t1_account_task_tests {
         // 「market minute close must be positive」失败（实际错误类型，
         /// 见 observing 对照用例断言）。
         {
-            let closes = session.state.market_minute_closes.get_mut(&crate::StockId(0)).unwrap();
+            let closes = session
+                .state
+                .market_minute_closes
+                .get_mut(&crate::StockId(0))
+                .unwrap();
             let next_minute = closes
                 .last()
                 .map(|close| close.absolute_trading_minute + 1)
@@ -810,7 +851,6 @@ mod t1_account_task_tests {
 /// 拒绝/u64 tick 域）随函数退役；「日终不带跨日批次」语义由
 /// day_end_npc_tests 的 pending None（现为结构性不存在）与 epoch 对齐
 /// fixture 场景 3/4 的日终断言承载。
-
 
 /// Sol 三审修复 2：首步前 queue 的 staged handover 消费（恰一次）——
 /// runtime 驱动器构造期调用（cfg(test)：staged 槽位仅测试适配器存在）。
@@ -948,8 +988,10 @@ pub(in crate::session) fn produce_decision_output_on(
         + 1;
     // 决策阶段生产的计算计量（原 tail 块的 CandidatePrepare 记账随 T3 前移
     // 到入口；在 compute.parallel 内记录，保持池上下文采样语义不变）。
-    view.compute
-        .parallel(|| view.compute.record(crate::compute::ComputeWork::CandidatePrepare));
+    view.compute.parallel(|| {
+        view.compute
+            .record(crate::compute::ComputeWork::CandidatePrepare)
+    });
     if writes
         .attention_scheduler
         .next_scheduled_tick()
@@ -1002,27 +1044,25 @@ pub(in crate::session) fn produce_decision_output_on(
         market_minute,
         trading_day: u64::from(view.day),
     };
-    let any_due_retail = due
-        .iter()
-        .any(|account| {
-            view.accounts
-                .get(account)
-                .is_some_and(|entry| entry.kind() == AccountKind::Retail)
-        });
+    let any_due_retail = due.iter().any(|account| {
+        view.accounts
+            .get(account)
+            .is_some_and(|entry| entry.kind() == AccountKind::Retail)
+    });
     // behavior_market/分析观察按「due 集含零售」捕获（超集条件，比旧
     // 「受理集含零售」多覆盖未受理零售——共享捕获一次，登记为工作量差）。
-    let behavior_market: Result<
-        Option<crate::behavior::BehaviorMarketObservation>,
-        String,
-    > = if any_due_retail {
-        super::decision_snapshot_capture::build_behavior_market_checked(view)
-            .map(Some)
-            .map_err(|error: super::decision_snapshot_capture::DecisionSnapshotCaptureError| {
-                error.to_string()
-            })
-    } else {
-        Ok(None)
-    };
+    let behavior_market: Result<Option<crate::behavior::BehaviorMarketObservation>, String> =
+        if any_due_retail {
+            super::decision_snapshot_capture::build_behavior_market_checked(view)
+                .map(Some)
+                .map_err(
+                    |error: super::decision_snapshot_capture::DecisionSnapshotCaptureError| {
+                        error.to_string()
+                    },
+                )
+        } else {
+            Ok(None)
+        };
     let (working_continuous, working_auction) = if due.is_empty() {
         (BTreeMap::new(), BTreeMap::new())
     } else {
@@ -1073,9 +1113,9 @@ pub(in crate::session) fn produce_decision_output_on(
     };
     let urgency_policy = view.urgency_policy.clone();
     urgency_policy.validate().map_err(|error| {
-        capture_err(super::decision_snapshot_capture::DecisionSnapshotCaptureError::UrgencyPolicy(
-            error,
-        ))
+        capture_err(
+            super::decision_snapshot_capture::DecisionSnapshotCaptureError::UrgencyPolicy(error),
+        )
     })?;
     // ===== 协调线程：个人状态 take（每账户恰一次，O(due)；失败时随候选丢弃）=====
     let mut taken = BTreeMap::new();
@@ -1157,7 +1197,7 @@ pub(in crate::session) fn produce_decision_output_on(
          errors: &mut Vec<(
             crate::AccountId,
             super::npc_decisions::NpcDecisionStreamError<String>,
-         )>| {
+        )>| {
             match result {
                 Ok(mut patch) => {
                     if patch.account != account {
@@ -1250,10 +1290,7 @@ struct NpcAccountTaskContext {
     /// due 集含零售才构建；构建错误**延迟消费**（增量三十三·错误边界）：
     /// 仅在首个受理零售账户的任务内上浮——attention 全拒绝时错误不上浮，
     /// 与旧「按受理集捕获」路径的错误边界一致。
-    behavior_market: Result<
-        Option<crate::behavior::BehaviorMarketObservation>,
-        String,
-    >,
+    behavior_market: Result<Option<crate::behavior::BehaviorMarketObservation>, String>,
     urgency_policy: crate::plans::UrgencyPolicy,
     /// 共享 attention 信号（由市场视图派生一次）。
     attention_signal: f64,
@@ -1341,29 +1378,23 @@ fn run_npc_account_task(
     config: &crate::GameConfig,
     account: AccountId,
 ) -> Result<super::npc_state_projection::NpcAccountPatch, String> {
-    let capture_err = |error: super::decision_snapshot_capture::DecisionSnapshotCaptureError| {
-        error.to_string()
-    };
+    let capture_err =
+        |error: super::decision_snapshot_capture::DecisionSnapshotCaptureError| error.to_string();
     let taken = ctx
         .taken
         .lock()
         .expect("queue 账户状态托管锁被 poison")
         .remove(&account)
         .ok_or_else(|| format!("queue 账户任务缺少托管个人状态 {account:?}（调度不变量破坏）"))?;
-    let entry = view
-        .accounts
-        .get(&account)
-        .ok_or_else(|| capture_err(
-            super::decision_snapshot_capture::DecisionSnapshotCaptureError::MissingAccount(
-                account,
-            ),
-        ))?;
+    let entry = view.accounts.get(&account).ok_or_else(|| {
+        capture_err(
+            super::decision_snapshot_capture::DecisionSnapshotCaptureError::MissingAccount(account),
+        )
+    })?;
     let kind = entry.kind();
     if kind == AccountKind::Player {
         return Err(capture_err(
-            super::decision_snapshot_capture::DecisionSnapshotCaptureError::PlayerAccount(
-                account,
-            ),
+            super::decision_snapshot_capture::DecisionSnapshotCaptureError::PlayerAccount(account),
         ));
     }
     // —— attention 判定（任务内推进个人 RNG 流；概率有效性先行）——
@@ -1383,9 +1414,11 @@ fn run_npc_account_task(
             // 继续消费同一流（rng_after 仅到 evaluate 边界）。
             #[cfg(test)]
             let rng_before = state.attention().rng_state;
-            let accepted = state
-                .attention_mut()
-                .evaluate_candidate_with_signal(kind, ctx.attention_signal, ctx.tick);
+            let accepted = state.attention_mut().evaluate_candidate_with_signal(
+                kind,
+                ctx.attention_signal,
+                ctx.tick,
+            );
             #[cfg(test)]
             view.compute
                 .t1_probes
@@ -1440,18 +1473,20 @@ fn run_npc_account_task(
     }
     if !observes {
         // 未受理：个人经验行原样带回安装（捕获时已 take，不得丢失）。
-        return Ok(crate::session::pipeline::npc_state_projection::NpcAccountPatch {
-            account,
-            observes: false,
-            next_attention_candidate_tick,
-            attention,
-            personal,
-            strategy: None,
-            retail_trace: None,
-            experience_row: taken.experience,
-            ordered_intents: Vec::new(),
-            local_dependencies: Vec::new(),
-        });
+        return Ok(
+            crate::session::pipeline::npc_state_projection::NpcAccountPatch {
+                account,
+                observes: false,
+                next_attention_candidate_tick,
+                attention,
+                personal,
+                strategy: None,
+                retail_trace: None,
+                experience_row: taken.experience,
+                ordered_intents: Vec::new(),
+                local_dependencies: Vec::new(),
+            },
+        );
     }
     // —— 个人观察（任务内；经验行权益/持仓观察 + SelfView + 风险观察）——
     #[cfg(test)]
@@ -1482,15 +1517,11 @@ fn run_npc_account_task(
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         view.compute.record(crate::compute::ComputeWork::Analyse);
         let analysis = match ctx.analysis.as_ref() {
-            None => {
-                return Err("queue 缺少共享分析输入（due 集含零售则必须捕获）".to_owned())
-            }
+            None => return Err("queue 缺少共享分析输入（due 集含零售则必须捕获）".to_owned()),
             Some(Err(description)) => return Err(description.clone()),
             Some(Ok(inputs)) => inputs,
         };
-        let mut state = personal
-            .take()
-            .expect("零售到期账户必有托管个人计划状态");
+        let mut state = personal.take().expect("零售到期账户必有托管个人计划状态");
         let row = experience_row.as_ref().ok_or_else(|| {
             capture_err(
                 super::decision_snapshot_capture::DecisionSnapshotCaptureError::MissingAccount(
@@ -1538,8 +1569,9 @@ fn run_npc_account_task(
         .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     view.compute.record(crate::compute::ComputeWork::Decide);
     let shared = ctx.shared_inputs_with(behavior_market);
-    let source = super::npc_decisions::decide_npc_account_from_shared(&shared, &input, config, account)
-        .map_err(|error| error.to_string())?;
+    let source =
+        super::npc_decisions::decide_npc_account_from_shared(&shared, &input, config, account)
+            .map_err(|error| error.to_string())?;
     // —— quote/plan 个人投影 + 经验终值（任务内）——
     #[cfg(test)]
     view.compute
@@ -1556,18 +1588,20 @@ fn run_npc_account_task(
         view,
         &mut experience_row,
     )?;
-    Ok(crate::session::pipeline::npc_state_projection::NpcAccountPatch {
-        account,
-        observes: true,
-        next_attention_candidate_tick,
-        attention,
-        personal,
-        strategy: decision.strategy,
-        retail_trace: decision.retail_trace,
-        experience_row: decision.experience_row,
-        ordered_intents: decision.ordered_intents,
-        local_dependencies: decision.local_dependencies,
-    })
+    Ok(
+        crate::session::pipeline::npc_state_projection::NpcAccountPatch {
+            account,
+            observes: true,
+            next_attention_candidate_tick,
+            attention,
+            personal,
+            strategy: decision.strategy,
+            retail_trace: decision.retail_trace,
+            experience_row: decision.experience_row,
+            ordered_intents: decision.ordered_intents,
+            local_dependencies: decision.local_dependencies,
+        },
+    )
 }
 
 /// attention 基础概率有效性（与旧批处理捕获同文案）。
@@ -1605,12 +1639,16 @@ fn validate_npc_account_input(
         return Err(DecisionSnapshotError::UnexpectedRetailAnalysis(account).to_string());
     }
     if let Some(analysis) = input.retail_analysis() {
-        if !matches!(input.strategy_state(), crate::strategy::StrategyState::ZiNoise(_)) {
-            return Err(
-                DecisionSnapshotError::InvalidRetailAnalysisStrategy(account).to_string(),
-            );
+        if !matches!(
+            input.strategy_state(),
+            crate::strategy::StrategyState::ZiNoise(_)
+        ) {
+            return Err(DecisionSnapshotError::InvalidRetailAnalysisStrategy(account).to_string());
         }
-        if let Some(code) = analysis.keys().find(|code| !market.stocks.contains_key(*code)) {
+        if let Some(code) = analysis
+            .keys()
+            .find(|code| !market.stocks.contains_key(*code))
+        {
             return Err(DecisionSnapshotError::UnknownRetailAnalysisStock {
                 account,
                 code: code.clone(),
@@ -1620,9 +1658,7 @@ fn validate_npc_account_input(
     }
     if kind == AccountKind::Retail {
         if behavior_market.is_none() {
-            return Err(
-                DecisionSnapshotError::MissingRetailBehaviorMarket(account).to_string(),
-            );
+            return Err(DecisionSnapshotError::MissingRetailBehaviorMarket(account).to_string());
         }
         if input.account_risk().is_none() {
             return Err(DecisionSnapshotError::MissingRetailAccountRisk(account).to_string());
@@ -1751,7 +1787,8 @@ impl NpcDecisionHandover {
         // fixture 中「无观察记录但携带 intents」的形状合法（receive 事实由
         // receipt 承载，不由观察集合推导——ADR-0032 决策第 1 条）。
         // 检查一（产物完整）：依赖表合法（镜像 fault2068）。
-        self.validate_dependencies().map_err(|error| invariant(&error))?;
+        self.validate_dependencies()
+            .map_err(|error| invariant(&error))?;
         let ready = self;
         let mut local = BTreeMap::<AccountId, u64>::new();
         let mut candidates = Vec::with_capacity(ready.intents.len());
@@ -1800,9 +1837,8 @@ impl NpcDecisionHandover {
                 return Err(format!("{prefix} predecessor is not a cancellation"));
             };
             let after_code = match &after.intent {
-                crate::Intent::PlaceLimit { code, .. } | crate::Intent::PlaceMarket { code, .. } => {
-                    code
-                }
+                crate::Intent::PlaceLimit { code, .. }
+                | crate::Intent::PlaceMarket { code, .. } => code,
                 crate::Intent::Cancel { .. } => {
                     return Err(format!("{prefix} successor is not a placement"));
                 }
@@ -1824,9 +1860,9 @@ pub(in crate::session) fn take_decision_output(
     slot: &mut Option<NpcDecisionHandover>,
     consuming_tick: u64,
 ) -> Result<NpcDecisionHandover, StepFatal> {
-    let output = slot.take().ok_or_else(|| {
-        invariant("tick decision output is missing or was already consumed")
-    })?;
+    let output = slot
+        .take()
+        .ok_or_else(|| invariant("tick decision output is missing or was already consumed"))?;
     if output.observed_tick() != consuming_tick {
         return Err(invariant(
             "decision output epoch does not match the consuming tick",
@@ -1900,8 +1936,6 @@ pub(in crate::session) mod staged_decision {
         })
     }
 }
-
-
 
 fn invariant(description: &str) -> StepFatal {
     StepFatal::InvariantViolation {

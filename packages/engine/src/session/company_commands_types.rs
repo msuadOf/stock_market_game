@@ -2,11 +2,11 @@
 //!
 //! 这里只承载输入与类别，不赋予审批权限、不表示已受理，也不分配交易 PlanId。
 
-use crate::Money;
-use crate::company::CompanyId;
 use crate::company::issuer_repurchase::RepurchasePurpose;
 use crate::company::share_split::ShareSplitDirection;
 use crate::company::stock_distribution::StockDistributionKind;
+use crate::company::CompanyId;
+use crate::Money;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]

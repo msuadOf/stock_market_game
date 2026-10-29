@@ -25,7 +25,10 @@ fn buy(code: StockId, ordinal: u64) -> ReceiptBearingIntent {
 fn cancel(code: StockId, ordinal: u64) -> ReceiptBearingIntent {
     ReceiptBearingIntent {
         owner: AccountId(1),
-        intent: Intent::Cancel { code, id: crate::OrderId(7) },
+        intent: Intent::Cancel {
+            code,
+            id: crate::OrderId(7),
+        },
         account_ordinal: ordinal,
         stock_ordinal: ordinal,
     }
@@ -41,15 +44,9 @@ fn description_of(error: &crate::session::StepFatal) -> String {
 /// 检查一（epoch 匹配）：跨 tick（错位 epoch）交接必须显式失败。
 #[test]
 fn decision_output_rejects_epoch_mismatch() {
-    let output = NpcDecisionHandover::new(
-        5,
-        vec![AccountId(1)],
-        vec![buy(StockId(0), 0)],
-        Vec::new(),
-    );
-    let error = output
-        .into_batch(6)
-        .expect_err("epoch 不匹配必须拒绝交接");
+    let output =
+        NpcDecisionHandover::new(5, vec![AccountId(1)], vec![buy(StockId(0), 0)], Vec::new());
+    let error = output.into_batch(6).expect_err("epoch 不匹配必须拒绝交接");
     assert!(
         description_of(&error).contains("epoch does not match"),
         "实际错误: {}",
@@ -104,8 +101,7 @@ fn decision_output_take_is_exactly_once() {
     let mut slot = Some(NpcDecisionHandover::empty(5));
     let first = take_decision_output(&mut slot, 5).expect("首次消费必须成功");
     assert_eq!(first.observed_tick(), 5);
-    let second = take_decision_output(&mut slot, 5)
-        .expect_err("二次消费（槽位已空）必须拒绝");
+    let second = take_decision_output(&mut slot, 5).expect_err("二次消费（槽位已空）必须拒绝");
     assert!(
         description_of(&second).contains("missing or was already consumed"),
         "实际错误: {}",
@@ -130,7 +126,9 @@ fn decision_output_take_rejects_epoch_mismatch() {
 #[test]
 fn decision_output_legal_batches_hand_over_with_ingress_order() {
     // 空批。
-    let (batch, observed) = NpcDecisionHandover::empty(5).into_batch(5).expect("空批交接");
+    let (batch, observed) = NpcDecisionHandover::empty(5)
+        .into_batch(5)
+        .expect("空批交接");
     assert!(observed.is_empty());
     assert!(batch.candidates().is_empty());
     // 满批：撤单→下单依赖（同账户同股）。

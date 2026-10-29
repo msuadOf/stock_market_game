@@ -23,10 +23,13 @@ impl GameSession {
     pub fn flush_now(&mut self) -> Result<(), StepFatal> {
         self.require_healthy()?;
         let fail = |description| StepFatal::InvariantViolation {
-            location: "GameSession::flush_now".to_owned(), description,
+            location: "GameSession::flush_now".to_owned(),
+            description,
         };
         if self.has_current_external_runtime_authority() {
-            return Err(fail("外部 RuntimeDriver 在位，请通过该 owner 显式 flush".to_owned()));
+            return Err(fail(
+                "外部 RuntimeDriver 在位，请通过该 owner 显式 flush".to_owned(),
+            ));
         }
         if !crate::runtime::step_runtime_enabled() {
             return Ok(());
@@ -34,11 +37,18 @@ impl GameSession {
         if self.runtime_driver.is_none() {
             self.construct_runtime_driver_lazy()?;
         }
-        let cell = self.runtime_driver.take().expect("显式 flush 已构造 driver");
+        let cell = self
+            .runtime_driver
+            .take()
+            .expect("显式 flush 已构造 driver");
         let result = (|| {
-            let mut driver = cell.lock().map_err(|_| fail("runtime driver 锁 poison".to_owned()))?;
+            let mut driver = cell
+                .lock()
+                .map_err(|_| fail("runtime driver 锁 poison".to_owned()))?;
             driver.flush_now(self).map_err(|description| {
-                self.poison_reason().cloned().unwrap_or_else(|| fail(description))
+                self.poison_reason()
+                    .cloned()
+                    .unwrap_or_else(|| fail(description))
             })
         })();
         self.runtime_driver = Some(cell);
@@ -60,11 +70,11 @@ impl GameSession {
     }
 
     /// runtime 驱动器翻转面（D2）：玩家意图冻结取出。
-    pub fn take_runtime_player_intents(
-        &mut self,
-    ) -> Vec<crate::session::ReceiptBearingIntent> {
+    pub fn take_runtime_player_intents(&mut self) -> Vec<crate::session::ReceiptBearingIntent> {
         #[cfg(all(test, not(target_family = "wasm")))]
-        crate::session::calendar_entry_cache_tests::record_entry_call(crate::session::calendar_entry_cache_tests::EntryCall::Take);
+        crate::session::calendar_entry_cache_tests::record_entry_call(
+            crate::session::calendar_entry_cache_tests::EntryCall::Take,
+        );
         self.mark_external_mutation();
         self.state.pending_player.drain(..).collect()
     }
@@ -93,7 +103,9 @@ impl GameSession {
         // attention（调度域 candidate 保持组权威值——P1-10 链路回写的
         /// 镜像同步；information 域经 Belief-1b 投递演进——此处整态
         /// 覆盖为组快照，两域同源）。
-        self.state.npc_attention.insert(id, snapshot.attention.clone());
+        self.state
+            .npc_attention
+            .insert(id, snapshot.attention.clone());
         // P2-1：npc_attention 变更即置 heap 惰性标记（镜像同步在消费点
         // 重建——见 set_runtime_attention 注释）。
         self.state.runtime_heap_dirty = true;
@@ -228,10 +240,13 @@ impl GameSession {
                 book.iter()
                     .map(|fact| {
                         // Sol 终审修复 1c：归户保留组号（同镜像/信封）。
-                        let account = driver
-                            .account_by_owner(fact.owner)
-                            .expect("owner 在名册");
-                        (account, fact.side, crate::money::Money::from_cents(fact.price), fact.qty)
+                        let account = driver.account_by_owner(fact.owner).expect("owner 在名册");
+                        (
+                            account,
+                            fact.side,
+                            crate::money::Money::from_cents(fact.price),
+                            fact.qty,
+                        )
                     })
                     .collect()
             })
@@ -372,16 +387,11 @@ impl GameSession {
         if self.runtime_driver.is_none() {
             self.construct_runtime_driver_lazy()?;
         }
-        let cell = self
-            .runtime_driver
-            .take()
-            .expect("上方已构造或在位");
+        let cell = self.runtime_driver.take().expect("上方已构造或在位");
         let outcome = (|| {
-            let mut driver = cell.lock().map_err(|_| {
-                StepFatal::InvariantViolation {
-                    location: "GameSession::end_civil_day::retained_closed".to_owned(),
-                    description: "runtime 驱动器锁 poison（休市冻结）".to_owned(),
-                }
+            let mut driver = cell.lock().map_err(|_| StepFatal::InvariantViolation {
+                location: "GameSession::end_civil_day::retained_closed".to_owned(),
+                description: "runtime 驱动器锁 poison（休市冻结）".to_owned(),
             })?;
             driver
                 .freeze_retained_closed_day(self, settled)
@@ -397,27 +407,41 @@ impl GameSession {
     /// 惰性构造常驻驱动器（`with_routed_runtime_driver` 的构造段抽公共
     /// ——首步与 end_civil_day 补冻结两消费面共用）。
     #[cfg(test)]
-    pub(in crate::session) fn construct_runtime_driver_lazy_for_test(&mut self) -> Result<(), StepFatal> {
+    pub(in crate::session) fn construct_runtime_driver_lazy_for_test(
+        &mut self,
+    ) -> Result<(), StepFatal> {
         self.construct_runtime_driver_lazy()
     }
 
     pub(in crate::session) fn construct_runtime_driver_lazy(&mut self) -> Result<(), StepFatal> {
         self.require_healthy()?;
         let fail = |description| StepFatal::InvariantViolation {
-            location: "GameSession::ensure_runtime_driver".to_owned(), description,
+            location: "GameSession::ensure_runtime_driver".to_owned(),
+            description,
         };
         // private markets 已去旧簿，activation 只有 mirror install 的一次 revision 写入。
         let revision = self.external_revision();
-        revision.checked_add(1).ok_or_else(|| fail("静点移交 external revision 已耗尽".to_owned()))?;
+        revision
+            .checked_add(1)
+            .ok_or_else(|| fail("静点移交 external revision 已耗尽".to_owned()))?;
         let authority_epoch = self.next_runtime_authority_epoch().map_err(fail)?;
-        self.runtime_mirror_install_sequence.checked_add(1)
+        self.runtime_mirror_install_sequence
+            .checked_add(1)
             .ok_or_else(|| fail("静点移交 install_sequence 已耗尽".to_owned()))?;
-        crate::runtime::drive::RuntimeDriver::validate_static_adoption_identity(self).map_err(fail)?;
+        crate::runtime::drive::RuntimeDriver::validate_static_adoption_identity(self)
+            .map_err(fail)?;
         let mut driver = crate::runtime::drive::RuntimeDriver::prepare_from_session_grouped(
-            self, self.runtime_group_count, authority_epoch,
-        ).map_err(|error| {
+            self,
+            self.runtime_group_count,
+            authority_epoch,
+        )
+        .map_err(|error| {
             let fatal = fail(error.to_string());
-            if error.cleanup_failed { self.poison_runtime_step(fatal) } else { fatal }
+            if error.cleanup_failed {
+                self.poison_runtime_step(fatal)
+            } else {
+                fatal
+            }
         })?;
         driver.adopt_session_seq(self);
         let prepared = (|| {
@@ -427,12 +451,16 @@ impl GameSession {
             #[cfg(test)]
             if let Some(queued) = crate::session::pipeline::staged_decision::peek_any() {
                 if !queued.intents().is_empty() {
-                    let upper: Vec<_> = driver.world_public_views().iter()
-                        .map(|view| view.daily_upper_limit).collect();
+                    let upper: Vec<_> = driver
+                        .world_public_views()
+                        .iter()
+                        .map(|view| view.daily_upper_limit)
+                        .collect();
                     driver.inject_player_intents(queued.intents(), &upper)?;
                 }
             }
-            let ack = self.validate_runtime_mirror_source(&driver, &mirror)
+            let ack = self
+                .validate_runtime_mirror_source(&driver, &mirror)
                 .map_err(|error| error.to_string())?;
             Ok::<_, String>((mirror, ack))
         })();
@@ -447,8 +475,18 @@ impl GameSession {
                 };
             }
         };
-        let prepared = PreparedRuntimeHandover { driver, mirror, ack, authority_epoch, revision };
-        assert_eq!(self.external_revision(), prepared.revision, "prepare 与 activation 之间不允许 Session 来源改变");
+        let prepared = PreparedRuntimeHandover {
+            driver,
+            mirror,
+            ack,
+            authority_epoch,
+            revision,
+        };
+        assert_eq!(
+            self.external_revision(),
+            prepared.revision,
+            "prepare 与 activation 之间不允许 Session 来源改变"
+        );
         self.install_runtime_authority_epoch(prepared.authority_epoch);
         let mut driver = prepared.driver;
         let events = self.install_runtime_mirror(&mut driver, prepared.mirror);
@@ -505,10 +543,7 @@ impl GameSession {
     /// 意图（外部队列不被失败 tick 消费）。
     fn with_routed_runtime_driver<R>(
         &mut self,
-        body: impl FnOnce(
-            &mut Self,
-            &mut crate::runtime::drive::RuntimeDriver,
-        ) -> Result<R, StepFatal>,
+        body: impl FnOnce(&mut Self, &mut crate::runtime::drive::RuntimeDriver) -> Result<R, StepFatal>,
     ) -> Result<R, StepFatal> {
         // Calendar 非法时不得构造 driver、截取 ingress 或消费受理身份。
         let (calendar_day, calendar_tick) = self.prepare_market_calendar_tick()?;
@@ -591,10 +626,12 @@ impl GameSession {
                 location: "GameSession::with_routed_runtime_driver_locked::calendar".to_owned(),
                 description,
             })?;
-        driver.require_staged_calendar_tick().map_err(|description| StepFatal::InvariantViolation {
-            location: "GameSession::with_routed_runtime_driver_locked::calendar".to_owned(),
-            description,
-        })?;
+        driver
+            .require_staged_calendar_tick()
+            .map_err(|description| StepFatal::InvariantViolation {
+                location: "GameSession::with_routed_runtime_driver_locked::calendar".to_owned(),
+                description,
+            })?;
         // D4（t3 对等）：ingress 截取时刻——宿主经 shared ingress
         // 绑定入队的玩家意图搬运进 pending_player（旧管线 cutoff
         // 同口径；无绑定为 no-op）。
@@ -603,12 +640,17 @@ impl GameSession {
         }
         // 同一cutoff内输入已真实接收；在读取预算或发送 ExternalPlan 前同步旧镜像。
         // flush 失败保留 pending 与原 ordinal，不发下一市场 Start，也不回退接收事实。
-        if self.state.setup.runtime_sync_policy.needs_compute_flush() && !self.state.pending_player.is_empty() {
-            if let Err(description) = driver.flush_candidate(self, crate::runtime::sync_policy::FlushTrigger::ComputeRead) {
+        if self.state.setup.runtime_sync_policy.needs_compute_flush()
+            && !self.state.pending_player.is_empty()
+        {
+            if let Err(description) =
+                driver.flush_candidate(self, crate::runtime::sync_policy::FlushTrigger::ComputeRead)
+            {
                 let fatal = match self.poison_reason() {
                     Some(first) => first.clone(),
                     None => StepFatal::InvariantViolation {
-                        location: "GameSession::compute_read_flush".to_owned(), description,
+                        location: "GameSession::compute_read_flush".to_owned(),
+                        description,
                     },
                 };
                 return Err(self.poison_runtime_step(fatal));
@@ -644,18 +686,25 @@ impl GameSession {
         driver: &mut crate::runtime::drive::RuntimeDriver,
     ) -> Result<Vec<Event>, StepFatal> {
         self.require_healthy()?;
-        driver.ensure_session_authority(self).map_err(|description| StepFatal::InvariantViolation {
-            location: "RuntimeDriver::step::authority".to_owned(), description,
-        })?;
-        self.check_step_start().map_err(|fatal| self.poison_runtime_step(fatal))?;
-        let (day, tick) = self.prepare_market_calendar_tick()
+        driver
+            .ensure_session_authority(self)
+            .map_err(|description| StepFatal::InvariantViolation {
+                location: "RuntimeDriver::step::authority".to_owned(),
+                description,
+            })?;
+        self.check_step_start()
+            .map_err(|fatal| self.poison_runtime_step(fatal))?;
+        let (day, tick) = self
+            .prepare_market_calendar_tick()
             .map_err(|fatal| self.poison_runtime_step(fatal))?;
         let result = self.with_routed_runtime_driver_ref(driver, tick, |session, driver| {
             session.runtime_step_with_prepared_mirror_mode(driver, false, |_, facts| {
                 Ok(facts.into_iter().map(|fact| fact.event).collect())
             })
         });
-        if result.is_ok() { self.install_market_calendar_day(day); }
+        if result.is_ok() {
+            self.install_market_calendar_day(day);
+        }
         result
     }
 
@@ -671,7 +720,9 @@ impl GameSession {
         self.check_step_start()
             .map_err(|fatal| self.poison_runtime_step(fatal))?;
         self.with_routed_runtime_driver(|session, driver| {
-            session.runtime_step_with_prepared_mirror(driver, project).map(|value| (value, None))
+            session
+                .runtime_step_with_prepared_mirror(driver, project)
+                .map(|value| (value, None))
         })
     }
 
@@ -689,7 +740,10 @@ impl GameSession {
     pub(in crate::session) fn runtime_step_with_prepared_mirror<P>(
         &mut self,
         driver: &mut crate::runtime::drive::RuntimeDriver,
-        project: impl FnOnce(crate::session::protocol::TickCandidateProjection<'_>, Vec<crate::session::protocol::EventFact>) -> Result<P, StepFatal>,
+        project: impl FnOnce(
+            crate::session::protocol::TickCandidateProjection<'_>,
+            Vec<crate::session::protocol::EventFact>,
+        ) -> Result<P, StepFatal>,
     ) -> Result<P, StepFatal> {
         self.runtime_step_with_prepared_mirror_mode(driver, true, project)
     }
@@ -699,37 +753,62 @@ impl GameSession {
         &mut self,
         driver: &mut crate::runtime::drive::RuntimeDriver,
         automatic_day_end: bool,
-        project: impl FnOnce(crate::session::protocol::TickCandidateProjection<'_>, Vec<crate::session::protocol::EventFact>) -> Result<P, StepFatal>,
+        project: impl FnOnce(
+            crate::session::protocol::TickCandidateProjection<'_>,
+            Vec<crate::session::protocol::EventFact>,
+        ) -> Result<P, StepFatal>,
     ) -> Result<P, StepFatal> {
         self.require_healthy()?;
-        driver.ensure_session_authority(self).map_err(|description| {
-            StepFatal::InvariantViolation {
+        driver
+            .ensure_session_authority(self)
+            .map_err(|description| StepFatal::InvariantViolation {
                 location: "runtime_mirror::authority".to_owned(),
                 description,
-            }
-        })?;
+            })?;
         self.runtime_clear_account_undo();
         #[cfg(test)]
-        self.compute_context().t1_probes.queue_attempt_seq.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        let tick = self.tick().checked_add(1).ok_or_else(|| self.poison_runtime_step(StepFatal::InvariantViolation {
-            location: "runtime_mirror::prepare".to_owned(), description: "运行 tick 溢出".to_owned(),
-        }))?;
+        self.compute_context()
+            .t1_probes
+            .queue_attempt_seq
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let tick = self.tick().checked_add(1).ok_or_else(|| {
+            self.poison_runtime_step(StepFatal::InvariantViolation {
+                location: "runtime_mirror::prepare".to_owned(),
+                description: "运行 tick 溢出".to_owned(),
+            })
+        })?;
         let seq_from = self.seq();
         driver.adopt_session_seq(self);
-        crate::verification_evidence::begin_authoritative_tick(self.tick(), self.compute_context())?;
+        crate::verification_evidence::begin_authoritative_tick(
+            self.tick(),
+            self.compute_context(),
+        )?;
         #[cfg(feature = "simulation-diagnostics")]
-        let causal_time = self.causal_time().map_err(|fatal| self.poison_runtime_step(fatal))?;
-        let prepared = driver.prepare_driver_step_with_day_end(self, automatic_day_end)
+        let causal_time = self
+            .causal_time()
+            .map_err(|fatal| self.poison_runtime_step(fatal))?;
+        let prepared = driver
+            .prepare_driver_step_with_day_end(self, automatic_day_end)
             .and_then(|input| self.prepare_runtime_publication(driver, input, tick));
         let mut prepared = prepared.map_err(|description| {
-            let fatal = StepFatal::InvariantViolation { location: "runtime_mirror::prepare".to_owned(), description };
+            let fatal = StepFatal::InvariantViolation {
+                location: "runtime_mirror::prepare".to_owned(),
+                description,
+            };
             #[cfg(feature = "simulation-diagnostics")]
             driver.retain_pending_causal_failure(causal_time, fatal.clone());
             driver.abort_unpublished_day_end();
             self.poison_runtime_step(fatal)
         })?;
         #[cfg(feature = "simulation-diagnostics")]
-        let causal = self.prepare_runtime_causal_at(driver, causal_time, tick, prepared.plans(), prepared.calendar())
+        let causal = self
+            .prepare_runtime_causal_at(
+                driver,
+                causal_time,
+                tick,
+                prepared.plans(),
+                prepared.calendar(),
+            )
             .map_err(|fatal| self.poison_runtime_step(fatal))?;
         #[cfg(test)]
         if let Some(fatal) = self.post_shadow_failure.take() {
@@ -737,7 +816,9 @@ impl GameSession {
             driver.retain_terminal_causal(causal.time, causal.raw, fatal.clone());
             return Err(self.poison_runtime_step(fatal));
         }
-        crate::verification_evidence::enter_phase(crate::session::pipeline::TickPhase::PreCommitValidation);
+        crate::verification_evidence::enter_phase(
+            crate::session::pipeline::TickPhase::PreCommitValidation,
+        );
         if let Err(fatal) = crate::verification_evidence::validate_precommit() {
             #[cfg(feature = "simulation-diagnostics")]
             driver.retain_terminal_causal(causal.time, causal.raw, fatal.clone());
@@ -745,8 +826,15 @@ impl GameSession {
         }
         #[cfg(test)]
         let has_events = !prepared.events().is_empty();
-        let facts = crate::runtime::event_bridge::event_facts_with_stable_keys(prepared.take_events());
-        let value = match project(crate::session::protocol::TickCandidateProjection::from_prepared(prepared.projection(), seq_from), facts) {
+        let facts =
+            crate::runtime::event_bridge::event_facts_with_stable_keys(prepared.take_events());
+        let value = match project(
+            crate::session::protocol::TickCandidateProjection::from_prepared(
+                prepared.projection(),
+                seq_from,
+            ),
+            facts,
+        ) {
             Ok(value) => value,
             Err(fatal) => {
                 #[cfg(feature = "simulation-diagnostics")]
@@ -763,11 +851,17 @@ impl GameSession {
             }
         };
         if let Some(binding) = &self.ingress {
-            binding.source.update_runtime_progress(tick, driver.mirror_source().generation)
-                .map_err(|error| self.poison_runtime_step(super::shared_ingress::ingress_fatal(error)))?;
+            binding
+                .source
+                .update_runtime_progress(tick, driver.mirror_source().generation)
+                .map_err(|error| {
+                    self.poison_runtime_step(super::shared_ingress::ingress_fatal(error))
+                })?;
         }
         self.install_runtime_publication(driver, prepared);
-        if let Some(ack) = ack { driver.ack_prepared_mirror(ack); }
+        if let Some(ack) = ack {
+            driver.ack_prepared_mirror(ack);
+        }
         #[cfg(feature = "simulation-diagnostics")]
         self.publish_runtime_causal(causal);
         crate::verification_evidence::enter_phase(crate::session::pipeline::TickPhase::CommitTick);
@@ -777,8 +871,6 @@ impl GameSession {
         self.runtime_clear_account_undo();
         Ok(value)
     }
-
-
 
     /// P2-3b：五域写时 undo 记录面（幂等首写——undo_ids 判重；None=拍前
     /// 不在册墓碑）。写入点在**改写前**调用。
@@ -809,7 +901,6 @@ impl GameSession {
             self.state.runtime_history_undo.push((*id, prev));
         }
     }
-
 
     /// 所有市场工作运行在私有 tick shadow；失败候选被丢弃。
     /// 权威状态只接收最终不会失败的 CommitTick 状态交换。
@@ -927,8 +1018,7 @@ impl GameSession {
     /// 失败（不静默返回空版本）。
     pub fn runtime_publication(
         &self,
-    ) -> Result<std::sync::Arc<crate::runtime::publication::ViewPublication>, String>
-    {
+    ) -> Result<std::sync::Arc<crate::runtime::publication::ViewPublication>, String> {
         let cell = self
             .runtime_driver
             .as_ref()
@@ -950,10 +1040,7 @@ impl GameSession {
     /// 恶化——Sol 终裁判定，见 .tmp/perf-p0-diff-profile.md）。重建后
     /// 每账户恰一项、值=权威候选 tick（"新候选入堆"语义保持——新候选
     /// 必然在堆；陈旧项消失，pop_due 的候选核对语义不受影响）。
-    pub fn set_runtime_attention(
-        &mut self,
-        entries: &[(crate::AccountId, u64, u64)],
-    ) {
+    pub fn set_runtime_attention(&mut self, entries: &[(crate::AccountId, u64, u64)]) {
         self.mark_external_mutation();
         let tick = self.state.tick;
         for (id, next_due, rng_state) in entries {
@@ -1087,7 +1174,9 @@ impl GameSession {
         }
         let floor = self.state.next_order_id;
         if floor > (1_u64 << 32) {
-            return Err(format!("初始静点接管不能保真旧全局 OrderId 游标：next_order_id={floor}"));
+            return Err(format!(
+                "初始静点接管不能保真旧全局 OrderId 游标：next_order_id={floor}"
+            ));
         }
         Ok(Some(floor))
     }
@@ -1232,10 +1321,11 @@ impl GameSession {
             .collect()
     }
 
-
     /// 注意力镜像全量只读（Belief-1b·下：投递下行快照源——candidate
     /// 域=上一 tick 组同步值）。
-    pub fn runtime_attention_full_states(&self) -> Vec<(crate::AccountId, crate::session::NpcAttentionState)> {
+    pub fn runtime_attention_full_states(
+        &self,
+    ) -> Vec<(crate::AccountId, crate::session::NpcAttentionState)> {
         self.state
             .npc_attention
             .iter()
@@ -1247,35 +1337,46 @@ impl GameSession {
     pub fn runtime_library_handle(
         &self,
     ) -> (u32, std::sync::Arc<crate::information::PublicLibrary>) {
-        (self.state.library.version(), std::sync::Arc::clone(&self.state.library))
+        (
+            self.state.library.version(),
+            std::sync::Arc::clone(&self.state.library),
+        )
     }
 
     /// 从会话选定公司模型构造不含私有财务的共同公开事实。
     pub fn runtime_company_read_facts(
         &self,
     ) -> Result<std::sync::Arc<crate::company::CompanyReadFacts>, StepFatal> {
-        self.state.company_read_facts().map(std::sync::Arc::new).map_err(|error| {
-            StepFatal::InvariantViolation {
+        self.state
+            .company_read_facts()
+            .map(std::sync::Arc::new)
+            .map_err(|error| StepFatal::InvariantViolation {
                 description: error.to_string(),
                 location: "GameSession::runtime_company_read_facts".to_owned(),
-            }
-        })
+            })
     }
 
     /// 数值股票到发行人的同源只读投影，已验证上市股不得遗漏。
     pub fn runtime_issuer_map(
         &self,
     ) -> std::collections::BTreeMap<crate::StockId, crate::company::CompanyId> {
-        self.runtime_company_read_facts().unwrap_or_else(|error| panic!("发行人投影失败：{error}"))
-            .issuers().map(|(stock, company)| (*stock, *company)).collect()
+        self.runtime_company_read_facts()
+            .unwrap_or_else(|error| panic!("发行人投影失败：{error}"))
+            .issuers()
+            .map(|(stock, company)| (*stock, *company))
+            .collect()
     }
 
     /// 公司 kind 与当前 issued_shares 的同源只读投影，包含未上市公司。
     pub fn runtime_company_specs(
         &self,
-    ) -> std::collections::BTreeMap<crate::company::CompanyId, (crate::company::CompanyKind, u64)> {
-        self.runtime_company_read_facts().unwrap_or_else(|error| panic!("公司规格投影失败：{error}"))
-            .company_specs().map(|(company, spec)| (*company, *spec)).collect()
+    ) -> std::collections::BTreeMap<crate::company::CompanyId, (crate::company::CompanyKind, u64)>
+    {
+        self.runtime_company_read_facts()
+            .unwrap_or_else(|error| panic!("公司规格投影失败：{error}"))
+            .company_specs()
+            .map(|(company, spec)| (*company, *spec))
+            .collect()
     }
 
     /// 观察时刻（投递载荷——披露相位 instant）。
@@ -1291,7 +1392,11 @@ impl GameSession {
         updates: &[(crate::AccountId, crate::session::NpcAttentionState)],
     ) {
         #[cfg(test)]
-        eprintln!("PROBE set-info-checks n={} first={:?}", updates.len(), updates.first().map(|u| (u.0, u.1.next_information_check)));
+        eprintln!(
+            "PROBE set-info-checks n={} first={:?}",
+            updates.len(),
+            updates.first().map(|u| (u.0, u.1.next_information_check))
+        );
         self.mark_external_mutation();
         for (id, updated) in updates {
             // P2-3b：首写前值入 undo（改写前记录——回滚源）。
@@ -1305,16 +1410,17 @@ impl GameSession {
 
     /// 每股限价单笔上限投影（D3a-3 件4b：组内报价/预算输入——category
     /// 差异显式建模的主板/创业板上限）。
-    pub fn runtime_max_order_qty_limit(
-        &self,
-    ) -> std::collections::BTreeMap<crate::StockId, u32> {
+    pub fn runtime_max_order_qty_limit(&self) -> std::collections::BTreeMap<crate::StockId, u32> {
         self.state
             .setup
             .stocks
             .iter()
             .map(|stock| {
                 (
-                    self.state.stocks.id(stock.code.0.as_str()).expect("setup 股在目录"),
+                    self.state
+                        .stocks
+                        .id(stock.code.0.as_str())
+                        .expect("setup 股在目录"),
                     stock.category.max_order_qty(false),
                 )
             })
@@ -1330,7 +1436,10 @@ impl GameSession {
             .map(|stock| {
                 (
                     stock.code.clone(),
-                    self.state.stocks.id(stock.code.0.as_str()).expect("setup 股在目录"),
+                    self.state
+                        .stocks
+                        .id(stock.code.0.as_str())
+                        .expect("setup 股在目录"),
                 )
             })
             .collect()
@@ -1338,16 +1447,17 @@ impl GameSession {
 
     /// 每股最小报价单位投影（D3a-3 复核收口：组内报价取整口径——
     /// setup 权威，与 session stock.tick 同源）。
-    pub fn runtime_tick_size_cents(
-        &self,
-    ) -> std::collections::BTreeMap<crate::StockId, i64> {
+    pub fn runtime_tick_size_cents(&self) -> std::collections::BTreeMap<crate::StockId, i64> {
         self.state
             .setup
             .stocks
             .iter()
             .map(|stock| {
                 (
-                    self.state.stocks.id(stock.code.0.as_str()).expect("setup 股在目录"),
+                    self.state
+                        .stocks
+                        .id(stock.code.0.as_str())
+                        .expect("setup 股在目录"),
                     stock.tick.cents(),
                 )
             })
@@ -1406,21 +1516,34 @@ impl GameSession {
 
     /// 每股当前已发行股数；保留原始 u64，数量边界由策略与下单入口处理。
     pub fn runtime_total_shares(&self) -> std::collections::BTreeMap<crate::StockId, u64> {
-        let facts = self.runtime_company_read_facts().unwrap_or_else(|error| panic!("当前股本投影失败：{error}"));
-        facts.issuers().map(|(stock, company)| {
-            let (_, issued_shares) = facts.company_spec(company).unwrap_or_else(|error| panic!("已验证发行人规格缺失：{error}"));
-            (*stock, issued_shares)
-        }).collect()
+        let facts = self
+            .runtime_company_read_facts()
+            .unwrap_or_else(|error| panic!("当前股本投影失败：{error}"));
+        facts
+            .issuers()
+            .map(|(stock, company)| {
+                let (_, issued_shares) = facts
+                    .company_spec(company)
+                    .unwrap_or_else(|error| panic!("已验证发行人规格缺失：{error}"));
+                (*stock, issued_shares)
+            })
+            .collect()
     }
 
     /// 构造期 NPC 只读输入只暴露目录与共同事实，不持有经营账簿。
     pub fn runtime_company_handles(
         &self,
-    ) -> Result<(
-        crate::stock::StockCatalog,
-        std::sync::Arc<crate::company::CompanyReadFacts>,
-    ), StepFatal> {
-        Ok((self.state.stocks.clone(), self.runtime_company_read_facts()?))
+    ) -> Result<
+        (
+            crate::stock::StockCatalog,
+            std::sync::Arc<crate::company::CompanyReadFacts>,
+        ),
+        StepFatal,
+    > {
+        Ok((
+            self.state.stocks.clone(),
+            self.runtime_company_read_facts()?,
+        ))
     }
 
     /// 完整个人态只读投影（D3a-2c 件2：PlanPersonalState 六件——含 attention
@@ -1457,7 +1580,12 @@ impl GameSession {
                         attention: attention.clone(),
                         watchlist: participant.watchlist().clone(),
                         price_memory: participant.price_memory().clone(),
-                        history_reads: self.state.history_reads.get(id).cloned().unwrap_or_default(),
+                        history_reads: self
+                            .state
+                            .history_reads
+                            .get(id)
+                            .cloned()
+                            .unwrap_or_default(),
                         information: participant.information().clone(),
                         belief: participant.belief().clone(),
                     },
@@ -1489,11 +1617,17 @@ impl GameSession {
     }
 
     pub(crate) fn next_runtime_authority_epoch(&self) -> Result<u64, String> {
-        self.runtime_authority_epoch.checked_add(1).ok_or_else(|| "driver authority_epoch 已耗尽，拒绝构造替换".to_owned())
+        self.runtime_authority_epoch
+            .checked_add(1)
+            .ok_or_else(|| "driver authority_epoch 已耗尽，拒绝构造替换".to_owned())
     }
 
     pub(crate) fn install_runtime_authority_epoch(&mut self, epoch: u64) {
-        assert_eq!(self.runtime_authority_epoch.checked_add(1), Some(epoch), "driver epoch 已在 spawn 前验证且仅成功安装一次");
+        assert_eq!(
+            self.runtime_authority_epoch.checked_add(1),
+            Some(epoch),
+            "driver epoch 已在 spawn 前验证且仅成功安装一次"
+        );
         self.runtime_authority_epoch = epoch;
         self.runtime_external_authority = std::sync::Weak::new();
         self.runtime_installed_market_close = None;
@@ -1503,7 +1637,11 @@ impl GameSession {
         std::sync::Arc::downgrade(&self.runtime_authority_identity)
     }
 
-    pub(crate) fn matches_runtime_authority(&self, identity: &std::sync::Weak<()>, epoch: u64) -> bool {
+    pub(crate) fn matches_runtime_authority(
+        &self,
+        identity: &std::sync::Weak<()>,
+        epoch: u64,
+    ) -> bool {
         epoch == self.runtime_authority_epoch
             && std::sync::Weak::ptr_eq(identity, &self.runtime_authority_identity())
     }
@@ -1548,21 +1686,35 @@ impl GameSession {
 
     pub(crate) fn runtime_personal_presence(
         &self,
-    ) -> Result<std::collections::BTreeMap<crate::AccountId, crate::runtime::personal_full_validation::PersonalPresence>, String> {
+    ) -> Result<
+        std::collections::BTreeMap<
+            crate::AccountId,
+            crate::runtime::personal_full_validation::PersonalPresence,
+        >,
+        String,
+    > {
         use crate::runtime::personal_full_validation::{PersonalAbsenceReason, PersonalPresence};
         let mut expected = std::collections::BTreeMap::new();
         for (id, account) in self.state.accounts.iter() {
             let Some(strategy) = account.strategy() else {
                 if self.state.belief_participants.contains_key(id) {
-                    return Err(format!("个人能力名册：无实际 strategy 却有 participant：{id:?}"));
+                    return Err(format!(
+                        "个人能力名册：无实际 strategy 却有 participant：{id:?}"
+                    ));
                 }
-                expected.insert(*id, PersonalPresence::Absent(PersonalAbsenceReason::NoStrategy));
+                expected.insert(
+                    *id,
+                    PersonalPresence::Absent(PersonalAbsenceReason::NoStrategy),
+                );
                 continue;
             };
             let participant = self.state.belief_participants.get(id);
-            let required = strategy.retail_style().is_some() || strategy.belief_chain_params().is_some();
+            let required =
+                strategy.retail_style().is_some() || strategy.belief_chain_params().is_some();
             if required && participant.is_none() {
-                return Err(format!("个人能力名册：实际 strategy 要求 participant 但缺行：{id:?}"));
+                return Err(format!(
+                    "个人能力名册：实际 strategy 要求 participant 但缺行：{id:?}"
+                ));
             }
             if let Some(participant) = participant {
                 if !self.state.npc_attention.contains_key(id) {
@@ -1573,7 +1725,10 @@ impl GameSession {
                 }
                 expected.insert(*id, PersonalPresence::Required);
             } else {
-                expected.insert(*id, PersonalPresence::Absent(PersonalAbsenceReason::NoBeliefParticipant));
+                expected.insert(
+                    *id,
+                    PersonalPresence::Absent(PersonalAbsenceReason::NoBeliefParticipant),
+                );
             }
         }
         Ok(expected)
@@ -1614,10 +1769,7 @@ impl GameSession {
     /// 侧分流）。
     pub fn runtime_daily_histories(
         &self,
-    ) -> std::collections::BTreeMap<
-        crate::StockId,
-        (Vec<(i64, i64, i64, i64, u64)>, u64),
-    > {
+    ) -> std::collections::BTreeMap<crate::StockId, (Vec<(i64, i64, i64, i64, u64)>, u64)> {
         self.state
             .candle_book
             .histories()
@@ -1671,9 +1823,7 @@ impl GameSession {
     }
 
     /// B2：保留历史链只读（查询面/发布对账的数据源）。
-    pub fn retained_market_days(
-        &self,
-    ) -> &[crate::runtime::publication::SharedRetainedDay] {
+    pub fn retained_market_days(&self) -> &[crate::runtime::publication::SharedRetainedDay] {
         &self.state.retained_market_days
     }
 
@@ -1723,9 +1873,18 @@ impl GameSession {
         date: crate::calendar::CivilDate,
     ) -> Result<std::sync::Arc<crate::runtime::publication::RetainedDaySnapshot>, String> {
         let candle_time = self.candle_date_time_for_runtime();
-        let closed = self.state.candle_book.histories().iter().filter_map(|(code, history)| {
-            history.iter_rev().find(|candle| candle.time == candle_time).map(|candle| (*code, candle.clone()))
-        }).collect();
+        let closed = self
+            .state
+            .candle_book
+            .histories()
+            .iter()
+            .filter_map(|(code, history)| {
+                history
+                    .iter_rev()
+                    .find(|candle| candle.time == candle_time)
+                    .map(|candle| (*code, candle.clone()))
+            })
+            .collect();
         self.assemble_retained_from_prepared(bars, date, &closed, false)
     }
 
@@ -1759,7 +1918,9 @@ impl GameSession {
                 let code = crate::StockId(idx as u32);
                 let candle = closed.get(&code);
                 let Some(candle) = candle else {
-                    if require_candles { return Err(format!("Full 日结候选缺当日 K：{code:?}")); }
+                    if require_candles {
+                        return Err(format!("Full 日结候选缺当日 K：{code:?}"));
+                    }
                     // 【既有登记（manual 面）】手动 day_end 编排不做
                     /// boundary 迁移（日K未提交 install 面）——对账基缺席
                     /// 跳过（生产 step 的 ends_day 段恒有提交条目+日界批
@@ -1806,10 +1967,9 @@ impl GameSession {
                 },
             );
         }
-        Ok(std::sync::Arc::new(crate::runtime::publication::RetainedDaySnapshot {
-            date,
-            securities,
-        }))
+        Ok(std::sync::Arc::new(
+            crate::runtime::publication::RetainedDaySnapshot { date, securities },
+        ))
     }
 
     /// B2：指定自然日每股开市判定（retained 冻结的休市/开市口径——
@@ -1821,12 +1981,18 @@ impl GameSession {
         date: crate::calendar::CivilDate,
     ) -> Result<bool, crate::calendar::CalendarError> {
         // StockId 属于按代码排序的 catalog；按完整 code 找回显式 exchange。
-        let missing_stock = || crate::calendar::CalendarError::BeforeInitFloor {
-            date,
-            floor: date,
-        };
-        let code = self.state.stocks.code(crate::StockId(stock_idx)).ok_or_else(missing_stock)?;
-        let stock = self.state.setup.stocks.iter()
+        let missing_stock =
+            || crate::calendar::CalendarError::BeforeInitFloor { date, floor: date };
+        let code = self
+            .state
+            .stocks
+            .code(crate::StockId(stock_idx))
+            .ok_or_else(missing_stock)?;
+        let stock = self
+            .state
+            .setup
+            .stocks
+            .iter()
             .find(|stock| stock.code.0 == code)
             .ok_or_else(missing_stock)?;
         self.state
@@ -1855,10 +2021,7 @@ impl GameSession {
 
     /// B2：当日分钟K桶镜像只读（install 位置合并的前缀源——同
     /// `runtime_minute_history` 式）。
-    pub fn runtime_minute_bars(
-        &self,
-        code: &crate::StockId,
-    ) -> &[crate::runtime::MinuteBarFact] {
+    pub fn runtime_minute_bars(&self, code: &crate::StockId) -> &[crate::runtime::MinuteBarFact] {
         self.state
             .market_minute_bars
             .get(code)
@@ -1871,10 +2034,19 @@ impl GameSession {
     /// （desk 从构造零点=昨收锚定起，恰为新日起点语义）。昨收=日 K
     /// 历史末条 close，首日无历史时退初始价。
     /// 构造 World 与首次 mirror 共用的行情/公开截点种子；不读取 v0 占位视图。
-    pub(crate) fn runtime_static_market_seed(&self, code: crate::StockId) -> Result<(i64, u64), String> {
-        let market = self.state.markets.get(&code)
+    pub(crate) fn runtime_static_market_seed(
+        &self,
+        code: crate::StockId,
+    ) -> Result<(i64, u64), String> {
+        let market = self
+            .state
+            .markets
+            .get(&code)
             .ok_or_else(|| format!("初始静点行情缺股票：{code:?}"))?;
-        Ok((market.last_price().cents(), self.runtime_public_cutoff_for(&code)))
+        Ok((
+            market.last_price().cents(),
+            self.runtime_public_cutoff_for(&code),
+        ))
     }
 
     pub fn runtime_market_seeds(
@@ -2064,7 +2236,6 @@ impl GameSession {
         self.state.seq
     }
 
-
     /// runtime 驱动器翻转面（批 8h）：披露 observer 注册透传。
     pub fn add_disclosure_observer_for_runtime(
         &mut self,
@@ -2074,10 +2245,7 @@ impl GameSession {
     }
 
     /// runtime 驱动器翻转面（批 8h）：行情直改入口（X1 标记）。
-    pub fn market_mut_for_runtime(
-        &mut self,
-        code: &crate::StockId,
-    ) -> Option<&mut crate::Market> {
+    pub fn market_mut_for_runtime(&mut self, code: &crate::StockId) -> Option<&mut crate::Market> {
         self.state.markets.get_mut(code)
     }
 
@@ -2190,7 +2358,10 @@ impl GameSession {
     /// runtime 驱动器翻转面（step_frame 接轨件 3）：本股活动 K 只读
     /// （PriceTick.daily_candle 的 session 侧来源——install_candles 已装；
     /// 空拍缺席由调用方合成占位，对齐旧管线 mark_candle(None, ..)）。
-    pub fn runtime_active_candle(&self, code: &crate::StockId) -> Option<crate::session::DailyCandle> {
+    pub fn runtime_active_candle(
+        &self,
+        code: &crate::StockId,
+    ) -> Option<crate::session::DailyCandle> {
         self.state.candle_book.active().get(code).cloned()
     }
 
@@ -2199,13 +2370,14 @@ impl GameSession {
         self.poison_failed_step(fatal)
     }
 
-
     pub(super) fn poison_failed_step(&mut self, fatal: StepFatal) -> StepFatal {
         if let Some(first) = &self.poison {
             return first.clone();
         }
         self.poison = Some(fatal.clone());
-        if let Some(binding) = &self.ingress { binding.source.publish_terminal(fatal.clone()); }
+        if let Some(binding) = &self.ingress {
+            binding.source.publish_terminal(fatal.clone());
+        }
         fatal
     }
 
@@ -2338,14 +2510,13 @@ impl GameSession {
         let mut envelopes = Vec::new();
         for (stock_idx, book) in snapshot.facts.iter().enumerate() {
             for fact in book.iter() {
-                let global = fact.owner.0 as usize * snapshot.accounts_per_group
-                    + fact.owner.1 as usize;
+                let global =
+                    fact.owner.0 as usize * snapshot.accounts_per_group + fact.owner.1 as usize;
                 // 名册外 owner：与原全量重建同语义跳过。
                 let Some(&account) = snapshot.id_map.get(global) else {
                     continue;
                 };
-                match runtime_resting_envelope(account, &self.state.setup.config, stock_idx, fact)
-                {
+                match runtime_resting_envelope(account, &self.state.setup.config, stock_idx, fact) {
                     Ok(Some(envelope)) => envelopes.push(envelope),
                     Ok(None) => {}
                     Err(description) => {

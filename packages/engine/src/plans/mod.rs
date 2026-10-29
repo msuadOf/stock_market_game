@@ -29,13 +29,13 @@ pub use candidates::{
     CandidateSignals, CandidateTargetProposal, ExcludedSignal, QuantityRounding, SignalComponent,
     SignalContribution, SignalScore, SignalUnavailableReason, TargetShareQuantity,
 };
+pub use entry::{PlanEntry, PlanOrigin};
 pub use quote_policy::{
     decide_quote, ActiveQuote, BookTop, QuoteAction, QuoteDecision, QuoteDecisionInputs,
     QuoteError, QuoteReason,
 };
-pub use entry::{PlanEntry, PlanOrigin};
-pub use revision::{PlanRevision, RevisionReason, RevisionRecord};
 pub use repurchase_origin::{RepurchaseExecutionPlan, RepurchaseExecutionStatus};
+pub use revision::{PlanRevision, RevisionReason, RevisionRecord};
 pub use state::{
     OpinionSource, PauseReason, PlanExecutionLeg, PlanId, PlanOpen, PlanOpinion, PlanStatus,
     PlanTarget, ResumeReason, ReviewConditions, ReviewResources, TerminationReason, TradingPlan,
@@ -397,19 +397,27 @@ impl PlanBook {
 
     /// Only live plans participate in decision roots. Historical plan records stay
     /// queryable in `plans` without making every observation scan them.
-    pub(crate) fn active_investor_codes(&self, account: AccountId) -> impl Iterator<Item = &StockId> {
+    pub(crate) fn active_investor_codes(
+        &self,
+        account: AccountId,
+    ) -> impl Iterator<Item = &StockId> {
         self.by_account_stock
             .get(&account)
             .into_iter()
             .flat_map(|stocks| stocks.iter())
-            .filter_map(move |(code, id)| match self.entry(*id).expect("活动索引必须对应真实条目") {
-                PlanEntry::Investor(_) => Some(code),
-                PlanEntry::IssuerRepurchase(_) => None,
+            .filter_map(move |(code, id)| {
+                match self.entry(*id).expect("活动索引必须对应真实条目") {
+                    PlanEntry::Investor(_) => Some(code),
+                    PlanEntry::IssuerRepurchase(_) => None,
+                }
             })
     }
 
     pub(crate) fn active_investor_accounts(&self) -> impl Iterator<Item = AccountId> + '_ {
-        self.by_account_stock.keys().copied().filter(move |owner| self.active_investor_codes(*owner).next().is_some())
+        self.by_account_stock
+            .keys()
+            .copied()
+            .filter(move |owner| self.active_investor_codes(*owner).next().is_some())
     }
 
     /// 以显式政策构造（政策字段立即校验）。

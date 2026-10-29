@@ -14,31 +14,48 @@ fn production_source_does_not_fabricate_the_currently_unreachable_parent_capabil
     let account = AccountId(1);
     let mut shadow = GameSession::new(npc_working_quote_tests::quote_setup(0), 991).unwrap();
     let code = crate::StockId(0);
-    let id = shadow.state.plans.create(crate::plans::PlanOpen {
-        account,
-        code,
-        direction: crate::Side::Buy,
-        target: crate::plans::PlanTarget::ShareCount(400),
-        opinion: crate::plans::PlanOpinion {
-            signal_score_bp: 3000,
-            source: crate::plans::OpinionSource::Blended,
-        },
-        confidence_bp: 8000,
-        urgency: crate::plans::Urgency::Normal,
-        horizon_trading_days: 5,
-        created_trading_day: 0,
-    }).unwrap();
-    shadow.state.plans.install_execution(id, 100, Money::from_cents(1000), 100).unwrap();
+    let id = shadow
+        .state
+        .plans
+        .create(crate::plans::PlanOpen {
+            account,
+            code,
+            direction: crate::Side::Buy,
+            target: crate::plans::PlanTarget::ShareCount(400),
+            opinion: crate::plans::PlanOpinion {
+                signal_score_bp: 3000,
+                source: crate::plans::OpinionSource::Blended,
+            },
+            confidence_bp: 8000,
+            urgency: crate::plans::Urgency::Normal,
+            horizon_trading_days: 5,
+            created_trading_day: 0,
+        })
+        .unwrap();
+    shadow
+        .state
+        .plans
+        .install_execution(id, 100, Money::from_cents(1000), 100)
+        .unwrap();
     let before = shadow.state.plans.clone();
     let tick = shadow.state.tick;
     npc_working_quote_tests::force_attention_candidate(&mut shadow, account, tick);
     let snapshot = capture_decision_snapshot(&mut shadow).unwrap();
-    let mut source = run_npc_decisions(snapshot.snapshot.clone(), &shadow.state.setup.config).unwrap();
+    let mut source =
+        run_npc_decisions(snapshot.snapshot.clone(), &shadow.state.setup.config).unwrap();
     assert!(!source.account_outputs()[0].uses_parent_order_execution());
     let output = project_npc_state(&mut shadow, &snapshot, &mut source).unwrap();
-    assert!(output.residual_intents().iter().all(|intent| intent.source_key().is_some()));
-    assert_eq!(shadow.state.plans, before, "普通策略投影不能伪造计划执行事实");
-    assert!(shadow.state.markets[&code].resting_orders_for(account).is_empty());
+    assert!(output
+        .residual_intents()
+        .iter()
+        .all(|intent| intent.source_key().is_some()));
+    assert_eq!(
+        shadow.state.plans, before,
+        "普通策略投影不能伪造计划执行事实"
+    );
+    assert!(shadow.state.markets[&code]
+        .resting_orders_for(account)
+        .is_empty());
 }
 
 fn due_retail(seed: u64) -> (GameSession, AccountId) {
@@ -328,7 +345,9 @@ fn later_projection_failure_discards_earlier_strategy_transfer_with_tick_candida
         &[AccountId(1), AccountId(2)]
     );
     let mut source = run_npc_decisions(captured.snapshot.clone(), &decision_config).unwrap();
-    let mut plan = plan_tick(PhaseInput { session: &authority })
+    let mut plan = plan_tick(PhaseInput {
+        session: &authority,
+    })
     .unwrap();
     let mut candidate = plan.take_session().unwrap();
     candidate.state.retail_experience.remove(&AccountId(2));
@@ -480,7 +499,6 @@ fn projection_exposes_working_decisions_before_residuals_without_canceling_the_b
         "structured reconciliation must precede residual routing, not execute it"
     );
 }
-
 
 #[test]
 fn retail_review_reconciles_only_the_stock_actually_observed() {

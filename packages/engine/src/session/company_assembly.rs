@@ -20,10 +20,14 @@ pub(super) fn assemble_companies(
     seed: u64,
     event_multiplier_bp: u16,
 ) -> Result<CompanyAssembly, SessionError> {
-    let issuers: Vec<_> = setup.stocks.iter().map(|stock| IssuerFacts {
-        code: &stock.code,
-        total_shares: stock.total_shares,
-    }).collect();
+    let issuers: Vec<_> = setup
+        .stocks
+        .iter()
+        .map(|stock| IssuerFacts {
+            code: &stock.code,
+            total_shares: stock.total_shares,
+        })
+        .collect();
     CompanyOperations::assemble_new_game(CompanyAssemblyContext {
         issuers: &issuers,
         custom: setup.company_operations.as_ref(),
@@ -36,7 +40,8 @@ pub(super) fn assemble_companies(
             .unwrap_or(crate::information::ReportFrequency::Quarterly),
         seed,
         event_multiplier_bp,
-    }).map_err(|source| SessionError::InvalidSetup(source.0))
+    })
+    .map_err(|source| SessionError::InvalidSetup(source.0))
 }
 
 /// 公司系统 spine 装配：按 setup 股票清单与 Simple 配置构建
@@ -84,8 +89,10 @@ pub(super) fn assemble_company_system(
 /// `SimpleCompanyConfig.company` 即代码升序下标（与 `IssuerRegistry::new`
 /// 同款约定，见 `company/identity.rs` 模块注释）。
 pub(super) fn issuer_specs(setup: &SessionSetup) -> Result<Vec<CompanySpec>, SessionError> {
-    let crate::company::config::CompanySystemConfig::Simple(config) =
-        setup.company_system.as_ref().expect("调用方已校验公司系统在场")
+    let crate::company::config::CompanySystemConfig::Simple(config) = setup
+        .company_system
+        .as_ref()
+        .expect("调用方已校验公司系统在场")
     else {
         // fault1049: 公司系统配置非法（Simulation 未实现）。槽0=变体判别值
         // （Simple=0/Simulation=1）。
@@ -119,11 +126,14 @@ pub(super) fn issuer_specs(setup: &SessionSetup) -> Result<Vec<CompanySpec>, Ses
         .iter()
         .enumerate()
         .map(|(index, stock)| {
-            let kind = kinds.get(&CompanyId(index as u32)).copied().ok_or_else(|| {
-                // fault1049: 股票缺少显式 CompanyKind 配置。槽0 待 C 批数值化
-                // （原文本为代码串 "{}"）。
-                SessionError::InvalidSetup(ValidationFault::new(1049, vec![0]))
-            })?;
+            let kind = kinds
+                .get(&CompanyId(index as u32))
+                .copied()
+                .ok_or_else(|| {
+                    // fault1049: 股票缺少显式 CompanyKind 配置。槽0 待 C 批数值化
+                    // （原文本为代码串 "{}"）。
+                    SessionError::InvalidSetup(ValidationFault::new(1049, vec![0]))
+                })?;
             Ok(CompanySpec {
                 code: format!("C-{}", stock.code.0),
                 name: format!("虚构上市公司{}", stock.code.0),

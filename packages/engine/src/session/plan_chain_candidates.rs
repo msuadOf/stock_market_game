@@ -224,8 +224,7 @@ static ROOT_PANIC_ACCOUNTS: std::sync::Mutex<std::collections::BTreeSet<AccountI
 /// 「clone marker + rebox」伪造；改为登记 panic_any 所装 Box 的元素地址，
 /// 测试对重抛对象做**同地址判等**——重建对象地址必不同，真·对象身份）。
 #[cfg(any(test, feature = "verification-harness"))]
-static ROOT_PANIC_TOKEN_ADDR: std::sync::Mutex<Option<usize>> =
-    std::sync::Mutex::new(None);
+static ROOT_PANIC_TOKEN_ADDR: std::sync::Mutex<Option<usize>> = std::sync::Mutex::new(None);
 
 /// 注入 payload 的对象身份标记（p3 三审③：String 内容判等无法区分 clone/rebox，
 /// 测试以 `Arc::ptr_eq` 证明传播的是**原 payload 对象**，非同内容重建）。
@@ -275,8 +274,7 @@ pub(in crate::session) fn set_plan_root_prepared_probe(
 /// 保持锚点」）：注入点在 panic 前阻塞等待 `wait_for` 账户的 publish flag
 /// ——panic 的发生（及其 TaskDied 发送）确定晚于该账户 Prepared 的发送。
 #[cfg(any(test, feature = "verification-harness"))]
-static ROOT_PANIC_WAIT_PUBLISHED: std::sync::Mutex<Option<AccountId>> =
-    std::sync::Mutex::new(None);
+static ROOT_PANIC_WAIT_PUBLISHED: std::sync::Mutex<Option<AccountId>> = std::sync::Mutex::new(None);
 
 /// publish flag/通知（panic 注入点等待侧与 Prepared 探针置位侧共用）。
 #[cfg(any(test, feature = "verification-harness"))]
@@ -324,18 +322,15 @@ pub(in crate::session) fn set_plan_root_account_entry_probe(
 /// prepare 的 blocking 分支进入「在飞>0 且队列空」的自旋等待时回调
 ///（首次进入置位语义由测试侧约定；回调在协调者线程，不得取台账锁）。
 #[cfg(any(test, feature = "verification-harness"))]
-static PLAN_ROOT_4B_SPIN_PROBE: std::sync::Mutex<
-    Option<std::sync::Arc<dyn Fn() + Send + Sync>>,
-> = std::sync::Mutex::new(None);
+static PLAN_ROOT_4B_SPIN_PROBE: std::sync::Mutex<Option<std::sync::Arc<dyn Fn() + Send + Sync>>> =
+    std::sync::Mutex::new(None);
 
 /// 安装/清除 4b 探针。
 #[cfg(any(test, feature = "verification-harness"))]
 pub(in crate::session) fn set_plan_root_4b_probe(
     probe: Option<std::sync::Arc<dyn Fn() + Send + Sync>>,
 ) {
-    *PLAN_ROOT_4B_SPIN_PROBE
-        .lock()
-        .expect("4b 探针锁被 poison") = probe;
+    *PLAN_ROOT_4B_SPIN_PROBE.lock().expect("4b 探针锁被 poison") = probe;
 }
 
 /// 派发保持账户集（测试/验证专用；六审「真实未派发 pending」）：派发点
@@ -360,8 +355,7 @@ pub(in crate::session) fn set_root_dispatch_hold_accounts(accounts: &[AccountId]
 /// 时刻 TLS 已卸下（实际绑定已释放）。负向 M8（把 finish 移入绑定作用域
 /// 内）将记录到 installed=true → 测试红。
 #[cfg(any(test, feature = "verification-harness"))]
-static PLAN_ROOT_PUBLISH_TLS_STATE: std::sync::Mutex<Option<bool>> =
-    std::sync::Mutex::new(None);
+static PLAN_ROOT_PUBLISH_TLS_STATE: std::sync::Mutex<Option<bool>> = std::sync::Mutex::new(None);
 
 /// 读取最近一次 TaskDied 发布点记录的 TLS 安装态（None=尚未发布过）。
 #[cfg(any(test, feature = "verification-harness"))]
@@ -427,9 +421,8 @@ pub(in crate::session) fn set_root_panic_accounts(accounts: &[AccountId]) {
 /// finish 段的 TaskDied 发布严格晚于该析构，协调者收到 TaskDied 时探针必已
 /// 触发。
 #[cfg(any(test, feature = "verification-harness"))]
-static ROOT_BOUND_RELEASE_PROBE: std::sync::Mutex<
-    Option<std::sync::Arc<dyn Fn() + Send + Sync>>,
-> = std::sync::Mutex::new(None);
+static ROOT_BOUND_RELEASE_PROBE: std::sync::Mutex<Option<std::sync::Arc<dyn Fn() + Send + Sync>>> =
+    std::sync::Mutex::new(None);
 
 /// 安装/清除 bound 释放探针（None=清除；测试结束必须清除，防串扰）。
 #[cfg(any(test, feature = "verification-harness"))]
@@ -640,13 +633,6 @@ impl Drop for PlanRootCoordinator {
     }
 }
 
-
-
-
-
-
-
-
 impl PlanRootCoordinator {
     fn empty() -> Self {
         Self {
@@ -761,7 +747,7 @@ impl PlanRootCoordinator {
             let snapshot = Arc::clone(snapshot);
             let observations = Arc::clone(observations);
             let sender = sender.clone();
-                let worker_compute = Arc::clone(compute);
+            let worker_compute = Arc::clone(compute);
             let spawner = Arc::clone(compute);
             // 两段式：观察在继承绑定内完成；typed 结果与完成通知在绑定释放后
             // 发送。panic 政策：bound 内 catch 仅运输原 payload（不恢复不转换）；
@@ -964,9 +950,7 @@ impl PlanRootCoordinator {
                         // 排空期间到达的迟到结果不 install（a1 失败原子性：
                         // personal state 随私有候选丢弃，不恢复进权威状态）。
                         if *remaining == 0 && pending.is_empty() {
-                            let payload = task_died
-                                .take()
-                                .expect("TaskDied 分支必然已存 payload");
+                            let payload = task_died.take().expect("TaskDied 分支必然已存 payload");
                             self.source = AccountSource::Empty;
                             std::panic::resume_unwind(payload);
                         }
@@ -1010,9 +994,7 @@ impl PlanRootCoordinator {
                     }
                     // P-b：停止派发（dispatch 的 task_died 守卫）、排空其余在飞。
                     if *remaining == 0 {
-                        let payload = task_died
-                            .take()
-                            .expect("TaskDied 分支必然已存 payload");
+                        let payload = task_died.take().expect("TaskDied 分支必然已存 payload");
                         self.source = AccountSource::Empty;
                         std::panic::resume_unwind(payload);
                     }
@@ -1044,7 +1026,15 @@ impl PlanRootCoordinator {
                     }
                     // 4c 前补派发（P1：容量恢复后 pending 必须继续派发；
                     // task_died 已存时 dispatch 内部守卫直接冻结）。
-                    drop((receiver, remaining, snapshot, observations, pending, compute, task_died));
+                    drop((
+                        receiver,
+                        remaining,
+                        snapshot,
+                        observations,
+                        pending,
+                        compute,
+                        task_died,
+                    ));
                     self.dispatch_ready_accounts();
                     let AccountSource::InFlight {
                         receiver,
@@ -1066,9 +1056,7 @@ impl PlanRootCoordinator {
                     }
                     // 4c：在飞==0 且 pending 非空。
                     if task_died.is_some() {
-                        let payload = task_died
-                            .take()
-                            .expect("TaskDied 分支必然已存 payload");
+                        let payload = task_died.take().expect("TaskDied 分支必然已存 payload");
                         self.source = AccountSource::Empty;
                         std::panic::resume_unwind(payload);
                     }
@@ -1079,13 +1067,16 @@ impl PlanRootCoordinator {
                             pending.pop_front().expect("4c 内联项来自非空 pending");
                         let snapshot = Arc::clone(snapshot);
                         let observations = Arc::clone(observations);
-                        let root =
-                            InstitutionDecisionRoot::new(account, personal)
-                                .observe(&snapshot, &observations);
+                        let root = InstitutionDecisionRoot::new(account, personal)
+                            .observe(&snapshot, &observations);
                         let (account, personal, generated, diagnostics) = root;
                         personal.install(session, account);
                         #[cfg(feature = "simulation-diagnostics")]
-                        session.record_plan_root_diagnostics(account, diagnostics, &snapshot.plans)?;
+                        session.record_plan_root_diagnostics(
+                            account,
+                            diagnostics,
+                            &snapshot.plans,
+                        )?;
                         #[cfg(not(feature = "simulation-diagnostics"))]
                         let _ = diagnostics;
                         if pending.is_empty() {

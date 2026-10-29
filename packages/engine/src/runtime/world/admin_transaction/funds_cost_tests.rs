@@ -368,7 +368,9 @@ fn information_world() -> World {
         long: Duration::from_millis(300),
     };
     World::spawn_with_calendar_source(
-        spec, information_fixture::calendar_source(), information_fixture::calendar_bindings(),
+        spec,
+        information_fixture::calendar_source(),
+        information_fixture::calendar_bindings(),
         #[cfg(all(target_family = "wasm", feature = "verification-harness"))]
         None,
     )
@@ -426,7 +428,10 @@ fn funds_p1_09_information_and_paid_share_cost_abort_together_on_last_group_reje
     assert!(!inspected);
     assert!(world.dead_reason.is_none());
     assert_eq!(accounts(&mut world), before);
-    assert!(Arc::ptr_eq(&published_before, &world.publication.load()), "同overlay拒绝不得撤回已发布PublishedTick");
+    assert!(
+        Arc::ptr_eq(&published_before, &world.publication.load()),
+        "同overlay拒绝不得撤回已发布PublishedTick"
+    );
     assert_eq!(world.global.committed_tick, committed_tick_before);
     let mut expected = before;
     expected[0][0].shares[0] += 7;
@@ -473,7 +478,10 @@ fn funds_p1_10_information_inspect_rejection_restores_cost_and_observation_befor
     assert!(error.to_string().contains("P1资产与信息共同候选拒绝"));
     assert!(world.dead_reason.is_none());
     assert_eq!(accounts(&mut world), before);
-    assert!(Arc::ptr_eq(&published_before, &world.publication.load()), "同overlay拒绝不得撤回已发布PublishedTick");
+    assert!(
+        Arc::ptr_eq(&published_before, &world.publication.load()),
+        "同overlay拒绝不得撤回已发布PublishedTick"
+    );
     assert_eq!(world.global.committed_tick, committed_tick_before);
     world
         .with_information_transaction(vec![(0, vec![shares(0, 7, 5600)])], payload, |candidate| {

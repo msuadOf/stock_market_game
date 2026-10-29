@@ -25,19 +25,42 @@ pub(super) struct FillFact {
 
 impl FillFact {
     pub(super) fn new(input: FillFactInput<'_>) -> Result<Self, StepFatal> {
-        let qty = input.qty_before.checked_sub(input.qty_after).filter(|qty| *qty > 0)
+        let qty = input
+            .qty_before
+            .checked_sub(input.qty_after)
+            .filter(|qty| *qty > 0)
             .ok_or_else(|| invariant("fill fact 数量回退或为零"))?;
-        let gross = input.value_after.sub(input.value_before)
+        let gross = input
+            .value_after
+            .sub(input.value_before)
             .map_err(|error| invariant(&error.to_string()))?;
-        if gross <= Money::ZERO { return Err(invariant("fill fact 成交额非正")); }
-        Ok(Self { index: input.index, key: input.key.clone(), qty, gross, charged: input.charged })
+        if gross <= Money::ZERO {
+            return Err(invariant("fill fact 成交额非正"));
+        }
+        Ok(Self {
+            index: input.index,
+            key: input.key.clone(),
+            qty,
+            gross,
+            charged: input.charged,
+        })
     }
 
-    pub(super) const fn index(&self) -> ReceiptIndex { self.index }
-    pub(super) const fn key(&self) -> &EnvelopeKey { &self.key }
-    pub(super) const fn qty(&self) -> u32 { self.qty }
-    pub(super) const fn gross(&self) -> Money { self.gross }
-    pub(super) const fn charged(&self) -> FeeComponents { self.charged }
+    pub(super) const fn index(&self) -> ReceiptIndex {
+        self.index
+    }
+    pub(super) const fn key(&self) -> &EnvelopeKey {
+        &self.key
+    }
+    pub(super) const fn qty(&self) -> u32 {
+        self.qty
+    }
+    pub(super) const fn gross(&self) -> Money {
+        self.gross
+    }
+    pub(super) const fn charged(&self) -> FeeComponents {
+        self.charged
+    }
 }
 
 /// raw审计与typed事实同一对象，贯穿stock/finalizer/market/settlement/经验链。
@@ -55,7 +78,9 @@ impl ReceiptBatch {
         Ok(Self { raw, fills })
     }
 
-    pub(super) fn raw(&self) -> &[EnvelopeReceipt] { &self.raw }
+    pub(super) fn raw(&self) -> &[EnvelopeReceipt] {
+        &self.raw
+    }
 
     /// T5（cfg(test) 克隆分支统一）：测试检视副本的**纯字段克隆**——不经
     /// from_aggregation 再派生（fill 规范化恰一次的钉不受扰动）。
@@ -66,42 +91,62 @@ impl ReceiptBatch {
             fills: self.fills.clone(),
         }
     }
-    pub(super) fn fill_facts(&self) -> FillFactView<'_> { FillFactView::all(&self.fills) }
-    pub(super) fn into_raw(self) -> Vec<EnvelopeReceipt> { self.raw }
+    pub(super) fn fill_facts(&self) -> FillFactView<'_> {
+        FillFactView::all(&self.fills)
+    }
+    pub(super) fn into_raw(self) -> Vec<EnvelopeReceipt> {
+        self.raw
+    }
 
     pub(super) fn fill_for(&self, receipt: &EnvelopeReceipt) -> Result<&FillFact, StepFatal> {
-        let position = self.fills.binary_search_by_key(&ReceiptIndex(receipt.index), FillFact::index)
+        let position = self
+            .fills
+            .binary_search_by_key(&ReceiptIndex(receipt.index), FillFact::index)
             .map_err(|_| invariant("Fill收据缺少唯一已验证事实"))?;
         let fact = &self.fills[position];
-        if fact.key() != &receipt.envelope { return Err(invariant("Fill事实身份与审计收据不一致")); }
+        if fact.key() != &receipt.envelope {
+            return Err(invariant("Fill事实身份与审计收据不一致"));
+        }
         Ok(fact)
     }
 
     /// PreSeal只有已应用的Release；借用式合并只搬审计元数据并复用同批Fill事实，
     /// 不重新派生。原批次保持股票批契约（不含前缀）供market/evidence使用。
     pub(super) fn prepend_releases(&self, prefix: &[EnvelopeReceipt]) -> Result<Self, StepFatal> {
-        if prefix.iter().any(|row| row.kind != ReceiptKind::Release
-            || !matches!(row.local_key.source(), super::ReceiptSource::QuoteExpiry(_))) {
+        if prefix.iter().any(|row| {
+            row.kind != ReceiptKind::Release
+                || !matches!(row.local_key.source(), super::ReceiptSource::QuoteExpiry(_))
+        }) {
             return Err(invariant("PreSeal前缀只能包含QuoteExpiry Release"));
         }
         let mut raw = Vec::with_capacity(prefix.len().saturating_add(self.raw.len()));
         raw.extend_from_slice(prefix);
         raw.extend_from_slice(&self.raw);
-        if raw.windows(2).any(|rows| rows[0].index.checked_add(1) != Some(rows[1].index)) {
+        if raw
+            .windows(2)
+            .any(|rows| rows[0].index.checked_add(1) != Some(rows[1].index))
+        {
             return Err(invariant("合并收据前缀的全局索引不连续唯一"));
         }
-        Ok(Self { raw, fills: self.fills.clone() })
+        Ok(Self {
+            raw,
+            fills: self.fills.clone(),
+        })
     }
 }
 
 impl std::ops::Deref for ReceiptBatch {
     type Target = [EnvelopeReceipt];
-    fn deref(&self) -> &Self::Target { self.raw() }
+    fn deref(&self) -> &Self::Target {
+        self.raw()
+    }
 }
 impl<'a> IntoIterator for &'a ReceiptBatch {
     type Item = &'a EnvelopeReceipt;
     type IntoIter = std::slice::Iter<'a, EnvelopeReceipt>;
-    fn into_iter(self) -> Self::IntoIter { self.raw.iter() }
+    fn into_iter(self) -> Self::IntoIter {
+        self.raw.iter()
+    }
 }
 
 /// seen过滤只选择同一批事实的引用，不clone/rederive事实，不重复插入seen树。
@@ -111,12 +156,23 @@ pub(super) struct FillFactView<'a> {
     selected: Option<&'a BTreeSet<ReceiptIndex>>,
 }
 impl<'a> FillFactView<'a> {
-    pub(super) const fn all(facts: &'a [FillFact]) -> Self { Self { facts, selected: None } }
+    pub(super) const fn all(facts: &'a [FillFact]) -> Self {
+        Self {
+            facts,
+            selected: None,
+        }
+    }
     pub(super) fn select(self, indices: &'a BTreeSet<ReceiptIndex>) -> Self {
-        Self { facts: self.facts, selected: Some(indices) }
+        Self {
+            facts: self.facts,
+            selected: Some(indices),
+        }
     }
     pub(super) fn iter(self) -> impl Iterator<Item = &'a FillFact> {
-        self.facts.iter().filter(move |fact| self.selected.is_none_or(|keys| keys.contains(&fact.index())))
+        self.facts.iter().filter(move |fact| {
+            self.selected
+                .is_none_or(|keys| keys.contains(&fact.index()))
+        })
     }
 }
 
@@ -135,19 +191,32 @@ pub(super) fn derive_refs(receipts: &[&EnvelopeReceipt]) -> Result<Vec<FillFact>
     derive_in_order(receipts.iter().copied())
 }
 
-fn derive_in_order<'r>(receipts: impl Iterator<Item = &'r EnvelopeReceipt>) -> Result<Vec<FillFact>, StepFatal> {
+fn derive_in_order<'r>(
+    receipts: impl Iterator<Item = &'r EnvelopeReceipt>,
+) -> Result<Vec<FillFact>, StepFatal> {
     #[cfg(test)]
     FILL_FACT_DERIVATION_COUNT.with(|count| count.set(count.get() + 1));
     let mut facts = Vec::new();
     for receipt in receipts {
-        if receipt.kind != ReceiptKind::Fill { continue; }
-        facts.push(FillFact::new(FillFactInput { index: ReceiptIndex(receipt.index), key: &receipt.envelope,
-            qty_before: receipt.qty_before, qty_after: receipt.qty_after,
-            value_before: receipt.value_before, value_after: receipt.value_after, charged: receipt.charged })?);
+        if receipt.kind != ReceiptKind::Fill {
+            continue;
+        }
+        facts.push(FillFact::new(FillFactInput {
+            index: ReceiptIndex(receipt.index),
+            key: &receipt.envelope,
+            qty_before: receipt.qty_before,
+            qty_after: receipt.qty_after,
+            value_before: receipt.value_before,
+            value_after: receipt.value_after,
+            charged: receipt.charged,
+        })?);
     }
     Ok(facts)
 }
 
 fn invariant(description: &str) -> StepFatal {
-    StepFatal::InvariantViolation { description: description.to_owned(), location: "pipeline::fill_fact".to_owned() }
+    StepFatal::InvariantViolation {
+        description: description.to_owned(),
+        location: "pipeline::fill_fact".to_owned(),
+    }
 }

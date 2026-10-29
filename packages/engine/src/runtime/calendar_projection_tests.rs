@@ -134,14 +134,24 @@ fn all_closed_static_full_keeps_day_context_without_constructing_market_tick() {
     driver.ack_prepared_mirror(ack);
     assert_eq!((game.tick(), game.day()), (0, 0));
     let installed_origin = game.runtime_mirror_origin();
-    assert_eq!(installed_origin.install_sequence, 1, "成功 Full 恰好安装一次");
+    assert_eq!(
+        installed_origin.install_sequence, 1,
+        "成功 Full 恰好安装一次"
+    );
     let mut expected_origin = prior_origin;
     expected_origin.install_sequence = 1;
-    assert_eq!(installed_origin, expected_origin, "静点 Full 不改变其它 source 身份或进度");
+    assert_eq!(
+        installed_origin, expected_origin,
+        "静点 Full 不改变其它 source 身份或进度"
+    );
     before["mirror_origin"] = serde_json::to_value(expected_origin).unwrap();
     assert_eq!(serde_json::to_value(game.snapshot()).unwrap(), before);
     assert_eq!(driver.mirror_source(), prior_source);
-    assert_eq!(driver.next_seq(), prior_seq, "静点安装不额外生成市场事件或执行 flush");
+    assert_eq!(
+        driver.next_seq(),
+        prior_seq,
+        "静点安装不额外生成市场事件或执行 flush"
+    );
     assert!(driver.world_report_log().is_empty());
     assert!(Arc::ptr_eq(&published, &driver.publication().load()));
 }

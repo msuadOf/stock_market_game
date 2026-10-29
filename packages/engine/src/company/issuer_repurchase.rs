@@ -228,9 +228,7 @@ pub enum IssuerRepurchaseError {
     InvalidPlan { detail: String },
     #[error("issuer repurchase: trading calendar lookup failed: {0}")]
     CalendarLookup(String),
-    #[error(
-        "issuer repurchase: date {date} is not a {exchange:?} trading day"
-    )]
+    #[error("issuer repurchase: date {date} is not a {exchange:?} trading day")]
     InvalidTradingDate {
         date: CivilDate,
         exchange: CalendarExchange,
@@ -243,11 +241,10 @@ pub enum IssuerRepurchaseError {
     #[error(
         "issuer repurchase: fill record {day} {gross:?} is inconsistent with remaining budget"
     )]
-    FillExceedsBudget {
-        day: CivilDate,
-        gross: Money,
-    },
-    #[error("issuer repurchase: cancellation shares {requested} exceed completed fills {completed}")]
+    FillExceedsBudget { day: CivilDate, gross: Money },
+    #[error(
+        "issuer repurchase: cancellation shares {requested} exceed completed fills {completed}"
+    )]
     CancellationExceedsFills { requested: u64, completed: u64 },
     #[error(
         "issuer repurchase: cancellation shares {requested} exceed current inventory {available}"
@@ -348,12 +345,22 @@ impl IssuerRepurchasePlan {
     }
 
     /// 基准锚已包含的事件不能因回填审批日期再调整一次。
-    pub fn unit_event_follows_approval_anchor(&self, event_id: &str, context: &[SplitUnitContext]) -> Result<bool, IssuerRepurchaseError> {
-        let event = context.iter().find(|entry| entry.event_id == event_id).ok_or_else(|| invalid("unknown unit event"))?;
+    pub fn unit_event_follows_approval_anchor(
+        &self,
+        event_id: &str,
+        context: &[SplitUnitContext],
+    ) -> Result<bool, IssuerRepurchaseError> {
+        let event = context
+            .iter()
+            .find(|entry| entry.event_id == event_id)
+            .ok_or_else(|| invalid("unknown unit event"))?;
         match self.approval_unit_event_id.as_deref() {
             None => Ok(true),
             Some(anchor_id) => {
-                let anchor = context.iter().find(|entry| entry.event_id == anchor_id).ok_or_else(|| invalid("unknown approval unit anchor"))?;
+                let anchor = context
+                    .iter()
+                    .find(|entry| entry.event_id == anchor_id)
+                    .ok_or_else(|| invalid("unknown approval unit anchor"))?;
                 Ok(event.ex_on > anchor.ex_on)
             }
         }
@@ -560,11 +567,9 @@ impl IssuerRepurchaseBook {
         self.plan
             .total_budget
             .sub(self.total_spent()?)
-            .map_err(|_| {
-                IssuerRepurchaseError::FillExceedsBudget {
-                    day: self.plan.window_deadline_on,
-                    gross: self.plan.total_budget,
-                }
+            .map_err(|_| IssuerRepurchaseError::FillExceedsBudget {
+                day: self.plan.window_deadline_on,
+                gross: self.plan.total_budget,
             })
     }
 
@@ -982,14 +987,12 @@ impl IssuerRepurchaseBook {
         }
         let spent = self.total_spent()?;
         if withdrawn_remainder
-            != self
-                .plan
-                .total_budget
-                .sub(spent)
-                .map_err(|_| IssuerRepurchaseError::FillExceedsBudget {
+            != self.plan.total_budget.sub(spent).map_err(|_| {
+                IssuerRepurchaseError::FillExceedsBudget {
                     day: on,
                     gross: spent,
-                })?
+                }
+            })?
         {
             return Err(invalid(
                 "withdrawn remainder must equal budget minus total spent",
@@ -1067,23 +1070,28 @@ impl IssuerRepurchaseBook {
                 ));
             }
         }
-        match (self.status.clone(), self.completed_on, self.withdrawn_remainder) {
+        match (
+            self.status.clone(),
+            self.completed_on,
+            self.withdrawn_remainder,
+        ) {
             (IssuerRepurchaseStatus::Approved, None, None) => {}
             (IssuerRepurchaseStatus::Announced, None, None) => {}
             (IssuerRepurchaseStatus::Executing, None, None) => {}
             (IssuerRepurchaseStatus::Completed, Some(_), Some(_)) => {}
             (IssuerRepurchaseStatus::Cancelled, Some(_), Some(_)) => {}
             _ => {
-                return Err(invalid(
-                    "status does not agree with completion facts",
-                ));
+                return Err(invalid("status does not agree with completion facts"));
             }
         }
         if matches!(
             self.status,
             IssuerRepurchaseStatus::Executing | IssuerRepurchaseStatus::Announced
         ) && !self.fills.is_empty()
-            && self.fills.iter().any(|fill| !self.plan.window_contains(fill.day))
+            && self
+                .fills
+                .iter()
+                .any(|fill| !self.plan.window_contains(fill.day))
         {
             return Err(invalid("fill day outside the execution window"));
         }

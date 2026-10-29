@@ -25,7 +25,11 @@ fn state(ids: &[AccountId]) -> GroupState {
     s
 }
 /// 合成机制 fixture 迁移到真实静点；只重建可编辑恢复事实，不伪称发生了市场 tick。
-fn set_observation_phase(s: &mut GroupState, p: &mut InformationPreparePayload, through: CivilInstant) {
+fn set_observation_phase(
+    s: &mut GroupState,
+    p: &mut InformationPreparePayload,
+    through: CivilInstant,
+) {
     let day = calendar_source().day(through.date()).unwrap();
     let tick = day.day_model().shared_sessions_before_date() * 100;
     s.cur_tick = tick;
@@ -209,44 +213,72 @@ fn info_06_mixed_days_reach_belief_inputs_and_active_plan_qualification() {
     let mut p = payload(true);
     let (annual0, _) = reports(&mut p, 0, false);
     let (annual1, _) = reports(&mut p, 1, false);
-    use crate::calendar::{CalendarExchange, CalendarPolicy, OfficialCoverageEntry, TradingCalendar};
-    use crate::session::exchange_calendar_model::{SessionTickLayout, SharedClockInput, SharedDayProgress};
+    use crate::calendar::{
+        CalendarExchange, CalendarPolicy, OfficialCoverageEntry, TradingCalendar,
+    };
+    use crate::session::exchange_calendar_model::{
+        SessionTickLayout, SharedClockInput, SharedDayProgress,
+    };
     use crate::session::market_calendar_context::MarketCalendarSource;
     let start = at(0, 0).date();
     let current = start.next().unwrap();
     let mut policy = CalendarPolicy::current_default_policy().unwrap().spec();
     // 真实冻结政策的 synthetic-test 双所差异；不再手写无来源的 7/12 标量。
-    policy.official_coverage.push(OfficialCoverageEntry::new(CalendarExchange::Sse, 2031,
-        vec![(start, start)], "synthetic-test-info-mixed".into(), "synthetic-test-info-mixed-source".into()));
-    let bindings = vec![(StockId(0), CalendarExchange::Sse), (StockId(1), CalendarExchange::Szse)];
-    let source = MarketCalendarSource::new(TradingCalendar::from_policy(CalendarPolicy::from_parts(policy).unwrap()).unwrap(), start, bindings.clone()).unwrap();
+    policy.official_coverage.push(OfficialCoverageEntry::new(
+        CalendarExchange::Sse,
+        2031,
+        vec![(start, start)],
+        "synthetic-test-info-mixed".into(),
+        "synthetic-test-info-mixed-source".into(),
+    ));
+    let bindings = vec![
+        (StockId(0), CalendarExchange::Sse),
+        (StockId(1), CalendarExchange::Szse),
+    ];
+    let source = MarketCalendarSource::new(
+        TradingCalendar::from_policy(CalendarPolicy::from_parts(policy).unwrap()).unwrap(),
+        start,
+        bindings.clone(),
+    )
+    .unwrap();
     s.bind_calendar(Arc::clone(&source), bindings);
     s.cur_tick = 100;
     s.committed_tick = 100;
     let through = CivilInstant::from_hms(current, 19, 0, 0).unwrap();
     let point = p.observation.as_mut().unwrap();
     point.through = through;
-    point.clock = crate::runtime::InformationClockContext::fixture_static(source.day(current).unwrap(),
-        SessionTickLayout { ticks_per_day: 100, auction_ticks: 0, closing_auction_ticks: 0 },
-        SharedClockInput { tick: 100, completed_shared_sessions: 1, progress: SharedDayProgress::Trading { completed_ticks: 0 } }, through);
+    point.clock = crate::runtime::InformationClockContext::fixture_static(
+        source.day(current).unwrap(),
+        SessionTickLayout {
+            ticks_per_day: 100,
+            auction_ticks: 0,
+            closing_auction_ticks: 0,
+        },
+        SharedClockInput {
+            tick: 100,
+            completed_shared_sessions: 1,
+            progress: SharedDayProgress::Trading { completed_ticks: 0 },
+        },
+        through,
+    );
     point.as_of_anchors = point.clock.anchors().unwrap();
     Arc::make_mut(&mut point.market).tick = 100;
     let c = s
         .prepare_admin_with_information(AdminTransactionId(1), Vec::new(), Some(p))
         .unwrap();
     let prepared = &c.information.unwrap().personals[0].2;
-    assert_eq!(
-        prepared.information.observed_at_of(annual0),
-        Some(through)
-    );
-    assert_eq!(
-        prepared.information.observed_at_of(annual1),
-        Some(through)
-    );
+    assert_eq!(prepared.information.observed_at_of(annual0), Some(through));
+    assert_eq!(prepared.information.observed_at_of(annual1), Some(through));
     for (stock, ordinal) in [(StockId(0), 0), (StockId(1), 1)] {
         let entry = prepared.belief.entry(&stock).unwrap();
-        assert_eq!(entry.anchor, crate::observation::information_clock::InformationTradingAnchor::TradingDay { ordinal });
-        assert_eq!(entry.last_cause.as_ref().unwrap().as_of_anchor, entry.anchor);
+        assert_eq!(
+            entry.anchor,
+            crate::observation::information_clock::InformationTradingAnchor::TradingDay { ordinal }
+        );
+        assert_eq!(
+            entry.last_cause.as_ref().unwrap().as_of_anchor,
+            entry.anchor
+        );
     }
 }
 #[test]
@@ -285,8 +317,11 @@ fn info_07_custom_monthly_published_1030_observed_1100_and_same_version_due() {
     assert!(c.information.unwrap().personals.is_empty());
     s.complete_admin(AdminTransactionId(2), AdminPhase::Commit)
         .unwrap();
-    set_observation_phase(&mut s, &mut p,
-        CivilInstant::from_hms(at(11, 0).date().next().unwrap(), 19, 0, 0).unwrap());
+    set_observation_phase(
+        &mut s,
+        &mut p,
+        CivilInstant::from_hms(at(11, 0).date().next().unwrap(), 19, 0, 0).unwrap(),
+    );
     let c = s
         .prepare_admin_with_information(AdminTransactionId(3), Vec::new(), Some(p.clone()))
         .unwrap();
@@ -466,12 +501,29 @@ fn info_12_closed_day_evening_monthly_is_acquired_at_real_end_without_market_tic
         .stocks
         .insert(StockId(0), Default::default());
     let mut p = payload(true);
-    let through = CivilInstant::from_hms(crate::CivilDate::from_iso("2031-04-05").unwrap(), 23, 59, 59).unwrap();
+    let through = CivilInstant::from_hms(
+        crate::CivilDate::from_iso("2031-04-05").unwrap(),
+        23,
+        59,
+        59,
+    )
+    .unwrap();
     set_observation_phase(&mut s, &mut p, through);
-    assert!(!calendar_source().day(through.date()).unwrap().day_model().shared_trading_on_date(), "正控确为真实 Closed 日期");
+    assert!(
+        !calendar_source()
+            .day(through.date())
+            .unwrap()
+            .day_model()
+            .shared_trading_on_date(),
+        "正控确为真实 Closed 日期"
+    );
     let (_, monthly) = reports_on(&mut p, 0, true, through.date(), 20 * 3600 + 30 * 60);
     let id = monthly.unwrap();
-    assert_eq!(p.library.report(id, through).unwrap().published_at.date(), through.date(), "同日 Closed 晚间材料才检验实际披露相位");
+    assert_eq!(
+        p.library.report(id, through).unwrap().published_at.date(),
+        through.date(),
+        "同日 Closed 晚间材料才检验实际披露相位"
+    );
     let before_tick = (s.cur_tick, s.committed_tick);
     let c = s
         .prepare_admin_with_information(AdminTransactionId(1), Vec::new(), Some(p.clone()))
@@ -619,7 +671,8 @@ fn info_16_market_tick_must_match_static_working_and_restore_tick_is_valid() {
         s.committed_tick = 100;
         let mut p = payload(true);
         p.observation.as_mut().unwrap().clock = clock_at(at(19, 0), 100);
-        p.observation.as_mut().unwrap().as_of_anchors = p.observation.as_ref().unwrap().clock.anchors().unwrap();
+        p.observation.as_mut().unwrap().as_of_anchors =
+            p.observation.as_ref().unwrap().clock.anchors().unwrap();
         Arc::make_mut(&mut p.observation.as_mut().unwrap().market).tick = actual;
         let result = s.prepare_admin_with_information(AdminTransactionId(1), Vec::new(), Some(p));
         if actual == 100 {
@@ -836,11 +889,17 @@ fn selected_company_source_group_review_cap_reads_facts_after_information_commit
     let personal = s.belief_states[0].as_ref().unwrap().clone();
     let cap = |state: &GroupState| {
         let host = GroupReviewHost {
-            state, local: 0, account: AccountId(71), market: market.clone(),
-            belief: &personal.belief, information: &personal.information,
+            state,
+            local: 0,
+            account: AccountId(71),
+            market: market.clone(),
+            belief: &personal.belief,
+            information: &personal.information,
             minutes_by_code: Default::default(),
             moment: crate::experience::ExperienceMoment {
-                civil_date: at(19, 0).date(), market_minute: 17, trading_day: 0,
+                civil_date: at(19, 0).date(),
+                market_minute: 17,
+                trading_day: 0,
             },
         };
         crate::session::PlanReviewHost::max_holdable_shares(&host, &StockId(0))
@@ -848,11 +907,26 @@ fn selected_company_source_group_review_cap_reads_facts_after_information_commit
     assert_eq!(cap(&s), 10_000);
     let mut p = payload(false);
     p.current_facts = facts(u64::from(u32::MAX) + 701);
-    s.prepare_admin_with_information(AdminTransactionId(1), Vec::new(), Some(p)).unwrap();
+    s.prepare_admin_with_information(AdminTransactionId(1), Vec::new(), Some(p))
+        .unwrap();
     assert_eq!(cap(&s), 10_000, "prepare 不提前改变 consumer 可见股本");
-    s.complete_admin(AdminTransactionId(1), AdminPhase::Commit).unwrap();
-    assert_eq!(cap(&s), u64::from(u32::MAX), "commit 后真实复审 consumer 读取当前事实");
-    assert_eq!(s.root_projection.as_ref().unwrap().initial_company_facts.company_spec(&crate::company::CompanyId(0)).unwrap().1, 10_000);
+    s.complete_admin(AdminTransactionId(1), AdminPhase::Commit)
+        .unwrap();
+    assert_eq!(
+        cap(&s),
+        u64::from(u32::MAX),
+        "commit 后真实复审 consumer 读取当前事实"
+    );
+    assert_eq!(
+        s.root_projection
+            .as_ref()
+            .unwrap()
+            .initial_company_facts
+            .company_spec(&crate::company::CompanyId(0))
+            .unwrap()
+            .1,
+        10_000
+    );
 }
 
 #[test]
@@ -939,21 +1013,45 @@ fn funds_p1_information_abort_restores_complete_private_overlay_then_commits_onc
 fn typed_information_map_variant_is_validated_before_signature_and_cadence_shortcuts() {
     for not_due in [false, true] {
         let mut s = state(&[AccountId(71)]);
-        s.belief_states[0].as_mut().unwrap().watchlist.stocks.insert(StockId(0), Default::default());
+        s.belief_states[0]
+            .as_mut()
+            .unwrap()
+            .watchlist
+            .stocks
+            .insert(StockId(0), Default::default());
         let mut p = payload(true);
         reports(&mut p, 0, false);
-        s.prepare_admin_with_information(AdminTransactionId(1), Vec::new(), Some(p.clone())).unwrap();
-        s.complete_admin(AdminTransactionId(1), AdminPhase::Commit).unwrap();
+        s.prepare_admin_with_information(AdminTransactionId(1), Vec::new(), Some(p.clone()))
+            .unwrap();
+        s.complete_admin(AdminTransactionId(1), AdminPhase::Commit)
+            .unwrap();
         if not_due {
-            s.belief_states[0].as_mut().unwrap().attention.next_information_check = at(23, 0);
+            s.belief_states[0]
+                .as_mut()
+                .unwrap()
+                .attention
+                .next_information_check = at(23, 0);
         }
         let before = s.belief_states.clone();
         let library = Arc::clone(&s.library);
         let point = p.observation.as_mut().unwrap();
-        point.as_of_anchors.insert(StockId(0), crate::observation::information_clock::InformationTradingAnchor::DayBefore { ordinal: 0 });
-        let error = s.prepare_admin_with_information(AdminTransactionId(2), Vec::new(), Some(p)).unwrap_err();
-        assert!(matches!(error, RuntimeError::ProtocolInvariant { .. } | RuntimeError::InformationPrepare { .. }));
-        assert_eq!(s.belief_states, before, "同 position 的未来 variant 不得被 shortcut 吞掉或修改整本 Book");
+        point.as_of_anchors.insert(
+            StockId(0),
+            crate::observation::information_clock::InformationTradingAnchor::DayBefore {
+                ordinal: 0,
+            },
+        );
+        let error = s
+            .prepare_admin_with_information(AdminTransactionId(2), Vec::new(), Some(p))
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            RuntimeError::ProtocolInvariant { .. } | RuntimeError::InformationPrepare { .. }
+        ));
+        assert_eq!(
+            s.belief_states, before,
+            "同 position 的未来 variant 不得被 shortcut 吞掉或修改整本 Book"
+        );
         assert!(Arc::ptr_eq(&s.library, &library));
     }
 }

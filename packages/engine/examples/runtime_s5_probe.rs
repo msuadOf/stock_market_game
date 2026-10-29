@@ -193,7 +193,10 @@ fn run_probe(ticks: u64, n_groups: usize, per_group: usize) -> u64 {
         let mean: f64 = handles.iter().sum::<f64>() / n as f64;
         println!(
             "组端Seal处理 μs/tick：min {:.0} / mean {:.0} / max {:.0}（{} 组）",
-            handles[0], mean, handles[n - 1], n
+            handles[0],
+            mean,
+            handles[n - 1],
+            n
         );
         // H1/H2/H3 构成：drain 批占比/延迟相/分片构建（max 组口径）。
         // 诊断面：全部组的构成明细（组号/handle/drain批/等待批/延迟相/分片）。

@@ -485,16 +485,16 @@ fn downstream_failure_discards_npc_decision_and_authority_state() {
         decision_probe.session_state_hash().unwrap(),
         authority_before
     );
-    let mut plan = plan_tick(PhaseInput { session: &authority })
+    let mut plan = plan_tick(PhaseInput {
+        session: &authority,
+    })
     .unwrap();
-    plan
-        .execute(|candidate| {
-            candidate.state.next_receipt_base = 1;
-            Ok(())
-        })
-        .unwrap();
-    let result =
-        super::market_tick_transaction::apply_tick_shadow_market_transaction(&mut plan);
+    plan.execute(|candidate| {
+        candidate.state.next_receipt_base = 1;
+        Ok(())
+    })
+    .unwrap();
+    let result = super::market_tick_transaction::apply_tick_shadow_market_transaction(&mut plan);
     assert!(matches!(
         result,
         Err(super::market_tick_transaction::MarketTransactionError::Finalization(
@@ -566,13 +566,11 @@ fn real_npc_working_quotes_cancel_before_one_replacement_with_contiguous_keys() 
         .collect();
     old_ids.sort();
     assert_eq!(old_ids.len(), 2);
-    let resources = plan_tick(PhaseInput {
-        session: &session,
-    })
-    .unwrap()
-    .decision_resources()
-    .unwrap()
-    .clone();
+    let resources = plan_tick(PhaseInput { session: &session })
+        .unwrap()
+        .decision_resources()
+        .unwrap()
+        .clone();
     let mut queued_session = session.clone_for_tick_shadow().unwrap();
     let prepared = prepare_npc_decisions(&mut session, None).unwrap();
     assert!(prepared.projection.reconciliation_decisions().iter().all(|decision| matches!(
@@ -864,7 +862,11 @@ fn legacy_archive_identification_covers_value_escape_null_and_precedence() {
 
     // ② 转义键：任意位置 unicode 转义（_/_ 与首字符 p 形态——三轮收口
     //    解析后结构检测全覆盖）⇒ 2100（serde 解析后统一为原键，不落 2080）。
-    for escaped in ["pending\\u005fnpc", "pending\\u005Fnpc", "\\u0070ending_npc"] {
+    for escaped in [
+        "pending\\u005fnpc",
+        "pending\\u005Fnpc",
+        "\\u0070ending_npc",
+    ] {
         let mut legacy = clean.clone();
         legacy[escaped] = serde_json::Value::Null;
         // 以文本注入真实转义字节：serde_json::Value 键不支持转义形态——

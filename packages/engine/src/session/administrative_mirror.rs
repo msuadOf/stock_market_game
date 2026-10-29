@@ -47,7 +47,9 @@ pub(crate) enum AdministrativeMirrorError {
     Runtime(#[from] RuntimeError),
     #[error(transparent)]
     Session(#[from] StepFatal),
-    #[error("行政入口 civil_date 不一致：Session={expected}，World={actual}；请先完成原自然日同步")]
+    #[error(
+        "行政入口 civil_date 不一致：Session={expected}，World={actual}；请先完成原自然日同步"
+    )]
     CivilDateMismatch {
         expected: crate::calendar::CivilDate,
         actual: crate::calendar::CivilDate,
@@ -592,8 +594,9 @@ impl GameSession {
         candidate: &AdminCandidate,
         source: &PreparedAdministrativeSource,
         information: Option<&InformationPreparePayload>,
-        #[cfg(feature = "simulation-diagnostics")]
-        acquisition_time: Option<crate::diagnostics::causal::FactTime>,
+        #[cfg(feature = "simulation-diagnostics")] acquisition_time: Option<
+            crate::diagnostics::causal::FactTime,
+        >,
         revision: u64,
         sequence: u64,
     ) -> Result<PreparedAdministrativeMirror, RuntimeError> {

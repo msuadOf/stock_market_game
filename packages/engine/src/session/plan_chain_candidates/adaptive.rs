@@ -326,7 +326,12 @@ impl PlanChainOperationBatch {
                         .plans()
                         .active_investor_plan_ids_for_account(*account)
                         .into_iter()
-                        .map(|plan_id| domain.plans().plan(plan_id).expect("个人活动身份必须对应真实 Investor 条目"))
+                        .map(|plan_id| {
+                            domain
+                                .plans()
+                                .plan(plan_id)
+                                .expect("个人活动身份必须对应真实 Investor 条目")
+                        })
                         .any(|plan| unfinished_routes.contains(&(*account, plan.code().clone())))
             }
         })
@@ -386,7 +391,11 @@ impl PlanChainOperationBatch {
                             reason: RejectionReason::OrderAlreadyFilled
                         }
                     );
-                    if needs_reconsideration && domain.plans().active_investor_plan(account, &code).is_some()
+                    if needs_reconsideration
+                        && domain
+                            .plans()
+                            .active_investor_plan(account, &code)
+                            .is_some()
                     {
                         if let Some(followup) = self.routes.take_follow_up((account, code)) {
                             followups.push(followup);

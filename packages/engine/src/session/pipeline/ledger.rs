@@ -184,7 +184,11 @@ impl EnvelopeLedger {
         envelope.validate()?;
         let key = envelope.key().clone();
         let audit = envelope.audit();
-        if self.conservation.get(&key).is_some_and(|c| *c != ConservationState::EMPTY) {
+        if self
+            .conservation
+            .get(&key)
+            .is_some_and(|c| *c != ConservationState::EMPTY)
+        {
             return Err(ledger_validation::invariant(
                 "runtime 增量安装遇到非空 conservation（runtime 路径无回执流——结构性漂移）",
             ));
@@ -784,7 +788,9 @@ fn validate_ledger_evidence_row_with_conservation(
 ) -> Result<(), StepFatal> {
     envelope.validate()?;
     if envelope.key() != key {
-        return Err(ledger_validation::invariant("ledger行键与规范订单身份不一致"));
+        return Err(ledger_validation::invariant(
+            "ledger行键与规范订单身份不一致",
+        ));
     }
     if ledger.envelopes.contains_key(key) && ledger.terminal_envelopes.contains_key(key) {
         return Err(ledger_validation::invariant(

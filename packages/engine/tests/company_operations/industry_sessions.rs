@@ -15,7 +15,8 @@ fn assert_actual_publication(company: OperatingCompanyConfig, seed: u64, params:
     let report = session.end_civil_day().unwrap();
     let saved = session.save().unwrap();
     let id = legacy_saved(&saved).0.catalog().id(&code).unwrap();
-    let active = legacy_saved(&saved).0
+    let active = legacy_saved(&saved)
+        .0
         .company(&id)
         .unwrap()
         .economy()
@@ -38,10 +39,12 @@ fn assert_actual_publication(company: OperatingCompanyConfig, seed: u64, params:
                 .unwrap();
             if !matches!(
                 &announcement.content,
-                engine::information::AnnouncementContent::Shock(engine::information::AnnouncedEvent {
-                    kind: ShockKind::PaymentFailure { .. },
-                    ..
-                })
+                engine::information::AnnouncementContent::Shock(
+                    engine::information::AnnouncedEvent {
+                        kind: ShockKind::PaymentFailure { .. },
+                        ..
+                    }
+                )
             ) {
                 economic_announcements.push(match &announcement.content {
                     engine::information::AnnouncementContent::Shock(event) => &event.kind,

@@ -15,14 +15,14 @@ fn session_with_institutions(auction_ticks: u64, inst_count: u32) -> crate::Game
 
     crate::GameSession::new(
         SessionSetup {
-        company_system: None,
-        dividend_tax_mode: None,
-        flat_withholding_bp: None,
-        rights_offering_enabled: false,
-        issuer_repurchase_enabled: false,
-        par_value_per_share: None,
-        auto_corporate_foundation: false,
-        report_frequency: None,
+            company_system: None,
+            dividend_tax_mode: None,
+            flat_withholding_bp: None,
+            rights_offering_enabled: false,
+            issuer_repurchase_enabled: false,
+            par_value_per_share: None,
+            auto_corporate_foundation: false,
+            report_frequency: None,
             company_operations: None,
             groups: Vec::new(),
             stocks: vec![StockSpec {
@@ -201,28 +201,41 @@ fn evidence_serializes_all_measurements_as_decimal_strings() {
     }
 }
 
-
 #[test]
 fn compute_context_timing_binding_restores_after_error_unwind_and_nested_burst() {
     with_phase_timing_binding(PhaseTimingBinding(None), || {
         start_capture().unwrap();
         let original = current_phase_timing_binding();
-        let alternate = PhaseTimingBinding(Some(std::sync::Arc::new(std::sync::Mutex::new(Collector::new()))));
+        let alternate = PhaseTimingBinding(Some(std::sync::Arc::new(std::sync::Mutex::new(
+            Collector::new(),
+        ))));
         let result: Result<(), ()> = with_phase_timing_binding(alternate.clone(), || {
-            assert!(std::sync::Arc::ptr_eq(current_phase_timing_binding().0.as_ref().unwrap(), alternate.0.as_ref().unwrap()));
+            assert!(std::sync::Arc::ptr_eq(
+                current_phase_timing_binding().0.as_ref().unwrap(),
+                alternate.0.as_ref().unwrap()
+            ));
             with_phase_timing_binding(original.clone(), || {
-                assert!(std::sync::Arc::ptr_eq(current_phase_timing_binding().0.as_ref().unwrap(), original.0.as_ref().unwrap()));
+                assert!(std::sync::Arc::ptr_eq(
+                    current_phase_timing_binding().0.as_ref().unwrap(),
+                    original.0.as_ref().unwrap()
+                ));
             });
             Err(())
         });
         assert!(result.is_err());
-        assert!(std::sync::Arc::ptr_eq(current_phase_timing_binding().0.as_ref().unwrap(), original.0.as_ref().unwrap()));
+        assert!(std::sync::Arc::ptr_eq(
+            current_phase_timing_binding().0.as_ref().unwrap(),
+            original.0.as_ref().unwrap()
+        ));
         // 只在测试捕获 panic，验证 RAII；生产不把 panic 当可恢复 tick。
         let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             with_phase_timing_binding(PhaseTimingBinding(None), || panic!("测试观察绑定 unwind"));
         }));
         assert!(panic.is_err());
-        assert!(std::sync::Arc::ptr_eq(current_phase_timing_binding().0.as_ref().unwrap(), original.0.as_ref().unwrap()));
+        assert!(std::sync::Arc::ptr_eq(
+            current_phase_timing_binding().0.as_ref().unwrap(),
+            original.0.as_ref().unwrap()
+        ));
     });
     assert!(current_phase_timing_binding().0.is_none());
 }
@@ -262,15 +275,18 @@ fn compute_context_completion_implies_binding_exclusive_no_panic() {
         move |value| done_tx.send(value).expect("两段式收尾信号必须可达"),
     );
     // 协调者收到完成信号 ⇒ 按协议最后一个绑定克隆已析构 ⇒ take_capture 必须成功且不 panic。
-    assert_eq!(done_rx.recv_timeout(std::time::Duration::from_secs(2)).unwrap(), 7);
+    assert_eq!(
+        done_rx
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .unwrap(),
+        7
+    );
     let collector = take_capture().expect("完成信号之后绑定必须独占");
     assert!(matches!(
         collector.finish(),
         Err(PhaseTimingCaptureError::NoCommittedTick)
     ));
 }
-
-
 
 #[test]
 fn empty_and_nonempty_ingress_both_record_account_validation() {

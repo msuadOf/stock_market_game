@@ -101,7 +101,11 @@ impl AccountBook {
         validate: impl Fn(AccountId, &Account) -> Result<(), super::StepFatal> + Sync,
     ) -> Result<(), super::StepFatal> {
         let prices = Arc::new(prices.clone());
-        let pages: Vec<_> = self.groups.values().flat_map(|group| group.iter()).collect();
+        let pages: Vec<_> = self
+            .groups
+            .values()
+            .flat_map(|group| group.iter())
+            .collect();
         // 方向A·任务粗化（宽度税治理）：页级资源校验原先按单页分裂（s5 实测
         // 每_tick ~627 单页任务，多为缓存命中微任务）。方向B 改走
         // scatter-gather：min(页数, active_width) 个粗 chunk、阻塞归并零
@@ -386,7 +390,8 @@ mod tests {
         let mut cash = BTreeMap::new();
         let mut sell = BTreeMap::new();
         accounts
-            .validate_resources(&test_compute(),
+            .validate_resources(
+                &test_compute(),
                 &prices,
                 &super::super::pipeline::LiveReservations::fixture(&cash, &sell),
                 &validate,
@@ -394,7 +399,8 @@ mod tests {
             .unwrap();
         let mut shadow = accounts.clone_for_shadow().unwrap();
         shadow
-            .validate_resources(&test_compute(),
+            .validate_resources(
+                &test_compute(),
                 &prices,
                 &super::super::pipeline::LiveReservations::fixture(&cash, &sell),
                 &validate,
@@ -406,7 +412,8 @@ mod tests {
             .unwrap()
             .fixture_set_cash(Money::from_cents(90));
         shadow
-            .validate_resources(&test_compute(),
+            .validate_resources(
+                &test_compute(),
                 &prices,
                 &super::super::pipeline::LiveReservations::fixture(&cash, &sell),
                 &validate,
@@ -415,7 +422,8 @@ mod tests {
         assert_eq!(calls.load(Ordering::Relaxed), 3, "只重验发生 mutation 的页");
         prices.insert(StockId(0), Money::from_cents(101));
         shadow
-            .validate_resources(&test_compute(),
+            .validate_resources(
+                &test_compute(),
                 &prices,
                 &super::super::pipeline::LiveReservations::fixture(&cash, &sell),
                 &validate,
@@ -424,7 +432,8 @@ mod tests {
         assert_eq!(calls.load(Ordering::Relaxed), 5, "价格变化必须重验全部页");
         cash.insert(AccountId(32), Money::from_cents(5));
         shadow
-            .validate_resources(&test_compute(),
+            .validate_resources(
+                &test_compute(),
                 &prices,
                 &super::super::pipeline::LiveReservations::fixture(&cash, &sell),
                 &validate,
@@ -433,7 +442,8 @@ mod tests {
         assert_eq!(calls.load(Ordering::Relaxed), 6, "现金预留只使受影响页失效");
         sell.insert(AccountId(0), BTreeMap::from([(StockId(0), 100)]));
         shadow
-            .validate_resources(&test_compute(),
+            .validate_resources(
+                &test_compute(),
                 &prices,
                 &super::super::pipeline::LiveReservations::fixture(&cash, &sell),
                 &validate,
@@ -441,7 +451,8 @@ mod tests {
             .unwrap();
         assert_eq!(calls.load(Ordering::Relaxed), 7, "股份预留只使受影响页失效");
         accounts
-            .validate_resources(&test_compute(),
+            .validate_resources(
+                &test_compute(),
                 &BTreeMap::from([(StockId(0), Money::from_cents(100))]),
                 &super::super::pipeline::LiveReservations::fixture(
                     &BTreeMap::new(),
@@ -475,7 +486,7 @@ mod tests {
         };
         for _ in 0..2 {
             assert_eq!(
-                accounts.validate_resources(&test_compute(),&prices, &reservations, |_, _| {
+                accounts.validate_resources(&test_compute(), &prices, &reservations, |_, _| {
                     calls.fetch_add(1, Ordering::Relaxed);
                     Err(error.clone())
                 }),

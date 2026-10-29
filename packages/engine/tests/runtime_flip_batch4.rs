@@ -2,7 +2,9 @@
 
 mod common;
 
-use common::flip_helpers::{assert_order_event_invariants, pipeline_events, runtime_events, setup_1stock};
+use common::flip_helpers::{
+    assert_order_event_invariants, pipeline_events, runtime_events, setup_1stock,
+};
 use engine::{Event, GameSession};
 
 // 1. 跨日驱动后会话 day 推进（runtime 市场侧 day 安装）。
@@ -70,15 +72,11 @@ fn batch4_t1_unfreeze_clears_frozen_after_day_end() {
             &upper,
         )
         .expect("注入");
-    driver
-        .step_frame_equivalent(&mut session)
-        .expect("成交拍");
+    driver.step_frame_equivalent(&mut session).expect("成交拍");
     driver.install_market_views(&mut session).expect("行情安装");
     driver.install_candles(&mut session).expect("K 安装");
     for _ in 2..=240 {
-        driver
-            .step_frame_equivalent(&mut session)
-            .expect("步进");
+        driver.step_frame_equivalent(&mut session).expect("步进");
         driver.install_market_views(&mut session).expect("行情安装");
         driver.install_candles(&mut session).expect("K 安装");
     }
@@ -123,7 +121,8 @@ fn batch4_day_parity() {
 #[test]
 fn batch4_continue_after_day_end() {
     let mut session = GameSession::new(setup_1stock(), 304).expect("会话");
-    let mut driver = engine::runtime::drive::RuntimeDriver::from_session(&mut session).expect("驱动器");
+    let mut driver =
+        engine::runtime::drive::RuntimeDriver::from_session(&mut session).expect("驱动器");
     driver.adopt_session_seq(&session);
     for t in 1..=245 {
         driver.step_frame_equivalent(&mut session).expect("步进");
@@ -135,7 +134,9 @@ fn batch4_continue_after_day_end() {
     }
     // 日结后继续 5 tick（245+5=250）。
     for _ in 0..5 {
-        driver.step_frame_equivalent(&mut session).expect("日结续跑");
+        driver
+            .step_frame_equivalent(&mut session)
+            .expect("日结续跑");
     }
     assert_eq!(session.tick(), 250, "245 步 + 5 续 = 250");
 }
@@ -187,14 +188,22 @@ fn batch4_drain_closes_all_resting() {
 fn batch4_cash_no_injection_across_days() {
     let initial = GameSession::new(setup_1stock(), 308).expect("基线");
     let base: i64 = (0..initial.account_count() as u64)
-        .filter_map(|i| initial.account(engine::AccountId(i)).map(|a| a.cash().cents()))
+        .filter_map(|i| {
+            initial
+                .account(engine::AccountId(i))
+                .map(|a| a.cash().cents())
+        })
         .sum();
     for (name, (session, _)) in [
         ("runtime", runtime_events(245, 308)),
         ("pipeline", pipeline_events(245, 308)),
     ] {
         let total: i64 = (0..session.account_count() as u64)
-            .filter_map(|i| session.account(engine::AccountId(i)).map(|a| a.cash().cents()))
+            .filter_map(|i| {
+                session
+                    .account(engine::AccountId(i))
+                    .map(|a| a.cash().cents())
+            })
             .sum();
         assert!(
             total <= base,
@@ -240,7 +249,9 @@ fn batch4_civil_failure_rolls_back_day_end_fully_and_retries_once() {
         let mut recent_accept = false;
         for i in 1..=240 {
             let evs = d.step_frame_equivalent(&mut s).expect("步进");
-            let accepted = evs.iter().any(|e| matches!(e, engine::Event::OrderAccepted { .. }));
+            let accepted = evs
+                .iter()
+                .any(|e| matches!(e, engine::Event::OrderAccepted { .. }));
             has_accept |= accepted;
             if accepted && i > 232 {
                 recent_accept = true;
@@ -256,7 +267,8 @@ fn batch4_civil_failure_rolls_back_day_end_fully_and_retries_once() {
     }
     let mut session = session.expect("候选序内存在有受理单形态（清簿依赖日终在途）");
     let mut driver = driver.expect("驱动器");
-    let mut driver = engine::runtime::drive::RuntimeDriver::from_session(&mut session).expect("驱动器");
+    let mut driver =
+        engine::runtime::drive::RuntimeDriver::from_session(&mut session).expect("驱动器");
     driver.adopt_session_seq(&session);
     for _ in 1..=240 {
         driver.step_frame_equivalent(&mut session).expect("步进");
@@ -290,7 +302,10 @@ fn batch4_civil_failure_rolls_back_day_end_fully_and_retries_once() {
     let mut canceled_ids = BTreeSet::new();
     for e in &drained {
         if let Event::OrderCanceled { id, .. } = e {
-            assert!(canceled_ids.insert(*id), "清簿撤单不得重复（重试恰一次）：{id:?}");
+            assert!(
+                canceled_ids.insert(*id),
+                "清簿撤单不得重复（重试恰一次）：{id:?}"
+            );
         }
     }
     // D5 #2：observe 门使日终在途单概率化——候选形态下清簿事件可为空
@@ -298,5 +313,7 @@ fn batch4_civil_failure_rolls_back_day_end_fully_and_retries_once() {
     // 撤单承载（drained 非空时逐单查重仍生效）。
     let _ = drained.is_empty();
     // 重试后世界可继续步进（Abort 已收敛、无死锁）。
-    driver.step_frame_equivalent(&mut session).expect("日结后可续跑");
+    driver
+        .step_frame_equivalent(&mut session)
+        .expect("日结后可续跑");
 }

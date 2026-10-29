@@ -274,7 +274,6 @@ fn apply_receipt_transaction(
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-
 #[test]
 fn journal_source_mismatch_is_rejected_before_a_worker_receipt_can_exist() {
     let result = ReceiptLocalKey::new(

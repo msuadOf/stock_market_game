@@ -78,17 +78,31 @@ pub fn projection(ids: Vec<AccountId>) -> Arc<RootProjection> {
 }
 /// 合成 Admin 机制 fixture 的冻结 owner；时钟与 map 仍由真实 Calendar 投影产生。
 pub fn calendar_source() -> Arc<crate::session::market_calendar_context::MarketCalendarSource> {
-    static SOURCE: std::sync::OnceLock<Arc<crate::session::market_calendar_context::MarketCalendarSource>> = std::sync::OnceLock::new();
-    Arc::clone(SOURCE.get_or_init(|| crate::session::market_calendar_context::MarketCalendarSource::new(
-        crate::TradingCalendar::current_default_calendar().unwrap(), at(0, 0).date(), calendar_bindings(),
-    ).unwrap()))
+    static SOURCE: std::sync::OnceLock<
+        Arc<crate::session::market_calendar_context::MarketCalendarSource>,
+    > = std::sync::OnceLock::new();
+    Arc::clone(SOURCE.get_or_init(|| {
+        crate::session::market_calendar_context::MarketCalendarSource::new(
+            crate::TradingCalendar::current_default_calendar().unwrap(),
+            at(0, 0).date(),
+            calendar_bindings(),
+        )
+        .unwrap()
+    }))
 }
 pub fn calendar_bindings() -> Vec<(StockId, crate::calendar::CalendarExchange)> {
-    vec![(StockId(0), crate::calendar::CalendarExchange::Sse), (StockId(1), crate::calendar::CalendarExchange::Sse)]
+    vec![
+        (StockId(0), crate::calendar::CalendarExchange::Sse),
+        (StockId(1), crate::calendar::CalendarExchange::Sse),
+    ]
 }
 pub fn clock_at(through: CivilInstant, tick: u64) -> crate::runtime::InformationClockContext {
     let day = calendar_source().day(through.date()).unwrap();
-    let layout = crate::session::exchange_calendar_model::SessionTickLayout { ticks_per_day: 100, auction_ticks: 0, closing_auction_ticks: 0 };
+    let layout = crate::session::exchange_calendar_model::SessionTickLayout {
+        ticks_per_day: 100,
+        auction_ticks: 0,
+        closing_auction_ticks: 0,
+    };
     let input = crate::session::calendar_clock_input(&day, layout, tick, tick / 100).unwrap();
     crate::runtime::InformationClockContext::fixture_static(day, layout, input, through)
 }
@@ -186,7 +200,10 @@ pub fn reports_on(
     monthly: bool,
     monthly_date: CivilDate,
     monthly_second: u32,
-) -> (crate::information::PublicationId, Option<crate::information::PublicationId>) {
+) -> (
+    crate::information::PublicationId,
+    Option<crate::information::PublicationId>,
+) {
     use crate::accounting::consolidation::{MemberId, ScopeId};
     use crate::accounting::reports::{
         generate_report_set, IndustryPresentation, ReportKind, ReportRequest, ReportSource,

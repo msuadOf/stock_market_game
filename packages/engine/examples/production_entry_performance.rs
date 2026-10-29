@@ -82,10 +82,7 @@ fn seed_active_plans(
     Ok((restored, accounts.into_iter().collect()))
 }
 
-fn execute(
-    workload: Workload,
-    input_fingerprint: String,
-) -> Result<serde_json::Value, String> {
+fn execute(workload: Workload, input_fingerprint: String) -> Result<serde_json::Value, String> {
     if workload.ticks == 0 || workload.plan_accounts == 0 || workload.player_orders_per_tick == 0 {
         return Err("ticks, plan_accounts, and player_orders_per_tick must all be positive".into());
     }
@@ -170,9 +167,7 @@ fn execute(
                     } => {
                         player_resting_orders += 1;
                     }
-                    Event::OrderAccepted { account, .. }
-                        if plan_accounts.contains(&account) =>
-                    {
+                    Event::OrderAccepted { account, .. } if plan_accounts.contains(&account) => {
                         plan_account_resting_orders += 1;
                     }
                     Event::OrderAccepted { .. } => other_npc_resting_orders += 1,

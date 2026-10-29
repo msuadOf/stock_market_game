@@ -20,7 +20,9 @@ fn batch3_runtime_emits_order_canceled() {
         }
     }
     assert!(
-        events.iter().any(|e| matches!(e, Event::OrderCanceled { .. })),
+        events
+            .iter()
+            .any(|e| matches!(e, Event::OrderCanceled { .. })),
         "候选序 199..260 内应存在跨日撤单形态"
     );
     let mut kinds = std::collections::BTreeMap::new();
@@ -124,7 +126,10 @@ fn batch3_runtime_emits_intent_rejected() {
     let mut events = Vec::new();
     for seed in 199..260u64 {
         let (s, evs) = runtime_events(250, seed);
-        if evs.iter().any(|e| matches!(e, Event::IntentRejected { .. })) {
+        if evs
+            .iter()
+            .any(|e| matches!(e, Event::IntentRejected { .. }))
+        {
             session = Some(s);
             events = evs;
             break;
@@ -144,7 +149,10 @@ fn batch3_runtime_emits_intent_rejected() {
         let Event::IntentRejected { account, code, .. } = r else {
             unreachable!()
         };
-        assert!(account.0 < count, "拒收账户在册（账户 id 连续稠密）：{account:?}");
+        assert!(
+            account.0 < count,
+            "拒收账户在册（账户 id 连续稠密）：{account:?}"
+        );
         assert_eq!(code.0, 0, "单股 fixture：{code:?}");
     }
 }
@@ -215,7 +223,10 @@ fn batch3_both_paths_cancels_present() {
     // 双侧存在性锚（此前 arrival=0 时旧管线恰 0 条是 fixture 现实，
     // 不是形态差断言；Sol 二审修复的"`>=0` 恒真"问题以双侧>0 收口）。
     assert!(rt_c > 0, "runtime 撤单面：{rt_c}");
-    assert!(p_c > 0, "旧管线撤单面（arrival 0.30 产单后撤单事件存在）：{p_c}");
+    assert!(
+        p_c > 0,
+        "旧管线撤单面（arrival 0.30 产单后撤单事件存在）：{p_c}"
+    );
 }
 
 // 8. 事件无重复 seq（runtime——稳定键唯一性的 seq 面）。
@@ -287,7 +298,9 @@ fn batch3_exact_closure_on_no_trade_fixture() {
         }
     }
     assert!(
-        events.iter().any(|e| matches!(e, Event::OrderAccepted { .. })),
+        events
+            .iter()
+            .any(|e| matches!(e, Event::OrderAccepted { .. })),
         "候选序 300..340 内应存在有受理且无成交的形态"
     );
     // (account, code, id) → (受理余量, 撤单次数, 撤单余量)
@@ -295,11 +308,23 @@ fn batch3_exact_closure_on_no_trade_fixture() {
     let mut trades = 0u64;
     for e in &events {
         match e {
-            Event::OrderAccepted { account, code, id, remaining_qty, .. } => {
+            Event::OrderAccepted {
+                account,
+                code,
+                id,
+                remaining_qty,
+                ..
+            } => {
                 let slot = orders.entry((account.0, code.0, id.0)).or_default();
                 slot.0 += *remaining_qty;
             }
-            Event::OrderCanceled { account, code, id, remaining_qty, .. } => {
+            Event::OrderCanceled {
+                account,
+                code,
+                id,
+                remaining_qty,
+                ..
+            } => {
                 let slot = orders.entry((account.0, code.0, id.0)).or_default();
                 slot.1 += 1;
                 slot.2 += *remaining_qty;
@@ -308,7 +333,10 @@ fn batch3_exact_closure_on_no_trade_fixture() {
             _ => {}
         }
     }
-    assert_eq!(trades, 0u64, "前置：本 fixture 确定无成交（否则精确口径不适用）");
+    assert_eq!(
+        trades, 0u64,
+        "前置：本 fixture 确定无成交（否则精确口径不适用）"
+    );
     assert!(!orders.is_empty(), "前置：有受理单（非空转）");
     for (key, (accepted_rem, cancel_count, canceled_rem)) in &orders {
         assert_eq!(

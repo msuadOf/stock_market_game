@@ -158,9 +158,8 @@ fn prepare_stock_input_on(
         // 方向B 改走 scatter-gather：min(订单数, active_width) 个粗 chunk、
         // 协调线程阻塞归并零自旋。捕获结果与首错选择（按簿序）不变。
         let orders: Vec<(usize, &Order)> = market.resting_order_refs().enumerate().collect();
-        let captured: Vec<ContinuousEnvelopeSnapshot> = view
-            .compute
-            .parallel_map_chunks(orders.len(), |index| {
+        let captured: Vec<ContinuousEnvelopeSnapshot> =
+            view.compute.parallel_map_chunks(orders.len(), |index| {
                 let (book_index, order) = orders[index];
                 let mut key = make_key();
                 capture_order_on(

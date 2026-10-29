@@ -92,17 +92,21 @@ fn identity_and_resources(
     let expected_stock = catalog
         .id(&book.plan().stock.0)
         .ok_or(RepurchaseFundsFailure::RegistryMismatch)?;
-    let entry =
-        plans
-            .entry(execution_plan)
-            .map_err(|_| RepurchaseFundsFailure::UnknownPlan {
-                plan: execution_plan,
-            })?;
+    let entry = plans
+        .entry(execution_plan)
+        .map_err(|_| RepurchaseFundsFailure::UnknownPlan {
+            plan: execution_plan,
+        })?;
     let crate::plans::PlanEntry::IssuerRepurchase(canonical) = entry else {
-        return Err(RepurchaseFundsFailure::WrongOrigin { plan: execution_plan });
+        return Err(RepurchaseFundsFailure::WrongOrigin {
+            plan: execution_plan,
+        });
     };
-    if entry.account() != account.id() || canonical.stock() != expected_stock
-        || canonical.issuer() != book.plan().issuer || entry.is_terminal() {
+    if entry.account() != account.id()
+        || canonical.stock() != expected_stock
+        || canonical.issuer() != book.plan().issuer
+        || entry.is_terminal()
+    {
         return Err(RepurchaseFundsFailure::PlanIdentityMismatch {
             plan: execution_plan,
             expected_stock,
@@ -266,7 +270,6 @@ pub(super) fn closed_window_recycle_candidate(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::orderbook::Side;
     use crate::account::StockCode;
     use crate::company::issuer_repurchase::{
         IssuerRepurchasePlan, RepurchaseCompletionPolicy, RepurchaseFillRecord, RepurchasePurpose,
@@ -274,6 +277,7 @@ mod tests {
     use crate::company::share_registry::{
         AcquisitionSource, HolderId, ShareHolding, ShareLot, ShareRestriction,
     };
+    use crate::orderbook::Side;
     use crate::plans::{OpinionSource, PlanOpen, PlanOpinion, PlanPolicy, PlanTarget, Urgency};
 
     fn date(s: &str) -> CivilDate {
@@ -350,24 +354,40 @@ mod tests {
         let account = Account::new(AccountId(17), AccountKind::IssuerRepurchase, Money::ZERO);
         let mut plans = PlanBook::new(PlanPolicy::default()).unwrap();
         // 真实 company entry 只证明身份；资金批准仍由调用事务核验。
-        let id = plans.create_issuer_repurchase(crate::plans::RepurchaseExecutionOpen {
-            owner: account.id(), issuer: CompanyId(2), stock: StockId(1),
-        }).unwrap();
+        let id = plans
+            .create_issuer_repurchase(crate::plans::RepurchaseExecutionOpen {
+                owner: account.id(),
+                issuer: CompanyId(2),
+                stock: StockId(1),
+            })
+            .unwrap();
         (account, plans, id)
     }
     #[test]
     fn investor_entry_is_never_a_company_funding_source() {
         let (account, _, _) = identity();
         let mut plans = PlanBook::default();
-        let id = plans.create(PlanOpen {
-            account: account.id(), code: StockId(1), direction: Side::Buy,
-            target: PlanTarget::ShareCount(100),
-            opinion: PlanOpinion { signal_score_bp: 0, source: OpinionSource::Fundamental },
-            confidence_bp: 0, urgency: Urgency::Patient, horizon_trading_days: 20, created_trading_day: 0,
-        }).unwrap();
-        assert!(matches!(credit_candidate(&book(), &registry(), &account, &plans, id, &catalog(),
+        let id = plans
+            .create(PlanOpen {
+                account: account.id(),
+                code: StockId(1),
+                direction: Side::Buy,
+                target: PlanTarget::ShareCount(100),
+                opinion: PlanOpinion {
+                    signal_score_bp: 0,
+                    source: OpinionSource::Fundamental,
+                },
+                confidence_bp: 0,
+                urgency: Urgency::Patient,
+                horizon_trading_days: 20,
+                created_trading_day: 0,
+            })
+            .unwrap();
+        assert!(
+            matches!(credit_candidate(&book(), &registry(), &account, &plans, id, &catalog(),
             &GroupAccount::new(9_000_000, 2)), Err(RepurchaseFundsFailure::WrongOrigin { plan }) if plan == id),
-            "Investor 个人判断必须给明确 WrongOrigin，不能冒充发行人资金来源");
+            "Investor 个人判断必须给明确 WrongOrigin，不能冒充发行人资金来源"
+        );
     }
     #[test]
     fn recycle_uses_real_book_fees_and_leaves_surplus_and_other_plan_money_untouched() {

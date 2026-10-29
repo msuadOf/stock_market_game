@@ -1,5 +1,4 @@
 use super::*;
-use crate::StockCode;
 use crate::accounting::{
     IncomeTaxPolicy, JournalLine, LedgerAccountId, PostingSide, TaxPolicy, VatPolicy,
 };
@@ -19,8 +18,8 @@ use crate::company::share_registry::{
     ShareHolding, ShareLot, ShareRegistry, ShareRestriction,
 };
 use crate::company::share_split::{
-    ShareSplitBook, ShareSplitDeclaration, ShareSplitDirection, ShareSplitEventPlan,
-    holder_inherited_restriction,
+    holder_inherited_restriction, ShareSplitBook, ShareSplitDeclaration, ShareSplitDirection,
+    ShareSplitEventPlan,
 };
 use crate::company::simple::period::{
     AnnualTrendConfig, PeriodGenerationParameters, PeriodNoiseConfig, PeriodVariableExpenseRule,
@@ -31,13 +30,14 @@ use crate::company::simple::{
     SimpleEnvironmentConfig, SimpleFinanceConfig, SimpleSummaryRule,
 };
 use crate::company::stock_distribution::{
-    StockDistributionBook, StockDistributionDeclaration, StockDistributionEventPlan,
-    StockDistributionKind, holder_credit_lots,
+    holder_credit_lots, StockDistributionBook, StockDistributionDeclaration,
+    StockDistributionEventPlan, StockDistributionKind,
 };
 use crate::company::{CompanyKind, CompanySpec, IndustryId};
 use crate::orderbook::AccountId;
 use crate::session::{SecurityCategory, StockExchange, StockSpec};
 use crate::stock::StockMeta;
+use crate::StockCode;
 
 #[path = "company_capital_approval_cutoff_tests.rs"]
 mod approval_cutoff_tests;
@@ -1729,11 +1729,9 @@ fn capital_09_approved_uncredited_distribution_keeps_legal_future_schedule() {
     f.actions.stock_distributions[0]
         .validate_with_calendar(&f.calendar)
         .unwrap();
-    assert!(
-        f.system.stock_distribution_facts(&CompanyId(0)).unwrap()[0]
-            .credited_on
-            .is_none()
-    );
+    assert!(f.system.stock_distribution_facts(&CompanyId(0)).unwrap()[0]
+        .credited_on
+        .is_none());
     let summary = f.validate("2030-06-03").unwrap();
     assert_eq!(summary.companies[&CompanyId(0)].issued_shares, 1_000);
     assert_eq!(

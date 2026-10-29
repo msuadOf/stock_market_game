@@ -104,8 +104,8 @@ fn run_boundary(
 ) {
     let mut session = GameSession::new(setup, seed).expect("会话构造");
     let (buyer, seller) = trade_pair(&session);
-    let mut driver = crate::runtime::drive::RuntimeDriver::from_session(&mut session)
-        .expect("驱动器构造");
+    let mut driver =
+        crate::runtime::drive::RuntimeDriver::from_session(&mut session).expect("驱动器构造");
     driver.adopt_session_seq(&session);
     let mut per_tick = std::collections::BTreeMap::new();
     for t in 1..=until {
@@ -141,10 +141,8 @@ fn desk_day0_candle(
     driver: &mut crate::runtime::drive::RuntimeDriver,
 ) -> (i64, i64, i64, i64, i64, u64, i64, u64) {
     let finals = driver.world_desk_finals_for_candles().expect("desk 面");
-    let &(time, o, h, l, c, v, turnover, count) = finals[0]
-        .1
-        .last()
-        .expect("desk 面必有日 0 归档 K");
+    let &(time, o, h, l, c, v, turnover, count) =
+        finals[0].1.last().expect("desk 面必有日 0 归档 K");
     (time, o, h, l, c, v, turnover, count)
 }
 
@@ -205,7 +203,17 @@ fn closing_only_trades_reach_day_kline_and_receipts() {
     let event_candle = boundary
         .get(&StockId(0))
         .expect("DayBoundary 必含股 0 日 K");
-    assert_day_k("DayBoundary", 200, 200_000, 2, 1000, 1000, 1000, 1000, event_candle);
+    assert_day_k(
+        "DayBoundary",
+        200,
+        200_000,
+        2,
+        1000,
+        1000,
+        1000,
+        1000,
+        event_candle,
+    );
     // 保留快照：日 0 bars 总量=200，含 900（收盘竞价）桶。
     let day0 = crate::CivilDate::from_iso("2030-01-02").unwrap();
     let retained = session
@@ -222,7 +230,9 @@ fn closing_only_trades_reach_day_kline_and_receipts() {
     );
     // 次日（日 1）活动 K 不被收盘段污染。
     assert_eq!(
-        driver.world_public_views()[0].daily_active.map(|(_, _, _, _, v)| v),
+        driver.world_public_views()[0]
+            .daily_active
+            .map(|(_, _, _, _, v)| v),
         Some(0),
         "日 1 活动 K 零量（收盘段不跨日残留）"
     );
@@ -273,7 +283,8 @@ fn closing_only_trades_reach_day_kline_and_receipts() {
 fn intraday_plus_closing_day_kline_matches_bars_and_desk() {
     // tick24/25/26 连续段成交（3 笔 300 股）+ tick28/29 收盘窗挂单
     // （Drain 清算 2 笔 200 股）。
-    let (session, mut driver, per_tick) = run_boundary(boundary_setup(), 92, &[24, 25, 26, 28, 29], 32);
+    let (session, mut driver, per_tick) =
+        run_boundary(boundary_setup(), 92, &[24, 25, 26, 28, 29], 32);
 
     // 日结拍（tick30）成功即红证闭合（旧形态在冻结对账硬失败）。
     assert!(
@@ -320,12 +331,13 @@ fn intraday_plus_closing_day_kline_matches_bars_and_desk() {
     assert_eq!(vol, 500, "bars 总量=日 K 量");
     // 次日活动 K 零量（收盘段不污染）。
     assert_eq!(
-        driver.world_public_views()[0].daily_active.map(|(_, _, _, _, v)| v),
+        driver.world_public_views()[0]
+            .daily_active
+            .map(|(_, _, _, _, v)| v),
         Some(0),
         "日 1 活动 K 零量"
     );
 }
-
 
 /// 场景三（复核建议 S3）：多日连续日界——日 1 收盘段同样归位，日 0
 /// 冻结结果不被日 1 覆盖（retained 链两条、逐日独立）。
@@ -337,8 +349,8 @@ fn second_day_boundary_keeps_days_independent() {
     // 先 end_civil_day 对齐交易日序，否则日 1 冻结被同日幂等检查跳过）。
     let mut session = GameSession::new(boundary_setup(), 93).expect("会话构造");
     let (buyer, seller) = trade_pair(&session);
-    let mut driver = crate::runtime::drive::RuntimeDriver::from_session(&mut session)
-        .expect("驱动器构造");
+    let mut driver =
+        crate::runtime::drive::RuntimeDriver::from_session(&mut session).expect("驱动器构造");
     driver.adopt_session_seq(&session);
     for t in 1..=62u64 {
         while session.civil_clock().phase() == crate::session::CivilPhase::ClosedDay
@@ -396,7 +408,9 @@ fn second_day_boundary_keeps_days_independent() {
     );
     // 日 2 活动 K 零量（第二日收盘段不跨日残留）。
     assert_eq!(
-        driver.world_public_views()[0].daily_active.map(|(_, _, _, _, v)| v),
+        driver.world_public_views()[0]
+            .daily_active
+            .map(|(_, _, _, _, v)| v),
         Some(0),
         "日 2 活动 K 零量"
     );
@@ -409,8 +423,8 @@ fn second_day_boundary_keeps_days_independent() {
 fn closing_only_candle_opens_at_clearing_price_not_anchor() {
     let mut session = GameSession::new(boundary_setup(), 94).expect("会话构造");
     let (buyer, seller) = trade_pair(&session);
-    let mut driver = crate::runtime::drive::RuntimeDriver::from_session(&mut session)
-        .expect("驱动器构造");
+    let mut driver =
+        crate::runtime::drive::RuntimeDriver::from_session(&mut session).expect("驱动器构造");
     driver.adopt_session_seq(&session);
     for t in 1..=32u64 {
         if (28..=29).contains(&t) {
@@ -428,17 +442,7 @@ fn closing_only_candle_opens_at_clearing_price_not_anchor() {
             .unwrap_or_else(|e| panic!("tick{t} 步进失败：{e}"));
     }
     let install = install_day0_candle(&session);
-    assert_day_k(
-        "install",
-        200,
-        201_000,
-        2,
-        1005,
-        1005,
-        1005,
-        1005,
-        &install,
-    );
+    assert_day_k("install", 200, 201_000, 2, 1005, 1005, 1005, 1005, &install);
     // 次日昨收=官方收盘价 1005（涨跌停基准随 reroll 归正——读面抽查）。
     let views = driver.world_public_views();
     assert!(

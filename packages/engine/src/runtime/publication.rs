@@ -138,8 +138,7 @@ pub struct GroupShardInput {
     pub accounts:
         std::sync::Arc<Vec<(super::LocalIdx, std::sync::Arc<super::group::GroupAccount>)>>,
     /// belief 稀疏分片（Seal 落账后 dirty 集——含清仓经历转移行）。
-    pub belief:
-        std::sync::Arc<Vec<(super::LocalIdx, super::world::BeliefParticipantSnapshot)>>,
+    pub belief: std::sync::Arc<Vec<(super::LocalIdx, super::world::BeliefParticipantSnapshot)>>,
 }
 
 /// 组读面分片（P1-2 起 belief 稀疏观察面随 SealAck 上行；账户投影/
@@ -152,12 +151,7 @@ pub struct GroupShard {
     pub committed_hash: u64,
     /// belief 稀疏条目（本 tick 生产演进位——P2-2a 语义；P1-2 起随
     /// SealAck 上行=含 Seal 延迟相演进；全量读面由驱动器增量缓存承载）。
-    pub belief: std::sync::Arc<
-        Vec<(
-            super::LocalIdx,
-            super::world::BeliefParticipantSnapshot,
-        )>,
-    >,
+    pub belief: std::sync::Arc<Vec<(super::LocalIdx, super::world::BeliefParticipantSnapshot)>>,
     /// Q2 批 3：账户稀疏条目（SealAck 上行——Seal 落账后 undo 集口径；
     /// 替代驱动器 EchoAccountsSparse 往返；全量读面走 EchoAccounts）。
     pub accounts:

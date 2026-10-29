@@ -19,20 +19,34 @@ pub struct CivilDayEndFailure {
 impl CivilDayEndFailure {
     /// 仅真实 prepare 的局部来源且当前 authority 健康时调用；callback 只能返回 SessionError。
     pub(in crate::session) fn correction_prepare_rejected(error: SessionError) -> Self {
-        Self { error, recovery: CivilRecovery::CorrectionPrepareRejected }
+        Self {
+            error,
+            recovery: CivilRecovery::CorrectionPrepareRejected,
+        }
     }
 
-    pub fn error(&self) -> &SessionError { &self.error }
-    pub fn into_error(self) -> SessionError { self.error }
-    pub const fn recovery(&self) -> CivilRecovery { self.recovery }
+    pub fn error(&self) -> &SessionError {
+        &self.error
+    }
+    pub fn into_error(self) -> SessionError {
+        self.error
+    }
+    pub const fn recovery(&self) -> CivilRecovery {
+        self.recovery
+    }
 }
 
 impl From<SessionError> for CivilDayEndFailure {
     fn from(error: SessionError) -> Self {
-        Self { error, recovery: CivilRecovery::None }
+        Self {
+            error,
+            recovery: CivilRecovery::None,
+        }
     }
 }
 
 impl From<StepFatal> for CivilDayEndFailure {
-    fn from(error: StepFatal) -> Self { SessionError::Step(error).into() }
+    fn from(error: StepFatal) -> Self {
+        SessionError::Step(error).into()
+    }
 }

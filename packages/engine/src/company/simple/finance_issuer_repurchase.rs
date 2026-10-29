@@ -10,8 +10,10 @@ use super::*;
 impl SimpleFinanceState {
     pub fn issuer_repurchase_facts(
         &self,
-    ) -> Result<Vec<crate::company::issuer_repurchase::IssuerRepurchaseFinanceFact>, SimpleFinanceError>
-    {
+    ) -> Result<
+        Vec<crate::company::issuer_repurchase::IssuerRepurchaseFinanceFact>,
+        SimpleFinanceError,
+    > {
         Ok(self.issuer_repurchases.values().cloned().collect())
     }
 
@@ -73,7 +75,9 @@ impl SimpleFinanceState {
             ));
         }
         let mut candidate = self.clone();
-        candidate.issuer_repurchases.insert(event_id.clone(), fact.clone());
+        candidate
+            .issuer_repurchases
+            .insert(event_id.clone(), fact.clone());
         candidate.validate()?;
         *self = candidate;
         Ok(false)

@@ -32,7 +32,10 @@ fn lot(id: &str, qty: u64) -> ShareLot {
     }
 }
 
-fn snapshot(holdings: Vec<ShareHolding>, issued_shares: u64) -> crate::company::share_registry::RegistrationSnapshot {
+fn snapshot(
+    holdings: Vec<ShareHolding>,
+    issued_shares: u64,
+) -> crate::company::share_registry::RegistrationSnapshot {
     let mut registry = ShareRegistry::new(
         StockCode("600001".to_owned()),
         CompanyId(0),
@@ -367,9 +370,7 @@ fn payment_window_subscription_and_close_state_machine() {
     assert_eq!(book.status(), &RightsOfferingStatus::Closed);
     book.close_payment_window(date("2030-06-11")).unwrap();
     // 关窗后不再受理。
-    assert!(book
-        .record_subscription(record(1, 1, 1))
-        .is_err());
+    assert!(book.record_subscription(record(1, 1, 1)).is_err());
 }
 
 #[test]
@@ -408,9 +409,13 @@ fn seventy_percent_failure_is_determined_from_paid_shares_only() {
             .find(|entry| entry.holder == HolderId::Account(AccountId(account)))
             .unwrap()
             .rights_shares;
-        book.record_subscription(record(account, rights, rights)).unwrap();
+        book.record_subscription(record(account, rights, rights))
+            .unwrap();
     }
-    assert!(!book.determine_failure().unwrap(), "全额认购（5/5）必须成功");
+    assert!(
+        !book.determine_failure().unwrap(),
+        "全额认购（5/5）必须成功"
+    );
     // 认购不足：单户 5 股权利只缴 1 股（1×10 < 5×7）→ 失败。
     let record_snapshot = snapshot(
         vec![ShareHolding {
@@ -487,7 +492,8 @@ fn settle_records_success_and_rejects_incoherent_refunds() {
             .find(|entry| entry.holder == HolderId::Account(AccountId(account)))
             .unwrap()
             .rights_shares;
-        book.record_subscription(record(account, rights, rights)).unwrap();
+        book.record_subscription(record(account, rights, rights))
+            .unwrap();
     }
     book.close_payment_window(date("2030-06-11")).unwrap();
     let receipt = settlement_from_book(&book);
@@ -554,7 +560,8 @@ fn book_restored_from_serialized_state_replays_identical_facts() {
             .find(|entry| entry.holder == HolderId::Account(AccountId(account)))
             .unwrap()
             .rights_shares;
-        book.record_subscription(record(account, rights, rights)).unwrap();
+        book.record_subscription(record(account, rights, rights))
+            .unwrap();
     }
     book.close_payment_window(date("2030-06-11")).unwrap();
     let receipt = settlement_from_book(&book);

@@ -127,7 +127,10 @@ fn single_pool_actor_filled_leaves_do_not_initialize_global() {
     const CHILD: &str = "STOCK_SINGLE_POOL_ACTOR_CHILD_WORKERS";
     if let Some(workers) = std::env::var_os(CHILD) {
         let workers: usize = workers.to_str().unwrap().parse().unwrap();
-        let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
         let valid = runtime.block_on(async {
             // 批 9 A3（compute 注入退役）：observer 采样/池绑定断言面
             /// 随 A1/A2 消亡——本测试保留的验证=真实成交+多账户触及+
@@ -210,11 +213,22 @@ fn single_pool_actor_filled_leaves_do_not_initialize_global() {
     let mut failures = Vec::new();
     for workers in [1, 2] {
         let status = std::process::Command::new(std::env::current_exe().unwrap())
-            .args(["--exact", "single_pool_actor_filled_leaves_do_not_initialize_global", "--nocapture"])
-            .env(CHILD, workers.to_string()).status().unwrap();
-        if !status.success() { failures.push((workers, status)); }
+            .args([
+                "--exact",
+                "single_pool_actor_filled_leaves_do_not_initialize_global",
+                "--nocapture",
+            ])
+            .env(CHILD, workers.to_string())
+            .status()
+            .unwrap();
+        if !status.success() {
+            failures.push((workers, status));
+        }
     }
-    assert!(failures.is_empty(), "fresh Actor child 的真实 leaf/无 global 门禁失败：{failures:?}");
+    assert!(
+        failures.is_empty(),
+        "fresh Actor child 的真实 leaf/无 global 门禁失败：{failures:?}"
+    );
 }
 
 #[tokio::test]

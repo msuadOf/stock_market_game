@@ -147,14 +147,25 @@ pub(in crate::session) struct PublicBookProjection {
 }
 
 impl PhasePolicy {
-    pub(in crate::session) fn project_public_book(self, market: &crate::Market) -> PublicBookProjection {
+    pub(in crate::session) fn project_public_book(
+        self,
+        market: &crate::Market,
+    ) -> PublicBookProjection {
         let (bids, asks) = match self.phase {
             crate::TradingPhase::CallAuction => (Vec::new(), Vec::new()),
-            crate::TradingPhase::ClosingAuction => market.depth_before_sequence(market.auction_public_cutoff_sequence()),
-            crate::TradingPhase::PreOpen | crate::TradingPhase::Continuous => (market.bid_depth(), market.ask_depth()),
+            crate::TradingPhase::ClosingAuction => {
+                market.depth_before_sequence(market.auction_public_cutoff_sequence())
+            }
+            crate::TradingPhase::PreOpen | crate::TradingPhase::Continuous => {
+                (market.bid_depth(), market.ask_depth())
+            }
         };
-        PublicBookProjection { best_bid: bids.first().map(|(price, _)| *price),
-            best_ask: asks.first().map(|(price, _)| *price), bids, asks }
+        PublicBookProjection {
+            best_bid: bids.first().map(|(price, _)| *price),
+            best_ask: asks.first().map(|(price, _)| *price),
+            bids,
+            asks,
+        }
     }
 }
 

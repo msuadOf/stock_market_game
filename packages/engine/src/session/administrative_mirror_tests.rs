@@ -324,10 +324,15 @@ fn administrative_mirror_04_information_observation_preserves_session_only_retai
     let (day, _) = game.prepare_market_calendar_projection().unwrap();
     let setup = game.export_setup_for_runtime();
     let layout = crate::session::exchange_calendar_model::SessionTickLayout {
-        ticks_per_day: setup.ticks_per_day, auction_ticks: setup.auction_ticks, closing_auction_ticks: setup.closing_auction_ticks,
+        ticks_per_day: setup.ticks_per_day,
+        auction_ticks: setup.auction_ticks,
+        closing_auction_ticks: setup.closing_auction_ticks,
     };
-    let input = crate::session::calendar_clock_input(&day, layout, game.tick(), u64::from(game.day())).unwrap();
-    let clock = crate::runtime::InformationClockContext::fixture_static(day, layout, input, through);
+    let input =
+        crate::session::calendar_clock_input(&day, layout, game.tick(), u64::from(game.day()))
+            .unwrap();
+    let clock =
+        crate::runtime::InformationClockContext::fixture_static(day, layout, input, through);
     let facts = Arc::new(game.state.company_read_facts().unwrap());
     let payload = InformationPreparePayload {
         library: Arc::clone(&game.state.library),

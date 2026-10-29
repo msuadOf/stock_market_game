@@ -92,9 +92,9 @@ fn validate_account_validation_result_contract(
     let mut result_keys = BTreeSet::new();
     let mut sealed_indices = BTreeSet::new();
     for result in results {
-        let binding = candidates
-            .get(result.key())
-            .ok_or_else(|| invariant("AccountValidation 结果未引用 DecisionAndContinuation 候选"))?;
+        let binding = candidates.get(result.key()).ok_or_else(|| {
+            invariant("AccountValidation 结果未引用 DecisionAndContinuation 候选")
+        })?;
         if result.sealed_index() != binding.sealed_index {
             return Err(invariant(
                 "AccountValidation 结果的 sealed identity 与规范 DecisionAndContinuation 批次的 sealed identity 不一致",

@@ -10,10 +10,7 @@ fn symbolic_buy_reserves_its_account_validation_bound_and_keeps_the_requested_pr
     let code = crate::StockId(0);
     let game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
-    let plan = plan_tick(PhaseInput {
-        session: &game,
-    })
-    .unwrap();
+    let plan = plan_tick(PhaseInput { session: &game }).unwrap();
     let batch = IntentCandidateBatch::new(vec![IntentCandidate::new(
         IntentCandidateKey::player(0),
         crate::AccountId(0),
@@ -72,10 +69,7 @@ fn highest_buy_needs_the_full_daily_limit_reservation_including_fees() {
         game.fixture_account_mut(&crate::AccountId(0))
             .unwrap()
             .fixture_set_cash(cash);
-        let plan = plan_tick(PhaseInput {
-            session: &game,
-        })
-        .unwrap();
+        let plan = plan_tick(PhaseInput { session: &game }).unwrap();
         let batch = IntentCandidateBatch::new(vec![IntentCandidate::new(
             IntentCandidateKey::player(0),
             crate::AccountId(0),
@@ -122,10 +116,7 @@ fn account_validation_handoff_preserves_input_order_and_uses_sealed_budget_witho
         .unwrap()
         .fixture_set_strategy(None);
     let before = game.business_state_hash().unwrap();
-    let plan = plan_tick(PhaseInput {
-        session: &game,
-    })
-    .unwrap();
+    let plan = plan_tick(PhaseInput { session: &game }).unwrap();
     let batch = IntentCandidateBatch::new(vec![
         IntentCandidate::new(
             IntentCandidateKey::plan_chain(0),
@@ -198,10 +189,7 @@ fn account_validation_handoff_rejects_order_id_overflow_without_exposing_drafts(
     let code = crate::StockId(0);
     let game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
-    let plan = plan_tick(PhaseInput {
-        session: &game,
-    })
-    .unwrap();
+    let plan = plan_tick(PhaseInput { session: &game }).unwrap();
     let batch = IntentCandidateBatch::new(vec![IntentCandidate::new(
         IntentCandidateKey::player(0),
         account,
@@ -232,10 +220,7 @@ fn account_validation_handoff_passes_cancel_without_allocating_an_order_id() {
     let code = crate::StockId(0);
     let game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
-    let plan = plan_tick(PhaseInput {
-        session: &game,
-    })
-    .unwrap();
+    let plan = plan_tick(PhaseInput { session: &game }).unwrap();
     let batch = IntentCandidateBatch::new(vec![IntentCandidate::new(
         IntentCandidateKey::player(0),
         account,
@@ -268,10 +253,7 @@ fn account_validation_handoff_passes_unknown_stock_cancel_to_the_stock_state_mac
     let unknown = crate::StockId(9);
     let game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
-    let plan = plan_tick(PhaseInput {
-        session: &game,
-    })
-    .unwrap();
+    let plan = plan_tick(PhaseInput { session: &game }).unwrap();
     let batch = IntentCandidateBatch::new(vec![IntentCandidate::new(
         IntentCandidateKey::player(0),
         account,
@@ -317,10 +299,7 @@ fn account_validation_sealed_indices_keep_rejected_slots_while_order_ids_only_co
     let unknown = crate::StockId(9);
     let game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
-    let plan = plan_tick(PhaseInput {
-        session: &game,
-    })
-    .unwrap();
+    let plan = plan_tick(PhaseInput { session: &game }).unwrap();
     let batch = IntentCandidateBatch::new(vec![
         IntentCandidate::new(
             IntentCandidateKey::player(4),
@@ -420,10 +399,7 @@ fn account_validation_contract_passes_cancel_and_materializes_limit_and_market_e
         .grant_position(code.clone(), 150, crate::Money::from_cents(150_000))
         .unwrap();
     let before = game.business_state_hash().unwrap();
-    let plan = plan_tick(PhaseInput {
-        session: &game,
-    })
-    .unwrap();
+    let plan = plan_tick(PhaseInput { session: &game }).unwrap();
     let batch = IntentCandidateBatch::new(vec![
         IntentCandidate::new(
             IntentCandidateKey::player(2),
@@ -554,10 +530,7 @@ fn account_validation_rejects_unknown_quantity_cash_and_t1_share_failures_with_t
         position.recovered_cents(),
     );
     holder.fixture_insert_position(main.clone(), locked);
-    let plan = plan_tick(PhaseInput {
-        session: &game,
-    })
-    .unwrap();
+    let plan = plan_tick(PhaseInput { session: &game }).unwrap();
     let candidates = vec![
         limit(0, account, unknown, crate::Side::Buy, 100),
         limit(1, account, main.clone(), crate::Side::Buy, 99),
@@ -677,10 +650,7 @@ fn account_validation_cash_budget_contends_across_stocks_in_account_receipt_orde
     game.fixture_account_mut(&account)
         .unwrap()
         .fixture_set_cash(reservation);
-    let plan = plan_tick(PhaseInput {
-        session: &game,
-    })
-    .unwrap();
+    let plan = plan_tick(PhaseInput { session: &game }).unwrap();
     let batch = IntentCandidateBatch::new(vec![
         limit(0, account, first.clone(), crate::Side::Buy, 100),
         limit(1, account, second.clone(), crate::Side::Buy, 100),
@@ -725,10 +695,7 @@ fn account_validation_near_order_id_overflow_is_fatal_before_any_output_is_obser
     let game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
     let before = game.business_state_hash().unwrap();
-    let plan = plan_tick(PhaseInput {
-        session: &game,
-    })
-    .unwrap();
+    let plan = plan_tick(PhaseInput { session: &game }).unwrap();
     let ledger = plan.envelope_ledger().unwrap();
     let batch = IntentCandidateBatch::new(vec![
         limit(0, account, code.clone(), crate::Side::Buy, 100),
@@ -774,10 +741,7 @@ fn account_validation_quantity_caps_accept_exact_limits_and_reject_the_next_boar
     game.fixture_account_mut(&account)
         .unwrap()
         .fixture_set_cash(crate::Money::from_cents(10_000_000_000));
-    let plan = plan_tick(PhaseInput {
-        session: &game,
-    })
-    .unwrap();
+    let plan = plan_tick(PhaseInput { session: &game }).unwrap();
     let candidates = vec![
         limit(0, account, main.clone(), crate::Side::Buy, 1_000_000),
         limit(1, account, main.clone(), crate::Side::Buy, 1_000_100),
@@ -909,10 +873,7 @@ fn account_validation_sell_candidates_compete_for_one_private_same_batch_share_b
         .unwrap()
         .grant_position(code.clone(), 150, crate::Money::from_cents(150_000))
         .unwrap();
-    let plan = plan_tick(PhaseInput {
-        session: &game,
-    })
-    .unwrap();
+    let plan = plan_tick(PhaseInput { session: &game }).unwrap();
     let output = CandidateValidationInput::new_with_context(
         IntentCandidateBatch::new(vec![
             limit(0, account, code.clone(), crate::Side::Sell, 100),

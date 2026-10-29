@@ -3,7 +3,7 @@ use crate::company::api::PeriodAmounts;
 use crate::{
     accounting::AccountingAmount,
     calendar::CivilDate,
-    company::{CompanySystemError, rng::OperatingRng},
+    company::{rng::OperatingRng, CompanySystemError},
 };
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]

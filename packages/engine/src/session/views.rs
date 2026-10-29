@@ -28,121 +28,124 @@ pub(in crate::session) fn build_market_view_on(view: &SessionReadView) -> Market
         })
         .into_par_iter()
         .map(|(code, m)| {
-                let hist: Vec<Money> = view
-                    .price_history
-                    .get(code)
-                    .map(|d| d.iter().copied().collect())
-                    .expect("every market must have a price-history queue");
-                let completed_minute_prices: Vec<Money> = view
-                    .market_minute_closes
-                    .get(code)
-                    .expect("every market must have canonical minute history")
-                    .iter()
-                    .map(|sample| sample.close)
-                    .collect();
-                let historical = view
-                    .candle_book
-                    .histories()
-                    .get(code)
-                    .expect("every market must have authoritative daily candles");
-                let sample_count = historical.len().min(20);
-                let average_daily_volume = if sample_count == 0 {
-                    0.0
-                } else {
-                    historical
-                        .iter_rev()
-                        .take(sample_count)
-                        .map(|candle| candle.volume as f64)
-                        .sum::<f64>()
-                        / sample_count as f64
-                };
-                let current_volume = view
-                    .candle_book
-                    .active()
-                    .get(code)
-                    .map_or(0, |candle| candle.volume) as f64;
-                let elapsed_fraction = intraday_expected_volume_fraction(
-                    view.tick % view.setup.ticks_per_day + 1,
-                    view.setup.ticks_per_day,
-                    view.setup.auction_ticks,
-                );
-                let expected_volume = average_daily_volume * elapsed_fraction;
-                let relative_volume = if expected_volume > 0.0 {
-                    current_volume / expected_volume
-                } else {
-                    0.0
-                };
-                // D5 attention：runtime 形态（desk 镜像在位）——公开面/
-                /// 最新价自镜像（相位+截点门禁；session market 恒空簿）。
-                let (public, mirror_last) = match view.desk_book_mirror.get(code) {
-                    Some(mirror) => (
-                        super::snapshot::project_mirror_public_book(view.phase(), mirror),
-                        Some(mirror.last_price),
-                    ),
-                    None => {
-                        let m = m.expect("旧管线形态必持市场");
-                        (public_policy.project_public_book(m), None)
-                    }
-                };
-                let bid_volume: u64 = public
-                    .bids
-                    .iter()
-                    .take(5)
-                    .map(|(_, quantity)| *quantity)
-                    .sum();
-                let ask_volume: u64 = public
-                    .asks
-                    .iter()
-                    .take(5)
-                    .map(|(_, quantity)| *quantity)
-                    .sum();
-                let depth_total = bid_volume.saturating_add(ask_volume);
-                let order_book_imbalance = if depth_total == 0 {
-                    0.0
-                } else {
-                    (bid_volume as f64 - ask_volume as f64) / depth_total as f64
-                };
-                (
-                    code.clone(),
-                    StockView {
-                        best_bid: public.best_bid,
-                        best_ask: public.best_ask,
-                        last_price: mirror_last.unwrap_or_else(|| {
-                            m.expect("旧管线形态必持市场").last_price()
-                        }),
-                        daily_upper_limit: m.map_or_else(
-                            || bound_fallback(mirror_last),
-                            |mm| mm.up_stop().unwrap_or_else(|error| {
+            let hist: Vec<Money> = view
+                .price_history
+                .get(code)
+                .map(|d| d.iter().copied().collect())
+                .expect("every market must have a price-history queue");
+            let completed_minute_prices: Vec<Money> = view
+                .market_minute_closes
+                .get(code)
+                .expect("every market must have canonical minute history")
+                .iter()
+                .map(|sample| sample.close)
+                .collect();
+            let historical = view
+                .candle_book
+                .histories()
+                .get(code)
+                .expect("every market must have authoritative daily candles");
+            let sample_count = historical.len().min(20);
+            let average_daily_volume = if sample_count == 0 {
+                0.0
+            } else {
+                historical
+                    .iter_rev()
+                    .take(sample_count)
+                    .map(|candle| candle.volume as f64)
+                    .sum::<f64>()
+                    / sample_count as f64
+            };
+            let current_volume = view
+                .candle_book
+                .active()
+                .get(code)
+                .map_or(0, |candle| candle.volume) as f64;
+            let elapsed_fraction = intraday_expected_volume_fraction(
+                view.tick % view.setup.ticks_per_day + 1,
+                view.setup.ticks_per_day,
+                view.setup.auction_ticks,
+            );
+            let expected_volume = average_daily_volume * elapsed_fraction;
+            let relative_volume = if expected_volume > 0.0 {
+                current_volume / expected_volume
+            } else {
+                0.0
+            };
+            // D5 attention：runtime 形态（desk 镜像在位）——公开面/
+            /// 最新价自镜像（相位+截点门禁；session market 恒空簿）。
+            let (public, mirror_last) = match view.desk_book_mirror.get(code) {
+                Some(mirror) => (
+                    super::snapshot::project_mirror_public_book(view.phase(), mirror),
+                    Some(mirror.last_price),
+                ),
+                None => {
+                    let m = m.expect("旧管线形态必持市场");
+                    (public_policy.project_public_book(m), None)
+                }
+            };
+            let bid_volume: u64 = public
+                .bids
+                .iter()
+                .take(5)
+                .map(|(_, quantity)| *quantity)
+                .sum();
+            let ask_volume: u64 = public
+                .asks
+                .iter()
+                .take(5)
+                .map(|(_, quantity)| *quantity)
+                .sum();
+            let depth_total = bid_volume.saturating_add(ask_volume);
+            let order_book_imbalance = if depth_total == 0 {
+                0.0
+            } else {
+                (bid_volume as f64 - ask_volume as f64) / depth_total as f64
+            };
+            (
+                code.clone(),
+                StockView {
+                    best_bid: public.best_bid,
+                    best_ask: public.best_ask,
+                    last_price: mirror_last
+                        .unwrap_or_else(|| m.expect("旧管线形态必持市场").last_price()),
+                    daily_upper_limit: m.map_or_else(
+                        || bound_fallback(mirror_last),
+                        |mm| {
+                            mm.up_stop().unwrap_or_else(|error| {
                                 panic!(
                                     "daily upper limit observation failed for {}: {error}",
                                     code.0
                                 )
-                            }),
-                        ),
-                        max_buy_price: m.map_or_else(
-                            || bound_fallback(mirror_last),
-                            |mm| mm
-                                .limit_order_price_bound(Side::Buy, apply_price_cage)
+                            })
+                        },
+                    ),
+                    max_buy_price: m.map_or_else(
+                        || bound_fallback(mirror_last),
+                        |mm| {
+                            mm.limit_order_price_bound(Side::Buy, apply_price_cage)
                                 .unwrap_or_else(|error| {
                                     panic!("buy limit observation failed for {}: {error}", code.0)
-                                }),
-                        ),
-                        min_sell_price: m.map_or_else(
-                            || bound_fallback_floor(mirror_last),
-                            |mm| mm
-                                .limit_order_price_bound(Side::Sell, apply_price_cage)
+                                })
+                        },
+                    ),
+                    min_sell_price: m.map_or_else(
+                        || bound_fallback_floor(mirror_last),
+                        |mm| {
+                            mm.limit_order_price_bound(Side::Sell, apply_price_cage)
                                 .unwrap_or_else(|error| {
                                     panic!("sell limit observation failed for {}: {error}", code.0)
-                                }),
-                        ),
-                        recent_prices: hist,
-                        recent_market_minute_prices: completed_minute_prices,
-                        relative_volume,
-                        order_book_imbalance,
-                    },
-                )
-            })
-            .collect()
+                                })
+                        },
+                    ),
+                    recent_prices: hist,
+                    recent_market_minute_prices: completed_minute_prices,
+                    relative_volume,
+                    order_book_imbalance,
+                },
+            )
+        })
+        .collect()
     });
     MarketView {
         stocks,
@@ -317,13 +320,12 @@ mod tests {
         )
         .unwrap();
         let observe = |workers| {
-            crate::compute::ComputeContext::from_workers(workers)
-                .install(|| {
-                    (
-                        serde_json::to_value(session.build_market_view()).unwrap(),
-                        session.market_price_path_observations().unwrap(),
-                    )
-                })
+            crate::compute::ComputeContext::from_workers(workers).install(|| {
+                (
+                    serde_json::to_value(session.build_market_view()).unwrap(),
+                    session.market_price_path_observations().unwrap(),
+                )
+            })
         };
 
         assert_eq!(observe(1), observe(4));
@@ -372,7 +374,6 @@ mod tests {
         }
     }
 }
-
 
 /// D5 attention：runtime 镜像形态的价格带兜底（market 缺位时的观察面
 /// 近似——测试与决策的笼子断言面不涉及；desk 广播带精确值待后续投影）。

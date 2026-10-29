@@ -67,9 +67,7 @@ pub(in crate::session::pipeline) fn prepare_on(
 /// 快速路径资格（读视图）。P0 重叠恢复（throughput-attribution·tree31j 单
 /// 变量 +15.9% 在终态树的等价形态）：与决策生产**并行**判定——读集
 /// （phase/ledger/生命周期克隆）与决策写集（npc_split 写字段）不相交。
-fn fast_path_eligible_on(
-    view: &super::npc_split::SessionReadView<'_>,
-) -> bool {
+fn fast_path_eligible_on(view: &super::npc_split::SessionReadView<'_>) -> bool {
     view.phase() == crate::TradingPhase::Continuous
         && view.envelope_ledger.iter().next().is_some()
         && !view
@@ -258,10 +256,7 @@ mod tests {
         game.state.npc_order_lifecycles[0].expires_market_minute = now;
         assert!(!can_prepare(&game));
         let before = game.business_state_hash().unwrap();
-        let plan = super::super::plan_tick(super::super::PhaseInput {
-            session: &game,
-        })
-        .unwrap();
+        let plan = super::super::plan_tick(super::super::PhaseInput { session: &game }).unwrap();
         assert_eq!(plan.expiry().releases.len(), 1);
         assert!(plan.precomputed_stock_inputs.is_none());
         assert_eq!(game.business_state_hash().unwrap(), before);
@@ -311,11 +306,9 @@ mod tests {
                 Ok(()) => DecisionResourceSnapshot::seal(&game).unwrap_err(),
             };
             let before = game.business_state_hash().unwrap();
-            let error = super::super::plan_tick(super::super::PhaseInput {
-                session: &game,
-            })
-            .err()
-            .expect("原首错必须从对应阶段返回");
+            let error = super::super::plan_tick(super::super::PhaseInput { session: &game })
+                .err()
+                .expect("原首错必须从对应阶段返回");
             assert_eq!(error, expected);
             assert_eq!(game.business_state_hash().unwrap(), before);
         }
@@ -350,10 +343,8 @@ mod tests {
         game.state.markets.insert(code, wrong_market);
         game.state.tick = 1;
         let before = game.business_state_hash().unwrap();
-        let mut plan = super::super::plan_tick(super::super::PhaseInput {
-            session: &game,
-        })
-        .unwrap();
+        let mut plan =
+            super::super::plan_tick(super::super::PhaseInput { session: &game }).unwrap();
         assert!(plan.precomputed_stock_inputs.as_ref().unwrap().is_err());
         let input_error = plan
             .precomputed_stock_inputs
@@ -371,19 +362,22 @@ mod tests {
         // 下方两段（空决策产出下传播）承载。
         assert_eq!(game.business_state_hash().unwrap(), before);
 
-        crate::session::pipeline::staged_decision::stage(crate::session::pipeline::NpcDecisionHandover::new(game.state.tick, Vec::new(), Vec::new(), Vec::new()));
+        crate::session::pipeline::staged_decision::stage(
+            crate::session::pipeline::NpcDecisionHandover::new(
+                game.state.tick,
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            ),
+        );
         let before = game.business_state_hash().unwrap();
-        let mut plan = super::super::plan_tick(super::super::PhaseInput {
-            session: &game,
-        })
-        .unwrap();
+        let mut plan =
+            super::super::plan_tick(super::super::PhaseInput { session: &game }).unwrap();
         let error =
-            super::super::market_tick_transaction::apply_tick_shadow_market_transaction(
-                &mut plan,
-            )
-            .err()
-            .expect("入口有效时仍须传播已准备的 stock input 错误")
-            .into_fatal();
+            super::super::market_tick_transaction::apply_tick_shadow_market_transaction(&mut plan)
+                .err()
+                .expect("入口有效时仍须传播已准备的 stock input 错误")
+                .into_fatal();
         assert_eq!(error, input_error);
         assert_eq!(game.business_state_hash().unwrap(), before);
 
@@ -398,18 +392,14 @@ mod tests {
                 .err()
                 .expect("fixture 必须同时触发 context 与 stock-input 错误");
         let before = game.business_state_hash().unwrap();
-        let mut plan = super::super::plan_tick(super::super::PhaseInput {
-            session: &game,
-        })
-        .unwrap();
+        let mut plan =
+            super::super::plan_tick(super::super::PhaseInput { session: &game }).unwrap();
         assert!(plan.precomputed_stock_inputs.as_ref().unwrap().is_err());
         let error =
-            super::super::market_tick_transaction::apply_tick_shadow_market_transaction(
-                &mut plan,
-            )
-            .err()
-            .expect("context 错误仍先于预计算 stock input 错误")
-            .into_fatal();
+            super::super::market_tick_transaction::apply_tick_shadow_market_transaction(&mut plan)
+                .err()
+                .expect("context 错误仍先于预计算 stock input 错误")
+                .into_fatal();
         assert_eq!(error, context_error);
         assert_eq!(game.business_state_hash().unwrap(), before);
     }
@@ -466,12 +456,17 @@ mod tests {
         let run = |keep_precomputed: bool| -> String {
             let mut game = fixture();
             game.state.tick = 1;
-            crate::session::pipeline::staged_decision::stage(crate::session::pipeline::NpcDecisionHandover::new(game.state.tick, Vec::new(), Vec::new(), Vec::new()));
+            crate::session::pipeline::staged_decision::stage(
+                crate::session::pipeline::NpcDecisionHandover::new(
+                    game.state.tick,
+                    Vec::new(),
+                    Vec::new(),
+                    Vec::new(),
+                ),
+            );
             let before = game.business_state_hash().unwrap();
-            let mut plan = super::super::plan_tick(super::super::PhaseInput {
-                session: &game,
-            })
-            .unwrap();
+            let mut plan =
+                super::super::plan_tick(super::super::PhaseInput { session: &game }).unwrap();
             if !keep_precomputed {
                 plan.precomputed_stock_shards = None;
                 plan.precomputed_stock_inputs = None;

@@ -104,10 +104,14 @@ fn completion_withdraws_exact_remainder_and_cancellation_bounded_by_fills() {
     book.record_fill(fill("2030-06-03", 1_000, 1_100_000, 110), &[])
         .unwrap();
     // 完成日前置拒绝。
-    assert!(book.complete(date("2030-06-10"), Money::from_cents(1)).is_err());
+    assert!(book
+        .complete(date("2030-06-10"), Money::from_cents(1))
+        .is_err());
     let remainder = Money::from_cents(3_000_000 - 1_100_110);
     // 回收额与额度—支出不一致拒绝。
-    assert!(book.complete(date("2030-06-11"), Money::from_cents(1)).is_err());
+    assert!(book
+        .complete(date("2030-06-11"), Money::from_cents(1))
+        .is_err());
     book.complete(date("2030-06-11"), remainder).unwrap();
     book.complete(date("2030-06-11"), remainder).unwrap();
     // 注销超过累计成交拒绝。

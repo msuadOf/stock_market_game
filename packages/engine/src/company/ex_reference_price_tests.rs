@@ -293,9 +293,7 @@ fn stock_distribution_ex_rights_rejects_cross_market_formula_and_invalid_inputs(
         stock_distribution_ex_rights_reference_price(
             &calendar,
             CalendarExchange::Sse,
-            StockDistributionExRightsFormula::ShanghaiCirculatingShareChange {
-                ratio_micros: 0
-            },
+            StockDistributionExRightsFormula::ShanghaiCirculatingShareChange { ratio_micros: 0 },
             date("2030-06-06"),
             Money::from_cents(1_000),
             Money::ZERO,

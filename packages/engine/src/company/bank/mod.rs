@@ -20,6 +20,7 @@
 //! [`Books::post_batch`]: crate::accounting::Books::post_batch
 
 mod chart;
+mod claim_sources;
 mod config;
 mod deposits;
 mod ecl;
@@ -29,24 +30,23 @@ mod income_tax;
 mod interest;
 mod lending;
 mod loans;
-mod claim_sources;
 mod writeoff;
 
 #[cfg(test)]
 mod behavior_tests;
 #[cfg(test)]
-mod income_tax_tests;
-#[cfg(test)]
 mod claim_source_tests;
+#[cfg(test)]
+mod income_tax_tests;
 
 pub use chart::bank_account_chart;
+pub use claim_sources::{BankLoanClaimKind, BankLoanClaimSource};
 pub use config::BankConfig;
 pub use deposits::{DepositAccrualItem, DepositState};
 pub use ecl::{EclPolicy, EclScenario, EclStage, StageTransferRecord};
 pub use error::BankError;
 pub use interest::LoanAccrualItem;
 pub use loans::BankLoanState;
-pub use claim_sources::{BankLoanClaimKind, BankLoanClaimSource};
 
 use crate::accounting::reports::bank::{bank_presentation_lines, BankPresentationLines};
 use crate::accounting::{AccountingAmount, AccountingError, Books, JournalLine, LedgerAccountId};

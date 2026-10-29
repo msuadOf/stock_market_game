@@ -136,7 +136,10 @@ impl OperatingScheduler {
 
     /// 取消一项仍待办的 due；取消后来源 key 可再次提交，但 id 游标不回退。
     pub fn cancel_due(&mut self, id: ScheduledDueId) -> Result<ScheduledDue, SchedulerError> {
-        let position = self.pending.iter().position(|due| due.id == id)
+        let position = self
+            .pending
+            .iter()
+            .position(|due| due.id == id)
             .ok_or(SchedulerError::DueNotPending { id })?;
         Ok(self.pending.remove(position))
     }

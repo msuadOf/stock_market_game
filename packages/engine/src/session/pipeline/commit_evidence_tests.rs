@@ -1,6 +1,4 @@
-use super::market_tick_transaction::{
-    apply_tick_shadow_market_transaction, prepare_market_tick,
-};
+use super::market_tick_transaction::{apply_tick_shadow_market_transaction, prepare_market_tick};
 use super::*;
 use crate::{
     Account, AccountId, AccountKind, GameSession, Intent, Money, Order, OrderId, Side, StockId,
@@ -138,7 +136,9 @@ fn prepared_commit_exposes_the_applied_quote_expiry_receipt_without_reconstructi
 #[test]
 fn prepared_commit_rejects_missing_receipt_values_without_touching_authority() {
     let (mut authority, _) = continuous_trade_session();
-    let mut plan = plan_tick(PhaseInput { session: &authority })
+    let mut plan = plan_tick(PhaseInput {
+        session: &authority,
+    })
     .unwrap();
     apply_tick_shadow_market_transaction(&mut plan).unwrap();
     assert!(!plan.applied_receipts.is_empty());
@@ -163,7 +163,9 @@ fn prepared_commit_rejects_missing_receipt_values_without_touching_authority() {
 #[test]
 fn ordinary_commit_rejects_receipt_journal_missing_applied_values() {
     let (mut authority, _) = continuous_trade_session();
-    let mut plan = plan_tick(PhaseInput { session: &authority })
+    let mut plan = plan_tick(PhaseInput {
+        session: &authority,
+    })
     .unwrap();
     apply_tick_shadow_market_transaction(&mut plan).unwrap();
     plan.applied_receipts.clear();
@@ -184,7 +186,9 @@ fn ordinary_commit_rejects_receipt_journal_missing_applied_values() {
 #[test]
 fn prepared_commit_rejects_tampered_receipt_values_without_touching_authority() {
     let (mut authority, _) = continuous_trade_session();
-    let mut plan = plan_tick(PhaseInput { session: &authority })
+    let mut plan = plan_tick(PhaseInput {
+        session: &authority,
+    })
     .unwrap();
     apply_tick_shadow_market_transaction(&mut plan).unwrap();
     let receipt = plan.applied_receipts.first_mut().unwrap();
@@ -213,7 +217,14 @@ fn prepared_commit_reports_per_stock_finalizer_executions_from_the_real_tail() {
     let mut authority = GameSession::new(setup, 73).unwrap();
     authority.state.tick = 99;
     authority.fixture_sync_market_modes_for_test();
-    crate::session::pipeline::staged_decision::stage(crate::session::pipeline::NpcDecisionHandover::new(authority.state.tick, Vec::new(), Vec::new(), Vec::new()));
+    crate::session::pipeline::staged_decision::stage(
+        crate::session::pipeline::NpcDecisionHandover::new(
+            authority.state.tick,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        ),
+    );
     assert_eq!(authority.phase(), TradingPhase::ClosingAuction);
 
     let prepared = prepare_market_tick(&mut authority).unwrap();

@@ -1,7 +1,7 @@
 #[path = "disclosure_correction_proof.rs"]
 mod disclosure_proof;
-pub(crate) use disclosure_proof::{ConfirmedDisclosureCorrections, DisclosureCorrectionProofError};
 pub(in crate::company) use disclosure_proof::DisclosureCorrectionOwnerResult;
+pub(crate) use disclosure_proof::{ConfirmedDisclosureCorrections, DisclosureCorrectionProofError};
 
 /// 私有更正候选保留实际 owner 与 proof 的 typed 错误及 source 链。
 #[derive(Debug, thiserror::Error)]
@@ -11,7 +11,6 @@ pub(crate) enum DisclosureCorrectionPrepareError {
     #[error("公司更正 proof 准备失败：{0}")]
     Proof(#[from] DisclosureCorrectionProofError),
 }
-
 
 use crate::accounting::closing::{ClosingEngine, ClosingError, CorrectionRequest, ReportHandle};
 use crate::accounting::consolidation::MemberId;
@@ -51,7 +50,10 @@ pub enum CompanyCorrectionError {
         reason: String,
         cause: Box<InformationError>,
     },
-    InvalidInput { reason: String, detail: String },
+    InvalidInput {
+        reason: String,
+        detail: String,
+    },
 }
 
 impl std::fmt::Display for CompanyCorrectionError {

@@ -99,9 +99,7 @@ pub struct SavedReceiptTransition {
 
 /// P2-4：save 面派生临时 ledger（快照→envelopes→同构重建——与原每拍
 /// 全量重建同一构造口径；restore 链的 ledger 字段语义不变）。
-fn build_save_ledger(
-    session: &GameSession,
-) -> Result<pipeline::EnvelopeLedger, StepFatal> {
+fn build_save_ledger(session: &GameSession) -> Result<pipeline::EnvelopeLedger, StepFatal> {
     let envelopes = session.runtime_derive_envelopes()?;
     pipeline::EnvelopeLedger::new(session.state.next_receipt_base, envelopes)
         .map_err(|fatal| invariant(format!("派生信封账本构建失败：{fatal:?}")))
@@ -570,9 +568,7 @@ impl SavedRuntimeState {
                     key.side,
                     saved.filled_value,
                 )
-                .map_err(|_| {
-                    SessionError::InvalidSave(ValidationFault::new(2219, vec![0]))
-                })?;
+                .map_err(|_| SessionError::InvalidSave(ValidationFault::new(2219, vec![0])))?;
                 let audit = pipeline::EnvelopeAudit {
                     limit: saved.limit,
                     remaining_qty: saved.remaining_qty,
@@ -585,8 +581,7 @@ impl SavedRuntimeState {
                     },
                     charged: saved.charged.to_runtime(),
                 };
-                let envelope =
-                    pipeline::Envelope::tick_start_existing(key, cash, shares, audit);
+                let envelope = pipeline::Envelope::tick_start_existing(key, cash, shares, audit);
                 envelope
                     .validate()
                     .map_err(|_| SessionError::InvalidSave(ValidationFault::new(2222, vec![0])))?;
@@ -926,9 +921,7 @@ impl CumulativeFeeAudit {
                 .commission
                 .cents()
                 .saturating_sub(commission_min.cents())
-                .saturating_add(
-                    n_max_i64.saturating_mul(commission_min.cents().max(1)),
-                )
+                .saturating_add(n_max_i64.saturating_mul(commission_min.cents().max(1)))
                 .max(nominal.commission.cents());
             return Ok(charged.stamp_tax == Money::ZERO
                 && charged.commission >= nominal.commission

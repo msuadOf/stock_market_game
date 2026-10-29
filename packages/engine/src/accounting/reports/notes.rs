@@ -129,7 +129,12 @@ impl ReportClassification {
             let summary = super::simple_summary::assignments()
                 .into_iter()
                 .filter(|item| {
-                    member.books.ledger().chart().get(&LedgerAccountId(item.code.into())).is_some()
+                    member
+                        .books
+                        .ledger()
+                        .chart()
+                        .get(&LedgerAccountId(item.code.into()))
+                        .is_some()
                 })
                 .collect();
             source = merge_into(source, summary)?;

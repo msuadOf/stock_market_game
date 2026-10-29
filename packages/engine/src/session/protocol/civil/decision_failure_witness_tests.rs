@@ -97,7 +97,13 @@ fn attention_snap(session: &GameSession) -> Vec<(AccountId, u64, u64)> {
         .state
         .npc_attention
         .iter()
-        .map(|(account, state)| (*account, state.next_attention_candidate_tick, state.rng_state))
+        .map(|(account, state)| {
+            (
+                *account,
+                state.next_attention_candidate_tick,
+                state.rng_state,
+            )
+        })
         .collect()
 }
 
@@ -128,7 +134,9 @@ fn failure_before_any_receive_allots_no_receipts_and_keeps_external_inputs() {
     let authority_before = authority_cursors(session.game());
     let shared_before = shared_cursors(session.game_mut());
 
-    let error = session.step_frame_pipeline_contract().expect_err("MissingAttention 必须使整个 tick 失败");
+    let error = session
+        .step_frame_pipeline_contract()
+        .expect_err("MissingAttention 必须使整个 tick 失败");
 
     assert!(
         format!("{error:?}").contains("缺少 attention state"),
@@ -160,7 +168,11 @@ fn failure_before_any_receive_allots_no_receipts_and_keeps_external_inputs() {
     // 外部输入保留：新 tick shadow 的 freeze 快照仍能截到该玩家请求。
     let mut probe = session.game().clone_for_tick_shadow().unwrap();
     probe.freeze_shared_ingress().unwrap();
-    assert_eq!(probe.state.pending_player.len(), 1, "失败不丢失外部玩家输入");
+    assert_eq!(
+        probe.state.pending_player.len(),
+        1,
+        "失败不丢失外部玩家输入"
+    );
     // 修复后重试（协议层失败不 poison——既有错误契约允许同会话修复后重试）：
     // 玩家请求被执行（接收事实唯一，恰一次消费）。
     session
@@ -168,7 +180,9 @@ fn failure_before_any_receive_allots_no_receipts_and_keeps_external_inputs() {
         .state
         .npc_attention
         .insert(AccountId(1), removed_attention);
-    let frame = session.step_frame_pipeline_contract().expect("修复后重试必须成功");
+    let frame = session
+        .step_frame_pipeline_contract()
+        .expect("修复后重试必须成功");
     assert!(
         frame
             .events()
@@ -213,9 +227,11 @@ fn partial_receive_failure_leaves_permanent_gap_and_discards_private_payload() {
     let before = session.game().business_state_hash().unwrap();
     let shared_before = shared_cursors(session.game_mut());
     let _ = shared_before; // （玩家 enqueue 已发生的外部事实；失败 attempt 的
-    // gap 由下方 shared-after-failure vs authority 之差见证）
+                           // gap 由下方 shared-after-failure vs authority 之差见证）
 
-    let error = session.step_frame_pipeline_contract().expect_err("账户 2 概率非法必须使整个 tick 失败");
+    let error = session
+        .step_frame_pipeline_contract()
+        .expect_err("账户 2 概率非法必须使整个 tick 失败");
 
     assert!(
         format!("{error:?}").contains("注意力概率"),
@@ -246,7 +262,11 @@ fn partial_receive_failure_leaves_permanent_gap_and_discards_private_payload() {
     // 外部输入保留。
     let mut probe = session.game().clone_for_tick_shadow().unwrap();
     probe.freeze_shared_ingress().unwrap();
-    assert_eq!(probe.state.pending_player.len(), 1, "外部玩家输入不因失败丢失");
+    assert_eq!(
+        probe.state.pending_player.len(),
+        1,
+        "外部玩家输入不因失败丢失"
+    );
     // 修复重试（协议层失败不 poison）：旧 payload 不复活——账户 1 重算批按
     // **新** ordinal 恰一次执行，游标在 gap 之上继续单调前进（不复用、不回退）。
     session
@@ -261,17 +281,13 @@ fn partial_receive_failure_leaves_permanent_gap_and_discards_private_payload() {
     // payload 复活/重算批丢失都会打破）、全帧无重复 id（恰一次执行）。
     let mut accepted_ids: Vec<crate::OrderId> = Vec::new();
     for _ in 0..3 {
-        let frame = session.step_frame_pipeline_contract().expect("修复后重试必须成功");
-        accepted_ids.extend(
-            frame
-                .events()
-                .filter_map(|event| match event {
-                    Event::OrderAccepted { account, id, .. } if *account == AccountId(1) => {
-                        Some(*id)
-                    }
-                    _ => None,
-                }),
-        );
+        let frame = session
+            .step_frame_pipeline_contract()
+            .expect("修复后重试必须成功");
+        accepted_ids.extend(frame.events().filter_map(|event| match event {
+            Event::OrderAccepted { account, id, .. } if *account == AccountId(1) => Some(*id),
+            _ => None,
+        }));
         if !accepted_ids.is_empty() {
             break;
         }
@@ -336,18 +352,33 @@ fn publication_failure_discards_payload_keeps_receipts_and_retries_once() {
         .state
         .npc_attention
         .iter()
-        .map(|(account, state)| (*account, state.next_attention_candidate_tick, state.rng_state))
+        .map(|(account, state)| {
+            (
+                *account,
+                state.next_attention_candidate_tick,
+                state.rng_state,
+            )
+        })
         .collect::<Vec<_>>();
     let shared_before = session.game_mut().shared_ingress().receipts_probe();
     session.malformed_frame = true;
-    assert!(session.step_frame_pipeline_contract().is_err(), "malformed frame 必须使 publication 失败");
+    assert!(
+        session.step_frame_pipeline_contract().is_err(),
+        "malformed frame 必须使 publication 失败"
+    );
     // 权威注意力/RNG 未被消耗（个人 patch 随 candidate 整体丢弃）。
     let attention_after_failure = session
         .game()
         .state
         .npc_attention
         .iter()
-        .map(|(account, state)| (*account, state.next_attention_candidate_tick, state.rng_state))
+        .map(|(account, state)| {
+            (
+                *account,
+                state.next_attention_candidate_tick,
+                state.rng_state,
+            )
+        })
         .collect::<Vec<_>>();
     assert_eq!(
         attention_after_failure, attention_before,
@@ -357,16 +388,18 @@ fn publication_failure_discards_payload_keeps_receipts_and_retries_once() {
     // 权威未同步——两者之差即失败 attempt 的 gap。
     let shared_after_failure = session.game_mut().shared_ingress().receipts_probe();
     let authority_after_failure = authority_cursors(session.game());
-    let gap_witnessed = shared_after_failure
-        .next_account_ordinal
-        .iter()
-        .any(|(account, shared)| {
-            shared > &authority_after_failure
-                .next_account_ordinal
-                .get(account)
-                .copied()
-                .unwrap_or(0)
-        });
+    let gap_witnessed =
+        shared_after_failure
+            .next_account_ordinal
+            .iter()
+            .any(|(account, shared)| {
+                shared
+                    > &authority_after_failure
+                        .next_account_ordinal
+                        .get(account)
+                        .copied()
+                        .unwrap_or(0)
+            });
     assert!(
         gap_witnessed,
         "失败 attempt 已 receive 的 NPC intents 留永久 gap（共享 receiver > 权威）"
@@ -374,7 +407,9 @@ fn publication_failure_discards_payload_keeps_receipts_and_retries_once() {
     let _ = shared_before;
     // 重试：D(4) 重算、按新 receive 恰一次执行；无旧 payload 复活。
     session.malformed_frame = false;
-    let resumed = session.step_frame_pipeline_contract().expect("重试必须成功");
+    let resumed = session
+        .step_frame_pipeline_contract()
+        .expect("重试必须成功");
     let npc_events: Vec<_> = resumed
         .events()
         .filter(|event| {
@@ -430,10 +465,7 @@ fn admission_count<'a>(events: impl IntoIterator<Item = &'a Event>, account: Acc
         .count() as u64
 }
 
-fn account_ordinal(
-    cursors: &crate::session::IngressReceiptCursors,
-    account: AccountId,
-) -> u64 {
+fn account_ordinal(cursors: &crate::session::IngressReceiptCursors, account: AccountId) -> u64 {
     cursors
         .next_account_ordinal
         .get(&account)
@@ -475,7 +507,9 @@ fn partial_receive_failure_retry_executes_exact_new_receipt_window() {
     let business_before = session.game().business_state_hash().unwrap();
     let a1_authority_before = account_ordinal(&authority_cursors(session.game()), AccountId(1));
 
-    let error = session.step_frame_pipeline_contract().expect_err("账户 2 概率非法必须使整个 tick 失败");
+    let error = session
+        .step_frame_pipeline_contract()
+        .expect_err("账户 2 概率非法必须使整个 tick 失败");
     assert!(
         format!("{error:?}").contains("注意力概率"),
         "实际错误: {error:?}"
@@ -489,7 +523,8 @@ fn partial_receive_failure_retry_executes_exact_new_receipt_window() {
     // 失败 attempt 的实际 receipt gap（共享水位 − 权威水位）。
     let shared_after_failure = shared_cursors(session.game_mut());
     let a1_shared = account_ordinal(&shared_after_failure, AccountId(1));
-    let a1_authority_after_failure = account_ordinal(&authority_cursors(session.game()), AccountId(1));
+    let a1_authority_after_failure =
+        account_ordinal(&authority_cursors(session.game()), AccountId(1));
     assert_eq!(
         a1_authority_after_failure, a1_authority_before,
         "失败不提交任何账户 1 的权威游标"
@@ -517,7 +552,9 @@ fn partial_receive_failure_retry_executes_exact_new_receipt_window() {
             "帧间无新登记（共享水位保持失败后值）"
         );
         let authority_pre = account_ordinal(&authority_cursors(session.game()), AccountId(1));
-        let frame = session.step_frame_pipeline_contract().expect("修复后重试必须成功");
+        let frame = session
+            .step_frame_pipeline_contract()
+            .expect("修复后重试必须成功");
         let executed = admission_count(frame.events(), AccountId(1));
         let authority_post = account_ordinal(&authority_cursors(session.game()), AccountId(1));
         if executed == 0 {
@@ -626,8 +663,7 @@ fn publication_failure_rolls_back_business_and_executes_each_receipt_exactly_onc
         let shared = account_ordinal(&shared_after_failure, *account);
         let authority = account_ordinal(&authority_after_failure, *account);
         assert!(
-            authority
-                <= account_ordinal(&authority_before, *account),
+            authority <= account_ordinal(&authority_before, *account),
             "失败不提交 {account:?} 的权威游标"
         );
         gap_total += shared.saturating_sub(authority);
@@ -639,7 +675,9 @@ fn publication_failure_rolls_back_business_and_executes_each_receipt_exactly_onc
 
     // 重试：外部玩家原 receipt 恰一次；NPC 精确窗口。
     session.malformed_frame = false;
-    let resumed = session.step_frame_pipeline_contract().expect("重试必须成功");
+    let resumed = session
+        .step_frame_pipeline_contract()
+        .expect("重试必须成功");
     assert_eq!(
         admission_count(resumed.events(), AccountId(0)),
         1,
@@ -683,7 +721,9 @@ fn publication_failure_rolls_back_business_and_executes_each_receipt_exactly_onc
         非空的业务强度由无玩家注入的原用例承载）"
     );
     // 后续帧：外部玩家原 receipt 不再重复受理（恰一次=全窗口恰一次）。
-    let next = session.step_frame_pipeline_contract().expect("后续帧必须成功");
+    let next = session
+        .step_frame_pipeline_contract()
+        .expect("后续帧必须成功");
     assert_eq!(
         admission_count(next.events(), AccountId(0)),
         0,

@@ -17,11 +17,11 @@ fn amount(cents: i128) -> AccountingAmount {
 
 #[test]
 fn standalone_current_tax_assets_keep_deferred_assets_and_each_comparison_direction_separate() {
-    use crate::accounting::BusinessEventId;
     use crate::accounting::reports::{
         generate_report_set, BsLine, Comparative, IndustryPresentation, ReportKind, ReportRequest,
         ReportSource, ReportVersion, VersionKind,
     };
+    use crate::accounting::BusinessEventId;
     for opening_tax in [100_i128, -100] {
         let mut books = crate::accounting::Books::new(industrial_account_chart());
         books

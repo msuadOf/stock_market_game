@@ -3,7 +3,6 @@ use engine::{session::protocol::EngineUpdate, SessionSetup};
 use server::SessionManager;
 use std::{env, fs, time::Instant};
 
-
 /// 基线没有独立 context API，实际计算使用唯一 Rayon global registry；
 /// 当前实现的同名 inherent getter 优先读取真实宿主 context，不创建第二个 global pool。
 trait BaselineRegistryAccess {
@@ -11,7 +10,9 @@ trait BaselineRegistryAccess {
 }
 impl BaselineRegistryAccess for SessionManager {
     fn compute_workers(&self) -> Result<usize, Box<dyn std::error::Error>> {
-        Ok(std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1))
+        Ok(std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1))
     }
 }
 
@@ -71,13 +72,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let metrics = handles.speed_metrics().await?;
         handles.set_running(false).await?;
         handles.shutdown().await?;
-        println!("{}", serde_json::json!({
-            "path": "production_server_actor_fastest", "ticks": committed,
-            "tokio_threads": 2,
-            "wall_s": wall_s, "speed_x": committed as f64 / wall_s,
-            "initialization_s": initialization_s, "events": events,
-            "batches": batches, "civil_updates": civil_updates, "metrics": metrics,
-        }));
+        println!(
+            "{}",
+            serde_json::json!({
+                "path": "production_server_actor_fastest", "ticks": committed,
+                "tokio_threads": 2,
+                "wall_s": wall_s, "speed_x": committed as f64 / wall_s,
+                "initialization_s": initialization_s, "events": events,
+                "batches": batches, "civil_updates": civil_updates, "metrics": metrics,
+            })
+        );
         Ok::<_, Box<dyn std::error::Error>>(())
     })
 }

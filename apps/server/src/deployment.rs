@@ -57,7 +57,10 @@ impl DeploymentOptions {
             match flag {
                 "--new-market" => {
                     if options.new_market || options.archive_slot.is_some() {
-                        return Err(DeploymentError("--new-market 与 --archive-slot 只能明确选择一种启动方式，且不可重复".into()));
+                        return Err(DeploymentError(
+                            "--new-market 与 --archive-slot 只能明确选择一种启动方式，且不可重复"
+                                .into(),
+                        ));
                     }
                     options.new_market = true;
                 }
@@ -87,7 +90,9 @@ impl DeploymentOptions {
                         )));
                     }
                     if flag == "--archive-slot" {
-                        let slot = value.into_string().map_err(|_| DeploymentError("--archive-slot 必须是 Unicode 槽身份".into()))?;
+                        let slot = value.into_string().map_err(|_| {
+                            DeploymentError("--archive-slot 必须是 Unicode 槽身份".into())
+                        })?;
                         if slot.trim().is_empty() || slot.contains('\0') {
                             return Err(DeploymentError("--archive-slot 不可为空或含 NUL".into()));
                         }
@@ -132,12 +137,18 @@ impl DeploymentOptions {
             options.services = services;
         }
         options.services.ensure_supported()?;
-        if options.services == Services::WebUi && (options.new_market || options.archive_slot.is_some()) {
-            return Err(DeploymentError("--new-market / --archive-slot 只适用于运行 Server 的服务模式".into()));
+        if options.services == Services::WebUi
+            && (options.new_market || options.archive_slot.is_some())
+        {
+            return Err(DeploymentError(
+                "--new-market / --archive-slot 只适用于运行 Server 的服务模式".into(),
+            ));
         }
         if let Some(database) = database {
             if database == Path::new(":memory:") {
-                return Err(DeploymentError("--database 必须使用真实 SQLite 文件，不接受 :memory:".into()));
+                return Err(DeploymentError(
+                    "--database 必须使用真实 SQLite 文件，不接受 :memory:".into(),
+                ));
             }
             options.database = database;
         }
@@ -223,7 +234,9 @@ pub fn deployment_router_with_manager(
 ) -> Result<axum::Router, DeploymentError> {
     services.ensure_supported()?;
     if services == Services::Server {
-        let manager = manager.ok_or_else(|| DeploymentError("Server 必须显式初始化 SQLite 与内存市场管理器".into()))?;
+        let manager = manager.ok_or_else(|| {
+            DeploymentError("Server 必须显式初始化 SQLite 与内存市场管理器".into())
+        })?;
         return Ok(crate::app_router_with_manager(manager));
     }
     #[cfg(feature = "web-ui")]
@@ -232,7 +245,10 @@ pub fn deployment_router_with_manager(
         let static_router = crate::web_ui::static_router(web_root)?;
         Ok(match services {
             Services::WebUi => static_router,
-            Services::All => crate::app_router_with_manager(manager.ok_or_else(|| DeploymentError("Server 必须显式初始化 SQLite 与内存市场管理器".into()))?).merge(static_router),
+            Services::All => crate::app_router_with_manager(manager.ok_or_else(|| {
+                DeploymentError("Server 必须显式初始化 SQLite 与内存市场管理器".into())
+            })?)
+            .merge(static_router),
             Services::Server => unreachable!(),
         })
     }

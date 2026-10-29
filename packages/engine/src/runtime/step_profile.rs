@@ -12,9 +12,9 @@
 //! - 计时开销 ~2×Instant::now/段 ≈ 80ns；18 段/tick ≈ 1.5μs，B 口径
 //!   ~3.2ms/tick 占比 0.05%（启用时）。
 
+use crate::clock::Instant;
 use std::cell::RefCell;
 use std::sync::atomic::{AtomicBool, Ordering};
-use crate::clock::Instant;
 
 /// 分段清单（枚举序=代码执行序；详细语义见各插桩点注释）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

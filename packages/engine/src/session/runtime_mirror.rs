@@ -68,19 +68,34 @@ impl GameSession {
             let record = &raw.record;
             if raw.owner.1 as usize >= driver.accounts_per_group()
                 || driver.account_by_owner(raw.owner) != Some(record.account)
-                || record.tick != tick || !seen.insert(record.account)
-                || !matches!(raw.kind, AccountKind::Inst | AccountKind::Retail | AccountKind::Hot)
-                || self.account(record.account).map(|account| account.kind()) != Some(raw.kind) {
+                || record.tick != tick
+                || !seen.insert(record.account)
+                || !matches!(
+                    raw.kind,
+                    AccountKind::Inst | AccountKind::Retail | AccountKind::Hot
+                )
+                || self.account(record.account).map(|account| account.kind()) != Some(raw.kind)
+            {
                 return Err(format!("NPC trace candidate 来源错配：owner={:?} kind={:?} account={:?} tick={} expected={tick}", raw.owner, raw.kind, record.account, record.tick));
             }
             if raw.kind != AccountKind::Inst
-                && (!raw.plan_before.is_empty() || !record.plan_ids.is_empty()
-                    || !record.plan_changes.is_empty() || !record.budget_constraints.is_empty()) {
-                return Err(format!("非机构 trace candidate 含机构计划或预算字段：account={:?}", record.account));
+                && (!raw.plan_before.is_empty()
+                    || !record.plan_ids.is_empty()
+                    || !record.plan_changes.is_empty()
+                    || !record.budget_constraints.is_empty())
+            {
+                return Err(format!(
+                    "非机构 trace candidate 含机构计划或预算字段：account={:?}",
+                    record.account
+                ));
             }
             if raw.kind == AccountKind::Hot
-                && (!record.source_report_ids.is_empty() || record.expectation_method.is_some()) {
-                return Err(format!("Hot trace candidate 含未发生的公司材料或估值：account={:?}", record.account));
+                && (!record.source_report_ids.is_empty() || record.expectation_method.is_some())
+            {
+                return Err(format!(
+                    "Hot trace candidate 含未发生的公司材料或估值：account={:?}",
+                    record.account
+                ));
             }
             let mut codes = BTreeSet::new();
             for code in &record.codes {
@@ -90,28 +105,49 @@ impl GameSession {
             }
             for plan_id in &record.plan_ids {
                 if plan_id.owner != record.account || plans.plan(*plan_id).is_err() {
-                    return Err(format!("机构 trace candidate 完整 PlanId 不属本人或不存在：{plan_id:?}"));
+                    return Err(format!(
+                        "机构 trace candidate 完整 PlanId 不属本人或不存在：{plan_id:?}"
+                    ));
                 }
             }
             let mut changes = Vec::new();
-            let touched: BTreeSet<_> = raw.plan_before.keys().copied()
-                .chain(record.plan_ids.iter().copied()).collect();
+            let touched: BTreeSet<_> = raw
+                .plan_before
+                .keys()
+                .copied()
+                .chain(record.plan_ids.iter().copied())
+                .collect();
             for plan_id in touched {
                 if plan_id.owner != record.account {
                     return Err(format!("机构 trace before PlanId 不属本人：{plan_id:?}"));
                 }
-                let plan = plans.plan(plan_id).map_err(|error| format!("机构 trace 最终计划消失：{plan_id:?} {error}"))?;
+                let plan = plans
+                    .plan(plan_id)
+                    .map_err(|error| format!("机构 trace 最终计划消失：{plan_id:?} {error}"))?;
                 let current = crate::session::plan_trace_state(plan);
                 if raw.plan_before.get(&plan_id) != Some(&current) {
-                    changes.push(format!("{plan_id:?}: {} -> {current}", raw.plan_before.get(&plan_id).map(String::as_str).unwrap_or("Created")));
+                    changes.push(format!(
+                        "{plan_id:?}: {} -> {current}",
+                        raw.plan_before
+                            .get(&plan_id)
+                            .map(String::as_str)
+                            .unwrap_or("Created")
+                    ));
                 }
             }
             // 账户事件口径沿用 legacy trace；不把此投影冒充 causal PlanId→OrderId 归因。
-            let orders: Vec<_> = events.iter().filter_map(|event| match event {
-                Event::OrderAccepted { account, id, .. } | Event::OrderCanceled { account, id, .. }
-                    if *account == record.account => Some(*id),
-                _ => None,
-            }).collect();
+            let orders: Vec<_> = events
+                .iter()
+                .filter_map(|event| match event {
+                    Event::OrderAccepted { account, id, .. }
+                    | Event::OrderCanceled { account, id, .. }
+                        if *account == record.account =>
+                    {
+                        Some(*id)
+                    }
+                    _ => None,
+                })
+                .collect();
             let mut record = Arc::clone(record);
             if !orders.is_empty() || !changes.is_empty() {
                 let record = Arc::make_mut(&mut record);
@@ -169,15 +205,20 @@ impl GameSession {
         if static_session_revision.is_some_and(|revision| revision != self.external_revision()) {
             return Err("静点 Full 捕获后 Session revision 已改变".to_owned());
         }
-        if is_static && (input.emit_price_tick || input.day_end.is_some() || !input.events.is_empty()) {
+        if is_static
+            && (input.emit_price_tick || input.day_end.is_some() || !input.events.is_empty())
+        {
             return Err("静点 Full 不得产生 tick、日结或业务事件".to_owned());
         }
-        let mut source = static_read.as_ref().map_or_else(|| driver.mirror_source(), |read| read.source);
+        let mut source = static_read
+            .as_ref()
+            .map_or_else(|| driver.mirror_source(), |read| read.source);
         if source != driver.mirror_source() {
             return Err("静点 Full 捕获来源已过期".to_owned());
         }
         let captured_domains = driver.pending_mirror_domains();
-        if source.authority_epoch != expected_authority_epoch || source.tick != tick
+        if source.authority_epoch != expected_authority_epoch
+            || source.tick != tick
             || source.civil_date != self.civil_date()
         {
             return Err(format!(
@@ -338,7 +379,9 @@ impl GameSession {
                 .get_or_insert_with(|| self.state.retail_experience[&id].clone());
             // 延迟窗口内组可能已在下一次观察创建完整持仓经历；该整态保持组权威。
             // 仅为组也尚未建立的首买补既有桥接，不再次初始化已有生命周期。
-            if ledger.feedback.stocks.contains_key(&code) { continue; }
+            if ledger.feedback.stocks.contains_key(&code) {
+                continue;
+            }
             let price = Money::from_cents(entry.max(1));
             ledger
                 .initialize_holding_dated(
@@ -397,7 +440,9 @@ impl GameSession {
         if is_static {
             for market in markets.values_mut() {
                 for order in market.resting_orders() {
-                    market.cancel(order.id).map_err(|error| format!("静点旧簿私有清理失败：{error:?}"))?;
+                    market
+                        .cancel(order.id)
+                        .map_err(|error| format!("静点旧簿私有清理失败：{error:?}"))?;
                 }
             }
         }
@@ -418,99 +463,109 @@ impl GameSession {
         }
         let candle_time = self.candle_date_time_for_runtime();
         if !is_static || refresh_market {
-        for (index, view) in driver.world_public_views().iter().enumerate() {
-            let code = StockId(index as u32);
-            if !input.calendar.stock_is_open(code)? {
-                continue;
-            }
-            let market = markets
-                .get_mut(&code)
-                .ok_or_else(|| format!("行情 candidate 未知股票：{code:?}"))?;
-            if view.last_price <= 0 {
-                return Err(format!("行情 candidate 非正价格：{code:?}"));
-            }
-            market.restore_prices(
-                Money::from_cents(view.last_price),
-                Money::from_cents(view.last_price),
-            );
-            histories.insert(
-                code,
-                view.recent_prices
-                    .iter()
-                    .rev()
-                    .take(history_len)
-                    .rev()
-                    .map(|price| Money::from_cents((*price).max(1)))
-                    .collect(),
-            );
-            let target = minutes.entry(code).or_default();
-            target.extend(
-                view.minute_closes
-                    .iter()
-                    .skip(target.len())
-                    .map(|(minute, close)| MarketMinuteClose {
+            for (index, view) in driver.world_public_views().iter().enumerate() {
+                let code = StockId(index as u32);
+                if !input.calendar.stock_is_open(code)? {
+                    continue;
+                }
+                let market = markets
+                    .get_mut(&code)
+                    .ok_or_else(|| format!("行情 candidate 未知股票：{code:?}"))?;
+                if view.last_price <= 0 {
+                    return Err(format!("行情 candidate 非正价格：{code:?}"));
+                }
+                market.restore_prices(
+                    Money::from_cents(view.last_price),
+                    Money::from_cents(view.last_price),
+                );
+                histories.insert(
+                    code,
+                    view.recent_prices
+                        .iter()
+                        .rev()
+                        .take(history_len)
+                        .rev()
+                        .map(|price| Money::from_cents((*price).max(1)))
+                        .collect(),
+                );
+                let target = minutes.entry(code).or_default();
+                target.extend(view.minute_closes.iter().skip(target.len()).map(
+                    |(minute, close)| MarketMinuteClose {
                         absolute_trading_minute: *minute,
                         close: Money::from_cents((*close).max(1)),
-                    }),
-            );
-            let target = minute_bars.entry(code).or_default();
-            target.extend(view.minute_bars.iter().skip(target.len()).copied());
-            let empty = day_tick < setup.auction_ticks - setup.auction_ticks / 3 && day_tick != 0;
-            if empty {
-                active.remove(&code);
-            }
-            let shard = published
-                .desks
-                .iter()
-                .find(|shard| u32::from(shard.stock) == code.0)
-                .ok_or_else(|| format!("K candidate 缺股票分片：{code:?}"))?;
-            let view = &shard.view;
-            if !empty {
-                if let Some((open, high, low, close, volume)) =
-                    view.daily_active.filter(|raw| raw.4 > 0)
-                {
-                    active.insert(
-                        code,
-                        DailyCandle {
-                            time: candle_time,
-                            open: Money::from_cents(open),
-                            high: Money::from_cents(high),
-                            low: Money::from_cents(low),
-                            close: Money::from_cents(close),
-                            volume,
-                            trade_stats: Some(DailyTradeStats {
-                                turnover_cents: view.daily_active_turnover_cents.max(0) as u64,
-                                trade_count: view.daily_active_trade_count,
-                            }),
-                        },
-                    );
-                } else if active
-                    .get(&code)
-                    .is_none_or(|candle| candle.time != candle_time)
-                {
-                    let price = Money::from_cents(view.last_price.max(1));
-                    active.insert(
-                        code,
-                        DailyCandle {
-                            time: candle_time,
-                            open: price,
-                            high: price,
-                            low: price,
-                            close: price,
-                            volume: 0,
-                            trade_stats: Some(Default::default()),
-                        },
-                    );
+                    },
+                ));
+                let target = minute_bars.entry(code).or_default();
+                target.extend(view.minute_bars.iter().skip(target.len()).copied());
+                let empty =
+                    day_tick < setup.auction_ticks - setup.auction_ticks / 3 && day_tick != 0;
+                if empty {
+                    active.remove(&code);
+                }
+                let shard = published
+                    .desks
+                    .iter()
+                    .find(|shard| u32::from(shard.stock) == code.0)
+                    .ok_or_else(|| format!("K candidate 缺股票分片：{code:?}"))?;
+                let view = &shard.view;
+                if !empty {
+                    if let Some((open, high, low, close, volume)) =
+                        view.daily_active.filter(|raw| raw.4 > 0)
+                    {
+                        active.insert(
+                            code,
+                            DailyCandle {
+                                time: candle_time,
+                                open: Money::from_cents(open),
+                                high: Money::from_cents(high),
+                                low: Money::from_cents(low),
+                                close: Money::from_cents(close),
+                                volume,
+                                trade_stats: Some(DailyTradeStats {
+                                    turnover_cents: view.daily_active_turnover_cents.max(0) as u64,
+                                    trade_count: view.daily_active_trade_count,
+                                }),
+                            },
+                        );
+                    } else if active
+                        .get(&code)
+                        .is_none_or(|candle| candle.time != candle_time)
+                    {
+                        let price = Money::from_cents(view.last_price.max(1));
+                        active.insert(
+                            code,
+                            DailyCandle {
+                                time: candle_time,
+                                open: price,
+                                high: price,
+                                low: price,
+                                close: price,
+                                volume: 0,
+                                trade_stats: Some(Default::default()),
+                            },
+                        );
+                    }
                 }
             }
         }
-        }
         let (attention, facts, id_map, serials, static_markets) = if let Some(read) = static_read {
-            (read.attention, read.resting, std::sync::Arc::new(driver.id_map.clone()), read.serials, Some(read.market_views))
+            (
+                read.attention,
+                read.resting,
+                std::sync::Arc::new(driver.id_map.clone()),
+                read.serials,
+                Some(read.market_views),
+            )
         } else {
             let attention = driver.sync_attention_for_projection()?;
             let (facts, ids) = driver.resting_snapshot_for_prepared(is_day_end)?;
-            (attention, facts, ids, driver.desk_next_serials().to_vec(), None)
+            (
+                attention,
+                facts,
+                ids,
+                driver.desk_next_serials().to_vec(),
+                None,
+            )
         };
         let mut mirrors = BTreeMap::new();
         for (index, rows) in facts.iter().enumerate() {
@@ -519,7 +574,9 @@ impl GameSession {
                 .get(index)
                 .ok_or_else(|| format!("簿 candidate 缺股票行情：{index}"))?;
             let (last_price, public_cutoff_serial) = match &static_markets {
-                Some(rows) => *rows.get(index).ok_or_else(|| format!("静点缺行情及截点种子：{index}"))?,
+                Some(rows) => *rows
+                    .get(index)
+                    .ok_or_else(|| format!("静点缺行情及截点种子：{index}"))?,
                 None => (view.last_price, view.public_cutoff_serial),
             };
             let mut orders = Vec::new();
@@ -568,12 +625,8 @@ impl GameSession {
             let bars = data.bars.clone();
             #[cfg(all(test, feature = "simulation-diagnostics", not(target_arch = "wasm32")))]
             let bars = super::runtime_diagnostics_tests::retained_tests::perturb_volume_once(bars);
-            let retained = self.assemble_retained_from_prepared(
-                bars,
-                self.civil_date(),
-                &closed,
-                true,
-            )?;
+            let retained =
+                self.assemble_retained_from_prepared(bars, self.civil_date(), &closed, true)?;
             driver.publish_prepared_retained(std::sync::Arc::clone(&retained));
             source = driver.mirror_source();
             for values in minutes.values_mut() {
@@ -752,9 +805,12 @@ impl GameSession {
         } else if manual_day_end {
             Vec::new()
         } else {
-            driver.collect_retail_traces()
+            driver
+                .collect_retail_traces()
                 .map_err(|error| format!("零售决策 candidate 收集失败：{error:?}"))?
-                .into_iter().flatten().collect()
+                .into_iter()
+                .flatten()
+                .collect()
         };
         let (mut retail_facts, retail_rejections) = if is_static || manual_day_end {
             (Vec::new(), Vec::new())
@@ -765,7 +821,11 @@ impl GameSession {
             retail_facts.extend(driver.drained_retail_facts());
         }
         let mut retail_candidate = super::retail_lifecycle::Candidate {
-            events: if is_static { self.state.last_retail_order_events.clone() } else { Vec::new() },
+            events: if is_static {
+                self.state.last_retail_order_events.clone()
+            } else {
+                Vec::new()
+            },
             decisions: retail_decisions,
         };
         self.append_runtime_retail_facts_at(driver, &mut retail_candidate, retail_facts, tick)
@@ -808,8 +868,11 @@ impl GameSession {
             #[cfg(feature = "simulation-diagnostics")]
             causal_calendar,
             #[cfg(feature = "simulation-diagnostics")]
-            decision_traces: if manual_day_end { self.state.npc_decision_traces.clone() }
-                else { self.prepare_runtime_decision_traces(driver, tick, &input.plans, &events)? },
+            decision_traces: if manual_day_end {
+                self.state.npc_decision_traces.clone()
+            } else {
+                self.prepare_runtime_decision_traces(driver, tick, &input.plans, &events)?
+            },
             accounts,
             personals,
             plans: input.plans,
@@ -842,7 +905,11 @@ impl GameSession {
             events,
             retail_decisions,
             retail_order_events,
-            npc_order_lifecycles: if is_static { self.state.npc_order_lifecycles.clone() } else { Vec::new() },
+            npc_order_lifecycles: if is_static {
+                self.state.npc_order_lifecycles.clone()
+            } else {
+                Vec::new()
+            },
         })
     }
 
@@ -861,7 +928,10 @@ impl GameSession {
     }
 
     /// 只在私有 handover base 上移动完整领域值；不消费旧 driver 的覆盖表或缓存。
-    pub(in crate::session) fn materialize_runtime_handover_base(&mut self, prepared: PreparedRuntimeMirror) {
+    pub(in crate::session) fn materialize_runtime_handover_base(
+        &mut self,
+        prepared: PreparedRuntimeMirror,
+    ) {
         let (events, _, _) = self.move_runtime_mirror_state(prepared, false);
         assert!(events.is_empty(), "静点 handover base 不能产生市场事实");
     }
@@ -870,7 +940,11 @@ impl GameSession {
         &mut self,
         prepared: PreparedRuntimeMirror,
         commit_source: bool,
-    ) -> (Vec<Event>, BTreeMap<AccountId, (usize, BeliefParticipantSnapshot)>, usize) {
+    ) -> (
+        Vec<Event>,
+        BTreeMap<AccountId, (usize, BeliefParticipantSnapshot)>,
+        usize,
+    ) {
         let count = prepared.accounts.len();
         for (id, account) in prepared.accounts {
             self.state.accounts.insert(id, account);
@@ -952,8 +1026,11 @@ impl GameSession {
         } else {
             source.authority_epoch == self.runtime_authority_epoch
         };
-        if source != prepared.source || !valid_authority
-            || prepared.static_session_revision.is_some_and(|revision| revision != self.external_revision())
+        if source != prepared.source
+            || !valid_authority
+            || prepared
+                .static_session_revision
+                .is_some_and(|revision| revision != self.external_revision())
             || prepared.session_authority_epoch != self.runtime_authority_epoch
         {
             return Err(StepFatal::InvariantViolation {

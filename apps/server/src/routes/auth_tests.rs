@@ -151,17 +151,14 @@ pub(super) async fn request(
             )
             .await
             .unwrap();
-        let value: Value = serde_json::from_slice(
-            &to_bytes(guest.into_body(), 1 << 20).await.unwrap(),
-        )
-        .unwrap();
+        let value: Value =
+            serde_json::from_slice(&to_bytes(guest.into_body(), 1 << 20).await.unwrap()).unwrap();
         value["token"].as_str().unwrap().to_owned()
     } else {
         String::new()
     };
-    let effective_token = token.or_else(|| {
-        (!generated_credential.is_empty()).then_some(generated_credential.as_str())
-    });
+    let effective_token = token
+        .or_else(|| (!generated_credential.is_empty()).then_some(generated_credential.as_str()));
     let mut builder = Request::builder().method(method).uri(uri);
     if body.is_some() {
         builder = builder.header("content-type", "application/json");
@@ -379,7 +376,10 @@ async fn session_private_http_routes_require_the_matching_bearer_token() {
         )
         .await;
         assert_eq!(status, StatusCode::UNAUTHORIZED, "{method} {uri}");
-        assert_eq!(error["code"], "IDENTITY_AUTHENTICATION_FAILED", "{method} {uri}");
+        assert_eq!(
+            error["code"], "IDENTITY_AUTHENTICATION_FAILED",
+            "{method} {uri}"
+        );
     }
     let snapshot_uri = format!("/api/snapshot?session_id={session_id}");
     let (unknown_status, unknown_error) = request(

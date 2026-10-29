@@ -528,7 +528,11 @@ impl ContinuousStockRoundProcessor {
                     // LimitExceeded 在修改订单簿前检查；其他错误丢弃整个 private tick candidate，
                     // 因此无须为每张 incoming 委托复制不断增长的订单簿。
                     // 簿内 Order 只经 draft 的单一 typed 构造点产生（任务65 #1）。
-                    let result = match self.output.market.place_recording(draft.into_book_order(price)) {
+                    let result = match self
+                        .output
+                        .market
+                        .place_recording(draft.into_book_order(price))
+                    {
                         Ok(result) => result,
                         Err(MarketError::LimitExceeded { .. }) => {
                             self.reject_place(&draft, RejectionReason::LimitExceeded)?;

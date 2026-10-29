@@ -342,8 +342,9 @@ pub async fn api_propose_player_company_action(
             warn!(session = %body.session_id, error = ?error, "公司写命令被领域拒绝");
             (StatusCode::BAD_REQUEST, Json(serde_json::json!({"code":"PLAYER_COMPANY_ACTION_REJECTED","failure":error.public_failure()}))).into_response()
         }
-        Ok(crate::actor::MemberResponse::CompanyWriteFatal(failure)) =>
-            (StatusCode::INTERNAL_SERVER_ERROR, Json(failure)).into_response(),
+        Ok(crate::actor::MemberResponse::CompanyWriteFatal(failure)) => {
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(failure)).into_response()
+        }
         Ok(_) => api_error(
             StatusCode::INTERNAL_SERVER_ERROR,
             "COMPANY_WRITE_RESPONSE_INVALID",
@@ -384,7 +385,9 @@ pub async fn api_enqueue_report_correction(
         Err(error) => return invalid_json_response(error),
     };
     let (handles, subject) =
-        match authorized_market_controller(&state, &body.session_id, authorization_token(&headers)).await {
+        match authorized_market_controller(&state, &body.session_id, authorization_token(&headers))
+            .await
+        {
             Ok(context) => context,
             Err(response) => return *response,
         };
@@ -426,7 +429,9 @@ pub async fn api_cancel_report_correction(
         Err(error) => return invalid_json_response(error),
     };
     let (handles, subject) =
-        match authorized_market_controller(&state, &body.session_id, authorization_token(&headers)).await {
+        match authorized_market_controller(&state, &body.session_id, authorization_token(&headers))
+            .await
+        {
             Ok(context) => context,
             Err(response) => return *response,
         };
@@ -853,7 +858,11 @@ pub async fn api_new(
         }
         Err(NewSessionError::Text(message)) => {
             warn!(error = %message, "new_session rejected (server domain)");
-            api_error(StatusCode::INTERNAL_SERVER_ERROR, "SESSION_SETUP_FAILED", message)
+            api_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "SESSION_SETUP_FAILED",
+                message,
+            )
         }
     }
 }
@@ -1275,10 +1284,7 @@ pub async fn api_intent(
         Ok(generation) => generation,
         Err(response) => return *response,
     };
-    match handles
-        .enqueue_for(generation, subject, body.intent)
-        .await
-    {
+    match handles.enqueue_for(generation, subject, body.intent).await {
         Ok(()) => StatusCode::OK.into_response(),
         Err(SendCommandError::ActorGone) => {
             error!(session = %body.session_id, "intent: actor gone");
@@ -1336,11 +1342,11 @@ pub async fn api_player_working_orders(
     // 读面仍是 main 的账户 0 单人形态（PlayerWorkingOrder 无 owner 字段，
     // 多成员本人过滤形态待 W3 读面多玩家化；actor 侧 MemberRequest::
     // WorkingOrders 对远程多成员已显式拒绝）。
-    let (handles, _) = match authorized_session(&state, &query.session_id, authorization_token(&headers)).await
-    {
-        Ok(context) => context,
-        Err(response) => return *response,
-    };
+    let (handles, _) =
+        match authorized_session(&state, &query.session_id, authorization_token(&headers)).await {
+            Ok(context) => context,
+            Err(response) => return *response,
+        };
     match handles.player_working_orders(query.generation).await {
         Ok((generation, orders)) => (
             StatusCode::OK,
@@ -1413,12 +1419,11 @@ pub async fn api_initial_allocation(
     Query(query): Query<InitialAllocationQuery>,
     headers: HeaderMap,
 ) -> Response {
-    let (handles, _) = match authorized_market(&state, &query.session_id, authorization_token(&headers))
-        .await
-    {
-        Ok(context) => context,
-        Err(response) => return *response,
-    };
+    let (handles, _) =
+        match authorized_market(&state, &query.session_id, authorization_token(&headers)).await {
+            Ok(context) => context,
+            Err(response) => return *response,
+        };
     match handles.initial_allocation(query.generation).await {
         Ok((generation, data)) => (
             StatusCode::OK,
@@ -1603,10 +1608,11 @@ pub async fn api_speed_metrics(
     headers: HeaderMap,
     Query(q): Query<SessionQuery>,
 ) -> Response {
-    let (handles, _) = match authorized_market(&state, &q.session_id, authorization_token(&headers)).await {
-        Ok(context) => context,
-        Err(response) => return *response,
-    };
+    let (handles, _) =
+        match authorized_market(&state, &q.session_id, authorization_token(&headers)).await {
+            Ok(context) => context,
+            Err(response) => return *response,
+        };
     match handles.speed_metrics().await {
         Ok(metrics) => (StatusCode::OK, Json(metrics)).into_response(),
         Err(SendCommandError::ActorGone) => {
@@ -1648,7 +1654,10 @@ pub async fn api_running(
         Ok(generation) => generation,
         Err(response) => return *response,
     };
-    match handles.set_running_for(generation, subject, body.running).await {
+    match handles
+        .set_running_for(generation, subject, body.running)
+        .await
+    {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(SendCommandError::ActorGone) => api_error(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -1965,11 +1974,16 @@ impl WsPublisherConnection {
 
     fn ingest(&mut self, update: crate::actor::EngineUpdate) -> PublisherAction {
         if let Some(failure) = &update.failure {
-            if self.delivered_failure.as_ref().is_some_and(|first| !first.recoverable) {
+            if self
+                .delivered_failure
+                .as_ref()
+                .is_some_and(|first| !first.recoverable)
+            {
                 return PublisherAction::Ignored;
             }
             if self.delivered_failure.as_ref() == Some(failure) {
-                self.awaiting_resync = !failure.is_correction_prepare_rejected(self.timeline_generation);
+                self.awaiting_resync =
+                    !failure.is_correction_prepare_rejected(self.timeline_generation);
                 return PublisherAction::Ignored;
             }
             return PublisherAction::HostFailure(Box::new(failure.clone()));
@@ -2034,7 +2048,11 @@ impl WsPublisherConnection {
     }
 
     fn failure_delivered(&mut self, failure: crate::actor::HostFailure) {
-        if self.delivered_failure.as_ref().is_some_and(|first| !first.recoverable) {
+        if self
+            .delivered_failure
+            .as_ref()
+            .is_some_and(|first| !first.recoverable)
+        {
             return;
         }
         self.awaiting_resync = !failure.is_correction_prepare_rejected(self.timeline_generation);
@@ -2504,7 +2522,11 @@ mod baseline_failure_tests {
         })
         .unwrap();
 
-        assert_eq!(messages.len(), 1, "terminal baseline 不得先作为健康 wire baseline 交付");
+        assert_eq!(
+            messages.len(),
+            1,
+            "terminal baseline 不得先作为健康 wire baseline 交付"
+        );
         let failure: serde_json::Value = serde_json::from_str(&messages[0]).unwrap();
         assert!(failure.get("Baseline").is_none());
         assert_eq!(failure["HostFailure"]["code"], "STEP_FATAL");
@@ -2689,17 +2711,32 @@ mod publisher_connection_tests {
     fn prepare_rejection_after_flushing_keeps_the_current_publisher_ready() {
         for delivery in [DeliveryMode::Push, DeliveryMode::Pull] {
             let mut connection = connection(delivery);
-            assert!(matches!(connection.ingest(update(6, 4)), PublisherAction::Buffered));
+            assert!(matches!(
+                connection.ingest(update(6, 4)),
+                PublisherAction::Buffered
+            ));
             let rejected = HostFailure::correction_prepare_rejection_fixture();
             let mut failed = update(6, 4);
             failed.update = None;
             failed.failure = Some(rejected);
-            let PublisherAction::HostFailure(rejected) = connection.ingest(failed) else { panic!("必须先交付显式更正拒绝") };
-            assert_eq!(frame_tick(connection.take_flush_frame().unwrap()), 6, "已接受末拍仍在 FIFO");
+            let PublisherAction::HostFailure(rejected) = connection.ingest(failed) else {
+                panic!("必须先交付显式更正拒绝")
+            };
+            assert_eq!(
+                frame_tick(connection.take_flush_frame().unwrap()),
+                6,
+                "已接受末拍仍在 FIFO"
+            );
             assert!(connection.take_flush_frame().is_none());
             connection.failure_delivered(*rejected);
-            assert!(!connection.awaiting_resync, "严格 F2 不能把同连接 civil-only retry 永久锁死");
-            assert!(matches!(connection.ingest(update(7, 4)), PublisherAction::Buffered));
+            assert!(
+                !connection.awaiting_resync,
+                "严格 F2 不能把同连接 civil-only retry 永久锁死"
+            );
+            assert!(matches!(
+                connection.ingest(update(7, 4)),
+                PublisherAction::Buffered
+            ));
         }
     }
 
@@ -2712,7 +2749,10 @@ mod publisher_connection_tests {
         let mut message = update(6, 4);
         message.update = None;
         message.failure = Some(rejected.clone());
-        assert!(matches!(connection.ingest(message), PublisherAction::Ignored), "首 fatal 之后迟到的 F2 不能再次交付并开门");
+        assert!(
+            matches!(connection.ingest(message), PublisherAction::Ignored),
+            "首 fatal 之后迟到的 F2 不能再次交付并开门"
+        );
         connection.failure_delivered(rejected);
         assert!(connection.awaiting_resync);
         assert_eq!(connection.delivered_failure, Some(first));

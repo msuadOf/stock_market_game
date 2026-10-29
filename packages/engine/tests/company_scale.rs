@@ -164,15 +164,25 @@ fn short_checkpoint_preserves_bytes_and_rejects_unknown_plan_references() {
         ),
     ] {
         let mut tampered = original.clone();
-        let plan_index = tampered["plans"]["plans"].as_array().unwrap().iter()
-            .position(|plan| plan["Investor"]["plan_id"] == serde_json::to_value(plan_id).unwrap()).unwrap();
+        let plan_index = tampered["plans"]["plans"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .position(|plan| plan["Investor"]["plan_id"] == serde_json::to_value(plan_id).unwrap())
+            .unwrap();
         if field == "account" {
             tampered["plans"]["plans"][plan_index]["Investor"]["plan_id"]["owner"] = value.clone();
-            let next_sequence = original["plans"]["owner_sequences"].as_array().unwrap().iter()
+            let next_sequence = original["plans"]["owner_sequences"]
+                .as_array()
+                .unwrap()
+                .iter()
                 .find(|cursor| cursor["owner"] == serde_json::to_value(plan_id.owner).unwrap())
-                .unwrap()["next_sequence"].clone();
-            tampered["plans"]["owner_sequences"].as_array_mut().unwrap().push(
-                serde_json::json!({"owner": value.clone(), "next_sequence": next_sequence}));
+                .unwrap()["next_sequence"]
+                .clone();
+            tampered["plans"]["owner_sequences"]
+                .as_array_mut()
+                .unwrap()
+                .push(serde_json::json!({"owner": value.clone(), "next_sequence": next_sequence}));
         }
         tampered["plans"]["plans"][plan_index]["Investor"][field] = value;
         let tampered_bytes = serde_json::to_vec(&tampered).expect("tampered save serializes");
@@ -347,7 +357,8 @@ fn four_industry_ten_year_archive_preserves_each_industry_state() {
         shock_params: engine::company::events::ShockParams::current_default_parameters(),
         catalog: engine::company::CompanyCatalog::from_codes(&[
             "C-BANK", "C-IND-A", "C-IND-B", "C-INS", "C-RE",
-        ]).unwrap(),
+        ])
+        .unwrap(),
         companies: vec![
             four_industry_fixtures::industrial_a(start),
             four_industry_fixtures::bank_c(start),

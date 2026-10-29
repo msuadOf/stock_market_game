@@ -86,11 +86,12 @@ pub(super) enum StockStreamProgress<'a, R> {
 /// T4：owner 完成点的 typed feedback 匹配器（fn 指针，任务内执行）——
 /// 生产实现=`market_tick_transaction::match_continuous_feedback`
 /// （原 ReadyStockStream::take_completed+validate_execution_round 迁移）。
-pub(super) type RoundFeedbackFn<R> = fn(
-    &StockId,
-    &mut R,
-    Vec<super::CandidateValidationOutcome>,
-) -> Result<Vec<super::CandidateValidationOutcome>, StepFatal>;
+pub(super) type RoundFeedbackFn<R> =
+    fn(
+        &StockId,
+        &mut R,
+        Vec<super::CandidateValidationOutcome>,
+    ) -> Result<Vec<super::CandidateValidationOutcome>, StepFatal>;
 
 /// 测试直通匹配器（mock shard 无 Continuous 事实面；期望原样转交）。
 pub(in crate::session::pipeline) fn passthrough_round_feedback<R>(
@@ -141,9 +142,7 @@ pub(super) fn continuous_shards(
         .collect::<Result<BTreeMap<_, _>, StepFatal>>()?;
     // T4（行情面）：先验逐股注入 owner；先验面与 shard 面恰一致（多/缺皆结构错误）。
     if priors.len() != shards.len() {
-        return Err(invariant(
-            "行情先验面与股票 shard 面不一致（多或缺股票）",
-        ));
+        return Err(invariant("行情先验面与股票 shard 面不一致（多或缺股票）"));
     }
     for (code, prior) in priors {
         shards
@@ -300,8 +299,7 @@ pub(super) fn drive_stock_stream_with_feedback<S, F, D>(
 ) -> Result<BTreeMap<StockId, S>, StepFatal>
 where
     S: StockShard,
-    F: FnMut(StockStreamProgress<'_, S::Round>) -> Result<FeedOutcome, StepFatal>
-        + Send,
+    F: FnMut(StockStreamProgress<'_, S::Round>) -> Result<FeedOutcome, StepFatal> + Send,
     D: FnMut(&StockId) -> Result<S, StepFatal> + Send,
 {
     let mut coordinator = StockStreamCoordinator::new(compute.clone(), available, notifications);
@@ -323,8 +321,7 @@ pub(super) fn drive_stock_stream<S, F, D>(
 ) -> Result<BTreeMap<StockId, S>, StepFatal>
 where
     S: StockShard,
-    F: FnMut(StockStreamProgress<'_, S::Round>) -> Result<FeedOutcome, StepFatal>
-        + Send,
+    F: FnMut(StockStreamProgress<'_, S::Round>) -> Result<FeedOutcome, StepFatal> + Send,
     D: FnMut(&StockId) -> Result<S, StepFatal> + Send,
 {
     drive_stock_stream_with_feedback(
@@ -357,7 +354,13 @@ struct StockStreamCoordinator<S: StockShard> {
     available: BTreeMap<StockId, S>,
     /// 就绪批=（操作, 受理结果期望）成对（T4 必修 1：期望随任务派发，
     /// 匹配在 owner 完成点执行）。
-    pending: BTreeMap<StockId, (Vec<ValidatedOperation>, Vec<super::CandidateValidationOutcome>)>,
+    pending: BTreeMap<
+        StockId,
+        (
+            Vec<ValidatedOperation>,
+            Vec<super::CandidateValidationOutcome>,
+        ),
+    >,
     in_flight: BTreeSet<StockId>,
     /// 首批就绪操作与期望（drive 入口成对入队）。
     initial_ops: Option<Vec<ValidatedOperation>>,
@@ -423,9 +426,7 @@ impl<S: StockShard> StockStreamCoordinator<S> {
         // 期望为空=无期望形态（测试直通驱动），操作照常入队。其余长度错配=
         // 结构错误显式失败，不以截断静默丢操作。
         if !expected.is_empty() && expected.len() != operations.len() {
-            return Err(invariant(
-                "股票就绪批的操作与受理期望数量不一致",
-            ));
+            return Err(invariant("股票就绪批的操作与受理期望数量不一致"));
         }
         if expected.is_empty() {
             for operation in operations {
@@ -718,7 +719,10 @@ impl<S: StockShard> StockStreamCoordinator<S> {
     {
         crate::verification_evidence::enter_phase(super::TickPhase::DecisionAndContinuation);
         match on_progress(StockStreamProgress::Idle)? {
-            FeedOutcome::Operations { operations, outcomes } => {
+            FeedOutcome::Operations {
+                operations,
+                outcomes,
+            } => {
                 self.enqueue_ready(operations, outcomes)?;
                 Ok(false)
             }
@@ -734,12 +738,12 @@ impl<S: StockShard> StockStreamCoordinator<S> {
         mut on_progress: F,
     ) -> Result<BTreeMap<StockId, S>, StepFatal>
     where
-        F: FnMut(StockStreamProgress<'_, S::Round>) -> Result<FeedOutcome, StepFatal>
-            + Send,
+        F: FnMut(StockStreamProgress<'_, S::Round>) -> Result<FeedOutcome, StepFatal> + Send,
         D: FnMut(&StockId) -> Result<S, StepFatal> + Send,
     {
         // 首批就绪操作与期望成对入队（T4 必修 1）。
-        let (initial_ops, initial_expected) = (self.initial_ops.take(), self.initial_expected.take());
+        let (initial_ops, initial_expected) =
+            (self.initial_ops.take(), self.initial_expected.take());
         if let Some(ops) = initial_ops {
             self.enqueue_ready(ops, initial_expected.unwrap_or_default())?;
         }
@@ -787,19 +791,20 @@ impl<S: StockShard> StockStreamCoordinator<S> {
                     PollOutcome::Ready(TickWorkReady::Stock) => {}
                 }
                 let (code, mut round, outcomes) = self.receive_completion()?;
-                crate::verification_evidence::enter_phase(super::TickPhase::DecisionAndContinuation);
+                crate::verification_evidence::enter_phase(
+                    super::TickPhase::DecisionAndContinuation,
+                );
                 match on_progress(StockStreamProgress::StockCompleted {
                     code: &code,
                     round: &mut round,
                     outcomes: &outcomes,
                 })? {
-                    FeedOutcome::Operations { operations, outcomes } => {
-                        self.enqueue_ready(operations, outcomes)?
-                    }
+                    FeedOutcome::Operations {
+                        operations,
+                        outcomes,
+                    } => self.enqueue_ready(operations, outcomes)?,
                     FeedOutcome::Complete => {
-                        return Err(invariant(
-                            "非阻塞进度路径不应产生 Complete",
-                        ));
+                        return Err(invariant("非阻塞进度路径不应产生 Complete"));
                     }
                 }
             }
@@ -987,7 +992,9 @@ mod tests {
             Err(invariant("fixture must not dispatch a detached stock"))
         };
         assert!(matches!(
-            coordinator.poll_progress(&mut detached, passthrough_round_feedback).unwrap(),
+            coordinator
+                .poll_progress(&mut detached, passthrough_round_feedback)
+                .unwrap(),
             PollOutcome::Ready(TickWorkReady::Stock)
         ));
         assert!(coordinator
@@ -1033,7 +1040,10 @@ mod tests {
             .send((code.clone(), EmptyShard, Ok(((), Vec::new()))))
             .unwrap();
         coordinator.receive_completion().unwrap();
-        coordinator.sender.send((code, EmptyShard, Ok(((), Vec::new())))).unwrap();
+        coordinator
+            .sender
+            .send((code, EmptyShard, Ok(((), Vec::new()))))
+            .unwrap();
         assert!(coordinator
             .receive_completion()
             .unwrap_err()
@@ -1114,8 +1124,8 @@ mod tests {
 
         for _ in 0..8 {
             // 该负例在 from_post_expiry 即失败；先验面传空不改变首错位置。
-            let error =
-                continuous_shards(vec![second.clone(), first.clone()], BTreeMap::new()).unwrap_err();
+            let error = continuous_shards(vec![second.clone(), first.clone()], BTreeMap::new())
+                .unwrap_err();
             assert!(
                 matches!(error, StepFatal::InvariantViolation { description, location }
                 if description == "增量 StockProcessing 初始化时包含了 sealed operations"
@@ -1181,17 +1191,23 @@ mod tests {
         let pool_workers = 1;
         let shared = crate::compute::ComputeContext::from_workers(pool_workers);
         let pool = shared.clone();
-        let finished = shared.install(|| {
+        let finished = shared
+            .install(|| {
                 drive_stock_stream(
                     &shared,
                     BTreeMap::from([(code.clone(), shard)]),
                     vec![cancel(StockId(0), 1)],
                     StockStreamNotifications::new(),
                     |_| Err(invariant("mock must not request a detached stock")),
-                    |progress| Ok(match progress {
-                        StockStreamProgress::Idle => FeedOutcome::Complete,
-                        _ => FeedOutcome::Operations { operations: Vec::new(), outcomes: Vec::new() },
-                    }),
+                    |progress| {
+                        Ok(match progress {
+                            StockStreamProgress::Idle => FeedOutcome::Complete,
+                            _ => FeedOutcome::Operations {
+                                operations: Vec::new(),
+                                outcomes: Vec::new(),
+                            },
+                        })
+                    },
                 )
             })
             .unwrap();
@@ -1200,7 +1216,9 @@ mod tests {
 
     #[test]
     fn concurrent_external_coordinators_leave_workers_available_for_stock_jobs() {
-        let workers = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
+        let workers = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1);
         let entered = std::sync::Barrier::new(workers);
         std::thread::scope(|threads| {
             for _ in 0..workers {
@@ -1225,10 +1243,15 @@ mod tests {
                                 }),
                             })
                         },
-                        |progress| Ok(match progress {
-                        StockStreamProgress::Idle => FeedOutcome::Complete,
-                        _ => FeedOutcome::Operations { operations: Vec::new(), outcomes: Vec::new() },
-                    }),
+                        |progress| {
+                            Ok(match progress {
+                                StockStreamProgress::Idle => FeedOutcome::Complete,
+                                _ => FeedOutcome::Operations {
+                                    operations: Vec::new(),
+                                    outcomes: Vec::new(),
+                                },
+                            })
+                        },
                     )
                     .unwrap();
                     assert_eq!(finished[&code].steps, 1);
@@ -1287,10 +1310,15 @@ mod tests {
                             }
                             Ok(FiniteShard)
                         },
-                        |progress| Ok(match progress {
-                        StockStreamProgress::Idle => FeedOutcome::Complete,
-                        _ => FeedOutcome::Operations { operations: Vec::new(), outcomes: Vec::new() },
-                    }),
+                        |progress| {
+                            Ok(match progress {
+                                StockStreamProgress::Idle => FeedOutcome::Complete,
+                                _ => FeedOutcome::Operations {
+                                    operations: Vec::new(),
+                                    outcomes: Vec::new(),
+                                },
+                            })
+                        },
                     )
                     .map(|books| books.len())
                 });
@@ -1386,7 +1414,8 @@ mod tests {
         let shared = crate::compute::ComputeContext::from_workers(pool_workers);
         let pool = shared.clone();
         let mut rounds = BTreeMap::new();
-        let completed = shared.install(|| {
+        let completed = shared
+            .install(|| {
                 drive_stock_stream(
                     &shared,
                     shards,
@@ -1407,7 +1436,10 @@ mod tests {
                         Ok(if idle {
                             FeedOutcome::Complete
                         } else {
-                            FeedOutcome::Operations { operations: Vec::new(), outcomes: Vec::new() }
+                            FeedOutcome::Operations {
+                                operations: Vec::new(),
+                                outcomes: Vec::new(),
+                            }
                         })
                     },
                 )
@@ -1474,10 +1506,15 @@ mod tests {
                         }
                         Ok(FiniteShard)
                     },
-                    |progress| Ok(match progress {
-                        StockStreamProgress::Idle => FeedOutcome::Complete,
-                        _ => FeedOutcome::Operations { operations: Vec::new(), outcomes: Vec::new() },
-                    }),
+                    |progress| {
+                        Ok(match progress {
+                            StockStreamProgress::Idle => FeedOutcome::Complete,
+                            _ => FeedOutcome::Operations {
+                                operations: Vec::new(),
+                                outcomes: Vec::new(),
+                            },
+                        })
+                    },
                 )
                 .map(|books| books.len())
             });
@@ -1556,20 +1593,26 @@ mod tests {
         let x_pool = Arc::clone(&pool);
         let x_shared = shared.clone();
         let x = std::thread::spawn(move || {
-            x_pool.install(|| {
-                drive_stock_stream(
-                    &x_shared,
-                    BTreeMap::new(),
-                    vec![cancel(StockId(0), 1)],
-                    StockStreamNotifications::new(),
-                    |_: &StockId| Ok(FiniteShard),
-                    |progress| Ok(match progress {
-                        StockStreamProgress::Idle => FeedOutcome::Complete,
-                        _ => FeedOutcome::Operations { operations: Vec::new(), outcomes: Vec::new() },
-                    }),
-                )
-            })
-            .map(|books| books.len())
+            x_pool
+                .install(|| {
+                    drive_stock_stream(
+                        &x_shared,
+                        BTreeMap::new(),
+                        vec![cancel(StockId(0), 1)],
+                        StockStreamNotifications::new(),
+                        |_: &StockId| Ok(FiniteShard),
+                        |progress| {
+                            Ok(match progress {
+                                StockStreamProgress::Idle => FeedOutcome::Complete,
+                                _ => FeedOutcome::Operations {
+                                    operations: Vec::new(),
+                                    outcomes: Vec::new(),
+                                },
+                            })
+                        },
+                    )
+                })
+                .map(|books| books.len())
         });
         x_parked_rx
             .recv()
@@ -1582,30 +1625,36 @@ mod tests {
         let y_pool = Arc::clone(&pool);
         let y_shared = shared.clone();
         let y = std::thread::spawn(move || {
-            y_pool.install(|| {
-                drive_stock_stream(
-                    &y_shared,
-                    BTreeMap::new(),
-                    vec![cancel(StockId(1), 2)],
-                    StockStreamNotifications::new(),
-                    move |_: &StockId| {
-                        let hold = y_hold
-                            .lock()
-                            .unwrap()
-                            .take()
-                            .expect("Y 的 detached 只会被调用一次（单股票）");
-                        Ok(HeldShard {
-                            running: y_running_tx.clone(),
-                            hold,
-                        })
-                    },
-                    |progress| Ok(match progress {
-                        StockStreamProgress::Idle => FeedOutcome::Complete,
-                        _ => FeedOutcome::Operations { operations: Vec::new(), outcomes: Vec::new() },
-                    }),
-                )
-            })
-            .map(|books| books.len())
+            y_pool
+                .install(|| {
+                    drive_stock_stream(
+                        &y_shared,
+                        BTreeMap::new(),
+                        vec![cancel(StockId(1), 2)],
+                        StockStreamNotifications::new(),
+                        move |_: &StockId| {
+                            let hold = y_hold
+                                .lock()
+                                .unwrap()
+                                .take()
+                                .expect("Y 的 detached 只会被调用一次（单股票）");
+                            Ok(HeldShard {
+                                running: y_running_tx.clone(),
+                                hold,
+                            })
+                        },
+                        |progress| {
+                            Ok(match progress {
+                                StockStreamProgress::Idle => FeedOutcome::Complete,
+                                _ => FeedOutcome::Operations {
+                                    operations: Vec::new(),
+                                    outcomes: Vec::new(),
+                                },
+                            })
+                        },
+                    )
+                })
+                .map(|books| books.len())
         });
         y_running_rx
             .recv()
@@ -1628,12 +1677,16 @@ mod tests {
         x_release_tx.send(()).unwrap();
         y_release_tx.send(()).unwrap();
         assert_eq!(
-            x.join().expect("X 线程不得 panic").expect("X drive 不得失败"),
+            x.join()
+                .expect("X 线程不得 panic")
+                .expect("X drive 不得失败"),
             1,
             "X 必须恰好返回自己的 1 本私有簿"
         );
         assert_eq!(
-            y.join().expect("Y 线程不得 panic").expect("Y drive 不得失败"),
+            y.join()
+                .expect("Y 线程不得 panic")
+                .expect("Y drive 不得失败"),
             1,
             "Y 必须恰好返回自己的 1 本私有簿"
         );
@@ -1655,7 +1708,8 @@ mod tests {
             type Round = usize;
             const DISPATCH_BOUNDARY: Option<ExecutorBoundary> = None;
             fn apply(&mut self, _: Vec<ValidatedOperation>) -> Result<usize, StepFatal> {
-                self.executions.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                self.executions
+                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 Ok(1)
             }
         }
@@ -1858,10 +1912,15 @@ mod tests {
                                 ],
                                 StockStreamNotifications::new(),
                                 detached,
-                                |progress| Ok(match progress {
-                        StockStreamProgress::Idle => FeedOutcome::Complete,
-                        _ => FeedOutcome::Operations { operations: Vec::new(), outcomes: Vec::new() },
-                    }),
+                                |progress| {
+                                    Ok(match progress {
+                                        StockStreamProgress::Idle => FeedOutcome::Complete,
+                                        _ => FeedOutcome::Operations {
+                                            operations: Vec::new(),
+                                            outcomes: Vec::new(),
+                                        },
+                                    })
+                                },
                             )
                         })
                         .unwrap();
@@ -1940,7 +1999,10 @@ mod tests {
                             }
                             Ok(match progress {
                                 StockStreamProgress::Idle => FeedOutcome::Complete,
-                                _ => FeedOutcome::Operations { operations: Vec::new(), outcomes: Vec::new() },
+                                _ => FeedOutcome::Operations {
+                                    operations: Vec::new(),
+                                    outcomes: Vec::new(),
+                                },
                             })
                         },
                     )

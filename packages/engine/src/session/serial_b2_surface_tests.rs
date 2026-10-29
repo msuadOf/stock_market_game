@@ -143,7 +143,11 @@ fn serial_four_surfaces_probe() {
     let count: u64 = entry.bars.iter().map(|bar| bar.trade_count).sum();
     assert_eq!(candle.volume, volume, "串行日 K 量==分钟桶累计");
     let stats = candle.trade_stats.as_ref().expect("日 K stats 在档");
-    assert_eq!(u128::from(stats.turnover_cents), turnover, "日 K 额==分钟桶累计");
+    assert_eq!(
+        u128::from(stats.turnover_cents),
+        turnover,
+        "日 K 额==分钟桶累计"
+    );
     assert_eq!(stats.trade_count, count, "日 K 笔数==分钟桶累计");
 }
 
@@ -160,7 +164,11 @@ fn serial_closed_day_probe() {
     assert!(session_0.bars.is_empty(), "休市恒空桶");
     // 幂等：同日不重复；连续第二休市日恰加一条。
     session.end_civil_day().unwrap();
-    assert_eq!(session.retained_market_days().len(), 2, "连续两休市日恰两条");
+    assert_eq!(
+        session.retained_market_days().len(),
+        2,
+        "连续两休市日恰两条"
+    );
 }
 
 /// 串行路径存档往返：B2 三面（桶/确认/保留链）随 save 序列化并在

@@ -32,9 +32,17 @@ pub fn account_chart(base: AccountChart) -> Result<AccountChart, AccountingError
         (VARIABLE_EXPENSE, "Simple 汇总变动费用", Expense),
         (DIVIDEND_PAYABLE, "应付股利", Liability),
         (STATUTORY_RESERVE, "法定公积金", Equity),
-        (DIVIDEND_SETTLEMENT_ASSET, "Simple 分红账面资产调整（非现金）", Asset),
+        (
+            DIVIDEND_SETTLEMENT_ASSET,
+            "Simple 分红账面资产调整（非现金）",
+            Asset,
+        ),
         (CAPITAL_RESERVE, "Simple 资本公积—股本溢价（账面）", Equity),
-        (ISSUER_FUNDING_ASSET, "Simple 发行人募集资金账面调整（非现金）", Asset),
+        (
+            ISSUER_FUNDING_ASSET,
+            "Simple 发行人募集资金账面调整（非现金）",
+            Asset,
+        ),
     ] {
         accounts.push((LedgerAccountId(code.into()), AccountDef::new(name, element)));
     }
@@ -54,10 +62,25 @@ pub(crate) fn assignments() -> Vec<Assignment> {
             VARIABLE_EXPENSE,
             NoteTarget::Income(IncomeLine::OperatingCost),
         ),
-        a(DIVIDEND_PAYABLE, NoteTarget::BalanceSheet(BsLine::AccountsPayable)),
-        a(STATUTORY_RESERVE, NoteTarget::BalanceSheet(BsLine::StatutoryReserve)),
-        a(DIVIDEND_SETTLEMENT_ASSET, NoteTarget::BalanceSheet(BsLine::SimpleDividendSettlementAdjustment)),
-        a(CAPITAL_RESERVE, NoteTarget::BalanceSheet(BsLine::CapitalReserve)),
-        a(ISSUER_FUNDING_ASSET, NoteTarget::BalanceSheet(BsLine::SimpleIssuerFundingAdjustment)),
+        a(
+            DIVIDEND_PAYABLE,
+            NoteTarget::BalanceSheet(BsLine::AccountsPayable),
+        ),
+        a(
+            STATUTORY_RESERVE,
+            NoteTarget::BalanceSheet(BsLine::StatutoryReserve),
+        ),
+        a(
+            DIVIDEND_SETTLEMENT_ASSET,
+            NoteTarget::BalanceSheet(BsLine::SimpleDividendSettlementAdjustment),
+        ),
+        a(
+            CAPITAL_RESERVE,
+            NoteTarget::BalanceSheet(BsLine::CapitalReserve),
+        ),
+        a(
+            ISSUER_FUNDING_ASSET,
+            NoteTarget::BalanceSheet(BsLine::SimpleIssuerFundingAdjustment),
+        ),
     ]
 }

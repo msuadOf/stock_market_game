@@ -49,7 +49,12 @@ impl GameSession {
             if self.state.runtime_resting_snapshot.is_some() {
                 return self.runtime_derive_envelopes();
             }
-            return Ok(self.state.envelope_ledger.iter().map(|(_, e)| e.clone()).collect());
+            return Ok(self
+                .state
+                .envelope_ledger
+                .iter()
+                .map(|(_, e)| e.clone())
+                .collect());
         }
         let mut envelopes = Vec::new();
         for (code, market) in &self.state.markets {
@@ -102,7 +107,10 @@ impl GameSession {
     ) -> Result<(), StepFatal> {
         // restore/new生出的raw行没有proof，统一入口会完整重算一次；已有规范行复用
         // 每订单内容版本的证明，不能把“恢复保留全校验”理解成每tick重建同一财务表示。
-        Self::validate_existing_live_projection_with_observer_on(&self.read_view(), observe_projected_row)
+        Self::validate_existing_live_projection_with_observer_on(
+            &self.read_view(),
+            observe_projected_row,
+        )
     }
 
     /// 读视图版本（prepare 链投机路径共用）。
@@ -178,7 +186,8 @@ impl GameSession {
                 if envelope.origin() != pipeline::EnvelopeOrigin::TickStart
                     || envelope.basis() != envelope.live()
                     || envelope.spent() != pipeline::ResVec::ZERO
-                    || envelope.released() != pipeline::ResVec::ZERO {
+                    || envelope.released() != pipeline::ResVec::ZERO
+                {
                     return Err(invariant("live envelope projection disagrees with ledger"));
                 }
                 envelope.verified_live(&view.setup.config)?;

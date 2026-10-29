@@ -71,8 +71,7 @@ static HOOK_SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
 #[test]
 fn chunked_dispatch_packs_accounts_into_worker_aligned_tasks() {
     let compute = crate::compute::ComputeContext::with_workers(2).unwrap();
-    let merged: Arc<std::sync::Mutex<Vec<AccountId>>> =
-        Arc::new(std::sync::Mutex::new(Vec::new()));
+    let merged: Arc<std::sync::Mutex<Vec<AccountId>>> = Arc::new(std::sync::Mutex::new(Vec::new()));
     let merged_view = Arc::clone(&merged);
     let _ = compute.take_stream_workload_counts();
     let result = super::npc_decisions::stream_npc_account_tasks_with(
@@ -80,10 +79,9 @@ fn chunked_dispatch_packs_accounts_into_worker_aligned_tasks() {
         &compute,
         |_| {},
         |_| Ok::<(), ()>(()),
-        move |account, result: Result<(), ()>, _errors: &mut Vec<(
-            AccountId,
-            NpcDecisionStreamError<()>,
-        )>| {
+        move |account,
+              result: Result<(), ()>,
+              _errors: &mut Vec<(AccountId, NpcDecisionStreamError<()>)>| {
             let _ = &result;
             merged_view.lock().unwrap().push(account);
         },
@@ -95,7 +93,8 @@ fn chunked_dispatch_packs_accounts_into_worker_aligned_tasks() {
         "任务数必须=min(due,workers)=2（实测 spawned={spawned}；宽度税治理目标）"
     );
     assert_eq!(
-        payloads + inline, 7,
+        payloads + inline,
+        7,
         "每账户恰一次交付（payload 或内联；实测 payloads={payloads} inline={inline}）"
     );
     let mut covered = merged.lock().unwrap().clone();
@@ -111,10 +110,16 @@ fn chunked_dispatch_packs_accounts_into_worker_aligned_tasks() {
 /// 恰一次、台账 spawn 分量不增。
 #[test]
 fn d1_full_drives_falls_back_to_full_inline_without_dispatch() {
-    let _hook_guard = HOOK_SERIAL.lock().unwrap_or_else(|poison| poison.into_inner());
+    let _hook_guard = HOOK_SERIAL
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner());
     let compute = crate::compute::ComputeContext::with_workers(2).unwrap();
-    let _drive_a = compute.try_enter_pool_drive_slot().expect("第一个 drive 槽");
-    let _drive_b = compute.try_enter_pool_drive_slot().expect("第二个 drive 槽");
+    let _drive_a = compute
+        .try_enter_pool_drive_slot()
+        .expect("第一个 drive 槽");
+    let _drive_b = compute
+        .try_enter_pool_drive_slot()
+        .expect("第二个 drive 槽");
     let dispatches = Arc::new(AtomicUsize::new(0));
     let gate = {
         let dispatches = Arc::clone(&dispatches);
@@ -169,7 +174,9 @@ fn d1_full_drives_falls_back_to_full_inline_without_dispatch() {
 /// 在流完成前不归还），语义等价且完全确定。
 #[test]
 fn d2_sent_result_with_held_guard_still_progresses_via_inline() {
-    let _hook_guard = HOOK_SERIAL.lock().unwrap_or_else(|poison| poison.into_inner());
+    let _hook_guard = HOOK_SERIAL
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner());
     let compute = crate::compute::ComputeContext::with_workers(3).unwrap();
     // 钉住窗口：占用两个 spawned 槽位（3-worker 池，留 1 槽给 A 类协调者
     // 登记 drive 后账面即满：drives 1 + spawned 2 = 3/3），完成前不归还。
@@ -206,7 +213,10 @@ fn d2_sent_result_with_held_guard_still_progresses_via_inline() {
     drop(held_guard_b);
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     while compute.admission_snapshot() != (0, 0) {
-        assert!(std::time::Instant::now() < deadline, "guard 归还后账面回基线");
+        assert!(
+            std::time::Instant::now() < deadline,
+            "guard 归还后账面回基线"
+        );
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
 }
@@ -215,7 +225,9 @@ fn d2_sent_result_with_held_guard_still_progresses_via_inline() {
 /// inline 执行数不受限（=全部）。
 #[test]
 fn d3_dispatch_and_inline_are_counted_separately_under_full_ledger() {
-    let _hook_guard = HOOK_SERIAL.lock().unwrap_or_else(|poison| poison.into_inner());
+    let _hook_guard = HOOK_SERIAL
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner());
     let compute = crate::compute::ComputeContext::with_workers(2).unwrap();
     let _drive_a = compute.try_enter_pool_drive_slot().unwrap();
     let _drive_b = compute.try_enter_pool_drive_slot().unwrap();
@@ -247,7 +259,11 @@ fn d3_dispatch_and_inline_are_counted_separately_under_full_ledger() {
         )
     });
     assert!(result.is_ok());
-    assert_eq!(dispatches.load(Ordering::SeqCst), 0, "reserve 被拒期间 spawn 派发数不增");
+    assert_eq!(
+        dispatches.load(Ordering::SeqCst),
+        0,
+        "reserve 被拒期间 spawn 派发数不增"
+    );
     assert_eq!(inline.load(Ordering::SeqCst), 4, "inline 执行数不受限");
 }
 
@@ -255,7 +271,9 @@ fn d3_dispatch_and_inline_are_counted_separately_under_full_ledger() {
 /// 预留恰 1 归还）；运行中联合采样不变式 drives+spawned≤workers。
 #[test]
 fn d4_dispatch_completion_and_release_are_conserved() {
-    let _hook_guard = HOOK_SERIAL.lock().unwrap_or_else(|poison| poison.into_inner());
+    let _hook_guard = HOOK_SERIAL
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner());
     let compute = crate::compute::ComputeContext::with_workers(4).unwrap();
     let dispatches = Arc::new(AtomicUsize::new(0));
     let gate = {
@@ -309,7 +327,10 @@ fn d4_dispatch_completion_and_release_are_conserved() {
     // 恰 1 预留恰 1 归还：结束后 spawned 分量回 0（drives 亦随协调者退出归 0）。
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     while compute.admission_snapshot() != (0, 0) {
-        assert!(std::time::Instant::now() < deadline, "每任务恰一次归还（守恒）");
+        assert!(
+            std::time::Instant::now() < deadline,
+            "每任务恰一次归还（守恒）"
+        );
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
     sampler.1.store(true, Ordering::Relaxed);
@@ -324,7 +345,9 @@ fn d4_dispatch_completion_and_release_are_conserved() {
 /// d5：C 类全内联退化与单 worker 池——逐账户恰一次（含单 worker 退化口径）。
 #[test]
 fn d5_inline_fallback_and_single_worker_pool_each_account_exactly_once() {
-    let _hook_guard = HOOK_SERIAL.lock().unwrap_or_else(|poison| poison.into_inner());
+    let _hook_guard = HOOK_SERIAL
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner());
     let single = crate::compute::ComputeContext::with_workers(1).unwrap();
     let mut seen = std::collections::BTreeSet::new();
     let result = single.install(|| {
@@ -354,7 +377,9 @@ fn d5_inline_fallback_and_single_worker_pool_each_account_exactly_once() {
 /// guard 最终归还），钉死 sender 保活反例（设计 §3.1④ p1）。
 #[test]
 fn p1_worker_panic_reraises_original_payload_and_releases_guards() {
-    let _hook_guard = HOOK_SERIAL.lock().unwrap_or_else(|poison| poison.into_inner());
+    let _hook_guard = HOOK_SERIAL
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner());
     let compute = crate::compute::ComputeContext::with_workers(4).unwrap();
     set_decide_panic_accounts(&[AccountId(2)]);
     let payload = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -372,10 +397,11 @@ fn p1_worker_panic_reraises_original_payload_and_releases_guards() {
         })
     }))
     .expect_err("panic 必须显式传播（不得静默/挂死）");
-    let message = payload
-        .downcast_ref::<String>()
-        .cloned()
-        .or_else(|| payload.downcast_ref::<&str>().map(|text| (*text).to_string()));
+    let message = payload.downcast_ref::<String>().cloned().or_else(|| {
+        payload
+            .downcast_ref::<&str>()
+            .map(|text| (*text).to_string())
+    });
     assert_eq!(
         message.as_deref(),
         Some("decide quota test panic AccountId(2)"),
@@ -384,7 +410,10 @@ fn p1_worker_panic_reraises_original_payload_and_releases_guards() {
     set_decide_panic_accounts(&[]);
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     while compute.admission_snapshot() != (0, 0) {
-        assert!(std::time::Instant::now() < deadline, "guard 必须最终全部归还");
+        assert!(
+            std::time::Instant::now() < deadline,
+            "guard 必须最终全部归还"
+        );
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
 }
@@ -393,7 +422,9 @@ fn p1_worker_panic_reraises_original_payload_and_releases_guards() {
 /// 错误聚合吞掉（设计 §3.1④ p2）。
 #[test]
 fn p2_panic_during_drain_overrides_consumer_error_aggregation() {
-    let _hook_guard = HOOK_SERIAL.lock().unwrap_or_else(|poison| poison.into_inner());
+    let _hook_guard = HOOK_SERIAL
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner());
     let compute = crate::compute::ComputeContext::with_workers(4).unwrap();
     set_decide_panic_accounts(&[AccountId(3)]);
     let payload = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -437,7 +468,9 @@ fn p2_panic_during_drain_overrides_consumer_error_aggregation() {
 /// [merge:first, dispatch:C, merge:second] ⇒ 对修复前实现本测试红。
 #[test]
 fn r1c_decide_consumes_ready_result_before_dispatching_more() {
-    let _hook_guard = HOOK_SERIAL.lock().unwrap_or_else(|poison| poison.into_inner());
+    let _hook_guard = HOOK_SERIAL
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner());
     let compute = crate::compute::ComputeContext::with_workers(2).unwrap();
     let a_sent = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let b_sent = Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -476,10 +509,9 @@ fn r1c_decide_consumes_ready_result_before_dispatching_more() {
             &compute,
             |_| {},
             |_| Ok::<(), ()>(()),
-            move |account, result: Result<(), ()>, _errors: &mut Vec<(
-                AccountId,
-                NpcDecisionStreamError<()>,
-            )>| {
+            move |account,
+                  result: Result<(), ()>,
+                  _errors: &mut Vec<(AccountId, NpcDecisionStreamError<()>)>| {
                 let _ = result;
                 // 第一/第二个结果的 merge 自旋至「A、B 两 payload 均已入通道」
                 //（标志由 post-send hold 设置：send 先于标志）⇒ 钉死窗口。
@@ -503,13 +535,18 @@ fn r1c_decide_consumes_ready_result_before_dispatching_more() {
     set_decide_post_send_hold(None);
     result.expect("r1c 见证流必须有限完成");
     let events = events.lock().unwrap().clone();
-    assert_eq!(dispatches.load(Ordering::SeqCst), 2, "chunk 派发恰两次（[A,B]/[C]，方向A 粗化）");
+    assert_eq!(
+        dispatches.load(Ordering::SeqCst),
+        2,
+        "chunk 派发恰两次（[A,B]/[C]，方向A 粗化）"
+    );
     let first = events
         .iter()
         .position(|event| *event == "merge:first")
         .expect("必须存在首个 merge 事件");
     assert_eq!(
-        events[first + 1], "merge:later",
+        events[first + 1],
+        "merge:later",
         "R1-c：现成结果（已在通道内的第二份 payload）必须先于补派发 C 被消费；\
          实测事件全序={events:?}"
     );
@@ -545,7 +582,9 @@ fn r1c_decide_consumes_ready_result_before_dispatching_more() {
 /// 账户任务流共用，消费即生产 (d0)/(d) 路径）。
 #[test]
 fn r1c_decide_consume_before_redispatch_deterministic() {
-    let _hook_guard = HOOK_SERIAL.lock().unwrap_or_else(|poison| poison.into_inner());
+    let _hook_guard = HOOK_SERIAL
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner());
     let compute = crate::compute::ComputeContext::with_workers(4).unwrap();
     let a_sent = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let b_sent = Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -572,9 +611,7 @@ fn r1c_decide_consume_before_redispatch_deterministic() {
             events.lock().unwrap().push("dispatch");
         }));
     }
-    let accounts: Arc<Vec<AccountId>> = Arc::new(
-        (1..=13u64).map(AccountId).collect::<Vec<_>>(),
-    );
+    let accounts: Arc<Vec<AccountId>> = Arc::new((1..=13u64).map(AccountId).collect::<Vec<_>>());
     let first_merge = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let result = {
         let events = Arc::clone(&events);
@@ -592,10 +629,7 @@ fn r1c_decide_consume_before_redispatch_deterministic() {
                 |_| Ok::<(), ()>(()),
                 move |account,
                       result: Result<(), ()>,
-                      _errors: &mut Vec<(
-                          AccountId,
-                          NpcDecisionStreamError<()>,
-                      )>| {
+                      _errors: &mut Vec<(AccountId, NpcDecisionStreamError<()>)>| {
                     let _ = result;
                     // 钉窗（Sol 补强）：首个 merge 返回前必须同时观察到——
                     // ① chunk1 内 A/B 已 send（标志后于 send）⇒ 通道内必有
@@ -604,8 +638,7 @@ fn r1c_decide_consume_before_redispatch_deterministic() {
                     //    析构 ⇒ drives(1)+spawned<workers ⇒ 尾 chunk=[13]
                     //    的 reserve 立即可行、pending 非空。
                     // 此刻新旧两序必在此分岔。
-                    let deadline = std::time::Instant::now()
-                        + std::time::Duration::from_secs(10);
+                    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
                     while !(a_sent.load(Ordering::SeqCst)
                         && b_sent.load(Ordering::SeqCst)
                         && compute_for_merge.admission_snapshot().1 <= 2)
@@ -640,7 +673,8 @@ fn r1c_decide_consume_before_redispatch_deterministic() {
         .position(|event| *event == "merge:first")
         .expect("必须存在首个 merge 事件");
     assert_eq!(
-        events[first + 1], "merge:later",
+        events[first + 1],
+        "merge:later",
         "R1-c 确定性红证：现成 payload 在通道且尾 chunk reserve 立即可行时，\
          下一事件必须是消费现成结果（merge:later），不得先补派发（dispatch）\
          ——回退旧序（先补派发再消费）本断言确定性红。实测事件全序={events:?}"

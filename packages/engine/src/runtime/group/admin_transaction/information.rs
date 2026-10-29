@@ -49,7 +49,9 @@ impl GroupState {
     ) -> Result<PendingInformation, RuntimeError> {
         let reject = |error| self.information_error(error);
         if payload.observation.is_some() != proof.is_some() {
-            return Err(reject(InformationPrepareError::Identity { detail: "INFO 观察作用域与 World 证明作用域不同".to_owned() }));
+            return Err(reject(InformationPrepareError::Identity {
+                detail: "INFO 观察作用域与 World 证明作用域不同".to_owned(),
+            }));
         }
         let mut personals = Vec::new();
         let mut before = Vec::new();
@@ -99,17 +101,27 @@ impl GroupState {
                 issuers.insert(stock, company);
                 specs.insert(company, spec);
                 if !point.as_of_anchors.contains_key(&stock) {
-                    return Err(reject(InformationPrepareError::MissingInformationAnchor { stock }));
+                    return Err(reject(InformationPrepareError::MissingInformationAnchor {
+                        stock,
+                    }));
                 }
                 if !point.market.stocks.contains_key(&stock) {
                     return Err(reject(InformationPrepareError::MissingMarket { stock }));
                 }
             }
-            let proof = proof.ok_or_else(|| reject(InformationPrepareError::Identity { detail: "INFO 缺少 World 认证证明".to_owned() }))?;
+            let proof = proof.ok_or_else(|| {
+                reject(InformationPrepareError::Identity {
+                    detail: "INFO 缺少 World 认证证明".to_owned(),
+                })
+            })?;
             self.validate_information_clock(proof)?;
-            if proof.through() != point.through || proof.anchors() != &point.as_of_anchors
-                || !proof.clock().same_source(&point.clock) {
-                return Err(reject(InformationPrepareError::Identity { detail: "INFO 原始观察与 World 认证证明绑定不同".to_owned() }));
+            if proof.through() != point.through
+                || proof.anchors() != &point.as_of_anchors
+                || !proof.clock().same_source(&point.clock)
+            {
+                return Err(reject(InformationPrepareError::Identity {
+                    detail: "INFO 原始观察与 World 认证证明绑定不同".to_owned(),
+                }));
             }
             let mut observers = Vec::new();
             for local in 0..self.accounts.len() {
@@ -170,10 +182,15 @@ impl GroupState {
                         }));
                     }
                 }
-                snapshot.belief.validate_information_anchors(|stock| point.as_of_anchors.get(&stock).copied())
-                    .map_err(|error| reject(InformationPrepareError::Revaluation {
-                        account: owner, detail: error.to_string(),
-                    }))?;
+                snapshot
+                    .belief
+                    .validate_information_anchors(|stock| point.as_of_anchors.get(&stock).copied())
+                    .map_err(|error| {
+                        reject(InformationPrepareError::Revaluation {
+                            account: owner,
+                            detail: error.to_string(),
+                        })
+                    })?;
                 observers.push((local, owner, snapshot, codes, protected));
             }
             // 完整目录与全部真实 owner/codes 已验证后，才允许同签名跳过本人计算。

@@ -215,42 +215,92 @@ fn repurchase_account_still_accepts_explicit_external_plan() {
 #[test]
 fn repurchase_raw_external_plan_cancel_returns_resources_and_abort_preserves_original_order() {
     let mut session = funded_repurchase_session();
-    assert!(session.runtime_plans_snapshot().plan_ids().next().is_none(), "夹具没有 canonical 公司计划");
+    assert!(
+        session.runtime_plans_snapshot().plan_ids().next().is_none(),
+        "夹具没有 canonical 公司计划"
+    );
     let opening_ticks = session.export_setup_for_runtime().auction_ticks;
     let mut driver = RuntimeDriver::from_session(&mut session).unwrap();
     driver.adopt_session_seq(&session);
-    driver.defer_due_for_test_at(&(1..=u64::from(RETAIL_COUNT)).map(AccountId).collect::<Vec<_>>(), u64::MAX);
-    for _ in 0..opening_ticks { driver.step_frame_equivalent(&mut session).unwrap(); }
-    let upper: Vec<_> = driver.world_public_views().iter().map(|view| view.daily_upper_limit).collect();
+    driver.defer_due_for_test_at(
+        &(1..=u64::from(RETAIL_COUNT))
+            .map(AccountId)
+            .collect::<Vec<_>>(),
+        u64::MAX,
+    );
+    for _ in 0..opening_ticks {
+        driver.step_frame_equivalent(&mut session).unwrap();
+    }
+    let upper: Vec<_> = driver
+        .world_public_views()
+        .iter()
+        .map(|view| view.daily_upper_limit)
+        .collect();
     let initial_accounts = driver.world_accounts_snapshot().unwrap();
     let initial_cash = session.account(REPURCHASE_ACCOUNT).unwrap().cash();
-    let initial_positions = serde_json::to_value(session.account(REPURCHASE_ACCOUNT).unwrap().positions()).unwrap();
+    let initial_positions =
+        serde_json::to_value(session.account(REPURCHASE_ACCOUNT).unwrap().positions()).unwrap();
     let place = || crate::session::ReceiptBearingIntent {
         owner: REPURCHASE_ACCOUNT,
-        intent: crate::Intent::PlaceLimit { code: STOCK, side: crate::Side::Buy,
-            price: crate::strategy::LimitPrice::Fixed(Money::from_cents(1_000)), qty: 100 },
-        account_ordinal: 0, stock_ordinal: 0,
+        intent: crate::Intent::PlaceLimit {
+            code: STOCK,
+            side: crate::Side::Buy,
+            price: crate::strategy::LimitPrice::Fixed(Money::from_cents(1_000)),
+            qty: 100,
+        },
+        account_ordinal: 0,
+        stock_ordinal: 0,
     };
     let cancel = |id| crate::session::ReceiptBearingIntent {
-        owner: REPURCHASE_ACCOUNT, intent: crate::Intent::Cancel { code: STOCK, id },
-        account_ordinal: 0, stock_ordinal: 0,
+        owner: REPURCHASE_ACCOUNT,
+        intent: crate::Intent::Cancel { code: STOCK, id },
+        account_ordinal: 0,
+        stock_ordinal: 0,
     };
-    let accepted_id = |events: &[Event]| events.iter().find_map(|event| match event {
-        Event::OrderAccepted { account, code, id, side: crate::Side::Buy, remaining_qty: 100, .. }
-            if *account == REPURCHASE_ACCOUNT && *code == STOCK => Some(*id),
-        _ => None,
-    }).expect("真实 raw ExternalPlan 必须先受理，不能提前改为权限拒绝");
+    let accepted_id = |events: &[Event]| {
+        events
+            .iter()
+            .find_map(|event| match event {
+                Event::OrderAccepted {
+                    account,
+                    code,
+                    id,
+                    side: crate::Side::Buy,
+                    remaining_qty: 100,
+                    ..
+                } if *account == REPURCHASE_ACCOUNT && *code == STOCK => Some(*id),
+                _ => None,
+            })
+            .expect("真实 raw ExternalPlan 必须先受理，不能提前改为权限拒绝")
+    };
     driver.inject_player_intents(&[place()], &upper).unwrap();
     let id = accepted_id(&driver.step_frame_equivalent(&mut session).unwrap());
     driver.inject_player_intents(&[cancel(id)], &upper).unwrap();
-    let events = driver.step_frame_equivalent(&mut session)
+    let events = driver
+        .step_frame_equivalent(&mut session)
         .expect("已受理 raw ExternalPlan 的真实退款 Closed 必须成功，不得仅凭 binding 拒绝");
-    assert_eq!(events.iter().filter(|event| matches!(event,
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(event,
         Event::OrderCanceled { account, code, id: actual, remaining_qty: 100, .. }
-            if *account == REPURCHASE_ACCOUNT && *code == STOCK && *actual == id)).count(), 1);
-    assert_eq!(driver.world_accounts_snapshot().unwrap(), initial_accounts, "原账户资源全部归还，不制造现金或股份");
-    assert_eq!(session.account(REPURCHASE_ACCOUNT).unwrap().cash(), initial_cash);
-    assert_eq!(serde_json::to_value(session.account(REPURCHASE_ACCOUNT).unwrap().positions()).unwrap(), initial_positions);
+            if *account == REPURCHASE_ACCOUNT && *code == STOCK && *actual == id))
+            .count(),
+        1
+    );
+    assert_eq!(
+        driver.world_accounts_snapshot().unwrap(),
+        initial_accounts,
+        "原账户资源全部归还，不制造现金或股份"
+    );
+    assert_eq!(
+        session.account(REPURCHASE_ACCOUNT).unwrap().cash(),
+        initial_cash
+    );
+    assert_eq!(
+        serde_json::to_value(session.account(REPURCHASE_ACCOUNT).unwrap().positions()).unwrap(),
+        initial_positions
+    );
 
     // 再受理同类原订单，拒绝真实撤单 tick；Abort 只能恢复该订单在途资源。
     driver.inject_player_intents(&[place()], &upper).unwrap();
@@ -260,25 +310,49 @@ fn repurchase_raw_external_plan_cancel_returns_resources_and_abort_preserves_ori
     let before_accounts = driver.world_accounts_snapshot().unwrap();
     let before_plans = driver.collect_plans().unwrap();
     driver.inject_player_intents(&[cancel(id)], &upper).unwrap();
-    driver.set_world_validator_for_test(Box::new(|_| Err("raw ExternalPlan 撤单 Abort 验证".into())));
+    driver
+        .set_world_validator_for_test(Box::new(|_| Err("raw ExternalPlan 撤单 Abort 验证".into())));
     // 本段只验证 World 的机械 Abort 可逆性；公开 driver 的 candidate 失败必须 terminal。
-    let error = driver.run_world_tick_for_test().expect_err("真实撤单候选必须被 validator 拒绝");
-    assert!(error.contains("raw ExternalPlan 撤单 Abort 验证"), "须到达目标 validator：{error}");
+    let error = driver
+        .run_world_tick_for_test()
+        .expect_err("真实撤单候选必须被 validator 拒绝");
+    assert!(
+        error.contains("raw ExternalPlan 撤单 Abort 验证"),
+        "须到达目标 validator：{error}"
+    );
     assert_eq!(session.tick(), before_tick);
     assert_eq!(session.business_state_hash().unwrap(), before_hash);
     assert_eq!(driver.world_accounts_snapshot().unwrap(), before_accounts);
     assert_eq!(driver.collect_plans().unwrap(), before_plans);
     driver.set_world_validator_for_test(Box::new(|_| Ok(())));
     driver.inject_player_intents(&[cancel(id)], &upper).unwrap();
-    let events = driver.step_frame_equivalent(&mut session).expect("Abort 后原单仍能真实撤销");
-    assert!(events.iter().any(|event| matches!(event, Event::OrderCanceled { account, id: actual, .. }
-        if *account == REPURCHASE_ACCOUNT && *actual == id)));
+    let events = driver
+        .step_frame_equivalent(&mut session)
+        .expect("Abort 后原单仍能真实撤销");
+    assert!(events.iter().any(
+        |event| matches!(event, Event::OrderCanceled { account, id: actual, .. }
+        if *account == REPURCHASE_ACCOUNT && *actual == id)
+    ));
     assert_eq!(driver.world_accounts_snapshot().unwrap(), initial_accounts);
-    driver.step_frame_equivalent(&mut session).expect("显式订单终结后继续合法交易拍");
+    driver
+        .step_frame_equivalent(&mut session)
+        .expect("显式订单终结后继续合法交易拍");
     assert!(session.runtime_plans_snapshot().plan_ids().next().is_none());
-    let index = driver.id_map.iter().position(|id| *id == REPURCHASE_ACCOUNT).unwrap();
+    let index = driver
+        .id_map
+        .iter()
+        .position(|id| *id == REPURCHASE_ACCOUNT)
+        .unwrap();
     let attention = driver.collect_attention().unwrap();
-    assert_eq!(attention[0].1.iter().find(|(local, _, _)| *local as usize == index).unwrap().1, u64::MAX);
+    assert_eq!(
+        attention[0]
+            .1
+            .iter()
+            .find(|(local, _, _)| *local as usize == index)
+            .unwrap()
+            .1,
+        u64::MAX
+    );
 }
 
 fn is_account_order_event(event: &Event, owner: AccountId) -> bool {

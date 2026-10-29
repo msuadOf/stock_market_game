@@ -109,15 +109,30 @@ fn solfinal2_real_trade_parity_cash_position_t1_cost() {
     let mut legacy = make();
     let code = crate::StockId(0);
     // 玩家步前现金（两臂同构——独立推算基线动态取，不硬编码）。
-    let player_cash_before = legacy.game().save().expect("存档").snapshot.accounts[&crate::AccountId(0)].cash.cents();
+    let player_cash_before = legacy.game().save().expect("存档").snapshot.accounts
+        [&crate::AccountId(0)]
+        .cash
+        .cents();
     // 卖方步前现金（卖方现金 oracle 基线）。
-    let rt_seller_cash_before = rt.game().save().expect("存档").snapshot.accounts[&crate::AccountId(1)].cash.cents();
-    let legacy_seller_cash_before = legacy.game().save().expect("存档").snapshot.accounts[&crate::AccountId(1)].cash.cents();
-    assert_eq!(rt_seller_cash_before, legacy_seller_cash_before, "卖方步前现金两臂同构");
+    let rt_seller_cash_before = rt.game().save().expect("存档").snapshot.accounts
+        [&crate::AccountId(1)]
+        .cash
+        .cents();
+    let legacy_seller_cash_before = legacy.game().save().expect("存档").snapshot.accounts
+        [&crate::AccountId(1)]
+        .cash
+        .cents();
+    assert_eq!(
+        rt_seller_cash_before, legacy_seller_cash_before,
+        "卖方步前现金两臂同构"
+    );
     // NPC 卖 100@1000 挂旧簿（两臂同拍同形；受理事件面不在断言内）。
     let mut events = Vec::new();
-    rt.game_mut()
-        .seed_order_for_test(crate::AccountId(1), sell_limit(&code, 1000, 100), &mut events);
+    rt.game_mut().seed_order_for_test(
+        crate::AccountId(1),
+        sell_limit(&code, 1000, 100),
+        &mut events,
+    );
     let mut events = Vec::new();
     legacy.game_mut().seed_order_for_test(
         crate::AccountId(1),
@@ -132,7 +147,9 @@ fn solfinal2_real_trade_parity_cash_position_t1_cost() {
                 crate::Intent::PlaceLimit {
                     code,
                     side: crate::Side::Buy,
-                    price: crate::strategy::LimitPrice::Fixed(crate::money::Money::from_cents(1000)),
+                    price: crate::strategy::LimitPrice::Fixed(crate::money::Money::from_cents(
+                        1000,
+                    )),
                     qty: 100,
                 },
             )
@@ -142,7 +159,9 @@ fn solfinal2_real_trade_parity_cash_position_t1_cost() {
     let legacy_frame = legacy
         .step_frame_pipeline_contract()
         .expect("legacy 步进（旧簿撮合）");
-    let rt_frame = rt.step_frame().expect("runtime 步进（adopt 迁入+desk 撮合）");
+    let rt_frame = rt
+        .step_frame()
+        .expect("runtime 步进（adopt 迁入+desk 撮合）");
     rt_frame.validate().expect("runtime 帧校验");
     // 成交确实发生（两臂各恰一笔 Trade 100@1000）。
     for (name, frame) in [("legacy", &legacy_frame), ("rt", &rt_frame)] {
@@ -200,7 +219,10 @@ fn solfinal2_real_trade_parity_cash_position_t1_cost() {
         (900, 0),
         "卖方余仓 900（1000−100），T+1 不涉（非当日买入）"
     );
-    assert_eq!(seller_recovered, 100_000, "卖方 recovered=成交额（费不入账口径）");
+    assert_eq!(
+        seller_recovered, 100_000,
+        "卖方 recovered=成交额（费不入账口径）"
+    );
     // 卖方现金=步前+净得（成交额−佣金−印花税；印花税=卖方 0.5‰=50 分）。
     let stamp_tax = 50i64;
     // 净得=100_000−500−50−1（佣金/印花/过户）。
@@ -246,9 +268,9 @@ fn parity_scenario(auction_ticks: u64, ticks: u64) {
                     crate::Intent::PlaceLimit {
                         code,
                         side: crate::Side::Buy,
-                        price: crate::strategy::LimitPrice::Fixed(
-                            crate::money::Money::from_cents(1000),
-                        ),
+                        price: crate::strategy::LimitPrice::Fixed(crate::money::Money::from_cents(
+                            1000,
+                        )),
                         qty: 100,
                     },
                 )
@@ -256,9 +278,7 @@ fn parity_scenario(auction_ticks: u64, ticks: u64) {
         }
         let rt_frame = rt.step_frame().expect("runtime 分叉步进");
         rt_frame.validate().expect("runtime 帧校验");
-        let legacy_frame = legacy
-            .step_frame_pipeline_contract()
-            .expect("旧管线步进");
+        let legacy_frame = legacy.step_frame_pipeline_contract().expect("旧管线步进");
         for fact in &legacy_frame.facts {
             if matches!(fact.event, crate::Event::IntentRejected { .. }) {
                 eprintln!("tick {t} legacy rejected: {:?}", fact.event);

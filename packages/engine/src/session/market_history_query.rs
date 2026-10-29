@@ -254,20 +254,19 @@ impl GameSession {
         );
         // 收盘后：当日步数已满（tick 为 tpd 倍数）且日K已入历史。
         let after_close = trading
-            && self.state.tick.is_multiple_of(self.state.setup.ticks_per_day)
+            && self
+                .state
+                .tick
+                .is_multiple_of(self.state.setup.ticks_per_day)
             && self
                 .state
                 .candle_book
                 .histories()
                 .get(&request.stock)
                 .is_some_and(|history| {
-                    history
-                        .iter_rev()
-                        .next()
-                        .is_some_and(|candle| {
-                            candle.time
-                                == crate::session::candles::candle_date_time(date)
-                        })
+                    history.iter_rev().next().is_some_and(|candle| {
+                        candle.time == crate::session::candles::candle_date_time(date)
+                    })
                 });
         let phase = if !trading {
             CurrentMinuteHistoryPhase::Closed
@@ -278,9 +277,7 @@ impl GameSession {
                 crate::TradingPhase::CallAuction => CurrentMinuteHistoryPhase::CallAuction,
                 crate::TradingPhase::PreOpen => CurrentMinuteHistoryPhase::PreOpen,
                 crate::TradingPhase::Continuous => CurrentMinuteHistoryPhase::Continuous,
-                crate::TradingPhase::ClosingAuction => {
-                    CurrentMinuteHistoryPhase::ClosingAuction
-                }
+                crate::TradingPhase::ClosingAuction => CurrentMinuteHistoryPhase::ClosingAuction,
             }
         };
         let bars = if trading {
@@ -345,9 +342,7 @@ impl GameSession {
             .ok_or(SessionError::UnknownHistoryAccount(account))?
             .record(stock, minute)
             // 1260：个人历史读记录失败（与 query_stock_history 同码同义）。
-            .map_err(|_| {
-                SessionError::InvalidSave(crate::error::ValidationFault::bare(1260))
-            })?;
+            .map_err(|_| SessionError::InvalidSave(crate::error::ValidationFault::bare(1260)))?;
         Ok(())
     }
 }

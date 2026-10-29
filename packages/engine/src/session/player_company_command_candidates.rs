@@ -492,7 +492,9 @@ pub(super) fn build_player_repurchase_plan(
             book.plan().stock == stock
                 && book.receipt().is_some()
                 && book.plan().ex_rights_on <= input.day
-                && book.settled_on().is_some_and(|settled_on| settled_on <= input.day)
+                && book
+                    .settled_on()
+                    .is_some_and(|settled_on| settled_on <= input.day)
         })
         .max_by_key(|book| book.plan().ex_rights_on)
         .map(|book| book.plan().event_id.clone());

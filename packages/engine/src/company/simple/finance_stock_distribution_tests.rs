@@ -163,13 +163,23 @@ fn bonus_share_cap_uses_registered_capital_evolved_by_prior_credit() {
     // 可分配利润上限按演进后注册资本核定：50% 门槛重新生效并要求计提法定公积金。
     let after = state.distributable_profit().unwrap();
     assert_eq!(
-        state.books().ledger().account_net_debit(&LedgerAccountId(
-            crate::accounting::reports::simple_summary::STATUTORY_RESERVE.into(),
-        )).unwrap().neg().unwrap(),
+        state
+            .books()
+            .ledger()
+            .account_net_debit(&LedgerAccountId(
+                crate::accounting::reports::simple_summary::STATUTORY_RESERVE.into(),
+            ))
+            .unwrap()
+            .neg()
+            .unwrap(),
         amount(8_200),
         "送转增资会恢复计提门槛；批准时预留并于入账计提 2_700，不能只算上限而不计提"
     );
-    assert_eq!(after.statutory_reserve, amount(0), "2030 年度计提已经完成，不得重复计提");
+    assert_eq!(
+        after.statutory_reserve,
+        amount(0),
+        "2030 年度计提已经完成，不得重复计提"
+    );
     // 按演进前口径本可受理（27_000 ≥ 26_000）的送股面值总额，现按演进后上限被拒。
     assert!(
         state
@@ -322,7 +332,13 @@ fn bonus_share_declaration_blocks_full_cash_dividend_double_spend() {
         )
         .unwrap();
     bind_capital(&mut state);
-    assert_eq!(state.distributable_profit().unwrap().available_for_distribution, amount(6_300));
+    assert_eq!(
+        state
+            .distributable_profit()
+            .unwrap()
+            .available_for_distribution,
+        amount(6_300)
+    );
     state
         .declare_stock_distribution(one_cent_par_declaration(
             "dist-reserve",
@@ -353,11 +369,26 @@ fn bonus_share_declaration_blocks_full_cash_dividend_double_spend() {
             registered_capital: amount(10_000),
         })
         .unwrap();
-    state.record_stock_distribution_credit("dist-reserve", in_2031(1, 3), 6_000).unwrap();
-    state.apply_month(in_2031(1, 31), &PeriodAmounts {
-        revenue: amount(0), fixed_expense: amount(0), variable_expense: amount(0),
-    }).expect("已批准来源额度内的送股与现金分红不得卡死后续结算");
-    assert_eq!(state.distributable_profit().unwrap().available_for_distribution, amount(0));
+    state
+        .record_stock_distribution_credit("dist-reserve", in_2031(1, 3), 6_000)
+        .unwrap();
+    state
+        .apply_month(
+            in_2031(1, 31),
+            &PeriodAmounts {
+                revenue: amount(0),
+                fixed_expense: amount(0),
+                variable_expense: amount(0),
+            },
+        )
+        .expect("已批准来源额度内的送股与现金分红不得卡死后续结算");
+    assert_eq!(
+        state
+            .distributable_profit()
+            .unwrap()
+            .available_for_distribution,
+        amount(0)
+    );
 }
 
 /// 转增声明必须按未入账已占用额预留资本公积余额：两笔各超余额的转增
@@ -385,8 +416,7 @@ fn capital_reserve_conversions_reserve_balance_at_declaration() {
     .unwrap();
     bind_capital(&mut state);
     let conversion = |event_id: &str, shares: u64, approved: CivilDate| {
-        let mut declaration =
-            one_cent_par_declaration(event_id, shares, 10_000, approved);
+        let mut declaration = one_cent_par_declaration(event_id, shares, 10_000, approved);
         declaration.kind =
             crate::company::stock_distribution::StockDistributionKind::CapitalReserveConversion;
         declaration
@@ -408,11 +438,19 @@ fn capital_reserve_conversions_reserve_balance_at_declaration() {
     let mut rest = conversion("conv-rest", 1_500, in_2031(1, 4));
     rest.registered_capital_at_approval = amount(13_000);
     state.declare_stock_distribution(rest).unwrap();
-    state.record_stock_distribution_credit("conv-rest", in_2031(1, 5), 1_500).unwrap();
+    state
+        .record_stock_distribution_credit("conv-rest", in_2031(1, 5), 1_500)
+        .unwrap();
     // 不生成额外收入费用，只核对行为后的完整会计期间仍能结算。
-    let zero = PeriodAmounts { revenue: amount(0), fixed_expense: amount(0), variable_expense: amount(0) };
+    let zero = PeriodAmounts {
+        revenue: amount(0),
+        fixed_expense: amount(0),
+        variable_expense: amount(0),
+    };
     state.apply_period(date(1, 1), date(12, 31), &zero).unwrap();
-    state.apply_month(in_2031(1, 31), &zero).expect("拒绝超额声明后，合法转增与后续结算不能卡死");
+    state
+        .apply_month(in_2031(1, 31), &zero)
+        .expect("拒绝超额声明后，合法转增与后续结算不能卡死");
     state.validate().unwrap();
 }
 
@@ -449,7 +487,10 @@ fn declared_bonus_reservation_does_not_block_later_loss_month_close() {
         .expect("已批准送转入账不得被当期利润下降阻断");
     state.validate().unwrap();
     assert_eq!(
-        state.distributable_profit().unwrap().available_for_distribution,
+        state
+            .distributable_profit()
+            .unwrap()
+            .available_for_distribution,
         amount(0),
         "入账后可分配利润归零（留存收益 −100）"
     );

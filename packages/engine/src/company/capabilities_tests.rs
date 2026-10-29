@@ -205,9 +205,7 @@ fn company_facts_after_legal_facts_report_yuan_strings() {
 #[test]
 fn company_facts_unknown_company_is_invalid_input() {
     let system = create_system();
-    let error = system
-        .company_facts(&CompanyId(1))
-        .unwrap_err();
+    let error = system.company_facts(&CompanyId(1)).unwrap_err();
     assert_eq!(error.classification(), CompanyErrorClass::InvalidInput);
 }
 
@@ -223,7 +221,11 @@ fn company_facts_par_value_uses_booked_outstanding_anchor_not_declared_chain() {
         .define_dividend_legal_facts(&company(), amount(1_000_000), "股东会决议第 1 号".into())
         .unwrap();
     // 前置：无任何送转／拆股事实，两条面值链都无锚。
-    match system.company_facts(&company()).unwrap().par_value_per_share {
+    match system
+        .company_facts(&company())
+        .unwrap()
+        .par_value_per_share
+    {
         CapabilityMoney::Unavailable { .. } => {}
         CapabilityMoney::Available { .. } => panic!("无面值事实时不得冒充可用"),
     }
@@ -254,7 +256,11 @@ fn company_facts_par_value_uses_booked_outstanding_anchor_not_declared_chain() {
     );
     // 能力面：在册口径无已入账重锚 → 显式不可用（issued 仍 1000 股、注册资本
     // 未变，报 500 分会造成 par×issued≠registered_capital）。
-    match system.company_facts(&company()).unwrap().par_value_per_share {
+    match system
+        .company_facts(&company())
+        .unwrap()
+        .par_value_per_share
+    {
         CapabilityMoney::Unavailable { reason } => {
             assert!(!reason.trim().is_empty(), "不可用必须显式给原因");
         }

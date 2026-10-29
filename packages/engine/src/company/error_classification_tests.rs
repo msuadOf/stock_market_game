@@ -5,25 +5,25 @@
 //! 行为路径（create／finance／submit_command）覆盖每类至少两例，防止分类面与
 //! 实际调用点漂移。
 
+use crate::account::StockCode;
+use crate::accounting::{
+    AccountingAmount, AccountingError, IncomeTaxPolicy, JournalLine, LedgerAccountId, PostingSide,
+    TaxPolicy, VatPolicy,
+};
 use crate::calendar::CivilDate;
 use crate::company::api::CompanyCommand;
 use crate::company::config::CompanySystemConfig;
 use crate::company::simple::{
-    SimpleConfig, SimpleEnvironmentConfig, SimpleFinanceConfig, SimpleSummaryRule,
     finance::SimpleFinanceError,
     period::{
         AnnualTrendConfig, PeriodGenerationParameters, PeriodNoiseConfig,
         PeriodVariableExpenseRule, SettlementCycle,
     },
     preferences::SimpleCompanyPreferences,
+    SimpleConfig, SimpleEnvironmentConfig, SimpleFinanceConfig, SimpleSummaryRule,
 };
 use crate::company::spec::{CompanyId, CompanyKind, CompanySpec, IndustryId};
 use crate::company::{CompanyErrorClass, CompanySystem, CompanySystemError};
-use crate::account::StockCode;
-use crate::accounting::{
-    AccountingAmount, AccountingError, IncomeTaxPolicy, JournalLine, LedgerAccountId,
-    PostingSide, TaxPolicy, VatPolicy,
-};
 
 fn date(text: &str) -> CivilDate {
     CivilDate::from_iso(text).unwrap()
@@ -129,9 +129,7 @@ fn create_system() -> CompanySystem {
 #[test]
 fn unknown_company_query_maps_to_invalid_input() {
     let system = create_system();
-    let error = system
-        .distributable_profit(&CompanyId(1))
-        .unwrap_err();
+    let error = system.distributable_profit(&CompanyId(1)).unwrap_err();
     assert_eq!(error.classification(), CompanyErrorClass::InvalidInput);
     // 分类是附加结构：具体错误信息保持原样。
     // 数值身份下未知公司即超界数值 id，错误消息展示数值（展示代码由边界层翻译）。
@@ -140,7 +138,8 @@ fn unknown_company_query_maps_to_invalid_input() {
 
 #[test]
 fn invalid_civil_date_maps_to_invalid_input() {
-    let error = CompanySystemError::from(crate::calendar::CivilDate::from_ymd(2029, 2, 30).unwrap_err());
+    let error =
+        CompanySystemError::from(crate::calendar::CivilDate::from_ymd(2029, 2, 30).unwrap_err());
     assert_eq!(error.classification(), CompanyErrorClass::InvalidInput);
 }
 
@@ -181,9 +180,7 @@ fn restart_revenue_on_active_company_maps_to_business_condition() {
 
 #[test]
 fn wrapped_plan_identity_conflict_maps_to_business_condition() {
-    let error = CompanySystemError::from(SimpleFinanceError::DividendPlanConflict(
-        "plan-1".into(),
-    ));
+    let error = CompanySystemError::from(SimpleFinanceError::DividendPlanConflict("plan-1".into()));
     assert_eq!(error.classification(), CompanyErrorClass::BusinessCondition);
 }
 
@@ -242,7 +239,10 @@ fn restored_state_with_missing_company_maps_to_system_state() {
     let missing = match &mut system.implementation {
         crate::company::system::CompanyImplementation::Simple(state) => {
             let victim = state.config.companies[0].company.clone();
-            assert!(state.companies.remove(&victim).is_some(), "fixture 前置：公司状态存在");
+            assert!(
+                state.companies.remove(&victim).is_some(),
+                "fixture 前置：公司状态存在"
+            );
             victim
         }
     };

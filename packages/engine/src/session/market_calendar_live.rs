@@ -197,7 +197,8 @@ impl GameSession {
             &self.market_calendar_source,
             &self.market_calendar_bindings()?,
             self.civil_date(),
-        ).map_err(|error| StepFatal::InvariantViolation {
+        )
+        .map_err(|error| StepFatal::InvariantViolation {
             location: "GameSession::prepare_market_calendar_projection".to_owned(),
             description: error.to_string(),
         })?;
@@ -222,9 +223,9 @@ impl GameSession {
         };
         let input = calendar_clock_input(day, layout, self.state.tick, u64::from(self.state.day))
             .map_err(|error| StepFatal::InvariantViolation {
-                location: "GameSession::prepare_market_calendar_tick".to_owned(),
-                description: error.to_string(),
-            })?;
+            location: "GameSession::prepare_market_calendar_tick".to_owned(),
+            description: error.to_string(),
+        })?;
         Ok((layout, input))
     }
 
@@ -234,10 +235,12 @@ impl GameSession {
     ) -> Result<(Arc<MarketDayContext>, Arc<MarketTickContext>), StepFatal> {
         let day = self.prepare_market_calendar_day()?;
         let (layout, input) = self.market_calendar_clock_input(&day)?;
-        let context = day.tick(layout, input).map_err(|error| StepFatal::InvariantViolation {
-            location: "GameSession::prepare_market_calendar_tick".to_owned(),
-            description: error.to_string(),
-        })?;
+        let context = day
+            .tick(layout, input)
+            .map_err(|error| StepFatal::InvariantViolation {
+                location: "GameSession::prepare_market_calendar_tick".to_owned(),
+                description: error.to_string(),
+            })?;
         Ok((day, context))
     }
 

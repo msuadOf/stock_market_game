@@ -1,13 +1,15 @@
 //! 存档结构、市场、账户、订单与日 K 不变量校验。
 
+use super::exchange_calendar_model::{
+    calendar_clock_projection, SessionTickLayout, SharedDayProgress,
+};
 use super::*;
 use crate::error::ValidationFault;
-use super::exchange_calendar_model::{calendar_clock_projection, SessionTickLayout, SharedDayProgress};
 
-mod saved_runtime;
 mod registry_settlement;
 #[cfg(test)]
 mod registry_settlement_restore_tests;
+mod saved_runtime;
 #[cfg(test)]
 mod saved_runtime_tests;
 
@@ -302,7 +304,8 @@ impl<'a> SaveValidationContext<'a> {
 fn saved_calendar_error(error: impl std::fmt::Display) -> SessionError {
     CivilClockError::SaveInconsistent {
         detail: format!("存档市场 Calendar 进度不一致：{error}"),
-    }.into()
+    }
+    .into()
 }
 
 pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
@@ -323,17 +326,25 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
             Some(crate::company::config::CompanySystemConfig::Simple(_)),
             SavedSessionCompanies::CompanySystem { system, .. },
         ) => {
-            let expected_listed: BTreeSet<_> = save.setup.stocks.iter().map(|stock| &stock.code).collect();
-            let actual_listed: BTreeSet<_> = system.issuers().iter().filter_map(|(_, spec)| spec.listed_stock.as_ref()).collect();
+            let expected_listed: BTreeSet<_> =
+                save.setup.stocks.iter().map(|stock| &stock.code).collect();
+            let actual_listed: BTreeSet<_> = system
+                .issuers()
+                .iter()
+                .filter_map(|(_, spec)| spec.listed_stock.as_ref())
+                .collect();
             if actual_listed != expected_listed {
-                return Err(SessionError::InvalidSave(ValidationFault::new(1063, vec![0, 0])));
+                return Err(SessionError::InvalidSave(ValidationFault::new(
+                    1063,
+                    vec![0, 0],
+                )));
             }
             if Some(system.config()) != save.setup.company_system {
-        return Err(super::StepFatal::InvariantViolation {
+                return Err(super::StepFatal::InvariantViolation {
                     description: "存档 company_state.CompanySystem.system.config 与 setup.company_system 不一致".into(),
             location: "validate_save_slot.company_system_config".into(),
                 }.into());
-        }
+            }
         }
         _ => return Err(SessionError::InvalidSave(ValidationFault::bare(2101))),
     }
@@ -347,11 +358,15 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
         .stock_catalog()
         .map_err(|_| SessionError::InvalidSave(ValidationFault::bare(2002)))?;
     if let Some(actions) = save.company_state.actions() {
-        registry_settlement::validate_registry_settlement_sources(&actions.registries, save, &save_catalog)
-            .map_err(|cause| super::StepFatal::InvariantViolation {
-                description: cause.to_string(),
-                location: "validate_save_slot.registry_settlement_sources".into(),
-            })?;
+        registry_settlement::validate_registry_settlement_sources(
+            &actions.registries,
+            save,
+            &save_catalog,
+        )
+        .map_err(|cause| super::StepFatal::InvariantViolation {
+            description: cause.to_string(),
+            location: "validate_save_slot.registry_settlement_sources".into(),
+        })?;
     }
     let expected_markets: BTreeSet<StockId> = save
         .setup
@@ -408,35 +423,53 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
     let saved_clock = CivilClock::from_parts_for_exchanges(
         save.setup.start_date,
         &save.civil_clock,
-        save.setup.stocks.iter().map(|stock| session_calendar_exchange(stock.exchange)),
+        save.setup
+            .stocks
+            .iter()
+            .map(|stock| session_calendar_exchange(stock.exchange)),
     )?;
-    let calendar_source = GameSession::calendar_source_for(&save.setup, &save_catalog, &saved_clock)?;
-    let calendar_day = calendar_source.day(saved_clock.current_date()).map_err(saved_calendar_error)?;
+    let calendar_source =
+        GameSession::calendar_source_for(&save.setup, &save_catalog, &saved_clock)?;
+    let calendar_day = calendar_source
+        .day(saved_clock.current_date())
+        .map_err(saved_calendar_error)?;
     let layout = SessionTickLayout {
         ticks_per_day: save.setup.ticks_per_day,
         auction_ticks: save.setup.auction_ticks,
         closing_auction_ticks: save.setup.closing_auction_ticks,
     };
     let clock_input = super::market_calendar_live::calendar_clock_input(
-        &calendar_day, layout, save.snapshot.tick, saved_day,
-    ).map_err(saved_calendar_error)?;
+        &calendar_day,
+        layout,
+        save.snapshot.tick,
+        saved_day,
+    )
+    .map_err(saved_calendar_error)?;
     let clock_projection = calendar_clock_projection(calendar_day.day_model(), layout, clock_input)
         .map_err(saved_calendar_error)?;
-    let continuous_ticks_per_day = save.setup.ticks_per_day
-        - save.setup.auction_ticks - save.setup.closing_auction_ticks;
+    let continuous_ticks_per_day =
+        save.setup.ticks_per_day - save.setup.auction_ticks - save.setup.closing_auction_ticks;
     let current_continuous_ticks = match clock_input.progress {
         SharedDayProgress::ClosedDay => 0,
         SharedDayProgress::Trading { completed_ticks } => completed_ticks
-            .saturating_sub(save.setup.auction_ticks).min(continuous_ticks_per_day),
+            .saturating_sub(save.setup.auction_ticks)
+            .min(continuous_ticks_per_day),
         SharedDayProgress::TradingCompleted => continuous_ticks_per_day,
     };
     for (code, prices) in &save.price_history {
-        let stock_day = calendar_day.day_model().stock(*code).map_err(saved_calendar_error)?;
-        let current_stock_ticks = if matches!(stock_day.status(), crate::calendar::DayStatus::Trading) {
-            current_continuous_ticks
-        } else { 0 };
+        let stock_day = calendar_day
+            .day_model()
+            .stock(*code)
+            .map_err(saved_calendar_error)?;
+        let current_stock_ticks =
+            if matches!(stock_day.status(), crate::calendar::DayStatus::Trading) {
+                current_continuous_ticks
+            } else {
+                0
+            };
         // 本所历史完整会话 + 当日一次进度；TradingCompleted 不能重复计入完整会话。
-        let completed_continuous_ticks = stock_day.sessions_before_date()
+        let completed_continuous_ticks = stock_day
+            .sessions_before_date()
             .checked_mul(continuous_ticks_per_day)
             .and_then(|ticks| ticks.checked_add(current_stock_ticks))
             .ok_or_else(|| {
@@ -480,7 +513,9 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
             .map_err(|_| SessionError::InvalidSave(ValidationFault::new(2013, vec![0])))?,
     );
     for (code, minutes) in &save.market_minute_closes {
-        let stock_clock = clock_projection.stock(*code).map_err(saved_calendar_error)?;
+        let stock_clock = clock_projection
+            .stock(*code)
+            .map_err(saved_calendar_error)?;
         // producer 在 TradingCompleted 清空当日桶；advanced 日期和 ClosedDay 也不能回填旧分钟。
         let expected_minute_keys = if day_tick == 0 {
             Vec::new()
@@ -488,10 +523,12 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
             match stock_clock.current_date_first_minute_key() {
                 None => Vec::new(),
                 Some(first) => (0..u64::from(stock_clock.current_date_completed_minute_count()))
-                    .map(|minute| first.checked_add(minute).ok_or_else(|| {
-                        // fault2014：市场分钟键计算溢出。
-                        SessionError::InvalidSave(ValidationFault::bare(2014))
-                    }))
+                    .map(|minute| {
+                        first.checked_add(minute).ok_or_else(|| {
+                            // fault2014：市场分钟键计算溢出。
+                            SessionError::InvalidSave(ValidationFault::bare(2014))
+                        })
+                    })
                     .collect::<Result<Vec<_>, _>>()?,
             }
         };
@@ -922,8 +959,10 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
                 vec![u64::from(code.0)],
             )));
         }
-        let completed_stock_sessions = clock_projection.stock(*code)
-            .map_err(saved_calendar_error)?.completed_session_count();
+        let completed_stock_sessions = clock_projection
+            .stock(*code)
+            .map_err(saved_calendar_error)?
+            .completed_session_count();
         let expected_candles = usize::try_from(completed_stock_sessions)
             .ok()
             .and_then(|completed_days| completed_days.checked_add(360))
@@ -1127,7 +1166,9 @@ fn validate_saved_information_anchors(
     let day = source
         .day(clock.current_date())
         .map_err(|error| match error {
-            super::market_calendar_context::MarketCalendarContextError::Model(error) => saved_information_clock_error(save, error),
+            super::market_calendar_context::MarketCalendarContextError::Model(error) => {
+                saved_information_clock_error(save, error)
+            }
             _ => invalid("构造日历 owner 返回不可能的 context 校验错误".to_owned()),
         })?;
     let layout = super::exchange_calendar_model::SessionTickLayout {
@@ -1193,21 +1234,44 @@ fn saved_information_clock_error(
         E::Calendar(error) => return SessionError::Calendar(error),
         E::EmptyBindings => (1, vec![]),
         E::DuplicateStock { stock } => (2, vec![u64::from(stock.0)]),
-        E::CurrentBeforeStart { start, current } => (3, vec![
-            crate::error::ymd_context(start.year(), start.month(), start.day()),
-            crate::error::ymd_context(current.year(), current.month(), current.day()),
-        ]),
-        E::InvalidTickLayout { ticks_per_day, auction_ticks, closing_auction_ticks } =>
-            (4, vec![ticks_per_day, auction_ticks, closing_auction_ticks]),
-        E::ProgressCalendarMismatch { progress: actual, shared_open } => {
+        E::CurrentBeforeStart { start, current } => (
+            3,
+            vec![
+                crate::error::ymd_context(start.year(), start.month(), start.day()),
+                crate::error::ymd_context(current.year(), current.month(), current.day()),
+            ],
+        ),
+        E::InvalidTickLayout {
+            ticks_per_day,
+            auction_ticks,
+            closing_auction_ticks,
+        } => (4, vec![ticks_per_day, auction_ticks, closing_auction_ticks]),
+        E::ProgressCalendarMismatch {
+            progress: actual,
+            shared_open,
+        } => {
             let mut detail = progress(actual);
             detail.push(u64::from(shared_open));
             (5, detail)
         }
-        E::TradingTicksOutsideSession { completed_ticks, ticks_per_day } =>
-            (6, vec![completed_ticks, ticks_per_day]),
-        E::CountersMismatch { expected_tick, actual_tick, expected_shared_sessions, actual_shared_sessions } =>
-            (7, vec![expected_tick, actual_tick, expected_shared_sessions, actual_shared_sessions]),
+        E::TradingTicksOutsideSession {
+            completed_ticks,
+            ticks_per_day,
+        } => (6, vec![completed_ticks, ticks_per_day]),
+        E::CountersMismatch {
+            expected_tick,
+            actual_tick,
+            expected_shared_sessions,
+            actual_shared_sessions,
+        } => (
+            7,
+            vec![
+                expected_tick,
+                actual_tick,
+                expected_shared_sessions,
+                actual_shared_sessions,
+            ],
+        ),
         E::ArithmeticOverflow => (8, vec![]),
         E::Observation(error) => {
             // 本投影只可能请求已完成 tick 到分钟映射，仍保留数值输入供边界复现。
@@ -1408,75 +1472,75 @@ fn validate_company_domain(save: &SaveSlot) -> Result<(), SessionError> {
             closing,
             groups,
         } => {
-    // fault2085：closing registry 缺少合并母公司净利；ctx[0] 待 C 批数值化（原文本 "{error}" closing 子错误）。
+            // fault2085：closing registry 缺少合并母公司净利；ctx[0] 待 C 批数值化（原文本 "{error}" closing 子错误）。
             closing
-        .validate_consolidated_parent_income()
-        .map_err(|_| SessionError::InvalidSave(ValidationFault::new(2085, vec![0])))?;
+                .validate_consolidated_parent_income()
+                .map_err(|_| SessionError::InvalidSave(ValidationFault::new(2085, vec![0])))?;
             for date in operations.payment_failures.keys() {
-        if *date < save.civil_clock.policy.init_only_min_start
-            || *date > save.civil_clock.policy.runtime_max_end
-        {
-            // fault2086：付款失败日期越出日历政策窗；ctx[0]=yyyymmdd。
-            let (year, month, day) = date.ymd();
-            return Err(SessionError::InvalidSave(ValidationFault::new(
-                2086,
-                vec![crate::error::ymd_context(year, month, day)],
-            )));
-        }
-    }
-    // fault2087：付款历史不一致；ctx[0] 待 C 批数值化（原文本 "{error}"）。
-            operations
-        .validate_payment_history()
-        .map_err(|_| SessionError::InvalidSave(ValidationFault::new(2087, vec![0])))?;
-            if *groups != save.setup.groups {
-        // fault2088：存档分组与 setup 不一致。
-        return Err(SessionError::InvalidSave(ValidationFault::bare(2088)));
-    }
-    // fault2089：存档公司分组非法；ctx[0] 待 C 批数值化（原文本 "{error}"）。
-            super::company_groups::validate_groups(groups, operations)
-        .map_err(|_| SessionError::InvalidSave(ValidationFault::new(2089, vec![0])))?;
-    // 公司集合精确：每家经营公司唯一映射一只 setup 股票且股本一致。
-    // 2090-2096 的 ctx[0] 统一落数值 CompanyId（C 批数值化收口：定位到具体公司，
-    // 不再以 0 占位）；ctx[1]（错误种别/字符串 id）仍待 C 批登记。
-    let mut mapped: BTreeSet<&StockCode> = BTreeSet::new();
-            for (id, company) in &operations.companies {
-        if company
-            .economy()
-            .active()
-            .iter()
-            .any(|shock| !shock.kind.applies_to(company.spec().kind))
-        {
-            // fault2090：公司存有行业不适用的活跃冲击；ctx[0]=CompanyId。
-            return Err(SessionError::InvalidSave(ValidationFault::new(
-                2090,
-                vec![u64::from(id.0)],
-            )));
-        }
-        if let Some(real_estate) = company.books().as_real_estate() {
-            for (_contract, loan) in real_estate.loans() {
-                if loan.maturity_date() < save.civil_clock.policy.init_only_min_start
-                    || loan.maturity_date() > save.civil_clock.policy.runtime_max_end
+                if *date < save.civil_clock.policy.init_only_min_start
+                    || *date > save.civil_clock.policy.runtime_max_end
                 {
-                    // fault2091：项目贷款到期日越出日历政策窗；ctx[0]=CompanyId，
-                    // ctx[1] 待 C 批数值化（原文本 "{contract:?}" 合同 id）。
+                    // fault2086：付款失败日期越出日历政策窗；ctx[0]=yyyymmdd。
+                    let (year, month, day) = date.ymd();
                     return Err(SessionError::InvalidSave(ValidationFault::new(
-                        2091,
-                        vec![u64::from(id.0), 0],
+                        2086,
+                        vec![crate::error::ymd_context(year, month, day)],
                     )));
                 }
             }
-        }
-        if let Some(insurance) = company.books().as_insurance() {
-            // fault2092：保险账状态非法；ctx[0]=CompanyId，ctx[1] 待 C 批（原文本 "{error}"）。
-            insurance.validate_restore().map_err(|_| {
+            // fault2087：付款历史不一致；ctx[0] 待 C 批数值化（原文本 "{error}"）。
+            operations
+                .validate_payment_history()
+                .map_err(|_| SessionError::InvalidSave(ValidationFault::new(2087, vec![0])))?;
+            if *groups != save.setup.groups {
+                // fault2088：存档分组与 setup 不一致。
+                return Err(SessionError::InvalidSave(ValidationFault::bare(2088)));
+            }
+            // fault2089：存档公司分组非法；ctx[0] 待 C 批数值化（原文本 "{error}"）。
+            super::company_groups::validate_groups(groups, operations)
+                .map_err(|_| SessionError::InvalidSave(ValidationFault::new(2089, vec![0])))?;
+            // 公司集合精确：每家经营公司唯一映射一只 setup 股票且股本一致。
+            // 2090-2096 的 ctx[0] 统一落数值 CompanyId（C 批数值化收口：定位到具体公司，
+            // 不再以 0 占位）；ctx[1]（错误种别/字符串 id）仍待 C 批登记。
+            let mut mapped: BTreeSet<&StockCode> = BTreeSet::new();
+            for (id, company) in &operations.companies {
+                if company
+                    .economy()
+                    .active()
+                    .iter()
+                    .any(|shock| !shock.kind.applies_to(company.spec().kind))
+                {
+                    // fault2090：公司存有行业不适用的活跃冲击；ctx[0]=CompanyId。
+                    return Err(SessionError::InvalidSave(ValidationFault::new(
+                        2090,
+                        vec![u64::from(id.0)],
+                    )));
+                }
+                if let Some(real_estate) = company.books().as_real_estate() {
+                    for (_contract, loan) in real_estate.loans() {
+                        if loan.maturity_date() < save.civil_clock.policy.init_only_min_start
+                            || loan.maturity_date() > save.civil_clock.policy.runtime_max_end
+                        {
+                            // fault2091：项目贷款到期日越出日历政策窗；ctx[0]=CompanyId，
+                            // ctx[1] 待 C 批数值化（原文本 "{contract:?}" 合同 id）。
+                            return Err(SessionError::InvalidSave(ValidationFault::new(
+                                2091,
+                                vec![u64::from(id.0), 0],
+                            )));
+                        }
+                    }
+                }
+                if let Some(insurance) = company.books().as_insurance() {
+                    // fault2092：保险账状态非法；ctx[0]=CompanyId，ctx[1] 待 C 批（原文本 "{error}"）。
+                    insurance.validate_restore().map_err(|_| {
                         SessionError::InvalidSave(ValidationFault::new(
                             2092,
                             vec![u64::from(id.0), 0],
                         ))
-            })?;
-        }
-        if let Some(industrial) = company.books().as_industrial() {
-            // fault2093：工业贸易对手方事件非法；ctx[0]=CompanyId，ctx[1] 待 C 批（"{error}"）。
+                    })?;
+                }
+                if let Some(industrial) = company.books().as_industrial() {
+                    // fault2093：工业贸易对手方事件非法；ctx[0]=CompanyId，ctx[1] 待 C 批（"{error}"）。
                     industrial
                         .validate_trade_counterparty_events()
                         .map_err(|_| {
@@ -1484,109 +1548,117 @@ fn validate_company_domain(save: &SaveSlot) -> Result<(), SessionError> {
                                 2093,
                                 vec![u64::from(id.0), 0],
                             ))
-            })?;
-            // fault2094：工业库存来源事件非法；ctx[0]=CompanyId，ctx[1] 待 C 批（"{error}"）。
-            industrial.validate_inventory_source_events().map_err(|_| {
+                        })?;
+                    // fault2094：工业库存来源事件非法；ctx[0]=CompanyId，ctx[1] 待 C 批（"{error}"）。
+                    industrial.validate_inventory_source_events().map_err(|_| {
                         SessionError::InvalidSave(ValidationFault::new(
                             2094,
                             vec![u64::from(id.0), 0],
                         ))
-            })?;
-            // fault2095：工业信用状态非法；ctx[0]=CompanyId，ctx[1] 待 C 批（"{error}"）。
-            industrial.validate_credit_state().map_err(|_| {
+                    })?;
+                    // fault2095：工业信用状态非法；ctx[0]=CompanyId，ctx[1] 待 C 批（"{error}"）。
+                    industrial.validate_credit_state().map_err(|_| {
                         SessionError::InvalidSave(ValidationFault::new(
                             2095,
                             vec![u64::from(id.0), 0],
                         ))
-            })?;
-        }
-        if let Some(bank) = company.books().as_bank() {
-            // fault2096：银行 ECL 政策非法；ctx[0]=CompanyId，ctx[1] 待 C 批（"{error}"）。
-            bank.ecl_policy().validate().map_err(|_| {
+                    })?;
+                }
+                if let Some(bank) = company.books().as_bank() {
+                    // fault2096：银行 ECL 政策非法；ctx[0]=CompanyId，ctx[1] 待 C 批（"{error}"）。
+                    bank.ecl_policy().validate().map_err(|_| {
                         SessionError::InvalidSave(ValidationFault::new(
                             2096,
                             vec![u64::from(id.0), 0],
                         ))
-            })?;
-        }
-        let Some(listed) = company.spec().listed_stock.as_ref() else {
-            continue;
-        };
-        let Some(stock) = save.setup.stocks.iter().find(|s| &s.code == listed) else {
-            // fault2097：公司映射到未知股票；ctx[0] 待 C 批（CompanyId），ctx[1] 待 C 批（原文本 "{listed:?}" StockCode）。
-            return Err(SessionError::InvalidSave(ValidationFault::new(
-                2097,
-                vec![0, 0],
-            )));
-        };
-        if company.spec().issued_shares != stock.total_shares || !mapped.insert(listed) {
-            // fault2098：公司股本或映射与 setup 股票冲突；ctx[0] 待 C 批（CompanyId），ctx[1] 待 C 批（"{listed:?}"）。
-            return Err(SessionError::InvalidSave(ValidationFault::new(
-                2098,
-                vec![0, 0],
-            )));
-        }
-    }
-    if mapped.len() != save.setup.stocks.len() {
-        // fault2099：公司集合未精确覆盖 setup 股票。
-        return Err(SessionError::InvalidSave(ValidationFault::bare(2099)));
-    }
-    // 经营推进时点与时钟一致：存档时点 next_expected 恒等于当前自然日。
+                    })?;
+                }
+                let Some(listed) = company.spec().listed_stock.as_ref() else {
+                    continue;
+                };
+                let Some(stock) = save.setup.stocks.iter().find(|s| &s.code == listed) else {
+                    // fault2097：公司映射到未知股票；ctx[0] 待 C 批（CompanyId），ctx[1] 待 C 批（原文本 "{listed:?}" StockCode）。
+                    return Err(SessionError::InvalidSave(ValidationFault::new(
+                        2097,
+                        vec![0, 0],
+                    )));
+                };
+                if company.spec().issued_shares != stock.total_shares || !mapped.insert(listed) {
+                    // fault2098：公司股本或映射与 setup 股票冲突；ctx[0] 待 C 批（CompanyId），ctx[1] 待 C 批（"{listed:?}"）。
+                    return Err(SessionError::InvalidSave(ValidationFault::new(
+                        2098,
+                        vec![0, 0],
+                    )));
+                }
+            }
+            if mapped.len() != save.setup.stocks.len() {
+                // fault2099：公司集合未精确覆盖 setup 股票。
+                return Err(SessionError::InvalidSave(ValidationFault::bare(2099)));
+            }
+            // 经营推进时点与时钟一致：存档时点 next_expected 恒等于当前自然日。
             if operations.next_expected_date() != save.civil_clock.current_date {
-        // fault2100：经营推进时点与自然日不一致；ctx[0]=期望日 yyyymmdd，ctx[1]=当前日 yyyymmdd。
+                // fault2100：经营推进时点与自然日不一致；ctx[0]=期望日 yyyymmdd，ctx[1]=当前日 yyyymmdd。
                 let expected_date = operations.next_expected_date();
-        let (expect_y, expect_m, expect_d) = expected_date.ymd();
-        let (clock_y, clock_m, clock_d) = save.civil_clock.current_date.ymd();
-        return Err(SessionError::InvalidSave(ValidationFault::new(
-            2100,
-            vec![
-                crate::error::ymd_context(expect_y, expect_m, expect_d),
-                crate::error::ymd_context(clock_y, clock_m, clock_d),
-            ],
-        )));
-    }
-    // 公司 due 单一 authority：待办只存在于调度器；不允许任何待办早于当前
-    // 自然日，或超出冻结日历适用范围（均失去恰好一次派发机会）。
+                let (expect_y, expect_m, expect_d) = expected_date.ymd();
+                let (clock_y, clock_m, clock_d) = save.civil_clock.current_date.ymd();
+                return Err(SessionError::InvalidSave(ValidationFault::new(
+                    2100,
+                    vec![
+                        crate::error::ymd_context(expect_y, expect_m, expect_d),
+                        crate::error::ymd_context(clock_y, clock_m, clock_d),
+                    ],
+                )));
+            }
+            // 公司 due 单一 authority：待办只存在于调度器；不允许任何待办早于当前
+            // 自然日，或超出冻结日历适用范围（均失去恰好一次派发机会）。
             for due in operations.scheduler().pending() {
-        if due.due_date < save.civil_clock.policy.init_only_min_start
-            || due.due_date > save.civil_clock.policy.runtime_max_end
-        {
-            // fault2234：调度待办日期越出冻结日历适用范围；ctx[0]=due id，ctx[1]=yyyymmdd。
-            let (year, month, day) = due.due_date.ymd();
-            return Err(SessionError::InvalidSave(ValidationFault::new(
-                2234,
-                vec![due.id.as_u64(), crate::error::ymd_context(year, month, day)],
-            )));
-        }
-        if due.due_date < save.civil_clock.current_date {
-            // fault2102：调度待办早于当前自然日；ctx[0]=due id，ctx[1]=due_date yyyymmdd，
-            // ctx[2] 待 C 批数值化（原文本 "{due:?}" 其余字段 key/action）。
-            let (year, month, day) = due.due_date.ymd();
-            return Err(SessionError::InvalidSave(ValidationFault::new(
-                2102,
-                vec![
-                    due.id.as_u64(),
-                    crate::error::ymd_context(year, month, day),
-                    0,
-                ],
-            )));
-        }
-    }
+                if due.due_date < save.civil_clock.policy.init_only_min_start
+                    || due.due_date > save.civil_clock.policy.runtime_max_end
+                {
+                    // fault2234：调度待办日期越出冻结日历适用范围；ctx[0]=due id，ctx[1]=yyyymmdd。
+                    let (year, month, day) = due.due_date.ymd();
+                    return Err(SessionError::InvalidSave(ValidationFault::new(
+                        2234,
+                        vec![due.id.as_u64(), crate::error::ymd_context(year, month, day)],
+                    )));
+                }
+                if due.due_date < save.civil_clock.current_date {
+                    // fault2102：调度待办早于当前自然日；ctx[0]=due id，ctx[1]=due_date yyyymmdd，
+                    // ctx[2] 待 C 批数值化（原文本 "{due:?}" 其余字段 key/action）。
+                    let (year, month, day) = due.due_date.ymd();
+                    return Err(SessionError::InvalidSave(ValidationFault::new(
+                        2102,
+                        vec![
+                            due.id.as_u64(),
+                            crate::error::ymd_context(year, month, day),
+                            0,
+                        ],
+                    )));
+                }
+            }
         }
     }
     let issuer_ids = save.company_state.issuer_ids();
     let expected_source = if save.company_state.system().is_some() {
         crate::information::PublicationSource::SimpleGenerated
-    } else { crate::information::PublicationSource::SimulationAccounting };
+    } else {
+        crate::information::PublicationSource::SimulationAccounting
+    };
     let public = save.public_library.save();
     for report in &public.reports {
         if report.source != expected_source || !issuer_ids.contains(&report.company) {
-            return Err(SessionError::InvalidSave(ValidationFault::new(2236, vec![u64::from(report.company.0)])));
+            return Err(SessionError::InvalidSave(ValidationFault::new(
+                2236,
+                vec![u64::from(report.company.0)],
+            )));
         }
     }
     for announcement in &public.announcements {
         if !issuer_ids.contains(&announcement.company) {
-            return Err(SessionError::InvalidSave(ValidationFault::new(2236, vec![u64::from(announcement.company.0)])));
+            return Err(SessionError::InvalidSave(ValidationFault::new(
+                2236,
+                vec![u64::from(announcement.company.0)],
+            )));
         }
     }
     // 公开信息库：全量重验（JSON 路径已验，这里覆盖直接内存构造的 SaveSlot）。
@@ -1608,10 +1680,15 @@ fn validate_disclosure_cursors(save: &SaveSlot) -> Result<(), SessionError> {
             // 每个已日结自然日的披露相位都是 18:00；游标必须精确落在其上。
             // fault2105：settled 日 18:00 相位构造失败；ctx[0] 待 C 批数值化（原文本 "{error}" CalendarError）。
             let phase = if save.company_state.system().is_some()
-                && matches!(save.setup.report_frequency, Some(crate::information::ReportFrequency::Monthly { .. })) {
+                && matches!(
+                    save.setup.report_frequency,
+                    Some(crate::information::ReportFrequency::Monthly { .. })
+                ) {
                 crate::calendar::CivilInstant::new(settled, 86_399)
-            } else { crate::calendar::CivilInstant::from_hms(settled, 18, 0, 0) }
-                .map_err(|_| SessionError::InvalidSave(ValidationFault::new(2105, vec![0])))?;
+            } else {
+                crate::calendar::CivilInstant::from_hms(settled, 18, 0, 0)
+            }
+            .map_err(|_| SessionError::InvalidSave(ValidationFault::new(2105, vec![0])))?;
             if save.disclosures.published_through() != Some(phase) {
                 // fault2106：披露游标未落在 settled 日 18:00 相位；
                 // ctx[0] 待 C 批数值化（原文本 "{:?}" published_through CivilInstant），ctx[1]=settled yyyymmdd。
@@ -2060,21 +2137,24 @@ fn validate_plan_contract(context: &SaveValidationContext) -> Result<(), Session
         if !save.snapshot.accounts.contains_key(&entry.account()) {
             return Err(SessionError::InvalidSave(ValidationFault::new(
                 2142,
-                plan_id.error_context_with([entry.account().0 >> 32, entry.account().0 & 0xffff_ffff]),
+                plan_id
+                    .error_context_with([entry.account().0 >> 32, entry.account().0 & 0xffff_ffff]),
             )));
         }
         if !stock_codes.contains(entry.code()) {
             return Err(SessionError::InvalidSave(ValidationFault::new(
-                2143, plan_id.error_context_with([u64::from(entry.code().0)]),
+                2143,
+                plan_id.error_context_with([u64::from(entry.code().0)]),
             )));
         }
         let plan = match entry {
             crate::plans::PlanEntry::Investor(plan) => plan,
             crate::plans::PlanEntry::IssuerRepurchase(_) => {
                 // Origin 值恢复不能代替批准事务产生的真实资金与公司绑定。
-                return Err(crate::company::CompanySystemError::SystemState(
-                    format!("公司计划 {plan_id:?} 缺少已提交的资金与公司授权 binding；当前不支持恢复"),
-                ).into());
+                return Err(crate::company::CompanySystemError::SystemState(format!(
+                    "公司计划 {plan_id:?} 缺少已提交的资金与公司授权 binding；当前不支持恢复"
+                ))
+                .into());
             }
         };
         // 以下计划错误的 ctx[0..4] 均为 owner 高/低 u32、sequence 高/低 u32。
@@ -2147,7 +2227,9 @@ fn validate_plan_contract(context: &SaveValidationContext) -> Result<(), Session
                         )));
                     }
                 }
-                if leg.active_child_remaining_qty().is_some_and(|stored| stored > *live_remaining)
+                if leg
+                    .active_child_remaining_qty()
+                    .is_some_and(|stored| stored > *live_remaining)
                 {
                     // fault2185：序列化余量大于真实订单余量（虚增敞口）。
                     return Err(SessionError::InvalidSave(ValidationFault::new(
@@ -2422,18 +2504,23 @@ pub(super) fn validate_saved_order_state(
                 vec![lifecycle.order_id.0],
             )));
         }
-        let duplicates_plan_child = match save.plans.active_entry(lifecycle.account, &lifecycle.code) {
-            Some(crate::plans::PlanEntry::Investor(plan)) => plan.active_child_order_id() == Some(lifecycle.order_id),
-            Some(crate::plans::PlanEntry::IssuerRepurchase(plan)) => {
-                if plan.execution().is_some() {
-                    return Err(crate::company::CompanySystemError::SystemState(
-                        format!("公司计划 {:?} 尚未接入真实子单来源", plan.plan_id()),
-                    ).into());
+        let duplicates_plan_child =
+            match save.plans.active_entry(lifecycle.account, &lifecycle.code) {
+                Some(crate::plans::PlanEntry::Investor(plan)) => {
+                    plan.active_child_order_id() == Some(lifecycle.order_id)
                 }
-                false
-            }
-            None => false,
-        };
+                Some(crate::plans::PlanEntry::IssuerRepurchase(plan)) => {
+                    if plan.execution().is_some() {
+                        return Err(crate::company::CompanySystemError::SystemState(format!(
+                            "公司计划 {:?} 尚未接入真实子单来源",
+                            plan.plan_id()
+                        ))
+                        .into());
+                    }
+                    false
+                }
+                None => false,
+            };
         if duplicates_plan_child {
             // fault2171：NPC 报价生命周期订单与计划执行腿活跃子委托重复；ctx[0]=订单 id。
             return Err(SessionError::InvalidSave(ValidationFault::new(

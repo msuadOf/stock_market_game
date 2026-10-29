@@ -731,27 +731,23 @@ fn redenomination_reduction_reduces_fifo_lots_without_taxable_disposition() {
 fn redenomination_reduction_validates_boundaries() {
     let mut book = book();
     // 超出持有数量拒绝。
-    assert!(
-        book.record_redenomination_reduction("c1".into(), date("2030-01-02"), 21)
-            .is_err()
-    );
+    assert!(book
+        .record_redenomination_reduction("c1".into(), date("2030-01-02"), 21)
+        .is_err());
     // 跳日拒绝（须同日续记或次一自然日）。
-    assert!(
-        book.record_redenomination_reduction("c2".into(), date("2030-01-05"), 1)
-            .is_err()
-    );
+    assert!(book
+        .record_redenomination_reduction("c2".into(), date("2030-01-05"), 1)
+        .is_err());
     // 零数量拒绝。
-    assert!(
-        book.record_redenomination_reduction("c3".into(), date("2030-01-02"), 0)
-            .is_err()
-    );
+    assert!(book
+        .record_redenomination_reduction("c3".into(), date("2030-01-02"), 0)
+        .is_err());
     book.record_redenomination_reduction("c4".into(), date("2030-01-02"), 10)
         .unwrap();
     // 事件身份复用但数量不同 → 冲突。
-    assert!(
-        book.record_redenomination_reduction("c4".into(), date("2030-01-02"), 1)
-            .is_err()
-    );
+    assert!(book
+        .record_redenomination_reduction("c4".into(), date("2030-01-02"), 1)
+        .is_err());
     // 篡改核减数量在恢复校验中被拒。
     let mut tampered = serde_json::to_value(&book).unwrap();
     tampered["redenominations"][0]["net_change"] = serde_json::json!("-9");

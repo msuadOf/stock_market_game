@@ -40,11 +40,23 @@ fn config_no_cage() -> Arc<GameConfig> {
 }
 
 fn sell(local: u32, price: i64, qty: u32) -> PlaceSpec {
-    PlaceSpec { local, stock: 0, side: Side::Sell, price, qty }
+    PlaceSpec {
+        local,
+        stock: 0,
+        side: Side::Sell,
+        price,
+        qty,
+    }
 }
 
 fn buy(local: u32, price: i64, qty: u32) -> PlaceSpec {
-    PlaceSpec { local, stock: 0, side: Side::Buy, price, qty }
+    PlaceSpec {
+        local,
+        stock: 0,
+        side: Side::Buy,
+        price,
+        qty,
+    }
 }
 
 fn empty_script() -> Box<dyn Fn(GroupIdx) -> GroupScript> {
@@ -75,17 +87,29 @@ fn final_tick_completes_all_minutes_with_opening_window_and_no_closing_window() 
         let mut world = World::spawn(
             spec,
             crate::calendar::TradingCalendar::current_default_calendar().unwrap(),
-        ).unwrap();
-        world.run_ticks(ticks_per_day).expect("当日全部市场拍合法完成");
+        )
+        .unwrap();
+        world
+            .run_ticks(ticks_per_day)
+            .expect("当日全部市场拍合法完成");
         let view = &world.public_views()[0];
-        assert_eq!(view.minute_closes.len(), 240,
-            "T={ticks_per_day}, a={auction_ticks}：最后一拍不能按次日相位跳过分钟");
+        assert_eq!(
+            view.minute_closes.len(),
+            240,
+            "T={ticks_per_day}, a={auction_ticks}：最后一拍不能按次日相位跳过分钟"
+        );
         assert_eq!(view.minute_closes.first(), Some(&(0, 1_000)));
         assert_eq!(view.minute_closes.last(), Some(&(239, 1_000)));
-        assert!(view.minute_bars.is_empty(), "零成交只补收盘观察，不伪造成交分钟 K");
+        assert!(
+            view.minute_bars.is_empty(),
+            "零成交只补收盘观察，不伪造成交分钟 K"
+        );
         assert_eq!(world.global.committed_tick, ticks_per_day);
         let report = world.shutdown().expect("完整收束并回收 worker");
-        assert!(report.worker_results.iter().all(|(_, result)| result.is_ok()));
+        assert!(report
+            .worker_results
+            .iter()
+            .all(|(_, result)| result.is_ok()));
     }
 }
 
@@ -115,10 +139,18 @@ fn continuous_fills_build_exact_minute_ohlc_volume_turnover_and_count() {
     let bars = &report.desk_finals[0].market.minute_bars;
     assert_eq!(bars.len(), 1, "同 tick 三笔成交聚合为恰一个分钟桶");
     let bar = &bars[0];
-    assert_eq!(bar.minute_of_day, 570, "tick1 → 首个新覆盖分钟 idx0 → 墙钟 570");
+    assert_eq!(
+        bar.minute_of_day, 570,
+        "tick1 → 首个新覆盖分钟 idx0 → 墙钟 570"
+    );
     assert_eq!(bar.phase, super::protocol::MinuteBarPhase::Continuous);
     assert_eq!(
-        (bar.open.cents(), bar.high.cents(), bar.low.cents(), bar.close.cents()),
+        (
+            bar.open.cents(),
+            bar.high.cents(),
+            bar.low.cents(),
+            bar.close.cents()
+        ),
         (900, 1100, 900, 1100)
     );
     assert_eq!(bar.volume_shares, 300);
@@ -171,7 +203,10 @@ fn fills_across_minute_boundaries_split_into_ordered_buckets() {
     assert_eq!(bars.len(), 2, "两个 tick 分属两个分钟桶");
     assert_eq!(bars[0].minute_of_day, 570, "tick1 → idx0 → 570");
     assert_eq!(bars[0].close.cents(), 1000);
-    assert_eq!(bars[1].minute_of_day, 574, "tick2 → idx=floor(1*240/60)=4 → 574");
+    assert_eq!(
+        bars[1].minute_of_day, 574,
+        "tick2 → idx=floor(1*240/60)=4 → 574"
+    );
     assert_eq!(bars[1].close.cents(), 1005);
     assert!(
         bars.windows(2).all(|pair| {
@@ -244,10 +279,18 @@ fn closing_auction_drain_fills_land_at_minute_900() {
     let report = world.shutdown().expect("关停（Drain 收盘清算）");
     // 期末 Drain 应答捎带桶（跨日形态 live 已并入——观察面统一走
     /// 报告字段；desk_finals 的 live 桶在跨日形态已清）。
-    let bars = report.drained_minute_bars.into_iter().next().flatten().unwrap_or_default();
+    let bars = report
+        .drained_minute_bars
+        .into_iter()
+        .next()
+        .flatten()
+        .unwrap_or_default();
     assert_eq!(bars.len(), 1, "收盘清算恰一桶");
     assert_eq!(bars[0].minute_of_day, 900);
-    assert_eq!(bars[0].phase, super::protocol::MinuteBarPhase::ClosingAuction);
+    assert_eq!(
+        bars[0].phase,
+        super::protocol::MinuteBarPhase::ClosingAuction
+    );
     assert_eq!(bars[0].volume_shares, 100);
 }
 
@@ -266,7 +309,11 @@ fn abort_replay_rolls_back_minute_bars_exactly_once() {
     };
     let mut world = continuous_world(Box::new(script));
     let fail: Validator = Box::new(|ev| {
-        if ev.tick == 1 { Err("分钟桶回滚注入".to_owned()) } else { Ok(()) }
+        if ev.tick == 1 {
+            Err("分钟桶回滚注入".to_owned())
+        } else {
+            Ok(())
+        }
     });
     world.set_validator(fail);
     assert!(world.run_ticks(1).is_err(), "tick1 注入失败（Abort）");
@@ -302,10 +349,9 @@ fn second_trading_day_minute_bars_restart_empty() {
     let mut world = World::spawn(spec, calendar.clone()).expect("世界构造");
     world.run_ticks(30).expect("首日全部市场拍");
     world.run_day_end_public().expect("显式首日市场日终");
-    let next_date = calendar.next_trading_day(
-        crate::calendar::CalendarExchange::Sse,
-        first_date,
-    ).unwrap();
+    let next_date = calendar
+        .next_trading_day(crate::calendar::CalendarExchange::Sse, first_date)
+        .unwrap();
     world.set_civil_date(next_date);
     world.run_ticks(1).expect("显式跨入第二日");
     let views = world.public_views().to_vec();

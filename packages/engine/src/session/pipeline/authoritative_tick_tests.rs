@@ -6,11 +6,8 @@ use crate::{
 };
 
 #[cfg(not(target_arch = "wasm32"))]
-
 #[cfg(not(target_arch = "wasm32"))]
-
 #[cfg(not(target_arch = "wasm32"))]
-
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn compute_context_shared_sessions_preserve_budget_and_failure_atomicity() {
@@ -51,7 +48,14 @@ fn empty_session_at(tick: u64, closing_auction_ticks: u64) -> GameSession {
     session.state.tick = tick;
     session.fixture_sync_market_modes_for_test();
     if tick > 0 {
-        crate::session::pipeline::staged_decision::stage(crate::session::pipeline::NpcDecisionHandover::new(tick, Vec::new(), Vec::new(), Vec::new()));
+        crate::session::pipeline::staged_decision::stage(
+            crate::session::pipeline::NpcDecisionHandover::new(
+                tick,
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            ),
+        );
     }
     session
 }
@@ -66,7 +70,14 @@ fn reachable_session_at(tick: u64, closing_auction_ticks: u64) -> GameSession {
         .expect("opening completion must establish the day's candle state");
     session.state.tick = tick;
     session.fixture_sync_market_modes_for_test();
-    crate::session::pipeline::staged_decision::stage(crate::session::pipeline::NpcDecisionHandover::new(tick, Vec::new(), Vec::new(), Vec::new()));
+    crate::session::pipeline::staged_decision::stage(
+        crate::session::pipeline::NpcDecisionHandover::new(
+            tick,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        ),
+    );
     session
 }
 
@@ -127,10 +138,7 @@ fn preparing_each_market_phase_leaves_authority_untouched_until_commit() {
         let session_before = session.session_state_hash().unwrap();
         match session.phase() {
             TradingPhase::Continuous => {
-                drop(
-                    super::market_tick_transaction::prepare_market_tick(&mut session)
-                        .unwrap(),
-                );
+                drop(super::market_tick_transaction::prepare_market_tick(&mut session).unwrap());
             }
             TradingPhase::CallAuction | TradingPhase::ClosingAuction => {
                 drop(super::market_tick_transaction::prepare_market_tick(&mut session).unwrap());
@@ -185,7 +193,14 @@ fn two_npc_requests_and_player_request_share_stock_price_time_rules() {
                 .unwrap()
         })
         .collect();
-    crate::session::pipeline::staged_decision::stage(crate::session::pipeline::NpcDecisionHandover::new(session.state.tick, vec![first, second], intents, Vec::new()));
+    crate::session::pipeline::staged_decision::stage(
+        crate::session::pipeline::NpcDecisionHandover::new(
+            session.state.tick,
+            vec![first, second],
+            intents,
+            Vec::new(),
+        ),
+    );
     session
         .enqueue_player_intent(
             player,
@@ -234,9 +249,7 @@ fn two_npc_requests_and_player_request_share_stock_price_time_rules() {
         let book = session.runtime_resting_book_for_test(&code);
         let bid_total: u32 = book
             .iter()
-            .filter(|(_, side, price, _)| {
-                *side == Side::Buy && *price == Money::from_cents(900)
-            })
+            .filter(|(_, side, price, _)| *side == Side::Buy && *price == Money::from_cents(900))
             .map(|(_, _, _, qty)| *qty)
             .sum();
         assert_eq!(bid_total, 500);
@@ -320,7 +333,10 @@ fn npc_request_uses_available_cash_when_it_enters_the_next_tick() {
             ..
         }] = queued.intents()
         else {
-            panic!("expected one queued Highest buy, got {:?}", queued.intents());
+            panic!(
+                "expected one queued Highest buy, got {:?}",
+                queued.intents()
+            );
         };
         assert_eq!(*owner, account);
         assert!(*qty > 0 && *qty % 100 == 0);
@@ -413,11 +429,9 @@ fn public_step_commits_phase_boundaries_once_and_leaves_a_saveable_quiet_point()
 /// save/restore 往返一致（fault2064/2076 全程不触发）。
 #[test]
 fn public_step_day_boundary_candle_state_machine_holds_for_extreme_phase_geometry() {
-    for (auction_ticks, tpd, closing, ticks) in [
-        (0u64, 1u64, 0u64, 4u64),
-        (0, 4, 0, 9),
-        (1, 4, 1, 9),
-    ] {
+    for (auction_ticks, tpd, closing, ticks) in
+        [(0u64, 1u64, 0u64, 4u64), (0, 4, 0, 9), (1, 4, 1, 9)]
+    {
         let mut session = boundary_session_with(auction_ticks, tpd, closing);
         for _ in 0..ticks {
             // 双时钟契约驱动（同 public_step_commits：休市日/已收盘日
@@ -433,7 +447,10 @@ fn public_step_day_boundary_candle_state_machine_holds_for_extreme_phase_geometr
             }
             session.step().unwrap();
             let save = session.save().unwrap_or_else(|error| {
-                panic!("tpd={tpd} closing={closing} tick {} 静点存档失败：{error}", session.tick())
+                panic!(
+                    "tpd={tpd} closing={closing} tick {} 静点存档失败：{error}",
+                    session.tick()
+                )
             });
             let restored = GameSession::restore(&save).unwrap_or_else(|error| {
                 panic!(
@@ -471,7 +488,9 @@ fn public_step_discards_each_phase_candidate_when_commit_preparation_fails() {
         assert_eq!(session.tick(), tick);
         assert_eq!(session.business_state_hash().unwrap(), expected_business);
         assert_eq!(session.poison_reason(), Some(&fatal));
-        assert!(matches!(session.save(), Err(crate::SessionError::Step(actual)) if actual == fatal));
+        assert!(
+            matches!(session.save(), Err(crate::SessionError::Step(actual)) if actual == fatal)
+        );
     }
 }
 

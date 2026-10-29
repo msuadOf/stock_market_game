@@ -72,7 +72,9 @@ pub enum RightsOfferingMode {
         shares_per_existing_share_micros: u64,
     },
     /// 定向增发：公司侧显式指定对象清单（意向的自动产生属 P 批偏好域）。
-    DirectedPlacement { targets: Vec<DirectedPlacementTarget> },
+    DirectedPlacement {
+        targets: Vec<DirectedPlacementTarget>,
+    },
 }
 
 /// 配股／增发全链路方案：发行人、市场、法定日期与价格。
@@ -200,7 +202,9 @@ impl RightsOfferingEventPlan {
         }
         if let RightsOfferingMode::DirectedPlacement { targets } = &self.mode {
             if targets.is_empty() {
-                return Err(invalid("directed placement requires an explicit target list"));
+                return Err(invalid(
+                    "directed placement requires an explicit target list",
+                ));
             }
             let mut seen = std::collections::BTreeSet::new();
             let mut total = 0_u64;
@@ -212,12 +216,12 @@ impl RightsOfferingEventPlan {
                         lock_until,
                     } => {
                         if !seen.insert(holder.clone()) {
-                            return Err(invalid(
-                                "directed placement target holder is duplicated",
-                            ));
+                            return Err(invalid("directed placement target holder is duplicated"));
                         }
                         if *shares == 0 {
-                            return Err(invalid("directed placement target shares must be positive"));
+                            return Err(invalid(
+                                "directed placement target shares must be positive",
+                            ));
                         }
                         if let Some(lock_until) = lock_until {
                             if *lock_until <= self.listing_on {
@@ -232,7 +236,9 @@ impl RightsOfferingEventPlan {
                     }
                     DirectedPlacementTarget::OpenPublicSubscription { shares } => {
                         if *shares == 0 {
-                            return Err(invalid("open public subscription headroom must be positive"));
+                            return Err(invalid(
+                                "open public subscription headroom must be positive",
+                            ));
                         }
                         total = total
                             .checked_add(*shares)
@@ -255,10 +261,7 @@ impl RightsOfferingEventPlan {
     /// 使用调用方提供的权威日历校验日程：R、缴款期、L 均为该交易所交易日，
     /// 缴款起始日为 R 次一交易日、除权日为 L 次一交易日、划款/入账日为除权日次一
     /// 交易日（L+2）。不默认补齐日历。
-    pub fn validate_calendar(
-        &self,
-        calendar: &TradingCalendar,
-    ) -> Result<(), RightsOfferingError> {
+    pub fn validate_calendar(&self, calendar: &TradingCalendar) -> Result<(), RightsOfferingError> {
         let check_trading = |date: CivilDate| -> Result<(), RightsOfferingError> {
             let trading = calendar
                 .is_trading_day(self.exchange, date)
@@ -320,7 +323,9 @@ impl RightsOfferingEventPlan {
         payment_days: u32,
     ) -> Result<(), RightsOfferingError> {
         if payment_days == 0 {
-            return Err(invalid("payment window must cover at least one trading day"));
+            return Err(invalid(
+                "payment window must cover at least one trading day",
+            ));
         }
         self.exchange = exchange;
         let mut cursor = calendar
@@ -593,11 +598,7 @@ pub fn allocate_rights_entitlements(
     }
 }
 
-fn shuffle_equal_remainders(
-    candidates: &mut [usize],
-    holders: &[(HolderId, u64, u64)],
-    seed: u64,
-) {
+fn shuffle_equal_remainders(candidates: &mut [usize], holders: &[(HolderId, u64, u64)], seed: u64) {
     let mut random = SeededRandom(seed);
     let mut start = 0;
     while start < candidates.len() {
@@ -900,7 +901,9 @@ impl RightsOfferingBook {
     ) -> Result<(), RightsOfferingError> {
         if self.status != RightsOfferingStatus::Entitled {
             return Err(RightsOfferingError::SnapshotMismatch {
-                detail: "subscriptions are only accepted inside the payment window after entitlement".into(),
+                detail:
+                    "subscriptions are only accepted inside the payment window after entitlement"
+                        .into(),
             });
         }
         if !self.plan.payment_window_contains(record.submitted_on) {
@@ -911,12 +914,10 @@ impl RightsOfferingBook {
         if record.requested_shares == 0 || record.paid_shares > record.requested_shares {
             return Err(invalid("subscription quantity facts are inconsistent"));
         }
-        if record
-            .paid_shares
-            .checked_add(record.waived_shares)
-            != Some(record.requested_shares)
-        {
-            return Err(invalid("paid plus waived shares must equal the requested shares"));
+        if record.paid_shares.checked_add(record.waived_shares) != Some(record.requested_shares) {
+            return Err(invalid(
+                "paid plus waived shares must equal the requested shares",
+            ));
         }
         let expected_amount = Money::from_cents(
             i64::try_from(
@@ -930,20 +931,25 @@ impl RightsOfferingBook {
             || (record.paid_shares > 0 && record.paid_amount != expected_amount)
             || (record.paid_shares == 0 && record.paid_amount != Money::ZERO)
         {
-            return Err(invalid("subscription price or paid amount does not match the plan"));
+            return Err(invalid(
+                "subscription price or paid amount does not match the plan",
+            ));
         }
         if self
             .subscriptions
             .iter()
             .any(|existing| existing.holder == record.holder)
         {
-            return Err(invalid("holder already subscribed; one net subscription per holder"));
+            return Err(invalid(
+                "holder already subscribed; one net subscription per holder",
+            ));
         }
-        let entitlement = self.entitlement.as_ref().ok_or_else(|| {
-            RightsOfferingError::SnapshotMismatch {
-                detail: "subscriptions require a frozen entitlement receipt".into(),
-            }
-        })?;
+        let entitlement =
+            self.entitlement
+                .as_ref()
+                .ok_or_else(|| RightsOfferingError::SnapshotMismatch {
+                    detail: "subscriptions require a frozen entitlement receipt".into(),
+                })?;
         if let Some(entitlement) = entitlement
             .entitlements
             .iter()
@@ -973,7 +979,9 @@ impl RightsOfferingBook {
                 return Err(invalid("subscription exceeds the open public headroom"));
             }
         } else {
-            return Err(invalid("holder has no rights and the plan has no open headroom"));
+            return Err(invalid(
+                "holder has no rights and the plan has no open headroom",
+            ));
         }
         self.subscriptions.push(record);
         Ok(())
@@ -1010,11 +1018,12 @@ impl RightsOfferingBook {
     /// 配股（面向全体股东）失败判定：认购不足拟配售量 70%（206号令第 53 条）。
     /// 定向增发不适用代销 70% 门槛，恒为成功（未缴款部分不发行，不退款）。
     pub fn determine_failure(&self) -> Result<bool, RightsOfferingError> {
-        let entitlement = self.entitlement.as_ref().ok_or_else(|| {
-            RightsOfferingError::SnapshotMismatch {
-                detail: "failure determination requires a frozen entitlement".into(),
-            }
-        })?;
+        let entitlement =
+            self.entitlement
+                .as_ref()
+                .ok_or_else(|| RightsOfferingError::SnapshotMismatch {
+                    detail: "failure determination requires a frozen entitlement".into(),
+                })?;
         if !matches!(
             self.plan.mode,
             RightsOfferingMode::RightsToAllShareholders { .. }
@@ -1054,7 +1063,9 @@ impl RightsOfferingBook {
             });
         }
         if receipt.event_id != self.plan.event_id || receipt.settlement_on != day {
-            return Err(invalid("settlement receipt identity does not match the plan"));
+            return Err(invalid(
+                "settlement receipt identity does not match the plan",
+            ));
         }
         let failed = self.determine_failure()?;
         if receipt.failed != failed {
@@ -1074,9 +1085,7 @@ impl RightsOfferingBook {
                 .subscriptions
                 .iter()
                 .find(|record| record.holder == holder.holder)
-                .ok_or_else(|| {
-                    invalid("settlement holder has no subscription record")
-                })?;
+                .ok_or_else(|| invalid("settlement holder has no subscription record"))?;
             if holder.paid_shares != subscription.paid_shares
                 || holder.paid_amount != subscription.paid_amount
                 || holder.waived_shares != subscription.waived_shares
@@ -1086,7 +1095,9 @@ impl RightsOfferingBook {
             if (failed && holder.refunded_amount != holder.paid_amount)
                 || (!failed && holder.refunded_amount != Money::ZERO)
             {
-                return Err(invalid("refund facts disagree with the failure determination"));
+                return Err(invalid(
+                    "refund facts disagree with the failure determination",
+                ));
             }
             paid_shares = paid_shares
                 .checked_add(holder.paid_shares)
@@ -1103,7 +1114,9 @@ impl RightsOfferingBook {
             || refunded != receipt.refunded_total
             || receipt.holders.len() != self.subscriptions.len()
         {
-            return Err(invalid("settlement aggregates do not match the holder rows"));
+            return Err(invalid(
+                "settlement aggregates do not match the holder rows",
+            ));
         }
         self.settlement = Some(receipt);
         self.status = RightsOfferingStatus::Settled;
@@ -1244,24 +1257,23 @@ impl RightsOfferingBook {
         let mut open_used = 0_u64;
         for record in &self.subscriptions {
             if !seen.insert(record.holder.clone()) {
-                return Err(invalid("holder already subscribed; one net subscription per holder"));
+                return Err(invalid(
+                    "holder already subscribed; one net subscription per holder",
+                ));
             }
             if record.requested_shares == 0 || record.paid_shares > record.requested_shares {
                 return Err(invalid("subscription quantity facts are inconsistent"));
             }
-            if record
-                .paid_shares
-                .checked_add(record.waived_shares)
-                != Some(record.requested_shares)
+            if record.paid_shares.checked_add(record.waived_shares) != Some(record.requested_shares)
             {
-                return Err(invalid("paid plus waived shares must equal the requested shares"));
+                return Err(invalid(
+                    "paid plus waived shares must equal the requested shares",
+                ));
             }
             let expected_amount = Money::from_cents(
                 i64::try_from(
                     u128::from(record.paid_shares)
-                        .checked_mul(u128::from(
-                            self.plan.price_per_share.cents().unsigned_abs(),
-                        ))
+                        .checked_mul(u128::from(self.plan.price_per_share.cents().unsigned_abs()))
                         .ok_or(RightsOfferingError::ArithmeticOverflow)?,
                 )
                 .map_err(|_| RightsOfferingError::ArithmeticOverflow)?,
@@ -1270,10 +1282,14 @@ impl RightsOfferingBook {
                 || (record.paid_shares > 0 && record.paid_amount != expected_amount)
                 || (record.paid_shares == 0 && record.paid_amount != Money::ZERO)
             {
-                return Err(invalid("subscription price or paid amount does not match the plan"));
+                return Err(invalid(
+                    "subscription price or paid amount does not match the plan",
+                ));
             }
             if !self.plan.payment_window_contains(record.submitted_on) {
-                return Err(invalid("subscription was submitted outside the payment window"));
+                return Err(invalid(
+                    "subscription was submitted outside the payment window",
+                ));
             }
             match entitlement
                 .entitlements

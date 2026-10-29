@@ -10,19 +10,18 @@
 use crate::book::{Arena, Placement, StockBook};
 use crate::npc::{FeeTable, Npc};
 use crate::setup::{build_roster, ProtoConfig, StockSpec};
-use crate::ProtoError;
 use crate::stock_identity::StockIdentity;
-use engine::StockId;
+use crate::ProtoError;
 use engine::money::Money;
 use engine::session::SplitMix64;
 use engine::strategy::{
-    decide_data, LimitPrice, MarketView, PositionView, SelfView, StockView, Intent,
+    decide_data, Intent, LimitPrice, MarketView, PositionView, SelfView, StockView,
 };
+use engine::StockId;
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{Arc, RwLock};
-
 
 #[cfg(test)]
 mod identity_tests {
@@ -234,7 +233,13 @@ impl RoutedPrice {
     }
 
     /// 在目标股簿上解析为具体价格（对齐引擎受理语义；跨股臂在目标股线程执行）。
-    pub fn resolve(&self, side: engine::orderbook::Side, book: &StockBook, upper: i64, lower: i64) -> i64 {
+    pub fn resolve(
+        &self,
+        side: engine::orderbook::Side,
+        book: &StockBook,
+        upper: i64,
+        lower: i64,
+    ) -> i64 {
         match self {
             RoutedPrice::Fixed(p) => *p,
             RoutedPrice::Highest => match side {
@@ -421,7 +426,16 @@ fn run_tick(
         let guard = arena
             .read()
             .map_err(|_| ProtoError::ChannelClosed("npcs 读锁中毒".into()))?;
-        decide_range(guard.accounts(), 0, guard.roster_len, stock_id, &market, game_cfg, cfg.seed, tick)
+        decide_range(
+            guard.accounts(),
+            0,
+            guard.roster_len,
+            stock_id,
+            &market,
+            game_cfg,
+            cfg.seed,
+            tick,
+        )
     } else if let Some(pool) = pool {
         // persist 池：派工 → 收结果。
         let len = arena_len(arena)?;
@@ -471,16 +485,8 @@ fn run_tick(
                 let gauge = gauge;
                 handles.push(scope.spawn(move || {
                     gauge.enter();
-                    let out = decide_range(
-                        roster,
-                        from,
-                        to,
-                        stock_id,
-                        market,
-                        game_cfg,
-                        seed,
-                        tick,
-                    );
+                    let out =
+                        decide_range(roster, from, to, stock_id, market, game_cfg, seed, tick);
                     gauge.exit();
                     out
                 }));
@@ -600,10 +606,7 @@ fn apply_intents(
         book.cancel_all_for(arena, rec.npc_idx)?;
         let resolved = match &rec.intent {
             Intent::PlaceLimit {
-                side,
-                price,
-                qty,
-                ..
+                side, price, qty, ..
             } => {
                 let rp = RoutedPrice::from_limit(price, false);
                 Some((*side, rp.resolve(*side, book, upper, lower), *qty))
@@ -658,7 +661,11 @@ fn build_market_view(
         max_buy_price: Money::from_cents(upper),
         daily_upper_limit: Money::from_cents(upper),
         min_sell_price: Money::from_cents(lower),
-        recent_prices: st.recent_prices.iter().map(|&c| Money::from_cents(c)).collect(),
+        recent_prices: st
+            .recent_prices
+            .iter()
+            .map(|&c| Money::from_cents(c))
+            .collect(),
         recent_market_minute_prices: st
             .minute_prices
             .iter()
@@ -684,7 +691,9 @@ fn arena_len(arena: &Arc<RwLock<Arena>>) -> Result<u32, ProtoError> {
     Ok(len)
 }
 
-fn write_arena(arena: &Arc<RwLock<Arena>>) -> Result<std::sync::RwLockWriteGuard<'_, Arena>, ProtoError> {
+fn write_arena(
+    arena: &Arc<RwLock<Arena>>,
+) -> Result<std::sync::RwLockWriteGuard<'_, Arena>, ProtoError> {
     arena
         .write()
         .map_err(|_| ProtoError::ChannelClosed("npcs 写锁中毒".into()))

@@ -289,9 +289,7 @@ fn correction_pending_save_is_recoverable_and_cancel_restores_save_boundary() {
     );
 
     // pending 不能遮蔽已有 terminal 首错；保存拒绝也不能消费队列。
-    session
-        .enqueue_report_correction(&epoch, request)
-        .unwrap();
+    session.enqueue_report_correction(&epoch, request).unwrap();
     let pending = session.state.report_corrections.clone();
     let hash = session.business_state_hash().unwrap();
     let revision = session.external_revision();
@@ -876,14 +874,22 @@ fn correction_month_end_posts_pending_adjustment_before_period_close_and_restore
     assert_eq!(restored.report_corrections().unwrap(), status);
 }
 
-
 #[test]
 fn correction_external_closed_system_state_keeps_typed_cause_and_terminal_first_fatal() {
     let (mut session, mut request) = session_and_request();
     let receivable = LedgerAccountId("1122".into());
-    let balance = session.company_system().unwrap().finance(&request.company).unwrap()
-        .books().ledger().account_balance(&receivable);
-    assert!(balance.debit_total().is_positive(), "真实 opening 应收账款借方已有余额");
+    let balance = session
+        .company_system()
+        .unwrap()
+        .finance(&request.company)
+        .unwrap()
+        .books()
+        .ledger()
+        .account_balance(&receivable);
+    assert!(
+        balance.debit_total().is_positive(),
+        "真实 opening 应收账款借方已有余额"
+    );
     request.entries[0].kind = BusinessKind::CreditSale;
     request.entries[0].cash_flow = CashFlowClass::NonCash;
     request.entries[0].lines[0].account = receivable;
@@ -903,19 +909,28 @@ fn correction_external_closed_system_state_keeps_typed_cause_and_terminal_first_
     let error = session.end_civil_day().unwrap_err();
     assert!(matches!(&error, SessionError::ReportCorrectionDayEnd(cause)
         if cause.classification() == crate::company::CompanyErrorClass::SystemState));
-    assert!(correction_error_has_cause::<crate::accounting::AccountingError>(&error,
-        |cause| matches!(correction_accounting_leaf(cause),
-            crate::accounting::AccountingError::AmountOverflow { .. })));
+    assert!(correction_error_has_cause::<
+        crate::accounting::AccountingError,
+    >(&error, |cause| matches!(
+        correction_accounting_leaf(cause),
+        crate::accounting::AccountingError::AmountOverflow { .. }
+    )));
     assert!(session.runtime_driver.is_none());
     assert_eq!(session.state.report_corrections, pending);
     assert_eq!(session.business_state_hash().unwrap(), before);
     assert_eq!(session.external_revision(), revision);
     assert_eq!(session.runtime_authority_epoch, authority_epoch);
     assert_eq!(session.civil_date(), date);
-    let fatal = session.poison_reason().expect("SystemState 须封存首个 terminal 错误").clone();
+    let fatal = session
+        .poison_reason()
+        .expect("SystemState 须封存首个 terminal 错误")
+        .clone();
     assert!(matches!(session.save(), Err(SessionError::Step(actual)) if actual == fatal));
     assert!(matches!(session.end_civil_day(), Err(SessionError::Step(actual)) if actual == fatal));
-    assert_eq!(driver.step_frame_equivalent(&mut session).unwrap_err(), fatal);
+    assert_eq!(
+        driver.step_frame_equivalent(&mut session).unwrap_err(),
+        fatal
+    );
     assert_eq!(session.poison_reason(), Some(&fatal));
     assert_eq!(session.state.report_corrections, pending);
 }
@@ -934,7 +949,9 @@ fn correction_external_manual_close_business_rejection_keeps_close_and_allows_ci
     request.entries[0].lines[1].account = LedgerAccountId("不存在的科目".into());
     request.entries[0].validate_invariants().unwrap();
     let epoch = session.report_correction_epoch();
-    session.enqueue_report_correction(&epoch, request.clone()).unwrap();
+    session
+        .enqueue_report_correction(&epoch, request.clone())
+        .unwrap();
     let pending = session.report_corrections().unwrap();
     let mut driver = crate::runtime::drive::RuntimeDriver::from_session(&mut session).unwrap();
     session.runtime_step_with_install(&mut driver).unwrap();
@@ -945,38 +962,74 @@ fn correction_external_manual_close_business_rejection_keeps_close_and_allows_ci
     }
     let date = session.civil_date();
     let committed = driver.committed_calendar_tick().unwrap().unwrap();
-    assert_eq!((session.tick(), session.day(), driver.world_committed_tick()), (4, 0, 4));
+    assert_eq!(
+        (session.tick(), session.day(), driver.world_committed_tick()),
+        (4, 0, 4)
+    );
     // 本例 NPC 为零，只覆盖真实 empty Drain，不冒充非空订单或退款覆盖。
-    let error = driver.day_end_with_runtime_market_day(&mut session).unwrap_err();
-    assert!(error.contains("自然日推进失败"), "manual 当前 String API 的真实错误：{error}");
-    assert_eq!((session.tick(), session.day(), driver.world_committed_tick()), (4, 1, 4));
+    let error = driver
+        .day_end_with_runtime_market_day(&mut session)
+        .unwrap_err();
+    assert!(
+        error.contains("自然日推进失败"),
+        "manual 当前 String API 的真实错误：{error}"
+    );
+    assert_eq!(
+        (session.tick(), session.day(), driver.world_committed_tick()),
+        (4, 1, 4)
+    );
     assert_eq!(session.civil_date(), date);
     assert!(session.runtime_driver.is_none());
-    session.require_healthy().expect("明确 InvalidInput 不应把已安装收盘转成 terminal");
+    session
+        .require_healthy()
+        .expect("明确 InvalidInput 不应把已安装收盘转成 terminal");
     assert_eq!(session.report_corrections().unwrap(), pending);
     let retained = driver.publication().load();
-    assert_eq!(retained.retained.days.len(), 1, "真实收盘 retained 已安装且不可撤回");
-    assert!(driver.has_committed_market_close_for_civil(session.tick(), date).unwrap());
+    assert_eq!(
+        retained.retained.days.len(),
+        1,
+        "真实收盘 retained 已安装且不可撤回"
+    );
+    assert!(driver
+        .has_committed_market_close_for_civil(session.tick(), date)
+        .unwrap());
     // manual String 不冒 typed cause；通过真正 civil 入口取得并核原错误链。
     let error = session.end_civil_day().unwrap_err();
     assert!(matches!(&error, SessionError::ReportCorrectionDayEnd(cause)
         if cause.classification() == crate::company::CompanyErrorClass::InvalidInput));
-    assert!(correction_error_has_cause::<crate::accounting::AccountingError>(&error,
+    assert!(correction_error_has_cause::<
+        crate::accounting::AccountingError,
+    >(
+        &error,
         |cause| matches!(correction_accounting_leaf(cause),
             crate::accounting::AccountingError::UnknownAccount { account, .. }
-            if account == &LedgerAccountId("不存在的科目".into()))));
+            if account == &LedgerAccountId("不存在的科目".into()))
+    ));
     session.require_healthy().unwrap();
     assert_eq!(session.report_corrections().unwrap(), pending);
-    assert!(std::sync::Arc::ptr_eq(&retained.retained, &driver.publication().load().retained));
-    session.cancel_report_correction(&epoch, &request.operation_id).unwrap();
-    session.end_civil_day().expect("只重试 civil，不重复已安装市场收盘");
-    assert_eq!((session.tick(), session.day(), driver.world_committed_tick()), (4, 1, 4));
+    assert!(std::sync::Arc::ptr_eq(
+        &retained.retained,
+        &driver.publication().load().retained
+    ));
+    session
+        .cancel_report_correction(&epoch, &request.operation_id)
+        .unwrap();
+    session
+        .end_civil_day()
+        .expect("只重试 civil，不重复已安装市场收盘");
+    assert_eq!(
+        (session.tick(), session.day(), driver.world_committed_tick()),
+        (4, 1, 4)
+    );
     assert!(session.civil_date() > date);
     assert!(session.runtime_driver.is_none());
     let after = driver.committed_calendar_tick().unwrap().unwrap();
     assert!(std::sync::Arc::ptr_eq(&committed.calendar, &after.calendar));
     assert_eq!(committed.source, after.source);
-    assert!(std::sync::Arc::ptr_eq(&retained.retained, &driver.publication().load().retained));
+    assert!(std::sync::Arc::ptr_eq(
+        &retained.retained,
+        &driver.publication().load().retained
+    ));
     session.require_healthy().unwrap();
 }
 
@@ -999,7 +1052,8 @@ fn protocol_checkpoint_cannot_retract_full_close_after_a_typed_healthy_correctio
         let old_update = protocol.end_civil_day_update().unwrap();
         let old_save = serde_json::to_vec(&protocol.save().unwrap()).unwrap();
         let old_key = protocol::SaveCandidateKey {
-            settled_date: old_update.boundary.settled_date, seq: old_update.seq_to,
+            settled_date: old_update.boundary.settled_date,
+            seq: old_update.seq_to,
         };
         let mut request = correction_request(protocol.game(), CompanyId(0));
         if negative_cash {
@@ -1014,7 +1068,9 @@ fn protocol_checkpoint_cannot_retract_full_close_after_a_typed_healthy_correctio
         }
         request.entries[0].validate_invariants().unwrap();
         let epoch = protocol.game().report_correction_epoch();
-        protocol.enqueue_report_correction(&epoch, request.clone()).unwrap();
+        protocol
+            .enqueue_report_correction(&epoch, request.clone())
+            .unwrap();
         let checkpoint = protocol.checkpoint().unwrap();
         for _ in 0..4 {
             protocol.step_frame().unwrap();
@@ -1024,59 +1080,117 @@ fn protocol_checkpoint_cannot_retract_full_close_after_a_typed_healthy_correctio
         assert_eq!((protocol.game().tick(), origin.source_tick), (8, 8));
         let installed = serde_json::to_value(protocol.game().snapshot_inner(true, true)).unwrap();
         let (publication, retained, starts) = {
-            let driver = protocol.game().runtime_driver.as_ref().unwrap().lock().unwrap();
+            let driver = protocol
+                .game()
+                .runtime_driver
+                .as_ref()
+                .unwrap()
+                .lock()
+                .unwrap();
             let retained = driver.publication().load().retained.clone();
             assert_eq!(retained.days.len(), 2, "两个真实收盘都已发布 retained");
-            (driver.publication(), retained, driver.world_report_log().len())
+            (
+                driver.publication(),
+                retained,
+                driver.world_report_log().len(),
+            )
         };
         let pending = protocol.game().report_corrections().unwrap();
         let baseline_calls = calls.counts();
-        assert!(baseline_calls.start > 0 && baseline_calls.drain > 0,
-            "计数必须先见证当前 World 的真实 Start 与收盘 Drain，不能以未接线的零作证");
+        assert!(
+            baseline_calls.start > 0 && baseline_calls.drain > 0,
+            "计数必须先见证当前 World 的真实 Start 与收盘 Drain，不能以未接线的零作证"
+        );
         let failure = protocol.end_civil_day_update_classified().unwrap_err();
-        assert_eq!(failure.recovery(), protocol::CivilRecovery::CorrectionPrepareRejected);
+        assert_eq!(
+            failure.recovery(),
+            protocol::CivilRecovery::CorrectionPrepareRejected
+        );
         let error = failure.into_error();
         let expected_class = if negative_cash {
             crate::company::CompanyErrorClass::BusinessCondition
         } else {
             crate::company::CompanyErrorClass::InvalidInput
         };
-        assert!(matches!(&error, SessionError::ReportCorrectionDayEnd(cause)
-            if cause.classification() == expected_class), "必须由真实更正 prepare 拒绝：{error}");
+        assert!(
+            matches!(&error, SessionError::ReportCorrectionDayEnd(cause)
+            if cause.classification() == expected_class),
+            "必须由真实更正 prepare 拒绝：{error}"
+        );
         protocol.game().require_healthy().unwrap();
 
         let rejected = protocol.rollback(checkpoint).unwrap_err();
 
-        assert!(matches!(rejected, StepFatal::InvariantViolation { ref location, .. }
-            if location == "ProtocolSession::rollback"));
+        assert!(
+            matches!(rejected, StepFatal::InvariantViolation { ref location, .. }
+            if location == "ProtocolSession::rollback")
+        );
         protocol.game().require_healthy().unwrap();
         assert_eq!(protocol.game().runtime_mirror_origin(), origin);
-        assert_eq!(serde_json::to_value(protocol.game().snapshot_inner(true, true)).unwrap(), installed);
+        assert_eq!(
+            serde_json::to_value(protocol.game().snapshot_inner(true, true)).unwrap(),
+            installed
+        );
         assert_eq!(protocol.game().report_corrections().unwrap(), pending);
-        assert_eq!(serde_json::to_vec(&protocol.save().unwrap()).unwrap(), old_save);
-        assert_eq!(serde_json::to_vec(&protocol.save_candidate(&old_key).unwrap()).unwrap(), old_save);
+        assert_eq!(
+            serde_json::to_vec(&protocol.save().unwrap()).unwrap(),
+            old_save
+        );
+        assert_eq!(
+            serde_json::to_vec(&protocol.save_candidate(&old_key).unwrap()).unwrap(),
+            old_save
+        );
         {
-            let driver = protocol.game().runtime_driver.as_ref().unwrap().lock().unwrap();
+            let driver = protocol
+                .game()
+                .runtime_driver
+                .as_ref()
+                .unwrap()
+                .lock()
+                .unwrap();
             assert!(std::sync::Arc::ptr_eq(&publication, &driver.publication()));
-            assert!(std::sync::Arc::ptr_eq(&retained, &driver.publication().load().retained));
+            assert!(std::sync::Arc::ptr_eq(
+                &retained,
+                &driver.publication().load().retained
+            ));
             assert_eq!(driver.world_report_log().len(), starts);
         }
-        protocol.cancel_report_correction(&epoch, &request.operation_id).unwrap();
+        protocol
+            .cancel_report_correction(&epoch, &request.operation_id)
+            .unwrap();
         protocol.end_civil_day_update().unwrap();
         assert!(protocol.game().civil_date() > date);
         assert_eq!((protocol.game().tick(), protocol.game().day()), (8, 2));
-        let driver = protocol.game().runtime_driver.as_ref().unwrap().lock().unwrap();
+        let driver = protocol
+            .game()
+            .runtime_driver
+            .as_ref()
+            .unwrap()
+            .lock()
+            .unwrap();
         assert!(std::sync::Arc::ptr_eq(&publication, &driver.publication()));
-        assert!(std::sync::Arc::ptr_eq(&retained, &driver.publication().load().retained));
-        assert_eq!(driver.world_report_log().len(), starts, "取消后只重试 civil，不重复 Start/Drain");
-        assert_eq!(calls.counts(), baseline_calls, "真实拒绝、rollback 拒绝、取消及 civil retry 均无额外 Start/Drain 尝试");
+        assert!(std::sync::Arc::ptr_eq(
+            &retained,
+            &driver.publication().load().retained
+        ));
+        assert_eq!(
+            driver.world_report_log().len(),
+            starts,
+            "取消后只重试 civil，不重复 Start/Drain"
+        );
+        assert_eq!(
+            calls.counts(),
+            baseline_calls,
+            "真实拒绝、rollback 拒绝、取消及 civil retry 均无额外 Start/Drain 尝试"
+        );
     }
 }
 
 #[test]
 fn classified_civil_failure_exposes_only_current_real_correction_prepare_recovery() {
     for negative_cash in [false, true] {
-        let mut protocol = protocol::ProtocolSession::new(correction_setup("2030-06-08", None), 7183).unwrap();
+        let mut protocol =
+            protocol::ProtocolSession::new(correction_setup("2030-06-08", None), 7183).unwrap();
         let mut request = correction_request(protocol.game(), CompanyId(0));
         if negative_cash {
             request.entries[0].kind = BusinessKind::CashExpense;
@@ -1090,33 +1204,55 @@ fn classified_civil_failure_exposes_only_current_real_correction_prepare_recover
         }
         request.entries[0].validate_invariants().unwrap();
         let epoch = protocol.game().report_correction_epoch();
-        protocol.enqueue_report_correction(&epoch, request.clone()).unwrap();
+        protocol
+            .enqueue_report_correction(&epoch, request.clone())
+            .unwrap();
         let failure = protocol.end_civil_day_update_classified().unwrap_err();
-        let class = if negative_cash { crate::company::CompanyErrorClass::BusinessCondition }
-            else { crate::company::CompanyErrorClass::InvalidInput };
-        assert!(matches!(failure.error(), SessionError::ReportCorrectionDayEnd(cause)
-            if cause.classification() == class));
+        let class = if negative_cash {
+            crate::company::CompanyErrorClass::BusinessCondition
+        } else {
+            crate::company::CompanyErrorClass::InvalidInput
+        };
+        assert!(
+            matches!(failure.error(), SessionError::ReportCorrectionDayEnd(cause)
+            if cause.classification() == class)
+        );
         protocol.game().require_healthy().unwrap();
         assert_eq!(failure.recovery(), protocol::CivilRecovery::CorrectionPrepareRejected,
             "CURRENT_CORRECTION_PREPARE_PROVENANCE_REQUIRED：只能由本次真实更正 prepare 产生恢复资格");
         let plain = failure.into_error();
-        assert_eq!(protocol::CivilDayEndFailure::from(plain).recovery(), protocol::CivilRecovery::None,
-            "抽出的领域错误不保留可重放来源资格");
-        protocol.cancel_report_correction(&epoch, &request.operation_id).unwrap();
+        assert_eq!(
+            protocol::CivilDayEndFailure::from(plain).recovery(),
+            protocol::CivilRecovery::None,
+            "抽出的领域错误不保留可重放来源资格"
+        );
+        protocol
+            .cancel_report_correction(&epoch, &request.operation_id)
+            .unwrap();
         protocol.end_civil_day_update_classified().unwrap();
 
         // 外持 driver 的 lease 不能证明 World 健康；降权不改变既有 typed 拒绝及取消重试。
         let mut external = GameSession::new(correction_setup("2030-06-08", None), 7183).unwrap();
         let external_epoch = external.report_correction_epoch();
-        external.enqueue_report_correction(&external_epoch, request.clone()).unwrap();
+        external
+            .enqueue_report_correction(&external_epoch, request.clone())
+            .unwrap();
         let driver = crate::runtime::drive::RuntimeDriver::from_session(&mut external).unwrap();
-        let failure = external.with_prepared_civil_day_classified(|_, _| Ok(())).unwrap_err();
-        assert!(matches!(failure.error(), SessionError::ReportCorrectionDayEnd(cause)
-            if cause.classification() == class));
+        let failure = external
+            .with_prepared_civil_day_classified(|_, _| Ok(()))
+            .unwrap_err();
+        assert!(
+            matches!(failure.error(), SessionError::ReportCorrectionDayEnd(cause)
+            if cause.classification() == class)
+        );
         assert_eq!(failure.recovery(), protocol::CivilRecovery::None);
         external.require_healthy().unwrap();
-        external.cancel_report_correction(&external_epoch, &request.operation_id).unwrap();
-        external.end_civil_day().expect("外持来源降权后仍保留原 cancel/retry 行为");
+        external
+            .cancel_report_correction(&external_epoch, &request.operation_id)
+            .unwrap();
+        external
+            .end_civil_day()
+            .expect("外持来源降权后仍保留原 cancel/retry 行为");
         assert!(external.runtime_driver.is_none());
         assert_eq!(driver.world_committed_tick(), 0);
     }
@@ -1125,7 +1261,14 @@ fn classified_civil_failure_exposes_only_current_real_correction_prepare_recover
 #[test]
 fn captured_prepare_error_returned_by_callback_has_no_current_recovery_provenance() {
     for full_close in [false, true] {
-        let mut setup = correction_setup(if full_close { "2030-06-07" } else { "2030-06-08" }, None);
+        let mut setup = correction_setup(
+            if full_close {
+                "2030-06-07"
+            } else {
+                "2030-06-08"
+            },
+            None,
+        );
         setup.ticks_per_day = 4;
         setup.auction_ticks = 0;
         setup.closing_auction_ticks = 0;
@@ -1136,43 +1279,67 @@ fn captured_prepare_error_returned_by_callback_has_no_current_recovery_provenanc
         let mut request = correction_request(&game, CompanyId(0));
         request.entries[0].lines[1].account = LedgerAccountId("不存在的科目".into());
         let epoch = game.report_correction_epoch();
-        game.enqueue_report_correction(&epoch, request.clone()).unwrap();
+        game.enqueue_report_correction(&epoch, request.clone())
+            .unwrap();
         let mut driver = if full_close {
             let mut driver = crate::runtime::drive::RuntimeDriver::from_session(&mut game).unwrap();
-            for _ in 0..4 { game.runtime_step_with_install(&mut driver).unwrap(); }
+            for _ in 0..4 {
+                game.runtime_step_with_install(&mut driver).unwrap();
+            }
             Some(driver)
-        } else { None };
-        let captured = game.with_prepared_civil_day_classified(|_, _| Ok(())).unwrap_err().into_error();
-        assert!(matches!(&captured, SessionError::ReportCorrectionDayEnd(cause)
-            if cause.classification() == crate::company::CompanyErrorClass::InvalidInput));
+        } else {
+            None
+        };
+        let captured = game
+            .with_prepared_civil_day_classified(|_, _| Ok(()))
+            .unwrap_err()
+            .into_error();
+        assert!(
+            matches!(&captured, SessionError::ReportCorrectionDayEnd(cause)
+            if cause.classification() == crate::company::CompanyErrorClass::InvalidInput)
+        );
         game.require_healthy().unwrap();
-        game.cancel_report_correction(&epoch, &request.operation_id).unwrap();
+        game.cancel_report_correction(&epoch, &request.operation_id)
+            .unwrap();
         let before = game.business_state_hash().unwrap();
         let date = game.civil_date();
         let mut reached = false;
         // SessionError 不实现 Clone；move 同一原错误比另造同型错误更严格。
-        let failure = game.with_prepared_civil_day_classified::<()>(|_, _| {
-            reached = true;
-            Err(captured)
-        }).unwrap_err();
-        assert!(reached, "取消坏更正后实际 prepare 成功，错误确实来自 callback");
-        assert_eq!(failure.recovery(), protocol::CivilRecovery::None,
-            "旧 prepare 原错误经 callback 返回不得继承本次恢复资格");
-        assert!(matches!(failure.error(), SessionError::ReportCorrectionDayEnd(cause)
-            if cause.classification() == crate::company::CompanyErrorClass::InvalidInput));
+        let failure = game
+            .with_prepared_civil_day_classified::<()>(|_, _| {
+                reached = true;
+                Err(captured)
+            })
+            .unwrap_err();
+        assert!(
+            reached,
+            "取消坏更正后实际 prepare 成功，错误确实来自 callback"
+        );
+        assert_eq!(
+            failure.recovery(),
+            protocol::CivilRecovery::None,
+            "旧 prepare 原错误经 callback 返回不得继承本次恢复资格"
+        );
+        assert!(
+            matches!(failure.error(), SessionError::ReportCorrectionDayEnd(cause)
+            if cause.classification() == crate::company::CompanyErrorClass::InvalidInput)
+        );
         assert_eq!(game.business_state_hash().unwrap(), before);
         assert_eq!(game.civil_date(), date);
         if let Some(driver) = &mut driver {
-            let fatal = game.poison_reason().expect("Full 后 callback 失败仍 terminal").clone();
+            let fatal = game
+                .poison_reason()
+                .expect("Full 后 callback 失败仍 terminal")
+                .clone();
             assert_eq!(driver.step_frame_equivalent(&mut game).unwrap_err(), fatal);
             assert_eq!(driver.world_committed_tick(), 4);
         } else {
-            game.require_healthy().expect("冷 Closed callback 拒绝保原 generic 可逆边界");
+            game.require_healthy()
+                .expect("冷 Closed callback 拒绝保原 generic 可逆边界");
             game.end_civil_day().unwrap();
         }
     }
 }
-
 
 #[test]
 fn correction_external_full_close_business_rejection_keeps_cancel_retry_available() {
@@ -1198,16 +1365,24 @@ fn correction_external_full_close_business_rejection_keeps_cancel_retry_availabl
         }
         request.entries[0].validate_invariants().unwrap();
         let epoch = session.report_correction_epoch();
-        session.enqueue_report_correction(&epoch, request.clone()).unwrap();
+        session
+            .enqueue_report_correction(&epoch, request.clone())
+            .unwrap();
         let pending = session.report_corrections().unwrap();
         let mut driver = crate::runtime::drive::RuntimeDriver::from_session(&mut session).unwrap();
         for _ in 0..4 {
             session.runtime_step_with_install(&mut driver).unwrap();
         }
         let date = session.civil_date();
-        assert_eq!((session.tick(), session.day(), driver.world_committed_tick()), (4, 1, 4));
-        assert_eq!(session.runtime_installed_market_close,
-            Some((session.runtime_authority_epoch, 4, date)), "必须经过真实 Full 收盘安装");
+        assert_eq!(
+            (session.tick(), session.day(), driver.world_committed_tick()),
+            (4, 1, 4)
+        );
+        assert_eq!(
+            session.runtime_installed_market_close,
+            Some((session.runtime_authority_epoch, 4, date)),
+            "必须经过真实 Full 收盘安装"
+        );
         let before = session.business_state_hash().unwrap();
         let retained = driver.publication().load();
         let error = session.end_civil_day().unwrap_err();
@@ -1216,25 +1391,45 @@ fn correction_external_full_close_business_rejection_keeps_cancel_retry_availabl
         } else {
             crate::company::CompanyErrorClass::InvalidInput
         };
-        assert!(matches!(&error, SessionError::ReportCorrectionDayEnd(cause)
-            if cause.classification() == expected), "必须取得真实更正业务拒绝：{error}");
-        assert!(correction_error_has_cause::<crate::accounting::AccountingError>(&error, |cause|
-            matches!(correction_accounting_leaf(cause),
+        assert!(
+            matches!(&error, SessionError::ReportCorrectionDayEnd(cause)
+            if cause.classification() == expected),
+            "必须取得真实更正业务拒绝：{error}"
+        );
+        assert!(correction_error_has_cause::<
+            crate::accounting::AccountingError,
+        >(
+            &error,
+            |cause| matches!(correction_accounting_leaf(cause),
                 crate::accounting::AccountingError::UnknownAccount { .. } if !negative_cash)
-            || matches!(correction_accounting_leaf(cause),
-                crate::accounting::AccountingError::NegativeCashProhibited { .. } if negative_cash)));
+                || matches!(correction_accounting_leaf(cause),
+                crate::accounting::AccountingError::NegativeCashProhibited { .. } if negative_cash)
+        ));
         assert!(session.require_healthy().is_ok(),
             "FULL_CLOSE_CORRECTION_RETRY_REQUIRED：Full 收盘后的明确业务拒绝仍须可取消重试；negative_cash={negative_cash}");
         assert_eq!(session.business_state_hash().unwrap(), before);
         assert_eq!(session.report_corrections().unwrap(), pending);
         assert_eq!(session.civil_date(), date);
-        assert!(std::sync::Arc::ptr_eq(&retained.retained, &driver.publication().load().retained));
-        session.cancel_report_correction(&epoch, &request.operation_id).unwrap();
-        session.end_civil_day().expect("取消真实业务拒绝后只重试 civil 日结");
-        assert_eq!((session.tick(), session.day(), driver.world_committed_tick()), (4, 1, 4));
+        assert!(std::sync::Arc::ptr_eq(
+            &retained.retained,
+            &driver.publication().load().retained
+        ));
+        session
+            .cancel_report_correction(&epoch, &request.operation_id)
+            .unwrap();
+        session
+            .end_civil_day()
+            .expect("取消真实业务拒绝后只重试 civil 日结");
+        assert_eq!(
+            (session.tick(), session.day(), driver.world_committed_tick()),
+            (4, 1, 4)
+        );
         assert!(session.civil_date() > date);
         assert!(session.runtime_driver.is_none());
-        assert!(std::sync::Arc::ptr_eq(&retained.retained, &driver.publication().load().retained));
+        assert!(std::sync::Arc::ptr_eq(
+            &retained.retained,
+            &driver.publication().load().retained
+        ));
         session.require_healthy().unwrap();
     }
 }
@@ -1252,17 +1447,23 @@ fn correction_external_full_close_callback_cannot_reuse_typed_prepare_rejection(
     let mut request = correction_request(&session, CompanyId(0));
     request.entries[0].lines[1].account = LedgerAccountId("不存在的科目".into());
     let epoch = session.report_correction_epoch();
-    session.enqueue_report_correction(&epoch, request.clone()).unwrap();
+    session
+        .enqueue_report_correction(&epoch, request.clone())
+        .unwrap();
     let mut driver = crate::runtime::drive::RuntimeDriver::from_session(&mut session).unwrap();
     for _ in 0..4 {
         session.runtime_step_with_install(&mut driver).unwrap();
     }
     // 先取得真实 prepare 的 typed cause，不在测试中另造错误类型或分类。
     let original = session.end_civil_day().unwrap_err();
-    assert!(matches!(&original, SessionError::ReportCorrectionDayEnd(cause)
-        if cause.classification() == crate::company::CompanyErrorClass::InvalidInput));
+    assert!(
+        matches!(&original, SessionError::ReportCorrectionDayEnd(cause)
+        if cause.classification() == crate::company::CompanyErrorClass::InvalidInput)
+    );
     session.require_healthy().unwrap();
-    session.cancel_report_correction(&epoch, &request.operation_id).unwrap();
+    session
+        .cancel_report_correction(&epoch, &request.operation_id)
+        .unwrap();
     let before = session.business_state_hash().unwrap();
     let date = session.civil_date();
     let retained = driver.publication().load();
@@ -1271,26 +1472,44 @@ fn correction_external_full_close_callback_cannot_reuse_typed_prepare_rejection(
         reached = true;
         Err(original)
     });
-    assert!(reached, "取消坏更正后必须真实完成 prepare 并进入输出 callback");
-    assert!(matches!(result, Err(SessionError::ReportCorrectionDayEnd(cause))
-        if cause.classification() == crate::company::CompanyErrorClass::InvalidInput));
-    let fatal = session.poison_reason()
+    assert!(
+        reached,
+        "取消坏更正后必须真实完成 prepare 并进入输出 callback"
+    );
+    assert!(
+        matches!(result, Err(SessionError::ReportCorrectionDayEnd(cause))
+        if cause.classification() == crate::company::CompanyErrorClass::InvalidInput)
+    );
+    let fatal = session
+        .poison_reason()
         .expect("输出 callback 返回相同 typed 业务错误仍须 terminal，不能借 prepare 例外续跑")
         .clone();
     assert_eq!(session.business_state_hash().unwrap(), before);
     assert_eq!(session.civil_date(), date);
-    assert_eq!((session.tick(), session.day(), driver.world_committed_tick()), (4, 1, 4));
-    assert!(std::sync::Arc::ptr_eq(&retained.retained, &driver.publication().load().retained));
+    assert_eq!(
+        (session.tick(), session.day(), driver.world_committed_tick()),
+        (4, 1, 4)
+    );
+    assert!(std::sync::Arc::ptr_eq(
+        &retained.retained,
+        &driver.publication().load().retained
+    ));
     assert!(matches!(session.save(), Err(SessionError::Step(actual)) if actual == fatal));
     assert!(matches!(session.end_civil_day(), Err(SessionError::Step(actual)) if actual == fatal));
-    assert_eq!(driver.step_frame_equivalent(&mut session).unwrap_err(), fatal);
+    assert_eq!(
+        driver.step_frame_equivalent(&mut session).unwrap_err(),
+        fatal
+    );
 }
 
 #[test]
 fn correction_tax_cascade_overflow_preserves_actual_accounting_source() {
     let (mut session, mut request) = session_and_request();
     // 保留无历史余额的 6001；首笔过账成功后，真实税务年度利润汇总才发生溢出。
-    assert_eq!(request.entries[0].lines[1].account, LedgerAccountId("6001".into()));
+    assert_eq!(
+        request.entries[0].lines[1].account,
+        LedgerAccountId("6001".into())
+    );
     for line in &mut request.entries[0].lines {
         line.amount = AccountingAmount::MAX;
     }
@@ -1298,14 +1517,28 @@ fn correction_tax_cascade_overflow_preserves_actual_accounting_source() {
     let epoch = session.report_correction_epoch();
     session.enqueue_report_correction(&epoch, request).unwrap();
     let error = session.end_civil_day().unwrap_err();
-    assert!(matches!(&error, SessionError::ReportCorrectionDayEnd(source)
-        if source.classification() == crate::company::CompanyErrorClass::SystemState));
-    assert!(correction_error_has_cause::<crate::company::IncomeTaxOwnerError>(&error, |source|
-        matches!(source, crate::company::IncomeTaxOwnerError::Accounting(
-            crate::accounting::AccountingError::AmountOverflow { .. }))));
-    assert!(correction_error_has_cause::<crate::accounting::AccountingError>(&error, |source|
-        matches!(source, crate::accounting::AccountingError::AmountOverflow { .. })),
-        "CORRECTION_TAX_OVERFLOW_SOURCE_MISSING：真实税务 AmountOverflow 必须保留在标准 source 链");
+    assert!(
+        matches!(&error, SessionError::ReportCorrectionDayEnd(source)
+        if source.classification() == crate::company::CompanyErrorClass::SystemState)
+    );
+    assert!(correction_error_has_cause::<
+        crate::company::IncomeTaxOwnerError,
+    >(&error, |source| matches!(
+        source,
+        crate::company::IncomeTaxOwnerError::Accounting(
+            crate::accounting::AccountingError::AmountOverflow { .. }
+        )
+    )));
+    assert!(
+        correction_error_has_cause::<crate::accounting::AccountingError>(
+            &error,
+            |source| matches!(
+                source,
+                crate::accounting::AccountingError::AmountOverflow { .. }
+            )
+        ),
+        "CORRECTION_TAX_OVERFLOW_SOURCE_MISSING：真实税务 AmountOverflow 必须保留在标准 source 链"
+    );
     assert!(session.require_healthy().is_err());
 }
 
@@ -1322,48 +1555,100 @@ fn correction_manual_system_state_keeps_same_first_fatal_in_terminal_drain() {
     let mut session = GameSession::new_with_runtime_groups(setup, 7181, 3).unwrap();
     let mut request = correction_request(&session, CompanyId(0));
     let receivable = LedgerAccountId("1122".into());
-    assert!(session.company_system().unwrap().finance(&request.company).unwrap()
-        .books().ledger().account_balance(&receivable).debit_total().is_positive());
+    assert!(session
+        .company_system()
+        .unwrap()
+        .finance(&request.company)
+        .unwrap()
+        .books()
+        .ledger()
+        .account_balance(&receivable)
+        .debit_total()
+        .is_positive());
     request.entries[0].kind = BusinessKind::CreditSale;
     request.entries[0].cash_flow = CashFlowClass::NonCash;
     request.entries[0].lines[0].account = receivable;
-    for line in &mut request.entries[0].lines { line.amount = AccountingAmount::MAX; }
+    for line in &mut request.entries[0].lines {
+        line.amount = AccountingAmount::MAX;
+    }
     request.entries[0].validate_invariants().unwrap();
     let epoch = session.report_correction_epoch();
     session.enqueue_report_correction(&epoch, request).unwrap();
-    session.enqueue_player_intent(AccountId(0), Intent::PlaceLimit {
-        code: StockId(0), side: Side::Buy,
-        price: LimitPrice::Fixed(Money::from_cents(995)), qty: 100,
-    }).unwrap();
+    session
+        .enqueue_player_intent(
+            AccountId(0),
+            Intent::PlaceLimit {
+                code: StockId(0),
+                side: Side::Buy,
+                price: LimitPrice::Fixed(Money::from_cents(995)),
+                qty: 100,
+            },
+        )
+        .unwrap();
     let pending = session.take_runtime_player_intents();
     assert_eq!(pending.len(), 1, "非空 Drain 必须来自唯一真实受理意图");
     let mut driver = crate::runtime::drive::RuntimeDriver::from_session(&mut session).unwrap();
-    let upper = driver.world_public_views().iter().map(|view| view.daily_upper_limit).collect::<Vec<_>>();
+    let upper = driver
+        .world_public_views()
+        .iter()
+        .map(|view| view.daily_upper_limit)
+        .collect::<Vec<_>>();
     driver.inject_player_intents(&pending, &upper).unwrap();
     let events = session.runtime_step_with_install(&mut driver).unwrap();
-    let order = events.iter().find_map(|event| match event {
-        Event::OrderAccepted { id, account: AccountId(0), remaining_qty: 100, .. } => Some(*id),
-        _ => None,
-    }).expect("真实未成交委托必须留给非空 Drain");
+    let order = events
+        .iter()
+        .find_map(|event| match event {
+            Event::OrderAccepted {
+                id,
+                account: AccountId(0),
+                remaining_qty: 100,
+                ..
+            } => Some(*id),
+            _ => None,
+        })
+        .expect("真实未成交委托必须留给非空 Drain");
     for _ in 0..3 {
         driver.step_frame_equivalent(&mut session).unwrap();
         driver.install_market_views(&mut session).unwrap();
         driver.install_candles(&mut session).unwrap();
     }
     let date = session.civil_date();
-    let error = driver.day_end_with_runtime_market_day(&mut session).unwrap_err();
-    let fatal = session.poison_reason().expect("真实 AmountOverflow 必须封存首错").clone();
-    let terminal = driver.terminal_causal_snapshot_for_test().expect("真实 Drain 失败必须留证");
+    let error = driver
+        .day_end_with_runtime_market_day(&mut session)
+        .unwrap_err();
+    let fatal = session
+        .poison_reason()
+        .expect("真实 AmountOverflow 必须封存首错")
+        .clone();
+    let terminal = driver
+        .terminal_causal_snapshot_for_test()
+        .expect("真实 Drain 失败必须留证");
     assert!(terminal.0.is_some());
-    assert_eq!(terminal.1.iter().filter(|fact| matches!(fact.kind,
+    assert_eq!(
+        terminal
+            .1
+            .iter()
+            .filter(|fact| matches!(fact.kind,
         crate::runtime::diagnostics::DeskCausalKind::DayEnded { order: raw, qty: 100, .. }
-            if crate::OrderId((u64::from(raw.0) << 32) | raw.1) == order)).count(), 1);
-    assert_eq!(terminal.2, fatal, "MANUAL_CORRECTION_FIRST_FATAL_DRIFT：Drain 与 Session 必须保留同一个首错");
+            if crate::OrderId((u64::from(raw.0) << 32) | raw.1) == order))
+            .count(),
+        1
+    );
+    assert_eq!(
+        terminal.2, fatal,
+        "MANUAL_CORRECTION_FIRST_FATAL_DRIFT：Drain 与 Session 必须保留同一个首错"
+    );
     assert_eq!(error, fatal.to_string());
-    assert_eq!((session.tick(), session.day(), driver.world_committed_tick()), (4, 1, 4));
+    assert_eq!(
+        (session.tick(), session.day(), driver.world_committed_tick()),
+        (4, 1, 4)
+    );
     assert_eq!(session.civil_date(), date);
     assert!(driver.collect_resting_facts_live().unwrap()[0].is_empty());
     assert!(matches!(session.save(), Err(SessionError::Step(actual)) if actual == fatal));
-    assert_eq!(driver.step_frame_equivalent(&mut session).unwrap_err(), fatal);
+    assert_eq!(
+        driver.step_frame_equivalent(&mut session).unwrap_err(),
+        fatal
+    );
     assert_eq!(driver.terminal_causal_snapshot_for_test(), Some(terminal));
 }

@@ -1,6 +1,5 @@
 //! 公司命令的纯候选；结果必须由共同事务安装，不是对外受理回执。
 
-use crate::Money;
 use crate::account::StockCode;
 use crate::accounting::{AccountingAmount, AccountingError};
 use crate::calendar::{CalendarExchange, CivilDate, TradingCalendar};
@@ -11,6 +10,7 @@ use crate::company::{
     CompanyId, CompanySystem, CompanySystemError, DividendDeclaration, DividendPlanReceipt,
 };
 use crate::session::SessionCorporateActions;
+use crate::Money;
 
 /// day 与 exchange 必须取当前 Session 时钟及证券规格；不能由提案自报覆盖。
 pub(crate) struct CashDividendApprovalInput<'a> {

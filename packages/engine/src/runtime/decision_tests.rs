@@ -4,8 +4,8 @@
 
 use super::decision::DecisionSetup;
 use super::decision::{
-    evaluate_attention,
-    build_market_view, build_self_view, decide_account, intent_to_pending, NpcProfile,
+    build_market_view, build_self_view, decide_account, evaluate_attention, intent_to_pending,
+    NpcProfile,
 };
 use super::group::{GroupAccount, GroupScript, PlaceSpec, TickPlan};
 use super::protocol::{RoutedPrice, TickSnapshot};
@@ -151,8 +151,7 @@ fn decide_account_is_deterministic_per_seed_tick_and_reschedules() {
     // P1-B：signal/market 由调用方共享构建（同 snapshot 纯函数）。
     let market = build_market_view(&snapshot);
     let signal = crate::session::market_attention_signal(&market);
-    let run =
-        |p: &mut NpcProfile| decide_account(p, 0x1234, 1, 0, &market, &account, &config);
+    let run = |p: &mut NpcProfile| decide_account(p, 0x1234, 1, 0, &market, &account, &config);
     let mut a = profile.clone();
     let mut b = profile.clone();
     let (ops_a, _) = run(&mut a);
@@ -343,19 +342,38 @@ fn shared_view_decision_sequence_golden() {
     let group = &report.group_finals[0];
     let cash = group.accounts[0].cash;
     let fees: i64 = report.desk_finals.iter().map(|d| d.fee_sink).sum();
-    let volume: u64 = report.desk_finals.iter().map(|d| d.market.volume_today).sum();
+    let volume: u64 = report
+        .desk_finals
+        .iter()
+        .map(|d| d.market.volume_today)
+        .sum();
     assert_eq!(cash + fees, 1_000_000, "守恒（golden 前置）");
     // golden 断言（决策/RNG 流漂移即红）：
-    assert_eq!((cash, fees, volume), (SHARED_VIEW_GOLDEN_CASH, SHARED_VIEW_GOLDEN_FEES, SHARED_VIEW_GOLDEN_VOLUME),
-        "共享视图决策序列等价守卫（决策/RNG 流漂移即红）");
-    assert_eq!(group.accounts[0].shares.as_slice(), &[SHARED_VIEW_GOLDEN_SHARES],
-        "持仓终态 golden");
-    assert_eq!(group.decide_calls_total, 5, "每 tick due（该种子 wait 采样恒 1）——决策次数 golden");
+    assert_eq!(
+        (cash, fees, volume),
+        (
+            SHARED_VIEW_GOLDEN_CASH,
+            SHARED_VIEW_GOLDEN_FEES,
+            SHARED_VIEW_GOLDEN_VOLUME
+        ),
+        "共享视图决策序列等价守卫（决策/RNG 流漂移即红）"
+    );
+    assert_eq!(
+        group.accounts[0].shares.as_slice(),
+        &[SHARED_VIEW_GOLDEN_SHARES],
+        "持仓终态 golden"
+    );
+    assert_eq!(
+        group.decide_calls_total, 5,
+        "每 tick due（该种子 wait 采样恒 1）——决策次数 golden"
+    );
     let expected_resting: Vec<Vec<(u16, u64)>> = (0..5)
         .map(|i| vec![SHARED_VIEW_GOLDEN_RESTING[i]])
         .collect();
-    assert_eq!(resting_per_tick, expected_resting,
-        "挂簿节奏 golden（决策订单流逐 tick 痕迹）");
+    assert_eq!(
+        resting_per_tick, expected_resting,
+        "挂簿节奏 golden（决策订单流逐 tick 痕迹）"
+    );
 }
 
 #[test]
@@ -491,15 +509,15 @@ fn sol5_abort_rolls_back_next_due_reschedule() {
                 strategy: StrategyData::retail(1.0, 100, 1.0),
                 seed: 11,
                 next_due: 0,
-        attention_base: 0.30,
-        retail_style: None,
+                attention_base: 0.30,
+                retail_style: None,
             },
             NpcProfile {
                 strategy: StrategyData::retail(1.0, 100, 1.0),
                 seed: 22,
                 next_due: 1,
-        attention_base: 0.30,
-        retail_style: None,
+                attention_base: 0.30,
+                retail_style: None,
             },
         ],
         attention_gap_ticks: 4,

@@ -7,9 +7,8 @@ use server::actor::PublicBaselineSnapshot;
 
 #[test]
 fn public_baseline_preserves_mirror_origin_and_only_player_account() {
-    let mut setup = fixture::civil_setup(
-        engine::CivilDate::from_iso("2030-01-02").expect("测试日期应有效"),
-    );
+    let mut setup =
+        fixture::civil_setup(engine::CivilDate::from_iso("2030-01-02").expect("测试日期应有效"));
     setup.npcs.retail_count = 2;
     setup.npcs.inst_count = 0;
     setup.npcs.hot_count = 0;
@@ -42,8 +41,7 @@ fn public_baseline_preserves_mirror_origin_and_only_player_account() {
     let actual_account_ids = baseline.accounts.keys().copied().collect::<Vec<_>>();
     assert_eq!(actual_account_ids, vec![AccountId(0)]);
 
-    let baseline_json = serde_json::to_value(&baseline)
-        .expect("PublicBaselineSnapshot 序列化失败");
+    let baseline_json = serde_json::to_value(&baseline).expect("PublicBaselineSnapshot 序列化失败");
     let actual_origin = baseline_json
         .get("mirror_origin")
         .expect("PublicBaselineSnapshot JSON 缺少 mirror_origin");

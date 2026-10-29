@@ -84,11 +84,17 @@ fn seal_settles_before_publish() {
         // 关停一个同构世界取基线（seed/脚本同参——初始面一致）。
         let probe = spawn_trading_world();
         let report = probe.shutdown().expect("基线关停");
-        (report.group_finals[0].accounts[1].shares[0], report.group_finals[0].accounts[2].shares[0])
+        (
+            report.group_finals[0].accounts[1].shares[0],
+            report.group_finals[0].accounts[2].shares[0],
+        )
     };
     world.run_ticks(3).expect("tick2-4（买吃+防御 Start 走查）");
     let version = world.publication().load();
-    assert_eq!(version.tick, 4, "权威推进（Start 防御未触发=Seal 落账干净）");
+    assert_eq!(
+        version.tick, 4,
+        "权威推进（Start 防御未触发=Seal 落账干净）"
+    );
     let traded: u32 = world_report_traded_qty(&world);
     let report = world.shutdown().expect("关停");
     let (seller_shares_0, buyer_shares_0) = baseline;
@@ -256,7 +262,9 @@ fn converge_round_skips_stale_seal_ack() {
     );
     match outcome {
         super::coordinator::RoundOutcome::Converged(ev) => assert_eq!(ev.tick, 7),
-        super::coordinator::RoundOutcome::Failed(_) | super::coordinator::RoundOutcome::PendingStartRejected(_) | super::coordinator::RoundOutcome::TaskDied { .. } => {
+        super::coordinator::RoundOutcome::Failed(_)
+        | super::coordinator::RoundOutcome::PendingStartRejected(_)
+        | super::coordinator::RoundOutcome::TaskDied { .. } => {
             panic!("迟到 Ack 不得污染收束（RoundOutcome 非 Converged）")
         }
     }

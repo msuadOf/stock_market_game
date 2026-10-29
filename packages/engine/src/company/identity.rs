@@ -91,9 +91,7 @@ impl IssuerRegistry {
         cancelled: u64,
     ) -> Result<(), CompanySystemError> {
         if cancelled == 0 {
-            return Err(CompanySystemError::Invalid(
-                "回购注销股数必须为正数".into(),
-            ));
+            return Err(CompanySystemError::Invalid("回购注销股数必须为正数".into()));
         }
         let spec = self
             .0

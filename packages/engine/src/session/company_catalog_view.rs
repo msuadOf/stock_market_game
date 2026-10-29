@@ -47,7 +47,11 @@ impl GameSession {
         match self.company_system() {
             Some(system) => system.issuers().iter().map(project).collect(),
             None => self
-                .state.companies.legacy().expect("此调用仅用于 Legacy 公司状态").registry
+                .state
+                .companies
+                .legacy()
+                .expect("此调用仅用于 Legacy 公司状态")
+                .registry
                 .iter()
                 .map(|(id, company)| (id, company.spec()))
                 .map(project)

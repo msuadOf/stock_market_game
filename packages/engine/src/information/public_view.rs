@@ -12,12 +12,12 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::accounting::Books;
 use crate::accounting::closing::{
     ClosingEngine, CorrectionRequest, CorrectionTransactionError, ReportHandle,
 };
 use crate::accounting::consolidation::MemberId;
 use crate::accounting::reports::IndustryPresentation;
+use crate::accounting::Books;
 use crate::calendar::CivilInstant;
 use crate::company::CompanyId;
 use crate::information::publication::{
@@ -1004,7 +1004,10 @@ mod tests {
         let before = exhausted.clone();
         let mut report = library.save().reports.remove(0);
         report.id = PublicationId::new(u32::MAX);
-        assert!(matches!(exhausted.insert_report(report), Err(InformationError::InconsistentLibrary { .. })));
+        assert!(matches!(
+            exhausted.insert_report(report),
+            Err(InformationError::InconsistentLibrary { .. })
+        ));
         assert_eq!(exhausted, before);
         assert_eq!(
             PublicLibrary::from_parts(PublicLibrary::new().save()).unwrap(),
@@ -1131,11 +1134,9 @@ mod tests {
         assert_eq!(library, before);
         let valid_plan = plan.clone();
         plan.announced_on = announced_on.next().unwrap();
-        assert!(
-            library
-                .publish_announcement(request(CompanyId(0), plan))
-                .is_err()
-        );
+        assert!(library
+            .publish_announcement(request(CompanyId(0), plan))
+            .is_err());
         assert_eq!(library, before);
         library
             .publish_announcement(request(CompanyId(0), valid_plan))

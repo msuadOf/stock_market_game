@@ -277,7 +277,9 @@ pub(crate) enum CompanyWriteHostFailure {
 impl CompanyWriteHostError {
     pub(crate) fn public_failure(&self) -> CompanyWriteHostFailure {
         match self {
-            Self::Session { message } => CompanyWriteHostFailure::Session { message: message.clone() },
+            Self::Session { message } => CompanyWriteHostFailure::Session {
+                message: message.clone(),
+            },
             Self::Command(error) => CompanyWriteHostFailure::Command(error.public_failure()),
             Self::Fatal(fatal) => CompanyWriteHostFailure::Fatal(HostFailure::step(fatal.clone())),
         }
@@ -936,7 +938,11 @@ struct StepFailureCapture {
 struct SessionActor<R: Runtime> {
     ingress: Arc<RwLock<(u64, engine::SharedSessionIngress)>>,
     #[cfg(test)]
-    injected_step_failure: Option<(usize, engine::session::StepFatal, Arc<std::sync::Mutex<StepFailureCapture>>)>,
+    injected_step_failure: Option<(
+        usize,
+        engine::session::StepFatal,
+        Arc<std::sync::Mutex<StepFailureCapture>>,
+    )>,
     pacing: DesktopPacing,
     game: ProtocolSession,
     cmd_rx: mpsc::UnboundedReceiver<SessionCommand>,
@@ -1034,14 +1040,17 @@ impl<R: Runtime> SessionActor<R> {
         let capture = if let Some((remaining, error, capture)) = &mut self.injected_step_failure {
             if *remaining == 0 {
                 let mut observed = capture.lock().unwrap();
-                observed.saved = Some(serde_json::to_value(self.game.game().save().unwrap()).unwrap());
+                observed.saved =
+                    Some(serde_json::to_value(self.game.game().save().unwrap()).unwrap());
                 observed.origin = Some(self.game.runtime_mirror_origin());
                 observed.business = Some(self.game.business_state_hash().unwrap());
                 return Err(error.clone());
             }
             *remaining -= 1;
             Some(Arc::clone(capture))
-        } else { None };
+        } else {
+            None
+        };
         let result = self.game.step_frame();
         #[cfg(test)]
         if let (Some(capture), Ok(frame)) = (capture, &result) {
@@ -1171,7 +1180,10 @@ impl<R: Runtime> SessionActor<R> {
     fn stop_cycle_with_unpublished_frames(&mut self, frames: Vec<TickFrame>, error: SessionError) {
         let mut failure = failure::HostFailure::civil(error);
         if !frames.is_empty() {
-            let range = frames.first().zip(frames.last()).map(|(first, last)| (first.tick, last.tick, first.seq_from, last.seq_to));
+            let range = frames
+                .first()
+                .zip(frames.last())
+                .map(|(first, last)| (first.tick, last.tick, first.seq_from, last.seq_to));
             match self.game.tick_batch(frames) {
                 Ok(batch) => self.emit_update(EngineUpdate::TickBatch(Box::new(batch))),
                 Err(publication_error) => {
@@ -1185,7 +1197,10 @@ impl<R: Runtime> SessionActor<R> {
 
     fn publish_protocol_cycle(&mut self, frames: Vec<TickFrame>) -> Result<(), HostFailure> {
         if !frames.is_empty() {
-            let range = frames.first().zip(frames.last()).map(|(first, last)| (first.tick, last.tick, first.seq_from, last.seq_to));
+            let range = frames
+                .first()
+                .zip(frames.last())
+                .map(|(first, last)| (first.tick, last.tick, first.seq_from, last.seq_to));
             match self.game.tick_batch(frames) {
                 Ok(batch) => self.emit_update(EngineUpdate::TickBatch(Box::new(batch))),
                 Err(error) => {
@@ -1222,20 +1237,28 @@ impl<R: Runtime> SessionActor<R> {
         }
     }
 
-    fn finish_company_write<T>(&mut self, result: Result<T, CompanyWriteHostError>) -> Result<T, CompanyWriteHostError> {
+    fn finish_company_write<T>(
+        &mut self,
+        result: Result<T, CompanyWriteHostError>,
+    ) -> Result<T, CompanyWriteHostError> {
         // generation 拒绝先于领域命令，也不能因当前 Session 已 poison 而改写其结果。
         if matches!(&result, Err(CompanyWriteHostError::Session { .. })) {
             return result;
         }
-        let fatal = self.game.require_healthy().err().or_else(|| {
-            match result.as_ref().err() {
+        let fatal = self
+            .game
+            .require_healthy()
+            .err()
+            .or_else(|| match result.as_ref().err() {
                 Some(CompanyWriteHostError::Command(error)) => error.step_fatal().cloned(),
                 _ => None,
-            }
-        });
+            });
         if let Some(fatal) = fatal {
             if let Err(error) = &result {
-                eprintln!("[session {}] 公司写命令触发引擎致命错误：{error:?}", self.session_id);
+                eprintln!(
+                    "[session {}] 公司写命令触发引擎致命错误：{error:?}",
+                    self.session_id
+                );
             }
             self.stop_after_step_failure(fatal.clone());
             return Err(CompanyWriteHostError::Fatal(fatal));
@@ -1624,26 +1647,38 @@ impl<R: Runtime> SessionActor<R> {
     }
 
     fn prepare_civil_updates(&mut self) -> Result<(), HostFailure> {
-        while self.game.civil_day_ready().map_err(failure::HostFailure::civil)? {
+        while self
+            .game
+            .civil_day_ready()
+            .map_err(failure::HostFailure::civil)?
+        {
             let date = self.game.civil_date();
             let update = match self.game.end_civil_day_update_classified() {
                 Ok(update) => update,
                 Err(failure) => {
-                    let prepare_rejected = failure.recovery() == engine::session::protocol::CivilRecovery::CorrectionPrepareRejected
-                        && !self.cmd_rx.is_closed() && self.game.require_healthy().is_ok()
-                        && self.game.civil_date() == date && self.game.civil_day_ready().is_ok_and(|ready| ready);
+                    let prepare_rejected = failure.recovery()
+                        == engine::session::protocol::CivilRecovery::CorrectionPrepareRejected
+                        && !self.cmd_rx.is_closed()
+                        && self.game.require_healthy().is_ok()
+                        && self.game.civil_date() == date
+                        && self.game.civil_day_ready().is_ok_and(|ready| ready);
                     let error = failure.into_error();
-                    return Err(if prepare_rejected { failure::HostFailure::correction_prepare_rejected(error) } else { failure::HostFailure::civil(error) });
+                    return Err(if prepare_rejected {
+                        failure::HostFailure::correction_prepare_rejected(error)
+                    } else {
+                        failure::HostFailure::civil(error)
+                    });
                 }
             };
             let pause = self.pause_preferences.pauses(&update);
             // 已成功日结立即交付；下一自然日失败不能丢弃先前的完整 CivilUpdate。
             self.publish_civil_update(update);
-            if pause { break; }
+            if pause {
+                break;
+            }
         }
         Ok(())
     }
-
 }
 
 #[cfg(test)]
@@ -1732,14 +1767,14 @@ mod tests {
 
     pub(super) fn diagnostic_setup() -> SessionSetup {
         SessionSetup {
-        company_system: None,
-        dividend_tax_mode: None,
-        flat_withholding_bp: None,
-        rights_offering_enabled: false,
-        issuer_repurchase_enabled: false,
-        par_value_per_share: None,
-        auto_corporate_foundation: false,
-        report_frequency: None,
+            company_system: None,
+            dividend_tax_mode: None,
+            flat_withholding_bp: None,
+            rights_offering_enabled: false,
+            issuer_repurchase_enabled: false,
+            par_value_per_share: None,
+            auto_corporate_foundation: false,
+            report_frequency: None,
             company_operations: None,
             groups: Vec::new(),
             stocks: vec![StockSpec {

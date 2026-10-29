@@ -30,8 +30,8 @@
 use super::fill_fact::{FillFact, ReceiptBatch};
 use super::StepFatal;
 use crate::runtime::{
-    minute_bar_apply, continuous_minute_of_day, CLOSING_AUCTION_BAR_MINUTE,
-    OPEN_AUCTION_BAR_MINUTE, MinuteBarPhase,
+    continuous_minute_of_day, minute_bar_apply, MinuteBarPhase, CLOSING_AUCTION_BAR_MINUTE,
+    OPEN_AUCTION_BAR_MINUTE,
 };
 use crate::session::protocol::EventFact;
 use crate::{Event, GameSession, TradingPhase};
@@ -81,7 +81,10 @@ impl GameSession {
                 clearing.insert(code.clone(), key);
             }
         }
-        if !facts.iter().any(|fact| matches!(fact.event, Event::Trade { .. })) {
+        if !facts
+            .iter()
+            .any(|fact| matches!(fact.event, Event::Trade { .. }))
+        {
             return Ok(());
         }
         let setup = &self.state.setup;
@@ -144,8 +147,7 @@ impl GameSession {
             Vec::with_capacity(fills.len());
         for fact in fills {
             pending.push(
-                serial_fill_confirmation(fact, civil_date)
-                    .map_err(|detail| invariant(&detail))?,
+                serial_fill_confirmation(fact, civil_date).map_err(|detail| invariant(&detail))?,
             );
         }
         self.runtime_append_trade_receipts(&pending)
@@ -238,20 +240,22 @@ fn serial_fill_confirmation(
                 key.account
             )
         })?;
-    Ok(crate::session::personal_trade_history::PendingTradeReceipt {
-        account: key.account,
-        confirmation: crate::session::PersonalTradeConfirmation {
-            // receipt_id＝ledger Fill 收据全局索引（单调唯一，持久续号）。
-            receipt_id: fact.index().0,
-            civil_date,
-            stock: key.stock.clone(),
-            side: key.side,
-            price_cents,
-            quantity_shares: fact.qty(),
-            gross_cents: gross,
-            actual_fees: fact.charged(),
+    Ok(
+        crate::session::personal_trade_history::PendingTradeReceipt {
+            account: key.account,
+            confirmation: crate::session::PersonalTradeConfirmation {
+                // receipt_id＝ledger Fill 收据全局索引（单调唯一，持久续号）。
+                receipt_id: fact.index().0,
+                civil_date,
+                stock: key.stock.clone(),
+                side: key.side,
+                price_cents,
+                quantity_shares: fact.qty(),
+                gross_cents: gross,
+                actual_fees: fact.charged(),
+            },
         },
-    })
+    )
 }
 
 /// 数值错误统一换算（位置锚定本模块）。

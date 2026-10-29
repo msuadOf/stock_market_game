@@ -4,6 +4,7 @@ use super::npc_decisions::{
 };
 use super::{DecisionAccountInput, DecisionSnapshot, IntentCandidateKey};
 use crate::behavior::BehaviorMarketObservation;
+use crate::compute::parallel::*;
 use crate::observation::{
     AccountRiskObservation, EqualWeightMarketObservation, HorizonReturn, PricePathObservation,
 };
@@ -11,7 +12,6 @@ use crate::strategy::{
     MarketView, MomentumStrategy, SelfView, StockView, StrategyState, ZiNoiseStrategy,
 };
 use crate::{AccountId, AccountKind, Intent, Money, SplitMix64, StockId, TradingPhase};
-use crate::compute::parallel::*;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -43,7 +43,7 @@ fn external_host_consumes_npc_results_on_its_calling_thread() {
 #[test]
 fn npc_completion_channel_does_not_deadlock_with_one_rayon_worker() {
     let pool = crate::compute::ComputeContext::from_workers(1);
-        let shared = pool.clone();
+    let shared = pool.clone();
     let result = pool.install(move || {
         stream_npc_decisions(
             snapshot(vec![AccountId(1), AccountId(2)]),
@@ -75,7 +75,7 @@ fn concurrent_sessions_can_queue_npcs_from_every_worker_in_a_two_worker_pool() {
                         account,
                     );
                     let tick = session.state.tick;
-                                    let attention = session.state.npc_attention.get_mut(&account).unwrap();
+                    let attention = session.state.npc_attention.get_mut(&account).unwrap();
                     attention.next_attention_candidate_tick = tick;
                     attention.rng_state = 3;
                     let mut quiet_probe = attention.clone();

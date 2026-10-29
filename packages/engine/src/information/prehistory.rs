@@ -165,8 +165,7 @@ pub fn assemble_seeded_prehistory(
             .expect("公司 id 必须能在目录内翻译出代码");
         for fiscal_year in history_start.year()..=game_start.year() {
             for kind in report_frequency.scheduled_kinds() {
-                let instant =
-                    report_frequency.scheduled_instant(kind, fiscal_year, seed, code)?;
+                let instant = report_frequency.scheduled_instant(kind, fiscal_year, seed, code)?;
                 if instant < start_instant {
                     due.push((instant, id.clone(), kind, fiscal_year));
                 }
@@ -201,8 +200,7 @@ pub fn assemble_seeded_prehistory(
             chart_version: books.ledger().chart().version(),
         };
         let approval = report_frequency.approval_instant(kind, instant)?;
-        let origin =
-            report_frequency.publication_origin(kind, fiscal_year, seed, code, true)?;
+        let origin = report_frequency.publication_origin(kind, fiscal_year, seed, code, true)?;
         library.publish_closed(
             &closing,
             PublicationRequest {

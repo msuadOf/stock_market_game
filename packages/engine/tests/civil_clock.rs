@@ -116,8 +116,7 @@ impl SpringFestivalScenario {
     }
 
     fn with_setup_and_seed(setup: SessionSetup, seed: u64) -> Self {
-        let session =
-            GameSession::new(setup, seed).expect("spring festival setup must be valid");
+        let session = GameSession::new(setup, seed).expect("spring festival setup must be valid");
         Self { session }
     }
 }
@@ -517,16 +516,17 @@ fn restored_period_boundary_is_exactly_once() {
 
     // 恢复后的会话照常逐日推进：调度器待办随自然日消费，不重复派发周五。
     for _ in 0..4 {
-        restored
-            .end_civil_day()
-            .expect("restored weekend advances");
+        restored.end_civil_day().expect("restored weekend advances");
     }
     run_full_trading_session(&mut restored);
     restored
         .end_civil_day()
         .expect("restored Wednesday day-end");
     let restored_saved = restored.save().expect("healthy save");
-    assert_eq!(restored_saved.civil_clock.settled_through, Some(date("2030-02-06")));
+    assert_eq!(
+        restored_saved.civil_clock.settled_through,
+        Some(date("2030-02-06"))
+    );
     assert!(
         legacy_saved(&restored_saved)
             .0
@@ -1005,7 +1005,9 @@ fn closed_day_fixture_facts_probe_is_deterministic_evidence() {
                         sells += 1;
                     }
                 }
-                Event::Trade { taker, maker, qty, .. } => {
+                Event::Trade {
+                    taker, maker, qty, ..
+                } => {
                     if taker == player || maker == player {
                         player_filled += qty;
                     }

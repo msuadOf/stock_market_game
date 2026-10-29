@@ -36,17 +36,24 @@ impl CompanyOperations {
         kind: crate::accounting::reports::ReportKind,
         closing: &mut ClosingEngine,
     ) -> Result<RegisteredCompanyReport, CompanyCloseError> {
-        let source = self.company(&company).ok_or_else(|| CompanyCloseError::Fault(
-            crate::error::ValidationFault::new(4002, vec![u64::from(company.0)]),
-        ))?;
+        let source = self.company(&company).ok_or_else(|| {
+            CompanyCloseError::Fault(crate::error::ValidationFault::new(
+                4002,
+                vec![u64::from(company.0)],
+            ))
+        })?;
         let books = source.books().books();
         let member = crate::accounting::consolidation::MemberId(company.0);
         let industry = crate::information::industry_presentation(source.spec().kind);
-        crate::information::ensure_original_registered(closing, books, &member, industry, period, kind)
-            .map_err(|source| CompanyCloseError::Information(Box::new(source)))?;
+        crate::information::ensure_original_registered(
+            closing, books, &member, industry, period, kind,
+        )
+        .map_err(|source| CompanyCloseError::Information(Box::new(source)))?;
         Ok(RegisteredCompanyReport {
             scope: crate::accounting::consolidation::ScopeId::Standalone(member),
-            policy: crate::information::AccountingPolicyRef { chart_version: books.ledger().chart().version() },
+            policy: crate::information::AccountingPolicyRef {
+                chart_version: books.ledger().chart().version(),
+            },
         })
     }
 
@@ -63,11 +70,15 @@ impl CompanyOperations {
             let expected = self.next_expected_date();
             let (year, month, day) = settled.ymd();
             let (expect_year, expect_month, expect_day) = expected.ymd();
-            return Err(CompanyCloseError::Fault(crate::error::ValidationFault::new(
-                4000,
-                vec![crate::error::ymd_context(year, month, day),
-                    crate::error::ymd_context(expect_year, expect_month, expect_day)],
-            )));
+            return Err(CompanyCloseError::Fault(
+                crate::error::ValidationFault::new(
+                    4000,
+                    vec![
+                        crate::error::ymd_context(year, month, day),
+                        crate::error::ymd_context(expect_year, expect_month, expect_day),
+                    ],
+                ),
+            ));
         }
         if next.month() == settled.month() {
             return Ok(None);
@@ -80,10 +91,12 @@ impl CompanyOperations {
             let industry = crate::information::industry_presentation(company.spec().kind);
             let books = company.books_mut();
             if year_end {
-                closing.close_year(books, &member, industry, settled.year())
+                closing
+                    .close_year(books, &member, industry, settled.year())
                     .map_err(|source| CompanyCloseError::Closing(Box::new(source)))?;
             } else {
-                closing.close_month(books, &member, industry, period)
+                closing
+                    .close_month(books, &member, industry, period)
                     .map_err(|source| CompanyCloseError::Closing(Box::new(source)))?;
             }
         }

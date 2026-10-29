@@ -21,9 +21,7 @@ use crate::GameSession;
 /// 生产安装序同 drive_tests 各用例）。
 fn drive_ticks(driver: &mut RuntimeDriver, session: &mut GameSession, ticks: usize) {
     for _ in 0..ticks {
-        driver
-            .step_frame_equivalent(session)
-            .expect("步进");
+        driver.step_frame_equivalent(session).expect("步进");
         driver.install_market_views(session).expect("行情安装");
         driver.install_candles(session).expect("K 安装");
     }
@@ -32,7 +30,9 @@ fn drive_ticks(driver: &mut RuntimeDriver, session: &mut GameSession, ticks: usi
 /// desk 权威 active → session DailyCandle 的期望值（对账映射——与
 /// install_candles_with_mode 的装载同式：time 占位 0、stats 来自
 /// 8 元组第 7/8 位）。
-fn desk_active_to_daily(a: (i64, i64, i64, i64, i64, u64, i64, u64)) -> crate::session::DailyCandle {
+fn desk_active_to_daily(
+    a: (i64, i64, i64, i64, i64, u64, i64, u64),
+) -> crate::session::DailyCandle {
     let _ = a.0; // 8 元组首位为 time 占位（desk 侧恒 0；session 时间另取——对照不比 time）
     crate::session::DailyCandle {
         time: 0,
@@ -74,7 +74,9 @@ fn inject_crossing_intents(driver: &mut RuntimeDriver, session: &mut GameSession
                 intent: crate::Intent::PlaceLimit {
                     code: crate::StockId(0),
                     side: Side::Buy,
-                    price: crate::strategy::LimitPrice::Fixed(crate::money::Money::from_cents(1000)),
+                    price: crate::strategy::LimitPrice::Fixed(crate::money::Money::from_cents(
+                        1000,
+                    )),
                     qty: 100,
                 },
                 account_ordinal: 0,
@@ -85,7 +87,9 @@ fn inject_crossing_intents(driver: &mut RuntimeDriver, session: &mut GameSession
                 intent: crate::Intent::PlaceLimit {
                     code: crate::StockId(0),
                     side: Side::Sell,
-                    price: crate::strategy::LimitPrice::Fixed(crate::money::Money::from_cents(1000)),
+                    price: crate::strategy::LimitPrice::Fixed(crate::money::Money::from_cents(
+                        1000,
+                    )),
                     qty: 100,
                 },
                 account_ordinal: 0,
@@ -137,8 +141,20 @@ fn candle_install_matches_desk_authority() {
                 // OHLCV 逐位（Money 不含 PartialEq 语义时按分量——
                 // DailyCandle 字段直接比较）。
                 assert_eq!(
-                    (got.open.cents(), got.high.cents(), got.low.cents(), got.close.cents(), got.volume),
-                    (expected.open.cents(), expected.high.cents(), expected.low.cents(), expected.close.cents(), expected.volume),
+                    (
+                        got.open.cents(),
+                        got.high.cents(),
+                        got.low.cents(),
+                        got.close.cents(),
+                        got.volume
+                    ),
+                    (
+                        expected.open.cents(),
+                        expected.high.cents(),
+                        expected.low.cents(),
+                        expected.close.cents(),
+                        expected.volume
+                    ),
                     "股 {code:?} active OHLCV 安装==desk 权威"
                 );
                 assert_eq!(
@@ -182,7 +198,12 @@ fn candle_placeholder_on_no_trade_stock() {
         match session.runtime_active_candle(&code) {
             Some(k) => {
                 assert_eq!(
-                    (k.open.cents(), k.high.cents(), k.low.cents(), k.close.cents()),
+                    (
+                        k.open.cents(),
+                        k.high.cents(),
+                        k.low.cents(),
+                        k.close.cents()
+                    ),
                     (last, last, last, last),
                     "股 {code:?} 占位 K 四值==last_price（无成交日不缺条——fault2064 族）"
                 );
@@ -316,7 +337,11 @@ fn candle_knob2_drop_turnover_proves_stats_flow() {
         let Some(got) = session.runtime_active_candle(&code) else {
             continue;
         };
-        if got.trade_stats.as_ref().is_some_and(|s| s.turnover_cents == 0) {
+        if got
+            .trade_stats
+            .as_ref()
+            .is_some_and(|s| s.turnover_cents == 0)
+        {
             dropped += 1;
         }
     }

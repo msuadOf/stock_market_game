@@ -1,4 +1,6 @@
-use server::deployment::{deployment_router_with_manager, resolve_web_root, DeploymentOptions, Services, DEPLOYMENT_HELP};
+use server::deployment::{
+    deployment_router_with_manager, resolve_web_root, DeploymentOptions, Services, DEPLOYMENT_HELP,
+};
 use server::init_tracing;
 
 #[tokio::main]

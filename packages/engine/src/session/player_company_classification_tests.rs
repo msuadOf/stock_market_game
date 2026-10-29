@@ -74,13 +74,16 @@ fn player_command_poison_is_system_state_and_remains_fatal() {
     assert_eq!(game.poison_reason(), Some(&fatal));
 }
 
-
 #[test]
 fn player_command_invalid_amount_and_disabled_mechanism_have_typed_classes() {
     let mut game = game(true);
-    let invalid = game.propose_player_company_action(AccountId(0), cash(0)).unwrap_err();
+    let invalid = game
+        .propose_player_company_action(AccountId(0), cash(0))
+        .unwrap_err();
     preserve_source(&invalid, CompanyErrorClass::InvalidInput);
-    let disabled = game.propose_player_company_action(AccountId(0), repurchase()).unwrap_err();
+    let disabled = game
+        .propose_player_company_action(AccountId(0), repurchase())
+        .unwrap_err();
     preserve_source(&disabled, CompanyErrorClass::UnsupportedOperation);
     assert!(game.require_healthy().is_ok());
 }
@@ -94,7 +97,9 @@ fn player_command_repurchase_share_limit_is_business_condition_without_funding()
         unreachable!()
     };
     *max_shares = 1_001;
-    let error = game.propose_player_company_action(AccountId(0), proposal).unwrap_err();
+    let error = game
+        .propose_player_company_action(AccountId(0), proposal)
+        .unwrap_err();
     preserve_source(&error, CompanyErrorClass::BusinessCondition);
     assert_eq!(serde_json::to_value(game.save().unwrap()).unwrap(), before);
     assert!(game.require_healthy().is_ok());

@@ -42,10 +42,18 @@ pub(crate) struct PreparedAdministrativeSource {
 }
 
 impl PreparedAdministrativeSource {
-    pub(crate) fn id(&self) -> AdminTransactionId { self.id }
-    pub(crate) fn before(&self) -> crate::runtime::source::WorldMirrorSource { self.before }
-    pub(crate) fn after(&self) -> crate::runtime::source::WorldMirrorSource { self.after }
-    pub(crate) fn captured(&self) -> crate::runtime::source::MirrorDomains { self.captured }
+    pub(crate) fn id(&self) -> AdminTransactionId {
+        self.id
+    }
+    pub(crate) fn before(&self) -> crate::runtime::source::WorldMirrorSource {
+        self.before
+    }
+    pub(crate) fn after(&self) -> crate::runtime::source::WorldMirrorSource {
+        self.after
+    }
+    pub(crate) fn captured(&self) -> crate::runtime::source::MirrorDomains {
+        self.captured
+    }
 }
 
 impl World {
@@ -92,9 +100,14 @@ impl World {
         inspect: impl FnOnce(&AdminCandidate) -> Result<P, RuntimeError>,
     ) -> Result<P, RuntimeError> {
         self.with_administrative_inspection(
-            grouped, information, repurchase, None, inspect,
+            grouped,
+            information,
+            repurchase,
+            None,
+            inspect,
             |_candidate, _source, value| Ok(value),
-        ).map(|(value, _unconsumed_ack)| value)
+        )
+        .map(|(value, _unconsumed_ack)| value)
     }
 
     /// ack 留在 World 内，只有同次真实 Commit 全部成功才交给唯一镜像安装者。
@@ -106,7 +119,11 @@ impl World {
         inspect: impl FnOnce(&AdminCandidate, &PreparedAdministrativeSource) -> Result<P, RuntimeError>,
     ) -> Result<(P, crate::runtime::source::PreparedMirrorAck), RuntimeError> {
         self.with_administrative_inspection(
-            grouped, information, repurchase, None, |_candidate| Ok(()),
+            grouped,
+            information,
+            repurchase,
+            None,
+            |_candidate| Ok(()),
             |candidate, source, ()| inspect(candidate, source),
         )
     }
@@ -119,7 +136,11 @@ impl World {
         repurchase: Option<crate::runtime::protocol::RepurchasePreparePayload>,
         stage_layouts: Option<BTreeMap<GroupIdx, crate::runtime::protocol::AdminStageLayout>>,
         inspect_candidate: impl FnOnce(&AdminCandidate) -> Result<L, RuntimeError>,
-        inspect_prepared: impl FnOnce(&AdminCandidate, &PreparedAdministrativeSource, L) -> Result<P, RuntimeError>,
+        inspect_prepared: impl FnOnce(
+            &AdminCandidate,
+            &PreparedAdministrativeSource,
+            L,
+        ) -> Result<P, RuntimeError>,
     ) -> Result<(P, crate::runtime::source::PreparedMirrorAck), RuntimeError> {
         if let Some(reason) = &self.dead_reason {
             return Err(invalid(format!("world 已死亡，不可行政处理：{reason}")));
@@ -131,7 +152,10 @@ impl World {
                 invalid("行政入口通道面与 world 拓扑不一致").into(),
             );
         }
-        if let Some(point) = information.as_ref().and_then(|payload| payload.observation.as_ref()) {
+        if let Some(point) = information
+            .as_ref()
+            .and_then(|payload| payload.observation.as_ref())
+        {
             self.validate_information_clock(&point.clock, point.through, &point.as_of_anchors)?;
         }
         self.admin_next_id = self
@@ -175,7 +199,13 @@ impl World {
                     group,
                     ops.iter()
                         .map(|op| op.coordinates().0)
-                        .chain(projections.get(&group).into_iter().flatten().map(|row| row.local))
+                        .chain(
+                            projections
+                                .get(&group)
+                                .into_iter()
+                                .flatten()
+                                .map(|row| row.local),
+                        )
                         .collect::<BTreeSet<_>>()
                         .into_iter()
                         .collect(),
@@ -189,8 +219,21 @@ impl World {
                 Ok(books) => books.into_iter().collect(),
                 Err(error) => return self.finish_admin_failure(id, &sent, error.into()),
             }
-        } else { BTreeMap::new() };
-        match self.execute_admin(id, operations, information, stage_layouts, projections, before_books, &expected, &mut sent, inspect_candidate, inspect_prepared) {
+        } else {
+            BTreeMap::new()
+        };
+        match self.execute_admin(
+            id,
+            operations,
+            information,
+            stage_layouts,
+            projections,
+            before_books,
+            &expected,
+            &mut sent,
+            inspect_candidate,
+            inspect_prepared,
+        ) {
             Ok(value) => Ok(value),
             Err(failure) => self.finish_admin_failure(id, &sent, failure),
         }
@@ -274,10 +317,22 @@ impl World {
         expected: &BTreeMap<GroupIdx, Vec<super::super::LocalIdx>>,
         sent: &mut BTreeMap<GroupIdx, Vec<super::super::LocalIdx>>,
         inspect_candidate: impl FnOnce(&AdminCandidate) -> Result<L, RuntimeError>,
-        inspect_prepared: impl FnOnce(&AdminCandidate, &PreparedAdministrativeSource, L) -> Result<P, RuntimeError>,
+        inspect_prepared: impl FnOnce(
+            &AdminCandidate,
+            &PreparedAdministrativeSource,
+            L,
+        ) -> Result<P, RuntimeError>,
     ) -> Result<(P, crate::runtime::source::PreparedMirrorAck), AdminFailure> {
-        let information_clock = information.as_ref().and_then(|payload| payload.observation.as_ref())
-            .map(|point| self.authenticate_information_clock(&point.clock, point.through, Arc::new(point.as_of_anchors.clone())))
+        let information_clock = information
+            .as_ref()
+            .and_then(|payload| payload.observation.as_ref())
+            .map(|point| {
+                self.authenticate_information_clock(
+                    &point.clock,
+                    point.through,
+                    Arc::new(point.as_of_anchors.clone()),
+                )
+            })
             .transpose()?;
         for (&group, ops) in &operations {
             self.send_admin(
@@ -286,7 +341,10 @@ impl World {
                 GroupIn::AdminPrepare {
                     id,
                     operations: ops.clone(),
-                    stage_layout: stage_layouts.as_ref().and_then(|layouts| layouts.get(&group)).cloned(),
+                    stage_layout: stage_layouts
+                        .as_ref()
+                        .and_then(|layouts| layouts.get(&group))
+                        .cloned(),
                     information: information.clone(),
                     repurchase: projections.get(&group).cloned(),
                     information_clock: information_clock.clone(),
@@ -302,10 +360,21 @@ impl World {
                 self.receive_admin(id, AdminPhase::Prepare, expected, &mut seen)?;
             match result {
                 Ok(candidate) => {
-                    stages::validate_group_stage_evidence(id, &candidate, &operations[&group],
-                        stage_layouts.as_ref().and_then(|layouts| layouts.get(&group)))?;
+                    stages::validate_group_stage_evidence(
+                        id,
+                        &candidate,
+                        &operations[&group],
+                        stage_layouts
+                            .as_ref()
+                            .and_then(|layouts| layouts.get(&group)),
+                    )?;
                     self.validate_information_candidate(&candidate, information.as_ref())?;
-                    self.validate_repurchase_candidate(&candidate, &operations[&group], projections.get(&group), before_books.get(&group))?;
+                    self.validate_repurchase_candidate(
+                        &candidate,
+                        &operations[&group],
+                        projections.get(&group),
+                        before_books.get(&group),
+                    )?;
                     prepared.insert(group, candidate);
                 }
                 Err(error) => {
@@ -335,20 +404,32 @@ impl World {
             groups: prepared.into_values().collect(),
         };
         // 保留旧 World 入口先检查真实 candidate 的契约；拒绝或 panic 均不进入来源准备。
-        let legacy_value =
-            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| inspect_candidate(&candidate))) {
-                Ok(Ok(value)) => value,
-                Ok(Err(error)) => {
-                    self.abort_admin_preserving_error(id, expected, &error)?;
-                    return Err(AdminFailure { error, payload: None, terminal: false, committing: false });
-                }
-                Err(payload) => {
-                    return Err(AdminFailure {
-                        error: invalid("行政候选检查 panic"), payload: Some(payload), terminal: true, committing: false,
-                    });
-                }
-            };
-        let domains = candidate.groups.iter().fold(crate::runtime::source::MirrorDomains::default(), |all, group| all.union(group.mirror_domains));
+        let legacy_value = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            inspect_candidate(&candidate)
+        })) {
+            Ok(Ok(value)) => value,
+            Ok(Err(error)) => {
+                self.abort_admin_preserving_error(id, expected, &error)?;
+                return Err(AdminFailure {
+                    error,
+                    payload: None,
+                    terminal: false,
+                    committing: false,
+                });
+            }
+            Err(payload) => {
+                return Err(AdminFailure {
+                    error: invalid("行政候选检查 panic"),
+                    payload: Some(payload),
+                    terminal: true,
+                    committing: false,
+                });
+            }
+        };
+        let domains = candidate.groups.iter().fold(
+            crate::runtime::source::MirrorDomains::default(),
+            |all, group| all.union(group.mirror_domains),
+        );
         let next_revision = if domains.is_empty() {
             self.non_tick_revision
         } else {
@@ -357,21 +438,6 @@ impl World {
                 None => {
                     let error = invalid("非 tick 成功来源游标已耗尽，拒绝首个 commit");
                     self.abort_admin_preserving_error(id, expected, &error)?;
-                    return Err(AdminFailure { error, payload: None, terminal: false, committing: false });
-                }
-            }
-        };
-        let before = self.mirror_source();
-        let mut after = before;
-        after.non_tick_revision = next_revision;
-        let captured = self.pending_mirror_domains.union(domains);
-        let source = PreparedAdministrativeSource { id, before, after, captured };
-        let ack = crate::runtime::source::PreparedMirrorAck { domains: captured };
-        let value =
-            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| inspect_prepared(&candidate, &source, legacy_value))) {
-                Ok(Ok(value)) => value,
-                Ok(Err(error)) => {
-                    self.abort_admin_preserving_error(id, expected, &error)?;
                     return Err(AdminFailure {
                         error,
                         payload: None,
@@ -379,15 +445,41 @@ impl World {
                         committing: false,
                     });
                 }
-                Err(payload) => {
-                    return Err(AdminFailure {
-                        error: invalid("行政候选检查 panic"),
-                        payload: Some(payload),
-                        terminal: true,
-                        committing: false,
-                    })
-                }
-            };
+            }
+        };
+        let before = self.mirror_source();
+        let mut after = before;
+        after.non_tick_revision = next_revision;
+        let captured = self.pending_mirror_domains.union(domains);
+        let source = PreparedAdministrativeSource {
+            id,
+            before,
+            after,
+            captured,
+        };
+        let ack = crate::runtime::source::PreparedMirrorAck { domains: captured };
+        let value = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            inspect_prepared(&candidate, &source, legacy_value)
+        })) {
+            Ok(Ok(value)) => value,
+            Ok(Err(error)) => {
+                self.abort_admin_preserving_error(id, expected, &error)?;
+                return Err(AdminFailure {
+                    error,
+                    payload: None,
+                    terminal: false,
+                    committing: false,
+                });
+            }
+            Err(payload) => {
+                return Err(AdminFailure {
+                    error: invalid("行政候选检查 panic"),
+                    payload: Some(payload),
+                    terminal: true,
+                    committing: false,
+                })
+            }
+        };
         if !expected.is_empty() {
             // 首个 commit 发送前关窗；任何部分提交失败均不可复用 world。
             self.day_end_prior_public_views = None;
@@ -404,7 +496,14 @@ impl World {
 
     /// 读面通信失败不能留下可重试的半收齐通道；沿既有 terminal 回收保首错。
     pub(crate) fn stop_failed_administrative_read(&mut self, error: RuntimeError) -> RuntimeError {
-        self.stop_after_fatal_failure(self.global.committed_tick, 0, "administrative_baseline", error, FatalCleanupMode::StopImmediately, None)
+        self.stop_after_fatal_failure(
+            self.global.committed_tick,
+            0,
+            "administrative_baseline",
+            error,
+            FatalCleanupMode::StopImmediately,
+            None,
+        )
     }
 
     fn validate_repurchase_candidate(
@@ -416,43 +515,100 @@ impl World {
     ) -> Result<(), RuntimeError> {
         use crate::runtime::protocol::{AdminPlanReference, CreatedRepurchasePlan};
         let Some(rows) = rows else {
-            return if candidate.repurchase.is_none() { Ok(()) } else { Err(invalid("非回购作用域收到执行候选")) };
+            return if candidate.repurchase.is_none() {
+                Ok(())
+            } else {
+                Err(invalid("非回购作用域收到执行候选"))
+            };
         };
-        let prepared = candidate.repurchase.as_ref().ok_or_else(|| invalid("回购 Prepare 缺少完整候选"))?;
-        let mut expected_book = before.ok_or_else(|| invalid("回购 Prepare 缺少事务前完整簿"))?.clone();
+        let prepared = candidate
+            .repurchase
+            .as_ref()
+            .ok_or_else(|| invalid("回购 Prepare 缺少完整候选"))?;
+        let mut expected_book = before
+            .ok_or_else(|| invalid("回购 Prepare 缺少事务前完整簿"))?
+            .clone();
         let mut expected_created = Vec::new();
         for (index, operation) in operations.iter().enumerate() {
-            if let AdminOperation::OpenIssuerRepurchase { local, stock, issuer } = *operation {
-                let account = self.information_roster.get(candidate.group as usize).and_then(|roster| roster.get(local as usize))
-                    .copied().ok_or_else(|| invalid("回购 Open 的真实名册坐标缺失"))?;
-                let plan_id = expected_book.create_issuer_repurchase(crate::plans::RepurchaseExecutionOpen { owner: account, issuer, stock: crate::StockId(u32::from(stock)) })
+            if let AdminOperation::OpenIssuerRepurchase {
+                local,
+                stock,
+                issuer,
+            } = *operation
+            {
+                let account = self
+                    .information_roster
+                    .get(candidate.group as usize)
+                    .and_then(|roster| roster.get(local as usize))
+                    .copied()
+                    .ok_or_else(|| invalid("回购 Open 的真实名册坐标缺失"))?;
+                let plan_id = expected_book
+                    .create_issuer_repurchase(crate::plans::RepurchaseExecutionOpen {
+                        owner: account,
+                        issuer,
+                        stock: crate::StockId(u32::from(stock)),
+                    })
                     .map_err(|error| invalid(format!("回购回执验证重放失败：{error}")))?;
-                expected_created.push(CreatedRepurchasePlan { group: candidate.group, operation_index: u32::try_from(index).map_err(|_| invalid("回购 Open 位置溢出"))?, local, stock, issuer, plan_id });
+                expected_created.push(CreatedRepurchasePlan {
+                    group: candidate.group,
+                    operation_index: u32::try_from(index)
+                        .map_err(|_| invalid("回购 Open 位置溢出"))?,
+                    local,
+                    stock,
+                    issuer,
+                    plan_id,
+                });
             }
         }
         if prepared.created != expected_created || prepared.book != expected_book {
-            return Err(invalid("回购 Prepare 完整 book/OwnerSequence/created 回执不一致"));
+            return Err(invalid(
+                "回购 Prepare 完整 book/OwnerSequence/created 回执不一致",
+            ));
         }
         let mut seen = BTreeSet::new();
         for row in rows {
             let id = match row.execution_plan {
                 AdminPlanReference::Existing(id) => id,
-                AdminPlanReference::CreatedInThisPrepare { operation_index } => expected_created.iter().find(|created| created.operation_index == operation_index)
-                    .ok_or_else(|| invalid("回购投影 Created 位置不符"))?.plan_id,
+                AdminPlanReference::CreatedInThisPrepare { operation_index } => {
+                    expected_created
+                        .iter()
+                        .find(|created| created.operation_index == operation_index)
+                        .ok_or_else(|| invalid("回购投影 Created 位置不符"))?
+                        .plan_id
+                }
             };
             if !seen.insert(id) || prepared.projections.get(&id) != Some(&row.projection) {
                 return Err(invalid("回购 Prepare 执行投影漏失、重复或被替换"));
             }
         }
         for (id, projection) in &prepared.projections {
-            let entry = prepared.book.entry(*id).map_err(|_| invalid("回购投影含未知计划"))?;
-            let crate::plans::PlanEntry::IssuerRepurchase(plan) = entry else { return Err(invalid("回购投影来源不是公司计划")); };
-            if id.owner != projection.account || plan.issuer() != projection.issuer || plan.stock() != crate::StockId(u32::from(projection.stock)) || entry.is_terminal() {
+            let entry = prepared
+                .book
+                .entry(*id)
+                .map_err(|_| invalid("回购投影含未知计划"))?;
+            let crate::plans::PlanEntry::IssuerRepurchase(plan) = entry else {
+                return Err(invalid("回购投影来源不是公司计划"));
+            };
+            if id.owner != projection.account
+                || plan.issuer() != projection.issuer
+                || plan.stock() != crate::StockId(u32::from(projection.stock))
+                || entry.is_terminal()
+            {
                 return Err(invalid("回购投影与完整簿身份不符"));
             }
         }
-        if prepared.projections.keys().copied().collect::<BTreeSet<_>>() != seen { return Err(invalid("回购 Prepare 投影集合存在额外或遗漏计划")); }
-        if !expected_created.is_empty() && !candidate.mirror_domains.plans_pending { return Err(invalid("回购创建候选遗漏 plans_pending")); }
+        if prepared
+            .projections
+            .keys()
+            .copied()
+            .collect::<BTreeSet<_>>()
+            != seen
+        {
+            return Err(invalid("回购 Prepare 投影集合存在额外或遗漏计划"));
+        }
+        if !expected_created.is_empty() && !candidate.mirror_domains.plans_pending {
+            return Err(invalid("回购创建候选遗漏 plans_pending"));
+        }
         Ok(())
     }
 
@@ -469,16 +625,26 @@ impl World {
                     || info.observed_through != payload.observation.as_ref().map(|p| p.through)
                     || info.personals.windows(2).any(|pair| pair[0].0 >= pair[1].0)
                     || info.personals.iter().any(|(local, account, snapshot)| {
-                        self.information_roster.get(candidate.group as usize).and_then(|roster| roster.get(*local as usize)) != Some(account)
-                            || snapshot.information.owner() != *account || snapshot.belief.npc() != *account
+                        self.information_roster
+                            .get(candidate.group as usize)
+                            .and_then(|roster| roster.get(*local as usize))
+                            != Some(account)
+                            || snapshot.information.owner() != *account
+                            || snapshot.belief.npc() != *account
                     })
                     || (payload.observation.is_none() && !info.personals.is_empty())
                 {
-                    return Err(invalid(format!("组 {} 信息候选回执身份/输入不一致", candidate.group)));
+                    return Err(invalid(format!(
+                        "组 {} 信息候选回执身份/输入不一致",
+                        candidate.group
+                    )));
                 }
                 Ok(())
             }
-            _ => Err(invalid(format!("组 {} 信息候选作用域错配", candidate.group))),
+            _ => Err(invalid(format!(
+                "组 {} 信息候选作用域错配",
+                candidate.group
+            ))),
         }
     }
 
@@ -854,22 +1020,33 @@ mod tests {
             spec(),
             crate::calendar::TradingCalendar::current_default_calendar()
                 .expect("显式 raw Calendar 政策合法"),
-        ).unwrap();
+        )
+        .unwrap();
         let initial = world.mirror_source();
         for revision in 1..=2 {
             world.with_admin_transaction(credit(), |_| Ok(())).unwrap();
             let source = world.mirror_source();
-            assert_eq!((source.tick, source.generation), (initial.tick, initial.generation));
-            assert_eq!(source.non_tick_revision, revision,
-                "成功 Admin 不是 attempt id；同 tick 连续写必须有独立成功来源");
+            assert_eq!(
+                (source.tick, source.generation),
+                (initial.tick, initial.generation)
+            );
+            assert_eq!(
+                source.non_tick_revision, revision,
+                "成功 Admin 不是 attempt id；同 tick 连续写必须有独立成功来源"
+            );
             assert!(world.pending_mirror_domains().accounts_full);
         }
         let source = world.mirror_source();
         let pending = world.pending_mirror_domains();
-        let rejected = world.with_admin_transaction(credit(), |_| Err::<(), _>(invalid("纯 inspect 业务拒绝")));
+        let rejected = world
+            .with_admin_transaction(credit(), |_| Err::<(), _>(invalid("纯 inspect 业务拒绝")));
         assert!(rejected.is_err());
         assert_eq!(world.mirror_source(), source, "失败不推进成功来源");
-        assert_eq!(world.pending_mirror_domains(), pending, "失败不清旧 dirty 原因");
+        assert_eq!(
+            world.pending_mirror_domains(),
+            pending,
+            "失败不清旧 dirty 原因"
+        );
         world.shutdown().unwrap();
     }
 
@@ -879,14 +1056,19 @@ mod tests {
             spec(),
             crate::calendar::TradingCalendar::current_default_calendar()
                 .expect("显式 raw Calendar 政策合法"),
-        ).unwrap();
+        )
+        .unwrap();
         world.non_tick_revision = u64::MAX;
         let before = accounts(&mut world);
         let source = world.mirror_source();
         let pending = world.pending_mirror_domains();
         let rejected = world.with_admin_transaction(credit(), |_| Ok(()));
         assert!(rejected.is_err(), "耗尽必须在首个不可撤 commit 前拒绝");
-        assert_eq!(accounts(&mut world), before, "不得先 commit 后发现来源游标耗尽");
+        assert_eq!(
+            accounts(&mut world),
+            before,
+            "不得先 commit 后发现来源游标耗尽"
+        );
         assert_eq!(world.mirror_source(), source);
         assert_eq!(world.pending_mirror_domains(), pending);
         world.shutdown().unwrap();
@@ -897,7 +1079,8 @@ mod tests {
             spec(),
             crate::calendar::TradingCalendar::current_default_calendar()
                 .expect("显式 raw Calendar 政策合法"),
-        ).unwrap();
+        )
+        .unwrap();
         world.non_tick_revision = u64::MAX;
         let source = world.mirror_source();
         let pending = world.pending_mirror_domains();
@@ -1790,21 +1973,35 @@ mod tests {
                     day: 0,
                     civil_date: w.civil_date,
                     calendar: crate::runtime::protocol::DayEndCalendar::ManualDayEnd(
-                        w.calendar_source.day(w.civil_date).unwrap()),
+                        w.calendar_source.day(w.civil_date).unwrap(),
+                    ),
                     rights: Vec::new(),
                 })),
             };
             w.group_txs[0].send(message).unwrap();
-            match (mode, recv_deadline(&w.up_rx, Phase::Seal, &w.watchdog).unwrap()) {
+            match (
+                mode,
+                recv_deadline(&w.up_rx, Phase::Seal, &w.watchdog).unwrap(),
+            ) {
                 (0, UpMsg::PendingStartRejected(rejection)) => {
                     assert_eq!(rejection.group, 0);
                     assert_eq!((rejection.tick, rejection.prior_tick), (2, 1));
                     assert_eq!(rejection.calendar.before_input().tick, 1);
                     assert_eq!(rejection.calendar.after_input().tick, 2);
-                    assert!(matches!(rejection.error, RuntimeError::ProtocolInvariant { detail } if detail.contains("行政事务 pending")));
+                    assert!(
+                        matches!(rejection.error, RuntimeError::ProtocolInvariant { detail } if detail.contains("行政事务 pending"))
+                    );
                 }
-                (1 | 2, UpMsg::Failed { who: WorkerId::Group(0), error }) => {
-                    assert!(matches!(error, RuntimeError::ProtocolInvariant { detail } if detail.contains("行政事务 pending")));
+                (
+                    1 | 2,
+                    UpMsg::Failed {
+                        who: WorkerId::Group(0),
+                        error,
+                    },
+                ) => {
+                    assert!(
+                        matches!(error, RuntimeError::ProtocolInvariant { detail } if detail.contains("行政事务 pending"))
+                    );
                 }
                 (_, other) => panic!("pending门须保原错误与精确来源阶段：{other:?}"),
             }

@@ -24,12 +24,15 @@ fn batch2_runtime_auction_ticks_in_window() {
 #[test]
 fn batch2_auction_tick_phase_is_call_auction() {
     let (_, events) = runtime_events(12, 102);
-    assert!(events.iter().all(|e| match e {
-        Event::AuctionTick { phase, .. } | Event::AuctionCompleted { phase, .. } => {
-            *phase == TradingPhase::CallAuction
-        }
-        _ => true,
-    }), "前 12 tick（未过开盘窗）竞价事件 phase=CallAuction");
+    assert!(
+        events.iter().all(|e| match e {
+            Event::AuctionTick { phase, .. } | Event::AuctionCompleted { phase, .. } => {
+                *phase == TradingPhase::CallAuction
+            }
+            _ => true,
+        }),
+        "前 12 tick（未过开盘窗）竞价事件 phase=CallAuction"
+    );
 }
 
 // 3. 开盘竞价完成（AuctionCompleted）出现在离开申报窗后（runtime）。
@@ -39,7 +42,11 @@ fn batch2_opening_completion_after_window() {
     let completed_ticks: Vec<u64> = events
         .iter()
         .filter_map(|e| match e {
-            Event::AuctionCompleted { tick, phase: TradingPhase::CallAuction, .. } => Some(*tick),
+            Event::AuctionCompleted {
+                tick,
+                phase: TradingPhase::CallAuction,
+                ..
+            } => Some(*tick),
             _ => None,
         })
         .collect();
@@ -54,7 +61,9 @@ fn batch2_opening_completion_after_window() {
 fn batch2_pipeline_auction_window_events() {
     let (_, events) = pipeline_events(15, 101);
     assert!(
-        events.iter().any(|e| matches!(e, Event::AuctionTick { .. })),
+        events
+            .iter()
+            .any(|e| matches!(e, Event::AuctionTick { .. })),
         "旧管线对照面"
     );
 }
@@ -109,15 +118,13 @@ fn batch2_auction_completed_fields_wellformed() {
     }
     // 注入臂（Some 分支绑定）：确定性交叉对手单 ⇒ 有价有量。
     let mut session = engine::GameSession::new(setup_1stock(), 199).expect("会话");
-    let mut driver = engine::runtime::drive::RuntimeDriver::from_session(&mut session)
-        .expect("驱动器");
+    let mut driver =
+        engine::runtime::drive::RuntimeDriver::from_session(&mut session).expect("驱动器");
     driver.adopt_session_seq(&session);
     inject_crossing_pair_at_1000(&mut driver);
     let mut injected_completed = Vec::new();
     for _ in 0..12 {
-        let evs = driver
-            .step_frame_equivalent(&mut session)
-            .expect("步进");
+        let evs = driver.step_frame_equivalent(&mut session).expect("步进");
         injected_completed.extend(
             evs.into_iter()
                 .filter(|e| matches!(e, Event::AuctionCompleted { .. })),

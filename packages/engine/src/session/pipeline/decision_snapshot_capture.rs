@@ -71,7 +71,9 @@ pub(in crate::session) enum DecisionSnapshotCaptureError {
         #[source]
         source: super::StepFatal,
     },
-    #[error("DecisionAndContinuation 决策快照 {location} 的账户 {account:?} 金额计算失败：{source}")]
+    #[error(
+        "DecisionAndContinuation 决策快照 {location} 的账户 {account:?} 金额计算失败：{source}"
+    )]
     Money {
         location: &'static str,
         account: AccountId,
@@ -305,7 +307,9 @@ pub(in crate::session) fn capture_npc_account_input_on(
         .get(&account)
         .ok_or(DecisionSnapshotCaptureError::MissingAccount(account))?;
     let observation = match experience_row {
-        Some(row) => CapturedExperienceObservation::capture_from_row(row, view, account, market_minute)?,
+        Some(row) => {
+            CapturedExperienceObservation::capture_from_row(row, view, account, market_minute)?
+        }
         None => CapturedExperienceObservation::NoExperience,
     };
     let CapturedAccountObservation {
@@ -333,9 +337,9 @@ pub(in crate::session) fn capture_npc_account_input_on(
     let experience_row = input.retail_experience().map(|row| row.clone());
     if kind == AccountKind::Retail {
         if let Some(state) = input.retail_experience() {
-            let influence = state.failure_influence(moment).map_err(|source| {
-                DecisionSnapshotCaptureError::Experience { account, source }
-            })?;
+            let influence = state
+                .failure_influence(moment)
+                .map_err(|source| DecisionSnapshotCaptureError::Experience { account, source })?;
             input = input.with_failure_influence(influence);
         }
     }
