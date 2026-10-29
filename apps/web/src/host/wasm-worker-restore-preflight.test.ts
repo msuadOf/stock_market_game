@@ -3,7 +3,7 @@ import { registerHooks } from "node:module";
 import test from "node:test";
 
 for (const scenario of ["wrong-hash", "missing-export", "false-missing-setter"] as const) {
-  test(`实际 Worker restore package ${scenario} 必须在 initializer/Memory 前拒绝`, { timeout: 10000 }, async () => {
+  test(`实际 Worker restore package ${scenario} 必须在 initializer/Memory 前拒绝`, { timeout: 10000 }, async (t) => {
     const key = Symbol.for(`restore-preflight-${scenario}`);
     const saved = new Map<PropertyKey, PropertyDescriptor | undefined>();
     function replace(name: PropertyKey, value: unknown) { saved.set(name, Object.getOwnPropertyDescriptor(globalThis, name)); Object.defineProperty(globalThis, name, { value, configurable: true }); }
@@ -11,10 +11,40 @@ for (const scenario of ["wrong-hash", "missing-export", "false-missing-setter"] 
     const OriginalChannel = MessageChannel;
     replace("MessageChannel", class extends OriginalChannel { constructor() { super(); channels.push(this); } });
     const posted: Record<string, unknown>[] = [];
+    let releaseCompile: (() => void) | undefined;
+    let resolveCompileStarted!: () => void;
+    const compileStarted = new Promise<void>((resolve) => { resolveCompileStarted = resolve; });
+    const compileGate = new Promise<void>((resolve) => { releaseCompile = resolve; });
+    let resolvePosted!: (message: Record<string, unknown>) => void;
+    const postedMessage = new Promise<Record<string, unknown>>((resolve) => { resolvePosted = resolve; });
+    function awaitTestSignal<T>(promise: Promise<T>): Promise<T> {
+      return new Promise<T>((resolve, reject) => {
+        if (t.signal.aborted) { reject(t.signal.reason); return; }
+        const onAbort = () => reject(t.signal.reason);
+        t.signal.addEventListener("abort", onAbort, { once: true });
+        promise.then(
+          (value) => { t.signal.removeEventListener("abort", onAbort); resolve(value); },
+          (error: unknown) => { t.signal.removeEventListener("abort", onAbort); reject(error); },
+        );
+      });
+    }
     let calls = 0; let handler!: (event: { data: Record<string, unknown> }) => void;
     replace(key, { initialize() { calls++; return Promise.resolve(); }, dispose() {} });
-    replace("self", { postMessage: (message: Record<string, unknown>) => { posted.push(message); }, addEventListener(_type: string, listener: typeof handler) { handler = listener; } });
+    replace("self", { postMessage: (message: Record<string, unknown>) => { posted.push(message); resolvePosted(message); }, addEventListener(_type: string, listener: typeof handler) { handler = listener; } });
     const bytes = new Uint8Array([0,97,115,109,1,0,0,0]);
+    if (scenario === "missing-export") {
+      const originalWebAssembly = WebAssembly;
+      replace("WebAssembly", new Proxy(originalWebAssembly, {
+        get(target, property) {
+          if (property === "compile") return async (source: BufferSource) => {
+            resolveCompileStarted();
+            await compileGate;
+            return Reflect.apply(target.compile, target, [source]);
+          };
+          return Reflect.get(target, property, target);
+        },
+      }));
+    }
     const wasmHash = [...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))].map((byte) => byte.toString(16).padStart(2, "0")).join("");
     let fetches = 0;
     replace("fetch", async () => { fetches++; return { ok: true, arrayBuffer: async () => bytes.buffer }; });
@@ -36,12 +66,24 @@ for (const scenario of ["wrong-hash", "missing-export", "false-missing-setter"] 
       await import(`./wasm-worker.ts?restore-preflight=${scenario}`);
       handler({ data: { type: "init", ...(scenario === "false-missing-setter" ? { runtimeOverride: false } : {}), initialArchive: { marker: "唯一 X" }, restoreCapability: { kind: "verified-package", wasmSha256: scenario === "wrong-hash" ? "a".repeat(64) : wasmHash,
         glueSha256: "b".repeat(64), sourceSha256: "c".repeat(64), buildManifestSha256: "d".repeat(64), exports: ["restore_json", "facade_slot_init_for_restore_json"] } } });
-      for (let count = 0; count < 20 && posted.length === 0; count++) await new Promise((resolve) => setImmediate(resolve));
+      if (scenario === "missing-export") {
+        const progress = await awaitTestSignal(Promise.race([
+          compileStarted.then(() => "compile" as const),
+          postedMessage.then(() => "failure" as const),
+        ]));
+        if (progress === "compile") {
+          for (let count = 0; count < 20 && posted.length === 0; count++) await new Promise((resolve) => setImmediate(resolve));
+          assert.equal(posted.length, 0, "20 次 setImmediate 不能替代真实 WebAssembly.compile 完成");
+          releaseCompile?.();
+          releaseCompile = undefined;
+        }
+      }
       if (scenario === "false-missing-setter") assert.equal(fetches, 0, "缺 setter 在 package load 和 initializer 前拒绝");
+      const failure = await awaitTestSignal(postedMessage);
       assert.equal(calls, 0, "PACKAGE_CHECK_MUST_PRECEDE_MEMORY_INITIALIZER");
-      assert.equal(posted.length, 1); assert.equal(posted[0].type, "failure");
-      assert.equal(posted[0].engineQuiescent, "initialization-failed"); assert.equal(posted[0].memoryAllocation, "not-allocated");
-      assert.equal(posted[0].code, scenario === "wrong-hash" ? "WASM_PACKAGE_IDENTITY_MISMATCH" : "WASM_RESTORE_TOPOLOGY_NOT_READY");
-    } finally { hooks.deregister(); for (const channel of channels) { channel.port1.close(); channel.port2.close(); } for (const [name, value] of saved) { if (value === undefined) Reflect.deleteProperty(globalThis, name); else Object.defineProperty(globalThis, name, value); } }
+      assert.equal(posted.length, 1); assert.equal(failure.type, "failure");
+      assert.equal(failure.engineQuiescent, "initialization-failed"); assert.equal(failure.memoryAllocation, "not-allocated");
+      assert.equal(failure.code, scenario === "wrong-hash" ? "WASM_PACKAGE_IDENTITY_MISMATCH" : "WASM_RESTORE_TOPOLOGY_NOT_READY");
+    } finally { releaseCompile?.(); hooks.deregister(); for (const channel of channels) { channel.port1.close(); channel.port2.close(); } for (const [name, value] of saved) { if (value === undefined) Reflect.deleteProperty(globalThis, name); else Object.defineProperty(globalThis, name, value); } }
   });
 }
