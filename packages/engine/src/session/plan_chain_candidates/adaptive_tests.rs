@@ -138,7 +138,7 @@ fn lifecycle_skips_a_pending_stock_and_observes_an_independent_stock() {
     let mut request = template;
     request.plan_id = ids[0];
     request.allocation.plan_id = ids[0];
-    request.trading_day = session.state.day;
+    request.trading_day = u64::from(session.state.day);
     let mut roots = PlanChainOperationBatch::empty();
     roots.push_execution(request);
     roots.push_lifecycle(

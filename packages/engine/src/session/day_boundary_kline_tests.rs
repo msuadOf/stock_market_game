@@ -120,7 +120,7 @@ fn run_boundary(
             .runtime_step_with_install(&mut driver)
             .unwrap_or_else(|e| panic!("tick{t} 步进失败：{e}"));
         per_tick.insert(t, events);
-        if t % ticks_per_day == 0 {
+        if t.is_multiple_of(ticks_per_day) {
             session
                 .end_civil_day()
                 .unwrap_or_else(|e| panic!("tick{t} 后自然日日结失败：{e}"));
@@ -465,7 +465,7 @@ fn second_day_boundary_keeps_days_independent() {
         session
             .runtime_step_with_install(&mut driver)
             .unwrap_or_else(|e| panic!("tick{t} 步进失败：{e}"));
-        if t % ticks_per_day == 0 {
+        if t.is_multiple_of(ticks_per_day) {
             session
                 .end_civil_day()
                 .unwrap_or_else(|e| panic!("tick{t} 后自然日日结失败：{e}"));
@@ -549,7 +549,7 @@ fn closing_only_candle_opens_at_clearing_price_not_anchor() {
         session
             .runtime_step_with_install(&mut driver)
             .unwrap_or_else(|e| panic!("tick{t} 步进失败：{e}"));
-        if t % ticks_per_day == 0 {
+        if t.is_multiple_of(ticks_per_day) {
             session
                 .end_civil_day()
                 .unwrap_or_else(|e| panic!("tick{t} 后自然日日结失败：{e}"));
