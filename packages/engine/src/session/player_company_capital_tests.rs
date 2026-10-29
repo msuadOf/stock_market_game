@@ -491,9 +491,11 @@ fn capital_context_future_registry_receipt_is_rejected_before_world_or_approval(
     }
     assert!(matches!(
         CapitalApprovalContext::prepare(&game, CompanyId(0)),
-        Err(CapitalApprovalError::Replay(
-            crate::session::company_capital_restore::CompanyCapitalRestoreError::FutureFact { .. }
-        ))
+        Err(CapitalApprovalError::Replay(source))
+            if matches!(
+                source.as_ref(),
+                crate::session::company_capital_restore::CompanyCapitalRestoreError::FutureFact { .. }
+            )
     ));
     assert_rejected_unchanged(&mut game, rights());
 }

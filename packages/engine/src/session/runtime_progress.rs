@@ -22,7 +22,7 @@ pub(crate) struct PreparedRuntimeProgress {
 }
 
 impl PreparedRuntimeCommit {
-    pub(crate) fn projection(&self) -> &protocol::PreparedTickProjection {
+    pub(super) fn projection(&self) -> &protocol::PreparedTickProjection {
         match self {
             Self::Mirror(value) => &value.projection,
             Self::Progress(value) => &value.projection,

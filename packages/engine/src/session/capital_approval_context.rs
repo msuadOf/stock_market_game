@@ -24,24 +24,71 @@ pub(super) struct CapitalApprovalContext {
     prepared_revision: u64,
 }
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug)]
 pub(super) enum CapitalApprovalError {
-    #[error("资本批准输入失败：{0}")]
-    Session(#[from] SessionError),
-    #[error("资本批准公司事实失败：{0}")]
-    Company(#[from] CompanySystemError),
-    #[error("资本批准已安装事实不一致：{0}")]
-    Replay(#[from] CompanyCapitalRestoreError),
-    #[error("资本批准缺少所选 CompanySystem")]
+    Session(SessionError),
+    Company(CompanySystemError),
+    Replay(Box<CompanyCapitalRestoreError>),
     MissingSystem,
-    #[error("资本批准缺少公司 {company} 的完整在册资本事实")]
-    MissingFacts { company: CompanyId },
-    #[error("公司 {company} 的资本 {capital:?} 与已发行 {shares} 股不能表示正整数分面值")]
+    MissingFacts {
+        company: CompanyId,
+    },
     InvalidPar {
         company: CompanyId,
         capital: AccountingAmount,
         shares: u64,
     },
+}
+
+impl std::fmt::Display for CapitalApprovalError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Session(source) => write!(formatter, "资本批准输入失败：{source}"),
+            Self::Company(source) => write!(formatter, "资本批准公司事实失败：{source}"),
+            Self::Replay(source) => write!(formatter, "资本批准已安装事实不一致：{source}"),
+            Self::MissingSystem => formatter.write_str("资本批准缺少所选 CompanySystem"),
+            Self::MissingFacts { company } => {
+                write!(formatter, "资本批准缺少公司 {company} 的完整在册资本事实")
+            }
+            Self::InvalidPar {
+                company,
+                capital,
+                shares,
+            } => write!(
+                formatter,
+                "公司 {company} 的资本 {capital:?} 与已发行 {shares} 股不能表示正整数分面值"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for CapitalApprovalError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Session(source) => Some(source),
+            Self::Company(source) => Some(source),
+            Self::Replay(source) => Some(source.as_ref()),
+            Self::MissingSystem | Self::MissingFacts { .. } | Self::InvalidPar { .. } => None,
+        }
+    }
+}
+
+impl From<SessionError> for CapitalApprovalError {
+    fn from(source: SessionError) -> Self {
+        Self::Session(source)
+    }
+}
+
+impl From<CompanySystemError> for CapitalApprovalError {
+    fn from(source: CompanySystemError) -> Self {
+        Self::Company(source)
+    }
+}
+
+impl From<CompanyCapitalRestoreError> for CapitalApprovalError {
+    fn from(source: CompanyCapitalRestoreError) -> Self {
+        Self::Replay(Box::new(source))
+    }
 }
 
 impl CapitalApprovalContext {

@@ -11,6 +11,7 @@ use super::player_company_command_candidates::{PlayerCommandCause, PlayerCommand
 use super::stock_distribution_command_candidate::{
     StockDistributionApprovalCause, StockDistributionApprovalError,
 };
+use super::SessionError;
 use crate::company::{CompanyId, CompanySystemError};
 use crate::{AccountId, CivilDate, StockCode, StockId};
 use std::error::Error;
@@ -42,7 +43,15 @@ macro_rules! compact_error {
 }
 
 compact_error!(capital_restore_error_is_compact, CompanyCapitalRestoreError);
-compact_error!(capital_approval_error_is_compact, CapitalApprovalError);
+#[test]
+fn capital_approval_error_is_compact() {
+    let size = std::mem::size_of::<CapitalApprovalError>();
+    assert!(
+        size < 128,
+        "{} 占 {size} 字节，必须严格小于 Result 错误运输的 128 字节边界",
+        stringify!(CapitalApprovalError)
+    );
+}
 compact_error!(cash_approval_error_is_compact, CompanyCommandError);
 compact_error!(
     stock_approval_error_is_compact,
@@ -156,11 +165,40 @@ fn capital_restore_context_and_typed_source_survive_approval_conversion() {
         format!("资本恢复公司事实校验失败：{context:?}：公司系统输入非法：原始资本事实缺失")
     );
     let error: CapitalApprovalError = replay.into();
+    assert_eq!(
+        error.to_string(),
+        format!("资本批准已安装事实不一致：资本恢复公司事实校验失败：{context:?}：公司系统输入非法：原始资本事实缺失")
+    );
     let replay = source_as::<CompanyCapitalRestoreError>(&error);
     assert!(matches!(
         source_as::<CompanySystemError>(replay),
         CompanySystemError::SystemState(detail) if detail == "原始资本事实缺失"
     ));
+
+    let session = SessionError::UnknownPlayer(AccountId(23));
+    let session_display = session.to_string();
+    let error: CapitalApprovalError = session.into();
+    assert_eq!(
+        error.to_string(),
+        format!("资本批准输入失败：{session_display}")
+    );
+    assert!(matches!(
+        source_as::<SessionError>(&error),
+        SessionError::UnknownPlayer(AccountId(23))
+    ));
+
+    let company = CompanySystemError::SystemState("批准公司事实缺失".into());
+    let company_display = company.to_string();
+    let error: CapitalApprovalError = company.into();
+    assert_eq!(
+        error.to_string(),
+        format!("资本批准公司事实失败：{company_display}")
+    );
+    assert!(matches!(
+        source_as::<CompanySystemError>(&error),
+        CompanySystemError::SystemState(detail) if detail == "批准公司事实缺失"
+    ));
+
     // 原 prepare 的 Result 类型不因内部布局调整而改变。
     let _prepare: fn(
         &super::GameSession,

@@ -38,7 +38,7 @@ pub(crate) struct PreparedRuntimeMirror {
     is_handover: bool,
     installed_market_close: bool,
     static_session_revision: Option<u64>,
-    pub projection: protocol::PreparedTickProjection,
+    pub(super) projection: protocol::PreparedTickProjection,
     pub events: Vec<Event>,
     retail_decisions: Vec<RetailDecisionTrace>,
     retail_order_events: Vec<RetailOrderDiagnosticEvent>,
