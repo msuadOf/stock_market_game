@@ -1072,7 +1072,7 @@ impl World {
                     }
                 }
                 // D5 restore 链最后一层：T+1 当日冻结投影（save 前买入的
-                /// 当日冻结面——组侧冻结权威自此起步）。
+                // 当日冻结面——组侧冻结权威自此起步）。
                 if let Some(frozen) = initial_frozen_today
                     .get(g as usize)
                     .and_then(|by_group| by_group.get(l))
@@ -1082,8 +1082,8 @@ impl World {
                     }
                 }
                 // D5 restore 链最后一层：在途买占用投影（ledger 买种子
-                /// purse——组现金已同步扣减，公开现金=组现金+占用口径
-                /// 因此成立）。
+                // purse——组现金已同步扣减，公开现金=组现金+占用口径
+                // 因此成立）。
                 if let Some(&purse) = initial_purse_held
                     .get(g as usize)
                     .and_then(|by_group| by_group.get(l))
@@ -1091,9 +1091,9 @@ impl World {
                     acct.buy_purse_held_cents = purse;
                 }
                 // Sol 终审四审预留族：在途卖余量镜像投影（desk 卖种子
-                /// 的组端 pending_sell_qty——组 shares 已同步扣减，公开
-                /// 持仓=组 shares+余量口径因此成立；可卖=组 shares−冻结
-                /// 不含在途）。
+                // 的组端 pending_sell_qty——组 shares 已同步扣减，公开
+                // 持仓=组 shares+余量口径因此成立；可卖=组 shares−冻结
+                // 不含在途）。
                 if let Some(pending) = initial_pending_sell
                     .get(g as usize)
                     .and_then(|by_group| by_group.get(l))
@@ -1357,7 +1357,7 @@ impl World {
                         view: std::sync::Arc::new(view.clone()),
                         resting_count: 0,
                         // P2-3：v0 空 observation 面；游标=初始种子
-                        ///（空簿保留已耗序号）。
+                        //（空簿保留已耗序号）。
                         resting: std::sync::Arc::new(Vec::new()),
                         next_serial: initial_desk_next_serial.get(s).copied().unwrap_or(0),
                     })
@@ -3040,8 +3040,8 @@ impl World {
                         });
                     };
                     // P1-3（Sol 复核）：同组重复 Ack=上一失败尝试的迟到
-                    /// 竞态产物（本组本拍已 Ack——重跑确定性下值同源）；
-                    /// 跳过不计（缺组由真 Ack 补齐）。
+                    // 竞态产物（本组本拍已 Ack——重跑确定性下值同源）；
+                    // 跳过不计（缺组由真 Ack 补齐）。
                     if std::mem::replace(already, true) {
                         continue;
                     }
@@ -3055,7 +3055,7 @@ impl World {
                         self.seal_last_ack_groups.push(u32::from(group));
                     }
                     // P1-2（Sol 复核）：账户+belief 双分片随 SealAck 上行
-                    ///（belief 在 apply_deferred 后构建——含清仓经历行）。
+                    //（belief 在 apply_deferred 后构建——含清仓经历行）。
                     seal_accounts.push(super::publication::GroupShardInput {
                         group,
                         accounts: accounts_sparse,
@@ -3484,9 +3484,9 @@ impl World {
         for (stock, view) in evidence.desk_views {
             if let Some(slot) = self.public_views.get_mut(stock as usize) {
                 // 刀 2b：resting 条目已 Arc（desk 报告直通——免整 Vec
-                /// 重建包装）；view Arc 直通分片；广播基保持值拷贝（组
-                /// 决策输入 &[StockPublic] 切片形态——P1 的"可见再 Arc
-                /// 化"面：发布分片与收束收集双 clone 退役）。
+                // 重建包装）；view Arc 直通分片；广播基保持值拷贝（组
+                // 决策输入 &[StockPublic] 切片形态——P1 的"可见再 Arc
+                // 化"面：发布分片与收束收集双 clone 退役）。
                 let facts_for_stock = match resting_facts.get_mut(stock as usize) {
                     Some(buffer) => std::sync::Arc::clone(buffer),
                     None => std::sync::Arc::new(Vec::new()),
@@ -3535,8 +3535,8 @@ impl World {
         self.report_log.push(record);
         // Q1 单点发布（唯一 publish 调用点）：组装不可变版本并原子交换。
         // P1-2（Sol 复核）：groups 分片=SealAck 双分片（账户+belief——
-        /// 均为 Seal 落账后构建，含清仓经历行）；events 占位（事件迁移
-        /// 时填充）。
+        // 均为 Seal 落账后构建，含清仓经历行）；events 占位（事件迁移
+        // 时填充）。
         let group_shards: Vec<super::publication::GroupShard> = seal_shards
             .into_iter()
             .map(|input| super::publication::GroupShard {
@@ -3774,8 +3774,8 @@ impl World {
             panic!("日结撤销失败，world 已停止：{error}");
         }
         // Sol 六审收官复核阻断 4：日结 Drain 期间上行的事实缓冲随冲回
-        /// 清空——Abort 重跑会重新 Drain 产生同名事实，残留使缓冲
-        /// 双载（竞价事实 2→4 条实测）。
+        // 清空——Abort 重跑会重新 Drain 产生同名事实，残留使缓冲
+        // 双载（竞价事实 2→4 条实测）。
         self.drained_lifecycle.clear();
         self.drained_auction.clear();
         // 日界批：drain 成交/终 K 同步作废（回滚对称——重跑重新收集）。
@@ -3815,9 +3815,9 @@ impl World {
             self.drained_causal_clocks.clear();
         }
         // Sol 收官再复核阻断 4：日结序列任一失败路径（Drain/组翻/校验）
-        /// 都必须清空 Drain 期间上行的事实缓冲——重跑会重新 Drain 产生
-        /// 同名事实，残留使缓冲双载（此前仅 abort_day_end 清，run_day_end
-        /// 内部失败绕过）。
+        // 都必须清空 Drain 期间上行的事实缓冲——重跑会重新 Drain 产生
+        // 同名事实，残留使缓冲双载（此前仅 abort_day_end 清，run_day_end
+        // 内部失败绕过）。
         let mut progress = DayEndProgress {
             desks_sent: 0,
             groups_sent: 0,
@@ -3857,7 +3857,7 @@ impl World {
                 self.drained_causal_clocks.clear();
             }
             // 复核建议 S1：终 K 暂存对称清理（良性缺口——下次成功 Drain
-            /// 全槽覆写、take 仅在成功后发生；此处补齐与 abort_day_end 同式）。
+            // 全槽覆写、take 仅在成功后发生；此处补齐与 abort_day_end 同式）。
             for slot in &mut self.pending_day_candles {
                 *slot = None;
             }
@@ -4265,10 +4265,10 @@ impl World {
         stage: &mut &'static str,
     ) -> Result<ShutdownReport, RuntimeError> {
         // Sol 终审四审 A1：正常关停**不置**永久标记——Drain/Shutdown/
-        /// Final 是完整消息协议（组在 Shutdown 消息处 apply_staging 后
-        /// 上交 Final）；标记驱退会旁路 Final 上交（空闲 worker 50ms
-        /// 提前退出，特定交错漏合入回流实体）。标记仅用于通道不可达
-        /// 场景（sever/Drop）。消息协议失败时 Drop 兜底仍回收。
+        // Final 是完整消息协议（组在 Shutdown 消息处 apply_staging 后
+        // 上交 Final）；标记驱退会旁路 Final 上交（空闲 worker 50ms
+        // 提前退出，特定交错漏合入回流实体）。标记仅用于通道不可达
+        // 场景（sever/Drop）。消息协议失败时 Drop 兜底仍回收。
         if let Some(report) = self.dead_finals.take() {
             // 已在失败撤退路径收齐 Final：只补 join。
             Ok(report)
@@ -4303,7 +4303,7 @@ impl World {
                             ..
                         } => {
                             // B2：期末 Drain 应答同样收集桶（观察面与日结统一；
-                            /// DeskFinal 的 live 桶在跨日形态已并入应答）。
+                            // DeskFinal 的 live 桶在跨日形态已并入应答）。
                             if let Some(slot) = self.pending_day_bars.get_mut(stock as usize) {
                                 *slot = Some(drained_minute_bars);
                             }
@@ -4338,8 +4338,8 @@ impl World {
                 }
             }
             // Sol 五审再复核 P1-2：组 Shutdown 广播前的受控停顿（仅测试
-            /// 装配；复现四审竞态窗——若重引"关停前置永久标记"，空闲组
-            /// 在此窗内被标记驱退提前退出、Shutdown 消息不被处理）。
+            // 装配；复现四审竞态窗——若重引"关停前置永久标记"，空闲组
+            // 在此窗内被标记驱退提前退出、Shutdown 消息不被处理）。
             #[cfg(test)]
             if let Some(stall) = self.shutdown_stall_for_test {
                 std::thread::sleep(stall);
@@ -4495,7 +4495,7 @@ impl World {
         #[cfg(not(target_family = "wasm"))]
         {
             // Sol 终审三审：置永久关停（worker_recv 分片窗口内观察退出）——
-            /// sever 后下行断连互等（组↔部互持 clone），消息不可达只能走标记。
+            // sever 后下行断连互等（组↔部互持 clone），消息不可达只能走标记。
             self.worker_shutdown.store(true, Ordering::SeqCst);
             self.group_txs.clear();
             self.desk_txs.clear();

@@ -370,8 +370,8 @@ fn d5_inline_fallback_and_single_worker_pool_each_account_exactly_once() {
     assert_eq!(seen.len(), 5);
 }
 
-/// d6：消费错误停止派发+排空+聚合——首个消费错误返回（到达序），在飞
-/// 任务全部排空（guard 最终归还）。
+// d6：消费错误停止派发+排空+聚合——首个消费错误返回（到达序），在飞
+// 任务全部排空（guard 最终归还）。
 
 /// p1：pending 非空时 worker panic——原 panic payload 重抛（不挂死、不静默、
 /// guard 最终归还），钉死 sender 保活反例（设计 §3.1④ p1）。
@@ -578,8 +578,8 @@ fn r1c_decide_consumes_ready_result_before_dispatching_more() {
 ///   的 dispatch 恒绿；
 /// - 旧序（循环顶先 (a) 补派发再消费；复现补丁=移除 (d0)，专用件）⇒
 ///   reserve 必然成功 ⇒ events[first+1]=dispatch **确定性红**，不依赖调度。
-/// 载体=真实生产骨架 `stream_npc_account_tasks_with`（decide 流与 T1
-/// 账户任务流共用，消费即生产 (d0)/(d) 路径）。
+///   载体=真实生产骨架 `stream_npc_account_tasks_with`（decide 流与 T1
+///   账户任务流共用，消费即生产 (d0)/(d) 路径）。
 #[test]
 fn r1c_decide_consume_before_redispatch_deterministic() {
     let _hook_guard = HOOK_SERIAL

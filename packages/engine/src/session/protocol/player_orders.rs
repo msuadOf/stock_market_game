@@ -45,7 +45,7 @@ impl crate::session::GameSession {
     pub fn player_working_orders(&self) -> Vec<PlayerWorkingOrder> {
         let mut orders = Vec::new();
         // D5 attention：runtime 形态（desk 镜像在位）——玩家在途从镜像
-        /// （desk 权威）；venue=当前相位撮合模式。
+        // （desk 权威）；venue=当前相位撮合模式。
         if !self.state.desk_book_mirror.is_empty() {
             return working_orders_from_mirror(
                 &self.state.desk_book_mirror,

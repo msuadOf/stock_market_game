@@ -144,7 +144,7 @@ impl GameSession {
         let mut reservations = LiveOrderReservations::default();
         if runtime_mirrored {
             // D5 attention：desk 簿镜像承载（runtime 形态——公开面/预留
-            /// 从镜像算；A 股竞价可见性门禁的相位+截点过滤）。
+            // 从镜像算；A 股竞价可见性门禁的相位+截点过滤）。
             for (code, mirror) in &self.state.desk_book_mirror {
                 for (owner, side, price, qty, _serial, filled_value, _fq) in &mirror.orders {
                     if !include_npc_accounts && *owner != AccountId(0) {

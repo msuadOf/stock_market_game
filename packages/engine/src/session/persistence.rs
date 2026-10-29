@@ -2395,7 +2395,7 @@ pub(super) fn validate_saved_order_state(
                 )));
             }
             // D5：desk 镜像档的卖量/现金预留校验跳过（desk/组权威
-            /// ——session sellable/cash 口径不可比对）。
+            // ——session sellable/cash 口径不可比对）。
             if !save.desk_mirrored_resting {
                 reservations.validate_quantity(
                     session,
@@ -2454,8 +2454,8 @@ pub(super) fn validate_saved_order_state(
     for ((owner, code), reserved) in &sells {
         if save.desk_mirrored_resting {
             // D5：desk 镜像档——卖量锁定的权威=组 pending_sell/desk
-            /// （runtime 回写口径 qty 含在途），session 侧 sellable 不可
-            /// 比对（镜像单不占 session 预留）。
+            // （runtime 回写口径 qty 含在途），session 侧 sellable 不可
+            // 比对（镜像单不占 session 预留）。
             continue;
         }
         let sellable = session

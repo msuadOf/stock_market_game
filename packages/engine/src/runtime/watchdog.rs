@@ -191,7 +191,7 @@ pub fn spin_config() -> SpinConfig {
             let window_us = match std::env::var("ENGINE_SPIN_US") {
                 Err(_) => 500,
                 // 复核建议②收口：显式设置的部署参数非法值=显式失败，
-                /// 不静默回落默认（铁律二"不用默认值掩盖异常"）。
+                // 不静默回落默认（铁律二"不用默认值掩盖异常"）。
                 Ok(raw) => spin_us_from_str(&raw),
             };
             SpinConfig {

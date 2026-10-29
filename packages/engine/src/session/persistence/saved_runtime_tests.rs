@@ -622,7 +622,7 @@ fn save_omits_snapshot_and_envelope_mirrors_but_keeps_charged_fees() {
     // 升格为一等数值面（runtime 形态 desk 权威不在 restore 侧——旧簿
     // 空时它们是唯一载体，remaining 退占位使续拍种子量错）。live 资源
     // 与 nominal 仍是派生面不入档（restore 重建：live= purse/remaining
-    /// 组装、nominal=费用表重算）。
+    // 组装、nominal=费用表重算）。
     assert_eq!(
         envelope.keys().cloned().collect::<Vec<_>>(),
         [
@@ -855,8 +855,8 @@ fn restore_rejects_inflated_serialized_remaining_with_fault2185() {
 #[test]
 fn runtime_envelope_rejects_injected_derived_fields() {
     // D5 restore 链最后一层后，仍属派生面（restore 重建，拒绝注入）的
-    /// 是 live 资源镜像与 nominal；remaining/filled/limit/purse 已升格
-    /// 一等数值面（runtime 形态 desk 权威的唯一载体），在字段集内。
+    // 是 live 资源镜像与 nominal；remaining/filled/limit/purse 已升格
+    // 一等数值面（runtime 形态 desk 权威的唯一载体），在字段集内。
     for field in ["live", "nominal"] {
         let mut encoded = serde_json::json!({
             "key": { "account": "1", "stock": 0, "order": 1, "side": "Sell" },
@@ -1133,7 +1133,7 @@ fn real_step_settles_and_persists_gross_capped_seller_without_cash_reservation()
             .grant_position(code, 200, Money::from_cents(1))
             .expect("fixture holding must be valid");
         // fault2038（持仓必有经历）：测试中途 grant 的持仓需同步经历
-        /// 条目（真实流量的持仓来自构造期分配或买腿成交——各自带条目）。
+        // 条目（真实流量的持仓来自构造期分配或买腿成交——各自带条目）。
         session
             .state
             .retail_experience
@@ -1398,7 +1398,7 @@ fn same_tick_new_seller_route_creates_and_advances_cumulative_fee_audit() {
     let code = StockId(0);
     let mut session = GameSession::new(setup, 44).expect("runtime_state fixture 必须有效");
     // D5 自成交拍板 A（双轨）：runtime=retail 位双账户种子卖（同上登记）；
-    /// 默认=原玩家单账户（同拍三单——旧管线结算 epoch 面对种子卖不适用）。
+    // 默认=原玩家单账户（同拍三单——旧管线结算 epoch 面对种子卖不适用）。
     if crate::runtime::step_runtime_enabled() {
         session
             .fixture_account_mut(&AccountId(1))
@@ -1910,7 +1910,7 @@ fn save_slot_uses_current_structure_and_rejects_legacy_runtime_key() {
 #[test]
 fn restore_carries_true_fill_facts_and_continues_buy_with_cumulative_fees() {
     // runtime 专属契约（desk 权威累计域的贯穿链）；旧管线模式无该链路
-    /// ——同 real_step_settles 的 runtime_mode 双轨先例，此处整体跳过。
+    // ——同 real_step_settles 的 runtime_mode 双轨先例，此处整体跳过。
     if !crate::runtime::step_runtime_enabled() {
         return;
     }
@@ -1947,10 +1947,10 @@ fn restore_carries_true_fill_facts_and_continues_buy_with_cumulative_fees() {
         attention.next_attention_candidate_tick = 10;
     }
     // 三段链（Sol 五审复核阻断 2 回归）：玩家限价 1000 买 300；每段
-    /// 卖方挂 100@990 → 价优/平价各成交 100，段间 save/restore——
-    /// 多笔部分成交的**中间静点**（第二次 restore 时 charged 累计若按
-    /// 每笔完整 nominal 叠加（两笔各 500=1000）超过累计 nominal（500）
-    /// → verified_live 拒绝 → fault2220 显红）。
+    // 卖方挂 100@990 → 价优/平价各成交 100，段间 save/restore——
+    // 多笔部分成交的**中间静点**（第二次 restore 时 charged 累计若按
+    // 每笔完整 nominal 叠加（两笔各 500=1000）超过累计 nominal（500）
+    // → verified_live 拒绝 → fault2220 显红）。
     let mut current = session;
     let mut expected_filled = 0u32;
     for leg in 1..=3u32 {
@@ -1992,7 +1992,7 @@ fn restore_carries_true_fill_facts_and_continues_buy_with_cumulative_fees() {
         current.step().expect("段内步进必须成功");
         expected_filled += 100;
         // 段末静点：真实数量/累计额断言（leg1 即判决反例——价优换算
-        /// 99_000÷1000=99 显红）。leg3 全成离册——余量断言仅前两段。
+        // 99_000÷1000=99 显红）。leg3 全成离册——余量断言仅前两段。
         let save = current.save().expect("段末静点存档");
         let remaining = 300 - expected_filled;
         if remaining > 0 {
@@ -2016,7 +2016,7 @@ fn restore_carries_true_fill_facts_and_continues_buy_with_cumulative_fees() {
             }
         }
         // 段间往返（含最终段后的档恢复）——中间静点的信封审计
-        ///（charged 边际 telescoping==nominal(累计)）在此显红。
+        //（charged 边际 telescoping==nominal(累计)）在此显红。
         let restored = GameSession::restore(&save)
             .unwrap_or_else(|e| panic!("leg{leg} 静点恢复失败（累计审计口径）：{e}"));
         current = restored;
@@ -2311,9 +2311,9 @@ fn v6_order_id_encoding_stays_in_wire_domain_beyond_32_stocks() {
     let save = session.save().expect("存档");
     GameSession::restore(&save).expect("33 股局档往返");
     // 编码域断言（v6 方案 A 修复后）：新合成 `(stock<<32)|serial`
-    /// 在最大股序（2^21−1）与最大 serial（2^32−1）处仍内含 OrderId
-    /// 的 js_safe wire 域；旧编码 (32<<48)|1 的超限红证见
-    /// .tmp/sol-stepframe-red-evidence/13-v6-orderid-red.txt。
+    // 在最大股序（2^21−1）与最大 serial（2^32−1）处仍内含 OrderId
+    // 的 js_safe wire 域；旧编码 (32<<48)|1 的超限红证见
+    // .tmp/sol-stepframe-red-evidence/13-v6-orderid-red.txt。
     let encoded = serde_json::to_value(OrderId(crate::runtime::group::desk_order_id(
         u16::MAX,
         0xFFFF_FFFF,

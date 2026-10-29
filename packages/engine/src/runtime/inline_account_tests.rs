@@ -67,14 +67,14 @@ fn inline_vec_content_equivalence() {
     assert_eq!(heap.len(), 9);
     assert_eq!(heap.last(), Some(&9), "spill 堆路径末位");
     // **按内容判等守卫**：同内容 Inline vs Heap 相等（手写 PartialEq——
-    /// 变体不参与判等）。
+    // 变体不参与判等）。
     let same_inline = IV::filled(9, 9);
     match (&same_inline, &heap) {
         (InlineVec::Heap(_), InlineVec::Heap(_)) => {}
         other => panic!("len=9 恒堆变体（构造不变量）：{other:?}"),
     }
     // 同内容判等（PartialEq 按 as_slice 实现——变体不参与判等；
-    /// 异构对不可构造：同长度恒同变体，由构造不变量承载）。
+    // 异构对不可构造：同长度恒同变体，由构造不变量承载）。
     let x = IV::filled(5, 3);
     let y = IV::filled(5, 3);
     assert_eq!(x, y, "同构造内容相等");

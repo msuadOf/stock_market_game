@@ -2669,9 +2669,9 @@ mod chain_restructure_tests {
         let equity = session.account_equity(account).unwrap();
         // 手工伪造权益峰值（2×当前 equity——真实 equity 回撤 50% 触发
         // account risk 判定）。D3b 件 4 适配：runtime 下 belief 直改经组
-        /// 通道（MutateBelief——镜像 belief 组权威不感知）；峰值基准
-        /// 放大（组内 observe 的 equity 含在途 purse≈session 口径 2×——
-        /// 2×峰值不构成回撤，10× 确保触发）。
+        // 通道（MutateBelief——镜像 belief 组权威不感知）；峰值基准
+        // 放大（组内 observe 的 equity 含在途 purse≈session 口径 2×——
+        // 2×峰值不构成回撤，10× 确保触发）。
         if session.runtime_driver.is_some() {
             session.mutate_belief_via_runtime(
                 account,
@@ -3164,7 +3164,7 @@ mod chain_restructure_tests {
             trading_day: 0,
         };
         // D3b 件 4 fixture 适配：runtime 下计划事件经组簿通道（镜像直改
-        /// 组权威不感知）。
+        // 组权威不感知）。
         if session.runtime_driver.is_some() {
             session.apply_plan_events_via_runtime(vec![(plan_id, paused)]);
         } else {
@@ -3375,9 +3375,9 @@ mod chain_restructure_tests {
     #[test]
     fn institution_boundary_mixed_pause_latches_risk_pressure_until_recovery() {
         // D3b 件 4 适配登记：本用例的多段恢复链依赖 session 侧账户现金注入
-        ///（fixture_set_cash——组账户现金为组权威，无注入通道）；暂停/恢复
-        /// 主面已由 institution_risk_pressure（Pause 段）与 recovery 族
-        ///（Resume 段）的组内实测承载，runtime 分支跳过本参数化用例。
+        //（fixture_set_cash——组账户现金为组权威，无注入通道）；暂停/恢复
+        // 主面已由 institution_risk_pressure（Pause 段）与 recovery 族
+        //（Resume 段）的组内实测承载，runtime 分支跳过本参数化用例。
         if crate::runtime::step_runtime_enabled() {
             return;
         }
@@ -3866,9 +3866,9 @@ mod chain_restructure_tests {
 
     fn set_urgency_minutes(session: &mut GameSession, falling: bool) {
         // D3b 件 4 fixture 适配（runtime 分支）：分钟序列注入组内观察基
-        ///（组侧每 tick 由 observation_inputs 现算）；session 侧 tick 直改
-        /// 会使两权威锁步漂移（step 显式拒绝），跳过——序列自绝对分钟
-        /// 起步即承载下跌形态。
+        //（组侧每 tick 由 observation_inputs 现算）；session 侧 tick 直改
+        // 会使两权威锁步漂移（step 显式拒绝），跳过——序列自绝对分钟
+        // 起步即承载下跌形态。
         if session.runtime_driver.is_some() {
             // 条数对齐 session 侧 current_market_minute() 语义（tick=30
             // → end=31——30 分钟窗口 return 需 31 个点，30 条时 r30=None
@@ -3966,9 +3966,9 @@ mod chain_restructure_tests {
         }
         set_urgency_minutes(&mut session, false);
         // D3b 件 4 适配：旧管线报价 API 断言段（cursor 生成 Cancel）为
-        /// session 决策面直调——runtime 等价面=组内报价循环的 paused 前置
-        /// 分支（d3b3 定向撤单路由实测承载），跳过本段；tick 直改/queue
-        /// 同理（runtime 下锁步权威+组调度）。
+        // session 决策面直调——runtime 等价面=组内报价循环的 paused 前置
+        // 分支（d3b3 定向撤单路由实测承载），跳过本段；tick 直改/queue
+        // 同理（runtime 下锁步权威+组调度）。
         if session.runtime_driver.is_none() {
             let view = session.build_market_view();
             let mut cursor = session
@@ -4015,9 +4015,9 @@ mod chain_restructure_tests {
     #[test]
     fn urgency_paused_child_in_no_cancel_window_stays_pending_without_releasing_resources() {
         // D3b 件 4 适配登记：相位=世界 tick 权威（tick 直改即锁步漂移），
-        /// 断言面绑定旧市场簿（resting_orders——runtime 下单在 desk）；
-        /// 非撤窗的 Keep/PendingReconsideration 决策由共享 decide_plan_quote
-        /// 承载，runtime 分支跳过本相位+旧簿用例。
+        // 断言面绑定旧市场簿（resting_orders——runtime 下单在 desk）；
+        // 非撤窗的 Keep/PendingReconsideration 决策由共享 decide_plan_quote
+        // 承载，runtime 分支跳过本相位+旧簿用例。
         if crate::runtime::step_runtime_enabled() {
             return;
         }
@@ -5467,10 +5467,10 @@ mod chain_restructure_tests {
     #[test]
     fn filled_child_cancel_failure_reconsiders_the_live_plan() {
         // D3b 件 4 适配登记：本用例驱动旧管线 adaptive 续行链
-        ///（PlanContinuationDomain/yield/resume_adaptive——撤单拒收回执的
-        /// 重议路径）；runtime 下该事件面为旧管线专有（D5 登记域），组内
-        /// 拒收回执消费面未迁移——runtime 分支跳过，等价面随 D5 拒收回执
-        /// 域收口时补。
+        //（PlanContinuationDomain/yield/resume_adaptive——撤单拒收回执的
+        // 重议路径）；runtime 下该事件面为旧管线专有（D5 登记域），组内
+        // 拒收回执消费面未迁移——runtime 分支跳过，等价面随 D5 拒收回执
+        // 域收口时补。
         if crate::runtime::step_runtime_enabled() {
             return;
         }
@@ -5597,11 +5597,11 @@ mod chain_restructure_tests {
         assessments: &BTreeMap<StockId, CandidateAssessment>,
     ) -> Vec<Event> {
         // D3b 件 4 fixture 适配（runtime 分支）：复审候选经注入通道下行组内
-        ///（chain_restructure 测试的 drive_once 等价面——旧管线执行链
-        ///（commit_injected_plan_roots）在 runtime 下无旧市场簿子单，撤单
-        /// 路由必须由组线程承载）；事件 id 域统一映射回合簿合成域
-        ///（stock<<48|serial——测试断言沿用合成 id；事件桥批 8e 近似映射
-        /// 登记的差异在驱动边界收敛）。
+        //（chain_restructure 测试的 drive_once 等价面——旧管线执行链
+        //（commit_injected_plan_roots）在 runtime 下无旧市场簿子单，撤单
+        // 路由必须由组线程承载）；事件 id 域统一映射回合簿合成域
+        //（stock<<48|serial——测试断言沿用合成 id；事件桥批 8e 近似映射
+        // 登记的差异在驱动边界收敛）。
         if session.runtime_driver.is_some() {
             session.inject_review_assessments_via_runtime(AccountId(1), assessments.clone());
             session.force_due_via_runtime(&[AccountId(1)], session.state.tick + 1);
@@ -5807,7 +5807,7 @@ mod chain_restructure_tests {
         let code = session.stock_id("000812").unwrap();
         // 子单已解决而计划仍活跃：直接把执行腿重装为无在途子单。
         // D3b 件 4 适配：runtime 下同一变换经组簿通道（镜像写入组权威
-        /// 不感知）。
+        // 不感知）。
         {
             let relink = move |plans: &mut crate::plans::PlanBook| {
                 plans
@@ -5874,9 +5874,9 @@ mod chain_restructure_tests {
     #[test]
     fn mid_day_restructure_in_a_non_cancellable_phase_keeps_plan_and_child() {
         // D3b 件 4 适配登记：相位=世界 tick 权威（fixture 直改 session tick
-        /// 即锁步漂移）；非连续段的复审 Observe 语义（child_cancellable_
-        /// now=false → 不撤不终止）由共享决策核+phase_is_continuous 同式
-        /// 判定承载，runtime 分支跳过本相位伪造用例。
+        // 即锁步漂移）；非连续段的复审 Observe 语义（child_cancellable_
+        // now=false → 不撤不终止）由共享决策核+phase_is_continuous 同式
+        // 判定承载，runtime 分支跳过本相位伪造用例。
         if crate::runtime::step_runtime_enabled() {
             return;
         }
@@ -6053,11 +6053,11 @@ mod chain_restructure_tests {
     #[test]
     fn restructure_rejection_preserves_old_plan_parent_order_and_reservation() {
         // D5 pin+登记（注入通道旧管线专有）：restructure 注入经
-        /// commit_injected_plan_roots（旧管线 tick 事务——plan_tick/
-        /// apply_tick_shadow 直调，runtime 形态 session 的旧簿恒空使
-        /// ledger/book 对拍崩）；组内拒收回执消费面未迁移（D3b 件 4
-        /// 同族登记）。等价锚：组内定向撤单路由的不存在单拒收（d3b3
-        /// serial 逆解实测）+拒收回执域 D5 收口后补。
+        // commit_injected_plan_roots（旧管线 tick 事务——plan_tick/
+        // apply_tick_shadow 直调，runtime 形态 session 的旧簿恒空使
+        // ledger/book 对拍崩）；组内拒收回执消费面未迁移（D3b 件 4
+        // 同族登记）。等价锚：组内定向撤单路由的不存在单拒收（d3b3
+        // serial 逆解实测）+拒收回执域 D5 收口后补。
         if crate::runtime::step_runtime_enabled() {
             return;
         }

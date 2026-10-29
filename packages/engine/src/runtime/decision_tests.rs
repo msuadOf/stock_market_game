@@ -181,7 +181,7 @@ fn attention_gap_suppresses_non_due_ticks() {
         retail_style: None,
     };
     // D5 #2：evaluate 排期后未到期 tick 不得再 evaluate（静默窗口由
-    /// wait 采样决定——均匀 gap 机制已由 signal 公式替代）。
+    // wait 采样决定——均匀 gap 机制已由 signal 公式替代）。
     let market = build_market_view(&snapshot);
     let signal = crate::session::market_attention_signal(&market);
     let (_, _) = evaluate_attention(&mut profile, signal, 1);
@@ -234,7 +234,7 @@ fn seed_that_buys() -> u64 {
             retail_style: None,
         };
         // D5 #2：运行序=evaluate（续流）→decide（due 门在调用方——组内
-        /// due 循环保证）。P1-B：signal/market 调用方共享构建。
+        // due 循环保证）。P1-B：signal/market 调用方共享构建。
         let market = build_market_view(&snapshot);
         let signal = crate::session::market_attention_signal(&market);
         let _ = evaluate_attention(&mut profile, signal, 1);
@@ -255,7 +255,7 @@ fn inline_decision_drives_orders_and_conservation_holds() {
             seed,
             next_due: 0,
             // D5 #2：base=1 ⇒ observe 恒真+wait=1（保持"每 tick 到期"的
-            /// 既有断言面；signal 概率语义由 attention_gap 测试承载。
+            // 既有断言面；signal 概率语义由 attention_gap 测试承载。
             attention_base: 1.0,
             retail_style: None,
         }],

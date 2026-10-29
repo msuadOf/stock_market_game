@@ -97,8 +97,8 @@ pub fn world_spec_from_setup(
         rounds_cap: 8,
         stocks,
         // Sol 终审四审 A4 判决点：此前用默认 GameConfig 覆盖传入配置
-        /// ——价格笼子/费则/整手等会话级差异（如禁笼子 fixture）被静默
-        /// 丢弃，session 18 例价格规则族显红。改为透传 setup.config。
+        // ——价格笼子/费则/整手等会话级差异（如禁笼子 fixture）被静默
+        // 丢弃，session 18 例价格规则族显红。改为透传 setup.config。
         config: Arc::new(setup.config.clone()),
         ticks_per_day: setup.ticks_per_day,
         auction_ticks: setup.auction_ticks,
@@ -132,7 +132,7 @@ pub fn default_retail_decision(count: usize, seed_base: u64) -> DecisionSetup {
                 seed: seed_base.wrapping_add(i as u64),
                 next_due: (i % 8) as u64,
                 // 缺省装配无会话来源：base 用策略群体基准（D5 #2 起
-                /// evaluate 门消费；生产路径经 from_session 投影个体值）。
+                // evaluate 门消费；生产路径经 from_session 投影个体值）。
                 attention_base: 0.30,
                 retail_style: Some(crate::strategy::RetailStyle::Noise),
             })
@@ -159,8 +159,8 @@ pub fn accounts_projection_from_session(
 ) -> super::type_aliases::SessionAccountProjection {
     // B3 远程登录：名册取全量账户（id 升序）而非仅有策略的 NPC——共享
     // 市场的动态加入成员（无策略 Player，意图只走 ExternalPlan 路由）
-    /// 必须在 id_map 内，否则 owner 路由显式失败。账户 0 仍由下方惯例位
-    /// 先行并入，此处跳过。
+    // 必须在 id_map 内，否则 owner 路由显式失败。账户 0 仍由下方惯例位
+    // 先行并入，此处跳过。
     let roster = session.account_roster();
     let mut cash = Vec::with_capacity(roster.len() + 1);
     let mut shares = Vec::with_capacity(roster.len() + 1);

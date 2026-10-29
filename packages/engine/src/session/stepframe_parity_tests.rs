@@ -11,7 +11,7 @@ use super::ProtocolSession;
 fn parity_setup(auction_ticks: u64) -> crate::session::SessionSetup {
     // 引擎内已验证的 quote_setup（sol 系玩家单受理锚定的 fixture）。
     // 两场景：0=全天连续（PriceTick/受理面）；6=竞价窗（AuctionTick/
-    /// AuctionCompleted/PreOpen 拒收面+转连续）。
+    // AuctionCompleted/PreOpen 拒收面+转连续）。
     crate::session::npc_working_quote_tests::quote_setup(auction_ticks)
 }
 
@@ -98,7 +98,7 @@ fn solfinal2_real_trade_parity_cash_position_t1_cost() {
             .expect("NPC 在名册")
             .fixture_set_positions(positions);
         // 持仓经历条目配套（旧管线 SettlementShadow 要求 active holding
-        /// epoch——fixture 直设持仓绕过建仓链时需补；两臂同构）。
+        // epoch——fixture 直设持仓绕过建仓链时需补；两臂同构）。
         session
             .game_mut()
             .runtime_hold_experience_init(&npc, &code, 1_000, 1_000)

@@ -49,20 +49,20 @@ pub(crate) static DUE_FILTER_FULL_SCAN: std::sync::atomic::AtomicBool =
 
 /// 组内账户：现金聚合额 + 每股持仓聚合额 + T+1 冻结 + 每股在途挂单登记
 /// + 每股成本基（invested/recovered 累计器）。
-/// 不变量（期末审计断言）：`shares == sellable + frozen_today`（sellable 派生）。
-/// 成本基口径（D3a-2c 件1，对齐 `Account::apply_buy_settlement` /
-/// `apply_sell_settlement`）：invested/recovered 只累计**成交额**
-/// （`price × qty`，佣金/过户费/印花税不入账）；清仓（shares 归零）后
-/// 成本基清零（对齐 session 清仓删除条目——下次买入从零新建）。
-/// 内联小向量（Seal 攻顶刀 A-1'，协调者批）：GroupAccount 的每股域
-/// 容器。容量决策数据驱动：现役全部口径股数 P100=5（A/B 探针 5 股、
-/// 测试 fixture 2 股）——内联容量 8（P100 的 2 的幂上取），此区间内
-/// `Clone` = 栈拷贝零堆分配（Seal 分片构建 226μs 的主成本=活跃集 ×
-/// 7 域 × Vec 堆分配）。spill（len>8）走堆 Vec 语义不变（spill 基准
-/// 见 inline_account_tests——不劣化验证）。
-/// 等价面（复核守卫 2）：`Deref<Target=[T]>`——索引/迭代/切片与 Vec
-/// 兼容（调用点零改动）；`PartialEq` 手写按内容比（Inline/Heap 同内容
-/// 相等——变体不参与判等，分片对账/测试断言无变体歧义）。
+///   不变量（期末审计断言）：`shares == sellable + frozen_today`（sellable 派生）。
+///   成本基口径（D3a-2c 件1，对齐 `Account::apply_buy_settlement` /
+///   `apply_sell_settlement`）：invested/recovered 只累计**成交额**
+///   （`price × qty`，佣金/过户费/印花税不入账）；清仓（shares 归零）后
+///   成本基清零（对齐 session 清仓删除条目——下次买入从零新建）。
+///   内联小向量（Seal 攻顶刀 A-1'，协调者批）：GroupAccount 的每股域
+///   容器。容量决策数据驱动：现役全部口径股数 P100=5（A/B 探针 5 股、
+///   测试 fixture 2 股）——内联容量 8（P100 的 2 的幂上取），此区间内
+///   `Clone` = 栈拷贝零堆分配（Seal 分片构建 226μs 的主成本=活跃集 ×
+///   7 域 × Vec 堆分配）。spill（len>8）走堆 Vec 语义不变（spill 基准
+///   见 inline_account_tests——不劣化验证）。
+///   等价面（复核守卫 2）：`Deref<Target=[T]>`——索引/迭代/切片与 Vec
+///   兼容（调用点零改动）；`PartialEq` 手写按内容比（Inline/Heap 同内容
+///   相等——变体不参与判等，分片对账/测试断言无变体歧义）。
 #[derive(Clone, Debug)]
 pub enum InlineVec<T: Copy + Default, const N: usize> {
     /// 内联（len≤N——栈存储，Clone=数组拷贝）。
@@ -1577,7 +1577,7 @@ impl GroupState {
         self.seal_acked_len = None;
         self.batches_after_seal = 0;
         // Sol 二审修复集 4：未消费的 ForceDue 待办一并作废（指令失效
-        /// 需重发）；已入日志域的由上方 undo 逆序回放冲回。
+        // 需重发）；已入日志域的由上方 undo 逆序回放冲回。
         self.pending_force_due.clear();
         #[cfg(feature = "simulation-diagnostics")]
         {
@@ -1798,7 +1798,7 @@ impl GroupState {
                 DeferredAction::EverReset { local } => {
                     // RefundedShares 复位（原 apply_entity 批内位置）：qty>0
                     // 的再持有=曾持有位复位；读当前值翻转（即时相不写
-                    /// ever_held——延迟相内按原序重放等价原批内判定）。
+                    // ever_held——延迟相内按原序重放等价原批内判定）。
                     let acct = std::sync::Arc::make_mut(&mut self.accounts[local as usize]);
                     if acct.ever_held[stock as usize] {
                         acct.ever_held[stock as usize] = false;
@@ -1828,11 +1828,11 @@ impl GroupState {
             }
         }
         // Sol 终审四审经历族（fault2051）：清仓 retail 经历转移（F5——
-        /// 期末 face=即时相末值，读值时点等价原批尾）。
+        // 期末 face=即时相末值，读值时点等价原批尾）。
         self.apply_full_exit_experience(stock, &deferred.fills, &deferred.pre_exit_basis)?;
         // Sol D3b 件 1：fill 触达账户的个人记忆裁剪（F5——对齐 session
-        /// candidate_commit 的逐账户 prune_plan_personal_memory——
-        /// completed_sell 2069 残余收口；清仓后售出股脱离保护集）。
+        // candidate_commit 的逐账户 prune_plan_personal_memory——
+        // completed_sell 2069 残余收口；清仓后售出股脱离保护集）。
         for (local, _) in &touched {
             self.prune_personal_memory_after_completion(*local);
         }
@@ -1902,7 +1902,7 @@ impl GroupState {
                 continue;
             };
             // cost_before=fill 前仓均成本（银行家舍入同 Position::cost_price；
-            /// 非正=不可用 None——逆境计数不因本腿调整）。
+            // 非正=不可用 None——逆境计数不因本腿调整）。
             let cost_before = pre_exit_basis
                 .get(&local)
                 .and_then(|&(invested, recovered, face_pre)| {
@@ -1938,7 +1938,7 @@ impl GroupState {
                 });
             }
             // 拍前值入可逆日志（Personal）+还槽+dirty（经验行随 Belief
-            /// 上行通道同拍回写 session 镜像）。
+            // 上行通道同拍回写 session 镜像）。
             self.push_undo(GroupUndo::Personal {
                 local,
                 prev: Box::new(prev),
@@ -2046,8 +2046,8 @@ impl GroupState {
             _ => return Ok(()),
         }
         // Sol 终审四审 A2：日基准=(tick−1)/tpd（首拍属 day 0——与
-        /// session.day 同基；此前 tick/tpd 使组内日历超前 1，plan 事件
-        /// day 超前触发 session 日终迁移的 precedes 校验拒绝）。
+        // session.day 同基；此前 tick/tpd 使组内日历超前 1，plan 事件
+        // day 超前触发 session 日终迁移的 precedes 校验拒绝）。
         let day = self
             .stock_trading_day(code)?
             .ok_or_else(|| RuntimeError::ProtocolInvariant {
@@ -2085,9 +2085,9 @@ impl GroupState {
         // Sol 二审修复集 3（六审勘正）：票已有身份时成交**同单才推进**——
         // 此前未验证即以票身份推进外来单的成交量（同账户同股他单的 fill
         // 静默吃掉本票执行腿余量）。身份不符=外来同键单的成交（驱动器
-        /// 意图路由/测试注入的合法形态——ticket 只承载本单事实）：跳过
-        /// 不误挂（与 release 的身份关联语义一致；原"显式失败"形态会
-        /// 杀死合法外来单的拍——sol7th_foreign 红证实测）。
+        // 意图路由/测试注入的合法形态——ticket 只承载本单事实）：跳过
+        // 不误挂（与 release 的身份关联语义一致；原"显式失败"形态会
+        // 杀死合法外来单的拍——sol7th_foreign 红证实测）。
         if order_id_of(&fill.order) != order_id {
             return Ok(());
         }
@@ -2113,7 +2113,7 @@ impl GroupState {
         }
         // Sol 二审修复集 2：票的实时余量随 fill 推进（组读面三面统一）；
         // Sol 四审修复 1：买腿同步累计 desk 实际扣减。余量下穿/扣减溢出
-        /// =票/簿推进失同步，显式失败（铁律二）。
+        // =票/簿推进失同步，显式失败（铁律二）。
         {
             let prev_ticket = ticket.clone();
             ticket.remaining = ticket.remaining.checked_sub(fill.qty).unwrap_or_else(|| {
@@ -2181,9 +2181,9 @@ impl GroupState {
             return;
         };
         // 保护集：在手∪在途卖（session positions 键面等价——旧管线清仓
-        /// 删条目后售出股不在保护集；在途卖单期间条目保留=保护）∪活跃
-        /// 计划股。**不含**曾持有（ever_held 是组侧观察面位——清仓后
-        /// session 条目已删，误入保护集会使售出股永不被裁剪）。
+        // 删条目后售出股不在保护集；在途卖单期间条目保留=保护）∪活跃
+        // 计划股。**不含**曾持有（ever_held 是组侧观察面位——清仓后
+        // session 条目已删，误入保护集会使售出股永不被裁剪）。
         let mut protected: std::collections::BTreeSet<crate::StockId> = self.accounts
             [local as usize]
             .shares
@@ -2242,7 +2242,7 @@ impl GroupState {
         let side = ticket.side;
         let qty = ticket.qty;
         // Sol 六审收官复核阻断 2：desk 侧 lifecycle/facts 的 order_serial
-        /// 已是 wire 编码 id（(stock<<32)|serial）——不再二次合成。
+        // 已是 wire 编码 id（(stock<<32)|serial）——不再二次合成。
         let order_id = crate::OrderId(order_serial);
         let day = self
             .stock_trading_day(code)?
@@ -2322,14 +2322,14 @@ impl GroupState {
                     })?;
             self.save_plan_book_undo();
             // 日终清簿的子单释放=错过日终的补账（revision.rs 守卫注释
-            /// 的豁免面——horizon 外仍须可达）。
+            // 的豁免面——horizon 外仍须可达）。
             let released = self
                 .plan_book
                 .record_child_released(account, &code, order_id, day, true)
                 .unwrap_or_else(|error| panic!("组内子单释放失败 {account:?} {code:?}: {error}"));
             if !released {
                 // 迟到 Closed 的合法面：多轮推进后计划 active_child 可能
-                /// 已换新单（旧票身份不再匹配——非漂移；无害跳过）。
+                // 已换新单（旧票身份不再匹配——非漂移；无害跳过）。
                 return Ok(());
             }
         }
@@ -2391,8 +2391,8 @@ impl GroupState {
             }
             Entity::CashRefund { local, amount } => {
                 // 买单 purse 余额退款：现金入账 + 在途买占用同步减
-                ///（Sol 五审：实体驱动——全额终结后占用归零；卖腿现金走
-                /// CashProceeds）。
+                //（Sol 五审：实体驱动——全额终结后占用归零；卖腿现金走
+                // CashProceeds）。
                 let acct = self.acct_mut(local)?;
                 acct.cash = acct.cash.checked_add(amount).ok_or_else(|| {
                     RuntimeError::ProtocolInvariant {
@@ -2461,8 +2461,8 @@ impl GroupState {
                     })?;
                 if qty > 0 {
                     // F4 序敏感（曾持有复位）——延迟相按原 entities 序重放
-                    ///（replay_deferred_batch 的 EverReset：读当前值翻转，
-                    /// 即时相不写 ever_held，读值时点等价原批内判定）。
+                    //（replay_deferred_batch 的 EverReset：读当前值翻转，
+                    // 即时相不写 ever_held，读值时点等价原批内判定）。
                     deferred.actions.push(DeferredAction::EverReset { local });
                 }
                 self.push_undo(GroupUndo::Shares {
@@ -2522,7 +2522,7 @@ impl GroupState {
             });
         }
         // D3a-2：观察基——快照即权威（desk 的 minute_closes/daily_bars
-        /// 每 tick 整值刷新，无累积无窗口截断——与 session 读面同源）。
+        // 每 tick 整值刷新，无累积无窗口截断——与 session 读面同源）。
         if let Some(snapshot) = &self.snapshot {
             #[cfg(test)]
             let overrides = self.observation_overrides.clone();
@@ -2584,7 +2584,7 @@ impl GroupState {
         self.seal_acked_len = None;
         self.batches_after_seal = 0;
         // P2-1a：dirty 掩码随新 tick 清（上一 tick 的 dirty 已在安装期
-        /// 上行消费；新 tick 的演进面重新标记）。
+        // 上行消费；新 tick 的演进面重新标记）。
         self.belief_dirty.iter_mut().for_each(|f| *f = false);
         self.attention_evolved.clear();
         self.plan_undo_saved = false;
@@ -2623,7 +2623,7 @@ impl GroupState {
         self.cur_tick = tick;
         self.cur_round = 0;
         // D5 #4 retail 链：trace 瞬态语义（旧管线每 tick 入口清——
-        /// 本 tick 生产写入存活到提交，无新产出 tick 返回后读数为空）。
+        // 本 tick 生产写入存活到提交，无新产出 tick 返回后读数为空）。
         self.retail_traces.clear();
         // T+1 日界解冻移至 DayEnd 相位（F §6.2，批 5）：Start 不再承担。
         self.committed_hash = (0xcbf2_9ce4_8422_2325u64 ^ tick).wrapping_mul(0x100000001b3);
@@ -2779,13 +2779,13 @@ impl GroupState {
         self.batches_after_seal = 0;
         self.account_dirty_set.clear();
         // P2-1a：日结转正同步清 dirty（日结后安装期消费的是日结相位
-        /// 的标记——留待下一 Start 前的正常安装轮完成）。
+        // 的标记——留待下一 Start 前的正常安装轮完成）。
         self.belief_dirty.iter_mut().for_each(|f| *f = false);
         self.attention_evolved.clear();
         self.plan_undo_saved = false;
         self.committed_tick = self.cur_tick;
         // ① Drain 回流落账（清空在途——即时相已在到达时应用，此处
-        /// 补延迟相 F4/F5/F6 重放；与原 apply_staging 全族落账等价）。
+        // 补延迟相 F4/F5/F6 重放；与原 apply_staging 全族落账等价）。
         self.apply_deferred()?;
         // ② T+1 日界解冻（当日买入进入可卖）。
         for local in 0..self.accounts.len() as LocalIdx {
@@ -2914,7 +2914,7 @@ impl GroupState {
     /// 观察（belief entry/watchlist/information/经验反馈）+ behavior 决策
     /// （decide_retail_position_with_experience+个人分析应用）+ trace 收集
     /// + 经验行演进）。决策流=npc_seed_base 同式派生（与旧管线 A 类一致）；
-    /// 个人态六件+经验行入可逆日志后写回组权威。
+    ///   个人态六件+经验行入可逆日志后写回组权威。
     ///
     /// P2-3a：`chain`/`behavior` 为本轮共享公共观察（调用方 run_round 每
     /// 轮构造一次——纯 snapshot 函数，与旧管线 T1"捕获一次共享只读"同式；
@@ -2947,10 +2947,10 @@ impl GroupState {
             }
         };
         // P2-3d：槽 take 化——原「输入 clone + 决策尾 undo clone」双深拷贝
-        /// 归一（journal 先记拍前值再消费；错误/panic 路径 Abort 重放
-        /// GroupUndo::Personal 无条件恢复 Some(prev)，槽空窗仅函数内——
-        /// 组线程单线程，run_round 期无并发读面）。journal 相对序不变
-        ///（本函数此前唯一 undo 条目=Personal，前后无其他条目交错）。
+        // 归一（journal 先记拍前值再消费；错误/panic 路径 Abort 重放
+        // GroupUndo::Personal 无条件恢复 Some(prev)，槽空窗仅函数内——
+        // 组线程单线程，run_round 期无并发读面）。journal 相对序不变
+        //（本函数此前唯一 undo 条目=Personal，前后无其他条目交错）。
         let mut snap = match self
             .belief_states
             .get_mut(local as usize)
@@ -3004,8 +3004,8 @@ impl GroupState {
                     detail: format!("组 {group} retail 位 {local} 缺经验行投影"),
                 })?;
         // 组账户 → 零售分析 ctx（旧管线 view 依赖面的组内等价——
-        /// qty 口径=在手+在途卖（回写同式）；零量条目按曾持有位保留
-        /// （旧管线 positions 的清仓残留键语义）。
+        // qty 口径=在手+在途卖（回写同式）；零量条目按曾持有位保留
+        // （旧管线 positions 的清仓残留键语义）。
         let acct = &self.accounts[local as usize];
         let mut positions: std::collections::BTreeMap<crate::StockId, crate::Position> =
             std::collections::BTreeMap::new();
@@ -3060,11 +3060,11 @@ impl GroupState {
             retail,
         };
         // 观察（core——session 版同核）：belief entry/watchlist/information
-        /// 演进+候选评估。P2-3a：公共观察=本轮共享（调用方一次构造）。
+        // 演进+候选评估。P2-3a：公共观察=本轮共享（调用方一次构造）。
         let observation = chain;
         // 经验行 capture 演进（旧管线 decision_snapshot_capture 的
-        /// capture_from_row 等价——equity 观测/持仓 dated 演进/首建；
-        /// 观察 core 与决策消费演进后的行）。
+        // capture_from_row 等价——equity 观测/持仓 dated 演进/首建；
+        // 观察 core 与决策消费演进后的行）。
         {
             let moment = crate::experience::ExperienceMoment {
                 civil_date: snapshot.civil_date,
@@ -3131,7 +3131,7 @@ impl GroupState {
             detail: format!("组 {group} retail {account:?} 观察失败：{e:?}"),
         })?;
         // 决策（旧管线 decide_with_experience+apply_personal_analysis 等价）：
-        /// behavior+risk+dated 经验输入；rng=npc_seed_base 同式派生。
+        // behavior+risk+dated 经验输入；rng=npc_seed_base 同式派生。
         // own 自 ctx.positions 同源组装（决策内核要求 own.positions ⊆
         /// risk.positions——build_self_view 不过滤零量股，多股/零仓形态
         /// 集合漂移即 panic）。
@@ -3153,7 +3153,7 @@ impl GroupState {
                 .collect(),
         };
         // P2-3a：behavior 观察面=本轮共享引用（原每位 paths BTreeMap 克隆
-        /// 一次——下游 decide_* 直接消费共享引用）。
+        // 一次——下游 decide_* 直接消费共享引用）。
         let mut risk_inputs = std::collections::BTreeMap::new();
         for (code, position) in &ctx.positions {
             let stock = observation.market.stocks.get(code).ok_or_else(|| {
@@ -3197,7 +3197,7 @@ impl GroupState {
         let mut rng = crate::session::SplitMix64::new(npc_seed);
         let data = profile.strategy.clone();
         // 决策组装（ZiNoiseStrategy::decide_with_experience 等价——
-        /// PositionDecision → intents/reviewed/trace 三面）。
+        // PositionDecision → intents/reviewed/trace 三面）。
         let original = crate::behavior::decide_retail_position_with_experience(
             &data,
             retail_style,
@@ -3213,7 +3213,7 @@ impl GroupState {
             original
         } else {
             // 个人分析应用（apply_personal_analysis 等价——分析驱动目标
-            /// 仓位修订）。
+            // 仓位修订）。
             crate::behavior::apply_personal_analysis(
                 original.clone(),
                 &assessments,
@@ -3291,7 +3291,7 @@ impl GroupState {
                 });
         }
         // 组态写回（个人态六件+经验行）。P2-3d：undo 已在 take 时记录；
-        /// 写回字段自 personal move（personal 此后无消费——六件 clone 归零）。
+        // 写回字段自 personal move（personal 此后无消费——六件 clone 归零）。
         if let Some(slot) = self.belief_states.get_mut(local as usize) {
             *slot = Some(super::world::BeliefParticipantSnapshot {
                 watchlist: personal.watchlist,
@@ -3516,11 +3516,11 @@ impl GroupState {
                     account,
                     market: observation.market.clone(),
                     // 复审时点面：observe 输出（assessments/behavior/acquired
-                    /// 同源——belief_states 是 observe 前旧态）。
+                    // 同源——belief_states 是 observe 前旧态）。
                     belief: &out.belief,
                     information: &out.information,
                     // 开仓后复评共用同一份预转换（host 拥有副本——分离
-                    /// 字段借用下的生命周期独立）。
+                    // 字段借用下的生命周期独立）。
                     minutes_by_code: minutes_by_code.clone(),
                     moment,
                 };
@@ -3700,8 +3700,8 @@ impl GroupState {
                     panic!("组内计划创建失败 {account:?} {code:?}: {error}")
                 });
                 // D3b 件 4：新建计划复审基线+报价前 urgency 复评（session
-                /// Create 动作同式：record_review/record_resource_review 后
-                /// 按 PauseAssessment 判停——组内此前缺失，quiet 首拍无基线）。
+                // Create 动作同式：record_review/record_resource_review 后
+                // 按 PauseAssessment 判停——组内此前缺失，quiet 首拍无基线）。
                 let price = observation
                     .market
                     .stocks
@@ -3726,7 +3726,7 @@ impl GroupState {
                     .record_resource_review(plan_id, resources)
                     .unwrap_or_else(|e| panic!("组内新计划复审资源记录失败 {plan_id:?}: {e:?}"));
                 // 报价前 urgency 复评（session Create 分支同式：分钟路径
-                /// return + 组内 urgency 面共享函数——判停即 Paused）。
+                // return + 组内 urgency 面共享函数——判停即 Paused）。
                 let minutes = minutes_by_code.get(code).cloned().unwrap_or_default();
                 let path = crate::observation::build_price_path_observation(&minutes, &[], None)
                     .unwrap_or_else(|e| panic!("组内新计划价格路径失败 {plan_id:?}: {e:?}"));
@@ -3850,7 +3850,7 @@ impl GroupState {
                     attention: out.attention.clone(),
                     history_reads: out.history_reads.clone(),
                     // 经验行非 observe 产物——保留组内现值（retail 链
-                    /// 的决策段演进）。
+                    // 的决策段演进）。
                     retail_experience: slot.as_ref().and_then(|s| s.retail_experience.clone()),
                 });
             }
@@ -3940,7 +3940,7 @@ impl GroupState {
                 crate::plans::ReviewResources {
                     cash: crate::money::Money::from_cents(acct.cash),
                     // 组内所有权模型：现金已扣在途（chain_quote_children
-                    /// frozen=ZERO 同式——保守预算，登记差异）。
+                    // frozen=ZERO 同式——保守预算，登记差异）。
                     frozen_cash: crate::money::Money::ZERO,
                     held_qty: acct.shares.get(idx).copied().unwrap_or(0),
                     t1_locked: acct.frozen_today.get(idx).copied().unwrap_or(0),
@@ -3990,11 +3990,11 @@ impl GroupState {
             } => {
                 // 在途子单先真实撤销（票留待 Closed 实体释放——件 3 的
                 // release 路径同源；簿侧腿引用同拍释放——session 执行链
-                /// 的撤单即清语义，Closed 落账的 release 幂等跳过）。
+                // 的撤单即清语义，Closed 落账的 release 幂等跳过）。
                 if let Some(order_id) = child_order_id {
                     cancels.push((local, code.0 as StockIdx, desk_order_serial(order_id.0)));
                     // 幂等（Ok(false)=Closed 落账先行清理）容忍；Err（非法
-                    /// 迁移）显式失败——铁律二。
+                    // 迁移）显式失败——铁律二。
                     let released = self.plan_book.record_child_released(
                         account,
                         &code,
@@ -4026,12 +4026,12 @@ impl GroupState {
             } => {
                 // 重构同撤（session push_restructure：终止/反向/超额时
                 // 先撤在途子单再 apply 修订——生命周期约束，决策核注记；
-                /// 同向 Forward 修订不清腿，簿侧腿引用随撤单同拍释放——
-                /// session 执行链语义，Closed 落账的 release 幂等跳过）。
+                // 同向 Forward 修订不清腿，簿侧腿引用随撤单同拍释放——
+                // session 执行链语义，Closed 落账的 release 幂等跳过）。
                 if let Some(order_id) = child_order_id {
                     cancels.push((local, code.0 as StockIdx, desk_order_serial(order_id.0)));
                     // 幂等（Ok(false)=Closed 落账先行清理）容忍；Err（非法
-                    /// 迁移）显式失败——铁律二。
+                    // 迁移）显式失败——铁律二。
                     let released = self.plan_book.record_child_released(
                         account,
                         &code,
@@ -4088,7 +4088,7 @@ impl GroupState {
         let mut ops = Vec::new();
         // D3b 件 3：定向撤单目标（local, stock, desk serial）——
         // QuoteAction::Cancel 的路由产物（票留待 Closed 实体释放——
-        /// identity 匹配路径已有）。
+        // identity 匹配路径已有）。
         let mut cancels: Vec<(LocalIdx, StockIdx, u64)> = Vec::new();
         // D3b 件 3：撤买终止目标（循环外 apply——借用隔离）。
         let mut withdrawals: Vec<crate::plans::PlanId> = Vec::new();
@@ -4107,9 +4107,9 @@ impl GroupState {
             roster_chain_params(&projection.chain_params, self.roster_offset, local as usize)
                 .unwrap_or_else(|| panic!("组 {group} belief 位 {local} 缺链参数投影"));
         // Sol 整改 3：预算现金=可用（已扣在途 purse——所有权口径；frozen
-        /// 单独为 0 防重复扣，裁决登记）。Sol 整改 3b：existing=本轮开仓
-        /// 前集合（此前从全部 active 构造——新计划全成 ExistingPlan，
-        /// NewOpportunity 不可达）。
+        // 单独为 0 防重复扣，裁决登记）。Sol 整改 3b：existing=本轮开仓
+        // 前集合（此前从全部 active 构造——新计划全成 ExistingPlan，
+        // NewOpportunity 不可达）。
         let cash = crate::money::Money::from_cents(group_account.cash);
         let existing: std::collections::BTreeSet<crate::plans::PlanId> =
             existing_before.iter().copied().collect();
@@ -4134,9 +4134,9 @@ impl GroupState {
                 continue;
             }
             // D3b 件 3：Paused 计划放行到报价决策（共享 decide_plan_quote
-            /// 的暂停分支产出 Cancel——定向撤单路由）；terminal 跳过。
-            /// 在途票跳过仅对 Active（防重复挂单）——Paused+在途恰是
-            /// Cancel 的触发形态，不得跳过。
+            // 的暂停分支产出 Cancel——定向撤单路由）；terminal 跳过。
+            // 在途票跳过仅对 Active（防重复挂单）——Paused+在途恰是
+            // Cancel 的触发形态，不得跳过。
             if matches!(
                 plan.status(),
                 crate::plans::PlanStatus::Completed | crate::plans::PlanStatus::Terminated { .. }
@@ -4271,9 +4271,9 @@ impl GroupState {
                 continue;
             }
             // D3b 件 3：Paused 计划放行到报价决策（共享 decide_plan_quote
-            /// 的暂停分支产出 Cancel——定向撤单路由）；terminal 跳过。
-            /// 在途票跳过仅对 Active（防重复挂单）——Paused+在途恰是
-            /// Cancel 的触发形态，不得跳过。
+            // 的暂停分支产出 Cancel——定向撤单路由）；terminal 跳过。
+            // 在途票跳过仅对 Active（防重复挂单）——Paused+在途恰是
+            // Cancel 的触发形态，不得跳过。
             if matches!(
                 plan.status(),
                 crate::plans::PlanStatus::Completed | crate::plans::PlanStatus::Terminated { .. }
@@ -4286,11 +4286,11 @@ impl GroupState {
                 continue;
             };
             // D3b 件 3：暂停/撤买前置分支（session generate_next_plan_quote
-            /// 头段的组内等价——共享 decide_plan_quote 不含该面）：Paused
-            /// 或（买方向且非反手信号 ≤0）→ Cancel/Keep/Wait + 撤买终止。
-            /// 位置在预算查找**之前**（撤单不是下单——不依赖软预算分配；
-            /// Sell 计划 sellable 不足时无 grant，暂停撤单不得被预算挡住，
-            /// session 头段同序）。
+            // 头段的组内等价——共享 decide_plan_quote 不含该面）：Paused
+            // 或（买方向且非反手信号 ≤0）→ Cancel/Keep/Wait + 撤买终止。
+            // 位置在预算查找**之前**（撤单不是下单——不依赖软预算分配；
+            // Sell 计划 sellable 不足时无 grant，暂停撤单不得被预算挡住，
+            // session 头段同序）。
             let code = plan.code();
             {
                 let cancellable_now = phase_is_continuous(
@@ -4316,7 +4316,7 @@ impl GroupState {
                     }
                     if withdraw {
                         // 撤买终止（session 的 Terminate 动作组内等价）——
-                        /// 借用冲突，收集后循环外 apply。
+                        // 借用冲突，收集后循环外 apply。
                         withdrawals.push(plan_id);
                     }
                     continue;
@@ -4597,12 +4597,12 @@ impl GroupState {
                         })?;
                 let group_mix = (self.group as u64).wrapping_mul(0x9E3779B9);
                 // P1-B（性能修复）：本轮共享公共视图与 attention signal——
-                /// 此前每 due NPC 各自 build_market_view（重建全市场
-                /// BTreeMap+复制价格/分钟历史）只为算一个对全组相同的
-                /// 公共 signal，observe 通过后 decide 再建一次（构造次数
-                /// ≈3.4× 放大，见 .tmp/perf-p0-diff-profile.md）。两者均为
-                /// snapshot 的纯函数且不消费 RNG——共享后决策序列/RNG 流
-                /// 逐位不变（等价守卫=同种子终态逐字段对比）。
+                // 此前每 due NPC 各自 build_market_view（重建全市场
+                // BTreeMap+复制价格/分钟历史）只为算一个对全组相同的
+                // 公共 signal，observe 通过后 decide 再建一次（构造次数
+                // ≈3.4× 放大，见 .tmp/perf-p0-diff-profile.md）。两者均为
+                // snapshot 的纯函数且不消费 RNG——共享后决策序列/RNG 流
+                // 逐位不变（等价守卫=同种子终态逐字段对比）。
                 let shared_market = super::decision::build_market_view(&snapshot);
                 let shared_signal = crate::session::market_attention_signal(&shared_market);
                 // D3a-3：belief 位的决策链轮（observe 直调——方向 A 深移植）
@@ -4611,7 +4611,7 @@ impl GroupState {
                 // 在借用外执行（组态/簿的演进借用互斥）。
                 let mut chain_due: Vec<LocalIdx> = Vec::new();
                 // D5 #4 retail 链：retail 位（个人态在位+零售风格）的
-                /// 决策延后到借用释放（组态写回与决策档案借用互斥）。
+                // 决策延后到借用释放（组态写回与决策档案借用互斥）。
                 let mut retail_due: Vec<LocalIdx> = Vec::new();
                 {
                     // ⑤a 收袋刀：due 候选源——heap 延迟删除筛选（默认）。
@@ -4665,7 +4665,7 @@ impl GroupState {
                             .get(local as usize)
                             .is_some_and(|slot| slot.is_some());
                         // D5 #4：链位判定加链参数面——retail 位个人态在位
-                        /// 但无机构链参数，走 retail 链（观察+behavior 决策）。
+                        // 但无机构链参数，走 retail 链（观察+behavior 决策）。
                         let chain_params_seeded = self.root_projection.as_ref().is_some_and(|p| {
                             p.chain_params
                                 .get(self.roster_offset + local as usize)
@@ -4682,10 +4682,10 @@ impl GroupState {
                                 continue;
                             }
                             // D5 #2：signal-based evaluate 门（旧管线
-                            /// evaluate_candidate_with_signal 同式：共享续流+
-                            /// observe 门+wait 采样；observe=false 只重排不
-                            /// 决策（链轮跳过——决策频率语义与旧管线对齐，
-                            /// 此前均匀 gap 近似使 epoch 双轨显红）。
+                            // evaluate_candidate_with_signal 同式：共享续流+
+                            // observe 门+wait 采样；observe=false 只重排不
+                            // 决策（链轮跳过——决策频率语义与旧管线对齐，
+                            // 此前均匀 gap 近似使 epoch 双轨显红）。
                             let (observes, prev_due) = super::decision::evaluate_attention(
                                 &mut profiles[local as usize],
                                 shared_signal,
@@ -4700,7 +4700,7 @@ impl GroupState {
                                 local,
                             )));
                             // P2-3e：evaluate 消费过 RNG/重排 next_due——
-                            /// 稀疏上行演进位标记（observe=false 也演进）。
+                            // 稀疏上行演进位标记（observe=false 也演进）。
                             self.attention_evolved.push(local);
                             if observes {
                                 decide_calls += 1;
@@ -4713,13 +4713,13 @@ impl GroupState {
                             continue;
                         }
                         // D5 #2：due 外判（decide_account 内判已随纯决策化
-                        /// 移除——调用方控制契约）。
+                        // 移除——调用方控制契约）。
                         if tick < profiles[local as usize].next_due {
                             continue;
                         }
                         let account = &self.accounts[local as usize];
                         // D5 #2：retail 同式 evaluate 门（observe=false 只
-                        /// 重排不决策）。
+                        // 重排不决策）。
                         let (observes, prev_due) = super::decision::evaluate_attention(
                             &mut profiles[local as usize],
                             shared_signal,
@@ -4867,7 +4867,7 @@ impl GroupState {
                 }
                 // D5 #4 retail 链：观察+决策+trace+经验行（组内权威）。
                 // P1-B：复用本轮共享公共视图（原每轮零售位再建一次——
-                /// 同 snapshot 纯函数，逐位等价）。
+                // 同 snapshot 纯函数，逐位等价）。
                 // P2-3a：链观察/等权聚合/behavior 价径面同样上移每轮一次
                 ///（原每位 build_chain_observation+聚合+paths 克隆——组线程
                 /// 拷贝放大主源；同轮输入逐位相同 ⇒ 等价论证同 P1-B）。
@@ -4960,7 +4960,7 @@ impl GroupState {
             pendings.push(Pending::Op(op));
         }
         // D5 终程：外部定向撤单延迟到下单 flush 之后（同批 Place+Cancel
-        /// 的 desk 到达序——Cancel 须晚于 Place 才能命中）。
+        // 的 desk 到达序——Cancel 须晚于 Place 才能命中）。
         let external_cancels = std::mem::take(&mut self.external_cancels);
         // 计划链推进（批 6）：轮 0=根命令（空结果输入）；轮 k=按本 tick 已见
         // FillFact 推进（Continue 轮先落账再续行——staging 已在 handle_continue
@@ -4976,7 +4976,7 @@ impl GroupState {
         }
         continuation |= plans_pending;
         // step_frame 接轨前置约束① fixture 通道：一次性强制续行标记
-        ///（消费即清——仅驱动 Continue 轮的触发面，不改决策/落账语义）。
+        //（消费即清——仅驱动 Continue 轮的触发面，不改决策/落账语义）。
         #[cfg(test)]
         if self.force_continuation {
             self.force_continuation = false;
@@ -4992,8 +4992,8 @@ impl GroupState {
         let n_stocks = self.accounts.first().map(|a| a.shares.len()).unwrap_or(0);
         let mut buffers: Vec<Vec<DeskIn>> = vec![Vec::new(); n_stocks];
         // D3b 件 3：定向撤单路由（DeskIn::Cancel{owner, order}——与本轮
-        /// 下单共用分段 flush 缓冲；票保留至 Closed 实体释放——identity
-        /// 匹配的 release 路径已有）。
+        // 下单共用分段 flush 缓冲；票保留至 Closed 实体释放——identity
+        // 匹配的 release 路径已有）。
         for (local, stock, serial) in chain_cancels {
             if !self.stock_is_open(stock)? {
                 continue;
@@ -5071,9 +5071,9 @@ impl GroupState {
                 continue;
             }
             // Sol 复审修复 3（校验顺序）：竞价相位×市价门禁**先于**资源
-            /// 校验——保证相位显式回执可达（资源不足不误吞相位拒收；
-            /// 对齐旧管线相位门禁在市场层入口的次序）。相位基准
-            /// phase_at(tick−1)（与 desk 受理同窗——D5 off-by-one 口径）。
+            // 校验——保证相位显式回执可达（资源不足不误吞相位拒收；
+            // 对齐旧管线相位门禁在市场层入口的次序）。相位基准
+            // phase_at(tick−1)（与 desk 受理同窗——D5 off-by-one 口径）。
             if matches!(p.routed, super::protocol::RoutedPrice::Market) {
                 let snapshot =
                     self.snapshot
@@ -5236,7 +5236,7 @@ impl GroupState {
             }
         }
         // 外部定向撤单在下单 flush 之后（同批 Place+Cancel 的 desk 到达
-        /// 序——Cancel 晚于 Place 才能命中簿内单）。
+        // 序——Cancel 晚于 Place 才能命中簿内单）。
         for (local, stock, serial) in std::mem::take(&mut external_cancel_buffer) {
             if !self.stock_is_open(stock)? {
                 self.round_rejections.push(super::DeskReceipt {
@@ -5356,7 +5356,7 @@ impl GroupState {
             decide_calls,
             cancel_intents_skipped,
             // 组端业务拒绝（Sol 复审修复 2）：本轮排空上行——Abort 重跑
-            /// 时由校验路径重新产生（run_round 起点清零）。
+            // 时由校验路径重新产生（run_round 起点清零）。
             rejections: std::mem::take(&mut self.round_rejections),
         };
         up_tx
@@ -5392,7 +5392,7 @@ impl GroupState {
             plan_book_for_test: self.plan_book.clone(),
             group: self.group,
             // 低频（shutdown 一次）：展开为值（Arc COW 的分片收益在
-            /// SealAck 高频面——此处保持协议形状）。
+            // SealAck 高频面——此处保持协议形状）。
             accounts: self.accounts.iter().map(|a| (**a).clone()).collect(),
             skipped_orders: self.skipped_orders,
             decide_calls_total: self.decide_calls_total,
@@ -5502,7 +5502,7 @@ impl<'a> crate::session::PlanReviewHost for GroupReviewHost<'a> {
             .unwrap_or_else(|| panic!("组内复审缺股 {code:?} 行情"));
         // acquired 数：issuer 记录计数（group_review_acquired——session
         // plan_review_facts 同式：股→发行人→information 记录；复审时点
-        /// 的 observe 输出面）。
+        // 的 observe 输出面）。
         let acquired = group_review_acquired(
             self.state
                 .current_company_facts()
@@ -5558,8 +5558,8 @@ impl<'a> crate::session::PlanReviewHost for GroupReviewHost<'a> {
     }
     fn minute_closes(&self, code: &crate::StockId) -> &[crate::observation::MarketMinuteClose] {
         // 组内等价：observation_inputs 的分钟序列预转换（与 build_
-        /// observations 同式 c.max(1)——字段不得分叉）；非候选股兜底
-        /// 空切片（session 版 get().unwrap_or(&[]) 同式）。
+        // observations 同式 c.max(1)——字段不得分叉）；非候选股兜底
+        // 空切片（session 版 get().unwrap_or(&[]) 同式）。
         self.minutes_by_code
             .get(code)
             .map(|v| v.as_slice())
@@ -5567,7 +5567,7 @@ impl<'a> crate::session::PlanReviewHost for GroupReviewHost<'a> {
     }
     fn belief_style(&self) -> Option<crate::strategy::InstitutionStyle> {
         // 复审时点面（observe 输出——与宿主其余面同源；profile 冻结故
-        /// 与 belief_states 旧态值恒同，时点统一消分叉面）。
+        // 与 belief_states 旧态值恒同，时点统一消分叉面）。
         match self.belief.profile() {
             crate::strategy::StrategyProfile::Institution(style) => Some(*style),
             _ => None,
@@ -5707,7 +5707,7 @@ fn group_urgency_at_view(
             > = std::collections::BTreeMap::new();
             for (idx, &qty) in acct.shares.iter().enumerate() {
                 // 零量条目不入风险观察（RiskPositionInput 要求 qty>0
-                /// ——组侧曾持有/清仓面在 shares 中为 0）。
+                // ——组侧曾持有/清仓面在 shares 中为 0）。
                 if qty == 0 {
                     continue;
                 }
@@ -5935,7 +5935,7 @@ fn build_root_read_context(
         };
         let group_account = &accounts[local];
         // Sol 整改 3：含在途现金（买 purse 加回——挂单期间权益观察不
-        /// 缩水，对齐旧管线 escrow 口径）。
+        // 缩水，对齐旧管线 escrow 口径）。
         let mut account = crate::account::Account::new(
             account_id,
             crate::account::AccountKind::Inst,
@@ -5944,8 +5944,8 @@ fn build_root_read_context(
         let mut positions = std::collections::BTreeMap::new();
         for (stock, &qty_raw) in group_account.shares.iter().enumerate() {
             // Sol 整改 3：持仓含在途卖单余量（旧管线口径=在手+在途——
-            /// 组 shares 已扣；qty 口径差收口）。零持仓仅在曾持有或在途
-            /// 卖时建条目（held 集成员参与发现采样）。
+            // 组 shares 已扣；qty 口径差收口）。零持仓仅在曾持有或在途
+            // 卖时建条目（held 集成员参与发现采样）。
             let qty = held_qty_with_pending_at(
                 &group_account.shares,
                 child_in_flight,
@@ -5999,10 +5999,10 @@ fn build_root_read_context(
 /// 时刻 ExperienceMoment 与 RootReadContext 共用此式，字段不得分叉）。
 fn market_minute_at(tick: u64, ticks_per_day: u64, auction_ticks: u64, closing_ticks: u64) -> u64 {
     // Sol 终审四审 A2：day=(tick−1)/tpd；day_tick=(tick−1)%tpd（与 day
-    /// 同受理窗——跨日 minute 单调；曾试对齐 session 的 tick%tpd 异基
-    /// 式，institution 观察 clock（roots.rs 要求单调）跨日显红
-    /// "attempted 0 after last 236"——组内观察 clock 以同窗单调为先，
-    /// session 的异基式不适配组内，登记差异）。
+    // 同受理窗——跨日 minute 单调；曾试对齐 session 的 tick%tpd 异基
+    // 式，institution 观察 clock（roots.rs 要求单调）跨日显红
+    // "attempted 0 after last 236"——组内观察 clock 以同窗单调为先，
+    // session 的异基式不适配组内，登记差异）。
     let day = u32::try_from(tick.saturating_sub(1) / ticks_per_day).expect("交易日序号超 u32");
     let day_tick = tick.saturating_sub(1) % ticks_per_day;
     let continuous = ticks_per_day
@@ -6040,7 +6040,7 @@ fn build_chain_observation(
     }
     let now = snapshot.calendar.observation_instant_after();
     // Sol 整改 5：曝光面收口（此前空集——生产发现路径丢披露曝光权重；
-    /// 与 session 版同一共享函数 exposed_stocks_shared）。
+    // 与 session 版同一共享函数 exposed_stocks_shared）。
     let exposed = crate::session::exposed_stocks_shared(library, company_facts, now);
     crate::session::DecisionChainObservation {
         market,
@@ -6122,8 +6122,8 @@ pub fn group_main(
         // Sol 终审三审：退出判定用 shutdown（永久关停——sever/Drop）；
         // abort 只管本 tick 回滚语义（本 worker 失败时置位通知对端）。
         // B-1' 分级自旋（协调者批 2026-10-19——首版只组线程，desk 走
-        /// 原 worker_recv）：热态自旋窗免深 C-state futex 唤醒延迟
-        ///（spread 94μs 无归属段归因——seal-spread-wakeup-design.md）。
+        // 原 worker_recv）：热态自旋窗免深 C-state futex 唤醒延迟
+        //（spread 94μs 无归属段归因——seal-spread-wakeup-design.md）。
         let msg = match worker_recv_spin(&rx, &watchdog, &shutdown, who, spin_config()) {
             Ok(Some(m)) => m,
             Ok(None) => break,
@@ -6276,8 +6276,8 @@ pub fn group_main(
                 state.observed.push(Observed::Batch(batch.tick));
                 state.seal_wait_batches += 1;
                 // SealAck 后到达=锁步破坏面（计数供 Start 防御；日结 Drain
-                /// 序列由 DayEnd 消化清零——批次本身照常即时应用，防御
-                /// 不改变落账行为只改变上报时点）。
+                // 序列由 DayEnd 消化清零——批次本身照常即时应用，防御
+                // 不改变落账行为只改变上报时点）。
                 if state.seal_acked_len.is_some() {
                     state.batches_after_seal += 1;
                 }
@@ -6602,7 +6602,7 @@ pub fn group_main(
                                 snap.information = information;
                                 snap.belief = belief;
                                 // P2-1a：投递演进=dirty（EchoBelief 掩码+
-                                /// 驱动器重装面）。
+                                // 驱动器重装面）。
                                 if let Some(flag) = state.belief_dirty.get_mut(li) {
                                     *flag = true;
                                 }
@@ -6853,7 +6853,7 @@ pub fn group_main(
             #[cfg(test)]
             GroupIn::InstallPersonal { local, snapshot } => {
                 // D3b 件 5：个人态注入——组权威覆盖（Personal undo 可逆；
-                /// Abort 冲回后需重发）。缺位/越界=注入面漂移，显式失败。
+                // Abort 冲回后需重发）。缺位/越界=注入面漂移，显式失败。
                 let prev = state.belief_states.get(local as usize).cloned().flatten();
                 match prev {
                     Some(prev) => {
@@ -6865,7 +6865,7 @@ pub fn group_main(
                             *slot = Some(snapshot);
                         }
                         // P2-2a：注入=跨 Start 待上行（Start 会清本 tick
-                        /// 的 belief_dirty——注入态由 pending 承载到上行消费）。
+                        // 的 belief_dirty——注入态由 pending 承载到上行消费）。
                         state.belief_pending_dirty.push(local);
                     }
                     None => {
@@ -6976,7 +6976,7 @@ pub fn group_main(
             #[cfg(test)]
             GroupIn::MutateBeliefForTest { account, mutate } => {
                 // D3b 件 4 fixture 通道：belief 簿测试变换（account→local
-                /// 经投影名册映射——目标位缺失=显式失败）。
+                // 经投影名册映射——目标位缺失=显式失败）。
                 //
                 // ⚠️ 已知坐标缺陷（未修，见 agents/multi-group-roster-offset
                 // /ledger.md「待办」）：`position()` 返回的是**全局**名册
@@ -7026,7 +7026,7 @@ pub fn group_main(
             #[cfg(test)]
             GroupIn::DeferDueForTest { locals, tick } => {
                 // D5 #4 fixture 通道（cfg(test)）：推远 next_due——"无 due
-                /// tick"形态构造（组权威调度面的测试控制；效果入可逆日志）。
+                // tick"形态构造（组权威调度面的测试控制；效果入可逆日志）。
                 for local in locals {
                     if let Some((profiles, _)) = &mut state.decision {
                         if let Some(p) = profiles.get_mut(local as usize) {
@@ -7200,7 +7200,7 @@ pub fn group_main(
             GroupIn::EchoObservations => {
                 // D3a-2：每股链观察（价格路径+技术面）——纯构建器与
                 // session 读面同源（build_price_path_observation /
-                /// build_technical_observation_from_recent_trades）。
+                // build_technical_observation_from_recent_trades）。
                 let observations: Vec<(
                     crate::observation::PricePathObservation,
                     crate::observation::TechnicalObservation,
@@ -7224,9 +7224,9 @@ pub fn group_main(
             }
             GroupIn::EchoAttention => {
                 // D5 #2：next_due+注意力 rng 续传态（evaluate 共享流——
-                /// session rng_state 同源写回）。D5 restore 链最后一层：
-                /// 构造期组因子混入在回传时逆运算——session 面存纯值
-                ///（restore 再构造混入恰一次，不叠加）。
+                // session rng_state 同源写回）。D5 restore 链最后一层：
+                // 构造期组因子混入在回传时逆运算——session 面存纯值
+                //（restore 再构造混入恰一次，不叠加）。
                 let attention = match &state.decision {
                     Some((profiles, _)) => profiles
                         .iter()
@@ -7265,11 +7265,11 @@ pub fn group_main(
             }
             GroupIn::EchoAttentionSparse => {
                 // P2-3e：生产安装段稀疏上行——只回本 tick 演进位
-                ///（evaluate 消费 RNG/重排 next_due，或 ForceDue 改排的位）。
-                /// 非演进位 session 镜像==组权威（构造期同源+只经本通道
-                /// 同步——不变式同 belief P2-2a），全量语义由驱动器缓存/
-                /// session 镜像承载。全量读面用 EchoAttention（构造恢复/
-                /// Abort 测试锚）不变。
+                //（evaluate 消费 RNG/重排 next_due，或 ForceDue 改排的位）。
+                // 非演进位 session 镜像==组权威（构造期同源+只经本通道
+                // 同步——不变式同 belief P2-2a），全量语义由驱动器缓存/
+                // session 镜像承载。全量读面用 EchoAttention（构造恢复/
+                // Abort 测试锚）不变。
                 let evolved = std::mem::take(&mut state.attention_evolved);
                 let attention = match &state.decision {
                     Some((profiles, _)) => evolved
@@ -7301,7 +7301,7 @@ pub fn group_main(
             }
             GroupIn::EchoRetailTraces => {
                 // D5 #4 retail 链：本拍 trace 上行（瞬态读面——Start 清、
-                /// 生产写入存活到提交）。
+                // 生产写入存活到提交）。
                 let msg = UpMsg::RetailTraces {
                     group: state.group,
                     traces: state.retail_traces.clone(),
@@ -7316,7 +7316,7 @@ pub fn group_main(
             }
             GroupIn::EchoAccounts => {
                 // 在途买占用为账户级维护字段（Sol 五审：run_round 挂出/
-                /// apply_staging 成交与退款驱动——全部买单，不限计划链票）。
+                // apply_staging 成交与退款驱动——全部买单，不限计划链票）。
                 let echo = UpMsg::GroupEcho {
                     group: state.group,
                     accounts: state.accounts.iter().map(|a| (**a).clone()).collect(),
@@ -7331,17 +7331,17 @@ pub fn group_main(
             }
             GroupIn::Seal { tick, round_final } => {
                 // Q2 Seal 收尾确认（S1-S4）：drain 本拍全部批次——S4 锁步
-                /// 不变量：协调者收齐全部 DeskReport（desk 批次 FIFO 先于
-                /// DeskReport 入组收件箱）后才发 Seal ⇒ 组处理到 Seal 时
-                /// 全部批次已在收件箱，逐条消费进 staging 后一次落账
-                ///（S2：落账点从下一 Start 前移到 Seal——apply_staging
-                /// 唯一化）。落账进 undo 日志（Abort 可冲回——S3：undo
-                /// 跨发布无害，Start 清点不变）。期末哈希随 SealAck 上行。
+                // 不变量：协调者收齐全部 DeskReport（desk 批次 FIFO 先于
+                // DeskReport 入组收件箱）后才发 Seal ⇒ 组处理到 Seal 时
+                // 全部批次已在收件箱，逐条消费进 staging 后一次落账
+                //（S2：落账点从下一 Start 前移到 Seal——apply_staging
+                // 唯一化）。落账进 undo 日志（Abort 可冲回——S3：undo
+                // 跨发布无害，Start 清点不变）。期末哈希随 SealAck 上行。
                 if tick != state.cur_tick || round_final != state.cur_round {
                     // 铁律二收口（seal_failed_injection_tests 发现的缺口）：
-                    /// 协议错位退出必须 Failed 上行+abort 置位（对齐其他
-                    /// 失败分支——不静默只 break 会使协调者退化为
-                    /// watchdog/断连超时发现）。
+                    // 协议错位退出必须 Failed 上行+abort 置位（对齐其他
+                    // 失败分支——不静默只 break 会使协调者退化为
+                    // watchdog/断连超时发现）。
                     abort.store(true, Ordering::SeqCst);
                     let e = RuntimeError::ProtocolInvariant {
                         detail: format!(
@@ -7359,18 +7359,18 @@ pub fn group_main(
                 // Seal 地板分解诊断：组端处理段（drain→Ack 发送前）计时。
                 let seal_handle_started = crate::clock::Instant::now();
                 // 收件箱顺序 drain：Seal 前入队的全部数据面消息（S4：
-                /// desk 批次 FIFO 先于其 DeskReport ⇒ 先于 Seal 入队）。
-                /// 数据面=Batch（实体批次）与 AcceptedBatch（受理身份）；
-                /// 其他消息（外部意图/回声请求等）属协议错位——
-                /// Seal 相位不应出现，显式失败不静默。Abort 例外（Sol
-                /// 复核 P1-3）：协调者收集超时后 [Seal, Abort] 同队列
-                /// 竞态——Seal 处理期到达的 Abort 是合法产物，非错位。
+                // desk 批次 FIFO 先于其 DeskReport ⇒ 先于 Seal 入队）。
+                // 数据面=Batch（实体批次）与 AcceptedBatch（受理身份）；
+                // 其他消息（外部意图/回声请求等）属协议错位——
+                // Seal 相位不应出现，显式失败不静默。Abort 例外（Sol
+                // 复核 P1-3）：协调者收集超时后 [Seal, Abort] 同队列
+                // 竞态——Seal 处理期到达的 Abort 是合法产物，非错位。
                 let mut seal_aborted = false;
                 loop {
                     match rx.try_recv() {
                         Ok(GroupIn::Batch(batch)) => {
                             // eager 分域即时相（Seal drain 批次与等待窗批次
-                            /// 同路径——S4 FIFO 锁步语义不变）。
+                            // 同路径——S4 FIFO 锁步语义不变）。
                             state.observed.push(Observed::Batch(batch.tick));
                             state.seal_drain_batches += 1;
                             if let Err(e) = state.apply_batch_immediate(batch, tick, round_final) {
@@ -7410,10 +7410,10 @@ pub fn group_main(
                         }
                         Ok(GroupIn::Abort { tick: abort_tick }) => {
                             // Sol 复核阻断 P1-3：Seal 处理期的 Abort=本拍
-                            /// 已被协调者判死（收集超时/失败）——回滚本拍
-                            /// 已应用面、不发 SealAck、**存活**回主循环
-                            ///（Abort 语义：同 tick 可重试——与常规 Abort
-                            /// 臂同式，不判协议错位退出）。
+                            // 已被协调者判死（收集超时/失败）——回滚本拍
+                            // 已应用面、不发 SealAck、**存活**回主循环
+                            //（Abort 语义：同 tick 可重试——与常规 Abort
+                            // 臂同式，不判协议错位退出）。
                             state.observed.push(Observed::Abort(abort_tick));
                             state.rollback();
                             seal_aborted = true;
@@ -7451,14 +7451,14 @@ pub fn group_main(
                 }
                 if seal_aborted {
                     // P1-3：跳过 Seal 收尾（无延迟相/分片/SealAck/基线）
-                    ///——主循环继续等待（重试 Start 重跑本拍）。
+                    //——主循环继续等待（重试 Start 重跑本拍）。
                     continue;
                 }
                 let deferred_started = crate::clock::Instant::now();
                 // 终轮延迟相（S2 落账点唯一化——eager 分域版）：即时相
-                /// 已随 Batch 到达/Seal drain 应用；此处重放 F4/F5/F6
-                /// 延迟域（早轮批次的延迟项已随各自 handle_continue
-                /// 消费，只剩终轮）。
+                // 已随 Batch 到达/Seal drain 应用；此处重放 F4/F5/F6
+                // 延迟域（早轮批次的延迟项已随各自 handle_continue
+                // 消费，只剩终轮）。
                 if let Err(e) = state.apply_deferred() {
                     abort.store(true, Ordering::SeqCst);
                     let _ = up_tx.send(UpMsg::Failed {
@@ -7470,24 +7470,24 @@ pub fn group_main(
                 }
                 state.seal_deferred_ns += deferred_started.elapsed().as_nanos();
                 // Q2：final_hash 用 O(1) 指纹口径（设计稿 §3.2——与
-                /// committed_hash 同族合成，**非** state_hash 全名册遍历：
-                /// B 口径 20000×5 股×8 域的 O(N) 哈希 ≈2ms/tick 串行屏障
-                /// 实测打回）。指纹含落账事实量（undo 长度+延迟载荷余量）
-                /// 供未来 Abort 对账观察点扩展。
+                // committed_hash 同族合成，**非** state_hash 全名册遍历：
+                // B 口径 20000×5 股×8 域的 O(N) 哈希 ≈2ms/tick 串行屏障
+                // 实测打回）。指纹含落账事实量（undo 长度+延迟载荷余量）
+                // 供未来 Abort 对账观察点扩展。
                 let final_hash = (0xcbf2_9ce4_8422_2325u64 ^ tick ^ ((round_final as u64) << 32))
                     .wrapping_mul(0x100000001b3)
                     ^ (state.undo.len() as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15);
                 let shard_started = crate::clock::Instant::now();
                 // P1-2（Sol 复核阻断）：belief 稀疏分片在 apply_deferred
-                /// 之后构建（清仓经历转移已置 dirty——终轮清仓行随本拍
-                /// SealAck 上行，发布/session/save 同拍一致；此前随
-                /// GroupReport 决策相构建早于延迟相）。
+                // 之后构建（清仓经历转移已置 dirty——终轮清仓行随本拍
+                // SealAck 上行，发布/session/save 同拍一致；此前随
+                // GroupReport 决策相构建早于延迟相）。
                 let belief_sparse = std::sync::Arc::new(state.belief_shard_from_dirty());
                 // Q2 批 3+eager 分域：账户稀疏分片随 SealAck 上行——
-                /// account_dirty_set 由 push_undo 即时维护（决策扣除+
-                /// 全部轮即时域落账的写点；等待窗/Seal drain 消化），Seal
-                /// 临界路径免原 O(undo_len) 全日志重扫。集合族与原扫描
-                /// 口径逐族一致（8 个账户域族），等价替换。
+                // account_dirty_set 由 push_undo 即时维护（决策扣除+
+                // 全部轮即时域落账的写点；等待窗/Seal drain 消化），Seal
+                // 临界路径免原 O(undo_len) 全日志重扫。集合族与原扫描
+                // 口径逐族一致（8 个账户域族），等价替换。
                 let accounts_sparse: Vec<(_, _)> = std::mem::take(&mut state.account_dirty_set)
                     .into_iter()
                     .filter_map(|local| {
@@ -7498,8 +7498,8 @@ pub fn group_main(
                     })
                     .collect();
                 // Seal 攻顶批 旋钮（cfg(test) 突变判别）：①篡改首条目
-                /// cash+1（分片内容源=组账户终态的判别面）；②丢末条目
-                ///（dirty 集完整性判别面）。生产恒 false 零开销。
+                // cash+1（分片内容源=组账户终态的判别面）；②丢末条目
+                //（dirty 集完整性判别面）。生产恒 false 零开销。
                 #[cfg(test)]
                 {
                     if state.seal_knob_tamper_shard {
@@ -7538,12 +7538,12 @@ pub fn group_main(
             }
             GroupIn::EchoAccountsSparse { wanted } => {
                 // P2-4a：生产回写段稀疏上行——只回驱动器 dirty 集指名的
-                /// 账户（P2-1b 已把**写回**稀疏化，但全量回声仍是每拍
-                /// 全名册 20000×8 堆 Vec 克隆+主线程 drop 的双热点）。
-                /// 全量语义由驱动器 dirty 写回承载（等价构造：取回的恰是
-                /// 原来要写的同一批值）；全量读面用 EchoAccounts 不变。
-                /// 回执集与请求集的精确一致由收集端校验（缺项
-                /// =RuntimeError 不静默）。
+                // 账户（P2-1b 已把**写回**稀疏化，但全量回声仍是每拍
+                // 全名册 20000×8 堆 Vec 克隆+主线程 drop 的双热点）。
+                // 全量语义由驱动器 dirty 写回承载（等价构造：取回的恰是
+                // 原来要写的同一批值）；全量读面用 EchoAccounts 不变。
+                // 回执集与请求集的精确一致由收集端校验（缺项
+                // =RuntimeError 不静默）。
                 let mut accounts: Vec<(LocalIdx, GroupAccount)> = Vec::with_capacity(wanted.len());
                 for &local in &wanted {
                     let Some(account) = state.accounts.get(local as usize) else {
@@ -7584,8 +7584,8 @@ pub fn group_main(
             GroupIn::Shutdown => {
                 state.observed.push(Observed::Shutdown);
                 // Drain 实体批次已先于 Shutdown 入队（FIFO）且即时相已
-                /// 落账（eager 分域）：期末名册须含全部回流——延迟相补齐
-                /// F4/F5/F6 后上交 Final。
+                // 落账（eager 分域）：期末名册须含全部回流——延迟相补齐
+                // F4/F5/F6 后上交 Final。
                 if let Err(e) = state.apply_deferred() {
                     abort.store(true, Ordering::SeqCst);
                     let _ = up_tx.send(UpMsg::Failed {
@@ -7612,8 +7612,8 @@ pub fn group_main(
     result
 }
 
-/// Sol 二审修复集 3 红证（受理身份关联）：组内最小决策链态直调
-/// apply_staging——外来单的成交/终结事实不得触碰本票执行腿。
+// Sol 二审修复集 3 红证（受理身份关联）：组内最小决策链态直调
+// apply_staging——外来单的成交/终结事实不得触碰本票执行腿。
 // ═══ Sol 五审件 3（四审 A1 指定回归）：正常关停 >50ms 空闲窗 × 在途资源 ═══
 
 #[cfg(not(target_family = "wasm"))]
@@ -7688,7 +7688,7 @@ mod v5_shutdown_idle_window_tests {
             }))
             .expect("Batch 入队");
         // >50ms 空闲窗：worker_recv 分片轮询跨片等待（四审竞态窗——
-        /// 旧缺陷形态在此窗内提前退出）。
+        // 旧缺陷形态在此窗内提前退出）。
         std::thread::sleep(std::time::Duration::from_millis(120));
         // 正常关停消息（协议路径——不置永久标记）。
         group_tx.send(GroupIn::Shutdown).expect("Shutdown 发送");
@@ -8144,8 +8144,8 @@ mod sol_recheck3_tests {
             0,
         );
         // Sol 六审勘正：外来同键单成交=合法形态（意图路由/测试注入）——
-        /// 跳过不误挂（Ok 且余量不动），不再显式失败（原 Err 形态实测会
-        /// 杀死合法外来单的拍——sol7th_foreign 场景红证）。
+        // 跳过不误挂（Ok 且余量不动），不再显式失败（原 Err 形态实测会
+        // 杀死合法外来单的拍——sol7th_foreign 场景红证）。
         state
             .apply_deferred()
             .expect("外来单成交跳过（不构成失败）");
@@ -8703,7 +8703,7 @@ mod eager_domain_tests {
         // 批 1：F1（CashRefund 现金+占用/BoughtShares 持仓+冻结）+
         // F2（RefundedShares 卖余量+持仓、sell fill 成本基/卖余量）+
         // F3（Closed 在途减）+F4/F5/F6 延迟载荷（RefundedShares 曾持有
-        /// 复位/拒收释放——延迟相重放，Abort 不得触碰）。
+        // 复位/拒收释放——延迟相重放，Abort 不得触碰）。
         let b1 = DeskBatch {
             repurchase: Vec::new(),
             stock: 0,
@@ -8729,7 +8729,7 @@ mod eager_domain_tests {
             }],
         };
         // 批 2：买腿 fill（owner=组 0 位 1——BuyPurseHeld F2 减实付）+
-        /// CashProceeds（F1 加）。
+        // CashProceeds（F1 加）。
         let b2 = DeskBatch {
             repurchase: Vec::new(),
             stock: 1,

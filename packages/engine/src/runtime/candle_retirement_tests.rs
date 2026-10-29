@@ -166,7 +166,7 @@ fn candle_install_matches_desk_authority() {
             None => {
                 // desk 无 active（无成交）⇒ session 侧应为占位 K 或
                 // 申报窗清空（相位语义由合同 2/3 承载——此处仅登记
-                /// 不误断 None）。
+                // 不误断 None）。
                 let _ = installed;
             }
         }
@@ -211,8 +211,8 @@ fn candle_placeholder_on_no_trade_stock() {
             }
             None => {
                 // 申报窗内清空合法（相位基准）——窗口内不误断；本测试
-                /// 跑 25 拍已跨申报窗（auction_entry=10），None=语义
-                /// 回归，显式红。
+                // 跑 25 拍已跨申报窗（auction_entry=10），None=语义
+                // 回归，显式红。
                 panic!(
                     "股 {code:?} 跨申报窗后 desk 无成交股的 active 须为占位 K（fault2064 族回归）"
                 );
@@ -322,7 +322,7 @@ fn candle_knob2_drop_turnover_proves_stats_flow() {
     driver.candle_knob_drop_turnover_for_test();
     drive_ticks(&mut driver, &mut session, 25);
     // 判别前提：连续段成交（fixture 竞价段成交不进 turnover_today/
-    /// trade_count——stats 判别需 d3a2c 式限价交叉注入）。
+    // trade_count——stats 判别需 d3a2c 式限价交叉注入）。
     inject_crossing_intents(&mut driver, &mut session);
     let finals = driver
         .world_desk_finals_for_candles()

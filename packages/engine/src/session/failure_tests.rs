@@ -809,7 +809,7 @@ fn solfinal1c_multi_group_resting_projection_attributes_owner() {
         envelope_accounts
     );
     // Sol 过程 review 补强：撤单后的镜像与信封**删除**（增删键一致性
-    /// ——删除分支用 account_by_owner，构造侧改后两侧必须同键联动）。
+    // ——删除分支用 account_by_owner，构造侧改后两侧必须同键联动）。
     let order_id = save
         .resting_orders
         .get(&crate::StockId(0))
@@ -947,7 +947,7 @@ fn solfinal3_same_tick_projection_group1_first_buy_uses_real_vwap() {
         "前置：买家持仓建立"
     );
     // 判别面：经历条目在场且入场参考价=成交价 1100（红态=组 0 查表
-    /// miss → 静默退步前价 {step_price_before}）。
+    // miss → 静默退步前价 {step_price_before}）。
     assert!(
         session.runtime_retail_experience_has(buyer, &code),
         "首买经历条目必须在场"
@@ -973,7 +973,7 @@ fn solfinal3_same_tick_projection_group1_first_buy_uses_real_vwap() {
         "组 1 首买的经历入场价必须=成交 VWAP 1010（红态=步前价 {step_price_before}——组 0 查表错组）"
     );
     // 保存恢复链：恢复后经历条目**同价**保持（Sol 三审附带①——
-    /// 只查条目存在不锁数值面，入场价漂移不可见）。
+    // 只查条目存在不锁数值面，入场价漂移不可见）。
     let restored = super::GameSession::restore(&save).expect("恢复");
     assert!(
         restored.runtime_retail_experience_has(buyer, &code),

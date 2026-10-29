@@ -236,7 +236,7 @@ impl ProtocolSession {
 
     pub fn restore(slot: &crate::SaveSlot) -> Result<Self, SessionError> {
         // 批 9 A5（with_compute 注入面退役）：wasm 串行与生产统一走
-        /// shared_default 内部构造（C 桶保留面——wasm 恒旧管线串行）。
+        // shared_default 内部构造（C 桶保留面——wasm 恒旧管线串行）。
         let game =
             GameSession::restore_with_compute(slot, crate::ComputeContext::shared_default()?)?;
         let sessions_through_current_date =
@@ -294,8 +294,8 @@ impl ProtocolSession {
         compute: Arc<crate::ComputeContext>,
     ) -> Result<Self, SessionError> {
         // Sol 收官再复核阻断 9：验证恢复沿 harness 预算池（与
-        /// from_game_for_verification 对偶——默认通道恒绑 shared_default
-        /// 使预算隔离在"构造→保存→恢复"链上丢失）。
+        // from_game_for_verification 对偶——默认通道恒绑 shared_default
+        // 使预算隔离在"构造→保存→恢复"链上丢失）。
         Ok(Self::from_game(
             GameSession::restore_with_compute(slot, compute)?,
             None,
@@ -305,8 +305,8 @@ impl ProtocolSession {
     #[cfg(feature = "verification-harness")]
     pub fn restore_verification_checkpoint(slot: &crate::SaveSlot) -> Result<Self, SessionError> {
         // 批 9 A5：注入面退役——验证恢复经内部 shared_default（C 桶
-        /// escrow 验证面的 ComputeContext 消费仍由 GameSession 内部
-        /// 承载）。
+        // escrow 验证面的 ComputeContext 消费仍由 GameSession 内部
+        // 承载）。
         Ok(Self::from_game(
             GameSession::restore_with_compute(slot, crate::ComputeContext::shared_default()?)?,
             None,

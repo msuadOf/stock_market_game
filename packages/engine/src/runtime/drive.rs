@@ -118,7 +118,7 @@ pub(crate) fn ensure_fact_owners_covered_arc(
 ) -> Result<(), String> {
     // 复核登记项收口（sealtop 批）：覆盖校验只消费 local 下标——Arc
     // 分片形态直接迭代（零 GroupAccount 深拷贝；原逐条值形态重组=每拍
-    /// 无谓拷贝税，dirty 集增大时随账户数线性放大）。
+    // 无谓拷贝税，dirty 集增大时随账户数线性放大）。
     ensure_fact_owners_covered_locals(
         fact_rec,
         snapshots
@@ -506,7 +506,7 @@ impl RuntimeDriver {
         let npcs = ids.len();
         let personal_presence = session.runtime_personal_presence()?;
         // 翻转批组参数化：账户矩阵按组切分（[group][local]——id_map 序
-        /// 均分、尾组余位零填充；单组 n_groups=1 时与原全量单行等价）。
+        // 均分、尾组余位零填充；单组 n_groups=1 时与原全量单行等价）。
         let n_groups = n_groups.max(1);
         let per_group = npcs.div_ceil(n_groups);
         fn split_rows<T: Clone>(
@@ -620,16 +620,16 @@ impl RuntimeDriver {
         }
         // D5 restore 链最后一层（Sol 终审四审预留族重述）：desk 种子的
         // 组端资源预留——**restore 账本与 adopt 旧簿两形态统一**。基线
-        /// 投影（accounts_projection）读的是 session 公开面：现金=组现金
-        /// +在途买占用（escrow 加回）、持仓=组 shares+在途卖余量（qty
-        /// 含在途口径）。组端严格口径须在基线之上反向扣除：
-        /// · 买种子 purse → 组现金扣减 + buy_purse_held 登记（公开现金
-        ///   =组现金+占用重建，face 不变；adopt 形态此前不扣——费用
-        ///   边际滞留组内可再消费）；
-        /// · 卖种子余量 → 组 shares 扣减 + pending_sell_qty 登记（face
-        ///   不变；restore 形态此前在 face 之上**加**余量=双计使可卖
-        ///   翻倍——resting_sell_orders_reserve 显红；adopt 形态不扣
-        ///   则成交后组侧幻影股，日结全量回写复活已卖持仓）。
+        // 投影（accounts_projection）读的是 session 公开面：现金=组现金
+        // +在途买占用（escrow 加回）、持仓=组 shares+在途卖余量（qty
+        // 含在途口径）。组端严格口径须在基线之上反向扣除：
+        // · 买种子 purse → 组现金扣减 + buy_purse_held 登记（公开现金
+        //   =组现金+占用重建，face 不变；adopt 形态此前不扣——费用
+        //   边际滞留组内可再消费）；
+        // · 卖种子余量 → 组 shares 扣减 + pending_sell_qty 登记（face
+        //   不变；restore 形态此前在 face 之上**加**余量=双计使可卖
+        //   翻倍——resting_sell_orders_reserve 显红；adopt 形态不扣
+        //   则成交后组侧幻影股，日结全量回写复活已卖持仓）。
         let desk_order_seeds =
             resting_order_seeds_from_session(session, &ids, per_group, static_handover)?;
         {
@@ -682,8 +682,8 @@ impl RuntimeDriver {
         spec.initial_committed_tick = session.tick();
         spec.civil_start_date = session.civil_date();
         // Sol 终审四审 A2（restore 重复日结）：恢复形态的上一拍若为
-        /// 日结拍（tick%tpd==0——session 日终迁移已完成）即视为该交易
-        /// 日已日结，防首拍 run_ticks 自动日结重复归档日 K。
+        // 日结拍（tick%tpd==0——session 日终迁移已完成）即视为该交易
+        // 日已日结，防首拍 run_ticks 自动日结重复归档日 K。
         let restore_tpd = u64::from(session.export_setup_for_runtime().ticks_per_day).max(1);
         spec.initial_last_day_end_tick = if session.tick() > 0 && session.tick() % restore_tpd == 0
         {
@@ -711,8 +711,8 @@ impl RuntimeDriver {
         // （种子已在预留段先行计算——组端现金/持仓扣减与之同源。）
         spec.initial_desk_orders = desk_order_seeds;
         // D5 restore 等价：tick 价格历史投影（save fault2010 长度面）+
-        /// 日内行情聚合种子（最后一层——活动 K/日内高低调/分钟收盘/昨收，
-        /// 续拍在 save 聚合之上演进）。
+        // 日内行情聚合种子（最后一层——活动 K/日内高低调/分钟收盘/昨收，
+        // 续拍在 save 聚合之上演进）。
         {
             let market_seeds = session.runtime_market_seeds();
             for (idx, (stock_spec, history)) in spec
@@ -791,7 +791,7 @@ impl RuntimeDriver {
             #[cfg(test)]
             personal_installs: 0,
             // 首拍全量（初始镜像同步——构造后首 step 建立 session 侧
-            /// 组权威镜像基线；此后按事实 dirty 增量）。
+            // 组权威镜像基线；此后按事实 dirty 增量）。
             force_full_accounts: true,
             #[cfg(test)]
             account_writes: 0,
@@ -819,9 +819,9 @@ impl RuntimeDriver {
             last_library_version: None,
             resting_echo_prev: None,
             // Sol 终审四审 A2 修正：initial 记**净预置史**（构造时长度−
-            /// 构造时 session.day）——restore 场景构造期长度已含已归档日
-            /// （361=360 预置+1 已归档），直接当 initial 会使归档上限
-            /// 双计（limit=361+day → push 超前一条，档校验 fault2064）。
+            // 构造时 session.day）——restore 场景构造期长度已含已归档日
+            // （361=360 预置+1 已归档），直接当 initial 会使归档上限
+            // 双计（limit=361+day → push 超前一条，档校验 fault2064）。
             initial_candle_history_len: session
                 .runtime_candle_histories()
                 .into_iter()
@@ -942,7 +942,7 @@ impl RuntimeDriver {
             for fact in &trades {
                 // 归一化身份：maker≡卖方、taker≡买方（Sol 七审修复 2：
                 // 此前按原始 taker_side 判买腿——主动卖时把卖方当买方，
-                /// 真买方缺 VWAP 退用上一价，经历入场价错）。
+                // 真买方缺 VWAP 退用上一价，经历入场价错）。
                 let legs = [(fact.taker, true), (fact.maker, false)];
                 for ((g, local), is_buy) in legs {
                     if is_buy {
@@ -1000,7 +1000,7 @@ impl RuntimeDriver {
         let fact_rec = self.world.report_log.last().cloned();
         let _ = self.id_map.len();
         // 【P0 画像】acct_echo_collect 段（残余=发布版本分片重组；
-        /// fact_rec 的 clone 归 remainder——事件面 R4 必留）。
+        // fact_rec 的 clone 归 remainder——事件面 R4 必留）。
         let snapshots = {
             let _seg = step_profile::scope(StepSegment::AcctEchoCollect);
             let skip_all =
@@ -1015,7 +1015,7 @@ impl RuntimeDriver {
                 }
                 let n_groups = self.world.n_groups();
                 // 归因优化：分片句柄直接借用（Arc deref）——免每拍全量
-                /// clone 重组（净机实测该 clone 占 A 税 ~140μs/tick）。
+                // clone 重组（净机实测该 clone 占 A 税 ~140μs/tick）。
                 let mut shards: GroupAccountShards =
                     vec![std::sync::Arc::new(Vec::new()); n_groups];
                 for shard in &published.groups {
@@ -1081,7 +1081,7 @@ impl RuntimeDriver {
                 .map(|r| r.desk_receipts.clone())
                 .unwrap_or_default();
             // Sol 复审修复 2：组端业务拒绝（资金/可卖/零股/竞价×市价）与
-            /// desk 回执同入事件流（IntentRejected 映射）。
+            // desk 回执同入事件流（IntentRejected 映射）。
             if let Some(r) = rec.as_ref() {
                 receipts.extend(r.group_rejections.iter().copied());
             }
@@ -1100,8 +1100,8 @@ impl RuntimeDriver {
                 &mut self.next_seq,
             )?;
             // B2 件 5：个人确认派生（同 seq 域——receipt_id=trade_seq×2+
-            /// leg；owner→AccountId 缺失=名册投影缺口，显式失败）。空批
-            /// 不触碰游标（take_seq 契约），此处 len 基准自洽。
+            // leg；owner→AccountId 缺失=名册投影缺口，显式失败）。空批
+            // 不触碰游标（take_seq 契约），此处 len 基准自洽。
             {
                 let trade_count = trades.len() as u64;
                 let first_trade_seq = self.next_seq + 1 - trade_count;
@@ -1290,8 +1290,8 @@ impl RuntimeDriver {
     ) -> Result<(), String> {
         self.ensure_session_authority(session)?;
         // 相位基准=本拍**开始时**相位（tick−1 的 day_tick——与旧管线
-        /// finish_market_data 的 boundary 政策同拍口径；用步后 tick 判
-        /// 会使转连续过渡拍早一拍产 PriceTick，parity 对照显红）。
+        // finish_market_data 的 boundary 政策同拍口径；用步后 tick 判
+        // 会使转连续过渡拍早一拍产 PriceTick，parity 对照显红）。
         let setup = session.export_setup_for_runtime();
         let tpd = setup.ticks_per_day.max(1);
         let day_tick_before = session.tick().saturating_sub(1) % tpd;
@@ -1405,7 +1405,7 @@ impl RuntimeDriver {
                 continue;
             };
             // P2-2b：首写前值入 undo（安装失败回滚源——替代 baseline
-            /// 全名册账户快照）。
+            // 全名册账户快照）。
             session.runtime_record_account_undo(id);
             #[cfg(test)]
             {
@@ -1424,8 +1424,8 @@ impl RuntimeDriver {
                 Vec::new();
             for (idx, &qty_raw) in acct.shares.iter().enumerate() {
                 // Sol 整改 3：qty 含在途卖余量（旧管线口径=在手+在途
-                /// ——qty 口径差收口；session 域 cost_price/权益观察
-                /// 因此与组读面同源）。
+                // ——qty 口径差收口；session 域 cost_price/权益观察
+                // 因此与组读面同源）。
                 let qty =
                     qty_raw.saturating_add(acct.pending_sell_qty.get(idx).copied().unwrap_or(0));
                 let code = crate::StockId(idx as u32);
@@ -1443,14 +1443,14 @@ impl RuntimeDriver {
                 let is_new_hold = qty > 0 && !merged.contains_key(&code);
                 if is_new_hold {
                     // Sol 终审修复 1c：VWAP 查找用真实组号（此前写死
-                    /// group=0——多组下组 0 的 VWAP 误配给其他组账户）。
+                    // group=0——多组下组 0 的 VWAP 误配给其他组账户）。
                     let entry = buy_vwap
                         .get(&(g as super::GroupIdx, local, idx as super::StockIdx))
                         .copied()
                         .or_else(|| last_prices.get(idx).copied())
                         .unwrap_or(1);
                     // D5 #4：首买经历 init 延后到个人态回写之后（组权威
-                    /// 经验行整态覆盖会冲掉先行写入——同拍投影段同式）。
+                    // 经验行整态覆盖会冲掉先行写入——同拍投影段同式）。
                     pending_hold_inits.push((id, code, qty, entry));
                 }
                 merged.insert(
@@ -1465,16 +1465,16 @@ impl RuntimeDriver {
             }
             if let Some(engine_acct) = session.fixture_account_mut(&id) {
                 // Sol 五审：公开现金=组现金+在途买占用（挂出不减、成交
-                /// 实付减、终结不变——旧管线 reservation 观同口径；组
-                /// 内部 purse 所有权口径不因此改变）。
+                // 实付减、终结不变——旧管线 reservation 观同口径；组
+                // 内部 purse 所有权口径不因此改变）。
                 engine_acct
                     .fixture_set_cash(Money::from_cents(acct.cash + acct.buy_purse_held_cents));
                 engine_acct.fixture_set_positions(merged);
             }
             // Sol 终审修复 1b：本账户的首买经历 init 收集并入成员槽
-            ///（Q2 Seal 后组回写（发布分片）已含本拍全部成交——
-            /// 回写段是 init 的唯一时机，丢弃形成"有持仓、无经历"，
-            /// 破坏 fault2038 保存校验）。
+            //（Q2 Seal 后组回写（发布分片）已含本拍全部成交——
+            // 回写段是 init 的唯一时机，丢弃形成"有持仓、无经历"，
+            // 破坏 fault2038 保存校验）。
             self.pending_hold_inits.extend(pending_hold_inits);
         }
     }
@@ -1646,7 +1646,7 @@ impl RuntimeDriver {
     pub fn freeze_retained_trading_day(&mut self, session: &mut GameSession) -> Result<(), String> {
         self.ensure_session_authority(session)?;
         // B2 复核建议 3：同日二次调用幂等（step ends_day 已冻结后手动
-        /// day_end 再入——末条==当日即跳过，防 day-1 bars 冻入 day-2）。
+        // day_end 再入——末条==当日即跳过，防 day-1 bars 冻入 day-2）。
         if session
             .retained_market_days()
             .last()
@@ -1821,7 +1821,7 @@ impl RuntimeDriver {
             entries: Vec::new(),
         };
         // 股数不一致（世界重建/构造形态变化）：快照面错配，退全量
-        ///（不静默截断差分）。前置判——zip 截断不产生半截差分。
+        //（不静默截断差分）。前置判——zip 截断不产生半截差分。
         if prev.len() != current.len() {
             self.resting_echo_prev = Some(current.to_vec());
             return super::protocol::RestingDelta {
@@ -1831,8 +1831,8 @@ impl RuntimeDriver {
         }
         for (stock, (cur_book, prev_book)) in current.iter().zip(prev.iter()).enumerate() {
             // 键控差分（O(n)——首版逐项线性扫 O(n²) 在 resting ~4700 时
-            /// 每股每拍 2200 万次比较，1000 tick 长跑 271→135 显著回退，
-            /// 实测打回）。
+            // 每股每拍 2200 万次比较，1000 tick 长跑 271→135 显著回退，
+            // 实测打回）。
             let mut prev_index: std::collections::HashMap<
                 (super::Owner, crate::orderbook::Side, u64),
                 &super::protocol::RestingFact,
@@ -1938,10 +1938,10 @@ impl RuntimeDriver {
         civil_date: crate::calendar::CivilDate,
     ) -> Result<Vec<crate::session::personal_trade_history::PendingTradeReceipt>, String> {
         // Sol 收官再复核阻断 3（最终形态）：分段编号分段取——竞价事件
-        ///（DayBoundary 之前输出）先入独立缓冲；撤单事件编号**延迟**到
-        /// DayBoundary 序号分配之后（collect_drained_lifecycle_after_
-        /// boundary）。此前一次性编号使 DayBoundary(24) 晚于撤单(23)
-        /// 而输出在其前——seq 非单调。
+        //（DayBoundary 之前输出）先入独立缓冲；撤单事件编号**延迟**到
+        // DayBoundary 序号分配之后（collect_drained_lifecycle_after_
+        // boundary）。此前一次性编号使 DayBoundary(24) 晚于撤单(23)
+        // 而输出在其前——seq 非单调。
         // 日界批：收盘成交事件段先于竞价事实编号（ Drain 缓冲按类分组、
         /// 无法与 AuctionTick/Completed 逐条交错——真实序"指示价→成交
         /// →完成"以类段近似，台账登记）。
@@ -1952,7 +1952,7 @@ impl RuntimeDriver {
 
     /// 日界批：Drain 收盘竞价成交 → Trade 事件（DayBoundary 之前编号）
     /// + 个人确认派生（与每拍事件组装同式：receipt_id=trade_seq×2+leg，
-    /// owner→AccountId 缺失显式失败）。
+    ///   owner→AccountId 缺失显式失败）。
     fn project_drained_day_trades(
         &mut self,
         civil_date: crate::calendar::CivilDate,
@@ -2083,15 +2083,15 @@ impl RuntimeDriver {
         upper_limits: &[i64],
     ) -> Result<super::type_aliases::RoutedExternalIntents, String> {
         // Sol 终审修复 1c 同族：多组名册的 owner→(组, 组内 local) 换算
-        ///（此前全局下标直接当 local——双组下组 1 账户的单被发给组 0
-        /// 的越界 local，tick 失败）。产物按组号分桶，定向发送。
+        //（此前全局下标直接当 local——双组下组 1 账户的单被发给组 0
+        // 的越界 local，tick 失败）。产物按组号分桶，定向发送。
         let n_groups = self.world.n_groups();
         let mut ops: Vec<Vec<super::decision::PendingOp>> = vec![Vec::new(); n_groups];
         let mut cancels: Vec<Vec<(super::LocalIdx, super::StockIdx, u64)>> =
             vec![Vec::new(); n_groups];
         for r in intents {
             // D5 终程：Cancel 意图路由（OrderId 低 48 位=desk serial——
-            /// 组端直转 DeskIn::Cancel；撤单窗/存在性由 desk 权威判定）。
+            // 组端直转 DeskIn::Cancel；撤单窗/存在性由 desk 权威判定）。
             if let crate::Intent::Cancel { code, id } = &r.intent {
                 let (g, local) = self.owner_slot(r.owner)?;
                 cancels[g as usize].push((
@@ -2126,7 +2126,7 @@ impl RuntimeDriver {
                     continue;
                 }
                 // purse 最坏情况=日涨停（与 decision.rs intent_to_pending
-                /// 的 NPC 市价路径同口径，F §1.5）。
+                // 的 NPC 市价路径同口径，F §1.5）。
                 ops[g as usize].push(super::decision::PendingOp {
                     local,
                     stock: code.0 as super::StockIdx,
@@ -2145,11 +2145,11 @@ impl RuntimeDriver {
                 }
                 // 符号价（sol-103 上报项 2 附带修复）：按变体正向路由——
                 // 此前 `_ =>` 把 Lowest 也折叠成 Highest（玩家 Lowest 卖
-                /// 会解析到涨停）。purse 最坏情况（Sol 复审修复 4，
-                /// ADR-0022 裁定）：Highest=日涨停；**Lowest=日跌停**
-                /// （Lowest 买等效跌停限价单，永远不可能高于跌停成交，
-                /// 预留跌停即足够——F §1.5"统一涨停"属过度预留，已按
-                /// 裁定对齐并同步 F 文档注记）。
+                // 会解析到涨停）。purse 最坏情况（Sol 复审修复 4，
+                // ADR-0022 裁定）：Highest=日涨停；**Lowest=日跌停**
+                // （Lowest 买等效跌停限价单，永远不可能高于跌停成交，
+                // 预留跌停即足够——F §1.5"统一涨停"属过度预留，已按
+                // 裁定对齐并同步 F 文档注记）。
                 crate::strategy::LimitPrice::Highest => {
                     (super::protocol::RoutedPrice::Highest, upper)
                 }
@@ -2163,8 +2163,8 @@ impl RuntimeDriver {
                 }
             };
             // D5 组端校验：qty=0 意图路由层拒收（desk 侧为防御性 panic
-            /// ——组端先验，拒收事件入本拍事件流——旧管线 InvalidQuantity
-            /// 回执的 runtime 等价）。
+            // ——组端先验，拒收事件入本拍事件流——旧管线 InvalidQuantity
+            // 回执的 runtime 等价）。
             if *qty == 0 {
                 self.pending_rejections.push((*code, r.owner));
                 continue;
@@ -2768,9 +2768,9 @@ impl RuntimeDriver {
         let history_len = setup.history_len;
         let tick = session.tick();
         // D5 存档对齐：完成连续 tick 数按 tick 推导（tick/tpd 替代
-        /// state.day——日界安装序在 install 之后时 day 尚未推进，而 save
-        /// 校验口径（persistence.rs）以含日界的绝对 tick 计——两序下
-        /// tick 推导恒一致）。
+        // state.day——日界安装序在 install 之后时 day 尚未推进，而 save
+        // 校验口径（persistence.rs）以含日界的绝对 tick 计——两序下
+        // tick 推导恒一致）。
         let day = tick / tpd.max(1);
         let continuous_per_day = tpd.saturating_sub(auction).saturating_sub(closing);
         let completed_cont =
@@ -2811,10 +2811,10 @@ impl RuntimeDriver {
             }
             session.set_runtime_minute_closes(&code, merged);
             // B2：分钟K桶镜像安装——**增量追加**（位置合并的低拷贝形态：
-            /// 跨日 desk 已 roll 清桶/暂存（P1-6 同因），session 侧保留
-            /// 当日桶直到日结冻结后清——desk 列表恒为镜像尾部延续；
-            /// 镜像内不再重建整 Vec——性能配对归因项：每 tick 全量
-            /// 重建曾占 ~100μs/tick）。
+            // 跨日 desk 已 roll 清桶/暂存（P1-6 同因），session 侧保留
+            // 当日桶直到日结冻结后清——desk 列表恒为镜像尾部延续；
+            // 镜像内不再重建整 Vec——性能配对归因项：每 tick 全量
+            // 重建曾占 ~100μs/tick）。
             let skip_bars = session.runtime_minute_bars(&code).len();
             session.runtime_append_minute_bars(
                 &code,
@@ -2828,8 +2828,8 @@ impl RuntimeDriver {
         }
         // P1-10（Sol）：注意力候选真实写回——组线程 next_due 是调度
         // 权威（替换"推到 tick"的假迁移）。P2-3e：生产安装段改稀疏上行
-        ///（只回本 tick 演进位；非演进位 session 镜像==组权威——不变式
-        /// 同 belief P2-2a。B fixture due≈20-40/tick vs 名册 20000）。
+        //（只回本 tick 演进位；非演进位 session 镜像==组权威——不变式
+        // 同 belief P2-2a。B fixture due≈20-40/tick vs 名册 20000）。
         // 【P0 画像】attention_heap 段（D6：稀疏收集 + heap 全名册镜像
         /// 重建——set_runtime_attention 内 O(名册) collect）。
         {
@@ -2924,28 +2924,28 @@ impl RuntimeDriver {
             // 批复）：归档权收归 session 日终迁移（commit_active）唯一
             // 承载。本函数只承载 C1（active 装载/占位）与 C3（清空）。
             // C3（方案 B）：active 清空仅两源——迁移后补装
-            /// （post_day_end）与**迁移已执行后的**新日申报窗。日结拍
-            /// 的常规 install（先于 ends_day 迁移执行）不得清当日
-            /// active（session active 仍持当日终态，是日终迁移
-            /// commit_active 的唯一归档输入；此处清空会使日界静点丢
-            /// 当日 K——fault2064 少条形态）。
+            // （post_day_end）与**迁移已执行后的**新日申报窗。日结拍
+            // 的常规 install（先于 ends_day 迁移执行）不得清当日
+            // active（session active 仍持当日终态，是日终迁移
+            // commit_active 的唯一归档输入；此处清空会使日界静点丢
+            // 当日 K——fault2064 少条形态）。
             let active_must_be_empty = post_day_end || (day_tick < auction_entry && !ends_day);
             if active_must_be_empty {
                 session.clear_active_candle_for_runtime(&code);
             }
             // 无成交日的**占位 K**（旧管线 mark_candle(None, time, last, 0)
-            /// 占位语义——日终 commit 归档占位 K，档校验不因无交易日缺条
-            /// fault2064）。desk active 仅在成交时建立——连续段缺席时以
-            /// 收束点 last_price 合成（发布版本同源值）。
-            /// W3 缺陷 2 修复：占位 K 只补**缺失**场景，不得覆盖已有
-            /// 活动 K 的量/额/笔数。占位形态两源：①发布版本 view.daily_
-            /// active 为 None；②desk 行情收尾（`finish_round` 的 candle
-            /// `get_or_insert`——复核修正归因，原注释误写 snapshot_
-            /// market）对新日零占位重建（日界拍 roll_day 归档真实 K 后
-            /// 立即发生）——view.daily_active=Some 但 v=0。两者同属占位。
-            /// session 侧已有当日活动 K（time 匹配——真实终态，日终迁移
-            /// commit_active 的唯一归档输入）时跳过安装，否则真实量/
-            /// 额/笔被零值整体覆盖归档（W3 接线实证缺陷）。
+            // 占位语义——日终 commit 归档占位 K，档校验不因无交易日缺条
+            // fault2064）。desk active 仅在成交时建立——连续段缺席时以
+            // 收束点 last_price 合成（发布版本同源值）。
+            // W3 缺陷 2 修复：占位 K 只补**缺失**场景，不得覆盖已有
+            // 活动 K 的量/额/笔数。占位形态两源：①发布版本 view.daily_
+            // active 为 None；②desk 行情收尾（`finish_round` 的 candle
+            // `get_or_insert`——复核修正归因，原注释误写 snapshot_
+            // market）对新日零占位重建（日界拍 roll_day 归档真实 K 后
+            // 立即发生）——view.daily_active=Some 但 v=0。两者同属占位。
+            // session 侧已有当日活动 K（time 匹配——真实终态，日终迁移
+            // commit_active 的唯一归档输入）时跳过安装，否则真实量/
+            // 额/笔被零值整体覆盖归档（W3 接线实证缺陷）。
             let view_is_placeholder = view.daily_active.is_none_or(|(_, _, _, _, v)| v == 0);
             if view_is_placeholder && !active_must_be_empty && !post_day_end {
                 let existing = session.runtime_active_candle(&code);
@@ -2975,7 +2975,7 @@ impl RuntimeDriver {
                 .filter(|_| !active_must_be_empty)
             {
                 // 旋钮 1（cfg(test) 突变判别）：close 篡改 +1 分——判别
-                /// 安装数据源真为发布版本读路径（合同 1 负控）。
+                // 安装数据源真为发布版本读路径（合同 1 负控）。
                 #[cfg(test)]
                 let c = if self.candle_knob_tamper_active {
                     c + 1
@@ -3039,7 +3039,7 @@ fn resting_order_seeds_from_session(
     // D5 restore 等价：runtime 形态（旧簿空）下单权威=restore 重建的信封
     // 账本（save 的 live_envelopes）——desk 种子从账本键恢复（purse 与
     // 价格面自 audit 真值直取——runtime 信封已收口真 limit/精确 escrow
-    /// purse，A2 时期的零标记/1 分占位形态退役）。
+    // purse，A2 时期的零标记/1 分占位形态退役）。
     let snapshot = session.runtime_resting_orders_snapshot();
     let from_ledger = snapshot.iter().all(|(_, orders)| orders.is_empty());
     let mut seeds: Vec<Vec<super::desk::DeskRestingSeed>> = Vec::new();
@@ -3049,7 +3049,7 @@ fn resting_order_seeds_from_session(
             .map_err(|fatal| format!("信封账本快照派生失败：{fatal:?}"))?;
         for (key, envelope) in ledger_entries {
             // Sol 终审修复 1c 同族：owner 用真实组号（此前写死组 0
-            /// ——多组 restore 的挂单被错归组 0 的同 local 账户）。
+            // ——多组 restore 的挂单被错归组 0 的同 local 账户）。
             let global = id_map
                 .iter()
                 .position(|id| *id == key.account)
@@ -3065,7 +3065,7 @@ fn resting_order_seeds_from_session(
                 seeds.resize(stock + 1, Vec::new());
             }
             // D5 restore 链最后一层：audit/ purse 数值面自 save 契约直取
-            /// （desk 权威——此前 remaining 退 1 股占位使续拍种子量错）。
+            // （desk 权威——此前 remaining 退 1 股占位使续拍种子量错）。
             // Sol 终审四审符号价族：limit=受理价真值（runtime 信封已收口
             /// 真价面）——1 分占位标记退役；非正=档损坏，显式失败（此前
             /// 占位使 restore 后公开簿/笼子参考价错乱——bids=[(1,100)]
@@ -3084,8 +3084,8 @@ fn resting_order_seeds_from_session(
                 0
             };
             // Sol 五审件 1：累计事实（成交额/数量/费用分项）自 audit
-            /// 直取——desk 种子归零会使续填重算最低佣金（purse 不足
-            /// 显式失败）与费用口径漂移。
+            // 直取——desk 种子归零会使续填重算最低佣金（purse 不足
+            // 显式失败）与费用口径漂移。
             let audit = envelope.audit();
             seeds[stock].push(super::desk::DeskRestingSeed {
                 owner: (g, local),
@@ -3125,8 +3125,8 @@ fn resting_order_seeds_from_session(
     // (stock, 0) 身份——组端 Cancel/释放按 order_serial 关联错乱）。
     let mut adopt_serial: u64 = 1;
     // Sol 五审件 1：adopt 单的累计事实自信封账本 join（旧簿 Order 不
-    /// 携费用分项；restore 侧 build_ledger 对每张在场委托都建有信封
-    /// ——fault2218 缺失即显式拒绝，join 恒命中）。
+    // 携费用分项；restore 侧 build_ledger 对每张在场委托都建有信封
+    // ——fault2218 缺失即显式拒绝，join 恒命中）。
     // 键 Side 无 Ord——方向入键用秩（Buy=0/Sell=1，与会话侧 side_rank 同式）。
     let ledger: std::collections::BTreeMap<
         (crate::AccountId, crate::StockId, crate::OrderId, u8),
@@ -3157,12 +3157,12 @@ fn resting_order_seeds_from_session(
                 (global % accounts_per_group.max(1)) as super::LocalIdx,
             );
             // Sol 五审复核阻断 1 修正：adopt 买腿 purse 自信封 live 直取
-            /// （=旧管线 buy_order_reservation(限价, 余量, **真实累计
-            /// 成交额**) 的精确 escrow——含按真实累计的费用边际）。此前
-            /// 按零成交额式 buy_purse_limit 计算：部分成交单的种子
-            /// purse 偏大（如 100@990 已成交、余 100@1000：种子 100_501
-            /// vs 精确 100_001），空跑存档的 verified_live 期望失配 →
-            /// fault2220。
+            // （=旧管线 buy_order_reservation(限价, 余量, **真实累计
+            // 成交额**) 的精确 escrow——含按真实累计的费用边际）。此前
+            // 按零成交额式 buy_purse_limit 计算：部分成交单的种子
+            // purse 偏大（如 100@990 已成交、余 100@1000：种子 100_501
+            // vs 精确 100_001），空跑存档的 verified_live 期望失配 →
+            // fault2220。
             let envelope = ledger
                 .get(&(
                     order.owner,
@@ -3210,8 +3210,8 @@ fn resting_order_seeds_from_session(
     Ok(seeds)
 }
 
-/// P2-4b 判别面前置（cfg(test)）：差分三面计数（Added/Removed/Changed）
-/// ——等价守卫的 fixture 前置断言数据源。
+// P2-4b 判别面前置（cfg(test)）：差分三面计数（Added/Removed/Changed）
+// ——等价守卫的 fixture 前置断言数据源。
 #[cfg(test)]
 thread_local! {
     pub static RESTING_DELTA_FACE_COUNTS: std::cell::RefCell<Option<std::sync::Arc<std::sync::Mutex<super::type_aliases::RestingDeltaFaceCounts>>>> = const { std::cell::RefCell::new(None) };

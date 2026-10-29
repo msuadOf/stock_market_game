@@ -11,7 +11,7 @@ pub(in crate::session) fn build_market_view_on(view: &SessionReadView) -> Market
     let apply_price_cage =
         view.phase() == TradingPhase::Continuous && view.setup.config.price_cage_enabled;
     // D5 attention：runtime 形态——遍历面=desk 镜像键集（session
-    /// markets 恒空簿；market 读面（价格笼子等）经 Option 兜底）。
+    // markets 恒空簿；market 读面（价格笼子等）经 Option 兜底）。
     let runtime_mirrored = !view.desk_book_mirror.is_empty();
     let mirror_ref = view.desk_book_mirror;
     let stocks = view.compute.parallel(|| {
@@ -73,7 +73,7 @@ pub(in crate::session) fn build_market_view_on(view: &SessionReadView) -> Market
                 0.0
             };
             // D5 attention：runtime 形态（desk 镜像在位）——公开面/
-            /// 最新价自镜像（相位+截点门禁；session market 恒空簿）。
+            // 最新价自镜像（相位+截点门禁；session market 恒空簿）。
             let (public, mirror_last) = match view.desk_book_mirror.get(code) {
                 Some(mirror) => (
                     super::snapshot::project_mirror_public_book(view.phase(), mirror),

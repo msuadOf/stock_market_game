@@ -1240,11 +1240,11 @@ fn epoch_alignment_accepted_account_personal_rng_terminal_is_exact() {
     let mut twin = GameSession::restore(&slot).unwrap();
     twin.rebind_compute_for_verification(crate::compute::ComputeContext::with_workers(1).unwrap());
     // D5 双轨同基适配：live 轨经 step_frame（candidate 投影契约——恒走
-    /// 旧管线）；twin 的 step 在 ENGINE_STEP_RUNTIME 下走 std-thread
-    /// runtime，双轨异管线使"冻结输入确定函数"的逐位断言结构性破裂。
-    /// twin 改经 step_pipeline_contract（同一旧管线入口）恢复同基；
-    /// runtime 侧的等价锚=retail 链 restore 双轨（public_step_consumes_
-    /// retail_beliefs 组内同 rng 派生式）承载。
+    // 旧管线）；twin 的 step 在 ENGINE_STEP_RUNTIME 下走 std-thread
+    // runtime，双轨异管线使"冻结输入确定函数"的逐位断言结构性破裂。
+    // twin 改经 step_pipeline_contract（同一旧管线入口）恢复同基；
+    // runtime 侧的等价锚=retail 链 restore 双轨（public_step_consumes_
+    // retail_beliefs 组内同 rng 派生式）承载。
     if crate::runtime::step_runtime_enabled() {
         twin.step_pipeline_contract().unwrap();
     } else {

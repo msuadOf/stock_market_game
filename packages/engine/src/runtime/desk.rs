@@ -1329,7 +1329,7 @@ impl DeskState {
             return Ok(());
         }
         // 涨跌停带（闭区间）与价格笼子。市价按纯带校验（Sol 复审
-        /// 修复 1：保护边界不含笼子——笼子内限价与带外拒收口径不变）。
+        // 修复 1：保护边界不含笼子——笼子内限价与带外拒收口径不变）。
         let cage = self.config.price_cage_enabled;
         let (down, up) = if is_market {
             self.price_bound_for(side, tick, false)?
@@ -1338,8 +1338,8 @@ impl DeskState {
         };
         if price < down || price > up {
             // Sol 终审四审价格族：笼子内限价的带内越界=笼子拒收（区别
-            /// 于涨跌停带外）——两 kind 分开映射引擎事件域的两个
-            /// RejectionReason（PriceCageExceeded/LimitExceeded）。
+            // 于涨跌停带外）——两 kind 分开映射引擎事件域的两个
+            // RejectionReason（PriceCageExceeded/LimitExceeded）。
             let band = self.price_bound_for(side, tick, false)?;
             let kind = if price >= band.0 && price <= band.1 {
                 ReceiptKind::PriceCageExceeded
@@ -1376,9 +1376,9 @@ impl DeskState {
             before
         };
         // Sol 三轮修复 2（即时单序号推进）：申报取号即消费（A 股语义：
-        /// 每笔申报消耗一个序号）——此前仅在挂簿路径（rest_inner）推进，
-        /// 即成/即撤的即时单不推进，同账户同股连续两笔空盘市价单产生
-        /// **同一订单 ID** 的两条 Cancelled，后续挂簿单复用该 ID。
+        // 每笔申报消耗一个序号）——此前仅在挂簿路径（rest_inner）推进，
+        // 即成/即撤的即时单不推进，同账户同股连续两笔空盘市价单产生
+        // **同一订单 ID** 的两条 Cancelled，后续挂簿单复用该 ID。
         let order_ref = (self.setup.stock, self.next_serial);
         // Sol 六审收官复核阻断 1：place 取号同守 2^32 checked（v6 方案 A
         // 的"低 32 位恒等"前提——reject 路径已有，此处遗漏）。
@@ -1458,8 +1458,8 @@ impl DeskState {
                     self.rest(order);
                 } else {
                     // 市价余量不进簿：原路退回 + **显式撤销事实**（Sol
-                    /// 复审修复 2：玩家逐请求可见结果——OrderCanceled
-                    /// 的 remaining=余量，部分成交时注明撤销的是余量）。
+                    // 复审修复 2：玩家逐请求可见结果——OrderCanceled
+                    // 的 remaining=余量，部分成交时注明撤销的是余量）。
                     self.note_terminated(&order, super::protocol::LifecycleKind::Cancelled);
                     #[cfg(feature = "simulation-diagnostics")]
                     self.note_causal(super::diagnostics::DeskCausalKind::MarketRemainder {
@@ -1773,7 +1773,7 @@ impl DeskState {
         .cents();
         // purse 防御：不足=组端预留口径 bug（purse 应含费用上限），显式失败不静默负数。
         // D5 adopt 例外：purse=0 的单=构造期迁入的旧簿在途单（无 purse
-        /// 预留——组端现金实扣走外来成交落账面，Sol 六/七审外来路径），
+        // 预留——组端现金实扣走外来成交落账面，Sol 六/七审外来路径），
         // purse 记账维持 0（不透支簿面）。
         let adopt_foreign_buy = buy_purse_before == 0;
         let buy_purse_after = if adopt_foreign_buy {
@@ -1801,12 +1801,12 @@ impl DeskState {
         let charged = seller_charge(nominal_after, sell_charged_before, Money::from_cents(value))
             .map_err(|_| over("卖腿费用分配失败"))?;
         // 应用到 taker/maker 副本（写回簿/订单）。买腿 charged 累计=
-        /// **边际**口径（buy_commission_delta/buy_transfer_delta——与
-        /// purse 扣减同源；多笔部分成交后 telescoping 恰等于累计
-        /// nominal，兑现 ledger 审计的 "Buy charged==nominal" 契约。
-        /// Sol 五审复核阻断 2 修正：此前按每笔完整 nominal 叠加，两笔
-        /// 各 500 后 charged=1000 > nominal(累计)→verified_live 拒绝 →
-        /// fault2220）。
+        // **边际**口径（buy_commission_delta/buy_transfer_delta——与
+        // purse 扣减同源；多笔部分成交后 telescoping 恰等于累计
+        // nominal，兑现 ledger 审计的 "Buy charged==nominal" 契约。
+        // Sol 五审复核阻断 2 修正：此前按每笔完整 nominal 叠加，两笔
+        // 各 500 后 charged=1000 > nominal(累计)→verified_live 拒绝 →
+        // fault2220）。
         if taker.side == Side::Buy {
             taker.filled_value += value;
             taker.filled_qty += qty;
@@ -2324,9 +2324,9 @@ impl DeskState {
             });
         }
         // D5 off-by-one 对齐（含判定序）：撤单窗口门禁先于存在性判定
-        /// （旧管线相位门禁在路由层先拒——PreOpen 的 Cancel 不论单存否
-        /// 一律 NotCancelable；desk 先查存在会把窗口关闭误报成
-        /// OrderNotFound/已全成）。
+        // （旧管线相位门禁在路由层先拒——PreOpen 的 Cancel 不论单存否
+        // 一律 NotCancelable；desk 先查存在会把窗口关闭误报成
+        // OrderNotFound/已全成）。
         if !self.setup.allows_cancel(tick.saturating_sub(1)) {
             self.receipts_out[owner.0 as usize].push(DeskReceipt {
                 order,
@@ -2717,9 +2717,9 @@ impl DeskState {
             "跨日暂存桶未被日结消费（连续日结缺失）"
         );
         // 未跨日手动日结已捎带过（bars_shipped_today）——不再暂存（防
-        /// 下次日结双计）且**清 live**（复核终核登记 a：day-1 仅 565 一桶
-        /// 的窄形态会与 day-2 同桶静默合并——多数形态键回退显式 Err，窄
-        /// 形态必须同样终结）；生产日末 Drain 在 roll 之前尚未捎带。
+        // 下次日结双计）且**清 live**（复核终核登记 a：day-1 仅 565 一桶
+        // 的窄形态会与 day-2 同桶静默合并——多数形态键回退显式 Err，窄
+        // 形态必须同样终结）；生产日末 Drain 在 roll 之前尚未捎带。
         if !self.bars_shipped_today {
             let m = &mut self.market;
             self.rolled_day_bars = Some(std::mem::take(&mut m.minute_bars));
@@ -2793,8 +2793,8 @@ impl DeskState {
             self.execute_opening_clearing()?;
         }
         // D5 attention 公开可见性门禁：连续→收盘竞价切换时点记公开截点
-        ///（老单公开、竞价新单隐藏——旧管线 set_matching_mode 的 cutoff
-        /// 语义等价，desk 权威域承载）。
+        //（老单公开、竞价新单隐藏——旧管线 set_matching_mode 的 cutoff
+        // 语义等价，desk 权威域承载）。
         // 【刀 2a 复核建议①锚定】本写点不 bump book_ver——正确性依赖
         /// "cutoff 变化必然伴随相位切换"的隐式论证：设置只发生在进
         /// ClosingAuction 首 tick（last_phase≠Closing→相位键已变→缓存
@@ -2837,8 +2837,8 @@ impl DeskState {
             return;
         }
         // 开盘清算已完成的拍不再产申报窗指示价（09:25 清算后申报窗
-        /// 结束——旧管线同语义；此前清算拍多产一条尾随指示价，
-        /// step_skeleton 取证实证 a3 t1/a6 t3）。
+        // 结束——旧管线同语义；此前清算拍多产一条尾随指示价，
+        // step_skeleton 取证实证 a3 t1/a6 t3）。
         if phase == DeskPhase::CallAuction && self.opening_cleared {
             return;
         }
@@ -2914,10 +2914,10 @@ impl DeskState {
         let (down_sell, _) =
             self.price_bound_for(Side::Sell, tick, self.config.price_cage_enabled)?;
         // D5 attention 公开可见性门禁（A 股制度面）：开盘集合竞价申报窗
-        /// 公开簿=空（不揭示买卖盘）；收盘竞价只揭示截点前老单；盘前/
-        /// 连续全公开（竞价清算后的揭示=簿全量）。desk 广播是组内观察
-        /// （signal/imbalance）与路由（best/depth）的输入——公开面与
-        /// 真实簿分离。
+        // 公开簿=空（不揭示买卖盘）；收盘竞价只揭示截点前老单；盘前/
+        // 连续全公开（竞价清算后的揭示=簿全量）。desk 广播是组内观察
+        // （signal/imbalance）与路由（best/depth）的输入——公开面与
+        // 真实簿分离。
         let phase = self.setup.phase_at(tick);
         let public_orders: Vec<&DeskOrder> = match phase {
             DeskPhase::CallAuction => Vec::new(),
@@ -2970,7 +2970,7 @@ impl DeskState {
             minute_bars: std::sync::Arc::new(self.market.minute_bars.clone()),
             // D3a-2 观察基：已完成日 K 尾部 250（不过滤）+绝对计数。
             // 刀 2a：尾部 250 直取（原全历史 collect 再 drain 头部——
-            /// O(全历史)/轮×每股；361 日档每轮多遍历 111 条）。
+            // O(全历史)/轮×每股；361 日档每轮多遍历 111 条）。
             daily_bars: {
                 let candles = &self.market.candles;
                 let start = candles.len().saturating_sub(250);
@@ -2985,8 +2985,8 @@ impl DeskState {
                 .as_ref()
                 .map(|c| (c.open, c.high, c.low, c.close, c.volume)),
             // candle 退役刀 1：与 candle_projection 的 active 8 元组第 7/8
-            /// 位同源（market.turnover_today/trade_count——发布面与对账
-            /// 面的 stats 一致性由构造点单点保证）。
+            // 位同源（market.turnover_today/trade_count——发布面与对账
+            // 面的 stats 一致性由构造点单点保证）。
             daily_active_turnover_cents: self.market.turnover_today,
             daily_active_trade_count: self.market.trade_count,
             daily_total_completed: self.market.candles.len() as u64,
@@ -3036,9 +3036,9 @@ impl DeskState {
         // 零成交也建立占位 K（对齐 record_trade_or_mark 的 or_insert 语义）。
         let last = self.market.last_price;
         // 刀 2a 值敏感失效：finish_round 每轮跑（幂等写为主）——只在
-        /// view 依赖域内容实际变化时推进 market_ver（占位 K 建立/close
-        /// 变化/recent 窗口滑动不同值/分钟回填），保证零成交稳态轮的
-        /// view 缓存命中。判定收敛到函数末尾统一 bump。
+        // view 依赖域内容实际变化时推进 market_ver（占位 K 建立/close
+        // 变化/recent 窗口滑动不同值/分钟回填），保证零成交稳态轮的
+        // view 缓存命中。判定收敛到函数末尾统一 bump。
         let candle_close_changed = self.market.candle.as_ref().is_none_or(|c| c.close != last);
         let window_full = self.market.recent_prices.len() >= self.setup.history_len;
         let popped_front = if window_full {
@@ -3155,13 +3155,13 @@ impl DeskState {
     /// 强撤全部挂单（Drain 日终清簿）。收盘竞价先一次清算再清余单。
     fn drain_all(&mut self) -> Result<Option<(i64, u64)>, RuntimeError> {
         // Sol 六审段 1.2 取证修复（相位口径）：日结 Drain 拍的
-        /// phase_at 已翻入新日 tick0——收盘清算判定按**上一拍相位**
-        /// （phase_at(cur_tick−1)，与 place() 的受理窗 N−1 基准同式）
-        /// 且不与开盘清算共用 opening_cleared 标记（开盘已清算的局
-        /// 收盘 drain 会被误拦——a3 t19 Completed 缺失的第二根因）。
-        /// 此前按 phase_at(cur_tick)+!opening_cleared 判定使日结拍恒走
-        /// 强撤分支：末拍 AuctionTick/AuctionCompleted 全缺
-        /// （a0/a3/a6 t19 取证实证）。
+        // phase_at 已翻入新日 tick0——收盘清算判定按**上一拍相位**
+        // （phase_at(cur_tick−1)，与 place() 的受理窗 N−1 基准同式）
+        // 且不与开盘清算共用 opening_cleared 标记（开盘已清算的局
+        // 收盘 drain 会被误拦——a3 t19 Completed 缺失的第二根因）。
+        // 此前按 phase_at(cur_tick)+!opening_cleared 判定使日结拍恒走
+        // 强撤分支：末拍 AuctionTick/AuctionCompleted 全缺
+        // （a0/a3/a6 t19 取证实证）。
         if self.cur_tick > 0 && self.setup.phase_at(self.cur_tick - 1) == DeskPhase::ClosingAuction
         {
             // 清算前保留真正前一交易日昨收，不能先 roll 再用当日价冒充昨收。
@@ -3186,17 +3186,17 @@ impl DeskState {
                 detail: format!("收盘清算选价失败：{e:?}"),
             })?;
             // Sol 六审段 1.2 取证修复：收盘竞价 Drain 清算补齐竞价事件
-            /// 事实（末拍 AuctionTick 指示价 + AuctionCompleted——与
-            /// execute_opening_clearing 同形态；此前 Drain 清算只撮合
-            /// 不产事实，日结拍事件流缺 AuctionTick/Completed，与旧
-            /// 管线 finish 的末拍序列不一致——step_skeleton 逐字段
-            /// 取证实证 a0/a3 t19 缺两条）。
+            // 事实（末拍 AuctionTick 指示价 + AuctionCompleted——与
+            // execute_opening_clearing 同形态；此前 Drain 清算只撮合
+            // 不产事实，日结拍事件流缺 AuctionTick/Completed，与旧
+            // 管线 finish 的末拍序列不一致——step_skeleton 逐字段
+            // 取证实证 a0/a3 t19 缺两条）。
             let (indicative, matched, imbalance) = match &selection {
                 Some(sel) => (Some(sel.price.cents()), sel.volume, sel.imbalance),
                 None => (None, 0, 0),
             };
             // 末次指示价预演（事实序：AuctionTick 先于 Completed——
-            /// 与开盘清算的 D4 注释同序）。
+            // 与开盘清算的 D4 注释同序）。
             self.auction_facts.push(super::protocol::DeskAuctionFact {
                 stock: self.setup.stock,
                 tick: self.cur_tick,
@@ -3227,13 +3227,13 @@ impl DeskState {
                 });
                 let cleared = Ok(Some((price, actual)));
                 // 清算后**继续清余单**（收盘竞价一次清算后清簿——模块
-                /// 语义；此前清算分支提前 return 使余单跨日残留，
-                /// sol3r 余 100 不退回/closing_keeps bids 不空两测显红）。
+                // 语义；此前清算分支提前 return 使余单跨日残留，
+                // sol3r 余 100 不退回/closing_keeps bids 不空两测显红）。
                 self.drain_remaining_orders();
                 return cleared;
             }
             // 空簿清算也产 Completed（清算发生、量恰为零——开盘清算
-            /// 空簿分支同语义）。
+            // 空簿分支同语义）。
             self.auction_facts.push(super::protocol::DeskAuctionFact {
                 stock: self.setup.stock,
                 tick: self.cur_tick,
@@ -3447,9 +3447,9 @@ pub fn desk_main(
         }
     }
     // D5 adopt：旧簿在途单直入初始簿（不撮合；受理事实按种子标记——
-    /// live 构造期 adopt 照记 Accepted（对齐旧管线 enqueue 后首拍交付
-    /// 面），restore 形态不重放（save 前事件历史已含，重发即重复）；
-    /// serial 序=构造期前段，与消息链首单同起 0）。
+    // live 构造期 adopt 照记 Accepted（对齐旧管线 enqueue 后首拍交付
+    // 面），restore 形态不重放（save 前事件历史已含，重发即重复）；
+    // serial 序=构造期前段，与消息链首单同起 0）。
     for seed in initial_orders {
         // D5 复核修复（Major 1）：serial 域延续（restore=原值；adopt=
         // 构造期自然序）——公开截点语义依赖 serial 单调连续。
@@ -3463,7 +3463,7 @@ pub fn desk_main(
             qty: seed.qty,
             purse: seed.purse,
             // Sol 五审件 1：累计事实随种子装载（此前归零使续填重算
-            /// 最低佣金——purse 不足/费用口径漂移）。
+            // 最低佣金——purse 不足/费用口径漂移）。
             filled_value: seed.filled_value,
             filled_qty: seed.filled_qty,
             charged_commission: seed.charged_commission,
@@ -3483,7 +3483,7 @@ pub fn desk_main(
     // D5 attention：公开截点种子（restore 链——desk 权威自此起步）。
     state.public_cutoff_serial = initial_public_cutoff;
     // D5 restore 链最后一层：日内行情聚合种子装载（save 点权威——
-    /// 续拍在 save 聚合之上演进，不再从构造零点覆盖）。
+    // 续拍在 save 聚合之上演进，不再从构造零点覆盖）。
     if let Some(seed) = initial_market {
         let m = &mut state.market;
         m.last_price = seed.last_price;
@@ -3630,7 +3630,7 @@ fn process_msg(
         DeskMsg::EchoResting => {
             // D5 envelope 投影：在途单快照（bids+asks 全量——费用
             // 累计/余量直取 desk 权威）。P2-3 后生产读面走 DeskReport
-            /// 携带；本应答保留给日结/测试的 live 收集通道。
+            // 携带；本应答保留给日结/测试的 live 收集通道。
             let orders = (*state.resting_snapshot_arc()).clone();
             if up_tx
                 .send(UpMsg::DeskResting {
@@ -4007,9 +4007,9 @@ fn process_msg(
                     #[cfg(feature = "simulation-diagnostics")]
                     drained_causal: std::mem::take(&mut state.causal_facts),
                     // 只上行 **drain 自产**的收盘竞价事实——auction_facts
-                    /// 可能残留拍内窗指示价（日结拍相位窗的 CallAuction
-                    /// 指示价，其上行随拍内 DeskReport 承载或随 Abort 丢弃；
-                    /// 混入日结帧会造成事件双载）。
+                    // 可能残留拍内窗指示价（日结拍相位窗的 CallAuction
+                    // 指示价，其上行随拍内 DeskReport 承载或随 Abort 丢弃；
+                    // 混入日结帧会造成事件双载）。
                     drained_auction: state
                         .auction_facts
                         .drain(..)
@@ -4030,14 +4030,14 @@ fn process_msg(
                         }
                     },
                     // 日界批：收盘竞价清算成交随应答上行（原随下一拍
-                    /// DeskReport 迟到——receipt civil_date 取组装时点成
-                    /// 次日；take 后缓冲清空，杜绝下一拍双报）。
+                    // DeskReport 迟到——receipt civil_date 取组装时点成
+                    // 次日；take 后缓冲清空，杜绝下一拍双报）。
                     drained_trades: std::mem::take(&mut state.trade_facts),
                     // 日界批：当日终 K（含收盘段——install 面/DayBoundary
-                    /// 事件的权威补真值源）。仅本次 Drain 实际执行了收盘
-                    /// 清算且归档后携带；closing=0 几何/未跨日
-                    /// 手动日结=None——install 面维持既有形态（不对
-                    /// 非收盘段日界补真，防预置历史/双属拍污染）。
+                    // 事件的权威补真值源）。仅本次 Drain 实际执行了收盘
+                    // 清算且归档后携带；closing=0 几何/未跨日
+                    // 手动日结=None——install 面维持既有形态（不对
+                    // 非收盘段日界补真，防预置历史/双属拍污染）。
                     drained_day_candle: state.drain_cleared_closing.take(),
                     drained_view: std::sync::Arc::new(state.build_drained_public()?),
                 })

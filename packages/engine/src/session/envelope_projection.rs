@@ -36,10 +36,10 @@ struct LiveOrderProjection<'a> {
 impl GameSession {
     pub fn project_live_envelopes(&self) -> Result<Vec<pipeline::Envelope>, StepFatal> {
         // D5 runtime 分支：信封权威=发布版本在途单观察面（P2-4 起 ledger
-        /// 每拍维护退役——运行中读派生快照）。restore 后未步进（无快照）
-        /// 回退 ledger（hydrate 的存档值——restore 链语义保持；首步建立
-        /// 快照后派生接管）。旧簿在 adopt 后不再持有在途单——以「旧簿
-        /// 无在途单」判 runtime 形态。
+        // 每拍维护退役——运行中读派生快照）。restore 后未步进（无快照）
+        // 回退 ledger（hydrate 的存档值——restore 链语义保持；首步建立
+        // 快照后派生接管）。旧簿在 adopt 后不再持有在途单——以「旧簿
+        // 无在途单」判 runtime 形态。
         let legacy_resting_empty = self
             .state
             .markets
@@ -125,13 +125,13 @@ impl GameSession {
     ) -> Result<(), StepFatal> {
         verify_fee_config_unchanged(view)?;
         // D5 restore 链最后一层连带：runtime 形态无 book 对拍面；ledger
-        /// 行自身结构校验（validate+出生守恒）承载。复核 Minor 3 修复：
-        /// 形态判定用 desk 镜像/runtime 权威标志——旧管线合法空簿（开局
-        /// /全成交）不因行为推断被静默跳过交叉核对（空簿且 ledger 非空
-        /// =runtime 恢复形态；两者皆空=旧管线空集，走原交叉核对路径）。
-        /// verified_live 的 Buy 全额预留断言不适用——runtime 行 live=
-        /// desk 实际 purse（成交扣减后的所有权模型），旧管线全额预留
-        /// 口径差已登记（D5 #3 purse 模型）。
+        // 行自身结构校验（validate+出生守恒）承载。复核 Minor 3 修复：
+        // 形态判定用 desk 镜像/runtime 权威标志——旧管线合法空簿（开局
+        // /全成交）不因行为推断被静默跳过交叉核对（空簿且 ledger 非空
+        // =runtime 恢复形态；两者皆空=旧管线空集，走原交叉核对路径）。
+        // verified_live 的 Buy 全额预留断言不适用——runtime 行 live=
+        // desk 实际 purse（成交扣减后的所有权模型），旧管线全额预留
+        // 口径差已登记（D5 #3 purse 模型）。
         let runtime_shape = !view.desk_book_mirror.is_empty()
             || (view
                 .markets

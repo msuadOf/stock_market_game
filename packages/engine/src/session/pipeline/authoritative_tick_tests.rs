@@ -244,7 +244,7 @@ fn two_npc_requests_and_player_request_share_stock_price_time_rules() {
         [OrderId(1), OrderId(2), OrderId(3)].into_iter().collect()
     );
     // D5 读面适配：runtime 下簿权威在 desk（session 旧簿恒空）——
-    /// bid_depth/resting_orders_for 断言经 desk 簿事实读面承载。
+    // bid_depth/resting_orders_for 断言经 desk 簿事实读面承载。
     if crate::runtime::step_runtime_enabled() {
         let book = session.runtime_resting_book_for_test(&code);
         let bid_total: u32 = book
@@ -685,10 +685,10 @@ fn unified_market_auction_keeps_orders_in_the_production_book_without_matching()
 #[test]
 fn unified_market_post_clearing_failure_preserves_book_mode_cash_and_shares() {
     // D5 pin+登记（candidate 证据面旧管线专有）：本用例的注入失败回滚
-    /// 断言经 step_with_commit_evidence（candidate 投影契约/Escrow 验证
-    /// ——恒走旧管线为 fallback，见 step_via_runtime doc）；runtime 的
-    /// 失败回滚=组端 Abort 可逆日志。等价锚：翻转批 batch4 civil 失败
-    /// 回滚全量对账。
+    // 断言经 step_with_commit_evidence（candidate 投影契约/Escrow 验证
+    // ——恒走旧管线为 fallback，见 step_via_runtime doc）；runtime 的
+    // 失败回滚=组端 Abort 可逆日志。等价锚：翻转批 batch4 civil 失败
+    // 回滚全量对账。
     if crate::runtime::step_runtime_enabled() {
         return;
     }
@@ -767,9 +767,9 @@ fn unified_market_post_clearing_failure_preserves_book_mode_cash_and_shares() {
 #[test]
 fn unified_market_closing_auction_uses_the_same_resting_order_lifecycle() {
     // D5 pin+登记（candidate 证据面旧管线专有）：auction_finalizers 证据
-    /// （completion/day_end passes 计数）是 step_with_commit_evidence 的
-    /// candidate 投影契约（恒走旧管线）；runtime 的竞价编排权威=desk
-    /// 相位面。等价锚：desk 竞价语义（desk_semantics_tests）+翻转批对拍。
+    // （completion/day_end passes 计数）是 step_with_commit_evidence 的
+    // candidate 投影契约（恒走旧管线）；runtime 的竞价编排权威=desk
+    // 相位面。等价锚：desk 竞价语义（desk_semantics_tests）+翻转批对拍。
     if crate::runtime::step_runtime_enabled() {
         return;
     }

@@ -437,7 +437,7 @@ mod attention_tests {
             .any(|event| matches!(event, Event::Trade { .. })));
         if crate::runtime::step_runtime_enabled() {
             // D5 读面适配：私有真簿权威=desk（session markets 恒空）——
-            /// 镜像承载唯一 book 断言。
+            // 镜像承载唯一 book 断言。
             assert_eq!(
                 game.state.desk_book_mirror[&StockId(0)].orders.len(),
                 1,
@@ -550,7 +550,7 @@ mod attention_tests {
         let mut restored = GameSession::restore(&game.save().unwrap()).unwrap();
         if crate::runtime::step_runtime_enabled() {
             // D5 断言面适配：镜像随首拍 desk 权威刷新（截点自档恢复——
-            /// 可见性截点跨档语义不变；恢复时点从静默读面变为一拍后）。
+            // 可见性截点跨档语义不变；恢复时点从静默读面变为一拍后）。
             restored.step().unwrap();
             assert_eq!(
                 restored.state.desk_book_mirror[&StockId(0)].orders[0].4,
@@ -582,7 +582,7 @@ mod attention_tests {
             restored.step().unwrap();
         }
         // D5 runtime 分支：恢复首拍 step 后 mirror 才重建（desk 权威
-        /// 在线）——日终清簿断言在末拍后成立。
+        // 在线）——日终清簿断言在末拍后成立。
         assert!(restored.snapshot().markets[&StockId(0)].bids.is_empty());
         assert!(restored.player_working_orders().is_empty());
     }
@@ -614,7 +614,7 @@ mod attention_tests {
         assert_eq!(game.phase(), TradingPhase::PreOpen);
         if runtime_mode {
             // D5 读面适配：镜像单序/价/量承载揭示后余单锚（desk 权威——
-            /// 原序不变、不重报价）。
+            // 原序不变、不重报价）。
             let order = &game.state.desk_book_mirror[&StockId(0)].orders[0];
             assert_eq!((order.2, order.3), (Money::from_cents(990), 100));
             assert_eq!(order.4, original_serial);

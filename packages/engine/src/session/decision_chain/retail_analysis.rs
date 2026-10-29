@@ -901,11 +901,11 @@ mod tests {
         session.state.attention_scheduler.clear();
         session.state.attention_scheduler.enqueue(0, id);
         // D5 #4 fixture 适配（B 类：observe 门采样非断言面）：runtime 下
-        /// 首拍快照来自构造期 desk（空簿起步，signal 面与旧管线预置簿
-        /// 不同——observe 门采样可能翻转为不观察）。首拍构造常驻驱动器
-        /// 后经 ForceDue（ensure_observe=true——组内绕门，session 侧
-        /// 策略/关注概率不动，save 的 fault2210 校验面不受触碰）在下一
-        /// 拍强制到期；断言面=entry 创建与 restore 双轨对拍。
+        // 首拍快照来自构造期 desk（空簿起步，signal 面与旧管线预置簿
+        // 不同——observe 门采样可能翻转为不观察）。首拍构造常驻驱动器
+        // 后经 ForceDue（ensure_observe=true——组内绕门，session 侧
+        // 策略/关注概率不动，save 的 fault2210 校验面不受触碰）在下一
+        // 拍强制到期；断言面=entry 创建与 restore 双轨对拍。
         if crate::runtime::step_runtime_enabled() {
             session.step().expect("runtime 首拍构造驱动器");
             session.force_due_via_runtime(&[id], session.state.tick + 1);

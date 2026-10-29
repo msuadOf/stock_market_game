@@ -27,7 +27,7 @@ fn sol3_install_candles_after_sever_uses_last_publication() {
         .collect();
     driver.sever_world_for_test();
     // 新语义：install 从发布版本读——sever 后成功且与断开前安装
-    /// 逐位一致（发布版本=已提交一致快照；相位清空语义同拍一致）。
+    // 逐位一致（发布版本=已提交一致快照；相位清空语义同拍一致）。
     driver
         .install_candles(&mut session)
         .expect("sever 后安装用最后发布版本（一致快照非部分数据）");
@@ -1560,7 +1560,7 @@ fn sol6th_same_tick_abort_leaks_nothing() {
     let code = crate::StockId(0);
     let price = crate::money::Money::from_cents(1_000);
     // D5 #4 fixture 适配：grant 先于驱动器构造（组权威 shares 构造期
-    /// 投影——构造后 grant 组不感知，挂卖被组端 sellable 校验跳过）。
+    // 投影——构造后 grant 组不感知，挂卖被组端 sellable 校验跳过）。
     session
         .fixture_account_mut(&seller)
         .unwrap()
@@ -1882,9 +1882,9 @@ fn sol7th_foreign_same_key_fill_does_not_advance_plan_child() {
     }
     // Sol 终审四审 sol7th 判型修正（探针实证）：组内成交的最终 staging
     // 在**下一拍 Start** 落账——warmup 末拍的子单自有成交滞后一步；原
-    /// fixture 在落账前读 f0/r0 基线（陈旧 400 vs 落账后真值 1100——
-    /// 身份核 0 次误匹配，session 投影无辜）。插入静默冲刷拍使基线=
-    /// 结算真值，身份核判别力恢复（外来成交两拍均不推进）。
+    // fixture 在落账前读 f0/r0 基线（陈旧 400 vs 落账后真值 1100——
+    // 身份核 0 次误匹配，session 投影无辜）。插入静默冲刷拍使基线=
+    // 结算真值，身份核判别力恢复（外来成交两拍均不推进）。
     driver
         .step_frame_equivalent(&mut session)
         .expect("静默冲刷拍（滞后 staging 落账）");
@@ -1938,9 +1938,9 @@ fn sol7th_foreign_same_key_fill_does_not_advance_plan_child() {
     driver.install_market_views(&mut session).expect("行情");
     driver.install_candles(&mut session).expect("K");
     // R1（同拍投影——**被测对象=session 投影簿** plans_debug，直接断言
-    /// filled_qty：Sol 八审——此前只断言 Active+余量读组簿，误推进后
-    /// 照样 Active、下一拍组权威又抹掉，判别力为零。投影 filled 未被
-    /// 外来成交推进=身份核生效的直接证据）。
+    // filled_qty：Sol 八审——此前只断言 Active+余量读组簿，误推进后
+    // 照样 Active、下一拍组权威又抹掉，判别力为零。投影 filled 未被
+    // 外来成交推进=身份核生效的直接证据）。
     let session_filled = session
         .investor_plans_debug()
         .into_iter()
@@ -2508,8 +2508,8 @@ fn p2_1a_personal_state_install_respects_dirty_mask() {
     let installs = driver.personal_installs_for_test();
     // P2-2a 后上行已稀疏（条目=dirty 位）——判别面：单 tick 全名册演进
     // 统计上不可能（observe 门 ~35%/位、8 位全真≈0.02%），安装数 <8；
-    /// 突变（组侧稀疏回全量）时 installs=8 显红。缓存等价由
-    /// d3a2b/d3b5 读面测试承载。
+    // 突变（组侧稀疏回全量）时 installs=8 显红。缓存等价由
+    // d3a2b/d3b5 读面测试承载。
     assert!(
         installs < 8,
         "个人态安装数必须小于名册 belief 位数（稀疏上行；全量重装=回归）：{installs}"
@@ -2720,7 +2720,7 @@ fn p2_3d_retail_slot_take_restores_on_abort() {
         traces.len()
     );
     // 组端真读面（稀疏=被拒拍演进位；collect_belief 是驱动器缓存——
-    /// Abort 不触安装、缓存不变，判别力为零，已登记）。
+    // Abort 不触安装、缓存不变，判别力为零，已登记）。
     let sparse = driver
         .collect_group_belief_for_test()
         .expect("组端 belief 读面");
@@ -2806,7 +2806,7 @@ fn p2_4a_run(force_full_every_tick: bool) -> (crate::session::StateHash, Vec<Str
         // 每 tick 注入对手双方（限价 1000=初始价；买卖交叉必成交——
         // dirty 集非空，稀疏/全量两条路径都真实走账）。t==3 一次性
         // 追加一张**不交叉**的挂单卖（股 1 @2050：高于 touch 2000、
-        /// 低于涨停 2200，与成交腿不同股避开唯一挂出守卫）。挂出使
+        // 低于涨停 2200，与成交腿不同股避开唯一挂出守卫）。挂出使
         // pending_sell_qty 进 qty 面：该面只有回写承载（same_tick 成交
         // 投影不覆盖受理/在途），写回缺失即期末 positions 漂移——
         // 等价守卫的判别面，M1 空请求集突变显红依据）。
@@ -3065,11 +3065,11 @@ fn p2_4b_run() -> (crate::session::StateHash, Vec<String>) {
     setup.auction_ticks = 1;
     let mut game = GameSession::new(setup, 21).expect("会话构造");
     // Sol 终审四审 p2_4b 判型修正（探针实证）：desk 自成交硬排除（分歧
-    /// 台账 A3）下卖腿与挂单买腿**必须不同账户**——此前 seller 与
-    /// resting_owner 可选同一账户（seed 21 下同为 (0,2)），卖单永不吃
-    /// 800 买、Changed 面恒零；t2-4 buyer 腿现金不足被组端静默跳过，
-    /// 连续窗整体失效。重写角色约束：不相交 + 卖量（7×100 股）与
-    /// 800 买 worst purse（≈81 万分）双阈值。
+    // 台账 A3）下卖腿与挂单买腿**必须不同账户**——此前 seller 与
+    // resting_owner 可选同一账户（seed 21 下同为 (0,2)），卖单永不吃
+    // 800 买、Changed 面恒零；t2-4 buyer 腿现金不足被组端静默跳过，
+    // 连续窗整体失效。重写角色约束：不相交 + 卖量（7×100 股）与
+    // 800 买 worst purse（≈81 万分）双阈值。
     let (seller, resting_owner) = [1u64, 2, 3, 4]
         .into_iter()
         .flat_map(|s| [1u64, 2, 3, 4].into_iter().map(move |r| (s, r)))
@@ -3088,12 +3088,12 @@ fn p2_4b_run() -> (crate::session::StateHash, Vec<String>) {
     let mut resting_order_id: Option<crate::OrderId> = None;
     for t in 1..=11u64 {
         // 逐拍成交驱动（Sol 终审四审节奏重排）：t2-t5 卖腿挂 @1000 累积
-        /// 卖盘（Added 面）；t5 的 800 股限价买一拍吃掉全部站簿卖盘
-        /// （Removed 面）后余量在簿；t6/8/10 卖腿逐拍部分成交（Changed
-        /// 面——期末余量 800−400−300=100 仍在册：中间态被期末对账吞掉
-        /// 的教训，瞬时 Changed 单期末已清空则跳过更新不改变终态）。
-        /// 卖腿与挂单买腿分属 seller/resting_owner 两账户（A3 自成交
-        /// 硬排除——同账户不撮合）。
+        // 卖盘（Added 面）；t5 的 800 股限价买一拍吃掉全部站簿卖盘
+        // （Removed 面）后余量在簿；t6/8/10 卖腿逐拍部分成交（Changed
+        // 面——期末余量 800−400−300=100 仍在册：中间态被期末对账吞掉
+        // 的教训，瞬时 Changed 单期末已清空则跳过更新不改变终态）。
+        // 卖腿与挂单买腿分属 seller/resting_owner 两账户（A3 自成交
+        // 硬排除——同账户不撮合）。
         let mut intents: Vec<(crate::AccountId, crate::Intent)> = Vec::new();
         if t == 2 || t == 3 || t == 4 || t == 5 || t == 6 || t == 8 || t == 10 {
             intents.push((
@@ -3397,7 +3397,7 @@ fn prereq1_continue_early_round_fills_settle_exactly_once() {
         rec.desk_trades
     );
     // 独立期望值（恰一次）：双腿费用分项来自 desk 事实（maker≡卖方
-    /// fees 恒卖腿、taker≡买方——desk 产出侧归一化）。
+    // fees 恒卖腿、taker≡买方——desk 产出侧归一化）。
     let gross = trades[0].price * i64::from(trades[0].qty);
     let seller_net = gross - trades[0].maker_fees_cents;
     let buyer_paid = gross + trades[0].taker_fees_cents;
@@ -3491,7 +3491,7 @@ fn stepframe2_runtime_event_seq_starts_at_legacy_cursor_plus_one() {
     driver.install_candles(&mut session).expect("K 安装");
     assert!(!events.is_empty(), "前置：场景产生了事件（成交+受理）");
     // 事件 seq 全体 ≥ 步前+1（首条恰=步前+1——对齐旧管线 collect_events
-    /// 的 (seq_from, seq_to] 契约；当前 adopt 直取导致全体少 1）。
+    // 的 (seq_from, seq_to] 契约；当前 adopt 直取导致全体少 1）。
     let min_seq = events.iter().map(|e| event_seq(e)).min().expect("事件非空");
     assert_eq!(
         min_seq,

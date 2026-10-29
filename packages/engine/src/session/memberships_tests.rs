@@ -243,9 +243,9 @@ fn members_trade_in_one_shared_book_with_fifo_and_t1_and_cannot_cancel_others() 
         .unwrap();
     // 语义对齐注记：18725d07 旧管线把"撤他人挂单"显式报 NotOrderOwner；
     // main 的 runtime desk 层（event_bridge）统一映射 OrderNotFound——
-    /// 撤单目标不存在与非本人挂单不区分（防他人挂单探测，同真实市场
-    /// 口径）。身份防御拒绝本身保留（first 的撤单未生效），仅错误码
-    /// 按 main 现行契约断言。
+    // 撤单目标不存在与非本人挂单不区分（防他人挂单探测，同真实市场
+    // 口径）。身份防御拒绝本身保留（first 的撤单未生效），仅错误码
+    // 按 main 现行契约断言。
     assert!(game.step().unwrap().iter().any(|event| matches!(event, Event::IntentRejected { account, reason: RejectionReason::OrderNotFound, .. } if *account == first)));
     ingress
         .enqueue_player_intent(

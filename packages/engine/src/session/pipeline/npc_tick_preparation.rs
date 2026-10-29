@@ -184,7 +184,7 @@ mod t1_account_task_tests {
         // (i) 首步：staged intents 经构造期消费进入 runtime 世界。
         let events = session.step().expect("首步");
         // 只计 retail（AccountId(1)）的受理——fixture 的玩家对手种子经
-        /// 构造期迁移同样受理（不过滤则与 staged 数巧合相等）。
+        // 构造期迁移同样受理（不过滤则与 staged 数巧合相等）。
         let accepted1 = events
             .iter()
             .filter(|event| {
@@ -801,7 +801,7 @@ mod t1_account_task_tests {
         );
         // 确定性注入共享捕获失败：末尾 0 收盘分钟 ⇒ 价格路径观察守卫
         // 「market minute close must be positive」失败（实际错误类型，
-        /// 见 observing 对照用例断言）。
+        // 见 observing 对照用例断言）。
         {
             let closes = session
                 .state
@@ -854,26 +854,26 @@ mod t1_account_task_tests {
     }
 }
 
-/// T3 批四退役登记（A1 §7 删除清单）：`queue_empty_npc_at_day_end` 空占位
-/// 生产随跨 tick 载体删除——原 day_end_tests 三用例（unconsumed 守卫/非日界
-/// 拒绝/u64 tick 域）随函数退役；「日终不带跨日批次」语义由
-/// day_end_npc_tests 的 pending None（现为结构性不存在）与 epoch 对齐
-/// fixture 场景 3/4 的日终断言承载。
+// T3 批四退役登记（A1 §7 删除清单）：`queue_empty_npc_at_day_end` 空占位
+// 生产随跨 tick 载体删除——原 day_end_tests 三用例（unconsumed 守卫/非日界
+// 拒绝/u64 tick 域）随函数退役；「日终不带跨日批次」语义由
+// day_end_npc_tests 的 pending None（现为结构性不存在）与 epoch 对齐
+// fixture 场景 3/4 的日终断言承载。
 
 /// Sol 三审修复 2：首步前 queue 的 staged handover 消费（恰一次）——
 /// runtime 驱动器构造期调用（cfg(test)：staged 槽位仅测试适配器存在）。
 /// - intents 按产出序转交驱动器注入（归并序已固化依赖边语义）；
 /// - attention 已由 produce 写回会话镜像**恰一次**（构造器恢复即组
 ///   next_due——消费不再推进；镜像值即组权威起点）。
-/// 消费拍语义（两面分开，Sol 四审落字）：
+///   消费拍语义（两面分开，Sol 四审落字）：
 /// - **已交付面（retail intents）**：消费拍执行、不重放（02 红绿的第二
 ///   拍零新增断言）；对齐旧 seam 的"消费 tick 不重复决策"。
 /// - **未交付面（belief 链计划 root）**：不在 handover 结构内、组簿无
 ///   注入通道（D3b）——消费拍**保持自然调度，不抑制**。抑制而不交付会
 ///   使 belief 位在消费拍既无 staged 结果也无自然决策（双失——实测连坐
 ///   institution_observation 族，d34fbc76 提交记录的回退实验）。
-/// 失败边界：注入后首步失败（Abort）时 staged 已消费——指令失效需
-/// 重发（与 ForceDue 承诺同语义）。
+///   失败边界：注入后首步失败（Abort）时 staged 已消费——指令失效需
+///   重发（与 ForceDue 承诺同语义）。
 #[cfg(test)]
 pub(in crate::session) fn take_staged_intents_for_runtime(
     _session: &mut GameSession,
@@ -894,11 +894,11 @@ pub(in crate::session) fn queue_npc_for_next_tick(
     session: &mut GameSession,
 ) -> Result<(), StepFatal> {
     // Sol 整改注入通道（cfg(test) 分流）：runtime 驱动器在位时决策权威
-    /// 在组——不生产/暂存旧管线产物（take 个人态的副作用同样跳过）；
-    /// 测试意图（下一 tick 全部 NPC 决策）经显式 ForceDue 指令承载
-    ///（全部 belief 位+retail 位到期）。Sol 二审修复集 5：首步前（驱动器
-    /// 不在位）走旧 produce/stage——个人态经构造期投影接管（staged 批
-    /// 由旧管线语义持有，runtime 消费面=构造期 attention/挂单迁移）。
+    // 在组——不生产/暂存旧管线产物（take 个人态的副作用同样跳过）；
+    // 测试意图（下一 tick 全部 NPC 决策）经显式 ForceDue 指令承载
+    //（全部 belief 位+retail 位到期）。Sol 二审修复集 5：首步前（驱动器
+    // 不在位）走旧 produce/stage——个人态经构造期投影接管（staged 批
+    // 由旧管线语义持有，runtime 消费面=构造期 attention/挂单迁移）。
     #[cfg(test)]
     if session.runtime_driver.is_some() {
         session.force_all_due_via_runtime();

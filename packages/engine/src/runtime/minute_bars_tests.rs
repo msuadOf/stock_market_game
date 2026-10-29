@@ -278,7 +278,7 @@ fn closing_auction_drain_fills_land_at_minute_900() {
     world.run_ticks(30).expect("跑到日末");
     let report = world.shutdown().expect("关停（Drain 收盘清算）");
     // 期末 Drain 应答捎带桶（跨日形态 live 已并入——观察面统一走
-    /// 报告字段；desk_finals 的 live 桶在跨日形态已清）。
+    // 报告字段；desk_finals 的 live 桶在跨日形态已清）。
     let bars = report
         .drained_minute_bars
         .into_iter()

@@ -328,8 +328,8 @@ use crate::strategy::{
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use thiserror::Error;
 
-/// 机构母单在没有新目标修订时，最多跨越一个标准交易日。
-/// 日终所有剩余子单和计划都会失效，绝不跨日沿用旧观点。
+// 机构母单在没有新目标修订时，最多跨越一个标准交易日。
+// 日终所有剩余子单和计划都会失效，绝不跨日沿用旧观点。
 
 /// SplitMix64：确定性 PRNG。种子化、可重放（同种子同序列）。
 #[derive(Clone)]
@@ -1484,15 +1484,15 @@ impl SessionSetup {
             return Err(SessionError::InvalidSetup(ValidationFault::bare(1005)));
         }
         // Sol 六审 v6 方案 A 守卫：股数上限=desk 域 OrderId 编码域容量
-        /// （stock 位宽 2^21=2_097_152 股——`(stock<<32)|serial` 最大
-        /// 2^53−2 恰内含 js_safe wire 域；股数超编码域=订单身份无法
-        /// 在 wire 域内合成）。StockIdx 的 u16 类型已先验限制股数
-        /// <65536≪2^21，本校验为防御性显式化（不经 StockIdx 的注入
-        /// 面同被拦）。所有 setup 入口（含测试注入）经此校验。
+        // （stock 位宽 2^21=2_097_152 股——`(stock<<32)|serial` 最大
+        // 2^53−2 恰内含 js_safe wire 域；股数超编码域=订单身份无法
+        // 在 wire 域内合成）。StockIdx 的 u16 类型已先验限制股数
+        // <65536≪2^21，本校验为防御性显式化（不经 StockIdx 的注入
+        // 面同被拦）。所有 setup 入口（含测试注入）经此校验。
         if self.stocks.len() >= (1usize << 21) {
             // fault1035: 股数超出 desk 域 OrderId 编码容量。ctx[0] = 实际
             // 股数；ctx[1] = 容量上限 2^21（stock 位宽——超域即拒，显式
-            /// 报错而非静默产生超 wire 域的订单身份）。
+            // 报错而非静默产生超 wire 域的订单身份）。
             return Err(SessionError::InvalidSetup(ValidationFault::new(
                 1035,
                 vec![self.stocks.len() as u64, 1 << 21],
@@ -2450,7 +2450,7 @@ impl GameSession {
         runtime_groups: usize,
     ) -> Result<GameSession, SessionError> {
         // 批 9 A6：compute 参数退役——内部 shared_default（wasm 串行/OS 级
-        /// CPU 约束同 A5 口径）。
+        // CPU 约束同 A5 口径）。
         let mut session = Self::new(setup, seed)?;
         if runtime_groups == 0 {
             return Err(SessionError::InvalidSetup(
@@ -3707,9 +3707,9 @@ impl GameSession {
     pub fn end_civil_day(&mut self) -> Result<CivilDayEndReport, SessionError> {
         let report = self.with_prepared_civil_day(|_, report| Ok(report))?;
         // B2 件 4：休市自然日补保留条目（交易日已由 step 的 ends_day 段
-        /// 冻结——末条日期==settled_date 时跳过；休市日无 tick，此处按
-        /// 每股日历如实补 Closed/NoTrades 条目并原子重发布）。仅 runtime
-        /// 形态（惰性构造驱动器与 step 同路由）。
+        // 冻结——末条日期==settled_date 时跳过；休市日无 tick，此处按
+        // 每股日历如实补 Closed/NoTrades 条目并原子重发布）。仅 runtime
+        // 形态（惰性构造驱动器与 step 同路由）。
         if self.uses_runtime_civil_authority() {
             self.freeze_closed_retained_day_if_needed(report.settled_date)?;
         } else {
@@ -4355,9 +4355,9 @@ impl GameSession {
                     .collect()
             } else {
                 // D5 fault1042 收口：runtime 形态的在场委托=desk 镜像
-                ///（session 旧簿恒空——计划在途子单的重建校验需要）。
-                /// filled 面置零（镜像不承载 desk 成交累计——审计面由
-                /// ledger（desk 事实）承载；置零使 Order 出生校验自洽）。
+                //（session 旧簿恒空——计划在途子单的重建校验需要）。
+                // filled 面置零（镜像不承载 desk 成交累计——审计面由
+                // ledger（desk 事实）承载；置零使 Order 出生校验自洽）。
                 self.state
                     .desk_book_mirror
                     .iter()
@@ -4369,10 +4369,10 @@ impl GameSession {
                                 .iter()
                                 .map(|(owner, side, price, qty, serial, fv, fq)| {
                                     // Sol 终审四审 A3→五审件 1 修正：
-                                    /// original=余量+**真实**成交量（desk
-                                    /// 权威计数——限价单允许价优成交，
-                                    /// 此前"成交额÷限价"换算在价优下
-                                    /// 失真：100@990 存成 99——判决反例）。
+                                    // original=余量+**真实**成交量（desk
+                                    // 权威计数——限价单允许价优成交，
+                                    // 此前"成交额÷限价"换算在价优下
+                                    // 失真：100@990 存成 99——判决反例）。
                                     Order {
                                         id: OrderId(*serial),
                                         owner: *owner,
@@ -4383,11 +4383,11 @@ impl GameSession {
                                         filled_qty: *fq,
                                         filled_value: Money::from_cents(*fv),
                                         // 收官再复核建议 1：seq 保留**本地时间序**
-                                        ///（desk serial——"每股下一时间序"域，
-                                        /// orderbook.rs 恢复约束 seq<next_seq
-                                        /// 与游标链同基）；id 才是 wire 编码
-                                        /// 身份。此前写编码值使 seq≈2^32 域
-                                        /// 漂移。
+                                        //（desk serial——"每股下一时间序"域，
+                                        // orderbook.rs 恢复约束 seq<next_seq
+                                        // 与游标链同基）；id 才是 wire 编码
+                                        // 身份。此前写编码值使 seq≈2^32 域
+                                        // 漂移。
                                         seq: crate::runtime::group::desk_order_serial(*serial),
                                     }
                                 })
@@ -4397,9 +4397,9 @@ impl GameSession {
                     .collect()
             },
             // Sol 四轮修复：序号游标=三源逐股 max（只增不减——R26 空簿
-            /// 也保留已耗序号）：旧簿 book_next_sequence（旧管线/restore
-            /// 载入）、desk 镜像 next_serial（runtime 权威）、会话级
-            /// 缓存 runtime_desk_serial_cursors（镜像瞬态缺席的兜底）。
+            // 也保留已耗序号）：旧簿 book_next_sequence（旧管线/restore
+            // 载入）、desk 镜像 next_serial（runtime 权威）、会话级
+            // 缓存 runtime_desk_serial_cursors（镜像瞬态缺席的兜底）。
             book_next_sequences: {
                 let mut out: std::collections::BTreeMap<StockId, u64> = self
                     .state
@@ -4457,8 +4457,8 @@ impl GameSession {
             ingress_receipt_cursors: self.state.ingress_receipt_cursors.clone(),
             next_order_id: {
                 // D5 fault2079：desk 镜像档的在场委托 id=desk serial——
-                /// next_order_id 须严格大于全部（session 域与 desk serial
-                /// 域取 max）。
+                // next_order_id 须严格大于全部（session 域与 desk serial
+                // 域取 max）。
                 let mirror_max = self
                     .state
                     .desk_book_mirror
@@ -4472,10 +4472,10 @@ impl GameSession {
                     .max()
                     .unwrap_or(0);
                 // Sol 五审复核收口→六审 v6 方案 A：desk 游标域（next_serial
-                /// >全部已耗序号——含已闭合单）与经历行/计划链的 desk 域
-                /// OrderId（`(stock<<32)|serial`——新编码域最大 2^53−2
-                /// 恒内含 js_safe wire 域，夹取退役）一并入下界——此前
-                /// 仅镜像在册 serial+1：闭合单 id 使 fault2044 显红。
+                // >全部已耗序号——含已闭合单）与经历行/计划链的 desk 域
+                // OrderId（`(stock<<32)|serial`——新编码域最大 2^53−2
+                // 恒内含 js_safe wire 域，夹取退役）一并入下界——此前
+                // 仅镜像在册 serial+1：闭合单 id 使 fault2044 显红。
                 let mut floor = mirror_max.saturating_add(1);
                 for (code, mirror) in &self.state.desk_book_mirror {
                     floor = floor.max(crate::runtime::group::desk_order_id(
@@ -4616,9 +4616,9 @@ impl GameSession {
         for (code, market) in &mut sess.state.markets {
             if save.desk_mirrored_resting {
                 // D5：desk 镜像档——在场委托权威=desk（ledger 种子恢复），
-                /// 旧簿装载跳过（镜像单重建会与 desk 双载且交叉簿形态
-                /// 使 set_matching_mode 显红 fault1038）；簿序游标仍装载
-                /// （save 对拍的 book_next_sequences 域一致性）。
+                // 旧簿装载跳过（镜像单重建会与 desk 双载且交叉簿形态
+                // 使 set_matching_mode 显红 fault1038）；簿序游标仍装载
+                // （save 对拍的 book_next_sequences 域一致性）。
                 market
                     .restore_resting_orders(&[], save.book_next_sequences[code])
                     .map_err(|_error| {
@@ -4628,11 +4628,11 @@ impl GameSession {
                         ))
                     })?;
                 // Sol 终审四审游标族：镜像档回装**携带在场委托**——
-                /// 此前空条目占位使 restore 静点（未 step）的 save 投影
-                /// resting_orders 丢失挂单（sparse FIFO key 族显红）；
-                /// desk 种子仍由首拍 install 重建权威，此处回填仅为
-                /// 静点读面/存档往返一致（filled_value 档面已按 A3 修
-                /// 复承载真实累计）。
+                // 此前空条目占位使 restore 静点（未 step）的 save 投影
+                // resting_orders 丢失挂单（sparse FIFO key 族显红）；
+                // desk 种子仍由首拍 install 重建权威，此处回填仅为
+                // 静点读面/存档往返一致（filled_value 档面已按 A3 修
+                // 复承载真实累计）。
                 let orders = save
                     .resting_orders
                     .get(code)
@@ -5329,13 +5329,13 @@ impl GameSession {
         auction: bool,
     ) {
         // Sol 整改注入通道（cfg(test) 分流）：runtime 驱动器在位时挂单
-        /// 权威在组/desk——经 D2 意图注入路由进 runtime 世界（写旧
-        /// session book 在 runtime 模式下不可见——裁决"book fixture
-        /// 分别适配"）。Sol 二审修复集 5：首步前（驱动器不在位）的注入
-        /// 走旧簿+构造期迁移（RuntimeDriver::adopt_session_resting_orders
-        /// ——免全局分流破坏旧管线 fixture 面）。事件面：runtime 模式的
-        /// 受理事件由下一 step 产出（seed 调用方的 events 缓冲不在此
-        /// 伪造就地事件——如实空）。
+        // 权威在组/desk——经 D2 意图注入路由进 runtime 世界（写旧
+        // session book 在 runtime 模式下不可见——裁决"book fixture
+        // 分别适配"）。Sol 二审修复集 5：首步前（驱动器不在位）的注入
+        // 走旧簿+构造期迁移（RuntimeDriver::adopt_session_resting_orders
+        // ——免全局分流破坏旧管线 fixture 面）。事件面：runtime 模式的
+        // 受理事件由下一 step 产出（seed 调用方的 events 缓冲不在此
+        // 伪造就地事件——如实空）。
         #[cfg(test)]
         if self.runtime_driver.is_some() {
             let mut intents = vec![crate::session::ReceiptBearingIntent {
@@ -5581,9 +5581,9 @@ mod b2_bars_rollback_tests {
         session.runtime_install_failure = true;
         assert!(session.step().is_err(), "注入的安装失败");
         // 安装失败=毒化终态（既有设计：与 v0 投影失败的可重试路径
-        /// 不同层——后者经 driver 丢弃+from_session 重建，重建 seed 携
-        /// 回滚后的 bars 镜像，ghost 播回由本回滚锚定+重建等价共同
-        /// 保证）。
+        // 不同层——后者经 driver 丢弃+from_session 重建，重建 seed 携
+        // 回滚后的 bars 镜像，ghost 播回由本回滚锚定+重建等价共同
+        // 保证）。
         assert!(session.poison.is_some(), "安装失败必须毒化（终态）");
         assert_eq!(
             session.runtime_minute_bars(&code).len(),
@@ -5617,8 +5617,8 @@ mod b2_bars_rollback_tests {
             "失败拍镜像零泄漏（回滚源）"
         );
         // 重建输入面锚定（driver 丢弃后重试经 from_session 重建——seed
-        /// 投影的数据源即回滚后的镜像/save）：断言重建输入零 ghost；
-        /// 端到端重试链（seed/ledger 交互）登记台账，随 W3 接线批补。
+        // 投影的数据源即回滚后的镜像/save）：断言重建输入零 ghost；
+        // 端到端重试链（seed/ledger 交互）登记台账，随 W3 接线批补。
         let seeds = session.runtime_market_seeds();
         assert_eq!(
             seeds
@@ -6180,7 +6180,7 @@ mod personal_receipt_tests {
         );
         let watermark_before = restored.receipt_watermark();
         // 恢复后新成交的 receipt_id 单调续号（seq 恢复自驱动器游标——
-        /// 禁直接改 seq，派生域天然单调）。
+        // 禁直接改 seq，派生域天然单调）。
         let mut second = restored;
         execute_buy(&mut second);
         let buyer = second
@@ -6432,7 +6432,7 @@ mod retained_snapshot_tests {
             .load();
         assert_eq!(published.retained.days.len(), 1, "发布面保留链同步");
         // 幂等锚定（复核终核登记 b）：连续推进第二日（1/6 周日）恰加
-        /// 一条 Closed——1/5 不因二次调用重复（already 幂等）。
+        // 一条 Closed——1/5 不因二次调用重复（already 幂等）。
         session.end_civil_day().unwrap();
         assert_eq!(
             session.retained_market_days().len(),
@@ -6795,10 +6795,10 @@ mod npc_working_quote_tests {
         tick: u64,
     ) {
         // Sol 整改注入通道（cfg(test) 分流）：runtime 驱动器在位时调度
-        /// 权威在组（P1-10）——显式 ForceDue 指令（组验证执行；不偷改
-        /// session 镜像）。旧管线（无驱动器）路径不变。Sol 二审修复集 5：
-        /// 首步前（驱动器不在位）走旧镜像路径——构造器自会话 attention
-        /// 恢复 next_due（镜像值即组权威起点）。
+        // 权威在组（P1-10）——显式 ForceDue 指令（组验证执行；不偷改
+        // session 镜像）。旧管线（无驱动器）路径不变。Sol 二审修复集 5：
+        // 首步前（驱动器不在位）走旧镜像路径——构造器自会话 attention
+        // 恢复 next_due（镜像值即组权威起点）。
         #[cfg(test)]
         if session.runtime_driver.is_some() {
             let target = tick.max(session.state.tick + 1);

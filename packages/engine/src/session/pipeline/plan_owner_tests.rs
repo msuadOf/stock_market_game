@@ -732,11 +732,11 @@ fn confirmed_cancel_clears_the_plan_child_and_allows_resubmission() {
 #[test]
 fn cross_stock_plans_keep_independent_children_and_escrow_after_a_cancel() {
     // D5 pin+登记（身份链错位——与 live_plan 同族）：旧管线注入的计划
-    /// 子单持 session OrderId 域，runtime adopt 后 desk serial 重编
-    /// ——两域不可映射（fixture 实证：child=OrderId(2) 而 desk 成交
-    /// serial=1，低 48 位核也不成立——adopt 分配序与注入 id 无关）。
-    /// 修复需组内计划注入通道（MutatePlanBook）改造，超半天量级。
-    /// 等价锚：翻转批 batch 计划链独立源对拍（runtime 计划链闭环）。
+    // 子单持 session OrderId 域，runtime adopt 后 desk serial 重编
+    // ——两域不可映射（fixture 实证：child=OrderId(2) 而 desk 成交
+    // serial=1，低 48 位核也不成立——adopt 分配序与注入 id 无关）。
+    // 修复需组内计划注入通道（MutatePlanBook）改造，超半天量级。
+    // 等价锚：翻转批 batch 计划链独立源对拍（runtime 计划链闭环）。
     if crate::runtime::step_runtime_enabled() {
         return;
     }
@@ -1014,11 +1014,11 @@ fn enqueue_ordinary_buy(authority: &mut GameSession, qty: u32) {
 #[test]
 fn ordinary_adoption_rejects_exceeding_remaining_quantity() {
     // D5 pin+登记（旧管线计划委托机制）：外来单认领计划腿（adoption——
-    /// record_child_submitted 的普通来源入口）是旧管线计划委托域的
-    /// 采纳防御；runtime 的外来单走独立路径（组内无计划认领面——
-    /// 计划子单由组内链 chain_quote_children 管理）。等价锚：组内计划
-    /// 链的余量推进（solmid 独立源对拍）+desk purse 校验；外来认领面
-    /// 随计划委托域收口时迁移。
+    // record_child_submitted 的普通来源入口）是旧管线计划委托域的
+    // 采纳防御；runtime 的外来单走独立路径（组内无计划认领面——
+    // 计划子单由组内链 chain_quote_children 管理）。等价锚：组内计划
+    // 链的余量推进（solmid 独立源对拍）+desk purse 校验；外来认领面
+    // 随计划委托域收口时迁移。
     if crate::runtime::step_runtime_enabled() {
         return;
     }

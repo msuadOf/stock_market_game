@@ -13,10 +13,10 @@ pub(crate) fn setup_fixture() -> SessionSetup {
     let stocks = vec![
         StockSpec {
             // Sol 终审四审 A4 配套修订：600000→000001（深主板——代码
-            /// 序 000001<300001 与输入序一致，StockCatalog 按代码序分配
-            /// StockId 的 ADR-0041 约定下 id0/id1 语义与原 fixture 完全
-            /// 一致：id0=1000 元主板、id1=2000 元创业板 20%）；主板
-            /// 语义（10%/100 万限价）不变，引用 StockId(0) 的测试无需适配。
+            // 序 000001<300001 与输入序一致，StockCatalog 按代码序分配
+            // StockId 的 ADR-0041 约定下 id0/id1 语义与原 fixture 完全
+            // 一致：id0=1000 元主板、id1=2000 元创业板 20%）；主板
+            // 语义（10%/100 万限价）不变，引用 StockId(0) 的测试无需适配。
             code: StockCode("000001".to_owned()),
             exchange: StockExchange::Shenzhen,
             initial_price: Money::from_cents(1000),
@@ -94,7 +94,7 @@ fn bridge_projects_setup_into_world_spec() {
     let spec = world_spec_from_setup(&setup, None, idle_script()).expect("投影成功");
     assert_eq!(spec.stocks.len(), 2);
     // 主板 10%/创业板 20% 显式差异（A4 配套修订后 id0=深主板 000001、
-    /// id1=创业板 300001——代码序=输入序，语义与原 fixture 一致）。
+    // id1=创业板 300001——代码序=输入序，语义与原 fixture 一致）。
     assert_eq!(spec.stocks[0].limit_bps, 1000);
     assert_eq!(spec.stocks[1].limit_bps, 2000);
     assert_eq!(spec.stocks[0].max_order_qty_limit, 1_000_000);

@@ -388,8 +388,8 @@ impl Market {
         cutoff: u64,
     ) -> Result<(), MarketError> {
         // D5 attention：runtime 形态（desk 簿权威——restore 时 session 簿
-        /// 恒空、next_sequence=0）——空簿时截点不与本簿对拍（desk 恢复
-        /// 域接管；旧簿单恢复后仍按原校验）。
+        // 恒空、next_sequence=0）——空簿时截点不与本簿对拍（desk 恢复
+        // 域接管；旧簿单恢复后仍按原校验）。
         if cutoff > self.book.next_sequence() && self.book.next_sequence() > 0 {
             return Err(MarketError::InvalidParams {
                 reason: "公开可见性截点超过 book 下一受理序号".to_owned(),

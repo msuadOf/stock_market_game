@@ -271,7 +271,7 @@ impl Drop for Completion<'_> {
     fn drop(&mut self) {
         // P2③：只有进入本 payload Drop 之后新出现的 panic 才记 drop_panicked。
         // `thread::panicking()` 只能证明线程在 unwind；外层 panic 连带析构
-        /// （如 receiver 析构队列剩余 Job）时健康 payload 不得被误标。
+        // （如 receiver 析构队列剩余 Job）时健康 payload 不得被误标。
         let panicked = !self.inherited_unwind && std::thread::panicking();
         self.ticket.metrics.complete(
             self.ticket.id,

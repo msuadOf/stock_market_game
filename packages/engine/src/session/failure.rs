@@ -101,8 +101,8 @@ impl GameSession {
         self.runtime_record_history_undo(&id);
         self.runtime_record_retail_undo(&id);
         // attention（调度域 candidate 保持组权威值——P1-10 链路回写的
-        /// 镜像同步；information 域经 Belief-1b 投递演进——此处整态
-        /// 覆盖为组快照，两域同源）。
+        // 镜像同步；information 域经 Belief-1b 投递演进——此处整态
+        // 覆盖为组快照，两域同源）。
         self.state
             .npc_attention
             .insert(id, snapshot.attention.clone());
@@ -127,8 +127,8 @@ impl GameSession {
             .history_reads
             .insert(id, snapshot.history_reads.clone());
         // D5 #4 retail 链：经验行镜像随组演进——组行为权威基，**保留
-        /// 组外新增键**（同拍投影段的首买 init 在组内观察接管前由合并
-        /// 承载；组内下一 due 的 capture initialize 同键幂等，不双载）。
+        // 组外新增键**（同拍投影段的首买 init 在组内观察接管前由合并
+        // 承载；组内下一 due 的 capture initialize 同键幂等，不双载）。
         if let Some(row) = &snapshot.retail_experience {
             let merged = match self.state.retail_experience.remove(&id) {
                 Some(existing) => existing.merged_with_group_authority(row),
@@ -382,8 +382,8 @@ impl GameSession {
             return Ok(());
         }
         // 直调模式（不走 `with_routed_runtime_driver`——其锁步校验是
-        /// step 拍语义的前置，end_civil_day 时点（restore 重放等形态）
-        /// 校验错位；此处仅需驱动器在位）。
+        // step 拍语义的前置，end_civil_day 时点（restore 重放等形态）
+        // 校验错位；此处仅需驱动器在位）。
         if self.runtime_driver.is_none() {
             self.construct_runtime_driver_lazy()?;
         }
@@ -526,7 +526,7 @@ impl GameSession {
         check.map_err(|fatal| self.poison_runtime_step(fatal))?;
         self.with_routed_runtime_driver(|session, driver| {
             // 刀③：body 总段（driver_step+安装链+尾部全含）——与
-            /// step_outer/lock_route 差额二分定位未段化归属。
+            // step_outer/lock_route 差额二分定位未段化归属。
             let _seg_body = crate::runtime::step_profile::scope(
                 crate::runtime::step_profile::StepSegment::StepViaBody,
             );
@@ -551,14 +551,14 @@ impl GameSession {
         // 当前 session.tick——全新会话即 0）。
         if self.runtime_driver.is_none() {
             // 构造细节见 `construct_runtime_driver_lazy`（D0 惰性构造+
-            /// cfg(test) staged handover 消费——两消费面共用）。
+            // cfg(test) staged handover 消费——两消费面共用）。
             self.construct_runtime_driver_lazy()?;
         }
         // 取出锁单元（避免 &mut self 与 guard 交叉借用）；失败/成功都
         // 放回——Abort 语义下 worker 存活，driver 可重跑。例外：body 内
-        /// 置 runtime_discard_driver_flag（step_frame 分叉的投影段失败——
-        /// world 已转正而会话已回滚，锁步断裂的实例不可复用）时丢弃，
-        /// 重试经 from_session 重建（等价旧管线"candidate 丢弃+可重试"）。
+        // 置 runtime_discard_driver_flag（step_frame 分叉的投影段失败——
+        // world 已转正而会话已回滚，锁步断裂的实例不可复用）时丢弃，
+        // 重试经 from_session 重建（等价旧管线"candidate 丢弃+可重试"）。
         let cell = self
             .runtime_driver
             .take()
@@ -910,7 +910,7 @@ impl GameSession {
     pub fn step(&mut self) -> Result<Vec<Event>, StepFatal> {
         // 翻转批：opt-in 翻转（ENGINE_STEP_RUNTIME=1 显式走 runtime；
         // 缺省 0=旧管线——106 失败实测后回退，见 runtime/mod.rs 开关
-        /// 注释；全局域迁移完成后才改缺省）。
+        // 注释；全局域迁移完成后才改缺省）。
         if crate::runtime::step_runtime_enabled() {
             return self.step_via_runtime();
         }
@@ -1015,7 +1015,7 @@ impl GameSession {
     /// Q1 发布槽句柄（session 侧读者面）：外部读者（server actor/测试/
     /// 存档）经此取一致读点——load() 一次 clone 即得"一个固定提交版本
     /// + 它的全部分片句柄"。驱动器不在位=尚未步入 runtime 模式，显式
-    /// 失败（不静默返回空版本）。
+    ///   失败（不静默返回空版本）。
     pub fn runtime_publication(
         &self,
     ) -> Result<std::sync::Arc<crate::runtime::publication::ViewPublication>, String> {
@@ -1153,7 +1153,7 @@ impl GameSession {
         }
         if let Some(exp) = self.state.retail_experience.get_mut(&id) {
             // 两面同清（initialize_holding_dated 的守卫查 feedback.stocks
-            /// ——只清 stocks 会被 ActiveEntryAlreadyExists 拒绝）。
+            // ——只清 stocks 会被 ActiveEntryAlreadyExists 拒绝）。
             exp.stocks.remove(code);
             exp.feedback.stocks.remove(code);
         }
@@ -1468,7 +1468,7 @@ impl GameSession {
     /// plans 的唯一来源；X1 直改标记外部直改。plans_debug 等读面消费）。
     pub fn set_runtime_plans(&mut self, plans: crate::plans::PlanBook) {
         // step_frame 接轨件 4b：投影失败回滚面——计划簿整值旧值入
-        /// undo（幂等首写；PlanBook 规模小，无条件记录成本可忽略）。
+        // undo（幂等首写；PlanBook 规模小，无条件记录成本可忽略）。
         self.state
             .runtime_plans_undo
             .get_or_insert_with(|| self.state.plans.clone());
@@ -1912,8 +1912,8 @@ impl GameSession {
                 return Err(format!("休市股 {idx} 出现分钟桶（{} 条）", bars_vec.len()));
             }
             // 交易日对账：bars 累计与当日日K逐位（量/额/笔/OHLC——旧
-            /// validate_bars_against_candle 语义；占位日K（volume=0）与
-            /// 空 bars 互恰）。
+            // validate_bars_against_candle 语义；占位日K（volume=0）与
+            // 空 bars 互恰）。
             if trading {
                 let code = crate::StockId(idx as u32);
                 let candle = closed.get(&code);
@@ -1922,10 +1922,10 @@ impl GameSession {
                         return Err(format!("Full 日结候选缺当日 K：{code:?}"));
                     }
                     // 【既有登记（manual 面）】手动 day_end 编排不做
-                    /// boundary 迁移（日K未提交 install 面）——对账基缺席
-                    /// 跳过（生产 step 的 ends_day 段恒有提交条目+日界批
-                    /// 终 K 补真；manual 面差异登记于
-                    /// agents/day-boundary-kline/ledger.md 遗留节）。
+                    // boundary 迁移（日K未提交 install 面）——对账基缺席
+                    // 跳过（生产 step 的 ends_day 段恒有提交条目+日界批
+                    // 终 K 补真；manual 面差异登记于
+                    // agents/day-boundary-kline/ledger.md 遗留节）。
                     continue;
                 };
 
@@ -1933,9 +1933,9 @@ impl GameSession {
                 let turnover: u128 = bars_vec.iter().map(|b| b.turnover_cents).sum();
                 let count: u64 = bars_vec.iter().map(|b| b.trade_count).sum();
                 // 日界批收口：原"占位 K（volume=0）配非零 bars 放行"的
-                /// 豁免退役——日结 Drain 终 K 已补真 install 面（含收盘
-                /// 竞价段），全形态逐位对账（B2 台账"占位形态跳过逐位"
-                /// 收紧；占位 K 仅与空 bars 互恰仍自然通过）。
+                // 豁免退役——日结 Drain 终 K 已补真 install 面（含收盘
+                // 竞价段），全形态逐位对账（B2 台账"占位形态跳过逐位"
+                // 收紧；占位 K 仅与空 bars 互恰仍自然通过）。
                 let (c_turnover, c_count) = candle
                     .trade_stats
                     .as_ref()
@@ -2063,7 +2063,7 @@ impl GameSession {
                 .map(|c| c.close.cents())
                 .or_else(|| {
                     // 首日无历史：昨收=初始价（StockId=股序数值——setup
-                    /// stocks 的下标约定）。
+                    // stocks 的下标约定）。
                     self.state
                         .setup
                         .stocks
@@ -2460,16 +2460,16 @@ fn runtime_resting_envelope(
     .map_err(|e| format!("名义费用重算失败：{e:?}"))?;
     let audit = crate::session::pipeline::EnvelopeAudit {
         // Sol 终审四审符号价族（session 集成 sparse_fifo/maker_split 收口）：
-        /// limit=受理价真值（desk 解析后的事实）——restore 侧 desk 种子
-        /// 价格面与 verified_live 的 escrow 核对都依赖真值；desk 挂簿时
-        /// purse 已收敛到 buy_purse_limit(受理价, 余量, 成交额)（与旧
-        /// 管线 buy_order_reservation 同式），runtime 行因此与旧管线行
-        /// 同过证明，A2 时期的"nominal/limit 双零跳过通道"与证明空窗
-        /// 就此退役。
+        // limit=受理价真值（desk 解析后的事实）——restore 侧 desk 种子
+        // 价格面与 verified_live 的 escrow 核对都依赖真值；desk 挂簿时
+        // purse 已收敛到 buy_purse_limit(受理价, 余量, 成交额)（与旧
+        // 管线 buy_order_reservation 同式），runtime 行因此与旧管线行
+        // 同过证明，A2 时期的"nominal/limit 双零跳过通道"与证明空窗
+        // 就此退役。
         limit: crate::money::Money::from_cents(fact.price),
         remaining_qty: fact.qty,
         // Sol 五审件 1：真实成交量入审计（desk 权威计数——restore 侧
-        /// desk 种子/存档链的 filled_qty 源；此前恒 0）。
+        // desk 种子/存档链的 filled_qty 源；此前恒 0）。
         filled_qty: fact.filled_qty,
         filled_value: crate::money::Money::from_cents(fact.filled_value),
         nominal: crate::session::pipeline::FeeComponents {

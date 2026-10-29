@@ -15,9 +15,9 @@ pub(in crate::session) fn install_runtime_day_boundary(
     session: &mut GameSession,
 ) -> Result<Vec<EventFact>, StepFatal> {
     // D5 组内事件日历对齐：ends_day 拍的组内事件（开仓/撤单/释放）以
-    /// 绝对 tick/tpd 记日（拍内组世界已在新日首拍）——session 侧迁移
-    /// 的 day 基准对齐同式（此前 state.day 落后一日，plan 事件的
-    /// precede 守卫显红）。apply 的 day+1 即得绝对新日。
+    // 绝对 tick/tpd 记日（拍内组世界已在新日首拍）——session 侧迁移
+    // 的 day 基准对齐同式（此前 state.day 落后一日，plan 事件的
+    // precede 守卫显红）。apply 的 day+1 即得绝对新日。
     TradingDayEndTransition::new(session).apply()
 }
 
@@ -35,8 +35,8 @@ impl<'candidate> TradingDayEndTransition<'candidate> {
             .collect::<std::collections::BTreeSet<_>>();
         let session = &mut *self.candidate;
         // D5 runtime 形态：desk 簿权威（mirror/ledger 承载在途——清簿由
-        /// install 段的 world 日结在 session 日终迁移后执行）；旧簿与
-        /// ledger 的"日终无在途"校验只对旧管线形态生效。
+        // install 段的 world 日结在 session 日终迁移后执行）；旧簿与
+        // ledger 的"日终无在途"校验只对旧管线形态生效。
         let runtime_shape = !session.state.desk_book_mirror.is_empty();
         if !runtime_shape
             && (session

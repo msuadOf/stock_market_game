@@ -530,8 +530,8 @@ fn sol3_continuation_round_acceptance_reaches_group_before_continue() {
 fn accepted_batch_keeps_continuation_timing_and_owner_targeting_in_multi_group() {
     use super::group::Observed;
     // 2 组、各组 local 0 都在 tick1 轮 0 挂买：组 0 声明续行（时序断言
-    /// 载体）、组 1 也产生自己的受理（定向断言载体——复核建议：组 1
-    /// 桶恒空时"无外来观察"近乎恒真，须有本组受理才能判别"只收自己的"）。
+    // 载体）、组 1 也产生自己的受理（定向断言载体——复核建议：组 1
+    // 桶恒空时"无外来观察"近乎恒真，须有本组受理才能判别"只收自己的"）。
     let script = |g: GroupIdx| -> GroupScript {
         Box::new(move |tick, round| {
             let mut plan = TickPlan::default();
@@ -567,8 +567,8 @@ fn accepted_batch_keeps_continuation_timing_and_owner_targeting_in_multi_group()
         "批发后受理仍须先于 Continue 到达 owner 组（受理@{accepted_at} ≥ Continue@{continue_at}）"
     );
     // ② 双向定向：每组都**有**本组受理（空桶恒真的弱断言已废弃）——
-    /// 各组观察到的每条 ChildAccepted 的 owner 必属本组（外来泄漏即红），
-    /// 且两组都确实观察到受理（批发不丢非声明续行的组）。
+    // 各组观察到的每条 ChildAccepted 的 owner 必属本组（外来泄漏即红），
+    // 且两组都确实观察到受理（批发不丢非声明续行的组）。
     for (g, final_) in report.group_finals.iter().enumerate() {
         let accepted: Vec<_> = final_
             .observed
@@ -698,7 +698,7 @@ fn watchdog_timeout_carries_phase_context() {
     match &err {
         super::protocol::RuntimeError::Watchdog { phase, waited, .. } => {
             // Q2 Seal 后停顿可能落在收束或 Seal 相位（取决于停顿时点
-            /// ——断言放宽为两者之一；相位上下文携带本身是判据）。
+            // ——断言放宽为两者之一；相位上下文携带本身是判据）。
             assert!(
                 matches!(*phase, Phase::TickConverge | Phase::Seal),
                 "超时须携带相位上下文（got {phase:?}）"
@@ -889,9 +889,9 @@ fn d0_world_drop_shuts_down_workers() {
     // 注册等待已移除：spawn 返回即持有全部 worker 句柄（注册完成的
     // 同步证明=drop 内 join 返回本身）；原"c >= before+3"轮询在并行
     // 满载批下被其他测试的线程增减污染（before 采样于高峰、判定时
-    /// 其他测试已退出——永假导致无界挂起，见 run5 实测 before=170
-    /// now=18）。计数判据仅保留 drop 后回落（并行高峰采样时判别力
-    /// 弱化为不误红；串行/低峰场景判别力不变）。
+    // 其他测试已退出——永假导致无界挂起，见 run5 实测 before=170
+    // now=18）。计数判据仅保留 drop 后回落（并行高峰采样时判别力
+    // 弱化为不误红；串行/低峰场景判别力不变）。
     drop(world);
     // 等线程退出回落（≤2s）——Drop 兜底须发 Shutdown 并 join。
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);

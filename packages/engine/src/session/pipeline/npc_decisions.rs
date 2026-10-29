@@ -414,7 +414,7 @@ where
         TaskDied(Box<dyn std::any::Any + Send>),
     }
 
-    /// 协调者位置：池内（登记 drive 成功，A 类）或池外（非 worker 线程顶层编排）。
+    // 协调者位置：池内（登记 drive 成功，A 类）或池外（非 worker 线程顶层编排）。
     // drive 槽必须在函数级持有（match 臂内绑定会在臂结束即 Drop——A 类登记
     // 形同虚设的缺陷由 d2 确定性台账探针暴露并修复；函数级 `_drive_slot`
     // 存续到 return，池外协调者不占 drive 槽（设计 §2.2/§4.3）。

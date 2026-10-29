@@ -65,7 +65,7 @@ fn seal_unsettled_tail_is_empty() {
     );
     let _ = &all;
     // Q2 批 4：unsettled_trades 字段已从 TickRecord **删除**（类型级
-    /// 防复活——复活需显式重引入字段并过全部行为合同）。
+    // 防复活——复活需显式重引入字段并过全部行为合同）。
     world.shutdown().expect("关停");
 }
 
@@ -148,7 +148,7 @@ fn seal_ack_failure_aborts_then_retry_survives() {
         .expect("Abort 后同 tick 重试成功（worker 存活）");
     assert_eq!(world.global.committed_tick, 2, "重试后权威推进");
     // 全存活：shutdown 干净收齐 Final（死亡 worker 会使 shutdown 失败
-    /// 或 dead_reason 在位——此处以干净关停承载）。
+    // 或 dead_reason 在位——此处以干净关停承载）。
     let stocks = world.public_views().len();
     let report = world.shutdown().expect("关停干净=worker 全存活");
     assert_eq!(

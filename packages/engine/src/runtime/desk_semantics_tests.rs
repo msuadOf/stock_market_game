@@ -380,7 +380,7 @@ fn preopen_rejects_and_auction_requires_limit_orders() {
         Box::new(|tick, _round| match tick {
             1 => place_at(1, vec![buy(0, 0, 1000, 100), sell(1, 0, 1000, 100)]),
             // D5 off-by-one 对齐：受理相位基准=phase(tick-1)（旧管线
-            /// step(N) 的受理窗=N-1 相位——PreOpen 拒收的申报须在 tick5
+            // step(N) 的受理窗=N-1 相位——PreOpen 拒收的申报须在 tick5
             // （phase(4)=PreOpen；tick4 申报按 phase(3)=CallAuction 受理）。
             5 => place_at(5, vec![buy(0, 0, 1000, 100)]),
             _ => TickPlan::default(),
@@ -1194,9 +1194,9 @@ fn tick_facts(
 /// - **越窗**（tick 5）撤买 ⇒ CancelWindowClosed 回执（显式业务失败），
 ///   挂单保留并参与开盘清算（tick 6 完成拍恰成交一笔）；
 /// - 窗内撤**他人**挂单 ⇒ OrderNotFound（身份防御）。
-/// 手算 oracle：双边同价 1000 ⇒ 清算价=1000（单候选，无中间价问题）；
-/// 买方实付 100_000+500+1=100_501；卖方净得 100_000−551（佣金 500+
-/// 印花 50+过户 1）。
+///   手算 oracle：双边同价 1000 ⇒ 清算价=1000（单候选，无中间价问题）；
+///   买方实付 100_000+500+1=100_501；卖方净得 100_000−551（佣金 500+
+///   印花 50+过户 1）。
 #[test]
 fn r08_cancel_window_partition_by_receipt_and_clearing_participation() {
     let script = |_g: GroupIdx| -> GroupScript {
@@ -2219,8 +2219,8 @@ fn sol3r_failed_tick_retry_emits_facts_exactly_once() {
     assert!(world.run_ticks(1).is_err(), "注入失败必须显式失败");
     world.set_validator(Box::new(|_| Ok(())));
     // world 级约定：失败拍已消费注入（组端 take 后随 Abort 回滚不返还
-    /// 队列），重跑由调用方重播（drive 层等价=restore_runtime_player_
-    /// intents 回灌后重注入）。
+    // 队列），重跑由调用方重播（drive 层等价=restore_runtime_player_
+    // intents 回灌后重注入）。
     world.broadcast_external_plan(
         vec![PendingOp {
             local: 0,
@@ -2309,7 +2309,7 @@ fn sol3r_market_sell_walks_bids_below_cage() {
 #[test]
 fn sol3r_closing_multi_level_settles_at_clearing_price() {
     // 收盘窗（day_tick 27-29）内申报：限价买卖均合法（14:57-15:00
-    /// 接受限价申报、不可撤、日终一次撮合）。
+    // 接受限价申报、不可撤、日终一次撮合）。
     let script = |_g: GroupIdx| -> GroupScript {
         Box::new(|tick, _round| match tick {
             27 => place_at(

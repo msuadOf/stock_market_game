@@ -1154,7 +1154,7 @@ impl<'a> ContinuousFillReceiptProjection<'a> {
                 .map_err(|error| invariant(&error.to_string()))?;
             // 腿方向语义（2026-10-16 契约）：maker≡卖腿/taker≡买腿——
             // buyer/seller 推导与 draft.side（incoming 方向）解耦（旧
-            /// "taker=主动"假设退役；Trade 构造已按腿归一）。
+            // "taker=主动"假设退役；Trade 构造已按腿归一）。
             let (buyer, buyer_before, seller, seller_before) = (
                 EnvelopeKey {
                     account: trade.taker,

@@ -231,8 +231,8 @@ fn stale_traces_are_cleared_when_the_next_tick_produces_none() {
     );
     // 清空调度 ⇒ 后续 tick 无 due ⇒ 无新 trace ⇒ 上一 tick 的残留被清。
     // D5 #4 fixture 适配：runtime 下调度权威在组（session 直改不感知）
-    /// ——经 DeferDueForTest 通道推远组内 next_due（"无 due tick"形态
-    /// 的组内等价；默认分支保留 session 直改）。
+    // ——经 DeferDueForTest 通道推远组内 next_due（"无 due tick"形态
+    // 的组内等价；默认分支保留 session 直改）。
     if crate::runtime::step_runtime_enabled() {
         let accounts: Vec<_> = session.state.npc_attention.keys().copied().collect();
         session.defer_due_via_runtime(&accounts, session.state.tick + 100);

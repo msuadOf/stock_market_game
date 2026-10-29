@@ -232,7 +232,7 @@ pub(super) fn finalize_continuous_tick(
     // 分钟桶镜像 + Fill 收据双腿入账——ends_day 迁移**之前**执行（迁移
     // 清桶，此处桶=当日完整）。与 runtime 的 install_market_views/
     // receipts 入账等价（共用同一套纯函数与 session 累积面——见
-    /// serial_b2_surfaces 模块注释）。
+    // serial_b2_surfaces 模块注释）。
     session
         .install_serial_b2_surfaces(&facts, &receipts)
         .map_err(finalize_error)?;

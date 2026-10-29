@@ -204,7 +204,7 @@ pub fn capture_runtime_state(session: &GameSession) -> Result<SavedRuntimeState,
                 .collect()
         } else {
             // D5 attention：runtime 形态（desk 镜像在位）——公开截点自
-            /// 镜像（desk 权威；session market 恒 0）。
+            // 镜像（desk 权威；session market 恒 0）。
             session
                 .state
                 .desk_book_mirror
@@ -269,8 +269,8 @@ pub fn validate_runtime_state(
     for (code, cutoff) in &state.book_public_cutoff_sequences {
         let market = &session.state.markets[code];
         // D5 attention：runtime 形态（desk 簿权威——restore 时 session 簿
-        /// 空、next_sequence=0）——截点不与本簿序对拍（desk 恢复域接管）；
-        /// 相位面（连续/盘前=0 截点）仍按 session 相位判。
+        // 空、next_sequence=0）——截点不与本簿序对拍（desk 恢复域接管）；
+        // 相位面（连续/盘前=0 截点）仍按 session 相位判。
         if (market.book_next_sequence() > 0 && *cutoff > market.book_next_sequence())
             || (matches!(
                 session.phase(),
@@ -491,7 +491,7 @@ pub fn restore_runtime_state(
                 ))
             })?;
         // D5：镜像档的占位条目带上截点（save 侧镜像分支读
-        /// mirror.public_cutoff_serial——往返一致性；desk 首拍重建）。
+        // mirror.public_cutoff_serial——往返一致性；desk 首拍重建）。
         if let Some(mirror) = session.state.desk_book_mirror.get_mut(code) {
             mirror.public_cutoff_serial = *cutoff;
         }
@@ -506,9 +506,9 @@ pub fn restore_runtime_state(
     for (key, envelope) in session.state.envelope_ledger.iter() {
         // Sol 终审四审符号价族：runtime 重建行不再走"nominal/limit 双零"
         // 跳过通道——desk 挂簿 purse 收敛（trim_buy_purse_to_exact）后
-        /// live==buy_order_reservation(真 limit, 余量, 成交额) 恒成立，
-        /// runtime 行与旧管线行同过 verified_live（restore 后首拍前的
-        /// 证明空窗登记差异就此闭合）。
+        // live==buy_order_reservation(真 limit, 余量, 成交额) 恒成立，
+        // runtime 行与旧管线行同过 verified_live（restore 后首拍前的
+        // 证明空窗登记差异就此闭合）。
         envelope.verified_live(&config).map_err(|_| {
             // fault2220：restore末尾财务证明建立失败（同码复用压平）；ctx为订单身份。
             SessionError::InvalidSave(ValidationFault::new(
@@ -553,16 +553,16 @@ impl SavedRuntimeState {
             if runtime_shape {
                 let key = saved.key.to_runtime();
                 // live 资源真值（买=purse 占用、卖=余量股数——与
-                /// runtime_step 尾重建的 EchoResting 同源；此前 1 股/1 分
-                /// 占位使 restore 后 desk 种子与公开口径失真）。
+                // runtime_step 尾重建的 EchoResting 同源；此前 1 股/1 分
+                // 占位使 restore 后 desk 种子与公开口径失真）。
                 let (cash, shares) = if key.side == Side::Buy {
                     (saved.purse, 0u32)
                 } else {
                     (crate::money::Money::ZERO, saved.remaining_qty)
                 };
                 // nominal 自费用表重算（决定性——与 runtime_step 尾重建
-                /// 同式；restore 尾的 verified_live 证明因此可建立，证明
-                /// 空窗登记就此闭合）。
+                // 同式；restore 尾的 verified_live 证明因此可建立，证明
+                // 空窗登记就此闭合）。
                 let nominal = crate::runtime::fees::FeeQuote::nominal(
                     &session.state.setup.config,
                     key.side,

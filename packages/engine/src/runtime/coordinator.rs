@@ -286,8 +286,8 @@ pub fn converge_round(
                 // Sol 复核阻断 P1-3：迟到 SealAck=已判死尝试（SealAck
                 // 收集超时已 Abort）的 Ack 竞态落入重试收束窗——协议
                 // 合法产物（组在 Abort 后已回滚重跑，本轮回执以本轮
-                /// GroupReport/DeskReport 为准），跳过不报错。单次尝试
-                /// 内 Seal 只在收束后广播，收束期不可能有本拍真 Ack。
+                // GroupReport/DeskReport 为准），跳过不报错。单次尝试
+                // 内 Seal 只在收束后广播，收束期不可能有本拍真 Ack。
                 continue;
             }
             UpMsg::Failed { who, error } => {

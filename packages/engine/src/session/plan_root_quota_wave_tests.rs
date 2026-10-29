@@ -232,13 +232,13 @@ fn assert_token_identity(
     );
 }
 
-/// R1-c 消费优先（增量二十八红证）：root1 的结果**已现成**（发布完成、
-/// 在队列中）且 root2 因容量受限留在 pending——阻塞拉取必须**先消费现成
-/// 结果并返回交付**，不得被「循环顶补派发」阻塞。旧序（每轮先补派发后
-/// 消费）下，本轮派发 root2 会撞上测试派发门（在派发点阻塞协调者线程）
-/// → 现成结果迟迟不被消费 → returned_within_grace=false → 红；新序
-/// （每轮先消费，零在飞+pending 非空时才在 4c 判定前尽力派发）下立即
-/// 返回 Delivered → 绿。
+// R1-c 消费优先（增量二十八红证）：root1 的结果**已现成**（发布完成、
+// 在队列中）且 root2 因容量受限留在 pending——阻塞拉取必须**先消费现成
+// 结果并返回交付**，不得被「循环顶补派发」阻塞。旧序（每轮先补派发后
+// 消费）下，本轮派发 root2 会撞上测试派发门（在派发点阻塞协调者线程）
+// → 现成结果迟迟不被消费 → returned_within_grace=false → 红；新序
+// （每轮先消费，零在飞+pending 非空时才在 4c 判定前尽力派发）下立即
+// 返回 Delivered → 绿。
 
 /// r4（池外容量握手）+P1-①回归：池外协调者容量受阻上提 PendingCapacity；
 /// 容量恢复后**重入必须补派发 pending 直至 Complete**——增量十七缺陷形态
@@ -352,13 +352,13 @@ fn r5_true_capacity_pressure_inline_or_late_dispatch_completes() {
     let _ = batch;
 }
 
-/// 跨 wave 续行（增量二十重写；Astra 三审「先构造并断言真实 pending 跨调用」）：
-/// 确定性握手 = 观察者闩（root1 在 bound 观察点闩住）+ 持 2/3 spawn 槽。
-/// 形态钉死：首轮只派发 root1（pending FIFO 首个），root2 留 pending 跨调用
-/// 存续（bound 进入计数=1 且账面恒满证明未派发、未完成）；放行 root1 后其
-/// 现成结果先交付（channel FIFO：root1 的 send 先于 root2），不被 root2/
-/// pending 阻挡；随后 root2 派发交付至 Complete。
-/// 负向红证（mutation M6）：移除 prepare 内补派发 → root2 永不派发 → 红。
+// 跨 wave 续行（增量二十重写；Astra 三审「先构造并断言真实 pending 跨调用」）：
+// 确定性握手 = 观察者闩（root1 在 bound 观察点闩住）+ 持 2/3 spawn 槽。
+// 形态钉死：首轮只派发 root1（pending FIFO 首个），root2 留 pending 跨调用
+// 存续（bound 进入计数=1 且账面恒满证明未派发、未完成）；放行 root1 后其
+// 现成结果先交付（channel FIFO：root1 的 send 先于 root2），不被 root2/
+// pending 阻挡；随后 root2 派发交付至 Complete。
+// 负向红证（mutation M6）：移除 prepare 内补派发 → root2 永不派发 → 红。
 
 /// personal 恰一次 install + 同一 observation 贯穿：以计划权威状态推进的
 /// 幂等性承载（重复 install 会破坏计划账本不变量并立即暴露）。
@@ -1032,8 +1032,8 @@ fn a1_queued_taskdied_survives_coordinator_drop() {
 /// （新序下保存形态要求其他 root 先于 TaskDied 派发——三 root 起始全派发
 /// 满足）；外层失败销毁协调者 → Drop 收满协议：收 TaskDied（payload 留存）
 /// + root2/3 迟到 Prepared 丢弃（Empty 探针放行，send 晚于 Empty 观察）
-/// → 收满重抛已保存 payload。M1 红：旧 Drop 忽略字段+一次性排空 → 队列
-/// 空（TaskDied 已被消费）→ Ok → 红。
+///   → 收满重抛已保存 payload。M1 红：旧 Drop 忽略字段+一次性排空 → 队列
+///   空（TaskDied 已被消费）→ Ok → 红。
 #[test]
 #[ignore = "口径=串行独立运行：同 a1_panic_form；node scripts/run-engine-lib-tests.mjs normal --ignored --bin <bin> plan_root_quota_wave_tests"]
 fn a1_saved_taskdied_with_late_result_survives_coordinator_drop() {
