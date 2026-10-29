@@ -1283,9 +1283,6 @@ fn next_start_real_sell_consumers_match_the_same_new_day_control() {
 fn raw_cross_day_request_is_rejected_without_leaking_state_until_explicit_day_end() {
     let mut world = closing_spec(CLOSING_PRICE);
     world.ticks_per_day = DAY_END_TICK;
-    world.auction_ticks = 9;
-    world.closing_auction_ticks = 3;
-    world.initial_committed_tick = DAY_END_TICK;
     let civil_date = world.civil_start_date;
     let mut world = World::spawn(
         world,
@@ -1293,17 +1290,27 @@ fn raw_cross_day_request_is_rejected_without_leaking_state_until_explicit_day_en
             .expect("显式 raw Calendar 政策合法"),
     )
     .expect("构造 raw 日末世界");
+    world
+        .run_ticks(2)
+        .expect("真实提交 Start239 与收盘 Start240");
+    assert_eq!(world.global.committed_tick, DAY_END_TICK);
+    assert_eq!(world.global.day, 0, "最后已提交市场拍仍属于零基第0日");
     let publication = world.publication();
     let prior_publication = publication.load();
     let prior_views = world.public_views().to_vec();
     let prior_tick = world.global.committed_tick;
 
-    let error = world.run_ticks(1).expect_err("raw 请求不能隐式跨 civil date 日结");
+    let error = world
+        .run_ticks(1)
+        .expect_err("raw 请求不能隐式跨 civil date 日结");
     assert!(
         matches!(&error, super::protocol::RuntimeError::ProtocolInvariant { detail } if detail.contains("TickRangeCrossesCivilDay")),
         "必须显式指出 raw tick range 越过 civil date：{error:?}"
     );
-    assert_eq!(world.global.committed_tick, prior_tick, "拒绝前置检查不推进 tick");
+    assert_eq!(
+        world.global.committed_tick, prior_tick,
+        "拒绝前置检查不推进 tick"
+    );
     assert_eq!(world.public_views(), prior_views, "拒绝不泄漏新日行情");
     assert!(
         Arc::ptr_eq(&publication.load(), &prior_publication),
@@ -1311,9 +1318,13 @@ fn raw_cross_day_request_is_rejected_without_leaking_state_until_explicit_day_en
     );
 
     world.run_day_end_public().expect("显式提交当日日结");
+    assert_eq!(world.global.day, 0, "日结不伪造下一交易日市场拍");
     world.set_civil_date(next_raw_trading_date(civil_date));
-    world.run_ticks(1).expect("显式推进 civil date 后接受下一拍");
+    world
+        .run_ticks(1)
+        .expect("显式推进 civil date 后接受 Start241");
     assert_eq!(world.global.committed_tick, DAY_END_TICK + 1);
+    assert_eq!(world.global.day, 1, "Start241 属于零基第1交易日");
     assert_eq!(world.publication().load().tick, DAY_END_TICK + 1);
     world.shutdown().expect("正常关停");
 }

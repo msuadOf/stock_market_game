@@ -557,13 +557,23 @@ fn driver_day_end_advances_runtime_and_civil_together() {
         .expect("已安装 market day 后日终成功");
     assert_eq!(
         success_driver.world_global_day(),
-        1,
-        "runtime 日终推进一个交易日"
+        0,
+        "日结后 World.day 仍表示最后已提交市场拍所属的零基交易日"
     );
-    assert_eq!(success_session.day(), 1, "Session 安装同一交易日进度");
+    assert_eq!(success_session.day(), 1, "Session.day 表示已完成交易日数");
     assert_eq!(
         success_session.civil_date(),
         civil_before.next().expect("下一自然日合法"),
         "日终推进一个自然日"
     );
+    success_driver
+        .step_frame_equivalent(&mut success_session)
+        .expect("次一交易日 Start241");
+    assert_eq!(success_session.tick(), 241, "次一市场拍为 Start241");
+    assert_eq!(
+        success_driver.world_global_day(),
+        1,
+        "Start241 安装后 World.day 才进入下一零基交易日"
+    );
+    assert_eq!(success_session.day(), 1, "Start241 不重复结算交易日");
 }
