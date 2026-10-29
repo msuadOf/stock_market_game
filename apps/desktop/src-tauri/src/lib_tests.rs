@@ -71,7 +71,7 @@ use tauri::{
     WebviewWindow, WebviewWindowBuilder,
 };
 
-fn diagnostic_setup() -> SessionSetup {
+pub(super) fn diagnostic_setup() -> SessionSetup {
     SessionSetup {
         company_system: None,
         dividend_tax_mode: None,
@@ -139,7 +139,7 @@ fn ipc_request(command: &str, body: Value) -> InvokeRequest {
     }
 }
 
-fn invoke_json(
+pub(super) fn invoke_json(
     webview: &WebviewWindow<MockRuntime>,
     command: &str,
     body: Value,

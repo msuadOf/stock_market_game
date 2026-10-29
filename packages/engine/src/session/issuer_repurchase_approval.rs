@@ -32,6 +32,8 @@ pub enum RepurchaseApprovalError {
     PlanConflict { existing_plan: crate::plans::PlanId },
     #[error("回购批准条件无效：{detail}")]
     InvalidPlan { detail: String },
+    #[error("数量上限 {requested} 超过当前股本 {issued} 或非减资用途的 10% 上限")]
+    ShareLimit { requested: u64, issued: u64 },
     #[error("回购执行关联缺失：{event_id}")]
     MissingBinding { event_id: String },
     #[error("回购批准事务失败：{source}")]
@@ -146,7 +148,11 @@ impl GameSession {
             .map_err(|error| invalid_plan(error.to_string()))?;
         if plan.max_shares > registry.issued_shares() || (plan.purpose != crate::company::issuer_repurchase::RepurchasePurpose::ReduceCapital
             && u128::from(plan.max_shares) * 10 > u128::from(registry.issued_shares())) {
-            return Err(invalid_plan("数量上限超过当前股本或非减资用途的 10% 上限").into());
+            return Err(RepurchaseApprovalError::ShareLimit {
+                requested: plan.max_shares,
+                issued: registry.issued_shares(),
+            }
+            .into());
         }
         let anchor = actions.share_splits.iter().filter(|book| book.plan().stock == plan.stock && book.receipt().is_some() && book.plan().ex_rights_on <= day && book.settled_on().is_some_and(|on| on <= day))
             .max_by_key(|book| book.plan().ex_rights_on).map(|book| book.plan().event_id.as_str());

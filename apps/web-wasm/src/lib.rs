@@ -74,6 +74,95 @@ pub fn company_read_query(handle: u32, query: JsValue) -> Result<JsValue, JsValu
     })
 }
 
+fn propose_company_action(
+    session: &mut ProtocolSession,
+    proposal: engine::session::PlayerCompanyProposal,
+) -> Result<engine::session::PlayerCompanyCommandReceipt, engine::session::protocol::CompanyWriteError> {
+    session.propose_player_company_action(AccountId(0), proposal).map_err(Into::into)
+}
+
+fn enqueue_correction(
+    session: &mut ProtocolSession,
+    request: engine::session::CompanyReportCorrection,
+) -> Result<engine::session::protocol::ReportCorrectionAcknowledgement, engine::session::protocol::CompanyWriteError> {
+    let epoch = session.game().report_correction_epoch();
+    let operation_id = request.operation_id.clone();
+    session.enqueue_report_correction(&epoch, request)?;
+    Ok(engine::session::protocol::ReportCorrectionAcknowledgement { operation_id })
+}
+
+fn cancel_correction(
+    session: &mut ProtocolSession,
+    operation_id: &str,
+) -> Result<engine::session::protocol::ReportCorrectionAcknowledgement, engine::session::protocol::CompanyWriteError> {
+    let epoch = session.game().report_correction_epoch();
+    session.cancel_report_correction(&epoch, operation_id)?;
+    Ok(engine::session::protocol::ReportCorrectionAcknowledgement { operation_id: operation_id.to_owned() })
+}
+
+fn company_write_error_to_js(
+    error: engine::session::protocol::CompanyWriteError,
+    session: &ProtocolSession,
+) -> Result<JsValue, JsValue> {
+    // JavaScript 只接收公开投影；可信 console 保留本地 Session 的原 typed cause。
+    log_company_write_error(&error);
+    if let Some(fatal) = session.require_healthy().err().or_else(|| error.step_fatal().cloned()) {
+        return Err(step_update_error_to_js(StepUpdateError::Fatal(Box::new(
+            HostFailure::step(fatal).at_session(session),
+        ))));
+    }
+    Err(public_dto_to_js(&error.public_failure())?)
+}
+
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen]
+extern "C" {
+    #[wasm_bindgen(js_namespace = console, js_name = error)]
+    fn log_company_write_error_message(message: &str);
+}
+
+fn log_company_write_error(error: &engine::session::protocol::CompanyWriteError) {
+    #[cfg(target_arch = "wasm32")]
+    log_company_write_error_message(&format!("web-wasm 公司写命令拒绝：{error:?}"));
+    #[cfg(not(target_arch = "wasm32"))]
+    eprintln!("web-wasm 公司写命令拒绝：{error:?}");
+}
+
+#[wasm_bindgen]
+pub fn propose_player_company_action(handle: u32, proposal: JsValue) -> Result<JsValue, JsValue> {
+    let proposal = serde_wasm_bindgen::from_value(proposal)?;
+    with_session(handle, |session| {
+        match propose_company_action(session, proposal) {
+            Ok(receipt) => public_dto_to_js(&serde_json::json!({ "receipt": receipt })),
+            Err(error) => company_write_error_to_js(error, session),
+        }
+    })
+}
+
+#[wasm_bindgen]
+pub fn enqueue_report_correction(handle: u32, request: JsValue) -> Result<JsValue, JsValue> {
+    let request = serde_wasm_bindgen::from_value(request)?;
+    with_session(handle, |session| {
+        match enqueue_correction(session, request) {
+            Ok(acknowledgement) => public_dto_to_js(&acknowledgement),
+            Err(error) => company_write_error_to_js(error, session),
+        }
+    })
+}
+
+#[wasm_bindgen]
+pub fn cancel_report_correction(handle: u32, operation_id: String) -> Result<JsValue, JsValue> {
+    with_session(handle, |session| {
+        match cancel_correction(session, &operation_id) {
+            Ok(acknowledgement) => public_dto_to_js(&acknowledgement),
+            Err(error) => company_write_error_to_js(error, session),
+        }
+    })
+}
+
+#[cfg(test)]
+mod company_write_tests;
+
 fn save_to_js<T: Serialize>(value: &T) -> Result<JsValue, JsValue> {
     to_js(value)
 }

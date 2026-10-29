@@ -298,6 +298,158 @@ pub async fn api_company_read_query(
     }
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProposePlayerCompanyActionBody {
+    pub session_id: String,
+    pub generation: String,
+    pub proposal: engine::session::PlayerCompanyProposal,
+}
+
+pub async fn api_propose_player_company_action(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    body: Result<Json<ProposePlayerCompanyActionBody>, JsonRejection>,
+) -> Response {
+    let Json(body) = match body {
+        Ok(body) => body,
+        Err(error) => return invalid_json_response(error),
+    };
+    let (handles, subject) =
+        match authorized_session(&state, &body.session_id, authorization_token(&headers)).await {
+            Ok(context) => context,
+            Err(response) => return *response,
+        };
+    let generation = match parse_host_parity_generation(&body.generation) {
+        Ok(generation) => generation,
+        Err(response) => return *response,
+    };
+    match handles
+        .member_request(
+            subject,
+            crate::actor::MemberRequest::ProposePlayerCompanyAction {
+                generation,
+                proposal: body.proposal,
+            },
+        )
+        .await
+    {
+        Ok(crate::actor::MemberResponse::CompanyProposal(generation, Ok(value))) => {
+            Json(serde_json::json!({"generation":generation.to_string(),"receipt":value}))
+                .into_response()
+        }
+        Ok(crate::actor::MemberResponse::CompanyProposal(_, Err(error))) => {
+            warn!(session = %body.session_id, error = ?error, "公司写命令被领域拒绝");
+            (StatusCode::BAD_REQUEST, Json(serde_json::json!({"code":"PLAYER_COMPANY_ACTION_REJECTED","failure":error.public_failure()}))).into_response()
+        }
+        Ok(crate::actor::MemberResponse::CompanyWriteFatal(failure)) =>
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(failure)).into_response(),
+        Ok(_) => api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "COMPANY_WRITE_RESPONSE_INVALID",
+            "公司写命令响应类型错误，请反馈",
+        ),
+        Err(SendCommandError::ActorGone) => api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "ACTOR_GONE",
+            "会话 actor 已退出，请同步有效会话后重试",
+        ),
+        Err(SendCommandError::Rejected(reason)) if reason == "STALE_SESSION_GENERATION" => {
+            api_error(StatusCode::CONFLICT, "STALE_SESSION_GENERATION", reason)
+        }
+        Err(SendCommandError::Rejected(reason)) => api_error(
+            StatusCode::BAD_REQUEST,
+            "PLAYER_COMPANY_ACTION_REJECTED",
+            reason,
+        ),
+        Err(SendCommandError::InvalidSpeed(_)) => unreachable!("公司写命令不校验倍速"),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EnqueueReportCorrectionBody {
+    pub session_id: String,
+    pub generation: String,
+    pub request: engine::session::CompanyReportCorrection,
+}
+
+pub async fn api_enqueue_report_correction(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    body: Result<Json<EnqueueReportCorrectionBody>, JsonRejection>,
+) -> Response {
+    let Json(body) = match body {
+        Ok(body) => body,
+        Err(error) => return invalid_json_response(error),
+    };
+    let (handles, subject) =
+        match authorized_market_controller(&state, &body.session_id, authorization_token(&headers)).await {
+            Ok(context) => context,
+            Err(response) => return *response,
+        };
+    let generation = match parse_host_parity_generation(&body.generation) {
+        Ok(generation) => generation,
+        Err(response) => return *response,
+    };
+    match handles.member_request(subject, crate::actor::MemberRequest::EnqueueReportCorrection { generation, request: body.request }).await {
+        Ok(crate::actor::MemberResponse::ReportCorrection(generation, Ok(value))) => Json(serde_json::json!({"generation":generation.to_string(),"operation_id":value.operation_id})).into_response(),
+        Ok(crate::actor::MemberResponse::ReportCorrection(_, Err(error))) => {
+            warn!(session = %body.session_id, error = ?error, "公司写命令被领域拒绝");
+            (StatusCode::BAD_REQUEST, Json(serde_json::json!({"code":"REPORT_CORRECTION_REJECTED","failure":error.public_failure()}))).into_response()
+        }
+        Ok(crate::actor::MemberResponse::CompanyWriteFatal(failure)) =>
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(failure)).into_response(),
+        Ok(_) => api_error(StatusCode::INTERNAL_SERVER_ERROR, "COMPANY_WRITE_RESPONSE_INVALID", "公司写命令响应类型错误，请反馈"),
+        Err(SendCommandError::ActorGone) => api_error(StatusCode::INTERNAL_SERVER_ERROR, "ACTOR_GONE", "会话 actor 已退出，请同步有效会话后重试"),
+        Err(SendCommandError::Rejected(reason)) if reason == "STALE_SESSION_GENERATION" => api_error(StatusCode::CONFLICT, "STALE_SESSION_GENERATION", reason),
+        Err(SendCommandError::Rejected(reason)) => api_error(StatusCode::BAD_REQUEST, "REPORT_CORRECTION_REJECTED", reason),
+        Err(SendCommandError::InvalidSpeed(_)) => unreachable!("公司写命令不校验倍速"),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CancelReportCorrectionBody {
+    pub session_id: String,
+    pub generation: String,
+    pub operation_id: String,
+}
+
+pub async fn api_cancel_report_correction(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    body: Result<Json<CancelReportCorrectionBody>, JsonRejection>,
+) -> Response {
+    let Json(body) = match body {
+        Ok(body) => body,
+        Err(error) => return invalid_json_response(error),
+    };
+    let (handles, subject) =
+        match authorized_market_controller(&state, &body.session_id, authorization_token(&headers)).await {
+            Ok(context) => context,
+            Err(response) => return *response,
+        };
+    let generation = match parse_host_parity_generation(&body.generation) {
+        Ok(generation) => generation,
+        Err(response) => return *response,
+    };
+    match handles.member_request(subject, crate::actor::MemberRequest::CancelReportCorrection { generation, operation_id: body.operation_id }).await {
+        Ok(crate::actor::MemberResponse::ReportCorrection(generation, Ok(value))) => Json(serde_json::json!({"generation":generation.to_string(),"operation_id":value.operation_id})).into_response(),
+        Ok(crate::actor::MemberResponse::ReportCorrection(_, Err(error))) => {
+            warn!(session = %body.session_id, error = ?error, "公司写命令被领域拒绝");
+            (StatusCode::BAD_REQUEST, Json(serde_json::json!({"code":"REPORT_CORRECTION_REJECTED","failure":error.public_failure()}))).into_response()
+        }
+        Ok(crate::actor::MemberResponse::CompanyWriteFatal(failure)) =>
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(failure)).into_response(),
+        Ok(_) => api_error(StatusCode::INTERNAL_SERVER_ERROR, "COMPANY_WRITE_RESPONSE_INVALID", "公司写命令响应类型错误，请反馈"),
+        Err(SendCommandError::ActorGone) => api_error(StatusCode::INTERNAL_SERVER_ERROR, "ACTOR_GONE", "会话 actor 已退出，请同步有效会话后重试"),
+        Err(SendCommandError::Rejected(reason)) if reason == "STALE_SESSION_GENERATION" => api_error(StatusCode::CONFLICT, "STALE_SESSION_GENERATION", reason),
+        Err(SendCommandError::Rejected(reason)) => api_error(StatusCode::BAD_REQUEST, "REPORT_CORRECTION_REJECTED", reason),
+        Err(SendCommandError::InvalidSpeed(_)) => unreachable!("公司写命令不校验倍速"),
+    }
+}
+
 /// /api/speed 请求体。
 #[derive(Debug, Deserialize)]
 pub struct SpeedBody {
@@ -2621,3 +2773,7 @@ mod publisher_connection_tests {
         ));
     }
 }
+
+#[cfg(test)]
+#[path = "routes/company_write_tests.rs"]
+mod company_write_tests;

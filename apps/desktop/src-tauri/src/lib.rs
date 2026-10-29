@@ -257,6 +257,69 @@ async fn company_read_query(
 }
 
 #[tauri::command]
+async fn propose_player_company_action(
+    state: State<'_, DesktopState>,
+    session_id: String,
+    generation: String,
+    proposal: engine::session::PlayerCompanyProposal,
+) -> Result<actor::CompanyProposalResponse, actor::CompanyWriteHostFailure> {
+    let handles = lookup_handles(&state, &session_id)
+        .await
+        .map_err(|error| actor::CompanyWriteHostFailure::Session { message: error.to_string() })?;
+    let generation = parse_generation(generation)
+        .map_err(|message| actor::CompanyWriteHostFailure::Session { message })?;
+    handles
+        .propose_player_company_action(generation, proposal)
+        .await
+        .map_err(|error| {
+            eprintln!("desktop.propose_player_company_action 领域拒绝：{error:?}");
+            error.public_failure()
+        })
+}
+
+#[tauri::command]
+async fn enqueue_report_correction(
+    state: State<'_, DesktopState>,
+    session_id: String,
+    generation: String,
+    request: engine::session::CompanyReportCorrection,
+) -> Result<actor::ReportCorrectionResponse, actor::CompanyWriteHostFailure> {
+    let handles = lookup_handles(&state, &session_id)
+        .await
+        .map_err(|error| actor::CompanyWriteHostFailure::Session { message: error.to_string() })?;
+    let generation = parse_generation(generation)
+        .map_err(|message| actor::CompanyWriteHostFailure::Session { message })?;
+    handles
+        .enqueue_report_correction(generation, request)
+        .await
+        .map_err(|error| {
+            eprintln!("desktop.enqueue_report_correction 领域拒绝：{error:?}");
+            error.public_failure()
+        })
+}
+
+#[tauri::command]
+async fn cancel_report_correction(
+    state: State<'_, DesktopState>,
+    session_id: String,
+    generation: String,
+    operation_id: String,
+) -> Result<actor::ReportCorrectionResponse, actor::CompanyWriteHostFailure> {
+    let handles = lookup_handles(&state, &session_id)
+        .await
+        .map_err(|error| actor::CompanyWriteHostFailure::Session { message: error.to_string() })?;
+    let generation = parse_generation(generation)
+        .map_err(|message| actor::CompanyWriteHostFailure::Session { message })?;
+    handles
+        .cancel_report_correction(generation, operation_id)
+        .await
+        .map_err(|error| {
+            eprintln!("desktop.cancel_report_correction 领域拒绝：{error:?}");
+            error.public_failure()
+        })
+}
+
+#[tauri::command]
 async fn public_reports(
     state: State<'_, DesktopState>,
     session_id: String,
@@ -504,6 +567,9 @@ fn command_builder<R: Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> 
             civil_date,
             public_reports,
             company_read_query,
+            propose_player_company_action,
+            enqueue_report_correction,
+            cancel_report_correction,
             public_report_by_id,
             npc_decision_diagnostics,
             speed_metrics,
@@ -537,6 +603,9 @@ fn command_builder<R: Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> 
             civil_date,
             public_reports,
             company_read_query,
+            propose_player_company_action,
+            enqueue_report_correction,
+            cancel_report_correction,
             public_report_by_id,
             npc_decision_diagnostics,
             speed_metrics,
@@ -567,3 +636,6 @@ pub fn run() {
 
 #[cfg(test)]
 mod lib_tests;
+
+#[cfg(test)]
+mod company_write_tests;

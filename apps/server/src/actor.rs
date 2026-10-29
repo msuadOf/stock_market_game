@@ -259,11 +259,21 @@ impl HostFailure {
                 r#where: "server.actor.rollback_cycle".into(),
                 cause: failure_cause(other),
                 context: FailureContext::new("endCivilDay"),
-                recoverable: false,
-                recovery_actions: vec![
-                    "停止当前会话；重新打开上一份有效日终存档或新局",
-                    "复制脱敏错误详情反馈",
-                ],
+                recoverable: matches!(other, SessionError::ReportCorrectionDayEnd(source)
+                    if source.classification() != engine::company::CompanyErrorClass::SystemState),
+                recovery_actions: if matches!(other, SessionError::ReportCorrectionDayEnd(source)
+                    if source.classification() != engine::company::CompanyErrorClass::SystemState)
+                {
+                    vec![
+                        "取消或修正待处理更正后恢复推进并重试日终",
+                        "复制脱敏错误详情反馈",
+                    ]
+                } else {
+                    vec![
+                        "停止当前会话；重新打开上一份有效日终存档或新局",
+                        "复制脱敏错误详情反馈",
+                    ]
+                },
             },
         }
     }
@@ -593,6 +603,18 @@ pub enum SessionCommand {
 /// 共享市场成员请求；本人公司查询由当前成员关系导出账户。
 #[derive(Debug)]
 pub enum MemberRequest {
+    ProposePlayerCompanyAction {
+        generation: u64,
+        proposal: engine::session::PlayerCompanyProposal,
+    },
+    EnqueueReportCorrection {
+        generation: u64,
+        request: engine::session::CompanyReportCorrection,
+    },
+    CancelReportCorrection {
+        generation: u64,
+        operation_id: String,
+    },
     CompanyRead {
         generation: u64,
         query: engine::session::protocol::CompanyReadQuery,
@@ -641,6 +663,21 @@ pub enum MemberRequest {
 
 #[derive(Debug)]
 pub enum MemberResponse {
+    CompanyWriteFatal(HostFailure),
+    CompanyProposal(
+        u64,
+        Result<
+            engine::session::PlayerCompanyCommandReceipt,
+            engine::session::protocol::CompanyWriteError,
+        >,
+    ),
+    ReportCorrection(
+        u64,
+        Result<
+            engine::session::protocol::ReportCorrectionAcknowledgement,
+            engine::session::protocol::CompanyWriteError,
+        >,
+    ),
     CompanyRead(
         u64,
         AccountId,
@@ -671,6 +708,9 @@ pub struct MarketContext {
 
 #[cfg(test)]
 mod fatal_tests;
+
+#[cfg(test)]
+mod correction_recovery_tests;
 
 #[cfg(test)]
 mod interval_tests {
@@ -2036,29 +2076,29 @@ impl SessionActor {
             }
         };
         let tick_date = self.game.civil_date().to_iso();
-        let civil_updates = match self.prepare_civil_updates() {
-            Ok(updates) => updates,
-            Err(error) => {
+        let mut civil_updates = Vec::new();
+        if let Err(error) = self.prepare_civil_updates(&mut civil_updates) {
+            let recoverable = matches!(&error, SessionError::ReportCorrectionDayEnd(source)
+                    if source.classification() != engine::company::CompanyErrorClass::SystemState)
+                && self.game.require_healthy().is_ok();
+            if recoverable {
+                // tick_batch 已消费 seq；保留并先广播真实末拍，避免重试时 ReplayGuard 出现空洞。
+                if let Some(update) = tick_update {
+                    self.broadcast_at(update, tick_date);
+                }
+                self.publish_civil_updates(civil_updates);
+                self.stop_with_failure(HostFailure::civil(&error));
+                engine::session::defer_destruction(checkpoint);
+            } else {
                 self.public_revision = revision_before;
                 self.rollback_cycle(checkpoint, error);
-                return;
             }
-        };
+            return;
+        }
         if let Some(update) = tick_update {
             self.broadcast_at(update, tick_date);
         }
-        for update in civil_updates {
-            // B3 远程登录：日终档随广播前持久化（写失败=可恢复失败——上一份
-            // 有效档保留，交易提交有效；18725d07 persist_day_end 语义）。
-            self.persist_day_end(&update);
-            let pause = self.pause_preferences.pauses(&update);
-            self.public_revision = self.public_revision.saturating_add(1);
-            let date = update.civil_date.clone();
-            self.broadcast_at(ProtocolUpdate::CivilUpdate(Box::new(update)), date);
-            if pause {
-                self.pacing.pause_at_civil_boundary(self.game.tick());
-            }
-        }
+        self.publish_civil_updates(civil_updates);
         self.pacing.refresh_metrics(self.game.tick());
         // 成功路径：批级回滚锚点已无用，析构移交池外专用线程——旧账户页的
         // jemalloc free（实测 ~132µs/tick）不再占用 actor 关键路径；析构无任何
@@ -2084,10 +2124,23 @@ impl SessionActor {
         }
     }
 
+    fn publish_civil_updates(&mut self, updates: Vec<engine::session::protocol::CivilUpdate>) {
+        for update in updates {
+            self.persist_day_end(&update);
+            let pause = self.pause_preferences.pauses(&update);
+            self.public_revision = self.public_revision.saturating_add(1);
+            let date = update.civil_date.clone();
+            self.broadcast_at(ProtocolUpdate::CivilUpdate(Box::new(update)), date);
+            if pause {
+                self.pacing.pause_at_civil_boundary(self.game.tick());
+            }
+        }
+    }
+
     fn prepare_civil_updates(
         &mut self,
-    ) -> Result<Vec<engine::session::protocol::CivilUpdate>, SessionError> {
-        let mut updates = Vec::new();
+        updates: &mut Vec<engine::session::protocol::CivilUpdate>,
+    ) -> Result<(), SessionError> {
         while self.game.civil_day_ready()? {
             let update = self.game.end_civil_day_update()?;
             let pause = self.pause_preferences.pauses(&update);
@@ -2096,7 +2149,7 @@ impl SessionActor {
                 break;
             }
         }
-        Ok(updates)
+        Ok(())
     }
 
     /// 日终档持久化（B3 远程登录）：写失败为可恢复失败——交易提交有效、
@@ -2131,6 +2184,21 @@ impl SessionActor {
         }
     }
 
+    fn company_write_fatal(
+        &mut self,
+        error: Option<&engine::session::protocol::CompanyWriteError>,
+    ) -> Option<MemberResponse> {
+        let fatal = self.game.require_healthy().err()
+            .or_else(|| error.and_then(|error| error.step_fatal().cloned()))?;
+        // 公开 fatal 只含脱敏投影；原 typed cause 在转换前进入可信宿主日志。
+        if let Some(error) = error {
+            warn!(session = %self.session_id, error = ?error, "公司写命令触发引擎致命错误");
+        }
+        let failure = HostFailure::step(&fatal);
+        self.stop_with_failure(failure.clone());
+        Some(MemberResponse::CompanyWriteFatal(failure))
+    }
+
     /// 成员请求处理（B3 子集——鉴权后的成员/控制面统一入口）。
     fn handle_member_request(
         &mut self,
@@ -2140,7 +2208,10 @@ impl SessionActor {
         let reject =
             |error: engine::session::MembershipError| SendCommandError::Rejected(error.to_string());
         let request_generation = match &request {
-            MemberRequest::AdmissionCash { generation, .. }
+            MemberRequest::ProposePlayerCompanyAction { generation, .. }
+            | MemberRequest::EnqueueReportCorrection { generation, .. }
+            | MemberRequest::CancelReportCorrection { generation, .. }
+            | MemberRequest::AdmissionCash { generation, .. }
             | MemberRequest::CompanyRead { generation, .. }
             | MemberRequest::SetSpeed { generation, .. }
             | MemberRequest::SetRunning { generation, .. }
@@ -2148,9 +2219,79 @@ impl SessionActor {
             _ => None,
         };
         if request_generation.is_some_and(|generation| generation != self.timeline_generation) {
-            return Err(SendCommandError::Rejected("STALE_SESSION_GENERATION".into()));
+            return Err(SendCommandError::Rejected(
+                "STALE_SESSION_GENERATION".into(),
+            ));
         }
         match request {
+            MemberRequest::ProposePlayerCompanyAction { proposal, .. } => {
+                let owner = self
+                    .game
+                    .market_membership(&subject)
+                    .map_err(reject)?
+                    .account_id;
+                if let Some(failure) = &self.fatal_failure {
+                    return Ok(MemberResponse::CompanyWriteFatal(failure.clone()));
+                }
+                let result = self
+                    .game
+                    .propose_player_company_action(owner, proposal)
+                    .map_err(Into::into);
+                if let Some(fatal) = self.company_write_fatal(result.as_ref().err()) {
+                    return Ok(fatal);
+                }
+                Ok(MemberResponse::CompanyProposal(
+                    self.timeline_generation,
+                    result,
+                ))
+            }
+            MemberRequest::EnqueueReportCorrection { request, .. } => {
+                self.require_market_control(&subject)?;
+                if let Some(failure) = &self.fatal_failure {
+                    return Ok(MemberResponse::CompanyWriteFatal(failure.clone()));
+                }
+                let epoch = self.game.game().report_correction_epoch();
+                let operation_id = request.operation_id.clone();
+                let result = self
+                    .game
+                    .enqueue_report_correction(&epoch, request)
+                    .map(
+                        |_| engine::session::protocol::ReportCorrectionAcknowledgement {
+                            operation_id,
+                        },
+                    )
+                    .map_err(Into::into);
+                if let Some(fatal) = self.company_write_fatal(result.as_ref().err()) {
+                    return Ok(fatal);
+                }
+                Ok(MemberResponse::ReportCorrection(
+                    self.timeline_generation,
+                    result,
+                ))
+            }
+            MemberRequest::CancelReportCorrection { operation_id, .. } => {
+                self.require_market_control(&subject)?;
+                if let Some(failure) = &self.fatal_failure {
+                    return Ok(MemberResponse::CompanyWriteFatal(failure.clone()));
+                }
+                let epoch = self.game.game().report_correction_epoch();
+                let result = self
+                    .game
+                    .cancel_report_correction(&epoch, &operation_id)
+                    .map(
+                        |_| engine::session::protocol::ReportCorrectionAcknowledgement {
+                            operation_id,
+                        },
+                    )
+                    .map_err(Into::into);
+                if let Some(fatal) = self.company_write_fatal(result.as_ref().err()) {
+                    return Ok(fatal);
+                }
+                Ok(MemberResponse::ReportCorrection(
+                    self.timeline_generation,
+                    result,
+                ))
+            }
             MemberRequest::CompanyRead { query, .. } => {
                 if let Some(error) = self.fatal_rejection() {
                     return Err(SendCommandError::Rejected(error.to_string()));
@@ -2828,10 +2969,19 @@ impl SessionActor {
                 request,
                 reply,
             } => {
-                let result = if let Some(error) = self.fatal_rejection() {
-                    Err(SendCommandError::Rejected(error.to_string()))
-                } else {
-                    self.handle_member_request(subject, request)
+                let fatal_probe = matches!(
+                    &request,
+                    MemberRequest::Control
+                        | MemberRequest::Resolve
+                        | MemberRequest::ProposePlayerCompanyAction { .. }
+                        | MemberRequest::EnqueueReportCorrection { .. }
+                        | MemberRequest::CancelReportCorrection { .. }
+                );
+                let result = match self.fatal_rejection() {
+                    Some(error) if !fatal_probe => {
+                        Err(SendCommandError::Rejected(error.to_string()))
+                    }
+                    _ => self.handle_member_request(subject, request),
                 };
                 let _ = reply.send(result);
             }

@@ -6,7 +6,11 @@ use std::collections::{BTreeMap, BTreeSet};
 mod civil;
 mod commit;
 mod company_reads;
-pub use company_reads::{CompanyReadError, CompanyReadFailure, CompanyReadQuery, CompanyReadResult};
+mod company_writes;
+pub use company_reads::{
+    CompanyReadError, CompanyReadFailure, CompanyReadQuery, CompanyReadResult,
+};
+pub use company_writes::{CompanyWriteError, CompanyWriteFailure, ReportCorrectionAcknowledgement};
 mod delta;
 mod facts;
 mod optional_u64;

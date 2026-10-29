@@ -2132,3 +2132,36 @@ mod d0b_storage_tests {
         assert_eq!(snapshot(&source), initial);
     }
 }
+// 显式转发现有领域命令；不授予权限，不替换 epoch，不触发推进或存档。
+impl ProtocolSession {
+    pub fn propose_player_company_action(
+        &mut self,
+        account: crate::AccountId,
+        proposal: crate::session::PlayerCompanyProposal,
+    ) -> Result<
+        crate::session::PlayerCompanyCommandReceipt,
+        crate::session::PlayerCompanyCommandError,
+    > {
+        self.state
+            .game
+            .propose_player_company_action(account, proposal)
+    }
+
+    pub fn enqueue_report_correction(
+        &mut self,
+        epoch: &crate::session::ReportCorrectionEpoch,
+        request: crate::session::CompanyReportCorrection,
+    ) -> Result<(), crate::session::ReportCorrectionError> {
+        self.state.game.enqueue_report_correction(epoch, request)
+    }
+
+    pub fn cancel_report_correction(
+        &mut self,
+        epoch: &crate::session::ReportCorrectionEpoch,
+        operation_id: &str,
+    ) -> Result<(), crate::session::ReportCorrectionError> {
+        self.state
+            .game
+            .cancel_report_correction(epoch, operation_id)
+    }
+}

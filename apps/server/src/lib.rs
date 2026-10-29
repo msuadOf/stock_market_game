@@ -62,6 +62,18 @@ pub fn app_router_with_manager(manager: SessionManager) -> Router {
 /// 内部：由 `AppState` 装配完整路由树。
 fn app_router_with_state(state: AppState) -> Router {
     let router = Router::new()
+        .route(
+            "/api/propose-player-company-action",
+            post(routes::api_propose_player_company_action),
+        )
+        .route(
+            "/api/enqueue-report-correction",
+            post(routes::api_enqueue_report_correction),
+        )
+        .route(
+            "/api/cancel-report-correction",
+            post(routes::api_cancel_report_correction),
+        )
         .route("/healthz", get(healthz))
         .merge(routes::archive_router())
         .route("/api/new", post(routes::api_new))

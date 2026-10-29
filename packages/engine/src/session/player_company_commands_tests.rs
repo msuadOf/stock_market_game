@@ -619,3 +619,6 @@ fn player_command_driver_tick_mismatch_is_terminal() {
         before
     );
 }
+
+#[path = "player_company_classification_tests.rs"]
+mod classification_tests;

@@ -207,11 +207,21 @@ impl HostFailure {
                 r#where: "desktop.actor.rollback_cycle".into(),
                 cause: failure_cause(&other),
                 context: FailureContext::new("endCivilDay"),
-                recoverable: false,
-                recovery_actions: vec![
-                    "停止当前会话；重新打开上一份有效日终存档或新局",
-                    "复制脱敏错误详情反馈",
-                ],
+                recoverable: matches!(&other, SessionError::ReportCorrectionDayEnd(source)
+                    if source.classification() != engine::company::CompanyErrorClass::SystemState),
+                recovery_actions: if matches!(&other, SessionError::ReportCorrectionDayEnd(source)
+                    if source.classification() != engine::company::CompanyErrorClass::SystemState)
+                {
+                    vec![
+                        "取消或修正待处理更正后恢复推进并重试日终",
+                        "复制脱敏错误详情反馈",
+                    ]
+                } else {
+                    vec![
+                        "停止当前会话；重新打开上一份有效日终存档或新局",
+                        "复制脱敏错误详情反馈",
+                    ]
+                },
             },
         }
     }
@@ -232,10 +242,12 @@ impl<R: Runtime> SessionActor<R> {
     }
 
     pub(super) fn stop_after_host_failure(&mut self, mut failure: HostFailure) {
-        if let Err(error) = self.game.shared_ingress().close() {
-            failure
-                .message
-                .push_str(&format!("；关闭 ingress 失败：{error}"));
+        if !failure.recoverable {
+            if let Err(error) = self.game.shared_ingress().close() {
+                failure
+                    .message
+                    .push_str(&format!("；关闭 ingress 失败：{error}"));
+            }
         }
         failure.context.tick = Some(self.game.tick());
         failure.context.seq = Some(self.game.seq());
@@ -254,6 +266,8 @@ impl<R: Runtime> SessionActor<R> {
                 self.session_id, failure.code, failure.message
             );
         }
-        self.cmd_rx.close();
+        if !failure.recoverable {
+            self.cmd_rx.close();
+        }
     }
 }

@@ -6,14 +6,17 @@ use super::capital_command_candidates::{
 };
 use super::company_state::{SessionCompanies, SystemCompanyState};
 use super::player_company_command_candidates::{
-    build_player_repurchase_plan, build_player_rights_plan, build_player_split_plan, player_holding_context,
-    prepare_player_cash_dividend, prepare_player_stock_distribution, PlayerCompanyCommandInput,
+    PlayerCompanyCommandInput, build_player_repurchase_plan, build_player_rights_plan,
+    build_player_split_plan, player_holding_context, prepare_player_cash_dividend,
+    prepare_player_stock_distribution,
 };
 use super::{GameSession, PlayerCompanyProposal, PlayerProposalKind};
-use crate::company::{CompanyId, CompanySystem};
+use crate::company::{CompanyErrorClass, CompanyId, CompanySystem};
+#[path = "player_company_command_classification.rs"]
+mod classification;
 use crate::runtime::world::InformationPreparePayload;
 use crate::{AccountId, AccountKind, CivilDate};
-use std::sync::{atomic::Ordering, Arc};
+use std::sync::{Arc, atomic::Ordering};
 
 /// 只证明该公司方案已经批准并安装；不证明未来付款、登记或股份到账。
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -60,11 +63,17 @@ pub struct PlayerCompanyCommandError {
     pub company: CompanyId,
     pub kind: PlayerProposalKind,
     pub day: CivilDate,
+    classification: CompanyErrorClass,
     #[source]
     cause: Box<dyn std::error::Error + Send + Sync>,
 }
 
 impl PlayerCompanyCommandError {
+    /// 分类在原 typed cause 装箱前确定，不替换或消费真实错误链。
+    pub const fn classification(&self) -> CompanyErrorClass {
+        self.classification
+    }
+
     pub fn account(&self) -> AccountId {
         self.account
     }
@@ -81,21 +90,35 @@ impl GameSession {
         let company = proposal.company();
         let kind = proposal.kind();
         let day = self.civil_date();
-        let fail = |cause: Box<dyn std::error::Error + Send + Sync>| PlayerCompanyCommandError {
-            account,
-            company,
-            kind,
-            day,
-            cause,
+        let fail = |classification, cause: Box<dyn std::error::Error + Send + Sync>| {
+            PlayerCompanyCommandError {
+                account,
+                company,
+                kind,
+                day,
+                classification,
+                cause,
+            }
         };
-        let issue = |value| fail(Box::new(CommandIssue(value)));
+        let issue = |value| {
+            fail(
+                classification::command_issue(value),
+                Box::new(CommandIssue(value)),
+            )
+        };
         self.require_healthy()
-            .map_err(|error| fail(Box::new(error)))?;
-        let requester = self
-            .account(account)
-            .ok_or_else(|| fail(Box::new(super::SessionError::UnknownPlayer(account))))?;
+            .map_err(|error| fail(CompanyErrorClass::SystemState, Box::new(error)))?;
+        let requester = self.account(account).ok_or_else(|| {
+            fail(
+                CompanyErrorClass::InvalidInput,
+                Box::new(super::SessionError::UnknownPlayer(account)),
+            )
+        })?;
         if requester.kind() != AccountKind::Player {
-            return Err(fail(Box::new(super::SessionError::NotPlayer(account))));
+            return Err(fail(
+                CompanyErrorClass::InvalidInput,
+                Box::new(super::SessionError::NotPlayer(account)),
+            ));
         }
         let (system, actions) = match &self.state.companies {
             SessionCompanies::CompanySystem(state) => {
@@ -138,29 +161,36 @@ impl GameSession {
                 | PlayerProposalKind::ShareSplit
         ) {
             // 尚未执行资产操作的类别也必须先验证真实当前持仓，不能让占位拒绝替代身份门。
-            player_holding_context(&input).map_err(|error| fail(Box::new(error)))?;
+            player_holding_context(&input)
+                .map_err(|error| fail(classification::player(&error), Box::new(error)))?;
         }
         if matches!(
             kind,
             PlayerProposalKind::RightsOffering | PlayerProposalKind::SecondaryOffering
         ) && !self.state.setup.rights_offering_enabled
         {
-            return Err(fail(Box::new(DisabledCompanyMechanism {
-                mechanism: "配股／增发",
-                setup_flag: "rights_offering_enabled",
-            })));
+            return Err(fail(
+                CompanyErrorClass::UnsupportedOperation,
+                Box::new(DisabledCompanyMechanism {
+                    mechanism: "配股／增发",
+                    setup_flag: "rights_offering_enabled",
+                }),
+            ));
         }
         if kind == PlayerProposalKind::IssuerRepurchase
             && !self.state.setup.issuer_repurchase_enabled
         {
-            return Err(fail(Box::new(DisabledCompanyMechanism {
-                mechanism: "发行人回购",
-                setup_flag: "issuer_repurchase_enabled",
-            })));
+            return Err(fail(
+                CompanyErrorClass::UnsupportedOperation,
+                Box::new(DisabledCompanyMechanism {
+                    mechanism: "发行人回购",
+                    setup_flag: "issuer_repurchase_enabled",
+                }),
+            ));
         }
         if kind == PlayerProposalKind::IssuerRepurchase {
-            let plan =
-                build_player_repurchase_plan(input).map_err(|error| fail(Box::new(error)))?;
+            let plan = build_player_repurchase_plan(input)
+                .map_err(|error| fail(classification::player(&error), Box::new(error)))?;
             let approved = self
                 .approve_issuer_repurchase(
                     plan,
@@ -168,7 +198,9 @@ impl GameSession {
                         requester: account,
                     },
                 )
-                .map_err(|error| fail(Box::new(error)))?;
+                .map_err(|error| {
+                    fail(classification::repurchase_session(&error), Box::new(error))
+                })?;
             let event_id = match approved {
                 super::RepurchaseApprovalReceipt::Approved { event_id, .. }
                 | super::RepurchaseApprovalReceipt::AlreadyApproved { event_id, .. } => event_id,
@@ -190,15 +222,15 @@ impl GameSession {
         ) {
             Some(
                 CapitalApprovalContext::prepare(self, company)
-                    .map_err(|error| fail(Box::new(error)))?,
+                    .map_err(|error| fail(CompanyErrorClass::SystemState, Box::new(error)))?,
             )
         } else {
             None
         };
         let (candidate_system, candidate_actions, event_id) = match kind {
             PlayerProposalKind::CashDividend => {
-                let candidate =
-                    prepare_player_cash_dividend(input).map_err(|error| fail(Box::new(error)))?;
+                let candidate = prepare_player_cash_dividend(input)
+                    .map_err(|error| fail(classification::player(&error), Box::new(error)))?;
                 (
                     candidate.company_system,
                     candidate.actions,
@@ -210,7 +242,7 @@ impl GameSession {
                     input,
                     capital.as_ref().expect("送转已准备实际资本口径"),
                 )
-                .map_err(|error| fail(Box::new(error)))?;
+                .map_err(|error| fail(classification::player(&error), Box::new(error)))?;
                 (
                     candidate.company_system,
                     candidate.actions,
@@ -219,11 +251,11 @@ impl GameSession {
             }
             PlayerProposalKind::RightsOffering | PlayerProposalKind::SecondaryOffering => {
                 let exchange = player_holding_context(&input)
-                    .map_err(|error| fail(Box::new(error)))?
+                    .map_err(|error| fail(classification::player(&error), Box::new(error)))?
                     .2;
                 let plan =
                     build_player_rights_plan(input, self.state.setup.rights_offering_enabled)
-                        .map_err(|error| fail(Box::new(error)))?;
+                        .map_err(|error| fail(classification::player(&error), Box::new(error)))?;
                 let candidate = prepare_rights_approval(
                     CapitalCommandInput {
                         system,
@@ -235,7 +267,7 @@ impl GameSession {
                     },
                     plan,
                 )
-                .map_err(|error| fail(Box::new(error)))?;
+                .map_err(|error| fail(classification::capital(&error), Box::new(error)))?;
                 (
                     candidate.company_system,
                     candidate.actions,
@@ -244,9 +276,10 @@ impl GameSession {
             }
             PlayerProposalKind::ShareSplit => {
                 let exchange = player_holding_context(&input)
-                    .map_err(|error| fail(Box::new(error)))?
+                    .map_err(|error| fail(classification::player(&error), Box::new(error)))?
                     .2;
-                let plan = build_player_split_plan(input).map_err(|error| fail(Box::new(error)))?;
+                let plan = build_player_split_plan(input)
+                    .map_err(|error| fail(classification::player(&error), Box::new(error)))?;
                 let candidate = prepare_split_approval(
                     CapitalCommandInput {
                         system,
@@ -258,7 +291,7 @@ impl GameSession {
                     },
                     plan,
                 )
-                .map_err(|error| fail(Box::new(error)))?;
+                .map_err(|error| fail(classification::capital(&error), Box::new(error)))?;
                 (
                     candidate.company_system,
                     candidate.actions,
@@ -281,13 +314,13 @@ impl GameSession {
             ));
         }
         validate_approval_books(&candidate_system, &candidate_actions)
-            .map_err(|error| fail(Box::new(error)))?;
+            .map_err(|error| fail(CompanyErrorClass::SystemState, Box::new(error)))?;
         let payload = InformationPreparePayload {
             library: Arc::clone(&self.state.library),
             current_facts: Arc::new(
                 self.state
                     .company_read_facts()
-                    .map_err(|error| fail(Box::new(error)))?,
+                    .map_err(|error| fail(CompanyErrorClass::SystemState, Box::new(error)))?,
             ),
             observation: None,
         };
@@ -305,7 +338,7 @@ impl GameSession {
             .ok_or_else(|| issue(PlayerCompanyCommandIssue::RevisionExhausted))?;
         if construct_runtime {
             self.construct_runtime_driver_lazy()
-                .map_err(|error| fail(Box::new(error)))?;
+                .map_err(|error| fail(CompanyErrorClass::SystemState, Box::new(error)))?;
         }
         // 真实初始化已经结束；inspect 只能比较这个同作用域的新鲜来源戳。
         let revision = self.external_revision();
@@ -364,7 +397,7 @@ impl GameSession {
                         description: format!("公司命令运行时已经终止：{cause}"),
                     });
                 }
-                return Err(fail(cause));
+                return Err(fail(CompanyErrorClass::SystemState, cause));
             }
         }
         self.revision.store(next_revision, Ordering::Relaxed);

@@ -34,6 +34,8 @@ use crate::EngineEventPayload;
 mod failure;
 pub(crate) use failure::HostFailure;
 #[cfg(test)]
+mod correction_recovery_tests;
+#[cfg(test)]
 mod fatal_tests;
 #[cfg(test)]
 mod protocol_tests;
@@ -254,11 +256,66 @@ impl DesktopPacing {
     }
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum CompanyWriteHostError {
+    #[error("公司写命令宿主失败：{message}")]
+    Session { message: String },
+    #[error("{0}")]
+    Command(#[from] engine::session::protocol::CompanyWriteError),
+    #[error("公司写命令已触发引擎致命错误：{0}")]
+    Fatal(#[source] engine::session::StepFatal),
+}
+
+#[derive(Debug, Serialize)]
+#[serde(untagged)]
+pub(crate) enum CompanyWriteHostFailure {
+    Command(engine::session::protocol::CompanyWriteFailure),
+    Fatal(HostFailure),
+    Session { message: String },
+}
+
+impl CompanyWriteHostError {
+    pub(crate) fn public_failure(&self) -> CompanyWriteHostFailure {
+        match self {
+            Self::Session { message } => CompanyWriteHostFailure::Session { message: message.clone() },
+            Self::Command(error) => CompanyWriteHostFailure::Command(error.public_failure()),
+            Self::Fatal(fatal) => CompanyWriteHostFailure::Fatal(HostFailure::step(fatal.clone())),
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct CompanyProposalResponse {
+    pub generation: String,
+    pub receipt: engine::session::PlayerCompanyCommandReceipt,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ReportCorrectionResponse {
+    pub generation: String,
+    pub operation_id: String,
+}
+
 /// 发给 actor 的命令；控制回执表示 actor 已应用，不只是进入 mpsc。
 ///
 /// `reply` 用 `Result` 而非裸值：engine 失败（`SessionError`）显式上抛，绝不静默吞（铁律二）。
 #[derive(Debug)]
 pub enum SessionCommand {
+    ProposePlayerCompanyAction {
+        generation: u64,
+        proposal: engine::session::PlayerCompanyProposal,
+        reply: oneshot::Sender<Result<CompanyProposalResponse, CompanyWriteHostError>>,
+    },
+    EnqueueReportCorrection {
+        generation: u64,
+        request: engine::session::CompanyReportCorrection,
+        reply: oneshot::Sender<Result<ReportCorrectionResponse, CompanyWriteHostError>>,
+    },
+    CancelReportCorrection {
+        generation: u64,
+        operation_id: String,
+        reply: oneshot::Sender<Result<ReportCorrectionResponse, CompanyWriteHostError>>,
+    },
     CompanyRead {
         generation: u64,
         query: engine::session::protocol::CompanyReadQuery,
@@ -373,6 +430,72 @@ pub struct SessionHandles {
 }
 
 impl SessionHandles {
+    pub async fn propose_player_company_action(
+        &self,
+        generation: u64,
+        proposal: engine::session::PlayerCompanyProposal,
+    ) -> Result<CompanyProposalResponse, CompanyWriteHostError> {
+        let (reply, received) = oneshot::channel();
+        self.cmd_tx
+            .send(SessionCommand::ProposePlayerCompanyAction {
+                generation,
+                proposal,
+                reply,
+            })
+            .map_err(|error| CompanyWriteHostError::Session {
+                message: error.to_string(),
+            })?;
+        received
+            .await
+            .map_err(|error| CompanyWriteHostError::Session {
+                message: error.to_string(),
+            })?
+    }
+
+    pub async fn enqueue_report_correction(
+        &self,
+        generation: u64,
+        request: engine::session::CompanyReportCorrection,
+    ) -> Result<ReportCorrectionResponse, CompanyWriteHostError> {
+        let (reply, received) = oneshot::channel();
+        self.cmd_tx
+            .send(SessionCommand::EnqueueReportCorrection {
+                generation,
+                request,
+                reply,
+            })
+            .map_err(|error| CompanyWriteHostError::Session {
+                message: error.to_string(),
+            })?;
+        received
+            .await
+            .map_err(|error| CompanyWriteHostError::Session {
+                message: error.to_string(),
+            })?
+    }
+
+    pub async fn cancel_report_correction(
+        &self,
+        generation: u64,
+        operation_id: String,
+    ) -> Result<ReportCorrectionResponse, CompanyWriteHostError> {
+        let (reply, received) = oneshot::channel();
+        self.cmd_tx
+            .send(SessionCommand::CancelReportCorrection {
+                generation,
+                operation_id,
+                reply,
+            })
+            .map_err(|error| CompanyWriteHostError::Session {
+                message: error.to_string(),
+            })?;
+        received
+            .await
+            .map_err(|error| CompanyWriteHostError::Session {
+                message: error.to_string(),
+            })?
+    }
+
     pub async fn company_read_query(
         &self,
         generation: u64,
@@ -1038,10 +1161,32 @@ impl<R: Runtime> SessionActor<R> {
         } else {
             Some(self.game.tick_batch(frames)?)
         };
-        let updates = self.prepare_civil_updates()?;
+        let mut updates = Vec::new();
+        match self.prepare_civil_updates(&mut updates) {
+            Ok(()) => {}
+            Err(error)
+                if matches!(&error, SessionError::ReportCorrectionDayEnd(source)
+                if source.classification() != engine::company::CompanyErrorClass::SystemState)
+                    && self.game.require_healthy().is_ok() =>
+            {
+                // seq 已经由真实 tick_batch 提交；必须先交付末拍，再通知可恢复更正拒绝。
+                if let Some(batch) = batch {
+                    self.emit_update(EngineUpdate::TickBatch(Box::new(batch)));
+                }
+                self.publish_civil_updates(updates);
+                self.stop_after_host_failure(failure::HostFailure::civil(error));
+                return Ok(());
+            }
+            Err(error) => return Err(error),
+        };
         if let Some(batch) = batch {
             self.emit_update(EngineUpdate::TickBatch(Box::new(batch)));
         }
+        self.publish_civil_updates(updates);
+        Ok(())
+    }
+
+    fn publish_civil_updates(&mut self, updates: Vec<engine::session::protocol::CivilUpdate>) {
         for update in updates {
             let pause = self.pause_preferences.pauses(&update);
             self.emit_update(EngineUpdate::CivilUpdate(Box::new(update)));
@@ -1049,7 +1194,6 @@ impl<R: Runtime> SessionActor<R> {
                 self.pacing.pause_at_civil_boundary(self.game.tick());
             }
         }
-        Ok(())
     }
 
     fn emit_update(&mut self, update: EngineUpdate) {
@@ -1067,12 +1211,102 @@ impl<R: Runtime> SessionActor<R> {
         }
     }
 
+    fn finish_company_write<T>(&mut self, result: Result<T, CompanyWriteHostError>) -> Result<T, CompanyWriteHostError> {
+        // generation 拒绝先于领域命令，也不能因当前 Session 已 poison 而改写其结果。
+        if matches!(&result, Err(CompanyWriteHostError::Session { .. })) {
+            return result;
+        }
+        let fatal = self.game.require_healthy().err().or_else(|| {
+            match result.as_ref().err() {
+                Some(CompanyWriteHostError::Command(error)) => error.step_fatal().cloned(),
+                _ => None,
+            }
+        });
+        if let Some(fatal) = fatal {
+            if let Err(error) = &result {
+                eprintln!("[session {}] 公司写命令触发引擎致命错误：{error:?}", self.session_id);
+            }
+            self.stop_after_step_failure(fatal.clone());
+            return Err(CompanyWriteHostError::Fatal(fatal));
+        }
+        result
+    }
+
     /// 处理单条命令。
     async fn handle_command(&mut self, cmd: SessionCommand) {
         if self.cmd_rx.is_closed() {
             return;
         }
         match cmd {
+            SessionCommand::ProposePlayerCompanyAction {
+                generation,
+                proposal,
+                reply,
+            } => {
+                let result = self
+                    .generation_response(generation, Ok(()))
+                    .map_err(|error| CompanyWriteHostError::Session {
+                        message: error.to_string(),
+                    })
+                    .and_then(|_| {
+                        self.game
+                            .propose_player_company_action(AccountId(0), proposal)
+                            .map(|receipt| CompanyProposalResponse {
+                                generation: self.generation.to_string(),
+                                receipt,
+                            })
+                            .map_err(|error| CompanyWriteHostError::Command(error.into()))
+                    });
+                let result = self.finish_company_write(result);
+                let _ = reply.send(result);
+            }
+            SessionCommand::EnqueueReportCorrection {
+                generation,
+                request,
+                reply,
+            } => {
+                let result = self
+                    .generation_response(generation, Ok(()))
+                    .map_err(|error| CompanyWriteHostError::Session {
+                        message: error.to_string(),
+                    })
+                    .and_then(|_| {
+                        let operation_id = request.operation_id.clone();
+                        let epoch = self.game.game().report_correction_epoch();
+                        self.game
+                            .enqueue_report_correction(&epoch, request)
+                            .map(|_| ReportCorrectionResponse {
+                                generation: self.generation.to_string(),
+                                operation_id,
+                            })
+                            .map_err(|error| CompanyWriteHostError::Command(error.into()))
+                    });
+                let result = self.finish_company_write(result);
+                let _ = reply.send(result);
+            }
+            SessionCommand::CancelReportCorrection {
+                generation,
+                operation_id,
+                reply,
+            } => {
+                let result = self
+                    .generation_response(generation, Ok(()))
+                    .map_err(|error| CompanyWriteHostError::Session {
+                        message: error.to_string(),
+                    })
+                    .and_then(|_| {
+                        let epoch = self.game.game().report_correction_epoch();
+                        self.game
+                            .cancel_report_correction(&epoch, &operation_id)
+                            .map(|_| ReportCorrectionResponse {
+                                generation: self.generation.to_string(),
+                                operation_id,
+                            })
+                            .map_err(|error| CompanyWriteHostError::Command(error.into()))
+                    });
+                let result = self.finish_company_write(result);
+                let _ = reply.send(result);
+            }
             SessionCommand::CompanyRead {
                 generation,
                 query,
@@ -1380,8 +1614,8 @@ impl<R: Runtime> SessionActor<R> {
 
     fn prepare_civil_updates(
         &mut self,
-    ) -> Result<Vec<engine::session::protocol::CivilUpdate>, SessionError> {
-        let mut updates = Vec::new();
+        updates: &mut Vec<engine::session::protocol::CivilUpdate>,
+    ) -> Result<(), SessionError> {
         while self.game.civil_day_ready()? {
             let update = self.game.end_civil_day_update()?;
             let pause = self.pause_preferences.pauses(&update);
@@ -1390,7 +1624,7 @@ impl<R: Runtime> SessionActor<R> {
                 break;
             }
         }
-        Ok(updates)
+        Ok(())
     }
 }
 

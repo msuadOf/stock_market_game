@@ -121,7 +121,7 @@ async fn company_read_route_authenticates_and_preserves_owner_and_generation() {
     );
 }
 
-fn setup() -> Value {
+pub(super) fn setup() -> Value {
     json!({
         "stocks": [{"code":"600101","exchange":"Shanghai","category":"MainBoard","initial_price":"1000","limit_pct":0.10,"tick":"1","total_shares":"10000000","float_shares":0}],
         "npcs": {"retail_count":0,"inst_count":0,"hot_count":0,"retail_cash_median":"10000000"},
@@ -131,7 +131,7 @@ fn setup() -> Value {
     })
 }
 
-async fn request(
+pub(super) async fn request(
     app: axum::Router,
     method: &str,
     uri: &str,
