@@ -39,7 +39,7 @@ export interface SessionHostLifecyclePorts {
   setIndicatorCalculator(calculator: IndicatorCalculator): () => void;
   connectProtocol(host: EngineHost): void;
   disconnectProtocol(): void;
-  createHost(setup: SessionSetup, seed: bigint, target: StartupTarget, onSpawnFailure: (failure: HostFailure) => void): Promise<EngineHost>;
+  createHost(setup: SessionSetup, seed: bigint, target: StartupTarget, onSpawnFailure: (failure: HostFailure) => void, initialArchive: StrictSaveEnvelope | null): Promise<EngineHost>;
   onSpawnFailure(failure: HostFailure): void;
   createSeed?(): bigint;
   checkWasmEnvironment(): void;
@@ -116,14 +116,14 @@ export function createSessionHostLifecycle(ports: SessionHostLifecyclePorts) {
       // 此 sink 属于本次 lifecycle；构造期尚无 hostRef，也必须立即交付。
       const host = await createHost(setup, seed, startupTarget, (failure) => {
         if (!cancelled) ports.onSpawnFailure(failure);
-      });
+      }, initialSlot);
       ownedHost = host;
       if (cancelled) {
         // React StrictMode 会执行一次探测性挂载；异步创建完成后必须停掉该宿主，避免泄漏 Worker/线程池。
         await releaseOwnedHost();
         return;
       }
-      if (initialSlot !== null) await host.load(initialSlot);
+      if (initialSlot !== null && startupTarget.kind !== "wasm") await host.load(initialSlot);
       if (cancelled) return;
       if (initialSlot === null) {
         const allocation = await host.initialAllocation();
@@ -237,10 +237,10 @@ export function createSessionHostLifecycle(ports: SessionHostLifecyclePorts) {
   };
   return { start, stopCurrentSession, releaseOwnedHost, dispose };
 }
-function createSessionHost(setup: SessionSetup, seed: bigint, startupTarget: StartupTarget, tradingE2EMode: boolean, onSpawnFailure: (failure: HostFailure) => void): Promise<EngineHost> {
+function createSessionHost(setup: SessionSetup, seed: bigint, startupTarget: StartupTarget, tradingE2EMode: boolean, onSpawnFailure: (failure: HostFailure) => void, initialArchive: StrictSaveEnvelope | null): Promise<EngineHost> {
   if (startupTarget.kind === "tauri") return createTauriHost(setup, seed);
   if (startupTarget.kind === "remote") return createRemoteHost(setup, seed, { baseUrl: startupTarget.baseUrl });
-  const options = { enableE2EStepping: tradingE2EMode, onSpawnFailure };
+  const options = { enableE2EStepping: tradingE2EMode, onSpawnFailure, initialArchive };
   return createWorkerHost(setup, seed, options);
 }
 
@@ -256,7 +256,7 @@ export function useSessionHostLifecycle(options: Options): void {
   const { sessionSetup, startupTarget, pausePreferencesReady, refreshPlayerOrders, setIndicatorCalculator } = options;
   useEffect(() => {
     const lifecycle = createSessionHostLifecycle({ ...options,
-      createHost: (setup, seed, target, onSpawnFailure) => createSessionHost(setup, seed, target, options.TRADING_E2E_MODE, onSpawnFailure),
+      createHost: (setup, seed, target, onSpawnFailure, initialArchive) => createSessionHost(setup, seed, target, options.TRADING_E2E_MODE, onSpawnFailure, initialArchive),
       checkWasmEnvironment: () => assertWasmEnvironment(browserWasmEnvironment()),
       isDocumentHidden: () => document.hidden,
     });

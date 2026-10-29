@@ -59,7 +59,7 @@ test("新局在同一宿主开跑前取得真实分配，读档不查询初始�
   assert.ok(f.calls.indexOf("query-allocation") < f.calls.indexOf("show-allocation"));
   assert.ok(f.calls.indexOf("show-allocation") < f.calls.indexOf("start"));
   await f.runtime.dispose();
-  const restored = fixture();
+  const restored = fixture({ startupTarget: { kind: "remote", baseUrl: "http://localhost" } });
   restored.source.select(commandDayEndArchiveFixture());
   restored.host.initialAllocation = async () => { throw new Error("读档不能假称初始分配"); };
   await restored.runtime.start();
@@ -138,7 +138,7 @@ test("StrictMode cleanup 后创建完成的宿主只 dispose，不向 Shell 写�
 test("启动档 setup/seed 优先于默认配置，load 完成后安装时间配置才接线和 start", async () => {
   const archive = { ...commandDayEndArchiveFixture(), setup: { ...DEFAULT_SETUP, start_date: "2031-02-03", ticks_per_day: 30, auction_ticks: 9, closing_auction_ticks: 3 }, seed: "9007199254740993" };
   let seenSeed: bigint | null = null;
-  const f = fixture(); f.source.select(archive);
+  const f = fixture({ startupTarget: { kind: "remote", baseUrl: "http://localhost" } }); f.source.select(archive);
   f.ports.createHost = async (setup, seed) => { assert.equal(setup, archive.setup); seenSeed = seed; return f.host; };
   f.ports.configureMarketTiming = (setup) => { assert.equal(setup, archive.setup); f.calls.push("timing"); };
   const runtime = createSessionHostLifecycle(f.ports); await runtime.start();
@@ -158,7 +158,7 @@ test("初始化 load 或偏好确认尚未完成时 cleanup，晚到确认不能
     let enter!: () => void, complete!: () => void;
     const entered = new Promise<void>((resolve) => { enter = resolve; });
     const pending = new Promise<void>((resolve) => { complete = resolve; });
-    const f = fixture();
+    const f = fixture({ startupTarget: { kind: "remote", baseUrl: "http://localhost" } });
     const archive = commandDayEndArchiveFixture();
     if (stage === "load") {
       f.source.select(archive);
@@ -190,7 +190,7 @@ test("初始化 load 或偏好确认尚未完成时 cleanup，晚到确认不能
 });
 
 test("初始存档恢复失败显式释放宿主并保留启动源，重试仍恢复同一日终档", async () => {
-  const f = fixture();
+  const f = fixture({ startupTarget: { kind: "remote", baseUrl: "http://localhost" } });
   const archive = commandDayEndArchiveFixture();
   f.source.select(archive);
   f.host.load = async (slot) => { assert.equal(slot, archive); throw new Error("初始日终存档恢复失败"); };
@@ -234,7 +234,7 @@ test("G20：无存档新局使用熵端口，E2E固定seed与读档seed不消耗
   for (const mode of ["new", "e2e", "save"] as const) {
     let seeds = 0; let seen: bigint | null = null;
     const f = fixture({ createSeed: () => { seeds++; return 9007199254740999n; }, TRADING_E2E_MODE: mode === "e2e" });
-    if (mode === "save") f.source.select({ ...commandDayEndArchiveFixture(), seed: "9007199254740993" });
+    if (mode === "save") { f.ports.startupTarget = { kind: "remote", baseUrl: "http://localhost" }; f.source.select({ ...commandDayEndArchiveFixture(), seed: "9007199254740993" }); }
     f.ports.createHost = async (_setup, seed) => { seen = seed; return f.host; };
     if (mode === "e2e") {
       Object.assign(f.host, { stepOnceForE2E: async () => 0 });
@@ -376,4 +376,19 @@ test("WASM初始化结构化错误保留HostFailure，普通String和Error沿用
     await plain.runtime.start();
     assert.equal(ordinaryReceived, fatalWasmInitializationMessage(ordinary));
   }
+});
+
+test("WASM 启动档作为同一第五参数交给 createHost，构造前不调用 load", { timeout: 10000 }, async () => {
+  const archive = commandDayEndArchiveFixture();
+  const f = fixture();
+  f.source.select(archive);
+  f.ports.createHost = async (...args: unknown[]) => {
+    assert.equal(args.length, 5);
+    assert.equal(args[3] instanceof Function, true, "第四参数仍是 spawn failure sink");
+    assert.equal(args[4], archive, "完整原档作为第五参数传递");
+    return f.host;
+  };
+  await createSessionHostLifecycle(f.ports).start();
+  assert.equal(f.calls.includes("load"), false, "WASM 不能先空建宿主再恢复");
+  assert.equal(f.calls.includes("ready"), true);
 });
