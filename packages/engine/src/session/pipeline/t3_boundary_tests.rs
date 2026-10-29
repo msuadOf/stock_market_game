@@ -326,7 +326,15 @@ fn full_trading_day_and_day_boundary_keep_one_production_per_tick() {
         session.step().expect("日内 tick");
     }
     assert_eq!(attempt_seq(&session), before + ticks_per_day);
-    // 次日首 tick（新会话路径）：仍恰 +1。
+    let completed_day_attempts = attempt_seq(&session);
+    session.end_civil_day().expect("交易日日结");
+    assert_eq!(attempt_seq(&session), completed_day_attempts);
+    while session.civil_clock().phase() == crate::session::CivilPhase::ClosedDay {
+        let closed_day_attempts = attempt_seq(&session);
+        session.end_civil_day().expect("休市日日结");
+        assert_eq!(attempt_seq(&session), closed_day_attempts);
+    }
+    // 下一个交易日首 tick（新会话路径）：仍恰 +1。
     session.step().expect("日界后首 tick");
     assert_eq!(
         attempt_seq(&session),
