@@ -551,6 +551,7 @@ impl ProtocolSession {
     pub fn end_civil_day_update_classified(
         &mut self,
     ) -> Result<CivilUpdate, super::CivilDayEndFailure> {
+        self.state.game.require_healthy()?;
         #[cfg(test)]
         let malformed = std::mem::take(&mut self.malformed_civil);
         // 只有 civil publication 构建完整收盘数组；外层 checkpoint 仍共享既有历史。
