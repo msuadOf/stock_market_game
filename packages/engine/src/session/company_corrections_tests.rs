@@ -979,3 +979,27 @@ fn correction_external_manual_close_business_rejection_keeps_close_and_allows_ci
     assert!(std::sync::Arc::ptr_eq(&retained.retained, &driver.publication().load().retained));
     session.require_healthy().unwrap();
 }
+
+
+#[test]
+fn correction_tax_cascade_overflow_preserves_actual_accounting_source() {
+    let (mut session, mut request) = session_and_request();
+    // 保留无历史余额的 6001；首笔过账成功后，真实税务年度利润汇总才发生溢出。
+    assert_eq!(request.entries[0].lines[1].account, LedgerAccountId("6001".into()));
+    for line in &mut request.entries[0].lines {
+        line.amount = AccountingAmount::MAX;
+    }
+    request.entries[0].validate_invariants().unwrap();
+    let epoch = session.report_correction_epoch();
+    session.enqueue_report_correction(&epoch, request).unwrap();
+    let error = session.end_civil_day().unwrap_err();
+    assert!(matches!(&error, SessionError::ReportCorrectionDayEnd(source)
+        if source.classification() == crate::company::CompanyErrorClass::SystemState));
+    assert!(correction_error_has_cause::<crate::company::IncomeTaxOwnerError>(&error, |source|
+        matches!(source, crate::company::IncomeTaxOwnerError::Accounting(
+            crate::accounting::AccountingError::AmountOverflow { .. }))));
+    assert!(correction_error_has_cause::<crate::accounting::AccountingError>(&error, |source|
+        matches!(source, crate::accounting::AccountingError::AmountOverflow { .. })),
+        "CORRECTION_TAX_OVERFLOW_SOURCE_MISSING：真实税务 AmountOverflow 必须保留在标准 source 链");
+    assert!(session.require_healthy().is_err());
+}

@@ -241,7 +241,7 @@ fn origin_mixed_stock_day_end_uses_real_group_and_rejects_closed_company_executi
     account.frozen_today[1] = 100;
     group.accounts = vec![Arc::new(account)];
     group.child_in_flight.insert((AccountId(1), StockId(0)), ChildTicket {
-        qty: 200, side: Side::Buy, price: 1000, order_id: None, remaining: 200, charged_cents: 0,
+        qty: 200, side: Side::Buy, price: 1000, order_id: None, remaining: 200, charged_cents: 0, repurchase: None,
     });
     group.seal_acked_len = Some(group.undo.len());
     group.apply_batch_immediate(DeskBatch {

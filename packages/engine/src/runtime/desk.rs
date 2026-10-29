@@ -35,6 +35,9 @@ use std::sync::mpsc::{Receiver, Sender};
 use std::sync::Arc;
 mod repurchase;
 
+#[cfg(test)]
+pub(crate) mod repurchase_group_fixture;
+
 /// 构造期迁入的在途挂单种子（adopt：会话旧簿单直入 desk 初始簿——
 /// 先于本 tick 新单（到簿序对齐旧管线；此前经 ExternalPlan 消息链晚于
 /// 外部新单，maker/taker 身分颠倒）。

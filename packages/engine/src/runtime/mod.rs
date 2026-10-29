@@ -28,6 +28,7 @@ pub type StockIdx = u16;
 /// 复合标识。
 pub type OrderRef = (StockIdx, u64);
 
+pub(crate) mod admin_tax_projection;
 mod entities;
 mod facts;
 mod protocol;

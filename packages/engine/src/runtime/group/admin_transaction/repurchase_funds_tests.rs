@@ -104,7 +104,7 @@ fn funds_p2_group_05_every_stock_pending_resources_and_real_ticket_independently
             1 => replace(&mut s, |a| a.foreign_active[1] = 1),
             2 => replace(&mut s, |a| a.pending_sell_qty[1] = 1),
             _ => { s.child_in_flight.insert((AccountId(79), StockId(1)), ChildTicket {
-                qty: 100, side: Side::Buy, price: 1000, order_id: None, remaining: if mode == 3 { 100 } else { 0 }, charged_cents: 0,
+                qty: 100, side: Side::Buy, price: 1000, order_id: None, remaining: if mode == 3 { 100 } else { 0 }, charged_cents: 0, repurchase: None,
             }); },
         }
         rejected_without_drift(&mut s, vec![recycle(ids[0], 0, 101)]);

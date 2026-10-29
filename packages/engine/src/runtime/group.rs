@@ -292,7 +292,7 @@ impl ObservationInputs {
 /// 计划子单在途票（Sol 整改 2/3：挂出量+方向+挂出限价+受理身份；
 /// Sol 二审修复集 2：实时未成交余量+累计成交额——组观察/开仓/session
 /// 投影三面统一消费**真实余量**，不再按原挂出量）。
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct ChildTicket {
     /// 挂出量（完整子单数量——PendingOp.qty，adopt 的数量输入）。
     qty: u32,
@@ -311,6 +311,27 @@ struct ChildTicket {
     /// ——live purse=挂出全额 purse−此值，价优差额不漏计；与 desk 逐笔
     /// buyer_charge 扣减同口径）。
     charged_cents: i64,
+    /// 公司请求发送前冻结的来源；普通 Investor 票为 None。
+    repurchase: Option<RepurchaseChildSource>,
+}
+
+/// 只扩展原 ChildTicket 的冷来源，不复制其余量、成交扣款或订单身份。
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct RepurchaseChildSource {
+    request_key: super::RepurchaseRequestKey,
+    purse_initial: i64,
+    returned_cumulative: i64,
+    phase: RepurchaseChildPhase,
+    /// 最近消费 Fill 或 PriceImprovement 的真实 Batch 位置，不保存第二份成交账。
+    last_progress_position: Option<(u64, u32)>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RepurchaseChildPhase {
+    Submitted,
+    Accepted,
+    Rejected,
+    TerminalReturned,
 }
 
 /// 构造期已经校验的计划和既有子单票；安装本身没有失败分支。
@@ -380,7 +401,7 @@ pub(crate) fn prepare_plan_seeds(
             } else { 0 };
             tickets.insert((plan.account(), *plan.code()), ChildTicket {
                 qty, side: seed.side, price: seed.price, order_id: Some(order),
-                remaining: seed.qty, charged_cents,
+                remaining: seed.qty, charged_cents, repurchase: None,
             });
         }
         Ok(PreparedPlanSeed { book, tickets })
@@ -1302,6 +1323,19 @@ impl GroupState {
             // 判据覆盖票推进漂移）。
             h = fnv(h, u64::from(ticket.remaining));
             h = fnv(h, ticket.charged_cents as u64);
+            if let Some(source) = &ticket.repurchase {
+                h = fnv(h, 0x5250_534f_5552_4345);
+                for value in [source.request_key.plan_id.owner.0, source.request_key.plan_id.sequence,
+                    u64::from(source.request_key.stock.0), source.request_key.requested_trading_day,
+                    source.purse_initial as u64, source.returned_cumulative as u64, source.phase as u64] {
+                    h = fnv(h, value);
+                }
+                h = fnv(h, source.last_progress_position.is_some() as u64);
+                if let Some((tick, round)) = source.last_progress_position {
+                    h = fnv(h, tick);
+                    h = fnv(h, u64::from(round));
+                }
+            }
         }
         h
     }
@@ -1908,6 +1942,7 @@ impl GroupState {
                     order_id: None,
                     remaining: ticket.remaining,
                     charged_cents: ticket.charged_cents,
+                    repurchase: ticket.repurchase.clone(),
                 }),
             });
             self.child_in_flight.insert((account, code.clone()), ticket.clone());
@@ -2100,6 +2135,7 @@ impl GroupState {
                 order_id: None,
                 remaining: ticket.remaining,
                 charged_cents: ticket.charged_cents,
+                repurchase: ticket.repurchase.clone(),
             }),
         });
         self.child_in_flight.insert((account, code), ticket);
@@ -4153,6 +4189,7 @@ impl GroupState {
                     // Sol 二审修复集 2/四审修复 1：实时余量/desk 扣减起步值。
                     remaining: qty,
                     charged_cents: 0,
+                    repurchase: None,
                 },
             );
             // 在途卖余量镜像由 run_round 挂出臂统一维护（Sol 五审：
@@ -7161,6 +7198,7 @@ mod sol_recheck3_tests {
                 order_id: Some(order_id),
                 remaining: target,
                 charged_cents: 0,
+                repurchase: None,
             },
         );
         state
@@ -8417,6 +8455,7 @@ mod roster_offset_tests {
                 order_id: Some(order_id),
                 remaining: 200,
                 charged_cents: 0,
+                repurchase: None,
             },
         );
         // 成交事实：owner=(组 1, local 0) ⇒ 应解析到全局第 1 位=mine。
