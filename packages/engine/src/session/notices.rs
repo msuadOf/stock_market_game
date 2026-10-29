@@ -341,6 +341,7 @@ pub(super) fn credit_default_cause(
 }
 
 impl GameSession {
+    #[cfg(test)]
     pub(super) fn deliver_public_information(
         &mut self,
         now: CivilInstant,

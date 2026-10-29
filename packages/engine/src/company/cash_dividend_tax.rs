@@ -800,9 +800,11 @@ impl CashDividendTaxBook {
     }
 
     /// 日结回执只读视图（含同日续记的完整顺序），供 Session 层勾稽与测试断言使用。
+    #[cfg(test)]
     pub(crate) fn tax_day_receipts(&self) -> &[TaxDayReceipt] {
         &self.days
     }
+    #[cfg(test)]
     pub(crate) fn payment_by_id(&self, payment_id: &str) -> Option<&DividendCashReceipt> {
         self.dividends
             .iter()

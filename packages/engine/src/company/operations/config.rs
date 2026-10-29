@@ -118,16 +118,6 @@ impl IndustryBooks {
     }
 
     #[cfg(test)]
-    pub(crate) fn validate_income_tax_state(&self) -> Result<(), OperationsError> {
-        match self {
-            Self::Industrial(owner) => owner.validate_income_tax_state().map_err(Into::into),
-            Self::Bank(owner) => owner.validate_income_tax_state().map_err(Into::into),
-            Self::Insurance(owner) => owner.validate_restore().map_err(Into::into),
-            Self::RealEstate(owner) => owner.validate_income_tax_state().map_err(Into::into),
-        }
-    }
-
-    #[cfg(test)]
     pub(crate) fn validate_owner_state(&self) -> Result<(), OperationsError> {
         match self {
             Self::Industrial(owner) => {

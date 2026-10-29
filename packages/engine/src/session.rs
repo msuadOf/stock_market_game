@@ -1207,14 +1207,6 @@ impl SecurityCategory {
             _ => 1_000_000,
         }
     }
-
-    fn display_limit(self) -> &'static str {
-        match self {
-            Self::MainBoard => "10%",
-            Self::StMainBoard => "10%",
-            Self::ChiNext => "20%",
-        }
-    }
 }
 
 /// 单只股票初始规格（行情/涨跌停/tick/总股本/流通盘）。
@@ -2097,12 +2089,30 @@ pub(in crate::session) enum FieldId {
     NpcOrderLifecycles,
     LastRetailDecisions,
     LastRetailOrderEvents,
+    #[cfg_attr(
+        not(feature = "simulation-diagnostics"),
+        expect(
+            dead_code,
+            reason = "FieldId 诊断槽仅由 simulation-diagnostics 条件移交；保留其历史数值"
+        )
+    )]
     NpcDecisionTraces,
+    #[cfg_attr(
+        not(feature = "simulation-diagnostics"),
+        expect(
+            dead_code,
+            reason = "FieldId 诊断槽仅由 simulation-diagnostics 条件移交；保留其历史数值"
+        )
+    )]
     Causal,
     AttentionScheduler,
+    #[expect(dead_code, reason = "保留 FieldId 历史 repr(u8) 槽位，不得删除或重排")]
     CompanyRegistry,
+    #[expect(dead_code, reason = "保留 FieldId 历史 repr(u8) 槽位，不得删除或重排")]
     Operations,
+    #[expect(dead_code, reason = "保留 FieldId 历史 repr(u8) 槽位，不得删除或重排")]
     Groups,
+    #[expect(dead_code, reason = "保留 FieldId 历史 repr(u8) 槽位，不得删除或重排")]
     Closing,
     Library,
     Disclosures,
@@ -2112,11 +2122,14 @@ pub(in crate::session) enum FieldId {
     RetailProjectionSeen,
     CivilClock,
     /// retired：T3 已删除 SpeculativePrepareStash；保留历史数值槽，不再产生 Job。
+    #[expect(dead_code, reason = "保留 FieldId 历史 repr(u8) 槽位，不得删除或重排")]
     SpeculativePrepare,
     /// B3 远程登录批次追加：市场成员关系（尾部追加，不改变既有变体数值）。
     Memberships,
     /// B4b 公司线批次追加：公司系统 spine 与公司行为状态容器（尾部追加）。
+    #[expect(dead_code, reason = "保留 FieldId 历史 repr(u8) 槽位，不得删除或重排")]
     CompanySystem,
+    #[expect(dead_code, reason = "保留 FieldId 历史 repr(u8) 槽位，不得删除或重排")]
     CorporateActions,
     /// SOURCE-B：互斥公司 authority 的唯一移交域。
     Companies,
@@ -2131,7 +2144,7 @@ pub(in crate::session) enum FieldId {
 /// SpeculativePrepare 的历史 FieldId 数值槽保留，但不再属于可提交字段集合。
 /// 两套期望集除诊断项外逐项一致；诊断项位于 LastRetailOrderEvents 之后，
 /// 后续字段的数组下标随之变化，不能逐下标比较两套清单。
-#[cfg(not(feature = "simulation-diagnostics"))]
+#[cfg(all(test, not(feature = "simulation-diagnostics")))]
 pub(in crate::session) const COMMIT_FIELD_EXPECTED: [FieldId; 29] = [
     FieldId::Setup,
     FieldId::ValidatedConfig,
@@ -2164,7 +2177,7 @@ pub(in crate::session) const COMMIT_FIELD_EXPECTED: [FieldId; 29] = [
     FieldId::Memberships,
 ];
 
-#[cfg(feature = "simulation-diagnostics")]
+#[cfg(all(test, feature = "simulation-diagnostics"))]
 pub(in crate::session) const COMMIT_FIELD_EXPECTED: [FieldId; 31] = [
     FieldId::Setup,
     FieldId::ValidatedConfig,
@@ -6481,6 +6494,7 @@ mod retained_snapshot_tests {
     }
 }
 
+#[cfg(test)]
 mod npc_working_quote_tests {
     use super::*;
     use crate::{HotParams, InstParams, RetailParams};

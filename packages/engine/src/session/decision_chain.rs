@@ -147,15 +147,6 @@ impl DecisionChainObservation {
             .map(|(code, result)| Ok((code, result?)))
             .collect()
     }
-    fn exposed_stocks(
-        session: &GameSession,
-        now: crate::calendar::CivilInstant,
-    ) -> BTreeSet<StockId> {
-        Self::exposed_stocks_on(&session.read_view(), now)
-    }
-
-    /// 读视图版本（Sol 整改 5：改调共享 exposed_stocks_shared——组线程
-    /// 组装同一函数）。
     fn exposed_stocks_on(
         view: &crate::session::pipeline::npc_split::SessionReadView,
         now: crate::calendar::CivilInstant,
@@ -1186,7 +1177,7 @@ impl GameSession {
     /// 权重的公告加成输入；公司 ↔ 股票映射 = 发行人注册表）。
     #[cfg(test)]
     fn chain_exposed_stocks(&self, now: crate::calendar::CivilInstant) -> BTreeSet<StockId> {
-        DecisionChainObservation::exposed_stocks(self, now)
+        DecisionChainObservation::exposed_stocks_on(&self.read_view(), now)
     }
 
     #[cfg(feature = "simulation-diagnostics")]

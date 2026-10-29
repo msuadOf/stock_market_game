@@ -152,29 +152,6 @@ impl GameSession {
         Ok(output)
     }
 
-    fn observe_retail_analysis(
-        &self,
-        id: AccountId,
-        personal: &mut PlanPersonalState,
-        observation: &DecisionChainObservation,
-        thirty_minute_market: &crate::observation::EqualWeightMarketObservation,
-    ) -> Result<BTreeMap<StockId, CandidateAssessment>, StepFatal> {
-        let row = self
-            .state
-            .retail_experience
-            .get(&id)
-            .expect("observed retail must have an experience row");
-        Self::observe_retail_analysis_on(
-            &self.read_view(),
-            &self.state.plans,
-            row,
-            id,
-            personal,
-            observation,
-            thirty_minute_market,
-        )
-    }
-
     /// 读视图+写组再借用版本；T1·两阶段（ADR-0042 §T1）：经验行经参数传入
     /// （观察更新后的 owned 行），queue 账户任务与批处理捕获共用本实现。
     /// D5 #4：上下文自 view 组装后走 core（组线程同核）。
@@ -483,43 +460,6 @@ impl GameSession {
         Ok((assessments, diagnostics))
     }
 
-    fn retail_candidate_signals(
-        &self,
-        id: AccountId,
-        code: &StockId,
-        personal: &PlanPersonalState,
-        observation: &DecisionChainObservation,
-        thirty_minute_market: &crate::observation::EqualWeightMarketObservation,
-    ) -> Result<CandidateSignals, String> {
-        let row = self
-            .state
-            .retail_experience
-            .get(&id)
-            .expect("retail must have an experience row");
-        Self::retail_candidate_signals_on(
-            &self.read_view(),
-            row,
-            id,
-            RetailCandidateInput {
-                code,
-                personal,
-                observation,
-                thirty_minute_market,
-            },
-        )
-    }
-
-    /// 读视图+写组再借用版本（D5 #4：经 ctx 走 core）。
-    fn retail_candidate_signals_on(
-        view: &crate::session::pipeline::npc_split::SessionReadView<'_>,
-        experience: &crate::RetailExperienceState,
-        id: AccountId,
-        input: RetailCandidateInput<'_>,
-    ) -> Result<CandidateSignals, String> {
-        let ctx = Self::retail_analysis_ctx_from_view(view, id);
-        Self::retail_candidate_signals_core(&ctx, experience, input)
-    }
-
     /// D5 #4 候选信号核（组线程/session 共用）。
     fn retail_candidate_signals_core(
         ctx: &RetailAnalysisCtx<'_>,
@@ -590,41 +530,6 @@ impl GameSession {
             technical,
             experience,
         })
-    }
-
-    fn retail_cost_signal(
-        &self,
-        id: AccountId,
-        code: &StockId,
-        observation: &DecisionChainObservation,
-        thirty_minute_market: &crate::observation::EqualWeightMarketObservation,
-    ) -> Result<SignalContribution, String> {
-        let row = self
-            .state
-            .retail_experience
-            .get(&id)
-            .expect("retail must have an experience row");
-        Self::retail_cost_signal_on(
-            &self.read_view(),
-            row,
-            id,
-            code,
-            observation,
-            thirty_minute_market,
-        )
-    }
-
-    /// 读视图+写组再借用版本（D5 #4：经 ctx 走 core）。
-    fn retail_cost_signal_on(
-        view: &crate::session::pipeline::npc_split::SessionReadView<'_>,
-        experience: &crate::RetailExperienceState,
-        id: AccountId,
-        code: &StockId,
-        observation: &DecisionChainObservation,
-        thirty_minute_market: &crate::observation::EqualWeightMarketObservation,
-    ) -> Result<SignalContribution, String> {
-        let ctx = Self::retail_analysis_ctx_from_view(view, id);
-        Self::retail_cost_signal_core(&ctx, experience, code, observation, thirty_minute_market)
     }
 
     /// D5 #4 成本信号核（组线程/session 共用）。
