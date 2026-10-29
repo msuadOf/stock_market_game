@@ -728,3 +728,61 @@ fn repurchase_x_group_14_missing_sources_cannot_hide_company_facts_in_another_st
     batch.stock = 2;
     reject_before_mutation(&mut state, batch);
 }
+
+#[test]
+fn repurchase_x_group_15_real_start_commits_tail_and_next_tick_abort_keeps_complete_prefix() {
+    let (mut state, mut desk, request, purse) = state(1000, 200);
+    desk.company_buy(request, 1000, 200, purse);
+    consume(&mut state, desk.flush_company());
+    let accepted_tail = state.repurchase_pending_tails.clone();
+    assert_eq!(accepted_tail[&request.plan_id].cursor, 1);
+    let date = crate::CivilDate::from_iso("2026-01-05").unwrap();
+    let calendar = source().day(date).unwrap().tick(
+        crate::session::exchange_calendar_model::SessionTickLayout {
+            ticks_per_day: 100, auction_ticks: 0, closing_auction_ticks: 0,
+        },
+        crate::session::exchange_calendar_model::SharedClockInput {
+            tick: 1, completed_shared_sessions: 0,
+            progress: crate::session::exchange_calendar_model::SharedDayProgress::Trading { completed_ticks: 1 },
+        },
+    ).unwrap();
+    let stocks = Arc::clone(&state.snapshot.as_ref().unwrap().stocks);
+    state.snapshot = Some(Arc::new(TickSnapshot { calendar: Arc::clone(&calendar), tick: 2,
+        market_minute: 1, civil_date: date, stocks }));
+    let channels: Vec<_> = (0..4).map(|_| std::sync::mpsc::channel()).collect();
+    let desk_txs: Vec<_> = channels.iter().map(|(sender, _)| sender.clone()).collect();
+    let (up_tx, up_rx) = std::sync::mpsc::channel();
+    state.handle_start(2, &desk_txs, &up_tx).unwrap();
+    assert_eq!((state.cur_tick, state.committed_tick), (2, 1));
+    assert!(state.undo.is_empty(), "真实 Start 应退役前拍 Undo");
+    assert_eq!(state.repurchase_pending_tails, accepted_tail, "Start 不能丢失未确认前缀");
+    assert!(matches!(up_rx.try_recv().unwrap(), UpMsg::GroupReport(report) if report.tick == 2 && report.round == 0 && report.ops_sent == 0));
+    for (_, receiver) in &channels {
+        assert!(matches!(receiver.try_recv().unwrap(), super::super::super::protocol::DeskMsg::Ops {
+            tick: 2, round: 0, ops, final_flush: true, ..
+        } if ops.is_empty()));
+    }
+    let hash = state.state_hash();
+    let accounts = state.accounts.clone();
+    let book = state.plan_book.clone();
+    let tickets = state.child_in_flight.clone();
+    desk.advance_tick(2, calendar);
+    desk.sell(1000, 100);
+    let batch = desk.flush_company();
+    assert_eq!((batch.tick, batch.round), (2, 0));
+    assert_eq!(batch.fills.len(), 1);
+    state.apply_batch_immediate(batch, 2, 0).unwrap();
+    state.apply_deferred().unwrap();
+    assert_eq!(state.accounts[1].shares[3], 100);
+    let tail = &state.repurchase_pending_tails[&request.plan_id];
+    assert!(tail.cursor > accepted_tail[&request.plan_id].cursor);
+    assert_eq!(tail.facts[0], accepted_tail[&request.plan_id].facts[0]);
+    assert!(tail.facts[1..].iter().all(|fact| (fact.tick, fact.round) == (2, 0)));
+    state.rollback();
+    assert_eq!(state.cur_tick, 1);
+    assert_eq!(state.state_hash(), hash);
+    assert_eq!(state.accounts, accounts);
+    assert_eq!(state.plan_book, book);
+    assert_eq!(state.child_in_flight, tickets);
+    assert_eq!(state.repurchase_pending_tails, accepted_tail);
+}

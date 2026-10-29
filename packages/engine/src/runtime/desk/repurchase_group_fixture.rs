@@ -68,7 +68,7 @@ impl SourceDesk {
     pub(crate) fn sell(&mut self, price: i64, qty: u32) {
         self.state
             .apply_ops(
-                1,
+                self.state.cur_tick,
                 vec![DeskIn::Place {
                     owner: (0, 0),
                     side: Side::Sell,
@@ -80,6 +80,11 @@ impl SourceDesk {
                 }],
             )
             .unwrap();
+    }
+
+    /// 调用原 Desk tick 入口提交前拍；后续成交仍走真实撮合与原 flush。
+    pub(crate) fn advance_tick(&mut self, tick: u64, calendar: Arc<super::super::MarketTickContext>) {
+        self.state.begin_tick(tick, calendar).unwrap();
     }
 
     pub(crate) fn cancel_company(&mut self) {
@@ -95,7 +100,7 @@ impl SourceDesk {
     pub(crate) fn flush_company_round(&mut self, round: u32) -> DeskBatch {
         let (tx0, _rx0) = std::sync::mpsc::channel();
         let (tx1, rx1) = std::sync::mpsc::channel();
-        self.state.flush_batches(&[tx0, tx1], 1, round).unwrap();
+        self.state.flush_batches(&[tx0, tx1], self.state.cur_tick, round).unwrap();
         let super::super::protocol::GroupIn::Batch(batch) =
             rx1.try_recv().expect("真实公司 Batch 必须已发送")
         else {

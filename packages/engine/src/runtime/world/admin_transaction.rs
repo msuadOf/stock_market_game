@@ -1,6 +1,8 @@
 use super::*;
 use crate::runtime::protocol::{AdminGroupCandidate, AdminPhase};
 use std::collections::{BTreeMap, BTreeSet};
+mod stages;
+pub(crate) use stages::{AdminOperationStage, PreparedAdministrativeStages};
 
 type PanicPayload = Box<dyn std::any::Any + Send>;
 

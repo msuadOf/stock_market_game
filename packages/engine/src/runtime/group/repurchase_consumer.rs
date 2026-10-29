@@ -32,7 +32,9 @@ impl GroupState {
         for receipt in &batch.receipts { locals.insert(receipt.owner.1); }
         for entity in &batch.entities { locals.insert(entity_local(entity)); }
         for source in &batch.repurchase { locals.insert(source.owner.1); }
-        locals.retain(|&local| self.company_child_at(local, batch.stock));
+        // 真实专户 owner 独立于可变 Batch.stock；来源全删也不能洗成普通交易。
+        locals.retain(|&local| self.company_child_at(local, batch.stock)
+            || self.admin_treasury_bindings.iter().any(|binding| binding.owner == (self.group, local)));
         if locals.is_empty() && batch.repurchase.is_empty() { return Ok(PreparedRepurchaseBatch::default()); }
 
         let mut prepared = PreparedRepurchaseBatch::default();
@@ -132,7 +134,7 @@ impl GroupState {
             let original_entities: Vec<_> = batch.entities.iter().filter(|entity| entity_local(entity) == local).copied().collect();
             let original_receipts: Vec<_> = batch.receipts.iter().filter(|receipt| receipt.owner.1 == local && place_rejection(receipt.kind)).copied().collect();
             if original_fills.as_slice() != expected_fills.get(&local).map_or(&[][..], Vec::as_slice)
-                || original_entities.as_slice() != expected_entities.get(&local).map_or(&[][..], Vec::as_slice)
+                || !same_entity_streams(&original_entities, expected_entities.get(&local).map_or(&[][..], Vec::as_slice))
                 || original_receipts.as_slice() != expected_receipts.get(&local).map_or(&[][..], Vec::as_slice) {
                 return Err(invalid("公司 source 与原 Fill/Entity/Rejected receipt 的次数或顺序不同"));
             }
@@ -276,6 +278,14 @@ impl GroupState {
 fn values(mut hash: u64, fields: &[u64]) -> u64 {
     for &field in fields { hash = fnv(hash, field); }
     hash
+}
+
+/// 原 Desk 的 maker Closed 可先于 BoughtShares；两条实体子流各守原序与次数。
+fn same_entity_streams(original: &[Entity], expected: &[Entity]) -> bool {
+    let bought = |entity: &&Entity| matches!(entity, Entity::BoughtShares { .. });
+    original.iter().filter(bought).eq(expected.iter().filter(bought))
+        && original.iter().filter(|entity| !bought(entity))
+            .eq(expected.iter().filter(|entity| !bought(entity)))
 }
 
 fn invalid(detail: impl std::fmt::Display) -> RuntimeError {
