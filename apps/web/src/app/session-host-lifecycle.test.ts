@@ -12,6 +12,9 @@ import { fatalWasmInitializationMessage } from "../host/startup-policy.ts";
 import type { StrictSaveEnvelope } from "../save/schema/root.ts";
 import { commandHostFixture, commandDayEndArchiveFixture } from "./command-host-test-fixture.ts";
 import { AutoOrderManager } from "../components/auto-order-manager.ts";
+import { createMemoryHandoverSelection } from "./memory-handover-selection.ts";
+import type { MemoryHandoverPanelProps } from "./MemoryHandoverPanel.tsx";
+import { parseSaveSlot } from "../save/save-schema.ts";
 
 function fixture(overrides: Partial<SessionHostLifecyclePorts> = {}) {
   const calls: string[] = [];
@@ -623,6 +626,93 @@ test("reload待确认X时用户明确改选Y，先确认Y再单次消费；不�
   const current = createSessionHostLifecycle(f.ports); await current.start();
   assert.equal(confirmed, 1); assert.equal(created, 1); assert.equal(f.calls.includes("load"), false);
   await current.dispose();
+});
+
+test("面板实际解析文件Y后才确认恢复，carrier仍绑定X且旧快速槽X不能覆盖Y", { timeout: 10000 }, async () => {
+  const m = memoryOwnerFixture(), archive = commandDayEndArchiveFixture();
+  for (let index = 0; index < 2; index++) {
+    const admitted = m.owner.admit({ kind: "new", setup: DEFAULT_SETUP, seed: "42" });
+    if (admitted.kind !== "admitted") throw new Error("fixture必须admitted");
+    m.owner.recordCommittedBoundary(admitted.ticket, { tick: 6, day: 2 });
+    admitted.ticket.registerRelease(Promise.resolve({ kind: "released", finalBytes: 256 * MiB, growthStopped: true, referencesDropped: true }));
+    await m.owner.finish(admitted.ticket);
+  }
+  assert.equal(m.owner.admit({ kind: "load", archive }).kind, "reload");
+  const originalCarrier = JSON.parse(m.memory.session.data.get(SNAPSHOT_KEY)!);
+  const next = new WasmDocumentMemoryOwner({ maximumBytes: m.memory.options.maximumBytes, reclaimBytes: m.memory.options.reclaimBytes,
+    readCapacity: () => ({ kind: "enforced-capacity", initialPages: 1024, maximumPages: 4096, liveUpperBoundBytes: 256 * MiB }),
+    restoreCapabilities: { forArchive: () => ({ kind: "verified-package", wasmSha256: "a".repeat(64), glueSha256: "b".repeat(64), sourceSha256: "c".repeat(64), buildManifestSha256: "d".repeat(64), exports: ["restore_json", "facade_slot_init_for_restore_json"] }) },
+    createStorage: (liveUpperBoundBytes) => new WasmMemoryStorage({ ...m.memory.options, liveUpperBoundBytes }) });
+  const y = { ...archive, seed: "99" };
+  let panel: MemoryHandoverPanelProps | null = null, fileReads = 0, quickslotReads = 0, creates = 0;
+  const view = (): MemoryHandoverPanelProps => { assert.ok(panel); return panel; };
+  const selection = createMemoryHandoverSelection({
+    loadFromFile: async () => { fileReads++; return parseSaveSlot(JSON.parse(JSON.stringify(y))); },
+    createNewIntent: () => { throw new Error("选择文件不得生成新局seed"); },
+    onChange: value => { panel = value; },
+  });
+  const f = fixture({ wasmMemoryOwner: next, hostTransitionRef: next.hostTransitionRef,
+    confirmMemoryHandover: selection.request,
+    getBrowserSaveRepository: () => ({ load: async () => { quickslotReads++; return archive; } }),
+    prepareWasmRestoreCapability: async selected => { assert.deepEqual(selected, y); },
+  });
+  f.host.tick = () => 6; f.host.day = () => 2;
+  f.ports.createHost = async (_setup, seed, _target, _sink, selected, ticket) => {
+    creates++; assert.equal(seed, 99n); assert.deepEqual(selected, y); assert.ok(ticket);
+    assert.equal(JSON.parse(m.memory.session.data.get(SNAPSHOT_KEY)!).handover, undefined);
+    ticket.registerRelease(Promise.resolve({ kind: "not-allocated" })); return f.host;
+  };
+  const current = createSessionHostLifecycle(f.ports), starting = current.start();
+  await settleTasks(); assert.deepEqual(view().selectedIntent, { kind: "load", archive });
+  const carrier = m.memory.session.data.get(SNAPSHOT_KEY);
+  assert.deepEqual(JSON.parse(carrier!).handover, originalCarrier.handover);
+  assert.equal(JSON.parse(carrier!).chainId, originalCarrier.chainId);
+  view().onSelectFile(); await settleTasks();
+  assert.equal(fileReads, 1); assert.deepEqual(view().selectedIntent, { kind: "load", archive: y });
+  assert.equal(m.memory.session.data.get(SNAPSHOT_KEY), carrier); assert.equal(creates, 0);
+  view().onContinue(); await starting;
+  assert.equal(creates, 1); assert.equal(quickslotReads, 0); assert.deepEqual(archive.seed, "42");
+  assert.equal(f.calls.includes("load"), false); assert.equal(f.calls.includes("ready"), true);
+  await current.dispose(); selection.dispose();
+});
+
+test("用户取消冻结目标确认正常返回启动选择，原carrier与明确Y均保留且零新分配", { timeout: 10000 }, async () => {
+  const m = memoryOwnerFixture(), archive = commandDayEndArchiveFixture();
+  for (let index = 0; index < 2; index++) {
+    const a = m.owner.admit({ kind: "new", setup: DEFAULT_SETUP, seed: "42" });
+    if (a.kind !== "admitted") throw new Error("fixture必须admitted");
+    m.owner.recordCommittedBoundary(a.ticket, { tick: 6, day: 2 });
+    a.ticket.registerRelease(Promise.resolve({ kind: "released", finalBytes: 256 * MiB, growthStopped: true, referencesDropped: true })); await m.owner.finish(a.ticket);
+  }
+  m.owner.admit({ kind: "load", archive });
+  const before = m.memory.session.data.get(SNAPSHOT_KEY); let returned = 0, created = 0;
+  const errors: unknown[] = [], y = { ...archive, seed: "99" };
+  const f = fixture({ wasmMemoryOwner: m.owner, hostTransitionRef: m.owner.hostTransitionRef,
+    confirmMemoryHandover: async () => null, onMemoryHandoverCancelled: async () => { returned++; },
+    createHost: async () => { created++; throw new Error("取消不得分配"); },
+    getBrowserSaveRepository: () => { throw new Error("取消不得读快速槽"); }, setError: error => errors.push(error) });
+  f.source.select(y); await f.runtime.start();
+  assert.equal(returned, 1); assert.equal(created, 0); assert.deepEqual(errors, []);
+  assert.equal(m.memory.session.data.get(SNAPSHOT_KEY), before); assert.equal(await f.source.read(async () => null), y);
+  assert.deepEqual(await m.owner.hostTransitionRef.current, { kind: "released" }); await f.runtime.dispose();
+});
+
+test("原冻结交接重试由用户取消也正常返回启动选择，不reload不分配不报宿主错误", { timeout: 10000 }, async () => {
+  const m = memoryOwnerFixture();
+  for (let index = 0; index < 2; index++) {
+    const a = m.owner.admit({ kind: "new", setup: DEFAULT_SETUP, seed: "42" });
+    if (a.kind !== "admitted") throw new Error("fixture必须admitted");
+    m.owner.recordCommittedBoundary(a.ticket, { tick: 4, day: 1 });
+    a.ticket.registerRelease(Promise.resolve({ kind: "released", finalBytes: 256 * MiB, growthStopped: true, referencesDropped: true })); await m.owner.finish(a.ticket);
+  }
+  m.memory.session.onCall(call => { if (call.operation === "set" && call.key === SNAPSHOT_KEY) throw new Error("quota"); });
+  assert.throws(() => m.owner.admit({ kind: "new", setup: DEFAULT_SETUP, seed: "42" }));m.memory.session.onCall(null);
+  let returned = 0; const errors: unknown[] = [], retry = m.owner.pendingReloadRetry();
+  const f = fixture({ wasmMemoryOwner: m.owner, hostTransitionRef: m.owner.hostTransitionRef,
+    confirmMemoryReloadRetry: async () => false, onMemoryHandoverCancelled: async () => { returned++; },
+    createHost: async () => { throw new Error("取消不得分配"); }, reloadAfterMemoryNotice: async () => { throw new Error("取消不得reload"); }, setError: error => errors.push(error) });
+  await f.runtime.start(); assert.equal(returned, 1); assert.deepEqual(errors, []);assert.deepEqual(m.owner.pendingReloadRetry(), retry);
+  await f.runtime.dispose();
 });
 
 test("旧create拒绝后仍等待已登记Memory回执，不能将create失败当零残留", { timeout: 10000 }, async () => {

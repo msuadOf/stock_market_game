@@ -1,5 +1,7 @@
 import { prepareDocumentWasmRestoreCapability } from "../host/wasm-restore-capability-source.ts";
-import { useEffect, type MutableRefObject } from "react";
+import { useEffect, useState, type MutableRefObject } from "react";
+import { createMemoryHandoverSelection } from "./memory-handover-selection.ts";
+import type { MemoryHandoverPanelProps } from "./MemoryHandoverPanel.tsx";
 import { getDocumentWasmMemoryOwner, WasmDocumentMemoryError } from "../host/wasm-document-memory-owner.ts";
 import type { WasmDocumentMemoryOwner, WasmMemoryAdmissionTicket } from "../host/wasm-document-memory-owner.ts";
 import type { WasmMemoryHandover, WasmMemoryPendingIntent } from "../host/wasm-memory-handover.ts";
@@ -35,6 +37,7 @@ export interface SessionHostLifecyclePorts {
   prepareWasmRestoreCapability?(archive: StrictSaveEnvelope): Promise<void>;
   confirmMemoryHandover?(handover: WasmMemoryHandover, explicitIntent?: Exclude<WasmMemoryPendingIntent, null>): Promise<WasmMemoryPendingIntent>;
   confirmMemoryReloadRetry?(handover: WasmMemoryHandover & { kind: "frozen" }): Promise<boolean>;
+  onMemoryHandoverCancelled?(): void | Promise<void>;
   reloadAfterMemoryNotice?(degraded: boolean): Promise<void>;
   initialSaveSourceRef: MutableRefObject<InitialSaveSource<StrictSaveEnvelope>>;
   dayEndPersistenceRef: MutableRefObject<DayEndPersistence>;
@@ -180,6 +183,12 @@ export function createSessionHostLifecycle(ports: SessionHostLifecyclePorts) {
     return teardownTask;
   };
   const playerOrderRefreshGate = playerOrderRefreshGateRef.current;
+  const cancelMemoryHandover = async () => {
+    ending = true;
+    onRunning(false);
+    await releaseOwnedHost();
+    await ports.onMemoryHandoverCancelled?.();
+  };
   const reloadWithNotice = async (admitted: { degraded: boolean; diagnostics: unknown }) => {
     onRunning(false);
     setNotice(admitted.degraded ? "灾备台账写入失败，当前重载交接仅由单通道保护；详情已保留，重载后请确认目标。" : "Memory 残留已达到回收阈值，已冻结本次选择；重载后请确认目标。");
@@ -210,7 +219,8 @@ export function createSessionHostLifecycle(ports: SessionHostLifecyclePorts) {
       if (startupTarget.kind === "wasm" && ports.wasmMemoryOwner !== undefined) {
         const retry = ports.wasmMemoryOwner.pendingReloadRetry();
         if (retry !== undefined) {
-          if (ports.confirmMemoryReloadRetry === undefined || !await ports.confirmMemoryReloadRetry(retry)) throw new WasmDocumentMemoryError("MEMORY_RELOAD_RETRY_CONFIRMATION_REQUIRED", "尚未确认重试原冻结交接，本次其他选择未受理，未分配游戏 Memory。");
+          if (ports.confirmMemoryReloadRetry === undefined) throw new WasmDocumentMemoryError("MEMORY_RELOAD_RETRY_CONFIRMATION_REQUIRED", "尚未提供原冻结交接重试确认，未分配游戏 Memory。");
+          if (!await ports.confirmMemoryReloadRetry(retry)) { if (!cancelled) await cancelMemoryHandover(); return; }
           if (cancelled) return;
           await reloadWithNotice(ports.wasmMemoryOwner.retryReloadHandover());
           return;
@@ -226,7 +236,7 @@ export function createSessionHostLifecycle(ports: SessionHostLifecyclePorts) {
           }
           const choice = await ports.confirmMemoryHandover(pending, explicitIntent);
           if (cancelled) return;
-          if (choice === null) throw new WasmDocumentMemoryError("MEMORY_HANDOVER_CONFIRMATION_REQUIRED", "尚未确认冻结的存档或新局目标，未分配游戏 Memory。");
+          if (choice === null) { await cancelMemoryHandover(); return; }
           confirmedIntent = choice; confirmedHandover = true;
           if (choice.kind === "load") initialSaveSourceRef.current.select(choice.archive);
           else initialSaveSourceRef.current.reset();
@@ -427,11 +437,19 @@ interface Options extends Omit<SessionHostLifecyclePorts, "createHost" | "checkW
   pausePreferencesReady: boolean;
   setHostBaselineReady(ready: boolean): void;
   refreshPlayerOrders(): Promise<void>;
+  loadMemoryHandoverFile(): Promise<StrictSaveEnvelope | null>;
 }
 
-export function useSessionHostLifecycle(options: Options): void {
+export function useSessionHostLifecycle(options: Options): MemoryHandoverPanelProps | null {
+  const [memoryHandoverPanel, setMemoryHandoverPanel] = useState<MemoryHandoverPanelProps | null>(null);
   const { sessionSetup, startupTarget, pausePreferencesReady, refreshPlayerOrders, setIndicatorCalculator } = options;
   useEffect(() => {
+    const selection = createMemoryHandoverSelection({
+      loadFromFile: options.loadMemoryHandoverFile,
+      createNewIntent: () => ({ kind: "new", setup: options.sessionSetup, seed: (options.createSeed === undefined ? createNewSessionSeed() : options.createSeed()).toString() }),
+      onChange: setMemoryHandoverPanel,
+    });
+    setMemoryHandoverPanel(null);
     const documentOwner = getDocumentWasmMemoryOwner(document);
     const lifecycle = createSessionHostLifecycle({ ...options,
       hostTransitionRef: documentOwner.hostTransitionRef,
@@ -440,16 +458,7 @@ export function useSessionHostLifecycle(options: Options): void {
         const runtime = parseWasmRuntimeOptions(window.location.search);
         await prepareDocumentWasmRestoreCapability(document, { runtimeOverride: runtime.runtimeOverride });
       },
-      confirmMemoryHandover: async (handover, explicitIntent) => {
-        const intent = explicitIntent === undefined ? handover.kind === "frozen" ? handover.pendingIntent : null : explicitIntent;
-        if (intent !== null) {
-          const target = intent.kind === "load" ? `日终存档（seed ${intent.archive.seed}）` : `新局（seed ${intent.seed}）`;
-          const selection = explicitIntent === undefined ? "上次明确选择" : "本次明确选择";
-          return window.confirm(`是否继续${selection}的${target}？确认后才分配游戏 Memory。`) ? intent : null;
-        }
-        return window.confirm("重载交接目标不可用。是否明确选择按当前配置创建新局？原日终存档不会被改写。")
-          ? { kind: "new", setup: options.sessionSetup, seed: createNewSessionSeed().toString() } : null;
-      },
+      confirmMemoryHandover: selection.request,
       confirmMemoryReloadRetry: async (handover) => {
         const intent = handover.pendingIntent;
         const target = intent === null ? "原冻结选择" : intent.kind === "load" ? `原日终存档（seed ${intent.archive.seed}）` : `原新局（seed ${intent.seed}）`;
@@ -468,7 +477,11 @@ export function useSessionHostLifecycle(options: Options): void {
     if (!pausePreferencesReady || options.returningToStartupRef.current) return undefined;
     options.setHostBaselineReady(false);
     void lifecycle.start();
-    return () => { void lifecycle.dispose().catch((failure) => options.setError(`释放宿主失败：${failure instanceof Error ? failure.message : String(failure)}；请反馈此错误。`)); };
+    return () => {
+      selection.dispose();
+      void lifecycle.dispose().catch((failure) => options.setError(`释放宿主失败：${failure instanceof Error ? failure.message : String(failure)}；请反馈此错误。`));
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionSetup, startupTarget, pausePreferencesReady, refreshPlayerOrders, setIndicatorCalculator]);
+  return memoryHandoverPanel;
 }

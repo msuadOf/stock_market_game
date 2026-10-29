@@ -44,6 +44,7 @@ import {
   type RootState,
 } from "./store/store";
 import { useSessionHostLifecycle } from "./app/useSessionHostLifecycle.ts";
+import { MemoryHandoverPanel } from "./app/MemoryHandoverPanel.tsx";
 import { useSaveCommands } from "./app/useSaveCommands.ts";
 import { useTradingCommands } from "./app/useTradingCommands.ts";
 import { useSpeedMetricsPolling } from "./app/useSpeedMetricsPolling.ts";
@@ -373,12 +374,14 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
     });
   }
 
-  useSessionHostLifecycle({ hostRef, initialSaveSourceRef, dayEndPersistenceRef, autoOrderMgrRef, sessionReplacementGateRef,
+  const memoryHandoverPanel = useSessionHostLifecycle({ hostRef, initialSaveSourceRef, dayEndPersistenceRef, autoOrderMgrRef, sessionReplacementGateRef,
     saveSelectionGenerationRef, playerOrderRefreshGateRef, hostUpdateRef, fatalHostErrorRef, stopStartupRef, returningToStartupRef,
     startupTarget, sessionSetup, speed, pauseAfterClose, pauseBeforeOpen, TRADING_E2E_MODE, pausePreferencesReady,
     malformedProtocolFixture: () => import.meta.env.DEV && new URLSearchParams(window.location.search).get("protocolFixture") === "malformed",
     setIndicatorCalculator, configureMarketTiming, setActiveSetup, setStartDateDraft, setPriceCageEnabledDraft, setFloatAllocationDraft, setInitialAllocation, setDeliveryModes, setDeliveryModeState,
     setNotice, setReady, setError, onSpawnFailure, setHostBaselineReady, refreshPlayerOrders, getBrowserSaveRepository, connectProtocol,
+    onMemoryHandoverCancelled: () => onSelectHost(stopStartupRef.current),
+    loadMemoryHandoverFile: () => loadFromFile(() => dayEndPersistenceRef.current.beforeRead()),
     disconnectProtocol() {
       companyCoordinatorRef.current?.dispose();
       companyCoordinatorRef.current = null;
@@ -471,6 +474,7 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
   if (returningToStartup) {
     return <div className="app-loading"><p role="status" aria-live="polite">正在结束当前启动，等待已提交的日终存档写入完成；完成前不会启动另一局…</p></div>;
   }
+  if (memoryHandoverPanel !== null) return <div className="app-loading"><MemoryHandoverPanel {...memoryHandoverPanel} /></div>;
   if (error) {
     return <>
       <FatalHostError error={error} onRetry={() => window.location.reload()} />
