@@ -206,6 +206,7 @@ fn protocol_save_fault(error: ProtocolError) -> ValidationFault {
 }
 
 impl GameSession {
+    #[cfg(test)]
     fn end_civil_day_update(
         &mut self,
         intraday: Vec<TickFrame>,

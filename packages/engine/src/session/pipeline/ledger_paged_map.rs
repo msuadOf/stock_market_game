@@ -124,18 +124,6 @@ impl<V> LedgerPagedMap<V> {
     }
 
     #[cfg(test)]
-    pub(super) fn values_mut(&mut self) -> impl DoubleEndedIterator<Item = &mut V>
-    where
-        V: Clone,
-    {
-        self.groups.values_mut().flat_map(|group| {
-            Arc::make_mut(group)
-                .values_mut()
-                .flat_map(|page| Arc::make_mut(page).values_mut())
-        })
-    }
-
-    #[cfg(test)]
     pub(super) fn retain(&mut self, mut keep: impl FnMut(&EnvelopeKey, &mut V) -> bool)
     where
         V: Clone,

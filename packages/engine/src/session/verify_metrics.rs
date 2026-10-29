@@ -337,6 +337,7 @@ impl Drop for Scope<'_> {
             .fetch_add(self.started.elapsed().as_nanos() as u64, Ordering::Relaxed);
     }
 }
+#[cfg(test)]
 pub(in crate::session) fn add_span(calls: &AtomicU64, nanos: &AtomicU64, started: Instant) {
     calls.fetch_add(1, Ordering::Relaxed);
     nanos.fetch_add(started.elapsed().as_nanos() as u64, Ordering::Relaxed);
@@ -651,8 +652,8 @@ mod tests {
         // 声明序 first 在前：unwind 按声明序析构，first 的 Drop 触发 panic 后
         // second 在同一 unwind 中被析构（等价于 receiver 析构连带队列剩余 Job）。
         struct DuringUnwind<'a> {
-            first: Tracked<'a, PanickyDrop>,
-            second: Tracked<'a, ()>,
+            _first: Tracked<'a, PanickyDrop>,
+            _second: Tracked<'a, ()>,
         }
         let metrics = VerifyMetrics::new();
         let tickets = RefCell::new(Vec::new());
@@ -664,7 +665,10 @@ mod tests {
                 let (second, t2) = Tracked::new((), metrics_ref, JobKind::CommitField);
                 *tickets_ref.borrow_mut() = vec![t1, t2];
                 // 整体析构：first 的 value Drop panic 开始 unwind，second 连带析构。
-                drop(DuringUnwind { first, second });
+                drop(DuringUnwind {
+                    _first: first,
+                    _second: second,
+                });
             }));
             assert!(caught.is_err(), "first 的 payload panic 应被捕获");
         }

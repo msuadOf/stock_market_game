@@ -1,5 +1,6 @@
 //! Per-account state shared between a committed session and its tick candidate.
 
+#[cfg(test)]
 use crate::compute::parallel::*;
 use crate::AccountId;
 use serde::ser::SerializeMap;
@@ -68,38 +69,8 @@ impl<Value> AccountPagedMap<Value> {
 }
 
 impl<Value: Clone> AccountPagedMap<Value> {
-    pub(super) fn replace_existing_shared_parallel(
-        &mut self,
-        updates: Vec<(AccountId, Arc<Value>)>,
-    ) -> Result<(), AccountId>
-    where
-        Value: Send + Sync,
-    {
-        let mut by_group = BTreeMap::<u64, Vec<(AccountId, Arc<Value>)>>::new();
-        for (id, value) in updates {
-            by_group.entry(group_id(id)).or_default().push((id, value));
-        }
-        let work = self
-            .groups
-            .iter_mut()
-            .filter_map(|(group_id, group)| by_group.remove(group_id).map(|rows| (group, rows)))
-            .collect::<Vec<_>>();
-        if let Some(rows) = by_group.into_values().next() {
-            return Err(rows[0].0);
-        }
-        work.into_par_iter().try_for_each(|(group, rows)| {
-            let pages = Arc::make_mut(group);
-            for (id, value) in rows {
-                let page = pages.get_mut(&page_id(id)).ok_or(id)?;
-                if Arc::make_mut(page).insert(id, value).is_none() {
-                    return Err(id);
-                }
-            }
-            Ok(())
-        })
-    }
-
     /// Change independent existing accounts on disjoint pages of a private tick state.
+    #[cfg(test)]
     pub(super) fn mutate_existing_parallel<Output, Error>(
         &mut self,
         ids: &[AccountId],

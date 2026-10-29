@@ -235,6 +235,7 @@ pub use saved_runtime::{
 /// 不绑定恢复后的 GameSession，也不推断或修补可编辑存档事实。
 struct SaveValidationContext<'a> {
     save: &'a SaveSlot,
+    #[cfg(test)]
     config: &'a GameConfig,
     saved_day: u64,
     day_tick: u64,
@@ -257,6 +258,7 @@ impl<'a> SaveValidationContext<'a> {
     ) -> Self {
         Self {
             save,
+            #[cfg(test)]
             config: &save.setup.config,
             saved_day,
             day_tick,

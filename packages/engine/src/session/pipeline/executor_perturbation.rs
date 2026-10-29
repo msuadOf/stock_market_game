@@ -83,15 +83,6 @@ impl ExecutorBinding {
             _ => false,
         }
     }
-
-    /// 当前绑定持有的扰动观察账本强引用数（空绑定为 0）。
-    /// 与 PhaseTimingBinding::strong_count 同口径，用于两段式收尾断言。
-    pub(super) fn strong_count(&self) -> usize {
-        self.0
-            .as_ref()
-            .map(std::sync::Arc::strong_count)
-            .unwrap_or(0)
-    }
 }
 
 pub(crate) fn current_executor_binding() -> ExecutorBinding {

@@ -12,8 +12,8 @@ pub(crate) struct PreparedRuntimeProgress {
     source: WorldMirrorSource,
     projection: protocol::PreparedTickProjection,
     events: Vec<Event>,
-    plans: crate::plans::PlanBook,
-    calendar: crate::runtime::drive::PreparedDriverCalendar,
+    _plans: crate::plans::PlanBook,
+    _calendar: crate::runtime::drive::PreparedDriverCalendar,
     receipts: BTreeMap<AccountId, crate::experience::AppendOnlyHistory<PersonalTradeConfirmation>>,
     receipt_watermark: u64,
     retail: super::retail_lifecycle::Candidate,
@@ -28,6 +28,7 @@ impl PreparedRuntimeCommit {
             Self::Progress(value) => &value.projection,
         }
     }
+    #[cfg(test)]
     pub(crate) fn events(&self) -> &[Event] {
         match self {
             Self::Mirror(value) => &value.events,
@@ -44,14 +45,14 @@ impl PreparedRuntimeCommit {
     pub(crate) fn plans(&self) -> &crate::plans::PlanBook {
         match self {
             Self::Mirror(value) => value.causal_plans(),
-            Self::Progress(value) => &value.plans,
+            Self::Progress(value) => &value._plans,
         }
     }
     #[cfg(feature = "simulation-diagnostics")]
     pub(crate) fn calendar(&self) -> &crate::runtime::drive::PreparedDriverCalendar {
         match self {
             Self::Mirror(value) => &value.causal_calendar,
-            Self::Progress(value) => &value.calendar,
+            Self::Progress(value) => &value._calendar,
         }
     }
 }
@@ -264,8 +265,8 @@ impl GameSession {
                 source,
                 projection: protocol::PreparedTickProjection { snapshot, runtime },
                 events,
-                plans: input.plans,
-                calendar: input.calendar,
+                _plans: input.plans,
+                _calendar: input.calendar,
                 receipts,
                 receipt_watermark,
                 retail,
