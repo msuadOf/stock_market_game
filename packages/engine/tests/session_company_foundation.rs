@@ -467,11 +467,14 @@ fn disabled_foundation_leaves_registry_empty() {
 
 #[test]
 fn save_restore_roundtrips_company_fields_bitwise() {
-    let mut session = GameSession::new(company_setup(), 7).unwrap();
-    // 推进若干 tick + 日结，让公司状态跨越存档边界（构造后立即存档是平凡情形）。
+    let mut setup = company_setup();
+    setup.ticks_per_day = 35;
+    let mut session = GameSession::new(setup, 7).unwrap();
+    // 完成一个 35 tick 交易日并显式日结，让公司状态跨越有效存档边界。
     for _ in 0..35 {
         session.step().expect("healthy step");
     }
+    session.end_civil_day().expect("healthy civil day end");
     let saved = session.save().expect("healthy save");
     let saved_company = system_saved(&saved).0.clone();
     let saved_actions = system_saved(&saved).1.clone();
@@ -530,10 +533,13 @@ fn incomplete_company_save_is_rejected() {
 
 #[test]
 fn plain_sessions_save_json_carries_no_company_keys() {
-    let mut session = GameSession::new(plain_setup(), 7).unwrap();
+    let mut setup = plain_setup();
+    setup.ticks_per_day = 35;
+    let mut session = GameSession::new(setup, 7).unwrap();
     for _ in 0..35 {
         session.step().expect("healthy step");
     }
+    session.end_civil_day().expect("healthy civil day end");
     let saved = session.save().expect("healthy save");
     let json = serde_json::to_value(&saved).unwrap();
     // SaveSlot 顶层与 setup 子层都不携带公司字段（缺席 = 公司线未激活）。
@@ -571,10 +577,13 @@ fn plain_sessions_save_json_carries_no_company_keys() {
 fn plain_sessions_restore_identically() {
     // 旧局 restore 后行为与原局一致：同 seed 再跑同 tick 数，账户权益与
     // 存档快照逐位一致（构造期公司装配缺席 = 零行为变化的直接证据）。
-    let mut session = GameSession::new(plain_setup(), 11).unwrap();
+    let mut setup = plain_setup();
+    setup.ticks_per_day = 35;
+    let mut session = GameSession::new(setup, 11).unwrap();
     for _ in 0..35 {
         session.step().expect("healthy step");
     }
+    session.end_civil_day().expect("healthy civil day end");
     let saved = session.save().unwrap();
     let restored = GameSession::restore(&saved).unwrap();
     for id in [
