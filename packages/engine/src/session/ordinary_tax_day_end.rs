@@ -406,7 +406,7 @@ impl GameSession {
                     if attribution.stock() != &stock
                         || attribution.registered_on() != day
                         || attribution.settled_receipts() != snapshot.settled_receipts()
-                        || attribution.after_book_operation() != market_book.operation_seq
+                        || attribution.after_book_operation() != market_book.operation_seq()
                         || attribution.lots() != market_book.lots()
                         || book.lots() != market_book.lots()
                     {

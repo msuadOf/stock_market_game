@@ -778,6 +778,10 @@ impl CashDividendTaxBook {
         *self = candidate;
         Ok(receipt)
     }
+    /// 只读当前操作水位；供同源登记归属与市场尾校验。
+    pub(crate) const fn operation_seq(&self) -> u64 {
+        self.operation_seq
+    }
     pub fn lots(&self) -> &[DividendTaxLot] {
         &self.lots
     }
