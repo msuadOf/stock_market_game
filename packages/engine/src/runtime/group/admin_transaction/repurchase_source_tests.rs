@@ -786,3 +786,37 @@ fn repurchase_x_group_15_real_start_commits_tail_and_next_tick_abort_keeps_compl
     assert_eq!(state.child_in_flight, tickets);
     assert_eq!(state.repurchase_pending_tails, accepted_tail);
 }
+
+#[test]
+fn repurchase_x_group_16_source_less_closed_and_rejected_prefix_keep_raw_stock_identity() {
+    {
+    let (mut state, mut desk, request, purse) = state(1000, 100);
+    desk.company_buy(request, 1000, 100, purse);
+    consume(&mut state, desk.flush_company());
+    desk.sell(1000, 100);
+    let mut prefix = desk.flush_company();
+    let closed_source = prefix.repurchase.pop().unwrap();
+    assert_eq!(closed_source.kind, RepurchaseSourceKind::Closed);
+    let at = prefix.entities.iter().position(|entity| matches!(entity, Entity::Closed { .. })).unwrap();
+    let closed_entity = prefix.entities.remove(at);
+    consume(&mut state, prefix);
+    assert_eq!(state.accounts[1].buy_purse_held_cents, 0);
+    assert!(state.child_in_flight.contains_key(&(ACCOUNT, StockId(3))));
+    // 原 H0 Closed 后缀没有 Fill；删 source、改 Batch.stock 仍不能变成普通闭单。
+    reject_before_mutation(&mut state, DeskBatch { stock: 2, tick: 1, round: 0,
+        entities: vec![closed_entity], ..Default::default() });
+    }
+    {
+    let (mut state, mut desk, request, purse) = state(1200, 100);
+    desk.company_buy(request, 1200, 100, purse);
+    let mut rejected = desk.flush_company();
+    assert!(matches!(rejected.repurchase[0].kind, RepurchaseSourceKind::Rejected { .. }));
+    assert_eq!(rejected.receipts.len(), 1);
+    assert_eq!(rejected.receipts[0].order.0, STOCK);
+    // 真实 Rejected receipt 前缀也没有 Fill/Entity；原 Ref 的股身份仍须核对。
+    rejected.entities.clear();
+    rejected.repurchase.clear();
+    rejected.stock = 2;
+    reject_before_mutation(&mut state, rejected);
+    }
+}

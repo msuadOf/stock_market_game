@@ -28,13 +28,22 @@ impl GroupState {
     pub(super) fn prepare_repurchase_batch(&self, batch: &DeskBatch) -> Result<PreparedRepurchaseBatch, RuntimeError> {
         let code = crate::StockId(u32::from(batch.stock));
         let mut locals = std::collections::BTreeSet::new();
-        for fill in &batch.fills { locals.insert(fill.owner.1); }
-        for receipt in &batch.receipts { locals.insert(receipt.owner.1); }
-        for entity in &batch.entities { locals.insert(entity_local(entity)); }
+        for fill in &batch.fills {
+            self.verify_company_raw_stock(batch.stock, fill.owner.1, u64::from(fill.order.0))?;
+            locals.insert(fill.owner.1);
+        }
+        for receipt in &batch.receipts {
+            self.verify_company_raw_stock(batch.stock, receipt.owner.1, u64::from(receipt.order.0))?;
+            locals.insert(receipt.owner.1);
+        }
+        for entity in &batch.entities {
+            if let Entity::Closed { local, order_serial } = *entity {
+                self.verify_company_raw_stock(batch.stock, local, order_serial >> 32)?;
+            }
+            locals.insert(entity_local(entity));
+        }
         for source in &batch.repurchase { locals.insert(source.owner.1); }
-        // 真实专户 owner 独立于可变 Batch.stock；来源全删也不能洗成普通交易。
-        locals.retain(|&local| self.company_child_at(local, batch.stock)
-            || self.admin_treasury_bindings.iter().any(|binding| binding.owner == (self.group, local)));
+        locals.retain(|&local| self.company_child_at(local, batch.stock));
         if locals.is_empty() && batch.repurchase.is_empty() { return Ok(PreparedRepurchaseBatch::default()); }
 
         let mut prepared = PreparedRepurchaseBatch::default();
@@ -216,12 +225,18 @@ impl GroupState {
         Ok(())
     }
 
+    /// 原 Ref 可独立暴露错股；binding 只证明能力，不改变其它股票的 raw origin。
+    fn verify_company_raw_stock(&self, batch_stock: StockIdx, local: LocalIdx, raw_stock: u64) -> Result<(), RuntimeError> {
+        if raw_stock != u64::from(batch_stock)
+            && (self.company_child_at(local, batch_stock)
+                || StockIdx::try_from(raw_stock).is_ok_and(|stock| self.company_child_at(local, stock))) {
+            return Err(invalid("原事实的 raw 证券与 Batch.stock 不同"));
+        }
+        Ok(())
+    }
+
     /// 通用 Investor 生命周期入口只能跳过公司票；真实推进由校验后的来源独占。
     pub(super) fn company_child_at(&self, local: LocalIdx, stock: StockIdx) -> bool {
-        if self.admin_treasury_bindings.iter().any(|binding|
-            binding.owner == (self.group, local) && binding.stock == stock) {
-            return true;
-        }
         let Some(account) = self.root_projection.as_ref().and_then(|root|
             self.roster_offset.checked_add(local as usize).and_then(|index| root.account_ids.get(index)))
         else { return false; };
