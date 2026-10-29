@@ -54,7 +54,9 @@ fn sol5_from_session_restores_attention_state() {
     let mut session = GameSession::new(setup_fixture(), 88).expect("会话构造");
     // 旧管线推进若干 tick——attention 候选随调度演进。
     for _ in 0..5 {
-        session.step_frame().expect("旧管线 tick");
+        session
+            .step_with_commit_evidence()
+            .expect("显式旧管线契约 tick");
     }
     let attention: BTreeMap<crate::AccountId, (u64, u64)> = session
         .runtime_attention_state()
@@ -1209,11 +1211,12 @@ fn solmid_day_end_drain_releases_child_tickets() {
     setup.npcs.inst_count = 3;
     setup.strategy_params.inst.order_size = 100;
     setup.auction_ticks = 0;
+    setup.ticks_per_day = 7;
     let mut session = GameSession::new(setup, 51).expect("会话构造");
     let mut driver = RuntimeDriver::from_session(&mut session).expect("驱动器构造");
     driver.adopt_session_seq(&session);
     // 与 lifecycle 红证同款注入（喂簿/吃单）——制造在途子单。
-    for _ in 0..6 {
+    for _ in 0..7 {
         let views = driver.world_public_views().to_vec();
         let mut intents = Vec::new();
         for (stock, view) in views.iter().enumerate() {
@@ -1285,6 +1288,7 @@ fn sol4_day_end_abort_restores_execution_leg_with_tickets() {
     setup.npcs.inst_count = 3;
     setup.strategy_params.inst.order_size = 100;
     setup.auction_ticks = 0;
+    setup.ticks_per_day = 7;
     let mut session = GameSession::new(setup, 51).expect("会话构造");
     let mut driver = RuntimeDriver::from_session(&mut session).expect("驱动器构造");
     driver.adopt_session_seq(&session);
@@ -2571,41 +2575,174 @@ fn p2_1b_account_writeback_respects_fact_dirty() {
     );
 }
 
-// ── P2-2b 红证：账户写时 undo 的记录与消费 ──
+// ── P2-2b：账户候选拒绝不安装，提交后不依赖 undo ──
 
-// 判别形态说明（如实登记）：受理只挪 purse（公开现金=cash+在途 purse
-// 总量不变）、成交才变——quote 类小 fixture 的失败拍难保证有成交写入，
-// 行为断言不可靠。改结构断言：①首拍全量回写（force_full 基线）必产生
-// undo 记录（驱动器手动序列不走 session.step 尾清）；②session.step()
-// 成功路径尾清（失败路径由 rollback 消费——回滚完整性由既有
-// compute_context hash 守卫+本守卫①共同覆盖：①突变（记录 no-op）
-// 显红，hash 守卫在零写入拍不可判别已登记）。
 #[test]
 fn p2_2b_account_undo_records_and_clears() {
     let mut setup = setup_fixture();
-    setup.npcs.retail_count = 1;
+    setup.npcs.retail_count = 2;
     setup.npcs.inst_count = 0;
     setup.auction_ticks = 0;
-    setup.strategy_params.retail.arrival_rate = 1.0;
-    setup.strategy_params.retail.order_size_mean = 100;
-    let mut session = GameSession::new(setup, 37).expect("会话构造");
-    let mut driver = RuntimeDriver::from_session(&mut session).expect("驱动器构造");
-    driver.adopt_session_seq(&session);
-    driver
-        .step_frame_equivalent(&mut session)
-        .expect("首拍（强制全量回写基线）");
-    driver.install_market_views(&mut session).expect("行情");
-    driver.install_candles(&mut session).expect("K");
-    // ①首拍全量回写 ⇒ undo 记录=名册（玩家+NPC）。
-    assert_eq!(
-        session.runtime_account_undo_len_for_test(),
-        2,
-        "首拍全量回写必产生写时 undo 记录（记录缺失=回滚源断裂）"
+    let mut rejected = GameSession::new(setup.clone(), 37).expect("拒绝分支会话");
+    let seller = [crate::AccountId(1), crate::AccountId(2)]
+        .into_iter()
+        .find(|id| {
+            rejected
+                .account(*id)
+                .is_some_and(|account| account.sellable_qty(&crate::StockId(0)) >= 100)
+        })
+        .expect("fixture 有可卖的 NPC");
+    let buyer = if seller == crate::AccountId(1) {
+        crate::AccountId(2)
+    } else {
+        crate::AccountId(1)
+    };
+    let inject_cross = |driver: &mut RuntimeDriver| {
+        let upper: Vec<_> = driver
+            .world_public_views()
+            .iter()
+            .map(|view| view.daily_upper_limit)
+            .collect();
+        driver
+            .inject_player_intents(
+                &[
+                    crate::session::ReceiptBearingIntent {
+                        owner: buyer,
+                        intent: crate::Intent::PlaceLimit {
+                            code: crate::StockId(0),
+                            side: crate::orderbook::Side::Buy,
+                            price: crate::strategy::LimitPrice::Fixed(
+                                crate::money::Money::from_cents(1000),
+                            ),
+                            qty: 100,
+                        },
+                        account_ordinal: 0,
+                        stock_ordinal: 0,
+                    },
+                    crate::session::ReceiptBearingIntent {
+                        owner: seller,
+                        intent: crate::Intent::PlaceLimit {
+                            code: crate::StockId(0),
+                            side: crate::orderbook::Side::Sell,
+                            price: crate::strategy::LimitPrice::Fixed(
+                                crate::money::Money::from_cents(1000),
+                            ),
+                            qty: 100,
+                        },
+                        account_ordinal: 0,
+                        stock_ordinal: 0,
+                    },
+                ],
+                &upper,
+            )
+            .expect("注入真实交叉成交");
+    };
+    let account_state = |session: &GameSession| {
+        session
+            .account_roster()
+            .into_iter()
+            .map(|id| {
+                let account = session.account(id).expect("名册账户");
+                (id, account.cash().cents(), account.positions().clone())
+            })
+            .collect::<Vec<_>>()
+    };
+
+    let mut rejected_driver = RuntimeDriver::from_session(&mut rejected).expect("拒绝驱动器");
+    rejected_driver.adopt_session_seq(&rejected);
+    let rejected_before = account_state(&rejected);
+    let rejected_hash = rejected.business_state_hash().expect("拒绝前状态 hash");
+    inject_cross(&mut rejected_driver);
+    let rejected_trade_qty = std::sync::Arc::new(std::sync::Mutex::new(0u32));
+    let trade_probe = std::sync::Arc::clone(&rejected_trade_qty);
+    rejected_driver.set_world_validator_for_test(Box::new(move |evidence| {
+        *trade_probe.lock().expect("成交证据锁") =
+            evidence.desk_trades.iter().map(|trade| trade.qty).sum();
+        Err("拒绝账户 candidate".to_owned())
+    }));
+    assert!(
+        rejected_driver
+            .step_frame_equivalent(&mut rejected)
+            .is_err(),
+        "World 拒绝必须在账户 candidate 安装前 Abort"
     );
-    // ②session.step 成功路径尾清。
-    session.runtime_clear_account_undo();
-    assert_eq!(session.runtime_account_undo_len_for_test(), 0, "清空后归零");
-    let _ = driver;
+    assert!(
+        *rejected_trade_qty.lock().expect("成交证据锁") > 0,
+        "被拒 candidate 含真实成交，账户零安装断言不空转"
+    );
+    assert_eq!(rejected.tick(), 0, "Abort 后会话 tick 不推进");
+    assert_eq!(
+        account_state(&rejected),
+        rejected_before,
+        "Abort 后全账户保持原值"
+    );
+    assert_eq!(
+        rejected.business_state_hash().expect("Abort 后状态 hash"),
+        rejected_hash,
+        "Abort 后业务状态逐位保持"
+    );
+    assert_eq!(
+        rejected.runtime_account_undo_len_for_test(),
+        0,
+        "未安装的账户 candidate 不写 undo"
+    );
+
+    let mut committed = GameSession::new(setup, 37).expect("提交分支会话");
+    let mut driver = RuntimeDriver::from_session(&mut committed).expect("提交驱动器");
+    driver.adopt_session_seq(&committed);
+    let committed_before = account_state(&committed);
+    inject_cross(&mut driver);
+    let committed_trade_qty = std::sync::Arc::new(std::sync::Mutex::new(0u32));
+    let trade_probe = std::sync::Arc::clone(&committed_trade_qty);
+    driver.set_world_validator_for_test(Box::new(move |evidence| {
+        *trade_probe.lock().expect("成交证据锁") =
+            evidence.desk_trades.iter().map(|trade| trade.qty).sum();
+        Ok(())
+    }));
+    driver
+        .step_frame_equivalent(&mut committed)
+        .expect("账户 candidate 通过校验并唯一安装");
+    assert_eq!(committed.tick(), 1, "安装后 tick 恰推进一拍");
+    assert!(
+        *committed_trade_qty.lock().expect("成交证据锁") > 0,
+        "成功 candidate 含真实成交"
+    );
+    assert_ne!(
+        account_state(&committed),
+        committed_before,
+        "真实成交改变现金/持仓，安装对账具备非平凡判别力"
+    );
+    assert_eq!(
+        committed.runtime_account_undo_len_for_test(),
+        0,
+        "candidate move-install 不需要写时 undo"
+    );
+    let authority = driver.world_accounts_snapshot().expect("组账户权威");
+    for (group, accounts) in authority {
+        for (local, expected) in accounts.iter().enumerate() {
+            let Some(id) = driver.account_by_owner((group, local as u32)) else {
+                continue;
+            };
+            let actual = committed.account(id).expect("已安装会话账户");
+            assert_eq!(
+                actual.cash().cents(),
+                expected.cash + expected.buy_purse_held_cents,
+                "{id:?} 安装账户现金与 candidate 权威一致"
+            );
+            for stock in 0..expected.shares.len() {
+                let code = crate::StockId(stock as u32);
+                let qty = expected.shares[stock] + expected.pending_sell_qty[stock];
+                assert_eq!(
+                    actual
+                        .positions()
+                        .get(&code)
+                        .map_or(0, |position| position.qty()),
+                    qty,
+                    "{id:?} {code:?} 安装持仓与 candidate 权威一致"
+                );
+            }
+        }
+    }
 }
 
 // ── P2-3a 等价守卫：零售链公共观察每轮共享后决策序列黄金值 ──
@@ -3539,14 +3676,10 @@ fn stepframe3_continuous_phase_emits_price_tick_per_stock() {
     let mut session = GameSession::new(setup, 21).expect("会话构造");
     let mut driver = RuntimeDriver::from_session(&mut session).expect("驱动器构造");
     driver.adopt_session_seq(&session);
-    let mut events = driver.step_frame_equivalent(&mut session).expect("步进");
+    let events = driver.step_frame_equivalent(&mut session).expect("步进");
     driver.install_market_views(&mut session).expect("行情安装");
     driver.install_candles(&mut session).expect("K 安装");
-    // 生产挂点=runtime_step_with_install 的 install 段之后（failure.rs）
-    //——本测试直调组件同序（session 模块外不可见 install 聚合方法）。
-    driver
-        .emit_price_tick_events(&mut session, &mut events)
-        .expect("PriceTick 生成");
+    // `step_frame_equivalent` 已完成 production install 段中的 PriceTick 生成。
     let price_ticks: Vec<&crate::Event> = events
         .iter()
         .filter(|e| matches!(e, crate::Event::PriceTick { .. }))
@@ -3557,14 +3690,19 @@ fn stepframe3_continuous_phase_emits_price_tick_per_stock() {
         "连续相位每拍每股恰一条 PriceTick（fixture 两股）：{:?}",
         events
     );
+    let mut per_stock = [0usize; 2];
     let tick_after = session.tick();
     for event in &price_ticks {
         let crate::Event::PriceTick { tick, code, .. } = event else {
             unreachable!();
         };
         assert_eq!(*tick, tick_after, "PriceTick 携带步进后 tick");
-        assert!(*code == crate::StockId(0) || *code == crate::StockId(1));
+        let count = per_stock
+            .get_mut(code.0 as usize)
+            .expect("PriceTick 必须来自 fixture 两股之一");
+        *count += 1;
     }
+    assert_eq!(per_stock, [1, 1], "两股各自恰有一条 PriceTick");
 }
 
 // ═══ Sol 终审修复 1b：Continue 早轮首买的 retail 经历初始化 ═══
@@ -3814,6 +3952,8 @@ fn sol_r22_full_exit_experience_reaches_all_four_faces_same_tick() {
     setup.ticks_per_day = 4;
     setup.closing_auction_ticks = 0;
     let mut game = GameSession::new(setup, 21).expect("会话构造");
+    let mut driver = RuntimeDriver::from_session(&mut game).expect("驱动器构造");
+    driver.adopt_session_seq(&game);
     let code = crate::StockId(0);
     // 角色（seed 21 float 分配实测，retail_count=4）：acct2 持股 0
     // 无股 0 持仓（清仓主角——首买建仓）、acct3 现金充足（退出对手）。
@@ -3837,45 +3977,45 @@ fn sol_r22_full_exit_experience_reaches_all_four_faces_same_tick() {
             .is_some_and(|a| a.cash().cents() >= 102_000),
         "fixture 前提：closer 现金充足"
     );
-    let inject = |game: &mut GameSession, owner: crate::AccountId, side: crate::orderbook::Side| {
-        let mut driver = game
-            .runtime_driver_for_test()
-            .expect("常驻驱动器在位")
-            .lock()
-            .expect("驱动器锁");
-        let upper: Vec<i64> = driver
-            .world_public_views()
-            .iter()
-            .map(|v| v.daily_upper_limit)
-            .collect();
-        driver
-            .inject_player_intents(
-                &[crate::session::ReceiptBearingIntent {
-                    owner,
-                    intent: crate::Intent::PlaceLimit {
-                        code,
-                        side,
-                        price: crate::strategy::LimitPrice::Fixed(crate::money::Money::from_cents(
-                            1000,
-                        )),
-                        qty: 100,
-                    },
-                    account_ordinal: 0,
-                    stock_ordinal: 0,
-                }],
-                &upper,
-            )
-            .expect("外部意图注入");
-    };
+    let inject =
+        |driver: &mut RuntimeDriver, owner: crate::AccountId, side: crate::orderbook::Side| {
+            let upper: Vec<i64> = driver
+                .world_public_views()
+                .iter()
+                .map(|v| v.daily_upper_limit)
+                .collect();
+            driver
+                .inject_player_intents(
+                    &[crate::session::ReceiptBearingIntent {
+                        owner,
+                        intent: crate::Intent::PlaceLimit {
+                            code,
+                            side,
+                            price: crate::strategy::LimitPrice::Fixed(
+                                crate::money::Money::from_cents(1000),
+                            ),
+                            qty: 100,
+                        },
+                        account_ordinal: 0,
+                        stock_ordinal: 0,
+                    }],
+                    &upper,
+                )
+                .expect("外部意图注入");
+        };
     // t1 空跑（驱动器惰性构造）；t2 maker 挂卖 100（站簿）；t3 exiter
     // 买 100（交叉全成——首买建仓）；t4 日结（Drain 清簿+T+1 解锁）；
     // t5 exiter 挂卖 100（全部持仓——站簿）；t6 closer 买 100（交叉
     // 全成——exiter face 归零，Seal 经历转移）。
-    game.step_via_runtime().expect("t1");
-    inject(&mut game, maker, crate::orderbook::Side::Sell);
-    game.step_via_runtime().expect("t2（maker 挂卖）");
-    inject(&mut game, exiter, crate::orderbook::Side::Buy);
-    game.step_via_runtime().expect("t3（exiter 首买）");
+    driver.step_frame_equivalent(&mut game).expect("t1");
+    inject(&mut driver, maker, crate::orderbook::Side::Sell);
+    driver
+        .step_frame_equivalent(&mut game)
+        .expect("t2（maker 挂卖）");
+    inject(&mut driver, exiter, crate::orderbook::Side::Buy);
+    driver
+        .step_frame_equivalent(&mut game)
+        .expect("t3（exiter 首买）");
     assert_eq!(
         game.account(exiter)
             .and_then(|a| a.positions().get(&code))
@@ -3883,11 +4023,20 @@ fn sol_r22_full_exit_experience_reaches_all_four_faces_same_tick() {
         100,
         "fixture 前提：exiter 建仓 100（t3 全成）"
     );
-    game.step_via_runtime().expect("t4（日结——T+1 解锁）");
-    inject(&mut game, exiter, crate::orderbook::Side::Sell);
-    game.step_via_runtime().expect("t5（exiter 挂全部持仓）");
-    inject(&mut game, closer, crate::orderbook::Side::Buy);
-    game.step_via_runtime().expect("t6（清仓拍）");
+    driver
+        .step_frame_equivalent(&mut game)
+        .expect("t4（日结——T+1 解锁）");
+    driver
+        .day_end_with_runtime_market_day(&mut game)
+        .expect("完成 t4 世界与自然日日结");
+    inject(&mut driver, exiter, crate::orderbook::Side::Sell);
+    driver
+        .step_frame_equivalent(&mut game)
+        .expect("t5（exiter 挂全部持仓）");
+    inject(&mut driver, closer, crate::orderbook::Side::Buy);
+    driver
+        .step_frame_equivalent(&mut game)
+        .expect("t6（清仓拍）");
     // 前提：exiter 持仓归零（成交全量）。
     assert_eq!(
         game.account(exiter)
@@ -3898,11 +4047,6 @@ fn sol_r22_full_exit_experience_reaches_all_four_faces_same_tick() {
     );
     // 面 1：组权威行（EchoBelief 真读面——Seal 后 dirty 位）。
     let (authority_exp, published_exp) = {
-        let mut driver = game
-            .runtime_driver_for_test()
-            .expect("常驻驱动器在位")
-            .lock()
-            .expect("驱动器锁");
         let local = driver
             .id_map
             .iter()
