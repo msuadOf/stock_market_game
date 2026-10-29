@@ -90,8 +90,10 @@ fn spec_for_run() -> WorldSpec {
 /// 单跑采集：35 tick 逐拍发布版本 desks 域 view 快照+终态守恒锚。
 fn run_and_collect(disable_cache: bool) -> (Vec<Vec<StockPublic>>, i128, u64) {
     set_desk_projection_cache_disabled_for_test(disable_cache);
+    let spec = spec_for_run();
+    let civil_date = spec.civil_start_date;
     let mut world = World::spawn(
-        spec_for_run(),
+        spec,
         crate::calendar::TradingCalendar::current_default_calendar()
             .expect("显式 raw Calendar 政策合法"),
     )
@@ -104,7 +106,7 @@ fn run_and_collect(disable_cache: bool) -> (Vec<Vec<StockPublic>>, i128, u64) {
                 .expect("显式 raw Calendar 政策合法")
                 .next_trading_day(
                     crate::calendar::CalendarExchange::Sse,
-                    world.civil_date,
+                    civil_date,
                 )
                 .expect("fixture 下一 SSE trading date 合法");
             world.set_civil_date(next_date);

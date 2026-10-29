@@ -482,24 +482,6 @@ mod whole_save {
             71,
         )
         .unwrap();
-        let system = std::sync::Arc::make_mut(session.state.companies.system_arc_mut().unwrap());
-        system
-            .declare_share_split(
-                &CompanyId(0),
-                crate::company::share_split::ShareSplitDeclaration {
-                    event_id: "split-1".into(),
-                    approval_reference: "shareholders-resolution-1".into(),
-                    direction: ShareSplitDirection::Consolidate,
-                    approved_on: date("2030-06-01"),
-                    ratio: 2,
-                    par_value_before: Money::from_cents(100),
-                    par_value_after: Money::from_cents(200),
-                    registered_capital_at_approval:
-                        crate::accounting::AccountingAmount::from_cents(10_000_000),
-                },
-            )
-            .unwrap();
-
         let registry_before = session
             .save()
             .unwrap()
@@ -525,6 +507,24 @@ mod whole_save {
         use crate::company::share_registry::MovementScope;
 
         let mut save = session.save().unwrap();
+        let system = save.company_state.system_for_test_mut();
+        system
+            .declare_share_split(
+                &CompanyId(0),
+                crate::company::share_split::ShareSplitDeclaration {
+                    event_id: "split-1".into(),
+                    approval_reference: "shareholders-resolution-1".into(),
+                    direction: ShareSplitDirection::Consolidate,
+                    approved_on: date("2030-06-01"),
+                    ratio: 2,
+                    par_value_before: Money::from_cents(100),
+                    par_value_after: Money::from_cents(200),
+                    registered_capital_at_approval:
+                        crate::accounting::AccountingAmount::from_cents(10_000_000),
+                },
+            )
+            .unwrap();
+
         let settled_registry = save.company_state.actions().unwrap().registries[0].clone();
         let market_receipt = settled_registry
             .receipts()

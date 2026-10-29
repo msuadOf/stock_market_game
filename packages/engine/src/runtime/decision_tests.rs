@@ -480,6 +480,7 @@ fn t1_frozen_unfreezes_at_day_boundary_in_group_thread() {
     spec.ticks_per_day = 4;
     spec.auction_ticks = 0;
     spec.closing_auction_ticks = 0;
+    let civil_date = spec.civil_start_date;
     let mut world = World::spawn(
         spec,
         crate::calendar::TradingCalendar::current_default_calendar()
@@ -492,7 +493,7 @@ fn t1_frozen_unfreezes_at_day_boundary_in_group_thread() {
         .expect("显式 raw Calendar 政策合法")
         .next_trading_day(
             crate::calendar::CalendarExchange::Sse,
-            world.civil_date,
+            civil_date,
         )
         .expect("fixture 下一 SSE trading date 合法");
     world.set_civil_date(next_date);
