@@ -7,16 +7,32 @@ describe("Tauri host startup contract", () => {
     const appSource = readFileSync(new URL("../app/useSessionHostLifecycle.ts", import.meta.url), "utf8");
     const hostSource = readFileSync(new URL("./tauri-host.ts", import.meta.url), "utf8");
     const timelineSource = readFileSync(new URL("./tauri-timeline-state.ts", import.meta.url), "utf8");
+    const updateSource = readFileSync(new URL("./host-update.ts", import.meta.url), "utf8");
 
     assert.match(appSource, /return createTauriHost\(setup, seed\)/);
-    assert.match(appSource, /const host = await createHost\(setup, seed, startupTarget\)/);
+    assert.match(
+      appSource,
+      /const host = await createHost\(setup, seed, startupTarget, \(failure\) => \{\s*if \(!cancelled\) ports\.onSpawnFailure\(failure\);\s*\}, initialSlot\);/,
+    );
+    assert.match(appSource, /if \(startupTarget\.kind === "tauri"\) return createTauriHost\(setup, seed\);/);
+    assert.match(appSource, /if \(startupTarget\.kind === "remote"\) return createRemoteHost\(setup, seed, \{ baseUrl: startupTarget\.baseUrl \}\);/);
+    assert.match(appSource, /const options = \{ enableE2EStepping: tradingE2EMode, onSpawnFailure, initialArchive \};/);
+    const hostReadyIndex = appSource.indexOf("const host = await createHost(");
+    const conditionalLoadIndex = appSource.indexOf("if (initialSlot !== null && startupTarget.kind !== \"wasm\") await host.load(initialSlot);");
+    const appWiringIndex = appSource.indexOf("hostRef.current = host;", hostReadyIndex);
+    assert.notEqual(hostReadyIndex, -1);
+    assert.notEqual(conditionalLoadIndex, -1);
+    assert.notEqual(appWiringIndex, -1);
+    assert.ok(conditionalLoadIndex > hostReadyIndex);
+    assert.ok(conditionalLoadIndex < appWiringIndex);
     assert.match(hostSource, /export async function createTauriHost/);
-    assert.match(hostSource, /await invoke<unknown>\("engine_baseline", \{ sessionId, generation: timeline\.currentGeneration\(\) \}\)/);
+    assert.match(hostSource, /await invokeBaseline\("engine_baseline", \{ sessionId, generation: timeline\.currentGeneration\(\) \}\)/);
     assert.match(hostSource, /timeline\.installInitialBaseline\(initialBaseline\)/);
     assert.match(timelineSource, /response\.generation !== this\.generation/);
-    assert.match(timelineSource, /this\.installSnapshot\(response\.snapshot, response\.civil_date, "Tauri engine_baseline"\)/);
-    assert.match(timelineSource, /parseProtocolSnapshot\(snapshot, `\$\{where\}\.snapshot`\)/);
-    assert.match(timelineSource, /parseIsoDate\(civilDate, `\$\{where\}\.civil_date`\)/);
+    assert.match(timelineSource, /return this\.installSnapshot\(response, "Tauri engine_baseline"\)/);
+    assert.match(timelineSource, /prepareBaselineUpdate\(response\.generation, response\.snapshot, response\.stock_catalog, response\.company_catalog, \{\s*civilDate: parseIsoDate\(response\.civil_date, `\$\{where\}\.civil_date`\), revision: null,\s*\}\)/);
+    assert.match(updateSource, /parseProtocolSnapshot\(snapshot, "baseline\.snapshot", resolver\)/);
+    assert.match(timelineSource, /parseIsoDate\(response\.civil_date, `\$\{where\}\.civil_date`\)/);
   });
 
   it("uses an explicit JSON-safe protocol for the fastest desktop speed", () => {

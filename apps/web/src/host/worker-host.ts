@@ -12,6 +12,8 @@ import type {
 import { wireIntentOf } from "./protocol/stock-identity.ts";
 import type { PausePreferences } from "../types/generated/PausePreferences.ts";
 import { parseSaveSlot } from "../save/save-schema.ts";
+import type { StrictSaveEnvelope } from "../save/schema/root.ts";
+import { validateDayEndArchive } from "../save/day-end-candidate.ts";
 import type { EngineHost, IndicatorCapabilities, SpeedMetrics } from "./engine-host.ts";
 import type { IntradayAverageCurveInput, IntradayAverageInput, IntradayAverageResult, PersonalTradeConfirmation } from "./engine-host.ts";
 import type { CurrentMinuteHistoryRequest, CurrentMinuteHistoryResponse } from "./current-minute-history.ts";
@@ -184,6 +186,7 @@ export function assertWorkerE2EStepAllowed(e2eBuild: boolean, injectedCapability
 interface WorkerHostOptions {
   readonly enableE2EStepping?: boolean;
   readonly onSpawnFailure: (failure: HostFailure) => void;
+  readonly initialArchive?: StrictSaveEnvelope | null;
 }
 
 export function createWorkerHost(
@@ -194,6 +197,17 @@ export function createWorkerHost(
   return new Promise((resolve, reject) => {
     if (options === null || typeof options !== "object" || typeof options.onSpawnFailure !== "function") {
       reject(new Error("WorkerHost 必须提供 onSpawnFailure callback"));
+      return;
+    }
+    if (options.initialArchive !== null && options.initialArchive !== undefined) {
+      const archive = parseSaveSlot(structuredClone(options.initialArchive));
+      validateDayEndArchive(archive);
+      reject(new WasmHostInitializationError({
+        code: "WASM_RESTORE_TOPOLOGY_NOT_READY",
+        where: "worker-host.initial-archive",
+        message: "WASM 日终存档恢复所需的宿主拓扑尚未就绪",
+        context: { operation: "restore" },
+      }));
       return;
     }
     const worker = new Worker(new URL("./wasm-worker.ts", import.meta.url), { type: "module" });
