@@ -47,6 +47,20 @@ pub struct DeskExecutionLeg {
     pub value_before: i64,
 }
 
+/// 未接通路径的真实来源；仅用于核对原报告，不代表 rich 翻译已支持。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UnsupportedSource {
+    /// 原有未接通路径；不携可代替日终余单的终止身份。
+    Other,
+    /// 游戏额外自成交限制：同主配对仅排除卖单，不产生真实成交。
+    AuctionSelfTradeExcluded {
+        sell: OrderRef,
+        buy: OrderRef,
+        owner: Owner,
+        qty: u32,
+    },
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DeskCausalKind {
     Submitted {
@@ -92,6 +106,7 @@ pub enum DeskCausalKind {
     /// 中间 slice 尚未接通的真实路径；不能生成看似完整的报告。
     Unsupported {
         detail: &'static str,
+        source: UnsupportedSource,
     },
 }
 
@@ -109,9 +124,15 @@ pub(super) fn validate_executions(
     auction: bool,
 ) -> Result<(), super::protocol::RuntimeError> {
     let fail = |detail| super::protocol::RuntimeError::ProtocolInvariant { detail };
-    let holes = causal
-        .iter()
-        .any(|fact| matches!(fact.kind, DeskCausalKind::Unsupported { .. }));
+    let holes = causal.iter().any(|fact| {
+        matches!(
+            fact.kind,
+            DeskCausalKind::Unsupported {
+                source: UnsupportedSource::Other,
+                ..
+            }
+        )
+    });
     let mut expected = 0_u64;
     for fact in causal {
         if fact.context.stock() != stock {
@@ -249,19 +270,84 @@ pub(super) fn validate_rejections(
     Ok(())
 }
 
-/// 日终余单必须与同一原始报告的真实终止逐项对应，不能漏记或把主动撤单混入。
+/// 日终余单与显式自排来源须完整覆盖原报告终止；自排仍保留 Unsupported。
 pub(super) fn validate_day_ends(
     stock: StockIdx,
     causal: &[DeskCausalFact],
     lifecycle: &[super::protocol::DeskLifecycleFact],
 ) -> Result<(), super::protocol::RuntimeError> {
-    let mut actual = causal
+    let cancellation_sides = lifecycle
+        .iter()
+        .filter(|fact| matches!(fact.kind, super::protocol::LifecycleKind::Cancelled))
+        .map(|fact| {
+            (
+                (fact.stock, fact.order_serial & u64::from(u32::MAX)),
+                fact.side,
+            )
+        })
+        .collect::<std::collections::BTreeMap<_, _>>();
+    // 自排后的买单必须仍有同报告的真实成交或日终余量，不凭任意缺失序号分类。
+    let buy_witnesses = causal
         .iter()
         .filter_map(|fact| match fact.kind {
-            DeskCausalKind::DayEnded { order, owner, qty } => Some((order, owner, qty)),
+            DeskCausalKind::Execution { buyer, .. } => {
+                Some((fact.context, buyer.order, buyer.owner))
+            }
+            DeskCausalKind::DayEnded { order, owner, .. }
+                if cancellation_sides.get(&order) == Some(&Side::Buy) =>
+            {
+                Some((fact.context, order, owner))
+            }
             _ => None,
         })
-        .collect::<Vec<_>>();
+        .collect::<std::collections::BTreeSet<_>>();
+    let mut actual = Vec::new();
+    for fact in causal {
+        let termination = match fact.kind {
+            DeskCausalKind::DayEnded { order, owner, qty } => Some((order, owner, qty)),
+            DeskCausalKind::Unsupported {
+                source:
+                    UnsupportedSource::AuctionSelfTradeExcluded {
+                        sell,
+                        buy,
+                        owner,
+                        qty,
+                    },
+                ..
+            } => {
+                let buy_witness = buy_witnesses.contains(&(fact.context, buy, owner));
+                let sell_witness = cancellation_sides.get(&sell) == Some(&Side::Sell);
+                if buy.0 != stock
+                    || buy.1 > u64::from(u32::MAX)
+                    || buy == sell
+                    || !buy_witness
+                    || !sell_witness
+                {
+                    return Err(super::protocol::RuntimeError::ProtocolInvariant {
+                        detail: format!(
+                            "Drain 自成交排除配对身份错配：stock={stock} fact={fact:?}"
+                        ),
+                    });
+                }
+                Some((sell, owner, qty))
+            }
+            _ => None,
+        };
+        if let Some((order, owner, qty)) = termination {
+            if !matches!(fact.context, super::retail_lifecycle::BatchContext::Drain { stock: report_stock, .. } if report_stock == stock)
+                || order.0 != stock
+                || order.1 > u64::from(u32::MAX)
+                || qty == 0
+            {
+                return Err(super::protocol::RuntimeError::ProtocolInvariant {
+                    detail: format!(
+                        "Drain 真实终止来源身份或数量错配：stock={stock} fact={fact:?}"
+                    ),
+                });
+            }
+            actual.push((order, owner, qty));
+        }
+    }
     let mut expected = lifecycle
         .iter()
         .filter(|fact| matches!(fact.kind, super::protocol::LifecycleKind::Cancelled))
@@ -279,9 +365,6 @@ pub(super) fn validate_day_ends(
         .iter()
         .any(|fact| fact.stock != stock || fact.order_serial >> 32 != u64::from(stock))
         || actual != expected
-        || actual
-            .iter()
-            .any(|(order, _, qty)| order.0 != stock || *qty == 0)
         || actual.windows(2).any(|pair| pair[0].0 == pair[1].0)
     {
         return Err(super::protocol::RuntimeError::ProtocolInvariant {
@@ -450,7 +533,7 @@ mod tests {
     fn d1_actual_expiry_keeps_an_explicit_unsupported_marker() {
         let mut world = world_with_ttl(1);
         world.run_ticks(2).unwrap();
-        assert!(world.report_log[1].desk_causal.iter().any(|fact| matches!(fact.kind, DeskCausalKind::Unsupported { detail } if detail.contains("Expired"))), "真实到期不能静默丢掉诊断生命周期");
+        assert!(world.report_log[1].desk_causal.iter().any(|fact| matches!(fact.kind, DeskCausalKind::Unsupported { detail, .. } if detail.contains("Expired"))), "真实到期不能静默丢掉诊断生命周期");
         world.shutdown().unwrap();
     }
 

@@ -481,7 +481,7 @@ impl GameSession {
                     });
                 }
                 DeskCausalKind::Quote(raw) => kinds.push(CausalFactKind::Quote(quote(raw))),
-                DeskCausalKind::Unsupported { detail } => return Err(fail(detail.to_owned())),
+                DeskCausalKind::Unsupported { detail, .. } => return Err(fail(detail.to_owned())),
             }
         }
         checked_runtime_sequence(self.state.causal.fact_count(), kinds.len()).map_err(fail)?;

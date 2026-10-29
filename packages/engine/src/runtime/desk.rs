@@ -1966,6 +1966,7 @@ impl DeskState {
         } else {
             self.note_causal(super::diagnostics::DeskCausalKind::Unsupported {
                 detail: "本切片尚未接通的Filled/Execution类型",
+                source: super::diagnostics::UnsupportedSource::Other,
             });
         }
         // 实体互换：买方得股票、卖方得净额。
@@ -2531,6 +2532,7 @@ impl DeskState {
             #[cfg(feature = "simulation-diagnostics")]
             self.note_causal(super::diagnostics::DeskCausalKind::Unsupported {
                 detail: "真实Expired终止生命周期尚未接通",
+                source: super::diagnostics::UnsupportedSource::Other,
             });
             self.remove_order(&o);
             self.close_order_entities(&o);
@@ -2682,6 +2684,12 @@ impl DeskState {
                 #[cfg(feature = "simulation-diagnostics")]
                 self.note_causal(super::diagnostics::DeskCausalKind::Unsupported {
                     detail: "auction 自成交排除终止尚未接通",
+                    source: super::diagnostics::UnsupportedSource::AuctionSelfTradeExcluded {
+                        sell: sell.order_ref,
+                        buy: buy.order_ref,
+                        owner: sell.owner,
+                        qty: sell.qty,
+                    },
                 });
                 self.note_terminated(&sell, super::protocol::LifecycleKind::Cancelled);
                 self.remove_order(&sell);

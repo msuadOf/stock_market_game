@@ -1215,7 +1215,8 @@ fn solmid_day_end_drain_releases_child_tickets() {
     let mut session = GameSession::new(setup, 51).expect("会话构造");
     let mut driver = RuntimeDriver::from_session(&mut session).expect("驱动器构造");
     driver.adopt_session_seq(&session);
-    // 与 lifecycle 红证同款注入（喂簿/吃单）——制造在途子单。
+    // 买卖分属玩家和 retail，保留真实收盘清算，避免此计划释放 fixture 混入
+    // rich 尚未接通的同主卖单排除路径。
     for _ in 0..7 {
         let views = driver.world_public_views().to_vec();
         let mut intents = Vec::new();
@@ -1225,7 +1226,10 @@ fn solmid_day_end_drain_releases_child_tickets() {
                 (Side::Sell, view.last_price - 1),
             ] {
                 intents.push(crate::session::ReceiptBearingIntent {
-                    owner: crate::AccountId(1),
+                    owner: match side {
+                        Side::Buy => crate::AccountId(0),
+                        Side::Sell => crate::AccountId(1),
+                    },
                     intent: crate::Intent::PlaceLimit {
                         code: crate::StockId(stock as u32),
                         side,
@@ -1292,7 +1296,8 @@ fn sol4_day_end_abort_restores_execution_leg_with_tickets() {
     let mut session = GameSession::new(setup, 51).expect("会话构造");
     let mut driver = RuntimeDriver::from_session(&mut session).expect("驱动器构造");
     driver.adopt_session_seq(&session);
-    // 与 lifecycle 红证同款注入（喂簿/吃单）——制造在途子单。
+    // 买卖分属玩家和 retail；同主卖单排除由独立 raw Drain 用例验证，
+    // 此处保留收盘清算与日结计划、账户的完整 Abort 边界。
     for _ in 0..6 {
         let views = driver.world_public_views().to_vec();
         let mut intents = Vec::new();
@@ -1302,7 +1307,10 @@ fn sol4_day_end_abort_restores_execution_leg_with_tickets() {
                 (Side::Sell, view.last_price - 1),
             ] {
                 intents.push(crate::session::ReceiptBearingIntent {
-                    owner: crate::AccountId(1),
+                    owner: match side {
+                        Side::Buy => crate::AccountId(0),
+                        Side::Sell => crate::AccountId(1),
+                    },
                     intent: crate::Intent::PlaceLimit {
                         code: crate::StockId(stock as u32),
                         side,
@@ -1338,7 +1346,10 @@ fn sol4_day_end_abort_restores_execution_leg_with_tickets() {
                 (Side::Sell, view.last_price - 1),
             ] {
                 intents.push(crate::session::ReceiptBearingIntent {
-                    owner: crate::AccountId(1),
+                    owner: match side {
+                        Side::Buy => crate::AccountId(0),
+                        Side::Sell => crate::AccountId(1),
+                    },
                     intent: crate::Intent::PlaceLimit {
                         code: crate::StockId(stock as u32),
                         side,
@@ -1380,11 +1391,12 @@ fn sol4_day_end_abort_restores_execution_leg_with_tickets() {
     );
     // 日结候选校验注入拒绝 → 世界广播 Abort → 组冲回日结日志。
     driver.set_day_end_validator_for_test(Box::new(|_c| Err("注入：日结候选拒绝".to_owned())));
+    let error = driver
+        .day_end_with_runtime_market_day(&mut session)
+        .expect_err("注入拒绝的日结必须失败");
     assert!(
-        driver
-            .day_end_with_runtime_market_day(&mut session)
-            .is_err(),
-        "注入拒绝的日结必须失败"
+        error.contains("注入：日结候选拒绝"),
+        "必须到达完整日结候选后才注入拒绝：{error}"
     );
     // Abort 后完整状态：簿与账户均恢复日结前（票与执行腿同冲回）。
     let after = driver.collect_plans().expect("Abort 后簿").remove(0).1;
