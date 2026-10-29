@@ -178,7 +178,7 @@ impl ProtocolSession {
         Ok(())
     }
 
-    /// 含 civil 的旧机械回放用原 exact case 独立验证 serial；沿父 case 的外部十秒进程树预算。
+    /// serial checkpoint、候选重试与旧管线决策合同使用原 exact case 验证；沿父 case 的外部十秒进程树预算。
     #[cfg(all(test, not(target_family = "wasm")))]
     pub(in crate::session) fn run_serial_checkpoint_probe_for_test() {
         assert!(
@@ -693,6 +693,117 @@ mod single_owner_tests;
 #[cfg(test)]
 mod rollback_tests {
     use super::*;
+
+    /// native callback 失败已经越过 World 提交；只核对未安装镜像，不公开绕过健康门的存档。
+    #[cfg(not(target_family = "wasm"))]
+    struct NativePublicationBaseline {
+        save: crate::SaveSlot,
+        business_hash: crate::session::StateHash,
+        history: serde_json::Value,
+        fact_cursor: crate::session::protocol::SessionFactCursor,
+        committed_runtime: Option<serde_json::Value>,
+        published_runtime: Option<serde_json::Value>,
+        frozen_save: serde_json::Value,
+        pending_saves: serde_json::Value,
+    }
+
+    #[cfg(not(target_family = "wasm"))]
+    impl NativePublicationBaseline {
+        fn capture(session: &ProtocolSession) -> Self {
+            Self {
+                save: session.state.game.save().unwrap(),
+                business_hash: session.state.game.business_state_hash().unwrap(),
+                history: serde_json::to_value(&session.state.intraday).unwrap(),
+                fact_cursor: session.state.fact_cursor.clone(),
+                committed_runtime: session
+                    .state
+                    .committed_runtime
+                    .as_ref()
+                    .map(|state| state.test_projection()),
+                published_runtime: session
+                    .state
+                    .published_runtime
+                    .borrow()
+                    .as_ref()
+                    .map(|state| state.test_projection()),
+                frozen_save: serde_json::to_value(&session.state.day_end_save).unwrap(),
+                pending_saves: serde_json::to_value(
+                    &*session.state.pending_save_candidates.borrow(),
+                )
+                .unwrap(),
+            }
+        }
+
+        fn assert_terminal(self, session: &mut ProtocolSession, fatal: StepFatal) {
+            assert!(
+                matches!(&fatal, StepFatal::InvariantViolation { location, description }
+                    if location == "ProtocolSession publication"
+                        && description.contains("event sequence coverage is not exactly")),
+                "必须真实到达注入后的 publication 校验：{fatal:?}"
+            );
+            assert_eq!(session.state.game.poison_reason(), Some(&fatal));
+            assert_eq!(
+                session.state.game.business_state_hash().unwrap(),
+                self.business_hash
+            );
+            assert_eq!(
+                serde_json::to_value(
+                    session
+                        .state
+                        .game
+                        .save_projection(self.save.runtime_state.clone())
+                )
+                .unwrap(),
+                serde_json::to_value(&self.save).unwrap(),
+                "最后 publication 拒绝不得安装账户、T+1、公司、披露、日界或随机状态"
+            );
+            assert_eq!(
+                serde_json::to_value(&session.state.intraday).unwrap(),
+                self.history
+            );
+            assert_eq!(session.state.fact_cursor, self.fact_cursor);
+            assert_eq!(
+                session
+                    .state
+                    .committed_runtime
+                    .as_ref()
+                    .map(|state| state.test_projection()),
+                self.committed_runtime
+            );
+            assert_eq!(
+                session
+                    .state
+                    .published_runtime
+                    .borrow()
+                    .as_ref()
+                    .map(|state| state.test_projection()),
+                self.published_runtime
+            );
+            assert_eq!(
+                serde_json::to_value(&session.state.day_end_save).unwrap(),
+                self.frozen_save
+            );
+            assert_eq!(
+                serde_json::to_value(&*session.state.pending_save_candidates.borrow()).unwrap(),
+                self.pending_saves
+            );
+            assert!(
+                matches!(session.save(), Err(SessionError::Step(ref actual)) if actual == &fatal)
+            );
+            assert!(
+                matches!(session.game().save(), Err(SessionError::Step(ref actual)) if actual == &fatal)
+            );
+            assert!(matches!(session.checkpoint(), Err(ref actual) if actual == &fatal));
+            assert_eq!(session.step_frame().unwrap_err(), fatal);
+            assert!(
+                matches!(session.end_civil_day_update(), Err(SessionError::Step(ref actual)) if actual == &fatal)
+            );
+            assert_eq!(
+                session.state.fact_cursor, self.fact_cursor,
+                "终态拒绝不能继续消耗事实身份"
+            );
+        }
+    }
 
     #[test]
     fn publication_cursor_continues_at_same_tick_and_resets_on_next_tick() {
@@ -1320,6 +1431,11 @@ mod rollback_tests {
 
     #[test]
     fn day_end_save_is_frozen_during_intraday_and_after_failed_day_end() {
+        #[cfg(not(target_family = "wasm"))]
+        if crate::runtime::step_runtime_enabled() {
+            // 原完整回滚/重试合同仍由 serial exact 子进程执行；native 下继续核对终态零安装。
+            ProtocolSession::run_serial_checkpoint_probe_for_test();
+        }
         let mut setup = crate::session::protocol::civil::publication_tests::setup();
         setup.start_date = crate::CivilDate::from_iso("2030-01-02").unwrap();
         let steps = setup.ticks_per_day;
@@ -1336,8 +1452,20 @@ mod rollback_tests {
             serde_json::to_value(session.save().unwrap()).unwrap(),
             saved
         );
+        #[cfg(not(target_family = "wasm"))]
+        let native_baseline = crate::runtime::step_runtime_enabled()
+            .then(|| NativePublicationBaseline::capture(&session));
         session.malformed_civil = true;
-        assert!(session.end_civil_day_update().is_err());
+        let error = session.end_civil_day_update().unwrap_err();
+        assert!(matches!(error, SessionError::Step(_)));
+        #[cfg(not(target_family = "wasm"))]
+        if let Some(baseline) = native_baseline {
+            let SessionError::Step(fatal) = error else {
+                panic!("预期 publication 首错：{error:?}")
+            };
+            baseline.assert_terminal(&mut session, fatal);
+            return;
+        }
         assert_eq!(
             serde_json::to_value(session.save().unwrap()).unwrap(),
             saved
@@ -1559,12 +1687,24 @@ mod rollback_tests {
 
     #[test]
     fn closed_day_archive_defers_active_npc_requests_and_restores_exactly() {
+        #[cfg(not(target_family = "wasm"))]
+        if crate::runtime::step_runtime_enabled() {
+            // fixture 使用旧管线 attention/ledger seam，整段保持同一 serial authority。
+            ProtocolSession::run_serial_checkpoint_probe_for_test();
+            return;
+        }
         let live = ProtocolSession::new(active_retail_day_end_setup("2030-01-01"), 8).unwrap();
         assert_day_end_npc_continuation(live);
     }
 
     #[test]
     fn trading_day_archive_defers_active_npc_requests_and_restores_exactly() {
+        #[cfg(not(target_family = "wasm"))]
+        if crate::runtime::step_runtime_enabled() {
+            // fixture 使用旧管线 attention/ledger seam，整段保持同一 serial authority。
+            ProtocolSession::run_serial_checkpoint_probe_for_test();
+            return;
+        }
         let mut live = ProtocolSession::new(active_retail_day_end_setup("2030-01-02"), 8).unwrap();
         for _ in 0..11 {
             live.step_frame_pipeline_contract().unwrap();
@@ -1846,6 +1986,11 @@ mod rollback_tests {
 
     #[test]
     fn malformed_civil_after_mutation_rolls_back_and_can_retry() {
+        #[cfg(not(target_family = "wasm"))]
+        if crate::runtime::step_runtime_enabled() {
+            // 原完整回滚/重试合同仍由 serial exact 子进程执行；native 下继续核对终态零安装。
+            ProtocolSession::run_serial_checkpoint_probe_for_test();
+        }
         let mut setup = crate::session::protocol::civil::publication_tests::setup();
         setup.start_date = crate::CivilDate::from_iso("2030-01-02").unwrap();
         let mut session = ProtocolSession::new(setup, 41).unwrap();
@@ -1854,11 +1999,22 @@ mod rollback_tests {
         }
         let before = serde_json::to_value(session.state.game.save().unwrap()).unwrap();
         let history = serde_json::to_value(&session.state.intraday).unwrap();
+        #[cfg(not(target_family = "wasm"))]
+        let native_baseline = crate::runtime::step_runtime_enabled()
+            .then(|| NativePublicationBaseline::capture(&session));
         session.malformed_civil = true;
 
         let error = session.end_civil_day_update().unwrap_err();
 
         assert!(matches!(error, SessionError::Step(_)));
+        #[cfg(not(target_family = "wasm"))]
+        if let Some(baseline) = native_baseline {
+            let SessionError::Step(fatal) = error else {
+                panic!("预期 publication 首错：{error:?}")
+            };
+            baseline.assert_terminal(&mut session, fatal);
+            return;
+        }
         assert_eq!(
             serde_json::to_value(session.state.game.save().unwrap()).unwrap(),
             before
@@ -1881,6 +2037,11 @@ mod rollback_tests {
     /// 泄漏及重试契约）。红态：失败后 day==day_before+1。
     #[test]
     fn solfinal1a_day_end_projection_failure_rolls_back_day() {
+        #[cfg(not(target_family = "wasm"))]
+        if crate::runtime::step_runtime_enabled() {
+            // 原完整回滚/重试合同仍由 serial exact 子进程执行；native 下继续核对终态零安装。
+            ProtocolSession::run_serial_checkpoint_probe_for_test();
+        }
         let mut setup = crate::session::protocol::civil::publication_tests::setup();
         // 本用例验证市场候选提交及回滚，首拍须为开市日。
         setup.start_date = crate::CivilDate::from_iso("2030-01-02").unwrap();
@@ -1891,9 +2052,17 @@ mod rollback_tests {
         }
         let day_before = session.game().day();
         let before = serde_json::to_value(session.state.game.save().unwrap()).unwrap();
+        #[cfg(not(target_family = "wasm"))]
+        let native_baseline = crate::runtime::step_runtime_enabled()
+            .then(|| NativePublicationBaseline::capture(&session));
         session.malformed_frame = true;
         let error = session.step_frame().unwrap_err();
         assert!(matches!(error, StepFatal::InvariantViolation { .. }));
+        #[cfg(not(target_family = "wasm"))]
+        if let Some(baseline) = native_baseline {
+            baseline.assert_terminal(&mut session, error);
+            return;
+        }
         assert_eq!(
             session.game().day(),
             day_before,
@@ -1916,10 +2085,23 @@ mod rollback_tests {
 
     #[test]
     fn malformed_frame_after_mutation_rolls_back_game_history_and_fact_cursor() {
+        #[cfg(not(target_family = "wasm"))]
+        if crate::runtime::step_runtime_enabled() {
+            // 原完整回滚/重试合同仍由 serial exact 子进程执行；native 下继续核对终态零安装。
+            ProtocolSession::run_serial_checkpoint_probe_for_test();
+        }
         let mut setup = crate::session::protocol::civil::publication_tests::setup();
         // 本用例验证市场候选提交及回滚，首拍须为开市日。
         setup.start_date = crate::CivilDate::from_iso("2030-01-02").unwrap();
         let mut session = ProtocolSession::new(setup, 40).unwrap();
+        #[cfg(not(target_family = "wasm"))]
+        if crate::runtime::step_runtime_enabled() {
+            session
+                .state
+                .game
+                .construct_runtime_driver_lazy_for_test()
+                .unwrap();
+        }
         let preceding = crate::Event::CivilDateAdvanced {
             seq: session.state.game.seq(),
             settled_date: crate::CivilDate::from_iso("2030-01-06").unwrap(),
@@ -1944,11 +2126,19 @@ mod rollback_tests {
         let history = serde_json::to_value(&session.state.intraday).unwrap();
         let fact_tick = session.state.fact_cursor.tick();
         let cursor_before = session.state.fact_cursor.clone();
+        #[cfg(not(target_family = "wasm"))]
+        let native_baseline = crate::runtime::step_runtime_enabled()
+            .then(|| NativePublicationBaseline::capture(&session));
         session.malformed_frame = true;
 
         let error = session.step_frame().unwrap_err();
 
         assert!(matches!(error, StepFatal::InvariantViolation { .. }));
+        #[cfg(not(target_family = "wasm"))]
+        if let Some(baseline) = native_baseline {
+            baseline.assert_terminal(&mut session, error);
+            return;
+        }
         assert_eq!(
             serde_json::to_value(session.state.game.save().unwrap()).unwrap(),
             before

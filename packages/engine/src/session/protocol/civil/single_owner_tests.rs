@@ -506,8 +506,24 @@ fn civil_publication_copies_history_only_for_the_delivery_boundary() {
 
 #[test]
 fn projection_moves_the_same_record_batch_and_rejected_callback_installs_nothing() {
+    #[cfg(not(target_family = "wasm"))]
+    if crate::runtime::step_runtime_enabled() {
+        // 原 serial 候选可重试合同完整保留；父 case 继续核对 native 的首错终态。
+        super::ProtocolSession::run_serial_checkpoint_probe_for_test();
+    }
     let mut game = GameSession::new(two_stock_setup(), 66).unwrap();
+    #[cfg(not(target_family = "wasm"))]
+    let native_before = if crate::runtime::step_runtime_enabled() {
+        game.construct_runtime_driver_lazy_for_test().unwrap();
+        Some(game.save().unwrap())
+    } else {
+        None
+    };
     let before = game.business_state_hash().unwrap();
+    let fatal = StepFatal::InvariantViolation {
+        location: "single_owner_tests::precommit".into(),
+        description: "拒绝已构造但未提交的 publication".into(),
+    };
     let mut projected = 0;
     let failure = game.step_frame_and_commit(false, |projection, facts| {
         assert!(!facts.is_empty());
@@ -520,17 +536,32 @@ fn projection_moves_the_same_record_batch_and_rejected_callback_installs_nothing
         );
         frame.validate().unwrap();
         projected += frame.facts.len();
-        Err::<(), _>(StepFatal::InvariantViolation {
-            location: "single_owner_tests::precommit".into(),
-            description: "拒绝已构造但未提交的 publication".into(),
-        })
+        Err::<(), _>(fatal.clone())
     });
-    assert!(failure.is_err());
+    assert_eq!(failure.unwrap_err(), fatal);
     assert!(
         projected > 0,
         "必须真实执行到 candidate publication callback"
     );
     assert_eq!(game.business_state_hash().unwrap(), before);
+    #[cfg(not(target_family = "wasm"))]
+    if let Some(saved) = native_before {
+        assert_eq!(game.poison_reason(), Some(&fatal));
+        assert_eq!(
+            serde_json::to_value(game.save_projection(saved.runtime_state.clone())).unwrap(),
+            serde_json::to_value(saved).unwrap(),
+            "native callback 拒绝不得安装任何 candidate 事实"
+        );
+        assert!(
+            matches!(game.save(), Err(crate::SessionError::Step(ref actual)) if actual == &fatal)
+        );
+        let mut session = super::ProtocolSession::from_game(game, None);
+        assert_eq!(session.step_frame().unwrap_err(), fatal);
+        assert!(
+            matches!(session.end_civil_day_update(), Err(crate::SessionError::Step(ref actual)) if actual == &fatal)
+        );
+        return;
+    }
     assert!(game.poison_reason().is_none());
     let mut session = super::ProtocolSession::from_game(game, None);
     let frame = session.step_frame().unwrap();
