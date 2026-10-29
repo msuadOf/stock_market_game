@@ -4,7 +4,7 @@ import { DEFAULT_SETUP } from "../config/defaults.ts";
 import { parseWasmRuntimeOptions } from "./wasm-runtime-options.ts";
 import { createWorkerHost } from "./worker-host.ts";
 
-const WAIT_SETTINGS = { spinUs: 500, quietUs: 50_000, fineUs: 500, coarseUs: 100_000 };
+const WAIT_SETTINGS = { spinUs: 500, quietUs: 50_000, fineUs: 500, coarseUs: 500 };
 
 for (const [search, expected] of [
   ["", {}],

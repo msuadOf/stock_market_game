@@ -143,7 +143,13 @@ taskset affinity）。2026-10-15：确认最终形态为**资源实体所有权�
    测试面已锚定（同拍全量投影/Abort 零泄漏）。
 6. **翻转现状**：`step_runtime_enabled()` 缺省 `0`=旧管线；`ENGINE_STEP_RUNTIME=1`
    显式启用 runtime。终态=全局域迁移完成、缺省翻转、旧管线与开关退役
-   ——本 ADR 改 accepted 时按当时状态如实更新本条。
+   ——本 ADR 改 accepted 时按当时状态如实更新本条。Web 显式启用 runtime 时，宿主等待
+   参数为 `spinUs=500`、`quietUs=50000`、`fineUs=500`、`coarseUs=500`（单位：微秒）；
+   其中 `coarseUs` 的产品默认值依据普通 World/4 NPC 的真实浏览器 A/B：两臂连续
+   交付 32 tick，暂停前均到第 33 tick、day 0，完整 start→query→dispose→join/final→
+   owner.finish 生命周期分别为 4563.43 ms 与 156.945 ms。该证据只覆盖 32 tick 与
+   完整生命周期，不代表完整日结已验证；后验仍待测，记录见
+   [`product-default-wait-fix`](../../agents/branch-completion/wasm-w2/resume-2026-10-29/production-browser/product-default-wait-fix/)。
 7. 迁移期双轨（翻转前）旧管线测试与 runtime 测试并存；旧管线退役批按「死亡测试
    台账」逐条登记机制替代，不静默删。
 
