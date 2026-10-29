@@ -5,7 +5,7 @@ use crate::fixture::{history_start_of, plus_days, single_company_config, INDUSTR
 use crate::session_fixture::{civil_setup, TICKS_PER_DAY};
 use engine::accounting::reports::ReportKind;
 use engine::accounting::AccountingPeriod;
-use engine::calendar::{CalendarExchange, CivilInstant, TradingCalendar, Weekday};
+use engine::calendar::{CalendarExchange, CivilDate, CivilInstant, TradingCalendar, Weekday};
 use engine::company::{ActiveShock, ShockKind};
 use engine::information::{
     assemble_seeded_prehistory, scheduled_instant, stable_company_offset, InformationError,
@@ -13,8 +13,73 @@ use engine::information::{
 };
 use engine::session::{
     CivilDayEndReport, CompanyDisclosureKind, DayEndDisclosureCtx, DayEndDisclosures,
-    DisclosureDispatch, Event, GameSession,
+    DisclosureDispatch, Event, GameSession, NpcInformationCadence,
 };
+
+/// 按保存前的 cadence 独立推算到期检查在日终记录后的下次时点。
+fn expected_next_information_check(
+    cadence: NpcInformationCadence,
+    previous: CivilInstant,
+    now: CivilInstant,
+) -> CivilInstant {
+    if cadence != NpcInformationCadence::Immediate && now < previous {
+        return previous;
+    }
+
+    match cadence {
+        NpcInformationCadence::Immediate => now,
+        NpcInformationCadence::Daily { checks: 2 } => {
+            if now.second_of_day() < 9 * 3600 {
+                CivilInstant::from_hms(now.date(), 9, 0, 0).expect("09:00 合法")
+            } else if now.second_of_day() < 18 * 3600 {
+                CivilInstant::from_hms(now.date(), 18, 0, 0).expect("18:00 合法")
+            } else {
+                CivilInstant::from_hms(now.date().next().expect("次日合法"), 9, 0, 0)
+                    .expect("次日09:00合法")
+            }
+        }
+        NpcInformationCadence::Daily { checks: 1 } => {
+            CivilInstant::from_hms(now.date().next().expect("次日合法"), 18, 0, 0)
+                .expect("次日18:00合法")
+        }
+        NpcInformationCadence::Daily { checks } => {
+            panic!("存档中的 Daily checks 非法：{checks}")
+        }
+        NpcInformationCadence::EveryDays { days } => {
+            assert!(days > 0, "存档中的 EveryDays days 必须为正数");
+            let mut date = now.date();
+            for _ in 0..days {
+                date = date.next().expect("检查间隔内日期合法");
+            }
+            CivilInstant::from_hms(
+                date,
+                (now.second_of_day() / 3600) as u8,
+                ((now.second_of_day() % 3600) / 60) as u8,
+                (now.second_of_day() % 60) as u8,
+            )
+            .expect("间隔后的检查时点合法")
+        }
+        NpcInformationCadence::Monthly => {
+            let date = now.date();
+            let (year, month) = if date.month() == 12 {
+                (date.year() + 1, 1)
+            } else {
+                (date.year(), date.month() + 1)
+            };
+            let next_month = if month == 12 {
+                CivilDate::from_ymd(year + 1, 1, 1).expect("下一年合法")
+            } else {
+                CivilDate::from_ymd(year, month + 1, 1).expect("下月合法")
+            };
+            let day = date.day().min(next_month.prev().expect("月末合法").day());
+            CivilInstant::new(
+                CivilDate::from_ymd(year, month, day).expect("下月对应日合法"),
+                now.second_of_day(),
+            )
+            .expect("下月检查时点合法")
+        }
+    }
+}
 
 /// 找到「Q1 基准日 + 该公司真实偏移」落在周六、且其前一自然日（周五）是
 /// 交易日的年份（确定性搜索：偏移是 seed+公司 id 的纯函数）。
@@ -163,7 +228,30 @@ fn weekend_report_publishes_without_trade() {
     );
     let save_after = scenario.session.save().expect("healthy settled save");
     assert_eq!(save_after.rng_state, save_before.rng_state);
-    assert_eq!(save_after.npc_attention, save_before.npc_attention);
+    assert_eq!(
+        save_after.npc_attention.keys().collect::<Vec<_>>(),
+        save_before.npc_attention.keys().collect::<Vec<_>>(),
+        "休市日信息检查不能增删 NPC 账户"
+    );
+    for (account, before) in &save_before.npc_attention {
+        let after = &save_after.npc_attention[account];
+        assert_eq!(after.information_cadence, before.information_cadence);
+        assert_eq!(
+            after.next_information_check,
+            expected_next_information_check(
+                before.information_cadence,
+                before.next_information_check,
+                saturday_report.disclosure_instant,
+            ),
+            "账户 {account:?} 的自然日信息检查时点按其 cadence 推进"
+        );
+        assert_eq!(after.base_probability, before.base_probability);
+        assert_eq!(
+            after.next_attention_candidate_tick,
+            before.next_attention_candidate_tick
+        );
+        assert_eq!(after.rng_state, before.rng_state);
+    }
     assert!(saturday_report.events.len() > 1);
     for (index, event) in saturday_report.events.iter().enumerate() {
         assert_eq!(event.seq(), seq_before + index as u64 + 1);
