@@ -1030,7 +1030,11 @@ fn correction_manual_system_state_keeps_same_first_fatal_in_terminal_drain() {
         code: StockId(0), side: Side::Buy,
         price: LimitPrice::Fixed(Money::from_cents(995)), qty: 100,
     }).unwrap();
+    let pending = session.take_runtime_player_intents();
+    assert_eq!(pending.len(), 1, "非空 Drain 必须来自唯一真实受理意图");
     let mut driver = crate::runtime::drive::RuntimeDriver::from_session(&mut session).unwrap();
+    let upper = driver.world_public_views().iter().map(|view| view.daily_upper_limit).collect::<Vec<_>>();
+    driver.inject_player_intents(&pending, &upper).unwrap();
     let events = session.runtime_step_with_install(&mut driver).unwrap();
     let order = events.iter().find_map(|event| match event {
         Event::OrderAccepted { id, account: AccountId(0), remaining_qty: 100, .. } => Some(*id),
