@@ -23,7 +23,10 @@ const failure = { kind: "PlayerProposal", data: { account: "0", company: 0, kind
 test("Worker Host 真实三写透传及 typed 拒绝后继续使用同一会话", { timeout: 10000 }, async () => {
   await withHost(async (host, f) => {
     const engine = f.workers[0];
-    engine.onPost = raw => {
+    const controlOnPost = engine.onPost;
+    assert.ok(controlOnPost, "健康 fixture 必须保留 shutdown 控制消息处理器");
+    engine.onPost = (raw, transfer) => {
+      if (raw.type === "shutdown" || raw.type === "quiesceIngress") { controlOnPost(raw, transfer); return; }
       if (raw.type === "proposePlayerCompanyAction") engine.emit({ type: "playerCompanyActionAcknowledged", requestId: raw.requestId, generation: raw.generation, result: { receipt } });
       if (raw.type === "enqueueReportCorrection" || raw.type === "cancelReportCorrection") engine.emit({ type: raw.type === "enqueueReportCorrection" ? "reportCorrectionEnqueueAcknowledged" : "reportCorrectionCancelAcknowledged", requestId: raw.requestId, generation: raw.generation, result: { operation_id: "synthetic-correction" } });
     };
@@ -35,14 +38,20 @@ test("Worker Host 真实三写透传及 typed 拒绝后继续使用同一会话"
     assert.deepEqual(sent.map(({ requestId, ...raw }) => { assert.ok(Number.isSafeInteger(requestId)); return raw; }), [
       { type: "proposePlayerCompanyAction", generation: 1, proposal }, { type: "enqueueReportCorrection", generation: 1, request }, { type: "cancelReportCorrection", generation: 1, operation_id: request.operation_id },
     ]);
-    engine.onPost = raw => engine.emit({ type: "operationError", requestId: raw.requestId, generation: raw.generation, message: "具体持仓拒绝", failure });
+    engine.onPost = (raw, transfer) => {
+      if (raw.type === "shutdown" || raw.type === "quiesceIngress") { controlOnPost(raw, transfer); return; }
+      engine.emit({ type: "operationError", requestId: raw.requestId, generation: raw.generation, message: "具体持仓拒绝", failure });
+    };
     await assert.rejects(host.proposePlayerCompanyAction(proposal), error => {
       assert.ok(error instanceof CompanyWriteRejectedError);
       assert.deepEqual(error.cause, failure);
       return true;
     });
     assert.equal(engine.terminations, 0);
-    engine.onPost = raw => engine.emit({ type: "playerCompanyActionAcknowledged", requestId: raw.requestId, generation: raw.generation, result: { receipt } });
+    engine.onPost = (raw, transfer) => {
+      if (raw.type === "shutdown" || raw.type === "quiesceIngress") { controlOnPost(raw, transfer); return; }
+      engine.emit({ type: "playerCompanyActionAcknowledged", requestId: raw.requestId, generation: raw.generation, result: { receipt } });
+    };
     assert.deepEqual(await host.proposePlayerCompanyAction(proposal), receipt);
   });
 });
