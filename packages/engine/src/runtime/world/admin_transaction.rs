@@ -92,7 +92,7 @@ impl World {
         inspect: impl FnOnce(&AdminCandidate) -> Result<P, RuntimeError>,
     ) -> Result<P, RuntimeError> {
         self.with_administrative_inspection(
-            grouped, information, repurchase, inspect,
+            grouped, information, repurchase, None, inspect,
             |_candidate, _source, value| Ok(value),
         ).map(|(value, _unconsumed_ack)| value)
     }
@@ -106,7 +106,7 @@ impl World {
         inspect: impl FnOnce(&AdminCandidate, &PreparedAdministrativeSource) -> Result<P, RuntimeError>,
     ) -> Result<(P, crate::runtime::source::PreparedMirrorAck), RuntimeError> {
         self.with_administrative_inspection(
-            grouped, information, repurchase, |_candidate| Ok(()),
+            grouped, information, repurchase, None, |_candidate| Ok(()),
             |candidate, source, ()| inspect(candidate, source),
         )
     }
@@ -117,6 +117,7 @@ impl World {
         grouped: Vec<(GroupIdx, Vec<AdminOperation>)>,
         information: Option<crate::runtime::protocol::InformationPreparePayload>,
         repurchase: Option<crate::runtime::protocol::RepurchasePreparePayload>,
+        stage_layouts: Option<BTreeMap<GroupIdx, crate::runtime::protocol::AdminStageLayout>>,
         inspect_candidate: impl FnOnce(&AdminCandidate) -> Result<L, RuntimeError>,
         inspect_prepared: impl FnOnce(&AdminCandidate, &PreparedAdministrativeSource, L) -> Result<P, RuntimeError>,
     ) -> Result<(P, crate::runtime::source::PreparedMirrorAck), RuntimeError> {
@@ -189,7 +190,7 @@ impl World {
                 Err(error) => return self.finish_admin_failure(id, &sent, error.into()),
             }
         } else { BTreeMap::new() };
-        match self.execute_admin(id, operations, information, projections, before_books, &expected, &mut sent, inspect_candidate, inspect_prepared) {
+        match self.execute_admin(id, operations, information, stage_layouts, projections, before_books, &expected, &mut sent, inspect_candidate, inspect_prepared) {
             Ok(value) => Ok(value),
             Err(failure) => self.finish_admin_failure(id, &sent, failure),
         }
@@ -266,6 +267,7 @@ impl World {
         id: AdminTransactionId,
         operations: BTreeMap<GroupIdx, Vec<AdminOperation>>,
         information: Option<crate::runtime::protocol::InformationPreparePayload>,
+        stage_layouts: Option<BTreeMap<GroupIdx, crate::runtime::protocol::AdminStageLayout>>,
         projections: BTreeMap<GroupIdx, Vec<crate::runtime::protocol::RepurchaseProjectionInput>>,
         before_books: BTreeMap<GroupIdx, crate::plans::PlanBook>,
         expected: &BTreeMap<GroupIdx, Vec<super::super::LocalIdx>>,
@@ -283,6 +285,7 @@ impl World {
                 GroupIn::AdminPrepare {
                     id,
                     operations: ops.clone(),
+                    stage_layout: stage_layouts.as_ref().and_then(|layouts| layouts.get(&group)).cloned(),
                     information: information.clone(),
                     repurchase: projections.get(&group).cloned(),
                     information_clock: information_clock.clone(),
@@ -298,6 +301,8 @@ impl World {
                 self.receive_admin(id, AdminPhase::Prepare, expected, &mut seen)?;
             match result {
                 Ok(candidate) => {
+                    stages::validate_group_stage_evidence(id, &candidate, &operations[&group],
+                        stage_layouts.as_ref().and_then(|layouts| layouts.get(&group)))?;
                     self.validate_information_candidate(&candidate, information.as_ref())?;
                     self.validate_repurchase_candidate(&candidate, &operations[&group], projections.get(&group), before_books.get(&group))?;
                     prepared.insert(group, candidate);
@@ -581,6 +586,9 @@ impl World {
                     return Err(invalid(format!("行政回执重复/错位：期望 {id:?}/{phase:?}，收到 {actual:?}/{actual_phase:?}/group={group}")).into());
                 }
                 if let Ok(candidate) = &result {
+                    if phase != AdminPhase::Prepare && candidate.stages.is_some() {
+                        return Err(invalid("行政控制回执不得携带阶段 Prepare 候选").into());
+                    }
                     if phase != AdminPhase::Prepare && candidate.repurchase.is_some() {
                         return Err(invalid("行政控制回执不得携带回购 Prepare 候选").into());
                     }
@@ -1747,6 +1755,7 @@ mod tests {
                 .send(GroupIn::AdminPrepare {
                     id: AdminTransactionId(91),
                     operations: vec![dividend(0, 1)],
+                    stage_layout: None,
                     information: None,
                     repurchase: None,
                     information_clock: None,

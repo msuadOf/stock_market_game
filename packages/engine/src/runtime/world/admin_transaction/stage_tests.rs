@@ -174,3 +174,65 @@ fn r4_stage_03_final_inspect_rejection_aborts_tax_and_keeps_original_cause() {
     assert_eq!(world.snapshot_accounts().unwrap(), before);
     world.shutdown().unwrap();
 }
+
+#[test]
+fn r4_stage_04_join_borrows_original_operands_and_rejects_corrupt_indices() {
+    let mut w = world();
+    let request = stages(10);
+    let pointers: Vec<_> = request
+        .iter()
+        .flat_map(|stage| &stage.operations)
+        .flat_map(|(_, operations)| operations)
+        .map(std::ptr::from_ref)
+        .collect();
+    w.with_staged_admin_transaction(request, None, |_, prepared| {
+        assert_eq!(
+            prepared
+                .operands()
+                .iter()
+                .map(|row| std::ptr::from_ref(row.operation))
+                .collect::<Vec<_>>(),
+            pointers,
+            "join必须借World保留的原typed请求，不得回执另造operand"
+        );
+        assert_eq!(
+            prepared
+                .operands()
+                .iter()
+                .map(|row| (row.group, row.stage_index, row.operation_index))
+                .collect::<Vec<_>>(),
+            vec![(1, 0, 0), (1, 1, 1), (1, 1, 2), (1, 2, 3)]
+        );
+        Ok(())
+    })
+    .unwrap();
+    w.shutdown().unwrap();
+    for mode in 0..6 {
+        let mut w = world();
+        w.group_txs[1]
+            .send(GroupIn::AdminFaultForTest {
+                phase: AdminPhase::Prepare,
+                fault: crate::runtime::protocol::AdminFault::StagePrepareCorruption(mode),
+            })
+            .unwrap();
+        let inspected = Cell::new(false);
+        let error = w
+            .with_staged_admin_transaction(stages(10), None, |_, _| {
+                inspected.set(true);
+                Ok(())
+            })
+            .expect_err("损坏的真实stage回执必须拒绝");
+        assert!(
+            !inspected.get(),
+            "协议来源损坏不能进入用户inspect：mode={mode}"
+        );
+        assert!(
+            w.dead_reason.is_some(),
+            "协议来源损坏必须terminal：mode={mode} {error}"
+        );
+        assert!(
+            w.handles.is_empty(),
+            "terminal必须join全部worker：mode={mode}"
+        );
+    }
+}

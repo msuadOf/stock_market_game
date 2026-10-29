@@ -716,10 +716,37 @@ pub enum InformationPrepareError {
     Revaluation { account: crate::AccountId, detail: String },
 }
 
+/// 每个公共阶段在本组的操作数；原 typed operands 仍只保留在 flat operations。
+#[derive(Clone, Debug)]
+pub(crate) struct AdminStageLayout {
+    pub counts: Vec<usize>,
+    pub tax_stages: std::collections::BTreeSet<u32>,
+}
+
+/// 仅在对应 working 的 checked apply 成功后记录原 flat 位置。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct PreparedAdminOperationPosition {
+    pub stage_index: u32,
+    pub operation_index: usize,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct PreparedTaxStageAccounts {
+    pub stage_index: u32,
+    pub accounts: Vec<(LocalIdx, std::sync::Arc<super::group::GroupAccount>, std::sync::Arc<super::group::GroupAccount>)>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct PreparedGroupAdminStages {
+    pub operation_indices: Vec<PreparedAdminOperationPosition>,
+    pub tax_stages: Vec<PreparedTaxStageAccounts>,
+}
+
 /// 组端账户候选；locals 递增且只含本事务触达账户。
 #[derive(Clone, Debug)]
 pub struct AdminGroupCandidate {
     pub(crate) mirror_domains: super::source::MirrorDomains,
+    pub(crate) stages: Option<PreparedGroupAdminStages>,
     pub information: Option<PreparedInformationResult>,
     pub repurchase: Option<PreparedRepurchaseResult>,
     pub group: GroupIdx,
@@ -745,6 +772,7 @@ pub enum AdminPhase {
 #[cfg(test)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AdminFault {
+    StagePrepareCorruption(u8),
     RepurchasePrepareCorruption(u8),
     RepurchaseInControlReceipt,
     Panic(std::sync::Arc<String>),
@@ -825,7 +853,7 @@ pub struct GroupFlushWitnessForTest {
 /// FIFO + 收束因果序保证批次先于下一 Start 被处理）。
 pub enum GroupIn {
     /// 行政静点操作；事务生命周期不进入普通 tick 日志。
-    AdminPrepare { id: AdminTransactionId, operations: Vec<AdminOperation>, information: Option<InformationPreparePayload>, information_clock: Option<super::world::AuthenticatedInformationClock>, repurchase: Option<Vec<RepurchaseProjectionInput>> },
+    AdminPrepare { id: AdminTransactionId, operations: Vec<AdminOperation>, stage_layout: Option<AdminStageLayout>, information: Option<InformationPreparePayload>, information_clock: Option<super::world::AuthenticatedInformationClock>, repurchase: Option<Vec<RepurchaseProjectionInput>> },
     AdminCommit { id: AdminTransactionId },
     AdminAbort { id: AdminTransactionId },
     #[cfg(test)]

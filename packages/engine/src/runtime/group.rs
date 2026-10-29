@@ -5788,14 +5788,14 @@ pub fn group_main(
                 *desk_txs.get_mut(usize::from(stock)).expect("测试断连证券索引合法") = disconnected;
                 assert!(state.disconnected_flush_for_test.replace((stock, witness, after_final_flush)).is_none(), "测试断连不能覆盖未消费的见证");
             }
-            GroupIn::AdminPrepare { id, operations, information, information_clock, repurchase } => {
-                if !state.handle_admin_message(id, super::protocol::AdminPhase::Prepare, operations, information, information_clock, repurchase, &up_tx, who) { break; }
+            GroupIn::AdminPrepare { id, operations, stage_layout, information, information_clock, repurchase } => {
+                if !state.handle_admin_message(id, super::protocol::AdminPhase::Prepare, operations, stage_layout, information, information_clock, repurchase, &up_tx, who) { break; }
             }
             GroupIn::AdminCommit { id } => {
-                if !state.handle_admin_message(id, super::protocol::AdminPhase::Commit, Vec::new(), None, None, None, &up_tx, who) { break; }
+                if !state.handle_admin_message(id, super::protocol::AdminPhase::Commit, Vec::new(), None, None, None, None, &up_tx, who) { break; }
             }
             GroupIn::AdminAbort { id } => {
-                if !state.handle_admin_message(id, super::protocol::AdminPhase::Abort, Vec::new(), None, None, None, &up_tx, who) { break; }
+                if !state.handle_admin_message(id, super::protocol::AdminPhase::Abort, Vec::new(), None, None, None, None, &up_tx, who) { break; }
             }
             GroupIn::Batch(batch) => {
                 // eager 分域即时相：到达即应用 F1/F2/F3（等待窗=组空闲
