@@ -13,7 +13,7 @@
 use super::account_validation::set_validation_reject_accounts_for_test;
 use crate::session::plan_chain_candidates_tests::execution_fixture_with_compute;
 use crate::{AccountId, Event};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 /// 普通测试 10s 硬上限（项目纪律）。

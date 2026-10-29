@@ -455,7 +455,7 @@ fn with_collector<R>(work: impl FnOnce(Option<&mut Collector>) -> R) -> R {
 
 /// 本线程 TLS 是否仍安装着相位计时绑定（发布点直证辅助：发布现场必须已
 /// 卸下=实际绑定已释放，非计数推断）。
-#[cfg(any(test, feature = "verification-harness"))]
+#[cfg(test)]
 pub(crate) fn phase_timing_binding_installed_on_this_thread() -> bool {
     COLLECTOR.with_borrow(|slot| slot.is_some())
 }

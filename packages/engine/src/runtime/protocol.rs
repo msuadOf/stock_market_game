@@ -1335,9 +1335,12 @@ pub enum DeskMsg {
     /// 仅撤销已经开始的 Drain；未进入日结的交易部保留普通 tick。
     AbortDayEnd { tick: u64 },
     /// 市场日终只消费本日最后一拍已完成的同 owner DayContext。
-    #[expect(
-        dead_code,
-        reason = "保留携带同 owner DayContext 的 typed 日终入口，交易部仍执行完整来源校验"
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "保留携带同 owner DayContext 的 typed 日终入口，交易部仍执行完整来源校验"
+        )
     )]
     DrainMarket {
         tick: u64,

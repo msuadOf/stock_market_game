@@ -1366,7 +1366,7 @@ impl RuntimeDriver {
     }
 
     /// tick 分片与日结完整 candidate 共用同一账户投影，保持现金、T+1、成本口径一致。
-    #[cfg(test)]
+    #[cfg(all(test, feature = "simulation-diagnostics", not(target_arch = "wasm32")))]
     fn install_account_projection<'a>(
         &mut self,
         session: &mut GameSession,
@@ -1458,7 +1458,7 @@ impl RuntimeDriver {
     }
 
     /// 日结成功回执已包含 Drain 结算及 T+1 解冻；在 civil 读取账户前立即交付。
-    #[cfg(test)]
+    #[cfg(all(test, feature = "simulation-diagnostics", not(target_arch = "wasm32")))]
     fn install_day_end_accounts(&mut self, session: &mut GameSession) -> Result<(), String> {
         let candidate = self
             .world
@@ -1512,7 +1512,7 @@ impl RuntimeDriver {
         Ok(())
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "simulation-diagnostics", not(target_arch = "wasm32")))]
     fn install_pending_hold_inits(
         &mut self,
         session: &mut GameSession,
@@ -1883,7 +1883,7 @@ impl RuntimeDriver {
     /// 清簿撤单事实收集进 drained 缓冲（调用方 take_drained_events 取走）。
     /// 日界批：收盘竞价成交随 Drain 应答上行——事件/个人确认在此消费
     /// （civil_date=当日；receipts 返回调用方即时入账）。
-    #[cfg(test)]
+    #[cfg(all(test, feature = "simulation-diagnostics", not(target_arch = "wasm32")))]
     pub(crate) fn world_day_end_for_step(
         &mut self,
         session: &mut GameSession,

@@ -24,14 +24,20 @@ struct PreparedTaxStageGroup {
 
 #[derive(Debug)]
 struct PreparedTaxStageAccounts {
-    #[expect(
-        dead_code,
-        reason = "保留税阶段索引与账户快照到 inspect 结束，维持 Arc 生命周期及析构顺序"
+    #[cfg_attr(
+        not(all(test, not(target_arch = "wasm32"))),
+        expect(
+            dead_code,
+            reason = "保留税阶段索引与账户快照到 inspect 结束，维持 Arc 生命周期及析构顺序"
+        )
     )]
     stage_index: u32,
-    #[expect(
-        dead_code,
-        reason = "保留税阶段账户快照到 inspect 结束，维持 before/after Arc 生命周期及析构顺序"
+    #[cfg_attr(
+        not(all(test, not(target_arch = "wasm32"))),
+        expect(
+            dead_code,
+            reason = "保留税阶段账户快照到 inspect 结束，维持 before/after Arc 生命周期及析构顺序"
+        )
     )]
     groups: Vec<PreparedTaxStageGroup>,
 }

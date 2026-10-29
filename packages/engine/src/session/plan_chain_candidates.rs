@@ -748,7 +748,7 @@ impl PlanRootCoordinator {
         if task_died.is_some() {
             return;
         }
-        while let Some((account, _personal)) = pending.front() {
+        while let Some((_account, _personal)) = pending.front() {
             let Some(guard) = compute.reserve_spawn_slot() else {
                 break;
             };
@@ -758,7 +758,7 @@ impl PlanRootCoordinator {
             if ROOT_DISPATCH_HOLD_ACCOUNTS
                 .lock()
                 .expect("派发保持集锁被 poison")
-                .contains(account)
+                .contains(_account)
             {
                 drop(guard);
                 break;

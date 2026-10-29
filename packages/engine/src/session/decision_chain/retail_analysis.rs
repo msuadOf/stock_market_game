@@ -1,8 +1,8 @@
 use super::*;
 use crate::behavior::BehaviorMarketObservation;
-use crate::observation::{
-    build_account_risk_observation, build_equal_weight_market_observation, RiskPositionInput,
-};
+#[cfg(test)]
+use crate::observation::build_equal_weight_market_observation;
+use crate::observation::{build_account_risk_observation, RiskPositionInput};
 use crate::strategy::{PositionView, SelfView, Strategy, StrategyState};
 
 /// D5 #4 retail 链：零售分析参数化上下文（观察/信号/成本核的共享输入
@@ -70,6 +70,7 @@ pub(crate) struct RetailStrategyInstance {
 }
 
 impl GameSession {
+    #[cfg(test)]
     pub(in crate::session) fn capture_retail_analysis(
         &mut self,
         observed: &[AccountId],
@@ -80,6 +81,7 @@ impl GameSession {
     }
 
     /// 读视图+写组版本（queue 链转换目标形态）。
+    #[cfg(test)]
     pub(in crate::session) fn capture_retail_analysis_on(
         view: &crate::session::pipeline::npc_split::SessionReadView<'_>,
         writes: &mut crate::session::pipeline::npc_split::NpcWriteFields<'_>,
