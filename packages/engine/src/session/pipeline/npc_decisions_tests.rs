@@ -1,6 +1,5 @@
 use super::npc_decisions::{
-    npc_rng_seed, run_npc_decisions, stream_npc_decisions, stream_npc_decisions_with,
-    NpcDecisionSourceError,
+    npc_rng_seed, run_npc_decisions, stream_npc_decisions, NpcDecisionSourceError,
 };
 use super::{DecisionAccountInput, DecisionSnapshot, IntentCandidateKey};
 use crate::behavior::BehaviorMarketObservation;
@@ -11,7 +10,7 @@ use crate::observation::{
 use crate::strategy::{
     MarketView, MomentumStrategy, SelfView, StockView, StrategyState, ZiNoiseStrategy,
 };
-use crate::{AccountId, AccountKind, Intent, Money, SplitMix64, StockId, TradingPhase};
+use crate::{AccountId, AccountKind, Money, SplitMix64, StockId, TradingPhase};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 

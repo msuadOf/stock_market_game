@@ -17,10 +17,10 @@ use super::ready_stock_stream::{FeedOutcome, ReadyStockStream};
 use super::stock_stream::StockStreamProgress;
 use super::{
     AccountValidatorDriver, CandidateValidationOutcome, DecisionResourceSnapshot, EnvelopeLedger,
-    IntentCandidate, IntentCandidateKey, StepFatal,
+    IntentCandidate, IntentCandidateKey,
 };
 use crate::session::plan_continuation_domain::PlanContinuationDomain;
-use crate::{AccountId, GameSession, Intent, Money, Side, StockId};
+use crate::{AccountId, GameSession, Money, Side, StockId};
 
 struct RouteRig {
     session: GameSession,

@@ -657,7 +657,7 @@ fn execution_leg_wire_rejects_injected_unknown_fields() {
         500,
         Some(100),
     );
-    let mut encoded = serde_json::to_value(&leg).expect("execution leg must encode");
+    let mut encoded = serde_json::to_value(leg).expect("execution leg must encode");
     encoded["legacy_parent_field"] = serde_json::json!(1);
     assert!(
         serde_json::from_value::<crate::plans::PlanExecutionLeg>(encoded).is_err(),
@@ -754,7 +754,7 @@ fn live_child_case_at_stock(
 
 #[test]
 fn restore_rebuilds_remaining_from_live_book_when_serialized_value_is_stale() {
-    let (authority, plan_id, code) = live_child_case();
+    let (authority, plan_id, _) = live_child_case();
     let saved = authority.save().unwrap();
     let mut encoded = serde_json::to_value(&saved).unwrap();
     // 序列化余量(1) < 真实订单余量(300)：restore 必须以真实簿为准。
@@ -781,7 +781,7 @@ fn restore_rebuilds_remaining_from_live_book_when_serialized_value_is_stale() {
 
 #[test]
 fn restore_rebuilds_remaining_from_live_book_when_field_is_absent() {
-    let (authority, plan_id, code) = live_child_case();
+    let (authority, plan_id, _) = live_child_case();
     let saved = authority.save().unwrap();
     let mut encoded = serde_json::to_value(&saved).unwrap();
     // 字段缺失：唯一 owner 从真实订单簿重建。
@@ -1121,7 +1121,7 @@ fn real_step_settles_and_persists_gross_capped_seller_without_cash_reservation()
     // 缺自成交限制，随退役消亡）；默认分支保留原单账户形态（旧管线
     // 结算链的零售持仓 epoch 面对种子卖不适用——原序即原语义）。
     let runtime_mode = crate::runtime::step_runtime_enabled();
-    let mut cash_before_fill;
+    let cash_before_fill;
     if runtime_mode {
         session
             .fixture_account_mut(&AccountId(1))
@@ -1177,7 +1177,7 @@ fn real_step_settles_and_persists_gross_capped_seller_without_cash_reservation()
         session
             .step()
             .expect("buyer crosses seeded seller tick must commit");
-        cash_before_fill = session.state.accounts[&AccountId(0)].cash();
+        let _cash_after_first_fill = session.state.accounts[&AccountId(0)].cash();
         // 双账户下买方首拍即付（gross 断言的"卖拍后现金"基线=首拍后值）。
         let gross_pre = Money::from_cents(100);
         let pre_cost = gross_pre
@@ -2307,7 +2307,7 @@ fn v6_order_id_encoding_stays_in_wire_domain_beyond_32_stocks() {
         .expect("入队");
     let events = session.step().expect("步进");
     let json = serde_json::to_value(&events).expect("事件面序列化");
-    assert!(json.to_string().len() > 0);
+    assert!(!json.to_string().is_empty());
     let save = session.save().expect("存档");
     GameSession::restore(&save).expect("33 股局档往返");
     // 编码域断言（v6 方案 A 修复后）：新合成 `(stock<<32)|serial`

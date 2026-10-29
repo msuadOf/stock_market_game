@@ -37,7 +37,6 @@ fn cancel(code: StockId, ordinal: u64) -> ReceiptBearingIntent {
 fn description_of(error: &crate::session::StepFatal) -> String {
     match error {
         crate::session::StepFatal::InvariantViolation { description, .. } => description.clone(),
-        other => format!("{other:?}"),
     }
 }
 

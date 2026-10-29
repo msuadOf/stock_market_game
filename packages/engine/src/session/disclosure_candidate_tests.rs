@@ -27,8 +27,7 @@ fn simple_model_with_cycle(
         SimpleBookDisplayConfig, SimpleFinanceConfig, SimpleSummaryRule,
     };
     use crate::company::simple::period::{
-        AnnualTrendConfig, PeriodGenerationParameters, PeriodNoiseConfig,
-        PeriodVariableExpenseRule, SettlementCycle,
+        AnnualTrendConfig, PeriodGenerationParameters, PeriodNoiseConfig, PeriodVariableExpenseRule,
     };
     use crate::company::simple::{SimpleCompanyConfig, SimpleConfig, SimpleEnvironmentConfig};
     use crate::company::{CompanyKind, CompanySpec, CompanySystem, IndustryId};
@@ -41,7 +40,7 @@ fn simple_model_with_cycle(
     // spec code "empty-simple" 在单公司集合内分配数值 id 0。
     let company = CompanyId(0);
     let start = CivilDate::from_iso("2030-01-01").unwrap();
-    let system = CompanySystem::create(
+    CompanySystem::create(
         vec![CompanySpec {
             code: "empty-simple".into(),
             name: "空历史简单公司".into(),
@@ -113,8 +112,7 @@ fn simple_model_with_cycle(
         start,
         17,
     )
-    .unwrap();
-    system
+    .unwrap()
 }
 
 fn instant(second: u32) -> CivilInstant {
@@ -391,8 +389,10 @@ fn same_instant_announcement_precedes_report_but_early_custom_report_precedes_an
     let system = simple_model(1);
     let dispatch = DisclosureDispatch::default();
     let library = PublicLibrary::new();
-    let mut actions = SessionCorporateActions::default();
-    actions.share_splits = vec![split_book("z"), split_book("a")];
+    let actions = SessionCorporateActions {
+        share_splits: vec![split_book("z"), split_book("a")],
+        ..SessionCorporateActions::default()
+    };
     for second in [18 * 3600, 10 * 3600 + 30 * 60] {
         let reports = [request(second)];
         let mut input = ctx(&system, &dispatch, &library, &reports, 86399);
@@ -420,8 +420,10 @@ fn same_identity_same_payload_is_idempotent_but_changed_payload_rejects_whole_ca
     let dispatch = DisclosureDispatch::default();
     let library = PublicLibrary::new();
     let book = split_book("same");
-    let mut actions = SessionCorporateActions::default();
-    actions.share_splits = vec![book.clone(), book];
+    let mut actions = SessionCorporateActions {
+        share_splits: vec![book.clone(), book],
+        ..SessionCorporateActions::default()
+    };
     let prepare = |actions: &SessionCorporateActions| {
         let mut input = ctx(&system, &dispatch, &library, &[], 86399);
         input.settled_announcements = Some(instant(0).date());
@@ -650,8 +652,10 @@ fn cash_announcement_fixture() -> (
         gross_per_share: Money::from_cents(1),
         distributable_amount: Money::from_cents(1000),
     };
-    let mut actions = SessionCorporateActions::default();
-    actions.dividends = vec![CashDividendBook::new(plan.clone()).unwrap()];
+    let mut actions = SessionCorporateActions {
+        dividends: vec![CashDividendBook::new(plan.clone()).unwrap()],
+        ..SessionCorporateActions::default()
+    };
     use crate::company::share_registry::{
         AcquisitionSource, HolderId, ShareHolding, ShareLot, ShareRegistry, ShareRestriction,
     };

@@ -101,7 +101,7 @@ fn company_close_failure_discards_closed_books_registry_and_disclosure_candidate
         serde_json::to_vec(session.state.library.as_ref()).unwrap(),
         serde_json::to_vec(old_library.as_ref()).unwrap()
     );
-    for (_, company) in &old_ops.companies {
+    for company in old_ops.companies.values() {
         assert_eq!(
             company.books().books().journal().period_status(period),
             PeriodStatus::Open,
@@ -124,13 +124,14 @@ fn company_close_failure_discards_closed_books_registry_and_disclosure_candidate
         1,
         "成功关账后披露相位恰好一次"
     );
-    for (_, company) in &session
+    for company in session
         .state
         .companies
         .legacy()
         .expect("此调用仅用于 Legacy 公司状态")
         .operations
         .companies
+        .values()
     {
         assert_eq!(
             company.books().books().journal().period_status(period),

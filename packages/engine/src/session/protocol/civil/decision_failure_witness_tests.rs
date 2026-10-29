@@ -685,7 +685,7 @@ fn publication_failure_rolls_back_business_and_executes_each_receipt_exactly_onc
     );
     let authority_after_retry = authority_cursors(session.game());
     let shared_after_retry = shared_cursors(session.game_mut());
-    let mut npc_admissions_total = 0u64;
+    let mut _npc_admissions_total = 0u64;
     let mut npc_new_allocations_total = 0u64;
     for account in &accounts {
         let failure_level = account_ordinal(&shared_after_failure, *account);
@@ -711,7 +711,7 @@ fn publication_failure_rolls_back_business_and_executes_each_receipt_exactly_onc
             admissions <= new_allocations,
             "{account:?} 受理事件数（{admissions}）≤ 新分配 ordinal 数（{new_allocations}；旧 payload 复活双执行会打破上界）"
         );
-        npc_admissions_total += admissions;
+        _npc_admissions_total += admissions;
         npc_new_allocations_total += new_allocations;
     }
     assert!(

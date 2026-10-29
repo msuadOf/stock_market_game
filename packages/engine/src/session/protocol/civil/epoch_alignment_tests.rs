@@ -216,7 +216,6 @@ fn force_due_keep_base(
 /// 搜索一个「probe 接受」的 rng_state（接受侧构造自校验）。
 fn find_accepting_rng(session: &ProtocolSession, account: AccountId, tick: u64) -> u64 {
     for seed in 1..500u64 {
-        let probe_session = session;
         // 临时改 rng 不可行（借用）；改为数学短路：克隆评估。
         let game = session.game();
         let attention = game.state.npc_attention.get(&account).unwrap().clone();
@@ -233,13 +232,7 @@ fn find_accepting_rng(session: &ProtocolSession, account: AccountId, tick: u64) 
 }
 
 /// 搜索一个「首评估拒绝且 wait ≥ min_wait」的 rng_state（自校验内嵌）。
-fn find_rejecting_rng(
-    session: &ProtocolSession,
-    account: AccountId,
-    tick: u64,
-    base_probability: f64,
-    min_wait: u64,
-) -> u64 {
+fn find_rejecting_rng(base_probability: f64, min_wait: u64) -> u64 {
     // probe 需要真实 base；临时不可行——改为纯数学搜索：克隆评估不可用状态
     // 可用轻量模拟：SplitMix64 首抽 < effective/maximum 即接受。
     let sensitivity = 0.75f64; // Retail
@@ -277,7 +270,7 @@ fn epoch_alignment_first_call_records_entry_and_tail_epochs() {
     // A：base=1.0 恒接受（wait=1 ⇒ next=1，D(1) 仍 due）。
     force_due(&mut session, a, 0, 3);
     // B：base<1.0 且 rng 使首评估拒绝、wait>=2（D(1) 不 due）。
-    let b_rng = find_rejecting_rng(&session, b, 0, 0.1, 2);
+    let b_rng = find_rejecting_rng(0.1, 2);
     force_due_with_base(&mut session, b, 0, b_rng, 0.1);
     // 内嵌自校验（A3：拒绝侧构造显式 probe 自校验）。
     {
@@ -421,8 +414,6 @@ fn epoch_alignment_intraday_tick_consumes_one_epoch_and_produces_next() {
     setup.ticks_per_day = 12;
     setup.start_date = CivilDate::from_iso("2030-01-07").unwrap();
     let mut session = ProtocolSession::new(setup, 11).unwrap();
-    let a = AccountId(1);
-    let b = AccountId(2);
     // 推进至 tick 5（0..5），期间注意力自然演化。
     for _ in 0..5 {
         session.step_frame_pipeline_contract().unwrap();
@@ -431,7 +422,7 @@ fn epoch_alignment_intraday_tick_consumes_one_epoch_and_produces_next() {
     let b = *session.game().state.npc_attention.keys().max().unwrap();
     // epoch 5：A due 接受；epoch 6：B due 拒绝（rng 自校验搜索）。
     force_due(&mut session, a, 5, 3);
-    let b_rng = find_rejecting_rng(&session, b, 6, 0.1, 12);
+    let b_rng = find_rejecting_rng(0.1, 12);
     force_due_with_base(&mut session, b, 6, b_rng, 0.1);
     {
         let (accepted, _) = probe_attention(&session, b, 6);
@@ -454,12 +445,12 @@ fn epoch_alignment_intraday_tick_consumes_one_epoch_and_produces_next() {
     // 第二拍 [5,6]/[6] 闭合（A/B 拆分纪律：epoch 事实 A 类、调用分组 B 类）。
     let (_, state_a5_first) =
         probe_chain_from(&session, a, &attention_before, &[(5, signal_at_epoch5)]);
-    let (_, state_b6) = probe_chain_from(&session, b, &attention_before, &[(6, signal_at_epoch6)]);
+    let (_, _state_b6) = probe_chain_from(&session, b, &attention_before, &[(6, signal_at_epoch6)]);
     let after_a = attention_after
         .iter()
         .find(|(account, _, _)| *account == a)
         .unwrap();
-    let after_b = attention_after
+    let _after_b = attention_after
         .iter()
         .find(|(account, _, _)| *account == b)
         .unwrap();
@@ -674,7 +665,7 @@ fn epoch_alignment_after_civil_update_first_tick_evaluates_day_boundary_epoch() 
         "A 类：首 tick 失败不消耗权威随机流（attention 逐位不变）"
     );
     assert!(
-        serde_json::to_value(&restored.game().save().unwrap())
+        serde_json::to_value(restored.game().save().unwrap())
             .unwrap()
             .get("pending_npc")
             .is_none(),
@@ -745,8 +736,7 @@ fn epoch_alignment_after_civil_update_first_tick_evaluates_day_boundary_epoch() 
         if let Some(row) = restored.game().state.retail_experience.get(account) {
             for (stock_id, stock) in &row.stocks {
                 assert_eq!(
-                    stock.last_observed_market_minute,
-                    1 * 240,
+                    stock.last_observed_market_minute, 240,
                     "A 类（v3 分钟精确）：{account:?}/{stock_id:?} 第一拍终值==D(4) 的观察分钟 240"
                 );
             }
@@ -790,7 +780,7 @@ fn epoch_alignment_after_civil_update_first_tick_evaluates_day_boundary_epoch() 
                     minute_at_epoch5_day2
                 } else {
                     // 最后实际写入仍为日界 D(4)（无后续写入保留原值）。
-                    1 * 240
+                    240
                 };
                 assert_eq!(
                     stock.last_observed_market_minute, expected,
@@ -1111,7 +1101,7 @@ fn epoch_alignment_rejected_account_rng_is_exact_at_evaluate_boundary() {
     let a = AccountId(1);
     let b = AccountId(2);
     force_due(&mut session, a, 0, 3);
-    let b_rng = find_rejecting_rng(&session, b, 0, 0.1, 2);
+    let b_rng = find_rejecting_rng(0.1, 2);
     force_due_with_base(&mut session, b, 0, b_rng, 0.1);
     session.step_frame_pipeline_contract().unwrap();
     let trace = session

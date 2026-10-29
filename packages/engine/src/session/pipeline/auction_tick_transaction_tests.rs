@@ -1,5 +1,3 @@
-use super::account_validation_context::build_account_validation_context;
-use super::adaptive_plan_chain::AdaptivePlanChainCoordinator;
 use super::market_tick_transaction::{
     apply_tick_shadow_market_transaction_with_roots_for_test, prepare_market_tick,
 };
@@ -8,9 +6,8 @@ use crate::plans::quote_policy::{QuoteAction, QuoteDecision, QuoteReason};
 use crate::plans::{
     AllocationGrant, OpinionSource, PlanOpen, PlanOpinion, PlanStatus, PlanTarget, Urgency,
 };
-use crate::session::pipeline::DecisionResourceSnapshot;
 use crate::session::plan_chain_candidates::PlanChainOperationBatch;
-use crate::session::{PlanExecutionDisposition, PlanExecutionRequest};
+use crate::session::PlanExecutionRequest;
 use crate::strategy::ZiNoiseStrategy;
 use crate::{AccountId, Event, GameSession, Intent, Money, OrderId, RejectionReason, Side};
 
@@ -524,8 +521,7 @@ fn parent_transaction_seam_rolls_back_every_authoritative_family_on_later_round_
     let business_before = authority.business_state_hash().unwrap();
     let session_before = authority.session_state_hash().unwrap();
     let next_order_before = authority.state.next_order_id;
-    let queue_before =
-        serde_json::to_value(&authority.auction_order_projection_for_test()).unwrap();
+    let queue_before = serde_json::to_value(authority.auction_order_projection_for_test()).unwrap();
     let ledger_before = authority.state.envelope_ledger.clone();
     let plans_before = serde_json::to_value(&authority.state.plans).unwrap();
     let mut plan = plan_tick(PhaseInput {
@@ -634,9 +630,8 @@ fn parent_transaction_applies_opening_completion_full_fill_once() {
 #[test]
 fn parent_transaction_applies_opening_completion_partial_fill_once() {
     let (mut authority, request) = opening_completion_fixture(200, 100);
+    let _code = request.allocation.code;
     let plan_id = request.plan_id;
-    let code = request.allocation.code;
-
     commit_with_roots(&mut authority, request);
 
     let plan = authority.state.plans.plan(plan_id).unwrap();

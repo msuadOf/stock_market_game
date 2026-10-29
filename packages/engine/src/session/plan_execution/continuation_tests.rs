@@ -326,8 +326,8 @@ fn filled_child_can_reject_cancellation_while_its_plan_remains_active() {
 fn a_new_plan_submit_keeps_parent_private_until_the_stock_accepts_it() {
     let (mut session, mut plans, plan, child) = fixture();
     let plan_id = plan.plan_id();
-    let account = plan.account();
-    let code = *plan.code();
+    let _account = plan.account();
+    let _code = *plan.code();
     let progress = session
         .prepare_working_cancels(plan, child, Vec::new())
         .expect("a new plan child must be routable");

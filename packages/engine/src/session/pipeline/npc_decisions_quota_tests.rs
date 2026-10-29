@@ -15,7 +15,6 @@ use crate::strategy::{MarketView, MomentumStrategy, SelfView, StrategyState};
 use crate::{AccountId, AccountKind, Money, TradingPhase};
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::mpsc;
 use std::sync::Arc;
 
 fn account_input() -> DecisionAccountInput {
@@ -509,7 +508,7 @@ fn r1c_decide_consumes_ready_result_before_dispatching_more() {
             &compute,
             |_| {},
             |_| Ok::<(), ()>(()),
-            move |account,
+            move |_account,
                   result: Result<(), ()>,
                   _errors: &mut Vec<(AccountId, NpcDecisionStreamError<()>)>| {
                 let _ = result;
@@ -627,7 +626,7 @@ fn r1c_decide_consume_before_redispatch_deterministic() {
                 &compute_outer,
                 |_| {},
                 |_| Ok::<(), ()>(()),
-                move |account,
+                move |_account,
                       result: Result<(), ()>,
                       _errors: &mut Vec<(AccountId, NpcDecisionStreamError<()>)>| {
                     let _ = result;

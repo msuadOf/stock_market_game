@@ -62,7 +62,7 @@ fn plan_identity_day_end_restores_one_two_three_groups_and_continues_cursors() {
         session.step().unwrap();
         let day = u64::from(session.day());
         {
-            let mut driver = session.runtime_driver.as_mut().unwrap().lock().unwrap();
+            let mut driver = session.runtime_driver.as_ref().unwrap().lock().unwrap();
             for owner in [AccountId(0), AccountId(2)] {
                 driver.mutate_plan_book_for_test(
                     owner,
@@ -180,7 +180,7 @@ fn plan_identity_joined_player_plan_and_events_use_tail_group_writer() {
     session.step().unwrap();
     let owner = member.account_id;
     {
-        let mut driver = session.runtime_driver.as_mut().unwrap().lock().unwrap();
+        let mut driver = session.runtime_driver.as_ref().unwrap().lock().unwrap();
         driver.mutate_plan_book_for_test(
             owner,
             Box::new(move |book| {
@@ -196,7 +196,7 @@ fn plan_identity_joined_player_plan_and_events_use_tail_group_writer() {
         .unwrap()
         .plan_id();
     {
-        let mut driver = session.runtime_driver.as_mut().unwrap().lock().unwrap();
+        let mut driver = session.runtime_driver.as_ref().unwrap().lock().unwrap();
         driver.apply_plan_events_for_test(vec![(
             id,
             PlanEvent::Terminated {
@@ -207,7 +207,7 @@ fn plan_identity_joined_player_plan_and_events_use_tail_group_writer() {
     }
     session.step().unwrap();
     assert!(session.state.plans.plan(id).unwrap().is_terminal());
-    let mut driver = session.runtime_driver.as_mut().unwrap().lock().unwrap();
+    let mut driver = session.runtime_driver.as_ref().unwrap().lock().unwrap();
     for (group, book) in driver.collect_plans().unwrap() {
         assert_eq!(
             book.plan(id).is_ok(),

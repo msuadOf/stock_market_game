@@ -285,14 +285,14 @@ fn join_prepares_complete_current_authority_before_registering_new_player() {
         .unwrap();
     game.construct_runtime_driver_lazy_for_test().unwrap();
     let rng_before = {
-        let mut driver = game.runtime_driver.as_mut().unwrap().lock().unwrap();
+        let mut driver = game.runtime_driver.as_ref().unwrap().lock().unwrap();
         driver.defer_due_for_test_at(&[AccountId(1)], u64::MAX);
         driver.force_due_for_test_at(&[AccountId(2)], 1);
         attention(&mut driver)[&AccountId(2)].1
     };
     game.step_frame().unwrap();
     let rng_after =
-        attention(&mut game.runtime_driver.as_mut().unwrap().lock().unwrap())[&AccountId(2)].1;
+        attention(&mut game.runtime_driver.as_ref().unwrap().lock().unwrap())[&AccountId(2)].1;
     assert_ne!(
         rng_after, rng_before,
         "真实 due 决策已经推进 profile RNG，不能只比较构造种子"
@@ -344,7 +344,7 @@ fn join_prepares_complete_current_authority_before_registering_new_player() {
         );
     }
     let (old_accounts, old_personals, old_attention, old_resting, old_serials, old_plans) = {
-        let mut driver = game.runtime_driver.as_mut().unwrap().lock().unwrap();
+        let mut driver = game.runtime_driver.as_ref().unwrap().lock().unwrap();
         let accounts = accounts(&mut driver);
         assert!(
             accounts[&AccountId(1)].buy_purse_held_cents > 0,
@@ -376,7 +376,7 @@ fn join_prepares_complete_current_authority_before_registering_new_player() {
     );
     let mut driver = game
         .runtime_driver
-        .as_mut()
+        .as_ref()
         .expect("正常 join 在注册前已准备并安装新 driver")
         .lock()
         .unwrap();
@@ -420,7 +420,7 @@ fn join_prepares_complete_current_authority_before_registering_new_player() {
     }
     drop(driver);
     let (before_accounts, before_personals, before_attention, before_resting) = {
-        let mut driver = game.runtime_driver.as_mut().unwrap().lock().unwrap();
+        let mut driver = game.runtime_driver.as_ref().unwrap().lock().unwrap();
         (
             accounts(&mut driver),
             personals(&mut driver),
@@ -440,7 +440,7 @@ fn join_prepares_complete_current_authority_before_registering_new_player() {
         game.runtime_mirror_origin().authority_epoch,
         before_second.authority_epoch + 1
     );
-    let mut driver = game.runtime_driver.as_mut().unwrap().lock().unwrap();
+    let mut driver = game.runtime_driver.as_ref().unwrap().lock().unwrap();
     assert_eq!(
         driver.accounts_per_group(),
         3,

@@ -41,7 +41,7 @@ fn session_settlement_records_retail_receipt_order_and_simulation_date_once() {
         trading_day: u64::from(session.state.day),
     };
     let receipt = fill(1, Side::Buy, 17, 100, 100_000);
-    apply_session_settlement_transaction(&mut session, &[receipt.clone()]).unwrap();
+    apply_session_settlement_transaction(&mut session, std::slice::from_ref(&receipt)).unwrap();
     let experience = &session.state.retail_experience[&AccountId(1)];
     assert_eq!(experience.feedback.stocks[&stock()].entry_moment, moment);
     assert_eq!(experience.stocks[&stock()].last_buy_order_id, Some(17));

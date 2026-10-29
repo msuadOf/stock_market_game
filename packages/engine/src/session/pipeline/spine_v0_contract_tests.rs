@@ -122,8 +122,7 @@ fn v0_publication_failure_installs_nothing_and_keeps_session_steppable() {
                 location: "spine_v0_contract_tests".to_owned(),
             })
         })
-        .err()
-        .expect("publication 失败必须使整个 tick 失败");
+        .expect_err("publication 失败必须使整个 tick 失败");
 
     assert!(
         matches!(error, StepFatal::InvariantViolation { .. }),

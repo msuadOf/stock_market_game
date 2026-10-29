@@ -7,7 +7,7 @@ use super::{
     Envelope, EnvelopeKey, EnvelopeLedger, EnvelopeReceipt, JournalRank, ReceiptDelta, ReceiptKind,
     ReceiptLocalKey, ReceiptSource, ReceiptTransition, ResVec, StepFatal,
 };
-use crate::{AccountId, GameSession, Money, OrderId, Side, StockId};
+use crate::{GameSession, Money};
 
 fn audit_compute() -> std::sync::Arc<crate::compute::ComputeContext> {
     crate::compute::ComputeContext::with_workers(2).unwrap()

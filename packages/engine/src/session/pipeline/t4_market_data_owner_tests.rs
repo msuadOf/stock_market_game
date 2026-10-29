@@ -55,7 +55,7 @@ fn stock_owner_finish_computes_market_data_patch_for_continuous_tick() {
     let completed = usize::from(boundary.completed_minutes.unwrap());
     for worker in &finish.workers {
         let code = worker.market.code();
-        let prior_minutes = session.state.market_minute_closes[&code].len();
+        let prior_minutes = session.state.market_minute_closes[code].len();
         let patch = &worker.market_data;
         // 无成交 Continuous tick：owner 仍完成收盘标记、历史追加与分钟回填。
         let candle = patch
@@ -527,8 +527,7 @@ fn owner_matcher_rejects_leftover_expected_partial_facts() {
     let mut round = coordinator.apply_round(vec![ops[0].clone()]).unwrap();
     let error =
         super::market_tick_transaction::match_continuous_feedback(&code, &mut round, expected)
-            .err()
-            .expect("部分事实（期望未清空）必须失败");
+            .expect_err("部分事实（期望未清空）必须失败");
     assert!(
         error
             .to_string()
@@ -554,8 +553,7 @@ fn owner_matcher_rejects_leftover_expected_zero_facts() {
     let mut round = coordinator.apply_round(Vec::new()).unwrap();
     let error =
         super::market_tick_transaction::match_continuous_feedback(&code, &mut round, expected)
-            .err()
-            .expect("零事实（期望未清空）必须失败");
+            .expect_err("零事实（期望未清空）必须失败");
     assert!(
         error
             .to_string()

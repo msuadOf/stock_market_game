@@ -679,8 +679,7 @@ fn low_level_clearing_second_leg_money_overflow_keeps_real_partial_book_change_n
     let before_price = market.last_price();
     let error = market
         .execute_auction_clearing(StockExchange::Shanghai)
-        .err()
-        .expect("第二腿累计金额必须 overflow");
+        .expect_err("第二腿累计金额必须 overflow");
     assert!(matches!(
         error,
         crate::MarketError::OrderBook(crate::orderbook::OrderError::Money(_))

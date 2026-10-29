@@ -271,7 +271,6 @@ fn rejected_replace_cancel_keeps_child_parent_reservation_and_order_identity() {
     let (mut authority, mut request) =
         crate::session::plan_chain_candidates_tests::execution_fixture();
     let plan_id = request.plan_id;
-    let code = request.allocation.code;
     let owner = AccountId(1);
     authority
         .state
