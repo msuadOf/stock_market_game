@@ -73,6 +73,7 @@ impl IndustrialBooks {
         self.next_event_id = next_event_id;
     }
 
+    #[cfg(test)]
     pub(crate) fn validate_income_tax_state(&self) -> Result<(), IndustrialError> {
         self.income_tax_position
             .validate(&self.tax_policy().income_tax)

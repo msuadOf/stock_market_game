@@ -1,23 +1,22 @@
 use super::*;
-#[path = "../../information_fixture.rs"]
-mod fixture;
 use crate::calendar::CivilInstant;
+use crate::runtime::information_fixture as fixture;
 use crate::runtime::protocol::{InformationPrepareError, InformationPreparePayload};
 use crate::{AccountId, StockId};
 use fixture::*;
 
 fn state(ids: &[AccountId]) -> GroupState {
-    let mut s = GroupState::new(
-        2,
-        vec![GroupAccount::new(100_000, 2); ids.len()],
-        8,
-        100,
-        Arc::new(GameConfig::proposed_defaults()),
-        100,
-        None,
-        Vec::new(),
-        Box::new(|_, _| TickPlan::default()),
-    );
+    let mut s = GroupState::new(super::GroupSetup {
+        group: 2,
+        accounts: vec![GroupAccount::new(100_000, 2); ids.len()],
+        chunk: 8,
+        lot: 100,
+        config: Arc::new(GameConfig::proposed_defaults()),
+        ticks_per_day: 100,
+        decision: None,
+        plans: Vec::new(),
+        script: Box::new(|_, _| TickPlan::default()),
+    });
     s.bind_calendar(calendar_source(), calendar_bindings());
     s.belief_states = ids.iter().map(|&id| Some(personal(id))).collect();
     s.belief_dirty = vec![false; ids.len()];

@@ -16,12 +16,14 @@ use super::protocol::{
     AdminRight, DayEndDirective, DeskBatch, DeskIn, GroupIn, GroupReport, RoutedPrice,
     RuntimeError, UpMsg, WorkerId,
 };
-use super::watchdog::{spin_config, worker_recv_spin, WatchdogConfig};
+use super::watchdog::{spin_config, worker_recv_spin};
 use super::{Entity, FillFact, GroupIdx, LocalIdx, OrderRef, StockIdx};
 use crate::config::GameConfig;
 use crate::money::Money;
 use crate::orderbook::Side;
-use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(test)]
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::Arc;
 use std::time::Duration;
@@ -788,6 +790,20 @@ pub struct GroupFinalState {
     pub observed: Vec<Observed>,
 }
 
+/// 新建组测试使用的完整初始事实。
+#[cfg(test)]
+pub(super) struct GroupSetup {
+    pub(super) group: GroupIdx,
+    pub(super) accounts: Vec<GroupAccount>,
+    pub(super) chunk: usize,
+    pub(super) lot: u32,
+    pub(super) config: Arc<GameConfig>,
+    pub(super) ticks_per_day: u64,
+    pub(super) decision: Option<(Vec<NpcProfile>, u32)>,
+    pub(super) plans: Vec<Box<dyn PlanChain>>,
+    pub(super) script: GroupScript,
+}
+
 /// 组线程私有状态。
 pub struct GroupState {
     calendar_owner: Option<super::type_aliases::CalendarOwner>,
@@ -1085,15 +1101,15 @@ impl GroupState {
         .map_err(|error| RuntimeError::ProtocolInvariant {
             detail: error.to_string(),
         })?;
-        clock.validate(
-            owner,
+        clock.validate(super::information_clock_context::ExpectedInformationClock {
+            source: owner,
             bindings,
-            frontier.civil_date,
+            date: frontier.civil_date,
             layout,
             input,
             through,
             anchors,
-        )?;
+        })?;
         if let Some(record) = clock.committed_record() {
             let inherited = self
                 .inherited_calendar
@@ -1124,33 +1140,24 @@ impl GroupState {
     }
 
     /// 构造组状态（全新世界：tick 0 起步）。
-    pub fn new(
-        group: GroupIdx,
-        accounts: Vec<GroupAccount>,
-        chunk: usize,
-        lot: u32,
-        config: Arc<GameConfig>,
-        ticks_per_day: u64,
-        decision: Option<(Vec<NpcProfile>, u32)>,
-        plans: Vec<Box<dyn PlanChain>>,
-        script: GroupScript,
-    ) -> Self {
+    #[cfg(test)]
+    pub(super) fn new(setup: GroupSetup) -> Self {
         Self::new_with_initial_tick(
-            group,
-            accounts,
+            setup.group,
+            setup.accounts,
             Vec::new(),
             std::sync::Arc::new(crate::information::PublicLibrary::default()),
-            chunk,
-            lot,
-            config,
-            ticks_per_day,
+            setup.chunk,
+            setup.lot,
+            setup.config,
+            setup.ticks_per_day,
             0,
             0,
             0,
-            decision,
-            plans,
+            setup.decision,
+            setup.plans,
             None,
-            script,
+            setup.script,
         )
     }
 
@@ -3655,37 +3662,44 @@ impl GroupState {
                     )
                 });
             let open = crate::session::open_position_action(
-                account,
-                code,
-                price,
-                held_qty,
-                equity_cents_with_pending(
-                    group_account,
-                    &self.child_in_flight,
-                    roster_slice(
-                        &projection.account_ids,
-                        self.roster_offset,
-                        self.accounts.len(),
+                crate::session::OpenPositionAssessment {
+                    account,
+                    code,
+                    price,
+                    held_qty,
+                    equity: equity_cents_with_pending(
+                        group_account,
+                        &self.child_in_flight,
+                        roster_slice(
+                            &projection.account_ids,
+                            self.roster_offset,
+                            self.accounts.len(),
+                        ),
+                        local,
+                        &observation.market,
                     ),
-                    local,
-                    &observation.market,
-                ),
-                score,
-                fundamental_ready,
-                &out.belief,
-                self.plan_book.policy().reverse_revision_threshold_bp,
-                &params,
-                style,
-                phase_is_continuous(
-                    snapshot.tick,
-                    self.ticks_per_day,
-                    projection.auction_ticks,
-                    projection.closing_auction_ticks,
-                ),
-                // Sol 终审四审 A2：开仓复审 trading_day 同 (tick−1)/tpd 基准。
-                trading_day,
-                self.config.lot_size,
-                group_max_holdable_shares(&company_facts, code),
+                    score,
+                    fundamental_ready,
+                },
+                crate::session::OpenPositionPolicy {
+                    belief: &out.belief,
+                    reverse_revision_threshold_bp: self
+                        .plan_book
+                        .policy()
+                        .reverse_revision_threshold_bp,
+                    chain_params: &params,
+                    style,
+                    phase_continuous: phase_is_continuous(
+                        snapshot.tick,
+                        self.ticks_per_day,
+                        projection.auction_ticks,
+                        projection.closing_auction_ticks,
+                    ),
+                    // Sol 终审四审 A2：开仓复审 trading_day 同 (tick−1)/tpd 基准。
+                    trading_day,
+                    lot: self.config.lot_size,
+                    max_holdable_shares: group_max_holdable_shares(&company_facts, code),
+                },
                 |direction, confidence_bp, horizon| {
                     initial_group_urgency(
                         direction,
@@ -5982,18 +5996,18 @@ fn build_root_read_context(
         .calendar
         .before_projection()
         .completed_shared_minute_count();
-    crate::session::RootReadContext::from_parts(
-        book,
-        Arc::clone(company_facts),
-        std::sync::Arc::clone(library),
+    crate::session::RootReadContext {
+        accounts: book,
+        company_facts: Arc::clone(company_facts),
+        library: std::sync::Arc::clone(library),
         // 组内计划簿（D3a-2c 件4 起承载开仓产物——与 session 投影同源；
         // 此前恒空簿的起点形态在件4 落地后退役）。
-        plans.clone(),
-        snapshot.civil_date,
+        plans: plans.clone(),
+        civil_date: snapshot.civil_date,
         market_minute,
         day,
         information_anchors,
-    )
+    }
 }
 
 /// 市场分钟（与 session `current_market_minute` 同式：交易日×240 +
@@ -6096,16 +6110,19 @@ fn fnv(state: u64, value: u64) -> u64 {
 
 /// 组线程主循环（骨架）。panic 运输：处理体 `catch_unwind` 捕获 → 回滚自身
 /// overlay → `TaskDied`（原 payload）→ Final 上交 → 退出。
-pub fn group_main(
+pub(crate) fn group_main(
     state: GroupState,
     desk_txs: Vec<Sender<super::protocol::DeskMsg>>,
     rx: Receiver<GroupIn>,
-    up_tx: Sender<UpMsg>,
-    abort: Arc<AtomicBool>,
-    shutdown: Arc<AtomicBool>,
-    watchdog: WatchdogConfig,
-    capture: Arc<std::sync::Mutex<crate::verification_evidence::PhaseTimingBinding>>,
+    context: super::worker_context::WorkerContext,
 ) -> Result<(), RuntimeError> {
+    let super::worker_context::WorkerContext {
+        up_tx,
+        abort,
+        shutdown,
+        watchdog,
+        capture,
+    } = context;
     /// D4：每条消息处理期安装当前捕获绑定（无捕获=None 零开销；完成
     /// 信号在作用域退出（绑定释放）后发出——沿用旧协议保证）。
     fn with_capture<R>(
@@ -6229,11 +6246,13 @@ pub fn group_main(
                 if !state.handle_admin_message(
                     id,
                     super::protocol::AdminPhase::Prepare,
-                    operations,
-                    stage_layout,
-                    information,
-                    information_clock,
-                    repurchase,
+                    admin_transaction::AdminPrepareInput {
+                        operations,
+                        stage_layout,
+                        information,
+                        information_clock,
+                        repurchase,
+                    },
                     &up_tx,
                     who,
                 ) {
@@ -6244,11 +6263,13 @@ pub fn group_main(
                 if !state.handle_admin_message(
                     id,
                     super::protocol::AdminPhase::Commit,
-                    Vec::new(),
-                    None,
-                    None,
-                    None,
-                    None,
+                    admin_transaction::AdminPrepareInput {
+                        operations: Vec::new(),
+                        stage_layout: None,
+                        information: None,
+                        information_clock: None,
+                        repurchase: None,
+                    },
                     &up_tx,
                     who,
                 ) {
@@ -6259,11 +6280,13 @@ pub fn group_main(
                 if !state.handle_admin_message(
                     id,
                     super::protocol::AdminPhase::Abort,
-                    Vec::new(),
-                    None,
-                    None,
-                    None,
-                    None,
+                    admin_transaction::AdminPrepareInput {
+                        operations: Vec::new(),
+                        stage_layout: None,
+                        information: None,
+                        information_clock: None,
+                        repurchase: None,
+                    },
                     &up_tx,
                     who,
                 ) {
@@ -6587,18 +6610,23 @@ pub fn group_main(
                         let spec_of = |company: &crate::company::CompanyId| {
                             company_facts.company_spec(company).ok()
                         };
+                        let as_of_anchor = |stock| as_of_anchors.get(&stock).copied();
                         match crate::session::notices::deliver_information_for_npc(
-                            account_id,
-                            now,
-                            &|stock| as_of_anchors.get(&stock).copied(),
-                            &attention,
-                            &snap.information,
-                            &snap.belief,
-                            codes,
-                            &issuer_of,
-                            &spec_of,
-                            &state.library,
-                            &market,
+                            crate::session::notices::InformationDeliveryContext {
+                                id: account_id,
+                                now,
+                                as_of_anchor: &as_of_anchor,
+                                codes,
+                                issuer_of_stock: &issuer_of,
+                                company_spec: &spec_of,
+                                library: &state.library,
+                                market: &market,
+                            },
+                            crate::session::notices::InformationDeliveryState {
+                                attention: &attention,
+                                information: &snap.information,
+                                belief: &snap.belief,
+                            },
                         ) {
                             Ok(Some((_, information, belief, attention))) => {
                                 snap.information = information;
@@ -7643,17 +7671,17 @@ mod v5_shutdown_idle_window_tests {
         let capture = Arc::new(std::sync::Mutex::new(
             crate::verification_evidence::current_phase_timing_binding(),
         ));
-        let mut state = GroupState::new(
-            0,
-            vec![GroupAccount::new(10_000_000, 1)],
-            8,
-            100,
-            Arc::new(crate::config::GameConfig::proposed_defaults()),
-            240,
-            None,
-            Vec::new(),
-            Box::new(|_t, _r| TickPlan::default()),
-        );
+        let mut state = GroupState::new(GroupSetup {
+            group: 0,
+            accounts: vec![GroupAccount::new(10_000_000, 1)],
+            chunk: 8,
+            lot: 100,
+            config: Arc::new(crate::config::GameConfig::proposed_defaults()),
+            ticks_per_day: 240,
+            decision: None,
+            plans: Vec::new(),
+            script: Box::new(|_t, _r| TickPlan::default()),
+        });
         state.cur_tick = 1;
         state.cur_round = 0;
         let handle = {
@@ -7665,14 +7693,16 @@ mod v5_shutdown_idle_window_tests {
                     state,
                     vec![desk_tx],
                     group_rx,
-                    up_tx,
-                    abort,
-                    shutdown_flag,
-                    crate::runtime::watchdog::WatchdogConfig {
-                        normal: std::time::Duration::from_secs(30),
-                        long: std::time::Duration::from_secs(120),
+                    crate::runtime::worker_context::WorkerContext {
+                        up_tx,
+                        abort,
+                        shutdown: shutdown_flag,
+                        watchdog: crate::runtime::watchdog::WatchdogConfig {
+                            normal: std::time::Duration::from_secs(30),
+                            long: std::time::Duration::from_secs(120),
+                        },
+                        capture,
                     },
-                    capture,
                 )
             })
         };
@@ -7812,17 +7842,17 @@ mod sol_recheck3_tests {
     /// 同 chain_harness，但计划目标/执行腿/子单量可变（terminal fixture
     /// 用小目标 100——全额成交即 Completed，不依赖巨量成交）。
     fn chain_harness_target(side: Side, target: u32) -> GroupState {
-        let mut state = GroupState::new(
-            0,
-            vec![GroupAccount::new(10_000_000, 1)],
-            8,
-            100,
-            std::sync::Arc::new(crate::config::GameConfig::proposed_defaults()),
-            240,
-            None,
-            Vec::new(),
-            Box::new(|_t, _r| TickPlan::default()),
-        );
+        let mut state = GroupState::new(GroupSetup {
+            group: 0,
+            accounts: vec![GroupAccount::new(10_000_000, 1)],
+            chunk: 8,
+            lot: 100,
+            config: std::sync::Arc::new(crate::config::GameConfig::proposed_defaults()),
+            ticks_per_day: 240,
+            decision: None,
+            plans: Vec::new(),
+            script: Box::new(|_t, _r| TickPlan::default()),
+        });
         state.root_projection = Some(std::sync::Arc::new(crate::runtime::world::RootProjection {
             catalog: crate::stock::StockCatalog::from_metas(vec![crate::stock::StockMeta::new(
                 "600000",
@@ -8062,23 +8092,25 @@ mod sol_recheck3_tests {
             ),
         }));
         std::sync::Arc::make_mut(&mut state.accounts[0]).cash = 1_000_000;
-        state.apply_batch_immediate(
-            batch(
-                Vec::new(),
-                vec![FillFact {
-                    order: (0, 5),
-                    owner: (0, 0),
-                    side: Side::Buy,
-                    price: 900,
-                    qty: 100,
-                    commission: 500,
-                    stamp_tax: 0,
-                    transfer_fee: 1,
-                }],
-            ),
-            1,
-            0,
-        );
+        state
+            .apply_batch_immediate(
+                batch(
+                    Vec::new(),
+                    vec![FillFact {
+                        order: (0, 5),
+                        owner: (0, 0),
+                        side: Side::Buy,
+                        price: 900,
+                        qty: 100,
+                        commission: 500,
+                        stamp_tax: 0,
+                        transfer_fee: 1,
+                    }],
+                ),
+                1,
+                0,
+            )
+            .expect("有效全额成交事实正常应用");
         state.apply_deferred().expect("全额成交正常推进");
         // terminal 记录不再出现在 active 面——按 id 直查（记录保留在簿）。
         let plan = state
@@ -8130,23 +8162,25 @@ mod sol_recheck3_tests {
     #[test]
     fn sol3_fill_with_foreign_order_fails_instead_of_eating_the_leg() {
         let mut state = chain_harness(Side::Buy);
-        state.apply_batch_immediate(
-            batch(
-                Vec::new(),
-                vec![FillFact {
-                    order: (0, 77),
-                    owner: (0, 0),
-                    side: Side::Buy,
-                    price: 1_000,
-                    qty: 50,
-                    commission: 0,
-                    stamp_tax: 0,
-                    transfer_fee: 0,
-                }],
-            ),
-            1,
-            0,
-        );
+        state
+            .apply_batch_immediate(
+                batch(
+                    Vec::new(),
+                    vec![FillFact {
+                        order: (0, 77),
+                        owner: (0, 0),
+                        side: Side::Buy,
+                        price: 1_000,
+                        qty: 50,
+                        commission: 0,
+                        stamp_tax: 0,
+                        transfer_fee: 0,
+                    }],
+                ),
+                1,
+                0,
+            )
+            .expect("合法外来成交事实正常应用");
         // Sol 六审勘正：外来同键单成交=合法形态（意图路由/测试注入）——
         // 跳过不误挂（Ok 且余量不动），不再显式失败（原 Err 形态实测会
         // 杀死合法外来单的拍——sol7th_foreign 场景红证）。
@@ -8172,23 +8206,25 @@ mod sol_recheck3_tests {
         // 卖出扣除后（挂单在途）：在手 0；挂出时镜像加 200。
         std::sync::Arc::make_mut(&mut state.accounts[0]).shares[0] = 0;
         std::sync::Arc::make_mut(&mut state.accounts[0]).pending_sell_qty[0] = 200;
-        state.apply_batch_immediate(
-            batch(
-                Vec::new(),
-                vec![FillFact {
-                    order: (0, 5),
-                    owner: (0, 0),
-                    side: Side::Sell,
-                    price: 1_000,
-                    qty: 100,
-                    commission: 0,
-                    stamp_tax: 50,
-                    transfer_fee: 1,
-                }],
-            ),
-            1,
-            0,
-        );
+        state
+            .apply_batch_immediate(
+                batch(
+                    Vec::new(),
+                    vec![FillFact {
+                        order: (0, 5),
+                        owner: (0, 0),
+                        side: Side::Sell,
+                        price: 1_000,
+                        qty: 100,
+                        commission: 0,
+                        stamp_tax: 50,
+                        transfer_fee: 1,
+                    }],
+                ),
+                1,
+                0,
+            )
+            .expect("有效部分成交事实正常应用");
         state.apply_deferred().expect("本单部分成交正常推进");
         // session 镜像口径（fill 推进减 fill.qty）。
         assert_eq!(state.accounts[0].pending_sell_qty[0], 100, "镜像减成交部分");
@@ -8229,23 +8265,25 @@ mod sol_recheck3_tests {
         const CHARGE: i64 = 90_000 + 500 + 1;
         std::sync::Arc::make_mut(&mut state.accounts[0]).cash = 1_000_000 - PURSE0;
         std::sync::Arc::make_mut(&mut state.accounts[0]).buy_purse_held_cents = PURSE0;
-        state.apply_batch_immediate(
-            batch(
-                Vec::new(),
-                vec![FillFact {
-                    order: (0, 5),
-                    owner: (0, 0),
-                    side: Side::Buy,
-                    price: 900,
-                    qty: 100,
-                    commission: 500,
-                    stamp_tax: 0,
-                    transfer_fee: 1,
-                }],
-            ),
-            1,
-            0,
-        );
+        state
+            .apply_batch_immediate(
+                batch(
+                    Vec::new(),
+                    vec![FillFact {
+                        order: (0, 5),
+                        owner: (0, 0),
+                        side: Side::Buy,
+                        price: 900,
+                        qty: 100,
+                        commission: 500,
+                        stamp_tax: 0,
+                        transfer_fee: 1,
+                    }],
+                ),
+                1,
+                0,
+            )
+            .expect("有效部分成交事实正常应用");
         state.apply_deferred().expect("本单部分成交正常推进");
         let face = cash_with_pending_at(&state.accounts[0]);
         assert_eq!(
@@ -8388,29 +8426,31 @@ mod sol_recheck3_tests {
         std::sync::Arc::make_mut(&mut state.accounts[0]).pending_sell_qty[0] = 200;
         // desk 拒收形态：RefundedShares（卖单原路退回）+ Closed 与回执
         // 同批（reject() 三件套）。
-        state.apply_batch_immediate(
-            DeskBatch {
-                repurchase: Vec::new(),
-                stock: 0,
-                tick: 1,
-                round: 0,
-                entities: vec![
-                    Entity::RefundedShares { local: 0, qty: 200 },
-                    Entity::Closed {
-                        local: 0,
-                        order_serial: 43,
-                    },
-                ],
-                fills: Vec::new(),
-                receipts: vec![crate::runtime::DeskReceipt {
-                    order: (0, 43),
-                    owner: (0, 0),
-                    kind: crate::runtime::ReceiptKind::PriceOutOfBand,
-                }],
-            },
-            1,
-            0,
-        );
+        state
+            .apply_batch_immediate(
+                DeskBatch {
+                    repurchase: Vec::new(),
+                    stock: 0,
+                    tick: 1,
+                    round: 0,
+                    entities: vec![
+                        Entity::RefundedShares { local: 0, qty: 200 },
+                        Entity::Closed {
+                            local: 0,
+                            order_serial: 43,
+                        },
+                    ],
+                    fills: Vec::new(),
+                    receipts: vec![crate::runtime::DeskReceipt {
+                        order: (0, 43),
+                        owner: (0, 0),
+                        kind: crate::runtime::ReceiptKind::PriceOutOfBand,
+                    }],
+                },
+                1,
+                0,
+            )
+            .expect("未受理票的拒收回执正常应用");
         state.apply_deferred().expect("未受理票的拒收回执正常释放");
         assert!(
             !state.child_in_flight.contains_key(&key),
@@ -8432,17 +8472,17 @@ mod sol_recheck1_tests {
     /// 优先级决定谁挂出子单（NewOpportunity=2 让位 ExistingPlan=1，
     /// 平手按信心倒序）。
     fn competing_plans_state() -> GroupState {
-        let mut state = GroupState::new(
-            0,
-            vec![GroupAccount::new(120_000, 2)],
-            8,
-            100,
-            std::sync::Arc::new(crate::config::GameConfig::proposed_defaults()),
-            240,
-            None,
-            Vec::new(),
-            Box::new(|_t, _r| TickPlan::default()),
-        );
+        let mut state = GroupState::new(GroupSetup {
+            group: 0,
+            accounts: vec![GroupAccount::new(120_000, 2)],
+            chunk: 8,
+            lot: 100,
+            config: std::sync::Arc::new(crate::config::GameConfig::proposed_defaults()),
+            ticks_per_day: 240,
+            decision: None,
+            plans: Vec::new(),
+            script: Box::new(|_t, _r| TickPlan::default()),
+        });
         let account = crate::AccountId(9);
         let chain_params = crate::strategy::BeliefChainParams {
             position_step_bp: 1_000,
@@ -8671,17 +8711,17 @@ mod eager_domain_tests {
         a1.shares[2] = 80;
         a1.buy_purse_held_cents = 60_000;
         a1.ever_held[0] = true;
-        GroupState::new(
-            0,
-            vec![a0, a1],
-            8,
-            100,
-            Arc::new(crate::config::GameConfig::proposed_defaults()),
-            240,
-            None,
-            Vec::new(),
-            Box::new(|_t, _r| TickPlan::default()),
-        )
+        GroupState::new(GroupSetup {
+            group: 0,
+            accounts: vec![a0, a1],
+            chunk: 8,
+            lot: 100,
+            config: Arc::new(crate::config::GameConfig::proposed_defaults()),
+            ticks_per_day: 240,
+            decision: None,
+            plans: Vec::new(),
+            script: Box::new(|_t, _r| TickPlan::default()),
+        })
     }
 
     /// 卖腿成交事实（owner=组 0 位 0；经历转移/成本基的 Sell 路径素材）。
@@ -9007,17 +9047,17 @@ mod seal_failed_injection_tests {
         let capture = Arc::new(Mutex::new(
             crate::verification_evidence::current_phase_timing_binding(),
         ));
-        let mut state = GroupState::new(
-            0,
-            vec![GroupAccount::new(1_000_000, 1)],
-            8,
-            100,
-            Arc::new(crate::config::GameConfig::proposed_defaults()),
-            240,
-            None,
-            Vec::new(),
-            Box::new(|_t, _r| TickPlan::default()),
-        );
+        let mut state = GroupState::new(GroupSetup {
+            group: 0,
+            accounts: vec![GroupAccount::new(1_000_000, 1)],
+            chunk: 8,
+            lot: 100,
+            config: Arc::new(crate::config::GameConfig::proposed_defaults()),
+            ticks_per_day: 240,
+            decision: None,
+            plans: Vec::new(),
+            script: Box::new(|_t, _r| TickPlan::default()),
+        });
         state.cur_tick = 1;
         state.cur_round = 0;
         let handle = {
@@ -9031,14 +9071,16 @@ mod seal_failed_injection_tests {
                     state,
                     vec![_desk_tx],
                     group_rx,
-                    up_tx,
-                    abort,
-                    shutdown_flag,
-                    crate::runtime::watchdog::WatchdogConfig {
-                        normal: std::time::Duration::from_secs(30),
-                        long: std::time::Duration::from_secs(120),
+                    crate::runtime::worker_context::WorkerContext {
+                        up_tx,
+                        abort,
+                        shutdown: shutdown_flag,
+                        watchdog: crate::runtime::watchdog::WatchdogConfig {
+                            normal: std::time::Duration::from_secs(30),
+                            long: std::time::Duration::from_secs(120),
+                        },
+                        capture,
                     },
-                    capture,
                 )
             })
         };
@@ -9085,17 +9127,17 @@ mod seal_failed_injection_tests {
         let capture = Arc::new(Mutex::new(
             crate::verification_evidence::current_phase_timing_binding(),
         ));
-        let mut state = GroupState::new(
-            0,
-            vec![GroupAccount::new(1_000_000, 1)],
-            8,
-            100,
-            Arc::new(crate::config::GameConfig::proposed_defaults()),
-            240,
-            None,
-            Vec::new(),
-            Box::new(|_t, _r| TickPlan::default()),
-        );
+        let mut state = GroupState::new(GroupSetup {
+            group: 0,
+            accounts: vec![GroupAccount::new(1_000_000, 1)],
+            chunk: 8,
+            lot: 100,
+            config: Arc::new(crate::config::GameConfig::proposed_defaults()),
+            ticks_per_day: 240,
+            decision: None,
+            plans: Vec::new(),
+            script: Box::new(|_t, _r| TickPlan::default()),
+        });
         state.cur_tick = 1;
         state.cur_round = 0;
         // 先入队 Seal（匹配 cur_tick/cur_round——进入 drain），紧随真外来
@@ -9120,14 +9162,16 @@ mod seal_failed_injection_tests {
                     state,
                     vec![_desk_tx],
                     group_rx,
-                    up_tx,
-                    abort,
-                    shutdown_flag,
-                    crate::runtime::watchdog::WatchdogConfig {
-                        normal: std::time::Duration::from_secs(30),
-                        long: std::time::Duration::from_secs(120),
+                    crate::runtime::worker_context::WorkerContext {
+                        up_tx,
+                        abort,
+                        shutdown: shutdown_flag,
+                        watchdog: crate::runtime::watchdog::WatchdogConfig {
+                            normal: std::time::Duration::from_secs(30),
+                            long: std::time::Duration::from_secs(120),
+                        },
+                        capture,
                     },
-                    capture,
                 )
             })
         };
@@ -9210,17 +9254,17 @@ mod roster_offset_tests {
         let mine = crate::AccountId(9);
         let other = crate::AccountId(7);
         let code = crate::StockId(0);
-        let mut state = GroupState::new(
-            1,
-            vec![GroupAccount::new(10_000_000, 1)],
-            8,
-            100,
-            std::sync::Arc::new(crate::config::GameConfig::proposed_defaults()),
-            240,
-            None,
-            Vec::new(),
-            Box::new(|_t, _r| TickPlan::default()),
-        );
+        let mut state = GroupState::new(GroupSetup {
+            group: 1,
+            accounts: vec![GroupAccount::new(10_000_000, 1)],
+            chunk: 8,
+            lot: 100,
+            config: std::sync::Arc::new(crate::config::GameConfig::proposed_defaults()),
+            ticks_per_day: 240,
+            decision: None,
+            plans: Vec::new(),
+            script: Box::new(|_t, _r| TickPlan::default()),
+        });
         // 本组在全局名册的偏移=1（组 1）。
         state.roster_offset = 1;
         state.root_projection = Some(std::sync::Arc::new(crate::runtime::world::RootProjection {
@@ -9440,6 +9484,7 @@ mod admin_funds_cost;
 #[cfg(test)]
 mod origin_consumer_tests;
 
+#[cfg(test)]
 mod repurchase_funds_candidate;
 
 mod admin_repurchase_funds;

@@ -25,7 +25,7 @@ use super::{
     session_fact_producers::adapt_account_validation_rejection_facts,
     stock_stream::{
         continuous_shards, detached_continuous_shard, drive_stock_stream_with_feedback,
-        finish_market_shards_with_calendar,
+        finish_market_shards_with_calendar, StockStreamInitialBatch,
     },
     AccountValidatorDriver, CandidateValidationOutcome, EnvelopeReceipt, IntentCandidate,
     IntentCandidateBatch, PhaseInput, StepFatal, TickShadowPlan,
@@ -434,8 +434,10 @@ fn apply_session_market_transaction(
     let stock_execution = drive_stock_stream_with_feedback(
         &compute,
         stock_execution,
-        initial,
-        expected,
+        StockStreamInitialBatch {
+            operations: initial,
+            expected,
+        },
         notifications,
         |code| detached_continuous_shard(code, phase),
         match_continuous_feedback,

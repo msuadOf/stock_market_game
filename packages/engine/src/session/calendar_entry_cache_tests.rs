@@ -1,9 +1,8 @@
 //! V1 工作草案：真实入口Calendar前置、cache提交与派生域排除；已安装；未编译/运行。
 //! 计数只接到真实 freeze/take/Start/Drain 发送前，默认关闭且仅 caller 线程 scope 生效。
 use super::*;
-#[path = "../runtime/calendar_public_restore_fixture.rs"]
-mod fixture;
 use crate::calendar::CalendarExchange;
+use crate::runtime::calendar_public_restore_fixture as fixture;
 use crate::session::protocol::ProtocolSession;
 use std::cell::Cell;
 use std::sync::Arc;

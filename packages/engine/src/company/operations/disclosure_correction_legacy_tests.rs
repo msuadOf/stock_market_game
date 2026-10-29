@@ -1,6 +1,4 @@
 use super::*;
-#[path = "../disclosure_correction_test_fixture.rs"]
-mod fixture;
 use crate::accounting::closing::{ClosingEngine, CorrectionRequest};
 use crate::accounting::consolidation::{MemberId, ScopeId};
 use crate::accounting::reports::ReportKind;
@@ -9,6 +7,7 @@ use crate::accounting::{
     JournalLine, LedgerAccountId, PostingSide,
 };
 use crate::calendar::CivilInstant;
+use crate::company::disclosure_correction_test_fixture as fixture;
 use crate::information::{
     AccountingPolicyRef, MonthlyReportDelay, MonthlyReportSchedule, PublicLibrary,
     PublicationOrigin, PublicationRequest,

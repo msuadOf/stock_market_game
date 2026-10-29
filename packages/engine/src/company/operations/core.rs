@@ -157,6 +157,7 @@ pub struct CompanyOperations {
 }
 
 impl CompanyOperations {
+    #[cfg(test)]
     pub(crate) fn correct_company_report_for_session(
         &mut self,
         id: &CompanyId,
@@ -558,6 +559,7 @@ impl CompanyOperations {
 }
 
 /// 单次 Legacy owner 更正的只读基线与正式操作请求。
+#[cfg(test)]
 pub(crate) struct LegacyDisclosureCorrectionCtx<'a> {
     pub closing: &'a crate::accounting::closing::ClosingEngine,
     pub base: &'a crate::information::PublicLibrary,
@@ -587,6 +589,7 @@ impl<'a> PreparedLegacyDisclosureCorrection<'a> {
     ) -> &crate::company::report_correction::ConfirmedDisclosureCorrections<'a> {
         &self.proof
     }
+    #[cfg(test)]
     pub(crate) fn into_source(
         self,
     ) -> (CompanyOperations, crate::accounting::closing::ClosingEngine) {
@@ -595,6 +598,7 @@ impl<'a> PreparedLegacyDisclosureCorrection<'a> {
 }
 
 impl CompanyOperations {
+    #[cfg(test)]
     pub(crate) fn prepare_disclosure_correction<'a>(
         &self,
         company: &CompanyId,

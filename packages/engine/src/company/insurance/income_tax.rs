@@ -40,6 +40,7 @@ impl InsuranceBooks {
         self.income_tax_position.restatements()
     }
 
+    #[cfg(test)]
     pub(crate) fn income_tax_owner(&self) -> (&Books, &IncomeTaxPosition, &IncomeTaxPolicy, u64) {
         (
             &self.books,
@@ -49,6 +50,7 @@ impl InsuranceBooks {
         )
     }
 
+    #[cfg(test)]
     pub(crate) fn install_income_tax_owner(
         &mut self,
         books: Books,

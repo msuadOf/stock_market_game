@@ -149,6 +149,7 @@ impl AdaptivePlanChainCoordinator {
     }
 
     /// T5（Sol 终裁·完成边界见证）：root 源排空断言（委托 roots 批）。
+    #[cfg(test)]
     pub(super) fn roots_source_drained(&self) -> bool {
         self.roots.roots_source_drained()
     }

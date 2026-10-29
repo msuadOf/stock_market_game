@@ -8,8 +8,7 @@ use fixture::*;
 use std::sync::Arc;
 use std::time::Duration;
 
-#[path = "../../information_fixture.rs"]
-mod fixture;
+use crate::runtime::information_fixture as fixture;
 
 fn world() -> World {
     let ids = [11, 37, 51, 79, 113].map(AccountId);

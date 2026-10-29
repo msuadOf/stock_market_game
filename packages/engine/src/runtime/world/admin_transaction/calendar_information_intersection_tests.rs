@@ -1,14 +1,13 @@
 //! V10 工作草案：真实 Calendar mask 与既有 INFO/Admin 机制交集。
 //! 应作为 world::admin_transaction 后代模块注册；不冒生产 civil dispatcher 验收。
 use super::*;
-#[path = "../../information_fixture.rs"]
-mod fixture;
 use crate::calendar::{
     CalendarExchange, CalendarPolicy, CivilDate, CivilInstant, OfficialCoverageEntry,
     TradingCalendar,
 };
 use crate::observation::information_clock::InformationTradingAnchor;
 use crate::runtime::group::TickPlan;
+use crate::runtime::information_fixture as fixture;
 use crate::runtime::protocol::{InformationObservation, InformationPreparePayload};
 use crate::runtime::skeleton_tests::basic_spec;
 use crate::{AccountId, StockExchange, StockId};

@@ -954,7 +954,7 @@ impl GameSession {
     }
 
     /// 协调逻辑在调用线程；各并行 burst 经会话上下文进入其池（架构项 14）。
-    pub(crate) fn step_on_context(
+    pub(super) fn step_on_context(
         &mut self,
         capture_commit_evidence: bool,
     ) -> Result<super::pipeline::AuthoritativeTickCommit, StepFatal> {
@@ -1551,7 +1551,7 @@ impl GameSession {
     /// `capture_decision_chain_roots` 的能力探针：只有暴露链参数的信念
     /// 机构策略进链（retail 位无 frozen policy——误投影导致 observe
     /// panic，D3a-3 接线显红后收口）。
-    pub fn runtime_personal_states(
+    pub(crate) fn runtime_personal_states(
         &self,
     ) -> std::collections::BTreeMap<
         crate::AccountId,

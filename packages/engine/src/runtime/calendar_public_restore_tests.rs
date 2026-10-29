@@ -1,8 +1,7 @@
 //! V12：真实 mixed 日结后严格 SaveSlot restore 与下一复市日续行。
 //! direct-engine GameSession 公共API；合成休市不代表官方未来安排。
 
-#[path = "calendar_public_restore_fixture.rs"]
-mod fixture;
+use crate::runtime::calendar_public_restore_fixture as fixture;
 
 use crate::calendar::CalendarExchange;
 use crate::session::{MarketHistoryAvailability, MarketHistoryRequest};

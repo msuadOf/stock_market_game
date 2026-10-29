@@ -267,8 +267,8 @@ pub(crate) use observation_clock::intraday_observation_second;
 pub(crate) use decision_chain::{
     buy_allocation_request, decide_plan_quote, exposed_stocks_shared, next_routable_buy_qty,
     next_routable_sell_qty, open_position_action, DecisionChainObservation,
-    InstitutionDecisionRoot, PlanLifecycleAction, PlanPersonalState, PlanQuoteInputs,
-    PlanRootDiagnostics, RootReadContext,
+    InstitutionDecisionRoot, OpenPositionAssessment, OpenPositionPolicy, PlanLifecycleAction,
+    PlanPersonalState, PlanQuoteInputs, PlanRootDiagnostics, RootReadContext,
 };
 // D3b 件 4：组线程复审宿主的共享类型面（trait+行为结构——两宿主实现
 // 同一 trait，行为不得分叉）。

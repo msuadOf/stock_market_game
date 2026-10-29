@@ -4,14 +4,13 @@ use super::*;
 use crate::company::{CompanyId, CompanyKind, CompanyReadFacts};
 use crate::plans::{PlanId, RepurchaseExecutionStatus};
 use crate::runtime::desk::repurchase_group_fixture::SourceDesk;
+use crate::runtime::information_fixture as fixture;
 use crate::runtime::protocol::{
     AdminPlanReference, AdminTreasuryBinding, RepurchaseExecutionProjection,
     RepurchaseMaterialRestriction, RepurchaseProjectionInput,
 };
 use crate::runtime::{RepurchaseRequestKey, RepurchaseSourceKind};
 use crate::{AccountId, StockId};
-#[path = "../../information_fixture.rs"]
-mod fixture;
 
 const FUNDING: i64 = 1_000_000;
 const ACCOUNT: AccountId = AccountId(79);
@@ -71,17 +70,17 @@ fn state(price: i64, qty: u32) -> (GroupState, SourceDesk, RepurchaseRequestKey,
         )
         .unwrap();
     let desk = SourceDesk::new(Arc::clone(&config), Arc::clone(&calendar));
-    let mut state = GroupState::new(
-        1,
-        vec![GroupAccount::new(0, 4); 2],
-        8,
-        100,
-        Arc::clone(&config),
-        100,
-        None,
-        Vec::new(),
-        Box::new(|_, _| TickPlan::default()),
-    );
+    let mut state = GroupState::new(super::GroupSetup {
+        group: 1,
+        accounts: vec![GroupAccount::new(0, 4); 2],
+        chunk: 8,
+        lot: 100,
+        config: Arc::clone(&config),
+        ticks_per_day: 100,
+        decision: None,
+        plans: Vec::new(),
+        script: Box::new(|_, _| TickPlan::default()),
+    });
     let facts = Arc::new(
         CompanyReadFacts::new(
             (0..4)

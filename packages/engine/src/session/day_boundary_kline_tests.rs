@@ -146,30 +146,63 @@ fn desk_day0_candle(
     (time, o, h, l, c, v, turnover, count)
 }
 
-/// 日 K 逐位断言（量/额/笔/OHLC——三面共用的期望形态）。
-#[track_caller]
-fn assert_day_k(
-    context: &str,
+/// 日 K 断言使用具名期望字段，逐项核对成交与 OHLC。
+struct ExpectedDayK {
+    context: &'static str,
     volume: u64,
-    turnover: i64,
+    turnover_cents: i64,
     trade_count: u64,
-    o: i64,
-    h: i64,
-    l: i64,
-    c: i64,
-    candle: &crate::session::DailyCandle,
-) {
-    assert_eq!(candle.volume, volume, "{context}: volume");
+    open_cents: i64,
+    high_cents: i64,
+    low_cents: i64,
+    close_cents: i64,
+}
+
+#[track_caller]
+fn assert_day_k(expected: ExpectedDayK, candle: &crate::session::DailyCandle) {
+    assert_eq!(
+        candle.volume, expected.volume,
+        "{}: volume",
+        expected.context
+    );
     let stats = candle
         .trade_stats
         .as_ref()
-        .unwrap_or_else(|| panic!("{context}: 日 K 必带成交统计"));
-    assert_eq!(stats.turnover_cents, turnover as u64, "{context}: turnover");
-    assert_eq!(stats.trade_count, trade_count, "{context}: trade_count");
-    assert_eq!(candle.open.cents(), o, "{context}: open");
-    assert_eq!(candle.high.cents(), h, "{context}: high");
-    assert_eq!(candle.low.cents(), l, "{context}: low");
-    assert_eq!(candle.close.cents(), c, "{context}: close");
+        .unwrap_or_else(|| panic!("{}: 日 K 必带成交统计", expected.context));
+    assert_eq!(
+        stats.turnover_cents, expected.turnover_cents as u64,
+        "{}: turnover",
+        expected.context
+    );
+    assert_eq!(
+        stats.trade_count, expected.trade_count,
+        "{}: trade_count",
+        expected.context
+    );
+    assert_eq!(
+        candle.open.cents(),
+        expected.open_cents,
+        "{}: open",
+        expected.context
+    );
+    assert_eq!(
+        candle.high.cents(),
+        expected.high_cents,
+        "{}: high",
+        expected.context
+    );
+    assert_eq!(
+        candle.low.cents(),
+        expected.low_cents,
+        "{}: low",
+        expected.context
+    );
+    assert_eq!(
+        candle.close.cents(),
+        expected.close_cents,
+        "{}: close",
+        expected.context
+    );
 }
 
 /// 场景一（占位/全丢形态）：全日仅收盘竞价成交——install 面旧提交
@@ -182,7 +215,19 @@ fn closing_only_trades_reach_day_kline_and_receipts() {
 
     // install 面：日 0 K = 收盘段真实值（量 200/额 200000/笔 2/OHLC 1000）。
     let install = install_day0_candle(&session);
-    assert_day_k("install", 200, 200_000, 2, 1000, 1000, 1000, 1000, &install);
+    assert_day_k(
+        ExpectedDayK {
+            context: "install",
+            volume: 200,
+            turnover_cents: 200_000,
+            trade_count: 2,
+            open_cents: 1000,
+            high_cents: 1000,
+            low_cents: 1000,
+            close_cents: 1000,
+        },
+        &install,
+    );
     // desk 面：归档 K 与 install 面 逐位一致（desk 侧 K 无时间戳——
     // 投影 time 恒 0，量/额/笔/OHLC 为对账面）。
     let (_, o, h, l, c, v, _turnover, _count) = desk_day0_candle(&mut driver);
@@ -204,14 +249,16 @@ fn closing_only_trades_reach_day_kline_and_receipts() {
         .get(&StockId(0))
         .expect("DayBoundary 必含股 0 日 K");
     assert_day_k(
-        "DayBoundary",
-        200,
-        200_000,
-        2,
-        1000,
-        1000,
-        1000,
-        1000,
+        ExpectedDayK {
+            context: "DayBoundary",
+            volume: 200,
+            turnover_cents: 200_000,
+            trade_count: 2,
+            open_cents: 1000,
+            high_cents: 1000,
+            low_cents: 1000,
+            close_cents: 1000,
+        },
         event_candle,
     );
     // 保留快照：日 0 bars 总量=200，含 900（收盘竞价）桶。
@@ -295,7 +342,19 @@ fn intraday_plus_closing_day_kline_matches_bars_and_desk() {
     );
     // install 面：日内 300 + 收盘 200。
     let install = install_day0_candle(&session);
-    assert_day_k("install", 500, 500_000, 5, 1000, 1000, 1000, 1000, &install);
+    assert_day_k(
+        ExpectedDayK {
+            context: "install",
+            volume: 500,
+            turnover_cents: 500_000,
+            trade_count: 5,
+            open_cents: 1000,
+            high_cents: 1000,
+            low_cents: 1000,
+            close_cents: 1000,
+        },
+        &install,
+    );
     // desk 面 逐位一致（desk 侧 K 无时间戳——量/额/笔/OHLC 对账）。
     let (_, o, h, l, c, v, _turnover, _count) = desk_day0_candle(&mut driver);
     assert_eq!((o, h, l, c, v), (1000, 1000, 1000, 1000, 500));
@@ -311,14 +370,16 @@ fn intraday_plus_closing_day_kline_matches_bars_and_desk() {
         })
         .expect("DayBoundary");
     assert_day_k(
-        "DayBoundary",
-        500,
-        500_000,
-        5,
-        1000,
-        1000,
-        1000,
-        1000,
+        ExpectedDayK {
+            context: "DayBoundary",
+            volume: 500,
+            turnover_cents: 500_000,
+            trade_count: 5,
+            open_cents: 1000,
+            high_cents: 1000,
+            low_cents: 1000,
+            close_cents: 1000,
+        },
         boundary.get(&StockId(0)).expect("股 0 日 K"),
     );
     // 保留快照：bars 总量=500 与日 K 逐位（冻结对账在全对账分支通过）。
@@ -385,25 +446,29 @@ fn second_day_boundary_keeps_days_independent() {
     // install 面：末条=日 1 终 K；其前=日 0 终 K（不被覆盖）。
     let hist = session.candle_book_histories_for_runtime(&StockId(0));
     assert_day_k(
-        "install 日 1",
-        400,
-        400_000,
-        4,
-        1000,
-        1000,
-        1000,
-        1000,
+        ExpectedDayK {
+            context: "install 日 1",
+            volume: 400,
+            turnover_cents: 400_000,
+            trade_count: 4,
+            open_cents: 1000,
+            high_cents: 1000,
+            low_cents: 1000,
+            close_cents: 1000,
+        },
         hist.last().expect("日 1 K"),
     );
     assert_day_k(
-        "install 日 0",
-        200,
-        200_000,
-        2,
-        1000,
-        1000,
-        1000,
-        1000,
+        ExpectedDayK {
+            context: "install 日 0",
+            volume: 200,
+            turnover_cents: 200_000,
+            trade_count: 2,
+            open_cents: 1000,
+            high_cents: 1000,
+            low_cents: 1000,
+            close_cents: 1000,
+        },
         &hist[hist.len() - 2],
     );
     // 日 2 活动 K 零量（第二日收盘段不跨日残留）。
@@ -442,7 +507,19 @@ fn closing_only_candle_opens_at_clearing_price_not_anchor() {
             .unwrap_or_else(|e| panic!("tick{t} 步进失败：{e}"));
     }
     let install = install_day0_candle(&session);
-    assert_day_k("install", 200, 201_000, 2, 1005, 1005, 1005, 1005, &install);
+    assert_day_k(
+        ExpectedDayK {
+            context: "install",
+            volume: 200,
+            turnover_cents: 201_000,
+            trade_count: 2,
+            open_cents: 1005,
+            high_cents: 1005,
+            low_cents: 1005,
+            close_cents: 1005,
+        },
+        &install,
+    );
     // 次日昨收=官方收盘价 1005（涨跌停基准随 reroll 归正——读面抽查）。
     let views = driver.world_public_views();
     assert!(

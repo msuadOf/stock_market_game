@@ -2,26 +2,25 @@
 use super::*;
 use crate::company::CompanyId;
 use crate::plans::{PlanId, RepurchaseExecutionOpen};
+use crate::runtime::information_fixture as fixture;
 use crate::runtime::protocol::{
     AdminPlanReference, AdminTreasuryBinding, RepurchaseExecutionProjection,
     RepurchaseMaterialRestriction, RepurchaseProjectionInput,
 };
 use crate::{AccountId, Money, StockId};
-#[path = "../../information_fixture.rs"]
-mod fixture;
 
 fn fixture_state() -> GroupState {
-    let mut state = GroupState::new(
-        1,
-        vec![GroupAccount::new(0, 2); 2],
-        8,
-        100,
-        Arc::new(GameConfig::proposed_defaults()),
-        100,
-        None,
-        Vec::new(),
-        Box::new(|_, _| TickPlan::default()),
-    );
+    let mut state = GroupState::new(super::GroupSetup {
+        group: 1,
+        accounts: vec![GroupAccount::new(0, 2); 2],
+        chunk: 8,
+        lot: 100,
+        config: Arc::new(GameConfig::proposed_defaults()),
+        ticks_per_day: 100,
+        decision: None,
+        plans: Vec::new(),
+        script: Box::new(|_, _| TickPlan::default()),
+    });
     state.bind_calendar(fixture::calendar_source(), fixture::calendar_bindings());
     state.root_projection = Some(fixture::projection(
         [11, 37, 51, 79, 113].map(AccountId).to_vec(),

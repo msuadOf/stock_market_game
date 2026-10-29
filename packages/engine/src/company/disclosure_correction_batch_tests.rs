@@ -1,6 +1,5 @@
 use super::*;
-#[path = "disclosure_correction_test_fixture.rs"]
-mod fixture;
+use crate::company::disclosure_correction_test_fixture as fixture;
 use crate::company::report_correction::{
     DisclosureCorrectionPrepareError, DisclosureCorrectionProofError,
 };

@@ -21,16 +21,8 @@ pub(in crate::session) struct ReadOnlyStart {
         Option<Result<BTreeMap<StockId, IncrementalContinuousStockCoordinator>, StepFatal>>,
 }
 
-// T3（ADR-0042 §T3）：SpeculativePrepareStash 与投机命中/未中计数器删除
+// T3（ADR-0042 §T3）：SpeculativePrepareStash 与投机命中/未中计数器已删除
 // （commit tail 生产块已退役；非投机快速路径保留——can_prepare/prepare）。
-static INLINE_PREPARE_CALLS: std::sync::atomic::AtomicUsize =
-    std::sync::atomic::AtomicUsize::new(0);
-
-/// 内联准备调用计数（cfg(test)，验证非投机路径按需现算）。
-#[cfg(test)]
-pub(in crate::session::pipeline) fn inline_prepare_calls() -> usize {
-    INLINE_PREPARE_CALLS.load(std::sync::atomic::Ordering::SeqCst)
-}
 #[derive(Clone, Copy)]
 pub(super) enum StartWork {
     ProjectedRow,
@@ -49,8 +41,6 @@ pub(super) fn can_prepare(session: &GameSession) -> bool {
 }
 
 pub(super) fn prepare(session: &GameSession) -> ReadOnlyStart {
-    #[cfg(test)]
-    INLINE_PREPARE_CALLS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     prepare_with_observer(session, |_| {})
 }
 

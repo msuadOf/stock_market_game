@@ -22,6 +22,15 @@ pub(super) struct InformationObservationSignature {
         BTreeMap<LocalIdx, (crate::AccountId, std::collections::BTreeSet<crate::StockId>)>,
 }
 
+/// 单次 Prepare 的行政写集与认证信息；Commit/Abort 仍传入原空输入。
+pub(super) struct AdminPrepareInput {
+    pub(super) operations: Vec<AdminOperation>,
+    pub(super) stage_layout: Option<crate::runtime::protocol::AdminStageLayout>,
+    pub(super) information: Option<crate::runtime::protocol::InformationPreparePayload>,
+    pub(super) information_clock: Option<crate::runtime::world::AuthenticatedInformationClock>,
+    pub(super) repurchase: Option<Vec<crate::runtime::protocol::RepurchaseProjectionInput>>,
+}
+
 /// 只保留 touched 账户前值，不借用有 i32 股数差额的普通日志。
 pub(super) struct PendingAdmin {
     id: AdminTransactionId,
@@ -364,6 +373,7 @@ impl GroupState {
             .ok_or_else(|| invalid("组缺少 current CompanyReadFacts"))
     }
 
+    #[cfg(test)]
     fn prepare_admin(
         &mut self,
         id: AdminTransactionId,
@@ -387,6 +397,7 @@ impl GroupState {
         self.prepare_admin_with_information_clock(id, operations, information, proof)
     }
 
+    #[cfg(test)]
     fn prepare_admin_with_information_clock(
         &mut self,
         id: AdminTransactionId,
@@ -413,6 +424,7 @@ impl GroupState {
         self.prepare_admin_scope_with_clock(id, operations, information, repurchase, proof)
     }
 
+    #[cfg(test)]
     fn prepare_admin_scope_with_clock(
         &mut self,
         id: AdminTransactionId,
@@ -644,14 +656,17 @@ impl GroupState {
         &mut self,
         id: AdminTransactionId,
         phase: AdminPhase,
-        operations: Vec<AdminOperation>,
-        stage_layout: Option<crate::runtime::protocol::AdminStageLayout>,
-        information: Option<crate::runtime::protocol::InformationPreparePayload>,
-        information_clock: Option<super::super::world::AuthenticatedInformationClock>,
-        repurchase: Option<Vec<crate::runtime::protocol::RepurchaseProjectionInput>>,
+        input: AdminPrepareInput,
         up: &Sender<UpMsg>,
         who: super::super::protocol::WorkerId,
     ) -> bool {
+        let AdminPrepareInput {
+            operations,
+            stage_layout,
+            information,
+            information_clock,
+            repurchase,
+        } = input;
         #[cfg(test)]
         let fault = if self.admin_fault.as_ref().is_some_and(|(p, _)| *p == phase) {
             self.admin_fault.take().map(|(_, f)| f)
@@ -983,17 +998,17 @@ mod tests {
     fn state() -> GroupState {
         let mut a = GroupAccount::new(1_000_000, 1);
         a.shares[0] = 1000;
-        GroupState::new(
-            0,
-            vec![a],
-            8,
-            100,
-            Arc::new(GameConfig::proposed_defaults()),
-            100,
-            None,
-            Vec::new(),
-            Box::new(|_, _| TickPlan::default()),
-        )
+        GroupState::new(GroupSetup {
+            group: 0,
+            accounts: vec![a],
+            chunk: 8,
+            lot: 100,
+            config: Arc::new(GameConfig::proposed_defaults()),
+            ticks_per_day: 100,
+            decision: None,
+            plans: Vec::new(),
+            script: Box::new(|_, _| TickPlan::default()),
+        })
     }
     fn credit() -> Vec<AdminOperation> {
         vec![AdminOperation::CashDividend {

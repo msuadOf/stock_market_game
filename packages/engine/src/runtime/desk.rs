@@ -22,7 +22,7 @@ use super::protocol::{
     DeskBatch, DeskIn, DeskMsg, DeskReport, RoutedPrice, RuntimeError, UpMsg, WorkerId,
 };
 use super::type_aliases::CandleProjection;
-use super::watchdog::{worker_recv, WatchdogConfig};
+use super::watchdog::worker_recv;
 use super::{DeskReceipt, Entity, FillFact, OrderRef, Owner, ReceiptKind, StockIdx};
 use crate::config::GameConfig;
 use crate::money::Money;
@@ -31,7 +31,7 @@ use crate::orderbook::auction_clearing::{select_clearing, ClearingOrder};
 use crate::orderbook::Side;
 use crate::StockExchange;
 use std::collections::{BTreeMap, VecDeque};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::Ordering;
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::Arc;
 mod repurchase;
@@ -1251,7 +1251,6 @@ impl DeskState {
         // 相位门禁：盘前拒收；竞价阶段只收限价。
         if phase == DeskPhase::PreOpen {
             self.reject(
-                tick,
                 owner,
                 side,
                 qty,
@@ -1264,7 +1263,6 @@ impl DeskState {
         if phase == DeskPhase::CallAuction || phase == DeskPhase::ClosingAuction {
             if is_market {
                 self.reject(
-                    tick,
                     owner,
                     side,
                     qty,
@@ -1291,7 +1289,6 @@ impl DeskState {
         }
         if qty > cap {
             self.reject(
-                tick,
                 owner,
                 side,
                 qty,
@@ -1304,7 +1301,6 @@ impl DeskState {
         // 买入整手（卖出零股一次性由组端校验——持仓知识在本组）。
         if side == Side::Buy && qty % self.config.lot_size != 0 {
             self.reject(
-                tick,
                 owner,
                 side,
                 qty,
@@ -1318,7 +1314,6 @@ impl DeskState {
         let (price, rest_remainder) = self.resolve_price(rp, side, tick)?;
         if price <= 0 || price % 1 != 0 {
             self.reject(
-                tick,
                 owner,
                 side,
                 qty,
@@ -1346,7 +1341,7 @@ impl DeskState {
             } else {
                 ReceiptKind::PriceOutOfBand
             };
-            self.reject(tick, owner, side, qty, purse, kind, repurchase)?;
+            self.reject(owner, side, qty, purse, kind, repurchase)?;
             return Ok(());
         }
         if purse < 0 || (side == Side::Sell && purse != 0) {
@@ -2387,7 +2382,6 @@ impl DeskState {
     /// 受理拒绝：实体原路退回 + 回执（被拒单消耗序号）。
     fn reject(
         &mut self,
-        _tick: u64,
         owner: Owner,
         side: Side,
         qty: u32,
@@ -3411,18 +3405,21 @@ fn build_resting_facts(state: &DeskState) -> Vec<super::protocol::RestingFact> {
     orders
 }
 
-pub fn desk_main(
+pub(crate) fn desk_main(
     mut setup: DeskSetup,
     n_groups: usize,
     config: Arc<GameConfig>,
     rx: Receiver<DeskMsg>,
     group_txs: Vec<Sender<super::protocol::GroupIn>>,
-    up_tx: Sender<UpMsg>,
-    abort: Arc<AtomicBool>,
-    shutdown: Arc<AtomicBool>,
-    watchdog: WatchdogConfig,
-    capture: Arc<std::sync::Mutex<crate::verification_evidence::PhaseTimingBinding>>,
+    context: super::worker_context::WorkerContext,
 ) -> Result<(), RuntimeError> {
+    let super::worker_context::WorkerContext {
+        up_tx,
+        abort,
+        shutdown,
+        watchdog,
+        capture,
+    } = context;
     /// D4：消息处理期安装捕获绑定（无捕获零开销；上报在绑定释放后）。
     fn with_capture<R>(
         capture: &Arc<std::sync::Mutex<crate::verification_evidence::PhaseTimingBinding>>,

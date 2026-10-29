@@ -50,10 +50,10 @@ impl IndustrialBooks {
                         .iter()
                         .any(|line| line.account == source.account)
                 })
-                || !self
+                || self
                     .inventory()
                     .get(&source.item)
-                    .is_some_and(|item| item.account() == &source.account)
+                    .is_none_or(|item| item.account() != &source.account)
             {
                 return Err(IndustrialError::Accounting(
                     crate::accounting::AccountingError::ChartInvalid { detail },

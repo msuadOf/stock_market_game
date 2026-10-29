@@ -1088,6 +1088,7 @@ impl CompanySystem {
         }
         result
     }
+    #[cfg(test)]
     pub(crate) fn history(&self) -> &[SimpleDisclosureCandidate] {
         match &self.implementation {
             CompanyImplementation::Simple(state) => &state.history,

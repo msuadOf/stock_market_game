@@ -50,26 +50,26 @@ fn information_context_rejects_wrong_owner_missing_extra_and_same_position_varia
         InformationTradingAnchor::TradingDay { ordinal: 0 }
     );
     clock
-        .validate(
-            &owner,
-            &bindings,
-            clock.date(),
-            clock.layout(),
-            clock.input(),
-            clock.cutoff(),
-            &anchors,
-        )
+        .validate(ExpectedInformationClock {
+            source: &owner,
+            bindings: &bindings,
+            date: clock.date(),
+            layout: clock.layout(),
+            input: clock.input(),
+            through: clock.cutoff(),
+            anchors: &anchors,
+        })
         .unwrap();
     assert!(foreign
-        .validate(
-            &owner,
-            &bindings,
-            clock.date(),
-            clock.layout(),
-            clock.input(),
-            clock.cutoff(),
-            &anchors
-        )
+        .validate(ExpectedInformationClock {
+            source: &owner,
+            bindings: &bindings,
+            date: clock.date(),
+            layout: clock.layout(),
+            input: clock.input(),
+            through: clock.cutoff(),
+            anchors: &anchors,
+        })
         .is_err());
     for malformed in [
         {
@@ -92,15 +92,15 @@ fn information_context_rejects_wrong_owner_missing_extra_and_same_position_varia
         },
     ] {
         assert!(clock
-            .validate(
-                &owner,
-                &bindings,
-                clock.date(),
-                clock.layout(),
-                clock.input(),
-                clock.cutoff(),
-                &malformed
-            )
+            .validate(ExpectedInformationClock {
+                source: &owner,
+                bindings: &bindings,
+                date: clock.date(),
+                layout: clock.layout(),
+                input: clock.input(),
+                through: clock.cutoff(),
+                anchors: &malformed,
+            })
             .is_err());
     }
 }
@@ -111,15 +111,15 @@ fn information_context_rejects_later_through_and_receivers_different_real_progre
     let anchors = clock.anchors().unwrap();
     let late = CivilInstant::from_hms(clock.date(), 18, 0, 0).unwrap();
     assert!(clock
-        .validate(
-            &owner,
-            &bindings,
-            clock.date(),
-            clock.layout(),
-            clock.input(),
-            late,
-            &anchors
-        )
+        .validate(ExpectedInformationClock {
+            source: &owner,
+            bindings: &bindings,
+            date: clock.date(),
+            layout: clock.layout(),
+            input: clock.input(),
+            through: late,
+            anchors: &anchors,
+        })
         .is_err());
     let next_input = SharedClockInput {
         tick: 1,
@@ -127,15 +127,15 @@ fn information_context_rejects_later_through_and_receivers_different_real_progre
         progress: SharedDayProgress::Trading { completed_ticks: 1 },
     };
     assert!(clock
-        .validate(
-            &owner,
-            &bindings,
-            clock.date(),
-            clock.layout(),
-            next_input,
-            clock.cutoff(),
-            &anchors
-        )
+        .validate(ExpectedInformationClock {
+            source: &owner,
+            bindings: &bindings,
+            date: clock.date(),
+            layout: clock.layout(),
+            input: next_input,
+            through: clock.cutoff(),
+            anchors: &anchors,
+        })
         .is_err());
 }
 
@@ -189,14 +189,14 @@ fn real_mixed_calendar_projection_keeps_different_stock_ordinals() {
         InformationTradingAnchor::TradingDay { ordinal: 1 }
     );
     clock
-        .validate(
-            &source,
-            &bindings,
-            current,
+        .validate(ExpectedInformationClock {
+            source: &source,
+            bindings: &bindings,
+            date: current,
             layout,
             input,
-            clock.cutoff(),
-            &anchors,
-        )
+            through: clock.cutoff(),
+            anchors: &anchors,
+        })
         .unwrap();
 }

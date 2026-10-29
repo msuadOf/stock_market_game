@@ -788,24 +788,6 @@ impl CashDividendTaxBook {
     pub fn collections(&self) -> &[TaxCollectionReceipt] {
         &self.collections
     }
-    /// 拆股／缩股核减回执按事件身份查询（与日结回执同一幂等判定入口）。
-    pub(crate) fn redenomination_by_event(
-        &self,
-        event_id: &str,
-    ) -> Option<&TaxRedenominationReceipt> {
-        self.redenominations
-            .iter()
-            .find(|receipt| receipt.event_id == event_id)
-    }
-    /// 送股税基事实只读视图（供 Session 层勾稽与测试断言使用）。
-    pub(crate) fn stock_bonus_bases(&self) -> &[StockBonusTaxBasis] {
-        &self.stock_bonus_bases
-    }
-    pub(crate) fn stock_bonus_basis_by_event(&self, event_id: &str) -> Option<&StockBonusTaxBasis> {
-        self.stock_bonus_bases
-            .iter()
-            .find(|basis| basis.event_id == event_id)
-    }
     /// 按批次身份解析其取得日与税类：创建事实（日结回执 acquisition）永久留存，
     /// 优先于仍持有中的当前批次快照；两者都缺属结构损坏，显式失败。
     fn resolve_lot_facts(&self, lot_id: &str) -> Result<&DividendTaxLot, DividendTaxError> {
@@ -817,19 +799,9 @@ impl CashDividendTaxBook {
             .ok_or_else(|| invalid("tax lot facts cannot be resolved from day receipts"))
     }
 
-    pub(crate) fn receipt_by_event(&self, event_id: &str) -> Option<&TaxDayReceipt> {
-        self.days
-            .iter()
-            .find(|receipt| receipt.event_id == event_id)
-    }
     /// 日结回执只读视图（含同日续记的完整顺序），供 Session 层勾稽与测试断言使用。
     pub(crate) fn tax_day_receipts(&self) -> &[TaxDayReceipt] {
         &self.days
-    }
-    pub(crate) fn dividend_event_by_id(&self, event_id: &str) -> Option<&RegisteredTaxDividend> {
-        self.dividends
-            .iter()
-            .find(|dividend| dividend.event_id == event_id)
     }
     pub(crate) fn payment_by_id(&self, payment_id: &str) -> Option<&DividendCashReceipt> {
         self.dividends
@@ -1060,7 +1032,9 @@ impl CashDividendTaxBook {
                     day.acquisition.as_ref(),
                 )?;
                 if dispositions != day.dispositions {
-                    return Err(invalid("tax disposal identities, metadata or FIFO quantities contradict held facts"));
+                    return Err(invalid(
+                        "tax disposal identities, metadata or FIFO quantities contradict held facts",
+                    ));
                 }
             }
             if let Some(reduction) = self
@@ -1089,7 +1063,9 @@ impl CashDividendTaxBook {
                 .find(|dividend| dividend.operation_seq == *sequence)
             {
                 if dividend.lots != replayed {
-                    return Err(invalid("registered dividend tax lots contradict actual holding facts at registration"));
+                    return Err(invalid(
+                        "registered dividend tax lots contradict actual holding facts at registration",
+                    ));
                 }
             }
             if let Some(basis) = self

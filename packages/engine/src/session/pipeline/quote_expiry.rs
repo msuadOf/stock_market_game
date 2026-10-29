@@ -60,6 +60,7 @@ impl<'a> NpcOrderLifecycleBook<'a> {
         });
     }
 
+    #[cfg(test)]
     pub(in crate::session) fn due_at(
         &self,
         market_minute: u64,

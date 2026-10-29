@@ -1,10 +1,9 @@
 //! P2 真实多组行政事务；方案资金来源仍由同一次 inspect 勾稽。
 use super::*;
-#[path = "../../information_fixture.rs"]
-mod fixture;
 use crate::company::CompanyId;
 use crate::plans::{PlanId, RepurchaseExecutionOpen};
 use crate::runtime::group::{GroupAccount, TickPlan};
+use crate::runtime::information_fixture as fixture;
 use crate::runtime::protocol::AdminTreasuryBinding;
 use crate::runtime::skeleton_tests::basic_spec;
 use crate::{AccountId, StockId};

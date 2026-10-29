@@ -36,6 +36,7 @@ impl RealEstateBooks {
         self.income_tax_position.restatements()
     }
 
+    #[cfg(test)]
     pub(crate) fn income_tax_owner(&self) -> (&Books, &IncomeTaxPosition, &IncomeTaxPolicy, u64) {
         (
             &self.books,
@@ -45,6 +46,7 @@ impl RealEstateBooks {
         )
     }
 
+    #[cfg(test)]
     pub(crate) fn install_income_tax_owner(
         &mut self,
         books: Books,
@@ -56,6 +58,7 @@ impl RealEstateBooks {
         self.next_event_id = next_event_id;
     }
 
+    #[cfg(test)]
     pub(crate) fn validate_income_tax_state(&self) -> Result<(), RealEstateError> {
         validate_policy(self.income_tax_policy())?;
         self.income_tax_position

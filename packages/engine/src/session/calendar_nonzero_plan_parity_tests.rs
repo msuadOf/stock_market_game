@@ -1,9 +1,8 @@
 //! V7 工作草案：同一完整SaveSlot的native组/镜像与生产serial纯迁移；已注册；未编译/运行。
 //! serial使用既有step_pipeline_contract；不冒actual wasm32、serial civil或真实collector Create。
 use super::*;
-#[path = "../runtime/calendar_public_restore_fixture.rs"]
-mod fixture;
 use crate::calendar::CalendarExchange;
+use crate::runtime::calendar_public_restore_fixture as fixture;
 
 fn assert_phase_save_projection(
     native: &SaveSlot,

@@ -434,8 +434,7 @@ impl World {
 }
 
 #[cfg(test)]
-#[path = "../information_fixture.rs"]
-mod fixture;
+use crate::runtime::information_fixture as fixture;
 
 #[cfg(test)]
 mod tests {

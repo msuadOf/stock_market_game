@@ -28,6 +28,14 @@ pub type StockIdx = u16;
 /// 复合标识。
 pub type OrderRef = (StockIdx, u64);
 
+#[cfg(all(test, not(target_arch = "wasm32")))]
+#[path = "calendar_public_restore_fixture.rs"]
+pub(crate) mod calendar_public_restore_fixture;
+
+#[cfg(test)]
+#[path = "information_fixture.rs"]
+pub(crate) mod information_fixture;
+
 pub(crate) mod admin_tax_projection;
 
 #[cfg(any(target_arch = "wasm32", test))]
@@ -47,6 +55,7 @@ pub mod type_aliases;
 mod entities;
 mod facts;
 mod protocol;
+mod worker_context;
 #[cfg(test)]
 pub(crate) use protocol::LifecycleKind;
 pub(crate) use protocol::{RepurchasePreparePayload, RepurchaseProjectionInput, RuntimeError};

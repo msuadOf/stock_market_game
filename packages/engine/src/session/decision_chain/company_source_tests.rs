@@ -32,12 +32,20 @@ fn divergent_company_source_session_with_counts(
     simple.prehistory_periods = 24;
     let scale = i128::from((opening_shares + u64::from(u32::MAX) + 777).div_ceil(1_000_000));
     let scale_amount = |amount: crate::accounting::AccountingAmount| {
-        crate::accounting::AccountingAmount::from_cents(amount.cents().checked_mul(scale).expect("公开前史 fixture 金额不溢出"))
+        crate::accounting::AccountingAmount::from_cents(
+            amount
+                .cents()
+                .checked_mul(scale)
+                .expect("公开前史 fixture 金额不溢出"),
+        )
     };
     let company = &mut simple.companies[0];
     company.generation.initial_revenue = scale_amount(company.generation.initial_revenue);
-    company.generation.initial_fixed_expense = scale_amount(company.generation.initial_fixed_expense);
-    for line in &mut company.finance.opening_lines { line.amount = scale_amount(line.amount); }
+    company.generation.initial_fixed_expense =
+        scale_amount(company.generation.initial_fixed_expense);
+    for line in &mut company.finance.opening_lines {
+        line.amount = scale_amount(line.amount);
+    }
     setup.company_system = Some(config);
     setup.dividend_tax_mode =
         Some(crate::company::cash_dividend_tax::CashDividendTaxMode::FlatWithholding);
@@ -257,16 +265,24 @@ fn selected_company_source_root_parts_keep_independent_numeric_namespaces_and_ty
         [(company, (crate::company::CompanyKind::Bank, shares))].into(),
     )
     .unwrap();
-    let root = RootReadContext::from_parts(
-        crate::session::AccountBook::default(),
-        std::sync::Arc::new(facts),
-        std::sync::Arc::new(crate::information::PublicLibrary::new()),
-        PlanBook::default(),
-        crate::CivilDate::from_iso("2030-01-07").unwrap(),
-        0,
-        0,
-        std::sync::Arc::new([(stock, crate::observation::information_clock::InformationTradingAnchor::TradingDay { ordinal: 0 })].into()),
-    );
+    let root = RootReadContext {
+        accounts: crate::session::AccountBook::default(),
+        company_facts: std::sync::Arc::new(facts),
+        library: std::sync::Arc::new(crate::information::PublicLibrary::new()),
+        plans: PlanBook::default(),
+        civil_date: crate::CivilDate::from_iso("2030-01-07").unwrap(),
+        market_minute: 0,
+        day: 0,
+        information_anchors: std::sync::Arc::new(
+            [(
+                stock,
+                crate::observation::information_clock::InformationTradingAnchor::TradingDay {
+                    ordinal: 0,
+                },
+            )]
+            .into(),
+        ),
+    };
     assert_eq!(root.issuer_of_stock(stock), Ok(company));
     assert_eq!(
         root.company_spec(&company).unwrap(),
@@ -333,7 +349,15 @@ fn selected_company_source_root_uses_simple_kind_and_full_u64_shares() {
         .issuer_of(&StockCode("000812".to_owned()))
         .unwrap();
     let legacy = probe_session();
-    let old = legacy.state.companies.legacy().unwrap().operations.company(&company).unwrap().spec();
+    let old = legacy
+        .state
+        .companies
+        .legacy()
+        .unwrap()
+        .operations
+        .company(&company)
+        .unwrap()
+        .spec();
     let expected = (
         crate::company::CompanyKind::Bank,
         1_000_000 + u64::from(u32::MAX) + 777,
@@ -577,10 +601,17 @@ fn selected_company_source_legacy_missing_operation_is_explicit_error() {
         .state
         .issuer_of_stock(session.stock_id("000812").unwrap())
         .unwrap();
-    std::sync::Arc::make_mut(&mut session.state.companies.legacy_mut().expect("此调用仅用于 Legacy 公司状态").operations)
-        .companies
-        .remove(&company)
-        .unwrap();
+    std::sync::Arc::make_mut(
+        &mut session
+            .state
+            .companies
+            .legacy_mut()
+            .expect("此调用仅用于 Legacy 公司状态")
+            .operations,
+    )
+    .companies
+    .remove(&company)
+    .unwrap();
     assert_eq!(
         session.state.company_read_facts(),
         Err(
@@ -598,11 +629,18 @@ fn selected_company_source_legacy_spec_mismatch_is_explicit_error() {
         .state
         .issuer_of_stock(session.stock_id("000812").unwrap())
         .unwrap();
-    std::sync::Arc::make_mut(&mut session.state.companies.legacy_mut().expect("此调用仅用于 Legacy 公司状态").operations)
-        .company_mut(&company)
-        .unwrap()
-        .spec
-        .issued_shares += 100;
+    std::sync::Arc::make_mut(
+        &mut session
+            .state
+            .companies
+            .legacy_mut()
+            .expect("此调用仅用于 Legacy 公司状态")
+            .operations,
+    )
+    .company_mut(&company)
+    .unwrap()
+    .spec
+    .issued_shares += 100;
     assert_eq!(
         session.state.company_read_facts(),
         Err(crate::session::company_facts::CompanyFactsSourceError::LegacySpecMismatch { company })
@@ -612,8 +650,13 @@ fn selected_company_source_legacy_spec_mismatch_is_explicit_error() {
 #[test]
 fn selected_company_source_simple_does_not_read_corrupt_legacy_operation() {
     let session = divergent_company_source_session(crate::company::CompanyKind::Bank);
-    assert!(matches!(session.state.companies, super::super::company_state::SessionCompanies::CompanySystem(_)),
-        "互斥容器不再持有可腐坏的 Legacy operations");
+    assert!(
+        matches!(
+            session.state.companies,
+            super::super::company_state::SessionCompanies::CompanySystem(_)
+        ),
+        "互斥容器不再持有可腐坏的 Legacy operations"
+    );
     let facts = session.state.company_read_facts().unwrap();
     assert_eq!(
         facts.company_spec(&crate::company::CompanyId(0)).unwrap(),
@@ -636,13 +679,24 @@ fn selected_company_source_simple_does_not_read_corrupt_legacy_operation() {
 fn selected_company_source_legacy_extra_operation_is_explicit_error() {
     let mut session = probe_session();
     let extra = session
-        .state.companies.legacy().expect("此调用仅用于 Legacy 公司状态").operations
+        .state
+        .companies
+        .legacy()
+        .expect("此调用仅用于 Legacy 公司状态")
+        .operations
         .company(&crate::company::CompanyId(0))
         .unwrap()
         .clone();
-    std::sync::Arc::make_mut(&mut session.state.companies.legacy_mut().expect("此调用仅用于 Legacy 公司状态").operations)
-        .companies
-        .insert(crate::company::CompanyId(99), extra);
+    std::sync::Arc::make_mut(
+        &mut session
+            .state
+            .companies
+            .legacy_mut()
+            .expect("此调用仅用于 Legacy 公司状态")
+            .operations,
+    )
+    .companies
+    .insert(crate::company::CompanyId(99), extra);
     assert_eq!(
         session.state.company_read_facts(),
         Err(
@@ -678,7 +732,15 @@ fn selected_company_source_none_keeps_legacy_root_spec() {
     let session = probe_session();
     let stock = session.stock_id("000812").unwrap();
     let company = session.state.issuer_of_stock(stock).unwrap();
-    let spec = session.state.companies.legacy().expect("此调用仅用于 Legacy 公司状态").operations.company(&company).unwrap().spec();
+    let spec = session
+        .state
+        .companies
+        .legacy()
+        .expect("此调用仅用于 Legacy 公司状态")
+        .operations
+        .company(&company)
+        .unwrap()
+        .spec();
     let root = RootReadContext::capture(&session).unwrap();
     assert_eq!(
         root.company_spec(&company).unwrap(),

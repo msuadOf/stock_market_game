@@ -11,6 +11,15 @@ type PanicPayload = Box<dyn std::any::Any + Send>;
 fn admin_wasm_join_diagnostic(who: WorkerId, error: std::io::Error) -> String {
     format!("{who} wasm join 失败：kind={:?}；{error}", error.kind())
 }
+/// 同一行政作用域预先算出的 Prepare 写集与回执校验基线。
+struct AdminPreparation {
+    operations: BTreeMap<GroupIdx, Vec<AdminOperation>>,
+    information: Option<crate::runtime::protocol::InformationPreparePayload>,
+    stage_layouts: Option<BTreeMap<GroupIdx, crate::runtime::protocol::AdminStageLayout>>,
+    projections: BTreeMap<GroupIdx, Vec<crate::runtime::protocol::RepurchaseProjectionInput>>,
+    before_books: BTreeMap<GroupIdx, crate::plans::PlanBook>,
+}
+
 struct AdminFailure {
     error: RuntimeError,
     payload: Option<PanicPayload>,
@@ -224,11 +233,13 @@ impl World {
         };
         match self.execute_admin(
             id,
-            operations,
-            information,
-            stage_layouts,
-            projections,
-            before_books,
+            AdminPreparation {
+                operations,
+                information,
+                stage_layouts,
+                projections,
+                before_books,
+            },
             &expected,
             &mut sent,
             inspect_candidate,
@@ -309,11 +320,7 @@ impl World {
     fn execute_admin<L, P>(
         &mut self,
         id: AdminTransactionId,
-        operations: BTreeMap<GroupIdx, Vec<AdminOperation>>,
-        information: Option<crate::runtime::protocol::InformationPreparePayload>,
-        stage_layouts: Option<BTreeMap<GroupIdx, crate::runtime::protocol::AdminStageLayout>>,
-        projections: BTreeMap<GroupIdx, Vec<crate::runtime::protocol::RepurchaseProjectionInput>>,
-        before_books: BTreeMap<GroupIdx, crate::plans::PlanBook>,
+        preparation: AdminPreparation,
         expected: &BTreeMap<GroupIdx, Vec<super::super::LocalIdx>>,
         sent: &mut BTreeMap<GroupIdx, Vec<super::super::LocalIdx>>,
         inspect_candidate: impl FnOnce(&AdminCandidate) -> Result<L, RuntimeError>,
@@ -323,6 +330,13 @@ impl World {
             L,
         ) -> Result<P, RuntimeError>,
     ) -> Result<(P, crate::runtime::source::PreparedMirrorAck), AdminFailure> {
+        let AdminPreparation {
+            operations,
+            information,
+            stage_layouts,
+            projections,
+            before_books,
+        } = preparation;
         let information_clock = information
             .as_ref()
             .and_then(|payload| payload.observation.as_ref())

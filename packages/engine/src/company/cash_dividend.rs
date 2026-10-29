@@ -618,7 +618,7 @@ impl CashDividendBook {
         self.plan.validate()?;
         let registered = self.registration.is_some();
         if registered
-            != !matches!(
+            == matches!(
                 self.status,
                 CashDividendStatus::Approved | CashDividendStatus::Announced
             )

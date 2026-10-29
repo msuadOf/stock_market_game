@@ -49,7 +49,8 @@ fn invalid(
     }
 }
 
-/// 只供真实 tax-only 整事务；混合事务须由 R4 实际阶段 producer 调用同一 core。
+/// 只供测试验证 tax-only 整事务；生产混合事务由 R4 实际阶段 producer 调用同一 core。
+#[cfg(test)]
 pub(crate) fn inspect_tax_only(
     before: &[(GroupIdx, Vec<GroupAccount>)],
     grouped: &[(GroupIdx, Vec<AdminOperation>)],

@@ -65,6 +65,10 @@ pub use income_tax::{IncomeTaxOutcome, IncomeTaxOwnerError};
 pub use report_correction::CompanyCorrectionError;
 
 #[cfg(test)]
+#[path = "disclosure_correction_test_fixture.rs"]
+pub(crate) mod disclosure_correction_test_fixture;
+
+#[cfg(test)]
 mod capabilities_tests;
 #[cfg(test)]
 mod dividend_contract_tests;

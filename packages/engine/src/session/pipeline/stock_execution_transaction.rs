@@ -3,20 +3,22 @@
 //! 本模块消费股票 worker 输出，在私有权威 shadows 上运行 ReceiptAggregation 与 Settlement，
 //! 返回供后续 CommitTick 共同安装的 candidate；不修改输入权威状态。
 
+use super::{account_settlement::SettlementTransactionError, StepFatal};
+#[cfg(test)]
 use super::{
-    account_settlement::{
-        prepare_settlement_transaction_with_beliefs, SettlementTransactionError,
-        SettlementTransactionOutput,
-    },
+    account_settlement::{SettlementReadContext, SettlementTransactionOutput},
     continuous_matching::{
         ContinuousCancelFact, ContinuousPlaceFact, ContinuousStockOutput, ContinuousTradeFact,
     },
-    receipt_aggregation::apply_owned_receipt_transaction,
     retail_projection::RetailProjectionSeen,
-    EnvelopeLedger, EnvelopeReceipt, StepFatal,
+    EnvelopeLedger, EnvelopeReceipt,
 };
+#[cfg(test)]
 use crate::session::{account_book::AccountBook, account_paged_map::AccountPagedMap};
-use crate::{Account, AccountId, Market, RetailExperienceState, StockId};
+use crate::StockId;
+#[cfg(test)]
+use crate::{Account, AccountId, Market, RetailExperienceState};
+#[cfg(test)]
 use std::collections::BTreeMap;
 
 #[derive(Debug, thiserror::Error)]
@@ -89,12 +91,7 @@ impl<'receipt> SettlementApplicationContext<'receipt> {
 pub(super) fn compose_stock_execution_transaction_for_test(
     compute: &std::sync::Arc<crate::ComputeContext>,
     ledger: &EnvelopeLedger,
-    accounts: &AccountBook,
-    retail_experience: &AccountPagedMap<crate::RetailExperienceState>,
-    belief_participants: &AccountPagedMap<
-        crate::session::decision_chain::personal_state::BeliefParticipantState,
-    >,
-    seen: &RetailProjectionSeen,
+    read: SettlementReadContext<'_>,
     workers: Vec<ContinuousStockOutput>,
     context: SettlementApplicationContext<'_>,
 ) -> Result<StockExecutionTransactionOutput, StockExecutionTransactionError> {
@@ -135,10 +132,7 @@ pub(super) fn compose_stock_execution_transaction_for_test(
         .map_err(StockExecutionTransactionError::ReceiptAggregation)?;
     let prepared = prepare_settlement_transaction_with_beliefs(
         compute,
-        accounts,
-        retail_experience,
-        belief_participants,
-        seen,
+        read,
         context.moment,
         &settlement_input,
         context.t1_enabled,
@@ -170,26 +164,22 @@ pub(super) fn apply_stock_execution_transaction(
     compose_stock_execution_transaction_for_test(
         &crate::ComputeContext::shared_default().expect("测试计算上下文"),
         ledger,
-        accounts,
-        retail_experience,
-        &AccountPagedMap::default(),
-        seen,
+        SettlementReadContext {
+            accounts,
+            retail_experience,
+            belief_participants: &AccountPagedMap::default(),
+            seen,
+        },
         workers,
         SettlementApplicationContext::new(test_experience_moment(market_minute), &[], t1_enabled),
     )
 }
 
+#[cfg(test)]
 fn test_experience_moment(market_minute: u64) -> crate::experience::ExperienceMoment {
     crate::experience::ExperienceMoment {
         civil_date: crate::calendar::CivilDate::from_ymd(2030, 1, 1).expect("test date is valid"),
         market_minute,
         trading_day: market_minute,
-    }
-}
-
-fn invariant(description: &str) -> StepFatal {
-    StepFatal::InvariantViolation {
-        description: description.to_owned(),
-        location: "pipeline::stock_execution_transaction".to_owned(),
     }
 }

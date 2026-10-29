@@ -210,18 +210,26 @@ impl GroupState {
             let observe = self.information_signature.as_ref() != Some(&signature);
             for (local, owner, snapshot, codes, protected) in observers {
                 let result = if observe && snapshot.attention.information_check_due(point.through) {
+                    let as_of_anchor = |stock| point.as_of_anchors.get(&stock).copied();
+                    let issuer_of_stock = |stock| issuers.get(&stock).copied();
+                    let company_spec =
+                        |company: &crate::company::CompanyId| specs.get(company).copied();
                     crate::session::notices::deliver_information_for_npc(
-                        owner,
-                        point.through,
-                        &|stock| point.as_of_anchors.get(&stock).copied(),
-                        &snapshot.attention,
-                        &snapshot.information,
-                        &snapshot.belief,
-                        codes,
-                        &|stock| issuers.get(&stock).copied(),
-                        &|company| specs.get(company).copied(),
-                        &payload.library,
-                        &point.market,
+                        crate::session::notices::InformationDeliveryContext {
+                            id: owner,
+                            now: point.through,
+                            as_of_anchor: &as_of_anchor,
+                            codes,
+                            issuer_of_stock: &issuer_of_stock,
+                            company_spec: &company_spec,
+                            library: &payload.library,
+                            market: &point.market,
+                        },
+                        crate::session::notices::InformationDeliveryState {
+                            attention: &snapshot.attention,
+                            information: &snapshot.information,
+                            belief: &snapshot.belief,
+                        },
                     )
                     .map_err(|e| {
                         reject(InformationPrepareError::Revaluation {

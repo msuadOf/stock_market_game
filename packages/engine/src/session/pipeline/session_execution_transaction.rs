@@ -63,10 +63,12 @@ pub(super) fn apply_session_execution_transaction(
             compose_stock_execution_transaction_for_test(
                 session.compute_context(),
                 &session.state.envelope_ledger,
-                &session.state.accounts,
-                &session.state.retail_experience,
-                &session.state.belief_participants,
-                &session.state.retail_projection_seen,
+                super::account_settlement::SettlementReadContext {
+                    accounts: &session.state.accounts,
+                    retail_experience: &session.state.retail_experience,
+                    belief_participants: &session.state.belief_participants,
+                    seen: &session.state.retail_projection_seen,
+                },
                 workers,
                 super::stock_execution_transaction::SettlementApplicationContext::new(
                     crate::experience::ExperienceMoment {

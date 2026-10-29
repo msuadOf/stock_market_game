@@ -135,7 +135,7 @@ pub enum RoundOutcome {
 }
 
 /// 收束一轮：收齐 G 个 `GroupReport` + N 个 `DeskReport`。
-pub fn converge_round(
+pub(crate) fn converge_round(
     up_rx: &Receiver<UpMsg>,
     n_groups: usize,
     n_stocks: usize,
@@ -363,7 +363,7 @@ pub fn converge_round(
 }
 
 /// 广播 Start（每股/每组的下行 channel 逐个 send，无锁无惊群）。
-pub fn broadcast_start(
+pub(crate) fn broadcast_start(
     group_txs: &[Sender<super::protocol::GroupIn>],
     tick: u64,
     calendar: Arc<super::MarketTickContext>,
@@ -396,7 +396,7 @@ pub fn broadcast_start(
 }
 
 /// 广播 Continue（仅组；交易部经组的新一轮 Ops 感知轮次）。
-pub fn broadcast_continue(
+pub(crate) fn broadcast_continue(
     group_txs: &[Sender<super::protocol::GroupIn>],
     tick: u64,
     round: u32,

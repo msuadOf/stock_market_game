@@ -29,6 +29,17 @@ enum InformationClockSource {
     },
 }
 
+/// 接收方真实进度提供的 INFO 认证输入；不能从待校验 payload 自取。
+pub(crate) struct ExpectedInformationClock<'a> {
+    pub(crate) source: &'a Arc<MarketCalendarSource>,
+    pub(crate) bindings: &'a [(StockId, CalendarExchange)],
+    pub(crate) date: CivilDate,
+    pub(crate) layout: SessionTickLayout,
+    pub(crate) input: SharedClockInput,
+    pub(crate) through: CivilInstant,
+    pub(crate) anchors: &'a BTreeMap<StockId, InformationTradingAnchor>,
+}
+
 impl InformationClockContext {
     fn invalid(detail: impl Into<String>) -> RuntimeError {
         RuntimeError::ProtocolInvariant {
@@ -151,6 +162,7 @@ impl InformationClockContext {
             InformationClockSource::Static { day, .. } => day,
         }
     }
+    #[cfg(test)]
     pub(crate) fn date(&self) -> CivilDate {
         self.day().day_model().current_date()
     }
@@ -194,14 +206,17 @@ impl InformationClockContext {
     /// expected_* 必须由接收方真实进度提供，不能从 payload 自取作认证。
     pub(crate) fn validate(
         &self,
-        source: &Arc<MarketCalendarSource>,
-        bindings: &[(StockId, CalendarExchange)],
-        date: CivilDate,
-        layout: SessionTickLayout,
-        input: SharedClockInput,
-        through: CivilInstant,
-        anchors: &BTreeMap<StockId, InformationTradingAnchor>,
+        expected: ExpectedInformationClock<'_>,
     ) -> Result<(), RuntimeError> {
+        let ExpectedInformationClock {
+            source,
+            bindings,
+            date,
+            layout,
+            input,
+            through,
+            anchors,
+        } = expected;
         self.day()
             .validate_for(source, bindings, date)
             .map_err(|error| Self::invalid(error.to_string()))?;

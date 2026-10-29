@@ -5,14 +5,14 @@ use crate::information::{
     MonthlyReportDelay, MonthlyReportSchedule, PublicLibrary, PublicationId, ReportFrequency,
 };
 
-pub(super) fn simple_model(prehistory_periods: u16) -> crate::company::CompanySystem {
+pub(crate) fn simple_model(prehistory_periods: u16) -> crate::company::CompanySystem {
     simple_model_with_cycle(
         prehistory_periods,
         crate::company::simple::period::SettlementCycle::Monthly,
     )
 }
 
-pub(super) fn simple_model_with_cycle(
+pub(crate) fn simple_model_with_cycle(
     prehistory_periods: u16,
     settlement_cycle: crate::company::simple::period::SettlementCycle,
 ) -> crate::company::CompanySystem {
@@ -115,7 +115,7 @@ pub(super) fn simple_model_with_cycle(
     system
 }
 
-pub(super) fn simple_models(prehistory_periods: u16, count: u32) -> CompanySystem {
+pub(crate) fn simple_models(prehistory_periods: u16, count: u32) -> CompanySystem {
     let template = simple_model(prehistory_periods);
     let crate::company::config::CompanySystemConfig::Simple(mut config) = template.config() else {
         panic!("fixture 必须来自真实 Simple 配置");
@@ -143,7 +143,7 @@ pub(super) fn simple_models(prehistory_periods: u16, count: u32) -> CompanySyste
     .unwrap()
 }
 
-pub(super) fn correction_operation(
+pub(crate) fn correction_operation(
     source: u64,
     date: CivilDate,
 ) -> crate::accounting::closing::CorrectionRequest {
@@ -174,7 +174,7 @@ pub(super) fn correction_operation(
     }
 }
 
-pub(super) fn owner_result() -> (PublicLibrary, PublicLibrary, Vec<PublicationId>) {
+pub(crate) fn owner_result() -> (PublicLibrary, PublicLibrary, Vec<PublicationId>) {
     let mut system = simple_model(1);
     let date = CivilDate::from_iso("2030-01-01").unwrap();
     let frequency = ReportFrequency::Monthly {
@@ -214,7 +214,7 @@ use crate::accounting::consolidation::{MemberId, ScopeId};
 use crate::accounting::reports::{ReportKind, ReportVersion, VersionKind};
 use crate::accounting::AccountingPeriod;
 use crate::company::operations::CompanyOperations;
-pub(super) fn legacy_fixture() -> (CompanyOperations, ClosingEngine) {
+pub(crate) fn legacy_fixture() -> (CompanyOperations, ClosingEngine) {
     use crate::accounting::consolidation::{ConsolidationRequest, GroupMember, MemberSpec};
     use crate::accounting::reports::{
         generate_report_set, IndustryPresentation, ReportRequest, ReportSource,

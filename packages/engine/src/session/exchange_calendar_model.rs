@@ -100,6 +100,7 @@ pub(crate) struct CalendarDayModel {
 }
 
 impl CalendarDayModel {
+    #[cfg(test)]
     pub(crate) fn start_date(&self) -> CivilDate {
         self.start_date
     }
@@ -155,6 +156,7 @@ impl StockCalendarClock {
             .then_some(self.completed_minutes - u64::from(self.current_date_completed_minutes))
     }
     /// 闭市时可指向上一真实会话末分钟，不表示当前日期产生新样本。
+    #[cfg(test)]
     pub(crate) fn last_completed_minute_key(&self) -> Option<u64> {
         self.completed_minutes.checked_sub(1)
     }

@@ -120,26 +120,36 @@ impl NpcAttentionState {
     }
 }
 
-/// D3a-2b Belief-1b 提取：单 NPC 信息投递更新（纯函数——组线程与
-/// session 侧同输入同演进的等价基座；fault 码与原内联实现逐字一致）。
-pub(crate) fn deliver_information_for_npc(
-    id: AccountId,
-    now: CivilInstant,
-    as_of_anchor: &dyn Fn(
+/// 单次信息投递读取的固定公开事实；保留逐股时点、发行人来源与个人可见市场面。
+pub(crate) struct InformationDeliveryContext<'a> {
+    pub(crate) id: AccountId,
+    pub(crate) now: CivilInstant,
+    pub(crate) as_of_anchor: &'a dyn Fn(
         StockId,
     ) -> Option<
         crate::observation::information_clock::InformationTradingAnchor,
     >,
-    attention_in: &crate::session::attention::NpcAttentionState,
-    information_in: &NpcInformationState,
-    belief_in: &BeliefBook,
-    codes: BTreeSet<StockId>,
-    issuer_of_stock: &dyn Fn(StockId) -> Option<crate::company::CompanyId>,
-    // 发行人 spec 快照查表（Belief-1b·下：组内以快照承载——session
-    // 侧闭包经 operations.company().spec() 等价供数）。
-    company_spec: &dyn Fn(&crate::company::CompanyId) -> Option<(crate::company::CompanyKind, u64)>,
-    library: &crate::information::PublicLibrary,
-    market: &crate::strategy::MarketView,
+    pub(crate) codes: BTreeSet<StockId>,
+    pub(crate) issuer_of_stock: &'a dyn Fn(StockId) -> Option<crate::company::CompanyId>,
+    // 发行人 spec 快照查表；组内以快照承载，session 闭包经 operations.company().spec() 等价供数。
+    pub(crate) company_spec:
+        &'a dyn Fn(&crate::company::CompanyId) -> Option<(crate::company::CompanyKind, u64)>,
+    pub(crate) library: &'a crate::information::PublicLibrary,
+    pub(crate) market: &'a crate::strategy::MarketView,
+}
+
+/// 本人信息与信念状态在同一投递事务中的只读输入。
+pub(crate) struct InformationDeliveryState<'a> {
+    pub(crate) attention: &'a crate::session::attention::NpcAttentionState,
+    pub(crate) information: &'a NpcInformationState,
+    pub(crate) belief: &'a BeliefBook,
+}
+
+/// D3a-2b Belief-1b 提取：单 NPC 信息投递更新（纯函数——组线程与
+/// session 侧同输入同演进的等价基座；fault 码与原内联实现逐字一致）。
+pub(crate) fn deliver_information_for_npc(
+    context: InformationDeliveryContext<'_>,
+    state: InformationDeliveryState<'_>,
 ) -> Result<
     Option<(
         AccountId,
@@ -149,6 +159,21 @@ pub(crate) fn deliver_information_for_npc(
     )>,
     SessionError,
 > {
+    let InformationDeliveryContext {
+        id,
+        now,
+        as_of_anchor,
+        codes,
+        issuer_of_stock,
+        company_spec,
+        library,
+        market,
+    } = context;
+    let InformationDeliveryState {
+        attention: attention_in,
+        information: information_in,
+        belief: belief_in,
+    } = state;
     belief_in
         .validate_information_anchors(as_of_anchor)
         .map_err(|error| {
@@ -364,20 +389,26 @@ impl GameSession {
                     codes.extend(participant.watchlist().stocks.keys().cloned());
                     codes.extend(self.state.plans.active_investor_codes(id).cloned());
                     let issuer_of = |code: StockId| company_facts.issuer_of_stock(code).ok();
+                    let as_of_anchor = |stock| anchors.get(&stock).copied();
+                    let company_spec = |company: &crate::company::CompanyId| {
+                        company_facts.company_spec(company).ok()
+                    };
                     deliver_information_for_npc(
-                        id,
-                        now,
-                        &|stock| anchors.get(&stock).copied(),
-                        attention,
-                        participant.information(),
-                        participant.belief(),
-                        codes,
-                        &issuer_of,
-                        &|company: &crate::company::CompanyId| {
-                            company_facts.company_spec(company).ok()
+                        InformationDeliveryContext {
+                            id,
+                            now,
+                            as_of_anchor: &as_of_anchor,
+                            codes,
+                            issuer_of_stock: &issuer_of,
+                            company_spec: &company_spec,
+                            library: self.state.library.as_ref(),
+                            market: &market,
                         },
-                        self.state.library.as_ref(),
-                        &market,
+                        InformationDeliveryState {
+                            attention,
+                            information: participant.information(),
+                            belief: participant.belief(),
+                        },
                     )
                 })
                 .collect::<Vec<_>>()

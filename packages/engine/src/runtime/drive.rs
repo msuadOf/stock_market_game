@@ -128,6 +128,7 @@ pub(crate) fn ensure_fact_owners_covered_arc(
     )
 }
 
+#[cfg(test)]
 pub(crate) fn ensure_fact_owners_covered(
     fact_rec: Option<&super::world::TickRecord>,
     snapshots: &[Vec<(super::LocalIdx, super::group::GroupAccount)>],
@@ -1917,7 +1918,7 @@ impl RuntimeDriver {
     /// 清簿撤单事实收集进 drained 缓冲（调用方 take_drained_events 取走）。
     /// 日界批：收盘竞价成交随 Drain 应答上行——事件/个人确认在此消费
     /// （civil_date=当日；receipts 返回调用方即时入账）。
-    pub fn world_day_end_for_step(
+    pub(crate) fn world_day_end_for_step(
         &mut self,
         session: &mut GameSession,
     ) -> Result<Vec<crate::session::personal_trade_history::PendingTradeReceipt>, String> {

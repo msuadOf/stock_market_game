@@ -1,6 +1,5 @@
 use super::*;
-#[path = "disclosure_correction_test_fixture.rs"]
-mod fixture;
+use crate::company::disclosure_correction_test_fixture as fixture;
 use crate::information::{MonthlyReportDelay, MonthlyReportSchedule, ReportFrequency};
 use fixture::*;
 

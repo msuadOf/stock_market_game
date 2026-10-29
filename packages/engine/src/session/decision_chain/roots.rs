@@ -3,15 +3,19 @@
 use super::*;
 
 /// 同批 root 共享的只读事实；不包含市场簿、历史、个人状态 map 或委托游标。
+/// D3a-2c 件2：组线程按 `capture` 同一字段面显式组装；投影来源须同源，包含组账户
+/// 保真投影、构造期共享的 `CompanyReadFacts` 与 `PublicLibrary`、组内 `PlanBook`，以及
+/// tick 推导和快照 `civil_date` 组成的时间面。组内派生与 session 版派生相等的红证可显红组装分叉。
+/// 组内 `PlanBook` 此前为空簿，件4 起承载开仓产物；runtime 模式下 session plans 恒空。
 pub(crate) struct RootReadContext {
-    accounts: account_book::AccountBook,
-    company_facts: std::sync::Arc<crate::company::CompanyReadFacts>,
-    library: std::sync::Arc<crate::information::PublicLibrary>,
-    pub(in crate::session) plans: PlanBook,
-    civil_date: crate::CivilDate,
-    market_minute: u64,
-    day: u32,
-    information_anchors: std::sync::Arc<
+    pub(crate) accounts: account_book::AccountBook,
+    pub(crate) company_facts: std::sync::Arc<crate::company::CompanyReadFacts>,
+    pub(crate) library: std::sync::Arc<crate::information::PublicLibrary>,
+    pub(crate) plans: PlanBook,
+    pub(crate) civil_date: crate::CivilDate,
+    pub(crate) market_minute: u64,
+    pub(crate) day: u32,
+    pub(crate) information_anchors: std::sync::Arc<
         BTreeMap<StockId, crate::observation::information_clock::InformationTradingAnchor>,
     >,
 }
@@ -57,33 +61,6 @@ impl RootReadContext {
             day: session.state.day,
             information_anchors: session.prepare_information_anchors()?,
         })
-    }
-
-    /// D3a-2c 件2：组线程组装（与 [`Self::capture`] 同一字段面——投影来源
-    /// 由调用方保证同源：组账户投影/构造期 Arc/组内 PlanBook/快照时间面）。
-    /// 字段逐项显式，任何组装分叉在红证（组内派生==session 版派生）显红。
-    pub(crate) fn from_parts(
-        accounts: account_book::AccountBook,
-        company_facts: std::sync::Arc<crate::company::CompanyReadFacts>,
-        library: std::sync::Arc<crate::information::PublicLibrary>,
-        plans: PlanBook,
-        civil_date: crate::CivilDate,
-        market_minute: u64,
-        day: u32,
-        information_anchors: std::sync::Arc<
-            BTreeMap<StockId, crate::observation::information_clock::InformationTradingAnchor>,
-        >,
-    ) -> Self {
-        Self {
-            accounts,
-            company_facts,
-            library,
-            plans,
-            civil_date,
-            market_minute,
-            day,
-            information_anchors,
-        }
     }
 
     fn institution_behavior(

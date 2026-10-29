@@ -93,7 +93,7 @@ impl RetailProjectionSeen {
 
     /// 插入一条收据身份（任务65 #11：由 account_settlement 的 canonical 单遍调用；
     /// 投影自身不再触碰 seen）。
-    pub(in crate::session) fn insert(
+    pub(super) fn insert(
         &mut self,
         index: u64,
         local_key: ReceiptLocalKey,

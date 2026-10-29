@@ -1,7 +1,7 @@
 use super::account_settlement::{
     apply_session_settlement_transaction, apply_settlement_transaction,
     apply_settlement_transaction_with_beliefs, prepare_settlement_transaction,
-    SettlementTransactionError,
+    SettlementTransactionError, SettlementWriteContext,
 };
 use super::retail_projection::{RetailProjectionError, RetailProjectionSeen};
 use super::{
@@ -380,10 +380,12 @@ fn institution_fill_updates_only_belief_book_trade_facts_and_is_idempotent() {
 
     apply_settlement_transaction_with_beliefs(
         &crate::ComputeContext::shared_default().unwrap(),
-        &mut accounts,
-        &mut retail_experience,
-        &mut books,
-        &mut seen,
+        SettlementWriteContext {
+            accounts: &mut accounts,
+            retail_experience: &mut retail_experience,
+            belief_participants: &mut books,
+            seen: &mut seen,
+        },
         crate::experience::ExperienceMoment {
             civil_date: crate::calendar::CivilDate::from_ymd(2030, 1, 1).unwrap(),
             market_minute: 10,
@@ -413,10 +415,12 @@ fn institution_fill_updates_only_belief_book_trade_facts_and_is_idempotent() {
     let exit = fill(2, Side::Sell, 11, 100, 120_000);
     apply_settlement_transaction_with_beliefs(
         &crate::ComputeContext::shared_default().unwrap(),
-        &mut accounts,
-        &mut retail_experience,
-        &mut books,
-        &mut seen,
+        SettlementWriteContext {
+            accounts: &mut accounts,
+            retail_experience: &mut retail_experience,
+            belief_participants: &mut books,
+            seen: &mut seen,
+        },
         crate::experience::ExperienceMoment {
             civil_date: crate::calendar::CivilDate::from_ymd(2030, 1, 1).unwrap(),
             market_minute: 11,
@@ -439,10 +443,12 @@ fn institution_fill_updates_only_belief_book_trade_facts_and_is_idempotent() {
 
     apply_settlement_transaction_with_beliefs(
         &crate::ComputeContext::shared_default().unwrap(),
-        &mut accounts,
-        &mut retail_experience,
-        &mut books,
-        &mut seen,
+        SettlementWriteContext {
+            accounts: &mut accounts,
+            retail_experience: &mut retail_experience,
+            belief_participants: &mut books,
+            seen: &mut seen,
+        },
         crate::experience::ExperienceMoment {
             civil_date: crate::calendar::CivilDate::from_ymd(2030, 1, 1).unwrap(),
             market_minute: 11,
@@ -480,10 +486,12 @@ fn institutional_exit_profit_requires_net_cash_after_actual_fees() {
     ] {
         apply_settlement_transaction_with_beliefs(
             &crate::ComputeContext::shared_default().unwrap(),
-            &mut accounts,
-            &mut retail_experience,
-            &mut books,
-            &mut seen,
+            SettlementWriteContext {
+                accounts: &mut accounts,
+                retail_experience: &mut retail_experience,
+                belief_participants: &mut books,
+                seen: &mut seen,
+            },
             crate::experience::ExperienceMoment {
                 civil_date: date,
                 market_minute: minute,
@@ -526,10 +534,12 @@ fn institutional_settlement_records_a_loss_making_sell_when_fees_exceed_proceeds
     let buy = fill(1, Side::Buy, 10, 1, 100_000);
     apply_settlement_transaction_with_beliefs(
         &crate::ComputeContext::shared_default().unwrap(),
-        &mut accounts,
-        &mut retail_experience,
-        &mut books,
-        &mut seen,
+        SettlementWriteContext {
+            accounts: &mut accounts,
+            retail_experience: &mut retail_experience,
+            belief_participants: &mut books,
+            seen: &mut seen,
+        },
         crate::experience::ExperienceMoment {
             civil_date: date,
             market_minute: 10,
@@ -543,10 +553,12 @@ fn institutional_settlement_records_a_loss_making_sell_when_fees_exceed_proceeds
     let sell = fill(2, Side::Sell, 11, 1, 1);
     apply_settlement_transaction_with_beliefs(
         &crate::ComputeContext::shared_default().unwrap(),
-        &mut accounts,
-        &mut retail_experience,
-        &mut books,
-        &mut seen,
+        SettlementWriteContext {
+            accounts: &mut accounts,
+            retail_experience: &mut retail_experience,
+            belief_participants: &mut books,
+            seen: &mut seen,
+        },
         crate::experience::ExperienceMoment {
             civil_date: date,
             market_minute: 11,
@@ -1139,10 +1151,12 @@ fn settlement_plan_account_failure_preserves_all_four_transaction_containers() {
     .unwrap();
     let error = apply_settlement_transaction_with_beliefs(
         &crate::ComputeContext::shared_default().unwrap(),
-        &mut accounts,
-        &mut experience,
-        &mut books,
-        &mut seen,
+        SettlementWriteContext {
+            accounts: &mut accounts,
+            retail_experience: &mut experience,
+            belief_participants: &mut books,
+            seen: &mut seen,
+        },
         crate::experience::ExperienceMoment {
             civil_date: crate::CivilDate::from_iso("2030-01-07").unwrap(),
             market_minute: 10,

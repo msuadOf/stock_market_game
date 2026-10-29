@@ -2,9 +2,8 @@
 //! 已注册；尚未编译或运行，不把注入失败等同生产通过。
 
 use super::*;
-#[path = "../runtime/calendar_public_restore_fixture.rs"]
-mod fixture;
 use crate::calendar::CalendarExchange;
+use crate::runtime::calendar_public_restore_fixture as fixture;
 use crate::runtime::drive::RuntimeDriver;
 use crate::{StockExchange, StockId};
 

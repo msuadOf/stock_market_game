@@ -212,17 +212,26 @@ pub(super) fn credit_candidate(
     ))
 }
 
+/// 同一 canonical 计划簿与待核对的计划身份；仍在 candidate 内按原顺序验证。
+pub(super) struct RepurchasePlanRead<'a> {
+    pub(super) plans: &'a PlanBook,
+    pub(super) execution_plan: PlanId,
+}
+
 /// 本片仅支持执行窗口已结束且共享专户所有真实在途资源已清的数值回收；不决定是否批准/自动完成。
 pub(super) fn closed_window_recycle_candidate(
     book: &IssuerRepurchaseBook,
     registry: &ShareRegistry,
     account: &Account,
-    plans: &PlanBook,
-    execution_plan: PlanId,
+    plan: RepurchasePlanRead<'_>,
     catalog: &crate::stock::StockCatalog,
     actual: &GroupAccount,
     day: CivilDate,
 ) -> Result<RepurchaseFundsIntent, RepurchaseFundsFailure> {
+    let RepurchasePlanRead {
+        plans,
+        execution_plan,
+    } = plan;
     identity_and_resources(
         book,
         registry,
@@ -399,8 +408,10 @@ mod tests {
             &book,
             &registry(),
             &account,
-            &plans,
-            id,
+            RepurchasePlanRead {
+                plans: &plans,
+                execution_plan: id,
+            },
             &catalog(),
             &actual,
             date("2030-06-11"),
@@ -427,11 +438,13 @@ mod tests {
                     &filled(),
                     &registry(),
                     &account,
-                    &plans,
-                    id,
+                    RepurchasePlanRead {
+                        plans: &plans,
+                        execution_plan: id
+                    },
                     &catalog(),
                     &actual,
-                    date("2030-06-11")
+                    date("2030-06-11"),
                 ),
                 Err(RepurchaseFundsFailure::PendingResources)
             );
@@ -543,11 +556,13 @@ mod tests {
                 &filled(),
                 &registry(),
                 &account,
-                &plans,
-                id,
+                RepurchasePlanRead {
+                    plans: &plans,
+                    execution_plan: id
+                },
                 &catalog(),
                 &actual,
-                date("2030-06-11")
+                date("2030-06-11"),
             ),
             Err(RepurchaseFundsFailure::InsufficientCash {
                 required: Money::from_cents(2_899_000),
@@ -584,11 +599,13 @@ mod tests {
                 &filled(),
                 &registry(),
                 &account,
-                &plans,
-                id,
+                RepurchasePlanRead {
+                    plans: &plans,
+                    execution_plan: id
+                },
                 &catalog(),
                 &actual,
-                date("2030-06-10")
+                date("2030-06-10"),
             ),
             Err(RepurchaseFundsFailure::RegistryDayMismatch {
                 requested: date("2030-06-10"),
@@ -604,11 +621,13 @@ mod tests {
                 &completed,
                 &registry(),
                 &account,
-                &plans,
-                id,
+                RepurchasePlanRead {
+                    plans: &plans,
+                    execution_plan: id
+                },
                 &catalog(),
                 &actual,
-                date("2030-06-11")
+                date("2030-06-11"),
             ),
             Err(RepurchaseFundsFailure::WrongBookStage)
         );
@@ -623,11 +642,13 @@ mod tests {
                 &filled(),
                 &registry_on(day),
                 &account,
-                &plans,
-                id,
+                RepurchasePlanRead {
+                    plans: &plans,
+                    execution_plan: id
+                },
                 &catalog(),
                 &actual,
-                day
+                day,
             ),
             Err(RepurchaseFundsFailure::WindowNotClosed {
                 day,

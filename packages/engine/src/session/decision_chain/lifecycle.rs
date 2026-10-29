@@ -9,24 +9,51 @@ use super::*;
 /// （entry/权重）、策略面（链参数/风格/相位）、计划面（迟滞阈值/交易日/lot/
 /// 可持有上限）；`initial_urgency` 由调用方包装（session 版=
 /// `initial_plan_urgency`；组内版=同一 `assess_urgency` 输入投影）。
+pub(crate) struct OpenPositionAssessment<'a> {
+    pub(crate) account: AccountId,
+    pub(crate) code: &'a StockId,
+    pub(crate) price: Money,
+    pub(crate) held_qty: u32,
+    pub(crate) equity: Money,
+    pub(crate) score: Option<crate::plans::SignalScore>,
+    pub(crate) fundamental_ready: bool,
+}
+
+pub(crate) struct OpenPositionPolicy<'a> {
+    pub(crate) belief: &'a BeliefBook,
+    pub(crate) reverse_revision_threshold_bp: i32,
+    pub(crate) chain_params: &'a crate::strategy::BeliefChainParams,
+    pub(crate) style: Option<crate::strategy::InstitutionStyle>,
+    pub(crate) phase_continuous: bool,
+    pub(crate) trading_day: u64,
+    pub(crate) lot: u32,
+    pub(crate) max_holdable_shares: u64,
+}
+
 pub(crate) fn open_position_action(
-    account: AccountId,
-    code: &StockId,
-    price: Money,
-    held_qty: u32,
-    equity: Money,
-    score: Option<crate::plans::SignalScore>,
-    fundamental_ready: bool,
-    belief: &BeliefBook,
-    reverse_revision_threshold_bp: i32,
-    chain_params: &crate::strategy::BeliefChainParams,
-    style: Option<crate::strategy::InstitutionStyle>,
-    phase_continuous: bool,
-    trading_day: u64,
-    lot: u32,
-    max_holdable_shares: u64,
+    assessment: OpenPositionAssessment<'_>,
+    policy: OpenPositionPolicy<'_>,
     initial_urgency: impl FnOnce(Side, u32, u32) -> Urgency,
 ) -> Option<PlanOpen> {
+    let OpenPositionAssessment {
+        account,
+        code,
+        price,
+        held_qty,
+        equity,
+        score,
+        fundamental_ready,
+    } = assessment;
+    let OpenPositionPolicy {
+        belief,
+        reverse_revision_threshold_bp,
+        chain_params,
+        style,
+        phase_continuous,
+        trading_day,
+        lot,
+        max_holdable_shares,
+    } = policy;
     // ActiveTrader 仅连续相位开仓（日内风格）。
     if style == Some(crate::strategy::InstitutionStyle::ActiveTrader) && !phase_continuous {
         return None;
@@ -642,21 +669,25 @@ impl<'a> PlanLifecycleReview<'a> {
                 // D3a-2c 件4：开仓分支提取共享（与组线程 Lifecycle 消费同一
                 // 函数）——行为保持（参数自本复核面提取）。
                 let open = open_position_action(
-                    id,
-                    code,
-                    price,
-                    held_qty,
-                    equity,
-                    score,
-                    fundamental_ready,
-                    belief,
-                    plans.policy().reverse_revision_threshold_bp,
-                    &self.chain_params,
-                    host.belief_style(),
-                    host.phase_continuous(),
-                    trading_day,
-                    lot,
-                    host.max_holdable_shares(code),
+                    OpenPositionAssessment {
+                        account: id,
+                        code,
+                        price,
+                        held_qty,
+                        equity,
+                        score,
+                        fundamental_ready,
+                    },
+                    OpenPositionPolicy {
+                        belief,
+                        reverse_revision_threshold_bp: plans.policy().reverse_revision_threshold_bp,
+                        chain_params: &self.chain_params,
+                        style: host.belief_style(),
+                        phase_continuous: host.phase_continuous(),
+                        trading_day,
+                        lot,
+                        max_holdable_shares: host.max_holdable_shares(code),
+                    },
                     |direction, confidence_bp, horizon_trading_days| {
                         host.initial_urgency(direction, confidence_bp, horizon_trading_days)
                     },

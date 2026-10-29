@@ -53,18 +53,25 @@ fn export_three_calendar_information_books_from_real_acquisition_and_cause() {
         let participant = &session.state.belief_participants[&account];
         let facts = session.runtime_company_read_facts().unwrap();
         let market = session.build_market_view();
+        let as_of_anchor = |stock| anchors.get(&stock).copied();
+        let issuer_of_stock = |stock| facts.issuer_of_stock(stock).ok();
+        let company_spec = |company: &crate::company::CompanyId| facts.company_spec(company).ok();
         let (_, acquired, book, _) = super::super::notices::deliver_information_for_npc(
-            account,
-            now,
-            &|stock| anchors.get(&stock).copied(),
-            &session.state.npc_attention[&account],
-            participant.information(),
-            participant.belief(),
-            [stock].into(),
-            &|stock| facts.issuer_of_stock(stock).ok(),
-            &|company| facts.company_spec(company).ok(),
-            &session.state.library,
-            &market,
+            super::super::notices::InformationDeliveryContext {
+                id: account,
+                now,
+                as_of_anchor: &as_of_anchor,
+                codes: [stock].into(),
+                issuer_of_stock: &issuer_of_stock,
+                company_spec: &company_spec,
+                library: &session.state.library,
+                market: &market,
+            },
+            super::super::notices::InformationDeliveryState {
+                attention: &session.state.npc_attention[&account],
+                information: participant.information(),
+                belief: participant.belief(),
+            },
         )
         .expect("本人真实获取公开材料并形成 cause")
         .expect("观察 cadence 必须到期");

@@ -60,9 +60,9 @@ mod roots;
 mod urgency;
 pub(crate) use personal_state::PlanPersonalState;
 // D3a-2c 件4：开仓派生共享函数（lifecycle 提取——组线程消费同源）。
-pub(crate) use lifecycle::open_position_action;
 pub(crate) use lifecycle::PlanLifecycleReview;
 pub(crate) use lifecycle::PlanReviewHost;
+pub(crate) use lifecycle::{open_position_action, OpenPositionAssessment, OpenPositionPolicy};
 pub(crate) use roots::{InstitutionDecisionRoot, RootReadContext};
 
 /// 同批账户 root 使用同一市场、路径、技术、时刻与曝光观察。

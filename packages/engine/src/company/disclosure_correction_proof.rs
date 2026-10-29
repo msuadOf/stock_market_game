@@ -213,6 +213,7 @@ impl<'a> ConfirmedDisclosureCorrections<'a> {
     }
 
     /// Legacy 缺少完整返回列表时仍从同一私有库差集提取，不收紧空 entries 政策。
+    #[cfg(test)]
     pub(in crate::company) fn from_owner_result(
         base: &'a PublicLibrary,
         private_library: PublicLibrary,

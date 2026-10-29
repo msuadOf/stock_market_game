@@ -21,6 +21,21 @@ pub(super) struct SettlementTransactionOutput {
     pub(super) events: Vec<RetailReceiptEvent>,
 }
 
+pub(super) struct SettlementReadContext<'a> {
+    pub(super) accounts: &'a AccountBook,
+    pub(super) retail_experience: &'a AccountPagedMap<crate::RetailExperienceState>,
+    pub(super) belief_participants: &'a AccountPagedMap<BeliefParticipantState>,
+    pub(super) seen: &'a RetailProjectionSeen,
+}
+
+#[cfg(test)]
+pub(super) struct SettlementWriteContext<'a> {
+    pub(super) accounts: &'a mut AccountBook,
+    pub(super) retail_experience: &'a mut AccountPagedMap<crate::RetailExperienceState>,
+    pub(super) belief_participants: &'a mut AccountPagedMap<BeliefParticipantState>,
+    pub(super) seen: &'a mut RetailProjectionSeen,
+}
+
 pub(super) struct PreparedSettlementTransaction {
     pub(super) account_patch: BTreeMap<AccountId, Account>,
     pub(super) retail_patch: BTreeMap<AccountId, RetailExperienceState>,
@@ -53,10 +68,12 @@ pub(super) fn apply_session_settlement_transaction(
     let compute = session.compute_context().clone();
     apply_settlement_transaction_with_beliefs(
         &compute,
-        &mut session.state.accounts,
-        &mut session.state.retail_experience,
-        &mut session.state.belief_participants,
-        &mut session.state.retail_projection_seen,
+        SettlementWriteContext {
+            accounts: &mut session.state.accounts,
+            retail_experience: &mut session.state.retail_experience,
+            belief_participants: &mut session.state.belief_participants,
+            seen: &mut session.state.retail_projection_seen,
+        },
         moment,
         receipts,
         t1_enabled,
@@ -76,10 +93,12 @@ pub(super) fn apply_settlement_transaction(
     let mut belief_participants = AccountPagedMap::default();
     apply_settlement_transaction_with_beliefs(
         &crate::ComputeContext::shared_default().expect("测试计算上下文"),
-        accounts,
-        retail_experience,
-        &mut belief_participants,
-        seen,
+        SettlementWriteContext {
+            accounts,
+            retail_experience,
+            belief_participants: &mut belief_participants,
+            seen,
+        },
         test_experience_moment(market_minute),
         receipts,
         t1_enabled,
@@ -89,51 +108,40 @@ pub(super) fn apply_settlement_transaction(
 #[cfg(test)]
 pub(super) fn apply_settlement_transaction_with_beliefs(
     compute: &crate::ComputeContext,
-    accounts: &mut AccountBook,
-    retail_experience: &mut AccountPagedMap<crate::RetailExperienceState>,
-    belief_participants: &mut AccountPagedMap<BeliefParticipantState>,
-    seen: &mut RetailProjectionSeen,
+    write: SettlementWriteContext<'_>,
     moment: crate::experience::ExperienceMoment,
     receipts: &[EnvelopeReceipt],
     t1_enabled: bool,
 ) -> Result<SettlementTransactionOutput, SettlementTransactionError> {
     let batch = fixture_receipt_batch(receipts)?;
-    let prepared = prepare_settlement_transaction_with_beliefs(
-        compute,
-        accounts,
-        retail_experience,
-        belief_participants,
-        seen,
-        moment,
-        &batch,
-        t1_enabled,
-    )?;
-    apply_prepared_settlement_transaction(
-        accounts,
-        retail_experience,
-        belief_participants,
-        seen,
-        prepared,
-    )
+    let prepared = {
+        let read = SettlementReadContext {
+            accounts: &*write.accounts,
+            retail_experience: &*write.retail_experience,
+            belief_participants: &*write.belief_participants,
+            seen: &*write.seen,
+        };
+        prepare_settlement_transaction_with_beliefs(compute, read, moment, &batch, t1_enabled)?
+    };
+    apply_prepared_settlement_transaction(write, prepared)
 }
 
+#[cfg(test)]
 fn apply_prepared_settlement_transaction(
-    accounts: &mut AccountBook,
-    retail_experience: &mut AccountPagedMap<crate::RetailExperienceState>,
-    belief_participants: &mut AccountPagedMap<BeliefParticipantState>,
-    seen: &mut RetailProjectionSeen,
+    write: SettlementWriteContext<'_>,
     prepared: PreparedSettlementTransaction,
 ) -> Result<SettlementTransactionOutput, SettlementTransactionError> {
-    accounts.extend(prepared.account_patch);
-    retail_experience.extend(prepared.retail_patch);
+    write.accounts.extend(prepared.account_patch);
+    write.retail_experience.extend(prepared.retail_patch);
     for (account_id, belief) in prepared.belief_patch {
-        let mut participant = belief_participants
+        let mut participant = write
+            .belief_participants
             .remove(&account_id)
             .expect("prepared institutional belief participant is missing");
         *participant.belief_mut() = belief;
-        belief_participants.insert(account_id, participant);
+        write.belief_participants.insert(account_id, participant);
     }
-    *seen = prepared.seen;
+    *write.seen = prepared.seen;
     Ok(prepared.output)
 }
 
@@ -151,10 +159,12 @@ pub(super) fn prepare_settlement_transaction(
     let batch = fixture_receipt_batch(receipts)?;
     prepare_settlement_transaction_with_beliefs(
         &crate::ComputeContext::shared_default().expect("测试计算上下文"),
-        accounts,
-        retail_experience,
-        &belief_participants,
-        seen,
+        SettlementReadContext {
+            accounts,
+            retail_experience,
+            belief_participants: &belief_participants,
+            seen,
+        },
         test_experience_moment(market_minute),
         &batch,
         t1_enabled,
@@ -163,17 +173,14 @@ pub(super) fn prepare_settlement_transaction(
 
 pub(super) fn prepare_settlement_transaction_with_beliefs(
     compute: &crate::ComputeContext,
-    accounts: &AccountBook,
-    retail_experience: &AccountPagedMap<crate::RetailExperienceState>,
-    belief_participants: &AccountPagedMap<BeliefParticipantState>,
-    seen: &RetailProjectionSeen,
+    read: SettlementReadContext<'_>,
     moment: crate::experience::ExperienceMoment,
     receipts: &ReceiptBatch,
     t1_enabled: bool,
 ) -> Result<PreparedSettlementTransaction, SettlementTransactionError> {
     // seen门只选择产出点同批事实的引用；不再从raw重新派生qty/gross。
-    let canonical = canonical_unseen_receipts(receipts.raw(), seen)?;
-    let mut seen_after = seen.clone();
+    let canonical = canonical_unseen_receipts(receipts.raw(), read.seen)?;
+    let mut seen_after = read.seen.clone();
     for receipt in &canonical {
         seen_after
             .insert(receipt.index, receipt.local_key.clone())
@@ -185,13 +192,13 @@ pub(super) fn prepare_settlement_transaction_with_beliefs(
         .collect();
     let fill_facts = receipts.fill_facts().select(&selected);
     let (account_shadow, settlement) = ReceiptSettlementPlan::from_fill_facts(fill_facts.iter())?
-        .prepare_accounts(compute, accounts, t1_enabled)?;
+        .prepare_accounts(compute, read.accounts, t1_enabled)?;
     // Source observation 和 Settlement Fill 各自修剪发生变更的账户。
     // Save 会拒绝超限的未持仓 watchlist，空收据批次没有要访问或修复的 retail 账户。
     let experience_accounts: BTreeSet<AccountId> = fill_facts
         .iter()
         .filter_map(|fact| {
-            accounts
+            read.accounts
                 .get(&fact.key().account)
                 .filter(|account| matches!(account.kind(), AccountKind::Retail | AccountKind::Inst))
                 .map(|_| fact.key().account)
@@ -200,13 +207,13 @@ pub(super) fn prepare_settlement_transaction_with_beliefs(
     let retail_accounts: BTreeSet<AccountId> = experience_accounts
         .iter()
         .filter(|account_id| {
-            accounts
+            read.accounts
                 .get(account_id)
                 .is_some_and(|account| account.kind() == AccountKind::Retail)
         })
         .copied()
         .collect();
-    let positions_before = positions_of_accounts(accounts, &experience_accounts);
+    let positions_before = positions_of_accounts(read.accounts, &experience_accounts);
     let mut positions_after = positions_before.clone();
     for (account_id, account) in &account_shadow {
         if experience_accounts.contains(account_id) {
@@ -216,7 +223,7 @@ pub(super) fn prepare_settlement_transaction_with_beliefs(
     let projection = project_retail_receipts_dated(
         compute,
         RetailProjectionInput {
-            retail_experience,
+            retail_experience: read.retail_experience,
             retail_accounts: &retail_accounts,
             positions_before: &positions_before,
             positions_after: &positions_after,
@@ -228,7 +235,7 @@ pub(super) fn prepare_settlement_transaction_with_beliefs(
     let belief_patch = project_institutional_experience(
         compute,
         &account_shadow,
-        belief_participants,
+        read.belief_participants,
         &positions_before,
         &positions_after,
         moment,

@@ -1243,25 +1243,29 @@ mod rollback_tests {
         use crate::{Money, Side, StockId};
         let setup = crate::session::protocol::civil::publication_tests::setup();
         let mut session = ProtocolSession::new(setup, 75).unwrap();
-        session.state.game.fixture_append_auction_orders(
-            StockId(0),
-            vec![
-                crate::AuctionOrderSnap {
-                    owner: crate::AccountId(0),
-                    side: Side::Buy,
-                    limit: Money::from_cents(1000),
-                    qty: 100,
-                    order_id: 81,
-                },
-                crate::AuctionOrderSnap {
-                    owner: crate::AccountId(1),
-                    side: Side::Sell,
-                    limit: Money::from_cents(1000),
-                    qty: 100,
-                    order_id: 82,
-                },
-            ],
-        );
+        session
+            .state
+            .game
+            .fixture_append_auction_orders(
+                StockId(0),
+                vec![
+                    crate::AuctionOrderSnap {
+                        owner: crate::AccountId(0),
+                        side: Side::Buy,
+                        limit: Money::from_cents(1000),
+                        qty: 100,
+                        order_id: 81,
+                    },
+                    crate::AuctionOrderSnap {
+                        owner: crate::AccountId(1),
+                        side: Side::Sell,
+                        limit: Money::from_cents(1000),
+                        qty: 100,
+                        order_id: 82,
+                    },
+                ],
+            )
+            .expect("追加竞价委托成功");
         assert!(session.save().is_err());
         let orders = session.player_working_orders();
         assert_eq!(orders.len(), 1);

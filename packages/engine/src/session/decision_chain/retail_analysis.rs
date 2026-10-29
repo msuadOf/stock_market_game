@@ -53,6 +53,14 @@ impl RetailAnalysisCtx<'_> {
     }
 }
 
+/// 单个候选信号请求的观察面；同一行输入同时供基本面、技术面与经验成本面读取。
+struct RetailCandidateInput<'a> {
+    code: &'a StockId,
+    personal: &'a PlanPersonalState,
+    observation: &'a DecisionChainObservation,
+    thirty_minute_market: &'a crate::observation::EqualWeightMarketObservation,
+}
+
 /// D5 #4：零售执行策略的最小实例面（ZiNoise 生产态的组内可达投影）。
 pub(crate) struct RetailStrategyInstance {
     /// 数据面（strategy_data 等价）。
@@ -444,12 +452,13 @@ impl GameSession {
         for code in &candidates {
             let signals = Self::retail_candidate_signals_core(
                 ctx,
-                plans,
                 account_experience,
-                code,
-                personal,
-                observation,
-                thirty_minute_market,
+                RetailCandidateInput {
+                    code,
+                    personal,
+                    observation,
+                    thirty_minute_market,
+                },
             )
             .map_err(|error| invariant(format!("retail {id:?} {code:?}: {error}")))?;
             personal
@@ -489,49 +498,40 @@ impl GameSession {
             .expect("retail must have an experience row");
         Self::retail_candidate_signals_on(
             &self.read_view(),
-            &self.state.plans,
             row,
             id,
-            code,
-            personal,
-            observation,
-            thirty_minute_market,
+            RetailCandidateInput {
+                code,
+                personal,
+                observation,
+                thirty_minute_market,
+            },
         )
     }
 
     /// 读视图+写组再借用版本（D5 #4：经 ctx 走 core）。
     fn retail_candidate_signals_on(
         view: &crate::session::pipeline::npc_split::SessionReadView<'_>,
-        plans: &crate::plans::PlanBook,
         experience: &crate::RetailExperienceState,
         id: AccountId,
-        code: &StockId,
-        personal: &PlanPersonalState,
-        observation: &DecisionChainObservation,
-        thirty_minute_market: &crate::observation::EqualWeightMarketObservation,
+        input: RetailCandidateInput<'_>,
     ) -> Result<CandidateSignals, String> {
         let ctx = Self::retail_analysis_ctx_from_view(view, id);
-        Self::retail_candidate_signals_core(
-            &ctx,
-            plans,
-            experience,
-            code,
-            personal,
-            observation,
-            thirty_minute_market,
-        )
+        Self::retail_candidate_signals_core(&ctx, experience, input)
     }
 
     /// D5 #4 候选信号核（组线程/session 共用）。
     fn retail_candidate_signals_core(
         ctx: &RetailAnalysisCtx<'_>,
-        plans: &crate::plans::PlanBook,
         experience: &crate::RetailExperienceState,
-        code: &StockId,
-        personal: &PlanPersonalState,
-        observation: &DecisionChainObservation,
-        thirty_minute_market: &crate::observation::EqualWeightMarketObservation,
+        input: RetailCandidateInput<'_>,
     ) -> Result<CandidateSignals, String> {
+        let RetailCandidateInput {
+            code,
+            personal,
+            observation,
+            thirty_minute_market,
+        } = input;
         use crate::plans::{
             fundamental_signal, normalized_score, price_volume_signal, technical_signal,
             trend_signal,

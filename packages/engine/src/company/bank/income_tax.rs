@@ -25,6 +25,7 @@ pub(super) fn validate_policy(policy: &IncomeTaxPolicy) -> Result<(), BankError>
 }
 
 impl BankBooks {
+    #[cfg(test)]
     pub(crate) fn income_tax_owner(
         &self,
     ) -> (
@@ -41,6 +42,7 @@ impl BankBooks {
         )
     }
 
+    #[cfg(test)]
     pub(crate) fn install_income_tax_owner(
         &mut self,
         books: crate::accounting::Books,
@@ -52,6 +54,7 @@ impl BankBooks {
         self.next_event_id = next_event_id;
     }
 
+    #[cfg(test)]
     pub(crate) fn validate_owner_state(&self) -> Result<(), BankError> {
         self.validate_loan_claim_sources()?;
         self.ecl_policy.validate()?;
@@ -262,6 +265,7 @@ fn owner_error(detail: String) -> BankError {
     BankError::OwnershipStateInconsistent { detail }
 }
 
+#[cfg(test)]
 fn add_balance(
     balances: &mut BTreeMap<&'static str, AccountingAmount>,
     code: &'static str,

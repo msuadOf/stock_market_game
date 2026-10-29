@@ -1,7 +1,6 @@
 use super::*;
-#[path = "../../information_fixture.rs"]
-mod fixture;
 use crate::runtime::group::TickPlan;
+use crate::runtime::information_fixture as fixture;
 use crate::runtime::protocol::{AdminFault, InformationPreparePayload};
 use crate::runtime::skeleton_tests::basic_spec;
 use crate::{AccountId, StockId};

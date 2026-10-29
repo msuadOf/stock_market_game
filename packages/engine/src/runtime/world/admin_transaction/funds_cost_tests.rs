@@ -338,8 +338,7 @@ fn funds_p1_08_same_local_debit_before_refund_cannot_be_netted_or_reordered() {
     world.shutdown().unwrap();
 }
 
-#[path = "../../information_fixture.rs"]
-mod information_fixture;
+use crate::runtime::information_fixture;
 
 fn information_world() -> World {
     use crate::AccountId;

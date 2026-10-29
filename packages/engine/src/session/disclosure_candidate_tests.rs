@@ -301,8 +301,7 @@ fn civil_scan_does_not_turn_publication_instants_into_personal_observation_hooks
     );
 }
 
-#[path = "../company/disclosure_correction_test_fixture.rs"]
-mod shared_owner_fixture;
+use crate::company::disclosure_correction_test_fixture as shared_owner_fixture;
 use shared_owner_fixture::legacy_fixture;
 
 #[test]

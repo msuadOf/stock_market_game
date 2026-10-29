@@ -214,6 +214,7 @@ impl AccountBook {
         self.get(id).is_some()
     }
 
+    #[cfg(test)]
     pub(super) fn unlock_t1_positions(&mut self) {
         let locked_accounts = self
             .iter()

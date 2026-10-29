@@ -130,10 +130,10 @@ pub(super) fn player_holding_context(
     if input.security.code != *code || expected_exchange != input.security.exchange {
         return Err(invalid(PlayerCommandIssue::StockMismatch));
     }
-    if !input
+    if input
         .requester
         .position(&stock)
-        .is_some_and(|position| position.qty() > 0)
+        .is_none_or(|position| position.qty() == 0)
     {
         return Err(fail(PlayerCommandCause::NoHolding { stock }));
     }

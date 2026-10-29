@@ -283,6 +283,12 @@ pub(super) fn operation_owner(operation: &ValidatedOperation) -> AccountId {
     }
 }
 
+/// 首批股票操作及其受理结果期望。
+pub(super) struct StockStreamInitialBatch {
+    pub(super) operations: Vec<ValidatedOperation>,
+    pub(super) expected: Vec<super::CandidateValidationOutcome>,
+}
+
 /// worker 独占股票簿与 typed facts；调用线程中的 coordinator 及时推进就绪工作。
 /// T4（Astra 必修 1）：`expected`（首批受理结果期望）与 `feedback`（owner 完成
 /// 点的 typed feedback 匹配器）随流传入——匹配在本股任务内执行，协调者只收
@@ -290,8 +296,7 @@ pub(super) fn operation_owner(operation: &ValidatedOperation) -> AccountId {
 pub(super) fn drive_stock_stream_with_feedback<S, F, D>(
     compute: &std::sync::Arc<crate::compute::ComputeContext>,
     available: BTreeMap<StockId, S>,
-    initial: Vec<ValidatedOperation>,
-    expected: Vec<super::CandidateValidationOutcome>,
+    initial: StockStreamInitialBatch,
     notifications: StockStreamNotifications,
     detached: D,
     feedback: RoundFeedbackFn<S::Round>,
@@ -303,8 +308,8 @@ where
     D: FnMut(&StockId) -> Result<S, StepFatal> + Send,
 {
     let mut coordinator = StockStreamCoordinator::new(compute.clone(), available, notifications);
-    coordinator.initial_ops = Some(initial);
-    coordinator.initial_expected = Some(expected);
+    coordinator.initial_ops = Some(initial.operations);
+    coordinator.initial_expected = Some(initial.expected);
     coordinator.drive(Vec::new(), feedback, detached, on_progress)
 }
 
@@ -327,8 +332,10 @@ where
     drive_stock_stream_with_feedback(
         compute,
         available,
-        initial,
-        Vec::new(),
+        StockStreamInitialBatch {
+            operations: initial,
+            expected: Vec::new(),
+        },
         notifications,
         detached,
         passthrough_round_feedback,
@@ -518,16 +525,20 @@ impl<S: StockShard> StockStreamCoordinator<S> {
                 self.in_flight.insert(code);
                 scope.spawn(move |_| {
                     execute_stock_task(
-                        &worker_compute,
-                        &worker_sender,
-                        &worker_notifications,
-                        bindings,
-                        Some(slot),
-                        code,
-                        shard,
-                        operations,
-                        expected,
-                        feedback,
+                        StockTaskDelivery {
+                            compute: &worker_compute,
+                            sender: &worker_sender,
+                            notifications: &worker_notifications,
+                            bindings,
+                            spawn_slot: Some(slot),
+                        },
+                        StockTaskInput {
+                            code,
+                            shard,
+                            operations,
+                            expected,
+                            feedback,
+                        },
                     );
                 });
             }
@@ -589,16 +600,20 @@ impl<S: StockShard> StockStreamCoordinator<S> {
         // 与 spawn 派发同点捕获（协调线程），两路径绑定语义一致。
         let bindings = StockTaskBindings::capture();
         execute_stock_task(
-            &compute,
-            &sender,
-            &notifications,
-            bindings,
-            None,
-            code,
-            shard,
-            operations,
-            expected,
-            feedback,
+            StockTaskDelivery {
+                compute: &compute,
+                sender: &sender,
+                notifications: &notifications,
+                bindings,
+                spawn_slot: None,
+            },
+            StockTaskInput {
+                code,
+                shard,
+                operations,
+                expected,
+                feedback,
+            },
         );
         Ok(true)
     }
@@ -830,24 +845,45 @@ impl StockTaskBindings {
     }
 }
 
+/// 单股独占工作的私有输入；受理期望只随其所属操作批传递。
+struct StockTaskInput<S: StockShard> {
+    code: StockId,
+    shard: S,
+    operations: Vec<ValidatedOperation>,
+    expected: Vec<super::CandidateValidationOutcome>,
+    feedback: RoundFeedbackFn<S::Round>,
+}
+
+/// 执行交付绑定与资源；借用派发上下文，预留槽仍由执行体在完成通知后释放。
+struct StockTaskDelivery<'a, S: StockShard> {
+    compute: &'a std::sync::Arc<crate::compute::ComputeContext>,
+    sender: &'a mpsc::Sender<StockCompletion<S>>,
+    notifications: &'a mpsc::Sender<TickWorkReady>,
+    bindings: StockTaskBindings,
+    spawn_slot: Option<crate::compute::SpawnSlotGuard>,
+}
+
 /// 单项股票任务的执行体（worker spawn 与协调者内联帮助共用）。
 /// 绑定由派发线程捕获并显式传入；两段式：股票计算在绑定内完成，
 /// payload/通知发送移到绑定释放之后——协调者可见的完成信号严格晚于
 /// 最后一个绑定克隆的析构。spawn 路径携带派发预留守卫：完成信号可见
 /// 之后才归还派发槽（协调者的 try_recv 先于容量唤醒看到完成）；内联
 /// 路径无预留（协调者自己的槽）。
-fn execute_stock_task<S: StockShard>(
-    compute: &std::sync::Arc<crate::compute::ComputeContext>,
-    sender: &mpsc::Sender<StockCompletion<S>>,
-    notifications: &mpsc::Sender<TickWorkReady>,
-    bindings: StockTaskBindings,
-    spawn_slot: Option<crate::compute::SpawnSlotGuard>,
-    code: StockId,
-    shard: S,
-    operations: Vec<ValidatedOperation>,
-    expected: Vec<super::CandidateValidationOutcome>,
-    feedback: RoundFeedbackFn<S::Round>,
-) {
+fn execute_stock_task<S: StockShard>(delivery: StockTaskDelivery<'_, S>, task: StockTaskInput<S>) {
+    let StockTaskDelivery {
+        compute,
+        sender,
+        notifications,
+        bindings,
+        spawn_slot,
+    } = delivery;
+    let StockTaskInput {
+        code,
+        shard,
+        operations,
+        expected,
+        feedback,
+    } = task;
     let StockTaskBindings {
         timing,
         #[cfg(any(test, feature = "verification-harness"))]

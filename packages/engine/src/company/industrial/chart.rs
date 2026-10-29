@@ -56,7 +56,7 @@ pub fn industrial_account_chart() -> AccountChart {
         acc("6401", AccountDef::new("主营业务成本", Expense)),
         acc("6602", AccountDef::new("管理费用", Expense)),
         acc("6603", AccountDef::new("财务费用", Expense)),
-        acc("6801", AccountDef::new("所得税费用", Expense)),
+        acc(acct::TAX_EXP, AccountDef::new("所得税费用", Expense)),
         // —— 工业扩充 ——
         acc(
             acct::BAD_DEBT_ALLOW,

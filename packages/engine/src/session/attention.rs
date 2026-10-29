@@ -282,6 +282,7 @@ impl NpcAttentionScheduler {
         self.candidates.clear();
     }
 
+    #[cfg(test)]
     pub(super) fn iter(&self) -> impl Iterator<Item = &(u64, AccountId)> {
         self.candidates.iter().map(|Reverse(entry)| entry)
     }

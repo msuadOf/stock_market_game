@@ -160,6 +160,7 @@ impl SessionCandleBook {
 }
 
 impl SessionCandleBook {
+    #[cfg(test)]
     pub(super) fn record_trade_or_mark(
         &mut self,
         time: i64,
@@ -219,6 +220,7 @@ impl SessionCandleBook {
 }
 
 impl GameSession {
+    #[cfg(test)]
     pub(super) fn update_active_daily_candle(
         &mut self,
         code: &StockId,

@@ -33,6 +33,7 @@ mod impairment;
 mod income_tax;
 mod land;
 mod loans;
+#[cfg(test)]
 mod owner_state;
 mod presales;
 mod projects;

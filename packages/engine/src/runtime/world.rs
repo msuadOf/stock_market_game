@@ -173,9 +173,9 @@ pub struct OpenDerivationRecord {
     /// 账户。
     pub account: crate::AccountId,
     /// observe 输入个人态（红证同输入锚）。
-    pub personal_in: crate::session::PlanPersonalState,
+    pub(crate) personal_in: crate::session::PlanPersonalState,
     /// observe 输出个人态（演进后）。
-    pub personal_out: crate::session::PlanPersonalState,
+    pub(crate) personal_out: crate::session::PlanPersonalState,
     /// Lifecycle 携带的候选评估（账户序单元素）。
     pub assessments: Vec<(crate::StockId, crate::plans::CandidateAssessment)>,
     /// D3a-2c 件4：组内 Lifecycle 开仓消费产物（PlanOpen——红证锚；
@@ -1182,7 +1182,16 @@ impl World {
                     let capture = std::sync::Arc::clone(&capture_slot);
                     move || {
                         group_main(
-                            state, desk_txs, rx, up_tx, abort, shutdown, watchdog, capture,
+                            state,
+                            desk_txs,
+                            rx,
+                            super::worker_context::WorkerContext {
+                                up_tx,
+                                abort,
+                                shutdown,
+                                watchdog,
+                                capture,
+                            },
                         )
                     }
                 });
@@ -1266,8 +1275,18 @@ impl World {
                     let capture = std::sync::Arc::clone(&capture_slot);
                     move || {
                         desk_main(
-                            setup, n_groups, config, rx, group_txs, up_tx, abort, shutdown,
-                            watchdog, capture,
+                            setup,
+                            n_groups,
+                            config,
+                            rx,
+                            group_txs,
+                            super::worker_context::WorkerContext {
+                                up_tx,
+                                abort,
+                                shutdown,
+                                watchdog,
+                                capture,
+                            },
                         )
                     }
                 });
@@ -1553,7 +1572,7 @@ impl World {
     }
 
     #[cfg(test)]
-    pub fn swap_group_sender_for_test(
+    pub(crate) fn swap_group_sender_for_test(
         &mut self,
         group: usize,
         sender: Sender<GroupIn>,
@@ -1637,7 +1656,7 @@ impl World {
     }
 
     #[cfg(test)]
-    pub fn set_start_cleanup_message_for_test(&mut self, message: UpMsg) {
+    pub(crate) fn set_start_cleanup_message_for_test(&mut self, message: UpMsg) {
         self.start_cleanup_message_for_test = Some(message);
     }
 
@@ -2323,7 +2342,10 @@ impl World {
     }
 
     /// D4：挂当前相位计时捕获（world 运行期组/部 worker 读取安装）。
-    pub fn set_tick_capture(&mut self, binding: crate::verification_evidence::PhaseTimingBinding) {
+    pub(crate) fn set_tick_capture(
+        &mut self,
+        binding: crate::verification_evidence::PhaseTimingBinding,
+    ) {
         *self.capture_slot.lock().expect("capture 槽锁被 poison") = binding;
     }
 

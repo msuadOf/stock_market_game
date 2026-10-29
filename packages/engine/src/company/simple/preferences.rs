@@ -12,18 +12,25 @@
 //! 每类别至多评估一次，全部为 O(偏好项) 的整数比较与少量既有事实扫描；
 //! 不引入每 tick 的堆分配或全量克隆。
 
+#[cfg(test)]
+use crate::account::StockCode;
+#[cfg(test)]
 use crate::accounting::AccountingAmount;
 use crate::calendar::{CalendarExchange, CivilDate, TradingCalendar};
+#[cfg(test)]
 use crate::company::dividend::DistributableProfit;
-use crate::company::{CompanyId, DividendDeclaration};
+use crate::company::CompanyId;
+#[cfg(test)]
+use crate::company::{cash_dividend::CashDividendPlan, DividendDeclaration};
 use crate::money::Money;
-use crate::{account::StockCode, company::cash_dividend::CashDividendPlan};
 
 /// 送转比例的分母：比例字段以「百万分之一股/股」表达（与
 /// `StockDistributionEventPlan::shares_per_existing_share_micros` 同单位）。
+#[cfg(test)]
 pub(crate) const SHARE_RATIO_DENOMINATOR: u64 = 1_000_000;
 
 /// 基点分母（1bp = 万分之一 = 0.01%），与既有 `persistence_bp` 等字段同约定。
+#[cfg(test)]
 pub(crate) const BASIS_POINT_DENOMINATOR: i128 = 10_000;
 
 /// 每公司行为偏好配置。严格持久化字段：无 serde 默认，旧档缺失显式拒绝。
@@ -254,7 +261,10 @@ impl SimplePreferenceLedger {
     }
 }
 
+// 自动提案执行链仍属后续批次；当前配置、ledger 与显式提案日期保留生产支持，
+// 下面独立评估算法的既有行为验证仅在测试中编译。见 docs/trading-rules.md 的局内配置边界。
 /// 相邻自然月的月差：`(later - earlier)` 的整月数（要求 earlier <= later）。
+#[cfg(test)]
 fn months_between(earlier: CivilDate, later: CivilDate) -> i32 {
     i32::from(later.year()) * 12 + i32::from(later.month())
         - (i32::from(earlier.year()) * 12 + i32::from(earlier.month()))
@@ -262,6 +272,7 @@ fn months_between(earlier: CivilDate, later: CivilDate) -> i32 {
 
 /// 频率判定：自最近一次提案（接受或被拒）所属周期末日起，是否已满足
 /// `cycles_between_proposals` 个完整结算周期的间隔。
+#[cfg(test)]
 pub(crate) fn proposal_due(
     last_proposal_period_end: Option<CivilDate>,
     evaluated_on: CivilDate,
@@ -276,11 +287,13 @@ pub(crate) fn proposal_due(
 }
 
 /// 偏好自动提案的确定性现金分红计划 id（同公司同周期唯一，幂等键）。
+#[cfg(test)]
 pub(crate) fn cash_dividend_plan_id(company: &CompanyId, period_end: CivilDate) -> String {
     format!("simple-preference:{}:dividend:{}", company.0, period_end)
 }
 
 /// 偏好自动提案的确定性送转事件 id（同公司同周期唯一，幂等键）。
+#[cfg(test)]
 pub(crate) fn stock_distribution_event_id(company: &CompanyId, period_end: CivilDate) -> String {
     format!(
         "simple-preference:{}:stock-distribution:{}",
@@ -290,6 +303,7 @@ pub(crate) fn stock_distribution_event_id(company: &CompanyId, period_end: Civil
 
 /// 现金分红提案封顶的行情敞口上下文（游戏化保护，非官方规则；口径登记于
 /// `docs/trading-rules.md`「公司行为偏好自动提案」）。
+#[cfg(test)]
 pub(crate) struct SimpleCashDividendExposure {
     /// 提案时点最新收盘价 = 周期末最后一个交易日的收盘（跌停余量推导的锚）。
     pub last_close: Money,
@@ -305,6 +319,7 @@ pub(crate) struct SimpleCashDividendExposure {
 }
 
 /// 现金分红偏好评估输入：全部为既有事实的只读快照，评估本身不产生副作用。
+#[cfg(test)]
 pub(crate) struct SimpleCashDividendEvaluation<'a> {
     pub preference: &'a SimpleCashDividendPreference,
     pub company: &'a CompanyId,
@@ -337,6 +352,7 @@ pub(crate) struct SimpleCashDividendEvaluation<'a> {
 
 /// 现金分红偏好评估结论。
 #[derive(Debug)]
+#[cfg(test)]
 pub(crate) enum SimpleCashDividendOutcome {
     /// 触发条件不满足或本周期已处理：不提案（不是拒绝，无需记录）。
     Skip,
@@ -350,6 +366,7 @@ pub(crate) enum SimpleCashDividendOutcome {
 }
 
 /// 现金分红偏好评估：纯整数/定点计算，O(1)。
+#[cfg(test)]
 pub(crate) fn evaluate_cash_dividend_preference(
     input: &SimpleCashDividendEvaluation<'_>,
 ) -> SimpleCashDividendOutcome {
@@ -523,6 +540,7 @@ pub(crate) fn evaluate_cash_dividend_preference(
 
 /// 送转提案的行情敞口上下文（游戏化保护；与现金分红封顶同口径推导，登记于
 /// `docs/trading-rules.md`「公司行为偏好自动提案」）。
+#[cfg(test)]
 pub(crate) struct SimpleStockDistributionExposure {
     /// 提案时点最新收盘价 = 周期末最后一个交易日的收盘（跌停余量推导的锚）。
     pub last_close: Money,
@@ -547,6 +565,7 @@ pub(crate) struct SimpleStockDistributionExposure {
 }
 
 /// 送转偏好评估输入。
+#[cfg(test)]
 pub(crate) struct SimpleStockDistributionEvaluation<'a> {
     pub preference: &'a SimpleStockDistributionPreference,
     pub company: &'a CompanyId,
@@ -572,6 +591,7 @@ pub(crate) struct SimpleStockDistributionEvaluation<'a> {
 
 /// 送转偏好评估结论。
 #[derive(Debug)]
+#[cfg(test)]
 pub(crate) enum SimpleStockDistributionOutcome {
     Skip,
     Proposal {
@@ -583,6 +603,7 @@ pub(crate) enum SimpleStockDistributionOutcome {
 }
 
 /// 送转偏好评估：纯整数/定点计算，O(1)。
+#[cfg(test)]
 pub(crate) fn evaluate_stock_distribution_preference(
     input: &SimpleStockDistributionEvaluation<'_>,
 ) -> SimpleStockDistributionOutcome {
@@ -794,6 +815,7 @@ pub(crate) fn preference_ex_dates(
 /// 批准日开市前，锚即该区间前最后一个交易日的收盘价；区间内每个交易日的
 /// 收盘相对前一收盘最多再跌一个跌停幅度。按日程逐日推导，不拍脑袋固定
 /// 天数（公告日为交易日时 n=2：公告日与登记日；公告日休市时 n=1）。
+#[cfg(test)]
 pub(crate) fn exposure_trading_days(
     calendar: &TradingCalendar,
     exchange: CalendarExchange,
@@ -829,6 +851,7 @@ pub(crate) fn exposure_trading_days(
 /// 链每步恒 ≥ 一个价位，故锚为正时返回值恒 ≥ tick，不存在「余量耗尽」；
 /// `None` 仅表示输入非法（锚/价位非正、limit_bps > 10000）或推导溢出，
 /// 由调用方如实拒绝（铁律二）。
+#[cfg(test)]
 pub(crate) fn limit_down_margin_floor_cents(
     last_close_cents: i64,
     limit_bps: u32,
@@ -851,6 +874,7 @@ pub(crate) fn limit_down_margin_floor_cents(
 /// 现金红利」的分子必须 ≥ ceil((10^6 + ratio_micros)/10^6) 分：参考价 =
 /// 分子 × 10^6 / (10^6 + ratio) 银行家舍入到分，商为 0 时舍入无法保证 ≥1。
 /// 纯现金组（ratio = 0）即熟悉的「至少留 1 分」。
+#[cfg(test)]
 pub(crate) fn combined_group_required_positive_cents(ratio_micros: u64) -> i128 {
     1 + i128::from((ratio_micros + SHARE_RATIO_DENOMINATOR - 1) / SHARE_RATIO_DENOMINATOR)
 }

@@ -16,17 +16,17 @@ fn company_book() -> PlanBook {
 }
 
 fn state(book: PlanBook) -> GroupState {
-    let mut state = GroupState::new(
-        1,
-        vec![GroupAccount::new(0, 1)],
-        8,
-        100,
-        Arc::new(GameConfig::proposed_defaults()),
-        240,
-        None,
-        Vec::new(),
-        Box::new(|_, _| TickPlan::default()),
-    );
+    let mut state = GroupState::new(super::GroupSetup {
+        group: 1,
+        accounts: vec![GroupAccount::new(0, 1)],
+        chunk: 8,
+        lot: 100,
+        config: Arc::new(GameConfig::proposed_defaults()),
+        ticks_per_day: 240,
+        decision: None,
+        plans: Vec::new(),
+        script: Box::new(|_, _| TickPlan::default()),
+    });
     state.plan_book = book;
     state
 }
@@ -198,17 +198,17 @@ fn origin_mixed_stock_day_end_uses_real_group_and_rejects_closed_company_executi
     accounts[0].shares[1] = 100;
     accounts[0].frozen_today[0] = 100;
     accounts[0].frozen_today[1] = 100;
-    let mut group = GroupState::new(
-        0,
+    let mut group = GroupState::new(super::GroupSetup {
+        group: 0,
         accounts,
-        8,
-        100,
-        Arc::new(GameConfig::proposed_defaults()),
-        2,
-        None,
-        Vec::new(),
-        Box::new(|_, _| TickPlan::default()),
-    );
+        chunk: 8,
+        lot: 100,
+        config: Arc::new(GameConfig::proposed_defaults()),
+        ticks_per_day: 2,
+        decision: None,
+        plans: Vec::new(),
+        script: Box::new(|_, _| TickPlan::default()),
+    });
     group.bind_calendar(Arc::clone(&source), bindings);
     group.plan_book = book.clone();
     group.cur_tick = 9;

@@ -2,14 +2,13 @@
 use super::*;
 use crate::company::CompanyId;
 use crate::runtime::group::TickPlan;
+use crate::runtime::information_fixture as fixture;
 use crate::runtime::protocol::{
     AdminFault, AdminPlanReference, AdminTreasuryBinding, RepurchaseExecutionProjection,
     RepurchaseMaterialRestriction, RepurchasePreparePayload, RepurchaseProjectionInput,
 };
 use crate::runtime::skeleton_tests::basic_spec;
 use crate::{AccountId, Money};
-#[path = "../../information_fixture.rs"]
-mod fixture;
 fn world() -> World {
     let mut spec = basic_spec(3, 2, 2, Box::new(|_| Box::new(|_, _| TickPlan::default())));
     spec.civil_start_date = fixture::at(9, 0).date();

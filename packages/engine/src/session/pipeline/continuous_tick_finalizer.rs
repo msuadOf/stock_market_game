@@ -1,7 +1,7 @@
 //! 在 Continuous private candidate 上执行 stock_processing 收尾与唯一一次 ReceiptAggregation/Projection。
 
 use super::{
-    account_settlement::prepare_settlement_transaction_with_beliefs,
+    account_settlement::{prepare_settlement_transaction_with_beliefs, SettlementReadContext},
     adaptive_plan_chain::PlanChainFactConsumption,
     continuous_lifecycle_projection::project_continuous_retail_lifecycle,
     continuous_matching::IncrementalContinuousStockFinish,
@@ -133,11 +133,13 @@ pub(super) fn finalize_continuous_tick(
             )
         })?;
     let prepared = prepare_settlement_transaction_with_beliefs(
-        compute,
-        &session.state.accounts,
-        &session.state.retail_experience,
-        &session.state.belief_participants,
-        &session.state.retail_projection_seen,
+        &compute,
+        SettlementReadContext {
+            accounts: &session.state.accounts,
+            retail_experience: &session.state.retail_experience,
+            belief_participants: &session.state.belief_participants,
+            seen: &session.state.retail_projection_seen,
+        },
         crate::experience::ExperienceMoment {
             civil_date: session.civil_date(),
             market_minute: session.current_market_minute(),

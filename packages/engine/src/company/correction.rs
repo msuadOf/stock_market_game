@@ -291,6 +291,7 @@ impl<'a> PreparedSimpleDisclosureCorrection<'a> {
 }
 
 impl super::CompanySystem {
+    #[cfg(test)]
     pub(crate) fn prepare_disclosure_correction<'a>(
         &self,
         company: &CompanyId,

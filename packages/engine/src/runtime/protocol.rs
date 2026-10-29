@@ -907,7 +907,7 @@ pub struct GroupFlushWitnessForTest {
 
 /// 组线程收件消息（coordinator 的控制消息与交易部的实体批次共用一个 mpsc；
 /// FIFO + 收束因果序保证批次先于下一 Start 被处理）。
-pub enum GroupIn {
+pub(crate) enum GroupIn {
     /// 行政静点操作；事务生命周期不进入普通 tick 日志。
     AdminPrepare {
         id: AdminTransactionId,
@@ -1347,7 +1347,7 @@ pub struct PendingStartRejection {
 }
 
 /// worker → 协调者的上行消息；panic payload 的 Debug 不展开载荷。
-pub enum UpMsg {
+pub(crate) enum UpMsg {
     /// 仅 pending 门在分派 Start 前产生；该组尚未发送本轮任何 Ops 或 final。
     PendingStartRejected(PendingStartRejection),
     /// 三阶段显式回执；Prepare 业务拒绝不终止 worker。
