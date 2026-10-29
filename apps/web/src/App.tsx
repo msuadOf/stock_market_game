@@ -145,6 +145,14 @@ interface AppShellProps {
   setNotice: Dispatch<SetStateAction<string | null>>;
 }
 
+export function ReturnToStartupControl({ onSelectHost, stopSession, error }: { onSelectHost: (stopSession: () => Promise<void>) => Promise<void>; stopSession: () => Promise<void>; error: string | null }) {
+  return <section aria-label="返回启动选择">
+    <p>返回启动选择将结束当前内存会话，未保存的日内进度会丢失；不会重读快速槽，也不会无缝迁移。</p>
+    <Button onClick={() => { void onSelectHost(stopSession); }}>返回启动选择</Button>
+    {error !== null && <p role="alert">{error}</p>}
+  </section>;
+}
+
 function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, sessionSetup, setSessionSetup, returningToStartup, returningToStartupRef, startupReturnError, onSpawnFailure, onSelectHost, autoOrderMgrRef, hostRef, notice, setNotice }: AppShellProps) {
   const hasSnapshot = useSelector((s: RootState) => s.snapshot.snapshot !== null);
   const snapshotGeneration = useSelector((state: RootState) => state.snapshot.generation);
@@ -662,6 +670,7 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
 
         <Card className="panel user-panel" id="section-user">
           <h3 className="panel-title">我的</h3>
+          <ReturnToStartupControl onSelectHost={onSelectHost} stopSession={stopStartupRef.current} error={startupReturnError} />
           <section className="new-game-panel" aria-label="新游戏">
             <h4>新游戏</h4>
             <StartDateInput value={startDateDraft} error={startDateError} onChange={(value) => { setStartDateDraft(value); setStartDateError(null); }} />
