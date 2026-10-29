@@ -9,8 +9,8 @@ use engine::money::Money;
 use engine::orderbook::AccountId;
 use engine::session::NpcAttentionState;
 use engine::session::{
-    FloatAllocation, GameSession, NpcSetup, SecurityCategory, SessionSetup, StockExchange,
-    StockSpec,
+    CivilPhase, FloatAllocation, GameSession, NpcSetup, SecurityCategory, SessionSetup,
+    StockExchange, StockSpec,
 };
 use engine::strategy::{HotParams, InstParams, RetailParams, StrategyParams};
 use engine::{CivilDate, StockCode};
@@ -91,8 +91,18 @@ fn discovery_setup() -> SessionSetup {
 fn session_bytes() -> Vec<u8> {
     let mut session = GameSession::new(discovery_setup(), 42).expect("session builds");
     let mut events = Vec::new();
-    for _ in 0..150 {
+    for tick in 1..=150 {
         events.extend(session.step().expect("healthy step"));
+        if tick % 10 == 0 {
+            session
+                .end_civil_day()
+                .expect("completed trading day advances civil date");
+            while session.civil_clock().phase() == CivilPhase::ClosedDay {
+                session
+                    .end_civil_day()
+                    .expect("closed civil day advances to next trading day");
+            }
+        }
     }
     let mut bytes = serde_json::to_vec(&events).expect("events serialize");
     bytes.extend(b"|");
