@@ -17,8 +17,8 @@ pub(in crate::session) fn build_market_view_on(view: &SessionReadView) -> Market
     let stocks = view.compute.parallel(|| {
         (if runtime_mirrored {
             mirror_ref
-                .iter()
-                .map(|(code, _)| (code, None))
+                .keys()
+                .map(|code| (code, None))
                 .collect::<Vec<(&StockId, Option<&crate::Market>)>>()
         } else {
             view.markets

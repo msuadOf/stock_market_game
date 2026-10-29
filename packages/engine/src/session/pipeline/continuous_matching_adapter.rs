@@ -85,7 +85,7 @@ pub(super) fn prepare_inputs_with_observer_on(
             .collect::<Vec<_>>()
     });
     // Error selection and the returned layout are stable; neither ranks orders.
-    prepared.sort_unstable_by(|left, right| left.0.cmp(&right.0));
+    prepared.sort_unstable_by_key(|left| left.0);
     let mut inputs = Vec::with_capacity(prepared.len());
     let mut matched = 0_usize;
     for (_, result) in prepared {

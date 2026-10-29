@@ -601,7 +601,7 @@ mod tests {
             std::hint::spin_loop();
         }
         assert!(flag.load(Ordering::SeqCst), "析构任务未在专用线程执行");
-        assert!(deferred_count() >= before + 1);
+        assert!(deferred_count() > before);
     }
 
     struct CountingProbe(Arc<AtomicUsize>);

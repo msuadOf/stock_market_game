@@ -375,7 +375,7 @@ mod tests {
                 writes
                     .npc_order_lifecycles
                     .push(crate::session::NpcOrderLifecycle {
-                        account: account,
+                        account,
                         code: StockId(0),
                         order_id: crate::OrderId(999),
                         placed_market_minute: 0,

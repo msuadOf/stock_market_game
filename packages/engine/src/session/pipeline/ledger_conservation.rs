@@ -110,7 +110,6 @@ pub(super) fn validate_with_observer_in(
         .envelopes
         .iter()
         .chain(ledger.terminal_envelopes.iter())
-        .map(|(key, envelope)| (key, envelope))
         .collect();
     let validated = map_rows(&rows, compute, |(key, envelope)| {
         observe_row();
@@ -234,7 +233,7 @@ where
         //（串行脊线程上 par_iter 会惰性初始化全局池，即线程数 132→260 的元凶）。
         // 未显式接会话上下文的调用方在 ≥512 行时退化为调用线程串行循环；
         // 逐行校验内容、结果顺序与错误合同与原并行分支完全一致，只改执行域。
-        None => rows.iter().map(|row| validate_row(row)).collect(),
+        None => rows.iter().map(validate_row).collect(),
     }
 }
 

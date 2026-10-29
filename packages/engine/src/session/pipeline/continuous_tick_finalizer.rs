@@ -113,7 +113,7 @@ pub(super) fn finalize_continuous_tick(
         created_envelopes,
         worker_batches,
         terminal_keys,
-        &compute,
+        compute,
     )
     .map_err(|error| {
         stock_execution_error(
@@ -133,7 +133,7 @@ pub(super) fn finalize_continuous_tick(
             )
         })?;
     let prepared = prepare_settlement_transaction_with_beliefs(
-        &compute,
+        compute,
         &session.state.accounts,
         &session.state.retail_experience,
         &session.state.belief_participants,

@@ -115,7 +115,7 @@ impl DecisionResourceSnapshot {
         let reservations = view.envelope_ledger.live_reservations()?;
 
         view.accounts.validate_resources(
-            &view.compute,
+            view.compute,
             &configured_stocks,
             &reservations,
             |account_id, account| -> Result<(), StepFatal> {

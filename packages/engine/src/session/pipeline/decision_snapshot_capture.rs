@@ -334,7 +334,7 @@ pub(in crate::session) fn capture_npc_account_input_on(
     let mut input =
         DecisionAccountInput::new_shared(kind, self_view, strategy_state, account_risk, experience);
     // 经验行 owned 终值：观察更新后的行（Arc 快照留在输入内）。
-    let experience_row = input.retail_experience().map(|row| row.clone());
+    let experience_row = input.retail_experience().cloned();
     if kind == AccountKind::Retail {
         if let Some(state) = input.retail_experience() {
             let influence = state

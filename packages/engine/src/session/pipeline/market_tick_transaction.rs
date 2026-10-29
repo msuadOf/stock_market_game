@@ -107,10 +107,7 @@ pub(super) fn prepare_market_tick_with_evidence(
     authority: &mut GameSession,
     capture_commit_evidence: bool,
 ) -> Result<PreparedMarketTick<'_>, MarketTransactionError> {
-    let mut plan = match plan_tick(PhaseInput { session: authority }) {
-        Ok(plan) => plan,
-        Err(error) => return Err(error.into()),
-    };
+    let mut plan = plan_tick(PhaseInput { session: authority })?;
     let _output = apply_tick_shadow_market_transaction(&mut plan)?;
     crate::verification_evidence::enter_phase(super::TickPhase::PreCommitValidation);
     let commit = super::candidate_commit::prepare_tick_shadow_plan_commit_with_evidence(

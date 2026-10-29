@@ -346,7 +346,7 @@ mod t1_account_task_tests {
         );
         let tick = session.state.tick;
         for account in 1..=retail_count {
-            let account = crate::AccountId(u64::try_from(account).unwrap());
+            let account = crate::AccountId(u64::from(account));
             crate::session::npc_working_quote_tests::force_attention_candidate(
                 &mut session,
                 account,
@@ -675,7 +675,7 @@ mod t1_account_task_tests {
             let (_view, mut writes) = super::super::npc_split::npc_split(&mut session);
             super::super::npc_split::receive_private_intent_on(
                 writes.ingress,
-                &mut writes.ingress_receipt_cursors,
+                writes.ingress_receipt_cursors,
                 player,
                 crate::Intent::Cancel {
                     code: code,
@@ -1197,7 +1197,7 @@ pub(in crate::session) fn produce_decision_output_on(
     view.compute.begin_install_roundtrip_probe();
     let stream_error = super::npc_decisions::stream_npc_account_tasks_with(
         std::sync::Arc::new(due.clone()),
-        &view.compute,
+        view.compute,
         |_| {},
         |account| run_npc_account_task(view, &ctx, &plans, &config, account),
         |account,

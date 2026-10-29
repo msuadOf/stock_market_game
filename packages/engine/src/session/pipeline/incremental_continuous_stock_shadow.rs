@@ -373,7 +373,7 @@ impl IncrementalContinuousStockCoordinator {
 
         // 完成结果可能乱序交付；按股票身份选择首错并归并成功输出，不赋予交易优先级。
         let mut results = results;
-        results.sort_by(|left, right| left.0.cmp(&right.0));
+        results.sort_by_key(|left| left.0);
         let mut facts = detached.clone();
         let mut receipts = Vec::new();
         #[cfg(any(test, feature = "simulation-diagnostics"))]

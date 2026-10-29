@@ -999,7 +999,7 @@ mod rollback_tests {
         );
         // 批四：跨 tick 载体删除——档不含 pending_npc 键（NPC 待处理事实随
         // 载体退役；本断言原验证批为空，键缺失为更强形态）。
-        assert!(serde_json::to_value(&branch.game().save().unwrap())
+        assert!(serde_json::to_value(branch.game().save().unwrap())
             .unwrap()
             .get("pending_npc")
             .is_none());

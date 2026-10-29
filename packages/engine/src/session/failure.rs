@@ -191,8 +191,8 @@ impl GameSession {
     pub fn runtime_price_histories(&self) -> Vec<Vec<i64>> {
         self.state
             .price_history
-            .iter()
-            .map(|(_, history)| history.iter().map(|price| price.cents()).collect())
+            .values()
+            .map(|history| history.iter().map(|price| price.cents()).collect())
             .collect()
     }
 

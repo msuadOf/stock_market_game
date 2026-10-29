@@ -394,7 +394,7 @@ mod tests {
                 &test_compute(),
                 &prices,
                 &super::super::pipeline::LiveReservations::fixture(&cash, &sell),
-                &validate,
+                validate,
             )
             .unwrap();
         let mut shadow = accounts.clone_for_shadow().unwrap();
@@ -403,7 +403,7 @@ mod tests {
                 &test_compute(),
                 &prices,
                 &super::super::pipeline::LiveReservations::fixture(&cash, &sell),
-                &validate,
+                validate,
             )
             .unwrap();
         assert_eq!(calls.load(Ordering::Relaxed), 2, "未变化的页不应重复计算");
@@ -416,7 +416,7 @@ mod tests {
                 &test_compute(),
                 &prices,
                 &super::super::pipeline::LiveReservations::fixture(&cash, &sell),
-                &validate,
+                validate,
             )
             .unwrap();
         assert_eq!(calls.load(Ordering::Relaxed), 3, "只重验发生 mutation 的页");
@@ -426,7 +426,7 @@ mod tests {
                 &test_compute(),
                 &prices,
                 &super::super::pipeline::LiveReservations::fixture(&cash, &sell),
-                &validate,
+                validate,
             )
             .unwrap();
         assert_eq!(calls.load(Ordering::Relaxed), 5, "价格变化必须重验全部页");
@@ -436,7 +436,7 @@ mod tests {
                 &test_compute(),
                 &prices,
                 &super::super::pipeline::LiveReservations::fixture(&cash, &sell),
-                &validate,
+                validate,
             )
             .unwrap();
         assert_eq!(calls.load(Ordering::Relaxed), 6, "现金预留只使受影响页失效");
@@ -446,7 +446,7 @@ mod tests {
                 &test_compute(),
                 &prices,
                 &super::super::pipeline::LiveReservations::fixture(&cash, &sell),
-                &validate,
+                validate,
             )
             .unwrap();
         assert_eq!(calls.load(Ordering::Relaxed), 7, "股份预留只使受影响页失效");
@@ -458,7 +458,7 @@ mod tests {
                     &BTreeMap::new(),
                     &BTreeMap::new(),
                 ),
-                &validate,
+                validate,
             )
             .unwrap();
         assert_eq!(

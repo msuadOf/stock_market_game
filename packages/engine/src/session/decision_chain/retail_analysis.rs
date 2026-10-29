@@ -262,7 +262,7 @@ impl GameSession {
                 .map_err(|error| invariant(error.to_string()))?;
         }
         personal.watchlist.prune(&protected);
-        let candidates = root_candidate_codes(id, &held, &personal.watchlist, &plans, discovered);
+        let candidates = root_candidate_codes(id, &held, &personal.watchlist, plans, discovered);
         #[cfg(feature = "simulation-diagnostics")]
         let mut causal_facts =
             vec![crate::diagnostics::causal::CausalFactKind::Decision { account: id }];

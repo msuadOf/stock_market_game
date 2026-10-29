@@ -89,7 +89,7 @@ impl ExecutorBinding {
     pub(super) fn strong_count(&self) -> usize {
         self.0
             .as_ref()
-            .map(|scope| std::sync::Arc::strong_count(scope))
+            .map(std::sync::Arc::strong_count)
             .unwrap_or(0)
     }
 }

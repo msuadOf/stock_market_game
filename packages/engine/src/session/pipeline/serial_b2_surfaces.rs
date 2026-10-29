@@ -88,7 +88,7 @@ impl GameSession {
             return Ok(());
         }
         let setup = &self.state.setup;
-        let tpd = u64::from(setup.ticks_per_day);
+        let tpd = setup.ticks_per_day;
         // 撮合窗基准=step 后 tick−1（与 desk cur_tick−1 同式）。
         let basis = self.state.tick.saturating_sub(1);
         for fact in facts {

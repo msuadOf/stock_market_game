@@ -389,8 +389,7 @@ mod tests {
             .fixture_set_last_close(Money::ZERO);
         let context_error =
             super::super::account_validation_context::build_account_validation_context(&game)
-                .err()
-                .expect("fixture 必须同时触发 context 与 stock-input 错误");
+                .expect_err("fixture 必须同时触发 context 与 stock-input 错误");
         let before = game.business_state_hash().unwrap();
         let mut plan =
             super::super::plan_tick(super::super::PhaseInput { session: &game }).unwrap();

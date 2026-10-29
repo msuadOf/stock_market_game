@@ -216,8 +216,7 @@ mod tests {
         let mut candidate = authority.clone_for_tick_shadow().unwrap();
         let error = TradingDayEndTransition::new(&mut candidate)
             .apply()
-            .err()
-            .expect("day 溢出必须显式失败");
+            .expect_err("day 溢出必须显式失败");
         assert!(
             matches!(error, StepFatal::InvariantViolation { description, .. } if description.contains("overflow"))
         );

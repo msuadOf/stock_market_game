@@ -135,7 +135,7 @@ pub(super) fn continuous_shards(
             (code, shard)
         })
         .collect::<Vec<_>>();
-    initialized.sort_unstable_by(|left, right| left.0.cmp(&right.0));
+    initialized.sort_unstable_by_key(|left| left.0);
     let mut shards = initialized
         .into_iter()
         .map(|(code, shard)| shard.map(|shard| (code, shard)))
@@ -687,7 +687,7 @@ impl<S: StockShard> StockStreamCoordinator<S> {
         self.notifications
             .receiver
             .recv()
-            .map(|done| PollOutcome::Ready(done))
+            .map(PollOutcome::Ready)
             .map_err(|_| invariant("work notification channel closed during stock processing"))
     }
 
