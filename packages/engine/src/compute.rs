@@ -645,6 +645,7 @@ impl ComputeContext {
         finish(payload);
     }
 
+    #[cfg(test)]
     pub(crate) fn spawn(&self, work: impl FnOnce() + Send + 'static) {
         // 串行垫片：立即执行（绑定继承语义保持）。
         let timing = crate::verification_evidence::current_phase_timing_binding();
@@ -669,14 +670,6 @@ impl ComputeContext {
         right: impl FnOnce() -> B + Send,
     ) -> (A, B) {
         (left(), right())
-    }
-
-    /// scope burst：scope 体在本上下文池的一个 worker 上执行（含其 spawn）。
-    pub(crate) fn scope<'scope, R: Send>(
-        &self,
-        body: impl FnOnce(&crate::compute::Scope<'scope>) -> R + Send,
-    ) -> R {
-        crate::compute::scope(body)
     }
 
     /// scope 体保留在协调调用线程；spawn 的借用任务只进入此池。
@@ -945,7 +938,7 @@ impl ComputeContext {
     /// 台账快照（测试/验证专用）：(占池协调者数 drives, 在飞派发预留数 spawned)。
     /// 供确定性测试断言联合不变式 `drives + spawned ≤ workers` 持续成立
     /// （round4 ①-必修a；该不变式只对 workers>1 的池声明，round5-③）。
-    #[cfg(any(test, feature = "verification-harness"))]
+    #[cfg(test)]
     pub(crate) fn admission_snapshot(&self) -> (usize, usize) {
         let admission = self.admission.lock().expect("池准入台账锁被 poison");
         (admission.drives, admission.spawned)
@@ -1102,15 +1095,6 @@ pub(crate) mod parallel {
         }
     }
     impl<'a, T: ?Sized + 'a> ParallelRefIterator<'a> for T where &'a T: IntoIterator {}
-    pub trait ParallelRefMutIterator<'a>: 'a
-    where
-        &'a mut Self: IntoIterator,
-    {
-        fn par_iter_mut(&'a mut self) -> <&'a mut Self as IntoIterator>::IntoIter {
-            self.into_iter()
-        }
-    }
-    impl<'a, T: ?Sized + 'a> ParallelRefMutIterator<'a> for T where &'a mut T: IntoIterator {}
     pub trait SequentialGrain: Iterator + Sized {
         fn with_min_len(self, _: usize) -> Self {
             self
