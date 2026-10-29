@@ -260,10 +260,9 @@ fn multi_round_continue_terminates_by_empty_continuation() {
 fn rounds_cap_exceeding_fails_explicitly() {
     // 每轮都声称续行：超过轮数上限必须显式失败（异常形状不静默）。
     let script = |_g: GroupIdx| -> GroupScript {
-        Box::new(|_tick, _round| {
-            let mut plan = TickPlan::default();
-            plan.continuation = true;
-            plan
+        Box::new(|_tick, _round| TickPlan {
+            continuation: true,
+            ..TickPlan::default()
         })
     };
     let mut spec = basic_spec(1, 1, 1, Box::new(script));
@@ -818,8 +817,8 @@ fn drain_shutdown_final_leaves_no_inflight_entities() {
         Box::new(move |tick, _round| {
             let mut plan = TickPlan::default();
             if tick == 1 {
-                plan.places.push(buy(0, (g % 2) as u16, 1000, 100));
-                plan.places.push(sell(0, ((g + 1) % 2) as u16, 1000, 100));
+                plan.places.push(buy(0, g % 2, 1000, 100));
+                plan.places.push(sell(0, (g + 1) % 2, 1000, 100));
             }
             plan
         })

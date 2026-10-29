@@ -226,7 +226,7 @@ pub fn project_lifecycle_events(input: &LifecycleEvents, next_seq: &mut u64) -> 
             remaining_qty: *remaining,
         });
     }
-    for (owner, stock, serial, reason) in &input.rejections {
+    for (owner, stock, _serial, reason) in &input.rejections {
         events.push(Event::IntentRejected {
             seq: take(next_seq),
             account: owner_to_account(*owner),

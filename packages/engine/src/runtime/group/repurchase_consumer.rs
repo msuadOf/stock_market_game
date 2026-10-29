@@ -96,13 +96,13 @@ impl GroupState {
                         ..
                     }
             );
-            if is_progress && progress.insert(key) {
-                if source_meta
+            if is_progress
+                && progress.insert(key)
+                && source_meta
                     .last_progress_position
                     .is_some_and(|old| (batch.tick, batch.round) <= old)
-                {
-                    return Err(invalid("同或更旧 Batch 位置重复推进公司票"));
-                }
+            {
+                return Err(invalid("同或更旧 Batch 位置重复推进公司票"));
             }
             match source.kind {
                 RepurchaseSourceKind::Accepted {

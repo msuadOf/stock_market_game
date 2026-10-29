@@ -26,7 +26,6 @@ pub use shutdown_completion::{
 mod shutdown_verification;
 #[cfg(any(target_family = "wasm", test))]
 mod wasm_shutdown;
-pub(crate) use prepared_stop::StopReport;
 #[cfg(all(target_family = "wasm", feature = "verification-harness"))]
 pub use shutdown_verification::{verify_world_stop, WorldStopProbe};
 
@@ -71,6 +70,7 @@ use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
+#[cfg(any(test, all(target_family = "wasm", feature = "verification-harness")))]
 use std::time::Duration;
 
 /// 每股交易部规格（类别差异显式建模：主板/创业板）。
@@ -1178,7 +1178,6 @@ impl World {
                     let up_tx = up_tx.clone();
                     let abort = Arc::clone(&abort);
                     let shutdown = Arc::clone(&worker_shutdown);
-                    let watchdog = watchdog;
                     let capture = std::sync::Arc::clone(&capture_slot);
                     move || {
                         group_main(
@@ -1270,7 +1269,6 @@ impl World {
                     let up_tx = up_tx.clone();
                     let abort = Arc::clone(&abort);
                     let shutdown = Arc::clone(&worker_shutdown);
-                    let watchdog = watchdog;
                     let config = Arc::clone(&config);
                     let capture = std::sync::Arc::clone(&capture_slot);
                     move || {
@@ -3013,7 +3011,7 @@ impl World {
         #[cfg(test)]
         let fail_after_acks = self.seal_ack_fail_after_acks.take();
         #[cfg(not(test))]
-        let fail_after_acks: Option<usize> = None;
+        let _fail_after_acks: Option<usize> = None;
         for tx in &self.group_txs {
             if tx.send(GroupIn::Seal { tick, round_final }).is_err() {
                 self.abort_tick(tick);
@@ -3179,65 +3177,66 @@ impl World {
             original_panic.into_iter().collect();
         let mut worker_results = Vec::new();
         // 上行通道无界，worker 不等待协调者读 Final；先 join 可保证异常收集也不漏线程。
-        let mut join_one =
-            |who, handle: crate::thread_facade::JoinHandle<Result<(), RuntimeError>>| {
-                let result = match handle.join() {
-                    Ok(result) => result,
-                    Err(payload) => {
-                        // wasm join 的 io::Error 保留诊断载荷，在此统一进入失败收集。
-                        #[cfg(target_family = "wasm")]
-                        let payload = Box::new(payload) as Box<dyn std::any::Any + Send>;
-                        panics.push((who, payload));
-                        Err(RuntimeError::ProtocolInvariant {
-                            detail: format!("worker {who} 未经 TaskDied 运输的线程 panic"),
-                        })
+        {
+            let mut join_one =
+                |who, handle: crate::thread_facade::JoinHandle<Result<(), RuntimeError>>| {
+                    let result = match handle.join() {
+                        Ok(result) => result,
+                        Err(payload) => {
+                            // wasm join 的 io::Error 保留诊断载荷，在此统一进入失败收集。
+                            #[cfg(target_family = "wasm")]
+                            let payload = Box::new(payload) as Box<dyn std::any::Any + Send>;
+                            panics.push((who, payload));
+                            Err(RuntimeError::ProtocolInvariant {
+                                detail: format!("worker {who} 未经 TaskDied 运输的线程 panic"),
+                            })
+                        }
+                    };
+                    if let Err(failure) = &result {
+                        if expected_failure != Some((who, failure)) {
+                            errors.push(format!("join {who}：{failure}"));
+                        }
                     }
+                    worker_results.push((who, result));
                 };
-                if let Err(failure) = &result {
-                    if expected_failure != Some((who, failure)) {
-                        errors.push(format!("join {who}：{failure}"));
-                    }
-                }
-                worker_results.push((who, result));
-            };
-        let handles = std::mem::take(&mut self.handles);
-        if mode == FatalCleanupMode::PendingStartBeforeFinal {
-            let (groups, desks): (Vec<_>, Vec<_>) = handles
-                .into_iter()
-                .partition(|(who, _)| matches!(who, WorkerId::Group(_)));
-            #[cfg(test)]
-            let mut joined_producers = Vec::new();
-            for (who, handle) in groups {
-                join_one(who, handle);
+            let handles = std::mem::take(&mut self.handles);
+            if mode == FatalCleanupMode::PendingStartBeforeFinal {
+                let (groups, desks): (Vec<_>, Vec<_>) = handles
+                    .into_iter()
+                    .partition(|(who, _)| matches!(who, WorkerId::Group(_)));
                 #[cfg(test)]
-                joined_producers.push(who);
-            }
-            #[cfg(test)]
-            if let Some(probe) = &self.fatal_cleanup_probe_for_test {
-                probe(FatalCleanupPhaseForTest::ProducersJoined {
-                    workers: joined_producers,
-                });
-            }
-            // 所有真实producer均已join；跨sender的本轮Ops必已排在以下Abort之前。
-            for tx in &self.desk_txs {
-                let _ = tx.send(DeskMsg::Abort { tick });
-            }
-            #[cfg(test)]
-            if let Some(probe) = &self.fatal_cleanup_probe_for_test {
-                probe(FatalCleanupPhaseForTest::BeforeDeskShutdown);
-            }
-            for tx in &self.desk_txs {
-                let _ = tx.send(DeskMsg::Shutdown);
-            }
-            for (who, handle) in desks {
-                join_one(who, handle);
-            }
-        } else {
-            for (who, handle) in handles {
-                join_one(who, handle);
+                let mut joined_producers = Vec::new();
+                for (who, handle) in groups {
+                    join_one(who, handle);
+                    #[cfg(test)]
+                    joined_producers.push(who);
+                }
+                #[cfg(test)]
+                if let Some(probe) = &self.fatal_cleanup_probe_for_test {
+                    probe(FatalCleanupPhaseForTest::ProducersJoined {
+                        workers: joined_producers,
+                    });
+                }
+                // 所有真实producer均已join；跨sender的本轮Ops必已排在以下Abort之前。
+                for tx in &self.desk_txs {
+                    let _ = tx.send(DeskMsg::Abort { tick });
+                }
+                #[cfg(test)]
+                if let Some(probe) = &self.fatal_cleanup_probe_for_test {
+                    probe(FatalCleanupPhaseForTest::BeforeDeskShutdown);
+                }
+                for tx in &self.desk_txs {
+                    let _ = tx.send(DeskMsg::Shutdown);
+                }
+                for (who, handle) in desks {
+                    join_one(who, handle);
+                }
+            } else {
+                for (who, handle) in handles {
+                    join_one(who, handle);
+                }
             }
         }
-        drop(join_one);
         let mut group_finals: Vec<Option<GroupFinalState>> =
             (0..self.n_groups).map(|_| None).collect();
         let mut desk_finals: Vec<Option<DeskFinalState>> =

@@ -1260,18 +1260,16 @@ impl DeskState {
             )?;
             return Ok(());
         }
-        if phase == DeskPhase::CallAuction || phase == DeskPhase::ClosingAuction {
-            if is_market {
-                self.reject(
-                    owner,
-                    side,
-                    qty,
-                    purse,
-                    ReceiptKind::AuctionLimitOrderRequired,
-                    repurchase,
-                )?;
-                return Ok(());
-            }
+        if (phase == DeskPhase::CallAuction || phase == DeskPhase::ClosingAuction) && is_market {
+            self.reject(
+                owner,
+                side,
+                qty,
+                purse,
+                ReceiptKind::AuctionLimitOrderRequired,
+                repurchase,
+            )?;
+            return Ok(());
         }
         // 数量：非零 + 单笔上限（类别差异：主板/创业板 × 限价/市价）。
         let cap = if is_market {
@@ -1299,7 +1297,7 @@ impl DeskState {
             return Ok(());
         }
         // 买入整手（卖出零股一次性由组端校验——持仓知识在本组）。
-        if side == Side::Buy && qty % self.config.lot_size != 0 {
+        if side == Side::Buy && qty.rem_euclid(self.config.lot_size) != 0 {
             self.reject(
                 owner,
                 side,
@@ -1312,7 +1310,7 @@ impl DeskState {
         }
         // 价格：正数 + tick 整数倍（最小价位 0.01 元）。
         let (price, rest_remainder) = self.resolve_price(rp, side, tick)?;
-        if price <= 0 || price % 1 != 0 {
+        if price <= 0 {
             self.reject(
                 owner,
                 side,
@@ -2823,7 +2821,7 @@ impl DeskState {
     /// 多一条）。日结拍（tick%tpd==0）不产窗指示价——其竞价事件由
     /// 日终 Drain 清算承载（AuctionTick+AuctionCompleted）。
     fn note_auction_indicative(&mut self, tick: u64) {
-        if tick % self.setup.ticks_per_day.max(1) == 0 {
+        if tick.is_multiple_of(self.setup.ticks_per_day.max(1)) {
             return;
         }
         let phase = self.setup.phase_at(tick.saturating_sub(1));
@@ -3531,15 +3529,14 @@ pub(crate) fn desk_main(
             {
                 abort.store(true, Ordering::SeqCst);
                 result = Err(RuntimeError::SendFailed {
-                    detail: format!("交易部 EchoCandles 发送失败"),
+                    detail: "交易部 EchoCandles 发送失败".to_owned(),
                 });
                 break;
             }
             continue;
         }
-        match &msg {
-            DeskMsg::Shutdown => break,
-            _ => {}
+        if let DeskMsg::Shutdown = &msg {
+            break;
         }
         let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             with_capture(&capture, || {
@@ -3957,7 +3954,7 @@ fn process_msg(
                     state.causal_drain_date = Some(day.day_model().current_date());
                 }
                 state.drain_all()?;
-                if state.cur_tick > 0 && state.cur_tick % state.setup.ticks_per_day == 0 {
+                if state.cur_tick > 0 && state.cur_tick.rem_euclid(state.setup.ticks_per_day) == 0 {
                     if state.setup.phase_at(state.cur_tick - 1) == DeskPhase::ClosingAuction {
                         let candle =
                             state

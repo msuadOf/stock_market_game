@@ -2960,7 +2960,7 @@ fn p2_4a_sparse_echo_missing_item_fails_loud() {
     let err = ensure_fact_owners_covered(Some(&record), &snapshots, 8)
         .expect_err("缺项必须显式失败（不静默丢账户）");
     assert!(
-        format!("{err}").contains("分片缺项"),
+        err.to_string().contains("分片缺项"),
         "错误必须指明分片缺项（got: {err}）"
     );
     // 全量形态（None 记录）恒过。
@@ -3392,7 +3392,7 @@ fn prereq1_continue_early_round_fills_settle_exactly_once() {
         .filter(|t| t.stock == 0 && t.qty == 100)
         .collect();
     assert!(
-        trades.len() >= 1,
+        !trades.is_empty(),
         "前置：早轮产生了成交：{:?}",
         rec.desk_trades
     );
@@ -3492,14 +3492,14 @@ fn stepframe2_runtime_event_seq_starts_at_legacy_cursor_plus_one() {
     assert!(!events.is_empty(), "前置：场景产生了事件（成交+受理）");
     // 事件 seq 全体 ≥ 步前+1（首条恰=步前+1——对齐旧管线 collect_events
     // 的 (seq_from, seq_to] 契约；当前 adopt 直取导致全体少 1）。
-    let min_seq = events.iter().map(|e| event_seq(e)).min().expect("事件非空");
+    let min_seq = events.iter().map(event_seq).min().expect("事件非空");
     assert_eq!(
         min_seq,
         seq_before + 1,
         "runtime 首条事件 seq 必须=步前权威 seq+1（旧管线 collect 语义；当前少 1）"
     );
     // 事件 seq 全体连续（无重号无跳号——两路径合一的 seq 空间）。
-    let mut seqs: Vec<u64> = events.iter().map(|e| event_seq(e)).collect();
+    let mut seqs: Vec<u64> = events.iter().map(event_seq).collect();
     seqs.sort();
     seqs.dedup();
     assert_eq!(seqs.len(), events.len(), "事件 seq 不得重号");

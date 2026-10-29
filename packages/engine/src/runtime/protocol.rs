@@ -384,14 +384,14 @@ mod minute_bar_wire_tests {
             turnover_cents: 20_000_000_000_000_000_000_u128,
             trade_count: 4,
         };
-        let value = serde_json::to_value(&fact).unwrap();
+        let value = serde_json::to_value(fact).unwrap();
         assert_eq!(value["turnover_cents"], "20000000000000000000");
         assert_eq!(
             serde_json::from_value::<MinuteBarFact>(value).unwrap(),
             fact
         );
         // 非规范形态显式拒绝（旧基线 minute_wire_rejects 形态）。
-        let mut bad = serde_json::to_value(&fact).unwrap();
+        let mut bad = serde_json::to_value(fact).unwrap();
         bad["turnover_cents"] = serde_json::json!(1);
         assert!(serde_json::from_value::<MinuteBarFact>(bad).is_err());
     }

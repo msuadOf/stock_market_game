@@ -115,12 +115,11 @@ fn old_pipeline_and_runtime_driver_both_drive_without_divergence() {
     );
     // 账户面对照：两会话账户数一致；现金均为有限值（无 NaN/溢出路径）。
     assert_eq!(session_a.account_count(), session_b.account_count());
-    for id in [crate::AccountId(0)] {
-        let a = session_a.account(id).expect("A 有玩家");
-        let b = session_b.account(id).expect("B 有玩家");
-        // 玩家无策略不交易 ⇒ 现金应保持不变（两会话同构初始）。
-        assert_eq!(a.cash(), b.cash(), "玩家现金两面一致（无决策路径）");
-    }
+    let id = crate::AccountId(0);
+    let a = session_a.account(id).expect("A 有玩家");
+    let b = session_b.account(id).expect("B 有玩家");
+    // 玩家无策略不交易 ⇒ 现金应保持不变（两会话同构初始）。
+    assert_eq!(a.cash(), b.cash(), "玩家现金两面一致（无决策路径）");
 }
 
 #[test]
@@ -411,7 +410,7 @@ fn disclosure_observers_covered_by_civil_authority() {
     // 存在且经 end_civil_day 触发（不依赖 runtime 细节）。
     let mut session = GameSession::new(equiv_setup(), 9).expect("会话构造");
     let fired = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let probe = std::sync::Arc::clone(&fired);
+    let _probe = std::sync::Arc::clone(&fired);
     fn probe_observer(_instant: crate::calendar::CivilInstant) {
         // fn 指针口径：无捕获（捕获面经 static 通道属测试基建，此处只证
         // 注册通道存在）。

@@ -21,7 +21,6 @@ use crate::config::GameConfig;
 use crate::money::Money;
 use crate::orderbook::Side;
 use crate::session::SplitMix64;
-use crate::strategy::Rng as _;
 use crate::strategy::{
     decide_data, Intent, LimitPrice, MarketView, PositionView, SelfView, StockView, StrategyData,
 };

@@ -82,7 +82,7 @@ fn trading_day_end_freezes_retained_snapshot_with_exact_bars() {
     world.run_ticks(30).expect("跑到日末");
     world.run_day_end_public().expect("日结（Drain 捎带 bars）");
     let committed_before = world.global.committed_tick;
-    let mut snapshot_seen = None;
+    let snapshot_seen;
     // 日结（Drain 捎带 bars → driver 编排冻结——本测试直接调 world 的
     // 冻结入口验证编排产物；session 侧编排在 session 层测试覆盖）。
     // 模拟 driver：取 pending bars + 组装 + freeze。
@@ -108,12 +108,12 @@ fn trading_day_end_freezes_retained_snapshot_with_exact_bars() {
             .collect(),
         });
         world.freeze_retained_day(Arc::clone(&snapshot));
-        snapshot_seen = Some(snapshot);
+        snapshot_seen = snapshot;
     }
     let retained = world.retained_days();
     assert_eq!(retained.len(), 1, "保留链恰一条（ADR-0034 全保留）");
     assert!(
-        Arc::ptr_eq(&retained[0], &snapshot_seen.expect("已冻结")),
+        Arc::ptr_eq(&retained[0], &snapshot_seen),
         "协调者持同一不可变句柄"
     );
     let committed_final = world.global.committed_tick;

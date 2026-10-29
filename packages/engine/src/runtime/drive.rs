@@ -685,13 +685,13 @@ impl RuntimeDriver {
         // Sol 终审四审 A2（restore 重复日结）：恢复形态的上一拍若为
         // 日结拍（tick%tpd==0——session 日终迁移已完成）即视为该交易
         // 日已日结，防首拍 run_ticks 自动日结重复归档日 K。
-        let restore_tpd = u64::from(session.export_setup_for_runtime().ticks_per_day).max(1);
-        spec.initial_last_day_end_tick = if session.tick() > 0 && session.tick() % restore_tpd == 0
-        {
-            Some(session.tick())
-        } else {
-            None
-        };
+        let restore_tpd = session.export_setup_for_runtime().ticks_per_day.max(1);
+        spec.initial_last_day_end_tick =
+            if session.tick() > 0 && session.tick().is_multiple_of(restore_tpd) {
+                Some(session.tick())
+            } else {
+                None
+            };
         spec.accounts_per_group = per_group;
         spec.initial_cash = 0;
         spec.initial_cash_override = Some(cash);
@@ -954,13 +954,12 @@ impl RuntimeDriver {
                 }
             }
             sums.into_iter()
-                .filter_map(|(k, (value, qty))| {
-                    (qty > 0).then(|| {
-                        (
-                            k,
-                            i64::try_from(value / i128::from(qty)).unwrap_or(1).max(1),
-                        )
-                    })
+                .filter(|&(_, (_, qty))| qty > 0)
+                .map(|(k, (value, qty))| {
+                    (
+                        k,
+                        i64::try_from(value / i128::from(qty)).unwrap_or(1).max(1),
+                    )
                 })
                 .collect()
         };
@@ -1017,8 +1016,8 @@ impl RuntimeDriver {
                 let n_groups = self.world.n_groups();
                 // 归因优化：分片句柄直接借用（Arc deref）——免每拍全量
                 // clone 重组（净机实测该 clone 占 A 税 ~140μs/tick）。
-                let mut shards: GroupAccountShards =
-                    vec![std::sync::Arc::new(Vec::new()); n_groups];
+                let empty_shard = std::sync::Arc::new(Vec::new());
+                let mut shards: GroupAccountShards = vec![empty_shard; n_groups];
                 for shard in &published.groups {
                     let Some(slot) = shards.get_mut(shard.group as usize) else {
                         return Err(format!(
@@ -1041,7 +1040,8 @@ impl RuntimeDriver {
                     .world
                     .snapshot_accounts()
                     .map_err(|e| format!("账户快照失败：{e:?}"))?;
-                let mut shards = vec![std::sync::Arc::new(Vec::new()); self.world.n_groups()];
+                let empty_shard = std::sync::Arc::new(Vec::new());
+                let mut shards = vec![empty_shard; self.world.n_groups()];
                 for (g, accounts) in dense {
                     let slot = shards
                         .get_mut(g as usize)
@@ -1504,13 +1504,12 @@ impl RuntimeDriver {
         }
         let buy_vwap = sums
             .into_iter()
-            .filter_map(|(key, (value, qty))| {
-                (qty > 0).then(|| {
-                    (
-                        key,
-                        i64::try_from(value / i128::from(qty)).expect("成交均价在 i64"),
-                    )
-                })
+            .filter(|&(_, (_, qty))| qty > 0)
+            .map(|(key, (value, qty))| {
+                (
+                    key,
+                    i64::try_from(value / i128::from(qty)).expect("成交均价在 i64"),
+                )
             })
             .collect();
         let prices: Vec<_> = self
@@ -1768,7 +1767,8 @@ impl RuntimeDriver {
             ));
         }
         let n = published.desks.len();
-        let mut facts = vec![std::sync::Arc::new(Vec::new()); n];
+        let empty_facts = std::sync::Arc::new(Vec::new());
+        let mut facts = vec![empty_facts; n];
         let mut cursors = vec![0u64; n];
         for shard in &published.desks {
             let idx = shard.stock as usize;
@@ -2911,10 +2911,10 @@ impl RuntimeDriver {
         }
         // 刀 2：循环不变量外提（原每股 export_setup 重复导出×N 股）。
         let s = session.export_setup_for_runtime();
-        let tpd_now = u64::from(s.ticks_per_day).max(1);
+        let tpd_now = s.ticks_per_day.max(1);
         // 日结拍判定（C2/C3 相位基准）：本拍步后 tick 为 tpd 倍数 ⇒
         // ends_day 段的日终迁移（commit_active）即将执行。
-        let ends_day = session.tick() % tpd_now == 0;
+        let ends_day = session.tick().is_multiple_of(tpd_now);
         let day_tick = session.tick() % tpd_now;
         let auction_entry = s.auction_ticks - s.auction_ticks / 3;
         let candle_time = session.candle_date_time_for_runtime();
@@ -3232,10 +3232,10 @@ pub(crate) fn admin_treasury_bindings_from_session(
         let actual = session
             .account(*account)
             .ok_or_else(|| format!("专户 binding 名册账户不存在：{account:?}"))?;
-        if actual.kind() == crate::AccountKind::IssuerRepurchase {
-            if treasury.replace((index, *account)).is_some() {
-                return Err("专户 binding 不支持多个共享 IssuerRepurchase 账户".into());
-            }
+        if actual.kind() == crate::AccountKind::IssuerRepurchase
+            && treasury.replace((index, *account)).is_some()
+        {
+            return Err("专户 binding 不支持多个共享 IssuerRepurchase 账户".into());
         }
     }
     let Some((index, account)) = treasury else {

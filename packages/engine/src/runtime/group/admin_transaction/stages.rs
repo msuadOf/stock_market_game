@@ -35,8 +35,7 @@ pub(super) fn prepare_working(
             u32::try_from(stage_index).map_err(|_| invalid("行政阶段索引超过 u32"))?;
         let is_tax_stage = layout.is_some_and(|layout| layout.tax_stages.contains(&stage_index));
         let mut before = BTreeMap::<LocalIdx, Arc<GroupAccount>>::new();
-        for operation_index in start..end {
-            let operation = operations[operation_index];
+        for (operation_index, &operation) in operations.iter().enumerate().take(end).skip(start) {
             if !has_repurchase_scope {
                 state.validate_repurchase_funds_operation(operation)?;
             }

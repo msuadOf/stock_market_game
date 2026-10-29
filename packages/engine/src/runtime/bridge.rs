@@ -16,7 +16,6 @@
 use super::decision::{DecisionSetup, NpcProfile};
 use super::watchdog::WatchdogConfig;
 use super::world::{DeskStockSpec, WorldSpec};
-use crate::config::GameConfig;
 use crate::strategy::StrategyData;
 use crate::SessionSetup;
 use std::sync::Arc;

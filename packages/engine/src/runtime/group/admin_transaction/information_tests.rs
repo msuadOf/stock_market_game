@@ -1087,7 +1087,7 @@ fn civil_retention_state() -> (GroupState, InformationPreparePayload) {
     mutable.catalog = crate::stock::StockCatalog::from_metas(
         codes
             .iter()
-            .map(|stock| crate::stock::StockMeta::new(&format!("600{:03}", stock.0)))
+            .map(|stock| crate::stock::StockMeta::new(format!("600{:03}", stock.0)))
             .collect(),
     )
     .unwrap();

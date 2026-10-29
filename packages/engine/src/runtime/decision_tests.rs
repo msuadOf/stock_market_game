@@ -170,9 +170,9 @@ fn decide_account_is_deterministic_per_seed_tick_and_reschedules() {
 #[test]
 fn attention_gap_suppresses_non_due_ticks() {
     // gap=100：tick1 决策一次后，tick2..5 均未到期 ⇒ decide_calls_total 停在 1。
-    let config = GameConfig::proposed_defaults();
+    let _config = GameConfig::proposed_defaults();
     let snapshot = snapshot_one_stock(1000, 1100, 900);
-    let account = GroupAccount::new(1_000_000, 1);
+    let _account = GroupAccount::new(1_000_000, 1);
     let mut profile = NpcProfile {
         strategy: StrategyData::retail(0.0, 100, 0.0),
         seed: 7,

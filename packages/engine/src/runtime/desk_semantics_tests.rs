@@ -16,7 +16,6 @@ use crate::money::Money;
 use crate::orderbook::Side;
 use crate::StockExchange;
 use std::sync::Arc;
-use std::time::Duration;
 
 fn config_with_cage(cage: bool) -> Arc<GameConfig> {
     Arc::new(
@@ -72,9 +71,10 @@ fn sell(local: u32, stock: u16, price: i64, qty: u32) -> PlaceSpec {
 
 fn place_at(_tick: u64, places: Vec<PlaceSpec>) -> TickPlan {
     // 调用方按 tick 分派（match tick）；本 helper 只装计划。
-    let mut plan = TickPlan::default();
-    plan.places = places;
-    plan
+    TickPlan {
+        places,
+        ..TickPlan::default()
+    }
 }
 
 // ── 价格时间优先 ──

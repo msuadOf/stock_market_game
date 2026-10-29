@@ -1426,7 +1426,7 @@ impl GroupState {
         h = self.hash_repurchase_projections(h);
         h = self.hash_repurchase_pending_tails(h);
         for ((account, code), ticket) in &self.child_in_flight {
-            h = fnv(h, u64::from(account.0));
+            h = fnv(h, account.0);
             h = fnv(h, u64::from(code.0));
             h = fnv(h, u64::from(ticket.qty));
             h = fnv(h, ticket.price as u64);
@@ -1713,7 +1713,7 @@ impl GroupState {
             // Sol 五审：在途镜像统一按 fill 推进（不限计划链票——
             // 外部/retail 单同口径）：卖腿余量减；买腿占用减实付
             //（gross+佣金+过户=desk buyer_charge 同式）。
-            let gross = i64::from(fill.price) * i64::from(fill.qty);
+            let gross = fill.price * i64::from(fill.qty);
             match fill.side {
                 Side::Sell => {
                     let acct = std::sync::Arc::make_mut(&mut self.accounts[fill.owner.1 as usize]);
@@ -2161,14 +2161,12 @@ impl GroupState {
         // 在途卖余量镜像已上移至 apply_staging 统一 fill 段（Sol 五审：
         // 外部/retail 卖单同口径——票域减法会造成外部单双计/漏计）。
         // 部分成交推进（票保留）或全成清除（下一轮可再报价）。
-        if fill.qty >= remaining {
-            if self.child_in_flight.remove(&(account, code)).is_some() {
-                self.push_undo(GroupUndo::ChildInFlight {
-                    account,
-                    code,
-                    prev: Some(ticket),
-                });
-            }
+        if fill.qty >= remaining && self.child_in_flight.remove(&(account, code)).is_some() {
+            self.push_undo(GroupUndo::ChildInFlight {
+                account,
+                code,
+                prev: Some(ticket),
+            });
         }
         Ok(())
     }
@@ -2533,7 +2531,7 @@ impl GroupState {
         if let Some(snapshot) = &self.snapshot {
             #[cfg(test)]
             let overrides = self.observation_overrides.clone();
-            for (stock_idx, (inputs, stock)) in self
+            for (_stock_idx, (inputs, stock)) in self
                 .observation_inputs
                 .iter_mut()
                 .zip(snapshot.stocks.iter())
@@ -2543,7 +2541,7 @@ impl GroupState {
                 #[cfg(test)]
                 {
                     inputs.minutes = stock.minute_closes.clone();
-                    if let Some(minutes) = overrides.get(&(stock_idx as u16)) {
+                    if let Some(minutes) = overrides.get(&(_stock_idx as u16)) {
                         inputs.minutes = minutes.clone();
                     }
                 }
@@ -3210,7 +3208,7 @@ impl GroupState {
             retail_style,
             market,
             &own,
-            &behavior,
+            behavior,
             &risk,
             &dated,
             minute,
@@ -4317,7 +4315,7 @@ impl GroupState {
                 );
                 let reversing_to_sell = plan.direction() == Side::Buy
                     && plan.opinion().signal_score_bp
-                        <= -(plan_book_policy_reverse_threshold(self) as i32);
+                        <= -(plan_book_policy_reverse_threshold(self));
                 let withdraw = plan.direction() == Side::Buy
                     && plan.opinion().signal_score_bp <= 0
                     && !reversing_to_sell;
@@ -4930,7 +4928,7 @@ impl GroupState {
                             &shared_market,
                             &chain,
                             &behavior,
-                            &information_anchors,
+                            information_anchors,
                         )?;
                         for op in ops {
                             #[cfg(feature = "simulation-diagnostics")]
@@ -5923,8 +5921,8 @@ fn build_root_read_context(
     library: &std::sync::Arc<crate::information::PublicLibrary>,
     plans: &crate::plans::PlanBook,
     child_in_flight: &std::collections::BTreeMap<(crate::AccountId, crate::StockId), ChildTicket>,
-    tick: u64,
-    ticks_per_day: u64,
+    _tick: u64,
+    _ticks_per_day: u64,
     snapshot: &TickSnapshot,
     // 本组在全局名册的偏移（P0 缺陷修复：`account_ids` / `chain_params`
     // 均为全局名册序，组内 local 须加偏移；单组=0）。
@@ -6040,9 +6038,9 @@ fn market_minute_at(tick: u64, ticks_per_day: u64, auction_ticks: u64, closing_t
 fn build_chain_observation(
     inputs: &[ObservationInputs],
     snapshot: &TickSnapshot,
-    ticks_per_day: u64,
-    auction_ticks: u64,
-    closing_auction_ticks: u64,
+    _ticks_per_day: u64,
+    _auction_ticks: u64,
+    _closing_auction_ticks: u64,
     library: &std::sync::Arc<crate::information::PublicLibrary>,
     company_facts: &crate::company::CompanyReadFacts,
 ) -> crate::session::DecisionChainObservation {
@@ -7650,7 +7648,11 @@ pub(crate) fn group_main(
 
 #[cfg(not(target_family = "wasm"))]
 mod v5_shutdown_idle_window_tests {
-    use super::*;
+    #[cfg(test)]
+    use super::{
+        group_main, Arc, AtomicBool, DeskBatch, Entity, GroupAccount, GroupIn, GroupState,
+        Observed, Ordering, TickPlan, UpMsg,
+    };
 
     /// 四审 A1 关停竞态的确定性回归：正常关停（Drain→Shutdown→Final
     /// 消息协议）期间 **不置** worker_shutdown 永久标记——空闲 worker

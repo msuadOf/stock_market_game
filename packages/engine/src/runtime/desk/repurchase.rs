@@ -18,7 +18,7 @@ impl DeskState {
             .enumerate()
             .filter(|(_, facts)| !facts.is_empty())
         {
-            hash = fnv(hash, 0x5250_4f55_54);
+            hash = fnv(hash, 0x0052_504f_5554);
             hash = fnv(hash, group as u64);
             hash = fnv(hash, facts.len() as u64);
             for fact in facts {

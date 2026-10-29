@@ -14,7 +14,7 @@
 use super::coordinator::Validator;
 use super::group::{GroupScript, PlaceSpec, TickPlan};
 use super::skeleton_tests::basic_spec;
-use super::world::{World, WorldSpec};
+use super::world::World;
 use super::GroupIdx;
 use crate::config::GameConfig;
 use crate::fees::FeeComponents;

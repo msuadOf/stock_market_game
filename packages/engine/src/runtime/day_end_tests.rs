@@ -4,10 +4,10 @@
 //! ③ 存档候选投影（组装+校验成功才提交；候选往返内容等价）。
 //! 另：日界行情重置（昨收/日内/K 历史）与日结 Abort 窗口语义。
 
-use super::group::{GroupAccount, GroupScript, PlaceSpec, TickPlan};
+use super::group::{GroupScript, PlaceSpec, TickPlan};
 use super::protocol::{AdminRight, RuntimeError};
 use super::skeleton_tests::basic_spec;
-use super::world::{DayEndCandidate, World};
+use super::world::World;
 use super::GroupIdx;
 use crate::orderbook::Side;
 use crate::session::SplitMix64;

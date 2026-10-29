@@ -1104,7 +1104,7 @@ fn sell_decision_setup(next_tick: u64) -> super::decision::DecisionSetup {
 
 /// 对照从相同最新价及真实昨收恢复；最后一拍保旧昨收，下一日才用收盘价。
 fn same_new_day_sell_control_spec(close: i64, final_tick: u64) -> WorldSpec {
-    let previous_close = if final_tick % DAY_END_TICK == 0 {
+    let previous_close = if final_tick.is_multiple_of(DAY_END_TICK) {
         close
     } else {
         INITIAL_PRICE

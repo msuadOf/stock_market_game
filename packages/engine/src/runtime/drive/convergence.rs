@@ -557,8 +557,8 @@ impl RuntimeDriver {
             if price <= 0 {
                 return Err("收盘成交 VWAP 非正".to_owned());
             }
-            if !input.buy_vwap.contains_key(&key) {
-                input.buy_vwap.insert(key, price);
+            if let std::collections::btree_map::Entry::Vacant(entry) = input.buy_vwap.entry(key) {
+                entry.insert(price);
                 closing_buy_vwap.insert(key, price);
             }
         }

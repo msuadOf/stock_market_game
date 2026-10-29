@@ -14,13 +14,12 @@
 use super::coordinator::Validator;
 use super::group::{GroupScript, PlaceSpec, TickPlan};
 use super::skeleton_tests::basic_spec;
-use super::world::{World, WorldSpec};
+use super::world::World;
 use super::GroupIdx;
 use crate::config::GameConfig;
 use crate::money::Money;
 use crate::orderbook::Side;
 use std::sync::Arc;
-use std::time::Duration;
 
 /// 无笼子测试配置（隔离价格带变量——与 desk_semantics_tests 同参）。
 fn config_no_cage() -> Arc<GameConfig> {

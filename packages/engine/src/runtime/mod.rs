@@ -56,7 +56,7 @@ mod entities;
 mod facts;
 mod protocol;
 mod worker_context;
-#[cfg(test)]
+#[cfg(all(test, feature = "simulation-diagnostics", not(target_arch = "wasm32")))]
 pub(crate) use protocol::LifecycleKind;
 pub(crate) use protocol::{RepurchasePreparePayload, RepurchaseProjectionInput, RuntimeError};
 mod information_clock_context;

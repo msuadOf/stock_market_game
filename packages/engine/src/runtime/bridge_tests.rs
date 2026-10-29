@@ -372,7 +372,7 @@ fn runtime_driver_steps_session_with_account_writeback_and_events() {
     let mut session = crate::GameSession::new(setup_fixture(), 7).expect("会话构造");
     let mut driver = RuntimeDriver::from_session(&mut session).expect("驱动器构造");
     assert!(
-        driver.id_map.len() >= 1,
+        !driver.id_map.is_empty(),
         "玩家并入投影（AccountId(0) 惯例位）"
     );
     let before_cash: i64 = driver

@@ -8,7 +8,7 @@
 //! →内联容量 8；spill（>8）基准在批 2 落地（本文件 spill 等价合同先行）。
 //! ②等价面=Deref 切片+按内容 PartialEq——分片对账/断言零变体歧义。
 
-use super::group::{GroupAccount, InlineVec};
+use super::group::InlineVec;
 use super::skeleton_tests::basic_spec;
 use super::world::World;
 use crate::orderbook::Side;
