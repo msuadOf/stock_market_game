@@ -2533,17 +2533,22 @@ impl GroupState {
         if let Some(snapshot) = &self.snapshot {
             #[cfg(test)]
             let overrides = self.observation_overrides.clone();
-            for (_stock_idx, (inputs, stock)) in self
+            let observation_stocks = self
                 .observation_inputs
                 .iter_mut()
-                .zip(snapshot.stocks.iter())
-                .enumerate()
-            {
+                .zip(snapshot.stocks.iter());
+            #[cfg(test)]
+            let observation_stocks = observation_stocks.enumerate();
+            for entry in observation_stocks {
+                #[cfg(test)]
+                let (stock_idx, (inputs, stock)) = entry;
+                #[cfg(not(test))]
+                let (inputs, stock) = entry;
                 // D3b 件 4 fixture 通道：权威刷新后套用分钟覆盖槽。
                 #[cfg(test)]
                 {
                     inputs.minutes = stock.minute_closes.clone();
-                    if let Some(minutes) = overrides.get(&(_stock_idx as u16)) {
+                    if let Some(minutes) = overrides.get(&(stock_idx as u16)) {
                         inputs.minutes = minutes.clone();
                     }
                 }

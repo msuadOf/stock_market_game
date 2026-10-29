@@ -1261,11 +1261,13 @@ pub(in crate::session) fn produce_decision_output_on(
     view.compute.end_install_roundtrip_probe();
     *writes.plans = plans;
     if let Err(error) = stream_error {
+        #[cfg(test)]
         let description = match error {
-            #[cfg(test)]
             NpcDecisionStreamError::Decision(error) => error.to_string(),
             NpcDecisionStreamError::Consumer(error) => error,
         };
+        #[cfg(not(test))]
+        let NpcDecisionStreamError::Consumer(description) = error;
         return Err(invariant(&description));
     }
     // ===== 确定性状态安装（due 弹出序=旧批处理安装序；ingress 已在归并
