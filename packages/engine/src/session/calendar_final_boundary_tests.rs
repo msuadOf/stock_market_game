@@ -17,15 +17,40 @@ fn game(closed: CalendarExchange) -> (GameSession, StockId, StockId) {
     (setup.session, setup.closed, setup.open)
 }
 
+fn assert_static_driver_replacement_changes_only_authority_epoch(
+    before: &serde_json::Value,
+    after: &serde_json::Value,
+) {
+    let mut expected = before.clone();
+    let expected_origin = expected["mirror_origin"].as_object_mut().unwrap();
+    let value = expected_origin["authority_epoch"].as_u64().unwrap();
+    expected_origin.insert(
+        "authority_epoch".to_owned(),
+        serde_json::json!(value + 1),
+    );
+    assert_eq!(
+        *after, expected,
+        "driver替换仅推进authority_epoch，install_sequence须保持静点值"
+    );
+}
+
 #[test]
 fn mixed_full_candidate_install_rejection_keeps_old_session_and_terminal_world_version() {
     for closed_exchange in [CalendarExchange::Sse, CalendarExchange::Szse] {
         let (mut game, closed, open) = game(closed_exchange);
         // 本case仅验证零NPC/零成交的mixed Full安装拒绝；raw core不冒玩家入队路由。
-        let before = serde_json::to_value(game.snapshot_inner(true, true)).unwrap();
+        let static_before = serde_json::to_value(game.snapshot_inner(true, true)).unwrap();
         let before_hash = game.business_state_hash().unwrap();
         let before_save = serde_json::to_value(game.save().unwrap()).unwrap();
+        assert_eq!(before_save["desk_mirrored_resting"], false);
         let mut driver = RuntimeDriver::from_session(&mut game).unwrap();
+        let before = serde_json::to_value(game.snapshot_inner(true, true)).unwrap();
+        assert_static_driver_replacement_changes_only_authority_epoch(&static_before, &before);
+        assert_eq!(game.business_state_hash().unwrap(), before_hash);
+        assert_eq!(
+            serde_json::to_value(game.save().unwrap()).unwrap(),
+            before_save
+        );
         let old_source = driver.publication().load();
         game.inject_runtime_install_failure();
         let fatal = game.runtime_step_with_install(&mut driver).unwrap_err();
@@ -59,9 +84,12 @@ fn mixed_full_candidate_install_rejection_keeps_old_session_and_terminal_world_v
 fn mixed_full_projection_callback_rejection_does_not_install_any_session_domain() {
     for closed_exchange in [CalendarExchange::Sse, CalendarExchange::Szse] {
         let (mut game, closed, open) = game(closed_exchange);
-        let before = serde_json::to_value(game.snapshot_inner(true, true)).unwrap();
+        let static_before = serde_json::to_value(game.snapshot_inner(true, true)).unwrap();
         let before_hash = game.business_state_hash().unwrap();
         let mut driver = RuntimeDriver::from_session(&mut game).unwrap();
+        let before = serde_json::to_value(game.snapshot_inner(true, true)).unwrap();
+        assert_static_driver_replacement_changes_only_authority_epoch(&static_before, &before);
+        assert_eq!(game.business_state_hash().unwrap(), before_hash);
         let fatal = StepFatal::InvariantViolation {
             location: "mixed_full_projection_callback".into(),
             description: "真实混合开闭市候选最后投影拒绝".into(),

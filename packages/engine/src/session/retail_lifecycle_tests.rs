@@ -7,6 +7,19 @@ const SELLER: AccountId = AccountId(1);
 const BUYER: AccountId = AccountId(2);
 const CODE: StockId = StockId(0);
 
+fn assert_snapshot_matches_except_static_mirror_generation(
+    before: &serde_json::Value,
+    after: &serde_json::Value,
+) {
+    let mut expected = before.clone();
+    let expected_origin = expected["mirror_origin"].as_object_mut().unwrap();
+    for field in ["authority_epoch", "install_sequence"] {
+        let value = expected_origin[field].as_u64().unwrap();
+        expected_origin.insert(field.to_owned(), serde_json::json!(value + 1));
+    }
+    assert_eq!(*after, expected, "静点接管仅推进镜像来源代数");
+}
+
 fn fixture(ticks_per_day: u64) -> (GameSession, RuntimeDriver) {
     let mut setup = super::npc_working_quote_tests::retail_quote_setup();
     setup.npcs.retail_count = 2;
@@ -830,6 +843,8 @@ fn lazy_static_handover_preserves_real_trade_price_and_closing_cutoff() {
     let mut restored = GameSession::restore(&before).unwrap();
     let snapshot = serde_json::to_value(restored.snapshot_inner(true, true)).unwrap();
     restored.construct_runtime_driver_lazy_for_test().unwrap();
+    let handed_over = serde_json::to_value(restored.snapshot_inner(true, true)).unwrap();
+    assert_snapshot_matches_except_static_mirror_generation(&snapshot, &handed_over);
     {
         let driver = restored.runtime_driver.as_ref().unwrap().lock().unwrap();
         assert_ne!(
@@ -855,7 +870,7 @@ fn lazy_static_handover_preserves_real_trade_price_and_closing_cutoff() {
     );
     assert_eq!(
         serde_json::to_value(restored.snapshot_inner(true, true)).unwrap(),
-        snapshot
+        handed_over
     );
     GameSession::restore(&restored.save().unwrap()).unwrap();
 }

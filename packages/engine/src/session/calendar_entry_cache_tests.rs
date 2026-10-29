@@ -318,8 +318,27 @@ fn mixed_hit_and_miss_cache_survive_real_last_frame_projection_failure() {
         let old = game.market_calendar_day.clone();
         assert_eq!(old.is_some(), warm);
         let source = Arc::clone(game.market_calendar_source());
-        let before = serde_json::to_value(game.snapshot_inner(true, true)).unwrap();
+        let static_before = serde_json::to_value(game.snapshot_inner(true, true)).unwrap();
         let hash = game.business_state_hash().unwrap();
+        if !warm {
+            // 冷路径只构造合法runtime owner，不推进tick，保留Calendar cache miss。
+            game.construct_runtime_driver_lazy_for_test().unwrap();
+            let handed_over = serde_json::to_value(game.snapshot_inner(true, true)).unwrap();
+            let mut expected = static_before.clone();
+            let expected_origin = expected["mirror_origin"].as_object_mut().unwrap();
+            for field in ["authority_epoch", "install_sequence"] {
+                let value = expected_origin[field].as_u64().unwrap();
+                expected_origin.insert(field.to_owned(), serde_json::json!(value + 1));
+            }
+            assert_eq!(handed_over, expected, "惰性接管仅推进镜像来源代数");
+        }
+        let before = serde_json::to_value(game.snapshot_inner(true, true)).unwrap();
+        assert_eq!(game.business_state_hash().unwrap(), hash);
+        assert_eq!(
+            game.market_calendar_day.is_some(),
+            warm,
+            "构造owner须保留原cache冷热状态"
+        );
         let fatal = StepFatal::InvariantViolation {
             location: "mixed_v1_final_frame".into(),
             description: "最后frame投影拒绝".into(),
