@@ -7349,6 +7349,11 @@ mod sol_recheck3_tests {
     #[test]
     fn sol4th_full_fill_completes_plan_to_terminal() {
         let mut state = chain_harness_target(Side::Buy, 100);
+        let date = crate::CivilDate::from_iso("2026-01-05").unwrap();
+        state.snapshot = Some(Arc::new(TickSnapshot {
+            tick: 1, market_minute: 0, civil_date: date, stocks: Arc::new(Vec::new()),
+            calendar: crate::runtime::calendar_test_support::open_tick(1, state.ticks_per_day, state.auction_ticks, state.closing_auction_ticks, 1, date),
+        }));
         std::sync::Arc::make_mut(&mut state.accounts[0]).cash = 1_000_000;
         state.apply_batch_immediate(batch(
             Vec::new(),
@@ -8449,6 +8454,11 @@ mod roster_offset_tests {
         state.cur_tick = 1;
         state.cur_round = 0;
         // 本组账户的计划 + 执行腿 + 已受理在途票（身份=serial 5）。
+        let date = crate::CivilDate::from_iso("2026-01-05").unwrap();
+        state.snapshot = Some(Arc::new(TickSnapshot {
+            tick: 1, market_minute: 0, civil_date: date, stocks: Arc::new(Vec::new()),
+            calendar: crate::runtime::calendar_test_support::open_tick(1, state.ticks_per_day, state.auction_ticks, state.closing_auction_ticks, 1, date),
+        }));
         let order_id = order_id_of(&(0, 5));
         let pid = state
             .plan_book
