@@ -14,14 +14,6 @@ fn company_write_setup(mut setup: engine::SessionSetup) -> engine::SessionSetup 
     setup
 }
 
-fn no_holding_cash_proposal() -> serde_json::Value {
-    serde_json::to_value(engine::session::PlayerCompanyProposal::CashDividend {
-        company: engine::company::CompanyId(0),
-        gross_per_share: engine::Money::from_cents(1),
-    })
-    .unwrap()
-}
-
 fn host_correction_request(publications: &serde_json::Value) -> serde_json::Value {
     use engine::accounting::{
         AccountingAmount, BusinessEventId, BusinessKind, CashFlowClass, JournalEntry, JournalLine,

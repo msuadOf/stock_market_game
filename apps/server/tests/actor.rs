@@ -8,7 +8,6 @@
 //! - intent 入队后被 actor 接受（Ok）；
 //! - 未知 session_id 查询返回 None（不静默）。
 
-use engine::account::StockCode;
 use engine::money::Money;
 use engine::session::{NpcSetup, SecurityCategory, SessionSetup, StockExchange, StockSpec};
 use engine::strategy::Intent;
@@ -133,8 +132,8 @@ fn single_pool_actor_filled_leaves_do_not_initialize_global() {
             .unwrap();
         let valid = runtime.block_on(async {
             // 批 9 A3（compute 注入退役）：observer 采样/池绑定断言面
-            /// 随 A1/A2 消亡——本测试保留的验证=真实成交+多账户触及+
-            /// 无失败交付（runtime 与旧管线分支共同的交付面）。
+            // 随 A1/A2 消亡——本测试保留的验证=真实成交+多账户触及+
+            // 无失败交付（runtime 与旧管线分支共同的交付面）。
             let manager = SessionManager::with_base_ms(1);
             let mut setup = active_market_setup();
             setup.start_date = engine::CivilDate::from_iso("2030-01-06").unwrap();
@@ -197,8 +196,8 @@ fn single_pool_actor_filled_leaves_do_not_initialize_global() {
             handles.shutdown().await.unwrap();
             manager.remove(&id).unwrap();
             // 批 9 A3：池归属断言面退役（rayon 批 7 起 observer 通道仅
-            /// 旧管线测试注入面保留，本测试不再消费）——valid 语义=
-            /// 交付面断言（上方断言组已全部通过即真）。
+            // 旧管线测试注入面保留，本测试不再消费）——valid 语义=
+            // 交付面断言（上方断言组已全部通过即真）。
             eprintln!(
                 "single_pool_actor workers={workers}: delivery assertions passed (fills={fill_count} affected={affected:?}); pool-owner assertions retired"
             );
@@ -699,7 +698,7 @@ async fn actor_market_goes_live_produces_trade_events() {
             .expect("玩家账户应存在")
             .positions
             .insert(
-                code.clone(),
+                code,
                 engine::PositionSnap {
                     qty: 100,
                     t1_locked: 0,

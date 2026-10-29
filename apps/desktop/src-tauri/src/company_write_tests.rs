@@ -6,6 +6,9 @@ use tauri::test::{mock_builder, mock_context, noop_assets};
 use tauri::WebviewWindowBuilder;
 include!("../../../../packages/engine/test-support/simple_company.rs");
 include!("../../../../packages/engine/test-support/host_company_writes.rs");
+include!(
+    "../../../../packages/engine/test-support/host_company_writes/no_holding_cash_proposal.rs"
+);
 
 #[tokio::test]
 async fn proposal_ipc_reaches_actual_no_holding_domain_rejection() {

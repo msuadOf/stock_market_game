@@ -343,7 +343,7 @@ async fn pull_publisher_waits_for_client_and_then_returns_accumulated_frame() {
 async fn gateway_reports_malformed_commands_and_queues_writes_explicitly() {
     ServerFixture::run(1_000, |fixture| async move {
     let base_url = &fixture.base_url;
-    let (id, handles, token, generation) = fixture.session(44).await;
+    let (id, _handles, token, generation) = fixture.session(44).await;
     let ws_url = fixture.ws_url();
     let req = WsRequest::builder()
         .method("GET")
@@ -442,7 +442,7 @@ async fn ws_rejects_unknown_session() {
 async fn ws_rejects_missing_or_query_string_credentials() {
     ServerFixture::run(1_000, |fixture| async move {
         let base_url = &fixture.base_url;
-        let (id, handles, token, _generation) = fixture.session(46).await;
+        let (id, _handles, token, _generation) = fixture.session(46).await;
         let ws_url = fixture.ws_url();
 
         for request in [
@@ -479,7 +479,7 @@ async fn ws_rejects_missing_or_query_string_credentials() {
 #[tokio::test]
 async fn browser_subprotocol_credentials_authorize_only_the_matching_session() {
     ServerFixture::run(1_000, |fixture| async move {
-        let (id, handles, token, _generation) = fixture.session(47).await;
+        let (id, _handles, token, _generation) = fixture.session(47).await;
         let encoded: String = token.bytes().map(|byte| format!("{byte:02x}")).collect();
         for credential in ["00", "not-hex", "", &encoded] {
             let request = WsRequest::builder()
@@ -518,7 +518,7 @@ async fn browser_subprotocol_credentials_authorize_only_the_matching_session() {
 #[tokio::test]
 async fn ws_closes_when_client_does_not_answer_ping_before_deadline() {
     ServerFixture::run(1_000, |fixture| async move {
-        let (id, handles, token, _generation) = fixture.session(48).await;
+        let (id, _handles, token, _generation) = fixture.session(48).await;
         let request = WsRequest::builder()
             .method("GET")
             .uri(format!("{}/ws?session_id={id}", fixture.ws_url()))

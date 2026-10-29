@@ -3,6 +3,7 @@ use super::*;
 use crate::session_fixture as fixture;
 include!("../../../packages/engine/test-support/simple_company.rs");
 include!("../../../packages/engine/test-support/host_company_writes.rs");
+include!("../../../packages/engine/test-support/host_company_writes/no_holding_cash_proposal.rs");
 
 #[test]
 fn proposal_registry_reaches_actual_owner_zero_no_holding_rejection() {

@@ -9,8 +9,10 @@ use serde_json::json;
 use server::{app_router_with_manager, SessionManager};
 use tower::ServiceExt;
 
-#[path = "identity_fixture.rs"]
-mod identity_fixture;
+mod identity_fixture {
+    include!("identity_fixture.rs");
+    include!("identity_fixture/create_market.rs");
+}
 
 #[tokio::test]
 async fn pause_preferences_requires_owner_and_current_canonical_generation() {

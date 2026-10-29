@@ -13,7 +13,6 @@
 
 use axum::body::to_bytes;
 use axum::http::{Request, StatusCode};
-use engine::account::StockCode;
 use engine::money::Money;
 use engine::strategy::Intent;
 use engine::Side;
@@ -643,7 +642,7 @@ async fn snapshot_returns_snapshot_json() {
     )
     .await;
     let id = body["session_id"].as_str().unwrap().to_string();
-    let generation = body["generation"]
+    let _generation = body["generation"]
         .as_str()
         .expect("generation required")
         .to_string();
@@ -1305,7 +1304,7 @@ async fn intent_known_session_returns_200() {
     )
     .await;
     let id = body["session_id"].as_str().unwrap().to_string();
-    let generation = body["generation"]
+    let _generation = body["generation"]
         .as_str()
         .expect("generation required")
         .to_string();

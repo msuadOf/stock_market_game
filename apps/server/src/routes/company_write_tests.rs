@@ -4,6 +4,9 @@ use axum::http::StatusCode;
 use serde_json::{json, Value};
 include!("../../../../packages/engine/test-support/simple_company.rs");
 include!("../../../../packages/engine/test-support/host_company_writes.rs");
+include!(
+    "../../../../packages/engine/test-support/host_company_writes/no_holding_cash_proposal.rs"
+);
 
 async fn company_market() -> (axum::Router, Value, String) {
     let app = crate::app_router();
