@@ -1160,7 +1160,24 @@ impl RestingDelta {
 }
 
 /// 交易部收件消息。
+#[cfg(test)]
+#[derive(Debug)]
+pub enum DeskFatalCleanupEventForTest {
+    AbortApplied { stock: StockIdx, tick: u64, cur_tick: u64, calendar_tick: Option<u64> },
+    OpsDequeued { stock: StockIdx, tick: u64, round: u32, group: GroupIdx, final_flush: bool, ops_len: usize, cur_tick: u64 },
+}
+
+/// 仅具名失败拍使用的有界观察门；不替代真实消息、回滚或处理结果。
+#[cfg(test)]
+pub struct DeskFatalCleanupProbeForTest {
+    pub tick: u64,
+    pub events: std::sync::mpsc::Sender<DeskFatalCleanupEventForTest>,
+    pub after_abort: std::sync::mpsc::Receiver<()>,
+}
+
 pub enum DeskMsg {
+    #[cfg(test)]
+    InstallFatalCleanupProbeForTest(DeskFatalCleanupProbeForTest),
     /// spawn 已验证的静点；只在任何 Start 前绑定一次 source owner。
     BindCalendar {
         day: std::sync::Arc<super::MarketDayContext>,
@@ -1210,9 +1227,20 @@ pub enum DeskMsg {
     EchoCandles,
 }
 
-/// worker → 协调者的上行消息（全部 worker 共用一个 mpsc）。
-/// 手写 Debug：panic payload 不透明，只报告变体名与身份。
+/// pending 门在分派 Start 前采集的来源事实；不改变原 RuntimeError 类型。
+#[derive(Clone, Debug)]
+pub struct PendingStartRejection {
+    pub group: GroupIdx,
+    pub tick: u64,
+    pub prior_tick: u64,
+    pub calendar: std::sync::Arc<super::MarketTickContext>,
+    pub error: RuntimeError,
+}
+
+/// worker → 协调者的上行消息；panic payload 的 Debug 不展开载荷。
 pub enum UpMsg {
+    /// 仅 pending 门在分派 Start 前产生；该组尚未发送本轮任何 Ops 或 final。
+    PendingStartRejected(PendingStartRejection),
     /// 三阶段显式回执；Prepare 业务拒绝不终止 worker。
     AdminReceipt {
         id: AdminTransactionId,
@@ -1423,6 +1451,7 @@ pub enum UpMsg {
 impl std::fmt::Debug for UpMsg {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            UpMsg::PendingStartRejected(rejection) => write!(f, "PendingStartRejected(group={}, tick={}, prior_tick={}, error={:?})", rejection.group, rejection.tick, rejection.prior_tick, rejection.error),
             UpMsg::AdminReceipt { id, group, phase, result } => write!(f, "AdminReceipt({id:?}, group={group}, phase={phase:?}, ok={})", result.is_ok()),
             UpMsg::DayEndAborted { who, tick } => write!(f, "DayEndAborted({who}, tick={tick})"),
             #[cfg(test)]
@@ -1492,11 +1521,27 @@ impl std::fmt::Debug for UpMsg {
     }
 }
 
+/// 仅测试：真实 lifecycle collector 动作成功施加后的观察，不是额外派生。
+#[cfg(test)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PlanLifecycleWitnessForTest {
+    pub kind: &'static str,
+    pub plan_id: crate::plans::PlanId,
+    pub stock: crate::StockId,
+    pub event_trading_day: u64,
+    pub caller_trading_day: u64,
+    pub last_event_after: u64,
+    pub review_day_after: u64,
+}
+
 /// 组线程本轮报告。
 /// P1-2（Sol 复核）：belief 稀疏分片改随 SealAck 上行（Seal 的
 /// apply_deferred 后构建——含清仓经历行）；报告不再携带分片。
 #[derive(Clone, Debug, PartialEq)]
 pub struct GroupReport {
+    /// 仅本轮真实 collect→apply 成功后的动作见证。
+    #[cfg(test)]
+    pub lifecycle_actions_for_test: Vec<PlanLifecycleWitnessForTest>,
     /// 仅本轮真实 observe 产生的增量；不含 Echo 派生或旧 trace。
     #[cfg(feature = "simulation-diagnostics")]
     pub decision_traces: Vec<super::diagnostics::GroupDecisionTrace>,

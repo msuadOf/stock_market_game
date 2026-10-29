@@ -152,6 +152,9 @@ pub struct BeliefParticipantSnapshot {
 /// 比对载体）。
 #[derive(Clone, Debug, PartialEq)]
 pub struct OpenDerivationRecord {
+    /// 仅测试；Echo 的纯派生不产生真实 lifecycle 动作。
+    #[cfg(test)]
+    pub lifecycle_actions_for_test: Vec<super::protocol::PlanLifecycleWitnessForTest>,
     /// 账户。
     pub account: crate::AccountId,
     /// observe 输入个人态（红证同输入锚）。
@@ -309,6 +312,9 @@ pub type DayEndValidator = Box<dyn FnMut(&DayEndCandidate) -> Result<(), String>
 /// 每个已收敛 tick 的记录（测试与审计面）。
 #[derive(Clone, Debug)]
 pub struct TickRecord {
+    /// 仅测试：所有真实轮动作，只有成功安装才公开。
+    #[cfg(test)]
+    pub lifecycle_actions_for_test: Vec<super::protocol::PlanLifecycleWitnessForTest>,
     #[cfg(feature = "simulation-diagnostics")]
     pub decision_traces: Vec<super::diagnostics::GroupDecisionTrace>,
     /// tick 编号。
@@ -400,6 +406,21 @@ pub(crate) struct CommittedCalendarTick {
     pub source: super::source::WorldMirrorSource,
 }
 
+#[cfg(test)]
+#[derive(Debug)]
+enum FatalCleanupPhaseForTest {
+    BeforeProducerJoin,
+    ProducersJoined { workers: Vec<WorkerId> },
+    BeforeDeskShutdown,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum FatalCleanupMode {
+    StopImmediately,
+    Queued,
+    PendingStartBeforeFinal,
+}
+
 /// 世界（协调者视角持有全部通道与线程句柄）。
 pub struct World {
     calendar_source: Arc<crate::session::market_calendar_context::MarketCalendarSource>,
@@ -451,6 +472,8 @@ pub struct World {
     day_end_fail_before_group: Option<usize>,
     #[cfg(test)]
     start_cleanup_message_for_test: Option<UpMsg>,
+    #[cfg(test)]
+    fatal_cleanup_probe_for_test: Option<Box<dyn Fn(FatalCleanupPhaseForTest) + Send>>,
     watchdog: WatchdogConfig,
     validator: Validator,
     rounds_cap: u32,
@@ -581,7 +604,7 @@ impl World {
         match self.collect_personal_full_inner() {
             Ok(snapshot) => Ok(snapshot),
             Err(error) => Err(self.stop_after_fatal_failure(
-                self.global.committed_tick, 0, "collect_personal_full", error, true, None,
+                self.global.committed_tick, 0, "collect_personal_full", error, FatalCleanupMode::StopImmediately, None,
             )),
         }
     }
@@ -1174,6 +1197,8 @@ impl World {
             day_end_fail_before_group: None,
             #[cfg(test)]
             start_cleanup_message_for_test: None,
+            #[cfg(test)]
+            fatal_cleanup_probe_for_test: None,
             watchdog,
             validator: no_op_validator(),
             rounds_cap,
@@ -2466,6 +2491,8 @@ impl World {
             // D4：tick 起点先达交易部（FIFO 保证先于同 tick Ops）——
             // 每 tick 必推进 begin_tick（到期/清算/快照不再依赖 Ops 到达）。
             for tx in &self.desk_txs {
+                #[cfg(all(test, not(target_family = "wasm")))]
+                crate::session::calendar_entry_cache_tests::record_entry_call(crate::session::calendar_entry_cache_tests::EntryCall::Start);
                 if tx
                     .send(DeskMsg::Start {
                         tick,
@@ -2499,13 +2526,15 @@ impl World {
             let mut acc_causal = Vec::new();
             #[cfg(feature = "simulation-diagnostics")]
             let mut acc_decision_traces = Vec::new();
+            #[cfg(test)]
+            let mut acc_lifecycle_actions_for_test = Vec::new();
             let mut acc_lifecycle = Vec::new();
             let mut acc_receipts = Vec::new();
             let mut acc_group_rejections = Vec::new();
             let mut acc_auction = Vec::new();
             let mut acc_entities_out = 0u64;
             loop {
-                let mut evidence = self.converge_or_die(tick, rounds)?;
+                let mut evidence = self.converge_or_die(tick, rounds, &calendar)?;
                 if let Err(detail) = (self.validator)(&evidence) {
                     self.abort_tick(tick);
                     return Err(RuntimeError::TickValidation {
@@ -2552,6 +2581,8 @@ impl World {
                 acc_decision_traces.append(&mut evidence.decision_traces);
                 acc_lifecycle.extend(evidence.desk_lifecycle.iter().copied());
                 acc_receipts.extend(evidence.desk_receipts.iter().copied());
+                #[cfg(test)]
+                acc_lifecycle_actions_for_test.append(&mut evidence.lifecycle_actions_for_test);
                 acc_group_rejections.extend(evidence.group_rejections.iter().copied());
                 acc_auction.extend(evidence.desk_auction.iter().copied());
                 acc_entities_out += evidence.entities_out;
@@ -2581,6 +2612,8 @@ impl World {
                     }
                     evidence.desk_lifecycle = acc_lifecycle;
                     evidence.desk_receipts = acc_receipts;
+                    #[cfg(test)]
+                    { evidence.lifecycle_actions_for_test = acc_lifecycle_actions_for_test; }
                     evidence.group_rejections = acc_group_rejections;
                     evidence.desk_auction = acc_auction;
                     evidence.entities_out = acc_entities_out;
@@ -2698,7 +2731,7 @@ impl World {
                     self.abort_tick(tick);
                     self.send_worker_shutdown();
                     return Err(self.stop_after_fatal_failure(
-                        tick, round_final, "Seal", RuntimeError::WorkerFailed { who, error: Box::new(error) }, false, None,
+                        tick, round_final, "Seal", RuntimeError::WorkerFailed { who, error: Box::new(error) }, FatalCleanupMode::Queued, None,
                     ));
                 }
                 Ok(other) => {
@@ -2723,26 +2756,36 @@ impl World {
     /// Start 部分发送后参与者可能分处两拍，不能对全员广播任一拍的 Abort。
     /// 永久停止并 join 后再耗尽上行：Final 只作诊断，不安装半拍或重开日结窗口。
     fn stop_after_start_failure(&mut self, tick: u64, error: RuntimeError) -> RuntimeError {
-        self.stop_after_fatal_failure(tick, 0, "Start", error, true, None)
+        self.stop_after_fatal_failure(tick, 0, "Start", error, FatalCleanupMode::StopImmediately, None)
     }
 
     /// 失败退出统一先 join 再收上行，允许失败轮已发出的报告到达；不安装这些报告。
-    /// Start 部分发送时不能统一 Abort；其他失败已先排队 Abort/Shutdown，须让其被消费。
+    /// Start 部分发送时不能统一 Abort；Queued消费已排队的清理，窄pending模式先停止producer。
     fn stop_after_fatal_failure(
         &mut self,
         tick: u64,
         round: u32,
         stage: &str,
         error: RuntimeError,
-        stop_immediately: bool,
+        mode: FatalCleanupMode,
         original_panic: Option<(WorkerId, Box<dyn std::any::Any + Send>)>,
     ) -> RuntimeError {
         self.dead_reason = Some(format!("{stage}(tick={tick}) 失败，world 已终止且不可重试：{error}"));
-        if stop_immediately {
+        if mode == FatalCleanupMode::StopImmediately {
             #[cfg(not(target_family = "wasm"))]
             self.worker_shutdown.store(true, Ordering::SeqCst);
             #[cfg(target_family = "wasm")]
             self.stop_permanently();
+        }
+        if mode == FatalCleanupMode::PendingStartBeforeFinal {
+            // 只有来源门已证明失败组未发final时，desk才不会向正在退出的group回流Batch。
+            self.abort.store(true, Ordering::SeqCst);
+            for tx in &self.group_txs { let _ = tx.send(GroupIn::Abort { tick }); }
+            for tx in &self.group_txs { let _ = tx.send(GroupIn::Shutdown); }
+            #[cfg(test)]
+            if let Some(probe) = &self.fatal_cleanup_probe_for_test {
+                probe(FatalCleanupPhaseForTest::BeforeProducerJoin);
+            }
         }
         let expected_failure = match &error {
             RuntimeError::WorkerFailed { who, error } => Some((*who, error.as_ref())),
@@ -2752,7 +2795,7 @@ impl World {
         let mut panics: Vec<(WorkerId, Box<dyn std::any::Any + Send>)> = original_panic.into_iter().collect();
         let mut worker_results = Vec::new();
         // 上行通道无界，worker 不等待协调者读 Final；先 join 可保证异常收集也不漏线程。
-        for (who, handle) in std::mem::take(&mut self.handles) {
+        let mut join_one = |who, handle: crate::thread_facade::JoinHandle<Result<(), RuntimeError>>| {
             let result = match handle.join() {
                 Ok(result) => result,
                 Err(payload) => {
@@ -2771,7 +2814,33 @@ impl World {
                 }
             }
             worker_results.push((who, result));
+        };
+        let handles = std::mem::take(&mut self.handles);
+        if mode == FatalCleanupMode::PendingStartBeforeFinal {
+            let (groups, desks): (Vec<_>, Vec<_>) = handles.into_iter().partition(|(who, _)| matches!(who, WorkerId::Group(_)));
+            #[cfg(test)]
+            let mut joined_producers = Vec::new();
+            for (who, handle) in groups {
+                join_one(who, handle);
+                #[cfg(test)]
+                joined_producers.push(who);
+            }
+            #[cfg(test)]
+            if let Some(probe) = &self.fatal_cleanup_probe_for_test {
+                probe(FatalCleanupPhaseForTest::ProducersJoined { workers: joined_producers });
+            }
+            // 所有真实producer均已join；跨sender的本轮Ops必已排在以下Abort之前。
+            for tx in &self.desk_txs { let _ = tx.send(DeskMsg::Abort { tick }); }
+            #[cfg(test)]
+            if let Some(probe) = &self.fatal_cleanup_probe_for_test {
+                probe(FatalCleanupPhaseForTest::BeforeDeskShutdown);
+            }
+            for tx in &self.desk_txs { let _ = tx.send(DeskMsg::Shutdown); }
+            for (who, handle) in desks { join_one(who, handle); }
+        } else {
+            for (who, handle) in handles { join_one(who, handle); }
         }
+        drop(join_one);
         let mut group_finals: Vec<Option<GroupFinalState>> = (0..self.n_groups).map(|_| None).collect();
         let mut desk_finals: Vec<Option<DeskFinalState>> = (0..self.n_stocks).map(|_| None).collect();
         let mut group_reports = vec![false; self.n_groups];
@@ -2810,6 +2879,11 @@ impl World {
                     if expected_failure != Some((who, &error)) {
                         errors.push(format!("worker {who} 显式失败：{error}"));
                     }
+                }
+                UpMsg::PendingStartRejected(rejection) => {
+                    failed_count += 1;
+                    errors.push(format!("另一条pending Start拒绝：worker {}，tick={}，prior_tick={}，原错误={}",
+                        WorkerId::Group(rejection.group), rejection.tick, rejection.prior_tick, rejection.error));
                 }
                 UpMsg::TaskDied { who, payload } => panics.push((who, payload)),
                 UpMsg::SealAck { group, tick: ack_tick, .. } if stage == "Seal" && ack_tick == tick && usize::from(group) < self.n_groups => {}
@@ -2875,7 +2949,7 @@ impl World {
     }
     /// 收束一轮；TaskDied ⇒ 撤退 + 收齐 Final + join + `resume_unwind` 原 payload
     /// （不吞、不改写）。收集失败不丢原 payload：stderr 登记后仍 resume。
-    fn converge_or_die(&mut self, tick: u64, round: u32) -> Result<TickEvidence, RuntimeError> {
+    fn converge_or_die(&mut self, tick: u64, round: u32, calendar: &Arc<super::MarketTickContext>) -> Result<TickEvidence, RuntimeError> {
         let outcome = converge_round(
             &self.up_rx,
             self.n_groups,
@@ -2886,19 +2960,32 @@ impl World {
         );
         match outcome {
             RoundOutcome::Converged(ev) => Ok(ev),
+            RoundOutcome::PendingStartRejected(rejection) => {
+                let who = WorkerId::Group(rejection.group);
+                if !Arc::ptr_eq(calendar, &rejection.calendar) || self.global.committed_tick != rejection.prior_tick {
+                    let error = RuntimeError::WorkerFailed { who, error: Box::new(RuntimeError::ProtocolInvariant {
+                        detail: format!("pending Start拒绝未绑定当前Calendar/global：committed={}，rejection={rejection:?}；原错误={}", self.global.committed_tick, rejection.error),
+                    }) };
+                    self.abort_tick(tick);
+                    self.send_worker_shutdown();
+                    return Err(self.stop_after_fatal_failure(tick, round, "收束", error, FatalCleanupMode::Queued, None));
+                }
+                let error = RuntimeError::WorkerFailed { who, error: Box::new(rejection.error) };
+                Err(self.stop_after_fatal_failure(tick, round, "收束", error, FatalCleanupMode::PendingStartBeforeFinal, None))
+            }
             RoundOutcome::TaskDied { who, payload } => {
                 self.abort_tick(tick);
                 self.send_worker_shutdown();
                 let error = RuntimeError::ProtocolInvariant {
                     detail: format!("worker {who} panic（原 payload 待恢复）"),
                 };
-                self.stop_after_fatal_failure(tick, round, "收束", error, false, Some((who, payload)));
+                self.stop_after_fatal_failure(tick, round, "收束", error, FatalCleanupMode::Queued, Some((who, payload)));
                 unreachable!("原 panic 必须在完整清理后恢复")
             }
             RoundOutcome::Failed(error @ RuntimeError::WorkerFailed { .. }) => {
                 self.abort_tick(tick);
                 self.send_worker_shutdown();
-                Err(self.stop_after_fatal_failure(tick, round, "收束", error, false, None))
+                Err(self.stop_after_fatal_failure(tick, round, "收束", error, FatalCleanupMode::Queued, None))
             }
             RoundOutcome::Failed(e) => {
                 self.abort_tick(tick);
@@ -2911,6 +2998,10 @@ impl World {
     fn send_worker_shutdown(&self) {
         for tx in &self.group_txs {
             let _ = tx.send(GroupIn::Shutdown);
+        }
+        #[cfg(test)]
+        if let Some(probe) = &self.fatal_cleanup_probe_for_test {
+            probe(FatalCleanupPhaseForTest::BeforeDeskShutdown);
         }
         for tx in &self.desk_txs {
             let _ = tx.send(DeskMsg::Shutdown);
@@ -2988,6 +3079,8 @@ impl World {
         let group_hashes = evidence.group_hashes;
         let desk_hashes = evidence.desk_hashes;
         let record = TickRecord {
+            #[cfg(test)]
+            lifecycle_actions_for_test: evidence.lifecycle_actions_for_test,
             #[cfg(feature = "simulation-diagnostics")]
             decision_traces: evidence.decision_traces,
             tick,

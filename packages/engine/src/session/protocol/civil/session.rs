@@ -290,6 +290,15 @@ impl ProtocolSession {
         Self::from_game(game, day_end_save)
     }
 
+    /// 仅供内存初始 checkpoint 测试使用；不代表可加载的公共日终档。
+    #[cfg(test)]
+    pub(in crate::session) fn restore_initial_checkpoint_for_test(
+        slot: &crate::SaveSlot,
+    ) -> Result<Self, SessionError> {
+        let game = GameSession::restore(slot)?;
+        Ok(Self::from_game(game, None))
+    }
+
     fn from_game(mut game: GameSession, day_end_save: Option<Arc<crate::SaveSlot>>) -> Self {
         game.shared_ingress();
         Self {

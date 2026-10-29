@@ -430,6 +430,8 @@ pub struct DeskState {
     cur_tick: u64,
     #[cfg(test)]
     last_applied_start_for_test: Option<u64>,
+    #[cfg(test)]
+    fatal_cleanup_probe_for_test: Option<super::protocol::DeskFatalCleanupProbeForTest>,
     cur_round: u32,
     committed_tick: u64,
     committed_hash: u64,
@@ -644,6 +646,8 @@ impl DeskState {
             cur_tick: initial_tick,
             #[cfg(test)]
             last_applied_start_for_test: None,
+            #[cfg(test)]
+            fatal_cleanup_probe_for_test: None,
             cur_round: 0,
             committed_tick: initial_tick,
             committed_hash: 0,
@@ -3438,6 +3442,10 @@ fn process_msg(
         other => other,
     };
     match msg {
+        #[cfg(test)]
+        DeskMsg::InstallFatalCleanupProbeForTest(probe) => {
+            assert!(state.fatal_cleanup_probe_for_test.replace(probe).is_none(), "失败清理观察门不得覆盖未消费配置");
+        }
         DeskMsg::EchoResting => {
             // D5 envelope 投影：在途单快照（bids+asks 全量——费用
             // 累计/余量直取 desk 权威）。P2-3 后生产读面走 DeskReport
@@ -3548,6 +3556,12 @@ fn process_msg(
             ops,
             final_flush,
         } => {
+            #[cfg(test)]
+            if let Some(probe) = state.fatal_cleanup_probe_for_test.as_ref().filter(|probe| probe.tick == tick) {
+                probe.events.send(super::protocol::DeskFatalCleanupEventForTest::OpsDequeued {
+                    stock: state.setup.stock, tick, round, group, final_flush, ops_len: ops.len(), cur_tick: state.cur_tick,
+                }).map_err(|error| over(&format!("失败清理Ops观察通道断连：{error}")))?;
+            }
             if tick != state.cur_tick
                 || state
                     .calendar_tick
@@ -3652,6 +3666,15 @@ fn process_msg(
             }
             state.rollback();
             state.rollback_hash = Some(state.state_hash());
+            #[cfg(test)]
+            if let Some(probe) = state.fatal_cleanup_probe_for_test.as_ref().filter(|probe| probe.tick == tick) {
+                probe.events.send(super::protocol::DeskFatalCleanupEventForTest::AbortApplied {
+                    stock: state.setup.stock, tick, cur_tick: state.cur_tick,
+                    calendar_tick: state.calendar_tick.as_ref().map(|calendar| calendar.after_input().tick),
+                }).map_err(|error| over(&format!("失败清理Abort观察通道断连：{error}")))?;
+                probe.after_abort.recv_timeout(std::time::Duration::from_millis(1000))
+                    .map_err(|error| over(&format!("失败清理Abort观察门超过1000ms或断连：{error}")))?;
+            }
         }
         DeskMsg::AbortDayEnd { tick } => {
             if tick != state.cur_tick {

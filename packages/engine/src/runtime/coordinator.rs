@@ -65,6 +65,9 @@ fn fnv(state: u64, value: u64) -> u64 {
 /// 一轮收束证据（PreCommit 校验注入点的输入）。
 #[derive(Clone, Debug)]
 pub struct TickEvidence {
+    /// 仅测试：从本轮 GroupReport 原样搬移的真实动作。
+    #[cfg(test)]
+    pub lifecycle_actions_for_test: Vec<super::protocol::PlanLifecycleWitnessForTest>,
     #[cfg(feature = "simulation-diagnostics")]
     pub decision_traces: Vec<super::diagnostics::GroupDecisionTrace>,
     /// tick 编号。
@@ -120,6 +123,8 @@ pub enum RoundOutcome {
     Converged(TickEvidence),
     /// 显式失败（看门狗/断连/worker Failed/协议不变量）。
     Failed(RuntimeError),
+    /// 来源门已拒绝分派本轮 Start；协调者核对后可先等待 producer 停止。
+    PendingStartRejected(super::protocol::PendingStartRejection),
     /// worker panic：原 payload 待运输。
     TaskDied {
         /// panic 的 worker。
@@ -142,6 +147,8 @@ pub fn converge_round(
         Ok(ev) => RoundOutcome::Converged(ev),
         Err(e) => RoundOutcome::Failed(e),
     };
+    #[cfg(test)]
+    let mut lifecycle_actions_for_test = Vec::new();
     let mut groups_left = n_groups;
     let mut desks_left = n_stocks;
     let mut group_hashes = Vec::with_capacity(n_groups);
@@ -199,6 +206,8 @@ pub fn converge_round(
                     }
                     decision_traces.extend(r.decision_traces);
                 }
+                #[cfg(test)]
+                lifecycle_actions_for_test.extend(r.lifecycle_actions_for_test);
                 groups_left -= 1;
                 continuation_any |= r.continuation;
                 group_hashes.push((r.group, r.committed_hash));
@@ -263,6 +272,22 @@ pub fn converge_round(
                     error: Box::new(error),
                 });
             }
+            UpMsg::PendingStartRejected(rejection) => {
+                if usize::from(rejection.group) >= n_groups || round != 0
+                    || rejection.tick != tick || rejection.prior_tick.checked_add(1) != Some(tick)
+                    || rejection.calendar.before_input().tick != rejection.prior_tick
+                    || rejection.calendar.after_input().tick != tick
+                    || group_hashes.iter().any(|(group, _)| *group == rejection.group)
+                {
+                    return RoundOutcome::Failed(RuntimeError::WorkerFailed {
+                        who: WorkerId::Group(rejection.group),
+                        error: Box::new(RuntimeError::ProtocolInvariant {
+                            detail: format!("pending Start 拒绝阶段证据失配：expected=({tick},{round}), actual={rejection:?}；原错误={}", rejection.error),
+                        }),
+                    });
+                }
+                return RoundOutcome::PendingStartRejected(rejection);
+            }
             other => {
                 return RoundOutcome::Failed(RuntimeError::Disconnected {
                     who: None,
@@ -278,6 +303,8 @@ pub fn converge_round(
     #[cfg(feature = "simulation-diagnostics")]
     decision_traces.sort_unstable_by_key(|trace| trace.owner);
     wrap(Ok(TickEvidence {
+        #[cfg(test)]
+        lifecycle_actions_for_test,
         #[cfg(feature = "simulation-diagnostics")]
         decision_traces,
         tick,
@@ -322,6 +349,8 @@ pub fn broadcast_start(
         stocks: std::sync::Arc::new(stocks.to_vec()),
     });
     for tx in group_txs {
+        #[cfg(all(test, not(target_family = "wasm")))]
+        crate::session::calendar_entry_cache_tests::record_entry_call(crate::session::calendar_entry_cache_tests::EntryCall::Start);
         tx.send(super::protocol::GroupIn::Start {
             tick,
             snapshot: Arc::clone(&snapshot),

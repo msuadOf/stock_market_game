@@ -37,6 +37,8 @@ impl GameSession {
     pub fn take_runtime_player_intents(
         &mut self,
     ) -> Vec<crate::session::ReceiptBearingIntent> {
+        #[cfg(all(test, not(target_family = "wasm")))]
+        crate::session::calendar_entry_cache_tests::record_entry_call(crate::session::calendar_entry_cache_tests::EntryCall::Take);
         self.mark_external_mutation();
         self.state.pending_player.drain(..).collect()
     }
@@ -1407,6 +1409,7 @@ impl GameSession {
         assert_eq!(self.runtime_authority_epoch.checked_add(1), Some(epoch), "driver epoch 已在 spawn 前验证且仅成功安装一次");
         self.runtime_authority_epoch = epoch;
         self.runtime_external_authority = std::sync::Weak::new();
+        self.runtime_installed_market_close = None;
     }
 
     pub(crate) fn runtime_authority_identity(&self) -> std::sync::Weak<()> {

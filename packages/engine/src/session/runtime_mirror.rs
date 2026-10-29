@@ -36,6 +36,7 @@ pub(crate) struct PreparedRuntimeMirror {
     install_sequence: u64,
     session_authority_epoch: u64,
     is_handover: bool,
+    installed_market_close: bool,
     static_session_revision: Option<u64>,
     pub projection: protocol::PreparedTickProjection,
     pub events: Vec<Event>,
@@ -198,6 +199,11 @@ impl GameSession {
         let n_stocks = self.state.stocks.len();
         let day_end = input.day_end;
         let is_day_end = day_end.is_some();
+        let installed_market_close = is_day_end
+            && matches!(&input.calendar,
+                crate::runtime::drive::PreparedDriverCalendar::MarketTick(calendar)
+                    if calendar.after_input().progress
+                        == super::exchange_calendar_model::SharedDayProgress::TradingCompleted);
         let manual_day_end = day_end.as_ref().is_some_and(|data| !data.emit_boundary);
         for (group, rows) in input.accounts.iter().enumerate() {
             let mut seen = BTreeSet::new();
@@ -848,6 +854,7 @@ impl GameSession {
             install_sequence,
             session_authority_epoch: self.runtime_authority_epoch,
             is_handover: expected_authority_epoch != self.runtime_authority_epoch,
+            installed_market_close,
             static_session_revision,
             projection,
             events,
@@ -905,6 +912,13 @@ impl GameSession {
         }
         self.state.tick = prepared.tick;
         self.state.seq = prepared.seq;
+        if prepared.installed_market_close {
+            self.runtime_installed_market_close = Some((
+                prepared.source.authority_epoch,
+                prepared.tick,
+                prepared.source.civil_date,
+            ));
+        }
         self.runtime_mirror_install_sequence = prepared.install_sequence;
         driver.finish_mirror_install(count);
         prepared.events

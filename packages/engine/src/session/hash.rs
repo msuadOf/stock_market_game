@@ -1,10 +1,59 @@
 use super::{GameSession, StepFatal};
 use serde::Serialize;
 use std::collections::BTreeMap;
+#[cfg(test)]
+use std::cell::RefCell;
 
 /// FNV-1a over length-delimited canonical JSON fields; not a security digest.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 pub struct StateHash(u64);
+
+#[cfg(test)]
+thread_local! {
+    static BUSINESS_HASH_TRACE: RefCell<Option<Vec<Vec<u8>>>> = const { RefCell::new(None) };
+}
+
+#[cfg(test)]
+struct BusinessHashTraceGuard;
+
+#[cfg(test)]
+impl BusinessHashTraceGuard {
+    fn begin() -> Self {
+        BUSINESS_HASH_TRACE.with(|trace| {
+            let mut trace = trace.borrow_mut();
+            assert!(trace.is_none(), "business hash trace不允许嵌套");
+            *trace = Some(Vec::new());
+        });
+        Self
+    }
+
+    fn finish(self) -> Vec<Vec<u8>> {
+        let fields = BUSINESS_HASH_TRACE.with(|trace| {
+            trace
+                .borrow_mut()
+                .take()
+                .expect("business hash trace生命周期已损坏")
+        });
+        fields
+    }
+}
+
+#[cfg(test)]
+impl Drop for BusinessHashTraceGuard {
+    fn drop(&mut self) {
+        BUSINESS_HASH_TRACE.with(|trace| *trace.borrow_mut() = None);
+    }
+}
+
+#[cfg(test)]
+pub(in crate::session) fn capture_business_hash_for_test(
+    session: &GameSession,
+) -> Result<(StateHash, Vec<Vec<u8>>), StepFatal> {
+    let guard = BusinessHashTraceGuard::begin();
+    let hash = session.business_state_hash()?;
+    let fields = guard.finish();
+    Ok((hash, fields))
+}
 
 impl StateHash {
     fn field(&mut self, value: &impl Serialize) -> Result<(), StepFatal> {
@@ -12,6 +61,12 @@ impl StateHash {
             description: error.to_string(),
             location: "state_hash.serialization".to_owned(),
         })?;
+        #[cfg(test)]
+        BUSINESS_HASH_TRACE.with(|trace| {
+            if let Some(fields) = trace.borrow_mut().as_mut() {
+                fields.push(bytes.clone());
+            }
+        });
         let length = u64::try_from(bytes.len()).map_err(|error| StepFatal::InvariantViolation {
             description: error.to_string(),
             location: "state_hash.length".to_owned(),
@@ -47,6 +102,7 @@ impl GameSession {
             runtime_authority_epoch: _,
             runtime_authority_identity: _,
             runtime_external_authority: _,
+            runtime_installed_market_close: _,
             runtime_mirror_install_sequence: _,
             runtime_discard_driver_flag: _,
             revision: _,

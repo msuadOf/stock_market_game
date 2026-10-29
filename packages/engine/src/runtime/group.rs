@@ -3309,6 +3309,8 @@ impl GroupState {
                 .completed_shared_minute_count(),
             trading_day,
         };
+        #[cfg(test)]
+        let mut lifecycle_actions_for_test = Vec::new();
         if write_back {
             let group_account = self
                 .accounts
@@ -3363,6 +3365,23 @@ impl GroupState {
                 };
                 let actions = review.collect(&host, &assessments_map);
                 for action in actions {
+                    #[cfg(test)]
+                    let observed = {
+                        use crate::session::PlanLifecycleAction as A;
+                        match &action {
+                            A::Observe { plan_id, trading_day } => Some(("Observe", *plan_id, *trading_day)),
+                            A::Revise { plan_id, revision } => Some(("Revise", *plan_id, revision.trading_day)),
+                            A::Restructure { plan_id, revision, .. } => Some(("Restructure", *plan_id, revision.trading_day)),
+                            A::Terminate { plan_id, trading_day, .. } => Some(("Terminate", *plan_id, *trading_day)),
+                            A::ExecutionState { plan_id, event } => match event {
+                                crate::plans::PlanEvent::Paused { trading_day, .. } => Some(("ExecutionState::Paused", *plan_id, *trading_day)),
+                                crate::plans::PlanEvent::Resumed { trading_day, .. } => Some(("ExecutionState::Resumed", *plan_id, *trading_day)),
+                                _ => panic!("真实 collector 的 ExecutionState 必须是 Paused 或 Resumed"),
+                            },
+                            // 原 consumer 对 Create 早退，由后续开仓循环消费；不能冒已施加动作。
+                            A::Create { .. } => None,
+                        }
+                    };
                     self.apply_lifecycle_action(
                         action,
                         &observation.market,
@@ -3371,6 +3390,17 @@ impl GroupState {
                         &out.information,
                         &mut review_cancels,
                     );
+                    #[cfg(test)]
+                    if let Some((kind, plan_id, event_trading_day)) = observed {
+                        let plan = self.plan_book.plan(plan_id).expect("成功施加的真实动作必须保留计划");
+                        let stock = *plan.code();
+                        lifecycle_actions_for_test.push(super::protocol::PlanLifecycleWitnessForTest {
+                            kind, plan_id, stock, event_trading_day,
+                            caller_trading_day: self.stock_trading_day(stock).unwrap().expect("真实复审动作只来自本股开市"),
+                            last_event_after: plan.last_event_trading_day(),
+                            review_day_after: plan.review().last_review_trading_day,
+                        });
+                    }
                 }
             }
         }
@@ -3616,6 +3646,8 @@ impl GroupState {
         let _ = tick;
         Ok((
             super::world::OpenDerivationRecord {
+                #[cfg(test)]
+                lifecycle_actions_for_test,
                 account,
                 personal_in,
                 personal_out: out,
@@ -4313,6 +4345,8 @@ impl GroupState {
         let mut stall: Option<Duration> = None;
         // D3b 件 3：belief 链定向撤单目标（决策块内收集，缓冲创建后下发）。
         let mut chain_cancels: Vec<(LocalIdx, StockIdx, u64)> = Vec::new();
+        #[cfg(test)]
+        let mut lifecycle_actions_for_test = Vec::new();
         if let Some((profiles, gap)) = &mut self.decision {
             // Continue 轮跳过普通 due 筛选（F §4.3）——只推进计划链；
             // 测试脚本路径不受限（脚本按轮定义行为，是续行注入面）。
@@ -4537,6 +4571,8 @@ impl GroupState {
                     let (_record, child_ops, cancels) =
                         self.run_chain_decision(local, tick, true,
                             Arc::clone(information_anchors.as_ref().expect("非空 chain_due 已准备同批 anchor")))?;
+                    #[cfg(test)]
+                    lifecycle_actions_for_test.extend(_record.lifecycle_actions_for_test);
                     for (_plan, op) in child_ops {
                         #[cfg(feature = "simulation-diagnostics")]
                         pendings.push(Pending::InstitutionOp(_plan, op));
@@ -4977,6 +5013,8 @@ impl GroupState {
             }
         }
         let report = GroupReport {
+            #[cfg(test)]
+            lifecycle_actions_for_test,
             #[cfg(feature = "simulation-diagnostics")]
             decision_traces: std::mem::take(&mut self.round_decision_traces),
             group,
@@ -5765,7 +5803,14 @@ pub fn group_main(
             GroupIn::AdminCommit { .. } | GroupIn::AdminAbort { .. } | GroupIn::AdminPrepare { .. }
             | GroupIn::EchoAccounts | GroupIn::EchoAccountsSparse { .. } | GroupIn::Shutdown) {
             let error = RuntimeError::ProtocolInvariant { detail: format!("组 {who} 行政事务 pending 时收到改变状态的消息") };
-            let _ = up_tx.send(UpMsg::Failed { who, error: error.clone() });
+            let failure = match &msg {
+                GroupIn::Start { tick, snapshot } => UpMsg::PendingStartRejected(super::protocol::PendingStartRejection {
+                    group: state.group, tick: *tick, prior_tick: state.cur_tick,
+                    calendar: Arc::clone(&snapshot.calendar), error: error.clone(),
+                }),
+                _ => UpMsg::Failed { who, error: error.clone() },
+            };
+            let _ = up_tx.send(failure);
             result = Err(error);
             break;
         }

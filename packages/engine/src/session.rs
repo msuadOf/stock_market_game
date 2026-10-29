@@ -195,6 +195,8 @@ mod envelope_projection_tests;
 mod failure_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod runtime_sync_tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod calendar_final_boundary_tests;
 mod runtime_mirror;
 pub(crate) mod retail_lifecycle;
 #[cfg(all(test, not(feature = "simulation-diagnostics"), not(target_arch = "wasm32")))]
@@ -203,6 +205,8 @@ mod retail_lifecycle_tests;
 mod runtime_diagnostics_tests;
 #[cfg(test)]
 mod hash_contract_tests;
+#[cfg(all(test, not(target_family = "wasm")))]
+pub(crate) mod calendar_entry_cache_tests;
 #[cfg(test)]
 mod plan_chain_candidates_tests;
 #[cfg(test)]
@@ -1856,6 +1860,8 @@ pub struct GameSession {
     runtime_authority_identity: std::sync::Arc<()>,
     /// 当前公开 factory 返回的外持 owner；Weak 不延长 World 寿命。
     runtime_external_authority: std::sync::Weak<crate::runtime::drive::RuntimeAuthorityLease>,
+    /// 本 owner 已成功 Full 安装的真实市场收盘；仅用于同日 civil 失败的终态判定。
+    runtime_installed_market_close: Option<(u64, u64, crate::CivilDate)>,
     runtime_mirror_install_sequence: u64,
     /// step_frame 接轨件 4：投影段失败后丢弃驱动器的标志（body 内设置、
     /// 驱动器共用段消费——world tick 已转正而会话已回滚，锁步断裂的
@@ -2346,6 +2352,7 @@ impl GameSession {
             runtime_authority_epoch: self.runtime_authority_epoch,
             runtime_authority_identity: std::sync::Arc::clone(&self.runtime_authority_identity),
             runtime_external_authority: self.runtime_external_authority.clone(),
+            runtime_installed_market_close: self.runtime_installed_market_close,
             runtime_mirror_install_sequence: self.runtime_mirror_install_sequence,
             runtime_discard_driver_flag: false,
             state: self.state.clone_for_shadow()?,
@@ -2521,6 +2528,7 @@ impl GameSession {
             runtime_authority_epoch: 0,
             runtime_authority_identity: std::sync::Arc::new(()),
             runtime_external_authority: std::sync::Weak::new(),
+            runtime_installed_market_close: None,
             runtime_mirror_install_sequence: 0,
             runtime_discard_driver_flag: false,
             state: CommittableSessionState {
@@ -3665,25 +3673,36 @@ impl GameSession {
         if self.uses_runtime_civil_authority() {
             return self.with_prepared_runtime_civil_day(project);
         }
-        let mut candidate = self.clone_for_tick_shadow().map_err(|_error| {
-            // fault1034：自然日日终 candidate 捕获失败，保持数值错误契约。
-            SessionError::InvalidSave(ValidationFault::new(1034, vec![0]))
-        })?;
-        let report = candidate.end_civil_day_after_session_check().map_err(|error| {
-            if matches!(&error, SessionError::ReportCorrectionDayEnd(cause)
-                if cause.classification() == crate::company::CompanyErrorClass::SystemState)
-            {
-                // 外持 runtime 与串行分支也封存系统首错；首个返回仍保留原 typed cause。
-                self.poison_runtime_step(StepFatal::InvariantViolation {
-                    location: "GameSession::with_prepared_civil_day".to_owned(),
-                    description: format!("civil authority 无法继续运行：{error}"),
-                });
-            }
-            error
-        })?;
-        candidate.market_calendar_day = None;
-        let instant = report.disclosure_instant;
-        let publication = project(&candidate, report)?;
+        let market_installed = self.has_current_external_runtime_authority()
+            && self.runtime_installed_market_close
+                == Some((self.runtime_authority_epoch, self.tick(), self.civil_date()));
+        let prepared = (|| {
+            let mut candidate = self.clone_for_tick_shadow().map_err(|_error| {
+                // fault1034：自然日日终 candidate 捕获失败，保持数值错误契约。
+                SessionError::InvalidSave(ValidationFault::new(1034, vec![0]))
+            })?;
+            let report = candidate.end_civil_day_after_session_check().map_err(|error| {
+                if matches!(&error, SessionError::ReportCorrectionDayEnd(cause)
+                    if cause.classification() == crate::company::CompanyErrorClass::SystemState)
+                {
+                    // 外持 runtime 与串行分支也封存系统首错；首个返回仍保留原 typed cause。
+                    self.poison_runtime_step(StepFatal::InvariantViolation {
+                        location: "GameSession::with_prepared_civil_day".to_owned(),
+                        description: format!("civil authority 无法继续运行：{error}"),
+                    });
+                }
+                error
+            })?;
+            candidate.market_calendar_day = None;
+            let instant = report.disclosure_instant;
+            let publication = project(&candidate, report)?;
+            Ok((candidate, instant, publication))
+        })();
+        let (candidate, instant, publication) = match prepared {
+            Ok(value) => value,
+            Err(error) if market_installed => return Err(self.poison_civil_authority(error)),
+            Err(error) => return Err(error),
+        };
         self.commit_tick_shadow(candidate);
         for observer in self.state.civil_clock.disclosure_observers() {
             observer(instant);
@@ -7972,3 +7991,6 @@ pub struct DeskBookMirror {
 
 #[cfg(test)]
 mod company_source_runtime_tests;
+
+#[cfg(all(test, not(target_family = "wasm")))]
+mod calendar_nonzero_plan_parity_tests;

@@ -177,6 +177,8 @@ impl GameSession {
     }
 
     pub(super) fn freeze_shared_ingress(&mut self) -> Result<(), StepFatal> {
+        #[cfg(all(test, not(target_family = "wasm")))]
+        crate::session::calendar_entry_cache_tests::record_entry_call(crate::session::calendar_entry_cache_tests::EntryCall::Freeze);
         if let Some(binding) = &self.ingress {
             let (inputs, cursors, cutoff) = binding.snapshot().map_err(ingress_fatal)?;
             self.state.pending_player.extend(inputs);

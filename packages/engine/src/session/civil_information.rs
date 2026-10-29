@@ -52,7 +52,7 @@ impl PreparedCivilFields {
 }
 
 impl GameSession {
-    fn poison_civil_authority(&mut self, error: SessionError) -> SessionError {
+    pub(super) fn poison_civil_authority(&mut self, error: SessionError) -> SessionError {
         match error {
             SessionError::Step(fatal) => SessionError::Step(self.poison_runtime_step(fatal)),
             error => {

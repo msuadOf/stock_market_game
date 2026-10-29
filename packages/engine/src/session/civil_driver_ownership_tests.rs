@@ -18,6 +18,62 @@ fn open_external_game() -> GameSession {
     GameSession::new(setup, 42).unwrap()
 }
 
+#[test]
+fn external_installed_market_close_numeric_failure_keeps_typed_fault_and_first_poison() {
+    let mut game = open_external_game();
+    let mut driver = RuntimeDriver::from_session(&mut game).unwrap();
+    for _ in 0..4 {
+        game.runtime_step_with_install(&mut driver).unwrap();
+    }
+    assert!(driver.has_committed_market_close_for_civil(game.tick(), game.civil_date()).unwrap());
+    let epoch = game.runtime_authority_epoch;
+    let before = game.business_state_hash().unwrap();
+    let publication = driver.publication().load();
+    let fault = ValidationFault::new(1034, vec![75, 13]);
+    let mut reached = false;
+    let result: Result<(), SessionError> = game.with_prepared_civil_day(|_, _| {
+        reached = true;
+        Err(SessionError::InvalidSave(fault.clone()))
+    });
+    assert!(reached);
+    assert!(matches!(result, Err(SessionError::InvalidSave(actual)) if actual == fault));
+    assert_eq!(game.business_state_hash().unwrap(), before);
+    let fatal = game.poison_reason().expect("外持 owner 实际收盘后的失败必须终结").clone();
+    assert!(game.runtime_driver.is_none(), "封存首错不能偷偷替换外 owner");
+    assert_eq!(game.runtime_authority_epoch, epoch);
+    assert_eq!(driver.world_committed_tick(), 4);
+    assert!(std::sync::Arc::ptr_eq(&publication, &driver.publication().load()));
+    assert!(matches!(game.save(), Err(SessionError::Step(actual)) if actual == fatal));
+    assert_eq!(game.step().unwrap_err(), fatal);
+    assert!(matches!(game.end_civil_day(), Err(SessionError::Step(actual)) if actual == fatal));
+}
+
+#[test]
+fn external_prior_day_market_close_does_not_poison_next_closed_day_projection_rejection() {
+    let mut game = open_external_game();
+    let mut driver = RuntimeDriver::from_session(&mut game).unwrap();
+    for _ in 0..4 {
+        game.runtime_step_with_install(&mut driver).unwrap();
+    }
+    let settled = game.end_civil_day().unwrap();
+    assert_eq!(settled.next_date, crate::CivilDate::from_iso("2030-01-05").unwrap());
+    let before = game.business_state_hash().unwrap();
+    let epoch = game.runtime_authority_epoch;
+    let fault = ValidationFault::new(1034, vec![76, 14]);
+    let result: Result<(), SessionError> = game.with_prepared_civil_day(|_, report| {
+        assert_eq!(report.settled_date, settled.next_date);
+        Err(SessionError::InvalidSave(fault.clone()))
+    });
+    assert!(matches!(result, Err(SessionError::InvalidSave(actual)) if actual == fault));
+    assert!(game.poison_reason().is_none(), "昨日真实收盘不能冒充本休市日的安装事实");
+    assert_eq!(game.business_state_hash().unwrap(), before);
+    assert_eq!(game.runtime_authority_epoch, epoch);
+    assert!(game.runtime_driver.is_none());
+    game.end_civil_day().expect("同一外持 owner 的可逆休市失败仍可重试");
+    assert_eq!(game.runtime_authority_epoch, epoch);
+    assert_eq!(driver.world_committed_tick(), 4);
+}
+
 fn assert_owner_error<T>(result: Result<T, String>, marker: &str) {
     let error = match result {
         Ok(_) => panic!("合法业务输入必须在 owner 身份守卫处拒绝"),

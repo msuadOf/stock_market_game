@@ -982,6 +982,71 @@ fn correction_external_manual_close_business_rejection_keeps_close_and_allows_ci
 
 
 #[test]
+fn correction_external_full_close_business_rejection_keeps_cancel_retry_available() {
+    for negative_cash in [false, true] {
+        let mut setup = correction_setup("2030-06-07", None);
+        setup.ticks_per_day = 4;
+        setup.auction_ticks = 0;
+        setup.closing_auction_ticks = 0;
+        setup.npcs.retail_count = 0;
+        setup.npcs.inst_count = 0;
+        setup.npcs.hot_count = 0;
+        let mut session = GameSession::new_with_runtime_groups(setup, 7181, 3).unwrap();
+        let mut request = correction_request(&session, CompanyId(0));
+        if negative_cash {
+            request.entries[0].kind = BusinessKind::CashExpense;
+            request.entries[0].lines[0].account = LedgerAccountId("6001".into());
+            request.entries[0].lines[1].account = LedgerAccountId("1002".into());
+            for line in &mut request.entries[0].lines {
+                line.amount = AccountingAmount::from_cents(1_000_000_000_000);
+            }
+        } else {
+            request.entries[0].lines[1].account = LedgerAccountId("不存在的科目".into());
+        }
+        request.entries[0].validate_invariants().unwrap();
+        let epoch = session.report_correction_epoch();
+        session.enqueue_report_correction(&epoch, request.clone()).unwrap();
+        let pending = session.report_corrections().unwrap();
+        let mut driver = crate::runtime::drive::RuntimeDriver::from_session(&mut session).unwrap();
+        for _ in 0..4 {
+            session.runtime_step_with_install(&mut driver).unwrap();
+        }
+        let date = session.civil_date();
+        assert_eq!((session.tick(), session.day(), driver.world_committed_tick()), (4, 1, 4));
+        assert_eq!(session.runtime_installed_market_close,
+            Some((session.runtime_authority_epoch, 4, date)), "必须经过真实 Full 收盘安装");
+        let before = session.business_state_hash().unwrap();
+        let retained = driver.publication().load();
+        let error = session.end_civil_day().unwrap_err();
+        let expected = if negative_cash {
+            crate::company::CompanyErrorClass::BusinessCondition
+        } else {
+            crate::company::CompanyErrorClass::InvalidInput
+        };
+        assert!(matches!(&error, SessionError::ReportCorrectionDayEnd(cause)
+            if cause.classification() == expected), "必须取得真实更正业务拒绝：{error}");
+        assert!(correction_error_has_cause::<crate::accounting::AccountingError>(&error, |cause|
+            matches!(correction_accounting_leaf(cause),
+                crate::accounting::AccountingError::UnknownAccount { .. } if !negative_cash)
+            || matches!(correction_accounting_leaf(cause),
+                crate::accounting::AccountingError::NegativeCashProhibited { .. } if negative_cash)));
+        assert!(session.require_healthy().is_ok(),
+            "FULL_CLOSE_CORRECTION_RETRY_REQUIRED：Full 收盘后的明确业务拒绝仍须可取消重试；negative_cash={negative_cash}");
+        assert_eq!(session.business_state_hash().unwrap(), before);
+        assert_eq!(session.report_corrections().unwrap(), pending);
+        assert_eq!(session.civil_date(), date);
+        assert!(std::sync::Arc::ptr_eq(&retained.retained, &driver.publication().load().retained));
+        session.cancel_report_correction(&epoch, &request.operation_id).unwrap();
+        session.end_civil_day().expect("取消真实业务拒绝后只重试 civil 日结");
+        assert_eq!((session.tick(), session.day(), driver.world_committed_tick()), (4, 1, 4));
+        assert!(session.civil_date() > date);
+        assert!(session.runtime_driver.is_none());
+        assert!(std::sync::Arc::ptr_eq(&retained.retained, &driver.publication().load().retained));
+        session.require_healthy().unwrap();
+    }
+}
+
+#[test]
 fn correction_tax_cascade_overflow_preserves_actual_accounting_source() {
     let (mut session, mut request) = session_and_request();
     // 保留无历史余额的 6001；首笔过账成功后，真实税务年度利润汇总才发生溢出。

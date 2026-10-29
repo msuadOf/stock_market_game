@@ -20,6 +20,10 @@ pub(super) fn panic_detail(payload: &(dyn std::any::Any + Send)) -> String {
 /// getter 不得用 UpMsg 的省略 Debug 丢弃 panic 载荷详情。
 pub(super) fn read_failure(stage: &str, message: UpMsg) -> RuntimeError {
     match message {
+        UpMsg::PendingStartRejected(rejection) => RuntimeError::WorkerFailed {
+            who: WorkerId::Group(rejection.group),
+            error: Box::new(rejection.error),
+        },
         UpMsg::Failed { who, error } => RuntimeError::WorkerFailed {
             who,
             error: Box::new(error),
@@ -66,6 +70,10 @@ impl World {
         for message in self.up_rx.try_iter() {
             discarded_messages += 1;
             match message {
+                UpMsg::PendingStartRejected(rejection) => errors.push(format!(
+                    "未交付 pending Start 错误：worker {}：{}",
+                    WorkerId::Group(rejection.group), rejection.error
+                )),
                 UpMsg::Failed { who, error } => {
                     errors.push(format!("未交付 worker {who} 错误：{error}"))
                 }

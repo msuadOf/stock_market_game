@@ -404,7 +404,7 @@ impl World {
 
     /// 读面通信失败不能留下可重试的半收齐通道；沿既有 terminal 回收保首错。
     pub(crate) fn stop_failed_administrative_read(&mut self, error: RuntimeError) -> RuntimeError {
-        self.stop_after_fatal_failure(self.global.committed_tick, 0, "administrative_baseline", error, true, None)
+        self.stop_after_fatal_failure(self.global.committed_tick, 0, "administrative_baseline", error, FatalCleanupMode::StopImmediately, None)
     }
 
     fn validate_repurchase_candidate(
@@ -1795,10 +1795,19 @@ mod tests {
                 })),
             };
             w.group_txs[0].send(message).unwrap();
-            assert!(matches!(
-                recv_deadline(&w.up_rx, Phase::Seal, &w.watchdog).unwrap(),
-                UpMsg::Failed { .. }
-            ));
+            match (mode, recv_deadline(&w.up_rx, Phase::Seal, &w.watchdog).unwrap()) {
+                (0, UpMsg::PendingStartRejected(rejection)) => {
+                    assert_eq!(rejection.group, 0);
+                    assert_eq!((rejection.tick, rejection.prior_tick), (2, 1));
+                    assert_eq!(rejection.calendar.before_input().tick, 1);
+                    assert_eq!(rejection.calendar.after_input().tick, 2);
+                    assert!(matches!(rejection.error, RuntimeError::ProtocolInvariant { detail } if detail.contains("行政事务 pending")));
+                }
+                (1 | 2, UpMsg::Failed { who: WorkerId::Group(0), error }) => {
+                    assert!(matches!(error, RuntimeError::ProtocolInvariant { detail } if detail.contains("行政事务 pending")));
+                }
+                (_, other) => panic!("pending门须保原错误与精确来源阶段：{other:?}"),
+            }
             match recv_deadline(&w.up_rx, Phase::Seal, &w.watchdog).unwrap() {
                 UpMsg::GroupFinal(g) => assert_eq!(g.accounts, before[0]),
                 other => panic!("期望Final，收到{other:?}"),
@@ -1870,6 +1879,9 @@ mod tests {
 
 #[cfg(test)]
 mod information_tests;
+
+#[cfg(all(test, not(target_family = "wasm")))]
+mod calendar_information_intersection_tests;
 
 #[cfg(test)]
 mod funds_cost_tests;

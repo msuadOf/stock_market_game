@@ -227,6 +227,7 @@ fn converge_round_skips_stale_seal_ack() {
     .expect("预置旧拍迟到 Ack");
     // 本轮合法收束面：1 组报告（n_stocks=0——零交易部世界）。
     tx.send(UpMsg::GroupReport(super::protocol::GroupReport {
+        lifecycle_actions_for_test: Vec::new(),
         #[cfg(feature = "simulation-diagnostics")]
         decision_traces: Vec::new(),
         group: 0,
@@ -255,7 +256,7 @@ fn converge_round_skips_stale_seal_ack() {
     );
     match outcome {
         super::coordinator::RoundOutcome::Converged(ev) => assert_eq!(ev.tick, 7),
-        super::coordinator::RoundOutcome::Failed(_) | super::coordinator::RoundOutcome::TaskDied { .. } => {
+        super::coordinator::RoundOutcome::Failed(_) | super::coordinator::RoundOutcome::PendingStartRejected(_) | super::coordinator::RoundOutcome::TaskDied { .. } => {
             panic!("迟到 Ack 不得污染收束（RoundOutcome 非 Converged）")
         }
     }
