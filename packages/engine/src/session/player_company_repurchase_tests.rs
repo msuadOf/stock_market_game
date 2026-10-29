@@ -175,9 +175,9 @@ fn player_repurchase_rejects_zero_window_and_invalid_terms_without_partial_fundi
             if let Some(player) = cause.downcast_ref::<crate::session::player_company_command_candidates::PlayerCommandError>() {
                 use crate::session::player_company_command_candidates::{PlayerCommandCause, PlayerCommandIssue};
                 expected_cause = if condition == 3 {
-                    matches!(player.cause, PlayerCommandCause::Validation(PlayerCommandIssue::NonPositiveRepurchaseWindow))
+                    matches!(player.cause.as_ref(), PlayerCommandCause::Validation(PlayerCommandIssue::NonPositiveRepurchaseWindow))
                 } else {
-                    matches!(player.cause, PlayerCommandCause::RepurchasePlan(_))
+                    matches!(player.cause.as_ref(), PlayerCommandCause::RepurchasePlan(_))
                 };
                 break;
             }
