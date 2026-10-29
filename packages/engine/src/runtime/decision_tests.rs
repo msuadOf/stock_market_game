@@ -486,7 +486,17 @@ fn t1_frozen_unfreezes_at_day_boundary_in_group_thread() {
             .expect("显式 raw Calendar 政策合法"),
     )
     .expect("世界构造");
-    world.run_ticks(5).expect("5 tick 收敛");
+    world.run_ticks(4).expect("首 civil date 4 tick 收敛");
+    world.run_day_end_public().expect("显式日结推进 T+1 状态");
+    let next_date = crate::calendar::TradingCalendar::current_default_calendar()
+        .expect("显式 raw Calendar 政策合法")
+        .next_trading_day(
+            crate::calendar::CalendarExchange::Sse,
+            world.civil_date,
+        )
+        .expect("fixture 下一 SSE trading date 合法");
+    world.set_civil_date(next_date);
+    world.run_ticks(1).expect("新 civil date 的 tick5 收敛");
     let report = world.shutdown().expect("关停");
     let a0 = &report.group_finals[0].accounts[0];
     assert_eq!(a0.frozen_today[0], 0, "日界解冻");

@@ -18,6 +18,26 @@ const INITIAL_PRICE: i64 = 1_000;
 const CLOSING_PRICE: i64 = 1_100;
 const LOT: u32 = 100;
 
+fn next_raw_trading_date(date: crate::calendar::CivilDate) -> crate::calendar::CivilDate {
+    crate::calendar::TradingCalendar::current_default_calendar()
+        .expect("显式 raw Calendar 政策合法")
+        .next_trading_day(crate::calendar::CalendarExchange::Sse, date)
+        .expect("fixture 下一 SSE trading date 合法")
+}
+
+fn raw_trading_date_after(
+    calendar_start_date: crate::calendar::CivilDate,
+    completed_sessions: u64,
+) -> crate::calendar::CivilDate {
+    let calendar = crate::calendar::TradingCalendar::current_default_calendar()
+        .expect("显式 raw Calendar 政策合法");
+    (0..completed_sessions).fold(calendar_start_date, |date, _| {
+        calendar
+            .next_trading_day(crate::calendar::CalendarExchange::Sse, date)
+            .expect("fixture 下一 SSE trading date 合法")
+    })
+}
+
 /// 直接观察 spawn 生成的 initial_views；不运行 tick，避免被 DeskReport 覆盖。
 fn assert_initial_sell_floor(first_tick: u64, cage_on: bool, floor: i64) {
     let mut spec = basic_spec(2, 1, 1, Box::new(|_| Box::new(|_, _| TickPlan::default())));
@@ -549,6 +569,7 @@ fn closing_rise_next_day_highest_buy_reserves_the_new_daily_limit() {
         "竞价尚未清算"
     );
     world.run_day_end_public().expect("日结执行收盘竞价清算");
+    world.set_civil_date(next_raw_trading_date(civil_date));
     let candidate = world.last_day_end_candidate.as_ref().expect("日结候选");
     assert_eq!(
         candidate.desks[0].2, CLOSING_PRICE,
@@ -568,11 +589,11 @@ fn closing_rise_next_day_highest_buy_reserves_the_new_daily_limit() {
             9,
             3,
             1,
-            civil_date,
+            next_raw_trading_date(civil_date),
         ),
         tick: DAY_END_TICK + 1,
         market_minute: 0,
-        civil_date,
+        civil_date: next_raw_trading_date(civil_date),
         stocks: Arc::new(world.public_views().to_vec()),
     };
     let op = intent_to_pending(
@@ -617,6 +638,7 @@ fn closing_rise_next_day_highest_buy_reserves_the_new_daily_limit() {
 
 #[test]
 fn failed_day_end_restores_desk_and_broadcast_before_retry() {
+    let civil_date = closing_spec(CLOSING_PRICE).civil_start_date;
     let mut world = World::spawn(
         closing_spec(CLOSING_PRICE),
         crate::calendar::TradingCalendar::current_default_calendar()
@@ -660,6 +682,7 @@ fn failed_day_end_restores_desk_and_broadcast_before_retry() {
     );
     world.set_day_end_validator(Box::new(|_| Ok(())));
     world.run_day_end_public().expect("失败后可重跑同一日结");
+    world.set_civil_date(next_raw_trading_date(civil_date));
     assert_eq!(world.public_views()[0].daily_upper_limit, 1_210);
     assert_eq!(world.public_views()[0].daily_lower_limit, 990);
     assert_eq!(
@@ -690,6 +713,7 @@ fn failed_day_end_restores_desk_and_broadcast_before_retry() {
 
 #[test]
 fn explicit_abort_day_end_restores_the_real_prior_then_retries() {
+    let civil_date = closing_spec(CLOSING_PRICE).civil_start_date;
     let mut world = World::spawn(
         closing_spec(CLOSING_PRICE),
         crate::calendar::TradingCalendar::current_default_calendar()
@@ -741,6 +765,7 @@ fn explicit_abort_day_end_restores_the_real_prior_then_retries() {
         "显式 Abort 必须恢复交易部行情，而非只恢复 World 向量"
     );
     world.run_day_end_public().expect("显式 Abort 后重跑日结");
+    world.set_civil_date(next_raw_trading_date(civil_date));
     assert_eq!(world.public_views()[0].daily_upper_limit, 1_210);
     world.run_ticks(1).expect("显式重试后的真实 Start241");
     let report = world.shutdown().expect("关停");
@@ -793,7 +818,7 @@ fn manual_drain_before_roll_prices_the_next_real_start_not_the_current_day() {
 }
 
 #[test]
-fn automatic_day_end_broadcast_reaches_real_npcs_in_every_group() {
+fn explicit_day_end_broadcast_reaches_real_npcs_in_every_group() {
     use super::decision::{
         decide_account, evaluate_attention, DecisionSetup, NpcProfile, PendingOp,
     };
@@ -870,6 +895,7 @@ fn automatic_day_end_broadcast_reaches_real_npcs_in_every_group() {
         profiles,
         attention_gap_ticks: 0,
     });
+    let civil_date = spec.civil_start_date;
     let mut world = World::spawn(
         spec,
         crate::calendar::TradingCalendar::current_default_calendar()
@@ -902,9 +928,11 @@ fn automatic_day_end_broadcast_reaches_real_npcs_in_every_group() {
         vec![],
     );
     world.run_ticks(2).expect("tick239/240 竞价申报收束");
+    world.run_day_end_public().expect("显式日结并刷新两组广播基");
+    world.set_civil_date(next_raw_trading_date(civil_date));
     world
         .run_ticks(1)
-        .expect("自动日结后 Start241 两组真实 NPC 买单受理");
+        .expect("显式推进 civil date 后 Start241 两组真实 NPC 买单受理");
     let orders = world.collect_desk_resting().expect("真实组端下单结果").0;
     for group in 0..2 {
         let order = orders[0]
@@ -954,6 +982,7 @@ fn two_groups_two_stocks_keep_distinct_up_and_down_closing_bases() {
             plan
         })
     });
+    let civil_date = spec.civil_start_date;
     let mut world = World::spawn(
         spec,
         crate::calendar::TradingCalendar::current_default_calendar()
@@ -962,6 +991,7 @@ fn two_groups_two_stocks_keep_distinct_up_and_down_closing_bases() {
     .expect("两组两股世界");
     world.run_ticks(2).expect("两股收盘竞价申报");
     world.run_day_end_public().expect("两股一次日结");
+    world.set_civil_date(next_raw_trading_date(civil_date));
     let views = world.public_views().to_vec();
     assert_eq!(
         (
@@ -1019,6 +1049,7 @@ fn closing_moves_refresh_next_day_limits_and_buy_cage_in_both_directions() {
     for (close, upper, lower, cage) in [(1_100, 1_210, 990, 1_122), (900, 990, 810, 918)] {
         let mut spec = closing_spec(close);
         Arc::make_mut(&mut spec.config).price_cage_enabled = true;
+        let civil_date = spec.civil_start_date;
         let mut world = World::spawn(
             spec,
             crate::calendar::TradingCalendar::current_default_calendar()
@@ -1029,6 +1060,7 @@ fn closing_moves_refresh_next_day_limits_and_buy_cage_in_both_directions() {
         world
             .run_day_end_public()
             .expect("收盘清算并构造次日观察基");
+        world.set_civil_date(next_raw_trading_date(civil_date));
         let view = &world.public_views()[0];
         assert_eq!(
             (
@@ -1125,6 +1157,9 @@ fn same_new_day_sell_control_spec(close: i64, final_tick: u64) -> WorldSpec {
     });
     spec.initial_committed_tick = final_tick;
     spec.initial_last_day_end_tick = Some(final_tick);
+    if final_tick.is_multiple_of(DAY_END_TICK) {
+        spec.civil_start_date = next_raw_trading_date(spec.civil_start_date);
+    }
     Arc::make_mut(&mut spec.config).price_cage_enabled = true;
     spec
 }
@@ -1133,9 +1168,10 @@ fn same_new_day_sell_control_spec(close: i64, final_tick: u64) -> WorldSpec {
 fn next_start_real_sell_consumers_match_the_same_new_day_control() {
     use super::decision::PendingOp;
     for close in [1_100, 900] {
-        for (final_tick, manual) in [(239, true), (240, true), (240, false)] {
+        for final_tick in [239, 240] {
             let next_tick = final_tick + 1;
             let mut spec = closing_spec(close);
+            let civil_date = spec.civil_start_date;
             Arc::make_mut(&mut spec.config).price_cage_enabled = true;
             spec.decision = Some(sell_decision_setup(next_tick));
             let mut crossed = World::spawn(
@@ -1172,8 +1208,9 @@ fn next_start_real_sell_consumers_match_the_same_new_day_control() {
             crossed
                 .run_ticks(final_tick - (DAY_END_TICK - 2))
                 .expect("收盘竞价申报");
-            if manual {
-                crossed.run_day_end_public().expect("手动日结");
+            crossed.run_day_end_public().expect("显式日结");
+            if final_tick == DAY_END_TICK {
+                crossed.set_civil_date(next_raw_trading_date(civil_date));
             }
             crossed
                 .run_ticks(1)
@@ -1235,11 +1272,50 @@ fn next_start_real_sell_consumers_match_the_same_new_day_control() {
                 .expect("首拍记录")
                 .desk_receipts
                 .is_empty());
-            eprintln!("#121 sell Start{next_tick}, manual={manual}, close={close}: public_lower={lower}, public_min_sell={sell_floor}, actual_inst_sell={close}, control_inst_sell={close}");
+            eprintln!("#121 sell Start{next_tick}, explicit_day_end=true, close={close}: public_lower={lower}, public_min_sell={sell_floor}, actual_inst_sell={close}, control_inst_sell={close}");
             crossed.shutdown().expect("跨日世界关停");
             control.shutdown().expect("对照世界关停");
         }
     }
+}
+
+#[test]
+fn raw_cross_day_request_is_rejected_without_leaking_state_until_explicit_day_end() {
+    let mut world = closing_spec(CLOSING_PRICE);
+    world.ticks_per_day = DAY_END_TICK;
+    world.auction_ticks = 9;
+    world.closing_auction_ticks = 3;
+    world.initial_committed_tick = DAY_END_TICK;
+    let civil_date = world.civil_start_date;
+    let mut world = World::spawn(
+        world,
+        crate::calendar::TradingCalendar::current_default_calendar()
+            .expect("显式 raw Calendar 政策合法"),
+    )
+    .expect("构造 raw 日末世界");
+    let publication = world.publication();
+    let prior_publication = publication.load();
+    let prior_views = world.public_views().to_vec();
+    let prior_tick = world.global.committed_tick;
+
+    let error = world.run_ticks(1).expect_err("raw 请求不能隐式跨 civil date 日结");
+    assert!(
+        matches!(&error, super::protocol::RuntimeError::ProtocolInvariant { detail } if detail.contains("TickRangeCrossesCivilDay")),
+        "必须显式指出 raw tick range 越过 civil date：{error:?}"
+    );
+    assert_eq!(world.global.committed_tick, prior_tick, "拒绝前置检查不推进 tick");
+    assert_eq!(world.public_views(), prior_views, "拒绝不泄漏新日行情");
+    assert!(
+        Arc::ptr_eq(&publication.load(), &prior_publication),
+        "拒绝不替换发布版本"
+    );
+
+    world.run_day_end_public().expect("显式提交当日日结");
+    world.set_civil_date(next_raw_trading_date(civil_date));
+    world.run_ticks(1).expect("显式推进 civil date 后接受下一拍");
+    assert_eq!(world.global.committed_tick, DAY_END_TICK + 1);
+    assert_eq!(world.publication().load().tick, DAY_END_TICK + 1);
+    world.shutdown().expect("正常关停");
 }
 
 #[test]
@@ -1260,6 +1336,7 @@ fn next_start_sell_boundary_matches_the_sell_cage_floor() {
                 super::ReceiptKind::PriceCageExceeded
             };
             let mut spec = closing_spec(close);
+            let civil_date = spec.civil_start_date;
             Arc::make_mut(&mut spec.config).price_cage_enabled = true;
             let mut crossed = World::spawn(
                 spec,
@@ -1270,7 +1347,10 @@ fn next_start_sell_boundary_matches_the_sell_cage_floor() {
             crossed
                 .run_ticks(final_tick - (DAY_END_TICK - 2))
                 .expect("收盘申报");
-            crossed.run_day_end_public().expect("手动日结");
+            crossed.run_day_end_public().expect("显式日结");
+            if final_tick == DAY_END_TICK {
+                crossed.set_civil_date(next_raw_trading_date(civil_date));
+            }
             let view = &crossed.public_views()[0];
             assert_eq!(
                 (view.daily_lower_limit, view.min_sell_price),
@@ -1336,6 +1416,7 @@ fn next_start_sell_boundary_matches_the_sell_cage_floor() {
 
 #[test]
 fn successful_next_start_closes_the_day_end_abort_window() {
+    let civil_date = closing_spec(CLOSING_PRICE).civil_start_date;
     let mut world = World::spawn(
         closing_spec(CLOSING_PRICE),
         crate::calendar::TradingCalendar::current_default_calendar()
@@ -1346,6 +1427,7 @@ fn successful_next_start_closes_the_day_end_abort_window() {
     let publication = world.publication();
     let prior = publication.load();
     world.run_day_end_public().expect("日结成功");
+    world.set_civil_date(next_raw_trading_date(civil_date));
     assert!(Arc::ptr_eq(&publication.load(), &prior));
     world.run_ticks(1).expect("下一真实 Start 转正日结");
     let published = publication.load();
@@ -1373,6 +1455,7 @@ fn successful_next_start_closes_the_day_end_abort_window() {
 
 #[test]
 fn failing_first_tick_rolls_back_only_the_tick_not_the_committed_day_end() {
+    let civil_date = closing_spec(CLOSING_PRICE).civil_start_date;
     let mut world = World::spawn(
         closing_spec(CLOSING_PRICE),
         crate::calendar::TradingCalendar::current_default_calendar()
@@ -1381,6 +1464,7 @@ fn failing_first_tick_rolls_back_only_the_tick_not_the_committed_day_end() {
     .expect("构造世界");
     world.run_ticks(2).expect("日终两拍");
     world.run_day_end_public().expect("日结成功等待 Start");
+    world.set_civil_date(next_raw_trading_date(civil_date));
     let views = world.public_views().to_vec();
     let candles = world.take_candle_projection().expect("日结后 K");
     let accounts = world.snapshot_accounts().expect("日结后账户");
@@ -1458,7 +1542,8 @@ fn final_tick_uses_old_close_then_next_tick_uses_the_drained_close() {
         minute_closes: vec![],
         minute_bars: vec![],
     });
-    let date = spec.civil_start_date;
+    let date = raw_trading_date_after(spec.calendar_start_date, 2);
+    spec.civil_start_date = date;
     let mut world = World::spawn(
         spec,
         crate::calendar::TradingCalendar::current_default_calendar()
@@ -1467,12 +1552,30 @@ fn final_tick_uses_old_close_then_next_tick_uses_the_drained_close() {
     .expect("构造原失败数字的两组三股短 fixture");
     world.run_ticks(1).expect("tick89 发布当日观察基");
     assert_eq!(world.public_views()[2].daily_upper_limit, 1529);
-    let make_buy = |world: &World, tick| {
+    let make_buy = |world: &World, tick, civil_date| {
+        let calendar = super::calendar_test_support::open_tick(tick, 30, 8, 4, 3, civil_date);
+        assert_eq!(calendar.layout().ticks_per_day, 30);
+        assert_eq!(calendar.layout().auction_ticks, 8);
+        assert_eq!(calendar.layout().closing_auction_ticks, 4);
+        assert_eq!(calendar.day().day_model().current_date(), civil_date);
+        assert_eq!(
+            calendar.day().day_model().shared_sessions_before_date(),
+            if tick == 90 { 2 } else { 3 }
+        );
+        assert_eq!(calendar.after_input().tick, tick);
+        assert_eq!(
+            calendar.phase_before(),
+            if tick == 90 {
+                crate::TradingPhase::ClosingAuction
+            } else {
+                crate::TradingPhase::CallAuction
+            }
+        );
         let snapshot = TickSnapshot {
-            calendar: super::calendar_test_support::open_tick(tick, 90, 9, 3, 3, date),
+            calendar,
             tick,
             market_minute: 0,
-            civil_date: date,
+            civil_date,
             stocks: Arc::new(world.public_views().to_vec()),
         };
         let mut op = intent_to_pending(
@@ -1488,7 +1591,7 @@ fn final_tick_uses_old_close_then_next_tick_uses_the_drained_close() {
         op.local = 25;
         op
     };
-    world.broadcast_external_plan(vec![make_buy(&world, 90)], vec![]);
+    world.broadcast_external_plan(vec![make_buy(&world, 90, date)], vec![]);
     world
         .run_ticks(1)
         .expect("tick90 仍属原交易日，不能提前提高昨收和精确 purse");
@@ -1506,7 +1609,9 @@ fn final_tick_uses_old_close_then_next_tick_uses_the_drained_close() {
     let published = publication.load();
     world.run_day_end_public().expect("日末成功 Drain");
     assert_eq!(world.public_views()[2].daily_upper_limit, 1835);
-    world.broadcast_external_plan(vec![make_buy(&world, 91)], vec![]);
+    let next_date = next_raw_trading_date(date);
+    world.set_civil_date(next_date);
+    world.broadcast_external_plan(vec![make_buy(&world, 91, next_date)], vec![]);
     world
         .run_ticks(1)
         .expect("tick91 使用真实日结后的新昨收，不得再次roll");
@@ -2008,6 +2113,8 @@ fn shutdown_preserves_unconsumed_day_end_minute_bars() {
 fn shutdown_day_end_reuse_respects_consumed_aborted_and_new_start_paths() {
     use super::decision::PendingOp;
     for path in 0..4 {
+        let civil_date = crate::calendar::CivilDate::from_ymd(2026, 1, 5)
+            .expect("测试日期合法");
         let mut world = shenzhen_closing_tie_world();
         world
             .run_ticks(if path == 3 { 2 } else { 7 })
@@ -2038,7 +2145,8 @@ fn shutdown_day_end_reuse_respects_consumed_aborted_and_new_start_paths() {
                 }],
                 vec![],
             );
-            world.run_ticks(1).expect("新Start真实挂单");
+            world.set_civil_date(next_raw_trading_date(civil_date));
+            world.run_ticks(1).expect("新civil date 首拍真实挂单");
             assert!(!world.collect_desk_resting().expect("关停前活动单").0[0].is_empty());
         }
         let report = world.shutdown().expect("按真实日结与Start状态关停");
