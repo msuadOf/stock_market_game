@@ -5648,6 +5648,45 @@ mod b2_bars_rollback_tests {
             .any(|e| matches!(e, crate::Event::Trade { .. })));
     }
 
+    fn execute_buy_serial(session: &mut GameSession) {
+        let code = crate::StockId(0);
+        let mut events = Vec::new();
+        session.seed_order_for_test(
+            AccountId(1),
+            crate::Intent::PlaceLimit {
+                code,
+                side: Side::Sell,
+                price: crate::LimitPrice::Fixed(crate::money::Money::from_cents(1000)),
+                qty: 100,
+            },
+            &mut events,
+        );
+        session
+            .hydrate_or_validate_envelope_ledger()
+            .expect("seed 单账本 hydrate");
+        session
+            .enqueue_player_intent(
+                AccountId(0),
+                crate::Intent::PlaceLimit {
+                    code,
+                    side: Side::Buy,
+                    price: crate::LimitPrice::Fixed(crate::money::Money::from_cents(1005)),
+                    qty: 100,
+                },
+            )
+            .unwrap();
+        let frame = session
+            .step_frame_and_commit(true, |projection, facts| projection.project_frame(facts))
+            .expect("serial 首步成交")
+            .0;
+        assert!(
+            frame
+                .facts
+                .iter()
+                .any(|fact| matches!(fact.event, crate::Event::Trade { .. }))
+        );
+    }
+
     #[test]
     fn install_failure_rolls_back_bars_and_retry_does_not_ghost() {
         if !crate::runtime::step_runtime_enabled() {
@@ -5673,48 +5712,79 @@ mod b2_bars_rollback_tests {
         );
     }
 
-    /// 复核②补强：candidate 投影失败（可重试路径——driver 丢弃+
-    /// from_session 重建，seed 携回滚后镜像）→ 重试成交无 ghost 播回。
+    /// 保留 serial candidate 拒绝后的 seed/save 零 ghost 断言，并单独钉住
+    /// runtime DP1：最后 callback 失败时 World 已提交、mirror 未 swap 且首错 terminal。
     #[test]
     fn candidate_projection_failure_rebuild_is_ghost_free() {
-        if !crate::runtime::step_runtime_enabled() {
-            return;
-        }
-        let mut session = b2_session();
-        execute_buy(&mut session);
         let code = crate::StockId(0);
-        assert_eq!(session.runtime_minute_bars(&code).len(), 1);
-        // 投影回调失败（v0 合同 1 同式——可重试形态）。
-        let outcome = session.step_frame_and_commit(false, |_, _| {
+        let mut serial = b2_session();
+        execute_buy_serial(&mut serial);
+        assert_eq!(serial.runtime_minute_bars(&code).len(), 1);
+        let serial_outcome = serial.step_frame_and_commit(true, |_, _| {
             Err::<crate::session::protocol::TickFrame, _>(StepFatal::InvariantViolation {
-                description: "B2 ghost 注入：投影失败".to_owned(),
+                description: "B2 ghost 注入：serial 投影失败".to_owned(),
                 location: "b2_bars_rollback_tests".to_owned(),
             })
         });
-        assert!(outcome.is_err(), "投影失败必须整拍失败");
+        assert!(serial_outcome.is_err(), "serial 投影失败必须整拍失败");
+        assert_eq!(serial.runtime_minute_bars(&code).len(), 1, "serial 失败拍镜像零泄漏");
+        let seeds = serial.runtime_market_seeds();
         assert_eq!(
-            session.runtime_minute_bars(&code).len(),
-            1,
-            "失败拍镜像零泄漏（回滚源）"
+            seeds.get(&code).map(|seed| seed.minute_bars.len()),
+            Some(1),
+            "serial 回滚后重建 seed 不含 ghost"
         );
-        // 重建输入面锚定（driver 丢弃后重试经 from_session 重建——seed
-        // 投影的数据源即回滚后的镜像/save）：断言重建输入零 ghost；
-        // 端到端重试链（seed/ledger 交互）登记台账，随 W3 接线批补。
-        let seeds = session.runtime_market_seeds();
-        assert_eq!(
-            seeds
-                .get(&code)
-                .map(|seed| seed.minute_bars.len())
-                .unwrap_or(0),
-            1,
-            "重建 seed 携回滚后镜像（ghost 不入重建输入）"
-        );
-        let save = session.save().expect("投影失败不毒化——save 可走");
-        assert_eq!(
-            save.market_minute_bars[&code].len(),
-            1,
-            "save 面同样零 ghost"
-        );
+        let save = serial.save().expect("serial 投影失败仍可保存");
+        assert_eq!(save.market_minute_bars[&code].len(), 1, "serial save 面同样零 ghost");
+
+        #[cfg(not(target_arch = "wasm32"))]
+        if crate::runtime::step_runtime_enabled() {
+            let mut session = b2_session();
+            execute_buy(&mut session);
+            let mirror_before = serde_json::to_value(session.snapshot_inner(true, true)).unwrap();
+            let world_tick_before = session
+                .runtime_driver_for_test()
+                .unwrap()
+                .lock()
+                .unwrap()
+                .world_committed_tick();
+            let fatal = StepFatal::InvariantViolation {
+                description: "B2 ghost 注入：runtime callback 投影失败".to_owned(),
+                location: "b2_bars_rollback_tests".to_owned(),
+            };
+            let mut callback_called = false;
+            let outcome = session.step_frame_and_commit_via_runtime(|_, _| {
+                callback_called = true;
+                Err::<crate::session::protocol::TickFrame, _>(fatal.clone())
+            });
+            assert!(callback_called, "终态错误来自最后 candidate callback");
+            assert_eq!(outcome.unwrap_err(), fatal, "保留 callback 原始首错");
+            let world_tick_after = session
+                .runtime_driver_for_test()
+                .unwrap()
+                .lock()
+                .unwrap()
+                .world_committed_tick();
+            assert_eq!(
+                world_tick_after,
+                world_tick_before + 1,
+                "World 已提交 callback 对应的真实 tick"
+            );
+            assert_eq!(session.tick(), world_tick_before, "未安装 candidate 时 session 进度仍旧");
+            assert_eq!(
+                serde_json::to_value(session.snapshot_inner(true, true)).unwrap(),
+                mirror_before,
+                "失败 candidate 未泄漏到公开 session mirror"
+            );
+            assert_eq!(session.poison_reason(), Some(&fatal), "DP1 首错封存且不可重试");
+            assert_eq!(session.step().unwrap_err(), fatal, "后续入口返回同一首错");
+            assert_eq!(
+                session.runtime_driver_for_test().unwrap().lock().unwrap().world_committed_tick(),
+                world_tick_after,
+                "terminal 后不重跑已发布 World tick"
+            );
+            assert!(matches!(session.save(), Err(SessionError::Step(actual)) if actual == fatal));
+        }
     }
 }
 
@@ -5951,9 +6021,10 @@ mod b2_query_contract_tests {
         execute_buy(&mut session);
         execute_buy(&mut session);
         session.step().unwrap();
+        session.end_civil_day().expect("完成第一自然日并推进日期");
         let request = || PersonalTradeHistoryRequest {
             date_from: date("2030-01-02"),
-            date_to: date("2030-01-02"),
+            date_to: date("2030-01-03"),
             stock: None,
             side: None,
             before_receipt: None,
@@ -5964,6 +6035,7 @@ mod b2_query_contract_tests {
             .query_personal_trade_history(AccountId(0), request())
             .unwrap();
         assert_eq!(first.confirmations.len(), 1, "页大小 1");
+        assert_eq!(first.current_date, date("2030-01-03"), "分页发生在真实civil推进后");
         let second = session
             .query_personal_trade_history(
                 AccountId(0),
@@ -5975,6 +6047,7 @@ mod b2_query_contract_tests {
             )
             .unwrap();
         assert_eq!(second.confirmations.len(), 1, "第二页一条");
+        assert_eq!(second.as_of_receipt, first.as_of_receipt, "分页沿用同一快照水位");
         assert_eq!(second.next_cursor, None, "两腿恰尽");
         assert!(
             first.confirmations[0].receipt_id > second.confirmations[0].receipt_id,
@@ -5983,6 +6056,7 @@ mod b2_query_contract_tests {
         // 读己之写快照：as_of 之后的新成交不入旧窗。
         let frozen = first.as_of_receipt;
         execute_buy(&mut session);
+        assert_eq!(session.civil_date(), date("2030-01-03"), "新成交发生在后继自然日");
         let stale = session
             .query_personal_trade_history(
                 AccountId(0),
@@ -5993,6 +6067,13 @@ mod b2_query_contract_tests {
             )
             .unwrap();
         assert_eq!(stale.confirmations.len(), 1, "旧窗不见新成交");
+        assert_eq!(stale.as_of_receipt, frozen, "旧快照游标逐位保持");
+        let refreshed = session
+            .query_personal_trade_history(AccountId(0), request())
+            .unwrap();
+        assert_eq!(refreshed.confirmations.len(), 1, "新快照当前页仍按页大小截断");
+        assert!(refreshed.confirmations[0].receipt_id >= frozen.0, "跨日新成交进入新快照");
+        assert_eq!(refreshed.confirmations[0].civil_date, date("2030-01-03"));
         // 过滤与边界。
         let filtered = session
             .query_personal_trade_history(
@@ -6893,30 +6974,88 @@ mod npc_working_quote_tests {
         session.state.attention_scheduler.enqueue(tick, account);
     }
 
-    // Sol 二审修复集 5 红证：首步前 seed 的挂单经**构造期迁移**进入
-    // runtime 世界（RuntimeDriver::adopt_session_resting_orders——组 0
-    // 下一 tick round 0 经 ExternalPlan 挂出）——首步的受理事件面可见。
+    // Sol 二审修复集 5 红证：首步前 seed 的 resting order 经构造期迁移
+    // 进入 runtime World，后继真实买单应能与它撮合；首步只出现受理事件
+    // 不足以证明旧挂单已经成为 World 的撮合输入。
     // 此前首构造不迁入旧挂单：seed 只写 session 旧簿，runtime 世界不可见。
     // 仅 runtime 翻转模式有意义（缺省走旧管线，seed 本就在旧簿生效）。
+    #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn sol5_seed_before_first_step_reaches_runtime_world() {
         if !crate::runtime::step_runtime_enabled() {
             return;
         }
-        let mut session = GameSession::new(retail_quote_setup(), 311).unwrap();
+        let mut setup = retail_quote_setup();
+        setup.stocks[0].float_shares = 1_000;
+        setup.float_allocation = FloatAllocation::class_percentages(
+            1.0,
+            0.0,
+            0.0,
+            WithinKindDistribution::EqualPercentage,
+        );
+        let mut session = GameSession::new(setup, 311).unwrap();
         let code = StockId(0);
         let mut events = Vec::new();
-        session.seed_order_for_test(AccountId(1), buy(&code, 900), &mut events);
+        session.seed_order_for_test(
+            AccountId(1),
+            Intent::PlaceLimit {
+                code,
+                side: Side::Sell,
+                price: LimitPrice::Fixed(Money::from_cents(900)),
+                qty: 100,
+            },
+            &mut events,
+        );
+        session
+            .construct_runtime_driver_lazy_for_test()
+            .expect("构造期将真实 seed 挂单移交给 runtime World");
+        let seeded_order = {
+            let cell = session.runtime_driver_for_test().unwrap();
+            let mut driver = cell.lock().unwrap();
+            driver
+                .collect_resting_facts()
+                .expect("从 runtime World 已发布读点读取在途单")
+                .into_iter()
+                .flatten()
+                .find(|fact| {
+                    fact.side == Side::Sell
+                        && fact.price == 900
+                        && fact.qty == 100
+                        && driver.account_by_owner(fact.owner) == Some(AccountId(1))
+                })
+                .expect("首步前 seed 已是 runtime World 的真实 resting order")
+        };
+        session
+            .enqueue_player_intent(AccountId(0), buy(&code, 900))
+            .expect("玩家买单登记");
         let step_events = session.step().expect("healthy step");
         assert!(
             step_events.iter().any(|event| matches!(
                 event,
-                Event::OrderAccepted {
-                    account: AccountId(1),
+                Event::Trade {
+                    maker: AccountId(1),
+                    taker: AccountId(0),
+                    qty: 100,
+                    price,
                     ..
-                }
+                } if price.cents() == seeded_order.price
             )),
-            "首步前 seed 的挂单经构造期迁移进入 runtime 世界（首步即受理）"
+            "真实 seed resting order 必须参与撮合并产生两方 Trade"
+        );
+        let remaining = {
+            let cell = session.runtime_driver_for_test().unwrap();
+            let mut driver = cell.lock().unwrap();
+            driver
+                .collect_resting_facts()
+                .expect("成交后读取 runtime 在途单")
+        };
+        assert!(
+            remaining.iter().flatten().all(|fact| {
+                !(fact.owner == seeded_order.owner
+                    && fact.side == seeded_order.side
+                    && fact.order_serial == seeded_order.order_serial)
+            }),
+            "全部成交后原 seed resting order 从 runtime World 在途簿移除"
         );
     }
 
