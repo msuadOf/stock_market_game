@@ -7009,12 +7009,14 @@ mod npc_working_quote_tests {
         session
             .construct_runtime_driver_lazy_for_test()
             .expect("构造期将真实 seed 挂单移交给 runtime World");
+        let source_tick_before_live_read = session.tick();
+        let seed_events_before_live_read = events.clone();
         let seeded_order = {
             let cell = session.runtime_driver_for_test().unwrap();
             let mut driver = cell.lock().unwrap();
             driver
-                .collect_resting_facts()
-                .expect("从 runtime World 已发布读点读取在途单")
+                .collect_resting_facts_live()
+                .expect("从 runtime World 交易部实时读点读取在途单")
                 .into_iter()
                 .flatten()
                 .find(|fact| {
@@ -7025,6 +7027,8 @@ mod npc_working_quote_tests {
                 })
                 .expect("首步前 seed 已是 runtime World 的真实 resting order")
         };
+        assert_eq!(session.tick(), source_tick_before_live_read, "live 查询不推进 source tick");
+        assert_eq!(events, seed_events_before_live_read, "live 查询不发出 Start 或交易事件");
         session
             .enqueue_player_intent(AccountId(0), buy(&code, 900))
             .expect("玩家买单登记");

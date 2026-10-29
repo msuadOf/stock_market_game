@@ -336,21 +336,39 @@ fn market_views_install_into_session_markets() {
         .expect("会话市场存在")
         .restore_prices(Money::from_cents(1_000), Money::from_cents(1_000));
     assert_eq!(
-        session.snapshot().markets[&crate::StockId(0)]
-            .last_price
+        session
+            .market_mut_for_runtime(&crate::StockId(0))
+            .expect("会话市场存在")
+            .last_price()
             .cents(),
         1_000,
-        "显式构造的过期市场镜像"
+        "显式构造的过期旧 Market"
     );
-    driver
-        .install_market_views(&mut session)
-        .expect("显式行情安装");
     assert_eq!(
         session.snapshot().markets[&crate::StockId(0)]
             .last_price
             .cents(),
         1_001,
-        "显式安装恢复 desk 收束价"
+        "snapshot 继续读取 desk 权威视图"
+    );
+    driver
+        .install_market_views(&mut session)
+        .expect("显式行情安装");
+    assert_eq!(
+        session
+            .market_mut_for_runtime(&crate::StockId(0))
+            .expect("会话市场存在")
+            .last_price()
+            .cents(),
+        1_001,
+        "显式安装将 desk 收束价写入旧 Market"
+    );
+    assert_eq!(
+        session.snapshot().markets[&crate::StockId(0)]
+            .last_price
+            .cents(),
+        1_001,
+        "显式安装后 snapshot 仍为 desk 收束价"
     );
     driver
         .step_frame_equivalent(&mut session)
