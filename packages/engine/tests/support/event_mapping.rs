@@ -43,7 +43,7 @@ pub fn events() -> Vec<Event> {
     vec![
         Event::Trade {
             seq: 1,
-            code: code.clone(),
+            code,
             price,
             qty: 100,
             maker: AccountId(41),
@@ -53,7 +53,7 @@ pub fn events() -> Vec<Event> {
             seq: 2,
             tick: 9,
             phase: TradingPhase::CallAuction,
-            code: code.clone(),
+            code,
             indicative_price: Some(price),
             matched_volume: 100,
             imbalance: 0,
@@ -62,14 +62,14 @@ pub fn events() -> Vec<Event> {
             seq: 3,
             tick: 9,
             phase: TradingPhase::CallAuction,
-            code: code.clone(),
+            code,
             clearing_price: Some(price),
             matched_volume: 100,
         },
         Event::PriceTick {
             seq: 4,
             tick: 10,
-            code: code.clone(),
+            code,
             last_price: price,
             daily_candle: DailyCandle {
                 time: 0,
@@ -104,7 +104,7 @@ pub fn events() -> Vec<Event> {
         Event::OrderAccepted {
             seq: 8,
             account,
-            code: code.clone(),
+            code,
             id: OrderId(101),
             side: Side::Buy,
             price,
@@ -113,14 +113,14 @@ pub fn events() -> Vec<Event> {
         Event::OrderCanceled {
             seq: 9,
             account,
-            code: code.clone(),
+            code,
             id: OrderId(101),
             remaining_qty: 100,
         },
         Event::IntentRejected {
             seq: 10,
             account,
-            code: code.clone(),
+            code,
             reason: RejectionReason::InsufficientCash,
         },
         Event::SettlementError {

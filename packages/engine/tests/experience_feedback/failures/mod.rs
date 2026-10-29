@@ -76,10 +76,7 @@ fn buy_from_zero_over_an_active_entry_is_rejected() {
             moment(1, 20),
         )
         .unwrap_err();
-    assert_eq!(
-        err,
-        ExperienceError::ActiveEntryAlreadyExists { code: code }
-    );
+    assert_eq!(err, ExperienceError::ActiveEntryAlreadyExists { code });
     assert!(
         state.feedback.stocks.contains_key(&code),
         "拒绝不得破坏既有生命周期"
@@ -102,7 +99,7 @@ fn exit_without_an_active_entry_is_rejected() {
             moment(0, 10),
         )
         .unwrap_err();
-    assert_eq!(err, ExperienceError::NoActiveEntry { code: code });
+    assert_eq!(err, ExperienceError::NoActiveEntry { code });
     assert!(state.feedback.exit_records.is_empty());
 }
 
@@ -114,7 +111,7 @@ fn observation_without_an_active_entry_is_rejected() {
     let err = state
         .observe_position_dated(&code, price(940), moment(0, 10))
         .unwrap_err();
-    assert_eq!(err, ExperienceError::NoActiveEntry { code: code });
+    assert_eq!(err, ExperienceError::NoActiveEntry { code });
     assert!(state.feedback.failure_events.is_empty());
     assert_eq!(state.consecutive_failed_buys, 0);
 
@@ -123,7 +120,7 @@ fn observation_without_an_active_entry_is_rejected() {
         state
             .is_long_stuck(&code, price(1_000), &moment(0, 11))
             .unwrap_err(),
-        ExperienceError::NoActiveEntry { code: code }
+        ExperienceError::NoActiveEntry { code }
     );
 }
 
@@ -174,7 +171,7 @@ fn inconsistent_restored_feedback_fails_validation() {
 
     let mut no_cooldown = state.feedback.clone();
     no_cooldown.exit_records.push(ExitRecord {
-        code: code.clone(),
+        code,
         order_id: Some(2),
         cooldown_until_market_minute: Some(10),
         realized_profit: false,

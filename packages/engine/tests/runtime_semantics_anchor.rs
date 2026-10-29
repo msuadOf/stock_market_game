@@ -18,11 +18,11 @@
 //!   「每单累计+下限一次」机制，卖方分腿费用同断言面覆盖）
 //! - 生命周期 #12（执行序无关性·runtime 形态）→
 //!   `scheduling_invariants_hold_across_runs`
-//! （#2/#7/#8/#10/#11 已由常驻测试独立承载：desk_semantics_tests
-//! t1_frozen_shares_cannot_sell_same_day 与 p1_auction_self_trade_*、
-//! flip_helpers::assert_order_event_invariants+closure_tests、字段域与
-//! orders_expire_at_ttl——不在本文件重复；#7 连续竞价自成交终止在
-//! desk_semantics_tests r07 新增。）
+//!   （#2/#7/#8/#10/#11 已由常驻测试独立承载：desk_semantics_tests
+//!   t1_frozen_shares_cannot_sell_same_day 与 p1_auction_self_trade_*、
+//!   flip_helpers::assert_order_event_invariants+closure_tests、字段域与
+//!   orders_expire_at_ttl——不在本文件重复；#7 连续竞价自成交终止在
+//!   desk_semantics_tests r07 新增。）
 
 mod common;
 
@@ -305,7 +305,7 @@ fn auction_window_gates_and_closing_phase_events() {
                 }
                 // #23：连续竞价窗（17-236）不得有竞价事件。
                 assert!(
-                    !(*t > 16),
+                    *t <= 16,
                     "连续竞价窗（tick {t}）不得有 AuctionTick/Completed：{e:?}"
                 );
             }

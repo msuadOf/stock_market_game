@@ -44,7 +44,7 @@ pub fn setup_1stock() -> SessionSetup {
                 // （此前 runtime 侧靠合成 0.30 幽灵决策撑起事件面断言）。
                 // D5 #4 retail 链 behavior 化后，到达门之上还有信号门
                 //（NoSignal 分支不产单）——0.30 到达不再保证"真实交易"
-                /// 前提（batch4_t1 的 frozen>0 断言空转显红）。fixture
+                // 前提（batch4_t1 的 frozen>0 断言空转显红）。fixture
                 // 显式 1.0：30 分钟窗口内的基础需求分支（rng<arrival）
                 // 恒过——observe 过的拍必产 TryBuy。
                 arrival_rate: 1.0,

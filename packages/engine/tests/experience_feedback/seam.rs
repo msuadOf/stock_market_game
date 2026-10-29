@@ -58,7 +58,7 @@ fn path(thirty_minute: Option<f64>, five_day: Option<f64>) -> PricePathObservati
 fn market_and_observations() -> (MarketView, BehaviorMarketObservation) {
     let code = code();
     let price_paths = BTreeMap::from([(
-        code.clone(),
+        code,
         path(Some(-0.03), Some(0.05)), // 回调买入触发：30 分钟跌超阈值且 5 日向上
     )]);
     let stocks = BTreeMap::from([(
@@ -190,7 +190,7 @@ fn panic_exits_the_same_loss_that_long_term_holds() {
     let own = SelfView {
         cash: price(10_000_000),
         positions: BTreeMap::from([(
-            code.clone(),
+            code,
             PositionView {
                 qty: 1_000,
                 sellable_qty: 1_000,
@@ -203,7 +203,7 @@ fn panic_exits_the_same_loss_that_long_term_holds() {
         return_from_reference: None,
         drawdown_from_peak: None,
         positions: BTreeMap::from([(
-            code.clone(),
+            code,
             PositionRiskObservation {
                 market_value: price(1_000_000),
                 unrealized_return: Some(-0.10),
