@@ -18,6 +18,8 @@ mod civil_clock;
 mod civil_information;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod civil_information_runtime_tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod civil_runtime_ceiling_tests;
 mod company_assembly;
 mod stock_identity_view;
 pub use stock_identity_view::StockIdentityEntry;
@@ -3766,6 +3768,11 @@ impl GameSession {
                 .into(),
             );
         }
+        // 确定性日期拒绝先于 civil 事务；真实收盘不能把未进入事务的上界拒绝变成 terminal。
+        self.state
+            .civil_clock
+            .plan_day_end(self.next_civil_work_date()?)
+            .map_err(SessionError::from)?;
         #[cfg(not(target_arch = "wasm32"))]
         if self.uses_runtime_civil_authority() {
             return self.with_prepared_runtime_civil_day_classified(project);
@@ -3832,8 +3839,8 @@ impl GameSession {
         Ok(publication)
     }
 
-    /// 公司经营与披露只形成候选；本人 INFO 与裁剪由对应 authority 的同次事务完成。
-    fn prepare_civil_day_disclosures(&mut self) -> Result<CivilDayEndReport, SessionError> {
+    /// 公司工作日期与时钟日期使用同一只读选择，preflight 不派发经营或披露。
+    fn next_civil_work_date(&self) -> Result<crate::CivilDate, SessionError> {
         let company_work_date = match &self.state.companies {
             SessionCompanies::LegacyOperations(legacy) => {
                 let next = legacy.operations.next_expected_date();
@@ -3848,7 +3855,12 @@ impl GameSession {
                 .next()
                 .map_err(crate::calendar::CalendarError::from)?,
         };
-        let next_work_date = company_work_date.min(self.state.civil_clock.next_civil_event_date());
+        Ok(company_work_date.min(self.state.civil_clock.next_civil_event_date()))
+    }
+
+    /// 公司经营与披露只形成候选；本人 INFO 与裁剪由对应 authority 的同次事务完成。
+    fn prepare_civil_day_disclosures(&mut self) -> Result<CivilDayEndReport, SessionError> {
+        let next_work_date = self.next_civil_work_date()?;
         let mut report = self.state.civil_clock.end_day(next_work_date)?;
         // private candidate 已进入 next_date，后续 INFO 读视图不能继续复用 settled_date 的缓存。
         self.market_calendar_day = None;

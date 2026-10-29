@@ -315,6 +315,17 @@ impl CivilClock {
     /// `CompanyOperations::advance_civil_day(settled_date)` 完成（单一 authority：
     /// `OperatingScheduler`）；18:00 观察者由 `GameSession` 在完整日结成功后调用。
     pub fn end_day(&mut self, date: CivilDate) -> Result<CivilDayEndReport, CivilClockError> {
+        let report = self.plan_day_end(date)?;
+        self.settled_through = Some(report.settled_date);
+        self.current_date = report.next_date;
+        Ok(report)
+    }
+
+    /// 只读规划与 `end_day` 共用全部时钟检查，供 Session 在进入 civil 事务前拒绝确定性越界。
+    pub(super) fn plan_day_end(
+        &self,
+        date: CivilDate,
+    ) -> Result<CivilDayEndReport, CivilClockError> {
         if self.settled_through == Some(date) {
             return Err(CivilClockError::DuplicateDayEnd {
                 date,
@@ -342,8 +353,6 @@ impl CivilClock {
         let disclosure_instant =
             CivilInstant::from_hms(settled_date, 18, 0, 0).expect("18:00:00 is a valid instant");
         let next_status = self.shared_day_status(next)?;
-        self.settled_through = Some(settled_date);
-        self.current_date = next;
         Ok(CivilDayEndReport {
             settled_date,
             disclosure_instant,
