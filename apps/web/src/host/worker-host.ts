@@ -347,10 +347,14 @@ export function createWorkerHost(
             }
             if (ingressWorker === null) throw new Error("Browser ingress Worker 尚未初始化");
             ingressRequests = new WorkerRequestScope(ingressWorker);
+            const boundIngress = ingressWorker;
             ingressReady = ingressRequests.request({
               ...(first ? supervisor.getSubstrate() : {}), type: "bindIngress", shared: true, token: incoming.token,
               requestId: ingressRequests.nextRequestId(), generation: nextGeneration,
-            }, "ingressBound");
+            }, "ingressBound").then((response) => {
+              if (first && !disposed) supervisor!.observeIngressConfigured(boundIngress);
+              return response;
+            });
             waitForInitialization();
             return;
           }

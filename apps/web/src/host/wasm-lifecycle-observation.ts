@@ -2,6 +2,8 @@ import type { WasmSessionShutdown } from "./wasm-shutdown-report.ts";
 
 /** 只含数值、字符串和纯数据快照；禁止把 Memory、SAB、view 或 Worker 交给观测者。 */
 export type WasmLifecycleObservation =
+  | { readonly type: "memoryRegistered"; readonly allocationId: 1; readonly role: "engine" }
+  | { readonly type: "allocationConfigured"; readonly allocationId: 1; readonly role: "engine" | "ingress" | "child"; readonly workerId: number | null; readonly slot: number | null; readonly gen: number | null }
   | { readonly type: "rustShutdown"; readonly report: WasmSessionShutdown }
   | { readonly type: "childExit"; readonly workerId: number; readonly slot: number; readonly gen: number; readonly activeChildren: number; readonly manifestEntries: number; readonly pendingRecovery: number }
   | { readonly type: "quiescent"; readonly role: "engine" | "ingress"; readonly activeChildren: number; readonly manifestEntries: number; readonly pendingRecovery: number }

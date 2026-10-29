@@ -313,6 +313,7 @@ export function createEngineSupervisor(options: EngineSupervisorOptions) {
       if (resource.role !== "engine" || resource.localPort !== undefined || resource.port === undefined || allocatedMemory !== undefined || substrate !== undefined) throw new Error("Memory 只能由首次 engine bootstrap 的控制端登记一次");
       allocatedMemory = message.memory;
       resource.port.postMessage({ type: "facadeEngineMemoryRegistered", allocationId: 1 });
+      options.onLifecycleObservation?.({ type: "memoryRegistered", allocationId: 1, role: "engine" });
       return;
     }
     if (message.type === "facadeEngineConfiguration") {
@@ -321,6 +322,7 @@ export function createEngineSupervisor(options: EngineSupervisorOptions) {
       const waitAbort = message.waitAbort === undefined ? undefined : parseWasmWaitAbortLayout(message.waitAbort, allocatedMemory);
       installSubstrate({ module: message.module, memory: allocatedMemory, layout: message.layout, diagnostics: message.diagnostics, ...(waitAbort === undefined ? {} : { waitAbort }) });
       resource.port.postMessage({ type: "facadeEngineConfigured" });
+      options.onLifecycleObservation?.({ type: "allocationConfigured", allocationId: 1, role: "engine", workerId: null, slot: null, gen: null });
       return;
     }
     if (message.type === "facadeEngineSubstrate") {
@@ -361,7 +363,10 @@ export function createEngineSupervisor(options: EngineSupervisorOptions) {
           onMessageEntry() {}, onAfterAcquire() {}, onTerminateLateChild() { cleanup(resource, true); },
         });
         if (outcome === "dropped-late") protocol.manifest.delete(message.workerId);
-        else resource.ready = true;
+        else {
+          resource.ready = true;
+          if (allocatedMemory !== undefined) options.onLifecycleObservation?.({ type: "allocationConfigured", allocationId: 1, role: "child", workerId: message.workerId, slot: message.slot, gen: message.gen });
+        }
         return;
       }
       case "facadeWorkerExit": {
@@ -498,6 +503,11 @@ export function createEngineSupervisor(options: EngineSupervisorOptions) {
       return substrate;
     },
     attachIngress(worker: Worker): void { assertConfigured(); attach(worker, "ingress"); },
+    observeIngressConfigured(worker: Worker): void {
+      const resource = resources.get(worker);
+      if (disposed || resource === undefined || resource.role !== "ingress") throw new Error("ingress configured 观察必须属于本人活跃 ingress");
+      if (allocatedMemory !== undefined) options.onLifecycleObservation?.({ type: "allocationConfigured", allocationId: 1, role: "ingress", workerId: null, slot: null, gen: null });
+    },
     handleGlobalMessage(worker: Worker, value: unknown): boolean {
       const resource = resources.get(worker);
       return resource === undefined ? true : consume(resource, value, true);
