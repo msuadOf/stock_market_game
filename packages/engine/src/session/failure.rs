@@ -19,6 +19,32 @@ struct PreparedRuntimeHandover {
 }
 
 impl GameSession {
+    /// 显式同步当前已提交来源，不推进市场 tick 或事件 seq。
+    pub fn flush_now(&mut self) -> Result<(), StepFatal> {
+        self.require_healthy()?;
+        let fail = |description| StepFatal::InvariantViolation {
+            location: "GameSession::flush_now".to_owned(), description,
+        };
+        if self.has_current_external_runtime_authority() {
+            return Err(fail("外部 RuntimeDriver 在位，请通过该 owner 显式 flush".to_owned()));
+        }
+        if !crate::runtime::step_runtime_enabled() {
+            return Ok(());
+        }
+        if self.runtime_driver.is_none() {
+            self.construct_runtime_driver_lazy()?;
+        }
+        let cell = self.runtime_driver.take().expect("显式 flush 已构造 driver");
+        let result = (|| {
+            let mut driver = cell.lock().map_err(|_| fail("runtime driver 锁 poison".to_owned()))?;
+            driver.flush_now(self).map_err(|description| {
+                self.poison_reason().cloned().unwrap_or_else(|| fail(description))
+            })
+        })();
+        self.runtime_driver = Some(cell);
+        result.map_err(|fatal| self.poison_runtime_step(fatal))
+    }
+
     pub fn publication_ids(&self) -> Vec<crate::information::PublicationId> {
         self.state.library.publication_ids()
     }
@@ -389,7 +415,10 @@ impl GameSession {
         crate::runtime::drive::RuntimeDriver::validate_static_adoption_identity(self).map_err(fail)?;
         let mut driver = crate::runtime::drive::RuntimeDriver::prepare_from_session_grouped(
             self, self.runtime_group_count, authority_epoch,
-        ).map_err(fail)?;
+        ).map_err(|error| {
+            let fatal = fail(error.to_string());
+            if error.cleanup_failed { self.poison_runtime_step(fatal) } else { fatal }
+        })?;
         driver.adopt_session_seq(self);
         let prepared = (|| {
             let input = driver.prepare_static_driver_projection(self)?;
@@ -519,10 +548,6 @@ impl GameSession {
         calendar: std::sync::Arc<crate::runtime::MarketTickContext>,
         body: impl FnOnce(&mut Self, &mut crate::runtime::drive::RuntimeDriver) -> Result<R, StepFatal>,
     ) -> Result<R, StepFatal> {
-        // 【P0 画像】lock_route 段（锁+锁步校验+ingress freeze+意图路由）。
-        let _seg_lock = crate::runtime::step_profile::scope(
-            crate::runtime::step_profile::StepSegment::LockRoute,
-        );
         let guard = cell.lock();
         let poisoned = guard.is_err();
         let mut driver = if poisoned {
@@ -535,6 +560,19 @@ impl GameSession {
         } else {
             guard.expect("is_err 已排阴")
         };
+        self.with_routed_runtime_driver_ref(&mut driver, calendar, body)
+    }
+
+    /// 内部常驻 owner 与公开 direct owner 共用 Calendar、cutoff 和运行账户消费门。
+    fn with_routed_runtime_driver_ref<R>(
+        &mut self,
+        driver: &mut crate::runtime::drive::RuntimeDriver,
+        calendar: std::sync::Arc<crate::runtime::MarketTickContext>,
+        body: impl FnOnce(&mut Self, &mut crate::runtime::drive::RuntimeDriver) -> Result<R, StepFatal>,
+    ) -> Result<R, StepFatal> {
+        let route_scope = crate::runtime::step_profile::scope(
+            crate::runtime::step_profile::StepSegment::LockRoute,
+        );
         // 锁步不变量：world 已转正 tick 必须 == session.tick
         // （失配=两权威漂移，显式拒绝——不静默重放）。
         let world_tick = driver.world_committed_tick();
@@ -592,12 +630,33 @@ impl GameSession {
                 }));
             }
         }
-        drop(_seg_lock);
-        let outcome = body(self, &mut driver);
+        drop(route_scope);
+        let outcome = body(self, driver);
         if outcome.is_err() {
             self.restore_runtime_player_intents(intents);
         }
         outcome
+    }
+
+    /// direct driver 成功返回前也完成唯一 progress 与镜像提交，不能留下非法公开来源。
+    pub(crate) fn step_with_external_runtime_driver(
+        &mut self,
+        driver: &mut crate::runtime::drive::RuntimeDriver,
+    ) -> Result<Vec<Event>, StepFatal> {
+        self.require_healthy()?;
+        driver.ensure_session_authority(self).map_err(|description| StepFatal::InvariantViolation {
+            location: "RuntimeDriver::step::authority".to_owned(), description,
+        })?;
+        self.check_step_start().map_err(|fatal| self.poison_runtime_step(fatal))?;
+        let (day, tick) = self.prepare_market_calendar_tick()
+            .map_err(|fatal| self.poison_runtime_step(fatal))?;
+        let result = self.with_routed_runtime_driver_ref(driver, tick, |session, driver| {
+            session.runtime_step_with_prepared_mirror_mode(driver, false, |_, facts| {
+                Ok(facts.into_iter().map(|fact| fact.event).collect())
+            })
+        });
+        if result.is_ok() { self.install_market_calendar_day(day); }
+        result
     }
 
     /// Frame callback 只读取私有 candidate；全部验证成功才唯一安装。
@@ -632,6 +691,16 @@ impl GameSession {
         driver: &mut crate::runtime::drive::RuntimeDriver,
         project: impl FnOnce(crate::session::protocol::TickCandidateProjection<'_>, Vec<crate::session::protocol::EventFact>) -> Result<P, StepFatal>,
     ) -> Result<P, StepFatal> {
+        self.runtime_step_with_prepared_mirror_mode(driver, true, project)
+    }
+
+    /// direct owner 保留显式市场日结 API；逐拍提交仍与常驻 owner 共用唯一 core。
+    fn runtime_step_with_prepared_mirror_mode<P>(
+        &mut self,
+        driver: &mut crate::runtime::drive::RuntimeDriver,
+        automatic_day_end: bool,
+        project: impl FnOnce(crate::session::protocol::TickCandidateProjection<'_>, Vec<crate::session::protocol::EventFact>) -> Result<P, StepFatal>,
+    ) -> Result<P, StepFatal> {
         self.require_healthy()?;
         driver.ensure_session_authority(self).map_err(|description| {
             StepFatal::InvariantViolation {
@@ -650,7 +719,8 @@ impl GameSession {
         crate::verification_evidence::begin_authoritative_tick(self.tick(), self.compute_context())?;
         #[cfg(feature = "simulation-diagnostics")]
         let causal_time = self.causal_time().map_err(|fatal| self.poison_runtime_step(fatal))?;
-        let prepared = driver.prepare_driver_step(self).and_then(|input| self.prepare_runtime_publication(driver, input, tick));
+        let prepared = driver.prepare_driver_step_with_day_end(self, automatic_day_end)
+            .and_then(|input| self.prepare_runtime_publication(driver, input, tick));
         let mut prepared = prepared.map_err(|description| {
             let fatal = StepFatal::InvariantViolation { location: "runtime_mirror::prepare".to_owned(), description };
             #[cfg(feature = "simulation-diagnostics")]

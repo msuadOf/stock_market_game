@@ -200,7 +200,12 @@ mod runtime_sync_tests;
 mod calendar_final_boundary_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod runtime_sync_consumption_tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod runtime_sync_boundary_tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod runtime_sync_handover_tests;
 mod runtime_mirror;
+mod runtime_handover;
 pub(crate) use runtime_mirror::PreparedRuntimeMirror;
 mod runtime_progress;
 pub(crate) mod retail_lifecycle;
@@ -2347,16 +2352,24 @@ impl GameSession {
 
 impl GameSession {
     pub(super) fn clone_for_tick_shadow(&self) -> Result<Self, StepFatal> {
+        let ingress = self.ingress.as_ref().map(shared_ingress::IngressBinding::fork)
+            .transpose().map_err(shared_ingress::ingress_fatal)?;
+        self.clone_private_state(ingress)
+    }
+
+    /// handover 不创建第二个 receiver reader；现有 binding 仅在最终 move 时保留。
+    pub(in crate::session) fn clone_for_runtime_handover(&self) -> Result<Self, StepFatal> {
+        let mut candidate = self.clone_private_state(None)?;
+        candidate.runtime_group_count = self.runtime_group_count;
+        Ok(candidate)
+    }
+
+    fn clone_private_state(&self, ingress: Option<shared_ingress::IngressBinding>) -> Result<Self, StepFatal> {
         Ok(Self {
             market_calendar_source: self.market_calendar_source.clone(),
             market_calendar_day: self.market_calendar_day.clone(),
             compute: self.compute.clone(),
-            ingress: self
-                .ingress
-                .as_ref()
-                .map(shared_ingress::IngressBinding::fork)
-                .transpose()
-                .map_err(shared_ingress::ingress_fatal)?,
+            ingress,
             report_correction_epoch: self.report_correction_epoch.clone(),
             poison: None,
             revision: std::sync::atomic::AtomicU64::new(

@@ -890,6 +890,9 @@ pub struct GroupState {
     information_observed_through: Option<crate::calendar::CivilInstant>,
     /// 最后成功 Some 观察输入；None 材料刷新不占用观察资格，不保存历史。
     information_signature: Option<admin_transaction::InformationObservationSignature>,
+    /// 完整移交初值只安装一次；双 None 也不能再次覆盖 prepared 世界。
+    information_handover_installed: bool,
+    inherited_calendar: Option<super::world::InheritedCalendarCommit>,
     /// D3a-2 观察基：快照来源的每股（分钟收盘，日 K 条）——链观察的
     /// 纯输入（与 session 读面同源：desk 权威 minute_closes/daily_bars；
     /// 观察对象每 tick 由纯构建器现算，不累积不缓存——口径不可能漂移）。
@@ -1028,14 +1031,14 @@ impl GroupState {
             .map_err(|error| RuntimeError::ProtocolInvariant { detail: error.to_string() })?;
         clock.validate(owner, bindings, frontier.civil_date, layout, input, through, anchors)?;
         if let Some(record) = clock.committed_record() {
-            let snapshot = self.snapshot.as_ref().ok_or_else(|| RuntimeError::ProtocolInvariant {
-                detail: "市场拍后 INFO 缺少本组真实 Start/Seal snapshot".to_owned(),
-            })?;
-            if !Arc::ptr_eq(&snapshot.calendar, &record.calendar) || record.source.tick != self.cur_tick
-                || record.source.authority_epoch != frontier.authority_epoch
-                || record.source.civil_date != frontier.civil_date
-                || record.source.generation > frontier.generation {
-                return Err(RuntimeError::ProtocolInvariant { detail: "INFO 已提交 TickArc 与组真实 Start/Seal 不一致".to_owned() });
+            let inherited = self.inherited_calendar.as_ref().is_some_and(|inherited| inherited.accepts(record, frontier));
+            let native = self.snapshot.as_ref().is_some_and(|snapshot|
+                Arc::ptr_eq(&snapshot.calendar, &record.calendar) && record.source.tick == self.cur_tick
+                && record.source.authority_epoch == frontier.authority_epoch
+                && record.source.civil_date == frontier.civil_date
+                && record.source.generation <= frontier.generation);
+            if !inherited && !native {
+                return Err(RuntimeError::ProtocolInvariant { detail: "INFO 已提交 TickArc 缺真实 Start/Seal 或已认证继承资格".to_owned() });
             }
         }
         Ok(())
@@ -1172,6 +1175,8 @@ impl GroupState {
             current_company_facts: None,
             information_observed_through: None,
             information_signature: None,
+            information_handover_installed: false,
+            inherited_calendar: None,
             root_projection,
             child_in_flight: Default::default(),
             admin_treasury_bindings: Vec::new(),
@@ -5867,6 +5872,7 @@ pub fn group_main(
                 }
             }
             GroupIn::Start { tick, snapshot } => {
+                state.inherited_calendar = None;
                 state.observed.push(Observed::Start(tick));
                 if snapshot.tick != tick {
                     abort.store(true, Ordering::SeqCst);
@@ -6183,6 +6189,39 @@ pub fn group_main(
                         detail: "GroupDeliveryDone 上行失败".to_owned(),
                     });
                     break;
+                }
+            }
+            GroupIn::EchoInformationHandover { source } => {
+                let captured = state.capture_information_handover(source);
+                match captured {
+                    Ok((handover, library, facts, profiles)) => {
+                        if up_tx.send(UpMsg::GroupInformationHandover { group: state.group, source, handover, library, facts, profiles }).is_err() {
+                            result = Err(RuntimeError::SendFailed { detail: "GroupInformationHandover 上行失败".to_owned() });
+                            break;
+                        }
+                    }
+                    Err(error) => {
+                        abort.store(true, Ordering::SeqCst);
+                        let _ = up_tx.send(UpMsg::Failed { who, error: error.clone() });
+                        result = Err(error);
+                        break;
+                    }
+                }
+            }
+            GroupIn::InstallInitialInformationHandover { source, roster, handover, library, facts, accounts, personals, attention, inherited_calendar } => {
+                match state.install_initial_information_handover(source, &roster, handover, library, facts, accounts, personals, attention, inherited_calendar) {
+                    Ok(()) => {
+                        if up_tx.send(UpMsg::GroupInformationHandoverInstalled { group: state.group, source }).is_err() {
+                            result = Err(RuntimeError::SendFailed { detail: "GroupInformationHandoverInstalled 上行失败".to_owned() });
+                            break;
+                        }
+                    }
+                    Err(error) => {
+                        abort.store(true, Ordering::SeqCst);
+                        let _ = up_tx.send(UpMsg::Failed { who, error: error.clone() });
+                        result = Err(error);
+                        break;
+                    }
                 }
             }
             GroupIn::EchoPersonalFull { source } => {

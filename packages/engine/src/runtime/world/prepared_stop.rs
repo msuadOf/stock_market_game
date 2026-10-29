@@ -41,6 +41,18 @@ pub(super) fn read_failure(stage: &str, message: UpMsg) -> RuntimeError {
 }
 
 impl World {
+    /// 真正使一个 worker 因失序消息退出；仅用于验证移交尾的错误与全部 join。
+    #[cfg(test)]
+    pub(crate) fn inject_stop_failure_for_test(&self) -> Result<(), RuntimeError> {
+        self.group_txs[0].send(GroupIn::Continue { tick: 0, round: 0 })
+            .map_err(|_| RuntimeError::SendFailed { detail: "停止失败 fixture 无法发送失序 Continue".to_owned() })?;
+        match recv_deadline(&self.up_rx, Phase::TickConverge, &self.watchdog)? {
+            UpMsg::Failed { who: WorkerId::Group(0), error: RuntimeError::ProtocolInvariant { detail } }
+                if detail.contains("Continue 错序") => Ok(()),
+            other => Err(read_failure("停止失败 fixture", other)),
+        }
+    }
+
     pub(crate) fn stop_without_drain(mut self) -> Result<StopReport, RuntimeError> {
         #[cfg(target_family = "wasm")]
         self.stop_permanently();

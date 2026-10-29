@@ -139,10 +139,10 @@ fn manual_day_end_uses_ended_day_mask_without_preparing_another_tick() {
     let mut game = mixed_game(false);
     let mut driver = RuntimeDriver::from_session(&mut game).unwrap();
     let before = game.snapshot();
-    // 直接 driver API 的调用方依原契约推进 Session tick；不触发聚合入口自动日终。
+    // direct driver 提交真实 progress；市场日结仍由下方显式入口执行。
     for tick in 1..=2 {
         driver.step(&mut game).expect("真实 mixed 市场拍");
-        game.set_runtime_tick(tick);
+        assert_eq!(game.tick(), tick);
     }
     assert!(
         game.prepare_market_calendar_tick().is_err(),

@@ -36,6 +36,180 @@ fn invalid(detail: impl Into<String>) -> RuntimeError {
 }
 
 impl GroupState {
+    pub(super) fn capture_information_handover(
+        &self,
+        source: crate::runtime::source::WorldMirrorSource,
+    ) -> Result<(
+        crate::runtime::information_handover::GroupInformationHandover,
+        Arc<crate::information::PublicLibrary>,
+        Arc<crate::company::CompanyReadFacts>,
+        Vec<(crate::AccountId, u64, u64)>,
+    ), RuntimeError> {
+        use crate::runtime::information_handover::{GroupInformationHandover, InformationHandoverMaterial, InformationHandoverSignature};
+        let sealed_static = self.seal_acked_len.is_some() && self.batches_after_seal == 0
+            && self.staging_deferred.is_empty();
+        if source.tick != self.cur_tick || self.admin_pending.is_some()
+            || !self.staging_deferred.is_empty() || self.batches_after_seal != 0
+            || (self.cur_tick != self.committed_tick && !sealed_static)
+        {
+            return Err(invalid(format!("INFO 移交捕获不是已提交静点：group={} source={source:?}", self.group)));
+        }
+        let root = self.root_projection.as_ref().ok_or_else(|| invalid("INFO 移交捕获缺真实名册"))?;
+        let roster: Vec<_> = root.account_ids.iter().skip(self.roster_offset).take(self.accounts.len()).copied().collect();
+        let signature = self.information_signature.as_ref().map(|signature| {
+            if Some(signature.through) != self.information_observed_through {
+                return Err(invalid("INFO 移交签名 through 与观察水位不同"));
+            }
+            let mut owners_and_codes = BTreeMap::new();
+            for (&local, (owner, codes)) in &signature.owners_and_codes {
+                if roster.get(local as usize) != Some(owner) {
+                    return Err(invalid(format!("INFO 移交签名 local/AccountId 不属于真实名册：group={} local={local} owner={owner:?}", self.group)));
+                }
+                if owners_and_codes.insert(*owner, codes.clone()).is_some() {
+                    return Err(invalid(format!("INFO 移交签名重复 AccountId={owner:?}")));
+                }
+            }
+            Ok(InformationHandoverSignature {
+                material: Arc::new(InformationHandoverMaterial {
+                    through: signature.through,
+                    library: Arc::clone(&signature.library),
+                    facts: Arc::clone(&signature.facts),
+                    market: Arc::clone(&signature.market),
+                    anchors: signature.anchors.clone(),
+                }),
+                owners_and_codes,
+            })
+        }).transpose()?;
+        let profiles = match &self.decision {
+            Some((profiles, _)) => {
+                if profiles.len() < roster.len() {
+                    return Err(invalid("INFO 移交捕获 profile 缺少真实账户槽"));
+                }
+                roster.iter().zip(profiles).map(|(&owner, profile)| (owner, profile.next_due, profile.seed)).collect()
+            }
+            None => Vec::new(),
+        };
+        Ok((GroupInformationHandover { observed_through: self.information_observed_through, signature },
+            Arc::clone(&self.library), Arc::clone(self.current_company_facts()?), profiles))
+    }
+
+    /// 原始账户、profile 和 INFO checkpoint 是同一完整初值；全部校验后才 move 安装。
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn install_initial_information_handover(
+        &mut self,
+        source: crate::runtime::source::WorldMirrorSource,
+        roster: &[(crate::AccountId, bool)],
+        handover: crate::runtime::information_handover::GroupInformationHandover,
+        library: Arc<crate::information::PublicLibrary>,
+        facts: Arc<crate::company::CompanyReadFacts>,
+        accounts: Vec<(crate::AccountId, GroupAccount)>,
+        personals: Vec<(crate::AccountId, Option<crate::runtime::world::BeliefParticipantSnapshot>)>,
+        attention: Vec<(crate::AccountId, u64, u64)>,
+        inherited_calendar: Option<crate::runtime::world::InheritedCalendarCommit>,
+    ) -> Result<(), RuntimeError> {
+        if self.information_handover_installed || self.snapshot.is_some()
+            || self.admin_last_id != 0 || self.admin_pending.is_some()
+            || self.cur_tick != self.committed_tick || source.tick != self.cur_tick
+            || self.information_signature.is_some() || self.information_observed_through.is_some()
+            || !self.staging_deferred.is_empty() || self.batches_after_seal != 0
+            || !self.external_pending.is_empty() || !self.external_cancels.is_empty()
+            || !self.pending_force_due.is_empty()
+            || !self.observed.is_empty()
+        {
+            return Err(invalid(format!("完整移交初值只能在首个 Start 前安装一次：group={}", self.group)));
+        }
+        let root = self.root_projection.as_ref().ok_or_else(|| invalid("完整移交初值缺真实名册"))?;
+        if let Some(inherited) = &inherited_calendar {
+            let (owner, bindings) = self.calendar_owner.as_ref().ok_or_else(|| invalid("Calendar 移交缺组构造 owner"))?;
+            inherited.validate_install(owner, bindings, crate::session::exchange_calendar_model::SessionTickLayout {
+                ticks_per_day: self.ticks_per_day, auction_ticks: self.auction_ticks, closing_auction_ticks: self.closing_auction_ticks,
+            }, source)?;
+        }
+        let expected: Vec<_> = root.account_ids.iter().skip(self.roster_offset).take(self.accounts.len()).copied().collect();
+        if expected != roster.iter().map(|(owner, _)| *owner).collect::<Vec<_>>() || accounts.len() != roster.len()
+            || personals.iter().map(|(owner, _)| *owner).collect::<Vec<_>>() != expected
+        {
+            return Err(invalid(format!("完整移交初值与真实组名册不同：group={}", self.group)));
+        }
+        for (local, ((owner, required), (account_owner, account))) in roster.iter().zip(&accounts).enumerate() {
+            if account_owner != owner {
+                return Err(invalid(format!("完整移交账户 owner 错位：group={} local={local}", self.group)));
+            }
+            let personal = self.belief_states.get(local).ok_or_else(|| invalid("完整移交个人态缺真实槽"))?;
+            let incoming = &personals[local].1;
+            if personal.is_some() != *required || incoming.is_some() != *required
+                || incoming.as_ref().is_some_and(|personal| personal.information.owner() != *owner || personal.belief.npc() != *owner) {
+                return Err(invalid(format!("完整移交个人态与 Required 名册不同：group={} owner={owner:?}", self.group)));
+            }
+            let stocks = root.catalog.len();
+            if [account.shares.len(), account.frozen_today.len(), account.foreign_active.len(), account.invested_cents.len(), account.recovered_cents.len(), account.ever_held.len(), account.pending_sell_qty.len()].iter().any(|&len| len != stocks)
+                || account.frozen_today.iter().zip(&account.shares).any(|(&frozen, &shares)| frozen > shares)
+            {
+                return Err(invalid(format!("完整移交账户股票拓扑或 T+1 冻结非法：owner={owner:?}")));
+            }
+        }
+        let required: std::collections::BTreeSet<_> = roster.iter().filter(|(_, required)| *required).map(|(owner, _)| *owner).collect();
+        let signature = handover.signature.map(|signature| {
+            if Some(signature.material.through) != handover.observed_through
+                || signature.owners_and_codes.keys().copied().collect::<std::collections::BTreeSet<_>>() != required
+            {
+                return Err(invalid("INFO 初值签名 through 或 Required owner 集合不一致"));
+            }
+            let mut owners_and_codes = BTreeMap::new();
+            for (local, (owner, _)) in roster.iter().enumerate() {
+                if let Some(codes) = signature.owners_and_codes.get(owner) {
+                    let local = LocalIdx::try_from(local).map_err(|_| invalid("INFO 初值 local 超出 LocalIdx"))?;
+                    owners_and_codes.insert(local, (*owner, codes.clone()));
+                }
+            }
+            Ok(InformationObservationSignature {
+                through: signature.material.through,
+                library: Arc::clone(&signature.material.library),
+                facts: Arc::clone(&signature.material.facts),
+                market: Arc::clone(&signature.material.market),
+                anchors: signature.material.anchors.clone(),
+                owners_and_codes,
+            })
+        }).transpose()?;
+        if signature.is_none() && handover.observed_through.is_some() && !required.is_empty() {
+            return Err(invalid("INFO 初值 Required 有观察水位却缺签名"));
+        }
+        match &self.decision {
+            Some((profiles, _)) if profiles.len() >= roster.len()
+                && attention.iter().map(|(owner, _, _)| *owner).collect::<Vec<_>>() == expected => {}
+            None if attention.is_empty() => {}
+            _ => return Err(invalid("完整移交初值 profile/attention 与真实名册不完整或错位")),
+        }
+        let mut next_accounts = self.accounts.clone();
+        let mut next_decision = self.decision.clone();
+        let mut next_personals = self.belief_states.clone();
+        for (local, (_, personal)) in personals.into_iter().enumerate() {
+            next_personals[local] = personal;
+        }
+        for (local, (_, account)) in accounts.into_iter().enumerate() {
+            next_accounts[local] = Arc::new(account);
+        }
+        if let Some((profiles, _)) = &mut next_decision {
+            for (local, (_, due, seed)) in attention.into_iter().enumerate() {
+                profiles[local].next_due = due;
+                profiles[local].seed = seed;
+            }
+        }
+        let next_heap = next_decision.as_ref().map(|(profiles, _)| profiles.iter().enumerate()
+            .map(|(local, profile)| std::cmp::Reverse((profile.next_due, local as LocalIdx))).collect()).unwrap_or_default();
+        self.accounts = next_accounts;
+        self.decision = next_decision;
+        self.belief_states = next_personals;
+        self.due_heap = next_heap;
+        self.library = library;
+        self.current_company_facts = Some(facts);
+        self.information_observed_through = handover.observed_through;
+        self.information_signature = signature;
+        self.information_handover_installed = true;
+        self.inherited_calendar = inherited_calendar;
+        Ok(())
+    }
+
     /// 初值仅允许构造静点安装；恢复世界的 initial tick 可以大于零。
     pub(crate) fn install_initial_company_facts(&mut self, facts: Arc<crate::company::CompanyReadFacts>) -> Result<(), RuntimeError> {
         if self.current_company_facts.is_some() || self.snapshot.is_some()

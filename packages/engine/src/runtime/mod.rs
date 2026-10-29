@@ -49,6 +49,7 @@ mod protocol;
 pub(crate) use protocol::LifecycleKind;
 pub(crate) use protocol::{RepurchasePreparePayload, RepurchaseProjectionInput, RuntimeError};
 mod information_clock_context;
+pub(crate) mod information_handover;
 pub use information_clock_context::InformationClockContext;
 mod repurchase_transport;
 pub use repurchase_transport::{RepurchaseRequestKey, RepurchaseReturnKind, RepurchaseSourceFact, RepurchaseSourceKind};

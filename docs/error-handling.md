@@ -16,6 +16,17 @@
 
 ## 1. 红线（禁止的做法）
 
+运行镜像与日终存档边界使用以下数值错误；`context` 的单位与 engine 字段一致：
+
+| 错误码 | 含义 | context |
+| --- | --- | --- |
+| 3018 `SAVE_TARGET_DAY_NOT_READY` | 最新成功日终候选的自然日不等于 `save_current_day` 请求日期；首次日结前也返回此错误 | 空 |
+| 3020 `RUNTIME_SYNC_POLICY_VIOLATION` | `DayEnd` 策略拒绝日内 Player ingress，在登记 receipt 前返回 | `[1, runtime_tick, runtime_generation]` |
+
+`save()` 无候选仍为 3015；`save_candidate` 的未知 key 与日期不符仍分别为 3016、3017。
+这些只读请求不触发 flush 或自然日日结。会话已经 terminal 时，先返回保存的首个 fatal，
+不把它改成 3015–3018。
+
 ### ❌ 禁止：空 catch / 吞掉错误
 
 ```ts

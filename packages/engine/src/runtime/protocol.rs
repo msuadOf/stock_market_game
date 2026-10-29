@@ -920,6 +920,21 @@ pub enum GroupIn {
     EchoBelief,
     /// 已验证静点的完整个人态读取；不消费 dirty/pending。
     EchoPersonalFull { source: super::source::WorldMirrorSource },
+    /// 静点只读捕获当前共同输入及最后成功观察，不消费 dirty/pending。
+    EchoInformationHandover { source: super::source::WorldMirrorSource },
+    /// 仅 prepared 世界首个 Start 前安装完整初值；不是常态 INFO 或 Admin。
+    InstallInitialInformationHandover {
+        source: super::source::WorldMirrorSource,
+        roster: Vec<(crate::AccountId, bool)>,
+        handover: super::information_handover::GroupInformationHandover,
+        library: std::sync::Arc<crate::information::PublicLibrary>,
+        facts: std::sync::Arc<crate::company::CompanyReadFacts>,
+        accounts: Vec<(crate::AccountId, super::group::GroupAccount)>,
+        personals: Vec<(crate::AccountId, Option<super::world::BeliefParticipantSnapshot>)>,
+        /// 完整移交的内部 (next_due, seed)；不使用 EchoAttention 的布局编码。
+        attention: Vec<(crate::AccountId, u64, u64)>,
+        inherited_calendar: Option<super::world::InheritedCalendarCommit>,
+    },
     /// 信息投递（Belief-1b·下：稀疏——仅披露 tick 下行。携带库 Arc
     /// 刷新+per-NPC 注意力**镜像快照**（candidate 域=组权威值，见
     /// 设计注记）+issuer/spec 快照+时刻。组内纯函数推进，上行仅
@@ -1337,6 +1352,19 @@ pub enum UpMsg {
         source: super::source::WorldMirrorSource,
         slots: Vec<(LocalIdx, crate::AccountId, Option<super::world::BeliefParticipantSnapshot>)>,
     },
+    GroupInformationHandover {
+        group: GroupIdx,
+        source: super::source::WorldMirrorSource,
+        handover: super::information_handover::GroupInformationHandover,
+        library: std::sync::Arc<crate::information::PublicLibrary>,
+        facts: std::sync::Arc<crate::company::CompanyReadFacts>,
+        /// 真实内部 profile RNG；未混入或消除任何新旧拓扑编码。
+        profiles: Vec<(crate::AccountId, u64, u64)>,
+    },
+    GroupInformationHandoverInstalled {
+        group: GroupIdx,
+        source: super::source::WorldMirrorSource,
+    },
     /// 信念个人态回执（EchoBelief 应答）。P2-2a：**稀疏上行**——只含
     /// 本 tick dirty（生产演进面触碰）且在册的条目 `(组内下标, 快照)`；
     /// 驱动器侧增量维护全量缓存（collect_belief 读面语义不变）。省组端
@@ -1504,6 +1532,8 @@ impl std::fmt::Debug for UpMsg {
             UpMsg::GroupPersonalFull { group, slots, .. } => {
                 write!(f, "GroupPersonalFull(group={group}, n={})", slots.len())
             }
+            UpMsg::GroupInformationHandover { group, .. } => write!(f, "GroupInformationHandover(group={group})"),
+            UpMsg::GroupInformationHandoverInstalled { group, .. } => write!(f, "GroupInformationHandoverInstalled(group={group})"),
             UpMsg::GroupDeliveryDone { group, updates } => {
                 write!(f, "GroupDeliveryDone(group={group}, n={})", updates.len())
             }
@@ -1736,6 +1766,9 @@ pub struct DeskReport {
 /// 运行时显式失败（不静默吞错）。panic 走 `TaskDied` 运输，不进本枚举。
 #[derive(Clone, Debug, PartialEq, thiserror::Error)]
 pub enum RuntimeError {
+    /// World 尚未形成时的主错误与全部已启动 worker 的回收结果。
+    #[error("{primary}；native construction 已 join {joined_workers} 个 worker；回收错误={cleanup_errors:?}")]
+    ConstructionFailure { primary: String, joined_workers: usize, cleanup_errors: Vec<String> },
     /// wasm 宿主永久 abort，与 tick Abort、相位超时及通道断连分开报告。
     #[cfg(target_family = "wasm")]
     #[error("wasm 宿主已永久终止：phase={phase:?}, who={who:?}")]

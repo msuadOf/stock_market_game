@@ -849,12 +849,28 @@ impl GameSession {
         prepared: PreparedRuntimeMirror,
     ) -> Vec<Event> {
         self.mark_external_mutation();
+        let (events, personals, count) = self.move_runtime_mirror_state(prepared, true);
+        for (id, (index, value)) in personals {
+            driver.install_cached_personal_at(index, id, value);
+        }
+        driver.finish_mirror_install(count);
+        events
+    }
+
+    /// 只在私有 handover base 上移动完整领域值；不消费旧 driver 的覆盖表或缓存。
+    pub(in crate::session) fn materialize_runtime_handover_base(&mut self, prepared: PreparedRuntimeMirror) {
+        let (events, _, _) = self.move_runtime_mirror_state(prepared, false);
+        assert!(events.is_empty(), "静点 handover base 不能产生市场事实");
+    }
+
+    fn move_runtime_mirror_state(
+        &mut self,
+        prepared: PreparedRuntimeMirror,
+        commit_source: bool,
+    ) -> (Vec<Event>, BTreeMap<AccountId, (usize, BeliefParticipantSnapshot)>, usize) {
         let count = prepared.accounts.len();
         for (id, account) in prepared.accounts {
             self.state.accounts.insert(id, account);
-        }
-        for (id, (index, value)) in prepared.personals {
-            driver.install_cached_personal_at(index, id, value);
         }
         self.state.plans = prepared.plans;
         self.state.markets = prepared.markets;
@@ -898,11 +914,12 @@ impl GameSession {
                 prepared.source.civil_date,
             ));
         }
-        self.runtime_mirror_install_sequence = prepared.install_sequence;
-        self.runtime_mirror_origin = Some(prepared.projection.snapshot.mirror_origin);
-        self.runtime_publication_generation = prepared.source.generation;
-        driver.finish_mirror_install(count);
-        prepared.events
+        if commit_source {
+            self.runtime_mirror_install_sequence = prepared.install_sequence;
+            self.runtime_mirror_origin = Some(prepared.projection.snapshot.mirror_origin);
+            self.runtime_publication_generation = prepared.source.generation;
+        }
+        (prepared.events, prepared.personals, count)
     }
 
     pub(crate) fn validate_runtime_mirror_source(

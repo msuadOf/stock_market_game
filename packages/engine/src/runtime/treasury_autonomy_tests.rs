@@ -261,7 +261,8 @@ fn repurchase_raw_external_plan_cancel_returns_resources_and_abort_preserves_ori
     let before_plans = driver.collect_plans().unwrap();
     driver.inject_player_intents(&[cancel(id)], &upper).unwrap();
     driver.set_world_validator_for_test(Box::new(|_| Err("raw ExternalPlan 撤单 Abort 验证".into())));
-    let error = driver.step(&mut session).expect_err("真实撤单候选必须被 validator 拒绝");
+    // 本段只验证 World 的机械 Abort 可逆性；公开 driver 的 candidate 失败必须 terminal。
+    let error = driver.run_world_tick_for_test().expect_err("真实撤单候选必须被 validator 拒绝");
     assert!(error.contains("raw ExternalPlan 撤单 Abort 验证"), "须到达目标 validator：{error}");
     assert_eq!(session.tick(), before_tick);
     assert_eq!(session.business_state_hash().unwrap(), before_hash);

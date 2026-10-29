@@ -10,6 +10,12 @@
 //! 代码本体零线程数管理概念：线程数 = G+N(+调用线程)，由世界构造参数决定。
 
 mod prepared_stop;
+#[cfg(not(target_family = "wasm"))]
+mod native_construction;
+#[cfg(all(test, not(target_family = "wasm")))]
+pub(crate) use native_construction::{fail_next_spawn_after_for_test, fail_next_spawn_with_cleanup_error_for_test};
+mod information_handover;
+pub(crate) use information_handover::{CapturedInformationHandover, InheritedCalendarCommit};
 mod shutdown_completion;
 pub use shutdown_completion::{
     ShutdownCompletion, ShutdownFailure, ShutdownIssue, ShutdownWorkerResult,
@@ -428,6 +434,7 @@ pub struct World {
     tick_layout: crate::session::exchange_calendar_model::SessionTickLayout,
     pending_calendar_tick: Option<Arc<super::MarketTickContext>>,
     last_committed_calendar: Option<CommittedCalendarTick>,
+    inherited_calendar: Option<InheritedCalendarCommit>,
     admin_next_id: u64,
     authority_epoch: u64,
     non_tick_revision: u64,
@@ -866,7 +873,7 @@ impl World {
             desk_rxs.push(rx);
         }
         #[cfg(not(target_family = "wasm"))]
-        let mut handles = Vec::with_capacity(n_groups + n_stocks);
+        let mut native_construction = native_construction::NativeConstructionGuard::new(Arc::clone(&worker_shutdown), n_groups + n_stocks);
         #[cfg(target_family = "wasm")]
         let mut construction = WasmConstructionGuard::new(
             Arc::clone(&worker_shutdown),
@@ -1005,6 +1012,13 @@ impl World {
                 .filter(|binding| binding.owner.0 == g).copied().collect();
             state.install_plan_seed(prepared_plans.next().expect("全部组已预检"));
             let rx = group_rxs.remove(0);
+            #[cfg(all(test, not(target_family = "wasm")))]
+            if let Some(worker_error) = native_construction.inject_failure() {
+                if worker_error { native_construction::fail_worker_for_test(&group_txs, &up_rx, &watchdog); }
+                return Err(native_construction.spawn_failure(
+                    format!("注入 spawn rt-group-{g} 失败"), &mut group_txs, &mut desk_txs,
+                ));
+            }
             let handle = crate::thread_facade::Builder::new()
                 .name(format!("rt-group-{g}"))
                 .spawn({
@@ -1017,9 +1031,9 @@ impl World {
                     move || group_main(state, desk_txs, rx, up_tx, abort, shutdown, watchdog, capture)
                 });
             #[cfg(not(target_family = "wasm"))]
-            let handle = handle.map_err(|e| RuntimeError::SendFailed {
-                detail: format!("spawn rt-group-{g} 失败：{e}"),
-            })?;
+            let handle = match handle { Ok(handle) => handle, Err(error) => return Err(
+                native_construction.spawn_failure(format!("spawn rt-group-{g} 失败：{error}"), &mut group_txs, &mut desk_txs)
+            ) };
             #[cfg(target_family = "wasm")]
             let handle = match handle {
                 Ok(handle) => handle,
@@ -1030,13 +1044,20 @@ impl World {
                 }
             };
             #[cfg(not(target_family = "wasm"))]
-            handles.push((WorkerId::Group(g), handle));
+            native_construction.push(WorkerId::Group(g), handle);
             #[cfg(target_family = "wasm")]
             construction.push(WorkerId::Group(g), handle);
         }
         for (s, stock_spec) in stocks.into_iter().enumerate() {
             let s = s as StockIdx;
             let rx = desk_rxs.remove(0);
+            #[cfg(all(test, not(target_family = "wasm")))]
+            if let Some(worker_error) = native_construction.inject_failure() {
+                if worker_error { native_construction::fail_worker_for_test(&group_txs, &up_rx, &watchdog); }
+                return Err(native_construction.spawn_failure(
+                    format!("注入 spawn rt-desk-{s} 失败"), &mut group_txs, &mut desk_txs,
+                ));
+            }
             let setup = DeskSetup {
                 stock: s,
                 exchange: stock_spec.exchange,
@@ -1080,9 +1101,9 @@ impl World {
                     }
                 });
             #[cfg(not(target_family = "wasm"))]
-            let handle = handle.map_err(|e| RuntimeError::SendFailed {
-                detail: format!("spawn rt-desk-{s} 失败：{e}"),
-            })?;
+            let handle = match handle { Ok(handle) => handle, Err(error) => return Err(
+                native_construction.spawn_failure(format!("spawn rt-desk-{s} 失败：{error}"), &mut group_txs, &mut desk_txs)
+            ) };
             #[cfg(target_family = "wasm")]
             let handle = match handle {
                 Ok(handle) => handle,
@@ -1093,7 +1114,7 @@ impl World {
                 }
             };
             #[cfg(not(target_family = "wasm"))]
-            handles.push((WorkerId::Desk(s), handle));
+            native_construction.push(WorkerId::Desk(s), handle);
             #[cfg(target_family = "wasm")]
             construction.push(WorkerId::Desk(s), handle);
         }
@@ -1109,8 +1130,8 @@ impl World {
                 );
             }
         }
-        for tx in &desk_txs {
-            if tx.send(DeskMsg::BindCalendar {
+        for index in 0..desk_txs.len() {
+            if desk_txs[index].send(DeskMsg::BindCalendar {
                 day: Arc::clone(&initial_calendar_day),
             }).is_err() {
                 #[cfg(all(target_family = "wasm", feature = "verification-harness"))]
@@ -1118,8 +1139,9 @@ impl World {
                 let detail = "交易部 Calendar owner 绑定失败".to_owned();
                 // 普通 Err 必须显式回收，保留主错与全部次生错误，避免 Drop panic 覆盖主错。
                 #[cfg(target_family = "wasm")]
-                let detail = construction.spawn_failure(detail);
-                return Err(RuntimeError::SendFailed { detail });
+                return Err(RuntimeError::SendFailed { detail: construction.spawn_failure(detail) });
+                #[cfg(not(target_family = "wasm"))]
+                return Err(native_construction.spawn_failure(detail, &mut group_txs, &mut desk_txs));
             }
         }
         let global_v0 = GlobalState {
@@ -1158,12 +1180,15 @@ impl World {
         );
         #[cfg(target_family = "wasm")]
         let (shutdown_wake, handles) = construction.transfer();
+        #[cfg(not(target_family = "wasm"))]
+        let handles = native_construction.transfer();
         Ok(World {
             calendar_source,
             calendar_bindings,
             tick_layout,
             pending_calendar_tick: None,
             last_committed_calendar: None,
+            inherited_calendar: None,
             admin_next_id: 0,
             authority_epoch: 0,
             non_tick_revision: 0,
@@ -2308,7 +2333,8 @@ impl World {
             let actual = self.committed_calendar_tick()?.ok_or_else(|| RuntimeError::ProtocolInvariant {
                 detail: "INFO 缺少本 authority 已提交市场拍".to_owned(),
             })?;
-            if record.source != actual.source || !Arc::ptr_eq(&record.calendar, &actual.calendar)
+            if !self.authenticates_committed_calendar(record)
+                || record.source != actual.source || !Arc::ptr_eq(&record.calendar, &actual.calendar)
                 || record.calendar.after_input().tick != self.global.committed_tick {
                 return Err(RuntimeError::ProtocolInvariant { detail: "INFO 已提交 Calendar 历史身份或当前 tick 不一致".to_owned() });
             }
@@ -2333,14 +2359,16 @@ impl World {
         Ok(())
     }
 
-    /// None 明确表示本 authority 尚未成功提交市场拍；不得由 pending 或 restore 补造。
+    /// 仅返回本 authority 原生提交或已认证接管的原事实；pending/普通 restore 不能补造。
     pub(crate) fn committed_calendar_tick(&self) -> Result<Option<CommittedCalendarTick>, RuntimeError> {
         if let Some(reason) = &self.dead_reason {
             return Err(RuntimeError::ProtocolInvariant {
                 detail: format!("world 已死亡，不可读取已提交 Calendar：{reason}"),
             });
         }
-        Ok(self.last_committed_calendar.clone())
+        Ok(self.last_committed_calendar.clone().or_else(|| self.inherited_calendar.as_ref()
+            .filter(|inherited| inherited.accepts(inherited.record(), self.mirror_source()))
+            .map(|inherited| inherited.record().clone())))
     }
 
     pub(crate) fn staged_calendar_tick(&self) -> Option<Arc<super::MarketTickContext>> {
@@ -2486,6 +2514,8 @@ impl World {
             };
             self.validate_calendar_tick(&calendar)?;
             let tick = calendar.after_input().tick;
+            // 首个真实 Start 起继承资格退役；发送失败沿现有 terminal 生命周期处理。
+            self.inherited_calendar = None;
             // 首个 Start 即可能使参与者退役日结 undo；发送失败也不能重新打开窗口。
             self.day_end_prior_public_views = None;
             // D4：tick 起点先达交易部（FIFO 保证先于同 tick Ops）——
@@ -3186,7 +3216,7 @@ impl World {
             context.validate_for(&self.calendar_source, &self.calendar_bindings, self.civil_date,
                 self.tick_layout, context.before_input()).map_err(|error| fail(error.to_string()))?;
             if !Arc::ptr_eq(context, &committed.calendar)
-                || committed.source.authority_epoch != self.authority_epoch
+                || !self.authenticates_committed_calendar(&committed)
                 || committed.source.tick != tick || committed.source.civil_date != self.civil_date
                 || context.after_input().tick != tick
                 || !matches!(context.after_input().progress, SharedDayProgress::TradingCompleted) {

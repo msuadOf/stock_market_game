@@ -326,7 +326,10 @@ impl RuntimeDriver {
         #[cfg(not(test))]
         let _ = accounts;
         self.force_full_accounts = false;
-        self.initial_static_seed = None;
+        // 初始静点安装与 retained 重发布都不是真实市场拍；首个真实 tick 后才退役行情种子。
+        if !self.world.report_log.is_empty() {
+            self.initial_static_seed = None;
+        }
         self.sync_inputs.complete_flush(crate::runtime::driver_sync::FlushOutcome::Successful);
         self.finish_tick_fact_install();
     }
@@ -348,42 +351,6 @@ impl RuntimeDriver {
         &self.pending_receipts
     }
 
-    /// 兼容直接 driver 调用；生产聚合入口在全部域准备成功后才调用安装。
-    pub(super) fn install_driver_projection(
-        &mut self,
-        session: &mut GameSession,
-        prepared: PreparedDriverStep,
-    ) -> Result<Vec<Event>, String> {
-        self.install_account_projection(
-            session,
-            prepared
-                .accounts
-                .iter()
-                .enumerate()
-                .flat_map(|(group, rows)| {
-                    rows.iter()
-                        .map(move |(local, account)| (group, *local, account.as_ref()))
-                }),
-            &prepared.buy_vwap,
-            &prepared.last_prices,
-        );
-        for (global, id, snapshot) in prepared.personals {
-            session.set_runtime_personal_state(id, &snapshot);
-            self.belief_cache[global] = Some(snapshot);
-            #[cfg(test)]
-            {
-                self.personal_installs += 1;
-            }
-        }
-        self.install_pending_hold_inits(session, None)?;
-        session.set_runtime_plans(prepared.plans);
-        for (_, account) in prepared.touched {
-            session.runtime_prune_personal_memory(account);
-        }
-        self.force_full_accounts = false;
-        Ok(prepared.events)
-    }
-
     /// 只供 Session routed 入口在调用共享安装 core 前检查；direct driver 沿已有同 owner World 路径。
     pub(crate) fn require_staged_calendar_tick(&self) -> Result<(), String> {
         if self.world.staged_calendar_tick().is_none() {
@@ -396,10 +363,18 @@ impl RuntimeDriver {
         &mut self,
         session: &GameSession,
     ) -> Result<PreparedDriverStep, String> {
+        self.prepare_driver_step_with_day_end(session, true)
+    }
+
+    pub(crate) fn prepare_driver_step_with_day_end(
+        &mut self,
+        session: &GameSession,
+        automatic_day_end: bool,
+    ) -> Result<PreparedDriverStep, String> {
         self.ensure_session_authority(session)?;
         let next_tick = self.world_committed_tick().checked_add(1)
             .ok_or_else(|| "driver sync 下一 tick 已耗尽".to_owned())?;
-        let registrations = if next_tick.is_multiple_of(session.export_setup_for_runtime().ticks_per_day) { 2 } else { 1 };
+        let registrations = if automatic_day_end && next_tick.is_multiple_of(session.export_setup_for_runtime().ticks_per_day) { 2 } else { 1 };
         self.sync_source_seq.checked_add(registrations)
             .ok_or_else(|| "driver sync source_seq 在本拍完整登记前已耗尽".to_owned())?;
         self.world.set_civil_date(session.civil_date());
@@ -409,7 +384,7 @@ impl RuntimeDriver {
             .prepare_step_with_capture(session, true)
             .and_then(|mut input| {
                 let tick = self.world.global.committed_tick;
-                if tick.is_multiple_of(session.export_setup_for_runtime().ticks_per_day) {
+                if automatic_day_end && tick.is_multiple_of(session.export_setup_for_runtime().ticks_per_day) {
                     input = self.prepare_day_end_input(session, input, true, true)?;
                 }
                 Ok(input)

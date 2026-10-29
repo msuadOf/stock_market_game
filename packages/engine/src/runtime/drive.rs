@@ -23,12 +23,29 @@ mod administrative_mirror;
 pub(crate) use administrative_mirror::AdministrativeBaseline;
 mod sync_inputs;
 mod static_projection;
+mod handover;
 mod shutdown;
 pub(crate) use static_projection::PreparedStaticRead;
 pub(crate) use convergence::{PreparedDriverCalendar, PreparedDriverStep};
 use crate::money::Money;
 use crate::strategy::StrategyData;
 use crate::{AccountId, Event, GameSession, SessionSetup};
+
+#[derive(Debug)]
+pub(crate) struct RuntimeDriverConstructionError {
+    description: String,
+    pub(crate) cleanup_failed: bool,
+}
+
+impl From<String> for RuntimeDriverConstructionError {
+    fn from(description: String) -> Self { Self { description, cleanup_failed: false } }
+}
+impl From<&str> for RuntimeDriverConstructionError {
+    fn from(description: &str) -> Self { description.to_owned().into() }
+}
+impl std::fmt::Display for RuntimeDriverConstructionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { self.description.fmt(f) }
+}
 
 /// Trade 账户身份只取真实名册；整批解析与编号成功后才推进事件游标。
 fn project_trade_events_for_roster(
@@ -426,7 +443,16 @@ impl RuntimeDriver {
     ) -> Result<Self, String> {
         session.check_external_runtime_factory()?;
         let authority_epoch = session.next_runtime_authority_epoch()?;
-        let mut driver = Self::build_from_session_grouped(session, n_groups, authority_epoch, false)?;
+        let mut driver = Self::build_from_session_grouped(session, n_groups, authority_epoch, false)
+            .map_err(|error| {
+                let description = error.to_string();
+                if error.cleanup_failed {
+                    session.poison_runtime_step(crate::session::StepFatal::InvariantViolation {
+                        location: "RuntimeDriver::from_session_grouped::cleanup".to_owned(), description: description.clone(),
+                    });
+                }
+                description
+            })?;
         session.retire_replaced_internal_runtime_driver();
         session.runtime_clear_resting_for_adoption();
         session.install_runtime_authority_epoch(authority_epoch);
@@ -440,7 +466,7 @@ impl RuntimeDriver {
         session: &GameSession,
         n_groups: usize,
         authority_epoch: u64,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, RuntimeDriverConstructionError> {
         Self::build_from_session_grouped(session, n_groups, authority_epoch, true)
     }
 
@@ -449,7 +475,7 @@ impl RuntimeDriver {
         n_groups: usize,
         authority_epoch: u64,
         static_handover: bool,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, RuntimeDriverConstructionError> {
         // 两个 factory 都在旧簿接管、线程启动或任何输入消费前验证 Calendar。
         session
             .prepare_market_calendar_projection()
@@ -617,7 +643,7 @@ impl RuntimeDriver {
                 if stock >= n_stocks {
                     return Err(format!(
                         "desk 种子股索引越界（无法投影）：stock={stock}（股数 {n_stocks}）"
-                    ));
+                    ).into());
                 }
                 for seed in seeds {
                     let (g, l) = (seed.owner.0 as usize, seed.owner.1 as usize);
@@ -625,7 +651,7 @@ impl RuntimeDriver {
                         return Err(format!(
                             "desk 种子组位越界（无法投影）：owner={:?}（组数 {n_groups}，每组 {per_group}）",
                             seed.owner
-                        ));
+                        ).into());
                     }
                     match seed.side {
                         crate::orderbook::Side::Buy => {
@@ -731,7 +757,10 @@ impl RuntimeDriver {
             session.market_calendar_bindings().map_err(|error| error.to_string())?,
             #[cfg(all(target_family = "wasm", feature = "verification-harness"))]
             None,
-        ).map_err(|e| format!("驱动器世界构造失败：{e:?}"))?;
+        ).map_err(|error| RuntimeDriverConstructionError {
+            cleanup_failed: matches!(&error, super::RuntimeError::ConstructionFailure { cleanup_errors, .. } if !cleanup_errors.is_empty()),
+            description: format!("驱动器世界构造失败：{error}"),
+        })?;
         let presence = (0..n_groups).map(|group| {
             (group as super::GroupIdx, ids.iter().skip(group * per_group).take(per_group)
                 .map(|id| (*id, personal_presence[id])).collect())
@@ -827,28 +856,10 @@ impl RuntimeDriver {
         Ok(())
     }
 
-    /// 驱动一个 tick：runtime 收束 → 账户/行情回写会话 → 事件产出。
-    /// 会话 tick 由调用方（或批 8e 的 step_frame 本体）推进。
+    /// 提交一个真实市场 tick；三档共用 candidate、事实、来源校验与唯一安装。
+    /// 成功返回前推进 Session tick/seq；市场日结仍由既有显式日结 API 触发。
     pub fn step(&mut self, session: &mut GameSession) -> Result<Vec<Event>, String> {
-        self.ensure_session_authority(session)?;
-        session.require_healthy().map_err(|fatal| fatal.to_string())?;
-        // D3a-2c 件2：自然日同步（会话 civil clock 权威——快照 civil_date
-        // 的唯一来源；休市日跳变经此传导）。
-        self.world.set_civil_date(session.civil_date());
-        // D4 相位计时：挂当前捕获绑定（组/部 worker 读取安装）；世界运行
-        // 结束必摘（槽内克隆持 Arc，不清则捕获收尾 try_unwrap 失败）。
-        self.world.set_tick_capture(
-            crate::verification_evidence::current_phase_timing_binding(),
-        );
-        let outcome = self.step_with_capture(session);
-        self.world.clear_tick_capture();
-        outcome
-    }
-
-    /// step 本体（D4：捕获绑定已挂）——驱动器侧相位对齐旧管线 10 相。
-    fn step_with_capture(&mut self, session: &mut GameSession) -> Result<Vec<Event>, String> {
-        let prepared = self.prepare_step_with_capture(session, false)?;
-        self.install_driver_projection(session, prepared)
+        session.step_with_external_runtime_driver(self).map_err(|fatal| fatal.to_string())
     }
 
     fn prepare_step_with_capture(
@@ -1832,15 +1843,7 @@ impl RuntimeDriver {
     pub(crate) fn has_committed_market_close_for_civil(
         &self, tick: u64, date: crate::calendar::CivilDate,
     ) -> Result<bool, super::RuntimeError> {
-        let Some(record) = self.world.committed_calendar_tick()? else { return Ok(false); };
-        let current = self.world.mirror_source();
-        Ok(record.source.authority_epoch == current.authority_epoch
-            && record.source.tick == tick && current.tick == tick
-            && current.civil_date == date
-            && record.calendar.day().day_model().current_date() == date
-            && record.calendar.after_input().tick == tick
-            && record.calendar.after_input().progress == crate::session::exchange_calendar_model::SharedDayProgress::TradingCompleted
-            && current.day_end_stage != crate::runtime::source::MirrorDayEndStage::Tick)
+        self.world.has_committed_market_close_for_civil(tick, date)
     }
 
     /// D5 日界·world 段（ends_day 拍在 step 内编排——desk roll_day/组
@@ -2480,6 +2483,15 @@ impl RuntimeDriver {
             .map_err(|e| format!("账户快照失败：{e:?}"))
     }
 
+    /// 仅验证 World 的 Abort 机械可逆性；不冒充公开 driver 的完整提交与 terminal 契约。
+    #[cfg(test)]
+    pub(crate) fn run_world_tick_for_test(&mut self) -> Result<(), String> {
+        self.world
+            .run_ticks(1)
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+    }
+
     /// 消费本拍 sideband；report_log 不再永久保存第二份诊断历史。
     #[cfg(feature = "simulation-diagnostics")]
     pub(crate) fn take_causal_facts(&mut self) -> (Vec<super::diagnostics::DeskCausalFact>, Option<crate::diagnostics::causal::FactTime>, std::collections::BTreeMap<crate::StockId, u64>) {
@@ -2620,77 +2632,14 @@ impl RuntimeDriver {
 }
 
 impl RuntimeDriver {
-    /// 翻转缺口②（批 8h·部分3）：tick 计数与 poison 安装面。
-    ///
-    /// `step_frame_equivalent`：runtime 驱动 + 会话市场侧安装（tick 前进/
-    /// poison 语义）——对照旧管线 `step_frame_and_commit` 的安装段逐段
-    /// 迁移的**第一段**（tick 计数 + 失败 poison）：
-    /// - 成功：`session.state.tick` 前进（经直改标记入口）、事件返回；
-    /// - runtime 失败：映射为 `StepFatal` 并 poison 会话（旧管线
-    ///   `poison_failed_step` 语义：失败后 `require_healthy` 恒拒）。
-    /// 未迁移段（登记）：candidate 投影/observer 回调/事件 seq 写入
-    /// 会话权威（`state.seq`）/日界安装——这些与 envelope/公司域联动，
-    /// 属翻转最后一步的整合面。
+    /// 与 step 共用完整提交；typed 错误保留 Session 首个 fatal，不重复推进 tick/seq。
     pub fn step_frame_equivalent(
         &mut self,
         session: &mut GameSession,
     ) -> Result<Vec<Event>, crate::session::StepFatal> {
-        session.require_healthy()?;
-        self.ensure_session_authority(session).map_err(|description| {
-            crate::session::StepFatal::InvariantViolation {
-                location: "RuntimeDriver::step_frame_equivalent::authority".to_owned(),
-                description,
-            }
-        })?;
-        // step_frame 接轨件 4：seq 权威=会话，每拍从权威重取游标——
-        /// civil 面（end_civil_day_update 走旧管线 candidate 的 session
-        /// 侧 seq 分配）推进 state.seq 后驱动器游标即过期，本拍重取
-        /// 保证分配续接（tick 的锁步校验同式：会话是唯一权威）。
-        self.adopt_session_seq(session);
-        let tick_after = session.tick() + 1;
-        // D4 相位计时：tick 界登记（context_workers 采样真实池容量）。
-        crate::verification_evidence::begin_authoritative_tick(
-            session.tick(),
-            session.compute_context(),
-        )?;
-        match self.step(session) {
-            Ok(events) => {
-                // D4 相位：提交前校验段（相位完整性——缺相=显式失败）。
-                crate::verification_evidence::enter_phase(
-                    crate::session::pipeline::TickPhase::PreCommitValidation,
-                );
-                crate::verification_evidence::validate_precommit()?;
-                session.set_runtime_tick(tick_after);
-                // D4 相位：提交段（权威 tick/seq 写回）。
-                crate::verification_evidence::enter_phase(
-                    crate::session::pipeline::TickPhase::CommitTick,
-                );
-                self.sync_seq_into_session(session).map_err(|description| {
-                    crate::session::StepFatal::InvariantViolation {
-                        location: "RuntimeDriver::step_frame_equivalent::authority".to_owned(),
-                        description,
-                    }
-                })?;
-                crate::verification_evidence::mark_committed(tick_after);
-                // D4（t3 读面对等）：root 完成交接见证——runtime 的等价
-                // 交付点=本 tick 事件即将返回（收束完成→交付）。计数域/
-                // 序数/反捕获栈逻辑与旧写入者（ready_ingress）逐字对齐：
-                // 完成序号恒奇数位（fetch+1 先于交付 fetch），同 tick 重
-                // 捕获首例抓栈。roots 非空标记=本 tick 事件非空（生产
-                // 产物面——映射登记）。
-                #[cfg(test)]
-                Self::record_root_handover(session, tick_after, !events.is_empty());
-                Ok(events)
-            }
-            Err(runtime_err) => {
-                let fatal = crate::session::StepFatal::InvariantViolation {
-                    location: "RuntimeDriver::step_frame_equivalent".to_owned(),
-                    description: runtime_err,
-                };
-                Err(session.poison_runtime_step(fatal))
-            }
-        }
+        session.step_with_external_runtime_driver(self)
     }
+
 }
 
 impl RuntimeDriver {

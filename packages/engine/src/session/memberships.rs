@@ -107,6 +107,8 @@ pub enum MembershipError {
     MarketUnhealthy(String),
     #[error("加入市场的共享收件入口登记失败：{0}")]
     IngressRegistration(String),
+    #[error("市场运行态移交失败：{0}")]
+    RuntimeHandover(String),
 }
 
 impl MarketMembershipState {
@@ -273,30 +275,6 @@ impl GameSession {
                 external_cash: cash,
             },
         };
-        if let Some(binding) = &self.ingress {
-            binding
-                .source
-                .register_player(account_id)
-                .map_err(|error| MembershipError::IngressRegistration(error.to_string()))?;
-        }
-        self.state.accounts.insert(
-            account_id,
-            Account::new(account_id, AccountKind::Player, cash),
-        );
-        self.state.history_reads.insert(
-            account_id,
-            crate::experience::PersonalHistoryReadLedger::default(),
-        );
-        self.state
-            .memberships
-            .members
-            .insert(subject, member.clone());
-        // std-thread runtime 适配（main 形态）：世界名册（RuntimeDriver 的
-        // id_map）在驱动器构造时固化，动态加入的成员账户不在既有名册内、
-        // 外部意图路由会显式失败。join_market 是静点（不在 tick 中），此处
-        // 丢弃常驻驱动器，下一 step_frame 经 from_session 以新名册重建——
-        // 与 runtime_discard_driver_flag（投影段失败丢弃、重试重建）同机制。
-        self.runtime_driver = None;
-        Ok(member)
+        self.join_with_runtime_handover(subject, member)
     }
 }

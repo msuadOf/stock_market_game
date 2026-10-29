@@ -698,3 +698,18 @@ std-thread runtime 的 `DayEndCalendar` 明确区分 `MarketTick` 与 `ManualDay
 释放完成后，更新后的 `PlanBook` 经唯一 clone/swap 算法迁移，避免旧簿覆盖回流事实。
 这些前置校验不改变 Drain、权益及其它原有失败的 undo/Abort 契约；不据此宣称公司回购
 真实执行、完整授权或其它未实现规则已支持。合成沪深差异测试不代表官方未来交易日安排。
+
+### 运行镜像同步与日终存档（2026-10-29）
+
+`RuntimeSyncPolicy` 控制 std-thread runtime 的展示镜像安装时机。新局默认 `EveryTick`；
+`DayEnd` 日内仅提交真实市场进度与逐拍事实，拒绝 Player ingress；`OnDemand` 在显式
+`flush_now()` 或运行账户消费前同步镜像。三档均在市场日结完成后同步完整权威，再执行
+自然日日结。现金单位仍为分、持仓单位仍为股，撮合、费用和 T+1 规则不随镜像策略改变。
+
+公开运行 `tick/seq/day/phase` 表达已提交进度；`mirror_origin` 明示可滞后的镜像来源及相位。
+显式 flush 不增加市场 tick 或事件 seq。只读日终候选查询不触发 flush，未完成的自然日不能
+因镜像已经同步而冒充保存成功。WASM 串行管线只支持 `EveryTick`，不支持日内镜像解耦。
+
+成员加入在旧 World 静点捕获完整账户、本人态、计划、在途委托、真实 RNG 与来源，
+先准备新 authority，再登记 receiver；成功后只移动已验证值，并停止旧 worker，
+不重新撮合、不 Drain 或重发历史。准备失败保留旧权威；无法完整回收时显式终结会话。

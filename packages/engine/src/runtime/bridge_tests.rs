@@ -382,8 +382,10 @@ fn runtime_driver_steps_session_with_account_writeback_and_events() {
         .sum();
     let mut total_events = 0usize;
     let mut last_seq: Option<u64> = None;
-    for _ in 0..20 {
+    for tick in 1..=20 {
         let events = driver.step(&mut session).expect("驱动 tick");
+        assert_eq!(session.tick(), tick);
+        assert_eq!(events.iter().filter(|event| matches!(event, crate::Event::PriceTick { .. })).count(), session.stock_count_for_runtime());
         for e in &events {
             let seq = match e {
                 crate::Event::Trade { seq, .. } => *seq,
@@ -392,9 +394,8 @@ fn runtime_driver_steps_session_with_account_writeback_and_events() {
                 | crate::Event::OrderCanceled { seq, .. }
                 | crate::Event::IntentRejected { seq, .. }
                 | crate::Event::AuctionTick { seq, .. }
-                | crate::Event::AuctionCompleted { seq, .. } => *seq,
-                // 纵切当前不产这些类型（PriceTick/日界/公司域留后续批）；
-                // 出现即断言失败（显式，不静默跳过）。
+                | crate::Event::AuctionCompleted { seq, .. }
+                | crate::Event::PriceTick { seq, .. } => *seq,
                 other => panic!("纵切事件面外的事件：{other:?}"),
             };
             if let Some(prev) = last_seq {

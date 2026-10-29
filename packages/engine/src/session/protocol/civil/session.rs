@@ -350,6 +350,26 @@ impl ProtocolSession {
             })
     }
 
+    /// 显式同步后返回当前 Snapshot；不构造市场 TickFrame。
+    pub fn flush_now(&mut self) -> Result<crate::Snapshot, StepFatal> {
+        self.state.game.flush_now()?;
+        let snapshot = self.state.game.runtime_snapshot();
+        let current = self.state.game.public_runtime_state()
+            .map_err(|fatal| self.state.game.poison_runtime_step(fatal))?;
+        self.state.committed_runtime = Some(current.clone());
+        *self.state.published_runtime.borrow_mut() = Some(current);
+        Ok(snapshot)
+    }
+
+    /// 只读选择指定自然日已经成功生成的日终候选。
+    pub fn save_current_day(&self, date: crate::CivilDate) -> Result<crate::SaveSlot, SessionError> {
+        self.state.game.require_healthy()?;
+        self.state.day_end_save.as_ref()
+            .filter(|slot| slot.civil_clock.settled_through == Some(date))
+            .map(|slot| slot.as_ref().clone())
+            .ok_or_else(|| SessionError::InvalidSave(ValidationFault::bare(crate::error::SAVE_TARGET_DAY_NOT_READY)))
+    }
+
     pub fn save_candidate(
         &self,
         key: &super::super::SaveCandidateKey,

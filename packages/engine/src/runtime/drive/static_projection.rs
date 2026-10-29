@@ -76,6 +76,8 @@ impl RuntimeDriver {
             .prepare_market_calendar_projection()
             .map_err(|error| error.to_string())?;
         let source = self.mirror_source();
+        // generation 也会因闭市 retained 重发布前进，不能用它证明 desk 已提交真实行情。
+        let has_committed_market_tick = !self.world.report_log.is_empty();
         let (market_views, session_revision) = if initial_adoption {
             let initial = self
                 .initial_static_seed
@@ -89,7 +91,7 @@ impl RuntimeDriver {
             if source.civil_date != session.civil_date() {
                 return Err("flush 静点 World 与 Session civil date 不一致".to_owned());
             }
-            let views = if source.generation == 0 {
+            let views = if !has_committed_market_tick {
                 self.initial_static_seed
                     .as_ref()
                     .ok_or_else(|| "flush 初始发布缺原始行情种子".to_owned())?
@@ -236,7 +238,7 @@ impl RuntimeDriver {
                 resting: resting.into_iter().map(std::sync::Arc::new).collect(),
                 serials,
                 market_views,
-                refresh_market: !initial_adoption && source.generation != 0,
+                refresh_market: !initial_adoption && has_committed_market_tick,
             }),
         })
     }
