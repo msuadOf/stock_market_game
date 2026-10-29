@@ -584,6 +584,15 @@ fn install_settled_split_history(game: &mut GameSession) {
     while game.civil_date() <= plan.ex_rights_on {
         let day = game.civil_date();
         game.state.civil_clock.end_day(day).unwrap();
+        game.market_calendar_day = None;
+        // 本测试只需构造已结算股本与后续批准上下文；日历仍是会话时钟的权威，
+        // 因而按其实际共享交易会话数同步 tick/day，不伪造连续市场成交。
+        let day_context = game.prepare_market_calendar_day().unwrap();
+        let completed_sessions = day_context.day_model().shared_sessions_before_date();
+        game.state.day = u32::try_from(completed_sessions).unwrap();
+        game.state.tick = completed_sessions
+            .checked_mul(game.state.setup.ticks_per_day)
+            .unwrap();
     }
 }
 

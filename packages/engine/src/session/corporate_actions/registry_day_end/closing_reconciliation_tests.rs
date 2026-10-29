@@ -199,22 +199,13 @@ fn confirmations(session: &GameSession) -> Confirmations {
 }
 
 fn assert_trade(
-    session: &GameSession,
     events: &[Event],
     seller: AccountId,
     buyer: AccountId,
     qty: u32,
 ) -> u64 {
-    let driver = session.runtime_driver_for_test().unwrap().lock().unwrap();
-    // 当前 Event 投影仍为复合 Owner；个人确认已按真实 id_map 归户。
-    // 显式跨过该既有接缝，不把复合数字冒充真实 AccountId，也不修改生产投影。
-    let account = |projected: AccountId| {
-        let group = crate::runtime::GroupIdx::try_from(projected.0 >> 32).unwrap();
-        let local = crate::runtime::LocalIdx::try_from(projected.0 & u64::from(u32::MAX)).unwrap();
-        driver
-            .account_by_owner((group, local))
-            .expect("真实成交Owner必须映射到名册账户")
-    };
+    // Event::Trade 的 maker/taker 已是按生产 id_map 投影出的真实 AccountId；
+    // 稀疏名册断言直接核对真实卖方与买方，防止把 Owner 编码当账户身份。
     let matches: Vec<_> = events
         .iter()
         .filter_map(|event| match event {
@@ -226,8 +217,8 @@ fn assert_trade(
                 maker,
                 taker,
             } if *code == STOCK
-                && account(*maker) == seller
-                && account(*taker) == buyer
+                && *maker == seller
+                && *taker == buyer
                 && *actual == qty
                 && price.cents() == PRICE_CENTS =>
             {
@@ -337,7 +328,6 @@ fn issue119_closing_1200_to_1500_reconciles_real_day_end_accounts_confirmations_
     inject_pair(&session, AccountId(0), AccountId(1), ORDINARY_QTY);
     let ordinary = session.step_via_runtime().unwrap();
     let ordinary_seq = assert_trade(
-        &session,
         &ordinary,
         AccountId(0),
         AccountId(1),
@@ -376,7 +366,7 @@ fn issue119_closing_1200_to_1500_reconciles_real_day_end_accounts_confirmations_
     );
     assert_eq!(positions(&session)[&TARGET][&STOCK], 1200);
     let closing = session.step_via_runtime().unwrap();
-    let closing_seq = assert_trade(&session, &closing, AccountId(3), TARGET, CLOSING_QTY);
+    let closing_seq = assert_trade(&closing, AccountId(3), TARGET, CLOSING_QTY);
     assert!(closing.iter().any(|event| matches!(
         event,
         Event::AuctionCompleted {

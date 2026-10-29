@@ -125,11 +125,20 @@ fn lifecycle_skips_a_pending_stock_and_observes_an_independent_stock() {
                 .unwrap(),
         );
     }
-    session.state.day = 1;
+    let current_date = session.civil_date();
+    session.state.civil_clock.end_day(current_date).unwrap();
+    session.market_calendar_day = None;
+    assert_eq!(session.civil_date(), current_date.next().unwrap());
+    let day_context = session.prepare_market_calendar_day().unwrap();
+    let completed_sessions = day_context.day_model().shared_sessions_before_date();
+    session.state.day = u32::try_from(completed_sessions).unwrap();
+    session.state.tick = completed_sessions
+        .checked_mul(session.state.setup.ticks_per_day)
+        .unwrap();
     let mut request = template;
     request.plan_id = ids[0];
     request.allocation.plan_id = ids[0];
-    request.trading_day = 1;
+    request.trading_day = session.state.day;
     let mut roots = PlanChainOperationBatch::empty();
     roots.push_execution(request);
     roots.push_lifecycle(
