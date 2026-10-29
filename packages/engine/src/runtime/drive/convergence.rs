@@ -631,11 +631,14 @@ impl RuntimeDriver {
                 if let Some(causal) = causal { session.publish_runtime_causal(causal); }
                 return Err(format!("市场日结安装后的自然日推进失败：{error}"));
             }
-            let fatal = match error {
-                crate::session::SessionError::Step(fatal) => fatal,
-                error => crate::session::StepFatal::InvariantViolation {
-                    location: "RuntimeDriver::day_end::civil".to_owned(),
-                    description: format!("市场日结安装后的自然日推进失败：{error}"),
+            let fatal = match session.poison_reason() {
+                Some(first) => first.clone(),
+                None => match error {
+                    crate::session::SessionError::Step(fatal) => fatal,
+                    error => crate::session::StepFatal::InvariantViolation {
+                        location: "RuntimeDriver::day_end::civil".to_owned(),
+                        description: format!("市场日结安装后的自然日推进失败：{error}"),
+                    },
                 },
             };
             #[cfg(feature = "simulation-diagnostics")]
