@@ -108,7 +108,7 @@ fn 转移表全边严格递增() {
 fn 非法状态位形显式失败() {
     let bits = 4u32;
     // gen=0、低 28 位杂散值 8（超出 8 值状态全集）。
-    let w = 0u32 | 8;
+    let w = 8;
     let _ = decode_state(w, bits);
 }
 

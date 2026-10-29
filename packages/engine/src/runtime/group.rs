@@ -9431,8 +9431,8 @@ mod roster_offset_tests {
 
     /// 组数多于名册数（npcs=5 / n_groups=4 ⇒ per_group=2 ⇒ 尾组 offset=6
     /// > 5）：该组全是补齐空槽，须得**空段**——不得 panic（合法配置，
-    /// world.rs 明确以 None 补齐支持）。独立复核发现此前 `assert!` 会
-    /// 把该配置打成组线程崩溃。
+    /// > world.rs 明确以 None 补齐支持）。独立复核发现此前 `assert!` 会
+    /// > 把该配置打成组线程崩溃。
     #[test]
     fn roster_slice_empty_for_group_beyond_roster() {
         let ids = vec![

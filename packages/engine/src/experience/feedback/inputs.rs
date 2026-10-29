@@ -34,7 +34,7 @@ impl RetailExperienceState {
             .feedback
             .stocks
             .get(code)
-            .ok_or_else(|| ExperienceError::NoActiveEntry { code: *code })?;
+            .ok_or(ExperienceError::NoActiveEntry { code: *code })?;
         let held_days = as_of.trading_day - epoch.entry_moment.trading_day;
         Ok(held_days >= LONG_STUCK_TRADING_DAYS
             && epoch

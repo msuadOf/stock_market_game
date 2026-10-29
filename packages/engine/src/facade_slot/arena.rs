@@ -402,8 +402,8 @@ impl SlotArena {
         let mut active = 0u32;
         let mut ra = 0u32;
         let mut rb = 0u32;
-        for i in 0..bump as usize {
-            if in_free[i] {
+        for (i, is_free) in in_free.iter().enumerate().take(bump as usize) {
+            if *is_free {
                 continue;
             }
             match decode_state(

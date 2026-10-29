@@ -495,7 +495,7 @@ impl PhaseTimingBinding {
     pub(crate) fn strong_count(&self) -> usize {
         self.0
             .as_ref()
-            .map(|collector| std::sync::Arc::strong_count(collector))
+            .map(std::sync::Arc::strong_count)
             .unwrap_or(0)
     }
 }

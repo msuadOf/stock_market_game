@@ -502,10 +502,9 @@ where
                 } else {
                     "PANIC"
                 };
-                return Err(io::Error::new(
-                    io::ErrorKind::Other,
-                    format!("FACADE_DEAD_{kind}:0x{code:X}（worker 死亡信号，§8.2.2）"),
-                ));
+                return Err(io::Error::other(format!(
+                    "FACADE_DEAD_{kind}:0x{code:X}（worker 死亡信号，§8.2.2）"
+                )));
             }
             JoinState::Consumed => {
                 arena

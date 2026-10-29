@@ -364,7 +364,7 @@ mod context_tests {
         // Luna 快检（方向A）补证：目标数是近似+上界，非恰等——9/4 目标 4，
         // 实际 chunk_size=3 ⇒ 3 个 chunk（ceil(9/3)=3 ≤ 4）。
         assert_eq!(parallel_grain(9, 4), 3);
-        assert!(9usize.div_ceil(parallel_grain(9, 4)) <= 9.min(4));
+        assert!(9usize.div_ceil(parallel_grain(9, 4)) <= 4);
     }
 
     #[cfg(target_arch = "wasm32")]
@@ -822,17 +822,12 @@ impl ComputeContext {
                                         {
                                             crate::session::pipeline::with_executor_binding(
                                                 executor,
-                                                move || {
-                                                    range
-                                                        .clone()
-                                                        .map(|i| item(i))
-                                                        .collect::<Vec<_>>()
-                                                },
+                                                move || range.clone().map(item).collect::<Vec<_>>(),
                                             )
                                         }
                                         #[cfg(not(any(test, feature = "verification-harness")))]
                                         {
-                                            range.map(|i| item(i)).collect::<Vec<_>>()
+                                            range.map(item).collect::<Vec<_>>()
                                         }
                                     },
                                 )
@@ -1042,8 +1037,6 @@ impl<'scope> Scope<'scope> {
 pub(crate) fn scope<'scope, R>(work: impl FnOnce(&Scope<'scope>) -> R) -> R {
     work(&Scope(std::marker::PhantomData))
 }
-
-pub(crate) use scope as in_place_scope;
 
 thread_local! {
     /// install 深度（串行垫片的 is_worker 判据）。

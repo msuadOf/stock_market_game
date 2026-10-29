@@ -193,8 +193,7 @@ fn simple_model_with_cycle(
         SimpleBookDisplayConfig, SimpleFinanceConfig, SimpleSummaryRule,
     };
     use crate::company::simple::period::{
-        AnnualTrendConfig, PeriodGenerationParameters, PeriodNoiseConfig,
-        PeriodVariableExpenseRule, SettlementCycle,
+        AnnualTrendConfig, PeriodGenerationParameters, PeriodNoiseConfig, PeriodVariableExpenseRule,
     };
     use crate::company::simple::{SimpleCompanyConfig, SimpleConfig, SimpleEnvironmentConfig};
     use crate::company::{CompanyKind, CompanySpec, CompanySystem, IndustryId};
@@ -207,7 +206,7 @@ fn simple_model_with_cycle(
     // spec code "empty-simple" 在单公司集合内分配数值 id 0。
     let company = CompanyId(0);
     let start = CivilDate::from_iso("2030-01-01").unwrap();
-    let system = CompanySystem::create(
+    CompanySystem::create(
         vec![CompanySpec {
             code: "empty-simple".into(),
             name: "空历史简单公司".into(),
@@ -279,8 +278,7 @@ fn simple_model_with_cycle(
         start,
         17,
     )
-    .unwrap();
-    system
+    .unwrap()
 }
 
 fn monthly_availability_query() -> crate::company::PublicReportAvailabilityQuery {

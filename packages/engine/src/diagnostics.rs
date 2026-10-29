@@ -1564,8 +1564,7 @@ fn summarize_ensemble(
             expected: 0,
             actual: 0,
         })
-        .ok()
-        .expect("汇总前 setup 已验证，目录必须可构造");
+        .unwrap_or_else(|_| panic!("汇总前 setup 已验证，目录必须可构造"));
     let mut stocks = BTreeMap::new();
     let mut extreme_cases = Vec::with_capacity(setup.stocks.len() * 3);
     for stock in &setup.stocks {

@@ -173,7 +173,7 @@ impl PersonalPriceMemory {
         let entry = self
             .stocks
             .get_mut(code)
-            .ok_or_else(|| PriceMemoryError::UnobservedStock { code: *code })?;
+            .ok_or(PriceMemoryError::UnobservedStock { code: *code })?;
         entry.record_public_history_read(code, market_minute, reads)
     }
 

@@ -25,8 +25,8 @@ use crate::GameSession;
 
 /// 双组世界（会话 + 驱动器）：机构位被均分到两组（组 1 的 `roster_offset
 /// > 0`——缺陷的必要条件）。沿用 `d3a2c_group_open_derivation_matches_
-/// session_observe` 的会话 fixture（完整 legal 个人态：attention/belief/
-/// information 六件齐全——observe 链需跑完才显红，不从零造 fixture）。
+/// > session_observe` 的会话 fixture（完整 legal 个人态：attention/belief/
+/// > information 六件齐全——observe 链需跑完才显红，不从零造 fixture）。
 fn grouped_world(n_groups: usize, inst_count: u32) -> (GameSession, RuntimeDriver) {
     let mut setup = setup_fixture();
     setup.npcs.retail_count = 0;

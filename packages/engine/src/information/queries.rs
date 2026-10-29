@@ -474,7 +474,8 @@ mod tests {
         let started = std::time::Instant::now();
         let library = library_with_reports(total);
         let setup_elapsed = started.elapsed();
-        let as_of = as_of_after_publication();
+
+        let _as_of = as_of_after_publication();
 
         // 场景 1：宿主翻完整历史（游标漫游全部页）。
         let mut cursor = None;
