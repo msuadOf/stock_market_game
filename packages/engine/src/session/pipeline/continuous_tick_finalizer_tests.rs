@@ -470,13 +470,21 @@ fn tick_and_day_overflow_are_typed_and_atomic() {
                 game.session_state_hash().unwrap(),
             ))
         };
+        let boundary_error = super::phase::PhasePolicy::capture(&game)
+            .boundary(&game)
+            .expect_err("PhasePolicy boundary must report the exact clock overflow");
+        assert!(matches!(
+            &boundary_error,
+            super::StepFatal::InvariantViolation { location, description }
+                if location == "pipeline::PhasePolicy::boundary" && description.contains("溢出")
+        ));
+        let calendar_error = game
+            .prepare_market_calendar_tick()
+            .expect_err("calendar tick must retain the exact typed overflow");
         let error = prepare_market_tick(&mut game)
             .err()
             .expect("clock overflow must fail");
-        assert!(
-            matches!(error.into_fatal(), super::StepFatal::InvariantViolation { location, description }
-            if location == "pipeline::PhasePolicy::boundary" && description.contains("溢出"))
-        );
+        assert_eq!(error.into_fatal(), calendar_error);
         if let Some(before) = before {
             assert_eq!(
                 (

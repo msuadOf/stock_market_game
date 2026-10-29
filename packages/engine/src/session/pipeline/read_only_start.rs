@@ -287,8 +287,22 @@ mod tests {
                     ),
                 );
             } else {
-                // hydration 与 Seal 都不消费 category；稍后的 context 必须仍排在资源错误之后。
-                game.state.setup.stocks.clear();
+                // 保持 setup、StockCatalog 与 Calendar 绑定完整，只让涨停价投影在 context 阶段失败。
+                game.state
+                    .markets
+                    .get_mut(&code)
+                    .unwrap()
+                    .fixture_set_last_close(Money::ZERO);
+                let context_error =
+                    super::super::account_validation_context::build_account_validation_context(
+                        &game,
+                    )
+                    .expect_err("零昨收必须使 AccountValidation context 的涨停价计算显式失败");
+                assert!(matches!(
+                    context_error,
+                    super::super::StepFatal::InvariantViolation { location, .. }
+                        if location == "pipeline::account_validation_context"
+                ));
             }
             let expected = match game.validate_existing_live_envelope_projection() {
                 Err(error) => error,

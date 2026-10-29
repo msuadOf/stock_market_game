@@ -169,6 +169,8 @@ fn continuous_adapter_rejects_a_cross_stock_market_map() {
     let first = StockId(0);
     let second = StockId(1);
     let first_market = game.state.markets.remove(&first).unwrap();
+    let second_market = game.state.markets.remove(&second).unwrap();
+    game.state.markets.insert(first, second_market);
     game.state.markets.insert(second, first_market);
 
     let error = prepare_incremental_continuous_inputs(&game).unwrap_err();
@@ -176,7 +178,7 @@ fn continuous_adapter_rejects_a_cross_stock_market_map() {
     assert!(matches!(
         error,
         StepFatal::InvariantViolation { description, location }
-            if description.contains("market map key")
+            if description == "market map key disagrees with the market stock code"
                 && location == "pipeline::continuous_matching_adapter"
     ));
 }
