@@ -235,22 +235,27 @@ fn weekend_report_publishes_without_trade() {
     );
     for (account, before) in &save_before.npc_attention {
         let after = &save_after.npc_attention[account];
+        let receives_information_check = save_before.belief_books.contains_key(account);
         assert_eq!(after.information_cadence, before.information_cadence);
-        assert_eq!(
-            after.next_information_check,
-            expected_next_information_check(
-                before.information_cadence,
-                before.next_information_check,
-                saturday_report.disclosure_instant,
-            ),
-            "账户 {account:?} 的自然日信息检查时点按其 cadence 推进"
-        );
         assert_eq!(after.base_probability, before.base_probability);
         assert_eq!(
             after.next_attention_candidate_tick,
             before.next_attention_candidate_tick
         );
         assert_eq!(after.rng_state, before.rng_state);
+        if receives_information_check {
+            assert_eq!(
+                after.next_information_check,
+                expected_next_information_check(
+                    before.information_cadence,
+                    before.next_information_check,
+                    saturday_report.disclosure_instant,
+                ),
+                "参与信息投递的账户 {account:?} 按其 cadence 推进自然日检查时点"
+            );
+        } else {
+            assert_eq!(after, before, "未参与信息投递的账户 {account:?} 整行不变");
+        }
     }
     assert!(saturday_report.events.len() > 1);
     for (index, event) in saturday_report.events.iter().enumerate() {

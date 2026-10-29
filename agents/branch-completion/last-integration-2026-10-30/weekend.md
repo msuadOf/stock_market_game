@@ -1,4 +1,4 @@
-# Weekend publication failure follow-up
+# 周末披露失败复核记录
 
 日期：2026-10-30
 
@@ -14,4 +14,4 @@
 
 ## 修改与验证
 
-仅调整 `packages/engine/tests/publications/weekend_publish.rs`：新增根据保存前 cadence、旧检查时点与周六披露时点独立推算预期值的测试辅助函数；逐账户核对账户集合、cadence、预期检查时点、基础注意力概率、候选 tick 和 RNG 状态。没有按实际结果回填预期，也没有删除注意力断言。`git diff --check` 通过。未运行测试。
+仅调整 `packages/engine/tests/publications/weekend_publish.rs`：新增根据保存前 cadence、旧检查时点与周六披露时点独立推算预期值的测试辅助函数；逐账户核对账户集合、cadence、预期检查时点、基础注意力概率、候选 tick 和 RNG 状态。是否推进检查时点依据保存前 `belief_books` 的参与者键集独立推导；该键集恢复为 `belief_participants`，也是 runtime `INFO` 名册的资格源。未参与信息投递的账户要求整个 attention 行保持不变。没有按实际结果回填预期，也没有删除注意力断言。`git diff --check` 通过。未运行测试。
