@@ -1281,6 +1281,8 @@ impl DeskState {
                 purse,
                 ReceiptKind::PhaseRejected,
                 repurchase,
+                #[cfg(feature = "simulation-diagnostics")]
+                source,
             )?;
             return Ok(());
         }
@@ -1292,6 +1294,8 @@ impl DeskState {
                 purse,
                 ReceiptKind::AuctionLimitOrderRequired,
                 repurchase,
+                #[cfg(feature = "simulation-diagnostics")]
+                source,
             )?;
             return Ok(());
         }
@@ -1317,6 +1321,8 @@ impl DeskState {
                 purse,
                 ReceiptKind::ExceedsOrderCap,
                 repurchase,
+                #[cfg(feature = "simulation-diagnostics")]
+                source,
             )?;
             return Ok(());
         }
@@ -1329,6 +1335,8 @@ impl DeskState {
                 purse,
                 ReceiptKind::NotRoundLot,
                 repurchase,
+                #[cfg(feature = "simulation-diagnostics")]
+                source,
             )?;
             return Ok(());
         }
@@ -1342,6 +1350,8 @@ impl DeskState {
                 purse,
                 ReceiptKind::PriceOutOfBand,
                 repurchase,
+                #[cfg(feature = "simulation-diagnostics")]
+                source,
             )?;
             return Ok(());
         }
@@ -1363,7 +1373,16 @@ impl DeskState {
             } else {
                 ReceiptKind::PriceOutOfBand
             };
-            self.reject(owner, side, qty, purse, kind, repurchase)?;
+            self.reject(
+                owner,
+                side,
+                qty,
+                purse,
+                kind,
+                repurchase,
+                #[cfg(feature = "simulation-diagnostics")]
+                source,
+            )?;
             return Ok(());
         }
         if purse < 0 || (side == Side::Sell && purse != 0) {
@@ -2388,6 +2407,7 @@ impl DeskState {
     }
 
     /// 受理拒绝：实体原路退回 + 回执（被拒单消耗序号）。
+    #[allow(clippy::too_many_arguments)]
     fn reject(
         &mut self,
         owner: Owner,
@@ -2396,7 +2416,11 @@ impl DeskState {
         purse: i64,
         kind: ReceiptKind,
         repurchase: Option<super::RepurchaseRequestKey>,
+        #[cfg(feature = "simulation-diagnostics")] source: super::diagnostics::OperationSource,
     ) -> Result<(), RuntimeError> {
+        #[cfg(feature = "simulation-diagnostics")]
+        let causal_before = self.causal_quote()?;
+        let order = (self.setup.stock, self.next_serial);
         let g = owner.0 as usize;
         match side {
             Side::Buy => {
@@ -2418,7 +2442,6 @@ impl DeskState {
             local: owner.1,
             order_serial: (u64::from(self.setup.stock) << 32) | self.next_serial,
         });
-        let order = (self.setup.stock, self.next_serial);
         // 同上：2^32 checked（v6 方案 A 守卫——拒收回执身份同域）。
         self.next_serial = self
             .next_serial
@@ -2446,9 +2469,22 @@ impl DeskState {
                 end: super::retail_lifecycle::Termination::Aborted,
             });
         #[cfg(feature = "simulation-diagnostics")]
-        self.note_causal(super::diagnostics::DeskCausalKind::Unsupported {
-            detail: "真实 desk reject 的 rich 来源尚未接通",
-        });
+        {
+            self.note_causal(super::diagnostics::DeskCausalKind::Submitted {
+                order,
+                owner,
+                side,
+                qty,
+                source,
+                before: causal_before,
+            });
+            self.note_causal(super::diagnostics::DeskCausalKind::Rejected {
+                order,
+                owner,
+                qty,
+                kind,
+            });
+        }
         self.receipts_out[g].push(DeskReceipt { order, owner, kind });
         if let Some(request) = repurchase {
             self.repurchase_out[g].push(super::RepurchaseSourceFact {

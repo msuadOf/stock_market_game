@@ -132,9 +132,10 @@ impl GameSession {
         // 仅本拍 touched orders；首次观察到旧单时保留真实累计值，不补造 Submitted。
         let mut touched =
             std::collections::BTreeMap::<OrderId, (AccountId, crate::Side, i64)>::new();
+        let mut rejected_orders = std::collections::BTreeSet::<OrderId>::new();
         let mut sources = std::collections::BTreeSet::new();
         let mut drain_start = None;
-        for fact in raw.iter().copied() {
+        for (raw_index, fact) in raw.iter().copied().enumerate() {
             use crate::runtime::retail_lifecycle::BatchContext;
             let drain = match fact.context {
                 BatchContext::Tick { tick: actual, .. }
@@ -262,6 +263,69 @@ impl GameSession {
                         qty,
                     }));
                 }
+                DeskCausalKind::Rejected {
+                    order,
+                    owner,
+                    qty,
+                    kind,
+                } => {
+                    if drain || qty == 0 {
+                        return Err(fail("Rejected 必须来自本拍非空拒收申报".to_owned()));
+                    }
+                    if !matches!(
+                        kind,
+                        crate::runtime::ReceiptKind::PhaseRejected
+                            | crate::runtime::ReceiptKind::AuctionLimitOrderRequired
+                            | crate::runtime::ReceiptKind::ExceedsOrderCap
+                            | crate::runtime::ReceiptKind::NotRoundLot
+                            | crate::runtime::ReceiptKind::PriceOutOfBand
+                            | crate::runtime::ReceiptKind::PriceCageExceeded
+                    ) {
+                        return Err(fail(format!(
+                            "causal Rejected 回执种类尚未接通：{kind:?} order={order:?}"
+                        )));
+                    }
+                    let previous_fact = raw_index.checked_sub(1).and_then(|index| raw.get(index));
+                    if previous_fact.is_some_and(|previous| previous.context != fact.context) {
+                        return Err(fail(format!(
+                            "causal Rejected 与紧邻 Submitted 来源上下文错配：{order:?}"
+                        )));
+                    }
+                    let previous = previous_fact.map(|fact| fact.kind);
+                    let Some(DeskCausalKind::Submitted {
+                        order: submitted_order,
+                        owner: submitted_owner,
+                        side,
+                        qty: submitted_qty,
+                        ..
+                    }) = previous
+                    else {
+                        return Err(fail(format!(
+                            "causal Rejected 缺少紧邻的真实 Submitted：{order:?}"
+                        )));
+                    };
+                    if submitted_order != order || submitted_owner != owner || submitted_qty != qty
+                    {
+                        return Err(fail(format!(
+                            "causal Rejected 与紧邻 Submitted 身份或数量错配：{order:?}"
+                        )));
+                    }
+                    let (order, account) = identity(order, owner)?;
+                    if touched.get(&order) != Some(&(account, side, 0))
+                        || !rejected_orders.insert(order)
+                    {
+                        return Err(fail(format!(
+                            "causal Rejected 对应订单已有 fill、重复终止或未受理：{order:?}"
+                        )));
+                    }
+                    kinds.push(CausalFactKind::Terminated {
+                        order,
+                        account,
+                        code,
+                        qty,
+                        reason: Termination::Aborted,
+                    });
+                }
                 DeskCausalKind::Cancelled {
                     order,
                     owner,
@@ -344,6 +408,12 @@ impl GameSession {
                         .ok_or_else(|| fail("causal gross 溢出".to_owned()))?;
                     let (sell_order, sell_account) = identity(seller.order, seller.owner)?;
                     let (buy_order, buy_account) = identity(buyer.order, buyer.owner)?;
+                    if rejected_orders.contains(&sell_order) || rejected_orders.contains(&buy_order)
+                    {
+                        return Err(fail(format!(
+                            "causal Execution 引用已拒收订单：{sell_order:?} {buy_order:?}"
+                        )));
+                    }
                     for (order, account, leg_side, value_before) in [
                         (
                             sell_order,
@@ -1236,6 +1306,158 @@ mod tests {
             assert!(
                 game.causal_facts().is_empty(),
                 "typed 只读正负校验均不能提前发布"
+            );
+        }
+
+        #[test]
+        fn d2_rejected_requires_adjacent_supported_submission_and_matching_identity() {
+            use crate::runtime::diagnostics::{
+                DeskCausalFact, DeskCausalKind, DeskQuote, OperationSource,
+            };
+            use crate::runtime::retail_lifecycle::BatchContext;
+            let mut game = super::super::super::runtime_diagnostics_tests::d2_game();
+            let driver = crate::runtime::drive::RuntimeDriver::from_session(&mut game).unwrap();
+            let owner = (0..driver.accounts_per_group() as u32)
+                .map(|local| (0, local))
+                .find(|owner| driver.account_by_owner(*owner) == Some(AccountId(0)))
+                .unwrap();
+            let context = BatchContext::Tick {
+                tick: game.tick(),
+                round: 0,
+                stock: 1,
+            };
+            let before = DeskQuote {
+                bid_cents: None,
+                ask_cents: None,
+                bid_depth: 0,
+                ask_depth: 0,
+            };
+            let pair = || {
+                vec![
+                    DeskCausalFact {
+                        context,
+                        kind: DeskCausalKind::Submitted {
+                            order: (1, 7),
+                            owner,
+                            side: Side::Buy,
+                            qty: 100,
+                            source: OperationSource::PlayerExternal,
+                            before,
+                        },
+                    },
+                    DeskCausalFact {
+                        context,
+                        kind: DeskCausalKind::Rejected {
+                            order: (1, 7),
+                            owner,
+                            qty: 100,
+                            kind: crate::runtime::ReceiptKind::PriceOutOfBand,
+                        },
+                    },
+                ]
+            };
+            let translate = |raw: &[DeskCausalFact]| {
+                game.translate_runtime_causal(
+                    &driver,
+                    game.tick(),
+                    raw,
+                    &[],
+                    &game.state.plans,
+                    None,
+                )
+            };
+            let kinds = translate(&pair()).unwrap().0;
+            assert!(kinds.iter().any(|kind| matches!(
+                kind,
+                CausalFactKind::Terminated {
+                    order: OrderId(4_294_967_303),
+                    account: AccountId(0),
+                    qty: 100,
+                    reason: Termination::Aborted,
+                    ..
+                }
+            )));
+
+            assert!(translate(&pair()[1..]).is_err());
+            let mut wrong_order = pair();
+            if let DeskCausalKind::Rejected { order, .. } = &mut wrong_order[1].kind {
+                order.1 += 1;
+            }
+            assert!(translate(&wrong_order).is_err());
+            let mut duplicate = pair();
+            duplicate.push(pair()[1]);
+            assert!(translate(&duplicate).is_err());
+            let mut unsupported_kind = pair();
+            if let DeskCausalKind::Rejected { kind, .. } = &mut unsupported_kind[1].kind {
+                *kind = crate::runtime::ReceiptKind::AlreadyFilled;
+            }
+            assert!(translate(&unsupported_kind).is_err());
+
+            let mut wrong_owner = pair();
+            if let DeskCausalKind::Rejected { owner, .. } = &mut wrong_owner[1].kind {
+                owner.1 += 1;
+            }
+            assert!(translate(&wrong_owner).is_err());
+            let mut wrong_qty = pair();
+            if let DeskCausalKind::Rejected { qty, .. } = &mut wrong_qty[1].kind {
+                *qty += 100;
+            }
+            assert!(translate(&wrong_qty).is_err());
+            let mut wrong_context = pair();
+            wrong_context[1].context = BatchContext::Tick {
+                tick: game.tick(),
+                round: 1,
+                stock: 1,
+            };
+            assert!(translate(&wrong_context).is_err());
+            let mut unresolved = pair();
+            if let DeskCausalKind::Submitted { source, .. } = &mut unresolved[0].kind {
+                *source = OperationSource::NonPlayerUnresolved;
+            }
+            assert!(translate(&unresolved).is_err());
+            let drain_context = BatchContext::Drain {
+                ended_date: game.civil_date(),
+                final_tick: game.tick(),
+                stock: 1,
+            };
+            let mut drain = pair();
+            drain[0].context = drain_context;
+            drain[1].context = drain_context;
+            assert!(translate(&drain).is_err());
+
+            let seller = (0..driver.accounts_per_group() as u32)
+                .map(|local| (0, local))
+                .find(|owner| driver.account_by_owner(*owner) == Some(AccountId(2)))
+                .unwrap();
+            let mut rejected_then_execution = pair();
+            rejected_then_execution.push(DeskCausalFact {
+                context,
+                kind: DeskCausalKind::Execution {
+                    ordinal: 0,
+                    seller: crate::runtime::diagnostics::DeskExecutionLeg {
+                        order: (1, 8),
+                        owner: seller,
+                        value_before: 0,
+                    },
+                    buyer: crate::runtime::diagnostics::DeskExecutionLeg {
+                        order: (1, 7),
+                        owner,
+                        value_before: 0,
+                    },
+                    qty: 100,
+                    price_cents: 1000,
+                    side: Some(Side::Buy),
+                    before,
+                },
+            });
+            let error = translate(&rejected_then_execution).unwrap_err();
+            assert!(
+                matches!(
+                    error,
+                    StepFatal::InvariantViolation { ref description, .. }
+                        if description.contains("引用已拒收订单")
+                ),
+                "拒收订单不能随后成交，且应命中新防护：{error:?}"
             );
         }
 

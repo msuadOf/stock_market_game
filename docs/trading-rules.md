@@ -433,8 +433,12 @@ restore 静点只读原 DayArc projection，不为 Closed 或 Completed 日期�
 连续竞价 Market 的 rich 生命周期沿用原即时撮合：Submitted 与 Execution 使用原单及
 同一次 incoming 操作起点的真实盘口，非零未成交余量记为 `Termination::MarketRemainder`；全成不再生成
 终止事实。该观测不改变上述市价保护带、余量撤销和沪深类型尚未细分的游戏简化。
-拒单、TTL 到期、CancelAll 未解析来源及竞价自成交排除的 rich 生命周期仍未全部支持，
-遇到这些真实路径显式拒绝报告，不能用空报告冒充完整诊断。
+已解析来源的 place 拒单已接通 rich 生命周期：保留真实取号申报尝试的来源与拒单前盘口，
+并以同一订单身份记 `Termination::Aborted`；只覆盖 `PhaseRejected`、
+`AuctionLimitOrderRequired`、`ExceedsOrderCap`、`NotRoundLot`、`PriceOutOfBand` 和
+`PriceCageExceeded`，且逐项与同一 `DeskReport` 的拒收回执核对。`NonPlayerUnresolved` 来源仍显式拒绝。
+TTL 到期、CancelAll 未解析来源及竞价自成交排除的 rich 生命周期仍不支持，遇到这些真实路径
+显式拒绝报告，不能用空报告冒充完整诊断。
 
 内存验证投影保留每股挂单 `seq` 与 `book_next_sequences`，不重新编号或改变同价委托先后。
 下一序号按 u64 十进制字符串无损传输，股票键集必须与配置和市场一致，并严格大于该股

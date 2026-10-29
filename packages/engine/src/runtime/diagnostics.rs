@@ -57,6 +57,12 @@ pub enum DeskCausalKind {
         source: OperationSource,
         before: DeskQuote,
     },
+    Rejected {
+        order: OrderRef,
+        owner: Owner,
+        qty: u32,
+        kind: super::ReceiptKind,
+    },
     Cancelled {
         order: OrderRef,
         owner: Owner,
@@ -177,6 +183,72 @@ pub(super) fn validate_executions(
     Ok(())
 }
 
+/// 同一 DeskReport 的已解析拒收回执必须与 rich sideband 逐项相符。
+pub(super) fn validate_rejections(
+    stock: StockIdx,
+    causal: &[DeskCausalFact],
+    receipts: &[super::DeskReceipt],
+) -> Result<(), super::protocol::RuntimeError> {
+    let fail = |detail| super::protocol::RuntimeError::ProtocolInvariant { detail };
+    let is_place_rejection = |kind: super::ReceiptKind| {
+        matches!(
+            kind,
+            super::ReceiptKind::PhaseRejected
+                | super::ReceiptKind::AuctionLimitOrderRequired
+                | super::ReceiptKind::ExceedsOrderCap
+                | super::ReceiptKind::NotRoundLot
+                | super::ReceiptKind::PriceOutOfBand
+                | super::ReceiptKind::PriceCageExceeded
+        )
+    };
+    let mut actual = Vec::new();
+    for fact in causal {
+        if let DeskCausalKind::Rejected {
+            order,
+            owner,
+            qty,
+            kind,
+        } = fact.kind
+        {
+            if fact.context.stock() != stock
+                || order.0 != stock
+                || order.1 > u64::from(u32::MAX)
+                || qty == 0
+                || !is_place_rejection(kind)
+            {
+                return Err(fail(format!(
+                    "rich Rejected 与原报告股票、数量或受理拒收种类错配：stock={stock} fact={fact:?}"
+                )));
+            }
+            actual.push((order, owner, kind));
+        }
+    }
+    let mut expected = receipts
+        .iter()
+        .filter(|receipt| is_place_rejection(receipt.kind))
+        .map(|receipt| (receipt.order, receipt.owner, receipt.kind))
+        .collect::<Vec<_>>();
+    if receipts
+        .iter()
+        .any(|receipt| is_place_rejection(receipt.kind) && receipt.order.0 != stock)
+    {
+        return Err(fail(format!(
+            "原报告 place 拒收回执股身份错配：stock={stock}"
+        )));
+    }
+    actual.sort_unstable_by_key(|(order, owner, _)| (*order, *owner));
+    expected.sort_unstable_by_key(|(order, owner, _)| (*order, *owner));
+    if actual != expected
+        || actual.windows(2).any(|pair| pair[0].0 == pair[1].0)
+        || expected.windows(2).any(|pair| pair[0].0 == pair[1].0)
+    {
+        return Err(fail(format!(
+            "rich Rejected 与原报告 place 拒收回执缺失、重复或身份/原因错配：stock={stock} actual={actual:?} expected={expected:?}"
+        )));
+    }
+    Ok(())
+}
+
 /// 日终余单必须与同一原始报告的真实终止逐项对应，不能漏记或把主动撤单混入。
 pub(super) fn validate_day_ends(
     stock: StockIdx,
@@ -228,6 +300,69 @@ mod tests {
 
     fn world() -> World {
         world_with_ttl(1_000_000)
+    }
+
+    #[test]
+    fn rich_rejections_match_only_same_report_place_receipts() {
+        let context = super::super::retail_lifecycle::BatchContext::Tick {
+            tick: 1,
+            round: 0,
+            stock: 0,
+        };
+        let order = (0, 7);
+        let owner = (0, 1);
+        let causal = vec![DeskCausalFact {
+            context,
+            kind: DeskCausalKind::Rejected {
+                order,
+                owner,
+                qty: 100,
+                kind: super::super::ReceiptKind::PriceOutOfBand,
+            },
+        }];
+        let receipts = vec![
+            super::super::DeskReceipt {
+                order,
+                owner,
+                kind: super::super::ReceiptKind::PriceOutOfBand,
+            },
+            super::super::DeskReceipt {
+                order: (0, 8),
+                owner,
+                kind: super::super::ReceiptKind::OrderNotFound,
+            },
+        ];
+        validate_rejections(0, &causal, &receipts).unwrap();
+
+        assert!(validate_rejections(0, &causal, &[]).is_err());
+        assert!(validate_rejections(0, &[], &receipts).is_err());
+        let mut duplicate = causal.clone();
+        duplicate.push(causal[0]);
+        assert!(validate_rejections(0, &duplicate, &receipts).is_err());
+        for (changed_order, changed_owner, changed_kind) in [
+            (order, (0, 2), super::super::ReceiptKind::PriceOutOfBand),
+            ((0, 9), owner, super::super::ReceiptKind::PriceOutOfBand),
+            (order, owner, super::super::ReceiptKind::PriceCageExceeded),
+        ] {
+            let mut mismatch = causal.clone();
+            mismatch[0].kind = DeskCausalKind::Rejected {
+                order: changed_order,
+                owner: changed_owner,
+                qty: 100,
+                kind: changed_kind,
+            };
+            assert!(validate_rejections(0, &mismatch, &receipts).is_err());
+        }
+        assert!(validate_rejections(
+            1,
+            &causal,
+            &[super::super::DeskReceipt {
+                order,
+                owner,
+                kind: super::super::ReceiptKind::PriceOutOfBand,
+            }],
+        )
+        .is_err());
     }
 
     fn world_with_ttl(ttl: u64) -> World {

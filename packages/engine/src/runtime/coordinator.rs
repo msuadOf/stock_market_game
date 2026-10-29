@@ -254,6 +254,14 @@ pub(crate) fn converge_round(
                 ) {
                     return RoundOutcome::Failed(error);
                 }
+                #[cfg(feature = "simulation-diagnostics")]
+                if let Err(error) = super::diagnostics::validate_rejections(
+                    r.stock,
+                    &r.causal,
+                    &r.receipts_out_list,
+                ) {
+                    return RoundOutcome::Failed(error);
+                }
                 if !r.retail.is_empty() || !r.trades.is_empty() {
                     let context = super::retail_lifecycle::BatchContext::Tick {
                         tick,

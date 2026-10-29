@@ -1152,7 +1152,68 @@ fn d2_prepare_market_after_real_fill_restores_both_install_capture_modes() {
 mod coordinator_source_tests;
 
 #[test]
-fn d2b_rich_desk_reject_is_explicit_unsupported_and_keeps_prior_candidate_unpublished() {
+fn d2b_rich_desk_reject_publishes_real_aborted_attempt() {
+    let mut game = d2_game();
+    d2_place(&mut game, 0, 1, crate::Side::Buy, 1050, 100);
+    let events = game.step_via_runtime().expect("真实拒单应成功发布候选");
+    assert!(events.iter().any(|event| matches!(
+        event,
+        Event::IntentRejected {
+            account: AccountId(0),
+            code: StockId(1),
+            reason: crate::RejectionReason::PriceCageExceeded,
+            ..
+        }
+    )));
+    assert!(!events
+        .iter()
+        .any(|event| matches!(event, Event::OrderAccepted { .. } | Event::Trade { .. })));
+    let origin = game
+        .causal_facts()
+        .iter()
+        .find_map(|fact| match &fact.kind {
+            CausalFactKind::Submitted(origin) if origin.account == AccountId(0) => Some(origin),
+            _ => None,
+        })
+        .expect("拒收申报必须保留真实订单来源");
+    assert_eq!(origin.code, StockId(1));
+    assert_eq!(origin.qty, 100);
+    assert!(game.causal_facts().iter().any(|fact| matches!(
+        fact.kind,
+        CausalFactKind::Terminated {
+            order,
+            account: AccountId(0),
+            code: StockId(1),
+            qty: 100,
+            reason: crate::diagnostics::causal::Termination::Aborted,
+        } if order == origin.order
+    )));
+    let report = game.causal_diagnostics().unwrap();
+    assert_eq!(
+        (
+            report.submitted_qty,
+            report.aborted_qty,
+            report.filled_qty,
+            report.open_qty
+        ),
+        (100, 100, 0, 0)
+    );
+    let order = report
+        .orders
+        .iter()
+        .find(|order| order.origin.order == origin.order)
+        .unwrap();
+    assert_eq!(order.aborted_qty, 100);
+    assert_eq!(order.filled_qty, 0);
+    assert_eq!(order.open_qty, 0);
+    assert_eq!(
+        order.terminal_reason,
+        Some(crate::diagnostics::causal::Termination::Aborted)
+    );
+}
+
+#[test]
+fn d2b_real_reject_then_late_callback_failure_keeps_prior_candidate_unpublished() {
     let mut game = d2_game();
     d2_place(&mut game, 0, 1, crate::Side::Buy, 990, 100);
     game.step_via_runtime().unwrap();
@@ -1161,20 +1222,109 @@ fn d2b_rich_desk_reject_is_explicit_unsupported_and_keeps_prior_candidate_unpubl
     let prior_facts = serde_json::to_value(game.causal_facts()).unwrap();
     let prior_events = game.last_retail_order_events().to_vec();
     let prior_decisions = game.last_retail_decisions().to_vec();
-    let error = game.step_via_runtime().unwrap_err();
-    assert!(
-        matches!(&error, StepFatal::InvariantViolation { location, description }
-        if location == "runtime::diagnostics::prepare" && description.contains("真实 desk reject 的 rich 来源尚未接通"))
-    );
+    let before = game.business_state_hash().unwrap();
+    let mut called = false;
+    let error = game
+        .step_frame_and_commit_via_runtime(|_, events| {
+            called = true;
+            assert!(events.iter().any(|fact| matches!(
+                fact.event,
+                Event::IntentRejected {
+                    account: AccountId(0),
+                    code: StockId(1),
+                    reason: crate::RejectionReason::PriceCageExceeded,
+                    ..
+                }
+            )));
+            Err::<(), _>(StepFatal::InvariantViolation {
+                location: "d2b_reject_callback".to_owned(),
+                description: "拒单候选之后的晚 callback 故障".to_owned(),
+            })
+        })
+        .unwrap_err();
+    assert!(called);
+    assert_eq!(game.poison_reason(), Some(&error));
     assert_eq!(
         serde_json::to_value(game.causal_facts()).unwrap(),
         prior_facts
     );
     assert_eq!(game.last_retail_order_events(), prior_events);
     assert_eq!(game.last_retail_decisions(), prior_decisions);
+    assert_eq!(game.business_state_hash().unwrap(), before);
+    let terminal = game
+        .runtime_driver
+        .as_ref()
+        .unwrap()
+        .lock()
+        .unwrap()
+        .terminal_causal_snapshot_for_test()
+        .expect("晚 callback 失败必须保留拒单原始事实");
+    assert_eq!(terminal.2, error);
+    let submitted = terminal
+        .1
+        .iter()
+        .find_map(|fact| match fact.kind {
+            crate::runtime::diagnostics::DeskCausalKind::Submitted {
+                order,
+                owner,
+                qty,
+                source: crate::runtime::diagnostics::OperationSource::PlayerExternal,
+                before,
+                ..
+            } if qty == 100 => Some((fact.context, order, owner, before)),
+            _ => None,
+        })
+        .expect("terminal causal 必须保留真实外部申报尝试");
+    let rejected = terminal
+        .1
+        .iter()
+        .find_map(|fact| match fact.kind {
+            crate::runtime::diagnostics::DeskCausalKind::Rejected {
+                order,
+                owner,
+                qty: 100,
+                kind: crate::runtime::ReceiptKind::PriceCageExceeded,
+            } => Some((fact.context, order, owner)),
+            _ => None,
+        })
+        .expect("terminal causal 必须保留真实拒收");
+    {
+        let runtime = game.runtime_driver.as_ref().unwrap().lock().unwrap();
+        let report = runtime
+            .world_report_log()
+            .last()
+            .expect("拒单已由 World 发布原报告");
+        assert!(report.desk_causal.is_empty());
+        assert!(report.desk_receipts.iter().any(|receipt| {
+            receipt.order == rejected.1
+                && receipt.owner == rejected.2
+                && receipt.kind == crate::runtime::ReceiptKind::PriceCageExceeded
+                && runtime.account_by_owner(receipt.owner) == Some(AccountId(0))
+        }));
+    }
     assert_eq!(
-        game.business_state_hash().unwrap(),
-        checkpoint.business_state_hash().unwrap()
+        (submitted.0, submitted.1, submitted.2),
+        rejected,
+        "Submitted 与 Rejected 必须共享 context、order 与 owner"
+    );
+    assert_eq!(
+        submitted.3,
+        crate::runtime::diagnostics::DeskQuote {
+            bid_cents: Some(990),
+            ask_cents: None,
+            bid_depth: 100,
+            ask_depth: 0,
+        },
+        "Submitted 必须保留真实拒单前盘口"
+    );
+    assert_eq!(
+        game.runtime_driver
+            .as_ref()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .account_by_owner(submitted.2),
+        Some(AccountId(0))
     );
     checkpoint.poison_runtime_step(error);
     assert_eq!(
