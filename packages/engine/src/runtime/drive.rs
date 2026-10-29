@@ -289,6 +289,7 @@ pub struct RuntimeDriver {
     /// 每组账户数（多组形态的 Owner(g,l)→全局名册映射基；单组=名册长，
     /// owner.0 恒 0 时 g*k+l==l 兼容）。翻转批组参数化（探针负载用）。
     accounts_per_group: usize,
+    plan_owners: super::plan_ownership::OwnerGroups,
     /// 构造时固定，所有组的计划 policy 必须一致。
     plan_policy: crate::plans::PlanPolicy,
     /// D5 #4：首买经历 init 待办（回写/投影段收集、个人态回写后执行）。
@@ -321,6 +322,17 @@ impl RuntimeDriver {
         }
         if !self.authority_lease.matches(session) {
             return Err("driver authority_epoch 已失效，拒绝旧 owner 写入".to_owned());
+        }
+        self.ensure_plan_ownership()
+    }
+
+    fn ensure_plan_ownership(&self) -> Result<(), String> {
+        if self.id_map.as_slice() != self.id_map_shared.as_slice()
+            || !self
+                .plan_owners
+                .matches_layout(self.world.n_groups(), self.accounts_per_group)
+        {
+            return Err("计划名册或组布局已改变；请重新构造 RuntimeDriver".to_owned());
         }
         Ok(())
     }
@@ -731,13 +743,11 @@ impl RuntimeDriver {
             }
         }
         let plan_policy = *session.runtime_plans_snapshot().policy();
-        spec.initial_plan_books = super::plan_ownership::split(
-            session.runtime_plans_snapshot().clone(),
-            &ids,
-            n_groups,
-            per_group,
-        )
-        .map_err(|error| format!("计划构造移交失败：{error:?}"))?;
+        let plan_owners = super::plan_ownership::OwnerGroups::new(&ids, n_groups, per_group)
+            .map_err(|error| format!("计划构造移交失败：{error:?}"))?;
+        spec.initial_plan_books = plan_owners
+            .split(session.runtime_plans_snapshot().clone())
+            .map_err(|error| format!("计划构造移交失败：{error:?}"))?;
         spec.admin_treasury_bindings =
             admin_treasury_bindings_from_session(session, &ids, per_group)?;
         // P2-2a：稀疏上行读面的全量缓存基线（构造期投影==组端初值）。
@@ -815,6 +825,7 @@ impl RuntimeDriver {
             unresolved_causal_source_for_test: false,
             pending_rejections: Vec::new(),
             accounts_per_group: per_group.max(1),
+            plan_owners,
             plan_policy,
             pending_hold_inits: Vec::new(),
             last_library_version: None,
@@ -1219,14 +1230,10 @@ impl RuntimeDriver {
                 .world
                 .collect_plans()
                 .map_err(|error| format!("计划簿交付投影失败：{error:?}"))?;
-            let plans = super::plan_ownership::merge(
-                shards,
-                &self.id_map,
-                self.world.n_groups(),
-                self.accounts_per_group,
-                self.plan_policy,
-            )
-            .map_err(|error| format!("计划簿完整汇合失败：{error:?}"))?;
+            let plans = self
+                .plan_owners
+                .merge(shards, self.plan_policy)
+                .map_err(|error| format!("计划簿完整汇合失败：{error:?}"))?;
             plans
         };
         let mut touched = Vec::new();
@@ -3281,6 +3288,9 @@ mod repurchase_funds_tests;
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod sync_input_tests;
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod owner_cache_tests;
 
 impl RuntimeDriver {
     /// E1 生产接线首红读面；返回真实覆盖表数量与私有输入序号。

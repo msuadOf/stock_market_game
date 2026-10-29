@@ -72,6 +72,7 @@ impl RuntimeDriver {
         session: &GameSession,
         initial_adoption: bool,
     ) -> Result<PreparedDriverStep, String> {
+        self.ensure_plan_ownership()?;
         let (calendar_day, _) = session
             .prepare_market_calendar_projection()
             .map_err(|error| error.to_string())?;
@@ -174,16 +175,15 @@ impl RuntimeDriver {
                 })
             })
             .collect();
-        let plans = super::super::plan_ownership::merge(
-            self.world
-                .collect_plans()
-                .map_err(|error| error.to_string())?,
-            &self.id_map,
-            self.world.n_groups(),
-            self.accounts_per_group,
-            self.plan_policy,
-        )
-        .map_err(|error| error.to_string())?;
+        let plans = self
+            .plan_owners
+            .merge(
+                self.world
+                    .collect_plans()
+                    .map_err(|error| error.to_string())?,
+                self.plan_policy,
+            )
+            .map_err(|error| error.to_string())?;
         let mut attention = Vec::new();
         let mut seen = std::collections::BTreeSet::new();
         for (group, rows) in self

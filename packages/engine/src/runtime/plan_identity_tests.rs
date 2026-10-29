@@ -25,7 +25,7 @@ fn open(owner: AccountId, stock: u32) -> PlanOpen {
     }
 }
 
-fn seed_book() -> PlanBook {
+pub(super) fn seed_book() -> PlanBook {
     let mut book = PlanBook::default();
     let player = book.create(open(AccountId(0), 0)).unwrap();
     book.apply(
@@ -310,6 +310,69 @@ fn origin_mixed_shards_merge_entries_and_history_cursors_without_reallocating_id
             .into_iter()
             .enumerate()
             .map(|(group, shard)| (group as u16, shard))
+            .collect(),
+        &roster,
+        2,
+        2,
+        *book.policy(),
+    )
+    .unwrap();
+    assert_eq!(merged, book);
+    assert_eq!(
+        serde_json::to_value(merged).unwrap(),
+        serde_json::to_value(book).unwrap()
+    );
+}
+
+#[test]
+fn unordered_sparse_roster_preserves_mixed_origins_terminal_and_none_cursors() {
+    let roster = [AccountId(17), AccountId(0), AccountId(1)];
+    let mut book = PlanBook::default();
+    let investor = book.create(open(AccountId(1), 0)).unwrap();
+    book.apply(
+        investor,
+        PlanEvent::Terminated {
+            reason: TerminationReason::Cancelled,
+            trading_day: 0,
+        },
+    )
+    .unwrap();
+    let issuer = book
+        .create_issuer_repurchase(crate::plans::RepurchaseExecutionOpen {
+            owner: AccountId(17),
+            issuer: crate::company::CompanyId(3),
+            stock: StockId(1),
+        })
+        .unwrap();
+    let (policy, _, entries) = book.into_parts();
+    let book = PlanBook::from_parts(
+        policy,
+        vec![
+            OwnerSequence {
+                owner: AccountId(0),
+                next_sequence: None,
+            },
+            OwnerSequence {
+                owner: AccountId(1),
+                next_sequence: Some(40),
+            },
+            OwnerSequence {
+                owner: AccountId(17),
+                next_sequence: Some(90),
+            },
+        ],
+        entries,
+    )
+    .unwrap();
+    let shards = super::plan_ownership::split(book.clone(), &roster, 2, 2).unwrap();
+    assert!(shards[0].entry(issuer).is_ok());
+    assert!(shards[0].entry(investor).is_err());
+    assert!(shards[1].entry(investor).is_ok());
+    let merged = super::plan_ownership::merge(
+        shards
+            .into_iter()
+            .enumerate()
+            .map(|(g, book)| (g as u16, book))
             .collect(),
         &roster,
         2,

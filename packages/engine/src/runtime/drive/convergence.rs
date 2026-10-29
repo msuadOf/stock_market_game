@@ -580,16 +580,15 @@ impl RuntimeDriver {
                 })
             })
             .collect();
-        input.plans = super::super::plan_ownership::merge(
-            self.world
-                .collect_plans()
-                .map_err(|error| error.to_string())?,
-            &self.id_map,
-            self.world.n_groups(),
-            self.accounts_per_group,
-            self.plan_policy,
-        )
-        .map_err(|error| error.to_string())?;
+        input.plans = self
+            .plan_owners
+            .merge(
+                self.world
+                    .collect_plans()
+                    .map_err(|error| error.to_string())?,
+                self.plan_policy,
+            )
+            .map_err(|error| error.to_string())?;
         let receipts = self.collect_drained_events(session.civil_date())?;
         self.pending_receipts.extend(receipts);
         let closing_events = self.take_drained_auction_events();

@@ -58,6 +58,7 @@ impl super::RuntimeDriver {
                 "行政镜像入口尚有未安装域；请先完成原同步，不消费旧 pending".into(),
             ));
         }
+        self.ensure_plan_ownership().map_err(invalid)?;
         let source = self.mirror_source();
         let accounts = match self.world.snapshot_accounts() {
             Ok(value) => value,
@@ -103,13 +104,7 @@ impl super::RuntimeDriver {
             Ok(value) => value,
             Err(error) => return Err(self.world.stop_failed_administrative_read(error)),
         };
-        let plans = match crate::runtime::plan_ownership::merge(
-            plan_shards,
-            &self.id_map,
-            self.world.n_groups(),
-            self.accounts_per_group,
-            self.plan_policy,
-        ) {
+        let plans = match self.plan_owners.merge(plan_shards, self.plan_policy) {
             Ok(value) => value,
             Err(error) => return Err(self.world.stop_failed_administrative_read(error)),
         };
