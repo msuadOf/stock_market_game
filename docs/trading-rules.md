@@ -659,7 +659,12 @@ Calendar projection 和本次报告的 `disclosure_instant`，不把已前进的
 保护集包含在手股、pending sell 与 active plan，不裁 `history_reads`。即使本人 INFO
 检查未到期或命中同一观察签名，日终裁剪仍在同一个 Group 候选内完成。首个休市日的
 可逆投影拒绝保留原状态并允许重试；本 authority 已实际安装市场收盘后的 civil 失败
-保留收盘并终结该会话。构造／restore 的静点标记不冒充实际市场收盘。
+保留收盘并终结该会话。受限例外仅是尚无首个 fatal、civil 尚未提交时，真实更正 prepare
+返回 typed `ReportCorrectionDayEnd` 的 `InvalidInput` 或 `BusinessCondition`：保留已安装
+市场、retained 和旧存档候选，只允许取消坏更正后重试 civil，不再发送市场 `Start` 或重跑
+收盘。`UnsupportedOperation`、`SystemState`、INFO／输出 callback 即使返回同型错误、
+内部不变量以及已提交 civil 后的失败仍终结会话；不得按“不是 SystemState”自动扩大例外。
+构造／restore 的静点标记不冒充实际市场收盘。
 
 本条只说明普通自然日 INFO 入口；Correction queue 的完成、资本动作、税日 producer、
 三宿主恢复流程与 WASM runtime 迁移仍按各自登记边界验收，不由本条宣称完成。

@@ -1047,6 +1047,53 @@ fn correction_external_full_close_business_rejection_keeps_cancel_retry_availabl
 }
 
 #[test]
+fn correction_external_full_close_callback_cannot_reuse_typed_prepare_rejection() {
+    let mut setup = correction_setup("2030-06-07", None);
+    setup.ticks_per_day = 4;
+    setup.auction_ticks = 0;
+    setup.closing_auction_ticks = 0;
+    setup.npcs.retail_count = 0;
+    setup.npcs.inst_count = 0;
+    setup.npcs.hot_count = 0;
+    let mut session = GameSession::new_with_runtime_groups(setup, 7181, 3).unwrap();
+    let mut request = correction_request(&session, CompanyId(0));
+    request.entries[0].lines[1].account = LedgerAccountId("不存在的科目".into());
+    let epoch = session.report_correction_epoch();
+    session.enqueue_report_correction(&epoch, request.clone()).unwrap();
+    let mut driver = crate::runtime::drive::RuntimeDriver::from_session(&mut session).unwrap();
+    for _ in 0..4 {
+        session.runtime_step_with_install(&mut driver).unwrap();
+    }
+    // 先取得真实 prepare 的 typed cause，不在测试中另造错误类型或分类。
+    let original = session.end_civil_day().unwrap_err();
+    assert!(matches!(&original, SessionError::ReportCorrectionDayEnd(cause)
+        if cause.classification() == crate::company::CompanyErrorClass::InvalidInput));
+    session.require_healthy().unwrap();
+    session.cancel_report_correction(&epoch, &request.operation_id).unwrap();
+    let before = session.business_state_hash().unwrap();
+    let date = session.civil_date();
+    let retained = driver.publication().load();
+    let mut reached = false;
+    let result: Result<(), SessionError> = session.with_prepared_civil_day(|_, _| {
+        reached = true;
+        Err(original)
+    });
+    assert!(reached, "取消坏更正后必须真实完成 prepare 并进入输出 callback");
+    assert!(matches!(result, Err(SessionError::ReportCorrectionDayEnd(cause))
+        if cause.classification() == crate::company::CompanyErrorClass::InvalidInput));
+    let fatal = session.poison_reason()
+        .expect("输出 callback 返回相同 typed 业务错误仍须 terminal，不能借 prepare 例外续跑")
+        .clone();
+    assert_eq!(session.business_state_hash().unwrap(), before);
+    assert_eq!(session.civil_date(), date);
+    assert_eq!((session.tick(), session.day(), driver.world_committed_tick()), (4, 1, 4));
+    assert!(std::sync::Arc::ptr_eq(&retained.retained, &driver.publication().load().retained));
+    assert!(matches!(session.save(), Err(SessionError::Step(actual)) if actual == fatal));
+    assert!(matches!(session.end_civil_day(), Err(SessionError::Step(actual)) if actual == fatal));
+    assert_eq!(driver.step_frame_equivalent(&mut session).unwrap_err(), fatal);
+}
+
+#[test]
 fn correction_tax_cascade_overflow_preserves_actual_accounting_source() {
     let (mut session, mut request) = session_and_request();
     // 保留无历史余额的 6001；首笔过账成功后，真实税务年度利润汇总才发生溢出。

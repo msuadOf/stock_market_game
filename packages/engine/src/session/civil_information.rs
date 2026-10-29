@@ -94,11 +94,19 @@ impl GameSession {
             // 此探测只读 committed record；错误仅可能来自已死亡 World 或已 poison 的锁。
             Err(error) => return Err(self.poison_civil_authority(error)),
         };
+        let mut correction_prepare_rejected = false;
         let prepared = (|| {
             let mut shadow = self
                 .clone_for_tick_shadow()
                 .map_err(|_| SessionError::InvalidSave(ValidationFault::new(1034, vec![0])))?;
-            let report = shadow.prepare_civil_day_disclosures()?;
+            let report = shadow.prepare_civil_day_disclosures().map_err(|error| {
+                correction_prepare_rejected = self.poison_reason().is_none()
+                    && matches!(&error, SessionError::ReportCorrectionDayEnd(cause)
+                        if matches!(cause.classification(),
+                            crate::company::CompanyErrorClass::InvalidInput
+                            | crate::company::CompanyErrorClass::BusinessCondition));
+                error
+            })?;
             shadow.prepare_ordinary_tax_day_end(report.settled_date, market_installed)?;
             let instant = report.disclosure_instant;
             let next_date = report.next_date;
@@ -192,8 +200,10 @@ impl GameSession {
                     {
                         return Err(self.poison_civil_authority(error));
                     }
-                    // 健康 authority 的明确业务拒绝保留 pending，由用户取消后重试。
-                    return Err(error);
+                    if correction_prepare_rejected {
+                        // 仅真实更正 prepare 的两类业务拒绝允许取消后重试 civil。
+                        return Err(error);
+                    }
                 }
                 if terminal || market_installed {
                     return Err(self.poison_civil_authority(error));

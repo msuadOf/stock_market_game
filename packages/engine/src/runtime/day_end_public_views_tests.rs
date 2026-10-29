@@ -138,16 +138,18 @@ fn partial_drain_spec() -> WorldSpec {
 }
 
 fn world_after_successful_day_end() -> World {
-    let mut world = World::spawn(
-        partial_drain_spec(),
-        crate::calendar::TradingCalendar::current_default_calendar()
-            .expect("显式 raw Calendar 政策合法"),
-    )
-    .expect("构造两股两组日结世界");
+    let spec = partial_drain_spec();
+    let calendar = crate::calendar::TradingCalendar::current_default_calendar()
+        .expect("显式 raw Calendar 政策合法");
+    let next_date = calendar
+        .next_trading_day(crate::calendar::CalendarExchange::Sse, spec.civil_start_date)
+        .expect("fixture 下一 SSE trading date 合法");
+    let mut world = World::spawn(spec, calendar).expect("构造两股两组日结世界");
     world.run_ticks(2).expect("tick240 成功发布");
     world
         .run_day_end_public()
         .expect("日结成功且撤销窗口仍开启");
+    world.set_civil_date(next_date);
     world
 }
 
@@ -289,14 +291,15 @@ fn partial_start_cleanup_joins_workers_before_resuming_the_original_panic() {
             plan
         })
     });
-    let mut world = World::spawn(
-        spec,
-        crate::calendar::TradingCalendar::current_default_calendar()
-            .expect("显式 raw Calendar 政策合法"),
-    )
-    .expect("构造真实 panic 世界");
+    let calendar = crate::calendar::TradingCalendar::current_default_calendar()
+        .expect("显式 raw Calendar 政策合法");
+    let next_date = calendar
+        .next_trading_day(crate::calendar::CalendarExchange::Sse, spec.civil_start_date)
+        .expect("fixture 下一 SSE trading date 合法");
+    let mut world = World::spawn(spec, calendar).expect("构造真实 panic 世界");
     world.run_ticks(2).expect("发布240");
     world.run_day_end_public().expect("成功日结");
+    world.set_civil_date(next_date);
     let publication = world.publication();
     let published = publication.load();
     let (dead, receiver) = std::sync::mpsc::channel();

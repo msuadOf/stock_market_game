@@ -622,7 +622,9 @@ impl RuntimeDriver {
         self.drained_events.extend(events);
         if let Err(error) = session.end_civil_day() {
             if matches!(&error, crate::session::SessionError::ReportCorrectionDayEnd(cause)
-                if cause.classification() != crate::company::CompanyErrorClass::SystemState)
+                if matches!(cause.classification(),
+                    crate::company::CompanyErrorClass::InvalidInput
+                    | crate::company::CompanyErrorClass::BusinessCondition))
                 && session.poison_reason().is_none()
                 && !self.administrative_world_is_terminal()
             {

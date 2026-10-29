@@ -3676,12 +3676,19 @@ impl GameSession {
         let market_installed = self.has_current_external_runtime_authority()
             && self.runtime_installed_market_close
                 == Some((self.runtime_authority_epoch, self.tick(), self.civil_date()));
+        let mut correction_prepare_rejected = false;
         let prepared = (|| {
             let mut candidate = self.clone_for_tick_shadow().map_err(|_error| {
                 // fault1034：自然日日终 candidate 捕获失败，保持数值错误契约。
                 SessionError::InvalidSave(ValidationFault::new(1034, vec![0]))
             })?;
             let report = candidate.end_civil_day_after_session_check().map_err(|error| {
+                // 只标记真实更正 prepare 的业务拒绝；后续 project 同型错误仍须终止。
+                correction_prepare_rejected = self.poison_reason().is_none()
+                    && matches!(&error, SessionError::ReportCorrectionDayEnd(cause)
+                        if matches!(cause.classification(),
+                            crate::company::CompanyErrorClass::InvalidInput
+                            | crate::company::CompanyErrorClass::BusinessCondition));
                 if matches!(&error, SessionError::ReportCorrectionDayEnd(cause)
                     if cause.classification() == crate::company::CompanyErrorClass::SystemState)
                 {
@@ -3700,6 +3707,7 @@ impl GameSession {
         })();
         let (candidate, instant, publication) = match prepared {
             Ok(value) => value,
+            Err(error) if correction_prepare_rejected => return Err(error),
             Err(error) if market_installed => return Err(self.poison_civil_authority(error)),
             Err(error) => return Err(error),
         };
