@@ -37,6 +37,7 @@ import { WorkerRequestScope } from "./worker-request.ts";
 import { parseHistoricalStockData } from "./stock-history.ts";
 import { parseInitialAllocation } from "./initial-allocation.ts";
 import { WasmHostInitializationError } from "./wasm-host-initialization-error.ts";
+import type { WasmRuntimeOptions } from "./wasm-runtime-options.ts";
 
 type WorkerMessage = {
   readonly type: string;
@@ -183,11 +184,11 @@ export function assertWorkerE2EStepAllowed(e2eBuild: boolean, injectedCapability
   if (!injectedCapability) throw new Error("Worker 受控单步 capability 未注入");
 }
 
-interface WorkerHostOptions {
+type WorkerHostOptions = {
   readonly enableE2EStepping?: boolean;
   readonly onSpawnFailure: (failure: HostFailure) => void;
   readonly initialArchive?: StrictSaveEnvelope | null;
-}
+} & WasmRuntimeOptions;
 
 export function createWorkerHost(
   setup: SessionSetup,
@@ -422,7 +423,12 @@ export function createWorkerHost(
         onSpawnFailure: options.onSpawnFailure,
       });
       worker.addEventListener("message", onMessage);
-      supervisor.bootstrapEngine({ type: "init", setup });
+      supervisor.bootstrapEngine({
+        type: "init",
+        setup,
+        ...(options.runtimeOverride === undefined ? {} : { runtimeOverride: options.runtimeOverride }),
+        ...(options.waitSettings === undefined ? {} : { waitSettings: options.waitSettings }),
+      });
     } catch (error) {
       notifyFailure({ code: "WASM_WORKER_TRANSPORT", where: "worker-host.initialize", message: error instanceof Error ? error.message : String(error) });
     }

@@ -6,6 +6,7 @@ import { createTauriHost } from "../host/tauri-host.ts";
 import { createRemoteHost } from "../host/remote-host.ts";
 import { createWorkerHost, type WorkerE2EHost } from "../host/worker-host.ts";
 import { WasmHostInitializationError } from "../host/wasm-host-initialization-error.ts";
+import { parseWasmRuntimeOptions } from "../host/wasm-runtime-options.ts";
 import { assertWasmEnvironment, browserWasmEnvironment, fatalDesktopInitializationMessage, fatalRemoteInitializationMessage, fatalWasmInitializationMessage, type StartupTarget } from "../host/startup-policy.ts";
 import { DEFAULT_SEED } from "../config/defaults.ts";
 import { createNewSessionSeed } from "../config/session-seed.ts";
@@ -240,7 +241,10 @@ export function createSessionHostLifecycle(ports: SessionHostLifecyclePorts) {
 function createSessionHost(setup: SessionSetup, seed: bigint, startupTarget: StartupTarget, tradingE2EMode: boolean, onSpawnFailure: (failure: HostFailure) => void, initialArchive: StrictSaveEnvelope | null): Promise<EngineHost> {
   if (startupTarget.kind === "tauri") return createTauriHost(setup, seed);
   if (startupTarget.kind === "remote") return createRemoteHost(setup, seed, { baseUrl: startupTarget.baseUrl });
-  const options = { enableE2EStepping: tradingE2EMode, onSpawnFailure, initialArchive };
+  const wasmRuntimeOptions = startupTarget.kind === "wasm"
+    ? parseWasmRuntimeOptions(window.location.search)
+    : {};
+  const options = { enableE2EStepping: tradingE2EMode, onSpawnFailure, initialArchive, ...wasmRuntimeOptions };
   return createWorkerHost(setup, seed, options);
 }
 
