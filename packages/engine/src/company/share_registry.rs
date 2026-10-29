@@ -864,7 +864,7 @@ impl ShareRegistry {
                     | MovementScope::ShareReDenomination { .. } => {
                         for change in &receipt.request.changes {
                             issued_after_registration = issued_after_registration
-                                .checked_add(i128::from(change.change))
+                                .checked_add(change.change)
                                 .ok_or_else(|| error("issued share replay overflow"))?;
                         }
                     }

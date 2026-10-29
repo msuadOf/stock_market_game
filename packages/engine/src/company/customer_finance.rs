@@ -1177,7 +1177,8 @@ mod tests {
             .expect("客户");
         // 数值公司 id 恒为合法格式（旧的字符串格式校验随 id 数值化消失）；
         // 债权人必填与“客户字符串命名空间不可被公司占用”由类型分离保证。
-        for invalid in [DebtCreditor::External("".to_string())] {
+        {
+            let invalid = DebtCreditor::External("".to_string());
             let before = book.clone();
             assert!(book
                 .register_debt(

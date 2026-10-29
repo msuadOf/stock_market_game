@@ -34,9 +34,8 @@ use crate::company::operations::{
     OperatingCompanyConfig,
 };
 use crate::company::{
-    default_companies, CompanyConfig, CompanyId, CompanyKind, CompanyRegistry, CompanySpec,
-    CounterpartyId, CounterpartyKind, CreditLine, ExternalCounterparty, IndustryId, OpeningLine,
-    OperatingBudget,
+    default_companies, CompanyConfig, CompanyKind, CompanyRegistry, CompanySpec, CounterpartyId,
+    CounterpartyKind, CreditLine, ExternalCounterparty, IndustryId, OpeningLine, OperatingBudget,
 };
 use crate::error::ValidationFault;
 use crate::information::{assemble_seeded_prehistory, SeededPrehistory};

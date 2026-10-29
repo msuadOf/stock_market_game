@@ -487,19 +487,17 @@ impl SimpleFinanceState {
             // 回填字段 all-or-none：任一注销侧字段有值（含孤立核减额）都要求
             // 完成回填 + 注销日期/股数/核减额齐全（修复轮独立复核发现的反向
             // 孤立口径并入触发条件）。
-            if fact.cancelled_shares > 0
+            if (fact.cancelled_shares > 0
                 || fact.cancelled_on.is_some()
-                || fact.capital_reduction.is_some()
-            {
-                if fact.completed_on.is_none()
+                || fact.capital_reduction.is_some())
+                && (fact.completed_on.is_none()
                     || fact.cancelled_on.is_none()
                     || fact.capital_reduction.is_none()
-                    || fact.cancelled_shares == 0
-                {
-                    return Err(SimpleFinanceError::StockDistributionInvalid(format!(
-                        "回购声明 {event_id} 的注销回填字段不完整"
-                    )));
-                }
+                    || fact.cancelled_shares == 0)
+            {
+                return Err(SimpleFinanceError::StockDistributionInvalid(format!(
+                    "回购声明 {event_id} 的注销回填字段不完整"
+                )));
             }
         }
         let payable = self

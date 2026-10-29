@@ -266,8 +266,8 @@ impl SimplePreferenceLedger {
 /// 相邻自然月的月差：`(later - earlier)` 的整月数（要求 earlier <= later）。
 #[cfg(test)]
 fn months_between(earlier: CivilDate, later: CivilDate) -> i32 {
-    i32::from(later.year()) * 12 + i32::from(later.month())
-        - (i32::from(earlier.year()) * 12 + i32::from(earlier.month()))
+    later.year() * 12 + i32::from(later.month())
+        - (earlier.year() * 12 + i32::from(earlier.month()))
 }
 
 /// 频率判定：自最近一次提案（接受或被拒）所属周期末日起，是否已满足
@@ -630,8 +630,7 @@ pub(crate) fn evaluate_stock_distribution_preference(
         .unwrap_or(0);
     let cumulative_after = u128::from(input.cumulative_distributed_shares) + proposed_total;
     let expansion_budget = u128::from(input.initial_issued_shares)
-        .checked_mul(u128::from(input.preference.max_cumulative_expansion_micros))
-        .unwrap_or(u128::MAX)
+        .saturating_mul(u128::from(input.preference.max_cumulative_expansion_micros))
         / u128::from(SHARE_RATIO_DENOMINATOR);
     if cumulative_after > expansion_budget {
         return SimpleStockDistributionOutcome::Skip;
@@ -876,5 +875,5 @@ pub(crate) fn limit_down_margin_floor_cents(
 /// 纯现金组（ratio = 0）即熟悉的「至少留 1 分」。
 #[cfg(test)]
 pub(crate) fn combined_group_required_positive_cents(ratio_micros: u64) -> i128 {
-    1 + i128::from((ratio_micros + SHARE_RATIO_DENOMINATOR - 1) / SHARE_RATIO_DENOMINATOR)
+    1 + i128::from((ratio_micros + SHARE_RATIO_DENOMINATOR - 1).div_euclid(SHARE_RATIO_DENOMINATOR))
 }

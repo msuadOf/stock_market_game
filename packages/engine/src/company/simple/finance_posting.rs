@@ -152,7 +152,7 @@ impl SimpleFinanceState {
             ReportKind::HalfYear,
             ReportKind::Annual,
         ] {
-            if (kind == ReportKind::Quarter && end.month() % 3 != 0)
+            if (kind == ReportKind::Quarter && !end.month().is_multiple_of(3))
                 || (kind == ReportKind::HalfYear && end.month() != 6)
                 || (kind == ReportKind::Annual && end.month() != 12)
             {

@@ -165,7 +165,7 @@ impl Money {
         self.0
             .checked_add(other.0)
             .map(Money)
-            .ok_or_else(|| MoneyError::Overflow {
+            .ok_or(MoneyError::Overflow {
                 op: MoneyOp::CashAdd,
                 operand: self.0,
             })
@@ -177,7 +177,7 @@ impl Money {
         self.0
             .checked_sub(other.0)
             .map(Money)
-            .ok_or_else(|| MoneyError::Overflow {
+            .ok_or(MoneyError::Overflow {
                 op: MoneyOp::CashSub,
                 operand: self.0,
             })
@@ -188,7 +188,7 @@ impl Money {
         self.0
             .checked_mul(i64::from(shares))
             .map(Money)
-            .ok_or_else(|| MoneyError::Overflow {
+            .ok_or(MoneyError::Overflow {
                 op: MoneyOp::MulShares,
                 operand: self.0,
             })
@@ -283,7 +283,7 @@ impl Money {
         let absolute_total = int_cents
             .checked_mul(100)
             .and_then(|c| c.checked_add(frac_padded))
-            .ok_or_else(|| MoneyError::Overflow {
+            .ok_or(MoneyError::Overflow {
                 op: MoneyOp::Other,
                 operand: 0,
             })?;
@@ -292,7 +292,7 @@ impl Money {
         } else {
             Some(absolute_total)
         }
-        .ok_or_else(|| MoneyError::Overflow {
+        .ok_or(MoneyError::Overflow {
             op: MoneyOp::Cents,
             operand: 0,
         })?;

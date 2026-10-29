@@ -1,5 +1,5 @@
 use super::*;
-use crate::accounting::closing::{ClosingEngine, CorrectionRequest};
+use crate::accounting::closing::CorrectionRequest;
 use crate::accounting::consolidation::{MemberId, ScopeId};
 use crate::accounting::reports::ReportKind;
 use crate::accounting::{

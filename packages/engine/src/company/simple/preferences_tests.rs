@@ -265,8 +265,7 @@ fn cash_evaluation_caps_per_share_by_schedule_limit_down_margin() {
     );
     input.exposure = Some(cash_exposure(1_120));
     let expected_days = independent_exposed_days(CalendarExchange::Sse, d("2030-01-31"), {
-        let registered = preference_registered_on(CalendarExchange::Sse, d("2030-02-01"));
-        registered
+        preference_registered_on(CalendarExchange::Sse, d("2030-02-01"))
     });
     assert_eq!(expected_days, 2, "公告日为交易日时敞露 2 个交易日");
     let expected_cap = i128::from(independent_limit_down_chain_floor_cents(
@@ -373,7 +372,6 @@ fn cash_evaluation_caps_per_share_by_schedule_limit_down_margin() {
     assert_eq!(plan.gross_per_share, Money::from_cents(905));
 
     // 缺行情锚：无法约束上限，如实记录拒绝。
-    let mut input = input;
     input.exposure = None;
     assert!(matches!(
         evaluate_cash_dividend_preference(&input),
@@ -478,7 +476,7 @@ fn limit_down_chain_floor_matches_independent_replication_across_domain() {
         }
     }
     let mut coarse = 2_001_i64;
-    while coarse <= 100_000_00 {
+    while coarse <= 10_000_000 {
         anchors.push(coarse);
         coarse += 65_521;
     }
@@ -707,7 +705,7 @@ fn stock_evaluation_sizes_by_ratio_and_honors_expansion_cap() {
         period_end: d("2030-01-31"),
         approve_on: d("2030-02-01"),
         calendar: trading_calendar(),
-        distributable: profit(1_000_000_00),
+        distributable: profit(100_000_000),
         eligible_shares: 10_000,
         initial_issued_shares: 12_000,
         cumulative_distributed_shares: 0,
@@ -799,7 +797,7 @@ fn stock_evaluation_rejects_same_ex_date_event_and_insufficient_combined_margin(
         period_end: d("2030-01-31"),
         approve_on: d("2030-02-01"),
         calendar: trading_calendar(),
-        distributable: profit(1_000_000_00),
+        distributable: profit(100_000_000),
         eligible_shares: 10_000,
         initial_issued_shares: 12_000,
         cumulative_distributed_shares: 0,
@@ -857,7 +855,7 @@ fn stock_evaluation_rejects_same_ex_date_split_event() {
         period_end: d("2030-01-31"),
         approve_on: d("2030-02-01"),
         calendar: trading_calendar(),
-        distributable: profit(1_000_000_00),
+        distributable: profit(100_000_000),
         eligible_shares: 10_000,
         initial_issued_shares: 12_000,
         cumulative_distributed_shares: 0,
@@ -953,7 +951,7 @@ fn preference_evaluation_of_500_companies_stays_lightweight() {
             period_end: d("2030-01-31"),
             approve_on: d("2030-02-01"),
             calendar: trading_calendar(),
-            distributable: profit(1_000_000_00),
+            distributable: profit(100_000_000),
             eligible_shares: 1_000_000,
             exposure: Some(cash_exposure(10_000)),
             registered_capital: Some(capital),
@@ -975,7 +973,7 @@ fn preference_evaluation_of_500_companies_stays_lightweight() {
             period_end: d("2030-01-31"),
             approve_on: d("2030-02-01"),
             calendar: trading_calendar(),
-            distributable: profit(1_000_000_00),
+            distributable: profit(100_000_000),
             eligible_shares: 1_000_000,
             initial_issued_shares: 1_200_000,
             cumulative_distributed_shares: 0,

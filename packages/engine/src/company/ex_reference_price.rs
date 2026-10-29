@@ -474,7 +474,7 @@ pub fn rights_offering_ex_rights_reference_price(
     if base_cents <= 0 {
         return Err(ExReferencePriceError::NonPositiveExRightsNumerator { cents: base_cents });
     }
-    let numerator_scaled = i128::from(base_cents)
+    let numerator_scaled = base_cents
         .checked_mul(1_000_000)
         .and_then(|scaled| {
             scaled

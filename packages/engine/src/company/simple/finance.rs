@@ -2,9 +2,11 @@ pub use super::finance_config::{SimpleBookDisplayConfig, SimpleFinanceConfig, Si
 use crate::accounting::closing::{ClosingEngine, ClosingError};
 use crate::accounting::consolidation::{MemberId, ScopeId};
 use crate::accounting::reports::{IndustryPresentation, ReportError, ReportKind, ReportSet};
+#[cfg(test)]
+use crate::accounting::TaxPolicy;
 use crate::accounting::{
     AccountingAmount, AccountingPeriod, Books, BusinessEventId, BusinessKind, CashFlowClass,
-    JournalEntry, JournalLine, LedgerAccountId, PostingSide, TaxPolicy, TaxPolicyError,
+    JournalEntry, JournalLine, LedgerAccountId, PostingSide, TaxPolicyError,
 };
 use crate::calendar::CivilDate;
 use crate::company::api::PeriodAmounts;

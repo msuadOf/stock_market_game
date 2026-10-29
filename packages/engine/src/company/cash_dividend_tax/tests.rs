@@ -788,7 +788,7 @@ fn book_with_bonus_basis(
     book.record_net_day(
         "stock-distribution:d1:0".into(),
         date("2030-01-02"),
-        i128::try_from(qty).unwrap(),
+        i128::from(qty),
         Some(credit_lot),
     )
     .unwrap();
@@ -815,13 +815,8 @@ fn dispose_bonus_on(book: CashDividendTaxBook, sale: &str, qty: u64) -> CashDivi
         book.record_net_day(format!("market-{next}"), next, 0, None)
             .unwrap();
     }
-    book.record_net_day(
-        format!("sell-{sale}"),
-        sale_day,
-        -i128::try_from(qty).unwrap(),
-        None,
-    )
-    .unwrap();
+    book.record_net_day(format!("sell-{sale}"), sale_day, -i128::from(qty), None)
+        .unwrap();
     book
 }
 

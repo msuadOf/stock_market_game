@@ -5,7 +5,6 @@ use crate::accounting::{
 };
 use crate::company::industrial::{IndustrialBooks, InventorySourceEvent};
 use crate::company::operations::CompanyOperations;
-use crate::company::CompanyId;
 use crate::information::InformationError;
 use std::collections::{BTreeMap, BTreeSet};
 

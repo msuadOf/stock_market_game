@@ -24,7 +24,7 @@ use thiserror::Error;
 use super::share_registry::{HolderId, RegistrationSnapshot, ShareRegistryError};
 use super::CompanyId;
 use crate::account::StockCode;
-use crate::calendar::{CalendarError, CalendarExchange, CivilDate, TradingCalendar};
+use crate::calendar::{CalendarExchange, CivilDate, TradingCalendar};
 use crate::money::Money;
 
 /// 比例单位：百万分之一股，与 `company::stock_distribution` 一致。

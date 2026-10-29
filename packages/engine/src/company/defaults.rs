@@ -13,7 +13,7 @@ use crate::company::contracts::{CreditLine, OperatingBudget};
 use crate::company::counterparty::{CounterpartyId, CounterpartyKind, ExternalCounterparty};
 use crate::company::error::CompanyError;
 use crate::company::opening::{CompanyOpening, OpeningLine};
-use crate::company::spec::{CompanyId, CompanyKind, CompanySpec, IndustryId};
+use crate::company::spec::{CompanyKind, CompanySpec, IndustryId};
 use crate::company::CompanyConfig;
 
 /// 通用开局科目代码（企业会计准则通用科目编号；科目表 = 通用科目表（AccountChart.version=1））。

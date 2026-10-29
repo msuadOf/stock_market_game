@@ -1,4 +1,3 @@
-use crate::compute::parallel::*;
 use serde::{Deserialize, Serialize};
 use std::fmt::{Display, Formatter};
 
@@ -300,7 +299,7 @@ fn rsv(close: f64, high: f64, low: f64) -> f64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{kdj, kdj_ohlc, macd, IndicatorInput, IndicatorInputError, OhlcBar};
+    use super::{kdj, kdj_ohlc, macd, IndicatorInputError, OhlcBar};
 
     // 修2（增量十四）：batch 死入口删除时本混合测试被整块误删，现恢复其全部
     // 单项入口断言（NaN/Infinity/非法 OHLC/NonFiniteResult），去掉 batch 分支并

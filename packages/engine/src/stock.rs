@@ -43,7 +43,7 @@ pub mod stock_id_decimal {
 
 /// Vec<StockId> 的证据十进制字符串序列化。
 pub mod stock_id_decimal_vec {
-    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use serde::{Deserialize, Deserializer, Serializer};
 
     pub fn serialize<S>(ids: &[super::StockId], serializer: S) -> Result<S::Ok, S::Error>
     where

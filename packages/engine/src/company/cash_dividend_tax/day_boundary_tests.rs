@@ -746,7 +746,7 @@ fn stock_batch_keeps_one_registry_and_rejects_duplicate_tax_book_accounts() {
     let (registry, book, day, calendar) = fixture();
     let result = TaxDayBoundaryFacts::prepare(
         &registry,
-        &[book.clone()],
+        std::slice::from_ref(&book),
         &day,
         &context(&calendar, &[], Some(day.day)),
     )

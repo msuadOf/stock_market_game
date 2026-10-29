@@ -997,9 +997,7 @@ impl CompanySystem {
     ) -> Result<(), CompanySystemError> {
         preferences.validate()?;
         let result = (|| {
-            let state = match &mut self.implementation {
-                CompanyImplementation::Simple(state) => state,
-            };
+            let CompanyImplementation::Simple(state) = &mut self.implementation;
             let entry = state
                 .config
                 .companies
@@ -1025,9 +1023,7 @@ impl CompanySystem {
         detail: String,
     ) -> Result<(), CompanySystemError> {
         let result = (|| {
-            let state = match &mut self.implementation {
-                CompanyImplementation::Simple(state) => state,
-            };
+            let CompanyImplementation::Simple(state) = &mut self.implementation;
             let entry = state.companies.get_mut(company).ok_or_else(|| {
                 CompanySystemError::InvalidInput(format!("未知公司 {}", company.0))
             })?;
@@ -1262,9 +1258,7 @@ impl CompanySystem {
         company: &CompanyId,
         period_end: CivilDate,
     ) -> Result<super::simple::period::PeriodChangeExplanation, CompanySystemError> {
-        let state = match &self.implementation {
-            CompanyImplementation::Simple(state) => state,
-        };
+        let CompanyImplementation::Simple(state) = &self.implementation;
         if !state.companies.contains_key(company) {
             return Err(CompanySystemError::InvalidInput(format!(
                 "未知公司 {}",

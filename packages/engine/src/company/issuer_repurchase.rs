@@ -628,7 +628,7 @@ impl IssuerRepurchaseBook {
             });
         }
         self.fills.push(fill);
-        self.fills.sort_by(|left, right| left.day.cmp(&right.day));
+        self.fills.sort_by_key(|left| left.day);
         self.status = IssuerRepurchaseStatus::Executing;
         Ok(())
     }
@@ -831,7 +831,7 @@ impl IssuerRepurchaseBook {
                 ));
             }
         }
-        events.sort_by(|left, right| (left.0, left.1).cmp(&(right.0, right.1)));
+        events.sort_by_key(|left| (left.0, left.1));
         let mut inventory: u64 = 0;
         let mut awards: u64 = 0;
         let mut unit_cap = self.plan.max_shares;

@@ -167,7 +167,7 @@ impl SimpleFundamentals {
             self.companies.insert(candidate.company, state);
             generated.push(candidate);
         }
-        generated.sort_by(|left, right| left.company.cmp(&right.company));
+        generated.sort_by_key(|entry| entry.company);
         self.history.extend(generated.iter().cloned());
         self.environment_change_bp = environment;
         self.environment_rng = environment_rng;

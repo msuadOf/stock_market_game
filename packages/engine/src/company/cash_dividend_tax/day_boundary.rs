@@ -393,7 +393,7 @@ fn verify_history(
     }
     // 仅逆推来源元数据与数量来核 opening；不创建税处置、不重算税额。
     let mut opening: VecDeque<_> = current_lots.iter().cloned().collect();
-    for receipt in suffix.into_iter().rev() {
+    for receipt in suffix.iter().rev() {
         let (_, acquisition) = receipt.tax_facts(book.account())?;
         if let Some(acquisition) = acquisition {
             if opening.pop_back().as_ref() != Some(&acquisition) {

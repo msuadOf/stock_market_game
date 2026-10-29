@@ -24,7 +24,7 @@ use crate::company::simple::{
     SimpleSummaryRule,
 };
 use crate::company::spec::{CompanyId, CompanyKind, CompanySpec, IndustryId};
-use crate::company::{CompanyErrorClass, CompanySystem, CompanySystemError};
+use crate::company::{CompanyErrorClass, CompanySystem};
 
 fn date(text: &str) -> CivilDate {
     CivilDate::from_iso(text).unwrap()

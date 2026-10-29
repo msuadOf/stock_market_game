@@ -139,7 +139,7 @@ fn validates_fact_scope_period_and_future_publication_boundary() {
     future_input.report.published_on = date(2030, 6, 30);
     assert!(matches!(
         calculate_disclosure_roe(&future_input),
-        Err(DisclosureRoeError::ReportNotYetEnded { .. })
+        Err(DisclosureRoeError::ReportNotYetEnded)
     ));
 }
 
@@ -249,7 +249,7 @@ fn same_control_combination_outside_the_report_period_is_rejected() {
         });
     assert!(matches!(
         calculate_disclosure_roe(&input),
-        Err(DisclosureRoeError::EventOutsidePeriod { .. })
+        Err(DisclosureRoeError::EventOutsidePeriod)
     ));
 }
 
@@ -392,7 +392,7 @@ fn rejects_invalid_month_aligned_period_and_effective_date_not_in_period() {
     });
     assert!(matches!(
         calculate_disclosure_roe(&input),
-        Err(DisclosureRoeError::EventOutsidePeriod { .. })
+        Err(DisclosureRoeError::EventOutsidePeriod)
     ));
 }
 
