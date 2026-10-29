@@ -67,7 +67,7 @@ fn characterization_ticks_preserve_price_and_day_boundaries(
     for auction_ticks in [0, 3, 6] {
         let mut game = GameSession::new(setup(auction_ticks)?, 42)?;
         let mut day_boundaries = 0;
-        for expected_tick in 1..=60 {
+        for expected_tick in 1_u64..=60 {
             let events = game.step().expect("healthy step");
             day_boundaries += events
                 .iter()
@@ -80,7 +80,7 @@ fn characterization_ticks_preserve_price_and_day_boundaries(
                     .last_price,
                 Money::from_cents(1000)
             );
-            if expected_tick % 20 == 0 {
+            if expected_tick.is_multiple_of(20) {
                 // 市场日界只完成交易会话；下一交易日必须由真实 civil 日结进入。
                 let settled_date = game.civil_date();
                 let report = game.end_civil_day()?;
