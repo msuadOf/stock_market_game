@@ -13,7 +13,7 @@
 use super::account_validation::set_validation_reject_accounts_for_test;
 use crate::session::plan_chain_candidates_tests::execution_fixture_with_compute;
 use crate::{AccountId, Event};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 /// 普通测试 10s 硬上限（项目纪律）。
@@ -24,10 +24,6 @@ fn deadline() -> Instant {
 fn dedicated_compute() -> Arc<crate::compute::ComputeContext> {
     crate::compute::ComputeContext::with_workers(3).unwrap()
 }
-
-/// 观察者闩（本文件专用形态）：进入 bound 的 root 全部阻塞在观察点直至
-/// 放行（per-ComputeContext，专用池不串扰）。
-type RootGate = Arc<(Mutex<u8>, Condvar)>;
 
 fn assert_guards_returned(compute: &Arc<crate::compute::ComputeContext>) {
     let wait = deadline();

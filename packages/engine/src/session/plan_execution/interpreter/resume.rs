@@ -12,7 +12,7 @@ impl GameSession {
                 observed,
                 order_id,
                 event,
-                terminating: _,
+                _terminating: _,
             } => {
                 let plan_id = observed.plan_id();
                 let disposition = match outcome {

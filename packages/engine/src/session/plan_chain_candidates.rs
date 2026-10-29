@@ -4,7 +4,7 @@ use crate::plans::{CandidateAssessment, PlanEvent, PlanId, PlanRevision};
 use std::collections::VecDeque;
 use std::sync::{mpsc, Arc};
 
-#[cfg(any(test, feature = "verification-harness"))]
+#[cfg(test)]
 pub(in crate::session) type PlanRootAccountProbe = Arc<dyn Fn(AccountId) + Send + Sync>;
 mod adaptive;
 use super::decision_chain::{DecisionChainObservation, InstitutionDecisionRoot, RootReadContext};
@@ -219,19 +219,19 @@ impl StockRouteCoordination {
 /// 停止派发、排空、不 install（personal state 不恢复进权威），最后重抛原
 /// payload；Disconnected 降为冗余断言（无标记的静默消失=invariant 错误）。
 /// root panic 注入账户集合（测试/验证专用；p3 验收）。
-#[cfg(any(test, feature = "verification-harness"))]
+#[cfg(test)]
 static ROOT_PANIC_ACCOUNTS: std::sync::Mutex<std::collections::BTreeSet<AccountId>> =
     std::sync::Mutex::new(std::collections::BTreeSet::new());
 
 /// 注入 payload 的堆对象地址登记（Astra 四审：marker Arc 判等仍可被
 /// 「clone marker + rebox」伪造；改为登记 panic_any 所装 Box 的元素地址，
 /// 测试对重抛对象做**同地址判等**——重建对象地址必不同，真·对象身份）。
-#[cfg(any(test, feature = "verification-harness"))]
+#[cfg(test)]
 static ROOT_PANIC_TOKEN_ADDR: std::sync::Mutex<Option<usize>> = std::sync::Mutex::new(None);
 
 /// 注入 payload 的对象身份标记（p3 三审③：String 内容判等无法区分 clone/rebox，
 /// 测试以 `Arc::ptr_eq` 证明传播的是**原 payload 对象**，非同内容重建）。
-#[cfg(any(test, feature = "verification-harness"))]
+#[cfg(test)]
 static ROOT_PANIC_MARKER: std::sync::Mutex<Option<std::sync::Arc<()>>> =
     std::sync::Mutex::new(None);
 
@@ -239,13 +239,13 @@ static ROOT_PANIC_MARKER: std::sync::Mutex<Option<std::sync::Arc<()>>> =
 /// Drop 收满循环首次观察到空队列（=迟到 send 窗口的开启点）时在本线程回调。
 /// 回调内不得取台账锁（与容量等待探针同纪律）；测试用它在该确定性时点之后
 /// 才放行被闩任务的发送，钉住「Empty 之后才 send」交错。
-#[cfg(any(test, feature = "verification-harness"))]
+#[cfg(test)]
 static PLAN_ROOT_DROP_EMPTY_PROBE: std::sync::Mutex<
     Option<std::sync::Arc<dyn Fn() + Send + Sync>>,
 > = std::sync::Mutex::new(None);
 
 /// 安装/清除 Drop「已见 Empty」探针（None=清除；测试结束必须清除）。
-#[cfg(any(test, feature = "verification-harness"))]
+#[cfg(test)]
 pub(in crate::session) fn set_plan_root_drop_empty_probe(
     probe: Option<std::sync::Arc<dyn Fn() + Send + Sync>>,
 ) {
@@ -258,12 +258,12 @@ pub(in crate::session) fn set_plan_root_drop_empty_probe(
 /// Prepared 发布探针（测试/验证专用；六审「F 发布保持锚点」）：finish 段
 /// `sender.send(RootMessage::Prepared)` **成功后**以账户回调——F 已执行且
 /// 结果已发布的保持位锚点（早于协调者消费）。
-#[cfg(any(test, feature = "verification-harness"))]
+#[cfg(test)]
 static PLAN_ROOT_PREPARED_PROBE: std::sync::Mutex<Option<PlanRootAccountProbe>> =
     std::sync::Mutex::new(None);
 
 /// 安装/清除 Prepared 发布探针（None=清除）。
-#[cfg(any(test, feature = "verification-harness"))]
+#[cfg(test)]
 pub(in crate::session) fn set_plan_root_prepared_probe(probe: Option<PlanRootAccountProbe>) {
     *PLAN_ROOT_PREPARED_PROBE
         .lock()
@@ -273,19 +273,19 @@ pub(in crate::session) fn set_plan_root_prepared_probe(probe: Option<PlanRootAcc
 /// panic 注入前等待指定账户的 Prepared 发布（测试/验证专用；六审「F 发布
 /// 保持锚点」）：注入点在 panic 前阻塞等待 `wait_for` 账户的 publish flag
 /// ——panic 的发生（及其 TaskDied 发送）确定晚于该账户 Prepared 的发送。
-#[cfg(any(test, feature = "verification-harness"))]
+#[cfg(test)]
 static ROOT_PANIC_WAIT_PUBLISHED: std::sync::Mutex<Option<AccountId>> = std::sync::Mutex::new(None);
 
 /// publish flag/通知（panic 注入点等待侧与 Prepared 探针置位侧共用）。
-#[cfg(any(test, feature = "verification-harness"))]
+#[cfg(test)]
 static PLAN_ROOT_PUBLISHED: std::sync::Mutex<std::collections::BTreeSet<AccountId>> =
     std::sync::Mutex::new(std::collections::BTreeSet::new());
-#[cfg(any(test, feature = "verification-harness"))]
+#[cfg(test)]
 static PLAN_ROOT_PUBLISHED_SIGNAL: std::sync::Condvar = std::sync::Condvar::new();
 
 /// 配置 panic 注入前需等待其 Prepared 发布的账户（None=清除；测试结束
 /// 必须清除并清空 publish 集）。
-#[cfg(any(test, feature = "verification-harness"))]
+#[cfg(test)]
 pub(in crate::session) fn set_root_panic_wait_published(account: Option<AccountId>) {
     *ROOT_PANIC_WAIT_PUBLISHED
         .lock()
@@ -293,7 +293,7 @@ pub(in crate::session) fn set_root_panic_wait_published(account: Option<AccountI
 }
 
 /// 清空 publish 保持集（测试收尾）。
-#[cfg(any(test, feature = "verification-harness"))]
+#[cfg(test)]
 pub(in crate::session) fn clear_plan_root_published() {
     PLAN_ROOT_PUBLISHED
         .lock()
@@ -303,12 +303,12 @@ pub(in crate::session) fn clear_plan_root_published() {
 
 /// 账户入口探针（测试/验证专用；六审「账户身份明确化」）：bound 开头以
 /// 账户回调——观察点编排不再依赖无账户身份的 ordinal。
-#[cfg(any(test, feature = "verification-harness"))]
+#[cfg(test)]
 static PLAN_ROOT_ACCOUNT_ENTRY_PROBE: std::sync::Mutex<Option<PlanRootAccountProbe>> =
     std::sync::Mutex::new(None);
 
 /// 安装/清除账户入口探针。
-#[cfg(any(test, feature = "verification-harness"))]
+#[cfg(test)]
 pub(in crate::session) fn set_plan_root_account_entry_probe(probe: Option<PlanRootAccountProbe>) {
     *PLAN_ROOT_ACCOUNT_ENTRY_PROBE
         .lock()
@@ -318,12 +318,12 @@ pub(in crate::session) fn set_plan_root_account_entry_probe(probe: Option<PlanRo
 /// 4b 等待分支探针（测试/验证专用；六审「确定经过 4b」）：协调者在
 /// prepare 的 blocking 分支进入「在飞>0 且队列空」的自旋等待时回调
 ///（首次进入置位语义由测试侧约定；回调在协调者线程，不得取台账锁）。
-#[cfg(any(test, feature = "verification-harness"))]
+#[cfg(test)]
 static PLAN_ROOT_4B_SPIN_PROBE: std::sync::Mutex<Option<std::sync::Arc<dyn Fn() + Send + Sync>>> =
     std::sync::Mutex::new(None);
 
 /// 安装/清除 4b 探针。
-#[cfg(any(test, feature = "verification-harness"))]
+#[cfg(test)]
 pub(in crate::session) fn set_plan_root_4b_probe(
     probe: Option<std::sync::Arc<dyn Fn() + Send + Sync>>,
 ) {
@@ -334,12 +334,12 @@ pub(in crate::session) fn set_plan_root_4b_probe(
 /// reserve 成功后若命中保持集，则该项推回 pending 前端并归还预留——
 /// 与 reserve 失败同分支（模拟该账户任务暂时不可派发的容量形态；
 /// ROOT_PANIC_ACCOUNTS 同款进程级静态口径：串行运行、结束清空）。
-#[cfg(any(test, feature = "verification-harness"))]
+#[cfg(test)]
 static ROOT_DISPATCH_HOLD_ACCOUNTS: std::sync::Mutex<std::collections::BTreeSet<AccountId>> =
     std::sync::Mutex::new(std::collections::BTreeSet::new());
 
 /// 配置/清空派发保持账户集。
-#[cfg(any(test, feature = "verification-harness"))]
+#[cfg(test)]
 pub(in crate::session) fn set_root_dispatch_hold_accounts(accounts: &[AccountId]) {
     *ROOT_DISPATCH_HOLD_ACCOUNTS
         .lock()
@@ -351,11 +351,11 @@ pub(in crate::session) fn set_root_dispatch_hold_accounts(accounts: &[AccountId]
 /// 安装态——两段式序（bound 内层绑定作用域退出 → finish 发布）要求该
 /// 时刻 TLS 已卸下（实际绑定已释放）。负向 M8（把 finish 移入绑定作用域
 /// 内）将记录到 installed=true → 测试红。
-#[cfg(any(test, feature = "verification-harness"))]
+#[cfg(test)]
 static PLAN_ROOT_PUBLISH_TLS_STATE: std::sync::Mutex<Option<bool>> = std::sync::Mutex::new(None);
 
 /// 读取最近一次 TaskDied 发布点记录的 TLS 安装态（None=尚未发布过）。
-#[cfg(any(test, feature = "verification-harness"))]
+#[cfg(test)]
 pub(in crate::session) fn plan_root_publish_tls_state() -> Option<bool> {
     *PLAN_ROOT_PUBLISH_TLS_STATE
         .lock()
@@ -367,13 +367,13 @@ pub(in crate::session) fn plan_root_publish_tls_state() -> Option<bool> {
 /// 线程回调——测试用它门控「确认失败已接收之后才放行迟到发送」（可保持
 /// 阶段握手），或在接收当场核验实际绑定已释放（p3 发布顺序直证）。
 /// 回调内不得取台账锁；不得阻塞（协调者线程）。
-#[cfg(any(test, feature = "verification-harness"))]
+#[cfg(test)]
 static PLAN_ROOT_TASKDIED_RECEIVED_PROBE: std::sync::Mutex<
     Option<std::sync::Arc<dyn Fn() + Send + Sync>>,
 > = std::sync::Mutex::new(None);
 
 /// 安装/清除 TaskDied 接收探针（None=清除；测试结束必须清除）。
-#[cfg(any(test, feature = "verification-harness"))]
+#[cfg(test)]
 pub(in crate::session) fn set_plan_root_taskdied_probe(
     probe: Option<std::sync::Arc<dyn Fn() + Send + Sync>>,
 ) {
@@ -383,7 +383,7 @@ pub(in crate::session) fn set_plan_root_taskdied_probe(
 }
 
 /// 读取已登记的注入 payload 堆地址（对象身份判等的期望侧）。
-#[cfg(any(test, feature = "verification-harness"))]
+#[cfg(test)]
 pub(in crate::session) fn root_panic_token_addr() -> Option<usize> {
     *ROOT_PANIC_TOKEN_ADDR
         .lock()
@@ -392,7 +392,7 @@ pub(in crate::session) fn root_panic_token_addr() -> Option<usize> {
 
 /// root panic 注入的对象身份载体（测试/验证专用）：account 承载可读身份，
 /// marker 承载对象身份（Arc 指针判等）。
-#[cfg(any(test, feature = "verification-harness"))]
+#[cfg(test)]
 pub(in crate::session) struct RootPanicToken {
     pub(in crate::session) account: AccountId,
     #[allow(dead_code)]
@@ -401,7 +401,7 @@ pub(in crate::session) struct RootPanicToken {
 
 /// 配置 root panic 注入账户（测试/验证专用）；返回本次注入的 payload 身份
 /// 标记，供测试对重抛对象做 `Arc::ptr_eq` 判等。
-#[cfg(any(test, feature = "verification-harness"))]
+#[cfg(test)]
 pub(in crate::session) fn set_root_panic_accounts(accounts: &[AccountId]) {
     *ROOT_PANIC_ACCOUNTS
         .lock()
@@ -417,12 +417,12 @@ pub(in crate::session) fn set_root_panic_accounts(accounts: &[AccountId]) {
 /// 闭包捕获，bound 环境析构（含计时/扰动绑定释放）时回调——两段式序保证
 /// finish 段的 TaskDied 发布严格晚于该析构，协调者收到 TaskDied 时探针必已
 /// 触发。
-#[cfg(any(test, feature = "verification-harness"))]
+#[cfg(test)]
 static ROOT_BOUND_RELEASE_PROBE: std::sync::Mutex<Option<std::sync::Arc<dyn Fn() + Send + Sync>>> =
     std::sync::Mutex::new(None);
 
 /// 安装/清除 bound 释放探针（None=清除；测试结束必须清除，防串扰）。
-#[cfg(any(test, feature = "verification-harness"))]
+#[cfg(test)]
 pub(in crate::session) fn set_root_bound_release_probe(
     probe: Option<std::sync::Arc<dyn Fn() + Send + Sync>>,
 ) {
@@ -431,10 +431,10 @@ pub(in crate::session) fn set_root_bound_release_probe(
         .expect("root bound 释放探针锁被 poison") = probe;
 }
 
-#[cfg(any(test, feature = "verification-harness"))]
+#[cfg(test)]
 struct RootBoundReleaseGuard(Option<std::sync::Arc<dyn Fn() + Send + Sync>>);
 
-#[cfg(any(test, feature = "verification-harness"))]
+#[cfg(test)]
 impl Drop for RootBoundReleaseGuard {
     fn drop(&mut self) {
         if let Some(probe) = self.0.take() {
@@ -593,7 +593,7 @@ impl Drop for PlanRootCoordinator {
                         Err(mpsc::TryRecvError::Empty) => {
                             if !empty_observed {
                                 empty_observed = true;
-                                #[cfg(any(test, feature = "verification-harness"))]
+                                #[cfg(test)]
                                 if let Some(probe) = PLAN_ROOT_DROP_EMPTY_PROBE
                                     .lock()
                                     .expect("Drop Empty 探针锁被 poison")
@@ -661,6 +661,7 @@ impl PlanRootCoordinator {
             source: AccountSource::Empty,
         }
     }
+    #[cfg(test)]
     fn is_source_empty(&self) -> bool {
         matches!(self.source, AccountSource::Empty)
     }
@@ -753,7 +754,7 @@ impl PlanRootCoordinator {
             };
             // 派发保持集（六审）：命中账户推回 pending 前端并归还预留——与
             // reserve 失败同分支（容量形态模拟，pending 冻结语义不变）。
-            #[cfg(any(test, feature = "verification-harness"))]
+            #[cfg(test)]
             if ROOT_DISPATCH_HOLD_ACCOUNTS
                 .lock()
                 .expect("派发保持集锁被 poison")
@@ -790,7 +791,7 @@ impl PlanRootCoordinator {
                         // 回调执行（Rust if-let 临时生存期），回调内等待时持有
                         // 全局探针锁，阻塞后续 root 的入口探针调用 ⇒ 互锁
                         //（六轮 inflight 3/5 挂起根因；M10 回退红证钉住）。
-                        #[cfg(any(test, feature = "verification-harness"))]
+                        #[cfg(test)]
                         {
                             let probe = PLAN_ROOT_ACCOUNT_ENTRY_PROBE
                                 .lock()
@@ -803,7 +804,7 @@ impl PlanRootCoordinator {
 
                         // 绑定释放探针（p3 发布顺序）：guard 随本闭包捕获，bound
                         // 环境析构时触发——严格早于 finish 段的终结发布。
-                        #[cfg(any(test, feature = "verification-harness"))]
+                        #[cfg(test)]
                         let _bound_release_probe = RootBoundReleaseGuard(
                             ROOT_BOUND_RELEASE_PROBE
                                 .lock()
@@ -813,7 +814,7 @@ impl PlanRootCoordinator {
                         // 注入点在 catch_unwind 运输区内（p3 验收；区外裸 panic
                         // 无 TaskDied 终结信号）。payload=RootPanicToken（对象
                         // 身份可判等，三审③）。
-                        #[cfg(any(test, feature = "verification-harness"))]
+                        #[cfg(test)]
                         if ROOT_PANIC_ACCOUNTS
                             .lock()
                             .expect("root panic 注入锁被 poison")
@@ -823,7 +824,7 @@ impl PlanRootCoordinator {
                             // 账户的 Prepared 发布 flag 后再 panic——TaskDied 的
                             // 发送确定晚于该账户 Prepared 的发送（FIFO ⇒ 协调者
                             // 先消费该 Prepared）。
-                            #[cfg(any(test, feature = "verification-harness"))]
+                            #[cfg(test)]
                             {
                                 // 七轮锁环修复：先取配置并释放配置锁再等待。
                                 let wait_for = *ROOT_PANIC_WAIT_PUBLISHED
@@ -881,12 +882,12 @@ impl PlanRootCoordinator {
                         RootOutcome::Prepared(result) => {
                             // 先发布 typed 结果再唤醒 coordinator；receiver 已关闭
                             // 表示私有 tick 已丢弃。
-                            #[cfg(any(test, feature = "verification-harness"))]
+                            #[cfg(test)]
                             let published_account = result.0;
                             if sender.send(RootMessage::Prepared(result)).is_ok() {
                                 // Prepared 发布探针 + publish 保持集（六审）：send
                                 // 成功后置位——「F 已发布」锚点。
-                                #[cfg(any(test, feature = "verification-harness"))]
+                                #[cfg(test)]
                                 {
                                     PLAN_ROOT_PUBLISHED
                                         .lock()
@@ -907,7 +908,7 @@ impl PlanRootCoordinator {
                         RootOutcome::Died(panic_payload) => {
                             // 发布点 TLS 直证（五审）：send 调用现场记录发布
                             // 线程的绑定安装态——发布时实际绑定必须已卸下。
-                            #[cfg(any(test, feature = "verification-harness"))]
+                            #[cfg(test)]
                             {
                                 *PLAN_ROOT_PUBLISH_TLS_STATE
                                     .lock()
@@ -1001,7 +1002,7 @@ impl PlanRootCoordinator {
                     // 接收探针：收到 TaskDied 的当场（协调者线程）回调——
                     // 早于存储/冻结/排空处置（五审：迟到发送门控与绑定释放
                     // 接收点直证的锚点）。
-                    #[cfg(any(test, feature = "verification-harness"))]
+                    #[cfg(test)]
                     {
                         // 七轮锁环修复：clone 后释放探针锁再调用。
                         let probe = PLAN_ROOT_TASKDIED_RECEIVED_PROBE
@@ -1034,7 +1035,7 @@ impl PlanRootCoordinator {
                         // 普通空队列等待不触发，杜绝「先普通 4b 放行 → 后收
                         // TaskDied」交错；(b) 先取 clone 释放探针锁再调用
                         //（锁环修复，同其他探针）。
-                        #[cfg(any(test, feature = "verification-harness"))]
+                        #[cfg(test)]
                         if task_died.is_some() {
                             let probe = PLAN_ROOT_4B_SPIN_PROBE
                                 .lock()
@@ -1128,6 +1129,7 @@ impl PlanRootCoordinator {
 impl PlanChainOperationBatch {
     /// T5（Sol 终裁·完成边界见证）：root **源**是否排空（AccountSource=Empty）
     /// ——不依赖 operations/routes 状态；capture 返回当场断言用。
+    #[cfg(test)]
     pub(in crate::session) fn roots_source_drained(&self) -> bool {
         self.roots.is_source_empty()
     }

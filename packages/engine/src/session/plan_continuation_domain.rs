@@ -57,11 +57,6 @@ impl<'a> PlanContinuationDomain<'a> {
         continuation(&mut domain)
     }
 
-    /// 直接开域（测试与驱动环内部使用；生产路径优先 `scoped`）。
-    pub(in crate::session) fn new(session: &'a mut GameSession) -> Self {
-        Self { session }
-    }
-
     /// §10.1 域「本股 market」：owner 生产的 delta 在此跨越应用到权威簿。
     /// 错误文案与位置沿用迁移前 `pipeline::adaptive_plan_chain` 口径。
     pub(in crate::session) fn apply_market_delta(

@@ -127,49 +127,6 @@ fn release_roots(gate: &RootGate) {
     release_roots_to(gate, 2);
 }
 
-/// 派发门（两段放行，测试/验证专用原语 set_dispatch_gate 的编排封装）：
-/// 派发点第 1 次调用（FIFO 首项）放行；第 2 次起阻塞，直至
-/// [`release_serial_dispatch_to`] 放行到对应层级。派发门运行在协调者线程
-/// （reserve 成功后、spawn 前）——阻塞它即冻结后续派发，形成确定性派发序。
-type SerialDispatchGate = Arc<(Mutex<u8>, Condvar, AtomicUsize)>;
-
-fn install_serial_dispatch_gate(
-    compute: &Arc<crate::compute::ComputeContext>,
-) -> SerialDispatchGate {
-    let gate: SerialDispatchGate = Arc::new((Mutex::new(0), Condvar::new(), AtomicUsize::new(0)));
-    let observer_gate = Arc::clone(&gate);
-    compute.set_dispatch_gate(Arc::new(move || {
-        let ordinal = observer_gate.2.fetch_add(1, Ordering::SeqCst) + 1;
-        let (phase, signal, _) = &*observer_gate;
-        let mut phase = phase
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        // 层级语义：phase=P 时仅放行前 P+1 项（ordinal ≤ P+1）——逐项串行放行。
-        while ordinal > usize::from(*phase) + 1 {
-            phase = match signal.wait(phase) {
-                Ok(guard) => guard,
-                Err(poisoned) => poisoned.into_inner(),
-            };
-        }
-    }));
-    gate
-}
-
-/// 派发门已放行层数（≥n 表示第 n 项已通过派发点）。
-fn dispatch_gate_calls(gate: &SerialDispatchGate) -> usize {
-    gate.2.load(Ordering::SeqCst)
-}
-
-/// 放行派发门到指定层级（level=P=放行前 P+1 项：1 允许第 2 项、2 全放）。
-fn release_serial_dispatch_to(gate: &SerialDispatchGate, level: u8) {
-    let (phase, signal, _) = &**gate;
-    let mut phase = phase
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    *phase = level;
-    signal.notify_all();
-}
-
 /// 闩自动释放 guard：本 guard 析构（含 panic unwind）时先放行全部被闩 root，
 /// 再轮到其后析构的协调者 Drop 排空——保证「测试失败→批销毁」路径不会因
 /// 被间 root 永不发送而挂死（失败以断言红呈现，而非挂起）。
@@ -456,18 +413,6 @@ fn a1_panic_form_atomicity_on_real_transaction() {
         business_before,
         "迟到结果不得 install（终态仍零漂移）"
     );
-}
-
-/// 三级门辅助：放行 ordinal1（level=1）/ 全放（level=2）。
-fn release_gate_to(gate: &Arc<(Mutex<u8>, Condvar)>, level: u8) {
-    let (phase, signal) = &**gate;
-    let mut phase = phase
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    if *phase < level {
-        *phase = level;
-    }
-    signal.notify_all();
 }
 
 /// a1 pending 形态（真实事务，增量二十一）：roots FIFO=[panic(2), F(1)]，

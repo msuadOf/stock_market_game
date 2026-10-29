@@ -73,7 +73,7 @@ enum Continuation {
         observed: TradingPlan,
         order_id: OrderId,
         event: PlanEvent,
-        terminating: bool,
+        _terminating: bool,
     },
     Cancel {
         plan_id: crate::plans::PlanId,
@@ -119,7 +119,7 @@ impl PlanExecutionProgress {
                 observed: plan.clone(),
                 order_id,
                 event,
-                terminating,
+                _terminating: terminating,
             },
             replaced: None,
         }))
