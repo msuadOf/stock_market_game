@@ -681,7 +681,7 @@ mod t1_account_task_tests {
                 writes.ingress_receipt_cursors,
                 player,
                 crate::Intent::Cancel {
-                    code: code,
+                    code,
                     id: crate::OrderId(7),
                 },
             )

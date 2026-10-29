@@ -166,7 +166,7 @@ fn tick_with_expiry_still_produces_once_across_phase_boundaries() {
     session.seed_order_for_test(
         npc,
         crate::Intent::PlaceLimit {
-            code: code,
+            code,
             side: crate::Side::Buy,
             price: crate::LimitPrice::Fixed(crate::Money::from_cents(900)),
             qty: 1_000,

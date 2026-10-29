@@ -33,7 +33,7 @@ fn matching_working_order_is_adopted_by_plan_without_allocating_another_order_id
     authority.seed_order_for_test(
         owner,
         Intent::PlaceLimit {
-            code: code,
+            code,
             side: Side::Buy,
             price: crate::LimitPrice::Fixed(Money::from_cents(900)),
             qty: 100,
@@ -99,7 +99,7 @@ fn player_and_other_accounts_plan_join_one_ready_stock_batch() {
         .receive(
             AccountId(0),
             Intent::PlaceLimit {
-                code: code,
+                code,
                 side: Side::Buy,
                 // Both arrival orders stay inside the price cage. This case checks
                 // shared admission, not the effect of moving the best bid.
@@ -180,7 +180,7 @@ fn queued_npc_cancel_reaches_the_book_before_plan_adopts_the_old_order() {
     authority.seed_order_for_test(
         owner,
         Intent::PlaceLimit {
-            code: code,
+            code,
             side: Side::Buy,
             price: crate::LimitPrice::Fixed(Money::from_cents(900)),
             qty: 100,
@@ -197,7 +197,7 @@ fn queued_npc_cancel_reaches_the_book_before_plan_adopts_the_old_order() {
         .receive(
             owner,
             Intent::Cancel {
-                code: code,
+                code,
                 id: old_id,
             },
         )
@@ -396,7 +396,7 @@ fn live_buy_plan_case_with_day_ticks(
         .plans
         .create(PlanOpen {
             account: AccountId(1),
-            code: code,
+            code,
             direction: Side::Buy,
             target: PlanTarget::ShareCount(400),
             opinion: PlanOpinion {
@@ -431,7 +431,7 @@ fn live_buy_plan_case_with_day_ticks(
         .enqueue_player_intent(
             seller,
             Intent::PlaceLimit {
-                code: code,
+                code,
                 side: Side::Sell,
                 price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
                 qty: seller_shares,
@@ -442,7 +442,7 @@ fn live_buy_plan_case_with_day_ticks(
         plan_id,
         allocation: AllocationGrant {
             plan_id,
-            code: code,
+            code,
             allocated_cash: Money::from_cents(1_000_000),
             constraint: None,
         },
@@ -491,7 +491,7 @@ fn fully_filled_first_plan_submit_makes_a_second_ready_submit_a_business_wait() 
     authority.seed_order_for_test(
         AccountId(0),
         Intent::PlaceLimit {
-            code: code,
+            code,
             side: Side::Sell,
             price: crate::LimitPrice::Fixed(Money::from_cents(900)),
             qty: 100,
@@ -567,7 +567,7 @@ fn live_plan_partial_fill_survives_restore_and_second_real_tick_fill() {
             .enqueue_player_intent(
                 AccountId(0),
                 Intent::PlaceLimit {
-                    code: code,
+                    code,
                     side: Side::Sell,
                     price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
                     qty: 100,
@@ -757,7 +757,7 @@ fn player_rejections_and_acceptance_keep_cash_order_and_order_identity() {
     let first_order_id = OrderId(authority.state.next_order_id);
     for intent in [
         Intent::PlaceLimit {
-            code: code,
+            code,
             side: Side::Buy,
             price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
             qty: 1,
@@ -767,7 +767,7 @@ fn player_rejections_and_acceptance_keep_cash_order_and_order_identity() {
             id: OrderId(123),
         },
         Intent::PlaceLimit {
-            code: code,
+            code,
             side: Side::Buy,
             price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
             qty: 100,
@@ -889,7 +889,7 @@ fn joint_player_batch_reaches_rebased_commit() {
         .enqueue_player_intent(
             AccountId(0),
             Intent::PlaceLimit {
-                code: code,
+                code,
                 side: Side::Buy,
                 price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
                 qty: 100,
@@ -1148,7 +1148,7 @@ fn one_account_two_stocks_replace_children_without_waiting_for_other_stock() {
             .plans
             .create(PlanOpen {
                 account: AccountId(1),
-                code: code,
+                code,
                 direction: Side::Buy,
                 target: PlanTarget::ShareCount(100),
                 opinion: PlanOpinion {
@@ -1254,7 +1254,7 @@ fn prepared_joint_entry_has_no_fallible_tail_after_commit_validation() {
         .enqueue_player_intent(
             AccountId(0),
             Intent::PlaceLimit {
-                code: code,
+                code,
                 side: Side::Buy,
                 price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
                 qty: 100,
@@ -1287,7 +1287,7 @@ fn retail_diagnostics_cover_account_validation_and_matching_rejections_in_sealed
         .enqueue_player_intent(
             AccountId(0),
             Intent::PlaceLimit {
-                code: code,
+                code,
                 side: Side::Buy,
                 price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
                 qty: 0,
@@ -1298,7 +1298,7 @@ fn retail_diagnostics_cover_account_validation_and_matching_rejections_in_sealed
         .enqueue_player_intent(
             AccountId(0),
             Intent::PlaceLimit {
-                code: code,
+                code,
                 side: Side::Buy,
                 price: crate::LimitPrice::Fixed(Money::from_cents(1_100)),
                 qty: 100,
@@ -1488,7 +1488,7 @@ fn retail_cancel_is_projected_once_and_preserves_quote_expiry_diagnostic_order()
     authority.seed_order_for_test(
         retail,
         Intent::PlaceLimit {
-            code: code,
+            code,
             side: Side::Buy,
             price: crate::LimitPrice::Fixed(Money::from_cents(980)),
             qty: 100,
@@ -1502,7 +1502,7 @@ fn retail_cancel_is_projected_once_and_preserves_quote_expiry_diagnostic_order()
         .enqueue_player_intent(
             AccountId(0),
             Intent::PlaceLimit {
-                code: code,
+                code,
                 side: Side::Buy,
                 price: crate::LimitPrice::Fixed(Money::from_cents(970)),
                 qty: 100,
@@ -1567,7 +1567,7 @@ fn successful_retail_cancel_is_projected_from_the_matching_fact() {
         .enqueue_player_intent(
             account,
             Intent::Cancel {
-                code: code,
+                code,
                 id: order_id,
             },
         )

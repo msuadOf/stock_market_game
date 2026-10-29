@@ -5419,7 +5419,7 @@ impl GameSession {
                             events.push(Event::OrderCanceled {
                                 seq: self.next_seq(),
                                 account,
-                                code: code,
+                                code,
                                 id: old.id,
                                 remaining_qty: old.qty,
                             });
@@ -5540,7 +5540,7 @@ mod b2_bars_rollback_tests {
         session.seed_order_for_test(
             AccountId(1),
             crate::Intent::PlaceLimit {
-                code: code,
+                code,
                 side: Side::Sell,
                 price: crate::LimitPrice::Fixed(crate::money::Money::from_cents(1000)),
                 qty: 100,
@@ -5555,7 +5555,7 @@ mod b2_bars_rollback_tests {
             .enqueue_player_intent(
                 AccountId(0),
                 crate::Intent::PlaceLimit {
-                    code: code,
+                    code,
                     side: Side::Buy,
                     price: crate::LimitPrice::Fixed(crate::money::Money::from_cents(1005)),
                     qty: 100,
@@ -5662,7 +5662,7 @@ mod b2_query_contract_tests {
         session.seed_order_for_test(
             AccountId(1),
             crate::Intent::PlaceLimit {
-                code: code,
+                code,
                 side: Side::Sell,
                 price: crate::LimitPrice::Fixed(crate::money::Money::from_cents(1000)),
                 qty: 100,
@@ -5673,7 +5673,7 @@ mod b2_query_contract_tests {
             .enqueue_player_intent(
                 AccountId(0),
                 crate::Intent::PlaceLimit {
-                    code: code,
+                    code,
                     side: Side::Buy,
                     price: crate::LimitPrice::Fixed(crate::money::Money::from_cents(1005)),
                     qty: 100,
@@ -6017,7 +6017,7 @@ mod personal_receipt_tests {
         session.seed_order_for_test(
             AccountId(1),
             crate::Intent::PlaceLimit {
-                code: code,
+                code,
                 side: crate::orderbook::Side::Sell,
                 price: crate::LimitPrice::Fixed(crate::money::Money::from_cents(1000)),
                 qty: 100,
@@ -6028,7 +6028,7 @@ mod personal_receipt_tests {
             .enqueue_player_intent(
                 AccountId(0),
                 crate::Intent::PlaceLimit {
-                    code: code,
+                    code,
                     side: crate::orderbook::Side::Buy,
                     price: crate::LimitPrice::Fixed(crate::money::Money::from_cents(1005)),
                     qty: 100,
@@ -6226,7 +6226,7 @@ mod retained_snapshot_tests {
         session.seed_order_for_test(
             AccountId(1),
             crate::Intent::PlaceLimit {
-                code: code,
+                code,
                 side: crate::orderbook::Side::Sell,
                 price: crate::LimitPrice::Fixed(crate::money::Money::from_cents(1000)),
                 qty: 100,
@@ -6237,7 +6237,7 @@ mod retained_snapshot_tests {
             .enqueue_player_intent(
                 AccountId(0),
                 crate::Intent::PlaceLimit {
-                    code: code,
+                    code,
                     side: crate::orderbook::Side::Buy,
                     price: crate::LimitPrice::Fixed(crate::money::Money::from_cents(1005)),
                     qty: 100,
@@ -6854,7 +6854,7 @@ mod npc_working_quote_tests {
             .plans
             .create(crate::plans::PlanOpen {
                 account,
-                code: code,
+                code,
                 direction: Side::Buy,
                 target: crate::plans::PlanTarget::ShareCount(100),
                 opinion: crate::plans::PlanOpinion {
@@ -6879,7 +6879,7 @@ mod npc_working_quote_tests {
         let pid = book
             .create(crate::plans::PlanOpen {
                 account,
-                code: code,
+                code,
                 direction: Side::Buy,
                 target: crate::plans::PlanTarget::ShareCount(100),
                 opinion: crate::plans::PlanOpinion {
@@ -6943,7 +6943,7 @@ mod npc_working_quote_tests {
         session.seed_order_for_test(
             seller,
             Intent::PlaceLimit {
-                code: code,
+                code,
                 side: Side::Sell,
                 price: LimitPrice::Fixed(price),
                 qty: 100,
@@ -6967,7 +6967,7 @@ mod npc_working_quote_tests {
             .enqueue_player_intent(
                 buyer,
                 Intent::PlaceLimit {
-                    code: code,
+                    code,
                     side: Side::Buy,
                     price: LimitPrice::Fixed(price),
                     qty: 100,

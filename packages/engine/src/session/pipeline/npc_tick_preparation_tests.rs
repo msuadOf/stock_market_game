@@ -241,7 +241,7 @@ fn restore_rejects_legacy_pending_while_live_consumption_validates_dependencies(
         crate::session::ReceiptBearingIntent {
             owner: npc,
             intent: Intent::Cancel {
-                code: code,
+                code,
                 id: crate::OrderId(9),
             },
             account_ordinal: 0,
@@ -250,7 +250,7 @@ fn restore_rejects_legacy_pending_while_live_consumption_validates_dependencies(
         crate::session::ReceiptBearingIntent {
             owner: npc,
             intent: Intent::PlaceLimit {
-                code: code,
+                code,
                 side: Side::Buy,
                 price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
                 qty: 100,
@@ -547,7 +547,7 @@ fn real_npc_working_quotes_cancel_before_one_replacement_with_contiguous_keys() 
         session.seed_order_for_test(
             npc,
             Intent::PlaceLimit {
-                code: code,
+                code,
                 side: Side::Buy,
                 price: crate::LimitPrice::Fixed(Money::from_cents(price)),
                 qty: 1_000,
@@ -714,7 +714,7 @@ fn npc_replacement_keeps_the_requested_place_for_next_tick_validation() {
     session.seed_order_for_test(
         npc,
         Intent::PlaceLimit {
-            code: code,
+            code,
             side: Side::Buy,
             price: crate::LimitPrice::Fixed(Money::from_cents(900)),
             // 仍将全部资金冻结；明确预算使当前策略的试买目标足够重新报一手。
@@ -753,7 +753,7 @@ fn real_npc_review_cancels_working_quote_in_and_cleans_lifecycle() {
     session.seed_order_for_test(
         npc,
         Intent::PlaceLimit {
-            code: code,
+            code,
             side: Side::Buy,
             price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
             qty: 100,
@@ -796,7 +796,7 @@ fn npc_reconciliation_local_indexes_restart_per_account_in_canonical_account_ord
         session.seed_order_for_test(
             npc,
             Intent::PlaceLimit {
-                code: code,
+                code,
                 side: Side::Buy,
                 price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
                 qty: 100,

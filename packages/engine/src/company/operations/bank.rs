@@ -69,7 +69,7 @@ pub(in crate::company::operations) fn advance_day(
             key: format!("DEP:{}:{}", company.0, deposit.0),
             due_date: maturity,
             action: ScheduledAction::ContractMaturity {
-                company: company,
+                company,
                 reference: format!("DEP:{}", deposit.0),
             },
         })?;
@@ -92,7 +92,7 @@ pub(in crate::company::operations) fn advance_day(
                 failures.push(PaymentFailureRecord {
                     obligation_status:
                         crate::company::events::PaymentObligationStatus::UncommittedExpense,
-                    company: company,
+                    company,
                     what: "loan disbursement".to_string(),
                     amount: params.loan_principal,
                 });
@@ -104,7 +104,7 @@ pub(in crate::company::operations) fn advance_day(
                 key: format!("MAT:{}:{}", company.0, loan.0),
                 due_date: maturity,
                 action: ScheduledAction::ContractMaturity {
-                    company: company,
+                    company,
                     reference: format!("LN:{}", loan.0),
                 },
             })?;

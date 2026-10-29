@@ -122,7 +122,7 @@ fn player_place_and_cancel_are_rejected_at_the_stock_boundary_with_one_reject_re
         .enqueue_player_intent(
             player,
             Intent::PlaceLimit {
-                code: code,
+                code,
                 side: Side::Buy,
                 price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
                 qty: 100,
@@ -133,7 +133,7 @@ fn player_place_and_cancel_are_rejected_at_the_stock_boundary_with_one_reject_re
         .enqueue_player_intent(
             player,
             Intent::Cancel {
-                code: code,
+                code,
                 id: OrderId(77),
             },
         )
@@ -255,7 +255,7 @@ fn opening_rollover_order_and_reservation_survive_a_silent_pre_open_tick_and_res
         .enqueue_player_intent(
             player,
             Intent::PlaceLimit {
-                code: code,
+                code,
                 side: Side::Buy,
                 price: crate::LimitPrice::Fixed(Money::from_cents(990)),
                 qty: 100,

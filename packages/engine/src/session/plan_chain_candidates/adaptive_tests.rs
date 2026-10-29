@@ -222,7 +222,7 @@ fn frozen_plan_observation_reuses_cash_market_and_reservation_after_private_canc
     session.seed_order_for_test(
         owner,
         Intent::PlaceLimit {
-            code: code,
+            code,
             side: Side::Buy,
             price: LimitPrice::Fixed(Money::from_cents(901)),
             qty: 100,
@@ -236,7 +236,7 @@ fn frozen_plan_observation_reuses_cash_market_and_reservation_after_private_canc
     session.seed_order_for_test(
         owner,
         Intent::Cancel {
-            code: code,
+            code,
             id: order_id,
         },
         &mut Vec::new(),

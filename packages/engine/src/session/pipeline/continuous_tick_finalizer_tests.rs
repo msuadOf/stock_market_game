@@ -71,7 +71,7 @@ fn no_closing_auction_finishes_day_and_releases_new_orders_once() {
     game.enqueue_player_intent(
         AccountId(0),
         Intent::PlaceLimit {
-            code: code,
+            code,
             side: Side::Buy,
             price: crate::LimitPrice::Fixed(Money::from_cents(990)),
             qty: 100,
@@ -331,7 +331,7 @@ fn trade_session(ticks_per_day: u64) -> (GameSession, crate::StockId) {
             game.enqueue_player_intent(
                 AccountId(0),
                 Intent::PlaceLimit {
-                    code: code,
+                    code,
                     side,
                     price: crate::LimitPrice::Fixed(Money::from_cents(price)),
                     qty: 100,
@@ -564,7 +564,7 @@ fn partial_fill_then_day_end(maker: Side, taker: Side) {
         game.enqueue_player_intent(
             AccountId(0),
             Intent::PlaceLimit {
-                code: code,
+                code,
                 side,
                 price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
                 qty,

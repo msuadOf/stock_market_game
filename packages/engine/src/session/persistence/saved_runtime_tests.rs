@@ -172,7 +172,7 @@ fn restore_rejects_plan_child_that_does_not_match_a_live_order() {
     session.seed_order_for_test(
         AccountId(0),
         Intent::PlaceLimit {
-            code: code,
+            code,
             side: Side::Buy,
             price: LimitPrice::Fixed(Money::from_cents(1_000)),
             qty: 100,
@@ -191,7 +191,7 @@ fn restore_rejects_plan_child_that_does_not_match_a_live_order() {
         .plans
         .create(crate::plans::PlanOpen {
             account: institution,
-            code: code,
+            code,
             direction: Side::Buy,
             target: crate::plans::PlanTarget::ShareCount(100),
             opinion: crate::plans::PlanOpinion {
@@ -694,7 +694,7 @@ fn live_child_case_at_stock(
         .plans
         .create(crate::plans::PlanOpen {
             account,
-            code: code,
+            code,
             direction: Side::Buy,
             target: crate::plans::PlanTarget::ShareCount(400),
             opinion: crate::plans::PlanOpinion {
@@ -1154,7 +1154,7 @@ fn real_step_settles_and_persists_gross_capped_seller_without_cash_reservation()
         session.seed_order_for_test(
             AccountId(1),
             Intent::PlaceLimit {
-                code: code,
+                code,
                 side: Side::Sell,
                 price: LimitPrice::Fixed(Money::from_cents(1)),
                 // 200 挂出、买 100——余 100 在途（"partially-filled seller
@@ -1167,7 +1167,7 @@ fn real_step_settles_and_persists_gross_capped_seller_without_cash_reservation()
             .enqueue_player_intent(
                 AccountId(0),
                 Intent::PlaceLimit {
-                    code: code,
+                    code,
                     side: Side::Buy,
                     price: LimitPrice::Fixed(Money::from_cents(1)),
                     qty: 100,
@@ -1199,7 +1199,7 @@ fn real_step_settles_and_persists_gross_capped_seller_without_cash_reservation()
             .enqueue_player_intent(
                 AccountId(0),
                 Intent::PlaceLimit {
-                    code: code,
+                    code,
                     side: Side::Buy,
                     price: LimitPrice::Fixed(Money::from_cents(1)),
                     qty: 100,
@@ -1212,7 +1212,7 @@ fn real_step_settles_and_persists_gross_capped_seller_without_cash_reservation()
             .enqueue_player_intent(
                 AccountId(0),
                 Intent::PlaceLimit {
-                    code: code,
+                    code,
                     side: Side::Sell,
                     price: LimitPrice::Fixed(Money::from_cents(1)),
                     qty: 200,
@@ -1258,7 +1258,7 @@ fn real_step_settles_and_persists_gross_capped_seller_without_cash_reservation()
             .enqueue_player_intent(
                 AccountId(0),
                 Intent::PlaceLimit {
-                    code: code,
+                    code,
                     side: Side::Buy,
                     price: LimitPrice::Fixed(Money::from_cents(1)),
                     qty: 100,
@@ -1304,7 +1304,7 @@ fn same_tick_routes_advance_one_seller_fee_debt_without_reusing_tick_start_audit
         session.seed_order_for_test(
             AccountId(1),
             Intent::PlaceLimit {
-                code: code,
+                code,
                 side: Side::Sell,
                 price: LimitPrice::Fixed(Money::from_cents(1)),
                 qty: 1_300,
@@ -1321,7 +1321,7 @@ fn same_tick_routes_advance_one_seller_fee_debt_without_reusing_tick_start_audit
             .enqueue_player_intent(
                 AccountId(0),
                 Intent::PlaceLimit {
-                    code: code,
+                    code,
                     side: Side::Sell,
                     price: LimitPrice::Fixed(Money::from_cents(1)),
                     qty: 1_300,
@@ -1336,7 +1336,7 @@ fn same_tick_routes_advance_one_seller_fee_debt_without_reusing_tick_start_audit
             .enqueue_player_intent(
                 AccountId(0),
                 Intent::PlaceLimit {
-                    code: code,
+                    code,
                     side: Side::Buy,
                     price: LimitPrice::Fixed(Money::from_cents(1)),
                     qty,
@@ -1409,7 +1409,7 @@ fn same_tick_new_seller_route_creates_and_advances_cumulative_fee_audit() {
         session.seed_order_for_test(
             AccountId(1),
             Intent::PlaceLimit {
-                code: code,
+                code,
                 side: Side::Sell,
                 price: LimitPrice::Fixed(Money::from_cents(1)),
                 qty: 1_300,
@@ -1426,7 +1426,7 @@ fn same_tick_new_seller_route_creates_and_advances_cumulative_fee_audit() {
             .enqueue_player_intent(
                 AccountId(0),
                 Intent::PlaceLimit {
-                    code: code,
+                    code,
                     side: Side::Sell,
                     price: LimitPrice::Fixed(Money::from_cents(1)),
                     qty: 1_300,
@@ -1439,7 +1439,7 @@ fn same_tick_new_seller_route_creates_and_advances_cumulative_fee_audit() {
             .enqueue_player_intent(
                 AccountId(0),
                 Intent::PlaceLimit {
-                    code: code,
+                    code,
                     side: Side::Buy,
                     price: LimitPrice::Fixed(Money::from_cents(1)),
                     qty,
@@ -1959,7 +1959,7 @@ fn restore_carries_true_fill_facts_and_continues_buy_with_cumulative_fees() {
             current.seed_order_for_test(
                 AccountId(1),
                 Intent::PlaceLimit {
-                    code: code,
+                    code,
                     side: Side::Sell,
                     price: LimitPrice::Fixed(crate::money::Money::from_cents(990)),
                     qty: 100,
@@ -1970,7 +1970,7 @@ fn restore_carries_true_fill_facts_and_continues_buy_with_cumulative_fees() {
                 .enqueue_player_intent(
                     AccountId(0),
                     Intent::PlaceLimit {
-                        code: code,
+                        code,
                         side: Side::Buy,
                         price: LimitPrice::Fixed(crate::money::Money::from_cents(1_000)),
                         qty: 300,
@@ -1981,7 +1981,7 @@ fn restore_carries_true_fill_facts_and_continues_buy_with_cumulative_fees() {
             current.seed_order_for_test(
                 AccountId(1),
                 Intent::PlaceLimit {
-                    code: code,
+                    code,
                     side: Side::Sell,
                     price: LimitPrice::Fixed(crate::money::Money::from_cents(990)),
                     qty: 100,

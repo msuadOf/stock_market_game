@@ -253,7 +253,7 @@ mod shared_receipt_tests {
             .stock_id(&session.state.setup.stocks[0].code.0)
             .unwrap();
         let intent = || Intent::PlaceLimit {
-            code: code,
+            code,
             side: Side::Buy,
             price: LimitPrice::Fixed(Money::from_cents(990)),
             qty: 100,

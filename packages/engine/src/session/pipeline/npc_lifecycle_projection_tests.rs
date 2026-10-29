@@ -103,7 +103,7 @@ fn npc_passive_full_fill_removes_existing_quote_lifecycle_before_save() {
     session.seed_order_for_test(
         npc,
         Intent::PlaceLimit {
-            code: code,
+            code,
             side: Side::Sell,
             price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
             qty: 100,
@@ -125,7 +125,7 @@ fn npc_passive_full_fill_removes_existing_quote_lifecycle_before_save() {
         .enqueue_player_intent(
             AccountId(0),
             Intent::PlaceLimit {
-                code: code,
+                code,
                 side: Side::Buy,
                 price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
                 qty: 100,
@@ -187,7 +187,7 @@ fn project_npc_limit_against_player_ask(qty: u32) -> (GameSession, OrderId) {
     session.seed_order_for_test(
         player,
         Intent::PlaceLimit {
-            code: code,
+            code,
             side: Side::Sell,
             price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
             qty: 100,
@@ -244,7 +244,7 @@ fn npc_quote_expiry_uses_acceptance_quote_when_a_later_round_operation_moves_the
         .grant_position(code, 100, Money::from_cents(100_000))
         .unwrap();
     let buy = Intent::PlaceLimit {
-        code: code,
+        code,
         side: Side::Buy,
         price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
         qty: 100,
@@ -265,7 +265,7 @@ fn npc_quote_expiry_uses_acceptance_quote_when_a_later_round_operation_moves_the
             IntentCandidateKey::player(0),
             player,
             Intent::PlaceLimit {
-                code: code,
+                code,
                 side: Side::Sell,
                 price: crate::LimitPrice::Fixed(Money::from_cents(1_008)),
                 qty: 100,
@@ -336,7 +336,7 @@ fn npc_new_quote_filled_later_in_the_same_round_has_no_stale_lifecycle() {
             IntentCandidateKey::npc(npc, 0),
             npc,
             Intent::PlaceLimit {
-                code: code,
+                code,
                 side: Side::Buy,
                 price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
                 qty: 100,
@@ -346,7 +346,7 @@ fn npc_new_quote_filled_later_in_the_same_round_has_no_stale_lifecycle() {
             IntentCandidateKey::player(0),
             player,
             Intent::PlaceLimit {
-                code: code,
+                code,
                 side: Side::Sell,
                 price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
                 qty: 100,
@@ -414,7 +414,7 @@ fn npc_resting_fact_without_its_acceptance_quote_is_a_typed_failure() {
             IntentCandidateKey::npc(npc, 0),
             npc,
             Intent::PlaceLimit {
-                code: code,
+                code,
                 side: Side::Buy,
                 price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
                 qty: 100,

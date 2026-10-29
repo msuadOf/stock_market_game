@@ -22,7 +22,7 @@ fn decision_resources_fixture(
     game.seed_order_for_test(
         account,
         crate::Intent::PlaceLimit {
-            code: code,
+            code,
             side,
             price: crate::LimitPrice::Fixed(crate::Money::from_cents(990)),
             qty: 100,
@@ -220,7 +220,7 @@ fn decision_resources_mixed_books_ignore_plan_legs_and_keep_seller_cash_unreserv
     game.seed_order_for_test(
         seller,
         crate::Intent::PlaceLimit {
-            code: code,
+            code,
             side: crate::Side::Sell,
             price: crate::LimitPrice::Fixed(crate::Money::from_cents(990)),
             qty: 100,
@@ -230,7 +230,7 @@ fn decision_resources_mixed_books_ignore_plan_legs_and_keep_seller_cash_unreserv
     game.seed_order_for_test(
         player,
         crate::Intent::PlaceLimit {
-            code: code,
+            code,
             side: crate::Side::Buy,
             price: crate::LimitPrice::Fixed(crate::Money::from_cents(980)),
             qty: 100,
@@ -243,7 +243,7 @@ fn decision_resources_mixed_books_ignore_plan_legs_and_keep_seller_cash_unreserv
         .plans
         .create(crate::plans::PlanOpen {
             account: player,
-            code: code,
+            code,
             direction: crate::Side::Buy,
             target: crate::plans::PlanTarget::ShareCount(400),
             opinion: crate::plans::PlanOpinion {
@@ -283,7 +283,7 @@ fn decision_resources_mixed_books_ignore_plan_legs_and_keep_seller_cash_unreserv
     without_leg.seed_order_for_test(
         seller,
         crate::Intent::PlaceLimit {
-            code: code,
+            code,
             side: crate::Side::Sell,
             price: crate::LimitPrice::Fixed(crate::Money::from_cents(990)),
             qty: 100,
@@ -293,7 +293,7 @@ fn decision_resources_mixed_books_ignore_plan_legs_and_keep_seller_cash_unreserv
     without_leg.seed_order_for_test(
         player,
         crate::Intent::PlaceLimit {
-            code: code,
+            code,
             side: crate::Side::Buy,
             price: crate::LimitPrice::Fixed(crate::Money::from_cents(980)),
             qty: 100,
@@ -547,7 +547,7 @@ fn decision_resources_parallel_account_failures_reject_corrupt_resources() {
     game.seed_order_for_test(
         seller,
         crate::Intent::PlaceLimit {
-            code: code,
+            code,
             side: crate::Side::Sell,
             price: crate::LimitPrice::Fixed(crate::Money::from_cents(1_100)),
             qty: 100,
@@ -557,7 +557,7 @@ fn decision_resources_parallel_account_failures_reject_corrupt_resources() {
     game.seed_order_for_test(
         buyer,
         crate::Intent::PlaceLimit {
-            code: code,
+            code,
             side: crate::Side::Buy,
             price: crate::LimitPrice::Fixed(crate::Money::from_cents(900)),
             qty: 100,

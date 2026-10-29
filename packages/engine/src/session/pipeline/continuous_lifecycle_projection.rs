@@ -599,14 +599,14 @@ mod tests {
         let b = OrderId(11);
         let submitted = |order_id| RetailOrderDiagnosticEvent::Submitted {
             account: AccountId(1),
-            code: code,
+            code,
             side: Side::Buy,
             order_id,
             qty: 100,
         };
         let filled = |order_id| RetailOrderDiagnosticEvent::Filled {
             account: AccountId(1),
-            code: code,
+            code,
             side: Side::Buy,
             order_id,
             qty: 100,
@@ -636,14 +636,14 @@ mod tests {
         let order_id = OrderId(10);
         let submitted = RetailOrderDiagnosticEvent::Submitted {
             account: AccountId(1),
-            code: code,
+            code,
             side: Side::Buy,
             order_id,
             qty: 100,
         };
         let filled = |qty| RetailOrderDiagnosticEvent::Filled {
             account: AccountId(1),
-            code: code,
+            code,
             side: Side::Buy,
             order_id,
             qty,
@@ -665,7 +665,7 @@ mod tests {
         let order_id = OrderId(10);
         let filled = RetailOrderDiagnosticEvent::Filled {
             account: AccountId(1),
-            code: code,
+            code,
             side: Side::Buy,
             order_id,
             qty: 40,
@@ -692,21 +692,21 @@ mod tests {
         let order_id = OrderId(10);
         let submitted = RetailOrderDiagnosticEvent::Submitted {
             account: AccountId(1),
-            code: code,
+            code,
             side: Side::Buy,
             order_id,
             qty: 100,
         };
         let filled = |qty| RetailOrderDiagnosticEvent::Filled {
             account: AccountId(1),
-            code: code,
+            code,
             side: Side::Buy,
             order_id,
             qty,
         };
         let canceled = RetailOrderDiagnosticEvent::Canceled {
             account: AccountId(1),
-            code: code,
+            code,
             order_id,
             remaining_qty: 60,
         };

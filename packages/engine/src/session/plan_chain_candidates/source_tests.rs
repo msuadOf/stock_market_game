@@ -24,7 +24,7 @@ fn fixture_with_two_live_orders() -> (GameSession, PlanExecutionRequest, Vec<Ord
         session.seed_order_for_test(
             owner,
             Intent::PlaceLimit {
-                code: code,
+                code,
                 side: Side::Buy,
                 price: LimitPrice::Fixed(Money::from_cents(price)),
                 qty: 100,
@@ -74,7 +74,7 @@ fn source_enumeration_preserves_multi_continuation_order_and_payload() {
     session.seed_order_for_test(
         AccountId(1),
         Intent::Cancel {
-            code: code,
+            code,
             id: order_ids[0],
         },
         &mut cancel_events,
@@ -101,7 +101,7 @@ fn source_enumeration_preserves_multi_continuation_order_and_payload() {
     session.seed_order_for_test(
         AccountId(1),
         Intent::Cancel {
-            code: code,
+            code,
             id: order_ids[1],
         },
         &mut cancel_events,
@@ -150,11 +150,11 @@ fn source_enumeration_preserves_multi_continuation_order_and_payload() {
         .unwrap(),
         serde_json::to_value([
             Intent::Cancel {
-                code: code,
+                code,
                 id: order_ids[0],
             },
             Intent::Cancel {
-                code: code,
+                code,
                 id: order_ids[1],
             },
             Intent::PlaceLimit {

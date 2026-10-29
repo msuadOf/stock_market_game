@@ -75,7 +75,7 @@ pub fn publish_simple_scheduled(
     let mut ids = Vec::with_capacity(pending.len());
     for (published_at, company, kind, report) in pending {
         let request = PublicationRequest {
-            company: company,
+            company,
             scope: report.scope,
             period: report.period,
             kind: report.kind,

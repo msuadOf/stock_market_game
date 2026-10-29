@@ -1217,7 +1217,7 @@ mod tests {
         });
         let code = StockId(0);
         let shard = MockShard {
-            code: code,
+            code,
             steps: 0,
             signals,
         };

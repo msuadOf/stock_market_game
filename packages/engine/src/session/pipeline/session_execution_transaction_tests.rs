@@ -15,7 +15,7 @@ fn accepted_buy_worker(
         IntentCandidateKey::player(0),
         buyer,
         Intent::PlaceLimit {
-            code: code,
+            code,
             side: Side::Buy,
             price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
             qty: 100,
@@ -121,7 +121,7 @@ fn institutional_fill_updates_belief_and_preserves_participant_members_and_other
     game.seed_order_for_test(
         AccountId(0),
         Intent::PlaceLimit {
-            code: code,
+            code,
             side: Side::Sell,
             price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
             qty: 100,

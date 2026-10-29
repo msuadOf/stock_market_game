@@ -184,7 +184,7 @@ fn two_npc_requests_and_player_request_share_stock_price_time_rules() {
                 .receive(
                     account,
                     Intent::PlaceLimit {
-                        code: code,
+                        code,
                         side: Side::Buy,
                         price: crate::LimitPrice::Fixed(Money::from_cents(900)),
                         qty: 200,
@@ -205,7 +205,7 @@ fn two_npc_requests_and_player_request_share_stock_price_time_rules() {
         .enqueue_player_intent(
             player,
             Intent::PlaceLimit {
-                code: code,
+                code,
                 side: Side::Buy,
                 price: crate::LimitPrice::Fixed(Money::from_cents(900)),
                 qty: 100,
@@ -511,7 +511,7 @@ fn public_step_routes_pre_open_rejection_and_continuous_place_cancel_lifecycle()
         .enqueue_player_intent(
             AccountId(0),
             Intent::PlaceLimit {
-                code: code,
+                code,
                 side: Side::Buy,
                 price: crate::LimitPrice::Fixed(Money::from_cents(900)),
                 qty: 100,
@@ -522,7 +522,7 @@ fn public_step_routes_pre_open_rejection_and_continuous_place_cancel_lifecycle()
         .enqueue_player_intent(
             AccountId(0),
             Intent::Cancel {
-                code: code,
+                code,
                 id: OrderId(77),
             },
         )
@@ -574,7 +574,7 @@ fn public_step_routes_pre_open_rejection_and_continuous_place_cancel_lifecycle()
         .enqueue_player_intent(
             AccountId(0),
             Intent::PlaceLimit {
-                code: code,
+                code,
                 side: Side::Buy,
                 price: crate::LimitPrice::Fixed(Money::from_cents(900)),
                 qty: 100,
@@ -605,7 +605,7 @@ fn public_step_routes_pre_open_rejection_and_continuous_place_cancel_lifecycle()
         .enqueue_player_intent(
             AccountId(0),
             Intent::Cancel {
-                code: code,
+                code,
                 id: OrderId(order_id.0),
             },
         )
@@ -835,7 +835,7 @@ fn public_step_reports_zero_quantity_in_event_and_retail_diagnostic() {
         .enqueue_player_intent(
             AccountId(0),
             Intent::PlaceLimit {
-                code: code,
+                code,
                 side: Side::Buy,
                 price: crate::LimitPrice::Fixed(Money::from_cents(900)),
                 qty: 0,

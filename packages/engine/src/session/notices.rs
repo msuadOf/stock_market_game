@@ -555,7 +555,7 @@ mod tests {
                     .plans
                     .create(crate::plans::PlanOpen {
                         account,
-                        code: code,
+                        code,
                         direction: Side::Buy,
                         target: crate::plans::PlanTarget::ShareCount(100),
                         opinion: crate::plans::PlanOpinion {

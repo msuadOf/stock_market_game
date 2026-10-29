@@ -186,7 +186,7 @@ fn working_orders(session: &mut GameSession, prices: &[i64]) -> Vec<OrderId> {
         session.seed_order_for_test(
             AccountId(1),
             Intent::PlaceLimit {
-                code: code,
+                code,
                 side: Side::Buy,
                 price: crate::LimitPrice::Fixed(Money::from_cents(*price)),
                 qty: 100,
@@ -364,7 +364,7 @@ fn replace_rechecks_plan_remaining_after_another_account_partially_fills_old_chi
         IntentCandidateKey::player(0),
         AccountId(0),
         Intent::PlaceLimit {
-            code: code,
+            code,
             side: Side::Sell,
             price: crate::LimitPrice::Fixed(Money::from_cents(900)),
             qty: 50,
@@ -447,7 +447,7 @@ fn conflicting_cancels_recheck_live_orders_after_another_account_fills_one() {
         IntentCandidateKey::player(0),
         AccountId(0),
         Intent::PlaceLimit {
-            code: code,
+            code,
             side: Side::Sell,
             price: crate::LimitPrice::Fixed(Money::from_cents(902)),
             qty: 100,
@@ -624,7 +624,7 @@ fn fill_case(resting_sell_qty: u32) {
     session.seed_order_for_test(
         AccountId(0),
         Intent::PlaceLimit {
-            code: code,
+            code,
             side: Side::Sell,
             price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
             qty: resting_sell_qty,
@@ -893,7 +893,7 @@ fn run_independent_stock_round(
             .plans
             .create(PlanOpen {
                 account,
-                code: code,
+                code,
                 direction: Side::Buy,
                 target: PlanTarget::ShareCount(100),
                 opinion: PlanOpinion {
@@ -1149,7 +1149,7 @@ fn adaptive_initial_player_partial_market_fill_is_projected_without_a_false_full
     session.seed_order_for_test(
         AccountId(1),
         Intent::PlaceLimit {
-            code: code,
+            code,
             side: Side::Sell,
             price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
             qty: 50,

@@ -135,7 +135,7 @@ fn saved_filled_identity_cannot_also_be_an_active_order() {
     session.seed_order_for_test(
         AccountId(0),
         Intent::PlaceLimit {
-            code: code,
+            code,
             side: Side::Buy,
             price: LimitPrice::Fixed(Money::from_cents(1_000)),
             qty: 100,

@@ -40,7 +40,7 @@ fn execute_buy(session: &mut GameSession) -> crate::StockId {
     session.seed_order_for_test(
         crate::AccountId(1),
         crate::Intent::PlaceLimit {
-            code: code,
+            code,
             side: crate::orderbook::Side::Sell,
             price: crate::LimitPrice::Fixed(crate::money::Money::from_cents(1000)),
             qty: 100,
@@ -54,7 +54,7 @@ fn execute_buy(session: &mut GameSession) -> crate::StockId {
         .enqueue_player_intent(
             crate::AccountId(0),
             crate::Intent::PlaceLimit {
-                code: code,
+                code,
                 side: crate::orderbook::Side::Buy,
                 price: crate::LimitPrice::Fixed(crate::money::Money::from_cents(1005)),
                 qty: 100,

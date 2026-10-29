@@ -741,7 +741,7 @@ fn correction_ready_system_with_prehistory(
             prehistory_periods,
             settlement_cycle: SettlementCycle::Monthly,
             companies: vec![SimpleCompanyConfig {
-                company: company,
+                company,
                 kind: CompanyKind::Industrial,
                 generation: PeriodGenerationParameters {
                     initial_revenue: AccountingAmount::from_cents(10_000),

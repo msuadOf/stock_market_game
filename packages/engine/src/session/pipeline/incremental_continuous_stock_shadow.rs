@@ -776,7 +776,7 @@ impl IncrementalContinuousStockShadow {
                 Event::PriceTick {
                     seq: 0,
                     tick: boundary.tick_after,
-                    code: code,
+                    code,
                     last_price: last,
                     daily_candle: data.candle.clone().expect("收盘标记后必有活动日 K"),
                     bids: price.bids.clone(),
@@ -791,7 +791,7 @@ impl IncrementalContinuousStockShadow {
                     seq: 0,
                     tick: boundary.tick_after,
                     phase: boundary.policy.phase(),
-                    code: code,
+                    code,
                     indicative_price: auction.indicative_price,
                     matched_volume: auction.matched_volume,
                     imbalance: auction.imbalance,

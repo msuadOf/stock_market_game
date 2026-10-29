@@ -43,7 +43,7 @@ fn same_stock_cancellations_follow_supplied_order_even_when_identity_numbers_des
         candidate_key: IntentCandidateKey::player(key),
         sealed_index,
         account: AccountId(11),
-        code: code,
+        code,
         order_id: OrderId(100),
     };
 
@@ -81,13 +81,13 @@ fn post_quote_expiry_stock_shadow_survives_routes_and_same_tick_cancel_sees_the_
     let (operations, config, first_order_id) = validated_operations(&code, |next_order_id| {
         vec![
             Intent::PlaceLimit {
-                code: code,
+                code,
                 side: Side::Buy,
                 price: crate::LimitPrice::Fixed(Money::from_cents(990)),
                 qty: 100,
             },
             Intent::Cancel {
-                code: code,
+                code,
                 id: OrderId(next_order_id),
             },
         ]
@@ -160,13 +160,13 @@ fn private_stock_round_places_then_cancels_in_one_batch_with_complete_evidence()
     let (operations, config, order_id) = validated_operations(&code, |next_order_id| {
         vec![
             Intent::PlaceLimit {
-                code: code,
+                code,
                 side: Side::Buy,
                 price: crate::LimitPrice::Fixed(Money::from_cents(990)),
                 qty: 100,
             },
             Intent::Cancel {
-                code: code,
+                code,
                 id: OrderId(next_order_id),
             },
         ]
@@ -218,7 +218,7 @@ fn immediate_full_fill_has_a_typed_outcome_without_an_order_accepted_fact() {
     );
     let (operations, config, incoming_id) = validated_operations(&code, |_| {
         vec![Intent::PlaceMarket {
-            code: code,
+            code,
             side: Side::Buy,
             qty: 100,
         }]
@@ -279,7 +279,7 @@ fn one_incoming_order_fills_each_resting_maker_once() {
     );
     let (operations, config, _) = validated_operations(&code, |_| {
         vec![Intent::PlaceMarket {
-            code: code,
+            code,
             side: Side::Buy,
             qty: 200,
         }]
@@ -340,12 +340,12 @@ fn stock_local_trade_identity_continues_across_adaptive_routes() {
     let (operations, config, _) = validated_operations(&code, |_| {
         vec![
             Intent::PlaceMarket {
-                code: code,
+                code,
                 side: Side::Buy,
                 qty: 100,
             },
             Intent::PlaceMarket {
-                code: code,
+                code,
                 side: Side::Buy,
                 qty: 100,
             },
@@ -394,12 +394,12 @@ fn sell_maker_conservation_survives_partial_fills_across_routes() {
     let (operations, config, _) = validated_operations(&code, |_| {
         vec![
             Intent::PlaceMarket {
-                code: code,
+                code,
                 side: Side::Buy,
                 qty: 100,
             },
             Intent::PlaceMarket {
-                code: code,
+                code,
                 side: Side::Buy,
                 qty: 100,
             },
@@ -500,7 +500,7 @@ fn tick_start_maker_can_be_canceled_after_a_partial_fill_in_an_earlier_route() {
     );
     let (operations, config, _) = validated_operations(&code, |_| {
         vec![Intent::PlaceMarket {
-            code: code,
+            code,
             side: Side::Buy,
             qty: 100,
         }]
@@ -509,7 +509,7 @@ fn tick_start_maker_can_be_canceled_after_a_partial_fill_in_an_earlier_route() {
         candidate_key: IntentCandidateKey::player(1),
         sealed_index: 1,
         account: AccountId(11),
-        code: code,
+        code,
         order_id: OrderId(100),
     };
     let mut coordinator =
@@ -689,7 +689,7 @@ fn successful_cancel_cannot_hide_a_remaining_book_ledger_mismatch_at_finish() {
             candidate_key: IntentCandidateKey::player(0),
             sealed_index: 0,
             account: AccountId(11),
-            code: code,
+            code,
             order_id: OrderId(100),
         }])
         .unwrap();

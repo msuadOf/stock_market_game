@@ -262,12 +262,12 @@ mod history_storage_tests {
             };
             original.latest_moment = Some(moment);
             original.failure_events.push(FailureEventRecord {
-                code: code,
+                code,
                 order_id: Some(ordinal),
                 moment,
             });
             original.exit_records.push(ExitRecord {
-                code: code,
+                code,
                 order_id: Some(ordinal),
                 cooldown_until_market_minute: Some(ordinal + 120),
                 realized_profit: false,
@@ -292,7 +292,7 @@ mod history_storage_tests {
             trading_day: 66,
         };
         candidate.failure_events.push(FailureEventRecord {
-            code: code,
+            code,
             order_id: Some(66),
             moment,
         });

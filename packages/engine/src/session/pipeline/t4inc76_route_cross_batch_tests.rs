@@ -45,7 +45,7 @@ fn plan_request_for(
         .plans
         .create(PlanOpen {
             account,
-            code: code,
+            code,
             direction: Side::Buy,
             target: PlanTarget::ShareCount(u32::try_from(target).unwrap()),
             opinion: PlanOpinion {

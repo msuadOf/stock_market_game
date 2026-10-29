@@ -464,7 +464,7 @@ impl Account {
         let sellable = self.sellable_qty(&code);
         if settlement.qty > sellable {
             return Err(AccountError::InsufficientShares {
-                code: code,
+                code,
                 needed: settlement.qty,
                 have: sellable,
             });

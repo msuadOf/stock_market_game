@@ -203,7 +203,7 @@ fn expiring_quote_and_fill_session() -> (GameSession, crate::OrderId, AccountId)
     session.seed_order_for_test(
         account,
         Intent::PlaceLimit {
-            code: code,
+            code,
             side: Side::Buy,
             price: crate::LimitPrice::Fixed(Money::from_cents(990)),
             qty: 100,
@@ -241,7 +241,7 @@ fn expiring_quote_and_fill_session() -> (GameSession, crate::OrderId, AccountId)
     session.seed_order_for_test(
         releasing,
         Intent::PlaceLimit {
-            code: code,
+            code,
             side: Side::Sell,
             price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
             qty: 100,
@@ -256,7 +256,7 @@ fn expiring_quote_and_fill_session() -> (GameSession, crate::OrderId, AccountId)
     session.seed_order_for_test(
         releasing,
         Intent::PlaceLimit {
-            code: code,
+            code,
             side: Side::Buy,
             price: crate::LimitPrice::Fixed(Money::from_cents(980)),
             qty: 100,
@@ -282,7 +282,7 @@ fn expiring_quote_and_fill_session() -> (GameSession, crate::OrderId, AccountId)
         .enqueue_player_intent(
             PLAYER,
             Intent::PlaceLimit {
-                code: code,
+                code,
                 side: Side::Buy,
                 price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
                 qty: 100,
@@ -294,7 +294,7 @@ fn expiring_quote_and_fill_session() -> (GameSession, crate::OrderId, AccountId)
         .enqueue_player_intent(
             releasing,
             Intent::Cancel {
-                code: code,
+                code,
                 id: working_order,
             },
         )
@@ -303,7 +303,7 @@ fn expiring_quote_and_fill_session() -> (GameSession, crate::OrderId, AccountId)
         .enqueue_player_intent(
             releasing,
             Intent::PlaceLimit {
-                code: code,
+                code,
                 side: Side::Buy,
                 price: crate::LimitPrice::Fixed(Money::from_cents(990)),
                 qty: 100,

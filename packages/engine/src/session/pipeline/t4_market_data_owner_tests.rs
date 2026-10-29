@@ -272,7 +272,7 @@ fn owner_finish_candle_statistics_under_real_trades() {
             &game,
             AccountId(0),
             vec![crate::Intent::PlaceLimit {
-                code: code,
+                code,
                 side: Side::Buy,
                 price: crate::LimitPrice::Fixed(Money::from_cents(1_010)),
                 qty: 100,
@@ -627,7 +627,7 @@ fn two_accepted_outcomes() -> (
             IntentCandidateKey::player(index),
             AccountId(0),
             Intent::PlaceLimit {
-                code: code,
+                code,
                 side: Side::Buy,
                 price: crate::LimitPrice::Fixed(Money::from_cents(700)),
                 qty: 100,

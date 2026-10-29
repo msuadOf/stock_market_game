@@ -2255,7 +2255,7 @@ mod chain_restructure_tests {
         session.seed_order_for_test(
             account,
             Intent::PlaceLimit {
-                code: code,
+                code,
                 side: Side::Sell,
                 price: LimitPrice::Fixed(price),
                 qty: 100,
@@ -2278,7 +2278,7 @@ mod chain_restructure_tests {
             .enqueue_player_intent(
                 AccountId(0),
                 Intent::PlaceLimit {
-                    code: code,
+                    code,
                     side: Side::Buy,
                     price: LimitPrice::Fixed(price),
                     qty: 100,
@@ -2360,7 +2360,7 @@ mod chain_restructure_tests {
         let expires_on = session.civil_date();
         let publication = std::sync::Arc::make_mut(&mut session.state.library)
             .publish_announcement(crate::information::AnnouncementRequest {
-                company: company,
+                company,
                 occurred_on: date,
                 published_at: crate::calendar::CivilInstant::from_hms(date, 18, 0, 0).unwrap(),
                 content: crate::information::AnnouncementContent::Shock(
@@ -2847,7 +2847,7 @@ mod chain_restructure_tests {
             .feedback
             .exit_records
             .push(crate::experience::ExitRecord {
-                code: code,
+                code,
                 order_id: Some(999),
                 cooldown_until_market_minute: None,
                 realized_profit: true,
@@ -3510,7 +3510,7 @@ mod chain_restructure_tests {
             .plans
             .create(PlanOpen {
                 account,
-                code: code,
+                code,
                 direction: Side::Buy,
                 target: PlanTarget::ShareCount(1000),
                 opinion: PlanOpinion {
@@ -3664,7 +3664,7 @@ mod chain_restructure_tests {
             .plans
             .create(PlanOpen {
                 account,
-                code: code,
+                code,
                 direction: Side::Buy,
                 target: PlanTarget::ShareCount(order_size),
                 opinion: PlanOpinion {
@@ -4289,7 +4289,7 @@ mod chain_restructure_tests {
             .plans
             .create(PlanOpen {
                 account,
-                code: code,
+                code,
                 direction: Side::Buy,
                 target: PlanTarget::ShareCount(100),
                 opinion: PlanOpinion {
@@ -4485,7 +4485,7 @@ mod chain_restructure_tests {
             .plans
             .create(PlanOpen {
                 account: owner,
-                code: code,
+                code,
                 direction: Side::Buy,
                 target: PlanTarget::ShareCount(1_000),
                 opinion: PlanOpinion {
@@ -4708,7 +4708,7 @@ mod chain_restructure_tests {
             .plans
             .create(PlanOpen {
                 account: owner,
-                code: code,
+                code,
                 direction: Side::Buy,
                 target: PlanTarget::ShareCount(parent_qty),
                 opinion: PlanOpinion {
@@ -4990,7 +4990,7 @@ mod chain_restructure_tests {
             .plans
             .create(PlanOpen {
                 account,
-                code: code,
+                code,
                 direction: Side::Buy,
                 target: PlanTarget::ShareCount(100),
                 opinion: PlanOpinion {
@@ -5641,7 +5641,7 @@ mod chain_restructure_tests {
                 } => Event::OrderCanceled {
                     seq,
                     account,
-                    code: code,
+                    code,
                     id: OrderId(crate::runtime::group::desk_order_id(
                         code.0 as crate::runtime::StockIdx,
                         crate::runtime::group::desk_order_serial(id.0),
@@ -5659,7 +5659,7 @@ mod chain_restructure_tests {
                 } => Event::OrderAccepted {
                     seq,
                     account,
-                    code: code,
+                    code,
                     id: OrderId(crate::runtime::group::desk_order_id(
                         code.0 as crate::runtime::StockIdx,
                         crate::runtime::group::desk_order_serial(id.0),
@@ -6019,7 +6019,7 @@ mod chain_restructure_tests {
             .plans
             .create(PlanOpen {
                 account: owner,
-                code: code,
+                code,
                 direction: Side::Sell,
                 target: PlanTarget::ShareCount(target_qty),
                 opinion: PlanOpinion {

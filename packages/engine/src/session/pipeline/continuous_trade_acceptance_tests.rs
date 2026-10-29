@@ -267,7 +267,7 @@ fn market_remainder_is_not_reported_as_an_auction_abort() {
         .enqueue_player_intent(
             PLAYER,
             Intent::PlaceMarket {
-                code: code,
+                code,
                 side: Side::Buy,
                 qty: LOT * 2,
             },

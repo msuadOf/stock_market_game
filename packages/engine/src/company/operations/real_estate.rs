@@ -62,7 +62,7 @@ pub(in crate::company::operations) fn advance_day(
                 failures.push(PaymentFailureRecord {
                     obligation_status:
                         crate::company::events::PaymentObligationStatus::UncommittedExpense,
-                    company: company,
+                    company,
                     what: "land acquisition".to_string(),
                     amount: params.land_cost,
                 });
@@ -121,7 +121,7 @@ pub(in crate::company::operations) fn advance_day(
                     failures.push(PaymentFailureRecord {
                         obligation_status:
                             crate::company::events::PaymentObligationStatus::UncommittedExpense,
-                        company: company,
+                        company,
                         what: "development spend".to_string(),
                         amount: spend,
                     });
@@ -193,7 +193,7 @@ pub(in crate::company::operations) fn advance_day(
                 key: format!("MAT:{}:{}", company.0, contract.0),
                 due_date: delivery_day,
                 action: ScheduledAction::ContractMaturity {
-                    company: company,
+                    company,
                     reference: format!("DL:{}", contract.0),
                 },
             })?;

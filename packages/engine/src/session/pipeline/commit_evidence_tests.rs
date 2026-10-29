@@ -330,7 +330,7 @@ fn continuous_trade_session() -> (GameSession, StockId) {
         .enqueue_player_intent(
             PLAYER,
             Intent::PlaceLimit {
-                code: code,
+                code,
                 side: Side::Buy,
                 price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
                 qty: 100,
@@ -353,7 +353,7 @@ fn expiring_buy_session() -> (GameSession, StockId, AccountId, OrderId) {
     session.seed_order_for_test(
         account,
         Intent::PlaceLimit {
-            code: code,
+            code,
             side: Side::Buy,
             price: crate::LimitPrice::Fixed(Money::from_cents(990)),
             qty: 100,
@@ -390,7 +390,7 @@ fn mixed_quote_expiry_and_sealed_receipt_session() -> GameSession {
     session.seed_order_for_test(
         seller,
         Intent::PlaceLimit {
-            code: code,
+            code,
             side: Side::Sell,
             price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
             qty: 100,

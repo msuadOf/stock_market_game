@@ -220,7 +220,7 @@ fn inverse_identity_partial_fill_then_cancel_keeps_maker_audit_and_t1() {
                 candidate_key: IntentCandidateKey::player(0),
                 sealed_index: 0,
                 account: AccountId(0),
-                code: code,
+                code,
                 order_id: OrderId(100),
             },
         ],

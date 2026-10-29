@@ -19,13 +19,13 @@ fn unified_stock_worker_accepts_and_reserves_crossed_auction_quotes_without_fill
         &code,
         vec![
             Intent::PlaceLimit {
-                code: code,
+                code,
                 side: Side::Buy,
                 price: LimitPrice::Fixed(Money::from_cents(1050)),
                 qty: 100,
             },
             Intent::PlaceLimit {
-                code: code,
+                code,
                 side: Side::Sell,
                 price: LimitPrice::Fixed(Money::from_cents(950)),
                 qty: 100,
@@ -63,7 +63,7 @@ fn highest_buy_resolves_at_receipt_time_and_releases_only_the_excess_reservation
     let market = empty_market(&code);
     let resolved = market.limit_order_price_bound(Side::Buy, true).unwrap();
     let (operations, config) = validated_operations(vec![Intent::PlaceLimit {
-        code: code,
+        code,
         side: Side::Buy,
         price: LimitPrice::Highest,
         qty: 100,
@@ -332,7 +332,7 @@ fn cancellation_after_an_earlier_fill_continues_the_receipt_audit_chain() {
         operation: ContinuousCancelOperation {
             sealed_index: 41,
             account: AccountId(1),
-            code: code,
+            code,
             order_id: OrderId(7),
         },
     };
@@ -545,13 +545,13 @@ fn stock_worker_assigns_time_priority_from_supplied_order_not_sealed_identity() 
     let code = StockId(0);
     let (mut operations, config) = validated_operations(vec![
         Intent::PlaceLimit {
-            code: code,
+            code,
             side: Side::Buy,
             price: crate::LimitPrice::Fixed(Money::from_cents(990)),
             qty: 100,
         },
         Intent::PlaceLimit {
-            code: code,
+            code,
             side: Side::Buy,
             price: crate::LimitPrice::Fixed(Money::from_cents(990)),
             qty: 100,
@@ -587,7 +587,7 @@ fn stock_worker_assigns_time_priority_from_supplied_order_not_sealed_identity() 
 fn continuous_limit_place_rests_with_its_preallocated_id_and_live_draft() {
     let code = StockId(0);
     let (operations, config) = validated_operations(vec![Intent::PlaceLimit {
-        code: code,
+        code,
         side: Side::Buy,
         price: crate::LimitPrice::Fixed(Money::from_cents(990)),
         qty: 100,
@@ -615,7 +615,7 @@ fn continuous_limit_place_rests_with_its_preallocated_id_and_live_draft() {
         vec![ContinuousPlaceFact::Resting {
             sealed_index: draft.sealed_index(),
             account: draft.owner(),
-            code: code,
+            code,
             order_id: draft.order_id(),
             side: Side::Buy,
             price: Money::from_cents(990),
@@ -629,7 +629,7 @@ fn continuous_limit_place_rests_with_its_preallocated_id_and_live_draft() {
 fn price_cage_reject_consumes_the_preallocated_id_and_releases_the_draft() {
     let code = StockId(0);
     let (operations, config) = validated_operations(vec![Intent::PlaceLimit {
-        code: code,
+        code,
         side: Side::Buy,
         price: crate::LimitPrice::Fixed(Money::from_cents(1_021)),
         qty: 100,
@@ -681,13 +681,13 @@ fn price_cage_rechecks_an_observed_buy_after_the_earlier_admitted_sell() {
         &code,
         vec![
             Intent::PlaceLimit {
-                code: code,
+                code,
                 side: Side::Sell,
                 price: LimitPrice::Fixed(Money::from_cents(990)),
                 qty: 100,
             },
             Intent::PlaceLimit {
-                code: code,
+                code,
                 side: Side::Buy,
                 price: LimitPrice::Fixed(Money::from_cents(1020)),
                 qty: 100,
@@ -712,7 +712,7 @@ fn price_cage_rechecks_an_observed_buy_after_the_earlier_admitted_sell() {
             ContinuousPlaceFact::Resting {
                 sealed_index: sell.sealed_index(),
                 account: sell.owner(),
-                code: code,
+                code,
                 order_id: sell.order_id(),
                 side: Side::Sell,
                 price: Money::from_cents(990),
@@ -754,7 +754,7 @@ fn limit_reject_after_dynamic_cage_still_terminates_the_preallocated_draft() {
         100,
     );
     let (operations, config) = validated_operations(vec![Intent::PlaceLimit {
-        code: code,
+        code,
         side: Side::Buy,
         price: crate::LimitPrice::Fixed(Money::from_cents(1_101)),
         qty: 100,
@@ -792,7 +792,7 @@ fn limit_reject_after_dynamic_cage_still_terminates_the_preallocated_draft() {
 fn auction_market_reject_releases_the_draft_without_routing_to_the_book() {
     let code = StockId(0);
     let (operations, config) = validated_operations(vec![Intent::PlaceMarket {
-        code: code,
+        code,
         side: Side::Buy,
         qty: 100,
     }]);
@@ -829,7 +829,7 @@ fn auction_market_reject_releases_the_draft_without_routing_to_the_book() {
 fn continuous_market_without_liquidity_releases_the_draft_and_reports_zero_filled() {
     let code = StockId(0);
     let (operations, config) = validated_operations(vec![Intent::PlaceMarket {
-        code: code,
+        code,
         side: Side::Buy,
         qty: 100,
     }]);
@@ -889,7 +889,7 @@ fn continuous_market_partial_fill_releases_remainder_with_the_next_ordinal() {
         100,
     );
     let (operations, config) = validated_operations(vec![Intent::PlaceMarket {
-        code: code,
+        code,
         side: Side::Buy,
         qty: 200,
     }]);
@@ -970,7 +970,7 @@ fn continuous_match_emits_per_envelope_ordinals_and_unnumbered_valid_receipts() 
         100,
     );
     let (operations, config) = validated_operations(vec![Intent::PlaceLimit {
-        code: code,
+        code,
         side: Side::Buy,
         price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
         qty: 200,
@@ -1172,13 +1172,13 @@ fn same_stock_competing_limits_fill_in_received_order_with_descending_identities
     );
     let (mut operations, config) = validated_operations(vec![
         Intent::PlaceLimit {
-            code: code,
+            code,
             side: Side::Buy,
             price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
             qty: 100,
         },
         Intent::PlaceLimit {
-            code: code,
+            code,
             side: Side::Buy,
             price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
             qty: 100,
@@ -1247,12 +1247,12 @@ fn trade_fact_identity_spans_multiple_sealed_operations_legs_and_makers() {
     ];
     let (operations, config) = validated_operations(vec![
         Intent::PlaceMarket {
-            code: code,
+            code,
             side: Side::Buy,
             qty: 200,
         },
         Intent::PlaceMarket {
-            code: code,
+            code,
             side: Side::Buy,
             qty: 100,
         },
@@ -1329,11 +1329,11 @@ fn account_facts_use_the_triggering_sealed_operation_as_identity() {
     );
     let (operations, config) = validated_operations(vec![
         Intent::Cancel {
-            code: code,
+            code,
             id: OrderId(100),
         },
         Intent::PlaceLimit {
-            code: code,
+            code,
             side: Side::Buy,
             price: crate::LimitPrice::Fixed(Money::from_cents(990)),
             qty: 100,
@@ -1357,7 +1357,7 @@ fn account_facts_use_the_triggering_sealed_operation_as_identity() {
         ContinuousCancelFact::Canceled {
             sealed_index: 0,
             account: AccountId(0),
-            code: code,
+            code,
             order_id: OrderId(100),
             side: Side::Buy,
             remaining_qty: 100,
@@ -1398,7 +1398,7 @@ fn each_stock_worker_numbers_trade_facts_from_zero() {
         let (operations, config) = validated_operations_for_stock(
             &code,
             vec![Intent::PlaceMarket {
-                code: code,
+                code,
                 side: Side::Buy,
                 qty: 100,
             }],
@@ -1465,7 +1465,7 @@ fn partial_seller_fill_keeps_live_shares_and_nonzero_fee_audit() {
         200,
     );
     let (operations, config) = validated_operations(vec![Intent::PlaceLimit {
-        code: code,
+        code,
         side: Side::Buy,
         price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
         qty: 100,

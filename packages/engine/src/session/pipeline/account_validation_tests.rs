@@ -15,7 +15,7 @@ fn symbolic_buy_reserves_its_account_validation_bound_and_keeps_the_requested_pr
         IntentCandidateKey::player(0),
         crate::AccountId(0),
         crate::Intent::PlaceLimit {
-            code: code,
+            code,
             side: crate::Side::Buy,
             price: crate::LimitPrice::Lowest,
             qty: 100,
@@ -74,7 +74,7 @@ fn highest_buy_needs_the_full_daily_limit_reservation_including_fees() {
             IntentCandidateKey::player(0),
             crate::AccountId(0),
             crate::Intent::PlaceLimit {
-                code: code,
+                code,
                 side: crate::Side::Buy,
                 price: crate::LimitPrice::Highest,
                 qty: 100,
@@ -122,7 +122,7 @@ fn account_validation_handoff_preserves_input_order_and_uses_sealed_budget_witho
             IntentCandidateKey::plan_chain(0),
             account,
             crate::Intent::PlaceLimit {
-                code: code,
+                code,
                 side: crate::Side::Buy,
                 price: crate::LimitPrice::Fixed(crate::Money::from_cents(900)),
                 qty: 100,
@@ -132,7 +132,7 @@ fn account_validation_handoff_preserves_input_order_and_uses_sealed_budget_witho
             IntentCandidateKey::npc(account, 0),
             account,
             crate::Intent::PlaceLimit {
-                code: code,
+                code,
                 side: crate::Side::Buy,
                 price: crate::LimitPrice::Fixed(crate::Money::from_cents(900)),
                 qty: 100,
@@ -142,7 +142,7 @@ fn account_validation_handoff_preserves_input_order_and_uses_sealed_budget_witho
             IntentCandidateKey::player(0),
             account,
             crate::Intent::PlaceLimit {
-                code: code,
+                code,
                 side: crate::Side::Sell,
                 price: crate::LimitPrice::Fixed(crate::Money::from_cents(900)),
                 qty: 100,
@@ -405,7 +405,7 @@ fn account_validation_contract_passes_cancel_and_materializes_limit_and_market_e
             IntentCandidateKey::player(2),
             account,
             crate::Intent::PlaceLimit {
-                code: code,
+                code,
                 side: crate::Side::Sell,
                 price: crate::LimitPrice::Fixed(crate::Money::from_cents(900)),
                 qty: 50,
@@ -415,7 +415,7 @@ fn account_validation_contract_passes_cancel_and_materializes_limit_and_market_e
             IntentCandidateKey::player(0),
             account,
             crate::Intent::PlaceMarket {
-                code: code,
+                code,
                 side: crate::Side::Buy,
                 qty: 100,
             },
@@ -424,7 +424,7 @@ fn account_validation_contract_passes_cancel_and_materializes_limit_and_market_e
             IntentCandidateKey::player(1),
             account,
             crate::Intent::Cancel {
-                code: code,
+                code,
                 id: crate::OrderId(77),
             },
         ),

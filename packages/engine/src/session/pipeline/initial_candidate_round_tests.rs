@@ -301,7 +301,7 @@ fn initial_batch_full_fill_completes_linked_parent_before_later_manual_acceptanc
             IntentCandidateKey::player(0),
             AccountId(0),
             Intent::PlaceLimit {
-                code: code,
+                code,
                 side: Side::Sell,
                 price: crate::LimitPrice::Fixed(Money::from_cents(900)),
                 qty: 100,
@@ -311,7 +311,7 @@ fn initial_batch_full_fill_completes_linked_parent_before_later_manual_acceptanc
             IntentCandidateKey::player(1),
             AccountId(1),
             Intent::PlaceLimit {
-                code: code,
+                code,
                 side: Side::Buy,
                 price: crate::LimitPrice::Fixed(Money::from_cents(900)),
                 qty: 100,
@@ -370,7 +370,7 @@ fn batched_resting_acceptances_keep_each_operations_market_quote_and_order() {
             IntentCandidateKey::npc(AccountId(1), 0),
             AccountId(1),
             Intent::PlaceLimit {
-                code: code,
+                code,
                 side: Side::Buy,
                 price: crate::LimitPrice::Fixed(Money::from_cents(990)),
                 qty: 100,
@@ -380,7 +380,7 @@ fn batched_resting_acceptances_keep_each_operations_market_quote_and_order() {
             IntentCandidateKey::player(0),
             AccountId(0),
             Intent::PlaceLimit {
-                code: code,
+                code,
                 side: Side::Sell,
                 price: crate::LimitPrice::Fixed(Money::from_cents(990)),
                 qty: 100,
@@ -390,7 +390,7 @@ fn batched_resting_acceptances_keep_each_operations_market_quote_and_order() {
             IntentCandidateKey::player(1),
             AccountId(0),
             Intent::PlaceLimit {
-                code: code,
+                code,
                 side: Side::Buy,
                 price: crate::LimitPrice::Fixed(Money::from_cents(980)),
                 qty: 100,

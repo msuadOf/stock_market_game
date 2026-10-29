@@ -2075,7 +2075,7 @@ impl GroupState {
             ticket.order_id = Some(order_id);
             self.push_undo(GroupUndo::ChildInFlight {
                 account,
-                code: code,
+                code,
                 prev: Some(ChildTicket {
                     qty: ticket.qty,
                     side: ticket.side,
@@ -2155,7 +2155,7 @@ impl GroupState {
             }
             self.push_undo(GroupUndo::ChildInFlight {
                 account,
-                code: code,
+                code,
                 prev: Some(prev_ticket),
             });
             self.child_in_flight.insert((account, code), ticket.clone());
@@ -2263,7 +2263,7 @@ impl GroupState {
         ticket.order_id = Some(order_id);
         self.push_undo(GroupUndo::ChildInFlight {
             account,
-            code: code,
+            code,
             prev: Some(ChildTicket {
                 qty,
                 side,
@@ -2316,7 +2316,7 @@ impl GroupState {
         };
         self.push_undo(GroupUndo::ChildInFlight {
             account,
-            code: code,
+            code,
             prev: Some(ticket.clone()),
         });
         // 在途卖余量镜像改由 RefundedShares 实体驱动（apply_staging 统一
@@ -4506,7 +4506,7 @@ impl GroupState {
             );
             self.push_undo(GroupUndo::ChildInFlight {
                 account,
-                code: code,
+                code,
                 prev: None,
             });
             // Sol 整改 1：簿快照覆盖全部簿变更（install/record 亦然）。
@@ -7905,7 +7905,7 @@ mod sol_recheck3_tests {
             .plan_book
             .create(crate::plans::PlanOpen {
                 account,
-                code: code,
+                code,
                 direction: side,
                 target: crate::plans::PlanTarget::ShareCount(target),
                 opinion: crate::plans::PlanOpinion {
@@ -9333,7 +9333,7 @@ mod roster_offset_tests {
             .plan_book
             .create(crate::plans::PlanOpen {
                 account: mine,
-                code: code,
+                code,
                 direction: Side::Buy,
                 target: crate::plans::PlanTarget::ShareCount(200),
                 opinion: crate::plans::PlanOpinion {

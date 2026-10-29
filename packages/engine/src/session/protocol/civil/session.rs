@@ -875,7 +875,7 @@ mod rollback_tests {
             .enqueue_player_intent(
                 crate::AccountId(0),
                 crate::Intent::PlaceLimit {
-                    code: code,
+                    code,
                     side: crate::Side::Buy,
                     price: crate::LimitPrice::Fixed(crate::Money::from_cents(900)),
                     qty: 100,
@@ -903,7 +903,7 @@ mod rollback_tests {
         setup.npcs.inst_count = 0;
         let code = crate::StockId(0);
         let intent = || crate::Intent::PlaceLimit {
-            code: code,
+            code,
             side: crate::Side::Buy,
             price: crate::LimitPrice::Fixed(crate::Money::from_cents(900)),
             qty: 100,
@@ -1153,7 +1153,7 @@ mod rollback_tests {
             .plans
             .create(crate::plans::PlanOpen {
                 account: crate::AccountId(2),
-                code: code,
+                code,
                 direction: crate::Side::Buy,
                 target: crate::plans::PlanTarget::ShareCount(200),
                 opinion: crate::plans::PlanOpinion {

@@ -13,7 +13,7 @@ fn session_with_resting_npc_order() -> (GameSession, StockId, AccountId, OrderId
     session.seed_order_for_test(
         account,
         Intent::PlaceLimit {
-            code: code,
+            code,
             side: Side::Buy,
             price: LimitPrice::Fixed(Money::from_cents(990)),
             qty: 100,

@@ -371,7 +371,7 @@ impl GameSession {
             let (kind, issued_shares) = ctx.company_spec(&company)?;
             let inputs = BeliefInputs {
                 ctx: &ctx_info,
-                company: company,
+                company,
                 kind,
                 total_issued_shares: issued_shares,
                 as_of_anchor: *ctx

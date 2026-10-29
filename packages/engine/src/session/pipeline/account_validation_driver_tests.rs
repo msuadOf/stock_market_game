@@ -79,7 +79,7 @@ fn account_validation_unrelated_cancels_do_not_occupy_the_cash_lane() {
                 IntentCandidateKey::player(0),
                 account,
                 crate::Intent::Cancel {
-                    code: code,
+                    code,
                     id: crate::OrderId(10),
                 },
             ),
@@ -314,7 +314,7 @@ fn account_validation_driver_preserves_key_regression_and_rejects_replayed_ident
             IntentCandidateKey::plan_chain(1),
             account,
             crate::Intent::Cancel {
-                code: code,
+                code,
                 id: crate::OrderId(77),
             },
         ))
@@ -324,7 +324,7 @@ fn account_validation_driver_preserves_key_regression_and_rejects_replayed_ident
             IntentCandidateKey::plan_chain(0),
             account,
             crate::Intent::Cancel {
-                code: code,
+                code,
                 id: crate::OrderId(78),
             },
         ))
@@ -538,7 +538,7 @@ fn account_validation_driver_later_round_order_id_overflow_discards_the_whole_ro
             IntentCandidateKey::plan_chain(0),
             account,
             crate::Intent::Cancel {
-                code: code,
+                code,
                 id: crate::OrderId(77),
             },
         ))
@@ -593,7 +593,7 @@ fn account_validation_driver_later_round_sealed_overflow_preserves_the_prior_bou
             IntentCandidateKey::plan_chain(0),
             account,
             crate::Intent::Cancel {
-                code: code,
+                code,
                 id: crate::OrderId(77),
             },
         ))

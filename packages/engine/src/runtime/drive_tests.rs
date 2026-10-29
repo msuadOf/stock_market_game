@@ -1572,7 +1572,7 @@ fn sol6th_same_tick_abort_leaks_nothing() {
     let intents = vec![crate::session::ReceiptBearingIntent {
         owner: seller,
         intent: crate::Intent::PlaceLimit {
-            code: code,
+            code,
             side: Side::Sell,
             price: crate::strategy::LimitPrice::Fixed(price),
             qty: 100,
@@ -1596,7 +1596,7 @@ fn sol6th_same_tick_abort_leaks_nothing() {
     let buy = vec![crate::session::ReceiptBearingIntent {
         owner: buyer,
         intent: crate::Intent::PlaceLimit {
-            code: code,
+            code,
             side: Side::Buy,
             price: crate::strategy::LimitPrice::Fixed(price),
             qty: 100,
@@ -1690,7 +1690,7 @@ fn sol7th_projection_matrix_active_sell_passive_buy_and_add_on() {
     let intent = |owner, side, qty| crate::session::ReceiptBearingIntent {
         owner,
         intent: crate::Intent::PlaceLimit {
-            code: code,
+            code,
             side,
             price: crate::strategy::LimitPrice::Fixed(price),
             qty,
@@ -1920,7 +1920,7 @@ fn sol7th_foreign_same_key_fill_does_not_advance_plan_child() {
     let foreign = vec![crate::session::ReceiptBearingIntent {
         owner: account,
         intent: crate::Intent::PlaceLimit {
-            code: code,
+            code,
             side: foreign_side,
             price: crate::strategy::LimitPrice::Fixed(crate::money::Money::from_cents(cross_price)),
             qty: 100,
@@ -2040,7 +2040,7 @@ fn sol8th_retail_first_hold_experience_initializes_same_tick() {
                 crate::session::ReceiptBearingIntent {
                     owner: seller,
                     intent: crate::Intent::PlaceLimit {
-                        code: code,
+                        code,
                         side: Side::Sell,
                         price: crate::strategy::LimitPrice::Fixed(price),
                         qty: 100,
@@ -2051,7 +2051,7 @@ fn sol8th_retail_first_hold_experience_initializes_same_tick() {
                 crate::session::ReceiptBearingIntent {
                     owner: retail,
                     intent: crate::Intent::PlaceLimit {
-                        code: code,
+                        code,
                         side: Side::Buy,
                         price: crate::strategy::LimitPrice::Fixed(price),
                         qty: 100,

@@ -316,7 +316,7 @@ mod tests {
                 .feedback
                 .failure_events
                 .push(crate::experience::FailureEventRecord {
-                    code: code,
+                    code,
                     order_id: Some(order),
                     moment: moment(order),
                 });

@@ -98,7 +98,7 @@ pub(super) fn use_buy_imbalance_analysis(session: &mut GameSession, account: Acc
             session.seed_order_for_test(
                 AccountId(0),
                 crate::Intent::PlaceLimit {
-                    code: code,
+                    code,
                     side: crate::Side::Buy,
                     price: crate::LimitPrice::Fixed(Money::from_cents(900)),
                     qty: 100,
@@ -139,7 +139,7 @@ fn rewritten_parent_child_shape_cannot_borrow_a_raw_key_by_stock_and_side() {
     let account = AccountId(1);
     let code = crate::StockId(0);
     let raw_intent = crate::Intent::PlaceLimit {
-        code: code,
+        code,
         side: crate::Side::Buy,
         price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
         qty: 400,
@@ -424,7 +424,7 @@ fn projection_exposes_working_decisions_before_residuals_without_canceling_the_b
     shadow.seed_order_for_test(
         account,
         crate::Intent::PlaceLimit {
-            code: code,
+            code,
             side: crate::Side::Buy,
             price: crate::LimitPrice::Fixed(Money::from_cents(900)),
             // 全部现金仍由该单冻结，但撤换时的 7% 试买目标须足够生成一手。

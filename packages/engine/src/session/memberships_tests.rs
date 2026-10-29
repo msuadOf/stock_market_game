@@ -216,7 +216,7 @@ fn members_trade_in_one_shared_book_with_fifo_and_t1_and_cannot_cancel_others() 
             .enqueue_player_intent(
                 account,
                 Intent::PlaceLimit {
-                    code: code,
+                    code,
                     side: Side::Buy,
                     price: LimitPrice::Fixed(Money::from_cents(1000)),
                     qty: 100,
@@ -236,7 +236,7 @@ fn members_trade_in_one_shared_book_with_fifo_and_t1_and_cannot_cancel_others() 
         .enqueue_player_intent(
             first,
             Intent::Cancel {
-                code: code,
+                code,
                 id: second_order,
             },
         )
@@ -251,7 +251,7 @@ fn members_trade_in_one_shared_book_with_fifo_and_t1_and_cannot_cancel_others() 
         .enqueue_player_intent(
             AccountId(0),
             Intent::PlaceLimit {
-                code: code,
+                code,
                 side: Side::Sell,
                 price: LimitPrice::Fixed(Money::from_cents(1000)),
                 qty: 100,
