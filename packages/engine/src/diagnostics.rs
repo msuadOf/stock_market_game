@@ -751,10 +751,7 @@ impl SeedDiagnostics {
                             diagnostics.auction_volume = diagnostics
                                 .auction_volume
                                 .checked_add(u64::from(qty))
-                                .ok_or_else(|| BaselineError::VolumeOverflow {
-                                    seed,
-                                    code,
-                                })?;
+                                .ok_or_else(|| BaselineError::VolumeOverflow { seed, code })?;
                             let phase_volume = match phase {
                                 TradingPhase::CallAuction => {
                                     &mut diagnostics.opening_auction_volume
@@ -764,19 +761,15 @@ impl SeedDiagnostics {
                                 }
                                 TradingPhase::PreOpen | TradingPhase::Continuous => unreachable!(),
                             };
-                            *phase_volume =
-                                phase_volume.checked_add(u64::from(qty)).ok_or_else(|| {
-                                    BaselineError::VolumeOverflow { seed, code }
-                                })?;
+                            *phase_volume = phase_volume
+                                .checked_add(u64::from(qty))
+                                .ok_or_else(|| BaselineError::VolumeOverflow { seed, code })?;
                         }
                         TradingPhase::Continuous => {
                             diagnostics.continuous_volume = diagnostics
                                 .continuous_volume
                                 .checked_add(u64::from(qty))
-                                .ok_or_else(|| BaselineError::VolumeOverflow {
-                                    seed,
-                                    code,
-                                })?;
+                                .ok_or_else(|| BaselineError::VolumeOverflow { seed, code })?;
                             let continuous_ticks = setup
                                 .ticks_per_day
                                 .saturating_sub(setup.auction_ticks)
@@ -787,10 +780,7 @@ impl SeedDiagnostics {
                             diagnostics.continuous_volume_by_decile[decile] = diagnostics
                                 .continuous_volume_by_decile[decile]
                                 .checked_add(u64::from(qty))
-                                .ok_or_else(|| BaselineError::VolumeOverflow {
-                                    seed,
-                                    code,
-                                })?;
+                                .ok_or_else(|| BaselineError::VolumeOverflow { seed, code })?;
                         }
                         TradingPhase::PreOpen => {
                             return Err(BaselineError::TradeDuringPreOpen { seed, code });

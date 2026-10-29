@@ -235,10 +235,7 @@ fn frozen_plan_observation_reuses_cash_market_and_reservation_after_private_canc
     let order_id = session.state.markets[&code].resting_orders()[0].id;
     session.seed_order_for_test(
         owner,
-        Intent::Cancel {
-            code,
-            id: order_id,
-        },
+        Intent::Cancel { code, id: order_id },
         &mut Vec::new(),
     );
     session

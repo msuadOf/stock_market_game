@@ -194,13 +194,7 @@ fn queued_npc_cancel_reaches_the_book_before_plan_adopts_the_old_order() {
     let received = authority
         .state
         .ingress_receipt_cursors
-        .receive(
-            owner,
-            Intent::Cancel {
-                code,
-                id: old_id,
-            },
-        )
+        .receive(owner, Intent::Cancel { code, id: old_id })
         .unwrap();
     crate::session::pipeline::staged_decision::stage(
         crate::session::pipeline::NpcDecisionHandover::new(
@@ -1564,13 +1558,7 @@ fn successful_retail_cancel_is_projected_from_the_matching_fact() {
     authority.state.next_order_id = order_id.0 + 1;
     authority.hydrate_or_validate_envelope_ledger().unwrap();
     authority
-        .enqueue_player_intent(
-            account,
-            Intent::Cancel {
-                code,
-                id: order_id,
-            },
-        )
+        .enqueue_player_intent(account, Intent::Cancel { code, id: order_id })
         .unwrap();
 
     prepare_market_tick(&mut authority).unwrap().commit();
