@@ -713,7 +713,7 @@ fn epoch_alignment_after_civil_update_first_tick_evaluates_day_boundary_epoch() 
     let attention_after_day2_first = snap_attention(&restored);
     // B 类（新契约）：跨 tick 载体退役——首调用后 pending 恒 None。
     assert!(
-        serde_json::to_value(&restored.game().save().unwrap())
+        serde_json::to_value(restored.game().save().unwrap())
             .unwrap()
             .get("pending_npc")
             .is_none(),

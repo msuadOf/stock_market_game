@@ -592,7 +592,7 @@ fn working_intent(
 ) -> Option<Intent> {
     match phase {
         crate::TradingPhase::Continuous => working.continuous.iter().find_map(|(code, order)| {
-            (order.id == order_id).then(|| Intent::PlaceLimit {
+            (order.id == order_id).then_some(Intent::PlaceLimit {
                 code: *code,
                 side: order.side,
                 price: LimitPrice::Fixed(order.price),
@@ -600,7 +600,7 @@ fn working_intent(
             })
         }),
         crate::TradingPhase::CallAuction => working.auction.iter().find_map(|(code, order)| {
-            (OrderId(order.order_id) == order_id).then(|| Intent::PlaceLimit {
+            (OrderId(order.order_id) == order_id).then_some(Intent::PlaceLimit {
                 code: *code,
                 side: order.side,
                 price: LimitPrice::Fixed(order.limit),

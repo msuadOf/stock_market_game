@@ -416,7 +416,7 @@ impl CapturedExperienceObservation {
             let price = view
                 .markets
                 .get(code)
-                .ok_or_else(|| DecisionSnapshotCaptureError::MissingMarketData {
+                .ok_or(DecisionSnapshotCaptureError::MissingMarketData {
                     location: "retail experience position",
                     code: *code,
                 })?

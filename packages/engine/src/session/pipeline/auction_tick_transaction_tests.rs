@@ -545,7 +545,7 @@ fn parent_transaction_seam_rolls_back_every_authoritative_family_on_later_round_
     assert_eq!(authority.session_state_hash().unwrap(), session_before);
     assert_eq!(authority.state.next_order_id, next_order_before);
     assert_eq!(
-        serde_json::to_value(&authority.auction_order_projection_for_test()).unwrap(),
+        serde_json::to_value(authority.auction_order_projection_for_test()).unwrap(),
         queue_before
     );
     assert_eq!(authority.state.envelope_ledger, ledger_before);

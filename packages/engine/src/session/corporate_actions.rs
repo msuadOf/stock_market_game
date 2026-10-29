@@ -422,15 +422,15 @@ mod tests {
             container
         );
         assert!(
-            serde_json::from_str::<SessionCorporateActions>(&format!(
-                "{{\"registries\": [], \"dividends\": [], \"dividend_tax_books\": [], \
+            serde_json::from_str::<SessionCorporateActions>(
+                "{\"registries\": [], \"dividends\": [], \"dividend_tax_books\": [], \
                  \"flat_withholding_receipts\": [], \"stock_distributions\": [], \
                  \"share_splits\": [], \"rights_offerings\": [], \
                  \"rights_subscription_queue\": [], \"rejected_rights_subscriptions\": [], \
                  \"issuer_repurchases\": [], \"repurchase_execution_bindings\": [], \"account_gross_receipts\": [], \
                  \"external_receipts\": [], \"applied_ex_reference_groups\": [], \
-                 \"unknown_field\": []}}"
-            ))
+                 \"unknown_field\": []}"
+            )
             .is_err(),
             "未知字段必须显式拒绝（deny_unknown_fields）"
         );

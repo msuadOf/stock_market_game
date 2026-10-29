@@ -133,7 +133,7 @@ pub(super) fn finalize_continuous_tick(
             )
         })?;
     let prepared = prepare_settlement_transaction_with_beliefs(
-        &compute,
+        compute,
         SettlementReadContext {
             accounts: &session.state.accounts,
             retail_experience: &session.state.retail_experience,
