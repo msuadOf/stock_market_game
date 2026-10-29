@@ -2576,61 +2576,6 @@ fn seq_of(e: &Event) -> u64 {
         | Event::OrderAccepted { seq, .. } => *seq,
     }
 }
-fn events_summary(ev: &[Event]) -> Vec<String> {
-    ev.iter()
-        .map(|e| match e {
-            Event::Trade {
-                code, price, qty, ..
-            } => format!("T{}:{}:{}", code.0, price.cents(), qty),
-            Event::AuctionTick {
-                code,
-                indicative_price,
-                matched_volume,
-                ..
-            } => format!(
-                "A{}:{:?}:{}",
-                code.0,
-                indicative_price.map(|price| price.cents()),
-                matched_volume
-            ),
-            Event::AuctionCompleted {
-                code,
-                clearing_price,
-                matched_volume,
-                ..
-            } => format!(
-                "C{}:{:?}:{}",
-                code.0,
-                clearing_price.map(|price| price.cents()),
-                matched_volume
-            ),
-            Event::PriceTick {
-                code, last_price, ..
-            } => format!("P{}:{}", code.0, last_price.cents()),
-            Event::DayBoundary { day, .. } => format!("D{}", day),
-            Event::CivilDateAdvanced {
-                settled_date,
-                next_date,
-                ..
-            } => format!("V{settled_date}:{next_date}"),
-            Event::CompanyDisclosurePublished {
-                publication_id,
-                company,
-                published_at,
-                kind,
-                ..
-            } => format!(
-                "I{}:{}:{published_at:?}:{kind:?}",
-                publication_id.value(),
-                company.0
-            ),
-            Event::IntentRejected { reason, .. } => format!("R{:?}", reason),
-            Event::SettlementError { reason, .. } => format!("S{}", reason),
-            Event::OrderCanceled { id, .. } => format!("X{}", id.0),
-            Event::OrderAccepted { id, .. } => format!("O{}", id.0),
-        })
-        .collect()
-}
 
 #[test]
 fn step_produces_events_with_monotonic_seq() {
@@ -4818,12 +4763,12 @@ fn retail_decision_diagnostics_are_not_authoritative_or_replay_state() {
     // B 类重锚（六审段 1.3）：「seed 20 拍内须产生样本」的前提在 runtime
     // 下不可复现（组端 evaluate 观察门为 RNG 采样——retail 位 next_due
     // 初始 11/16，seed 42 的 20 拍窗内观察门 0 次通过；v4 判 B 的
-    /// "后置构造可靠采样 fixture"）。改确定性采样：retail 位注意力
-    /// 候选 tick 钉 1（首拍到期）+rng_state 钉使首次观察抽样必过的
-    /// 种子（SplitMix64(seed) 首抽 f64 已验证 <0.004<观察概率下界）
-    /// ——经存档往返通道注入（base_probability 不可钉：restore 侧
-    /// fault1041 确定性重建校验）。样本仍来自生产决策路径，断言强度
-    /// 不降。
+    // "后置构造可靠采样 fixture"）。改确定性采样：retail 位注意力
+    // 候选 tick 钉 1（首拍到期）+rng_state 钉使首次观察抽样必过的
+    // 种子（SplitMix64(seed) 首抽 f64 已验证 <0.004<观察概率下界）
+    // ——经存档往返通道注入（base_probability 不可钉：restore 侧
+    // fault1041 确定性重建校验）。样本仍来自生产决策路径，断言强度
+    // 不降。
     let mut save = session.save().expect("healthy base save");
     for (id, attention) in save.npc_attention.iter_mut() {
         if id.0 == 1 || id.0 == 2 {
@@ -5616,10 +5561,10 @@ fn symbolic_limit_request(side: Side, price: &str, qty: u32) -> Intent {
 fn symbolic_highest_resolves_after_the_earlier_order_and_survives_save_as_a_fixed_resting_price() {
     let code = sid();
     // 自成交拍板 A（分歧台账 A3/B1）：desk 对同账户买卖互成交硬排除
-    /// （真实沪深语义的游戏额外限制；旧管线缺失——原 fixture 依赖玩家
-    /// 双侧自成交）。9.90 卖侧改由 retail NPC 承接（双账户 fixture 化，
-    /// saved_runtime_tests 同模式）；"先受理的 Ask 定 Highest 解析价"
-    /// 的到达序语义不变。
+    // （真实沪深语义的游戏额外限制；旧管线缺失——原 fixture 依赖玩家
+    // 双侧自成交）。9.90 卖侧改由 retail NPC 承接（双账户 fixture 化，
+    // saved_runtime_tests 同模式）；"先受理的 Ask 定 Highest 解析价"
+    // 的到达序语义不变。
     let mut setup = sample_setup();
     setup.npcs = NpcSetup {
         retail_count: 1,
@@ -5694,8 +5639,8 @@ fn symbolic_highest_resolves_after_the_earlier_order_and_survives_save_as_a_fixe
     let pending = session.save().unwrap();
     let pending_json = serde_json::to_value(&pending).unwrap();
     // ReceiptBearingIntent 为结构体（map 形态序列化——owner/intent/
-    /// account_ordinal/stock_ordinal 四字段）；此前的 [0][1] 元组下标
-    /// 读法是结构化前的旧前提（四审 C 类判定的同一处，基线同红）。
+    // account_ordinal/stock_ordinal 四字段）；此前的 [0][1] 元组下标
+    // 读法是结构化前的旧前提（四审 C 类判定的同一处，基线同红）。
     assert_eq!(
         pending_json["pending_player"][0]["intent"]["PlaceLimit"]["price"],
         "Highest"

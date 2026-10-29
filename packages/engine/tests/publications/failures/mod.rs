@@ -20,7 +20,6 @@ use engine::information::{
 };
 
 const COMPANY: &str = "C-FAIL";
-const OTHER: &str = "C-OTHER";
 
 struct Base {
     closing: ClosingEngine,

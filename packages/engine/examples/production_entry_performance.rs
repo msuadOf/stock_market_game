@@ -28,14 +28,6 @@ struct Workload {
     player_orders_per_tick: usize,
 }
 
-fn positive_usize(value: &str, name: &str) -> Result<usize, String> {
-    value
-        .parse::<usize>()
-        .ok()
-        .filter(|parsed| *parsed > 0)
-        .ok_or_else(|| format!("{name} must be a positive integer"))
-}
-
 fn seed_active_plans(
     game: GameSession,
     plan_accounts: usize,
@@ -91,7 +83,7 @@ fn execute(workload: Workload, input_fingerprint: String) -> Result<serde_json::
         .validate()
         .map_err(|error| error.to_string())?;
     // 批 9 A6：ComputeContext/rayon-threads 参数退役——std-thread 模型
-    /// 线程数由引擎内部决定，CPU 约束走 OS 级 cgroup/taskset。
+    // 线程数由引擎内部决定，CPU 约束走 OS 级 cgroup/taskset。
     {
         let game = engine::GameSession::new(workload.setup.clone(), workload.seed)
             .map_err(|error| error.to_string())?;

@@ -324,9 +324,7 @@ pub(crate) fn real_estate_fixture() -> Books {
 // —— 合并集团夹具（工业母公司 + 工业子公司 80%）——
 
 pub(crate) const GROUP_ROOT: u32 = 0;
-const GROUP_ROOT_CODE: &str = "C-GROUP-P";
 pub(crate) const GROUP_SUB: u32 = 1;
-const GROUP_SUB_CODE: &str = "C-GROUP-S";
 
 /// 母公司账套：开局/外购存货/对外销售/内部赊销（均 2030-03）。
 pub(crate) fn group_parent_books() -> Books {

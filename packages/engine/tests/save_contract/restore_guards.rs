@@ -64,18 +64,6 @@ fn serde_rejection_text(wire: &serde_json::Value) -> String {
         .to_string()
 }
 
-fn restore_error(wire: serde_json::Value) -> String {
-    let save = decode_save_slot(
-        &serde_json::to_vec(&wire).unwrap(),
-        &SaveDecodeLimits::default(),
-    )
-    .unwrap();
-    match GameSession::restore(&save) {
-        Err(error) => error.to_string(),
-        Ok(_) => panic!("损坏状态不应安装为运行会话"),
-    }
-}
-
 #[test]
 fn audit_credit_complete_save_rejects_invalid_industrial_loan_facts() {
     let baseline = baseline();

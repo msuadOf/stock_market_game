@@ -121,16 +121,6 @@ pub(crate) fn setup(start_date: &str) -> SessionSetup {
 /// Disclosure-focused scenarios still use the real company, information and
 /// belief pipelines, but do not need five issuers or six market ticks on every
 /// trading day while advancing through a civil reporting window.
-/// 场景会话使用引擎默认公司集合；此处提供默认目录（代码序分配 id）供断言查询。
-pub(crate) fn scenario_catalog() -> engine::company::CompanyCatalog {
-    let as_of = engine::calendar::CivilDate::from_iso("2027-12-31").expect("开局前一日");
-    let configs = engine::company::default_companies(as_of).expect("默认公司集合");
-    engine::company::CompanyRegistry::new(configs)
-        .expect("默认公司注册表")
-        .catalog()
-        .clone()
-}
-
 pub(crate) fn focused_disclosure_session(start_date: &str) -> GameSession {
     let mut focused = setup(start_date);
     focused.stocks.retain(|stock| stock.code.0 == "600101");
