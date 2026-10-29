@@ -369,6 +369,14 @@ enum DeskUndo {
     FeeSink(i64),
     /// 行情快照（tick 起始整面）。
     Market(MarketSnapshot),
+    /// 本 tick 首次采样；回滚同时恢复满窗口移出的头价。
+    RecentPriceAppend {
+        evicted_front: Option<i64>,
+    },
+    /// Continue 仅更新本 tick 尾价，不能另造一个时间样本。
+    RecentPriceTail {
+        previous: i64,
+    },
     /// 日结副作用前的行情与跨日暂存；下一 Start 随 undo 一并退役。
     DrainMarket(Box<DrainMarketSnapshot>),
 }
@@ -820,6 +828,22 @@ impl DeskState {
         let undo = std::mem::take(&mut self.undo);
         for entry in undo.into_iter().rev() {
             match entry {
+                DeskUndo::RecentPriceAppend { evicted_front } => {
+                    self.market
+                        .recent_prices
+                        .pop_back()
+                        .expect("首样本 undo 必须对应本 tick 样本");
+                    if let Some(price) = evicted_front {
+                        self.market.recent_prices.push_front(price);
+                    }
+                }
+                DeskUndo::RecentPriceTail { previous } => {
+                    *self
+                        .market
+                        .recent_prices
+                        .back_mut()
+                        .expect("尾价 undo 必须对应本 tick 样本") = previous;
+                }
                 DeskUndo::RepurchaseRequest { order, before } => {
                     if let Some(request) = before {
                         self.repurchase_requests.insert(order, request);
@@ -2999,6 +3023,13 @@ impl DeskState {
                 return Ok(());
             }
         }
+        let continuous = match &self.calendar_tick {
+            Some(context) => context.phase_before() == crate::TradingPhase::Continuous,
+            None => self.setup.phase_at(tick.saturating_sub(1)) == DeskPhase::Continuous,
+        };
+        if continuous && self.setup.history_len == 0 {
+            return Err(over("连续竞价 price_history 的 history_len 必须大于 0"));
+        }
         // 零成交也建立占位 K（对齐 record_trade_or_mark 的 or_insert 语义）。
         let last = self.market.last_price;
         // 刀 2a 值敏感失效：finish_round 每轮跑（幂等写为主）——只在
@@ -3006,12 +3037,6 @@ impl DeskState {
         // 变化/recent 窗口滑动不同值/分钟回填），保证零成交稳态轮的
         // view 缓存命中。判定收敛到函数末尾统一 bump。
         let candle_close_changed = self.market.candle.as_ref().is_none_or(|c| c.close != last);
-        let window_full = self.market.recent_prices.len() >= self.setup.history_len;
-        let popped_front = if window_full {
-            self.market.recent_prices.front().copied()
-        } else {
-            None
-        };
         let candle = self.market.candle.get_or_insert(DeskCandle {
             open: last,
             high: last,
@@ -3022,12 +3047,34 @@ impl DeskState {
         candle.close = last;
         // 竞价窗：指示价预演上行（每轮 AuctionTick 事实）。
         self.note_auction_indicative(tick);
-        // tick 收盘价历史（容量裁剪）。
-        self.market.recent_prices.push_back(last);
-        let mut content_changed =
-            candle_close_changed || !window_full || popped_front != Some(last);
-        if self.market.recent_prices.len() > self.setup.history_len {
-            self.market.recent_prices.pop_front();
+        let mut content_changed = candle_close_changed;
+        // 与 serial 的 ContinuousMarketData 同口径：本拍 before 必须为连续竞价。
+        // 每个逻辑 tick 仅一个样本；Continue 把它更新为最后一轮权威价。
+        if continuous {
+            if self.cur_round == 0 {
+                self.market.recent_prices.push_back(last);
+                let evicted_front = if self.market.recent_prices.len() > self.setup.history_len {
+                    self.market.recent_prices.pop_front()
+                } else {
+                    None
+                };
+                self.undo
+                    .push(DeskUndo::RecentPriceAppend { evicted_front });
+                content_changed |= evicted_front != Some(last)
+                    || self.market.recent_prices.iter().any(|price| *price != last);
+            } else {
+                let tail = self
+                    .market
+                    .recent_prices
+                    .back_mut()
+                    .ok_or_else(|| over("Continue 缺少本 tick 连续竞价价格样本"))?;
+                if *tail != last {
+                    self.undo
+                        .push(DeskUndo::RecentPriceTail { previous: *tail });
+                    *tail = last;
+                    content_changed = true;
+                }
+            }
         }
         // 真实 Start context 的 after 仍属于本日；末拍不可被次日取模相位挡住。
         let minute_progress = if let Some(context) = &self.calendar_tick {
@@ -3294,6 +3341,10 @@ impl DeskState {
 #[cfg(test)]
 #[path = "desk_repurchase_transport_tests.rs"]
 mod repurchase_transport_tests;
+
+#[cfg(test)]
+#[path = "desk_price_history_tests.rs"]
+mod price_history_tests;
 
 /// 边际费用 helper（与 fees.rs fee_delta 同口径）。
 fn marginal(
