@@ -496,17 +496,29 @@ fn event_and_setup_construct() {
             ..
         }
     ));
+    let mirror_origin = engine::RuntimeMirrorOrigin {
+        authority_epoch: 1,
+        install_sequence: 0,
+        source_tick: 0,
+        source_generation: 0,
+        day_end_stage: engine::RuntimeMirrorDayEndStage::Tick,
+        non_tick_revision: 0,
+        mirror_phase: TradingPhase::Continuous,
+    };
+    assert!(mirror_origin.validate().is_ok());
     let snap = Snapshot {
         seq: 0,
         tick: 0,
         day: 0,
         phase: TradingPhase::Continuous,
+        mirror_origin,
         markets: Default::default(),
         accounts: Default::default(),
         daily_candles: Default::default(),
         active_daily_candles: Default::default(),
     };
     assert_eq!(snap.seq, 0);
+    assert_eq!(snap.mirror_origin, mirror_origin);
     assert_eq!(sample_setup().stocks.len(), 1);
 }
 

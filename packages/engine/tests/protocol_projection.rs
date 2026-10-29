@@ -9,11 +9,22 @@ fn fixture_facts(
 }
 
 fn snapshot() -> Snapshot {
+    let mirror_origin = engine::RuntimeMirrorOrigin {
+        authority_epoch: 1,
+        install_sequence: 4,
+        source_tick: 8,
+        source_generation: 0,
+        day_end_stage: engine::RuntimeMirrorDayEndStage::Tick,
+        non_tick_revision: 0,
+        mirror_phase: TradingPhase::Continuous,
+    };
+    assert!(mirror_origin.validate().is_ok());
     Snapshot {
         seq: 4,
         tick: 8,
         day: 0,
         phase: TradingPhase::Continuous,
+        mirror_origin,
         markets: Default::default(),
         accounts: Default::default(),
         daily_candles: Default::default(),

@@ -133,11 +133,22 @@ fn batches_reject_tick_reorder_duplicate_gap_and_sequence_gap() {
 
 #[test]
 fn final_snapshot_must_match_both_frame_cursors() {
+    let mirror_origin = engine::RuntimeMirrorOrigin {
+        authority_epoch: 1,
+        install_sequence: 1,
+        source_tick: 1,
+        source_generation: 0,
+        day_end_stage: engine::RuntimeMirrorDayEndStage::Tick,
+        non_tick_revision: 0,
+        mirror_phase: engine::TradingPhase::Continuous,
+    };
+    assert!(mirror_origin.validate().is_ok());
     let snapshot = engine::Snapshot {
         seq: 1,
         tick: 1,
         day: 0,
         phase: engine::TradingPhase::Continuous,
+        mirror_origin,
         markets: Default::default(),
         accounts: Default::default(),
         daily_candles: Default::default(),
