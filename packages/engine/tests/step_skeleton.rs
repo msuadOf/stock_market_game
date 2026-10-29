@@ -80,6 +80,28 @@ fn characterization_ticks_preserve_price_and_day_boundaries(
                     .last_price,
                 Money::from_cents(1000)
             );
+            if expected_tick % 20 == 0 {
+                // 市场日界只完成交易会话；下一交易日必须由真实 civil 日结进入。
+                let settled_date = game.civil_date();
+                let report = game.end_civil_day()?;
+                assert_eq!(report.settled_date, settled_date);
+                assert_eq!(report.next_date, settled_date.next()?);
+                assert_eq!(game.civil_date(), report.next_date);
+                assert_eq!(game.snapshot().tick, expected_tick);
+                assert_eq!(game.snapshot().day, snapshot.day);
+                assert_eq!(
+                    report
+                        .events
+                        .iter()
+                        .filter(|event| matches!(event, Event::CivilDateAdvanced { .. }))
+                        .count(),
+                    1
+                );
+                assert!(!report
+                    .events
+                    .iter()
+                    .any(|event| matches!(event, Event::Trade { .. } | Event::DayBoundary { .. })));
+            }
         }
         assert_eq!(day_boundaries, 3);
         assert_eq!(game.snapshot().day, 3);
