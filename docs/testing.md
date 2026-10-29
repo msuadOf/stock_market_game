@@ -254,7 +254,7 @@ seed 不包含并发任务的实际到达轨迹。两次自由调度可以产生
 中失效的三项跨运行字节比较；其余公司链用例保留。现行约束由以下已有测试覆盖：
 
 - 纯输入确定性：同套件的 `cpu_compute_backend_serves_the_common_market_view_deterministically`；
-  固定调度的事件与存档字节锚、seed/事件顺序扰动由 `tests/extraction_replay.rs` 覆盖，不冒充自由并发调度契约。
+  `tests/extraction_replay.rs` 的活动用例覆盖单次生产运行的权威存档往返，以及 seed/事件顺序扰动；跨运行字节锚按并发政策 ignore，仅作为历史留档。
 - 实际受理与价格时间优先：`pipeline/continuous_matching_tests.rs` 的
   `stock_worker_assigns_time_priority_from_supplied_order_not_sealed_identity`、`tests/orderbook.rs` 的价格优先/FIFO用例，
   以及 `pipeline/local_admission.rs` 的账户资源收据顺序和撤单→新申报依赖用例。

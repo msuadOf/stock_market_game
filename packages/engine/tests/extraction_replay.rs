@@ -1,8 +1,9 @@
-//! 固定单 worker 场景的回放与存档表示锚点测试。
+//! 生产驱动场景的单次 capture、存档往返与扰动判别测试。
 //!
-//! 当前锚点固定 ADR-0021/0022 后的受控场景：同一 setup、seed 和单 worker
-//! 调度，必须产出逐字节相同的事件流与权威存档。使用同一生产并行路径，
-//! 不承诺 ADR-0017 已允许变化的多 worker 跨实体受理顺序逐字节一致。
+//! 活动用例各自捕获一次由生产 `step` 与 civil day 驱动的受控场景，检查
+//! 存档往返，以及 seed 和事件顺序扰动能否改变序列化结果；不比较自由并发
+//! 调度下相同 seed 的多次运行字节。下方历史锚点沿革保留供被 ignore 的旧
+//! 跨运行确定性用例追溯，不代表当前活动用例的断言。
 //!
 //! 自检证明 seed 与事件顺序的扰动确实改变字节；真实成交、日界和股份守恒
 //! 断言防止无交易的退化场景冒充有效的随机回放。历史锚点沿革保留如下。
@@ -183,13 +184,6 @@ struct ReplayCapture {
 }
 
 fn run_replay(seed: u64) -> ReplayCapture {
-    // ADR-0017 允许并发跨实体受理顺序变化；字节锚仅约束同一路径的单 worker 调度。
-    // 三个独立测试仍由多线程 harness 并行执行。
-    // rayon 退役（批 7）：单 worker install 的串行等价=直接调用。
-    run_replay_serial(seed)
-}
-
-fn run_replay_serial(seed: u64) -> ReplayCapture {
     let initial = GameSession::new(replay_setup(), seed).expect("replay setup must be valid");
     let mut initial_save = initial.save().expect("healthy initial save");
     let initial_cash: i128 = initial_save
@@ -284,15 +278,9 @@ fn run_replay_serial(seed: u64) -> ReplayCapture {
                     .expect("real player order must enqueue");
             }
         }
-        // std-thread 迁移登记（Sol 终审整改 2）：本组测试是**旧管线
-        // 逐字节确定性回放锚**（FNV 锚/事件序扰动判别——ADR-0017 的
-        // 单 worker 同路径约束）。runtime 并发模型下跨实体受理顺序
-        // 天然变化（用户裁决：并发下不要求可复现），确定性锚不适用
-        // 混跑——显式经恒旧管线的 commit-evidence 入口驱动；runtime
-        // 的行为对照由 flip 批/stepframe parity 承载。
-        let (step_events, _evidence) = session
-            .step_with_commit_evidence()
-            .expect("healthy step（旧管线锚定入口）");
+        // 使用生产 `step` 与 civil day 路径捕获本次运行事实；活动用例不比较
+        // 相同 seed 的多次自由并发运行是否逐字节相同。
+        let step_events = session.step().expect("healthy production step");
         for event in &step_events {
             if let Event::Trade {
                 code,
