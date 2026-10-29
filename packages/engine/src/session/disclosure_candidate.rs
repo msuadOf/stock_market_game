@@ -30,6 +30,10 @@ pub(in crate::session) enum DisclosureSourceRef<'a> {
         closing: &'a ClosingEngine,
     },
     PreparedSimple(&'a crate::company::PreparedSimpleDisclosureCorrection<'a>),
+    #[expect(
+        dead_code,
+        reason = "保留正式 Legacy owner 更正证明的 selected/proof 适配；现有生产 builder 未接入且仓内无构造"
+    )]
     PreparedLegacy(&'a crate::company::operations::PreparedLegacyDisclosureCorrection<'a>),
 }
 

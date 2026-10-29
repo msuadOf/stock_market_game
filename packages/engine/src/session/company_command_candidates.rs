@@ -28,8 +28,6 @@ pub(crate) struct PreparedCashDividendApproval {
     pub company_system: CompanySystem,
     pub actions: SessionCorporateActions,
     pub receipt: DividendPlanReceipt,
-    /// 同证券同除息日的全部方案累计额，供实际除息候选统一检查参考价。
-    pub same_ex_date_gross_per_share: Money,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -185,7 +183,7 @@ pub(crate) fn prepare_cash_dividend_approval(
         .dividend_legal_facts(&input.plan.issuer)
         .map_err(|cause| fail(cause.into()))?
         .ok_or_else(|| invalid(CashDividendApprovalIssue::MissingLegalFacts))?;
-    let same_ex_date_gross_per_share = input
+    let _same_ex_date_gross_per_share = input
         .actions
         .dividends
         .iter()
@@ -221,6 +219,5 @@ pub(crate) fn prepare_cash_dividend_approval(
         company_system,
         actions,
         receipt,
-        same_ex_date_gross_per_share,
     })
 }

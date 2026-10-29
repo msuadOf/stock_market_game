@@ -121,12 +121,26 @@ pub(crate) enum RightsOfferingCandidateError {
         lock_until: CivilDate,
     },
     #[error("配股事件 {event_id} 在 {day} 缺少账户 {account:?} 的最终可用资源")]
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "保留配股日终缺少账户资源的 typed SystemState 分类；当前真实生产结算producer未接线，此候选只在 cfg(test) 构造",
+        )
+    )]
     MissingAccount {
         event_id: String,
         account: AccountId,
         day: CivilDate,
     },
     #[error("配股事件 {event_id} 在 {day} 的账户 {account:?} 可用现金为负：{cash:?}")]
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "保留配股日终负可用现金的 typed SystemState 分类；当前真实生产结算producer未接线，此候选只在 cfg(test) 构造",
+        )
+    )]
     NegativeCash {
         event_id: String,
         account: AccountId,
@@ -134,12 +148,26 @@ pub(crate) enum RightsOfferingCandidateError {
         cash: Money,
     },
     #[error("配股事件 {event_id} 在 {day} 的领域校验失败：{source}")]
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "保留配股日终领域失败的 typed SystemState 分类；当前真实生产结算producer未接线，此候选只在 cfg(test) 构造",
+        )
+    )]
     Domain {
         event_id: String,
         day: CivilDate,
         source: RightsOfferingError,
     },
     #[error("配股事件 {event_id} 在 {day} 的候选状态错误：{detail}")]
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "保留配股日终候选状态错误的 typed SystemState 分类；当前真实生产结算producer未接线，此候选只在 cfg(test) 构造",
+        )
+    )]
     Invalid {
         event_id: String,
         day: CivilDate,

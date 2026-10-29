@@ -9,6 +9,13 @@ pub(crate) enum RepurchaseApprovalSource {
     Player {
         requester: AccountId,
     },
+    #[cfg_attr(
+        not(all(test, not(target_arch = "wasm32"))),
+        expect(
+            dead_code,
+            reason = "保留经批准的公司偏好来源并校验issuer一致性；当前自动回购方案producer尚未接入，真实方案链不由lint改动接通",
+        )
+    )]
     CompanyPreference {
         issuer: crate::company::CompanyId,
     },

@@ -42,13 +42,25 @@ pub(crate) struct DistributionsDayEndInput<'a> {
 /// 来源仅为外部传入的候选契约，evidence 字符串本身不是权威证明。
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum CapitalReserveTaxSource {
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "保留股票溢价来源与资本增加额的 typed 税务证据；当前生产入口只运行现金分红候选，送转税务候选仅由测试构造",
+        )
+    )]
     StockPremium {
         evidence: String,
         capital_increase: crate::accounting::AccountingAmount,
     },
-    Other {
-        evidence: String,
-    },
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "保留非股票溢价来源的 typed 拒绝路径；当前生产入口只运行现金分红候选，送转税务候选仅由测试构造",
+        )
+    )]
+    Other { evidence: String },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -206,6 +218,7 @@ impl Context {
 }
 
 impl SessionCorporateActions {
+    #[cfg(test)]
     pub(crate) fn distributions_day_end_candidate(
         &self,
         input: DistributionsDayEndInput<'_>,

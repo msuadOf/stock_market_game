@@ -48,6 +48,10 @@ pub(crate) enum StockDistributionApprovalIssue {
     RegistryMismatch,
     FutureRegistry,
     MissingLegalFacts,
+    #[expect(
+        dead_code,
+        reason = "保留送转面值不可整除的业务错误分类；当前资本事实门禁只派生可整除面值，生产分类仍将该错误映射为 BusinessCondition"
+    )]
     NonIntegralPar,
     NonPositiveOrOverflowPar,
     CapitalOverflow,
