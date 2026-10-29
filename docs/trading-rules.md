@@ -566,12 +566,13 @@ NPC 默认策略只在缴款首日日终对未显式申请的非玩家、非回�
 
 ## 分红与送转独立候选的支持边界（2026-10-26）
 
-`session/corporate_actions/distributions_day_end.rs` 仅准备隔离候选，尚未接入生产日终。
+`session/corporate_actions/distributions_day_end.rs` 准备隔离候选；native civil 已接现金分红
+与个人税收缴的生产候选，尚待本轮正式绿测。送转仍只准备独立候选。
 调用前安装 R1 最终名册/税账；返回分红、送转、公司账面与发行人候选、逐笔税前股利、
 税款退出、新股可用数量，以及包括具名 `External` 持有人的来源和回执。`Paid`/`Credited`
 均是待提交候选状态，必须经组端真实行政回执逐笔勾稽后才能发布。公司 `Simple` 合成
 股利按 ADR-0038 保留来源；外部股东付款不计入游戏账户现金注入。没有真实账户直改、
-除权、长期限售或生产事务接线。
+除权或长期限售生产接线。
 
 - 税务模式沿 ADR-0040：`FlatWithholding` 按配置比例对每位账户持有人（包括机构）
   的税前股利直接代扣，half-up 到分，不创建个人税账；具名外部股东无游戏账户，
@@ -584,8 +585,12 @@ NPC 默认策略只在缴款首日日终对未显式申请的非玩家、非回�
   资金不足通知补足。候选按最终真实可用现金部分收缴，保留实收与未清税款；不含在途
   buy purse，不以默认零余额代替缺失账户。登记日冻结权利，登记后卖出不减少已登记股利。
 - `cash_dividend_tax::day_boundary::TaxDayBoundaryFacts` 由 native civil shadow 接入 ordinary
-  REG、个人税日及同日现金分红 capture，随唯一 INFO/Admin 固定成功尾安装；本批尚待正式
-  生产绿测，付款与 collection 仍待中央真实资金回执接线，不据此安装 `Paid`。每证券一次
+  REG、个人税日及同日现金分红 capture，随唯一 INFO/Admin 固定成功尾安装。
+  `civil_cash_distributions` 从同一次完整行政基线读取 raw cash，沿候选原顺序准备 cash／tax-only
+  stages，并在同一个 pending/id 的最终 INFO 与镜像检查中勾稽原 intent、借用的原 typed operand、
+  真实税阶段和完整最终账户；成功 Commit 后才随固定尾安装公司付款、`Paid`、payment 与
+  collection 候选。零税额不制造零额 `WithholdingTax`，不借 buy purse 或补钱；付款与收缴本轮
+  尚待实际绿测，不代表 WASM 或完整送转链已完成。每证券一次
   消费 typed REG 完整自然日、最终确认全集与实际完成水位，零成交日和
   休市日也记税日零净额。每本税账从自己的 `opened_on` 完成 frontier 核完整 opening lots，
   其后每个 REG 自然日与税日的净额、取得和处置须逐项一致；当前同数量、同 lot 尾部不能

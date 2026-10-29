@@ -138,6 +138,9 @@ impl GameSession {
                 adopted.state.library = shadow.state.library;
                 shadow = adopted;
             }
+            let baseline = self.prepare_civil_administrative_baseline()?;
+            let (stages, cash) =
+                shadow.prepare_civil_cash_distributions(report.settled_date, &baseline)?;
             let clock =
                 crate::runtime::InformationClockContext::for_civil_disclosure(self, instant)?;
             let as_of_anchors = clock.anchors().map_err(|source| {
@@ -162,9 +165,11 @@ impl GameSession {
                 }),
             };
             self.apply_civil_information_administrative_operations(
-                Vec::new(),
+                baseline,
+                stages,
                 payload,
-                move |_, prepared| {
+                move |candidate, prepared, stages| {
+                    cash.inspect(candidate, stages)?;
                     prepared.clone_into_civil_shadow(&mut shadow);
                     shadow.market_calendar_day = None;
                     let publication = project(&shadow, report)?;

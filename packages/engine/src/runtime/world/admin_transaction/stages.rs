@@ -244,6 +244,72 @@ fn prepare_stage_source<'a>(
     Ok(evidence)
 }
 
+fn prepare_stage_requests(
+    stages: &[AdminOperationStage],
+    n_groups: usize,
+    has_information: bool,
+) -> Result<
+    (
+        Vec<(GroupIdx, Vec<AdminOperation>)>,
+        BTreeMap<GroupIdx, AdminStageLayout>,
+    ),
+    RuntimeError,
+> {
+    let mut grouped = BTreeMap::<GroupIdx, Vec<AdminOperation>>::new();
+    let mut counts = BTreeMap::<GroupIdx, Vec<usize>>::new();
+    let mut tax_stages = BTreeSet::new();
+    for (stage_index, stage) in stages.iter().enumerate() {
+        let index = u32::try_from(stage_index).map_err(|_| invalid("阶段索引超出 u32"))?;
+        let mut seen = BTreeSet::new();
+        let mut tax = false;
+        let mut other = false;
+        for (group, operations) in &stage.operations {
+            if usize::from(*group) >= n_groups || !seen.insert(*group) {
+                return Err(invalid("阶段 group 越界或重复"));
+            }
+            for operation in operations {
+                if matches!(operation, AdminOperation::WithholdingTax { .. }) {
+                    tax = true;
+                } else {
+                    other = true;
+                }
+            }
+            grouped
+                .entry(*group)
+                .or_default()
+                .extend_from_slice(operations);
+            counts
+                .entry(*group)
+                .or_insert_with(|| vec![0; stages.len()])[stage_index] = operations.len();
+        }
+        if tax && other {
+            return Err(invalid("税阶段不得混入非 WithholdingTax 操作"));
+        }
+        if tax {
+            tax_stages.insert(index);
+        }
+    }
+    if has_information {
+        for group in 0..n_groups as GroupIdx {
+            grouped.entry(group).or_default();
+            counts.entry(group).or_insert_with(|| vec![0; stages.len()]);
+        }
+    }
+    let layouts = counts
+        .into_iter()
+        .map(|(group, counts)| {
+            (
+                group,
+                AdminStageLayout {
+                    counts,
+                    tax_stages: tax_stages.clone(),
+                },
+            )
+        })
+        .collect();
+    Ok((grouped.into_iter().collect(), layouts))
+}
+
 impl World {
     /// 资产阶段与最终 INFO 共用一个 pending/id；成功返回才代表最终 Commit 完成。
     pub(crate) fn with_staged_admin_transaction<P>(
@@ -255,60 +321,10 @@ impl World {
             &PreparedAdministrativeStages<'_>,
         ) -> Result<P, RuntimeError>,
     ) -> Result<P, RuntimeError> {
-        let mut grouped = BTreeMap::<GroupIdx, Vec<AdminOperation>>::new();
-        let mut counts = BTreeMap::<GroupIdx, Vec<usize>>::new();
-        let mut tax_stages = BTreeSet::new();
-        for (stage_index, stage) in stages.iter().enumerate() {
-            let index = u32::try_from(stage_index).map_err(|_| invalid("阶段索引超出 u32"))?;
-            let mut seen = BTreeSet::new();
-            let mut tax = false;
-            let mut other = false;
-            for (group, operations) in &stage.operations {
-                if usize::from(*group) >= self.n_groups || !seen.insert(*group) {
-                    return Err(invalid("阶段 group 越界或重复"));
-                }
-                for operation in operations {
-                    if matches!(operation, AdminOperation::WithholdingTax { .. }) {
-                        tax = true;
-                    } else {
-                        other = true;
-                    }
-                }
-                grouped
-                    .entry(*group)
-                    .or_default()
-                    .extend_from_slice(operations);
-                counts
-                    .entry(*group)
-                    .or_insert_with(|| vec![0; stages.len()])[stage_index] = operations.len();
-            }
-            if tax && other {
-                return Err(invalid("税阶段不得混入非 WithholdingTax 操作"));
-            }
-            if tax {
-                tax_stages.insert(index);
-            }
-        }
-        if information.is_some() {
-            for group in 0..self.n_groups as GroupIdx {
-                grouped.entry(group).or_default();
-                counts.entry(group).or_insert_with(|| vec![0; stages.len()]);
-            }
-        }
-        let layouts = counts
-            .into_iter()
-            .map(|(group, counts)| {
-                (
-                    group,
-                    AdminStageLayout {
-                        counts,
-                        tax_stages: tax_stages.clone(),
-                    },
-                )
-            })
-            .collect();
+        let (grouped, layouts) =
+            prepare_stage_requests(&stages, self.n_groups, information.is_some())?;
         self.with_administrative_inspection(
-            grouped.into_iter().collect(),
+            grouped,
             information,
             None,
             Some(layouts),
@@ -319,6 +335,32 @@ impl World {
             |_candidate, _source, value| Ok(value),
         )
         .map(|(value, _ack)| value)
+    }
+
+    /// 阶段账务与 INFO 共用一个 pending/id，并在真实 prepared source 上检查阶段证据。
+    pub(crate) fn with_prepared_staged_administrative_transaction<P>(
+        &mut self,
+        stages: Vec<AdminOperationStage>,
+        information: Option<crate::runtime::protocol::InformationPreparePayload>,
+        inspect: impl FnOnce(
+            &AdminCandidate,
+            &crate::runtime::world::PreparedAdministrativeSource,
+            &PreparedAdministrativeStages<'_>,
+        ) -> Result<P, RuntimeError>,
+    ) -> Result<(P, crate::runtime::source::PreparedMirrorAck), RuntimeError> {
+        let (grouped, layouts) =
+            prepare_stage_requests(&stages, self.n_groups, information.is_some())?;
+        self.with_administrative_inspection(
+            grouped,
+            information,
+            None,
+            Some(layouts),
+            |_candidate| Ok(()),
+            |candidate, source, ()| {
+                let evidence = prepare_stage_source(candidate, &stages)?;
+                inspect(candidate, source, &evidence)
+            },
+        )
     }
 }
 

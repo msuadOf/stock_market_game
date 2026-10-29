@@ -469,3 +469,61 @@ fn r4_cash_03_actual_sale_before_payment_collects_personal_tax() {
         1_200
     );
 }
+
+#[test]
+fn r4_cash_04_final_projection_rejection_aborts_payment_and_company_candidates() {
+    let mut session = payment_session(CashDividendTaxMode::AShareIndividual);
+    register_on_june_3(&mut session);
+    step_on_june_4(&mut session);
+    let before_hash = session.business_state_hash().unwrap();
+    let before_actions = session.corporate_actions().unwrap().clone();
+    let before_cash = cash(&session, AccountId(1));
+    let (before_runtime, before_raw_accounts) = {
+        let mut driver = session.runtime_driver.as_ref().unwrap().lock().unwrap();
+        (
+            driver.administrative_cache_snapshot_for_test(),
+            driver.world_accounts_snapshot().unwrap(),
+        )
+    };
+    let mut inspect_calls = 0;
+    let result: Result<(), SessionError> = session.with_prepared_runtime_civil_day(|shadow, _| {
+        inspect_calls += 1;
+        assert_eq!(
+            cash(shadow, AccountId(1)),
+            before_cash.add(Money::from_cents(200)).unwrap(),
+            "拒绝点必须已持有真实 prepared 账户付款候选"
+        );
+        assert_eq!(
+            shadow.corporate_actions().unwrap().dividends[0].status(),
+            &CashDividendStatus::Paid
+        );
+        Err(SessionError::CivilInformation(
+            super::super::administrative_mirror::CivilInformationError::new(
+                date(PAYMENT_DAY),
+                crate::runtime::RuntimeError::ProtocolInvariant {
+                    detail: "R4 付款最终公开投影主动拒绝".into(),
+                },
+            ),
+        ))
+    });
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("R4 付款最终公开投影主动拒绝")
+    );
+    assert_eq!(inspect_calls, 1);
+    assert_eq!(session.business_state_hash().unwrap(), before_hash);
+    assert_eq!(session.corporate_actions().unwrap(), &before_actions);
+    assert_eq!(cash(&session, AccountId(1)), before_cash);
+    let mut driver = session.runtime_driver.as_ref().unwrap().lock().unwrap();
+    assert!(
+        !driver.administrative_world_is_terminal(),
+        "业务投影拒绝应只 Abort 本次 Admin"
+    );
+    assert_eq!(
+        driver.administrative_cache_snapshot_for_test(),
+        before_runtime
+    );
+    assert_eq!(driver.world_accounts_snapshot().unwrap(), before_raw_accounts);
+}

@@ -4,8 +4,8 @@ use super::civil_information::PreparedCivilFields;
 use super::*;
 use crate::runtime::drive::{AdministrativeBaseline, RuntimeDriver};
 use crate::runtime::world::{
-    AdminCandidate, AdminOperation, BeliefParticipantSnapshot, InformationPreparePayload,
-    PreparedAdministrativeSource,
+    AdminCandidate, AdminOperation, AdminOperationStage, BeliefParticipantSnapshot,
+    InformationPreparePayload, PreparedAdministrativeSource, PreparedAdministrativeStages,
 };
 use crate::runtime::{GroupIdx, RuntimeError};
 use std::sync::Arc;
@@ -20,7 +20,10 @@ pub struct CivilInformationError {
 }
 
 impl CivilInformationError {
-    pub(super) fn new(date: crate::calendar::CivilDate, source: RuntimeError) -> Self {
+    pub(super) fn new(
+        date: crate::calendar::CivilDate,
+        source: impl std::error::Error + Send + Sync + 'static,
+    ) -> Self {
         Self {
             date,
             source: Box::new(source),
@@ -44,9 +47,7 @@ pub(crate) enum AdministrativeMirrorError {
     Runtime(#[from] RuntimeError),
     #[error(transparent)]
     Session(#[from] StepFatal),
-    #[error(
-        "行政入口 civil_date 不一致：Session={expected}，World={actual}；请先完成原自然日同步"
-    )]
+    #[error("行政入口 civil_date 不一致：Session={expected}，World={actual}；请先完成原自然日同步")]
     CivilDateMismatch {
         expected: crate::calendar::CivilDate,
         actual: crate::calendar::CivilDate,
@@ -137,8 +138,15 @@ const CIVIL_PREPARATION_REJECTED: &str = "civil INFO precommit callback 已拒�
 
 impl AdministrativeBaseline {
     /// 保留个人态其余字段，只叠同源真实 scheduler 两字段；cache 仍保原 raw 候选。
-    fn attention_at(&self, id: AccountId, raw: &NpcAttentionState) -> Result<NpcAttentionState, RuntimeError> {
-        let &(due, seed) = self.attention.get(&id).ok_or_else(|| invalid(format!("行政完整调度缺账户：{id:?}")))?;
+    fn attention_at(
+        &self,
+        id: AccountId,
+        raw: &NpcAttentionState,
+    ) -> Result<NpcAttentionState, RuntimeError> {
+        let &(due, seed) = self
+            .attention
+            .get(&id)
+            .ok_or_else(|| invalid(format!("行政完整调度缺账户：{id:?}")))?;
         let mut attention = raw.clone();
         attention.next_attention_candidate_tick = due;
         attention.rng_state = seed;
@@ -165,6 +173,42 @@ impl AdministrativeBaseline {
 }
 
 impl GameSession {
+    /// 付款候选与行政镜像共用这一份真实完整基线；首 Prepare 前还须核来源未变。
+    pub(super) fn prepare_civil_administrative_baseline(
+        &self,
+    ) -> Result<AdministrativeBaseline, SessionError> {
+        let baseline = {
+            let cell = self.runtime_driver.as_ref().ok_or_else(|| {
+                SessionError::CivilInformation(CivilInformationError::new(
+                    self.civil_date(),
+                    invalid("civil 基线前尚未接管 runtime"),
+                ))
+            })?;
+            let mut driver = cell.lock().map_err(|_| {
+                SessionError::CivilInformation(CivilInformationError::new(
+                    self.civil_date(),
+                    invalid("civil 基线 driver 锁被 poison"),
+                ))
+            })?;
+            driver
+                .prepare_administrative_baseline(self)
+                .map_err(|source| {
+                    SessionError::CivilInformation(CivilInformationError::new(
+                        self.civil_date(),
+                        source,
+                    ))
+                })?
+        };
+        self.validate_administrative_baseline(&baseline)
+            .map_err(|source| {
+                SessionError::CivilInformation(CivilInformationError::new(
+                    self.civil_date(),
+                    source,
+                ))
+            })?;
+        Ok(baseline)
+    }
+
     /// 短借用只持 driver 锁；不进入普通 tick 的 freeze、take 或 inject 玩家意图路径。
     pub(in crate::session) fn apply_administrative_operations<P>(
         &mut self,
@@ -194,20 +238,24 @@ impl GameSession {
 
     pub(in crate::session) fn apply_civil_information_administrative_operations<P>(
         &mut self,
-        grouped: Vec<(GroupIdx, Vec<AdminOperation>)>,
+        baseline: AdministrativeBaseline,
+        stages: Vec<AdminOperationStage>,
         information: InformationPreparePayload,
         prepare: impl FnOnce(
             &AdminCandidate,
             &PreparedAdministrativeProjection<'_>,
+            Option<&PreparedAdministrativeStages<'_>>,
         ) -> Result<(PreparedCivilFields, P), SessionError>,
     ) -> Result<P, SessionError> {
         let date = self.civil_date();
         let mut original_error = None;
-        let result = self.apply_administrative_scope(
-            grouped,
+        let result = self.apply_prepared_administrative_scope(
+            Vec::new(),
             Some(information),
             None,
-            |candidate, projection| match prepare(candidate, projection) {
+            Some(baseline),
+            (!stages.is_empty()).then_some(stages),
+            |candidate, projection, stages| match prepare(candidate, projection, stages) {
                 Ok((fields, value)) => Ok((Some(fields), value)),
                 Err(error) => {
                     original_error = Some(error);
@@ -246,6 +294,32 @@ impl GameSession {
             &PreparedAdministrativeProjection<'_>,
         ) -> Result<(Option<PreparedCivilFields>, P), RuntimeError>,
     ) -> Result<P, AdministrativeMirrorError> {
+        self.apply_prepared_administrative_scope(
+            grouped,
+            information,
+            repurchase,
+            None,
+            None,
+            |candidate, projection, _| prepare(candidate, projection),
+        )
+    }
+
+    fn apply_prepared_administrative_scope<P>(
+        &mut self,
+        grouped: Vec<(GroupIdx, Vec<AdminOperation>)>,
+        information: Option<InformationPreparePayload>,
+        repurchase: Option<crate::runtime::RepurchasePreparePayload>,
+        baseline: Option<AdministrativeBaseline>,
+        stages: Option<Vec<AdminOperationStage>>,
+        prepare: impl FnOnce(
+            &AdminCandidate,
+            &PreparedAdministrativeProjection<'_>,
+            Option<&PreparedAdministrativeStages<'_>>,
+        ) -> Result<(Option<PreparedCivilFields>, P), RuntimeError>,
+    ) -> Result<P, AdministrativeMirrorError> {
+        if stages.is_some() && (!grouped.is_empty() || repurchase.is_some()) {
+            return Err(invalid("有序现金阶段不得混入另一份 flat 或 repurchase 请求").into());
+        }
         self.require_healthy()?;
         if self.runtime_driver.is_none() {
             self.construct_runtime_driver_lazy()?;
@@ -279,7 +353,12 @@ impl GameSession {
                     actual: world_civil_date,
                 });
             }
-            let baseline = match driver.prepare_administrative_baseline(self) {
+            let baseline_result = match baseline {
+                Some(baseline) if driver.mirror_source() == baseline.source => Ok(baseline),
+                Some(_) => Err(invalid("civil 付款候选后的实际行政来源已改变")),
+                None => driver.prepare_administrative_baseline(self),
+            };
+            let baseline = match baseline_result {
                 Ok(value) => value,
                 Err(error) => {
                     self.retain_administrative_terminal(&driver, &error);
@@ -296,11 +375,10 @@ impl GameSession {
             let revision = self.external_revision();
             let sequence = self.runtime_mirror_install_sequence;
             let expected_information = information.clone();
-            let result = driver.with_prepared_administrative_transaction(
-                grouped,
-                information,
-                repurchase,
-                |candidate, source| {
+            let inspect =
+                |candidate: &AdminCandidate,
+                 source: &PreparedAdministrativeSource,
+                 stages: Option<&PreparedAdministrativeStages<'_>>| {
                     let prepared = self.prepare_administrative_mirror(
                         &baseline,
                         candidate,
@@ -315,7 +393,7 @@ impl GameSession {
                         original: self,
                         prepared: &prepared,
                     };
-                    let (civil, value) = prepare(candidate, &projection)?;
+                    let (civil, value) = prepare(candidate, &projection, stages)?;
                     if self.external_revision() != revision
                         || self.runtime_mirror_install_sequence != sequence
                         || self.tick() != baseline.source.tick
@@ -324,8 +402,20 @@ impl GameSession {
                         return Err(invalid("行政 prepare 的 Session 来源在 inspect 期间改变"));
                     }
                     Ok((value, prepared, civil))
-                },
-            );
+                };
+            let result = match stages {
+                Some(stages) => driver.with_prepared_staged_administrative_transaction(
+                    stages,
+                    information,
+                    |candidate, source, stages| inspect(candidate, source, Some(stages)),
+                ),
+                None => driver.with_prepared_administrative_transaction(
+                    grouped,
+                    information,
+                    repurchase,
+                    |candidate, source| inspect(candidate, source, None),
+                ),
+            };
             let ((value, prepared, civil), ack) = match result {
                 Ok(value) => value,
                 Err(error) => {
@@ -618,7 +708,8 @@ impl GameSession {
                 retail: self.state.retail_experience.clone(),
             };
             for (_, id, value) in &personals {
-                maps.attention.insert(*id, baseline.attention_at(*id, &value.attention)?);
+                maps.attention
+                    .insert(*id, baseline.attention_at(*id, &value.attention)?);
                 maps.beliefs.insert(
                     *id,
                     BeliefParticipantState::new(

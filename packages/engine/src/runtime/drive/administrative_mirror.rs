@@ -177,6 +177,20 @@ impl super::RuntimeDriver {
         )
     }
 
+    pub(crate) fn with_prepared_staged_administrative_transaction<P>(
+        &mut self,
+        stages: Vec<crate::runtime::world::AdminOperationStage>,
+        information: Option<crate::runtime::world::InformationPreparePayload>,
+        inspect: impl FnOnce(
+            &crate::runtime::world::AdminCandidate,
+            &crate::runtime::world::PreparedAdministrativeSource,
+            &crate::runtime::world::PreparedAdministrativeStages<'_>,
+        ) -> Result<P, crate::runtime::RuntimeError>,
+    ) -> Result<(P, crate::runtime::source::PreparedMirrorAck), crate::runtime::RuntimeError> {
+        self.world
+            .with_prepared_staged_administrative_transaction(stages, information, inspect)
+    }
+
     pub(crate) fn administrative_world_is_terminal(&self) -> bool {
         self.world.is_terminal()
     }

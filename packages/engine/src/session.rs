@@ -12,6 +12,7 @@ mod candles;
 mod causal;
 mod civil_clock;
 mod civil_information;
+mod civil_cash_distributions;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod civil_information_runtime_tests;
 mod company_assembly;

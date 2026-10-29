@@ -1,4 +1,4 @@
-//! 分红与送转的独立日终候选计算；尚未接入生产日终链。
+//! 分红与送转的日终候选计算；native civil 仅接现金分红与收缴，送转仍为独立候选。
 //!
 //! 调用前须在隔离公司状态安装 R1 名册/税账候选。这里只返回待行政回执验证的
 //! 候选事实；`Paid`/`Credited` 不能在真实账户回执勾稽前安装到权威 Session。
@@ -192,6 +192,22 @@ impl SessionCorporateActions {
         &self,
         input: DistributionsDayEndInput<'_>,
     ) -> Result<DistributionsDayEndCandidate, DistributionsDayEndError> {
+        self.prepare_distributions_candidate(input, true)
+    }
+
+    /// 现金生产片只复用现金与个人税候选，不顺带推进送转状态或股份 movement。
+    pub(crate) fn cash_distributions_day_end_candidate(
+        &self,
+        input: DistributionsDayEndInput<'_>,
+    ) -> Result<DistributionsDayEndCandidate, DistributionsDayEndError> {
+        self.prepare_distributions_candidate(input, false)
+    }
+
+    fn prepare_distributions_candidate(
+        &self,
+        input: DistributionsDayEndInput<'_>,
+        include_stock_distributions: bool,
+    ) -> Result<DistributionsDayEndCandidate, DistributionsDayEndError> {
         let ctx = Context {
             day: input.day,
             event_id: "distributions-input".into(),
@@ -225,7 +241,9 @@ impl SessionCorporateActions {
             projected_available_cash: input.available_cash.clone(),
         };
         result.prepare_dividends(&input)?;
-        result.prepare_stock_distributions(&input)?;
+        if include_stock_distributions {
+            result.prepare_stock_distributions(&input)?;
+        }
         result.prepare_individual_collections(&input)?;
         Ok(result)
     }

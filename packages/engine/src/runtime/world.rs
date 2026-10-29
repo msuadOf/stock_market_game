@@ -4068,7 +4068,9 @@ mod failed_cleanup_tests {
 }
 
 mod admin_transaction;
-pub(crate) use admin_transaction::PreparedAdministrativeSource;
+pub(crate) use admin_transaction::{
+    AdminOperationStage, PreparedAdministrativeSource, PreparedAdministrativeStages,
+};
 
 pub use super::protocol::{AdminCandidate, AdminOperation, AdminTransactionId, AdminTreasuryBinding, AdminPlanReference, CreatedRepurchasePlan, PreparedRepurchaseResult, RepurchaseExecutionProjection, RepurchaseMaterialRestriction, InformationObservation, InformationMemoryRetention, InformationPreparePayload, PreparedInformationResult, InformationPrepareError};
 
