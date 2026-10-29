@@ -4,6 +4,7 @@ import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import { emit } from "@tauri-apps/api/event";
 import { createTauriHost } from "./tauri-host.ts";
 import { CompanyWriteRejectedError } from "./company-write.ts";
+import { isReportCorrectionPrepareRejection } from "./protocol-failure.ts";
 import { catalogWireFixture } from "./catalog-test-fixture.ts";
 import { market, mirrorOrigin } from "./protocol-test-fixtures.ts";
 import type { SessionSetup } from "../types/engine.ts";
@@ -49,8 +50,9 @@ async function fixture(t: TestContext, respond: (command: string, generation: st
     assert.equal(typeof command, "function", `实际 Tauri EngineHost 必须提供 ${method}`);
     return (command as (value: unknown) => Promise<unknown>)(input);
   };
-  const fail = () => emit("engine-failure", { session_id: "current-session", timeline_id: `timeline-${generation}`, code: "INVARIANT_VIOLATION", where: "fixture.host", message: "当前权威已失效", events: [] });
-  return { host, calls, invoke, fail };
+  const fail = (details: Record<string, unknown> = {}) => emit("engine-failure", { session_id: "current-session", timeline_id: `timeline-${generation}`, code: "INVARIANT_VIOLATION", where: "fixture.host", message: "当前权威已失效", events: [], ...details });
+  const publish = (update: unknown) => emit("engine-event", { session_id: "current-session", timeline_id: `timeline-${generation}`, update });
+  return { host, calls, invoke, fail, publish };
 }
 
 for (const operation of operations) test(`Tauri ${operation.method} 经实际 Host 转发当前 generation 与真实响应`, { timeout: 10000 }, async t => {
@@ -108,4 +110,64 @@ test("Tauri真正Step对象保原结构与cause，不能改成CompanyWriteReject
   const step = { code: "INVARIANT_VIOLATION", message: "真实Step公开错误 fixture", where: "session.step", cause: { code: "INNER", message: "原公开链" }, context: { tick: 7 } };
   const f = await fixture(t, () => Promise.reject(step));
   await assert.rejects(f.invoke("proposePlayerCompanyAction", proposal), error => error instanceof Error && !(error instanceof CompanyWriteRejectedError) && error.cause === step);
+});
+
+
+const prepareRejection = {
+  code: "REPORT_CORRECTION_PREPARE_REJECTED", where: "desktop.actor.prepare_civil_updates", message: "报表更正未满足提交条件（内部详情已脱敏）",
+  recoverable: true, context: { operation: "endCivilDay", tick: 2, seq: 0, day: 1, generation: "1" },
+  cause: { code: "REPORT_CORRECTION_REJECTED", message: "报表更正未满足提交条件（内部详情已脱敏）", cause: null },
+};
+
+test("Tauri 末拍先交付、可信F2使旧确认过期，新cancel可到actor并civil-only继续", { timeout: 10000 }, async t => {
+  let finish!: (value: unknown) => void;
+  const f = await fixture(t, (command, generation) => command === "propose_player_company_action"
+    ? new Promise(resolve => { finish = resolve; }) : { generation, operation_id: correction.operation_id });
+  const observed: string[] = [];
+  await f.host.start(update => { observed.push(update.type); }, failure => { observed.push(failure.code); });
+  const pending = f.invoke("proposePlayerCompanyAction", proposal);
+  const stale = assert.rejects(pending, /过期|失效|中断/);
+  await f.publish({ TickBatch: { frames: [{ tick: 2, seq_from: 0, seq_to: 0, facts: [], timeseries_payload: {} }], runtime_snapshot: null } });
+  await f.fail(prepareRejection);
+  finish({ generation: "1", receipt: proposalReceipt });
+  await stale;
+  assert.deepEqual(await f.invoke("cancelReportCorrection", correction.operation_id), { operation_id: correction.operation_id });
+  const count = observed.length;
+  await f.host.start(update => { observed.push(update.type); }, failure => { observed.push(failure.code); });
+  await f.publish({ CivilUpdate: { tick: 2 } });
+  assert.deepEqual(observed.slice(0, 3), ["baseline", "protocol", "REPORT_CORRECTION_PREPARE_REJECTED"]);
+  assert.deepEqual(observed.slice(count), ["protocol"]);
+});
+
+for (const invalid of [
+  { code: "CIVIL_DAY_SETTLEMENT_FAILED" }, { where: "desktop.actor.callback" }, { recoverable: false },
+  { context: { ...prepareRejection.context, operation: "callback" } }, { context: { ...prepareRejection.context, generation: "2" } },
+  { context: { ...prepareRejection.context, day: 4_294_967_296 } },
+  { cause: { code: "REPORT_CORRECTION_REJECTED" } },
+  { cause: { ...prepareRejection.cause, unexpected: true } },
+  { cause: { ...prepareRejection.cause, message: "  " } },
+  { cause: { ...prepareRejection.cause, cause: { code: "INNER" } } },
+  { cause: { ...prepareRejection.cause, code: "REPORT_CORRECTION_FAILED" } },
+]) test(`Tauri 非可信F2不能解除fatal写门 ${JSON.stringify(invalid)}`, { timeout: 10000 }, async t => {
+  const f = await fixture(t, () => { throw new Error("非F2不能继续invoke"); });
+  await f.fail({ ...prepareRejection, ...invalid });
+  await assert.rejects(f.invoke("cancelReportCorrection", correction.operation_id), /失效|过期|fatal/);
+  assert.equal(f.calls.length, 0);
+});
+
+test("Tauri 首fatal之后迟到的F2不能解除写门或替换首错", { timeout: 10000 }, async t => {
+  const f = await fixture(t, () => { throw new Error("首fatal后不能invoke"); });
+  await f.fail();
+  await f.fail(prepareRejection);
+  await assert.rejects(f.invoke("cancelReportCorrection", correction.operation_id), error => error instanceof Error && (error.cause as { code?: unknown })?.code === "INVARIANT_VIOLATION");
+  assert.equal(f.calls.length, 0);
+});
+
+test("Tauri F2 matcher接纳完整嵌套FailureCause并拒绝循环cause", { timeout: 10000 }, () => {
+  const nested = { ...prepareRejection, cause: { ...prepareRejection.cause, cause: { code: "INNER", message: "内部拒绝", cause: null } } };
+  assert.equal(isReportCorrectionPrepareRejection(nested, "desktop", "1"), true);
+  assert.equal(isReportCorrectionPrepareRejection({ ...prepareRejection, context: { ...prepareRejection.context, day: 4_294_967_295 } }, "desktop", "1"), true);
+  const cyclicCause: { code: string; message: string; cause: unknown } = { code: "REPORT_CORRECTION_REJECTED", message: "拒绝", cause: null };
+  cyclicCause.cause = cyclicCause;
+  assert.equal(isReportCorrectionPrepareRejection({ ...prepareRejection, cause: cyclicCause }, "desktop", "1"), false);
 });

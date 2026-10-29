@@ -1,4 +1,4 @@
-import { parseHostFailure } from "./protocol-failure.ts";
+import { isReportCorrectionPrepareRejection, parseHostFailure } from "./protocol-failure.ts";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { HistoricalStockData, PublicReportPage, PublicReportQuery, PublicReportSummary, SaveSlot, SessionSetup, StockCode } from "../types/engine.ts";
@@ -114,12 +114,14 @@ export async function createTauriHost(setup: SessionSetup, seed: bigint): Promis
   let npcDiagnosticsEnabled = false;
   let deliveredGeneration: string | null = null;
   let companyWriteFailure: HostFailure | null = null;
+  let companyWriteEpoch = 0;
 
   const fail = (failure: HostFailure) => {
-    companyWriteFailure = failure;
+    companyWriteEpoch += 1;
+    if (!isReportCorrectionPrepareRejection(failure, "desktop", timeline.currentGeneration())) companyWriteFailure ??= failure;
     running = false;
     if (failure.code === "CATALOG_BASELINE_FAILED") baselineUnavailable = true;
-    fatalCallback?.(failure);
+    fatalCallback?.(companyWriteFailure ?? failure);
   };
 
   const invokeBaseline = async (command: string, args: Record<string, unknown>): Promise<unknown> => {
@@ -231,8 +233,10 @@ export async function createTauriHost(setup: SessionSetup, seed: bigint): Promis
       if (companyWriteFailure !== null) throw new Error("Tauri 公司写命令的当前 authority 已失效，须正常恢复新会话后再核对", { cause: companyWriteFailure });
       const id = requireSession();
       const cursor = timeline.captureQueryCursor();
+      const writeEpoch = companyWriteEpoch;
       const assertCurrent = (responseGeneration = cursor.generation) => {
         if (companyWriteFailure !== null) throw new Error("Tauri 公司写命令确认属于已失效 authority；结果未知，请核对权威状态", { cause: companyWriteFailure });
+        if (writeEpoch !== companyWriteEpoch) throw new Error("Tauri 公司写命令确认属于更正拒绝前的旧提交，已过期；结果未知，请核对权威状态");
         assertResponseCurrent(cursor.generation, "company_write");
         timeline.assertQueryCursor(cursor, responseGeneration, "Tauri 公司写命令确认属于已过期 baseline/generation；结果未知，请核对权威状态");
       };

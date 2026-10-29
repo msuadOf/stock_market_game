@@ -18,6 +18,7 @@ import { parseRemoteMessage } from "./remote-wire.ts";
 import { ReportQueryContext } from "./report-query-context.ts";
 import { RemoteCommandRegistry } from "./remote-command-registry.ts";
 import { RemotePublisherState } from "./remote-publisher-state.ts";
+import { isReportCorrectionPrepareRejection } from "./protocol-failure.ts";
 import { normalizePublicReportById, normalizePublicReportPage } from "./serde-normalize.ts";
 import { assertValidSpeedMultiplier, parseSpeedMetrics } from "./speed.ts";
 import { normalizePlayerWorkingOrders, type PlayerWorkingOrder } from "./player-working-orders.ts";
@@ -65,6 +66,7 @@ export async function createRemoteHost(setup: SessionSetup, seed: bigint, option
   let disposed = false;
   let delivery: DeliveryMode = "push";
   let baselineDelivered = false;
+  let companyWriteEpoch = 0;
   const requireCatalogResolver = () => { const baseline = publisher.baselineForRead(); if (baseline === null) throw new Error("远程只读查询需要baseline"); return baseline.catalogResolver; };
   let resyncPromise: Promise<void> | null = null;
   let pullTimer: ReturnType<typeof setInterval> | null = null;
@@ -106,6 +108,17 @@ export async function createRemoteHost(setup: SessionSetup, seed: bigint, option
   };
 
   const fail = (failure: HostFailure) => {
+    companyWriteEpoch += 1;
+    const baseline = publisher.baselineForRead();
+    if (baseline !== null && publisher.isProtocolReady() && publisher.currentSocket()?.readyState === WebSocket.OPEN
+      && isReportCorrectionPrepareRejection(failure, "server", baseline.generation)) {
+      if (pullResponseTimer !== null) clearTimeout(pullResponseTimer);
+      pullResponseTimer = null;
+      pullWaiting = false;
+      interrupt("报表更正 prepare 被拒绝，旧提交已失效");
+      fatalCallback?.(failure);
+      return;
+    }
     clearTransportTimers();
     publisher.invalidateConnection();
     const failedSocket = publisher.detachSocket();
@@ -271,9 +284,11 @@ export async function createRemoteHost(setup: SessionSetup, seed: bigint, option
     const hasCurrentConnection = () => publisher.currentSocket()?.readyState === 1;
     if (disposed || !hasCurrentConnection() || !publisher.isProtocolReady()) throw new Error("远程公司写命令需要健康的当前连接与 baseline");
     const cursor = publisher.captureQueryCursor("远程公司写命令缺少当前 baseline");
+    const writeEpoch = companyWriteEpoch;
     const catalog = requireCatalogResolver();
     const assertCurrent = (responseGeneration: unknown = cursor.generation) => {
       if (disposed || !hasCurrentConnection() || !publisher.isProtocolReady()) throw new Error("远程公司写命令确认已过期或会话已销毁；结果未知，请核对权威状态");
+      if (writeEpoch !== companyWriteEpoch) throw new Error("远程公司写命令确认属于更正拒绝前的旧提交，已过期；结果未知，请核对权威状态");
       publisher.assertQueryCursor(cursor, responseGeneration, "远程公司写命令确认属于已过期 baseline/generation；结果未知，请核对权威状态");
     };
     async function settled<V>(action: () => Promise<V>): Promise<V> {

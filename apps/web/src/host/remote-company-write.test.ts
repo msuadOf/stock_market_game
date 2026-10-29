@@ -2,9 +2,10 @@ import assert from "node:assert/strict";
 import test, { type TestContext } from "node:test";
 import { createRemoteHost } from "./remote-host.ts";
 import { CompanyWriteRejectedError } from "./company-write.ts";
+import { isReportCorrectionPrepareRejection } from "./protocol-failure.ts";
 import { catalogWireFixture } from "./catalog-test-fixture.ts";
 import { remoteTestContext } from "./remote-test-context.ts";
-import { mirrorOrigin, market } from "./protocol-test-fixtures.ts";
+import { market, mirrorOrigin } from "./protocol-test-fixtures.ts";
 import type { SessionSetup } from "../types/engine.ts";
 
 // synthetic transport fixture：只检查实际 Web Host 接线，不冒真实 Rust 批准或更正完成。
@@ -23,7 +24,10 @@ async function fixture(t: TestContext, respond: (path: string) => Response | Pro
   const calls: { path: string; body: unknown; token: string | null }[] = [];
   const contexts: { session: string | null; token: string | null }[] = [];
   const snapshot = { seq: 0, tick: 0, day: 0, phase: "Continuous", mirror_origin: mirrorOrigin(0), markets: { "3": market() }, accounts: {}, daily_candles: { "3": [] }, active_daily_candles: {} };
-  const socket = { readyState: 1, close() {}, send() {}, onmessage: null, onerror: null, onclose: null } as unknown as WebSocket;
+  let closed = 0;
+  const updates: unknown[] = [];
+  const failures: unknown[] = [];
+  const socket = { readyState: 1, close() { closed++; }, send() {}, onmessage: null, onerror: null, onclose: null } as unknown as WebSocket;
   const host = await createRemoteHost({} as SessionSetup, 1n, {
     baseUrl: "https://company-write.example", webSocketFactory: () => socket,
     fetchFn: async (input, init) => {
@@ -40,7 +44,7 @@ async function fixture(t: TestContext, respond: (path: string) => Response | Pro
     },
   });
   t.after(() => host.dispose());
-  await host.start(() => {});
+  await host.start(update => { updates.push(update); }, failure => { failures.push(failure); });
   const publish = (generation = 1) => socket.onmessage!({ data: JSON.stringify({ Baseline: { ...catalogWireFixture(snapshot), timeline_generation: generation, snapshot,
     civil_date: "2030-06-03", public_revision: 0, public_report_ids: [] } }) } as MessageEvent);
   publish();
@@ -49,8 +53,9 @@ async function fixture(t: TestContext, respond: (path: string) => Response | Pro
     assert.equal(typeof command, "function", `实际 Remote EngineHost 必须提供 ${method}`);
     return (command as (value: unknown) => Promise<unknown>)(input);
   };
-  const fail = () => socket.onmessage!({ data: JSON.stringify({ HostFailure: { code: "BROKEN", where: "fixture.host", message: "当前连接权威失效" } }) } as MessageEvent);
-  return { host, calls, contexts, publish, invoke, fail };
+  const fail = (details: Record<string, unknown> = {}) => socket.onmessage!({ data: JSON.stringify({ HostFailure: { code: "BROKEN", where: "fixture.host", message: "当前连接权威失效", ...details } }) } as MessageEvent);
+  const publishProtocol = (update: unknown) => socket.onmessage!({ data: JSON.stringify({ PublisherFrame: { timeline_generation: 1, update, civil_date: "2030-06-03", public_revision: 0 } }) } as MessageEvent);
+  return { host, calls, contexts, publish, invoke, fail, publishProtocol, updates, failures, closed: () => closed };
 }
 
 for (const operation of operations) test(`Remote ${operation.method} 经实际 Host 转发可信身份与当前 generation`, { timeout: 10000 }, async t => {
@@ -135,4 +140,65 @@ for (const response of ["success", "rejection"] as const) for (const change of [
   if (change === "dispose") await f.host.dispose(); else if (change === "failure") f.fail(); else f.publish(change === "restore" ? 2 : 1);
   finish(response === "success" ? json({ generation: "1", receipt: proposalReceipt }) : json({ code: "PLAYER_COMPANY_ACTION_REJECTED", failure }, 400));
   await rejected;
+});
+
+
+const prepareRejection = {
+  code: "REPORT_CORRECTION_PREPARE_REJECTED", where: "server.actor.prepare_civil_updates", message: "报表更正未满足提交条件（内部详情已脱敏）",
+  recoverable: true, context: { operation: "endCivilDay", tick: 2, seq: 0, day: 1, generation: "1" },
+  cause: { code: "REPORT_CORRECTION_REJECTED", message: "报表更正未满足提交条件（内部详情已脱敏）", cause: null },
+};
+
+test("Remote 真实Publisher消息先交末拍、可信F2中断旧确认并保同连接cancel与civil更新", { timeout: 10000 }, async t => {
+  let finish!: (value: Response) => void;
+  const f = await fixture(t, path => path === "/api/propose-player-company-action"
+    ? new Promise(resolve => { finish = resolve; }) : json({ generation: "1", operation_id: correction.operation_id }));
+  const pending = f.invoke("proposePlayerCompanyAction", proposal);
+  const stale = assert.rejects(pending, /过期|中断|失效/);
+  while (finish === undefined) await new Promise(resolve => setImmediate(resolve));
+  f.publishProtocol({ TickBatch: { frames: [{ tick: 2, seq_from: 0, seq_to: 0, facts: [], timeseries_payload: {} }], runtime_snapshot: null } });
+  f.fail(prepareRejection);
+  finish(json({ generation: "1", receipt: proposalReceipt }));
+  await stale;
+  assert.equal(f.closed(), 0, "可信 F2 必须保留当前 Publisher 连接");
+  assert.equal(f.updates.length, 2, "必须先交 baseline 与已接受末拍");
+  assert.equal(f.failures.length, 1, "可恢复拒绝仍须显式通知用户");
+  assert.deepEqual(await f.invoke("cancelReportCorrection", correction.operation_id), { operation_id: correction.operation_id });
+  f.publishProtocol({ CivilUpdate: { tick: 2 } });
+  assert.equal(f.updates.length, 3, "同连接必须继续交付 civil-only 更新");
+});
+
+for (const invalid of [
+  { code: "CIVIL_DAY_SETTLEMENT_FAILED" }, { where: "server.actor.callback" }, { recoverable: false },
+  { context: { ...prepareRejection.context, operation: "callback" } }, { context: { ...prepareRejection.context, generation: "2" } },
+  { context: { ...prepareRejection.context, day: 4_294_967_296 } },
+  { cause: { code: "REPORT_CORRECTION_REJECTED" } },
+  { cause: { ...prepareRejection.cause, unexpected: true } },
+  { cause: { ...prepareRejection.cause, message: "  " } },
+  { cause: { ...prepareRejection.cause, cause: { code: "INNER" } } },
+  { cause: { ...prepareRejection.cause, code: "REPORT_CORRECTION_FAILED" } },
+]) test(`Remote 非可信F2仍关闭连接 ${JSON.stringify(invalid)}`, { timeout: 10000 }, async t => {
+  const f = await fixture(t, () => { throw new Error("非F2不能继续POST"); });
+  f.fail({ ...prepareRejection, ...invalid });
+  assert.equal(f.closed(), 1);
+  await assert.rejects(f.invoke("cancelReportCorrection", correction.operation_id), /baseline|连接|失效|过期/);
+  assert.equal(f.calls.length, 0);
+});
+
+test("Remote 首fatal之后迟到的F2不能复活旧连接", { timeout: 10000 }, async t => {
+  const f = await fixture(t, () => { throw new Error("首fatal后不能POST"); });
+  f.fail();
+  f.fail(prepareRejection);
+  assert.equal(f.closed(), 1);
+  await assert.rejects(f.invoke("cancelReportCorrection", correction.operation_id), /baseline|连接|失效|过期/);
+  assert.equal(f.calls.length, 0);
+});
+
+test("Remote F2 matcher接纳完整嵌套FailureCause并拒绝循环cause", { timeout: 10000 }, () => {
+  const nested = { ...prepareRejection, cause: { ...prepareRejection.cause, cause: { code: "INNER", message: "内部拒绝", cause: null } } };
+  assert.equal(isReportCorrectionPrepareRejection(nested, "server", "1"), true);
+  assert.equal(isReportCorrectionPrepareRejection({ ...prepareRejection, context: { ...prepareRejection.context, day: 4_294_967_295 } }, "server", "1"), true);
+  const cyclicCause: { code: string; message: string; cause: unknown } = { code: "REPORT_CORRECTION_REJECTED", message: "拒绝", cause: null };
+  cyclicCause.cause = cyclicCause;
+  assert.equal(isReportCorrectionPrepareRejection({ ...prepareRejection, cause: cyclicCause }, "server", "1"), false);
 });
