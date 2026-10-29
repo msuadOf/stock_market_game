@@ -124,7 +124,11 @@ async function createFixture(
   assert.ok(listener);
   const send = (message: Message) => { listener!({ data: message }); };
   const control = new MessageChannel(); let substrate: Record<string, unknown> | undefined;
-  control.port1.addEventListener("message", (event) => { substrate = event.data; control.port1.postMessage({ type: "facadeEngineConfigured" }); }); control.port1.start();
+  let earlyMemory: WebAssembly.Memory | undefined;
+  control.port1.addEventListener("message", (event) => {
+    if (event.data.type === "facadeEngineMemory") { earlyMemory = event.data.memory; control.port1.postMessage({ type: "facadeEngineMemoryRegistered", allocationId: 1 }); }
+    else { substrate = { ...event.data, memory: earlyMemory }; control.port1.postMessage({ type: "facadeEngineConfigured" }); }
+  }); control.port1.start();
   send({ type: "init", setup: {}, controlPort: control.port2 });
   await ready;
   const initialization = [...posted];

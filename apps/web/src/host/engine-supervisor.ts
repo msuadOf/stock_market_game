@@ -7,6 +7,9 @@ import { parseHostFailure } from "./protocol-failure.ts";
 import { classifyWasmFailure, describeWasmFailure } from "./wasm-failure.ts";
 import { answerFail, answerOk, createSupervisorState, evaluateOkRecovery, onWorkerExit, recoverPending, registerChild, writeDead, type FacadeArenaView } from "./facade-supervisor.ts";
 import { CAPACITY, GEN_BITS, GEN_BITS_DEFAULT, HEADER_WORDS, SLOT_STRIDE, JOIN_STRIDE, SLOT_JOIN_INDEX, SlotState, JoinState, decodeGen, decodeJoinState, encodeW, slotWordOffset, slotFieldOffset, joinWordOffset } from "./facade-slot-protocol.ts";
+import { abortWasmWait, parseWasmWaitAbortLayout, type WasmWaitAbortLayout } from "./wasm-wait-abort.ts";
+import type { WasmLifecycleObservation } from "./wasm-lifecycle-observation.ts";
+import type { WasmFinalRelease } from "./wasm-document-memory-owner.ts";
 
 /** 只分配宿主错误载荷，不改变 Rust 的 WorkerFailed 判定。 */
 export const FacadeSpawnError = Object.freeze({ WORKER_CONSTRUCT: 1, SCRIPT_LOAD: 2, INSTANTIATE: 3, SUPERVISOR_SHUTDOWN: 4 });
@@ -19,6 +22,7 @@ export interface FacadeSubstrate {
   readonly memory: WebAssembly.Memory;
   readonly layout: FacadeSlotLayout;
   readonly diagnostics: boolean;
+  readonly waitAbort?: WasmWaitAbortLayout;
 }
 export interface SupervisorTimers {
   now(): number;
@@ -32,6 +36,9 @@ export interface EngineSupervisorOptions {
   readonly onFatalFailure: (failure: HostFailure) => void;
   readonly onSpawnFailure: (failure: HostFailure) => void;
   readonly reportError?: (error: Error) => void;
+  /** 只交纯数据；构造途中未取得 Memory 事实时交 Error，不能编造零字节。 */
+  readonly onLifecycleObservation?: (event: WasmLifecycleObservation) => void;
+  readonly onFinalRelease?: (result: WasmFinalRelease | Error) => void;
   /** 仅用于确定性短 fixture；产品始终使用默认时钟及期限。 */
   readonly timers?: SupervisorTimers;
 }
@@ -44,6 +51,7 @@ interface Resource {
   readonly listeners: Array<readonly [EventTarget, string, EventListener]>;
   readyTimer?: number;
   ready: boolean;
+  quiescent?: boolean;
   doneObservedAt?: number;
 }
 
@@ -64,6 +72,12 @@ export function createEngineSupervisor(options: EngineSupervisorOptions) {
   let disposed = false, shuttingDown = false;
   let deadline = Infinity;
   let sweepTimer: number | undefined;
+  let allocatedMemory: WebAssembly.Memory | undefined;
+  let allocationStarted = false;
+  let unprovenTermination = false;
+  let requireWaitAbort = false;
+  let finalRelease: WasmFinalRelease | Error | undefined;
+  let drain: { readonly promise: Promise<void>; readonly resolve: () => void; readonly reject: (error: Error) => void } | undefined;
 
   function failure(code: string, where: string, error: unknown, context?: unknown): HostFailure {
     const location = `engine-supervisor.${where}`;
@@ -105,28 +119,76 @@ export function createEngineSupervisor(options: EngineSupervisorOptions) {
   }
   function cleanup(resource: Resource, terminate: boolean): void {
     if (!resources.delete(resource.worker)) return;
-    if (resource.readyTimer !== undefined) { timers.clearTimeout(resource.readyTimer); resource.readyTimer = undefined; }
-    for (const [target, type, listener] of resource.listeners) target.removeEventListener(type, listener);
+    const errors: unknown[] = [];
+    function attempt(action: () => void): void { try { action(); } catch (error) { errors.push(error); } }
+    if (resource.readyTimer !== undefined) { const timer = resource.readyTimer; resource.readyTimer = undefined; attempt(() => timers.clearTimeout(timer)); }
+    for (const [target, type, listener] of resource.listeners) attempt(() => target.removeEventListener(type, listener));
     resource.listeners.length = 0;
-    resource.port?.close();
-    resource.localPort?.close();
+    attempt(() => resource.port?.close());
+    attempt(() => resource.localPort?.close());
     resource.localPort = undefined;
-    if (terminate) resource.worker.terminate();
+    if (terminate) {
+      if (resource.quiescent !== true) unprovenTermination = true;
+      // 即使 port/listener 清理失败也必须尝试 terminate；但 release 保留未知。
+      attempt(() => resource.worker.terminate());
+    }
+    if (errors.length !== 0) throw new AggregateError(errors, "Worker 资源清理失败");
   }
-  function dispose(): void {
-    if (disposed) return;
+  function dispose(): WasmFinalRelease | Error {
+    if (disposed) {
+      if (finalRelease === undefined) throw new Error("实例仍在同步释放中，禁止重入");
+      return finalRelease;
+    }
     // 先作废所有回调，再清理本人实例；迟到事件不能访问新实例。
     disposed = true;
-    if (sweepTimer !== undefined) { timers.clearTimeout(sweepTimer); sweepTimer = undefined; }
-    for (const resource of [...resources.values()]) cleanup(resource, true);
+    const pendingDrain = drain; drain = undefined;
+    pendingDrain?.reject(new Error("实例已 dispose；强制清表不能证明真实 child exit"));
+    const errors: unknown[] = [];
+    if (sweepTimer !== undefined) {
+      const timer = sweepTimer; sweepTimer = undefined;
+      try { timers.clearTimeout(timer); } catch (error) { errors.push(error); }
+    }
+    const growthStopped = !unprovenTermination && [...resources.values()].every((resource) => resource.role !== "child" && resource.quiescent === true)
+      && protocol.manifest.size === 0 && protocol.pendingRecovery.length === 0;
+    for (const resource of [...resources.values()]) {
+      try { cleanup(resource, true); }
+      catch (error) { errors.push(error); }
+    }
+    let memory = allocatedMemory ?? substrate?.memory;
+    let receipt: WasmFinalRelease | Error;
+    try {
+      if (errors.length !== 0) throw new AggregateError(errors, "整组 terminate 未全部成功，Memory 终值未知");
+      if (memory === undefined) {
+        if (allocationStarted) throw new Error("init 已开始但未取得 Memory 分配事实，禁止伪造 not-allocated 或零终值");
+        receipt = { kind: "not-allocated" };
+      } else {
+        if (!growthStopped) throw new Error("缺少 cooperative quiescence/真实 child exit 证据；terminate 返回不能证明 Memory 已停止 grow");
+        // cooperative quiescence 与真实 child exit 齐全后只读一次终值。
+        const finalBytes = memory.buffer.byteLength;
+        if (!Number.isSafeInteger(finalBytes) || finalBytes <= 0) throw new Error("Memory 终值不是正 safe integer bytes");
+        receipt = { kind: "released", finalBytes, growthStopped: true, referencesDropped: true };
+      }
+    } catch (error) { receipt = error instanceof Error ? error : new Error("Memory 最终释放失败", { cause: error }); }
     protocol.manifest.clear(); protocol.pendingRecovery.length = 0;
     substrate = undefined;
+    allocatedMemory = undefined;
+    memory = undefined;
     engineResource = undefined;
+    finalRelease = receipt;
+    options.onFinalRelease?.(receipt);
+    if (options.onLifecycleObservation !== undefined) options.onLifecycleObservation(receipt instanceof Error
+      ? { type: "releaseUnknown", message: receipt.message }
+      : receipt.kind === "released" ? { type: "finalRelease", kind: "released", finalBytes: receipt.finalBytes } : { type: "finalRelease", kind: "not-allocated" });
+    return receipt;
   }
   function fatal(detail: HostFailure): void {
     if (disposed) return;
-    dispose();
-    try { onFatalFailure(detail); }
+    let reported = detail;
+    try { if (substrate?.waitAbort !== undefined) abortWasmWait(substrate.memory, substrate.waitAbort); }
+    catch (error) { reported = { ...detail, cause: { primary: detail.cause, abort: failure("WASM_ABORT_WRITE", "fatal", error) } }; }
+    try { dispose(); }
+    catch (error) { reported = { ...reported, cause: { primary: reported.cause, releaseReporter: failure("WASM_RELEASE_REPORTER", "fatal", error) } }; }
+    try { onFatalFailure(reported); }
     catch (error) {
       const report = new AggregateError([detail, error], "EngineSupervisor fatal callback 失败；全部本人资源已清理");
       if (reportError !== undefined) reportError(report);
@@ -247,8 +309,23 @@ export function createEngineSupervisor(options: EngineSupervisorOptions) {
   }
   function dispatch(resource: Resource, message: FacadeSupervisorControlMessage, global: boolean): void {
     if (global && message.type !== "facadeBootstrapFailure") throw new Error("全局消息面只接受 facadeBootstrapFailure 错误出口");
+    if (message.type === "facadeEngineMemory") {
+      if (resource.role !== "engine" || resource.localPort !== undefined || resource.port === undefined || allocatedMemory !== undefined || substrate !== undefined) throw new Error("Memory 只能由首次 engine bootstrap 的控制端登记一次");
+      allocatedMemory = message.memory;
+      resource.port.postMessage({ type: "facadeEngineMemoryRegistered", allocationId: 1 });
+      return;
+    }
+    if (message.type === "facadeEngineConfiguration") {
+      if (resource.role !== "engine" || resource.localPort !== undefined || resource.port === undefined || allocatedMemory === undefined) throw new Error("配置必须关联本控制端已登记的唯一 Memory");
+      if (requireWaitAbort && message.waitAbort === undefined) throw new Error("runtime true 缺少真实 wait abort 布局");
+      const waitAbort = message.waitAbort === undefined ? undefined : parseWasmWaitAbortLayout(message.waitAbort, allocatedMemory);
+      installSubstrate({ module: message.module, memory: allocatedMemory, layout: message.layout, diagnostics: message.diagnostics, ...(waitAbort === undefined ? {} : { waitAbort }) });
+      resource.port.postMessage({ type: "facadeEngineConfigured" });
+      return;
+    }
     if (message.type === "facadeEngineSubstrate") {
       if (resource.role !== "engine" || resource.localPort !== undefined || resource.port === undefined) throw new Error("substrate 只能来自已接收首次 bootstrap 的 engine 自身控制端");
+      if (allocatedMemory !== undefined || requireWaitAbort) throw new Error("已登记 Memory 或 runtime true 必须使用 allocation configuration，禁止重传 Memory");
       installSubstrate(message);
       resource.port.postMessage({ type: "facadeEngineConfigured" });
       return;
@@ -292,7 +369,9 @@ export function createEngineSupervisor(options: EngineSupervisorOptions) {
         cleanup(resource, false);
         const outcome = onWorkerExit(arena(), protocol, message.workerId, message.slot, message.gen);
         if (outcome === "pushed") protocol.manifest.delete(message.workerId);
-        checkpoint(); return;
+        checkpoint();
+        options.onLifecycleObservation?.({ type: "childExit", workerId: message.workerId, slot: message.slot, gen: message.gen, ...lifecycleCounts() });
+        return;
       }
     }
   }
@@ -309,6 +388,9 @@ export function createEngineSupervisor(options: EngineSupervisorOptions) {
       if (disposed) throw error;
       fatal(failure("FACADE_PROTOCOL_ERROR", "control", error)); return true;
     }
+  }
+  function lifecycleCounts() {
+    return { activeChildren: [...resources.values()].filter((resource) => resource.role === "child").length, manifestEntries: protocol.manifest.size, pendingRecovery: protocol.pendingRecovery.length };
   }
   function checkpoint(): void {
     if (disposed || substrate === undefined) return;
@@ -345,10 +427,20 @@ export function createEngineSupervisor(options: EngineSupervisorOptions) {
         fatal(failure("FACADE_EXIT_ACK_TIMEOUT", "cleanup", new Error("DONE/CONSUMED 后未收到真实 workerExit"), id)); return;
       }
     }
+    if (drain !== undefined) {
+      if (![...resources.values()].some((resource) => resource.role === "child") && protocol.manifest.size === 0 && protocol.pendingRecovery.length === 0) {
+        const pending = drain;
+        options.onLifecycleObservation?.({ type: "childrenDrained", ...lifecycleCounts() });
+        drain = undefined; pending.resolve();
+      } else if (timers.now() >= deadline) {
+        fatal(failure("WASM_SHUTDOWN_EXIT_TIMEOUT", "shutdown", new Error("正常停止期限内未收到全部真实 child exit/槽回收")));
+      }
+    }
   }
   function scheduleSweep(): void {
     if (disposed || substrate === undefined || sweepTimer !== undefined) return;
     let delay = 25;
+    if (drain !== undefined) delay = Math.min(delay, Math.max(0, deadline - timers.now()));
     for (const resource of resources.values()) {
       if (resource.doneObservedAt !== undefined) delay = Math.min(delay, Math.max(0, Math.min(resource.doneObservedAt + 10000, deadline) - timers.now()));
     }
@@ -380,7 +472,9 @@ export function createEngineSupervisor(options: EngineSupervisorOptions) {
     if (layout.baseAddr + length * 4 > buffer.byteLength) throw new Error("facade layout 超出 memory");
     const view = new Int32Array(buffer, layout.baseAddr, length);
     if ((Atomics.load(view, CAPACITY) >>> 0) !== layout.capacity || (Atomics.load(view, GEN_BITS) >>> 0) !== layout.genBits) throw new Error("facade layout header 不匹配");
-    substrate = Object.freeze({ module, memory, layout: Object.freeze({ ...layout }), diagnostics });
+    if (Object.keys(layout).sort().join(",") !== "baseAddr,capacity,genBits,headerWords,joinStride,slotStride") throw new Error("facade layout 字段不完整或有未知字段");
+    const waitAbort = input.waitAbort === undefined ? undefined : parseWasmWaitAbortLayout(input.waitAbort, memory);
+    substrate = Object.freeze({ module, memory, layout: Object.freeze({ ...layout }), diagnostics, ...(waitAbort === undefined ? {} : { waitAbort }) });
     scheduleSweep();
   }
   function assertConfigured(): void {
@@ -392,6 +486,8 @@ export function createEngineSupervisor(options: EngineSupervisorOptions) {
     bootstrapEngine(message: Readonly<Record<string, unknown>>): void {
       const engine = engineResource;
       if (disposed || engine === undefined || engine.localPort === undefined) throw new Error("engine bootstrap 只允许发送一次");
+      allocationStarted = true;
+      requireWaitAbort = message.runtimeOverride === true;
       try { engine.worker.postMessage({ ...message, controlPort: engine.localPort }, [engine.localPort]); engine.localPort = undefined; }
       catch (error) { fatal(failure("FACADE_ENGINE_BOOTSTRAP", "engine", error)); }
     },
@@ -414,11 +510,27 @@ export function createEngineSupervisor(options: EngineSupervisorOptions) {
       }
       tightenDeadline(until === undefined ? deadline : until);
     },
+    waitForChildrenExit(until: number): Promise<void> {
+      if (disposed) return Promise.reject(new Error("实例已经 dispose，不能证明真实 child exit"));
+      if (!Number.isFinite(until) || until < 0) return Promise.reject(new Error("实例 deadline 必须为有限非负时间"));
+      if (drain !== undefined) { tightenDeadline(until); return drain.promise; }
+      let resolve!: () => void, reject!: (error: Error) => void;
+      const promise = new Promise<void>((done, failed) => { resolve = done; reject = failed; });
+      drain = { promise, resolve, reject };
+      tightenDeadline(until);
+      return promise;
+    },
     setDeadline(until: number): void {
       if (!Number.isFinite(until) || until < 0) throw new Error("实例 deadline 必须为有限非负时间");
       tightenDeadline(until);
     },
-    checkpoint, dispose,
+    markQuiescent(worker: Worker): void {
+      const resource = resources.get(worker);
+      if (disposed || resource === undefined || resource.role === "child" || resource.quiescent === true) throw new Error("quiescence 必须来自活跃 engine/ingress 的一次真实回复");
+      resource.quiescent = true;
+      options.onLifecycleObservation?.({ type: "quiescent", role: resource.role, ...lifecycleCounts() });
+    },
+    checkpoint, dispose, discard: fatal,
     snapshot() {
       return { disposed, children: [...resources.values()].filter((resource) => resource.role === "child").length,
         workers: resources.size, ports: [...resources.values()].reduce((count, resource) => count + (resource.port === undefined ? 0 : 1) + (resource.localPort === undefined ? 0 : 1), 0),

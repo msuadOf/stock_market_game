@@ -423,3 +423,25 @@ test("真实 trap 后 D5 二级协议错误保留首次原 trap/cause 快照", {
   assert.match(JSON.stringify(f.fatal[0]), /native trap detail/);
   assert.match(JSON.stringify(f.fatal[0]), /RangeError/);
 });
+
+test("正常 drain 必须等真实 childExit，join CONSUMED 不能替代且不提前 terminate", { timeout: 10000 }, async () => {
+  const f = fixture(); f.spawn(); f.ready();
+  const pending = f.supervisor.waitForChildrenExit(1000); let resolved = false;
+  void pending.then(() => { resolved = true; });
+  Atomics.store(f.words, joinWordOffset(0,4), encodeJoin(0,JoinState.Consumed,29) | 0);
+  f.supervisor.checkpoint(); await Promise.resolve();
+  assert.equal(resolved, false, "CONSUMED_IS_NOT_CHILD_EXIT");
+  assert.equal(f.children[0].terminations, 0);
+  f.channels[1].port1.emit({ type: "facadeWorkerExit", workerId: 1, slot: 0, gen: 0 });
+  await pending;
+  assert.equal(f.supervisor.snapshot().protocolEntries, 0);
+  assert.equal(f.engine.terminations, 0);
+  f.supervisor.dispose();
+});
+
+test("强制 dispose 清 manifest 不得把真实 drain waiter 改成成功", { timeout: 10000 }, async () => {
+  const f = fixture(); f.spawn(); f.ready();
+  const pending = f.supervisor.waitForChildrenExit(1000);
+  f.supervisor.dispose();
+  await assert.rejects(pending, /dispose|废弃|终止/);
+});

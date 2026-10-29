@@ -6,6 +6,7 @@ import type { FacadeArenaView } from "./facade-supervisor.ts";
 import type { FacadeSubstrate } from "./engine-supervisor.ts";
 import { createFacadeEngineHandshake } from "./facade-engine-handshake.ts";
 import { createFacadeSharedMemory, instantiateFacadeModule, type FacadeSyncInitializer } from "./facade-wasm-module.ts";
+import { parseWasmWaitAbortLayout, type WasmWaitAbortLayout } from "./wasm-wait-abort.ts";
 
 export interface FacadeEngineGlue extends FacadeSyncInitializer {
   readonly facade_slot_init_for_setup: (setup: unknown) => void;
@@ -13,6 +14,7 @@ export interface FacadeEngineGlue extends FacadeSyncInitializer {
   readonly facade_slot_layout: () => FacadeSlotLayout;
   readonly set_step_runtime_override?: (enabled: boolean) => void;
   readonly init_wasm_wait?: (spinUs: number, quietUs: number, fineUs: number, coarseUs: number) => void;
+  readonly wasm_wait_abort_layout?: () => unknown;
 }
 interface FacadeWaitSettings {
   readonly spinUs: number;
@@ -105,15 +107,20 @@ export function createFacadeEngineInitializer(options: {
         const isolated = options.isolated();
         if (isolated !== true) throw new Error("engine 需要 crossOriginIsolated 隔离环境");
         const memory = options.createMemory === undefined ? createFacadeSharedMemory({ isolated }) : options.createMemory();
+        await handshake.registerMemory(memory);
+        if (disposed) throw new Error("Memory 登记后实例已 dispose");
         options.environment.bindFacadeThreadEnvironment({ memory, role: "engine", postControl: handshake.postControl });
         const loaded = await options.load();
         if (disposed) throw new Error("engine 加载完成时实例已 dispose");
         instantiateFacadeModule(loaded.glue, loaded.module, memory);
+        let waitAbort: WasmWaitAbortLayout | undefined;
         if (runtime.requested) {
           const setRuntimeOverride = loaded.glue.set_step_runtime_override;
           const initializeWait = runtime.enabled ? loaded.glue.init_wasm_wait : undefined;
+          const abortLayout = runtime.enabled ? loaded.glue.wasm_wait_abort_layout : undefined;
           const missing = typeof setRuntimeOverride !== "function" ? "set_step_runtime_override"
-            : runtime.enabled && typeof initializeWait !== "function" ? "init_wasm_wait" : undefined;
+            : runtime.enabled && typeof initializeWait !== "function" ? "init_wasm_wait"
+            : runtime.enabled && typeof abortLayout !== "function" ? "wasm_wait_abort_layout" : undefined;
           if (missing !== undefined) throw Object.assign(new Error(`facade glue 缺少 runtime initializer: ${missing}`), {
             code: "WASM_RUNTIME_NOT_READY", where: "facade-engine-initialize.runtime", context: { operation: missing },
           });
@@ -124,6 +131,8 @@ export function createFacadeEngineInitializer(options: {
             }
             setRuntimeOverride.call(loaded.glue, true);
             initializeWait.call(loaded.glue, wait.spinUs, wait.quietUs, wait.fineUs, wait.coarseUs);
+            if (typeof abortLayout !== "function") throw new Error("已校验的 abort layout getter 状态丢失");
+            waitAbort = parseWasmWaitAbortLayout(abortLayout.call(loaded.glue), memory);
           } else {
             if (typeof setRuntimeOverride !== "function") throw new Error("已校验的 runtime setter 状态丢失");
             setRuntimeOverride.call(loaded.glue, false);
@@ -139,7 +148,7 @@ export function createFacadeEngineInitializer(options: {
         const layout = loaded.glue.facade_slot_layout();
         options.environment.installFacadeSlotLayout(layout); options.environment.getArenaView();
         const candidate = Object.freeze({ module: loaded.module, memory, layout, diagnostics: loaded.diagnostics });
-        await handshake.configure(candidate);
+        await handshake.configure(candidate, waitAbort);
         if (disposed) throw new Error("engine configured 到达时实例已 dispose");
         current = candidate;
         return candidate;

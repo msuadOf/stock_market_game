@@ -1,6 +1,7 @@
 import type { FacadeControlMessage } from "./facade-thread-binding.ts";
 import type { FacadeSubstrate } from "./engine-supervisor.ts";
 import { parseFacadeEngineConfigured } from "./facade-engine-protocol.ts";
+import type { WasmWaitAbortLayout } from "./wasm-wait-abort.ts";
 
 interface HandshakeTimers {
   setTimeout(callback: () => void, milliseconds: number): number;
@@ -14,6 +15,7 @@ export function createFacadeEngineHandshake(options: { readonly port: MessagePor
     clearTimeout: (id: number) => globalThis.clearTimeout(id),
   } : options.timers;
   let started = false, configured = false, closed = false;
+  let memoryStarted = false, memoryRegistered = false;
   let timer: number | undefined;
   let resolve: (() => void) | undefined, reject: ((error: unknown) => void) | undefined;
   function close(): void {
@@ -31,6 +33,15 @@ export function createFacadeEngineHandshake(options: { readonly port: MessagePor
   function receive(event: MessageEvent<unknown>): void {
     if (closed) return;
     try {
+      const value: unknown = event.data;
+      if (value !== null && typeof value === "object" && (value as Record<string, unknown>).type === "facadeEngineMemoryRegistered") {
+        const source = value as Record<string, unknown>;
+        if (!memoryStarted || memoryRegistered || started || Object.keys(source).sort().join(",") !== "allocationId,type" || source.allocationId !== 1) throw new Error("Memory 登记确认提前、重复或身份错误");
+        memoryRegistered = true;
+        if (timer !== undefined) { timers.clearTimeout(timer); timer = undefined; }
+        const done = resolve; resolve = undefined; reject = undefined; done?.();
+        return;
+      }
       parseFacadeEngineConfigured(event.data);
       if (!started || configured) throw new Error("facadeEngineConfigured 提前或重复发送");
       configured = true;
@@ -44,13 +55,29 @@ export function createFacadeEngineHandshake(options: { readonly port: MessagePor
     if (!configured || closed) throw new Error("engine 尚未 configured 或控制端已关闭");
   }
   return {
-    configure(substrate: FacadeSubstrate): Promise<void> {
+    registerMemory(memory: WebAssembly.Memory): Promise<void> {
+      if (memoryStarted || started || closed) throw new Error("engine Memory 只允许登记一次");
+      memoryStarted = true;
+      return new Promise<void>((done, failed) => {
+        resolve = done; reject = failed;
+        timer = timers.setTimeout(() => fail(new Error("engine Memory 登记等待超过 10000ms")), 10000);
+        try { port.postMessage({ type: "facadeEngineMemory", allocationId: 1, memory }); }
+        catch (error) { fail(error); }
+      });
+    },
+    configure(substrate: FacadeSubstrate, waitAbort?: WasmWaitAbortLayout): Promise<void> {
       if (started || closed) throw new Error("engine substrate 只允许发送一次");
+      if (memoryStarted && !memoryRegistered) throw new Error("engine Memory 尚未由主侧确认");
       started = true;
       return new Promise<void>((done, failed) => {
         resolve = done; reject = failed;
         timer = timers.setTimeout(() => fail(new Error("engine configured 等待超过 10000ms")), 10000);
-        try { port.postMessage({ type: "facadeEngineSubstrate", ...substrate }); }
+        try {
+          // 已登记 Memory 时不再跨消息 clone wrapper；控制端阶段就是一次分配权威。
+          port.postMessage(memoryRegistered
+            ? { type: "facadeEngineConfiguration", allocationId: 1, module: substrate.module, layout: substrate.layout, diagnostics: substrate.diagnostics, ...(waitAbort === undefined ? {} : { waitAbort }) }
+            : { type: "facadeEngineSubstrate", ...substrate });
+        }
         catch (error) { fail(error); }
       });
     },

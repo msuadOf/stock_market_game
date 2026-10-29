@@ -24,11 +24,14 @@ test("engine bind→实例化→Rust setup arena/clock→layout→main配置确�
   });
   try {
     assert.throws(() => initializer.requireConfigured(), /configured/);
-    const received = new Promise<Record<string, unknown>>((resolve) => channel.port1.addEventListener("message", (event) => resolve(event.data)));
+    const received = new Promise<Record<string, unknown>>((resolve) => channel.port1.addEventListener("message", (event) => {
+      if (event.data.type === "facadeEngineMemory") channel.port1.postMessage({ type: "facadeEngineMemoryRegistered", allocationId: 1 });
+      else resolve(event.data);
+    }));
     channel.port1.start();
     const initializing = initializer.initialize({ type: "init", controlPort: channel.port2, setup });
     const substrate = await received;
-    assert.equal(substrate.type, "facadeEngineSubstrate"); assert.deepEqual(substrate.layout, layout);
+    assert.equal(substrate.type, "facadeEngineConfiguration"); assert.deepEqual(substrate.layout, layout);
     assert.deepEqual(calls, ["bind", "load", "instantiate", "clock+arena", "layout", "install"]);
     assert.throws(() => initializer.requireConfigured(), /configured/);
     channel.port1.postMessage({ type: "facadeEngineConfigured" });
@@ -60,13 +63,20 @@ test("加载中重复 init 关闭新收到端与原端各一次，原初始化�
   duplicate.port2.close = () => { duplicateCloses++; closeDuplicate(); };
   let release!: () => void;
   const loading = new Promise<void>((resolve) => { release = resolve; });
+  let markLoaded!: () => void;
+  const loaded = new Promise<void>((resolve) => { markLoaded = resolve; });
+  original.port1.addEventListener("message", (event) => {
+    if (event.data.type === "facadeEngineMemory") original.port1.postMessage({ type: "facadeEngineMemoryRegistered", allocationId: 1 });
+  });
+  original.port1.start();
   const initializer = createFacadeEngineInitializer({ isolated: () => true,
     createMemory: () => new WebAssembly.Memory({ initial: 1, maximum: 2, shared: true }),
     environment: { bindFacadeThreadEnvironment() {}, installFacadeSlotLayout() {}, getArenaView() { throw new Error("不可达"); } },
-    load: async () => { await loading; throw new Error("load interrupted"); }, onFailure: () => {},
+    load: async () => { markLoaded(); await loading; throw new Error("load interrupted"); }, onFailure: () => {},
   });
   try {
     const pending = initializer.initialize({ type: "init", setup: {}, controlPort: original.port2 });
+    await loaded;
     await assert.rejects(initializer.initialize({ type: "init", setup: {}, controlPort: duplicate.port2 }), /重复/);
     assert.equal(originalCloses, 1); assert.equal(duplicateCloses, 1);
     release(); await assert.rejects(pending, /load interrupted/);

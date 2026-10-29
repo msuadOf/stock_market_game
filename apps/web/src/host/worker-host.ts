@@ -37,6 +37,9 @@ import { WorkerRequestScope } from "./worker-request.ts";
 import { parseHistoricalStockData } from "./stock-history.ts";
 import { parseInitialAllocation } from "./initial-allocation.ts";
 import { WasmHostInitializationError } from "./wasm-host-initialization-error.ts";
+import type { WasmLifecycleObservation } from "./wasm-lifecycle-observation.ts";
+import { parseWasmSessionShutdown, type WasmSessionShutdown } from "./wasm-shutdown-report.ts";
+import type { WasmFinalRelease, WasmMemoryAdmissionTicket } from "./wasm-document-memory-owner.ts";
 import type { WasmRuntimeOptions } from "./wasm-runtime-options.ts";
 
 type WorkerMessage = {
@@ -185,6 +188,8 @@ export function assertWorkerE2EStepAllowed(e2eBuild: boolean, injectedCapability
 }
 
 type WorkerHostOptions = {
+  readonly lifecycleObserver?: (event: WasmLifecycleObservation) => void;
+  readonly memoryAdmissionTicket?: WasmMemoryAdmissionTicket;
   readonly enableE2EStepping?: boolean;
   readonly onSpawnFailure: (failure: HostFailure) => void;
   readonly initialArchive?: StrictSaveEnvelope | null;
@@ -196,22 +201,35 @@ export function createWorkerHost(
   options: WorkerHostOptions,
 ): Promise<EngineHost & WorkerE2EHost & CompanyWriteCommands> {
   return new Promise((resolve, reject) => {
-    if (options === null || typeof options !== "object" || typeof options.onSpawnFailure !== "function") {
-      reject(new Error("WorkerHost 必须提供 onSpawnFailure callback"));
-      return;
+    let resolveRelease: ((result: WasmFinalRelease) => void) | undefined;
+    let rejectRelease: ((error: Error) => void) | undefined;
+    try {
+      const ticket = options !== null && typeof options === "object" ? options.memoryAdmissionTicket : undefined;
+      if (ticket !== undefined) {
+        const release = new Promise<WasmFinalRelease>((resolve, reject) => { resolveRelease = resolve; rejectRelease = reject; });
+        // admission 先登记唯一 release，再允许任何 preflight/Worker/Memory 分配。
+        ticket.registerRelease(release);
+      }
+      if (options === null || typeof options !== "object" || typeof options.onSpawnFailure !== "function") throw new Error("WorkerHost 必须提供 onSpawnFailure callback");
+      // options 是外部输入；只读一次，所有分配前失败共同结确切 not-allocated。
+      const initialArchive = options.initialArchive;
+      if (initialArchive !== null && initialArchive !== undefined) {
+        const archive = parseSaveSlot(structuredClone(initialArchive));
+        validateDayEndArchive(archive);
+        throw new WasmHostInitializationError({
+          code: "WASM_RESTORE_TOPOLOGY_NOT_READY",
+          where: "worker-host.initial-archive",
+          message: "WASM 日终存档恢复所需的宿主拓扑尚未就绪",
+          context: { operation: "restore" },
+        });
+      }
+    } catch (error) {
+      resolveRelease?.({ kind: "not-allocated" });
+      reject(error); return;
     }
-    if (options.initialArchive !== null && options.initialArchive !== undefined) {
-      const archive = parseSaveSlot(structuredClone(options.initialArchive));
-      validateDayEndArchive(archive);
-      reject(new WasmHostInitializationError({
-        code: "WASM_RESTORE_TOPOLOGY_NOT_READY",
-        where: "worker-host.initial-archive",
-        message: "WASM 日终存档恢复所需的宿主拓扑尚未就绪",
-        context: { operation: "restore" },
-      }));
-      return;
-    }
-    const worker = new Worker(new URL("./wasm-worker.ts", import.meta.url), { type: "module" });
+    let worker: Worker;
+    try { worker = new Worker(new URL("./wasm-worker.ts", import.meta.url), { type: "module" }); }
+    catch (error) { resolveRelease?.({ kind: "not-allocated" }); reject(error); return; }
     let supervisor: ReturnType<typeof createEngineSupervisor> | null = null;
     const requests = new WorkerRequestScope(worker);
     let ingressWorker: Worker | null = null;
@@ -231,6 +249,8 @@ export function createWorkerHost(
     let deliveredGeneration: string | null = null;
     let initialized = false;
     let disposed = false;
+    let closing = false;
+    let disposal: Promise<void> | undefined;
     let currentGeneration = 0;
     let npcDecisionDiagnostics = false;
     // W3 能力面：指标源能力与个人交割历史支持由 wasm host_capabilities 声明；
@@ -251,11 +271,12 @@ export function createWorkerHost(
       if (!preserveVisibleBaseline) cachedBaseline = null;
       const reportFailure = fatalCallback;
       fatalCallback = null;
-      requests.close(new Error(`${failure.code} @ ${failure.where}: ${failure.message}`));
-      closeIngress(new Error(`${failure.code}: ${failure.message}`));
+      const error = new Error(`${failure.code} @ ${failure.where}: ${failure.message}`, { cause: failure });
+      requests.close(error);
+      closeIngress(error);
       clearTimeout(timeout);
       worker.removeEventListener("message", onMessage);
-      supervisor?.dispose();
+      supervisor?.discard(failure);
       ingressWorker = null;
       if (!initialized) {
         reject(new WasmHostInitializationError(failure));
@@ -306,6 +327,7 @@ export function createWorkerHost(
         if (supervisor === null) throw new Error("Worker supervisor 尚未建立");
         if (supervisor.handleGlobalMessage(worker, event.data)) return;
         const incoming = message(event.data);
+        if (closing && !["failure", "shutdownCompleted"].includes(incoming.type)) return;
         switch (incoming.type) {
           case "ingress": {
             supervisor.assertConfigured();
@@ -388,8 +410,8 @@ export function createWorkerHost(
                 closeIngress(new Error("Worker 消费者拒绝协议更新，会话已停止"));
                 clearTimeout(timeout);
                 worker.removeEventListener("message", onMessage);
-                supervisor.dispose();
                 disposed = true;
+                supervisor.discard({ code: "WASM_CONSUMER_REJECTED", where: "worker-host.protocol", message: "Worker 消费者拒绝协议更新，会话已停止" });
                 callback = null;
                 return;
               }
@@ -398,6 +420,10 @@ export function createWorkerHost(
             return;
           }
           case "failure":
+            if (Object.hasOwn(incoming, "engineQuiescent")) {
+              if (initialized || currentGeneration !== 0 || incoming.engineQuiescent !== "initialization-failed") throw new Error("engine initialization quiescence 阶段或字段无效");
+              supervisor.markQuiescent(worker);
+            }
             notifyFailure(parseWorkerFailure(incoming));
             return;
           case "barrierPaused":
@@ -421,6 +447,11 @@ export function createWorkerHost(
         createChildWorker: () => new Worker(new URL("./facade-child-worker.ts", import.meta.url), { type: "module" }),
         onFatalFailure: notifyFailure,
         onSpawnFailure: options.onSpawnFailure,
+        onLifecycleObservation: options.lifecycleObserver,
+        onFinalRelease(result) {
+          if (result instanceof Error) rejectRelease?.(result);
+          else resolveRelease?.(result);
+        },
       });
       worker.addEventListener("message", onMessage);
       supervisor.bootstrapEngine({
@@ -450,7 +481,7 @@ export function createWorkerHost(
     function host(): EngineHost & WorkerE2EHost & CompanyWriteCommands {
       return {
         ...createCompanyWriteCommands(async command => {
-          if (disposed || pendingFailure !== null || cachedBaseline === null || restoringGeneration !== null || ingressGeneration !== currentGeneration) throw new Error("Worker 公司写命令需要健康的当前会话基线");
+          if (disposed || closing || pendingFailure !== null || cachedBaseline === null || restoringGeneration !== null || ingressGeneration !== currentGeneration) throw new Error("Worker 公司写命令需要健康的当前会话基线");
           const requestedGeneration = currentGeneration, requestedEpoch = baselineEpoch;
           const stale = () => disposed || pendingFailure !== null || currentGeneration !== requestedGeneration || baselineEpoch !== requestedEpoch || restoringGeneration !== null || ingressGeneration !== requestedGeneration;
           const route = {
@@ -468,13 +499,13 @@ export function createWorkerHost(
           }
           if (stale()) throw new Error("Worker 公司写命令确认属于已过期或已销毁会话 generation");
           return response.result;
-        }, () => { if (disposed || pendingFailure !== null || cachedBaseline === null || restoringGeneration !== null || ingressGeneration !== currentGeneration) throw new Error("Worker 公司写命令需要健康的当前会话目录"); return cachedBaseline.catalogResolver; }, "0"),
+        }, () => { if (disposed || closing || pendingFailure !== null || cachedBaseline === null || restoringGeneration !== null || ingressGeneration !== currentGeneration) throw new Error("Worker 公司写命令需要健康的当前会话目录"); return cachedBaseline.catalogResolver; }, "0"),
         ...createCompanyReadQueries(async query => {
-          if (disposed || pendingFailure !== null || cachedBaseline === null) throw new Error("Worker 公司查询需要健康的当前会话基线");
+          if (disposed || closing || pendingFailure !== null || cachedBaseline === null) throw new Error("Worker 公司查询需要健康的当前会话基线");
           const queryGeneration = currentGeneration;
           const queryEpoch = baselineEpoch;
           const response = await requests.request({ type: "companyReadQuery", requestId: requests.nextRequestId(), generation: queryGeneration, query }, "companyReadQuery");
-          if (disposed || pendingFailure !== null || currentGeneration !== queryGeneration || baselineEpoch !== queryEpoch) throw new Error("Worker 公司查询响应属于已过期会话 generation");
+          if (disposed || closing || pendingFailure !== null || currentGeneration !== queryGeneration || baselineEpoch !== queryEpoch) throw new Error("Worker 公司查询响应属于已过期会话 generation");
           return response.result;
         }, () => { if (cachedBaseline === null) throw new Error("Worker 公司查询需要当前目录"); return cachedBaseline.catalogResolver; }, "0"),
         capabilities: {
@@ -488,7 +519,7 @@ export function createWorkerHost(
           personalTradeHistory,
         },
         async start(onUpdate, onFatalError) {
-          if (disposed) throw new Error("WASM Worker 已被销毁");
+          if (disposed || closing) throw new Error("WASM Worker 已被销毁或正在关闭");
           if (pendingFailure !== null) throw new Error(`${pendingFailure.code}: ${pendingFailure.message}`);
           callback = onUpdate;
           fatalCallback = onFatalError ?? null;
@@ -504,18 +535,62 @@ export function createWorkerHost(
         async stop() {
           await control("stop", "stopped");
         },
-        async dispose() {
-          if (disposed) return;
-          disposed = true;
-          requests.close(new Error("WASM Worker 已被销毁，操作已取消"));
-          closeIngress(new Error("WASM ingress 已被销毁，操作已取消"));
-          callback = null;
-          fatalCallback = null;
-          cachedBaseline = null;
-          clearTimeout(timeout);
-          worker.removeEventListener("message", onMessage);
-          supervisor?.dispose();
-          ingressWorker = null;
+        dispose() {
+          if (disposal !== undefined) return disposal;
+          if (disposed) { disposal = Promise.resolve(); return disposal; }
+          closing = true;
+          callback = null; fatalCallback = null;
+          const cancellation = new Error("WASM Worker 正在关闭，业务操作已取消");
+          requests.beginClosing("shutdown", cancellation);
+          ingressRequests?.beginClosing("quiesceIngress", cancellation);
+          const until = performance.now() + 2000;
+          disposal = (async () => {
+            if (supervisor === null) throw new Error("关闭时 supervisor 不存在");
+            let observedReport: WasmSessionShutdown | undefined;
+            try {
+              supervisor.beginShutdown(until);
+              const childExit = supervisor.waitForChildrenExit(until);
+              const rustReply = requests.request({ type: "shutdown", requestId: requests.nextRequestId(), generation: currentGeneration }, "shutdownCompleted", Math.max(1, until - performance.now()))
+                .then((response) => {
+                  if (Object.keys(response).sort().join(",") !== "generation,report,requestId,type") throw new Error("shutdownCompleted 字段无效");
+                  const report = parseWasmSessionShutdown(response.report);
+                  observedReport = report;
+                  options.lifecycleObserver?.({ type: "rustShutdown", report: structuredClone(report) });
+                  supervisor!.markQuiescent(worker);
+                  return report;
+                });
+              const ingressQuiescent = ingressRequests === null || ingressWorker === null ? Promise.resolve() : (() => {
+                const intake = ingressWorker, scope = ingressRequests;
+                return scope.request({ type: "quiesceIngress", requestId: scope.nextRequestId(), generation: ingressGeneration }, "ingressQuiescent", Math.max(1, until - performance.now()))
+                  .then((response) => {
+                    if (Object.keys(response).sort().join(",") !== "generation,requestId,type") throw new Error("ingress quiescence ACK 字段无效");
+                    supervisor!.markQuiescent(intake);
+                  });
+              })();
+              const [report] = await Promise.all([rustReply, childExit, ingressQuiescent]);
+              if (report.kind === "failure") throw new Error(`Rust shutdown 失败：${report.primary.stage}: ${report.primary.detail}`, { cause: report });
+              const release = supervisor.dispose();
+              if (release instanceof Error) throw release;
+            } catch (error) {
+              // Rust reply 可能已先完成；child drain 的清理错误不能遮住随后收到的 fatal。
+              const transport = pendingFailure !== null && !(error instanceof Error && error.cause === pendingFailure)
+                ? new AggregateError([error], `${pendingFailure.code} @ ${pendingFailure.where}: ${pendingFailure.message}`, { cause: pendingFailure }) : error;
+              const primary = observedReport !== undefined && !(transport instanceof Error && transport.cause === observedReport)
+                ? new AggregateError([transport], "WASM shutdown 已有 Rust 结果但整组停止失败", { cause: { shutdownReport: observedReport, transport } }) : transport;
+              supervisor.discard({ code: "WASM_SHUTDOWN_FAILED", where: "worker-host.shutdown", message: primary instanceof Error ? primary.message : String(primary), cause: primary });
+              const release = supervisor.dispose();
+              if (release instanceof Error && release !== primary) throw new AggregateError([primary, release], "WASM shutdown 失败且最终释放事实未知", { cause: { primary, release } });
+              throw primary;
+            } finally {
+              disposed = true;
+              requests.close(cancellation); closeIngress(cancellation);
+              cachedBaseline = null;
+              clearTimeout(timeout);
+              worker.removeEventListener("message", onMessage);
+              ingressWorker = null;
+            }
+          })();
+          return disposal;
         },
         async setSpeed(multiplier) {
           assertValidSpeedMultiplier(multiplier);
@@ -525,6 +600,7 @@ export function createWorkerHost(
           await control("setPausePreferences", "pausePreferencesSet", { preferences });
         },
         setFrameRate(fps) {
+          if (closing || disposed) throw new Error("WASM Worker 已关闭，不能设置帧率");
           worker.postMessage({ type: "setFrameRate", fps });
         },
         async readSpeedMetrics() {
@@ -615,7 +691,7 @@ export function createWorkerHost(
           return currentResult(() => stepWorkerOnce(requests, requests.nextRequestId(), currentGeneration));
         },
         async submitIntent(intent) {
-          if (disposed) throw new Error("Worker会话已关闭，写请求未入队");
+          if (disposed || closing) throw new Error("Worker会话已关闭，写请求未入队");
           const baseline = cachedBaseline;
           if (baseline === null) throw new Error("Worker intent需要已安装的权威baseline");
           const requestedGeneration = currentGeneration;
@@ -673,6 +749,7 @@ export function createWorkerHost(
           deliverLiveBaseline(baseline);
         },
         async load(slot, onRestored) {
+          if (closing || disposed) throw new Error("WASM Worker 正在关闭，拒绝 restore");
           const parsedSlot = parseSaveSlot(slot);
           const requestedGeneration = currentGeneration;
           if (restoringGeneration !== null) throw new Error("Worker restore 已在途");

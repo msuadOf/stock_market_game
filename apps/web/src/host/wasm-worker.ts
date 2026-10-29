@@ -20,6 +20,7 @@ type WasmNpcDecisionTrace = (handle: number, account: bigint) => readonly NpcDec
 // 旧 bindings 的声明文件仍把 query_stock_history 标为 code: string；按 ADR 0041 以
 // 数值 StockId（u32）覆盖该成员，重建 bindings 后声明亦为数值。
 type WasmTransportExtensions = Omit<typeof import("../../wasm-pkg/web_wasm.js"), "query_stock_history"> & {
+  readonly shutdown_session?: (handle: number) => unknown;
   readonly ingress_token?: (handle: number) => number;
   readonly prepare_public_baseline?: (handle: number) => void;
   readonly stock_catalog_view: (handle: number) => unknown;
@@ -66,7 +67,8 @@ export function isE2EStepMode(mode: unknown): boolean {
 const E2E_STEP_ENABLED = isE2EStepMode(import.meta.env?.MODE);
 
 let wasmModule: typeof import("../../wasm-pkg/web_wasm.js") | null = null;
-const slot = new WasmSessionSlot(() => wasmModule);
+// shutdown export 是可选扩展；保留其余真实 generated 签名，运行期由 consuming slot 探测。
+const slot = new WasmSessionSlot(() => wasmModule as (typeof import("../../wasm-pkg/web_wasm.js") & Pick<WasmTransportExtensions, "shutdown_session">) | null);
 const taskScheduler = new WorkerTaskScheduler();
 const loop = new WasmTickLoop({
   slot,
@@ -156,15 +158,16 @@ export function postFailure(where: string, error: unknown): void {
   postFailureDetails(where, failure);
 }
 
-function postFailureDetails(where: string, failure: WorkerFailureDetails): void {
+function postFailureDetails(where: string, failure: WorkerFailureDetails, initializationQuiescent = false): void {
   const generation = slot.readGeneration();
   try {
-    ctx.postMessage({ type: "failure", generation, ...failure });
+    ctx.postMessage({ type: "failure", generation, ...failure, ...(initializationQuiescent ? { engineQuiescent: "initialization-failed" } : {}) });
   } catch (sendError) {
     const sendReason = describeWasmFailure(sendError);
     try {
       ctx.postMessage({
         type: "failure", generation, code: "WASM_WORKER_PROTOCOL", where,
+        ...(initializationQuiescent ? { engineQuiescent: "initialization-failed" } : {}),
         message: `发送结构化错误详情失败：${sendReason}`,
         cause: failure,
       });
@@ -184,6 +187,7 @@ function postFailureDetails(where: string, failure: WorkerFailureDetails): void 
 
 const restoreRestart = new WasmRestartGate();
 let fatalSession = false;
+let closingSession = false;
 
 function postBaseline(): void {
   const [session, wasm] = slot.requireHandle();
@@ -280,7 +284,8 @@ ctx.addEventListener("message", (event) => {
   void (async () => {
     let restoreAttempt: { handle: number; generation: number; token: number; restartWanted: boolean } | null = null;
     try {
-      if (fatalSession && message.type !== "drop") throw new Error("Worker 会话已停止，必须重建有效会话");
+      if (closingSession && message.type !== "shutdown") throw new Error("Worker 会话正在关闭，拒绝新请求");
+      if (fatalSession && message.type !== "drop" && message.type !== "shutdown") throw new Error("Worker 会话已停止，必须重建有效会话");
       switch (message.type) {
         case "init":
           await engineInitializer.initialize(message);
@@ -588,6 +593,17 @@ ctx.addEventListener("message", (event) => {
           ctx.postMessage({ type: "publicReportById", requestId: message.requestId, generation: requestedGeneration, report: normalizePublicReportById(wasm.public_report_by_id(session, String(message.id))) });
           return;
         }
+        case "shutdown": {
+          if (Object.keys(message).sort().join(",") !== "generation,requestId,type" || !Number.isSafeInteger(message.requestId) || Number(message.requestId) < 1) throw new Error("Worker shutdown 需要唯一正 safe requestId 与 exact 字段");
+          const requestedGeneration = slot.requireGeneration(message.generation);
+          if (closingSession) throw new Error("Worker shutdown 不能重复消费会话");
+          closingSession = true;
+          restoreRestart.invalidate();
+          loop.stop();
+          const report = slot.shutdown();
+          ctx.postMessage({ type: "shutdownCompleted", requestId: message.requestId, generation: requestedGeneration, report });
+          return;
+        }
         case "drop": {
           restoreRestart.invalidate();
           loop.stop();
@@ -598,6 +614,11 @@ ctx.addEventListener("message", (event) => {
           throw new Error(`未知 Worker 消息：${message.type}`);
       }
     } catch (error) {
+      if (message.type === "init") {
+        closingSession = true;
+        restoreRestart.invalidate(); loop.stop();
+        // initializer 已拒绝且关闭；本入口之后禁止任何 WASM 调用。
+      }
       const attempt = restoreAttempt;
       const committed = attempt !== null && (slot.readGeneration() !== attempt.generation || slot.requireHandle()[0] !== attempt.handle);
       const classified = classifyWasmFailure(error);
@@ -620,9 +641,9 @@ ctx.addEventListener("message", (event) => {
           try { slot.drop(); }
           catch (cleanupError) { failure = { ...failure, cause: { primary: failure.cause, cleanup: describeWasmFailure(cleanupError) } }; }
         }
-        postFailureDetails(`wasm-worker.${message.type}`, failure);
+        postFailureDetails(`wasm-worker.${message.type}`, failure, message.type === "init");
       } else if (typeof message.requestId === "number") respondOperationError(message, classified.description);
-      else postFailureDetails("wasm-worker.message", unstructuredFailureDetails(classified.description, "wasm-worker.message", classified.cause));
+      else postFailureDetails("wasm-worker.message", unstructuredFailureDetails(classified.description, "wasm-worker.message", classified.cause), message.type === "init");
     }
   })();
 });

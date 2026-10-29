@@ -1,3 +1,4 @@
+import assert from "node:assert/strict";
 import { catalogWorkerFixture } from "./catalog-test-fixture.ts";
 import { setImmediate } from "node:timers/promises";
 import { MessageChannel as NodeMessageChannel } from "node:worker_threads";
@@ -64,7 +65,7 @@ export const setup = { stocks: [{ code: "000812" }] } as Parameters<typeof creat
 const capabilities = { npcDecisionDiagnostics: false, personalTradeHistory: false, indicatorCapabilities: { intradayAverage: false, macd: false, priceKdj: false, candleKdj: false } };
 
 /** 同时支持 pre-host init 与新 bootstrap；ready 只有新控制端真实 ACK 后才产生。 */
-export function fixture(options: { initError?: unknown; channelError?: boolean; childConstructError?: unknown; spawnSink?: (failure: HostFailure) => void; beforeInitPost?: (clock: Clock) => void } = {}) {
+export function fixture(options: { initError?: unknown; initAfterMemoryFailure?: unknown; engineConstructError?: unknown; channelError?: boolean; childConstructError?: unknown; spawnSink?: (failure: HostFailure) => void; beforeInitPost?: (clock: Clock) => void } = {}) {
   const originals = new Map<string, PropertyDescriptor | undefined>();
   function install(name: string, value: unknown) {
     originals.set(name, Object.getOwnPropertyDescriptor(globalThis, name));
@@ -100,6 +101,7 @@ export function fixture(options: { initError?: unknown; channelError?: boolean; 
     constructor(url: URL) {
       super();
       this.kind = url.pathname.endsWith("wasm-worker.ts") ? "engine" : url.pathname.endsWith("wasm-ingress-worker.ts") ? "ingress" : "child";
+      if (this.kind === "engine" && options.engineConstructError !== undefined) throw options.engineConstructError;
       if (this.kind === "child" && options.childConstructError !== undefined) throw options.childConstructError;
       workers.push(this);
       this.onPost = (value) => {
@@ -108,12 +110,18 @@ export function fixture(options: { initError?: unknown; channelError?: boolean; 
           if (options.initError !== undefined) throw options.initError;
           if (this.controlPort !== undefined) {
             this.controlPort.addEventListener("message", (event) => {
+              if ((event.data as { type?: string }).type === "facadeEngineMemoryRegistered" && options.initAfterMemoryFailure !== undefined) {
+                memory.grow(1);
+                this.emit({ type: "failure", generation: 0, code: "INIT_FIXTURE", where: "fixture.init", message: String(options.initAfterMemoryFailure), engineQuiescent: "initialization-failed" });
+              }
               if ((event.data as { type?: string }).type === "facadeEngineConfigured") { configured++; this.emit({ type: "ready" }); }
             });
             this.controlPort.start();
-            this.controlPort.postMessage({ type: "facadeEngineSubstrate", ...substrate });
+            this.controlPort.postMessage(options.initAfterMemoryFailure === undefined ? { type: "facadeEngineSubstrate", ...substrate } : { type: "facadeEngineMemory", allocationId: 1, memory });
           } else queueMicrotask(() => this.emit({ type: "ready" }));
         }
+        if (value.type === "shutdown") queueMicrotask(() => this.emit({ type: "shutdownCompleted", requestId: value.requestId, generation: value.generation, report: { kind: "success", handle: 7, runtime: null } }));
+        if (value.type === "quiesceIngress") queueMicrotask(() => this.emit({ type: "ingressQuiescent", requestId: value.requestId, generation: value.generation }));
         if (value.type === "create") queueMicrotask(() => this.emit({ type: "created", generation: 1, capabilities }));
       };
     }
@@ -144,8 +152,11 @@ export function fixture(options: { initError?: unknown; channelError?: boolean; 
     if (workers[0].controlPort === undefined) workers[0].emit({ type: "facadeSpawn", slot, gen: 0, name: "fixture" });
     else workers[0].controlPort.postMessage({ type: "facadeSpawn", slot, gen: 0, name: "fixture" });
   }
-  async function cleanup() {
-    if (outcome.status === "fulfilled") await outcome.host.dispose();
+  async function cleanup(expectedDisposalFailure?: RegExp) {
+    if (outcome.status === "fulfilled") {
+      if (expectedDisposalFailure === undefined) await outcome.host.dispose();
+      else await assert.rejects(outcome.host.dispose(), expectedDisposalFailure);
+    }
     else if (outcome.status === "pending" && workers[0] !== undefined) { workers[0].emit({ type: "failure", code: "FIXTURE_CLEANUP", where: "fixture", message: "测试收尾" }); await drain(); }
     // fixture 的防泄漏兜底发生在产品清理断言之后，不能用它证明产品已清理。
     for (const channel of channels) { channel.port1.close(); channel.port2.close(); }

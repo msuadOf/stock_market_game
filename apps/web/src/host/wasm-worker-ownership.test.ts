@@ -53,7 +53,7 @@ async function createFixture(
   const timers = new Map<number, () => void>();
   let nextTimer = 0;
   let handle = 7;
-  let failing: "snapshot" | "prepare" | "drop" | "catalog" | "recoverable" | "snapshot-and-drop" | "company-read" | null = null;
+  let failing: "snapshot" | "prepare" | "drop" | "catalog" | "recoverable" | "snapshot-and-drop" | "company-read" | "shutdown" | null = null;
   let failingPost: string | null = null;
   let writeFailure: unknown;
   let listener: ((event: { data: Message }) => void) | undefined;
@@ -71,6 +71,11 @@ async function createFixture(
     stock_catalog_view: () => [{ id: 0, code: "000812" }],
     company_catalog_view: () => { if (failing === "catalog") throw { code: "CATALOG_BASELINE_FAILED", where: "web-wasm.company_catalog_view", message: "公开公司身份目录构造失败", context: { operation: "company_catalog_view", fault: { code: 3019, context: [7] } }, recoverable: false, recoveryActions: ["重新同步"] }; return [{ id: 0, code: "C-000812", name: "公司000812", listed_stock: 0 }]; },
     prepare_public_baseline: (current: number) => { calls.push(`prepare:${current}`); if (failing === "prepare") throw new Error("prepare failed"); },
+    shutdown_session: (current: number) => {
+      calls.push(`shutdown:${current}`);
+      if (failing === "shutdown") throw { handle: current, result: { primary: { stage: "join", worker: "group-0", detail: "真实 primary fixture" }, secondary: [{ stage: "final", worker: undefined, detail: "真实 secondary fixture" }], completion: { owned_workers: 1, joined_workers: 1, worker_results: [{ worker: "group-0", result: { Err: "panic fixture" } }], group_finals: 0, desk_finals: 0 } } };
+      return { handle: current, result: { runtime: undefined } };
+    },
     drop_session: (current: number) => { calls.push(`drop:${current}`); if (failing === "drop" || failing === "snapshot-and-drop") throw new Error("drop failed"); },
     restore_json: (encoded: string) => { assert.deepEqual(JSON.parse(encoded), saved); calls.push(`restore:${handle}`); return handle; },
     host_capabilities: () => ({ npcDecisionDiagnostics: false, indicatorCapabilities: { intradayAverage: false, macd: false, priceKdj: false, candleKdj: false }, personalTradeHistory: false }),
@@ -133,7 +138,7 @@ async function createFixture(
   await import(`./wasm-worker.ts?owner-test=${id}`);
   assert.ok(listener);
   const send = (message: Message) => { listener!({ data: message }); };
-  const control = new MessageChannel(); control.port1.addEventListener("message", () => { control.port1.postMessage({ type: "facadeEngineConfigured" }); }); control.port1.start();
+  const control = new MessageChannel(); control.port1.addEventListener("message", (event) => { control.port1.postMessage(event.data.type === "facadeEngineMemory" ? { type: "facadeEngineMemoryRegistered", allocationId: 1 } : { type: "facadeEngineConfigured" }); }); control.port1.start();
   send({ type: "init", setup: {}, controlPort: control.port2 });
   await ready;
   assert.deepEqual(posted, [{ type: "ready" }]);
@@ -501,3 +506,64 @@ test("Worker 公司查询 dispatch 使用当前唯一 handle，旧 generation �
     assert.match(String(f.posted.at(-1)?.message), /本人公司查询的实际拒绝原因/);
   });
 });
+
+for (const outcome of ["success", "failure"] as const) {
+  test(`生产 Worker shutdown ${outcome} 停 loop、保完整结果并撤销后续 WASM 调用`, { timeout: 10000 }, async () => {
+    await withWorker(async f => {
+      f.send({ type: "create", seed: 1n });
+      f.send({ type: "start", requestId: 901, generation: 1 });
+      if (outcome === "failure") f.fail("shutdown");
+      f.posted.length = 0;
+      f.send({ type: "shutdown", requestId: 902, generation: 1 });
+      assert.equal(f.timers.size, 0);
+      assert.equal(f.calls.filter((call) => call === "shutdown:7").length, 1);
+      const reply = f.posted.find((message) => message.type === "shutdownCompleted");
+      assert.ok(reply); assert.equal(reply.generation, 1); assert.equal(reply.requestId, 902);
+      const report = reply.report as { kind: string; primary?: { detail: string }; secondary?: { detail: string }[]; completion?: { joinedWorkers: number } };
+      assert.equal(report.kind, outcome);
+      if (outcome === "failure") {
+        assert.equal(report.primary?.detail, "真实 primary fixture");
+        assert.equal(report.secondary?.[0].detail, "真实 secondary fixture");
+        assert.equal(report.completion?.joinedWorkers, 1);
+      }
+      const before = [...f.calls];
+      for (const type of ["start", "restore", "civilDate", "drop", "shutdown"]) f.send({ type, requestId: 903, generation: 1, slot: f.saved });
+      assert.deepEqual(f.calls, before, "closing 后不得重入 Rust 或 drop 已消费 handle");
+    });
+  });
+}
+
+
+import { parseWorkerFailure } from "./worker-host.ts";
+
+for (const variant of ["string", "unknown", "error", "getter"] as const) {
+  test(`生产 Worker shutdown 非 envelope ${variant} 经真实 reporter 保留 FFI 主错与 decoder 次错`, { timeout: 10000 }, async () => {
+    await withWorker(async f => {
+      f.send({ type: "create", seed: 1n }); f.posted.length = 0;
+      const original = variant === "string" ? "shutdown report serialize failed: SENTINEL" : variant === "unknown" ? { foreign: "FFI_SENTINEL" } : variant === "error" ? Object.assign(new Error("FFI_ERROR_SENTINEL"), { code: "FFI_SERIALIZE", context: { stage: "FFI_CONTEXT_SENTINEL" } }) : Object.defineProperty(Object.defineProperty({ result: {} }, "detail", { value: "FFI_GETTER_SENTINEL" }), "handle", { enumerable: true, get() { throw new Error("DECODER_GETTER_SENTINEL"); } });
+      const bindings = (globalThis as unknown as Record<symbol, { shutdown_session: (current: number) => unknown }>)[bindingsKey];
+      bindings.shutdown_session = current => { f.calls.push(`shutdown:${current}`); throw original; };
+      f.send({ type: "shutdown", requestId: 31, generation: 1 });
+      assert.equal(f.posted.length, 1);
+      // 真实 reporter 已显式提取纯壳字段；此处再经过浏览器消息边界同等的克隆与主侧 parser。
+      const failure = parseWorkerFailure(structuredClone(f.posted[0]));
+      assert.equal(f.posted[0].type, "failure");
+      assert.equal(failure.code, "WASM_SHUTDOWN_REPORT_INVALID");
+      assert.equal(failure.where, "wasm-session-slot.shutdown");
+      const cause = failure.cause as { ffiError: unknown; decoderError: { message: string } };
+      if (variant === "string" || variant === "unknown") assert.deepEqual(cause.ffiError, original);
+      if (variant === "error") {
+        assert.equal((cause.ffiError as Record<string, unknown>).message, "FFI_ERROR_SENTINEL");
+        assert.equal((cause.ffiError as Record<string, unknown>).code, "FFI_SERIALIZE");
+        assert.deepEqual((cause.ffiError as Record<string, unknown>).context, { stage: "FFI_CONTEXT_SENTINEL" });
+      }
+      if (variant === "getter") {
+        assert.equal((cause.ffiError as Record<string, unknown>).detail, "FFI_GETTER_SENTINEL");
+        assert.equal(cause.decoderError.message, "DECODER_GETTER_SENTINEL");
+      }
+      assert.ok(cause.decoderError.message.length > 0);
+      f.send({ type: "drop" });
+      assert.deepEqual(f.calls.filter(call => call.startsWith("shutdown:") || call.startsWith("drop:")), ["shutdown:7"]);
+    });
+  });
+}

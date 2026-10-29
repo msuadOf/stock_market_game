@@ -30,6 +30,7 @@ export class WorkerRequestScope {
   private sequence = 0;
   private readonly pending = new Map<number, PendingRequest>();
   private closed: Error | null = null;
+  private closingType: string | null = null;
 
   constructor(port: WorkerRequestPort) {
     this.port = port;
@@ -54,9 +55,17 @@ export class WorkerRequestScope {
     this.pending.clear();
   }
 
+  beginClosing(allowedType: string, error: Error): void {
+    if (this.closed !== null || this.closingType !== null) throw new Error("Worker 请求 scope 已关闭或正在关闭");
+    this.close(error);
+    this.closed = null;
+    this.closingType = allowedType;
+  }
+
   request(request: WorkerRequest, successType: string, timeoutMs = 10_000): Promise<WorkerResponse> {
     return new Promise((resolve, reject) => {
       if (this.closed !== null) { reject(this.closed); return; }
+      if (this.closingType !== null && request.type !== this.closingType) { reject(new Error("Worker 会话正在关闭，拒绝新业务请求")); return; }
       const cleanup = () => {
         if (resource.settled) return;
         resource.settled = true;

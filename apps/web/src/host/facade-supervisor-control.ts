@@ -1,8 +1,9 @@
 import type { FacadeChildControlMessage } from "./facade-child-bootstrap.ts";
 import { parseHostFailure } from "./protocol-failure.ts";
 import { parseFacadeEngineSubstrate, type FacadeEngineSubstrateMessage } from "./facade-engine-protocol.ts";
+import { parseFacadeEngineMemory, parseFacadeEngineConfiguration, type FacadeEngineMemoryMessage, type FacadeEngineConfigurationMessage } from "./facade-engine-protocol.ts";
 
-export type FacadeSupervisorControlMessage = FacadeChildControlMessage | FacadeEngineSubstrateMessage;
+export type FacadeSupervisorControlMessage = FacadeChildControlMessage | FacadeEngineSubstrateMessage | FacadeEngineMemoryMessage | FacadeEngineConfigurationMessage;
 
 /** 先于业务 parser 分流；已识别的 facade 消息不允许静默落入业务路径。 */
 export function parseFacadeSupervisorControl(value: unknown): FacadeSupervisorControlMessage | null {
@@ -19,6 +20,8 @@ export function parseFacadeSupervisorControl(value: unknown): FacadeSupervisorCo
     return result;
   }
   switch (type) {
+    case "facadeEngineMemory": return parseFacadeEngineMemory(value);
+    case "facadeEngineConfiguration": return parseFacadeEngineConfiguration(value);
     case "facadeEngineSubstrate": return parseFacadeEngineSubstrate(value);
     case "facadeSpawn": {
       exact(["type", "slot", "gen", "name"]);

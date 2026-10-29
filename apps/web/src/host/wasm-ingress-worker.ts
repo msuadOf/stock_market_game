@@ -14,11 +14,13 @@ const ingress = new WasmIngressReceiver((token, intent) => {
   bindings.ingress_enqueue(token, intent);
 });
 let pending = Promise.resolve();
+let closing = false;
 
 self.addEventListener("message", (event: MessageEvent<Record<string, unknown>>) => {
   const message = event.data;
   pending = pending.then(async () => {
     try {
+      if (closing) throw new Error("Browser ingress 已 quiesce，拒绝后续调用");
       switch (message.type) {
         case "bindIngress": {
           if (typeof message.generation !== "number" || !Number.isSafeInteger(message.generation) || message.generation < 1) throw new Error("Browser ingress generation 必须是正安全整数");
@@ -45,6 +47,13 @@ self.addEventListener("message", (event: MessageEvent<Record<string, unknown>>) 
           self.postMessage({ type: "ingressBound", requestId: message.requestId, generation: message.generation });
           return;
         }
+        case "quiesceIngress":
+          closing = true;
+          ingress.close();
+          // 此 ACK 之前的同步 enqueue 已返回，后续 submit/bind 均由 closed 拒绝。
+          bindings = null;
+          self.postMessage({ type: "ingressQuiescent", requestId: message.requestId, generation: message.generation });
+          return;
         case "enqueue":
           ingress.submit(message.generation, message.intent);
           self.postMessage({ type: "enqueued", requestId: message.requestId, generation: message.generation });

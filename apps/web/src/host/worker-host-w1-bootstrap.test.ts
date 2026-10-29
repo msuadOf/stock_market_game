@@ -100,9 +100,13 @@ test("W1 dispose 收回仍在 bootstrap 的 child 和在途 query", { timeout: 1
     const rejected = assert.rejects(query, /销毁|取消|关闭/);
     f.spawn(); await drain();
     assert.equal(f.workers.length, 3, "fixture 必须实际创建 engine/ingress/child");
-    await result.host.dispose(); await rejected;
+    await assert.rejects(result.host.dispose(), (error: unknown) => {
+      assert.ok(error instanceof AggregateError);
+      assert.match(String((error.cause as { release: unknown }).release), /quiescence|停止 grow/);
+      return true;
+    }); await rejected;
     assert.ok(f.workers.every((worker) => worker.terminations === 1));
     assert.ok(f.workers.every((worker) => worker.listenerCount() === 0));
     assert.equal(f.clock.tasks.size, 0);
-  } finally { await f.cleanup(); }
+  } finally { await f.cleanup(/最终释放事实未知/); }
 });

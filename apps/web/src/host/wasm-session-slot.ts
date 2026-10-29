@@ -1,9 +1,12 @@
+import { parseRustSessionShutdown, type WasmSessionShutdown } from "./wasm-shutdown-report.ts";
+import { describeWasmFailure } from "./wasm-failure.ts";
 import { restoreWasmSession } from "./wasm-restore-transaction.ts";
 
 export interface WasmSessionBindings {
   readonly create_session: (setup: unknown, seed: bigint) => number;
   readonly restore_json: (slot: string) => number;
   readonly snapshot: (handle: number) => unknown;
+  readonly shutdown_session?: (handle: number) => unknown;
   readonly drop_session: (handle: number) => void;
   readonly prepare_public_baseline?: (handle: number) => void;
 }
@@ -12,6 +15,31 @@ export interface WasmRestoreLoopHooks {
   readonly wasRunning: boolean;
   readonly stop: () => void;
   readonly restart: () => void;
+}
+
+/** 仅在 shutdown report 解码失败时生成诊断纯壳；Error 自定义字段不能交给原生 Error clone。 */
+function shutdownErrorSnapshot(value: unknown, seen = new WeakSet<object>()): unknown {
+  if (value === null || typeof value !== "object") {
+    return typeof value === "function" || typeof value === "symbol" ? { unavailable: "错误值不可克隆", description: describeWasmFailure(value) } : value;
+  }
+  if (seen.has(value)) return { unavailable: "错误详情包含循环引用" };
+  seen.add(value);
+  try {
+    // 诊断不能延长真实 WASM Memory 的 ownership，也不能把共享内存发送给主线程。
+    if (value instanceof WebAssembly.Memory || value instanceof SharedArrayBuffer || value instanceof ArrayBuffer || ArrayBuffer.isView(value)) return { unavailable: "内存资源不进入 shutdown 错误详情" };
+    const descriptors = Object.getOwnPropertyDescriptors(value);
+    const fields = Object.fromEntries(Object.entries(descriptors).filter(([key]) => key !== "stack").map(([key, descriptor]) => [key,
+      "value" in descriptor ? shutdownErrorSnapshot(descriptor.value, seen) : "accessor 字段未读取，原值不可克隆",
+    ]));
+    if (value instanceof Error && !Object.hasOwn(fields, "name")) {
+      try { fields.name = shutdownErrorSnapshot(value.name, seen); }
+      catch (nameError) { fields.name = { unavailable: "读取 Error.name 失败", description: describeWasmFailure(nameError) }; }
+    }
+    // 按 descriptor 重建数组，不重新触发 index getter。
+    return Array.isArray(value) ? Array.from({ length: descriptors.length!.value as number }, (_, index) => fields[String(index)]) : fields;
+  } catch (snapshotError) {
+    return { unavailable: "读取 shutdown 错误详情失败", description: describeWasmFailure(value), snapshotError: describeWasmFailure(snapshotError) };
+  } finally { seen.delete(value); }
 }
 
 /** bindings 的异步初始化归 Worker；当前 handle 与 generation 只归此槽。 */
@@ -69,6 +97,25 @@ export class WasmSessionSlot<TBindings extends WasmSessionBindings> {
   prepareBaseline(): void {
     const [handle, wasm] = this.requireHandle();
     this.preparePublicBaseline(handle, wasm);
+  }
+
+  shutdown(): WasmSessionShutdown {
+    const [handle, wasm] = this.requireHandle();
+    const shutdown = wasm.shutdown_session;
+    if (typeof shutdown !== "function") throw new Error("当前 WASM bindings 缺少 shutdown_session，请重建 bindings");
+    // shutdown_session 消费 Rust registry ownership；调用前撤销本地 handle，失败也不得重用。
+    this.handle = null;
+    let raw: unknown;
+    try { raw = shutdown(handle); }
+    catch (ffiError) {
+      try { return parseRustSessionShutdown(ffiError, "failure", handle); }
+      catch (decoderError) {
+        throw Object.assign(new Error("shutdown report 无法解码；保留原 FFI 故障与 decoder 详情", {
+          cause: { ffiError: shutdownErrorSnapshot(ffiError), decoderError: shutdownErrorSnapshot(decoderError) },
+        }), { code: "WASM_SHUTDOWN_REPORT_INVALID", where: "wasm-session-slot.shutdown" });
+      }
+    }
+    return parseRustSessionShutdown(raw, "success", handle);
   }
 
   drop(): void {

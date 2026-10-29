@@ -9,6 +9,10 @@ const MODULE = new WebAssembly.Module(new Uint8Array([0, 97, 115, 109, 1, 0, 0, 
 
 function fixture(glueMethods: Record<string, unknown> = {}, onLoad: () => void = () => {}, glueGetters: Record<string, () => unknown> = {}) {
   const channel = new MessageChannel();
+  channel.port1.addEventListener("message", (event) => {
+    if (event.data.type === "facadeEngineMemory") channel.port1.postMessage({ type: "facadeEngineMemoryRegistered", allocationId: 1 });
+  });
+  channel.port1.start();
   const calls: string[] = [];
   const memory = new WebAssembly.Memory({ initial: 1, maximum: 2, shared: true });
   const initializer = createFacadeEngineInitializer({
@@ -26,6 +30,7 @@ function fixture(glueMethods: Record<string, unknown> = {}, onLoad: () => void =
         initSync: () => { calls.push("instantiate"); return { memory, __wbindgen_thread_destroy() {} }; },
         facade_slot_init_for_setup: () => { calls.push("setup"); },
         facade_slot_layout: () => { calls.push("layout"); return LAYOUT; },
+        wasm_wait_abort_layout: () => ({ address: 65000, bytes: 1 }),
         ...glueMethods,
       };
       for (const [key, getter] of Object.entries(glueGetters)) Object.defineProperty(glue, key, { get: getter });
@@ -37,7 +42,7 @@ function fixture(glueMethods: Record<string, unknown> = {}, onLoad: () => void =
 }
 
 async function initialize(f: ReturnType<typeof fixture>, extra: Record<string, unknown> = {}) {
-  const configured = new Promise<void>((resolve) => f.channel.port1.addEventListener("message", () => resolve(), { once: true }));
+  const configured = new Promise<void>((resolve) => f.channel.port1.addEventListener("message", (event) => { if (event.data.type === "facadeEngineConfiguration") resolve(); }));
   f.channel.port1.start();
   const pending = f.initializer.initialize({ type: "init", setup: {}, controlPort: f.channel.port2, ...extra });
   await configured;
@@ -79,8 +84,9 @@ test("显式请求缺少所需 glue 方法时 typed 拒绝且不初始化 slot �
     [{ runtimeOverride: false }, "set_step_runtime_override"],
     [{ runtimeOverride: true, waitSettings: WAIT_SETTINGS }, "set_step_runtime_override"],
     [{ runtimeOverride: true, waitSettings: WAIT_SETTINGS }, "init_wasm_wait"],
+    [{ runtimeOverride: true, waitSettings: WAIT_SETTINGS }, "wasm_wait_abort_layout"],
   ] as const) {
-    const methods = missing === "init_wasm_wait" ? { set_step_runtime_override() {} } : {};
+    const methods = missing === "wasm_wait_abort_layout" ? { set_step_runtime_override() {}, init_wasm_wait() {}, wasm_wait_abort_layout: undefined } : missing === "init_wasm_wait" ? { set_step_runtime_override() {} } : {};
     const f = fixture(methods);
     try {
       await assert.rejects(f.initializer.initialize({ type: "init", setup: {}, controlPort: f.channel.port2, ...extra }), (error: unknown) => {
@@ -163,7 +169,7 @@ test("runtimeOverride getter 只读取一次并消费已校验原值", { timeout
     waitSettings: WAIT_SETTINGS,
   };
   try {
-    const configured = new Promise<void>((resolve) => f.channel.port1.addEventListener("message", () => resolve(), { once: true }));
+    const configured = new Promise<void>((resolve) => f.channel.port1.addEventListener("message", (event) => { if (event.data.type === "facadeEngineConfiguration") resolve(); }));
     f.channel.port1.start();
     const pending = f.initializer.initialize(value);
     await configured;

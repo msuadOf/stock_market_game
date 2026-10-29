@@ -8,6 +8,38 @@ export interface FacadeEngineSubstrateMessage {
   readonly layout: FacadeSlotLayout;
   readonly diagnostics: boolean;
 }
+/** 同一专用控制端只分配一个 Memory；配置阶段不再重复 structured clone Memory。 */
+export interface FacadeEngineMemoryMessage {
+  readonly type: "facadeEngineMemory";
+  readonly allocationId: number;
+  readonly memory: WebAssembly.Memory;
+}
+export interface FacadeEngineConfigurationMessage {
+  readonly type: "facadeEngineConfiguration";
+  readonly allocationId: number;
+  readonly module: WebAssembly.Module;
+  readonly layout: FacadeSlotLayout;
+  readonly diagnostics: boolean;
+  readonly waitAbort?: unknown;
+}
+export function parseFacadeEngineMemory(value: unknown): FacadeEngineMemoryMessage {
+  const source = record(value);
+  if (source.type !== "facadeEngineMemory" || Object.keys(source).sort().join(",") !== "allocationId,memory,type"
+    || source.allocationId !== 1 || !(source.memory instanceof WebAssembly.Memory) || !(source.memory.buffer instanceof SharedArrayBuffer)) {
+    throw new Error("facadeEngineMemory 必须为本控制端首次分配的 shared Memory");
+  }
+  return { type: "facadeEngineMemory", allocationId: 1, memory: source.memory };
+}
+export function parseFacadeEngineConfiguration(value: unknown): FacadeEngineConfigurationMessage {
+  const source = record(value);
+  if (source.type !== "facadeEngineConfiguration" || source.allocationId !== 1
+    || Object.keys(source).some((key) => !["type", "allocationId", "module", "layout", "diagnostics", "waitAbort"].includes(key))
+    || !(source.module instanceof WebAssembly.Module) || typeof source.diagnostics !== "boolean") throw new Error("facadeEngineConfiguration 形状非法");
+  // layout 的完整 header/bounds 在 supervisor 关联唯一已登记 Memory 后校验。
+  if (source.layout === null || typeof source.layout !== "object" || Array.isArray(source.layout)) throw new Error("facade engine layout 必须为对象");
+  return { type: "facadeEngineConfiguration", allocationId: 1, module: source.module, layout: source.layout as unknown as FacadeSlotLayout,
+    diagnostics: source.diagnostics, ...(Object.hasOwn(source, "waitAbort") ? { waitAbort: source.waitAbort } : {}) };
+}
 function record(value: unknown): Record<string, unknown> {
   if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("facade engine 控制消息必须为对象");
   return value as Record<string, unknown>;

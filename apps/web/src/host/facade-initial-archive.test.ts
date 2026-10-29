@@ -32,7 +32,7 @@ function fixture(options: FixtureOptions = {}) {
       facade_slot_layout: () => { calls.push("layout"); return layout; },
     } }; }, onFailure: (error) => { throw error; },
   });
-  channel.port1.addEventListener("message", () => channel.port1.postMessage({ type: "facadeEngineConfigured" })); channel.port1.start();
+  channel.port1.addEventListener("message", (event) => channel.port1.postMessage(event.data.type === "facadeEngineMemory" ? { type: "facadeEngineMemoryRegistered", allocationId: 1 } : { type: "facadeEngineConfigured" })); channel.port1.start();
   return { initializer, channel, calls, setups, archives, close() { initializer.dispose(); channel.port1.close(); channel.port2.close(); } };
 }
 test("初始档沿String ABI合同消费同一完整X，绝不调用default-new initializer", async () => {
