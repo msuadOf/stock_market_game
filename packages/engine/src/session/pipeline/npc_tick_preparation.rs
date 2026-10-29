@@ -667,7 +667,7 @@ mod t1_account_task_tests {
         let player = crate::AccountId(0);
         // 预登记一个更早的玩家接收事实（同股、同侧）。
         let player_receipt = {
-            let (_view, mut writes) = super::super::npc_split::npc_split(&mut session);
+            let (_view, writes) = super::super::npc_split::npc_split(&mut session);
             super::super::npc_split::receive_private_intent_on(
                 writes.ingress,
                 writes.ingress_receipt_cursors,

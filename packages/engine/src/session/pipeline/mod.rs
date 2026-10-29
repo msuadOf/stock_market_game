@@ -72,8 +72,6 @@ mod session_fact_producers;
 mod settlement;
 mod stock_execution_transaction;
 mod stock_stream;
-#[cfg(test)]
-pub(in crate::session) use stock_stream::TickWorkReady;
 mod transaction_error;
 pub mod transition;
 pub use account_validation::{
