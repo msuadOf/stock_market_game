@@ -423,11 +423,10 @@ impl RuntimeDriver {
         session: &mut GameSession,
         n_groups: usize,
     ) -> Result<Self, String> {
-        if session.has_internal_runtime_driver() {
-            return Err("公开 driver factory 不得替换活跃内部 runtime owner".to_owned());
-        }
+        session.check_external_runtime_factory()?;
         let authority_epoch = session.next_runtime_authority_epoch()?;
         let mut driver = Self::build_from_session_grouped(session, n_groups, authority_epoch, false)?;
+        session.retire_replaced_internal_runtime_driver();
         session.runtime_clear_resting_for_adoption();
         session.install_runtime_authority_epoch(authority_epoch);
         driver.initial_static_seed.as_mut().expect("构造期静点种子已准备").revision = session.external_revision();

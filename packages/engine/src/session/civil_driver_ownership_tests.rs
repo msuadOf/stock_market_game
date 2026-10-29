@@ -158,6 +158,37 @@ fn active_internal_driver_rejects_external_factory_before_any_mutation() {
 }
 
 #[test]
+fn poisoned_internal_driver_without_world_advance_rejects_external_factory() {
+    let mut game = closed_runtime_information_session();
+    let fatal = game.poison_runtime_step(StepFatal::InvariantViolation {
+        location: "internal_factory_same_tick".to_owned(),
+        description: "有首错也不能替换未超前的内部 World".to_owned(),
+    });
+    let epoch = game.runtime_authority_epoch;
+    let before = game.session_state_hash().unwrap();
+    let publication = {
+        let driver = game.runtime_driver.as_ref().unwrap().lock().unwrap();
+        assert_eq!(driver.world_committed_tick(), game.tick());
+        driver.publication().load()
+    };
+    assert!(RuntimeDriver::from_session(&mut game).is_err());
+    assert_eq!(game.runtime_authority_epoch, epoch);
+    assert_eq!(game.session_state_hash().unwrap(), before);
+    assert_eq!(game.poison_reason(), Some(&fatal));
+    assert!(std::sync::Arc::ptr_eq(
+        &publication,
+        &game
+            .runtime_driver
+            .as_ref()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .publication()
+            .load()
+    ));
+}
+
+#[test]
 fn external_owner_survives_callback_abort_and_shadow_does_not_keep_it_alive() {
     let mut game = external_game();
     let driver = RuntimeDriver::from_session(&mut game).unwrap();

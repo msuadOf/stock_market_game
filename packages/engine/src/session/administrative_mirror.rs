@@ -69,6 +69,8 @@ struct PreparedAdministrativeMirror {
     revision: u64,
     install_sequence: u64,
     changed: bool,
+    #[cfg(feature = "simulation-diagnostics")]
+    causal: crate::diagnostics::causal::CausalCollector,
 }
 
 struct AdministrativePersonalMaps {
@@ -107,6 +109,10 @@ impl PreparedAdministrativeProjection<'_> {
         shadow.state.history_reads = histories.clone();
         shadow.state.retail_experience = retail.clone();
         shadow.state.runtime_heap_dirty = true;
+        #[cfg(feature = "simulation-diagnostics")]
+        {
+            shadow.state.causal = self.prepared.causal.clone();
+        }
         shadow.state.library = Arc::clone(
             self.prepared
                 .library
@@ -281,6 +287,12 @@ impl GameSession {
                 }
             };
             self.validate_administrative_baseline(&baseline)?;
+            #[cfg(feature = "simulation-diagnostics")]
+            let acquisition_time = information
+                .as_ref()
+                .and_then(|payload| payload.observation.as_ref())
+                .map(|_| self.causal_static_time())
+                .transpose()?;
             let revision = self.external_revision();
             let sequence = self.runtime_mirror_install_sequence;
             let expected_information = information.clone();
@@ -294,6 +306,8 @@ impl GameSession {
                         candidate,
                         source,
                         expected_information.as_ref(),
+                        #[cfg(feature = "simulation-diagnostics")]
+                        acquisition_time,
                         revision,
                         sequence,
                     )?;
@@ -488,6 +502,8 @@ impl GameSession {
         candidate: &AdminCandidate,
         source: &PreparedAdministrativeSource,
         information: Option<&InformationPreparePayload>,
+        #[cfg(feature = "simulation-diagnostics")]
+        acquisition_time: Option<crate::diagnostics::causal::FactTime>,
         revision: u64,
         sequence: u64,
     ) -> Result<PreparedAdministrativeMirror, RuntimeError> {
@@ -619,6 +635,65 @@ impl GameSession {
             }
             Some(maps)
         };
+        #[cfg(feature = "simulation-diagnostics")]
+        let causal = {
+            let mut causal = self.state.causal.clone();
+            for (_, id, snapshot) in &personals {
+                let original = self.state.belief_participants.get(id);
+                for (company, records) in snapshot.information.companies() {
+                    for record in records {
+                        if original.is_some_and(|old| {
+                            old.information().observed_at_of(record.id).is_some()
+                        }) {
+                            continue;
+                        }
+                        let through = information
+                            .and_then(|payload| payload.observation.as_ref())
+                            .ok_or_else(|| invalid("行政新增获知缺少同次真实 observation"))?
+                            .through;
+                        if record.observed_at != through {
+                            return Err(invalid("行政新增获知时间不属于同次 observation"));
+                        }
+                        let published = match record.kind {
+                            crate::information::AcquiredKind::Report => {
+                                reference_library
+                                    .report(record.id, through)
+                                    .map_err(|error| {
+                                        invalid(format!(
+                                            "行政新增报告获知缺少同批公开材料：{error}"
+                                        ))
+                                    })?
+                                    .published_at
+                            }
+                            crate::information::AcquiredKind::Announcement => {
+                                reference_library
+                                    .announcement(record.id, through)
+                                    .map_err(|error| {
+                                        invalid(format!(
+                                            "行政新增公告获知缺少同批公开材料：{error}"
+                                        ))
+                                    })?
+                                    .published_at
+                            }
+                        };
+                        let mut time = acquisition_time
+                            .ok_or_else(|| invalid("行政新增获知缺少同次 civil 静点"))?;
+                        time.civil = through;
+                        causal.record(
+                            time,
+                            crate::diagnostics::causal::CausalFactKind::Acquisition {
+                                account: *id,
+                                company: *company,
+                                publication: u64::from(record.id.value()),
+                                published,
+                                acquired: record.observed_at,
+                            },
+                        );
+                    }
+                }
+            }
+            causal
+        };
         Ok(PreparedAdministrativeMirror {
             accounts: account_book,
             personals,
@@ -628,6 +703,8 @@ impl GameSession {
             revision: next_revision,
             install_sequence,
             changed,
+            #[cfg(feature = "simulation-diagnostics")]
+            causal,
         })
     }
 
@@ -655,6 +732,10 @@ impl GameSession {
         }
         if let Some(plans) = prepared.plans {
             self.state.plans = plans;
+        }
+        #[cfg(feature = "simulation-diagnostics")]
+        {
+            self.state.causal = prepared.causal;
         }
         self.revision
             .store(prepared.revision, std::sync::atomic::Ordering::Relaxed);

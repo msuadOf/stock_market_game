@@ -1418,8 +1418,24 @@ impl GameSession {
             && std::sync::Weak::ptr_eq(identity, &self.runtime_authority_identity())
     }
 
-    pub(crate) fn has_internal_runtime_driver(&self) -> bool {
-        self.runtime_driver.is_some()
+    pub(crate) fn check_external_runtime_factory(&self) -> Result<(), String> {
+        if let Some(cell) = &self.runtime_driver {
+            let driver = cell
+                .lock()
+                .map_err(|_| "内部 runtime owner 锁 poison，拒绝未知状态替换".to_owned())?;
+            driver.ensure_session_authority(self)?;
+            if self.poison.is_none() || driver.world_committed_tick() <= self.tick() {
+                return Err("公开 driver factory 不得替换活跃内部 runtime owner".to_owned());
+            }
+            // 显式 factory 可读取最后已提交 Session 种子；这不清除首错或恢复可玩。
+            // 失败 World 的 cell/raw 保留到新 driver 全部准备成功，不能提前退役。
+        }
+        Ok(())
+    }
+
+    pub(crate) fn retire_replaced_internal_runtime_driver(&mut self) {
+        // 仅在 factory 的全部可失败工作成功后调用；World Drop 先 shutdown/join。
+        drop(self.runtime_driver.take());
     }
 
     pub(crate) fn install_external_runtime_authority(

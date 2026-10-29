@@ -93,6 +93,72 @@ fn d1_late_callback_failure_preserves_terminal_raw_and_checkpoint_retry_publishe
 }
 
 #[test]
+fn terminal_internal_factory_failure_preserves_raw_then_explicit_replacement_keeps_first_fatal() {
+    let mut game = game();
+    enqueue(&mut game);
+    let expected_fatal = StepFatal::InvariantViolation {
+        location: "terminal_factory_callback".to_owned(),
+        description: "显式拒绝候选，验证重建不会恢复可玩".to_owned(),
+    };
+    let mut reached = false;
+    let fatal = game
+        .step_frame_and_commit_via_runtime(|_, _| {
+            reached = true;
+            Err::<(), _>(expected_fatal.clone())
+        })
+        .unwrap_err();
+    assert!(reached);
+    assert_eq!(fatal, expected_fatal);
+    let epoch = game.runtime_authority_epoch;
+    let (world_tick, publication, terminal) = {
+        let driver = game.runtime_driver.as_ref().unwrap().lock().unwrap();
+        (
+            driver.world_committed_tick(),
+            driver.publication().load(),
+            driver.terminal_causal_snapshot_for_test().unwrap(),
+        )
+    };
+    assert!(world_tick > game.tick());
+    assert!(!terminal.1.is_empty());
+    assert_eq!(terminal.2, fatal);
+    // 在已通过 terminal owner 门禁之后，真实 Calendar 投影准备失败。
+    let ticks_per_day = game.state.setup.ticks_per_day;
+    game.state.setup.ticks_per_day = 0;
+    game.check_external_runtime_factory().unwrap();
+    let hash = game.session_state_hash().unwrap();
+    let error = match crate::runtime::drive::RuntimeDriver::from_session(&mut game) {
+        Ok(_) => panic!("无效 Calendar tick 布局必须拒绝构造"),
+        Err(error) => error,
+    };
+    assert!(error.contains("无效 tick 布局"), "必须失败于真实 Calendar 构造准备：{error}");
+    assert_eq!(game.session_state_hash().unwrap(), hash);
+    assert_eq!(game.runtime_authority_epoch, epoch);
+    assert_eq!(game.poison_reason(), Some(&fatal));
+    {
+        let driver = game.runtime_driver.as_ref().unwrap().lock().unwrap();
+        assert_eq!(driver.world_committed_tick(), world_tick);
+        assert!(std::sync::Arc::ptr_eq(
+            &publication,
+            &driver.publication().load()
+        ));
+        assert_eq!(driver.terminal_causal_snapshot_for_test(), Some(terminal));
+    }
+    game.state.setup.ticks_per_day = ticks_per_day;
+    let mut rebuilt = crate::runtime::drive::RuntimeDriver::from_session(&mut game)
+        .expect("显式 factory 可读取最后已提交 Session 种子");
+    assert!(game.runtime_driver.is_none());
+    assert_eq!(game.runtime_authority_epoch, epoch + 1);
+    assert_eq!(rebuilt.world_committed_tick(), game.tick());
+    assert_eq!(game.poison_reason(), Some(&fatal));
+    assert!(matches!(game.save(), Err(SessionError::Step(actual)) if actual == fatal));
+    assert!(matches!(game.end_civil_day(), Err(SessionError::Step(actual)) if actual == fatal));
+    assert_eq!(game.step_via_runtime().unwrap_err(), fatal);
+    assert_eq!(rebuilt.step_frame_equivalent(&mut game).unwrap_err(), fatal);
+    assert_eq!(rebuilt.world_committed_tick(), game.tick());
+    assert!(game.causal_facts().is_empty());
+}
+
+#[test]
 fn d1_install_failure_keeps_prior_facts_and_checkpoint_retry_has_no_duplicate() {
     let mut game = game();
     enqueue(&mut game);
