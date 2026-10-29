@@ -497,12 +497,12 @@ impl EnvelopeLedger {
         let changed: Vec<_> = self
             .envelopes
             .iter()
-            .filter_map(|(key, envelope)| {
-                (envelope.origin() != EnvelopeOrigin::TickStart
+            .filter(|&(_, envelope)| {
+                envelope.origin() != EnvelopeOrigin::TickStart
                     || envelope.basis() != envelope.live()
-                    || envelope.pending_price().is_some())
-                .then(|| key.clone())
+                    || envelope.pending_price().is_some()
             })
+            .map(|(key, _)| key.clone())
             .collect();
         for key in changed {
             let envelope = self
@@ -523,7 +523,8 @@ impl EnvelopeLedger {
         let changed_conservation: Vec<_> = self
             .conservation
             .iter()
-            .filter_map(|(key, state)| (*state != ConservationState::EMPTY).then(|| key.clone()))
+            .filter(|&(_, state)| *state != ConservationState::EMPTY)
+            .map(|(key, _)| key.clone())
             .collect();
         for key in changed_conservation {
             *self

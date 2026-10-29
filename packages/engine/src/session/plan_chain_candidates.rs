@@ -763,7 +763,7 @@ impl PlanRootCoordinator {
         if task_died.is_some() {
             return;
         }
-        while let Some((account, personal)) = pending.front() {
+        while let Some((account, _personal)) = pending.front() {
             let Some(guard) = compute.reserve_spawn_slot() else {
                 break;
             };
@@ -1066,7 +1066,7 @@ impl PlanRootCoordinator {
                     }
                     // 4c 前补派发（P1：容量恢复后 pending 必须继续派发；
                     // task_died 已存时 dispatch 内部守卫直接冻结）。
-                    drop((
+                    let _ = (
                         receiver,
                         remaining,
                         snapshot,
@@ -1074,10 +1074,10 @@ impl PlanRootCoordinator {
                         pending,
                         compute,
                         task_died,
-                    ));
+                    );
                     self.dispatch_ready_accounts();
                     let AccountSource::InFlight {
-                        receiver,
+                        receiver: _,
                         remaining,
                         snapshot,
                         observations,

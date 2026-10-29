@@ -20,8 +20,6 @@ use super::stock_execution_transaction::{
     compose_stock_execution_transaction_for_test, StockExecutionTransactionOutput,
 };
 #[cfg(test)]
-use super::EnvelopeReceipt;
-#[cfg(test)]
 use crate::GameSession;
 
 #[derive(Debug, thiserror::Error)]

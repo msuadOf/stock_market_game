@@ -5278,7 +5278,7 @@ mod chain_restructure_tests {
             .runtime_driver
             .as_mut()
             .unwrap()
-            .lock()
+            .get_mut()
             .unwrap()
             .defer_due_for_test_at(&[AccountId(1)], u64::MAX);
         // 去掉用于引出机构报价的玩家原买单，避免既有自成交保护挡住玩家卖单。

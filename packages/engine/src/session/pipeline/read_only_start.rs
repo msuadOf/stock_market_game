@@ -1,9 +1,10 @@
 //! 无报价到期的 Continuous tick：独立准备读取相同不可变起点，结果在原阶段消费。
 use super::continuous_matching::IncrementalContinuousStockCoordinator;
+#[cfg(test)]
+use super::continuous_matching_adapter::prepare_incremental_continuous_inputs;
 use super::{
-    continuous_matching::ContinuousStockInput,
-    continuous_matching_adapter::prepare_incremental_continuous_inputs,
-    stock_stream::continuous_shards, DecisionResourceSnapshot, GameSession, StepFatal,
+    continuous_matching::ContinuousStockInput, stock_stream::continuous_shards,
+    DecisionResourceSnapshot, GameSession, StepFatal,
 };
 use crate::StockId;
 use std::collections::BTreeMap;
@@ -178,9 +179,6 @@ mod tests {
             );
         }
     }
-
-    use std::sync::atomic::{AtomicBool, Ordering};
-    use std::time::{Duration, Instant};
 
     fn phase_gate_fixture(tick: u64, auction_ticks: u64, ticks_per_day: u64) -> GameSession {
         let mut setup = crate::session::npc_working_quote_tests::quote_setup(auction_ticks);

@@ -15,8 +15,8 @@ use crate::company::{CompanyId, CompanySpec, CompanySystem};
 use crate::information::{
     AccountingPolicyRef, AnnouncedEvent, Announcement, AnnouncementContent, AnnouncementRequest,
     CashDividendAnnouncement, InformationError, IssuerRepurchaseAnnouncement, PublicLibrary,
-    PublicationId, PublicationOrigin, PublicationRequest, PublicationSource, PublishedReport,
-    ReportFrequency, RightsOfferingAnnouncement, ScheduledReportKind,
+    PublicationId, PublicationRequest, PublicationSource, PublishedReport, ReportFrequency,
+    RightsOfferingAnnouncement, ScheduledReportKind,
 };
 use crate::session::corporate_actions::SessionCorporateActions;
 use std::collections::{BTreeMap, BTreeSet};

@@ -56,7 +56,7 @@ pub(super) mod controlled {
     };
     use std::any::Any;
     use std::cell::RefCell;
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::AtomicBool;
     use std::sync::mpsc::SyncSender;
 
     type AnyObserver = Box<dyn FnMut(&dyn Any)>;

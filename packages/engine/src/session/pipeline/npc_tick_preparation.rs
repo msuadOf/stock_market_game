@@ -9,10 +9,6 @@ use super::decision_snapshot_capture::CapturedDecisionSnapshot;
 #[cfg(test)]
 use super::npc_decisions::run_npc_decisions;
 #[cfg(test)]
-use super::npc_decisions::stream_npc_decisions_with;
-#[cfg(test)]
-use super::npc_state_projection::project_npc_account;
-#[cfg(test)]
 use super::npc_state_projection::project_npc_state;
 #[cfg(test)]
 use super::DecisionSnapshot;
@@ -127,7 +123,6 @@ fn prepare_npc_projection(
 
 #[cfg(test)]
 mod t1_account_task_tests {
-    use super::*;
 
     #[test]
     fn probe3_consume_path() {
@@ -1221,7 +1216,7 @@ pub(in crate::session) fn produce_decision_output_on(
                     // ADR-0032：结果到达消费方即登记 ingress receipt（真实
                     // 接收序）；账户内 ordered_intents 保序。个人状态安装另
                     // 按 due 弹出序在流后确定性进行。
-                    let before_intents = intents.len();
+                    let _before_intents = intents.len();
                     if let Err(error) = receive_npc_patch_intents_in_arrival_order(
                         writes,
                         &mut patch,

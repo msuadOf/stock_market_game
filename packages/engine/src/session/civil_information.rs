@@ -107,14 +107,15 @@ impl GameSession {
             let mut shadow = self
                 .clone_for_tick_shadow()
                 .map_err(|_| SessionError::InvalidSave(ValidationFault::new(1034, vec![0])))?;
-            let report = shadow.prepare_civil_day_disclosures().map_err(|error| {
-                correction_prepare_rejected = self.poison_reason().is_none()
-                    && matches!(&error, SessionError::ReportCorrectionDayEnd(cause)
+            let report = shadow
+                .prepare_civil_day_disclosures()
+                .inspect_err(|error| {
+                    correction_prepare_rejected = self.poison_reason().is_none()
+                        && matches!(error, SessionError::ReportCorrectionDayEnd(cause)
                         if matches!(cause.classification(),
                             crate::company::CompanyErrorClass::InvalidInput
                             | crate::company::CompanyErrorClass::BusinessCondition));
-                error
-            })?;
+                })?;
             shadow.prepare_ordinary_tax_day_end(report.settled_date, market_installed)?;
             let instant = report.disclosure_instant;
             let next_date = report.next_date;

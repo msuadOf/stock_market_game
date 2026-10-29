@@ -681,8 +681,8 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
             )));
         }
     }
-    let first_institution = u64::from(save.setup.npcs.retail_count) + 1;
-    let last_institution = u64::from(save.setup.npcs.retail_count)
+    let _first_institution = u64::from(save.setup.npcs.retail_count) + 1;
+    let _last_institution = u64::from(save.setup.npcs.retail_count)
         .checked_add(u64::from(save.setup.npcs.inst_count))
         .ok_or_else(|| {
             // fault2031：机构账户区间计算溢出。
@@ -2126,7 +2126,7 @@ fn validate_personal_states(context: &SaveValidationContext) -> Result<(), Sessi
 /// 计划契约校验：计划引用域、链接母单互洽、待应用事实队列。
 fn validate_plan_contract(context: &SaveValidationContext) -> Result<(), SessionError> {
     let save = context.save;
-    let saved_day = context.saved_day;
+    let _saved_day = context.saved_day;
     let stock_codes = &context.stock_codes;
     for plan_id in save.plans.plan_ids() {
         let entry = save.plans.entry(plan_id).expect("计划迭代身份存在");

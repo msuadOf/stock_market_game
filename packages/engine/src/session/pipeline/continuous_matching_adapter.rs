@@ -4,7 +4,7 @@ use super::{
     EnvelopeKey, EnvelopeOrigin, StepFatal,
 };
 use crate::compute::parallel::*;
-use crate::{GameSession, Market, Order, StockId, TradingPhase};
+use crate::{GameSession, Market, Order, StockId};
 
 /// 结构性测试计数器：记录 prepare_stock_input_on 内 BTreeSet 增量插入查重的次数。
 /// 融合排序方案落地后该路径应消失，计数保持 0。

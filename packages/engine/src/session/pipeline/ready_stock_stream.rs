@@ -12,7 +12,7 @@ use super::{
 };
 use crate::session::plan_continuation_domain::PlanContinuationDomain;
 use crate::{GameSession, StockId};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 /// 进给协定的 typed 回复：就绪操作批（**操作与受理结果期望成对**——T4
 /// Astra 必修 1：期望随批派发、匹配在 owner 完成点执行）或计划来源显式排空
@@ -73,7 +73,7 @@ impl<'a> ReadyStockStream<'a> {
         // T4（Astra 必修 1）：typed feedback 已在本股 owner 任务内匹配并随
         // 完成回传（`outcomes`）——此处不再有协调者侧 pending 匹配；真实
         // 账户授权（validate_available_ready）与跨股依赖仍走本窄交接。
-        let (stock, round, matched) = match progress {
+        let (_stock, round, matched) = match progress {
             // Idle 三态循环（设计 §3.1③，落在最终 ValidatedOperation 层）：
             // (a) 校验就绪候选并推进拒绝反馈；(b) 非空 operations 立即交付；
             // (c) 空 → Complete（roots 含 pending 分量/operations/routes 全排空）

@@ -5,12 +5,15 @@
 
 #[cfg(test)]
 use super::stock_execution_transaction::StockExecutionOutput;
+#[cfg(test)]
 use super::{
     event_collection::{collect_events, CollectedEvents, EventFact},
     execution_fact_producers::adapt_continuous_facts,
     StepFatal,
 };
+#[cfg(test)]
 use crate::StockId;
+#[cfg(test)]
 use std::collections::BTreeMap;
 
 #[cfg(test)]

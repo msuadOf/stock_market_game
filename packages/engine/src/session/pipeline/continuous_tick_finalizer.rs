@@ -15,7 +15,7 @@ use super::{
     },
     AccountValidationOutput, EventStableKey, IntentCandidateBatch, ReceiptSource, StepFatal,
 };
-use crate::session::{completed_market_minute_count, RetailOrderDiagnosticEvent};
+use crate::session::RetailOrderDiagnosticEvent;
 #[cfg(test)]
 use crate::Money;
 #[cfg(feature = "simulation-diagnostics")]

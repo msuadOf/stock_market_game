@@ -227,10 +227,10 @@ impl GameSession {
         &mut self,
         code: &crate::StockId,
     ) -> Vec<(crate::AccountId, crate::Side, crate::money::Money, u32)> {
-        let mut driver = self
+        let driver = self
             .runtime_driver
             .as_mut()
-            .and_then(|cell| cell.lock().ok())
+            .and_then(|cell| cell.get_mut().ok())
             .expect("runtime 驱动器在位（调用方已判）");
         let facts = driver.collect_resting_facts_live().expect("在途簿收集");
         let idx = code.0 as usize;
@@ -257,20 +257,20 @@ impl GameSession {
     ///（"无 due tick"形态——t3 stale trace 面的 runtime 等价）。
     #[cfg(test)]
     pub(crate) fn defer_due_via_runtime(&mut self, ids: &[crate::AccountId], tick: u64) {
-        let mut driver = self
+        let driver = self
             .runtime_driver
             .as_mut()
-            .and_then(|cell| cell.lock().ok())
+            .and_then(|cell| cell.get_mut().ok())
             .expect("runtime 驱动器在位（调用方已判）");
         driver.defer_due_for_test_at(ids, tick);
     }
 
     #[cfg(test)]
     pub(super) fn force_due_via_runtime(&mut self, ids: &[crate::AccountId], tick: u64) {
-        let mut driver = self
+        let driver = self
             .runtime_driver
             .as_mut()
-            .and_then(|cell| cell.lock().ok())
+            .and_then(|cell| cell.get_mut().ok())
             .expect("runtime 驱动器在位（调用方已判）");
         // 目标 tick 取 max(指令, 世界下一 tick)——世界游标可能已领先。
         driver.force_due_for_test_at(ids, tick);
@@ -285,10 +285,10 @@ impl GameSession {
         account: crate::AccountId,
         assessments: std::collections::BTreeMap<crate::StockId, crate::plans::CandidateAssessment>,
     ) {
-        let mut driver = self
+        let driver = self
             .runtime_driver
             .as_mut()
-            .and_then(|cell| cell.lock().ok())
+            .and_then(|cell| cell.get_mut().ok())
             .expect("runtime 驱动器在位（调用方已判）");
         driver.inject_review_assessments_for_test(account, assessments);
     }
@@ -301,10 +301,10 @@ impl GameSession {
         owner: crate::AccountId,
         mutate: Box<dyn FnOnce(&mut crate::plans::PlanBook) + Send>,
     ) {
-        let mut driver = self
+        let driver = self
             .runtime_driver
             .as_mut()
-            .and_then(|cell| cell.lock().ok())
+            .and_then(|cell| cell.get_mut().ok())
             .expect("runtime 驱动器在位（调用方已判）");
         driver.mutate_plan_book_for_test(owner, mutate);
     }
@@ -317,10 +317,10 @@ impl GameSession {
         stock: u16,
         minutes: Vec<(u64, i64)>,
     ) {
-        let mut driver = self
+        let driver = self
             .runtime_driver
             .as_mut()
-            .and_then(|cell| cell.lock().ok())
+            .and_then(|cell| cell.get_mut().ok())
             .expect("runtime 驱动器在位（调用方已判）");
         driver.inject_observation_minutes_for_test(stock, minutes);
     }
@@ -332,10 +332,10 @@ impl GameSession {
         &mut self,
         events: Vec<(crate::plans::PlanId, crate::plans::PlanEvent)>,
     ) {
-        let mut driver = self
+        let driver = self
             .runtime_driver
             .as_mut()
-            .and_then(|cell| cell.lock().ok())
+            .and_then(|cell| cell.get_mut().ok())
             .expect("runtime 驱动器在位（调用方已判）");
         driver.apply_plan_events_for_test(events);
     }
@@ -348,10 +348,10 @@ impl GameSession {
         account: crate::AccountId,
         mutate: Box<dyn FnOnce(&mut crate::strategy::BeliefBook) + Send>,
     ) {
-        let mut driver = self
+        let driver = self
             .runtime_driver
             .as_mut()
-            .and_then(|cell| cell.lock().ok())
+            .and_then(|cell| cell.get_mut().ok())
             .expect("runtime 驱动器在位（调用方已判）");
         driver.mutate_belief_for_test(account, mutate);
     }

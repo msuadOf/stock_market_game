@@ -265,10 +265,10 @@ pub(crate) use observation_clock::intraday_observation_second;
 // D3a-2c 件2/3：组线程直调 observe 的类型面（决策链深移植——方向 A；
 // crate 内可见——runtime 组线程组装/直调）。
 pub(crate) use decision_chain::{
-    buy_allocation_request, decide_plan_quote, exposed_stocks_shared, next_routable_buy_qty,
-    next_routable_sell_qty, open_position_action, DecisionChainObservation,
-    InstitutionDecisionRoot, OpenPositionAssessment, OpenPositionPolicy, PlanLifecycleAction,
-    PlanPersonalState, PlanQuoteInputs, PlanRootDiagnostics, RootReadContext,
+    buy_allocation_request, decide_plan_quote, exposed_stocks_shared, next_routable_sell_qty,
+    open_position_action, DecisionChainObservation, InstitutionDecisionRoot,
+    OpenPositionAssessment, OpenPositionPolicy, PlanLifecycleAction, PlanPersonalState,
+    PlanQuoteInputs, RootReadContext,
 };
 // D3b 件 4：组线程复审宿主的共享类型面（trait+行为结构——两宿主实现
 // 同一 trait，行为不得分叉）。
@@ -1572,7 +1572,7 @@ impl SessionSetup {
         }
         self.strategy_params.validate()?;
         let lot_size = self.config.lot_size;
-        for (active, name, quantity) in [
+        for (active, _name, quantity) in [
             (
                 self.npcs.retail_count > 0,
                 "strategy_params.retail.order_size_mean",
@@ -1666,7 +1666,7 @@ impl SessionSetup {
         if let BetweenKindDistribution::Percentage { retail, inst, hot } =
             &self.float_allocation.between_kinds
         {
-            for (value, name) in [(*retail, "retail"), (*inst, "inst"), (*hot, "hot")] {
+            for (value, _name) in [(*retail, "retail"), (*inst, "inst"), (*hot, "hot")] {
                 if !value.is_finite() || value < 0.0 {
                     // fault1024: 类间流通盘比例必须为有限非负 f64。槽0 待 C 批数值化
                     // （原文本为类别名 "{name}"，取值 "retail"/"inst"/"hot"）；
@@ -5359,10 +5359,10 @@ impl GameSession {
                     .map(|v| v.daily_upper_limit)
                     .collect()
             };
-            let mut driver = self
+            let driver = self
                 .runtime_driver
                 .as_mut()
-                .and_then(|cell| cell.lock().ok())
+                .and_then(|cell| cell.get_mut().ok())
                 .expect("runtime 驱动器在位（上方已判）");
             driver
                 .inject_player_intents(&intents, &upper)

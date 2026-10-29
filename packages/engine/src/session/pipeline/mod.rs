@@ -72,9 +72,8 @@ mod session_fact_producers;
 mod settlement;
 mod stock_execution_transaction;
 mod stock_stream;
+#[cfg(test)]
 pub(in crate::session) use stock_stream::TickWorkReady;
-// D5 日界安装（runtime step 的 ends_day 拍——旧管线日终迁移复用）。
-pub(in crate::session) use day_end::install_runtime_day_boundary;
 mod transaction_error;
 pub mod transition;
 pub use account_validation::{
@@ -500,7 +499,7 @@ pub fn plan_tick(input: PhaseInput<'_>) -> Result<TickShadowPlan, StepFatal> {
         read_only = None;
     }
     drop(view);
-    drop(writes);
+    let _ = writes;
     let shadow = TickShadowPlan {
         session: Some(candidate),
         decision_output: Some(decision_output),
@@ -549,12 +548,10 @@ pub(in crate::session) fn commit_injected_plan_roots_for_test(
     authority: &mut GameSession,
     roots: crate::session::plan_chain_candidates::PlanChainOperationBatch,
 ) -> Vec<Event> {
-    use crate::TradingPhase;
-
     authority
         .hydrate_or_validate_envelope_ledger()
         .expect("plan-root fixture must have a valid starting ledger");
-    let phase = authority.phase();
+    let _phase = authority.phase();
     let mut plan = plan_tick(PhaseInput { session: authority })
         .expect("计划根 tick 的 ExpiryShadow/SealAllocationSnapshot");
     market_tick_transaction::apply_tick_shadow_market_transaction_with_roots_for_test(

@@ -33,7 +33,9 @@ use super::{
 use crate::session::plan_chain_candidates::PlanChainOperationBatch;
 #[cfg(test)]
 use crate::session::PlanExecutionReport;
-use crate::{Event, GameSession, StockId};
+#[cfg(test)]
+use crate::Event;
+use crate::{GameSession, StockId};
 
 #[derive(Debug, thiserror::Error)]
 pub(super) enum MarketTransactionError {

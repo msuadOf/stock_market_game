@@ -2,7 +2,6 @@ use super::private_stock_ledger::PrivateStockLedger;
 #[cfg(test)]
 use super::EnvelopeLedger;
 use super::{
-    transition::{BuyFillInput, FillTransition, SellFillInput},
     Envelope, EnvelopeAudit, EnvelopeKey, EnvelopeOrigin, EnvelopeReceipt, FeeComponents,
     JournalRank, PlaceKind, ReceiptDelta, ReceiptKind, ReceiptLocalKey, ReceiptSource,
     ReceiptTransition, ResVec, StepFatal, ValidatedOperation,

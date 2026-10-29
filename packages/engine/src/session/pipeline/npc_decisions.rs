@@ -208,7 +208,7 @@ pub(in crate::session) fn decide_npc_account_from_shared(
         shared.market,
         input.self_view(),
         (input.kind() == crate::AccountKind::Retail)
-            .then(|| shared.behavior_market)
+            .then_some(shared.behavior_market)
             .flatten(),
         (input.kind() == crate::AccountKind::Retail)
             .then(|| input.account_risk())
@@ -519,16 +519,7 @@ where
                                 .t1_probes
                                 .stream_payloads
                                 .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                            let before = errors.len();
                             record_stream_error_generic(account, result, &mut merge, &mut errors);
-                            if errors.len() > before
-                                && matches!(
-                                    errors.last(),
-                                    Some((_, NpcDecisionStreamError::Consumer(_)))
-                                )
-                            {
-                                consumer_failed = true;
-                            }
                         }
                         Ok(DecideMessage::TaskDied(_)) => {
                             // 首例已登记；后续终结信号仅确认排空进度。

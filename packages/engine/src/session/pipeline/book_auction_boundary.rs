@@ -4,7 +4,7 @@ use super::{
     order_receipts, private_stock_ledger::PrivateStockLedger, Envelope, EnvelopeKey,
     EnvelopeReceipt, ReceiptKind, ReceiptSource, StepFatal,
 };
-use crate::{GameConfig, Market, Money, OrderId, Side, StockExchange, Trade};
+use crate::{GameConfig, Market, Money, OrderId, StockExchange, Trade};
 use std::collections::BTreeMap;
 
 #[derive(Debug)]

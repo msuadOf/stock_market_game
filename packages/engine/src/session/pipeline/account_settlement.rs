@@ -7,12 +7,14 @@ use super::retail_projection::{
     RetailProjectionInput, RetailProjectionSeen, RetailReceiptEvent,
 };
 use super::settlement::{ReceiptSettlementPlan, SettlementApplication};
-use super::{EnvelopeReceipt, StepFatal};
+#[cfg(test)]
+use super::EnvelopeReceipt;
+use super::StepFatal;
 use crate::session::decision_chain::personal_state::BeliefParticipantState;
 use crate::session::{account_book::AccountBook, account_paged_map::AccountPagedMap};
-use crate::{
-    Account, AccountId, AccountKind, GameSession, Position, RetailExperienceState, StockId,
-};
+#[cfg(test)]
+use crate::GameSession;
+use crate::{Account, AccountId, AccountKind, Position, RetailExperienceState, StockId};
 use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Clone, Debug, Eq, PartialEq)]

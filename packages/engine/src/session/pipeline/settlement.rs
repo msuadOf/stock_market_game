@@ -2,7 +2,9 @@
 //!
 //! nominal 费用由 stock_processing 计算；此处只累计 EnvelopeReceipt::charged 的实际实收金额。
 
-use super::{EnvelopeReceipt, FeeComponents, ReceiptKind, StepFatal};
+#[cfg(test)]
+use super::{EnvelopeReceipt, ReceiptKind};
+use super::{FeeComponents, StepFatal};
 use crate::account::SettlementTotals;
 use crate::compute::parallel::*;
 use crate::session::account_book::AccountBook;

@@ -247,11 +247,9 @@ impl GameSession {
             return Err(SessionError::UnknownHistoryStock(request.stock));
         }
         let date = self.civil_date();
-        let trading = matches!(
-            self.runtime_stock_trading_on(request.stock.0, date)
-                .map_err(|e| invalid(format!("开市判定失败：{e:?}")))?,
-            true
-        );
+        let trading = self
+            .runtime_stock_trading_on(request.stock.0, date)
+            .map_err(|e| invalid(format!("开市判定失败：{e:?}")))?;
         // 收盘后：当日步数已满（tick 为 tpd 倍数）且日K已入历史。
         let after_close = trading
             && self

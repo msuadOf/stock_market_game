@@ -744,7 +744,7 @@ impl<S: StockShard> StockStreamCoordinator<S> {
 
     fn drive<F, D>(
         mut self,
-        expected: Vec<super::CandidateValidationOutcome>,
+        _expected: Vec<super::CandidateValidationOutcome>,
         feedback: RoundFeedbackFn<S::Round>,
         mut detached: D,
         mut on_progress: F,
@@ -1223,7 +1223,7 @@ mod tests {
         };
         let pool_workers = 1;
         let shared = crate::compute::ComputeContext::from_workers(pool_workers);
-        let pool = shared.clone();
+        let _pool = shared.clone();
         let finished = shared
             .install(|| {
                 drive_stock_stream(
@@ -1321,7 +1321,7 @@ mod tests {
         let rendezvous = Arc::new(std::sync::Barrier::new(2));
         let (result_tx, result_rx) = mpsc::channel();
         for lane in 0..2usize {
-            let pool = Arc::clone(&pool);
+            let _pool = Arc::clone(&pool);
             let shared = shared.clone();
             let rendezvous = Arc::clone(&rendezvous);
             let result_tx = result_tx.clone();
@@ -1445,7 +1445,7 @@ mod tests {
         ]);
         let pool_workers = 2;
         let shared = crate::compute::ComputeContext::from_workers(pool_workers);
-        let pool = shared.clone();
+        let _pool = shared.clone();
         let mut rounds = BTreeMap::new();
         let completed = shared
             .install(|| {
@@ -1910,7 +1910,7 @@ mod tests {
         let timing_probe = crate::verification_evidence::PhaseTimingBinding::test_collector();
         let pool_workers = 2;
         let shared = crate::compute::ComputeContext::from_workers(pool_workers);
-        let pool = shared.clone();
+        let _pool = shared.clone();
         let observed: Arc<std::sync::Mutex<Vec<BindingObservation>>> =
             Arc::new(std::sync::Mutex::new(Vec::new()));
         let observed_for_detached = Arc::clone(&observed);
@@ -1924,7 +1924,7 @@ mod tests {
                     let expected_timing =
                         crate::verification_evidence::current_phase_timing_binding();
                     let expected_executor = executor_perturbation::current_executor_binding();
-                    let detached = move |code: &StockId| {
+                    let detached = move |_code: &StockId| {
                         // detached 在协调线程的派发阶段执行：此刻的线程即协调线程。
                         Ok(BindingProbeShard {
                             expected_timing: expected_timing.clone(),
@@ -1993,7 +1993,7 @@ mod tests {
         let timing_probe = crate::verification_evidence::PhaseTimingBinding::test_collector();
         let pool_workers = 2;
         let shared = crate::compute::ComputeContext::from_workers(pool_workers);
-        let pool = shared.clone();
+        let _pool = shared.clone();
         let counts: Arc<std::sync::Mutex<Vec<(&'static str, usize)>>> =
             Arc::new(std::sync::Mutex::new(Vec::new()));
         let counts_for_progress = Arc::clone(&counts);

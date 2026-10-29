@@ -12,7 +12,7 @@ impl GameSession {
                 observed,
                 order_id,
                 event,
-                terminating,
+                terminating: _,
             } => {
                 let plan_id = observed.plan_id();
                 let disposition = match outcome {
@@ -93,7 +93,7 @@ impl GameSession {
                     disposition: other.failure()?,
                 }),
             },
-            Continuation::Submit { plan, child } => {
+            Continuation::Submit { plan: _, child } => {
                 let disposition = match outcome {
                     PlanRouteOutcome::Accepted(order_id) => PlanExecutionDisposition::Submitted {
                         order_id,
