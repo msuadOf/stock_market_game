@@ -4,13 +4,13 @@ import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { createTauriHost } from "./tauri-host.ts";
 import { createRemoteHost } from "./remote-host.ts";
 import { LegacyWorker, bootstrapLegacy, createLegacyHost } from "./worker-host-legacy.test-support.ts";
-import { market, dailyCandle } from "./protocol-test-fixtures.ts";
+import { mirrorOrigin, market, dailyCandle } from "./protocol-test-fixtures.ts";
 import type { EngineHost } from "./engine-host.ts";
 import type { SessionSetup } from "../types/engine.ts";
 import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 
-const snapshot = { seq: 0, tick: 0, day: 0, phase: "Continuous", markets: { "0": market() }, accounts: {}, daily_candles: { "0": [] }, active_daily_candles: { "0": dailyCandle() } };
+const snapshot = { seq: 0, tick: 0, day: 0, phase: "Continuous", mirror_origin: mirrorOrigin(0), markets: { "0": market() }, accounts: {}, daily_candles: { "0": [] }, active_daily_candles: { "0": dailyCandle() } };
 const stocks = [{ id: 0, code: "600101" }];
 const companies = [{ id: 7, code: "实际发行人", name: "公司", listed_stock: 0 }];
 const status = { mode: "AShareIndividual", identity: "Personal", stocks: [{ stock: "600101", status: "IndividualPublicMarket" }] };

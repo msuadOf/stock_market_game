@@ -9,7 +9,7 @@ import type { HostUpdate } from "../host/host-update.ts";
 import { createBaselineUpdate, createProtocolUpdate } from "../host/host-update.ts";
 import { parseEngineUpdate, parseProtocolSnapshot } from "../host/protocol/parse.ts";
 import { createProtocolState } from "../host/protocol/types.ts";
-import { civilUpdate, dailyCandle, frame, market, snapshot, timeseries } from "../host/protocol-test-fixtures.ts";
+import { civilUpdate, dailyCandle, frame, market, mirrorOrigin, snapshot, timeseries } from "../host/protocol-test-fixtures.ts";
 import type { ChartRuntimeObservation } from "./market-chart-runtime.test-support.tsx";
 import type { EngineHost } from "../host/engine-host.ts";
 import type { HistoricalStockData } from "../types/engine.ts";
@@ -50,7 +50,7 @@ function update(active: unknown, tick = 1, cursor = 0): Extract<HostUpdate, { ty
     } }],
     runtime_snapshot: null,
     runtime_delta: {
-      tick, seq_from: cursor, seq_to: cursor, day: 0, phase: "Continuous", accounts: {},
+      tick, seq_from: cursor, seq_to: cursor, day: 0, phase: "Continuous", mirror_origin: mirrorOrigin(tick), accounts: {},
       working_orders: { reset: tick === 1, upserts: [], removed: [] },
     },
   } });

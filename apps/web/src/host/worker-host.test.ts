@@ -6,7 +6,7 @@ import { parseProtocolSnapshot } from "./protocol/index.ts";
 import { assertWorkerE2EStepAllowed, createWorkerHost, parseWorkerFailure, readWorkerPlayerWorkingOrders, readWorkerStockHistory, readWorkerSpeedMetrics, refreshWorkerBaseline, requestWorkerIndicators, restoreWorkerSlot, stepWorkerOnce, workerPausePreferenceRequest } from "./worker-host.ts";
 import { WorkerRequestScope, type WorkerRequestPort } from "./worker-request.ts";
 import { ProtocolCoordinator } from "./protocol-coordinator.ts";
-import { frame, snapshot as protocolSnapshot, tickBatch, market, dailyCandle } from "./protocol-test-fixtures.ts";
+import { frame, snapshot as protocolSnapshot, tickBatch, market, dailyCandle, mirrorOrigin } from "./protocol-test-fixtures.ts";
 import { currentSaveFixture } from "../save/current-save-fixture.ts";
 import { drain as drainW1, fixture as fixtureW1 } from "./worker-host-w1.test-support.ts";
 
@@ -210,8 +210,8 @@ test("审计G53：Worker恢复必须推进generation，不能接受相同或更�
     const worker = new FakeWorker();
     const requests = new WorkerRequestScope(worker);
     const pending = restoreWorkerSlot(requests, {}, 1, 2);
-    worker.emit({ ...catalogWorkerFixture({ seq: 0, tick: 0, day: 0, phase: "Continuous", markets: {}, accounts: {}, daily_candles: {}, active_daily_candles: {} }), type: "restored", civilDate: "2030-01-01", requestId: 1, generation: 2, nextGeneration,
-      snapshot: { seq: 0, tick: 0, day: 0, phase: "Continuous", markets: {}, accounts: {}, daily_candles: {}, active_daily_candles: {} } });
+    worker.emit({ ...catalogWorkerFixture({ seq: 0, tick: 0, day: 0, phase: "Continuous", mirror_origin: mirrorOrigin(0), markets: {}, accounts: {}, daily_candles: {}, active_daily_candles: {} }), type: "restored", civilDate: "2030-01-01", requestId: 1, generation: 2, nextGeneration,
+      snapshot: { seq: 0, tick: 0, day: 0, phase: "Continuous", mirror_origin: mirrorOrigin(0), markets: {}, accounts: {}, daily_candles: {}, active_daily_candles: {} } });
     if (nextGeneration <= 2) await assert.rejects(pending, /generation.*2.*[12]|[12].*generation.*2/);
     else assert.equal((await pending).nextGeneration, 3);
     assert.equal(requests.pendingCount(), 0);
@@ -223,8 +223,8 @@ test("审计G53：恢复代次拒绝零、负数、非安全整数和字符串",
     const worker = new FakeWorker();
     const requests = new WorkerRequestScope(worker);
     const pending = restoreWorkerSlot(requests, {}, 1, 2);
-    worker.emit({ ...catalogWorkerFixture({ seq: 0, tick: 0, day: 0, phase: "Continuous", markets: {}, accounts: {}, daily_candles: {}, active_daily_candles: {} }), type: "restored", civilDate: "2030-01-01", requestId: 1, generation: 2, nextGeneration,
-      snapshot: { seq: 0, tick: 0, day: 0, phase: "Continuous", markets: {}, accounts: {}, daily_candles: {}, active_daily_candles: {} } });
+    worker.emit({ ...catalogWorkerFixture({ seq: 0, tick: 0, day: 0, phase: "Continuous", mirror_origin: mirrorOrigin(0), markets: {}, accounts: {}, daily_candles: {}, active_daily_candles: {} }), type: "restored", civilDate: "2030-01-01", requestId: 1, generation: 2, nextGeneration,
+      snapshot: { seq: 0, tick: 0, day: 0, phase: "Continuous", mirror_origin: mirrorOrigin(0), markets: {}, accounts: {}, daily_candles: {}, active_daily_candles: {} } });
     await assert.rejects(pending, /正安全整数/);
     assert.equal(requests.pendingCount(), 0);
   }
@@ -276,7 +276,7 @@ test("Worker save pins candidate generation and rejects an old saved response af
     const ready = createLegacyHost({} as Parameters<typeof createWorkerHost>[0], 1n);
     const worker = SaveWorker.current;
     await bootstrapLegacy(worker);
-    const snapshot = { seq: 42, tick: 0, day: 0, phase: "Continuous", markets: {}, accounts: {}, daily_candles: {}, active_daily_candles: {} };
+    const snapshot = { seq: 42, tick: 0, day: 0, phase: "Continuous", mirror_origin: mirrorOrigin(0), markets: {}, accounts: {}, daily_candles: {}, active_daily_candles: {} };
     worker.emit({ type: "created", generation: 1, capabilities: { npcDecisionDiagnostics: false, indicatorCapabilities: { intradayAverage: false, macd: false, priceKdj: false, candleKdj: false }, personalTradeHistory: false } });
     worker.emit({ ...catalogWorkerFixture(snapshot), type: "baseline", civilDate: "2030-01-01", generation: 1, snapshot });
     const host = await ready;
@@ -346,12 +346,12 @@ test("Given an enriched Worker failure, when parsed, then cause and recovery act
 test("Given a restore response from the old request generation, when read, then it yields the new authority before load completes", async () => {
   const worker = new FakeWorker();
   const pending = restoreWorkerSlot(new WorkerRequestScope(worker), { valid: "already-parsed" }, 2, 1);
-  worker.emit({ ...catalogWorkerFixture({ seq: 4, tick: 4, day: 0, phase: "Continuous", markets: {}, accounts: {}, daily_candles: {}, active_daily_candles: {} }),
+  worker.emit({ ...catalogWorkerFixture({ seq: 4, tick: 4, day: 0, phase: "Continuous", mirror_origin: mirrorOrigin(4), markets: {}, accounts: {}, daily_candles: {}, active_daily_candles: {} }),
     type: "restored", civilDate: "2030-01-01",
     requestId: 2,
     generation: 1,
     nextGeneration: 2,
-    snapshot: { seq: 4, tick: 4, day: 0, phase: "Continuous", markets: {}, accounts: {}, daily_candles: {}, active_daily_candles: {} },
+    snapshot: { seq: 4, tick: 4, day: 0, phase: "Continuous", mirror_origin: mirrorOrigin(4), markets: {}, accounts: {}, daily_candles: {}, active_daily_candles: {} },
   });
   const restored = await pending;
   assert.equal(restored.nextGeneration, 2);
@@ -362,7 +362,7 @@ test("Given a restore response from the old request generation, when read, then 
 
 test("Given a refresh request, when the worker reads its live session, then it returns that authoritative snapshot", async () => {
   const worker = new FakeWorker();
-  const restoredSnapshot = { seq: 8, tick: 8, day: 1, phase: "Continuous", markets: {}, accounts: {}, daily_candles: {}, active_daily_candles: {} };
+  const restoredSnapshot = { seq: 8, tick: 8, day: 1, phase: "Continuous", mirror_origin: mirrorOrigin(8), markets: {}, accounts: {}, daily_candles: {}, active_daily_candles: {} };
   const pending = refreshWorkerBaseline(new WorkerRequestScope(worker), 12, 4);
   worker.emit({ ...catalogWorkerFixture(restoredSnapshot), type: "refreshed", civilDate: "2030-01-01", requestId: 12, generation: 4, snapshot: restoredSnapshot });
   const baseline = await pending;
@@ -444,7 +444,7 @@ test("duplicate delivered baselines preserve pending order queries, while a new 
   }
   Object.defineProperty(globalThis, "Worker", { configurable: true, value: BaselineWorker });
   let host: Awaited<ReturnType<typeof createWorkerHost>> | undefined;
-  const snapshot = { seq: 4, tick: 4, day: 0, phase: "Continuous", markets: {}, accounts: {}, daily_candles: {}, active_daily_candles: {} };
+  const snapshot = { seq: 4, tick: 4, day: 0, phase: "Continuous", mirror_origin: mirrorOrigin(4), markets: {}, accounts: {}, daily_candles: {}, active_daily_candles: {} };
   try {
     const creating = createLegacyHost({} as Parameters<typeof createWorkerHost>[0], 1n);
     const worker = BaselineWorker.current;
@@ -496,7 +496,7 @@ test("Worker 控制等待应用回执，protocolBatch 每个提交接纳后立�
     const creating = createLegacyHost({} as Parameters<typeof createWorkerHost>[0], 1n);
     const worker = ControlledWorker.current;
     await bootstrapLegacy(worker);
-    const snapshot = { seq: 0, tick: 0, day: 0, phase: "Continuous", markets: {}, accounts: {}, daily_candles: {}, active_daily_candles: {} };
+    const snapshot = { seq: 0, tick: 0, day: 0, phase: "Continuous", mirror_origin: mirrorOrigin(0), markets: {}, accounts: {}, daily_candles: {}, active_daily_candles: {} };
     worker.emit({ ...catalogWorkerFixture(snapshot), type: "baseline", civilDate: "2030-01-01", generation: 1, snapshot });
     host = await creating;
     const updates: unknown[] = [];
@@ -608,7 +608,7 @@ test("Worker dispose 与 fatal 立即取消在途请求，释放监听并拒绝�
       const creating = createLegacyHost({} as Parameters<typeof createWorkerHost>[0], 1n);
       const worker = PendingWorker.current;
       await bootstrapLegacy(worker);
-      const snapshot = { seq: 0, tick: 0, day: 0, phase: "Continuous", markets: {}, accounts: {}, daily_candles: {}, active_daily_candles: {} };
+      const snapshot = { seq: 0, tick: 0, day: 0, phase: "Continuous", mirror_origin: mirrorOrigin(0), markets: {}, accounts: {}, daily_candles: {}, active_daily_candles: {} };
       worker.emit({ ...catalogWorkerFixture(snapshot), type: "baseline", civilDate: "2030-01-01", generation: 1, snapshot });
       const host = await creating;
       const date = host.civilDate!();

@@ -1,4 +1,4 @@
-import { market, dailyCandle } from "./protocol-test-fixtures.ts";
+import { mirrorOrigin, market, dailyCandle } from "./protocol-test-fixtures.ts";
 import { catalogWireFixture } from "./catalog-test-fixture.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -9,7 +9,7 @@ import { parseRemoteMessage } from "./remote-wire.ts";
 import { remotePausePreferencePayload } from "./remote-request.ts";
 
 const snapshot = {
-  seq: 0, tick: 0, day: 0, phase: "Continuous", markets: { "0": market() }, accounts: {}, daily_candles: { "0": [] }, active_daily_candles: { "0": dailyCandle() },
+  seq: 0, tick: 0, day: 0, phase: "Continuous", mirror_origin: mirrorOrigin(0), markets: { "0": market() }, accounts: {}, daily_candles: { "0": [] }, active_daily_candles: { "0": dailyCandle() },
 };
 
 test("Given the remote whole-update DTO, when parsed, then it preserves generation and opaque EngineUpdate", () => {
@@ -268,7 +268,7 @@ test("Given a same-generation Publisher resync, when refreshBaseline completes, 
     baseUrl: "http://127.0.0.1:3000",
     fetchFn,
     webSocketFactory: () => {
-      socket = { readyState: 1, close() {}, send() { queueMicrotask(() => socket?.onmessage?.({ data: JSON.stringify({ Baseline: { ...catalogWireFixture({ ...snapshot, seq: 3, tick: 3 }), timeline_generation: 1, snapshot: { ...snapshot, seq: 3, tick: 3 }, civil_date: "2030-01-02", public_revision: 0, public_report_ids: [] } }) } as MessageEvent)); }, onmessage: null, onerror: null, onclose: null } as unknown as WebSocket;
+      socket = { readyState: 1, close() {}, send() { queueMicrotask(() => socket?.onmessage?.({ data: JSON.stringify({ Baseline: { ...catalogWireFixture({ ...snapshot, seq: 3, tick: 3, mirror_origin: mirrorOrigin(3) }), timeline_generation: 1, snapshot: { ...snapshot, seq: 3, tick: 3, mirror_origin: mirrorOrigin(3) }, civil_date: "2030-01-02", public_revision: 0, public_report_ids: [] } }) } as MessageEvent)); }, onmessage: null, onerror: null, onclose: null } as unknown as WebSocket;
       return socket;
     },
   });

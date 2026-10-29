@@ -4,7 +4,7 @@ import test from "node:test";
 import { ProtocolCoordinator } from "./protocol-coordinator.ts";
 import { createBaselineUpdate, createProtocolUpdate } from "./host-update.ts";
 import { parseProtocolSnapshot } from "./protocol/parse.ts";
-import { frame, snapshot } from "./protocol-test-fixtures.ts";
+import { frame, mirrorOrigin, snapshot } from "./protocol-test-fixtures.ts";
 import { applyProtocolFrame, setSnapshot, store } from "../store/store.ts";
 
 test("production coordinator consumes delta before the existing chart frame callback without a full snapshot replacement", () => {
@@ -26,7 +26,7 @@ test("production coordinator consumes delta before the existing chart frame call
   coordinator.accept(createProtocolUpdate("1", { TickBatch: {
     frames: [frame(1, 0, [0])], runtime_snapshot: null,
     runtime_delta: {
-      seq_from: 0, seq_to: 1, tick: 1, day: 0, phase: "CallAuction",
+      seq_from: 0, seq_to: 1, tick: 1, day: 0, phase: "CallAuction", mirror_origin: { ...mirrorOrigin(1), mirror_phase: "CallAuction" },
       accounts: { "0": { cash: "99000", reserved_cash: "1000", reserved_sell_qty: {}, positions: {} } },
       working_orders: { reset: true, upserts: [{ id: 9, code: 0, side: "Buy", price: "1000", remainingQty: 100, venue: "Auction", frozen: "Cash" }], removed: [] },
     },
@@ -57,7 +57,7 @@ test("a reconnect baseline can seed exact-cursor public orders before consuming 
   coordinator.accept(createProtocolUpdate("2", { TickBatch: {
     frames: [frame(6, 5, [0])], runtime_snapshot: null,
     runtime_delta: {
-      seq_from: 5, seq_to: 6, tick: 6, day: 0, phase: "Continuous", accounts: {},
+      seq_from: 5, seq_to: 6, tick: 6, day: 0, phase: "Continuous", mirror_origin: mirrorOrigin(6), accounts: {},
       working_orders: { reset: false, upserts: [], removed: [9] },
     },
   } }));

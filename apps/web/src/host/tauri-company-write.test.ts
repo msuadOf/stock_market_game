@@ -5,7 +5,7 @@ import { emit } from "@tauri-apps/api/event";
 import { createTauriHost } from "./tauri-host.ts";
 import { CompanyWriteRejectedError } from "./company-write.ts";
 import { catalogWireFixture } from "./catalog-test-fixture.ts";
-import { market } from "./protocol-test-fixtures.ts";
+import { market, mirrorOrigin } from "./protocol-test-fixtures.ts";
 import type { SessionSetup } from "../types/engine.ts";
 
 // synthetic transport fixture：只检查实际 Web Host 接线，不冒真实 IPC actor 或 Rust 业务成功。
@@ -22,7 +22,7 @@ const failure = { kind: "PlayerProposal", data: { account: "0", company: 3, kind
 async function fixture(t: TestContext, respond: (command: string, generation: string) => unknown | Promise<unknown>) {
   const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
   Object.defineProperty(globalThis, "window", { configurable: true, value: { crypto: globalThis.crypto } });
-  const snapshot = { seq: 0, tick: 0, day: 0, phase: "Continuous", markets: { "3": market() }, accounts: {}, daily_candles: { "3": [] }, active_daily_candles: {} };
+  const snapshot = { seq: 0, tick: 0, day: 0, phase: "Continuous", mirror_origin: mirrorOrigin(0), markets: { "3": market() }, accounts: {}, daily_candles: { "3": [] }, active_daily_candles: {} };
   const calls: { command: string; args: unknown }[] = [];
   let generation = "1";
   mockIPC((command, args) => {

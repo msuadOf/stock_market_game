@@ -1,4 +1,4 @@
-import { market, dailyCandle } from "./protocol-test-fixtures.ts";
+import { mirrorOrigin, market, dailyCandle } from "./protocol-test-fixtures.ts";
 import { catalogWireFixture, defaultStockCatalogFixture } from "./catalog-test-fixture.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -6,7 +6,7 @@ import type { Intent, SessionSetup } from "../types/engine.ts";
 import type { HostFailure, HostUpdate } from "./host-update.ts";
 import { createRemoteHost } from "./remote-host.ts";
 
-const snapshot = { seq: 0, tick: 0, day: 0, phase: "Continuous", markets: Object.fromEntries(defaultStockCatalogFixture.map(stock => [String(stock.id), market()])), accounts: {}, daily_candles: Object.fromEntries(defaultStockCatalogFixture.map(stock => [String(stock.id), []])), active_daily_candles: Object.fromEntries(defaultStockCatalogFixture.map(stock => [String(stock.id), dailyCandle()])) };
+const snapshot = { seq: 0, tick: 0, day: 0, phase: "Continuous", mirror_origin: mirrorOrigin(0), markets: Object.fromEntries(defaultStockCatalogFixture.map(stock => [String(stock.id), market()])), accounts: {}, daily_candles: Object.fromEntries(defaultStockCatalogFixture.map(stock => [String(stock.id), []])), active_daily_candles: Object.fromEntries(defaultStockCatalogFixture.map(stock => [String(stock.id), dailyCandle()])) };
 const baseline = (generation = 1) => ({ Baseline: { ...catalogWireFixture(snapshot), timeline_generation: generation, snapshot, civil_date: "2030-01-02", public_revision: 0, public_report_ids: [] } });
 const protocol = (generation = 1) => ({ PublisherFrame: { timeline_generation: generation, update: { TickBatch: { frames: [], runtime_snapshot: null } }, civil_date: "2030-01-02", public_revision: 0 } });
 // 公共 Intent 形态（代码串 code；宿主经 wireIntentOf 译数值后上 wire）。

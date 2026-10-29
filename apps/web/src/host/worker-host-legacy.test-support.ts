@@ -34,6 +34,22 @@ export class LegacyWorker extends EventTarget {
     if (value.type === "bindIngress" && !manualLegacyIngress) queueMicrotask(() => {
       this.dispatchEvent(new MessageEvent("message", { data: { type: "ingressBound", generation: value.generation, requestId: value.requestId } }));
     });
+    // 仅模拟无 World/child 的 cooperative fixture 协议响应，不冒充真实 Rust join。
+    if (value.type === "shutdown") queueMicrotask(() => {
+      this.dispatchEvent(new MessageEvent("message", { data: {
+        type: "shutdownCompleted",
+        requestId: value.requestId,
+        generation: value.generation,
+        report: { kind: "success", handle: 7, runtime: null },
+      } }));
+    });
+    if (value.type === "quiesceIngress") queueMicrotask(() => {
+      this.dispatchEvent(new MessageEvent("message", { data: {
+        type: "ingressQuiescent",
+        requestId: value.requestId,
+        generation: value.generation,
+      } }));
+    });
   }
 }
 export async function bootstrapLegacy(worker: LegacyWorker, autoIngress = true): Promise<void> {

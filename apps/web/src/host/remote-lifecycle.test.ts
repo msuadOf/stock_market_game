@@ -1,4 +1,4 @@
-import { market, dailyCandle } from "./protocol-test-fixtures.ts";
+import { mirrorOrigin, market, dailyCandle } from "./protocol-test-fixtures.ts";
 import { catalogWireFixture } from "./catalog-test-fixture.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -6,7 +6,7 @@ import { createRemoteHost } from "./remote-host.ts";
 import type { SessionSetup, Intent } from "../types/engine.ts";
 
 const options = { timeout: 10000, concurrency: true };
-const baseline = JSON.stringify({ Baseline: { ...catalogWireFixture({ seq: 0, tick: 0, day: 0, phase: "Continuous", markets: { "3": market() }, accounts: {}, daily_candles: { "3": [] }, active_daily_candles: { "3": dailyCandle() } }), timeline_generation: 1, snapshot: { seq: 0, tick: 0, day: 0, phase: "Continuous", markets: { "3": market() }, accounts: {}, daily_candles: { "3": [] }, active_daily_candles: { "3": dailyCandle() } }, civil_date: "2030-01-02", public_revision: 0, public_report_ids: [] } });
+const baseline = JSON.stringify({ Baseline: { ...catalogWireFixture({ seq: 0, tick: 0, day: 0, phase: "Continuous", mirror_origin: mirrorOrigin(0), markets: { "3": market() }, accounts: {}, daily_candles: { "3": [] }, active_daily_candles: { "3": dailyCandle() } }), timeline_generation: 1, snapshot: { seq: 0, tick: 0, day: 0, phase: "Continuous", mirror_origin: mirrorOrigin(0), markets: { "3": market() }, accounts: {}, daily_candles: { "3": [] }, active_daily_candles: { "3": dailyCandle() } }, civil_date: "2030-01-02", public_revision: 0, public_report_ids: [] } });
 
 async function fixture(loadResponse?: () => Promise<Response>) {
   const sockets: WebSocket[] = [];

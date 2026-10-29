@@ -1,4 +1,4 @@
-import { market, dailyCandle } from "./protocol-test-fixtures.ts";
+import { market, dailyCandle, mirrorOrigin } from "./protocol-test-fixtures.ts";
 import { catalogWireFixture, defaultStockCatalogFixture } from "./catalog-test-fixture.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -13,7 +13,7 @@ test("Tauri save pins generation for keyed and latest candidates and rejects a l
   Object.defineProperty(globalThis, "window", { configurable: true, value: { crypto: globalThis.crypto } });
   const requests: Record<string, unknown>[] = [];
   let completeSave: ((slot: unknown) => void) | null = null;
-  const snapshot = { seq: 42, tick: 0, day: 0, phase: "Continuous", markets: Object.fromEntries(defaultStockCatalogFixture.map(stock => [String(stock.id), market()])), accounts: {}, daily_candles: Object.fromEntries(defaultStockCatalogFixture.map(stock => [String(stock.id), []])), active_daily_candles: Object.fromEntries(defaultStockCatalogFixture.map(stock => [String(stock.id), dailyCandle()])) };
+  const snapshot = { seq: 42, tick: 0, day: 0, phase: "Continuous", mirror_origin: mirrorOrigin(0), markets: Object.fromEntries(defaultStockCatalogFixture.map(stock => [String(stock.id), market()])), accounts: {}, daily_candles: Object.fromEntries(defaultStockCatalogFixture.map(stock => [String(stock.id), []])), active_daily_candles: Object.fromEntries(defaultStockCatalogFixture.map(stock => [String(stock.id), dailyCandle()])) };
   mockIPC((command, args) => {
     if (command === "create_session") return "session-1";
     if (command === "host_capabilities") return { npcDecisionDiagnostics: false };
@@ -45,7 +45,7 @@ test("Tauri save pins generation for keyed and latest candidates and rejects a l
   }
 });
 
-const snapshot = { seq: 42, tick: 0, day: 0, phase: "Continuous", markets: Object.fromEntries(defaultStockCatalogFixture.map(stock => [String(stock.id), market()])), accounts: {}, daily_candles: Object.fromEntries(defaultStockCatalogFixture.map(stock => [String(stock.id), []])), active_daily_candles: Object.fromEntries(defaultStockCatalogFixture.map(stock => [String(stock.id), dailyCandle()])) };
+const snapshot = { seq: 42, tick: 0, day: 0, phase: "Continuous", mirror_origin: mirrorOrigin(0), markets: Object.fromEntries(defaultStockCatalogFixture.map(stock => [String(stock.id), market()])), accounts: {}, daily_candles: Object.fromEntries(defaultStockCatalogFixture.map(stock => [String(stock.id), []])), active_daily_candles: Object.fromEntries(defaultStockCatalogFixture.map(stock => [String(stock.id), dailyCandle()])) };
 type IpcHandler = Parameters<typeof mockIPC>[0];
 
 async function withTauriHost(run: (host: Awaited<ReturnType<typeof createTauriHost>>, calls: string[]) => Promise<void>, handler: IpcHandler = () => undefined) {
@@ -59,7 +59,7 @@ async function withTauriHost(run: (host: Awaited<ReturnType<typeof createTauriHo
     if (command === "create_session") return "session-1";
     if (command === "host_capabilities") return { npcDecisionDiagnostics: true };
     if (command === "engine_baseline") return { ...catalogWireFixture(snapshot), snapshot, generation: "1", timeline_id: "timeline-1", civil_date: "2030-01-01" };
-    if (command === "restore_session") return { ...catalogWireFixture({ ...snapshot, tick: 2 }), snapshot: { ...snapshot, tick: 2 }, generation: "2", timeline_id: "timeline-2", civil_date: "2030-01-01" };
+    if (command === "restore_session") return { ...catalogWireFixture({ ...snapshot, tick: 2, mirror_origin: mirrorOrigin(2) }), snapshot: { ...snapshot, tick: 2, mirror_origin: mirrorOrigin(2) }, generation: "2", timeline_id: "timeline-2", civil_date: "2030-01-01" };
     return null;
   }, { shouldMockEvents: true });
   let host: Awaited<ReturnType<typeof createTauriHost>> | undefined;
@@ -215,7 +215,7 @@ test("Tauri dispose 后晚到 refresh 与 save 拒绝，不能复活基线", asy
     const date = host.civilDate!();
     const saved = assert.rejects(host.save(), /已过期会话 generation/);
     host.dispose();
-    finishRefresh({ ...catalogWireFixture({ ...snapshot, tick: 3 }), snapshot: { ...snapshot, tick: 3 }, generation: "1", timeline_id: "late", civil_date: "2030-01-01" });
+    finishRefresh({ ...catalogWireFixture({ ...snapshot, tick: 3, mirror_origin: mirrorOrigin(3) }), snapshot: { ...snapshot, tick: 3, mirror_origin: mirrorOrigin(3) }, generation: "1", timeline_id: "late", civil_date: "2030-01-01" });
     finishDate({ value: "2030-01-02" });
     finishSave({ saved: true });
     await Promise.all([refresh, saved]);
@@ -331,7 +331,7 @@ test("Tauri dispose 后晚到 load 拒绝且不安装 restore baseline", async (
   await withTauriHost(async (host) => {
     const loading = assert.rejects(host.load({}), /已销毁会话/);
     host.dispose();
-    finishRestore({ ...catalogWireFixture({ ...snapshot, tick: 5 }), snapshot: { ...snapshot, tick: 5 }, generation: "2", timeline_id: "late-load", civil_date: "2030-01-01" });
+    finishRestore({ ...catalogWireFixture({ ...snapshot, tick: 5, mirror_origin: mirrorOrigin(5) }), snapshot: { ...snapshot, tick: 5, mirror_origin: mirrorOrigin(5) }, generation: "2", timeline_id: "late-load", civil_date: "2030-01-01" });
     await loading;
     assert.throws(() => host.tick(), /基线尚未就绪/);
     assert.throws(() => host.snapshot(), /基线尚未就绪/);

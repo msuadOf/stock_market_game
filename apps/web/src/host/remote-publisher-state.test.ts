@@ -4,9 +4,10 @@ import test from "node:test";
 import { createBaselineUpdate } from "./host-update.ts";
 import { parseProtocolSnapshot } from "./protocol/index.ts";
 import { RemotePublisherState } from "./remote-publisher-state.ts";
+import { mirrorOrigin } from "./protocol-test-fixtures.ts";
 
 const options = { concurrency: true, timeout: 10000 };
-const snapshot = parseProtocolSnapshot({ seq: 0, tick: 0, day: 0, phase: "Continuous", markets: {}, accounts: {}, daily_candles: {}, active_daily_candles: {} }, "测试 baseline", defaultCatalogFixture);
+const snapshot = parseProtocolSnapshot({ seq: 0, tick: 0, day: 0, phase: "Continuous", mirror_origin: mirrorOrigin(0), markets: {}, accounts: {}, daily_candles: {}, active_daily_candles: {} }, "测试 baseline", defaultCatalogFixture);
 const baseline = (generation: string) => createBaselineUpdate(generation, snapshot, catalogFixtureForSnapshot(snapshot), { civilDate: "2030-01-02", revision: "0" });
 
 test("RemotePublisherState socket 移交与连接 identity 不改变 baseline gate", options, () => {

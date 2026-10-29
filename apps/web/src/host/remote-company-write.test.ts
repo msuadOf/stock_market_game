@@ -4,7 +4,7 @@ import { createRemoteHost } from "./remote-host.ts";
 import { CompanyWriteRejectedError } from "./company-write.ts";
 import { catalogWireFixture } from "./catalog-test-fixture.ts";
 import { remoteTestContext } from "./remote-test-context.ts";
-import { market } from "./protocol-test-fixtures.ts";
+import { mirrorOrigin, market } from "./protocol-test-fixtures.ts";
 import type { SessionSetup } from "../types/engine.ts";
 
 // synthetic transport fixture：只检查实际 Web Host 接线，不冒真实 Rust 批准或更正完成。
@@ -22,7 +22,7 @@ const failure = { kind: "PlayerProposal", data: { account: "1", company: 3, kind
 async function fixture(t: TestContext, respond: (path: string) => Response | Promise<Response>, context: () => Response | Promise<Response> = () => json(remoteTestContext("current-session"))) {
   const calls: { path: string; body: unknown; token: string | null }[] = [];
   const contexts: { session: string | null; token: string | null }[] = [];
-  const snapshot = { seq: 0, tick: 0, day: 0, phase: "Continuous", markets: { "3": market() }, accounts: {}, daily_candles: { "3": [] }, active_daily_candles: {} };
+  const snapshot = { seq: 0, tick: 0, day: 0, phase: "Continuous", mirror_origin: mirrorOrigin(0), markets: { "3": market() }, accounts: {}, daily_candles: { "3": [] }, active_daily_candles: {} };
   const socket = { readyState: 1, close() {}, send() {}, onmessage: null, onerror: null, onclose: null } as unknown as WebSocket;
   const host = await createRemoteHost({} as SessionSetup, 1n, {
     baseUrl: "https://company-write.example", webSocketFactory: () => socket,

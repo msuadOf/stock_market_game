@@ -10,20 +10,22 @@ describe("Tauri host startup contract", () => {
     const updateSource = readFileSync(new URL("./host-update.ts", import.meta.url), "utf8");
 
     assert.match(appSource, /return createTauriHost\(setup, seed\)/);
-    assert.match(
-      appSource,
-      /const host = await createHost\(setup, seed, startupTarget, \(failure\) => \{\s*if \(!cancelled\) ports\.onSpawnFailure\(failure\);\s*\}, initialSlot\);/,
-    );
+    assert.match(appSource, /const onSpawnFailure = \(failure: HostFailure\) => \{ if \(!cancelled\) ports\.onSpawnFailure\(failure\); \};/);
+    assert.match(appSource, /if \(memoryTicket === undefined\) host = await createHost\(setup, seed, startupTarget, onSpawnFailure, initialSlot\);/);
+    assert.match(appSource, /else host = await createHost\(setup, seed, startupTarget, onSpawnFailure, initialSlot, memoryTicket\);/);
     assert.match(appSource, /if \(startupTarget\.kind === "tauri"\) return createTauriHost\(setup, seed\);/);
     assert.match(appSource, /if \(startupTarget\.kind === "remote"\) return createRemoteHost\(setup, seed, \{ baseUrl: startupTarget\.baseUrl \}\);/);
-    assert.match(appSource, /const options = \{ enableE2EStepping: tradingE2EMode, onSpawnFailure, initialArchive \};/);
-    const hostReadyIndex = appSource.indexOf("const host = await createHost(");
+    assert.match(appSource, /const options = \{ enableE2EStepping: tradingE2EMode, onSpawnFailure, initialArchive, memoryAdmissionTicket, \.\.\.wasmRuntimeOptions \};/);
+    const hostReadyIndex = appSource.indexOf("host = await createHost(setup, seed, startupTarget, onSpawnFailure, initialSlot);");
+    const ticketHostReadyIndex = appSource.indexOf("host = await createHost(setup, seed, startupTarget, onSpawnFailure, initialSlot, memoryTicket);");
     const conditionalLoadIndex = appSource.indexOf("if (initialSlot !== null && startupTarget.kind !== \"wasm\") await host.load(initialSlot);");
     const appWiringIndex = appSource.indexOf("hostRef.current = host;", hostReadyIndex);
     assert.notEqual(hostReadyIndex, -1);
+    assert.notEqual(ticketHostReadyIndex, -1);
     assert.notEqual(conditionalLoadIndex, -1);
     assert.notEqual(appWiringIndex, -1);
     assert.ok(conditionalLoadIndex > hostReadyIndex);
+    assert.ok(conditionalLoadIndex > ticketHostReadyIndex);
     assert.ok(conditionalLoadIndex < appWiringIndex);
     assert.match(hostSource, /export async function createTauriHost/);
     assert.match(hostSource, /await invokeBaseline\("engine_baseline", \{ sessionId, generation: timeline\.currentGeneration\(\) \}\)/);

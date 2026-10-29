@@ -1,9 +1,10 @@
 import { catalogWireFixture } from "./catalog-test-fixture.ts";
+import { mirrorOrigin } from "./protocol-test-fixtures.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { nextTauriGeneration, TauriTimelineState } from "./tauri-timeline-state.ts";
 
-const snapshot = { seq: 4, tick: 4, day: 0, phase: "Continuous", markets: {}, accounts: {}, daily_candles: {}, active_daily_candles: {} };
+const snapshot = { seq: 4, tick: 4, day: 0, phase: "Continuous", mirror_origin: mirrorOrigin(4), markets: {}, accounts: {}, daily_candles: {}, active_daily_candles: {} };
 
 test("Tauri 三种 baseline 都携带对应会话的当前自然日", () => {
   const timeline = new TauriTimelineState();

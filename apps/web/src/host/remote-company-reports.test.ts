@@ -4,6 +4,7 @@ import test from "node:test";
 import type { PublicReportSummary, SessionSetup } from "../types/engine.ts";
 import { publicReportGold } from "../components/company/public-report-fixture.ts";
 import { createRemoteHost } from "./remote-host.ts";
+import { mirrorOrigin } from "./protocol-test-fixtures.ts";
 
 function reportFixture(): PublicReportSummary {
   return publicReportGold();
@@ -47,9 +48,9 @@ test("remote report ownership cannot survive a restored timeline with reused IDs
     onclose: null,
     close() {},
     send() {
-      queueMicrotask(() => socket.onmessage?.({ data: JSON.stringify({ Baseline: { ...catalogWireFixture({ seq: 0, tick: 0, day: 0, phase: "Continuous", markets: {}, accounts: {}, daily_candles: {}, active_daily_candles: {} }),
+      queueMicrotask(() => socket.onmessage?.({ data: JSON.stringify({ Baseline: { ...catalogWireFixture({ seq: 0, tick: 0, day: 0, phase: "Continuous", mirror_origin: mirrorOrigin(0), markets: {}, accounts: {}, daily_candles: {}, active_daily_candles: {} }),
         timeline_generation: restored ? 2 : 1,
-        snapshot: { seq: 0, tick: 0, day: 0, phase: "Continuous", markets: {}, accounts: {}, daily_candles: {}, active_daily_candles: {} },
+        snapshot: { seq: 0, tick: 0, day: 0, phase: "Continuous", mirror_origin: mirrorOrigin(0), markets: {}, accounts: {}, daily_candles: {}, active_daily_candles: {} },
         civil_date: "2030-01-02", public_revision: 0, public_report_ids: [],
       } }) } as MessageEvent));
     },
@@ -195,9 +196,9 @@ for (const queryKind of ["page", "by-id"] as const) {
         return json({});
       },
     });
-    const publishBaseline = (generation: number) => socket.onmessage!({ data: JSON.stringify({ Baseline: { ...catalogWireFixture({ seq: 0, tick: 0, day: 0, phase: "Continuous", markets: {}, accounts: {}, daily_candles: {}, active_daily_candles: {} }),
+    const publishBaseline = (generation: number) => socket.onmessage!({ data: JSON.stringify({ Baseline: { ...catalogWireFixture({ seq: 0, tick: 0, day: 0, phase: "Continuous", mirror_origin: mirrorOrigin(0), markets: {}, accounts: {}, daily_candles: {}, active_daily_candles: {} }),
       timeline_generation: generation,
-      snapshot: { seq: 0, tick: 0, day: 0, phase: "Continuous", markets: {}, accounts: {}, daily_candles: {}, active_daily_candles: {} },
+      snapshot: { seq: 0, tick: 0, day: 0, phase: "Continuous", mirror_origin: mirrorOrigin(0), markets: {}, accounts: {}, daily_candles: {}, active_daily_candles: {} },
       civil_date: "2030-01-02", public_revision: 0, public_report_ids: [],
     } }) } as MessageEvent);
     host.start(() => {});

@@ -4,10 +4,11 @@ import test from "node:test";
 import { selectPortfolioInput } from "./portfolio-selector.ts";
 import { parseProtocolSnapshot } from "../host/protocol/index.ts";
 import { ProtocolError } from "../host/protocol/types.ts";
+import { mirrorOrigin } from "../host/protocol-test-fixtures.ts";
 import type { RootState } from "../store/store.ts";
 
 function snapshot(markets: Record<string, unknown>) {
-  return { seq: 0, tick: 0, day: 0, phase: "Continuous", markets,
+  return { seq: 0, tick: 0, day: 0, phase: "Continuous", mirror_origin: mirrorOrigin(0), markets,
     accounts: { "0": { cash: "1000", reserved_cash: "0", reserved_sell_qty: {}, positions: { "3": { qty: 200, t1_locked: 0, invested_cents: "200100", recovered_cents: "0" } } } }, daily_candles: {}, active_daily_candles: {} };
 }
 

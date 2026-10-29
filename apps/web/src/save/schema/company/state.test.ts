@@ -6,10 +6,16 @@ import { SaveSchemaError } from "../primitives.ts";
 import { parseSaveJson, parseSaveSlot } from "../../save-schema.ts";
 const names = ["generated-company-state-registry.json", "manual-company-state-registry.json", "legacy-company-state.json"] as const;
 const historicalRaw = names.map(name => readFileSync(new URL(`../../fixtures/source-b/${name}`, import.meta.url), "utf8"));
-// synthetic：仅为未改动的其他 codec 保留历史结构覆盖；补策略和 bindings 都不代表当前 Rust producer 或恢复已验。
-function syntheticPolicyProjection(text: string): string {
+// synthetic：仅为未改动的其他 codec 保留历史结构覆盖；补 report correction 空表、策略和 bindings 都不代表当前 Rust producer 或恢复已验。
+function syntheticCorrectionOperationsProjection(text: string): string {
  const root=JSON.parse(text) as Record<string,any>;
- if(root.setup===undefined||typeof root.setup!=="object"||root.setup===null||Object.hasOwn(root.setup,"runtime_sync_policy"))return text;
+ if(Object.hasOwn(root,"report_correction_operations"))return text;
+ return JSON.stringify({...root,report_correction_operations:{}});
+}
+function syntheticPolicyProjection(text: string): string {
+ const corrected=syntheticCorrectionOperationsProjection(text);
+ const root=JSON.parse(corrected) as Record<string,any>;
+ if(root.setup===undefined||typeof root.setup!=="object"||root.setup===null||Object.hasOwn(root.setup,"runtime_sync_policy"))return corrected;
  return JSON.stringify({...root,setup:{...root.setup,runtime_sync_policy:"every_tick"}});
 }
 function syntheticBindingsProjection(text: string): string {
@@ -18,7 +24,8 @@ function syntheticBindingsProjection(text: string): string {
  assert.equal(Object.hasOwn(company.corporate_actions,"repurchase_execution_bindings"),false,"历史原件应保持旧字段集合");
  return JSON.stringify({...root,company_state:{CompanySystem:{...company,corporate_actions:{...company.corporate_actions,repurchase_execution_bindings:[]}}}});
 }
-const policyProjectedRaw = historicalRaw.map(syntheticPolicyProjection);
+const correctionProjectedRaw = historicalRaw.map(syntheticCorrectionOperationsProjection);
+const policyProjectedRaw = correctionProjectedRaw.map(syntheticPolicyProjection);
 const raw = policyProjectedRaw.map(syntheticBindingsProjection);
 function sample(index = 0): Record<string, unknown> { return JSON.parse(raw[index]); }
 function system(root: Record<string, unknown>): Record<string, any> { return (root.company_state as Record<string, any>).CompanySystem; }
@@ -27,11 +34,13 @@ for(const [index,name] of names.entries()) test(`历史Rust${name}的synthetic b
  const value=sample(index);assert.deepEqual(parseSaveSlot(value),value);assert.deepEqual(parseSaveJson(raw[index]),value);
  assert.deepEqual(Object.keys(parseSaveSlot(value).company_state),[index===2?"LegacyOperations":"CompanySystem"]);
 });
-for(const [index,name] of names.entries())test(`历史Rust${name}原件缺runtime_sync_policy明确拒绝`,{timeout:10000},()=>{
- assert.throws(()=>parseSaveSlot(JSON.parse(historicalRaw[index])),/runtime_sync_policy/);
- assert.throws(()=>parseSaveJson(historicalRaw[index]),/runtime_sync_policy/);
+for(const [index,name] of names.entries())test(`历史Rust${name}原件保持未投影并独立拒绝，合成空表后缺runtime_sync_policy明确拒绝`,{timeout:10000},()=>{
+ assert.throws(()=>parseSaveSlot(JSON.parse(historicalRaw[index])),/report_correction_operations/);
+ assert.throws(()=>parseSaveJson(historicalRaw[index]),/report_correction_operations/);
+ assert.throws(()=>parseSaveSlot(JSON.parse(correctionProjectedRaw[index])),/runtime_sync_policy/);
+ assert.throws(()=>parseSaveJson(correctionProjectedRaw[index]),/runtime_sync_policy/);
 });
-for(const index of [0,1])test(`历史Rust${names[index]}原件缺required bindings明确拒绝`,{timeout:10000},()=>{
+for(const index of [0,1])test(`历史Rust${names[index]}的synthetic policy投影缺required bindings明确拒绝`,{timeout:10000},()=>{
  assert.throws(()=>parseSaveSlot(JSON.parse(policyProjectedRaw[index])),/repurchase_execution_bindings/);
  assert.throws(()=>parseSaveJson(policyProjectedRaw[index]),/repurchase_execution_bindings/);
 });
@@ -71,7 +80,8 @@ test("canonical整数字符串拒绝前导零/负零与unsafe裸数，保真实�
 const nonempty = ["generated-custom-monthly-nonempty.json", "manual-custom-monthly-nonempty.json", "generated-quarterly-nonempty.json", "manual-quarterly-nonempty.json"];
 for(const name of nonempty) test(`历史非空SimpleGenerated报告${name}的synthetic bindings投影保留来源频率`, {timeout:10000}, () => {
  const original=readFileSync(new URL(`../../fixtures/source-b/${name}`,import.meta.url),"utf8");
- assert.throws(()=>parseSaveJson(original),/runtime_sync_policy/);
+ assert.throws(()=>parseSaveJson(original),/report_correction_operations/);
+ assert.throws(()=>parseSaveJson(syntheticCorrectionOperationsProjection(original)),/runtime_sync_policy/);
  const policyText=syntheticPolicyProjection(original);
  assert.throws(()=>parseSaveJson(policyText),/repurchase_execution_bindings/);
  const text=syntheticBindingsProjection(policyText);const value=JSON.parse(text);

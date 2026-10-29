@@ -4,8 +4,9 @@ import test from "node:test";
 import type { SessionSetup } from "../types/engine.ts";
 import { createRemoteHost } from "./remote-host.ts";
 import { parseProtocolSnapshot } from "./protocol/index.ts";
+import { mirrorOrigin } from "./protocol-test-fixtures.ts";
 
-const snapshot = { seq: 4, tick: 0, day: 0, phase: "Continuous", markets: {}, accounts: {}, daily_candles: {}, active_daily_candles: {} };
+const snapshot = { seq: 4, tick: 0, day: 0, phase: "Continuous", mirror_origin: mirrorOrigin(0), markets: {}, accounts: {}, daily_candles: {}, active_daily_candles: {} };
 
 async function fixture(deliver: (socket: WebSocket) => void, loadResponse?: () => Promise<Response>) {
   const requests: { url: string; init?: RequestInit }[] = [];
