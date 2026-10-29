@@ -15,7 +15,7 @@ test("生产 Worker init 把原输入交唯一initializer，配置前create拒�
   function replace(name: PropertyKey, value: unknown) { saved.set(name, Object.getOwnPropertyDescriptor(globalThis, name)); Object.defineProperty(globalThis, name, { value, configurable: true }); }
   const channels: MessageChannel[] = [], OriginalChannel = MessageChannel;
   replace("MessageChannel", class extends OriginalChannel { constructor() { super(); channels.push(this); } });
-  const state = { initialized, created, setup, substrate, load: async (): Promise<unknown> => { throw new Error("load 未接线"); }, async initialize(input: unknown) { initialized.push(input); await this.load(); await wait; configured = true; return substrate; }, requireConfigured() { if (!configured) throw new Error("fixture not configured"); return { setup, substrate }; }, dispose() {} };
+  const state = { initialized, created, setup, substrate, load: async (): Promise<unknown> => { throw new Error("load 未接线"); }, async initialize(input: unknown) { initialized.push(input); await this.load(); await wait; configured = true; return substrate; }, requireConfigured() { if (!configured) throw new Error("fixture not configured"); return { setup, substrate, initialArchive: null }; }, dispose() {} };
   replace(key, state);
   replace("self", { crossOriginIsolated: true, postMessage(message: Record<string, unknown>) { posted.push(message); }, addEventListener(_type: string, callback: typeof handler) { handler = callback; } });
   replace("fetch", async () => ({ ok: true, arrayBuffer: async () => new Uint8Array([0,97,115,109,1,0,0,0]).buffer }));

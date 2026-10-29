@@ -38,8 +38,9 @@ import { parseHistoricalStockData } from "./stock-history.ts";
 import { parseInitialAllocation } from "./initial-allocation.ts";
 import { WasmHostInitializationError } from "./wasm-host-initialization-error.ts";
 import type { WasmLifecycleObservation } from "./wasm-lifecycle-observation.ts";
+import { parseVerifiedRestoreCapability } from "./wasm-restore-package-capability.ts";
 import { parseWasmSessionShutdown, type WasmSessionShutdown } from "./wasm-shutdown-report.ts";
-import type { WasmFinalRelease, WasmMemoryAdmissionTicket } from "./wasm-document-memory-owner.ts";
+import type { VerifiedWasmRestoreCapability, WasmFinalRelease, WasmMemoryAdmissionTicket } from "./wasm-document-memory-owner.ts";
 import type { WasmRuntimeOptions } from "./wasm-runtime-options.ts";
 
 type WorkerMessage = {
@@ -203,30 +204,31 @@ export function createWorkerHost(
   return new Promise((resolve, reject) => {
     let resolveRelease: ((result: WasmFinalRelease) => void) | undefined;
     let rejectRelease: ((error: Error) => void) | undefined;
+    let memoryTicket: WasmMemoryAdmissionTicket | undefined;
+    let initialArchive: StrictSaveEnvelope | null = null;
+    let restoreCapability: VerifiedWasmRestoreCapability | undefined;
     try {
       const ticket = options !== null && typeof options === "object" ? options.memoryAdmissionTicket : undefined;
+      memoryTicket = ticket;
       if (ticket !== undefined) {
         const release = new Promise<WasmFinalRelease>((resolve, reject) => { resolveRelease = resolve; rejectRelease = reject; });
         // admission 先登记唯一 release，再允许任何 preflight/Worker/Memory 分配。
         ticket.registerRelease(release);
       }
       if (options === null || typeof options !== "object" || typeof options.onSpawnFailure !== "function") throw new Error("WorkerHost 必须提供 onSpawnFailure callback");
-      // options 是外部输入；只读一次，所有分配前失败共同结确切 not-allocated。
-      const initialArchive = options.initialArchive;
-      if (initialArchive !== null && initialArchive !== undefined) {
-        const archive = parseSaveSlot(structuredClone(initialArchive));
-        validateDayEndArchive(archive);
-        throw new WasmHostInitializationError({
-          code: "WASM_RESTORE_TOPOLOGY_NOT_READY",
-          where: "worker-host.initial-archive",
-          message: "WASM 日终存档恢复所需的宿主拓扑尚未就绪",
-          context: { operation: "restore" },
+      // 只读一次外部 getter；失败明确发生在 Worker/Memory 之前。
+      const suppliedArchive = options.initialArchive;
+      if (suppliedArchive !== null && suppliedArchive !== undefined) {
+        initialArchive = validateDayEndArchive(parseSaveSlot(structuredClone(suppliedArchive)));
+        const ticket = memoryTicket;
+        const candidate = ticket?.restoreCapability;
+        if (ticket === undefined || candidate === undefined || candidate === null) throw new WasmHostInitializationError({
+          code: "WASM_RESTORE_TOPOLOGY_NOT_READY", where: "worker-host.initial-archive", message: "WASM 日终存档恢复所需的宿主拓扑尚未就绪", context: { operation: "restore" },
         });
+        if (ticket.intent.kind !== "load" || JSON.stringify(ticket.intent.archive) !== JSON.stringify(initialArchive)) throw new Error("初始完整 X 与 memory admission ticket 的冻结 load intent 不一致");
+        restoreCapability = parseVerifiedRestoreCapability(candidate, options.runtimeOverride);
       }
-    } catch (error) {
-      resolveRelease?.({ kind: "not-allocated" });
-      reject(error); return;
-    }
+    } catch (error) { resolveRelease?.({ kind: "not-allocated" }); reject(error); return; }
     let worker: Worker;
     try { worker = new Worker(new URL("./wasm-worker.ts", import.meta.url), { type: "module" }); }
     catch (error) { resolveRelease?.({ kind: "not-allocated" }); reject(error); return; }
@@ -360,7 +362,7 @@ export function createWorkerHost(
           }
           case "ready":
             supervisor.assertConfigured();
-            worker.postMessage({ type: "create", seed });
+            worker.postMessage(initialArchive === null ? { type: "create", seed } : { type: "restoreInitial" });
             return;
           case "created":
             supervisor.assertConfigured();
@@ -425,9 +427,12 @@ export function createWorkerHost(
           }
           case "failure":
             if (Object.hasOwn(incoming, "engineQuiescent")) {
-              if (initialized || currentGeneration !== 0 || incoming.engineQuiescent !== "initialization-failed") throw new Error("engine initialization quiescence 阶段或字段无效");
-              supervisor.markQuiescent(worker);
-            }
+              if (initialized || !(incoming.engineQuiescent === "initialization-failed" && currentGeneration === 0 || incoming.engineQuiescent === "initial-session-failed" && initialArchive !== null)) throw new Error("engine initialization quiescence 阶段或字段无效");
+              if (Object.hasOwn(incoming, "memoryAllocation")) {
+                if (incoming.engineQuiescent !== "initialization-failed" || incoming.memoryAllocation !== "not-allocated" || currentGeneration !== 0) throw new Error("pre-Memory 分配证明阶段或字段无效");
+                supervisor.markEngineUnallocated(worker);
+              } else supervisor.markQuiescent(worker);
+            } else if (Object.hasOwn(incoming, "memoryAllocation")) throw new Error("未分配证明必须伴随实际初始化关闭证明");
             notifyFailure(parseWorkerFailure(incoming));
             return;
           case "barrierPaused":
@@ -460,7 +465,7 @@ export function createWorkerHost(
       worker.addEventListener("message", onMessage);
       supervisor.bootstrapEngine({
         type: "init",
-        setup,
+        ...(initialArchive === null ? { setup } : { initialArchive, restoreCapability }),
         ...(options.runtimeOverride === undefined ? {} : { runtimeOverride: options.runtimeOverride }),
         ...(options.waitSettings === undefined ? {} : { waitSettings: options.waitSettings }),
       });
@@ -576,7 +581,6 @@ export function createWorkerHost(
               const release = supervisor.dispose();
               if (release instanceof Error) throw release;
             } catch (error) {
-              // Rust reply 可能已先完成；child drain 的清理错误不能遮住随后收到的 fatal。
               const transport = pendingFailure !== null && !(error instanceof Error && error.cause === pendingFailure)
                 ? new AggregateError([error], `${pendingFailure.code} @ ${pendingFailure.where}: ${pendingFailure.message}`, { cause: pendingFailure }) : error;
               const primary = observedReport !== undefined && !(transport instanceof Error && transport.cause === observedReport)

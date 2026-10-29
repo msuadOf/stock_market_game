@@ -108,3 +108,14 @@ test("terminate 抛错不能报告 growthStopped，仍只结一个未知 release
   const first = f.supervisor.dispose(); const second = f.supervisor.dispose();
   assert.equal(first, second); assert.ok(first instanceof Error); assert.equal(f.releases.length, 1); assert.equal(f.engine.terminations, 1);
 });
+
+test("真实 pre-Memory 关闭证明允许 not-allocated，已登记 Memory 时拒绝矛盾证明", { timeout: 10000 }, () => {
+  const f = fixture(); f.supervisor.bootstrapEngine({ type: "init", initialArchive: {} });
+  f.supervisor.markEngineUnallocated(f.engine as unknown as Worker);
+  assert.deepEqual(f.supervisor.dispose(), { kind: "not-allocated" });
+  const allocated = fixture(); allocated.supervisor.bootstrapEngine({ type: "init", initialArchive: {} });
+  const memory = new WebAssembly.Memory({ initial: 1, maximum: 1, shared: true });
+  allocated.channels[0].port1.emit({ type: "facadeEngineMemory", allocationId: 1, memory });
+  assert.throws(() => allocated.supervisor.markEngineUnallocated(allocated.engine as unknown as Worker), /矛盾/);
+  assert.ok(allocated.supervisor.dispose() instanceof Error);
+});

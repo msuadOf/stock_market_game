@@ -74,6 +74,7 @@ export function createEngineSupervisor(options: EngineSupervisorOptions) {
   let sweepTimer: number | undefined;
   let allocatedMemory: WebAssembly.Memory | undefined;
   let allocationStarted = false;
+  let allocationConfirmedAbsent = false;
   let unprovenTermination = false;
   let requireWaitAbort = false;
   let finalRelease: WasmFinalRelease | Error | undefined;
@@ -159,7 +160,7 @@ export function createEngineSupervisor(options: EngineSupervisorOptions) {
     try {
       if (errors.length !== 0) throw new AggregateError(errors, "整组 terminate 未全部成功，Memory 终值未知");
       if (memory === undefined) {
-        if (allocationStarted) throw new Error("init 已开始但未取得 Memory 分配事实，禁止伪造 not-allocated 或零终值");
+        if (allocationStarted && !allocationConfirmedAbsent) throw new Error("init 已开始但未取得 Memory 分配事实，禁止伪造 not-allocated 或零终值");
         receipt = { kind: "not-allocated" };
       } else {
         if (!growthStopped) throw new Error("缺少 cooperative quiescence/真实 child exit 证据；terminate 返回不能证明 Memory 已停止 grow");
@@ -533,6 +534,13 @@ export function createEngineSupervisor(options: EngineSupervisorOptions) {
     setDeadline(until: number): void {
       if (!Number.isFinite(until) || until < 0) throw new Error("实例 deadline 必须为有限非负时间");
       tightenDeadline(until);
+    },
+    markEngineUnallocated(worker: Worker): void {
+      const resource = resources.get(worker);
+      if (disposed || resource === undefined || resource.role !== "engine" || resource.quiescent === true || allocatedMemory !== undefined || substrate !== undefined || allocationConfirmedAbsent) throw new Error("pre-Memory 未分配证明与实例阶段或已有分配事实矛盾");
+      allocationConfirmedAbsent = true;
+      resource.quiescent = true;
+      options.onLifecycleObservation?.({ type: "quiescent", role: "engine", ...lifecycleCounts() });
     },
     markQuiescent(worker: Worker): void {
       const resource = resources.get(worker);

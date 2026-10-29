@@ -1,3 +1,4 @@
+import { parseVerifiedRestoreCapability } from "./wasm-restore-package-capability.ts";
 import { WasmRestartGate } from "./wasm-restart-gate.ts";
 import { prepareBaselineUpdate } from "./host-update.ts";
 import { parseSaveSlot } from "../save/save-schema.ts";
@@ -10,6 +11,7 @@ import { parseHostFailure } from "./protocol-failure.ts";
 import { CompanyWriteRejectedError, parseCompanyWriteFailure, type CompanyWriteFailure } from "./company-write.ts";
 import { exact } from "../save/schema/primitives.ts";
 import { shouldLoadDiagnosticsWasm } from "./wasm-build-mode.ts";
+import type { VerifiedWasmRestoreCapability } from "./wasm-document-memory-owner.ts";
 import type { HostFailure } from "./host-update.ts";
 import type { NpcDecisionTraceRecord } from "./npc-decision-trace.ts";
 import { createFacadeEngineInitializer, type FacadeEngineGlue } from "./facade-engine-initialize.ts";
@@ -158,16 +160,16 @@ export function postFailure(where: string, error: unknown): void {
   postFailureDetails(where, failure);
 }
 
-function postFailureDetails(where: string, failure: WorkerFailureDetails, initializationQuiescent = false): void {
+function postFailureDetails(where: string, failure: WorkerFailureDetails, initializationQuiescent: false | "initialization-failed" | "initial-session-failed" = false, allocationKnownAbsent = false): void {
   const generation = slot.readGeneration();
   try {
-    ctx.postMessage({ type: "failure", generation, ...failure, ...(initializationQuiescent ? { engineQuiescent: "initialization-failed" } : {}) });
+    ctx.postMessage({ type: "failure", generation, ...failure, ...(initializationQuiescent ? { engineQuiescent: initializationQuiescent } : {}), ...(allocationKnownAbsent ? { memoryAllocation: "not-allocated" } : {}) });
   } catch (sendError) {
     const sendReason = describeWasmFailure(sendError);
     try {
       ctx.postMessage({
         type: "failure", generation, code: "WASM_WORKER_PROTOCOL", where,
-        ...(initializationQuiescent ? { engineQuiescent: "initialization-failed" } : {}),
+        ...(initializationQuiescent ? { engineQuiescent: initializationQuiescent } : {}), ...(allocationKnownAbsent ? { memoryAllocation: "not-allocated" } : {}),
         message: `发送结构化错误详情失败：${sendReason}`,
         cause: failure,
       });
@@ -255,7 +257,15 @@ function invokeCompanyWrite(message: WorkerMessage, requestedGeneration: number,
   ctx.postMessage({ type: successType, requestId: message.requestId, generation: requestedGeneration, result });
 }
 
-async function loadEngineModule() {
+type LoadedEngineModule = { readonly module: WebAssembly.Module; readonly diagnostics: boolean; readonly glue: FacadeEngineGlue };
+let verifiedRestoreModule: LoadedEngineModule | undefined;
+let initRequested = false;
+let memoryInitializationStarted = false;
+
+async function loadEngineModule(expected?: VerifiedWasmRestoreCapability): Promise<LoadedEngineModule> {
+  if (expected === undefined && verifiedRestoreModule !== undefined) {
+    const loaded = verifiedRestoreModule; verifiedRestoreModule = undefined; return loaded;
+  }
   let diagnosticsWasm = false;
   let wasmUrl: URL;
   if (import.meta.env.DEV) {
@@ -275,7 +285,20 @@ async function loadEngineModule() {
   }
   const response = await fetch(wasmUrl);
   if (!response.ok) throw new Error(`加载 WASM 二进制失败：HTTP ${response.status}`);
-  const module = await WebAssembly.compile(await response.arrayBuffer());
+  const wasmBytes = await response.arrayBuffer();
+  if (expected !== undefined) {
+    const digest = await crypto.subtle.digest("SHA-256", wasmBytes);
+    const actual = [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+    if (actual !== expected.wasmSha256) throw Object.assign(new Error("实际 WASM 字节与 verified restore package 身份不符，尚未分配 Memory"), { code: "WASM_PACKAGE_IDENTITY_MISMATCH", where: "wasm-worker.restore-package", context: { expected: expected.wasmSha256, actual } });
+  }
+  const module = await WebAssembly.compile(wasmBytes);
+  if (expected !== undefined) {
+    const wasmExports = new Set(WebAssembly.Module.exports(module).filter((entry) => entry.kind === "function").map((entry) => entry.name));
+    const glue = wasmModule as unknown as Record<string, unknown>;
+    for (const name of expected.exports) {
+      if (!wasmExports.has(name) || typeof glue[name] !== "function") throw Object.assign(new Error(`实际 package 缺少 verified 导出 ${name}，尚未分配 Memory`), { code: "WASM_RESTORE_TOPOLOGY_NOT_READY", where: "wasm-worker.restore-package", context: { operation: "restore", missing: name } });
+    }
+  }
   return { module, diagnostics: diagnosticsWasm, glue: wasmModule as unknown as FacadeEngineGlue };
 }
 
@@ -287,12 +310,38 @@ ctx.addEventListener("message", (event) => {
       if (closingSession && message.type !== "shutdown") throw new Error("Worker 会话正在关闭，拒绝新请求");
       if (fatalSession && message.type !== "drop" && message.type !== "shutdown") throw new Error("Worker 会话已停止，必须重建有效会话");
       switch (message.type) {
-        case "init":
-          await engineInitializer.initialize(message);
+        case "init": {
+          if (initRequested) throw new Error("Worker init 只允许首次请求，禁止预加载期间重复初始化");
+          initRequested = true;
+          const { restoreCapability, ...initializerMessage } = message;
+          if (Object.hasOwn(message, "initialArchive")) {
+            const candidate = parseVerifiedRestoreCapability(restoreCapability, message.runtimeOverride);
+            // glue/source/manifest 身份由实际发布包 producer 核实；此处核对实际装载的 WASM 字节与两层导出。
+            verifiedRestoreModule = await loadEngineModule(structuredClone(candidate));
+            if (closingSession) throw new Error("package 验证完成时实例已经关闭");
+          } else if (restoreCapability !== undefined) throw new Error("新局不得携带初始 restore capability");
+          memoryInitializationStarted = true;
+          await engineInitializer.initialize(initializerMessage);
           ctx.postMessage({ type: "ready" });
           return;
+        }
+        case "restoreInitial": {
+          if (Object.keys(message).join(",") !== "type") throw new Error("restoreInitial 只能消费 initializer 保存的完整 X，禁止第二份 payload");
+          const configured = engineInitializer.requireConfigured();
+          if (configured.initialArchive === null) throw new Error("restoreInitial 需要唯一完整初始档");
+          slot.restoreInitial(configured.initialArchive);
+          const [, wasm] = slot.requireHandle();
+          const capabilities = readWasmCapabilities(wasm);
+          postIngressBridge();
+          ctx.postMessage({ type: "created", generation: slot.readGeneration(), capabilities: {
+            ...capabilities, npcDecisionDiagnostics: capabilities.npcDecisionDiagnostics && optionalNpcDecisionTrace(wasm) !== undefined,
+          } });
+          postBaseline();
+          return;
+        }
         case "create": {
           const configured = engineInitializer.requireConfigured();
+          if (configured.initialArchive !== null) throw new Error("初始完整 X 只能 restoreInitial，禁止先建空局");
           if (Object.hasOwn(message, "setup")) throw new Error("create 不接受第二份 setup；必须使用首次 init 保存的同份 setup");
           slot.create(configured.setup, message.seed);
           const [, wasm] = slot.requireHandle();
@@ -614,8 +663,9 @@ ctx.addEventListener("message", (event) => {
           throw new Error(`未知 Worker 消息：${message.type}`);
       }
     } catch (error) {
-      if (message.type === "init") {
+      if (message.type === "init" || message.type === "restoreInitial") {
         closingSession = true;
+        if (message.type === "init") engineInitializer.dispose();
         restoreRestart.invalidate(); loop.stop();
         // initializer 已拒绝且关闭；本入口之后禁止任何 WASM 调用。
       }
@@ -641,9 +691,9 @@ ctx.addEventListener("message", (event) => {
           try { slot.drop(); }
           catch (cleanupError) { failure = { ...failure, cause: { primary: failure.cause, cleanup: describeWasmFailure(cleanupError) } }; }
         }
-        postFailureDetails(`wasm-worker.${message.type}`, failure, message.type === "init");
+        postFailureDetails(`wasm-worker.${message.type}`, failure, message.type === "init" ? "initialization-failed" : message.type === "restoreInitial" ? "initial-session-failed" : false, message.type === "init" && !memoryInitializationStarted);
       } else if (typeof message.requestId === "number") respondOperationError(message, classified.description);
-      else postFailureDetails("wasm-worker.message", unstructuredFailureDetails(classified.description, "wasm-worker.message", classified.cause), message.type === "init");
+      else postFailureDetails("wasm-worker.message", unstructuredFailureDetails(classified.description, "wasm-worker.message", classified.cause), message.type === "init" ? "initialization-failed" : message.type === "restoreInitial" ? "initial-session-failed" : false, message.type === "init" && !memoryInitializationStarted);
     }
   })();
 });

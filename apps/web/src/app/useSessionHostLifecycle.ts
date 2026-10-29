@@ -1,3 +1,4 @@
+import { prepareDocumentWasmRestoreCapability } from "../host/wasm-restore-capability-source.ts";
 import { useEffect, type MutableRefObject } from "react";
 import { getDocumentWasmMemoryOwner, WasmDocumentMemoryError } from "../host/wasm-document-memory-owner.ts";
 import type { WasmDocumentMemoryOwner, WasmMemoryAdmissionTicket } from "../host/wasm-document-memory-owner.ts";
@@ -31,6 +32,7 @@ export interface SessionHostLifecyclePorts {
   hostRef: MutableRefObject<EngineHost | null>;
   hostTransitionRef: MutableRefObject<Promise<HostTransitionOutcome>>;
   wasmMemoryOwner?: WasmDocumentMemoryOwner;
+  prepareWasmRestoreCapability?(archive: StrictSaveEnvelope): Promise<void>;
   confirmMemoryHandover?(handover: WasmMemoryHandover, explicitIntent?: Exclude<WasmMemoryPendingIntent, null>): Promise<WasmMemoryPendingIntent>;
   confirmMemoryReloadRetry?(handover: WasmMemoryHandover & { kind: "frozen" }): Promise<boolean>;
   reloadAfterMemoryNotice?(degraded: boolean): Promise<void>;
@@ -236,6 +238,10 @@ export function createSessionHostLifecycle(ports: SessionHostLifecyclePorts) {
         return slot === null ? null : validateDayEndArchive(slot);
       }) : confirmedIntent.kind === "load" ? confirmedIntent.archive : null;
       if (cancelled) return;
+      if (startupTarget.kind === "wasm" && initialSlot !== null && ports.prepareWasmRestoreCapability !== undefined) {
+        await ports.prepareWasmRestoreCapability(initialSlot);
+        if (cancelled) return;
+      }
       let setup = initialSlot === null ? sessionSetup : initialSlot.setup;
       let seed = confirmedIntent?.kind === "new" ? BigInt(confirmedIntent.seed)
         : initialSlot === null ? (TRADING_E2E_MODE ? DEFAULT_SEED : createSeed()) : BigInt(initialSlot.seed);
@@ -415,7 +421,7 @@ export function createSessionHost(setup: SessionSetup, seed: bigint, startupTarg
   return createWorkerHost(setup, seed, options);
 }
 
-interface Options extends Omit<SessionHostLifecyclePorts, "createHost" | "checkWasmEnvironment" | "isDocumentHidden" | "hostTransitionRef" | "wasmMemoryOwner" | "confirmMemoryHandover" | "confirmMemoryReloadRetry" | "reloadAfterMemoryNotice"> {
+interface Options extends Omit<SessionHostLifecyclePorts, "createHost" | "checkWasmEnvironment" | "isDocumentHidden" | "hostTransitionRef" | "wasmMemoryOwner" | "prepareWasmRestoreCapability" | "confirmMemoryHandover" | "confirmMemoryReloadRetry" | "reloadAfterMemoryNotice"> {
   stopStartupRef: MutableRefObject<() => Promise<void>>;
   returningToStartupRef: MutableRefObject<boolean>;
   pausePreferencesReady: boolean;
@@ -430,6 +436,10 @@ export function useSessionHostLifecycle(options: Options): void {
     const lifecycle = createSessionHostLifecycle({ ...options,
       hostTransitionRef: documentOwner.hostTransitionRef,
       wasmMemoryOwner: startupTarget.kind === "wasm" ? documentOwner : undefined,
+      prepareWasmRestoreCapability: async () => {
+        const runtime = parseWasmRuntimeOptions(window.location.search);
+        await prepareDocumentWasmRestoreCapability(document, { runtimeOverride: runtime.runtimeOverride });
+      },
       confirmMemoryHandover: async (handover, explicitIntent) => {
         const intent = explicitIntent === undefined ? handover.kind === "frozen" ? handover.pendingIntent : null : explicitIntent;
         if (intent !== null) {

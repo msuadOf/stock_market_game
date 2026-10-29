@@ -770,3 +770,24 @@ test("释放清理相位仅内部ACK同宿主transport，取消UI不消费且相
   assert.equal(f.update()({ type: "baseline" } as HostUpdate), false, "清理相位结束后旧baseline不再ACK");
   assert.equal(f.update()({ type: "protocol" } as HostUpdate), false, "清理相位结束后旧protocol不再ACK");
 });
+
+test("正式 WASM 初始 X 在 metadata 准备完成之前不得 admit 或创建 Worker", { timeout: 10000 }, async () => {
+  let ready!: () => void;
+  const waiting = new Promise<void>((resolve) => { ready = resolve; });
+  const calls: string[] = [];
+  const owner = { pendingReloadRetry: () => undefined, pendingHandover: () => undefined, admit() { calls.push("admit"); throw new Error("fixture 已确认准入排序"); } } as unknown as NonNullable<SessionHostLifecyclePorts["wasmMemoryOwner"]>;
+  const f = fixture({ wasmMemoryOwner: owner, prepareWasmRestoreCapability: async (archive) => { assert.deepEqual(archive, expected); calls.push("prepare"); await waiting; }, createHost: async () => { calls.push("create"); throw new Error("不可创建"); } });
+  const expected = commandDayEndArchiveFixture(); f.source.select(expected);
+  const starting = f.runtime.start();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(calls, ["prepare"], "PREPARE_MUST_PRECEDE_ADMISSION_AND_CARRIER_CONSUME");
+  ready(); await starting;
+  assert.deepEqual(calls, ["prepare", "admit"]);
+});
+
+test("普通 WASM 新局不请求 restore metadata 或静默等待其网络", { timeout: 10000 }, async () => {
+  const f = fixture({ prepareWasmRestoreCapability: async () => { throw new Error("新局不可读取 restore metadata"); } });
+  await f.runtime.start();
+  assert.ok(f.calls.includes("create")); assert.ok(f.calls.includes("ready"));
+  await f.runtime.dispose();
+});

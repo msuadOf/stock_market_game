@@ -46,6 +46,7 @@ function shutdownErrorSnapshot(value: unknown, seen = new WeakSet<object>()): un
 export class WasmSessionSlot<TBindings extends WasmSessionBindings> {
   private handle: number | null = null;
   private generation = 0;
+  private initialRestoreAttempted = false;
   private readonly bindings: () => TBindings | null;
 
   constructor(bindings: () => TBindings | null) {
@@ -76,6 +77,18 @@ export class WasmSessionSlot<TBindings extends WasmSessionBindings> {
     // 保留重复 create 直接覆盖的现状，资源缺陷须另批修复。
     this.handle = wasm.create_session(setup, seed);
     this.generation += 1;
+  }
+
+  restoreInitial(parsedSlot: unknown): void {
+    if (this.initialRestoreAttempted || this.handle !== null || this.generation !== 0) throw new Error("restoreInitial 仅允许首次空槽调用一次，不能替换已有会话");
+    const wasm = this.bindings();
+    if (wasm === null) throw new Error("wasm 未初始化");
+    const encoded = JSON.stringify(parsedSlot);
+    this.initialRestoreAttempted = true;
+    const handle = wasm.restore_json(encoded);
+    if (!Number.isInteger(handle) || handle < 1 || handle > 0xffff_ffff) throw new Error("restore_json 返回非法 SessionHandle");
+    this.handle = handle;
+    this.generation = 1;
   }
 
   restore(parsedSlot: unknown, loopHooks: WasmRestoreLoopHooks): unknown {

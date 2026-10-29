@@ -2,6 +2,7 @@ import { catalogWorkerFixture } from "./catalog-test-fixture.ts";
 import assert from "node:assert/strict";
 import { registerHooks } from "node:module";
 import test from "node:test";
+import { commandDayEndArchiveFixture } from "../app/command-host-test-fixture.ts";
 import { currentSaveFixture } from "../save/current-save-fixture.ts";
 import { civilUpdate, frame, snapshot, tickBatch } from "./protocol-test-fixtures.ts";
 import { CAPACITY, GEN_BITS, FREE_HEAD, FREE_HEAD_EMPTY, HEADER_WORDS, SLOT_STRIDE, JOIN_STRIDE } from "./facade-slot-protocol.ts";
@@ -10,7 +11,7 @@ type Message = Record<string, unknown> & { type: string };
 let fixtureId = 0;
 const bindingsKey = Symbol.for("stock-game-wasm-owner-tests");
 
-async function withWorker(run: (fixture: Awaited<ReturnType<typeof createFixture>>) => Promise<void>, missingWrites: boolean | "malformed" = false) {
+async function withWorker(run: (fixture: Awaited<ReturnType<typeof createFixture>>) => Promise<void>, missingWrites: boolean | "malformed" | "initial-archive" = false) {
   const globals = new Map<PropertyKey, PropertyDescriptor | undefined>();
   const replace = (key: PropertyKey, value: unknown) => {
     globals.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
@@ -44,7 +45,7 @@ async function withWorker(run: (fixture: Awaited<ReturnType<typeof createFixture
 async function createFixture(
   replace: (key: PropertyKey, value: unknown) => void,
   register: (hooks: ReturnType<typeof registerHooks>) => void,
-  missingWrites: boolean | "malformed",
+  missingWrites: boolean | "malformed" | "initial-archive",
 ) {
   const posted: Message[] = [];
   let initialized: () => void = () => { throw new Error("初始化信号未安装"); };
@@ -57,12 +58,16 @@ async function createFixture(
   let failingPost: string | null = null;
   let writeFailure: unknown;
   let listener: ((event: { data: Message }) => void) | undefined;
-  const saved = currentSaveFixture();
+  const saved = missingWrites === "initial-archive" ? commandDayEndArchiveFixture() : currentSaveFixture();
   const layout = { baseAddr: 0, headerWords: HEADER_WORDS, slotStride: SLOT_STRIDE, joinStride: JOIN_STRIDE, capacity: 4, genBits: 29 };
   let sharedMemory!: WebAssembly.Memory;
   const bindings = {
     initSync: ({ memory }: { memory: WebAssembly.Memory }) => { sharedMemory = memory; return { memory, __wbindgen_thread_destroy() {} }; },
     facade_slot_init_for_setup: () => { const words = new Int32Array(sharedMemory.buffer); Atomics.store(words, CAPACITY, 4); Atomics.store(words, GEN_BITS, 29); Atomics.store(words, FREE_HEAD, FREE_HEAD_EMPTY | 0); },
+    facade_slot_init_for_restore_json: (encoded: string) => {
+      assert.deepEqual(JSON.parse(encoded), saved); calls.push("initial-topology");
+      const words = new Int32Array(sharedMemory.buffer); Atomics.store(words, CAPACITY, 4); Atomics.store(words, GEN_BITS, 29); Atomics.store(words, FREE_HEAD, FREE_HEAD_EMPTY | 0);
+    },
     facade_slot_layout: () => layout,
     ingress_token: (current: number) => current,
     create_session: () => { calls.push(`create:${handle}`); return handle; },
@@ -107,7 +112,12 @@ async function createFixture(
   };
   replace(bindingsKey, bindings);
   replace("self", { crossOriginIsolated: true, postMessage: (message: Message) => { if (message.type === failingPost) throw new DOMException("发送失败", "DataCloneError"); posted.push(message); if (message.type === "ready" || message.type === "failure") initialized(); }, addEventListener: (_type: string, callback: typeof listener) => { listener = callback; } });
-  replace("fetch", async () => ({ ok: true, arrayBuffer: async () => Uint8Array.from([0, 97, 115, 109, 1, 0, 0, 0]).buffer }));
+  const emptyModule = [0,97,115,109,1,0,0,0];
+  const exportNames = ["restore_json", "facade_slot_init_for_restore_json"];
+  const exportEntries = exportNames.flatMap((name, index) => [name.length, ...new TextEncoder().encode(name), 0, index]);
+  const wasmBytes = Uint8Array.from(missingWrites === "initial-archive" ? [...emptyModule, 1,4,1,96,0,0, 3,3,2,0,0, 7,exportEntries.length+1,2,...exportEntries, 10,7,2,2,0,11,2,0,11] : emptyModule);
+  const wasmHash = [...new Uint8Array(await crypto.subtle.digest("SHA-256", wasmBytes))].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  replace("fetch", async () => ({ ok: true, arrayBuffer: async () => wasmBytes.buffer }));
   replace("setTimeout", (callback: () => void) => { const id = ++nextTimer; timers.set(id, callback); return id; });
   replace("clearTimeout", (id: number) => { timers.delete(id); });
   const id = ++fixtureId;
@@ -123,7 +133,7 @@ async function createFixture(
     load(url, context, nextLoad) {
       if (url.startsWith("virtual:wasm-pkg:owner-")) {
         const exports = Object.keys(bindings)
-          .map((key) => missingWrites && ["propose_player_company_action", "enqueue_report_correction", "cancel_report_correction"].includes(key) ? `export const ${key} = ${missingWrites === "malformed" ? "17" : "undefined"};` : `export const ${key} = (...args) => bindings.${key}(...args);`).join("\n");
+          .map((key) => (missingWrites === true || missingWrites === "malformed") && ["propose_player_company_action", "enqueue_report_correction", "cancel_report_correction"].includes(key) ? `export const ${key} = ${missingWrites === "malformed" ? "17" : "undefined"};` : `export const ${key} = (...args) => bindings.${key}(...args);`).join("\n");
         return { shortCircuit: true, format: "module", source: `const bindings = globalThis[Symbol.for("stock-game-wasm-owner-tests")];\n${exports}` };
       }
       if (url.startsWith("virtual:owner-env:")) return { shortCircuit: true, format: "module", source: `import {createFacadeThreadBinding} from ${JSON.stringify(new URL("./facade-thread-binding.ts", import.meta.url).href)}; const binding=createFacadeThreadBinding({isWorker:()=>true}); export const {bindFacadeThreadEnvironment,installFacadeSlotLayout,getArenaView}=binding;` };
@@ -139,7 +149,7 @@ async function createFixture(
   assert.ok(listener);
   const send = (message: Message) => { listener!({ data: message }); };
   const control = new MessageChannel(); control.port1.addEventListener("message", (event) => { control.port1.postMessage(event.data.type === "facadeEngineMemory" ? { type: "facadeEngineMemoryRegistered", allocationId: 1 } : { type: "facadeEngineConfigured" }); }); control.port1.start();
-  send({ type: "init", setup: {}, controlPort: control.port2 });
+  send({ type: "init", ...(missingWrites === "initial-archive" ? { initialArchive: saved, restoreCapability: { kind: "verified-package", wasmSha256: wasmHash, glueSha256: "b".repeat(64), sourceSha256: "c".repeat(64), buildManifestSha256: "d".repeat(64), exports: exportNames } } : { setup: {} }), controlPort: control.port2 });
   await ready;
   assert.deepEqual(posted, [{ type: "ready" }]);
   posted.length = 0;
@@ -532,6 +542,22 @@ for (const outcome of ["success", "failure"] as const) {
     });
   });
 }
+
+test("生产 Worker 初始完整 X 先完成同源 topology，再一次 restoreInitial 而非空 create", { timeout: 10000 }, async () => {
+  await withWorker(async f => {
+    assert.equal(f.calls.filter((call) => call === "initial-topology").length, 1);
+    f.send({ type: "create", seed: 42n });
+    assert.equal(f.calls.some((call) => call.startsWith("create:")), false);
+    f.posted.length = 0;
+    f.send({ type: "restoreInitial" });
+    assert.equal(f.calls.filter((call) => call === "restore:7").length, 1);
+    assert.equal(f.posted.some((message) => message.type === "created" && message.generation === 1), true);
+    assert.equal(f.posted.some((message) => message.type === "baseline" && message.generation === 1), true);
+    f.send({ type: "restoreInitial" });
+    assert.equal(f.calls.filter((call) => call === "restore:7").length, 1);
+    f.send({ type: "shutdown", requestId: 911, generation: 1 });
+  }, "initial-archive");
+});
 
 
 import { parseWorkerFailure } from "./worker-host.ts";

@@ -65,7 +65,7 @@ export const setup = { stocks: [{ code: "000812" }] } as Parameters<typeof creat
 const capabilities = { npcDecisionDiagnostics: false, personalTradeHistory: false, indicatorCapabilities: { intradayAverage: false, macd: false, priceKdj: false, candleKdj: false } };
 
 /** 同时支持 pre-host init 与新 bootstrap；ready 只有新控制端真实 ACK 后才产生。 */
-export function fixture(options: { initError?: unknown; initAfterMemoryFailure?: unknown; engineConstructError?: unknown; channelError?: boolean; childConstructError?: unknown; spawnSink?: (failure: HostFailure) => void; beforeInitPost?: (clock: Clock) => void } = {}) {
+export function fixture(options: { initError?: unknown; initAfterMemoryFailure?: unknown; initBeforeMemoryFailure?: unknown; claimUnallocatedAfterMemory?: boolean; engineConstructError?: unknown; channelError?: boolean; childConstructError?: unknown; spawnSink?: (failure: HostFailure) => void; beforeInitPost?: (clock: Clock) => void } = {}) {
   const originals = new Map<string, PropertyDescriptor | undefined>();
   function install(name: string, value: unknown) {
     originals.set(name, Object.getOwnPropertyDescriptor(globalThis, name));
@@ -107,12 +107,16 @@ export function fixture(options: { initError?: unknown; initAfterMemoryFailure?:
       this.onPost = (value) => {
         if (value.type === "init") {
           options.beforeInitPost?.(clock);
+          if (options.initBeforeMemoryFailure !== undefined) {
+            this.emit({ type: "failure", generation: 0, code: "PACKAGE_FIXTURE", where: "fixture.package", message: String(options.initBeforeMemoryFailure), engineQuiescent: "initialization-failed", memoryAllocation: "not-allocated" });
+            return;
+          }
           if (options.initError !== undefined) throw options.initError;
           if (this.controlPort !== undefined) {
             this.controlPort.addEventListener("message", (event) => {
               if ((event.data as { type?: string }).type === "facadeEngineMemoryRegistered" && options.initAfterMemoryFailure !== undefined) {
                 memory.grow(1);
-                this.emit({ type: "failure", generation: 0, code: "INIT_FIXTURE", where: "fixture.init", message: String(options.initAfterMemoryFailure), engineQuiescent: "initialization-failed" });
+                this.emit({ type: "failure", generation: 0, code: "INIT_FIXTURE", where: "fixture.init", message: String(options.initAfterMemoryFailure), engineQuiescent: "initialization-failed", ...(options.claimUnallocatedAfterMemory === true ? { memoryAllocation: "not-allocated" } : {}) });
               }
               if ((event.data as { type?: string }).type === "facadeEngineConfigured") { configured++; this.emit({ type: "ready" }); }
             });
