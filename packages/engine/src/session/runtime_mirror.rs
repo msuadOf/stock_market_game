@@ -372,11 +372,11 @@ impl GameSession {
             if !self.state.retail_experience.contains_key(&id) {
                 continue;
             }
-            if !personals.contains_key(&id) {
+            if let std::collections::btree_map::Entry::Vacant(entry) = personals.entry(id) {
                 let value = driver
                     .cached_personal_at(global)
                     .ok_or_else(|| format!("首买经历 candidate 缺完整个人态：{id:?}"))?;
-                personals.insert(id, (global, value.clone()));
+                entry.insert((global, value.clone()));
             }
             let (_, value) = personals.get_mut(&id).expect("刚插入或已有个人 candidate");
             let ledger = value
@@ -409,10 +409,10 @@ impl GameSession {
                 })?;
         }
         for (global, id) in input.touched {
-            if !personals.contains_key(&id) {
+            if let std::collections::btree_map::Entry::Vacant(entry) = personals.entry(id) {
                 match driver.cached_personal_at(global) {
                     Some(value) => {
-                        personals.insert(id, (global, value.clone()));
+                        entry.insert((global, value.clone()));
                     }
                     None if self.runtime_has_belief_participant(id) => {
                         return Err(format!("个人裁剪 candidate 缺当前个人态：{id:?}"))
