@@ -839,11 +839,33 @@ pub fn facade_slot_init(capacity: u32) -> Result<(), JsValue> {
 fn facade_slot_capacity_for_topology(groups: usize, desks: usize) -> Result<u32, &'static str> {
     let groups = u32::try_from(groups).map_err(|_| "facade topology 的 G 超出 u32 范围")?;
     let desks = u32::try_from(desks).map_err(|_| "facade topology 的 N 超出 u32 范围")?;
-    groups
+    let capacity = groups
         .checked_add(desks)
         .and_then(|count| count.checked_add(2))
         .and_then(|count| count.checked_mul(2))
-        .ok_or("facade topology 容量计算超出 u32 范围")
+        .ok_or("facade topology 容量计算超出 u32 范围")?;
+    if capacity > engine::thread_facade::FACADE_SLOT_MAX_CAPACITY {
+        return Err("facade topology 容量超出既有 arena 的 2^20 slot 上限");
+    }
+    Ok(capacity)
+}
+
+#[cfg(any(target_family = "wasm", test))]
+#[derive(Debug)]
+enum RestoreFacadeInitError {
+    Decode(serde_json::Error),
+    Topology(SessionError),
+    Capacity(&'static str),
+}
+
+/// 按完整 SaveSlot JSON 校验构造前缀并计算 slot 容量；不分配 arena 或完成恢复。
+#[cfg(any(target_family = "wasm", test))]
+fn facade_slot_capacity_for_restore_json(save_json: &str) -> Result<u32, RestoreFacadeInitError> {
+    let save: SaveSlot = serde_json::from_str(save_json).map_err(RestoreFacadeInitError::Decode)?;
+    let (groups, desks) = save
+        .restore_runtime_topology()
+        .map_err(RestoreFacadeInitError::Topology)?;
+    facade_slot_capacity_for_topology(groups, desks).map_err(RestoreFacadeInitError::Capacity)
 }
 
 /// 仅按经过完整校验的默认 new setup 初始化 facade 槽；不创建 Session 或 World。
@@ -858,6 +880,21 @@ pub fn facade_slot_init_for_setup(setup: JsValue) -> Result<(), JsValue> {
     facade_slot_init(capacity)
 }
 
+/// 仅按完整存档的构造前缀初始化 slot；不创建或登记会话，成功不表示完整恢复成功。
+#[cfg(target_family = "wasm")]
+#[wasm_bindgen]
+pub fn facade_slot_init_for_restore_json(save_json: String) -> Result<(), JsValue> {
+    let capacity = facade_slot_capacity_for_restore_json(&save_json).map_err(|error| match error {
+        RestoreFacadeInitError::Decode(error) => JsValue::from_str(&error.to_string()),
+        RestoreFacadeInitError::Topology(error) => session_error_to_js(error),
+        RestoreFacadeInitError::Capacity(error) => JsValue::from_str(error),
+    })?;
+    facade_slot_init(capacity)
+}
+
+#[cfg(test)]
+mod facade_restore_json_tests;
+
 #[cfg(test)]
 mod facade_slot_capacity_tests {
     use super::facade_slot_capacity_for_topology;
@@ -867,6 +904,16 @@ mod facade_slot_capacity_tests {
         for (desks, expected) in [(1, 8), (3, 12)] {
             assert_eq!(facade_slot_capacity_for_topology(1, desks), Ok(expected));
         }
+    }
+
+    #[test]
+    fn facade_slot_capacity_accepts_existing_arena_maximum_without_allocating() {
+        assert_eq!(facade_slot_capacity_for_topology(1, 524_285), Ok(1 << 20));
+    }
+
+    #[test]
+    fn facade_slot_capacity_rejects_first_value_above_existing_arena_maximum() {
+        assert!(facade_slot_capacity_for_topology(1, 524_286).is_err());
     }
 
     #[test]

@@ -193,6 +193,8 @@ impl Accounts {
     }
 }
 
+use crate::thread_facade::FACADE_SLOT_MAX_CAPACITY as MAX_CAPACITY;
+
 /// 槽 arena（共享内存区；`Box<[AtomicU32]>` 连续，地址可导出给宿主视图）。
 pub struct SlotArena {
     capacity: u32,
@@ -210,7 +212,7 @@ impl SlotArena {
     /// 单线程期划拨（facade init；容量 2×(G+N+2)，gen_bits 默认 29）。
     /// 容量/位宽在划拨后冻结（头部字供宿主与诊断读取）。
     pub fn alloc(capacity: u32, gen_bits: u32) -> SlotArena {
-        if capacity == 0 || capacity > 1 << 20 {
+        if capacity == 0 || capacity > MAX_CAPACITY {
             panic!("arena 容量非法：{capacity}（须 1..=2^20）");
         }
         if !gen_bits_valid(gen_bits) {

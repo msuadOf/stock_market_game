@@ -168,6 +168,8 @@ mod day_boundary_kline_tests;
 #[cfg(test)]
 mod default_new_runtime_topology_tests;
 #[cfg(test)]
+mod restore_runtime_topology_tests;
+#[cfg(test)]
 mod envelope_projection_hydration_tests;
 #[cfg(test)]
 mod envelope_projection_tests;
@@ -682,6 +684,16 @@ pub struct SaveSlot {
 }
 
 impl SaveSlot {
+    /// 只执行恢复构造前校验并投影 G/N；成功不保证后续会话与日终恢复成功。
+    pub fn restore_runtime_topology(&self) -> Result<(usize, usize), SessionError> {
+        self.urgency_policy.validate().map_err(|_error| {
+            // fault1037：保留原 restore 前缀的错误与优先级。
+            SessionError::InvalidSave(ValidationFault::new(1037, vec![0]))
+        })?;
+        validate_save_slot(self)?;
+        Ok((DEFAULT_NEW_RUNTIME_GROUP_COUNT, self.setup.stocks.len()))
+    }
+
     /// 边界便捷：按代码查 id（目录由 setup 构造）。未知代码返回 None。
     pub fn stock_id(&self, code: &str) -> Option<StockId> {
         self.setup
@@ -1344,7 +1356,7 @@ pub struct SessionSetup {
     pub simulation_policy_id: String,
 }
 
-// 默认 new 的 NPC group 数与只读宿主装配共用；不控制显式 override 或 restore。
+// 默认 new 与经 new 构造的 restore 共用初始 NPC group 数；不控制显式 override。
 const DEFAULT_NEW_RUNTIME_GROUP_COUNT: usize = 1;
 
 impl SessionSetup {
@@ -4334,11 +4346,7 @@ impl GameSession {
         // T3 批四·staged 决策槽防串扰（同 new_with_compute）。
         #[cfg(test)]
         crate::session::pipeline::staged_decision::clear();
-        save.urgency_policy.validate().map_err(|_error| {
-            // fault1037: 存档 urgency_policy 校验失败。槽0 待 C 批数值化（原文本为内层校验错误文本）。
-            SessionError::InvalidSave(ValidationFault::new(1037, vec![0]))
-        })?;
-        validate_save_slot(save)?;
+        save.restore_runtime_topology()?;
         let mut sess = GameSession::new_with_compute(save.setup.clone(), save.seed, compute)?;
         sess.fresh_initial_allocation = false;
         // B3 远程登录：恢复成员关系并为快照中的成员账户补建 Player 账户
