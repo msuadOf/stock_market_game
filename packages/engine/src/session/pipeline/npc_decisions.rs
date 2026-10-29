@@ -39,6 +39,7 @@ pub(in crate::session) struct NpcDecisionAccountOutput {
     position_decision: Option<crate::behavior::PositionDecision>,
     execution_urgency: crate::plans::urgency::risk::RiskUrgencyAssessment,
     updates_working_quotes: bool,
+    #[cfg(test)]
     uses_parent_order_execution: bool,
 }
 
@@ -84,6 +85,7 @@ impl NpcDecisionAccountOutput {
         self.updates_working_quotes
     }
 
+    #[cfg(test)]
     pub(in crate::session) const fn uses_parent_order_execution(&self) -> bool {
         self.uses_parent_order_execution
     }
@@ -94,20 +96,24 @@ impl NpcDecisionAccountOutput {
 /// 不持有事件、router、订单簿、envelope 或会话句柄。
 #[derive(Clone, Debug)]
 pub(in crate::session) struct NpcDecisionSourceOutput {
+    #[cfg(test)]
     account_ids: Vec<AccountId>,
     accounts: Vec<NpcDecisionAccountOutput>,
     intents: Vec<NpcDecisionIntent>,
 }
 
 impl NpcDecisionSourceOutput {
+    #[cfg(test)]
     pub(in crate::session) fn accounts(&self) -> &[AccountId] {
         &self.account_ids
     }
 
+    #[cfg(test)]
     pub(in crate::session) fn intents(&self) -> &[NpcDecisionIntent] {
         &self.intents
     }
 
+    #[cfg(test)]
     pub(in crate::session) fn account_outputs(&self) -> &[NpcDecisionAccountOutput] {
         &self.accounts
     }
@@ -260,6 +266,8 @@ pub(in crate::session) fn decide_npc_account_from_shared(
         || !reviewed_stocks.is_empty()
         || strategy.updates_working_quotes_on_empty_decision();
     let uses_parent_order_execution = strategy.uses_parent_order_execution();
+    #[cfg(not(test))]
+    let _ = uses_parent_order_execution;
     let mut intents = Vec::with_capacity(local_intents.len());
     for (npc_local_index, intent) in local_intents.into_iter().enumerate() {
         let npc_local_index = u64::try_from(npc_local_index)
@@ -285,9 +293,11 @@ pub(in crate::session) fn decide_npc_account_from_shared(
         position_decision,
         execution_urgency,
         updates_working_quotes,
+        #[cfg(test)]
         uses_parent_order_execution,
     };
     Ok(NpcDecisionSourceOutput {
+        #[cfg(test)]
         account_ids: vec![account],
         accounts: vec![account_output],
         intents,
@@ -307,14 +317,14 @@ static DECIDE_POST_SEND_HOLD: std::sync::Mutex<Option<DecidePostSendHold>> =
 static DECIDE_PANIC_ACCOUNTS: std::sync::Mutex<std::collections::BTreeSet<AccountId>> =
     std::sync::Mutex::new(std::collections::BTreeSet::new());
 
-/// 安装 send 后 guard 前的 hold 钩子（仅测试/验证构建）。
-#[cfg(any(test, feature = "verification-harness"))]
+/// 安装 send 后 guard 前的 hold 钩子（仅单元测试）。
+#[cfg(test)]
 pub(in crate::session) fn set_decide_post_send_hold(hold: Option<DecidePostSendHold>) {
     *DECIDE_POST_SEND_HOLD.lock().expect("hold 钩子锁被 poison") = hold;
 }
 
-/// 配置 decide panic 注入账户集合（仅测试/验证构建）。
-#[cfg(any(test, feature = "verification-harness"))]
+/// 配置 decide panic 注入账户集合（仅单元测试）。
+#[cfg(test)]
 pub(in crate::session) fn set_decide_panic_accounts(accounts: &[AccountId]) {
     *DECIDE_PANIC_ACCOUNTS.lock().expect("panic 注入锁被 poison") =
         accounts.iter().copied().collect();
@@ -797,6 +807,7 @@ pub(in crate::session) fn run_npc_decisions(
         .map(NpcDecisionAccountOutput::account)
         .collect();
     Ok(NpcDecisionSourceOutput {
+        #[cfg(test)]
         account_ids,
         accounts,
         intents,

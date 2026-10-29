@@ -7,6 +7,7 @@ use super::DecisionAccountInput;
 #[cfg(test)]
 use super::DecisionSnapshot;
 use crate::behavior::BehaviorMarketObservation;
+#[cfg(test)]
 use crate::compute::parallel::*;
 use crate::observation::{
     build_account_risk_observation, build_equal_weight_market_observation, AccountRiskObservation,

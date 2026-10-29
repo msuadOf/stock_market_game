@@ -19,6 +19,7 @@ pub struct DecisionSnapshot {
     behavior_market: Option<BehaviorMarketObservation>,
     due_npc_ids: Vec<AccountId>,
     accounts: BTreeMap<AccountId, DecisionAccountInput>,
+    #[cfg(test)]
     urgency_policy: crate::plans::UrgencyPolicy,
 }
 
@@ -240,10 +241,12 @@ impl DecisionSnapshot {
             behavior_market,
             due_npc_ids,
             accounts,
+            #[cfg(test)]
             urgency_policy: crate::plans::UrgencyPolicy::default(),
         })
     }
 
+    #[cfg(test)]
     pub(super) fn with_urgency_policy(
         mut self,
         policy: crate::plans::UrgencyPolicy,
@@ -251,10 +254,6 @@ impl DecisionSnapshot {
         policy.validate()?;
         self.urgency_policy = policy;
         Ok(self)
-    }
-
-    pub(super) fn urgency_policy(&self) -> &crate::plans::UrgencyPolicy {
-        &self.urgency_policy
     }
 
     pub const fn tick(&self) -> u64 {
@@ -296,6 +295,7 @@ impl DecisionSnapshot {
     }
 
     /// 共享半边的只读借用视图（T1：与账户任务共享同一 decide 核心）。
+    #[cfg(test)]
     pub(in crate::session) fn shared_inputs(&self) -> DecisionSharedInputs<'_> {
         DecisionSharedInputs {
             tick: self.tick,

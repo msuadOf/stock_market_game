@@ -9,6 +9,8 @@ use super::decision_snapshot_capture::capture_decision_snapshot;
 #[cfg(test)]
 use super::decision_snapshot_capture::CapturedDecisionSnapshot;
 #[cfg(test)]
+use super::decision_snapshot_capture::DecisionSnapshotCaptureError;
+#[cfg(test)]
 use super::npc_decisions::run_npc_decisions;
 #[cfg(test)]
 use super::npc_decisions::{NpcDecisionSourceError, NpcDecisionSourceOutput};
@@ -23,8 +25,8 @@ use super::DecisionSnapshot;
 #[cfg(test)]
 use super::IntentCandidateError;
 use super::{
-    decision_snapshot_capture::DecisionSnapshotCaptureError, npc_decisions::NpcDecisionStreamError,
-    IntentCandidate, IntentCandidateBatch, IntentCandidateKey, StepFatal,
+    npc_decisions::NpcDecisionStreamError, IntentCandidate, IntentCandidateBatch,
+    IntentCandidateKey, StepFatal,
 };
 #[cfg(test)]
 use crate::compute::join;
@@ -945,23 +947,6 @@ pub(in crate::session) fn produce_decision_output(
     }
     let (view, mut writes) = super::npc_split::npc_split(session);
     produce_decision_output_on(&view, &mut writes)
-}
-
-/// T3 批四·测试适配器（cfg(test)）：旧直接操作 `pending_npc` 的 fixture 改经
-/// staged NpcDecisionHandover 槽（字段已删除；语义=排队→下一 step 消费）。
-#[cfg(test)]
-pub(in crate::session::pipeline) fn queue_npc_on_for_test(
-    view: &super::npc_split::SessionReadView<'_>,
-    writes: &mut super::npc_split::NpcWriteFields<'_>,
-) -> Result<(), StepFatal> {
-    if staged_decision::has_any() {
-        return Err(invariant(
-            "next-tick NPC queue still contains an unconsumed batch",
-        ));
-    }
-    let output = produce_decision_output_on(view, writes)?;
-    staged_decision::stage(output);
-    Ok(())
 }
 
 /// P0 重叠恢复入口（plan_tick 专用）：与只读快速路径准备共用同一 npc_split

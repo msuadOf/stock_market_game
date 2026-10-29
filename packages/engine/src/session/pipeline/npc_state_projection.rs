@@ -6,6 +6,7 @@
 
 #[cfg(test)]
 use super::decision_snapshot_capture::CapturedDecisionSnapshot;
+#[cfg(test)]
 use super::npc_decisions::{NpcDecisionSourceOutput, NpcStrategyUpdate};
 use super::IntentCandidateKey;
 use crate::session::execution::reconcile_plan::WorkingOrderDecision;
