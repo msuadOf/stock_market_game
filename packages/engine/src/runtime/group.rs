@@ -7865,6 +7865,21 @@ mod sol_recheck3_tests {
             .expect("fixture 构造静点安装公司事实");
         state.cur_tick = 1;
         state.cur_round = 0;
+        let civil_date = crate::CivilDate::from_iso("2026-01-05").unwrap();
+        state.snapshot = Some(Arc::new(TickSnapshot {
+            calendar: crate::runtime::calendar_test_support::open_tick(
+                state.cur_tick,
+                state.ticks_per_day,
+                state.auction_ticks,
+                state.closing_auction_ticks,
+                1,
+                civil_date,
+            ),
+            tick: state.cur_tick,
+            market_minute: 0,
+            civil_date,
+            stocks: Arc::new(Vec::new()),
+        }));
         let account = crate::AccountId(9);
         let code = crate::StockId(0);
         let order_id = order_id_of(&(0, 5));
