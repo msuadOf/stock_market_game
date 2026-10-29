@@ -32,6 +32,8 @@ pub(crate) mod admin_tax_projection;
 mod entities;
 mod facts;
 mod protocol;
+#[cfg(test)]
+pub(crate) use protocol::LifecycleKind;
 pub(crate) use protocol::{RepurchasePreparePayload, RepurchaseProjectionInput, RuntimeError};
 mod information_clock_context;
 pub use information_clock_context::InformationClockContext;

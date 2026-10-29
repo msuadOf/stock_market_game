@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::diagnostics::causal::Termination;
-use crate::runtime::protocol::LifecycleKind;
+use crate::runtime::LifecycleKind;
 
 const BUYER: AccountId = AccountId(0);
 const SELLER: AccountId = AccountId(2);
