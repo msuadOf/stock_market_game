@@ -15,6 +15,17 @@ const api = async () => {
   return implementation;
 };
 
+// 最小有效 release WASM：带正式时间门要求的唯一时钟 import 与原子指令。
+function releaseWasmFixture() {
+  const section = (id, payload) => [id, payload.length, ...payload];
+  const name = (value) => [value.length, ...Buffer.from(value)];
+  const type = [0x01, 0x08, 0x02, 0x60, 0x00, 0x00, 0x60, 0x00, 0x01, 0x7c];
+  const imports = section(0x02, [0x01, ...name("env"), ...name("engine_clock_now"), 0x00, 0x01]);
+  const functions = section(0x03, [0x01, 0x00]);
+  const code = section(0x0a, [0x01, 0x05, 0x00, 0xfe, 0x03, 0x00, 0x0b]);
+  return Buffer.from([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, ...type, ...imports, ...functions, ...code]);
+}
+
 test("parser requires an explicit target and rejects ambiguous or unsafe options", async () => {
   const { parseBuildArgs } = await api();
   assert.equal(parseBuildArgs([]).help, true);
@@ -37,32 +48,55 @@ test("parser requires an explicit target and rejects ambiguous or unsafe options
 test("pure Server plan uses only locked Cargo release and independent executable output", async () => {
   const { createBuildPlan, parseBuildArgs } = await api();
   for (const host of ["linux", "windows", "macos"]) {
-    const plan = createBuildPlan(parseBuildArgs(["server", "--jobs", "4"]), { root: repository, host, buildId: "fixture" });
+    const planRoot = path.join(tmpdir(), "server-plan-fixture");
+    const plan = createBuildPlan(parseBuildArgs(["server", "--jobs", "4"]), { root: planRoot, host, buildId: "fixture" });
     assert.equal(plan.commands.length, 2);
-    assert.equal(plan.commands[0].command, "rustc");
-    assert.deepEqual(plan.commands[0].args, ["-vV"]);
-    assert.equal(plan.commands[1].command, "cargo");
-    assert.deepEqual(plan.commands[1].args, ["build", "--locked", "--release", "-p", "server", "--bin", "server", "--jobs", "4", "--target", "<rustc-host>"]);
-    assert.doesNotMatch(JSON.stringify(plan.commands), /pnpm|wasm|tauri|web-ui/);
+    assert.deepEqual(plan.commands.map(({ command, args, cwd }) => ({ command, args, cwd })), [
+      { command: "rustc", args: ["-vV"], cwd: planRoot },
+      { command: "cargo", args: ["build", "--locked", "--release", "-p", "server", "--bin", "server", "--jobs", "4", "--target", "<rustc-host>"], cwd: planRoot },
+    ]);
     assert.deepEqual(plan.artifact.files, [host === "windows" ? "server.exe" : "server", "LICENSE"]);
-    assert.match(plan.artifact.directory, /build-artifacts[/\\]server$/);
+    assert.equal(plan.artifact.directory, path.join(planRoot, "target/build-artifacts/server"));
     assert.deepEqual(plan.artifact.startArgs, ["--services", "server"]);
+    const pathWithBuildKeywords = createBuildPlan(parseBuildArgs(["server", "--jobs", "4"]), {
+      root: path.join(tmpdir(), "wasm-tauri-web-ui-pnpm"), host, buildId: "fixture",
+    });
+    assert.deepEqual(pathWithBuildKeywords.commands.map(({ command, args }) => ({ command, args })), plan.commands.map(({ command, args }) => ({ command, args })));
   }
 });
 
 test("Web plans compile real TypeScript, shared WASM and Rust web-ui, without fixed host mode", async () => {
   const { createBuildPlan, parseBuildArgs } = await api();
   for (const target of ["webui", "webui-server"]) {
-    const plan = createBuildPlan(parseBuildArgs([target, "--jobs", "4"]), { root: repository, host: "linux", buildId: "fixture" });
-    const serialized = JSON.stringify(plan);
-    assert.match(serialized, /--frozen-lockfile/);
-    assert.match(serialized, /tsc/);
-    assert.match(serialized, /--build/);
-    assert.match(serialized, /wasm-pack/);
+    const planRoot = path.join(tmpdir(), ".tmp", "wasm-web-plan-fixture");
+    const plan = createBuildPlan(parseBuildArgs([target, "--jobs", "4"]), { root: planRoot, host: "linux", buildId: "fixture" });
+    const commandArgs = plan.commands.map(({ command, args }) => `${command} ${args.join(" ")}`).join("\n");
+    const assertPlanPathsAndEnvironment = (candidate) => {
+      assert.ok(candidate.commands.every(({ env }) => env.VITE_HOST === undefined), "build commands must not force a fixed Vite host");
+      assert.equal(candidate.work, path.join(candidate.root, "target/build-work", `${target}-fixture`));
+      assert.equal(candidate.frontend, path.join(candidate.work, "web"));
+      assert.equal(candidate.frontendDist, path.join(candidate.frontend, "dist"));
+      assert.equal(candidate.wasmPackage, path.join(candidate.root, "apps/web-wasm/wasm-pack-output/fixture/wasm/pkg"));
+      assert.equal(candidate.wasmRoot, path.join(candidate.root, "apps/web-wasm/wasm-pack-output/fixture"));
+      assert.equal(candidate.cargoDirectory, path.join(candidate.root, "target/build-cache", target));
+      assert.equal(candidate.artifact.directory, path.join(candidate.root, "target/build-artifacts", target));
+    };
+    assertPlanPathsAndEnvironment(plan);
+    const fixedHostPlan = structuredClone(plan);
+    fixedHostPlan.commands[0].env.VITE_HOST = "local";
+    assert.throws(() => assertPlanPathsAndEnvironment(fixedHostPlan), /fixed Vite host/);
+    const misplacedArtifactPlan = structuredClone(plan);
+    misplacedArtifactPlan.artifact.directory = path.join(plan.root, ".tmp", target);
+    assert.throws(() => assertPlanPathsAndEnvironment(misplacedArtifactPlan), /build-artifacts/);
+    assert.ok(plan.commands.some(({ command, args }) => command === "corepack" && args.includes("--frozen-lockfile")));
+    assert.ok(plan.commands.some(({ command, args }) => command.endsWith("tsc") || args.some((argument) => /typescript[/\\]bin[/\\]tsc$/.test(argument))));
+    assert.ok(plan.commands.some(({ args }) => args.includes("--build")));
+    assert.ok(plan.commands.some(({ command }) => command === "wasm-pack"));
     // 批 9 A10 收尾：check-wasm-threading 断言随脚本退役。
-    assert.match(serialized, /check-web-release-wasm/);
-    assert.match(serialized, /web-ui/);
-    assert.doesNotMatch(serialized, /VITE_HOST|vite preview|regression|\.tmp/);
+    assert.ok(plan.commands.some(({ command, args }) => command.endsWith("node") && args.some((argument) => argument.endsWith("check-web-release-wasm.mjs"))));
+    assert.ok(plan.commands.some(({ command, args }) => command === "cargo" && args.includes("web-ui")));
+    assert.doesNotMatch(commandArgs, /VITE_HOST|vite preview|regression/);
+    assert.equal(plan.root, planRoot);
     const wasm = plan.commands.find(({ command }) => command === "wasm-pack");
     assert.match(wasm.args[wasm.args.indexOf("--out-dir") + 1], /apps[/\\]web-wasm[/\\]wasm-pack-output[/\\]fixture[/\\]wasm[/\\]pkg$/);
     assert.equal(wasm.env.CARGO_BUILD_JOBS, "4");
@@ -434,7 +468,7 @@ test("prebuilt UI is checked before native compilation and stale cached bundles 
       return "host: x86_64-pc-windows-msvc\n";
     };
     await assert.rejects(executeBuild(options, { root, host: "windows", buildId: "invalid", commandRunner: probeOnly }), /WASM/);
-    await writeFile(path.join(frontend, "web_wasm_bg.wasm"), Buffer.from([0, 97, 115, 109, 1, 0, 0, 0]));
+    await writeFile(path.join(frontend, "web_wasm_bg.wasm"), releaseWasmFixture());
     await mkdir(bundle, { recursive: true });
     await writeFile(path.join(bundle, "stale.msi"), "stale");
     await executeBuild(options, { root, host: "windows", buildId: "fresh", commandRunner: async (command) => {
@@ -497,7 +531,7 @@ test("desktop compile-only warms the exact Tauri library feature graph before bi
     const frontend = path.join(root, "target/frontend");
     await mkdir(frontend, { recursive: true });
     await writeFile(path.join(frontend, "index.html"), "entry");
-    await writeFile(path.join(frontend, "web_wasm_bg.wasm"), Buffer.from([0, 97, 115, 109, 1, 0, 0, 0]));
+    await writeFile(path.join(frontend, "web_wasm_bg.wasm"), releaseWasmFixture());
     const options = parseBuildArgs(["desktop", "--frontend-dist", "target/frontend", "--compile-only", "--jobs", "4"]);
     const plan = createBuildPlan(options, { root, host: "linux", buildId: "only" });
     const native = plan.commands.at(-1);
