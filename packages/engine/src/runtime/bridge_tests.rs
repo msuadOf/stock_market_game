@@ -383,14 +383,23 @@ fn runtime_driver_steps_session_with_account_writeback_and_events() {
     let mut total_events = 0usize;
     let mut last_seq: Option<u64> = None;
     for tick in 1..=20 {
-        let events = driver.step(&mut session).expect("驱动 tick");
+        let phase_before = session.phase();
+        let events = driver
+            .step_frame_equivalent(&mut session)
+            .expect("production runtime tick");
         assert_eq!(session.tick(), tick);
+        let price_ticks = events
+            .iter()
+            .filter(|event| matches!(event, crate::Event::PriceTick { .. }))
+            .count();
         assert_eq!(
-            events
-                .iter()
-                .filter(|event| matches!(event, crate::Event::PriceTick { .. }))
-                .count(),
-            session.stock_count_for_runtime()
+            price_ticks,
+            if phase_before == crate::TradingPhase::Continuous {
+                session.stock_count_for_runtime()
+            } else {
+                0
+            },
+            "仅步进前处于连续竞价相位时产生每股 PriceTick（tick={tick}，phase={phase_before:?}）"
         );
         for e in &events {
             let seq = match e {
@@ -504,23 +513,57 @@ fn driver_day_end_advances_runtime_and_civil_together() {
     // ticks_per_day=240：驱动 240 tick（一个交易日）→ day_end：
     // runtime 日结（组日翻转/清簿）+ 会话自然日推进（civil clock 前进）。
     let mut session = crate::GameSession::new(setup_fixture(), 11).expect("会话构造");
-    let day_before = session.day();
     let mut driver = RuntimeDriver::from_session(&mut session).expect("驱动器构造");
     for _ in 0..240 {
         driver.step(&mut session).expect("驱动 tick");
     }
-    let world_day = driver.world_global_day();
-    // 纵切已知边界（登记）：会话市场侧 day 由旧管线 step_frame 推进；纵切
-    // 驱动不跑旧管线 ⇒ session.day 停留 ⇒ end_civil_day 显式拒绝
-    // （MarketSessionOutOfSync——防御正确）。编排 API 形状验证：
+    assert_eq!(driver.world_global_day(), 0, "显式日终前 World 仍在当日");
+    assert_eq!(session.day(), 0, "直接 step 未安装 Session 日界进度");
+
+    // day_end(false) 保留同步拒绝：World 收盘后，Session 尚未提交该交易日，
+    // 因此自然日不能推进；此路径必须留下可辨识 fatal 并终止该 Session。
     let err = driver
         .day_end(&mut session)
-        .expect_err("纵切下自然日推进须显式拒绝");
+        .expect_err("缺少 Session 日界进度时必须拒绝自然日推进");
     assert!(
-        err.contains("MarketSessionOutOfSync"),
-        "应为时钟同步拒绝：{err}"
+        err.contains("market sessions out of sync"),
+        "须保留 Session market day 同步错误：{err}"
     );
-    // runtime 侧日结已成功（run_day_end_public 在会话拒绝前完成）。
-    assert!(world_day <= session.day() + 1);
-    let _ = day_before;
+    assert!(
+        matches!(
+            session.poison_reason(),
+            Some(crate::session::StepFatal::InvariantViolation { location, description })
+                if location == "RuntimeDriver::day_end::civil"
+                    && description.contains("market sessions out of sync")
+        ),
+        "同步失败必须保留 typed fatal 并终止 Session：{:?}",
+        session.poison_reason()
+    );
+
+    // 独立正控走 production frame 安装完整 240 tick，再显式推进 runtime
+    // market day 与 Session 日界；convergence::prepare_day_end_input 以同一
+    // candidate 安装 market_day=day+1 后才调用 end_civil_day。
+    let mut success_session = crate::GameSession::new(setup_fixture(), 11).expect("正控会话构造");
+    let civil_before = success_session.civil_date();
+    let mut success_driver =
+        RuntimeDriver::from_session(&mut success_session).expect("正控驱动器构造");
+    for _ in 0..240 {
+        success_driver
+            .step_frame_equivalent(&mut success_session)
+            .expect("production runtime tick");
+    }
+    success_driver
+        .day_end_with_runtime_market_day(&mut success_session)
+        .expect("已安装 market day 后日终成功");
+    assert_eq!(
+        success_driver.world_global_day(),
+        1,
+        "runtime 日终推进一个交易日"
+    );
+    assert_eq!(success_session.day(), 1, "Session 安装同一交易日进度");
+    assert_eq!(
+        success_session.civil_date(),
+        civil_before.next().expect("下一自然日合法"),
+        "日终推进一个自然日"
+    );
 }

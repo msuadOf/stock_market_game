@@ -263,16 +263,11 @@ fn seq_channel_unifies_runtime_cursor_with_session_authority() {
 #[test]
 fn market_views_install_into_session_markets() {
     use super::drive::RuntimeDriver;
-    // f-7 修复（断言强度批）：原测试唯一断言 `view.last_price > 0`，
-    // snap/probe/installed 全是弃置的死脚手架——"会话每股 last_price
-    // 与 runtime 收束点一致"从未被断言。且原 fixture（arrival=0.0）
-    // 价格恒为初始 1000，即使逐股比对也无法证明安装通道写了真实值。
-    // 现改为注入交叉对手单（@1001）驱动成交：
-    // - 成交前（未安装）：会话侧市场价保持初始 1000（step 不装行情）；
-    // - install 后：desk 权威 last=1001 必须逐股写入会话市场快照。
+    // 通过交叉对手单（@1001）生成非初始行情，核对生产 runtime 同拍投影，
+    // 并再次调用显式安装入口验证其与 World 收束视图一致。
     // 手算 oracle：清算价=1001（双边同价申报）、成交量=100。
-    // （fixture 沿用本文件 equiv_setup：arrival=0.0——NPC 不产单，
-    // 成交面完全由注入对承载，oracle 唯一确定。）
+    // fixture 沿用 equiv_setup：arrival=0.0，成交面完全由注入对承载，
+    // oracle 唯一确定。
     let mut session = GameSession::new(equiv_setup(), 199).expect("会话构造");
     let mut driver = RuntimeDriver::from_session(&mut session).expect("驱动器");
     driver.adopt_session_seq(&session);
@@ -319,15 +314,8 @@ fn market_views_install_into_session_markets() {
             .any(|e| matches!(e, crate::Event::Trade { .. }));
     }
     assert!(traded, "注入对必须成交（否则安装断言无移动价可证）");
-    // 成交后、安装前：会话市场价仍在初始 1000（行情安装是独立通道）。
-    let before = &session.snapshot().markets[&crate::StockId(0)];
-    assert_eq!(
-        before.last_price.cents(),
-        1_000,
-        "未安装时会话市场价保持初始值（step 不写行情——安装职责分离）"
-    );
-    // 安装后：desk 权威收束点（清算价 1001）逐股写入会话市场。
-    driver.install_market_views(&mut session).expect("行情安装");
+    // production step 返回时已安装当拍 candidate；移动价必须立即可见，
+    // 这同时覆盖同拍成交投影与 market 镜像提交。
     let views = driver.world_public_views().to_vec();
     for (idx, view) in views.iter().enumerate() {
         assert_eq!(
@@ -338,10 +326,32 @@ fn market_views_install_into_session_markets() {
         assert_eq!(
             installed.last_price.cents(),
             view.last_price,
-            "会话市场 last_price 必须与 runtime 收束点逐股一致（安装通道）"
+            "production step 必须将当拍 market last_price 逐股安装到 Session"
         );
     }
-    // 通道有效性：安装后续跑一步不失败。
+    // 注入受控的过期会话行情，单独验证显式安装入口确实从 World 收束点
+    // 恢复真实价格；生产 step 的同拍安装已在上方独立验证。
+    session
+        .market_mut_for_runtime(&crate::StockId(0))
+        .expect("会话市场存在")
+        .restore_prices(Money::from_cents(1_000), Money::from_cents(1_000));
+    assert_eq!(
+        session.snapshot().markets[&crate::StockId(0)]
+            .last_price
+            .cents(),
+        1_000,
+        "显式构造的过期市场镜像"
+    );
+    driver
+        .install_market_views(&mut session)
+        .expect("显式行情安装");
+    assert_eq!(
+        session.snapshot().markets[&crate::StockId(0)]
+            .last_price
+            .cents(),
+        1_001,
+        "显式安装恢复 desk 收束价"
+    );
     driver
         .step_frame_equivalent(&mut session)
         .expect("安装后续跑");
