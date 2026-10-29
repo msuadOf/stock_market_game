@@ -36,7 +36,7 @@ pub struct ShutdownCompletion {
 pub struct ShutdownFailure {
     pub primary: ShutdownIssue,
     pub secondary: Vec<ShutdownIssue>,
-    pub completion: Option<ShutdownCompletion>,
+    pub completion: Option<Box<ShutdownCompletion>>,
 }
 
 impl World {
@@ -52,7 +52,7 @@ impl World {
                     detail: reason,
                 },
                 secondary,
-                completion: Some(completion),
+                completion: Some(Box::new(completion)),
             });
         }
         let mut stage = "shutdown_state";
@@ -67,7 +67,7 @@ impl World {
                 Err(ShutdownFailure {
                     primary,
                     secondary,
-                    completion: Some(completion),
+                    completion: Some(Box::new(completion)),
                 })
             }
         }
@@ -167,7 +167,7 @@ fn complete_shutdown_report(
         Err(ShutdownFailure {
             primary,
             secondary: issues,
-            completion: Some(completion),
+            completion: Some(Box::new(completion)),
         })
     }
 }

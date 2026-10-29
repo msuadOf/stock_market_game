@@ -29,7 +29,7 @@ pub(super) fn command_issue(issue: PlayerCompanyCommandIssue) -> CompanyErrorCla
 
 pub(super) fn player(error: &PlayerCommandError) -> CompanyErrorClass {
     use PlayerCommandCause::*;
-    match &error.cause {
+    match error.cause.as_ref() {
         Validation(issue) => match issue {
             PlayerCommandIssue::UnknownIssuer
             | PlayerCommandIssue::NotListed
@@ -92,7 +92,7 @@ fn cash(error: &crate::company::cash_dividend::CashDividendError) -> CompanyErro
 }
 
 fn cash_approval(error: &CompanyCommandError) -> CompanyErrorClass {
-    match &error.cause {
+    match error.cause.as_ref() {
         CompanyCommandCause::Company(error) => error.classification(),
         CompanyCommandCause::Plan(error) => cash(error),
         CompanyCommandCause::Validation(issue) => match issue {
@@ -118,7 +118,7 @@ fn cash_approval(error: &CompanyCommandError) -> CompanyErrorClass {
 }
 
 fn stock_approval(error: &StockDistributionApprovalError) -> CompanyErrorClass {
-    match &error.cause {
+    match error.cause.as_ref() {
         StockDistributionApprovalCause::Company(error) => error.classification(),
         StockDistributionApprovalCause::CapitalTransition(error) => capital(error),
         StockDistributionApprovalCause::Validation(issue) => match issue {

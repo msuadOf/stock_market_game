@@ -71,15 +71,33 @@ pub(crate) enum StockDistributionApprovalCause {
     Accounting(#[from] AccountingError),
 }
 
-#[derive(Debug, thiserror::Error)]
-#[error("送转候选失败：公司 {company}，证券 {stock:?}，事件 {event_id}，日期 {day}：{cause}")]
+#[derive(Debug)]
 pub(crate) struct StockDistributionApprovalError {
     pub company: CompanyId,
     pub stock: StockCode,
     pub event_id: String,
     pub day: CivilDate,
-    #[source]
-    pub cause: StockDistributionApprovalCause,
+    pub cause: Box<StockDistributionApprovalCause>,
+}
+
+impl std::fmt::Display for StockDistributionApprovalError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "送转候选失败：公司 {company}，证券 {stock:?}，事件 {event_id}，日期 {day}：{cause}",
+            company = self.company,
+            stock = self.stock,
+            event_id = self.event_id,
+            day = self.day,
+            cause = self.cause
+        )
+    }
+}
+
+impl std::error::Error for StockDistributionApprovalError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(self.cause.as_ref())
+    }
 }
 
 pub(crate) fn prepare_stock_distribution_approval(
@@ -90,7 +108,7 @@ pub(crate) fn prepare_stock_distribution_approval(
         stock: input.plan.stock.clone(),
         event_id: input.plan.event_id.clone(),
         day: input.day,
-        cause,
+        cause: Box::new(cause),
     };
     let invalid = |issue| fail(StockDistributionApprovalCause::Validation(issue));
     if input.capital.company() != input.plan.issuer

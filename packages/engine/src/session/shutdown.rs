@@ -47,7 +47,7 @@ impl GameSession {
                     Err(failure) => {
                         issues.push(failure.primary);
                         issues.extend(failure.secondary);
-                        completion = failure.completion;
+                        completion = failure.completion.map(|report| *report);
                     }
                 }
             } else {
@@ -65,7 +65,7 @@ impl GameSession {
             Err(ShutdownFailure {
                 primary,
                 secondary: issues,
-                completion,
+                completion: completion.map(Box::new),
             })
         }
     }

@@ -276,7 +276,7 @@ fn zero_profit_with_nonpositive_average_equity_is_unavailable() {
 
     assert_eq!(
         calculate_disclosure_roe(&input).unwrap(),
-        DisclosureRoeOutcome::Available(DisclosureRoeResult {
+        DisclosureRoeOutcome::Available(Box::new(DisclosureRoeResult {
             ordinary_roe: DisclosureRoeValue::Unavailable(
                 DisclosureRoeUnavailable::NonPositiveAverageEquity
             ),
@@ -285,7 +285,7 @@ fn zero_profit_with_nonpositive_average_equity_is_unavailable() {
             ),
             weighted_average_parent_equity_cents: ratio(-2_400_000, 24),
             adjusted_weighted_average_parent_equity_cents: ratio(-2_400_000, 24),
-        })
+        }))
     );
 }
 
@@ -319,7 +319,7 @@ fn positive_profit_with_nonpositive_average_equity_is_unavailable() {
 
     assert_eq!(
         calculate_disclosure_roe(&input).unwrap(),
-        DisclosureRoeOutcome::Available(DisclosureRoeResult {
+        DisclosureRoeOutcome::Available(Box::new(DisclosureRoeResult {
             ordinary_roe: DisclosureRoeValue::Unavailable(
                 DisclosureRoeUnavailable::NonPositiveAverageEquity
             ),
@@ -328,7 +328,7 @@ fn positive_profit_with_nonpositive_average_equity_is_unavailable() {
             ),
             weighted_average_parent_equity_cents: ratio(-4_512_000, 24),
             adjusted_weighted_average_parent_equity_cents: ratio(-4_512_000, 24),
-        })
+        }))
     );
 }
 
@@ -439,4 +439,31 @@ fn arithmetic_keeps_i128_sized_facts_exact_without_intermediate_overflow() {
         result.ordinary_roe,
         DisclosureRoeValue::Available(ratio_big(&maximum * 24, &maximum * 36)),
     );
+}
+
+#[test]
+fn outcome_payload_preserves_value_semantics_and_stays_within_inline_budget() {
+    let input = report(full_year());
+    let outcome = calculate_disclosure_roe(&input).unwrap();
+    let DisclosureRoeOutcome::Available(result) = &outcome else {
+        panic!("正平均权益应有可用披露 ROE")
+    };
+    assert_eq!(
+        result.ordinary_roe,
+        DisclosureRoeValue::Available(ratio(576_000, 2_688_000))
+    );
+    assert_eq!(
+        result.adjusted_roe,
+        DisclosureRoeValue::Available(ratio(288_000, 2_688_000))
+    );
+    assert_eq!(
+        result.weighted_average_parent_equity_cents,
+        ratio(2_688_000, 24)
+    );
+    assert_eq!(
+        result.adjusted_weighted_average_parent_equity_cents,
+        ratio(2_688_000, 24)
+    );
+    assert_eq!(outcome.clone(), outcome);
+    assert!(std::mem::size_of::<DisclosureRoeOutcome>() <= 128);
 }

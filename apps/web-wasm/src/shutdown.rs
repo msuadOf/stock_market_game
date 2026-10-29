@@ -55,7 +55,7 @@ impl SessionRegistry {
             (Some(primary), Ok(report)) => Err(ShutdownFailure {
                 primary,
                 secondary: Vec::new(),
-                completion: report.runtime,
+                completion: report.runtime.map(Box::new),
             }),
             (Some(primary), Err(failure)) => {
                 let mut secondary = vec![failure.primary];

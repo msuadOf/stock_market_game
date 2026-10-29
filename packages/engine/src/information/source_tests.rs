@@ -505,3 +505,55 @@ fn simple_monthly_disclosure_obeys_public_time_and_repeated_scans_are_idempotent
     .is_err());
     assert_eq!(library.save().reports, saved.reports);
 }
+
+#[test]
+fn public_report_availability_preserves_complete_report_wire_and_inline_budget() {
+    use crate::company::{PublicReportAvailability, PublicReportUnavailableReason};
+
+    let unavailable = PublicReportAvailability::Unavailable {
+        reason: PublicReportUnavailableReason::NotYetPublished,
+    };
+    assert_eq!(
+        serde_json::to_value(&unavailable).unwrap(),
+        serde_json::json!({"status": "Unavailable", "reason": "NotYetPublished"})
+    );
+
+    let system = simple_model(1);
+    let query = monthly_availability_query();
+    let day = CivilDate::from_iso("2030-01-01").unwrap();
+    let published = CivilInstant::from_hms(day, 18, 0, 0).unwrap();
+    let frequency = ReportFrequency::Monthly {
+        schedule: MonthlyReportSchedule::Preset {
+            preset: MonthlyReportPreset::FirstDayEvening,
+            delay: MonthlyReportDelay::None,
+        },
+    };
+    let mut library = PublicLibrary::new();
+    let ids =
+        publish_simple_scheduled(&system, frequency, 17, None, published, &mut library, false)
+            .unwrap();
+    let original = library.report(ids[0], published).unwrap();
+    let report_wire =
+        serde_json::to_value(crate::company::PublicReportSummary::from(original)).unwrap();
+    let availability = library
+        .query_report_availability(&system, &query, frequency, published)
+        .unwrap();
+    let PublicReportAvailability::Available { report } = &availability else {
+        panic!("已公开同期间材料应可查询")
+    };
+    assert_eq!(report.period, query.period_end);
+    let encoded = serde_json::to_value(&availability).unwrap();
+    assert_eq!(encoded["status"], "Available");
+    assert_eq!(
+        encoded,
+        serde_json::json!({"status": "Available", "report": report_wire})
+    );
+    assert!(encoded["report"]["accounting"].is_object());
+    assert!(encoded["report"]["financials"]["cash_flow"].is_object());
+
+    let typescript = <PublicReportAvailability as ts_rs::TS>::decl(&ts_rs::Config::default());
+    assert!(typescript.contains("\"status\": \"Available\""));
+    assert!(typescript.contains("report: PublicReportSummary"));
+    assert!(typescript.contains("\"status\": \"Unavailable\""));
+    assert!(std::mem::size_of::<PublicReportAvailability>() <= 128);
+}

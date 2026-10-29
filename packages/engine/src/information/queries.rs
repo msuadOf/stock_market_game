@@ -71,7 +71,7 @@ impl PublicLibrary {
             .max_by_key(|report| (report.reports.version.sequence, report.id))
         {
             return Ok(PublicReportAvailability::Available {
-                report: PublicReportSummary::from(report),
+                report: Box::new(PublicReportSummary::from(report)),
             });
         }
         let unavailable = |reason| Ok(PublicReportAvailability::Unavailable { reason });

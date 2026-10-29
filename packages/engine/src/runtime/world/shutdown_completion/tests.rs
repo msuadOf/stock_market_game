@@ -3,6 +3,15 @@ use super::*;
 use crate::runtime::protocol::GroupIn;
 use std::sync::Arc;
 
+#[test]
+fn shutdown_failure_stays_within_the_error_layout_budget() {
+    assert!(
+        std::mem::size_of::<ShutdownFailure>() <= 128,
+        "ShutdownFailure embeds its potentially large completion: size={}",
+        std::mem::size_of::<ShutdownFailure>()
+    );
+}
+
 fn world() -> World {
     let spec = crate::runtime::skeleton_tests::basic_spec(
         2,
@@ -146,6 +155,7 @@ fn active_shutdown_rejects_worker_errors_and_keeps_every_real_join_failure() {
     assert!(failure.primary.detail.contains("Drain 广播失败"));
     let completion = failure
         .completion
+        .as_ref()
         .expect("正常流程失败仍需全员真实唤醒和 join 后给出事实");
     assert_eq!(completion.owned_workers, 4);
     assert_eq!(completion.joined_workers, 4);
@@ -169,6 +179,44 @@ fn active_shutdown_rejects_worker_errors_and_keeps_every_real_join_failure() {
             "主错和全部次错必须保留 worker 身份与原错误"
         );
     }
+
+    assert_eq!((completion.group_finals, completion.desk_finals), (0, 0));
+    let expected_issues = std::iter::once(&failure.primary)
+        .chain(&failure.secondary)
+        .map(|issue| {
+            serde_json::json!({
+                "stage": issue.stage,
+                "worker": issue.worker,
+                "detail": issue.detail,
+            })
+        })
+        .collect::<Vec<_>>();
+    let expected_workers = completion
+        .worker_results
+        .iter()
+        .map(|worker| {
+            let result = match &worker.result {
+                Ok(()) => serde_json::json!({ "Ok": null }),
+                Err(detail) => serde_json::json!({ "Err": detail }),
+            };
+            serde_json::json!({ "worker": worker.worker, "result": result })
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        serde_json::to_value(&failure).expect("ShutdownFailure 应可完整序列化"),
+        serde_json::json!({
+            "primary": expected_issues[0],
+            "secondary": &expected_issues[1..],
+            "completion": {
+                "owned_workers": 4,
+                "joined_workers": 4,
+                "worker_results": expected_workers,
+                "group_finals": 0,
+                "desk_finals": 0,
+            },
+        }),
+        "SHUTDOWN_FAILURE_JSON_TRUNCATED: primary、secondary 与真实 partial completion 必须完整保留"
+    );
 }
 
 fn wait_group0_exit(world: &World) {

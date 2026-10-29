@@ -89,6 +89,7 @@ pub(super) fn calculate_report_roe(
             detail: "规则9计算在通过前置校验后不应整体不可用".to_string(),
         });
     };
+    let result = *result;
     let average_equity = ReportRoeValue::Available(ReportRational {
         numerator: result
             .weighted_average_parent_equity_cents

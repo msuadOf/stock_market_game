@@ -209,10 +209,10 @@ pub(super) fn assemble_selected(
             )
             .map_err(|error| SessionError::Information(Box::new(error)))?;
             Ok((
-                SessionCompanies::CompanySystem(SystemCompanyState {
+                SessionCompanies::CompanySystem(Box::new(SystemCompanyState {
                     system: Arc::new(system),
                     corporate_actions: super::SessionCorporateActions::default(),
-                }),
+                })),
                 library,
             ))
         }

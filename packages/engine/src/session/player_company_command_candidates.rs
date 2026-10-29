@@ -78,15 +78,25 @@ pub(crate) enum PlayerCommandCause {
     RepurchasePlan(#[from] crate::company::issuer_repurchase::IssuerRepurchaseError),
 }
 
-#[derive(Debug, thiserror::Error)]
-#[error("玩家公司候选失败：账户 {account:?}，公司 {company}，类别 {kind:?}，日期 {day}：{cause}")]
+#[derive(Debug)]
 pub(crate) struct PlayerCommandError {
     pub account: AccountId,
     pub company: CompanyId,
     pub kind: PlayerProposalKind,
     pub day: CivilDate,
-    #[source]
-    pub cause: PlayerCommandCause,
+    pub cause: Box<PlayerCommandCause>,
+}
+
+impl std::fmt::Display for PlayerCommandError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "玩家公司候选失败：账户 {account:?}，公司 {company}，类别 {kind:?}，日期 {day}：{cause}", account = self.account, company = self.company, kind = self.kind, day = self.day, cause = self.cause)
+    }
+}
+
+impl std::error::Error for PlayerCommandError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(self.cause.as_ref())
+    }
 }
 
 pub(super) fn player_holding_context(
@@ -99,7 +109,7 @@ pub(super) fn player_holding_context(
         company,
         kind,
         day: input.day,
-        cause,
+        cause: Box::new(cause),
     };
     let invalid = |issue| fail(PlayerCommandCause::Validation(issue));
     let issuer = input
@@ -144,7 +154,7 @@ pub(crate) fn prepare_player_cash_dividend(
         company,
         kind,
         day: input.day,
-        cause,
+        cause: Box::new(cause),
     };
     let invalid = |issue| fail(PlayerCommandCause::Validation(issue));
     let PlayerCompanyProposal::CashDividend {
@@ -220,7 +230,7 @@ pub(crate) fn prepare_player_stock_distribution(
         company,
         kind,
         day: input.day,
-        cause,
+        cause: Box::new(cause),
     };
     let invalid = |issue| fail(PlayerCommandCause::Validation(issue));
     let PlayerCompanyProposal::StockDistribution {
@@ -307,7 +317,7 @@ pub(crate) fn build_player_rights_plan(
         company,
         kind,
         day: input.day,
-        cause,
+        cause: Box::new(cause),
     };
     let invalid = |issue| fail(PlayerCommandCause::Validation(issue));
     let (price_per_share, mode, payment_days) = match &input.proposal {
@@ -398,7 +408,7 @@ pub(super) fn build_player_split_plan(
         company,
         kind,
         day: input.day,
-        cause,
+        cause: Box::new(cause),
     };
     let PlayerCompanyProposal::ShareSplit {
         direction, ratio, ..
@@ -451,7 +461,7 @@ pub(super) fn build_player_repurchase_plan(
         company,
         kind,
         day: input.day,
-        cause,
+        cause: Box::new(cause),
     };
     let PlayerCompanyProposal::IssuerRepurchase {
         price_cap_per_share,

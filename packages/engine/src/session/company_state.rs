@@ -9,7 +9,7 @@ use std::sync::Arc;
 #[derive(Clone)]
 pub(crate) enum SessionCompanies {
     LegacyOperations(LegacyCompanyState),
-    CompanySystem(SystemCompanyState),
+    CompanySystem(Box<SystemCompanyState>),
 }
 
 #[derive(Clone)]

@@ -518,13 +518,16 @@ fn missing_account_and_overflow_abort_whole_candidate() {
         .unwrap_err();
         if !bad.contains_key(&AccountId(2)) {
             assert!(matches!(
-                error.source,
+                *error.source,
                 DistributionsDayEndFailure::MissingAvailableCash {
                     account: AccountId(2)
                 }
             ));
         } else {
-            assert!(matches!(error.source, DistributionsDayEndFailure::Money(_)));
+            assert!(matches!(
+                *error.source,
+                DistributionsDayEndFailure::Money(_)
+            ));
         }
 
         assert_eq!((reg.actions.clone(), reg.company_system.clone()), before);
@@ -705,7 +708,7 @@ fn personal_bonus_rejects_missing_original_registered_equity_tax_basis_atomicall
         assert_eq!(error.stock, Some(crate::stock::StockId(0)));
         assert_eq!(error.event_id, "stock");
         assert!(matches!(
-            error.source,
+            *error.source,
             DistributionsDayEndFailure::UnsupportedPersonalStockBonus
         ));
         assert_eq!((held, registered.company_system), before);
@@ -869,7 +872,7 @@ fn negative_available_cash_error_keeps_account_and_actual_cents() {
     assert_eq!(error.account, Some(AccountId(2)));
     assert!(error.to_string().contains("-17"), "{error}");
     assert!(
-        matches!(error.source, DistributionsDayEndFailure::NegativeAvailableCash { account: AccountId(2), actual } if actual.cents() == -17)
+        matches!(*error.source, DistributionsDayEndFailure::NegativeAvailableCash { account: AccountId(2), actual } if actual.cents() == -17)
     );
 }
 
@@ -937,19 +940,19 @@ fn personal_capital_reserve_conversion_requires_complete_premium_source_fact() {
         assert_eq!(error.event_id, "stock");
         match case {
             0 => assert!(matches!(
-                error.source,
+                *error.source,
                 DistributionsDayEndFailure::MissingCapitalReserveTaxSource
             )),
             1 => assert!(matches!(
-                error.source,
+                *error.source,
                 DistributionsDayEndFailure::NonPremiumCapitalReserveUnsupported { .. }
             )),
             2 => assert!(matches!(
-                error.source,
+                *error.source,
                 DistributionsDayEndFailure::EmptyPremiumEvidence
             )),
             3 => assert!(
-                matches!(error.source, DistributionsDayEndFailure::PremiumCapitalMismatch { expected, actual } if expected == amount(500) && actual == amount(499))
+                matches!(*error.source, DistributionsDayEndFailure::PremiumCapitalMismatch { expected, actual } if expected == amount(500) && actual == amount(499))
             ),
             _ => unreachable!("固定四种来源边界"),
         }

@@ -51,7 +51,8 @@ pub(crate) struct CapitalRestoreContext {
 pub(crate) enum CompanyCapitalRestoreError {
     #[error("资本恢复公司事实校验失败：{context:?}：{source}")]
     System {
-        context: CapitalRestoreContext,
+        // 仅间接存放上下文，保留原 typed source 与 downcast 身份。
+        context: Box<CapitalRestoreContext>,
         #[source]
         source: CompanySystemError,
     },
@@ -131,7 +132,7 @@ pub(crate) enum CompanyCapitalRestoreError {
     MissingReceipt { context: CapitalRestoreContext },
     #[error("资本恢复拆缩股账簿无效：{context:?}：{source}")]
     ShareSplit {
-        context: CapitalRestoreContext,
+        context: Box<CapitalRestoreContext>,
         #[source]
         source: crate::company::share_split::ShareSplitError,
     },
@@ -190,7 +191,7 @@ pub(crate) fn validate_company_capital_restore(
         .system
         .validate_restored()
         .map_err(|source| CompanyCapitalRestoreError::System {
-            context: CapitalRestoreContext::default(),
+            context: Box::default(),
             source,
         })?;
     validate_stable_issuers(&input)?;
@@ -258,7 +259,7 @@ pub(crate) fn validate_company_capital_restore(
             .system
             .dividend_legal_facts(company)
             .map_err(|source| CompanyCapitalRestoreError::System {
-                context: context.clone(),
+                context: Box::new(context.clone()),
                 source,
             })?
             .map(|facts| facts.registered_capital);
@@ -368,7 +369,7 @@ pub(crate) fn validate_company_capital_restore(
                         working_capital =
                             Some(before.add(movement.capital_delta).map_err(|source| {
                                 CompanyCapitalRestoreError::System {
-                                    context: receipt_context.clone(),
+                                    context: Box::new(receipt_context.clone()),
                                     source: CompanySystemError::Accounting(source),
                                 }
                             })?);
@@ -693,7 +694,7 @@ fn prepare_stock_distributions(
             .system
             .stock_distribution_facts(company)
             .map_err(|source| CompanyCapitalRestoreError::System {
-                context: context.clone(),
+                context: Box::new(context.clone()),
                 source,
             })?;
         for fact in facts {
@@ -848,10 +849,10 @@ fn prepare_stock_distributions(
         .system
         .validate_stock_distribution_books(&input.actions.stock_distributions)
         .map_err(|source| CompanyCapitalRestoreError::System {
-            context: CapitalRestoreContext {
+            context: Box::new(CapitalRestoreContext {
                 kind: Some(CorporateCapitalKind::StockDistribution),
                 ..Default::default()
-            },
+            }),
             source,
         })?;
     Ok(bindings)
@@ -875,7 +876,7 @@ fn prepare_share_splits(
         };
         for fact in input.system.share_split_facts(company).map_err(|source| {
             CompanyCapitalRestoreError::System {
-                context: context.clone(),
+                context: Box::new(context.clone()),
                 source,
             }
         })? {
@@ -904,7 +905,7 @@ fn prepare_share_splits(
         }
         book.validate_with_calendar(input.calendar)
             .map_err(|source| CompanyCapitalRestoreError::ShareSplit {
-                context: context.clone(),
+                context: Box::new(context.clone()),
                 source,
             })?;
         let fact = facts
@@ -1074,10 +1075,10 @@ fn prepare_share_splits(
         .system
         .validate_share_split_books(&input.actions.share_splits)
         .map_err(|source| CompanyCapitalRestoreError::System {
-            context: CapitalRestoreContext {
+            context: Box::new(CapitalRestoreContext {
                 kind: Some(CorporateCapitalKind::ShareReDenomination),
                 ..Default::default()
-            },
+            }),
             source,
         })?;
     Ok(())
@@ -1103,7 +1104,7 @@ fn prepare_rights_offerings(
             .system
             .rights_offering_facts(company)
             .map_err(|source| CompanyCapitalRestoreError::System {
-                context: context.clone(),
+                context: Box::new(context.clone()),
                 source,
             })?
         {
@@ -1313,10 +1314,10 @@ fn prepare_rights_offerings(
         .system
         .validate_rights_offering_books(&input.actions.rights_offerings)
         .map_err(|source| CompanyCapitalRestoreError::System {
-            context: CapitalRestoreContext {
+            context: Box::new(CapitalRestoreContext {
                 kind: Some(CorporateCapitalKind::RightsOffering),
                 ..Default::default()
-            },
+            }),
             source,
         })?;
     Ok(())
@@ -1342,7 +1343,7 @@ fn prepare_repurchase_cancellations(
             .system
             .issuer_repurchase_facts(company)
             .map_err(|source| CompanyCapitalRestoreError::System {
-                context: context.clone(),
+                context: Box::new(context.clone()),
                 source,
             })?
         {
@@ -1628,10 +1629,10 @@ fn prepare_repurchase_cancellations(
         .system
         .validate_issuer_repurchase_books(&input.actions.issuer_repurchases)
         .map_err(|source| CompanyCapitalRestoreError::System {
-            context: CapitalRestoreContext {
+            context: Box::new(CapitalRestoreContext {
                 kind: Some(CorporateCapitalKind::IssuerRepurchaseCancellation),
                 ..Default::default()
-            },
+            }),
             source,
         })?;
     Ok(())
@@ -1766,7 +1767,7 @@ fn validate_redenomination_holders(
             let restriction =
                 holder_inherited_restriction(holder, receipt.request.day).map_err(|source| {
                     CompanyCapitalRestoreError::ShareSplit {
-                        context: context.clone(),
+                        context: Box::new(context.clone()),
                         source,
                     }
                 })?;

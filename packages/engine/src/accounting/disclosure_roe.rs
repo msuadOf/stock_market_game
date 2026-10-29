@@ -115,7 +115,7 @@ pub struct DisclosureRoeResult {
 
 #[derive(Clone, Eq, PartialEq, Debug)]
 pub enum DisclosureRoeOutcome {
-    Available(DisclosureRoeResult),
+    Available(Box<DisclosureRoeResult>),
     Unavailable(DisclosureRoeUnavailable),
 }
 
@@ -230,13 +230,15 @@ pub fn calculate_disclosure_roe(
             .numerator
             .clone(),
     );
-    Ok(DisclosureRoeOutcome::Available(DisclosureRoeResult {
-        ordinary_roe: ordinary.ordinary_roe,
-        adjusted_roe,
-        weighted_average_parent_equity_cents: ordinary.weighted_average_parent_equity_cents,
-        adjusted_weighted_average_parent_equity_cents: ordinary
-            .adjusted_weighted_average_parent_equity_cents,
-    }))
+    Ok(DisclosureRoeOutcome::Available(Box::new(
+        DisclosureRoeResult {
+            ordinary_roe: ordinary.ordinary_roe,
+            adjusted_roe,
+            weighted_average_parent_equity_cents: ordinary.weighted_average_parent_equity_cents,
+            adjusted_weighted_average_parent_equity_cents: ordinary
+                .adjusted_weighted_average_parent_equity_cents,
+        },
+    )))
 }
 
 pub fn calculate_ordinary_disclosure_roe(

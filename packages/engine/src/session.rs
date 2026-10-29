@@ -65,6 +65,8 @@ mod company_state;
 pub use company_state::SavedSessionCompanies;
 use company_state::SessionCompanies;
 mod company_capital_restore;
+#[cfg(test)]
+mod error_transport_tests;
 mod report_correction_day_end;
 pub use report_correction_day_end::ReportCorrectionDayEndError;
 mod continuous_cancellation;
@@ -4898,10 +4900,10 @@ impl GameSession {
                             .flatten(),
                     },
                 )?;
-                SessionCompanies::CompanySystem(company_state::SystemCompanyState {
+                SessionCompanies::CompanySystem(Box::new(company_state::SystemCompanyState {
                     system: std::sync::Arc::new(system.export_state()),
                     corporate_actions: corporate_actions.clone(),
-                })
+                }))
             }
             _ => return Err(SessionError::InvalidSave(ValidationFault::bare(1064))),
         };

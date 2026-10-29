@@ -67,15 +67,34 @@ pub(crate) enum CompanyCommandCause {
 }
 
 /// Rust 内部错误保留原 typed source；宿主数值错误转换仍属后续独立边界。
-#[derive(Debug, thiserror::Error)]
-#[error("现金分红候选失败：公司 {company}，证券 {stock:?}，计划 {plan_id}，日期 {day}：{cause}")]
+#[derive(Debug)]
 pub(crate) struct CompanyCommandError {
     pub company: CompanyId,
     pub stock: StockCode,
     pub plan_id: String,
     pub day: CivilDate,
-    #[source]
-    pub cause: CompanyCommandCause,
+    pub cause: Box<CompanyCommandCause>,
+}
+
+impl std::fmt::Display for CompanyCommandError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "现金分红候选失败：公司 {company}，证券 {stock:?}，计划 {plan_id}，日期 {day}：{cause}",
+            company = self.company,
+            stock = self.stock,
+            plan_id = self.plan_id,
+            day = self.day,
+            cause = self.cause
+        )
+    }
+}
+
+impl std::error::Error for CompanyCommandError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        // 返回原 cause，避免把 Box 本身变成 source 的动态类型。
+        Some(self.cause.as_ref())
+    }
 }
 
 pub(crate) fn prepare_cash_dividend_approval(
@@ -86,7 +105,7 @@ pub(crate) fn prepare_cash_dividend_approval(
         stock: input.plan.stock.clone(),
         plan_id: input.plan.plan_id.clone(),
         day: input.day,
-        cause,
+        cause: Box::new(cause),
     };
     let invalid = |issue| fail(CompanyCommandCause::Validation(issue));
     input.plan.validate().map_err(|cause| fail(cause.into()))?;

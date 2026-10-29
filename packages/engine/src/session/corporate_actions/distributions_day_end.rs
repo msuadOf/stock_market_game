@@ -112,15 +112,33 @@ pub(crate) enum DistributionSource {
     },
 }
 
-#[derive(Debug, thiserror::Error)]
-#[error("公司权益候选失败：日期{day}，事件{event_id}，证券{stock:?}，账户{account:?}：{source}")]
+#[derive(Debug)]
 pub(crate) struct DistributionsDayEndError {
     pub day: CivilDate,
     pub event_id: String,
     pub stock: Option<StockId>,
     pub account: Option<AccountId>,
-    #[source]
-    pub source: DistributionsDayEndFailure,
+    pub source: Box<DistributionsDayEndFailure>,
+}
+
+impl std::fmt::Display for DistributionsDayEndError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "公司权益候选失败：日期{day}，事件{event_id}，证券{stock:?}，账户{account:?}：{source}",
+            day = self.day,
+            event_id = self.event_id,
+            stock = self.stock,
+            account = self.account,
+            source = self.source
+        )
+    }
+}
+
+impl std::error::Error for DistributionsDayEndError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(self.source.as_ref())
+    }
 }
 
 /// 保留领域错误的数值变体，日终包装不得只留下字符串或日期。
@@ -182,7 +200,7 @@ impl Context {
             event_id: self.event_id.clone(),
             stock: self.stock,
             account: self.account,
-            source: source.into(),
+            source: Box::new(source.into()),
         }
     }
 }

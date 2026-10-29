@@ -517,12 +517,12 @@ impl GameSession {
                         applied_fact_cursor: 0,
                         closing_state: RepurchaseBindingClosingState::Active,
                     });
-                let companies = super::company_state::SessionCompanies::CompanySystem(
+                let companies = super::company_state::SessionCompanies::CompanySystem(Box::new(
                     super::company_state::SystemCompanyState {
                         system: Arc::new(candidate_system),
                         corporate_actions: candidate_actions,
                     },
-                );
+                ));
                 let receipt = RepurchaseApprovalReceipt::Approved {
                     event_id: plan.event_id.clone(),
                     plan_id: created.plan_id,

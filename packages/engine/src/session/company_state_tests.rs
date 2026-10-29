@@ -11,6 +11,15 @@ fn date() -> CivilDate {
     CivilDate::from_iso("2030-06-03").unwrap()
 }
 
+#[test]
+fn selected_company_state_keeps_a_compact_session_envelope() {
+    let size = std::mem::size_of::<SessionCompanies>();
+    assert!(
+        size <= 128,
+        "SessionCompanies 占 {size} 字节，超过 128 字节运输预算"
+    );
+}
+
 fn system_state() -> SessionCompanies {
     let system = CompanySystem::create(
         vec![],
@@ -34,10 +43,10 @@ fn system_state() -> SessionCompanies {
     )
     .unwrap();
     system.validate_restored().unwrap();
-    SessionCompanies::CompanySystem(SystemCompanyState {
+    SessionCompanies::CompanySystem(Box::new(SystemCompanyState {
         system: Arc::new(system),
         corporate_actions: SessionCorporateActions::default(),
-    })
+    }))
 }
 
 fn legacy_state() -> SessionCompanies {

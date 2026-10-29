@@ -359,10 +359,10 @@ impl GameSession {
             approved_on: day,
         };
         // 所有分配及可失败的模型检查都在首 Commit 前完成；成功尾仅移动预备值。
-        let companies = SessionCompanies::CompanySystem(SystemCompanyState {
+        let companies = SessionCompanies::CompanySystem(Box::new(SystemCompanyState {
             system: Arc::new(candidate_system),
             corporate_actions: candidate_actions,
-        });
+        }));
         if crate::runtime::step_runtime_enabled() {
             let outcome = (|| {
                 let cell = self.runtime_driver.as_ref().expect("驱动器已经构造");

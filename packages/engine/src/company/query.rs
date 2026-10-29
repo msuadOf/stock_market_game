@@ -38,7 +38,7 @@ pub struct PublicReportAvailabilityQuery {
 #[ts(export)]
 pub enum PublicReportAvailability {
     Available {
-        report: PublicReportSummary,
+        report: Box<PublicReportSummary>,
     },
     Unavailable {
         reason: PublicReportUnavailableReason,
