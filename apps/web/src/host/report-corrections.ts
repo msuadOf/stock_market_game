@@ -73,6 +73,12 @@ function accountingAmount(value: unknown, path: string): string {
   if (magnitude > 170141183460469231731687303715884105727n) fail(path, "金额超出实际 i128 codec 范围");
   return result;
 }
+/** SaveRoot 更正表复用 host 的真实 AccountingAmount codec。 */
+export function parseReportCorrectionAmount(value: unknown, path: string): string { return accountingAmount(value, path); }
+
+/** SaveRoot 更正表复用 host 的 CivilDate 算法窗 codec。 */
+export function parseReportCorrectionDate(value: unknown, path: string): string { return civilDate(value, path); }
+
 function journalLine(value: unknown, path: string): CorrectionJournalLine {
   const item = exact(value, ["account", "side", "amount"], path);
   return { account: text(item.account, `${path}.account`), side: choice(item.side, ["Debit", "Credit"], `${path}.side`), amount: accountingAmount(item.amount, `${path}.amount`) };

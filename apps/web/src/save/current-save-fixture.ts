@@ -146,6 +146,7 @@ export function currentSaveFixture(): JsonObject {
       history: null,
     },
     closing_registry: { versions: [], restatements: [] },
+    report_correction_operations: {},
     public_library: { next_seq: 0, reports: [], announcements: [] },
     disclosures: { published_through: null, announced_through: null },
     plans: {

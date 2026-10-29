@@ -9,7 +9,9 @@ import { parseInformationStates } from "./personal/information.ts"
 import { parseHistoryReads, parsePriceMemories, parseWatchlists } from "./personal/memory.ts"
 import { parsePlanBook } from "./personal/plans.ts"
 import { parseActiveMinuteBars, parsePersonalTradeConfirmations, parseReceiptWatermark, parseRetainedHistory, validateRetainedHistoryCandles, type StockTickById } from "./retained-history.ts"
-import { boolean, decimal, exact, record, SaveSchemaError } from "./primitives.ts"
+import { array, boolean, decimal, exact, integer, oneOf, record, SaveSchemaError, string } from "./primitives.ts"
+import { u32 } from "./personal/common.ts"
+import { parseReportCorrectionAmount, parseReportCorrectionDate, type CompletedReportCorrectionInput, type CorrectionJournalEntry } from "../../host/report-corrections.ts"
 import { parseCivilClock } from "./civil-clock.ts"
 import { parseMarketMemberships, validateMembershipAccounts } from "./market-memberships.ts"
 import { parseSaveRuntime } from "./runtime-state.ts"
@@ -34,6 +36,7 @@ export type StrictSaveEnvelope = {
   readonly next_order_id: number
   readonly civil_clock: ReturnType<typeof parseCivilClock>
   readonly company_state: SavedSessionCompanies
+  readonly report_correction_operations: Readonly<Record<string, CompletedReportCorrectionInput>>
   readonly public_library: ReturnType<typeof parsePublicLibrary>
   readonly disclosures: ReturnType<typeof parseDisclosureDispatch>
   readonly plans: ReturnType<typeof parsePlanBook>
@@ -54,7 +57,70 @@ export type StrictSaveEnvelope = {
   readonly receipt_watermark: number
 }
 
-const ROOT_KEYS = ["desk_mirrored_resting", "runtime_state", "setup", "seed", "snapshot", "resting_orders", "book_next_sequences", "filled_orders", "price_history", "market_minute_closes", "market_minute_bars", "retained_market_days", "personal_trade_confirmations", "receipt_watermark", "rng_state", "npc_attention", "retail_experience", "npc_order_lifecycles", "pending_player", "ingress_receipt_cursors", "next_order_id", "civil_clock", "company_state", "public_library", "disclosures", "plans", "urgency_policy", "information_states", "belief_books", "watchlists", "price_memories", "history_reads", "market_memberships"] as const
+const ROOT_KEYS = ["desk_mirrored_resting", "runtime_state", "setup", "seed", "snapshot", "resting_orders", "book_next_sequences", "filled_orders", "price_history", "market_minute_closes", "market_minute_bars", "retained_market_days", "personal_trade_confirmations", "receipt_watermark", "rng_state", "npc_attention", "retail_experience", "npc_order_lifecycles", "pending_player", "ingress_receipt_cursors", "next_order_id", "civil_clock", "company_state", "report_correction_operations", "public_library", "disclosures", "plans", "urgency_policy", "information_states", "belief_books", "watchlists", "price_memories", "history_reads", "market_memberships"] as const
+
+
+const correctionBusinessKinds = ["SimpleRevenueAccrual", "SimpleFixedExpenseAccrual", "SimpleVariableExpenseAccrual", "CompanyDividendDeclaration", "CompanyDividendPayment", "CompanyStockDistributionCredit", "CompanyRightsOfferingSettlement", "CompanyRepurchaseCancellation", "CompanyShareReDenomination", "OpeningBalance", "LoanDisbursement", "LoanRepayment", "CashRevenue", "CreditSale", "ReceivableCollection", "CashExpense", "InterestAccrual", "InterestPayment", "TaxAccrual", "TaxPayment", "Depreciation", "CustomerDeposit", "CustomerWithdrawal", "LoanIssued", "LoanPrincipalCollected", "LoanInterestAccrued", "LoanInterestCollected", "DepositInterestAccrued", "DepositInterestPaid", "FeeAndCommissionEarned", "CreditImpairment", "LoanWriteOff", "WriteOffRecovery", "LandAcquisition", "DevelopmentCostIncurred", "PresaleCollection", "RealEstateDelivery", "FinalPaymentCollected", "BorrowingCostCapitalized", "DevelopmentImpairment", "InsurancePremiumAccrued", "InsurancePremiumCollected", "InsuranceServiceRevenue", "InsuranceFinance", "InsuranceLossComponent", "InsuranceClaimIncurred", "InsuranceClaimPaid"] as const
+
+type CorrectionJournalLine = CorrectionJournalEntry["lines"][number]
+
+function parseCorrectionJournalLine(value: unknown, path: string): CorrectionJournalLine {
+  const line = record(value, path)
+  exact(line, ["account", "side", "amount"], path)
+  return { account: string(line.account, `${path}.account`), side: oneOf(line.side, `${path}.side`, ["Debit", "Credit"] as const), amount: parseReportCorrectionAmount(line.amount, `${path}.amount`) }
+}
+
+function parseCorrectionJournalEntry(value: unknown, path: string): CorrectionJournalEntry {
+  const entry = record(value, path)
+  exact(entry, ["source", "date", "kind", "cash_flow", "lines"], path)
+  return {
+    source: integer(entry.source, `${path}.source`, 0),
+    date: parseReportCorrectionDate(entry.date, `${path}.date`),
+    kind: oneOf(entry.kind, `${path}.kind`, correctionBusinessKinds),
+    cash_flow: oneOf(entry.cash_flow, `${path}.cash_flow`, ["Operating", "Investing", "Financing", "NonCash"] as const),
+    lines: array(entry.lines, `${path}.lines`).map((line, index) => parseCorrectionJournalLine(line, `${path}.lines[${index}]`)),
+  }
+}
+
+function parseCompanyReportCorrection(value: unknown, path: string): CompletedReportCorrectionInput["request"] {
+  const request = record(value, path)
+  exact(request, ["operation_id", "company", "supersedes", "entries", "reason"], path)
+  return {
+    operation_id: string(request.operation_id, `${path}.operation_id`),
+    company: u32(request.company, `${path}.company`),
+    supersedes: u32(request.supersedes, `${path}.supersedes`),
+    entries: array(request.entries, `${path}.entries`).map((entry, index) => parseCorrectionJournalEntry(entry, `${path}.entries[${index}]`)),
+    reason: string(request.reason, `${path}.reason`),
+  }
+}
+
+function parseCompletedReportCorrection(value: unknown, path: string): CompletedReportCorrectionInput {
+  const completed = record(value, path)
+  exact(completed, ["request", "publications", "committed_at"], path)
+  const request = parseCompanyReportCorrection(completed.request, `${path}.request`)
+  const committedAt = record(completed.committed_at, `${path}.committed_at`)
+  exact(committedAt, ["date", "second_of_day"], `${path}.committed_at`)
+  const publications = array(completed.publications, `${path}.publications`).map((publication, index) => u32(publication, `${path}.publications[${index}]`))
+  const secondOfDay = integer(committedAt.second_of_day, `${path}.committed_at.second_of_day`, 0)
+  if (secondOfDay > 86_399) throw new SaveSchemaError(`${path}.committed_at.second_of_day`, "必须小于一天的秒数")
+  return {
+    request,
+    publications,
+    committed_at: { date: parseReportCorrectionDate(committedAt.date, `${path}.committed_at.date`), second_of_day: secondOfDay },
+  }
+}
+
+function parseReportCorrectionOperations(value: unknown): Readonly<Record<string, CompletedReportCorrectionInput>> {
+  const operations = record(value, "report_correction_operations")
+  const result: [string, CompletedReportCorrectionInput][] = []
+  for (const [identity, operation] of Object.entries(operations)) {
+    const path = `report_correction_operations.${JSON.stringify(identity)}`
+    const parsed = parseCompletedReportCorrection(operation, path)
+    if (identity !== parsed.request.operation_id) throw new SaveSchemaError(path, "键必须与 request.operation_id 一致")
+    result.push([identity, parsed])
+  }
+  return Object.fromEntries(result)
+}
 
 export function parseStrictSaveEnvelope(value: unknown): StrictSaveEnvelope {
   const root = record(value, "根节点")
@@ -72,6 +138,7 @@ export function parseStrictSaveEnvelope(value: unknown): StrictSaveEnvelope {
   }
   const snapshot = parseSaveSnapshot(root.snapshot, "snapshot")
   const company_state = parseSavedSessionCompanies(root.company_state, setup)
+  const report_correction_operations = parseReportCorrectionOperations(root.report_correction_operations)
   const public_library = parsePublicLibrary(root.public_library)
   const selectedReportSource = "LegacyOperations" in company_state ? "SimulationAccounting" : "SimpleGenerated"
   for (const [index, report] of public_library.reports.entries()) {
@@ -115,5 +182,5 @@ export function parseStrictSaveEnvelope(value: unknown): StrictSaveEnvelope {
     }
   }
   const receiptWatermark = parseReceiptWatermark(root.receipt_watermark, tradeConfirmations)
-  return { desk_mirrored_resting: boolean(root.desk_mirrored_resting, "desk_mirrored_resting"), runtime_state, setup, seed: decimal(root.seed, "seed"), snapshot, ...order, retail_experience: parseRetailExperienceStates(root.retail_experience), civil_clock: clock, company_state, public_library, disclosures: parseDisclosureDispatch(root.disclosures), plans: parsePlanBook(root.plans), urgency_policy: parseUrgencyPolicy(root.urgency_policy), information_states: parseInformationStates(root.information_states), belief_books: parseBeliefBooks(root.belief_books), watchlists: parseWatchlists(root.watchlists), price_memories: parsePriceMemories(root.price_memories), history_reads: parseHistoryReads(root.history_reads), market_memberships, market_minute_bars: marketMinuteBars, retained_market_days: retainedDays, personal_trade_confirmations: tradeConfirmations, receipt_watermark: receiptWatermark }
+  return { desk_mirrored_resting: boolean(root.desk_mirrored_resting, "desk_mirrored_resting"), runtime_state, setup, seed: decimal(root.seed, "seed"), snapshot, ...order, retail_experience: parseRetailExperienceStates(root.retail_experience), civil_clock: clock, company_state, report_correction_operations, public_library, disclosures: parseDisclosureDispatch(root.disclosures), plans: parsePlanBook(root.plans), urgency_policy: parseUrgencyPolicy(root.urgency_policy), information_states: parseInformationStates(root.information_states), belief_books: parseBeliefBooks(root.belief_books), watchlists: parseWatchlists(root.watchlists), price_memories: parsePriceMemories(root.price_memories), history_reads: parseHistoryReads(root.history_reads), market_memberships, market_minute_bars: marketMinuteBars, retained_market_days: retainedDays, personal_trade_confirmations: tradeConfirmations, receipt_watermark: receiptWatermark }
 }
