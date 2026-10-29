@@ -493,3 +493,6 @@ impl GameSession {
         Ok(())
     }
 }
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod payment_runtime_tests;
