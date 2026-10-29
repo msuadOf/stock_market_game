@@ -67,6 +67,7 @@ fn session_with_institutions(auction_ticks: u64, inst_count: u32) -> crate::Game
             // 计时证据针对市场 tick，不能以元旦休市开局。
             start_date: crate::CivilDate::from_ymd(2030, 1, 2).unwrap(),
             simulation_policy_id: SIMULATION_POLICY_ID.to_owned(),
+            runtime_sync_policy: Default::default(),
         },
         42,
     )

@@ -519,3 +519,98 @@ fn full_read_preserves_nonempty_pending_and_real_tick_dirty_rows() {
         "Full 不清真实 tick dirty，也不丢七字段"
     );
 }
+
+#[test]
+fn day_end_policy_keeps_progress_without_installing_intraday_mirror() {
+    let mut game = short_runtime_session();
+    game.state.setup.runtime_sync_policy = crate::RuntimeSyncPolicy::DayEnd;
+    let mut driver = crate::runtime::drive::RuntimeDriver::from_session(&mut game).unwrap();
+    let events = game.runtime_step_with_install(&mut driver).unwrap();
+    assert_eq!(game.tick(), 1);
+    assert_eq!(driver.world_committed_tick(), 1);
+    assert_eq!(game.seq(), driver.next_seq());
+    assert_eq!(driver.account_writes_for_test(), 0, "DayEnd 日内不安装账户镜像");
+    assert_eq!(game.runtime_mirror_install_sequence, 0, "运行进度不能冒充镜像安装");
+    assert!(events.iter().all(|event| event.seq() <= game.seq()));
+}
+
+#[test]
+fn day_end_policy_rejects_direct_ingress_before_receipt() {
+    let mut game = short_runtime_session();
+    game.state.setup.runtime_sync_policy = crate::RuntimeSyncPolicy::DayEnd;
+    let cursors = format!("{:?}", game.state.ingress_receipt_cursors);
+    let intent = Intent::Cancel { code: StockId(0), id: OrderId(1) };
+    assert!(matches!(game.enqueue_player_intent(AccountId(0), intent), Err(SessionError::SyncPolicyViolation(_))));
+    assert_eq!(format!("{:?}", game.state.ingress_receipt_cursors), cursors);
+    assert!(game.state.pending_player.is_empty());
+}
+
+#[test]
+fn day_end_policy_rejects_shared_ingress_before_receipt() {
+    let mut game = short_runtime_session();
+    game.state.setup.runtime_sync_policy = crate::RuntimeSyncPolicy::DayEnd;
+    let receiver = game.shared_ingress();
+    let cursors = format!("{:?}", receiver.receipts_probe());
+    let intent = Intent::Cancel { code: StockId(0), id: OrderId(1) };
+    assert!(matches!(receiver.enqueue_player_intent(AccountId(0), intent), Err(SessionError::SyncPolicyViolation(_))));
+    assert_eq!(format!("{:?}", receiver.receipts_probe()), cursors);
+}
+
+#[test]
+fn on_demand_explicit_flush_installs_without_advancing_progress() {
+    let mut game = short_runtime_session();
+    game.state.setup.runtime_sync_policy = crate::RuntimeSyncPolicy::OnDemand;
+    let mut driver = crate::runtime::drive::RuntimeDriver::from_session(&mut game).unwrap();
+    game.runtime_step_with_install(&mut driver).unwrap();
+    assert_eq!(driver.account_writes_for_test(), 0, "OnDemand 日内保持镜像原来源");
+    let progress = (game.tick(), game.seq(), driver.world_committed_tick());
+    driver.flush_now(&mut game).unwrap();
+    assert_eq!((game.tick(), game.seq(), driver.world_committed_tick()), progress);
+    assert!(driver.account_writes_for_test() > 0);
+    assert_eq!(game.runtime_mirror_install_sequence, 1);
+    driver.flush_now(&mut game).unwrap();
+    assert_eq!(game.runtime_mirror_install_sequence, 1, "同来源重复 flush 是幂等静点读取");
+}
+
+#[test]
+fn current_save_requires_explicit_runtime_sync_policy() {
+    let game = short_runtime_session();
+    let mut value = serde_json::to_value(game.save().unwrap()).unwrap();
+    value["setup"].as_object_mut().unwrap().remove("runtime_sync_policy");
+    let result = serde_json::from_value::<SaveSlot>(value);
+    assert!(result.is_err(), "严格当前档不能用新局默认补齐缺少的同步策略");
+}
+
+
+#[test]
+fn delayed_preauction_progress_does_not_create_active_candle() {
+    let mut setup = super::npc_working_quote_tests::quote_setup(0);
+    setup.start_date = crate::calendar::CivilDate::from_ymd(2026, 1, 5).unwrap();
+    setup.ticks_per_day = 12;
+    setup.auction_ticks = 6;
+    setup.closing_auction_ticks = 0;
+    setup.runtime_sync_policy = crate::RuntimeSyncPolicy::DayEnd;
+    let mut game = GameSession::new(setup, 42).unwrap();
+    let mut driver = crate::runtime::drive::RuntimeDriver::from_session(&mut game).unwrap();
+    let frame = game.runtime_step_with_prepared_mirror(&mut driver, |projection, facts| projection.project_frame(facts)).unwrap();
+    assert!(frame.timeseries_payload.active_daily_candles.is_empty(), "开盘撮合前不能从昨价造活动 K");
+    assert!(!frame.events().any(|event| matches!(event, Event::PriceTick { .. })));
+    assert_eq!(game.runtime_mirror_origin().source_tick, 0);
+    assert_eq!(game.tick(), 1);
+}
+
+#[test]
+fn late_day_end_receiver_uses_current_progress_context() {
+    let mut game = short_runtime_session();
+    game.state.setup.runtime_sync_policy = crate::RuntimeSyncPolicy::DayEnd;
+    let mut driver = crate::runtime::drive::RuntimeDriver::from_session(&mut game).unwrap();
+    game.runtime_step_with_install(&mut driver).unwrap();
+    game.runtime_step_with_install(&mut driver).unwrap();
+    let receiver = game.shared_ingress();
+    let cancel = Intent::Cancel { code: StockId(0), id: OrderId(1) };
+    let SessionError::SyncPolicyViolation(direct) = game.enqueue_player_intent(AccountId(0), cancel.clone()).unwrap_err() else { panic!("必须为策略拒绝"); };
+    let SessionError::SyncPolicyViolation(shared) = receiver.enqueue_player_intent(AccountId(0), cancel).unwrap_err() else { panic!("必须为策略拒绝"); };
+    assert_eq!(direct, shared);
+    assert_eq!(direct.code, crate::error::RUNTIME_SYNC_POLICY_VIOLATION);
+    assert_eq!(direct.context, vec![1, 2, driver.publication().load().generation]);
+}

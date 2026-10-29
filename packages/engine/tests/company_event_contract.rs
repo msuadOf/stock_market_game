@@ -65,6 +65,7 @@ fn setup(start_date: &str) -> SessionSetup {
         float_allocation: FloatAllocation::random(),
         start_date: CivilDate::from_iso(start_date).expect("fixture date is valid"),
         simulation_policy_id: engine::SIMULATION_POLICY_ID.to_string(),
+        runtime_sync_policy: Default::default(),
     }
 }
 

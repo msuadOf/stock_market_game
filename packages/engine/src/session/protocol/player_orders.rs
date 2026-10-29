@@ -47,7 +47,10 @@ impl crate::session::GameSession {
         // D5 attention：runtime 形态（desk 镜像在位）——玩家在途从镜像
         /// （desk 权威）；venue=当前相位撮合模式。
         if !self.state.desk_book_mirror.is_empty() {
-            return working_orders_from_mirror(&self.state.desk_book_mirror, self.phase());
+            return working_orders_from_mirror(
+                &self.state.desk_book_mirror,
+                self.runtime_mirror_phase(),
+            );
         }
         for (code, market) in &self.state.markets {
             for order in market.resting_orders_for(crate::AccountId(0)) {

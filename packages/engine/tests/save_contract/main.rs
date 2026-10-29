@@ -95,6 +95,7 @@ fn contract_setup() -> SessionSetup {
         ),
         start_date: engine::CivilDate::from_iso("2030-01-07").unwrap(),
         simulation_policy_id: SIMULATION_POLICY_ID.to_string(),
+        runtime_sync_policy: Default::default(),
     }
 }
 

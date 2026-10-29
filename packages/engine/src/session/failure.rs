@@ -563,6 +563,19 @@ impl GameSession {
         if let Err(fatal) = self.freeze_shared_ingress() {
             return Err(self.poison_runtime_step(fatal));
         }
+        // 同一cutoff内输入已真实接收；在读取预算或发送 ExternalPlan 前同步旧镜像。
+        // flush 失败保留 pending 与原 ordinal，不发下一市场 Start，也不回退接收事实。
+        if self.state.setup.runtime_sync_policy.needs_compute_flush() && !self.state.pending_player.is_empty() {
+            if let Err(description) = driver.flush_candidate(self, crate::runtime::sync_policy::FlushTrigger::ComputeRead) {
+                let fatal = match self.poison_reason() {
+                    Some(first) => first.clone(),
+                    None => StepFatal::InvariantViolation {
+                        location: "GameSession::compute_read_flush".to_owned(), description,
+                    },
+                };
+                return Err(self.poison_runtime_step(fatal));
+            }
+        }
         // 玩家意图路由（D2）：冻结取出→ExternalPlan 注入组 0；
         // 失败回灌（ready ingress 语义——外部队列不被失败 tick 消费）。
         let intents = self.take_runtime_player_intents();
@@ -637,7 +650,7 @@ impl GameSession {
         crate::verification_evidence::begin_authoritative_tick(self.tick(), self.compute_context())?;
         #[cfg(feature = "simulation-diagnostics")]
         let causal_time = self.causal_time().map_err(|fatal| self.poison_runtime_step(fatal))?;
-        let prepared = driver.prepare_driver_step(self).and_then(|input| self.prepare_runtime_mirror(driver, input, tick));
+        let prepared = driver.prepare_driver_step(self).and_then(|input| self.prepare_runtime_publication(driver, input, tick));
         let mut prepared = prepared.map_err(|description| {
             let fatal = StepFatal::InvariantViolation { location: "runtime_mirror::prepare".to_owned(), description };
             #[cfg(feature = "simulation-diagnostics")]
@@ -646,7 +659,7 @@ impl GameSession {
             self.poison_runtime_step(fatal)
         })?;
         #[cfg(feature = "simulation-diagnostics")]
-        let causal = self.prepare_runtime_causal_at(driver, causal_time, tick, prepared.causal_plans(), &prepared.causal_calendar)
+        let causal = self.prepare_runtime_causal_at(driver, causal_time, tick, prepared.plans(), prepared.calendar())
             .map_err(|fatal| self.poison_runtime_step(fatal))?;
         #[cfg(test)]
         if let Some(fatal) = self.post_shadow_failure.take() {
@@ -661,9 +674,9 @@ impl GameSession {
             return Err(self.poison_runtime_step(fatal));
         }
         #[cfg(test)]
-        let has_events = !prepared.events.is_empty();
-        let facts = crate::runtime::event_bridge::event_facts_with_stable_keys(std::mem::take(&mut prepared.events));
-        let value = match project(crate::session::protocol::TickCandidateProjection::from_prepared(&prepared.projection, seq_from), facts) {
+        let has_events = !prepared.events().is_empty();
+        let facts = crate::runtime::event_bridge::event_facts_with_stable_keys(prepared.take_events());
+        let value = match project(crate::session::protocol::TickCandidateProjection::from_prepared(prepared.projection(), seq_from), facts) {
             Ok(value) => value,
             Err(fatal) => {
                 #[cfg(feature = "simulation-diagnostics")]
@@ -671,7 +684,7 @@ impl GameSession {
                 return Err(self.poison_runtime_step(fatal));
             }
         };
-        let ack = match self.validate_runtime_mirror_source(driver, &prepared) {
+        let ack = match self.validate_runtime_publication(driver, &prepared) {
             Ok(ack) => ack,
             Err(fatal) => {
                 #[cfg(feature = "simulation-diagnostics")]
@@ -679,8 +692,12 @@ impl GameSession {
                 return Err(self.poison_runtime_step(fatal));
             }
         };
-        self.install_runtime_mirror(driver, prepared);
-        driver.ack_prepared_mirror(ack);
+        if let Some(binding) = &self.ingress {
+            binding.source.update_runtime_progress(tick, driver.mirror_source().generation)
+                .map_err(|error| self.poison_runtime_step(super::shared_ingress::ingress_fatal(error)))?;
+        }
+        self.install_runtime_publication(driver, prepared);
+        if let Some(ack) = ack { driver.ack_prepared_mirror(ack); }
         #[cfg(feature = "simulation-diagnostics")]
         self.publish_runtime_causal(causal);
         crate::verification_evidence::enter_phase(crate::session::pipeline::TickPhase::CommitTick);
@@ -2118,6 +2135,7 @@ impl GameSession {
             return first.clone();
         }
         self.poison = Some(fatal.clone());
+        if let Some(binding) = &self.ingress { binding.source.publish_terminal(fatal.clone()); }
         fatal
     }
 

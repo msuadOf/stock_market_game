@@ -72,6 +72,7 @@ fn d3_causal_quote_setup() -> SessionSetup {
         float_allocation: crate::session::FloatAllocation::random(),
         start_date: crate::calendar::CivilDate::from_ymd(2026, 1, 5).expect("测试日期合法"),
         simulation_policy_id: crate::session::SIMULATION_POLICY_ID.to_owned(),
+        runtime_sync_policy: Default::default(),
     }
 }
 

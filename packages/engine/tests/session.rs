@@ -114,6 +114,7 @@ fn sample_setup() -> SessionSetup {
         // 交易测试 fixture 首拍即可成交；默认休市开局由 civil_clock 专测覆盖。
         start_date: engine::CivilDate::from_iso("2030-01-02").unwrap(),
         simulation_policy_id: engine::SIMULATION_POLICY_ID.to_string(),
+        runtime_sync_policy: Default::default(),
     }
 }
 

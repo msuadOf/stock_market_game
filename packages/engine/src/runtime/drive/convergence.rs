@@ -163,6 +163,57 @@ pub(crate) struct PreparedDriverDayEnd {
 }
 
 impl RuntimeDriver {
+    /// 显式同步当前已提交静点，不推进市场 tick 或事件 seq。
+    pub fn flush_now(&mut self, session: &mut GameSession) -> Result<(), String> {
+        self.flush_candidate(session, crate::runtime::sync_policy::FlushTrigger::OnDemand)
+    }
+
+    /// 三档及计算消费点共用的静点汇合；trigger 只标识调用时机。
+    pub(crate) fn flush_candidate(
+        &mut self, session: &mut GameSession, trigger: crate::runtime::sync_policy::FlushTrigger,
+    ) -> Result<(), String> {
+        self.ensure_session_authority(session)?;
+        session.require_healthy().map_err(|fatal| fatal.to_string())?;
+        let source = self.mirror_source();
+        if source.civil_date != session.civil_date() {
+            return Err(session.poison_runtime_step(crate::session::StepFatal::InvariantViolation {
+                location: "runtime::flush_candidate".to_owned(), description: "World 与 Session civil date 不一致".to_owned(),
+            }).to_string());
+        }
+        let origin = session.runtime_mirror_origin();
+        let current_stage = match source.day_end_stage {
+            crate::runtime::source::MirrorDayEndStage::Tick => crate::RuntimeMirrorDayEndStage::Tick,
+            crate::runtime::source::MirrorDayEndStage::DayEndCommitted => crate::RuntimeMirrorDayEndStage::DayEndCommitted,
+            crate::runtime::source::MirrorDayEndStage::RetainedPublished => crate::RuntimeMirrorDayEndStage::RetainedPublished,
+        };
+        if origin.install_sequence > 0 && origin.authority_epoch == source.authority_epoch
+            && origin.source_tick == source.tick && origin.source_generation == source.generation
+            && origin.non_tick_revision == source.non_tick_revision && origin.day_end_stage == current_stage
+            && self.pending_mirror_domains().is_empty() && !self.sync_inputs.plans_pending()
+        { return Ok(()); }
+        let result = (|| {
+            let input = self.prepare_flush_driver_projection(session)?;
+            let prepared = self.prepare_flush_candidate(session, input, trigger)?;
+            if !prepared.events.is_empty() { return Err("静点 flush 不得产生市场事件".to_owned()); }
+            let ack = session.validate_runtime_mirror_source(self, &prepared).map_err(|fatal| fatal.to_string())?;
+            session.install_runtime_mirror(self, prepared);
+            self.ack_prepared_mirror(ack);
+            Ok(())
+        })();
+        result.map_err(|description| session.poison_runtime_step(crate::session::StepFatal::InvariantViolation {
+            location: "runtime::flush_candidate".to_owned(), description,
+        }).to_string())
+    }
+
+    /// 市场拍与静点均在同一prepare/validate/move安装实现上构造镜像。
+    pub(crate) fn prepare_flush_candidate(
+        &mut self, session: &GameSession, input: PreparedDriverStep,
+        _trigger: crate::runtime::sync_policy::FlushTrigger,
+    ) -> Result<crate::session::PreparedRuntimeMirror, String> {
+        let tick = self.world_committed_tick();
+        session.prepare_runtime_mirror(self, input, tick)
+    }
+
     pub(crate) fn mirror_source(&self) -> crate::runtime::source::WorldMirrorSource {
         self.world.mirror_source()
     }
@@ -268,8 +319,6 @@ impl RuntimeDriver {
     }
 
     pub(crate) fn finish_mirror_install(&mut self, accounts: usize) {
-        #[cfg(feature = "simulation-diagnostics")]
-        self.pending_decision_traces.clear();
         #[cfg(test)]
         {
             self.account_writes += accounts as u64;
@@ -279,6 +328,13 @@ impl RuntimeDriver {
         self.force_full_accounts = false;
         self.initial_static_seed = None;
         self.sync_inputs.complete_flush(crate::runtime::driver_sync::FlushOutcome::Successful);
+        self.finish_tick_fact_install();
+    }
+
+    /// 事实已在当前成功提交移交；不清 mirror 覆盖表及 Full 原因。
+    pub(crate) fn finish_tick_fact_install(&mut self) {
+        #[cfg(feature = "simulation-diagnostics")]
+        self.pending_decision_traces.clear();
         self.pending_retail.clear();
         self.pending_retail_rejections.clear();
         self.world.drained_retail.clear();
@@ -585,10 +641,9 @@ impl RuntimeDriver {
                     description
                 }
             })?;
-        let tick = self.world_committed_tick();
         let prepared =
-            session
-                .prepare_runtime_mirror(self, input, tick)
+            self
+                .prepare_flush_candidate(session, input, crate::runtime::sync_policy::FlushTrigger::DayEnd)
                 .map_err(|description| {
                     let fatal = crate::session::StepFatal::InvariantViolation {
                         location: "RuntimeDriver::day_end::prepare".to_owned(), description,

@@ -29,6 +29,7 @@ pub struct RuntimeDelta {
     pub tick: u64,
     pub day: u32,
     pub phase: TradingPhase,
+    pub mirror_origin: crate::RuntimeMirrorOrigin,
     pub accounts: BTreeMap<AccountId, AccountSnap>,
     pub working_orders: PlayerOrderDelta,
 }
@@ -39,6 +40,7 @@ pub struct PublicRuntimeState {
     seq: u64,
     day: u32,
     phase: TradingPhase,
+    mirror_origin: crate::RuntimeMirrorOrigin,
     accounts: BTreeMap<AccountId, AccountSnap>,
     working_orders: BTreeMap<u64, PlayerWorkingOrder>,
 }
@@ -51,6 +53,7 @@ impl PublicRuntimeState {
             self.seq,
             self.day,
             self.phase,
+            self.mirror_origin,
             &self.accounts,
             &self.working_orders,
         ))
@@ -60,7 +63,9 @@ impl PublicRuntimeState {
 
 impl RuntimeDelta {
     pub fn validate(&self) -> Result<(), ProtocolError> {
-        if self.seq_to < self.seq_from {
+        if self.seq_to < self.seq_from
+            || validate_mirror_origin(&self.mirror_origin, self.tick).is_err()
+        {
             return Err(ProtocolError::RuntimeDeltaMismatch);
         }
         validate_accounts(&self.accounts)?;
@@ -81,6 +86,27 @@ impl RuntimeDelta {
         }
         Ok(())
     }
+}
+
+fn validate_mirror_origin(
+    origin: &crate::RuntimeMirrorOrigin,
+    runtime_tick: u64,
+) -> Result<(), ProtocolError> {
+    origin
+        .validate()
+        .map_err(|_| ProtocolError::RuntimeDeltaMismatch)?;
+    if origin.source_tick > runtime_tick {
+        return Err(ProtocolError::RuntimeDeltaMismatch);
+    }
+    Ok(())
+}
+
+fn origin_is_not_older(
+    current: &crate::RuntimeMirrorOrigin,
+    previous: &crate::RuntimeMirrorOrigin,
+) -> bool {
+    (current.authority_epoch, current.install_sequence)
+        >= (previous.authority_epoch, previous.install_sequence)
 }
 
 fn validate_accounts(accounts: &BTreeMap<AccountId, AccountSnap>) -> Result<(), ProtocolError> {
@@ -173,6 +199,7 @@ impl GameSession {
         orders: Vec<super::PlayerWorkingOrder>,
     ) -> Result<PublicRuntimeState, StepFatal> {
         validate_accounts(&snapshot.accounts).map_err(fatal)?;
+        validate_mirror_origin(&snapshot.mirror_origin, snapshot.tick).map_err(fatal)?;
         if !snapshot.accounts.contains_key(&AccountId(0)) {
             return Err(fatal(ProtocolError::RuntimeDeltaMismatch));
         }
@@ -188,6 +215,7 @@ impl GameSession {
             seq: snapshot.seq,
             day: snapshot.day,
             phase: snapshot.phase,
+            mirror_origin: snapshot.mirror_origin,
             accounts: snapshot.accounts.clone(),
             working_orders,
         })
@@ -217,6 +245,11 @@ impl PublicRuntimeState {
         let current = self;
         if previous.is_some_and(|before| {
             before.seq != first.seq_from || before.tick.checked_add(1) != Some(first.tick)
+        }) {
+            return Err(fatal(ProtocolError::RuntimeDeltaMismatch));
+        }
+        if previous.is_some_and(|before| {
+            !origin_is_not_older(&current.mirror_origin, &before.mirror_origin)
         }) {
             return Err(fatal(ProtocolError::RuntimeDeltaMismatch));
         }
@@ -263,6 +296,7 @@ impl PublicRuntimeState {
                 tick: current.tick,
                 day: current.day,
                 phase: current.phase,
+                mirror_origin: current.mirror_origin,
                 accounts,
                 working_orders: PlayerOrderDelta {
                     reset: previous.is_none(),
@@ -301,5 +335,42 @@ mod safe_order_ids {
             ));
         }
         Ok(ids)
+    }
+}
+
+#[cfg(test)]
+mod mirror_origin_tests {
+    use super::{origin_is_not_older, validate_mirror_origin};
+    use crate::{RuntimeMirrorDayEndStage, RuntimeMirrorOrigin, TradingPhase};
+
+    fn origin(authority_epoch: u64, install_sequence: u64, source_tick: u64) -> RuntimeMirrorOrigin {
+        RuntimeMirrorOrigin {
+            authority_epoch,
+            install_sequence,
+            source_tick,
+            source_generation: 0,
+            day_end_stage: RuntimeMirrorDayEndStage::Tick,
+            non_tick_revision: 0,
+            mirror_phase: TradingPhase::Continuous,
+        }
+    }
+
+    #[test]
+    fn runtime_origin_must_be_valid_and_not_ahead_of_runtime_tick() {
+        assert!(validate_mirror_origin(&origin(1, 2, 3), 3).is_ok());
+        assert!(validate_mirror_origin(&origin(1, 2, 4), 3).is_err());
+        assert!(validate_mirror_origin(
+            &origin(1, 2, crate::orderbook::js_safe_u64::MAX + 1),
+            crate::orderbook::js_safe_u64::MAX + 1,
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn public_runtime_origin_freshness_is_monotone_by_epoch_then_install() {
+        assert!(origin_is_not_older(&origin(1, 5, 8), &origin(1, 4, 9)));
+        assert!(!origin_is_not_older(&origin(1, 4, 9), &origin(1, 5, 8)));
+        assert!(origin_is_not_older(&origin(2, 1, 0), &origin(1, 99, 20)));
+        assert!(!origin_is_not_older(&origin(1, 99, 20), &origin(2, 1, 0)));
     }
 }

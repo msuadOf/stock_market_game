@@ -86,6 +86,7 @@ pub(super) fn session_with_company(
             float_allocation: FloatAllocation::random(),
             start_date: date,
             simulation_policy_id: engine::SIMULATION_POLICY_ID.into(),
+            runtime_sync_policy: Default::default(),
         },
         1,
     )

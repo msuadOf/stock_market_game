@@ -221,3 +221,9 @@ pub use crate::session::market_calendar_context::{MarketDayContext, MarketTickCo
 
 #[cfg(test)]
 mod calendar_test_support;
+
+/// Session 镜像汇合时机；不改变 World 每拍提交。
+pub mod sync_policy;
+
+/// 公开镜像来源与运行进度分别标识。
+pub mod mirror_origin;

@@ -104,6 +104,8 @@ impl GameSession {
             runtime_external_authority: _,
             runtime_installed_market_close: _,
             runtime_mirror_install_sequence: _,
+            runtime_mirror_origin: _,
+            runtime_publication_generation: _,
             runtime_discard_driver_flag: _,
             revision: _,
             report_correction_epoch: _,

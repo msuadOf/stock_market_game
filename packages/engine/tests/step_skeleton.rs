@@ -57,6 +57,7 @@ fn setup(auction_ticks: u64) -> Result<SessionSetup, Box<dyn std::error::Error>>
         float_allocation: FloatAllocation::random(),
         start_date: CivilDate::from_iso("2030-01-02")?,
         simulation_policy_id: engine::SIMULATION_POLICY_ID.to_owned(),
+        runtime_sync_policy: Default::default(),
     })
 }
 

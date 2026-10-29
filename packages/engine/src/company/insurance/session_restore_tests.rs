@@ -133,6 +133,7 @@ fn full_session_restore_rejects_corrupt_insurance_group_in_memory() {
             float_allocation: FloatAllocation::random(),
             start_date: date("2030-01-05"),
             simulation_policy_id: crate::SIMULATION_POLICY_ID.into(),
+            runtime_sync_policy: Default::default(),
         },
         1,
     )

@@ -83,6 +83,7 @@ pub fn initial_save(closed: CalendarExchange, first: StockExchange, auction: boo
         float_allocation: FloatAllocation::random(),
         start_date: date(START_DATE),
         simulation_policy_id: SIMULATION_POLICY_ID.into(),
+        runtime_sync_policy: Default::default(),
     };
     let session = GameSession::new(setup, 73).expect("合法两股零 NPC 初始局");
     assert_eq!((session.tick(), session.day()), (0, 0));

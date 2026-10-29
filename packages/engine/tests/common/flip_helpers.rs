@@ -69,6 +69,7 @@ pub fn setup_1stock() -> SessionSetup {
         float_allocation: FloatAllocation::random(),
         start_date: engine::calendar::CivilDate::from_ymd(2026, 1, 5).expect("合法日期"),
         simulation_policy_id: SIMULATION_POLICY_ID.to_owned(),
+        runtime_sync_policy: Default::default(),
     }
 }
 

@@ -56,6 +56,7 @@ pub struct Snapshot {
     pub tick: u64,
     pub day: u32,
     pub phase: TradingPhase,
+    pub mirror_origin: crate::RuntimeMirrorOrigin,
     pub markets: BTreeMap<StockId, MarketSnap>,
     pub accounts: BTreeMap<AccountId, AccountSnap>,
     /// Rust 引擎持有的已完成日 K；首次连接、重连与存档恢复均由快照同步。
@@ -184,7 +185,7 @@ impl GameSession {
                 .desk_book_mirror
                 .iter()
                 .map(|(code, mirror)| {
-                    let public = project_mirror_public_book(self.phase(), mirror);
+                    let public = project_mirror_public_book(self.runtime_mirror_phase(), mirror);
                     let last_close = self
                         .state
                         .markets
@@ -279,6 +280,7 @@ impl GameSession {
             tick: self.state.tick,
             day: self.state.day,
             phase: self.phase(),
+            mirror_origin: self.runtime_mirror_origin(),
             markets,
             accounts,
             daily_candles: if include_daily_candles {

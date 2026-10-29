@@ -164,6 +164,7 @@ impl GameSession {
         let causal_calendar = input.calendar.clone();
         let static_read = input.static_read;
         let is_static = static_read.is_some();
+        let refresh_market = static_read.as_ref().is_some_and(|read| read.refresh_market);
         let static_session_revision = static_read.as_ref().map(|read| read.session_revision);
         if static_session_revision.is_some_and(|revision| revision != self.external_revision()) {
             return Err("静点 Full 捕获后 Session revision 已改变".to_owned());
@@ -335,6 +336,9 @@ impl GameSession {
             let ledger = value
                 .retail_experience
                 .get_or_insert_with(|| self.state.retail_experience[&id].clone());
+            // 延迟窗口内组可能已在下一次观察创建完整持仓经历；该整态保持组权威。
+            // 仅为组也尚未建立的首买补既有桥接，不再次初始化已有生命周期。
+            if ledger.feedback.stocks.contains_key(&code) { continue; }
             let price = Money::from_cents(entry.max(1));
             ledger
                 .initialize_holding_dated(
@@ -413,7 +417,7 @@ impl GameSession {
             ));
         }
         let candle_time = self.candle_date_time_for_runtime();
-        if !is_static {
+        if !is_static || refresh_market {
         for (index, view) in driver.world_public_views().iter().enumerate() {
             let code = StockId(index as u32);
             if !input.calendar.stock_is_open(code)? {
@@ -550,34 +554,7 @@ impl GameSession {
             id_map,
             accounts_per_group: per_group,
         };
-        let mut receipts = BTreeMap::new();
-        let mut receipt_watermark = self.state.receipt_watermark;
-        for pending in driver.pending_trade_receipts() {
-            let history = receipts.entry(pending.account).or_insert_with(|| {
-                self.state
-                    .personal_trade_confirmations
-                    .get(&pending.account)
-                    .cloned()
-                    .unwrap_or_default()
-            });
-            if history
-                .last()
-                .is_some_and(|last| last.receipt_id >= pending.confirmation.receipt_id)
-            {
-                return Err(format!(
-                    "个人确认 candidate receipt_id 回退或重复：account={:?} receipt={}",
-                    pending.account, pending.confirmation.receipt_id
-                ));
-            }
-            receipt_watermark = receipt_watermark.max(
-                pending
-                    .confirmation
-                    .receipt_id
-                    .checked_add(1)
-                    .ok_or_else(|| "个人确认 candidate 水位溢出".to_owned())?,
-            );
-            history.push(pending.confirmation.clone());
-        }
+        let (receipts, receipt_watermark) = self.prepare_runtime_receipts(driver)?;
         let mut closed = BTreeMap::new();
         let mut candle_book = self.state.candle_book.clone();
         candle_book.replace_active(active.clone());
@@ -749,7 +726,9 @@ impl GameSession {
                 )
             })
             .collect();
+        let origin = self.origin_from_runtime_source(source, install_sequence, phase)?;
         let snapshot = Snapshot {
+            mirror_origin: origin,
             tick,
             seq,
             day,
@@ -920,6 +899,8 @@ impl GameSession {
             ));
         }
         self.runtime_mirror_install_sequence = prepared.install_sequence;
+        self.runtime_mirror_origin = Some(prepared.projection.snapshot.mirror_origin);
+        self.runtime_publication_generation = prepared.source.generation;
         driver.finish_mirror_install(count);
         prepared.events
     }

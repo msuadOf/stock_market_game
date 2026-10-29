@@ -89,6 +89,7 @@ pub(crate) fn chain_setup(start_iso: &str) -> SessionSetup {
         ),
         start_date: engine::CivilDate::from_iso(start_iso).unwrap(),
         simulation_policy_id: engine::SIMULATION_POLICY_ID.to_string(),
+        runtime_sync_policy: Default::default(),
     }
 }
 

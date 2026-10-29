@@ -320,6 +320,7 @@ fn scenario_setup(scenario: &str) -> Result<SessionSetup, String> {
         })
         .map_err(|error| error.to_string())?,
         simulation_policy_id: engine::SIMULATION_POLICY_ID.to_string(),
+        runtime_sync_policy: Default::default(),
     })
 }
 

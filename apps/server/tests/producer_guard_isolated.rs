@@ -66,6 +66,7 @@ fn minimal_setup() -> engine::SessionSetup {
         float_allocation: FloatAllocation::random(),
         start_date: CivilDate::from_iso("2030-01-02").unwrap(),
         simulation_policy_id: SIMULATION_POLICY_ID.into(),
+        runtime_sync_policy: Default::default(),
     }
 }
 

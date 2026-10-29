@@ -174,6 +174,7 @@ pub(crate) mod tests {
             float_allocation: FloatAllocation::random(),
             start_date: day("2026-01-06"),
             simulation_policy_id: crate::SIMULATION_POLICY_ID.into(),
+            runtime_sync_policy: Default::default(),
             company_system: Some(config),
             dividend_tax_mode: Some(crate::company::CashDividendTaxMode::FlatWithholding),
             flat_withholding_bp: Some(1000),

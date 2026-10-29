@@ -14,6 +14,7 @@ pub(crate) struct PreparedStaticRead {
     pub resting: Vec<std::sync::Arc<Vec<super::super::protocol::RestingFact>>>,
     pub serials: Vec<u64>,
     pub market_views: Vec<(i64, u64)>,
+    pub refresh_market: bool,
 }
 
 impl RuntimeDriver {
@@ -56,17 +57,52 @@ impl RuntimeDriver {
         &mut self,
         session: &GameSession,
     ) -> Result<PreparedDriverStep, String> {
-        let (calendar_day, _) = session.prepare_market_calendar_projection().map_err(|error| error.to_string())?;
+        self.prepare_static_projection_inner(session, true)
+    }
+
+    pub(crate) fn prepare_flush_driver_projection(
+        &mut self,
+        session: &GameSession,
+    ) -> Result<PreparedDriverStep, String> {
+        self.prepare_static_projection_inner(session, false)
+    }
+
+    fn prepare_static_projection_inner(
+        &mut self,
+        session: &GameSession,
+        initial_adoption: bool,
+    ) -> Result<PreparedDriverStep, String> {
+        let (calendar_day, _) = session
+            .prepare_market_calendar_projection()
+            .map_err(|error| error.to_string())?;
         let source = self.mirror_source();
-        let initial = self
-            .initial_static_seed
-            .as_ref()
-            .ok_or_else(|| "初始静点种子已随安装退役".to_owned())?;
-        if initial.revision != session.external_revision() || source.generation != 0 {
-            return Err("初始静点种子与当前 Session 或 World 来源不一致".to_owned());
-        }
-        let market_views = initial.market_views.clone();
-        let session_revision = initial.revision;
+        let (market_views, session_revision) = if initial_adoption {
+            let initial = self
+                .initial_static_seed
+                .as_ref()
+                .ok_or_else(|| "初始静点种子已随安装退役".to_owned())?;
+            if initial.revision != session.external_revision() || source.generation != 0 {
+                return Err("初始静点种子与当前 Session 或 World 来源不一致".to_owned());
+            }
+            (initial.market_views.clone(), initial.revision)
+        } else {
+            if source.civil_date != session.civil_date() {
+                return Err("flush 静点 World 与 Session civil date 不一致".to_owned());
+            }
+            let views = if source.generation == 0 {
+                self.initial_static_seed
+                    .as_ref()
+                    .ok_or_else(|| "flush 初始发布缺原始行情种子".to_owned())?
+                    .market_views
+                    .clone()
+            } else {
+                self.world_public_views()
+                    .iter()
+                    .map(|view| (view.last_price, view.public_cutoff_serial))
+                    .collect()
+            };
+            (views, session.external_revision())
+        };
         if source.tick != session.tick() {
             return Err("静点 Full 不能替代尚未交付的市场 tick".to_owned());
         }
@@ -77,29 +113,48 @@ impl RuntimeDriver {
         {
             return Err("静点 Full 不能消费尚未交付的业务事实".to_owned());
         }
-        let groups = self
-            .world
-            .snapshot_accounts()
-            .map_err(|error| error.to_string())?;
-        if groups.len() != self.world.n_groups()
-            || groups
-                .iter()
-                .enumerate()
-                .any(|(index, (group, _))| usize::from(*group) != index)
-        {
-            return Err("静点 Full 账户组集合不完整或重复".to_owned());
-        }
-        let accounts = groups
-            .into_iter()
-            .map(|(_, rows)| {
-                std::sync::Arc::new(
-                    rows.into_iter()
-                        .enumerate()
-                        .map(|(local, value)| (local as _, std::sync::Arc::new(value)))
-                        .collect(),
-                )
-            })
-            .collect();
+        let full_accounts = initial_adoption
+            || self.force_full_accounts
+            || self.sync_inputs.account_source()
+                == crate::runtime::driver_sync::AccountSource::Full
+            || self.pending_mirror_domains().accounts_full;
+        let accounts = if full_accounts {
+            let groups = self
+                .world
+                .snapshot_accounts()
+                .map_err(|error| error.to_string())?;
+            if groups.len() != self.world.n_groups()
+                || groups.iter().enumerate().any(|(index, (group, rows))| {
+                    usize::from(*group) != index || rows.len() != self.accounts_per_group
+                })
+            {
+                return Err("静点 Full 账户组集合或名册不完整".to_owned());
+            }
+            groups
+                .into_iter()
+                .map(|(_, rows)| {
+                    Arc::new(
+                        rows.into_iter()
+                            .enumerate()
+                            .map(|(local, value)| (local as _, Arc::new(value)))
+                            .collect(),
+                    )
+                })
+                .collect()
+        } else {
+            (0..self.world.n_groups())
+                .map(|group| {
+                    Arc::new(
+                        self.sync_inputs
+                            .accounts()
+                            .iter()
+                            .filter(|(owner, _)| usize::from(owner.group) == group)
+                            .map(|(owner, row)| (owner.local, Arc::clone(&row.value)))
+                            .collect(),
+                    )
+                })
+                .collect()
+        };
         let full = self
             .world
             .collect_personal_full_for_prepared()
@@ -181,6 +236,7 @@ impl RuntimeDriver {
                 resting: resting.into_iter().map(std::sync::Arc::new).collect(),
                 serials,
                 market_views,
+                refresh_market: !initial_adoption && source.generation != 0,
             }),
         })
     }

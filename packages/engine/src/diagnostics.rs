@@ -2044,6 +2044,7 @@ mod tests {
             float_allocation: FloatAllocation::random(),
             start_date: crate::CivilDate::from_ymd(2030, 1, 1).unwrap(),
             simulation_policy_id: crate::SIMULATION_POLICY_ID.to_owned(),
+            runtime_sync_policy: Default::default(),
         };
         let session = crate::GameSession::new(setup.clone(), 7).unwrap();
         (

@@ -462,6 +462,7 @@ mod whole_save {
                 float_allocation: FloatAllocation::random(),
                 start_date: date("2030-06-03"),
                 simulation_policy_id: SIMULATION_POLICY_ID.to_owned(),
+                runtime_sync_policy: Default::default(),
                 company_system: Some(simple_company_fixture!(crate; ["600001"])),
                 dividend_tax_mode: Some(
                     crate::company::cash_dividend_tax::CashDividendTaxMode::FlatWithholding,

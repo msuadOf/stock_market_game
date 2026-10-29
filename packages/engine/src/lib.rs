@@ -151,3 +151,6 @@ pub mod information;
 
 /// std-thread 所有权转移模型运行时原语（身份/实体/事实/批次协议类型，批 1 类型先行）。
 pub mod runtime;
+
+pub use runtime::sync_policy::RuntimeSyncPolicy;
+pub use runtime::mirror_origin::{RuntimeMirrorDayEndStage, RuntimeMirrorOrigin};

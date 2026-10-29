@@ -21,6 +21,9 @@ use serde::{Deserialize, Serialize};
 /// selected 公司声称已上市，但同局 StockCatalog 缺证券；context 恰为 [CompanyId(u32)]。
 pub const COMPANY_CATALOG_LISTED_STOCK_MISSING: u16 = 3019;
 
+/// DayEnd 拒绝玩家输入；context=[policy(1=DayEnd),tick,generation]。
+pub const RUNTIME_SYNC_POLICY_VIOLATION: u16 = 3020;
+
 /// 校验失败的结构化载体：无字符串。context 槽位语义按错误码在清单文档登记。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
 #[ts(export)]

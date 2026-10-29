@@ -13,6 +13,10 @@ pub struct SharedSessionIngress {
 
 struct IngressState {
     closed: bool,
+    terminal: Option<StepFatal>,
+    policy: crate::RuntimeSyncPolicy,
+    runtime_tick: u64,
+    runtime_generation: u64,
     accounts: BTreeMap<AccountId, AccountKind>,
     receipts: IngressReceiptCursors,
     next_input: u64,
@@ -23,6 +27,18 @@ struct IngressState {
 pub(super) struct IngressBinding {
     pub(super) source: SharedSessionIngress,
     consumed: Arc<AtomicU64>,
+}
+
+impl IngressState {
+    fn require_player_policy(&self) -> Result<(), SessionError> {
+        if let Some(first) = &self.terminal { return Err(SessionError::Step(first.clone())); }
+        if !self.policy.allows_player_ingress() {
+            return Err(SessionError::SyncPolicyViolation(crate::error::ValidationFault::new(
+                crate::error::RUNTIME_SYNC_POLICY_VIOLATION, vec![1, self.runtime_tick, self.runtime_generation],
+            )));
+        }
+        Ok(())
+    }
 }
 
 impl SharedSessionIngress {
@@ -41,7 +57,8 @@ impl SharedSessionIngress {
     }
 
     fn lock(&self) -> Result<MutexGuard<'_, IngressState>, SessionError> {
-        self.inner.lock().map_err(|_error| {
+        self.inner.lock().map_err(|poison| {
+            if let Some(first) = &poison.get_ref().terminal { return SessionError::Step(first.clone()); }
             // 1250：ingress 元数据锁中毒（防御式显式暴露）。
             SessionError::ResourceLimit(crate::error::ValidationFault::bare(1250))
         })
@@ -65,6 +82,7 @@ impl SharedSessionIngress {
         intent: Intent,
     ) -> Result<(), SessionError> {
         let mut state = self.lock()?;
+        state.require_player_policy()?;
         if state.closed {
             // 1251：ingress 世代已关闭。
             return Err(SessionError::ResourceLimit(
@@ -85,6 +103,20 @@ impl SharedSessionIngress {
         state.next_input = next;
         state.inputs.push_back((input, receipt));
         Ok(())
+    }
+
+    pub(super) fn update_runtime_progress(&self, tick: u64, generation: u64) -> Result<(), SessionError> {
+        let mut state = self.lock()?;
+        state.runtime_tick = tick;
+        state.runtime_generation = generation;
+        Ok(())
+    }
+
+    pub(super) fn publish_terminal(&self, fatal: StepFatal) {
+        // lock poison 只允许封存首错并关闭，不恢复入队能力。
+        let mut state = match self.inner.lock() { Ok(state) => state, Err(poison) => poison.into_inner() };
+        if state.terminal.is_none() { state.terminal = Some(fatal); }
+        state.closed = true;
     }
 
     pub fn close(&self) -> Result<(), SessionError> {
@@ -157,6 +189,10 @@ impl GameSession {
         let source = SharedSessionIngress {
             inner: Arc::new(Mutex::new(IngressState {
                 closed: false,
+                terminal: self.poison_reason().cloned(),
+                policy: self.state.setup.runtime_sync_policy,
+                runtime_tick: self.tick(),
+                runtime_generation: self.runtime_publication_generation,
                 accounts: self
                     .state
                     .accounts

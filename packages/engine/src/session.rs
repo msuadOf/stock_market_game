@@ -198,7 +198,11 @@ mod failure_tests;
 mod runtime_sync_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod calendar_final_boundary_tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod runtime_sync_consumption_tests;
 mod runtime_mirror;
+pub(crate) use runtime_mirror::PreparedRuntimeMirror;
+mod runtime_progress;
 pub(crate) mod retail_lifecycle;
 #[cfg(all(test, not(feature = "simulation-diagnostics"), not(target_arch = "wasm32")))]
 mod retail_lifecycle_tests;
@@ -623,6 +627,7 @@ pub struct SaveSlot {
     /// false 走旧簿重建）。
     #[serde(default)]
     pub desk_mirrored_resting: bool,
+    #[serde(deserialize_with = "deserialize_saved_setup")]
     pub setup: SessionSetup,
     #[serde(with = "u64_decimal")]
     #[ts(type = "string")]
@@ -1011,6 +1016,8 @@ struct WorkingOrderSlices<'a> {
 /// session 操作失败（致命：构造非法 / 未知玩家）。绝不静默吞错（铁律二）。
 #[derive(Debug, Error)]
 pub enum SessionError {
+    #[error("runtime sync policy violation: {0}")]
+    SyncPolicyViolation(crate::error::ValidationFault),
     #[error(transparent)]
     RepurchaseApproval(#[from] RepurchaseApprovalError),
     #[error(transparent)]
@@ -1312,6 +1319,9 @@ pub struct NpcSetup {
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 #[ts(export)]
 pub struct SessionSetup {
+    /// 新局缺省 EveryTick；运行中固定，日终三档均强制汇合。
+    #[serde(default)]
+    pub runtime_sync_policy: crate::RuntimeSyncPolicy,
     pub stocks: Vec<StockSpec>,
     #[serde(default)]
     #[ts(optional)]
@@ -1396,6 +1406,15 @@ pub struct SessionSetup {
     /// 决策链参数族）的稳定版本标识。新档必填；与存档一起固化，恢复时不
     /// 与任何“最新默认”比对或迁移——身份不匹配的档由宿主层拒绝。
     pub simulation_policy_id: String,
+}
+
+/// 新局默认只适用于创建请求；当前档必须显式保存本局同步策略。
+fn deserialize_saved_setup<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<SessionSetup, D::Error> {
+    let value = <serde_json::Value as serde::Deserialize>::deserialize(deserializer)?;
+    if value.as_object().is_none_or(|setup| !setup.contains_key("runtime_sync_policy")) {
+        return Err(serde::de::Error::custom("当前存档 setup 缺少 runtime_sync_policy"));
+    }
+    serde_json::from_value(value).map_err(serde::de::Error::custom)
 }
 
 // 默认 new 与经 new 构造的 restore 共用初始 NPC group 数；不控制显式 override。
@@ -1864,6 +1883,8 @@ pub struct GameSession {
     /// 本 owner 已成功 Full 安装的真实市场收盘；仅用于同日 civil 失败的终态判定。
     runtime_installed_market_close: Option<(u64, u64, crate::CivilDate)>,
     runtime_mirror_install_sequence: u64,
+    runtime_mirror_origin: Option<crate::RuntimeMirrorOrigin>,
+    runtime_publication_generation: u64,
     /// step_frame 接轨件 4：投影段失败后丢弃驱动器的标志（body 内设置、
     /// 驱动器共用段消费——world tick 已转正而会话已回滚，锁步断裂的
     /// 常驻实例不可复用；重试经 from_session 重建，等价旧管线"candidate
@@ -2355,6 +2376,8 @@ impl GameSession {
             runtime_external_authority: self.runtime_external_authority.clone(),
             runtime_installed_market_close: self.runtime_installed_market_close,
             runtime_mirror_install_sequence: self.runtime_mirror_install_sequence,
+            runtime_mirror_origin: self.runtime_mirror_origin,
+            runtime_publication_generation: self.runtime_publication_generation,
             runtime_discard_driver_flag: false,
             state: self.state.clone_for_shadow()?,
         })
@@ -2531,6 +2554,8 @@ impl GameSession {
             runtime_external_authority: std::sync::Weak::new(),
             runtime_installed_market_close: None,
             runtime_mirror_install_sequence: 0,
+            runtime_mirror_origin: None,
+            runtime_publication_generation: 0,
             runtime_discard_driver_flag: false,
             state: CommittableSessionState {
                 #[cfg(feature = "simulation-diagnostics")]
@@ -4157,6 +4182,7 @@ impl GameSession {
         player_id: AccountId,
         intent: Intent,
     ) -> Result<(), SessionError> {
+        self.require_player_ingress_policy()?;
         if let Some(binding) = &self.ingress {
             return binding.source.enqueue_player_intent(player_id, intent);
         }
@@ -5041,6 +5067,7 @@ mod candle_open_tests {
             float_allocation: FloatAllocation::random(),
             start_date: default_civil_start_date(),
             simulation_policy_id: SIMULATION_POLICY_ID.to_string(),
+            runtime_sync_policy: Default::default(),
         }
     }
 
@@ -6390,6 +6417,7 @@ mod npc_working_quote_tests {
             // 本 helper 要求首拍即可交易，开局必须使用开市日。
             start_date: crate::CivilDate::from_iso("2030-01-02").unwrap(),
             simulation_policy_id: SIMULATION_POLICY_ID.to_string(),
+            runtime_sync_policy: Default::default(),
         }
     }
 
