@@ -19,7 +19,7 @@ fn measurement_lock() -> &'static Mutex<()> {
 
 // 复用 company_operations 的四行业装配（真实日结路径）；#[path] 共享同一文件，
 // 不复制 fixture。
-#[path = "company_operations/fixtures.rs"]
+#[path = "company_operations/fixtures/core.rs"]
 mod fixtures;
 
 use engine::company::operations::CompanyOperations;

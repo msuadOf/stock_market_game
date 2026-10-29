@@ -9,7 +9,6 @@ use engine::{
 
 pub const START_DATE: &str = "2030-01-02";
 pub const TICKS_PER_DAY: u64 = 2;
-pub const PRESET_HISTORY_DAYS: usize = 360;
 
 pub fn date(iso: &str) -> CivilDate {
     CivilDate::from_iso(iso).expect("fixture 日期必须合法")

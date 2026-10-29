@@ -9,7 +9,9 @@ use engine::session::{
     MarketHistoryRequest,
 };
 use engine::{Event, StockExchange};
-use fixture::{date, restore, PRESET_HISTORY_DAYS, START_DATE, TICKS_PER_DAY};
+use fixture::{date, restore, START_DATE, TICKS_PER_DAY};
+
+const PRESET_HISTORY_DAYS: usize = 360;
 
 #[test]
 fn initial_mixed_fixture_restores_with_frozen_policy_and_catalog() {
