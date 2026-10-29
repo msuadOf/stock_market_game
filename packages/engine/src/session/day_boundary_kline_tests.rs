@@ -1,9 +1,4 @@
-//! 日界拍日K漂移修复批（B2 台账"main 既有漂移登记 1"）：
-//! 生产时序 desk `roll_day`（tick=tpd 首拍开头）先于 session 日终迁移与
-//! 日结 Drain——收盘竞价成交迟到 Drain 清算，install 面提交的当日 K
-//! 拿不到收盘段（占位/部分丢失两形态），desk 面归档 K 同缺且收盘段
-//! 污染次日活动 K；成交 receipt 的 `civil_date` 取下一拍组装时点=次日、
-//! 日结静点 save/restore 丢（台账建议 1）。
+//! 固定运行时跨日 K 线、成交回执与日结存档的对账边界。
 //!
 //! 语义合同（大 A 基线）：
 //! - 收盘集合竞价成交（15:00/900 桶）计入**当日**日K（量/额/笔/OHLC）；
@@ -21,9 +16,9 @@ use crate::{AccountId, GameSession, StockId};
 /// 单股小日历 fixture：tpd=30 / auction=6（申报窗 day_tick 0..3、盘前
 /// 4..5、开盘清算 tick4 拍开头、连续 6..26）/ closing=3（收盘窗 day_tick
 /// 27..29；窗首拍受理单按连续末拍基准立即撮合，28/29 拍挂单留待 Drain
-/// 清算）。日 0 = tick 1..30；tick30 拍开头 desk `roll_day`（tick30 本身
-/// =日1 申报窗），tick30 拍步尾（ends_day，`tick()%tpd==0`）编排日终
-/// 迁移与日结 Drain（收盘竞价清算在此成交）。
+/// 清算）。日 0 = tick 1..30；tick30 完成当日 market DayBoundary 与收盘
+/// Drain。随后必须显式推进 `end_civil_day`，将自然日时钟与已完成的交易日
+/// 对齐；tick31 才属于下一交易日。
 fn boundary_setup() -> crate::session::SessionSetup {
     let mut setup = crate::session::npc_working_quote_tests::quote_setup(0);
     // 开局可卖持仓来源（卖腿 fixture 依赖——quote_setup 原值 0）。
@@ -91,7 +86,8 @@ fn trade_pair(session: &GameSession) -> (AccountId, AccountId) {
 }
 
 /// 跑到第 `until` 拍；`inject_ticks` 指定各拍注入交叉意图对。返回
-/// （session, driver, 各拍事件）。tick30 拍=日0 的日结拍。
+/// （session, driver, 各拍事件）。每个交易日最后一拍完成后显式推进
+/// 自然日日结，并核对自然日时钟与市场交易日计数同步。
 fn run_boundary(
     setup: crate::session::SessionSetup,
     seed: u64,
@@ -102,6 +98,7 @@ fn run_boundary(
     crate::runtime::drive::RuntimeDriver,
     std::collections::BTreeMap<u64, Vec<crate::Event>>,
 ) {
+    let ticks_per_day = setup.ticks_per_day;
     let mut session = GameSession::new(setup, seed).expect("会话构造");
     let (buyer, seller) = trade_pair(&session);
     let mut driver =
@@ -123,6 +120,19 @@ fn run_boundary(
             .runtime_step_with_install(&mut driver)
             .unwrap_or_else(|e| panic!("tick{t} 步进失败：{e}"));
         per_tick.insert(t, events);
+        if t % ticks_per_day == 0 {
+            session
+                .end_civil_day()
+                .unwrap_or_else(|e| panic!("tick{t} 后自然日日结失败：{e}"));
+            assert_eq!(
+                session
+                    .civil_clock()
+                    .completed_trading_sessions_expected()
+                    .expect("日结后 Calendar 交易日计数有效"),
+                session.day() + 1,
+                "tick{t} 后自然日与市场交易日同步"
+            );
+        }
     }
     (session, driver, per_tick)
 }
@@ -308,6 +318,33 @@ fn closing_only_trades_reach_day_kline_and_receipts() {
     let (session2, driver2, _) = run_boundary(boundary_setup(), 91, &[28, 29], 30);
     let save = session2.save().expect("日结静点 save");
     let restored = GameSession::restore(&save).expect("restore");
+    assert_day_k(
+        ExpectedDayK {
+            context: "restore",
+            volume: 200,
+            turnover_cents: 200_000,
+            trade_count: 2,
+            open_cents: 1000,
+            high_cents: 1000,
+            low_cents: 1000,
+            close_cents: 1000,
+        },
+        &install_day0_candle(&restored),
+    );
+    let restored_day = restored
+        .retained_market_days()
+        .last()
+        .expect("restore 后日 0 保留快照");
+    assert_eq!(restored_day.0.date, day0, "restore 后保留快照归日 0");
+    assert_eq!(
+        restored_day.0.securities[&0]
+            .bars
+            .iter()
+            .map(|bar| bar.volume_shares)
+            .sum::<u64>(),
+        200,
+        "restore 后日 0 bars 保留收盘竞价成交"
+    );
     let (buyer2, _) = trade_pair(&restored);
     let restored_rows = restored
         .personal_trade_confirmations(buyer2)
@@ -404,25 +441,17 @@ fn intraday_plus_closing_day_kline_matches_bars_and_desk() {
 /// 冻结结果不被日 1 覆盖（retained 链两条、逐日独立）。
 #[test]
 fn second_day_boundary_keeps_days_independent() {
+    let setup = boundary_setup();
+    let ticks_per_day = setup.ticks_per_day;
     // 日 0：收盘窗挂单（tick28/29→清算 200）；日 1（tick31..60）：连续段
-    // tick52/53（200）+收盘窗 tick58/59（清算 200）。双时钟契约：纯 step
-    // 路径不推进 civil（authoritative_tick_tests 同式——休市日/已收盘日
-    // 先 end_civil_day 对齐交易日序，否则日 1 冻结被同日幂等检查跳过）。
-    let mut session = GameSession::new(boundary_setup(), 93).expect("会话构造");
+    // tick52/53（200）+收盘窗 tick58/59（清算 200）。每个 `ends_day`
+    // 完成后推进 civil clock，检查日K、分钟桶与下一交易日活动状态独立。
+    let mut session = GameSession::new(setup, 93).expect("会话构造");
     let (buyer, seller) = trade_pair(&session);
     let mut driver =
         crate::runtime::drive::RuntimeDriver::from_session(&mut session).expect("驱动器构造");
     driver.adopt_session_seq(&session);
     for t in 1..=62u64 {
-        while session.civil_clock().phase() == crate::session::CivilPhase::ClosedDay
-            || session
-                .civil_clock()
-                .completed_trading_sessions_expected()
-                .unwrap()
-                != session.day() + 1
-        {
-            session.end_civil_day().expect("civil 推进");
-        }
         if [28, 29, 52, 53, 58, 59].contains(&t) {
             let upper: Vec<i64> = driver
                 .world_public_views()
@@ -436,6 +465,19 @@ fn second_day_boundary_keeps_days_independent() {
         session
             .runtime_step_with_install(&mut driver)
             .unwrap_or_else(|e| panic!("tick{t} 步进失败：{e}"));
+        if t % ticks_per_day == 0 {
+            session
+                .end_civil_day()
+                .unwrap_or_else(|e| panic!("tick{t} 后自然日日结失败：{e}"));
+            assert_eq!(
+                session
+                    .civil_clock()
+                    .completed_trading_sessions_expected()
+                    .expect("日结后 Calendar 交易日计数有效"),
+                session.day() + 1,
+                "tick{t} 后自然日与市场交易日同步"
+            );
+        }
     }
     let driver = driver;
     let retained = session.retained_market_days();
@@ -486,7 +528,9 @@ fn second_day_boundary_keeps_days_independent() {
 /// settle_fill 重锚定经本批 unroll 通道同样生效），额=1005×200。
 #[test]
 fn closing_only_candle_opens_at_clearing_price_not_anchor() {
-    let mut session = GameSession::new(boundary_setup(), 94).expect("会话构造");
+    let setup = boundary_setup();
+    let ticks_per_day = setup.ticks_per_day;
+    let mut session = GameSession::new(setup, 94).expect("会话构造");
     let (buyer, seller) = trade_pair(&session);
     let mut driver =
         crate::runtime::drive::RuntimeDriver::from_session(&mut session).expect("驱动器构造");
@@ -505,6 +549,19 @@ fn closing_only_candle_opens_at_clearing_price_not_anchor() {
         session
             .runtime_step_with_install(&mut driver)
             .unwrap_or_else(|e| panic!("tick{t} 步进失败：{e}"));
+        if t % ticks_per_day == 0 {
+            session
+                .end_civil_day()
+                .unwrap_or_else(|e| panic!("tick{t} 后自然日日结失败：{e}"));
+            assert_eq!(
+                session
+                    .civil_clock()
+                    .completed_trading_sessions_expected()
+                    .expect("日结后 Calendar 交易日计数有效"),
+                session.day() + 1,
+                "tick{t} 后自然日与市场交易日同步"
+            );
+        }
     }
     let install = install_day0_candle(&session);
     assert_day_k(
