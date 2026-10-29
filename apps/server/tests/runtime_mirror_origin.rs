@@ -16,7 +16,7 @@ fn public_baseline_preserves_mirror_origin_and_only_player_account() {
 
     let game = ProtocolSession::new(setup, 41).expect("测试 ProtocolSession 初始化失败");
     let mut snapshot = game.snapshot();
-    let expected_origin = serde_json::to_value(&snapshot.mirror_origin)
+    let expected_origin = serde_json::to_value(snapshot.mirror_origin)
         .expect("测试 Snapshot mirror_origin 序列化失败");
     assert!(snapshot.accounts.contains_key(&AccountId(0)));
     // 仅测试 DTO 过滤的合成输入，不冒充真实 NPC 公开投影。
