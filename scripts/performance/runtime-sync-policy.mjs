@@ -47,10 +47,111 @@ async function persistFailure(outputDirectory, batchIndex, item, writeFile, capt
   }
   await writeFile(`${prefix}.failure.json`, `${JSON.stringify({ phase: item.phase, round: item.round, position: item.position, policy: item.policy, error: item.error.message }, null, 2)}\n`, { flag: "wx" });
 }
+function bindCapturedChild({ command, args, options, spawnProcess, terminate, controller, env, deadlineAt, clock, onStdout, onStderr, onTermination }) {
+  const state = { child: undefined, capture: { stdout: "", stderr: "" }, terminated: Promise.resolve() };
+  state.child = spawnProcess(command, args, { ...options, env });
+  state.child.stdout?.on("data", (chunk) => { state.capture.stdout += chunk.toString(); onStdout(chunk); });
+  state.child.stderr?.on("data", (chunk) => { state.capture.stderr += chunk.toString(); onStderr(chunk); });
+  controller.signal.addEventListener("abort", () => {
+    state.terminated = Promise.resolve(terminate(state.child, false, Date.now() + Math.max(1, deadlineAt - clock())));
+    onTermination(state.terminated);
+  }, { once: true });
+  return state;
+}
+
 function stableJson(value) {
   if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
   if (isRecord(value)) return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`).join(",")}}`;
   return JSON.stringify(value);
+}
+
+async function collectProcessSample({ endpoint, config, runSample, spawnProcess, terminate, controller, envSnapshot, deadlineAt, executionDeadlineAt, clock, openFile, outputPrefix, onCapture, onTermination }) {
+  let stdoutHandle;
+  let stderrHandle;
+  let streamed = false;
+  let capture = { stdout: "", stderr: "" };
+  let rawWriteError;
+  let pendingWrites = Promise.resolve();
+  let terminated = Promise.resolve();
+  let rawPersisted = false;
+  const queueWrite = (handle, chunk) => {
+    if (handle === undefined) return;
+    pendingWrites = pendingWrites.then(async () => {
+      if (rawWriteError !== undefined) throw rawWriteError;
+      await handle.writeFile(chunk);
+    }).catch((error) => { rawWriteError = error; if (!controller.signal.aborted) controller.abort(error); });
+  };
+  const spawnBound = (command, args, options) => {
+    if (controller.signal.aborted) throw controller.signal.reason;
+    const state = bindCapturedChild({
+      command, args, options, spawnProcess, terminate, controller,
+      env: { ...envSnapshot, ENGINE_STEP_RUNTIME: "1" }, deadlineAt, clock,
+      onStdout: (chunk) => { streamed = true; capture = state.capture; onCapture?.(capture); queueWrite(stdoutHandle, chunk); },
+      onStderr: (chunk) => { streamed = true; capture = state.capture; onCapture?.(capture); queueWrite(stderrHandle, chunk); },
+      onTermination: (promise) => { terminated = promise; onTermination?.(promise); },
+    });
+    capture = state.capture;
+    onCapture?.(capture);
+    return state.child;
+  };
+  const evidence = () => ({ capture: { ...capture }, rawPersisted });
+  let primary;
+  let measured;
+  try {
+    if (controller.signal.aborted) throw controller.signal.reason;
+    if (outputPrefix !== undefined) {
+      stdoutHandle = await openFile(`${outputPrefix}.stdout`, "wx");
+      try { stderrHandle = await openFile(`${outputPrefix}.stderr`, "wx"); }
+      catch (error) {
+        try { await stdoutHandle.close(); }
+        catch (closeError) { throw new AggregateError([error, closeError], `stderr raw open failed and stdout raw close also failed: ${error.message}; ${closeError.message}`, { cause: error }); }
+        finally { stdoutHandle = undefined; }
+        throw error;
+      }
+      rawPersisted = true;
+    }
+    if (controller.signal.aborted) throw controller.signal.reason;
+    measured = await runSample(endpoint, {
+      rssSampleIntervalMs: config.sample_interval_ms,
+      signal: controller.signal,
+      spawn: spawnBound,
+      terminate: async (child) => terminate(child, false, Date.now() + Math.max(1, deadlineAt - clock())),
+    });
+    if (clock() >= executionDeadlineAt) {
+      if (!controller.signal.aborted) controller.abort(new Error("sample completed beyond execution deadline"));
+      fail("sample completed beyond the execution deadline");
+    }
+    if (controller.signal.aborted) fail("sample was cancelled by the shared deadline");
+    if (outputPrefix !== undefined && !streamed) {
+      capture = { stdout: measured.stdout, stderr: measured.stderr };
+      onCapture?.(capture);
+      await Promise.all([stdoutHandle.writeFile(measured.stdout), stderrHandle.writeFile(measured.stderr)]);
+    }
+    await pendingWrites;
+    if (rawWriteError !== undefined) throw rawWriteError;
+    if (stdoutHandle !== undefined || stderrHandle !== undefined) {
+      await Promise.all([stdoutHandle?.close(), stderrHandle?.close()]);
+      stdoutHandle = undefined; stderrHandle = undefined;
+    }
+    return { measured, evidence: evidence() };
+  } catch (error) {
+    primary = error;
+    const cleanupErrors = [];
+    if (controller.signal.aborted) {
+      try { await terminated; } catch (terminationError) { cleanupErrors.push(terminationError); }
+    }
+    try { await pendingWrites; } catch (writeError) { cleanupErrors.push(writeError); }
+    if (rawWriteError !== undefined && !cleanupErrors.includes(rawWriteError)) cleanupErrors.push(rawWriteError);
+    if (stdoutHandle !== undefined || stderrHandle !== undefined) {
+      try { await Promise.all([stdoutHandle?.close(), stderrHandle?.close()]); }
+      catch (closeError) { cleanupErrors.push(closeError); }
+      stdoutHandle = undefined; stderrHandle = undefined;
+    }
+    const combined = cleanupErrors.length === 0 ? primary
+      : new AggregateError([primary, ...cleanupErrors], `sample failed and process/raw cleanup also failed: ${[primary, ...cleanupErrors].map((entry) => entry.message).join("; ")}`, { cause: primary });
+    Object.defineProperty(combined, "sampleEvidence", { value: evidence(), configurable: true });
+    throw combined;
+  }
 }
 
 export function validateRuntimeSyncConfig(config) {
@@ -92,6 +193,18 @@ function normalizeSetup(setup, label) {
   delete normalized.runtime_sync_policy;
   return normalized;
 }
+function hasConfiguredSubset(expected, actual, root = true) {
+  if (Array.isArray(expected)) return Array.isArray(actual) && expected.length === actual.length
+    && expected.every((entry, index) => hasConfiguredSubset(entry, actual[index], false));
+  if (isRecord(expected)) return isRecord(actual)
+    && Object.entries(expected).every(([key, value]) => {
+      if (Object.hasOwn(actual, key)) return hasConfiguredSubset(value, actual[key], false);
+      if (value === null) return true;
+      return root && value === false && ["rights_offering_enabled", "issuer_repurchase_enabled", "auto_corporate_foundation"].includes(key);
+    });
+  return isDeepStrictEqual(expected, actual);
+}
+
 function isDate(value) {
   if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
   const date = new Date(`${value}T00:00:00.000Z`);
@@ -301,56 +414,20 @@ export async function runRuntimeSyncPolicy(inputConfig, {
       cwd: config.cwd,
       source_fingerprint: digest(binaryBytes),
     };
-    let stdoutHandle;
-    let stderrHandle;
-    let rawStreamed = false;
-    let rawWriteError;
-    let pendingWrites = Promise.resolve();
-    const queueRawWrite = (handle, chunk) => {
-      if (handle === undefined) return;
-      pendingWrites = pendingWrites.then(async () => {
-        if (rawWriteError !== undefined) throw rawWriteError;
-        await handle.writeFile(chunk);
-      }).catch((error) => { rawWriteError = error; abortActive(); });
-    };
-    const spawnBound = (command, args, options) => {
-      if (controller.signal.aborted) throw controller.signal.reason;
-      const childEnvironment = { ...childEnvironmentSnapshot, ENGINE_STEP_RUNTIME: "1" };
-      activeChild = spawnProcess(command, args, { ...options, env: childEnvironment });
-      activeCapture = { stdout: "", stderr: "" };
-      activeChild.stdout?.on("data", (chunk) => { activeCapture.stdout += chunk.toString(); rawStreamed = true; queueRawWrite(stdoutHandle, chunk); });
-      activeChild.stderr?.on("data", (chunk) => { activeCapture.stderr += chunk.toString(); rawStreamed = true; queueRawWrite(stderrHandle, chunk); });
-      controller.signal.addEventListener("abort", () => {
-        terminated = Promise.resolve(terminate(activeChild, false, Date.now() + Math.max(1, deadlineAt - clock())));
-      }, { once: true });
-      return activeChild;
-    };
     let measuredResult;
+    let capture = activeCapture;
     let rawPersisted = false;
     try {
-      if (outputDirectory !== undefined) {
-        const prefix = samplePrefix(outputDirectory, batchIndex, { phase, round, position, policy });
-        stdoutHandle = await openFile(`${prefix}.stdout`, "wx");
-        try { stderrHandle = await openFile(`${prefix}.stderr`, "wx"); }
-        catch (error) { await stdoutHandle.close(); throw error; }
-        rawPersisted = true;
-      }
-      const measured = await runSample(endpoint, {
-        rssSampleIntervalMs: config.sample_interval_ms,
-        signal: controller.signal,
-        spawn: spawnBound,
-        terminate: async (child) => terminate(child, false, Date.now() + Math.max(1, deadlineAt - clock())),
+      const outputPrefix = outputDirectory === undefined ? undefined : samplePrefix(outputDirectory, batchIndex, { phase, round, position, policy });
+      rawPersisted = outputPrefix !== undefined;
+      const collected = await collectProcessSample({
+        endpoint, config, runSample, spawnProcess, terminate, controller, envSnapshot: childEnvironmentSnapshot,
+        deadlineAt, executionDeadlineAt, clock, openFile, outputPrefix,
+        onCapture: (value) => { capture = value; activeCapture = value; },
+        onTermination: (promise) => { terminated = promise; },
       });
+      const measured = collected.measured;
       measuredResult = measured;
-      if (outputDirectory !== undefined) {
-        if (!rawStreamed && clock() < executionDeadlineAt) {
-          await Promise.all([stdoutHandle.writeFile(measured.stdout), stderrHandle.writeFile(measured.stderr)]);
-        }
-        await pendingWrites;
-        if (rawWriteError !== undefined) throw rawWriteError;
-        await Promise.all([stdoutHandle.close(), stderrHandle.close()]);
-        stdoutHandle = undefined; stderrHandle = undefined;
-      }
       if (clock() >= executionDeadlineAt) { abortActive(); fail("runtime sync policy sample completed beyond the execution deadline"); }
       if (controller.signal.aborted) {
         await terminated;
@@ -377,18 +454,12 @@ export async function runRuntimeSyncPolicy(inputConfig, {
       else counts.measured_samples += 1;
     } catch (error) {
       const cleanupErrors = [];
-      if (controller.signal.aborted) {
+      if (controller.signal.aborted && error.sampleEvidence === undefined) {
         try { await terminated; } catch (terminationError) { cleanupErrors.push(terminationError); }
       }
-      await pendingWrites;
-      if (rawWriteError !== undefined) cleanupErrors.push(rawWriteError);
-      if (stdoutHandle !== undefined || stderrHandle !== undefined) {
-        try { await Promise.all([stdoutHandle?.close(), stderrHandle?.close()]); }
-        catch (closeError) { cleanupErrors.push(closeError); }
-        stdoutHandle = undefined; stderrHandle = undefined;
-      }
+      const evidence = error.sampleEvidence ?? { capture, rawPersisted };
       if (outputDirectory !== undefined && clock() < executionDeadlineAt && !samples.some((sample) => sample.phase === phase && sample.round === round && sample.position === position)) {
-        try { await persistFailure(outputDirectory, batchIndex, { phase, round, position, policy, error }, writeBeforeDeadline, measuredResult === undefined ? activeCapture : measuredResult, !rawPersisted); }
+        try { await persistFailure(outputDirectory, batchIndex, { phase, round, position, policy, error }, writeBeforeDeadline, measuredResult ?? evidence.capture, !evidence.rawPersisted); }
         catch (artifactError) { cleanupErrors.push(artifactError); }
       }
       if (cleanupErrors.length > 0) throw new AggregateError([error, ...cleanupErrors], `样本失败且清理/原始证据写入也失败：${[error, ...cleanupErrors].map((entry) => entry.message).join("；")}`, { cause: error });
@@ -617,6 +688,14 @@ export async function main(argv = process.argv.slice(2), dependencies = {}) {
     config.output_directory = outputDirectory;
     return runRuntimeSyncPolicy(config, { ...dependencies, batchIndex });
   }
+  if (command === "memory-growth") {
+    if (args.length !== 2) fail("usage: runtime-sync-policy.mjs memory-growth <config.json> <new-output-dir>");
+    const configPath = path.resolve(args[0]);
+    const outputDirectory = path.resolve(args[1]);
+    const config = JSON.parse(await fs.readFile(configPath, "utf8"));
+    config.output_directory = outputDirectory;
+    return runRuntimeSyncMemoryGrowth(config, dependencies);
+  }
   if (command === "aggregate") {
     if (args.length !== 6) fail("usage: runtime-sync-policy.mjs aggregate <new-report.json> <batch1-report> <batch2-report> <batch3-report> <batch4-report> <batch5-report>");
     const outputPath = path.resolve(args[0]);
@@ -625,7 +704,7 @@ export async function main(argv = process.argv.slice(2), dependencies = {}) {
     await fs.writeFile(outputPath, `${JSON.stringify(aggregate, null, 2)}\n`, { flag: "wx" });
     return aggregate;
   }
-  fail("usage: runtime-sync-policy.mjs <batch|aggregate> ...");
+  fail("usage: runtime-sync-policy.mjs <batch|memory-growth|aggregate> ...");
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
@@ -633,4 +712,266 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     process.stderr.write(`${error.stack ?? error.message}\n`);
     process.exitCode = 1;
   });
+}
+
+const MEMORY_DOMAINS = {
+  save_slot: ["serialized_bytes"],
+  plans: ["serialized_bytes", "entry_count", "terminal_entry_count", "owner_sequence_count"],
+  retained_market_days: ["serialized_bytes", "entry_count"],
+  personal_trade_confirmations: ["serialized_bytes", "account_count", "entry_count"],
+  filled_orders: ["serialized_bytes", "stock_count", "entry_count"],
+  snapshot: ["serialized_bytes", "account_count", "market_count", "daily_candle_count"],
+  runtime_state: ["serialized_bytes", "live_envelope_count", "retail_projection_seen_count", "strategy_state_count"],
+};
+
+export function validateRuntimeSyncMemoryGrowthConfig(config) {
+  if (!isRecord(config)) fail("memory-growth config must be an object");
+  const required = ["schema", "schema_version", "binary", "cwd", "setup_file", "seed", "civil_days_n", "policy", "expected_closed_dates", "cpu_affinity", "source_revision"];
+  for (const key of required) if (!(key in config)) fail(`memory-growth config is missing ${key}`);
+  const allowed = [...required, "sample_interval_ms", "deadline_ms", "output_directory"];
+  for (const key of Object.keys(config)) if (!allowed.includes(key)) fail(`memory-growth config has unknown key ${key}`);
+  if (config.schema !== "runtime-sync-memory-growth-config" || config.schema_version !== 1) fail("memory-growth config schema is unsupported");
+  for (const key of ["binary", "cwd", "setup_file"]) if (typeof config[key] !== "string" || !path.isAbsolute(config[key])) fail(`${key} must be absolute`);
+  canonicalU64(config.seed, "seed");
+  positiveSafeInteger(config.civil_days_n, "civil_days_n");
+  if (config.civil_days_n > Math.floor(Number.MAX_SAFE_INTEGER / 2)) fail("civil_days_n makes 2N exceed safe integer range");
+  if (!["every_tick", "day_end"].includes(config.policy)) fail("policy must be every_tick or day_end");
+  if (!Array.isArray(config.expected_closed_dates) || config.expected_closed_dates.length > 2 * config.civil_days_n
+    || !config.expected_closed_dates.every((date, index, dates) => isDate(date) && (index === 0 || dates[index - 1] < date))) fail("expected_closed_dates must be a sorted unique ISO subset of at most 2N civil days");
+  if (!Array.isArray(config.cpu_affinity) || config.cpu_affinity.length === 0
+    || !config.cpu_affinity.every((cpu) => Number.isSafeInteger(cpu) && cpu >= 0)
+    || new Set(config.cpu_affinity).size !== config.cpu_affinity.length) fail("cpu_affinity must be a non-empty list of unique Linux CPU numbers");
+  if (typeof config.source_revision !== "string" || !/^[a-f0-9]{40}$/.test(config.source_revision)) fail("source_revision must be a full lowercase 40-hex revision");
+  if (config.output_directory !== undefined && (typeof config.output_directory !== "string" || !path.isAbsolute(config.output_directory))) fail("output_directory must be absolute");
+  const sampleInterval = config.sample_interval_ms ?? 5;
+  const deadline = config.deadline_ms ?? MAX_DEADLINE_MS;
+  if (!Number.isSafeInteger(sampleInterval) || sampleInterval < 1) fail("sample_interval_ms must be an integer >= 1");
+  if (!Number.isSafeInteger(deadline) || deadline <= CLEANUP_RESERVE_MS || deadline > MAX_DEADLINE_MS) fail(`deadline_ms must be > ${CLEANUP_RESERVE_MS} and <= ${MAX_DEADLINE_MS}`);
+  return { ...config, sample_interval_ms: sampleInterval, deadline_ms: deadline };
+}
+
+function validateMemoryGrowthSample(measured, config, setup, label = "memory-growth sample") {
+  exactKeys(measured, ["wall_ns", "peak_process_tree_rss_bytes", "process_tree_thread_state", "stdout", "stderr"], `${label} measurement`);
+  positiveDecimal(measured.wall_ns, `${label} wall_ns`);
+  positiveSafeInteger(measured.peak_process_tree_rss_bytes, `${label} process-tree peak RSS`);
+  validateThreadState(measured.process_tree_thread_state, label);
+  if (typeof measured.stdout !== "string" || typeof measured.stderr !== "string") fail(`${label} stdout/stderr must be strings`);
+  let sample;
+  try { sample = JSON.parse(measured.stdout); } catch (error) { fail(`${label} stdout is not sample JSON: ${error.message}`); }
+  if (!isRecord(sample) || sample.schema !== "runtime-sync-memory-growth-sample" || sample.schema_version !== 1) fail(`${label} schema is unsupported`);
+  if (sample.policy !== config.policy || sample.seed !== config.seed || sample.civil_days_n !== config.civil_days_n) fail(`${label} policy/seed/civil_days_n mismatch`);
+  if (!isRecord(sample.setup) || !isRecord(sample.effective_setup)) fail(`${label} setup/effective_setup missing`);
+  if (sample.setup.runtime_sync_policy !== config.policy) fail(`${label} source setup policy mismatch`);
+  if (!isDeepStrictEqual(normalizeSetup(sample.setup, label), normalizeSetup(setup, "configured"))) fail(`${label} setup differs from input setup`);
+  if (sample.effective_setup.runtime_sync_policy !== config.policy
+    || !hasConfiguredSubset({ ...sample.setup, runtime_sync_policy: config.policy }, sample.effective_setup)) fail(`${label} effective_setup differs from configured setup facts`);
+  for (const field of ["npc_count", "stocks", "completed_trading_days", "completed_civil_days", "completed_ticks"]) {
+    if (!Number.isSafeInteger(sample[field]) || sample[field] < 0) fail(`${label} ${field} must be a non-negative integer`);
+  }
+  if (sample.completed_civil_days !== 2 * config.civil_days_n || sample.completed_trading_days + sample.closed_dates?.length !== sample.completed_civil_days) fail(`${label} completed civil/trading day counts mismatch`);
+  if (!Array.isArray(sample.civil_day_boundaries) || sample.civil_day_boundaries.length !== 2 * config.civil_days_n) fail(`${label} civil-day boundary count mismatch`);
+  if (!Array.isArray(sample.closed_dates) || !isDeepStrictEqual(sample.closed_dates, config.expected_closed_dates)) fail(`${label} closed_dates differ from pre-registered dates`);
+  const startDate = setup.start_date;
+  if (!isDate(startDate)) fail(`${label} configured setup.start_date is invalid`);
+  const endDate = addCivilDays(startDate, 2 * config.civil_days_n);
+  if (endDate === startDate || !isDate(endDate)) fail(`${label} civil-day window exceeds supported ISO date range`);
+  if (config.expected_closed_dates.some((date) => date < startDate || date >= endDate)) fail(`${label} expected_closed_dates contains a date outside the run window`);
+  const ticksPerDay = setup.ticks_per_day;
+  positiveSafeInteger(ticksPerDay, `${label} setup.ticks_per_day`);
+  let priorTick = 0;
+  let priorSeq = 0;
+  for (const [index, boundary] of sample.civil_day_boundaries.entries()) {
+    if (!isRecord(boundary) || !isDate(boundary.settled_date) || !isDate(boundary.next_date)
+      || boundary.settled_date !== addCivilDays(startDate, index) || boundary.next_date !== addCivilDays(boundary.settled_date, 1)
+      || !Number.isSafeInteger(boundary.tick) || boundary.tick < 0 || !Number.isSafeInteger(boundary.seq) || boundary.seq < priorSeq
+      || !["intraday_trading", "closed_day"].includes(boundary.settled_phase)) fail(`${label} civil-day boundary ${index} is invalid or discontinuous`);
+    if ((boundary.settled_phase === "closed_day") !== config.expected_closed_dates.includes(boundary.settled_date)) fail(`${label} boundary closed phase differs from pre-registered dates`);
+    const expectedTick = priorTick + (boundary.settled_phase === "intraday_trading" ? ticksPerDay : 0);
+    if (boundary.tick !== expectedTick) fail(`${label} boundary ${index} tick does not advance by the configured civil-day policy`);
+    priorTick = boundary.tick;
+    priorSeq = boundary.seq;
+  }
+  const finalBoundary = sample.civil_day_boundaries.at(-1);
+  if (sample.final_civil_date !== finalBoundary.next_date || sample.final_phase !== "intraday_trading" && sample.final_phase !== "closed_day") fail(`${label} final civil date/phase mismatch`);
+  if (sample.completed_ticks !== finalBoundary.tick || sample.last_tick !== finalBoundary.tick || sample.final_seq !== finalBoundary.seq
+    || sample.completed_trading_days !== sample.civil_day_boundaries.filter((entry) => entry.settled_phase === "intraday_trading").length) fail(`${label} completed tick/trading-day count differs from boundaries`);
+  if (sample.shutdown_confirmed !== true || !isRecord(sample.shutdown)) fail(`${label} shutdown was not confirmed`);
+  if (!isRecord(sample.topology) || sample.topology.groups !== 1
+    || sample.topology.desks !== sample.setup.stocks?.length
+    || sample.stocks !== sample.setup.stocks?.length
+    || sample.npc_count !== sample.setup.npcs?.retail_count + sample.setup.npcs?.inst_count + sample.setup.npcs?.hot_count) fail(`${label} topology/stocks/npc counts mismatch`);
+  if (sample.run_wall_ns === undefined || sample.initialization_wall_ns === undefined) fail(`${label} initialization/run timing is missing`);
+  positiveDecimal(sample.run_wall_ns, `${label} run_wall_ns`);
+  positiveDecimal(sample.initialization_wall_ns, `${label} initialization_wall_ns`);
+  if (sample.pure_flush_wall_ns !== null || sample.pure_flush_availability !== "unavailable"
+    || sample.coverage_table_peak_count !== null || sample.coverage_table_peak_availability !== "unavailable") fail(`${label} unavailable instrumentation fields are inconsistent`);
+  if (typeof sample.measurement_effects !== "string" || sample.measurement_effects.length === 0) fail(`${label} measurement effects declaration is missing`);
+  if (sample.shutdown.runtime === null) {
+    if (sample.completed_ticks !== 0) fail(`${label} nonzero-tick run lacks runtime shutdown receipts`);
+  } else {
+    const runtime = sample.shutdown.runtime;
+    const workerCount = sample.topology.groups + sample.topology.desks;
+    if (!isRecord(runtime) || runtime.owned_workers !== workerCount || runtime.joined_workers !== workerCount
+      || runtime.group_finals !== sample.topology.groups || runtime.desk_finals !== sample.topology.desks
+      || !Array.isArray(runtime.worker_results) || runtime.worker_results.length !== workerCount
+      || runtime.worker_results.some((entry) => !isRecord(entry) || !isRecord(entry.result)
+        || Object.keys(entry.result).length !== 1 || entry.result.Ok !== null)) fail(`${label} runtime worker shutdown receipts are invalid`);
+  }
+  if (!Array.isArray(sample.observations) || sample.observations.length !== 2) fail(`${label} must contain exactly two observations`);
+  const points = [config.civil_days_n, 2 * config.civil_days_n];
+  for (let i = 0; i < 2; i += 1) {
+    const observation = sample.observations[i];
+    if (!isRecord(observation) || observation.civil_day_count !== points[i]) fail(`${label} observation ${i} is not at the registered N/2N point`);
+    const boundary = sample.civil_day_boundaries[points[i] - 1];
+    for (const key of ["settled_date", "tick", "seq"]) if (observation[key] !== boundary[key]) fail(`${label} observation ${i} ${key} differs from its boundary`);
+    if (observation.completed_trading_days !== sample.civil_day_boundaries.slice(0, points[i]).filter((entry) => entry.settled_phase === "intraday_trading").length
+      || observation.closed_civil_days !== sample.civil_day_boundaries.slice(0, points[i]).filter((entry) => entry.settled_phase === "closed_day").length) fail(`${label} observation ${i} day counts mismatch`);
+    if (observation.candidate_lifetime !== "captured_clone_alive_update_dropped") fail(`${label} observation ${i} candidate lifetime mismatch`);
+    positiveSafeInteger(observation.rss_before_serialization_bytes, `${label} observation RSS before serialization`);
+    positiveSafeInteger(observation.rss_after_serialization_bytes, `${label} observation RSS after serialization`);
+    if (observation.process_tree_process_count !== 1 || observation.rss_source !== "linux_proc_self_status_vmrss_all_tasks_children_checked" || observation.serialized_bytes_are_resident_allocation !== false) fail(`${label} observation process/RSS attribution mismatch`);
+    exactKeys(observation.domains, Object.keys(MEMORY_DOMAINS), `${label} observation domains`);
+    for (const [domain, fields] of Object.entries(MEMORY_DOMAINS)) {
+      exactKeys(observation.domains[domain], fields, `${label} observation ${domain}`);
+      canonicalU64(observation.domains[domain].serialized_bytes, `${label} ${domain}.serialized_bytes`);
+      for (const field of fields.slice(1)) if (!Number.isSafeInteger(observation.domains[domain][field]) || observation.domains[domain][field] < 0) fail(`${label} ${domain}.${field} must be a non-negative integer`);
+    }
+    if (observation.domains.plans.terminal_entry_count > observation.domains.plans.entry_count) fail(`${label} plans terminal entries exceed total entries`);
+  }
+  return { sample, measurement: measured };
+}
+
+function addCivilDays(date, count) {
+  const value = new Date(`${date}T00:00:00.000Z`);
+  value.setUTCDate(value.getUTCDate() + count);
+  return value.toISOString().slice(0, 10);
+}
+
+function growthDelta(firstObservation, secondObservation, firstDomain, secondDomain, field) {
+  const delta = BigInt(secondDomain[field]) - BigInt(firstDomain[field]);
+  const ticks = secondObservation.tick - firstObservation.tick;
+  return { delta: delta.toString(), delta_ticks: ticks, per_tick_slope: ticks === 0 ? { availability: "unavailable", value: null } : { availability: "available", value: `${delta}/${ticks}` } };
+}
+
+export async function runRuntimeSyncMemoryGrowth(inputConfig, dependencies = {}) {
+  const { runSample = runProcessSample, clock = () => performance.now(), readFile = (file) => fs.readFile(file), writeFile = (...args) => fs.writeFile(...args), openFile = (...args) => fs.open(...args), mkdir = (...args) => fs.mkdir(...args), renameFile = (...args) => fs.rename(...args), unlinkFile = (...args) => fs.unlink(...args), load = defaultLoad, spawnProcess = spawn, terminate = terminateTree, setDeadlineTimer = setTimeout, clearDeadlineTimer = clearTimeout } = dependencies;
+  if (process.platform !== "linux") fail("memory-growth runner requires Linux taskset and /proc sampling");
+  const config = validateRuntimeSyncMemoryGrowthConfig(inputConfig);
+  const envSnapshot = { ...process.env };
+  if ((envSnapshot.ENGINE_STEP_RUNTIME ?? "1") !== "1") fail("ENGINE_STEP_RUNTIME 必须为 1 或未设置，以确保 native runtime 实际启用");
+  const startedAt = clock();
+  const deadlineAt = startedAt + config.deadline_ms;
+  const executionDeadlineAt = deadlineAt - CLEANUP_RESERVE_MS;
+  if (config.output_directory !== undefined) {
+    await mkdir(config.output_directory, { recursive: false });
+    await mkdir(path.join(config.output_directory, "samples"), { recursive: false });
+  }
+  if (clock() >= executionDeadlineAt) fail("memory-growth deadline exhausted before input fingerprinting");
+  const [setupBytes, binaryBytes] = await Promise.all([readFile(config.setup_file), readFile(config.binary)]);
+  const setup = JSON.parse(Buffer.isBuffer(setupBytes) ? setupBytes.toString("utf8") : String(setupBytes));
+  if (!isRecord(setup) || !isDate(setup.start_date)) fail("memory-growth setup must include valid start_date");
+  if (config.civil_days_n > Math.floor((Date.UTC(9999, 11, 31) - Date.parse(`${setup.start_date}T00:00:00.000Z`)) / 86400000 / 2)) fail("memory-growth civil-day window exceeds supported ISO date range");
+  const civilEndDate = addCivilDays(setup.start_date, 2 * config.civil_days_n);
+  if (!isDate(civilEndDate) || config.expected_closed_dates.some((date) => date < setup.start_date || date >= civilEndDate)) fail("memory-growth expected_closed_dates falls outside the setup civil-day window");
+  if (clock() >= executionDeadlineAt) fail("memory-growth deadline exhausted during input fingerprinting");
+  const runtimeEnvironment = { ENGINE_STEP_RUNTIME: "1", ENGINE_SPIN_US: envSnapshot.ENGINE_SPIN_US ?? null, ENGINE_SPIN_DISABLE: envSnapshot.ENGINE_SPIN_DISABLE ?? null, STEP_PROFILE: envSnapshot.STEP_PROFILE ?? null };
+  const configForHash = { ...config, runtime_environment: runtimeEnvironment };
+  delete configForHash.output_directory;
+  const configSha256 = digest(stableJson(configForHash));
+  const cpuList = config.cpu_affinity.join(",");
+  const endpoint = { command: ["taskset", "-c", cpuList, config.binary, "memory-growth", config.setup_file, config.policy, config.seed, String(config.civil_days_n)], cwd: config.cwd, source_fingerprint: digest(binaryBytes) };
+  const loadBefore = load();
+  const item = { policy: config.policy };
+  const prefix = config.output_directory === undefined ? undefined : path.join(config.output_directory, "samples", `memory-growth-${config.policy}`);
+  let capture = { stdout: "", stderr: "" };
+  let controller;
+  let terminated = Promise.resolve();
+  let timedOut = false;
+  const abort = () => {
+    timedOut = true;
+    if (controller && !controller.signal.aborted) controller.abort(new Error("memory-growth reached its shared deadline"));
+  };
+  const timer = setDeadlineTimer(abort, Math.max(0, executionDeadlineAt - clock()));
+  let measured;
+  try {
+    controller = new AbortController();
+    if (timedOut || clock() >= executionDeadlineAt) controller.abort(new Error("memory-growth reached its shared deadline before process start"));
+    const collected = await collectProcessSample({
+      endpoint, config, runSample, spawnProcess, terminate, controller, envSnapshot, deadlineAt, executionDeadlineAt, clock, openFile,
+      outputPrefix: prefix, onCapture: (value) => { capture = value; }, onTermination: (promise) => { terminated = promise; },
+    });
+    measured = collected.measured;
+    if (timedOut || clock() >= executionDeadlineAt) fail("memory-growth sample completed beyond the execution deadline");
+    if (controller.signal.aborted) { await terminated; fail("memory-growth sample was cancelled by the shared deadline"); }
+    const validated = validateMemoryGrowthSample(measured, config, setup);
+    if (clock() >= executionDeadlineAt) fail("memory-growth deadline exhausted before input recheck");
+    const [setupAfterBytes, binaryAfterBytes] = await Promise.all([readFile(config.setup_file), readFile(config.binary)]);
+    if (!Buffer.from(setupBytes).equals(Buffer.from(setupAfterBytes)) || !Buffer.from(binaryBytes).equals(Buffer.from(binaryAfterBytes))) fail("binary or setup content changed during memory-growth run");
+    if (timedOut || clock() >= executionDeadlineAt) fail("memory-growth deadline exhausted during validation");
+    const first = validated.sample.observations[0]; const second = validated.sample.observations[1];
+    const domains = Object.fromEntries(Object.keys(MEMORY_DOMAINS).map((domain) => [domain, growthDelta(first, second, first.domains[domain], second.domains[domain], "serialized_bytes")]));
+    const report = {
+      schema: "runtime-sync-memory-growth-report", schema_version: 1, status: "COMPLETE_MEMORY_GROWTH_DIAGNOSTIC",
+      policy: config.policy, seed: config.seed, civil_days_n: config.civil_days_n, source_revision: config.source_revision,
+      cpu_affinity: config.cpu_affinity, setup_input: setup, binary_sha256: digest(binaryBytes), setup_sha256: digest(setupBytes),
+      config_sha256: configSha256, runtime_environment: runtimeEnvironment,
+      run_wall_ns: validated.sample.run_wall_ns, initialization_wall_ns: validated.sample.initialization_wall_ns,
+      pure_flush_wall_ns: validated.sample.pure_flush_wall_ns, pure_flush_availability: validated.sample.pure_flush_availability,
+      coverage_table_peak_count: validated.sample.coverage_table_peak_count,
+      coverage_table_peak_availability: validated.sample.coverage_table_peak_availability,
+      measurement_effects: validated.sample.measurement_effects,
+      completed_civil_days: validated.sample.completed_civil_days, completed_trading_days: validated.sample.completed_trading_days,
+      completed_ticks: validated.sample.completed_ticks, final_civil_date: validated.sample.final_civil_date, final_phase: validated.sample.final_phase,
+      closed_dates: validated.sample.closed_dates, civil_day_boundaries: validated.sample.civil_day_boundaries,
+      shutdown_confirmed: validated.sample.shutdown_confirmed, shutdown: validated.sample.shutdown,
+      peak_process_tree_rss_bytes: measured.peak_process_tree_rss_bytes, process_tree_thread_state: measured.process_tree_thread_state,
+      observations: validated.sample.observations, domain_serialized_growth: domains,
+      contract_metrics_complete: false,
+      measurement_gaps: ["pure_flush_wall_ns unavailable", "coverage_table_peak_count unavailable", "各域 serialized_bytes 不覆盖完整 resident allocation，且不相加解释 RSS", "候选点 RSS before/after 是观测快照；独立 runProcessSample process-tree peak 不是域 resident 归因"],
+      candidate_rss_snapshot_delta_bytes: second.rss_after_serialization_bytes - first.rss_after_serialization_bytes,
+      private_coverage_peak_availability: "unavailable",
+      measurement_limit: "serialized_bytes 是序列化内容长度，不代表驻留分配；候选点 RSS 为进程快照，不是峰值或域驻留量。",
+      cpu_load: { before: loadBefore, after: load() }, stdout: measured.stdout, stderr: measured.stderr,
+    };
+    if (prefix) {
+      const reportPath = path.join(config.output_directory, "runtime-sync-memory-growth-report.json");
+      const partialPath = `${reportPath}.partial`;
+      if (clock() >= executionDeadlineAt) fail("memory-growth deadline exhausted before report publication");
+      let publicationStage = "not-created";
+      try {
+        publicationStage = "partial-write-attempted";
+        await writeFile(partialPath, `${JSON.stringify(report, null, 2)}\n`, { flag: "wx" });
+        publicationStage = "partial-created";
+        if (clock() >= executionDeadlineAt) fail("memory-growth deadline exhausted before report publication");
+        await renameFile(partialPath, reportPath);
+        publicationStage = "published";
+        if (clock() >= executionDeadlineAt) fail("memory-growth deadline exhausted during report publication");
+      } catch (error) {
+        const cleanupPath = publicationStage === "published" ? reportPath : ["partial-write-attempted", "partial-created"].includes(publicationStage) ? partialPath : undefined;
+        if (cleanupPath !== undefined) {
+          try { await unlinkFile(cleanupPath); }
+          catch (cleanupError) {
+            const label = publicationStage === "published" ? "report" : "partial report";
+            throw new AggregateError([error, cleanupError], `memory-growth ${label} publication failed and cleanup also failed: ${error.message}; ${cleanupError.message}`, { cause: error });
+          }
+        }
+        throw error;
+      }
+    }
+    return report;
+  } catch (error) {
+    abort();
+    const cleanupErrors = [];
+    if (error.sampleEvidence === undefined) {
+      try { await terminated; } catch (terminationError) { cleanupErrors.push(terminationError); }
+    }
+    const evidence = error.sampleEvidence ?? { capture, rawPersisted: prefix !== undefined };
+    if (prefix && clock() < executionDeadlineAt) {
+      const failure = { policy: config.policy, error: error.message, stdout: evidence.capture.stdout, stderr: evidence.capture.stderr };
+      try { await writeFile(`${prefix}.failure.json`, `${JSON.stringify(failure, null, 2)}\n`, { flag: "wx" }); }
+      catch (artifactError) { cleanupErrors.push(artifactError); }
+    }
+    if (cleanupErrors.length > 0) throw new AggregateError([error, ...cleanupErrors], `memory-growth failed and cleanup/evidence also failed: ${[error, ...cleanupErrors].map((entry) => entry.message).join("; ")}`, { cause: error });
+    throw error;
+  } finally { clearDeadlineTimer(timer); }
 }
