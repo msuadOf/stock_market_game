@@ -7,6 +7,8 @@ import { PlayerOrderRefreshGate } from "../components/player-orders.ts";
 import { DEFAULT_SETUP } from "../config/defaults.ts";
 import type { EngineHost } from "../host/engine-host.ts";
 import type { HostFailure, HostUpdate } from "../host/host-update.ts";
+import { WasmHostInitializationError } from "../host/wasm-host-initialization-error.ts";
+import { fatalWasmInitializationMessage } from "../host/startup-policy.ts";
 import type { StrictSaveEnvelope } from "../save/schema/root.ts";
 import { commandHostFixture, commandDayEndArchiveFixture } from "./command-host-test-fixture.ts";
 import { AutoOrderManager } from "../components/auto-order-manager.ts";
@@ -348,4 +350,30 @@ test("构造尚未 resolve 就可报告；取消旧 sink 后新 lifecycle 追加
   assert.equal(reports[0], original);
   assert.equal(reports[1].message, "新生命周期失败");
   await next.dispose();
+});
+
+
+test("WASM初始化结构化错误保留HostFailure，普通String和Error沿用阶段文本", { timeout: 10000 }, async () => {
+  const failure: HostFailure = {
+    code: "WASM_RESTORE_PREFIX", where: "facade-engine-initialize.restore-prefix",
+    message: "日终存档前缀恢复失败", cause: { code: 1037, phase: "prefix" },
+    context: { operation: "restore", stockCount: 12 }, recoverable: true, recoveryActions: ["保留存档"],
+  };
+  let received: string | HostFailure | null = null;
+  const f = fixture({ setError: (value) => { received = value; }, createHost: async (_setup, _seed, _target, onSpawnFailure) => {
+    onSpawnFailure(failure);
+    throw new WasmHostInitializationError(failure);
+  } });
+  await f.runtime.start();
+  assert.equal(received, failure, "结构化初始化错误应以同一HostFailure交付给setError");
+  assert.ok(f.calls.includes("spawn-failure"), "createHost构造期spawn sink必须保留");
+  assert.equal(f.calls.includes("ready"), false, "初始化失败不能发布ready");
+  assert.equal(f.ports.hostRef.current, null, "初始化失败不能安装host");
+
+  for (const ordinary of ["WASM wrapper 原始字符串", new Error("WASM wrapper 普通错误")]) {
+    let ordinaryReceived: string | HostFailure | null = null;
+    const plain = fixture({ setError: (value) => { ordinaryReceived = value; }, createHost: async () => { throw ordinary; } });
+    await plain.runtime.start();
+    assert.equal(ordinaryReceived, fatalWasmInitializationMessage(ordinary));
+  }
 });

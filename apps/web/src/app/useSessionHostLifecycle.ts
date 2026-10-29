@@ -5,6 +5,7 @@ import { createProtocolUpdate } from "../host/host-update.ts";
 import { createTauriHost } from "../host/tauri-host.ts";
 import { createRemoteHost } from "../host/remote-host.ts";
 import { createWorkerHost, type WorkerE2EHost } from "../host/worker-host.ts";
+import { WasmHostInitializationError } from "../host/wasm-host-initialization-error.ts";
 import { assertWasmEnvironment, browserWasmEnvironment, fatalDesktopInitializationMessage, fatalRemoteInitializationMessage, fatalWasmInitializationMessage, type StartupTarget } from "../host/startup-policy.ts";
 import { DEFAULT_SEED } from "../config/defaults.ts";
 import { createNewSessionSeed } from "../config/session-seed.ts";
@@ -221,7 +222,7 @@ export function createSessionHostLifecycle(ports: SessionHostLifecyclePorts) {
           ? fatalDesktopInitializationMessage(e)
           : startupTarget.kind === "remote"
             ? fatalRemoteInitializationMessage(e)
-            : fatalWasmInitializationMessage(e));
+            : e instanceof WasmHostInitializationError ? e.failure : fatalWasmInitializationMessage(e));
       }
     }
   };
