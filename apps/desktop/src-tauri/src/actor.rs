@@ -24,7 +24,7 @@ use engine::{
     calendar::CivilDate,
     company::{PublicReportPage, PublicReportQuery, PublicReportSummary},
     session::HistoricalStockData,
-    AccountId, Intent, SaveSlot, SessionError, SessionSetup, Snapshot, StockCode,
+    AccountId, Intent, SaveSlot, SessionError, SessionSetup, Snapshot,
 };
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Runtime};
@@ -1161,7 +1161,7 @@ impl<R: Runtime> SessionActor<R> {
             steps += 1;
         }
         if let Err(failure) = self.publish_protocol_cycle(frames) {
-            self.stop_after_host_failure(failure);
+            self.stop_after_host_failure(*failure);
             return;
         }
         self.pacing.refresh_metrics(self.game.tick());
@@ -1195,7 +1195,7 @@ impl<R: Runtime> SessionActor<R> {
         self.stop_after_host_failure(failure);
     }
 
-    fn publish_protocol_cycle(&mut self, frames: Vec<TickFrame>) -> Result<(), HostFailure> {
+    fn publish_protocol_cycle(&mut self, frames: Vec<TickFrame>) -> Result<(), Box<HostFailure>> {
         if !frames.is_empty() {
             let range = frames
                 .first()
@@ -1206,7 +1206,7 @@ impl<R: Runtime> SessionActor<R> {
                 Err(error) => {
                     let mut failure = failure::HostFailure::step(error);
                     Self::describe_unpublished_frames(&mut failure, range);
-                    return Err(failure);
+                    return Err(Box::new(failure));
                 }
             }
         }
@@ -1646,11 +1646,11 @@ impl<R: Runtime> SessionActor<R> {
         })
     }
 
-    fn prepare_civil_updates(&mut self) -> Result<(), HostFailure> {
+    fn prepare_civil_updates(&mut self) -> Result<(), Box<HostFailure>> {
         while self
             .game
             .civil_day_ready()
-            .map_err(failure::HostFailure::civil)?
+            .map_err(|error| Box::new(failure::HostFailure::civil(error)))?
         {
             let date = self.game.civil_date();
             let update = match self.game.end_civil_day_update_classified() {
@@ -1663,11 +1663,11 @@ impl<R: Runtime> SessionActor<R> {
                         && self.game.civil_date() == date
                         && self.game.civil_day_ready().is_ok_and(|ready| ready);
                     let error = failure.into_error();
-                    return Err(if prepare_rejected {
+                    return Err(Box::new(if prepare_rejected {
                         failure::HostFailure::correction_prepare_rejected(error)
                     } else {
                         failure::HostFailure::civil(error)
-                    });
+                    }));
                 }
             };
             let pause = self.pause_preferences.pauses(&update);
