@@ -271,10 +271,12 @@ fn assert_failed_cycle_preserves_business_and_ingress_facts(
         .unwrap()
         .remove("ingress_receipt_cursors")
         .unwrap();
-    assert_eq!(
-        after_business, before_business,
-        "失败 cycle 必须完整回滚业务状态与全部未消费 receipt"
-    );
+    if successful_steps == 0 {
+        assert_eq!(after_business, before_business, "没有成功 tick 时业务事实和未消费 receipt 不变");
+    } else {
+        assert_eq!(saved_after.snapshot.tick, saved_before["snapshot"]["tick"].as_u64().unwrap() + successful_steps as u64,
+            "后续失败不能撤销已经成功安装的市场前缀");
+    }
     let previous: engine::session::IngressReceiptCursors =
         serde_json::from_value(before_cursors.clone()).unwrap();
     for (account, ordinal) in previous.next_account_ordinal {
@@ -301,21 +303,6 @@ fn assert_failed_cycle_preserves_business_and_ingress_facts(
         assert_eq!(
             after_cursors, before_cursors,
             "未执行成功 tick 时不得凭空登记 NPC receipt"
-        );
-    } else if engine::runtime::step_runtime_enabled() {
-        // std-thread runtime 模型差异（step_frame 接轨件 4 登记）：
-        // 失败拍=世界 Abort（组端决策/落账整体冲回）+玩家意图回灌
-        //（ready ingress——D2 语义），ingress ordinal **不消耗**——
-        // 重放重消费同号，游标自洽；旧管线的"receive 即 gap"是
-        // session 决策管线的防重放面（NPC receive 在 candidate 内）。
-        assert_eq!(
-            after_cursors, before_cursors,
-            "runtime 失败拍不消耗 NPC ordinal（整拍回滚+回灌重放语义）"
-        );
-    } else {
-        assert_ne!(
-            after_cursors, before_cursors,
-            "失败 cycle 的已接收 NPC 事实必须保留真实 ordinal gap"
         );
     }
     // T3 批四：pending_npc 载体删除——受理序核对仅覆盖 pending_player
@@ -362,12 +349,13 @@ async fn capture(successful_steps: usize) {
     };
     let (_sender, cmd_rx) = mpsc::unbounded_channel();
     let (event_tx, mut receiver) = broadcast::channel(EVENT_CHANNEL_CAPACITY);
+    let capture = Arc::new(std::sync::Mutex::new(StepFailureCapture::default()));
     let mut actor = SessionActor {
         ingress: Arc::new(RwLock::new((1, game.shared_ingress()))),
         members: Arc::new(RwLock::new(Default::default())),
         controllers: std::collections::BTreeSet::new(),
         archive: None,
-        injected_step_failure: Some((successful_steps, fatal.clone())),
+        injected_step_failure: Some((successful_steps, fatal.clone(), Arc::clone(&capture))),
         pacing: ServerPacing {
             speed_meter: SpeedMeter::new(game.tick()),
             tick_interval: Duration::from_millis(1),
@@ -390,21 +378,34 @@ async fn capture(successful_steps: usize) {
 
     actor.run_protocol_batch(if successful_steps == 0 { 1 } else { 8 });
 
-    let failure = receiver.try_recv().unwrap();
+    let mut replay = engine::session::protocol::ReplayGuard::new(before.0, before.1);
+    let mut delivered = Vec::new();
+    let mut delivered_frames = Vec::new();
+    let failure = loop {
+        let message = receiver.try_recv().unwrap();
+        if let Some(update) = &message.update {
+            let ProtocolUpdate::TickBatch(batch) = update else { panic!("失败前缀只能是已提交市场帧") };
+            delivered.extend(batch.frames.iter().map(|frame| frame.tick));
+            delivered_frames.extend(batch.frames.iter().cloned());
+            replay.ingest(update).unwrap();
+        } else { break message; }
+    };
+    assert_eq!(delivered, (1..=successful_steps as u64).map(|offset| before.0 + offset).collect::<Vec<_>>());
     assert!(failure.update.is_none());
     assert_eq!(failure.failure.as_ref().unwrap().code, "STEP_FATAL");
-    assert_eq!(
-        failure.failure.as_ref().unwrap().message,
-        "引擎不变量校验失败（原始详情已脱敏）"
-    );
-    assert_eq!(
-        (
-            actor.game.tick(),
-            actor.game.seq(),
-            actor.game.business_state_hash().unwrap()
-        ),
-        before
-    );
+    assert_eq!(failure.failure.as_ref().unwrap().message, "引擎不变量校验失败（原始详情已脱敏）");
+    let after = (actor.game.tick(), actor.game.seq(), actor.game.business_state_hash().unwrap());
+    let (expected_saved, expected_origin, expected_business, expected_frames) = {
+        let capture = capture.lock().unwrap();
+        (capture.saved.clone().unwrap(), capture.origin.unwrap(), capture.business.unwrap(), capture.frames.clone())
+    };
+    assert_eq!(serde_json::to_value(actor.game.game().save().unwrap()).unwrap(), expected_saved, "失败处理不能改写同 Session 失败前已提交的全部事实");
+    assert_eq!(actor.game.runtime_mirror_origin(), expected_origin);
+    assert_eq!(actor.game.business_state_hash().unwrap(), expected_business, "真实业务指纹必须与同 Session fatal 返回前完全一致");
+    assert_eq!(serde_json::to_value(&delivered_frames).unwrap(), serde_json::to_value(&expected_frames).unwrap(), "全部成功前缀事实必须原样交付且恰好一次");
+    assert_eq!(after.0, before.0 + successful_steps as u64);
+    assert!(after.1 >= before.1);
+    if successful_steps == 0 { assert_eq!(after, before); }
     assert_eq!(actor.public_revision, 4);
     assert_failed_cycle_preserves_business_and_ingress_facts(
         &saved_before,
@@ -510,7 +511,7 @@ async fn capture(successful_steps: usize) {
             actor.game.seq(),
             actor.game.business_state_hash().unwrap()
         ),
-        before
+        after
     );
     assert_failed_cycle_preserves_business_and_ingress_facts(
         &saved_before,
@@ -521,7 +522,7 @@ async fn capture(successful_steps: usize) {
     assert!(!actor.pacing.is_running());
     assert_eq!(actor.pause_preferences, PausePreferences::default());
     let mut verification = actor.game.fork_for_verification().unwrap();
-    for _ in before.0..fixture::TICKS_PER_DAY {
+    for _ in after.0..fixture::TICKS_PER_DAY {
         verification.step_frame().unwrap();
     }
     let civil = verification.end_civil_day_update().unwrap();
@@ -529,20 +530,18 @@ async fn capture(successful_steps: usize) {
         civil.refresh.intraday.len(),
         usize::try_from(fixture::TICKS_PER_DAY).unwrap()
     );
-    assert_eq!(
-        serde_json::to_value(&civil.refresh.intraday[0]).unwrap(),
-        serde_json::to_value(retained).unwrap()
-    );
-    println!("server failed after {successful_steps} successful steps; restored tick={} seq={}; healthy=0; {}", before.0, before.1, serde_json::to_string(&failure).unwrap());
+    let expected_prefix = std::iter::once(retained).chain(expected_frames.iter().cloned()).collect::<Vec<_>>();
+    assert_eq!(serde_json::to_value(&civil.refresh.intraday[..expected_prefix.len()]).unwrap(), serde_json::to_value(expected_prefix).unwrap(), "日终 retained 必须保留失败前全部真实帧");
+    println!("server failed after {successful_steps} successful steps; committed tick={} seq={}; host_stopped=1; {}", before.0, before.1, serde_json::to_string(&failure).unwrap());
 }
 
 #[tokio::test]
-async fn fastest_third_step_failure_restores_the_entire_cycle() {
+async fn fastest_third_step_failure_preserves_committed_prefix_and_stops() {
     capture(2).await;
 }
 
 #[tokio::test]
-async fn fixed_first_step_failure_restores_the_entire_cycle() {
+async fn fixed_first_step_failure_preserves_current_state_and_stops() {
     capture(0).await;
 }
 
@@ -856,12 +855,9 @@ fn producer_failure_redacts_real_bare_amount_overflow_operands() {
     assert!(value["cause"]["cause"]["cause"].is_null());
 }
 
-/// 批级 checkpoint 析构必须移交专用线程，不得在 actor 线程同步析构
-/// （串行脊柱研究实测：同步析构 ~132µs/tick，全部是旧账户页的 jemalloc free）。
-/// 生产形态断言：零 tick 批（无提交移交干扰）下计数增量 ≥1，专证 checkpoint 交接。
-/// 计数修复后只在成功入队时递增——退化内联路径不产生假阳性。
+/// Host 不再构造可复活 authority 的批 checkpoint；零拍批须保持真实来源与受理事实。
 #[test]
-fn batch_checkpoint_drop_is_deferred_to_dedicated_thread() {
+fn zero_step_batch_keeps_progress_origin_and_ingress_facts() {
     let setup = fixture::civil_setup(engine::CivilDate::from_iso("2030-01-02").unwrap());
     let mut game = ProtocolSession::new(setup, 7).unwrap();
     let (_sender, cmd_rx) = mpsc::unbounded_channel();
@@ -891,11 +887,13 @@ fn batch_checkpoint_drop_is_deferred_to_dedicated_thread() {
         fatal_failure: None,
         deferred_drop_reported: false,
     };
-    let before = engine::session::deferred_destruction_count();
-    // 零 tick 批：循环体不执行，无任何 commit 移交；checkpoint 建后按成功路径收尾。
+    let before = serde_json::to_value(actor.game.game().save().unwrap()).unwrap();
+    let origin = actor.game.runtime_mirror_origin();
     actor.run_protocol_batch(0);
-    let delta = engine::session::deferred_destruction_count() - before;
-    assert!(delta >= 1, "批级 checkpoint 未移交专用线程（增量 {delta}）");
+    assert_eq!(serde_json::to_value(actor.game.game().save().unwrap()).unwrap(), before);
+    assert_eq!(actor.game.runtime_mirror_origin(), origin);
+    assert!(actor.game.require_healthy().is_ok());
+    assert!(actor.fatal_failure.is_none());
 }
 
 fn catalog_actor_fixture() -> (SessionActor, broadcast::Receiver<EngineUpdate>) {

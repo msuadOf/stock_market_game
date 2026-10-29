@@ -424,6 +424,10 @@ fn failure_description(error: &(dyn std::error::Error + 'static)) -> (&'static s
                 "SESSION_STATE_INVALID",
                 "更正完成事实与真实会计和公开版本不一致（原始详情已脱敏）",
             ),
+            SessionError::InvalidSave(fault) if fault.code == engine::error::SAVE_TARGET_DAY_NOT_READY => (
+                "SAVE_TARGET_DAY_NOT_READY",
+                "目标自然日尚未完成日终，当前日存档不可用（原始详情已脱敏）",
+            ),
             SessionError::InvalidSave(_) => (
                 "SESSION_STATE_INVALID",
                 "日终存档或协议状态校验失败（原始详情已脱敏）",
@@ -624,6 +628,10 @@ fn step_update_error_to_js(error: StepUpdateError) -> JsValue {
 fn session_error_to_step_update_error(error: SessionError) -> StepUpdateError {
     match error {
         SessionError::Step(fatal) => StepUpdateError::Fatal(Box::new(fatal.into())),
+        SessionError::InvalidSave(ref fault) if fault.code == engine::error::SAVE_TARGET_DAY_NOT_READY => {
+            let (code, message) = failure_description(&error);
+            StepUpdateError::Operation(format!("{code}: {message}"))
+        }
         other => StepUpdateError::Operation(other.to_string()),
     }
 }

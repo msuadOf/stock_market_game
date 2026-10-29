@@ -125,7 +125,7 @@ fn removed_registry_token_closes_existing_capability_without_allocating_receipts
         .unwrap()
         .unwrap();
     let mut observer = ProtocolSession::new(setup.clone(), 73).unwrap();
-    observer.rollback(checkpoint);
+    observer.rollback(checkpoint).expect("真实 serial 0/0 checkpoint 必须仍可机械恢复");
     let before = observer.game().save().unwrap();
     registry.remove(token).unwrap();
     assert!(registry.with_session(token, |_| ()).is_err());
@@ -822,4 +822,19 @@ fn registry_baseline_catalogs_are_from_the_same_actual_session() {
         })
         .unwrap();
     registry.remove(handle).unwrap();
+}
+
+#[test]
+fn target_day_not_ready_uses_the_actual_session_error_conversion() {
+    let setup = fixture::civil_setup(engine::CivilDate::from_iso("2030-01-02").unwrap());
+    let game = ProtocolSession::new(setup, 41).unwrap();
+    let error = game.save_current_day(game.civil_date()).unwrap_err();
+    assert!(matches!(&error, SessionError::InvalidSave(fault) if fault.code == 3018 && fault.context.is_empty()));
+    assert_eq!(failure_description(&error), ("SAVE_TARGET_DAY_NOT_READY", "目标自然日尚未完成日终，当前日存档不可用（原始详情已脱敏）"));
+    assert_eq!(session_error_to_step_update_error(error), StepUpdateError::Operation("SAVE_TARGET_DAY_NOT_READY: 目标自然日尚未完成日终，当前日存档不可用（原始详情已脱敏）".into()));
+    for code in [3015, 3016, 3017] {
+        let error = SessionError::InvalidSave(engine::ValidationFault::bare(code));
+        let message = error.to_string();
+        assert_eq!(session_error_to_step_update_error(error), StepUpdateError::Operation(message));
+    }
 }

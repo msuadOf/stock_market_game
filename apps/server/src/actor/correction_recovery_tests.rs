@@ -172,6 +172,8 @@ async fn correction_business_rejection_keeps_installed_close_and_contiguous_canc
         }
     }
     let failure = failure.expect("真实更正业务拒绝必须通知用户");
+    assert_eq!(failure.code, "REPORT_CORRECTION_PREPARE_REJECTED");
+    assert_eq!(failure.r#where, "server.actor.prepare_civil_updates");
     assert_eq!(
         failure.cause.as_ref().unwrap().code,
         "REPORT_CORRECTION_REJECTED"
@@ -189,6 +191,9 @@ async fn correction_business_rejection_keeps_installed_close_and_contiguous_canc
     assert_eq!(actor.game.civil_date(), request.entries[0].date);
     assert!(actor.game.civil_day_ready().unwrap());
     assert!(actor.game.require_healthy().is_ok());
+    let close_origin = actor.game.runtime_mirror_origin();
+    assert_eq!(close_origin.source_tick, 2);
+    assert_eq!(close_origin.day_end_stage, engine::RuntimeMirrorDayEndStage::RetainedPublished);
     assert_eq!(
         actor.game.report_corrections().unwrap().pending,
         vec![rejected]
@@ -266,6 +271,11 @@ async fn correction_business_rejection_keeps_installed_close_and_contiguous_canc
     assert_eq!(status.completed[&request.operation_id].request, request);
     assert_eq!(actor.public_revision, 1);
     assert!(actor.game.require_healthy().is_ok());
+    let retry_origin = actor.game.runtime_mirror_origin();
+    assert_eq!(retry_origin.source_tick, close_origin.source_tick);
+    assert_eq!(retry_origin.source_generation, close_origin.source_generation);
+    assert_eq!(retry_origin.authority_epoch, close_origin.authority_epoch);
+    assert!(retry_origin.install_sequence >= close_origin.install_sequence, "civil-only retry 不得倒退 mirror 安装序");
 }
 
 #[tokio::test]
@@ -377,15 +387,20 @@ fn correction_real_accounting_overflow_keeps_fatal_actor_and_closed_ingress() {
     assert!(has_accounting_cause);
     assert!(receiver.try_recv().is_err(), "一个失败只能通知一次");
     assert!(actor.fatal_failure.is_some());
+    let first = actor.game.require_healthy().expect_err("fatal 不能被批前 checkpoint 复活");
+    assert_eq!(actor.game.poison_reason(), Some(&first));
+    assert_eq!(actor.game.step_frame().unwrap_err(), first);
     assert!(actor.fatal_rejection().is_some());
     assert!(!actor.pacing.is_running());
+    let before_rejected_ingress = actor.game.business_state_hash().unwrap();
     assert!(matches!(
         actor.game.shared_ingress().enqueue_player_intent(
             AccountId(0),
             Intent::Cancel { code: engine::StockId(0), id: engine::OrderId(1) }
         ),
-        Err(SessionError::ResourceLimit(fault)) if fault.code == 1251
+        Err(SessionError::Step(actual)) if actual == first
     ));
+    assert_eq!(actor.game.business_state_hash().unwrap(), before_rejected_ingress);
 }
 
 #[tokio::test]
@@ -425,8 +440,9 @@ async fn company_writes_after_fatal_preserve_first_failure_and_stale_generation(
     assert_eq!(first_failure.cause.as_ref().unwrap().code, "REPORT_CORRECTION_FAILED");
     assert!(!first_failure.recoverable);
     assert_eq!(actor.fatal_failure.as_ref(), Some(&first_failure));
-    // actor 已回滚批次 checkpoint；GameSession 可恢复为健康，Host terminal 仍不可绕过。
+    // Host 和 engine 都须保留真实首次 fatal，不能借批前 checkpoint 复活 authority。
     let first_poison = actor.game.poison_reason().cloned();
+    assert!(first_poison.is_some(), "真实 civil fatal 必须保留 engine poison");
     let first_health = actor.game.require_healthy();
     assert_eq!(actor.game.market_membership(&correction_controller()).unwrap().account_id, AccountId(0));
     let first_business = actor.game.business_state_hash().unwrap();
@@ -438,8 +454,9 @@ async fn company_writes_after_fatal_preserve_first_failure_and_stale_generation(
                 id: engine::OrderId(1),
             }
         ),
-        Err(SessionError::ResourceLimit(fault)) if fault.code == 1251
+        Err(SessionError::Step(actual)) if Some(&actual) == first_poison.as_ref()
     ));
+    assert_eq!(actor.game.business_state_hash().unwrap(), first_business);
 
     // 真实HTTP分别先发送Control／Resolve授权探针，必须能到内层真实鉴权。
     let control = dispatch(&mut actor, &sender, correction_controller(), MemberRequest::Control)
@@ -550,4 +567,220 @@ async fn company_writes_after_fatal_preserve_first_failure_and_stale_generation(
         assert_eq!(actor.game.business_state_hash().unwrap(), first_business);
         assert!(receiver.try_recv().is_err(), "未授权请求不得重发首错");
     }
+}
+
+#[test]
+fn generic_civil_failure_cannot_claim_the_prepare_recovery_contract() {
+    let (mut game, mut request) = correction_game("2030-06-08");
+    request.entries[0].lines[1].account = LedgerAccountId("不存在的科目".into());
+    let epoch = game.report_correction_epoch();
+    game.enqueue_report_correction(&epoch, request).unwrap();
+    let error = game.end_civil_day_update().unwrap_err();
+    assert!(game.require_healthy().is_ok());
+    let failure = HostFailure::civil(&error);
+    assert!(!failure.recoverable, "脱离真实 prepare 调用点的同型错误不能获得 F2 权限");
+    assert_eq!(failure.code, "CIVIL_DAY_SETTLEMENT_FAILED");
+}
+
+#[test]
+fn target_day_not_ready_has_a_dedicated_redacted_mapping() {
+    let (game, _) = correction_game("2030-06-07");
+    let error = game.save_current_day(game.civil_date()).unwrap_err();
+    assert!(matches!(&error, SessionError::InvalidSave(fault) if fault.code == 3018 && fault.context.is_empty()));
+    assert_eq!(failure_description(&error), ("SAVE_TARGET_DAY_NOT_READY", "目标自然日尚未完成日终，当前日存档不可用（原始详情已脱敏）"));
+    for code in [3015, 3016, 3017] {
+        assert_eq!(failure_description(&SessionError::InvalidSave(engine::ValidationFault::bare(code))).0, "SESSION_STATE_INVALID");
+    }
+}
+
+#[test]
+fn fatal_civil_after_market_install_keeps_committed_close_and_first_poison() {
+    let (mut game, mut request) = correction_game("2030-06-07");
+    for line in &mut request.entries[0].lines { line.amount = AccountingAmount::MAX; }
+    request.entries[0].lines[1].account = LedgerAccountId(engine::accounting::reports::simple_summary::REVENUE.into());
+    let first = game.step_frame().unwrap();
+    game.tick_batch(vec![first]).unwrap();
+    let epoch = game.report_correction_epoch();
+    game.enqueue_report_correction(&epoch, request).unwrap();
+    let (mut actor, _sender, mut receiver) = correction_actor(game);
+    actor.run_protocol_batch(1);
+    let update = receiver.try_recv().unwrap().update.expect("已打包成功末拍须在 fatal 前交付");
+    let ProtocolUpdate::TickBatch(batch) = update else { panic!("只能交付真实已成功市场帧") };
+    assert_eq!(batch.frames.iter().map(|frame| frame.tick).collect::<Vec<_>>(), vec![2]);
+    let failure = receiver.try_recv().unwrap().failure.unwrap();
+    assert!(!failure.recoverable);
+    assert_eq!(actor.game.tick(), 2, "installed close 不得复活批前 mirror");
+    assert_eq!(actor.game.retained_market_days().len(), 1);
+    let origin = actor.game.runtime_mirror_origin();
+    assert_eq!(origin.source_tick, 2);
+    assert!(origin.authority_epoch > 0 && origin.install_sequence > 0);
+    assert_eq!(origin.day_end_stage, engine::RuntimeMirrorDayEndStage::RetainedPublished);
+    let first = actor.game.require_healthy().expect_err("post-install civil fatal 必须保 poison");
+    assert_eq!(actor.game.step_frame().unwrap_err(), first);
+    assert_eq!(actor.game.save().unwrap_err().to_string(), SessionError::Step(first).to_string());
+    assert!(receiver.try_recv().is_err());
+}
+
+#[tokio::test]
+async fn target_day_not_ready_uses_the_actual_save_error_conversion() {
+    let (game, _) = correction_game("2030-06-07");
+    let setup = game.game().save().unwrap().setup;
+    let error = game.save_current_day(game.civil_date()).unwrap_err();
+    let (cmd_tx, mut commands) = mpsc::unbounded_channel();
+    let (event_tx, _) = broadcast::channel(1);
+    let handles = SessionHandles {
+        cmd_tx,
+        ingress: Arc::new(RwLock::new((1, game.shared_ingress()))),
+        members: Arc::new(RwLock::new(game.trading_subject_accounts())),
+        event_tx, ticks_per_day: 2, auction_ticks: 0, closing_auction_ticks: 0,
+        session_token: "private-test-token".into(), startup_setup: setup,
+        startup_seed: 7181, startup_resumed: false,
+    };
+    let (result, ()) = tokio::join!(handles.save(1, None), async {
+        let SessionCommand::Save { reply, .. } = commands.recv().await.unwrap() else { panic!("必须走既有 Save 命令转换") };
+        reply.send(Err(error)).unwrap();
+    });
+    assert!(matches!(result, Err(SendCommandError::Rejected(message)) if message == "SAVE_TARGET_DAY_NOT_READY: 目标自然日尚未完成日终，当前日存档不可用（原始详情已脱敏）"));
+}
+
+// 只供接收端状态机测试使用：真实 typed cause 来自 engine，wire 身份按 publisher fixture 显式绑定。
+impl HostFailure {
+    pub(crate) fn correction_prepare_rejection_fixture() -> Self {
+        let (mut game, mut request) = correction_game("2030-06-08");
+        request.entries[0].lines[1].account = LedgerAccountId("不存在的科目".into());
+        let epoch = game.report_correction_epoch();
+        game.enqueue_report_correction(&epoch, request).unwrap();
+        let error = game.end_civil_day_update().unwrap_err();
+        assert!(game.require_healthy().is_ok());
+        let mut failure = HostFailure::civil(&error);
+        failure.code = "REPORT_CORRECTION_PREPARE_REJECTED";
+        failure.r#where = "server.actor.prepare_civil_updates".into();
+        failure.recoverable = true;
+        failure.context.operation = "endCivilDay";
+        failure.context.tick = Some(6);
+        failure.context.seq = Some(4);
+        failure.context.day = Some(1);
+        failure.context.generation = Some("7".into());
+        assert_eq!(failure.cause.as_ref().unwrap().code, "REPORT_CORRECTION_REJECTED");
+        failure
+    }
+}
+
+fn poisoned_actor_for_command_boundaries() -> (SessionActor, engine::session::StepFatal) {
+    let (mut game, mut request) = correction_game("2030-06-08");
+    for line in &mut request.entries[0].lines { line.amount = AccountingAmount::MAX; }
+    request.entries[0].lines[1].account = LedgerAccountId(engine::accounting::reports::simple_summary::REVENUE.into());
+    let epoch = game.report_correction_epoch();
+    game.enqueue_report_correction(&epoch, request).unwrap();
+    let error = game.end_civil_day_update().unwrap_err();
+    let first = game.require_healthy().unwrap_err();
+    let (mut actor, _sender, _receiver) = correction_actor(game);
+    actor.stop_with_failure(HostFailure::civil(&error));
+    (actor, first)
+}
+
+#[tokio::test]
+async fn actual_save_after_engine_fatal_preserves_first_step_after_generation_validation() {
+    let (mut actor, first) = poisoned_actor_for_command_boundaries();
+    for generation in [2, 1] {
+        let (reply, response) = oneshot::channel();
+        actor.handle_command(SessionCommand::Save { generation, candidate: None, reply }).await;
+        let error = response.await.unwrap().unwrap_err();
+        if generation == 2 {
+            assert!(matches!(error, SessionError::InvalidSave(fault) if fault.code == 1290));
+        } else {
+            assert!(matches!(error, SessionError::Step(actual) if actual == first));
+        }
+    }
+}
+
+#[tokio::test]
+async fn normal_reads_after_engine_fatal_preserve_generation_then_first_step() {
+    let (mut actor, first) = poisoned_actor_for_command_boundaries();
+    for generation in [2, 1] {
+        let (reply, response) = oneshot::channel();
+        actor.handle_command(SessionCommand::PlayerWorkingOrders { generation, reply }).await;
+        let orders = response.await.unwrap().expect_err("正常委托读不能把 terminal 状态作为成功响应");
+        let (reply, response) = oneshot::channel();
+        actor.handle_command(SessionCommand::StockHistory { generation, code: engine::StockId(0), reply }).await;
+        let history = response.await.unwrap().expect_err("正常历史读不能把 terminal 状态作为成功响应");
+        let (reply, response) = oneshot::channel();
+        actor.handle_command(SessionCommand::InitialAllocation { generation, reply }).await;
+        let allocation = response.await.unwrap().expect_err("正常初始分配读不能把 terminal 状态作为成功响应");
+        for error in [orders, history, allocation] {
+            let SendCommandError::Rejected(message) = error else { panic!("必须沿既有拒绝容器返回") };
+            if generation == 2 { assert!(message.contains("fault[1290]")); }
+            else { assert_eq!(message, SessionError::Step(first.clone()).to_string()); }
+        }
+    }
+}
+
+#[test]
+fn civil_prefix_is_published_and_archived_before_the_next_real_month_end_failure() {
+    let (base, _) = correction_game("2030-06-29");
+    let mut setup = base.export_setup_for_runtime();
+    let engine::company::config::CompanySystemConfig::Simple(config) = setup.company_system.as_mut().unwrap() else { panic!("fixture 必须为 Simple") };
+    config.prehistory_periods = 0;
+    config.companies[0].generation.initial_revenue = AccountingAmount::MAX;
+    let mut probe = ProtocolSession::new(setup.clone(), 7181).unwrap();
+    probe.end_civil_day_update().expect("真实月末 probe 的 June29 必须成功");
+    let month_end_error = probe.end_civil_day_update().expect_err("真实月末 probe 的 June30 必须溢出");
+    assert!(matches!(&month_end_error, SessionError::CompanySystem(source) if source.classification() == engine::company::CompanyErrorClass::SystemState), "必须取得真实 Simple 月末系统错：{month_end_error}");
+    let expected_failure = HostFailure::civil(&month_end_error);
+
+    let mut game = ProtocolSession::new(setup, 7181).unwrap();
+    game.bind_market_creator(correction_controller()).unwrap();
+    let (mut actor, _sender, mut receiver) = correction_actor(game);
+    actor.pause_preferences = PausePreferences::default();
+    let database = native_store::NativeDatabase::open_in_memory().unwrap();
+    actor.archive = Some(native_store::ArchiveWriter::activate(database.clone(), "prefix-before-fatal").unwrap());
+    actor.run_protocol_batch(0);
+    let first = receiver.try_recv().unwrap();
+    let Some(ProtocolUpdate::CivilUpdate(civil)) = first.update else { panic!("首个成功 Closed 日必须在下一日真实失败前交付") };
+    assert!(first.failure.is_none());
+    assert_eq!(civil.boundary.settled_date, engine::CivilDate::from_iso("2030-06-29").unwrap());
+    let failure = receiver.try_recv().unwrap().failure.expect("月末真实溢出必须显式失败");
+    assert!(!failure.recoverable);
+    assert_eq!(failure.code, expected_failure.code);
+    assert_eq!(failure.message, expected_failure.message);
+    assert_eq!(failure.cause, expected_failure.cause);
+    assert_ne!(failure.code, "DAY_END_ARCHIVE_FAILED", "不得在 poison 后才捕获已成功候选，冒充额外保存失败");
+    assert!(receiver.try_recv().is_err());
+    let saved = database.load("prefix-before-fatal").unwrap().expect("已成功日终候选必须真实写入");
+    assert_eq!(saved.civil_clock.settled_through, Some(civil.boundary.settled_date));
+    assert_eq!(saved.snapshot.seq, civil.seq_to);
+    assert_eq!(actor.game.civil_date(), engine::CivilDate::from_iso("2030-06-30").unwrap());
+    assert_eq!(actor.game.tick(), 0);
+}
+
+#[test]
+fn archive_write_failure_keeps_the_previous_candidate_and_the_committed_civil_update() {
+    let (game, _) = correction_game("2030-06-09");
+    let (mut actor, _sender, mut receiver) = correction_actor(game);
+    let database = native_store::NativeDatabase::open_in_memory().unwrap();
+    actor.archive = Some(native_store::ArchiveWriter::activate(database.clone(), "archive-failure-control").unwrap());
+    actor.run_protocol_batch(0);
+    let previous = database.load("archive-failure-control").unwrap().unwrap();
+    assert!(receiver.try_recv().unwrap().failure.is_none());
+    database.with_connection(|connection| { connection.execute_batch("PRAGMA query_only = ON")?; Ok(()) }).unwrap();
+    actor.run_protocol_batch(1);
+    actor.run_protocol_batch(1);
+    let mut failure = None;
+    let mut civil = None;
+    while let Ok(message) = receiver.try_recv() {
+        if let Some(actual) = message.failure { assert!(failure.replace(actual).is_none()); }
+        if let Some(ProtocolUpdate::CivilUpdate(actual)) = message.update { assert!(civil.replace(actual).is_none()); }
+    }
+    let failure = failure.expect("真实 SQLite 写入失败必须显式通知");
+    assert_eq!(failure.code, "DAY_END_ARCHIVE_FAILED");
+    assert!(failure.recoverable);
+    let civil = civil.expect("持久化失败不能撤销已完成 CivilUpdate");
+    assert_eq!(civil.boundary.settled_date, engine::CivilDate::from_iso("2030-06-10").unwrap());
+    assert!(actor.fatal_failure.is_none());
+    assert!(actor.game.require_healthy().is_ok());
+    assert_eq!(serde_json::to_value(database.load("archive-failure-control").unwrap().unwrap()).unwrap(), serde_json::to_value(previous).unwrap());
+    let key = engine::session::protocol::SaveCandidateKey { seq: civil.seq_to, settled_date: civil.boundary.settled_date };
+    let exact = actor.game.save_candidate(&key).unwrap();
+    assert_eq!(exact.civil_clock.settled_through, Some(civil.boundary.settled_date));
+    assert_eq!(exact.snapshot.seq, civil.seq_to);
 }

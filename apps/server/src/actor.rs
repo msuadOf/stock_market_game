@@ -115,6 +115,10 @@ fn failure_description(error: &(dyn std::error::Error + 'static)) -> (&'static s
                 "SESSION_STATE_INVALID",
                 "更正完成事实与真实会计和公开版本不一致（原始详情已脱敏）",
             ),
+            SessionError::InvalidSave(fault) if fault.code == engine::error::SAVE_TARGET_DAY_NOT_READY => (
+                "SAVE_TARGET_DAY_NOT_READY",
+                "目标自然日尚未完成日终，当前日存档不可用（原始详情已脱敏）",
+            ),
             SessionError::InvalidSave(_) => (
                 "SESSION_STATE_INVALID",
                 "日终存档或协议状态校验失败（原始详情已脱敏）",
@@ -188,6 +192,15 @@ fn failure_description(error: &(dyn std::error::Error + 'static)) -> (&'static s
     ("ERROR_DETAILS_REDACTED", "原始错误类型未识别，详情未公开")
 }
 
+fn save_error_message(error: SessionError) -> String {
+    if matches!(&error, SessionError::InvalidSave(fault) if fault.code == engine::error::SAVE_TARGET_DAY_NOT_READY) {
+        let (code, message) = failure_description(&error);
+        format!("{code}: {message}")
+    } else {
+        error.to_string()
+    }
+}
+
 fn failure_cause(error: &(dyn std::error::Error + 'static)) -> Option<Box<FailureCause>> {
     error.source().map(|source| {
         let (code, message) = failure_description(source);
@@ -256,26 +269,35 @@ impl HostFailure {
             other => Self {
                 code: "CIVIL_DAY_SETTLEMENT_FAILED",
                 message: failure_description(other).1.to_owned(),
-                r#where: "server.actor.rollback_cycle".into(),
+                r#where: "server.actor.civil_day".into(),
                 cause: failure_cause(other),
                 context: FailureContext::new("endCivilDay"),
-                recoverable: matches!(other, SessionError::ReportCorrectionDayEnd(source)
-                    if source.classification() != engine::company::CompanyErrorClass::SystemState),
-                recovery_actions: if matches!(other, SessionError::ReportCorrectionDayEnd(source)
-                    if source.classification() != engine::company::CompanyErrorClass::SystemState)
-                {
-                    vec![
-                        "取消或修正待处理更正后恢复推进并重试日终",
-                        "复制脱敏错误详情反馈",
-                    ]
-                } else {
-                    vec![
-                        "停止当前会话；重新打开上一份有效日终存档或新局",
-                        "复制脱敏错误详情反馈",
-                    ]
-                },
+                recoverable: false,
+                recovery_actions: vec![
+                    "停止当前会话；重新打开上一份有效日终存档或新局",
+                    "复制脱敏错误详情反馈",
+                ],
             },
         }
+    }
+
+    fn correction_prepare_rejected(error: &SessionError) -> Self {
+        let mut failure = Self::civil(error);
+        failure.code = "REPORT_CORRECTION_PREPARE_REJECTED";
+        failure.r#where = "server.actor.prepare_civil_updates".into();
+        failure.recoverable = true;
+        failure.recovery_actions = vec!["取消或修正待处理更正后恢复推进并重试日终", "复制脱敏错误详情反馈"];
+        failure
+    }
+
+    pub(crate) fn is_correction_prepare_rejected(&self, generation: u64) -> bool {
+        self.code == "REPORT_CORRECTION_PREPARE_REJECTED"
+            && self.r#where == "server.actor.prepare_civil_updates"
+            && self.recoverable && self.context.operation == "endCivilDay"
+            && self.context.fault.is_none() && self.context.tick.is_some()
+            && self.context.seq.is_some() && self.context.day.is_some()
+            && self.context.generation.as_deref() == Some(generation.to_string().as_str())
+            && self.cause.as_ref().is_some_and(|cause| cause.code == "REPORT_CORRECTION_REJECTED")
     }
 
     /// B3 远程登录（18725d07 语义）：日终已完成、SQLite 保存失败——上一份
@@ -1413,7 +1435,7 @@ impl SessionHandles {
             .map_err(|_| SendCommandError::ActorGone)?;
         rx.await
             .map_err(|_| SendCommandError::ActorGone)?
-            .map_err(|error| SendCommandError::Rejected(error.to_string()))
+            .map_err(|error| SendCommandError::Rejected(save_error_message(error)))
     }
 
     pub async fn restore(&self, slot: SaveSlot) -> Result<Snapshot, SendCommandError> {
@@ -1904,6 +1926,15 @@ fn gate_deferred_drop_report(
     })
 }
 
+#[cfg(test)]
+#[derive(Default)]
+struct StepFailureCapture {
+    saved: Option<serde_json::Value>,
+    origin: Option<engine::RuntimeMirrorOrigin>,
+    business: Option<engine::session::StateHash>,
+    frames: Vec<engine::session::protocol::TickFrame>,
+}
+
 struct SessionActor {
     ingress: Arc<RwLock<(u64, engine::SharedSessionIngress)>>,
     /// B3 远程登录：subject → 玩家账户的成员名册（ingress 写锁内同步维护
@@ -1916,7 +1947,7 @@ struct SessionActor {
     /// 失效后的降级；日终档不再写）。
     archive: Option<native_store::ArchiveWriter>,
     #[cfg(test)]
-    injected_step_failure: Option<(usize, engine::session::StepFatal)>,
+    injected_step_failure: Option<(usize, engine::session::StepFatal, Arc<std::sync::Mutex<StepFailureCapture>>)>,
     pacing: ServerPacing,
     game: ProtocolSession,
     cmd_rx: mpsc::UnboundedReceiver<SessionCommand>,
@@ -1932,9 +1963,11 @@ struct SessionActor {
 
 impl SessionActor {
     fn fatal_rejection(&self) -> Option<SessionError> {
-        self.fatal_failure.as_ref().map(|failure| {
-            // 1291：宿主致命失败后停机；宿主失败 code/message 在 HostFailure 本体（边界序列化）。
-            SessionError::InvalidSave(engine::error::ValidationFault::bare(1291))
+        self.game.require_healthy().err().map(SessionError::Step).or_else(|| {
+            // 1291 仅表示健康 engine 的 Host fatal；engine poison 必须保留原首错。
+            self.fatal_failure.as_ref().map(|_| {
+                SessionError::InvalidSave(engine::error::ValidationFault::bare(1291))
+            })
         })
     }
 
@@ -1942,13 +1975,23 @@ impl SessionActor {
         &mut self,
     ) -> Result<engine::session::protocol::TickFrame, engine::session::StepFatal> {
         #[cfg(test)]
-        if let Some((remaining, error)) = &mut self.injected_step_failure {
+        let capture = if let Some((remaining, error, capture)) = &mut self.injected_step_failure {
             if *remaining == 0 {
+                let mut observed = capture.lock().unwrap();
+                observed.saved = Some(serde_json::to_value(self.game.game().save().unwrap()).unwrap());
+                observed.origin = Some(self.game.runtime_mirror_origin());
+                observed.business = Some(self.game.business_state_hash().unwrap());
                 return Err(error.clone());
             }
             *remaining -= 1;
+            Some(Arc::clone(capture))
+        } else { None };
+        let result = self.game.step_frame();
+        #[cfg(test)]
+        if let (Some(capture), Ok(frame)) = (capture, &result) {
+            capture.lock().unwrap().frames.push(frame.clone());
         }
-        self.game.step_frame()
+        result
     }
     /// 主循环：`select!` 同时等命令与 interval tick。
     ///
@@ -2026,14 +2069,10 @@ impl SessionActor {
         if self.fatal_failure.is_some() {
             return;
         }
-        let checkpoint = match self.game.checkpoint() {
-            Ok(checkpoint) => checkpoint,
-            Err(error) => {
-                self.stop_with_failure(HostFailure::step(&error));
-                return;
-            }
-        };
-        let revision_before = self.public_revision;
+        if let Err(error) = self.game.require_healthy() {
+            self.stop_with_failure(HostFailure::step(&error));
+            return;
+        }
         let started = std::time::Instant::now();
         let mut frames = Vec::new();
         for _ in 0..limit {
@@ -2046,14 +2085,14 @@ impl SessionActor {
                 Ok(true) => break,
                 Ok(false) => {}
                 Err(error) => {
-                    self.rollback_cycle(checkpoint, error);
+                    self.stop_cycle_with_unpublished_frames(frames, error);
                     return;
                 }
             }
             let frame = match self.step_game() {
                 Ok(frame) => frame,
                 Err(error) => {
-                    self.rollback_cycle(checkpoint, error.into());
+                    self.stop_cycle_with_unpublished_frames(frames, error.into());
                     return;
                 }
             };
@@ -2066,47 +2105,45 @@ impl SessionActor {
                 break;
             }
         }
-        let tick_update = if frames.is_empty() {
-            None
-        } else {
+        if !frames.is_empty() {
+            let range = frames.first().zip(frames.last()).map(|(first, last)| (first.tick, last.tick, first.seq_from, last.seq_to));
             match self.game.tick_batch(frames) {
-                Ok(batch) => Some(ProtocolUpdate::TickBatch(Box::new(batch))),
+                Ok(batch) => self.broadcast_at(ProtocolUpdate::TickBatch(Box::new(batch)), self.game.civil_date().to_iso()),
                 Err(error) => {
-                    self.rollback_cycle(checkpoint, error.into());
+                    let mut failure = HostFailure::step(&error);
+                    Self::describe_unpublished_frames(&mut failure, range);
+                    self.stop_with_failure(failure);
                     return;
                 }
             }
-        };
-        let tick_date = self.game.civil_date().to_iso();
-        let mut civil_updates = Vec::new();
-        if let Err(error) = self.prepare_civil_updates(&mut civil_updates) {
-            let recoverable = matches!(&error, SessionError::ReportCorrectionDayEnd(source)
-                    if source.classification() != engine::company::CompanyErrorClass::SystemState)
-                && self.game.require_healthy().is_ok();
-            if recoverable {
-                // tick_batch 已消费 seq；保留并先广播真实末拍，避免重试时 ReplayGuard 出现空洞。
-                if let Some(update) = tick_update {
-                    self.broadcast_at(update, tick_date);
-                }
-                self.publish_civil_updates(civil_updates);
-                self.stop_with_failure(HostFailure::civil(&error));
-                engine::session::defer_destruction(checkpoint);
-            } else {
-                self.public_revision = revision_before;
-                self.rollback_cycle(checkpoint, error);
-            }
+        }
+        if let Err(failure) = self.prepare_civil_updates() {
+            self.stop_with_failure(failure);
             return;
         }
-        if let Some(update) = tick_update {
-            self.broadcast_at(update, tick_date);
-        }
-        self.publish_civil_updates(civil_updates);
         self.pacing.refresh_metrics(self.game.tick());
-        // 成功路径：批级回滚锚点已无用，析构移交池外专用线程——旧账户页的
-        // jemalloc free（实测 ~132µs/tick）不再占用 actor 关键路径；析构无任何
-        // 可观察副作用，失败原子性/首错序不受影响（错误路径仍走 rollback_cycle）。
-        engine::session::defer_destruction(checkpoint);
         self.report_deferred_drop_degradation();
+    }
+
+    fn describe_unpublished_frames(failure: &mut HostFailure, range: Option<(u64, u64, u64, u64)>) {
+        if let Some((tick_from, tick_to, seq_from, seq_to)) = range {
+            failure.message.push_str(&format!("；本批已提交但尚未交付的成功前缀：tick_from={tick_from}, tick_to={tick_to}, seq_from={seq_from}, seq_to={seq_to}；内存事实仍保留供诊断，请重新打开有效日终档或新局"));
+        }
+    }
+
+    fn stop_cycle_with_unpublished_frames(&mut self, frames: Vec<engine::session::protocol::TickFrame>, error: SessionError) {
+        let mut failure = HostFailure::civil(&error);
+        if !frames.is_empty() {
+            let range = frames.first().zip(frames.last()).map(|(first, last)| (first.tick, last.tick, first.seq_from, last.seq_to));
+            match self.game.tick_batch(frames) {
+                Ok(batch) => self.broadcast_at(ProtocolUpdate::TickBatch(Box::new(batch)), self.game.civil_date().to_iso()),
+                Err(publication_error) => {
+                    warn!(?publication_error, "fatal 后成功前缀无法通过健康门，保留原首错和未交付范围");
+                    Self::describe_unpublished_frames(&mut failure, range);
+                }
+            }
+        }
+        self.stop_with_failure(failure);
     }
 
     /// 析构后端退化是性能告警，不是交易失败：不 stop pacing、不关闭 ingress、
@@ -2126,30 +2163,34 @@ impl SessionActor {
         }
     }
 
-    fn publish_civil_updates(&mut self, updates: Vec<engine::session::protocol::CivilUpdate>) {
-        for update in updates {
-            self.persist_day_end(&update);
-            let pause = self.pause_preferences.pauses(&update);
-            self.public_revision = self.public_revision.saturating_add(1);
-            let date = update.civil_date.clone();
-            self.broadcast_at(ProtocolUpdate::CivilUpdate(Box::new(update)), date);
-            if pause {
-                self.pacing.pause_at_civil_boundary(self.game.tick());
-            }
+    fn publish_civil_update(&mut self, update: engine::session::protocol::CivilUpdate) {
+        self.persist_day_end(&update);
+        let pause = self.pause_preferences.pauses(&update);
+        self.public_revision = self.public_revision.saturating_add(1);
+        let date = update.civil_date.clone();
+        self.broadcast_at(ProtocolUpdate::CivilUpdate(Box::new(update)), date);
+        if pause {
+            self.pacing.pause_at_civil_boundary(self.game.tick());
         }
     }
 
-    fn prepare_civil_updates(
-        &mut self,
-        updates: &mut Vec<engine::session::protocol::CivilUpdate>,
-    ) -> Result<(), SessionError> {
-        while self.game.civil_day_ready()? {
-            let update = self.game.end_civil_day_update()?;
+    fn prepare_civil_updates(&mut self) -> Result<(), HostFailure> {
+        while self.game.civil_day_ready().map_err(|error| HostFailure::civil(&error))? {
+            let date = self.game.civil_date();
+            let update = match self.game.end_civil_day_update_classified() {
+                Ok(update) => update,
+                Err(failure) => {
+                    let prepare_rejected = failure.recovery() == engine::session::protocol::CivilRecovery::CorrectionPrepareRejected
+                        && self.fatal_failure.is_none() && self.game.require_healthy().is_ok()
+                        && self.game.civil_date() == date && self.game.civil_day_ready().is_ok_and(|ready| ready);
+                    let error = failure.into_error();
+                    return Err(if prepare_rejected { HostFailure::correction_prepare_rejected(&error) } else { HostFailure::civil(&error) });
+                }
+            };
             let pause = self.pause_preferences.pauses(&update);
-            updates.push(update);
-            if pause {
-                break;
-            }
+            // 趁本日候选仍通过健康门时捕获并交付，下一自然日失败不能抹掉成功前缀。
+            self.publish_civil_update(update);
+            if pause { break; }
         }
         Ok(())
     }
@@ -2545,15 +2586,6 @@ impl SessionActor {
         }
     }
 
-    fn rollback_cycle(
-        &mut self,
-        checkpoint: engine::session::protocol::ProtocolCheckpoint,
-        error: SessionError,
-    ) {
-        self.game.rollback(checkpoint);
-        self.stop_with_failure(HostFailure::civil(&error));
-    }
-
     fn public_baseline_candidate(
         &mut self,
     ) -> Result<PublicBaseline, engine::session::CompanyCatalogViewError> {
@@ -2579,7 +2611,12 @@ impl SessionActor {
                 return Err(error);
             }
         };
-        self.game.prepare_public_baseline();
+        if let Err(fatal) = self.game.require_healthy() {
+            self.stop_with_failure(HostFailure::step(&fatal));
+        }
+        if self.fatal_failure.is_none() {
+            self.game.prepare_public_baseline();
+        }
         Ok(PublicBaseline {
             timeline_generation: self.timeline_generation,
             snapshot: self.game.snapshot().into(),
@@ -2701,6 +2738,8 @@ impl SessionActor {
                         "STALE_SESSION_GENERATION: fault[1290] requested {generation}; current is {}",
                         self.timeline_generation
                     )))
+                } else if let Some(error) = self.fatal_rejection() {
+                    Err(SendCommandError::Rejected(error.to_string()))
                 } else {
                     serde_json::to_value(self.game.player_working_orders())
                         .map(|orders| (self.timeline_generation, orders))
@@ -2722,6 +2761,8 @@ impl SessionActor {
                         "STALE_SESSION_GENERATION: fault[1290] requested {generation}; current is {}",
                         self.timeline_generation
                     )))
+                } else if let Some(error) = self.fatal_rejection() {
+                    Err(SendCommandError::Rejected(error.to_string()))
                 } else {
                     self.game
                         .query_stock_history(AccountId(0), &code)
@@ -2736,6 +2777,8 @@ impl SessionActor {
                         "STALE_SESSION_GENERATION: fault[1290] requested {generation}; current is {}",
                         self.timeline_generation
                     )))
+                } else if let Some(error) = self.fatal_rejection() {
+                    Err(SendCommandError::Rejected(error.to_string()))
                 } else {
                     self.game
                         .initial_allocation()

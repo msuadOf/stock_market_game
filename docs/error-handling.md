@@ -39,6 +39,30 @@
 外持 driver 的 lease 不能证明 World 健康，因此保守返回 `None`，仍保留原 typed 错误与取消重试行为。
 兼容入口 `end_civil_day_update`、`into_error` 及普通 `From<SessionError>` 均不保留恢复资格。
 
+Server 与 Desktop actor 只消费本次 `CivilDayEndFailure` 的恢复资格，构造
+`REPORT_CORRECTION_PREPARE_REJECTED`。其 `where` 分别为
+`server.actor.prepare_civil_updates`、`desktop.actor.prepare_civil_updates`，
+`recoverable` 为 `true`，`context` 含 `operation=endCivilDay` 及当前
+`tick/seq/day/generation`，首层 cause 为 `REPORT_CORRECTION_REJECTED`。
+普通 `HostFailure::civil`、同型 callback 错误与旧错误重放不能构造这个恢复合同。
+Remote 与 Tauri 只对完整合法、当前 generation 的该合同保留取消坏更正和 civil 重试权限；
+失败前的旧确认失效，已有首个 fatal 时迟到的该合同不能重新开放写入。
+
+Host 先交付已成功打包的 `TickBatch`；每个成功 `CivilUpdate` 都先交付，再准备下一自然日。
+Server 在下一日 prepare 前按精确 `SaveCandidateKey` 捕获并持久化候选；Desktop 立即交付，
+Engine 保留内存候选，这不代表候选已持久化，后日 fatal 后普通 Save 也不能绕过健康门提取候选。
+后续失败不撤回此前已交付或已持久化的成功前缀。
+若首个 fatal 已使尚未打包的市场前缀无法通过健康门，错误显式列出未交付的
+`tick_from/tick_to/seq_from/seq_to`，保留内存事实供诊断，不补造 snapshot。
+普通 Save 与 `PlayerWorkingOrders`、`StockHistory`、`InitialAllocation` 在既有权限和
+generation 校验后保留原首个 fatal；健康 Engine 的纯 Host fatal 仍沿既有拒绝路径处理。
+WS 初始化及 Resync 发现 baseline 含 failure 时只发送 `HostFailure`，不先安装或发送健康 baseline。
+
+3018 经 Server、Desktop 的既有 `SessionHandles::save` 错误转换及 WASM 的 `SessionError` 转换保留
+`SAVE_TARGET_DAY_NOT_READY` 和中文原因。当前公开保存入口读取最新候选，没有目标自然日参数，
+因此 UI 不能自然触发 3018；测试使用真实 `ProtocolSession::save_current_day` 错误验证这些转换，
+不据此宣称 UI 已支持按目标自然日保存。
+
 ### ❌ 禁止：空 catch / 吞掉错误
 
 ```ts

@@ -791,3 +791,123 @@ async fn server_fixture_cleans_resources_after_assertion_panic() {
     ));
     assert!(tokio::net::TcpStream::connect(address).await.is_err());
 }
+
+include!("../../../packages/engine/test-support/simple_company.rs");
+include!("../../../packages/engine/test-support/host_company_writes.rs");
+
+async fn correction_response(app: axum::Router, method: &str, path: &str, token: &str, payload: Option<serde_json::Value>) -> (axum::http::StatusCode, axum::body::Bytes) {
+    use tower::ServiceExt;
+    let request = axum::http::Request::builder().method(method).uri(path)
+        .header("authorization", format!("Bearer {token}"))
+        .header("content-type", "application/json")
+        .body(axum::body::Body::from(payload.map(|value| value.to_string()).unwrap_or_default())).unwrap();
+    let response = app.oneshot(request).await.unwrap();
+    let status = response.status();
+    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    assert!(status.is_success(), "真实 router 失败 {method} {path} {status}：{}", String::from_utf8_lossy(&bytes));
+    (status, bytes)
+}
+
+async fn correction_http(app: axum::Router, method: &str, path: &str, token: &str, payload: Option<serde_json::Value>) -> serde_json::Value {
+    let (status, bytes) = correction_response(app, method, path, token, payload).await;
+    assert_eq!(status, axum::http::StatusCode::OK, "JSON 响应状态不符：{method} {path}");
+    serde_json::from_slice(&bytes).expect("JSON 路由必须返回完整有效的 JSON body")
+}
+
+async fn correction_control(app: axum::Router, path: &str, token: &str, payload: serde_json::Value, expected_status: axum::http::StatusCode) {
+    let (status, bytes) = correction_response(app, "POST", path, token, Some(payload)).await;
+    assert_eq!(status, expected_status, "控制路由状态不符：{path}");
+    assert!(bytes.is_empty(), "控制路由必须返回空 body：{path} {status}");
+}
+
+async fn correction_rejection_flushes_before_failure(delivery: &str) {
+    let delivery = delivery.to_owned();
+    ServerFixture::run(1000, move |fixture| async move {
+    let app = app_router_with_manager(fixture.manager.clone());
+    let mut setup = company_write_setup(serde_json::from_value(sample_setup_json()).unwrap());
+    setup.ticks_per_day = 2;
+    let (id, handles, token, generation) = fixture.session_with_setup(setup, 7181).await;
+    handles.set_pause_preferences(generation.parse().unwrap(), engine::session::protocol::PausePreferences { pause_after_close: true, pause_before_open: true }).await.unwrap();
+    let reports = correction_http(app.clone(), "GET", &format!("/api/companies/0/reports?session_id={id}&limit=100"), &token, None).await;
+    let mut correction = host_correction_request(&reports);
+    correction["entries"][0]["lines"][1]["account"] = serde_json::json!("不存在的科目");
+    correction_http(app.clone(), "POST", "/api/enqueue-report-correction", &token,
+        Some(serde_json::json!({"session_id":id,"generation":generation,"request":correction}))).await;
+    let req = WsRequest::builder().method("GET")
+        .uri(format!("{}/ws?session_id={id}&delivery={delivery}", fixture.ws_url()))
+        .header("Host", "127.0.0.1").header("Connection", "Upgrade").header("Upgrade", "websocket")
+        .header("Sec-WebSocket-Key", generate_key()).header("Sec-WebSocket-Version", "13")
+        .header("authorization", format!("Bearer {token}"))
+        .body(()).unwrap();
+    let (mut ws, _) = tokio_tungstenite::connect_async(req).await.unwrap();
+    let first = ws.next().await.unwrap().unwrap();
+    let baseline: serde_json::Value = serde_json::from_str(first.to_text().unwrap()).unwrap();
+    let mut replay = engine::session::protocol::ReplayGuard::new(
+        baseline["Baseline"]["snapshot"]["tick"].as_u64().unwrap(),
+        baseline["Baseline"]["snapshot"]["seq"].as_u64().unwrap());
+    correction_control(app.clone(), "/api/speed", &token,
+        serde_json::json!({"session_id":id,"generation":generation,"speed":"Fastest"}), axum::http::StatusCode::OK).await;
+    correction_control(app.clone(), "/api/running", &token,
+        serde_json::json!({"session_id":id,"generation":generation,"running":true}), axum::http::StatusCode::NO_CONTENT).await;
+    let mut ticks = Vec::new();
+    let failure = tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            let message = ws.next().await.unwrap().unwrap();
+            let value: serde_json::Value = serde_json::from_str(message.to_text().unwrap()).unwrap();
+            if let Some(frame) = value.get("PublisherFrame") {
+                let update: engine::session::protocol::EngineUpdate = serde_json::from_value(frame["update"].clone()).unwrap();
+                replay.ingest(&update).unwrap();
+                let engine::session::protocol::EngineUpdate::TickBatch(batch) = update else { panic!("拒绝前只能交付市场末拍") };
+                ticks.extend(batch.frames.iter().map(|frame| frame.tick));
+            } else if let Some(failure) = value.get("HostFailure") { break failure.clone(); }
+            else { panic!("未知 WS 消息：{value}") }
+        }
+    }).await.expect("HostFailure 必须按时交付");
+    assert_eq!(ticks, vec![1, 2], "{delivery} 必须在 HostFailure 前主动 flush 已接受末拍；pull 无需 GetFrame");
+    assert_eq!(failure["code"], "REPORT_CORRECTION_PREPARE_REJECTED");
+    assert_eq!(failure["where"], "server.actor.prepare_civil_updates");
+    assert_eq!(failure["recoverable"], true);
+    assert_eq!(failure["context"]["tick"], 2);
+    correction_http(app.clone(), "POST", "/api/cancel-report-correction", &token,
+        Some(serde_json::json!({"session_id":id,"generation":generation,"operation_id":correction["operation_id"]}))).await;
+    correction_control(app.clone(), "/api/running", &token,
+        serde_json::json!({"session_id":id,"generation":generation,"running":true}), axum::http::StatusCode::NO_CONTENT).await;
+    if delivery == "pull" {
+        ws.send(tokio_tungstenite::tungstenite::Message::Text(serde_json::json!({"GetFrame":{}}).to_string())).await.unwrap();
+    }
+    let civil = tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            let message = ws.next().await.unwrap().unwrap();
+            let value: serde_json::Value = serde_json::from_str(message.to_text().unwrap()).unwrap();
+            if let Some(frame) = value.get("PublisherFrame") {
+                let update: engine::session::protocol::EngineUpdate = serde_json::from_value(frame["update"].clone()).unwrap();
+                replay.ingest(&update).unwrap();
+                let engine::session::protocol::EngineUpdate::CivilUpdate(civil) = update else { panic!("cancel 后只能 civil-only retry，不得新增 market Start") };
+                break civil;
+            }
+            assert!(value.get("FrameEmpty").is_some(), "F2 后不能被永久 resync 锁死：{value}");
+            if delivery == "pull" { ws.send(tokio_tungstenite::tungstenite::Message::Text(serde_json::json!({"GetFrame":{}}).to_string())).await.unwrap(); }
+        }
+    }).await.expect("取消后必须能在同一连接收到 civil-only retry");
+    assert_eq!(civil.tick, 2);
+    assert_eq!(handles.snapshot().await.unwrap().tick, 2, "暂停边界后不得新增 market Start");
+    let candidate = serde_json::to_value(engine::session::protocol::SaveCandidateKey {
+        seq: civil.seq_to,
+        settled_date: civil.boundary.settled_date,
+    }).unwrap();
+    let saved = correction_http(app, "POST", "/api/save", &token,
+        Some(serde_json::json!({"session_id":id,"generation":generation,"candidate":candidate}))).await;
+    assert_eq!(saved["snapshot"]["tick"], 2);
+    ws.close(None).await.unwrap();
+    }).await;
+}
+
+#[tokio::test]
+async fn pull_rejection_delivers_accepted_close_without_get_frame_then_allows_civil_retry() {
+    correction_rejection_flushes_before_failure("pull").await;
+}
+
+#[tokio::test]
+async fn push_rejection_delivers_accepted_close_before_failure_then_allows_civil_retry() {
+    correction_rejection_flushes_before_failure("push").await;
+}

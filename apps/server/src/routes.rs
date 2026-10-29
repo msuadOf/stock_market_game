@@ -1965,8 +1965,11 @@ impl WsPublisherConnection {
 
     fn ingest(&mut self, update: crate::actor::EngineUpdate) -> PublisherAction {
         if let Some(failure) = &update.failure {
+            if self.delivered_failure.as_ref().is_some_and(|first| !first.recoverable) {
+                return PublisherAction::Ignored;
+            }
             if self.delivered_failure.as_ref() == Some(failure) {
-                self.awaiting_resync = true;
+                self.awaiting_resync = !failure.is_correction_prepare_rejected(self.timeline_generation);
                 return PublisherAction::Ignored;
             }
             return PublisherAction::HostFailure(Box::new(failure.clone()));
@@ -2031,8 +2034,11 @@ impl WsPublisherConnection {
     }
 
     fn failure_delivered(&mut self, failure: crate::actor::HostFailure) {
+        if self.delivered_failure.as_ref().is_some_and(|first| !first.recoverable) {
+            return;
+        }
+        self.awaiting_resync = !failure.is_correction_prepare_rejected(self.timeline_generation);
         self.delivered_failure = Some(failure);
-        self.awaiting_resync = true;
     }
 
     fn require_resync(&mut self) {
@@ -2153,6 +2159,10 @@ async fn run_ws_connection(
     // 1. 对齐基线：发完整 Snapshot JSON。
     match handles.public_baseline().await {
         Ok(baseline) => {
+            if baseline.failure.is_some() {
+                let _ = send_baseline(&mut sender, baseline).await;
+                return;
+            }
             initial_baseline = (
                 (
                     baseline.snapshot.seq,
@@ -2215,6 +2225,14 @@ async fn run_ws_connection(
                         match connection.ingest(update) {
                             PublisherAction::Buffered | PublisherAction::Ignored => {}
                             PublisherAction::HostFailure(failure) => {
+                                let mut delivered = true;
+                                while let Some(frame) = connection.take_flush_frame() {
+                                    if !send_publisher_frame(&mut sender, frame).await {
+                                        delivered = false;
+                                        break;
+                                    }
+                                }
+                                if !delivered { break; }
                                 if !send_host_failure(&mut sender, (*failure).clone()).await { break; }
                                 connection.failure_delivered(*failure);
                             }
@@ -2311,7 +2329,9 @@ async fn run_ws_connection(
                                     connection.prepare_resync();
                                     match handles.public_baseline().await {
                                         Ok(baseline) => {
-                                            connection.install_baseline_cursor(&baseline);
+                                            if baseline.failure.is_none() {
+                                                connection.install_baseline_cursor(&baseline);
+                                            }
                                             let latched_failure = baseline.failure.clone();
                                             if !send_baseline(&mut sender, baseline).await { break; }
                                             connection.baseline_delivered(latched_failure);
@@ -2432,16 +2452,14 @@ async fn send_baseline(
 fn baseline_wire_messages(
     baseline: crate::actor::PublicBaseline,
 ) -> Result<Vec<String>, serde_json::Error> {
-    let failure = baseline.failure.clone();
-    let mut messages = vec![serde_json::to_string(
-        &serde_json::json!({ "Baseline": baseline }),
-    )?];
-    if let Some(failure) = failure {
-        messages.push(serde_json::to_string(
+    if let Some(failure) = &baseline.failure {
+        return Ok(vec![serde_json::to_string(
             &serde_json::json!({ "HostFailure": failure }),
-        )?);
+        )?]);
     }
-    Ok(messages)
+    Ok(vec![serde_json::to_string(
+        &serde_json::json!({ "Baseline": baseline }),
+    )?])
 }
 
 #[cfg(test)]
@@ -2450,7 +2468,7 @@ mod baseline_failure_tests {
     use crate::actor::{HostFailure, PublicBaseline, PublicBaselineSnapshot};
 
     #[test]
-    fn latched_failure_is_sent_after_an_unchanged_baseline() {
+    fn latched_failure_is_sent_without_installing_a_healthy_wire_baseline() {
         let messages = baseline_wire_messages(PublicBaseline {
             stock_catalog: Vec::new(),
             company_catalog: Vec::new(),
@@ -2486,10 +2504,9 @@ mod baseline_failure_tests {
         })
         .unwrap();
 
-        assert_eq!(messages.len(), 2);
-        let baseline: serde_json::Value = serde_json::from_str(&messages[0]).unwrap();
-        assert!(baseline["Baseline"].get("failure").is_none());
-        let failure: serde_json::Value = serde_json::from_str(&messages[1]).unwrap();
+        assert_eq!(messages.len(), 1, "terminal baseline 不得先作为健康 wire baseline 交付");
+        let failure: serde_json::Value = serde_json::from_str(&messages[0]).unwrap();
+        assert!(failure.get("Baseline").is_none());
         assert_eq!(failure["HostFailure"]["code"], "STEP_FATAL");
         assert_eq!(
             failure["HostFailure"]["message"],
@@ -2666,6 +2683,39 @@ mod publisher_connection_tests {
             connection.request_frame(),
             FrameRequest::ResyncRequired
         ));
+    }
+
+    #[test]
+    fn prepare_rejection_after_flushing_keeps_the_current_publisher_ready() {
+        for delivery in [DeliveryMode::Push, DeliveryMode::Pull] {
+            let mut connection = connection(delivery);
+            assert!(matches!(connection.ingest(update(6, 4)), PublisherAction::Buffered));
+            let rejected = HostFailure::correction_prepare_rejection_fixture();
+            let mut failed = update(6, 4);
+            failed.update = None;
+            failed.failure = Some(rejected);
+            let PublisherAction::HostFailure(rejected) = connection.ingest(failed) else { panic!("必须先交付显式更正拒绝") };
+            assert_eq!(frame_tick(connection.take_flush_frame().unwrap()), 6, "已接受末拍仍在 FIFO");
+            assert!(connection.take_flush_frame().is_none());
+            connection.failure_delivered(*rejected);
+            assert!(!connection.awaiting_resync, "严格 F2 不能把同连接 civil-only retry 永久锁死");
+            assert!(matches!(connection.ingest(update(7, 4)), PublisherAction::Buffered));
+        }
+    }
+
+    #[test]
+    fn first_fatal_cannot_be_replaced_by_a_late_prepare_rejection() {
+        let mut connection = connection(DeliveryMode::Pull);
+        let first = failure();
+        connection.failure_delivered(first.clone());
+        let rejected = HostFailure::correction_prepare_rejection_fixture();
+        let mut message = update(6, 4);
+        message.update = None;
+        message.failure = Some(rejected.clone());
+        assert!(matches!(connection.ingest(message), PublisherAction::Ignored), "首 fatal 之后迟到的 F2 不能再次交付并开门");
+        connection.failure_delivered(rejected);
+        assert!(connection.awaiting_resync);
+        assert_eq!(connection.delivered_failure, Some(first));
     }
 
     #[test]

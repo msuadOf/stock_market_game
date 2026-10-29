@@ -55,6 +55,10 @@ pub(super) fn failure_description(
                 "SESSION_STATE_INVALID",
                 "更正完成事实与真实会计和公开版本不一致（原始详情已脱敏）",
             ),
+            SessionError::InvalidSave(fault) if fault.code == engine::error::SAVE_TARGET_DAY_NOT_READY => (
+                "SAVE_TARGET_DAY_NOT_READY",
+                "目标自然日尚未完成日终，当前日存档不可用（原始详情已脱敏）",
+            ),
             SessionError::InvalidSave(_) => (
                 "SESSION_STATE_INVALID",
                 "日终存档或协议状态校验失败（原始详情已脱敏）",
@@ -126,6 +130,13 @@ pub(super) fn failure_description(
         );
     }
     ("ERROR_DETAILS_REDACTED", "原始错误类型未识别，详情未公开")
+}
+
+pub(super) fn save_error_message(error: SessionError) -> String {
+    if matches!(&error, SessionError::InvalidSave(fault) if fault.code == engine::error::SAVE_TARGET_DAY_NOT_READY) {
+        let (code, message) = failure_description(&error);
+        format!("{code}: {message}")
+    } else { error.to_string() }
 }
 
 pub(super) fn failure_cause(
@@ -204,27 +215,24 @@ impl HostFailure {
             other => Self {
                 code: "CIVIL_DAY_SETTLEMENT_FAILED",
                 message: failure_description(&other).1.to_owned(),
-                r#where: "desktop.actor.rollback_cycle".into(),
+                r#where: "desktop.actor.civil_day".into(),
                 cause: failure_cause(&other),
                 context: FailureContext::new("endCivilDay"),
-                recoverable: matches!(&other, SessionError::ReportCorrectionDayEnd(source)
-                    if source.classification() != engine::company::CompanyErrorClass::SystemState),
-                recovery_actions: if matches!(&other, SessionError::ReportCorrectionDayEnd(source)
-                    if source.classification() != engine::company::CompanyErrorClass::SystemState)
-                {
-                    vec![
-                        "取消或修正待处理更正后恢复推进并重试日终",
-                        "复制脱敏错误详情反馈",
-                    ]
-                } else {
-                    vec![
-                        "停止当前会话；重新打开上一份有效日终存档或新局",
-                        "复制脱敏错误详情反馈",
-                    ]
-                },
+                recoverable: false,
+                recovery_actions: vec!["停止当前会话；重新打开上一份有效日终存档或新局", "复制脱敏错误详情反馈"],
             },
         }
     }
+
+    pub(super) fn correction_prepare_rejected(error: SessionError) -> Self {
+        let mut failure = Self::civil(error);
+        failure.code = "REPORT_CORRECTION_PREPARE_REJECTED";
+        failure.r#where = "desktop.actor.prepare_civil_updates".into();
+        failure.recoverable = true;
+        failure.recovery_actions = vec!["取消或修正待处理更正后恢复推进并重试日终", "复制脱敏错误详情反馈"];
+        failure
+    }
+
 }
 
 #[derive(Clone, Serialize)]

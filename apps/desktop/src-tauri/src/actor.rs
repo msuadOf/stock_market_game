@@ -726,7 +726,7 @@ impl SessionHandles {
             .map_err(|_| SendCommandError::ActorGone)?;
         rx.await
             .map_err(|_| SendCommandError::ActorGone)?
-            .map_err(|error| SendCommandError::Rejected(error.to_string()))
+            .map_err(|error| SendCommandError::Rejected(failure::save_error_message(error)))
     }
 
     pub async fn restore(
@@ -923,11 +923,20 @@ impl Default for SessionManager {
     }
 }
 
+#[cfg(test)]
+#[derive(Default)]
+struct StepFailureCapture {
+    saved: Option<serde_json::Value>,
+    origin: Option<engine::RuntimeMirrorOrigin>,
+    business: Option<engine::session::StateHash>,
+    frames: Vec<engine::session::protocol::TickFrame>,
+}
+
 /// actor：独占 `GameSession` 的 tokio task。命令经 `cmd_rx`，事件经 `app.emit`。
 struct SessionActor<R: Runtime> {
     ingress: Arc<RwLock<(u64, engine::SharedSessionIngress)>>,
     #[cfg(test)]
-    injected_step_failure: Option<(usize, engine::session::StepFatal)>,
+    injected_step_failure: Option<(usize, engine::session::StepFatal, Arc<std::sync::Mutex<StepFailureCapture>>)>,
     pacing: DesktopPacing,
     game: ProtocolSession,
     cmd_rx: mpsc::UnboundedReceiver<SessionCommand>,
@@ -1022,13 +1031,23 @@ impl ActorHarness {
 impl<R: Runtime> SessionActor<R> {
     fn step_game(&mut self) -> Result<TickFrame, engine::session::StepFatal> {
         #[cfg(test)]
-        if let Some((remaining, error)) = &mut self.injected_step_failure {
+        let capture = if let Some((remaining, error, capture)) = &mut self.injected_step_failure {
             if *remaining == 0 {
+                let mut observed = capture.lock().unwrap();
+                observed.saved = Some(serde_json::to_value(self.game.game().save().unwrap()).unwrap());
+                observed.origin = Some(self.game.runtime_mirror_origin());
+                observed.business = Some(self.game.business_state_hash().unwrap());
                 return Err(error.clone());
             }
             *remaining -= 1;
+            Some(Arc::clone(capture))
+        } else { None };
+        let result = self.game.step_frame();
+        #[cfg(test)]
+        if let (Some(capture), Ok(frame)) = (capture, &result) {
+            capture.lock().unwrap().frames.push(frame.clone());
         }
-        self.game.step_frame()
+        result
     }
     /// 主循环：`select!` 同时等命令与 interval tick。
     ///
@@ -1096,13 +1115,10 @@ impl<R: Runtime> SessionActor<R> {
         if self.cmd_rx.is_closed() {
             return;
         }
-        let checkpoint = match self.game.checkpoint() {
-            Ok(checkpoint) => checkpoint,
-            Err(error) => {
-                self.stop_after_step_failure(error);
-                return;
-            }
-        };
+        if let Err(error) = self.game.require_healthy() {
+            self.stop_after_step_failure(error);
+            return;
+        }
         let started = std::time::Instant::now();
         let mut frames = Vec::new();
         let mut steps = 0;
@@ -1121,22 +1137,22 @@ impl<R: Runtime> SessionActor<R> {
                 Ok(true) => break,
                 Ok(false) => {}
                 Err(error) => {
-                    self.rollback_cycle(checkpoint, error);
+                    self.stop_cycle_with_unpublished_frames(frames, error);
                     return;
                 }
             }
             let frame = match self.step_game() {
                 Ok(frame) => frame,
                 Err(error) => {
-                    self.rollback_cycle(checkpoint, error.into());
+                    self.stop_cycle_with_unpublished_frames(frames, error.into());
                     return;
                 }
             };
             frames.push(frame);
             steps += 1;
         }
-        if let Err(error) = self.publish_protocol_cycle(frames) {
-            self.rollback_cycle(checkpoint, error);
+        if let Err(failure) = self.publish_protocol_cycle(frames) {
+            self.stop_after_host_failure(failure);
             return;
         }
         self.pacing.refresh_metrics(self.game.tick());
@@ -1146,53 +1162,48 @@ impl<R: Runtime> SessionActor<R> {
         self.run_cycle(FASTEST_BATCH_MAX_STEPS);
     }
 
-    fn rollback_cycle(
-        &mut self,
-        checkpoint: engine::session::protocol::ProtocolCheckpoint,
-        error: SessionError,
-    ) {
-        self.game.rollback(checkpoint);
-        self.stop_after_host_failure(failure::HostFailure::civil(error));
+    fn describe_unpublished_frames(failure: &mut HostFailure, range: Option<(u64, u64, u64, u64)>) {
+        if let Some((tick_from, tick_to, seq_from, seq_to)) = range {
+            failure.message.push_str(&format!("；本批已提交但尚未交付的成功前缀：tick_from={tick_from}, tick_to={tick_to}, seq_from={seq_from}, seq_to={seq_to}；内存事实仍保留供诊断，请重新打开有效日终档或新局"));
+        }
     }
 
-    fn publish_protocol_cycle(&mut self, frames: Vec<TickFrame>) -> Result<(), SessionError> {
-        let batch = if frames.is_empty() {
-            None
-        } else {
-            Some(self.game.tick_batch(frames)?)
-        };
-        let mut updates = Vec::new();
-        match self.prepare_civil_updates(&mut updates) {
-            Ok(()) => {}
-            Err(error)
-                if matches!(&error, SessionError::ReportCorrectionDayEnd(source)
-                if source.classification() != engine::company::CompanyErrorClass::SystemState)
-                    && self.game.require_healthy().is_ok() =>
-            {
-                // seq 已经由真实 tick_batch 提交；必须先交付末拍，再通知可恢复更正拒绝。
-                if let Some(batch) = batch {
-                    self.emit_update(EngineUpdate::TickBatch(Box::new(batch)));
+    fn stop_cycle_with_unpublished_frames(&mut self, frames: Vec<TickFrame>, error: SessionError) {
+        let mut failure = failure::HostFailure::civil(error);
+        if !frames.is_empty() {
+            let range = frames.first().zip(frames.last()).map(|(first, last)| (first.tick, last.tick, first.seq_from, last.seq_to));
+            match self.game.tick_batch(frames) {
+                Ok(batch) => self.emit_update(EngineUpdate::TickBatch(Box::new(batch))),
+                Err(publication_error) => {
+                    eprintln!("[session {}] fatal 后成功前缀无法通过健康门，保留原首错和未交付范围：{publication_error:?}", self.session_id);
+                    Self::describe_unpublished_frames(&mut failure, range);
                 }
-                self.publish_civil_updates(updates);
-                self.stop_after_host_failure(failure::HostFailure::civil(error));
-                return Ok(());
             }
-            Err(error) => return Err(error),
-        };
-        if let Some(batch) = batch {
-            self.emit_update(EngineUpdate::TickBatch(Box::new(batch)));
         }
-        self.publish_civil_updates(updates);
+        self.stop_after_host_failure(failure);
+    }
+
+    fn publish_protocol_cycle(&mut self, frames: Vec<TickFrame>) -> Result<(), HostFailure> {
+        if !frames.is_empty() {
+            let range = frames.first().zip(frames.last()).map(|(first, last)| (first.tick, last.tick, first.seq_from, last.seq_to));
+            match self.game.tick_batch(frames) {
+                Ok(batch) => self.emit_update(EngineUpdate::TickBatch(Box::new(batch))),
+                Err(error) => {
+                    let mut failure = failure::HostFailure::step(error);
+                    Self::describe_unpublished_frames(&mut failure, range);
+                    return Err(failure);
+                }
+            }
+        }
+        self.prepare_civil_updates()?;
         Ok(())
     }
 
-    fn publish_civil_updates(&mut self, updates: Vec<engine::session::protocol::CivilUpdate>) {
-        for update in updates {
-            let pause = self.pause_preferences.pauses(&update);
-            self.emit_update(EngineUpdate::CivilUpdate(Box::new(update)));
-            if pause {
-                self.pacing.pause_at_civil_boundary(self.game.tick());
-            }
+    fn publish_civil_update(&mut self, update: engine::session::protocol::CivilUpdate) {
+        let pause = self.pause_preferences.pauses(&update);
+        self.emit_update(EngineUpdate::CivilUpdate(Box::new(update)));
+        if pause {
+            self.pacing.pause_at_civil_boundary(self.game.tick());
         }
     }
 
@@ -1612,20 +1623,27 @@ impl<R: Runtime> SessionActor<R> {
         })
     }
 
-    fn prepare_civil_updates(
-        &mut self,
-        updates: &mut Vec<engine::session::protocol::CivilUpdate>,
-    ) -> Result<(), SessionError> {
-        while self.game.civil_day_ready()? {
-            let update = self.game.end_civil_day_update()?;
+    fn prepare_civil_updates(&mut self) -> Result<(), HostFailure> {
+        while self.game.civil_day_ready().map_err(failure::HostFailure::civil)? {
+            let date = self.game.civil_date();
+            let update = match self.game.end_civil_day_update_classified() {
+                Ok(update) => update,
+                Err(failure) => {
+                    let prepare_rejected = failure.recovery() == engine::session::protocol::CivilRecovery::CorrectionPrepareRejected
+                        && !self.cmd_rx.is_closed() && self.game.require_healthy().is_ok()
+                        && self.game.civil_date() == date && self.game.civil_day_ready().is_ok_and(|ready| ready);
+                    let error = failure.into_error();
+                    return Err(if prepare_rejected { failure::HostFailure::correction_prepare_rejected(error) } else { failure::HostFailure::civil(error) });
+                }
+            };
             let pause = self.pause_preferences.pauses(&update);
-            updates.push(update);
-            if pause {
-                break;
-            }
+            // 已成功日结立即交付；下一自然日失败不能丢弃先前的完整 CivilUpdate。
+            self.publish_civil_update(update);
+            if pause { break; }
         }
         Ok(())
     }
+
 }
 
 #[cfg(test)]

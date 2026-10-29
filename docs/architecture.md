@@ -82,8 +82,10 @@ Desktop/WebUI 同一成品在启动时选择本地或远程。WebUI 静态服务
 
 当前 `SaveSlot` 不设代际版本标记，恢复事实放在 `runtime_state: SavedRuntimeState`。
 Rust 的 `session/persistence/saved_runtime.rs` 与 Web 的 `save/schema/runtime-state.ts` 分别负责
-投影/恢复和严格输入校验；生成类型与三宿主消费同一契约。仅成功自然日日结产生持久存档候选，
-日内回滚使用内存 checkpoint；额外版本字段、旧字段与不完整当前结构显式拒绝，不建立格式迁移。见
+投影/恢复和严格输入校验；生成类型与三宿主消费同一契约。仅成功自然日日结产生持久存档候选。
+`ProtocolCheckpoint` 仅用于无 runtime authority 的健康 serial 机械回放，Host 不借它撤回
+live World 已提交的市场、镜像与自然日事实，或清除首个 fatal；额外版本字段、旧字段与不完整当前结构
+显式拒绝，不建立格式迁移。见
 [ADR-0025](decisions/0025-day-end-only-persistence.md) 和
 [ADR-0029](decisions/0029-responsibility-names-and-contract-versions.md)。
 std-thread runtime 的恢复=日终静点重建线程拓扑（NPC 组线程与交易部线程重建，`WorldSpec.initial_committed_tick` 与 `session.tick()` 锁步对齐）；活动委托不进档（日终清簿后天然为空）不变；日内回滚=Abort 三层 working overlay 冲回（[ADR-0043](decisions/0043-std-thread-ownership-runtime.md)）。
