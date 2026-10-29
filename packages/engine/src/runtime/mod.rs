@@ -29,6 +29,19 @@ pub type StockIdx = u16;
 pub type OrderRef = (StockIdx, u64);
 
 pub(crate) mod admin_tax_projection;
+
+#[cfg(any(target_arch = "wasm32", test))]
+mod wasm_step_override;
+
+#[cfg(target_arch = "wasm32")]
+static STEP_RUNTIME_OVERRIDE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+
+/// 在 WASM 首次读取运行时开关前设置一次显式 override。
+#[cfg(target_arch = "wasm32")]
+pub fn set_step_runtime_override(enabled: bool) -> Result<(), &'static str> {
+    wasm_step_override::set_step_runtime_override(&STEP_RUNTIME_OVERRIDE, enabled)
+}
+
 mod entities;
 mod facts;
 mod protocol;
@@ -142,9 +155,8 @@ mod wait_ledger_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod desk_projection_cache_tests;
 // D5 wasm 方向 A：world 不再按 wasm 门控（session/bridge/drive 的类型
-// 引用面在 wasm 下编译必需）；wasm 宿主无 OS 线程——spawn 运行期
-// Err 由 session 侧显式处理（step_runtime_enabled 在 wasm 恒 false
-// ——串行管线兜底，见该函数注释）。
+// 引用面在 wasm 下编译必需）；wasm 宿主没有 OS 线程。串行 fallback 是缺省值，
+// 宿主可在首次读取前显式设置 step runtime override。
 pub mod world;
 
 pub use entities::Entity;
@@ -157,16 +169,15 @@ pub use protocol::{
     OPEN_AUCTION_BAR_MINUTE,
 };
 
-/// D5 wasm 方向 A：wasm 串行冒烟（编译级断言——wasm 宿主无测试
-/// runner，测试体编译通过即承载「step_runtime_enabled 恒 false 的
-/// 串行管线路径可达」；运行时验证由 CI 的 wasm 构建+Web 端冒烟承载）。
+/// WASM 默认串行冒烟的编译级断言定义；不能据此认定默认行为已实测。
+/// 首次设置前 `step_runtime_enabled` 缺省为 false；本片未实跑 WASM 测试。
 #[cfg(all(test, target_arch = "wasm32"))]
 mod wasm_serial_smoke {
     #[test]
     fn runtime_step_disabled_on_wasm() {
         assert!(
             !crate::runtime::step_runtime_enabled(),
-            "wasm 宿主恒走串行管线（无 OS 线程——std-thread runtime 不可用）"
+            "wasm 未设置 override 时缺省走串行管线"
         );
     }
 }
@@ -182,23 +193,20 @@ mod protocol_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod skeleton_tests;
 
-/// 生产入口翻转开关：**缺省已翻转为 runtime**（翻转批终程：106 个
-/// 失败项清零后落地）；显式 `ENGINE_STEP_RUNTIME=0` 为回旧管线的临时
-/// 逃生门（批 9 外部清理时移除）。历史：翻转前缺省 0=旧管线，硬翻
-/// 曾使 106 个 session 侧测试失败——全局域迁移完成后才改缺省。
+/// 查询 step 管线开关。native 缺省启用 runtime，可用 `ENGINE_STEP_RUNTIME=0`
+/// 临时回旧管线；WASM 缺省仍为串行，只有宿主在首次读取前显式设置
+/// `step runtime override` 才进入经 `thread_facade` 创建 worker 的 `World` 路径。
+/// 此处的编译级冒烟断言定义不表示本片已实跑 WASM cfg、ABI、`World` 或 Browser。
 pub fn step_runtime_enabled() -> bool {
-    // D5 wasm 方向 A：wasm 宿主无 OS 线程（std::thread::spawn 运行期
-    // Err）——恒 false 走串行管线（Web 优先的产品语义；native 缺省
-    /// 由翻转批编排切换，wasm 不随之翻转）。
+    // wasm 缺省使用串行管线；宿主可在首次读取前显式设置一次 override。
     #[cfg(target_arch = "wasm32")]
     {
-        false
+        wasm_step_override::step_runtime_override_enabled(&STEP_RUNTIME_OVERRIDE)
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
-        // 翻转批：缺省=runtime（std-thread 生产缺省）；显式
-        // ENGINE_STEP_RUNTIME=0 为临时逃生门回旧管线（批 9 外部清理时
-        // 移除）。OnceLock 首读缓存——同进程不可中途切换。
+        // native 缺省启用 runtime（std-thread 生产缺省）；显式
+        // ENGINE_STEP_RUNTIME=0 临时回旧管线。OnceLock 首读缓存——同进程不可中途切换。
         static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
         *ENABLED.get_or_init(|| {
             std::env::var("ENGINE_STEP_RUNTIME")

@@ -1,10 +1,11 @@
 //! engine → WASM 绑定（ADR-0007 §4）。
 //!
-//! 多核（批 9 A10 终稿）：wasm 宿主无 OS 线程，native std::thread 运行时
-//!（ADR-0043）在 wasm 下不可用，engine 恒走串行管线——**串行 wasm 为本期
-//! wasm 语义，登记为简化**（docs/trading-rules 与
-//! memory/project_std_thread_migration）；原 wasm-bindgen-rayon 多核方案
-//! 随 rayon 退役一并删除（+atomics/build-std 链接链、COOP/COEP 隔离门）。
+//! native 直接使用 std::thread 运行时（ADR-0043）；WASM 的 `World` 也保留，
+//! worker 创建经 `thread_facade` 接入；宿主可在首次读取前显式设置一次
+//! `step runtime override` 进入该路径。缺省仍走串行管线，尚未翻转为 runtime；
+//! WASM 多 worker 所需的 `atomics`、`build-std` 与 COOP/COEP 隔离链仍是相关条件，
+//! 不代表已删除或本片已验证。WASM 默认串行属于简化（见 docs/trading-rules 与
+//! memory/project_std_thread_migration）；本片未实跑 WASM cfg、ABI、`World` 或 Browser。
 //!
 //! GameSession 不可序列化（含 `Box<dyn Strategy + Send + Sync>`），故存于 thread_local
 //! 句柄注册表；仅 `Snapshot`/`Event`/`Intent`/`SessionSetup` 经 serde-wasm-bindgen 跨界。
@@ -25,6 +26,12 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Mutex;
 use wasm_bindgen::prelude::*;
 
+/// 在 WASM 首次读取运行时开关前设置一次显式 override。
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen]
+pub fn set_step_runtime_override(enabled: bool) -> Result<(), JsValue> {
+    engine::runtime::set_step_runtime_override(enabled).map_err(JsValue::from_str)
+}
 
 /// 序列化为 JsValue。map 默认序列化为 JS Map（AccountId 是数字键，无法作 Object 键）；
 /// 前端 host 适配器负责把 Map 规整为普通对象（Object.fromEntries）供 React/RTK 消费。
