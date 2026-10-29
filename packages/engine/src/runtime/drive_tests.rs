@@ -2643,7 +2643,23 @@ fn p2_2b_account_undo_records_and_clears() {
             .into_iter()
             .map(|id| {
                 let account = session.account(id).expect("名册账户");
-                (id, account.cash().cents(), account.positions().clone())
+                (
+                    id,
+                    account.cash().cents(),
+                    account
+                        .positions()
+                        .iter()
+                        .map(|(&stock, position)| {
+                            (
+                                stock,
+                                position.qty(),
+                                position.t1_locked(),
+                                position.invested_cents(),
+                                position.recovered_cents(),
+                            )
+                        })
+                        .collect::<Vec<_>>(),
+                )
             })
             .collect::<Vec<_>>()
     };
