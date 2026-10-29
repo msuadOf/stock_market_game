@@ -96,6 +96,8 @@ pub(crate) mod personal_trade_history;
 mod market_history_query;
 mod shared_ingress;
 pub use shared_ingress::SharedSessionIngress;
+mod shutdown;
+pub use shutdown::SessionShutdownReport;
 #[cfg(feature = "verification-harness")]
 mod verify_metrics;
 #[cfg(feature = "verification-harness")]

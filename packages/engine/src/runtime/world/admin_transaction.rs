@@ -228,22 +228,23 @@ impl World {
                         .push_str("；行政收尾再次 panic，强制回收");
                     self.worker_shutdown.store(true, Ordering::SeqCst);
                     for (who, handle) in std::mem::take(&mut self.handles) {
-                        let diagnostic = match handle.join() {
-                            Ok(Ok(())) => None,
-                            Ok(Err(error)) => Some(format!("；收尾 join {who} 失败：{error}")),
+                        let result = match handle.join() {
+                            Ok(result) => result,
                             #[cfg(not(target_family = "wasm"))]
-                            Err(_) => Some(format!("；收尾 join {who} 再次 panic")),
+                            Err(payload) => Err(invalid(format!(
+                                "收尾 join {who} 再次 panic：{}",
+                                prepared_stop::panic_detail(payload.as_ref())
+                            ))),
                             #[cfg(target_family = "wasm")]
-                            Err(error) => Some(format!(
-                                "；收尾 {}", admin_wasm_join_diagnostic(who, error)
-                            )),
+                            Err(error) => Err(invalid(admin_wasm_join_diagnostic(who, error))),
                         };
-                        if let Some(diagnostic) = diagnostic {
+                        if let Err(error) = &result {
                             self.dead_reason
                                 .as_mut()
                                 .expect("已判死")
-                                .push_str(&diagnostic);
+                                .push_str(&format!("；收尾 join {who} 失败：{error}"));
                         }
+                        self.dead_worker_results.push((who, result));
                     }
                     if failure.payload.is_none() {
                         failure.payload = Some(payload);
@@ -703,22 +704,29 @@ impl World {
             }
         } else {
             for (who, handle) in std::mem::take(&mut self.handles) {
-                match handle.join() {
-                    Ok(Ok(())) => {}
-                    Ok(Err(error)) => diagnostics.push(format!("{who}：{error}")),
+                let result = match handle.join() {
+                    Ok(result) => result,
                     #[cfg(not(target_family = "wasm"))]
                     Err(p) => {
-                        diagnostics.push(format!("{who} 未运输 panic"));
+                        let error = invalid(format!(
+                            "{who} 未运输 panic：{}",
+                            prepared_stop::panic_detail(p.as_ref())
+                        ));
                         if payload.is_none() {
                             payload = Some(p);
                         }
+                        Err(error)
                     }
                     #[cfg(target_family = "wasm")]
                     Err(error) => {
                         // DEAD kind/code 交给终态诊断；io::Error 不能填充原 panic payload。
-                        diagnostics.push(admin_wasm_join_diagnostic(who, error));
+                        Err(invalid(admin_wasm_join_diagnostic(who, error)))
                     }
+                };
+                if let Err(error) = &result {
+                    diagnostics.push(format!("{who}：{error}"));
                 }
+                self.dead_worker_results.push((who, result));
             }
         }
         (payload, diagnostics.join("；"))

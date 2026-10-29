@@ -119,6 +119,8 @@ struct SessionRegistry {
     sessions: HashMap<u32, ProtocolSession>,
 }
 
+mod shutdown;
+
 impl SessionRegistry {
     fn register(
         &mut self,
@@ -819,6 +821,21 @@ pub fn drop_session(handle: u32) -> Result<(), JsValue> {
     REGISTRY
         .with(|r| r.borrow_mut().remove(handle))
         .map_err(session_error_to_js)
+}
+
+/// 消费指定 session 的 Rust owner；不证明同 memory 其他 session 或 child 已退出。
+#[wasm_bindgen]
+pub fn shutdown_session(handle: u32) -> Result<JsValue, JsValue> {
+    match REGISTRY.with(|registry| registry.borrow_mut().shutdown(handle)) {
+        Ok(report) => serde_wasm_bindgen::to_value(&shutdown::SessionShutdownReply { handle, result: report })
+            .map_err(|error| JsValue::from_str(&format!("shutdown 成功事实序列化失败：{error}"))),
+        Err(failure) => {
+            let wire = serde_wasm_bindgen::to_value(&shutdown::SessionShutdownReply { handle, result: &failure }).map_err(|error| {
+                JsValue::from_str(&format!("shutdown 失败事实序列化失败：{error}；原错误={failure:?}"))
+            })?;
+            Err(wire)
+        }
+    }
 }
 
 /// 返回最近完成自然日的存档候选；首个日终完成前返回错误。

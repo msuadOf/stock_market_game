@@ -238,6 +238,52 @@ mod tests {
     use super::*;
     use crate::{LimitPrice, Money, Side};
 
+    #[test]
+    #[cfg(not(target_family = "wasm"))]
+    fn shutdown_ingress_close_failure_still_consumes_real_driver() {
+        let mut game = game();
+        game.construct_runtime_driver_lazy_for_test().expect("真实 driver 已构造");
+        let source = game.shared_ingress();
+        assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = source.inner.lock().expect("首次 ingress 加锁正常");
+            panic!("shutdown-ingress-poison-fixture");
+        })).is_err());
+        let failure = game.shutdown().expect_err("ingress close 失败不能回成功 ack");
+        assert_eq!(failure.primary.stage, "ingress_close");
+        assert!(failure.primary.detail.contains("1250"), "保留真实 ingress poison fault");
+        let completion = failure.completion.expect("close 失败不能提前跳过原 driver 清理");
+        assert_eq!(completion.owned_workers, 3);
+        assert_eq!(completion.joined_workers, 3);
+        assert_eq!(completion.worker_results.len(), 3);
+    }
+
+    #[test]
+    #[cfg(not(target_family = "wasm"))]
+    fn shutdown_retains_session_primary_and_ingress_secondary_after_real_cleanup() {
+        let mut game = game();
+        game.construct_runtime_driver_lazy_for_test().expect("真实 driver 已构造");
+        game.poison = Some(StepFatal::InvariantViolation {
+            location: "shutdown-original-primary".to_owned(),
+            description: "活动 session 首错".to_owned(),
+        });
+        let source = game.shared_ingress();
+        assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = source.inner.lock().expect("首次 ingress 加锁正常");
+            panic!("shutdown-ingress-secondary-fixture");
+        })).is_err());
+        let failure = game.shutdown().expect_err("首错与 close 次错不得洗成成功");
+        assert_eq!(failure.primary.stage, "session_poison");
+        assert!(failure.primary.detail.contains("shutdown-original-primary"));
+        assert!(failure.secondary.iter().any(|issue|
+            issue.stage == "ingress_close" && issue.detail.contains("1250")
+        ), "ingress close 的真实失败不能丢失");
+        let completion = failure.completion.expect("多个错误仍需真实清理原 owner");
+        assert_eq!(completion.owned_workers, 3);
+        assert_eq!(completion.joined_workers, 3);
+        assert_eq!(completion.worker_results.len(), 3);
+        assert_eq!((completion.group_finals, completion.desk_finals), (0, 0));
+    }
+
     fn game() -> GameSession {
         let mut setup = crate::session::npc_working_quote_tests::quote_setup(0);
         setup.npcs.inst_count = 0;

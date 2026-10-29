@@ -23,6 +23,7 @@ mod administrative_mirror;
 pub(crate) use administrative_mirror::AdministrativeBaseline;
 mod sync_inputs;
 mod static_projection;
+mod shutdown;
 pub(crate) use static_projection::PreparedStaticRead;
 pub(crate) use convergence::{PreparedDriverCalendar, PreparedDriverStep};
 use crate::money::Money;

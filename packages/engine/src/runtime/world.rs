@@ -10,6 +10,10 @@
 //! 代码本体零线程数管理概念：线程数 = G+N(+调用线程)，由世界构造参数决定。
 
 mod prepared_stop;
+mod shutdown_completion;
+pub use shutdown_completion::{
+    ShutdownCompletion, ShutdownFailure, ShutdownIssue, ShutdownWorkerResult,
+};
 #[cfg(any(target_family = "wasm", test))]
 mod wasm_shutdown;
 #[cfg(all(target_family = "wasm", feature = "verification-harness"))]
@@ -454,6 +458,8 @@ pub struct World {
     n_stocks: usize,
     /// 已死亡 worker（Failed 路径收齐的 Final；world 不可再跑 tick）。
     dead_finals: Option<ShutdownReport>,
+    /// Final 不完整时独立保留真实 join 结果，不能把缺少 Final 误记为未 join。
+    dead_worker_results: Vec<(WorkerId, Result<(), RuntimeError>)>,
     dead_reason: Option<String>,
     /// 全股上一收束点公共态（决策观察基；DeskReport 安装更新）。
     public_views: Vec<StockPublic>,
@@ -1174,6 +1180,7 @@ impl World {
             n_groups,
             n_stocks,
             dead_finals: None,
+            dead_worker_results: Vec::new(),
             dead_reason: None,
             public_views,
             day_end_prior_public_views: None,
@@ -2824,6 +2831,7 @@ impl World {
             errors.push(format!(
                 "Final 缺口：组 {missing_groups:?}，交易部 {missing_desks:?}"
             ));
+            self.dead_worker_results.extend(worker_results);
         } else {
             self.dead_finals = Some(ShutdownReport {
                 group_finals: group_finals
@@ -3568,6 +3576,13 @@ impl World {
     /// 先于 Shutdown 入队——FIFO 保证期末名册含全部回流）→ 收 GroupFinal →
     /// Shutdown 交易部 → 收 DeskFinal → join。
     pub fn shutdown(mut self) -> Result<ShutdownReport, RuntimeError> {
+        let mut stage = "shutdown_state";
+        let report = self.shutdown_message_protocol(&mut stage)?;
+        self.join_workers(report)
+    }
+
+    // 保留 owner，正常协议失败后由显式完成入口继续永久唤醒和 join。
+    fn shutdown_message_protocol(&mut self, stage: &mut &'static str) -> Result<ShutdownReport, RuntimeError> {
         // Sol 终审四审 A1：正常关停**不置**永久标记——Drain/Shutdown/
         /// Final 是完整消息协议（组在 Shutdown 消息处 apply_staging 后
         /// 上交 Final）；标记驱退会旁路 Final 上交（空闲 worker 50ms
@@ -3575,7 +3590,7 @@ impl World {
         /// 场景（sever/Drop）。消息协议失败时 Drop 兜底仍回收。
         if let Some(report) = self.dead_finals.take() {
             // 已在失败撤退路径收齐 Final：只补 join。
-            self.join_workers(report)
+            Ok(report)
         } else {
             if let Some(reason) = &self.dead_reason {
                 if self.handles.is_empty() {
@@ -3586,6 +3601,7 @@ impl World {
             }
             // 成功日结（含恢复）已完成清簿与完整结果收集；无新成功 tick 时复用。
             // AbortDayEnd 清标，新 tick 成功推进 committed_tick，二者均恢复真实 Drain。
+            *stage = "Drain";
             if self.last_day_end_tick != Some(self.global.committed_tick) {
                 for tx in &self.desk_txs {
                     tx.send(DeskMsg::Drain)
@@ -3614,6 +3630,17 @@ impl World {
                                 error: Box::new(error),
                             });
                         }
+                        UpMsg::TaskDied { who, payload } => {
+                            return Err(RuntimeError::WorkerFailed {
+                                who,
+                                error: Box::new(RuntimeError::ProtocolInvariant {
+                                    detail: format!(
+                                        "Drain 收到 worker panic：{}",
+                                        prepared_stop::panic_detail(payload.as_ref())
+                                    ),
+                                }),
+                            });
+                        }
                         other => {
                             return Err(RuntimeError::Disconnected {
                                 who: None,
@@ -3630,6 +3657,7 @@ impl World {
             if let Some(stall) = self.shutdown_stall_for_test {
                 std::thread::sleep(stall);
             }
+            *stage = "GroupShutdown";
             for tx in &self.group_txs {
                 tx.send(GroupIn::Shutdown)
                     .map_err(|_| RuntimeError::SendFailed {
@@ -3638,14 +3666,15 @@ impl World {
             }
             // 交易部在组 Final 前发 Shutdown：组的 desk_txs 克隆随组退出释放，
             // 交易部收件循环随后退出并上交 Final。
+            *stage = "DeskShutdown";
             for tx in &self.desk_txs {
                 tx.send(DeskMsg::Shutdown)
                     .map_err(|_| RuntimeError::SendFailed {
                         detail: "交易部 Shutdown 广播失败".to_owned(),
                     })?;
             }
-            let report = self.collect_finals()?;
-            self.join_workers(report)
+            *stage = "FinalCollection";
+            self.collect_finals()
         }
     }
 
@@ -3673,6 +3702,17 @@ impl World {
                 UpMsg::Failed { who, error } => {
                     // Failed 与 Final 都会到（worker 先 Failed 后 Final）；记录不中断。
                     let _ = (who, error);
+                }
+                UpMsg::TaskDied { who, payload } => {
+                    return Err(RuntimeError::WorkerFailed {
+                        who,
+                        error: Box::new(RuntimeError::ProtocolInvariant {
+                            detail: format!(
+                                "FinalCollection 收到 worker panic：{}",
+                                prepared_stop::panic_detail(payload.as_ref())
+                            ),
+                        }),
+                    });
                 }
                 other => {
                     return Err(RuntimeError::Disconnected {
@@ -3729,21 +3769,26 @@ impl World {
 
     /// join 全部 worker（消费句柄）。
     fn join_workers(&mut self, mut report: ShutdownReport) -> Result<ShutdownReport, RuntimeError> {
-        for (who, handle) in std::mem::take(&mut self.handles) {
-            match handle.join() {
-                Ok(r) => report.worker_results.push((who, r)),
-                Err(_) => {
-                    report.worker_results.push((
-                        who,
-                        Err(RuntimeError::ProtocolInvariant {
-                            detail: "worker 线程 panic 退出（payload 应已由 TaskDied 运输）"
-                                .to_owned(),
-                        }),
-                    ));
-                }
-            }
-        }
+        report.worker_results.extend(self.join_worker_results());
         Ok(report)
+    }
+
+    fn join_worker_results(&mut self) -> Vec<(WorkerId, Result<(), RuntimeError>)> {
+        std::mem::take(&mut self.handles).into_iter().map(|(who, handle)| {
+            let result = match handle.join() {
+                Ok(result) => result,
+                Err(error) => {
+                    #[cfg(not(target_family = "wasm"))]
+                    let detail = prepared_stop::panic_detail(error.as_ref());
+                    #[cfg(target_family = "wasm")]
+                    let detail = error.to_string();
+                    Err(RuntimeError::ProtocolInvariant {
+                        detail: format!("worker {who} join 失败：{detail}"),
+                    })
+                }
+            };
+            (who, result)
+        }).collect()
     }
 
     #[cfg(target_family = "wasm")]

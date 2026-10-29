@@ -92,6 +92,11 @@ pub struct ProtocolCheckpoint {
 }
 
 impl ProtocolSession {
+    /// 消费实际 session owner；只报告本 session 的 Rust 停止事实。
+    pub fn shutdown(self) -> Result<crate::session::SessionShutdownReport, crate::runtime::world::ShutdownFailure> {
+        self.state.game.shutdown()
+    }
+
     pub fn query_stock_history(
         &mut self,
         account: crate::AccountId,
