@@ -348,7 +348,7 @@ fn simple_preferences_protocol_checkpoint_rolls_back_config_with_personal_facts(
     protocol
         .set_simple_preferences(&COMPANY, preferences())
         .unwrap();
-    protocol.rollback(checkpoint);
+    protocol.rollback(checkpoint).unwrap();
     assert_eq!(
         protocol.company_simple_preferences(&COMPANY).unwrap(),
         SimpleCompanyPreferences::none()

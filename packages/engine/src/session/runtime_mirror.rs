@@ -565,8 +565,11 @@ impl GameSession {
             }
             candle_book.replace_active(active.clone());
             closed = candle_book.commit_active();
+            let bars = data.bars.clone();
+            #[cfg(all(test, feature = "simulation-diagnostics", not(target_arch = "wasm32")))]
+            let bars = super::runtime_diagnostics_tests::retained_tests::perturb_volume_once(bars);
             let retained = self.assemble_retained_from_prepared(
-                data.bars.clone(),
+                bars,
                 self.civil_date(),
                 &closed,
                 true,

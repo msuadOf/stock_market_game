@@ -135,7 +135,7 @@ fn retained_game() -> GameSession {
 
 fn mismatch(error: &StepFatal) -> bool {
     matches!(error, StepFatal::InvariantViolation { location, description }
-        if location == "GameSession::step_via_runtime::retained_freeze"
+        if location == "runtime_mirror::prepare"
             && description.contains("分钟累计量/额/笔与日K不一致"))
 }
 

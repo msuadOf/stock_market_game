@@ -152,8 +152,43 @@ impl ProtocolSession {
         })
     }
 
-    pub fn rollback(&mut self, checkpoint: ProtocolCheckpoint) {
+    /// 仅允许健康 serial 的机械回放；checkpoint 不复制 live World，不能撤回 runtime 提交。
+    pub fn rollback(&mut self, checkpoint: ProtocolCheckpoint) -> Result<(), StepFatal> {
+        self.state.game.require_healthy()?;
+        let has_runtime_authority = |game: &GameSession| {
+            game.runtime_authority_epoch != 0
+                || game.runtime_mirror_install_sequence != 0
+                || game.runtime_driver.is_some()
+                || game.has_current_external_runtime_authority()
+        };
+        if has_runtime_authority(&self.state.game)
+            || has_runtime_authority(&checkpoint.state.game)
+        {
+            return Err(StepFatal::InvariantViolation {
+                location: "ProtocolSession::rollback".to_owned(),
+                description: "checkpoint 不持有 live World，不能回退已经安装或仍在位的 runtime authority".to_owned(),
+            });
+        }
         self.state = checkpoint.state;
+        Ok(())
+    }
+
+    /// 含 civil 的旧机械回放用原 exact case 独立验证 serial；沿父 case 的外部十秒进程树预算。
+    #[cfg(all(test, not(target_family = "wasm")))]
+    pub(in crate::session) fn run_serial_checkpoint_probe_for_test() {
+        assert!(crate::runtime::step_runtime_enabled(), "只有 native 父 case 启动 serial probe");
+        let thread = std::thread::current();
+        let name = thread.name().expect("libtest case 必须有完整名字");
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", name, "--nocapture", "--test-threads=1"])
+            .env("ENGINE_STEP_RUNTIME", "0")
+            .output()
+            .expect("启动原 checkpoint 合同的 serial exact probe");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(output.status.success() && stdout.contains("running 1 test")
+            && stdout.contains("1 passed; 0 failed"),
+            "serial checkpoint probe 必须真实执行原唯一 case：{name}\n{stdout}\n{stderr}");
     }
 
     #[cfg(feature = "verification-harness")]
@@ -497,6 +532,11 @@ impl ProtocolSession {
     }
 
     pub fn end_civil_day_update(&mut self) -> Result<CivilUpdate, SessionError> {
+        self.end_civil_day_update_classified().map_err(super::CivilDayEndFailure::into_error)
+    }
+
+    /// 失败恢复资格来自本次真实 prepare；旧领域错误经 callback 返回不能继承该资格。
+    pub fn end_civil_day_update_classified(&mut self) -> Result<CivilUpdate, super::CivilDayEndFailure> {
         #[cfg(test)]
         let malformed = std::mem::take(&mut self.malformed_civil);
         // 只有 civil publication 构建完整收盘数组；外层 checkpoint 仍共享既有历史。
@@ -513,7 +553,7 @@ impl ProtocolSession {
         let (update, save) = self
             .state
             .game
-            .with_prepared_civil_day(|candidate, report| {
+            .with_prepared_civil_day_classified(|candidate, report| {
                 let update = candidate.project_civil_update(
                     intraday,
                     settled_phase,
@@ -645,10 +685,11 @@ mod rollback_tests {
 
     #[test]
     fn checkpoint_restores_published_runtime_after_a_successful_batch() {
+        // 本例只验证 serial checkpoint 机械回放，证据入口不创建 runtime authority。
         let mut setup = crate::session::protocol::civil::publication_tests::setup();
         setup.start_date = crate::CivilDate::from_iso("2030-01-02").unwrap();
         let mut session = ProtocolSession::new(setup, 81).unwrap();
-        let first = session.step_frame().unwrap();
+        let first = session.step_frame_with_commit_evidence().map(|(frame, _)| frame).unwrap();
         session.tick_batch(vec![first]).unwrap();
         let before = session
             .state
@@ -658,7 +699,7 @@ mod rollback_tests {
             .unwrap()
             .test_projection();
         let checkpoint = session.checkpoint().unwrap();
-        let frame = session.step_frame().unwrap();
+        let frame = session.step_frame_with_commit_evidence().map(|(frame, _)| frame).unwrap();
         let first_batch =
             serde_json::to_value(session.tick_batch(vec![frame.clone()]).unwrap()).unwrap();
         assert_ne!(
@@ -671,7 +712,7 @@ mod rollback_tests {
                 .test_projection(),
             before
         );
-        session.rollback(checkpoint);
+        session.rollback(checkpoint).unwrap();
         assert_eq!(
             session
                 .state
@@ -682,7 +723,7 @@ mod rollback_tests {
                 .test_projection(),
             before
         );
-        let retry = session.step_frame().unwrap();
+        let retry = session.step_frame_with_commit_evidence().map(|(frame, _)| frame).unwrap();
         assert_eq!(
             serde_json::to_value(session.tick_batch(vec![retry]).unwrap()).unwrap(),
             first_batch
@@ -691,6 +732,12 @@ mod rollback_tests {
 
     #[test]
     fn checkpoint_restores_prior_candidates_and_frozen_save_after_two_civil_updates() {
+        #[cfg(not(target_family = "wasm"))]
+        if crate::runtime::step_runtime_enabled() {
+            ProtocolSession::run_serial_checkpoint_probe_for_test();
+            return;
+        }
+        assert!(!crate::runtime::step_runtime_enabled(), "civil 机械回放必须处于明确 serial 模式");
         let mut setup = crate::session::protocol::civil::publication_tests::setup();
         setup.start_date = crate::CivilDate::from_iso("2030-01-04").unwrap();
         let steps = setup.ticks_per_day;
@@ -712,7 +759,7 @@ mod rollback_tests {
             session.state.pending_save_candidates.borrow().len(),
             before.len() + 2
         );
-        session.rollback(checkpoint);
+        session.rollback(checkpoint).unwrap();
         assert_eq!(
             session
                 .state
@@ -823,6 +870,7 @@ mod rollback_tests {
     #[cfg(feature = "verification-harness")]
     #[test]
     fn verification_fork_preserves_failed_concurrent_player_receipts_and_isolates_intake() {
+        // 本例只验证 serial checkpoint 机械回放，证据入口不创建 runtime authority。
         let mut setup = crate::session::protocol::civil::publication_tests::setup();
         setup.start_date = crate::CivilDate::from_iso("2030-01-02").unwrap();
         setup.npcs.retail_count = 0;
@@ -835,7 +883,7 @@ mod rollback_tests {
             qty: 100,
         };
         let mut session = ProtocolSession::new(setup, 83).unwrap();
-        let retained = session.step_frame().unwrap();
+        let retained = session.step_frame_with_commit_evidence().map(|(frame, _)| frame).unwrap();
         let original = session.shared_ingress();
         let checkpoint = session.checkpoint().unwrap();
         let before = session.business_state_hash().unwrap();
@@ -851,8 +899,8 @@ mod rollback_tests {
                 .unwrap();
         });
         session.malformed_frame = true;
-        assert!(session.step_frame().is_err());
-        session.rollback(checkpoint);
+        assert!(session.step_frame_with_commit_evidence().map(|(frame, _)| frame).is_err());
+        session.rollback(checkpoint).unwrap();
         assert_eq!(session.business_state_hash().unwrap(), before);
         let npc_intent = intent();
         let mut failed_private = session.state.game.clone_for_tick_shadow().unwrap();
@@ -908,7 +956,7 @@ mod rollback_tests {
         assert!(original
             .enqueue_player_intent(crate::AccountId(0), intent())
             .is_err());
-        let accepted = branch.step_frame().unwrap();
+        let accepted = branch.step_frame_with_commit_evidence().map(|(frame, _)| frame).unwrap();
         assert_eq!(accepted.events().filter(|event| matches!(event, crate::Event::OrderAccepted { account, .. } if *account == crate::AccountId(0))).count(), 2);
         assert_eq!(
             serde_json::to_value(branch.state.intraday.iter().next().unwrap()).unwrap(),
@@ -1499,16 +1547,17 @@ mod rollback_tests {
 
     #[test]
     fn checkpoint_append_shares_frames_in_the_incomplete_tail_chunk() {
+        // 本例只验证 serial checkpoint 机械回放，证据入口不创建 runtime authority。
         let mut setup = crate::session::protocol::civil::publication_tests::setup();
         setup.start_date = crate::CivilDate::from_iso("2030-01-02").unwrap();
         setup.ticks_per_day = 48;
         let mut session = ProtocolSession::new(setup, 50).unwrap();
         for _ in 0..33 {
-            session.step_frame().unwrap();
+            session.step_frame_with_commit_evidence().map(|(frame, _)| frame).unwrap();
         }
         let checkpoint = session.checkpoint().unwrap();
         let before = serde_json::to_value(&checkpoint.state.intraday).unwrap();
-        session.step_frame().unwrap();
+        session.step_frame_with_commit_evidence().map(|(frame, _)| frame).unwrap();
         assert!(
             std::ptr::eq(
                 &session.state.intraday[32].timeseries_payload,
@@ -1516,13 +1565,13 @@ mod rollback_tests {
             ),
             "宿主批次回滚点不得让未满 chunk 中的已提交 TickFrame 深复制"
         );
-        session.rollback(checkpoint);
+        session.rollback(checkpoint).unwrap();
         assert_eq!(
             serde_json::to_value(&session.state.intraday).unwrap(),
             before
         );
         assert_eq!(session.tick(), 33);
-        assert_eq!(session.step_frame().unwrap().tick, 34);
+        assert_eq!(session.step_frame_with_commit_evidence().map(|(frame, _)| frame).unwrap().tick, 34);
     }
 
     #[test]
@@ -1542,7 +1591,7 @@ mod rollback_tests {
         let checkpoint = session.checkpoint().unwrap();
         session.state.game.state.last_retail_order_events.clear();
 
-        session.rollback(checkpoint);
+        session.rollback(checkpoint).unwrap();
 
         assert_eq!(session.state.game.session_state_hash().unwrap(), before);
         assert_eq!(
@@ -1553,6 +1602,12 @@ mod rollback_tests {
 
     #[test]
     fn outer_rollback_across_close_and_weekend_restores_history_and_can_repeat() {
+        #[cfg(not(target_family = "wasm"))]
+        if crate::runtime::step_runtime_enabled() {
+            ProtocolSession::run_serial_checkpoint_probe_for_test();
+            return;
+        }
+        assert!(!crate::runtime::step_runtime_enabled(), "civil 机械回放必须处于明确 serial 模式");
         let mut setup = crate::session::protocol::civil::publication_tests::setup();
         setup.start_date = crate::CivilDate::from_iso("2030-01-04").unwrap();
         let steps_before_close = setup.ticks_per_day - 1;
@@ -1571,7 +1626,7 @@ mod rollback_tests {
         assert!(session.state.intraday.is_empty());
         assert_eq!(weekend.civil_date, "2030-01-06");
 
-        session.rollback(checkpoint);
+        session.rollback(checkpoint).unwrap();
 
         assert_eq!(session.state.game.session_state_hash().unwrap(), before);
         assert_eq!(
@@ -2031,7 +2086,7 @@ mod d0b_storage_tests {
             )
             .unwrap();
         session
-            .step_frame()
+            .step_frame_with_commit_evidence().map(|(frame, _)| frame)
             .unwrap()
             .events()
             .find_map(|event| match event {
@@ -2052,7 +2107,7 @@ mod d0b_storage_tests {
             )
             .unwrap();
         assert!(session
-            .step_frame()
+            .step_frame_with_commit_evidence().map(|(frame, _)| frame)
             .unwrap()
             .events()
             .any(|event| matches!(event, crate::Event::OrderCanceled { id, .. } if *id == order)));
@@ -2082,7 +2137,7 @@ mod d0b_storage_tests {
             2
         );
         assert_ne!(snapshot(&live), middle);
-        live.rollback(oldest);
+        live.rollback(oldest).unwrap();
         assert_eq!(snapshot(&live), initial);
         let restored = live.game().npc_decision_trace(AccountId(17)).unwrap();
         assert_eq!(restored.len(), 128);
@@ -2110,13 +2165,13 @@ mod d0b_storage_tests {
             restored.last().unwrap().budget_constraints,
             ["初始约束", "约束一", "约束二"]
         );
-        live.rollback(newer);
+        live.rollback(newer).unwrap();
         assert_eq!(snapshot(&live), middle);
         let mut other = session(8);
         seed(&mut other);
         place(&mut other, 990);
         advance_seed(&mut other, 130);
-        other.rollback(cross_session);
+        other.rollback(cross_session).unwrap();
         assert_eq!(snapshot(&other), initial);
         let causal: serde_json::Value = serde_json::from_slice(&initial.causal).unwrap();
         for key in 0..257u64 {
@@ -2154,8 +2209,8 @@ mod d0b_storage_tests {
         advance_seed(&mut left, 130);
         cancel(&mut right, right_order);
         advance_seed(&mut right, 131);
-        left.rollback(left_checkpoint);
-        right.rollback(right_checkpoint);
+        left.rollback(left_checkpoint).unwrap();
+        right.rollback(right_checkpoint).unwrap();
         assert_eq!(snapshot(&left), left_snapshot);
         assert_eq!(snapshot(&right), right_snapshot);
         assert_eq!(snapshot(&source), initial);

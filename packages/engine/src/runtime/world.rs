@@ -3480,6 +3480,8 @@ impl World {
             .map_err(|_| RuntimeError::ProtocolInvariant { detail: "DayEnd 共享 day 溢出".to_owned() })?;
         // ① Drain。
         for tx in &self.desk_txs {
+            #[cfg(all(test, not(target_family = "wasm")))]
+            crate::session::calendar_entry_cache_tests::record_entry_call(crate::session::calendar_entry_cache_tests::EntryCall::Drain);
             tx.send(DeskMsg::Drain)
                 .map_err(|_| RuntimeError::SendFailed {
                     detail: "DayEnd Drain 广播失败".to_owned(),
@@ -3727,6 +3729,8 @@ impl World {
             *stage = "Drain";
             if self.last_day_end_tick != Some(self.global.committed_tick) {
                 for tx in &self.desk_txs {
+                    #[cfg(all(test, not(target_family = "wasm")))]
+                    crate::session::calendar_entry_cache_tests::record_entry_call(crate::session::calendar_entry_cache_tests::EntryCall::Drain);
                     tx.send(DeskMsg::Drain)
                         .map_err(|_| RuntimeError::SendFailed {
                             detail: "Drain 广播失败".to_owned(),

@@ -273,8 +273,9 @@ fn disclosure_public_index_and_private_acquisition_stay_separate() {
 ///    回滚 checkpoint 后重试成功，seq 从失败前的游标继续。
 #[test]
 fn failed_tick_publishes_no_facts_and_retries_from_untouched_cursor() {
+    // 旧 serial 注入失败仍可机械重放；真实 runtime terminal 由独立边界测试覆盖。
     let mut session = super::ProtocolSession::new(two_stock_setup(), 64).unwrap();
-    let first = session.step_frame().unwrap();
+    let first = session.step_frame_with_commit_evidence().map(|(frame, _)| frame).unwrap();
     let mut published = std::collections::BTreeSet::new();
     published.extend(
         first
@@ -292,15 +293,15 @@ fn failed_tick_publishes_no_facts_and_retries_from_untouched_cursor() {
             description: "测试注入的失败".into(),
             location: "single_owner_tests".into(),
         });
-    let failure = session.step_frame().unwrap_err();
+    let failure = session.step_frame_with_commit_evidence().map(|(frame, _)| frame).unwrap_err();
     assert!(matches!(
         failure,
         StepFatal::InvariantViolation { ref description, .. } if description == "测试注入的失败"
     ));
     assert_eq!(session.seq(), before_seq, "失败不得推进权威 seq 游标");
 
-    session.rollback(checkpoint);
-    let retry = session.step_frame().unwrap();
+    session.rollback(checkpoint).unwrap();
+    let retry = session.step_frame_with_commit_evidence().map(|(frame, _)| frame).unwrap();
     retry.validate().unwrap();
     for fact in &retry.facts {
         assert!(

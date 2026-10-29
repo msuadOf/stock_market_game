@@ -3694,11 +3694,20 @@ impl GameSession {
         &mut self,
         project: impl FnOnce(&GameSession, CivilDayEndReport) -> Result<P, SessionError>,
     ) -> Result<P, SessionError> {
+        self.with_prepared_civil_day_classified(project)
+            .map_err(protocol::CivilDayEndFailure::into_error)
+    }
+
+    pub(in crate::session) fn with_prepared_civil_day_classified<P>(
+        &mut self,
+        project: impl FnOnce(&GameSession, CivilDayEndReport) -> Result<P, SessionError>,
+    ) -> Result<P, protocol::CivilDayEndFailure> {
         self.require_healthy()?;
         let expected_sessions = self
             .state
             .civil_clock
-            .completed_trading_sessions_expected()?;
+            .completed_trading_sessions_expected()
+            .map_err(SessionError::from)?;
         if self.state.day != expected_sessions {
             return Err(SessionError::CivilClock(
                 CivilClockError::MarketSessionOutOfSync {
@@ -3706,22 +3715,23 @@ impl GameSession {
                     completed_sessions: self.state.day,
                     expected_sessions,
                 },
-            ));
+            ).into());
         }
         #[cfg(not(target_arch = "wasm32"))]
         if self.uses_runtime_civil_authority() {
-            return self.with_prepared_runtime_civil_day(project);
+            return self.with_prepared_runtime_civil_day_classified(project);
         }
         let market_installed = self.has_current_external_runtime_authority()
             && self.runtime_installed_market_close
                 == Some((self.runtime_authority_epoch, self.tick(), self.civil_date()));
         let mut correction_prepare_rejected = false;
-        let prepared = (|| {
+        let prepared: Result<_, SessionError> = (|| {
             let mut candidate = self.clone_for_tick_shadow().map_err(|_error| {
                 // fault1034：自然日日终 candidate 捕获失败，保持数值错误契约。
                 SessionError::InvalidSave(ValidationFault::new(1034, vec![0]))
             })?;
-            let report = candidate.end_civil_day_after_session_check().map_err(|error| {
+            let information_anchors = candidate.prepare_information_anchors()?;
+            let report = candidate.prepare_civil_day_disclosures().map_err(|error| {
                 // 只标记真实更正 prepare 的业务拒绝；后续 project 同型错误仍须终止。
                 correction_prepare_rejected = self.poison_reason().is_none()
                     && matches!(&error, SessionError::ReportCorrectionDayEnd(cause)
@@ -3739,6 +3749,8 @@ impl GameSession {
                 }
                 error
             })?;
+            candidate.deliver_public_information_with_anchors(report.disclosure_instant, &information_anchors)?;
+            candidate.prune_all_personal_memories();
             candidate.market_calendar_day = None;
             let instant = report.disclosure_instant;
             let publication = project(&candidate, report)?;
@@ -3746,23 +3758,21 @@ impl GameSession {
         })();
         let (candidate, instant, publication) = match prepared {
             Ok(value) => value,
-            Err(error) if correction_prepare_rejected => return Err(error),
-            Err(error) if market_installed => return Err(self.poison_civil_authority(error)),
-            Err(error) => return Err(error),
+            Err(error) if correction_prepare_rejected => {
+                // 外持 lease 只证明身份与 epoch，不能证明 World 健康；保留原健康拒绝但不授资格。
+                if self.poison_reason().is_none() && !self.has_current_external_runtime_authority() {
+                    return Err(protocol::CivilDayEndFailure::correction_prepare_rejected(error));
+                }
+                return Err(error.into());
+            }
+            Err(error) if market_installed => return Err(self.poison_civil_authority(error).into()),
+            Err(error) => return Err(error.into()),
         };
         self.commit_tick_shadow(candidate);
         for observer in self.state.civil_clock.disclosure_observers() {
             observer(instant);
         }
         Ok(publication)
-    }
-
-    fn end_civil_day_after_session_check(&mut self) -> Result<CivilDayEndReport, SessionError> {
-        let information_anchors = self.prepare_information_anchors()?;
-        let report = self.prepare_civil_day_disclosures()?;
-        self.deliver_public_information_with_anchors(report.disclosure_instant, &information_anchors)?;
-        self.prune_all_personal_memories();
-        Ok(report)
     }
 
     /// 公司经营与披露只形成候选；本人 INFO 与裁剪由对应 authority 的同次事务完成。
@@ -3783,6 +3793,8 @@ impl GameSession {
         };
         let next_work_date = company_work_date.min(self.state.civil_clock.next_civil_event_date());
         let mut report = self.state.civil_clock.end_day(next_work_date)?;
+        // private candidate 已进入 next_date，后续 INFO 读视图不能继续复用 settled_date 的缓存。
+        self.market_calendar_day = None;
         let correction_pending = self.has_pending_report_corrections();
         // pending 更正由同一完整包先入账再推进当日；零 pending 保留普通经营路径。
         let disclosures = if correction_pending {

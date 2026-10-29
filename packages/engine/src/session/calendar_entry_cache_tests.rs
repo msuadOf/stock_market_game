@@ -1,5 +1,5 @@
 //! V1 工作草案：真实入口Calendar前置、cache提交与派生域排除；已安装；未编译/运行。
-//! 4处计数只能接到真实freeze/take/Desk及Group Start发送前，默认关闭且仅caller线程scope生效。
+//! 计数只接到真实 freeze/take/Start/Drain 发送前，默认关闭且仅 caller 线程 scope 生效。
 use super::*;
 #[path = "../runtime/calendar_public_restore_fixture.rs"]
 mod fixture;
@@ -9,27 +9,27 @@ use std::cell::Cell;
 use std::sync::Arc;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) struct EntryCounts { pub freeze: u32, pub take: u32, pub start: u32 }
+pub(crate) struct EntryCounts { pub freeze: u32, pub take: u32, pub start: u32, pub drain: u32 }
 #[derive(Clone, Copy)]
-pub(crate) enum EntryCall { Freeze, Take, Start }
+pub(crate) enum EntryCall { Freeze, Take, Start, Drain }
 thread_local! { static ENTRY_COUNTS: Cell<Option<EntryCounts>> = const { Cell::new(None) }; }
 
 /// 只见证本caller线程的真实调用尝试；不新增运行时消息、共享状态或持久字段。
 pub(crate) fn record_entry_call(call: EntryCall) {
     ENTRY_COUNTS.with(|slot| {
         if let Some(mut counts) = slot.get() {
-            match call { EntryCall::Freeze => counts.freeze += 1, EntryCall::Take => counts.take += 1, EntryCall::Start => counts.start += 1 }
+            match call { EntryCall::Freeze => counts.freeze += 1, EntryCall::Take => counts.take += 1, EntryCall::Start => counts.start += 1, EntryCall::Drain => counts.drain += 1 }
             slot.set(Some(counts));
         }
     });
 }
-struct EntryScope { _caller_thread: std::marker::PhantomData<std::rc::Rc<()>> }
+pub(crate) struct EntryScope { _caller_thread: std::marker::PhantomData<std::rc::Rc<()>> }
 impl EntryScope {
-    fn enter() -> Self {
+    pub(crate) fn enter() -> Self {
         ENTRY_COUNTS.with(|slot| { assert!(slot.get().is_none(), "不允许嵌套或串case计数");slot.set(Some(EntryCounts::default())); });
         Self { _caller_thread: std::marker::PhantomData }
     }
-    fn counts(&self) -> EntryCounts { ENTRY_COUNTS.with(|slot| slot.get().expect("scope必须仍在位")) }
+    pub(crate) fn counts(&self) -> EntryCounts { ENTRY_COUNTS.with(|slot| slot.get().expect("scope必须仍在位")) }
 }
 impl Drop for EntryScope { fn drop(&mut self) { ENTRY_COUNTS.with(|slot| slot.set(None)); } }
 

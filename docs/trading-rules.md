@@ -713,3 +713,7 @@ std-thread runtime 的 `DayEndCalendar` 明确区分 `MarketTick` 与 `ManualDay
 成员加入在旧 World 静点捕获完整账户、本人态、计划、在途委托、真实 RNG 与来源，
 先准备新 authority，再登记 receiver；成功后只移动已验证值，并停止旧 worker，
 不重新撮合、不 Drain 或重发历史。准备失败保留旧权威；无法完整回收时显式终结会话。
+
+`ProtocolCheckpoint` 只支持无 runtime authority 的健康 serial 机械回放。它不复制 live World，
+不能撤回 runtime 已提交的交易、Full／retained，也不能清除 terminal 后重建旧 driver。
+`rollback` 对这些调用显式返回错误并保留当前状态；正常取消坏更正后的 civil 重试继续遵守上述受限例外。

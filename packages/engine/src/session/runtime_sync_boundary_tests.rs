@@ -160,3 +160,99 @@ fn poisoned_sessions_replay_first_fatal_from_flush_saves_and_shared_receiver() {
         matches!(protocol.save_current_day(protocol.game().civil_date()), Err(SessionError::Step(error)) if error == fatal)
     );
 }
+
+#[test]
+fn protocol_checkpoint_cannot_revive_first_fatal_or_discard_the_published_world() {
+    let mut session =
+        ProtocolSession::new(boundary_setup(crate::RuntimeSyncPolicy::EveryTick), 51).unwrap();
+    let buy = || Intent::PlaceLimit {
+        code: StockId(0), side: crate::Side::Buy,
+        price: crate::LimitPrice::Fixed(Money::from_cents(995)), qty: 100,
+    };
+    session.enqueue_player_intent(AccountId(0), buy()).unwrap();
+    session.step_frame().unwrap();
+    let checkpoint = session.checkpoint().unwrap();
+    let receiver = session.shared_ingress();
+    session.enqueue_player_intent(AccountId(0), buy()).unwrap();
+    session.game_mut().inject_runtime_install_failure();
+    let fatal = session.step_frame().unwrap_err();
+    assert!(fatal.to_string().contains("安装失败注入"));
+    assert_eq!(session.game().tick(), 1);
+    let before = serde_json::to_value(session.game().snapshot_inner(true, true)).unwrap();
+    let receipts = receiver.receipts_probe();
+    let (publication, published, source, starts) = {
+        let driver = session.game().runtime_driver.as_ref().unwrap().lock().unwrap();
+        assert_eq!(driver.world_committed_tick(), 2, "真实 World 已发布后才拒绝 candidate");
+        (driver.publication(), driver.publication().load(), driver.mirror_source(), driver.world_report_log().len())
+    };
+    #[cfg(feature = "simulation-diagnostics")]
+    let terminal = {
+        let driver = session.game().runtime_driver.as_ref().unwrap().lock().unwrap();
+        let terminal = driver.terminal_causal_snapshot_for_test().unwrap();
+        assert!(!terminal.1.is_empty(), "保留真实新申报的未交付 raw facts");
+        terminal
+    };
+
+    assert_eq!(session.rollback(checkpoint).unwrap_err(), fatal);
+
+    assert_eq!(session.game().poison_reason(), Some(&fatal));
+    assert_eq!(serde_json::to_value(session.game().snapshot_inner(true, true)).unwrap(), before);
+    assert_eq!(receiver.receipts_probe().next_account_ordinal, receipts.next_account_ordinal);
+    assert_eq!(receiver.receipts_probe().next_stock_ordinal, receipts.next_stock_ordinal);
+    assert_eq!(session.flush_now().unwrap_err(), fatal);
+    assert!(matches!(session.game().public_runtime_state(), Err(actual) if actual == fatal));
+    assert!(matches!(session.save(), Err(SessionError::Step(actual)) if actual == fatal));
+    assert!(matches!(session.save_current_day(session.game().civil_date()), Err(SessionError::Step(actual)) if actual == fatal));
+    assert!(matches!(session.save_candidate(&crate::session::protocol::SaveCandidateKey {
+        settled_date: session.game().civil_date(), seq: 1,
+    }), Err(SessionError::Step(actual)) if actual == fatal));
+    assert_eq!(session.step_frame().unwrap_err(), fatal);
+    assert!(matches!(receiver.enqueue_player_intent(AccountId(0), buy()), Err(SessionError::Step(actual)) if actual == fatal));
+    let driver = session.game().runtime_driver.as_ref().unwrap().lock().unwrap();
+    assert!(std::sync::Arc::ptr_eq(&publication, &driver.publication()));
+    let after = driver.publication().load();
+    assert!(std::sync::Arc::ptr_eq(&published, &after));
+    assert!(std::sync::Arc::ptr_eq(&published.retained, &after.retained));
+    assert_eq!(driver.mirror_source(), source);
+    assert_eq!(driver.world_report_log().len(), starts, "拒绝 rollback 后没有新 Start");
+    #[cfg(feature = "simulation-diagnostics")]
+    assert_eq!(driver.terminal_causal_snapshot_for_test(), Some(terminal));
+}
+
+#[test]
+fn on_demand_same_progress_checkpoint_cannot_replace_the_unflushed_live_world() {
+    let mut session =
+        ProtocolSession::new(boundary_setup(crate::RuntimeSyncPolicy::OnDemand), 52).unwrap();
+    session.step_frame().unwrap();
+    assert_eq!(session.game().tick(), 1);
+    let origin = session.game().runtime_mirror_origin();
+    assert_eq!(origin.source_tick, 0, "镜像仍落后于真实 progress");
+    let checkpoint = session.checkpoint().unwrap();
+    let receiver = session.shared_ingress();
+    let receipts = receiver.receipts_probe();
+    let (publication, source, starts) = {
+        let driver = session.game().runtime_driver.as_ref().unwrap().lock().unwrap();
+        (driver.publication(), driver.mirror_source(), driver.world_report_log().len())
+    };
+    let before = serde_json::to_value(session.game().snapshot_inner(true, true)).unwrap();
+
+    let error = session.rollback(checkpoint).unwrap_err();
+
+    assert!(matches!(error, StepFatal::InvariantViolation { ref location, .. } if location == "ProtocolSession::rollback"));
+    session.game().require_healthy().unwrap();
+    assert_eq!(session.game().runtime_mirror_origin(), origin);
+    assert_eq!(serde_json::to_value(session.game().snapshot_inner(true, true)).unwrap(), before);
+    assert_eq!(receiver.receipts_probe().next_account_ordinal, receipts.next_account_ordinal);
+    assert_eq!(receiver.receipts_probe().next_stock_ordinal, receipts.next_stock_ordinal);
+    {
+        let driver = session.game().runtime_driver.as_ref().unwrap().lock().unwrap();
+        assert!(std::sync::Arc::ptr_eq(&publication, &driver.publication()));
+        assert_eq!(driver.mirror_source(), source);
+        assert_eq!(driver.world_report_log().len(), starts);
+    }
+    session.step_frame().unwrap();
+    session.flush_now().unwrap();
+    assert_eq!((session.game().tick(), session.game().runtime_mirror_origin().source_tick), (2, 2));
+    let driver = session.game().runtime_driver.as_ref().unwrap().lock().unwrap();
+    assert!(std::sync::Arc::ptr_eq(&publication, &driver.publication()), "健康拒绝后沿原 live World 继续");
+}

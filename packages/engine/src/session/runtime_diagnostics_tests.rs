@@ -571,6 +571,50 @@ fn d2_restore_partial_order_keeps_nonzero_before_without_fabricated_origin() {
 #[cfg(feature = "verification-harness")]
 #[test]
 fn d2_protocol_checkpoint_after_real_fill_restores_exact_facts_sequence_and_queries() {
+    if crate::runtime::step_runtime_enabled() {
+        // runtime 的真实成交不可撤；原精确重放断言继续在明确 serial probe 中验证。
+        let mut game = d2_game();
+        d2_place(&mut game, 2, 1, crate::Side::Sell, 995, 300);
+        game.step().unwrap();
+        let mut protocol = crate::session::protocol::ProtocolSession::from_game_for_verification(game, None);
+        let buy = || Intent::PlaceLimit {
+            code: StockId(1), side: crate::Side::Buy,
+            price: crate::LimitPrice::Fixed(Money::from_cents(995)), qty: 100,
+        };
+        protocol.enqueue_player_intent(AccountId(0), buy()).unwrap();
+        protocol.step_frame().unwrap();
+        let checkpoint = protocol.checkpoint().unwrap();
+        protocol.enqueue_player_intent(AccountId(0), buy()).unwrap();
+        protocol.step_frame().unwrap();
+        protocol.step_frame().unwrap();
+        assert_eq!(d2_executions(protocol.game()).len(), 2);
+        assert_eq!(protocol.game().causal_diagnostics().unwrap().filled_qty, 400);
+        let facts = serde_json::to_value(protocol.game().causal_facts()).unwrap();
+        let snapshot = serde_json::to_value(protocol.game().snapshot_inner(true, true)).unwrap();
+        let hash = protocol.game().business_state_hash().unwrap();
+        let origin = protocol.game().runtime_mirror_origin();
+        let receiver = protocol.shared_ingress();
+        let receipts = receiver.receipts_probe();
+        let publication = protocol.game().runtime_publication().unwrap();
+        let published = publication.load();
+
+        assert!(matches!(protocol.rollback(checkpoint), Err(StepFatal::InvariantViolation { ref location, .. })
+            if location == "ProtocolSession::rollback"));
+
+        protocol.game().require_healthy().unwrap();
+        assert_eq!(serde_json::to_value(protocol.game().causal_facts()).unwrap(), facts);
+        assert_eq!(serde_json::to_value(protocol.game().snapshot_inner(true, true)).unwrap(), snapshot);
+        assert_eq!(protocol.game().business_state_hash().unwrap(), hash);
+        assert_eq!(protocol.game().runtime_mirror_origin(), origin);
+        assert_eq!(protocol.game().causal_diagnostics().unwrap().filled_qty, 400);
+        assert_eq!(receiver.receipts_probe().next_account_ordinal, receipts.next_account_ordinal);
+        assert_eq!(receiver.receipts_probe().next_stock_ordinal, receipts.next_stock_ordinal);
+        assert!(std::sync::Arc::ptr_eq(&publication, &protocol.game().runtime_publication().unwrap()));
+        assert!(std::sync::Arc::ptr_eq(&published, &publication.load()));
+        crate::session::protocol::ProtocolSession::run_serial_checkpoint_probe_for_test();
+        return;
+    }
+    assert!(!crate::runtime::step_runtime_enabled(), "原 owned checkpoint 重放只属于 serial 验证");
     let mut game=d2_game();
     d2_place(&mut game,2,1,crate::Side::Sell,995,300);
     game.step().unwrap();
@@ -595,7 +639,7 @@ fn d2_protocol_checkpoint_after_real_fill_restores_exact_facts_sequence_and_quer
     let second_hash = protocol.game().business_state_hash().unwrap();
     protocol.step_frame().unwrap();
     assert_eq!(d2_executions(protocol.game()).len(),2);
-    protocol.rollback(checkpoint);
+    protocol.rollback(checkpoint).unwrap();
     assert_eq!(serde_json::to_value(protocol.game().causal_facts()).unwrap(),before);
     assert_eq!(protocol.game().business_state_hash().unwrap(),hash);
     assert_eq!(protocol.game().causal_diagnostics().unwrap().filled_qty,200);

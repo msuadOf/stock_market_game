@@ -80,12 +80,13 @@ fn d1_real_lifecycle_keeps_original_quantity_order_quotes_and_exactly_once() {
 
 #[test]
 fn d1_owned_protocol_checkpoints_restore_multiple_successes_across_sessions() {
+    // 此处验证 serial owned checkpoint，证据入口明确不创建 live runtime authority。
     let mut session = ProtocolSession::new(setup(), 7).unwrap();
     let code = session.game().stock_id("600101").unwrap();
     session
         .enqueue_player_intent(AccountId(0), place(code))
         .unwrap();
-    let first = session.step_frame().unwrap();
+    let first = session.step_frame_with_commit_evidence().map(|(frame, _)| frame).unwrap();
     let order = first
         .facts
         .iter()
@@ -101,19 +102,19 @@ fn d1_owned_protocol_checkpoints_restore_multiple_successes_across_sessions() {
     session
         .enqueue_player_intent(AccountId(0), Intent::Cancel { code, id: order })
         .unwrap();
-    session.step_frame().unwrap();
+    session.step_frame_with_commit_evidence().map(|(frame, _)| frame).unwrap();
     let second_checkpoint = session.checkpoint().unwrap();
     let second_facts = serde_json::to_value(session.game().causal_facts()).unwrap();
-    session.step_frame().unwrap();
-    session.step_frame().unwrap();
-    session.rollback(first_checkpoint);
+    session.step_frame_with_commit_evidence().map(|(frame, _)| frame).unwrap();
+    session.step_frame_with_commit_evidence().map(|(frame, _)| frame).unwrap();
+    session.rollback(first_checkpoint).unwrap();
     assert_eq!(
         serde_json::to_value(session.game().causal_facts()).unwrap(),
         first_facts
     );
     assert_eq!(session.game().business_state_hash().unwrap(), first_hash);
     let mut other = ProtocolSession::new(setup(), 99).unwrap();
-    other.rollback(second_checkpoint);
+    other.rollback(second_checkpoint).unwrap();
     assert_eq!(
         serde_json::to_value(other.game().causal_facts()).unwrap(),
         second_facts
@@ -126,7 +127,7 @@ fn d1_owned_protocol_checkpoints_restore_multiple_successes_across_sessions() {
         serde_json::to_value(other.game().save().unwrap()).unwrap(),
         before_save
     );
-    other.step_frame().unwrap();
+    other.step_frame_with_commit_evidence().map(|(frame, _)| frame).unwrap();
     assert_eq!(
         serde_json::to_value(other.game().causal_facts()).unwrap(),
         second_facts

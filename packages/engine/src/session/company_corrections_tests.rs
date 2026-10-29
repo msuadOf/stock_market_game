@@ -980,6 +980,199 @@ fn correction_external_manual_close_business_rejection_keeps_close_and_allows_ci
     session.require_healthy().unwrap();
 }
 
+#[test]
+fn protocol_checkpoint_cannot_retract_full_close_after_a_typed_healthy_correction_rejection() {
+    for negative_cash in [false, true] {
+        let mut setup = correction_setup("2030-06-06", None);
+        setup.ticks_per_day = 4;
+        setup.auction_ticks = 0;
+        setup.closing_auction_ticks = 0;
+        setup.npcs.retail_count = 0;
+        setup.npcs.inst_count = 0;
+        setup.npcs.hot_count = 0;
+        setup.runtime_sync_policy = crate::RuntimeSyncPolicy::OnDemand;
+        let mut protocol = protocol::ProtocolSession::new(setup, 7182).unwrap();
+        let calls = super::calendar_entry_cache_tests::EntryScope::enter();
+        for _ in 0..4 {
+            protocol.step_frame().unwrap();
+        }
+        let old_update = protocol.end_civil_day_update().unwrap();
+        let old_save = serde_json::to_vec(&protocol.save().unwrap()).unwrap();
+        let old_key = protocol::SaveCandidateKey {
+            settled_date: old_update.boundary.settled_date, seq: old_update.seq_to,
+        };
+        let mut request = correction_request(protocol.game(), CompanyId(0));
+        if negative_cash {
+            request.entries[0].kind = BusinessKind::CashExpense;
+            request.entries[0].lines[0].account = LedgerAccountId("6001".into());
+            request.entries[0].lines[1].account = LedgerAccountId("1002".into());
+            for line in &mut request.entries[0].lines {
+                line.amount = AccountingAmount::from_cents(1_000_000_000_000);
+            }
+        } else {
+            request.entries[0].lines[1].account = LedgerAccountId("不存在的科目".into());
+        }
+        request.entries[0].validate_invariants().unwrap();
+        let epoch = protocol.game().report_correction_epoch();
+        protocol.enqueue_report_correction(&epoch, request.clone()).unwrap();
+        let checkpoint = protocol.checkpoint().unwrap();
+        for _ in 0..4 {
+            protocol.step_frame().unwrap();
+        }
+        let date = protocol.game().civil_date();
+        let origin = protocol.game().runtime_mirror_origin();
+        assert_eq!((protocol.game().tick(), origin.source_tick), (8, 8));
+        let installed = serde_json::to_value(protocol.game().snapshot_inner(true, true)).unwrap();
+        let (publication, retained, starts) = {
+            let driver = protocol.game().runtime_driver.as_ref().unwrap().lock().unwrap();
+            let retained = driver.publication().load().retained.clone();
+            assert_eq!(retained.days.len(), 2, "两个真实收盘都已发布 retained");
+            (driver.publication(), retained, driver.world_report_log().len())
+        };
+        let pending = protocol.game().report_corrections().unwrap();
+        let baseline_calls = calls.counts();
+        assert!(baseline_calls.start > 0 && baseline_calls.drain > 0,
+            "计数必须先见证当前 World 的真实 Start 与收盘 Drain，不能以未接线的零作证");
+        let failure = protocol.end_civil_day_update_classified().unwrap_err();
+        assert_eq!(failure.recovery(), protocol::CivilRecovery::CorrectionPrepareRejected);
+        let error = failure.into_error();
+        let expected_class = if negative_cash {
+            crate::company::CompanyErrorClass::BusinessCondition
+        } else {
+            crate::company::CompanyErrorClass::InvalidInput
+        };
+        assert!(matches!(&error, SessionError::ReportCorrectionDayEnd(cause)
+            if cause.classification() == expected_class), "必须由真实更正 prepare 拒绝：{error}");
+        protocol.game().require_healthy().unwrap();
+
+        let rejected = protocol.rollback(checkpoint).unwrap_err();
+
+        assert!(matches!(rejected, StepFatal::InvariantViolation { ref location, .. }
+            if location == "ProtocolSession::rollback"));
+        protocol.game().require_healthy().unwrap();
+        assert_eq!(protocol.game().runtime_mirror_origin(), origin);
+        assert_eq!(serde_json::to_value(protocol.game().snapshot_inner(true, true)).unwrap(), installed);
+        assert_eq!(protocol.game().report_corrections().unwrap(), pending);
+        assert_eq!(serde_json::to_vec(&protocol.save().unwrap()).unwrap(), old_save);
+        assert_eq!(serde_json::to_vec(&protocol.save_candidate(&old_key).unwrap()).unwrap(), old_save);
+        {
+            let driver = protocol.game().runtime_driver.as_ref().unwrap().lock().unwrap();
+            assert!(std::sync::Arc::ptr_eq(&publication, &driver.publication()));
+            assert!(std::sync::Arc::ptr_eq(&retained, &driver.publication().load().retained));
+            assert_eq!(driver.world_report_log().len(), starts);
+        }
+        protocol.cancel_report_correction(&epoch, &request.operation_id).unwrap();
+        protocol.end_civil_day_update().unwrap();
+        assert!(protocol.game().civil_date() > date);
+        assert_eq!((protocol.game().tick(), protocol.game().day()), (8, 2));
+        let driver = protocol.game().runtime_driver.as_ref().unwrap().lock().unwrap();
+        assert!(std::sync::Arc::ptr_eq(&publication, &driver.publication()));
+        assert!(std::sync::Arc::ptr_eq(&retained, &driver.publication().load().retained));
+        assert_eq!(driver.world_report_log().len(), starts, "取消后只重试 civil，不重复 Start/Drain");
+        assert_eq!(calls.counts(), baseline_calls, "真实拒绝、rollback 拒绝、取消及 civil retry 均无额外 Start/Drain 尝试");
+    }
+}
+
+#[test]
+fn classified_civil_failure_exposes_only_current_real_correction_prepare_recovery() {
+    for negative_cash in [false, true] {
+        let mut protocol = protocol::ProtocolSession::new(correction_setup("2030-06-08", None), 7183).unwrap();
+        let mut request = correction_request(protocol.game(), CompanyId(0));
+        if negative_cash {
+            request.entries[0].kind = BusinessKind::CashExpense;
+            request.entries[0].lines[0].account = LedgerAccountId("6001".into());
+            request.entries[0].lines[1].account = LedgerAccountId("1002".into());
+            for line in &mut request.entries[0].lines {
+                line.amount = AccountingAmount::from_cents(1_000_000_000_000);
+            }
+        } else {
+            request.entries[0].lines[1].account = LedgerAccountId("不存在的科目".into());
+        }
+        request.entries[0].validate_invariants().unwrap();
+        let epoch = protocol.game().report_correction_epoch();
+        protocol.enqueue_report_correction(&epoch, request.clone()).unwrap();
+        let failure = protocol.end_civil_day_update_classified().unwrap_err();
+        let class = if negative_cash { crate::company::CompanyErrorClass::BusinessCondition }
+            else { crate::company::CompanyErrorClass::InvalidInput };
+        assert!(matches!(failure.error(), SessionError::ReportCorrectionDayEnd(cause)
+            if cause.classification() == class));
+        protocol.game().require_healthy().unwrap();
+        assert_eq!(failure.recovery(), protocol::CivilRecovery::CorrectionPrepareRejected,
+            "CURRENT_CORRECTION_PREPARE_PROVENANCE_REQUIRED：只能由本次真实更正 prepare 产生恢复资格");
+        let plain = failure.into_error();
+        assert_eq!(protocol::CivilDayEndFailure::from(plain).recovery(), protocol::CivilRecovery::None,
+            "抽出的领域错误不保留可重放来源资格");
+        protocol.cancel_report_correction(&epoch, &request.operation_id).unwrap();
+        protocol.end_civil_day_update_classified().unwrap();
+
+        // 外持 driver 的 lease 不能证明 World 健康；降权不改变既有 typed 拒绝及取消重试。
+        let mut external = GameSession::new(correction_setup("2030-06-08", None), 7183).unwrap();
+        let external_epoch = external.report_correction_epoch();
+        external.enqueue_report_correction(&external_epoch, request.clone()).unwrap();
+        let driver = crate::runtime::drive::RuntimeDriver::from_session(&mut external).unwrap();
+        let failure = external.with_prepared_civil_day_classified(|_, _| Ok(())).unwrap_err();
+        assert!(matches!(failure.error(), SessionError::ReportCorrectionDayEnd(cause)
+            if cause.classification() == class));
+        assert_eq!(failure.recovery(), protocol::CivilRecovery::None);
+        external.require_healthy().unwrap();
+        external.cancel_report_correction(&external_epoch, &request.operation_id).unwrap();
+        external.end_civil_day().expect("外持来源降权后仍保留原 cancel/retry 行为");
+        assert!(external.runtime_driver.is_none());
+        assert_eq!(driver.world_committed_tick(), 0);
+    }
+}
+
+#[test]
+fn captured_prepare_error_returned_by_callback_has_no_current_recovery_provenance() {
+    for full_close in [false, true] {
+        let mut setup = correction_setup(if full_close { "2030-06-07" } else { "2030-06-08" }, None);
+        setup.ticks_per_day = 4;
+        setup.auction_ticks = 0;
+        setup.closing_auction_ticks = 0;
+        setup.npcs.retail_count = 0;
+        setup.npcs.inst_count = 0;
+        setup.npcs.hot_count = 0;
+        let mut game = GameSession::new_with_runtime_groups(setup, 7184, 2).unwrap();
+        let mut request = correction_request(&game, CompanyId(0));
+        request.entries[0].lines[1].account = LedgerAccountId("不存在的科目".into());
+        let epoch = game.report_correction_epoch();
+        game.enqueue_report_correction(&epoch, request.clone()).unwrap();
+        let mut driver = if full_close {
+            let mut driver = crate::runtime::drive::RuntimeDriver::from_session(&mut game).unwrap();
+            for _ in 0..4 { game.runtime_step_with_install(&mut driver).unwrap(); }
+            Some(driver)
+        } else { None };
+        let captured = game.with_prepared_civil_day_classified(|_, _| Ok(())).unwrap_err().into_error();
+        assert!(matches!(&captured, SessionError::ReportCorrectionDayEnd(cause)
+            if cause.classification() == crate::company::CompanyErrorClass::InvalidInput));
+        game.require_healthy().unwrap();
+        game.cancel_report_correction(&epoch, &request.operation_id).unwrap();
+        let before = game.business_state_hash().unwrap();
+        let date = game.civil_date();
+        let mut reached = false;
+        // SessionError 不实现 Clone；move 同一原错误比另造同型错误更严格。
+        let failure = game.with_prepared_civil_day_classified::<()>(|_, _| {
+            reached = true;
+            Err(captured)
+        }).unwrap_err();
+        assert!(reached, "取消坏更正后实际 prepare 成功，错误确实来自 callback");
+        assert_eq!(failure.recovery(), protocol::CivilRecovery::None,
+            "旧 prepare 原错误经 callback 返回不得继承本次恢复资格");
+        assert!(matches!(failure.error(), SessionError::ReportCorrectionDayEnd(cause)
+            if cause.classification() == crate::company::CompanyErrorClass::InvalidInput));
+        assert_eq!(game.business_state_hash().unwrap(), before);
+        assert_eq!(game.civil_date(), date);
+        if let Some(driver) = &mut driver {
+            let fatal = game.poison_reason().expect("Full 后 callback 失败仍 terminal").clone();
+            assert_eq!(driver.step_frame_equivalent(&mut game).unwrap_err(), fatal);
+            assert_eq!(driver.world_committed_tick(), 4);
+        } else {
+            game.require_healthy().expect("冷 Closed callback 拒绝保原 generic 可逆边界");
+            game.end_civil_day().unwrap();
+        }
+    }
+}
+
 
 #[test]
 fn correction_external_full_close_business_rejection_keeps_cancel_retry_available() {

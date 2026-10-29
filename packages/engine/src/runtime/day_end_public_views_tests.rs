@@ -352,11 +352,13 @@ fn partial_start_cleanup_reports_unknown_messages_after_joining_every_worker() {
 }
 
 fn assert_partial_day_end_preserves_published_tick(failure: u8) {
-    let mut world = World::spawn(
-        partial_drain_spec(),
-        crate::calendar::TradingCalendar::current_default_calendar()
-            .expect("显式 raw Calendar 政策合法"),
-    )
+    let spec = partial_drain_spec();
+    let calendar = crate::calendar::TradingCalendar::current_default_calendar()
+        .expect("显式 raw Calendar 政策合法");
+    let next_date = calendar
+        .next_trading_day(crate::calendar::CalendarExchange::Sse, spec.civil_start_date)
+        .expect("fixture 下一 SSE trading date 合法");
+    let mut world = World::spawn(spec, calendar)
     .expect("构造两股真实日结世界");
     world.run_ticks(2).expect("tick240 已完成 Seal 与发布");
     let before = world.snapshot_accounts().expect("发布后组账户");
@@ -464,6 +466,8 @@ fn assert_partial_day_end_preserves_published_tick(failure: u8) {
         200,
         "真实收盘成交只交付一次"
     );
+    // raw World 的日期由 caller 推进；成功日结后使用同一 Calendar 的下一开市日。
+    world.set_civil_date(next_date);
     world.run_ticks(1).expect("下一真实 Start241 正常执行");
     world.shutdown().expect("失败重试后正常关停");
 }

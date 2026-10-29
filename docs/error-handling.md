@@ -27,6 +27,18 @@
 这些只读请求不触发 flush 或自然日日结。会话已经 terminal 时，先返回保存的首个 fatal，
 不把它改成 3015–3018。
 
+`ProtocolSession::rollback` 返回 `Result<(), StepFatal>`。当前会话 terminal 时先原样返回首个 fatal；
+健康但当前会话或 checkpoint 已有 runtime authority／镜像安装时，返回位置为
+`ProtocolSession::rollback` 的显式拒绝，保留当前 live World、镜像与已发布事实。
+该调用拒绝不把健康会话封成 terminal；checkpoint 只保存 serial 机械回放所需的私有值，
+不能凭相同 tick 或 `mirror_origin` 代替尚未复制的 live World。
+
+`end_civil_day_update_classified` 的 `CivilDayEndFailure` 随本次结果 move。
+只有本次真实更正 prepare 的业务拒绝、且当前 Game 与内部 World 均健康时，
+`recovery()` 才是 `CivilRecovery::CorrectionPrepareRejected`；callback 返回过去捕获的同一错误也为 `None`。
+外持 driver 的 lease 不能证明 World 健康，因此保守返回 `None`，仍保留原 typed 错误与取消重试行为。
+兼容入口 `end_civil_day_update`、`into_error` 及普通 `From<SessionError>` 均不保留恢复资格。
+
 ### ❌ 禁止：空 catch / 吞掉错误
 
 ```ts

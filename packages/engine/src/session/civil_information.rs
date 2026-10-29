@@ -69,6 +69,14 @@ impl GameSession {
         &mut self,
         project: impl FnOnce(&GameSession, CivilDayEndReport) -> Result<P, SessionError>,
     ) -> Result<P, SessionError> {
+        self.with_prepared_runtime_civil_day_classified(project)
+            .map_err(protocol::CivilDayEndFailure::into_error)
+    }
+
+    pub(super) fn with_prepared_runtime_civil_day_classified<P>(
+        &mut self,
+        project: impl FnOnce(&GameSession, CivilDayEndReport) -> Result<P, SessionError>,
+    ) -> Result<P, protocol::CivilDayEndFailure> {
         // 当前未持有 World 的真实已提交收盘记录；候选业务拒绝不能先改变 authority/revision。
         let probe = match self.runtime_driver.as_ref() {
             None => Ok(false),
@@ -92,10 +100,10 @@ impl GameSession {
         let market_installed = match probe {
             Ok(installed) => installed,
             // 此探测只读 committed record；错误仅可能来自已死亡 World 或已 poison 的锁。
-            Err(error) => return Err(self.poison_civil_authority(error)),
+            Err(error) => return Err(self.poison_civil_authority(error).into()),
         };
         let mut correction_prepare_rejected = false;
-        let prepared = (|| {
+        let prepared: Result<_, SessionError> = (|| {
             let mut shadow = self
                 .clone_for_tick_shadow()
                 .map_err(|_| SessionError::InvalidSave(ValidationFault::new(1034, vec![0])))?;
@@ -136,6 +144,7 @@ impl GameSession {
                 adopted.state.report_corrections = shadow.state.report_corrections;
                 adopted.state.seq = shadow.state.seq;
                 adopted.state.library = shadow.state.library;
+                adopted.market_calendar_day = None;
                 shadow = adopted;
             }
             let baseline = self.prepare_civil_administrative_baseline()?;
@@ -183,7 +192,7 @@ impl GameSession {
             Err(error) => {
                 // 已封存首错或 World terminal 优先，不能被更正业务拒绝掩盖。
                 if let Some(fatal) = self.poison_reason() {
-                    return Err(SessionError::Step(fatal.clone()));
+                    return Err(SessionError::Step(fatal.clone()).into());
                 }
                 let terminal = match self.runtime_driver.as_ref() {
                     None => Ok(false),
@@ -197,23 +206,23 @@ impl GameSession {
                 };
                 let terminal = match terminal {
                     Ok(value) => value,
-                    Err(error) => return Err(self.poison_civil_authority(error)),
+                    Err(error) => return Err(self.poison_civil_authority(error).into()),
                 };
                 if let SessionError::ReportCorrectionDayEnd(cause) = &error {
                     if cause.classification() == crate::company::CompanyErrorClass::SystemState
                         || terminal
                     {
-                        return Err(self.poison_civil_authority(error));
+                        return Err(self.poison_civil_authority(error).into());
                     }
                     if correction_prepare_rejected {
                         // 仅真实更正 prepare 的两类业务拒绝允许取消后重试 civil。
-                        return Err(error);
+                        return Err(protocol::CivilDayEndFailure::correction_prepare_rejected(error));
                     }
                 }
                 if terminal || market_installed {
-                    return Err(self.poison_civil_authority(error));
+                    return Err(self.poison_civil_authority(error).into());
                 }
-                return Err(error);
+                return Err(error.into());
             }
         };
         for observer in self.state.civil_clock.disclosure_observers() {

@@ -2,6 +2,8 @@ use super::{validate_sequence, ProtocolError, SessionFactCursor, TickBatch, Tick
 use crate::error::ValidationFault;
 use crate::session::{Event, GameSession, SessionError, Snapshot, StockSpec};
 mod boundary;
+mod failure;
+pub use failure::{CivilDayEndFailure, CivilRecovery};
 #[cfg(test)]
 mod publication_tests;
 mod session;
