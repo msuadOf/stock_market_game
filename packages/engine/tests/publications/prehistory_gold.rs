@@ -6,7 +6,6 @@ use crate::fixture::{history_start_of, two_company_config, BANK_ID, INDUSTRIAL_I
 use engine::accounting::reports::ReportKind;
 use engine::accounting::AccountingPeriod;
 use engine::calendar::{CalendarExchange, CivilDate, CivilInstant, TradingCalendar};
-use engine::company::CompanyId;
 use engine::information::{
     assemble_seeded_prehistory, scheduled_instant, stable_company_offset, PublicationOrigin,
     ScheduledReportKind,

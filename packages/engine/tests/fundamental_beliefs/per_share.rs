@@ -5,7 +5,7 @@ use crate::gold::{
     hand_facts, momentum_analysis, momentum_profile, neutral_assumptions, stock_code,
 };
 use crate::hand::{hand_report, HandReportSpec};
-use crate::{assumptions_rng, d, hour_after, market, scenario, COMPANY, ISSUED_SHARES};
+use crate::{assumptions_rng, d, hour_after, market, scenario, ISSUED_SHARES};
 use crate::{BeliefIssuerInputs, FundamentalBeliefCase};
 use engine::calendar::CivilInstant;
 use engine::company::{CompanyId, CompanyKind};

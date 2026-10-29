@@ -63,7 +63,7 @@ fn prune_keeps_protected_and_eight_most_recent_unheld_stocks() {
     // 持仓股最早接触（minute 0）仍被保护；10 个未持仓股按最近接触保留 8 个，
     // 最早两个被驱逐。上限复用 MAX_UNHELD_WATCHLIST_STOCKS = 持仓 + 8 未持仓。
     let mut memory = PersonalPriceMemory::default();
-    let mut reads = PersonalHistoryReadLedger::default();
+    let _reads = PersonalHistoryReadLedger::default();
     let held = code("600001");
     memory.observe_price(&held, price(1000), 0).unwrap();
     for index in 1..=10_u64 {

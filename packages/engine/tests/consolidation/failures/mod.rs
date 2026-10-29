@@ -6,7 +6,7 @@
 mod intercompany;
 
 use super::{entry, member, request};
-use engine::accounting::consolidation::{consolidate, ConsolidationError, MemberId};
+use engine::accounting::consolidation::{consolidate, ConsolidationError};
 use engine::accounting::{AccountChart, Books, BusinessKind, CashFlowClass, PostingSide};
 use engine::company::industrial::industrial_account_chart;
 use PostingSide::{Credit, Debit};

@@ -8,7 +8,7 @@ use engine::company::scheduler::{
 };
 use engine::company::CompanyId;
 
-fn interest_due(company: &str, key: &str, due_date: CivilDate) -> SchedulerRequest {
+fn interest_due(_company: &str, key: &str, due_date: CivilDate) -> SchedulerRequest {
     SchedulerRequest::Due {
         key: key.to_string(),
         due_date,

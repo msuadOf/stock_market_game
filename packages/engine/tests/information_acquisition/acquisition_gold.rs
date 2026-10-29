@@ -4,7 +4,7 @@
 //! 不改变未观察 NPC 的观察前判断输入——以观察上下文内容的字节投影断言。
 
 use crate::fixture::{
-    hour_after, peer_information_npc, primary_information_npc, FixtureMarket, Scenario, COMPANY,
+    hour_after, peer_information_npc, primary_information_npc, FixtureMarket, Scenario,
 };
 use engine::company::CompanyId;
 use engine::information::{

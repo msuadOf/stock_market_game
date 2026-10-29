@@ -3,7 +3,7 @@ use engine::{AccountId, Event, StockId};
 
 fn frame(tick: u64, before: u64, count: u64) -> TickFrame {
     // 独立测试 fixture 的 producer：事件只在此构造一次并携带 typed 身份。
-    let mut cursor = engine::session::protocol::SessionFactCursor::default();
+    let cursor = engine::session::protocol::SessionFactCursor::default();
     let events = (before + 1..=before + count)
         .map(|seq| Event::IntentRejected {
             seq,

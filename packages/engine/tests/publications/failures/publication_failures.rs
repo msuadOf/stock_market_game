@@ -3,7 +3,7 @@
 //!
 //! 共享基线（`Base`）在 `super`。
 
-use super::{Base, OTHER};
+use super::Base;
 use crate::books_fixture::correction_books;
 use crate::fixture::d;
 use engine::accounting::closing::ClosingEngine;

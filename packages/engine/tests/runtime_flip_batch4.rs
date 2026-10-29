@@ -28,7 +28,7 @@ fn batch4_pipeline_day_advances() {
 #[test]
 fn batch4_t1_unfreeze_clears_frozen_after_day_end() {
     use engine::runtime::drive::RuntimeDriver;
-    let mut setup = setup_1stock();
+    let setup = setup_1stock();
     // D5 #4 fixture 适配：retail 链 behavior 化后，构造期组内快照（空簿
     // 起步）与 session 簿的观察面天然不同——NPC 到达不再保证成交
     //（等价锚=restore 双轨对拍，不逐位对拍旧管线）。「首日当日买入」
@@ -266,7 +266,7 @@ fn batch4_civil_failure_rolls_back_day_end_fully_and_retries_once() {
         }
     }
     let mut session = session.expect("候选序内存在有受理单形态（清簿依赖日终在途）");
-    let mut driver = driver.expect("驱动器");
+    let _driver = driver.expect("驱动器");
     let mut driver =
         engine::runtime::drive::RuntimeDriver::from_session(&mut session).expect("驱动器");
     driver.adopt_session_seq(&session);

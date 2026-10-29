@@ -31,7 +31,7 @@ use super::{attention, code, market_of, view};
 /// 公司 id ↔ 股票代码映射由会话接线持有；测试用固定映射。
 pub(crate) fn company_of(code: &StockId) -> CompanyId {
     // 测试固定映射：公司 id = 股票数值 id。
-    CompanyId(u32::from(code.0))
+    CompanyId(code.0)
 }
 
 pub(crate) fn d(iso: &str) -> CivilDate {

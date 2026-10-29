@@ -1,7 +1,7 @@
 //! 手工 ReportSet/PublishedReport 构造器（核心抽取层的直测面——不经结账
 //! 机器；字段最小可读，勾稽由真实链路测试覆盖）。
 
-use crate::{d, COMPANY};
+use crate::d;
 use engine::accounting::consolidation::{MemberId, ScopeId};
 use engine::accounting::reports::{
     BalanceSheet, BsLine, CashFlowStatement, Comparative, EquityStatement, IncomeColumns,

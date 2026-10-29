@@ -6,7 +6,6 @@ use engine::accounting::consolidation::{MemberId, ScopeId};
 use engine::accounting::reports::ReportKind;
 use engine::accounting::{AccountingPeriod, PeriodStatus};
 use engine::company::operations::CompanyOperations;
-use engine::company::CompanyId;
 
 #[test]
 fn company_domain_month_close_keeps_industrial_cash_debt_and_expenses_reconciled() {
@@ -102,7 +101,7 @@ fn company_domain_month_close_keeps_industrial_cash_debt_and_expenses_reconciled
         report.balance_sheet.liabilities_and_equity
     );
     assert!(
-        report.income.cumulative.operating.len() > 0,
+        !report.income.cumulative.operating.is_empty(),
         "费用/经营损益须来自实际分录"
     );
     let after = serde_json::to_value(books).unwrap();

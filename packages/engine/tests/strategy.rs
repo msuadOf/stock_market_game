@@ -1,5 +1,4 @@
 //! engine strategy 三策略 + 工厂集成测试（TDD 红绿循环）。
-use engine::account::StockCode;
 use engine::money::Money;
 use engine::strategy::{MarketView, Rng, StockView};
 use engine::LimitPrice;

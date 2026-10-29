@@ -9,9 +9,8 @@ include!("../../test-support/company_state/legacy_saved.rs");
 use engine::account::StockCode;
 use engine::money::Money;
 use engine::session::{
-    decode_save_slot, Event, FloatAllocation, GameSession, NpcSetup, SaveDecodeLimits,
-    SecurityCategory, SessionSetup, StockExchange, StockSpec, WithinKindDistribution,
-    SIMULATION_POLICY_ID,
+    decode_save_slot, FloatAllocation, GameSession, NpcSetup, SaveDecodeLimits, SecurityCategory,
+    SessionSetup, StockExchange, StockSpec, WithinKindDistribution, SIMULATION_POLICY_ID,
 };
 
 mod bank_policy;

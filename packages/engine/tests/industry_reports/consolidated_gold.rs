@@ -351,7 +351,7 @@ fn consolidated_missing_parent_income_is_rejected_at_report_validation() {
         .validate()
         .expect_err("Consolidated report must carry parent income");
     assert!(
-        matches!(&error, engine::accounting::reports::ReportError::MissingParentIncome { scope, period } if scope == &ScopeId::Consolidated(MemberId(GROUP_ROOT.into())) && *period == AccountingPeriod::from_iso("2030-03").unwrap())
+        matches!(&error, engine::accounting::reports::ReportError::MissingParentIncome { scope, period } if scope == &ScopeId::Consolidated(MemberId(GROUP_ROOT)) && *period == AccountingPeriod::from_iso("2030-03").unwrap())
     );
     assert!(error.to_string().contains("net_income_to_parent"));
     let mut closing = engine::accounting::closing::ClosingEngine::new();

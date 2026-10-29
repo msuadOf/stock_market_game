@@ -364,7 +364,7 @@ fn auto_foundation_builds_full_float_registry_and_legal_facts() {
     // 法定事实：注册资本 = 面值 100 分 × 100_000 股 = 10_000_000 分——按
     // 精确 JSON 路径取值断言（Simple 公司 0 的 finance.legal_facts）。
     let saved = session.save().unwrap();
-    let company_json = serde_json::to_value(&system_saved(&saved).0).unwrap();
+    let company_json = serde_json::to_value(system_saved(&saved).0).unwrap();
     let capital = &company_json["implementation"]["state"]["companies"]["0"]["finance"]
         ["legal_facts"]["registered_capital"];
     assert_eq!(
@@ -388,7 +388,8 @@ fn flat_withholding_boundary_values_are_accepted() {
 fn incomplete_company_config_residue_is_isolated_per_field() {
     // 残缺位图逐 bit 隔离：单独携带每个公司字段（company_system 缺席）都
     // 拒绝且 fault 码一致（1048）——杜绝「位图合并掩盖单字段拒绝」。
-    let residue_cases: Vec<(String, Box<dyn FnOnce(&mut SessionSetup)>)> = vec![
+    type ResidueCase = (String, Box<dyn FnOnce(&mut SessionSetup)>);
+    let residue_cases: Vec<ResidueCase> = vec![
         (
             "dividend_tax_mode".to_owned(),
             Box::new(|setup: &mut SessionSetup| {

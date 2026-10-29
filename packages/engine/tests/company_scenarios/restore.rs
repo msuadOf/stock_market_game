@@ -26,7 +26,7 @@ fn restored_session_preserves_immediate_save_integrity_and_continues_independent
 
     // 自由续跑：用户已授权不要求跨运行字节一致。
     // 两个实例各自独立推进一个交易日，验证各自合法（不崩溃、日结成功、存档可恢复）。
-    for tick in 0..TICKS_PER_DAY {
+    for _tick in 0..TICKS_PER_DAY {
         uninterrupted.step().expect("uninterrupted healthy step");
         restored.step().expect("restored healthy step");
     }

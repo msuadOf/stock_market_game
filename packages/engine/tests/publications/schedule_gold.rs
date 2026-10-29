@@ -3,7 +3,6 @@
 
 use crate::fixture::{BANK_ID, INDUSTRIAL_ID, OPS_SEED};
 use engine::calendar::CivilDate;
-use engine::company::CompanyId;
 use engine::information::{scheduled_instant, stable_company_offset, ScheduledReportKind};
 
 fn d(iso: &str) -> CivilDate {

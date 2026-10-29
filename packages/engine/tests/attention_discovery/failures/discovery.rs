@@ -15,8 +15,8 @@ use engine::session::{
 use engine::strategy::{HotParams, InstParams, RetailParams, StrategyParams};
 use engine::{CivilDate, StockCode};
 
+use crate::attention;
 use crate::exposure::{post_undisclosed_fact, private_books, AnnouncementExposureFixture};
-use crate::{attention, code};
 
 fn discovery_setup() -> SessionSetup {
     SessionSetup {

@@ -4,7 +4,6 @@ use engine::Money;
 
 #[test]
 fn intent_and_marketview_construct() {
-    use engine::account::StockCode;
     use engine::orderbook::Side;
     use engine::strategy::{Intent, MarketView, PositionView, SelfView, StockView};
     use engine::Money;
@@ -60,7 +59,7 @@ fn intent_and_marketview_construct() {
     };
 }
 
-use engine::account::{AccountError, AccountKind, StockCode};
+use engine::account::{AccountError, AccountKind};
 
 #[test]
 fn account_error_and_kind_basics() {
@@ -467,7 +466,6 @@ fn market_value_and_unrealized_pnl() {
 
 #[test]
 fn grant_position_sets_cost_basis() {
-    use engine::account::StockCode;
     use engine::Money;
     let mut a = engine::Account::new(
         engine::AccountId(1),
@@ -506,7 +504,7 @@ fn derived_values_and_grants_report_overflow() {
 #[test]
 fn reexport_from_crate_root() {
     use engine::strategy::StrategyProfile;
-    use engine::{Account, AccountError, AccountKind, Position, StockId};
+    use engine::{Account, AccountError, AccountKind, Position};
     use engine::{Intent, MarketView, Strategy, StrategyFamily, ZiNoiseStrategy};
 
     let mut npc = Account::new(AccountId(2), AccountKind::Retail, Money::ZERO);

@@ -3,7 +3,7 @@
 //!
 //! 共享基线（`Base`）在 `super`。
 
-use super::{Base, COMPANY};
+use super::Base;
 use crate::fixture::d;
 use engine::calendar::CivilInstant;
 use engine::company::{CompanyId, ShockKind};

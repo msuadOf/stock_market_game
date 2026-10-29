@@ -3,7 +3,7 @@ use super::fixtures::*;
 use engine::account::StockCode;
 use engine::calendar::CivilDate;
 use engine::company::operations::CompanyOperationsConfig;
-use engine::company::{CompanyId, ShockKind};
+use engine::company::CompanyId;
 use engine::money::Money;
 use engine::session::{
     CivilPhase, CompanyDisclosureKind, Event, FloatAllocation, GameSession, NpcSetup, SaveSlot,
@@ -150,7 +150,7 @@ fn restored_run_matches_continuous_run_for_company_facts_across_rest_days() {
         target.end_civil_day().expect("civil day settles");
     }
     fn receivable_collections(save: &SaveSlot, start: CivilDate) -> usize {
-        legacy_saved(&save)
+        legacy_saved(save)
             .0
             .industrial_books(&CompanyId(0))
             .expect("industrial company present")
@@ -214,7 +214,7 @@ fn assert_due_free_month_end_still_operates_and_discloses(mut target: GameSessio
         .books()
         .journal()
         .entry_count();
-    let closed_before = serde_json::to_value(&legacy_saved(&before).1).unwrap()["versions"]
+    let closed_before = serde_json::to_value(legacy_saved(&before).1).unwrap()["versions"]
         .as_array()
         .unwrap()
         .len();
@@ -239,7 +239,7 @@ fn assert_due_free_month_end_still_operates_and_discloses(mut target: GameSessio
             > entries_before,
         "每日经营不因没有当日 due 而跳过"
     );
-    let closed = serde_json::to_value(&legacy_saved(&after).1).unwrap();
+    let closed = serde_json::to_value(legacy_saved(&after).1).unwrap();
     assert!(
         closed["versions"].as_array().unwrap().len() > closed_before,
         "月末封账必须产生真实期间版本"

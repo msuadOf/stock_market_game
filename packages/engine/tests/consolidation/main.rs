@@ -79,7 +79,7 @@ pub(crate) fn member<'a>(
     GroupMember {
         spec: MemberSpec {
             id: member_id(id),
-            group_parent: parent.map(|p| member_id(p)),
+            group_parent: parent.map(member_id),
             issued_shares,
             parent_held_shares,
         },

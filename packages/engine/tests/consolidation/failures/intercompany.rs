@@ -23,7 +23,7 @@ fn equal_intercompany_declarations_cannot_exceed_actual_balances() {
 
 use super::super::{acct, ic_balance, ic_sale, member, request, yuan};
 use super::pair_books;
-use engine::accounting::consolidation::{consolidate, ConsolidationError, MemberId};
+use engine::accounting::consolidation::{consolidate, ConsolidationError};
 use engine::accounting::LedgerAccountId;
 
 #[test]

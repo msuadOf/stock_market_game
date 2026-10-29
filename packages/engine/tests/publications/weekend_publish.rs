@@ -6,7 +6,7 @@ use crate::session_fixture::{civil_setup, TICKS_PER_DAY};
 use engine::accounting::reports::ReportKind;
 use engine::accounting::AccountingPeriod;
 use engine::calendar::{CalendarExchange, CivilInstant, TradingCalendar, Weekday};
-use engine::company::{ActiveShock, CompanyId, ShockKind};
+use engine::company::{ActiveShock, ShockKind};
 use engine::information::{
     assemble_seeded_prehistory, scheduled_instant, stable_company_offset, InformationError,
     PublicationOrigin, ScheduledReportKind,

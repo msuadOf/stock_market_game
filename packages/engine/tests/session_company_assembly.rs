@@ -10,7 +10,7 @@ use engine::accounting::reports::ReportKind;
 use engine::accounting::{AccountingPeriod, PeriodStatus};
 use engine::calendar::CivilDate;
 use engine::company::operations::{CompanyOperationsConfig, FlowParams};
-use engine::company::{CompanyId, CompanyKind, PublicReportQuery, PublicReportScope};
+use engine::company::{CompanyKind, PublicReportQuery, PublicReportScope};
 use engine::session::{GroupHolding, GroupStructure, SessionSetup};
 use engine::{GameSession, StockCode};
 
