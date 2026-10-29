@@ -1,6 +1,5 @@
 //! 真实 Registry 双 session 范围与 ingress 撤销；worker 回收由 engine 短 fixture 验证。
-#[path = "../../../../packages/engine/tests/publications/session_fixture.rs"]
-mod fixture;
+use crate::session_fixture as fixture;
 
 use super::*;
 use crate::{ingress_operation, AccountId, Intent};

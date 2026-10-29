@@ -3,8 +3,7 @@
 use super::{facade_slot_capacity_for_restore_json, RestoreFacadeInitError};
 use engine::{GameSession, SaveSlot, SessionError, StockCode};
 
-#[path = "../../../packages/engine/tests/publications/session_fixture.rs"]
-mod fixture;
+use crate::session_fixture as fixture;
 
 fn save(stock_count: usize) -> SaveSlot {
     let mut setup = fixture::civil_setup(engine::CivilDate::from_iso("2030-01-02").unwrap());

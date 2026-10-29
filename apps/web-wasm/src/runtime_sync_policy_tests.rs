@@ -3,8 +3,7 @@
 use super::*;
 use engine::RuntimeSyncPolicy;
 
-#[path = "../../../packages/engine/tests/publications/session_fixture.rs"]
-mod fixture;
+use crate::session_fixture as fixture;
 
 fn setup() -> SessionSetup {
     let mut setup = fixture::civil_setup(engine::CivilDate::from_iso("2030-01-05").unwrap());

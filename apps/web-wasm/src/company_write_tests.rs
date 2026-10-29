@@ -1,7 +1,6 @@
 //! 真实 native registry 的首红；不能把本测试当实际 JS export 或浏览器。
 use super::*;
-#[path = "../../../packages/engine/tests/publications/session_fixture.rs"]
-mod fixture;
+use crate::session_fixture as fixture;
 include!("../../../packages/engine/test-support/simple_company.rs");
 include!("../../../packages/engine/test-support/host_company_writes.rs");
 

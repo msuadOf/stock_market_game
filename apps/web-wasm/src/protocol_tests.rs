@@ -1,5 +1,4 @@
-#[path = "../../../packages/engine/tests/publications/session_fixture.rs"]
-mod fixture;
+use crate::session_fixture as fixture;
 
 use super::*;
 include!("../../../packages/engine/test-support/simple_company.rs");
@@ -330,7 +329,7 @@ fn registry_step_returns_one_valid_frame_and_invalid_handle_is_explicit() {
         "wasm registry output: {}",
         serde_json::to_string(&update).unwrap()
     );
-    drop_session(handle);
+    drop_session(handle).expect("测试创建的会话应能成功销毁");
     assert_eq!(
         step_update(handle).unwrap_err(),
         StepUpdateError::Operation(format!("invalid session handle: {handle}"))
@@ -423,7 +422,7 @@ fn registry_retains_complete_closing_history() {
         panic!("CivilUpdate must be published exactly once before stepping resumes")
     };
     assert_eq!(next.frames[0].tick, fixture::TICKS_PER_DAY + 1);
-    drop_session(handle);
+    drop_session(handle).expect("测试创建的会话应能成功销毁");
 }
 #[test]
 fn producer_failure_preserves_real_source_chain_without_private_state() {
@@ -545,7 +544,7 @@ fn registry_restore_failure_preserves_existing_session_and_civil_barrier() {
     invalid
         .ingress_receipt_cursors
         .next_stock_ordinal
-        .insert(code.clone(), 1);
+        .insert(code, 1);
     invalid.pending_player.push(engine::ReceiptBearingIntent {
         owner: AccountId(0),
         intent: Intent::Cancel {

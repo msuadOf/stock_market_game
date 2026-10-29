@@ -719,7 +719,7 @@ fn finish_company_catalog(
         Vec<engine::session::CompanyCatalogEntry>,
         engine::session::CompanyCatalogViewError,
     >,
-) -> Result<Vec<engine::session::CompanyCatalogEntry>, HostFailure> {
+) -> Result<Vec<engine::session::CompanyCatalogEntry>, Box<HostFailure>> {
     catalog.map_err(|error| {
         let mut failure = HostFailure::catalog(
             &error,
@@ -736,7 +736,7 @@ fn finish_company_catalog(
         failure.context.tick = Some(session.tick());
         failure.context.seq = Some(session.seq());
         failure.context.day = Some(session.day());
-        failure
+        Box::new(failure)
     })
 }
 
@@ -1103,9 +1103,27 @@ fn facade_slot_capacity_for_topology(groups: usize, desks: usize) -> Result<u32,
 #[derive(Debug)]
 enum RestoreFacadeInitError {
     Decode(serde_json::Error),
-    UnsupportedRuntimeSyncPolicy(UnsupportedRuntimeSyncPolicy),
+    UnsupportedRuntimeSyncPolicy(
+        #[cfg_attr(
+            all(test, not(target_family = "wasm")),
+            expect(
+                dead_code,
+                reason = "native test 不编译 WASM 恢复导出；该载荷由原 WASM 错误映射读取"
+            )
+        )]
+        UnsupportedRuntimeSyncPolicy,
+    ),
     Topology(SessionError),
-    Capacity(&'static str),
+    Capacity(
+        #[cfg_attr(
+            all(test, not(target_family = "wasm")),
+            expect(
+                dead_code,
+                reason = "native test 不编译 WASM 恢复导出；该载荷由原 WASM 错误映射读取"
+            )
+        )]
+        &'static str,
+    ),
 }
 
 /// 按完整 SaveSlot JSON 校验构造前缀并计算 slot 容量；不分配 arena 或完成恢复。
@@ -1149,6 +1167,10 @@ pub fn facade_slot_init_for_restore_json(save_json: String) -> Result<(), JsValu
         })?;
     facade_slot_init(capacity)
 }
+
+#[cfg(test)]
+#[path = "../../../packages/engine/tests/publications/session_fixture.rs"]
+mod session_fixture;
 
 #[cfg(test)]
 mod facade_restore_json_tests;
