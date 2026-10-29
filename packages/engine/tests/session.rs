@@ -417,6 +417,29 @@ impl TestOrderSaveFixture {
     }
 }
 
+/// 既有迁移边界（trading-rules.md §初始静点接管）：不以改写合法旧簿身份换取接管成功。
+#[cfg(not(target_arch = "wasm32"))]
+fn assert_legacy_native_adoption_rejects_atomically(save: &engine::SaveSlot, description: String) {
+    let mut rejected = GameSession::restore(save).unwrap();
+    let before = rejected.save().unwrap();
+    let before_snapshot = rejected.snapshot();
+    let before_hash = rejected.business_state_hash().unwrap();
+    assert_eq!(
+        rejected.step_via_runtime().unwrap_err(),
+        engine::StepFatal::InvariantViolation {
+            description,
+            location: "GameSession::ensure_runtime_driver".to_owned(),
+        }
+    );
+    assert_eq!(rejected.business_state_hash().unwrap(), before_hash);
+    assert_eq!(rejected.snapshot(), before_snapshot);
+    assert_eq!(
+        serde_json::to_value(rejected.save().unwrap()).unwrap(),
+        serde_json::to_value(before).unwrap(),
+        "拒绝不能改变账户、OrderId、FIFO、游标、费用、T+1 或日期"
+    );
+}
+
 #[test]
 fn order_save_fixture_restores_envelopes_cursors_and_reservations() {
     let code = sid();
@@ -2301,14 +2324,46 @@ fn dated_candles_bridge_virtual_prehistory_and_real_sessions_across_weekend() {
     assert!(candles[360].trade_stats.is_some());
     assert!(candles[361].trade_stats.is_some());
     assert!(snapshot.active_daily_candles.is_empty());
+    let save = session.save().unwrap();
+    let restored = engine::session::protocol::ProtocolSession::restore(&save).unwrap();
     assert_eq!(
-        serde_json::to_value(
-            engine::session::protocol::ProtocolSession::restore(&session.save().unwrap())
-                .unwrap()
-                .snapshot()
-        )
-        .unwrap(),
-        serde_json::to_value(snapshot).unwrap()
+        serde_json::to_value(GameSession::save(&restored).unwrap()).unwrap(),
+        serde_json::to_value(save).unwrap(),
+        "完整日结事实恢复后逐字段相等"
+    );
+    let restored_origin = engine::RuntimeMirrorOrigin {
+        authority_epoch: 0,
+        install_sequence: 0,
+        source_tick: 20,
+        source_generation: 0,
+        day_end_stage: engine::RuntimeMirrorDayEndStage::Tick,
+        non_tick_revision: 0,
+        mirror_phase: TradingPhase::Continuous,
+    };
+    let original_origin = if engine::runtime::step_runtime_enabled() {
+        engine::RuntimeMirrorOrigin {
+            authority_epoch: 1,
+            // 初始接管一次、20 个市场拍与前三次 civil INFO 各安装一次。
+            install_sequence: 24,
+            source_tick: 20,
+            // 20 个市场拍加两个交易日的 retained 发布；周末不产生市场拍。
+            source_generation: 22,
+            day_end_stage: engine::RuntimeMirrorDayEndStage::RetainedPublished,
+            non_tick_revision: 3,
+            mirror_phase: TradingPhase::Continuous,
+        }
+    } else {
+        restored_origin
+    };
+    assert_eq!(snapshot.mirror_origin, original_origin);
+    let restored_snapshot = restored.snapshot();
+    assert_eq!(restored_snapshot.mirror_origin, restored_origin);
+    // restore 创建新 authority；其七个来源字段已独立核对，全部业务字段继续完整比较。
+    let mut expected = snapshot;
+    expected.mirror_origin = restored_origin;
+    assert_eq!(
+        serde_json::to_value(restored_snapshot).unwrap(),
+        serde_json::to_value(expected).unwrap()
     );
 }
 
@@ -3375,6 +3430,19 @@ fn all_stocks_produce_trades_multistock() {
     let mut sess = fixture
         .restore()
         .expect("five allocated sell books must restore");
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let legacy_save = sess.save().unwrap();
+        let stock = engine::StockId(1);
+        let order = legacy_save.resting_orders[&stock][0].id;
+        let expected = engine::OrderId((u64::from(stock.0) << 32) | order.0);
+        assert_legacy_native_adoption_rejects_atomically(
+            &legacy_save,
+            format!(
+                "初始静点接管不能保真重编号：stock={stock:?} order={order:?} expected={expected:?}"
+            ),
+        );
+    }
     for code_value in &all {
         sess.enqueue_player_intent(
             AccountId(0),
@@ -3390,8 +3458,10 @@ fn all_stocks_produce_trades_multistock() {
         .unwrap();
     }
     let traded: std::collections::HashSet<engine::StockId> = sess
-        .step()
+        // 手工 global OrderId 属于旧簿合同；不将 serial 成功冒充 native 完整接管。
+        .step_with_commit_evidence()
         .expect("healthy five-stock matching step")
+        .0
         .into_iter()
         .filter_map(|event| match event {
             Event::Trade { code, .. } => Some(code),
@@ -4128,6 +4198,13 @@ fn day_boundary_clears_daily_orders_and_releases_reservations() {
         .bids
         .is_empty());
 
+    // 市场日终已清簿；自然日日结完成后才能受理下一交易日的新委托。
+    advance_civil_to_session_start(&mut session);
+    assert_eq!(
+        session.civil_date(),
+        engine::CivilDate::from_iso("2030-01-03").unwrap()
+    );
+    assert_eq!((session.tick(), session.day()), (2, 1));
     session
         .enqueue_player_intent(
             AccountId(0),
@@ -4448,7 +4525,7 @@ fn restore_preserves_sparse_same_price_fifo_before_matching() {
         .unwrap();
     let mut save = source.save().unwrap();
     let orders = save.resting_orders.get_mut(&code).unwrap();
-    // Saved array order is not the priority: owner 2 arrived before owner 1.
+    // 存档数组位置不决定优先级：AccountId(2) 先于 AccountId(1) 被受理。
     orders[0].seq = 9;
     orders[1].seq = 3;
     save.book_next_sequences.insert(code, 20);
@@ -4459,6 +4536,11 @@ fn restore_preserves_sparse_same_price_fifo_before_matching() {
             .map(|order| order.seq)
             .collect::<Vec<_>>(),
         vec![3, 9]
+    );
+    #[cfg(not(target_arch = "wasm32"))]
+    assert_legacy_native_adoption_rejects_atomically(
+        &save,
+        "初始静点接管不能保真同价 FIFO：stock=StockId(0) order=OrderId(1)".to_owned(),
     );
     restored
         .enqueue_player_intent(
@@ -4472,8 +4554,10 @@ fn restore_preserves_sparse_same_price_fifo_before_matching() {
         )
         .unwrap();
     let trades: Vec<_> = restored
-        .step()
+        // sparse seq 与原始 OrderId 的 FIFO 合同由 serial 保真；native 拒绝另行验证。
+        .step_with_commit_evidence()
         .unwrap()
+        .0
         .into_iter()
         .filter_map(|event| {
             if let Event::Trade {
@@ -4701,12 +4785,15 @@ fn save_restore_preserves_rng_and_strategy_price_history() {
     );
 
     let mut restored = GameSession::restore(&saved).unwrap();
-    assert_eq!(
-        restored.save().expect("healthy save").retail_experience,
-        saved.retail_experience
-    );
+    let restored_save = restored.save().expect("healthy save");
+    assert_eq!(restored_save.rng_state, saved.rng_state);
+    assert_eq!(restored_save.price_history, saved.price_history);
+    assert_eq!(restored_save.npc_attention, saved.npc_attention);
+    assert_eq!(restored_save.retail_experience, saved.retail_experience);
     // 用户已授权不要求跨运行字节一致；恢复后各自独立推进验证健康
     for _ in 0..12 {
+        advance_civil_to_session_start(&mut original);
+        advance_civil_to_session_start(&mut restored);
         original.step().expect("original healthy step");
         restored.step().expect("restored healthy step");
     }
