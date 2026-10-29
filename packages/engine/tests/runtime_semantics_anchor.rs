@@ -9,7 +9,7 @@
 //! - T+1 #1 → `t1_today_buy_frozen_and_day_end_unfreeze`（batch4#3 再锚）
 //! - 日结 #18 → `day_end_drain_closes_all_resting`；#9 →
 //!   `exact_closure_on_no_trade_fixture`
-//! - 日结 #19 → `civil_day_end_failure_rolls_back_and_retries_once`
+//! - 日结 #19 → `civil_day_end_failure_preserves_installed_market_close_and_first_error`
 //! - 日结 #20 → `second_day_auction_window_resumes`
 //! - 竞价 #21-#25（+#26 收盘相位）→ `auction_window_gates_…`
 //! - 自成交 #6 → `trades_never_self_cross`
@@ -205,11 +205,10 @@ fn exact_closure_on_no_trade_fixture() {
     }
 }
 
-/// #19：civil 日结失败全量回滚（会话 day/seq、driver seq、事件缓冲）
-/// + 修复后重试恰一次成功（清簿撤单不重复）+ 重试后可续跑。
+/// #19：市场日结已安装后的 civil 计数失步保留收盘，终结会话并封存首错；
+/// 后续保存、civil 日结、市场步进和手动日结均不得重跑或再发布事件。
 #[test]
-fn civil_day_end_failure_rolls_back_and_retries_once() {
-    use std::collections::BTreeSet;
+fn civil_day_end_failure_preserves_installed_market_close_and_first_error() {
     let mut session = GameSession::new(setup_1stock(), 306).expect("会话");
     let mut driver = RuntimeDriver::from_session(&mut session).expect("驱动器");
     driver.adopt_session_seq(&session);
@@ -218,39 +217,115 @@ fn civil_day_end_failure_rolls_back_and_retries_once() {
         driver.install_market_views(&mut session).expect("行情");
         driver.install_candles(&mut session).expect("K");
     }
-    // 制造 civil 失败：交易日计数偏离时钟期望（advance 后 5+1≠1）。
+    assert_eq!(
+        (session.tick(), session.day()),
+        (240, 0),
+        "末拍尚未安装市场日结"
+    );
+    let date = session.civil_date();
+    let publication = driver.publication();
+    let generation_before = publication.load().generation;
+    // 保留原计数失步注入。市场日结先安装 5+1，civil 才拒绝 6≠1；
+    // 已发布收盘不可撤回，不能通过恢复 day 或重建 driver 冒充可重试。
     let seq_before = session.current_seq();
     session.rollback_runtime_day_end(5, seq_before);
-    let driver_seq_before = driver.next_seq();
     let err = driver
         .day_end_with_runtime_market_day(&mut session)
         .expect_err("civil 失败必须显式报错");
-    assert!(!format!("{err:?}").is_empty(), "错误面可辨识");
-    assert_eq!(session.day(), 5, "会话 day 回滚");
-    assert_eq!(session.current_seq(), seq_before, "会话 seq 回滚");
-    assert_eq!(driver.next_seq(), driver_seq_before, "driver seq 回滚");
+    let cause = engine::SessionError::CivilClock(
+        engine::session::CivilClockError::MarketSessionOutOfSync {
+            date,
+            completed_sessions: 6,
+            expected_sessions: 1,
+        },
+    );
+    let fatal = engine::session::StepFatal::InvariantViolation {
+        location: "RuntimeDriver::day_end::civil".to_owned(),
+        description: format!("市场日结安装后的自然日推进失败：{cause}"),
+    };
+    assert_eq!(
+        err,
+        fatal.to_string(),
+        "必须到达已安装市场后的真实 civil 拒绝"
+    );
+    assert_eq!(session.poison_reason(), Some(&fatal), "封存同一个首错");
+    assert_eq!(
+        (session.tick(), session.day(), driver.world_committed_tick()),
+        (240, 6, 240)
+    );
+    assert_eq!(session.civil_date(), date, "civil 候选未提交，日期不推进");
+    let published = publication.load();
+    assert_eq!(published.tick, 240);
+    assert!(
+        published.generation > generation_before,
+        "市场日结已实际发布"
+    );
+    assert_eq!(published.retained.days.len(), 1, "收盘保留链恰安装一次");
+    assert_eq!(published.retained.days[0].date, date);
+    let drained = driver.take_drained_events();
+    assert!(
+        drained.iter().any(|event| matches!(
+            event,
+            Event::AuctionCompleted {
+                phase: engine::TradingPhase::ClosingAuction,
+                ..
+            }
+        )),
+        "已提交的收盘竞价事件不可丢弃"
+    );
+    for (index, event) in drained.iter().enumerate() {
+        assert_eq!(
+            event.seq(),
+            seq_before + index as u64 + 1,
+            "已安装市场事件逐条续号"
+        );
+    }
+    let seq_after = seq_before + drained.len() as u64;
+    assert_eq!(session.current_seq(), seq_after, "只安装真实市场事件");
+    assert_eq!(
+        driver.next_seq(),
+        seq_after,
+        "driver 与 Session 使用同一序号"
+    );
+    let hash_after = session.business_state_hash().expect("终态业务哈希");
+    assert!(matches!(session.save(), Err(engine::SessionError::Step(actual)) if actual == fatal));
+    assert!(
+        matches!(session.end_civil_day(), Err(engine::SessionError::Step(actual)) if actual == fatal)
+    );
+    assert_eq!(
+        driver.step_frame_equivalent(&mut session).unwrap_err(),
+        fatal
+    );
+    assert_eq!(
+        driver
+            .day_end_with_runtime_market_day(&mut session)
+            .unwrap_err(),
+        fatal.to_string()
+    );
+    assert_eq!(
+        session.business_state_hash().unwrap(),
+        hash_after,
+        "拒绝续跑不得再改业务状态"
+    );
+    assert_eq!(
+        (
+            session.tick(),
+            session.day(),
+            session.current_seq(),
+            driver.next_seq(),
+            driver.world_committed_tick()
+        ),
+        (240, 6, seq_after, seq_after, 240)
+    );
+    assert_eq!(session.civil_date(), date);
+    assert!(
+        std::sync::Arc::ptr_eq(&published, &publication.load()),
+        "终态不重复发布收盘"
+    );
     assert!(
         driver.take_drained_events().is_empty(),
-        "失败尝试不得残留清簿事件"
+        "拒绝续跑不得重复清簿事件"
     );
-    session.rollback_runtime_day_end(0, session.current_seq());
-    driver
-        .day_end_with_runtime_market_day(&mut session)
-        .expect("重试日结成功");
-    assert_eq!(session.day(), 1, "重试后 day 恰 +1");
-    let drained = driver.take_drained_events();
-    let mut canceled_ids = BTreeSet::new();
-    for e in &drained {
-        if let Event::OrderCanceled { id, .. } = e {
-            assert!(
-                canceled_ids.insert(*id),
-                "清簿撤单不重复（重试恰一次）：{id:?}"
-            );
-        }
-    }
-    driver
-        .step_frame_equivalent(&mut session)
-        .expect("日结后可续跑");
 }
 
 /// #20：第二日开盘竞价窗重新出现 AuctionTick（tick 241+）。
