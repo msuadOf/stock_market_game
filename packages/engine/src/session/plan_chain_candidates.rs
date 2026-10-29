@@ -528,22 +528,6 @@ type PreparedRoot = (
     super::decision_chain::PlanRootDiagnostics,
 );
 
-#[cfg(test)]
-mod transport_layout_tests {
-    use super::{RootMessage, RootOutcome, RootPoll};
-
-    #[test]
-    fn root_replies_keep_compact_transport_envelopes() {
-        for (name, size) in [
-            ("RootOutcome", std::mem::size_of::<RootOutcome>()),
-            ("RootMessage", std::mem::size_of::<RootMessage>()),
-            ("RootPoll", std::mem::size_of::<RootPoll>()),
-        ] {
-            assert!(size <= 128, "{name} 占 {size} 字节，超过 128 字节运输预算");
-        }
-    }
-}
-
 enum PlanChainOperation {
     ExecutionRoute(Box<PlanExecutionRoute>),
     QuotePlans(QuotePlans),
@@ -1345,5 +1329,21 @@ impl PlanChainOperationBatch {
                 _ => None,
             })
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod transport_layout_tests {
+    use super::{RootMessage, RootOutcome, RootPoll};
+
+    #[test]
+    fn root_replies_keep_compact_transport_envelopes() {
+        for (name, size) in [
+            ("RootOutcome", std::mem::size_of::<RootOutcome>()),
+            ("RootMessage", std::mem::size_of::<RootMessage>()),
+            ("RootPoll", std::mem::size_of::<RootPoll>()),
+        ] {
+            assert!(size <= 128, "{name} 占 {size} 字节，超过 128 字节运输预算");
+        }
     }
 }

@@ -376,6 +376,32 @@ fn minute_count(
         .ok_or(CalendarClockModelError::ArithmeticOverflow)
 }
 
+// 同一日内秒映射供 Session 与 runtime Context 使用，午休不消耗市场分钟。
+pub(crate) fn intraday_observation_second(
+    day_tick: u64,
+    ticks_per_day: u64,
+    auction_ticks: u64,
+    closing_auction_ticks: u64,
+) -> u32 {
+    let continuous = ticks_per_day - auction_ticks - closing_auction_ticks;
+    let second = if day_tick < auction_ticks {
+        9 * 3600 + 15 * 60 + day_tick * 900 / auction_ticks
+    } else if closing_auction_ticks > 0 && day_tick >= ticks_per_day - closing_auction_ticks {
+        14 * 3600
+            + 57 * 60
+            + (day_tick - (ticks_per_day - closing_auction_ticks)) * 180 / closing_auction_ticks
+    } else {
+        let duration = if closing_auction_ticks > 0 {
+            14_220
+        } else {
+            14_400
+        };
+        let seconds = (day_tick - auction_ticks) * duration / continuous;
+        9 * 3600 + 30 * 60 + seconds + if seconds >= 7200 { 5400 } else { 0 }
+    };
+    u32::try_from(second).expect("validated intraday seconds")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -856,30 +882,4 @@ mod tests {
         assert!(d.stocks().values().all(|s| s.sessions_before_date() == 2));
         assert!(d.shared_trading_on_date());
     }
-}
-
-// 同一日内秒映射供 Session 与 runtime Context 使用，午休不消耗市场分钟。
-pub(crate) fn intraday_observation_second(
-    day_tick: u64,
-    ticks_per_day: u64,
-    auction_ticks: u64,
-    closing_auction_ticks: u64,
-) -> u32 {
-    let continuous = ticks_per_day - auction_ticks - closing_auction_ticks;
-    let second = if day_tick < auction_ticks {
-        9 * 3600 + 15 * 60 + day_tick * 900 / auction_ticks
-    } else if closing_auction_ticks > 0 && day_tick >= ticks_per_day - closing_auction_ticks {
-        14 * 3600
-            + 57 * 60
-            + (day_tick - (ticks_per_day - closing_auction_ticks)) * 180 / closing_auction_ticks
-    } else {
-        let duration = if closing_auction_ticks > 0 {
-            14_220
-        } else {
-            14_400
-        };
-        let seconds = (day_tick - auction_ticks) * duration / continuous;
-        9 * 3600 + 30 * 60 + seconds + if seconds >= 7200 { 5400 } else { 0 }
-    };
-    u32::try_from(second).expect("validated intraday seconds")
 }

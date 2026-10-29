@@ -290,6 +290,18 @@ impl GameSession {
     }
 }
 
+/// D5 attention：runtime 镜像形态的价格带兜底（market 缺位时的观察面
+/// 近似——测试与决策的笼子断言面不涉及；desk 广播带精确值待后续投影）。
+fn bound_fallback(last: Option<Money>) -> Money {
+    let last = last.unwrap_or(Money::from_cents(1));
+    Money::from_cents((last.cents() * 11 / 10).max(1))
+}
+
+fn bound_fallback_floor(last: Option<Money>) -> Money {
+    let last = last.unwrap_or(Money::from_cents(1));
+    Money::from_cents((last.cents() * 9 / 10).max(1))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -373,16 +385,4 @@ mod tests {
             ));
         }
     }
-}
-
-/// D5 attention：runtime 镜像形态的价格带兜底（market 缺位时的观察面
-/// 近似——测试与决策的笼子断言面不涉及；desk 广播带精确值待后续投影）。
-fn bound_fallback(last: Option<Money>) -> Money {
-    let last = last.unwrap_or(Money::from_cents(1));
-    Money::from_cents((last.cents() * 11 / 10).max(1))
-}
-
-fn bound_fallback_floor(last: Option<Money>) -> Money {
-    let last = last.unwrap_or(Money::from_cents(1));
-    Money::from_cents((last.cents() * 9 / 10).max(1))
 }

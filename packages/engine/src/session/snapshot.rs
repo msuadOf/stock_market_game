@@ -303,6 +303,58 @@ impl GameSession {
     }
 }
 
+/// D5 attention：镜像公开投影（desk 簿镜像+相位/截点门禁——与 desk
+/// build_public 的公开面同式：CallAuction 公开簿空、ClosingAuction 揭示
+/// 截点前老单、PreOpen/Continuous 全簿）。
+pub(super) fn project_mirror_public_book(
+    phase: crate::TradingPhase,
+    mirror: &super::DeskBookMirror,
+) -> pipeline::phase::PublicBookProjection {
+    use std::collections::BTreeMap;
+    let cutoff = mirror.public_cutoff_serial;
+    #[allow(clippy::type_complexity)]
+    let visible: Box<
+        dyn Iterator<
+            Item = &(
+                crate::AccountId,
+                crate::Side,
+                crate::Money,
+                u32,
+                u64,
+                i64,
+                u32,
+            ),
+        >,
+    > = match phase {
+        crate::TradingPhase::CallAuction => Box::new(std::iter::empty()),
+        crate::TradingPhase::ClosingAuction => {
+            Box::new(mirror.orders.iter().filter(|(_, _, _, _, serial, _, _)| {
+                crate::runtime::group::desk_order_serial(*serial) < cutoff
+            }))
+        }
+        crate::TradingPhase::PreOpen | crate::TradingPhase::Continuous => {
+            Box::new(mirror.orders.iter())
+        }
+    };
+    let mut bids: BTreeMap<crate::Money, u64> = BTreeMap::new();
+    let mut asks: BTreeMap<crate::Money, u64> = BTreeMap::new();
+    for (_, side, price, qty, _, _, _) in visible {
+        let level = match side {
+            crate::Side::Buy => &mut bids,
+            crate::Side::Sell => &mut asks,
+        };
+        *level.entry(*price).or_default() += u64::from(*qty);
+    }
+    let bids: Vec<(crate::Money, u64)> = bids.into_iter().rev().collect();
+    let asks: Vec<(crate::Money, u64)> = asks.into_iter().collect();
+    pipeline::phase::PublicBookProjection {
+        best_bid: bids.first().map(|(price, _)| *price),
+        best_ask: asks.first().map(|(price, _)| *price),
+        bids,
+        asks,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -547,57 +599,5 @@ mod tests {
                 &config,
             );
         }
-    }
-}
-
-/// D5 attention：镜像公开投影（desk 簿镜像+相位/截点门禁——与 desk
-/// build_public 的公开面同式：CallAuction 公开簿空、ClosingAuction 揭示
-/// 截点前老单、PreOpen/Continuous 全簿）。
-pub(super) fn project_mirror_public_book(
-    phase: crate::TradingPhase,
-    mirror: &super::DeskBookMirror,
-) -> pipeline::phase::PublicBookProjection {
-    use std::collections::BTreeMap;
-    let cutoff = mirror.public_cutoff_serial;
-    #[allow(clippy::type_complexity)]
-    let visible: Box<
-        dyn Iterator<
-            Item = &(
-                crate::AccountId,
-                crate::Side,
-                crate::Money,
-                u32,
-                u64,
-                i64,
-                u32,
-            ),
-        >,
-    > = match phase {
-        crate::TradingPhase::CallAuction => Box::new(std::iter::empty()),
-        crate::TradingPhase::ClosingAuction => {
-            Box::new(mirror.orders.iter().filter(|(_, _, _, _, serial, _, _)| {
-                crate::runtime::group::desk_order_serial(*serial) < cutoff
-            }))
-        }
-        crate::TradingPhase::PreOpen | crate::TradingPhase::Continuous => {
-            Box::new(mirror.orders.iter())
-        }
-    };
-    let mut bids: BTreeMap<crate::Money, u64> = BTreeMap::new();
-    let mut asks: BTreeMap<crate::Money, u64> = BTreeMap::new();
-    for (_, side, price, qty, _, _, _) in visible {
-        let level = match side {
-            crate::Side::Buy => &mut bids,
-            crate::Side::Sell => &mut asks,
-        };
-        *level.entry(*price).or_default() += u64::from(*qty);
-    }
-    let bids: Vec<(crate::Money, u64)> = bids.into_iter().rev().collect();
-    let asks: Vec<(crate::Money, u64)> = asks.into_iter().collect();
-    pipeline::phase::PublicBookProjection {
-        best_bid: bids.first().map(|(price, _)| *price),
-        best_ask: asks.first().map(|(price, _)| *price),
-        bids,
-        asks,
     }
 }
