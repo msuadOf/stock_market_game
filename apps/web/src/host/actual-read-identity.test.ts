@@ -1,4 +1,4 @@
-import { bootstrapLegacy, createLegacyHost, LegacyWorker } from "./worker-host-legacy.test-support.ts";
+import { bootstrapLegacy, createLegacyHost, drainLegacyPorts, LegacyWorker } from "./worker-host-legacy.test-support.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { prepareCatalogResolver } from "./catalog-resolver.ts";
@@ -63,21 +63,24 @@ test("真实WorkerHost只读请求按restore后实际子集发原StockId并拒�
       stockCatalog: identity.stockCatalog, companyCatalog: identity.companyCatalog });
     host = await creating;
     const beforeIntent = host.submitIntent({ PlaceMarket: { code: "600101", side: "Buy", qty: 100 } });
-    await Promise.resolve();
+    await drainLegacyPorts();
     const beforeIntentRequest = intake.sent.at(-1)!;
     assert.deepEqual(beforeIntentRequest.intent, { PlaceMarket: { code: 0, side: "Buy", qty: 100 } });
     intake.emit({ type: "enqueued", generation: 1, requestId: beforeIntentRequest.requestId });
     await beforeIntent;
     const first = host.queryStockHistory("600101");
+    await drainLegacyPorts();
     const firstRequest = worker.sent.at(-1)!;
     assert.equal(firstRequest.code, 0);
     worker.emit({ type: "stockHistory", generation: 1, requestId: firstRequest.requestId,
       data: { code: 0, daily_candles: [], active_daily_candle: null } });
     assert.equal((await first).code, "600101");
     const delayed = host.queryStockHistory("600101");
+    await drainLegacyPorts();
     const delayedRequest = worker.sent.at(-1)!;
     const oldRejected = assert.rejects(delayed, /过期/);
     const loading = host.load(currentSaveFixture());
+    await drainLegacyPorts();
     const request = worker.sent.at(-1)!;
     const stockCatalog = [{ id: 0, code: "002156" }, { id: 1, code: "600101" }];
     worker.emit({ type: "ingress", generation: 2, shared: true, token: 2 });
@@ -89,6 +92,7 @@ test("真实WorkerHost只读请求按restore后实际子集发原StockId并拒�
       data: { code: 0, daily_candles: [], active_daily_candle: null } });
     await oldRejected;
     const second = host.queryStockHistory("600101");
+    await drainLegacyPorts();
     const secondRequest = worker.sent.at(-1)!;
     assert.equal(secondRequest.generation, 2);
     assert.equal(secondRequest.code, 1);
@@ -96,7 +100,7 @@ test("真实WorkerHost只读请求按restore后实际子集发原StockId并拒�
       data: { code: 1, daily_candles: [], active_daily_candle: null } });
     assert.equal((await second).code, "600101");
     const afterIntent = host.submitIntent({ Cancel: { code: "600101", id: 7 } });
-    await Promise.resolve();
+    await drainLegacyPorts();
     const afterIntentRequest = intake.sent.at(-1)!;
     assert.deepEqual(afterIntentRequest.intent, { Cancel: { code: 1, id: 7 } });
     assert.equal(afterIntentRequest.generation, 2);

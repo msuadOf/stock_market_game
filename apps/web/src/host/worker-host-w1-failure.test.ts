@@ -13,11 +13,14 @@ for (const phase of ["initializing", "paused", "running", "stopped"] as const) {
         if (f.outcome.status !== "fulfilled") throw new Error("fixture 初始化失败");
         if (phase === "running" || phase === "stopped") {
           const starting = f.outcome.host.start(() => true);
+          await drain();
           const request = f.workers[0].sent.at(-1)!;
           f.workers[0].emit({ type: "started", generation: 1, requestId: request.requestId }); await starting;
         }
         if (phase === "stopped") {
-          const stopping = f.outcome.host.stop(); const request = f.workers[0].sent.at(-1)!;
+          const stopping = f.outcome.host.stop();
+          await drain();
+          const request = f.workers[0].sent.at(-1)!;
           f.workers[0].emit({ type: "stopped", generation: 1, requestId: request.requestId }); await stopping;
         }
       }
@@ -67,6 +70,7 @@ test("W1 native engine ErrorEvent 保留 WASM_WORKER_SCRIPT 壳与原 cause", { 
     if (f.outcome.status !== "fulfilled") throw new Error("fixture 初始化失败");
     const failures: unknown[] = [];
     const starting = f.outcome.host.start(() => true, (failure) => { failures.push(failure); });
+    await drain();
     const request = f.workers[0].sent.at(-1)!;
     f.workers[0].emit({ type: "started", generation: 1, requestId: request.requestId }); await starting;
     const original = new Error("原始脚本异常", { cause: { marker: "保真" } });

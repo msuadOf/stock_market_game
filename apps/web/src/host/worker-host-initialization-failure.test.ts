@@ -28,6 +28,7 @@ test("初始化prefix结构化failure拒绝时保留完整HostFailure并清理Wo
       assert.equal((error as Error & { cause?: unknown }).cause, (error as Error & { failure?: HostFailure }).failure);
       return true;
     });
+    f.clock.advance(2001);
     await drain();
     assert.equal(f.workers[0].sent.some((item) => item.type === "create" || item.type === "restoreInitial"), false, "prefix failure 后不得发生首建或初始恢复");
     assert.equal(f.readOutcome().status, "rejected", "初始化失败不得解析为host");
@@ -63,6 +64,8 @@ test("restore后段结构化failure发生在ready之后仍拒绝host并完整清
       assert.equal(initializationError.cause, initializationError.failure);
       return true;
     });
+    f.clock.advance(2001);
+    await drain();
     assert.equal(f.readOutcome().status, "rejected", "同代baseline尚未完成时不得解析host");
     assert.equal(f.workers[0].terminations, 1);
     assert.equal(f.workers[0].listenerCount(), 0);

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { registerHooks } from "node:module";
 import test from "node:test";
+import { WorkerTransportFixture } from "./worker-transport.test-support.ts";
 
 test("生产 Worker init 把原输入交唯一initializer，配置前create拒绝且ready晚于确认", { timeout: 10000 }, async () => {
   const key = Symbol.for("stock-game-worker-facade-init-test");
@@ -13,8 +14,7 @@ test("生产 Worker init 把原输入交唯一initializer，配置前create拒�
   const substrate = { memory, module: new WebAssembly.Module(new Uint8Array([0,97,115,109,1,0,0,0])), diagnostics: false };
   const saved = new Map<PropertyKey, PropertyDescriptor | undefined>();
   function replace(name: PropertyKey, value: unknown) { saved.set(name, Object.getOwnPropertyDescriptor(globalThis, name)); Object.defineProperty(globalThis, name, { value, configurable: true }); }
-  const channels: MessageChannel[] = [], OriginalChannel = MessageChannel;
-  replace("MessageChannel", class extends OriginalChannel { constructor() { super(); channels.push(this); } });
+  const transport = new WorkerTransportFixture();
   const state = { initialized, created, setup, substrate, load: async (): Promise<unknown> => { throw new Error("load 未接线"); }, async initialize(input: unknown) { initialized.push(input); await this.load(); await wait; configured = true; return substrate; }, requireConfigured() { if (!configured) throw new Error("fixture not configured"); return { setup, substrate, initialArchive: null }; }, dispose() {} };
   replace(key, state);
   replace("self", { crossOriginIsolated: true, postMessage(message: Record<string, unknown>) { posted.push(message); }, addEventListener(_type: string, callback: typeof handler) { handler = callback; } });
@@ -32,18 +32,30 @@ test("生产 Worker init 把原输入交唯一initializer，配置前create拒�
       return loaded;
     },
   });
-  const channel = new MessageChannel();
   try {
     const workerUrl = "./wasm-worker.ts?facade-init";
     await import(workerUrl);
-    const input = { type: "init", setup, controlPort: channel.port2 };
-    handler({ data: input }); await new Promise((resolve) => setImmediate(resolve));
+    if (handler === undefined) throw new Error("WASM Worker bootstrap listener 未安装");
+    transport.bindEngineTransport(handler as (event: MessageEvent<unknown>) => void, 1);
+    const workerPort = transport.channels[0]!.port2 as unknown as MessagePort;
+    const originalPost = workerPort.postMessage.bind(workerPort);
+    workerPort.postMessage = (message: unknown) => { posted.push(message as Record<string, unknown>); originalPost(message); };
+    const ownerBusinessPort = transport.channels[0]!.port1 as unknown as MessagePort;
+    const send = async (message: unknown) => {
+      transport.dispatch(ownerBusinessPort, message);
+      for (let count = 0; count < 8; count++) await new Promise((resolve) => setImmediate(resolve));
+    };
+    const input = { type: "init", setup, controlPort: transport.channels[1]!.port2 as unknown as MessagePort };
+    await send({ type: "init", setup });
+    for (let count = 0; count < 8; count++) await new Promise((resolve) => setImmediate(resolve));
     assert.deepEqual(initialized, [input]); assert.equal(posted.some((item) => item.type === "ready"), false);
-    handler({ data: { type: "create", setup: { marker: "wrong-second-copy" }, seed: 1n } });
+    await send({ type: "create", setup: { marker: "wrong-second-copy" }, seed: 1n });
+    for (let count = 0; count < 8; count++) await new Promise((resolve) => setImmediate(resolve));
     assert.equal(created.length, 0); assert.equal(posted.at(-1)?.type, "failure");
-    posted.length = 0; release(); await new Promise((resolve) => setImmediate(resolve));
+    posted.length = 0; release(); for (let count = 0; count < 8; count++) await new Promise((resolve) => setImmediate(resolve));
     assert.deepEqual(posted, [{ type: "ready" }]);
-    handler({ data: { type: "create", seed: 1n } });
+    await send({ type: "create", seed: 1n });
+    for (let count = 0; count < 8; count++) await new Promise((resolve) => setImmediate(resolve));
     assert.deepEqual(created, [setup]);
-  } finally { release(); hooks.deregister(); for (const current of channels) { current.port1.close(); current.port2.close(); } for (const [name, descriptor] of saved) { if (descriptor === undefined) Reflect.deleteProperty(globalThis, name); else Object.defineProperty(globalThis, name, descriptor); } }
+  } finally { release(); transport.close(); hooks.deregister(); for (const [name, descriptor] of saved) { if (descriptor === undefined) Reflect.deleteProperty(globalThis, name); else Object.defineProperty(globalThis, name, descriptor); } }
 });

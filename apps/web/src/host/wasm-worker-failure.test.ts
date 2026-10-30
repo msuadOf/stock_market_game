@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import test, { after } from "node:test";
+import { setImmediate } from "node:timers/promises";
 import { parseWorkerFailure } from "./worker-host.ts";
 import { classifyWasmFailure, describeWasmFailure } from "./wasm-failure.ts";
+import { WorkerTransportFixture } from "./worker-transport.test-support.ts";
 
 const posted: unknown[] = [];
 let remainingPostFailures = 0;
@@ -18,10 +20,13 @@ globalThis.MessageChannel = class extends originalMessageChannel {
   }
 };
 after(() => {
+  transport.close();
   for (const channel of channels) {
     channel.port1.close();
     channel.port2.close();
   }
+  if (originalSelf === undefined) Reflect.deleteProperty(globalThis, "self");
+  else Object.defineProperty(globalThis, "self", originalSelf);
 });
 Object.defineProperty(globalThis, "self", {
   configurable: true,
@@ -44,10 +49,38 @@ const { isE2EStepMode, postFailure } = await (async () => {
     return await import("./wasm-worker.ts");
   } finally {
     globalThis.MessageChannel = originalMessageChannel;
-    if (originalSelf === undefined) delete (globalThis as { self?: unknown }).self;
+    if (originalSelf === undefined) Reflect.deleteProperty(globalThis, "self");
     else Object.defineProperty(globalThis, "self", originalSelf);
   }
 })();
+
+const transport = new WorkerTransportFixture();
+if (messageListener === null) throw new Error("WASM Worker bootstrap listener 未安装");
+transport.bindEngineTransport(messageListener as (event: MessageEvent<unknown>) => void, 1);
+const workerBusinessPort = transport.channels[0]!.port2 as unknown as MessagePort;
+const originalBusinessPost = workerBusinessPort.postMessage.bind(workerBusinessPort);
+workerBusinessPort.postMessage = (message: unknown) => {
+  if (remainingPostFailures > 0) {
+    remainingPostFailures -= 1;
+    throw new Error(`port failure ${remainingPostFailures}`);
+  }
+  posted.push(structuredClone(message));
+  originalBusinessPost(message);
+};
+const ownerBusinessPort = transport.channels[0]!.port1 as unknown as MessagePort;
+async function sendWorkerRequest(message: unknown) {
+  transport.dispatch(ownerBusinessPort, message);
+  for (let count = 0; count < 8; count++) await setImmediate();
+}
+const sendRawWorkerRequest = (event: { data: unknown }) => transport.dispatchRaw(workerBusinessPort, event.data);
+Object.defineProperty(globalThis, "self", {
+  configurable: true,
+  value: {
+    postMessage() { throw new Error("WASM Worker business output bypassed dataPort"); },
+    get reportError() { return reportErrorEnabled ? (error: unknown) => { reportedErrors.push(error); } : undefined; },
+    addEventListener(_type: string, listener: typeof messageListener) { messageListener = listener; },
+  },
+});
 
 test("WASM Worker enables controlled stepping only for an explicit E2E build mode", () => {
   assert.equal(isE2EStepMode("e2e"), true);
@@ -56,9 +89,9 @@ test("WASM Worker enables controlled stepping only for an explicit E2E build mod
   assert.equal(isE2EStepMode({ MODE: "e2e" }), false);
 });
 
-test("Worker rejects stale save generation before looking up the current WASM candidate", () => {
+test("Worker rejects stale save generation before looking up the current WASM candidate", async () => {
   posted.length = 0;
-  messageListener!({ data: { type: "save", generation: 1, requestId: 99, candidate: { seq: 42, settledDate: "2030-01-05" } } } as MessageEvent);
+  await sendWorkerRequest({ type: "save", generation: 1, requestId: 99, candidate: { seq: 42, settledDate: "2030-01-05" } });
   assert.deepEqual(posted, [{ type: "operationError", requestId: 99, generation: 1, message: "Worker 请求属于已过期会话" }]);
 });
 
@@ -291,7 +324,7 @@ test("WASM Worker routes a structured request failure through HostFailure", () =
   });
 
   assert.notEqual(messageListener, null);
-  messageListener!({ data: request } as unknown as MessageEvent<Record<string, unknown> & { type: string }>);
+  sendRawWorkerRequest({ data: request } as unknown as MessageEvent<Record<string, unknown> & { type: string }>);
 
   assert.deepEqual(posted, [{
     type: "failure",
@@ -380,7 +413,7 @@ test("listener 的 getter 故障仍送出 failure 而不产生二次报告异常
     get() { throw new Error("context getter exploded"); },
   });
   const request = Object.defineProperty({ type: "speedMetrics", requestId: 29 }, "generation", { get() { throw error; } });
-  messageListener!({ data: request } as unknown as MessageEvent<Record<string, unknown> & { type: string }>);
+  sendRawWorkerRequest({ data: request } as unknown as MessageEvent<Record<string, unknown> & { type: string }>);
   const failure = posted[0] as Record<string, unknown>;
   assert.equal(failure.code, "WASM_WORKER_PROTOCOL");
   assert.match(String(failure.message), /context getter exploded/);
@@ -406,10 +439,10 @@ test("缺少 reportError 的旧环境通过 microtask 显式抛出完整故障�
   assert.deepEqual(posted, []);
 });
 
-test("operationError 发送失败改送 failure，保留请求原错误与传输原因", () => {
+test("operationError 发送失败改送 failure，保留请求原错误与传输原因", async () => {
   posted.length = 0;
   remainingPostFailures = 1;
-  messageListener!({ data: { type: "save", generation: 1, requestId: 42 } } as MessageEvent);
+  await sendWorkerRequest({ type: "save", generation: 1, requestId: 42 });
   assert.deepEqual(posted, [{
     type: "failure", generation: 0, code: "WASM_WORKER_PROTOCOL", where: "wasm-worker.save",
     message: "发送 operationError 失败：port failure 0；原始错误：Worker 请求属于已过期会话",
@@ -459,7 +492,7 @@ test("非结构化 Error 与 object 的核心 getter 只读一次，listener 复
           if (generationReads === 1) throw error;
           return 0;
         } });
-        messageListener!({ data: request } as unknown as MessageEvent<Record<string, unknown> & { type: string }>);
+        sendRawWorkerRequest({ data: request } as unknown as MessageEvent<Record<string, unknown> & { type: string }>);
       } else postFailure("wasm-worker.step", error);
       assert.deepEqual(reads, { code: 1, message: 1 }, `listener=${listener} nativeError=${nativeError}`);
       assert.match(String((posted[0] as Record<string, unknown>).message), /原始故障/);
@@ -589,7 +622,7 @@ test("畸形复杂 message 仍保留已读 primitive code/where，operationError
         if (++generationReads === 1) throw error;
         return 0;
       } });
-      messageListener!({ data: request } as unknown as MessageEvent<Record<string, unknown> & { type: string }>);
+      sendRawWorkerRequest({ data: request } as unknown as MessageEvent<Record<string, unknown> & { type: string }>);
     } else postFailure("wasm-worker.step", error);
     const failure = posted[0] as Record<string, unknown>;
     assert.match(String(failure.message), /KNOWN.*bindings.initialize/);

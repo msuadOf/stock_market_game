@@ -1,5 +1,5 @@
 import { catalogWorkerFixture } from "./catalog-test-fixture.ts";
-import { bootstrapLegacy, createLegacyHost, LegacyWorker } from "./worker-host-legacy.test-support.ts";
+import { bootstrapLegacy, createLegacyHost, drainLegacyPorts, LegacyWorker } from "./worker-host-legacy.test-support.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createWorkerHost, refreshWorkerBaseline, restoreWorkerSlot } from "./worker-host.ts";
@@ -29,10 +29,12 @@ for (const operation of ["initial", "refresh", "restore"] as const) {
       host = await creating;
       const updates: HostUpdate[] = [];
       const starting = host.start((update) => { updates.push(update); });
+      await drainLegacyPorts();
       worker.emit({ type: "started", generation: 1, requestId: worker.sent.at(-1)!.requestId });
       await starting;
       if (operation !== "initial") {
         const pending = operation === "restore" ? host.load(currentSaveFixture()) : host.refreshBaseline();
+        await drainLegacyPorts();
         const requestId = worker.sent.at(-1)!.requestId;
         worker.emit(operation === "restore"
           ? { ...catalogWorkerFixture(snapshot(1, 1)), type: "restored", generation: 1, nextGeneration: 2, requestId, snapshot: snapshot(1, 1), civilDate: "2031-02-03" }

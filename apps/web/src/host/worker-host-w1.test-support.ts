@@ -40,6 +40,9 @@ export class WorkerHandle extends EventTarget {
   dataPort?: MessagePort;
   instanceId?: number;
   onPost?: (value: Record<string, unknown>, transfer: unknown[]) => void;
+  onWorkerPost?: (value: Record<string, unknown>, transfer: unknown[]) => void;
+  onRawEmit?: (value: unknown) => void;
+  receiverListenerCount?: () => number;
   override addEventListener(type: string, callback: EventListenerOrEventListenerObject | null, options?: AddEventListenerOptions | boolean) {
     if (callback !== null) {
       let listeners = this.listeners.get(type);
@@ -56,12 +59,16 @@ export class WorkerHandle extends EventTarget {
     this.sent.push(value); this.transfers.push(transfer);
     if (value.controlPort instanceof MessagePort) this.controlPort = value.controlPort;
     if (value.dataPort instanceof MessagePort) this.dataPort = value.dataPort;
-    this.onPost?.(value, transfer);
+    this.onWorkerPost?.(value, transfer);
   }
   terminate() { this.terminations++; }
   emit(value: unknown) { this.dispatchEvent(new MessageEvent("message", { data: value })); }
+  emitRaw(value: unknown) {
+    if (this.onRawEmit === undefined) throw new Error("fixture raw response 缺少 dataPort 对端");
+    this.onRawEmit(value);
+  }
   error(error: unknown, message = "脚本失败") { this.dispatchEvent(Object.assign(new Event("error"), { error, message })); }
-  listenerCount() { return [...this.listeners.values()].reduce((count, listeners) => count + listeners.size, 0); }
+  listenerCount() { return [...this.listeners.values()].reduce((count, listeners) => count + listeners.size, 0) + (this.receiverListenerCount?.() ?? 0); }
 }
 export type Host = Awaited<ReturnType<typeof createWorkerHost>>;
 export type Outcome = { status: "pending" } | { status: "fulfilled"; host: Host } | { status: "rejected"; error: unknown };
@@ -76,7 +83,9 @@ export function fixture(options: { initError?: unknown; initAfterMemoryFailure?:
     Object.defineProperty(globalThis, name, { configurable: true, writable: true, value });
   }
   const clock = new Clock();
+  const workerQueueMicrotask = globalThis.queueMicrotask.bind(globalThis);
   const workers: WorkerHandle[] = [], controllers: WorkerHandle[] = [], channels: NodeMessageChannel[] = [], portCloses = new Map<object, number>();
+  const portListeners = new Map<object, Set<EventListenerOrEventListenerObject>>();
   let channelConstructions = 0;
   const failures: HostFailure[] = [];
   const module = new WebAssembly.Module(new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0]));
@@ -96,7 +105,20 @@ export function fixture(options: { initError?: unknown; initAfterMemoryFailure?:
         const data = (event as MessageEvent).data;
         if (data.type === "facadeEngineSubstrate") configuredSubstrate = data as typeof substrate;
       });
-      for (const port of [this.port1, this.port2]) {
+      for (const rawPort of [this.port1, this.port2]) {
+        const port = rawPort as unknown as MessagePort;
+        // fixture 的被动 substrate 观察者已先登记；这里只统计产品随后安装的 message listener。
+        const listeners = new Set<EventListenerOrEventListenerObject>();
+        portListeners.set(port, listeners);
+        const add = port.addEventListener.bind(port), remove = port.removeEventListener.bind(port);
+        port.addEventListener = (type, callback, options) => {
+          if (type === "message" && callback !== null) listeners.add(callback);
+          add(type, callback, options);
+        };
+        port.removeEventListener = (type, callback, options) => {
+          if (type === "message" && callback !== null) listeners.delete(callback);
+          remove(type, callback, options);
+        };
         const close = port.close.bind(port);
         port.close = () => { portCloses.set(port, (portCloses.get(port) ?? 0) + 1); close(); };
       }
@@ -110,7 +132,27 @@ export function fixture(options: { initError?: unknown; initAfterMemoryFailure?:
       if (this.kind === "engine" && options.engineConstructError !== undefined) throw options.engineConstructError;
       if (this.kind === "child" && options.childConstructError !== undefined) throw options.childConstructError;
       workers.push(this);
-      this.onPost = (value) => {
+      this.onPost = (request) => {
+        if (request.type === "init") {
+          if (options.initBeforeMemoryFailure !== undefined) {
+            this.dataPort!.postMessage({ type: "failure", generation: 0, code: "PACKAGE_FIXTURE", where: "fixture.package", message: String(options.initBeforeMemoryFailure), engineQuiescent: "initialization-failed", memoryAllocation: "not-allocated" });
+            this.emit({ type: "engineLifecycle", instanceId: this.instanceId, state: "unallocated" });
+            return;
+          }
+          if (options.initError !== undefined) { this.error(options.initError); return; }
+          this.controlPort!.postMessage(options.initAfterMemoryFailure === undefined ? { type: "facadeEngineSubstrate", ...substrate } : { type: "facadeEngineMemory", allocationId: 1, memory });
+        }
+        if (request.type === "shutdown") workerQueueMicrotask(() => {
+          this.dataPort!.postMessage({ type: "shutdownCompleted", requestId: request.requestId, generation: request.generation, report: { kind: "success", handle: 7, runtime: null } });
+          this.emit({ type: "engineLifecycle", instanceId: this.instanceId, state: "quiescent" });
+        });
+        if (request.type === "quiesceIngress") workerQueueMicrotask(() => {
+          this.dataPort!.postMessage({ type: "ingressQuiescent", requestId: request.requestId, generation: request.generation });
+          this.emit({ type: "ingressLifecycle", instanceId: this.instanceId, state: "quiescent" });
+        });
+        if (request.type === "create") workerQueueMicrotask(() => this.dataPort!.postMessage({ type: "created", generation: 1, capabilities }));
+      };
+      this.onWorkerPost = (value) => {
         // standalone supervisor 的既有 bootstrapEngine 控制项仍使用其真实公开入口。
         if (value.type === "init" && this.dataPort === undefined && this.controlPort !== undefined) {
           this.controlPort.addEventListener("message", (event) => {
@@ -122,6 +164,10 @@ export function fixture(options: { initError?: unknown; initAfterMemoryFailure?:
         if (value.type === "bindEngineTransport") {
           this.controlPort = value.controlPort as MessagePort;
           this.dataPort = value.dataPort as MessagePort;
+          const businessChannel = channels.find((channel) => channel.port2 === this.dataPort);
+          if (businessChannel === undefined) throw new Error("fixture 找不到 engine business port 对端");
+          this.receiverListenerCount = () => portListeners.get(businessChannel.port1)!.size;
+          this.onRawEmit = (message) => businessChannel.port1.dispatchEvent(new MessageEvent("message", { data: message }));
           this.instanceId = Number(value.instanceId);
           this.controlPort.addEventListener("message", (event) => {
             const request = event.data as { type?: string };
@@ -137,35 +183,22 @@ export function fixture(options: { initError?: unknown; initAfterMemoryFailure?:
             const request = event.data as Record<string, unknown>;
             this.sent.push(request);
             this.transfers.push([]);
-            if (request.type === "init") {
-              options.beforeInitPost?.(clock);
-              if (options.initBeforeMemoryFailure !== undefined) {
-                this.dataPort!.postMessage({ type: "failure", generation: 0, code: "PACKAGE_FIXTURE", where: "fixture.package", message: String(options.initBeforeMemoryFailure), engineQuiescent: "initialization-failed", memoryAllocation: "not-allocated" });
-                this.emit({ type: "engineLifecycle", instanceId: this.instanceId, state: "unallocated" });
-                return;
-              }
-              if (options.initError !== undefined) { this.error(options.initError); return; }
-              this.controlPort!.postMessage(options.initAfterMemoryFailure === undefined ? { type: "facadeEngineSubstrate", ...substrate } : { type: "facadeEngineMemory", allocationId: 1, memory });
-            }
-            if (request.type === "shutdown") queueMicrotask(() => {
-              this.dataPort!.postMessage({ type: "shutdownCompleted", requestId: request.requestId, generation: request.generation, report: { kind: "success", handle: 7, runtime: null } });
-              this.emit({ type: "engineLifecycle", instanceId: this.instanceId, state: "quiescent" });
-            });
-            if (request.type === "quiesceIngress") queueMicrotask(() => this.dataPort!.postMessage({ type: "ingressQuiescent", requestId: request.requestId, generation: request.generation }));
-            if (request.type === "create") queueMicrotask(() => this.dataPort!.postMessage({ type: "created", generation: 1, capabilities }));
+            this.onPost?.(request, []);
           });
           this.dataPort.start();
         }
         if (value.type === "bindIngressTransport") {
           this.dataPort = value.dataPort as MessagePort;
+          const businessChannel = channels.find((channel) => channel.port2 === this.dataPort);
+          if (businessChannel === undefined) throw new Error("fixture 找不到 ingress business port 对端");
+          this.receiverListenerCount = () => portListeners.get(businessChannel.port1)!.size;
+          this.onRawEmit = (message) => businessChannel.port1.dispatchEvent(new MessageEvent("message", { data: message }));
           this.instanceId = Number(value.instanceId);
           this.dataPort.addEventListener("message", (event) => {
             const request = event.data as Record<string, unknown>;
             this.sent.push(request);
-            if (request.type === "quiesceIngress") queueMicrotask(() => {
-              this.dataPort!.postMessage({ type: "ingressQuiescent", requestId: request.requestId, generation: request.generation });
-              this.emit({ type: "ingressLifecycle", instanceId: this.instanceId, state: "quiescent" });
-            });
+            this.transfers.push([]);
+            this.onPost?.(request, []);
           });
           this.dataPort.start();
         }

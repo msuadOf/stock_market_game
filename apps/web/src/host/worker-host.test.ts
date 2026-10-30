@@ -101,10 +101,14 @@ for (const scenario of ["consumerReject", "initializationTimeout", "staleEnqueue
       await bootstrapLegacy(engine, false);
       if (scenario === "initializationTimeout") context.mock.timers.tick(1);
       engine.emit({ type: "ingress", generation: 1, token: 42, shared: true });
+      await drainLegacyPorts();
       const intake = IntakeWorker.instances[1];
       if (scenario === "initializationTimeout") {
         const rejected = assert.rejects(creating, /初始化超时/);
         context.mock.timers.tick(9999);
+        await drainLegacyPorts();
+        context.mock.timers.tick(2001);
+        await drainLegacyPorts();
         await rejected;
         assert.equal(engine.terminations, 1);
         assert.equal(intake.terminations, 1);
@@ -121,17 +125,20 @@ for (const scenario of ["consumerReject", "initializationTimeout", "staleEnqueue
       if (scenario === "consumerReject") {
         let accept = true;
         const starting = host.start(() => accept);
+        await drainLegacyPorts();
         engine.emit({ type: "started", generation: 1, requestId: engine.sent.at(-1)!.requestId });
         await starting;
         accept = false;
         engine.emit({ type: "protocol", generation: 1, deliveryId: 1, update: tickBatch([frame(1, 0, [0])], protocolSnapshot(1, 1)) });
       } else {
+        await drainLegacyPorts();
         const request = intake.sent.at(-1)!;
-        intake.emit({ type: "enqueued", generation: 1, requestId: request.requestId });
+        intake.emitRaw({ type: "enqueued", generation: 1, requestId: request.requestId });
         if (scenario === "disposedEnqueued") await host.dispose();
-        else engine.emit({ ...catalogWorkerFixture(protocolSnapshot(1, 1)), type: "baseline", civilDate: "2030-01-02", generation: 2, snapshot: protocolSnapshot(1, 1) });
+        else engine.emitRaw({ ...catalogWorkerFixture(protocolSnapshot(1, 1)), type: "baseline", civilDate: "2030-01-02", generation: 2, snapshot: protocolSnapshot(1, 1) });
       }
       if (scenario === "consumerReject") {
+        await drainLegacyPorts();
         assert.equal(intake.terminations, 1);
       }
       await rejected;
@@ -179,6 +186,7 @@ for (const operation of ["baseline", "refreshBaseline", "load"] as const) {
       let accept = true;
       const failures: unknown[] = [];
       const starting = host.start(() => accept, (failure) => { failures.push(failure); });
+      await drainLegacyPorts();
       worker.emit({ type: "started", generation: 1, requestId: worker.sent.at(-1)!.requestId });
       await starting;
       accept = false;
@@ -188,12 +196,14 @@ for (const operation of ["baseline", "refreshBaseline", "load"] as const) {
       } else {
         const pending = operation === "load" ? host.load(currentSaveFixture()) : host.refreshBaseline();
         const rejected = assert.rejects(pending, /消费者拒绝.*baseline/);
+        await drainLegacyPorts();
         const requestId = worker.sent.at(-1)!.requestId;
         worker.emit(operation === "load"
           ? { ...catalogWorkerFixture(protocolSnapshot(1, 1)), type: "restored", civilDate: "2030-01-01", generation: 1, nextGeneration: 2, requestId, snapshot: protocolSnapshot(1, 1) }
           : { ...catalogWorkerFixture(protocolSnapshot(1, 1)), type: "refreshed", civilDate: "2030-01-01", generation: 1, requestId, snapshot: protocolSnapshot(1, 1) });
         await rejected;
       }
+      await drainLegacyPorts();
       assert.equal(worker.terminations, 1);
       assert.match(String(await pendingQuery), /消费者拒绝/);
       assert.equal(failures.length, 1);
@@ -252,7 +262,8 @@ test("Worker refresh 已回包但 continuation 前 dispose 不得复活 baseline
     host = await creating;
     const pending = host.refreshBaseline();
     const rejected = assert.rejects(pending, /已过期会话 generation/);
-    worker.emit({ ...catalogWorkerFixture(protocolSnapshot(1, 1)), type: "refreshed", civilDate: "2030-01-01", generation: 1, requestId: worker.sent.at(-1)!.requestId, snapshot: protocolSnapshot(1, 1) });
+    await drainLegacyPorts();
+    worker.emitRaw({ ...catalogWorkerFixture(protocolSnapshot(1, 1)), type: "refreshed", civilDate: "2030-01-01", generation: 1, requestId: worker.sent.at(-1)!.requestId, snapshot: protocolSnapshot(1, 1) });
     await host.dispose();
     await rejected;
     assert.throws(() => host!.snapshot(), /快照尚未就绪/);
@@ -284,12 +295,13 @@ test("Worker save pins candidate generation and rejects an old saved response af
     const host = await ready;
     const candidate = { seq: 42, settledDate: "2030-01-05" };
     const pending = host.save(candidate);
+    await drainLegacyPorts();
     const request = worker.sent.at(-1)!;
     assert.deepEqual(request, { type: "save", requestId: 1, generation: 1, candidate });
     worker.emit({ ...catalogWorkerFixture(snapshot), type: "baseline", civilDate: "2030-01-01", generation: 2, snapshot });
     worker.emit({ type: "saved", requestId: request.requestId, generation: 1, slot: { old: true } });
     await assert.rejects(pending, /generation/);
-    host.dispose();
+    await host.dispose();
   } finally {
     if (original === undefined) delete (globalThis as { Worker?: unknown }).Worker;
     else Object.defineProperty(globalThis, "Worker", original);
@@ -418,13 +430,17 @@ test("Worker initialization sends init without pool size and reports startup fai
   try {
     const pending = createLegacyHost({} as Parameters<typeof createWorkerHost>[0], 1n);
     const worker = StartupWorker.current;
+    await drainLegacyPorts();
     const init = worker.sent[0] as Record<string, unknown>;
     assert.equal(init.type, "init");
     assert.deepEqual(init.setup, {});
-    assert.ok(init.controlPort instanceof MessagePort);
+    assert.ok(worker.controlPort instanceof MessagePort);
+    assert.equal(Object.hasOwn(init, "controlPort"), false);
     assert.equal(Object.hasOwn(init, "poolSize"), false);
-    worker.emit({ type: "failure", code: "WASM_WORKER_PROTOCOL", where: "wasm-worker.init", message: "初始化失败" });
+    worker.emit({ type: "failure", code: "WASM_WORKER_PROTOCOL", where: "wasm-worker.init", message: "初始化失败", engineQuiescent: "initialization-failed" });
+    worker.dispatchEvent(new MessageEvent("message", { data: { type: "engineLifecycle", instanceId: worker.instanceId, state: "quiescent" } }));
     await assert.rejects(pending, /WASM_WORKER_PROTOCOL @ wasm-worker\.init: 初始化失败/);
+    await drainLegacyPorts();
     assert.equal(worker.terminated, true);
   } finally {
     if (original === undefined) delete (globalThis as { Worker?: unknown }).Worker;
@@ -455,13 +471,16 @@ test("duplicate delivered baselines preserve pending order queries, while a new 
     host = await creating;
     const updates: unknown[] = [];
     const starting = host.start((update) => { updates.push(update); });
+    await drainLegacyPorts();
     worker.emit({ type: "started", requestId: worker.sent.at(-1)!.requestId, generation: 1 });
     await starting;
     const refresh = host.refreshBaseline();
+    await drainLegacyPorts();
     worker.emit({ ...catalogWorkerFixture(snapshot), type: "refreshed", civilDate: "2030-01-01", requestId: worker.sent.at(-1)!.requestId, generation: 1, snapshot });
     await refresh;
 
     const orders = host.playerWorkingOrders();
+    await drainLegacyPorts();
     const requestId = worker.sent.at(-1)!.requestId;
     worker.emit({ ...catalogWorkerFixture(snapshot), type: "baseline", civilDate: "2030-01-01", generation: 1, snapshot });
     worker.emit({ type: "playerWorkingOrders", requestId, generation: 1, orders: [] });
@@ -470,12 +489,13 @@ test("duplicate delivered baselines preserve pending order queries, while a new 
 
     const stale = host.playerWorkingOrders();
     const rejected = assert.rejects(stale, /已过期会话 generation/);
+    await drainLegacyPorts();
     const staleRequestId = worker.sent.at(-1)!.requestId;
     worker.emit({ ...catalogWorkerFixture(snapshot), type: "baseline", civilDate: "2030-01-01", generation: 2, snapshot });
     worker.emit({ type: "playerWorkingOrders", requestId: staleRequestId, generation: 1, orders: [] });
     await rejected;
   } finally {
-    host?.dispose();
+    await host?.dispose();
     if (original === undefined) delete (globalThis as { Worker?: unknown }).Worker;
     else Object.defineProperty(globalThis, "Worker", original);
   }
@@ -507,13 +527,17 @@ test("Worker 控制等待应用回执，protocolBatch 每个提交接纳后立�
     const starting = host.start((update) => { updates.push(update); }, () => { failures++; }).then(() => { applied = true; });
     await Promise.resolve();
     assert.equal(applied, false);
+    await drainLegacyPorts();
     worker.emit({ type: "started", generation: 1, requestId: worker.sent.at(-1)!.requestId });
     await starting;
     const commits = [{ TickBatch: { frames: ["完整事实一"] } }, { CivilUpdate: { facts: ["完整事实二"] } }];
     worker.emit({ type: "protocolBatch", generation: 1, deliveryId: 3, updates: commits });
+    await drainLegacyPorts();
     assert.deepEqual(updates.slice(1).map((update) => (update as { update: unknown }).update), commits);
+    await drainLegacyPorts();
     assert.deepEqual(worker.sent.at(-1), { type: "uiFrame", generation: 1, deliveryId: 3 });
     const speedChange = assert.rejects(host.setSpeed(10), /已过期 generation/);
+    await drainLegacyPorts();
     const requestId = worker.sent.at(-1)!.requestId;
     worker.emit({ ...catalogWorkerFixture(snapshot), type: "baseline", civilDate: "2030-01-01", generation: 2, snapshot });
     worker.emit({ type: "speedSet", generation: 1, requestId });
@@ -523,6 +547,7 @@ test("Worker 控制等待应用回执，protocolBatch 每个提交接纳后立�
     worker.emit({ type: "failure", code: "TEST_FATAL", where: "worker-test", message: "失败" });
     worker.emit({ type: "protocol", generation: 2, deliveryId: 4, update: commits[0] });
     worker.emit({ type: "failure", code: "REPEATED_FATAL", where: "worker-test", message: "重复失败" });
+    await drainLegacyPorts();
     assert.equal(updates.length, acceptedCount);
     assert.equal(worker.sent.filter((message) => message.type === "uiFrame").length, acknowledgements);
     assert.equal(worker.terminations, 1);
@@ -567,6 +592,7 @@ test("Worker cached baseline 拒绝不启动或 ACK，显式重试仍交付且�
     const newUpdates: unknown[] = [];
     let newStarted = false;
     const startingNew = newHost.start((update) => { newUpdates.push(update); }).then(() => { newStarted = true; });
+    await drainLegacyPorts();
     const requestId = newWorker.sent.at(-1)!.requestId;
     oldWorker.emit({ type: "started", generation: 1, requestId });
     oldWorker.emit({ type: "protocol", generation: 1, deliveryId: 1, update: {} });
@@ -578,6 +604,7 @@ test("Worker cached baseline 拒绝不启动或 ACK，显式重试仍交付且�
     await startingNew;
     const retriedUpdates: unknown[] = [];
     const retry = oldHost.start((update) => { retriedUpdates.push(update); return true; });
+    await drainLegacyPorts();
     oldWorker.emit({ type: "started", generation: 1, requestId: oldWorker.sent.at(-1)!.requestId });
     await retry;
     assert.equal(retriedUpdates.length, 1);
@@ -615,6 +642,7 @@ test("Worker dispose 与 fatal 立即取消在途请求，释放监听并拒绝�
       const host = await creating;
       const date = host.civilDate!();
       const preferences = host.setPausePreferences({ pause_after_close: true, pause_before_open: false });
+      await drainLegacyPorts();
       assert.deepEqual(worker.sent.slice(-2).map((request) => request.requestId), [1, 2]);
       worker.emit({ type: "pausePreferencesSet", requestId: 2, generation: 1 });
       await preferences;
@@ -624,6 +652,7 @@ test("Worker dispose 与 fatal 立即取消在途请求，释放监听并拒绝�
       const disposing = reason === "dispose" ? host.dispose() : undefined;
       if (reason === "fatal") {
         worker.emit({ type: "failure", code: "TEST_FATAL", where: "worker-test", message: "失败" });
+        await drainLegacyPorts();
         assert.equal(worker.terminations, 1);
       }
       await dateAssertion;
@@ -661,6 +690,7 @@ test("Worker 真实 coordinator 拒绝批次中间提交后不消费尾部、不
     const failures: unknown[] = [];
     const coordinator = new ProtocolCoordinator({ onBaseline: () => {}, onApplied: () => { applications++; }, onFailure: (failure) => { failures.push(failure); } });
     const starting = host.start((update) => coordinator.accept(update));
+    await drainLegacyPorts();
     worker.emit({ type: "started", generation: 1, requestId: worker.sent.at(-1)!.requestId });
     await starting;
     const pending = assert.rejects(host.setSpeed(10), /消费者拒绝/);
@@ -674,6 +704,7 @@ test("Worker 真实 coordinator 拒绝批次中间提交后不消费尾部、不
     assert.equal(failures.length, 1);
     assert.equal(coordinator.status().kind, "failure");
     assert.equal(worker.sent.filter((message) => message.type === "uiFrame").length, 0);
+    await drainLegacyPorts();
     assert.equal(worker.terminations, 1);
     worker.emit({ type: "protocol", generation: 1, deliveryId: 8, update: tickBatch([frame(1, 0, [0])], protocolSnapshot(1, 1)) });
     assert.equal(applications, 1);
@@ -743,6 +774,7 @@ for (const shared of [true]) {
       const engine = IntentWorker.instances[0];
       await bootstrapLegacy(engine, false);
       engine.emit({ type: "ingress", generation: 1, token: 7, shared });
+      await drainLegacyPorts();
       const intake = shared ? IntentWorker.instances[1] : engine;
       if (shared) intake.emit({ type: "ingressBound", generation: 1, requestId: intake.sent[0].requestId });
       engine.emit({ type: "baseline", generation: 1, snapshot: protocolSnapshot(0, 0), civilDate: "2030-01-02",
@@ -755,6 +787,7 @@ for (const shared of [true]) {
       ] as const) {
         const pending = host.submitIntent(intent);
         await Promise.resolve();
+        await drainLegacyPorts();
         const request = intake.sent.at(-1)!;
         assert.equal(request.type, "enqueue");
         assert.equal(request.generation, 1);
@@ -772,7 +805,7 @@ for (const shared of [true]) {
       const old = host.submitIntent({ Cancel: { code: "600101", id: 10 } });
       const rejected = assert.rejects(old, /过期/);
       const oldRequest = intake.sent.at(-1)!;
-      engine.emit({ type: "baseline", generation: 2, civilDate: "2030-02-02",
+      engine.emitRaw({ type: "baseline", generation: 2, civilDate: "2030-02-02",
         snapshot: { ...protocolSnapshot(0, 0), markets: { "0": market(), "1": market() }, daily_candles: { "0": [], "1": [] }, active_daily_candles: { "0": dailyCandle(), "1": dailyCandle() } },
         stockCatalog: [{ id: 0, code: "002156" }, { id: 1, code: "600101" }],
         companyCatalog: [{ id: 0, code: "C-002156", name: "芯片", listed_stock: 0 }, { id: 1, code: "C-600101", name: "公司", listed_stock: 1 }] });
@@ -797,10 +830,11 @@ for (const transition of ["dispose", "generation"] as const) {
       if (result.status !== "fulfilled") throw new Error("fixture 未完成初始化");
       const pending = result.host.civilDate!();
       const rejected = assert.rejects(pending, /过期|销毁/);
+      await drainW1();
       const request = f.workers[0].sent.at(-1)!;
-      f.workers[0].emit({ type: "civilDate", generation: 1, requestId: request.requestId, date: "2030-01-02" });
+      f.workers[0].emitRaw({ type: "civilDate", generation: 1, requestId: request.requestId, date: "2030-01-02" });
       if (transition === "dispose") await result.host.dispose();
-      else f.baseline(2);
+      else f.workers[0].emitRaw({ ...catalogWorkerFixture(protocolSnapshot(2, 2)), type: "baseline", generation: 2, civilDate: "2030-01-02", snapshot: protocolSnapshot(2, 2) });
       await rejected;
     } finally { await f.cleanup(); }
   });
@@ -828,6 +862,7 @@ test("WorkerHost save remains pending through 10 seconds and accepts saved at 15
     host = await ready;
     context.mock.timers.enable({ apis: ["setTimeout"] });
     const pending = host.save({ seq: 17, settledDate: "2030-01-05" });
+    await drainLegacyPorts();
     const request = worker.sent.at(-1)!;
     context.mock.timers.tick(10_000);
     await Promise.resolve();
@@ -837,6 +872,7 @@ test("WorkerHost save remains pending through 10 seconds and accepts saved at 15
     assert.deepEqual(await pending, { seq: 17 });
     const overdueSave = host.save();
     const overdueAssertion = assert.rejects(overdueSave, /Worker save 操作超时（60000ms）/);
+    await drainLegacyPorts();
     context.mock.timers.tick(60_000);
     await overdueAssertion;
     const sentBeforeRejectedQuery = worker.sent.length;
@@ -993,6 +1029,7 @@ test("Worker generation 前进取消旧 save 与队列，同代 baseline 保留�
     const query = host.civilDate!();
     const queryAssertion = assert.rejects(query, /generation/);
     worker.emit({ ...catalogWorkerFixture(snapshot), type: "baseline", civilDate: "2030-01-02", generation: 2, snapshot });
+    await drainLegacyPorts();
     context.mock.timers.tick(60_000);
     await Promise.all([saveAssertion, queryAssertion]);
     assert.deepEqual(worker.sent.filter((request) => request.type === "save" || request.type === "civilDate").map((request) => request.type), ["save"]);
@@ -1000,6 +1037,7 @@ test("Worker generation 前进取消旧 save 与队列，同代 baseline 保留�
     const nextSave = host.save();
     const sameGenerationQuery = host.civilDate!();
     worker.emit({ ...catalogWorkerFixture(snapshot), type: "baseline", civilDate: "2030-01-03", generation: 2, snapshot });
+    await drainLegacyPorts();
     const sameRequest = worker.sent.at(-1)!;
     assert.equal(sameRequest.type, "save");
     assert.ok(typeof sameRequest.requestId === "number", "save request 应携带数字 requestId");
@@ -1014,6 +1052,7 @@ test("Worker generation 前进取消旧 save 与队列，同代 baseline 保留�
       if (update.generation === "3" || update.generation === "4") newGenerationQuery = host!.civilDate!().then((value) => ({ kind: "value", value }), (error: unknown) => ({ kind: "error", error }));
       return true;
     });
+    await drainLegacyPorts();
     const startRequest = worker.sent.at(-1)!;
     worker.emit({ type: "started", requestId: startRequest.requestId, generation: 2 });
     await starting;
@@ -1022,6 +1061,7 @@ test("Worker generation 前进取消旧 save 与队列，同代 baseline 保留�
     worker.emit({ ...catalogWorkerFixture(snapshot), type: "baseline", civilDate: "2030-01-04", generation: 3, snapshot });
     await oldSaveAssertion;
     assert.ok(newGenerationQuery, "同步 baseline callback 应创建新代查询");
+    await drainLegacyPorts();
     const newGenerationRequest = worker.sent.at(-1)!;
     assert.deepEqual(newGenerationRequest, { type: "civilDate", requestId: newGenerationRequest.requestId, generation: 3 });
     worker.emit({ type: "civilDate", requestId: newGenerationRequest.requestId, generation: 3, date: "2030-01-04" });
@@ -1029,10 +1069,12 @@ test("Worker generation 前进取消旧 save 与队列，同代 baseline 保留�
     assert.equal((newGenerationOutcome as { kind: string }).kind, "value");
 
     const loading = host.load(currentSaveFixture());
+    await drainLegacyPorts();
     const restoreRequest = worker.sent.at(-1)!;
     worker.emit({ ...catalogWorkerFixture(snapshot), type: "restored", civilDate: "2030-01-05", requestId: restoreRequest.requestId, generation: 3, nextGeneration: 4, snapshot });
     await loading;
     assert.ok(newGenerationQuery, "restore baseline callback 应创建新代查询");
+    await drainLegacyPorts();
     const restoreGenerationRequest = worker.sent.at(-1)!;
     assert.deepEqual(restoreGenerationRequest, { type: "civilDate", requestId: restoreGenerationRequest.requestId, generation: 4 });
     worker.emit({ type: "civilDate", requestId: restoreGenerationRequest.requestId, generation: 4, date: "2030-01-05" });

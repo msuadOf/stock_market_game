@@ -3,6 +3,7 @@ import { registerHooks } from "node:module";
 import test from "node:test";
 import { snapshot, tickBatch, frame } from "./protocol-test-fixtures.ts";
 import { CAPACITY, GEN_BITS, HEADER_WORDS, SLOT_STRIDE, JOIN_STRIDE } from "./facade-slot-protocol.ts";
+import { WorkerTransportFixture } from "./worker-transport.test-support.ts";
 
 /**
  * ingress 桥共享 substrate 门禁；W1 已批准从旧串行 fallback 迁移为显式失败。
@@ -30,18 +31,17 @@ async function withWorker(
   run: (fixture: Awaited<ReturnType<typeof createFixture>>) => Promise<void> | void,
 ) {
   const globals = new Map<PropertyKey, PropertyDescriptor | undefined>();
-  const channels: MessageChannel[] = [], OriginalChannel = MessageChannel;
+  const transport = new WorkerTransportFixture();
   const replace = (key: PropertyKey, value: unknown) => {
     globals.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
     Object.defineProperty(globalThis, key, { configurable: true, value });
   };
   let hooks: ReturnType<typeof registerHooks> | undefined;
   try {
-    replace("MessageChannel", class extends OriginalChannel { constructor() { super(); channels.push(this); } });
-    const fixture = await createFixture(options, replace, (registered) => { hooks = registered; });
+    const fixture = await createFixture(options, replace, (registered) => { hooks = registered; }, transport);
     await run(fixture);
   } finally {
-    for (const channel of channels) { channel.port1.close(); channel.port2.close(); }
+    transport.close();
     hooks?.deregister();
     for (const [key, original] of globals) {
       if (original === undefined) Reflect.deleteProperty(globalThis, key);
@@ -54,6 +54,7 @@ async function createFixture(
   options: FixtureOptions,
   replace: (key: PropertyKey, value: unknown) => void,
   register: (hooks: ReturnType<typeof registerHooks>) => void,
+  transport: WorkerTransportFixture,
 ) {
   const posted: Message[] = [];
   let initialized: () => void = () => { throw new Error("初始化信号未安装"); };
@@ -87,7 +88,7 @@ async function createFixture(
     crossOriginIsolated: true,
     // 浏览器 Worker#postMessage = structured clone 算法：不可克隆值同步抛
     // DataCloneError。此处先 structuredClone 再入账，复现该语义。
-    postMessage: (message: Message) => { structuredClone(message); posted.push(message); if (message.type === "ready" || message.type === "failure") initialized(); },
+    postMessage: (message: Message) => { if (message.type !== "engineLifecycle") throw new Error("engine business output bypassed dataPort"); },
     addEventListener: (_type: string, callback: typeof listener) => { listener = callback; },
   });
   replace("fetch", async () => ({ ok: true, arrayBuffer: async () => Uint8Array.from([0, 97, 115, 109, 1, 0, 0, 0]).buffer }));
@@ -122,14 +123,29 @@ async function createFixture(
   }));
   await import(`./wasm-worker.ts?ingress-bridge-test=${id}`);
   assert.ok(listener);
-  const send = (message: Message) => { listener!({ data: message }); };
-  const control = new MessageChannel(); let substrate: Record<string, unknown> | undefined;
+  transport.bindEngineTransport(listener as (event: MessageEvent<unknown>) => void, 1);
+  const workerPort = transport.channels[0]!.port2 as unknown as MessagePort;
+  const ownerBusinessPort = transport.channels[0]!.port1 as unknown as MessagePort;
+  const originalPost = workerPort.postMessage.bind(workerPort);
+  workerPort.postMessage = (message: unknown) => {
+    const value = structuredClone(message) as Message;
+    posted.push(value);
+    if (value.type === "ready" || value.type === "failure") initialized();
+    originalPost(message);
+  };
+  let substrate: Record<string, unknown> | undefined;
   let earlyMemory: WebAssembly.Memory | undefined;
-  control.port1.addEventListener("message", (event) => {
-    if (event.data.type === "facadeEngineMemory") { earlyMemory = event.data.memory; control.port1.postMessage({ type: "facadeEngineMemoryRegistered", allocationId: 1 }); }
-    else { substrate = { ...event.data, memory: earlyMemory }; control.port1.postMessage({ type: "facadeEngineConfigured" }); }
-  }); control.port1.start();
-  send({ type: "init", setup: {}, controlPort: control.port2 });
+  const ownerControl = transport.channels[1]!.port1 as unknown as MessagePort;
+  ownerControl.addEventListener("message", (event) => {
+    const value = (event as MessageEvent<Record<string, unknown>>).data;
+    if (value.type === "facadeEngineMemory") { earlyMemory = value.memory as WebAssembly.Memory; ownerControl.postMessage({ type: "facadeEngineMemoryRegistered", allocationId: 1 }); }
+    else { substrate = { ...value, memory: earlyMemory }; ownerControl.postMessage({ type: "facadeEngineConfigured" }); }
+  }); ownerControl.start();
+  const send = async (message: Message) => {
+    transport.dispatch(ownerBusinessPort, message);
+    for (let count = 0; count < 8; count++) await new Promise((resolve) => setImmediate(resolve));
+  };
+  await send({ type: "init", setup: {} });
   await ready;
   const initialization = [...posted];
   if (options.sharedMemory) assert.deepEqual(posted, [{ type: "ready" }]);
@@ -172,8 +188,7 @@ test("SharedArrayBuffer 不暴露时显式说明隔离能力错误，不能裸 R
 
 test("共享 module/memory 由一次控制握手交main，ingress仅带本代token", { timeout: 10000 }, async () => {
   await withWorker({ sharedMemory: true, withIngressToken: true }, async (f) => {
-    f.send({ type: "create", seed: 1n });
-    await Promise.resolve();
+    await f.send({ type: "create", seed: 1n });
     const ingress = f.posted[0];
     assert.deepEqual(
       ingress,

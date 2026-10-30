@@ -14,12 +14,13 @@ test("有 verified package capability 时 bootstrap 唯一完整 X，ready 后�
     f.launch({ onSpawnFailure() {}, initialArchive: archive, memoryAdmissionTicket: ticket });
     await drain();
     assert.equal(f.workers.length, 1, "VERIFIED_RESTORE_MUST_REACH_WORKER");
-    const init = f.workers[0].sent[0];
+    const init = f.workers[0].sent.find((message) => message.type === "init");
+    assert.ok(init);
     assert.equal(Object.hasOwn(init, "setup"), false); assert.deepEqual(init.initialArchive, archive); assert.deepEqual(init.restoreCapability, capability);
     assert.deepEqual(f.workers[0].sent.find((message) => message.type === "restoreInitial"), { type: "restoreInitial" });
     assert.equal(f.workers[0].sent.some((message) => message.type === "create" || message.type === "restore"), false);
     const releaseFailure = assert.rejects(release, /quiescence|停止 grow/);
-    f.workers[0].emit({ type: "failure", code: "FIXTURE_CLEANUP", where: "fixture", message: "只验证启动传输" }); await drain(); await releaseFailure;
+    f.workers[0].error(new Error("只验证启动传输，缺少真实 quiescence")); await drain(); await releaseFailure;
   } finally { await f.cleanup(); }
 });
 

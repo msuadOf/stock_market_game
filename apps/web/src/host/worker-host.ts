@@ -292,7 +292,7 @@ export function createWorkerHost(
             if (Object.keys(response).sort().join(",") !== "generation,report,requestId,type") throw new Error("shutdownCompleted 字段无效");
             const report = parseWasmSessionShutdown(response.report);
             options.lifecycleObserver?.({ type: "rustShutdown", report: structuredClone(report) });
-            if (report.kind === "failure") throw new Error(`Rust shutdown 失败：${report.primary.stage}: ${report.primary.detail}`, { cause: report });
+            if (report.kind === "failure" && (report.completion === null || report.completion.joinedWorkers !== report.completion.ownedWorkers)) throw new Error(`Rust shutdown 失败：${report.primary.stage}: ${report.primary.detail}`, { cause: report });
           }));
         } catch (shutdownError) { cleanupRequests.push(Promise.reject(shutdownError)); }
       }
@@ -308,14 +308,18 @@ export function createWorkerHost(
       try { controlClient.beginShutdown(performance.now() + 2000); }
       catch (error) { queueMicrotask(() => { throw new Error("请求 controlWorker 清理失败；release 保持 unknown", { cause: error }); }); }
       ingressWorker = null;
-      void Promise.allSettled(cleanupRequests).then((results) => {
+      const ownerRejected = new Promise<never>((_resolve, reject) => { void controlClient.release.then(undefined, reject); });
+      const finishCleanup = () => {
         requests.close(error);
         closeIngress(error);
         worker.removeEventListener("message", onMessage);
+      };
+      void Promise.race([Promise.allSettled(cleanupRequests), ownerRejected]).then((results) => {
+        finishCleanup();
         const failed = results.filter((result): result is PromiseRejectedResult => result.status === "rejected");
-        if (failed.length > 0) controlClient.abortShutdown(new AggregateError(failed.map((result) => result.reason), "故障关停缺少真实业务回复，release 保持 unknown", { cause: failure }));
+        if (failed.length > 0) controlClient.abortShutdown(new AggregateError(failed.map((result) => result.reason), `${failure.code} @ ${failure.where}: ${failure.message}；故障关停缺少真实业务回复或 quiescence，release 保持 unknown`, { cause: failure }));
         else controlClient.completeShutdown();
-      });
+      }, () => { finishCleanup(); });
       if (!initialized) {
         reject(new WasmHostInitializationError(failure));
         return;
@@ -598,7 +602,7 @@ export function createWorkerHost(
                 void controlClient.release.then(undefined, reject);
               });
               const [report] = await Promise.race([Promise.all([rustReply, ingressQuiescent]), releaseRejected]);
-              if (report.kind === "failure") throw new Error(`Rust shutdown 失败：${report.primary.stage}: ${report.primary.detail}`, { cause: report });
+              if (report.kind === "failure" && (report.completion === null || report.completion.joinedWorkers !== report.completion.ownedWorkers)) throw new Error(`Rust shutdown 失败：${report.primary.stage}: ${report.primary.detail}`, { cause: report });
               controlClient.completeShutdown();
               const remaining = Math.max(1, until - performance.now());
               let releaseTimer: ReturnType<typeof setTimeout> | undefined;
@@ -608,6 +612,7 @@ export function createWorkerHost(
               ]).finally(() => { if (releaseTimer !== undefined) clearTimeout(releaseTimer); });
               controlClient.terminateAfterRelease();
               if (release.kind !== "released" && release.kind !== "not-allocated") throw new Error("controlWorker release kind 无效");
+              if (report.kind === "failure") throw new Error(`Rust shutdown 失败：${report.primary.stage}: ${report.primary.detail}`, { cause: report });
             } catch (error) {
               const transport = pendingFailure !== null && !(error instanceof Error && error.cause === pendingFailure)
                 ? new AggregateError([error], `${pendingFailure.code} @ ${pendingFailure.where}: ${pendingFailure.message}`, { cause: pendingFailure }) : error;

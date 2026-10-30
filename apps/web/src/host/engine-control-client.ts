@@ -171,7 +171,7 @@ export function createEngineControlClient(options: {
     if (errors.length > 0) throw new AggregateError(errors, "controlWorker 主线程资源清理失败");
   }
 
-  function fail(error: Error): void {
+  function fail(error: Error, cleanupAtDeadline = false): void {
     if (failed || terminal) return;
     failed = true;
     configuredReject(error);
@@ -180,9 +180,10 @@ export function createEngineControlClient(options: {
     releaseReject(error);
     if (terminalReceipt !== undefined) { terminal = true; cleanup(); options.onFailure(error); return; }
     // 先让 owner 清理 nested Worker；硬故障无收据时只保留 unknown，并在同一 2s 内撤下本地引用。
-    failureCleanupTimer = setTimeout(cleanup, 2000);
+    if (!cleanupAtDeadline) failureCleanupTimer = setTimeout(cleanup, 2000);
     try { controlWorker?.postMessage({ type: "abort", instanceId }); }
     catch (abortError) { cleanup(); options.onFailure(new AggregateError([error, abortError], "controlWorker 故障且清理命令无法投递")); return; }
+    if (cleanupAtDeadline) cleanup();
     options.onFailure(error);
   }
   function finishTerminal(): void {
@@ -259,7 +260,13 @@ export function createEngineControlClient(options: {
       if (value.type === "failure") {
         if (Object.keys(value).sort().join(",") !== "failure,instanceId,type") throw new Error("controlWorker failure 字段无效");
         const detail = parseHostFailure(value.failure, "engine-control-client.failure");
-        throw new Error(`${detail.code} @ ${detail.where}: ${detail.message}`, { cause: detail });
+        if (failed) return;
+        const error = new Error(`${detail.code} @ ${detail.where}: ${detail.message}`, { cause: detail });
+        configuredReject(error);
+        // 有效 owner 故障先保留其后续真实 terminal；构造前拒绝仍可准确结 not-allocated。
+        if (failureCleanupTimer === undefined) failureCleanupTimer = setTimeout(() => fail(new Error("controlWorker 故障后缺少真实 terminal 收据，release unknown", { cause: error }), true), 2000);
+        options.onFailure(error);
+        return;
       }
       if (value.type === "spawnFailure") {
         if (Object.keys(value).sort().join(",") !== "failure,instanceId,type") throw new Error("controlWorker spawnFailure 字段无效");

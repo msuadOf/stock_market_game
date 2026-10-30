@@ -3,7 +3,7 @@ import test from "node:test";
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { createTauriHost } from "./tauri-host.ts";
 import { createRemoteHost } from "./remote-host.ts";
-import { LegacyWorker, bootstrapLegacy, createLegacyHost } from "./worker-host-legacy.test-support.ts";
+import { LegacyWorker, bootstrapLegacy, createLegacyHost, drainLegacyPorts } from "./worker-host-legacy.test-support.ts";
 import { mirrorOrigin, market, dailyCandle } from "./protocol-test-fixtures.ts";
 import type { EngineHost } from "./engine-host.ts";
 import type { SessionSetup } from "../types/engine.ts";
@@ -47,7 +47,7 @@ async function withHost(kind: "Worker" | "Tauri" | "Remote", body: (host: Engine
       await bootstrapLegacy(engine);
       engine.emit({ type: "baseline", generation: 1, snapshot, stockCatalog: catalog.stocks, companyCatalog: catalog.companies, civilDate: "2030-06-01" });
       host = await pending;
-      replaceBaseline = async () => engine.emit({ type: "baseline", generation: 1, snapshot, stockCatalog: catalog.stocks, companyCatalog: catalog.companies, civilDate: "2030-06-01" });
+      replaceBaseline = async () => { engine.emit({ type: "baseline", generation: 1, snapshot, stockCatalog: catalog.stocks, companyCatalog: catalog.companies, civilDate: "2030-06-01" }); await drainLegacyPorts(); };
     } else if (kind === "Tauri") {
       const original = Object.getOwnPropertyDescriptor(globalThis, "window");
       Object.defineProperty(globalThis, "window", { configurable: true, value: { crypto: globalThis.crypto } });

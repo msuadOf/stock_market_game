@@ -18,6 +18,7 @@ test("W1 真实 load 在途时 ingress 新桥先于 restored/baseline 合法，�
     const loading = host.load(currentSaveFixture()).then(() => { loaded = true; });
     // 立即接住真实 load 的失败，避免断言先失败时产生未处理 rejection。
     const loadResult = loading.then(() => ({ ok: true as const }), (error: unknown) => ({ ok: false as const, error }));
+    await drain();
     const restore = engine.sent.at(-1)!;
     assert.equal(restore.type, "restore"); assert.equal(restore.generation, 1);
     assert.equal(loaded, false, "必须先证明 load 已在途");
@@ -25,6 +26,7 @@ test("W1 真实 load 在途时 ingress 新桥先于 restored/baseline 合法，�
     // wasm-worker.restore 的真实发送顺序：postIngressBridge → restored → baseline。
     f.ingress(2, 202);
     assert.equal(engine.terminations, 0, "合法在途 restore 的先行 ingress2 不能触发 fatal");
+    await drain();
     const binding = intake.sent.at(-1)!;
     assert.equal(binding.type, "bindIngress"); assert.equal(binding.generation, 2); assert.equal(binding.token, 202);
     engine.emit({ ...catalogWorkerFixture(snapshot(2, 2)), type: "restored", requestId: restore.requestId, generation: 1, nextGeneration: 2, snapshot: snapshot(2, 2), civilDate: "2030-01-02" });
@@ -61,11 +63,14 @@ for (const staleType of ["enqueued", "operationError"] as const) {
       const oldEnqueue = intake.sent.at(-1)!; assert.equal(oldEnqueue.type, "enqueue"); assert.equal(oldEnqueue.generation, 1);
       const loading = host.load(currentSaveFixture());
       const loadResult = loading.then(() => ({ ok: true as const }), (error: unknown) => ({ ok: false as const, error }));
+      await drain();
       const restore = engine.sent.at(-1)!; assert.equal(restore.type, "restore");
-      f.ingress(2, 202);
+      f.ingress(2, 202); await drain();
       // 新桥已发布、restored 尚未返回：旧 ACK 不能趁 currentGeneration 仍是 1 而成功。
       intake.emit({ type: staleType, requestId: oldEnqueue.requestId, generation: 1, message: "旧桥迟到失败" });
-      f.ack(intake, 1, staleType === "operationError" ? "旧 bind 迟到失败" : undefined);
+      const oldBinding = intake.sent.findLast((request) => request.type === "bindIngress" && request.generation === 1)!;
+      intake.emit({ type: staleType === "operationError" ? "operationError" : "ingressBound", requestId: oldBinding.requestId, generation: 1,
+        ...(staleType === "operationError" ? { message: "旧 bind 迟到失败" } : {}) });
       await drain();
       assert.equal(oldSucceeded, false);
       const old = await oldResult; assert.equal(old.ok, false);
@@ -95,8 +100,7 @@ for (const type of ["ready", "baseline"] as const) {
     try {
       f.launch();
       assert.equal(f.configured, 0, "不 drain：原生控制端 ACK 此时尚未返回");
-      if (type === "ready") f.workers[0].emit({ type: "ready" });
-      else f.baseline();
+      f.workers[0].dispatchEvent(new MessageEvent("message", { data: type === "ready" ? { type: "ready" } : { ...catalogWorkerFixture(snapshot(1, 1)), type: "baseline", generation: 1, snapshot: snapshot(1, 1), civilDate: "2030-01-02" } }));
       await drain();
       assert.equal(f.workers[0].sent.some((message) => message.type === "create"), false, "早到消息不能先发 create 再补 configured");
       assert.equal(f.outcome.status, "rejected", "不能借未 configured 的 ready/baseline 开始会话");

@@ -33,10 +33,11 @@ test("allocation 数字观察只在真实 Memory 登记、configuration 和 chil
     assert.deepEqual(events[1], { type: "allocationConfigured", allocationId: 1, role: "engine", workerId: null, slot: null, gen: null });
     Atomics.store(words, slotFieldOffset(0, SLOT_JOIN_INDEX), 0); Atomics.store(words, joinWordOffset(0,4), encodeJoin(0, JoinState.Waiting,29)); Atomics.store(words, slotWordOffset(0), encodeW(0, SlotState.Req,29));
     control.postMessage({ type: "facadeSpawn", slot: 0, gen: 0, name: "group-0" }); await flush();
-    assert.equal(events.length, 2, "spawn 请求不是配置完成证据");
+    assert.deepEqual(events[2], { type: "childSpawn", workerId: 1, slot: 0, gen: 0, name: "stock-game:0:child:1:0:0", runtimeName: "group-0" });
+    assert.equal(events.filter((event) => event.type === "allocationConfigured").length, 1, "childSpawn 不是 allocationConfigured 证据");
     const childPort = children[0].input!.controlPort as MessagePort;
     childPort.postMessage({ type: "facadeChildReady", workerId: 1, slot: 0, gen: 0 }); await flush();
-    assert.deepEqual(events[2], { type: "allocationConfigured", allocationId: 1, role: "child", workerId: 1, slot: 0, gen: 0 });
+    assert.deepEqual(events[3], { type: "allocationConfigured", allocationId: 1, role: "child", workerId: 1, slot: 0, gen: 0 });
     for (const event of events) assert.equal(Object.values(event).some((value) => value instanceof WebAssembly.Memory || value instanceof SharedArrayBuffer || ArrayBuffer.isView(value)), false);
   } finally { supervisor.dispose(); for (const channel of channels) { channel.port1.close(); channel.port2.close(); } }
 });
