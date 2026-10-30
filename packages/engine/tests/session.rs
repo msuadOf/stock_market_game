@@ -426,7 +426,7 @@ fn assert_legacy_native_adoption_rejects_atomically(save: &engine::SaveSlot, des
     let before_hash = rejected.business_state_hash().unwrap();
     assert_eq!(
         rejected.step_via_runtime().unwrap_err(),
-        engine::StepFatal::InvariantViolation {
+        engine::session::StepFatal::InvariantViolation {
             description,
             location: "GameSession::ensure_runtime_driver".to_owned(),
         }
