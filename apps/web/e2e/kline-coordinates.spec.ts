@@ -44,7 +44,10 @@ test("桌面坐标文字不随缩放拉伸，价量指标和点选交易日同�
   await chart.getByRole("button", { name: "MACD", exact: true }).click();
   await expect(chart.getByLabel("MACD坐标", { exact: true })).toBeVisible();
   await expectAlignedPlots(chart);
-  await expect(chart.getByLabel("游戏交易日坐标", { exact: true })).not.toContainText("1970");
+  const dateAxis = chart.getByLabel("公历交易日期坐标", { exact: true });
+  await expect(dateAxis).toBeVisible();
+  await expect(dateAxis).not.toContainText("1970");
+  await expect(dateAxis).toContainText(/\d{4}/);
 });
 
 test("当前桌面窗口下单栏展开后周K坐标和底部指标按钮完整可见", async ({ page }) => {

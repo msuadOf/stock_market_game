@@ -1,7 +1,6 @@
 import { expect, test } from "@playwright/test";
 
 type DailyCandle = { time: number; open: string; high: string; low: string; close: string; volume: number };
-type CalendarSnapshot = { daily_candles: Record<string, DailyCandle[]>; active_daily_candles: Record<string, DailyCandle> };
 
 function expectedLots(shares: number): string {
   const units = ["", "万", "亿", "万亿"];
@@ -93,23 +92,64 @@ test("320px 手机显示菜单保持边界，多选后切周期保留设置且�
 
 test("桌面与手机共用周期选择，日周月入口和均线设置保持一致", async ({ page }) => {
   await page.setViewportSize({ width: 1020, height: 833 });
+  await page.addInitScript({ content: `
+    (() => {
+      const capture = { baselines: [], requests: [], histories: [] };
+      window.__stockHistoryCapture = capture;
+      const ids = new WeakMap(); let nextId = 0;
+      const portId = (port) => { let value = ids.get(port); if (value === undefined) { value = ++nextId; ids.set(port, value); } return value; };
+      const watched = new WeakSet();
+      const observe = (prototype) => {
+        const add = prototype.addEventListener;
+        prototype.addEventListener = function(type, listener, options) {
+          if (type === "message" && !watched.has(this)) {
+            watched.add(this);
+            add.call(this, "message", (event) => {
+              const message = event.data;
+              if (message?.type === "baseline" && typeof message.generation === "number") capture.baselines.push({ port: portId(this), generation: message.generation, stockCatalog: message.stockCatalog });
+              if (message?.type === "stockHistory" && typeof message.requestId === "number") capture.histories.push({ port: portId(this), requestId: message.requestId, generation: message.generation, data: message.data });
+            });
+          }
+          return add.call(this, type, listener, options);
+        };
+      };
+      const observeRequests = (prototype) => {
+        const post = prototype.postMessage;
+        prototype.postMessage = function(message, transfer) {
+          if (message?.type === "stockHistory" && typeof message.requestId === "number" && typeof message.generation === "number" && typeof message.code === "number") capture.requests.push({ port: portId(this), requestId: message.requestId, generation: message.generation, code: message.code });
+          return post.call(this, message, transfer);
+        };
+      };
+      observe(MessagePort.prototype); observe(Worker.prototype);
+      observeRequests(MessagePort.prototype); observeRequests(Worker.prototype);
+    })();
+  ` });
   await page.goto("/?tradingE2E=1");
   await page.getByRole("navigation", { name: "桌面主导航" }).getByRole("button", { name: "个股", exact: true }).click();
   const tabs = page.getByRole("tablist", { name: "图表周期" });
   await expect(tabs.getByRole("tab", { name: "周K", exact: true })).toHaveCount(1);
   await tabs.getByRole("tab", { name: "日K", exact: true }).click();
   const chart = page.locator(".shared-kline-host .msd-kline");
-  const snapshot = await page.evaluate(() => {
-    const controls = (globalThis as typeof globalThis & { __STOCK_GAME_E2E__?: { snapshot(): CalendarSnapshot } }).__STOCK_GAME_E2E__;
-    if (!controls) throw new Error("E2E engine snapshot unavailable");
-    return controls.snapshot();
+  await expect.poll(() => page.evaluate(() => {
+    const capture = (globalThis as typeof globalThis & { __stockHistoryCapture?: { baselines: { port: number; generation: number; stockCatalog: { id: number; code: string }[] }[]; requests: { port: number; requestId: number; generation: number; code: number }[]; histories: { port: number; requestId: number; generation: number; data: { daily_candles: unknown[] } }[] } }).__stockHistoryCapture;
+    if (!capture) return false;
+    return capture.requests.some(request => capture.histories.some(history => history.port === request.port && history.requestId === request.requestId && history.generation === request.generation && capture.baselines.some(baseline => baseline.port === request.port && baseline.generation === request.generation && baseline.stockCatalog.some(stock => stock.id === request.code && stock.code === "600101")) && history.data.daily_candles.length > 0));
+  })).toBe(true);
+  const source = await page.evaluate(() => {
+    const capture = (globalThis as typeof globalThis & { __stockHistoryCapture: { baselines: { port: number; generation: number; stockCatalog: { id: number; code: string }[] }[]; requests: { port: number; requestId: number; generation: number; code: number }[]; histories: { port: number; requestId: number; generation: number; data: { code: number; daily_candles: DailyCandle[]; active_daily_candle: DailyCandle | null } }[] } }).__stockHistoryCapture;
+    const request = capture.requests.find(item => capture.histories.some(history => history.port === item.port && history.requestId === item.requestId && history.generation === item.generation && capture.baselines.some(baseline => baseline.port === item.port && baseline.generation === item.generation && baseline.stockCatalog.some(stock => stock.id === item.code && stock.code === "600101")) && history.data.daily_candles.length > 0));
+    if (!request) throw new Error("本代 StockCatalog 中找不到 600101 的真实历史请求");
+    const baseline = capture.baselines.find(item => item.port === request.port && item.generation === request.generation && item.stockCatalog.some(stock => stock.id === request.code && stock.code === "600101"));
+    const response = capture.histories.find(item => item.port === request.port && item.requestId === request.requestId && item.generation === request.generation && item.data.daily_candles.length > 0);
+    if (!baseline || !response || baseline.stockCatalog.find(stock => stock.id === request.code)?.code !== "600101") throw new Error("600101 的 stockHistory 未与本代 baseline 和原请求关联");
+    const data = response.data;
+    if (data.code !== request.code) throw new Error("stockHistory.data.code 与本代请求 StockId 不一致");
+    if (data.daily_candles.length === 0) throw new Error("真实 stockHistory 缺少已结束日K");
+    return [...data.daily_candles, ...(data.active_daily_candle === null ? [] : [data.active_daily_candle])];
   });
-  const closed = snapshot.daily_candles["600101"];
-  const active = snapshot.active_daily_candles["600101"];
-  if (!closed || !active) throw new Error("600101快照缺少已结束或活动日K");
-  const source = [...closed, active];
+  if (source.length === 0) throw new Error("600101真实历史日K为空");
   const dailyCount = Number(await chart.getAttribute("data-kline-count"));
-  expect(dailyCount, "图表日K与真实快照成员数一致").toBe(source.length);
+  expect(dailyCount, "图表日K与真实历史查询成员数一致").toBe(source.length);
   await chart.getByRole("button", { name: /^MA5：/ }).click();
   await tabs.getByRole("tab", { name: "日K", exact: true }).press("ArrowRight");
   await expect(tabs.getByRole("tab", { name: "周K", exact: true })).toHaveAttribute("aria-selected", "true");

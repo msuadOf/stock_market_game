@@ -15,6 +15,7 @@ import { AutoOrderManager } from "../components/auto-order-manager.ts";
 import { createMemoryHandoverSelection } from "./memory-handover-selection.ts";
 import type { MemoryHandoverPanelProps } from "./MemoryHandoverPanel.tsx";
 import { parseSaveSlot } from "../save/save-schema.ts";
+import { store } from "../store/store.ts";
 
 function fixture(overrides: Partial<SessionHostLifecyclePorts> = {}) {
   const calls: string[] = [];
@@ -329,6 +330,33 @@ test("G20：无存档新局使用熵端口，E2E固定seed与读档seed不消耗
     await createSessionHostLifecycle(f.ports).start();
     assert.equal(seeds, mode === "new" ? 1 : 0);
     assert.equal(seen, mode === "new" ? 9007199254740999n : mode === "save" ? 9007199254740993n : 42n);
+  }
+});
+
+test("E2E snapshot bridge读取Redux当前快照，不读取宿主缓存快照", { timeout: 10_000 }, async () => {
+  const f = fixture({ TRADING_E2E_MODE: true });
+  Object.assign(f.host, { stepOnceForE2E: async () => 0 });
+  f.host.tick = () => 0;
+  const previousWindow = (globalThis as typeof globalThis & { window?: unknown }).window;
+  Object.assign(globalThis, { window: {} });
+  const getState = store.getState.bind(store);
+  try {
+    await f.runtime.start();
+    const live = { ...f.host.snapshot(), seq: 9, tick: 4, day: 2 };
+    store.getState = (() => ({ ...getState(), snapshot: { ...getState().snapshot, snapshot: live } })) as typeof store.getState;
+    const controls = (globalThis as typeof globalThis & { window: { __STOCK_GAME_E2E__?: { snapshot(): unknown } } }).window.__STOCK_GAME_E2E__;
+    assert.ok(controls);
+    assert.equal(controls.snapshot(), live);
+    assert.notEqual(controls.snapshot(), f.host.snapshot());
+    store.getState = (() => ({ ...getState(), snapshot: { ...getState().snapshot, snapshot: null } })) as typeof store.getState;
+    assert.throws(() => controls.snapshot(), /E2E 实时快照尚未由当前会话交付/);
+  } finally {
+    try { await f.runtime.dispose(); }
+    finally {
+      store.getState = getState;
+      if (previousWindow === undefined) delete (globalThis as typeof globalThis & { window?: unknown }).window;
+      else Object.assign(globalThis, { window: previousWindow });
+    }
   }
 });
 

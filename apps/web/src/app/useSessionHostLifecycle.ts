@@ -1,4 +1,5 @@
 import { prepareDocumentWasmRestoreCapability } from "../host/wasm-restore-capability-source.ts";
+import { store } from "../store/store.ts";
 import { useEffect, useState, type MutableRefObject } from "react";
 import { createMemoryHandoverSelection } from "./memory-handover-selection.ts";
 import type { MemoryHandoverPanelProps } from "./MemoryHandoverPanel.tsx";
@@ -352,7 +353,11 @@ export function createSessionHostLifecycle(ports: SessionHostLifecyclePorts) {
             while (controlledTick < target) controlledTick = await controlledHost.stepOnceForE2E!();
             return controlledTick;
           },
-          snapshot: () => host.snapshot(),
+          snapshot: () => {
+            const snapshot = store.getState().snapshot.snapshot;
+            if (snapshot === null) throw new Error("E2E 实时快照尚未由当前会话交付");
+            return snapshot;
+          },
         };
       }
       if (malformedProtocolFixture()) {

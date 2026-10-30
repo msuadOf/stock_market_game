@@ -54,10 +54,10 @@
 .terminal-stock-row:hover { background: var(--surface-hover); }
 .desktop-terminal[data-view="stock"] .chart-panel { display: grid; grid-template-columns: minmax(0, 1fr) 210px; grid-template-rows: auto minmax(0, 1fr); padding: 0; overflow: hidden; }
 .desktop-terminal[data-view="stock"] .chart-toolbar { grid-column: 1; grid-row: 1; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; min-width: 0; }
-.desktop-terminal[data-view="stock"] .chart-toolbar > label { display: inline-flex; align-items: center; gap: 5px; padding: 4px 8px; color: var(--muted); white-space: nowrap; }
-.desktop-terminal[data-view="stock"] .chart-toolbar select { min-height: 26px; border: 1px solid var(--border); background: var(--card-bg); color: var(--text); font: inherit; }
+.desktop-terminal[data-view="stock"] .stock-detail-header .indicator-data-source { display: flex; flex: 0 0 100%; align-items: center; gap: 4px; min-width: 0; color: var(--muted); font: inherit; white-space: nowrap; }
+.desktop-terminal[data-view="stock"] .stock-detail-header .indicator-data-source select { width: 76px; min-height: 26px; border: 1px solid var(--border); background: var(--card-bg); color: var(--text); font: inherit; }
 .desktop-terminal[data-view="stock"] .stock-detail-header { grid-column: 2; grid-row: 1 / 3; align-self: start; border-left: 1px solid var(--border); padding: 18px 12px; height: 100px; }
-.desktop-terminal[data-view="stock"] .order-book { grid-column: 2; grid-row: 1 / -1; margin-top: 130px; padding: 0 12px; overflow: auto; border-left: 1px solid var(--border); }
+.desktop-terminal[data-view="stock"] .order-book { grid-column: 2; grid-row: 1 / -1; margin-top: 166px; padding: 0 12px; overflow: auto; border-left: 1px solid var(--border); }
 .desktop-terminal[data-view="stock"] .price-chart { grid-column: 1; grid-row: 2; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
 .desktop-terminal[data-view="stock"] .price-chart-main { height: auto !important; flex: 1; min-height: 180px; }
 .desktop-terminal[data-view="stock"] .price-chart-indicator { height: 100px !important; flex: none; }
@@ -186,13 +186,15 @@
 .terminal-quote-actions .terminal-sell { color: var(--down); }
 .terminal-quote-actions button:hover { background: var(--surface-hover); }
 .desktop-terminal .stock-detail-header { flex-wrap: wrap; row-gap: 8px; }
-.desktop-terminal[data-view="stock"] .stock-detail-header { height: 130px; }
+.desktop-terminal[data-view="stock"] .stock-detail-header { height: 166px; }
 .desktop-terminal[data-trading-open="true"][data-view="stock"] .terminal-body { grid-template-rows: minmax(280px, 1fr) 36px; }
 .desktop-terminal[data-trading-open="true"][data-view="stock"] .chart-panel { grid-template-rows: auto minmax(0, 1fr); }
 .desktop-terminal[data-trading-open="true"] .shared-kline-host > .msd-kline { min-height: 0; }
 .desktop-terminal[data-trading-open="true"] .market-chart-slot .kline-price-plot { min-height: 80px; }
 .desktop-terminal[data-trading-open="true"] .market-chart-slot .msd-kline > p[role="status"] { margin: 0; padding: 1px 6px; font-size: 10px; line-height: 14px; }
 .desktop-terminal[data-trading-open="true"] .market-chart-slot .kline-footer { min-height: 28px; gap: 0 4px; }
+.desktop-terminal[data-trading-open="true"] .market-chart-slot .msd-chart-tools { height: 27px; min-height: 27px; }
+.desktop-terminal[data-trading-open="true"] .market-chart-slot .kline-footer { min-height: 27px; }
 .desktop-terminal[data-trading-open="true"] .market-chart-slot .shared-indicator-controls { flex-wrap: nowrap; gap: 2px; }
 .desktop-terminal[data-trading-open="true"] .market-chart-slot .chart-indicator-button { padding-inline: 5px; }
 .desktop-terminal[data-trading-open="true"] .market-chart-slot .msd-volume-title,

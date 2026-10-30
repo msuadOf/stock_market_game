@@ -192,24 +192,57 @@ test("新游戏默认 2030，拒绝无效日期并在有效日期重新创建真
 test("生产 WASM 拒绝无效公开报告查询而不伪造报告内容", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.addInitScript({ content: `
-    {
-      const originalPostMessage = Worker.prototype.postMessage;
-      Worker.prototype.postMessage = function(message, transfer) {
-        if (message?.type === "publicReports" && message?.query?.company_id === "C-600101") {
-          return originalPostMessage.call(this, {
-            ...message,
-            query: { ...message.query, page_size: 0 },
-          }, transfer);
-        }
-        return originalPostMessage.call(this, message, transfer);
+    (() => {
+      const state = { baselines: [], requests: [] };
+      window.__companyReadCapture = state;
+      const ids = new WeakMap(); let nextId = 0;
+      const id = (port) => { let value = ids.get(port); if (value === undefined) { value = ++nextId; ids.set(port, value); } return value; };
+      const watched = new WeakSet();
+      const observe = (prototype) => {
+        const add = prototype.addEventListener;
+        prototype.addEventListener = function(type, listener, options) {
+          if (type === "message" && !watched.has(this)) {
+            watched.add(this);
+            add.call(this, "message", (event) => {
+              const message = event.data;
+              if (message?.type === "baseline" && typeof message.generation === "number") state.baselines.push({ port: id(this), generation: message.generation, companyCatalog: message.companyCatalog });
+            });
+          }
+          return add.call(this, type, listener, options);
+        };
       };
-    }
+      observe(MessagePort.prototype);
+      observe(Worker.prototype);
+      const observeRequests = (prototype) => {
+        const post = prototype.postMessage;
+        prototype.postMessage = function(message, transfer) {
+          const baseline = state.baselines.find((item) => item.port === id(this) && item.generation === message?.generation);
+          const targetCompany = baseline?.companyCatalog?.find((item) => item.code === "C-600101");
+          if (state.requests.length === 0 && message?.type === "publicReports" && typeof message.requestId === "number" && typeof message.generation === "number" && targetCompany !== undefined && message.query?.company_id === targetCompany.id && message.query.page_size === null) {
+            state.requests.push({ port: id(this), requestId: message.requestId, generation: message.generation, company: message.query.company_id, pageSize: message.query.page_size, injectedPageSize: 0 });
+            return post.call(this, { ...message, query: { ...message.query, page_size: 0 } }, transfer);
+          }
+          return post.call(this, message, transfer);
+        };
+      };
+      observeRequests(MessagePort.prototype);
+      observeRequests(Worker.prototype);
+    })();
   ` });
   await page.goto("/?tradingE2E=1");
   await expectEngineReady(page);
   await page.getByRole("navigation", {name:"桌面主导航"}).getByRole("button", {name:"个股", exact:true}).click();
   await page.getByRole("button", {name:"公司资料 F10", exact:true}).click();
   const panel = companyPanel(page);
+  await expect.poll(() => page.evaluate(() => (globalThis as typeof globalThis & { __companyReadCapture?: { requests: unknown[] } }).__companyReadCapture?.requests.length ?? 0)).toBe(1);
+  const injected = await page.evaluate(() => (globalThis as typeof globalThis & { __companyReadCapture: { requests: { port: number; requestId: number; generation: number; company: number; pageSize: number | null; injectedPageSize: number }[] } }).__companyReadCapture.requests.at(-1));
+  expect(injected).toMatchObject({ pageSize: null, injectedPageSize: 0 });
+  expect(injected!.requestId).toBeGreaterThan(0);
+  expect(injected!.generation).toBeGreaterThan(0);
+  const baseline = await page.evaluate((request) => (globalThis as typeof globalThis & { __companyReadCapture: { baselines: { port: number; generation: number; companyCatalog: { id: number; code: string }[] }[] } }).__companyReadCapture.baselines.find(item => item.port === request.port && item.generation === request.generation), injected!);
+  if (!baseline) throw new Error("公司报告请求未关联到同端口同generation的baseline");
+  expect(baseline.companyCatalog.find(item => item.code === "C-600101")?.id).toBe(injected!.company);
+  await expect(panel).toHaveAttribute("data-company-id", "C-600101");
   await panel.scrollIntoViewIfNeeded();
   const reportError = panel.locator(":scope > p[role=alert]");
   await expect(reportError).toHaveCount(1);

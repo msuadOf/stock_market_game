@@ -1,4 +1,5 @@
 import { CompanyWriteRejectedError, parseCompanyWriteFailure } from "./company-write.ts";
+import { CompanyReadRejectedError, parseCompanyReadFailure } from "./company-read-failure.ts";
 
 export interface WorkerResponse {
   type: string;
@@ -130,7 +131,15 @@ export class WorkerRequestScope {
       if (response.type !== successType && response.type !== "operationError") return;
       this.finish(resource);
       if (response.type === successType) resource.resolve(response);
-      else if (["proposePlayerCompanyAction", "enqueueReportCorrection", "cancelReportCorrection"].includes(request.type)) {
+      else if (request.type === "companyReadQuery" && Object.hasOwn(response, "failure")) {
+        let failure: unknown;
+        try {
+          failure = response.failure;
+          resource.reject(new CompanyReadRejectedError(parseCompanyReadFailure(failure), response));
+        } catch (decoderError) {
+          resource.reject(new AggregateError([decoderError], "Worker 公司只读查询 typed failure 响应协议无效", { cause: { response, failure, decoderError } }));
+        }
+      } else if (["proposePlayerCompanyAction", "enqueueReportCorrection", "cancelReportCorrection"].includes(request.type)) {
         let failure: unknown;
         try {
           if (Object.hasOwn(response, "failure")) {
