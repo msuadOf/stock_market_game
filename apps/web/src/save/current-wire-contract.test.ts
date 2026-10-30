@@ -172,4 +172,54 @@ test("parseRawSaveJson 保留 JSON 词法与字符串边界", { timeout: 10_000 
   assert.equal(Object.hasOwn(prototypeKey, "__proto__"), true)
   assert.deepEqual(prototypeKey.__proto__, { polluted: true })
   assert.equal(({} as { polluted?: boolean }).polluted, undefined)
+
+  const emptyObject = parseRawSaveJson("{}") as Record<string, unknown>
+  assert.equal(Object.getPrototypeOf(emptyObject), Object.prototype)
+
+  const specialKeys = parseRawSaveJson(String.raw`{"__proto__":1,"constructor":2,"toString":3,"get":4,"set":5,"10":"ten","2":"two","nested":{"__proto__":{"safe":true}},"other":{"value":"tail"}}`) as Record<string, unknown>
+  assert.equal(Object.getPrototypeOf(specialKeys), Object.prototype)
+  assert.deepEqual(Object.keys(specialKeys), ["2", "10", "__proto__", "constructor", "toString", "get", "set", "nested", "other"])
+  for (const key of ["__proto__", "constructor", "toString", "get", "set"]) {
+    assert.equal(Object.hasOwn(specialKeys, key), true)
+    assert.deepEqual(Object.getOwnPropertyDescriptor(specialKeys, key), {
+      value: specialKeys[key], writable: true, enumerable: true, configurable: true,
+    })
+  }
+  const nested = specialKeys.nested as Record<string, unknown>
+  assert.equal(Object.getPrototypeOf(nested), Object.prototype)
+  assert.equal(Object.hasOwn(nested, "__proto__"), true)
+  assert.deepEqual(nested.__proto__, { safe: true })
+  assert.deepEqual(specialKeys.other, { value: "tail" })
+  assert.notEqual(specialKeys.nested, specialKeys.other)
+
+  const setterKey = "rawJsonSetterProbe"
+  const lockedKey = "rawJsonLockedProbe"
+  const setterDescriptor = Object.getOwnPropertyDescriptor(Object.prototype, setterKey)
+  const lockedDescriptor = Object.getOwnPropertyDescriptor(Object.prototype, lockedKey)
+  let setterCalls = 0
+  try {
+    Object.defineProperty(Object.prototype, setterKey, {
+      configurable: true,
+      set() { setterCalls++ },
+    })
+    Object.defineProperty(Object.prototype, lockedKey, {
+      configurable: true,
+      value: "inherited sentinel",
+      writable: false,
+    })
+
+    const guarded = parseRawSaveJson(String.raw`{"rawJsonSetterProbe":"setter value","rawJsonLockedProbe":"locked value"}`) as Record<string, unknown>
+    assert.equal(setterCalls, 0)
+    for (const [key, value] of [[setterKey, "setter value"], [lockedKey, "locked value"]] as const) {
+      assert.equal(Object.hasOwn(guarded, key), true)
+      assert.deepEqual(Object.getOwnPropertyDescriptor(guarded, key), {
+        value, writable: true, enumerable: true, configurable: true,
+      })
+    }
+  } finally {
+    if (setterDescriptor === undefined) delete (Object.prototype as Record<string, unknown>)[setterKey]
+    else Object.defineProperty(Object.prototype, setterKey, setterDescriptor)
+    if (lockedDescriptor === undefined) delete (Object.prototype as Record<string, unknown>)[lockedKey]
+    else Object.defineProperty(Object.prototype, lockedKey, lockedDescriptor)
+  }
 })

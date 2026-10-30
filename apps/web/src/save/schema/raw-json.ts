@@ -5,6 +5,10 @@ export function parseRawSaveJson(raw: string): unknown {
   if (typeof raw !== "string") throw new SaveSchemaError("根节点", "必须是 JSON 字符串");
   let cursor = 0;
   const fail = (path: string, detail: string): never => { throw new SaveSchemaError(path, `存档不是合法 JSON：${detail}`); };
+  const inheritedPropertyDescriptor: PropertyDescriptor = Object.create(null);
+  inheritedPropertyDescriptor.writable = true;
+  inheritedPropertyDescriptor.enumerable = true;
+  inheritedPropertyDescriptor.configurable = true;
   const skip = () => {
     while (cursor < raw.length) {
       const code = raw.charCodeAt(cursor);
@@ -36,15 +40,22 @@ export function parseRawSaveJson(raw: string): unknown {
     skip(); const first = raw[cursor];
     if (first === '"') return quoted(path);
     if (first === "{") {
-      cursor++; skip(); const entries: [string, unknown][] = [], seen = new Set<string>();
-      if (raw[cursor] === "}") { cursor++; return {}; }
+      cursor++; skip(); const result: Record<string, unknown> = {};
+      if (raw[cursor] === "}") { cursor++; return result; }
       for (;;) {
         skip(); const key = quoted(`${path}.key`);
-        if (seen.has(key)) fail(`${path}.${key}`, "包含重复 JSON 键");
-        seen.add(key); skip();
+        if (Object.hasOwn(result, key)) fail(`${path}.${key}`, "包含重复 JSON 键");
+        skip();
         if (raw[cursor++] !== ":") fail(path, "JSON 字段缺少冒号");
-        entries.push([key, value(`${path}.${key}`)]); skip();
-        if (raw[cursor] === "}") { cursor++; return Object.fromEntries(entries); }
+        const child = value(`${path}.${key}`);
+        if (key in result) {
+          inheritedPropertyDescriptor.value = child;
+          Object.defineProperty(result, key, inheritedPropertyDescriptor);
+        } else {
+          result[key] = child;
+        }
+        skip();
+        if (raw[cursor] === "}") { cursor++; return result; }
         if (raw[cursor++] !== ",") fail(path, "JSON 对象缺少逗号或结束符");
       }
     }
