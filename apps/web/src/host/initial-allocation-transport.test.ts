@@ -1,4 +1,4 @@
-import { bootstrapLegacy, createLegacyHost, LegacyWorker } from "./worker-host-legacy.test-support.ts";
+import { bootstrapLegacy, createLegacyHost, drainLegacyPorts, LegacyWorker } from "./worker-host-legacy.test-support.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
@@ -34,14 +34,17 @@ test("Worker实际分配query绑定requestId/generation，refresh后旧响应失
     worker.emit({ ...{ stockCatalog: [{ id: 0, code: "600101" }], companyCatalog: [{ id: 0, code: "C-600101", name: "公司", listed_stock: 0 }] }, type: "baseline", generation: 1, snapshot: snapshot(0, 0), civilDate: "2024-01-02" });
     host = await creating;
     const current = host.initialAllocation();
+    await drainLegacyPorts();
     const request = worker.sent.at(-1)!;
     assert.deepEqual(request, { type: "initialAllocation", requestId: request.requestId, generation: 1 });
     worker.emit({ type: "initialAllocation", requestId: request.requestId, generation: 1, data: allocation });
     assert.deepEqual(await current, { ...allocation, stocks: [{ ...allocation.stocks[0], code: "600101" }] });
     const stale = host.initialAllocation();
+    await drainLegacyPorts();
     const previous = worker.sent.at(-1)!;
     const rejected = assert.rejects(stale, /已过期会话 generation/);
     const refreshed = host.refreshBaseline();
+    await drainLegacyPorts();
     worker.emit({ ...{ stockCatalog: [{ id: 0, code: "600101" }], companyCatalog: [{ id: 0, code: "C-600101", name: "公司", listed_stock: 0 }] }, type: "refreshed", requestId: worker.sent.at(-1)!.requestId, generation: 1, snapshot: snapshot(0, 0), civilDate: "2024-01-02" });
     await refreshed;
     worker.emit({ type: "initialAllocation", requestId: previous.requestId, generation: 1, data: allocation });

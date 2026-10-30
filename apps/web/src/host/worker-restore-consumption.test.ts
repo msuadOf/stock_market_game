@@ -1,4 +1,4 @@
-import { bootstrapLegacy, createLegacyHost, LegacyWorker } from "./worker-host-legacy.test-support.ts";
+import { bootstrapLegacy, createLegacyHost, drainLegacyPorts, LegacyWorker } from "./worker-host-legacy.test-support.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
 import {createWorkerHost} from "./worker-host.ts";
@@ -22,7 +22,7 @@ test("独立review：restored回包缺目录后关闭Worker并禁旧generation�
 
   w.emit({type:"baseline",generation:1,snapshot:snapshot(0,0),civilDate:"2030-01-02",stockCatalog:[{id:0,code:"600101"}],companyCatalog:[{id:0,code:"C-600101",name:"公司",listed_stock:0}]});
   host=await creating;
-  const loading=host.load(currentSaveFixture());const req=w.sent.at(-1)!;
+  const loading=host.load(currentSaveFixture());await drainLegacyPorts();const req=w.sent.at(-1)!;
   const refused=assert.rejects(loading,/companyCatalog/);
   w.emit({type:"ingress",generation:2,shared:true,token:2});
   w.emit({type:"restored",requestId:req.requestId,generation:1,nextGeneration:2,snapshot:snapshot(0,0),civilDate:"2030-01-02",stockCatalog:[{id:0,code:"600101"}]});
@@ -53,12 +53,14 @@ for (const scenario of ["precommit", "malformed-next", "missing-catalog", "new-i
    host=await creating;
    const visible=host.snapshot();
    const loading=host.load(currentSaveFixture());
+   await drainLegacyPorts();
    const req=w.sent.at(-1)!;
    assert.equal(req.type,"restore");
    assert.equal(req.generation,1);
    assert.ok(Number.isSafeInteger(req.requestId) && Number(req.requestId)>0);
    const refused=assert.rejects(loading,scenario==="malformed-next"?/正安全整数/:scenario==="missing-catalog"?/companyCatalog/:/候选拒绝/);
    const saved=host.save();
+   await drainLegacyPorts();
    const saveRequest=w.sent.at(-1)!;
    assert.equal(saveRequest.type,"save");
    assert.ok(Number.isSafeInteger(saveRequest.requestId) && Number(saveRequest.requestId)>0);
@@ -78,6 +80,7 @@ for (const scenario of ["precommit", "malformed-next", "missing-catalog", "new-i
    }else{
     await assert.rejects(host.submitIntent({Cancel:{code:"600101",id:7}}),/已关闭/);
     assert.equal(w.sent.filter(v=>v.type==="enqueue").length,0);
+    await drainLegacyPorts();
     assert.equal(w.terminated,1);
     await savedResult;
    }

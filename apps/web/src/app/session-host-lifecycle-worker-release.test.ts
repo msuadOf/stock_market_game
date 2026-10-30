@@ -62,6 +62,7 @@ test("真实WorkerHost关闭时drain在途TickBatch且内部ACK最终baseline，
     lifecycle = createSessionHostLifecycle(ports); await lifecycle.start();
     assert.deepEqual(delivered.map(update => update.type), ["baseline"], "启动应向UI交付缓存baseline");
     engine.emit({ type: "protocol", generation: 1, deliveryId: 1, update: tickBatch([frame(1, 0, [0])], snapshot(1, 1)) });
+    await drain();
     assert.deepEqual(delivered.map(update => update.type), ["baseline", "protocol"]);
     assert.equal(host.tick(), 0, "运行protocol不会更新baseline缓存，不能直接当最终位置");
     await lifecycle.dispose();

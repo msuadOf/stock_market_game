@@ -1,8 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { DEFAULT_SETUP } from "../config/defaults.ts";
 import { parseWasmRuntimeOptions } from "./wasm-runtime-options.ts";
-import { createWorkerHost } from "./worker-host.ts";
+import { drain, fixture } from "./worker-host-w1.test-support.ts";
 
 const WAIT_SETTINGS = { spinUs: 500, quietUs: 50_000, fineUs: 500, coarseUs: 500 };
 
@@ -29,33 +28,25 @@ for (const [search, expected] of [
   ["?wasmRuntime=1", { runtimeOverride: true, waitSettings: WAIT_SETTINGS }],
 ] as const) {
   test(`Worker init 对 ${search || "缺省"} query 保留真实 payload 语义`, { timeout: 10000 }, async () => {
-    const previousWorker = Object.getOwnPropertyDescriptor(globalThis, "Worker");
-    const sent: Record<string, unknown>[] = [];
-    let terminated = 0;
-    class CapturingWorker extends EventTarget {
-      postMessage(value: Record<string, unknown>) {
-        sent.push(value);
-        throw new Error("测试在捕获 init payload 后停止 Worker 初始化");
-      }
-      terminate() { terminated++; }
-    }
-    Object.defineProperty(globalThis, "Worker", { configurable: true, value: CapturingWorker });
+    const f = fixture({ initError: new Error("测试在真实 init 传输后停止 Worker 初始化") });
     try {
-      await assert.rejects(createWorkerHost(DEFAULT_SETUP, 1n, {
+      const creating = f.launch({
         onSpawnFailure() {},
         ...parseWasmRuntimeOptions(search),
-      }));
-      const init = sent.find((entry) => entry.type === "init");
+      });
+      const rejected = assert.rejects(creating);
+      await drain();
+      await rejected;
+      const init = f.workers[0]?.sent.find((entry) => entry.type === "init");
       assert.ok(init);
       for (const [key, value] of Object.entries(expected)) assert.deepEqual(init[key], value);
       if (search === "" || search === "?wasmRuntime=0") {
         assert.equal(Object.hasOwn(init, "runtimeOverride"), search !== "");
         assert.equal(Object.hasOwn(init, "waitSettings"), false);
       }
-      assert.equal(terminated, 1, "bootstrap 失败必须真实终止已创建的 Worker");
+      assert.equal(f.workers[0]?.terminations, 1, "bootstrap 失败必须真实终止已创建的 Worker");
     } finally {
-      if (previousWorker === undefined) Reflect.deleteProperty(globalThis, "Worker");
-      else Object.defineProperty(globalThis, "Worker", previousWorker);
+      await f.cleanup();
     }
   });
 }

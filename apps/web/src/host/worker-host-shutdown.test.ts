@@ -19,8 +19,11 @@ for (const order of ["reply-first", "exit-first"] as const) {
       await drain();
       const request = engine.sent.findLast((message) => message.type === "shutdown");
       assert.ok(request, "DISPOSE_MUST_REQUEST_REAL_SHUTDOWN");
-      const reply = () => engine.emit({ type: "shutdownCompleted", requestId: request.requestId, generation: 1,
-        report: { kind: "success", handle: 7, runtime: { ownedWorkers: 1, joinedWorkers: 1, workers: [{ worker: "group-0", result: { kind: "ok" } }], groupFinals: 1, deskFinals: 0 } } });
+      const reply = () => {
+        engine.emit({ type: "shutdownCompleted", requestId: request.requestId, generation: 1,
+          report: { kind: "success", handle: 7, runtime: { ownedWorkers: 1, joinedWorkers: 1, workers: [{ worker: "group-0", result: { kind: "ok" } }], groupFinals: 1, deskFinals: 0 } } });
+        engine.emit({ type: "engineLifecycle", instanceId: engine.instanceId, state: "quiescent" });
+      };
       const exit = () => {
         Atomics.store(f.words, joinWordOffset(0, f.layout.capacity), encodeJoin(0, JoinState.Consumed, 29) | 0);
         child.controlPort!.postMessage({ type: "facadeWorkerExit", workerId: init.workerId, slot: 0, gen: 0 });
@@ -61,8 +64,9 @@ test("Rust shutdown 失败保留完整 cause，真实 quiescence 仍可结账但
     await drain(); f.ingress(); f.baseline(); await drain(); f.ack(f.workers[1], 1); await drain();
     const outcome = f.readOutcome(); if (outcome.status !== "fulfilled") throw new Error("fixture 未就绪");
     f.workers[0].onPost = (request) => {
-      if (request.type === "shutdown") f.workers[0].emit({ type: "shutdownCompleted", requestId: request.requestId, generation: request.generation, report: { kind: "failure", handle: 7,
+      if (request.type === "shutdown") { f.workers[0].emit({ type: "shutdownCompleted", requestId: request.requestId, generation: request.generation, report: { kind: "failure", handle: 7,
         primary: { stage: "final", worker: null, detail: "缺少 Final" }, secondary: [{ stage: "cleanup", worker: null, detail: "次要故障" }], completion: { ownedWorkers: 0, joinedWorkers: 0, workers: [], groupFinals: 0, deskFinals: 0 } } });
+        f.workers[0].emit({ type: "engineLifecycle", instanceId: f.workers[0].instanceId, state: "quiescent" }); }
     };
     await assert.rejects(outcome.host.dispose(), (error: unknown) => {
       assert.equal((error as Error).cause !== null, true);
@@ -74,6 +78,45 @@ test("Rust shutdown 失败保留完整 cause，真实 quiescence 仍可结账但
     assert.ok(observations.some((item) => (item as { type: string }).type === "finalRelease"));
   } finally { await f.cleanup(/Rust shutdown 失败/); }
 });
+
+for (const joined of [true, false]) {
+  test(`fatal cleanup 的 typed shutdown ${joined ? "完整 join 可真实释放" : "部分 join 保持 unknown"}且保留原 HostFailure`, { timeout: 10000 }, async () => {
+    const f = fixture();
+    const failure = { code: "ORIGINAL_FATAL", where: "fixture.fatal", message: "原用户故障", cause: { marker: "原 cause" } };
+    const shutdown = { kind: "failure", handle: 7, primary: { stage: "final", worker: null, detail: "typed shutdown 故障" }, secondary: [],
+      completion: { ownedWorkers: joined ? 0 : 1, joinedWorkers: 0, workers: [], groupFinals: 0, deskFinals: 0 } };
+    const observations: unknown[] = [], failures: unknown[] = [];
+    let release!: Promise<unknown>;
+    try {
+      f.launch({ onSpawnFailure() {}, lifecycleObserver: (event: unknown) => observations.push(event), memoryAdmissionTicket: { registerRelease(value: Promise<unknown>) { release = value; } } });
+      const released = joined ? release : assert.rejects(release, /unknown|未知/);
+      await drain(); f.ingress(); f.baseline(); await drain(); f.ack(f.workers[1], 1); await drain();
+      const outcome = f.readOutcome(); if (outcome.status !== "fulfilled") throw new Error("fixture 未就绪");
+      const starting = outcome.host.start(() => true, (value) => failures.push(value));
+      await drain();
+      const engine = f.workers[0], request = engine.sent.at(-1)!;
+      engine.emit({ type: "started", requestId: request.requestId, generation: request.generation });
+      await starting;
+      engine.onPost = (message) => {
+        if (message.type === "shutdown") {
+          engine.emit({ type: "shutdownCompleted", requestId: message.requestId, generation: message.generation, report: shutdown });
+          engine.emit({ type: "engineLifecycle", instanceId: engine.instanceId, state: "quiescent" });
+        }
+      };
+      engine.emit({ type: "failure", generation: 1, ...failure });
+      await drain();
+      const receipt = await released;
+      if (joined) assert.deepEqual(receipt, { kind: "released", finalBytes: 65536, growthStopped: true, referencesDropped: true });
+      assert.deepEqual(failures, [failure], "cleanup shutdown 结果不得替换原 HostFailure");
+      assert.ok(observations.some((event) => {
+        if (event === null || typeof event !== "object" || (event as { type?: unknown }).type !== "rustShutdown") return false;
+        assert.deepEqual((event as { report: unknown }).report, shutdown);
+        return true;
+      }), "保留完整 typed shutdown 诊断报告");
+      assert.ok(f.workers.every((worker) => worker.terminations === 1));
+    } finally { await f.cleanup(); }
+  });
+}
 
 test("shutdown 超时强制 discard 不冒成功，release 未知且新业务被拒绝", { timeout: 10000 }, async () => {
   const f = fixture();

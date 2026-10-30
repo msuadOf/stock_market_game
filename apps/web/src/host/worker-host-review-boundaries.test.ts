@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { fixture, drain } from "./worker-host-w1.test-support.ts";
+import { catalogWorkerFixture } from "./catalog-test-fixture.ts";
+import { snapshot } from "./protocol-test-fixtures.ts";
 
 test("review 真实create先ingress再created/baseline，首桥不能因currentGeneration尚为0拒绝", { timeout: 10000 }, async () => {
   const f = fixture();
@@ -30,12 +32,13 @@ for (const transition of ["dispose", "generation"]) {
       let changed = false;
       const terminalReads: boolean[] = [];
       const pending = ready.host.civilDate!().then(value => ({ status: "fulfilled" as const, value }), error => ({ status: "rejected" as const, error }));
+      await drain();
       const request = f.workers[0].sent.at(-1)!;
       // getter仅观察测试中终端date读取的发生时点，不参与guard或伪造业务结果。
       const response = { type: "civilDate", generation: 1, requestId: request.requestId };
       Object.defineProperty(response, "date", { enumerable: true, get() { terminalReads.push(changed); return "2030-01-02"; } });
-      f.workers[0].emit(response);
-      queueMicrotask(() => { changed = true; if (transition === "dispose") void ready.host.dispose(); else f.baseline(2); });
+      f.workers[0].emitRaw(response);
+      queueMicrotask(() => { changed = true; if (transition === "dispose") void ready.host.dispose(); else f.workers[0].emitRaw({ ...catalogWorkerFixture(snapshot(2, 2)), type: "baseline", generation: 2, civilDate: "2030-01-02", snapshot: snapshot(2, 2) }); });
       const outcome = await pending;
       if (outcome.status === "fulfilled") {
         assert.ok(terminalReads.length > 0);
@@ -57,12 +60,14 @@ test("review 直接Worker failure后的fatal callback抛错必须显式报告且
     const original = new Error("REVIEW_FATAL_CALLBACK_CAUSE");
     let invoked = 0;
     const starting = ready.host.start(() => true, () => { invoked++; throw original; });
+    await drain();
     const request = f.workers[0].sent.at(-1)!;
     f.workers[0].emit({ type: "started", generation: 1, requestId: request.requestId }); await starting;
     globalThis.queueMicrotask = callback => { queued.push(callback); };
     Object.defineProperty(globalThis, "reportError", { configurable: true, value: (error: unknown) => { reported.push(error); } });
     try { f.workers[0].emit({ type: "failure", code: "ENGINE_FATAL", where: "review", message: "原始engine fatal" }); }
     catch (error) { reported.push(error); }
+    await drain();
     assert.equal(invoked, 1);
     assert.ok(f.workers.every(worker => worker.terminations === 1));
     assert.equal(f.clock.tasks.size, 0);

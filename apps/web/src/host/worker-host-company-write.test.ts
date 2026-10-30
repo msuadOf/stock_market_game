@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { drain, fixture } from "./worker-host-w1.test-support.ts";
 import { CompanyWriteRejectedError } from "./company-write.ts";
+import { catalogWorkerFixture } from "./catalog-test-fixture.ts";
+import { snapshot } from "./protocol-test-fixtures.ts";
 import { currentSaveFixture } from "../save/current-save-fixture.ts";
+
+function protocolBaseline(generation: number) { return { ...catalogWorkerFixture(snapshot(generation, generation)), type: "baseline", generation, civilDate: "2030-01-02", snapshot: snapshot(generation, generation) }; }
 
 async function withHost(body: (host: Awaited<ReturnType<ReturnType<typeof fixture>["launch"]>>, f: ReturnType<typeof fixture>) => Promise<void>) {
   const f = fixture();
@@ -65,6 +69,7 @@ for (const settlement of ["success", "rejection"] as const) for (const replaceme
       const sentBeforeRequest = engine.sent.length;
       const pending = host.proposePlayerCompanyAction(proposal);
       const result = pending.then(value => ({ ok: true as const, value }), (error: unknown) => ({ ok: false as const, error }));
+      await drain();
       const sent = engine.sent.at(-1)!;
       if (replacement === "next-generation") {
         f.baseline(2);
@@ -93,8 +98,8 @@ for (const settlement of ["success", "rejection"] as const) for (const replaceme
         assert.equal(engine.terminations, 0);
         return;
       }
-      if (replacement === "same-generation") f.baseline(1);
-      engine.emit(settlement === "success"
+      if (replacement === "same-generation") engine.emitRaw(protocolBaseline(1));
+      engine.emitRaw(settlement === "success"
         ? { type: "playerCompanyActionAcknowledged", requestId: sent.requestId, generation: sent.generation, result: { receipt } }
         : { type: "operationError", requestId: sent.requestId, generation: sent.generation, message: "具体持仓拒绝", failure });
       if (replacement === "dispose") await host.dispose();
@@ -115,9 +120,11 @@ test("Worker 已接收的 typed 公司写拒绝在换代后仍保留完整 failu
   await withHost(async (host, f) => {
     const engine = f.workers[0];
     const pending = host.proposePlayerCompanyAction(proposal).then(value => ({ ok: true as const, value }), (error: unknown) => ({ ok: false as const, error }));
+    await drain();
     const sent = engine.sent.at(-1)!;
-    engine.emit({ type: "operationError", requestId: sent.requestId, generation: sent.generation, message: "具体持仓拒绝", failure });
-    f.baseline(2);
+    engine.emitRaw({ type: "operationError", requestId: sent.requestId, generation: sent.generation, message: "具体持仓拒绝", failure });
+    const next = protocolBaseline(2);
+    engine.emitRaw(next);
     const outcome = await pending;
     assert.equal(outcome.ok, false);
     if (outcome.ok) throw new Error("typed 公司写拒绝不能成功");
@@ -145,6 +152,7 @@ for (const settlement of ["success", "rejection"] as const) {
     await withHost(async (host, f) => {
       const engine = f.workers[0];
       const writing = host.proposePlayerCompanyAction(proposal).then(value => ({ ok: true as const, value }), (error: unknown) => ({ ok: false as const, error }));
+      await drain();
       const sent = engine.sent.at(-1)!;
       const loading = host.load(currentSaveFixture()).then(() => ({ ok: true as const }), (error: unknown) => ({ ok: false as const, error }));
       f.ingress(2, 202);

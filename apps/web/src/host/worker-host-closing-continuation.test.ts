@@ -42,6 +42,7 @@ function holdShutdown(engine: WorkerHandle): { readonly request: () => Record<st
     acknowledge() {
       const request = this.request();
       engine.emit({ type: "shutdownCompleted", requestId: request.requestId, generation: request.generation, report: { kind: "success", handle: 7, runtime: null } });
+      engine.emit({ type: "engineLifecycle", instanceId: engine.instanceId, state: "quiescent" });
     },
   };
 }
@@ -49,6 +50,7 @@ function holdShutdown(engine: WorkerHandle): { readonly request: () => Record<st
 async function closeAfterResponse(engine: WorkerHandle, host: Host): Promise<() => Promise<void>> {
   const shutdown = holdShutdown(engine);
   const disposing = host.dispose();
+  await drain();
   const request = shutdown.request();
   assert.equal(request.type, "shutdown");
   let finished = false;
@@ -67,17 +69,20 @@ test("submitIntent 入队 ACK 已回包时开始关闭，旧 continuation 必须
     const intent = { Cancel: { code: "000812", id: 7 } } as Parameters<typeof host.submitIntent>[0];
     const accepted = host.submitIntent(intent);
     await Promise.resolve();
+    await drain();
     const firstEnqueue = ingress.sent.at(-1)!;
     ingress.emit({ type: "enqueued", requestId: firstEnqueue.requestId, generation: firstEnqueue.generation });
     await accepted;
 
     const pending = host.submitIntent(intent);
+    const rejected = assert.rejects(pending, /过期|关闭/);
     await Promise.resolve();
+    await drain();
     const enqueue = ingress.sent.at(-1)!;
     assert.equal(enqueue.type, "enqueue");
-    ingress.emit({ type: "enqueued", requestId: enqueue.requestId, generation: enqueue.generation });
+    ingress.emitRaw({ type: "enqueued", requestId: enqueue.requestId, generation: enqueue.generation });
     finish = await closeAfterResponse(engine, host);
-    await assert.rejects(pending, /过期|关闭/);
+    await rejected;
   } finally { await finish?.(); await f.cleanup(); }
 });
 
@@ -86,15 +91,18 @@ test("civilDate 响应已回包时开始关闭，旧查询 continuation 必须�
   let finish: (() => Promise<void>) | undefined;
   try {
     const before = host.civilDate!();
+    await drain();
     const request = engine.sent.at(-1)!;
     engine.emit({ type: "civilDate", requestId: request.requestId, generation: request.generation, date: "2030-01-02" });
     assert.equal(await before, "2030-01-02", "关闭前有效查询应正常成功");
 
     const pending = host.civilDate!();
+    const rejected = assert.rejects(pending, /过期|关闭/);
+    await drain();
     const lateRequest = engine.sent.at(-1)!;
-    engine.emit({ type: "civilDate", requestId: lateRequest.requestId, generation: lateRequest.generation, date: "2030-01-03" });
+    engine.emitRaw({ type: "civilDate", requestId: lateRequest.requestId, generation: lateRequest.generation, date: "2030-01-03" });
     finish = await closeAfterResponse(engine, host);
-    await assert.rejects(pending, /过期|关闭/);
+    await rejected;
   } finally { await finish?.(); await f.cleanup(); }
 });
 
@@ -104,11 +112,13 @@ test("refreshBaseline 响应已回包时开始关闭，不得重装 baseline 或
   let finish: (() => Promise<void>) | undefined;
   try {
     const starting = host.start((update) => { delivered.push(update); });
+    await drain();
     const started = engine.sent.at(-1)!;
     engine.emit({ type: "started", requestId: started.requestId, generation: started.generation });
     await starting;
     const { catalogWorkerFixture } = await import("./catalog-test-fixture.ts");
     const normalRefresh = host.refreshBaseline();
+    await drain();
     const normalRequest = engine.sent.at(-1)!;
     const firstSnapshot = protocolSnapshot(2, 2);
     engine.emit({ ...catalogWorkerFixture(firstSnapshot), type: "refreshed", requestId: normalRequest.requestId, generation: normalRequest.generation, civilDate: "2030-01-03", snapshot: firstSnapshot });
@@ -116,11 +126,13 @@ test("refreshBaseline 响应已回包时开始关闭，不得重装 baseline 或
     const initialCount = delivered.length;
 
     const pending = host.refreshBaseline();
+    const rejected = assert.rejects(pending, /过期|关闭/);
+    await drain();
     const refresh = engine.sent.at(-1)!;
     const snapshot = protocolSnapshot(3, 3);
-    engine.emit({ ...catalogWorkerFixture(snapshot), type: "refreshed", requestId: refresh.requestId, generation: refresh.generation, civilDate: "2030-01-04", snapshot });
+    engine.emitRaw({ ...catalogWorkerFixture(snapshot), type: "refreshed", requestId: refresh.requestId, generation: refresh.generation, civilDate: "2030-01-04", snapshot });
     finish = await closeAfterResponse(engine, host);
-    await assert.rejects(pending, /过期|关闭/);
+    await rejected;
     assert.equal(delivered.length, initialCount, "关闭期不得调用 baseline callback");
     assert.equal(host.snapshot().tick, 2, "关闭期不得安装已回包的 refresh baseline");
     await finish();
@@ -136,10 +148,12 @@ test("Worker company write 已回包时开始关闭，旧确认不得成功", { 
   try {
     const proposal = { CashDividend: { company: 0, gross_per_share: "5" } };
     const pending = (host as Host & CompanyWriteCommands).proposePlayerCompanyAction(proposal);
+    const rejected = assert.rejects(pending, /过期|销毁/);
+    await drain();
     const request = engine.sent.at(-1)!;
-    engine.emit({ type: "playerCompanyActionAcknowledged", requestId: request.requestId, generation: request.generation, result: { receipt: { account: "0", company: 0, kind: "CashDividend", event_id: "synthetic-approved", approved_on: "2030-01-02" } } });
+    engine.emitRaw({ type: "playerCompanyActionAcknowledged", requestId: request.requestId, generation: request.generation, result: { receipt: { account: "0", company: 0, kind: "CashDividend", event_id: "synthetic-approved", approved_on: "2030-01-02" } } });
     finish = await closeAfterResponse(engine, host);
-    await assert.rejects(pending, /过期|销毁/);
+    await rejected;
   } finally { await finish?.(); await f.cleanup(); }
 });
 
@@ -166,8 +180,9 @@ test("真实 ingress bind operationError 在关闭 continuation 前到达仍报�
     const loading = host.load(currentSaveFixture());
     const loadRejected = assert.rejects(loading, /关闭|取消/);
     f.ingress(2, 202);
+    await drain();
     const binding = f.workers[1].sent.findLast((request) => request.type === "bindIngress" && request.generation === 2)!;
-    f.workers[1].emit({ type: "operationError", requestId: binding.requestId, generation: binding.generation, message: "真实 ingress bind 故障" });
+    f.workers[1].emitRaw({ type: "operationError", requestId: binding.requestId, generation: binding.generation, message: "真实 ingress bind 故障" });
     const disposing = host.dispose();
     await loadRejected;
     const disposal = await disposing.then(() => ({ ok: true as const }), (error: unknown) => ({ ok: false as const, error }));
@@ -191,11 +206,13 @@ test("currentResult 指标响应已回包时开始关闭，旧查询 continuatio
   let finish: (() => Promise<void>) | undefined;
   try {
     const pending = host.readSpeedMetrics();
+    const rejected = assert.rejects(pending, /过期|销毁/);
+    await drain();
     const request = engine.sent.at(-1)!;
-    engine.emit({ type: "speedMetrics", requestId: request.requestId, generation: request.generation, metrics: {
+    engine.emitRaw({ type: "speedMetrics", requestId: request.requestId, generation: request.generation, metrics: {
       requested: { mode: "fixed", multiplier: 60 }, actual_multiplier: 60, sample_duration_ms: 1000, sample_ticks: 60, running: true,
     } });
     finish = await closeAfterResponse(engine, host);
-    await assert.rejects(pending, /过期|销毁/);
+    await rejected;
   } finally { await finish?.(); await f.cleanup(); }
 });

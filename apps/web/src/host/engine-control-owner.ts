@@ -17,6 +17,7 @@ type ActiveOwner = {
   readonly instanceId: number;
   supervisor: ReturnType<typeof createEngineSupervisor> | null;
   engine: Worker | null;
+  engineCreated: boolean;
   ingress: Worker | null;
   ingressPort: MessagePort | null;
   ingressPortSent: boolean;
@@ -100,8 +101,13 @@ function sendFailure(active: ActiveOwner, error: unknown): void {
   }
   try { dropReferences(active); }
   catch (releaseError) { dependencies.reportError(new AggregateError([detail, releaseError], "controlWorker 清理失败")); }
-  if (finalReleaseEvent !== undefined) post({ type: "lifecycle", instanceId: active.instanceId, event: finalReleaseEvent });
-  terminal(active, { kind: "unknown", message: detail.message });
+  if (!active.engineCreated) {
+    post({ type: "lifecycle", instanceId: active.instanceId, event: { type: "finalRelease", kind: "not-allocated" } });
+    terminal(active, { kind: "not-allocated" });
+  } else {
+    if (finalReleaseEvent !== undefined) post({ type: "lifecycle", instanceId: active.instanceId, event: finalReleaseEvent });
+    terminal(active, { kind: "unknown", message: finalReleaseEvent?.type === "releaseUnknown" ? finalReleaseEvent.message : detail.message });
+  }
 }
 function lifecycle(active: ActiveOwner, event: WasmLifecycleObservation): void {
   if (event.type === "finalRelease" || event.type === "releaseUnknown") { finalReleaseEvent = event; return; }
@@ -134,10 +140,11 @@ function initialize(value: unknown): ActiveOwner {
   exact(request, ["type", "instanceId", "runtimeOverride", "dataPort"], "controlWorker start");
   const instanceId = safe(request.instanceId, "controlWorker instanceId");
   if (request.type !== "start" || typeof request.runtimeOverride !== "boolean" || !(request.dataPort instanceof MessagePort)) throw new Error("controlWorker start 内容无效");
-  const active: ActiveOwner = { instanceId, supervisor: null, engine: null, ingress: null, ingressPort: null,
+  const active: ActiveOwner = { instanceId, supervisor: null, engine: null, engineCreated: false, ingress: null, ingressPort: null,
     ingressPortSent: false, ingressGeneration: 0, ingressConfigurations: new Map(), listeners: [], ports: new Set([request.dataPort as MessagePort]), engineQuiescent: false, ingressQuiescent: false, childrenDrained: false, shutdownDeadline: Infinity, finalizing: false, terminal: false, failing: false, configured: false };
   owner = active;
   const engine = dependencies.createEngineWorker(`stock-game:${instanceId}:engine`);
+  active.engineCreated = true;
   active.engine = engine;
   let supervisor: ReturnType<typeof createEngineSupervisor>;
   try { supervisor = createEngineSupervisor({

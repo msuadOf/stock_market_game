@@ -9,10 +9,12 @@ import { createEngineControlOwner } from "./engine-control-owner.ts";
 const legacyMessageChannel = Object.getOwnPropertyDescriptor(globalThis, "MessageChannel");
 const legacyWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
 const legacyPorts = new Set<MessagePort>();
+const legacyPeers = new Map<MessagePort, MessagePort>();
 Object.defineProperty(globalThis, "window", { configurable: true, value: globalThis });
 test.after(() => {
   for (const port of legacyPorts) port.close();
   legacyPorts.clear();
+  legacyPeers.clear();
   if (legacyMessageChannel === undefined) Reflect.deleteProperty(globalThis, "MessageChannel");
   else Object.defineProperty(globalThis, "MessageChannel", legacyMessageChannel);
   if (legacyWindow === undefined) Reflect.deleteProperty(globalThis, "window");
@@ -24,6 +26,7 @@ export class LegacyWorker extends EventTarget {
   controlPort?: MessagePort;
   dataPort?: MessagePort;
   instanceId?: number;
+  private receiverPort?: MessagePort;
   private engineConfigured?: (value: void) => void;
   postMessage(value: Record<string, unknown>): void { this.prepare(value); }
   prepare(value: Record<string, unknown>): void {
@@ -83,6 +86,15 @@ export class LegacyWorker extends EventTarget {
     if (this.dataPort !== undefined && typeof type === "string" && type !== "engineLifecycle" && type !== "ingressLifecycle") this.dataPort.postMessage(value);
     else this.dispatchEvent(new MessageEvent("message", { data: value }));
   }
+  emitRaw(value: unknown): void {
+    if (this.receiverPort === undefined) throw new Error("legacy raw response 缺少真实 business port 对端");
+    this.receiverPort.dispatchEvent(new MessageEvent("message", { data: value }));
+  }
+  bindReceiver(port: MessagePort): void {
+    const receiver = legacyPeers.get(port);
+    if (receiver === undefined) throw new Error("legacy transport 缺少已登记的 business port 对端");
+    this.receiverPort = receiver;
+  }
 }
 export async function drainLegacyPorts(): Promise<void> {
   for (let count = 0; count < 8; count++) await setImmediate();
@@ -96,7 +108,14 @@ export async function bootstrapLegacy(worker: LegacyWorker, autoIngress = true):
 }
 export function createLegacyHost(setup: Parameters<typeof createWorkerHost>[0], seed: bigint) {
   // 保留 Node 原生控制 Channel，避免用同步桩绕过 configured 门禁。
-  Object.defineProperty(globalThis, "MessageChannel", { configurable: true, writable: true, value: LegacyChannel });
+  class TrackedLegacyChannel extends LegacyChannel {
+    constructor() {
+      super();
+      const first = this.port1 as unknown as MessagePort, second = this.port2 as unknown as MessagePort;
+      legacyPorts.add(first); legacyPorts.add(second); legacyPeers.set(second, first);
+    }
+  }
+  Object.defineProperty(globalThis, "MessageChannel", { configurable: true, writable: true, value: TrackedLegacyChannel });
   const LegacyWorkerConstructor = globalThis.Worker;
   if (typeof LegacyWorkerConstructor !== "function") throw new Error("legacy fixture 缺少测试 Worker 构造器");
   class LegacyController extends EventTarget {
@@ -109,7 +128,7 @@ export function createLegacyHost(setup: Parameters<typeof createWorkerHost>[0], 
         createIngressWorker: () => this.createLegacyWorker(new URL("./wasm-ingress-worker.ts", import.meta.url)),
         createChildWorker: () => this.createLegacyWorker(new URL("./facade-child-worker.ts", import.meta.url)),
         createChannel: () => {
-          const channel = new LegacyChannel();
+          const channel = new TrackedLegacyChannel();
           legacyPorts.add(channel.port1 as unknown as MessagePort); legacyPorts.add(channel.port2 as unknown as MessagePort);
           return channel as unknown as MessageChannel;
         },
@@ -133,6 +152,7 @@ export function createLegacyHost(setup: Parameters<typeof createWorkerHost>[0], 
         if (value.type === "bindEngineTransport" || value.type === "bindIngressTransport") {
           if (value.controlPort instanceof MessagePort) legacyPorts.add(value.controlPort);
           if (value.dataPort instanceof MessagePort) legacyPorts.add(value.dataPort);
+          worker.bindReceiver(value.dataPort as MessagePort);
           worker.prepare(value);
         }
         else originalPostMessage(value);
