@@ -313,3 +313,28 @@ test("parseRawSaveJson 保留 JSON 词法与字符串边界", { timeout: 10_000 
     else Object.defineProperty(Object.prototype, lockedKey, lockedDescriptor)
   }
 })
+
+test("parseRawSaveJson 的错误路径保留既有拼接语义", { timeout: 10_000 }, () => {
+  const cases: [string, string][] = [
+    [String.raw`{"outer":{"a.b[0]":{"key":[{},false,bad]}}}`, "根节点.outer.a.b[0].key[2]"],
+    [String.raw`{"\u0061":null,"a":0}`, "根节点.a"],
+    ['{"雪":"值😀","next":bad}', "根节点.next"],
+    [String.raw`{"outer":{"value":"\ud800"}}`, "根节点.outer.value"],
+    [String.raw`{"outer":{"\ud800":1}}`, "根节点.outer.key"],
+    [String.raw`{"items":[true,bad]}`, "根节点.items[1]"],
+    [String.raw`{"outer":{"field" 1}}`, "根节点.outer"],
+    [String.raw`{"outer":{"field":1 "next":2}}`, "根节点.outer"],
+    [String.raw`{"outer":[1`, "根节点.outer"],
+    [String.raw`[{},[],null false]`, "根节点"],
+    [String.raw`{"empty":{},"array":[],"nil":null,"flag":true,"count":1,"next":bad}`, "根节点.next"],
+    [String.raw`{"empty":{},"array":[],"nil":null,"flag":true,"count":1,"next":falsefalse}`, "根节点"],
+  ]
+
+  for (const [raw, expectedPath] of cases) {
+    assert.throws(
+      () => parseRawSaveJson(raw),
+      (error: unknown) => error instanceof SaveSchemaError && error.path === expectedPath,
+      `输入 ${raw} 应保留错误路径 ${expectedPath}`,
+    )
+  }
+})
