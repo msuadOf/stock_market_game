@@ -72,8 +72,7 @@ test("读档等待的真实压缩写入失败时保留当前局与上一有效�
   const previous = await preparePendingWrite(page);
   await expect(page.locator(".notice")).toContainText("正在读取日终快速存档");
   await page.evaluate(`globalThis.__STOCK_GAME_SAVE_WRITE_TEST__.release(true)`);
-  await expect(page.locator(".notice")).toContainText("读档失败");
-  await expect(page.locator(".notice")).toContainText("验收压缩写入失败");
+  await expect(page.locator(".notice")).toHaveText("读取日终存档失败：浏览器快速槽更新失败：写入浏览器存档失败：验收压缩写入失败");
   await expect(page.locator(".app-root")).toHaveAttribute("data-game-tick", "31");
   expect(await readQuickArchive(page)).toBe(previous);
 });

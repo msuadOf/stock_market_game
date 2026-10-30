@@ -372,6 +372,7 @@ export function createSessionHostLifecycle(ports: SessionHostLifecyclePorts) {
       }
       if (!cancelled) {
         initialSaveSourceRef.current.complete();
+        if (initialSlot !== null) setNotice(`已读档（第 ${host.day() + 1} 个交易日）`);
         setReady(true);
       }
     } catch (e) {

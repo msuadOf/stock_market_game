@@ -39,7 +39,7 @@ test("daily archives cannot restore live unified-book orders, including legacy a
 
 test("daily archives reject live resource envelopes and order expiry timers", () => {
   const slot = archive();
-  assert.throws(() => validate({ ...slot, runtime_state: { ...slot.runtime_state, live_envelopes: [{ key: { account: 0, stock: 3, order: 1, side: "Buy" }, charged: { commission: "0", stamp_tax: "0", transfer_fee: "0" } }] } }), /活动委托/);
+  assert.throws(() => validate({ ...slot, runtime_state: { ...slot.runtime_state, live_envelopes: [{ key: { account: "0", stock: 3, order: 1, side: "Buy" }, charged: { commission: "0", stamp_tax: "0", transfer_fee: "0" } }] } }), /活动委托/);
   assert.throws(() => validate({ ...slot, npc_order_lifecycles: [{ account: "1", code: 3, order_id: 1, placed_market_minute: 0, expires_market_minute: 1 }] }), /活动委托/);
 });
 

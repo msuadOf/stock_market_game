@@ -84,6 +84,12 @@ export function representativeCurrentSaveFixture(): Record<string, unknown> {
     runtime_state: {
       ...(save.runtime_state as Record<string, unknown>),
       book_public_cutoff_sequences: Object.fromEntries(Object.keys(markets).map((code) => [code, "0"])),
+      retail_projection_seen: ((save.runtime_state as { retail_projection_seen: Record<string, unknown>[] }).retail_projection_seen).map((receipt) => {
+        const localKey = receipt.local_key as Record<string, unknown>
+        const transition = localKey.transition as Record<string, unknown>
+        const envelope = transition.envelope as Record<string, unknown>
+        return { ...receipt, local_key: { ...localKey, transition: { ...transition, envelope: { ...envelope, account: String(envelope.account) } } } }
+      }),
     },
     urgency_policy: currentSaveFixture().urgency_policy,
     plans: {

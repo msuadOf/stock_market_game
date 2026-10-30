@@ -24,6 +24,7 @@ function fixture(overrides: Partial<SessionHostLifecyclePorts> = {}) {
     stop: async () => { calls.push("stop"); }, refreshBaseline: async () => {}, dispose: async () => { calls.push("dispose"); },
     setSpeed: async () => { calls.push("speed"); }, setPausePreferences: async () => { calls.push("preferences"); },
     load: async () => { calls.push("load"); }, submitIntent: async () => {},
+    day: () => 0,
     initialAllocation: async () => ({ stocks: [] }),
   });
   const source = new InitialSaveSource<StrictSaveEnvelope>();
@@ -70,6 +71,87 @@ test("新局在同一宿主开跑前取得真实分配，读档不查询初始�
   assert.ok(restored.calls.includes("ready"));
   await restored.runtime.dispose();
 });
+test("读档成功通知等待恢复、start 与后台 stop 全部确认并完成启动源", { timeout: 10000 }, async () => {
+  let confirmStart!: () => void;
+  let confirmStop!: () => void;
+  let enteredStart!: () => void;
+  let enteredStop!: () => void;
+  const startingHost = new Promise<void>((resolve) => { confirmStart = resolve; });
+  const stoppingHost = new Promise<void>((resolve) => { confirmStop = resolve; });
+  const startEntered = new Promise<void>((resolve) => { enteredStart = resolve; });
+  const stopEntered = new Promise<void>((resolve) => { enteredStop = resolve; });
+  const f = fixture();
+  const archive = commandDayEndArchiveFixture();
+  f.source.select(archive);
+  f.ports.createHost = async (_setup, _seed, _target, _onSpawnFailure, initialArchive) => {
+    assert.equal(initialArchive, archive);
+    f.calls.push("create-archive");
+    return f.host;
+  };
+  const complete = f.source.complete.bind(f.source);
+  f.source.complete = () => { f.calls.push("complete"); complete(); };
+  const runtime = createSessionHostLifecycle(f.ports);
+  f.host.day = () => 30;
+  f.host.start = async () => { f.calls.push("start-pending"); enteredStart(); await startingHost; f.calls.push("start-confirmed"); };
+  f.host.stop = async () => { f.calls.push("stop-pending"); enteredStop(); await stoppingHost; f.calls.push("stop-confirmed"); };
+
+  const starting = runtime.start();
+  await startEntered;
+  assert.equal(f.calls.some((call) => /已读档/.test(call)), false);
+  confirmStart();
+  await stopEntered;
+  assert.equal(f.calls.some((call) => /已读档/.test(call)), false);
+  confirmStop();
+  await starting;
+
+  const completeIndex = f.calls.indexOf("complete");
+  const successNoticeIndex = f.calls.findIndex((call) => /已读档/.test(call));
+  assert.ok(completeIndex >= 0);
+  assert.ok(f.calls.indexOf("create-archive") >= 0);
+  assert.equal(f.calls.includes("load"), false, "WASM 恢复必须通过 factory initialArchive");
+  assert.ok(f.calls.indexOf("start-confirmed") < completeIndex);
+  assert.ok(f.calls.indexOf("stop-confirmed") < completeIndex);
+  assert.ok(completeIndex < successNoticeIndex);
+  assert.equal(f.calls[successNoticeIndex], "已读档（第 31 个交易日）");
+  await runtime.dispose();
+});
+
+test("读档 start 或后台 stop 失败时不发布成功通知", { timeout: 10000 }, async () => {
+  for (const stage of ["start", "stop"] as const) {
+    const f = fixture();
+    f.source.select(commandDayEndArchiveFixture());
+    if (stage === "start") {
+      f.host.start = async () => { throw new Error("读档 start 失败"); };
+    } else {
+      f.host.stop = async () => { throw new Error("后台 stop 失败"); };
+    }
+    await f.runtime.start();
+    assert.equal(f.calls.some((call) => /已读档/.test(call)), false);
+    assert.equal(f.calls.includes("ready"), false);
+  }
+});
+
+test("读档启动取消后忽略 start 晚确认，且新局不发布读档成功通知", { timeout: 10000 }, async () => {
+  let confirmStart!: () => void;
+  let enterStart!: () => void;
+  const startEntered = new Promise<void>((resolve) => { enterStart = resolve; });
+  const pendingStart = new Promise<void>((resolve) => { confirmStart = resolve; });
+  const restored = fixture();
+  restored.source.select(commandDayEndArchiveFixture());
+  restored.host.start = async () => { restored.calls.push("start-pending"); enterStart(); await pendingStart; };
+  const starting = restored.runtime.start();
+  await startEntered;
+  await restored.runtime.dispose();
+  confirmStart();
+  await starting;
+  assert.equal(restored.calls.some((call) => /已读档/.test(call)), false);
+
+  const fresh = fixture();
+  await fresh.runtime.start();
+  assert.equal(fresh.calls.some((call) => /已读档/.test(call)), false);
+  await fresh.runtime.dispose();
+});
+
 test("取消后的初始分配晚响应不写 UI、不启动旧宿主", { timeout: 10000 }, async () => {
   let queried!: () => void;
   let resolve!: (value: { stocks: [] }) => void;

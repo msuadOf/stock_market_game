@@ -1,6 +1,7 @@
 import { money as parseCanonicalMoney } from "./primitives.ts"
 import { SaveSchemaError, array, boolean, decimal, exact, integer, map, oneOf, record, safeIntegerKey, string } from "./primitives.ts"
 import { u32 } from "./personal/common.ts"
+import { parsePlanU64 } from "../../utils/plan-identity.ts"
 
 const sides = ["Buy", "Sell"] as const
 const retailStyles = ["Dormant", "LongTerm", "Noise", "DipBuyer", "Momentum", "Panic"] as const
@@ -17,7 +18,7 @@ export type SavedFeeComponents = {
 }
 
 export type SavedEnvelopeKey = {
-  readonly account: number
+  readonly account: string
   /** 存档 wire 的股票身份：数值 StockId（ADR 0041）。 */
   readonly stock: number
   readonly order: number
@@ -129,7 +130,7 @@ function envelopeKey(value: unknown, path: string): SavedEnvelopeKey {
   const parsed = record(value, path)
   exact(parsed, ["account", "stock", "order", "side"], path)
   return {
-    account: integer(parsed.account, `${path}.account`, 0),
+    account: parsePlanU64(parsed.account, `${path}.account`),
     stock: stock(parsed.stock, `${path}.stock`),
     order: integer(parsed.order, `${path}.order`, 1),
     side: oneOf(parsed.side, `${path}.side`, sides),

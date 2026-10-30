@@ -15,7 +15,7 @@ function mutateRuntime(mutator: (runtime: Record<string, unknown>) => void): unk
 
 function validEnvelope(): Record<string, unknown> {
   return {
-    key: { account: 0, stock: 600888, order: 1, side: "Buy" },
+    key: { account: "0", stock: 600888, order: 1, side: "Buy" },
     charged: { commission: "0", stamp_tax: "0", transfer_fee: "0" },
   }
 }
@@ -27,7 +27,7 @@ function validReceipt(): Record<string, unknown> {
       journal: "SealedBatch",
       source: { SealedIntent: "0" },
       transition: {
-        envelope: { account: 0, stock: 600888, order: 1, side: "Buy" },
+        envelope: { account: "0", stock: 600888, order: 1, side: "Buy" },
         ordinal: "0",
       },
     },
@@ -105,7 +105,7 @@ test("save snapshot derives day and phase instead of accepting persisted mirrors
 test("runtime envelope persists identity and actual charges only", () => {
   const charged = { commission: "3", stamp_tax: "2", transfer_fee: "1" }
   const envelope = {
-    key: { account: 0, stock: 600888, order: 1, side: "Sell" },
+    key: { account: "0", stock: 600888, order: 1, side: "Sell" },
     charged,
   }
   const runtime = {
@@ -122,6 +122,66 @@ test("runtime envelope persists identity and actual charges only", () => {
       ...runtime,
       live_envelopes: [{ ...envelope, [field]: field === "live" ? { cash: "0", shares: 1 } : 1 }],
     }), new RegExp(`live_envelopes\\[0\\]\\.${field}`))
+  }
+})
+
+test("runtime envelope 与 receipt 的 AccountId 按规范 u64 十进制字符串无损往返", { timeout: 10_000 }, () => {
+  for (const account of ["0", "9007199254740993", "18446744073709551615"]) {
+    const envelope = validEnvelope()
+    ;(envelope.key as Record<string, unknown>).account = account
+    const receipt = validReceipt()
+    const localKey = receipt.local_key as Record<string, unknown>
+    const transition = localKey.transition as Record<string, unknown>
+    ;(transition.envelope as Record<string, unknown>).account = account
+    const runtime = {
+      poisoned: false,
+      next_receipt_base: "1",
+      live_envelopes: [envelope],
+      book_public_cutoff_sequences: { "600888": "0" },
+      retail_projection_seen: [receipt],
+      strategy_states: {},
+    }
+
+    assert.deepEqual(parseSaveRuntime(JSON.parse(JSON.stringify(runtime))), runtime)
+  }
+})
+
+test("runtime envelope 與 receipt 的 AccountId 拒绝非规范或超出 u64 的输入并报告路径", { timeout: 10_000 }, () => {
+  const invalidAccounts: readonly unknown[] = [
+    0,
+    Number.MAX_SAFE_INTEGER + 1,
+    "-1",
+    "01",
+    "+1",
+    "1.0",
+    "1e2",
+    "",
+    "18446744073709551616",
+  ]
+  for (const account of invalidAccounts) {
+    const envelope = validEnvelope()
+    ;(envelope.key as Record<string, unknown>).account = account
+    assert.throws(() => parseSaveRuntime({
+      poisoned: false,
+      next_receipt_base: "1",
+      live_envelopes: [envelope],
+      book_public_cutoff_sequences: { "600888": "0" },
+      retail_projection_seen: [],
+      strategy_states: {},
+    }), /runtime_state\.live_envelopes\[0\]\.key\.account/)
+
+    const receipt = validReceipt()
+    const localKey = receipt.local_key as Record<string, unknown>
+    const transition = localKey.transition as Record<string, unknown>
+    ;(transition.envelope as Record<string, unknown>).account = account
+    assert.throws(() => parseSaveRuntime({
+      poisoned: false,
+      next_receipt_base: "1",
+      live_envelopes: [],
+      book_public_cutoff_sequences: { "600888": "0" },
+      retail_projection_seen: [receipt],
+      strategy_states: {},
+    }), /runtime_state\.retail_projection_seen\[0\]\.local_key\.transition\.envelope\.account/)
   }
 })
 
