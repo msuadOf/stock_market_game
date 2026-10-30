@@ -1,7 +1,8 @@
 use engine::{
     CivilDate, Event, FloatAllocation, GameConfig, GameSession, HotParams, InstParams, Money,
-    NpcSetup, RetailParams, SecurityCategory, SessionSetup, StockCode, StockExchange, StockSpec,
-    StrategyParams,
+    NpcSetup, RetailParams, RuntimeMirrorDayEndStage, RuntimeMirrorOrigin, RuntimeSyncPolicy,
+    SecurityCategory, SessionSetup, StockCode, StockExchange, StockSpec, StrategyParams,
+    TradingPhase,
 };
 
 fn setup(auction_ticks: u64) -> Result<SessionSetup, Box<dyn std::error::Error>> {
@@ -110,22 +111,80 @@ fn characterization_ticks_preserve_price_and_day_boundaries(
 }
 
 fn complete_projection(auction_ticks: u64, seed: u64, ticks: u64) -> Vec<Vec<u8>> {
-    // A single worker controls scheduling on the same production path. The
-    // harness still runs the independent tests concurrently (ADR-0017).
+    // 零 NPC、零委托的原 fixture 仍走生产 step；本锚不承诺自由并发整局字节相同。
     let mut game = GameSession::new(setup(auction_ticks).unwrap(), seed).unwrap();
-    (0..ticks)
-        .map(|_| {
+    (1..=ticks)
+        .map(|expected_tick| {
             let events = game.step().expect("healthy step");
             let save = game.save().expect("healthy save");
+            let snapshot = game.snapshot();
+            assert_current_projection_fields(&snapshot, &save, auction_ticks, expected_tick);
             assert!(save.setup.config.price_cage_enabled);
             assert!(save.resting_orders.values().all(Vec::is_empty));
             assert!(game.player_working_orders().is_empty());
             assert!(!events
                 .iter()
                 .any(|event| matches!(event, Event::Trade { .. })));
-            serde_json::to_vec(&(events, game.snapshot(), save)).unwrap()
+            serde_json::to_vec(&(events, snapshot, save)).unwrap()
         })
         .collect()
+}
+
+fn assert_current_projection_fields(
+    snapshot: &engine::Snapshot,
+    save: &engine::SaveSlot,
+    auction_ticks: u64,
+    expected_tick: u64,
+) {
+    let day_tick = expected_tick % 20;
+    let expected_phase = if day_tick < auction_ticks - auction_ticks / 3 {
+        TradingPhase::CallAuction
+    } else if day_tick < auction_ticks {
+        TradingPhase::PreOpen
+    } else if day_tick >= 18 {
+        TradingPhase::ClosingAuction
+    } else {
+        TradingPhase::Continuous
+    };
+    assert_eq!(snapshot.tick, expected_tick);
+    assert_eq!(snapshot.phase, expected_phase);
+    // 首次 lazy 接管安装一次静点，其后每拍安装；末拍 retained 同 tick 再发布一次。
+    assert_eq!(
+        snapshot.mirror_origin,
+        RuntimeMirrorOrigin {
+            authority_epoch: 1,
+            install_sequence: expected_tick + 1,
+            source_tick: expected_tick,
+            source_generation: expected_tick + u64::from(expected_tick == 20),
+            day_end_stage: if expected_tick == 20 {
+                RuntimeMirrorDayEndStage::RetainedPublished
+            } else {
+                RuntimeMirrorDayEndStage::Tick
+            },
+            non_tick_revision: 0,
+            mirror_phase: expected_phase,
+        }
+    );
+    assert_eq!(save.setup.runtime_sync_policy, RuntimeSyncPolicy::EveryTick);
+    assert!(matches!(
+        &save.company_state,
+        engine::session::SavedSessionCompanies::LegacyOperations { groups, .. } if groups.is_empty()
+    ));
+    assert!(save.report_correction_operations.is_empty());
+    assert!(save.plans.owner_sequences().next().is_none());
+    assert!(save.plans.plan_ids().next().is_none());
+    assert_eq!(
+        serde_json::to_value(&save.plans).unwrap(),
+        serde_json::json!({
+            "policy": {
+                "reverse_revision_threshold_bp": 2000,
+                "review_signal_delta_bp": 1000,
+                "review_price_change_bp": 200
+            },
+            "owner_sequences": [],
+            "plans": []
+        })
+    );
 }
 
 fn projection_digest(projection: &[Vec<u8>]) -> u64 {
@@ -179,6 +238,13 @@ fn assert_complete_projection(auction_ticks: u64, expected: u64) {
     // （logs/t3b5-baseline48/49.txt），非批四回归。旧锚保留（T3 前最后形态）：
     // 1454294662355836716 系列之后末代=14588880118627202930 /
     // 10855500538460332623 / 14140194587992130069；新锚=下列常量。
+    // 2026-10-30 表示取证：旧 884bd5ad producer 的三锚实际精确复现；
+    // 仅按已独审源契约前向搬移公司容器、增加 EveryTick/origin/空更正记录，
+    // 并把 next_plan_seq=0、plans={} 的空计划簿转换为 owner 数组表示。
+    // 从旧 raw 独立推导的新原字节与 c912 producer 全部 60 tuple 精确相同；
+    // 当前完整 tuple 不剔字段，新增字段另有 typed/wire 强断言。
+    // 原锚、source/probe 与原字节档案见 agents/branch-completion/
+    // last-integration-2026-10-30/skeleton.md；未复用失配后重算的 actual 为期望值。
     assert_eq!(
         projection_digest(&complete_projection(auction_ticks, 42, 20)),
         expected
@@ -200,7 +266,8 @@ fn characterization_complete_projection_without_opening_auction() {
     // 字节形态变化）+ main 侧公司经营/披露结构接线，投影字节随之变化；
     // 事件与业务事实语义不变（域测试与 save 契约独立覆盖）。旧锚保留：
     // 16_114_484_025_310_678_034。
-    assert_complete_projection(0, 16_039_080_022_122_580_669);
+    // 884bd5ad 原锚：16_039_080_022_122_580_669；当前锚由旧 raw 前向独立推导。
+    assert_complete_projection(0, 14_515_314_912_140_190_070);
 }
 
 #[test]
@@ -208,7 +275,8 @@ fn characterization_complete_projection_with_three_auction_ticks() {
     // 同上重锚；旧锚保留：862_635_824_146_359_871。
     // B4a 公司域重锚（同 without 用例依据）；旧锚保留：
     // 15_244_279_962_941_296_384。
-    assert_complete_projection(3, 7_734_365_835_074_963_189);
+    // 884bd5ad 原锚：7_734_365_835_074_963_189；当前锚由旧 raw 前向独立推导。
+    assert_complete_projection(3, 1_528_640_566_612_864_764);
 }
 
 #[test]
@@ -216,7 +284,8 @@ fn characterization_complete_projection_with_six_auction_ticks() {
     // 同上重锚；旧锚保留：7_784_286_686_475_819_964。
     // B4a 公司域重锚（同 without 用例依据）；旧锚保留：
     // 12_603_764_770_532_460_219。
-    assert_complete_projection(6, 6_825_886_869_182_669_854);
+    // 884bd5ad 原锚：6_825_886_869_182_669_854；当前锚由旧 raw 前向独立推导。
+    assert_complete_projection(6, 571_153_393_436_025_933);
 }
 
 #[test]
