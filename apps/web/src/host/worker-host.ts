@@ -390,14 +390,20 @@ export function createWorkerHost(
             const next = prepareBaselineUpdate(String(nextGeneration), incoming.snapshot, incoming.stockCatalog, incoming.companyCatalog, {
               civilDate: parseIsoDate(incoming.civilDate, "Worker baseline.civilDate"), revision: null,
             });
+            const previousGeneration = currentGeneration;
+            const generationAdvanced = nextGeneration > previousGeneration;
             currentGeneration = nextGeneration;
-            if (deliveredGeneration === next.generation) return;
+            if (deliveredGeneration === next.generation) {
+              if (generationAdvanced) requests.cancelGeneration(previousGeneration, new Error("Worker 请求因 generation 前进已取消；请求属于已过期会话 generation（响应属于已过期 generation）"));
+              return;
+            }
             baselineEpoch += 1;
             cachedBaseline = next;
             if (!initialized) waitForInitialization();
             if (callback !== null && deliveredGeneration !== next.generation) {
               deliverLiveBaseline(next);
             }
+            if (generationAdvanced) requests.cancelGeneration(previousGeneration, new Error("Worker 请求因 generation 前进已取消；请求属于已过期会话 generation（响应属于已过期 generation）"));
             return;
           }
           case "protocol":
@@ -743,9 +749,10 @@ export function createWorkerHost(
         },
         async save(candidate?: { readonly seq: number; readonly settledDate: string }): Promise<unknown> {
           const queryGeneration = currentGeneration;
+          // 默认大档浏览器日终候选实测需约 15 秒；仅保存使用独立的 60 秒上限。
           const response = await requests.request(candidate === undefined
             ? { type: "save", requestId: requests.nextRequestId(), generation: queryGeneration }
-            : { type: "save", requestId: requests.nextRequestId(), generation: queryGeneration, candidate }, "saved");
+            : { type: "save", requestId: requests.nextRequestId(), generation: queryGeneration, candidate }, "saved", 60_000);
           if (disposed || closing || currentGeneration !== queryGeneration) throw new Error("Worker 存档响应属于已过期会话 generation");
           return response.slot;
         },
@@ -786,6 +793,7 @@ export function createWorkerHost(
           if (callback !== null && deliveredGeneration !== baseline.generation) {
             deliverLiveBaseline(baseline);
           }
+          requests.cancelGeneration(requestedGeneration, new Error("Worker 请求因 generation 前进已取消；请求属于已过期会话 generation（响应属于已过期 generation）"));
         },
         async queryPublicReports(query: PublicReportQuery): Promise<PublicReportPage> {
           const requestedGeneration = currentGeneration;

@@ -12,25 +12,25 @@ class Port implements WorkerRequestPort {
   emit(data: unknown) { for (const listener of this.listeners) listener({ data } as MessageEvent); }
 }
 
-test("WorkerRequestScope 为同一 port 分配连续 ID，逆序完成只清理对应资源", async () => {
+test("WorkerRequestScope 普通并发查询分配连续 ID，逆序完成只清理对应资源", async () => {
   assert.equal(typeof requests.WorkerRequestScope, "function", "请求资源应由 WorkerRequestScope 统一拥有");
   const port = new Port();
   const scope = new requests.WorkerRequestScope(port);
   const firstId = scope.nextRequestId();
-  const first = scope.request({ type: "save", requestId: firstId, generation: 1 }, "saved");
+  const first = scope.request({ type: "speedMetrics", requestId: firstId, generation: 1 }, "speedMetrics");
   const secondId = scope.nextRequestId();
   const second = scope.request({ type: "civilDate", requestId: secondId, generation: 2 }, "civilDate");
   assert.deepEqual([firstId, secondId], [1, 2]);
   assert.equal(scope.pendingCount(), 2);
-  port.emit({ type: "saved", requestId: firstId, generation: 2 });
+  port.emit({ type: "speedMetrics", requestId: firstId, generation: 2 });
   assert.equal(scope.pendingCount(), 2);
   port.emit({ type: "civilDate", requestId: secondId, generation: 2, date: "2030-01-02" });
   assert.equal((await second).date, "2030-01-02");
   assert.equal(scope.pendingCount(), 1);
   assert.equal(port.listeners.size, 1);
-  port.emit({ type: "saved", requestId: firstId, generation: 1, slot: "current" });
-  assert.equal((await first).slot, "current");
-  port.emit({ type: "saved", requestId: firstId, generation: 1, slot: "duplicate" });
+  port.emit({ type: "speedMetrics", requestId: firstId, generation: 1, metrics: { running: false } });
+  assert.deepEqual((await first).metrics, { running: false });
+  port.emit({ type: "speedMetrics", requestId: firstId, generation: 1, metrics: { running: true } });
   assert.equal(scope.pendingCount(), 0);
   assert.equal(port.listeners.size, 0);
   assert.equal(scope.nextRequestId(), 3);

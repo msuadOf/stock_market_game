@@ -59,6 +59,7 @@ import { AutoOrderManager, AUTO_ORDER_LABELS, type AutoOrderType } from "./compo
 import { useOrientation } from "./hooks/useOrientation";
 import { selectDayEndFileTarget, loadFromFile, type DayEndFileTarget } from "./save/save-file";
 import { DayEndPersistence } from "./save/day-end-persistence.ts";
+import { captureCivilDayEndCandidate } from "./save/civil-day-end-capture.ts";
 import { validateDayEndCandidate } from "./save/day-end-candidate.ts";
 import type { StrictSaveEnvelope } from "./save/schema/root.ts";
 import { writeDayEndTargets } from "./save/day-end-targets.ts";
@@ -324,9 +325,19 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
           clearPlayerOrders();
           const target = dayEndFileTargetRef.current;
           const reference = { seq: reduction.update.update.seq_to, settledDate: reduction.update.update.boundary.settled_date };
+          const candidate = captureCivilDayEndCandidate(
+            host.save(reference).then((slot) => validateDayEndCandidate(slot, reference)),
+            () => {
+              const protocolStatus = protocolCoordinatorRef.current?.status();
+              return host === hostRef.current
+                && protocolStatus?.kind === "ready"
+                && protocolStatus.state.cursor.generation === reduction.state.cursor.generation;
+            },
+            () => { void refreshPlayerOrders(); },
+          );
           void dayEndPersistenceRef.current.completed(
             reduction.state.cursor.generation,
-            host.save(reference).then((slot) => validateDayEndCandidate(slot, reference)),
+            candidate,
             async (slot, isCurrent) => {
               return await writeDayEndTargets(slot, isCurrent, [
                 { label: "浏览器快速槽", write: (value, current) => getBrowserSaveRepository().save(value, current) },
@@ -338,7 +349,6 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
           }, (saveError: unknown) => {
             if (host === hostRef.current) setNotice(`日终存档更新失败：${saveError instanceof Error ? saveError.message : String(saveError)}`);
           });
-          void refreshPlayerOrders();
         }
         acceptReductionRef.current(reduction);
         void quickTrading.advance(reduction.state.snapshot);

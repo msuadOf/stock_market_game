@@ -803,3 +803,288 @@ for (const transition of ["dispose", "generation"] as const) {
     } finally { await f.cleanup(); }
   });
 }
+
+test("WorkerHost save remains pending through 10 seconds and accepts saved at 15.202 seconds", { timeout: 10000 }, async (context) => {
+  const original = Object.getOwnPropertyDescriptor(globalThis, "Worker");
+  class SlowSaveWorker extends LegacyWorker {
+    static current: SlowSaveWorker;
+    readonly sent: Record<string, unknown>[] = [];
+    constructor() { super(); SlowSaveWorker.current = this; }
+    postMessage(value: Record<string, unknown>) { this.prepare(value); this.sent.push(value); }
+    terminate() {}
+    emit(value: unknown) { this.dispatchEvent(Object.assign(new Event("message"), { data: value })); }
+  }
+  Object.defineProperty(globalThis, "Worker", { configurable: true, value: SlowSaveWorker });
+  let host: Awaited<ReturnType<typeof createWorkerHost>> | undefined;
+  try {
+    const ready = createLegacyHost({} as Parameters<typeof createWorkerHost>[0], 1n);
+    const worker = SlowSaveWorker.current;
+    await bootstrapLegacy(worker);
+    const snapshot = { seq: 42, tick: 0, day: 0, phase: "Continuous", mirror_origin: mirrorOrigin(0), markets: {}, accounts: {}, daily_candles: {}, active_daily_candles: {} };
+    worker.emit({ type: "created", generation: 1, capabilities: { npcDecisionDiagnostics: false, indicatorCapabilities: { intradayAverage: false, macd: false, priceKdj: false, candleKdj: false }, personalTradeHistory: false } });
+    worker.emit({ ...catalogWorkerFixture(snapshot), type: "baseline", civilDate: "2030-01-01", generation: 1, snapshot });
+    host = await ready;
+    context.mock.timers.enable({ apis: ["setTimeout"] });
+    const pending = host.save({ seq: 17, settledDate: "2030-01-05" });
+    const request = worker.sent.at(-1)!;
+    context.mock.timers.tick(10_000);
+    await Promise.resolve();
+    assert.equal(request.type, "save");
+    context.mock.timers.tick(5_202);
+    worker.emit({ type: "saved", requestId: request.requestId, generation: 1, slot: { seq: 17 } });
+    assert.deepEqual(await pending, { seq: 17 });
+    const overdueSave = host.save();
+    const overdueAssertion = assert.rejects(overdueSave, /Worker save 操作超时（60000ms）/);
+    context.mock.timers.tick(60_000);
+    await overdueAssertion;
+    const sentBeforeRejectedQuery = worker.sent.length;
+    const civilDate = host.civilDate;
+    assert.ok(civilDate, "WorkerHost 应提供 civilDate capability");
+    await assert.rejects(civilDate(), /60000ms/);
+    assert.equal(worker.sent.length, sentBeforeRejectedQuery);
+    await host.dispose();
+    assert.equal(worker.sent.some((message) => message.type === "shutdown"), true);
+  } finally {
+    await host?.dispose();
+    if (original === undefined) delete (globalThis as { Worker?: unknown }).Worker;
+    else Object.defineProperty(globalThis, "Worker", original);
+  }
+});
+
+test("Worker save 超时后 scope 拒绝新请求，close 仍取消 late response", { timeout: 10000 }, async (context) => {
+  context.mock.timers.enable({ apis: ["setTimeout"] });
+  const port = new FakeWorker();
+  const requests = new WorkerRequestScope(port);
+  const timedOut = requests.request({ type: "save", requestId: requests.nextRequestId(), generation: 4 }, "saved", 60_000);
+  const timeoutAssertion = assert.rejects(timedOut, /Worker save 操作超时（60000ms）/);
+  context.mock.timers.tick(60_000);
+  await timeoutAssertion;
+  assert.equal(requests.pendingCount(), 0);
+  const pending = requests.request({ type: "save", requestId: requests.nextRequestId(), generation: 4 }, "saved", 60_000);
+  const disposed = assert.rejects(pending, /60000ms/);
+  requests.close(new Error("disposed"));
+  await disposed;
+  port.emit({ type: "saved", requestId: 2, generation: 4, slot: { late: true } });
+  assert.equal(requests.pendingCount(), 0);
+});
+
+test("Worker save 占用期普通请求不发出也不启动 deadline，saved 后按原 10 秒 deadline 运行", { timeout: 10000 }, async (context) => {
+  context.mock.timers.enable({ apis: ["setTimeout"] });
+  const port = new FakeWorker();
+  const requests = new WorkerRequestScope(port);
+  const saveId = requests.nextRequestId();
+  const save = requests.request({ type: "save", requestId: saveId, generation: 4 }, "saved", 60_000);
+  const queryId = requests.nextRequestId();
+  const query = requests.request({ type: "civilDate", requestId: queryId, generation: 4 }, "civilDate");
+  const queryAssertion = assert.doesNotReject(query);
+  context.mock.timers.tick(10_000);
+  assert.deepEqual(port.sent, [{ type: "save", requestId: saveId, generation: 4 }]);
+  context.mock.timers.tick(5_202);
+  port.emit({ type: "saved", requestId: saveId, generation: 4, slot: {} });
+  await save;
+  assert.deepEqual(port.sent, [
+    { type: "save", requestId: saveId, generation: 4 },
+    { type: "civilDate", requestId: queryId, generation: 4 },
+  ]);
+  context.mock.timers.tick(9_999);
+  port.emit({ type: "civilDate", requestId: queryId, generation: 4, date: "2030-01-05" });
+  await queryAssertion;
+  assert.equal(requests.pendingCount(), 0);
+});
+
+test("Worker save operationError 显式拒绝当前保存并按 FIFO 放行下一保存边界", { timeout: 10000 }, async () => {
+  const port = new FakeWorker();
+  const requests = new WorkerRequestScope(port);
+  const firstId = requests.nextRequestId();
+  const first = requests.request({ type: "save", requestId: firstId, generation: 4 }, "saved", 60_000);
+  const firstAssertion = assert.rejects(first, /存档写入失败/);
+  const queryId = requests.nextRequestId();
+  const query = requests.request({ type: "civilDate", requestId: queryId, generation: 4 }, "civilDate");
+  const secondSaveId = requests.nextRequestId();
+  const secondSave = requests.request({ type: "save", requestId: secondSaveId, generation: 4 }, "saved", 60_000);
+  const secondQueryId = requests.nextRequestId();
+  const secondQuery = requests.request({ type: "speedMetrics", requestId: secondQueryId, generation: 4 }, "speedMetrics");
+  assert.equal(port.sent.length, 1);
+  port.emit({ type: "operationError", requestId: firstId, generation: 4, message: "存档写入失败" });
+  await firstAssertion;
+  assert.equal((port.sent[1] as { requestId: number }).requestId, queryId);
+  port.emit({ type: "civilDate", requestId: queryId, generation: 4, date: "2030-01-05" });
+  await query;
+  assert.equal((port.sent[2] as { requestId: number }).requestId, secondSaveId);
+  assert.equal(port.sent.length, 3);
+  port.emit({ type: "saved", requestId: secondSaveId, generation: 4, slot: {} });
+  await secondSave;
+  assert.equal((port.sent[3] as { requestId: number }).requestId, secondQueryId);
+  port.emit({ type: "speedMetrics", requestId: secondQueryId, generation: 4, metrics: {} });
+  await secondQuery;
+});
+
+test("Worker save 超时会拒绝整队且 poison scope 仍允许显式 shutdown", { timeout: 10000 }, async (context) => {
+  context.mock.timers.enable({ apis: ["setTimeout"] });
+  const port = new FakeWorker();
+  const requests = new WorkerRequestScope(port);
+  const saveId = requests.nextRequestId();
+  const save = requests.request({ type: "save", requestId: saveId, generation: 4 }, "saved", 60_000);
+  const saveAssertion = assert.rejects(save, /Worker save 操作超时（60000ms）/);
+  const queuedId = requests.nextRequestId();
+  const queued = requests.request({ type: "civilDate", requestId: queuedId, generation: 4 }, "civilDate");
+  const queuedAssertion = assert.rejects(queued, /60000ms/);
+  context.mock.timers.tick(60_000);
+  await Promise.all([saveAssertion, queuedAssertion]);
+  assert.equal(requests.pendingCount(), 0);
+  port.emit({ type: "saved", requestId: saveId, generation: 4, slot: {} });
+  assert.equal(port.sent.length, 1);
+  requests.beginClosing("shutdown", new Error("closing"));
+  const shutdownId = requests.nextRequestId();
+  const shutdown = requests.request({ type: "shutdown", requestId: shutdownId, generation: 4 }, "shutdownCompleted");
+  assert.equal((port.sent[1] as { type: string }).type, "shutdown");
+  port.emit({ type: "shutdownCompleted", requestId: shutdownId, generation: 4 });
+  await shutdown;
+});
+
+test("Worker close 与 beginClosing 取消 save 和排队请求，晚到 saved 不会迟发", { timeout: 10000 }, async () => {
+  for (const transition of ["close", "beginClosing"] as const) {
+    const port = new FakeWorker();
+    const requests = new WorkerRequestScope(port);
+    const saveId = requests.nextRequestId();
+    const save = requests.request({ type: "save", requestId: saveId, generation: 4 }, "saved", 60_000);
+    const saveAssertion = assert.rejects(save, /closed/);
+    const queued = requests.request({ type: "civilDate", requestId: requests.nextRequestId(), generation: 4 }, "civilDate");
+    const queuedAssertion = assert.rejects(queued, /closed/);
+    if (transition === "close") requests.close(new Error("closed"));
+    else requests.beginClosing("shutdown", new Error("closed"));
+    await Promise.all([saveAssertion, queuedAssertion]);
+    port.emit({ type: "saved", requestId: saveId, generation: 4, slot: {} });
+    if (transition === "beginClosing") {
+      const shutdownId = requests.nextRequestId();
+      const shutdown = requests.request({ type: "shutdown", requestId: shutdownId, generation: 4 }, "shutdownCompleted");
+      port.emit({ type: "shutdownCompleted", requestId: shutdownId, generation: 4 });
+      await shutdown;
+    }
+    assert.deepEqual(port.sent.map((request) => (request as { type: string }).type), transition === "close" ? ["save"] : ["save", "shutdown"]);
+    assert.equal(requests.pendingCount(), 0);
+  }
+});
+
+test("Worker generation 前进取消旧 save 与队列，同代 baseline 保留在途请求", { timeout: 10000 }, async (context) => {
+  context.mock.timers.enable({ apis: ["setTimeout"] });
+  const original = Object.getOwnPropertyDescriptor(globalThis, "Worker");
+  class GenerationWorker extends LegacyWorker {
+    static current: GenerationWorker;
+    readonly sent: Record<string, unknown>[] = [];
+    constructor() { super(); GenerationWorker.current = this; }
+    postMessage(value: Record<string, unknown>) { this.prepare(value); this.sent.push(value); }
+    terminate() {}
+    emit(value: unknown) { this.dispatchEvent(Object.assign(new Event("message"), { data: value })); }
+  }
+  Object.defineProperty(globalThis, "Worker", { configurable: true, value: GenerationWorker });
+  let host: Awaited<ReturnType<typeof createWorkerHost>> | undefined;
+  try {
+    const creating = createLegacyHost({} as Parameters<typeof createWorkerHost>[0], 1n);
+    const worker = GenerationWorker.current;
+    await bootstrapLegacy(worker);
+    const snapshot = { seq: 0, tick: 0, day: 0, phase: "Continuous", mirror_origin: mirrorOrigin(0), markets: {}, accounts: {}, daily_candles: {}, active_daily_candles: {} };
+    worker.emit({ ...catalogWorkerFixture(snapshot), type: "baseline", civilDate: "2030-01-01", generation: 1, snapshot });
+    host = await creating;
+    const save = host.save();
+    const saveAssertion = assert.rejects(save, /generation/);
+    const query = host.civilDate!();
+    const queryAssertion = assert.rejects(query, /generation/);
+    worker.emit({ ...catalogWorkerFixture(snapshot), type: "baseline", civilDate: "2030-01-02", generation: 2, snapshot });
+    context.mock.timers.tick(60_000);
+    await Promise.all([saveAssertion, queryAssertion]);
+    assert.deepEqual(worker.sent.filter((request) => request.type === "save" || request.type === "civilDate").map((request) => request.type), ["save"]);
+
+    const nextSave = host.save();
+    const sameGenerationQuery = host.civilDate!();
+    worker.emit({ ...catalogWorkerFixture(snapshot), type: "baseline", civilDate: "2030-01-03", generation: 2, snapshot });
+    const sameRequest = worker.sent.at(-1)!;
+    assert.equal(sameRequest.type, "save");
+    assert.ok(typeof sameRequest.requestId === "number", "save request 应携带数字 requestId");
+    const sameRequestId = sameRequest.requestId;
+    worker.emit({ type: "saved", requestId: sameRequestId, generation: 2, slot: {} });
+    await nextSave;
+    worker.emit({ type: "civilDate", requestId: sameRequestId + 1, generation: 2, date: "2030-01-03" });
+    await sameGenerationQuery;
+
+    let newGenerationQuery: Promise<unknown> | undefined;
+    const starting = host.start((update) => {
+      if (update.generation === "3" || update.generation === "4") newGenerationQuery = host!.civilDate!().then((value) => ({ kind: "value", value }), (error: unknown) => ({ kind: "error", error }));
+      return true;
+    });
+    const startRequest = worker.sent.at(-1)!;
+    worker.emit({ type: "started", requestId: startRequest.requestId, generation: 2 });
+    await starting;
+    const oldSave = host.save();
+    const oldSaveAssertion = assert.rejects(oldSave, /generation/);
+    worker.emit({ ...catalogWorkerFixture(snapshot), type: "baseline", civilDate: "2030-01-04", generation: 3, snapshot });
+    await oldSaveAssertion;
+    assert.ok(newGenerationQuery, "同步 baseline callback 应创建新代查询");
+    const newGenerationRequest = worker.sent.at(-1)!;
+    assert.deepEqual(newGenerationRequest, { type: "civilDate", requestId: newGenerationRequest.requestId, generation: 3 });
+    worker.emit({ type: "civilDate", requestId: newGenerationRequest.requestId, generation: 3, date: "2030-01-04" });
+    const newGenerationOutcome = await newGenerationQuery;
+    assert.equal((newGenerationOutcome as { kind: string }).kind, "value");
+
+    const loading = host.load(currentSaveFixture());
+    const restoreRequest = worker.sent.at(-1)!;
+    worker.emit({ ...catalogWorkerFixture(snapshot), type: "restored", civilDate: "2030-01-05", requestId: restoreRequest.requestId, generation: 3, nextGeneration: 4, snapshot });
+    await loading;
+    assert.ok(newGenerationQuery, "restore baseline callback 应创建新代查询");
+    const restoreGenerationRequest = worker.sent.at(-1)!;
+    assert.deepEqual(restoreGenerationRequest, { type: "civilDate", requestId: restoreGenerationRequest.requestId, generation: 4 });
+    worker.emit({ type: "civilDate", requestId: restoreGenerationRequest.requestId, generation: 4, date: "2030-01-05" });
+    const restoreGenerationOutcome = await newGenerationQuery;
+    assert.equal((restoreGenerationOutcome as { kind: string }).kind, "value");
+  } finally {
+    await host?.dispose();
+    if (original === undefined) delete (globalThis as { Worker?: unknown }).Worker;
+    else Object.defineProperty(globalThis, "Worker", original);
+  }
+});
+
+test("Worker 无 save 时普通请求仍按 10 秒超时", { timeout: 10000 }, async (context) => {
+  context.mock.timers.enable({ apis: ["setTimeout"] });
+  const port = new FakeWorker();
+  const requests = new WorkerRequestScope(port);
+  const query = requests.request({ type: "civilDate", requestId: requests.nextRequestId(), generation: 4 }, "civilDate");
+  const assertion = assert.rejects(query, /Worker civilDate 操作超时（10000ms）/);
+  context.mock.timers.tick(9_999);
+  assert.equal(requests.pendingCount(), 1);
+  context.mock.timers.tick(1);
+  await assertion;
+  assert.equal(requests.pendingCount(), 0);
+});
+
+test("Worker 排队 save postMessage 同步失败显式拒绝并放行后续 FIFO 请求", { timeout: 10000 }, async () => {
+  class SavePostFailurePort extends FakeWorker {
+    failed = false;
+    postMessage(message: unknown): void {
+      if (!this.failed && (message as { type: string }).type === "save" && this.sent.length > 0) {
+        this.failed = true;
+        throw new Error("DataCloneError: queued save payload");
+      }
+      super.postMessage(message);
+    }
+  }
+  const port = new SavePostFailurePort();
+  const requests = new WorkerRequestScope(port);
+  const firstId = requests.nextRequestId();
+  const first = requests.request({ type: "save", requestId: firstId, generation: 4 }, "saved", 60_000);
+  const secondId = requests.nextRequestId();
+  const second = requests.request({ type: "save", requestId: secondId, generation: 4 }, "saved", 60_000);
+  const secondAssertion = assert.rejects(second, /DataCloneError: queued save payload/);
+  const queryId = requests.nextRequestId();
+  const query = requests.request({ type: "civilDate", requestId: queryId, generation: 4 }, "civilDate");
+  assert.deepEqual(port.sent, [{ type: "save", requestId: firstId, generation: 4 }]);
+  port.emit({ type: "saved", requestId: firstId, generation: 4, slot: {} });
+  await first;
+  await secondAssertion;
+  assert.deepEqual(port.sent, [
+    { type: "save", requestId: firstId, generation: 4 },
+    { type: "civilDate", requestId: queryId, generation: 4 },
+  ]);
+  port.emit({ type: "civilDate", requestId: queryId, generation: 4, date: "2030-01-05" });
+  await query;
+  assert.equal(requests.pendingCount(), 0);
+});
