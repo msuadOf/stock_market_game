@@ -51,6 +51,20 @@ test("开盘集合竞价窗口内不提供形成中分钟槽——起局首渲�
   assert.equal(noOpening.currentMinuteSlot(1), 0);
 });
 
+test("形成中分钟槽按交易日内开盘窗口判断", { timeout: 10000 }, () => {
+  const timeline = new TradingTimeline({ ticks_per_day: 15300, auction_ticks: 900, closing_auction_ticks: 180 });
+  assert.equal(timeline.currentMinuteSlot(0), null);
+  assert.equal(timeline.currentMinuteSlot(15300), timeline.minuteSlot(15300));
+  assert.equal(timeline.currentMinuteSlot(15301), null);
+  assert.equal(timeline.currentMinuteSlot(16200), null);
+  assert.equal(timeline.currentMinuteSlot(16201), 0);
+  assert.equal(timeline.currentMinuteSlot(30601), null);
+
+  const noOpening = new TradingTimeline({ ticks_per_day: 4, auction_ticks: 0, closing_auction_ticks: 0 });
+  assert.equal(noOpening.currentMinuteSlot(5), 0);
+  assert.throws(() => timeline.minuteSlot(15301), /开盘窗口/);
+});
+
 test("非法 timing 与事件不能被静默修补到零分钟", { timeout: 10000 }, () => {
   for (const timing of [
     { ticks_per_day: 0, auction_ticks: 0, closing_auction_ticks: 0 },

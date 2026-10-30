@@ -50,7 +50,11 @@ export class TradingTimeline {
    *  供分钟面板以游戏时钟提供"形成中桶"观察时刻；调用方不得直接用
    *  minuteSlot（其对开盘窗口 tick 按契约抛 RangeError）。 */
   currentMinuteSlot(tick: number): number | null {
-    return tick > this.openingTicks ? this.minuteSlot(tick) : null;
+    if (tick > this.openingTicks) {
+      const dayOffset = this.eventOffset(tick) % this.ticksPerDay;
+      return dayOffset >= this.openingTicks ? this.minuteSlot(tick) : null;
+    }
+    return null;
   }
 
   clock(tick: number): string {
