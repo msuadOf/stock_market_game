@@ -53,9 +53,9 @@ fn expected_next_information_check(
             }
             CivilInstant::from_hms(
                 date,
-                (now.second_of_day() / 3600) as u8,
-                ((now.second_of_day() % 3600) / 60) as u8,
-                (now.second_of_day() % 60) as u8,
+                now.second_of_day() / 3600,
+                (now.second_of_day() % 3600) / 60,
+                now.second_of_day() % 60,
             )
             .expect("间隔后的检查时点合法")
         }
