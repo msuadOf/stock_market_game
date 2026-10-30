@@ -102,6 +102,26 @@ test("桌面端以真实 WASM 报告渲染规范期间、版本、四张表和�
 
 test("平板端以真实 WASM 切换公司和报告期间并保持规范公开内容", async ({ page }) => {
   await page.setViewportSize({ width: 768, height: 700 });
+  await page.addInitScript({ content: `
+    (() => {
+      const watched = new WeakSet();
+      const observe = (prototype) => {
+        const add = prototype.addEventListener;
+        prototype.addEventListener = function(type, listener, options) {
+          if (type === "message" && !watched.has(this)) {
+            watched.add(this);
+            add.call(this, "message", (event) => {
+              const message = event.data;
+              if (message?.type === "baseline") globalThis.__tabletCompanyBaseline = { generation: message.generation, companyCatalog: message.companyCatalog, stockCatalog: message.stockCatalog };
+            });
+          }
+          return add.call(this, type, listener, options);
+        };
+      };
+      observe(MessagePort.prototype);
+      observe(Worker.prototype);
+    })();
+  ` });
   await page.goto("/?tradingE2E=1");
   await expectEngineReady(page);
   await page.getByRole("navigation", {name:"桌面主导航"}).getByRole("button", {name:"个股", exact:true}).click();
@@ -112,7 +132,19 @@ test("平板端以真实 WASM 切换公司和报告期间并保持规范公开�
   await page.getByRole("navigation", {name:"个股列表"}).getByRole("button", {name:/芯片科技/}).click();
   await expect(panel).toHaveAttribute("data-company-id", "C-002156");
   await expect(panel.getByRole("list", { name: "公开报告列表" })).toBeVisible();
-  await expect(panel).toContainText("芯片科技股份有限公司");
+  const authorityName = await page.evaluate(() => {
+    const baseline = (globalThis as typeof globalThis & { __tabletCompanyBaseline?: { generation: number; companyCatalog: { code: string; name: string; listed_stock: number | null }[]; stockCatalog: { id: number; code: string }[] } }).__tabletCompanyBaseline;
+    if (!baseline || !Number.isSafeInteger(baseline.generation) || baseline.generation <= 0) throw new Error("平板公司名缺少本代有效 baseline");
+    const companies = baseline.companyCatalog.filter(company => company.code === "C-002156");
+    if (companies.length !== 1) throw new Error("本代 CompanyCatalog 必须唯一包含 C-002156");
+    const company = companies[0]!;
+    if (company.listed_stock === null) throw new Error("C-002156 缺少上市 StockId");
+    const stocks = baseline.stockCatalog.filter(stock => stock.id === company.listed_stock);
+    if (stocks.length !== 1 || stocks[0]!.code !== "002156") throw new Error("C-002156 的 listed_stock 未严格关联到本代 002156");
+    if (typeof company.name !== "string" || company.name.trim().length === 0) throw new Error("C-002156 的本代权威名称为空");
+    return company.name;
+  });
+  await expect(panel.locator(".company-identity").getByRole("heading", { level: 3 })).toHaveText(authorityName);
   await expect(panel).toContainText("季度报告 · 2028-03-31");
   const semiannualReport = panel.getByRole("button", { name: "半年度报告 · 2028-06-30 2028-08-21 18:00 发布 · 版本 1", exact: true });
   await semiannualReport.click();
