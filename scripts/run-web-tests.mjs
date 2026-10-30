@@ -69,6 +69,15 @@ export function buildWebTestShardPolicy(availableCpuCount, files) {
   const sharedOffset = compilerSuite === undefined ? 0 : 1;
   if (compilerSuite !== undefined) shards[0].push(compilerSuite);
   sharedFiles.forEach((file, index) => shards[sharedOffset + index % (shardCount - sharedOffset)].push(file));
+  if (shardCount > 1) {
+    const completeSaveSchemaFile = files.find((file) => /(?:^|[/\\])save[/\\]complete-save-schema\.test\.ts$/.test(file));
+    if (completeSaveSchemaFile !== undefined) {
+      const owningShard = shards.find((shard) => shard.includes(completeSaveSchemaFile));
+      if (owningShard === undefined) throw new Error("完整存档 schema 测试未分配到任何 Web 分片");
+      owningShard.splice(owningShard.indexOf(completeSaveSchemaFile), 1);
+      owningShard.unshift(completeSaveSchemaFile);
+    }
+  }
   const perShardFileConcurrency = Math.max(1, Math.floor(availableCpuCount / shardCount));
   const fileProcessBudget = shardCount * perShardFileConcurrency;
   return {

@@ -49,6 +49,47 @@ it("partitions files across real processes without overselling the CPU budget", 
   }
 });
 
+it("多分片时将完整存档 schema 用例移到原分片首位并保留其余分配顺序", () => {
+  const files = [
+    "/web/src/a.test.ts",
+    "/web/src/b.test.ts",
+    "/web/src/c.test.ts",
+    "/web/src/d.test.ts",
+    "/web/src/e.test.ts",
+    "/web/src/f.test.ts",
+    "/web/src/save/complete-save-schema.test.ts",
+    "/web/src/g.test.ts",
+    "/web/src/h.test.ts",
+  ];
+
+  const policy = buildWebTestShardPolicy(4, files);
+
+  assert.deepEqual(policy.shards, [
+    [files[0], files[4], files[8]],
+    [files[1], files[5]],
+    [files[6], files[2]],
+    [files[3], files[7]],
+  ]);
+});
+
+it("没有完整存档 schema 用例或只有一个 CPU 分片时保持原有分配顺序", () => {
+  const files = [
+    "/web/src/a.test.ts",
+    "/web/src/save/complete-save-schema.test.ts",
+    "/web/src/c.test.ts",
+    "/web/src/d.test.ts",
+    "/web/src/e.test.ts",
+  ];
+  const filesWithoutTarget = files.filter((file) => !file.endsWith("complete-save-schema.test.ts"));
+
+  assert.deepEqual(buildWebTestShardPolicy(3, filesWithoutTarget).shards, [
+    [filesWithoutTarget[0], filesWithoutTarget[3]],
+    [filesWithoutTarget[1]],
+    [filesWithoutTarget[2]],
+  ]);
+  assert.deepEqual(buildWebTestShardPolicy(1, files).shards, [files]);
+});
+
 it("rejects an empty Web test inventory", () => {
   assert.throws(() => buildWebTestShardPolicy(8, []), /no Web test files/i);
 });
