@@ -493,7 +493,7 @@ pub fn restore_runtime_state(
         // D5：镜像档的占位条目带上截点（save 侧镜像分支读
         // mirror.public_cutoff_serial——往返一致性；desk 首拍重建）。
         if let Some(mirror) = session.state.desk_book_mirror.get_mut(code) {
-            mirror.public_cutoff_serial = *cutoff;
+            std::sync::Arc::make_mut(mirror).public_cutoff_serial = *cutoff;
         }
     }
     session.state.accounts = accounts;

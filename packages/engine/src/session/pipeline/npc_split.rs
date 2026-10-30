@@ -60,7 +60,7 @@ pub(in crate::session) struct SessionReadView<'a> {
     pub(in crate::session) accounts: Cow<'a, AccountBook>,
     /// D5 attention：desk 簿镜像（runtime 形态的公开面源；空=旧管线）。
     pub(in crate::session) desk_book_mirror:
-        &'a std::collections::BTreeMap<StockId, crate::session::DeskBookMirror>,
+        &'a std::collections::BTreeMap<StockId, std::sync::Arc<crate::session::DeskBookMirror>>,
 }
 
 impl GameSession {

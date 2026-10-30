@@ -688,3 +688,94 @@ fn late_day_end_receiver_uses_current_progress_context() {
         vec![1, 2, driver.publication().load().generation]
     );
 }
+
+#[test]
+fn unchanged_runtime_book_reuses_mirror_and_full_public_projection_cost() {
+    use crate::{LimitPrice, Money, Side, StockId};
+
+    let mut setup = super::npc_working_quote_tests::quote_setup(0);
+    setup.ticks_per_day = 8;
+    setup.auction_ticks = 0;
+    setup.closing_auction_ticks = 0;
+    setup.start_date = crate::calendar::CivilDate::from_ymd(2026, 1, 5).unwrap();
+    setup.npcs.retail_count = 0;
+    setup.npcs.inst_count = 0;
+    setup.npcs.hot_count = 0;
+    let expected_reserved = super::live_cash_reservation(
+        &setup.config,
+        Side::Buy,
+        Money::from_cents(995),
+        100,
+        Money::ZERO,
+    )
+    .unwrap();
+    let mut game = GameSession::new(setup, 42).unwrap();
+    let mut driver = crate::runtime::drive::RuntimeDriver::from_session(&mut game).unwrap();
+    game.enqueue_player_intent(
+        AccountId(0),
+        crate::Intent::PlaceLimit {
+            code: StockId(0),
+            side: Side::Buy,
+            price: LimitPrice::Fixed(Money::from_cents(995)),
+            qty: 100,
+        },
+    )
+    .unwrap();
+    driver.step(&mut game).unwrap();
+
+    let first_snapshot = game.runtime_snapshot();
+    let first_working_orders = game.player_working_orders();
+    let first_orders = game.state.desk_book_mirror[&StockId(0)].orders.clone();
+    assert_eq!(first_orders.len(), 1, "首拍应留下真实 standing limit order");
+    assert_eq!(first_orders[0].1, Side::Buy);
+    assert_eq!(first_orders[0].2, Money::from_cents(995));
+    assert_eq!(first_snapshot.markets[&StockId(0)].bids.len(), 1);
+    assert_eq!(first_snapshot.markets[&StockId(0)].bids[0].1, 100);
+    assert_eq!(
+        first_snapshot.accounts[&AccountId(0)].reserved_cash,
+        expected_reserved,
+        "玩家账户冻结额应按现行游戏费用函数计算"
+    );
+    assert!(expected_reserved > Money::from_cents(995 * 100), "冻结额含买入费用");
+    assert_eq!(first_working_orders.len(), 1);
+
+    let committed_before_prepare = serde_json::to_value(game.snapshot_inner(true, true)).unwrap();
+    let installed_facts = game.state.runtime_resting_snapshot.as_ref().unwrap().facts[0].clone();
+    let input = driver.prepare_driver_step(&game).unwrap();
+    let published = driver.publication().load();
+    assert!(
+        std::sync::Arc::ptr_eq(&installed_facts, &published.desks[0].resting),
+        "无簿变化的下一拍沿用同一个 resting facts Arc"
+    );
+
+    super::runtime_mirror::reset_runtime_book_projection_costs_for_test();
+    let prepared = game.prepare_runtime_mirror(&mut driver, input, 2).unwrap();
+    let costs = super::runtime_mirror::take_runtime_book_projection_costs_for_test();
+
+    assert_eq!(
+        costs.0, 0,
+        "相同 resting facts 下不应再次逐股重建完整 DeskBookMirror orders"
+    );
+    assert_eq!(
+        costs.1, 0,
+        "簿与 phase 未变时不应再次聚合完整 public depth"
+    );
+    assert_eq!(game.state.desk_book_mirror[&StockId(0)].orders, first_orders);
+    assert_eq!(
+        serde_json::to_value(game.snapshot_inner(true, true)).unwrap(),
+        committed_before_prepare,
+        "candidate prepare 不得安装或污染 committed 状态"
+    );
+    assert_eq!(prepared.projection.snapshot.tick, 2);
+    assert_eq!(prepared.projection.snapshot.seq, first_snapshot.seq + 1);
+    assert_eq!(prepared.projection.snapshot.markets, first_snapshot.markets);
+    assert_eq!(prepared.projection.snapshot.accounts, first_snapshot.accounts);
+    let expected_working: std::collections::BTreeMap<_, _> = first_working_orders
+        .iter()
+        .cloned()
+        .map(|order| (order.id, order))
+        .collect();
+    let runtime_projection = prepared.projection.runtime.test_projection();
+    assert_eq!(runtime_projection[6], serde_json::to_value(expected_working).unwrap());
+    assert_eq!(game.player_working_orders(), first_working_orders);
+}

@@ -310,6 +310,8 @@ pub(super) fn project_mirror_public_book(
     phase: crate::TradingPhase,
     mirror: &super::DeskBookMirror,
 ) -> pipeline::phase::PublicBookProjection {
+    #[cfg(test)]
+    super::runtime_mirror::record_full_public_book_aggregation_for_test();
     use std::collections::BTreeMap;
     let cutoff = mirror.public_cutoff_serial;
     #[allow(clippy::type_complexity)]
@@ -390,6 +392,36 @@ mod tests {
         assert_eq!(closing.bids, vec![(Money::from_cents(900), 100)]);
         let continuous = project_mirror_public_book(TradingPhase::Continuous, &mirror);
         assert_eq!(continuous.bids, vec![(Money::from_cents(900), 300)]);
+    }
+
+    #[test]
+    fn public_mirror_projection_preserves_all_seven_price_levels() {
+        let mirror = super::super::DeskBookMirror {
+            orders: (0..7_u64)
+                .map(|level| {
+                    (
+                        AccountId(level + 1),
+                        Side::Buy,
+                        Money::from_cents(900 - level as i64),
+                        100,
+                        (1_u64 << 32) | (level + 1),
+                        0,
+                        0,
+                    )
+                })
+                .collect(),
+            last_price: Money::from_cents(1_000),
+            public_cutoff_serial: 10,
+            next_serial: 8,
+        };
+        let projection = project_mirror_public_book(TradingPhase::Continuous, &mirror);
+        assert_eq!(
+            projection.bids,
+            (0..7_u64)
+                .map(|level| (Money::from_cents(900 - level as i64), 100))
+                .collect::<Vec<_>>(),
+            "内部与 candidate public projection 保留完整档位，不截为五档"
+        );
     }
 
     #[test]

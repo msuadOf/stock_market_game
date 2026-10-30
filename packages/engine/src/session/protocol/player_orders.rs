@@ -83,7 +83,7 @@ impl crate::session::GameSession {
 
 /// 生产读面与私有 candidate 共用同一簿投影，不临时安装后再读取。
 pub(in crate::session) fn working_orders_from_mirror(
-    mirrors: &std::collections::BTreeMap<StockId, crate::session::DeskBookMirror>,
+    mirrors: &std::collections::BTreeMap<StockId, std::sync::Arc<crate::session::DeskBookMirror>>,
     phase: crate::TradingPhase,
 ) -> Vec<PlayerWorkingOrder> {
     let mut orders = Vec::new();

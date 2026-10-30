@@ -47,7 +47,7 @@ pub struct PublicRuntimeState {
 
 #[cfg(test)]
 impl PublicRuntimeState {
-    pub(in crate::session::protocol) fn test_projection(&self) -> serde_json::Value {
+    pub(in crate::session) fn test_projection(&self) -> serde_json::Value {
         serde_json::to_value((
             self.tick,
             self.seq,

@@ -1,8 +1,79 @@
 use super::*;
 use crate::runtime::drive::{PreparedDriverStep, RuntimeDriver};
 use crate::runtime::world::BeliefParticipantSnapshot;
+
+#[cfg(test)]
+thread_local! {
+    static RUNTIME_BOOK_PROJECTION_COSTS: std::cell::Cell<(usize, usize)> =
+        const { std::cell::Cell::new((0, 0)) };
+}
+
+#[cfg(test)]
+pub(crate) fn reset_runtime_book_projection_costs_for_test() {
+    RUNTIME_BOOK_PROJECTION_COSTS.with(|costs| costs.set((0, 0)));
+}
+
+#[cfg(test)]
+pub(crate) fn take_runtime_book_projection_costs_for_test() -> (usize, usize) {
+    RUNTIME_BOOK_PROJECTION_COSTS.with(|costs| costs.replace((0, 0)))
+}
+
+#[cfg(test)]
+pub(super) fn record_full_public_book_aggregation_for_test() {
+    RUNTIME_BOOK_PROJECTION_COSTS.with(|costs| {
+        let (mirrors, projections) = costs.get();
+        costs.set((mirrors, projections + 1));
+    });
+}
 #[cfg(feature = "simulation-diagnostics")]
 use std::sync::Arc;
+
+fn runtime_book_cache_header_matches(
+    previous: Option<&RuntimeRestingSnapshot>,
+    id_map: &std::sync::Arc<Vec<AccountId>>,
+    accounts_per_group: usize,
+    authority_epoch: u64,
+) -> bool {
+    previous.is_some_and(|snapshot| {
+        std::sync::Arc::ptr_eq(&snapshot.id_map, id_map)
+            && snapshot.accounts_per_group == accounts_per_group
+            && snapshot
+                .projection_cache
+                .as_ref()
+                .is_some_and(|cache| cache.authority_epoch == authority_epoch)
+    })
+}
+
+fn cached_public_projection(
+    cache: Option<&RuntimeRestingProjectionCache>,
+    entry: Option<&RuntimeRestingProjectionEntry>,
+    mirror: &std::sync::Arc<DeskBookMirror>,
+    phase: crate::TradingPhase,
+) -> Option<std::sync::Arc<pipeline::phase::PublicBookProjection>> {
+    cache
+        .filter(|cache| cache.phase == phase)
+        .and_then(|_| entry)
+        .filter(|entry| std::sync::Arc::ptr_eq(&entry.mirror, mirror))
+        .map(|entry| std::sync::Arc::clone(&entry.projection))
+}
+
+fn runtime_book_cache_entry_matches(
+    previous_facts: Option<&std::sync::Arc<Vec<crate::runtime::RestingFact>>>,
+    current_facts: &std::sync::Arc<Vec<crate::runtime::RestingFact>>,
+    entry: &RuntimeRestingProjectionEntry,
+    committed_mirror: Option<&std::sync::Arc<DeskBookMirror>>,
+    last_price: i64,
+    public_cutoff_serial: u64,
+    next_serial: u64,
+) -> bool {
+    previous_facts.is_some_and(|old| std::sync::Arc::ptr_eq(old, current_facts))
+        && committed_mirror.is_some_and(|current| {
+            std::sync::Arc::ptr_eq(current, &entry.mirror)
+                && current.last_price.cents() == last_price
+                && current.public_cutoff_serial == public_cutoff_serial
+                && current.next_serial == next_serial
+        })
+}
 
 /// 仅持本次镜像替换值；不克隆 GameSession、World 或运行线程。
 pub(crate) struct PreparedRuntimeMirror {
@@ -25,7 +96,7 @@ pub(crate) struct PreparedRuntimeMirror {
     personal_history: AccountPagedMap<crate::experience::PersonalHistoryReadLedger>,
     retail: AccountPagedMap<RetailExperienceState>,
     resting: RuntimeRestingSnapshot,
-    mirrors: BTreeMap<StockId, DeskBookMirror>,
+    mirrors: BTreeMap<StockId, std::sync::Arc<DeskBookMirror>>,
     serials: Vec<u64>,
     receipts: BTreeMap<AccountId, crate::experience::AppendOnlyHistory<PersonalTradeConfirmation>>,
     receipt_watermark: u64,
@@ -196,6 +267,7 @@ impl GameSession {
         expected_authority_epoch: u64,
     ) -> Result<PreparedRuntimeMirror, String> {
         input.validate_calendar(self, tick, driver.world_committed_tick())?;
+        let phase = self.phase_at_tick(tick);
         #[cfg(feature = "simulation-diagnostics")]
         let causal_calendar = input.calendar.clone();
         let is_static = input.static_read.is_some();
@@ -572,8 +644,18 @@ impl GameSession {
                 None,
             )
         };
+        let previous_snapshot = self.state.runtime_resting_snapshot.as_ref();
+        let previous_cache =
+            previous_snapshot.and_then(|snapshot| snapshot.projection_cache.as_ref());
+        let cache_header_matches = runtime_book_cache_header_matches(
+            previous_snapshot,
+            &id_map,
+            per_group,
+            source.authority_epoch,
+        );
         let mut mirrors = BTreeMap::new();
         for (index, rows) in facts.iter().enumerate() {
+            let code = StockId(index as u32);
             let view = driver
                 .world_public_views()
                 .get(index)
@@ -584,37 +666,64 @@ impl GameSession {
                     .ok_or_else(|| format!("静点缺行情及截点种子：{index}"))?,
                 None => (view.last_price, view.public_cutoff_serial),
             };
-            let mut orders = Vec::new();
-            for fact in rows.iter() {
-                let account = driver
-                    .account_by_owner(fact.owner)
-                    .ok_or_else(|| format!("簿 candidate owner 不在真实名册：{:?}", fact.owner))?;
-                orders.push((
-                    account,
-                    fact.side,
-                    Money::from_cents(fact.price),
-                    fact.qty,
-                    fact.order_serial,
-                    fact.filled_value,
-                    fact.filled_qty,
-                ));
-            }
-            mirrors.insert(
-                StockId(index as u32),
-                DeskBookMirror {
+            let next_serial = *serials
+                .get(index)
+                .ok_or_else(|| format!("簿 candidate 缺游标：{index}"))?;
+            let committed_mirror = self.state.desk_book_mirror.get(&code);
+            let reusable = if cache_header_matches {
+                previous_cache
+                    .and_then(|cache| cache.entries.get(&code))
+                    .filter(|entry| {
+                        runtime_book_cache_entry_matches(
+                            previous_snapshot.and_then(|snapshot| snapshot.facts.get(index)),
+                            rows,
+                            entry,
+                            committed_mirror,
+                            last_price,
+                            public_cutoff_serial,
+                            next_serial,
+                        )
+                    })
+            } else {
+                None
+            };
+            let mirror = if let Some(entry) = reusable {
+                std::sync::Arc::clone(&entry.mirror)
+            } else {
+                #[cfg(test)]
+                RUNTIME_BOOK_PROJECTION_COSTS.with(|costs| {
+                    let (mirrors, projections) = costs.get();
+                    costs.set((mirrors + 1, projections));
+                });
+                let mut orders = Vec::new();
+                for fact in rows.iter() {
+                    let account = driver.account_by_owner(fact.owner).ok_or_else(|| {
+                        format!("簿 candidate owner 不在真实名册：{:?}", fact.owner)
+                    })?;
+                    orders.push((
+                        account,
+                        fact.side,
+                        Money::from_cents(fact.price),
+                        fact.qty,
+                        fact.order_serial,
+                        fact.filled_value,
+                        fact.filled_qty,
+                    ));
+                }
+                std::sync::Arc::new(DeskBookMirror {
                     orders,
                     last_price: Money::from_cents(last_price),
                     public_cutoff_serial,
-                    next_serial: *serials
-                        .get(index)
-                        .ok_or_else(|| format!("簿 candidate 缺游标：{index}"))?,
-                },
-            );
+                    next_serial,
+                })
+            };
+            mirrors.insert(code, mirror);
         }
-        let resting = RuntimeRestingSnapshot {
+        let mut resting = RuntimeRestingSnapshot {
             facts,
             id_map,
             accounts_per_group: per_group,
+            projection_cache: None,
         };
         let (receipts, receipt_watermark) = self.prepare_runtime_receipts(driver)?;
         let mut closed = BTreeMap::new();
@@ -700,7 +809,6 @@ impl GameSession {
             events.extend(driver.take_drained_events());
         }
         let seq = driver.next_seq();
-        let phase = self.phase_at_tick(tick);
         let mut selected = self
             .state
             .memberships
@@ -770,10 +878,27 @@ impl GameSession {
                 },
             );
         }
+        let mut cache_entries = BTreeMap::new();
         let market_snaps = mirrors
             .iter()
             .map(|(code, mirror)| {
-                let public = snapshot::project_mirror_public_book(phase, mirror);
+                let old_entry = previous_cache.and_then(|cache| cache.entries.get(code));
+                let cached_projection = if cache_header_matches {
+                    cached_public_projection(previous_cache, old_entry, mirror, phase)
+                } else {
+                    None
+                };
+                let projection = cached_projection.unwrap_or_else(|| {
+                    std::sync::Arc::new(snapshot::project_mirror_public_book(phase, mirror))
+                });
+                cache_entries.insert(
+                    *code,
+                    RuntimeRestingProjectionEntry {
+                        mirror: std::sync::Arc::clone(mirror),
+                        projection: std::sync::Arc::clone(&projection),
+                    },
+                );
+                let public = &projection;
                 (
                     *code,
                     MarketSnap {
@@ -781,12 +906,17 @@ impl GameSession {
                         last_close: markets[code].last_close(),
                         best_bid: public.best_bid,
                         best_ask: public.best_ask,
-                        bids: public.bids,
-                        asks: public.asks,
+                        bids: public.bids.clone(),
+                        asks: public.asks.clone(),
                     },
                 )
             })
             .collect();
+        resting.projection_cache = Some(RuntimeRestingProjectionCache {
+            authority_epoch: source.authority_epoch,
+            phase,
+            entries: cache_entries,
+        });
         let origin = self.origin_from_runtime_source(source, install_sequence, phase)?;
         let snapshot = Snapshot {
             mirror_origin: origin,
@@ -1088,6 +1218,256 @@ impl PreparedRuntimeMirror {
                 ),
             )
         )
+    }
+}
+
+#[cfg(test)]
+mod runtime_book_cache_guard_tests {
+    use super::*;
+
+    fn fact_rows() -> std::sync::Arc<Vec<crate::runtime::RestingFact>> {
+        std::sync::Arc::new(Vec::new())
+    }
+
+    fn cache_entry() -> RuntimeRestingProjectionEntry {
+        RuntimeRestingProjectionEntry {
+            mirror: std::sync::Arc::new(DeskBookMirror {
+                orders: Vec::new(),
+                last_price: Money::from_cents(1_000),
+                public_cutoff_serial: 7,
+                next_serial: 8,
+            }),
+            projection: std::sync::Arc::new(pipeline::phase::PublicBookProjection {
+                best_bid: None,
+                best_ask: None,
+                bids: Vec::new(),
+                asks: Vec::new(),
+            }),
+        }
+    }
+
+    #[test]
+    fn runtime_book_cache_candidate_failure_keeps_the_committed_cache_identity() {
+        let mut setup = super::super::npc_working_quote_tests::quote_setup(0);
+        setup.start_date = crate::calendar::CivilDate::from_ymd(2026, 1, 5).unwrap();
+        setup.ticks_per_day = 8;
+        setup.auction_ticks = 0;
+        setup.closing_auction_ticks = 0;
+        setup.npcs.retail_count = 0;
+        setup.npcs.inst_count = 0;
+        setup.npcs.hot_count = 0;
+        let mut game = GameSession::new(setup, 42).unwrap();
+        let mut driver = RuntimeDriver::from_session(&mut game).unwrap();
+        driver.step(&mut game).unwrap();
+        let committed_snapshot = game.state.runtime_resting_snapshot.as_ref().unwrap();
+        let committed_entry = &committed_snapshot
+            .projection_cache
+            .as_ref()
+            .unwrap()
+            .entries[&StockId(0)];
+        let old_facts = std::sync::Arc::clone(&committed_snapshot.facts[0]);
+        let old_mirror = std::sync::Arc::clone(&committed_entry.mirror);
+        let old_projection = std::sync::Arc::clone(&committed_entry.projection);
+        let before = serde_json::to_value(game.snapshot_inner(true, true)).unwrap();
+
+        game.enqueue_player_intent(
+            AccountId(0),
+            crate::Intent::PlaceLimit {
+                code: StockId(0),
+                side: crate::Side::Buy,
+                price: crate::LimitPrice::Fixed(Money::from_cents(995)),
+                qty: 100,
+            },
+        )
+        .unwrap();
+        game.runtime_install_failure = true;
+        let error = driver.step(&mut game).unwrap_err();
+
+        let published_facts = driver.publication().load().desks[0].resting.clone();
+        assert!(!published_facts.is_empty(), "失败前 World 已发布新非空在途簿");
+        assert!(
+            !std::sync::Arc::ptr_eq(&old_facts, &published_facts),
+            "失败前 World 的 resting facts 已变化"
+        );
+        assert!(
+            error.contains("安装失败注入（私有镜像 candidate 校验失败）"),
+            "必须报告原候选校验失败原因：{error}"
+        );
+        let after = game.state.runtime_resting_snapshot.as_ref().unwrap();
+        let after_entry = &after.projection_cache.as_ref().unwrap().entries[&StockId(0)];
+        assert!(std::sync::Arc::ptr_eq(&old_mirror, &after_entry.mirror));
+        assert!(std::sync::Arc::ptr_eq(
+            &old_projection,
+            &after_entry.projection
+        ));
+        assert!(std::sync::Arc::ptr_eq(&old_facts, &after.facts[0]));
+        assert_eq!(
+            serde_json::to_value(game.snapshot_inner(true, true)).unwrap(),
+            before,
+            "失败 candidate 不得安装或污染已提交簿与公开快照"
+        );
+
+        let committed_world_tick = driver.world_committed_tick();
+        assert_eq!(committed_world_tick, 2);
+        let retry_error = driver.step(&mut game).unwrap_err();
+        assert_eq!(retry_error, error, "poison 后必须重放首个 fatal");
+        assert_eq!(driver.world_committed_tick(), committed_world_tick);
+        let retry_snapshot = game.state.runtime_resting_snapshot.as_ref().unwrap();
+        let retry_entry = &retry_snapshot
+            .projection_cache
+            .as_ref()
+            .unwrap()
+            .entries[&StockId(0)];
+        assert!(std::sync::Arc::ptr_eq(&old_facts, &retry_snapshot.facts[0]));
+        assert!(std::sync::Arc::ptr_eq(&old_mirror, &retry_entry.mirror));
+        assert!(std::sync::Arc::ptr_eq(&old_projection, &retry_entry.projection));
+        assert_eq!(
+            serde_json::to_value(game.snapshot_inner(true, true)).unwrap(),
+            before,
+            "poison 重放不得推进 World 或改变已提交簿与公开快照"
+        );
+    }
+
+    #[test]
+    fn runtime_book_cache_requires_the_same_facts_arc_even_when_contents_match() {
+        let original = fact_rows();
+        let same_contents_new_arc = std::sync::Arc::new(original.as_ref().clone());
+        let entry = cache_entry();
+        let committed = std::sync::Arc::clone(&entry.mirror);
+        assert!(runtime_book_cache_entry_matches(
+            Some(&original),
+            &original,
+            &entry,
+            Some(&committed),
+            1_000,
+            7,
+            8,
+        ));
+        assert!(!runtime_book_cache_entry_matches(
+            Some(&original),
+            &same_contents_new_arc,
+            &entry,
+            Some(&committed),
+            1_000,
+            7,
+            8,
+        ));
+    }
+
+    #[test]
+    fn runtime_book_cache_header_requires_mapping_group_and_epoch_identity() {
+        let id_map = std::sync::Arc::new(vec![AccountId(0)]);
+        let snapshot = RuntimeRestingSnapshot {
+            facts: vec![fact_rows()],
+            id_map: std::sync::Arc::clone(&id_map),
+            accounts_per_group: 1,
+            projection_cache: Some(RuntimeRestingProjectionCache {
+                authority_epoch: 4,
+                phase: TradingPhase::Continuous,
+                entries: BTreeMap::new(),
+            }),
+        };
+        assert!(runtime_book_cache_header_matches(
+            Some(&snapshot),
+            &id_map,
+            1,
+            4
+        ));
+        assert!(!runtime_book_cache_header_matches(
+            Some(&snapshot),
+            &std::sync::Arc::new(vec![AccountId(0)]),
+            1,
+            4,
+        ));
+        assert!(!runtime_book_cache_header_matches(
+            Some(&snapshot),
+            &id_map,
+            2,
+            4
+        ));
+        assert!(!runtime_book_cache_header_matches(
+            Some(&snapshot),
+            &id_map,
+            1,
+            5
+        ));
+    }
+
+    #[test]
+    fn runtime_book_cache_rejects_changed_mirror_metadata_or_cow_identity() {
+        let facts = fact_rows();
+        let entry = cache_entry();
+        let committed = std::sync::Arc::clone(&entry.mirror);
+        let matches = |current: Option<&std::sync::Arc<DeskBookMirror>>, price, cutoff, serial| {
+            runtime_book_cache_entry_matches(
+                Some(&facts),
+                &facts,
+                &entry,
+                current,
+                price,
+                cutoff,
+                serial,
+            )
+        };
+        assert!(matches(Some(&committed), 1_000, 7, 8));
+        assert!(!matches(Some(&committed), 1_001, 7, 8));
+        assert!(!matches(Some(&committed), 1_000, 9, 8));
+        assert!(!matches(Some(&committed), 1_000, 7, 9));
+        let cow_changed = std::sync::Arc::new(committed.as_ref().clone());
+        assert!(!matches(Some(&cow_changed), 1_000, 7, 8));
+    }
+
+    #[test]
+    fn changed_phase_reprojects_the_full_closing_book() {
+        let mirror = std::sync::Arc::new(DeskBookMirror {
+            orders: (1..=7_u64)
+                .map(|serial| {
+                    (
+                        AccountId(1),
+                        crate::Side::Buy,
+                        Money::from_cents(1_000 - serial as i64),
+                        100,
+                        serial,
+                        0,
+                        0,
+                    )
+                })
+                .collect(),
+            last_price: Money::from_cents(1_000),
+            public_cutoff_serial: 8,
+            next_serial: 8,
+        });
+        let entry = RuntimeRestingProjectionEntry {
+            mirror: std::sync::Arc::clone(&mirror),
+            projection: std::sync::Arc::new(pipeline::phase::PublicBookProjection {
+                best_bid: Some(Money::from_cents(999)),
+                best_ask: None,
+                bids: vec![(Money::from_cents(999), 100)],
+                asks: Vec::new(),
+            }),
+        };
+        let previous = RuntimeRestingProjectionCache {
+            authority_epoch: 4,
+            phase: TradingPhase::Continuous,
+            entries: BTreeMap::from([(StockId(0), entry.clone())]),
+        };
+        assert!(cached_public_projection(
+            Some(&previous),
+            Some(&entry),
+            &mirror,
+            TradingPhase::ClosingAuction,
+        )
+        .is_none());
+
+        let closing = snapshot::project_mirror_public_book(TradingPhase::ClosingAuction, &mirror);
+        assert_eq!(
+            closing.bids,
+            (993..=999)
+                .rev()
+                .map(|price| (Money::from_cents(price), 100))
+                .collect::<Vec<_>>(),
+            "相位变化后仍完整投影七档且按买盘价格降序",
+        );
     }
 }
 

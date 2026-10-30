@@ -988,6 +988,21 @@ pub(crate) struct RuntimeRestingSnapshot {
     pub id_map: std::sync::Arc<Vec<AccountId>>,
     /// 每组账户数（Owner→全局下标换算基）。
     pub accounts_per_group: usize,
+    pub projection_cache: Option<RuntimeRestingProjectionCache>,
+}
+
+/// 不变簿的完整公开投影缓存；只随 runtime resting candidate 克隆和提交。
+#[derive(Clone)]
+pub(crate) struct RuntimeRestingProjectionCache {
+    pub authority_epoch: u64,
+    pub(in crate::session) phase: crate::TradingPhase,
+    pub(in crate::session) entries: BTreeMap<StockId, RuntimeRestingProjectionEntry>,
+}
+
+#[derive(Clone)]
+pub(crate) struct RuntimeRestingProjectionEntry {
+    pub(in crate::session) mirror: std::sync::Arc<DeskBookMirror>,
+    pub(in crate::session) projection: std::sync::Arc<pipeline::phase::PublicBookProjection>,
 }
 
 impl IngressReceiptCursors {
@@ -1959,7 +1974,7 @@ struct CommittableSessionState {
     /// install 段每拍刷新；不进入存档与业务 hash——snapshot 公开投影/
     /// 玩家在途/预留读面的源。旧管线读面（session markets 簿）在
     /// runtime 下恒空，公开面（A 股竞价隐藏/截点揭示）自此承载。
-    pub desk_book_mirror: BTreeMap<StockId, DeskBookMirror>,
+    pub desk_book_mirror: BTreeMap<StockId, std::sync::Arc<DeskBookMirror>>,
     /// runtime desk 序号游标的会话级缓存（Sol 四轮修复：save 投影权威
     /// ——镜像瞬态（install 段刷新、特定相位拍后可能缺席），游标只增
     /// 不减须持久于会话生命周期；不入 SaveSlot——save 落
@@ -2017,7 +2032,7 @@ struct CommittableSessionState {
     /// get_or_insert；ledger clone 仅 step_frame 分叉路径记录——见
     /// runtime_step_with_install_inner 的 capture_undo 门控）。瞬态不入
     /// 存档/hash；shadow/commit 有意丢弃（与五域 undo 同生命周期）。
-    runtime_mirror_undo: Option<(BTreeMap<StockId, DeskBookMirror>, Vec<u64>)>,
+    runtime_mirror_undo: Option<(BTreeMap<StockId, std::sync::Arc<DeskBookMirror>>, Vec<u64>)>,
     runtime_plans_undo: Option<crate::plans::PlanBook>,
     runtime_envelope_undo: Option<pipeline::EnvelopeLedger>,
     runtime_lifecycles_undo: Option<Vec<NpcOrderLifecycle>>,
@@ -4740,7 +4755,7 @@ impl GameSession {
                 let last_price = market.last_price();
                 sess.state.desk_book_mirror.insert(
                     *code,
-                    DeskBookMirror {
+                    std::sync::Arc::new(DeskBookMirror {
                         orders,
                         last_price,
                         public_cutoff_serial: save
@@ -4750,7 +4765,7 @@ impl GameSession {
                             .copied()
                             .unwrap_or(0),
                         next_serial,
-                    },
+                    }),
                 );
                 continue;
             }
@@ -7846,12 +7861,12 @@ mod committable_state_tests {
         shadow.runtime_desk_serial_cursors = vec![9];
         shadow.desk_book_mirror.insert(
             StockId(0),
-            DeskBookMirror {
+            std::sync::Arc::new(DeskBookMirror {
                 orders: Vec::new(),
                 last_price: crate::money::Money::from_cents(1000),
                 public_cutoff_serial: 0,
                 next_serial: 9,
-            },
+            }),
         );
         session.state.commit_from(shadow);
         assert_eq!(
@@ -7901,6 +7916,7 @@ mod committable_state_tests {
             facts: vec![std::sync::Arc::new(vec![fact(7)])],
             id_map: std::sync::Arc::new(vec![AccountId(1)]),
             accounts_per_group: 1,
+            projection_cache: None,
         });
         let mut shadow = session.state.clone_for_shadow().expect("shadow 克隆");
         assert!(
@@ -7912,6 +7928,7 @@ mod committable_state_tests {
             facts: vec![std::sync::Arc::new(vec![fact(9)])],
             id_map: std::sync::Arc::new(vec![AccountId(1)]),
             accounts_per_group: 1,
+            projection_cache: None,
         });
         session.state.commit_from(shadow);
         let committed = session
