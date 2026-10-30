@@ -18,15 +18,22 @@ for (const invalid of [undefined, {}, { onSpawnFailure: null }, { onSpawnFailure
   });
 }
 
-test("W1 init 首次传 setup 和唯一控制端，ACK 后 create 只传 seed", { timeout: 10000 }, async () => {
+test("W1 transport 首次传唯一控制端，业务 init 直传 setup，ACK 后 create 只传 seed", { timeout: 10000 }, async () => {
   const f = fixture();
   try {
     f.launch(); await drain();
-    const init = f.workers[0].sent[0];
+    const transport = f.workers[0].sent[0];
+    assert.equal(transport.type, "bindEngineTransport");
+    assert.ok(transport.dataPort instanceof MessagePort);
+    assert.ok(transport.controlPort instanceof MessagePort);
+    assert.deepEqual(Object.keys(transport).sort(), ["controlPort", "dataPort", "instanceId", "type"]);
+    assert.equal(transport.instanceId, f.controllers[0].sent[0].instanceId);
+    assert.deepEqual(f.workers[0].transfers[0], [transport.dataPort, transport.controlPort]);
+    const init = f.workers[0].sent[1];
     assert.equal(init.type, "init");
-    assert.equal(init.setup, setup);
-    assert.ok(init.controlPort instanceof MessagePort);
-    assert.deepEqual(f.workers[0].transfers[0], [init.controlPort]);
+    assert.deepEqual(init.setup, setup, "MessagePort 克隆后仍是同一份 setup 值");
+    assert.equal(Object.hasOwn(init, "controlPort"), false);
+    assert.deepEqual(f.workers[0].transfers[1], []);
     assert.equal(f.configured, 1, "ready 必须依赖真实 MessageChannel configured ACK");
     assert.deepEqual(f.workers[0].sent.find((message) => message.type === "create"), { type: "create", seed: 42n });
     assert.equal(f.workers[0].sent.filter((message) => Object.hasOwn(message, "controlPort")).length, 1);

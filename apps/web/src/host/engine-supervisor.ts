@@ -31,7 +31,8 @@ export interface SupervisorTimers {
 }
 export interface EngineSupervisorOptions {
   readonly engine: Worker;
-  readonly createChildWorker: () => Worker;
+  readonly instanceId?: number;
+  readonly createChildWorker: (name?: string) => Worker;
   readonly createChannel?: () => MessageChannel;
   readonly onFatalFailure: (failure: HostFailure) => void;
   readonly onSpawnFailure: (failure: HostFailure) => void;
@@ -55,13 +56,13 @@ interface Resource {
   doneObservedAt?: number;
 }
 
-/** 主线程持全部真实资源；协议 manifest 只保存 W0 的 slot/gen 事实。 */
+/** supervisor 所在的 control owner 持全部真实资源；manifest 只保存 W0 的 slot/gen 事实。 */
 export function createEngineSupervisor(options: EngineSupervisorOptions) {
   const { createChildWorker, onFatalFailure, onSpawnFailure, reportError } = options;
   const timers: SupervisorTimers = options.timers === undefined ? {
     now: () => performance.now(),
-    setTimeout: (callback, milliseconds) => window.setTimeout(callback, milliseconds),
-    clearTimeout: (id) => window.clearTimeout(id),
+    setTimeout: (callback, milliseconds) => globalThis.setTimeout(callback, milliseconds) as unknown as number,
+    clearTimeout: (id) => globalThis.clearTimeout(id),
   } : options.timers;
   const createChannel = options.createChannel === undefined ? () => new MessageChannel() : options.createChannel;
   const resources = new Map<Worker, Resource>();
@@ -276,7 +277,7 @@ export function createEngineSupervisor(options: EngineSupervisorOptions) {
     const view = arena();
     if (slot >= view.capacity || gen >= 2 ** view.genBits) throw new Error("facade slot/gen 超出当前 layout");
   }
-  function spawn(slot: number, gen: number): void {
+  function spawn(slot: number, gen: number, runtimeName: string): void {
     validatePair(slot, gen);
     const view = arena();
     if (shuttingDown) {
@@ -292,12 +293,14 @@ export function createEngineSupervisor(options: EngineSupervisorOptions) {
     nextWorkerId = allocated.next;
     const identity = Object.freeze({ workerId: allocated.workerId, slot, gen });
     let worker: Worker;
-    try { worker = createChildWorker(); }
+    const childName = `stock-game:${options.instanceId ?? 0}:child:${allocated.workerId}:${slot}:${gen}`;
+    try { worker = createChildWorker(childName); }
     catch (error) { spawnFailed(undefined, identity, "WORKER_CONSTRUCT", error); return; }
     let resource: Resource;
     try { resource = attach(worker, "child", identity); }
     catch (error) { spawnFailed(undefined, identity, "WORKER_CONSTRUCT", error); return; }
     if (substrate === undefined || resource.localPort === undefined) throw new Error("child bootstrap 资源不完整");
+    options.onLifecycleObservation?.({ type: "childSpawn", ...identity, name: childName, runtimeName });
     const message: FacadeChildBootstrapMessage = { type: "facadeChildBootstrap", ...substrate, ...identity, controlPort: resource.localPort };
     resource.readyTimer = timers.setTimeout(() => {
       resource.readyTimer = undefined;
@@ -331,6 +334,7 @@ export function createEngineSupervisor(options: EngineSupervisorOptions) {
       if (allocatedMemory !== undefined || requireWaitAbort) throw new Error("已登记 Memory 或 runtime true 必须使用 allocation configuration，禁止重传 Memory");
       installSubstrate(message);
       resource.port.postMessage({ type: "facadeEngineConfigured" });
+      options.onLifecycleObservation?.({ type: "allocationConfigured", allocationId: 1, role: "engine", workerId: null, slot: null, gen: null });
       return;
     }
     if (message.type === "facadeBootstrapFailure") {
@@ -345,7 +349,7 @@ export function createEngineSupervisor(options: EngineSupervisorOptions) {
     if (resource.role === "ingress") throw new Error("ingress 禁止 facade 控制消息");
     if (resource.role === "child" && !resource.ready && message.type !== "facadeChildReady") throw new Error("child ready 前不能发运行控制消息");
     switch (message.type) {
-      case "facadeSpawn": checkpoint(); if (!disposed) spawn(message.slot, message.gen); return;
+      case "facadeSpawn": checkpoint(); if (!disposed) spawn(message.slot, message.gen, message.name); return;
       case "facadeTerminateChild": {
         if (message.workerId < 1 || message.workerId >= nextWorkerId) throw new Error("terminate Worker id 不属于本实例已分配域");
         const target = [...resources.values()].find((candidate) => candidate.identity?.workerId === message.workerId);
@@ -399,7 +403,16 @@ export function createEngineSupervisor(options: EngineSupervisorOptions) {
     return { activeChildren: [...resources.values()].filter((resource) => resource.role === "child").length, manifestEntries: protocol.manifest.size, pendingRecovery: protocol.pendingRecovery.length };
   }
   function checkpoint(): void {
-    if (disposed || substrate === undefined) return;
+    if (disposed) return;
+    if (substrate === undefined) {
+      // 初始化尚未配置 arena 时也能证明实际资源表为空；owner 仍须另等 engine/ingress 的真实 quiescence。
+      if (drain !== undefined && ![...resources.values()].some((resource) => resource.role === "child") && protocol.manifest.size === 0 && protocol.pendingRecovery.length === 0) {
+        const pending = drain;
+        options.onLifecycleObservation?.({ type: "childrenDrained", ...lifecycleCounts() });
+        drain = undefined; pending.resolve();
+      }
+      return;
+    }
     const view = arena();
     for (const resource of [...resources.values()]) {
       const id = resource.identity;
@@ -496,6 +509,16 @@ export function createEngineSupervisor(options: EngineSupervisorOptions) {
       requireWaitAbort = message.runtimeOverride === true;
       try { engine.worker.postMessage({ ...message, controlPort: engine.localPort }, [engine.localPort]); engine.localPort = undefined; }
       catch (error) { fatal(failure("FACADE_ENGINE_BOOTSTRAP", "engine", error)); }
+    },
+    bootstrapEngineTransport(dataPort: MessagePort, instanceId: number, runtimeOverride = false): void {
+      const engine = engineResource;
+      if (disposed || engine === undefined || engine.localPort === undefined) throw new Error("engine transport bootstrap 只允许发送一次");
+      allocationStarted = true;
+      requireWaitAbort = runtimeOverride;
+      try {
+        engine.worker.postMessage({ type: "bindEngineTransport", instanceId, dataPort, controlPort: engine.localPort }, [dataPort, engine.localPort]);
+        engine.localPort = undefined;
+      } catch (error) { fatal(failure("FACADE_ENGINE_BOOTSTRAP", "engine", error)); }
     },
     installSubstrate, assertConfigured,
     getSubstrate(): FacadeSubstrate {

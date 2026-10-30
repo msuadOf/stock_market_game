@@ -9,6 +9,7 @@ import { WorkerTaskScheduler } from "./worker-task-scheduler.ts";
 import { classifyWasmFailure, describeWasmFailure, describeReadFailureFields, type WasmFailureClassification } from "./wasm-failure.ts";
 import { parseHostFailure } from "./protocol-failure.ts";
 import { CompanyWriteRejectedError, parseCompanyWriteFailure, type CompanyWriteFailure } from "./company-write.ts";
+import { CompanyReadRejectedError, parseCompanyReadFailure, type CompanyReadFailure } from "./company-read-failure.ts";
 import { exact } from "../save/schema/primitives.ts";
 import { shouldLoadDiagnosticsWasm } from "./wasm-build-mode.ts";
 import type { VerifiedWasmRestoreCapability } from "./wasm-document-memory-owner.ts";
@@ -60,7 +61,21 @@ function transportExtensions(wasm: typeof import("../../wasm-pkg/web_wasm.js")):
   return wasm as unknown as WasmTransportExtensions;
 }
 
-const ctx: WorkerPort = self;
+let businessPort: MessagePort | undefined;
+let engineControlPort: MessagePort | undefined;
+let ownerInstanceId: number | undefined;
+let initializedTransport = false;
+const ctx: WorkerPort = {
+  postMessage(message) {
+    if (businessPort === undefined) throw new Error("engine business port 尚未绑定");
+    businessPort.postMessage(message);
+  },
+  reportError(error) {
+    if (typeof self.reportError === "function") self.reportError(error);
+    else queueMicrotask(() => { throw error; });
+  },
+  addEventListener() { throw new Error("engine business listener 必须由 transfer 后的 dataPort 接收"); },
+};
 
 export function isE2EStepMode(mode: unknown): boolean {
   return mode === "e2e";
@@ -86,6 +101,22 @@ const engineInitializer = createFacadeEngineInitializer({
   load: loadEngineModule,
   onFailure(error) { loop.stop(); postFailure("wasm-worker.facade-control", error); },
 });
+
+function bindEngineTransport(value: unknown): void {
+  if (initializedTransport) throw new Error("engine transport 只允许绑定一次");
+  if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("engine transport 必须是对象");
+  const source = value as Record<string, unknown>;
+  if (Object.keys(source).sort().join(",") !== "controlPort,dataPort,instanceId,type" || source.type !== "bindEngineTransport"
+    || !Number.isSafeInteger(source.instanceId) || Number(source.instanceId) < 1
+    || !(source.controlPort instanceof MessagePort) || !(source.dataPort instanceof MessagePort)) throw new Error("engine transport 字段无效");
+  initializedTransport = true;
+  businessPort = source.dataPort;
+  engineControlPort = source.controlPort;
+  ownerInstanceId = Number(source.instanceId);
+  businessPort.addEventListener("message", (event) => { void handleBusinessMessage(event as MessageEvent<WorkerMessage>); });
+  businessPort.addEventListener("messageerror", (event) => postFailure("wasm-worker.business-port", event));
+  businessPort.start();
+}
 
 type WorkerFailureDetails = HostFailure;
 
@@ -218,7 +249,7 @@ function postIngressBridge(): void {
   });
 }
 
-function respondOperationError(message: WorkerMessage, failureMessage: string, failure?: CompanyWriteFailure): void {
+function respondOperationError(message: WorkerMessage, failureMessage: string, failure?: CompanyWriteFailure | CompanyReadFailure): void {
   try {
     ctx.postMessage({ type: "operationError", requestId: message.requestId, generation: message.generation, message: failureMessage, ...(failure === undefined ? {} : { failure }) });
   } catch (sendError) {
@@ -261,6 +292,7 @@ type LoadedEngineModule = { readonly module: WebAssembly.Module; readonly diagno
 let verifiedRestoreModule: LoadedEngineModule | undefined;
 let initRequested = false;
 let memoryInitializationStarted = false;
+let engineQuiescentReported = false;
 
 async function loadEngineModule(expected?: VerifiedWasmRestoreCapability): Promise<LoadedEngineModule> {
   if (expected === undefined && verifiedRestoreModule !== undefined) {
@@ -302,7 +334,7 @@ async function loadEngineModule(expected?: VerifiedWasmRestoreCapability): Promi
   return { module, diagnostics: diagnosticsWasm, glue: wasmModule as unknown as FacadeEngineGlue };
 }
 
-ctx.addEventListener("message", (event) => {
+function handleBusinessMessage(event: MessageEvent<WorkerMessage>): void {
   const message = event.data;
   void (async () => {
     let restoreAttempt: { handle: number; generation: number; token: number; restartWanted: boolean } | null = null;
@@ -321,7 +353,8 @@ ctx.addEventListener("message", (event) => {
             if (closingSession) throw new Error("package 验证完成时实例已经关闭");
           } else if (restoreCapability !== undefined) throw new Error("新局不得携带初始 restore capability");
           memoryInitializationStarted = true;
-          await engineInitializer.initialize(initializerMessage);
+          if (engineControlPort === undefined) throw new Error("engine transport controlPort 尚未绑定");
+          await engineInitializer.initialize({ ...initializerMessage, controlPort: engineControlPort });
           ctx.postMessage({ type: "ready" });
           return;
         }
@@ -502,7 +535,26 @@ ctx.addEventListener("message", (event) => {
           const [session, wasm] = slot.requireHandle();
           const read = transportExtensions(wasm).company_read_query;
           if (read === undefined) throw new Error("当前 WASM bindings 不支持公司只读查询，请重建 bindings");
-          ctx.postMessage({ type: "companyReadQuery", requestId: message.requestId, generation: requestedGeneration, result: read(session, message.query) });
+          let result: unknown;
+          try { result = read(session, message.query); }
+          catch (error) {
+            const protocolFailure = (decoderError: unknown): HostFailure => ({
+              code: "WASM_WORKER_PROTOCOL", where: "wasm-worker.company-read",
+              message: `公司只读拒绝详情解码失败：${describeWasmFailure(decoderError)}`,
+              cause: { failure: error, decoderError },
+            });
+            let kind: unknown;
+            try { kind = error !== null && typeof error === "object" ? Reflect.get(error, "kind") : undefined; }
+            catch (decoderError) { throw protocolFailure(decoderError); }
+            if (typeof kind !== "string" || !["Unhealthy", "UnknownOwner", "UnknownCompany", "Catalog", "Company", "CorporateState", "DividendTaxOutstanding"].includes(kind)) throw error;
+            let failure: CompanyReadFailure;
+            try { failure = parseCompanyReadFailure(error); }
+            catch (decoderError) { throw protocolFailure(decoderError); }
+            const rejected = new CompanyReadRejectedError(failure, error);
+            respondOperationError({ ...message, generation: requestedGeneration }, rejected.message, failure);
+            return;
+          }
+          ctx.postMessage({ type: "companyReadQuery", requestId: message.requestId, generation: requestedGeneration, result });
           return;
         }
         case "publicReports": {
@@ -651,6 +703,7 @@ ctx.addEventListener("message", (event) => {
           loop.stop();
           const report = slot.shutdown();
           ctx.postMessage({ type: "shutdownCompleted", requestId: message.requestId, generation: requestedGeneration, report });
+          reportEngineQuiescence();
           return;
         }
         case "drop": {
@@ -663,15 +716,21 @@ ctx.addEventListener("message", (event) => {
           throw new Error(`未知 Worker 消息：${message.type}`);
       }
     } catch (error) {
+      let failureError = error;
+      let initializationClosed = false;
       if (message.type === "init" || message.type === "restoreInitial") {
         closingSession = true;
-        if (message.type === "init") engineInitializer.dispose();
         restoreRestart.invalidate(); loop.stop();
-        // initializer 已拒绝且关闭；本入口之后禁止任何 WASM 调用。
+        try {
+          slot.drop(); engineInitializer.dispose(); verifiedRestoreModule = undefined;
+          initializationClosed = true;
+        } catch (cleanupError) {
+          failureError = new AggregateError([error, cleanupError], "初始会话失败且清理失败，quiescence 未证明", { cause: { primary: error, cleanup: cleanupError } });
+        }
       }
       const attempt = restoreAttempt;
       const committed = attempt !== null && (slot.readGeneration() !== attempt.generation || slot.requireHandle()[0] !== attempt.handle);
-      const classified = classifyWasmFailure(error);
+      const classified = classifyWasmFailure(failureError);
       if (attempt !== null && !committed && classified.kind === "unstructured" && attempt.restartWanted) {
         restoreRestart.schedule(attempt.token,
           () => !fatalSession && slot.readGeneration() === attempt.generation && slot.requireHandle()[0] === attempt.handle,
@@ -685,15 +744,38 @@ ctx.addEventListener("message", (event) => {
           ? { code: "WASM_RESTORE_COMMITTED_FAILED", where: "wasm-worker.restore",
               message: "恢复已替换实际会话，后续准备或清理失败，必须重建有效会话", context: { operation: "restore", generation: String(slot.readGeneration()) }, recoverable: false,
               recoveryActions: ["重新加载有效日终档或新建会话", "复制错误详情反馈"], cause: { message: classified.description } }
-          : structuredHostFailure(error, `wasm-worker.${message.type}`, classified);
+          : structuredHostFailure(failureError, `wasm-worker.${message.type}`, classified);
         // drop_session 同时撤销 SessionRegistry 的 ingress token，阻止独立 intake 继续入队。
         if (closeAuthority) {
           try { slot.drop(); }
           catch (cleanupError) { failure = { ...failure, cause: { primary: failure.cause, cleanup: describeWasmFailure(cleanupError) } }; }
         }
-        postFailureDetails(`wasm-worker.${message.type}`, failure, message.type === "init" ? "initialization-failed" : message.type === "restoreInitial" ? "initial-session-failed" : false, message.type === "init" && !memoryInitializationStarted);
+        postFailureDetails(`wasm-worker.${message.type}`, failure, initializationClosed ? message.type === "init" ? "initialization-failed" : "initial-session-failed" : false, initializationClosed && message.type === "init" && !memoryInitializationStarted);
+        if (initializationClosed) reportEngineQuiescence(message.type === "init" && !memoryInitializationStarted ? "unallocated" : "quiescent");
       } else if (typeof message.requestId === "number") respondOperationError(message, classified.description);
-      else postFailureDetails("wasm-worker.message", unstructuredFailureDetails(classified.description, "wasm-worker.message", classified.cause), message.type === "init" ? "initialization-failed" : message.type === "restoreInitial" ? "initial-session-failed" : false, message.type === "init" && !memoryInitializationStarted);
+      else {
+        postFailureDetails("wasm-worker.message", unstructuredFailureDetails(classified.description, "wasm-worker.message", classified.cause), initializationClosed ? message.type === "init" ? "initialization-failed" : "initial-session-failed" : false, initializationClosed && message.type === "init" && !memoryInitializationStarted);
+        if (initializationClosed) reportEngineQuiescence(message.type === "init" && !memoryInitializationStarted ? "unallocated" : "quiescent");
+      }
     }
   })();
+}
+
+function reportEngineQuiescence(state: "quiescent" | "unallocated" = "quiescent"): void {
+  if (engineQuiescentReported || ownerInstanceId === undefined) return;
+  engineQuiescentReported = true;
+  self.postMessage({ type: "engineLifecycle", instanceId: ownerInstanceId, state });
+}
+
+self.addEventListener("message", (event: MessageEvent<unknown>) => {
+  if (initializedTransport) {
+    postFailure("wasm-worker.global-message", new Error("engine 不接受 transport 绑定后的全局消息"));
+    return;
+  }
+  try { bindEngineTransport(event.data); }
+  catch (error) {
+    const detail = error instanceof Error ? error : new Error("engine transport 失败", { cause: error });
+    if (typeof self.reportError === "function") self.reportError(detail);
+    else queueMicrotask(() => { throw detail; });
+  }
 });

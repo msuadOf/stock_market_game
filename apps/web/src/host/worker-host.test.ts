@@ -1,7 +1,7 @@
 import { defaultCatalogFixture, catalogWorkerFixture } from "./catalog-test-fixture.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
-import { bootstrapLegacy, createLegacyHost, LegacyWorker } from "./worker-host-legacy.test-support.ts";
+import { bootstrapLegacy, createLegacyHost, drainLegacyPorts, LegacyWorker } from "./worker-host-legacy.test-support.ts";
 import { parseProtocolSnapshot } from "./protocol/index.ts";
 import { assertWorkerE2EStepAllowed, createWorkerHost, parseWorkerFailure, readWorkerPlayerWorkingOrders, readWorkerStockHistory, readWorkerSpeedMetrics, refreshWorkerBaseline, requestWorkerIndicators, restoreWorkerSlot, stepWorkerOnce, workerPausePreferenceRequest } from "./worker-host.ts";
 import { WorkerRequestScope, type WorkerRequestPort } from "./worker-request.ts";
@@ -50,16 +50,18 @@ test("Browser engine worker 忙碌时 submitIntent 由独立 intake worker 确�
     const engine = IntakeWorker.instances[0];
     await bootstrapLegacy(engine, false);
     engine.emit({ type: "ingress", generation: 1, token: 42, shared: true });
+    await drainLegacyPorts();
     const intake = IntakeWorker.instances[1];
     const binding = intake.sent[0];
     assert.equal(binding.type, "bindIngress");
     intake.emit({ type: "ingressBound", requestId: binding.requestId, generation: 1 });
+    await drainLegacyPorts();
     // ADR 0041: baseline wire 契约携带 civilDate，E8 改写时遗漏导致协议解析失败
     engine.emit({ ...catalogWorkerFixture(protocolSnapshot(0, 0)), type: "baseline", civilDate: "2030-01-02", generation: 1, snapshot: protocolSnapshot(0, 0) });
     host = await creating;
     const intent = { Cancel: { code: "000812", id: 7 } } as Parameters<typeof host.submitIntent>[0];
     const submitting = host.submitIntent(intent);
-    await Promise.resolve();
+    await drainLegacyPorts();
     const request = intake.sent.at(-1)!;
     assert.equal(request.type, "enqueue");
     // 公共 Intent（代码串）入队前已译为 wire 数值 StockId（ADR 0041）。

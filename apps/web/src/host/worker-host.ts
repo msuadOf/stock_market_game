@@ -32,8 +32,8 @@ import { parseHostFailure } from "./protocol-failure.ts";
 import { parseNpcDecisionTrace, type NpcDecisionTraceRecord } from "./npc-decision-trace.ts";
 import type { IndicatorInput, IndicatorResults } from "../components/indicator-results.ts";
 import { normalizeIndicatorInput, normalizeIndicatorResults } from "./indicator-transport.ts";
-import { createEngineSupervisor } from "./engine-supervisor.ts";
 import { WorkerRequestScope } from "./worker-request.ts";
+import { createEngineControlClient, type EngineBusinessPort } from "./engine-control-client.ts";
 import { parseHistoricalStockData } from "./stock-history.ts";
 import { parseInitialAllocation } from "./initial-allocation.ts";
 import { WasmHostInitializationError } from "./wasm-host-initialization-error.ts";
@@ -229,12 +229,21 @@ export function createWorkerHost(
         restoreCapability = parseVerifiedRestoreCapability(candidate, options.runtimeOverride);
       }
     } catch (error) { resolveRelease?.({ kind: "not-allocated" }); reject(error); return; }
-    let worker: Worker;
-    try { worker = new Worker(new URL("./wasm-worker.ts", import.meta.url), { type: "module" }); }
-    catch (error) { resolveRelease?.({ kind: "not-allocated" }); reject(error); return; }
-    let supervisor: ReturnType<typeof createEngineSupervisor> | null = null;
+    let controlClient: ReturnType<typeof createEngineControlClient>;
+    try {
+      controlClient = createEngineControlClient({ runtimeOverride: options.runtimeOverride === true,
+        onLifecycleObservation: options.lifecycleObserver,
+        onSpawnFailure(failure) { options.onSpawnFailure(parseWorkerFailure(failure)); },
+        onFailure(error) {
+          const cause = error.cause;
+          if (cause !== null && typeof cause === "object" && Object.hasOwn(cause, "code") && Object.hasOwn(cause, "where")) notifyFailure(parseWorkerFailure(cause));
+          else notifyFailure({ code: "WASM_CONTROL_WORKER", where: "worker-host.control", message: error.message, cause: error });
+        },
+      });
+    } catch (error) { resolveRelease?.({ kind: "not-allocated" }); reject(error); return; }
+    const worker: EngineBusinessPort = controlClient.enginePort;
     const requests = new WorkerRequestScope(worker);
-    let ingressWorker: Worker | null = null;
+    let ingressWorker: EngineBusinessPort | null = null;
     let ingressRequests: WorkerRequestScope | null = null;
     let ingressReady: Promise<unknown> | null = null;
     let ingressGeneration = 0;
@@ -275,12 +284,38 @@ export function createWorkerHost(
       const reportFailure = fatalCallback;
       fatalCallback = null;
       const error = new Error(`${failure.code} @ ${failure.where}: ${failure.message}`, { cause: failure });
-      requests.close(error);
-      closeIngress(error);
+      const cleanupRequests: Promise<unknown>[] = [];
+      if (currentGeneration > 0) {
+        try {
+          requests.beginClosing("shutdown", error);
+          cleanupRequests.push(requests.request({ type: "shutdown", requestId: requests.nextRequestId(), generation: currentGeneration }, "shutdownCompleted", 2000).then((response) => {
+            if (Object.keys(response).sort().join(",") !== "generation,report,requestId,type") throw new Error("shutdownCompleted 字段无效");
+            const report = parseWasmSessionShutdown(response.report);
+            options.lifecycleObserver?.({ type: "rustShutdown", report: structuredClone(report) });
+            if (report.kind === "failure") throw new Error(`Rust shutdown 失败：${report.primary.stage}: ${report.primary.detail}`, { cause: report });
+          }));
+        } catch (shutdownError) { cleanupRequests.push(Promise.reject(shutdownError)); }
+      }
+      if (ingressRequests !== null && ingressGeneration > 0) {
+        try {
+          ingressRequests.beginClosing("quiesceIngress", error);
+          cleanupRequests.push(ingressRequests.request({ type: "quiesceIngress", requestId: ingressRequests.nextRequestId(), generation: ingressGeneration }, "ingressQuiescent", 2000).then((response) => {
+            if (Object.keys(response).sort().join(",") !== "generation,requestId,type") throw new Error("ingress quiescence ACK 字段无效");
+          }));
+        } catch (shutdownError) { cleanupRequests.push(Promise.reject(shutdownError)); }
+      }
       clearTimeout(timeout);
-      worker.removeEventListener("message", onMessage);
-      supervisor?.discard(failure);
+      try { controlClient.beginShutdown(performance.now() + 2000); }
+      catch (error) { queueMicrotask(() => { throw new Error("请求 controlWorker 清理失败；release 保持 unknown", { cause: error }); }); }
       ingressWorker = null;
+      void Promise.allSettled(cleanupRequests).then((results) => {
+        requests.close(error);
+        closeIngress(error);
+        worker.removeEventListener("message", onMessage);
+        const failed = results.filter((result): result is PromiseRejectedResult => result.status === "rejected");
+        if (failed.length > 0) controlClient.abortShutdown(new AggregateError(failed.map((result) => result.reason), "故障关停缺少真实业务回复，release 保持 unknown", { cause: failure }));
+        else controlClient.completeShutdown();
+      });
       if (!initialized) {
         reject(new WasmHostInitializationError(failure));
         return;
@@ -324,16 +359,15 @@ export function createWorkerHost(
       });
     }
 
-    function onMessage(event: MessageEvent<unknown>): void {
+    async function onMessage(event: MessageEvent<unknown>): Promise<void> {
       if (disposed) return;
       try {
-        if (supervisor === null) throw new Error("Worker supervisor 尚未建立");
-        if (supervisor.handleGlobalMessage(worker, event.data)) return;
         const incoming = message(event.data);
         if (closing && !["failure", "shutdownCompleted"].includes(incoming.type)) return;
         switch (incoming.type) {
           case "ingress": {
-            supervisor.assertConfigured();
+            await controlClient.configured;
+            if (disposed || closing) return;
             if (Object.keys(incoming).sort().join(",") !== "generation,shared,token,type") throw new Error("Browser ingress 消息形状无效");
             const nextGeneration = generation(incoming.generation, "Browser ingress generation");
             if (!Number.isInteger(incoming.token) || typeof incoming.token !== "number" || incoming.token < 1 || incoming.token > 0xffffffff) throw new Error("Browser ingress token 必须是正 u32");
@@ -343,30 +377,24 @@ export function createWorkerHost(
               && !(ingressGeneration > 0 && restoringGeneration === currentGeneration && nextGeneration === currentGeneration + 1)) throw new Error("Browser ingress generation 没有当前会话或在途 restore 依据");
             closeIngress(new Error("Browser ingress generation 已过期，操作已取消"));
             ingressGeneration = nextGeneration;
+            const port = await controlClient.bindIngress(nextGeneration, Number(incoming.token));
+            if (disposed || closing || ingressGeneration !== nextGeneration) return;
             const first = ingressWorker === null;
-            if (first) {
-              ingressWorker = new Worker(new URL("./wasm-ingress-worker.ts", import.meta.url), { type: "module" });
-              supervisor.attachIngress(ingressWorker);
-            }
+            if (first) ingressWorker = port;
+            else if (ingressWorker !== port) throw new Error("Browser ingress business port 在实例内发生替换");
             if (ingressWorker === null) throw new Error("Browser ingress Worker 尚未初始化");
-            ingressRequests = new WorkerRequestScope(ingressWorker);
-            const boundIngress = ingressWorker;
-            ingressReady = ingressRequests.request({
-              ...(first ? supervisor.getSubstrate() : {}), type: "bindIngress", shared: true, token: incoming.token,
-              requestId: ingressRequests.nextRequestId(), generation: nextGeneration,
-            }, "ingressBound").then((response) => {
-              if (first && !disposed) supervisor!.observeIngressConfigured(boundIngress);
-              return response;
-            });
+            if (ingressRequests === null || first) ingressRequests = new WorkerRequestScope(ingressWorker);
+            ingressReady = ingressRequests.request({ type: "bindIngress", shared: true, token: incoming.token,
+              requestId: ingressRequests.nextRequestId(), generation: nextGeneration }, "ingressBound");
             waitForInitialization();
             return;
           }
           case "ready":
-            supervisor.assertConfigured();
+            await controlClient.configured;
+            if (disposed || closing) return;
             worker.postMessage(initialArchive === null ? { type: "create", seed } : { type: "restoreInitial" });
             return;
           case "created":
-            supervisor.assertConfigured();
             currentGeneration = generation(incoming.generation, "Worker created generation");
             {
               const workerCapabilities = record(incoming.capabilities, "Worker capabilities");
@@ -384,7 +412,6 @@ export function createWorkerHost(
             }
             return;
           case "baseline": {
-            supervisor.assertConfigured();
             const nextGeneration = generation(incoming.generation, "Worker baseline generation");
             if (nextGeneration < currentGeneration) return;
             const next = prepareBaselineUpdate(String(nextGeneration), incoming.snapshot, incoming.stockCatalog, incoming.companyCatalog, {
@@ -419,13 +446,7 @@ export function createWorkerHost(
                 revision: typeof incoming.revision === "string" ? incoming.revision : null,
               }));
               if (accepted === false) {
-                requests.close(new Error("Worker 消费者拒绝协议更新，会话已停止"));
-                closeIngress(new Error("Worker 消费者拒绝协议更新，会话已停止"));
-                clearTimeout(timeout);
-                worker.removeEventListener("message", onMessage);
-                disposed = true;
-                supervisor.discard({ code: "WASM_CONSUMER_REJECTED", where: "worker-host.protocol", message: "Worker 消费者拒绝协议更新，会话已停止" });
-                callback = null;
+                notifyFailure({ code: "WASM_WORKER_PROTOCOL_REJECTED", where: "worker-host.protocol", message: "Worker 消费者拒绝协议更新，会话已停止" });
                 return;
               }
             }
@@ -437,8 +458,7 @@ export function createWorkerHost(
               if (initialized || !(incoming.engineQuiescent === "initialization-failed" && currentGeneration === 0 || incoming.engineQuiescent === "initial-session-failed" && initialArchive !== null)) throw new Error("engine initialization quiescence 阶段或字段无效");
               if (Object.hasOwn(incoming, "memoryAllocation")) {
                 if (incoming.engineQuiescent !== "initialization-failed" || incoming.memoryAllocation !== "not-allocated" || currentGeneration !== 0) throw new Error("pre-Memory 分配证明阶段或字段无效");
-                supervisor.markEngineUnallocated(worker);
-              } else supervisor.markQuiescent(worker);
+              }
             } else if (Object.hasOwn(incoming, "memoryAllocation")) throw new Error("未分配证明必须伴随实际初始化关闭证明");
             notifyFailure(parseWorkerFailure(incoming));
             return;
@@ -458,19 +478,12 @@ export function createWorkerHost(
     }
 
     try {
-      supervisor = createEngineSupervisor({
-        engine: worker,
-        createChildWorker: () => new Worker(new URL("./facade-child-worker.ts", import.meta.url), { type: "module" }),
-        onFatalFailure: notifyFailure,
-        onSpawnFailure: options.onSpawnFailure,
-        onLifecycleObservation: options.lifecycleObserver,
-        onFinalRelease(result) {
-          if (result instanceof Error) rejectRelease?.(result);
-          else resolveRelease?.(result);
-        },
-      });
       worker.addEventListener("message", onMessage);
-      supervisor.bootstrapEngine({
+      void controlClient.release.then((result) => { resolveRelease?.(result); }, (error: unknown) => {
+        if (rejectRelease !== undefined) rejectRelease(error instanceof Error ? error : new Error("controlWorker release 失败", { cause: error }));
+      });
+      controlClient.start();
+      controlClient.sendInitialization({
         type: "init",
         ...(initialArchive === null ? { setup } : { initialArchive, restoreCapability }),
         ...(options.runtimeOverride === undefined ? {} : { runtimeOverride: options.runtimeOverride }),
@@ -562,40 +575,49 @@ export function createWorkerHost(
           ingressRequests?.beginClosing("quiesceIngress", cancellation);
           const until = performance.now() + 2000;
           disposal = (async () => {
-            if (supervisor === null) throw new Error("关闭时 supervisor 不存在");
             let observedReport: WasmSessionShutdown | undefined;
             try {
-              supervisor.beginShutdown(until);
-              const childExit = supervisor.waitForChildrenExit(until);
+              controlClient.beginShutdown(until);
               const rustReply = requests.request({ type: "shutdown", requestId: requests.nextRequestId(), generation: currentGeneration }, "shutdownCompleted", Math.max(1, until - performance.now()))
                 .then((response) => {
                   if (Object.keys(response).sort().join(",") !== "generation,report,requestId,type") throw new Error("shutdownCompleted 字段无效");
                   const report = parseWasmSessionShutdown(response.report);
                   observedReport = report;
                   options.lifecycleObserver?.({ type: "rustShutdown", report: structuredClone(report) });
-                  supervisor!.markQuiescent(worker);
                   return report;
                 });
               const ingressQuiescent = ingressRequests === null || ingressWorker === null ? Promise.resolve() : (() => {
-                const intake = ingressWorker, scope = ingressRequests;
+                const scope = ingressRequests;
                 return scope.request({ type: "quiesceIngress", requestId: scope.nextRequestId(), generation: ingressGeneration }, "ingressQuiescent", Math.max(1, until - performance.now()))
                   .then((response) => {
                     if (Object.keys(response).sort().join(",") !== "generation,requestId,type") throw new Error("ingress quiescence ACK 字段无效");
-                    supervisor!.markQuiescent(intake);
                   });
               })();
-              const [report] = await Promise.all([rustReply, childExit, ingressQuiescent]);
+              // terminal unknown 可先于另一业务端回复；立即传播拒绝，成功仍须等 typed 双门。
+              const releaseRejected = new Promise<never>((_resolve, reject) => {
+                void controlClient.release.then(undefined, reject);
+              });
+              const [report] = await Promise.race([Promise.all([rustReply, ingressQuiescent]), releaseRejected]);
               if (report.kind === "failure") throw new Error(`Rust shutdown 失败：${report.primary.stage}: ${report.primary.detail}`, { cause: report });
-              const release = supervisor.dispose();
-              if (release instanceof Error) throw release;
+              controlClient.completeShutdown();
+              const remaining = Math.max(1, until - performance.now());
+              let releaseTimer: ReturnType<typeof setTimeout> | undefined;
+              const release = await Promise.race([
+                controlClient.release,
+                new Promise<never>((_resolve, reject) => { releaseTimer = setTimeout(() => reject(new Error("controlWorker terminal release 在共享关停期限内未到达；资源归属未知")), remaining); }),
+              ]).finally(() => { if (releaseTimer !== undefined) clearTimeout(releaseTimer); });
+              controlClient.terminateAfterRelease();
+              if (release.kind !== "released" && release.kind !== "not-allocated") throw new Error("controlWorker release kind 无效");
             } catch (error) {
               const transport = pendingFailure !== null && !(error instanceof Error && error.cause === pendingFailure)
                 ? new AggregateError([error], `${pendingFailure.code} @ ${pendingFailure.where}: ${pendingFailure.message}`, { cause: pendingFailure }) : error;
               const primary = observedReport !== undefined && !(transport instanceof Error && transport.cause === observedReport)
                 ? new AggregateError([transport], "WASM shutdown 已有 Rust 结果但整组停止失败", { cause: { shutdownReport: observedReport, transport } }) : transport;
-              supervisor.discard({ code: "WASM_SHUTDOWN_FAILED", where: "worker-host.shutdown", message: primary instanceof Error ? primary.message : String(primary), cause: primary });
-              const release = supervisor.dispose();
-              if (release instanceof Error && release !== primary) throw new AggregateError([primary, release], "WASM shutdown 失败且最终释放事实未知", { cause: { primary, release } });
+              controlClient.abortShutdown(primary instanceof Error ? primary : new Error("WASM shutdown 失败", { cause: primary }));
+              try { controlClient.beginShutdown(until); }
+              catch (cleanupError) { throw new AggregateError([primary, cleanupError], "WASM shutdown 失败且 controlWorker 清理命令无法投递；release unknown", { cause: { primary, cleanupError } }); }
+              const releaseError = await controlClient.release.then(() => undefined, (failure: unknown) => failure);
+              if (releaseError !== undefined) throw new AggregateError([primary, releaseError], "WASM shutdown 失败且最终释放事实未知", { cause: { primary, release: releaseError } });
               throw primary;
             } finally {
               disposed = true;
