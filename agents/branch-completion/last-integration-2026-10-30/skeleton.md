@@ -165,3 +165,9 @@ writer 仅对已存在、已绑定的原字节作非 Cargo 分析，3 个进程�
 两份原 `.diff` 取证文本包含 patch 格式所需的空行 context 空格；为完整保留原 SHA 且避免将其误当源码尾空白，提交中以同名 `.diff.xz` 无损保存，读取后即得原冻结 diff，解码 SHA 见 `gold-probe/diff-archives.json`。没有改写原 diff 或放宽源码 whitespace 门。
 
 `rustfmt --edition 2021 --check` 和 `git diff --check` 通过。writer 没有运行 Cargo 或 Rust 测试；源码完整 diff 与后续真实 golden 执行仍由未实施父任务及唯一 integration 接手。此处只报告取证已闭合与源码已提交，不把尚未执行的新测试冒充绿灯。
+
+## 有限收尾状态
+
+父任务已完整独审源码 `d483869f` 与归档 `8420c7cb` / `40f2012f`：3 个 XZ 解压原字节等于实际 old raw、全部 60 片段的长度/SHA、旧 source/probe 原文、冻结脚本、压缩 diff 与 v4 manifest/stdout/stderr 均匹配，并已交 dev 净接。
+
+第三批实际的自动执行、清理与自动发布在 142092ms 完成；后到 canonical front 在 650819ms 才发布，明确超过原 300000ms，不能把它冒充限内自动发布。原 4765 批 FAIL 与后续独立 ce21 分析 PASS 继续分列。此前第 38 组实际 `21243` 的 22/22 仅关闭已划定的非 golden 小片；当前 3 个修正 golden 加 2 个控制的 fresh 实际仍待唯一 integration 结果，不以源码/取证通过替代测试绿灯。
