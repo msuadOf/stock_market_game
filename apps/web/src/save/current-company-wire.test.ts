@@ -1,5 +1,7 @@
 import assert from "node:assert/strict"
 import { readFileSync } from "node:fs"
+import fs from "node:fs"
+import { syncBuiltinESMExports } from "node:module"
 import test from "node:test"
 import { currentSaveFixture } from "./current-save-fixture.ts"
 import { parseCompanySpec } from "./schema/company/accounting/spec.ts"
@@ -80,4 +82,44 @@ test("报告新增字段仍严格拒绝缺失、未知 ROE 与旧公告 event �
   assert.deepEqual(parsePublicLibrary(library), library)
   const { content: _content, ...legacy } = announcement
   assert.throws(() => parsePublicLibrary({ ...library, announcements: [{ ...legacy, event: {} }] }), /content/)
+})
+
+
+test("公司历史语料仅在首次请求 fixture 时读取并缓存", { timeout: 10_000 }, async () => {
+  const target = new URL("./fixtures/current-company-slice.json", import.meta.url)
+  const originalReadFileSync = fs.readFileSync
+  let targetReads = 0
+  let capturedText: string | undefined
+
+  fs.readFileSync = ((path: Parameters<typeof fs.readFileSync>[0], ...args: unknown[]) => {
+    const result = (originalReadFileSync as (...values: unknown[]) => unknown)(path, ...args)
+    if (path instanceof URL && path.href === target.href) {
+      targetReads += 1
+      assert.ok(typeof result === "string", "历史语料应以 utf8 文本读取")
+      capturedText = result
+    }
+    return result
+  }) as typeof fs.readFileSync
+
+  try {
+    syncBuiltinESMExports()
+    const isolatedModuleUrl = new URL("./company-slice-test-fixture.ts?fixture-read-contract", import.meta.url)
+    const isolatedModule = await import(isolatedModuleUrl.href)
+    assert.equal(targetReads, 0, "导入模块不应读取历史语料")
+
+    const minimalSource = { companies: {}, scheduler: { pending: [] }, payment_failures: {} }
+    isolatedModule.projectHistoricalCompanyOperations(minimalSource)
+    assert.equal(targetReads, 0, "纯 projection 不应读取历史语料")
+
+    const first = isolatedModule.representativeCompanyOperationsFixture()
+    assert.equal(targetReads, 1, "首次 fixture 请求应真实读取历史语料一次")
+    const second = isolatedModule.representativeCompanyOperationsFixture()
+    assert.equal(targetReads, 1, "后续 fixture 请求应复用缓存")
+    assert.ok(typeof capturedText === "string", "应捕获真实文件读取文本")
+    assert.deepEqual(first, isolatedModule.projectHistoricalCompanyOperations(JSON.parse(capturedText)))
+    assert.deepEqual(second, first)
+  } finally {
+    fs.readFileSync = originalReadFileSync
+    syncBuiltinESMExports()
+  }
 })

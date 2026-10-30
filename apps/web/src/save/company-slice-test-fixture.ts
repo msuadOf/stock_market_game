@@ -1,6 +1,13 @@
 import { readFileSync } from "node:fs"
 
-const operations = JSON.parse(readFileSync(new URL("./fixtures/current-company-slice.json", import.meta.url), "utf8")) as Record<string, unknown>
+let operations: Record<string, unknown> | undefined
+
+function historicalCompanyOperations(): Record<string, unknown> {
+  if (operations === undefined) {
+    operations = JSON.parse(readFileSync(new URL("./fixtures/current-company-slice.json", import.meta.url), "utf8")) as Record<string, unknown>
+  }
+  return operations
+}
 
 /** 历史账套仅用于 schema projection，不声明其新增税务事实可由 Rust 恢复。 */
 export function projectHistoricalCompanyOperations(source: Record<string, unknown>): Record<string, unknown> {
@@ -28,5 +35,5 @@ export function projectHistoricalCompanyOperations(source: Record<string, unknow
 }
 
 export function representativeCompanyOperationsFixture(): Record<string, unknown> {
-  return projectHistoricalCompanyOperations(operations)
+  return projectHistoricalCompanyOperations(historicalCompanyOperations())
 }
