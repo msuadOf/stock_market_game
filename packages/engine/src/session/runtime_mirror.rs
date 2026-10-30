@@ -519,15 +519,8 @@ impl GameSession {
                 .copied()
                 .chain(input.plans.active_investor_codes(id).copied())
                 .collect();
-            let mut participant = decision_chain::personal_state::BeliefParticipantState::new(
-                value.watchlist.clone(),
-                value.price_memory.clone(),
-                value.information.clone(),
-                value.belief.clone(),
-            );
-            participant.prune_memory(&protected);
-            value.watchlist = participant.watchlist().clone();
-            value.price_memory = participant.price_memory().clone();
+            value.watchlist.prune(&protected);
+            value.price_memory.prune(&protected);
         }
         let mut markets = self.state.markets.clone();
         if is_static {
@@ -1498,6 +1491,223 @@ mod runtime_book_cache_guard_tests {
 #[cfg(test)]
 mod source_tests {
     use super::*;
+
+    #[test]
+    fn private_personal_prune_preserves_protection_order_and_failure_isolation() {
+        let mut setup = super::super::npc_working_quote_tests::quote_setup(0);
+        let stock_template = setup.stocks[0].clone();
+        setup.stocks.clear();
+        for suffix in 0..12 {
+            let mut spec = stock_template.clone();
+            spec.code = crate::StockCode(format!("{:06}", 600_880 + suffix));
+            setup.stocks.push(spec);
+        }
+        setup.start_date = crate::CivilDate::from_ymd(2026, 1, 5).unwrap();
+        setup.ticks_per_day = 8;
+        setup.auction_ticks = 0;
+        setup.closing_auction_ticks = 0;
+        let mut game = GameSession::new(setup, 42).unwrap();
+        let owner = *game
+            .state
+            .belief_participants
+            .keys()
+            .next()
+            .expect("真实信念机构名册非空");
+        game.fixture_account_mut(&owner)
+            .unwrap()
+            .fixture_set_positions(std::collections::BTreeMap::from([(
+                StockId(0),
+                crate::account::Position::from_restored_parts(100, 0, 100_000, 0),
+            )]));
+        game.state
+            .plans
+            .create(crate::plans::PlanOpen {
+                account: owner,
+                code: StockId(1),
+                direction: Side::Buy,
+                target: crate::plans::PlanTarget::ShareCount(100),
+                opinion: crate::plans::PlanOpinion {
+                    signal_score_bp: 3000,
+                    source: crate::plans::OpinionSource::Blended,
+                },
+                confidence_bp: 8000,
+                urgency: crate::plans::Urgency::Normal,
+                horizon_trading_days: 5,
+                created_trading_day: 0,
+            })
+            .unwrap();
+
+        let mut driver = RuntimeDriver::from_session(&mut game).unwrap();
+        driver.adopt_session_seq(&game);
+        driver.force_due_for_test_at(&[owner], 1);
+        let captured_input = driver.prepare_driver_step(&game).unwrap();
+        assert!(
+            captured_input.sync_source.is_some(),
+            "累计输入来自真实已提交拍"
+        );
+        let mut input = driver
+            .force_full_prepared_input_for_test(captured_input.clone())
+            .unwrap();
+        assert!(
+            input
+                .plans
+                .active_investor_codes(owner)
+                .any(|code| *code == StockId(1)),
+            "fixture 必须保留本人完整 active plan 的保护股"
+        );
+        let observed_minute = game.current_market_minute();
+        let row = input
+            .personals
+            .iter_mut()
+            .find(|(_, id, _)| *id == owner)
+            .expect("完整 Full 输入含目标个人态");
+        let global = row.0;
+        let personal = &mut row.2;
+        personal.watchlist = crate::experience::PersonalWatchlist::default();
+        personal.price_memory = crate::experience::PersonalPriceMemory::default();
+        for code in 0..12 {
+            personal
+                .watchlist
+                .record_attention(&StockId(code), observed_minute, observed_minute)
+                .unwrap();
+            personal
+                .price_memory
+                .observe_price(
+                    &StockId(code),
+                    Money::from_cents(1_000 + i64::from(code)),
+                    observed_minute,
+                )
+                .unwrap();
+        }
+        let original = personal.clone();
+        // 无对手盘也要明确经过生产 touched 裁剪块，不能让 fixture 旁路该块。
+        input.touched.push((global, owner));
+        input.touched.sort();
+        input.touched.dedup();
+        let expected_protected = std::collections::BTreeSet::from([StockId(0), StockId(1)]);
+        let mut reference =
+            super::super::decision_chain::personal_state::BeliefParticipantState::new(
+                original.watchlist.clone(),
+                original.price_memory.clone(),
+                original.information.clone(),
+                original.belief.clone(),
+            );
+        reference.prune_memory(&expected_protected);
+        let committed_before = serde_json::to_value(game.snapshot_inner(true, true)).unwrap();
+        let cache_before = driver.administrative_cache_snapshot_for_test();
+        let mut sync_before = captured_input.clone();
+        driver
+            .materialize_sync_mirror_inputs(&mut sync_before)
+            .unwrap();
+        assert!(
+            sync_before.personals.iter().any(|(_, id, _)| *id == owner),
+            "失败隔离守卫必须覆盖非空的本人累计个人输入"
+        );
+
+        let candidate = game
+            .prepare_runtime_mirror(&mut driver, input.clone(), 1)
+            .unwrap();
+        let prepared = &candidate.personals[&owner].1;
+        assert_eq!(
+            prepared.watchlist,
+            *reference.watchlist(),
+            "真实 prepare 的结果与既有 prune_memory 逐值一致"
+        );
+        assert_eq!(
+            prepared.price_memory,
+            *reference.price_memory(),
+            "价格记忆逐值与旧路径一致"
+        );
+        assert_eq!(
+            prepared.information, original.information,
+            "修剪不得改变 information"
+        );
+        assert_eq!(prepared.belief, original.belief, "修剪不得改变 belief");
+        assert!(
+            prepared.watchlist.stocks.contains_key(&StockId(0)),
+            "持仓股票受保护"
+        );
+        assert!(
+            prepared.watchlist.stocks.contains_key(&StockId(1)),
+            "active plan 股票受保护"
+        );
+        assert_eq!(
+            prepared.watchlist.latest_attention_minute, observed_minute,
+            "修剪保留 watchlist 时钟"
+        );
+        assert_eq!(
+            prepared.price_memory.stocks[&StockId(0)].last_observed_minute,
+            observed_minute,
+            "受保护条目的本人观察锚不变"
+        );
+        assert_eq!(
+            prepared.price_memory.stocks[&StockId(0)].observed_high,
+            Money::from_cents(1_000)
+        );
+        assert_eq!(
+            prepared.price_memory.stocks[&StockId(0)].observed_low,
+            Money::from_cents(1_000)
+        );
+        assert!(
+            !prepared.watchlist.stocks.contains_key(&StockId(3)),
+            "同分钟时较小 StockId 被稳定驱逐"
+        );
+        assert!(
+            !prepared.watchlist.stocks.contains_key(&StockId(2)),
+            "未保护超 8 项按分钟、StockId 排序裁剪"
+        );
+        assert!(
+            !prepared.price_memory.stocks.contains_key(&StockId(2)),
+            "价格记忆未保护超额项被裁剪"
+        );
+        assert!(
+            !prepared.price_memory.stocks.contains_key(&StockId(3)),
+            "价格记忆同分钟时较小 StockId 被稳定驱逐"
+        );
+        for code in 4..12 {
+            assert!(prepared.watchlist.stocks.contains_key(&StockId(code)));
+            assert!(prepared.price_memory.stocks.contains_key(&StockId(code)));
+        }
+        assert_eq!(
+            serde_json::to_value(game.snapshot_inner(true, true)).unwrap(),
+            committed_before,
+            "prepare 只构造候选，不提前改写 committed Session"
+        );
+        assert_eq!(
+            driver.administrative_cache_snapshot_for_test(),
+            cache_before,
+            "候选修剪不写入 driver 缓存"
+        );
+
+        game.runtime_install_failure = true;
+        let error = match game.prepare_runtime_mirror(&mut driver, input, 1) {
+            Ok(_) => panic!("后继私有 candidate 注入必须显式失败"),
+            Err(error) => error,
+        };
+        assert_eq!(error, "安装失败注入（私有镜像 candidate 校验失败）");
+        assert_eq!(
+            serde_json::to_value(game.snapshot_inner(true, true)).unwrap(),
+            committed_before,
+            "后继 prepare 失败后 committed Session 保持权威原值"
+        );
+        assert_eq!(
+            driver.administrative_cache_snapshot_for_test(),
+            cache_before,
+            "后继 prepare 失败不改 driver 缓存或 sync accumulator 摘要"
+        );
+        let mut sync_after = captured_input;
+        driver
+            .materialize_sync_mirror_inputs(&mut sync_after)
+            .unwrap();
+        assert_eq!(
+            sync_after.personals, sync_before.personals,
+            "后继 prepare 失败后重新物化的 sync accumulator 个人输入完整不变"
+        );
+        assert_eq!(
+            sync_after.accounts, sync_before.accounts,
+            "后继 prepare 失败后重新物化的 sync accumulator 账户输入完整不变"
+        );
+    }
 
     #[test]
     fn mirror_candidate_does_not_clone_replaced_shared_previous_values() {
