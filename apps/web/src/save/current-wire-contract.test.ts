@@ -8,7 +8,7 @@ import { parseSaveJson, parseSaveSlot } from "./save-schema.ts"
 import { parseInformationStates } from "./schema/personal/information.ts"
 import { parseBeliefBooks, type BeliefBook } from "./schema/personal/beliefs.ts"
 import { parseRawSaveJson } from "./schema/raw-json.ts"
-import { materializeSaveValue, RawSaveNumber } from "./schema/primitives.ts"
+import { finite, integer, materializeSaveValue, RawSaveNumber, SaveSchemaError } from "./schema/primitives.ts"
 
 // 从真实 Rust producer 原档提取，字段和值均未投影；来源与原档哈希见工作记录。
 const fragments = JSON.parse(readFileSync(new URL("./fixtures/current-producer-fragments.json", import.meta.url), "utf8")) as Record<string, unknown>
@@ -41,6 +41,96 @@ test("parseSaveJson 保留原始 JSON 约束并将数值完整物化", { timeout
     const text = fixtureText.replace('"receipt_watermark":0', `"receipt_watermark":${token}`)
     assert.notEqual(text, fixtureText)
     assert.throws(() => parseSaveJson(text), /receipt_watermark/)
+  }
+})
+
+test("materializeSaveValue 保留新对象树、键契约、数值 codec 与稀疏数组语义", { timeout: 10_000 }, () => {
+  const rawInteger = parseRawSaveJson("7")
+  const rawFinite = parseRawSaveJson("1.25")
+  assert.ok(rawInteger instanceof RawSaveNumber)
+  assert.ok(rawFinite instanceof RawSaveNumber)
+  integer(rawInteger, "根节点.count")
+  finite(rawFinite, "根节点.ratio")
+
+  const source: Record<string, unknown> = { "10": "ten", "2": "two", nested: { value: rawFinite }, count: rawInteger }
+  Object.defineProperty(source, "__proto__", { value: { safe: true }, writable: true, enumerable: true, configurable: true })
+  const materialized = materializeSaveValue(source)
+  assert.notEqual(materialized, source)
+  assert.notEqual(materialized.nested, source.nested)
+  assert.equal(source.count, rawInteger)
+  assert.equal((source.nested as { value: unknown }).value, rawFinite)
+  assert.equal(materialized["2"], "two")
+  assert.equal(materialized["10"], "ten")
+  assert.deepEqual(materialized.nested, { value: 1.25 })
+  assert.equal(materialized.count, 7)
+  assert.deepEqual(materialized.__proto__, { safe: true })
+  assert.notEqual(materialized.__proto__, source.__proto__)
+  assert.deepEqual(Object.keys(materialized), ["2", "10", "nested", "count", "__proto__"])
+  assert.equal(Object.getPrototypeOf(materialized), Object.prototype)
+  assert.deepEqual(Object.getOwnPropertyDescriptor(materialized, "__proto__"), {
+    value: { safe: true }, writable: true, enumerable: true, configurable: true,
+  })
+  assert.ok(rawInteger instanceof RawSaveNumber)
+  assert.ok(rawFinite instanceof RawSaveNumber)
+  assert.equal(rawInteger.decoded, 7)
+  assert.equal(rawFinite.decoded, 1.25)
+
+  const unconsumed = parseRawSaveJson("2")
+  assert.ok(unconsumed instanceof RawSaveNumber)
+  assert.throws(() => materializeSaveValue({ nested: unconsumed }, "存档"), (error) => {
+    assert.ok(error instanceof SaveSchemaError)
+    assert.equal(error.path, "存档.nested")
+    assert.equal(error.message, "存档 存档.nested 数值未经过字段 codec 校验")
+    return true
+  })
+
+  const sparse = new Array<unknown>(3)
+  sparse[1] = { value: true }
+  const sourceArray = [sparse] as const
+  const materializedArray = materializeSaveValue(sourceArray)
+  const materializedSparse = materializedArray[0]
+  assert.notEqual(materializedArray, sourceArray)
+  assert.notEqual(materializedSparse, sparse)
+  assert.notEqual(materializedSparse[1], sparse[1])
+  assert.equal(materializedSparse.length, 3)
+  assert.equal(Object.hasOwn(materializedSparse, 0), false)
+  assert.equal(Object.hasOwn(materializedSparse, 1), true)
+  assert.equal(Object.hasOwn(materializedSparse, 2), false)
+
+  const empty = materializeSaveValue({})
+  assert.equal(Object.getPrototypeOf(empty), Object.prototype)
+})
+
+test("materializeSaveValue 对继承 setter 与不可写属性仍建立普通 own data 属性", { timeout: 10_000 }, () => {
+  const setterKey = "materializeSetterProbe"
+  const lockedKey = "materializeLockedProbe"
+  const setterDescriptor = Object.getOwnPropertyDescriptor(Object.prototype, setterKey)
+  const lockedDescriptor = Object.getOwnPropertyDescriptor(Object.prototype, lockedKey)
+  let setterCalls = 0
+  try {
+    Object.defineProperty(Object.prototype, setterKey, {
+      configurable: true,
+      set() { setterCalls++ },
+    })
+    Object.defineProperty(Object.prototype, lockedKey, {
+      configurable: true,
+      value: "inherited sentinel",
+      writable: false,
+    })
+
+    const materialized = materializeSaveValue({ [setterKey]: "setter value", [lockedKey]: "locked value" })
+    assert.equal(setterCalls, 0)
+    for (const [key, value] of [[setterKey, "setter value"], [lockedKey, "locked value"]] as const) {
+      assert.equal(Object.hasOwn(materialized, key), true)
+      assert.deepEqual(Object.getOwnPropertyDescriptor(materialized, key), {
+        value, writable: true, enumerable: true, configurable: true,
+      })
+    }
+  } finally {
+    if (setterDescriptor === undefined) delete (Object.prototype as Record<string, unknown>)[setterKey]
+    else Object.defineProperty(Object.prototype, setterKey, setterDescriptor)
+    if (lockedDescriptor === undefined) delete (Object.prototype as Record<string, unknown>)[lockedKey]
+    else Object.defineProperty(Object.prototype, lockedKey, lockedDescriptor)
   }
 })
 

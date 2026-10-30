@@ -11,13 +11,34 @@ export class RawSaveNumber {
 
 /** 校验后返回原始 opaque 子树的叶也必须消费过数值 codec，不能漏出 token。 */
 export function materializeSaveValue<T>(value: T, path = "根节点"): T {
-  if (value instanceof RawSaveNumber) {
-    if (value.decoded === undefined) throw new SaveSchemaError(path, "数值未经过字段 codec 校验")
-    return value.decoded as T
+  const descriptor = Object.assign(Object.create(null) as PropertyDescriptor, {
+    value: undefined,
+    writable: true,
+    enumerable: true,
+    configurable: true,
+  })
+  const visit = (current: unknown, currentPath: string): unknown => {
+    if (current instanceof RawSaveNumber) {
+      if (current.decoded === undefined) throw new SaveSchemaError(currentPath, "数值未经过字段 codec 校验")
+      return current.decoded
+    }
+    if (Array.isArray(current)) return current.map((item, index) => visit(item, `${currentPath}[${index}]`))
+    if (current !== null && typeof current === "object") {
+      const result: Record<string, unknown> = {}
+      for (const key of Object.keys(current)) {
+        const nested = visit((current as Record<string, unknown>)[key], `${currentPath}.${key}`)
+        if (key in result) {
+          descriptor.value = nested
+          Object.defineProperty(result, key, descriptor)
+        } else {
+          result[key] = nested
+        }
+      }
+      return result
+    }
+    return current
   }
-  if (Array.isArray(value)) return value.map((item, index) => materializeSaveValue(item, `${path}[${index}]`)) as T
-  if (value !== null && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, materializeSaveValue(item, `${path}.${key}`)])) as T
-  return value
+  return visit(value, path) as T
 }
 
 export function validateSaveValue(value: unknown, path = "根节点", ancestors = new Set<object>()): void {
