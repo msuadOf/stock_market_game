@@ -15,6 +15,41 @@ const api = async () => {
   return implementation;
 };
 
+function assertWebPlanDoesNotRunPreviewOrRegression(candidate) {
+  for (const { command, args, env } of candidate.commands) {
+    const executable = path.basename(command).toLowerCase();
+    const tokens = args.map((argument) => String(argument));
+    if (env.VITE_HOST !== undefined || tokens.some((token) => /^VITE_HOST(?:=|$)/.test(token))) {
+      throw new Error("build commands must not force a fixed Vite host");
+    }
+
+    const isNode = executable === "node" || executable === "node.exe";
+    const isPackageManager = ["corepack", "pnpm", "pnpm.cjs", "pnpm.exe"].includes(executable);
+    const nodeEntry = isNode ? path.basename(tokens[0] ?? "").toLowerCase() : "";
+    const packageArgs = executable === "corepack" && tokens[0]?.toLowerCase() === "pnpm"
+      ? tokens.slice(1)
+      : isPackageManager && executable !== "corepack" ? tokens : [];
+    const runsVitePreview = (executable === "vite" || executable === "vite.exe" || executable === "vite.cmd")
+      ? tokens[0] === "preview"
+      : (isNode && nodeEntry === "vite.js" && tokens[1] === "preview")
+        || (isPackageManager && (
+          (packageArgs[0] === "exec" && path.basename(packageArgs[1] ?? "").toLowerCase() === "vite" && packageArgs[2] === "preview")
+          || (path.basename(packageArgs[0] ?? "").toLowerCase() === "vite" && packageArgs[1] === "preview")
+        ));
+    if (runsVitePreview) throw new Error("build commands must not run Vite preview");
+
+    const isRegressionTask = (token) => !token.includes("/") && !token.includes("\\")
+      && /(?:^|:|-)regression(?:$|:|-)/i.test(token);
+    const runsRegressionScript = (isNode && nodeEntry === "run-full-regression.mjs")
+      || executable === "run-full-regression.mjs";
+    const runsRegressionTask = isPackageManager && (
+      (packageArgs[0] === "run" && isRegressionTask(packageArgs[1] ?? ""))
+      || isRegressionTask(packageArgs[0] ?? "")
+    );
+    if (runsRegressionScript || runsRegressionTask) throw new Error("build commands must not run regression");
+  }
+}
+
 // 最小有效 release WASM：带正式时间门要求的唯一时钟 import 与原子指令。
 function releaseWasmFixture() {
   const section = (id, payload) => [id, payload.length, ...payload];
@@ -68,11 +103,10 @@ test("pure Server plan uses only locked Cargo release and independent executable
 test("Web plans compile real TypeScript, shared WASM and Rust web-ui, without fixed host mode", async () => {
   const { createBuildPlan, parseBuildArgs } = await api();
   for (const target of ["webui", "webui-server"]) {
-    const planRoot = path.join(tmpdir(), ".tmp", "wasm-web-plan-fixture");
+    const planRoot = path.join(tmpdir(), "regression vite preview VITE_HOST", ".tmp", "wasm-web-plan-fixture");
     const plan = createBuildPlan(parseBuildArgs([target, "--jobs", "4"]), { root: planRoot, host: "linux", buildId: "fixture" });
-    const commandArgs = plan.commands.map(({ command, args }) => `${command} ${args.join(" ")}`).join("\n");
     const assertPlanPathsAndEnvironment = (candidate) => {
-      assert.ok(candidate.commands.every(({ env }) => env.VITE_HOST === undefined), "build commands must not force a fixed Vite host");
+      assertWebPlanDoesNotRunPreviewOrRegression(candidate);
       assert.equal(candidate.work, path.join(candidate.root, "target/build-work", `${target}-fixture`));
       assert.equal(candidate.frontend, path.join(candidate.work, "web"));
       assert.equal(candidate.frontendDist, path.join(candidate.frontend, "dist"));
@@ -85,6 +119,31 @@ test("Web plans compile real TypeScript, shared WASM and Rust web-ui, without fi
     const fixedHostPlan = structuredClone(plan);
     fixedHostPlan.commands[0].env.VITE_HOST = "local";
     assert.throws(() => assertPlanPathsAndEnvironment(fixedHostPlan), /fixed Vite host/);
+    const fixedHostTokenPlan = structuredClone(plan);
+    fixedHostTokenPlan.commands[0].args.push("VITE_HOST=local");
+    assert.throws(() => assertPlanPathsAndEnvironment(fixedHostTokenPlan), /fixed Vite host/);
+    for (const [forbiddenCommand, expectedError] of [
+      [{ command: "vite", args: ["preview"] }, /Vite preview/],
+      [{ command: process.execPath, args: [path.join(plan.root, "node_modules/vite/bin/vite.js"), "preview"] }, /Vite preview/],
+      [{ command: process.execPath, args: [path.join(plan.root, "scripts/run-full-regression.mjs")] }, /regression/],
+      [{ command: path.join(plan.root, "scripts/run-full-regression.mjs"), args: [] }, /regression/],
+      [{ command: "pnpm", args: ["exec", "vite", "preview"] }, /Vite preview/],
+      [{ command: "corepack", args: ["pnpm", "vite", "preview"] }, /Vite preview/],
+      [{ command: "pnpm", args: ["run", "full-regression"] }, /regression/],
+      [{ command: "corepack", args: ["pnpm", "run", "full-regression"] }, /regression/],
+    ]) {
+      const forbiddenPlan = structuredClone(plan);
+      forbiddenPlan.commands.push({ ...forbiddenCommand, cwd: plan.root, env: {} });
+      assert.throws(() => assertPlanPathsAndEnvironment(forbiddenPlan), expectedError);
+    }
+    const nodeDataPathPlan = structuredClone(plan);
+    nodeDataPathPlan.commands.push({
+      command: process.execPath,
+      args: [path.join(plan.root, "scripts/build.mjs"), path.join(plan.root, "data/vite.js"), path.join(plan.root, "data/run-full-regression.mjs")],
+      cwd: plan.root,
+      env: {},
+    });
+    assertPlanPathsAndEnvironment(nodeDataPathPlan);
     const misplacedArtifactPlan = structuredClone(plan);
     misplacedArtifactPlan.artifact.directory = path.join(plan.root, ".tmp", target);
     assert.throws(() => assertPlanPathsAndEnvironment(misplacedArtifactPlan), /build-artifacts/);
@@ -95,7 +154,6 @@ test("Web plans compile real TypeScript, shared WASM and Rust web-ui, without fi
     // 批 9 A10 收尾：check-wasm-threading 断言随脚本退役。
     assert.ok(plan.commands.some(({ command, args }) => command.endsWith("node") && args.some((argument) => argument.endsWith("check-web-release-wasm.mjs"))));
     assert.ok(plan.commands.some(({ command, args }) => command === "cargo" && args.includes("web-ui")));
-    assert.doesNotMatch(commandArgs, /VITE_HOST|vite preview|regression/);
     assert.equal(plan.root, planRoot);
     const wasm = plan.commands.find(({ command }) => command === "wasm-pack");
     assert.match(wasm.args[wasm.args.indexOf("--out-dir") + 1], /apps[/\\]web-wasm[/\\]wasm-pack-output[/\\]fixture[/\\]wasm[/\\]pkg$/);
