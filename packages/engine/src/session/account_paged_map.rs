@@ -5,12 +5,29 @@ use crate::compute::parallel::*;
 use crate::AccountId;
 use serde::ser::SerializeMap;
 use std::collections::BTreeMap;
+#[cfg(test)]
+use std::cell::Cell;
 use std::ops::Index;
 use std::sync::Arc;
 
 const PAGE_SHIFT: u32 = 5;
 const GROUP_SHIFT: u32 = 4;
 type PageGroup<Value> = BTreeMap<u64, Arc<BTreeMap<AccountId, Arc<Value>>>>;
+
+#[cfg(test)]
+thread_local! {
+    static SHARED_PREVIOUS_VALUE_CLONES: Cell<usize> = const { Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(super) fn reset_shared_previous_value_clones() {
+    SHARED_PREVIOUS_VALUE_CLONES.with(|count| count.set(0));
+}
+
+#[cfg(test)]
+pub(super) fn shared_previous_value_clones() -> usize {
+    SHARED_PREVIOUS_VALUE_CLONES.with(Cell::get)
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct AccountPagedMap<Value> {
@@ -127,11 +144,15 @@ impl<Value: Clone> AccountPagedMap<Value> {
     }
 
     pub(super) fn insert(&mut self, id: AccountId, value: Value) -> Option<Value> {
-        self.insert_shared(id, value)
-            .map(|previous| Arc::try_unwrap(previous).unwrap_or_else(|shared| (*shared).clone()))
+        self.insert_shared(id, value).map(|previous| {
+            Arc::try_unwrap(previous).unwrap_or_else(|shared| {
+                #[cfg(test)]
+                SHARED_PREVIOUS_VALUE_CLONES.with(|count| count.set(count.get() + 1));
+                (*shared).clone()
+            })
+        })
     }
 
-    #[cfg(test)]
     pub(super) fn insert_without_previous(&mut self, id: AccountId, value: Value) {
         self.insert_shared(id, value);
     }
@@ -259,6 +280,35 @@ mod tests {
                 clones: Arc::clone(&self.clones),
             }
         }
+    }
+
+    #[test]
+    fn shared_previous_clone_counter_is_a_precise_negative_control() {
+        let old_value_clones = Arc::new(AtomicUsize::new(0));
+        let mut committed = AccountPagedMap::default();
+        committed.insert(
+            AccountId(7),
+            CountedValue {
+                value: 7,
+                clones: Arc::clone(&old_value_clones),
+            },
+        );
+        let mut candidate = committed.clone();
+        reset_shared_previous_value_clones();
+
+        let previous = candidate.insert(
+            AccountId(7),
+            CountedValue {
+                value: 70,
+                clones: Arc::new(AtomicUsize::new(0)),
+            },
+        );
+
+        assert_eq!(previous.unwrap().value, 7);
+        assert_eq!(shared_previous_value_clones(), 1);
+        assert_eq!(old_value_clones.load(Ordering::Relaxed), 1);
+        assert_eq!(committed.get(&AccountId(7)).unwrap().value, 7);
+        assert_eq!(candidate.get(&AccountId(7)).unwrap().value, 70);
     }
 
     #[test]

@@ -844,8 +844,8 @@ impl GameSession {
         let mut personal_history = self.state.history_reads.clone();
         let mut retail = self.state.retail_experience.clone();
         for (id, (_, value)) in &personals {
-            npc_attention.insert(*id, value.attention.clone());
-            beliefs.insert(
+            npc_attention.insert_without_previous(*id, value.attention.clone());
+            beliefs.insert_without_previous(
                 *id,
                 BeliefParticipantState::new(
                     value.watchlist.clone(),
@@ -854,9 +854,9 @@ impl GameSession {
                     value.belief.clone(),
                 ),
             );
-            personal_history.insert(*id, value.history_reads.clone());
+            personal_history.insert_without_previous(*id, value.history_reads.clone());
             if let Some(row) = &value.retail_experience {
-                retail.insert(*id, row.clone());
+                retail.insert_without_previous(*id, row.clone());
             }
         }
         for (id, due, seed) in attention {
@@ -1094,6 +1094,108 @@ impl PreparedRuntimeMirror {
 #[cfg(test)]
 mod source_tests {
     use super::*;
+
+    #[test]
+    fn mirror_candidate_does_not_clone_replaced_shared_previous_values() {
+        let mut setup = super::super::npc_working_quote_tests::retail_quote_setup();
+        setup.start_date = crate::calendar::CivilDate::from_ymd(2026, 1, 5).unwrap();
+        setup.ticks_per_day = 8;
+        setup.auction_ticks = 0;
+        setup.closing_auction_ticks = 0;
+        let mut game = GameSession::new(setup, 42).unwrap();
+        let retail_account = *game
+            .state
+            .retail_experience
+            .keys()
+            .next()
+            .expect("Retail 经历名册非空");
+        // 历史已读账本按首次读取惰性创建；显式种入合法零读取态以覆盖替换路径。
+        game.state.history_reads.insert_without_previous(
+            retail_account,
+            crate::experience::PersonalHistoryReadLedger::default(),
+        );
+        let mut driver = RuntimeDriver::from_session(&mut game).unwrap();
+        driver.adopt_session_seq(&game);
+        driver.force_due_for_test_at(&[retail_account], 1);
+        let mut input = driver.prepare_driver_step(&game).unwrap();
+        assert_eq!(
+            input.calendar.market_phase_before(),
+            Some(TradingPhase::Continuous),
+            "fixture 使用真实连续竞价观察拍"
+        );
+        driver.materialize_sync_mirror_inputs(&mut input).unwrap();
+        let observed_retail = input
+            .personals
+            .iter()
+            .find(|(_, account, _)| *account == retail_account)
+            .map(|(_, _, personal)| personal.clone())
+            .expect("被真实 Continuous observe 更新的 Retail personal");
+        assert!(observed_retail.retail_experience.is_some());
+        let attention_before = game.state.npc_attention.clone();
+        let beliefs_before = game.state.belief_participants.clone();
+        let history_before = game.state.history_reads.clone();
+        let retail_before = game.state.retail_experience.clone();
+        let snapshot_before = serde_json::to_value(game.snapshot_inner(true, true)).unwrap();
+        assert!(game.state.npc_attention.contains_key(&retail_account));
+        assert!(game.state.belief_participants.contains_key(&retail_account));
+        assert!(game.state.history_reads.contains_key(&retail_account));
+        assert!(retail_before.contains_key(&retail_account));
+
+        super::super::account_paged_map::reset_shared_previous_value_clones();
+        let mut candidate = game
+            .prepare_runtime_mirror(&mut driver, input.clone(), 1)
+            .unwrap();
+        let cloned_previous_values =
+            super::super::account_paged_map::shared_previous_value_clones();
+        assert_eq!(
+            cloned_previous_values, 0,
+            "生产 mirror 的四个稀疏域替换不消费 previous 值"
+        );
+        assert!(candidate.personals.contains_key(&retail_account));
+        assert!(candidate.personals[&retail_account]
+            .1
+            .retail_experience
+            .is_some());
+        assert_eq!(game.state.npc_attention, attention_before);
+        assert_eq!(game.state.belief_participants, beliefs_before);
+        assert_eq!(game.state.history_reads, history_before);
+        assert_eq!(game.state.retail_experience, retail_before);
+        assert_eq!(
+            serde_json::to_value(game.snapshot_inner(true, true)).unwrap(),
+            snapshot_before,
+            "准备 candidate 不得提前安装到 committed Session"
+        );
+
+        let account = *candidate.npc_attention.keys().next().unwrap();
+        candidate
+            .npc_attention
+            .get_mut(&account)
+            .unwrap()
+            .next_attention_candidate_tick += 1;
+        assert_eq!(game.state.npc_attention, attention_before);
+
+        game.runtime_install_failure = true;
+        super::super::account_paged_map::reset_shared_previous_value_clones();
+        let failure = match game.prepare_runtime_mirror(&mut driver, input, 1) {
+            Ok(_) => panic!("注入失败应拒绝镜像 candidate"),
+            Err(error) => error,
+        };
+        assert_eq!(failure, "安装失败注入（私有镜像 candidate 校验失败）");
+        assert_eq!(
+            super::super::account_paged_map::shared_previous_value_clones(),
+            0,
+            "准备失败也不应克隆被替换的 previous 值"
+        );
+        assert_eq!(game.state.npc_attention, attention_before);
+        assert_eq!(game.state.belief_participants, beliefs_before);
+        assert_eq!(game.state.history_reads, history_before);
+        assert_eq!(game.state.retail_experience, retail_before);
+        assert_eq!(
+            serde_json::to_value(game.snapshot_inner(true, true)).unwrap(),
+            snapshot_before,
+            "失败 candidate 不得半安装"
+        );
+    }
 
     #[test]
     fn each_private_source_component_and_pending_mask_is_checked_before_swap() {
