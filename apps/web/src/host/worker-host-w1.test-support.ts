@@ -110,12 +110,13 @@ export function fixture(options: { initError?: unknown; initAfterMemoryFailure?:
         // fixture 的被动 substrate 观察者已先登记；这里只统计产品随后安装的 message listener。
         const listeners = new Set<EventListenerOrEventListenerObject>();
         portListeners.set(port, listeners);
-        const add = port.addEventListener.bind(port), remove = port.removeEventListener.bind(port);
-        port.addEventListener = (type, callback, options) => {
+        const target: EventTarget = port;
+        const add = target.addEventListener.bind(target), remove = target.removeEventListener.bind(target);
+        target.addEventListener = (type: string, callback: EventListenerOrEventListenerObject | null, options?: AddEventListenerOptions | boolean) => {
           if (type === "message" && callback !== null) listeners.add(callback);
           add(type, callback, options);
         };
-        port.removeEventListener = (type, callback, options) => {
+        target.removeEventListener = (type: string, callback: EventListenerOrEventListenerObject | null, options?: EventListenerOptions | boolean) => {
           if (type === "message" && callback !== null) listeners.delete(callback);
           remove(type, callback, options);
         };
@@ -164,7 +165,7 @@ export function fixture(options: { initError?: unknown; initAfterMemoryFailure?:
         if (value.type === "bindEngineTransport") {
           this.controlPort = value.controlPort as MessagePort;
           this.dataPort = value.dataPort as MessagePort;
-          const businessChannel = channels.find((channel) => channel.port2 === this.dataPort);
+          const businessChannel = channels.find((channel) => (channel.port2 as unknown as MessagePort) === this.dataPort);
           if (businessChannel === undefined) throw new Error("fixture 找不到 engine business port 对端");
           this.receiverListenerCount = () => portListeners.get(businessChannel.port1)!.size;
           this.onRawEmit = (message) => businessChannel.port1.dispatchEvent(new MessageEvent("message", { data: message }));
@@ -189,7 +190,7 @@ export function fixture(options: { initError?: unknown; initAfterMemoryFailure?:
         }
         if (value.type === "bindIngressTransport") {
           this.dataPort = value.dataPort as MessagePort;
-          const businessChannel = channels.find((channel) => channel.port2 === this.dataPort);
+          const businessChannel = channels.find((channel) => (channel.port2 as unknown as MessagePort) === this.dataPort);
           if (businessChannel === undefined) throw new Error("fixture 找不到 ingress business port 对端");
           this.receiverListenerCount = () => portListeners.get(businessChannel.port1)!.size;
           this.onRawEmit = (message) => businessChannel.port1.dispatchEvent(new MessageEvent("message", { data: message }));

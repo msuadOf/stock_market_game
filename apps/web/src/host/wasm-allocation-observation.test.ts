@@ -26,7 +26,7 @@ test("allocation 数字观察只在真实 Memory 登记、configuration 和 chil
   try {
     supervisor.bootstrapEngine({ type: "init", setup: {} });
     const control = engine.input!.controlPort as MessagePort;
-    control.start(); assert.deepEqual(events, []);
+    control.start(); assert.deepEqual([...events], []);
     control.postMessage({ type: "facadeEngineMemory", allocationId: 1, memory }); await flush();
     assert.deepEqual(events, [{ type: "memoryRegistered", allocationId: 1, role: "engine" }]);
     control.postMessage({ type: "facadeEngineConfiguration", allocationId: 1, module: new WebAssembly.Module(new Uint8Array([0,97,115,109,1,0,0,0])), diagnostics: false, layout }); await flush();
