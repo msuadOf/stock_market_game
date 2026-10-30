@@ -1,0 +1,16 @@
+[
+  {
+    "filename": "forward_transform_v2.diff.xz",
+    "original_filename": "forward_transform_v2.diff",
+    "original_sha256": "a7022670029730422f3c22ca43fa3de07ee56b6403abe2a6f69d594cf5799c5a",
+    "xz_sha256": "9ff91dd4eacbc4f8e60e753f592f81b556089e8813789280fb3fb0af5ce01551",
+    "scope": "原diff逐字节无损保存；diff空行原有单个context空格不是源码尾空白，不改写原冻结证据"
+  },
+  {
+    "filename": "forward_transform_v4.diff.xz",
+    "original_filename": "forward_transform_v4.diff",
+    "original_sha256": "9cad159dadf948f6a535e060cef6efd5337d0c61981d16368649717b92e3b35a",
+    "xz_sha256": "ab4d3031fb6fd8e7049a158621b443de871b904ee16c70a048673689515c5e7c",
+    "scope": "原diff逐字节无损保存；diff空行原有单个context空格不是源码尾空白，不改写原冻结证据"
+  }
+]
