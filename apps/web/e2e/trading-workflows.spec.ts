@@ -1,4 +1,6 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
+import { writeFile } from "node:fs/promises";
+import { gunzipSync } from "node:zlib";
 import { readQuickArchive } from "./quick-archive.ts";
 
 const STOCK_CODE = "600101";
@@ -7,7 +9,7 @@ const CONTINUOUS_PRICE = "10.98";
 type E2EGlobal = typeof globalThis & {
   __STOCK_GAME_E2E__?: {
     advanceToTick(target: number): Promise<number>;
-    snapshot(): { accounts: Record<string, { cash: number }> };
+    snapshot(): { tick: number; accounts: Record<string, { cash: string; reserved_cash: string }> };
   };
 };
 
@@ -104,28 +106,69 @@ test("09:20–09:25 的集合竞价委托不可撤销且继续冻结", async ({ 
   await expect(order).toContainText("资金已冻结");
 
   await advanceToTick(page, 9);
-  await expect(order).toHaveAttribute("data-order-venue", "continuous");
+  await expect(order).toHaveAttribute("data-order-venue", "Continuous");
   await order.getByRole("button", { name: "撤单" }).click();
   await advanceToTick(page, 10);
   await expect(order).toHaveCount(0);
 });
 
-test("连续竞价展示活动委托冻结，并明确拒绝资金不足的买单", async ({ page }) => {
+test("连续竞价展示活动委托冻结，并明确拒绝资金不足的买单", async ({ page }, testInfo) => {
   await openGame(page);
-  await advanceToTick(page, 9);
-  const cashBefore = await availableCash(page).innerText();
+  await advanceToTick(page, 31);
+  const savedArchive = await readQuickArchive(page);
+  if (!savedArchive?.startsWith("gzip:")) throw new Error("缺少可读取的日终快速槽存档");
+  const archive = JSON.parse(gunzipSync(Buffer.from(savedArchive.slice("gzip:".length), "base64")).toString("utf8")) as {
+    snapshot?: { accounts?: Record<string, { cash?: string }> };
+  };
+  const player = archive.snapshot?.accounts?.["0"];
+  if (!player) throw new Error("日终存档缺少当前玩家账户");
+  player.cash = "200000";
+  const lowCashSavePath = testInfo.outputPath("low-cash-save.json");
+  await writeFile(lowCashSavePath, JSON.stringify(archive));
+  await page.getByRole("button", { name: "游戏与存档" }).click();
+  await page.evaluate(() => Object.defineProperty(window, "showOpenFilePicker", { configurable: true, value: undefined }));
+  const fileChooserPromise = page.waitForEvent("filechooser");
+  await page.getByRole("button", { name: "从文件读取" }).click();
+  await (await fileChooserPromise).setFiles(lowCashSavePath);
+  await expect(page.locator(".notice")).toContainText("已读档");
+  const restored = await page.evaluate(() => {
+    const controls = (globalThis as E2EGlobal).__STOCK_GAME_E2E__;
+    if (!controls) throw new Error("E2E engine controls are unavailable");
+    return controls.snapshot();
+  });
+  expect(restored.tick).toBe(30);
+  expect(restored.accounts["0"]?.cash).toBe("200000");
+  expect(restored.accounts["0"]?.reserved_cash).toBe("0");
+  await expect(page.locator(".player-order-item")).toHaveCount(0);
+  await page.getByRole("navigation", { name: "桌面主导航" }).getByRole("button", { name: "交易", exact: true }).click();
+  await advanceToTick(page, 39);
+  const beforeOrder = await page.evaluate(() => {
+    const controls = (globalThis as E2EGlobal).__STOCK_GAME_E2E__;
+    if (!controls) throw new Error("E2E engine controls are unavailable");
+    return controls.snapshot().accounts["0"];
+  });
+  if (!beforeOrder) throw new Error("当前玩家账户快照不可用");
+  const availableBefore = BigInt(beforeOrder.cash) - BigInt(beforeOrder.reserved_cash);
 
   await fillLimitBuy(page, CONTINUOUS_PRICE);
-  await advanceToTick(page, 10);
+  await advanceToTick(page, 40);
 
   const order = playerOrder(page);
   await expect(page.locator(".app-error")).toHaveCount(0);
   await expect(page.locator(".day-tag time")).toHaveText("09:43:10");
   await expect(order).toContainText("资金已冻结");
-  await expect(availableCash(page)).not.toHaveText(cashBefore);
+  const afterOrder = await page.evaluate(() => {
+    const controls = (globalThis as E2EGlobal).__STOCK_GAME_E2E__;
+    if (!controls) throw new Error("E2E engine controls are unavailable");
+    return controls.snapshot().accounts["0"];
+  });
+  if (!afterOrder) throw new Error("当前玩家账户快照不可用");
+  const availableAfter = BigInt(afterOrder.cash) - BigInt(afterOrder.reserved_cash);
+  expect(BigInt(afterOrder.reserved_cash)).toBeGreaterThan(BigInt(beforeOrder.reserved_cash));
+  expect(availableAfter).toBeLessThan(availableBefore);
 
-  await fillLimitBuy(page, "11.20", "1000000");
-  await advanceToTick(page, 11);
+  await fillLimitBuy(page, "11.20", "100");
+  await advanceToTick(page, 41);
 
   await expect(page.locator(".notice")).toContainText("资金不足");
   await expect(order).toContainText("资金已冻结");

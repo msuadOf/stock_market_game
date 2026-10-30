@@ -3,6 +3,7 @@ import test from "node:test";
 import { QuickTrading, fractionLots, pickBookDraft, buyingCapacity, applyFeeRate, tradingSecond } from "./quick-trading.ts";
 import { DEFAULT_SETUP } from "../config/defaults.ts";
 import type { Snapshot, Intent } from "../types/engine.ts";
+import { maxAShareOrderQuantity } from "../utils/trade-input.ts";
 function snapshot(tick = 0): Snapshot {
   return { tick, seq: tick, day: 0, phase: "Continuous", mirror_origin: { authority_epoch: 1, install_sequence: 2, source_tick: tick, source_generation: 0, day_end_stage: "tick", non_tick_revision: 0, mirror_phase: "Continuous" }, markets: {
     "600101": { last_price: "1000", last_close: "1000", best_bid: "999", best_ask: "1000", bids: [["999", 100], ["998", 200]], asks: [["1000", 100], ["1001", 250]] },
@@ -25,6 +26,27 @@ test("游戏秒只累计存在的竞价阶段，自定义局跨日不会让自�
     current = snapshot(setup.ticks_per_day); await trading.advance(current); assert.equal(submitted.length, 0);
     current = snapshot(setup.ticks_per_day + 9); await trading.advance(current); assert.equal(submitted.length, 1);
   }
+});
+test("买入整手能力同时受可用资金与证券类别单笔股数上限约束", { timeout: 10000 }, () => {
+  const base = snapshot();
+  const current: Snapshot = { ...base, accounts: { ...base.accounts, 0: {
+    ...base.accounts[0]!, cash: DEFAULT_SETUP.config.starting_cash,
+    positions: {
+      ...base.accounts[0]!.positions,
+      "600101": { ...base.accounts[0]!.positions["600101"]!, qty: 2_000_000 },
+      "300260": { qty: 2_000_000, t1_locked: 0, invested_cents: "0", recovered_cents: "0" },
+    },
+  } } };
+  current.markets["300260"] = { last_price: "3680", last_close: "3680", best_bid: "3679", best_ask: "3680", bids: [], asks: [] };
+  const trading = new QuickTrading({ setup: () => DEFAULT_SETUP, snapshot: () => current, autoAllowed: () => true, submit: async () => {} });
+  assert.equal(trading.capacity("600101", "Buy"), 10_000n);
+  assert.equal(trading.capacity("300260", "Buy"), 3_000n);
+  assert.equal(trading.capacity("600101", "Sell"), 10_000n);
+  assert.equal(trading.capacity("300260", "Sell"), 3_000n);
+  trading.edit("300260", "Buy", { orderKind: "market" });
+  assert.equal(trading.capacity("300260", "Buy"), 1_500n);
+  trading.edit("300260", "Sell", { orderKind: "market" });
+  assert.equal(trading.capacity("300260", "Sell"), 1_500n);
 });
 test("比例舍尾保留零手，买入能力含费用与预留资金", { timeout: 10000 }, () => {
   assert.equal(fractionLots(1n, 2), 0n);
@@ -122,7 +144,9 @@ test("面板与跨股可买能力共用扣除pending的精确分现金，失败�
   assert.equal(trading.availableCash(), "9007199254740870");
   const submitting = trading.submit("600101", "Buy");
   assert.equal(trading.availableCash(), "9007199254640369");
-  assert.equal(trading.capacity("002156", "Buy"), buyingCapacity(trading.availableCash(), "2000", DEFAULT_SETUP.config));
+  const affordableLots = buyingCapacity(trading.availableCash(), "2000", DEFAULT_SETUP.config);
+  const mainBoardLimitLots = BigInt(maxAShareOrderQuantity("MainBoard") / 100);
+  assert.equal(trading.capacity("002156", "Buy"), affordableLots < mainBoardLimitLots ? affordableLots : mainBoardLimitLots);
   reject(new Error("提交失败")); assert.equal(await submitting, false);
   assert.equal(trading.availableCash(), "9007199254740870");
 });

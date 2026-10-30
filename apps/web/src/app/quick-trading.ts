@@ -100,8 +100,16 @@ export class QuickTrading {
   }
   capacity(code: string, side: TradeSide): bigint {
     const snapshot = this.snapshot(), account = snapshot.accounts[0]; if (!account) throw new Error("缺少当前玩家账户");
-    if (side === "Sell") { const position = account.positions[code]; const pending = this.reservations.filter(item => item.code === code && item.side === "Sell").reduce((sum, item) => sum + item.qty, 0); return BigInt(Math.max(0, (position ? position.qty - position.t1_locked : 0) - (account.reserved_sell_qty[code] ?? 0) - pending)) / 100n; }
-    return buyingCapacity(this.availableCash(), this.price(code, side), this.options.setup().config);
+    const draft = this.draft(code, side), spec = this.options.setup().stocks.find(stock => stock.code === code);
+    if (!spec) throw new Error(`缺少 ${code} 的交易规则`);
+    const maxLots = BigInt(maxAShareOrderQuantity(spec.category, draft.orderKind === "market") / 100);
+    if (side === "Sell") {
+      const position = account.positions[code], pending = this.reservations.filter(item => item.code === code && item.side === "Sell").reduce((sum, item) => sum + item.qty, 0);
+      const sellableLots = BigInt(Math.max(0, (position ? position.qty - position.t1_locked : 0) - (account.reserved_sell_qty[code] ?? 0) - pending)) / 100n;
+      return sellableLots < maxLots ? sellableLots : maxLots;
+    }
+    const affordableLots = buyingCapacity(this.availableCash(), this.price(code, side), this.options.setup().config);
+    return affordableLots < maxLots ? affordableLots : maxLots;
   }
   availableCash(): string {
     const account = this.snapshot().accounts[0];
