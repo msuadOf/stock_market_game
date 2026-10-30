@@ -29,11 +29,33 @@ function companyPanel(page: Page) {
   return page.getByRole("region", { name: "公司信息" });
 }
 
+async function expectUnsupportedCompanyReadAlerts(panel: ReturnType<typeof companyPanel>, totalAlerts = 4): Promise<void> {
+  const contract = panel.getByRole("region", { name: "公司共同契约能力面" });
+  const rightsAlert = contract.getByRole("alert").filter({ hasText: "本人配股权益查询失败：" });
+  const capabilitiesAlert = contract.getByRole("alert").filter({ hasText: "公司能力面查询失败：" });
+  const receiptsAlert = contract.getByRole("alert").filter({ hasText: "简税代扣回执查询失败：" });
+  const taxPanel = panel.getByRole("region", { name: "股息税状态" });
+  const taxAlert = taxPanel.getByRole("alert").filter({ hasText: "股息税状态查询失败：" });
+
+  await expect(contract.getByRole("alert")).toHaveCount(3);
+  await expect(taxPanel.getByRole("alert")).toHaveCount(1);
+  await expect(panel.getByRole("alert")).toHaveCount(totalAlerts);
+  await expect(capabilitiesAlert).toHaveCount(1);
+  await expect(capabilitiesAlert).toHaveText("公司能力面查询失败：当前会话未配置公司系统，无公司权益事实可查");
+  await expect(rightsAlert).toHaveCount(1);
+  await expect(rightsAlert).toHaveText("本人配股权益查询失败：当前会话未配置公司系统，无公司权益事实可查");
+  await expect(receiptsAlert).toHaveCount(1);
+  await expect(receiptsAlert).toHaveText("简税代扣回执查询失败：当前会话未配置公司行为状态，不能查询现金分红税务事实");
+  await expect(taxAlert).toHaveCount(1);
+  await expect(taxAlert).toHaveText("股息税状态查询失败：当前会话未配置公司行为状态，不能查询现金分红税务事实");
+}
+
 async function expectPublicReportReady(page: Page): Promise<void> {
   const panel = companyPanel(page);
   await panel.evaluate((element) => element.scrollIntoView({ block: "start" }));
   await expect(panel.getByRole("list", { name: "公开报告列表" })).toBeVisible({ timeout: 30_000 });
-  await expect(panel.getByRole("alert")).toHaveCount(0);
+  await expect(panel.locator(":scope > p[role=alert]")).toHaveCount(0);
+  await expectUnsupportedCompanyReadAlerts(panel);
 }
 
 test("桌面端以真实 WASM 报告渲染规范期间、版本、四张表和附注", async ({ page }) => {
@@ -145,10 +167,10 @@ test("新游戏默认 2030，拒绝无效日期并在有效日期重新创建真
   await expect(page.getByRole("alert").filter({ hasText: "模拟起始日期不是有效公历日" })).toBeVisible();
   await expect(page.locator("#section-company .company-panel")).toHaveAttribute("data-company-id", "C-600101");
   await startDate.evaluate((element) => {
-    const input = element as { value: string; dispatchEvent(event: Event): boolean };
-    input.value = "2030-02-30";
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-    input.dispatchEvent(new Event("change", { bubbles: true }));
+    if (!(element instanceof HTMLInputElement)) throw new Error("模拟起始日期控件不是 input");
+    element.value = "2030-02-30";
+    element.dispatchEvent(new Event("input", { bubbles: true }));
+    element.dispatchEvent(new Event("change", { bubbles: true }));
   });
   await page.getByRole("button", { name: "创建新游戏", exact: true }).click();
   await expect(page.getByRole("alert").filter({ hasText: "模拟起始日期不是有效公历日" })).toBeVisible();
@@ -187,7 +209,10 @@ test("生产 WASM 拒绝无效公开报告查询而不伪造报告内容", async
   await page.getByRole("button", {name:"公司资料 F10", exact:true}).click();
   const panel = companyPanel(page);
   await panel.scrollIntoViewIfNeeded();
-  await expect(panel.getByRole("alert")).toContainText("公开报告查询失败：public report page size 0 outside 1..=100");
+  const reportError = panel.locator(":scope > p[role=alert]");
+  await expect(reportError).toHaveCount(1);
+  await expect(reportError).toHaveText("公开报告查询失败：public report page size 0 outside 1..=100");
+  await expectUnsupportedCompanyReadAlerts(panel, 5);
 });
 
 test("日终读档后公司资料立即显示存档自然日，横竖屏一致", async ({ page }) => {

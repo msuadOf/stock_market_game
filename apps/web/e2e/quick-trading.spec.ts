@@ -20,8 +20,25 @@ test('双侧草稿隔离，手机复用；零手有字段错误，全部含费�
   await page.getByRole('navigation', { name: '主导航' }).getByRole('button', { name: '交易', exact: true }).click();
   await expect(ticket(page).getByLabel('数量（手）')).toHaveValue('3');
   await ticket(page).getByRole('button', { name: '全部', exact: true }).click();
-  await expect(ticket(page).getByLabel('数量（手）')).toHaveValue('8926');
+  await expect(ticket(page).getByLabel('数量（手）')).toHaveValue('10000');
   expect(await page.locator('.app-root').evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
+});
+test('默认高现金下全部严格限制为主板单笔上限，下一手在提交前拒绝', async ({ page }) => {
+  await open(page);
+  const account = await page.evaluate(() => {
+    const controls = (globalThis as typeof globalThis & { __STOCK_GAME_E2E__?: { snapshot(): { tick: number; accounts: Record<string, { cash: string; reserved_cash: string }> } } }).__STOCK_GAME_E2E__;
+    if (!controls) throw new Error("E2E engine controls are unavailable");
+    return { tick: controls.snapshot().tick, account: controls.snapshot().accounts["0"] };
+  });
+  expect(account.tick).toBe(0);
+  expect(account.account?.cash).toBe("1000000000000");
+  expect(account.account?.reserved_cash).toBe("0");
+  await ticket(page).getByRole('button', { name: '全部', exact: true }).click();
+  await expect(ticket(page).getByLabel('数量（手）')).toHaveValue('10000');
+  await ticket(page).getByLabel('数量（手）').fill('10001');
+  await ticket(page).getByRole('button', { name: '买入', exact: true }).click();
+  await expect(ticket(page).getByRole('status')).toHaveText('单笔数量不能超过 1000000 股');
+  await expect(page.locator('.player-order-item')).toHaveCount(0);
 });
 test('价格错误只关联价格字段，提交聚焦错误字段', async ({ page }) => {
   await open(page);
