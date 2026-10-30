@@ -736,7 +736,10 @@ fn unchanged_runtime_book_reuses_mirror_and_full_public_projection_cost() {
         expected_reserved,
         "玩家账户冻结额应按现行游戏费用函数计算"
     );
-    assert!(expected_reserved > Money::from_cents(995 * 100), "冻结额含买入费用");
+    assert!(
+        expected_reserved > Money::from_cents(995 * 100),
+        "冻结额含买入费用"
+    );
     assert_eq!(first_working_orders.len(), 1);
 
     let committed_before_prepare = serde_json::to_value(game.snapshot_inner(true, true)).unwrap();
@@ -756,11 +759,11 @@ fn unchanged_runtime_book_reuses_mirror_and_full_public_projection_cost() {
         costs.0, 0,
         "相同 resting facts 下不应再次逐股重建完整 DeskBookMirror orders"
     );
+    assert_eq!(costs.1, 0, "簿与 phase 未变时不应再次聚合完整 public depth");
     assert_eq!(
-        costs.1, 0,
-        "簿与 phase 未变时不应再次聚合完整 public depth"
+        game.state.desk_book_mirror[&StockId(0)].orders,
+        first_orders
     );
-    assert_eq!(game.state.desk_book_mirror[&StockId(0)].orders, first_orders);
     assert_eq!(
         serde_json::to_value(game.snapshot_inner(true, true)).unwrap(),
         committed_before_prepare,
@@ -769,21 +772,27 @@ fn unchanged_runtime_book_reuses_mirror_and_full_public_projection_cost() {
     assert_eq!(prepared.projection.snapshot.tick, 2);
     assert_eq!(prepared.projection.snapshot.seq, first_snapshot.seq + 1);
     assert_eq!(prepared.projection.snapshot.markets, first_snapshot.markets);
-    assert_eq!(prepared.projection.snapshot.accounts, first_snapshot.accounts);
+    assert_eq!(
+        prepared.projection.snapshot.accounts,
+        first_snapshot.accounts
+    );
     let expected_working: std::collections::BTreeMap<_, _> = first_working_orders
         .iter()
         .cloned()
         .map(|order| (order.id, order))
         .collect();
     let runtime_projection = prepared.projection.runtime.test_projection();
-    assert_eq!(runtime_projection[6], serde_json::to_value(expected_working).unwrap());
+    assert_eq!(
+        runtime_projection[6],
+        serde_json::to_value(expected_working).unwrap()
+    );
     assert_eq!(game.player_working_orders(), first_working_orders);
 }
 
 #[test]
 fn runtime_mirror_prepares_working_orders_with_one_total_order_row_scan() {
-    use crate::{LimitPrice, Money, Side, StockId};
     use super::protocol::{FrozenAsset, OrderVenue, PlayerWorkingOrder};
+    use crate::{LimitPrice, Money, Side, StockId};
 
     let mut setup = super::npc_working_quote_tests::quote_setup(0);
     setup.ticks_per_day = 100;
@@ -870,10 +879,9 @@ fn runtime_mirror_prepares_working_orders_with_one_total_order_row_scan() {
     let committed_before = serde_json::to_value(game.snapshot_inner(true, true)).unwrap();
     let snapshot_before = game.runtime_snapshot();
     let before_cash = game.account(AccountId(0)).unwrap().cash();
-    let before_position = serde_json::to_value(
-        &game.account(AccountId(0)).unwrap().positions()[&StockId(0)],
-    )
-    .unwrap();
+    let before_position =
+        serde_json::to_value(&game.account(AccountId(0)).unwrap().positions()[&StockId(0)])
+            .unwrap();
     let input = driver.prepare_driver_step(&game).unwrap();
 
     super::runtime_mirror::reset_working_order_row_visits_for_test();

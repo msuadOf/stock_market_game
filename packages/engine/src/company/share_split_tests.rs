@@ -496,10 +496,7 @@ mod whole_save {
         (session, registry_before)
     }
 
-    fn save_with_split_capture(
-        session: &GameSession,
-        registry_before: &ShareRegistry,
-    ) -> SaveSlot {
+    fn save_with_split_capture(session: &GameSession, registry_before: &ShareRegistry) -> SaveSlot {
         use crate::company::share_registry::settlement_day::{
             ConfirmedShareMarketClose, ShareMarketSource, ShareMarketSourceContext,
             SharePostAction, ShareSettlementDay,
@@ -519,8 +516,9 @@ mod whole_save {
                     ratio: 2,
                     par_value_before: Money::from_cents(100),
                     par_value_after: Money::from_cents(200),
-                    registered_capital_at_approval:
-                        crate::accounting::AccountingAmount::from_cents(10_000_000),
+                    registered_capital_at_approval: crate::accounting::AccountingAmount::from_cents(
+                        10_000_000,
+                    ),
                 },
             )
             .unwrap();
@@ -582,9 +580,7 @@ mod whole_save {
                 },
             )
             .unwrap();
-        save.company_state
-            .actions_for_test_mut()
-            .registries[0] = captured_registry;
+        save.company_state.actions_for_test_mut().registries[0] = captured_registry;
         save
     }
 

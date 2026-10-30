@@ -7,6 +7,8 @@
 /// 每只股票的日 K 行情历史与累计成交日数。
 pub type RuntimeDailyHistory = (Vec<(i64, i64, i64, i64, u64)>, u64);
 
+type RuntimeMirrorUndo = (BTreeMap<StockId, std::sync::Arc<DeskBookMirror>>, Vec<u64>);
+
 mod account_book;
 mod account_paged_map;
 mod attention;
@@ -15,13 +17,13 @@ mod candles;
 mod causal;
 mod civil_cash_distributions;
 mod civil_clock;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod civil_due_horizon_runtime_tests;
 mod civil_information;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod civil_information_runtime_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod civil_runtime_ceiling_tests;
-#[cfg(all(test, not(target_arch = "wasm32")))]
-mod civil_due_horizon_runtime_tests;
 mod company_assembly;
 mod stock_identity_view;
 pub use stock_identity_view::StockIdentityEntry;
@@ -2032,7 +2034,7 @@ struct CommittableSessionState {
     /// get_or_insert；ledger clone 仅 step_frame 分叉路径记录——见
     /// runtime_step_with_install_inner 的 capture_undo 门控）。瞬态不入
     /// 存档/hash；shadow/commit 有意丢弃（与五域 undo 同生命周期）。
-    runtime_mirror_undo: Option<(BTreeMap<StockId, std::sync::Arc<DeskBookMirror>>, Vec<u64>)>,
+    runtime_mirror_undo: Option<RuntimeMirrorUndo>,
     runtime_plans_undo: Option<crate::plans::PlanBook>,
     runtime_envelope_undo: Option<pipeline::EnvelopeLedger>,
     runtime_lifecycles_undo: Option<Vec<NpcOrderLifecycle>>,
@@ -3905,9 +3907,8 @@ impl GameSession {
         &mut self,
     ) -> Result<CivilDayEndReport, CivilDayPreparationFailure> {
         let mut newly_scheduled_due_beyond_horizon = false;
-        let result = self.prepare_civil_day_disclosures_inner(
-            &mut newly_scheduled_due_beyond_horizon,
-        );
+        let result =
+            self.prepare_civil_day_disclosures_inner(&mut newly_scheduled_due_beyond_horizon);
         match result {
             Ok(report) => Ok(report),
             Err(error) if newly_scheduled_due_beyond_horizon => Err(
@@ -5696,12 +5697,10 @@ mod b2_bars_rollback_tests {
             .step_frame_and_commit(true, |projection, facts| projection.project_frame(facts))
             .expect("serial 首步成交")
             .0;
-        assert!(
-            frame
-                .facts
-                .iter()
-                .any(|fact| matches!(fact.event, crate::Event::Trade { .. }))
-        );
+        assert!(frame
+            .facts
+            .iter()
+            .any(|fact| matches!(fact.event, crate::Event::Trade { .. })));
     }
 
     #[test]
@@ -5744,7 +5743,11 @@ mod b2_bars_rollback_tests {
             })
         });
         assert!(serial_outcome.is_err(), "serial 投影失败必须整拍失败");
-        assert_eq!(serial.runtime_minute_bars(&code).len(), 1, "serial 失败拍镜像零泄漏");
+        assert_eq!(
+            serial.runtime_minute_bars(&code).len(),
+            1,
+            "serial 失败拍镜像零泄漏"
+        );
         let seeds = serial.runtime_market_seeds();
         assert_eq!(
             seeds.get(&code).map(|seed| seed.minute_bars.len()),
@@ -5752,7 +5755,11 @@ mod b2_bars_rollback_tests {
             "serial 回滚后重建 seed 不含 ghost"
         );
         let save = serial.save().expect("serial 投影失败仍可保存");
-        assert_eq!(save.market_minute_bars[&code].len(), 1, "serial save 面同样零 ghost");
+        assert_eq!(
+            save.market_minute_bars[&code].len(),
+            1,
+            "serial save 面同样零 ghost"
+        );
 
         #[cfg(not(target_arch = "wasm32"))]
         if crate::runtime::step_runtime_enabled() {
@@ -5787,16 +5794,29 @@ mod b2_bars_rollback_tests {
                 world_tick_before + 1,
                 "World 已提交 callback 对应的真实 tick"
             );
-            assert_eq!(session.tick(), world_tick_before, "未安装 candidate 时 session 进度仍旧");
+            assert_eq!(
+                session.tick(),
+                world_tick_before,
+                "未安装 candidate 时 session 进度仍旧"
+            );
             assert_eq!(
                 serde_json::to_value(session.snapshot_inner(true, true)).unwrap(),
                 mirror_before,
                 "失败 candidate 未泄漏到公开 session mirror"
             );
-            assert_eq!(session.poison_reason(), Some(&fatal), "DP1 首错封存且不可重试");
+            assert_eq!(
+                session.poison_reason(),
+                Some(&fatal),
+                "DP1 首错封存且不可重试"
+            );
             assert_eq!(session.step().unwrap_err(), fatal, "后续入口返回同一首错");
             assert_eq!(
-                session.runtime_driver_for_test().unwrap().lock().unwrap().world_committed_tick(),
+                session
+                    .runtime_driver_for_test()
+                    .unwrap()
+                    .lock()
+                    .unwrap()
+                    .world_committed_tick(),
                 world_tick_after,
                 "terminal 后不重跑已发布 World tick"
             );
@@ -6052,7 +6072,11 @@ mod b2_query_contract_tests {
             .query_personal_trade_history(AccountId(0), request())
             .unwrap();
         assert_eq!(first.confirmations.len(), 1, "页大小 1");
-        assert_eq!(first.current_date, date("2030-01-03"), "分页发生在真实civil推进后");
+        assert_eq!(
+            first.current_date,
+            date("2030-01-03"),
+            "分页发生在真实civil推进后"
+        );
         let second = session
             .query_personal_trade_history(
                 AccountId(0),
@@ -6064,7 +6088,10 @@ mod b2_query_contract_tests {
             )
             .unwrap();
         assert_eq!(second.confirmations.len(), 1, "第二页一条");
-        assert_eq!(second.as_of_receipt, first.as_of_receipt, "分页沿用同一快照水位");
+        assert_eq!(
+            second.as_of_receipt, first.as_of_receipt,
+            "分页沿用同一快照水位"
+        );
         assert_eq!(second.next_cursor, None, "两腿恰尽");
         assert!(
             first.confirmations[0].receipt_id > second.confirmations[0].receipt_id,
@@ -6073,7 +6100,11 @@ mod b2_query_contract_tests {
         // 读己之写快照：as_of 之后的新成交不入旧窗。
         let frozen = first.as_of_receipt;
         execute_buy(&mut session);
-        assert_eq!(session.civil_date(), date("2030-01-03"), "新成交发生在后继自然日");
+        assert_eq!(
+            session.civil_date(),
+            date("2030-01-03"),
+            "新成交发生在后继自然日"
+        );
         let stale = session
             .query_personal_trade_history(
                 AccountId(0),
@@ -6088,8 +6119,15 @@ mod b2_query_contract_tests {
         let refreshed = session
             .query_personal_trade_history(AccountId(0), request())
             .unwrap();
-        assert_eq!(refreshed.confirmations.len(), 1, "新快照当前页仍按页大小截断");
-        assert!(refreshed.confirmations[0].receipt_id >= frozen.0, "跨日新成交进入新快照");
+        assert_eq!(
+            refreshed.confirmations.len(),
+            1,
+            "新快照当前页仍按页大小截断"
+        );
+        assert!(
+            refreshed.confirmations[0].receipt_id >= frozen.0,
+            "跨日新成交进入新快照"
+        );
         assert_eq!(refreshed.confirmations[0].civil_date, date("2030-01-03"));
         // 过滤与边界。
         let filtered = session
@@ -7044,8 +7082,15 @@ mod npc_working_quote_tests {
                 })
                 .expect("首步前 seed 已是 runtime World 的真实 resting order")
         };
-        assert_eq!(session.tick(), source_tick_before_live_read, "live 查询不推进 source tick");
-        assert_eq!(events, seed_events_before_live_read, "live 查询不发出 Start 或交易事件");
+        assert_eq!(
+            session.tick(),
+            source_tick_before_live_read,
+            "live 查询不推进 source tick"
+        );
+        assert_eq!(
+            events, seed_events_before_live_read,
+            "live 查询不发出 Start 或交易事件"
+        );
         session
             .enqueue_player_intent(AccountId(0), buy(&code, 900))
             .expect("玩家买单登记");

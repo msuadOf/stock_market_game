@@ -928,7 +928,9 @@ fn explicit_day_end_broadcast_reaches_real_npcs_in_every_group() {
         vec![],
     );
     world.run_ticks(2).expect("tick239/240 竞价申报收束");
-    world.run_day_end_public().expect("显式日结并刷新两组广播基");
+    world
+        .run_day_end_public()
+        .expect("显式日结并刷新两组广播基");
     world.set_civil_date(next_raw_trading_date(civil_date));
     world
         .run_ticks(1)
@@ -2124,8 +2126,7 @@ fn shutdown_preserves_unconsumed_day_end_minute_bars() {
 fn shutdown_day_end_reuse_respects_consumed_aborted_and_new_start_paths() {
     use super::decision::PendingOp;
     for path in 0..4 {
-        let civil_date = crate::calendar::CivilDate::from_ymd(2026, 1, 5)
-            .expect("测试日期合法");
+        let civil_date = crate::calendar::CivilDate::from_ymd(2026, 1, 5).expect("测试日期合法");
         let mut world = shenzhen_closing_tie_world();
         world
             .run_ticks(if path == 3 { 2 } else { 7 })

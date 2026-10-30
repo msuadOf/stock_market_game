@@ -198,12 +198,7 @@ fn confirmations(session: &GameSession) -> Confirmations {
         .collect()
 }
 
-fn assert_trade(
-    events: &[Event],
-    seller: AccountId,
-    buyer: AccountId,
-    qty: u32,
-) -> u64 {
+fn assert_trade(events: &[Event], seller: AccountId, buyer: AccountId, qty: u32) -> u64 {
     // Event::Trade 的 maker/taker 已是按生产 id_map 投影出的真实 AccountId；
     // 稀疏名册断言直接核对真实卖方与买方，防止把 Owner 编码当账户身份。
     let matches: Vec<_> = events
@@ -327,12 +322,7 @@ fn issue119_closing_1200_to_1500_reconciles_real_day_end_accounts_confirmations_
     session.step_via_runtime().unwrap();
     inject_pair(&session, AccountId(0), AccountId(1), ORDINARY_QTY);
     let ordinary = session.step_via_runtime().unwrap();
-    let ordinary_seq = assert_trade(
-        &ordinary,
-        AccountId(0),
-        AccountId(1),
-        ORDINARY_QTY,
-    );
+    let ordinary_seq = assert_trade(&ordinary, AccountId(0), AccountId(1), ORDINARY_QTY);
     assert_eq!(
         session
             .account(AccountId(1))

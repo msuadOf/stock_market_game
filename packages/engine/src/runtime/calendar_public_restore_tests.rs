@@ -17,8 +17,14 @@ fn assert_snapshot_with_expected_origins(
     original_origin: RuntimeMirrorOrigin,
     restored_origin: RuntimeMirrorOrigin,
 ) {
-    assert_eq!(original.mirror_origin, original_origin, "原会话来源必须精确匹配");
-    assert_eq!(restored.mirror_origin, restored_origin, "恢复会话来源必须精确匹配");
+    assert_eq!(
+        original.mirror_origin, original_origin,
+        "原会话来源必须精确匹配"
+    );
+    assert_eq!(
+        restored.mirror_origin, restored_origin,
+        "恢复会话来源必须精确匹配"
+    );
     // origin 属于各自会话；保留完整 Snapshot，未来新增业务字段仍须逐字段相等。
     let mut expected = original.clone();
     expected.mirror_origin = restored_origin;

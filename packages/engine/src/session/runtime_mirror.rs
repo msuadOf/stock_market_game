@@ -68,7 +68,7 @@ fn cached_public_projection(
 ) -> Option<std::sync::Arc<pipeline::phase::PublicBookProjection>> {
     cache
         .filter(|cache| cache.phase == phase)
-        .and_then(|_| entry)
+        .and(entry)
         .filter(|entry| std::sync::Arc::ptr_eq(&entry.mirror, mirror))
         .map(|entry| std::sync::Arc::clone(&entry.projection))
 }
@@ -955,7 +955,7 @@ impl GameSession {
             active_daily_candles: candle_book.active().clone(),
         };
         let runtime = GameSession::public_runtime_from_prepared(&snapshot, working_orders)
-        .map_err(|error| error.to_string())?;
+            .map_err(|error| error.to_string())?;
         let projection = protocol::PreparedTickProjection { snapshot, runtime };
         let retail_decisions = if is_static {
             self.state.last_retail_decisions.clone()
@@ -1306,7 +1306,10 @@ mod runtime_book_cache_guard_tests {
         let error = driver.step(&mut game).unwrap_err();
 
         let published_facts = driver.publication().load().desks[0].resting.clone();
-        assert!(!published_facts.is_empty(), "失败前 World 已发布新非空在途簿");
+        assert!(
+            !published_facts.is_empty(),
+            "失败前 World 已发布新非空在途簿"
+        );
         assert!(
             !std::sync::Arc::ptr_eq(&old_facts, &published_facts),
             "失败前 World 的 resting facts 已变化"
@@ -1335,14 +1338,13 @@ mod runtime_book_cache_guard_tests {
         assert_eq!(retry_error, error, "poison 后必须重放首个 fatal");
         assert_eq!(driver.world_committed_tick(), committed_world_tick);
         let retry_snapshot = game.state.runtime_resting_snapshot.as_ref().unwrap();
-        let retry_entry = &retry_snapshot
-            .projection_cache
-            .as_ref()
-            .unwrap()
-            .entries[&StockId(0)];
+        let retry_entry = &retry_snapshot.projection_cache.as_ref().unwrap().entries[&StockId(0)];
         assert!(std::sync::Arc::ptr_eq(&old_facts, &retry_snapshot.facts[0]));
         assert!(std::sync::Arc::ptr_eq(&old_mirror, &retry_entry.mirror));
-        assert!(std::sync::Arc::ptr_eq(&old_projection, &retry_entry.projection));
+        assert!(std::sync::Arc::ptr_eq(
+            &old_projection,
+            &retry_entry.projection
+        ));
         assert_eq!(
             serde_json::to_value(game.snapshot_inner(true, true)).unwrap(),
             before,

@@ -4,9 +4,9 @@
 use crate::compute::parallel::*;
 use crate::AccountId;
 use serde::ser::SerializeMap;
-use std::collections::BTreeMap;
 #[cfg(test)]
 use std::cell::Cell;
+use std::collections::BTreeMap;
 use std::ops::Index;
 use std::sync::Arc;
 

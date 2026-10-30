@@ -10,8 +10,14 @@ fn assert_snapshot_with_expected_origins(
     native_origin: crate::RuntimeMirrorOrigin,
     serial_origin: crate::RuntimeMirrorOrigin,
 ) {
-    assert_eq!(native.mirror_origin, native_origin, "native 来源必须精确匹配");
-    assert_eq!(serial.mirror_origin, serial_origin, "serial 来源必须精确匹配");
+    assert_eq!(
+        native.mirror_origin, native_origin,
+        "native 来源必须精确匹配"
+    );
+    assert_eq!(
+        serial.mirror_origin, serial_origin,
+        "serial 来源必须精确匹配"
+    );
     // 两侧来源独立断言后，完整 Snapshot 仍比较全部业务字段和未来新增字段。
     let mut expected = native.clone();
     expected.mirror_origin = serial_origin;

@@ -24,10 +24,7 @@ fn assert_static_driver_replacement_changes_only_authority_epoch(
     let mut expected = before.clone();
     let expected_origin = expected["mirror_origin"].as_object_mut().unwrap();
     let value = expected_origin["authority_epoch"].as_u64().unwrap();
-    expected_origin.insert(
-        "authority_epoch".to_owned(),
-        serde_json::json!(value + 1),
-    );
+    expected_origin.insert("authority_epoch".to_owned(), serde_json::json!(value + 1));
     assert_eq!(
         *after, expected,
         "driver替换仅推进authority_epoch，install_sequence须保持静点值"

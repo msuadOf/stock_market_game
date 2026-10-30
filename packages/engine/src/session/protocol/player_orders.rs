@@ -126,9 +126,9 @@ pub(in crate::session) fn working_orders_from_mirror(
         for (owner, side, price, qty, serial, _, _) in &mirror.orders {
             #[cfg(test)]
             crate::session::runtime_mirror::record_working_order_row_visit_for_test();
-            if let Some(order) = player_working_order_from_mirror(
-                *code, *owner, *side, *price, *qty, *serial, phase,
-            ) {
+            if let Some(order) =
+                player_working_order_from_mirror(*code, *owner, *side, *price, *qty, *serial, phase)
+            {
                 orders.push(order);
             }
         }

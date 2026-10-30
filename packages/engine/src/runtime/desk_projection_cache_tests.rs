@@ -101,13 +101,12 @@ fn run_and_collect(disable_cache: bool) -> (Vec<Vec<StockPublic>>, i128, u64) {
     let mut snapshots: Vec<Vec<StockPublic>> = Vec::new();
     for tick in 1..=13u64 {
         if tick == 11 {
-            world.run_day_end_public().expect("第一个 civil date 的显式日结");
+            world
+                .run_day_end_public()
+                .expect("第一个 civil date 的显式日结");
             let next_date = crate::calendar::TradingCalendar::current_default_calendar()
                 .expect("显式 raw Calendar 政策合法")
-                .next_trading_day(
-                    crate::calendar::CalendarExchange::Sse,
-                    civil_date,
-                )
+                .next_trading_day(crate::calendar::CalendarExchange::Sse, civil_date)
                 .expect("fixture 下一 SSE trading date 合法");
             world.set_civil_date(next_date);
         }
