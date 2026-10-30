@@ -59,10 +59,41 @@ test("Worker Host 真实三写透传及 typed 拒绝后继续使用同一会话"
 for (const settlement of ["success", "rejection"] as const) for (const replacement of ["same-generation", "next-generation", "dispose"] as const) {
   test(`Worker 三写 ${replacement} 后拒绝旧 ${settlement} 并保原 cause`, { timeout: 10000 }, async () => {
     await withHost(async (host, f) => {
+      const engine = f.workers[0];
+      const listenersBeforeRequest = engine.listenerCount();
+      const timersBeforeRequest = f.clock.tasks.size;
+      const sentBeforeRequest = engine.sent.length;
       const pending = host.proposePlayerCompanyAction(proposal);
       const result = pending.then(value => ({ ok: true as const, value }), (error: unknown) => ({ ok: false as const, error }));
-      const engine = f.workers[0], sent = engine.sent.at(-1)!;
-      if (replacement !== "dispose") f.baseline(replacement === "same-generation" ? 1 : 2);
+      const sent = engine.sent.at(-1)!;
+      if (replacement === "next-generation") {
+        f.baseline(2);
+        const canceled = await result;
+        assert.equal(canceled.ok, false, "generation 前进必须先立即取消旧写");
+        if (canceled.ok) throw new Error("换代必须先取消旧写");
+        assert.ok(canceled.error instanceof Error);
+        assert.match(canceled.error.message, /过期/);
+        const cancellation = canceled.error.cause;
+        assert.ok(cancellation instanceof Error);
+        assert.match(cancellation.message, /generation 前进已取消/);
+        assert.equal(engine.sent.length, sentBeforeRequest + 1, "换代取消不得补发公司写");
+        assert.equal(engine.listenerCount(), listenersBeforeRequest, "取消后必须移除逐请求 message listener");
+        assert.equal(f.clock.tasks.size, timersBeforeRequest, "取消后必须清除逐请求 timeout");
+        const sentBeforeLateResponse = engine.sent.length;
+        const listenersBeforeLateResponse = engine.listenerCount();
+        const timersBeforeLateResponse = f.clock.tasks.size;
+        engine.emit(settlement === "success"
+          ? { type: "playerCompanyActionAcknowledged", requestId: sent.requestId, generation: sent.generation, result: { receipt } }
+          : { type: "operationError", requestId: sent.requestId, generation: sent.generation, message: "具体持仓拒绝", failure });
+        assert.equal(await result, canceled, "迟到响应不得改变已完成的取消结果");
+        assert.equal(canceled.error.cause, cancellation, "迟到响应不得替换真实取消 cause");
+        assert.equal(engine.sent.length, sentBeforeLateResponse);
+        assert.equal(engine.listenerCount(), listenersBeforeLateResponse);
+        assert.equal(f.clock.tasks.size, timersBeforeLateResponse);
+        assert.equal(engine.terminations, 0);
+        return;
+      }
+      if (replacement === "same-generation") f.baseline(1);
       engine.emit(settlement === "success"
         ? { type: "playerCompanyActionAcknowledged", requestId: sent.requestId, generation: sent.generation, result: { receipt } }
         : { type: "operationError", requestId: sent.requestId, generation: sent.generation, message: "具体持仓拒绝", failure });
@@ -79,6 +110,23 @@ for (const settlement of ["success", "rejection"] as const) for (const replaceme
     });
   });
 }
+
+test("Worker 已接收的 typed 公司写拒绝在换代后仍保留完整 failure", { timeout: 10000 }, async () => {
+  await withHost(async (host, f) => {
+    const engine = f.workers[0];
+    const pending = host.proposePlayerCompanyAction(proposal).then(value => ({ ok: true as const, value }), (error: unknown) => ({ ok: false as const, error }));
+    const sent = engine.sent.at(-1)!;
+    engine.emit({ type: "operationError", requestId: sent.requestId, generation: sent.generation, message: "具体持仓拒绝", failure });
+    f.baseline(2);
+    const outcome = await pending;
+    assert.equal(outcome.ok, false);
+    if (outcome.ok) throw new Error("typed 公司写拒绝不能成功");
+    assert.ok(outcome.error instanceof Error);
+    assert.match(outcome.error.message, /过期/);
+    assert.ok(outcome.error.cause instanceof CompanyWriteRejectedError);
+    assert.deepEqual(outcome.error.cause.cause, failure);
+  });
+});
 
 test("Worker fatal 拒绝在途和后续公司写，不因可见基线仍在而继续发送", { timeout: 10000 }, async () => {
   await withHost(async (host, f) => {
