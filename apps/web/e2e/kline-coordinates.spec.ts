@@ -7,6 +7,7 @@ async function openChart(page: Page, width: number) {
   await page.goto("/?tradingE2E=1");
   await page.getByRole("navigation", { name: "桌面主导航" }).getByRole("button", { name: "个股", exact: true }).click();
   await page.getByRole("tab", { name: "日K", exact: true }).click();
+  await page.getByLabel("指标数据源", { exact: true }).selectOption("rust");
   const chart = page.locator(".shared-kline-host .msd-kline");
   await expect(chart.getByLabel("KDJ坐标", { exact: true })).toBeVisible();
   return chart;

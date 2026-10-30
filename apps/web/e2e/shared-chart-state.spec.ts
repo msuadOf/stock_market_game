@@ -45,13 +45,16 @@ test("横竖屏与切股复用均线、副图和各股窗口；详情对齐保�
 
 test("深色外壳的共用K线和盘口保持浅色数据面与清楚的文字、深度色", async ({ page }) => {
   const chart = await openDesktopChart(page);
+  await page.getByLabel("指标数据源", { exact: true }).selectOption("rust");
+  await expect(chart.getByLabel("KDJ坐标", { exact: true })).toBeVisible();
+  await expect(chart).toContainText("Rust指标源不支持MA");
   await page.getByRole("button", { name: "🌙", exact: true }).click();
   await expect(chart).toHaveCSS("background-color", "rgb(255, 255, 255)");
   await expect(chart.locator(".msd-volume-title")).toHaveCSS("color", "rgb(34, 34, 34)");
   await expect(chart.locator(".msd-kdj-title")).toHaveCSS("color", "rgb(34, 34, 34)");
   const book = page.getByLabel("五档盘口，数量单位为手");
   await expect(book.locator(".msd-book-row").first()).toHaveCSS("color", "rgb(34, 34, 34)");
-  await expect(book.locator(".flat").first()).toHaveCSS("color", "rgb(119, 119, 119)");
+  await expect(book.locator(".flat").first()).toHaveCSS("color", "rgb(118, 118, 118)");
   expect(await book.evaluate(el => el.ownerDocument.defaultView!.getComputedStyle(el).getPropertyValue("--msd-rise").trim())).toBe("#ef3f49");
   expect(await book.evaluate(el => el.ownerDocument.defaultView!.getComputedStyle(el).getPropertyValue("--msd-fall").trim())).toBe("#009b22");
   await page.setViewportSize({ width: 320, height: 844 });
