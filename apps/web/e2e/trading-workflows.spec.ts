@@ -126,7 +126,7 @@ test("连续竞价展示活动委托冻结，并明确拒绝资金不足的买�
   const lowCashSavePath = testInfo.outputPath("low-cash-save.json");
   await writeFile(lowCashSavePath, JSON.stringify(archive));
   await page.getByRole("button", { name: "游戏与存档" }).click();
-  await page.evaluate(() => Object.defineProperty(window, "showOpenFilePicker", { configurable: true, value: undefined }));
+  await page.evaluate(() => Object.defineProperty(globalThis, "showOpenFilePicker", { configurable: true, value: undefined }));
   const fileChooserPromise = page.waitForEvent("filechooser");
   await page.getByRole("button", { name: "从文件读取" }).click();
   await (await fileChooserPromise).setFiles(lowCashSavePath);

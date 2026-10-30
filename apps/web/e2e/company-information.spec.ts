@@ -167,7 +167,9 @@ test("新游戏默认 2030，拒绝无效日期并在有效日期重新创建真
   await expect(page.getByRole("alert").filter({ hasText: "模拟起始日期不是有效公历日" })).toBeVisible();
   await expect(page.locator("#section-company .company-panel")).toHaveAttribute("data-company-id", "C-600101");
   await startDate.evaluate((element) => {
-    if (!(element instanceof HTMLInputElement)) throw new Error("模拟起始日期控件不是 input");
+    if (element.tagName !== "INPUT" || !("value" in element) || typeof element.value !== "string" || typeof element.dispatchEvent !== "function") {
+      throw new Error("模拟起始日期控件不是可编辑 input");
+    }
     element.value = "2030-02-30";
     element.dispatchEvent(new Event("input", { bubbles: true }));
     element.dispatchEvent(new Event("change", { bubbles: true }));
