@@ -3827,6 +3827,8 @@ impl GameSession {
                 &information_anchors,
             )?;
             candidate.prune_all_personal_memories();
+            // 休市日没有 market tick，必须在投影前显式写入本日日终 retained 条目。
+            candidate.freeze_serial_closed_retained_day_if_needed(report.settled_date)?;
             candidate.market_calendar_day = None;
             let instant = report.disclosure_instant;
             let publication = project(&candidate, report)?;

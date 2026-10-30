@@ -1491,6 +1491,310 @@ mod rollback_tests {
         );
     }
 
+    #[test]
+    fn protocol_closed_january_first_freezes_exact_day_end_candidate() {
+        #[cfg(not(target_family = "wasm"))]
+        if crate::runtime::step_runtime_enabled() {
+            ProtocolSession::run_serial_checkpoint_probe_for_test();
+            return;
+        }
+        assert!(
+            !crate::runtime::step_runtime_enabled(),
+            "休市协议日结必须处于明确 serial 模式"
+        );
+        let mut setup = crate::session::protocol::civil::publication_tests::setup();
+        setup.start_date = crate::CivilDate::from_iso("2030-01-01").unwrap();
+        let mut session = ProtocolSession::new(setup, 74).unwrap();
+        assert!(session.state.game.runtime_driver.is_none());
+        assert_eq!(session.state.game.runtime_authority_epoch, 0);
+
+        let update = session.end_civil_day_update().unwrap();
+        let expected_date = crate::CivilDate::from_iso("2030-01-01").unwrap();
+        assert_eq!(update.boundary.settled_date, expected_date);
+        assert_eq!(update.civil_date, "2030-01-02");
+        assert_eq!(update.tick, 0);
+        assert_eq!(update.seq_to, session.state.game.seq());
+        assert_eq!(session.state.game.tick(), 0);
+        assert_eq!(session.state.game.day(), 0);
+        assert!(session.state.game.runtime_driver.is_none());
+        assert_eq!(session.state.game.runtime_authority_epoch, 0);
+
+        let key = super::super::super::SaveCandidateKey {
+            seq: update.seq_to,
+            settled_date: expected_date,
+        };
+        let saved = session.save_candidate(&key).unwrap();
+        assert_eq!(saved.snapshot.seq, update.seq_to);
+        assert_eq!(saved.snapshot.tick, 0);
+        assert_eq!(saved.snapshot.tick / saved.setup.ticks_per_day, 0);
+        assert_eq!(saved.civil_clock.settled_through, Some(expected_date));
+        assert_eq!(saved.retained_market_days.len(), 1);
+        assert_eq!(saved.retained_market_days[0].0.date, expected_date);
+        assert_eq!(saved.retained_market_days[0].0.securities.len(), 1);
+        let market_day = saved.retained_market_days[0]
+            .0
+            .securities
+            .get(&0)
+            .expect("全体在册证券均写入休市条目");
+        assert!(!market_day.trading, "休市条目必须为 Closed");
+        assert!(market_day.bars.is_empty(), "休市条目不得包含分钟 K");
+
+        let restored = ProtocolSession::restore(&saved).unwrap();
+        assert_eq!(
+            serde_json::to_value(restored.save().unwrap()).unwrap(),
+            serde_json::to_value(saved).unwrap(),
+            "完整日终候选必须原样恢复"
+        );
+    }
+
+    #[test]
+    fn protocol_consecutive_closed_days_keep_each_candidate_immutable_and_ordered() {
+        #[cfg(not(target_family = "wasm"))]
+        if crate::runtime::step_runtime_enabled() {
+            ProtocolSession::run_serial_checkpoint_probe_for_test();
+            return;
+        }
+        assert!(
+            !crate::runtime::step_runtime_enabled(),
+            "连续休市协议日结必须处于明确 serial 模式"
+        );
+        let mut setup = crate::session::protocol::civil::publication_tests::setup();
+        setup.start_date = crate::CivilDate::from_iso("2030-01-05").unwrap();
+        let mut session = ProtocolSession::new(setup, 75).unwrap();
+
+        let first = session.end_civil_day_update().unwrap();
+        let first_key = super::super::super::SaveCandidateKey {
+            seq: first.seq_to,
+            settled_date: crate::CivilDate::from_iso("2030-01-05").unwrap(),
+        };
+        let first_value = serde_json::to_value(
+            session
+                .state
+                .pending_save_candidates
+                .borrow()
+                .get(&first_key.seq)
+                .expect("首日日终候选存在"),
+        )
+        .unwrap();
+        let second = session.end_civil_day_update().unwrap();
+        let second_key = super::super::super::SaveCandidateKey {
+            seq: second.seq_to,
+            settled_date: crate::CivilDate::from_iso("2030-01-06").unwrap(),
+        };
+        let captured_first = session.save_candidate(&first_key).unwrap();
+        assert_eq!(
+            serde_json::to_value(&captured_first).unwrap(),
+            first_value,
+            "第二日结成功后仍须能捕获原日完整候选"
+        );
+        let second_saved = session.save_candidate(&second_key).unwrap();
+
+        assert_ne!(first.seq_to, second.seq_to, "每日候选序号必须唯一递增");
+        assert_eq!(first.tick, 0);
+        assert_eq!(second.tick, 0);
+        assert_eq!(captured_first.snapshot.seq, first.seq_to);
+        assert_eq!(second_saved.snapshot.seq, second.seq_to);
+        assert_eq!(
+            serde_json::to_value(&captured_first).unwrap(),
+            first_value,
+            "后续休市日结不得修改已捕获候选"
+        );
+        assert_eq!(captured_first.retained_market_days.len(), 1);
+        assert_eq!(
+            captured_first.retained_market_days[0].0.date,
+            crate::CivilDate::from_iso("2030-01-05").unwrap()
+        );
+        assert_eq!(second_saved.retained_market_days.len(), 2);
+        assert_eq!(
+            second_saved
+                .retained_market_days
+                .iter()
+                .map(|day| day.0.date)
+                .collect::<Vec<_>>(),
+            vec![
+                crate::CivilDate::from_iso("2030-01-05").unwrap(),
+                crate::CivilDate::from_iso("2030-01-06").unwrap(),
+            ]
+        );
+        for day in &second_saved.retained_market_days {
+            assert_eq!(day.0.securities.len(), 1);
+            let security = day.0.securities.get(&0).unwrap();
+            assert!(!security.trading);
+            assert!(security.bars.is_empty());
+        }
+        let restored = ProtocolSession::restore(&second_saved).unwrap();
+        assert_eq!(
+            serde_json::to_value(restored.save().unwrap()).unwrap(),
+            serde_json::to_value(second_saved).unwrap()
+        );
+    }
+
+    #[test]
+    fn protocol_rejected_malformed_civil_update_preserves_state_for_single_retry() {
+        #[cfg(not(target_family = "wasm"))]
+        if crate::runtime::step_runtime_enabled() {
+            ProtocolSession::run_serial_checkpoint_probe_for_test();
+            return;
+        }
+        assert!(
+            !crate::runtime::step_runtime_enabled(),
+            "civil 拒绝原子性必须处于明确 serial 模式"
+        );
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static OBSERVED_DISCLOSURES: AtomicUsize = AtomicUsize::new(0);
+        fn count_disclosure(_: crate::calendar::CivilInstant) {
+            OBSERVED_DISCLOSURES.fetch_add(1, Ordering::SeqCst);
+        }
+
+        let mut setup = crate::session::protocol::civil::publication_tests::setup();
+        setup.start_date = crate::CivilDate::from_iso("2030-01-05").unwrap();
+        let mut session = ProtocolSession::new(setup, 76).unwrap();
+        session
+            .state
+            .game
+            .add_disclosure_observer_for_runtime(count_disclosure);
+        let first = session.end_civil_day_update().unwrap();
+        let observer_count_after_first_success = OBSERVED_DISCLOSURES.load(Ordering::SeqCst);
+        assert_eq!(
+            observer_count_after_first_success, 1,
+            "首次成功 publication 通知一次 disclosure observer"
+        );
+        let first_key = super::super::super::SaveCandidateKey {
+            seq: first.seq_to,
+            settled_date: crate::CivilDate::from_iso("2030-01-05").unwrap(),
+        };
+        let first_value = serde_json::to_value(
+            session
+                .state
+                .pending_save_candidates
+                .borrow()
+                .get(&first_key.seq)
+                .expect("首日日终候选存在"),
+        )
+        .unwrap();
+        let first_frozen =
+            serde_json::to_value(session.state.day_end_save.as_ref().unwrap()).unwrap();
+        let saved_game = serde_json::to_value(session.state.game.save().unwrap()).unwrap();
+        let retained = serde_json::to_value(session.state.game.retained_market_days()).unwrap();
+        let original_date = session.state.game.civil_date();
+        let original_tick = session.state.game.tick();
+        let original_seq = session.state.game.seq();
+        let pending =
+            serde_json::to_value(&*session.state.pending_save_candidates.borrow()).unwrap();
+        assert_eq!(session.state.pending_save_candidates.borrow().len(), 1);
+        assert_eq!(
+            original_date,
+            crate::CivilDate::from_iso("2030-01-06").unwrap()
+        );
+        assert_eq!(session.state.game.retained_market_days().len(), 1);
+        session.malformed_civil = true;
+
+        assert!(matches!(
+            session.end_civil_day_update(),
+            Err(SessionError::Step(_))
+        ));
+        assert_eq!(session.state.game.civil_date(), original_date);
+        assert_eq!(session.state.game.tick(), original_tick);
+        assert_eq!(session.state.game.seq(), original_seq);
+        assert_eq!(session.state.game.poison_reason(), None);
+        assert_eq!(
+            serde_json::to_value(session.state.game.save().unwrap()).unwrap(),
+            saved_game
+        );
+        assert_eq!(
+            serde_json::to_value(session.state.game.retained_market_days()).unwrap(),
+            retained
+        );
+        assert_eq!(
+            serde_json::to_value(&*session.state.pending_save_candidates.borrow()).unwrap(),
+            pending
+        );
+        assert_eq!(
+            serde_json::to_value(session.state.day_end_save.as_ref().unwrap()).unwrap(),
+            first_frozen
+        );
+        assert_eq!(
+            OBSERVED_DISCLOSURES.load(Ordering::SeqCst),
+            observer_count_after_first_success,
+            "失败 publication 不得提前通知 disclosure observer"
+        );
+
+        let retry = session.end_civil_day_update().unwrap();
+        assert_ne!(retry.seq_to, first.seq_to, "重试日候选必须有唯一序号");
+        assert_eq!(retry.boundary.settled_date, original_date);
+        assert_eq!(session.state.game.retained_market_days().len(), 2);
+        assert_eq!(session.state.pending_save_candidates.borrow().len(), 2);
+        assert_eq!(
+            OBSERVED_DISCLOSURES.load(Ordering::SeqCst),
+            2,
+            "重试成功后 disclosure observer 恰好收到第二次通知"
+        );
+        let retained_dates = session
+            .state
+            .game
+            .retained_market_days()
+            .iter()
+            .map(|day| day.0.date)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            retained_dates,
+            vec![
+                crate::CivilDate::from_iso("2030-01-05").unwrap(),
+                crate::CivilDate::from_iso("2030-01-06").unwrap(),
+            ]
+        );
+        let captured_first = session.save_candidate(&first_key).unwrap();
+        assert_eq!(serde_json::to_value(captured_first).unwrap(), first_value);
+        assert_eq!(
+            serde_json::to_value(session.state.day_end_save.as_ref().unwrap()).unwrap(),
+            serde_json::to_value(
+                session
+                    .state
+                    .pending_save_candidates
+                    .borrow()
+                    .get(&retry.seq_to)
+                    .expect("重试恰生成新日候选"),
+            )
+            .unwrap()
+        );
+    }
+
+    #[test]
+    fn protocol_does_not_freeze_unfinished_trading_day_as_closed() {
+        #[cfg(not(target_family = "wasm"))]
+        if crate::runtime::step_runtime_enabled() {
+            ProtocolSession::run_serial_checkpoint_probe_for_test();
+            return;
+        }
+        assert!(
+            !crate::runtime::step_runtime_enabled(),
+            "未完成交易日拒绝必须处于明确 serial 模式"
+        );
+        let mut setup = crate::session::protocol::civil::publication_tests::setup();
+        setup.start_date = crate::CivilDate::from_iso("2030-01-02").unwrap();
+        let steps = setup.ticks_per_day;
+        let mut session = ProtocolSession::new(setup, 77).unwrap();
+        let original_date = session.state.game.civil_date();
+        assert!(session.end_civil_day_update().is_err());
+        assert_eq!(session.state.game.civil_date(), original_date);
+        assert_eq!(session.state.game.tick(), 0);
+        assert!(session.state.game.retained_market_days().is_empty());
+        assert!(session.save().is_err());
+
+        for _ in 0..steps {
+            session.step_frame().unwrap();
+        }
+        let update = session.end_civil_day_update().unwrap();
+        let key = super::super::super::SaveCandidateKey {
+            seq: update.seq_to,
+            settled_date: original_date,
+        };
+        let saved = session.save_candidate(&key).unwrap();
+        assert_eq!(saved.retained_market_days.len(), 1);
+        let security = saved.retained_market_days[0].0.securities.get(&0).unwrap();
+        assert!(security.trading, "完成交易日不得被标成 Closed");
+    }
+
     fn active_retail_day_end_setup(start_date: &str) -> SessionSetup {
         let mut setup = crate::session::npc_working_quote_tests::retail_quote_setup();
         setup.start_date = crate::CivilDate::from_iso(start_date).unwrap();
