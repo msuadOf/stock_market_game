@@ -9,7 +9,7 @@ export function parseSaveSlot(value: unknown): StrictSaveEnvelope {
 
 export function parseSaveJson(text: string): StrictSaveEnvelope {
   try {
-    return materializeSaveValue(parseSaveSlot(parseRawSaveJson(text)))
+    return materializeSaveValue(parseStrictSaveEnvelope(parseRawSaveJson(text)))
   } catch (error) {
     if (error instanceof SyntaxError) throw new Error(`存档不是合法 JSON：${error.message}`)
     throw error

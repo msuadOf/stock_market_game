@@ -4,11 +4,11 @@ import { createHash } from "node:crypto"
 import test from "node:test"
 import { currentSaveFixture } from "./current-save-fixture.ts"
 import { parseSetup } from "./schema/market.ts"
-import { parseSaveSlot } from "./save-schema.ts"
+import { parseSaveJson, parseSaveSlot } from "./save-schema.ts"
 import { parseInformationStates } from "./schema/personal/information.ts"
 import { parseBeliefBooks, type BeliefBook } from "./schema/personal/beliefs.ts"
 import { parseRawSaveJson } from "./schema/raw-json.ts"
-import { materializeSaveValue } from "./schema/primitives.ts"
+import { materializeSaveValue, RawSaveNumber } from "./schema/primitives.ts"
 
 // 从真实 Rust producer 原档提取，字段和值均未投影；来源与原档哈希见工作记录。
 const fragments = JSON.parse(readFileSync(new URL("./fixtures/current-producer-fragments.json", import.meta.url), "utf8")) as Record<string, unknown>
@@ -21,6 +21,45 @@ const syntheticBelief = {
   entries: { "0": { company: 0, method: null, forecast: { growth_bp: null, basis: "InitialWithoutHistory" }, confidence_bp: 3000, valuation: { Unavailable: { reason: "MethodDisabled" } }, used_report_ids: [], anchor: { kind: "NoPriorSession" }, horizon_trading_days: 1, last_cause: null, applied_experience_orders: [] } },
   experience: { reference_equity: null, peak_equity: null, consecutive_failed_buys: 0, stocks: {} }, institution_policy: null,
 } satisfies BeliefBook
+
+test("parseSaveJson 保留原始 JSON 约束并将数值完整物化", { timeout: 10_000 }, () => {
+  const fixtureText = JSON.stringify(currentSaveFixture())
+  const parsed = parseSaveJson(fixtureText)
+  assert.deepEqual(parsed, currentSaveFixture())
+  const visit = (value: unknown): void => {
+    assert.ok(!(value instanceof RawSaveNumber), "物化存档不得泄漏 RawSaveNumber")
+    if (Array.isArray(value)) value.forEach(visit)
+    else if (value !== null && typeof value === "object") Object.values(value).forEach(visit)
+  }
+  visit(parsed)
+
+  assert.deepEqual(parseRawSaveJson(String.raw`{"\u6c49\u5b57":"\u503c\ud83d\ude00"}`), { "汉字": "值😀" })
+  assert.throws(() => parseSaveJson(fixtureText.replace('"start_date"', String.raw`"\ud800"`)), /孤立 Unicode surrogate/)
+  assert.throws(() => parseSaveJson(fixtureText.replace('"start_date":"2030-01-01"', String.raw`"start_date":"\ud800"`)), /孤立 Unicode surrogate/)
+  assert.throws(() => parseSaveJson(fixtureText.replace('"receipt_watermark":0', '"receipt_watermark":0,"receipt_watermark":0')), /重复 JSON 键/)
+  for (const token of ["9007199254740992", "-0", "0.0", "0e0"]) {
+    const text = fixtureText.replace('"receipt_watermark":0', `"receipt_watermark":${token}`)
+    assert.notEqual(text, fixtureText)
+    assert.throws(() => parseSaveJson(text), /receipt_watermark/)
+  }
+})
+
+test("parseSaveSlot 对外部对象继续拒绝循环、稀疏数组和非 JSON 值", { timeout: 10_000 }, () => {
+  const cyclic = currentSaveFixture()
+  ;(cyclic as Record<string, unknown>).cycle = cyclic
+  assert.throws(() => parseSaveSlot(cyclic), /循环引用/)
+
+  const sparse = currentSaveFixture()
+  const holes = new Array(1)
+  ;(sparse as Record<string, unknown>).sparse = holes
+  assert.throws(() => parseSaveSlot(sparse), /数组元素缺失/)
+
+  for (const value of [undefined, 1n, () => undefined, Symbol("value")]) {
+    const invalid = currentSaveFixture()
+    ;(invalid as Record<string, unknown>).invalid = value
+    assert.throws(() => parseSaveSlot(invalid), /不是 JSON 值/)
+  }
+})
 
 test("当前存档严格保留必填 desk_mirrored_resting，不混入默认值", { timeout: 10_000 }, () => {
   const current = currentSaveFixture()
