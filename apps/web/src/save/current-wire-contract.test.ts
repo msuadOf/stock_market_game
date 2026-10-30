@@ -131,3 +131,45 @@ test("parseSetup 接入完整公司选项且保留独立 report_frequency", { ti
   assert.throws(() => parseSetup({ ...setup, dividend_tax_mode: "Legacy" }, "setup"), /dividend_tax_mode/)
   assert.throws(() => parseSetup({ ...setup, extra: true }, "setup"), /extra/)
 })
+
+test("parseRawSaveJson 保留 JSON 词法与字符串边界", { timeout: 10_000 }, () => {
+  assert.deepEqual(parseRawSaveJson(String.raw`{"plain":"same","escaped":"\u0073ame"}`), { plain: "same", escaped: "same" })
+  assert.deepEqual(parseRawSaveJson(String.raw`{"quote":"a\"b","slash":"a\\b"}`), { quote: 'a"b', slash: "a\\b" })
+  assert.deepEqual(parseRawSaveJson('{"plain":"😀","escaped":"\\ud83d\\ude00"}'), { plain: "😀", escaped: "😀" })
+  assert.deepEqual(parseRawSaveJson(String.raw`{"\u0001":"\u0001"}`), { "\u0001": "\u0001" })
+  assert.throws(() => parseRawSaveJson(String.raw`{"a":1,"\u0061":2}`), /重复 JSON 键/)
+
+  assert.deepEqual(parseRawSaveJson("[ \t\r\n null , true , false ]"), [null, true, false])
+  for (const whitespace of ["\v", "\f"]) assert.throws(() => parseRawSaveJson(`[${whitespace}null]`), /合法 JSON/)
+  assert.throws(() => parseRawSaveJson("[true:false]"), /缺少逗号或结束符/)
+  for (const value of ["nullx", "true0", "false_", "truefalse"]) {
+    assert.throws(() => parseRawSaveJson(value), /根值之后包含多余内容/)
+  }
+
+  for (const token of ["0", "-1", "1.25", "2e+3", "4E-2"]) {
+    const parsed = parseRawSaveJson(token)
+    assert.ok(parsed instanceof RawSaveNumber)
+    assert.equal(parsed.token, token)
+  }
+  for (const token of ["+1", "01", "1.", ".1", "1e"]) assert.throws(() => parseRawSaveJson(token), /非法 JSON 数值或值/)
+
+  const escapedControls = parseRawSaveJson(String.raw`{"value":"line\n\u0001"}`) as Record<string, unknown>
+  assert.equal(escapedControls.value, "line\n\u0001")
+  for (const raw of [
+    `{"value":"a\u0001b"}`,
+    `{"a\u0001b":1}`,
+    String.raw`{"value":"\ud800"}`,
+    `{"value":"\ud800"}`,
+    String.raw`{"value":"\udfff"}`,
+    String.raw`{"value":"\q"}`,
+    '{"value":"truncated',
+    String.raw`{"\ud800":1}`,
+    `{"\ud800":1}`,
+  ]) assert.throws(() => parseRawSaveJson(raw), /非法 JSON 字符串|JSON 字符串未闭合|孤立 Unicode surrogate/)
+
+  const prototypeKey = parseRawSaveJson(String.raw`{"__proto__":{"polluted":true}}`) as Record<string, unknown>
+  assert.equal(Object.getPrototypeOf(prototypeKey), Object.prototype)
+  assert.equal(Object.hasOwn(prototypeKey, "__proto__"), true)
+  assert.deepEqual(prototypeKey.__proto__, { polluted: true })
+  assert.equal(({} as { polluted?: boolean }).polluted, undefined)
+})

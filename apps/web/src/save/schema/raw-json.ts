@@ -5,20 +5,30 @@ export function parseRawSaveJson(raw: string): unknown {
   if (typeof raw !== "string") throw new SaveSchemaError("根节点", "必须是 JSON 字符串");
   let cursor = 0;
   const fail = (path: string, detail: string): never => { throw new SaveSchemaError(path, `存档不是合法 JSON：${detail}`); };
-  const skip = () => { while (cursor < raw.length && /[ \t\r\n]/.test(raw[cursor])) cursor++; };
+  const skip = () => {
+    while (cursor < raw.length) {
+      const code = raw.charCodeAt(cursor);
+      if (code !== 0x20 && code !== 0x09 && code !== 0x0d && code !== 0x0a) break;
+      cursor++;
+    }
+  };
   const quoted = (path: string): string => {
     if (raw[cursor] !== '"') fail(path, "JSON 对象键必须是字符串");
     const start = cursor++;
+    let needsStringValidation = false;
     while (cursor < raw.length) {
+      const code = raw.charCodeAt(cursor);
       const char = raw[cursor++];
-      if (char === "\\") { cursor++; continue; }
+      if (char === "\\") { needsStringValidation = true; cursor++; continue; }
       if (char === '"') {
+        if (!needsStringValidation) return raw.slice(start + 1, cursor - 1);
         try { return string(JSON.parse(raw.slice(start, cursor)), path); }
         catch (error) {
           if (error instanceof SaveSchemaError) throw error;
           throw new SaveSchemaError(path, `包含非法 JSON 字符串：${error instanceof Error ? error.message : String(error)}`);
         }
       }
+      if (code < 0x20 || (code >= 0xd800 && code <= 0xdfff)) needsStringValidation = true;
     }
     return fail(path, "JSON 字符串未闭合");
   };
@@ -47,11 +57,15 @@ export function parseRawSaveJson(raw: string): unknown {
         if (raw[cursor++] !== ",") fail(path, "JSON 数组缺少逗号或结束符");
       }
     }
-    for (const [token, decoded] of [["null", null], ["true", true], ["false", false]] as const) {
-      if (raw.startsWith(token, cursor)) { cursor += token.length; return decoded; }
-    }
+    if (first === "n" && raw.startsWith("null", cursor)) { cursor += 4; return null; }
+    if (first === "t" && raw.startsWith("true", cursor)) { cursor += 4; return true; }
+    if (first === "f" && raw.startsWith("false", cursor)) { cursor += 5; return false; }
     const start = cursor;
-    while (cursor < raw.length && !/[ \t\r\n,\]}]/.test(raw[cursor])) cursor++;
+    while (cursor < raw.length) {
+      const code = raw.charCodeAt(cursor);
+      if (code === 0x20 || code === 0x09 || code === 0x0d || code === 0x0a || code === 0x2c || code === 0x5d || code === 0x7d) break;
+      cursor++;
+    }
     const token = raw.slice(start, cursor);
     if (!/^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?$/.test(token)) fail(path, "包含非法 JSON 数值或值");
     return new RawSaveNumber(token);
