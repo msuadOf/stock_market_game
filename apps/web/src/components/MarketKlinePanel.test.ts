@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { after, before, test } from "node:test";
 import { createServer, type ViteDevServer } from "vite";
-import { createElement } from "react";
+import { createElement, type ComponentProps } from "react";
 import { Provider } from "react-redux";
 import { configureStore } from "@reduxjs/toolkit";
 import { chartSettingsReducer, setChartAverageSettings } from "../store/chart-settings-slice.ts";
 let ChartSettingsFixture: typeof import("../test-support/ChartSettingsFixture.tsx").ChartSettingsFixture;
+let RequiredChildrenFixture: typeof import("../test-support/ChartSettingsFixture.tsx").RequiredChildrenFixture;
 import { renderToStaticMarkup } from "react-dom/server";
 import { aggregateCandles, MobileKlineProjection } from "../mobile/market-model.ts";
 let KlineDetails: typeof import("./MarketKlinePanel.tsx").KlineDetails;
@@ -15,7 +16,7 @@ let MarketKlinePanel: typeof import("./MarketKlinePanel.tsx").MarketKlinePanel;
 const START_DATE = Date.parse("2030-01-01T00:00:00Z") / 1000;
 before(async () => {
   vite = await createServer({ configFile: false, appType: "custom", server: { middlewareMode: true, ws: false }, optimizeDeps: { noDiscovery: true } });
-  ({ ChartSettingsFixture } = await vite.ssrLoadModule("/src/test-support/ChartSettingsFixture.tsx"));
+  ({ ChartSettingsFixture, RequiredChildrenFixture } = await vite.ssrLoadModule("/src/test-support/ChartSettingsFixture.tsx"));
   ({ MarketKlinePanel, MacdPanel, KlineDetails } = await vite.ssrLoadModule("/src/components/MarketKlinePanel.tsx"));
 });
 after(async () => { if (vite) await vite.close(); });
@@ -33,7 +34,7 @@ test("共享K线实际消费自定义周期及显示开关，不再保留固定�
   const preferenceStore = configureStore({ reducer: { chartSettings: chartSettingsReducer } });
   preferenceStore.dispatch(setChartAverageSettings([{ period: 3, visible: true }, { period: 25, visible: false }]));
   const dailyCandles = Array.from({ length: 30 }, (_, index) => ({ time: (START_DATE + index * 86400) as import("lightweight-charts").UTCTimestamp, open: 9, high: 12, low: 9, close: 11, rawPrices: { open: "900", high: "1200", low: "900", close: "1100" }, volume: 100 }));
-  const html = renderToStaticMarkup(createElement(Provider, { store: preferenceStore, children: createElement(MarketKlinePanel, { code: "600101", dailyCandles, period: "日K", indicatorCalculator: null }) }));
+  const html = renderToStaticMarkup(createElement(RequiredChildrenFixture<ComponentProps<typeof Provider>>, { component: Provider, props: { store: preferenceStore } }, createElement(MarketKlinePanel, { code: "600101", dailyCandles, period: "日K", indicatorCalculator: null })));
   assert.match(html, /aria-label="MA3：11\.000"/);
   assert.match(html, /<polyline class="ma3" aria-label="MA3曲线"[^>]*points="[^" ]+,/);
   assert.doesNotMatch(html, /<polyline class="ma25"|MA5：|MA60：/);

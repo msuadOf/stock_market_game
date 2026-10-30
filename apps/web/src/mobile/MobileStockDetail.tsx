@@ -97,23 +97,24 @@ function IntradayPanel({ code, market, minutePoints, auctionPoints, trades, acti
   const [rustAverageError, setRustAverageError] = useState<string | null>(null);
   const curvePoints = useMemo(() => minutePoints.filter((point) => point.cumulativeTurnoverCents !== undefined && point.cumulativeVolumeShares !== undefined && point.cumulativeTradeCount !== undefined), [minutePoints]);
   const curveSamples = useMemo(() => curvePoints.map((point) => ({ turnoverCents: point.cumulativeTurnoverCents!, volumeShares: point.cumulativeVolumeShares!, tradeCount: point.cumulativeTradeCount! })), [curvePoints]);
-  const stats = activeDailyCandle?.tradeStats;
+  const dailyTurnoverCents = activeDailyCandle?.tradeStats?.turnoverCents;
+  const dailyTradeCount = activeDailyCandle?.tradeStats?.tradeCount;
   const volumeShares = activeDailyCandle?.volume;
-  const dailySample = stats === undefined || volumeShares === undefined ? null : { turnoverCents: stats.turnoverCents, tradeCount: stats.tradeCount, volumeShares };
+  const dailySample = useMemo(() => dailyTurnoverCents === undefined || dailyTradeCount === undefined || volumeShares === undefined ? null : { turnoverCents: dailyTurnoverCents, tradeCount: dailyTradeCount, volumeShares }, [dailyTurnoverCents, dailyTradeCount, volumeShares]);
   const curveSamplesWithCurrent = useMemo(() => {
     if (dailySample === null) return curveSamples;
     const lastSample = curveSamples.at(-1);
     return lastSample?.turnoverCents === dailySample.turnoverCents && lastSample.tradeCount === dailySample.tradeCount && lastSample.volumeShares === dailySample.volumeShares
       ? curveSamples
       : [...curveSamples, dailySample];
-  }, [curveSamples, dailySample?.turnoverCents, dailySample?.tradeCount, dailySample?.volumeShares]);
+  }, [curveSamples, dailySample]);
   useEffect(() => {
     let current = true;
     setRustAveragePoints([]);
     setRustCurrentAverage(null);
     setRustAveragePending(false);
     setRustAverageError(null);
-    if (averageRoute.kind !== "rust" || stats === undefined || volumeShares === undefined || volumeShares === 0) return () => { current = false; };
+    if (averageRoute.kind !== "rust" || dailySample === null || dailySample.volumeShares === 0) return () => { current = false; };
     if (calculateIntradayAverageCurve === undefined) { setRustAverageError("Rust 分时均价曲线计算入口未接线"); return () => { current = false; }; }
     setRustAveragePending(true);
     const currentSample = curveSamplesWithCurrent.at(-1);
@@ -141,7 +142,7 @@ function IntradayPanel({ code, market, minutePoints, auctionPoints, trades, acti
       }
     });
     return () => { current = false; };
-  }, [averageRoute.kind, calculateIntradayAverageCurve, code, curvePoints, curveSamples, curveSamplesWithCurrent, gameDay, minutePoints, stats?.turnoverCents, stats?.tradeCount, volumeShares]);
+  }, [averageRoute.kind, calculateIntradayAverageCurve, code, curvePoints, curveSamples, curveSamplesWithCurrent, dailySample, gameDay, minutePoints]);
   const visibleTimes = new Set(visiblePoints.map((point) => point.time));
   const rustAverageLine = rustAveragePoints.filter((point) => visibleTimes.has(point.time)).map((point) => `${intradayChartX({ phase: "continuous", minute: point.time })},${projection.priceY(point.value)}`).join(" ");
   const selectedAverage = averageRoute.kind === "frontend" ? displayedAverage : rustCurrentAverage;
@@ -149,7 +150,7 @@ function IntradayPanel({ code, market, minutePoints, auctionPoints, trades, acti
     ? `所选${indicatorDataSource === "rust" ? "Rust" : "前端"}指标源不支持分时均价，未回退到另一数据源。`
     : rustAveragePending ? "Rust 分时均价曲线计算中…"
       : rustAverageError !== null ? `Rust 分时均价计算失败：${rustAverageError}`
-      : stats === undefined ? "不支持（缺少真实成交额统计）"
+      : dailyTurnoverCents === undefined ? "不支持（缺少真实成交额统计）"
         : volumeShares === undefined ? "不支持（缺少真实成交股数）"
           : "暂无成交";
   const latestPoint = visiblePoints.at(-1);

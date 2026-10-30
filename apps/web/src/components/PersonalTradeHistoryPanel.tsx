@@ -21,13 +21,14 @@ export function PersonalTradeHistoryPanel({ query, scopeKey, initialDate = null,
   const [error, setError] = useState<string | null>(null);
   const owner = useRef({ sequence: 0, alive: false });
   useEffect(() => {
-    owner.current.alive = true;
-    owner.current.sequence += 1;
+    const requestOwner = owner.current;
+    requestOwner.alive = true;
+    requestOwner.sequence += 1;
     setPages([]);
     setPageIndex(0);
     setLoading(false);
     setError(null);
-    return () => { owner.current.alive = false; owner.current.sequence += 1; };
+    return () => { requestOwner.alive = false; requestOwner.sequence += 1; };
   }, [scopeKey, query]);
   const invalidate = () => {
     owner.current.sequence += 1;

@@ -8,13 +8,13 @@ import type { MarketHistoryPage, MarketHistoryRequest } from "../host/market-his
 let vite: ViteDevServer;
 let Panel: typeof import("./MinuteKlinePanel.tsx").MinuteKlinePanel;
 let MinuteKlineDay: typeof import("./MinuteKlinePanel.tsx").MinuteKlineDay;
-let minuteVolumeBarHeight: typeof import("./MinuteKlinePanel.tsx").minuteVolumeBarHeight;
+let minuteVolumeBarHeight: typeof import("./minute-kline.ts").minuteVolumeBarHeight;
 before(async () => {
   vite = await createServer({ configFile: false, appType: "custom", server: { middlewareMode: true, ws: false }, optimizeDeps: { noDiscovery: true } });
   const module = await vite.ssrLoadModule("/src/components/MinuteKlinePanel.tsx");
   Panel = module.MinuteKlinePanel;
   MinuteKlineDay = module.MinuteKlineDay;
-  minuteVolumeBarHeight = module.minuteVolumeBarHeight;
+  ({ minuteVolumeBarHeight } = await vite.ssrLoadModule("/src/components/minute-kline.ts") as typeof import("./minute-kline.ts"));
 });
 after(async () => { await vite.close(); });
 
@@ -131,6 +131,6 @@ test("分钟量柱极小股数仍显示至少一像素且最大值保持满高",
   ];
   const html = renderToStaticMarkup(React.createElement(MinuteKlineDay, { date: "2030-01-02", bars, period: 1 }));
   assert.match(html, /<g class="fall"/);
-  assert.match(html, /class="fall"[^>]*x="[^\"]+" y="69" width="4" height="1"/);
-  assert.match(html, /class="fall"[^>]*x="[^\"]+" y="8" width="4" height="62"/);
+  assert.match(html, /class="fall"[^>]*x="[^"]+" y="69" width="4" height="1"/);
+  assert.match(html, /class="fall"[^>]*x="[^"]+" y="8" width="4" height="62"/);
 });

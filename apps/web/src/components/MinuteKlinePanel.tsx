@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { MarketHistoryPage, MarketHistoryRequest } from "../host/market-history.ts";
 import type { CurrentMinuteHistoryResponse } from "../host/current-minute-history.ts";
-import { activeMinuteKlineBucketMinute, aggregateMinuteBars, aggregateMinuteKlines, type MinuteKline, type MinuteKlinePeriod } from "./minute-kline.ts";
+import { activeMinuteKlineBucketMinute, aggregateMinuteBars, aggregateMinuteKlines, minuteVolumeBarHeight, type MinuteKline, type MinuteKlinePeriod } from "./minute-kline.ts";
 import { formatDecimalCentsAsYuan, yuan } from "../utils/format.ts";
 import { candleBodyPrices, candleWickPrices } from "../mobile/market-model.ts";
 import { KlineCoordinatePlot } from "./KlineCoordinatePlot.tsx";
@@ -24,15 +24,6 @@ export interface MinuteKlinePanelProps {
 const phases = { OpenAuction: "开盘集合竞价", Continuous: "连续竞价", ClosingAuction: "收盘集合竞价" };
 const currentPhases = { CallAuction: "开盘集合竞价", PreOpen: "开盘前", Continuous: "连续竞价", ClosingAuction: "收盘集合竞价", AfterClose: "收盘后", Closed: "休市" };
 const labels: Record<MinuteKlinePeriod, string> = { 120: "120分钟", 60: "60分钟", 30: "30分钟", 15: "15分钟", 5: "5分钟", 1: "1分钟" };
-const MAX_VOLUME_BAR_HEIGHT = 62;
-
-export function minuteVolumeBarHeight(volume: bigint, maximum: bigint): number {
-  if (volume < 0n || maximum < volume || maximum <= 0n) throw new RangeError("分钟成交量坐标超出真实股数范围");
-  if (volume === 0n) return 0;
-  const scaled = Number(volume * BigInt(MAX_VOLUME_BAR_HEIGHT) / maximum);
-  return Math.max(1, scaled);
-}
-
 function shiftDate(date: string, days: number): string {
   const parsed = new Date(`${date}T00:00:00Z`);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isFinite(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== date) throw new Error(`自然日期无效：${date}`);
@@ -99,32 +90,35 @@ export function MinuteKlinePanel({ query, scopeKey, code, currentDate, period, q
   const owner = useRef({ alive: false, sequence: 0 });
   const liveOwner = useRef({ alive: false, sequence: 0 });
   useEffect(() => {
-    owner.current.alive = true;
-    liveOwner.current.alive = true;
-    owner.current.sequence += 1;
-    liveOwner.current.sequence += 1;
+    const requestOwner = owner.current;
+    requestOwner.alive = true;
+    const liveRequestOwner = liveOwner.current;
+    liveRequestOwner.alive = true;
+    requestOwner.sequence += 1;
+    liveRequestOwner.sequence += 1;
     setFrom(currentDate === null ? "" : shiftDate(currentDate, -30));
     setTo(currentDate === null ? "" : shiftDate(currentDate, -1));
     setPages([]); setIndex(0); setLoading(false); setError(null); setLiveHistory(null); setLiveLoading(false); setLiveError(null);
-    return () => { owner.current.alive = false; owner.current.sequence += 1; liveOwner.current.alive = false; liveOwner.current.sequence += 1; };
+    return () => { requestOwner.alive = false; requestOwner.sequence += 1; liveRequestOwner.alive = false; liveRequestOwner.sequence += 1; };
   }, [scopeKey, code, query, currentDate]);
   useEffect(() => {
-    const sequence = ++liveOwner.current.sequence;
+    const requestOwner = liveOwner.current;
+    const sequence = ++requestOwner.sequence;
     if (queryCurrentMinuteHistory === undefined || currentDate === null) { setLiveHistory(null); setLiveLoading(false); setLiveError(null); return; }
     setLiveLoading(true); setLiveError(null);
     void queryCurrentMinuteHistory({ code }).then((response) => {
-      if (!liveOwner.current.alive || liveOwner.current.sequence !== sequence) return;
+      if (!requestOwner.alive || requestOwner.sequence !== sequence) return;
       if (response.code !== code || response.live !== true || response.date !== currentDate) throw new Error("当前分钟响应证券、自然日错配或不是实时事实");
       setLiveHistory(response);
     }).catch((failure: unknown) => {
-      if (liveOwner.current.alive && liveOwner.current.sequence === sequence) {
+      if (requestOwner.alive && requestOwner.sequence === sequence) {
         setLiveHistory((previous) => previous?.date === currentDate ? previous : null);
         setLiveError(`当前分钟查询失败：${failure instanceof Error ? failure.message : String(failure)}；请重试并反馈错误详情。`);
       }
     }).finally(() => {
-      if (liveOwner.current.alive && liveOwner.current.sequence === sequence) setLiveLoading(false);
+      if (requestOwner.alive && requestOwner.sequence === sequence) setLiveLoading(false);
     });
-    return () => { liveOwner.current.sequence += 1; };
+    return () => { requestOwner.sequence += 1; };
   }, [scopeKey, code, currentDate, queryCurrentMinuteHistory, tickRefreshKey]);
   const page = pages[index];
   const bars = useMemo(() => page === undefined ? [] : aggregateMinuteKlines(page.entries, period), [page, period]);

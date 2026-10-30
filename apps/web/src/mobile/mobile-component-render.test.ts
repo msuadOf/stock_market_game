@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { after, before, test } from "node:test";
-import { createElement } from "react";
+import { createElement, type ComponentProps } from "react";
 let ChartSettingsFixture: typeof import("../test-support/ChartSettingsFixture.tsx").ChartSettingsFixture;
+let RequiredChildrenFixture: typeof import("../test-support/ChartSettingsFixture.tsx").RequiredChildrenFixture;
 import { renderToStaticMarkup } from "react-dom/server";
 import { createServer, type ViteDevServer } from "vite";
 import type { KlinePoint } from "../components/PriceChart.tsx";
@@ -20,7 +21,7 @@ before(async () => {
     server: { middlewareMode: true, ws: false },
     optimizeDeps: { noDiscovery: true },
   });
-  ({ ChartSettingsFixture } = await vite.ssrLoadModule("/src/test-support/ChartSettingsFixture.tsx"));
+  ({ ChartSettingsFixture, RequiredChildrenFixture } = await vite.ssrLoadModule("/src/test-support/ChartSettingsFixture.tsx"));
   ({ MobileStockDetail } = await vite.ssrLoadModule("/src/mobile/MobileStockDetail.tsx") as typeof import("./MobileStockDetail.tsx"));
   ({ MobileDetailLayer } = await vite.ssrLoadModule("/src/mobile/MobileDetailLayer.tsx") as typeof import("./MobileDetailLayer.tsx"));
 });
@@ -42,10 +43,10 @@ test("审计G45：App共用详情层从自选打开会实际渲染，返回后�
   const list = reduceMobileUi(initialMobileUiState, { type: "switch-primary", tab: "watchlist" });
   const detail = reduceMobileUi(list, { type: "open-detail", code: "600101" });
   const children = createElement("span", null, "实际详情内容");
-  assert.match(renderToStaticMarkup(createElement(MobileDetailLayer, { ui: detail, children })), /mobile-detail-page.*实际详情内容/);
+  assert.match(renderToStaticMarkup(createElement(RequiredChildrenFixture<ComponentProps<typeof MobileDetailLayer>>, { component: MobileDetailLayer, props: { ui: detail } }, children)), /mobile-detail-page.*实际详情内容/);
   const returned = reduceMobileUi(detail, { type: "back" });
   assert.equal(returned.primaryTab, "watchlist");
-  assert.equal(renderToStaticMarkup(createElement(MobileDetailLayer, { ui: returned, children })), "");
+  assert.equal(renderToStaticMarkup(createElement(RequiredChildrenFixture<ComponentProps<typeof MobileDetailLayer>>, { component: MobileDetailLayer, props: { ui: returned } }, children)), "");
 });
 
 const candle: KlinePoint = {

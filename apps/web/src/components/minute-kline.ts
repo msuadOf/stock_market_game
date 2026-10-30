@@ -129,3 +129,12 @@ export function aggregateMinuteKlines(entries: readonly MarketHistoryEntry[], pe
   }
   return result;
 }
+
+const MAX_VOLUME_BAR_HEIGHT = 62;
+
+export function minuteVolumeBarHeight(volume: bigint, maximum: bigint): number {
+  if (volume < 0n || maximum < volume || maximum <= 0n) throw new RangeError("分钟成交量坐标超出真实股数范围");
+  if (volume === 0n) return 0;
+  const scaled = Number(volume * BigInt(MAX_VOLUME_BAR_HEIGHT) / maximum);
+  return Math.max(1, scaled);
+}

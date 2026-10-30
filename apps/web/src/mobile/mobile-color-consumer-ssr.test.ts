@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { after, before, test } from "node:test";
 import { configureStore } from "@reduxjs/toolkit";
-import { createElement } from "react";
+import { createElement, type ComponentProps } from "react";
 import { Provider } from "react-redux";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createServer, type ViteDevServer } from "vite";
@@ -16,6 +16,7 @@ let MarketGrid: typeof import("../components/MarketGrid.tsx").MarketGrid;
 let PositionsPanel: typeof import("../app/LocalRefreshViews.tsx").PositionsPanel;
 let MarketRuntimeProvider: typeof import("../app/MarketRuntimeProvider.tsx").MarketRuntimeProvider;
 let ChartSettingsFixture: typeof import("../test-support/ChartSettingsFixture.tsx").ChartSettingsFixture;
+let RequiredChildrenFixture: typeof import("../test-support/ChartSettingsFixture.tsx").RequiredChildrenFixture;
 
 before(async () => {
   vite = await createServer({
@@ -28,7 +29,7 @@ before(async () => {
   ({ MarketGrid } = await vite.ssrLoadModule("/src/components/MarketGrid.tsx") as typeof import("../components/MarketGrid.tsx"));
   ({ PositionsPanel } = await vite.ssrLoadModule("/src/app/LocalRefreshViews.tsx") as typeof import("../app/LocalRefreshViews.tsx"));
   ({ MarketRuntimeProvider } = await vite.ssrLoadModule("/src/app/MarketRuntimeProvider.tsx") as typeof import("../app/MarketRuntimeProvider.tsx"));
-  ({ ChartSettingsFixture } = await vite.ssrLoadModule("/src/test-support/ChartSettingsFixture.tsx") as typeof import("../test-support/ChartSettingsFixture.tsx"));
+  ({ ChartSettingsFixture, RequiredChildrenFixture } = await vite.ssrLoadModule("/src/test-support/ChartSettingsFixture.tsx") as typeof import("../test-support/ChartSettingsFixture.tsx"));
 });
 
 after(async () => {
@@ -72,15 +73,11 @@ function renderPortfolio(): string {
     snapshot: { snapshot, lastSeq: 1, generation: "1", playerWorkingOrders: {}, playerOrdersReady: false },
   };
   const testStore = configureStore({ reducer: () => state });
-  return renderToStaticMarkup(createElement(Provider, {
-    store: testStore,
-    children: createElement(MarketRuntimeProvider, {
-      autoOrderManagerRef: { current: null },
-      setNotice() {},
-      hostRef: { current: null },
-      children: createElement(PositionsPanel, { onOpenMarket() {} }),
-    }),
-  }));
+  return renderToStaticMarkup(createElement(RequiredChildrenFixture<ComponentProps<typeof Provider>>, {
+    component: Provider, props: { store: testStore },
+  }, createElement(RequiredChildrenFixture<ComponentProps<typeof MarketRuntimeProvider>>, {
+    component: MarketRuntimeProvider, props: { autoOrderManagerRef: { current: null }, setNotice() {}, hostRef: { current: null } },
+  }, createElement(PositionsPanel, { onOpenMarket() {} }))));
 }
 
 test("MobileStockDetail SSR 输出被对比度测试覆盖的真实行情消费者", { timeout: 10000 }, () => {

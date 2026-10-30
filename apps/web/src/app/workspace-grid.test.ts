@@ -7,9 +7,11 @@ import ts from "typescript";
 import { createServer, type ViteDevServer } from "vite";
 import type { ResponsiveGridLayoutProps } from "react-grid-layout";
 import { createWorkspaceLayouts, WORKSPACE_PANEL_IDS, type WorkspaceBreakpoint } from "./workspace-layout.ts";
+import type { WorkspaceGridProps } from "./WorkspaceGrid.tsx";
 
 let vite: ViteDevServer;
 let views: typeof import("./WorkspaceGrid.tsx");
+let RequiredChildrenFixture: typeof import("../test-support/ChartSettingsFixture.tsx").RequiredChildrenFixture;
 
 before(async () => {
   vite = await createServer({
@@ -19,6 +21,7 @@ before(async () => {
     optimizeDeps: { noDiscovery: true },
   });
   views = await vite.ssrLoadModule("/src/app/WorkspaceGrid.tsx") as typeof views;
+  ({ RequiredChildrenFixture } = await vite.ssrLoadModule("/src/test-support/ChartSettingsFixture.tsx") as typeof import("../test-support/ChartSettingsFixture.tsx"));
 });
 
 after(async () => { if (vite) await vite.close(); });
@@ -100,8 +103,8 @@ test("纵屏仍是原 app-grid 直接子节点，保留移动筛选属性、交�
     createElement("article", { key: "order", ref: sheetRef, id: "section-order", className: "panel order-panel mobile-sheet", hidden: true }, "委托下单"),
     createElement("article", { key: "user", id: "section-user", className: "panel user-panel" }, "我的"),
   ];
-  const props = { orientation: "portrait" as const, "data-mobile-tab": "market", "data-mobile-detail": "1", children };
-  const html = renderToStaticMarkup(createElement(views.WorkspaceGrid, props));
+  const props = { orientation: "portrait" as const, "data-mobile-tab": "market", "data-mobile-detail": "1" };
+  const html = renderToStaticMarkup(createElement(RequiredChildrenFixture<WorkspaceGridProps>, { component: views.WorkspaceGrid, props }, children));
   assert.equal(html, renderToStaticMarkup(createElement("div", {
     className: "app-grid", "data-mobile-tab": "market", "data-mobile-detail": "1",
   }, children)));
@@ -110,13 +113,11 @@ test("纵屏仍是原 app-grid 直接子节点，保留移动筛选属性、交�
 
 test("未知、重复与无标识面板直接拒绝，非法容器宽度不被默认值掩盖", () => {
   for (const children of [
-    [createElement("article", { id: "unknown" })],
-    [createElement("article", { id: "section-market" }), createElement("article", { id: "section-market" })],
-    [createElement("article")],
+    [createElement("article", { key: "unknown", id: "unknown" })],
+    [createElement("article", { key: "first", id: "section-market" }), createElement("article", { key: "second", id: "section-market" })],
+    [createElement("article", { key: "unidentified" })],
   ]) {
-    assert.throws(() => renderToStaticMarkup(createElement(views.WorkspaceGrid, {
-      orientation: "landscape", children,
-    })), /工作台.*面板/);
+    assert.throws(() => renderToStaticMarkup(createElement(RequiredChildrenFixture<WorkspaceGridProps>, { component: views.WorkspaceGrid, props: { orientation: "landscape" } }, children)), /工作台.*面板/);
   }
   for (const width of [0, -1, NaN, Infinity]) {
     assert.throws(() => views.WorkspaceDesktopLayout({

@@ -43,10 +43,11 @@ export function RetainedHistoryPanel({ query, scopeKey, code, currentDate, fiveD
   const [error, setError] = useState<string | null>(null);
   const owner = useRef({ alive: false, sequence: 0 });
   useEffect(() => {
-    owner.current.alive = true;
-    owner.current.sequence += 1;
+    const requestOwner = owner.current;
+    requestOwner.alive = true;
+    requestOwner.sequence += 1;
     setPages([]); setIndex(0); setLoading(false); setError(null);
-    return () => { owner.current.alive = false; owner.current.sequence += 1; };
+    return () => { requestOwner.alive = false; requestOwner.sequence += 1; };
   }, [scopeKey, code, query, fiveDay]);
   const invalidate = () => { owner.current.sequence += 1; setPages([]); setIndex(0); setLoading(false); setError(null); };
   const load = async (request: MarketHistoryRequest | null, previous: readonly MarketHistoryPage[]) => {

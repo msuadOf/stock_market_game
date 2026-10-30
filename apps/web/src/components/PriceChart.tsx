@@ -129,7 +129,7 @@ export function PriceChart({ data, intraday, dayRange, dailyCandles, lastClose, 
     });
     return () => { current = false; };
   }, [calculateIntradayAverageCurve, chartType, indicator, route?.kind, sampledPoints, samples, seriesKey]);
-  const averagePoints = indicator !== "intradayAverage" || chartType !== "分时" || route?.kind === "unsupported"
+  const averagePoints = useMemo(() => indicator !== "intradayAverage" || chartType !== "分时" || route?.kind === "unsupported"
     ? []
     : route?.kind === "frontend"
       ? data.flatMap((point) => {
@@ -137,7 +137,7 @@ export function PriceChart({ data, intraday, dayRange, dailyCandles, lastClose, 
         const value = intradayAverageYuan(point.cumulativeTurnoverCents, point.cumulativeVolumeShares);
         return value === null ? [] : [{ time: point.time, value }];
       })
-      : rustAveragePoints;
+      : rustAveragePoints, [indicator, chartType, route?.kind, data, rustAveragePoints]);
   const selectedCalculator = route?.kind === "rust" ? indicatorCalculator : null;
   const indicatorResult = useIndicatorResults(
     selectedCalculator,

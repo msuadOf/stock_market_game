@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { after, before, test } from "node:test";
 import { configureStore } from "@reduxjs/toolkit";
-import { createElement, type ReactElement } from "react";
+import { createElement, type ComponentProps, type ReactElement } from "react";
 import { Provider } from "react-redux";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createServer, type ViteDevServer } from "vite";
@@ -14,6 +14,7 @@ let views: typeof import("./LocalRefreshViews.tsx");
 let QuickTradingPanel: typeof import("./QuickTradingPanel.tsx").QuickTradingPanel;
 let QuickTrading: typeof import("./quick-trading.ts").QuickTrading;
 let MarketRuntimeProvider: typeof import("./MarketRuntimeProvider.tsx").MarketRuntimeProvider;
+let RequiredChildrenFixture: typeof import("../test-support/ChartSettingsFixture.tsx").RequiredChildrenFixture;
 
 before(async () => {
   vite = await createServer({
@@ -26,6 +27,7 @@ before(async () => {
   ({ QuickTrading } = await vite.ssrLoadModule("/src/app/quick-trading.ts"));
   views = await vite.ssrLoadModule("/src/app/LocalRefreshViews.tsx") as typeof views;
   ({ MarketRuntimeProvider } = await vite.ssrLoadModule("/src/app/MarketRuntimeProvider.tsx") as typeof import("./MarketRuntimeProvider.tsx"));
+  ({ RequiredChildrenFixture } = await vite.ssrLoadModule("/src/test-support/ChartSettingsFixture.tsx") as typeof import("../test-support/ChartSettingsFixture.tsx"));
 });
 
 after(async () => {
@@ -67,15 +69,11 @@ function renderView(view: ReactElement, activeSnapshot = snapshot): string {
     trades: { items: [{ seq: 1, code: "600101", price: "1000", qty: 250, maker: "1", taker: "2" }] },
   };
   const testStore = configureStore({ reducer: () => state });
-  return renderToStaticMarkup(createElement(Provider, {
-    store: testStore,
-    children: createElement(MarketRuntimeProvider, {
-      autoOrderManagerRef: { current: null },
-      setNotice() {},
-      hostRef: { current: null },
-      children: view,
-    }),
-  }));
+  return renderToStaticMarkup(createElement(RequiredChildrenFixture<ComponentProps<typeof Provider>>, {
+    component: Provider, props: { store: testStore },
+  }, createElement(RequiredChildrenFixture<ComponentProps<typeof MarketRuntimeProvider>>, {
+    component: MarketRuntimeProvider, props: { autoOrderManagerRef: { current: null }, setNotice() {}, hostRef: { current: null } },
+  }, view)));
 }
 
 const browserFixture = { favorites: ["600101"], ready: true, error: null, view: "watchlist" as const, query: "", sortRules: [], setSortRules() {}, setView() {}, setQuery() {}, toggleFavorite() {}, reload() {} };
