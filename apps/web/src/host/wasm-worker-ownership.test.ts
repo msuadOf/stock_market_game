@@ -153,12 +153,12 @@ async function createFixture(
   const control = new MessageChannel(); control.port1.addEventListener("message", (event) => { const value = event.data as Message; control.port1.postMessage(value.type === "facadeEngineMemory" ? { type: "facadeEngineMemoryRegistered", allocationId: 1 } : { type: "facadeEngineConfigured" }); }); control.port1.start();
   const business = new MessageChannel();
   const actualPost = business.port1.postMessage.bind(business.port1);
-  business.port1.postMessage = (value: unknown, transfer?: Transferable[]) => {
+  business.port1.postMessage = (value: unknown) => {
     const message = value as Message;
     if (message.type === failingPost) throw new DOMException("发送失败", "DataCloneError");
     posted.push(message);
     if (message.type === "ready" || message.type === "failure") initialized();
-    actualPost(value, transfer);
+    actualPost(value);
   };
   business.port1.start();
   const send = (message: Message) => { business.port1.dispatchEvent(new MessageEvent("message", { data: message })); };

@@ -354,7 +354,7 @@ test("E2E snapshot bridge读取Redux当前快照，不读取宿主缓存快照",
     try { await f.runtime.dispose(); }
     finally {
       store.getState = getState;
-      if (previousWindow === undefined) delete (globalThis as typeof globalThis & { window?: unknown }).window;
+      if (previousWindow === undefined) Reflect.deleteProperty(globalThis, "window");
       else Object.assign(globalThis, { window: previousWindow });
     }
   }

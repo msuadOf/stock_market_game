@@ -253,6 +253,7 @@ dependencies.addMessageListener((event: MessageEvent<unknown>) => {
     }
     if (request.type === "bindIngress") { bindIngress(owner, request); return; }
     if (request.type === "beginShutdown") {
+      const active = owner;
       exact(request, ["type", "instanceId", "deadline"], "beginShutdown");
       if (typeof request.deadline !== "number" || !Number.isFinite(request.deadline)) throw new Error("beginShutdown deadlineUnixMs 无效");
       const remaining = Math.max(0, request.deadline - performance.timeOrigin - performance.now());
@@ -261,11 +262,11 @@ dependencies.addMessageListener((event: MessageEvent<unknown>) => {
       owner.supervisor!.beginShutdown(owner.shutdownDeadline);
       if (owner.shutdownTimer !== undefined) clearTimeout(owner.shutdownTimer);
       owner.shutdownTimer = setTimeout(() => {
-        if (!owner!.terminal && (!owner!.engineQuiescent || !owner!.ingressQuiescent || !owner!.childrenDrained)) {
-          sendFailure(owner!, new Error("共享关停期限届满，缺少真实 engine/ingress quiescence 或 child drain 收据"));
+        if (!active.terminal && (!active.engineQuiescent || !active.ingressQuiescent || !active.childrenDrained)) {
+          sendFailure(active, new Error("共享关停期限届满，缺少真实 engine/ingress quiescence 或 child drain 收据"));
         }
       }, Math.max(0, owner.shutdownDeadline - performance.now()));
-      void owner.supervisor!.waitForChildrenExit(owner.shutdownDeadline).then(() => { owner.childrenDrained = true; finalize(owner!); }, (error) => sendFailure(owner!, error));
+      void active.supervisor!.waitForChildrenExit(active.shutdownDeadline).then(() => { active.childrenDrained = true; finalize(active); }, (error) => sendFailure(active, error));
       return;
     }
     throw new Error(`未知 controlWorker 命令：${request.type}`);
