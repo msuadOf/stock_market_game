@@ -2,6 +2,7 @@ import { catalogWorkerFixture } from "./catalog-test-fixture.ts";
 import assert from "node:assert/strict";
 import { registerHooks } from "node:module";
 import test from "node:test";
+import { setImmediate } from "node:timers/promises";
 import { commandDayEndArchiveFixture } from "../app/command-host-test-fixture.ts";
 import { currentSaveFixture } from "../save/current-save-fixture.ts";
 import { civilUpdate, frame, snapshot, tickBatch } from "./protocol-test-fixtures.ts";
@@ -48,13 +49,14 @@ async function createFixture(
   missingWrites: boolean | "malformed" | "initial-archive",
 ) {
   const posted: Message[] = [];
+  const globalLifecycle: Message[] = [];
   let initialized: () => void = () => { throw new Error("初始化信号未安装"); };
   const ready = new Promise<void>((resolve) => { initialized = resolve; });
   const calls: string[] = [];
   const timers = new Map<number, () => void>();
   let nextTimer = 0;
   let handle = 7;
-  let failing: "snapshot" | "prepare" | "drop" | "catalog" | "recoverable" | "snapshot-and-drop" | "company-read" | "shutdown" | null = null;
+  let failing: "snapshot" | "prepare" | "drop" | "catalog" | "recoverable" | "snapshot-and-drop" | "company-read" | "company-read-typed" | "shutdown" | null = null;
   let failingPost: string | null = null;
   let writeFailure: unknown;
   let listener: ((event: { data: Message }) => void) | undefined;
@@ -91,6 +93,7 @@ async function createFixture(
     company_read_query: (current: number, query: unknown) => {
       calls.push(`company-read:${current}:${JSON.stringify(query)}`);
       if (failing === "company-read") throw new Error("本人公司查询的实际拒绝原因");
+      if (failing === "company-read-typed") throw { kind: "CorporateState", data: { reason: "实际公司拒绝原因" } };
       return { owner: "0", value: { kind: "OwnerRightsOfferings", data: [] } };
     },
     // 三写返回值是 synthetic transport fixture，不证明真实 Rust 公司批准或 Correction 生命周期。
@@ -111,7 +114,7 @@ async function createFixture(
     },
   };
   replace(bindingsKey, bindings);
-  replace("self", { crossOriginIsolated: true, postMessage: (message: Message) => { if (message.type === failingPost) throw new DOMException("发送失败", "DataCloneError"); posted.push(message); if (message.type === "ready" || message.type === "failure") initialized(); }, addEventListener: (_type: string, callback: typeof listener) => { listener = callback; } });
+  replace("self", { crossOriginIsolated: true, postMessage: (message: Message) => { if (message.type === "engineLifecycle") globalLifecycle.push(message); }, addEventListener: (_type: string, callback: typeof listener) => { listener = callback; } });
   const emptyModule = [0,97,115,109,1,0,0,0];
   const exportNames = ["restore_json", "facade_slot_init_for_restore_json"];
   const exportEntries = exportNames.flatMap((name, index) => [name.length, ...new TextEncoder().encode(name), 0, index]);
@@ -147,13 +150,24 @@ async function createFixture(
   }));
   await import(`./wasm-worker.ts?owner-test=${id}`);
   assert.ok(listener);
-  const send = (message: Message) => { listener!({ data: message }); };
-  const control = new MessageChannel(); control.port1.addEventListener("message", (event) => { control.port1.postMessage(event.data.type === "facadeEngineMemory" ? { type: "facadeEngineMemoryRegistered", allocationId: 1 } : { type: "facadeEngineConfigured" }); }); control.port1.start();
-  send({ type: "init", ...(missingWrites === "initial-archive" ? { initialArchive: saved, restoreCapability: { kind: "verified-package", wasmSha256: wasmHash, glueSha256: "b".repeat(64), sourceSha256: "c".repeat(64), buildManifestSha256: "d".repeat(64), exports: exportNames } } : { setup: {} }), controlPort: control.port2 });
+  const control = new MessageChannel(); control.port1.addEventListener("message", (event) => { const value = event.data as Message; control.port1.postMessage(value.type === "facadeEngineMemory" ? { type: "facadeEngineMemoryRegistered", allocationId: 1 } : { type: "facadeEngineConfigured" }); }); control.port1.start();
+  const business = new MessageChannel();
+  const actualPost = business.port1.postMessage.bind(business.port1);
+  business.port1.postMessage = (value: unknown, transfer?: Transferable[]) => {
+    const message = value as Message;
+    if (message.type === failingPost) throw new DOMException("发送失败", "DataCloneError");
+    posted.push(message);
+    if (message.type === "ready" || message.type === "failure") initialized();
+    actualPost(value, transfer);
+  };
+  business.port1.start();
+  const send = (message: Message) => { business.port1.dispatchEvent(new MessageEvent("message", { data: message })); };
+  listener!({ data: { type: "bindEngineTransport", instanceId: 1, dataPort: business.port1, controlPort: control.port2 } });
+  send({ type: "init", ...(missingWrites === "initial-archive" ? { initialArchive: saved, restoreCapability: { kind: "verified-package", wasmSha256: wasmHash, glueSha256: "b".repeat(64), sourceSha256: "c".repeat(64), buildManifestSha256: "d".repeat(64), exports: exportNames } } : { setup: {} }) });
   await ready;
   assert.deepEqual(posted, [{ type: "ready" }]);
   posted.length = 0;
-  return { send, calls, posted: posted as Message[], timers, saved, handle: (next: number) => { handle = next; }, fail: (next: typeof failing) => { failing = next; }, failPost: (type: string | null) => { failingPost = type; }, failWrite: (error: unknown) => { writeFailure = error; } };
+  return { send, calls, posted: posted as Message[], globalLifecycle, timers, saved, handle: (next: number) => { handle = next; }, fail: (next: typeof failing) => { failing = next; }, failPost: (type: string | null) => { failingPost = type; }, failWrite: (error: unknown) => { writeFailure = error; } };
 }
 
 const correctionWriteRequest = { operation_id: "传输检查", company: 0, supersedes: 7, entries: [{ source: 900000001, date: "2030-01-02", kind: "CashRevenue", cash_flow: "Operating", lines: [{ account: "1002", side: "Debit", amount: "10.00" }, { account: "6001", side: "Credit", amount: "10.00" }] }], reason: "synthetic transport fixture" };
@@ -514,6 +528,13 @@ test("Worker 公司查询 dispatch 使用当前唯一 handle，旧 generation �
     f.fail("company-read");
     f.send({ type: "companyReadQuery", requestId: 23, generation: 1, query });
     assert.match(String(f.posted.at(-1)?.message), /本人公司查询的实际拒绝原因/);
+    f.fail("company-read-typed");
+    f.send({ type: "companyReadQuery", requestId: 24, generation: 1, query });
+    await setImmediate();
+    assert.deepEqual(f.posted.at(-1), {
+      type: "operationError", requestId: 24, generation: 1, message: "实际公司拒绝原因",
+      failure: { kind: "CorporateState", data: { reason: "实际公司拒绝原因" } },
+    }, "typed 公司拒绝须原样保留完整 failure 与请求身份");
   });
 });
 

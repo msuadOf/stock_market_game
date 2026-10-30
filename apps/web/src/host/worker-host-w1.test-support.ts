@@ -3,6 +3,7 @@ import { catalogWorkerFixture } from "./catalog-test-fixture.ts";
 import { setImmediate } from "node:timers/promises";
 import { MessageChannel as NodeMessageChannel } from "node:worker_threads";
 import { createWorkerHost } from "./worker-host.ts";
+import { createEngineControlOwner } from "./engine-control-owner.ts";
 import type { HostFailure } from "./host-update.ts";
 import { snapshot } from "./protocol-test-fixtures.ts";
 import { CAPACITY, GEN_BITS, FREE_HEAD, FREE_HEAD_EMPTY, HEADER_WORDS, SLOT_STRIDE, JOIN_STRIDE, SLOT_JOIN_INDEX, SlotState, JoinState, encodeW, encodeJoin, slotWordOffset, slotFieldOffset, joinWordOffset } from "./facade-slot-protocol.ts";
@@ -36,6 +37,8 @@ export class WorkerHandle extends EventTarget {
   readonly listeners = new Map<string, Set<EventListenerOrEventListenerObject>>();
   terminations = 0;
   controlPort?: MessagePort;
+  dataPort?: MessagePort;
+  instanceId?: number;
   onPost?: (value: Record<string, unknown>, transfer: unknown[]) => void;
   override addEventListener(type: string, callback: EventListenerOrEventListenerObject | null, options?: AddEventListenerOptions | boolean) {
     if (callback !== null) {
@@ -52,6 +55,7 @@ export class WorkerHandle extends EventTarget {
   postMessage(value: Record<string, unknown>, transfer: unknown[] = []) {
     this.sent.push(value); this.transfers.push(transfer);
     if (value.controlPort instanceof MessagePort) this.controlPort = value.controlPort;
+    if (value.dataPort instanceof MessagePort) this.dataPort = value.dataPort;
     this.onPost?.(value, transfer);
   }
   terminate() { this.terminations++; }
@@ -72,7 +76,8 @@ export function fixture(options: { initError?: unknown; initAfterMemoryFailure?:
     Object.defineProperty(globalThis, name, { configurable: true, writable: true, value });
   }
   const clock = new Clock();
-  const workers: WorkerHandle[] = [], channels: NodeMessageChannel[] = [], portCloses = new Map<object, number>();
+  const workers: WorkerHandle[] = [], controllers: WorkerHandle[] = [], channels: NodeMessageChannel[] = [], portCloses = new Map<object, number>();
+  let channelConstructions = 0;
   const failures: HostFailure[] = [];
   const module = new WebAssembly.Module(new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0]));
   const memory = new WebAssembly.Memory({ initial: 1, maximum: 2, shared: true });
@@ -84,7 +89,8 @@ export function fixture(options: { initError?: unknown; initAfterMemoryFailure?:
   let configuredSubstrate: typeof substrate | undefined;
   class FixtureChannel extends NodeMessageChannel {
     constructor() {
-      if (options.channelError === true) throw new Error("Channel 构造失败");
+      channelConstructions++;
+      if (options.channelError === true && channelConstructions > 1) throw new Error("Channel 构造失败");
       super(); channels.push(this);
       this.port1.addEventListener("message", (event) => {
         const data = (event as MessageEvent).data;
@@ -105,32 +111,98 @@ export function fixture(options: { initError?: unknown; initAfterMemoryFailure?:
       if (this.kind === "child" && options.childConstructError !== undefined) throw options.childConstructError;
       workers.push(this);
       this.onPost = (value) => {
-        if (value.type === "init") {
-          options.beforeInitPost?.(clock);
-          if (options.initBeforeMemoryFailure !== undefined) {
-            this.emit({ type: "failure", generation: 0, code: "PACKAGE_FIXTURE", where: "fixture.package", message: String(options.initBeforeMemoryFailure), engineQuiescent: "initialization-failed", memoryAllocation: "not-allocated" });
-            return;
-          }
-          if (options.initError !== undefined) throw options.initError;
-          if (this.controlPort !== undefined) {
-            this.controlPort.addEventListener("message", (event) => {
-              if ((event.data as { type?: string }).type === "facadeEngineMemoryRegistered" && options.initAfterMemoryFailure !== undefined) {
-                memory.grow(1);
-                this.emit({ type: "failure", generation: 0, code: "INIT_FIXTURE", where: "fixture.init", message: String(options.initAfterMemoryFailure), engineQuiescent: "initialization-failed", ...(options.claimUnallocatedAfterMemory === true ? { memoryAllocation: "not-allocated" } : {}) });
-              }
-              if ((event.data as { type?: string }).type === "facadeEngineConfigured") { configured++; this.emit({ type: "ready" }); }
-            });
-            this.controlPort.start();
-            this.controlPort.postMessage(options.initAfterMemoryFailure === undefined ? { type: "facadeEngineSubstrate", ...substrate } : { type: "facadeEngineMemory", allocationId: 1, memory });
-          } else queueMicrotask(() => this.emit({ type: "ready" }));
+        // standalone supervisor 的既有 bootstrapEngine 控制项仍使用其真实公开入口。
+        if (value.type === "init" && this.dataPort === undefined && this.controlPort !== undefined) {
+          this.controlPort.addEventListener("message", (event) => {
+            if ((event.data as { type?: string }).type === "facadeEngineConfigured") { configured++; this.emit({ type: "ready" }); }
+          });
+          this.controlPort.start();
+          this.controlPort.postMessage({ type: "facadeEngineSubstrate", ...substrate });
         }
-        if (value.type === "shutdown") queueMicrotask(() => this.emit({ type: "shutdownCompleted", requestId: value.requestId, generation: value.generation, report: { kind: "success", handle: 7, runtime: null } }));
-        if (value.type === "quiesceIngress") queueMicrotask(() => this.emit({ type: "ingressQuiescent", requestId: value.requestId, generation: value.generation }));
-        if (value.type === "create") queueMicrotask(() => this.emit({ type: "created", generation: 1, capabilities }));
+        if (value.type === "bindEngineTransport") {
+          this.controlPort = value.controlPort as MessagePort;
+          this.dataPort = value.dataPort as MessagePort;
+          this.instanceId = Number(value.instanceId);
+          this.controlPort.addEventListener("message", (event) => {
+            const request = event.data as { type?: string };
+            if (request.type === "facadeEngineMemoryRegistered" && options.initAfterMemoryFailure !== undefined) {
+              memory.grow(1);
+              this.dataPort!.postMessage({ type: "failure", generation: 0, code: "INIT_FIXTURE", where: "fixture.init", message: String(options.initAfterMemoryFailure), engineQuiescent: "initialization-failed", ...(options.claimUnallocatedAfterMemory === true ? { memoryAllocation: "not-allocated" } : {}) });
+              this.emit({ type: "engineLifecycle", instanceId: this.instanceId, state: options.claimUnallocatedAfterMemory === true ? "unallocated" : "quiescent" });
+            }
+            if (request.type === "facadeEngineConfigured") { configured++; this.dataPort!.postMessage({ type: "ready" }); }
+          });
+          this.controlPort.start();
+          this.dataPort.addEventListener("message", (event) => {
+            const request = event.data as Record<string, unknown>;
+            this.sent.push(request);
+            this.transfers.push([]);
+            if (request.type === "init") {
+              options.beforeInitPost?.(clock);
+              if (options.initBeforeMemoryFailure !== undefined) {
+                this.dataPort!.postMessage({ type: "failure", generation: 0, code: "PACKAGE_FIXTURE", where: "fixture.package", message: String(options.initBeforeMemoryFailure), engineQuiescent: "initialization-failed", memoryAllocation: "not-allocated" });
+                this.emit({ type: "engineLifecycle", instanceId: this.instanceId, state: "unallocated" });
+                return;
+              }
+              if (options.initError !== undefined) { this.error(options.initError); return; }
+              this.controlPort!.postMessage(options.initAfterMemoryFailure === undefined ? { type: "facadeEngineSubstrate", ...substrate } : { type: "facadeEngineMemory", allocationId: 1, memory });
+            }
+            if (request.type === "shutdown") queueMicrotask(() => {
+              this.dataPort!.postMessage({ type: "shutdownCompleted", requestId: request.requestId, generation: request.generation, report: { kind: "success", handle: 7, runtime: null } });
+              this.emit({ type: "engineLifecycle", instanceId: this.instanceId, state: "quiescent" });
+            });
+            if (request.type === "quiesceIngress") queueMicrotask(() => this.dataPort!.postMessage({ type: "ingressQuiescent", requestId: request.requestId, generation: request.generation }));
+            if (request.type === "create") queueMicrotask(() => this.dataPort!.postMessage({ type: "created", generation: 1, capabilities }));
+          });
+          this.dataPort.start();
+        }
+        if (value.type === "bindIngressTransport") {
+          this.dataPort = value.dataPort as MessagePort;
+          this.instanceId = Number(value.instanceId);
+          this.dataPort.addEventListener("message", (event) => {
+            const request = event.data as Record<string, unknown>;
+            this.sent.push(request);
+            if (request.type === "quiesceIngress") queueMicrotask(() => {
+              this.dataPort!.postMessage({ type: "ingressQuiescent", requestId: request.requestId, generation: request.generation });
+              this.emit({ type: "ingressLifecycle", instanceId: this.instanceId, state: "quiescent" });
+            });
+          });
+          this.dataPort.start();
+        }
       };
     }
+    override emit(value: unknown) {
+      const type = value !== null && typeof value === "object" ? (value as { type?: unknown }).type : undefined;
+      if (this.dataPort !== undefined && typeof type === "string" && type !== "engineLifecycle" && type !== "ingressLifecycle" && !type.startsWith("facade")) this.dataPort.postMessage(value);
+      else super.emit(value);
+    }
   }
-  install("Worker", FixtureWorker); install("MessageChannel", FixtureChannel);
+  class FixtureControlWorker extends WorkerHandle {
+    private ownerListener: ((event: MessageEvent<unknown>) => void) | undefined;
+    constructor() {
+      super(); controllers.push(this);
+      createEngineControlOwner({
+        createEngineWorker: () => new FixtureWorker(new URL("./wasm-worker.ts", import.meta.url)) as unknown as Worker,
+        createIngressWorker: () => new FixtureWorker(new URL("./wasm-ingress-worker.ts", import.meta.url)) as unknown as Worker,
+        createChildWorker: () => new FixtureWorker(new URL("./facade-child-worker.ts", import.meta.url)) as unknown as Worker,
+        createChannel: () => new FixtureChannel() as unknown as MessageChannel,
+        postMessage: (message) => this.emit(message),
+        addMessageListener: (listener) => { this.ownerListener = listener; },
+        reportError: (error) => { throw error; },
+      });
+    }
+    override postMessage(value: Record<string, unknown>, transfer: unknown[] = []) {
+      this.sent.push(value); this.transfers.push(transfer);
+      if (value.type === "start") options.beforeInitPost?.(clock);
+      this.ownerListener?.(new MessageEvent("message", { data: value }));
+    }
+  }
+  install("Worker", class {
+    constructor(url: URL) {
+      if (url.pathname.endsWith("engine-control-worker.ts")) return new FixtureControlWorker();
+      return new FixtureWorker(url);
+    }
+  }); install("MessageChannel", FixtureChannel);
   install("setTimeout", clock.setTimeout); install("clearTimeout", clock.clearTimeout);
   install("window", { setTimeout: clock.setTimeout, clearTimeout: clock.clearTimeout });
   const sink = (failure: HostFailure) => { failures.push(failure); options.spawnSink?.(failure); };
@@ -141,20 +213,20 @@ export function fixture(options: { initError?: unknown; initAfterMemoryFailure?:
     void creating.then((host) => { outcome = { status: "fulfilled", host }; }, (error: unknown) => { outcome = { status: "rejected", error }; });
     return creating;
   }
-  function baseline(generation = 1) { workers[0].emit({ ...catalogWorkerFixture(snapshot(generation, generation)), type: "baseline", civilDate: "2030-01-02", generation, snapshot: snapshot(generation, generation) }); }
-  function ingress(generation = 1, token: unknown = generation, extra: Record<string, unknown> = {}) { workers[0].emit({ type: "ingress", generation, token, shared: true, ...extra }); }
+  function baseline(generation = 1) { workers[0].dataPort!.postMessage({ ...catalogWorkerFixture(snapshot(generation, generation)), type: "baseline", civilDate: "2030-01-02", generation, snapshot: snapshot(generation, generation) }); }
+  function ingress(generation = 1, token: unknown = generation, extra: Record<string, unknown> = {}) { workers[0].dataPort!.postMessage({ type: "ingress", generation, token, shared: true, ...extra }); }
   function ack(worker: WorkerHandle, generation: number, failure?: string) {
     const request = worker.sent.findLast((item) => item.type === "bindIngress" && item.generation === generation);
     if (request === undefined) throw new Error(`fixture 缺少 generation ${generation} bindIngress`);
-    worker.emit({ type: failure === undefined ? "ingressBound" : "operationError", requestId: request.requestId, generation, ...(failure === undefined ? {} : { message: failure }) });
+    worker.dataPort!.postMessage({ type: failure === undefined ? "ingressBound" : "operationError", requestId: request.requestId, generation, ...(failure === undefined ? {} : { message: failure }) });
+    if (failure === undefined) worker.emit({ type: "ingressLifecycle", instanceId: worker.instanceId, state: "configured", generation, token: request.token });
   }
   function spawn(slot = 0) {
     Atomics.store(words, slotFieldOffset(slot, SLOT_JOIN_INDEX), slot);
     Atomics.store(words, joinWordOffset(slot, layout.capacity), encodeJoin(0, JoinState.Waiting, 29) | 0);
     Atomics.store(words, slotWordOffset(slot), encodeW(0, SlotState.Req, 29) | 0);
-    // pre-host 没有控制端：仍投递普通消息，以实际 sink 缺失断言呈现行为红。
-    if (workers[0].controlPort === undefined) workers[0].emit({ type: "facadeSpawn", slot, gen: 0, name: "fixture" });
-    else workers[0].controlPort.postMessage({ type: "facadeSpawn", slot, gen: 0, name: "fixture" });
+    // 通过 engine 与 supervisor 间的真实 controlPort 触发 child spawn。
+    workers[0].controlPort!.postMessage({ type: "facadeSpawn", slot, gen: 0, name: "fixture" });
   }
   async function cleanup(expectedDisposalFailure?: RegExp) {
     if (outcome.status === "fulfilled") {
@@ -164,7 +236,7 @@ export function fixture(options: { initError?: unknown; initAfterMemoryFailure?:
     else if (outcome.status === "pending" && workers[0] !== undefined) { workers[0].emit({ type: "failure", code: "FIXTURE_CLEANUP", where: "fixture", message: "测试收尾" }); await drain(); }
     // fixture 的防泄漏兜底发生在产品清理断言之后，不能用它证明产品已清理。
     for (const channel of channels) { channel.port1.close(); channel.port2.close(); }
-    for (const worker of workers) if (worker.terminations === 0) worker.terminate();
+    for (const worker of [...workers, ...controllers]) if (worker.terminations === 0) worker.terminate();
     clock.tasks.clear();
     for (const [name, descriptor] of originals) {
       if (descriptor === undefined) Reflect.deleteProperty(globalThis, name);
@@ -172,5 +244,5 @@ export function fixture(options: { initError?: unknown; initAfterMemoryFailure?:
     }
     await drain();
   }
-  return { clock, workers, channels, portCloses, failures, substrate, words, layout, launch, baseline, ingress, ack, spawn, cleanup, get outcome() { return outcome; }, readOutcome(): Outcome { return outcome; }, get configuredSubstrate() { return configuredSubstrate; }, get configured() { return configured; } };
+  return { clock, workers, controllers, channels, portCloses, failures, substrate, words, layout, launch, baseline, ingress, ack, spawn, cleanup, get outcome() { return outcome; }, readOutcome(): Outcome { return outcome; }, get configuredSubstrate() { return configuredSubstrate; }, get configured() { return configured; } };
 }
