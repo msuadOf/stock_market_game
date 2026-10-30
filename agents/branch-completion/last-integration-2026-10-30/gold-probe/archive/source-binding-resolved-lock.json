@@ -1,0 +1,34 @@
+{
+  "kind": "old",
+  "worktree": "/data1/baiyifan/workplace/stock_market_game/.worktree/step-skeleton-gold-884bd5ad-2026-10-30",
+  "revision": "fbf31a58d014be22972ce609cf0976f8cf1c76f6",
+  "original_source": "/data1/baiyifan/workplace/stock_market_game/.worktree/step-skeleton-gold-884bd5ad-2026-10-30/packages/engine/tests/step_skeleton.rs",
+  "original_source_sha256": "00b211e846ea38efff67ea410778cbe3b5ea8a399bbc2998826b6d5cf8fcc52c",
+  "original_source_blob": "be791e03f89a1411429d71174b080ad840d89f28",
+  "probe_source": "/data1/baiyifan/workplace/stock_market_game/.worktree/step-skeleton-gold-884bd5ad-2026-10-30/packages/engine/examples/step_skeleton_projection_probe.rs",
+  "probe_source_sha256": "16bd371233182727768b54f4cef2c9b57e0ffa3d364bf61bc899dc6e50ee5451",
+  "appendix_sha256": "d3b3f2e3d6ef948510f1a8808d2b8e533c56c9f5bbdb2041f782426c0ccea680",
+  "native_runtime_env": "ENGINE_STEP_RUNTIME=1",
+  "auction_ticks": [
+    0,
+    3,
+    6
+  ],
+  "seed": 42,
+  "ticks": 20,
+  "expected_old_fnv": {
+    "0": "16039080022122580669",
+    "3": "7734365835074963189",
+    "6": "6825886869182669854"
+  },
+  "core_source_revision": "884bd5ad12d71608ff7db1524292c98b96dc2978",
+  "reconstruction_only": true,
+  "lock_contract": "本次重建实验显式修正旧manifest已声明的num-bigint依赖边；不是历史原Cargo.lock",
+  "original_lock_sha256": "06894a91fa8dd82fa22d7a4843cef83054ce9b4a71ca4867d067d9cfe53478aa",
+  "resolved_lock_sha256": "558353207e066e3bd9e1fb56b7d7aa56373c0fcccd8de2fef5a17d32b7c43bb9",
+  "same_package_records": 629,
+  "changed_package_records": [
+    "engine 0.1.0 dependencies +num-bigint"
+  ],
+  "build_requirement": "cargo --locked；保持原profile/唯一target；共享300000ms包含三进程并行完整原字节分析，不新增deadline"
+}

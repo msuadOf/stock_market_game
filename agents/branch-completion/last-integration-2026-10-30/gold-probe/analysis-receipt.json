@@ -1,0 +1,30 @@
+{
+  "scope": "仅使用59278实际producer已冻结原字节的非Cargo追加表示分析，不重建producer，不改写原mismatch",
+  "command": [
+    "timeout",
+    "--signal=TERM",
+    "--kill-after=1s",
+    "60s",
+    "python3",
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/last-integration38-skeleton-2026-10-30/agents/branch-completion/last-integration-2026-10-30/gold-probe/forward_transform.py",
+    "/data1/baiyifan/workplace/stock_market_game/agents/branch-completion/validation-scheduler-2026-10-29/step-skeleton-gold-full-inputs-2026-10-30/old",
+    "/data1/baiyifan/workplace/stock_market_game/agents/branch-completion/validation-scheduler-2026-10-29/step-skeleton-gold-full-inputs-2026-10-30/current",
+    "/data1/baiyifan/workplace/stock_market_game/.worktree/last-integration38-skeleton-2026-10-30/agents/branch-completion/last-integration-2026-10-30/gold-probe/forward-v4-actual"
+  ],
+  "classification": "不可由短fixture替代的完整原字节长取证分析；外部60s进程树门，非普通10秒单测、不另开300s预算",
+  "workers": 3,
+  "observed_worker_cpu_percent": [
+    100,
+    99.1,
+    99.4
+  ],
+  "exit_code": 0,
+  "forward_sha256": "ce21dd7f65cbcbc8ea27897442f8e2a52f01bacdc32c0c2d51775bdf36cbf0ff",
+  "manifest_sha256": "b3fc5f46d723d3845a7460d35a914ac58854ab1c1f125a93df4920d1b054fa49",
+  "status": "FORWARD_TRANSFORM_EXACT_60_TUPLES",
+  "byte_equal_tuples": 60,
+  "stdout_sha256": "b3fc5f46d723d3845a7460d35a914ac58854ab1c1f125a93df4920d1b054fa49",
+  "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "archive_raw_total_bytes": 116324069,
+  "archive_xz_total_bytes": 169108
+}
