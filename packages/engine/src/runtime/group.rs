@@ -3365,11 +3365,10 @@ impl GroupState {
                 detail: format!("组 {group} 位 {local} 缺信念个人态"),
             });
         };
-        let accounts_ref: Vec<&GroupAccount> =
-            self.accounts.iter().map(std::sync::Arc::as_ref).collect();
         let context = build_root_read_context(
-            &accounts_ref,
-            &self.belief_states,
+            &self.accounts,
+            local as usize,
+            account,
             &projection,
             &company_facts,
             &self.library,
@@ -5875,16 +5874,15 @@ fn initial_group_urgency(
         .urgency
 }
 
-/// D3a-2c 件2：组线程组装 RootReadContext（与 `RootReadContext::capture`
-/// 同一字段面——投影来源同源：组账户→AccountBook 保真投影（现金/持仓/
-/// T+1 冻结/成本基）、current CompanyReadFacts 共享引用、library=组内
-/// 共享、plans=组内空簿（runtime 模式 session plans 恒空）、时间面=快照
-/// tick 推导 + 快照 civil_date）。任何组装分叉在红证（组内派生==session
-/// 版派生）显红。
+/// D3a-2c 件2：组线程为当前 root local 组装单账户 RootReadContext（与
+/// `RootReadContext::capture` 同一字段面——本人组账户投影保留现金、持仓、
+/// T+1 冻结与成本基，其他共享数据和时间面仍来自当前组状态与快照）。
+/// 当前决策只读取本人的账户；组内其余账户不进入这次 root 读面。
 #[allow(clippy::too_many_arguments)]
 fn build_root_read_context(
-    accounts: &[&GroupAccount],
-    belief_states: &[Option<super::world::BeliefParticipantSnapshot>],
+    accounts: &[std::sync::Arc<GroupAccount>],
+    local: usize,
+    account_id: crate::AccountId,
     projection: &std::sync::Arc<crate::runtime::world::RootProjection>,
     company_facts: &Arc<crate::company::CompanyReadFacts>,
     library: &std::sync::Arc<crate::information::PublicLibrary>,
@@ -5893,8 +5891,7 @@ fn build_root_read_context(
     _tick: u64,
     _ticks_per_day: u64,
     snapshot: &TickSnapshot,
-    // 本组在全局名册的偏移（P0 缺陷修复：`account_ids` / `chain_params`
-    // 均为全局名册序，组内 local 须加偏移；单组=0）。
+    // 本组在全局名册的偏移；`roster_slice` 按此截取本组段，供在途委托匹配。
     roster_offset: usize,
     information_anchors: Arc<
         std::collections::BTreeMap<
@@ -5905,53 +5902,42 @@ fn build_root_read_context(
 ) -> crate::session::RootReadContext {
     // 在途卖股仍按本组名册匹配，现金占用直接由资源实体聚合。
     let roster = roster_slice(&projection.account_ids, roster_offset, accounts.len());
+    let group_account = &accounts[local];
     let mut book = crate::session::AccountBook::default();
-    for (local, slot) in belief_states.iter().enumerate() {
-        if slot.is_none() {
-            continue;
-        }
-        // P0 缺陷根因（原 `account_ids.get(local)` 裸 local）：组 g≥1 取到
-        // 组 0 的账户 id 装进 AccountBook，而 run_chain_decision 解析的是
-        // `roster_offset+local` 的全局 id ⇒ roots.rs "account ID is absent"。
-        let Some(&account_id) = projection.account_ids.get(roster_offset + local) else {
-            continue;
-        };
-        let group_account = &accounts[local];
-        // Sol 整改 3：含在途现金（买 purse 加回——挂单期间权益观察不
-        // 缩水，对齐旧管线 escrow 口径）。
-        let mut account = crate::account::Account::new(
-            account_id,
-            crate::account::AccountKind::Inst,
-            crate::money::Money::from_cents(cash_with_pending_at(group_account)),
+    // Sol 整改 3：含在途现金（买 purse 加回——挂单期间权益观察不
+    // 缩水，对齐旧管线 escrow 口径）。
+    let mut account = crate::account::Account::new(
+        account_id,
+        crate::account::AccountKind::Inst,
+        crate::money::Money::from_cents(cash_with_pending_at(group_account)),
+    );
+    let mut positions = std::collections::BTreeMap::new();
+    for (stock, &qty_raw) in group_account.shares.iter().enumerate() {
+        // Sol 整改 3：持仓含在途卖单余量（旧管线口径=在手+在途——
+        // 组 shares 已扣；qty 口径差收口）。零持仓仅在曾持有或在途
+        // 卖时建条目（held 集成员参与发现采样）。
+        let qty = held_qty_with_pending_at(
+            &group_account.shares,
+            child_in_flight,
+            roster,
+            local as LocalIdx,
+            stock,
         );
-        let mut positions = std::collections::BTreeMap::new();
-        for (stock, &qty_raw) in group_account.shares.iter().enumerate() {
-            // Sol 整改 3：持仓含在途卖单余量（旧管线口径=在手+在途——
-            // 组 shares 已扣；qty 口径差收口）。零持仓仅在曾持有或在途
-            // 卖时建条目（held 集成员参与发现采样）。
-            let qty = held_qty_with_pending_at(
-                &group_account.shares,
-                child_in_flight,
-                roster,
-                local as LocalIdx,
-                stock,
-            );
-            if qty == 0 && qty_raw == 0 && !group_account.ever_held[stock] {
-                continue;
-            }
-            positions.insert(
-                crate::StockId(stock as u32),
-                crate::account::Position::from_restored_parts(
-                    qty,
-                    group_account.frozen_today[stock],
-                    group_account.invested_cents[stock],
-                    group_account.recovered_cents[stock],
-                ),
-            );
+        if qty == 0 && qty_raw == 0 && !group_account.ever_held[stock] {
+            continue;
         }
-        account.fixture_set_positions(positions);
-        book.insert(account_id, account);
+        positions.insert(
+            crate::StockId(stock as u32),
+            crate::account::Position::from_restored_parts(
+                qty,
+                group_account.frozen_today[stock],
+                group_account.invested_cents[stock],
+                group_account.recovered_cents[stock],
+            ),
+        );
     }
+    account.fixture_set_positions(positions);
+    book.insert(account_id, account);
     let day = u32::try_from(
         snapshot
             .calendar
@@ -9459,6 +9445,121 @@ mod roster_offset_tests {
             roster_slice(&ids, 2, 2),
             &ids[0..2],
             "组 2 段不得与组 0 段相同"
+        );
+    }
+
+    #[test]
+    fn root_read_context_projects_only_selected_local_account() {
+        let ids = vec![
+            crate::AccountId(200),
+            crate::AccountId(201),
+            crate::AccountId(202),
+            crate::AccountId(203),
+        ];
+        let roster_offset = 1;
+        let selected_local = 1;
+        let selected_id = ids[roster_offset + selected_local];
+        let projection = crate::runtime::information_fixture::projection(ids.clone());
+        let company_facts = Arc::clone(&projection.initial_company_facts);
+        let accounts = vec![
+            GroupAccount::new(10_000, 2),
+            GroupAccount::new(20_000, 2),
+            GroupAccount::new(30_000, 2),
+            GroupAccount::new(40_000, 2),
+        ];
+        let mut selected = accounts[1].clone();
+        selected.cash = 20_000;
+        selected.buy_purse_held_cents = 1_250;
+        selected.shares[0] = 140;
+        selected.frozen_today[0] = 40;
+        selected.invested_cents[0] = 98_000;
+        selected.recovered_cents[0] = 21_000;
+        selected.ever_held[1] = true;
+        let accounts = vec![
+            Arc::new(accounts[0].clone()),
+            Arc::new(selected),
+            Arc::new(accounts[2].clone()),
+            Arc::new(accounts[3].clone()),
+        ];
+        let mut child_in_flight = std::collections::BTreeMap::new();
+        child_in_flight.insert(
+            (selected_id, crate::StockId(0)),
+            ChildTicket {
+                qty: 90,
+                side: Side::Sell,
+                price: 1_000,
+                order_id: Some(order_id_of(&(0, 5))),
+                remaining: 25,
+                charged_cents: 0,
+                repurchase: None,
+            },
+        );
+        let date = crate::CivilDate::from_iso("2026-01-05").unwrap();
+        let snapshot = TickSnapshot {
+            calendar: crate::runtime::calendar_test_support::open_tick(1, 240, 0, 3, 1, date),
+            tick: 1,
+            market_minute: 0,
+            civil_date: date,
+            stocks: Arc::new(Vec::new()),
+        };
+
+        let context = build_root_read_context(
+            &accounts,
+            selected_local,
+            selected_id,
+            &projection,
+            &company_facts,
+            &Arc::new(crate::information::PublicLibrary::default()),
+            &crate::plans::PlanBook::default(),
+            &child_in_flight,
+            snapshot.tick,
+            240,
+            &snapshot,
+            roster_offset,
+            Arc::new(std::collections::BTreeMap::new()),
+        );
+
+        let account = &context.accounts[&selected_id];
+        assert_eq!(account.cash().cents(), 21_250, "现金含在途买入 purse");
+        let held = account.position(&crate::StockId(0)).expect("本人持仓投影");
+        assert_eq!(held.qty(), 165, "持仓只加回卖票实时 remaining");
+        assert_eq!(held.t1_locked(), 40, "保留 T+1 冻结股数");
+        assert_eq!(held.invested_cents(), 98_000, "保留累计买入成交额");
+        assert_eq!(held.recovered_cents(), 21_000, "保留累计卖出成交额");
+        let ever_held = account
+            .position(&crate::StockId(1))
+            .expect("曾持有零仓仍保留");
+        assert_eq!(ever_held.qty(), 0, "曾持有的零仓条目仍存在");
+        assert_eq!(
+            context.day,
+            u32::try_from(
+                snapshot
+                    .calendar
+                    .before_projection()
+                    .completed_shared_session_count()
+            )
+            .expect("会话数在范围内")
+        );
+        assert_eq!(
+            context.market_minute,
+            snapshot
+                .calendar
+                .before_projection()
+                .completed_shared_minute_count()
+        );
+        let projected_ids: Vec<_> = (&context.accounts).into_iter().map(|(id, _)| *id).collect();
+        assert_eq!(
+            projected_ids,
+            vec![selected_id],
+            "root observe 只需要并应只投影本次 local 对应账户"
+        );
+        assert!(
+            !projected_ids.contains(&ids[1]) && !projected_ids.contains(&ids[3]),
+            "同组其他账户不进入本次 root observe 读面"
+        );
+        assert!(
+            !projected_ids.contains(&crate::AccountId(205)),
+            "尾部无全局名册槽位时不构造账户"
         );
     }
 }
