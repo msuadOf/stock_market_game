@@ -6,6 +6,7 @@ use crate::runtime::world::BeliefParticipantSnapshot;
 thread_local! {
     static RUNTIME_BOOK_PROJECTION_COSTS: std::cell::Cell<(usize, usize)> =
         const { std::cell::Cell::new((0, 0)) };
+    static WORKING_ORDER_ROW_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 #[cfg(test)]
@@ -16,6 +17,21 @@ pub(crate) fn reset_runtime_book_projection_costs_for_test() {
 #[cfg(test)]
 pub(crate) fn take_runtime_book_projection_costs_for_test() -> (usize, usize) {
     RUNTIME_BOOK_PROJECTION_COSTS.with(|costs| costs.replace((0, 0)))
+}
+
+#[cfg(test)]
+pub(crate) fn reset_working_order_row_visits_for_test() {
+    WORKING_ORDER_ROW_VISITS.with(|visits| visits.set(0));
+}
+
+#[cfg(test)]
+pub(crate) fn take_working_order_row_visits_for_test() -> usize {
+    WORKING_ORDER_ROW_VISITS.with(|visits| visits.replace(0))
+}
+
+#[cfg(test)]
+pub(crate) fn record_working_order_row_visit_for_test() {
+    WORKING_ORDER_ROW_VISITS.with(|visits| visits.set(visits.get() + 1));
 }
 
 #[cfg(test)]
@@ -819,8 +835,11 @@ impl GameSession {
         selected.insert(AccountId(0));
         let mut reserved_cash: BTreeMap<AccountId, Money> = BTreeMap::new();
         let mut reserved_sell: BTreeMap<AccountId, BTreeMap<StockId, u32>> = BTreeMap::new();
+        let mut working_orders = Vec::new();
         for (code, mirror) in &mirrors {
-            for (owner, side, price, qty, _, value, _) in &mirror.orders {
+            for (owner, side, price, qty, serial, value, _) in &mirror.orders {
+                #[cfg(test)]
+                crate::session::runtime_mirror::record_working_order_row_visit_for_test();
                 if !selected.contains(owner) {
                     continue;
                 }
@@ -846,8 +865,14 @@ impl GameSession {
                         .checked_add(*qty)
                         .ok_or_else(|| format!("预留 candidate 股数溢出：owner={owner:?}"))?;
                 }
+                if let Some(order) = protocol::player_working_order_from_mirror(
+                    *code, *owner, *side, *price, *qty, *serial, phase,
+                ) {
+                    working_orders.push(order);
+                }
             }
         }
+        working_orders.sort_by_key(|order| order.id);
         let mut account_snaps = BTreeMap::new();
         for id in selected {
             let account = accounts
@@ -929,10 +954,7 @@ impl GameSession {
             daily_candles: BTreeMap::new(),
             active_daily_candles: candle_book.active().clone(),
         };
-        let runtime = GameSession::public_runtime_from_prepared(
-            &snapshot,
-            protocol::working_orders_from_mirror(&mirrors, phase),
-        )
+        let runtime = GameSession::public_runtime_from_prepared(&snapshot, working_orders)
         .map_err(|error| error.to_string())?;
         let projection = protocol::PreparedTickProjection { snapshot, runtime };
         let retail_decisions = if is_static {

@@ -779,3 +779,144 @@ fn unchanged_runtime_book_reuses_mirror_and_full_public_projection_cost() {
     assert_eq!(runtime_projection[6], serde_json::to_value(expected_working).unwrap());
     assert_eq!(game.player_working_orders(), first_working_orders);
 }
+
+#[test]
+fn runtime_mirror_prepares_working_orders_with_one_total_order_row_scan() {
+    use crate::{LimitPrice, Money, Side, StockId};
+    use super::protocol::{FrozenAsset, OrderVenue, PlayerWorkingOrder};
+
+    let mut setup = super::npc_working_quote_tests::quote_setup(0);
+    setup.ticks_per_day = 100;
+    setup.auction_ticks = 0;
+    setup.closing_auction_ticks = 0;
+    setup.npcs.retail_count = 0;
+    setup.npcs.inst_count = 0;
+    setup.npcs.hot_count = 0;
+    let mut game = GameSession::new(setup, 42).unwrap();
+    game.fixture_account_mut(&AccountId(0))
+        .unwrap()
+        .fixture_set_positions(std::collections::BTreeMap::from([(
+            StockId(0),
+            crate::account::Position::from_restored_parts(1_000, 0, 1_000_000, 0),
+        )]));
+    let mut driver = crate::runtime::drive::RuntimeDriver::from_session(&mut game).unwrap();
+
+    let buy_prices = [999, 998, 997, 996, 995, 994, 993];
+    for price in buy_prices {
+        game.enqueue_player_intent(
+            AccountId(0),
+            crate::Intent::PlaceLimit {
+                code: StockId(0),
+                side: Side::Buy,
+                price: LimitPrice::Fixed(Money::from_cents(price)),
+                qty: 100,
+            },
+        )
+        .unwrap();
+        driver.step(&mut game).unwrap();
+    }
+    game.enqueue_player_intent(
+        AccountId(0),
+        crate::Intent::PlaceLimit {
+            code: StockId(0),
+            side: Side::Sell,
+            price: LimitPrice::Fixed(Money::from_cents(1_001)),
+            qty: 100,
+        },
+    )
+    .unwrap();
+    driver.step(&mut game).unwrap();
+
+    let mirror = &game.state.desk_book_mirror[&StockId(0)];
+    assert_eq!(
+        mirror.orders.len(),
+        8,
+        "fixture 全部 mirror.orders 固定为八行"
+    );
+    let expected_working_orders = buy_prices
+        .iter()
+        .enumerate()
+        .map(|(index, price)| PlayerWorkingOrder {
+            id: crate::runtime::group::desk_order_id(0, index as u64 + 1),
+            code: StockId(0),
+            side: Side::Buy,
+            price: Money::from_cents(*price),
+            remaining_qty: 100,
+            venue: OrderVenue::Continuous,
+            frozen: FrozenAsset::Cash,
+        })
+        .chain(std::iter::once(PlayerWorkingOrder {
+            id: crate::runtime::group::desk_order_id(0, 8),
+            code: StockId(0),
+            side: Side::Sell,
+            price: Money::from_cents(1_001),
+            remaining_qty: 100,
+            venue: OrderVenue::Continuous,
+            frozen: FrozenAsset::Shares,
+        }))
+        .collect::<Vec<_>>();
+    let expected_reserved_cash = buy_prices
+        .iter()
+        .try_fold(Money::ZERO, |sum, price| {
+            sum.add(super::live_cash_reservation(
+                &game.state.setup.config,
+                Side::Buy,
+                Money::from_cents(*price),
+                100,
+                Money::ZERO,
+            )?)
+        })
+        .unwrap();
+    let committed_before = serde_json::to_value(game.snapshot_inner(true, true)).unwrap();
+    let snapshot_before = game.runtime_snapshot();
+    let before_cash = game.account(AccountId(0)).unwrap().cash();
+    let before_position = serde_json::to_value(
+        &game.account(AccountId(0)).unwrap().positions()[&StockId(0)],
+    )
+    .unwrap();
+    let input = driver.prepare_driver_step(&game).unwrap();
+
+    super::runtime_mirror::reset_working_order_row_visits_for_test();
+    let prepared = game.prepare_runtime_mirror(&mut driver, input, 9).unwrap();
+    let visits = super::runtime_mirror::take_working_order_row_visits_for_test();
+
+    assert_eq!(
+        prepared.projection.snapshot.markets,
+        snapshot_before.markets
+    );
+    assert_eq!(
+        prepared.projection.snapshot.accounts,
+        snapshot_before.accounts
+    );
+    assert_eq!(
+        prepared.projection.snapshot.accounts[&AccountId(0)].reserved_cash,
+        expected_reserved_cash
+    );
+    assert_eq!(
+        prepared.projection.snapshot.accounts[&AccountId(0)].reserved_sell_qty[&StockId(0)],
+        100
+    );
+    assert_eq!(
+        prepared.projection.snapshot.accounts[&AccountId(0)].cash,
+        before_cash
+    );
+    assert_eq!(
+        serde_json::to_value(&game.account(AccountId(0)).unwrap().positions()[&StockId(0)])
+            .unwrap(),
+        before_position
+    );
+    assert_eq!(game.state.desk_book_mirror[&StockId(0)].orders.len(), 8);
+    assert_eq!(
+        serde_json::to_value(game.snapshot_inner(true, true)).unwrap(),
+        committed_before
+    );
+    let expected_working: std::collections::BTreeMap<_, _> = expected_working_orders
+        .into_iter()
+        .map(|order| (order.id, order))
+        .collect();
+    assert_eq!(
+        prepared.projection.runtime.test_projection()[6],
+        serde_json::to_value(expected_working).unwrap()
+    );
+    assert_eq!(visits, 8, "预留与 PlayerWorkingOrders 应合计逐行扫描一次");
+}

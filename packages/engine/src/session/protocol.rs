@@ -22,7 +22,7 @@ pub use commit::project_timeseries;
 pub(in crate::session) use commit::{PreparedTickProjection, TickCandidateProjection};
 pub use delta::{PlayerOrderDelta, PublicRuntimeState, RuntimeDelta};
 pub use facts::{EventFact, SessionFactCursor};
-pub(in crate::session) use player_orders::working_orders_from_mirror;
+pub(in crate::session) use player_orders::player_working_order_from_mirror;
 pub use replay::*;
 
 #[cfg(test)]
