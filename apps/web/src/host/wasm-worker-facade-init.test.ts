@@ -19,6 +19,8 @@ test("生产 Worker init 把原输入交唯一initializer，配置前create拒�
   replace(key, state);
   replace("self", { crossOriginIsolated: true, postMessage(message: Record<string, unknown>) { posted.push(message); }, addEventListener(_type: string, callback: typeof handler) { handler = callback; } });
   replace("fetch", async () => ({ ok: true, arrayBuffer: async () => new Uint8Array([0,97,115,109,1,0,0,0]).buffer }));
+  let readyTimer: ReturnType<typeof setTimeout> | undefined;
+  let readyListener: ((event: MessageEvent<unknown>) => void) | undefined;
   const hooks = registerHooks({
     resolve(specifier, context, next) {
       if (specifier === "./facade-engine-initialize.ts" || specifier === "../../wasm-pkg/web_wasm.js") return { url: `virtual:facade-init:${specifier}`, shortCircuit: true };
@@ -52,10 +54,23 @@ test("生产 Worker init 把原输入交唯一initializer，配置前create拒�
     await send({ type: "create", setup: { marker: "wrong-second-copy" }, seed: 1n });
     for (let count = 0; count < 8; count++) await new Promise((resolve) => setImmediate(resolve));
     assert.equal(created.length, 0); assert.equal(posted.at(-1)?.type, "failure");
-    posted.length = 0; release(); for (let count = 0; count < 8; count++) await new Promise((resolve) => setImmediate(resolve));
+    posted.length = 0;
+    const ready = new Promise<void>((resolve, reject) => {
+      readyListener = (event) => {
+        const message = event.data;
+        if (typeof message === "object" && message !== null && (message as Record<string, unknown>).type === "ready") resolve();
+      };
+      ownerBusinessPort.addEventListener("message", readyListener);
+      ownerBusinessPort.start();
+      readyTimer = setTimeout(() => reject(new Error("等待 Worker ready 消息超时")), 1000);
+    });
+    release();
+    await ready;
+    if (readyTimer !== undefined) clearTimeout(readyTimer);
+    if (readyListener !== undefined) ownerBusinessPort.removeEventListener("message", readyListener);
     assert.deepEqual(posted, [{ type: "ready" }]);
     await send({ type: "create", seed: 1n });
     for (let count = 0; count < 8; count++) await new Promise((resolve) => setImmediate(resolve));
     assert.deepEqual(created, [setup]);
-  } finally { release(); transport.close(); hooks.deregister(); for (const [name, descriptor] of saved) { if (descriptor === undefined) Reflect.deleteProperty(globalThis, name); else Object.defineProperty(globalThis, name, descriptor); } }
+  } finally { if (readyTimer !== undefined) clearTimeout(readyTimer); if (readyListener !== undefined) (transport.channels[0]!.port1 as unknown as MessagePort).removeEventListener("message", readyListener); release(); transport.close(); hooks.deregister(); for (const [name, descriptor] of saved) { if (descriptor === undefined) Reflect.deleteProperty(globalThis, name); else Object.defineProperty(globalThis, name, descriptor); } }
 });
