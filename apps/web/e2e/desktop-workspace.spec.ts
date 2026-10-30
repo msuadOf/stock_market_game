@@ -1,5 +1,37 @@
 import { expect, test } from "@playwright/test";
 
+type DailyCandle = { time: number; open: string; high: string; low: string; close: string; volume: number };
+type CalendarSnapshot = { daily_candles: Record<string, DailyCandle[]>; active_daily_candles: Record<string, DailyCandle> };
+
+function expectedLots(shares: number): string {
+  const units = ["", "万", "亿", "万亿"];
+  let value = shares / 100;
+  let tier = 0;
+  while (value >= 10_000) { value /= 10_000; tier += 1; }
+  return `${value.toFixed(2).replace(/(\.\d*?[1-9])0+$|\.0+$/, "$1")}${units[tier]}`;
+}
+
+function independentCalendarCandles(candles: readonly DailyCandle[], period: "周K" | "月K") {
+  const groups: DailyCandle[][] = [];
+  let previousKey = "";
+  for (const candle of candles) {
+    const date = new Date(candle.time * 1000);
+    const key = period === "月K"
+      ? `${date.getUTCFullYear()}-${date.getUTCMonth()}`
+      : String(Math.floor(candle.time / 86400) - (date.getUTCDay() + 6) % 7);
+    if (key !== previousKey) groups.push([]);
+    groups.at(-1)!.push(candle);
+    previousKey = key;
+  }
+  return groups.map(group => {
+    const first = group[0]!;
+    const last = group.at(-1)!;
+    const high = group.reduce((value, candle) => BigInt(candle.high) > BigInt(value.high) ? candle : value, first);
+    const low = group.reduce((value, candle) => BigInt(candle.low) < BigInt(value.low) ? candle : value, first);
+    return { first, last, open: Number(first.open) / 100, high: Number(high.high) / 100, low: Number(low.low) / 100, close: Number(last.close) / 100, volume: group.reduce((sum, candle) => sum + candle.volume, 0) };
+  });
+}
+
 test.setTimeout(10_000);
 
 test("窄窗口看盘交易的周月K说明不裁切底部指标按钮", async ({ page }) => {
@@ -67,15 +99,62 @@ test("桌面与手机共用周期选择，日周月入口和均线设置保持�
   await expect(tabs.getByRole("tab", { name: "周K", exact: true })).toHaveCount(1);
   await tabs.getByRole("tab", { name: "日K", exact: true }).click();
   const chart = page.locator(".shared-kline-host .msd-kline");
+  const snapshot = await page.evaluate(() => {
+    const controls = (globalThis as typeof globalThis & { __STOCK_GAME_E2E__?: { snapshot(): CalendarSnapshot } }).__STOCK_GAME_E2E__;
+    if (!controls) throw new Error("E2E engine snapshot unavailable");
+    return controls.snapshot();
+  });
+  const closed = snapshot.daily_candles["600101"];
+  const active = snapshot.active_daily_candles["600101"];
+  if (!closed || !active) throw new Error("600101快照缺少已结束或活动日K");
+  const source = [...closed, active];
   const dailyCount = Number(await chart.getAttribute("data-kline-count"));
+  expect(dailyCount, "图表日K与真实快照成员数一致").toBe(source.length);
   await chart.getByRole("button", { name: /^MA5：/ }).click();
   await tabs.getByRole("tab", { name: "日K", exact: true }).press("ArrowRight");
   await expect(tabs.getByRole("tab", { name: "周K", exact: true })).toHaveAttribute("aria-selected", "true");
-  await expect(chart).toHaveAttribute("data-kline-count", String(Math.ceil(dailyCount / 5)));
-  await expect(chart.getByRole("button", { name: /^MA5：/ })).toHaveAttribute("aria-pressed", "false");
-  await expect(chart).toContainText("每5个游戏交易日合并");
-  await tabs.getByRole("tab", { name: "月K", exact: true }).click();
-  await expect(chart).toHaveAttribute("data-kline-count", String(Math.ceil(dailyCount / 20)));
+  for (const period of ["周K", "月K"] as const) {
+    const expected = independentCalendarCandles(source, period);
+    await expect(chart).toHaveAttribute("data-kline-count", String(expected.length));
+    const latest = expected.at(-1);
+    if (!latest) throw new Error(`${period}独立自然周期分桶为空`);
+    const signature = `${latest.first.time}:${latest.open}:${latest.high}:${latest.low}:${latest.close}:${latest.volume}`;
+    await expect(chart).toHaveAttribute("data-kline-signature", signature);
+    const earliest = chart.getByRole("button", { name: "跳到最早历史", exact: true });
+    if (await earliest.isEnabled()) await earliest.click();
+    const firstMark = chart.locator(".msd-candle-chart g rect").first();
+    const svg = chart.locator(".msd-candle-chart");
+    const svgBounds = await svg.boundingBox();
+    const firstBounds = await firstMark.boundingBox();
+    if (!svgBounds || !firstBounds) throw new Error("自然周期首桶蜡烛不可见");
+    await svg.click({ position: { x: firstBounds.x + firstBounds.width / 2 - svgBounds.x, y: firstBounds.y + firstBounds.height / 2 - svgBounds.y } });
+    const details = chart.getByRole("complementary", { name: "K线详细信息", exact: true });
+    await expect(details.locator("dd").nth(0)).toHaveText(new Date(expected[0]!.first.time * 1000).toISOString().slice(0, 10).replace(/^(\d{4})-(\d{2})-(\d{2})$/, "$1年$2月$3日"));
+    await expect(details.locator("dd").nth(1)).toHaveText((Number(expected[0]!.open)).toFixed(2));
+    await expect(details.locator("dd").nth(2)).toHaveText((Number(expected[0]!.high)).toFixed(2));
+    await expect(details.locator("dd").nth(3)).toHaveText((Number(expected[0]!.low)).toFixed(2));
+    await expect(details.locator("dd").nth(4)).toHaveText((Number(expected[0]!.close)).toFixed(2));
+    await expect(details.locator("dd").nth(7)).toHaveText(`${expectedLots(expected[0]!.volume)}手`);
+    await details.getByRole("button", { name: "关闭K线详细信息" }).click();
+    const reset = chart.getByRole("button", { name: "复位K线窗口", exact: true });
+    if (await reset.isEnabled()) await reset.click();
+    const lastMark = chart.locator(".msd-candle-chart g rect").last();
+    const lastBounds = await lastMark.boundingBox();
+    const svgBoundsAfterReset = await svg.boundingBox();
+    if (!lastBounds || !svgBoundsAfterReset) throw new Error("自然周期末桶蜡烛不可见");
+    await svg.click({ position: { x: lastBounds.x + lastBounds.width / 2 - svgBoundsAfterReset.x, y: lastBounds.y + lastBounds.height / 2 - svgBoundsAfterReset.y } });
+    const latestDetails = chart.getByRole("complementary", { name: "K线详细信息", exact: true });
+    await expect(latestDetails.locator("dd").nth(0)).toHaveText(new Date(latest.first.time * 1000).toISOString().slice(0, 10).replace(/^(\d{4})-(\d{2})-(\d{2})$/, "$1年$2月$3日"));
+    await expect(latestDetails.locator("dd").nth(1)).toHaveText(latest.open.toFixed(2));
+    await expect(latestDetails.locator("dd").nth(2)).toHaveText(latest.high.toFixed(2));
+    await expect(latestDetails.locator("dd").nth(3)).toHaveText(latest.low.toFixed(2));
+    await expect(latestDetails.locator("dd").nth(4)).toHaveText(latest.close.toFixed(2));
+    await expect(latestDetails.locator("dd").nth(7)).toHaveText(`${expectedLots(latest.volume)}手`);
+    await latestDetails.getByRole("button", { name: "关闭K线详细信息" }).click();
+    await expect(chart.getByRole("button", { name: /^MA5：/ })).toHaveAttribute("aria-pressed", "false");
+    await expect(chart).toContainText(period === "周K" ? "周一至周日的自然周" : "公历自然月");
+    if (period === "周K") await tabs.getByRole("tab", { name: "月K", exact: true }).click();
+  }
   await page.setViewportSize({ width: 390, height: 844 });
   await page.getByRole("button", { name: /稳健实业 600101/ }).click();
   await expect(page.getByRole("tab", { name: "月K", exact: true })).toHaveAttribute("aria-selected", "true");
@@ -209,10 +288,18 @@ test("1020窗口个股图保留完整时间轴，价量左右边界一致且盘�
   const overflow = await page.locator(".terminal-body").evaluate(el => el.scrollWidth > el.clientWidth);
   expect(overflow).toBe(false);
   await page.locator("#section-trade").getByRole("tab", { name: "日K", exact: true }).click();
-  await expect(chart).toHaveCount(1);
-  await expect(chart).toBeHidden();
+  await expect(chart).toHaveCount(0);
+  await expect(page.locator(".shared-kline-host .msd-kline")).toBeVisible();
   await page.locator("#section-trade").getByRole("tab", { name: "分时", exact: true }).click();
   await expect(chart).toBeVisible();
+  await expect(page.locator(".shared-kline-host .msd-kline")).toHaveCount(0);
+  await expect(chart.getByText("11:30/13:00", { exact: true })).toBeVisible();
+  const returnedPrice = await page.locator(".intraday-price-plot").boundingBox();
+  const returnedVolume = await page.locator(".intraday-volume-plot").boundingBox();
+  expect(returnedPrice).not.toBeNull();
+  expect(returnedVolume).not.toBeNull();
+  expect(Math.abs(returnedPrice!.x - returnedVolume!.x)).toBeLessThan(1);
+  expect(Math.abs(returnedPrice!.width - returnedVolume!.width)).toBeLessThan(1);
 });
 
 test("均线按钮可多选，关闭其中一条不影响其他均线", async ({ page }) => {
@@ -241,6 +328,7 @@ test("共用K线支持滚轮、Shift平移、点击对齐和双指缩放", async
   await page.goto("/?tradingE2E=1");
   await page.getByRole("navigation", { name: "桌面主导航" }).getByRole("button", { name: "个股", exact: true }).click();
   await page.getByRole("tab", { name: "日K", exact: true }).click();
+  await page.getByLabel("指标数据源", { exact: true }).selectOption("rust");
   const panel = page.locator('.shared-kline-host .msd-kline');
   const svg = panel.locator('.msd-candle-chart');
   await svg.dispatchEvent('wheel', { deltaY: -80, bubbles: true, cancelable: true });
@@ -352,6 +440,8 @@ test("当前窗口看盘下单的按钮和K线指标无需滚动，完整交易�
   const nav = page.getByRole("navigation", { name: "桌面主导航" });
   await nav.getByRole("button", { name: "个股", exact: true }).click();
   await page.getByRole("tab", { name: "日K", exact: true }).click();
+  await page.getByLabel("指标数据源", { exact: true }).selectOption("rust");
+  await expect(page.getByLabel("KDJ坐标", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "买入此股票", exact: true }).click();
   const order = page.locator("#section-order");
   const buy = await order.getByRole("button", { name: "买入", exact: true }).boundingBox();

@@ -16,10 +16,11 @@ test.beforeAll(async () => {
     code: "600101", name: "稳健实业",
     market: { last_price: "1232", last_close: "1120", best_bid: "1232", best_ask: "1233", bids: [], asks: [] },
     minutePoints: [], auctionPoints: [], dailyCandles: [],
+    indicatorDataSource: "frontend", indicatorCapabilities: { intradayAverage: false, macd: false, priceKdj: false, candleKdj: false }, onIndicatorDataSourceChange() {},
     activeDailyCandle: { time: 0, open: 11.2, high: 12.32, low: 11.2, close: 12.32, rawPrices: { open: "1120", high: "1232", low: "1120", close: "1232" }, volume },
-    trades: [], elapsedMinutes: 19, totalMinutes: 240, period: "分时", infoTab: "盘口", indicatorCalculator: null,
+    trades: [], elapsedMinutes: 19, totalMinutes: 240, klineDays: 5, period: "分时", infoTab: "盘口", indicatorCalculator: null,
     speed: 1, measuredSpeed: "实测 0x", running: false, gameDay: 1, gameTick: 901,
-    onPeriodChange() {}, onInfoTabChange() {}, onSpeedChange() {}, onPauseToggle() {}, onBack() {}, onPrevious() {}, onNext() {},
+    onKlineDaysChange() {}, onPeriodChange() {}, onInfoTabChange() {}, onSpeedChange() {}, onPauseToggle() {}, onBack() {}, onPrevious() {}, onNext() {}, companyContent: null,
   })));
 });
 

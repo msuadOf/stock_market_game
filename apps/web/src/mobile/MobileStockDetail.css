@@ -1,4 +1,4 @@
-.mobile-stock-detail {
+.mobile-stock-detail, .msd-kline, .msd-order-book {
   --msd-red: #d4202a;
   --msd-rise: #ef3f49;
   --msd-fall: #009b22;
