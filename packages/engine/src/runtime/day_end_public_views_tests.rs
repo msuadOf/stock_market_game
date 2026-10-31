@@ -1140,25 +1140,37 @@ fn sell_decision_setup(next_tick: u64) -> super::decision::DecisionSetup {
 }
 
 /// 对照从相同最新价及真实昨收恢复；最后一拍保旧昨收，下一日才用收盘价。
-fn same_new_day_sell_control_spec(close: i64, final_tick: u64) -> WorldSpec {
+fn same_new_day_sell_control_spec(
+    close: i64,
+    final_tick: u64,
+    source: &super::protocol::StockPublic,
+) -> WorldSpec {
     let previous_close = if final_tick.is_multiple_of(DAY_END_TICK) {
         close
     } else {
         INITIAL_PRICE
     };
+    assert_eq!(source.last_price, close);
+    assert_eq!(source.last_close, previous_close);
+    assert_eq!(
+        source.daily_active_trade_count > 0,
+        !final_tick.is_multiple_of(DAY_END_TICK),
+        "日中 Drain 保留真实当日成交；完整日结后的新日尚无成交"
+    );
     let mut spec = closing_spec(close);
     spec.stocks[0] = super::world::DeskStockSpec::main_board(close);
+    // 从真实清算后的同版读面构造对照，不用零成交 seed 冒充已成交的日中状态。
     spec.stocks[0].initial_market = Some(super::desk::DeskMarketSeed {
-        last_price: close,
-        last_close: previous_close,
-        day_high: close,
-        day_low: close,
-        volume_today: 0,
-        turnover_today: 0,
-        trade_count: 0,
-        candle: Some((close, close, close, close, 0)),
-        minute_closes: Vec::new(),
-        minute_bars: Vec::new(),
+        last_price: source.last_price,
+        last_close: source.last_close,
+        day_high: source.daily_active.map_or(close, |candle| candle.1),
+        day_low: source.daily_active.map_or(close, |candle| candle.2),
+        volume_today: source.volume_today,
+        turnover_today: source.daily_active_turnover_cents,
+        trade_count: source.daily_active_trade_count,
+        candle: source.daily_active,
+        minute_closes: source.minute_closes.clone(),
+        minute_bars: source.minute_bars.as_ref().clone(),
     });
     spec.initial_committed_tick = final_tick;
     spec.initial_last_day_end_tick = Some(final_tick);
@@ -1217,10 +1229,12 @@ fn next_start_real_sell_consumers_match_the_same_new_day_control() {
             if final_tick == DAY_END_TICK {
                 crossed.set_civil_date(next_raw_trading_date(civil_date));
             }
+            let control_market = crossed.public_views()[0].clone();
             crossed
                 .run_ticks(1)
                 .expect("真实 Start 使用新基准生成并受理机构卖单");
-            let mut control_spec = same_new_day_sell_control_spec(close, final_tick);
+            let mut control_spec =
+                same_new_day_sell_control_spec(close, final_tick, &control_market);
             control_spec.decision = Some(sell_decision_setup(next_tick));
             let mut control = World::spawn(
                 control_spec,
@@ -1228,6 +1242,25 @@ fn next_start_real_sell_consumers_match_the_same_new_day_control() {
                     .expect("显式 raw Calendar 政策合法"),
             )
             .expect("同新日昨收稳态对照");
+            let initial = &control.public_views()[0];
+            assert_eq!(
+                (
+                    initial.daily_active_trade_count,
+                    initial.volume_today,
+                    initial.daily_active_turnover_cents,
+                    initial.daily_active
+                ),
+                (
+                    control_market.daily_active_trade_count,
+                    control_market.volume_today,
+                    control_market.daily_active_turnover_cents,
+                    control_market.daily_active
+                ),
+                "首 Start 前公共成交统计须与真实恢复源一致"
+            );
+            assert_eq!(initial.observation_price(), close);
+            assert_eq!(initial.minute_closes, control_market.minute_closes);
+            assert_eq!(initial.minute_bars, control_market.minute_bars);
             control.run_ticks(1).expect("对照 Start 真实机构卖向消费");
             let lower = if final_tick == DAY_END_TICK {
                 close * 9 / 10
@@ -1375,7 +1408,7 @@ fn next_start_sell_boundary_matches_the_sell_cage_floor() {
             );
             let public_floor = view.min_sell_price;
             let mut control = World::spawn(
-                same_new_day_sell_control_spec(close, final_tick),
+                same_new_day_sell_control_spec(close, final_tick, view),
                 crate::calendar::TradingCalendar::current_default_calendar()
                     .expect("显式 raw Calendar 政策合法"),
             )

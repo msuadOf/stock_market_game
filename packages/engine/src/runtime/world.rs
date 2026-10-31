@@ -1813,15 +1813,32 @@ impl World {
                     daily_lower_limit: down.cents(),
                     min_sell_price: min_sell,
                     recent_prices: vec![last],
-                    minute_closes: Vec::new(),
-                    minute_bars: std::sync::Arc::new(Vec::new()),
+                    // 首个 Start 已消费观察价；当前日聚合必须与恢复到 Desk 的同一 seed 一致。
+                    minute_closes: s
+                        .initial_market
+                        .as_ref()
+                        .map_or_else(Vec::new, |market| market.minute_closes.clone()),
+                    minute_bars: std::sync::Arc::new(
+                        s.initial_market
+                            .as_ref()
+                            .map_or_else(Vec::new, |market| market.minute_bars.clone()),
+                    ),
                     daily_bars: Vec::new(),
-                    daily_active: None,
-                    daily_active_turnover_cents: 0,
-                    daily_active_trade_count: 0,
+                    daily_active: s.initial_market.as_ref().and_then(|market| market.candle),
+                    daily_active_turnover_cents: s
+                        .initial_market
+                        .as_ref()
+                        .map_or(0, |market| market.turnover_today),
+                    daily_active_trade_count: s
+                        .initial_market
+                        .as_ref()
+                        .map_or(0, |market| market.trade_count),
                     daily_total_completed: 0,
                     daily_total_traded: 0,
-                    volume_today: 0,
+                    volume_today: s
+                        .initial_market
+                        .as_ref()
+                        .map_or(0, |market| market.volume_today),
                     relative_volume: 1.0,
                     order_book_imbalance: 0.0,
                     public_cutoff_serial: 0,
