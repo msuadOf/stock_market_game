@@ -665,8 +665,7 @@ struct DeferredBatch {
     /// 成交事实原序（计划推进 F5/F6 重放+经历转移输入）。
     fills: Vec<FillFact>,
     /// 卖腿 fill 前仓基快照（经历转移的 cost_before 输入——即时相
-    /// fill 循环前捕获，时点等价原落账点：批到达与原落账消息点之间
-    /// 组线程串行无其他账户写）。
+    /// 每笔卖腿落账前更新，保留最后一笔卖腿的快照）。
     pre_exit_basis: std::collections::BTreeMap<LocalIdx, (i64, i64, u32)>,
     /// fill 循环后、批尾前的延迟动作（原批内序：receipts 拒收释放与
     /// entities 内的 Closed 释放/RefundedShares 复位按原序交错）。
@@ -1666,37 +1665,9 @@ impl GroupState {
         // 成交事实即时进计划结果缓冲（信息回流：续行由 FillFact 驱动，
         // F §4.3——Continue 轮"先见 fills 再续行"语义不因分域改变）。
         self.plan_fills.extend(batch.fills.iter().copied());
-        // Sol 终审四审经历族：卖腿 fill 前成本基/面快照（清仓转移的
-        // cost_before 输入——fill 循环内 apply_fill_cost_basis 先行
-        // 推进 invested/recovered，期末值不可反推）。捕获时点=即时相
-        // fill 循环前（等价原落账点——见函数 doc）。
-        let mut pre_exit_basis: std::collections::BTreeMap<LocalIdx, (i64, i64, u32)> =
-            std::collections::BTreeMap::new();
-        for fill in &batch.fills {
-            if fill.side != Side::Sell || fill.owner.0 != self.group {
-                continue;
-            }
-            let local = fill.owner.1;
-            if pre_exit_basis.contains_key(&local) {
-                continue;
-            }
-            if let Some(acct) = self.accounts.get(local as usize) {
-                pre_exit_basis.insert(
-                    local,
-                    (
-                        acct.invested_cents.get(stock_idx).copied().unwrap_or(0),
-                        acct.recovered_cents.get(stock_idx).copied().unwrap_or(0),
-                        acct.shares
-                            .get(stock_idx)
-                            .copied()
-                            .unwrap_or(0)
-                            .saturating_add(
-                                acct.pending_sell_qty.get(stock_idx).copied().unwrap_or(0),
-                            ),
-                    ),
-                );
-            }
-        }
+        // 买入股份在 fill 循环之后才由实体落账，先累计以还原逐笔持仓。
+        let mut bought = std::collections::BTreeMap::<LocalIdx, u32>::new();
+        let pre_exit_basis = std::collections::BTreeMap::new();
         let mut deferred = DeferredBatch {
             stock,
             fills: batch.fills.clone(),
@@ -1708,6 +1679,43 @@ impl GroupState {
         // （F5/F6——apply_fill_plan_progress）延迟重放（fills 已暂存）。
         let mut touched: Vec<(LocalIdx, StockIdx)> = Vec::new();
         for fill in &batch.fills {
+            if fill.owner.0 != self.group {
+                return Err(RuntimeError::ProtocolInvariant {
+                    detail: format!(
+                        "组 {} 批次收到外组成交事实 owner={:?}",
+                        self.group, fill.owner
+                    ),
+                });
+            }
+            let local = fill.owner.1;
+            if fill.side == Side::Sell {
+                let acct = self.accounts.get(local as usize).ok_or_else(|| {
+                    RuntimeError::ProtocolInvariant {
+                        detail: format!("组 {} 成交账户越界：local={local}", self.group),
+                    }
+                })?;
+                let face = acct.shares[stock_idx]
+                    .checked_add(acct.pending_sell_qty[stock_idx])
+                    .and_then(|qty| qty.checked_add(bought.get(&local).copied().unwrap_or(0)))
+                    .ok_or_else(|| RuntimeError::ProtocolInvariant {
+                        detail: format!("组 {} 成交前持仓溢出：local={local}", self.group),
+                    })?;
+                deferred.pre_exit_basis.insert(
+                    local,
+                    (
+                        acct.invested_cents[stock_idx],
+                        acct.recovered_cents[stock_idx],
+                        face,
+                    ),
+                );
+            } else {
+                let qty = bought.entry(local).or_default();
+                *qty =
+                    qty.checked_add(fill.qty)
+                        .ok_or_else(|| RuntimeError::ProtocolInvariant {
+                            detail: format!("组 {} 买入数量溢出：local={local}", self.group),
+                        })?;
+            }
             self.apply_fill_cost_basis(stock, fill)?;
             if !touched.contains(&(fill.owner.1, stock)) {
                 touched.push((fill.owner.1, stock));
@@ -8708,6 +8716,29 @@ mod eager_domain_tests {
             stamp_tax: 1,
             transfer_fee: 1,
         }
+    }
+
+    #[test]
+    fn exit_basis_tracks_each_preceding_fill() {
+        let mut state = domain_harness();
+        Arc::make_mut(&mut state.accounts[0]).invested_cents[0] = 700_000;
+        let before = state.state_hash();
+        let batch = DeskBatch {
+            repurchase: Vec::new(),
+            stock: 0,
+            tick: 1,
+            round: 0,
+            entities: Vec::new(),
+            fills: vec![sell_fill(100), sell_fill(100)],
+            receipts: Vec::new(),
+        };
+        state.apply_batch_immediate(batch, 1, 0).expect("成交落账");
+        assert_eq!(
+            state.staging_deferred[0].pre_exit_basis[&0],
+            (700_000, 100_000, 600)
+        );
+        state.rollback();
+        assert_eq!(state.state_hash(), before, "Abort 恢复成本基和持仓");
     }
 
     /// 合同 2：等待窗即时相部分应用后 Abort——delta 可交换性保证全冲回
