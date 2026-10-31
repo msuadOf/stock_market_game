@@ -4168,7 +4168,7 @@ impl GameSession {
                         }
                     }
                     self.state.disclosures = candidate.dispatch;
-                    self.state.library = Arc::new(candidate.library);
+                    self.state.library = std::sync::Arc::new(candidate.library);
                     output
                 }
             }
