@@ -1300,6 +1300,23 @@ fn same_tick_routes_advance_one_seller_fee_debt_without_reusing_tick_start_audit
             .expect("retail seller must exist")
             .grant_position(code, 1_300, Money::from_cents(1))
             .expect("fixture holding must be valid");
+        // 直接注入持仓时，同步登记该持仓的经历生命周期。
+        session
+            .state
+            .retail_experience
+            .get_mut(&AccountId(1))
+            .expect("retail seller must have an experience row")
+            .initialize_holding_dated(
+                &code,
+                Some(Money::from_cents(1)),
+                Money::from_cents(1),
+                crate::experience::ExperienceMoment {
+                    civil_date: session.state.civil_clock.current_date(),
+                    market_minute: 0,
+                    trading_day: 0,
+                },
+            )
+            .expect("fixture experience entry must be valid");
         let mut seed_events = Vec::new();
         session.seed_order_for_test(
             AccountId(1),
@@ -1405,6 +1422,23 @@ fn same_tick_new_seller_route_creates_and_advances_cumulative_fee_audit() {
             .expect("retail seller must exist")
             .grant_position(code, 1_300, Money::from_cents(1))
             .expect("fixture holding must be valid");
+        // 直接注入持仓时，同步登记该持仓的经历生命周期。
+        session
+            .state
+            .retail_experience
+            .get_mut(&AccountId(1))
+            .expect("retail seller must have an experience row")
+            .initialize_holding_dated(
+                &code,
+                Some(Money::from_cents(1)),
+                Money::from_cents(1),
+                crate::experience::ExperienceMoment {
+                    civil_date: session.state.civil_clock.current_date(),
+                    market_minute: 0,
+                    trading_day: 0,
+                },
+            )
+            .expect("fixture experience entry must be valid");
         let mut seed_events = Vec::new();
         session.seed_order_for_test(
             AccountId(1),
