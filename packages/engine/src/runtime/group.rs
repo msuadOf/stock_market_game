@@ -1889,7 +1889,7 @@ impl GroupState {
         Ok(())
     }
 
-    /// 成交经历使用结算后的权威共享时钟。
+    /// 连续竞价成交使用结算前的权威共享时钟。
     fn retail_tick_moment(&self) -> Result<crate::experience::ExperienceMoment, RuntimeError> {
         let snapshot = self
             .snapshot
@@ -1897,7 +1897,7 @@ impl GroupState {
             .ok_or_else(|| RuntimeError::ProtocolInvariant {
                 detail: format!("组 {} 成交缺 Calendar snapshot", self.group),
             })?;
-        let clock = snapshot.calendar.after_projection();
+        let clock = snapshot.calendar.before_projection();
         Ok(crate::experience::ExperienceMoment {
             civil_date: snapshot.civil_date,
             market_minute: clock.completed_shared_minute_count(),
@@ -3112,6 +3112,9 @@ impl GroupState {
             };
             let mut equity = ctx.cash;
             for (code, position) in &ctx.positions {
+                if position.qty() == 0 {
+                    continue;
+                }
                 let Some(stock) = observation.market.stocks.get(code) else {
                     continue;
                 };
@@ -8958,6 +8961,10 @@ mod eager_domain_tests {
             state.apply_deferred().unwrap();
         }
         let moment = state.retail_tick_moment().unwrap();
+        assert_eq!(
+            moment.market_minute, 0,
+            "连续竞价成交使用本拍开始时的市场分钟"
+        );
         let mut expected = personal.retail_experience.clone().unwrap();
         expected
             .record_fill_dated(

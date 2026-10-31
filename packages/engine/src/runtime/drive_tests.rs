@@ -4136,6 +4136,18 @@ fn sol_r22_full_exit_experience_reaches_all_four_faces_same_tick() {
         Some(authority_exp),
         "save-restore 往返保清仓经历行"
     );
+    driver.force_due_for_test_at(&[exiter], driver.world_committed_tick() + 1);
+    driver
+        .step_frame_equivalent(&mut game)
+        .expect("清仓后再次观察");
+    let experience = game.runtime_retail_experience_for(&exiter).unwrap();
+    assert!(
+        !experience.feedback.stocks.contains_key(&code)
+            && experience.stocks[&code]
+                .cooldown_until_market_minute
+                .is_some(),
+        "零仓观察须保留退出冷静期，不能重建持仓 epoch"
+    );
 }
 
 /// Sol 复核阻断 P2-4：无快照时业务 hash 必须读实际 ledger（统一
