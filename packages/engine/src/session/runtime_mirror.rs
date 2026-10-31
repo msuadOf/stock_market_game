@@ -1,6 +1,7 @@
 use super::*;
 use crate::runtime::drive::{PreparedDriverStep, RuntimeDriver};
 use crate::runtime::world::BeliefParticipantSnapshot;
+use std::sync::Arc;
 
 #[cfg(test)]
 thread_local! {
@@ -41,9 +42,6 @@ pub(super) fn record_full_public_book_aggregation_for_test() {
         costs.set((mirrors, projections + 1));
     });
 }
-#[cfg(feature = "simulation-diagnostics")]
-use std::sync::Arc;
-
 fn runtime_book_cache_header_matches(
     previous: Option<&RuntimeRestingSnapshot>,
     id_map: &std::sync::Arc<Vec<AccountId>>,
@@ -91,6 +89,56 @@ fn runtime_book_cache_entry_matches(
         })
 }
 
+/// Session 四表与 driver 缓存共享本人的最终只读值；写入仍由各表的 COW 隔离。
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct SharedRuntimePersonal {
+    attention: Arc<NpcAttentionState>,
+    participant: Arc<BeliefParticipantState>,
+    history_reads: Arc<crate::experience::PersonalHistoryReadLedger>,
+    retail_experience: Option<Arc<RetailExperienceState>>,
+}
+
+impl From<BeliefParticipantSnapshot> for SharedRuntimePersonal {
+    fn from(value: BeliefParticipantSnapshot) -> Self {
+        Self {
+            attention: Arc::new(value.attention),
+            participant: Arc::new(BeliefParticipantState::new(
+                value.watchlist,
+                value.price_memory,
+                value.information,
+                value.belief,
+            )),
+            history_reads: Arc::new(value.history_reads),
+            retail_experience: value.retail_experience.map(Arc::new),
+        }
+    }
+}
+
+impl SharedRuntimePersonal {
+    /// 完整读面显式物化拥有值，调用方后续修改不影响 Session 或缓存。
+    pub(crate) fn to_snapshot(&self) -> BeliefParticipantSnapshot {
+        BeliefParticipantSnapshot {
+            watchlist: self.participant.watchlist().clone(),
+            price_memory: self.participant.price_memory().clone(),
+            information: self.participant.information().clone(),
+            belief: self.participant.belief().clone(),
+            attention: self.attention.as_ref().clone(),
+            history_reads: self.history_reads.as_ref().clone(),
+            retail_experience: self.retail_experience.as_deref().cloned(),
+        }
+    }
+
+    pub(crate) fn matches_snapshot(&self, value: &BeliefParticipantSnapshot) -> bool {
+        self.participant.watchlist() == &value.watchlist
+            && self.participant.price_memory() == &value.price_memory
+            && self.participant.information() == &value.information
+            && self.participant.belief() == &value.belief
+            && self.attention.as_ref() == &value.attention
+            && self.history_reads.as_ref() == &value.history_reads
+            && self.retail_experience.as_deref() == value.retail_experience.as_ref()
+    }
+}
+
 /// 仅持本次镜像替换值；不克隆 GameSession、World 或运行线程。
 pub(crate) struct PreparedRuntimeMirror {
     #[cfg(feature = "simulation-diagnostics")]
@@ -98,7 +146,7 @@ pub(crate) struct PreparedRuntimeMirror {
     #[cfg(feature = "simulation-diagnostics")]
     decision_traces: crate::diagnostics::decision_trace::NpcDecisionTraceCollector,
     accounts: BTreeMap<AccountId, Account>,
-    personals: BTreeMap<AccountId, (usize, BeliefParticipantSnapshot)>,
+    personals: BTreeMap<AccountId, (usize, SharedRuntimePersonal)>,
     plans: crate::plans::PlanBook,
     markets: BTreeMap<StockId, Market>,
     histories: BTreeMap<StockId, VecDeque<Money>>,
@@ -464,7 +512,7 @@ impl GameSession {
                 let value = driver
                     .cached_personal_at(global)
                     .ok_or_else(|| format!("首买经历 candidate 缺完整个人态：{id:?}"))?;
-                entry.insert((global, value.clone()));
+                entry.insert((global, value.to_snapshot()));
             }
             let (_, value) = personals.get_mut(&id).expect("刚插入或已有个人 candidate");
             let ledger = value
@@ -500,7 +548,7 @@ impl GameSession {
             if let std::collections::btree_map::Entry::Vacant(entry) = personals.entry(id) {
                 match driver.cached_personal_at(global) {
                     Some(value) => {
-                        entry.insert((global, value.clone()));
+                        entry.insert((global, value.to_snapshot()));
                     }
                     None if self.runtime_has_belief_participant(id) => {
                         return Err(format!("个人裁剪 candidate 缺当前个人态：{id:?}"))
@@ -988,22 +1036,19 @@ impl GameSession {
         let mut beliefs = self.state.belief_participants.clone();
         let mut personal_history = self.state.history_reads.clone();
         let mut retail = self.state.retail_experience.clone();
-        for (id, (_, value)) in &personals {
-            npc_attention.insert_without_previous(*id, value.attention.clone());
-            beliefs.insert_without_previous(
-                *id,
-                BeliefParticipantState::new(
-                    value.watchlist.clone(),
-                    value.price_memory.clone(),
-                    value.information.clone(),
-                    value.belief.clone(),
-                ),
-            );
-            personal_history.insert_without_previous(*id, value.history_reads.clone());
-            if let Some(row) = &value.retail_experience {
-                retail.insert_without_previous(*id, row.clone());
-            }
-        }
+        let personals: BTreeMap<_, _> = personals
+            .into_iter()
+            .map(|(id, (index, value))| {
+                let value = SharedRuntimePersonal::from(value);
+                npc_attention.insert_arc(id, Arc::clone(&value.attention));
+                beliefs.insert_arc(id, Arc::clone(&value.participant));
+                personal_history.insert_arc(id, Arc::clone(&value.history_reads));
+                if let Some(row) = &value.retail_experience {
+                    retail.insert_arc(id, Arc::clone(row));
+                }
+                (id, (index, value))
+            })
+            .collect();
         for (id, due, seed) in attention {
             if let Some(state) = npc_attention.get_mut(&id) {
                 state.next_attention_candidate_tick = if is_static { due } else { due.max(tick) };
@@ -1092,7 +1137,7 @@ impl GameSession {
         commit_source: bool,
     ) -> (
         Vec<Event>,
-        BTreeMap<AccountId, (usize, BeliefParticipantSnapshot)>,
+        BTreeMap<AccountId, (usize, SharedRuntimePersonal)>,
         usize,
     ) {
         let count = prepared.accounts.len();
@@ -1607,7 +1652,7 @@ mod source_tests {
         let candidate = game
             .prepare_runtime_mirror(&mut driver, input.clone(), 1)
             .unwrap();
-        let prepared = &candidate.personals[&owner].1;
+        let prepared = candidate.personals[&owner].1.to_snapshot();
         assert_eq!(
             prepared.watchlist,
             *reference.watchlist(),
@@ -1712,6 +1757,7 @@ mod source_tests {
     #[test]
     fn mirror_candidate_does_not_clone_replaced_shared_previous_values() {
         let mut setup = super::super::npc_working_quote_tests::retail_quote_setup();
+        setup.npcs.inst_count = 1;
         setup.start_date = crate::calendar::CivilDate::from_ymd(2026, 1, 5).unwrap();
         setup.ticks_per_day = 8;
         setup.auction_ticks = 0;
@@ -1750,6 +1796,15 @@ mod source_tests {
         let history_before = game.state.history_reads.clone();
         let retail_before = game.state.retail_experience.clone();
         let snapshot_before = serde_json::to_value(game.snapshot_inner(true, true)).unwrap();
+        let cache_before = driver.administrative_cache_snapshot_for_test();
+        let mut sync_before = input.clone();
+        driver
+            .materialize_sync_mirror_inputs(&mut sync_before)
+            .unwrap();
+        assert!(
+            !sync_before.personals.is_empty(),
+            "fixture 保留真实非空 sync accumulator 个人输入"
+        );
         assert!(game.state.npc_attention.contains_key(&retail_account));
         assert!(game.state.belief_participants.contains_key(&retail_account));
         assert!(game.state.history_reads.contains_key(&retail_account));
@@ -1780,17 +1835,74 @@ mod source_tests {
             "准备 candidate 不得提前安装到 committed Session"
         );
 
-        let account = *candidate.npc_attention.keys().next().unwrap();
+        let account = retail_account;
+        let global = candidate.personals[&account].0;
+        let prepared_personal: BeliefParticipantSnapshot =
+            candidate.personals[&account].1.to_snapshot();
+        let price_code = *prepared_personal
+            .price_memory
+            .stocks
+            .keys()
+            .next()
+            .expect("真实 Continuous observe 已建立价格记忆");
+        let price_entry = &prepared_personal.price_memory.stocks[&price_code];
+        let candidate_minute = price_entry.last_touched_minute;
+        let history_minute = candidate_minute.max(
+            prepared_personal
+                .history_reads
+                .stocks
+                .get(&price_code)
+                .map_or(0, |entry| entry.last_read_market_minute),
+        );
         candidate
             .npc_attention
             .get_mut(&account)
             .unwrap()
             .next_attention_candidate_tick += 1;
+        let belief = candidate.beliefs.get_mut(&account).unwrap();
+        let price = price_entry.observed_high.add(Money::from_cents(1)).unwrap();
+        belief
+            .price_memory_mut()
+            .observe_price(&price_code, price, candidate_minute)
+            .unwrap();
+        candidate
+            .personal_history
+            .get_mut(&account)
+            .unwrap()
+            .record(&price_code, history_minute)
+            .unwrap();
+        candidate
+            .retail
+            .get_mut(&account)
+            .unwrap()
+            .consecutive_failed_buys += 1;
+        assert_eq!(
+            candidate.personals[&account].1.to_snapshot(),
+            prepared_personal,
+            "candidate 四个可变表写入不改变同一完整个人快照"
+        );
         assert_eq!(game.state.npc_attention, attention_before);
+        assert_eq!(game.state.belief_participants, beliefs_before);
+        assert_eq!(game.state.history_reads, history_before);
+        assert_eq!(game.state.retail_experience, retail_before);
+        assert_eq!(
+            driver.administrative_cache_snapshot_for_test(),
+            cache_before
+        );
+        assert_eq!(
+            serde_json::to_value(game.snapshot_inner(true, true)).unwrap(),
+            snapshot_before
+        );
+        let mut sync_after = input.clone();
+        driver
+            .materialize_sync_mirror_inputs(&mut sync_after)
+            .unwrap();
+        assert_eq!(sync_after.personals, sync_before.personals);
+        assert_eq!(sync_after.accounts, sync_before.accounts);
 
         game.runtime_install_failure = true;
         super::super::account_paged_map::reset_shared_previous_value_clones();
-        let failure = match game.prepare_runtime_mirror(&mut driver, input, 1) {
+        let failure = match game.prepare_runtime_mirror(&mut driver, input.clone(), 1) {
             Ok(_) => panic!("注入失败应拒绝镜像 candidate"),
             Err(error) => error,
         };
@@ -1808,6 +1920,95 @@ mod source_tests {
             serde_json::to_value(game.snapshot_inner(true, true)).unwrap(),
             snapshot_before,
             "失败 candidate 不得半安装"
+        );
+        game.runtime_install_failure = false;
+
+        drop(candidate);
+        let normal = game
+            .prepare_runtime_mirror(&mut driver, input.clone(), 1)
+            .unwrap();
+        let ack = game
+            .validate_runtime_mirror_source(&driver, &normal)
+            .unwrap();
+        game.install_runtime_mirror(&mut driver, normal);
+        driver.ack_prepared_mirror(ack);
+        let installed_cache = driver.administrative_cache_snapshot_for_test();
+        let other_owner = game
+            .state
+            .belief_participants
+            .keys()
+            .find(|id| **id != account)
+            .copied()
+            .expect("fixture 包含另一个真实 Inst owner");
+        let other_personal = (
+            game.state.npc_attention.get(&other_owner).cloned(),
+            game.state.belief_participants.get(&other_owner).cloned(),
+            game.state.history_reads.get(&other_owner).cloned(),
+            game.state.retail_experience.get(&other_owner).cloned(),
+        );
+        game.state
+            .npc_attention
+            .get_mut(&account)
+            .unwrap()
+            .next_attention_candidate_tick += 1;
+        let belief = game.state.belief_participants.get_mut(&account).unwrap();
+        belief
+            .price_memory_mut()
+            .observe_price(&price_code, price, candidate_minute)
+            .unwrap();
+        game.state
+            .history_reads
+            .get_mut(&account)
+            .unwrap()
+            .record(&price_code, history_minute)
+            .unwrap();
+        game.state
+            .retail_experience
+            .get_mut(&account)
+            .unwrap()
+            .consecutive_failed_buys += 1;
+        assert_eq!(
+            (
+                game.state.npc_attention.get(&other_owner).cloned(),
+                game.state.belief_participants.get(&other_owner).cloned(),
+                game.state.history_reads.get(&other_owner).cloned(),
+                game.state.retail_experience.get(&other_owner).cloned(),
+            ),
+            other_personal,
+            "另一 owner 四域完整值保持不变（None 能力位也保持 None）"
+        );
+        assert_eq!(
+            driver.administrative_cache_snapshot_for_test(),
+            installed_cache
+        );
+        let session_after_writes = (
+            game.state.npc_attention.clone(),
+            game.state.belief_participants.clone(),
+            game.state.history_reads.clone(),
+            game.state.retail_experience.clone(),
+        );
+        let mut collected = driver.collect_belief().unwrap();
+        collected
+            .iter_mut()
+            .flat_map(|(_, rows)| rows.iter_mut())
+            .nth(global)
+            .and_then(Option::as_mut)
+            .expect("collect_belief 返回目标完整个人态")
+            .attention
+            .next_attention_candidate_tick += 1;
+        assert_eq!(
+            driver.administrative_cache_snapshot_for_test(),
+            installed_cache
+        );
+        assert_eq!(
+            (
+                game.state.npc_attention.clone(),
+                game.state.belief_participants.clone(),
+                game.state.history_reads.clone(),
+                game.state.retail_experience.clone(),
+            ),
+            session_after_writes,
+            "修改 collect_belief 的拥有 Snapshot 不改变 Session 四域"
         );
     }
 

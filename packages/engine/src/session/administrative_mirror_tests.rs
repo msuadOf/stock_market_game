@@ -318,7 +318,7 @@ fn administrative_mirror_04_information_observation_preserves_session_only_retai
             .clone()
             .unwrap();
         cached.retail_experience = Some(expected.clone());
-        driver.install_cached_personal_at(1, owner, cached);
+        driver.install_cached_personal_at(1, owner, cached.into());
     }
     let through = crate::CivilInstant::from_hms(game.civil_date(), 23, 59, 0).unwrap();
     let (day, _) = game.prepare_market_calendar_projection().unwrap();

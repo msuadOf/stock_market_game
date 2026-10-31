@@ -378,7 +378,7 @@ impl RuntimeDriver {
     pub(crate) fn cached_personal_at(
         &self,
         index: usize,
-    ) -> Option<&super::super::world::BeliefParticipantSnapshot> {
+    ) -> Option<&crate::session::SharedRuntimePersonal> {
         self.belief_cache.get(index).and_then(Option::as_ref)
     }
 
@@ -386,7 +386,7 @@ impl RuntimeDriver {
         &mut self,
         index: usize,
         account: AccountId,
-        value: super::super::world::BeliefParticipantSnapshot,
+        value: crate::session::SharedRuntimePersonal,
     ) {
         assert_eq!(
             self.id_map[index], account,

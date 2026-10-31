@@ -9461,7 +9461,7 @@ mod roster_offset_tests {
         let selected_id = ids[roster_offset + selected_local];
         let projection = crate::runtime::information_fixture::projection(ids.clone());
         let company_facts = Arc::clone(&projection.initial_company_facts);
-        let accounts = vec![
+        let accounts = [
             GroupAccount::new(10_000, 2),
             GroupAccount::new(20_000, 2),
             GroupAccount::new(30_000, 2),

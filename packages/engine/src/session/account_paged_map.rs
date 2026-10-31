@@ -153,6 +153,7 @@ impl<Value: Clone> AccountPagedMap<Value> {
         })
     }
 
+    #[cfg(test)]
     pub(super) fn insert_without_previous(&mut self, id: AccountId, value: Value) {
         self.insert_shared(id, value);
     }
@@ -161,7 +162,7 @@ impl<Value: Clone> AccountPagedMap<Value> {
         self.insert_arc(id, Arc::new(value))
     }
 
-    fn insert_arc(&mut self, id: AccountId, value: Arc<Value>) -> Option<Arc<Value>> {
+    pub(super) fn insert_arc(&mut self, id: AccountId, value: Arc<Value>) -> Option<Arc<Value>> {
         let group = Arc::make_mut(self.groups.entry(group_id(id)).or_default());
         let previous = Arc::make_mut(group.entry(page_id(id)).or_default()).insert(id, value);
         if previous.is_none() {

@@ -262,7 +262,7 @@ pub struct RuntimeDriver {
     candle_knob_drop_turnover: bool,
     /// P2-2a：信念全量缓存（全局名册序——稀疏上行增量合并；构造期
     /// =belief_seeds 同源投影，collect_belief 读面由它承载全量语义）。
-    belief_cache: Vec<Option<super::world::BeliefParticipantSnapshot>>,
+    belief_cache: Vec<Option<crate::session::SharedRuntimePersonal>>,
     /// 日终清簿事件缓冲（take_drained_events 取走）。
     drained_events: Vec<Event>,
     /// B2 件 5：本拍待安装的个人确认（事件组装段派生存放，**安装成功
@@ -749,7 +749,15 @@ impl RuntimeDriver {
         spec.admin_treasury_bindings =
             admin_treasury_bindings_from_session(session, &ids, per_group)?;
         // P2-2a：稀疏上行读面的全量缓存基线（构造期投影==组端初值）。
-        let belief_cache = spec.belief_seeds.clone();
+        let belief_cache = spec
+            .belief_seeds
+            .iter()
+            .map(|value| {
+                value
+                    .clone()
+                    .map(crate::session::SharedRuntimePersonal::from)
+            })
+            .collect();
         let sync_inputs =
             crate::runtime::driver_sync::SyncAccumulator::new((0..n_groups).map(|group| {
                 (
@@ -2450,7 +2458,7 @@ impl RuntimeDriver {
                     self.belief_cache[g * per..]
                         .iter()
                         .take(per)
-                        .cloned()
+                        .map(|value| value.as_ref().map(|personal| personal.to_snapshot()))
                         .collect(),
                 )
             })

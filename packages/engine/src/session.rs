@@ -221,7 +221,7 @@ mod runtime_sync_consumption_tests;
 mod runtime_sync_handover_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod runtime_sync_tests;
-pub(crate) use runtime_mirror::PreparedRuntimeMirror;
+pub(crate) use runtime_mirror::{PreparedRuntimeMirror, SharedRuntimePersonal};
 #[cfg(all(test, not(target_family = "wasm")))]
 pub(crate) mod calendar_entry_cache_tests;
 #[cfg(test)]

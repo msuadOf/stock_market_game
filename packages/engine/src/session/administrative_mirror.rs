@@ -813,7 +813,7 @@ impl GameSession {
         }
         self.state.accounts = prepared.accounts;
         for (index, id, snapshot) in prepared.personals {
-            driver.install_cached_personal_at(index, id, snapshot);
+            driver.install_cached_personal_at(index, id, snapshot.into());
         }
         if let Some(maps) = prepared.personal_maps {
             self.state.npc_attention = maps.attention;

@@ -552,8 +552,10 @@ fn unconsumed_progress_does_not_copy_accumulated_sync_mirror_inputs() {
         }
         for (index, _, value) in &full.personals {
             assert_eq!(
-                driver.cached_personal_at(*index),
-                Some(value),
+                driver
+                    .cached_personal_at(*index)
+                    .map(|personal| personal.to_snapshot()),
+                Some(value.clone()),
                 "flush 保完整本人 INFO、belief、history、attention 与经历"
             );
         }
@@ -649,8 +651,10 @@ fn mirror_consumers_materialize_once_for_each_policy() {
             if flush {
                 for (owner, value) in values.personals {
                     assert_eq!(
-                        driver.cached_personal_at(driver.global_index(owner)),
-                        Some(&value)
+                        driver
+                            .cached_personal_at(driver.global_index(owner))
+                            .map(|personal| personal.to_snapshot()),
+                        Some(value)
                     );
                 }
                 assert_eq!(driver.pending_sync_inputs_for_test().0, 0);
