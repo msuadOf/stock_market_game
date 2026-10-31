@@ -610,9 +610,28 @@ pub struct CreatedRepurchasePlan {
     pub plan_id: crate::plans::PlanId,
 }
 
+/// 已由交易部真实回流并经组端校验的有序来源。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RepurchasePreparedFact {
+    pub cursor: u64,
+    pub tick: u64,
+    pub round: u32,
+    pub source: super::RepurchaseSourceFact,
+}
+
+/// Prepare 时的只读来源快照；读取本身不确认或删除尾流。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RepurchasePreparedSource {
+    pub consumed_cursor: u64,
+    pub tail_cursor: u64,
+    pub facts: Vec<RepurchasePreparedFact>,
+    pub child_active: bool,
+}
+
 /// 只在 Prepare 回执携带；完整 book 保留历史及唯一 OwnerSequence。
 #[derive(Clone, Debug)]
 pub struct PreparedRepurchaseResult {
+    pub sources: std::collections::BTreeMap<crate::plans::PlanId, RepurchasePreparedSource>,
     pub book: crate::plans::PlanBook,
     pub created: Vec<CreatedRepurchasePlan>,
     /// 本次输入行解析后的完整字段集合，keys 恰为本次 touched 计划；组权威仍保留全部投影。

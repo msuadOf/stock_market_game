@@ -1026,3 +1026,66 @@ fn repurchase_x_group_16_source_less_closed_and_rejected_prefix_keep_raw_stock_i
         reject_before_mutation(&mut state, rejected);
     }
 }
+
+#[test]
+fn repurchase_prepare_exposes_ordered_real_source_without_consuming_it() {
+    let (mut state, mut desk, request, purse) = state(1000, 200);
+    desk.company_buy(request, 1000, 200, purse);
+    consume(&mut state, desk.flush_company());
+    let before = state.repurchase_pending_tails.clone();
+    let projection = state.repurchase_projections[&request.plan_id].clone();
+    let candidate = state
+        .prepare_admin_scope(
+            AdminTransactionId(2),
+            vec![],
+            None,
+            Some(vec![RepurchaseProjectionInput {
+                local: 1,
+                stock: STOCK,
+                issuer: CompanyId(3),
+                execution_plan: AdminPlanReference::Existing(request.plan_id),
+                projection,
+            }]),
+        )
+        .unwrap();
+    let source = &candidate.repurchase.unwrap().sources[&request.plan_id];
+    assert_eq!(source.consumed_cursor, 0);
+    assert_eq!(source.tail_cursor, 1);
+    assert_eq!(source.facts.len(), 1);
+    assert_eq!(
+        source.facts[0].source.kind,
+        RepurchaseSourceKind::Accepted {
+            price: 1000,
+            qty: 200,
+            purse_initial: purse,
+        }
+    );
+    state
+        .complete_admin(AdminTransactionId(2), AdminPhase::Abort)
+        .unwrap();
+    assert_eq!(state.repurchase_pending_tails, before);
+}
+
+#[test]
+fn repurchase_prepare_rejects_cursor_ack_before_book_transaction_exists() {
+    let (mut state, mut desk, request, purse) = state(1000, 200);
+    desk.company_buy(request, 1000, 200, purse);
+    consume(&mut state, desk.flush_company());
+    let before = state.repurchase_pending_tails.clone();
+    let mut projection = state.repurchase_projections[&request.plan_id].clone();
+    projection.book_through_cursor = 1;
+    let result = state.prepare_admin_scope(
+        AdminTransactionId(2),
+        vec![],
+        None,
+        Some(vec![RepurchaseProjectionInput {
+            local: 1,
+            stock: STOCK,
+            issuer: CompanyId(3),
+            execution_plan: AdminPlanReference::Existing(request.plan_id),
+            projection,
+        }]),
+    );
+    assert!(result.is_err());
+    assert_eq!(state.repurchase_pending_tails, before);
+}

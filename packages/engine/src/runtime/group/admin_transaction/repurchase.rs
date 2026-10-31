@@ -347,8 +347,8 @@ fn validate_projection_update(
     {
         return Err(invalid("执行投影不可变方案发生变化"));
     }
-    if after.book_through_cursor < before.book_through_cursor {
-        return Err(invalid("执行投影 cursor 倒退"));
+    if after.book_through_cursor != before.book_through_cursor {
+        return Err(invalid("回购来源尚未接通公司簿事务确认，禁止推进 cursor"));
     }
     if after.eligibility_revision < before.eligibility_revision
         || after.unit_revision < before.unit_revision

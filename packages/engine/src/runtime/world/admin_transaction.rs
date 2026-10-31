@@ -727,6 +727,24 @@ impl World {
                 return Err(invalid("回购投影与完整簿身份不符"));
             }
         }
+        if prepared.sources.keys().copied().collect::<BTreeSet<_>>() != seen {
+            return Err(invalid("回购 Prepare 来源集合存在额外或遗漏计划"));
+        }
+        for (id, source) in &prepared.sources {
+            let projection = &prepared.projections[id];
+            if source.consumed_cursor != projection.book_through_cursor
+                || source.tail_cursor < source.consumed_cursor
+                || source.facts.len() as u64 != source.tail_cursor - source.consumed_cursor
+                || source.facts.iter().enumerate().any(|(index, fact)| {
+                    source.consumed_cursor.checked_add(index as u64 + 1) != Some(fact.cursor)
+                        || fact.source.request_key.plan_id != *id
+                        || fact.source.request_key.stock
+                            != crate::StockId(u32::from(projection.stock))
+                })
+            {
+                return Err(invalid("回购 Prepare 来源 cursor 或计划身份不一致"));
+            }
+        }
         if prepared
             .projections
             .keys()

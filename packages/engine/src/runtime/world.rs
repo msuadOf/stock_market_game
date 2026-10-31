@@ -4769,6 +4769,7 @@ pub use super::protocol::{
     CreatedRepurchasePlan, InformationMemoryRetention, InformationObservation,
     InformationPrepareError, InformationPreparePayload, PreparedInformationResult,
     PreparedRepurchaseResult, RepurchaseExecutionProjection, RepurchaseMaterialRestriction,
+    RepurchasePreparedFact, RepurchasePreparedSource,
 };
 
 mod admin_treasury_binding;

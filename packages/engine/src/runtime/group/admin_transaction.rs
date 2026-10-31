@@ -564,6 +564,37 @@ impl GroupState {
                 .map(|info| info.prepared.clone()),
             repurchase: pending.repurchase.as_ref().map(|repurchase| {
                 crate::runtime::protocol::PreparedRepurchaseResult {
+                    sources: repurchase
+                        .projected_ids
+                        .iter()
+                        .map(|id| {
+                            let projection = &self.repurchase_projections[id];
+                            let tail = self.repurchase_pending_tails.get(id);
+                            let facts = tail
+                                .into_iter()
+                                .flat_map(|tail| &tail.facts)
+                                .map(|fact| crate::runtime::protocol::RepurchasePreparedFact {
+                                    cursor: fact.cursor,
+                                    tick: fact.tick,
+                                    round: fact.round,
+                                    source: fact.source,
+                                })
+                                .collect();
+                            (
+                                *id,
+                                crate::runtime::protocol::RepurchasePreparedSource {
+                                    consumed_cursor: projection.book_through_cursor,
+                                    tail_cursor: tail
+                                        .map_or(projection.book_through_cursor, |tail| tail.cursor),
+                                    facts,
+                                    child_active: self.child_in_flight.contains_key(&(
+                                        projection.account,
+                                        crate::StockId(u32::from(projection.stock)),
+                                    )),
+                                },
+                            )
+                        })
+                        .collect(),
                     book: self.plan_book.clone(),
                     created: repurchase.created.clone(),
                     projections: repurchase
@@ -768,6 +799,7 @@ impl GroupState {
                     if fault == Some(AdminFault::RepurchaseInControlReceipt) {
                         candidate.repurchase =
                             Some(crate::runtime::protocol::PreparedRepurchaseResult {
+                                sources: Default::default(),
                                 book: self.plan_book.clone(),
                                 created: Vec::new(),
                                 projections: self.repurchase_projections.clone(),
