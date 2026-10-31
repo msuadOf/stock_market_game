@@ -215,7 +215,7 @@ fn funds_p2_actual_driver_04_lazy_builder_cannot_fund_same_number_with_player_ki
     let revision = session.external_revision();
     let plans = session.runtime_plans_snapshot().clone();
     let error = match RuntimeDriver::prepare_from_session_grouped(&session, 2, epoch) {
-        Ok(mut driver) => {
+        Ok(driver) => {
             driver.world.shutdown().unwrap();
             panic!("Player kind 不得构造回购 binding")
         }

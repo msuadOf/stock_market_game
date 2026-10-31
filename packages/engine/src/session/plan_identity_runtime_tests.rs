@@ -253,6 +253,7 @@ fn origin_treasury_setup() -> SessionSetup {
     setup.flat_withholding_bp = Some(1_000);
     setup.par_value_per_share = Some(Money::from_cents(100));
     setup.issuer_repurchase_enabled = true;
+    setup.auto_corporate_foundation = true;
     setup
 }
 
@@ -281,7 +282,7 @@ fn origin_session_restore_rejects_company_without_committed_funding_binding() {
     assert!(
         error
             .to_string()
-            .contains("缺少已提交的资金与公司授权 binding"),
+            .contains("公司方案或 canonical 公司计划缺少已提交 binding"),
         "{error}"
     );
 }
@@ -307,8 +308,7 @@ fn origin_session_restore_rejects_investor_plan_on_real_treasury_account() {
 }
 
 #[test]
-fn origin_real_next_tick_keeps_unfunded_company_value_out_of_personal_execution() {
-    // 仅验证共同 records 的真实移交；直接创建的低层值没有批准或注资权限。
+fn origin_runtime_rejects_company_without_committed_funding_binding() {
     let mut session = GameSession::new(origin_treasury_setup(), 98).unwrap();
     let owner = session
         .state
@@ -316,8 +316,7 @@ fn origin_real_next_tick_keeps_unfunded_company_value_out_of_personal_execution(
         .iter()
         .find_map(|(id, account)| (account.kind() == AccountKind::IssuerRepurchase).then_some(*id))
         .unwrap();
-    let personal = session.state.plans.create(open(AccountId(1), 0)).unwrap();
-    let company = session
+    session
         .state
         .plans
         .create_issuer_repurchase(crate::plans::RepurchaseExecutionOpen {
@@ -326,6 +325,56 @@ fn origin_real_next_tick_keeps_unfunded_company_value_out_of_personal_execution(
             stock: StockId(0),
         })
         .unwrap();
+    let before = session.state.plans.clone();
+    let error = crate::runtime::drive::RuntimeDriver::from_session_grouped(&mut session, 2)
+        .err()
+        .expect("未绑定资金的公司计划必须在启动时拒绝");
+    assert!(error.contains("binding"), "{error}");
+    assert_eq!(session.state.plans, before);
+    assert!(session.runtime_driver.is_none());
+}
+
+#[test]
+fn origin_real_next_tick_keeps_company_value_out_of_personal_execution() {
+    use crate::company::issuer_repurchase::{
+        IssuerRepurchasePlan, RepurchaseCompletionPolicy, RepurchasePurpose,
+    };
+    let mut session = GameSession::new(origin_treasury_setup(), 98).unwrap();
+    let owner = session
+        .state
+        .accounts
+        .iter()
+        .find_map(|(id, account)| (account.kind() == AccountKind::IssuerRepurchase).then_some(*id))
+        .unwrap();
+    let day = session.civil_date();
+    let next = day.next().unwrap();
+    let receipt = session
+        .approve_repurchase_for_runtime_test(IssuerRepurchasePlan {
+            event_id: "计划身份回购".into(),
+            approval_reference: "股东会批准".into(),
+            issuer: crate::company::CompanyId(0),
+            stock: StockCode("600888".into()),
+            exchange: crate::calendar::CalendarExchange::Sse,
+            approved_on: day,
+            announced_on: day,
+            window_start_on: next,
+            window_deadline_on: next,
+            price_cap_per_share: Money::from_cents(1_000),
+            total_budget: Money::from_cents(100_000),
+            max_shares: 100,
+            purpose: RepurchasePurpose::ReduceCapital,
+            completion_policy: RepurchaseCompletionPolicy::CancelOnCompletion,
+            approval_unit_event_id: None,
+        })
+        .unwrap();
+    let RepurchaseApprovalReceipt::Approved {
+        plan_id: company, ..
+    } = receipt
+    else {
+        panic!("首次批准必须成功")
+    };
+    let mut session = GameSession::restore(&session.save().unwrap()).unwrap();
+    let personal = session.state.plans.create(open(AccountId(1), 0)).unwrap();
     let authorization = session.state.plans.entry(company).unwrap().clone();
     let mut driver =
         crate::runtime::drive::RuntimeDriver::from_session_grouped(&mut session, 2).unwrap();
@@ -344,7 +393,7 @@ fn origin_real_next_tick_keeps_unfunded_company_value_out_of_personal_execution(
         );
         assert_eq!(
             session.state.accounts.get(&owner).unwrap().cash(),
-            Money::ZERO
+            Money::from_cents(100_000)
         );
         session.set_runtime_plans(mirror);
     }
