@@ -743,3 +743,25 @@ fn player_command_stock_after_restored_old_book_preserves_live_world_and_checkpo
 fn player_command_split_after_restored_old_book_preserves_live_world_and_checkpoint() {
     assert_old_book_handover_preserved(split(), false);
 }
+
+#[test]
+fn split_registration_captures_final_market_registry_in_civil_candidate() {
+    let mut game = game(false);
+    install_pending_split(&mut game, date("2030-06-03"), date("2030-06-04"));
+    game.prepare_ordinary_tax_day_end(date("2030-06-03"), true)
+        .unwrap();
+    let actions = game.corporate_actions().unwrap();
+    let book = &actions.share_splits[0];
+    let snapshot = book.registration().expect("日终登记必须冻结实际名册");
+    assert_eq!(snapshot.issued_shares(), 1_000);
+    assert_eq!(
+        snapshot,
+        actions.registries[0]
+            .registration("fixture-future-split")
+            .unwrap()
+    );
+    assert_eq!(
+        book.status(),
+        &crate::company::share_split::ShareSplitStatus::Registered
+    );
+}
