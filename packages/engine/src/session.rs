@@ -22,6 +22,8 @@ mod civil_due_horizon_runtime_tests;
 mod civil_information;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod civil_information_runtime_tests;
+mod civil_rights_ex;
+mod civil_rights_ex;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod civil_runtime_ceiling_tests;
 mod company_assembly;

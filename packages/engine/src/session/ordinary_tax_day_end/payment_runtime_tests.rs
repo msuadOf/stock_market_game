@@ -60,6 +60,9 @@ fn payment_session(mode: CashDividendTaxMode) -> GameSession {
     simple.prehistory_periods = 17;
     setup.company_system = Some(companies);
     setup.dividend_tax_mode = Some(mode);
+    if mode == CashDividendTaxMode::Exempt {
+        setup.config.stamp_tax_rate = 0.0;
+    }
     setup.flat_withholding_bp = (mode == CashDividendTaxMode::FlatWithholding).then_some(1_000);
     setup.par_value_per_share = Some(Money::from_cents(100));
     setup.auto_corporate_foundation = true;
@@ -766,5 +769,121 @@ fn failed_rights_refunds_real_debits_and_restores_without_repayment() {
     restored.end_civil_day().unwrap();
     for (account, _, _) in &before_refund {
         assert_eq!(cash(&restored, *account), cash(&session, *account));
+    }
+}
+
+#[test]
+fn exempt_rights_ex_anchor_is_committed_to_desk_and_restored() {
+    use crate::company::rights_offering::{
+        RightsOfferingBook, RightsOfferingDeclaration, RightsOfferingEventPlan, RightsOfferingMode,
+        RightsSubscriptionStrategy,
+    };
+    let initial = payment_session(CashDividendTaxMode::Exempt);
+    let mut saved = initial.save().unwrap();
+    saved.setup.rights_offering_enabled = true;
+    let company = CompanyId(0);
+    let capital = initial
+        .company_system()
+        .unwrap()
+        .dividend_legal_facts(&company)
+        .unwrap()
+        .unwrap()
+        .registered_capital;
+    let mut plan = RightsOfferingEventPlan {
+        event_id: "真实缴款测试".into(),
+        approval_reference: "测试批准".into(),
+        issuer: company,
+        stock: crate::StockCode(STOCK.into()),
+        exchange: crate::calendar::CalendarExchange::Sse,
+        approved_on: date(START),
+        announced_on: date(START),
+        registered_on: date(START),
+        payment_start_on: date(START),
+        payment_deadline_on: date(START),
+        ex_rights_on: date(START),
+        settlement_on: date(START),
+        listing_on: date(START),
+        price_per_share: Money::from_cents(100),
+        mode: RightsOfferingMode::RightsToAllShareholders {
+            shares_per_existing_share_micros: 100_000,
+        },
+        npc_subscription_strategy: RightsSubscriptionStrategy::FullByDefault,
+    };
+    plan.derive_schedule(initial.civil_clock().calendar(), plan.exchange, 1)
+        .unwrap();
+    saved
+        .company_state
+        .system_for_test_mut()
+        .declare_rights_offering(
+            &company,
+            RightsOfferingDeclaration {
+                event_id: plan.event_id.clone(),
+                approval_reference: plan.approval_reference.clone(),
+                approved_on: plan.approved_on,
+                price_per_share: plan.price_per_share,
+                par_value_per_share: Money::from_cents(100),
+                registered_capital_at_approval: capital,
+            },
+        )
+        .unwrap();
+    saved
+        .company_state
+        .actions_for_test_mut()
+        .rights_offerings
+        .push(RightsOfferingBook::new(plan.clone()).unwrap());
+    let mut session = restore_with_three_groups(&saved);
+    register_on_june_3(&mut session);
+    assert_eq!(session.civil_date(), plan.payment_start_on);
+    session.step().unwrap();
+    let before: Vec<_> = RETAIL_HOLDERS
+        .iter()
+        .map(|account| (*account, cash(&session, *account)))
+        .collect();
+    session.end_civil_day().unwrap();
+    let book = &session.corporate_actions().unwrap().rights_offerings[0];
+    assert_eq!(book.subscriptions().len(), RETAIL_HOLDERS.len());
+    for record in book.subscriptions() {
+        let HolderId::Account(account) = record.holder else {
+            panic!("预期账户持有人")
+        };
+        let opening = before.iter().find(|row| row.0 == account).unwrap().1;
+        // 同日现金分红先入账，再以本人真实余额缴款。
+        assert_eq!(
+            cash(&session, account).cents(),
+            opening.cents() + 200 - record.paid_amount.cents()
+        );
+    }
+    assert_eq!(session.civil_date(), plan.ex_rights_on);
+    let group = session
+        .corporate_actions()
+        .unwrap()
+        .applied_ex_reference_groups
+        .last()
+        .unwrap();
+    assert_eq!(group.rights_event_ids, vec![plan.event_id.clone()]);
+    assert_eq!(
+        session.state.markets[&StockId(0)].last_close(),
+        group.reference.reference_price
+    );
+    let after = session.save().unwrap();
+    let restored = restore_with_three_groups(&after);
+    assert_eq!(
+        restored.runtime_market_seeds()[&StockId(0)].last_close,
+        group.reference.reference_price.cents()
+    );
+    let mut tampered = after.clone();
+    tampered
+        .snapshot
+        .markets
+        .get_mut(&StockId(0))
+        .unwrap()
+        .last_close = Money::from_cents(1);
+    assert!(GameSession::restore(&tampered).is_err());
+    assert_eq!(
+        restored.corporate_actions().unwrap().rights_offerings[0],
+        session.corporate_actions().unwrap().rights_offerings[0]
+    );
+    for account in RETAIL_HOLDERS {
+        assert_eq!(cash(&restored, account), cash(&session, account));
     }
 }

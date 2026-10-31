@@ -625,8 +625,10 @@ impl PreparedCivilCash {
     ) -> Result<(), SessionError> {
         let verify = (|| {
             if self.positions.is_empty() {
-                if stages.is_some() {
-                    return Err(invalid("空现金权益意图不应含阶段来源"));
+                if stages.is_some_and(|source| {
+                    !source.operands().is_empty() || !source.tax_projections().is_empty()
+                }) {
+                    return Err(invalid("空现金权益意图不应含非空阶段来源"));
                 }
                 return Ok(());
             }

@@ -9,6 +9,7 @@ use crate::error::ValidationFault;
 mod registry_settlement;
 #[cfg(test)]
 mod registry_settlement_restore_tests;
+mod rights_ex_reference;
 mod saved_runtime;
 #[cfg(test)]
 mod saved_runtime_tests;
@@ -359,6 +360,12 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
         .setup
         .stock_catalog()
         .map_err(|_| SessionError::InvalidSave(ValidationFault::bare(2002)))?;
+    rights_ex_reference::validate(save, &save_catalog).map_err(|cause| {
+        super::StepFatal::InvariantViolation {
+            description: cause.to_string(),
+            location: "validate_save_slot.rights_ex_reference".into(),
+        }
+    })?;
     if let Some(actions) = save.company_state.actions() {
         registry_settlement::validate_registry_settlement_sources(
             &actions.registries,
