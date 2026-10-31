@@ -75,6 +75,28 @@ pub struct RestoreResult {
     pub generation: String,
 }
 
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConfirmationQuery {
+    #[serde(deserialize_with = "required_cursor")]
+    before_receipt: Option<String>,
+}
+
+fn required_cursor<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<String>, D::Error> {
+    <Option<String> as serde::Deserialize>::deserialize(deserializer)
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(tag = "kind", content = "data", deny_unknown_fields)]
+pub enum HistoryQuery {
+    MarketHistory(engine::session::MarketHistoryRequest),
+    CurrentMinuteHistory(engine::session::CurrentMinuteHistoryRequest),
+    PersonalTradeHistory(engine::session::PersonalTradeHistoryRequest),
+    PersonalTradeConfirmations(ConfirmationQuery),
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct GenerationResponse<T> {
     pub generation: String,
@@ -335,6 +357,11 @@ pub enum SessionCommand {
         generation: u64,
         reply: oneshot::Sender<Result<GenerationResponse<serde_json::Value>, SessionError>>,
     },
+    HostHistoryQuery {
+        generation: u64,
+        query: HistoryQuery,
+        reply: oneshot::Sender<Result<GenerationResponse<serde_json::Value>, String>>,
+    },
     StockHistory {
         generation: u64,
         code: engine::StockId,
@@ -572,6 +599,22 @@ impl SessionHandles {
         rx.await
             .map_err(|_| SendCommandError::ActorGone)?
             .map_err(|error| SendCommandError::Rejected(error.to_string()))
+    }
+
+    pub async fn host_history_query(
+        &self,
+        generation: u64,
+        query: HistoryQuery,
+    ) -> Result<GenerationResponse<serde_json::Value>, String> {
+        let (tx, rx) = oneshot::channel();
+        self.cmd_tx
+            .send(SessionCommand::HostHistoryQuery {
+                generation,
+                query,
+                reply: tx,
+            })
+            .map_err(|_| "actor 已关闭".to_owned())?;
+        rx.await.map_err(|_| "actor 已关闭".to_owned())?
     }
 
     pub async fn query_stock_history(
@@ -1384,6 +1427,59 @@ impl<R: Runtime> SessionActor<R> {
                         SessionError::InvalidSave(engine::error::ValidationFault::bare(1312))
                     });
                 let result = self.generation_response(generation, orders);
+                let _ = reply.send(result);
+            }
+            SessionCommand::HostHistoryQuery {
+                generation,
+                query,
+                reply,
+            } => {
+                let result = (|| -> Result<GenerationResponse<serde_json::Value>, String> {
+                    if generation != self.generation {
+                        return Err("STALE_SESSION_GENERATION".into());
+                    }
+                    self.game.require_healthy().map_err(|e| e.to_string())?;
+                    let value = match query {
+                        HistoryQuery::MarketHistory(query) => serde_json::to_value(
+                            self.game
+                                .query_market_history_for(AccountId(0), &query)
+                                .map_err(|e| e.to_string())?,
+                        ),
+                        HistoryQuery::CurrentMinuteHistory(query) => serde_json::to_value(
+                            self.game
+                                .query_current_minute_history_for(AccountId(0), &query)
+                                .map_err(|e| e.to_string())?,
+                        ),
+                        HistoryQuery::PersonalTradeHistory(query) => serde_json::to_value(
+                            self.game
+                                .query_personal_trade_history(AccountId(0), query)
+                                .map_err(|e| e.to_string())?,
+                        ),
+                        HistoryQuery::PersonalTradeConfirmations(query) => {
+                            let cursor = query.before_receipt;
+                            let cursor = cursor
+                                .map(|s| {
+                                    if s.is_empty()
+                                        || (s.len() > 1 && s.starts_with('0'))
+                                        || !s.bytes().all(|b| b.is_ascii_digit())
+                                    {
+                                        return Err("交割单游标无效".to_owned());
+                                    }
+                                    s.parse::<u64>().map_err(|e| e.to_string())
+                                })
+                                .transpose()?;
+                            serde_json::to_value(
+                                self.game
+                                    .personal_trade_confirmations_page(AccountId(0), cursor),
+                            )
+                        }
+                    }
+                    .map_err(|e| e.to_string())?;
+                    Ok(GenerationResponse {
+                        generation: generation.to_string(),
+                        value,
+                    })
+                })();
                 let _ = reply.send(result);
             }
             SessionCommand::StockHistory {

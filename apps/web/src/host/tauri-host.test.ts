@@ -540,3 +540,17 @@ test("Tauri 分时均价拒绝与输入不一致的响应", { timeout: 10000 }, 
     return undefined;
   });
 });
+
+test("Tauri 本人交割查询经 actor 命令且拒绝旧 generation", { timeout: 10000 }, async () => {
+  let finish!: (value: unknown) => void;
+  await withTauriHost(async (host) => {
+    const pending = host.queryPersonalTradeConfirmations();
+    const rejected = assert.rejects(pending, /过期/);
+    await host.load({});
+    finish({ generation: "1", value: [] });
+    await rejected;
+  }, (command) => {
+    if (command === "host_history_query") return new Promise((resolve) => { finish = resolve; });
+    return undefined;
+  });
+});

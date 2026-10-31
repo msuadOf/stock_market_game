@@ -517,3 +517,31 @@ fn intraday_average_commands_validate_wire_and_preserve_wide_turnover() {
     )
     .is_err());
 }
+
+#[tokio::test]
+async fn history_query_ipc_checks_generation_and_registers_commands() {
+    let app = command_builder(mock_builder())
+        .build(mock_context(noop_assets()))
+        .unwrap();
+    let webview = WebviewWindowBuilder::new(&app, "main", Default::default())
+        .build()
+        .unwrap();
+    let session_id = invoke_json(
+        &webview,
+        "create_session",
+        json!({"setup":diagnostic_setup(),"seed":"7"}),
+    )
+    .unwrap();
+    let mut body = json!({"sessionId":session_id,"generation":"1","query":{"kind":"PersonalTradeConfirmations","data":{"before_receipt":null}}});
+    let result = invoke_json(&webview, "host_history_query", body.clone()).unwrap();
+    assert_eq!(result["value"], json!([]));
+    let mut missing = body.clone();
+    missing["query"]["data"] = json!({});
+    assert!(invoke_json(&webview, "host_history_query", missing).is_err());
+    body["generation"] = json!("999");
+    assert!(invoke_json(&webview, "host_history_query", body.clone()).is_err());
+    body["generation"] = json!("1");
+    body["query"]["data"]["before_receipt"] = json!("01");
+    assert!(invoke_json(&webview, "host_history_query", body).is_err());
+    invoke_json(&webview, "stop_session", json!({"sessionId":session_id})).unwrap();
+}

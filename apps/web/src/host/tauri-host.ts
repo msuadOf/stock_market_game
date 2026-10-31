@@ -1,3 +1,7 @@
+import { normalizeMarketHistoryRequest, normalizeMarketHistoryPage, wireMarketHistoryRequest } from "./market-history.ts";
+import { normalizeCurrentMinuteHistoryRequest, normalizeCurrentMinuteHistoryResponse, wireCurrentMinuteHistoryRequest } from "./current-minute-history.ts";
+import { normalizePersonalTradeHistoryRequest, normalizePersonalTradeHistoryPage, wirePersonalTradeHistoryRequest } from "./personal-trade-history.ts";
+import { normalizeConfirmationCursor, normalizePersonalTradeConfirmations } from "./intraday-average.ts";
 import { normalizeIntradayAverageInput, normalizeIntradayAverageCurveInput, normalizeIntradayAverageCurveResult } from "./intraday-average.ts";
 import { isReportCorrectionPrepareRejection, parseHostFailure } from "./protocol-failure.ts";
 import { invoke } from "@tauri-apps/api/core";
@@ -123,6 +127,15 @@ export async function createTauriHost(setup: SessionSetup, seed: bigint): Promis
     running = false;
     if (failure.code === "CATALOG_BASELINE_FAILED") baselineUnavailable = true;
     fatalCallback?.(companyWriteFailure ?? failure);
+  };
+
+  const historyQuery = async (kind: string, data: unknown): Promise<unknown> => {
+    const cursor = timeline.captureQueryCursor();
+    const response = record(await invoke<unknown>("host_history_query", { sessionId: requireSession(), generation: cursor.generation, query: { kind, data } }), "Tauri 历史查询响应");
+    exact(response, ["generation", "value"], "Tauri 历史查询响应");
+    assertResponseCurrent(cursor.generation, "historyQuery");
+    timeline.assertQueryCursor(cursor, generation(response.generation, "Tauri 历史查询 generation"), "Tauri 历史查询响应属于已过期会话 generation");
+    return response.value;
   };
 
   const invokeBaseline = async (command: string, args: Record<string, unknown>): Promise<unknown> => {
@@ -463,12 +476,22 @@ export async function createTauriHost(setup: SessionSetup, seed: bigint): Promis
       const result = await invoke<unknown>("calculate_indicators", normalized);
       return normalizeIndicatorResults(result, normalized);
     },
-    // W3 查询面：Tauri 命令通道尚未接线对应命令（desktop 批次），显式失败
-    // 不静默回退（铁律二）——面板将错误原文展示给用户。
-    async queryMarketHistory(): Promise<never> { throw new Error("Tauri 宿主尚未接入保留历史查询命令"); },
-    async queryCurrentMinuteHistory(): Promise<never> { throw new Error("Tauri 宿主尚未接入当日分钟K查询命令"); },
-    async queryPersonalTradeHistory(): Promise<never> { throw new Error("Tauri 宿主尚未接入本人交割历史查询命令"); },
-    async queryPersonalTradeConfirmations(): Promise<never> { throw new Error("Tauri 宿主尚未接入本人交割单查询命令"); },
+    async queryMarketHistory(request) {
+      const normalized = normalizeMarketHistoryRequest(request), identity = timeline.baselineForRead().catalogResolver;
+      return normalizeMarketHistoryPage(await historyQuery("MarketHistory", wireMarketHistoryRequest(normalized, identity)), normalized, identity);
+    },
+    async queryCurrentMinuteHistory(request) {
+      const normalized = normalizeCurrentMinuteHistoryRequest(request), identity = timeline.baselineForRead().catalogResolver;
+      return normalizeCurrentMinuteHistoryResponse(await historyQuery("CurrentMinuteHistory", wireCurrentMinuteHistoryRequest(normalized, identity)), normalized, identity);
+    },
+    async queryPersonalTradeHistory(request) {
+      const normalized = normalizePersonalTradeHistoryRequest(request), identity = timeline.baselineForRead().catalogResolver;
+      return normalizePersonalTradeHistoryPage(await historyQuery("PersonalTradeHistory", wirePersonalTradeHistoryRequest(normalized, identity)), normalized, identity);
+    },
+    async queryPersonalTradeConfirmations(beforeReceipt = null) {
+      const identity = timeline.baselineForRead().catalogResolver;
+      return normalizePersonalTradeConfirmations(await historyQuery("PersonalTradeConfirmations", { before_receipt: normalizeConfirmationCursor(beforeReceipt) }), identity);
+    },
     async calculateIntradayAverage(input) {
       const sample = normalizeIntradayAverageInput(input);
       const cursor = timeline.captureQueryCursor();

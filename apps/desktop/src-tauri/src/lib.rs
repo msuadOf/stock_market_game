@@ -195,6 +195,19 @@ async fn player_working_orders(
 }
 
 #[tauri::command]
+async fn host_history_query(
+    state: State<'_, DesktopState>,
+    session_id: String,
+    generation: String,
+    query: actor::HistoryQuery,
+) -> Result<actor::GenerationResponse<serde_json::Value>, String> {
+    let handles = lookup_handles(&state, &session_id).await?;
+    handles
+        .host_history_query(parse_generation(generation)?, query)
+        .await
+}
+
+#[tauri::command]
 async fn query_stock_history(
     state: State<'_, DesktopState>,
     session_id: String,
@@ -595,6 +608,7 @@ fn command_builder<R: Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> 
             calculate_intraday_average_curve,
             player_working_orders,
             query_stock_history,
+            host_history_query,
             initial_allocation,
             runtime_snapshot,
             civil_date,
@@ -633,6 +647,7 @@ fn command_builder<R: Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> 
             calculate_intraday_average_curve,
             player_working_orders,
             query_stock_history,
+            host_history_query,
             initial_allocation,
             runtime_snapshot,
             civil_date,
