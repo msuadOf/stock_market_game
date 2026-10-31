@@ -847,10 +847,10 @@ fn lazy_static_handover_preserves_real_trade_price_and_closing_cutoff() {
     assert_snapshot_matches_except_static_mirror_generation(&snapshot, &handed_over);
     {
         let driver = restored.runtime_driver.as_ref().unwrap().lock().unwrap();
-        assert_ne!(
+        assert_eq!(
             driver.world_public_views()[0].last_price,
             995,
-            "必须判别旧 v0 价格来源错误"
+            "恢复后的 v0 公开价必须沿用真实成交价"
         );
         assert_ne!(
             driver.world_public_views()[0].public_cutoff_serial,
