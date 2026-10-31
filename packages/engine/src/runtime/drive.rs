@@ -221,7 +221,7 @@ pub struct RuntimeDriver {
     /// 三张真实 owner 覆盖表接管尚未安装的最后整态；不保存逐拍事件历史。
     sync_inputs: crate::runtime::driver_sync::SyncAccumulator<
         std::sync::Arc<super::group::GroupAccount>,
-        super::world::BeliefParticipantSnapshot,
+        crate::session::SharedRuntimePersonal,
         (u64, u64),
     >,
     /// 私有输入序号独立于 tick、发布 generation 与公共 event seq。
@@ -1175,7 +1175,7 @@ impl RuntimeDriver {
             for (group, rows) in full.groups {
                 for (local, id, value) in rows {
                     if let Some(value) = value {
-                        personals.push((self.global_index((group, local)), id, value));
+                        personals.push((self.global_index((group, local)), id, value.into()));
                     }
                 }
             }
@@ -1196,7 +1196,7 @@ impl RuntimeDriver {
                     if snapshot.information.owner() != id || snapshot.belief.npc() != id {
                         return Err(format!("个人态属主不匹配：owner={owner:?} account={id:?}"));
                     }
-                    personals.push((self.global_index(owner), id, snapshot.clone()));
+                    personals.push((self.global_index(owner), id, snapshot.clone().into()));
                 }
             }
         }
@@ -3290,7 +3290,7 @@ impl RuntimeDriver {
                 .sync_inputs
                 .beliefs()
                 .iter()
-                .map(|(owner, row)| ((owner.group, owner.local), row.value.clone()))
+                .map(|(owner, row)| ((owner.group, owner.local), row.value.to_snapshot()))
                 .collect(),
             attentions: self
                 .sync_inputs

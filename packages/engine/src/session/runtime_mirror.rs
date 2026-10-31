@@ -115,6 +115,39 @@ impl From<BeliefParticipantSnapshot> for SharedRuntimePersonal {
 }
 
 impl SharedRuntimePersonal {
+    pub(crate) fn matches_owner(&self, owner: AccountId) -> bool {
+        self.participant.information().owner() == owner && self.participant.belief().npc() == owner
+    }
+
+    fn merge_retail_from(&mut self, existing: Option<&RetailExperienceState>) {
+        let (Some(existing), Some(group)) = (existing, self.retail_experience.as_mut()) else {
+            return;
+        };
+        // 原合并只从镜像补 group 没有的 stock；其余字段与已知 stock 均以 group 为准。
+        if !existing
+            .stocks
+            .keys()
+            .any(|code| !group.stocks.contains_key(code))
+        {
+            return;
+        }
+        let group = Arc::make_mut(group);
+        for (code, value) in &existing.stocks {
+            group.stocks.entry(*code).or_insert_with(|| value.clone());
+        }
+    }
+
+    fn prune_memory(&mut self, protected: &BTreeSet<StockId>) {
+        // 两种 prune 都只 retain：总数不超过原未保护上限时，任何保护集下都无值变化。
+        let cap = crate::experience::MAX_UNHELD_WATCHLIST_STOCKS;
+        if self.participant.watchlist().stock_count() <= cap
+            && self.participant.price_memory().stock_count() <= cap
+        {
+            return;
+        }
+        Arc::make_mut(&mut self.participant).prune_memory(protected);
+    }
+
     /// 完整读面显式物化拥有值，调用方后续修改不影响 Session 或缓存。
     pub(crate) fn to_snapshot(&self) -> BeliefParticipantSnapshot {
         BeliefParticipantSnapshot {
@@ -497,12 +530,7 @@ impl GameSession {
         }
         // 稀疏个人态与组外首买经历保持既有合并优先级，在私有值上完成可失败初始化。
         for (id, (_, value)) in &mut personals {
-            if let Some(group) = &value.retail_experience {
-                value.retail_experience = Some(match self.state.retail_experience.get(id) {
-                    Some(existing) => existing.clone().merged_with_group_authority(group),
-                    None => group.clone(),
-                });
-            }
+            value.merge_retail_from(self.state.retail_experience.get(id));
         }
         for (global, id, code, entry, closing_buy) in hold_inits {
             if !self.state.retail_experience.contains_key(&id) {
@@ -512,19 +540,19 @@ impl GameSession {
                 let value = driver
                     .cached_personal_at(global)
                     .ok_or_else(|| format!("首买经历 candidate 缺完整个人态：{id:?}"))?;
-                entry.insert((global, value.to_snapshot()));
+                entry.insert((global, value.clone()));
             }
             let (_, value) = personals.get_mut(&id).expect("刚插入或已有个人 candidate");
             let ledger = value
                 .retail_experience
-                .get_or_insert_with(|| self.state.retail_experience[&id].clone());
+                .get_or_insert_with(|| Arc::new(self.state.retail_experience[&id].clone()));
             // 延迟窗口内组可能已在下一次观察创建完整持仓经历；该整态保持组权威。
             // 仅为组也尚未建立的首买补既有桥接，不再次初始化已有生命周期。
             if ledger.feedback.stocks.contains_key(&code) {
                 continue;
             }
             let price = Money::from_cents(entry.max(1));
-            ledger
+            Arc::make_mut(ledger)
                 .initialize_holding_dated(
                     &code,
                     Some(price),
@@ -548,7 +576,7 @@ impl GameSession {
             if let std::collections::btree_map::Entry::Vacant(entry) = personals.entry(id) {
                 match driver.cached_personal_at(global) {
                     Some(value) => {
-                        entry.insert((global, value.to_snapshot()));
+                        entry.insert((global, value.clone()));
                     }
                     None if self.runtime_has_belief_participant(id) => {
                         return Err(format!("个人裁剪 candidate 缺当前个人态：{id:?}"))
@@ -567,8 +595,7 @@ impl GameSession {
                 .copied()
                 .chain(input.plans.active_investor_codes(id).copied())
                 .collect();
-            value.watchlist.prune(&protected);
-            value.price_memory.prune(&protected);
+            value.prune_memory(&protected);
         }
         let mut markets = self.state.markets.clone();
         if is_static {
@@ -1036,19 +1063,14 @@ impl GameSession {
         let mut beliefs = self.state.belief_participants.clone();
         let mut personal_history = self.state.history_reads.clone();
         let mut retail = self.state.retail_experience.clone();
-        let personals: BTreeMap<_, _> = personals
-            .into_iter()
-            .map(|(id, (index, value))| {
-                let value = SharedRuntimePersonal::from(value);
-                npc_attention.insert_arc(id, Arc::clone(&value.attention));
-                beliefs.insert_arc(id, Arc::clone(&value.participant));
-                personal_history.insert_arc(id, Arc::clone(&value.history_reads));
-                if let Some(row) = &value.retail_experience {
-                    retail.insert_arc(id, Arc::clone(row));
-                }
-                (id, (index, value))
-            })
-            .collect();
+        for (id, (_, value)) in &personals {
+            npc_attention.insert_arc(*id, Arc::clone(&value.attention));
+            beliefs.insert_arc(*id, Arc::clone(&value.participant));
+            personal_history.insert_arc(*id, Arc::clone(&value.history_reads));
+            if let Some(row) = &value.retail_experience {
+                retail.insert_arc(*id, Arc::clone(row));
+            }
+        }
         for (id, due, seed) in attention {
             if let Some(state) = npc_attention.get_mut(&id) {
                 state.next_attention_candidate_tick = if is_static { due } else { due.max(tick) };
@@ -1538,6 +1560,82 @@ mod source_tests {
     use super::*;
 
     #[test]
+    fn shared_retail_merge_keeps_group_authority_and_independent_candidates() {
+        let mut setup = super::super::npc_working_quote_tests::two_stock_quote_setup();
+        setup.npcs.retail_count = 1;
+        setup.npcs.inst_count = 0;
+        let mut game = GameSession::new(setup, 42).unwrap();
+        let driver = RuntimeDriver::from_session(&mut game).unwrap();
+        let mut snapshot = driver
+            .collect_belief()
+            .unwrap()
+            .into_iter()
+            .flat_map(|(_, rows)| rows)
+            .flatten()
+            .next()
+            .expect("真实 Retail 完整个人态");
+        let moment = crate::experience::ExperienceMoment {
+            civil_date: game.civil_date(),
+            market_minute: game.current_market_minute(),
+            trading_day: u64::from(game.day()),
+        };
+        let mut group = RetailExperienceState::new(Money::from_cents(10_000)).unwrap();
+        group
+            .initialize_holding_dated(
+                &StockId(0),
+                Some(Money::from_cents(1_000)),
+                Money::from_cents(1_000),
+                moment,
+            )
+            .unwrap();
+        let mut existing = RetailExperienceState::new(Money::from_cents(20_000)).unwrap();
+        for code in 0..2 {
+            let price = Money::from_cents(1_100 + i64::from(code));
+            existing
+                .initialize_holding_dated(&StockId(code), Some(price), price, moment)
+                .unwrap();
+            snapshot
+                .watchlist
+                .record_attention(&StockId(code), moment.market_minute, moment.market_minute)
+                .unwrap();
+            snapshot
+                .price_memory
+                .observe_price(&StockId(code), price, moment.market_minute)
+                .unwrap();
+        }
+        snapshot.retail_experience = Some(group.clone());
+        let original = SharedRuntimePersonal::from(snapshot.clone());
+        let mut first = original.clone();
+        let second = original.clone();
+        first.merge_retail_from(Some(&existing));
+        let mut expected = snapshot.clone();
+        expected.retail_experience = Some(existing.clone().merged_with_group_authority(&group));
+        assert_eq!(
+            first.to_snapshot(),
+            expected,
+            "仅补镜像缺键，全部group字段保持权威"
+        );
+        assert_eq!(original.to_snapshot(), snapshot);
+        assert_eq!(second.to_snapshot(), snapshot, "另一个候选不被merge写入");
+        first.merge_retail_from(Some(&existing));
+        assert_eq!(first.to_snapshot(), expected, "重复merge幂等");
+
+        let mut unchanged = original.clone();
+        unchanged.merge_retail_from(Some(&group));
+        unchanged.prune_memory(&std::collections::BTreeSet::new());
+        assert_eq!(
+            unchanged.to_snapshot(),
+            snapshot,
+            "不缺键且小于原cap时完整个人值不变"
+        );
+        assert!(Arc::ptr_eq(&unchanged.participant, &original.participant));
+        assert!(Arc::ptr_eq(
+            unchanged.retail_experience.as_ref().unwrap(),
+            original.retail_experience.as_ref().unwrap()
+        ));
+    }
+
+    #[test]
     fn private_personal_prune_preserves_protection_order_and_failure_isolation() {
         let mut setup = super::super::npc_working_quote_tests::quote_setup(0);
         let stock_template = setup.stocks[0].clone();
@@ -1607,7 +1705,7 @@ mod source_tests {
             .find(|(_, id, _)| *id == owner)
             .expect("完整 Full 输入含目标个人态");
         let global = row.0;
-        let personal = &mut row.2;
+        let mut personal = row.2.to_snapshot();
         personal.watchlist = crate::experience::PersonalWatchlist::default();
         personal.price_memory = crate::experience::PersonalPriceMemory::default();
         for code in 0..12 {
@@ -1625,6 +1723,7 @@ mod source_tests {
                 .unwrap();
         }
         let original = personal.clone();
+        row.2 = personal.into();
         // 无对手盘也要明确经过生产 touched 裁剪块，不能让 fixture 旁路该块。
         input.touched.push((global, owner));
         input.touched.sort();
@@ -1648,6 +1747,11 @@ mod source_tests {
             sync_before.personals.iter().any(|(_, id, _)| *id == owner),
             "失败隔离守卫必须覆盖非空的本人累计个人输入"
         );
+        let sync_personals_before: Vec<_> = sync_before
+            .personals
+            .iter()
+            .map(|(index, id, value)| (*index, *id, value.to_snapshot()))
+            .collect();
 
         let candidate = game
             .prepare_runtime_mirror(&mut driver, input.clone(), 1)
@@ -1745,7 +1849,12 @@ mod source_tests {
             .materialize_sync_mirror_inputs(&mut sync_after)
             .unwrap();
         assert_eq!(
-            sync_after.personals, sync_before.personals,
+            sync_after
+                .personals
+                .iter()
+                .map(|(index, id, value)| (*index, *id, value.to_snapshot()))
+                .collect::<Vec<_>>(),
+            sync_personals_before,
             "后继 prepare 失败后重新物化的 sync accumulator 个人输入完整不变"
         );
         assert_eq!(
@@ -1805,6 +1914,11 @@ mod source_tests {
             !sync_before.personals.is_empty(),
             "fixture 保留真实非空 sync accumulator 个人输入"
         );
+        let sync_personals_before: Vec<_> = sync_before
+            .personals
+            .iter()
+            .map(|(index, id, value)| (*index, *id, value.to_snapshot()))
+            .collect();
         assert!(game.state.npc_attention.contains_key(&retail_account));
         assert!(game.state.belief_participants.contains_key(&retail_account));
         assert!(game.state.history_reads.contains_key(&retail_account));
@@ -1897,7 +2011,14 @@ mod source_tests {
         driver
             .materialize_sync_mirror_inputs(&mut sync_after)
             .unwrap();
-        assert_eq!(sync_after.personals, sync_before.personals);
+        assert_eq!(
+            sync_after
+                .personals
+                .iter()
+                .map(|(index, id, value)| (*index, *id, value.to_snapshot()))
+                .collect::<Vec<_>>(),
+            sync_personals_before
+        );
         assert_eq!(sync_after.accounts, sync_before.accounts);
 
         game.runtime_install_failure = true;

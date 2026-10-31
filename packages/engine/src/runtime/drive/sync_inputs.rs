@@ -55,10 +55,7 @@ impl RuntimeDriver {
         let mut personal_owners = Vec::new();
         let mut seen = std::collections::BTreeSet::new();
         for (index, id, value) in &input.personals {
-            if self.id_map.get(*index) != Some(id)
-                || !seen.insert(*id)
-                || value.information.owner() != *id
-                || value.belief.npc() != *id
+            if self.id_map.get(*index) != Some(id) || !seen.insert(*id) || !value.matches_owner(*id)
             {
                 return Err(format!("sync 个人属主或名册错误：{id:?}"));
             }
@@ -140,7 +137,7 @@ impl RuntimeDriver {
         Ok(())
     }
 
-    /// 只有真正消费镜像时才复制累计行；失败 prepare 保留三表用于同来源重试。
+    /// 只有真正消费镜像时才复制累计行的只读句柄；失败 prepare 保留三表用于同来源重试。
     pub(crate) fn materialize_sync_mirror_inputs(
         &self,
         input: &mut PreparedDriverStep,

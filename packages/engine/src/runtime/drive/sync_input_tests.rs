@@ -555,7 +555,7 @@ fn unconsumed_progress_does_not_copy_accumulated_sync_mirror_inputs() {
                 driver
                     .cached_personal_at(*index)
                     .map(|personal| personal.to_snapshot()),
-                Some(value.clone()),
+                Some(value.to_snapshot()),
                 "flush 保完整本人 INFO、belief、history、attention 与经历"
             );
         }
