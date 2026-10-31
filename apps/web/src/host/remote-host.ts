@@ -356,7 +356,7 @@ export async function createRemoteHost(setup: SessionSetup, seed: bigint, option
       publisher.assertQueryCursor(cursor, response.generation, "远程公司查询响应属于已过期会话 generation");
       return { owner: response.owner, value: response.value };
     }, requireCatalogResolver),
-    capabilities: { deliveryModes: ["push", "pull"], targetUiHz: UI_TARGET_HZ, sharedMemory: false, reconnect: true, publicCompanyReports: true, npcDecisionDiagnostics: capabilityRecord.npcDecisionDiagnostics },
+    capabilities: { deliveryModes: ["push", "pull"], targetUiHz: UI_TARGET_HZ, sharedMemory: false, reconnect: true, publicCompanyReports: true, personalTradeHistory: true, indicatorCapabilities: { intradayAverage: true, macd: true, priceKdj: true, candleKdj: true }, npcDecisionDiagnostics: capabilityRecord.npcDecisionDiagnostics },
     async start(onUpdate, onFatalError) {
       if (disposed) throw new Error("远程会话已经销毁，不能重新启动");
       callback = onUpdate;

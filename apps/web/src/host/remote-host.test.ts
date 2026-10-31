@@ -165,6 +165,15 @@ test("Given an authenticated remote host, when player orders are queried, then i
   assert.deepEqual(await host.calculateIntradayAverage({ turnoverCents: "1000", tradeCount: 1, volumeShares: 10 }), { turnoverCents: "1000", volumeShares: 10 });
   assert.deepEqual(await host.calculateIntradayAverageCurve({ seriesKey: "a", samples: [{ turnoverCents: "1000", tradeCount: 1, volumeShares: 10 }] }), [{ turnoverCents: "1000", volumeShares: 10 }]);
   assert.deepEqual(await host.queryPersonalTradeConfirmations(), []);
+  const { createServer } = await import("vite");
+  const vite = await createServer({ root: "apps/web", configFile: false, appType: "custom", server: { middlewareMode: true, ws: false }, optimizeDeps: { noDiscovery: true } });
+  try {
+    const { actionsFor } = await vite.ssrLoadModule("/src/app/market-runtime-gate.test-support.tsx") as typeof import("../app/market-runtime-gate.test-support.tsx");
+    const actions = actionsFor(host);
+    assert.deepEqual(await actions.queryPersonalTradeConfirmations(), []);
+    assert.deepEqual(await actions.calculateIntradayAverage({ turnoverCents: "1000", tradeCount: 1, volumeShares: 10 }), { turnoverCents: "1000", volumeShares: 10 });
+  } finally { await vite.close(); }
+
   assert.equal((await host.queryCurrentMinuteHistory({ code: "000812" })).code, "000812");
   await assert.rejects(host.queryMarketHistory({ code: "000812", date_from: "2030-01-01", date_to: "2030-01-02", after: null, page_size: 2 }), /过期/);
   const request = requests.find(({ url }) => url.includes("/api/player-working-orders?"));

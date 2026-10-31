@@ -554,3 +554,21 @@ test("Tauri 本人交割查询经 actor 命令且拒绝旧 generation", { timeou
     return undefined;
   });
 });
+
+
+test("Tauri 查询能力通过应用层门禁", { timeout: 10000 }, async () => {
+  await withTauriHost(async (host) => {
+    const { createServer } = await import("vite");
+    const vite = await createServer({ root: "apps/web", configFile: false, appType: "custom", server: { middlewareMode: true, ws: false }, optimizeDeps: { noDiscovery: true } });
+    try {
+      const { actionsFor } = await vite.ssrLoadModule("/src/app/market-runtime-gate.test-support.tsx") as typeof import("../app/market-runtime-gate.test-support.tsx");
+      const actions = actionsFor(host);
+      assert.deepEqual(await actions.queryPersonalTradeConfirmations(), []);
+      assert.deepEqual(await actions.calculateIntradayAverage({ turnoverCents: "1000", tradeCount: 1, volumeShares: 10 }), { turnoverCents: "1000", volumeShares: 10 });
+    } finally { await vite.close(); }
+  }, (command) => {
+    if (command === "host_history_query") return { generation: "1", value: [] };
+    if (command === "calculate_intraday_average") return { turnover_cents: "1000", volume_shares: 10 };
+    return undefined;
+  });
+});

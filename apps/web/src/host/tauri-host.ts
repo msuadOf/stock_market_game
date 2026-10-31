@@ -290,7 +290,7 @@ export async function createTauriHost(setup: SessionSetup, seed: bigint): Promis
       timeline.assertQueryCursor(cursor, generation(response.generation, "Tauri company_read_query.generation"), "Tauri 公司查询响应属于已过期会话 generation");
       return { owner: response.owner, value: response.value };
     }, () => timeline.baselineForRead().catalogResolver, "0"),
-    capabilities: { deliveryModes: [], targetUiHz: UI_TARGET_HZ, sharedMemory: false, reconnect: false, publicCompanyReports: true, npcDecisionDiagnostics: npcDiagnosticsEnabled },
+    capabilities: { deliveryModes: [], targetUiHz: UI_TARGET_HZ, sharedMemory: false, reconnect: false, publicCompanyReports: true, personalTradeHistory: true, indicatorCapabilities: { intradayAverage: true, macd: true, priceKdj: true, candleKdj: true }, npcDecisionDiagnostics: npcDiagnosticsEnabled },
     async start(onUpdate, onFatalError) {
       if (disposed) throw new Error("Tauri 会话已经销毁，不能重新启动");
       const id = requireSession();
