@@ -59,7 +59,13 @@ fn stock_session(start: &str, registered: &str, ex: &str) -> GameSession {
     restore_with_three_groups(&saved)
 }
 
-fn trade(session: &mut GameSession, seller: AccountId, buyer: AccountId, price: i64, qty: u32) {
+pub(super) fn trade(
+    session: &mut GameSession,
+    seller: AccountId,
+    buyer: AccountId,
+    price: i64,
+    qty: u32,
+) {
     if session.runtime_driver.is_none() {
         session.construct_runtime_driver_lazy_for_test().unwrap();
     }

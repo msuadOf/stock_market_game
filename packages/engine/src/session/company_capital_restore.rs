@@ -477,13 +477,14 @@ pub(crate) fn validate_company_capital_restore(
     Ok(CapitalReplaySummary { companies })
 }
 
-/// 唯一允许超过 civil 收盘截止的事实是次日已经应用且尚未消费的送转 opening。
+/// 唯一允许超过 civil 收盘截止的事实是次日已经应用且尚未消费的资本 opening。
 fn pending_stock_credit(
     input: &CapitalRestoreInput<'_>,
     issuer: CompanyId,
     movement: &str,
     day: CivilDate,
 ) -> bool {
+    use crate::company::share_registry::settlement_day::ShareUnitIdentity;
     input.committed_through.next().ok() == Some(day)
         && day <= input.approved_through
         && input.actions.dividend_tax_books.is_empty()
@@ -493,15 +494,31 @@ fn pending_stock_credit(
                 && registry.pending_opening().is_some_and(|opening| {
                     opening.request.event_id == movement
                         && opening.request.day == day
-                        && opening.reference.from_unit == opening.reference.to_unit
-                        && input.actions.stock_distributions.iter().any(|book| {
-                            book.plan().issuer == issuer
-                                && book.plan().stock == *registry.stock()
-                                && book.credited_on() == Some(day)
-                                && opening.reference.registration_event_id == book.plan().event_id
-                                && movement
-                                    == format!("stock-distribution:{}", book.plan().event_id)
-                        })
+                        && ((opening.reference.from_unit == opening.reference.to_unit
+                            && input.actions.stock_distributions.iter().any(|book| {
+                                book.plan().issuer == issuer
+                                    && book.plan().stock == *registry.stock()
+                                    && book.credited_on() == Some(day)
+                                    && opening.reference.registration_event_id
+                                        == book.plan().event_id
+                                    && movement
+                                        == format!("stock-distribution:{}", book.plan().event_id)
+                            }))
+                            || (opening.reference.from_unit != opening.reference.to_unit
+                                && opening.reference.to_unit
+                                    == (ShareUnitIdentity::ReDenominated {
+                                        movement_event_id: movement.into(),
+                                    })
+                                && input.actions.share_splits.iter().any(|book| {
+                                    book.plan().issuer == issuer
+                                        && book.plan().stock == *registry.stock()
+                                        && book.settled_on() == Some(day)
+                                        && book.plan().ex_rights_on == day
+                                        && opening.reference.registration_event_id
+                                            == book.plan().event_id
+                                        && movement
+                                            == format!("share-transform:{}", book.plan().event_id)
+                                })))
                 })
         })
 }
@@ -987,7 +1004,16 @@ fn prepare_share_splits(
         .into_iter()
         .flatten()
         {
-            if occurred > input.committed_through {
+            if occurred > input.committed_through
+                && !(book.settled_on() == Some(occurred)
+                    && occurred == plan.ex_rights_on
+                    && pending_stock_credit(
+                        input,
+                        plan.issuer,
+                        &format!("share-transform:{}", plan.event_id),
+                        occurred,
+                    ))
+            {
                 return Err(CompanyCapitalRestoreError::FutureFact {
                     context: CapitalRestoreContext {
                         day: Some(occurred),
@@ -1037,7 +1063,7 @@ fn prepare_share_splits(
                 fact.issued_shares_after,
                 context.clone(),
             )?;
-            // REG-P 接线前只支持与其他资本动作不交叉、同日无实际市场换手的正式转换。
+            // typed opening 明确把 E 日市场绑定到新单位；旧式同日转换仍拒绝换手。
             if bindings.movements.values().any(|movement| {
                 movement.context.company == Some(plan.issuer) && movement.day == day
             }) || input
@@ -1777,11 +1803,12 @@ fn validate_redenomination_holders(
     receipt: &ShareDayReceipt,
     frozen: &ShareSplitReceipt,
     context: &CapitalRestoreContext,
+    opening: bool,
 ) -> Result<(), CompanyCapitalRestoreError> {
     let expected = frozen
         .holders
         .iter()
-        .filter(|holder| holder.original_shares != holder.new_shares)
+        .filter(|holder| opening || holder.original_shares != holder.new_shares)
         .map(|holder| (&holder.holder, holder))
         .collect::<BTreeMap<_, _>>();
     if expected.len() != receipt.request.changes.len() {
@@ -1805,7 +1832,14 @@ fn validate_redenomination_holders(
                 field: "holder-allocation",
             });
         }
-        if delta > 0 {
+        if delta == 0 {
+            if change.acquisition.is_some() || change.consume.is_some() {
+                return Err(CompanyCapitalRestoreError::ActionMismatch {
+                    context: context.clone(),
+                    field: "zero-allocation",
+                });
+            }
+        } else if delta > 0 {
             let acquisition = change.acquisition.as_ref().ok_or_else(|| {
                 CompanyCapitalRestoreError::ActionMismatch {
                     context: context.clone(),
@@ -1893,7 +1927,7 @@ fn validate_bound_receipt(
         ExpectedCapitalAllocation::ReDenomination(frozen) => {
             check_shares(frozen.issued_shares_before, issued_before, context.clone())?;
             check_shares(frozen.issued_shares_after, issued_after, context.clone())?;
-            validate_redenomination_holders(receipt, frozen, &context)?;
+            validate_redenomination_holders(receipt, frozen, &context, opening)?;
         }
         ExpectedCapitalAllocation::RepurchaseCancellation {
             bought_lots,

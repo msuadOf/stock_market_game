@@ -162,6 +162,7 @@ impl GameSession {
                 shadow.prepare_civil_cash_distributions(report.settled_date, &baseline)?;
             let mut desks = shadow.prepare_rights_ex_anchors(next_date)?;
             desks.extend(shadow.prepare_stock_ex_anchors(next_date)?);
+            desks.extend(shadow.prepare_split_ex_anchors(next_date)?);
             let expected_desks = desks.clone();
             let clock =
                 crate::runtime::InformationClockContext::for_civil_disclosure(self, instant)?;
