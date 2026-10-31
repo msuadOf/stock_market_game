@@ -10,9 +10,41 @@ fn setup() -> crate::session::SessionSetup {
     setup.flat_withholding_bp = Some(1000);
     setup.par_value_per_share = Some(Money::from_cents(100));
     setup.issuer_repurchase_enabled = true;
+    setup.auto_corporate_foundation = true;
     setup.auction_ticks = 0;
     setup.closing_auction_ticks = 0;
     setup
+}
+fn approve(session: &mut GameSession, stock: u32, budget: i64) -> crate::plans::PlanId {
+    use crate::company::issuer_repurchase::{
+        IssuerRepurchasePlan, RepurchaseCompletionPolicy, RepurchasePurpose,
+    };
+    let day = session.civil_date();
+    let plan = IssuerRepurchasePlan {
+        event_id: format!("测试回购-{stock}"),
+        approval_reference: format!("股东会批准-{stock}"),
+        issuer: crate::company::CompanyId(stock),
+        stock: crate::StockCode(if stock == 0 { "000001" } else { "300001" }.into()),
+        exchange: crate::calendar::CalendarExchange::Szse,
+        approved_on: day,
+        announced_on: day,
+        window_start_on: day,
+        window_deadline_on: day,
+        price_cap_per_share: Money::from_cents(1000),
+        total_budget: Money::from_cents(budget),
+        max_shares: 100,
+        purpose: RepurchasePurpose::ReduceCapital,
+        completion_policy: RepurchaseCompletionPolicy::CancelOnCompletion,
+        approval_unit_event_id: None,
+    };
+    let receipt = session.approve_repurchase_for_runtime_test(plan).unwrap();
+    let crate::session::RepurchaseApprovalReceipt::Approved { plan_id, .. } = receipt else {
+        panic!("首次批准必须成功")
+    };
+    plan_id
+}
+fn restore_approved(session: &GameSession) -> GameSession {
+    GameSession::restore(&session.save().unwrap()).unwrap()
 }
 #[test]
 fn funds_p2_actual_driver_01_real_shared_treasury_nonzero_owner_credit_survives_next_start() {
@@ -22,18 +54,13 @@ fn funds_p2_actual_driver_01_real_shared_treasury_nonzero_owner_credit_survives_
         .into_iter()
         .find(|id| session.account(*id).unwrap().kind() == AccountKind::IssuerRepurchase)
         .unwrap();
-    let mut book = session.take_runtime_plans();
-    let ids = [0, 1].map(|stock| {
-        book.create_issuer_repurchase(crate::plans::RepurchaseExecutionOpen {
-            owner,
-            issuer: crate::company::CompanyId(stock),
-            stock: StockId(stock),
-        })
-        .unwrap()
-    });
-    session.set_runtime_plans(book);
+    let ids = [approve(&mut session, 0, 101), approve(&mut session, 1, 203)];
+    let mut session = restore_approved(&session);
+    let baseline = session.account(owner).unwrap().cash();
+    assert_eq!(baseline, Money::from_cents(304));
     let mut driver = RuntimeDriver::from_session_grouped(&mut session, 2).unwrap();
     assert_eq!(driver.account_by_owner((1, 1)), Some(owner));
+    // 以下只验证隔离 driver 的现金原语与镜像，不代表再次批准公司预算。
     driver
         .world
         .with_admin_transaction(
@@ -61,11 +88,11 @@ fn funds_p2_actual_driver_01_real_shared_treasury_nonzero_owner_credit_survives_
             |_| Ok(()),
         )
         .unwrap();
-    assert_eq!(session.account(owner).unwrap().cash(), Money::ZERO);
+    assert_eq!(session.account(owner).unwrap().cash(), baseline);
     driver.step_frame_equivalent(&mut session).unwrap();
     assert_eq!(
         session.account(owner).unwrap().cash(),
-        Money::from_cents(304)
+        Money::from_cents(608)
     );
     driver.world.shutdown().unwrap();
 }
@@ -97,15 +124,10 @@ fn funds_p2_actual_driver_03_lazy_builder_binding_is_live_before_session_activat
         .into_iter()
         .find(|id| session.account(*id).unwrap().kind() == AccountKind::IssuerRepurchase)
         .unwrap();
-    let mut book = session.take_runtime_plans();
-    let id = book
-        .create_issuer_repurchase(crate::plans::RepurchaseExecutionOpen {
-            owner,
-            issuer: crate::company::CompanyId(0),
-            stock: StockId(0),
-        })
-        .unwrap();
-    session.set_runtime_plans(book);
+    let id = approve(&mut session, 0, 101);
+    let session = restore_approved(&session);
+    let baseline = session.account(owner).unwrap().cash();
+    assert_eq!(baseline, Money::from_cents(101));
     let expected_epoch = session.next_runtime_authority_epoch().unwrap();
     let old_revision = session.external_revision();
     let old_plans = session.runtime_plans_snapshot().clone();
@@ -114,6 +136,7 @@ fn funds_p2_actual_driver_03_lazy_builder_binding_is_live_before_session_activat
     assert_eq!(driver.account_by_owner((1, 1)), Some(owner));
     let initial_source = driver.mirror_source();
     let published = driver.world.publication().load();
+    // 以下只验证隔离 driver 的现金原语与镜像，不代表再次批准公司预算。
     driver
         .world
         .with_admin_transaction(
@@ -157,14 +180,14 @@ fn funds_p2_actual_driver_03_lazy_builder_binding_is_live_before_session_activat
             .unwrap()
             .1
             .cash,
-        101
+        202
     );
     assert_eq!(
         driver.pending_mirror_domains(),
         pending,
         "静点读取不消费行政待刷原因"
     );
-    assert_eq!(session.account(owner).unwrap().cash(), Money::ZERO);
+    assert_eq!(session.account(owner).unwrap().cash(), baseline);
     assert_eq!(
         session.next_runtime_authority_epoch().unwrap(),
         expected_epoch
@@ -181,43 +204,27 @@ fn funds_p2_actual_driver_04_lazy_builder_cannot_fund_same_number_with_player_ki
         .into_iter()
         .find(|id| session.account(*id).unwrap().kind() == AccountKind::IssuerRepurchase)
         .unwrap();
+    let _id = approve(&mut session, 0, 101);
+    let mut session = restore_approved(&session);
     session
         .fixture_account_mut(&owner)
         .unwrap()
         .fixture_set_kind(AccountKind::Player);
-    let mut book = session.take_runtime_plans();
-    let id = book
-        .create_issuer_repurchase(crate::plans::RepurchaseExecutionOpen {
-            owner,
-            issuer: crate::company::CompanyId(0),
-            stock: StockId(0),
-        })
-        .unwrap();
-    session.set_runtime_plans(book);
+    let cash = session.account(owner).unwrap().cash();
     let epoch = session.next_runtime_authority_epoch().unwrap();
-    let mut driver = RuntimeDriver::prepare_from_session_grouped(&session, 2, epoch).unwrap();
-    let before = driver.mirror_source();
-    let pending = driver.pending_mirror_domains();
-    let error = driver
-        .world
-        .with_admin_transaction(
-            vec![(
-                1,
-                vec![AdminOperation::SyntheticBudgetCredit {
-                    local: 1,
-                    stock: 0,
-                    execution_plan: crate::runtime::protocol::AdminPlanReference::Existing(id),
-                    amount: 101,
-                }],
-            )],
-            |_| -> Result<(), crate::runtime::protocol::RuntimeError> {
-                panic!("实际 Player kind 不得到达信用 inspect")
-            },
-        )
-        .unwrap_err();
+    let revision = session.external_revision();
+    let plans = session.runtime_plans_snapshot().clone();
+    let error = match RuntimeDriver::prepare_from_session_grouped(&session, 2, epoch) {
+        Ok(mut driver) => {
+            driver.world.shutdown().unwrap();
+            panic!("Player kind 不得构造回购 binding")
+        }
+        Err(error) => error,
+    };
     assert!(error.to_string().contains("binding"), "{error}");
-    assert_eq!(driver.mirror_source(), before);
-    assert_eq!(driver.pending_mirror_domains(), pending);
-    assert_eq!(session.account(owner).unwrap().cash(), Money::ZERO);
-    driver.world.shutdown().unwrap();
+    assert_eq!(session.account(owner).unwrap().kind(), AccountKind::Player);
+    assert_eq!(session.account(owner).unwrap().cash(), cash);
+    assert_eq!(session.next_runtime_authority_epoch().unwrap(), epoch);
+    assert_eq!(session.external_revision(), revision);
+    assert_eq!(session.runtime_plans_snapshot(), &plans);
 }

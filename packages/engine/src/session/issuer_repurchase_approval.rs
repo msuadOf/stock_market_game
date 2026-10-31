@@ -626,3 +626,13 @@ pub(super) fn set_approval_fault(fault: ApprovalFault) -> ApprovalFaultGuard {
 pub(super) fn approval_fault_pending() -> Option<ApprovalFault> {
     APPROVAL_FAULT.with(std::cell::Cell::get)
 }
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+impl GameSession {
+    pub(crate) fn approve_repurchase_for_runtime_test(
+        &mut self,
+        plan: IssuerRepurchasePlan,
+    ) -> Result<RepurchaseApprovalReceipt, SessionError> {
+        self.approve_issuer_repurchase(plan, RepurchaseApprovalSource::InternalScenario)
+    }
+}
