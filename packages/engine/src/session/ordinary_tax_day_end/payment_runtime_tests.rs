@@ -635,3 +635,136 @@ fn rights_payment_commits_npc_debits_and_survives_restore() {
         assert_eq!(cash(&restored, account), cash(&session, account));
     }
 }
+
+#[test]
+fn failed_rights_refunds_real_debits_and_restores_without_repayment() {
+    use crate::company::rights_offering::{
+        RightsOfferingBook, RightsOfferingDeclaration, RightsOfferingEventPlan, RightsOfferingMode,
+        RightsSubscriptionStrategy,
+    };
+    let initial = payment_session(CashDividendTaxMode::FlatWithholding);
+    let price = RETAIL_HOLDERS
+        .iter()
+        .map(|account| cash(&initial, *account).cents())
+        .max()
+        .unwrap()
+        / 2
+        + 181;
+    let mut saved = initial.save().unwrap();
+    saved.setup.rights_offering_enabled = true;
+    let company = CompanyId(0);
+    let capital = initial
+        .company_system()
+        .unwrap()
+        .dividend_legal_facts(&company)
+        .unwrap()
+        .unwrap()
+        .registered_capital;
+    let mut plan = RightsOfferingEventPlan {
+        event_id: "真实退款测试".into(),
+        approval_reference: "测试批准".into(),
+        issuer: company,
+        stock: crate::StockCode(STOCK.into()),
+        exchange: crate::calendar::CalendarExchange::Sse,
+        approved_on: date(START),
+        announced_on: date(START),
+        registered_on: date(START),
+        payment_start_on: date(START),
+        payment_deadline_on: date(START),
+        ex_rights_on: date(START),
+        settlement_on: date(START),
+        listing_on: date(START),
+        price_per_share: Money::from_cents(price),
+        mode: RightsOfferingMode::RightsToAllShareholders {
+            shares_per_existing_share_micros: 100_000,
+        },
+        npc_subscription_strategy: RightsSubscriptionStrategy::FullByDefault,
+    };
+    plan.derive_schedule(initial.civil_clock().calendar(), plan.exchange, 1)
+        .unwrap();
+    saved
+        .company_state
+        .system_for_test_mut()
+        .declare_rights_offering(
+            &company,
+            RightsOfferingDeclaration {
+                event_id: plan.event_id.clone(),
+                approval_reference: plan.approval_reference.clone(),
+                approved_on: plan.approved_on,
+                price_per_share: plan.price_per_share,
+                par_value_per_share: Money::from_cents(100),
+                registered_capital_at_approval: capital,
+            },
+        )
+        .unwrap();
+    saved
+        .company_state
+        .actions_for_test_mut()
+        .rights_offerings
+        .push(RightsOfferingBook::new(plan.clone()).unwrap());
+    let mut session = restore_with_three_groups(&saved);
+    register_on_june_3(&mut session);
+    assert_eq!(session.civil_date(), plan.payment_start_on);
+    session.step().unwrap();
+    let before: Vec<_> = RETAIL_HOLDERS
+        .iter()
+        .map(|account| (*account, cash(&session, *account)))
+        .collect();
+    session.end_civil_day().unwrap();
+    let book = &session.corporate_actions().unwrap().rights_offerings[0];
+    assert_eq!(book.subscriptions().len(), RETAIL_HOLDERS.len());
+    for record in book.subscriptions() {
+        let HolderId::Account(account) = record.holder else {
+            panic!("预期账户持有人")
+        };
+        let opening = before.iter().find(|row| row.0 == account).unwrap().1;
+        // 同日现金分红先入账并代扣 10%，再以本人真实余额缴款。
+        assert_eq!(
+            cash(&session, account).cents(),
+            opening.cents() + 180 - record.paid_amount.cents()
+        );
+    }
+    let paid: Vec<_> = book
+        .subscriptions()
+        .iter()
+        .filter_map(|record| {
+            let HolderId::Account(account) = record.holder else {
+                return None;
+            };
+            (record.paid_amount > Money::ZERO).then_some((account, record.paid_amount))
+        })
+        .collect();
+    assert!(!paid.is_empty());
+    while session.civil_date() < plan.settlement_on {
+        session.step().unwrap();
+        session.end_civil_day().unwrap();
+    }
+    session.step().unwrap();
+    let before_refund: Vec<_> = paid
+        .iter()
+        .map(|(account, amount)| (*account, *amount, cash(&session, *account)))
+        .collect();
+    session.end_civil_day().unwrap();
+    assert!(
+        session.corporate_actions().unwrap().rights_offerings[0]
+            .settlement()
+            .unwrap()
+            .failed
+    );
+    for (account, amount, before) in &before_refund {
+        assert_eq!(
+            cash(&session, *account).cents(),
+            before.cents() + amount.cents()
+        );
+    }
+    let saved = session.save().unwrap();
+    let mut restored = restore_with_three_groups(&saved);
+    for (account, _, _) in &before_refund {
+        assert_eq!(cash(&restored, *account), cash(&session, *account));
+    }
+    restored.step().unwrap();
+    restored.end_civil_day().unwrap();
+    for (account, _, _) in &before_refund {
+        assert_eq!(cash(&restored, *account), cash(&session, *account));
+    }
+}

@@ -98,7 +98,14 @@ fn rights_payment_operation(
                 amount: amount.cents(),
             })
         }
-        _ => Err(invalid("配股缴款阶段只接受正额 PaymentDebit")),
+        RightsOfferingIntent::FailureRefund { amount, .. } if amount.cents() > 0 => {
+            Ok(AdminOperation::SubscriptionRefund {
+                local,
+                stock,
+                amount: amount.cents(),
+            })
+        }
+        _ => Err(invalid("配股资金阶段只接受正额缴款或退款")),
     }
 }
 
@@ -408,21 +415,13 @@ impl GameSession {
             if candidate.projected_available_cash.len() != available.len() {
                 return Err(invalid("现金权益候选漏真实账户").into());
             }
-            // 已缴款的发行不能静默越过尚未接线的发行结算。
-            if let Some(book) = candidate.actions.rights_offerings.iter().find(|book| {
-                book.status() == &crate::company::rights_offering::RightsOfferingStatus::Closed
-                    && day >= book.plan().settlement_on
-            }) {
-                return Err(invalid(format!(
-                    "配股事件 {} 的退款或发行结算尚未接线",
-                    book.plan().event_id
-                ))
-                .into());
-            }
-            // 缴款按现金权益后的真实候选余额计算，并在同一次 Admin 提交。
+            // 缴款和失败退款复用同一真实账户行政事务。
             let payment_active = candidate.actions.rights_offerings.iter().any(|book| {
-                book.status() == &crate::company::rights_offering::RightsOfferingStatus::Entitled
-                    && book.plan().payment_window_contains(day)
+                (book.status() == &crate::company::rights_offering::RightsOfferingStatus::Entitled
+                    && book.plan().payment_window_contains(day))
+                    || (book.status()
+                        == &crate::company::rights_offering::RightsOfferingStatus::Closed
+                        && day >= book.plan().settlement_on)
             });
             if payment_active {
                 let mut resources = BTreeMap::new();
@@ -458,26 +457,36 @@ impl GameSession {
                 )?;
                 if rights.registries != candidate.actions.registries
                     || rights.dividend_tax_books != candidate.actions.dividend_tax_books
-                    || !rights.finance_settlements.is_empty()
+                    || rights
+                        .finance_settlements
+                        .iter()
+                        .any(|fact| fact.issued_shares != 0 || fact.proceeds != Money::ZERO)
                 {
-                    return Err(invalid("配股缴款阶段不支持同日发行或其他名册变动").into());
+                    return Err(invalid("配股成功发行及股份、除权仍未接线").into());
                 }
                 let mut receipts = BTreeMap::new();
                 for result in &rights.results {
-                    if result.disposition == RightsAccountDisposition::PreparedSubscription
-                        && result.paid_amount > Money::ZERO
+                    let (kind, amount) = match &result.disposition {
+                        RightsAccountDisposition::PreparedSubscription => (0u8, result.paid_amount),
+                        RightsAccountDisposition::PreparedSettlement => {
+                            (1u8, result.refunded_amount)
+                        }
+                        RightsAccountDisposition::Rejected { .. } => continue,
+                    };
+                    if amount > Money::ZERO
                         && receipts
                             .insert(
                                 (
+                                    kind,
                                     result.request.event_id.clone(),
                                     result.request.account,
                                     result.request.submitted_on,
                                 ),
-                                result.paid_amount,
+                                amount,
                             )
                             .is_some()
                     {
-                        return Err(invalid("配股缴款申请身份重复").into());
+                        return Err(invalid("配股资金申请身份重复").into());
                     }
                 }
                 if !rights.intents.is_empty() {
@@ -486,16 +495,25 @@ impl GameSession {
                     });
                 }
                 for intent in &rights.intents {
-                    let RightsOfferingIntent::PaymentDebit { request, amount } = intent else {
-                        return Err(invalid("配股缴款阶段不支持退款或新股").into());
+                    let (kind, request, amount) = match intent {
+                        RightsOfferingIntent::PaymentDebit { request, amount } => {
+                            (0u8, request, amount)
+                        }
+                        RightsOfferingIntent::FailureRefund { request, amount } => {
+                            (1u8, request, amount)
+                        }
+                        RightsOfferingIntent::NewShares { .. } => {
+                            return Err(invalid("配股成功发行及股份、除权仍未接线").into())
+                        }
                     };
                     if receipts.remove(&(
+                        kind,
                         request.event_id.clone(),
                         request.account,
                         request.submitted_on,
                     )) != Some(*amount)
                     {
-                        return Err(invalid("配股扣款缺少唯一实缴回执").into());
+                        return Err(invalid("配股资金操作缺少唯一回执").into());
                     }
                     let book = rights
                         .rights_offerings
@@ -542,14 +560,40 @@ impl GameSession {
                         .expected_accounts
                         .entry((group, local))
                         .or_insert_with(|| raw_accounts[&(group, local)].clone());
-                    raw.cash = raw
-                        .cash
-                        .checked_sub(amount.cents())
-                        .filter(|cash| *cash >= 0)
-                        .ok_or_else(|| invalid("配股真实账户余额不足或下溢"))?;
+                    raw.cash = if kind == 0 {
+                        raw.cash
+                            .checked_sub(amount.cents())
+                            .filter(|cash| *cash >= 0)
+                    } else {
+                        raw.cash.checked_add(amount.cents())
+                    }
+                    .ok_or_else(|| invalid("配股真实账户资金溢出或余额不足"))?;
                 }
                 if !receipts.is_empty() {
                     return Err(invalid("配股实缴回执缺少扣款意图").into());
+                }
+                for fact in &rights.finance_settlements {
+                    let book = rights
+                        .rights_offerings
+                        .iter()
+                        .find(|book| book.plan().event_id == fact.event_id)
+                        .ok_or_else(|| invalid("配股退款缺少账簿"))?;
+                    if !book
+                        .settlement()
+                        .is_some_and(|receipt| receipt.failed && receipt.settlement_on == day)
+                        || fact.settled_on != day
+                        || fact.issued_shares != 0
+                        || fact.proceeds != Money::ZERO
+                    {
+                        return Err(invalid("配股退款与零发行事实不一致").into());
+                    }
+                    candidate.company_system.record_rights_offering_settlement(
+                        &fact.issuer,
+                        &fact.event_id,
+                        fact.settled_on,
+                        0,
+                        crate::accounting::AccountingAmount::from_money(fact.proceeds),
+                    )?;
                 }
                 candidate.actions.rights_offerings = rights.rights_offerings;
                 candidate.actions.rights_subscription_queue = rights.rights_subscription_queue;
@@ -669,6 +713,27 @@ mod rights_payment_tests {
     use crate::session::corporate_actions::rights_offering_day_end::{
         RightsOfferingIntent, RightsRequestKey,
     };
+
+    #[test]
+    fn failed_subscription_refund_uses_dedicated_credit_operand() {
+        let request = RightsRequestKey {
+            event_id: "退款测试".into(),
+            account: AccountId(3),
+            submitted_on: crate::CivilDate::from_iso("2030-06-04").unwrap(),
+        };
+        let intent = RightsOfferingIntent::FailureRefund {
+            request,
+            amount: Money::from_cents(2500),
+        };
+        assert_eq!(
+            rights_payment_operation(&intent, 2, 1).unwrap(),
+            AdminOperation::SubscriptionRefund {
+                local: 2,
+                stock: 1,
+                amount: 2500
+            }
+        );
+    }
 
     #[test]
     fn rights_payment_uses_dedicated_debit_operand_and_checks_amount() {
