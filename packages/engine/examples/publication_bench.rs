@@ -21,6 +21,7 @@ use std::time::Instant;
 fn synthetic_view(tick: u64) -> StockPublic {
     StockPublic {
         last_price: 1000 + (tick as i64 % 50),
+        last_close: 1000,
         best_bid: Some(999),
         best_ask: Some(1001),
         max_buy_price: 1100,
