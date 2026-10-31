@@ -1,6 +1,7 @@
 use super::*;
 use crate::runtime::drive::{PreparedDriverStep, RuntimeDriver};
 use crate::runtime::world::BeliefParticipantSnapshot;
+use std::sync::Arc;
 
 #[cfg(test)]
 thread_local! {
@@ -41,9 +42,6 @@ pub(super) fn record_full_public_book_aggregation_for_test() {
         costs.set((mirrors, projections + 1));
     });
 }
-#[cfg(feature = "simulation-diagnostics")]
-use std::sync::Arc;
-
 fn runtime_book_cache_header_matches(
     previous: Option<&RuntimeRestingSnapshot>,
     id_map: &std::sync::Arc<Vec<AccountId>>,
@@ -91,6 +89,89 @@ fn runtime_book_cache_entry_matches(
         })
 }
 
+/// Session 四表与 driver 缓存共享本人的最终只读值；写入仍由各表的 COW 隔离。
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct SharedRuntimePersonal {
+    attention: Arc<NpcAttentionState>,
+    participant: Arc<BeliefParticipantState>,
+    history_reads: Arc<crate::experience::PersonalHistoryReadLedger>,
+    retail_experience: Option<Arc<RetailExperienceState>>,
+}
+
+impl From<BeliefParticipantSnapshot> for SharedRuntimePersonal {
+    fn from(value: BeliefParticipantSnapshot) -> Self {
+        Self {
+            attention: Arc::new(value.attention),
+            participant: Arc::new(BeliefParticipantState::new(
+                value.watchlist,
+                value.price_memory,
+                value.information,
+                value.belief,
+            )),
+            history_reads: Arc::new(value.history_reads),
+            retail_experience: value.retail_experience.map(Arc::new),
+        }
+    }
+}
+
+impl SharedRuntimePersonal {
+    pub(crate) fn matches_owner(&self, owner: AccountId) -> bool {
+        self.participant.information().owner() == owner && self.participant.belief().npc() == owner
+    }
+
+    fn merge_retail_from(&mut self, existing: Option<&RetailExperienceState>) {
+        let (Some(existing), Some(group)) = (existing, self.retail_experience.as_mut()) else {
+            return;
+        };
+        // 原合并只从镜像补 group 没有的 stock；其余字段与已知 stock 均以 group 为准。
+        if !existing
+            .stocks
+            .keys()
+            .any(|code| !group.stocks.contains_key(code))
+        {
+            return;
+        }
+        let group = Arc::make_mut(group);
+        for (code, value) in &existing.stocks {
+            group.stocks.entry(*code).or_insert_with(|| value.clone());
+        }
+    }
+
+    fn prune_memory(&mut self, protected: &BTreeSet<StockId>) {
+        // 两种 prune 都只 retain：总数不超过原未保护上限时，任何保护集下都无值变化。
+        let cap = crate::experience::MAX_UNHELD_WATCHLIST_STOCKS;
+        if self.participant.watchlist().stock_count() <= cap
+            && self.participant.price_memory().stock_count() <= cap
+        {
+            return;
+        }
+        Arc::make_mut(&mut self.participant).prune_memory(protected);
+    }
+
+    /// 完整读面显式物化拥有值，调用方后续修改不影响 Session 或缓存。
+    pub(crate) fn to_snapshot(&self) -> BeliefParticipantSnapshot {
+        BeliefParticipantSnapshot {
+            watchlist: self.participant.watchlist().clone(),
+            price_memory: self.participant.price_memory().clone(),
+            information: self.participant.information().clone(),
+            belief: self.participant.belief().clone(),
+            attention: self.attention.as_ref().clone(),
+            history_reads: self.history_reads.as_ref().clone(),
+            retail_experience: self.retail_experience.as_deref().cloned(),
+        }
+    }
+
+    pub(crate) fn matches_snapshot(&self, value: &BeliefParticipantSnapshot) -> bool {
+        self.participant.watchlist() == &value.watchlist
+            && self.participant.price_memory() == &value.price_memory
+            && self.participant.information() == &value.information
+            && self.participant.belief() == &value.belief
+            && self.attention.as_ref() == &value.attention
+            && self.history_reads.as_ref() == &value.history_reads
+            && self.retail_experience.as_deref() == value.retail_experience.as_ref()
+    }
+}
+
 /// 仅持本次镜像替换值；不克隆 GameSession、World 或运行线程。
 pub(crate) struct PreparedRuntimeMirror {
     #[cfg(feature = "simulation-diagnostics")]
@@ -98,7 +179,7 @@ pub(crate) struct PreparedRuntimeMirror {
     #[cfg(feature = "simulation-diagnostics")]
     decision_traces: crate::diagnostics::decision_trace::NpcDecisionTraceCollector,
     accounts: BTreeMap<AccountId, Account>,
-    personals: BTreeMap<AccountId, (usize, BeliefParticipantSnapshot)>,
+    personals: BTreeMap<AccountId, (usize, SharedRuntimePersonal)>,
     plans: crate::plans::PlanBook,
     markets: BTreeMap<StockId, Market>,
     histories: BTreeMap<StockId, VecDeque<Money>>,
@@ -449,12 +530,7 @@ impl GameSession {
         }
         // 稀疏个人态与组外首买经历保持既有合并优先级，在私有值上完成可失败初始化。
         for (id, (_, value)) in &mut personals {
-            if let Some(group) = &value.retail_experience {
-                value.retail_experience = Some(match self.state.retail_experience.get(id) {
-                    Some(existing) => existing.clone().merged_with_group_authority(group),
-                    None => group.clone(),
-                });
-            }
+            value.merge_retail_from(self.state.retail_experience.get(id));
         }
         for (global, id, code, entry, closing_buy) in hold_inits {
             if !self.state.retail_experience.contains_key(&id) {
@@ -469,14 +545,14 @@ impl GameSession {
             let (_, value) = personals.get_mut(&id).expect("刚插入或已有个人 candidate");
             let ledger = value
                 .retail_experience
-                .get_or_insert_with(|| self.state.retail_experience[&id].clone());
+                .get_or_insert_with(|| Arc::new(self.state.retail_experience[&id].clone()));
             // 延迟窗口内组可能已在下一次观察创建完整持仓经历；该整态保持组权威。
             // 仅为组也尚未建立的首买补既有桥接，不再次初始化已有生命周期。
             if ledger.feedback.stocks.contains_key(&code) {
                 continue;
             }
             let price = Money::from_cents(entry.max(1));
-            ledger
+            Arc::make_mut(ledger)
                 .initialize_holding_dated(
                     &code,
                     Some(price),
@@ -519,15 +595,7 @@ impl GameSession {
                 .copied()
                 .chain(input.plans.active_investor_codes(id).copied())
                 .collect();
-            let mut participant = decision_chain::personal_state::BeliefParticipantState::new(
-                value.watchlist.clone(),
-                value.price_memory.clone(),
-                value.information.clone(),
-                value.belief.clone(),
-            );
-            participant.prune_memory(&protected);
-            value.watchlist = participant.watchlist().clone();
-            value.price_memory = participant.price_memory().clone();
+            value.prune_memory(&protected);
         }
         let mut markets = self.state.markets.clone();
         if is_static {
@@ -996,19 +1064,11 @@ impl GameSession {
         let mut personal_history = self.state.history_reads.clone();
         let mut retail = self.state.retail_experience.clone();
         for (id, (_, value)) in &personals {
-            npc_attention.insert_without_previous(*id, value.attention.clone());
-            beliefs.insert_without_previous(
-                *id,
-                BeliefParticipantState::new(
-                    value.watchlist.clone(),
-                    value.price_memory.clone(),
-                    value.information.clone(),
-                    value.belief.clone(),
-                ),
-            );
-            personal_history.insert_without_previous(*id, value.history_reads.clone());
+            npc_attention.insert_arc(*id, Arc::clone(&value.attention));
+            beliefs.insert_arc(*id, Arc::clone(&value.participant));
+            personal_history.insert_arc(*id, Arc::clone(&value.history_reads));
             if let Some(row) = &value.retail_experience {
-                retail.insert_without_previous(*id, row.clone());
+                retail.insert_arc(*id, Arc::clone(row));
             }
         }
         for (id, due, seed) in attention {
@@ -1099,7 +1159,7 @@ impl GameSession {
         commit_source: bool,
     ) -> (
         Vec<Event>,
-        BTreeMap<AccountId, (usize, BeliefParticipantSnapshot)>,
+        BTreeMap<AccountId, (usize, SharedRuntimePersonal)>,
         usize,
     ) {
         let count = prepared.accounts.len();
@@ -1500,8 +1560,313 @@ mod source_tests {
     use super::*;
 
     #[test]
+    fn shared_retail_merge_keeps_group_authority_and_independent_candidates() {
+        let mut setup = super::super::npc_working_quote_tests::two_stock_quote_setup();
+        setup.npcs.retail_count = 1;
+        setup.npcs.inst_count = 0;
+        let mut game = GameSession::new(setup, 42).unwrap();
+        let driver = RuntimeDriver::from_session(&mut game).unwrap();
+        let mut snapshot = driver
+            .collect_belief()
+            .unwrap()
+            .into_iter()
+            .flat_map(|(_, rows)| rows)
+            .flatten()
+            .next()
+            .expect("真实 Retail 完整个人态");
+        let moment = crate::experience::ExperienceMoment {
+            civil_date: game.civil_date(),
+            market_minute: game.current_market_minute(),
+            trading_day: u64::from(game.day()),
+        };
+        let mut group = RetailExperienceState::new(Money::from_cents(10_000)).unwrap();
+        group
+            .initialize_holding_dated(
+                &StockId(0),
+                Some(Money::from_cents(1_000)),
+                Money::from_cents(1_000),
+                moment,
+            )
+            .unwrap();
+        let mut existing = RetailExperienceState::new(Money::from_cents(20_000)).unwrap();
+        for code in 0..2 {
+            let price = Money::from_cents(1_100 + i64::from(code));
+            existing
+                .initialize_holding_dated(&StockId(code), Some(price), price, moment)
+                .unwrap();
+            snapshot
+                .watchlist
+                .record_attention(&StockId(code), moment.market_minute, moment.market_minute)
+                .unwrap();
+            snapshot
+                .price_memory
+                .observe_price(&StockId(code), price, moment.market_minute)
+                .unwrap();
+        }
+        snapshot.retail_experience = Some(group.clone());
+        let original = SharedRuntimePersonal::from(snapshot.clone());
+        let mut first = original.clone();
+        let second = original.clone();
+        first.merge_retail_from(Some(&existing));
+        let mut expected = snapshot.clone();
+        expected.retail_experience = Some(existing.clone().merged_with_group_authority(&group));
+        assert_eq!(
+            first.to_snapshot(),
+            expected,
+            "仅补镜像缺键，全部group字段保持权威"
+        );
+        assert_eq!(original.to_snapshot(), snapshot);
+        assert_eq!(second.to_snapshot(), snapshot, "另一个候选不被merge写入");
+        first.merge_retail_from(Some(&existing));
+        assert_eq!(first.to_snapshot(), expected, "重复merge幂等");
+
+        let mut unchanged = original.clone();
+        unchanged.merge_retail_from(Some(&group));
+        unchanged.prune_memory(&std::collections::BTreeSet::new());
+        assert_eq!(
+            unchanged.to_snapshot(),
+            snapshot,
+            "不缺键且小于原cap时完整个人值不变"
+        );
+        assert!(Arc::ptr_eq(&unchanged.participant, &original.participant));
+        assert!(Arc::ptr_eq(
+            unchanged.retail_experience.as_ref().unwrap(),
+            original.retail_experience.as_ref().unwrap()
+        ));
+    }
+
+    #[test]
+    fn private_personal_prune_preserves_protection_order_and_failure_isolation() {
+        let mut setup = super::super::npc_working_quote_tests::quote_setup(0);
+        let stock_template = setup.stocks[0].clone();
+        setup.stocks.clear();
+        for suffix in 0..12 {
+            let mut spec = stock_template.clone();
+            spec.code = crate::StockCode(format!("{:06}", 600_880 + suffix));
+            setup.stocks.push(spec);
+        }
+        setup.start_date = crate::CivilDate::from_ymd(2026, 1, 5).unwrap();
+        setup.ticks_per_day = 8;
+        setup.auction_ticks = 0;
+        setup.closing_auction_ticks = 0;
+        let mut game = GameSession::new(setup, 42).unwrap();
+        let owner = *game
+            .state
+            .belief_participants
+            .keys()
+            .next()
+            .expect("真实信念机构名册非空");
+        game.fixture_account_mut(&owner)
+            .unwrap()
+            .fixture_set_positions(std::collections::BTreeMap::from([(
+                StockId(0),
+                crate::account::Position::from_restored_parts(100, 0, 100_000, 0),
+            )]));
+        game.state
+            .plans
+            .create(crate::plans::PlanOpen {
+                account: owner,
+                code: StockId(1),
+                direction: Side::Buy,
+                target: crate::plans::PlanTarget::ShareCount(100),
+                opinion: crate::plans::PlanOpinion {
+                    signal_score_bp: 3000,
+                    source: crate::plans::OpinionSource::Blended,
+                },
+                confidence_bp: 8000,
+                urgency: crate::plans::Urgency::Normal,
+                horizon_trading_days: 5,
+                created_trading_day: 0,
+            })
+            .unwrap();
+
+        let mut driver = RuntimeDriver::from_session(&mut game).unwrap();
+        driver.adopt_session_seq(&game);
+        driver.force_due_for_test_at(&[owner], 1);
+        let captured_input = driver.prepare_driver_step(&game).unwrap();
+        assert!(
+            captured_input.sync_source.is_some(),
+            "累计输入来自真实已提交拍"
+        );
+        let mut input = driver
+            .force_full_prepared_input_for_test(captured_input.clone())
+            .unwrap();
+        assert!(
+            input
+                .plans
+                .active_investor_codes(owner)
+                .any(|code| *code == StockId(1)),
+            "fixture 必须保留本人完整 active plan 的保护股"
+        );
+        let observed_minute = game.current_market_minute();
+        let row = input
+            .personals
+            .iter_mut()
+            .find(|(_, id, _)| *id == owner)
+            .expect("完整 Full 输入含目标个人态");
+        let global = row.0;
+        let mut personal = row.2.to_snapshot();
+        personal.watchlist = crate::experience::PersonalWatchlist::default();
+        personal.price_memory = crate::experience::PersonalPriceMemory::default();
+        for code in 0..12 {
+            personal
+                .watchlist
+                .record_attention(&StockId(code), observed_minute, observed_minute)
+                .unwrap();
+            personal
+                .price_memory
+                .observe_price(
+                    &StockId(code),
+                    Money::from_cents(1_000 + i64::from(code)),
+                    observed_minute,
+                )
+                .unwrap();
+        }
+        let original = personal.clone();
+        row.2 = personal.into();
+        // 无对手盘也要明确经过生产 touched 裁剪块，不能让 fixture 旁路该块。
+        input.touched.push((global, owner));
+        input.touched.sort();
+        input.touched.dedup();
+        let expected_protected = std::collections::BTreeSet::from([StockId(0), StockId(1)]);
+        let mut reference =
+            super::super::decision_chain::personal_state::BeliefParticipantState::new(
+                original.watchlist.clone(),
+                original.price_memory.clone(),
+                original.information.clone(),
+                original.belief.clone(),
+            );
+        reference.prune_memory(&expected_protected);
+        let committed_before = serde_json::to_value(game.snapshot_inner(true, true)).unwrap();
+        let cache_before = driver.administrative_cache_snapshot_for_test();
+        let mut sync_before = captured_input.clone();
+        driver
+            .materialize_sync_mirror_inputs(&mut sync_before)
+            .unwrap();
+        assert!(
+            sync_before.personals.iter().any(|(_, id, _)| *id == owner),
+            "失败隔离守卫必须覆盖非空的本人累计个人输入"
+        );
+        let sync_personals_before: Vec<_> = sync_before
+            .personals
+            .iter()
+            .map(|(index, id, value)| (*index, *id, value.to_snapshot()))
+            .collect();
+
+        let candidate = game
+            .prepare_runtime_mirror(&mut driver, input.clone(), 1)
+            .unwrap();
+        let prepared = candidate.personals[&owner].1.to_snapshot();
+        assert_eq!(
+            prepared.watchlist,
+            *reference.watchlist(),
+            "真实 prepare 的结果与既有 prune_memory 逐值一致"
+        );
+        assert_eq!(
+            prepared.price_memory,
+            *reference.price_memory(),
+            "价格记忆逐值与旧路径一致"
+        );
+        assert_eq!(
+            prepared.information, original.information,
+            "修剪不得改变 information"
+        );
+        assert_eq!(prepared.belief, original.belief, "修剪不得改变 belief");
+        assert!(
+            prepared.watchlist.stocks.contains_key(&StockId(0)),
+            "持仓股票受保护"
+        );
+        assert!(
+            prepared.watchlist.stocks.contains_key(&StockId(1)),
+            "active plan 股票受保护"
+        );
+        assert_eq!(
+            prepared.watchlist.latest_attention_minute, observed_minute,
+            "修剪保留 watchlist 时钟"
+        );
+        assert_eq!(
+            prepared.price_memory.stocks[&StockId(0)].last_observed_minute,
+            observed_minute,
+            "受保护条目的本人观察锚不变"
+        );
+        assert_eq!(
+            prepared.price_memory.stocks[&StockId(0)].observed_high,
+            Money::from_cents(1_000)
+        );
+        assert_eq!(
+            prepared.price_memory.stocks[&StockId(0)].observed_low,
+            Money::from_cents(1_000)
+        );
+        assert!(
+            !prepared.watchlist.stocks.contains_key(&StockId(3)),
+            "同分钟时较小 StockId 被稳定驱逐"
+        );
+        assert!(
+            !prepared.watchlist.stocks.contains_key(&StockId(2)),
+            "未保护超 8 项按分钟、StockId 排序裁剪"
+        );
+        assert!(
+            !prepared.price_memory.stocks.contains_key(&StockId(2)),
+            "价格记忆未保护超额项被裁剪"
+        );
+        assert!(
+            !prepared.price_memory.stocks.contains_key(&StockId(3)),
+            "价格记忆同分钟时较小 StockId 被稳定驱逐"
+        );
+        for code in 4..12 {
+            assert!(prepared.watchlist.stocks.contains_key(&StockId(code)));
+            assert!(prepared.price_memory.stocks.contains_key(&StockId(code)));
+        }
+        assert_eq!(
+            serde_json::to_value(game.snapshot_inner(true, true)).unwrap(),
+            committed_before,
+            "prepare 只构造候选，不提前改写 committed Session"
+        );
+        assert_eq!(
+            driver.administrative_cache_snapshot_for_test(),
+            cache_before,
+            "候选修剪不写入 driver 缓存"
+        );
+
+        game.runtime_install_failure = true;
+        let error = match game.prepare_runtime_mirror(&mut driver, input, 1) {
+            Ok(_) => panic!("后继私有 candidate 注入必须显式失败"),
+            Err(error) => error,
+        };
+        assert_eq!(error, "安装失败注入（私有镜像 candidate 校验失败）");
+        assert_eq!(
+            serde_json::to_value(game.snapshot_inner(true, true)).unwrap(),
+            committed_before,
+            "后继 prepare 失败后 committed Session 保持权威原值"
+        );
+        assert_eq!(
+            driver.administrative_cache_snapshot_for_test(),
+            cache_before,
+            "后继 prepare 失败不改 driver 缓存或 sync accumulator 摘要"
+        );
+        let mut sync_after = captured_input;
+        driver
+            .materialize_sync_mirror_inputs(&mut sync_after)
+            .unwrap();
+        assert_eq!(
+            sync_after
+                .personals
+                .iter()
+                .map(|(index, id, value)| (*index, *id, value.to_snapshot()))
+                .collect::<Vec<_>>(),
+            sync_personals_before,
+            "后继 prepare 失败后重新物化的 sync accumulator 个人输入完整不变"
+        );
+        assert_eq!(
+            sync_after.accounts, sync_before.accounts,
+            "后继 prepare 失败后重新物化的 sync accumulator 账户输入完整不变"
+        );
+    }
+
+    #[test]
     fn mirror_candidate_does_not_clone_replaced_shared_previous_values() {
         let mut setup = super::super::npc_working_quote_tests::retail_quote_setup();
+        setup.npcs.inst_count = 1;
         setup.start_date = crate::calendar::CivilDate::from_ymd(2026, 1, 5).unwrap();
         setup.ticks_per_day = 8;
         setup.auction_ticks = 0;
@@ -1540,6 +1905,20 @@ mod source_tests {
         let history_before = game.state.history_reads.clone();
         let retail_before = game.state.retail_experience.clone();
         let snapshot_before = serde_json::to_value(game.snapshot_inner(true, true)).unwrap();
+        let cache_before = driver.administrative_cache_snapshot_for_test();
+        let mut sync_before = input.clone();
+        driver
+            .materialize_sync_mirror_inputs(&mut sync_before)
+            .unwrap();
+        assert!(
+            !sync_before.personals.is_empty(),
+            "fixture 保留真实非空 sync accumulator 个人输入"
+        );
+        let sync_personals_before: Vec<_> = sync_before
+            .personals
+            .iter()
+            .map(|(index, id, value)| (*index, *id, value.to_snapshot()))
+            .collect();
         assert!(game.state.npc_attention.contains_key(&retail_account));
         assert!(game.state.belief_participants.contains_key(&retail_account));
         assert!(game.state.history_reads.contains_key(&retail_account));
@@ -1570,17 +1949,81 @@ mod source_tests {
             "准备 candidate 不得提前安装到 committed Session"
         );
 
-        let account = *candidate.npc_attention.keys().next().unwrap();
+        let account = retail_account;
+        let global = candidate.personals[&account].0;
+        let prepared_personal: BeliefParticipantSnapshot =
+            candidate.personals[&account].1.to_snapshot();
+        let price_code = *prepared_personal
+            .price_memory
+            .stocks
+            .keys()
+            .next()
+            .expect("真实 Continuous observe 已建立价格记忆");
+        let price_entry = &prepared_personal.price_memory.stocks[&price_code];
+        let candidate_minute = price_entry.last_touched_minute;
+        let history_minute = candidate_minute.max(
+            prepared_personal
+                .history_reads
+                .stocks
+                .get(&price_code)
+                .map_or(0, |entry| entry.last_read_market_minute),
+        );
         candidate
             .npc_attention
             .get_mut(&account)
             .unwrap()
             .next_attention_candidate_tick += 1;
+        let belief = candidate.beliefs.get_mut(&account).unwrap();
+        let price = price_entry.observed_high.add(Money::from_cents(1)).unwrap();
+        belief
+            .price_memory_mut()
+            .observe_price(&price_code, price, candidate_minute)
+            .unwrap();
+        candidate
+            .personal_history
+            .get_mut(&account)
+            .unwrap()
+            .record(&price_code, history_minute)
+            .unwrap();
+        candidate
+            .retail
+            .get_mut(&account)
+            .unwrap()
+            .consecutive_failed_buys += 1;
+        assert_eq!(
+            candidate.personals[&account].1.to_snapshot(),
+            prepared_personal,
+            "candidate 四个可变表写入不改变同一完整个人快照"
+        );
         assert_eq!(game.state.npc_attention, attention_before);
+        assert_eq!(game.state.belief_participants, beliefs_before);
+        assert_eq!(game.state.history_reads, history_before);
+        assert_eq!(game.state.retail_experience, retail_before);
+        assert_eq!(
+            driver.administrative_cache_snapshot_for_test(),
+            cache_before
+        );
+        assert_eq!(
+            serde_json::to_value(game.snapshot_inner(true, true)).unwrap(),
+            snapshot_before
+        );
+        let mut sync_after = input.clone();
+        driver
+            .materialize_sync_mirror_inputs(&mut sync_after)
+            .unwrap();
+        assert_eq!(
+            sync_after
+                .personals
+                .iter()
+                .map(|(index, id, value)| (*index, *id, value.to_snapshot()))
+                .collect::<Vec<_>>(),
+            sync_personals_before
+        );
+        assert_eq!(sync_after.accounts, sync_before.accounts);
 
         game.runtime_install_failure = true;
         super::super::account_paged_map::reset_shared_previous_value_clones();
-        let failure = match game.prepare_runtime_mirror(&mut driver, input, 1) {
+        let failure = match game.prepare_runtime_mirror(&mut driver, input.clone(), 1) {
             Ok(_) => panic!("注入失败应拒绝镜像 candidate"),
             Err(error) => error,
         };
@@ -1598,6 +2041,95 @@ mod source_tests {
             serde_json::to_value(game.snapshot_inner(true, true)).unwrap(),
             snapshot_before,
             "失败 candidate 不得半安装"
+        );
+        game.runtime_install_failure = false;
+
+        drop(candidate);
+        let normal = game
+            .prepare_runtime_mirror(&mut driver, input.clone(), 1)
+            .unwrap();
+        let ack = game
+            .validate_runtime_mirror_source(&driver, &normal)
+            .unwrap();
+        game.install_runtime_mirror(&mut driver, normal);
+        driver.ack_prepared_mirror(ack);
+        let installed_cache = driver.administrative_cache_snapshot_for_test();
+        let other_owner = game
+            .state
+            .belief_participants
+            .keys()
+            .find(|id| **id != account)
+            .copied()
+            .expect("fixture 包含另一个真实 Inst owner");
+        let other_personal = (
+            game.state.npc_attention.get(&other_owner).cloned(),
+            game.state.belief_participants.get(&other_owner).cloned(),
+            game.state.history_reads.get(&other_owner).cloned(),
+            game.state.retail_experience.get(&other_owner).cloned(),
+        );
+        game.state
+            .npc_attention
+            .get_mut(&account)
+            .unwrap()
+            .next_attention_candidate_tick += 1;
+        let belief = game.state.belief_participants.get_mut(&account).unwrap();
+        belief
+            .price_memory_mut()
+            .observe_price(&price_code, price, candidate_minute)
+            .unwrap();
+        game.state
+            .history_reads
+            .get_mut(&account)
+            .unwrap()
+            .record(&price_code, history_minute)
+            .unwrap();
+        game.state
+            .retail_experience
+            .get_mut(&account)
+            .unwrap()
+            .consecutive_failed_buys += 1;
+        assert_eq!(
+            (
+                game.state.npc_attention.get(&other_owner).cloned(),
+                game.state.belief_participants.get(&other_owner).cloned(),
+                game.state.history_reads.get(&other_owner).cloned(),
+                game.state.retail_experience.get(&other_owner).cloned(),
+            ),
+            other_personal,
+            "另一 owner 四域完整值保持不变（None 能力位也保持 None）"
+        );
+        assert_eq!(
+            driver.administrative_cache_snapshot_for_test(),
+            installed_cache
+        );
+        let session_after_writes = (
+            game.state.npc_attention.clone(),
+            game.state.belief_participants.clone(),
+            game.state.history_reads.clone(),
+            game.state.retail_experience.clone(),
+        );
+        let mut collected = driver.collect_belief().unwrap();
+        collected
+            .iter_mut()
+            .flat_map(|(_, rows)| rows.iter_mut())
+            .nth(global)
+            .and_then(Option::as_mut)
+            .expect("collect_belief 返回目标完整个人态")
+            .attention
+            .next_attention_candidate_tick += 1;
+        assert_eq!(
+            driver.administrative_cache_snapshot_for_test(),
+            installed_cache
+        );
+        assert_eq!(
+            (
+                game.state.npc_attention.clone(),
+                game.state.belief_participants.clone(),
+                game.state.history_reads.clone(),
+                game.state.retail_experience.clone(),
+            ),
+            session_after_writes,
+            "修改 collect_belief 的拥有 Snapshot 不改变 Session 四域"
         );
     }
 

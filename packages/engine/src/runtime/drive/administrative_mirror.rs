@@ -14,7 +14,11 @@ impl super::RuntimeDriver {
     pub(crate) fn administrative_cache_snapshot_for_test(&self) -> AdministrativeCacheSnapshot {
         AdministrativeCacheSnapshot {
             source: self.mirror_source(),
-            personals: self.belief_cache.clone(),
+            personals: self
+                .belief_cache
+                .iter()
+                .map(|value| value.as_ref().map(|personal| personal.to_snapshot()))
+                .collect(),
             pending_counts: (
                 self.pending_retail.len(),
                 self.pending_retail_rejections.len(),
@@ -90,9 +94,12 @@ impl super::RuntimeDriver {
                     }
                 }
                 let index = self.global_index((group, local));
-                if self.id_map.get(index) != Some(&id)
-                    || self.belief_cache.get(index) != Some(&snapshot)
-                {
+                let cache_matches = match (self.belief_cache.get(index), &snapshot) {
+                    (Some(Some(cached)), Some(snapshot)) => cached.matches_snapshot(snapshot),
+                    (Some(None), None) => true,
+                    _ => false,
+                };
+                if self.id_map.get(index) != Some(&id) || !cache_matches {
                     return Err(invalid(format!(
                         "行政基线与真实个人缓存不一致：group={group} local={local} account={id:?}"
                     )));

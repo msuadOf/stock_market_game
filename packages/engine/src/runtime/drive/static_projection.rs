@@ -171,7 +171,7 @@ impl RuntimeDriver {
             .flat_map(|(group, rows)| {
                 let per = self.accounts_per_group;
                 rows.into_iter().filter_map(move |(local, id, value)| {
-                    value.map(|value| (usize::from(group) * per + local as usize, id, value))
+                    value.map(|value| (usize::from(group) * per + local as usize, id, value.into()))
                 })
             })
             .collect();

@@ -19,11 +19,7 @@ pub(crate) struct PreparedDriverStep {
         i64,
     >,
     pub last_prices: Vec<i64>,
-    pub personals: Vec<(
-        usize,
-        AccountId,
-        super::super::world::BeliefParticipantSnapshot,
-    )>,
+    pub personals: Vec<(usize, AccountId, crate::session::SharedRuntimePersonal)>,
     pub plans: crate::plans::PlanBook,
     pub touched: Vec<(usize, AccountId)>,
     pub events: Vec<Event>,
@@ -378,7 +374,7 @@ impl RuntimeDriver {
     pub(crate) fn cached_personal_at(
         &self,
         index: usize,
-    ) -> Option<&super::super::world::BeliefParticipantSnapshot> {
+    ) -> Option<&crate::session::SharedRuntimePersonal> {
         self.belief_cache.get(index).and_then(Option::as_ref)
     }
 
@@ -386,7 +382,7 @@ impl RuntimeDriver {
         &mut self,
         index: usize,
         account: AccountId,
-        value: super::super::world::BeliefParticipantSnapshot,
+        value: crate::session::SharedRuntimePersonal,
     ) {
         assert_eq!(
             self.id_map[index], account,
@@ -576,7 +572,13 @@ impl RuntimeDriver {
             .flat_map(|(group, rows)| {
                 let per = self.accounts_per_group;
                 rows.into_iter().filter_map(move |(local, account, value)| {
-                    value.map(|value| (usize::from(group) * per + local as usize, account, value))
+                    value.map(|value| {
+                        (
+                            usize::from(group) * per + local as usize,
+                            account,
+                            value.into(),
+                        )
+                    })
                 })
             })
             .collect();
@@ -644,7 +646,7 @@ impl RuntimeDriver {
             .flat_map(|(group, rows)| {
                 let per = self.accounts_per_group;
                 rows.into_iter().filter_map(move |(local, id, value)| {
-                    value.map(|value| (usize::from(group) * per + local as usize, id, value))
+                    value.map(|value| (usize::from(group) * per + local as usize, id, value.into()))
                 })
             })
             .collect();
