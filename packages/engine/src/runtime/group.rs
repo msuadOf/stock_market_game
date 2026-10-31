@@ -3042,9 +3042,7 @@ impl GroupState {
                 .ok_or_else(|| RuntimeError::ProtocolInvariant {
                     detail: format!("组 {group} retail 位 {local} 缺经验行投影"),
                 })?;
-        // 组账户 → 零售分析 ctx（旧管线 view 依赖面的组内等价——
-        // qty 口径=在手+在途卖（回写同式）；零量条目按曾持有位保留
-        // （旧管线 positions 的清仓残留键语义）。
+        // 组账户 → 零售分析 ctx：持仓数量含在手和在途卖，退出经历保存在 experience。
         let acct = &self.accounts[local as usize];
         let mut positions: std::collections::BTreeMap<crate::StockId, crate::Position> =
             std::collections::BTreeMap::new();
@@ -3062,11 +3060,6 @@ impl GroupState {
                         invested,
                         recovered,
                     ),
-                );
-            } else if *acct.ever_held.get(idx).unwrap_or(&false) {
-                positions.insert(
-                    crate::StockId(idx as u32),
-                    crate::Position::from_restored_parts(0, 0, invested, recovered),
                 );
             }
         }
