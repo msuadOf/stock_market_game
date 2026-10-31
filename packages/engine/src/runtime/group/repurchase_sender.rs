@@ -71,12 +71,17 @@ impl GroupState {
                 return Err(fail("回购资格不是本拍同源时点"));
             }
             if !live.announced
-                || live.issuance_in_progress != Some(false)
-                || live.material_restriction != RepurchaseMaterialRestriction::Clear
+                || live.issuance_in_progress.is_none()
+                || live.material_restriction == RepurchaseMaterialRestriction::NotModelled
             {
                 return Err(fail(
-                    "回购执行资格无法证明：发行实施或重大事项限制尚未解除；请反馈方案与日期",
+                    "回购执行资格无法证明：发行实施或重大事项限制来源未知；请反馈方案与日期",
                 ));
+            }
+            if live.issuance_in_progress == Some(true)
+                || live.material_restriction == RepurchaseMaterialRestriction::Restricted
+            {
+                continue;
             }
             if p.eligibility_as_of.date() > day || p.unit_as_of > day {
                 return Err(fail("回购资格来自未来"));

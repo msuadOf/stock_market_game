@@ -92,32 +92,6 @@ impl DisclosureDispatch {
         1
     }
 
-    /// Simple 的实际定稿材料沿同一公开库、同一排期和同一游标发布。
-    pub(super) fn run_simple_day_end(
-        &mut self,
-        system: &crate::company::CompanySystem,
-        frequency: crate::information::ReportFrequency,
-        seed: u64,
-        report: &CivilDayEndReport,
-        library: &mut PublicLibrary,
-    ) -> Result<DayEndDisclosures, DisclosureError> {
-        let reports_published = crate::information::publish_simple_scheduled(
-            system,
-            frequency,
-            seed,
-            self.published_through,
-            report.disclosure_instant,
-            library,
-            false,
-        )?;
-        self.published_through = Some(report.disclosure_instant);
-        self.announced_through = Some(report.settled_date);
-        Ok(DayEndDisclosures {
-            reports_published,
-            announcements_published: Vec::new(),
-        })
-    }
-
     /// 18:00 披露派发（恰好一次语义：同日重复调用 = no-op）。
     ///
     /// 1. 临时公告：经营目录中 starts_on == settled_date 的当日新激活事件，

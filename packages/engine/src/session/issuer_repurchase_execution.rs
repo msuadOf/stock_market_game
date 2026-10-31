@@ -93,7 +93,7 @@ impl GameSession {
             .announcements_for_company(&plan.issuer, at);
         let announced = published.iter().any(|entry| matches!(&entry.content, crate::information::AnnouncementContent::IssuerRepurchase(value) if value.plan == *plan));
         // 所有当前 Simple 非回购资本决策必须已依法披露；更正处于决策过程时仍受限。
-        let restricted = self.has_pending_report_corrections()
+        let restricted = self.pending_report_corrections().iter().any(|correction| correction.company == plan.issuer)
             || actions.dividends.iter().any(|book| book.plan().issuer == plan.issuer
                 && !published.iter().any(|entry| matches!(&entry.content, crate::information::AnnouncementContent::CashDividend(value) if value.plan == *book.plan())))
             || actions.rights_offerings.iter().any(|book| book.plan().issuer == plan.issuer

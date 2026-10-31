@@ -4135,13 +4135,41 @@ impl GameSession {
                             crate::calendar::CivilInstant::new(report.settled_date, 86_399)
                                 .map_err(crate::calendar::CalendarError::from)?;
                     }
-                    self.state.disclosures.run_simple_day_end(
-                        &system.system,
-                        frequency,
-                        self.state.seed,
-                        &report,
-                        std::sync::Arc::make_mut(&mut self.state.library),
-                    )?
+                    let candidate = disclosures::candidate::prepare_disclosures(
+                        disclosures::candidate::DisclosurePrepareCtx {
+                            source: disclosures::candidate::DisclosureSourceRef::Simple(
+                                &system.system,
+                            ),
+                            previous_dispatch: &self.state.disclosures,
+                            previous_library: &self.state.library,
+                            seed: self.state.seed,
+                            report_frequency: frequency,
+                            through: report.disclosure_instant,
+                            prehistory_opening: None,
+                            settled_announcements: Some(report.settled_date),
+                            corporate_actions: Some(&system.corporate_actions),
+                        },
+                    )
+                    .map_err(|error| {
+                        SessionError::Step(StepFatal::InvariantViolation {
+                            location: "GameSession::prepare_civil_day_disclosures".into(),
+                            description: format!("Simple 披露准备失败：{error}"),
+                        })
+                    })?;
+                    let mut output = DayEndDisclosures::default();
+                    for publication in &candidate.publications {
+                        match &publication.kind {
+                            disclosures::candidate::DisclosurePublicationKind::Announcement => {
+                                output.announcements_published.push(publication.id)
+                            }
+                            disclosures::candidate::DisclosurePublicationKind::Report {
+                                ..
+                            } => output.reports_published.push(publication.id),
+                        }
+                    }
+                    self.state.disclosures = candidate.dispatch;
+                    self.state.library = Arc::new(candidate.library);
+                    output
                 }
             }
         };
