@@ -465,7 +465,7 @@ mod whole_save {
                 history_len: 2,
                 t1_enabled: true,
                 float_allocation: FloatAllocation::random(),
-                start_date: date("2030-06-03"),
+                start_date: date("2030-06-07"),
                 simulation_policy_id: SIMULATION_POLICY_ID.to_owned(),
                 runtime_sync_policy: Default::default(),
                 company_system: Some(simple_company_fixture!(crate; ["600001"])),
@@ -496,6 +496,14 @@ mod whole_save {
         (session, registry_before)
     }
 
+    // 真实 R 收盘落在周五，保存于周六；Registered 仍在 E 前，不补造盘前执行或除权锚。
+    fn registered_plan(ratio: u64) -> ShareSplitEventPlan {
+        let mut pending = plan(ShareSplitDirection::Consolidate, ratio);
+        pending.registered_on = date("2030-06-07");
+        pending.ex_rights_on = date("2030-06-10");
+        pending
+    }
+
     fn save_with_split_capture(session: &GameSession, registry_before: &ShareRegistry) -> SaveSlot {
         use crate::company::share_registry::settlement_day::{
             ConfirmedShareMarketClose, ShareMarketSource, ShareMarketSourceContext,
@@ -504,6 +512,8 @@ mod whole_save {
         use crate::company::share_registry::MovementScope;
 
         let mut save = session.save().unwrap();
+        assert_eq!(save.civil_clock.current_date, date("2030-06-08"));
+        assert!(save.civil_clock.current_date < registered_plan(2).ex_rights_on);
         let system = save.company_state.system_for_test_mut();
         system
             .declare_share_split(
@@ -598,10 +608,9 @@ mod whole_save {
             .registration("split-1")
             .expect("typed settlement capture must freeze the split registration")
             .clone();
-        actions.share_splits.push(legacy_zero_book(
-            snapshot,
-            plan(ShareSplitDirection::Consolidate, 100_001),
-        ));
+        actions
+            .share_splits
+            .push(legacy_zero_book(snapshot, registered_plan(100_001)));
         let edited = serde_json::to_vec(&save).unwrap();
         let restored = GameSession::restore(&save);
         let decoded = serde_json::from_slice::<SaveSlot>(&edited);
@@ -648,7 +657,7 @@ mod whole_save {
             .registration("split-1")
             .expect("typed settlement capture must freeze the split registration")
             .clone();
-        let mut book = ShareSplitBook::new(plan(ShareSplitDirection::Consolidate, 2)).unwrap();
+        let mut book = ShareSplitBook::new(registered_plan(2)).unwrap();
         book.announce(date("2030-06-02")).unwrap();
         book.register(
             snapshot,
