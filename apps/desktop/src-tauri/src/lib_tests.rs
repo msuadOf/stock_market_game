@@ -476,3 +476,44 @@ fn catalog_ipc_error_keeps_structured_fault_and_existing_string_shape() {
         serde_json::json!("旧错误")
     );
 }
+
+#[test]
+fn intraday_average_commands_validate_wire_and_preserve_wide_turnover() {
+    let app = command_builder(mock_builder())
+        .build(mock_context(noop_assets()))
+        .unwrap();
+    let webview = WebviewWindowBuilder::new(&app, "main", Default::default())
+        .build()
+        .unwrap();
+    let input =
+        json!({"turnover_cents":"18446744073709551616", "trade_count":1, "volume_shares":10});
+    let result = invoke_json(
+        &webview,
+        "calculate_intraday_average",
+        json!({"input":input}),
+    )
+    .unwrap();
+    assert_eq!(
+        result,
+        json!({"turnover_cents":"18446744073709551616", "volume_shares":10})
+    );
+    let curve = invoke_json(
+        &webview,
+        "calculate_intraday_average_curve",
+        json!({"seriesKey":"a", "samples":[input]}),
+    )
+    .unwrap();
+    assert_eq!(curve, json!({"series_key":"a", "results":[result]}));
+    assert!(invoke_json(
+        &webview,
+        "calculate_intraday_average",
+        json!({"input":{"turnover_cents":"01", "trade_count":1, "volume_shares":10}})
+    )
+    .is_err());
+    assert!(invoke_json(
+        &webview,
+        "calculate_intraday_average",
+        json!({"input":{"turnover_cents":"0", "trade_count":1, "volume_shares":0}})
+    )
+    .is_err());
+}

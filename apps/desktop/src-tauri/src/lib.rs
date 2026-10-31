@@ -65,6 +65,26 @@ fn calculate_indicators(
         .map_err(|error| error.to_string())
 }
 
+#[tauri::command]
+fn calculate_intraday_average(
+    input: engine::IntradayAverageInput,
+) -> Result<Option<engine::IntradayAverage>, String> {
+    engine::calculate_intraday_average_from_input(&input).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn calculate_intraday_average_curve(
+    series_key: String,
+    samples: Vec<engine::IntradayAverageInput>,
+) -> Result<serde_json::Value, String> {
+    if series_key.is_empty() || series_key.chars().count() > 256 || samples.len() > 600 {
+        return Err("VWAP 曲线 series_key 或样本数无效".to_owned());
+    }
+    let results =
+        engine::calculate_intraday_average_curve(&samples).map_err(|error| error.to_string())?;
+    Ok(serde_json::json!({ "series_key": series_key, "results": results }))
+}
+
 // ── Tauri 命令 ──────────────────────────────────────────────────────────────
 
 /// 创建会话：构造 `GameSession` → 建 mpsc → spawn actor task → 注册。
@@ -571,6 +591,8 @@ fn command_builder<R: Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> 
             engine_baseline,
             host_capabilities,
             calculate_indicators,
+            calculate_intraday_average,
+            calculate_intraday_average_curve,
             player_working_orders,
             query_stock_history,
             initial_allocation,
@@ -607,6 +629,8 @@ fn command_builder<R: Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> 
             engine_baseline,
             host_capabilities,
             calculate_indicators,
+            calculate_intraday_average,
+            calculate_intraday_average_curve,
             player_working_orders,
             query_stock_history,
             initial_allocation,

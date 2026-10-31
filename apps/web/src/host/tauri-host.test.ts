@@ -513,3 +513,30 @@ test("Tauri pending start 遇普通提交前恢复拒绝仍可确认旧 authorit
     return undefined;
   });
 });
+
+test("Tauri 分时均价经 IPC 校验响应并拒绝换档后的迟到结果", { timeout: 10000 }, async () => {
+  let finish!: (value: unknown) => void;
+  await withTauriHost(async (host) => {
+    const pending = host.calculateIntradayAverage({ turnoverCents: "1000", tradeCount: 1, volumeShares: 10 });
+    const rejected = assert.rejects(pending, /过期/);
+    await host.load({});
+    finish({ turnover_cents: "1000", volume_shares: 10 });
+    await rejected;
+    assert.deepEqual(await host.calculateIntradayAverageCurve({ seriesKey: "x", samples: [{ turnoverCents: "1000", tradeCount: 1, volumeShares: 10 }] }), [{ turnoverCents: "1000", volumeShares: 10 }]);
+  }, (command) => {
+    if (command === "calculate_intraday_average") return new Promise((resolve) => { finish = resolve; });
+    if (command === "calculate_intraday_average_curve") return { series_key: "x", results: [{ turnover_cents: "1000", volume_shares: 10 }] };
+    return undefined;
+  });
+});
+
+test("Tauri 分时均价拒绝与输入不一致的响应", { timeout: 10000 }, async () => {
+  await withTauriHost(async (host) => {
+    await assert.rejects(host.calculateIntradayAverage({ turnoverCents: "1000", tradeCount: 1, volumeShares: 10 }), /不一致/);
+    await assert.rejects(host.calculateIntradayAverageCurve({ seriesKey: "x", samples: [] }), /series_key/);
+  }, (command) => {
+    if (command === "calculate_intraday_average") return { turnover_cents: "999", volume_shares: 10 };
+    if (command === "calculate_intraday_average_curve") return { series_key: "wrong", results: [] };
+    return undefined;
+  });
+});

@@ -1,3 +1,4 @@
+import { normalizeIntradayAverageInput, normalizeIntradayAverageCurveInput, normalizeIntradayAverageCurveResult } from "./intraday-average.ts";
 import { isReportCorrectionPrepareRejection, parseHostFailure } from "./protocol-failure.ts";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
@@ -468,7 +469,23 @@ export async function createTauriHost(setup: SessionSetup, seed: bigint): Promis
     async queryCurrentMinuteHistory(): Promise<never> { throw new Error("Tauri 宿主尚未接入当日分钟K查询命令"); },
     async queryPersonalTradeHistory(): Promise<never> { throw new Error("Tauri 宿主尚未接入本人交割历史查询命令"); },
     async queryPersonalTradeConfirmations(): Promise<never> { throw new Error("Tauri 宿主尚未接入本人交割单查询命令"); },
-    async calculateIntradayAverage(): Promise<never> { throw new Error("Tauri 宿主尚未接入分时均价计算命令"); },
-    async calculateIntradayAverageCurve(): Promise<never> { throw new Error("Tauri 宿主尚未接入分时均价曲线计算命令"); },
+    async calculateIntradayAverage(input) {
+      const sample = normalizeIntradayAverageInput(input);
+      const cursor = timeline.captureQueryCursor();
+      const result = await invoke<unknown>("calculate_intraday_average", { input: { turnover_cents: sample.turnoverCents, trade_count: sample.tradeCount, volume_shares: sample.volumeShares } });
+      assertResponseCurrent(cursor.generation, "calculateIntradayAverage");
+      timeline.assertQueryCursor(cursor, cursor.generation, "Tauri 均价响应属于已过期会话 generation");
+      return normalizeIntradayAverageCurveResult([result], 1, [sample])[0];
+    },
+    async calculateIntradayAverageCurve(input) {
+      const normalized = normalizeIntradayAverageCurveInput(input);
+      const cursor = timeline.captureQueryCursor();
+      const response = record(await invoke<unknown>("calculate_intraday_average_curve", { seriesKey: normalized.seriesKey, samples: normalized.samples.map(sample => ({ turnover_cents: sample.turnoverCents, trade_count: sample.tradeCount, volume_shares: sample.volumeShares })) }), "Tauri VWAP curve");
+      assertResponseCurrent(cursor.generation, "calculateIntradayAverageCurve");
+      timeline.assertQueryCursor(cursor, cursor.generation, "Tauri 均价曲线响应属于已过期会话 generation");
+      exact(response, ["series_key", "results"], "Tauri VWAP curve");
+      if (response.series_key !== normalized.seriesKey) throw new Error("VWAP curve 响应 series_key 与请求不匹配");
+      return normalizeIntradayAverageCurveResult(response.results, normalized.samples.length, normalized.samples);
+    },
   };
 }
