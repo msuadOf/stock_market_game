@@ -421,6 +421,10 @@ pub struct DeskState {
     initial_calendar_day: Option<Arc<super::MarketDayContext>>,
     calendar_tick: Option<Arc<super::MarketTickContext>>,
     setup: DeskSetup,
+    pending_ex_rights: Option<(
+        super::protocol::AdminTransactionId,
+        super::protocol::DeskExRightsRequest,
+    )>,
     config: Arc<GameConfig>,
     bids: BTreeMap<i64, VecDeque<DeskOrder>>,
     asks: BTreeMap<i64, VecDeque<DeskOrder>>,
@@ -646,6 +650,7 @@ impl DeskState {
             initial_calendar_day: None,
             calendar_tick: None,
             setup,
+            pending_ex_rights: None,
             config,
             bids: BTreeMap::new(),
             asks: BTreeMap::new(),
@@ -2778,10 +2783,53 @@ impl DeskState {
         self.reset_market_for_new_day();
     }
 
+    /// 除权候选不写行情；同一行政事务 Commit 才更新交易部权威。
+    fn prepare_ex_rights(
+        &mut self,
+        id: super::protocol::AdminTransactionId,
+        request: super::protocol::DeskExRightsRequest,
+    ) -> Result<super::protocol::DeskExRightsRequest, RuntimeError> {
+        if self.pending_ex_rights.is_some()
+            || request.stock != self.setup.stock
+            || request.expected_last_close != self.market.last_close
+            || request.reference_price <= 0
+            || !self.bids.is_empty()
+            || !self.asks.is_empty()
+        {
+            return Err(over(
+                "除权 Prepare 的交易部、收盘价、待处理状态或订单簿不一致",
+            ));
+        }
+        self.pending_ex_rights = Some((id, request));
+        Ok(request)
+    }
+
+    fn finish_ex_rights(
+        &mut self,
+        id: super::protocol::AdminTransactionId,
+        commit: bool,
+    ) -> Result<super::protocol::DeskExRightsRequest, RuntimeError> {
+        let Some((pending_id, request)) = self.pending_ex_rights else {
+            return Err(over("除权完成缺少 Prepare"));
+        };
+        if pending_id != id {
+            return Err(over("除权事务身份不一致"));
+        }
+        self.pending_ex_rights = None;
+        if commit {
+            self.market.last_close = request.reference_price;
+            self.bump_market_ver();
+        }
+        Ok(request)
+    }
+
     /// 收盘清算与终 K 归档完成后，按真实收盘建立下一日行情基准。
     fn reset_market_for_new_day(&mut self) {
         let m = &mut self.market;
-        m.last_close = m.last_price;
+        // 无成交日保留已有除权参考价，不把旧单位最后成交价重新当昨收。
+        if m.trade_count > 0 {
+            m.last_close = m.last_price;
+        }
         m.day_high = m.last_price;
         m.day_low = m.last_price;
         m.volume_today = 0;
@@ -3679,6 +3727,32 @@ fn process_msg(
         other => other,
     };
     match msg {
+        DeskMsg::ExRightsPrepare { id, request } => {
+            let result = state.prepare_ex_rights(id, request);
+            up_tx
+                .send(UpMsg::DeskAdminReceipt {
+                    id,
+                    stock: state.setup.stock,
+                    phase: super::protocol::AdminPhase::Prepare,
+                    result,
+                })
+                .map_err(|_| over("交易部除权 Prepare 回执发送失败"))?;
+        }
+        DeskMsg::ExRightsComplete { id, phase } => {
+            let result = match phase {
+                super::protocol::AdminPhase::Commit => state.finish_ex_rights(id, true),
+                super::protocol::AdminPhase::Abort => state.finish_ex_rights(id, false),
+                super::protocol::AdminPhase::Prepare => Err(over("除权完成相位无效")),
+            };
+            up_tx
+                .send(UpMsg::DeskAdminReceipt {
+                    id,
+                    stock: state.setup.stock,
+                    phase,
+                    result,
+                })
+                .map_err(|_| over("交易部除权完成回执发送失败"))?;
+        }
         #[cfg(test)]
         DeskMsg::InstallFatalCleanupProbeForTest(probe) => {
             assert!(
@@ -3723,6 +3797,9 @@ fn process_msg(
             state.initial_calendar_day = Some(day);
         }
         DeskMsg::Start { tick, calendar } => {
+            if state.pending_ex_rights.is_some() {
+                return Err(over("除权行政事务尚未完成，不得启动市场拍"));
+            }
             let source = state
                 .calendar_owner
                 .as_ref()

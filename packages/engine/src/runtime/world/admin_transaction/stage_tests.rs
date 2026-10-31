@@ -236,3 +236,47 @@ fn r4_stage_04_join_borrows_original_operands_and_rejects_corrupt_indices() {
         );
     }
 }
+
+#[test]
+fn desk_ex_rights_and_group_debit_share_prepare_abort_and_commit() {
+    let mut world = world();
+    let before = world.snapshot_accounts().unwrap();
+    let old = world.public_views()[0].last_price;
+    let request = crate::runtime::protocol::DeskExRightsRequest {
+        stock: 0,
+        expected_last_close: old,
+        reference_price: old - 1,
+    };
+    let reject = world.with_prepared_staged_administrative_and_desks(
+        stages(10),
+        None,
+        vec![request],
+        |candidate, _, _| {
+            assert_eq!(candidate.desks, vec![request]);
+            Err::<(), _>(RuntimeError::ProtocolInvariant {
+                detail: "测试拒绝".into(),
+            })
+        },
+    );
+    assert!(reject.is_err());
+    assert_eq!(world.snapshot_accounts().unwrap(), before);
+    world
+        .with_prepared_staged_administrative_and_desks(
+            stages(10),
+            None,
+            vec![request],
+            |candidate, _, _| {
+                assert_eq!(candidate.desks, vec![request]);
+                Ok(())
+            },
+        )
+        .unwrap();
+    assert_ne!(world.snapshot_accounts().unwrap(), before);
+    let again = world.with_prepared_staged_administrative_and_desks(
+        Vec::new(),
+        None,
+        vec![request],
+        |_, _, _| Ok(()),
+    );
+    assert!(again.is_err(), "已提交的旧参考价不得再次 Prepare");
+}

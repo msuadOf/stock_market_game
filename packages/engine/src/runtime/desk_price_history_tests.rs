@@ -137,3 +137,40 @@ fn direct_zero_capacity_history_is_rejected_before_sampling() {
     );
     assert!(state.market.recent_prices.is_empty());
 }
+
+#[test]
+fn ex_rights_desk_prepare_is_private_and_abort_preserves_market() {
+    let mut desk = state(4, 10, 0, 0);
+    let id = super::super::protocol::AdminTransactionId(1);
+    let before = desk.state_hash();
+    let request = super::super::protocol::DeskExRightsRequest {
+        stock: 0,
+        expected_last_close: 1000,
+        reference_price: 800,
+    };
+    desk.prepare_ex_rights(id, request).unwrap();
+    assert_eq!(desk.market.last_close, 1000);
+    desk.finish_ex_rights(id, false).unwrap();
+    assert_eq!(desk.state_hash(), before);
+}
+
+#[test]
+fn ex_rights_commit_changes_only_reference_and_rejects_stale_requests() {
+    let mut desk = state(4, 10, 0, 0);
+    let id = super::super::protocol::AdminTransactionId(2);
+    let request = super::super::protocol::DeskExRightsRequest {
+        stock: 0,
+        expected_last_close: 1000,
+        reference_price: 800,
+    };
+    desk.prepare_ex_rights(id, request).unwrap();
+    desk.finish_ex_rights(id, true).unwrap();
+    assert_eq!(desk.market.last_close, 800);
+    assert_eq!(desk.market.last_price, 1000);
+    desk.reset_market_for_new_day();
+    assert_eq!(
+        desk.market.last_close, 800,
+        "无成交日不得把旧成交价覆盖除权锚"
+    );
+    assert!(desk.prepare_ex_rights(id, request).is_err());
+}
