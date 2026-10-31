@@ -3844,7 +3844,17 @@ impl GameSession {
                 } else {
                     false
                 };
-                if !failed {
+                let anchored = self.state.setup.dividend_tax_mode
+                    == Some(crate::company::cash_dividend_tax::CashDividendTaxMode::Exempt)
+                    && actions.dividend_tax_books.is_empty()
+                    && book.status()
+                        == &crate::company::rights_offering::RightsOfferingStatus::Closed
+                    && actions.applied_ex_reference_groups.iter().any(|group| {
+                        group.stock == book.plan().stock
+                            && group.date == book.plan().ex_rights_on
+                            && group.rights_event_ids == [book.plan().event_id.clone()]
+                    });
+                if !failed && !anchored {
                     return Err(StepFatal::InvariantViolation {
                         location: "GameSession::validate_capital_market_boundary".into(),
                         description: format!(

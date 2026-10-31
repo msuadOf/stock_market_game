@@ -105,7 +105,17 @@ fn rights_payment_operation(
                 amount: amount.cents(),
             })
         }
-        _ => Err(invalid("配股资金阶段只接受正额缴款或退款")),
+        RightsOfferingIntent::NewShares {
+            shares,
+            paid_amount,
+            ..
+        } if *shares > 0 && paid_amount.cents() > 0 => Ok(AdminOperation::SharesWithCost {
+            local,
+            stock,
+            qty: u32::try_from(*shares).map_err(|_| invalid("配股新股超出账户股数范围"))?,
+            subscription_cost: paid_amount.cents(),
+        }),
+        _ => Err(invalid("配股资金或新股操作数无效")),
     }
 }
 
@@ -457,19 +467,22 @@ impl GameSession {
                 )?;
                 if rights.registries != candidate.actions.registries
                     || rights.dividend_tax_books != candidate.actions.dividend_tax_books
-                    || rights
-                        .finance_settlements
-                        .iter()
-                        .any(|fact| fact.issued_shares != 0 || fact.proceeds != Money::ZERO)
                 {
-                    return Err(invalid("配股成功发行及股份、除权仍未接线").into());
+                    return Err(invalid("配股名册或税账候选与同一 typed 日结不一致").into());
                 }
                 let mut receipts = BTreeMap::new();
                 for result in &rights.results {
-                    let (kind, amount) = match &result.disposition {
-                        RightsAccountDisposition::PreparedSubscription => (0u8, result.paid_amount),
+                    let (kind, amount, shares) = match &result.disposition {
+                        RightsAccountDisposition::PreparedSubscription => {
+                            (0u8, result.paid_amount, 0)
+                        }
+                        RightsAccountDisposition::PreparedSettlement
+                            if result.refunded_amount > Money::ZERO =>
+                        {
+                            (1u8, result.refunded_amount, 0)
+                        }
                         RightsAccountDisposition::PreparedSettlement => {
-                            (1u8, result.refunded_amount)
+                            (2u8, result.paid_amount, result.paid_shares)
                         }
                         RightsAccountDisposition::Rejected { .. } => continue,
                     };
@@ -482,7 +495,7 @@ impl GameSession {
                                     result.request.account,
                                     result.request.submitted_on,
                                 ),
-                                amount,
+                                (amount, shares),
                             )
                             .is_some()
                     {
@@ -495,23 +508,26 @@ impl GameSession {
                     });
                 }
                 for intent in &rights.intents {
-                    let (kind, request, amount) = match intent {
+                    let (kind, request, amount, shares) = match intent {
                         RightsOfferingIntent::PaymentDebit { request, amount } => {
-                            (0u8, request, amount)
+                            (0u8, request, amount, 0u64)
                         }
                         RightsOfferingIntent::FailureRefund { request, amount } => {
-                            (1u8, request, amount)
+                            (1u8, request, amount, 0u64)
                         }
-                        RightsOfferingIntent::NewShares { .. } => {
-                            return Err(invalid("配股成功发行及股份、除权仍未接线").into())
-                        }
+                        RightsOfferingIntent::NewShares {
+                            request,
+                            shares,
+                            paid_amount,
+                            ..
+                        } => (2u8, request, paid_amount, *shares),
                     };
                     if receipts.remove(&(
                         kind,
                         request.event_id.clone(),
                         request.account,
                         request.submitted_on,
-                    )) != Some(*amount)
+                    )) != Some((*amount, shares))
                     {
                         return Err(invalid("配股资金操作缺少唯一回执").into());
                     }
@@ -520,6 +536,15 @@ impl GameSession {
                         .iter()
                         .find(|book| book.plan().event_id == request.event_id)
                         .ok_or_else(|| invalid("配股扣款缺少方案"))?;
+                    if let RightsOfferingIntent::NewShares {
+                        stock: issued_stock,
+                        ..
+                    } = intent
+                    {
+                        if issued_stock != &book.plan().stock {
+                            return Err(invalid("配股新股证券与方案不一致").into());
+                        }
+                    }
                     let stock_id = self
                         .state
                         .stocks
@@ -560,14 +585,36 @@ impl GameSession {
                         .expected_accounts
                         .entry((group, local))
                         .or_insert_with(|| raw_accounts[&(group, local)].clone());
-                    raw.cash = if kind == 0 {
-                        raw.cash
-                            .checked_sub(amount.cents())
-                            .filter(|cash| *cash >= 0)
-                    } else {
-                        raw.cash.checked_add(amount.cents())
+                    match typed {
+                        AdminOperation::PaymentDebit { amount, .. } => {
+                            raw.cash = raw
+                                .cash
+                                .checked_sub(amount)
+                                .filter(|cash| *cash >= 0)
+                                .ok_or_else(|| invalid("配股余额不足"))?
+                        }
+                        AdminOperation::SubscriptionRefund { amount, .. } => {
+                            raw.cash = raw
+                                .cash
+                                .checked_add(amount)
+                                .ok_or_else(|| invalid("配股退款溢出"))?
+                        }
+                        AdminOperation::SharesWithCost {
+                            qty,
+                            subscription_cost,
+                            ..
+                        } => {
+                            let index = usize::from(stock);
+                            raw.shares[index] = raw.shares[index]
+                                .checked_add(qty)
+                                .ok_or_else(|| invalid("配股股份溢出"))?;
+                            raw.invested_cents[index] = raw.invested_cents[index]
+                                .checked_add(subscription_cost)
+                                .ok_or_else(|| invalid("配股成本溢出"))?;
+                            raw.ever_held[index] = false;
+                        }
+                        _ => unreachable!("配股只准备资金与新股操作"),
                     }
-                    .ok_or_else(|| invalid("配股真实账户资金溢出或余额不足"))?;
                 }
                 if !receipts.is_empty() {
                     return Err(invalid("配股实缴回执缺少扣款意图").into());
@@ -578,20 +625,24 @@ impl GameSession {
                         .iter()
                         .find(|book| book.plan().event_id == fact.event_id)
                         .ok_or_else(|| invalid("配股退款缺少账簿"))?;
-                    if !book
-                        .settlement()
-                        .is_some_and(|receipt| receipt.failed && receipt.settlement_on == day)
-                        || fact.settled_on != day
-                        || fact.issued_shares != 0
-                        || fact.proceeds != Money::ZERO
+                    let settlement = book.settlement().ok_or_else(|| invalid("配股缺结算回执"))?;
+                    if fact.settled_on != day
+                        || settlement.settlement_on != day
+                        || (settlement.failed
+                            && (fact.issued_shares != 0 || fact.proceeds != Money::ZERO))
+                        || (!settlement.failed
+                            && (mode
+                                != crate::company::cash_dividend_tax::CashDividendTaxMode::Exempt
+                                || fact.issued_shares != settlement.total_paid_shares
+                                || fact.proceeds != settlement.total_paid_amount))
                     {
-                        return Err(invalid("配股退款与零发行事实不一致").into());
+                        return Err(invalid("配股公司资本与结算回执不一致").into());
                     }
                     candidate.company_system.record_rights_offering_settlement(
                         &fact.issuer,
                         &fact.event_id,
                         fact.settled_on,
-                        0,
+                        fact.issued_shares,
                         crate::accounting::AccountingAmount::from_money(fact.proceeds),
                     )?;
                 }

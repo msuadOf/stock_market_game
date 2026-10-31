@@ -866,7 +866,7 @@ fn exempt_rights_ex_anchor_is_committed_to_desk_and_restored() {
         group.reference.reference_price
     );
     let after = session.save().unwrap();
-    let restored = restore_with_three_groups(&after);
+    let mut restored = restore_with_three_groups(&after);
     assert_eq!(
         restored.runtime_market_seeds()[&StockId(0)].last_close,
         group.reference.reference_price.cents()
@@ -885,5 +885,57 @@ fn exempt_rights_ex_anchor_is_committed_to_desk_and_restored() {
     );
     for account in RETAIL_HOLDERS {
         assert_eq!(cash(&restored, account), cash(&session, account));
+    }
+    restored.step().unwrap();
+    restored.end_civil_day().unwrap();
+    assert_eq!(restored.civil_date(), plan.settlement_on);
+    restored.step().unwrap();
+    let before: Vec<_> = RETAIL_HOLDERS
+        .iter()
+        .map(|id| {
+            let account = restored.account(*id).unwrap();
+            (
+                *id,
+                account.cash(),
+                account.position(&StockId(0)).unwrap().clone(),
+            )
+        })
+        .collect();
+    restored.end_civil_day().unwrap();
+    let book = &restored.corporate_actions().unwrap().rights_offerings[0];
+    assert!(!book.settlement().unwrap().failed);
+    for record in book.subscriptions() {
+        let HolderId::Account(account) = record.holder else {
+            panic!("预期账户持有人")
+        };
+        let (_, old_cash, old_position) = before.iter().find(|row| row.0 == account).unwrap();
+        let actual = restored.account(account).unwrap();
+        assert_eq!(actual.cash(), *old_cash);
+        let position = actual.position(&StockId(0)).unwrap();
+        assert_eq!(
+            u64::from(position.qty()),
+            u64::from(old_position.qty()) + record.paid_shares
+        );
+        assert_eq!(
+            position.invested_cents(),
+            old_position.invested_cents() + record.paid_amount.cents()
+        );
+    }
+    let saved = restored.save().unwrap();
+    let mut continued = restore_with_three_groups(&saved);
+    continued.step().unwrap();
+    continued.end_civil_day().unwrap();
+    for account in RETAIL_HOLDERS {
+        let before = restored.account(account).unwrap();
+        let after = continued.account(account).unwrap();
+        assert_eq!(after.cash(), before.cash());
+        assert_eq!(
+            after.position(&StockId(0)).unwrap().qty(),
+            before.position(&StockId(0)).unwrap().qty()
+        );
+        assert_eq!(
+            after.position(&StockId(0)).unwrap().invested_cents(),
+            before.position(&StockId(0)).unwrap().invested_cents()
+        );
     }
 }

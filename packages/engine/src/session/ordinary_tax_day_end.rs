@@ -442,6 +442,85 @@ impl GameSession {
                 })
                 .map(|(index, book)| (index, book.plan().event_id.clone()))
                 .collect();
+            // Exempt 配股新股先作为本日唯一 REG 的收盘后 movement，
+            // 后续 Admin 再以同一认购事实准备账户入股，不在此改真实账户。
+            let mut issuance = Vec::new();
+            let mut final_accounts = accounts.clone();
+            for book in candidate.rights_offerings.iter().filter(|book| {
+                book.plan().stock == stock
+                    && book.status()
+                        == &crate::company::rights_offering::RightsOfferingStatus::Closed
+                    && book.plan().settlement_on == day
+            }) {
+                let plan = book.plan();
+                if book
+                    .determine_failure()
+                    .map_err(|source| failure(day, Some(&stock), source))?
+                {
+                    continue;
+                }
+                if self.state.setup.dividend_tax_mode != Some(CashDividendTaxMode::Exempt)
+                    || !books.is_empty()
+                    || !candidate.applied_ex_reference_groups.iter().any(|group| {
+                        group.stock == stock
+                            && group.date == plan.ex_rights_on
+                            && group.rights_event_ids == [plan.event_id.clone()]
+                    })
+                {
+                    return Err(failure(
+                        day,
+                        Some(&stock),
+                        invalid("成功配股缺少 Exempt 税制或真实除权锚"),
+                    ));
+                }
+                let mut issuance_changes = Vec::new();
+                for record in book
+                    .subscriptions()
+                    .iter()
+                    .filter(|record| record.paid_shares > 0)
+                {
+                    let HolderId::Account(account) = &record.holder else {
+                        return Err(failure(
+                            day,
+                            Some(&stock),
+                            invalid("当前成功配股不支持外部股东或回购专户"),
+                        ));
+                    };
+                    let positions = final_accounts.get_mut(account).ok_or_else(|| {
+                        failure(day, Some(&stock), invalid("配股账户缺少真实市场持仓"))
+                    })?;
+                    let qty = positions.entry(stock_id).or_default();
+                    *qty = qty
+                        .checked_add(record.paid_shares)
+                        .ok_or_else(|| failure(day, Some(&stock), invalid("配股账户股份溢出")))?;
+                    issuance_changes.push(DayNetChange {
+                        holder: record.holder.clone(),
+                        change: i128::from(record.paid_shares),
+                        acquisition: Some(NetAcquisition {
+                            lot_id: format!(
+                                "rights-offering:{}:account-{}",
+                                plan.event_id, account.0
+                            ),
+                            source: AcquisitionSource::CorporateAction {
+                                event: plan.event_id.clone(),
+                            },
+                            restriction: ShareRestriction::Unrestricted,
+                        }),
+                        consume: None,
+                    });
+                }
+                if issuance_changes.is_empty() {
+                    return Err(failure(day, Some(&stock), invalid("成功配股没有实缴股份")));
+                }
+                issuance.push(SharePostAction::Movement(ShareDayRequest {
+                    event_id: format!("rights-offering:{}", plan.event_id),
+                    day,
+                    scope: MovementScope::NonTradingTransfer {
+                        basis: plan.approval_reference.clone(),
+                    },
+                    changes: issuance_changes,
+                }));
+            }
             let request = ShareSettlementDay {
                 stock: stock.clone(),
                 day,
@@ -459,19 +538,23 @@ impl GameSession {
                         changes,
                     },
                 },
-                post_market_actions: captures
-                    .iter()
-                    .map(|(_, plan)| SharePostAction::CaptureRegistration {
-                        event_id: plan.plan_id.clone(),
-                    })
+                post_market_actions: issuance
+                    .into_iter()
                     .chain(
-                        stock_captures
+                        captures
                             .iter()
-                            .chain(&split_captures)
-                            .chain(&rights_captures)
-                            .map(|(_, event_id)| SharePostAction::CaptureRegistration {
-                                event_id: event_id.clone(),
-                            }),
+                            .map(|(_, plan)| SharePostAction::CaptureRegistration {
+                                event_id: plan.plan_id.clone(),
+                            })
+                            .chain(
+                                stock_captures
+                                    .iter()
+                                    .chain(&split_captures)
+                                    .chain(&rights_captures)
+                                    .map(|(_, event_id)| SharePostAction::CaptureRegistration {
+                                        event_id: event_id.clone(),
+                                    }),
+                            ),
                     )
                     .collect(),
             };
@@ -496,7 +579,7 @@ impl GameSession {
                 prepared.registry(),
                 stock_id,
                 day,
-                &accounts,
+                &final_accounts,
                 treasury,
             )
             .map_err(|source| failure(day, Some(&stock), source))?;

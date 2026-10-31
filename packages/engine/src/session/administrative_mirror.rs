@@ -637,6 +637,7 @@ impl GameSession {
                     .ok_or_else(|| invalid("行政交易部不在市场目录"))?;
                 if market.last_close().cents() != desk.request.expected_last_close
                     || market.last_price().cents() != desk.view.last_price
+                    || desk.view.last_close != desk.request.reference_price
                     || desk.request.reference_price <= 0
                 {
                     return Err(invalid("交易部除权候选与 Session 同源行情不一致"));
