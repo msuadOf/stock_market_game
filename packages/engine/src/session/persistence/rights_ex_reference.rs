@@ -95,7 +95,7 @@ pub(in crate::session) fn validate(
                     }
                 }
             };
-            let reference = rights_offering_ex_rights_reference_price(
+            rights_offering_ex_rights_reference_price(
                 &calendar,
                 plan.exchange,
                 formula,
@@ -104,8 +104,7 @@ pub(in crate::session) fn validate(
                 Money::ZERO,
                 plan.price_per_share,
             )
-            .map_err(|e| invalid(e.to_string()))?;
-            reference
+            .map_err(|e| invalid(e.to_string()))?
         } else {
             continue;
         };

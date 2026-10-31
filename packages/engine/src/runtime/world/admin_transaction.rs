@@ -114,8 +114,7 @@ impl World {
             grouped,
             information,
             repurchase,
-            None,
-            Vec::new(),
+            (None, Vec::new()),
             inspect,
             |_candidate, _source, value| Ok(value),
         )
@@ -134,8 +133,7 @@ impl World {
             grouped,
             information,
             repurchase,
-            None,
-            Vec::new(),
+            (None, Vec::new()),
             |_candidate| Ok(()),
             |candidate, source, ()| inspect(candidate, source),
         )
@@ -147,8 +145,10 @@ impl World {
         grouped: Vec<(GroupIdx, Vec<AdminOperation>)>,
         information: Option<crate::runtime::protocol::InformationPreparePayload>,
         repurchase: Option<crate::runtime::protocol::RepurchasePreparePayload>,
-        stage_layouts: Option<BTreeMap<GroupIdx, crate::runtime::protocol::AdminStageLayout>>,
-        desks: Vec<crate::runtime::protocol::DeskExRightsRequest>,
+        staged_desks: (
+            Option<BTreeMap<GroupIdx, crate::runtime::protocol::AdminStageLayout>>,
+            Vec<crate::runtime::protocol::DeskExRightsRequest>,
+        ),
         inspect_candidate: impl FnOnce(&AdminCandidate) -> Result<L, RuntimeError>,
         inspect_prepared: impl FnOnce(
             &AdminCandidate,
@@ -156,6 +156,7 @@ impl World {
             L,
         ) -> Result<P, RuntimeError>,
     ) -> Result<(P, crate::runtime::source::PreparedMirrorAck), RuntimeError> {
+        let (stage_layouts, desks) = staged_desks;
         if let Some(reason) = &self.dead_reason {
             return Err(invalid(format!("world 已死亡，不可行政处理：{reason}")));
         }

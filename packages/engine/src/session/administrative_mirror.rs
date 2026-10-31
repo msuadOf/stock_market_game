@@ -264,8 +264,10 @@ impl GameSession {
             Some(information),
             repurchase,
             Some(baseline),
-            (!stages.is_empty() || !desks.is_empty() || has_repurchase).then_some(stages),
-            desks,
+            (
+                (!stages.is_empty() || !desks.is_empty() || has_repurchase).then_some(stages),
+                desks,
+            ),
             |candidate, projection, stages| match prepare(candidate, projection, stages) {
                 Ok((fields, value)) => Ok((Some(fields), value)),
                 Err(error) => {
@@ -310,8 +312,7 @@ impl GameSession {
             information,
             repurchase,
             None,
-            None,
-            Vec::new(),
+            (None, Vec::new()),
             |candidate, projection, _| prepare(candidate, projection),
         )
     }
@@ -322,14 +323,17 @@ impl GameSession {
         information: Option<InformationPreparePayload>,
         repurchase: Option<crate::runtime::RepurchasePreparePayload>,
         baseline: Option<AdministrativeBaseline>,
-        stages: Option<Vec<AdminOperationStage>>,
-        desks: Vec<crate::runtime::DeskExRightsRequest>,
+        staged_desks: (
+            Option<Vec<AdminOperationStage>>,
+            Vec<crate::runtime::DeskExRightsRequest>,
+        ),
         prepare: impl FnOnce(
             &AdminCandidate,
             &PreparedAdministrativeProjection<'_>,
             Option<&PreparedAdministrativeStages<'_>>,
         ) -> Result<(Option<PreparedCivilFields>, P), RuntimeError>,
     ) -> Result<P, AdministrativeMirrorError> {
+        let (stages, desks) = staged_desks;
         if stages.is_some() && !grouped.is_empty() {
             return Err(invalid("有序现金阶段不得混入另一份 flat 请求").into());
         }

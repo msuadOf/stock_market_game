@@ -336,8 +336,7 @@ impl World {
             grouped,
             information,
             None,
-            Some(layouts),
-            Vec::new(),
+            (Some(layouts), Vec::new()),
             |candidate| {
                 let evidence = prepare_stage_source(candidate, &stages)?;
                 inspect(candidate, &evidence)
@@ -366,8 +365,7 @@ impl World {
             grouped,
             information,
             repurchase,
-            Some(layouts),
-            desks,
+            (Some(layouts), desks),
             |_candidate| Ok(()),
             |candidate, source, ()| {
                 let evidence = prepare_stage_source(candidate, &stages)?;
@@ -393,8 +391,7 @@ impl World {
             grouped,
             information,
             None,
-            Some(layouts),
-            Vec::new(),
+            (Some(layouts), Vec::new()),
             |_candidate| Ok(()),
             |candidate, source, ()| {
                 let evidence = prepare_stage_source(candidate, &stages)?;

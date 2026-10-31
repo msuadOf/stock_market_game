@@ -167,10 +167,11 @@ impl RetailExperienceState {
                 &mut stock.entry_reference_price,
                 &mut stock.peak_price_since_entry,
                 &mut stock.last_buy_price,
-            ] {
-                if let Some(value) = price {
-                    *value = reanchor_price(*value, numerator, denominator)?;
-                }
+            ]
+            .into_iter()
+            .flatten()
+            {
+                *price = reanchor_price(*price, numerator, denominator)?;
             }
         }
         let mut epoch = self.feedback.stocks.get(code).cloned();
