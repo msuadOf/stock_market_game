@@ -2056,25 +2056,14 @@ impl GameSession {
     ) -> std::collections::BTreeMap<crate::StockId, crate::runtime::desk::DeskMarketSeed> {
         let mut seeds = std::collections::BTreeMap::new();
         for (code, active) in self.state.candle_book.active() {
+            // 昨收是独立的交易部权威，不能从成交价或 K 线倒推。
             let last_close = self
                 .state
-                .candle_book
-                .histories()
+                .markets
                 .get(code)
-                .and_then(|h| h.iter_rev().next())
-                .map(|c| c.close.cents())
-                .or_else(|| {
-                    // 首日无历史：昨收=初始价（StockId=股序数值——setup
-                    // stocks 的下标约定）。
-                    self.state
-                        .setup
-                        .stocks
-                        .get(code.0 as usize)
-                        .map(|s| s.initial_price.cents())
-                });
-            let Some(last_close) = last_close else {
-                continue;
-            };
+                .expect("活动 K 必须有同证券市场权威")
+                .last_close()
+                .cents();
             let (turnover, trade_count) = active
                 .trade_stats
                 .as_ref()
@@ -2109,6 +2098,28 @@ impl GameSession {
                         .get(code)
                         .cloned()
                         .unwrap_or_default(),
+                },
+            );
+        }
+        // 日终静点没有活动 K 时，同样从市场权威恢复，不伪造成交。
+        for (id, market) in &self.state.markets {
+            if seeds.contains_key(id) {
+                continue;
+            }
+            let last = market.last_price().cents();
+            seeds.insert(
+                *id,
+                crate::runtime::desk::DeskMarketSeed {
+                    last_price: last,
+                    last_close: market.last_close().cents(),
+                    day_high: last,
+                    day_low: last,
+                    volume_today: 0,
+                    turnover_today: 0,
+                    trade_count: 0,
+                    candle: None,
+                    minute_closes: Vec::new(),
+                    minute_bars: Vec::new(),
                 },
             );
         }

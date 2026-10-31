@@ -436,6 +436,7 @@ pub struct DeskState {
     /// 上拍相位（公开截点的切换检测）。
     last_phase: Option<DeskPhase>,
     undo: Vec<DeskUndo>,
+    sealed_drain_tick: Option<u64>,
     out: Vec<Vec<Entity>>,
     fills_out: Vec<Vec<FillFact>>,
     receipts_out: Vec<Vec<DeskReceipt>>,
@@ -658,6 +659,7 @@ impl DeskState {
             public_cutoff_serial: 0,
             last_phase: None,
             undo: Vec::new(),
+            sealed_drain_tick: None,
             out: vec![Vec::new(); n_groups],
             fills_out: vec![Vec::new(); n_groups],
             receipts_out: vec![Vec::new(); n_groups],
@@ -1093,7 +1095,11 @@ impl DeskState {
             Side::Buy => self.best_ask().or_else(|| self.best_bid()),
             Side::Sell => self.best_bid().or_else(|| self.best_ask()),
         }
-        .unwrap_or(self.market.last_price)
+        .unwrap_or(if self.market.trade_count == 0 {
+            self.market.last_close
+        } else {
+            self.market.last_price
+        })
     }
 
     /// 价格笼子边界（买上限/卖下限；±2% 与十个最小价位取宽）。
@@ -1103,11 +1109,19 @@ impl DeskState {
         match side {
             Side::Buy => {
                 let pct = self.price_bound(reference, 10_200, true)?.cents();
-                Ok(pct.max(reference.cents() + ten_ticks))
+                let minimum = reference
+                    .cents()
+                    .checked_add(ten_ticks)
+                    .ok_or_else(|| over("价格笼子上界溢出"))?;
+                Ok(pct.max(minimum))
             }
             Side::Sell => {
                 let pct = self.price_bound(reference, 9_800, false)?.cents();
-                Ok(pct.min(reference.cents() - ten_ticks).max(1))
+                let maximum = reference
+                    .cents()
+                    .checked_sub(ten_ticks)
+                    .ok_or_else(|| over("价格笼子下界溢出"))?;
+                Ok(pct.min(maximum).max(1))
             }
         }
     }
@@ -2800,6 +2814,16 @@ impl DeskState {
                 "除权 Prepare 的交易部、收盘价、待处理状态或订单簿不一致",
             ));
         }
+        // 显式核验下一交易日涨跌停与两向价格笼子，不能在首 Commit 后才发现溢出。
+        let reference = Money::from_cents(request.reference_price);
+        self.price_bound(reference, 10_000 + self.setup.limit_bps, true)?;
+        self.price_bound(reference, 10_000 - self.setup.limit_bps, false)?;
+        self.price_bound(reference, 10_200, true)?;
+        self.price_bound(reference, 9_800, false)?;
+        request
+            .reference_price
+            .checked_add(10)
+            .ok_or_else(|| over("除权价格笼子上界溢出"))?;
         // 私有线程内临时投影，任何结果都先恢复原行情，再保存 immutable 候选。
         let previous = self.market.last_close;
         self.market.last_close = request.reference_price;
@@ -2827,6 +2851,13 @@ impl DeskState {
         let candidate = candidate.clone();
         self.pending_ex_rights = None;
         if commit {
+            self.sealed_drain_tick = self
+                .undo
+                .iter()
+                .any(|entry| matches!(entry, DeskUndo::DrainMarket(_)))
+                .then_some(self.cur_tick);
+            self.undo.clear();
+            self.committed_tick = self.cur_tick;
             self.market.last_close = candidate.request.reference_price;
             self.bump_market_ver();
         }
@@ -2879,6 +2910,7 @@ impl DeskState {
     ) -> Result<(), RuntimeError> {
         // 下一 tick 首批 Ops(N) = tick N−1 隐式转正。
         self.undo.clear();
+        self.sealed_drain_tick = None;
         let previous = self.calendar_tick.replace(calendar);
         self.undo.push(DeskUndo::Calendar(previous));
         self.committed_tick = self.cur_tick;
@@ -3062,6 +3094,7 @@ impl DeskState {
         };
         Ok(super::protocol::StockPublic {
             last_price: self.market.last_price,
+            last_close: self.market.last_close,
             best_bid: pub_best_bid,
             best_ask: pub_best_ask,
             max_buy_price: up_buy,
@@ -4066,10 +4099,11 @@ fn process_msg(
         DeskMsg::Drain => {
             // 同一 Start 以来已完成 Drain：Shutdown 的重复请求只取诊断面。
             // AbortDayEnd 消费该日志，重试重新清算；下一 Start 清日志，开启新窗口。
-            let already_drained = state
-                .undo
-                .iter()
-                .any(|entry| matches!(entry, DeskUndo::DrainMarket(_)));
+            let already_drained = state.sealed_drain_tick == Some(state.cur_tick)
+                || state
+                    .undo
+                    .iter()
+                    .any(|entry| matches!(entry, DeskUndo::DrainMarket(_)));
             let open = match &state.calendar_tick {
                 Some(context) => context
                     .before_projection()

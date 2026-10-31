@@ -264,6 +264,7 @@ fn timeseries_mappers_project_runtime_views_to_engine_shapes() {
     use super::protocol::StockPublic;
     let view = StockPublic {
         last_price: 1005,
+        last_close: 1000,
         best_bid: Some(1000),
         best_ask: Some(1010),
         max_buy_price: 1020,

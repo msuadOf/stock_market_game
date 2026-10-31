@@ -424,6 +424,8 @@ mod u128_decimal {
 pub struct StockPublic {
     /// 最新价（分）。
     pub last_price: i64,
+    /// 交易部权威参考收盘价（分）。
+    pub last_close: i64,
     /// 买一（分；空簿 None）。
     pub best_bid: Option<i64>,
     /// 卖一（分；空簿 None）。

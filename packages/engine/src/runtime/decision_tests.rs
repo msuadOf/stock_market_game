@@ -35,6 +35,7 @@ fn snapshot_one_stock(last: i64, upper: i64, lower: i64) -> TickSnapshot {
         market_minute: 0,
         stocks: std::sync::Arc::new(vec![super::protocol::StockPublic {
             last_price: last,
+            last_close: last,
             best_bid: None,
             best_ask: None,
             max_buy_price: upper,

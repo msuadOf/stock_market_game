@@ -271,6 +271,7 @@ fn desk_ex_rights_and_group_debit_share_prepare_abort_and_commit() {
             |candidate, _, _| {
                 assert_eq!(candidate.desks[0].request, request);
                 assert_eq!(candidate.desks[0].view.last_price, old);
+                assert_eq!(candidate.desks[0].view.last_close, request.reference_price);
                 assert!(candidate.desks[0].view.daily_upper_limit < world_upper);
                 Ok(())
             },
@@ -278,6 +279,7 @@ fn desk_ex_rights_and_group_debit_share_prepare_abort_and_commit() {
         .unwrap();
     assert_ne!(world.snapshot_accounts().unwrap(), before);
     assert_eq!(world.public_views()[0].last_price, old);
+    assert_eq!(world.public_views()[0].last_close, request.reference_price);
     assert!(world.public_views()[0].daily_upper_limit < world_upper);
     let again = world.with_prepared_staged_administrative_and_desks(
         Vec::new(),
