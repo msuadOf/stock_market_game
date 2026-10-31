@@ -6,10 +6,10 @@ use crate::company::ex_reference_price::{
 };
 use crate::company::rights_offering::{RightsOfferingMode, RightsOfferingStatus};
 use crate::company::share_registry::{HolderId, ShareRestriction};
-use crate::runtime::protocol::DeskExRightsRequest;
+use crate::runtime::DeskExRightsRequest;
 use crate::session::corporate_actions::AppliedExReferenceGroup;
 
-pub(super) fn exact_ratio_micros(issued: u64, base: u64) -> Result<u64, &'static str> {
+pub(in crate::session) fn exact_ratio_micros(issued: u64, base: u64) -> Result<u64, &'static str> {
     if base == 0 || issued == 0 {
         return Err("配股除权股数必须为正");
     }

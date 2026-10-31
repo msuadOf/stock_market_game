@@ -162,8 +162,6 @@ impl GameSession {
                 shadow.prepare_civil_cash_distributions(report.settled_date, &baseline)?;
             let desks = shadow.prepare_rights_ex_anchors(next_date)?;
             let expected_desks = desks.clone();
-            let desks = shadow.prepare_rights_ex_anchors(next_date)?;
-            let expected_desks = desks.clone();
             let clock =
                 crate::runtime::InformationClockContext::for_civil_disclosure(self, instant)?;
             let as_of_anchors = clock.anchors().map_err(|source| {

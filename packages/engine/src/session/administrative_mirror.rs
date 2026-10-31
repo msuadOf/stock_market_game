@@ -248,7 +248,7 @@ impl GameSession {
         baseline: AdministrativeBaseline,
         stages: Vec<AdminOperationStage>,
         information: InformationPreparePayload,
-        desks: Vec<crate::runtime::protocol::DeskExRightsRequest>,
+        desks: Vec<crate::runtime::DeskExRightsRequest>,
         prepare: impl FnOnce(
             &AdminCandidate,
             &PreparedAdministrativeProjection<'_>,
@@ -321,7 +321,7 @@ impl GameSession {
         repurchase: Option<crate::runtime::RepurchasePreparePayload>,
         baseline: Option<AdministrativeBaseline>,
         stages: Option<Vec<AdminOperationStage>>,
-        desks: Vec<crate::runtime::protocol::DeskExRightsRequest>,
+        desks: Vec<crate::runtime::DeskExRightsRequest>,
         prepare: impl FnOnce(
             &AdminCandidate,
             &PreparedAdministrativeProjection<'_>,
