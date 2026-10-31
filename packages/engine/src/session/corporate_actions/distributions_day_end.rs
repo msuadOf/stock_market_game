@@ -83,6 +83,13 @@ pub(crate) enum WithholdingSource {
 /// 金额单位为分，股份单位为股；每笔保留事件身份，税款独立退出。
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum DistributionIntent {
+    ShareSplitAdjustment {
+        event_id: String,
+        account: AccountId,
+        stock: StockId,
+        change: i128,
+        available_on: CivilDate,
+    },
     DividendGrossCredit {
         payment_id: String,
         plan_id: String,
@@ -109,6 +116,12 @@ pub(crate) enum DistributionIntent {
 /// Account 与 External 来源分列；只有 Account 税前股利计入游戏投资者注入。
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum DistributionSource {
+    ShareSplit {
+        event_id: String,
+        holder: HolderId,
+        stock: StockId,
+        change: i128,
+    },
     SimpleSyntheticDividend {
         payment_id: String,
         plan_id: String,
@@ -178,6 +191,8 @@ pub(crate) enum DistributionsDayEndFailure {
     },
     #[error(transparent)]
     CashDividend(#[from] crate::company::cash_dividend::CashDividendError),
+    #[error(transparent)]
+    ShareSplit(#[from] crate::company::share_split::ShareSplitError),
     #[error(transparent)]
     StockDistribution(#[from] crate::company::stock_distribution::StockDistributionError),
     #[error(transparent)]

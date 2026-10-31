@@ -122,7 +122,112 @@ impl GameSession {
         {
             return Err(fail("名册未完成前一自然日日结或已有 pending opening"));
         }
-        if !baseline.plans.active_plan_ids().is_empty() || !self.state.pending_player.is_empty() {
+        Self::validate_opening_accounts(
+            snapshot,
+            baseline,
+            !self.state.pending_player.is_empty(),
+            fail,
+        )?;
+        Ok(true)
+    }
+
+    /// 盘前拆缩股只开放能从 Drain 后完整基线逐户勾稽的范围。
+    pub(super) fn validate_split_opening_scope(
+        &self,
+        next: CivilDate,
+        baseline: &crate::runtime::drive::AdministrativeBaseline,
+    ) -> Result<bool, crate::runtime::RuntimeError> {
+        use crate::company::share_split::ShareSplitStatus;
+        let Some(actions) = self.state.companies.corporate_actions() else {
+            return Ok(false);
+        };
+        let due: Vec<_> = actions
+            .share_splits
+            .iter()
+            .filter(|book| {
+                book.status() != &ShareSplitStatus::Settled && book.plan().ex_rights_on <= next
+            })
+            .collect();
+        if due.is_empty() {
+            return Ok(false);
+        }
+        let book = due[0];
+        let plan = book.plan();
+        let fail = |detail: &str| crate::runtime::RuntimeError::ProtocolInvariant {
+            detail: format!(
+                "拆缩股事件 {}，证券 {}，盘前日期 {next}：{detail}",
+                plan.event_id, plan.stock.0
+            ),
+        };
+        if due.len() != 1
+            || self.state.setup.stocks.len() != 1
+            || self.state.setup.issuer_repurchase_enabled
+            || self.state.setup.dividend_tax_mode != Some(CashDividendTaxMode::Exempt)
+            || !actions.dividend_tax_books.is_empty()
+            || book.status() != &ShareSplitStatus::Registered
+            || plan.ex_rights_on != next
+        {
+            return Err(fail(
+                "仅支持单证券、Exempt、无个人税账且准时 Registered 的独立拆缩股",
+            ));
+        }
+        if actions.share_splits.iter().any(|row| {
+            row.plan().event_id != plan.event_id && row.status() != &ShareSplitStatus::Settled
+        }) || actions.dividends.iter().any(|row| {
+            row.plan().stock == plan.stock
+                && (row.plan().ex_dividend_on == next
+                    || row.status() != &crate::company::cash_dividend::CashDividendStatus::Paid)
+        }) || actions.rights_offerings.iter().any(|row| {
+            row.plan().stock == plan.stock && row.status() != &RightsOfferingStatus::Settled
+        }) || actions.stock_distributions.iter().any(|row| {
+            row.plan().stock == plan.stock
+                && row.status()
+                    != &crate::company::stock_distribution::StockDistributionStatus::Credited
+        }) || !actions.issuer_repurchases.is_empty()
+            || actions
+                .applied_ex_reference_groups
+                .iter()
+                .any(|group| group.stock == plan.stock && group.date == next)
+        {
+            return Err(fail("同证券重叠公司行为、Treasury 或重复除权不支持"));
+        }
+        let snapshot = book
+            .registration()
+            .ok_or_else(|| fail("缺少真实登记快照"))?;
+        if !all_shares_circulating(snapshot)
+            || snapshot
+                .holdings()
+                .iter()
+                .any(|row| !matches!(row.holder, HolderId::Account(_)))
+        {
+            return Err(fail("当前仅支持全部流通且全部具名真实账户持有"));
+        }
+        let registry = actions
+            .registries
+            .iter()
+            .find(|row| row.stock() == &plan.stock && row.issuer() == &plan.issuer)
+            .ok_or_else(|| fail("缺少名册"))?;
+        if registry.settled_on() != next.prev().map_err(|_| fail("盘前日期前驱无效"))?
+            || registry.pending_opening().is_some()
+        {
+            return Err(fail("名册未完成前一自然日日结或已有 pending opening"));
+        }
+        Self::validate_opening_accounts(
+            snapshot,
+            baseline,
+            !self.state.pending_player.is_empty(),
+            fail,
+        )?;
+        Ok(true)
+    }
+
+    fn validate_opening_accounts(
+        snapshot: &RegistrationSnapshot,
+        baseline: &crate::runtime::drive::AdministrativeBaseline,
+        pending_player: bool,
+        fail: impl Fn(&str) -> crate::runtime::RuntimeError,
+    ) -> Result<(), crate::runtime::RuntimeError> {
+        if !baseline.plans.active_plan_ids().is_empty() || pending_player {
             return Err(fail("存在活动／待续行计划或待执行玩家委托"));
         }
         for (index, account) in baseline.roster.iter().enumerate() {
@@ -162,7 +267,7 @@ impl GameSession {
         }) {
             return Err(fail("登记股东不在真实 Owner 名册"));
         }
-        Ok(true)
+        Ok(())
     }
 
     pub(super) fn prepare_stock_ex_anchors(
@@ -241,6 +346,99 @@ impl GameSession {
                 stock_event_ids: vec![plan.event_id.clone()],
                 rights_event_ids: vec![],
                 split_event_ids: vec![],
+                pre_ex_close: market.last_close(),
+                reference,
+            });
+        }
+        if !groups.is_empty() {
+            self.state
+                .companies
+                .corporate_actions_mut()
+                .expect("候选来自同一公司容器")
+                .applied_ex_reference_groups
+                .extend(groups);
+        }
+        Ok(requests)
+    }
+
+    pub(super) fn prepare_split_ex_anchors(
+        &mut self,
+        next: CivilDate,
+    ) -> Result<Vec<DeskExRightsRequest>, SessionError> {
+        use crate::company::ex_reference_price::{
+            share_split_ex_rights_reference_price, ShareSplitExRightsFormula,
+        };
+        let Some(actions) = self.state.companies.corporate_actions() else {
+            return Ok(Vec::new());
+        };
+        let mut groups = Vec::new();
+        let mut requests = Vec::new();
+        for book in actions
+            .share_splits
+            .iter()
+            .filter(|book| book.settled_on() == Some(next))
+        {
+            let plan = book.plan();
+            let fail = |detail: String| {
+                SessionError::UnsupportedCapitalBoundary(format!(
+                    "拆缩股事件 {}，证券 {}，盘前日期 {next}：{detail}",
+                    plan.event_id, plan.stock.0
+                ))
+            };
+            let id = self
+                .state
+                .stocks
+                .id(&plan.stock.0)
+                .ok_or_else(|| fail("证券不在目录".into()))?;
+            let market = self
+                .state
+                .markets
+                .get(&id)
+                .ok_or_else(|| fail("缺少真实收盘镜像".into()))?;
+            let formula = match plan.exchange {
+                crate::calendar::CalendarExchange::Sse => {
+                    ShareSplitExRightsFormula::ShanghaiCirculatingShareChange {
+                        numerator: plan.new_shares_per_old_share().0,
+                        denominator: plan.new_shares_per_old_share().1,
+                    }
+                }
+                crate::calendar::CalendarExchange::Szse => {
+                    ShareSplitExRightsFormula::ShenzhenShareChange {
+                        numerator: plan.new_shares_per_old_share().0,
+                        denominator: plan.new_shares_per_old_share().1,
+                    }
+                }
+            };
+            let reference = share_split_ex_rights_reference_price(
+                self.state.civil_clock.calendar(),
+                plan.exchange,
+                formula,
+                plan.registered_on,
+                market.last_close(),
+                Money::ZERO,
+            )
+            .map_err(|error| fail(error.to_string()))?;
+            if reference.ex_date != next
+                || actions
+                    .applied_ex_reference_groups
+                    .iter()
+                    .any(|group| group.stock == plan.stock && group.date == next)
+            {
+                return Err(fail("除权日期不符或除权锚重复".into()));
+            }
+            requests.push(DeskExRightsRequest {
+                stock: crate::runtime::StockIdx::try_from(id.0)
+                    .map_err(|_| fail("证券坐标溢出".into()))?,
+                expected_last_close: market.last_close().cents(),
+                reference_price: reference.reference_price.cents(),
+            });
+            groups.push(AppliedExReferenceGroup {
+                date: next,
+                stock: plan.stock.clone(),
+                cash_plan_ids: vec![],
+                stock_event_ids: vec![],
+                rights_event_ids: vec![],
+                split_event_ids: vec![plan.event_id.clone()],
                 pre_ex_close: market.last_close(),
                 reference,
             });

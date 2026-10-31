@@ -808,6 +808,9 @@ fn issuer_treasury_never_receives_dividend_or_stock_distribution() {
         DistributionSource::SimpleSyntheticDividend { holder, .. }
         | DistributionSource::StockDistribution { holder, .. } =>
             *holder != HolderId::IssuerTreasury,
+        DistributionSource::ShareSplit { .. } => {
+            panic!("现金分红与送转候选不应生成拆缩股来源")
+        }
     }));
     assert_eq!(paid.actions.external_receipts[0].gross.cents(), 14);
 }

@@ -60,6 +60,22 @@ pub(super) struct PreparedCivilCash {
 
 fn operation(intent: &DistributionIntent, local: LocalIdx) -> Result<AdminOperation, RuntimeError> {
     let (stock, amount, tax) = match intent {
+        DistributionIntent::ShareSplitAdjustment { stock, change, .. } => {
+            let qty = u32::try_from(change.unsigned_abs())
+                .ok()
+                .filter(|qty| *qty > 0 && *qty <= i32::MAX as u32)
+                .ok_or_else(|| invalid("拆缩股数量超出行政回滚边界"))?;
+            let stock = StockIdx::try_from(stock.0).map_err(|_| invalid("拆缩股证券坐标溢出"))?;
+            return Ok(if *change > 0 {
+                AdminOperation::ShareSplit {
+                    local,
+                    stock,
+                    bonus_qty: qty,
+                }
+            } else {
+                AdminOperation::ShareReduction { local, stock, qty }
+            });
+        }
         DistributionIntent::DividendGrossCredit { stock, amount, .. } => (*stock, *amount, false),
         DistributionIntent::DividendWithholding { stock, amount, .. } => (*stock, *amount, true),
         DistributionIntent::StockDistributionCredit { stock, shares, .. } => {
@@ -201,6 +217,18 @@ impl GameSession {
                     capital_reserve_tax_sources: &BTreeMap::new(),
                 })?;
             }
+            if self.validate_split_opening_scope(next, baseline)? {
+                candidate.prepare_split_opening(&DistributionsDayEndInput {
+                    day: next,
+                    calendar: self.state.civil_clock.calendar(),
+                    catalog: &self.state.stocks,
+                    company_system: system,
+                    available_cash: &available,
+                    tax_mode: mode,
+                    flat_withholding_bp: self.state.setup.flat_withholding_bp,
+                    capital_reserve_tax_sources: &BTreeMap::new(),
+                })?;
+            }
             candidate
                 .company_system
                 .validate_cash_dividend_books(&candidate.actions.dividends)?;
@@ -219,9 +247,43 @@ impl GameSession {
                 }
             }
             let mut stock_sources = BTreeMap::new();
+            let mut split_sources = BTreeMap::new();
             let mut gross_sources = BTreeMap::new();
             for source in &candidate.sources {
                 match source {
+                    DistributionSource::ShareSplit {
+                        event_id,
+                        holder,
+                        stock,
+                        change,
+                    } => {
+                        let crate::company::share_registry::HolderId::Account(account) = holder
+                        else {
+                            return Err(invalid("拆缩股缺真实账户来源").into());
+                        };
+                        let book = candidate
+                            .actions
+                            .share_splits
+                            .iter()
+                            .find(|book| book.plan().event_id == *event_id)
+                            .ok_or_else(|| invalid("拆缩股来源缺事件"))?;
+                        if book.settled_on() != Some(next)
+                            || self.state.stocks.id(&book.plan().stock.0) != Some(*stock)
+                            || !book.receipt().is_some_and(|receipt| {
+                                receipt.holders.iter().any(|row| {
+                                    row.holder == *holder
+                                        && i128::from(row.new_shares)
+                                            - i128::from(row.original_shares)
+                                            == *change
+                                })
+                            })
+                            || split_sources
+                                .insert((event_id.clone(), *account, *stock), *change)
+                                .is_some()
+                        {
+                            return Err(invalid("拆缩股来源与冻结换算不符").into());
+                        }
+                    }
                     DistributionSource::SimpleSyntheticDividend {
                         payment_id,
                         plan_id,
@@ -349,6 +411,21 @@ impl GameSession {
             let mut prior_tax = None;
             for (intent_index, intent) in candidate.intents.iter().enumerate() {
                 let (account, is_tax) = match intent {
+                    DistributionIntent::ShareSplitAdjustment {
+                        event_id,
+                        account,
+                        stock,
+                        change,
+                        available_on,
+                    } => {
+                        if *available_on != next
+                            || split_sources.remove(&(event_id.clone(), *account, *stock))
+                                != Some(*change)
+                        {
+                            return Err(invalid("拆缩股意图缺唯一冻结来源").into());
+                        }
+                        (*account, false)
+                    }
                     DistributionIntent::DividendGrossCredit {
                         account,
                         payment_id,
@@ -478,11 +555,26 @@ impl GameSession {
                         raw.shares[usize::from(stock)] = raw.shares[usize::from(stock)]
                             .checked_add(bonus_qty)
                             .ok_or_else(|| invalid("送转完整账户股数溢出"))?;
+                        raw.ever_held[usize::from(stock)] = false;
                     }
-                    _ => unreachable!("operation 只生成现金权益与送转原语"),
+                    AdminOperation::ShareReduction { stock, qty, .. } => {
+                        let index = usize::from(stock);
+                        raw.shares[index] = raw.shares[index]
+                            .checked_sub(qty)
+                            .ok_or_else(|| invalid("缩股股份不足"))?;
+                        if raw.shares[index] == 0 {
+                            raw.invested_cents[index] = 0;
+                            raw.recovered_cents[index] = 0;
+                            raw.ever_held[index] = true;
+                        } else {
+                            raw.ever_held[index] = false;
+                        }
+                    }
+                    _ => unreachable!("operation 只生成现金权益与股份原语"),
                 }
             }
-            if !stock_sources.is_empty()
+            if !split_sources.is_empty()
+                || !stock_sources.is_empty()
                 || !gross_sources.is_empty()
                 || !gross_receipts.is_empty()
                 || !flat_receipts.is_empty()

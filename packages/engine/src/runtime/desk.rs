@@ -1089,17 +1089,22 @@ impl DeskState {
             .map(|(price, _)| *price)
     }
 
+    /// 新的空拍标记与观察点使用当前参考价，不改写最后一笔真实成交。
+    fn observation_price(&self) -> i64 {
+        if self.market.trade_count == 0 {
+            self.market.last_close
+        } else {
+            self.market.last_price
+        }
+    }
+
     /// 连续竞价限价申报基准价（上交所规则 3.3.14：对手一档→本方一档→最新价）。
     fn continuous_reference(&self, side: Side) -> i64 {
         match side {
             Side::Buy => self.best_ask().or_else(|| self.best_bid()),
             Side::Sell => self.best_bid().or_else(|| self.best_ask()),
         }
-        .unwrap_or(if self.market.trade_count == 0 {
-            self.market.last_close
-        } else {
-            self.market.last_price
-        })
+        .unwrap_or_else(|| self.observation_price())
     }
 
     /// 价格笼子边界（买上限/卖下限；±2% 与十个最小价位取宽）。
@@ -2613,7 +2618,7 @@ impl DeskState {
                 imbalance: 0,
             });
             if self.market.candle.is_none() {
-                let last = self.market.last_price;
+                let last = self.observation_price();
                 self.market.candle = Some(super::desk::DeskCandle {
                     open: last,
                     high: last,
@@ -2622,7 +2627,7 @@ impl DeskState {
                     volume: 0,
                 });
             }
-            return Ok(Some((self.market.last_price, 0)));
+            return Ok(Some((self.observation_price(), 0)));
         };
         let price = sel.price.cents();
         // P1-2（Sol）：公开成交量=实际成交量（内部选择量只是上界——
@@ -3166,7 +3171,7 @@ impl DeskState {
             return Err(over("连续竞价 price_history 的 history_len 必须大于 0"));
         }
         // 零成交也建立占位 K（对齐 record_trade_or_mark 的 or_insert 语义）。
-        let last = self.market.last_price;
+        let last = self.observation_price();
         // 刀 2a 值敏感失效：finish_round 每轮跑（幂等写为主）——只在
         // view 依赖域内容实际变化时推进 market_ver（占位 K 建立/close
         // 变化/recent 窗口滑动不同值/分钟回填），保证零成交稳态轮的
@@ -4164,7 +4169,7 @@ fn process_msg(
                     }
                     // 清算已完成，本日终 K 在归档前保留；roll 后只构造公开读面。
                     if state.market.candle.is_none() {
-                        let last = state.market.last_price;
+                        let last = state.observation_price();
                         state.market.candle = Some(DeskCandle {
                             open: last,
                             high: last,

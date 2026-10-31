@@ -1153,3 +1153,6 @@ fn rights_ex_day_close_after_trade_restores() {
 
 #[path = "stock_opening_runtime_tests.rs"]
 mod stock_opening_runtime_tests;
+
+#[path = "split_opening_runtime_tests.rs"]
+mod split_opening_runtime_tests;

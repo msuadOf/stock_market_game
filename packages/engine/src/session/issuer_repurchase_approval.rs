@@ -434,6 +434,7 @@ impl GameSession {
             material_restriction: RepurchaseMaterialRestriction::NotModelled,
         };
         let information = InformationPreparePayload {
+            price_unit_changes: Vec::new(),
             library: Arc::clone(&self.state.library),
             current_facts: Arc::new(self.state.company_read_facts().map_err(|source| {
                 RepurchaseApprovalError::Transaction {

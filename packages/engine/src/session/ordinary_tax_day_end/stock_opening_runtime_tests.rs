@@ -59,7 +59,13 @@ fn stock_session(start: &str, registered: &str, ex: &str) -> GameSession {
     restore_with_three_groups(&saved)
 }
 
-fn trade(session: &mut GameSession, seller: AccountId, buyer: AccountId, price: i64, qty: u32) {
+pub(super) fn trade(
+    session: &mut GameSession,
+    seller: AccountId,
+    buyer: AccountId,
+    price: i64,
+    qty: u32,
+) {
     if session.runtime_driver.is_none() {
         session.construct_runtime_driver_lazy_for_test().unwrap();
     }
@@ -156,6 +162,18 @@ fn native_stock_opening_real_registration_restore_first_sale_and_close() {
         500
     );
     assert_eq!(session.state.markets[&StockId(0)].last_close().cents(), 500);
+    let experience = session.state.retail_experience.get(&AccountId(2)).unwrap();
+    assert_eq!(
+        experience.stocks[&StockId(0)].entry_reference_price,
+        Some(Money::from_cents(500))
+    );
+    assert_eq!(
+        experience.feedback.stocks[&StockId(0)]
+            .last_own_observation
+            .unwrap()
+            .price,
+        Money::from_cents(500)
+    );
     let saved = session.save().unwrap();
     let json: crate::SaveSlot =
         serde_json::from_value(serde_json::to_value(&saved).unwrap()).unwrap();
@@ -164,7 +182,62 @@ fn native_stock_opening_real_registration_restore_first_sale_and_close() {
         serde_json::to_value(restored.save().unwrap()).unwrap(),
         serde_json::to_value(saved).unwrap()
     );
+    assert_eq!(
+        restored.state.markets[&StockId(0)].last_price().cents(),
+        1000,
+        "原始成交价不能追溯改写"
+    );
+    assert_eq!(
+        restored.build_market_view().stocks[&StockId(0)]
+            .last_price
+            .cents(),
+        500
+    );
+    assert_eq!(
+        restored.snapshot().markets[&StockId(0)].last_price.cents(),
+        500
+    );
+    let failures_before = restored
+        .state
+        .retail_experience
+        .get(&AccountId(2))
+        .unwrap()
+        .consecutive_failed_buys;
+    restored.construct_runtime_driver_lazy_for_test().unwrap();
+    let next_tick = restored.tick() + 1;
+    restored
+        .runtime_driver
+        .as_ref()
+        .unwrap()
+        .lock()
+        .unwrap()
+        .force_due_for_test_at(&[AccountId(2)], next_tick);
     trade(&mut restored, AccountId(0), AccountId(1), 500, 200);
+    let observed = restored
+        .state
+        .retail_experience
+        .get(&AccountId(2))
+        .unwrap()
+        .feedback
+        .stocks[&StockId(0)]
+        .last_own_observation
+        .unwrap();
+    assert_eq!(observed.price, Money::from_cents(500));
+    assert_eq!(
+        restored
+            .state
+            .retail_experience
+            .get(&AccountId(2))
+            .unwrap()
+            .consecutive_failed_buys,
+        failures_before,
+        "机械除权不能产生失败经历"
+    );
+    assert_eq!(
+        observed.moment.civil_date,
+        date(PAYMENT_DAY),
+        "必须是 E 首拍真实观察"
+    );
     restored.end_civil_day().unwrap();
     let registry = &restored.corporate_actions().unwrap().registries[0];
     assert_eq!(registry.settled_on(), date(PAYMENT_DAY));

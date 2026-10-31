@@ -162,6 +162,26 @@ impl GameSession {
                 shadow.prepare_civil_cash_distributions(report.settled_date, &baseline)?;
             let mut desks = shadow.prepare_rights_ex_anchors(next_date)?;
             desks.extend(shadow.prepare_stock_ex_anchors(next_date)?);
+            desks.extend(shadow.prepare_split_ex_anchors(next_date)?);
+            // 统一使用真实 Desk 的新旧参考价比率；余数分配不产生逐户价格单位。
+            let price_unit_changes = desks
+                .iter()
+                .filter(|request| {
+                    shadow.corporate_actions().is_some_and(|actions| {
+                        actions.applied_ex_reference_groups.iter().any(|group| {
+                            group.date == next_date
+                                && shadow
+                                    .state
+                                    .stocks
+                                    .id(&group.stock.0)
+                                    .is_some_and(|stock| stock.0 == u32::from(request.stock))
+                                && (!group.stock_event_ids.is_empty()
+                                    || !group.split_event_ids.is_empty())
+                        })
+                    })
+                })
+                .copied()
+                .collect();
             let expected_desks = desks.clone();
             let clock =
                 crate::runtime::InformationClockContext::for_civil_disclosure(self, instant)?;
@@ -175,6 +195,7 @@ impl GameSession {
             })?;
             let facts = shadow.runtime_company_read_facts()?;
             let payload = InformationPreparePayload {
+                price_unit_changes,
                 library: Arc::clone(&shadow.state.library),
                 current_facts: Arc::clone(&facts),
                 observation: Some(InformationObservation {

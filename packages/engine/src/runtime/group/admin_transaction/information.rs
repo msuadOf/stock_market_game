@@ -250,7 +250,30 @@ impl GroupState {
                     == crate::runtime::protocol::InformationMemoryRetention::CivilDayEnd
                     && (over_limit(&mut snapshot.watchlist.stocks.keys())
                         || over_limit(&mut snapshot.price_memory.stocks.keys()));
-                if result.is_none() && !needs_prune {
+                let ended_holdings: Vec<_> = accounts
+                    .get(&(local as LocalIdx))
+                    .map(|account| {
+                        account
+                            .shares
+                            .iter()
+                            .zip(&account.pending_sell_qty)
+                            .enumerate()
+                            .filter_map(|(stock, (&shares, &pending))| {
+                                let original = &self.accounts[local];
+                                (shares == 0
+                                    && pending == 0
+                                    && (original.shares[stock] > 0
+                                        || original.pending_sell_qty[stock] > 0))
+                                    .then_some(StockId(stock as u32))
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                if result.is_none()
+                    && !needs_prune
+                    && ended_holdings.is_empty()
+                    && payload.price_unit_changes.is_empty()
+                {
                     continue;
                 }
                 let observed = result.is_some();
@@ -266,6 +289,47 @@ impl GroupState {
                     },
                     None => snapshot.clone(),
                 };
+                for change in &payload.price_unit_changes {
+                    let code = StockId(u32::from(change.stock));
+                    let reject_price = |error: crate::experience::ExperienceError| {
+                        reject(InformationPrepareError::Revaluation {
+                            account: owner,
+                            detail: error.to_string(),
+                        })
+                    };
+                    let numerator = u64::try_from(change.reference_price).map_err(|_| {
+                        reject(InformationPrepareError::Identity {
+                            detail: "个人价格单位转换的新价格非正".into(),
+                        })
+                    })?;
+                    let denominator = u64::try_from(change.expected_last_close).map_err(|_| {
+                        reject(InformationPrepareError::Identity {
+                            detail: "个人价格单位转换的旧价格非正".into(),
+                        })
+                    })?;
+                    if numerator == 0 || denominator == 0 || !issuers.contains_key(&code) {
+                        return Err(reject(InformationPrepareError::Identity {
+                            detail: "个人价格单位转换证券或比例无效".into(),
+                        }));
+                    }
+                    next.price_memory
+                        .reanchor_prices(&code, numerator, denominator)
+                        .map_err(reject_price)?;
+                    next.belief
+                        .experience_mut()
+                        .reanchor_holding_prices(&code, numerator, denominator)
+                        .map_err(reject_price)?;
+                    if let Some(retail) = &mut next.retail_experience {
+                        retail
+                            .reanchor_holding_prices(&code, numerator, denominator)
+                            .map_err(reject_price)?;
+                    }
+                }
+                if let Some(retail) = &mut next.retail_experience {
+                    for stock in &ended_holdings {
+                        retail.end_holding_after_share_reduction(stock);
+                    }
+                }
                 if needs_prune {
                     // 先用原订阅获知；不 due 或同签名也必须执行日终裁剪，不改历史读取账。
                     next.watchlist.prune(&protected);

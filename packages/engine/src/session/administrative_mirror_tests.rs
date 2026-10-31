@@ -335,6 +335,7 @@ fn administrative_mirror_04_information_observation_preserves_session_only_retai
         crate::runtime::InformationClockContext::fixture_static(day, layout, input, through);
     let facts = Arc::new(game.state.company_read_facts().unwrap());
     let payload = InformationPreparePayload {
+        price_unit_changes: Vec::new(),
         library: Arc::clone(&game.state.library),
         current_facts: Arc::clone(&facts),
         observation: Some(crate::runtime::world::InformationObservation {

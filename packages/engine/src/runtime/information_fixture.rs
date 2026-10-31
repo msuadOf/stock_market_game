@@ -133,6 +133,7 @@ pub fn payload(observe: bool) -> InformationPreparePayload {
             .collect(),
     });
     InformationPreparePayload {
+        price_unit_changes: Vec::new(),
         library: Arc::new(crate::information::PublicLibrary::new()),
         current_facts: Arc::clone(&current_facts),
         observation: if observe {

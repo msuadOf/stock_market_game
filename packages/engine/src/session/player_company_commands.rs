@@ -316,6 +316,7 @@ impl GameSession {
         validate_approval_books(&candidate_system, &candidate_actions)
             .map_err(|error| fail(CompanyErrorClass::SystemState, Box::new(error)))?;
         let payload = InformationPreparePayload {
+            price_unit_changes: Vec::new(),
             library: Arc::clone(&self.state.library),
             current_facts: Arc::new(
                 self.state

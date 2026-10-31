@@ -34,6 +34,8 @@ pub(in crate::session) fn validate(
         }
         let reference = if !group.stock_event_ids.is_empty() {
             validate_stock_group(save, actions, group, &calendar)?
+        } else if !group.split_event_ids.is_empty() {
+            validate_split_group(save, actions, group, &calendar)?
         } else if !group.rights_event_ids.is_empty() {
             if group.rights_event_ids.len() != 1
                 || !group.cash_plan_ids.is_empty()
@@ -187,17 +189,42 @@ pub(in crate::session) fn validate(
             }
         }
     }
+    for book in &actions.share_splits {
+        if (book.settled_on().is_some()
+            || book.plan().ex_rights_on <= save.civil_clock.current_date)
+            && actions
+                .applied_ex_reference_groups
+                .iter()
+                .filter(|group| {
+                    group.stock == book.plan().stock
+                        && group.date == book.plan().ex_rights_on
+                        && group.split_event_ids == [book.plan().event_id.clone()]
+                })
+                .count()
+                != 1
+        {
+            return Err(invalid(format!(
+                "拆缩股事件 {} 缺少唯一真实除权锚",
+                book.plan().event_id
+            )));
+        }
+    }
     for registry in &actions.registries {
         if let Some(opening) = registry.pending_opening() {
             if !save.plans.active_plan_ids().is_empty()
                 || !save.pending_player.is_empty()
                 || opening.request.day != save.civil_clock.current_date
-                || !actions.stock_distributions.iter().any(|book| {
+                || !(actions.stock_distributions.iter().any(|book| {
                     book.plan().stock == *registry.stock()
                         && book.credited_on() == Some(opening.request.day)
                         && opening.request.event_id
                             == format!("stock-distribution:{}", book.plan().event_id)
-                })
+                }) || actions.share_splits.iter().any(|book| {
+                    book.plan().stock == *registry.stock()
+                        && book.settled_on() == Some(opening.request.day)
+                        && opening.request.event_id
+                            == format!("share-transform:{}", book.plan().event_id)
+                }))
             {
                 return Err(invalid("pending opening 缺少当前盘前送转事件".into()));
             }
@@ -361,6 +388,114 @@ fn validate_stock_group(
         },
     };
     stock_distribution_ex_rights_reference_price(
+        calendar,
+        plan.exchange,
+        formula,
+        plan.registered_on,
+        group.pre_ex_close,
+        Money::ZERO,
+    )
+    .map_err(|error| ShareRegistryError::InvalidFact {
+        detail: error.to_string(),
+    })
+}
+
+fn validate_split_group(
+    save: &SaveSlot,
+    actions: &crate::session::SessionCorporateActions,
+    group: &crate::session::corporate_actions::AppliedExReferenceGroup,
+    calendar: &TradingCalendar,
+) -> Result<crate::company::ex_reference_price::ExReferencePrice, ShareRegistryError> {
+    use crate::company::ex_reference_price::{
+        share_split_ex_rights_reference_price, ShareSplitExRightsFormula,
+    };
+    let invalid = |detail: &str| ShareRegistryError::InvalidFact {
+        detail: format!("拆缩股除权 {} {}：{detail}", group.stock.0, group.date),
+    };
+    if group.split_event_ids.len() != 1
+        || !group.rights_event_ids.is_empty()
+        || !group.cash_plan_ids.is_empty()
+        || !group.stock_event_ids.is_empty()
+        || save.setup.stocks.len() != 1
+        || save.setup.issuer_repurchase_enabled
+        || save.setup.dividend_tax_mode != Some(CashDividendTaxMode::Exempt)
+        || !actions.dividend_tax_books.is_empty()
+    {
+        return Err(invalid("仅支持单证券 Exempt 独立拆缩股"));
+    }
+    let book = actions
+        .share_splits
+        .iter()
+        .find(|book| book.plan().event_id == group.split_event_ids[0])
+        .ok_or_else(|| invalid("除权锚缺少拆缩股事件"))?;
+    let plan = book.plan();
+    if plan.stock != group.stock
+        || plan.ex_rights_on != group.date
+        || book.settled_on() != Some(group.date)
+    {
+        return Err(invalid("除权锚与入账事件不一致"));
+    }
+    let snapshot = book.registration().ok_or_else(|| invalid("拆缩股缺登记"))?;
+    if !crate::session::civil_rights_ex::all_shares_circulating(snapshot)
+        || snapshot.holdings().iter().any(|holding| {
+            !matches!(
+                holding.holder,
+                crate::company::share_registry::HolderId::Account(_)
+            )
+        })
+    {
+        return Err(invalid("拆缩股要求全部流通且全部为真实账户股份"));
+    }
+    let registry = actions
+        .registries
+        .iter()
+        .find(|registry| registry.stock() == &plan.stock && registry.issuer() == &plan.issuer)
+        .ok_or_else(|| invalid("拆缩股缺少名册"))?;
+    let movement = format!("share-transform:{}", plan.event_id);
+    let bound = if registry.settled_on() < group.date {
+        registry.pending_opening().map(|opening| &opening.reference)
+    } else {
+        let mut refs =
+            registry
+                .receipts()
+                .iter()
+                .filter_map(|receipt| match &receipt.request.scope {
+                    crate::company::share_registry::MovementScope::SettlementDayMarket {
+                        binding,
+                    } if receipt.request.day == group.date => binding
+                        .opening
+                        .iter()
+                        .find(|opening| opening.movement_event_id == movement),
+                    _ => None,
+                });
+        let first = refs.next();
+        if refs.next().is_some() {
+            return Err(invalid("拆缩股 opening 被重复消费"));
+        }
+        first
+    }
+    .ok_or_else(|| invalid("拆缩股缺少 pending 或已消费的 opening"))?;
+    if bound.movement_event_id != movement
+        || bound.registration_event_id != plan.event_id
+        || bound.from_unit == bound.to_unit
+        || bound.to_unit
+            != (crate::company::share_registry::settlement_day::ShareUnitIdentity::ReDenominated {
+                movement_event_id: movement.clone(),
+            })
+    {
+        return Err(invalid("拆缩股 opening 来源或单位不一致"));
+    }
+    let formula = match plan.exchange {
+        CalendarExchange::Sse => ShareSplitExRightsFormula::ShanghaiCirculatingShareChange {
+            numerator: plan.new_shares_per_old_share().0,
+            denominator: plan.new_shares_per_old_share().1,
+        },
+        CalendarExchange::Szse => ShareSplitExRightsFormula::ShenzhenShareChange {
+            numerator: plan.new_shares_per_old_share().0,
+            denominator: plan.new_shares_per_old_share().1,
+        },
+    };
+    share_split_ex_rights_reference_price(
         calendar,
         plan.exchange,
         formula,

@@ -422,6 +422,7 @@ impl CapturedExperienceObservation {
                     code: *code,
                 })?
                 .last_price();
+            let price = view.observation_price(code, price);
             equity = equity
                 .add(price.mul_shares(position.qty()).map_err(|source| {
                     DecisionSnapshotCaptureError::Money {
