@@ -160,7 +160,8 @@ impl GameSession {
             let baseline = self.prepare_civil_administrative_baseline()?;
             let (stages, cash) =
                 shadow.prepare_civil_cash_distributions(report.settled_date, &baseline)?;
-            let desks = shadow.prepare_rights_ex_anchors(next_date)?;
+            let mut desks = shadow.prepare_rights_ex_anchors(next_date)?;
+            desks.extend(shadow.prepare_stock_ex_anchors(next_date)?);
             let expected_desks = desks.clone();
             let clock =
                 crate::runtime::InformationClockContext::for_civil_disclosure(self, instant)?;

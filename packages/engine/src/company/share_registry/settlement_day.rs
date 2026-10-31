@@ -95,7 +95,8 @@ pub struct ShareMarketSourceContext<'a> {
     pub completed_through: Option<CivilDate>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct FrozenOpeningMovement {
     pub reference: OpeningMovementRef,
     pub request: ShareDayRequest,
@@ -131,8 +132,18 @@ pub struct ShareSettlementDay {
     pub post_market_actions: Vec<SharePostAction>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct PendingOpening {
+    pub(super) predecessor: ShareDayFrontier,
+    pub(super) opening: FrozenOpeningMovement,
+}
+
 impl ShareRegistry {
     pub fn settlement_frontier(&self) -> Result<ShareDayFrontier, ShareRegistryError> {
+        if let Some(pending) = &self.pending_opening {
+            return Ok(pending.predecessor.clone());
+        }
         let unit = self.receipts.iter().rev().find_map(|receipt| {
             matches!(
                 receipt.request.scope,
@@ -151,6 +162,88 @@ impl ShareRegistry {
                 None => ShareUnitIdentity::Initial,
             },
         })
+    }
+
+    pub fn pending_opening(&self) -> Option<&FrozenOpeningMovement> {
+        self.pending_opening
+            .as_ref()
+            .map(|pending| &pending.opening)
+    }
+
+    pub fn current_unit(&self) -> ShareUnitIdentity {
+        self.unit_at(self.receipts.len())
+    }
+
+    pub fn prepare_opening_movement(
+        &self,
+        predecessor: &ShareDayFrontier,
+        opening: &FrozenOpeningMovement,
+    ) -> Result<Self, ShareRegistryError> {
+        self.validate()?;
+        if self.pending_opening.is_some()
+            || *predecessor != self.settlement_frontier()?
+            || opening.request.day.days_since(self.settled_on) != 1
+            || opening.request.event_id != opening.reference.movement_event_id
+            || !opening_scope_matches(&opening.request.scope, &opening.reference)
+            || !opening_changes_match(&opening.request)
+        {
+            return Err(error(
+                "opening predecessor/day/scope is invalid or already pending",
+            ));
+        }
+        let mut candidate = self.clone();
+        candidate.apply_movement(opening.request.clone())?;
+        candidate.pending_opening = Some(PendingOpening {
+            predecessor: predecessor.clone(),
+            opening: opening.clone(),
+        });
+        candidate.validate()?;
+        Ok(candidate)
+    }
+
+    pub(super) fn validate_pending_opening(&self) -> Result<(), ShareRegistryError> {
+        let Some(pending) = &self.pending_opening else {
+            return Ok(());
+        };
+        let index = usize::try_from(pending.predecessor.receipt_count)
+            .map_err(|_| error("opening frontier exceeds usize"))?;
+        let opening = &pending.opening;
+        if index.checked_add(1) != Some(self.receipts.len())
+            || pending.predecessor.settled_on != self.settled_on
+            || opening.request.day.days_since(self.settled_on) != 1
+            || pending.predecessor.unit != self.unit_at(index)
+            || self
+                .receipts
+                .get(index.wrapping_sub(1))
+                .is_some_and(|receipt| receipt.request.day != pending.predecessor.settled_on)
+            || self
+                .registrations
+                .iter()
+                .any(|snapshot| snapshot.event_id == opening.request.event_id)
+            || opening.request.event_id != opening.reference.movement_event_id
+            || !opening_scope_matches(&opening.request.scope, &opening.reference)
+            || !opening_changes_match(&opening.request)
+            || self.receipts[index].request != opening.request
+        {
+            return Err(error(
+                "pending opening does not bind its predecessor and physical suffix",
+            ));
+        }
+        if matches!(
+            opening.request.scope,
+            MovementScope::ShareReDenomination { .. }
+        ) {
+            check_transition(
+                &pending.predecessor.unit,
+                &opening.reference.from_unit,
+                &opening.reference.to_unit,
+                &opening.request.event_id,
+            )?;
+        } else if opening.reference.from_unit != pending.predecessor.unit {
+            return Err(error("pending opening unit differs from predecessor"));
+        }
+        self.validate_frozen_opening(&opening.reference, index, &self.receipts[index])?;
+        Ok(())
     }
 
     pub fn prepare_settlement_day(
@@ -175,10 +268,8 @@ impl ShareRegistry {
             for opening in &request.opening {
                 if opening.request.day != request.day
                     || opening.request.event_id != opening.reference.movement_event_id
-                    || !matches!(
-                        opening.request.scope,
-                        MovementScope::ShareReDenomination { .. }
-                    )
+                    || !opening_scope_matches(&opening.request.scope, &opening.reference)
+                    || !opening_changes_match(&opening.request)
                 {
                     return Err(error(
                         "opening request does not bind its declared day/phase/movement reference",
@@ -236,13 +327,23 @@ impl ShareRegistry {
                 )
                 .collect();
             let mut candidate = self.clone();
+            let already_applied = match &self.pending_opening {
+                Some(pending) => {
+                    if request.opening.as_slice() != [pending.opening.clone()] {
+                        return Err(error("settlement opening differs from pending suffix"));
+                    }
+                    candidate.pending_opening = None;
+                    true
+                }
+                None => false,
+            };
             for opening in &request.opening {
+                if already_applied {
+                    continue;
+                }
                 if opening.request.day != request.day
                     || opening.reference.movement_event_id != opening.request.event_id
-                    || !matches!(
-                        opening.request.scope,
-                        MovementScope::ShareReDenomination { .. }
-                    )
+                    || !opening_scope_matches(&opening.request.scope, &opening.reference)
                     || !identities.insert(opening.request.event_id.clone())
                 {
                     return Err(error(
@@ -420,22 +521,29 @@ impl ShareRegistry {
                     let stored = &self.receipts[start + offset];
                     if stored.request.day != receipt.request.day
                         || stored.request.event_id != opening.movement_event_id
-                        || !matches!(
-                            stored.request.scope,
-                            MovementScope::ShareReDenomination { .. }
-                        )
+                        || !opening_scope_matches(&stored.request.scope, opening)
+                        || !opening_changes_match(&stored.request)
                         || !identities.insert(opening.movement_event_id.as_str())
                     {
                         return Err(error(
                             "opening reference does not resolve to its exact ordered movement",
                         ));
                     }
-                    check_transition(
-                        &unit,
-                        &opening.from_unit,
-                        &opening.to_unit,
-                        &stored.request.event_id,
-                    )?;
+                    if matches!(
+                        stored.request.scope,
+                        MovementScope::ShareReDenomination { .. }
+                    ) {
+                        check_transition(
+                            &unit,
+                            &opening.from_unit,
+                            &opening.to_unit,
+                            &stored.request.event_id,
+                        )?;
+                    } else if unit != opening.from_unit {
+                        return Err(error(
+                            "stock distribution opening does not retain the current unit",
+                        ));
+                    }
                     self.validate_frozen_opening(opening, start + offset, stored)
                         .map_err(|cause| {
                             error(&format!(
@@ -808,6 +916,19 @@ fn post_movement_error(
         "post={} unit={unit:?} lots={lots:?}: {detail}",
         request.event_id
     ))
+}
+
+fn opening_scope_matches(scope: &MovementScope, reference: &OpeningMovementRef) -> bool {
+    match scope {
+        MovementScope::ShareReDenomination { .. } => true,
+        MovementScope::NonTradingTransfer { .. } => reference.from_unit == reference.to_unit,
+        _ => false,
+    }
+}
+
+fn opening_changes_match(request: &ShareDayRequest) -> bool {
+    !matches!(request.scope, MovementScope::NonTradingTransfer { .. })
+        || request.changes.iter().all(|change| change.change >= 0)
 }
 
 fn check_transition(

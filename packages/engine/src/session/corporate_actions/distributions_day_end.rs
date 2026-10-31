@@ -1,4 +1,4 @@
-//! 分红与送转的日终候选计算；native civil 仅接现金分红与收缴，送转仍为独立候选。
+//! 分红日终与受限送转盘前候选；由 native civil 的唯一 Admin 事务验证并安装。
 //!
 //! 调用前须在隔离公司状态安装 R1 名册/税账候选。这里只返回待行政回执验证的
 //! 候选事实；`Paid`/`Credited` 不能在真实账户回执勾稽前安装到权威 Session。
@@ -7,6 +7,7 @@ use super::{
     AccountDividendGrossReceipt, DividendTaxStatus, ExternalDividendReceipt,
     FlatWithholdingReceipt, SessionCorporateActions,
 };
+use crate::company::share_registry::settlement_day::{FrozenOpeningMovement, OpeningMovementRef};
 use crate::{
     calendar::{CivilDate, TradingCalendar},
     company::{
@@ -273,7 +274,7 @@ impl SessionCorporateActions {
         };
         result.prepare_dividends(&input)?;
         if include_stock_distributions {
-            result.prepare_stock_distributions(&input)?;
+            result.prepare_stock_distributions(&input, false)?;
         }
         result.prepare_individual_collections(&input)?;
         Ok(result)
@@ -540,11 +541,38 @@ impl DistributionsDayEndCandidate {
         Ok(())
     }
 
-    fn prepare_stock_distributions(
+    /// 只推进 Registered 送转，不提前执行 E 的现金付款、公告或登记。
+    pub(crate) fn prepare_stock_opening(
         &mut self,
         input: &DistributionsDayEndInput<'_>,
     ) -> Result<(), DistributionsDayEndError> {
+        if input.tax_mode != CashDividendTaxMode::Exempt
+            || !self.actions.dividend_tax_books.is_empty()
+        {
+            return Err(Context {
+                day: input.day,
+                event_id: "stock-opening".into(),
+                stock: None,
+                account: None,
+            }
+            .error("盘前送转仅支持 Exempt 且无个人税账"));
+        }
+        self.prepare_stock_distributions(input, true)
+    }
+
+    fn prepare_stock_distributions(
+        &mut self,
+        input: &DistributionsDayEndInput<'_>,
+        opening: bool,
+    ) -> Result<(), DistributionsDayEndError> {
         for index in 0..self.actions.stock_distributions.len() {
+            if opening
+                && (self.actions.stock_distributions[index].status()
+                    != &StockDistributionStatus::Registered
+                    || self.actions.stock_distributions[index].plan().ex_rights_on != input.day)
+            {
+                continue;
+            }
             let plan = self.actions.stock_distributions[index].plan().clone();
             let mut ctx = Context {
                 day: input.day,
@@ -752,16 +780,68 @@ impl DistributionsDayEndCandidate {
                 .iter_mut()
                 .find(|r| r.stock() == &plan.stock && r.issuer() == &plan.issuer)
                 .ok_or_else(|| ctx.error("送转入账缺少匹配名册"))?;
-            registry
-                .close_day(ShareDayRequest {
-                    event_id: format!("stock-distribution:{}", plan.event_id),
-                    day: input.day,
-                    scope: MovementScope::NonTradingTransfer {
-                        basis: plan.approval_reference.clone(),
+            if opening {
+                // 零分配 holder 也必须绑定原 lots；不生成零数量账户操作。
+                let snapshot = registry
+                    .registration(&plan.event_id)
+                    .ok_or_else(|| ctx.error("盘前送转缺少冻结登记"))?;
+                for holding in snapshot.holdings() {
+                    if !changes.iter().any(|change| change.holder == holding.holder) {
+                        changes.push(DayNetChange {
+                            holder: holding.holder.clone(),
+                            change: 0,
+                            acquisition: None,
+                            consume: None,
+                        });
+                    }
+                }
+                let source_lots = changes
+                    .iter()
+                    .map(|change| {
+                        snapshot
+                            .holdings()
+                            .iter()
+                            .find(|holding| holding.holder == change.holder)
+                            .map(|holding| holding.lots.iter().map(|lot| lot.id.clone()).collect())
+                            .ok_or_else(|| ctx.error("送转来源 holder 不在登记快照"))
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                let unit = registry.current_unit();
+                let movement = FrozenOpeningMovement {
+                    reference: OpeningMovementRef {
+                        movement_event_id: format!("stock-distribution:{}", plan.event_id),
+                        registration_event_id: plan.event_id.clone(),
+                        source_lots,
+                        from_unit: unit.clone(),
+                        to_unit: unit,
                     },
-                    changes,
-                })
-                .map_err(|e| ctx.error(e))?;
+                    request: ShareDayRequest {
+                        event_id: format!("stock-distribution:{}", plan.event_id),
+                        day: input.day,
+                        scope: MovementScope::NonTradingTransfer {
+                            basis: plan.approval_reference.clone(),
+                        },
+                        changes,
+                    },
+                };
+                *registry = registry
+                    .prepare_opening_movement(
+                        &registry.settlement_frontier().map_err(|e| ctx.error(e))?,
+                        &movement,
+                    )
+                    .map_err(|e| ctx.error(e))?;
+            } else {
+                registry
+                    .close_day(ShareDayRequest {
+                        event_id: format!("stock-distribution:{}", plan.event_id),
+                        day: input.day,
+                        scope: MovementScope::NonTradingTransfer {
+                            basis: plan.approval_reference.clone(),
+                        },
+                        changes,
+                    })
+                    .map_err(|e| ctx.error(e))?;
+            }
             self.company_system
                 .record_stock_distribution_credit(
                     &plan.issuer,

@@ -6,7 +6,7 @@ import { SaveSchemaError } from "../primitives.ts";
 import { parseSaveJson, parseSaveSlot } from "../../save-schema.ts";
 const names = ["generated-company-state-registry.json", "manual-company-state-registry.json", "legacy-company-state.json"] as const;
 const historicalRaw = names.map(name => readFileSync(new URL(`../../fixtures/source-b/${name}`, import.meta.url), "utf8"));
-// synthetic：仅为未改动的其他 codec 保留历史结构覆盖；补 report correction 空表、策略和 bindings 都不代表当前 Rust producer 或恢复已验。
+// synthetic：仅为未改动的其他 codec 保留历史结构覆盖；补 report correction 空表、策略、bindings 与 pending_opening 都不代表当前 Rust producer 或恢复已验。
 function syntheticCorrectionOperationsProjection(text: string): string {
  const root=JSON.parse(text) as Record<string,any>;
  if(Object.hasOwn(root,"report_correction_operations"))return text;
@@ -22,7 +22,10 @@ function syntheticBindingsProjection(text: string): string {
  const root=JSON.parse(text) as Record<string,any>;const company=root.company_state.CompanySystem;
  if(company===undefined)return text;
  assert.equal(Object.hasOwn(company.corporate_actions,"repurchase_execution_bindings"),false,"历史原件应保持旧字段集合");
- return JSON.stringify({...root,company_state:{CompanySystem:{...company,corporate_actions:{...company.corporate_actions,repurchase_execution_bindings:[]}}}});
+ return JSON.stringify({...root,company_state:{CompanySystem:{...company,corporate_actions:{...company.corporate_actions,repurchase_execution_bindings:[],registries:company.corporate_actions.registries.map((registry: Record<string, unknown>) => {
+  assert.equal(Object.hasOwn(registry,"pending_opening"),false,"历史原件不含盘前字段");
+  return {...registry,pending_opening:null};
+ })}}}});
 }
 const correctionProjectedRaw = historicalRaw.map(syntheticCorrectionOperationsProjection);
 const policyProjectedRaw = correctionProjectedRaw.map(syntheticPolicyProjection);
@@ -157,4 +160,29 @@ for(const origin_year of [-2147483649,2147483648])test(`SimpleFinanceState所得
 for(const period of ["1899-12","2200-01"])test(`SimpleFinanceState所得税restatements拒绝期间越界${period}`,{timeout:10000},()=>{
  const value=sample();system(value).system.implementation.state.companies["0"].finance.income_tax_position.restatements={"1":period};
  assert.throws(()=>parseSaveSlot(value),/restatements.*1900/);
+});
+
+test("REG pending_opening 显式可空且全部嵌套字段严格必填（synthetic）", {timeout:10000}, () => {
+ const actions=system(sample()).corporate_actions;
+ const registry=actions.registries[0];
+ assert.equal(registry.pending_opening,null);
+ const missing=structuredClone(actions);delete missing.registries[0].pending_opening;
+ assert.throws(()=>parseSessionCorporateActions(missing,"actions"),/pending_opening/);
+ // 此输入只验证 wire 形状；真实冻结来源、数量与收盘消费由 Rust SaveSlot 校验。
+ registry.pending_opening={
+  predecessor:{settled_on:registry.settled_on,receipt_count:String(registry.receipts.length),unit:"Initial"},
+  opening:{reference:{movement_event_id:"stock-distribution:synthetic",registration_event_id:"synthetic",
+   source_lots:[["original"]],from_unit:"Initial",to_unit:"Initial"},
+   request:{event_id:"stock-distribution:synthetic",day:"2026-01-07",scope:{NonTradingTransfer:{basis:"合成结构测试"}},changes:[]}}
+ };
+ assert.deepEqual(parseSessionCorporateActions(actions,"actions"),actions);
+ for(const path of [[],["predecessor"],["opening"],["opening","reference"],["opening","request"]]){
+  let node=registry.pending_opening;for(const key of path)node=node[key];
+  for(const key of Object.keys(node)){
+   const bad=structuredClone(actions);let target=bad.registries[0].pending_opening;for(const part of path)target=target[part];delete target[key];
+   assert.throws(()=>parseSessionCorporateActions(bad,"actions"),new RegExp(key));
+  }
+  const extra=structuredClone(actions);let target=extra.registries[0].pending_opening;for(const part of path)target=target[part];target.unexpected=0;
+  assert.throws(()=>parseSessionCorporateActions(extra,"actions"),/unexpected/);
+ }
 });

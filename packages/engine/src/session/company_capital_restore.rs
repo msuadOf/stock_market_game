@@ -316,7 +316,14 @@ pub(crate) fn validate_company_capital_restore(
                     .or_else(|| bound_context.and_then(|bound| bound.kind)),
                     ..context.clone()
                 };
-                if receipt.request.day > input.committed_through {
+                if receipt.request.day > input.committed_through
+                    && !pending_stock_credit(
+                        &input,
+                        *company,
+                        &receipt.request.event_id,
+                        receipt.request.day,
+                    )
+                {
                     return Err(CompanyCapitalRestoreError::FutureFact {
                         context: receipt_context,
                         committed_through: input.committed_through,
@@ -359,6 +366,10 @@ pub(crate) fn validate_company_capital_restore(
                         issued_shares,
                         after,
                         working_capital,
+                        registry.pending_opening().is_some_and(|opening| opening.request.event_id == receipt.request.event_id)
+                            || registry.receipts().iter().any(|market| matches!(&market.request.scope,
+                                MovementScope::SettlementDayMarket { binding } if binding.opening.iter()
+                                    .any(|opening| opening.movement_event_id == receipt.request.event_id))),
                     )?;
                     capital_delta = capital_delta
                         .checked_add(movement.capital_delta.cents())
@@ -464,6 +475,35 @@ pub(crate) fn validate_company_capital_restore(
         );
     }
     Ok(CapitalReplaySummary { companies })
+}
+
+/// 唯一允许超过 civil 收盘截止的事实是次日已经应用且尚未消费的送转 opening。
+fn pending_stock_credit(
+    input: &CapitalRestoreInput<'_>,
+    issuer: CompanyId,
+    movement: &str,
+    day: CivilDate,
+) -> bool {
+    input.committed_through.next().ok() == Some(day)
+        && day <= input.approved_through
+        && input.actions.dividend_tax_books.is_empty()
+        && input.actions.registries.iter().any(|registry| {
+            registry.issuer() == &issuer
+                && registry.settled_on() == input.committed_through
+                && registry.pending_opening().is_some_and(|opening| {
+                    opening.request.event_id == movement
+                        && opening.request.day == day
+                        && opening.reference.from_unit == opening.reference.to_unit
+                        && input.actions.stock_distributions.iter().any(|book| {
+                            book.plan().issuer == issuer
+                                && book.plan().stock == *registry.stock()
+                                && book.credited_on() == Some(day)
+                                && opening.reference.registration_event_id == book.plan().event_id
+                                && movement
+                                    == format!("stock-distribution:{}", book.plan().event_id)
+                        })
+                })
+        })
 }
 
 fn check_shares(
@@ -758,7 +798,15 @@ fn prepare_stock_distributions(
         .into_iter()
         .flatten()
         {
-            if occurred > input.committed_through {
+            if occurred > input.committed_through
+                && !(book.credited_on() == Some(occurred)
+                    && pending_stock_credit(
+                        input,
+                        plan.issuer,
+                        &format!("stock-distribution:{}", plan.event_id),
+                        occurred,
+                    ))
+            {
                 return Err(CompanyCapitalRestoreError::FutureFact {
                     context: CapitalRestoreContext {
                         day: Some(occurred),
@@ -1820,6 +1868,7 @@ fn validate_bound_receipt(
     issued_before: u64,
     issued_after: u64,
     capital_before: Option<AccountingAmount>,
+    opening: bool,
 ) -> Result<(), CompanyCapitalRestoreError> {
     let context = CapitalRestoreContext {
         receipt_index: Some(receipt_index),
@@ -1835,9 +1884,12 @@ fn validate_bound_receipt(
         });
     }
     match &movement.allocation {
-        ExpectedCapitalAllocation::PositiveLots(lots) => {
-            validate_positive_lots(receipt, lots, &context)?
-        }
+        ExpectedCapitalAllocation::PositiveLots(lots) => validate_positive_lots(
+            receipt,
+            lots,
+            &context,
+            opening && context.kind == Some(CorporateCapitalKind::StockDistribution),
+        )?,
         ExpectedCapitalAllocation::ReDenomination(frozen) => {
             check_shares(frozen.issued_shares_before, issued_before, context.clone())?;
             check_shares(frozen.issued_shares_after, issued_after, context.clone())?;
@@ -1879,12 +1931,20 @@ fn validate_positive_lots(
     receipt: &ShareDayReceipt,
     lots: &[HolderCreditLot],
     context: &CapitalRestoreContext,
+    allow_zero_sources: bool,
 ) -> Result<(), CompanyCapitalRestoreError> {
     let expected = lots
         .iter()
         .map(|lot| (&lot.holder, lot))
         .collect::<BTreeMap<_, _>>();
-    if expected.len() != receipt.request.changes.len() {
+    if expected.len()
+        != receipt
+            .request
+            .changes
+            .iter()
+            .filter(|change| !allow_zero_sources || change.change != 0)
+            .count()
+    {
         return Err(CompanyCapitalRestoreError::ActionMismatch {
             context: context.clone(),
             field: "holders",
@@ -1892,6 +1952,18 @@ fn validate_positive_lots(
     }
     let mut seen = std::collections::BTreeSet::new();
     for change in &receipt.request.changes {
+        if allow_zero_sources && change.change == 0 {
+            if change.acquisition.is_some()
+                || change.consume.is_some()
+                || !seen.insert(&change.holder)
+            {
+                return Err(CompanyCapitalRestoreError::ActionMismatch {
+                    context: context.clone(),
+                    field: "zero-source",
+                });
+            }
+            continue;
+        }
         let lot = expected.get(&change.holder).ok_or_else(|| {
             CompanyCapitalRestoreError::ActionMismatch {
                 context: context.clone(),

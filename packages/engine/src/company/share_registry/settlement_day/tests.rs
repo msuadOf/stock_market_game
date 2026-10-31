@@ -286,6 +286,75 @@ fn ordered_captures_keep_exact_100_then_150_receipt_frontiers() {
 }
 
 #[test]
+fn registered_stock_distribution_can_precede_market_in_same_unit() {
+    let registry = foundation("2026-01-05");
+    let calendar = TradingCalendar::current_default_calendar().unwrap();
+    let mut request = market(&registry, "2026-01-06", 0, &[]);
+    request.opening.push(FrozenOpeningMovement {
+        reference: OpeningMovementRef {
+            movement_event_id: "stock-credit".into(),
+            registration_event_id: "R".into(),
+            source_lots: vec![vec!["original".into()]],
+            from_unit: ShareUnitIdentity::Initial,
+            to_unit: ShareUnitIdentity::Initial,
+        },
+        request: ShareDayRequest {
+            event_id: "stock-credit".into(),
+            day: request.day,
+            scope: MovementScope::NonTradingTransfer {
+                basis: "冻结送转".into(),
+            },
+            changes: vec![DayNetChange {
+                holder: holder(1),
+                change: 50,
+                consume: None,
+                acquisition: Some(NetAcquisition {
+                    lot_id: "stock-credit-lot".into(),
+                    source: AcquisitionSource::CorporateAction {
+                        event: "stock-credit".into(),
+                    },
+                    restriction: ShareRestriction::Unrestricted,
+                }),
+            }],
+        },
+    });
+    let opening = registry
+        .prepare_opening_movement(&request.predecessor, &request.opening[0])
+        .unwrap();
+    assert_eq!(opening.settled_on(), registry.settled_on());
+    assert_eq!(opening.issued_shares(), 150);
+    let restored: ShareRegistry =
+        serde_json::from_value(serde_json::to_value(&opening).unwrap()).unwrap();
+    assert_eq!(restored, opening);
+    let completed = restored
+        .prepare_settlement_day(&request, &context(&calendar, &[]))
+        .unwrap();
+    assert_eq!(completed.issued_shares(), 150);
+    assert_eq!(completed.settled_on(), request.day);
+    assert_eq!(completed.receipts().len(), opening.receipts().len() + 1);
+    let candidate = registry
+        .prepare_settlement_day(&request, &context(&calendar, &[]))
+        .unwrap();
+    assert_eq!(candidate.issued_shares(), 150);
+    let restored: ShareRegistry =
+        serde_json::from_value(serde_json::to_value(&candidate).unwrap()).unwrap();
+    assert_eq!(restored, candidate);
+    let mut wrong_unit = request.clone();
+    wrong_unit.opening[0].reference.to_unit = ShareUnitIdentity::ReDenominated {
+        movement_event_id: "stock-credit".into(),
+    };
+    assert!(registry
+        .prepare_settlement_day(&wrong_unit, &context(&calendar, &[]))
+        .is_err());
+    let mut reduction = request.clone();
+    reduction.opening[0].request.changes[0].change = -1;
+    reduction.opening[0].request.changes[0].acquisition = None;
+    assert!(registry
+        .prepare_settlement_day(&reduction, &context(&calendar, &[]))
+        .is_err());
+}
+
+#[test]
 fn friday_registration_survives_calendar_checked_weekend_zero_then_monday_opening() {
     let calendar = TradingCalendar::current_default_calendar().unwrap();
     let mut registry = foundation("2026-01-09");
@@ -875,4 +944,91 @@ fn typed_post_unit_movement_binds_result_unit_and_restore_rejects_wrong_transiti
     assert!(
         serde_json::from_value::<ShareRegistry>(serde_json::to_value(&corrupt).unwrap()).is_err()
     );
+}
+
+#[test]
+fn same_unit_stock_opening_covers_zero_allocation_sources_and_requires_explicit_wire() {
+    let mut registry = ShareRegistry::new(
+        StockCode("600001".into()),
+        CompanyId(0),
+        100,
+        day("2026-01-05"),
+        [(1, 99), (2, 1)]
+            .into_iter()
+            .map(|(owner, qty)| ShareHolding {
+                holder: holder(owner),
+                lots: vec![ShareLot {
+                    id: format!("original-{owner}"),
+                    qty,
+                    acquired_on: day("2026-01-05"),
+                    source: AcquisitionSource::InitialAllocation {
+                        evidence: "零分配来源测试".into(),
+                    },
+                    restriction: ShareRestriction::Unrestricted,
+                }],
+            })
+            .collect(),
+    )
+    .unwrap();
+    registry.register("R".into(), day("2026-01-05")).unwrap();
+    let opening = FrozenOpeningMovement {
+        reference: OpeningMovementRef {
+            movement_event_id: "stock-credit".into(),
+            registration_event_id: "R".into(),
+            source_lots: vec![vec!["original-1".into()], vec!["original-2".into()]],
+            from_unit: ShareUnitIdentity::Initial,
+            to_unit: ShareUnitIdentity::Initial,
+        },
+        request: ShareDayRequest {
+            event_id: "stock-credit".into(),
+            day: day("2026-01-06"),
+            scope: MovementScope::NonTradingTransfer {
+                basis: "冻结送转".into(),
+            },
+            changes: vec![
+                DayNetChange {
+                    holder: holder(1),
+                    change: 1,
+                    consume: None,
+                    acquisition: Some(NetAcquisition {
+                        lot_id: "stock-credit-lot".into(),
+                        source: AcquisitionSource::CorporateAction {
+                            event: "stock-credit".into(),
+                        },
+                        restriction: ShareRestriction::Unrestricted,
+                    }),
+                },
+                DayNetChange {
+                    holder: holder(2),
+                    change: 0,
+                    consume: None,
+                    acquisition: None,
+                },
+            ],
+        },
+    };
+    let pending = registry
+        .prepare_opening_movement(&registry.settlement_frontier().unwrap(), &opening)
+        .unwrap();
+    assert_eq!(pending.issued_shares(), 101);
+    assert!(pending
+        .prepare_opening_movement(&pending.settlement_frontier().unwrap(), &opening)
+        .is_err());
+    let mut encoded = serde_json::to_value(&pending).unwrap();
+    encoded.as_object_mut().unwrap().remove("pending_opening");
+    assert!(serde_json::from_value::<ShareRegistry>(encoded).is_err());
+    let mut missing_source = opening.clone();
+    missing_source.reference.source_lots.pop();
+    missing_source.request.changes.pop();
+    assert!(registry
+        .prepare_opening_movement(&registry.settlement_frontier().unwrap(), &missing_source)
+        .is_err());
+    let mut close = market(&pending, "2026-01-06", 0, &[]);
+    close.opening.push(opening);
+    let calendar = TradingCalendar::current_default_calendar().unwrap();
+    let complete = pending
+        .prepare_settlement_day(&close, &context(&calendar, &[]))
+        .unwrap();
+    assert!(complete.pending_opening().is_none());
+    assert_eq!(complete.issued_shares(), 101);
 }

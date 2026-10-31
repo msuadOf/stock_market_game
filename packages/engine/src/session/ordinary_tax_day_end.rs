@@ -7,7 +7,7 @@ use crate::company::cash_dividend_tax::{
 };
 use crate::company::share_registry::settlement_day::{
     ConfirmedShareMarketClose, ShareConfirmationRef, ShareMarketConfirmation, ShareMarketSource,
-    ShareMarketSourceContext, SharePostAction, ShareSettlementDay, ShareUnitIdentity,
+    ShareMarketSourceContext, SharePostAction, ShareSettlementDay,
 };
 use crate::company::share_registry::{
     AcquisitionSource, DayNetChange, HolderId, MovementScope, NetAcquisition, ShareDayRequest,
@@ -527,9 +527,9 @@ impl GameSession {
                 predecessor: registry
                     .settlement_frontier()
                     .map_err(|source| failure(day, Some(&stock), source))?,
-                opening: Vec::new(),
+                opening: registry.pending_opening().cloned().into_iter().collect(),
                 actual_market_close: ConfirmedShareMarketClose {
-                    unit: ShareUnitIdentity::Initial,
+                    unit: registry.current_unit(),
                     source,
                     request: ShareDayRequest {
                         event_id: format!("session-market:{}:{day}", stock.0),

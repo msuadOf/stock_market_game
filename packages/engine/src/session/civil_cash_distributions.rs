@@ -1,4 +1,4 @@
-//! 现金权益候选绑定真实行政基线、原 typed operand 与同次提交后的完整账户。
+//! 现金权益与受限盘前送转绑定真实行政基线、原 typed operand 和完整账户。
 
 use super::administrative_mirror::CivilInformationError;
 use super::corporate_actions::distributions_day_end::{
@@ -62,8 +62,16 @@ fn operation(intent: &DistributionIntent, local: LocalIdx) -> Result<AdminOperat
     let (stock, amount, tax) = match intent {
         DistributionIntent::DividendGrossCredit { stock, amount, .. } => (*stock, *amount, false),
         DistributionIntent::DividendWithholding { stock, amount, .. } => (*stock, *amount, true),
-        DistributionIntent::StockDistributionCredit { .. } => {
-            return Err(invalid("现金付款入口不支持股份 movement"));
+        DistributionIntent::StockDistributionCredit { stock, shares, .. } => {
+            if *shares == 0 || *shares > i32::MAX as u64 {
+                return Err(invalid("送转股份必须为正且在行政可回滚数量范围内"));
+            }
+            return Ok(AdminOperation::ShareSplit {
+                local,
+                stock: StockIdx::try_from(stock.0).map_err(|_| invalid("送转证券坐标溢出"))?,
+                bonus_qty: u32::try_from(*shares)
+                    .map_err(|_| invalid("送转股份超出账户数量范围"))?,
+            });
         }
     };
     let stock = StockIdx::try_from(stock.0).map_err(|_| invalid("现金权益证券坐标溢出"))?;
@@ -180,6 +188,19 @@ impl GameSession {
                     flat_withholding_bp: self.state.setup.flat_withholding_bp,
                     capital_reserve_tax_sources: &BTreeMap::new(),
                 })?;
+            let next = day.next().map_err(|error| invalid(error.to_string()))?;
+            if self.validate_stock_opening_scope(next, baseline)? {
+                candidate.prepare_stock_opening(&DistributionsDayEndInput {
+                    day: next,
+                    calendar: self.state.civil_clock.calendar(),
+                    catalog: &self.state.stocks,
+                    company_system: system,
+                    available_cash: &available,
+                    tax_mode: mode,
+                    flat_withholding_bp: self.state.setup.flat_withholding_bp,
+                    capital_reserve_tax_sources: &BTreeMap::new(),
+                })?;
+            }
             candidate
                 .company_system
                 .validate_cash_dividend_books(&candidate.actions.dividends)?;
@@ -197,6 +218,7 @@ impl GameSession {
                     return Err(invalid("现金分红方案身份重复").into());
                 }
             }
+            let mut stock_sources = BTreeMap::new();
             let mut gross_sources = BTreeMap::new();
             for source in &candidate.sources {
                 match source {
@@ -222,8 +244,38 @@ impl GameSession {
                             }
                         }
                     }
-                    DistributionSource::StockDistribution { .. } => {
-                        return Err(invalid("现金候选包含送转来源").into());
+                    DistributionSource::StockDistribution {
+                        event_id,
+                        holder,
+                        stock,
+                        shares,
+                        ..
+                    } => {
+                        let crate::company::share_registry::HolderId::Account(account) = holder
+                        else {
+                            return Err(invalid("生产送转来源必须是真实账户").into());
+                        };
+                        let book = candidate
+                            .actions
+                            .stock_distributions
+                            .iter()
+                            .find(|book| book.plan().event_id == *event_id)
+                            .ok_or_else(|| invalid("送转来源缺少事件"))?;
+                        let receipt = book
+                            .receipt()
+                            .ok_or_else(|| invalid("送转来源缺少冻结分配"))?;
+                        if book.credited_on() != Some(next)
+                            || self.state.stocks.id(&book.plan().stock.0) != Some(*stock)
+                            || !receipt
+                                .holders
+                                .iter()
+                                .any(|row| row.holder == *holder && row.whole_shares == *shares)
+                            || stock_sources
+                                .insert((event_id.clone(), *account, *stock), *shares)
+                                .is_some()
+                        {
+                            return Err(invalid("送转来源与唯一冻结分配不一致").into());
+                        }
                     }
                 }
             }
@@ -349,8 +401,20 @@ impl GameSession {
                         }
                         (*account, true)
                     }
-                    DistributionIntent::StockDistributionCredit { .. } => {
-                        return Err(invalid("现金付款候选包含股份 movement").into());
+                    DistributionIntent::StockDistributionCredit {
+                        event_id,
+                        account,
+                        stock,
+                        shares,
+                        available_on,
+                    } => {
+                        if *available_on != next
+                            || stock_sources.remove(&(event_id.clone(), *account, *stock))
+                                != Some(*shares)
+                        {
+                            return Err(invalid("送转意图缺少同日唯一真实来源").into());
+                        }
+                        (*account, false)
                     }
                 };
                 let &(group, local) = owners
@@ -394,16 +458,32 @@ impl GameSession {
                     .expected_accounts
                     .entry((group, local))
                     .or_insert_with(|| raw_accounts[&(group, local)].clone());
-                raw.cash = match typed {
-                    AdminOperation::CashDividend { amount, .. } => raw.cash.checked_add(amount),
-                    AdminOperation::WithholdingTax { amount, .. } => {
-                        raw.cash.checked_sub(amount).filter(|cash| *cash >= 0)
+                match typed {
+                    AdminOperation::CashDividend { amount, .. } => {
+                        raw.cash = raw
+                            .cash
+                            .checked_add(amount)
+                            .ok_or_else(|| invalid("现金股利溢出"))?;
                     }
-                    _ => unreachable!("operation 只生成现金权益两种原语"),
+                    AdminOperation::WithholdingTax { amount, .. } => {
+                        raw.cash = raw
+                            .cash
+                            .checked_sub(amount)
+                            .filter(|cash| *cash >= 0)
+                            .ok_or_else(|| invalid("现金权益预期现金不足"))?;
+                    }
+                    AdminOperation::ShareSplit {
+                        stock, bonus_qty, ..
+                    } => {
+                        raw.shares[usize::from(stock)] = raw.shares[usize::from(stock)]
+                            .checked_add(bonus_qty)
+                            .ok_or_else(|| invalid("送转完整账户股数溢出"))?;
+                    }
+                    _ => unreachable!("operation 只生成现金权益与送转原语"),
                 }
-                .ok_or_else(|| invalid("现金权益完整账户预期现金溢出或不足"))?;
             }
-            if !gross_sources.is_empty()
+            if !stock_sources.is_empty()
+                || !gross_sources.is_empty()
                 || !gross_receipts.is_empty()
                 || !flat_receipts.is_empty()
                 || !collections.is_empty()
