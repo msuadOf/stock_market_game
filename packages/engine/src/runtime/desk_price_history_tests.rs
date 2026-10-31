@@ -137,3 +137,80 @@ fn direct_zero_capacity_history_is_rejected_before_sampling() {
     );
     assert!(state.market.recent_prices.is_empty());
 }
+
+#[test]
+fn ex_rights_desk_prepare_is_private_and_abort_preserves_market() {
+    let mut desk = state(4, 10, 0, 0);
+    let id = super::super::protocol::AdminTransactionId(1);
+    let before = desk.state_hash();
+    let request = super::super::protocol::DeskExRightsRequest {
+        stock: 0,
+        expected_last_close: 1000,
+        reference_price: 800,
+    };
+    desk.prepare_ex_rights(id, request).unwrap();
+    assert_eq!(desk.market.last_close, 1000);
+    desk.finish_ex_rights(id, false).unwrap();
+    assert_eq!(desk.state_hash(), before);
+}
+
+#[test]
+fn ex_rights_commit_changes_only_reference_and_rejects_stale_requests() {
+    let mut desk = state(4, 10, 0, 0);
+    let id = super::super::protocol::AdminTransactionId(2);
+    let request = super::super::protocol::DeskExRightsRequest {
+        stock: 0,
+        expected_last_close: 1000,
+        reference_price: 800,
+    };
+    desk.prepare_ex_rights(id, request).unwrap();
+    desk.finish_ex_rights(id, true).unwrap();
+    assert_eq!(desk.market.last_close, 800);
+    assert_eq!(desk.market.last_price, 1000);
+    desk.reset_market_for_new_day();
+    assert_eq!(
+        desk.market.last_close, 800,
+        "无成交日不得把旧成交价覆盖除权锚"
+    );
+    assert!(desk.prepare_ex_rights(id, request).is_err());
+}
+
+#[test]
+fn ex_reference_drives_empty_book_cage_until_first_trade() {
+    let mut desk = state(4, 10, 0, 0);
+    let id = super::super::protocol::AdminTransactionId(3);
+    let request = super::super::protocol::DeskExRightsRequest {
+        stock: 0,
+        expected_last_close: 1000,
+        reference_price: 800,
+    };
+    let candidate = desk.prepare_ex_rights(id, request).unwrap();
+    assert_eq!(candidate.view.min_sell_price, 784);
+    desk.finish_ex_rights(id, true).unwrap();
+    assert_eq!(desk.continuous_reference(Side::Sell), 800);
+    desk.market.trade_count = 1;
+    desk.market.last_price = 820;
+    assert_eq!(desk.continuous_reference(Side::Sell), 820);
+}
+
+#[test]
+fn ex_prepare_rejects_overflow_before_install_and_commit_retires_old_undo() {
+    let mut desk = state(4, 10, 0, 0);
+    let id = super::super::protocol::AdminTransactionId(4);
+    let mut request = super::super::protocol::DeskExRightsRequest {
+        stock: 0,
+        expected_last_close: 1000,
+        reference_price: i64::MAX,
+    };
+    assert!(desk.prepare_ex_rights(id, request).is_err());
+    assert_eq!(desk.market.last_close, 1000);
+    desk.snapshot_drain_market();
+    request.reference_price = 800;
+    desk.prepare_ex_rights(id, request).unwrap();
+    desk.finish_ex_rights(id, true).unwrap();
+    assert!(desk.undo.is_empty());
+    assert_eq!(desk.committed_tick, desk.cur_tick);
+    assert_eq!(desk.sealed_drain_tick, Some(desk.cur_tick));
+    desk.rollback();
+    assert_eq!(desk.market.last_close, 800);
+}

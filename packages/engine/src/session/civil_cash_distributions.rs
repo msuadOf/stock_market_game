@@ -5,6 +5,10 @@ use super::corporate_actions::distributions_day_end::{
     DistributionIntent, DistributionSource, DistributionsDayEndError, DistributionsDayEndInput,
     WithholdingSource,
 };
+use super::corporate_actions::rights_offering_day_end::{
+    rights_offering_day_end_candidate, RightsAccountDisposition, RightsFinalResources,
+    RightsOfferingCandidateError, RightsOfferingIntent,
+};
 use super::*;
 use crate::runtime::drive::AdministrativeBaseline;
 use crate::runtime::group::GroupAccount;
@@ -22,6 +26,8 @@ enum CashPreparationError {
     Distribution(#[from] DistributionsDayEndError),
     #[error("{0}")]
     Company(#[from] crate::company::CompanySystemError),
+    #[error("{0}")]
+    Rights(#[from] RightsOfferingCandidateError),
 }
 
 fn invalid(detail: impl Into<String>) -> RuntimeError {
@@ -30,8 +36,14 @@ fn invalid(detail: impl Into<String>) -> RuntimeError {
     }
 }
 
+#[derive(Clone, Copy)]
+enum IntentOperand {
+    Distribution(usize),
+    Rights(AdminOperation),
+}
+
 struct IntentPosition {
-    intent_index: usize,
+    intent: IntentOperand,
     stage: u32,
     group: GroupIdx,
     group_index: usize,
@@ -71,6 +83,40 @@ fn operation(intent: &DistributionIntent, local: LocalIdx) -> Result<AdminOperat
             amount: amount.cents(),
         }
     })
+}
+
+fn rights_payment_operation(
+    intent: &RightsOfferingIntent,
+    local: LocalIdx,
+    stock: StockIdx,
+) -> Result<AdminOperation, RuntimeError> {
+    match intent {
+        RightsOfferingIntent::PaymentDebit { amount, .. } if amount.cents() > 0 => {
+            Ok(AdminOperation::PaymentDebit {
+                local,
+                stock,
+                amount: amount.cents(),
+            })
+        }
+        RightsOfferingIntent::FailureRefund { amount, .. } if amount.cents() > 0 => {
+            Ok(AdminOperation::SubscriptionRefund {
+                local,
+                stock,
+                amount: amount.cents(),
+            })
+        }
+        RightsOfferingIntent::NewShares {
+            shares,
+            paid_amount,
+            ..
+        } if *shares > 0 && paid_amount.cents() > 0 => Ok(AdminOperation::SharesWithCost {
+            local,
+            stock,
+            qty: u32::try_from(*shares).map_err(|_| invalid("配股新股超出账户股数范围"))?,
+            subscription_cost: paid_amount.cents(),
+        }),
+        _ => Err(invalid("配股资金或新股操作数无效")),
+    }
 }
 
 impl GameSession {
@@ -123,7 +169,7 @@ impl GameSession {
                 .setup
                 .dividend_tax_mode
                 .ok_or_else(|| invalid("现金权益缺开局税务模式"))?;
-            let candidate =
+            let mut candidate =
                 actions.cash_distributions_day_end_candidate(DistributionsDayEndInput {
                     day,
                     calendar: self.state.civil_clock.calendar(),
@@ -333,7 +379,7 @@ impl GameSession {
                 };
                 let offset = flat_offsets.entry(group).or_default();
                 prepared.positions.push(IntentPosition {
-                    intent_index,
+                    intent: IntentOperand::Distribution(intent_index),
                     stage,
                     group,
                     group_index,
@@ -379,6 +425,235 @@ impl GameSession {
             if candidate.projected_available_cash.len() != available.len() {
                 return Err(invalid("现金权益候选漏真实账户").into());
             }
+            // 缴款和失败退款复用同一真实账户行政事务。
+            let payment_active = candidate.actions.rights_offerings.iter().any(|book| {
+                (book.status() == &crate::company::rights_offering::RightsOfferingStatus::Entitled
+                    && book.plan().payment_window_contains(day))
+                    || (book.status()
+                        == &crate::company::rights_offering::RightsOfferingStatus::Closed
+                        && day >= book.plan().settlement_on)
+            });
+            if payment_active {
+                let mut resources = BTreeMap::new();
+                let mut personal_accounts = BTreeSet::new();
+                for (account, cash) in &candidate.projected_available_cash {
+                    let kind = self
+                        .state
+                        .accounts
+                        .get(account)
+                        .ok_or_else(|| invalid("配股账户缺少身份"))?
+                        .kind();
+                    if mode
+                        == crate::company::cash_dividend_tax::CashDividendTaxMode::AShareIndividual
+                        && corporate_actions::taxpayer_identity_of_kind(kind)
+                            == TaxpayerIdentity::Personal
+                    {
+                        personal_accounts.insert(*account);
+                    }
+                    resources.insert(
+                        *account,
+                        RightsFinalResources {
+                            available_cash: *cash,
+                            kind,
+                        },
+                    );
+                }
+                let rights = rights_offering_day_end_candidate(
+                    &candidate.actions,
+                    day,
+                    self.state.civil_clock.calendar(),
+                    &resources,
+                    &personal_accounts,
+                )?;
+                if rights.registries != candidate.actions.registries
+                    || rights.dividend_tax_books != candidate.actions.dividend_tax_books
+                {
+                    return Err(invalid("配股名册或税账候选与同一 typed 日结不一致").into());
+                }
+                let mut receipts = BTreeMap::new();
+                for result in &rights.results {
+                    let (kind, amount, shares) = match &result.disposition {
+                        RightsAccountDisposition::PreparedSubscription => {
+                            (0u8, result.paid_amount, 0)
+                        }
+                        RightsAccountDisposition::PreparedSettlement
+                            if result.refunded_amount > Money::ZERO =>
+                        {
+                            (1u8, result.refunded_amount, 0)
+                        }
+                        RightsAccountDisposition::PreparedSettlement => {
+                            (2u8, result.paid_amount, result.paid_shares)
+                        }
+                        RightsAccountDisposition::Rejected { .. } => continue,
+                    };
+                    if amount > Money::ZERO
+                        && receipts
+                            .insert(
+                                (
+                                    kind,
+                                    result.request.event_id.clone(),
+                                    result.request.account,
+                                    result.request.submitted_on,
+                                ),
+                                (amount, shares),
+                            )
+                            .is_some()
+                    {
+                        return Err(invalid("配股资金申请身份重复").into());
+                    }
+                }
+                if !rights.intents.is_empty() {
+                    stages.push(AdminOperationStage {
+                        operations: Vec::new(),
+                    });
+                }
+                for intent in &rights.intents {
+                    let (kind, request, amount, shares) = match intent {
+                        RightsOfferingIntent::PaymentDebit { request, amount } => {
+                            (0u8, request, amount, 0u64)
+                        }
+                        RightsOfferingIntent::FailureRefund { request, amount } => {
+                            (1u8, request, amount, 0u64)
+                        }
+                        RightsOfferingIntent::NewShares {
+                            request,
+                            shares,
+                            paid_amount,
+                            ..
+                        } => (2u8, request, paid_amount, *shares),
+                    };
+                    if receipts.remove(&(
+                        kind,
+                        request.event_id.clone(),
+                        request.account,
+                        request.submitted_on,
+                    )) != Some((*amount, shares))
+                    {
+                        return Err(invalid("配股资金操作缺少唯一回执").into());
+                    }
+                    let book = rights
+                        .rights_offerings
+                        .iter()
+                        .find(|book| book.plan().event_id == request.event_id)
+                        .ok_or_else(|| invalid("配股扣款缺少方案"))?;
+                    if let RightsOfferingIntent::NewShares {
+                        stock: issued_stock,
+                        ..
+                    } = intent
+                    {
+                        if issued_stock != &book.plan().stock {
+                            return Err(invalid("配股新股证券与方案不一致").into());
+                        }
+                    }
+                    let stock_id = self
+                        .state
+                        .stocks
+                        .id(&book.plan().stock.0)
+                        .ok_or_else(|| invalid("配股扣款证券不在目录"))?;
+                    let stock =
+                        StockIdx::try_from(stock_id.0).map_err(|_| invalid("配股证券坐标溢出"))?;
+                    let &(group, local) = owners
+                        .get(&request.account)
+                        .ok_or_else(|| invalid("配股扣款账户不在真实 Owner 名册"))?;
+                    let typed = rights_payment_operation(intent, local, stock)?;
+                    let stage =
+                        u32::try_from(stages.len() - 1).map_err(|_| invalid("配股 stage 溢出"))?;
+                    let rows = &mut stages.last_mut().expect("已建立缴款阶段").operations;
+                    let group_index = match rows.iter().position(|(actual, _)| *actual == group) {
+                        Some(index) => {
+                            rows[index].1.push(typed);
+                            index
+                        }
+                        None => {
+                            rows.push((group, vec![typed]));
+                            rows.len() - 1
+                        }
+                    };
+                    let offset = flat_offsets.entry(group).or_default();
+                    prepared.positions.push(IntentPosition {
+                        intent: IntentOperand::Rights(typed),
+                        stage,
+                        group,
+                        group_index,
+                        local,
+                        operation_index: *offset,
+                    });
+                    *offset = offset
+                        .checked_add(1)
+                        .ok_or_else(|| invalid("配股 flat index 溢出"))?;
+                    let raw = prepared
+                        .expected_accounts
+                        .entry((group, local))
+                        .or_insert_with(|| raw_accounts[&(group, local)].clone());
+                    match typed {
+                        AdminOperation::PaymentDebit { amount, .. } => {
+                            raw.cash = raw
+                                .cash
+                                .checked_sub(amount)
+                                .filter(|cash| *cash >= 0)
+                                .ok_or_else(|| invalid("配股余额不足"))?
+                        }
+                        AdminOperation::SubscriptionRefund { amount, .. } => {
+                            raw.cash = raw
+                                .cash
+                                .checked_add(amount)
+                                .ok_or_else(|| invalid("配股退款溢出"))?
+                        }
+                        AdminOperation::SharesWithCost {
+                            qty,
+                            subscription_cost,
+                            ..
+                        } => {
+                            let index = usize::from(stock);
+                            raw.shares[index] = raw.shares[index]
+                                .checked_add(qty)
+                                .ok_or_else(|| invalid("配股股份溢出"))?;
+                            raw.invested_cents[index] = raw.invested_cents[index]
+                                .checked_add(subscription_cost)
+                                .ok_or_else(|| invalid("配股成本溢出"))?;
+                            raw.ever_held[index] = false;
+                        }
+                        _ => unreachable!("配股只准备资金与新股操作"),
+                    }
+                }
+                if !receipts.is_empty() {
+                    return Err(invalid("配股实缴回执缺少扣款意图").into());
+                }
+                for fact in &rights.finance_settlements {
+                    let book = rights
+                        .rights_offerings
+                        .iter()
+                        .find(|book| book.plan().event_id == fact.event_id)
+                        .ok_or_else(|| invalid("配股退款缺少账簿"))?;
+                    let settlement = book.settlement().ok_or_else(|| invalid("配股缺结算回执"))?;
+                    if fact.settled_on != day
+                        || settlement.settlement_on != day
+                        || (settlement.failed
+                            && (fact.issued_shares != 0 || fact.proceeds != Money::ZERO))
+                        || (!settlement.failed
+                            && (mode
+                                != crate::company::cash_dividend_tax::CashDividendTaxMode::Exempt
+                                || fact.issued_shares != settlement.total_paid_shares
+                                || fact.proceeds != settlement.total_paid_amount))
+                    {
+                        return Err(invalid("配股公司资本与结算回执不一致").into());
+                    }
+                    candidate.company_system.record_rights_offering_settlement(
+                        &fact.issuer,
+                        &fact.event_id,
+                        fact.settled_on,
+                        fact.issued_shares,
+                        crate::accounting::AccountingAmount::from_money(fact.proceeds),
+                    )?;
+                }
+                candidate.actions.rights_offerings = rights.rights_offerings;
+                candidate.actions.rights_subscription_queue = rights.rights_subscription_queue;
+                candidate.actions.rejected_rights_subscriptions =
+                    rights.rejected_rights_subscriptions;
+                candidate
+                    .company_system
+                    .validate_rights_offering_books(&candidate.actions.rights_offerings)?;
+            }
             prepared.intents = candidate.intents;
             let SessionCompanies::CompanySystem(state) = &mut self.state.companies else {
                 unreachable!("候选来自同一公司容器")
@@ -401,8 +676,10 @@ impl PreparedCivilCash {
     ) -> Result<(), SessionError> {
         let verify = (|| {
             if self.positions.is_empty() {
-                if stages.is_some() {
-                    return Err(invalid("空现金权益意图不应含阶段来源"));
+                if stages.is_some_and(|source| {
+                    !source.operands().is_empty() || !source.tax_projections().is_empty()
+                }) {
+                    return Err(invalid("空现金权益意图不应含非空阶段来源"));
                 }
                 return Ok(());
             }
@@ -410,7 +687,12 @@ impl PreparedCivilCash {
             let mut expected = BTreeMap::new();
             let mut tax = BTreeMap::new();
             for position in &self.positions {
-                let typed = operation(&self.intents[position.intent_index], position.local)?;
+                let typed = match position.intent {
+                    IntentOperand::Distribution(index) => {
+                        operation(&self.intents[index], position.local)?
+                    }
+                    IntentOperand::Rights(typed) => typed,
+                };
                 let key = (position.group, position.stage, position.operation_index);
                 if expected.insert(key, typed).is_some() {
                     return Err(invalid("现金权益原意图坐标重复"));
@@ -475,5 +757,55 @@ impl PreparedCivilCash {
         verify.map_err(|source| {
             SessionError::CivilInformation(CivilInformationError::new(self.day, source))
         })
+    }
+}
+
+#[cfg(test)]
+mod rights_payment_tests {
+    use super::*;
+    use crate::session::corporate_actions::rights_offering_day_end::{
+        RightsOfferingIntent, RightsRequestKey,
+    };
+
+    #[test]
+    fn failed_subscription_refund_uses_dedicated_credit_operand() {
+        let request = RightsRequestKey {
+            event_id: "退款测试".into(),
+            account: AccountId(3),
+            submitted_on: crate::CivilDate::from_iso("2030-06-04").unwrap(),
+        };
+        let intent = RightsOfferingIntent::FailureRefund {
+            request,
+            amount: Money::from_cents(2500),
+        };
+        assert_eq!(
+            rights_payment_operation(&intent, 2, 1).unwrap(),
+            AdminOperation::SubscriptionRefund {
+                local: 2,
+                stock: 1,
+                amount: 2500
+            }
+        );
+    }
+
+    #[test]
+    fn rights_payment_uses_dedicated_debit_operand_and_checks_amount() {
+        let request = RightsRequestKey {
+            event_id: "配股测试".into(),
+            account: AccountId(3),
+            submitted_on: crate::CivilDate::from_iso("2030-06-04").unwrap(),
+        };
+        let intent = RightsOfferingIntent::PaymentDebit {
+            request,
+            amount: Money::from_cents(2500),
+        };
+        assert_eq!(
+            rights_payment_operation(&intent, 2, 1).unwrap(),
+            AdminOperation::PaymentDebit {
+                local: 2,
+                stock: 1,
+                amount: 2500
+            }
+        );
     }
 }

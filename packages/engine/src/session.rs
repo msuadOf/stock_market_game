@@ -22,6 +22,7 @@ mod civil_due_horizon_runtime_tests;
 mod civil_information;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod civil_information_runtime_tests;
+mod civil_rights_ex;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod civil_runtime_ceiling_tests;
 mod company_assembly;
@@ -1102,6 +1103,9 @@ pub enum SessionError {
     /// 存档 schema 或领域不变量不合法。数值码+数值上下文（ADR 0041）。
     #[error("invalid save: {0}")]
     InvalidSave(crate::error::ValidationFault),
+    /// 未完成接线的资本行为不得静默越过执行边界。
+    #[error("资本行为尚未接通：{0}")]
+    UnsupportedCapitalBoundary(String),
     /// pending 更正不能在保存时丢弃；健康会话可先日终提交或取消。
     #[error("存在待处理报表更正，请先完成日终披露或取消更正后再保存")]
     PendingReportCorrections,
@@ -3762,6 +3766,128 @@ impl GameSession {
         Ok(report)
     }
 
+    /// 串行宿主尚无资本行为日终，native 不得越过未接通的股份换算边界。
+    pub(super) fn validate_capital_civil_boundary(
+        &self,
+        _day: crate::CivilDate,
+        next: crate::CivilDate,
+        runtime: bool,
+    ) -> Result<(), SessionError> {
+        let Some(actions) = self.state.companies.corporate_actions() else {
+            return Ok(());
+        };
+        if !runtime {
+            if let Some(book) = actions.dividends.iter().find(|book| {
+                book.status() != &crate::company::cash_dividend::CashDividendStatus::Paid
+            }) {
+                return Err(SessionError::UnsupportedCapitalBoundary(format!(
+                    "串行宿主不支持现金分红 {}",
+                    book.plan().plan_id
+                )));
+            }
+        }
+        for book in &actions.stock_distributions {
+            if book.status()
+                != &crate::company::stock_distribution::StockDistributionStatus::Credited
+                && (!runtime || next >= book.plan().ex_rights_on)
+            {
+                return Err(SessionError::UnsupportedCapitalBoundary(format!(
+                    "送转事件 {} 的账户入账和除权未接通",
+                    book.plan().event_id
+                )));
+            }
+        }
+        for book in &actions.share_splits {
+            if book.status() != &crate::company::share_split::ShareSplitStatus::Settled
+                && (!runtime || next >= book.plan().ex_rights_on)
+            {
+                return Err(SessionError::UnsupportedCapitalBoundary(format!(
+                    "拆缩股事件 {} 的账户入账和除权未接通",
+                    book.plan().event_id
+                )));
+            }
+        }
+        if !runtime {
+            if let Some(book) = actions.rights_offerings.iter().find(|book| {
+                book.status() != &crate::company::rights_offering::RightsOfferingStatus::Settled
+            }) {
+                return Err(SessionError::UnsupportedCapitalBoundary(format!(
+                    "串行宿主不支持配股事件 {}",
+                    book.plan().event_id
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    /// 配股除权参考价必须在除权日首拍之前安装；失败发行无需调整。
+    pub(super) fn validate_capital_market_boundary(&self) -> Result<(), StepFatal> {
+        let Some(actions) = self.state.companies.corporate_actions() else {
+            return Ok(());
+        };
+        for book in &actions.rights_offerings {
+            if book.status() != &crate::company::rights_offering::RightsOfferingStatus::Settled
+                && self.civil_date() >= book.plan().ex_rights_on
+            {
+                let failed = if book.status()
+                    == &crate::company::rights_offering::RightsOfferingStatus::Closed
+                {
+                    book.determine_failure()
+                        .map_err(|error| StepFatal::InvariantViolation {
+                            location: "GameSession::validate_capital_market_boundary".into(),
+                            description: format!(
+                                "配股事件 {} 失败判定错误：{error}",
+                                book.plan().event_id
+                            ),
+                        })?
+                } else {
+                    false
+                };
+                let anchored = self.state.setup.dividend_tax_mode
+                    == Some(crate::company::cash_dividend_tax::CashDividendTaxMode::Exempt)
+                    && actions.dividend_tax_books.is_empty()
+                    && book.status()
+                        == &crate::company::rights_offering::RightsOfferingStatus::Closed
+                    && actions.applied_ex_reference_groups.iter().any(|group| {
+                        group.stock == book.plan().stock
+                            && group.date == book.plan().ex_rights_on
+                            && group.rights_event_ids == [book.plan().event_id.clone()]
+                    });
+                if !failed && !anchored {
+                    return Err(StepFatal::InvariantViolation {
+                        location: "GameSession::validate_capital_market_boundary".into(),
+                        description: format!(
+                            "配股事件 {} 的除权锚和成功发行未接通",
+                            book.plan().event_id
+                        ),
+                    });
+                }
+            }
+        }
+        for book in &actions.stock_distributions {
+            if book.status()
+                != &crate::company::stock_distribution::StockDistributionStatus::Credited
+                && self.civil_date() >= book.plan().ex_rights_on
+            {
+                return Err(StepFatal::InvariantViolation {
+                    location: "GameSession::validate_capital_market_boundary".into(),
+                    description: format!("送转事件 {} 的股份和除权未接通", book.plan().event_id),
+                });
+            }
+        }
+        for book in &actions.share_splits {
+            if book.status() != &crate::company::share_split::ShareSplitStatus::Settled
+                && self.civil_date() >= book.plan().ex_rights_on
+            {
+                return Err(StepFatal::InvariantViolation {
+                    location: "GameSession::validate_capital_market_boundary".into(),
+                    description: format!("拆缩股事件 {} 的股份和除权未接通", book.plan().event_id),
+                });
+            }
+        }
+        Ok(())
+    }
+
     /// 自然日与 market tick 一样先在同版 candidate 完成全部 publication callback，
     /// 成功后一次安装；失败不得先触发 observer 再靠 checkpoint 回滚。
     pub(in crate::session) fn with_prepared_civil_day<P>(
@@ -3793,10 +3919,16 @@ impl GameSession {
             );
         }
         // 确定性日期拒绝先于 civil 事务；真实收盘不能把未进入事务的上界拒绝变成 terminal。
-        self.state
+        let planned_day = self
+            .state
             .civil_clock
             .plan_day_end(self.next_civil_work_date()?)
             .map_err(SessionError::from)?;
+        self.validate_capital_civil_boundary(
+            self.civil_date(),
+            planned_day.next_date,
+            cfg!(not(target_arch = "wasm32")) && self.uses_runtime_civil_authority(),
+        )?;
         #[cfg(not(target_arch = "wasm32"))]
         if self.uses_runtime_civil_authority() {
             return self.with_prepared_runtime_civil_day_classified(project);

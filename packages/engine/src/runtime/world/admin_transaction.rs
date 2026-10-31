@@ -17,6 +17,7 @@ struct AdminPreparation {
     information: Option<crate::runtime::protocol::InformationPreparePayload>,
     stage_layouts: Option<BTreeMap<GroupIdx, crate::runtime::protocol::AdminStageLayout>>,
     projections: BTreeMap<GroupIdx, Vec<crate::runtime::protocol::RepurchaseProjectionInput>>,
+    desks: Vec<crate::runtime::protocol::DeskExRightsRequest>,
     before_books: BTreeMap<GroupIdx, crate::plans::PlanBook>,
 }
 
@@ -114,6 +115,7 @@ impl World {
             information,
             repurchase,
             None,
+            Vec::new(),
             inspect,
             |_candidate, _source, value| Ok(value),
         )
@@ -133,6 +135,7 @@ impl World {
             information,
             repurchase,
             None,
+            Vec::new(),
             |_candidate| Ok(()),
             |candidate, source, ()| inspect(candidate, source),
         )
@@ -145,6 +148,7 @@ impl World {
         information: Option<crate::runtime::protocol::InformationPreparePayload>,
         repurchase: Option<crate::runtime::protocol::RepurchasePreparePayload>,
         stage_layouts: Option<BTreeMap<GroupIdx, crate::runtime::protocol::AdminStageLayout>>,
+        desks: Vec<crate::runtime::protocol::DeskExRightsRequest>,
         inspect_candidate: impl FnOnce(&AdminCandidate) -> Result<L, RuntimeError>,
         inspect_prepared: impl FnOnce(
             &AdminCandidate,
@@ -173,6 +177,12 @@ impl World {
             .checked_add(1)
             .ok_or_else(|| invalid("行政事务 id 已耗尽"))?;
         let id = AdminTransactionId(self.admin_next_id);
+        let mut seen_stocks = BTreeSet::new();
+        if desks.iter().any(|request| {
+            usize::from(request.stock) >= self.n_stocks || !seen_stocks.insert(request.stock)
+        }) {
+            return Err(invalid("除权交易部越界或重复"));
+        }
         let mut operations = BTreeMap::new();
         let mut projections = BTreeMap::new();
         let has_repurchase_scope = repurchase.is_some();
@@ -239,6 +249,7 @@ impl World {
                 information,
                 stage_layouts,
                 projections,
+                desks,
                 before_books,
             },
             &expected,
@@ -336,6 +347,7 @@ impl World {
             information,
             stage_layouts,
             projections,
+            desks,
             before_books,
         } = preparation;
         let information_clock = information
@@ -414,9 +426,22 @@ impl World {
                 committing: false,
             });
         }
+        let mut prepared_desks = Vec::new();
+        for request in &desks {
+            match self.prepare_desk_ex_rights(id, *request) {
+                Ok(candidate) => prepared_desks.push(candidate),
+                Err(error) if !error.terminal => {
+                    self.abort_admin_preserving_error(id, expected, &error.error)?;
+                    self.control_desk_ex_rights(id, AdminPhase::Abort, &prepared_desks)?;
+                    return Err(error);
+                }
+                Err(error) => return Err(error),
+            }
+        }
         let candidate = AdminCandidate {
             id,
             groups: prepared.into_values().collect(),
+            desks: prepared_desks.clone(),
         };
         // 保留旧 World 入口先检查真实 candidate 的契约；拒绝或 panic 均不进入来源准备。
         let legacy_value = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -425,6 +450,7 @@ impl World {
             Ok(Ok(value)) => value,
             Ok(Err(error)) => {
                 self.abort_admin_preserving_error(id, expected, &error)?;
+                self.control_desk_ex_rights(id, AdminPhase::Abort, &prepared_desks)?;
                 return Err(AdminFailure {
                     error,
                     payload: None,
@@ -445,7 +471,7 @@ impl World {
             crate::runtime::source::MirrorDomains::default(),
             |all, group| all.union(group.mirror_domains),
         );
-        let next_revision = if domains.is_empty() {
+        let next_revision = if domains.is_empty() && prepared_desks.is_empty() {
             self.non_tick_revision
         } else {
             match self.non_tick_revision.checked_add(1) {
@@ -453,6 +479,7 @@ impl World {
                 None => {
                     let error = invalid("非 tick 成功来源游标已耗尽，拒绝首个 commit");
                     self.abort_admin_preserving_error(id, expected, &error)?;
+                    self.control_desk_ex_rights(id, AdminPhase::Abort, &prepared_desks)?;
                     return Err(AdminFailure {
                         error,
                         payload: None,
@@ -479,6 +506,7 @@ impl World {
             Ok(Ok(value)) => value,
             Ok(Err(error)) => {
                 self.abort_admin_preserving_error(id, expected, &error)?;
+                self.control_desk_ex_rights(id, AdminPhase::Abort, &prepared_desks)?;
                 return Err(AdminFailure {
                     error,
                     payload: None,
@@ -495,6 +523,15 @@ impl World {
                 })
             }
         };
+        let next_public_views = if prepared_desks.is_empty() {
+            None
+        } else {
+            let mut views = self.public_views.clone();
+            for desk in &prepared_desks {
+                views[usize::from(desk.request.stock)] = desk.view.clone();
+            }
+            Some(views)
+        };
         if !expected.is_empty() {
             // 首个 commit 发送前关窗；任何部分提交失败均不可复用 world。
             self.day_end_prior_public_views = None;
@@ -504,9 +541,87 @@ impl World {
                     failure
                 })?;
         }
+        if !prepared_desks.is_empty() {
+            self.day_end_prior_public_views = None;
+            self.control_desk_ex_rights(id, AdminPhase::Commit, &prepared_desks)
+                .map_err(|mut failure| {
+                    failure.committing = true;
+                    failure
+                })?;
+        }
+        // 公开快照在首 Commit 前构造，成功尾只移动。
+        if let Some(views) = next_public_views {
+            self.public_views = views;
+        }
         self.non_tick_revision = next_revision;
         self.pending_mirror_domains = captured;
         Ok((value, ack))
+    }
+
+    fn prepare_desk_ex_rights(
+        &mut self,
+        id: AdminTransactionId,
+        request: crate::runtime::protocol::DeskExRightsRequest,
+    ) -> Result<crate::runtime::protocol::DeskExRightsCandidate, AdminFailure> {
+        self.desk_txs[usize::from(request.stock)]
+            .send(DeskMsg::ExRightsPrepare { id, request })
+            .map_err(|_| invalid("除权 Prepare 发送失败"))?;
+        self.receive_desk_ex_rights(id, AdminPhase::Prepare, request)
+    }
+
+    fn control_desk_ex_rights(
+        &mut self,
+        id: AdminTransactionId,
+        phase: AdminPhase,
+        requests: &[crate::runtime::protocol::DeskExRightsCandidate],
+    ) -> Result<(), AdminFailure> {
+        for request in requests {
+            self.desk_txs[usize::from(request.request.stock)]
+                .send(DeskMsg::ExRightsComplete { id, phase })
+                .map_err(|_| invalid("除权完成消息发送失败"))?;
+            if self.receive_desk_ex_rights(id, phase, request.request)? != *request {
+                return Err(invalid("除权完成回执与 Prepare 候选不一致").into());
+            }
+        }
+        Ok(())
+    }
+
+    fn receive_desk_ex_rights(
+        &mut self,
+        id: AdminTransactionId,
+        phase: AdminPhase,
+        request: crate::runtime::protocol::DeskExRightsRequest,
+    ) -> Result<crate::runtime::protocol::DeskExRightsCandidate, AdminFailure> {
+        match recv_deadline(&self.up_rx, Phase::Seal, &self.watchdog)? {
+            UpMsg::DeskAdminReceipt {
+                id: actual,
+                stock,
+                phase: actual_phase,
+                result,
+            } if actual == id && stock == request.stock && actual_phase == phase => match result {
+                Ok(actual) if actual.request == request => Ok(actual),
+                Ok(_) => Err(invalid("除权回执与原请求不一致").into()),
+                Err(error) if phase == AdminPhase::Prepare => Err(AdminFailure {
+                    error,
+                    payload: None,
+                    terminal: false,
+                    committing: false,
+                }),
+                Err(error) => Err(error.into()),
+            },
+            UpMsg::TaskDied { who, payload } => Err(AdminFailure {
+                error: invalid(format!("除权交易部 panic：{who}")),
+                payload: Some(payload),
+                terminal: true,
+                committing: false,
+            }),
+            UpMsg::Failed { who, error } => Err(RuntimeError::WorkerFailed {
+                who,
+                error: Box::new(error),
+            }
+            .into()),
+            other => Err(invalid(format!("除权收到非预期消息：{other:?}")).into()),
+        }
     }
 
     /// 读面通信失败不能留下可重试的半收齐通道；沿既有 terminal 回收保首错。

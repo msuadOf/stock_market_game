@@ -236,3 +236,58 @@ fn r4_stage_04_join_borrows_original_operands_and_rejects_corrupt_indices() {
         );
     }
 }
+
+#[test]
+fn desk_ex_rights_and_group_debit_share_prepare_abort_and_commit() {
+    let mut world = world();
+    let before = world.snapshot_accounts().unwrap();
+    let old = world.public_views()[0].last_price;
+    let world_upper = world.public_views()[0].daily_upper_limit;
+    let request = crate::runtime::protocol::DeskExRightsRequest {
+        stock: 0,
+        expected_last_close: old,
+        reference_price: old / 2,
+    };
+    let reject = world.with_prepared_staged_administrative_and_desks(
+        stages(5),
+        None,
+        vec![request],
+        |candidate, _, _| {
+            assert_eq!(candidate.desks[0].request, request);
+            assert_eq!(candidate.desks[0].view.last_price, old);
+            assert!(candidate.desks[0].view.daily_upper_limit < world_upper);
+            Err::<(), _>(RuntimeError::ProtocolInvariant {
+                detail: "测试拒绝".into(),
+            })
+        },
+    );
+    assert!(reject.is_err());
+    assert_eq!(world.snapshot_accounts().unwrap(), before);
+    world
+        .with_prepared_staged_administrative_and_desks(
+            stages(5),
+            None,
+            vec![request],
+            |candidate, _, _| {
+                assert_eq!(candidate.desks[0].request, request);
+                assert_eq!(candidate.desks[0].view.last_price, old);
+                assert_eq!(candidate.desks[0].view.last_close, request.reference_price);
+                assert!(candidate.desks[0].view.daily_upper_limit < world_upper);
+                Ok(())
+            },
+        )
+        .unwrap();
+    let mut expected = before.clone();
+    expected[1].1[1].cash += 5;
+    assert_eq!(world.snapshot_accounts().unwrap(), expected);
+    assert_eq!(world.public_views()[0].last_price, old);
+    assert_eq!(world.public_views()[0].last_close, request.reference_price);
+    assert!(world.public_views()[0].daily_upper_limit < world_upper);
+    let again = world.with_prepared_staged_administrative_and_desks(
+        Vec::new(),
+        None,
+        vec![request],
+        |_, _, _| Ok(()),
+    );
+    assert!(again.is_err(), "已提交的旧参考价不得再次 Prepare");
+}

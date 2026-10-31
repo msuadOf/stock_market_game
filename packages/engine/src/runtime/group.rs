@@ -8565,6 +8565,7 @@ mod sol_recheck1_tests {
             daily_active_turnover_cents: 0,
             daily_active_trade_count: 0,
             last_price: last,
+            last_close: last,
             best_bid: None,
             best_ask: None,
             max_buy_price: last * 11 / 10,

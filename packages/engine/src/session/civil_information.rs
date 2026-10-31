@@ -160,6 +160,8 @@ impl GameSession {
             let baseline = self.prepare_civil_administrative_baseline()?;
             let (stages, cash) =
                 shadow.prepare_civil_cash_distributions(report.settled_date, &baseline)?;
+            let desks = shadow.prepare_rights_ex_anchors(next_date)?;
+            let expected_desks = desks.clone();
             let clock =
                 crate::runtime::InformationClockContext::for_civil_disclosure(self, instant)?;
             let as_of_anchors = clock.anchors().map_err(|source| {
@@ -187,8 +189,20 @@ impl GameSession {
                 baseline,
                 stages,
                 payload,
+                desks,
                 move |candidate, prepared, stages| {
                     cash.inspect(candidate, stages)?;
+                    if candidate
+                        .desks
+                        .iter()
+                        .map(|desk| desk.request)
+                        .collect::<Vec<_>>()
+                        != expected_desks
+                    {
+                        return Err(SessionError::UnsupportedCapitalBoundary(
+                            "交易部除权回执与原请求不一致".into(),
+                        ));
+                    }
                     prepared.clone_into_civil_shadow(&mut shadow);
                     shadow.market_calendar_day = None;
                     let publication = project(&shadow, report)?;

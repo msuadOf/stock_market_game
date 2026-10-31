@@ -1,38 +1,29 @@
 //! 配股／增发的日终纯候选。所有 paid/refunded 数值都表示待提交事实，不能冒充组端执行回执。
 
-#[cfg(test)]
 use super::{QueuedRightsSubscription, RejectedRightsSubscription, SessionCorporateActions};
-#[cfg(test)]
 use crate::account::{AccountKind, StockCode};
 use crate::calendar::CivilDate;
-#[cfg(test)]
 use crate::calendar::TradingCalendar;
-#[cfg(test)]
 use crate::company::cash_dividend_tax::CashDividendTaxBook;
 use crate::company::rights_offering::{
     DirectedPlacementTarget, RightsOfferingError, RightsOfferingEventPlan, RightsOfferingMode,
 };
-#[cfg(test)]
 use crate::company::rights_offering::{
     HolderRightsSettlement, RightsOfferingBook, RightsOfferingStatus, RightsSettlementReceipt,
     RightsSubscriptionRecord, SubscriptionOrigin,
 };
-#[cfg(test)]
 use crate::company::share_registry::{
     AcquisitionSource, DayNetChange, HolderId, MovementScope, NetAcquisition, ShareDayRequest,
     ShareRegistry, ShareRestriction,
 };
-#[cfg(test)]
 use crate::company::CompanyId;
 use crate::money::Money;
 use crate::orderbook::AccountId;
-#[cfg(test)]
 use std::collections::{BTreeMap, BTreeSet};
 use thiserror::Error;
 
 /// 真实日终组账户资源；available_cash 已扣在途占用，不得使用镜像总现金代替。
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[cfg(test)]
 pub(crate) struct RightsFinalResources {
     pub available_cash: Money,
     pub kind: AccountKind,
@@ -40,7 +31,6 @@ pub(crate) struct RightsFinalResources {
 
 /// 现有队列的一账户一净申请身份；不得把受理成功解释成缴款完成。
 #[derive(Clone, Debug, Eq, PartialEq)]
-#[cfg(test)]
 pub(crate) struct RightsRequestKey {
     pub event_id: String,
     pub account: AccountId,
@@ -48,7 +38,6 @@ pub(crate) struct RightsRequestKey {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-#[cfg(test)]
 pub(crate) enum RightsAccountDisposition {
     PreparedSubscription,
     PreparedSettlement,
@@ -56,7 +45,6 @@ pub(crate) enum RightsAccountDisposition {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-#[cfg(test)]
 pub(crate) struct RightsAccountResult {
     pub request: RightsRequestKey,
     pub origin: SubscriptionOrigin,
@@ -70,7 +58,6 @@ pub(crate) struct RightsAccountResult {
 
 /// 独立的配股领域意图。D1a 既有股利／税款操作不能替代这些语义。
 #[derive(Clone, Debug, Eq, PartialEq)]
-#[cfg(test)]
 pub(crate) enum RightsOfferingIntent {
     PaymentDebit {
         request: RightsRequestKey,
@@ -90,7 +77,6 @@ pub(crate) enum RightsOfferingIntent {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-#[cfg(test)]
 pub(crate) struct RightsFinanceSettlement {
     pub issuer: CompanyId,
     pub event_id: String,
@@ -101,7 +87,6 @@ pub(crate) struct RightsFinanceSettlement {
 
 /// 仅本簇会变化的候选字段；调用方在全部组回执勾稽后才可安装。
 #[derive(Clone, Debug, Eq, PartialEq)]
-#[cfg(test)]
 pub(crate) struct RightsOfferingDayEndCandidate {
     pub registries: Vec<ShareRegistry>,
     pub dividend_tax_books: Vec<CashDividendTaxBook>,
@@ -121,26 +106,12 @@ pub(crate) enum RightsOfferingCandidateError {
         lock_until: CivilDate,
     },
     #[error("配股事件 {event_id} 在 {day} 缺少账户 {account:?} 的最终可用资源")]
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "保留配股日终缺少账户资源的 typed SystemState 分类；当前真实生产结算producer未接线，此候选只在 cfg(test) 构造",
-        )
-    )]
     MissingAccount {
         event_id: String,
         account: AccountId,
         day: CivilDate,
     },
     #[error("配股事件 {event_id} 在 {day} 的账户 {account:?} 可用现金为负：{cash:?}")]
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "保留配股日终负可用现金的 typed SystemState 分类；当前真实生产结算producer未接线，此候选只在 cfg(test) 构造",
-        )
-    )]
     NegativeCash {
         event_id: String,
         account: AccountId,
@@ -148,26 +119,12 @@ pub(crate) enum RightsOfferingCandidateError {
         cash: Money,
     },
     #[error("配股事件 {event_id} 在 {day} 的领域校验失败：{source}")]
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "保留配股日终领域失败的 typed SystemState 分类；当前真实生产结算producer未接线，此候选只在 cfg(test) 构造",
-        )
-    )]
     Domain {
         event_id: String,
         day: CivilDate,
         source: RightsOfferingError,
     },
     #[error("配股事件 {event_id} 在 {day} 的候选状态错误：{detail}")]
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "保留配股日终候选状态错误的 typed SystemState 分类；当前真实生产结算producer未接线，此候选只在 cfg(test) 构造",
-        )
-    )]
     Invalid {
         event_id: String,
         day: CivilDate,
@@ -196,7 +153,6 @@ pub(crate) fn validate_rights_offering_capability(
     Ok(())
 }
 
-#[cfg(test)]
 fn invalid(
     plan: &RightsOfferingEventPlan,
     day: CivilDate,
@@ -208,7 +164,6 @@ fn invalid(
         detail: detail.into(),
     }
 }
-#[cfg(test)]
 fn domain(
     plan: &RightsOfferingEventPlan,
     day: CivilDate,
@@ -220,7 +175,6 @@ fn domain(
         source,
     }
 }
-#[cfg(test)]
 fn request(
     plan: &RightsOfferingEventPlan,
     account: AccountId,
@@ -232,7 +186,6 @@ fn request(
         submitted_on,
     }
 }
-#[cfg(test)]
 fn available(
     balances: &BTreeMap<AccountId, RightsFinalResources>,
     plan: &RightsOfferingEventPlan,
@@ -260,7 +213,6 @@ fn available(
 
 /// 在最终市场资源上计算；personal_tax_accounts 必须来自 AShareIndividual 的个人资格集。
 /// 同一账户跨事件按 rights_offerings 的冻结顺序共享余额；不修改任何调用方对象。
-#[cfg(test)]
 pub(crate) fn rights_offering_day_end_candidate(
     actions: &SessionCorporateActions,
     day: CivilDate,
@@ -450,7 +402,6 @@ pub(crate) fn rights_offering_day_end_candidate(
     Ok(candidate)
 }
 
-#[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 fn prepare_subscription(
     candidate: &mut RightsOfferingDayEndCandidate,
@@ -540,7 +491,6 @@ fn prepare_subscription(
     Ok(())
 }
 
-#[cfg(test)]
 fn prepare_settlement(
     candidate: &mut RightsOfferingDayEndCandidate,
     index: usize,
@@ -698,7 +648,6 @@ fn prepare_settlement(
     Ok(())
 }
 
-#[cfg(test)]
 fn prepare_tax_credit(
     candidate: &mut RightsOfferingDayEndCandidate,
     plan: &RightsOfferingEventPlan,

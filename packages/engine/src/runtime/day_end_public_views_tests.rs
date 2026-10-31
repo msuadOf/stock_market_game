@@ -1797,6 +1797,41 @@ fn initial_public_view_matches_the_first_start_phase() {
     }
 }
 
+#[test]
+fn restored_empty_book_cage_uses_trade_price_only_after_trade() {
+    for (trade_count, sell, buy) in [(0, 980, 1020), (1, 1029, 1071)] {
+        let mut spec = phase_view_spec(1000, 0, 0, true);
+        spec.stocks[0].initial_market = Some(super::desk::DeskMarketSeed {
+            last_price: 1050,
+            last_close: 1000,
+            day_high: 1050,
+            day_low: 1000,
+            volume_today: 0,
+            turnover_today: 0,
+            trade_count,
+            candle: None,
+            minute_closes: vec![],
+            minute_bars: vec![],
+        });
+        let world = World::spawn(
+            spec,
+            crate::calendar::TradingCalendar::current_default_calendar().unwrap(),
+        )
+        .unwrap();
+        let view = &world.public_views()[0];
+        assert_eq!(
+            (
+                view.daily_lower_limit,
+                view.daily_upper_limit,
+                view.min_sell_price,
+                view.max_buy_price
+            ),
+            (900, 1100, sell, buy)
+        );
+        world.shutdown().unwrap();
+    }
+}
+
 /// 首拍连续竞价：初始公开边界必须与 desk 实际受理完全一致。
 /// 卖 1077 拒 / 1078 受，买 1123 拒 / 1122 受（分股隔离，避免同拍交叉成交）。
 #[test]

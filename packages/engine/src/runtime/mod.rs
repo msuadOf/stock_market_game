@@ -58,7 +58,9 @@ mod protocol;
 mod worker_context;
 #[cfg(all(test, feature = "simulation-diagnostics", not(target_arch = "wasm32")))]
 pub(crate) use protocol::LifecycleKind;
-pub(crate) use protocol::{RepurchasePreparePayload, RepurchaseProjectionInput, RuntimeError};
+pub(crate) use protocol::{
+    DeskExRightsRequest, RepurchasePreparePayload, RepurchaseProjectionInput, RuntimeError,
+};
 mod information_clock_context;
 pub(crate) mod information_handover;
 pub use information_clock_context::InformationClockContext;

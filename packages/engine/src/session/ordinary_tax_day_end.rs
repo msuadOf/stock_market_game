@@ -59,7 +59,12 @@ impl GameSession {
                 ));
             }
         }
-        if actions.registries.is_empty() && actions.dividends.is_empty() {
+        if actions.registries.is_empty()
+            && actions.dividends.is_empty()
+            && actions.stock_distributions.is_empty()
+            && actions.share_splits.is_empty()
+            && actions.rights_offerings.is_empty()
+        {
             return Ok(());
         }
         let accounts: BTreeMap<_, BTreeMap<_, _>> = self
@@ -160,6 +165,78 @@ impl GameSession {
                         "分红方案 {} 错过登记日 {}",
                         plan.plan_id, plan.registered_on
                     )),
+                ));
+            }
+        }
+        // 与市场成交使用同一个 shadow，公告或登记失败时不发布任何部分状态。
+        for book in &mut candidate.stock_distributions {
+            let plan = book.plan().clone();
+            if book.status()
+                == &crate::company::stock_distribution::StockDistributionStatus::Approved
+            {
+                if plan.announced_on < day {
+                    return Err(failure(
+                        day,
+                        Some(&plan.stock),
+                        invalid(format!("送转方案 {} 错过公告日", plan.event_id)),
+                    ));
+                }
+                if plan.announced_on == day {
+                    book.announce(day)
+                        .map_err(|source| failure(day, Some(&plan.stock), source))?;
+                }
+            }
+            if book.registration().is_none() && plan.registered_on < day {
+                return Err(failure(
+                    day,
+                    Some(&plan.stock),
+                    invalid(format!("送转方案 {} 错过登记日", plan.event_id)),
+                ));
+            }
+        }
+        for book in &mut candidate.share_splits {
+            let plan = book.plan().clone();
+            if book.status() == &crate::company::share_split::ShareSplitStatus::Approved {
+                if plan.announced_on < day {
+                    return Err(failure(
+                        day,
+                        Some(&plan.stock),
+                        invalid(format!("拆缩股方案 {} 错过公告日", plan.event_id)),
+                    ));
+                }
+                if plan.announced_on == day {
+                    book.announce(day)
+                        .map_err(|source| failure(day, Some(&plan.stock), source))?;
+                }
+            }
+            if book.registration().is_none() && plan.registered_on < day {
+                return Err(failure(
+                    day,
+                    Some(&plan.stock),
+                    invalid(format!("拆缩股方案 {} 错过登记日", plan.event_id)),
+                ));
+            }
+        }
+        for book in &mut candidate.rights_offerings {
+            let plan = book.plan().clone();
+            if book.status() == &crate::company::rights_offering::RightsOfferingStatus::Approved {
+                if plan.announced_on < day {
+                    return Err(failure(
+                        day,
+                        Some(&plan.stock),
+                        invalid(format!("配股方案 {} 错过公告日", plan.event_id)),
+                    ));
+                }
+                if plan.announced_on == day {
+                    book.announce(day)
+                        .map_err(|source| failure(day, Some(&plan.stock), source))?;
+                }
+            }
+            if book.registration().is_none() && plan.registered_on < day {
+                return Err(failure(
+                    day,
+                    Some(&plan.stock),
+                    invalid(format!("配股方案 {} 错过登记日", plan.event_id)),
                 ));
             }
         }
@@ -332,6 +409,118 @@ impl GameSession {
                 })
                 .map(|(index, book)| (index, book.plan().clone()))
                 .collect();
+            let stock_captures: Vec<_> = candidate
+                .stock_distributions
+                .iter()
+                .enumerate()
+                .filter(|(_, book)| {
+                    book.plan().stock == stock
+                        && book.registration().is_none()
+                        && book.plan().registered_on == day
+                })
+                .map(|(index, book)| (index, book.plan().event_id.clone()))
+                .collect();
+            let split_captures: Vec<_> = candidate
+                .share_splits
+                .iter()
+                .enumerate()
+                .filter(|(_, book)| {
+                    book.plan().stock == stock
+                        && book.registration().is_none()
+                        && book.plan().registered_on == day
+                })
+                .map(|(index, book)| (index, book.plan().event_id.clone()))
+                .collect();
+            let rights_captures: Vec<_> = candidate
+                .rights_offerings
+                .iter()
+                .enumerate()
+                .filter(|(_, book)| {
+                    book.plan().stock == stock
+                        && book.registration().is_none()
+                        && book.plan().registered_on == day
+                })
+                .map(|(index, book)| (index, book.plan().event_id.clone()))
+                .collect();
+            // Exempt 配股新股先作为本日唯一 REG 的收盘后 movement，
+            // 后续 Admin 再以同一认购事实准备账户入股，不在此改真实账户。
+            let mut issuance = Vec::new();
+            let mut final_accounts = accounts.clone();
+            for book in candidate.rights_offerings.iter().filter(|book| {
+                book.plan().stock == stock
+                    && book.status()
+                        == &crate::company::rights_offering::RightsOfferingStatus::Closed
+                    && book.plan().settlement_on == day
+            }) {
+                let plan = book.plan();
+                if book
+                    .determine_failure()
+                    .map_err(|source| failure(day, Some(&stock), source))?
+                {
+                    continue;
+                }
+                if self.state.setup.dividend_tax_mode != Some(CashDividendTaxMode::Exempt)
+                    || !books.is_empty()
+                    || !candidate.applied_ex_reference_groups.iter().any(|group| {
+                        group.stock == stock
+                            && group.date == plan.ex_rights_on
+                            && group.rights_event_ids == [plan.event_id.clone()]
+                    })
+                {
+                    return Err(failure(
+                        day,
+                        Some(&stock),
+                        invalid("成功配股缺少 Exempt 税制或真实除权锚"),
+                    ));
+                }
+                let mut issuance_changes = Vec::new();
+                for record in book
+                    .subscriptions()
+                    .iter()
+                    .filter(|record| record.paid_shares > 0)
+                {
+                    let HolderId::Account(account) = &record.holder else {
+                        return Err(failure(
+                            day,
+                            Some(&stock),
+                            invalid("当前成功配股不支持外部股东或回购专户"),
+                        ));
+                    };
+                    let positions = final_accounts.get_mut(account).ok_or_else(|| {
+                        failure(day, Some(&stock), invalid("配股账户缺少真实市场持仓"))
+                    })?;
+                    let qty = positions.entry(stock_id).or_default();
+                    *qty = qty
+                        .checked_add(record.paid_shares)
+                        .ok_or_else(|| failure(day, Some(&stock), invalid("配股账户股份溢出")))?;
+                    issuance_changes.push(DayNetChange {
+                        holder: record.holder.clone(),
+                        change: i128::from(record.paid_shares),
+                        acquisition: Some(NetAcquisition {
+                            lot_id: format!(
+                                "rights-offering:{}:account-{}",
+                                plan.event_id, account.0
+                            ),
+                            source: AcquisitionSource::CorporateAction {
+                                event: plan.event_id.clone(),
+                            },
+                            restriction: ShareRestriction::Unrestricted,
+                        }),
+                        consume: None,
+                    });
+                }
+                if issuance_changes.is_empty() {
+                    return Err(failure(day, Some(&stock), invalid("成功配股没有实缴股份")));
+                }
+                issuance.push(SharePostAction::Movement(ShareDayRequest {
+                    event_id: format!("rights-offering:{}", plan.event_id),
+                    day,
+                    scope: MovementScope::NonTradingTransfer {
+                        basis: plan.approval_reference.clone(),
+                    },
+                    changes: issuance_changes,
+                }));
+            }
             let request = ShareSettlementDay {
                 stock: stock.clone(),
                 day,
@@ -349,35 +538,87 @@ impl GameSession {
                         changes,
                     },
                 },
-                post_market_actions: captures
-                    .iter()
-                    .map(|(_, plan)| SharePostAction::CaptureRegistration {
-                        event_id: plan.plan_id.clone(),
-                    })
+                post_market_actions: issuance
+                    .into_iter()
+                    .chain(
+                        captures
+                            .iter()
+                            .map(|(_, plan)| SharePostAction::CaptureRegistration {
+                                event_id: plan.plan_id.clone(),
+                            })
+                            .chain(
+                                stock_captures
+                                    .iter()
+                                    .chain(&split_captures)
+                                    .chain(&rights_captures)
+                                    .map(|(_, event_id)| SharePostAction::CaptureRegistration {
+                                        event_id: event_id.clone(),
+                                    }),
+                            ),
+                    )
                     .collect(),
             };
-            let prepared = TaxDayBoundaryFacts::prepare(
-                registry,
-                &books,
-                &request,
-                &ShareMarketSourceContext {
-                    calendar,
-                    exchange,
-                    confirmations: &confirmations,
-                    treasury_account: treasury,
-                    // 非交易日由同一冻结日历证明；交易日已核原 World 的真实末拍。
-                    completed_through: Some(day),
-                },
-            )
+            let sources = ShareMarketSourceContext {
+                calendar,
+                exchange,
+                confirmations: &confirmations,
+                treasury_account: treasury,
+                // 非交易日由同一冻结日历证明；交易日已核原 World 的真实末拍。
+                completed_through: Some(day),
+            };
+            let prepared = if self.state.setup.dividend_tax_mode
+                == Some(CashDividendTaxMode::Exempt)
+                && books.is_empty()
+            {
+                TaxDayBoundaryFacts::prepare_exempt(registry, &request, &sources)
+            } else {
+                TaxDayBoundaryFacts::prepare(registry, &books, &request, &sources)
+            }
             .map_err(|source| failure(day, Some(&stock), source))?;
             corporate_actions::registry_day_end::reconcile_registry(
                 prepared.registry(),
                 stock_id,
                 day,
-                &accounts,
+                &final_accounts,
                 treasury,
             )
             .map_err(|source| failure(day, Some(&stock), source))?;
+            for (index, event_id) in stock_captures {
+                let snapshot = prepared.registry().registration(&event_id).ok_or_else(|| {
+                    failure(
+                        day,
+                        Some(&stock),
+                        invalid(format!("送转方案 {event_id} 缺少登记快照")),
+                    )
+                })?;
+                candidate.stock_distributions[index]
+                    .register(snapshot.clone(), calendar)
+                    .map_err(|source| failure(day, Some(&stock), source))?;
+            }
+            for (index, event_id) in split_captures {
+                let snapshot = prepared.registry().registration(&event_id).ok_or_else(|| {
+                    failure(
+                        day,
+                        Some(&stock),
+                        invalid(format!("拆缩股方案 {event_id} 缺少登记快照")),
+                    )
+                })?;
+                candidate.share_splits[index]
+                    .register(snapshot.clone(), calendar)
+                    .map_err(|source| failure(day, Some(&stock), source))?;
+            }
+            for (index, event_id) in rights_captures {
+                let snapshot = prepared.registry().registration(&event_id).ok_or_else(|| {
+                    failure(
+                        day,
+                        Some(&stock),
+                        invalid(format!("配股方案 {event_id} 缺少登记快照")),
+                    )
+                })?;
+                candidate.rights_offerings[index]
+                    .entitle(snapshot.clone(), calendar)
+                    .map_err(|source| failure(day, Some(&stock), source))?;
+            }
             let mut registered_books = prepared.books().to_vec();
             for (dividend_index, plan) in captures {
                 let snapshot =
@@ -481,6 +722,51 @@ impl GameSession {
                 )),
             ));
         }
+        for (event_id, stock, registered_on, missing) in candidate
+            .stock_distributions
+            .iter()
+            .map(|book| {
+                (
+                    &book.plan().event_id,
+                    &book.plan().stock,
+                    book.plan().registered_on,
+                    book.registration().is_none(),
+                )
+            })
+            .chain(candidate.share_splits.iter().map(|book| {
+                (
+                    &book.plan().event_id,
+                    &book.plan().stock,
+                    book.plan().registered_on,
+                    book.registration().is_none(),
+                )
+            }))
+            .chain(candidate.rights_offerings.iter().map(|book| {
+                (
+                    &book.plan().event_id,
+                    &book.plan().stock,
+                    book.plan().registered_on,
+                    book.registration().is_none(),
+                )
+            }))
+        {
+            if registered_on == day && missing {
+                return Err(failure(
+                    day,
+                    Some(stock),
+                    invalid(format!("资本方案 {event_id} 缺少登记日的实际名册 capture")),
+                ));
+            }
+        }
+        system
+            .validate_stock_distribution_books(&candidate.stock_distributions)
+            .map_err(|source| failure(day, None, source))?;
+        system
+            .validate_share_split_books(&candidate.share_splits)
+            .map_err(|source| failure(day, None, source))?;
+        system
+            .validate_rights_offering_books(&candidate.rights_offerings)
+            .map_err(|source| failure(day, None, source))?;
         // 发布前复用唯一公司规则核批准日期、金额、法律来源与既有付款映射。
         system
             .validate_cash_dividend_books(&candidate.dividends)

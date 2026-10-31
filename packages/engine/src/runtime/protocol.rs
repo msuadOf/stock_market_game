@@ -424,6 +424,8 @@ mod u128_decimal {
 pub struct StockPublic {
     /// 最新价（分）。
     pub last_price: i64,
+    /// 交易部权威参考收盘价（分）。
+    pub last_close: i64,
     /// 买一（分；空簿 None）。
     pub best_bid: Option<i64>,
     /// 卖一（分；空簿 None）。
@@ -810,11 +812,27 @@ pub struct AdminGroupCandidate {
     pub state_hash: u64,
 }
 
+/// 除权参考价由发行候选计算；交易部校验同一收盘来源后才允许提交。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DeskExRightsRequest {
+    pub stock: StockIdx,
+    pub expected_last_close: i64,
+    pub reference_price: i64,
+}
+
+/// 交易部从真实行情准备的除权公开视图。
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct DeskExRightsCandidate {
+    pub request: DeskExRightsRequest,
+    pub view: StockPublic,
+}
+
 /// 只在同步行政作用域内交付，不代表已经向宿主发布。
 #[derive(Clone, Debug)]
 pub struct AdminCandidate {
     pub id: AdminTransactionId,
     pub groups: Vec<AdminGroupCandidate>,
+    pub(crate) desks: Vec<DeskExRightsCandidate>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1296,6 +1314,15 @@ pub struct DeskFatalCleanupProbeForTest {
 }
 
 pub enum DeskMsg {
+    /// 行政事务的除权参考价，Prepare 不改变交易权威。
+    ExRightsPrepare {
+        id: AdminTransactionId,
+        request: DeskExRightsRequest,
+    },
+    ExRightsComplete {
+        id: AdminTransactionId,
+        phase: AdminPhase,
+    },
     #[cfg(test)]
     InstallFatalCleanupProbeForTest(DeskFatalCleanupProbeForTest),
     /// spawn 已验证的静点；只在任何 Start 前绑定一次 source owner。
@@ -1366,6 +1393,13 @@ pub struct PendingStartRejection {
 
 /// worker → 协调者的上行消息；panic payload 的 Debug 不展开载荷。
 pub(crate) enum UpMsg {
+    /// 同一个行政事务的交易部除权回执。
+    DeskAdminReceipt {
+        id: AdminTransactionId,
+        stock: StockIdx,
+        phase: AdminPhase,
+        result: Result<DeskExRightsCandidate, RuntimeError>,
+    },
     /// 仅 pending 门在分派 Start 前产生；该组尚未发送本轮任何 Ops 或 final。
     PendingStartRejected(PendingStartRejection),
     /// 三阶段显式回执；Prepare 业务拒绝不终止 worker。
@@ -1598,6 +1632,16 @@ pub(crate) enum UpMsg {
 impl std::fmt::Debug for UpMsg {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            UpMsg::DeskAdminReceipt {
+                id,
+                stock,
+                phase,
+                result,
+            } => write!(
+                f,
+                "DeskAdminReceipt({id:?}, stock={stock}, phase={phase:?}, ok={})",
+                result.is_ok()
+            ),
             UpMsg::PendingStartRejected(rejection) => write!(
                 f,
                 "PendingStartRejected(group={}, tick={}, prior_tick={}, error={:?})",

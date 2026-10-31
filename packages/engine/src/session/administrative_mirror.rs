@@ -65,6 +65,7 @@ fn invalid(detail: impl Into<String>) -> RuntimeError {
 /// 全部可失败投影在首 Commit 前完成；成功尾只移动已验证的值。
 struct PreparedAdministrativeMirror {
     accounts: super::account_book::AccountBook,
+    markets: Option<BTreeMap<crate::StockId, crate::market::Market>>,
     personals: Vec<(usize, AccountId, BeliefParticipantSnapshot)>,
     personal_maps: Option<AdministrativePersonalMaps>,
     library: Option<Arc<crate::information::PublicLibrary>>,
@@ -93,6 +94,9 @@ impl PreparedAdministrativeProjection<'_> {
     /// clone 和页分离均在首 Commit 前；None 域显式重置为原 Session 同版值。
     pub(super) fn clone_into_civil_shadow(&self, shadow: &mut GameSession) {
         shadow.state.accounts = self.prepared.accounts.clone();
+        if let Some(markets) = &self.prepared.markets {
+            shadow.state.markets = markets.clone();
+        }
         let (attention, beliefs, histories, retail) = match &self.prepared.personal_maps {
             Some(maps) => (
                 &maps.attention,
@@ -244,6 +248,7 @@ impl GameSession {
         baseline: AdministrativeBaseline,
         stages: Vec<AdminOperationStage>,
         information: InformationPreparePayload,
+        desks: Vec<crate::runtime::DeskExRightsRequest>,
         prepare: impl FnOnce(
             &AdminCandidate,
             &PreparedAdministrativeProjection<'_>,
@@ -257,7 +262,8 @@ impl GameSession {
             Some(information),
             None,
             Some(baseline),
-            (!stages.is_empty()).then_some(stages),
+            (!stages.is_empty() || !desks.is_empty()).then_some(stages),
+            desks,
             |candidate, projection, stages| match prepare(candidate, projection, stages) {
                 Ok((fields, value)) => Ok((Some(fields), value)),
                 Err(error) => {
@@ -303,6 +309,7 @@ impl GameSession {
             repurchase,
             None,
             None,
+            Vec::new(),
             |candidate, projection, _| prepare(candidate, projection),
         )
     }
@@ -314,6 +321,7 @@ impl GameSession {
         repurchase: Option<crate::runtime::RepurchasePreparePayload>,
         baseline: Option<AdministrativeBaseline>,
         stages: Option<Vec<AdminOperationStage>>,
+        desks: Vec<crate::runtime::DeskExRightsRequest>,
         prepare: impl FnOnce(
             &AdminCandidate,
             &PreparedAdministrativeProjection<'_>,
@@ -407,6 +415,13 @@ impl GameSession {
                     Ok((value, prepared, civil))
                 };
             let result = match stages {
+                Some(stages) if !desks.is_empty() => driver
+                    .with_prepared_staged_administrative_and_desks(
+                        stages,
+                        information,
+                        desks,
+                        |candidate, source, stages| inspect(candidate, source, Some(stages)),
+                    ),
                 Some(stages) => driver.with_prepared_staged_administrative_transaction(
                     stages,
                     information,
@@ -608,6 +623,32 @@ impl GameSession {
         {
             return Err(invalid("行政候选未绑定同一次真实Prepare来源"));
         }
+        let mut markets = None;
+        if !candidate.desks.is_empty() {
+            let mut next = self.state.markets.clone();
+            let mut seen = BTreeSet::new();
+            for desk in &candidate.desks {
+                let stock = crate::StockId(u32::from(desk.request.stock));
+                if !seen.insert(stock) {
+                    return Err(invalid("行政候选重复交易部"));
+                }
+                let market = next
+                    .get_mut(&stock)
+                    .ok_or_else(|| invalid("行政交易部不在市场目录"))?;
+                if market.last_close().cents() != desk.request.expected_last_close
+                    || market.last_price().cents() != desk.view.last_price
+                    || desk.view.last_close != desk.request.reference_price
+                    || desk.request.reference_price <= 0
+                {
+                    return Err(invalid("交易部除权候选与 Session 同源行情不一致"));
+                }
+                market.restore_prices(
+                    market.last_price(),
+                    Money::from_cents(desk.request.reference_price),
+                );
+            }
+            markets = Some(next);
+        }
         let plans = baseline.plans_after(candidate)?;
         if source.captured().attention_full || (source.captured().plans_pending && plans.is_none())
         {
@@ -615,7 +656,7 @@ impl GameSession {
                 "行政镜像缺同次完整PlanBook或独立attention候选；拒绝确认该域",
             ));
         }
-        let changed = !source.captured().is_empty();
+        let changed = !source.captured().is_empty() || !candidate.desks.is_empty();
         let next_revision = if changed {
             revision
                 .checked_add(1)
@@ -791,6 +832,7 @@ impl GameSession {
         };
         Ok(PreparedAdministrativeMirror {
             accounts: account_book,
+            markets,
             personals,
             personal_maps,
             library,
@@ -812,6 +854,9 @@ impl GameSession {
             return;
         }
         self.state.accounts = prepared.accounts;
+        if let Some(markets) = prepared.markets {
+            self.state.markets = markets;
+        }
         for (index, id, snapshot) in prepared.personals {
             driver.install_cached_personal_at(index, id, snapshot.into());
         }

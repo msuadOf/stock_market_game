@@ -2756,7 +2756,7 @@ impl RuntimeDriver {
             if let Some(market) = session.market_mut_for_runtime(&code) {
                 market.restore_prices(
                     Money::from_cents(view.last_price),
-                    Money::from_cents(view.last_price.max(1)),
+                    Money::from_cents(view.last_close),
                 );
             } else {
                 return Err(format!("行情安装：股 {idx} 不在会话目录"));

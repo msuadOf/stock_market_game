@@ -337,6 +337,7 @@ impl World {
             information,
             None,
             Some(layouts),
+            Vec::new(),
             |candidate| {
                 let evidence = prepare_stage_source(candidate, &stages)?;
                 inspect(candidate, &evidence)
@@ -344,6 +345,34 @@ impl World {
             |_candidate, _source, value| Ok(value),
         )
         .map(|(value, _ack)| value)
+    }
+
+    /// 除权交易部与 Group 阶段共用唯一行政事务。
+    pub(crate) fn with_prepared_staged_administrative_and_desks<P>(
+        &mut self,
+        stages: Vec<AdminOperationStage>,
+        information: Option<crate::runtime::protocol::InformationPreparePayload>,
+        desks: Vec<crate::runtime::protocol::DeskExRightsRequest>,
+        inspect: impl FnOnce(
+            &AdminCandidate,
+            &crate::runtime::world::PreparedAdministrativeSource,
+            &PreparedAdministrativeStages<'_>,
+        ) -> Result<P, RuntimeError>,
+    ) -> Result<(P, crate::runtime::source::PreparedMirrorAck), RuntimeError> {
+        let (grouped, layouts) =
+            prepare_stage_requests(&stages, self.n_groups, information.is_some())?;
+        self.with_administrative_inspection(
+            grouped,
+            information,
+            None,
+            Some(layouts),
+            desks,
+            |_candidate| Ok(()),
+            |candidate, source, ()| {
+                let evidence = prepare_stage_source(candidate, &stages)?;
+                inspect(candidate, source, &evidence)
+            },
+        )
     }
 
     /// 阶段账务与 INFO 共用一个 pending/id，并在真实 prepared source 上检查阶段证据。
@@ -364,6 +393,7 @@ impl World {
             information,
             None,
             Some(layouts),
+            Vec::new(),
             |_candidate| Ok(()),
             |candidate, source, ()| {
                 let evidence = prepare_stage_source(candidate, &stages)?;

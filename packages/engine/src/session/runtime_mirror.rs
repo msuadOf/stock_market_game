@@ -632,12 +632,12 @@ impl GameSession {
                 let market = markets
                     .get_mut(&code)
                     .ok_or_else(|| format!("行情 candidate 未知股票：{code:?}"))?;
-                if view.last_price <= 0 {
+                if view.last_price <= 0 || view.last_close <= 0 {
                     return Err(format!("行情 candidate 非正价格：{code:?}"));
                 }
                 market.restore_prices(
                     Money::from_cents(view.last_price),
-                    Money::from_cents(view.last_price),
+                    Money::from_cents(view.last_close),
                 );
                 histories.insert(
                     code,

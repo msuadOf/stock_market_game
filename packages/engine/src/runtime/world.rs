@@ -1711,41 +1711,67 @@ impl World {
         specs
             .iter()
             .map(|s| {
-                let last = s.initial_price.max(1);
-                let up =
-                    super::desk::bound_price(Money::from_cents(last), 10_000 + s.limit_bps, true)
-                        .unwrap_or(Money::from_cents(last));
-                let down =
-                    super::desk::bound_price(Money::from_cents(last), 10_000 - s.limit_bps, false)
-                        .unwrap_or(Money::from_cents(1));
-                // 空簿时笼子参考价为最新价；买卖向公开边界均须与 desk 受理同口径。
+                let last = s
+                    .initial_market
+                    .as_ref()
+                    .map_or(s.initial_price, |market| market.last_price)
+                    .max(1);
+                let reference = s
+                    .initial_market
+                    .as_ref()
+                    .map_or(last, |market| market.last_close);
+                let up = super::desk::bound_price(
+                    Money::from_cents(reference),
+                    10_000 + s.limit_bps,
+                    true,
+                )
+                .unwrap_or(Money::from_cents(last));
+                let down = super::desk::bound_price(
+                    Money::from_cents(reference),
+                    10_000 - s.limit_bps,
+                    false,
+                )
+                .unwrap_or(Money::from_cents(1));
+                // 空簿时仅当日已有成交才使用最新价，与 desk 受理同口径。
+                let cage_reference = s.initial_market.as_ref().map_or(reference, |market| {
+                    if market.trade_count == 0 {
+                        reference
+                    } else {
+                        last
+                    }
+                });
                 let min_sell = if cage_on && cage_applies_first_tick {
-                    let pct = super::desk::bound_price(Money::from_cents(last), 9_800, false)
-                        .map_err(|error| RuntimeError::ProtocolInvariant {
-                            detail: format!("初始卖向笼子下界计算失败：{error}"),
-                        })?
-                        .cents();
-                    down.cents().max(pct.min(last - 10).max(1))
+                    let pct =
+                        super::desk::bound_price(Money::from_cents(cage_reference), 9_800, false)
+                            .map_err(|error| RuntimeError::ProtocolInvariant {
+                                detail: format!("初始卖向笼子下界计算失败：{error}"),
+                            })?
+                            .cents();
+                    down.cents().max(pct.min(cage_reference - 10).max(1))
                 } else {
                     down.cents()
                 };
                 let max_buy = if cage_on && cage_applies_first_tick {
-                    let pct = super::desk::bound_price(Money::from_cents(last), 10_200, true)
-                        .map_err(|error| RuntimeError::ProtocolInvariant {
-                            detail: format!("初始买向笼子上界计算失败：{error}"),
-                        })?
-                        .cents();
-                    let ten_ticks =
-                        last.checked_add(10)
-                            .ok_or_else(|| RuntimeError::ProtocolInvariant {
-                                detail: format!("初始买向十个最小价位上界溢出：reference={last}"),
-                            })?;
+                    let pct =
+                        super::desk::bound_price(Money::from_cents(cage_reference), 10_200, true)
+                            .map_err(|error| RuntimeError::ProtocolInvariant {
+                                detail: format!("初始买向笼子上界计算失败：{error}"),
+                            })?
+                            .cents();
+                    let ten_ticks = cage_reference.checked_add(10).ok_or_else(|| {
+                        RuntimeError::ProtocolInvariant {
+                            detail: format!(
+                                "初始买向十个最小价位上界溢出：reference={cage_reference}"
+                            ),
+                        }
+                    })?;
                     up.cents().min(pct.max(ten_ticks))
                 } else {
                     up.cents()
                 };
                 Ok(StockPublic {
                     last_price: last,
+                    last_close: reference,
                     best_bid: None,
                     best_ask: None,
                     depth_bids: Vec::new(),

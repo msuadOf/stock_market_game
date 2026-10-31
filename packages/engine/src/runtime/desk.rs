@@ -421,6 +421,10 @@ pub struct DeskState {
     initial_calendar_day: Option<Arc<super::MarketDayContext>>,
     calendar_tick: Option<Arc<super::MarketTickContext>>,
     setup: DeskSetup,
+    pending_ex_rights: Option<(
+        super::protocol::AdminTransactionId,
+        super::protocol::DeskExRightsCandidate,
+    )>,
     config: Arc<GameConfig>,
     bids: BTreeMap<i64, VecDeque<DeskOrder>>,
     asks: BTreeMap<i64, VecDeque<DeskOrder>>,
@@ -432,6 +436,7 @@ pub struct DeskState {
     /// 上拍相位（公开截点的切换检测）。
     last_phase: Option<DeskPhase>,
     undo: Vec<DeskUndo>,
+    sealed_drain_tick: Option<u64>,
     out: Vec<Vec<Entity>>,
     fills_out: Vec<Vec<FillFact>>,
     receipts_out: Vec<Vec<DeskReceipt>>,
@@ -646,6 +651,7 @@ impl DeskState {
             initial_calendar_day: None,
             calendar_tick: None,
             setup,
+            pending_ex_rights: None,
             config,
             bids: BTreeMap::new(),
             asks: BTreeMap::new(),
@@ -653,6 +659,7 @@ impl DeskState {
             public_cutoff_serial: 0,
             last_phase: None,
             undo: Vec::new(),
+            sealed_drain_tick: None,
             out: vec![Vec::new(); n_groups],
             fills_out: vec![Vec::new(); n_groups],
             receipts_out: vec![Vec::new(); n_groups],
@@ -1088,7 +1095,11 @@ impl DeskState {
             Side::Buy => self.best_ask().or_else(|| self.best_bid()),
             Side::Sell => self.best_bid().or_else(|| self.best_ask()),
         }
-        .unwrap_or(self.market.last_price)
+        .unwrap_or(if self.market.trade_count == 0 {
+            self.market.last_close
+        } else {
+            self.market.last_price
+        })
     }
 
     /// 价格笼子边界（买上限/卖下限；±2% 与十个最小价位取宽）。
@@ -1098,11 +1109,19 @@ impl DeskState {
         match side {
             Side::Buy => {
                 let pct = self.price_bound(reference, 10_200, true)?.cents();
-                Ok(pct.max(reference.cents() + ten_ticks))
+                let minimum = reference
+                    .cents()
+                    .checked_add(ten_ticks)
+                    .ok_or_else(|| over("价格笼子上界溢出"))?;
+                Ok(pct.max(minimum))
             }
             Side::Sell => {
                 let pct = self.price_bound(reference, 9_800, false)?.cents();
-                Ok(pct.min(reference.cents() - ten_ticks).max(1))
+                let maximum = reference
+                    .cents()
+                    .checked_sub(ten_ticks)
+                    .ok_or_else(|| over("价格笼子下界溢出"))?;
+                Ok(pct.min(maximum).max(1))
             }
         }
     }
@@ -2778,10 +2797,80 @@ impl DeskState {
         self.reset_market_for_new_day();
     }
 
+    /// 除权候选不写行情；同一行政事务 Commit 才更新交易部权威。
+    fn prepare_ex_rights(
+        &mut self,
+        id: super::protocol::AdminTransactionId,
+        request: super::protocol::DeskExRightsRequest,
+    ) -> Result<super::protocol::DeskExRightsCandidate, RuntimeError> {
+        if self.pending_ex_rights.is_some()
+            || request.stock != self.setup.stock
+            || request.expected_last_close != self.market.last_close
+            || request.reference_price <= 0
+            || !self.bids.is_empty()
+            || !self.asks.is_empty()
+        {
+            return Err(over(
+                "除权 Prepare 的交易部、收盘价、待处理状态或订单簿不一致",
+            ));
+        }
+        // 显式核验下一交易日涨跌停与两向价格笼子，不能在首 Commit 后才发现溢出。
+        let reference = Money::from_cents(request.reference_price);
+        self.price_bound(reference, 10_000 + self.setup.limit_bps, true)?;
+        self.price_bound(reference, 10_000 - self.setup.limit_bps, false)?;
+        self.price_bound(reference, 10_200, true)?;
+        self.price_bound(reference, 9_800, false)?;
+        request
+            .reference_price
+            .checked_add(10)
+            .ok_or_else(|| over("除权价格笼子上界溢出"))?;
+        // 私有线程内临时投影，任何结果都先恢复原行情，再保存 immutable 候选。
+        let previous = self.market.last_close;
+        self.market.last_close = request.reference_price;
+        let view = self.build_public(self.cur_tick.saturating_add(1));
+        self.market.last_close = previous;
+        let candidate = super::protocol::DeskExRightsCandidate {
+            request,
+            view: view?,
+        };
+        self.pending_ex_rights = Some((id, candidate.clone()));
+        Ok(candidate)
+    }
+
+    fn finish_ex_rights(
+        &mut self,
+        id: super::protocol::AdminTransactionId,
+        commit: bool,
+    ) -> Result<super::protocol::DeskExRightsCandidate, RuntimeError> {
+        let Some((pending_id, candidate)) = self.pending_ex_rights.as_ref() else {
+            return Err(over("除权完成缺少 Prepare"));
+        };
+        if *pending_id != id {
+            return Err(over("除权事务身份不一致"));
+        }
+        let candidate = candidate.clone();
+        self.pending_ex_rights = None;
+        if commit {
+            self.sealed_drain_tick = self
+                .undo
+                .iter()
+                .any(|entry| matches!(entry, DeskUndo::DrainMarket(_)))
+                .then_some(self.cur_tick);
+            self.undo.clear();
+            self.committed_tick = self.cur_tick;
+            self.market.last_close = candidate.request.reference_price;
+            self.bump_market_ver();
+        }
+        Ok(candidate)
+    }
+
     /// 收盘清算与终 K 归档完成后，按真实收盘建立下一日行情基准。
     fn reset_market_for_new_day(&mut self) {
         let m = &mut self.market;
-        m.last_close = m.last_price;
+        // 无成交日保留已有除权参考价，不把旧单位最后成交价重新当昨收。
+        if m.trade_count > 0 {
+            m.last_close = m.last_price;
+        }
         m.day_high = m.last_price;
         m.day_low = m.last_price;
         m.volume_today = 0;
@@ -2821,6 +2910,7 @@ impl DeskState {
     ) -> Result<(), RuntimeError> {
         // 下一 tick 首批 Ops(N) = tick N−1 隐式转正。
         self.undo.clear();
+        self.sealed_drain_tick = None;
         let previous = self.calendar_tick.replace(calendar);
         self.undo.push(DeskUndo::Calendar(previous));
         self.committed_tick = self.cur_tick;
@@ -3004,6 +3094,7 @@ impl DeskState {
         };
         Ok(super::protocol::StockPublic {
             last_price: self.market.last_price,
+            last_close: self.market.last_close,
             best_bid: pub_best_bid,
             best_ask: pub_best_ask,
             max_buy_price: up_buy,
@@ -3679,6 +3770,32 @@ fn process_msg(
         other => other,
     };
     match msg {
+        DeskMsg::ExRightsPrepare { id, request } => {
+            let result = state.prepare_ex_rights(id, request);
+            up_tx
+                .send(UpMsg::DeskAdminReceipt {
+                    id,
+                    stock: state.setup.stock,
+                    phase: super::protocol::AdminPhase::Prepare,
+                    result,
+                })
+                .map_err(|_| over("交易部除权 Prepare 回执发送失败"))?;
+        }
+        DeskMsg::ExRightsComplete { id, phase } => {
+            let result = match phase {
+                super::protocol::AdminPhase::Commit => state.finish_ex_rights(id, true),
+                super::protocol::AdminPhase::Abort => state.finish_ex_rights(id, false),
+                super::protocol::AdminPhase::Prepare => Err(over("除权完成相位无效")),
+            };
+            up_tx
+                .send(UpMsg::DeskAdminReceipt {
+                    id,
+                    stock: state.setup.stock,
+                    phase,
+                    result,
+                })
+                .map_err(|_| over("交易部除权完成回执发送失败"))?;
+        }
         #[cfg(test)]
         DeskMsg::InstallFatalCleanupProbeForTest(probe) => {
             assert!(
@@ -3723,6 +3840,9 @@ fn process_msg(
             state.initial_calendar_day = Some(day);
         }
         DeskMsg::Start { tick, calendar } => {
+            if state.pending_ex_rights.is_some() {
+                return Err(over("除权行政事务尚未完成，不得启动市场拍"));
+            }
             let source = state
                 .calendar_owner
                 .as_ref()
@@ -3979,10 +4099,11 @@ fn process_msg(
         DeskMsg::Drain => {
             // 同一 Start 以来已完成 Drain：Shutdown 的重复请求只取诊断面。
             // AbortDayEnd 消费该日志，重试重新清算；下一 Start 清日志，开启新窗口。
-            let already_drained = state
-                .undo
-                .iter()
-                .any(|entry| matches!(entry, DeskUndo::DrainMarket(_)));
+            let already_drained = state.sealed_drain_tick == Some(state.cur_tick)
+                || state
+                    .undo
+                    .iter()
+                    .any(|entry| matches!(entry, DeskUndo::DrainMarket(_)));
             let open = match &state.calendar_tick {
                 Some(context) => context
                     .before_projection()
